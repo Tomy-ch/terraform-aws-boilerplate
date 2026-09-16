@@ -1,0 +1,12 @@
+# gitleaks が無視する既知・許容済みフィンガープリントの一覧。
+# https://github.com/gitleaks/gitleaks#gitleaksignore
+#
+# 抑止ポリシー（.gitleaks.toml / .trivyignore.yaml と共通）
+# - ルールの一括無効化は禁止。抑止はフィンガープリント単位（<path>:<rule-id>:<line>）に限定する
+# - 各行の直前に「なぜ秘密でないか」を書く。理由を書けないものは抑止せず、値そのものを消す
+# - 条件が変われば（当該行が消えた / 実在の秘密になった）エントリを削除する。恒久 allowlist にしない
+#
+# パスやルールの面で除外したい場合は、本ファイルではなく .gitleaks.toml の allowlist を使う。
+#
+
+# 現時点でエントリなし。

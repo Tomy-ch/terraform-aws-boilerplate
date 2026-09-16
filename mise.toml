@@ -1,0 +1,38 @@
+# ツールチェーンの pin（ADR-0013 決定19）。
+#
+# backend（`aqua:` 等）は常に明示する。レジストリ上で複数 backend を持つツールは、
+# 既定 backend が差し替わると取得元が黙って変わるため。
+#
+# ここに置くのは、ADR-0013 決定4 のレイヤーに権威として割り当てられ、かつ初期導入
+# （同 決定31、ADR-0019 決定1）に入る道具だけとする。**未使用の道具を pin だけ置かない**
+# （同 決定33）。次段階の道具（Conftest / Infracost / tfautomv / Terratest / ローカル hook）は
+# 同 決定32 にあり、導入する変更でここへ加える。
+#
+# 道具は素で実行する。`mise exec -- <command>` での包み込みは、手元・hook・CI recipe の
+# いずれでも禁止（同 決定20）。素で解決しないなら直すのは PATH であって wrapper ではない。
+
+[tools]
+
+# 実行エンジン（ADR-0018 決定1）。OpenTofu を採らない理由は同 決定3 にあり、
+# 見直し条件も同 ADR が持つ。
+#
+# module が `required_version` で宣言するのは、使用する機能から導かれる検証済みの下限で
+# あって、この pin と同じ値ではない（ADR-0018 決定2、ADR-0008 決定8）。
+"aqua:hashicorp/terraform" = "1.16.2"
+
+# Static Analysis の権威（ADR-0013 決定4）。`terraform validate` の代替ではなく補完
+# （同 決定5）。
+#
+# AWS ルールセットは tflint 自身のプラグイン機構で取得するため、mise の pin は本体のみを
+# 対象とする。ルールセットの version 固定は `.tflint.hcl` が持つ（未作成）。
+"aqua:terraform-linters/tflint" = "0.64.0"
+
+# Security の権威（ADR-0013 決定4・決定6）。
+#
+# 実行時に scanner を misconfiguration へ限定する。秘密の検出は gitleaks が権威であり、
+# 同じ検査を二重に持たない（ADR-0019 決定2、ADR-0016 決定3）。
+"aqua:aquasecurity/trivy" = "0.74.0"
+
+# Secret Scan の権威（ADR-0019 決定1）。走査対象は commit と履歴であり、作業ツリーの
+# ファイルではない。検出時は通さない（同 決定4）。
+"aqua:gitleaks/gitleaks" = "8.30.1"
