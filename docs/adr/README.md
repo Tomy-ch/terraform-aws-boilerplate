@@ -20,6 +20,16 @@
 | [0010](0010-default-value-policy.md) | 設定値は公式ベストプラクティスを根拠に決定し、利用者へ公開しない | Accepted |
 | [0011](0011-least-privilege-policy.md) | 最小権限をdefaultとし、安全な設定をopt-inにしない | Accepted |
 | [0012](0012-testing-policy.md) | テストを第一級の設計要件とする | Accepted |
+| [0013](0013-development-tooling-composition.md) | 検証と運用の道具を既存ツールの組み合わせで構成する | Accepted |
+| [0014](0014-change-delivery-path.md) | 変更経路をGitに限定し、applyをmerge後のCI/CDで行う | Accepted |
+| [0015](0015-documentation-ownership-and-language.md) | 文書の所有と言語を定める | Accepted |
+| [0016](0016-policy-test-scope-and-verification.md) | Policy Testの適用範囲と、その検証方法を定める | Accepted |
+| [0017](0017-bootstrap-and-ci-authentication.md) | bootstrapをCLIとimportで立ち上げ、CI認証をOIDCとする | Accepted |
+| [0018](0018-execution-engine-selection.md) | 実行エンジンにTerraformを採用し、OpenTofuを採らない | Accepted |
+| [0019](0019-secret-leak-detection.md) | 履歴への秘密の混入を独立した検証レイヤーとして扱う | Accepted |
+| [0020](0020-repository-operations-substrate.md) | リポジトリ運用機構を独立した区分とし、Goで実装する | Accepted |
+| [0021](0021-branch-protection-and-required-checks.md) | 保護設定を宣言と実態の突合で管理し、required checkの基準を定める | Accepted |
+| [0022](0022-commit-and-branch-naming.md) | commit messageとブランチ名の規約を定め、機械に課す範囲を限定する | Accepted |
 
 ## 読む順序
 
@@ -30,8 +40,11 @@ ADR-0002 がリポジトリ全体の評価軸と原則を定義し、他のADR�
 3. ADR-0004 → ADR-0005 → ADR-0006 → ADR-0007（公開契約）
 4. ADR-0008 → ADR-0009 → ADR-0010（依存と設定値の根拠）
 5. ADR-0011（セキュリティ）
-6. ADR-0012（検証）
-7. ADR-0001（ADR自体の運用）
+6. ADR-0012 → ADR-0013 → ADR-0016 → ADR-0019（検証のレイヤー、それを担う道具、検査そのものの検証、履歴に対する検査）
+7. ADR-0014 → ADR-0017 → ADR-0021（変更が実環境へ届く経路、それを成立させるbootstrap、mergeを守るゲート）
+8. ADR-0018（実行エンジンの選定）
+9. ADR-0020 → ADR-0022（Terraformの外側にある運用の機構と、その規約）
+10. ADR-0001 → ADR-0015（ADRと文書自体の運用）
 
 ## 依存関係
 
