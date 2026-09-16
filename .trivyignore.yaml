@@ -1,0 +1,12 @@
+# Trivy が無視する脆弱性の一覧。https://trivy.dev/latest/docs/configuration/filtering/
+#
+# 抑止ポリシー（.gitleaks.toml / .gitleaksignore と共通）
+# - スキャナやチェックの一括無効化は禁止。抑止は脆弱性 ID + paths の単位に限定する。
+#   paths を書かないと、同じ ID を踏む新しい依存まで素通りする
+# - 各エントリに statement で「なぜ許容できるか」を書く。理由を書けないものは抑止しない
+# - 条件が変われば（修正版が出た / 当該依存が消えた）エントリを削除する。恒久 allowlist にしない
+#
+# expired_at を併用すると、期限切れのエントリが自動で復活して再判断を強制できる。
+#
+# 現時点でエントリなし。
+vulnerabilities: []
