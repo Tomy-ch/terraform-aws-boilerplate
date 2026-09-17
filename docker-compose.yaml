@@ -1,0 +1,58 @@
+# 道具の実行形態。ここが持つのは**起動の仕方だけ**で、版は1つも持たない。
+# 版の出所は mise.toml であり、イメージのビルドがそれを読む。
+#
+# **これは配送物ではない。** このリポジトリが配送するのは Terraform の構成であって、
+# コンテナではない。ここに在るのは、検査の道具を利用者の環境に依らず同じ依存で走らせる
+# ための入れ物だけである。
+#
+# terraform 本体はここに居ない。人と CI が最も頻繁に叩く単一の静的バイナリであり、
+# 資格情報の受け渡しに境界を増やさないため、mise がホストへ入れたものを直接実行する。
+#
+# ベースイメージが提供するランタイムの版が mise.toml の宣言とずれていれば、ビルドがその場で
+# 落ちる。3つの実行経路（ローカル / CI / コンテナ）の版が黙って割れるのを、ここで止める。
+
+services:
+  # 運用機構（scripts/）と、workflow・シェル・Terraform・コンテナ定義の検査。
+  #
+  # 運用機構は git を呼び、テストもそれを実際に起動して引数列を検査する。したがって
+  # このイメージに要るのは隔離ではなく**道具が揃っていること**である。
+  go_tool_runner:
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+      target: go_tools
+      secrets:
+        - github_token
+    # 生成物をホストの所有者で書き出す。root で書くと、道具が直した行を直した本人が
+    # 消せない状態がリポジトリに残る。
+    user: "${RUNNER_UID:-1000}:${RUNNER_GID:-1000}"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      # 非 root で走るため、道具が書ける HOME を与える。
+      HOME: /tmp
+    entrypoint: ""
+    init: true
+
+  # npm エコシステムの道具: markdownlint-cli2 / commitlint
+  node_tool_runner:
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+      target: node_tools
+    user: "${RUNNER_UID:-1000}:${RUNNER_GID:-1000}"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      HOME: /tmp
+    entrypoint: ""
+    init: true
+
+secrets:
+  # mise のツール解決を認証付きにするビルド時トークン。未認証の GitHub API は
+  # 60 req/hour・IP 単位で、イメージの install 群を賄えず 403 になる。
+  # build 引数と違い、イメージの履歴に残らない。
+  github_token:
+    environment: GITHUB_TOKEN
