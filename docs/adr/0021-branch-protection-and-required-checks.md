@@ -1,6 +1,6 @@
 # ADR-0021: 保護設定を宣言と実態の突合で管理し、required checkの基準を定める
 
-- Status: Accepted
+- Status: Superseded by repository-wide/ADR-0023
 - Date: 2026-09-16
 - Scope: repository-wide
 - Related: ADR-0012, ADR-0013, ADR-0014, ADR-0019, ADR-0020

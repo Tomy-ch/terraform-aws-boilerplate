@@ -1,6 +1,6 @@
 # ADR-0001: ADRの採用とADR配置・所有権ポリシー
 
-- Status: Accepted
+- Status: Superseded by repository-wide/ADR-0024
 - Date: 2026-09-15
 - Scope: repository-wide
 - Related: ADR-0002, ADR-0003, ADR-0005

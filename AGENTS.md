@@ -19,7 +19,8 @@
 - 道具の実行 —— `mise.toml` は [0013](docs/adr/0013-development-tooling-composition.md) 決定31 と [0019](docs/adr/0019-secret-leak-detection.md) 決定1 の初期導入分を pin したが、各道具の設定ファイル（`.tflint.hcl` / Trivy の scanner 指定）と実行経路は未作成である
 - `Makefile` —— include 先（`.makefiles/`）が存在せず、実行すれば失敗する
 - `.lefthook.yaml` —— 参照するコマンドが存在しない
-- 運用機構（[0020](docs/adr/0020-repository-operations-substrate.md)）—— commit とブランチ名の検査、固定の drift 検出、保護設定の突合、いずれも未実装
+- 分岐のパターンの単一宣言（[0023](docs/adr/0023-branch-protection-and-required-checks.md) 決定1）—— まだ作成しておらず、保護対象のパターンは保護設定の宣言側にだけ在る
+- 保護設定の突合（同 決定4）—— 適用はできるが、実態との突合が未実装
 
 **未配線の道具について「実行した」と報告しない。** 配線され次第この節から外し、この節が空になったとき節ごと削除する。
 
@@ -163,11 +164,12 @@ v1.0.0 より前では次を解除する。
 
 ## Git 規約
 
-[0014](docs/adr/0014-change-delivery-path.md) が変更の経路を、[0022](docs/adr/0022-commit-and-branch-naming.md) が commit とブランチ名の規約を持つ。ここに書くのは操作の規約だけである。
+[0014](docs/adr/0014-change-delivery-path.md) が変更の経路を、[0023](docs/adr/0023-branch-protection-and-required-checks.md) が分岐のパターンと保護設定を持つ。ここに書くのは操作の規約だけである。
 
-- **force push、rebase、amend、保護ブランチの checkout を行わない。** 修正は**新しい commit** として積む。同じ禁止はサーバ側の宣言としても置かれるが（[0021](docs/adr/0021-branch-protection-and-required-checks.md) 決定21）、片方が在ることを理由にもう片方を省かない。
+- **force push、rebase、amend、保護ブランチの checkout を行わない。** 修正は**新しい commit** として積む。同じ禁止はサーバ側の宣言としても置かれるが（[0023](docs/adr/0023-branch-protection-and-required-checks.md) 決定26）、片方が在ることを理由にもう片方を省かない。
 - amend したうえで既存の Pull Request ブランチへ push する場合、**push の前に確認する**。文言はこれを使う: 「変更はローカルにコミット済みです。これらの変更をプルリクエストにプッシュしますか？」
-- **commit の type と subject、body、trailer、ブランチ名は [0022](docs/adr/0022-commit-and-branch-naming.md) が持つ。** ここへ再掲しない。同 ADR が定める検査は未配線である（*現在の配線状態*）。
+- **commit message に課す検査は `commitlint.config.js` が持ち、そこに「なぜその3つだけか」も書いてある。** ここへ再掲しない。**形式を細かく規定しない** —— 守られなくても何も壊れない規定は置かない。
+- **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0023](docs/adr/0023-branch-protection-and-required-checks.md) 決定1-3）。同じパターンを2箇所へ書かない。宣言はまだ作成していない（*現在の配線状態*）。
 - **Pull Request の title と body は日本語**（[0015](docs/adr/0015-documentation-ownership-and-language.md) 決定9）。body には *手を止めてよい場所* の「それ以外」で下した決定を書く。
 - **merge の可否は、実環境への適用の可否と同義である**（[0014](docs/adr/0014-change-delivery-path.md) 決定10）。検証が失敗している Pull Request を merge しない。
 
