@@ -1,12 +1,17 @@
-# Trivy が無視する脆弱性の一覧。https://trivy.dev/latest/docs/configuration/filtering/
+# Trivy が無視する検出の一覧。https://trivy.dev/latest/docs/configuration/filtering/
 #
-# 抑止ポリシー（.gitleaks.toml / .gitleaksignore と共通）
-# - スキャナやチェックの一括無効化は禁止。抑止は脆弱性 ID + paths の単位に限定する。
-#   paths を書かないと、同じ ID を踏む新しい依存まで素通りする
-# - 各エントリに statement で「なぜ許容できるか」を書く。理由を書けないものは抑止しない
-# - 条件が変われば（修正版が出た / 当該依存が消えた）エントリを削除する。恒久 allowlist にしない
-#
-# expired_at を併用すると、期限切れのエントリが自動で復活して再判断を強制できる。
-#
-# 現時点でエントリなし。
+# 抑止ポリシー（.gitleaks.toml / .hadolint.yaml と共通）
+# - スキャナやチェックの一括無効化は禁止。抑止は検出 ID と対象パスの単位に限る
+# - 各エントリに statement で「なぜ許容できるか」を書く。理由を書けないものは抑止せず直す
+# - 条件が変われば（対象が消えた / 前提が変わった）エントリを削除する。恒久 allowlist にしない
+
 vulnerabilities: []
+
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - "docker/tools/Dockerfile"
+    statement: |
+      HEALTHCHECK を置かない。このイメージは make から `docker compose run --rm` で起動して
+      終了する使い捨てであり、常駐しない。観測すべき健全性の状態が存在しない。
+      撤回条件: このイメージを常駐させる用途が生じたとき。
