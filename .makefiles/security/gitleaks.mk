@@ -8,7 +8,7 @@
 
 .PHONY: secret-scan ## push 予定の commit 範囲に秘密が無いことを検査
 secret-scan:
-	@$(GO_TOOL) gitleaks git --redact --no-banner --log-opts="$(COMMITLINT_BASE)..HEAD"
+	@$(GO_TOOL) gitleaks git --redact --no-banner --log-opts="$(COMMITLINT_FROM)..HEAD"
 
 .PHONY: secret-scan-history ## 全履歴を走査（検出ルールの更新で過去が対象になるため定期実行する）
 secret-scan-history:
