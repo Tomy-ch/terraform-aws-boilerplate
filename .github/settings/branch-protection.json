@@ -1,0 +1,100 @@
+{
+  "name": "branch-protection",
+  "target": "branch",
+  "source_type": "Repository",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/production",
+        "refs/heads/staging",
+        "refs/heads/develop",
+        "refs/heads/release/**/*",
+        "refs/heads/hotfix/**/*"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "required_reviewers": [],
+        "require_code_owner_review": true,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": [
+          "merge",
+          "squash"
+        ]
+      }
+    },
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": true,
+        "review_draft_pull_requests": true
+      }
+    },
+    {
+      "type": "code_quality",
+      "parameters": {
+        "severity": "errors"
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "actions-lint"
+          },
+          {
+            "context": "commitlint"
+          },
+          {
+            "context": "docker-lint"
+          },
+          {
+            "context": "egress-check"
+          },
+          {
+            "context": "go-test"
+          },
+          {
+            "context": "md-lint"
+          },
+          {
+            "context": "mod-tidy-check"
+          },
+          {
+            "context": "pin-actions-check"
+          },
+          {
+            "context": "pin-images-check"
+          },
+          {
+            "context": "secret-scan"
+          },
+          {
+            "context": "trivy-config"
+          },
+          {
+            "context": "zizmor"
+          }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": []
+}
