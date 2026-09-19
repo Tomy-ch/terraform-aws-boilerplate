@@ -57,7 +57,7 @@ node = "24.21.0"
 
 # template injection の検出。shellcheck 系には構造的に見えない —— ${{ }} はシェルがパースする
 # 前に置換されるため、補間された式は文字列ではなくコードになる。だから lint に束ねず横に並べる。
-"aqua:zizmorcore/zizmor" = "1.30.1"
+"aqua:zizmorcore/zizmor" = "1.30.0"
 
 # workflow 定義の構文と式、run: のシェルを検査する。走査が及ぶのは .github/workflows だけで、
 # composite action の中は scripts/actions-shellcheck が埋める。
@@ -72,7 +72,7 @@ hadolint = "2.15.1"
 golangci-lint = "2.13.2"
 
 # ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
-lefthook = "2.1.14"
+lefthook = "2.1.12"
 
 # --- npm エコシステム（ADR-0503 決定14） ---
 
