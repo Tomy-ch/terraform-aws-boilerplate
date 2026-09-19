@@ -1013,6 +1013,25 @@ func Test_added(t *testing.T) {
 			assert.Contains(t, err.Error(), "refspec を明示")
 		})
 
+		// module を初めて持ち込む変更では base に go.mod が無い。ここを「ref が無い」と
+		// 読み違えると、その変更だけ1件も検査されないまま止まるか通るかになる。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("base に go.mod が無ければ現在の require をすべて追加として返す", func(t *testing.T) {
+			dir := t.TempDir()
+			base := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("x\n"), 0o600))
+			for _, args := range [][]string{{"init", "-q"}, {"add", "README.md"}, {"commit", "-q", "-m", "init"}} {
+				//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
+				out, err := exec.CommandContext(t.Context(), "git", append(base, args...)...).CombinedOutput()
+				require.NoError(t, err, "git %v: %s", args, out)
+			}
+			t.Chdir(dir)
+
+			got, err := added("HEAD", current)
+			require.NoError(t, err)
+			assert.Equal(t, current, got)
+		})
+
 		// base を読めないまま差分を空として返すと、追加した依存がひとつも検査されない。
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("base の go.mod を読み切れなければエラーにする", func(t *testing.T) {

@@ -259,13 +259,24 @@ func parseGoMod(content []byte) ([]requirement, error) {
 
 // added は base 時点の go.mod に無かった (module, version) の組を返す。バージョンを上げた
 // モジュールも新しい組として現れるため、追加と更新をひとつの判定で拾える。
+//
+// **base に go.mod がまだ無ければ、現在の require をすべて追加として返す。** module を初めて
+// 持ち込む変更では base に比較対象が存在せず、そのとき検査すべきなのは全件である。
+//
+// `git show <ref>:<path>` は「ref が無い」と「その ref に path が無い」を同じ exit 128 で
+// 返すので、ref の解決を先に分けて確かめる。混同すると、前者を後者と読んで**比較対象を
+// 失ったまま0件で通る**経路が開く（ADR-0702 決定13）。
 func added(base string, current []requirement) ([]requirement, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 
+	if err := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", base+"^{commit}").Run(); err != nil { //nolint:gosec // base は呼び出し側が与える git ref
+		return nil, xerrors.Wrap(err, fmt.Sprintf("git rev-parse %s（base を解決できません。fetch は refspec を明示すること —— ブランチ名だけでは FETCH_HEAD しか更新されません）", base))
+	}
+
 	out, err := exec.CommandContext(ctx, "git", "show", base+":"+goModPath).Output() //nolint:gosec // base は呼び出し側が与える git ref
 	if err != nil {
-		return nil, xerrors.Wrap(err, fmt.Sprintf("git show %s:%s（remote-tracking ref が無い可能性があります。fetch は refspec を明示すること —— ブランチ名だけでは FETCH_HEAD しか更新されません）", base, goModPath))
+		return append([]requirement(nil), current...), nil
 	}
 	before, err := parseGoMod(out)
 	if err != nil {
