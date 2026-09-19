@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,6 +161,49 @@ func Test_run(t *testing.T) {
 }
 
 //nolint:paralleltest // t.Chdir を使うため並列化できない
+//nolint:paralleltest // t.Chdir がプロセス共有の cwd を差し替えるため並列化不可
+func Test_lsRemote(t *testing.T) {
+	t.Run("正常系", func(t *testing.T) {
+		// glob が効いていないと、リリース線以外の参照まで最新版の候補に入る。
+		// **絞るのは接頭辞までで、版の形かどうかは見ない** —— そこは parseLine の仕事で、
+		// ここで絞ると「版でない release/*」が居たことを latestRelease が知れなくなる。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("接頭辞に一致する参照だけを返す", func(t *testing.T) {
+			t.Chdir(checkoutOf(t, remoteWithInvertedDates(t), ""))
+
+			got, err := lsRemote(refPrefix + branches.ReleasePrefix + "*")
+			require.NoError(t, err)
+
+			assert.Contains(t, got, refPrefix+branches.ReleasePrefix+"v1.10.0")
+			assert.Contains(t, got, refPrefix+branches.ReleasePrefix+"next")
+			assert.NotContains(t, got, refPrefix+"feature/")
+		})
+
+		// 一致が0件でも git は成功する。空を「取得できなかった」と混同しないこと ——
+		// 判定は latestRelease が持ち、そこが errNoReleaseBranch を返す。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("一致が0件なら空を返す", func(t *testing.T) {
+			t.Chdir(checkoutOf(t, remoteWithInvertedDates(t), ""))
+
+			got, err := lsRemote(refPrefix + "no-such-prefix/*")
+			require.NoError(t, err)
+			assert.Empty(t, strings.TrimSpace(got))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		// git の失敗を空文字として返すと、「リリース線が無い」と区別が付かなくなる。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("git が失敗すれば理由を添えてエラーにする", func(t *testing.T) {
+			t.Chdir(t.TempDir())
+
+			_, err := lsRemote(refPrefix + branches.ReleasePrefix + "*")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "git ls-remote")
+		})
+	})
+}
+
 func Test_lsRemoteReleases(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Run("コミット日時が逆順でもバージョン番号で最新を選ぶ", func(t *testing.T) {

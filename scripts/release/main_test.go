@@ -288,7 +288,7 @@ func Test_bump(t *testing.T) {
 	})
 }
 
-func Test_syncProductionSteps(t *testing.T) {
+func Test_syncDefaultSteps(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -728,6 +728,17 @@ func Test_runBranch(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+
+		// 取り消しの効かない手順（ブランチ作成・push・デフォルトブランチ切替）の直前に在る
+		// 最後の安全弁。解釈できない入力を通すと、接頭辞の無いブランチ名が作られる。
+		t.Run("未知の -line は本番へ触れる前に拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			err := runBranch(f.runner(), []string{"-bump", "patch", "-line", "bogus"})
+			require.ErrorIs(t, err, errUnknownLine)
+			assert.NotContains(t, f.calls, branchCreateCall)
+		})
 		t.Parallel()
 
 		t.Run("解釈できないフラグでは手順を 1 つも実行しない", func(t *testing.T) {

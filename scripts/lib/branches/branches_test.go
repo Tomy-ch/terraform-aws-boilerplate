@@ -8,8 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 宣言は定数なので、値そのものではなく**値が満たすべき関係**を固定する。
-// 値を書き写すテストは、宣言を変えたときに2箇所を直させるだけで何も守らない。
+// 宣言は定数なので、**宣言を読み上げるだけの assert は書かない。** `Protected` が
+// `ReleasePrefix + "**/*"` から組まれている以上、それを含むことを確かめても、同じ式を
+// 二度書いただけで何も守らない。ここで固定するのは、宣言の外側の何か —— 読む側が
+// 前提にしている性質と、空への退化 —— に限る。
 
 func Test_ReleasePattern(t *testing.T) {
 	t.Parallel()
@@ -17,38 +19,36 @@ func Test_ReleasePattern(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 捕捉群の順序が変わると base-branch が別の版を「最新」と判定する。
-		t.Run("major / minor / patch の順で捕捉する", func(t *testing.T) {
+		// base-branch の parseLine は m[1] m[2] m[3] を長さ検査なしで読む。
+		// 捕捉群を減らすと、一致した瞬間に index out of range で落ちる。
+		t.Run("捕捉群はちょうど3つで major / minor / patch の順に並ぶ", func(t *testing.T) {
 			t.Parallel()
+			require.Equal(t, 3, ReleasePattern.NumSubexp())
 			assert.Equal(t, []string{"release/v2.10.3", "2", "10", "3"},
 				ReleasePattern.FindStringSubmatch("release/v2.10.3"))
 		})
 
-		// parseLine は m[1] m[2] m[3] を長さ検査なしで読む。3群を割ると panic する。
-		t.Run("捕捉群はちょうど3つである", func(t *testing.T) {
+		// 接頭辞を変えたとき、パターンが追随しないと base-branch が何も見つけられなくなる。
+		t.Run("ReleasePrefix で始まる名前に一致する", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, 3, ReleasePattern.NumSubexp())
-		})
-
-		t.Run("接頭辞は ReleasePrefix と同じ出所から組む", func(t *testing.T) {
-			t.Parallel()
-			assert.Contains(t, ReleasePattern.String(), ReleasePrefix)
+			assert.NotNil(t, ReleasePattern.FindStringSubmatch(ReleasePrefix+"v1.0.0"))
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// プレリリースやビルドメタデータを最新版に選ぶと、release が作らない形の
-		// ブランチを base として指すことになる。
+		// プレリリースや別の線を最新版に選ぶと、release が作らない形のブランチを
+		// base として指すことになる。
 		for _, name := range []string{
 			"release/v1.2.3-rc1",
 			"release/v1.2",
 			"release/next",
 			"hotfix/v1.2.3",
 			"refs/heads/release/v1.2.3",
+			"",
 		} {
-			t.Run(name+" は一致しない", func(t *testing.T) {
+			t.Run("一致しない: "+name, func(t *testing.T) {
 				t.Parallel()
 				assert.Nil(t, ReleasePattern.FindStringSubmatch(name))
 			})
@@ -63,19 +63,13 @@ func Test_Protected(t *testing.T) {
 		t.Parallel()
 
 		// 実環境へ届くブランチが保護対象から漏れると、レビューを経ない変更が
-		// そのまま適用へ流れる。
+		// そのまま適用へ流れる。Deploy と Protected は別の変数なので、これは
+		// 独立した2つの宣言の突合になる。
 		t.Run("Deploy の全要素を含む", func(t *testing.T) {
 			t.Parallel()
 			for _, d := range Deploy {
 				assert.Contains(t, Protected, d, d)
 			}
-		})
-
-		// release 線と hotfix 線は glob で覆う。個別のブランチ名では列挙できない。
-		t.Run("release 線と hotfix 線を glob で覆う", func(t *testing.T) {
-			t.Parallel()
-			assert.Contains(t, Protected, ReleasePrefix+"**/*")
-			assert.Contains(t, Protected, HotfixPrefix+"**/*")
 		})
 
 		t.Run("重複を持たない", func(t *testing.T) {
@@ -87,6 +81,17 @@ func Test_Protected(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 空へ退化すると、生成先の保護対象が0件になる。生成側にもガードがあるが、
+		// 宣言そのものが空でないことをここで直接主張する。
+		t.Run("空でない", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, Protected)
+		})
+	})
 }
 
 func Test_Deploy(t *testing.T) {
@@ -95,12 +100,31 @@ func Test_Deploy(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// repo-setup はこの順序でブランチを作る。Default が最後でないと、
-		// デフォルトブランチの移動が未作成のブランチを指しうる。
+		// repo-setup はこの順序でブランチを作り、最後のものをデフォルトブランチへ移す。
+		// Default が末尾でないと、未作成のブランチを指しうる。
 		t.Run("末尾が Default である", func(t *testing.T) {
 			t.Parallel()
 			require.NotEmpty(t, Deploy)
 			assert.Equal(t, Default, Deploy[len(Deploy)-1])
+		})
+
+		t.Run("重複を持たない", func(t *testing.T) {
+			t.Parallel()
+			seen := map[string]bool{}
+			for _, d := range Deploy {
+				require.False(t, seen[d], "重複: %s", d)
+				seen[d] = true
+			}
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 空だと repo-setup が引数無しの `git push origin` を組む。
+		t.Run("空でない", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, Deploy)
 		})
 	})
 }
@@ -118,14 +142,19 @@ func Test_Line(t *testing.T) {
 		})
 
 		// 一覧が実装とずれると、usage が受け付けない線を案内する。
-		t.Run("Lines が返す線はすべて Valid である", func(t *testing.T) {
+		t.Run("Lines が返す線はすべて Valid で、接頭辞が重複しない", func(t *testing.T) {
 			t.Parallel()
 			require.NotEmpty(t, Lines())
+
+			seen := map[string]bool{}
 			for _, l := range Lines() {
 				assert.True(t, l.Valid(), string(l))
+				require.False(t, seen[l.Prefix()], "接頭辞が重複: %s", l.Prefix())
+				seen[l.Prefix()] = true
 			}
 		})
 
+		// 接頭辞とブランチ名を連結するので、区切りが無いと `releasev1.0.0` になる。
 		t.Run("接頭辞はスラッシュで終わる", func(t *testing.T) {
 			t.Parallel()
 			for _, l := range Lines() {
@@ -137,16 +166,13 @@ func Test_Line(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 未知の線を空接頭辞で通すと、`/v1.2.3` のようなブランチ名が作られる。
-		t.Run("未知の線は Valid でない", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, Line("no-such").Valid())
-			assert.Empty(t, Line("no-such").Prefix())
-		})
-
-		t.Run("空文字列は Valid でない", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, Line("").Valid())
-		})
+		// 未知の線を空接頭辞で通すと、`v1.2.3` という接頭辞の無いブランチが作られる。
+		for _, name := range []string{"no-such", "", "release/", "RELEASE"} {
+			t.Run("Valid でない: "+name, func(t *testing.T) {
+				t.Parallel()
+				assert.False(t, Line(name).Valid())
+				assert.Empty(t, Line(name).Prefix())
+			})
+		}
 	})
 }
