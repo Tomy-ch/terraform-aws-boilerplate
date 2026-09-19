@@ -20,7 +20,7 @@ gh api /repos/{owner}/{repo}/rulesets/{ruleset_id}
 
 ## branch-protection.json
 
-`conditions.ref_name.include` の対象は `production` / `staging` / `develop` / `release/**/*` / `hotfix/**/*` です。各ルールの宣言内容は次のとおりです。
+`conditions.ref_name.include` は [`scripts/lib/branches`](../../scripts/lib/branches/branches.go) の `Protected` から生成します —— **ここに一覧を書かない**（ADR-0603 決定1-3）。`make branches-apply` が反映し、`make branches-check` がずれで落ちます。各ルールの宣言内容は次のとおりです。
 
 | ルール | 宣言している内容 |
 | --- | --- |
@@ -48,7 +48,7 @@ GitHub の案内は、ruleset に Code Quality の閾値を宣言する**前に*
 | 群 | context |
 | --- | --- |
 | 検査の設定と定義 | `actions-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
-| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check` |
+| 宣言と実体のずれ | `branches-check`、`mod-tidy-check`、`pin-actions-check`、`pin-images-check` |
 | コードと構成 | `go-test`、`trivy-config`、`secret-scan` |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**

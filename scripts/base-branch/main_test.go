@@ -5,18 +5,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 )
 
 // lsRemoteOutput は、`git ls-remote --heads origin 'refs/heads/release/*'` の出力形式を模したものです。
-// testPattern は .github/branches.toml の release.pattern と同じ形。テストが宣言から
-// 独立して壊れないよう、値はここ1箇所に置く。
-var testPattern = regexp.MustCompile(`^release/v(\d+)\.(\d+)\.(\d+)$`)
-
 const lsRemoteOutput = "9ce3aa244390610aafe2c2be564a757126c84e58\trefs/heads/release/v1.0.0\n" +
 	"88f39914c09eee7330c854f49b7b5d053d692f2d\trefs/heads/release/v2.1.0\n" +
 	"5741f714caa221bac8c3f4a315922934ed069864\trefs/heads/release/v2.2.0\n"
@@ -103,7 +100,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 
-			require.NoError(t, run(nil, stubList(lsRemoteOutput), testPattern, &out))
+			require.NoError(t, run(nil, stubList(lsRemoteOutput), branches.ReleasePattern, &out))
 			assert.Equal(t, "release/v2.2.0\n", out.String())
 		})
 
@@ -112,7 +109,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 
-			require.NoError(t, run([]string{"-h"}, stubList(lsRemoteOutput), testPattern, &out))
+			require.NoError(t, run([]string{"-h"}, stubList(lsRemoteOutput), branches.ReleasePattern, &out))
 			assert.Empty(t, out.String())
 		})
 	})
@@ -125,7 +122,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 
-			err := run(nil, stubList(""), testPattern, &out)
+			err := run(nil, stubList(""), branches.ReleasePattern, &out)
 
 			require.ErrorIs(t, err, errNoReleaseBranch)
 			assert.Empty(t, out.String())
@@ -137,7 +134,7 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			failing := func() (string, error) { return "", errNoReleaseBranch }
 
-			require.ErrorIs(t, run(nil, failing, testPattern, &out), errNoReleaseBranch)
+			require.ErrorIs(t, run(nil, failing, branches.ReleasePattern, &out), errNoReleaseBranch)
 			assert.Empty(t, out.String())
 		})
 
@@ -146,7 +143,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 
-			err := run([]string{"release/v1.0.0"}, stubList(lsRemoteOutput), testPattern, &out)
+			err := run([]string{"release/v1.0.0"}, stubList(lsRemoteOutput), branches.ReleasePattern, &out)
 
 			require.ErrorIs(t, err, errUnexpectedArgs)
 			assert.Empty(t, out.String())
@@ -157,7 +154,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 
-			require.ErrorContains(t, run([]string{"-bogus"}, stubList(lsRemoteOutput), testPattern, &out), "failed to parse flags")
+			require.ErrorContains(t, run([]string{"-bogus"}, stubList(lsRemoteOutput), branches.ReleasePattern, &out), "failed to parse flags")
 		})
 	})
 }
@@ -168,10 +165,10 @@ func Test_lsRemoteReleases(t *testing.T) {
 		t.Run("コミット日時が逆順でもバージョン番号で最新を選ぶ", func(t *testing.T) {
 			t.Chdir(checkoutOf(t, remoteWithInvertedDates(t), ""))
 
-			refs, err := lsRemoteReleases("release/")()
+			refs, err := lsRemoteReleases()()
 			require.NoError(t, err)
 
-			latest, err := latestRelease(refs, testPattern)
+			latest, err := latestRelease(refs, branches.ReleasePattern)
 			require.NoError(t, err)
 			assert.Equal(t, "release/v1.10.0", latest.name)
 		})
@@ -179,10 +176,10 @@ func Test_lsRemoteReleases(t *testing.T) {
 		t.Run("origin/HEAD が古いままでも答えは変わらない", func(t *testing.T) {
 			t.Chdir(checkoutOf(t, remoteWithInvertedDates(t), "release/v1.9.0"))
 
-			refs, err := lsRemoteReleases("release/")()
+			refs, err := lsRemoteReleases()()
 			require.NoError(t, err)
 
-			latest, err := latestRelease(refs, testPattern)
+			latest, err := latestRelease(refs, branches.ReleasePattern)
 			require.NoError(t, err)
 			assert.Equal(t, "release/v1.10.0", latest.name)
 		})
@@ -192,7 +189,7 @@ func Test_lsRemoteReleases(t *testing.T) {
 		t.Run("origin を引けない場所では部分的な出力を返さず失敗する", func(t *testing.T) {
 			t.Chdir(t.TempDir())
 
-			_, err := lsRemoteReleases("release/")()
+			_, err := lsRemoteReleases()()
 
 			require.ErrorContains(t, err, "git ls-remote")
 		})
@@ -208,7 +205,7 @@ func Test_latestRelease(t *testing.T) {
 		t.Run("major / minor / patch を数値で比べて最新を選ぶ", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := latestRelease(lsRemoteOutput, testPattern)
+			got, err := latestRelease(lsRemoteOutput, branches.ReleasePattern)
 
 			require.NoError(t, err)
 			assert.Equal(t, "release/v2.2.0", got.name)
@@ -219,7 +216,7 @@ func Test_latestRelease(t *testing.T) {
 
 			out := "a\trefs/heads/release/v1.9.0\nb\trefs/heads/release/v1.10.0\n"
 
-			got, err := latestRelease(out, testPattern)
+			got, err := latestRelease(out, branches.ReleasePattern)
 
 			require.NoError(t, err)
 			assert.Equal(t, "release/v1.10.0", got.name)
@@ -230,7 +227,7 @@ func Test_latestRelease(t *testing.T) {
 
 			out := "a\trefs/heads/release/v1.10.0\nb\trefs/heads/release/v1.9.0\n"
 
-			got, err := latestRelease(out, testPattern)
+			got, err := latestRelease(out, branches.ReleasePattern)
 
 			require.NoError(t, err)
 			assert.Equal(t, "release/v1.10.0", got.name)
@@ -241,7 +238,7 @@ func Test_latestRelease(t *testing.T) {
 
 			out := "a\trefs/heads/hotfix/v9.9.9\nb\trefs/heads/release/next\nc\trefs/heads/release/v1.0.0\n"
 
-			got, err := latestRelease(out, testPattern)
+			got, err := latestRelease(out, branches.ReleasePattern)
 
 			require.NoError(t, err)
 			assert.Equal(t, "release/v1.0.0", got.name)
@@ -254,7 +251,7 @@ func Test_latestRelease(t *testing.T) {
 		t.Run("出力が空なら空文字を返さず失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := latestRelease("", testPattern)
+			_, err := latestRelease("", branches.ReleasePattern)
 
 			require.ErrorIs(t, err, errNoReleaseBranch)
 		})
@@ -262,7 +259,7 @@ func Test_latestRelease(t *testing.T) {
 		t.Run("解釈できる行が 1 つも無ければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := latestRelease("a\trefs/heads/feature/x\nb\trefs/heads/production\n", testPattern)
+			_, err := latestRelease("a\trefs/heads/feature/x\nb\trefs/heads/production\n", branches.ReleasePattern)
 
 			require.ErrorIs(t, err, errNoReleaseBranch)
 		})
@@ -278,7 +275,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("参照からブランチ名とバージョンを取り出す", func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := parseLine("5741f714\trefs/heads/release/v2.10.3\n", testPattern)
+			got, ok := parseLine("5741f714\trefs/heads/release/v2.10.3\n", branches.ReleasePattern)
 
 			require.True(t, ok)
 			assert.Equal(t, releaseLine{name: "release/v2.10.3", major: 2, minor: 10, patch: 3}, got)
@@ -291,7 +288,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("タブ区切りでない行は対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("refs/heads/release/v1.0.0", testPattern)
+			_, ok := parseLine("refs/heads/release/v1.0.0", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})
@@ -299,7 +296,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("refs/heads 配下でない参照は対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("5741f714\trefs/tags/release/v1.0.0", testPattern)
+			_, ok := parseLine("5741f714\trefs/tags/release/v1.0.0", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})
@@ -307,7 +304,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("release 配下でもバージョン形式でなければ対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("5741f714\trefs/heads/release/next", testPattern)
+			_, ok := parseLine("5741f714\trefs/heads/release/next", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})
@@ -315,7 +312,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("接頭辞の違うブランチは対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("5741f714\trefs/heads/hotfix/v1.0.1", testPattern)
+			_, ok := parseLine("5741f714\trefs/heads/hotfix/v1.0.1", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})
@@ -323,7 +320,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("空行は対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("", testPattern)
+			_, ok := parseLine("", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})
@@ -331,7 +328,7 @@ func Test_parseLine(t *testing.T) {
 		t.Run("int に収まらない桁のバージョンは対象外にする", func(t *testing.T) {
 			t.Parallel()
 
-			_, ok := parseLine("5741f714\trefs/heads/release/v99999999999999999999.0.0", testPattern)
+			_, ok := parseLine("5741f714\trefs/heads/release/v99999999999999999999.0.0", branches.ReleasePattern)
 
 			assert.False(t, ok)
 		})

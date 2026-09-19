@@ -45,9 +45,8 @@ pre-commit:
     # ではなく「保護されているつもり」になる。
     branches-check:
       glob:
-        - ".github/branches.toml"
+        - "scripts/lib/branches/*.go"
         - ".github/settings/branch-protection.json"
-        - ".github/workflows/*.{yml,yaml}"
       run: make branches-check
 
     # uses: と image: の固定。lockfile と実ファイルの drift、および参照されなくなった

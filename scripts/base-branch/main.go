@@ -60,20 +60,7 @@ type releaseLine struct {
 func main() {
 	log.SetFlags(0)
 
-	decl, err := branches.Load(branches.File)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	prefix, err := decl.ReleasePrefix()
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	pattern, err := decl.ReleasePattern()
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	if err := run(os.Args[1:], lsRemoteReleases(prefix), pattern, os.Stdout); err != nil {
+	if err := run(os.Args[1:], lsRemoteReleases(), branches.ReleasePattern, os.Stdout); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -113,11 +100,11 @@ func run(args []string, list func() (string, error), pattern *regexp.Regexp, out
 	return err
 }
 
-// lsRemoteReleases は、prefix に一致する origin の参照一覧を取得する関数を返します。
-// prefix は宣言が持つので、ここでは受け取って束ねるだけです。
-func lsRemoteReleases(prefix string) func() (string, error) {
+// lsRemoteReleases は、リリース線の参照一覧を取得する関数を返します。
+// 接頭辞は scripts/lib/branches が持つので、ここでは引き回さず直接読みます。
+func lsRemoteReleases() func() (string, error) {
 	return func() (string, error) {
-		return lsRemote(refPrefix + prefix + "*")
+		return lsRemote(refPrefix + branches.ReleasePrefix + "*")
 	}
 }
 
@@ -126,10 +113,7 @@ func lsRemote(glob string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
-	// glob は .github/branches.toml の release.prefix から組む。追跡され、レビューを経て、
-	// 保護設定と同じ宣言に置かれた値であり、利用者の入力ではない。コマンド自体は固定で、
-	// 可変なのは最後の引数1つだけ。撤回条件: 宣言の外から glob を受け取る形になったとき。
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", remoteName, glob) //nolint:gosec // 上のコメントを参照
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", remoteName, glob) //nolint:gosec // glob は scripts/lib/branches の定数から組む。撤回条件: 外部入力を受け取る形になったとき
 	// git の失敗理由（認証・名前解決）はそのまま利用者へ見せる。握り潰すと
 	// 「リリースラインが無い」との区別が付かなくなる。
 	cmd.Stderr = os.Stderr

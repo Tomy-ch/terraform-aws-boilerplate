@@ -1,7 +1,7 @@
 // Package main は、リリースタグとリリースブランチを作成するツール。
 //
 //	tag    -bump <patch|minor|major>                     production HEAD にタグを打ち、GitHub Release を作る
-//	branch -bump <patch|minor|major> -prefix <接頭辞>     次バージョンのブランチを切り、デフォルトブランチに設定する
+//	branch -bump <patch|minor|major> -line <release|hotfix>  次バージョンのブランチを切り、デフォルトブランチに設定する
 //
 // どちらも `git tag` の最新セマンティックバージョンを起点に次バージョンを決める。
 //
@@ -42,6 +42,8 @@ var (
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
 		"➡️ 先に make tag-patch などで初期タグを作成してから再実行してください")
 	errUnknownBump = xerrors.New("unknown -bump (patch / minor / major)")
+	// errUnknownLine は、-line に未知の線が渡されたことを表す。
+	errUnknownLine = xerrors.New("unknown -line (release / hotfix)")
 	// errHelpRequested は、-h でヘルプを求められたことを表す。失敗ではないため 0 で終える。
 	errHelpRequested = xerrors.New("help requested")
 	// errNoReleaseNote は、タグ本文にするリリースノートが production に無いことを表す。
@@ -78,22 +80,13 @@ type runner struct {
 func main() {
 	log.SetFlags(0)
 
-	decl, err := branches.Load(branches.File)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-	defaultBranch, err := decl.DefaultBranch()
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	if err := execute(hostRunner(), defaultBranch, os.Args[1:]); err != nil {
+	if err := execute(hostRunner(), os.Args[1:]); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
 // execute は、サブコマンドを選んで実行します。
-func execute(r runner, defaultBranch string, args []string) error {
+func execute(r runner, args []string) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -102,9 +95,9 @@ func execute(r runner, defaultBranch string, args []string) error {
 
 	switch args[0] {
 	case "tag":
-		err = runTag(r, defaultBranch, args[1:])
+		err = runTag(r, args[1:])
 	case "branch":
-		err = runBranch(r, defaultBranch, args[1:])
+		err = runBranch(r, args[1:])
 	default:
 		return errUnknownSubcommand
 	}
@@ -259,7 +252,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	}
 }
 
-func runTag(r runner, defaultBranch string, args []string) error {
+func runTag(r runner, args []string) error {
 	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
 
@@ -278,13 +271,13 @@ func runTag(r runner, defaultBranch string, args []string) error {
 	// production を最新へ合わせてからリリースノートの有無を見る。順序は入れ替えないこと。
 	// タグは production HEAD に打つので、確かめるべきは「production にノートがあるか」であり、
 	// switch 前の作業ツリー（別ブランチ）にノートがあるかではない。
-	log.Printf("🔄 productionブランチの最新を取得中...")
+	log.Printf("🔄 %s ブランチの最新を取得中...", branches.Default)
 
-	if err := r.runAll(syncDefaultSteps(defaultBranch)); err != nil {
+	if err := r.runAll(syncDefaultSteps(branches.Default)); err != nil {
 		return err
 	}
 
-	log.Printf("✅ 最新のproductionを取得完了")
+	log.Printf("✅ 最新の %s を取得完了", branches.Default)
 
 	note := notePath(next.String())
 	if _, err := os.Stat(note); err != nil {
@@ -295,16 +288,18 @@ func runTag(r runner, defaultBranch string, args []string) error {
 		return err
 	}
 
-	log.Printf("✅ タグを打ちました %s on production HEAD", next)
+	log.Printf("✅ タグを打ちました %s on %s HEAD", next, branches.Default)
 
 	return nil
 }
 
-func runBranch(r runner, defaultBranch string, args []string) error {
+func runBranch(r runner, args []string) error {
 	fs := flag.NewFlagSet("branch", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
-	prefix := fs.String("prefix", "release", "ブランチ名の接頭辞 (release / hotfix)")
-	base := fs.String("base", defaultBranch, "分岐元ブランチ")
+	// 接頭辞そのものではなく**線の種類**を受ける。接頭辞を受けると、呼び出し側が
+	// パターンを持つことになる（ADR-0603 決定2）。
+	line := fs.String("line", string(branches.LineRelease), "切る線 (release / hotfix)")
+	base := fs.String("base", branches.Default, "分岐元ブランチ")
 
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -323,7 +318,12 @@ func runBranch(r runner, defaultBranch string, args []string) error {
 
 	log.Printf("✅ 最新のタグを取得完了")
 
-	branch := *prefix + "/" + next.String()
+	kind := branches.Line(*line)
+	if !kind.Valid() {
+		return xerrors.Wrap(errUnknownLine, *line)
+	}
+
+	branch := kind.Prefix() + next.String()
 
 	log.Printf("🔖 タグから最新リリースバージョンを取得: 【 %s 】", current)
 	log.Printf("➡️ 次のリリースバージョンを作成: 【 %s 】", next)

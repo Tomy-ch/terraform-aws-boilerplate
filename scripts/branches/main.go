@@ -1,26 +1,29 @@
-// Package main は、分岐のパターンの単一宣言を読み、生成先へ反映・検証するツール。
+// Package main は、分岐のパターンの単一宣言を保護設定へ反映・検証するツール。
 //
-//	list <set>    集合の要素を1行ずつ出す
-//	get <key>     単一の値を出す（default.branch / release.prefix / release.pattern / feature.prefix）
-//	apply         生成先へ反映する
-//	check         生成先が宣言からずれていないかを検査する
+//	apply   .github/settings/branch-protection.json の保護対象を宣言から組み直す
+//	check   生成先が宣言からずれていないかを検査する（書き換えなし）
 //
-// **同じパターンが2箇所に在ると、片方だけが古くなる**（ADR-0603 決定1-3）。保護設定の宣言と
-// workflow の起動条件は生成し、生成できない側（Go のツール群）は実行時に list / get で読む。
+// 宣言は scripts/lib/branches が持つ（ADR-0603 決定1）。**生成できるのは保護設定だけである。**
+// 他の読み手（base-branch / release / repo-setup）は同じパッケージを import するので、
+// 生成も突合も要らない —— コンパイラが一致を保証する。
 //
 // ずれは静かに壊れる。保護対象から漏れたブランチは「保護されていない」ではなく
-// 「保護されているつもり」になり、起動条件から漏れたブランチでは検査が走らないまま緑になる。
-// だから check を持ち、宣言に無い workflow が on.push.branches を持っていることも違反とする。
+// 「保護されているつもり」になる。だから check を持ち、pre-commit と CI の両方で走らせる。
+//
+// **workflow の push 側の起動条件は生成しない。** そちらは required context を報告せず、
+// 絞っても merge を塞がない（ADR-0603 決定1）。塞がないものを生成対象にすると、生成器が
+// YAML の書式追随という終わりのない仕事を抱え、その取りこぼしが「検査が素通りする」形で出る。
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
-	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
@@ -29,22 +32,18 @@ import (
 
 const (
 	protectionFile = ".github/settings/branch-protection.json"
-	workflowDir    = ".github/workflows"
 	refPrefix      = "refs/heads/"
 	filePerm       = 0o644
-	// protectedSet は保護設定へ渡す集合の名前。ここだけ用途が固定されている。
-	protectedSet = "protected"
+	jsonIndent     = "  "
 )
 
 var (
-	// errUsage は、サブコマンドやキーの与え方が誤っていることを表す。
-	errUsage = xerrors.New("invalid usage")
+	// errUsage は、サブコマンドの与え方が誤っていることを表す。
+	errUsage = xerrors.New("usage: branches <apply|check>")
 	// errDrift は、生成先が宣言からずれていることを表す。
-	errDrift = xerrors.New("生成先が宣言からずれています")
-	// errOrphanWorkflow は、宣言に無い workflow が on.push.branches を持つことを表す。
-	errOrphanWorkflow = xerrors.New("宣言に無い workflow が on.push.branches を持っています")
-	// errMissingWorkflow は、宣言が指す workflow が存在しないことを表す。
-	errMissingWorkflow = xerrors.New("宣言が指す workflow がありません")
+	errDrift = xerrors.New("保護設定が宣言からずれています")
+	// errShape は、保護設定が期待する構造を持たないことを表す。
+	errShape = xerrors.New("保護設定の構造が想定と異なります")
 )
 
 // main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
@@ -58,291 +57,163 @@ func main() {
 
 // run は、サブコマンドを解釈して固定処理へ振り分けます。
 func run(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return xerrors.Wrap(errUsage, "usage: branches <list|get|apply|check> [引数]")
+	if len(args) != 1 {
+		return errUsage
 	}
 
-	// 宣言を読む前にサブコマンドを検める。逆にすると、打ち間違えたときに
-	// 「ファイルが無い」と言われ、読む人は存在するファイルを探しに行く。
 	switch args[0] {
-	case "list", "get":
-		if len(args) != 2 {
-			return xerrors.Wrap(errUsage, "usage: branches "+args[0]+" <name>")
-		}
-	case "apply", "check":
-		if len(args) != 1 {
-			return xerrors.Wrap(errUsage, "usage: branches "+args[0]+"（引数は取りません）")
-		}
+	case "apply":
+		return applyOrCheck(protectionFile, false, out)
+	case "check":
+		return applyOrCheck(protectionFile, true, out)
 	default:
 		return xerrors.Wrap(errUsage, "unknown subcommand: "+args[0])
 	}
-
-	decl, err := branches.Load(branches.File)
-	if err != nil {
-		return err
-	}
-
-	switch args[0] {
-	case "list":
-		return listSet(decl, args[1], out)
-	case "get":
-		return getScalar(decl, args[1], out)
-	case "apply":
-		return applyOrCheck(decl, false, out)
-	default:
-		return applyOrCheck(decl, true, out)
-	}
 }
 
-// listSet は集合の要素を1行ずつ書き出します。
-func listSet(decl branches.Declaration, name string, out io.Writer) error {
-	items, err := decl.Set(name)
+// applyOrCheck は保護設定を宣言へ揃えます。dryRun=true は書き換えず、ずれを報告して
+// 非ゼロで終わります。
+func applyOrCheck(path string, dryRun bool, out io.Writer) error {
+	before, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return err
+		return xerrors.Wrap(err, path)
 	}
 
-	for _, item := range items {
-		fmt.Fprintln(out, item)
-	}
-
-	return nil
-}
-
-// getScalar は単一の値を書き出します。
-func getScalar(decl branches.Declaration, key string, out io.Writer) error {
-	value, err := decl.Scalar(key)
+	after, err := rewrite(before)
 	if err != nil {
-		return err
+		return xerrors.Wrap(err, path)
 	}
 
-	fmt.Fprintln(out, value)
-
-	return nil
-}
-
-// applyOrCheck は生成先を宣言へ揃えます。dryRun=true は書き換えず、ずれを報告して
-// 非ゼロで終わります。**全ファイルを読み切って判定を確定させてから書き込む** ——
-// 1ファイルずつ書きながら進むと、途中で中断したときに作業ツリーだけが半端に変わります。
-func applyOrCheck(decl branches.Declaration, dryRun bool, out io.Writer) error {
-	plans, err := plan(decl)
-	if err != nil {
-		return err
-	}
-
-	var drifted []string
-	for _, p := range plans {
-		if p.before != p.after {
-			drifted = append(drifted, p.path)
-		}
-	}
-
-	if dryRun {
-		if len(drifted) > 0 {
-			for _, path := range drifted {
-				fmt.Fprintf(out, "❌ %s が .github/branches.toml からずれています\n", path)
-			}
-
-			return xerrors.Wrapf(errDrift, "%d 件", len(drifted))
-		}
-
-		fmt.Fprintf(out, "✅ branches-check: 生成先 %d 件が宣言と一致しています\n", len(plans))
+	if string(before) == string(after) {
+		fmt.Fprintf(out, "✅ branches: 保護対象 %d 件が宣言と一致しています\n", len(branches.Protected))
 
 		return nil
 	}
 
-	for _, p := range plans {
-		if p.before == p.after {
-			continue
-		}
-		if err := os.WriteFile(p.path, []byte(p.after), filePerm); err != nil {
-			return xerrors.Wrap(err, p.path)
-		}
+	if dryRun {
+		fmt.Fprintf(out, "❌ %s が宣言からずれています（make branches-apply で反映）\n", path)
+
+		return errDrift
 	}
 
-	fmt.Fprintf(out, "✅ branches-apply: %d ファイルへ反映しました（対象 %d 件）\n", len(drifted), len(plans))
+	// path を引数に取るのは、一時ディレクトリで書き換えを試すための seam である。
+	// 実行時に渡るのは package 定数 protectionFile だけで、外部入力は通らない。
+	// 撤回条件: 呼び出し側が package の外から path を受け取る形になったとき。
+	if err := os.WriteFile(path, after, filePerm); err != nil { //nolint:gosec // 上のコメントを参照
+		return xerrors.Wrap(err, path)
+	}
+	fmt.Fprintf(out, "✅ branches-apply: %s へ保護対象 %d 件を反映しました\n", path, len(branches.Protected))
 
 	return nil
 }
 
-// rewrite は1ファイルぶんの書き換え計画。
-type rewrite struct {
-	path   string
-	before string
-	after  string
-}
+// rewrite は保護設定の conditions.ref_name.include を宣言から組み直します。
+//
+// **まず JSON として検証し、置換は include 配列の区間だけに限る。** 全体を再直列化すると
+// キーの並びが辞書順へ変わり、生成器が触るべきでない箇所まで書き換わる。逆に検証を省いて
+// 文字列置換だけで済ませると、整形が変わった瞬間に別の配列の閉じ括弧へ着地する。
+func rewrite(content []byte) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(content, &doc); err != nil {
+		return nil, xerrors.Wrap(err, "JSON として読めません")
+	}
 
-// plan は生成先ごとの書き換え後の内容を決めます。宣言が指す先の不在も、宣言に無い
-// 生成先の存在も、ここで違反として返します。**片側だけを見ると、取りこぼした宣言が
-// 古いパターンのまま動き続けます。**
-func plan(decl branches.Declaration) ([]rewrite, error) {
-	protected, err := decl.Set(protectedSet)
+	if err := requireRefName(doc); err != nil {
+		return nil, err
+	}
+
+	start, end, err := includeSpan(content)
 	if err != nil {
 		return nil, err
 	}
 
-	content, err := os.ReadFile(protectionFile)
-	if err != nil {
-		return nil, xerrors.Wrap(err, protectionFile)
+	indent := indentOf(content, start)
+	items := make([]string, 0, len(branches.Protected))
+	for _, p := range branches.Protected {
+		items = append(items, indent+jsonIndent+strconv.Quote(refPrefix+p))
 	}
-	rewritten, err := rewriteProtection(string(content), protected)
-	if err != nil {
-		return nil, xerrors.Wrap(err, protectionFile)
-	}
-	plans := []rewrite{{path: protectionFile, before: string(content), after: rewritten}}
+	block := "[\n" + strings.Join(items, ",\n") + "\n" + indent + "]"
 
-	mapping := decl.Workflows()
-	names := make([]string, 0, len(mapping))
-	for name := range mapping {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	out := make([]byte, 0, len(content))
+	out = append(out, content[:start]...)
+	out = append(out, block...)
+	out = append(out, content[end:]...)
 
-	for _, name := range names {
-		items, err := decl.Set(mapping[name])
-		if err != nil {
-			return nil, xerrors.Wrap(err, name)
-		}
-
-		path := filepath.Join(workflowDir, name)
-		body, err := os.ReadFile(filepath.Clean(path))
-		if err != nil {
-			return nil, xerrors.Wrap(errMissingWorkflow, path)
-		}
-
-		after, err := rewritePushBranches(string(body), items)
-		if err != nil {
-			return nil, xerrors.Wrap(err, path)
-		}
-		plans = append(plans, rewrite{path: path, before: string(body), after: after})
-	}
-
-	if err := checkOrphans(decl); err != nil {
-		return nil, err
-	}
-
-	return plans, nil
+	return out, nil
 }
 
-// checkOrphans は、宣言に無い workflow が on.push.branches を持っていないかを見ます。
-func checkOrphans(decl branches.Declaration) error {
-	entries, err := os.ReadDir(workflowDir)
-	if err != nil {
-		return xerrors.Wrap(err, workflowDir)
+// requireRefName は conditions.ref_name.include の存在を確かめます。**不在は構造の違反として
+// エラーにする** —— 作って続行すると、保護対象を1件も持たない設定を生成したまま成功で返る。
+func requireRefName(doc map[string]any) error {
+	conditions, ok := doc["conditions"].(map[string]any)
+	if !ok {
+		return xerrors.Wrap(errShape, "conditions がありません")
 	}
 
-	mapping := decl.Workflows()
-
-	var orphans []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		if _, ok := mapping[e.Name()]; ok {
-			continue
-		}
-
-		body, err := os.ReadFile(filepath.Clean(filepath.Join(workflowDir, e.Name())))
-		if err != nil {
-			return xerrors.Wrap(err, e.Name())
-		}
-		if _, _, found := findPushBranches(string(body)); found {
-			orphans = append(orphans, e.Name())
-		}
+	refName, ok := conditions["ref_name"].(map[string]any)
+	if !ok {
+		return xerrors.Wrap(errShape, "conditions.ref_name がありません")
 	}
 
-	if len(orphans) > 0 {
-		return xerrors.Wrap(errOrphanWorkflow, strings.Join(orphans, " / "))
+	if _, ok := refName["include"].([]any); !ok {
+		return xerrors.Wrap(errShape, "conditions.ref_name.include がありません")
 	}
 
 	return nil
 }
 
-// rewriteProtection は保護設定の include を宣言から組み直します。値は refs/heads/ を
-// 前置した形で、順序は宣言のとおりとします。
-func rewriteProtection(content string, protected []string) (string, error) {
-	lines := strings.Split(content, "\n")
-
-	start, end := -1, -1
-	for i, line := range lines {
-		if strings.Contains(line, `"include"`) {
-			start = i
-
-			continue
-		}
-		if start >= 0 && strings.TrimSpace(line) == "]" {
-			end = i
-
-			break
-		}
-	}
-	if start < 0 || end < 0 {
-		return "", xerrors.Wrap(errDrift, `conditions.ref_name.include が見つかりません`)
+// includeSpan は include の値（配列）が占めるバイト区間を返します。
+//
+// 入力は JSON として検証済みなので、`[` から対応する `]` までを数えれば足ります。
+// **行の走査で終端を探さない** —— インライン形式（`"include": []`）や整形の変化で、
+// 無関係な配列の閉じ括弧へ着地する経路が開く。
+func includeSpan(content []byte) (int, int, error) {
+	key := []byte(`"include"`)
+	at := bytes.Index(content, key)
+	if at < 0 {
+		return 0, 0, xerrors.Wrap(errShape, `"include" が見つかりません`)
 	}
 
-	indent := strings.Repeat(" ", len(lines[start])-len(strings.TrimLeft(lines[start], " "))+2)
-	block := []string{lines[start]}
-	for i, p := range protected {
-		comma := ","
-		if i == len(protected)-1 {
-			comma = ""
-		}
-		block = append(block, indent+`"`+refPrefix+p+`"`+comma)
+	start := bytes.IndexByte(content[at:], '[')
+	if start < 0 {
+		return 0, 0, xerrors.Wrap(errShape, `"include" の値が配列ではありません`)
 	}
+	start += at
 
-	return strings.Join(slices.Concat(lines[:start], block, lines[end:]), "\n"), nil
-}
-
-// findPushBranches は on.push.branches の要素行の範囲を返します。
-// found=false は、その workflow が push 側の起動条件を絞っていないことを表します。
-func findPushBranches(content string) (int, int, bool) {
-	lines := strings.Split(content, "\n")
-
-	inOn, inPush := false, false
-	for i, line := range lines {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(content); i++ {
+		c := content[i]
 		switch {
-		case line == "on:":
-			inOn = true
-		case inOn && line == "  push:":
-			inPush = true
-		case inOn && len(line) > 0 && !strings.HasPrefix(line, " "):
-			return 0, 0, false
-		case inPush && line == "    branches:":
-			end := i + 1
-			for end < len(lines) && strings.HasPrefix(lines[end], "      - ") {
-				end++
+		case escaped:
+			escaped = false
+		case c == '\\' && inString:
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+		case c == '[':
+			depth++
+		case c == ']':
+			depth--
+			if depth == 0 {
+				return start, i + 1, nil
 			}
-
-			return i + 1, end, true
-		case inPush && strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    "):
-			inPush = false
 		}
 	}
 
-	return 0, 0, false
+	return 0, 0, xerrors.Wrap(errShape, `"include" の配列が閉じていません`)
 }
 
-// rewritePushBranches は on.push.branches を宣言から組み直します。
-func rewritePushBranches(content string, items []string) (string, error) {
-	start, end, found := findPushBranches(content)
-	if !found {
-		return "", xerrors.Wrap(errDrift, "on.push.branches が見つかりません")
+// indentOf は、その位置を含む行の字下げを返します。
+func indentOf(content []byte, at int) string {
+	lineStart := bytes.LastIndexByte(content[:at], '\n') + 1
+
+	n := 0
+	for lineStart+n < len(content) && content[lineStart+n] == ' ' {
+		n++
 	}
 
-	lines := strings.Split(content, "\n")
-	block := make([]string, 0, len(items))
-	for _, item := range items {
-		block = append(block, "      - "+quoteIfNeeded(item))
-	}
-
-	return strings.Join(slices.Concat(lines[:start], block, lines[end:]), "\n"), nil
-}
-
-// quoteIfNeeded は、YAML が別の意味に取る文字を含む値を引用符で囲みます。
-// `*` を裸で置くとエイリアスの指定として読まれます。
-func quoteIfNeeded(item string) string {
-	if strings.ContainsAny(item, "*[]{}#&,") {
-		return "'" + item + "'"
-	}
-
-	return item
+	return strings.Repeat(" ", n)
 }

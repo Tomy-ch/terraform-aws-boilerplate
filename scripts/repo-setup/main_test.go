@@ -46,14 +46,6 @@ type fakeRunner struct {
 }
 
 // runner は、この実行器を差し込んだ runner を返します。
-// testPatterns は .github/branches.toml と同じ値。テストが宣言から独立して壊れないよう、
-// 値はここ1箇所に置く。
-var testPatterns = patterns{
-	defaultBranch: "production",
-	managed:       []string{"develop", "staging", "production"},
-	releasePrefix: "release/",
-}
-
 func (f *fakeRunner) runner() runner {
 	return runner{run: f.run, output: f.output, branchExists: f.branchExists}
 }
@@ -238,7 +230,7 @@ func Test_branchCreationSteps(t *testing.T) {
 
 		t.Run("既存ブランチが無ければ 3 本すべて作る", func(t *testing.T) {
 			t.Parallel()
-			steps, skipped := branchCreationSteps(nil, testPatterns)
+			steps, skipped := branchCreationSteps(nil)
 			assert.Equal(t, []string{
 				"git branch develop",
 				"git branch staging",
@@ -249,14 +241,14 @@ func Test_branchCreationSteps(t *testing.T) {
 
 		t.Run("既存ブランチは作らずスキップとして返す", func(t *testing.T) {
 			t.Parallel()
-			steps, skipped := branchCreationSteps([]string{"develop", "production"}, testPatterns)
+			steps, skipped := branchCreationSteps([]string{"develop", "production"})
 			assert.Equal(t, []string{"git branch staging"}, commands(steps))
 			assert.Equal(t, []string{"develop", "production"}, skipped)
 		})
 
 		t.Run("すべて既存なら手順は空", func(t *testing.T) {
 			t.Parallel()
-			steps, skipped := branchCreationSteps([]string{"develop", "staging", "production"}, testPatterns)
+			steps, skipped := branchCreationSteps([]string{"develop", "staging", "production"})
 			assert.Empty(t, steps)
 			assert.Len(t, skipped, 3)
 		})
@@ -271,7 +263,7 @@ func Test_branchPushStep(t *testing.T) {
 
 		t.Run("既存かどうかに関わらず 3 本まとめて push する", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "git push origin develop staging production", branchPushStep(testPatterns).String())
+			assert.Equal(t, "git push origin develop staging production", branchPushStep().String())
 		})
 	})
 }
@@ -286,7 +278,7 @@ func Test_defaultBranchStep(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t,
 				"gh api -X PATCH repos/example-org/example-api -f default_branch=production",
-				defaultBranchStep("example-org/example-api", testPatterns).String())
+				defaultBranchStep("example-org/example-api").String())
 		})
 	})
 }
@@ -299,32 +291,32 @@ func Test_isReleaseBranch(t *testing.T) {
 
 		t.Run("release/ を含むブランチは破棄対象", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, isReleaseBranch("release/v1.0.0", "release/"))
+			assert.True(t, isReleaseBranch("release/v1.0.0"))
 		})
 
 		t.Run("前方一致ではなく部分一致で判定する", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, isReleaseBranch("hotfix/release/v1.0.0", "release/"))
+			assert.True(t, isReleaseBranch("hotfix/release/v1.0.0"))
 		})
 
 		t.Run("develop は破棄対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.False(t, isReleaseBranch("develop", "release/"))
+			assert.False(t, isReleaseBranch("develop"))
 		})
 
 		t.Run("production は破棄対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.False(t, isReleaseBranch("production", "release/"))
+			assert.False(t, isReleaseBranch("production"))
 		})
 
 		t.Run("release で始まっても / が続かなければ破棄対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.False(t, isReleaseBranch("feature/release-notes", "release/"))
+			assert.False(t, isReleaseBranch("feature/release-notes"))
 		})
 
 		t.Run("ブランチ名が空なら破棄対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.False(t, isReleaseBranch("", "release/"))
+			assert.False(t, isReleaseBranch(""))
 		})
 	})
 }
@@ -340,24 +332,24 @@ func Test_originalBranchCleanupSteps(t *testing.T) {
 			assert.Equal(t, []string{
 				"git branch -D release/v1.0.0",
 				"git push origin --delete release/v1.0.0",
-			}, commands(originalBranchCleanupSteps("release/v1.0.0", "release/")))
+			}, commands(originalBranchCleanupSteps("release/v1.0.0")))
 		})
 
 		t.Run("リモート削除だけは失敗を許容する（未 push のブランチがあり得るため）", func(t *testing.T) {
 			t.Parallel()
-			steps := originalBranchCleanupSteps("release/v1.0.0", "release/")
+			steps := originalBranchCleanupSteps("release/v1.0.0")
 			assert.False(t, steps[0].allowFail)
 			assert.True(t, steps[1].allowFail)
 		})
 
 		t.Run("リリースブランチでなければ何もしない", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, originalBranchCleanupSteps("develop", "release/"))
+			assert.Empty(t, originalBranchCleanupSteps("develop"))
 		})
 
 		t.Run("ブランチ名が空でも何もしない", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, originalBranchCleanupSteps("", "release/"))
+			assert.Empty(t, originalBranchCleanupSteps(""))
 		})
 	})
 }
@@ -613,7 +605,7 @@ func Test_runBootstrap(t *testing.T) {
 				"git branch --show-current": "develop\n",
 			}}
 
-			require.NoError(t, runBootstrap(f.runner(), testPatterns))
+			require.NoError(t, runBootstrap(f.runner()))
 
 			tags := slices.Index(f.calls, "git tag")
 			branches := slices.Index(f.calls, "git branch develop")
@@ -633,7 +625,7 @@ func Test_runBootstrap(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{failOn: "git tag"}
 
-			require.ErrorIs(t, runBootstrap(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, runBootstrap(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, "git branch develop")
 		})
 
@@ -641,7 +633,7 @@ func Test_runBootstrap(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{failOn: branchPushCall}
 
-			require.ErrorIs(t, runBootstrap(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, runBootstrap(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, ghRepoViewCall)
 		})
 
@@ -652,7 +644,7 @@ func Test_runBootstrap(t *testing.T) {
 				failOn:  "gh api -X PATCH repos/example-org/example-api -f default_branch=production",
 			}
 
-			require.ErrorIs(t, runBootstrap(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, runBootstrap(f.runner()), errFakeCommand)
 		})
 	})
 }
@@ -726,7 +718,7 @@ func Test_createBranches(t *testing.T) {
 		t.Run("既存ブランチが無ければ 3 本作ってからまとめて push する", func(t *testing.T) {
 			f := &fakeRunner{}
 
-			require.NoError(t, createBranches(f.runner(), testPatterns))
+			require.NoError(t, createBranches(f.runner()))
 			assert.Equal(t, []string{
 				"git branch develop",
 				"git branch staging",
@@ -739,7 +731,7 @@ func Test_createBranches(t *testing.T) {
 			logged := captureLog(t)
 			f := &fakeRunner{branches: map[string]bool{"develop": true}}
 
-			require.NoError(t, createBranches(f.runner(), testPatterns))
+			require.NoError(t, createBranches(f.runner()))
 			assert.Equal(t, []string{"git branch staging", "git branch production", branchPushCall}, f.calls)
 			assert.Contains(t, logged(), "ブランチ 【develop】 は既に存在します")
 		})
@@ -749,14 +741,14 @@ func Test_createBranches(t *testing.T) {
 		t.Run("ブランチの作成に失敗したら push しない", func(t *testing.T) {
 			f := &fakeRunner{failOn: "git branch staging"}
 
-			require.ErrorIs(t, createBranches(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, createBranches(f.runner()), errFakeCommand)
 			assert.Equal(t, []string{"git branch develop", "git branch staging"}, f.calls)
 		})
 
 		t.Run("push に失敗したらエラーを返す", func(t *testing.T) {
 			f := &fakeRunner{failOn: branchPushCall}
 
-			require.ErrorIs(t, createBranches(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, createBranches(f.runner()), errFakeCommand)
 		})
 	})
 }
@@ -774,7 +766,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				"git branch --show-current": "release/v1.0.0\n",
 			}}
 
-			require.NoError(t, moveDefaultBranch(f.runner(), testPatterns))
+			require.NoError(t, moveDefaultBranch(f.runner()))
 			assert.Equal(t, []string{
 				ghRepoViewCall,
 				"gh api -X PATCH repos/example-org/example-api -f default_branch=production",
@@ -793,7 +785,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				"git branch --show-current": "develop\n",
 			}}
 
-			require.NoError(t, moveDefaultBranch(f.runner(), testPatterns))
+			require.NoError(t, moveDefaultBranch(f.runner()))
 			assert.Equal(t, "git switch production", f.calls[len(f.calls)-1])
 		})
 	})
@@ -805,7 +797,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{failOn: ghRepoViewCall}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 			assert.Equal(t, []string{ghRepoViewCall}, f.calls)
 		})
 
@@ -816,7 +808,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				failOn:  "gh api -X PATCH repos/example-org/example-api -f default_branch=production",
 			}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -827,7 +819,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				failOn:  "git fetch --prune",
 			}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -838,7 +830,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				failOn:  "git branch --show-current",
 			}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -852,7 +844,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				failOn: "git switch production",
 			}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 			assert.NotContains(t, f.calls, "git branch -D release/v1.0.0")
 			assert.NotContains(t, f.calls, "git push origin --delete release/v1.0.0")
 		})
@@ -867,7 +859,7 @@ func Test_moveDefaultBranch(t *testing.T) {
 				failOn: "git branch -D release/v1.0.0",
 			}
 
-			require.ErrorIs(t, moveDefaultBranch(f.runner(), testPatterns), errFakeCommand)
+			require.ErrorIs(t, moveDefaultBranch(f.runner()), errFakeCommand)
 		})
 	})
 }
@@ -959,14 +951,14 @@ func Test_execute(t *testing.T) {
 			t.Chdir(initRepo(t))
 			f := bootstrappableRunner()
 
-			require.NoError(t, execute(f.runner(), testPatterns, []string{"preflight"}))
+			require.NoError(t, execute(f.runner(), []string{"preflight"}))
 			assert.Empty(t, f.calls)
 		})
 
 		t.Run("bootstrap は差し替えた実行層で手順を進める", func(t *testing.T) {
 			f := bootstrappableRunner()
 
-			require.NoError(t, execute(f.runner(), testPatterns, []string{"bootstrap"}))
+			require.NoError(t, execute(f.runner(), []string{"bootstrap"}))
 			assert.Contains(t, f.calls, initialTagCall)
 			assert.Contains(t, f.calls, branchPushCall)
 		})
@@ -975,7 +967,7 @@ func Test_execute(t *testing.T) {
 			noteDir := writeReleaseNotes(t)
 			f := bootstrappableRunner()
 
-			require.NoError(t, execute(f.runner(), testPatterns, []string{"prune-release-notes"}))
+			require.NoError(t, execute(f.runner(), []string{"prune-release-notes"}))
 			assert.FileExists(t, filepath.Join(noteDir, initialTag+".md"))
 			assert.NoFileExists(t, filepath.Join(noteDir, "v1.0.0.md"))
 			assert.Empty(t, f.calls)
@@ -986,14 +978,14 @@ func Test_execute(t *testing.T) {
 		t.Run("サブコマンドが無ければ使い方を示して手順を 1 つも実行しない", func(t *testing.T) {
 			f := bootstrappableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), testPatterns, nil), errUsage)
+			require.ErrorIs(t, execute(f.runner(), nil), errUsage)
 			assert.Empty(t, f.calls)
 		})
 
 		t.Run("未知のサブコマンドでは手順を 1 つも実行しない", func(t *testing.T) {
 			f := bootstrappableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), testPatterns, []string{"bogus"}), errUnknownSubcommand)
+			require.ErrorIs(t, execute(f.runner(), []string{"bogus"}), errUnknownSubcommand)
 			assert.Empty(t, f.calls)
 		})
 
@@ -1002,13 +994,13 @@ func Test_execute(t *testing.T) {
 			git(t, dir, "tag", initialTag)
 			t.Chdir(dir)
 
-			require.ErrorIs(t, execute(bootstrappableRunner().runner(), testPatterns, []string{"preflight"}), errInitialTagExists)
+			require.ErrorIs(t, execute(bootstrappableRunner().runner(), []string{"preflight"}), errInitialTagExists)
 		})
 
 		t.Run("bootstrap の失敗をそのまま返す", func(t *testing.T) {
 			f := &fakeRunner{failOn: "git tag"}
 
-			require.ErrorIs(t, execute(f.runner(), testPatterns, []string{"bootstrap"}), errFakeCommand)
+			require.ErrorIs(t, execute(f.runner(), []string{"bootstrap"}), errFakeCommand)
 		})
 
 		t.Run("prune-release-notes の失敗をそのまま返す", func(t *testing.T) {
@@ -1018,7 +1010,7 @@ func Test_execute(t *testing.T) {
 			require.NoError(t, os.WriteFile(notePath, nil, 0o600))
 			t.Chdir(dir)
 
-			require.Error(t, execute(bootstrappableRunner().runner(), testPatterns, []string{"prune-release-notes"}))
+			require.Error(t, execute(bootstrappableRunner().runner(), []string{"prune-release-notes"}))
 		})
 	})
 }

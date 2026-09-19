@@ -1,169 +1,152 @@
 package branches
 
 import (
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// sound は、解釈できる最小の宣言。
-const sound = `
-[default]
-branch = "production"
+// 宣言は定数なので、値そのものではなく**値が満たすべき関係**を固定する。
+// 値を書き写すテストは、宣言を変えたときに2箇所を直させるだけで何も守らない。
 
-[sets]
-deploy = ["develop", "staging", "production"]
-protected = ["develop", "release/**/*"]
-
-[release]
-prefix = "release/"
-pattern = '^release/v(\d+)\.(\d+)\.(\d+)$'
-
-[workflows]
-"zizmor.yaml" = "deploy"
-`
-
-func Test_Parse(t *testing.T) {
+func Test_ReleasePattern(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
-
-		t.Run("集合と単一値と workflow の対応を読み分ける", func(t *testing.T) {
-			t.Parallel()
-			decl, err := Parse(sound, "t.toml")
-			require.NoError(t, err)
-
-			set, err := decl.Set("deploy")
-			require.NoError(t, err)
-			assert.Equal(t, []string{"develop", "staging", "production"}, set)
-
-			branch, err := decl.DefaultBranch()
-			require.NoError(t, err)
-			assert.Equal(t, "production", branch)
-
-			assert.Equal(t, map[string]string{"zizmor.yaml": "deploy"}, decl.Workflows())
-		})
 
 		// 捕捉群の順序が変わると base-branch が別の版を「最新」と判定する。
-		t.Run("release.pattern は major / minor / patch の順で捕捉する", func(t *testing.T) {
+		t.Run("major / minor / patch の順で捕捉する", func(t *testing.T) {
 			t.Parallel()
-			decl, err := Parse(sound, "t.toml")
-			require.NoError(t, err)
-
-			re, err := decl.ReleasePattern()
-			require.NoError(t, err)
-			assert.Equal(t, []string{"release/v2.10.3", "2", "10", "3"}, re.FindStringSubmatch("release/v2.10.3"))
+			assert.Equal(t, []string{"release/v2.10.3", "2", "10", "3"},
+				ReleasePattern.FindStringSubmatch("release/v2.10.3"))
 		})
 
-		t.Run("Workflows は内部の map を共有しない", func(t *testing.T) {
+		// parseLine は m[1] m[2] m[3] を長さ検査なしで読む。3群を割ると panic する。
+		t.Run("捕捉群はちょうど3つである", func(t *testing.T) {
 			t.Parallel()
-			decl, err := Parse(sound, "t.toml")
-			require.NoError(t, err)
+			assert.Equal(t, 3, ReleasePattern.NumSubexp())
+		})
 
-			decl.Workflows()["zizmor.yaml"] = "書き換え"
-			assert.Equal(t, "deploy", decl.Workflows()["zizmor.yaml"])
+		t.Run("接頭辞は ReleasePrefix と同じ出所から組む", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, ReleasePattern.String(), ReleasePrefix)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 読み飛ばすと、打ち間違えた1行が「宣言されていない」と同じ扱いになり、
-		// 保護対象から黙って消える。
-		t.Run("解釈できない行はエラーにする", func(t *testing.T) {
-			t.Parallel()
-			_, err := Parse(sound+"\nbranch = production\n", "t.toml")
-			require.ErrorIs(t, err, ErrSyntax)
-			assert.Contains(t, err.Error(), "t.toml:")
-		})
-
-		t.Run("集合が1件も無ければエラーにする", func(t *testing.T) {
-			t.Parallel()
-			_, err := Parse("[default]\nbranch = \"production\"\n", "t.toml")
-			require.ErrorIs(t, err, ErrEmpty)
-		})
-
-		t.Run("単一値が1件も無ければエラーにする", func(t *testing.T) {
-			t.Parallel()
-			_, err := Parse("[sets]\ndeploy = [\"develop\"]\n", "t.toml")
-			require.ErrorIs(t, err, ErrEmpty)
-		})
-
-		t.Run("空の宣言はエラーにする", func(t *testing.T) {
-			t.Parallel()
-			_, err := Parse("", "t.toml")
-			require.ErrorIs(t, err, ErrEmpty)
-		})
-
-		// 空を返すと、打ち間違えた名前が「要素0件の集合」に化け、対象を1件も
-		// 持たないまま通る。
-		t.Run("存在しない集合はエラーにする", func(t *testing.T) {
-			t.Parallel()
-			decl, err := Parse(sound, "t.toml")
-			require.NoError(t, err)
-
-			_, err = decl.Set("no-such-set")
-			require.ErrorIs(t, err, ErrUnknownSet)
-		})
-
-		t.Run("存在しないキーはエラーにする", func(t *testing.T) {
-			t.Parallel()
-			decl, err := Parse(sound, "t.toml")
-			require.NoError(t, err)
-
-			_, err = decl.Scalar("no.such.key")
-			require.ErrorIs(t, err, ErrUnknownKey)
-		})
-
-		t.Run("正規表現として不正な release.pattern はエラーにする", func(t *testing.T) {
-			t.Parallel()
-			decl, err := Parse("[sets]\nx = [\"a\"]\n[release]\npattern = \"([\"\n", "t.toml")
-			require.NoError(t, err)
-
-			_, err = decl.ReleasePattern()
-			require.ErrorIs(t, err, ErrSyntax)
-		})
+		// プレリリースやビルドメタデータを最新版に選ぶと、release が作らない形の
+		// ブランチを base として指すことになる。
+		for _, name := range []string{
+			"release/v1.2.3-rc1",
+			"release/v1.2",
+			"release/next",
+			"hotfix/v1.2.3",
+			"refs/heads/release/v1.2.3",
+		} {
+			t.Run(name+" は一致しない", func(t *testing.T) {
+				t.Parallel()
+				assert.Nil(t, ReleasePattern.FindStringSubmatch(name))
+			})
+		}
 	})
 }
 
-func Test_Load(t *testing.T) {
+func Test_Protected(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ファイルを読んで解釈する", func(t *testing.T) {
+		// 実環境へ届くブランチが保護対象から漏れると、レビューを経ない変更が
+		// そのまま適用へ流れる。
+		t.Run("Deploy の全要素を含む", func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			path := filepath.Join(dir, "branches.toml")
-			require.NoError(t, writeFile(path, sound))
+			for _, d := range Deploy {
+				assert.Contains(t, Protected, d, d)
+			}
+		})
 
-			decl, err := Load(path)
-			require.NoError(t, err)
+		// release 線と hotfix 線は glob で覆う。個別のブランチ名では列挙できない。
+		t.Run("release 線と hotfix 線を glob で覆う", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, Protected, ReleasePrefix+"**/*")
+			assert.Contains(t, Protected, HotfixPrefix+"**/*")
+		})
 
-			branch, err := decl.DefaultBranch()
-			require.NoError(t, err)
-			assert.Equal(t, "production", branch)
+		t.Run("重複を持たない", func(t *testing.T) {
+			t.Parallel()
+			seen := map[string]bool{}
+			for _, p := range Protected {
+				require.False(t, seen[p], "重複: %s", p)
+				seen[p] = true
+			}
+		})
+	})
+}
+
+func Test_Deploy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// repo-setup はこの順序でブランチを作る。Default が最後でないと、
+		// デフォルトブランチの移動が未作成のブランチを指しうる。
+		t.Run("末尾が Default である", func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, Deploy)
+			assert.Equal(t, Default, Deploy[len(Deploy)-1])
+		})
+	})
+}
+
+func Test_Line(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("線ごとに接頭辞を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, ReleasePrefix, LineRelease.Prefix())
+			assert.Equal(t, HotfixPrefix, LineHotfix.Prefix())
+		})
+
+		// 一覧が実装とずれると、usage が受け付けない線を案内する。
+		t.Run("Lines が返す線はすべて Valid である", func(t *testing.T) {
+			t.Parallel()
+			require.NotEmpty(t, Lines())
+			for _, l := range Lines() {
+				assert.True(t, l.Valid(), string(l))
+			}
+		})
+
+		t.Run("接頭辞はスラッシュで終わる", func(t *testing.T) {
+			t.Parallel()
+			for _, l := range Lines() {
+				assert.True(t, strings.HasSuffix(l.Prefix(), "/"), string(l))
+			}
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 不在を空の宣言として続行すると、保護対象が0件のまま apply が通る。
-		t.Run("ファイルが無ければエラーにする", func(t *testing.T) {
+		// 未知の線を空接頭辞で通すと、`/v1.2.3` のようなブランチ名が作られる。
+		t.Run("未知の線は Valid でない", func(t *testing.T) {
 			t.Parallel()
-			_, err := Load(filepath.Join(t.TempDir(), "no-such.toml"))
-			require.Error(t, err)
+			assert.False(t, Line("no-such").Valid())
+			assert.Empty(t, Line("no-such").Prefix())
+		})
+
+		t.Run("空文字列は Valid でない", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, Line("").Valid())
 		})
 	})
-}
-
-// writeFile はテスト用の書き出し。
-func writeFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0o600)
 }

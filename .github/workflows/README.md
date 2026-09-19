@@ -52,16 +52,18 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 ## 分岐のパターン
 
 保護対象のブランチ、リリース線の形、ブランチ名の接頭辞は
-[`.github/branches.toml`](../branches.toml) **だけ**が持つ（[ADR-0603](../../docs/adr/0603-branch-protection-and-required-checks.md)
-決定1-3）。ここの `on.push.branches` は `make branches-apply` が宣言から組み直し、
-`make branches-check` がずれで落ちる。**手で編集しない。**
+[`scripts/lib/branches`](../../scripts/lib/branches/branches.go) **だけ**が持つ
+（[ADR-0603](../../docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。
+そこから生成するのは [`branch-protection.json`](../settings/branch-protection.json) だけで、
+`make branches-check` がずれで落ちる。
 
 **`pull_request` 側は絞らない。** 必須 context を報告する側であり、除外された Pull Request では
 run が起きず、報告の無い check を GitHub は待ち続ける（「必須検査はすべての Pull Request で
 報告される」）。`branches:` を置いてよいのは `push` 側だけである。
 
-宣言に無い workflow が `on.push.branches` を持っていると `branches-check` が落ちる。
-**生成の対象から漏れた宣言は、SSOT を直しても追随せず、古いパターンのまま動き続ける。**
+**その `push` 側の `branches:` は生成しない。** そちらは context を報告せず、絞っても merge を
+塞がない —— 塞がないものを生成対象にすると、生成器が YAML の書式追随という終わりのない仕事を
+抱え、その取りこぼしが「検査が素通りする」形で出る。ここは手で書く。
 
 ## 結果コメント
 
