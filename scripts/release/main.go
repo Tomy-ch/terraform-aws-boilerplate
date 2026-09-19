@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -32,6 +33,10 @@ const (
 	// commandTimeout は、git / gh 1 コマンドあたりの上限。push や Release 作成は
 	// ネットワーク越しのため、対話が無い前提で余裕を持たせる。
 	commandTimeout = 120 * time.Second
+
+	// lsRemoteNotFound は `git ls-remote --exit-code` が「一致が無い」ときに返す終了コード。
+	// それ以外の非ゼロは照会そのものの失敗であり、区別しないと「無い」と読んでしまう。
+	lsRemoteNotFound = 2
 )
 
 var (
@@ -70,8 +75,8 @@ type runner struct {
 	run func(s step) error
 	// output は、コマンドの標準出力を取り出す。
 	output func(name string, args ...string) (string, error)
-	// remoteBranchExists は、origin に同名ブランチがあるかを返す。
-	remoteBranchExists func(branch string) bool
+	// remoteBranchExists は、origin に同名ブランチがあるかを返す。照会できなければエラー。
+	remoteBranchExists func(branch string) (bool, error)
 }
 
 func main() {
@@ -318,7 +323,11 @@ func runBranch(r runner, args []string) error {
 	log.Printf("➡️ 次のリリースバージョンを作成: 【 %s 】", next)
 	log.Printf("🌱 ブランチを作成: %s → 【 %s 】", *base, branch)
 
-	if r.remoteBranchExists(branch) {
+	exists, err := r.remoteBranchExists(branch)
+	if err != nil {
+		return err
+	}
+	if exists {
 		return xerrors.Wrap(errBranchExists, "❌ ブランチ【 "+branch+" 】")
 	}
 
@@ -348,12 +357,27 @@ func hostRunner() runner {
 }
 
 // remoteBranchExists は、origin に同名ブランチが既にあるかを返します。
-func remoteBranchExists(branch string) bool {
+//
+// **「無い」と「確認できなかった」を畳まない。** `git ls-remote --exit-code` は、見つからない
+// とき 2 を、origin を解決できない・認証が通らないときは別の値を返す。両方を「無い」にすると、
+// 照会が失敗しただけで「衝突なし」と判定し、取り消しの効かない手順（push・デフォルトブランチ
+// 切替）へ進む。確認できなかったときはエラーを返して止める。
+func remoteBranchExists(branch string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
 	//nolint:gosec // branch はタグ由来のバージョン文字列
-	return exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", "--heads", "origin", branch).Run() == nil
+	err := exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", "--heads", "origin", branch).Run()
+	if err == nil {
+		return true, nil
+	}
+
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == lsRemoteNotFound {
+		return false, nil
+	}
+
+	return false, xerrors.Wrap(err, "git ls-remote origin "+branch+"（origin へ照会できません）")
 }
 
 func run(s step) error {
