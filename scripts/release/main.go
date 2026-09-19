@@ -180,7 +180,7 @@ func bump(v version, kind string) (version, error) {
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
 // syncDefaultSteps は、既定ブランチを origin の最新へ合わせる手順を返します。
-// ブランチ名は .github/branches.toml が持つので、ここでは受け取ります。
+// ブランチ名は宣言（lib/branches）が持つので、ここでは受け取ります。
 func syncDefaultSteps(branch string) []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", branch}},

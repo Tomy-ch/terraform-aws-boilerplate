@@ -40,7 +40,7 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make egress-check
 
-    # 保護対象のブランチと起動条件が SSOT（.github/branches.toml）通りか。
+    # 保護設定が宣言（scripts/lib/branches）通りか。
     # ずれたまま commit させない —— 保護対象から漏れたブランチは「保護されていない」
     # ではなく「保護されているつもり」になる。
     branches-check:

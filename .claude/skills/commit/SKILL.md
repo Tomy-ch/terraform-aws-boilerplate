@@ -102,7 +102,7 @@ Treat the following as **rider files** — they never form their own commit, but
 
 - Generated regions and generated declarations: the terraform-docs region in a `README.md`, `.terraform.lock.hcl`, `docker/images-pin.toml`, `.github/actions-pin.toml`, and every inline block written by `make egress-apply` / `make branches-apply`
 
-Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `.github/branches.toml` change brings the regenerated `branch-protection.json` include list and `on.push.branches` blocks.
+Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `scripts/lib/branches/branches.go` change brings the regenerated `branch-protection.json` include list.
 
 ## Step 3. Prefix Reference
 
@@ -134,7 +134,7 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 | `modules/<use-case>/README.md`, `docs/**/*.md`, `README.md`, `AGENTS.md` | `Docs` |
 | `docs/adr/**` | `Docs`, or `Refactor` when only the numbering moves |
 | `Dockerfile`, `docker/**`, `scripts/go.mod`, `scripts/go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` | `Build` |
-| `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml`, `.github/branches.toml` | `CI` |
+| `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml` | `CI` |
 | `.gitignore`, `.claude/**`, editor settings | `Chore` |
 
 ## Step 4. Propose Grouping
