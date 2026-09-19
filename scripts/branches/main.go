@@ -207,24 +207,79 @@ func planNames(plans ...plan) []string {
 
 // writePlan は計画をファイルへ書き出します。**ここに検証は無い** —— 検証はすべて計画の側で
 // 終わっている。
+//
+// **全部を一時ファイルへ書き切ってから差し替える。** 素直に上書きしていくと、途中の1件が
+// 失敗したとき前半だけが新しい内容になった状態が残る。計画の側で検証を終えても、書き込みの
+// 側で同じ形の部分適用が起きる。
+//
+// 差し替え（rename）そのものは1件ずつで、複数ファイルを不可分に入れ替える手段はファイル
+// システムに無い。ただし同じディレクトリへ置いた一時ファイルからの rename は、書き込みが
+// 済んだ後の操作なので、失敗する余地がほとんど残っていない。
 func writePlan(plans ...plan) error {
-	for _, p := range plans {
-		paths := make([]string, 0, len(p))
-		for path := range p {
-			paths = append(paths, path)
-		}
-		sort.Strings(paths)
+	type staged struct{ tmp, final string }
 
-		for _, path := range paths {
-			// path は package 定数から組んだ経路か、その直下の走査結果である。
-			// 撤回条件: 経路が root 以外から決まる形になったとき。
-			if err := os.WriteFile(path, []byte(p[path]), filePerm); err != nil { //nolint:gosec // 上のコメントを参照
-				return xerrors.Wrap(err, path)
+	var pending []staged
+	defer func() {
+		for _, p := range pending {
+			_ = os.Remove(p.tmp)
+		}
+	}()
+
+	for _, p := range plans {
+		for _, path := range sortedPaths(p) {
+			tmp, err := stage(path, p[path])
+			if err != nil {
+				return err
 			}
+			pending = append(pending, staged{tmp: tmp, final: path})
 		}
 	}
 
+	for _, p := range pending {
+		if err := os.Rename(p.tmp, p.final); err != nil {
+			return xerrors.Wrap(err, p.final)
+		}
+	}
+	pending = nil
+
 	return nil
+}
+
+// sortedPaths は計画の書き出し先を、並びを決めて返します。
+func sortedPaths(p plan) []string {
+	paths := make([]string, 0, len(p))
+	for path := range p {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	return paths
+}
+
+// stage は内容を差し替え先と同じディレクトリの一時ファイルへ書き、その名前を返します。
+func stage(path, content string) (string, error) {
+	// 差し替え先がディレクトリなら rename の段で落ちる。**そこまで進めない** ——
+	// 進めると、先に差し替えた分だけが新しい状態で残る。
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return "", xerrors.Wrap(errShape, path+" はディレクトリです")
+	}
+
+	// path は package 定数から組んだ経路か、その直下の走査結果である。
+	// 撤回条件: 経路が root 以外から決まる形になったとき。
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp") //nolint:gosec // 上のコメントを参照
+	if err != nil {
+		return "", xerrors.Wrap(err, path)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.WriteString(content); err != nil {
+		return "", xerrors.Wrap(err, path)
+	}
+	if err := f.Chmod(filePerm); err != nil {
+		return "", xerrors.Wrap(err, path)
+	}
+
+	return f.Name(), nil
 }
 
 // rewrite は保護設定の conditions.ref_name.include を宣言から組み直します。まず JSON として

@@ -145,12 +145,19 @@ func Test_rewrite(t *testing.T) {
 		// 読めない入力を取りこぼしとして扱うと、保護設定を空のまま生成しうる。
 		// 構造の検査（map へ復号 —— 後が勝つ）と区間の特定（トークン走査 —— 先が勝つ）で
 		// 別の値を見ることになり、検査した方とは別の配列を書き換える。
-		t.Run("同じ階層にキーが 2 度現れればエラーにする", func(t *testing.T) {
-			t.Parallel()
-			const dup = `{"conditions":{"ref_name":{"include":["a"],"include":["b"]}}}`
-			_, err := rewrite([]byte(dup), branches.Protected)
-			require.ErrorIs(t, err, errShape)
-		})
+		// 検査は再帰のどの階層でも走る。最下層だけで実証すると、`seen` の初期化位置が
+		// 階層をまたいで壊れたときに気づけない。
+		for name, dup := range map[string]string{
+			"最上位":           `{"conditions":{},"conditions":{"ref_name":{"include":["a"]}}}`,
+			"conditions 直下": `{"conditions":{"ref_name":{},"ref_name":{"include":["a"]}}}`,
+			"ref_name 直下":   `{"conditions":{"ref_name":{"include":["a"],"include":["b"]}}}`,
+		} {
+			t.Run(name+"でキーが 2 度現れればエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, err := rewrite([]byte(dup), branches.Protected)
+				require.ErrorIs(t, err, errShape)
+			})
+		}
 
 		t.Run("JSON として読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
@@ -259,8 +266,27 @@ func Test_applyAll(t *testing.T) {
 			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
 			var out bytes.Buffer
 			require.ErrorIs(t, applyAll(root, sets, true, &out), errDrift)
+			// 並びと区切りまで固定する。報告は1行の契約である。
+			assert.Contains(t, out.String(), "branch-protection.json, probe.yaml")
+		})
+
+		// 片方だけを見て報告すると、直して再実行するまでもう片方のずれが見えない。
+		t.Run("JSON だけずれていれば JSON の名前だけ報告する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": settledWorkflow})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyAll(root, sets, true, &out), errDrift)
 			assert.Contains(t, out.String(), "branch-protection.json")
+			assert.NotContains(t, out.String(), "probe.yaml")
+		})
+
+		t.Run("workflow だけずれていれば workflow の名前だけ報告する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, settledProtection(t), map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyAll(root, sets, true, &out), errDrift)
 			assert.Contains(t, out.String(), "probe.yaml")
+			assert.NotContains(t, out.String(), "branch-protection.json")
 		})
 
 		t.Run("check は両方とも書き換えない", func(t *testing.T) {
@@ -277,6 +303,17 @@ func Test_applyAll(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, applyAll(root, sets, false, &out))
 			require.NoError(t, applyAll(root, sets, true, &out))
+		})
+
+		// 何を書き換えたのかが報告に出ないと、読んだ人は差分を見に行くまで分からない。
+		t.Run("apply は反映したファイルの名前を報告する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.NoError(t, applyAll(root, sets, false, &out))
+			assert.Contains(t, out.String(), "branches-apply")
+			assert.Contains(t, out.String(), "branch-protection.json")
+			assert.Contains(t, out.String(), "probe.yaml")
 		})
 	})
 
@@ -297,11 +334,32 @@ func Test_applyAll(t *testing.T) {
 			assertRepo(t, root, sound, workflowFixture)
 		})
 
+		// **workflow 側に「読まれたら別のエラーになるもの」を置く。** 正常な workflow だと、
+		// 呼んでいないのか呼んで問題が無かったのかを区別できない。errNotation ではなく
+		// errShape が返ることが、workflow 側を評価していない証拠になる。
 		t.Run("保護設定が構造違反なら workflow を見る前に止まる", func(t *testing.T) {
 			t.Parallel()
-			root := newRepo(t, `{"name":"x"}`, map[string]string{"probe.yaml": workflowFixture})
+			root := newRepo(t, `{"name":"x"}`, map[string]string{
+				"probe.yaml": "on:\n  push:\n    branches: [evil]\n",
+			})
 			var out bytes.Buffer
-			require.ErrorIs(t, applyAll(root, sets, true, &out), errShape)
+
+			err := applyAll(root, sets, true, &out)
+			require.ErrorIs(t, err, errShape)
+			require.NotErrorIs(t, err, errNotation)
+			assert.Empty(t, out.String())
+		})
+
+		// 途中まで書いてから落ちたとき、成功したと読める報告を出さないこと。
+		t.Run("書き込めなければ成功を報告しない", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
+			require.NoError(t, os.Remove(filepath.Join(root, protectionFile)))
+			require.NoError(t, os.Mkdir(filepath.Join(root, protectionFile), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, protectionFile), 0o700) })
+
+			var out bytes.Buffer
+			require.Error(t, applyAll(root, sets, false, &out))
 			assert.Empty(t, out.String())
 		})
 	})
@@ -893,20 +951,19 @@ func Test_planWorkflows(t *testing.T) {
 			require.ErrorIs(t, err, errUnmanaged)
 		})
 
-		// Glob で列挙した直後に読めなくなる経路。黙って対象範囲が縮まないこと。
+		// Glob は列挙するが読めない経路。黙って対象範囲が縮まないこと。
+		//
+		// **権限を落とすのではなくディレクトリを置く。** chmod は root で効かないので、
+		// 効かない環境では skip するしかなくなる —— skip は既定の出力では見えず、
+		// 報告より少ない検査で緑を残す。ディレクトリなら誰が実行しても読めない。
 		t.Run("workflow が読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{"probe.yaml": settledWorkflow})
-			path := filepath.Join(dir, "probe.yaml")
-			require.NoError(t, os.Chmod(path, 0o000))
-			t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
-
-			if _, err := os.ReadFile(path); err == nil {
-				t.Skip("この環境では読み取り権限を落とせません（root 等）")
-			}
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "unreadable.yaml"), 0o700))
 
 			_, err := planWorkflows(dir, sets)
 			require.Error(t, err)
+			require.NotErrorIs(t, err, errDrift)
 		})
 	})
 }
@@ -947,6 +1004,11 @@ func Test_writePlan(t *testing.T) {
 				got, err := os.ReadFile(path)
 				require.NoError(t, err)
 				assert.Equal(t, want, string(got))
+
+				// 一時ファイルは 0600 で作られる。差し替えた先がそのままだと読めなくなる。
+				info, err := os.Stat(path)
+				require.NoError(t, err)
+				assert.Equal(t, os.FileMode(filePerm), info.Mode().Perm())
 			}
 		})
 	})
@@ -954,11 +1016,42 @@ func Test_writePlan(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("書き込めなければエラーにする", func(t *testing.T) {
+		t.Run("書き込めなければ失敗したパスを添えてエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			require.NoError(t, os.Mkdir(filepath.Join(dir, "taken"), 0o700))
-			require.Error(t, writePlan(plan{filepath.Join(dir, "taken"): "x"}))
+			taken := filepath.Join(dir, "taken")
+			require.NoError(t, os.Mkdir(taken, 0o700))
+
+			err := writePlan(plan{taken: "x"})
+			require.ErrorIs(t, err, errShape)
+			assert.Contains(t, err.Error(), taken)
+		})
+
+		// **1件でも書けないなら、1件も差し替えない。** 前半だけが新しい内容になった状態は、
+		// 呼び出し側から見ると「失敗した」としか分からない。
+		t.Run("後の 1 件が書けなければ前の 1 件も差し替えない", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			first, taken := filepath.Join(dir, "a"), filepath.Join(dir, "z")
+			require.NoError(t, os.WriteFile(first, []byte("OLD"), 0o600))
+			require.NoError(t, os.Mkdir(taken, 0o700))
+
+			require.Error(t, writePlan(plan{first: "A", taken: "x"}))
+			got, err := os.ReadFile(first)
+			require.NoError(t, err)
+			assert.Equal(t, "OLD", string(got))
+		})
+
+		// 一時ファイルを置き去りにすると、次の走査がそれを対象として拾う。
+		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "z"), 0o700))
+
+			require.Error(t, writePlan(plan{filepath.Join(dir, "a"): "A", filepath.Join(dir, "z"): "x"}))
+			left, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+			require.NoError(t, err)
+			assert.Empty(t, left)
 		})
 	})
 }
@@ -1379,4 +1472,86 @@ func mappingOf(t *testing.T, src string) *yaml.Node {
 	require.NoError(t, yaml.Unmarshal([]byte(src), &doc))
 
 	return doc.Content[0]
+}
+
+func Test_sortedPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 並びが実行のたびに変わると、書き出しの順序も報告も再現しなくなる。
+		t.Run("書き出し先を並べて返す", func(t *testing.T) {
+			t.Parallel()
+			got := sortedPaths(plan{"/z": "", "/a": "", "/m": ""})
+			assert.Equal(t, []string{"/a", "/m", "/z"}, got)
+		})
+
+		t.Run("空の計画には空を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, sortedPaths(plan{}))
+		})
+	})
+}
+
+func Test_stage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// rename で差し替えるので、一時ファイルは差し替え先と同じディレクトリに要る。
+		// 別のファイルシステムをまたぐと rename が失敗する。
+		t.Run("差し替え先と同じディレクトリへ内容を書く", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			final := filepath.Join(dir, "a.json")
+
+			tmp, err := stage(final, "X")
+			require.NoError(t, err)
+			assert.Equal(t, dir, filepath.Dir(tmp))
+
+			got, err := os.ReadFile(tmp) //nolint:gosec // tmp は直前に自分で作った一時ファイル
+			require.NoError(t, err)
+			assert.Equal(t, "X", string(got))
+		})
+
+		// CreateTemp は 0600 で作る。差し替えた先がそのままだと読めなくなる。
+		t.Run("差し替え後の権限で作る", func(t *testing.T) {
+			t.Parallel()
+			tmp, err := stage(filepath.Join(t.TempDir(), "a.json"), "X")
+			require.NoError(t, err)
+
+			info, err := os.Stat(tmp)
+			require.NoError(t, err)
+			assert.Equal(t, os.FileMode(filePerm), info.Mode().Perm())
+		})
+
+		t.Run("差し替え先が無くても書ける", func(t *testing.T) {
+			t.Parallel()
+			_, err := stage(filepath.Join(t.TempDir(), "no-such-yet.json"), "X")
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// rename の段まで進めると、先に差し替えた分だけが新しい状態で残る。
+		t.Run("差し替え先がディレクトリならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			taken := filepath.Join(dir, "taken")
+			require.NoError(t, os.Mkdir(taken, 0o700))
+
+			_, err := stage(taken, "X")
+			require.ErrorIs(t, err, errShape)
+		})
+
+		t.Run("置き場所が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := stage(filepath.Join(t.TempDir(), "no-such-dir", "a.json"), "X")
+			require.Error(t, err)
+		})
+	})
 }

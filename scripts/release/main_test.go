@@ -540,6 +540,7 @@ func Test_hostRunner(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, missing)
 		})
+
 	})
 }
 
@@ -591,6 +592,22 @@ func Test_remoteBranchExists(t *testing.T) {
 			t.Chdir(dir)
 			got, err := remoteBranchExists("release/v9.9.9")
 			require.NoError(t, err)
+			assert.False(t, got)
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		// **exit code 2 だけが「無い」である。** origin を解決できないときの 128 を
+		// 「無い」と読むと、衝突しているブランチへ向かって取り消しの効かない手順が走る。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("origin を解決できなければ偽ではなくエラーを返す", func(t *testing.T) {
+			dir := newRepo(t)
+			t.Chdir(dir)
+			gitIn(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "no-such-repo"))
+
+			got, err := remoteBranchExists("production")
+			require.Error(t, err)
 			assert.False(t, got)
 		})
 	})
@@ -779,6 +796,20 @@ func Test_runBranch(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// **「無い」と「確認できなかった」を畳むと、ここが通ってしまう。** 照会に失敗した
+		// だけで「衝突なし」と読み、取り消しの効かない手順へ進む。
+		t.Run("origin へ照会できなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			f.lsRemoteFails = true
+
+			err := runBranch(f.runner(), []string{"-bump", "patch"})
+			require.ErrorIs(t, err, errLsRemote)
+			assert.NotContains(t, f.calls, branchCreateCall)
+			assert.NotContains(t, f.calls, branchPushCall)
+			assert.NotContains(t, f.calls, defaultBranchCall)
+		})
 
 		// 取り消しの効かない手順（ブランチ作成・push・デフォルトブランチ切替）の直前に在る
 		// 最後の安全弁。解釈できない入力を通すと、接頭辞の無いブランチ名が作られる。
