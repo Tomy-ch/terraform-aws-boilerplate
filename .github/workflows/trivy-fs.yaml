@@ -68,6 +68,9 @@ jobs:
             api.npmjs.org:443
             api.osv.dev:443
             npm.jsr.io:443
+            mirror.gcr.io:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -207,6 +210,9 @@ jobs:
             api.npmjs.org:443
             api.osv.dev:443
             npm.jsr.io:443
+            mirror.gcr.io:443
+            ghcr.io:443
+            pkg-containers.githubusercontent.com:443
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

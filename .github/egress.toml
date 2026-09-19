@@ -50,6 +50,16 @@ hosts = [
   "github-releases.githubusercontent.com:443",
 ]
 
+[class.trivy]
+includes = ["mise"]
+hosts = [
+  # 脆弱性 DB と checks バンドルは OCI artifact として配布される。取れないと trivy は
+  # 「所見なし」ではなく FATAL で落ちる —— 検査が働かなかったことが緑に化けない。
+  "mirror.gcr.io:443",
+  "ghcr.io:443",
+  "pkg-containers.githubusercontent.com:443",
+]
+
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
 
@@ -119,26 +129,16 @@ classes = ["mise"]
 classes = []
 
 [job."trivy-config.yaml:trivy-config"]
-classes = ["mise"]
-extra = [
-  "mirror.gcr.io:443",
-  "ghcr.io:443",
-  "pkg-containers.githubusercontent.com:443",
-]
+classes = ["trivy"]
 
 [job."trivy-fs.yaml:trivy-fs"]
-classes = ["mise"]
+classes = ["trivy"]
 
 [job."trivy-fs.yaml:trivy-license"]
-classes = ["mise"]
+classes = ["trivy"]
 
 [job."trivy-release-gate.yaml:trivy-fs-release"]
-classes = ["mise"]
-extra = [
-  "mirror.gcr.io:443",
-  "ghcr.io:443",
-  "pkg-containers.githubusercontent.com:443",
-]
+classes = ["trivy"]
 
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]
