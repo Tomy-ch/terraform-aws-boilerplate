@@ -1,0 +1,338 @@
+name: Go Test
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      # fetch-depth: 0 so the PR's base and head commits are present locally. The filter
+      # below compares them with `git diff`; the default shallow checkout fetches only the
+      # merge commit, so neither parent resolves.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Filter the changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          # An empty token selects `git diff` over the compare API. The API refuses a
+          # large diff outright (`this diff is taking too long to generate`), and a filter
+          # that reaches no verdict runs every gated job instead of skipping it.
+          token: ''
+          filters: |
+            relevant:
+              - '.github/workflows/go-test.yaml'
+              - '**/*.go'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
+              - '.makefiles/**'
+              - 'Makefile'
+
+  go-test:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+
+      # shellcheck: mise.toml holds the pinned version actions-shellcheck's tests are checked
+      # against, so the runner's own build is not enough (scripts/README.md, Test Strategy).
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: shellcheck
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The console gets the filtered stream, not the raw one: most of a passing run's output is
+      # lines that say only "this package passed". That is what anyone reading the run log pays,
+      # `gh run view` included -- `::group::` folds in the browser but leaves every byte in the
+      # fetched log, so folding would not have helped.
+      #
+      # `tee` keeps the raw log for the comment step below, which reads it from disk. Nothing unique
+      # is dropped from the console: the per-package percentages live in `coverage.out`, which
+      # octocov and `cover-gate` read, and the remaining pass/duration pairs go unused.
+      #
+      # REQUIRE_SHELLCHECK turns actions-shellcheck's self-skip into a failure. A skip is invisible
+      # in the default output and would leave the run green while checking less than it reports.
+      - name: Run Tests with Coverage
+        id: cover-test
+        shell: bash
+        env:
+          REQUIRE_SHELLCHECK: '1'
+        run: |
+          set +e
+          make go-test-cover RUNNER_MODE=host 2>&1 | tee /tmp/go-test-cover.log | make go-test-fails LOG=-
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "$(grep -ac '^ok' /tmp/go-test-cover.log) packages passed"
+          fi
+          exit 0
+
+      # A profile written by a run that failed measures whichever packages happened to finish, so
+      # both the report and the gate are read as facts about a codebase that never passed. They are
+      # gated on the clean signal itself rather than on the job's state, which the recorded exit
+      # code above no longer reflects.
+      - name: Report Test Coverage
+        if: steps.cover-test.outputs.exit_code == '0'
+        uses: k1LoW/octocov-action@a167dc0dee441b7ffc45e1b862ab55ec0d87f278 # v1
+
+      # Coverage below the threshold is an ordinary outcome of an ordinary change, so it reaches
+      # the comment the way a failing test does rather than only turning the check red. The gate
+      # prints the measured total against the threshold, which is the whole of what a reader needs.
+      - name: Coverage gate
+        id: cover-gate
+        if: steps.cover-test.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set +e
+          make cover-gate RUNNER_MODE=host 2>&1 | tee /tmp/go-test-gate.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # always() rather than the implicit `success() &&`: a step failing outright before the run
+      # is an ordinary path here, not only a cut-off. Skipping would answer it with the action's
+      # cut-off notice, which names no cause.
+      - name: Build PR comment body
+        id: comment
+        if: always() && github.event_name == 'pull_request'
+        shell: bash
+        # Read as variables rather than interpolated: these values look safe today, but that is
+        # a property of their producers, not of this step. README.md の「補足」.
+        env:
+          COVER_CODE: ${{ steps.cover-test.outputs.exit_code }}
+          GATE_CODE: ${{ steps.cover-gate.outputs.exit_code }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+
+          # A step that never ran leaves its output empty, which arrives here as an unset variable
+          # rather than an empty one, so every read carries the fallback.
+          cover_code="${COVER_CODE-}"
+          gate_code="${GATE_CODE-}"
+
+          # The two steps above no longer fail the job themselves and every other step that can
+          # sits before this one, so `success` here means nothing else went wrong — octocov, a
+          # `mise install`. Reading it keeps the verdict from claiming a pass on a job that is
+          # already red, without enumerating steps whose only report is having failed.
+          job_status="${JOB_STATUS-}"
+
+          # Derived from the clean signal, so a step that never ran leaves an empty value that is
+          # not `0` and therefore reports, rather than reading as a pass.
+          if [ "$cover_code" = "0" ] && [ "$gate_code" = "0" ] \
+            && [ "$job_status" = "success" ]; then
+            status=success
+          else
+            status=failure
+          fi
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+          out=/tmp/go-test-comment.md
+
+          if [ "$status" = "success" ]; then
+            echo "title=## ✅ Go test: PASS" >> "$GITHUB_OUTPUT"
+            # Reached only when an earlier push left a red comment to overwrite; a passing run
+            # creates none. The failure log has nothing left to say, so the body states the verdict.
+            echo "All Go tests passed." > "$out"
+            exit 0
+          fi
+
+          echo "title=## ❌ Go test: FAIL" >> "$GITHUB_OUTPUT"
+          # Each opening answers the question its own case raises. Sections that are all clean on a
+          # failing run otherwise read as the comment contradicting the check, and sections that all
+          # say "not run" read as the comment having lost them. In the ordinary case what was left
+          # out is stated here rather than only in the fold label, so a reader who finds nothing
+          # about a package knows it passed instead of wondering whether the comment dropped it.
+          if [ -z "$cover_code" ] && [ -z "$gate_code" ]; then
+            echo 'No test run was reached: the job failed before it got there — see the run log.' > "$out"
+          elif [ "$cover_code" = "0" ] && [ "$gate_code" = "0" ]; then
+            echo 'Every run captured below came back clean, so the failure is in a step this comment does not capture — see the run log.' > "$out"
+          else
+            echo 'Passing packages are omitted; the full output is in the run log.' > "$out"
+          fi
+          echo "" >> "$out"
+
+          # Two sections share the action's 45000 character default, which it applies before
+          # building the fence on the details-summary path, so a trim here cannot leave the block
+          # unclosed. The cap keeps one runaway section from crowding the other out.
+          section_limit=18000
+
+          write_section() {
+            local label="$1" src="$2" code="$3"
+            printf '=== %s ===\n' "$label" >> "$out"
+
+            if [ -z "$code" ]; then
+              printf '(not run)\n\n' >> "$out"
+              return
+            fi
+            if [ ! -f "$src" ]; then
+              printf '(log not found)\n\n' >> "$out"
+              return
+            fi
+
+            # `make go-test-fails` owns the filter semantics — which lines are dropped, and why
+            # dropping them is safe — see `.makefiles/go/test.mk`. What matters here is that it
+            # writes its nothing-left notice to stderr, so this file stays empty and the
+            # emptiness check below is what decides.
+            local filtered=/tmp/go-test-section.log
+            make go-test-fails RUNNER_MODE=host LOG="$src" > "$filtered"
+
+            if [ ! -s "$filtered" ]; then
+              if [ "$code" = "0" ]; then
+                printf '(passed)\n\n' >> "$out"
+              else
+                # A non-zero exit whose whole log was filtered away. The filter recognises the
+                # passing forms rather than the failing ones precisely so this stays rare, but a
+                # section that said nothing at all would read as if the run had been fine.
+                printf '(exit %s, no output left after dropping the passing packages; see the run log)\n\n' "$code" >> "$out"
+              fi
+              return
+            fi
+
+            # head cuts on a byte boundary and Go test names in this repository are Japanese, so it
+            # can split a trailing multi-byte character. `-c` drops an invalid sequence mid-stream
+            # but not a truncated one at the end: iconv exits non-zero there, which under
+            # `set -euo pipefail` would fail this step over a cut that landed one byte off. It
+            # writes the converted prefix before exiting, which is the wanted result.
+            # sed: the action sizes its fence from the longest backtick run in the body, so a run
+            # this long would spend the size budget on the fence alone.
+            # tr: a NUL is valid UTF-8, so it survives the conversion and lands in the request the
+            # comment is posted with, which the API rejects. The comment step is
+            # `continue-on-error`, so that failure would take the comment down silently — the one
+            # outcome this whole path exists to prevent, on exactly the kind of run that produces
+            # a stray NUL. The same byte is why the filter above needs `grep -a`.
+            { head -c "$section_limit" "$filtered" | tr -d '\000' | iconv -f UTF-8 -t UTF-8 -c || true; } \
+              | sed -E 's/`{10,}/[long backtick run elided]/g' >> "$out"
+            if [ "$(wc -c < "$filtered")" -gt "$section_limit" ]; then
+              printf '\n... (log truncated)\n' >> "$out"
+            fi
+            printf '\n' >> "$out"
+          }
+
+          write_section 'make go-test-cover RUNNER_MODE=host' /tmp/go-test-cover.log "$cover_code"
+          write_section 'make cover-gate RUNNER_MODE=host' /tmp/go-test-gate.log "$gate_code"
+
+      - name: Comment Go test result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- go-test-result -->'
+          status: ${{ steps.comment.outputs.status }}
+          title: "${{ steps.comment.outputs.title || '## ⚠️ Go Test: CUT OFF (no result produced)' }}"
+          body-file: /tmp/go-test-comment.md
+          details-summary: 'go test log'
+
+      # The verdict is re-derived from the exit codes rather than read off the comment step, which
+      # only runs for a pull request and could not carry the check on any other trigger.
+      - name: Fail if Go tests failed
+        if: always()
+        shell: bash
+        # Read as environment for the same reason as the step above.
+        env:
+          COVER_CODE: ${{ steps.cover-test.outputs.exit_code }}
+          GATE_CODE: ${{ steps.cover-gate.outputs.exit_code }}
+        run: |
+          cover_code="${COVER_CODE-}"
+          gate_code="${GATE_CODE-}"
+
+          # Empty means the run never reached its own exit: the job was cut off, or a step before
+          # it failed outright.
+          if [ -z "$cover_code" ] || [ -z "$gate_code" ]; then
+            echo "a test step produced no exit code; see the steps above for how far the job got"
+            exit 1
+          fi
+          if [ "$cover_code" != "0" ]; then
+            echo "make go-test-cover RUNNER_MODE=host failed with exit code $cover_code"
+          fi
+          if [ "$gate_code" != "0" ]; then
+            echo "make cover-gate RUNNER_MODE=host failed with exit code $gate_code"
+          fi
+          if [ "$cover_code" != "0" ] || [ "$gate_code" != "0" ]; then
+            exit 1
+          fi

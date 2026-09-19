@@ -1,0 +1,145 @@
+# harden-runner の allowed-endpoints の SSOT。インラインブロックを手で編集してはならない。
+# クラスの意味・追加手順・反映と検査のコマンドは .github/workflows/README.md の Runner Hardening 節。
+
+[class.base]
+hosts = [
+  "agent.api.stepsecurity.io:443",
+  "api.github.com:443",
+  "github.com:443",
+  "codeload.github.com:443",
+  "objects.githubusercontent.com:443",
+  "raw.githubusercontent.com:443",
+  "release-assets.githubusercontent.com:443",
+  "*.actions.githubusercontent.com:443",
+  "*.blob.core.windows.net:443",
+]
+
+[class.mise]
+hosts = [
+  "mise.jdx.dev:443",
+  "mise-versions.jdx.dev:443",
+  "mise.run:443",
+  "mise.en.dev:443",
+  "aquaproj.github.io:443",
+  "proxy.golang.org:443",
+  "sum.golang.org:443",
+  "index.golang.org:443",
+  "storage.googleapis.com:443",
+  "dl.google.com:443",
+  "go.dev:443",
+  "golang.org:443",
+  "nodejs.org:443",
+  "registry.npmjs.org:443",
+  "tuf-repo-cdn.sigstore.dev:443",
+  "rekor.sigstore.dev:443",
+  "fulcio.sigstore.dev:443",
+  # aube（mise 内蔵の npm インストーラ）が依存解決時に問い合わせる supply-chain 情報源。遮断すると解決自体が失敗する
+  "api.npmjs.org:443",
+  "api.osv.dev:443",
+  "npm.jsr.io:443",
+]
+
+[class.terraform]
+includes = ["mise"]
+hosts = [
+  # provider と module の解決。ADR-0205 により module は取りに行かないが、
+  # registry の discovery は provider の解決経路と同じ入口を通る。
+  "registry.terraform.io:443",
+  "releases.hashicorp.com:443",
+  # provider のバイナリの実体。registry が指す先。
+  "github-releases.githubusercontent.com:443",
+]
+
+[class.trivy]
+includes = ["mise"]
+hosts = [
+  # 脆弱性 DB と checks バンドルは OCI artifact として配布される。取れないと trivy は
+  # 「所見なし」ではなく FATAL で落ちる —— 検査が働かなかったことが緑に化けない。
+  "mirror.gcr.io:443",
+  "ghcr.io:443",
+  "pkg-containers.githubusercontent.com:443",
+]
+
+[job."actions-lint.yaml:actions-lint"]
+classes = ["mise"]
+
+[job."commitlint.yaml:commitlint"]
+classes = ["mise"]
+
+[job."dependency-review.yaml:dependency-review"]
+classes = []
+# OpenSSF Scorecard の要約（show-openssf-scorecard は既定で有効）が引くデータ源。
+# 呼ぶのは「その PR が新しく足した依存」がある時だけなので、依存を増やさない PR では
+# 一度も出ていかない。そのため、この 2 ホストが欠けていても依存を足す PR が現れるまで
+# 誰も気づかず、現れた瞬間にその PR だけが fetch failed で落ちる。
+extra = [
+  "api.securityscorecards.dev:443",
+  "api.deps.dev:443",
+]
+
+[job."docker-lint.yaml:docker-lint"]
+classes = ["mise"]
+
+[job."egress-check.yaml:egress-check"]
+classes = ["mise"]
+
+[job."go-cooldown.yaml:go-cooldown"]
+classes = ["mise"]
+
+[job."go-test.yaml:changes"]
+classes = []
+
+[job."go-test.yaml:go-test"]
+classes = ["mise"]
+
+[job."md-lint.yaml:md-lint"]
+classes = ["mise"]
+
+[job."notify.yaml:notify"]
+classes = []
+extra = [
+  "hooks.slack.com:443",
+]
+
+[job."pin-actions-check.yaml:pin-actions-check"]
+classes = ["mise"]
+
+[job."pin-images-check.yaml:pin-images-check"]
+classes = ["mise"]
+
+[job."secret-scan.yaml:secret-scan"]
+classes = ["mise"]
+
+[job."secret-scan.yaml:trivy-secret"]
+classes = ["mise"]
+
+[job."tidy-check.yaml:changes"]
+classes = []
+
+[job."tidy-check.yaml:mod-tidy-check"]
+classes = ["mise"]
+
+[job."tool-cooldown.yaml:tool-cooldown"]
+classes = ["mise"]
+
+[job."tool-outdated-report.yaml:report"]
+classes = ["mise"]
+
+[job."trivy-config.yaml:changes"]
+classes = []
+
+[job."trivy-config.yaml:trivy-config"]
+classes = ["trivy"]
+
+[job."trivy-fs.yaml:trivy-fs"]
+classes = ["trivy"]
+
+[job."trivy-fs.yaml:trivy-license"]
+classes = ["trivy"]
+
+[job."trivy-release-gate.yaml:trivy-fs-release"]
+classes = ["trivy"]
+
+[job."zizmor.yaml:zizmor"]
+classes = ["mise"]
+

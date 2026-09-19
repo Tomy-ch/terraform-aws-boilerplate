@@ -1,0 +1,10 @@
+# mise.toml が宣言するツールの供給網 cooldown を緊急に外すための lockfile（SSOT）。
+# make tool-cooldown-gate / tool-cooldown-audit と .github/workflows/tool-cooldown.yaml が読む。
+#
+# 1 行 1 エントリ。形式は以下で、3 つのキーは順序も含めてすべて必須。
+# key は mise.toml に書かれたキーそのもの（短縮名なら短縮名のまま）。
+#
+#   "<key>@<version>" = { expires = YYYY-MM-DD, issue = <N>, reason = "..." }
+#
+# expires は必ず置く。期限切れ・上限（今日から 3 ヶ月）超過・mise.toml に無いエントリは、
+# gate / audit のどちらでも失敗する（理由: ADR-0702 決定18）。解決したらエントリを消す。

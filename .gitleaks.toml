@@ -1,20 +1,26 @@
-# gitleaks 設定。https://github.com/gitleaks/gitleaks#configuration
+# gitleaks 設定
+# https://github.com/gitleaks/gitleaks#configuration
 #
-# 抑止ポリシー（.gitleaksignore / .trivyignore.yaml と共通）
-# - ルールの一括無効化は禁止。抑止はファイル単位 or フィンガープリント単位に限定する
-# - エントリには必ず「なぜ秘密でないか」を書く。理由を書けないものは抑止しない
-# - 条件が変われば（対象が消えた / 生成物でなくなった）エントリを削除する。恒久 allowlist にしない
-#
-# 本ファイルは検知ルールの土台（既定ルールセットの採用）と、機械生成物のパス除外を担う。
-# 個別の検出結果をピンポイントで許容する場合は .gitleaksignore（フィンガープリント単位）を使う。
-
+# 秘密の検出の権威はこの層が持つ（ADR-0302 決定2）。Trivy の secret scanner は無効化してある。
+# 抑止の条件は ADR-0501 決定13 に従う。
 [extend]
 useDefault = true
 
-# 既定ルールセットには gitleaks 本体が持つ global allowlist が同梱される。
-# 各種 lockfile や .svg など、いくつかの path が無条件に走査対象外になり、
-# これは本ファイルからは打ち消せない（上記の抑止ポリシーが及ばない範囲）。
-# 打ち消すには useDefault を捨てて全ルールを自前で持つ必要があり、既定ルールの更新追随を失う。
-# 追随を優先して useDefault を採り、除外範囲は把握したうえで受け入れる。
+# actions-mise-pin-lint のフィクスチャが持つキャッシュキー（`mise-<版>-<digest の先頭8桁>`）。
 #
-# allowlist は現時点で空。誤検知が実際に出た時点で、上記ポリシーに沿って理由付きで追加する。
+# このツールが検査しているのは「キャッシュキーが版と digest の両方を含むこと」そのものなので、
+# フィクスチャは実物と同じ形でなければならない。形を崩せば、検査していた対象が消える。
+# `key:` という語と16進8桁の並びが generic-api-key の keyword + entropy 条件に当たる誤検知で、
+# 値は実在しない。
+#
+# **外すのはこの形に当たる検出そのものであって、ファイルではない。** `paths` で外してはならない
+# —— gitleaks の allowlist は `paths` と `regexes` を AND で評価せず、path が当たった時点で
+# そのファイルの検出がすべて落ちる。`condition = "AND"` を書いても同じだった（8.30.1 で確認）。
+# つまり path による除外は、同じファイルへ後から入った本物の秘密も一緒に見逃す。
+#
+# 撤回条件: キャッシュキーの形式が digest を含まなくなったとき、または actions-mise-pin-lint が
+# 無くなったとき。
+[allowlist]
+description = "actions-mise-pin-lint のフィクスチャ内のキャッシュキー（実在しない合成値）"
+regexTarget = "match"
+regexes = ['mise-\d+\.\d+\.\d+-[0-9a-f]{8}']

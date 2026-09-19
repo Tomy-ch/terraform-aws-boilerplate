@@ -1,0 +1,192 @@
+name: Module Tidy Check
+
+on:
+  pull_request:
+  push:
+    paths:
+      - '.github/workflows/tidy-check.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+
+      # fetch-depth: 0 so the PR's base and head commits are present locally. The filter
+      # below compares them with `git diff`; the default shallow checkout fetches only the
+      # merge commit, so neither parent resolves.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Filter the changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          # An empty token selects `git diff` over the compare API. The API refuses a
+          # large diff outright (`this diff is taking too long to generate`), and a filter
+          # that reaches no verdict runs every gated job instead of skipping it.
+          token: ''
+          filters: |
+            relevant:
+              - '.github/workflows/tidy-check.yaml'
+              # `go mod tidy` derives the required set from every import in the tree: dropping
+              # a module's last use leaves go.mod stale while touching no manifest.
+              - '**/*.go'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
+
+  mod-tidy-check:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: scripts/go.mod
+          # cache: false — this job holds security-events: write. See README.md の「キャッシュの安全性」.
+          cache: false
+
+      # `go mod verify` only checks modules already present in the local download
+      # cache, and it neither downloads what is missing nor reads go.sum. On its own
+      # it would report "all modules verified" here and mean nothing: this job's path
+      # filter fires when go.sum changes, which is exactly when setup-go's cache key
+      # (a hash of go.sum) misses and the cache is empty.
+      #
+      # `go mod download` is therefore what makes the check real — it fetches every
+      # module named in go.mod and fails if one does not match its go.sum hash.
+      # `go mod verify` then re-checks the fetched cache for tampering after the fact.
+      #
+      # Scope worth knowing: neither command inspects the committed vendor/ tree, and
+      # builds here run in vendor mode. This verifies that go.sum still describes the
+      # real upstream modules; it does NOT prove vendor/ matches them.
+      # The module is rooted at scripts/, so every go command needs -C. Running one from the
+      # repository root reports "cannot find main module" rather than a tidy failure.
+      - name: Verify module checksums
+        run: |
+          go -C scripts mod download
+          go -C scripts mod verify
+        shell: bash
+
+      - name: Tidy (check only)
+        id: tidy
+        shell: bash
+        run: |
+          set +e
+          mkdir -p /tmp
+
+          make go-tidy-check RUNNER_MODE=host > /dev/null 2>&1
+          code=$?
+          git diff --no-color -- scripts/go.mod scripts/go.sum > /tmp/go-mod-tidy.diff
+
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 0 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "title=## ✅ go mod tidy: PASS" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "title=## ❌ go mod tidy: FAIL" >> "$GITHUB_OUTPUT"
+          fi
+
+          exit 0
+
+      - name: Comment tidy result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- go-mod-tidy-check-result -->'
+          status: ${{ steps.tidy.outputs.status }}
+          title: "${{ steps.tidy.outputs.title || '## ⚠️ Module Tidy Check: CUT OFF (no result produced)' }}"
+          body-file: /tmp/go-mod-tidy.diff
+          details-summary: '📄 go.mod / go.sum diff'
+
+      - name: Fail if tidy check failed
+        if: always()
+        shell: bash
+        env:
+          EXIT_CODE: ${{ steps.tidy.outputs.exit_code }}
+        run: |
+          code="${EXIT_CODE-}"
+          if [ "$code" != "0" ]; then
+            echo "::error::go.mod/go.sum show differences after running \`go mod tidy\`"
+            exit 1
+          fi

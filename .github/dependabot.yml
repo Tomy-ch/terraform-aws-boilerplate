@@ -1,0 +1,48 @@
+# Dependabot configuration.
+#
+# `cooldown` withholds an update PR until the stated number of days has passed since the version
+# was published. A security update skips it and opens immediately, which is Dependabot's own
+# behaviour and not configurable here.
+version: 2
+updates:
+  # ---- Go modules ----
+  - package-ecosystem: "gomod"
+    directory: "/scripts"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 5
+      semver-patch-days: 5
+      semver-minor-days: 7
+      semver-major-days: 30
+    groups:
+      gomod:
+        patterns:
+          - "*"
+
+  # ---- Docker ----
+  - package-ecosystem: "docker"
+    directory: "/docker/tools"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 5
+    groups:
+      docker:
+        patterns:
+          - "*"
+
+  # ---- GitHub Actions ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

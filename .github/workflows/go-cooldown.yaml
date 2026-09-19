@@ -1,0 +1,117 @@
+name: Go Cooldown
+
+# Go has no resolver-side cooldown, so this workflow is the guard itself rather than a
+# detector for a bypassed one — README.md の「Go のクールダウン」.
+
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+on:
+  pull_request:
+  schedule:
+    - cron: '15 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-cooldown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+
+      # The default checkout is shallow, so the base commit is absent and `git show
+      # <base>:go.mod` fails. Fetching the base ref explicitly is what makes the diff
+      # resolvable; without it the gate cannot tell an added requirement from an existing one.
+      - name: Resolve gate base
+        id: base
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BASE_REF}" ]; then
+            echo "base=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # refspec を明示する。ブランチ名だけを渡す fetch は FETCH_HEAD しか更新せず、
+          # refs/remotes/origin/<base> を作らない —— 直後の `git show origin/<base>:...` が
+          # exit 128 で落ちる。
+          git fetch --no-tags --depth=200 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          echo "base=origin/${BASE_REF}" >> "$GITHUB_OUTPUT"
+
+      # The summary body is written by the tool, which fences every value it did not author
+      # itself: a module path comes out of `go.mod`, which the pull request controls, and the
+      # step summary renders Markdown. The headings stay live so the report reads as a report.
+      - name: Check Go module cooldown
+        shell: bash
+        env:
+          GATE_BASE: ${{ steps.base.outputs.base }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${GATE_BASE}" ]; then
+            make go-cooldown-gate RUNNER_MODE=host \
+              BASE="${GATE_BASE}" SUMMARY_OUT=go-cooldown-summary.md \
+              && status=0 || status=$?
+          else
+            make go-cooldown-audit RUNNER_MODE=host \
+              SUMMARY_OUT=go-cooldown-summary.md \
+              && status=0 || status=$?
+          fi
+
+          cat go-cooldown-summary.md >> "${GITHUB_STEP_SUMMARY}"
+          exit "${status}"

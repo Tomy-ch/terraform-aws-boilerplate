@@ -1,0 +1,12 @@
+# GitHub Actions の pin 対象 SHA（SSOT）。
+# make pin-actions-resolve で解決・make pin-actions-apply で workflow へ反映する。
+"actions/cache@v6.1.0" = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+"actions/checkout@v7.0.1" = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+"actions/dependency-review-action@v5.0.0" = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
+"actions/github-script@v9" = "3a2844b7e9c422d3c10d287c895573f7108da1b3"
+"actions/setup-go@v7" = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+"actions/upload-artifact@v7" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+"dorny/paths-filter@v4" = "ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
+"github/codeql-action@v4.37.9" = "cdf488f595d80d6e07e03d4674febd5ab45fa938"
+"k1LoW/octocov-action@v1" = "a167dc0dee441b7ffc45e1b862ab55ec0d87f278"
+"step-security/harden-runner@v2.21.0" = "05e31511f85b41b11d1cf0ef85d0992719546e2c"

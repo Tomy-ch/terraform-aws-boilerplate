@@ -1,0 +1,11 @@
+# actionlint configuration
+# https://github.com/rhysd/actionlint/blob/main/docs/config.md
+
+# self-hosted runner labels (suppresses the "unknown runner label" false positive)
+# self-hosted-runner:
+#   labels:
+#     - my-custom-runner
+
+# Declared `vars.*` (lets actionlint flag a reference to an undeclared one)
+# config-variables:
+#   - DEPLOY_ENV

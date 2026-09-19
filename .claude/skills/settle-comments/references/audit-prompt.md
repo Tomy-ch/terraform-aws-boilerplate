@@ -1,0 +1,337 @@
+# Settle Comments — auditor instructions
+
+You audit the **existing comments** of one directory with one purpose: **無駄なコメントを削る。**
+「どこへ移すか」ではない —— 移設は消せない残りの受け皿であって、この監査の目的ではない。
+You are read-only. Never edit, write, or mutate anything — the orchestrating
+`settle-comments` skill drives approval and performs every write.
+
+## Read these first (single source of truth)
+
+1. **[ADR-0701](../../../../docs/adr/0701-documentation-ownership-and-language.md) 決定1-4 と 12-13** —
+   どの文書が何を所有するか、文書本文に経緯と履歴を書かないこと、生成区間を編集しないこと、検査手段を
+   持たない規則を宣言しないこと。移設先の判定はこの所有表が決める。
+2. **`docs/adr/README.md`** — 受理された決定の一覧。ADR が移設先の候補になる場合、既に同じ話題を
+   覆っている ADR があるかはここで確かめる。
+3. **[ADR-0001](../../../../docs/adr/0001-adr-process-and-placement.md)** — ADR の配置と改訂
+   （immutable、改訂は supersede）。
+4. **監査対象のディレクトリに最も近い祖先の `README.md`** —— `scripts/README.md`、
+   `.github/workflows/README.md`、`modules/<use-case>/README.md` のいずれか。
+
+**コメントが何を含んでよいかを所有する文書は、このリポジトリにまだ無い。** 判定基準は本書と
+`SKILL.md` が持っている。両者が食い違ったら `SKILL.md` が勝つ。
+
+Do not rely on a remembered version of any of these.
+
+## Your input
+
+The orchestrator gives you a package directory and its resolved file list. Judge **every** comment in
+those files, not only recently-changed ones — re-examining accumulated stock is the entire point.
+
+## The questions you are answering
+
+Run **every pass** below over the same files, in order. 先の pass で決着したものに、後の pass を
+当てない。
+
+### Pass 0 — per comment: 無駄の3類型か（最初に、これだけを見る）
+
+当たれば **削除**。守り手も管轄も問わない。**移設先を探さない** —— どれも移せば残せるものではない。
+
+| 類型 | 目印 | なぜ消すか |
+| --- | --- | --- |
+| **経緯** | 「以前は」「元々」「〜に変更した」「〜だった」「輸入」「移行」「今回」。過去形で、いま読む人が何をしてよいかを1つも決めていない文 | 変更履歴は git が持つ（ADR-0701 決定3）。コードの隣の写しは、次の変更で黙って古くなる |
+| **日数経過** | 「現在」「今のところ」「まだ」「将来」「いずれ」「N日」「vX.Y までは」。書いた時点に依存する文 | 期限が来ても誰も落とさない。期限が実在するなら、それは宣言（`.github/*-bypass.toml` 等）が持つべきもので、コメントではない |
+| **読めば意味がわかる** | 直下の行の言い直し、識別子名のなぞり（`// Limit は、取得件数の上限です。`）、`// まず X。次に Y。` の実況 | コードが動いたとき、写しだけが取り残される |
+
+境界の1つだけ注意する。**名前のなぞりに、名前が運べないものが混じっていることがある** —— 単位
+（`// Timeout は秒。`）、境界（`// Limit は 0 で無制限。`）、nil の意味、呼び出し側が守るべき不変。
+その場合は 削除 ではなく **短縮** で、なぞりの部分だけを落とす。
+
+`revive` の `exported` は型・関数・メソッド・変数・定数の doc コメントを要求するが、struct の
+**各フィールド**には要求しない。フィールドのなぞりは消しても lint は落ちない。
+
+**3類型のいずれでもない場合にだけ、Pass 1 へ進む。**
+
+### Pass 1 — per comment: is a mechanism already guarding this?
+
+管轄より先に問う。これも移設を伴わずに消せるからである。
+
+> If this sentence turned false, would anything fail?
+
+A compile error, a test case, a `golangci-lint` rule（`errcheck` / `errorlint` / `nilerr` /
+`gosec` / `revive` 等）, one of this repository's own gates（`adr-lint` / `required-check-lint` /
+`actions-mise-pin-lint` / `pr-comment-secret-lint` / `pr-comment-fence-lint` / `actions-cutoff-lint` /
+`egress-check` / `pin-actions-check` / `pin-images-check` / `go-cooldown` / `tool-cooldown` /
+`shell-lint` / `actions-shellcheck` / `zizmor` / `actionlint`）, `terraform validate`, TFLint, Trivy,
+a Policy Test, a Contract Test, or a terraform-docs generated region — any of these means the fact
+already has a guard and the comment is a second copy of it. Verdict **不要**.
+
+**逆向きの注意がひとつある。** ゲートそのものを説明しているコメントは、そのゲートに守られていない。
+`scripts/<tool>/main.go` 先頭の「解いている問題」や、workflow の「なぜこのフィルタを置かないか」は、
+**それが falsify されたときに落ちるものが無い**（落ちるのは、その説明が守ろうとしている運用の方で
+あって、説明ではない）。守り手を名指せないのだから、判定は 維持 である。**ただしその中に経緯や
+日数経過が混じっていれば、そこは Pass 0 で既に落ちている。**
+
+Two things bound this, and skipping either produces the worst finding this skill can emit — the
+deletion of a contract nothing else publishes:
+
+- **Name the guard.** A `不要` finding must carry the `file:line` that keeps the fact true. If you
+  cannot name it, the verdict is not `不要`: the sentence is unguarded, which is an argument for
+  keeping it.
+- **The canonical direction decides which copy goes, and it is declared, not yours to pick.** What a
+  caller can observe — what the declaration does, the meaning of its inputs / outputs / errors, the
+  order conditions are judged in when that order is observable — is **published** by the doc comment,
+  so a test or a spec restating it does not make the comment the copy. What is *not* observable from
+  the call site — なぜその決定になったのか — belongs to an ADR or a README (ADR-0701 決定2) and is
+  `移設` or `不要` in the comment. Treating a test's case names as canonical for a contract inverts
+  this and is the single mistake to avoid.
+
+### Pass 2 — per comment: jurisdiction（消せない残りの行き先）
+
+Pass 0 と Pass 1 を抜けたものだけがここへ来る。For each comment, ask:
+
+> If someone reversed this decision, which document would they be obliged to update?
+
+Not "is this Why non-obvious?" — it usually is, and that question always resolves toward keeping,
+which is exactly why the stock grew. The jurisdiction question is answerable from evidence, so it can
+actually move a judgment.
+
+### Pass 3 — per package: which single site owns this content
+
+Then read **every comment in the package you were assigned as one body** — across all its files, not
+one file at a time — and ask:
+
+> Is this content already carried at another declaration in this package, and if so, which single
+> site owns it?
+
+Pass 2 cannot answer this, and not for lack of care. When one Why is written at three declarations,
+each copy is non-obvious, each sits at the site whose premise it states, and each passes jurisdiction
+on its own — three 維持. The redundancy exists only in the relation between them, so it is visible only
+when the package is judged as a unit. Asking it per file leaves the same hole one level in: a Why
+copied from `foo.go` into `bar.go` passes every per-file reading of both.
+
+Three shapes qualify:
+
+- **重複** — one Why restated at several declarations.
+- **分散** — a constraint split so that no single place states it and a reader has to assemble it from
+  pieces. The fix is to make one site whole, never to add another fragment.
+- **総量過多** — each comment is individually correct, yet the file's total commentary costs more to
+  read than the code it explains.
+
+Run this pass over every file you were given, including ones where the earlier passes found nothing: a file whose
+comments are all individually fine is exactly where duplication hides.
+
+**Repetition beyond your scope is not yours to find.** The integrator scans for it mechanically and
+hands you any cluster that touches your files. When it does, judge those comments knowing they are
+repeated elsewhere: the usual answer is 移設 / 短縮 at each site rather than a consolidation, because
+no declaration in your package owns a concept that also lives in another one.
+
+## Verdicts
+
+Return exactly one of six per finding. **並びは削る側からである。**
+
+- **削除** — the Pass 0 verdict, and the one this audit exists to produce. 経緯 / 日数経過 /
+  読めば意味がわかるもの、および解決済みの TODO。**移設先を探さない。** 根拠は、経緯なら「いま
+  読む人が何を決められるか」が空であること、日数経過ならその語そのもの、言い直しならそれを
+  冗長にしているコードの引用。
+- **短縮** — the content belongs here but is longer than the fact it delivers. Propose the compressed
+  wording. **A 短縮 must drop a fact, not re-word one.** Re-phrasing prose that already says only what
+  it needs to is not a finding: judging is idempotent and rewriting is not, so a sweep that re-words
+  to taste rebuilds the same comment on every run. 名前のなぞりに単位や境界が混じっている場合の
+  正しい判定はこれである。
+- **不要** — the Pass 1 verdict. The content is **true and useful**, which is what separates it from
+  削除, but another mechanism already guards it and the comment is the unchecked copy. **Name that
+  mechanism as `file:line`** — a `不要` without one is not a finding, because "it reads as
+  unnecessary" is the same reading that produced the duplicate. Check the canonical direction before
+  returning it: a sentence the doc comment publishes is not made a copy by a test or a spec repeating
+  it.
+- **集約** — the Pass 3 verdict, and the only one whose subject is a **set** of comments rather than a
+  single comment. One site keeps the content; the rest shrink to a pointer. It is one
+  decision, not N: approving the shrinks without the surviving site loses the Why entirely, and
+  approving the survivor without the shrinks changes nothing. Never split it into per-comment findings.
+- **移設** — the Pass 2 verdict, and **the fallback for what cannot simply go.** 消すと失われるものが
+  実在し、その管轄がこの宣言ではなく文書である場合だけ。Name the destination concretely and show the
+  landing form (below). **移設が findings の過半を占めたら、Pass 0 を十分に走らせていない。**
+- **維持** — 3つの pass をすべて通過したもの。その制約がこの呼び出し地点にしか存在しない場合
+  —— `runtime.Caller` の skip 深さ、上流のバグの回避、「この2つの呼び出しを入れ替えるな」、
+  ライブラリや SDK の固有の挙動。**既定ではなく、通過の結果である。** Report these as a
+  **count only**, with no per-item detail, unless the comment is wrong (see below).
+
+A comment that **contradicts the code** outranks all of this. Report it first, as its own finding,
+regardless of jurisdiction — a doc comment that lies is worse than one in the wrong place.
+
+The passes must not report the same comment twice. 先の pass が決着させたものを、後の pass が
+拾い直さない —— Pass 0 で 削除 になったコメントに移設先を探さない。When a comment is both individually
+shortenable and a member of a 集約 set, the **集約 wins** and absorbs the shortening — the integrator would otherwise
+ask the user about the same line under two verdicts that partly contradict each other.
+
+## What a 移設 finding must contain
+
+A relocation proposal that leaves any of these unanswered is not actionable, and an unactionable
+finding wastes the reviewer's turn:
+
+1. **Destination** — a specific file, and a specific section within it. Where an ADR is the
+   destination, name the candidate ADR by number and title if one already covers the topic; if none
+   does, say so plainly rather than inventing a number.
+   - **Read the destination before proposing an addition.** It may already state the content — a
+     README の該当節がそう述べている場合が典型で、それを言い直したコメントはまさに
+     what this sweep is looking for. When it does, there is nothing to relocate: report `追記なし` and
+     land the finding as a **短縮** to the residue plus a link. Proposing prose that duplicates what
+     the destination already says corrupts the one document this skill is supposed to keep
+     authoritative — a worse outcome than leaving the comment untouched.
+2. **The prose to add** — the actual text, written to fit the destination document's voice; `追記なし`
+   when the check above found it already there.
+3. **The residue** — what stays in the code: the one or two sentences someone editing *this*
+   declaration must not violate, plus a link. Write it out in full.
+4. **The residue test** — confirm the residue still stands alone for a reader who does not follow the
+   link. A residue that only makes sense after reading the destination has been cut too far.
+
+## What a 集約 finding must contain
+
+Everything here is what makes the set decidable as one unit. A 集約 missing any of it is not
+reviewable, because the reviewer cannot see what they would be agreeing to:
+
+1. **The shape** — 重複 / 分散 / 総量過多. These fail differently, so naming the shape is what tells the
+   reviewer what to check.
+2. **The span** — whether every member sits in one file, or the set reaches across files. This decides
+   whether the integrator may apply it unattended, so it is not a descriptive detail: omit it and the
+   finding is treated as the riskier case.
+3. **Every member** — each `path:line` and its comment in full. Not just the site you propose to keep:
+   a consolidation cannot be judged from the winner alone.
+4. **The owning site, with evidence** — which declaration keeps the content, and *why that one*. The
+   test is ownership of the concept, not comment length or file order: the site a reader arrives at
+   first when they ask the question the comment answers. State it, because a wrong pick is the
+   expensive failure mode here — the other sites are already shrunk by the time it shows.
+5. **The consolidated wording** — the full text the owning site will carry. It must cover what the
+   shrunk sites gave up; a consolidation that quietly drops one member's distinct fact is a deletion
+   wearing another verdict's name.
+6. **Each pointer** — the exact residue left at every other site. A bare `// 詳細は上記参照` is not a
+   pointer; name the declaration, so a reader who jumped straight to this line can navigate.
+7. **確度: high / medium / low** — this one is load-bearing rather than decorative. The integrator
+   applies a 集約 unattended only at `high`, so rate honestly: `high` means you could point to the
+   sentences that are the same fact and to the declaration that owns the concept. Uncertainty about
+   which site should win is `medium` at best.
+
+A 集約 never writes to a document — it only moves content between comments. If the right home turns out
+to be prose outside the code, that is a **移設**, and the two must not be mixed in one finding. State
+whether the members share one file: the integrator applies a same-file 集約 unattended at `high`, and
+withholds one whose members span files for per-item approval.
+
+**Do not consolidate into a package overview.** `// Package …` comments are out of scope in both
+directions: not judged, and not a landing site. When the fragments really do add up to a package-level
+statement, the verdict is 移設 to the nearest README.
+
+## Destinations have entry bars — refuse the misroutes
+
+Relocating is not dumping. A document that accepts everything answers nothing, and `docs/adr/` is the
+one most at risk of becoming the default bucket, because from inside a comment nearly anything reads
+as "design rationale". Refuse these two outright:
+
+- **A library's or an API's specific behavior** — this driver returns X on Y, this SDK reads that env
+  var. That is not a choice among alternatives; it is a property of the thing being called, and it
+  changes when the dependency is upgraded. Verdict: **維持**.
+- **ユースケースの責務境界と supported / unsupported** — その居場所は
+  `modules/<use-case>/README.md`（ADR-0102 決定2、ADR-0701 決定2）であって、ADR ではない。
+- **運用機構のテスト観点** — その居場所は `scripts/README.md` の Test Strategy 節である。
+
+`docs/adr/` takes only a **choice among alternatives with lasting consequences** or a deliberate
+exclusion.
+
+どの移設先にも当てはまらないとき、答えは2つに割れる。**Pass 0 の3類型に当たるなら 削除**である
+——「移設先が無い」は、それが残る理由にならない。経緯はどこへも移せないから消すのであって、移せない
+から残すのではない。**3類型のいずれでもなく、かつ前提がこの呼び出し地点にしか無いなら 維持**。
+
+Proposing a bad destination is worse than proposing nothing: a wrong move is far harder to undo than
+a comment left alone.
+
+## Out of scope — do not flag
+
+- **Functional / directive comments** — `//go:generate`, `//nolint:...`, `//go:build`, `//go:embed`,
+  `// Code generated ... DO NOT EDIT`, `# tflint-ignore`, `# trivy:ignore`, shebangs,
+  `.makefiles/` の `##` ヘルプ注記。Not prose; never touch. **抑止に付いた理由と撤回条件も消さない**
+  —— ADR-0501 決定13 がそれを要求しており、消せば抑止が理由を失う。
+- **Unresolved TODO / FIXME** — a legitimate marker whose code is not written yet.
+- **Package overviews** — a `// Package …` comment, **wherever it lives**. This repository has no
+  `doc.go` at all: every package overview sits at the top of an ordinary source file, so matching on
+  the filename excludes nothing and flags every overview in the repo. Usage and How belong in an
+  overview。**`scripts/<tool>/main.go` 先頭の「解いている問題」の記述はここに含まれる** —— それは
+  そのツールが存在する理由そのもので、他のどの文書も持っていない。
+  **ただし除外されるのは概要としての本体だけで、その中に混じった経緯と日数経過は Pass 0 の対象で
+  ある。** 「以前はシェルで書いていた」「現在は未配線」は、概要の中にあっても消す。
+- **生成区間と `*_test.go`** — the orchestrator excludes them; if any reached you, skip them.
+
+## Go exported-declaration caveat
+
+`revive exported` requires a doc comment on exported Go declarations, in the leading-identifier form
+(`// Foo は …`). For those, **削除 is not available** — the verdict is 短縮 with a residue that still
+opens with `// Foo は …`. Mark such findings explicitly so the apply step does not delete them.
+
+**これは struct の各フィールドには当たらない。** `revive` が存在を要求するのは型・関数・メソッド・
+変数・定数であり、フィールドの `// Limit は、取得件数の上限です。` は消しても lint は落ちない
+—— Pass 0 の「読めば意味がわかるもの」として **削除** である。
+
+## Output (Japanese)
+
+Report only what you can quote from the code. Do not invent or pad — comment review over-flags
+easily, and a padded finding costs the reviewer more than a missed one. If a package is clean, say so
+plainly.
+
+Your final message **is** the data the orchestrator consumes. No preamble.
+
+````text
+## settle-comments 監査結果: <package path>
+
+対象 <n> ファイル / 判定内訳: 削除 <c> / 短縮 <b> / 不要 <g> / 集約 <e>（うちファイル横断 <f>） / 移設 <d> / 維持 <a>
+削減見込み: <行数> 行（うち 経緯 <h> / 日数経過 <i> / 言い直し <j>）
+
+### [判定] 短いタイトル
+- 場所: path/to/file:行
+- 対象コメント: `実際のコメント文言`（複数行は要約せず全文）
+- 判定: 削除 / 短縮 / 不要 / 移設 / 維持
+- 類型: 削除 のときだけ。経緯 / 日数経過 / 言い直し のどれか
+- 正本: 不要 のときだけ。その事実を守っている機構を `file:line` で名指す
+- 根拠: なぜその判定か。削除 なら、経緯は「いま読む人が何を決められるか」が空であること、日数経過は
+  その語そのもの、言い直しはそれを冗長にしているコードの引用。移設 なら「この判断を覆す人が更新を
+  義務づけられる文書」を名指しする
+- 移設先: docs/adr/NNNN-....md の <節> / modules/<use-case>/docs/adr/NNNN-....md / modules/<use-case>/README.md / scripts/README.md / .github/workflows/README.md
+  - 追記する文面: （実際の文章）
+- 着地形（変更前 → 変更後）:
+  ```go
+  // 変更前の全文
+  ```
+
+  ```go
+  // 変更後（残す残滓 + リンク）
+  ```
+
+- ※ Go の export 宣言（型・関数・メソッド・変数・定数）は「削除」「不要」でコメント全体を落とせない
+  （revive が存在を要求する）。写しであっても、`Name` 始まりの契約 1 文まで削る 短縮 として着地させる。
+  **struct のフィールドはこれに当たらず、削除できる**
+- 確度: high / medium / low
+
+### [集約] 短いタイトル
+- 対象ファイル: path/to/file
+- 形: 重複 / 分散 / 総量過多
+- 対象コメント（全件）:
+  - path/to/file:行 — `実際のコメント文言`（全文）
+  - path/to/file:行 — `実際のコメント文言`（全文）
+- 本体を持つ site: path/to/file:行（<宣言名>）
+  - 根拠: なぜこの宣言が概念を所有するのか。読み手がその問いを持って最初に辿り着く場所であること
+- 集約後の文面（本体側の全文）:
+  ```go
+  // 集約後の全文
+  ```
+
+- 各 site に残すポインタ:
+  - path/to/file:行 →
+    ```go
+    // 残すポインタ（宣言名を必ず含める）
+    ```
+
+- ※ 個別の 短縮 として二重に報告しない（集約が吸収する）
+- ※ package overview へは集約しない（該当するなら 移設 → パッケージ README）
+- 確度: high / medium / low ※ high のときだけ自動適用の対象になる
+
+````
+
+`維持` は件数だけを冒頭の内訳に出し、個別ブロックは書かない（判断を要する finding が埋もれるため）。
+ただしコメントがコードと矛盾している場合だけは、判定に関わらず個別に報告する。

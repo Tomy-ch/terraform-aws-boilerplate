@@ -1,0 +1,110 @@
+name: Actions Lint
+
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actions-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: actionlint shellcheck
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Actions lint
+        id: actions-lint
+        shell: bash
+        run: |
+          set +e
+
+          make actions-lint RUNNER_MODE=host 2>&1 | tee /tmp/actions-lint.log
+
+          code=${PIPESTATUS[0]}
+
+          if [ "$code" -eq 0 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "title=## ✅ Actions lint: PASS (actionlint + composite-action shellcheck + Node 検査群)" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "title=## ❌ Actions lint: FAIL (actionlint + composite-action shellcheck + Node 検査群)" >> "$GITHUB_OUTPUT"
+          fi
+
+          exit 0
+
+      - name: Comment Actions lint result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- actions-lint-result -->'
+          status: ${{ steps.actions-lint.outputs.status }}
+          title: "${{ steps.actions-lint.outputs.title || '## ⚠️ Actions Lint: CUT OFF (no result produced)' }}"
+          body-file: /tmp/actions-lint.log
+          details-summary: 'Actions lint log'
+
+      - name: Fail if Actions lint failed
+        if: always() && steps.actions-lint.outputs.status != 'success'
+        run: exit 1
