@@ -19,3 +19,14 @@ zizmor:
 .PHONY: zizmor-audit ## 助言まで含めた全所見を表示（ゲートしない）
 zizmor-audit:
 	@$(GO_TOOL) zizmor --no-progress --persona auditor $(ZIZMOR_TARGET) || true
+
+.PHONY: zizmor-sarif ## 全所見を SARIF で標準出力へ書き出す（code scanning 連携用）
+##
+## **severity で絞らない。** ゲートが high だけを見る一方で、code scanning には全所見を残す。
+## 「落とさないが記録はする」層が、ここで成立する。
+##
+## 出力は純粋な SARIF でなければ code scanning が受け取れない。レシピ先頭の `@` がエコーを
+## 抑えているが、呼び出し側は `make -s` も併せて渡すこと —— `@` が1つ落ちただけで、SARIF の
+## 先頭にコマンド文字列が混ざる壊れ方をする。
+zizmor-sarif:
+	@$(GO_TOOL) zizmor --no-progress --format sarif $(ZIZMOR_TARGET)

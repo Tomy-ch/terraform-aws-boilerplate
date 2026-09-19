@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Why the trigger condition lives in a job: README.md § Required checks report on every pull request.
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
   changes:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -68,7 +68,7 @@ jobs:
 
   mod-tidy-check:
     needs: changes
-    # Fail open — README.md § Required checks report on every pull request.
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -121,7 +121,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: scripts/go.mod
-          # cache: false — this job holds security-events: write. See README.md § Cache safety.
+          # cache: false — this job holds security-events: write. See README.md の「キャッシュの安全性」.
           cache: false
 
       # `go mod verify` only checks modules already present in the local download
@@ -137,10 +137,12 @@ jobs:
       # Scope worth knowing: neither command inspects the committed vendor/ tree, and
       # builds here run in vendor mode. This verifies that go.sum still describes the
       # real upstream modules; it does NOT prove vendor/ matches them.
+      # The module is rooted at scripts/, so every go command needs -C. Running one from the
+      # repository root reports "cannot find main module" rather than a tidy failure.
       - name: Verify module checksums
         run: |
-          go mod download
-          go mod verify
+          go -C scripts mod download
+          go -C scripts mod verify
         shell: bash
 
       - name: Tidy (check only)
@@ -150,9 +152,9 @@ jobs:
           set +e
           mkdir -p /tmp
 
-          go mod tidy
-          git diff --no-color -- go.mod go.sum > /tmp/go-mod-tidy.diff
+          make go-tidy-check RUNNER_MODE=host > /dev/null 2>&1
           code=$?
+          git diff --no-color -- scripts/go.mod scripts/go.sum > /tmp/go-mod-tidy.diff
 
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then

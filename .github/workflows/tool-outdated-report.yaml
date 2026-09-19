@@ -1,9 +1,9 @@
 name: Tool Version Report
 
 # `tool-cooldown` gates a declared version against the window; neither it nor anything else notices
-# that upstream has published a newer one. Without this, the pins in `mise.toml` and `python/*.in`
-# sit still until somebody remembers to run `/tools-upgrade`. This reports so that remembering is
-# not a person's job; it never applies an update.
+# that upstream has published a newer one. Without this, the pins in `mise.toml` sit still until
+# somebody remembers to check by hand. This reports so that remembering is not a person's job;
+# it never applies an update.
 #
 # The report goes to an issue rather than a pull request because a notification carries no diff to
 # maintain: it cannot conflict while it waits, and it closes itself once nothing is actionable.

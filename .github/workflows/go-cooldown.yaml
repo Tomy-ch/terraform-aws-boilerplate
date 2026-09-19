@@ -1,26 +1,9 @@
 name: Go Cooldown
 
-# Unlike npm, Go has no resolver-side cooldown: nothing lets `go get` refuse a version for
-# being too new, and `.npmrc`'s `min-release-age` has no counterpart in `go.mod`. This
-# workflow is therefore not a detector for a bypassed guard — it *is* the guard, and the
-# window exists nowhere else.
-#
-# On a pull request it gates: only the requirements the change adds or upgrades are checked,
-# so the modules already in `go.mod` are grandfathered rather than blocking every branch.
-# Only direct requirements fail the check. An indirect version is chosen by MVS and can be
-# pinned below a direct dependency's own lower bound, so failing on one would produce a red
-# nobody can resolve; those are reported instead.
-#
-# The scheduled run audits every requirement and never fails on the window. What it does fail
-# on is the bypass file: an entry whose deadline has passed, whose deadline reaches further
-# than the allowed maximum, or that no longer matches anything in `go.mod`. A deadline arrives
-# without `go.mod` changing, so the pull-request trigger alone would never notice one expiring
-# — the schedule is what collects them.
+# Go has no resolver-side cooldown, so this workflow is the guard itself rather than a
+# detector for a bypassed one — README.md の「Go のクールダウン」.
 
-# `pull_request` に paths / branches のフィルタを置かない。除外された Pull Request では run が
-# 1件も起動せず、GitHub は報告されなかった context を「該当しない」とは解釈せずに待ち続ける。
-# その Pull Request は恒久的にマージ可能にならない。起動を絞る必要が生じたら、フィルタではなく
-# job の if: に置く —— skip された job は skipped を報告し、required check はそれを成功として数える。
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   schedule:
@@ -118,12 +101,12 @@ jobs:
           set -euo pipefail
 
           if [ -n "${GATE_BASE}" ]; then
-            go run ./scripts/go-cooldown gate --base="${GATE_BASE}" --github \
-              --summary-out=go-cooldown-summary.md \
+            make go-cooldown-gate RUNNER_MODE=host \
+              BASE="${GATE_BASE}" SUMMARY_OUT=go-cooldown-summary.md \
               && status=0 || status=$?
           else
-            go run ./scripts/go-cooldown audit --github \
-              --summary-out=go-cooldown-summary.md \
+            make go-cooldown-audit RUNNER_MODE=host \
+              SUMMARY_OUT=go-cooldown-summary.md \
               && status=0 || status=$?
           fi
 

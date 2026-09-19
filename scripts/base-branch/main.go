@@ -13,8 +13,7 @@
 //
 // 最新の定義はバージョン番号の数値比較であって、コミット日時ではない。リリースラインの
 // 新しさはバージョン番号そのものが表しており、日時は古いラインへの hotfix やベース merge で
-// 前後する（実際このリポジトリの release/v2.1.0 は、より新しい release/v2.2.0 を取り込んだ
-// merge を tip に持つ）。ブランチを切る scripts/release も同じ数値比較で次版を決めるので、
+// 前後する。ブランチを切る scripts/release も同じ数値比較で次版を決めるので、
 // 作る側と解決する側の基準が揃う。文字列順を採らないのは v1.10.0 が v1.9.0 より前に並ぶため。
 //
 // git はホストの認証情報を使うため、ツールランナーではなくホストで実行する
@@ -41,8 +40,7 @@ const (
 	// remoteName は、実状態を問い合わせるリモート。
 	remoteName = "origin"
 	// refPrefix は、`git ls-remote --heads` が返す参照の接頭辞。
-	refPrefix = "refs/heads/"
-	// releasePrefix は、リリースラインのブランチ名の接頭辞。
+	refPrefix     = "refs/heads/"
 	releasePrefix = "release/"
 	// commandTimeout は、git 1 コマンドあたりの上限。ネットワーク越しのため余裕を持たせる。
 	commandTimeout = 60 * time.Second
@@ -51,11 +49,9 @@ const (
 var (
 	// releasePattern は、リリースラインとして扱うブランチ名の形式。プレリリースや
 	// ビルドメタデータは対象外（scripts/release が作る形式に合わせる）。
-	releasePattern = regexp.MustCompile(`^release/v(\d+)\.(\d+)\.(\d+)$`)
-	// errNoReleaseBranch は、origin にリリースラインが 1 本も無いことを表す。
+	releasePattern     = regexp.MustCompile(`^release/v(\d+)\.(\d+)\.(\d+)$`)
 	errNoReleaseBranch = xerrors.New("❌ origin に release/vX.Y.Z 形式のブランチがありません")
-	// errUnexpectedArgs は、解釈できない引数が渡されたことを表す。
-	errUnexpectedArgs = xerrors.New("❌ usage: base-branch（引数は取りません）")
+	errUnexpectedArgs  = xerrors.New("❌ usage: base-branch（引数は取りません）")
 )
 
 // releaseLine は、1 本のリリースライン。
@@ -64,7 +60,6 @@ type releaseLine struct {
 	major, minor, patch int
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -79,7 +74,7 @@ func run(args []string, list func() (string, error), out io.Writer) error {
 	fs := flag.NewFlagSet("base-branch", flag.ContinueOnError)
 
 	if err := fs.Parse(args); err != nil {
-		// ヘルプ要求は失敗ではないので 0 で終える。usage は flag が既に出力している。
+		// usage は flag が既に出力している。
 		if xerrors.Is(err, flag.ErrHelp) {
 			return nil
 		}

@@ -59,7 +59,7 @@ runs:
           // Absence means cut-off, not step failure: a cut-off job never reaches the step that
           // writes the body. It is not the whole test — a job cut off *while* writing leaves a
           // file behind, and the caller's `title` carries that half (see below).
-          // See README.md § Job Cut-off.
+          // See README.md の「ジョブの打ち切り」.
           const cutOff = !fs.existsSync(bodyFile);
           if (cutOff) {
             core.warning(`${bodyFile} not found; reporting the job as cut off`);
@@ -74,7 +74,7 @@ runs:
 
           // The cut-off heading replaces the caller's title: no title can still describe a body
           // saying the job never ran, and it names no cause (only the run log tells a timeout from
-          // an earlier failure). See README.md § Job Cut-off.
+          // an earlier failure). See README.md の「ジョブの打ち切り」.
           const heading = cutOff
             ? '## ⚠️ CUT OFF (no result produced)'
             : title;
@@ -103,7 +103,7 @@ runs:
 
           // One backtick longer than the longest run in the body, so no run in the body can
           // close the fence early. Callers that fence their own body duplicate this exactly.
-          // See README.md § PR comment fencing.
+          // See README.md の「PR コメントのフェンス」.
           const fenceFor = (text) => {
             const longestRun = (text.match(/`+/g) || [])
               .reduce((max, run) => Math.max(max, run.length), 0);
@@ -128,14 +128,14 @@ runs:
           });
 
           // Matched on the marker AND a Bot author, and only as a prefix — a marker anywhere in a
-          // body can be planted by a pull-request author. See README.md § Notes.
+          // body can be planted by a pull-request author. See README.md の「補足」.
           const existing = comments.find(
             c => (c.body || '').startsWith(marker) && c.user?.type === 'Bot',
           );
 
           // `success` suppresses *creating* a comment, never updating one, so a fixed check
           // overwrites its own red comment in place. A cut-off has no status and always posts.
-          // See README.md § Result Comments.
+          // See README.md の「結果コメント」.
           const quiet = !cutOff && status === 'success';
 
           if (!existing && quiet) {
@@ -146,7 +146,7 @@ runs:
           // The one comment deleted rather than overwritten: a cut-off records no verdict, so a
           // later success answers it rather than superseding a finding. Recognized by its heading,
           // since a mid-write cut-off has a body. A refused delete falls back to the overwrite.
-          // See README.md § Result Comments.
+          // See README.md の「結果コメント」.
           const headingLine = (existing?.body || '').split('\n')[1] || '';
           const staleCutOff = quiet
             && headingLine.startsWith('## ')

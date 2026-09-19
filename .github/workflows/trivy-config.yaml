@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Why the trigger condition lives in a job: README.md § Required checks report on every pull request.
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
   changes:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -87,7 +87,7 @@ jobs:
 
   trivy-config:
     needs: changes
-    # Fail open — README.md § Required checks report on every pull request.
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -148,7 +148,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy config scan (JSON)
-        run: make -s trivy-config-ci TRIVY_FORMAT=json > trivy-config.json
+        run: make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=json > trivy-config.json
         shell: bash
 
       - name: Create Trivy config summary (Markdown)
@@ -207,7 +207,7 @@ jobs:
 
       - name: Trivy config scan (SARIF)
         if: always()
-        run: make -s trivy-config-ci TRIVY_FORMAT=sarif > trivy-config.sarif
+        run: make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=sarif > trivy-config.sarif
         shell: bash
 
       # Its own category so misconfiguration alerts stay separable from the

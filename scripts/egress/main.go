@@ -41,29 +41,20 @@ var (
 
 var (
 	// errUsage は、サブコマンドが無いか未知の場合のエラー。
-	errUsage = xerrors.New("usage: egress <apply|check>")
-	// errSSOTSyntax は、SSOT に解釈できない行があった場合のエラー。
+	errUsage      = xerrors.New("usage: egress <apply|check>")
 	errSSOTSyntax = xerrors.New("SSOT に解釈できない行があります")
 	// errSSOTDuplicate は、SSOT にセクション / キー / ホストの重複があった場合のエラー。
-	errSSOTDuplicate = xerrors.New("SSOT に重複があります")
-	// errSSOTUnknownClass は、未定義のクラスを参照した場合のエラー。
+	errSSOTDuplicate    = xerrors.New("SSOT に重複があります")
 	errSSOTUnknownClass = xerrors.New("SSOT が未定義のクラスを参照しています")
-	// errSSOTClassCycle は、クラスの includes が循環している場合のエラー。
-	errSSOTClassCycle = xerrors.New("SSOT のクラス継承が循環しています")
-	// errSSOTBaseClass は、base クラスを classes に明示した場合のエラー。
-	errSSOTBaseClass = xerrors.New("base クラスは全ジョブへ暗黙に適用されるため classes に書けません")
+	errSSOTClassCycle   = xerrors.New("SSOT のクラス継承が循環しています")
+	errSSOTBaseClass    = xerrors.New("base クラスは全ジョブへ暗黙に適用されるため classes に書けません")
 	// errSSOTPolicy は、egress_policy の値が不正、または audit ジョブが許可リストを持つ場合のエラー。
-	errSSOTPolicy = xerrors.New("SSOT の egress_policy が不正です")
-	// errWorkflowJobless は、どのジョブにも属さない harden-runner 記述を検出した場合のエラー。
+	errSSOTPolicy      = xerrors.New("SSOT の egress_policy が不正です")
 	errWorkflowJobless = xerrors.New("ジョブに属さない harden-runner の記述があります")
-	// errBlockComment は、allowed-endpoints ブロックにホスト以外の行があった場合のエラー。
-	errBlockComment = xerrors.New("allowed-endpoints ブロックにホスト以外の行があります")
-	// errPolicyMismatch は、workflow の egress-policy と SSOT の宣言が食い違う場合のエラー。
-	errPolicyMismatch = xerrors.New("workflow の egress-policy と SSOT の宣言が食い違います")
-	// errJobMissing は、workflow のジョブが SSOT に未登録の場合のエラー。
-	errJobMissing = xerrors.New("SSOT に未登録のジョブがあります")
-	// errJobOrphan は、SSOT にあるがどの workflow にも存在しないジョブがあった場合のエラー。
-	errJobOrphan = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
+	errBlockComment    = xerrors.New("allowed-endpoints ブロックにホスト以外の行があります")
+	errPolicyMismatch  = xerrors.New("workflow の egress-policy と SSOT の宣言が食い違います")
+	errJobMissing      = xerrors.New("SSOT に未登録のジョブがあります")
+	errJobOrphan       = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
 	// errEgressDrift は、check で SSOT との差分を検出した場合のエラー。
 	errEgressDrift = xerrors.New("allowed-endpoints が SSOT からずれています")
 )
@@ -106,7 +97,6 @@ type block struct {
 	hosts   []string
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -229,7 +219,6 @@ func parseAssignment(lines []string, i int) (string, []string, int, error) {
 	}
 }
 
-// assign は読み取ったキーを、開いているセクションのフィールドへ載せる。
 func assign(c *class, j *jobSpec, key string, values []string) error {
 	if err := requireUnique(values); err != nil {
 		return xerrors.Wrap(err, key)
@@ -283,7 +272,6 @@ func (s *ssot) validate() error {
 	return nil
 }
 
-// validateJob は 1 ジョブの宣言の整合を返す。
 func (s *ssot) validateJob(key string, j *jobSpec) error {
 	switch j.policy {
 	case "", policyBlock:
@@ -431,7 +419,6 @@ func readBlock(name string, lines []string, keyLine, indent int) (block, error) 
 	return b, nil
 }
 
-// renderBlock はホスト行を workflow へ書き戻す形へ整える。
 func renderBlock(hosts []string, indent int) []string {
 	pad := strings.Repeat(" ", indent+blockIndentStep)
 	out := make([]string, 0, len(hosts))

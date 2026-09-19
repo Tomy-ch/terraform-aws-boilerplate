@@ -1,7 +1,6 @@
 name: Release Dependency Scan
 
-# Blocking half of the Trivy double gate, and the counterpart of osv-release-gate.yaml:
-# trivy-fs.yaml reports on every PR without failing, this one runs at the promotion
+# Blocking half of the Trivy double gate: trivy-fs.yaml reports on every PR without failing, this one runs at the promotion
 # boundary and fails on a finding.
 #
 # The `push` trigger covers that boundary crossed without a promotion PR. A commit
@@ -30,7 +29,7 @@ concurrency:
 
 jobs:
   trivy-fs-release:
-    # Why the trigger condition lives in a job: README.md § Required checks report on every pull request.
+    # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
     if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["develop", "staging", "production"]'), github.base_ref) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -89,7 +88,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy FS scan (JSON, include unfixed)
-        run: make -s trivy-fs-release-ci TRIVY_FORMAT=json > trivy-fs-release.json
+        run: make -s trivy-fs-release RUNNER_MODE=host TRIVY_FORMAT=json > trivy-fs-release.json
         shell: bash
 
       - name: Create Trivy summary (Markdown)
@@ -158,8 +157,7 @@ jobs:
           details-summary: '📄 Summary'
 
       # release-gate is the strict gate for PRs targeting a deploy branch. It fails on every finding,
-      # including unfixed ones — osv-release-gate.yaml applies the same policy to its own HIGH /
-      # CRITICAL verdict. It also fails when summarize did not run and count is empty, so a
+      # including unfixed ones. It also fails when summarize did not run and count is empty, so a
       # failed scan / aggregation is never mistaken for a pass.
       - name: Fail if any vulnerability was found
         if: always() && steps.summarize.outputs.count != '0'

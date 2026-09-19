@@ -19,7 +19,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// actionFilenames は composite action の定義ファイル名。
 var actionFilenames = []string{"action.yml", "action.yaml"}
 
 // workflowPatterns は root からの相対で workflow 定義を指すパターン。

@@ -84,7 +84,8 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: npm:@commitlint/cli
+          # node は npm: backend の解決に要る。省くと mise が commitlint を入れられない。
+          tools: node npm:@commitlint/cli
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run commitlint on the PR commit range

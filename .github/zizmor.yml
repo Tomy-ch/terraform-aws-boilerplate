@@ -23,21 +23,11 @@ rules:
     remap:
       severity: informational
 
-  # Composite-action findings cannot be ignored per file (zizmor limitation), so
-  # the severity is remapped instead of listing the file.
-  # .github/actions/setup-postgres appends to $GITHUB_PATH using its own
-  # `pg_version` input, which is supplied by the calling workflow and never by
-  # untrusted event data — zizmor itself rates this detection "low confidence".
-  github-env:
-    remap:
-      severity: medium
-
   # Fires on any workflow that combines a caching setup action (mise / setup-go)
   # with a trigger set zizmor associates with publishing, which is nearly every
   # workflow here — a file list would rot on every addition. Detection is "low
   # confidence" and the caches are branch-scoped, so it is kept as an alert
-  # rather than a gate. deploy-app.yaml, which really does publish images, is
-  # still worth an explicit review.
+  # rather than a gate.
   cache-poisoning:
     remap:
       severity: medium

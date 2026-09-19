@@ -1,9 +1,6 @@
 name: Pin Actions Check
 
-# `pull_request` に paths / branches のフィルタを置かない。除外された Pull Request では run が
-# 1件も起動せず、GitHub は報告されなかった context を「該当しない」とは解釈せずに待ち続ける。
-# その Pull Request は恒久的にマージ可能にならない。起動を絞る必要が生じたら、フィルタではなく
-# job の if: に置く —— skip された job は skipped を報告し、required check はそれを成功として数える。
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   workflow_dispatch:
@@ -58,22 +55,6 @@ jobs:
             api.npmjs.org:443
             api.osv.dev:443
             npm.jsr.io:443
-            docker.io:443
-            index.docker.io:443
-            registry-1.docker.io:443
-            auth.docker.io:443
-            *.docker.io:443
-            production.cloudflare.docker.com:443
-            production.cloudfront.docker.com:443
-            mirror.gcr.io:443
-            ghcr.io:443
-            pkg-containers.githubusercontent.com:443
-            dl-cdn.alpinelinux.org:443
-            dl-cdn.alpinelinux.org:80
-            deb.debian.org:443
-            deb.debian.org:80
-            security.debian.org:443
-            security.debian.org:80
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +73,7 @@ jobs:
         run: |
           set +e
 
-          make pin-actions-check 2>&1 | tee /tmp/pin-actions.log
+          make pin-actions-check RUNNER_MODE=host 2>&1 | tee /tmp/pin-actions.log
 
           code=${PIPESTATUS[0]}
 

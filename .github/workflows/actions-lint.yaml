@@ -1,9 +1,6 @@
 name: Actions Lint
 
-# `pull_request` に paths / branches のフィルタを置かない。除外された Pull Request では run が
-# 1件も起動せず、GitHub は報告されなかった context を「該当しない」とは解釈せずに待ち続ける。
-# その Pull Request は恒久的にマージ可能にならない。起動を絞る必要が生じたら、フィルタではなく
-# job の if: に置く —— skip された job は skipped を報告し、required check はそれを成功として数える。
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   workflow_dispatch:
@@ -75,11 +72,6 @@ jobs:
         with:
           tools: actionlint shellcheck
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # actionlint で表現できない Node 検査群は TypeScript で実行するため、pnpm も導入する。
-
-      # The tree is the one `scripts/pnpm-lock.yaml` pins, so CI and the container resolve the
-      # same versions.
 
       - name: Run Actions lint
         id: actions-lint

@@ -27,7 +27,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// digestPrefixLength は、キャッシュキーへ埋める digest の先頭桁数です。
 const digestPrefixLength = 8
 
 const defaultActionPath = ".github/actions/setup-mise/action.yaml"

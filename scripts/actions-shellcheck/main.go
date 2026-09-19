@@ -84,7 +84,6 @@ type result struct {
 	findings []string
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -259,7 +258,6 @@ func countRunSteps(file string, data []byte) (int, error) {
 	if steps == nil {
 		return 0, nil
 	}
-	// ここも同じ理由で「対象外」に寄せずエラーにする。
 	list, ok := steps.([]any)
 	if !ok {
 		return 0, xerrors.Wrap(errStepsNotSequence, file)
