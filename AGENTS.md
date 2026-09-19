@@ -195,7 +195,7 @@ v1.0.0 より前では次を解除する。
 - **force push、rebase、amend、保護ブランチの checkout を行わない。** 修正は**新しい commit** として積む。同じ禁止はサーバ側の宣言としても置かれるが（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定26）、片方が在ることを理由にもう片方を省かない。
 - amend したうえで既存の Pull Request ブランチへ push する場合、**push の前に確認する**。文言はこれを使う: 「変更はローカルにコミット済みです。これらの変更をプルリクエストにプッシュしますか？」
 - **commit message に課す検査は `commitlint.config.js` が持ち、そこに「なぜその3つだけか」も書いてある。** ここへ再掲しない。**形式を細かく規定しない** —— 守られなくても何も壊れない規定は置かない。
-- **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。宣言は [`scripts/lib/branches`](scripts/lib/branches/branches.go) で、同じパターンを2箇所へ書かない。保護設定は `make branches-apply` が生成し、`make branches-check` がずれで落ちる。他の読み手は同じパッケージを import する。
+- **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。宣言は [`scripts/lib/branches`](scripts/lib/branches/branches.go) で、同じパターンを2箇所へ書かない。保護設定と workflow の起動条件は `make branches-apply` が生成し、`make branches-check` がずれで落ちる。実行時に読む側は同じパッケージを import する。
 - **Pull Request の title と body は日本語**（[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定9）。body には *手を止めてよい場所* の「それ以外」で下した決定を書く。
 - **merge の可否は、実環境への適用の可否と同義である**（[0601](docs/adr/0601-change-delivery-path.md) 決定10）。検証が失敗している Pull Request を merge しない。
 

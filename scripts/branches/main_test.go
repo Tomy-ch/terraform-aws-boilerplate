@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -419,5 +420,509 @@ func Test_indentOf(t *testing.T) {
 				assert.Equal(t, tc.want, indentOf([]byte(tc.content), tc.at))
 			})
 		}
+	})
+}
+
+// ---- workflow の起動条件とブランチ集合 --------------------------------------
+
+// workflowFixture は、生成対象を2種類とも持つ最小の workflow。
+// 実物を読むテストは、今日の workflow の内容で通ったり落ちたりするようになります。
+const workflowFixture = `name: Probe
+
+on:
+  pull_request:
+    branches:
+      - touched-by-nobody
+  push:
+    branches:
+      - old
+      - 'release/old'
+    paths:
+      - 'x'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    if: ${{ contains(fromJSON('["old"]'), github.base_ref) }}
+    runs-on: ubuntu-latest
+  notify:
+    if: ${{ always() && contains(fromJSON('["failure", "cancelled"]'), needs.probe.result) }}
+    runs-on: ubuntu-latest
+`
+
+// linesOf は、テスト対象が受け取る形へ整えます。
+func linesOf(s string) []string { return strings.Split(s, "\n") }
+
+// writeWorkflows は一時ディレクトリへ workflow を置き、そのディレクトリを返します。
+func writeWorkflows(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600))
+	}
+
+	return dir
+}
+
+func Test_branchesBlock(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// pull_request 側にも branches: がある。押さえどころは「どちらを掴むか」で、
+		// 取り違えると push を絞ったつもりで必須検査の起動条件を書き換える。
+		t.Run("push 側の区間と字下げを返す", func(t *testing.T) {
+			t.Parallel()
+			lines := linesOf(workflowFixture)
+			first, last, indent, found, err := branchesBlock(lines)
+			require.NoError(t, err)
+			require.True(t, found)
+			assert.Equal(t, []string{"      - old", "      - 'release/old'"}, lines[first:last])
+			assert.Equal(t, "      ", indent)
+		})
+
+		// YAML 1.1 は素の on を真偽値に読むため、引用して書く流儀がある。
+		t.Run("on が引用されていても見つける", func(t *testing.T) {
+			t.Parallel()
+			_, _, _, found, err := branchesBlock(linesOf(strings.Replace(workflowFixture, "on:", `"on":`, 1)))
+			require.NoError(t, err)
+			assert.True(t, found)
+		})
+
+		// 生成の対象なので、注記は次の apply で黙って消える。区間を切って見なかったことに
+		// するのでも、消してしまうのでもなく、落とす。
+		t.Run("項目の間にコメントがあればエラーにする", func(t *testing.T) {
+			t.Parallel()
+			src := strings.Replace(workflowFixture, "      - old\n", "      - old\n      # 注記\n", 1)
+			_, _, _, _, err := branchesBlock(linesOf(src))
+			require.ErrorIs(t, err, errShape)
+		})
+
+		t.Run("push を持たなければ found は false", func(t *testing.T) {
+			t.Parallel()
+			_, _, _, found, err := branchesBlock(linesOf("on:\n  pull_request:\n\njobs:\n  a:\n    runs-on: x\n"))
+			require.NoError(t, err)
+			assert.False(t, found)
+		})
+
+		// on: の区間を末尾まで延ばすと、jobs 配下の push という名の job を掴む。
+		t.Run("jobs 配下の push という名の job を掴まない", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  pull_request:\n\njobs:\n  push:\n    branches:\n      - x\n"
+			_, _, _, found, err := branchesBlock(linesOf(src))
+			require.NoError(t, err)
+			assert.False(t, found)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, src := range map[string]string{
+			"項目以外の行がある": "on:\n  push:\n    branches:\n      - a\n      unexpected: 1\n",
+			"項目が0件":     "on:\n  push:\n    branches:\n    paths:\n      - x\n",
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, _, _, err := branchesBlock(linesOf(src))
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+	})
+}
+
+func Test_rewriteWorkflow(t *testing.T) {
+	t.Parallel()
+
+	set := []string{"develop", "release/*"}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("起動条件を宣言へ組み直す", func(t *testing.T) {
+			t.Parallel()
+			got, err := rewriteWorkflow(linesOf(workflowFixture), set)
+			require.NoError(t, err)
+			assert.Contains(t, got, "    branches:\n      - develop\n      - 'release/*'\n    paths:\n")
+		})
+
+		t.Run("ブランチ集合の式を宣言へ組み直す", func(t *testing.T) {
+			t.Parallel()
+			got, err := rewriteWorkflow(linesOf(workflowFixture), set)
+			require.NoError(t, err)
+			assert.Contains(t, got, `fromJSON('["develop", "release/*"]'), github.base_ref`)
+		})
+
+		// job の結果を並べた fromJSON を掴むと、通知の条件が壊れる。
+		t.Run("ブランチ名と突き合わせていない集合は触らない", func(t *testing.T) {
+			t.Parallel()
+			got, err := rewriteWorkflow(linesOf(workflowFixture), set)
+			require.NoError(t, err)
+			assert.Contains(t, got, `fromJSON('["failure", "cancelled"]'), needs.probe.result`)
+		})
+
+		// pull_request 側を絞ると、報告の不在が合格として数えられる（ADR-0603 決定16-18）。
+		t.Run("pull_request 側の branches を書き換えない", func(t *testing.T) {
+			t.Parallel()
+			got, err := rewriteWorkflow(linesOf(workflowFixture), set)
+			require.NoError(t, err)
+			assert.Contains(t, got, "      - touched-by-nobody")
+		})
+
+		t.Run("2 度かけても同じ結果になる", func(t *testing.T) {
+			t.Parallel()
+			once, err := rewriteWorkflow(linesOf(workflowFixture), set)
+			require.NoError(t, err)
+			twice, err := rewriteWorkflow(linesOf(once), set)
+			require.NoError(t, err)
+			assert.Equal(t, once, twice)
+		})
+
+		t.Run("生成対象を持たない workflow をそのまま返す", func(t *testing.T) {
+			t.Parallel()
+			src := "name: X\n\njobs:\n  a:\n    runs-on: x\n"
+			got, err := rewriteWorkflow(linesOf(src), set)
+			require.NoError(t, err)
+			assert.Equal(t, src, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 起動条件が空の workflow は push で一度も走らず、それでいて check は緑を返す。
+		t.Run("宣言の集合が0件ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := rewriteWorkflow(linesOf(workflowFixture), nil)
+			require.ErrorIs(t, err, errShape)
+		})
+	})
+}
+
+func Test_applyOrCheckWorkflows(t *testing.T) {
+	t.Parallel()
+
+	sets := map[string][]string{"probe.yaml": {"develop"}}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ずれていれば check は errDrift を返す", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errDrift)
+			assert.Contains(t, out.String(), "probe.yaml")
+		})
+
+		t.Run("check は書き換えない", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.Error(t, applyOrCheckWorkflows(dir, sets, true, &out))
+			after, err := os.ReadFile(filepath.Join(dir, "probe.yaml"))
+			require.NoError(t, err)
+			assert.Equal(t, workflowFixture, string(after))
+		})
+
+		t.Run("apply の直後は check が通る", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.NoError(t, applyOrCheckWorkflows(dir, sets, false, &out))
+			require.NoError(t, applyOrCheckWorkflows(dir, sets, true, &out))
+		})
+
+		// 宣言の対象外でも、ブランチのパターンを持たない workflow は通す。
+		t.Run("対象外でもパターンを持たなければ通す", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{
+				"probe.yaml": workflowFixture,
+				"other.yaml": "name: Other\n\non:\n  pull_request:\n\njobs:\n  a:\n    runs-on: x\n",
+			})
+			var out bytes.Buffer
+			require.NoError(t, applyOrCheckWorkflows(dir, sets, false, &out))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 走査対象を失った検査は、合格ではなく検査していない状態である。
+		t.Run("workflow が1件も無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(t.TempDir(), sets, true, &out), errShape)
+		})
+
+		t.Run("宣言が指す workflow が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"other.yaml": "name: Other\n\njobs:\n  a:\n    runs-on: x\n"})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errOrphan)
+		})
+
+		t.Run("宣言が指す workflow が生成対象を持たなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": "name: P\n\njobs:\n  a:\n    runs-on: x\n"})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errOrphan)
+		})
+
+		t.Run("対象外の workflow が起動条件を持てばエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{
+				"probe.yaml": workflowFixture,
+				"other.yaml": "on:\n  push:\n    branches:\n      - develop\n",
+			})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errUnmanaged)
+		})
+
+		t.Run("ブランチ名を式へ直接書いていればエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{
+				"probe.yaml": workflowFixture,
+				"other.yaml": "jobs:\n  a:\n    if: ${{ github.base_ref == '" + branches.Default + "' }}\n",
+			})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errUnmanaged)
+		})
+	})
+}
+
+func Test_workflowFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 片方の拡張子だけを見ると、もう片方で書かれた workflow が走査から黙って外れる。
+		t.Run("yaml と yml の両方を拾う", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"a.yaml": "x", "b.yml": "x"})
+			got, err := workflowFiles(dir)
+			require.NoError(t, err)
+			assert.Len(t, got, 2)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("0 件ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := workflowFiles(t.TempDir())
+			require.ErrorIs(t, err, errShape)
+		})
+	})
+}
+
+func Test_workflowTargets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("起動条件と集合の式をそれぞれ報告する", func(t *testing.T) {
+			t.Parallel()
+			hasBranches, hasSet, err := workflowTargets(linesOf(workflowFixture))
+			require.NoError(t, err)
+			assert.True(t, hasBranches)
+			assert.True(t, hasSet)
+		})
+
+		t.Run("job の結果の集合を生成対象と数えない", func(t *testing.T) {
+			t.Parallel()
+			src := "jobs:\n  a:\n    if: ${{ contains(fromJSON('[\"failure\"]'), needs.b.result) }}\n"
+			hasBranches, hasSet, err := workflowTargets(linesOf(src))
+			require.NoError(t, err)
+			assert.False(t, hasBranches)
+			assert.False(t, hasSet)
+		})
+	})
+}
+
+func Test_yamlScalar(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 素で書くと YAML が別の意味に取る値だけを引用する。全部引用すると既存の書式を壊す。
+		for in, want := range map[string]string{
+			"develop":   "develop",
+			"release/*": "'release/*'",
+			"a,b":       "'a,b'",
+			"#x":        "'#x'",
+		} {
+			t.Run(in+" を "+want+" にする", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, want, yamlScalar(in))
+			})
+		}
+	})
+}
+
+func Test_unmanagedLiteral(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("生成できる形は対象にしない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, unmanagedLiteral(linesOf(workflowFixture)))
+		})
+
+		t.Run("ブランチ名に触れない式は対象にしない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, unmanagedLiteral(linesOf("        REF_NAME: ${{ github.ref_name }}\n")))
+		})
+
+		t.Run("直接比較を見つける", func(t *testing.T) {
+			t.Parallel()
+			src := "    if: ${{ github.base_ref == '" + branches.Default + "' }}\n"
+			assert.Equal(t, branches.Default, unmanagedLiteral(linesOf(src)))
+		})
+	})
+}
+
+func Test_declaredLiterals(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// glob を含めると、`release/*` という文字列を含む行すべてが直接比較に見える。
+		t.Run("glob を含まない", func(t *testing.T) {
+			t.Parallel()
+			for _, v := range declaredLiterals() {
+				assert.NotContains(t, v, "*", v)
+			}
+		})
+
+		t.Run("重複を持たない", func(t *testing.T) {
+			t.Parallel()
+			seen := map[string]bool{}
+			for _, v := range declaredLiterals() {
+				require.False(t, seen[v], "重複: %s", v)
+				seen[v] = true
+			}
+		})
+	})
+}
+
+func Test_findKey(t *testing.T) {
+	t.Parallel()
+
+	lines := linesOf("  a:\n    b:\n    push:\n  push:\n")
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 区間が入れ子の途中から始まっていても、親の直下だけを返す。
+		t.Run("最も浅い階層のキーを返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 3, findKey(lines, 0, len(lines), "push"))
+		})
+
+		t.Run("無ければ -1 を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, -1, findKey(lines, 0, len(lines), "no-such"))
+			assert.Equal(t, -1, findKey(nil, 0, 0, "push"))
+		})
+	})
+}
+
+func Test_blockEnd(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("字下げが親以下へ戻る行を返す", func(t *testing.T) {
+			t.Parallel()
+			lines := linesOf("on:\n  push:\n    branches:\njobs:\n")
+			assert.Equal(t, 3, blockEnd(lines, 1, len(lines), 0))
+		})
+
+		t.Run("空行とコメントで区間を終わらせない", func(t *testing.T) {
+			t.Parallel()
+			lines := linesOf("on:\n  push:\n\n  # 注記\n  x:\njobs:\n")
+			assert.Equal(t, 5, blockEnd(lines, 1, len(lines), 0))
+		})
+
+		t.Run("戻らなければ区間の終端を返す", func(t *testing.T) {
+			t.Parallel()
+			lines := linesOf("on:\n  push:\n")
+			assert.Equal(t, len(lines), blockEnd(lines, 1, len(lines), 0))
+		})
+	})
+}
+
+func Test_indentWidth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for in, want := range map[string]int{"": 0, "a": 0, "  a": 2, "    ": 4} {
+			t.Run("「"+in+"」は "+strconv.Itoa(want), func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, want, indentWidth(in))
+			})
+		}
+	})
+}
+
+func Test_requireAllSeen(t *testing.T) {
+	t.Parallel()
+
+	sets := map[string][]string{"a.yaml": {"x"}, "b.yaml": {"x"}}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("すべて実在すれば通る", func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, requireAllSeen(map[string]bool{"a.yaml": true, "b.yaml": true}, sets))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("欠けていればその名前を添えてエラーにする", func(t *testing.T) {
+			t.Parallel()
+			err := requireAllSeen(map[string]bool{"a.yaml": true}, sets)
+			require.ErrorIs(t, err, errOrphan)
+			assert.Contains(t, err.Error(), "b.yaml")
+		})
+	})
+}
+
+func Test_expressionLines(t *testing.T) {
+	t.Parallel()
+
+	// run: のスクリプトは文字列であって式ではない。ここを外さないと、走るはずの
+	// コマンドを書き換える。
+	src := "jobs:\n  a:\n    if: ${{ x }}\n    steps:\n      - run: |\n          echo ${{ x }}\n      - run: echo done\n"
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ブロックスカラーの中身を外す", func(t *testing.T) {
+			t.Parallel()
+			lines := linesOf(src)
+			got := make([]string, 0, len(lines))
+			for _, i := range expressionLines(lines) {
+				got = append(got, lines[i])
+			}
+			assert.NotContains(t, got, "          echo ${{ x }}")
+			assert.Contains(t, got, "    if: ${{ x }}")
+			assert.Contains(t, got, "      - run: echo done")
+		})
 	})
 }

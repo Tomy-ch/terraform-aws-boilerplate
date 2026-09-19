@@ -54,8 +54,13 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 保護対象のブランチ、リリース線の形、ブランチ名の接頭辞は
 [`scripts/lib/branches`](../../scripts/lib/branches/branches.go) **だけ**が持つ
 （[ADR-0603](../../docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。
-そこから生成するのは [`branch-protection.json`](../settings/branch-protection.json) だけで、
-`make branches-check` がずれで落ちる。
+そこから生成するのは [`branch-protection.json`](../settings/branch-protection.json) の
+`conditions.ref_name.include` と、**workflow の `on.push.branches` およびブランチ名と突き合わせる
+`fromJSON` の集合**で、`make branches-check` がずれで落ちる。
+
+検査は全 workflow を走査し、宣言の対象外の workflow がこれらを持っていれば落ちる。
+`github.base_ref == '<branch>'` のような直接比較は生成で追随できないため、書き換えずに落とす
+—— 集合の式（`contains(fromJSON('[...]'), github.base_ref)`）で書くこと。
 
 **`pull_request` 側は絞らない。** 必須 context を報告する側であり、除外された Pull Request では
 run が起きず、報告の無い check を GitHub は待ち続ける（「必須検査はすべての Pull Request で

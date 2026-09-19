@@ -47,6 +47,7 @@ pre-commit:
       glob:
         - "scripts/lib/branches/*.go"
         - ".github/settings/branch-protection.json"
+        - ".github/workflows/*.{yml,yaml}"
       run: make branches-check
 
     # uses: と image: の固定。lockfile と実ファイルの drift、および参照されなくなった

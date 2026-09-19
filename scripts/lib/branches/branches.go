@@ -36,6 +36,13 @@ var ReleasePattern = regexp.MustCompile(`^` + ReleasePrefix + `v(\d+)\.(\d+)\.(\
 // （ADR-0601 決定10）。並びは下流から上流で、repo-setup が作る順序でもある。
 var Deploy = []string{"develop", "staging", Default}
 
+// GatePush は、push 側で走らせる検査の起動対象。**required context を報告しない側なので
+// 絞ってよい** —— 絞ってはならないのは pull_request 側である（ADR-0603 決定16-18）。
+var GatePush = []string{"develop", "staging", Default, ReleasePrefix + "*"}
+
+// ReleasePush は、リリース線と Default だけを見る検査の起動対象。
+var ReleasePush = []string{ReleasePrefix + "*", Default}
+
 // Protected は保護設定の適用対象。GitHub の ruleset へは refs/heads/ を前置した
 // fnmatch で渡り、`**/*` は階層を跨ぐ。
 //
