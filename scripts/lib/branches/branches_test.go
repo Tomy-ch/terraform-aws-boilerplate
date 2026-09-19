@@ -129,6 +129,33 @@ func Test_Deploy(t *testing.T) {
 	})
 }
 
+func Test_GatePush(t *testing.T) {
+	t.Parallel()
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 空へ退化すると、その workflow は push で一度も走らない。
+		t.Run("空でない", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, GatePush)
+		})
+	})
+}
+
+func Test_ReleasePush(t *testing.T) {
+	t.Parallel()
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("空でない", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, ReleasePush)
+		})
+	})
+}
+
 func Test_Line(t *testing.T) {
 	t.Parallel()
 

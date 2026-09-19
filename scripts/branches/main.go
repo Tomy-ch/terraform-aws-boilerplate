@@ -103,82 +103,126 @@ var yamlReserved = map[string]bool{
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], ".", os.Stdout); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
 // run は、サブコマンドを解釈して固定処理へ振り分けます。
-func run(args []string, out io.Writer) error {
+//
+// root を引数で受けるのは、分岐をテストから到達可能にするためである（scripts/README.md の
+// Test Strategy）。作業ディレクトリは不純な依存であり、ここへ焼き込むと `apply` と `check` の
+// 対応そのものを誰も確かめられなくなる。
+func run(args []string, root string, out io.Writer) error {
 	if len(args) != 1 {
 		return errUsage
 	}
 
 	switch args[0] {
 	case "apply":
-		return applyAll(".", false, out)
+		return applyAll(root, workflowSets, false, out)
 	case "check":
-		return applyAll(".", true, out)
+		return applyAll(root, workflowSets, true, out)
 	default:
 		return xerrors.Wrap(errUsage, "unknown subcommand: "+args[0])
 	}
 }
 
-// applyAll は、2つの生成先を順に揃えます。
+// plan は、書き換えが要る生成先とその内容。空なら宣言と一致している。
+type plan map[string]string
+
+// applyAll は、2つの生成先を宣言へ揃えます。
 //
-// **ずれは両方を見てから返す。** 片方で打ち切ると、直して再実行するまでもう片方のずれが
-// 見えず、「直した」と「まだ残っている」が交互に現れる。構造の違反はその場で止める ——
-// 構造が読めない状態で生成を続けると、何を書き換えたのかが誰にも分からなくなる。
-func applyAll(root string, dryRun bool, out io.Writer) error {
-	jsonErr := applyOrCheck(filepath.Join(root, protectionFile), dryRun, out)
-	if jsonErr != nil && !errors.Is(jsonErr, errDrift) {
-		return jsonErr
-	}
-
-	wfErr := applyOrCheckWorkflows(filepath.Join(root, workflowDir), workflowSets, dryRun, out)
-	if wfErr != nil && !errors.Is(wfErr, errDrift) {
-		return wfErr
-	}
-
-	if jsonErr != nil {
-		return jsonErr
-	}
-
-	return wfErr
-}
-
-// applyOrCheck は保護設定を宣言へ揃えます。dryRun=true は書き換えず、ずれを報告して
-// 非ゼロで終わります。
-func applyOrCheck(path string, dryRun bool, out io.Writer) error {
-	before, err := os.ReadFile(filepath.Clean(path))
+// **検証が全部終わるまで1バイトも書かない。** ファイルごとに検証と書き込みを交互にすると、
+// 途中で落ちたとき前半だけが書き換わった状態が残り、呼び出し側には「失敗した」としか
+// 見えない。何が適用されたのかは、誰にも分からなくなる。計画を組んでから書く。
+//
+// ずれも両方を見てから返す。片方で打ち切ると、直して再実行するまでもう片方のずれが
+// 見えず、「直した」と「まだ残っている」が交互に現れる。
+func applyAll(root string, sets map[string][]string, dryRun bool, out io.Writer) error {
+	jsonPlan, err := planProtection(filepath.Join(root, protectionFile))
 	if err != nil {
-		return xerrors.Wrap(err, path)
+		return err
 	}
 
-	after, err := rewrite(before, branches.Protected)
+	wfPlan, err := planWorkflows(filepath.Join(root, workflowDir), sets)
 	if err != nil {
-		return xerrors.Wrap(err, path)
+		return err
 	}
 
-	if string(before) == string(after) {
-		fmt.Fprintf(out, "✅ branches: 保護対象 %d 件が宣言と一致しています\n", len(branches.Protected))
+	names := planNames(jsonPlan, wfPlan)
+	if len(names) == 0 {
+		fmt.Fprintf(out, "✅ branches: 保護対象 %d 件と workflow %d 件が宣言と一致しています\n",
+			len(branches.Protected), len(sets))
 
 		return nil
 	}
 
 	if dryRun {
-		fmt.Fprintf(out, "❌ %s が宣言からずれています（make branches-apply で反映）\n", path)
+		fmt.Fprintf(out, "❌ 生成先が宣言からずれています: %s（make branches-apply で反映）\n",
+			strings.Join(names, ", "))
 
 		return errDrift
 	}
 
-	// path を引数に取るのは、一時ディレクトリで書き換えを試すための seam である。
-	// 実行時に渡るのは package 定数 protectionFile だけで、外部入力は通らない。
-	// 撤回条件: 呼び出し側が package の外から path を受け取る形になったとき。
-	if err := os.WriteFile(path, after, filePerm); err != nil { //nolint:gosec // 上のコメントを参照
-		return xerrors.Wrap(err, path)
+	if err := writePlan(jsonPlan, wfPlan); err != nil {
+		return err
 	}
-	fmt.Fprintf(out, "✅ branches-apply: %s へ保護対象 %d 件を反映しました\n", path, len(branches.Protected))
+	fmt.Fprintf(out, "✅ branches-apply: %s へ反映しました\n", strings.Join(names, ", "))
+
+	return nil
+}
+
+// planProtection は保護設定の書き換えを計画します。
+func planProtection(path string) (plan, error) {
+	before, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, xerrors.Wrap(err, path)
+	}
+
+	after, err := rewrite(before, branches.Protected)
+	if err != nil {
+		return nil, xerrors.Wrap(err, path)
+	}
+
+	if string(before) == string(after) {
+		return plan{}, nil
+	}
+
+	return plan{path: string(after)}, nil
+}
+
+// planNames は計画が触れるファイルの名前を、並びを決めて返します。
+func planNames(plans ...plan) []string {
+	names := []string{}
+	for _, p := range plans {
+		for path := range p {
+			names = append(names, filepath.Base(path))
+		}
+	}
+	sort.Strings(names)
+
+	return names
+}
+
+// writePlan は計画をファイルへ書き出します。**ここに検証は無い** —— 検証はすべて計画の側で
+// 終わっている。
+func writePlan(plans ...plan) error {
+	for _, p := range plans {
+		paths := make([]string, 0, len(p))
+		for path := range p {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+
+		for _, path := range paths {
+			// path は package 定数から組んだ経路か、その直下の走査結果である。
+			// 撤回条件: 経路が root 以外から決まる形になったとき。
+			if err := os.WriteFile(path, []byte(p[path]), filePerm); err != nil { //nolint:gosec // 上のコメントを参照
+				return xerrors.Wrap(err, path)
+			}
+		}
+	}
 
 	return nil
 }
@@ -257,6 +301,10 @@ func includeSpan(content []byte) (int, int, error) {
 
 	start, end, found, err := findArray(dec, includePath)
 	if err != nil {
+		if errors.Is(err, errShape) {
+			return 0, 0, err
+		}
+
 		return 0, 0, xerrors.Wrap(errShape, strings.Join(includePath, ".")+" を辿れません")
 	}
 	if !found {
@@ -267,18 +315,30 @@ func includeSpan(content []byte) (int, int, error) {
 }
 
 // findArray は、開き波括弧を読み終えた object の中で want の経路を辿り、
-// 行き着いた配列のバイト区間を返します。
+// 行き着いた配列のバイト区間を返します。**見つけた後も同じ階層を読み切る** —— 途中で
+// 打ち切ると、後ろに現れた同名のキーを見ないまま返す。
+//
+// **同じ階層にキーが2度現れたら落とす。** JSON はそれを許すが、構造の検査（map へ復号 ——
+// 後が勝つ）と区間の特定（トークン走査 —— 先が勝つ）で別の値を見ることになり、検査した方とは
+// 別の配列を書き換える。しかも成功で返る。
 func findArray(dec *json.Decoder, want []string) (int, int, bool, error) {
+	seen := map[string]bool{}
+	start, end, found := 0, 0, false
+
 	for {
 		tok, err := dec.Token()
 		if err != nil {
 			return 0, 0, false, err
 		}
 		if d, ok := tok.(json.Delim); ok && d == '}' {
-			return 0, 0, false, nil
+			return start, end, found, nil
 		}
 
 		key, _ := tok.(string)
+		if seen[key] {
+			return 0, 0, false, xerrors.Wrap(errShape, "同じ階層にキーが 2 度現れます: "+key)
+		}
+		seen[key] = true
 
 		value, err := dec.Token()
 		if err != nil {
@@ -294,8 +354,11 @@ func findArray(dec *json.Decoder, want []string) (int, int, bool, error) {
 		case '{':
 			if len(want) > 1 && key == want[0] {
 				s, e, f, err := findArray(dec, want[1:])
-				if err != nil || f {
-					return s, e, f, err
+				if err != nil {
+					return 0, 0, false, err
+				}
+				if f {
+					start, end, found = s, e, true
 				}
 
 				continue
@@ -310,8 +373,9 @@ func findArray(dec *json.Decoder, want []string) (int, int, bool, error) {
 				if err := skipContainer(dec); err != nil {
 					return 0, 0, false, err
 				}
+				start, end, found = at, int(dec.InputOffset()), true
 
-				return at, int(dec.InputOffset()), true, nil
+				continue
 			}
 			if err := skipContainer(dec); err != nil {
 				return 0, 0, false, err
@@ -355,81 +419,63 @@ func indentOf(content []byte, at int) string {
 
 // ---- workflow の起動条件とブランチ集合 --------------------------------------
 
-// applyOrCheckWorkflows は、workflow のブランチのパターンを宣言へ揃えます。
+// planWorkflows は、workflow のブランチのパターンの書き換えを計画します。
 // 走査を全 workflow に掛ける理由は scripts/README.md の branches/ の行。
-func applyOrCheckWorkflows(dir string, sets map[string][]string, dryRun bool, out io.Writer) error {
+func planWorkflows(dir string, sets map[string][]string) (plan, error) {
 	paths, err := workflowFiles(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	seen := make(map[string]bool, len(sets))
-	drift := make([]string, 0, len(sets))
+	changes := plan{}
 
 	for _, path := range paths {
 		name := filepath.Base(path)
 
 		data, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
-			return xerrors.Wrap(err, path)
+			return nil, xerrors.Wrap(err, path)
 		}
 		lines := strings.Split(string(data), "\n")
 
 		hasBranches, hasSet, err := workflowTargets(data, lines)
 		if err != nil {
-			return xerrors.Wrap(err, name)
+			return nil, xerrors.Wrap(err, name)
 		}
 
 		if expr := unmanagedExpression(lines); expr != "" {
-			return xerrors.Wrap(errUnmanaged, name+" がブランチ名を式へ直接書いています: "+expr)
+			return nil, xerrors.Wrap(errUnmanaged, name+" がブランチ名を式へ直接書いています: "+expr)
 		}
 
 		set, mapped := sets[name]
 		if !mapped {
 			if hasBranches || hasSet {
-				return xerrors.Wrap(errUnmanaged, name+"（on.push.branches またはブランチ集合の式を持っています）")
+				return nil, xerrors.Wrap(errUnmanaged, name+"（on.push.branches またはブランチ集合の式を持っています）")
 			}
 
 			continue
 		}
 
 		if !hasBranches && !hasSet {
-			return xerrors.Wrap(errOrphan, name)
+			return nil, xerrors.Wrap(errOrphan, name)
 		}
 		seen[name] = true
 
 		after, err := rewriteWorkflow(lines, set)
 		if err != nil {
-			return xerrors.Wrap(err, name)
+			return nil, xerrors.Wrap(err, name)
 		}
-		if after == string(data) {
-			continue
-		}
-
-		if dryRun {
-			drift = append(drift, name)
-
-			continue
-		}
-		// path は dir 直下の走査結果で、dir は package 定数から組む。外部入力は通らない。
-		// 撤回条件: dir が root 以外から決まる形になったとき。
-		if err := os.WriteFile(path, []byte(after), filePerm); err != nil { //nolint:gosec // 上のコメントを参照
-			return xerrors.Wrap(err, path)
+		if after != string(data) {
+			changes[path] = after
 		}
 	}
 
 	if err := requireAllSeen(seen, sets); err != nil {
-		return err
+		return nil, err
 	}
 
-	if len(drift) > 0 {
-		fmt.Fprintf(out, "❌ workflow が宣言からずれています: %s（make branches-apply で反映）\n", strings.Join(drift, ", "))
-
-		return errDrift
-	}
-	fmt.Fprintf(out, "✅ branches: workflow %d 件の起動条件が宣言と一致しています\n", len(sets))
-
-	return nil
+	return changes, nil
 }
 
 // workflowFiles は走査対象の workflow を返します。**拡張子は両方を見る** ——

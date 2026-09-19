@@ -143,6 +143,15 @@ func Test_rewrite(t *testing.T) {
 		t.Parallel()
 
 		// 読めない入力を取りこぼしとして扱うと、保護設定を空のまま生成しうる。
+		// 構造の検査（map へ復号 —— 後が勝つ）と区間の特定（トークン走査 —— 先が勝つ）で
+		// 別の値を見ることになり、検査した方とは別の配列を書き換える。
+		t.Run("同じ階層にキーが 2 度現れればエラーにする", func(t *testing.T) {
+			t.Parallel()
+			const dup = `{"conditions":{"ref_name":{"include":["a"],"include":["b"]}}}`
+			_, err := rewrite([]byte(dup), branches.Protected)
+			require.ErrorIs(t, err, errShape)
+		})
+
 		t.Run("JSON として読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, err := rewrite([]byte("{ not json"), branches.Protected)
@@ -172,50 +181,38 @@ func Test_rewrite(t *testing.T) {
 	})
 }
 
-func Test_applyOrCheck(t *testing.T) {
+func Test_planProtection(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ずれていれば check は errDrift を返す", func(t *testing.T) {
-			t.Parallel()
-			var out bytes.Buffer
-			err := applyOrCheck(writeProtection(t, sound), true, &out)
-			require.ErrorIs(t, err, errDrift)
-			assert.Contains(t, out.String(), "❌")
-		})
-
-		// check が書き換えると、検査が対象を自分で直して緑を返すことになる。
-		t.Run("check は書き換えない", func(t *testing.T) {
+		t.Run("ずれていれば書き換え後の内容を返す", func(t *testing.T) {
 			t.Parallel()
 			path := writeProtection(t, sound)
-			var out bytes.Buffer
-			_ = applyOrCheck(path, true, &out)
+			got, err := planProtection(path)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.NotContains(t, includeOf(t, []byte(got[path])), refPrefix+"old")
+		})
+
+		// 計画の段階で書き換えると、検査が対象を自分で直して緑を返すことになる。
+		t.Run("ファイルを書き換えない", func(t *testing.T) {
+			t.Parallel()
+			path := writeProtection(t, sound)
+			_, err := planProtection(path)
+			require.NoError(t, err)
 
 			after, err := os.ReadFile(path)
 			require.NoError(t, err)
 			assert.Equal(t, sound, string(after))
 		})
 
-		t.Run("apply は書き換えて成功する", func(t *testing.T) {
+		t.Run("一致していれば空の計画を返す", func(t *testing.T) {
 			t.Parallel()
-			path := writeProtection(t, sound)
-			var out bytes.Buffer
-			require.NoError(t, applyOrCheck(path, false, &out))
-
-			after, err := os.ReadFile(path)
+			got, err := planProtection(writeProtection(t, settledProtection(t)))
 			require.NoError(t, err)
-			assert.NotContains(t, includeOf(t, after), refPrefix+"old")
-			assert.Contains(t, out.String(), "✅")
-		})
-
-		t.Run("apply の直後は check が通る", func(t *testing.T) {
-			t.Parallel()
-			path := writeProtection(t, sound)
-			var out bytes.Buffer
-			require.NoError(t, applyOrCheck(path, false, &out))
-			require.NoError(t, applyOrCheck(path, true, &out))
+			assert.Empty(t, got)
 		})
 	})
 
@@ -225,18 +222,127 @@ func Test_applyOrCheck(t *testing.T) {
 		// 不在を「ずれなし」として通すと、保護設定を失ったまま緑になる。
 		t.Run("ファイルが無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			var out bytes.Buffer
-			err := applyOrCheck(filepath.Join(t.TempDir(), "no-such.json"), true, &out)
+			_, err := planProtection(filepath.Join(t.TempDir(), "no-such.json"))
 			require.Error(t, err)
 			require.NotErrorIs(t, err, errDrift)
 		})
 
-		t.Run("構造が違えば check でもエラーにする", func(t *testing.T) {
-			var out bytes.Buffer
-			err := applyOrCheck(writeProtection(t, `{"name":"x"}`), true, &out)
+		t.Run("構造が違えばエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := planProtection(writeProtection(t, `{"name":"x"}`))
 			require.ErrorIs(t, err, errShape)
 		})
 	})
+}
+
+func Test_applyAll(t *testing.T) {
+	t.Parallel()
+
+	sets := map[string][]string{"probe.yaml": {"develop"}}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("両方が一致していれば成功して件数を報告する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, settledProtection(t), map[string]string{"probe.yaml": settledWorkflow})
+			var out bytes.Buffer
+			require.NoError(t, applyAll(root, sets, true, &out))
+			assert.Contains(t, out.String(), "✅")
+			assert.Contains(t, out.String(), "保護対象 "+strconv.Itoa(len(branches.Protected))+" 件")
+			assert.Contains(t, out.String(), "workflow "+strconv.Itoa(len(sets))+" 件")
+		})
+
+		// 片方で打ち切ると、直して再実行するまでもう片方のずれが見えない。
+		t.Run("両方ずれていれば両方の名前を報告してから errDrift を返す", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyAll(root, sets, true, &out), errDrift)
+			assert.Contains(t, out.String(), "branch-protection.json")
+			assert.Contains(t, out.String(), "probe.yaml")
+		})
+
+		t.Run("check は両方とも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.Error(t, applyAll(root, sets, true, &out))
+			assertRepo(t, root, sound, workflowFixture)
+		})
+
+		t.Run("apply の直後は check が通る", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.NoError(t, applyAll(root, sets, false, &out))
+			require.NoError(t, applyAll(root, sets, true, &out))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// **部分適用の回帰テスト。** 保護設定はずれていて書き換えの対象になるが、workflow 側が
+		// 読めない。検証を全部終えてから書く形でないと、保護設定だけが書き換わった状態で
+		// 「失敗しました」とだけ言うことになる。
+		t.Run("workflow が読めなければ保護設定を書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, map[string]string{
+				"probe.yaml": workflowFixture,
+				"z.yaml":     "on:\n  push:\n    branches: [evil]\n",
+			})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyAll(root, sets, false, &out), errNotation)
+			assertRepo(t, root, sound, workflowFixture)
+		})
+
+		t.Run("保護設定が構造違反なら workflow を見る前に止まる", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, `{"name":"x"}`, map[string]string{"probe.yaml": workflowFixture})
+			var out bytes.Buffer
+			require.ErrorIs(t, applyAll(root, sets, true, &out), errShape)
+			assert.Empty(t, out.String())
+		})
+	})
+}
+
+// newRepo は、保護設定と workflow を持つ一時リポジトリの root を返します。
+func newRepo(t *testing.T, protection string, workflows map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, filepath.Dir(protectionFile)), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, protectionFile), []byte(protection), 0o600))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, workflowDir), 0o700))
+	for name, content := range workflows {
+		require.NoError(t, os.WriteFile(filepath.Join(root, workflowDir, name), []byte(content), 0o600))
+	}
+
+	return root
+}
+
+// assertRepo は、保護設定と probe.yaml が手つかずであることを確かめます。
+func assertRepo(t *testing.T, root, protection, workflow string) {
+	t.Helper()
+
+	gotJSON, err := os.ReadFile(filepath.Join(root, protectionFile))
+	require.NoError(t, err)
+	assert.Equal(t, protection, string(gotJSON))
+
+	gotWF, err := os.ReadFile(filepath.Join(root, workflowDir, "probe.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, workflow, string(gotWF))
+}
+
+// settledProtection は、宣言と既に一致している保護設定を返します。
+func settledProtection(t *testing.T) string {
+	t.Helper()
+	after, err := rewrite([]byte(sound), branches.Protected)
+	require.NoError(t, err)
+
+	return string(after)
 }
 
 func Test_run(t *testing.T) {
@@ -253,10 +359,55 @@ func Test_run(t *testing.T) {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
-				require.ErrorIs(t, run(args, &out), errUsage)
+				require.ErrorIs(t, run(args, t.TempDir(), &out), errUsage)
 			})
 		}
 	})
+
+	// root を引数で受けているので、apply と check の対応そのものを確かめられる。
+	// 焼き込んでいた頃は、この2分岐がテストから到達できなかった。
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("check は書き換えず errDrift を返す", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, withManagedWorkflows(t))
+			var out bytes.Buffer
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+
+			after, err := os.ReadFile(filepath.Join(root, protectionFile))
+			require.NoError(t, err)
+			assert.Equal(t, sound, string(after))
+		})
+
+		t.Run("apply は書き換えて成功する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, sound, withManagedWorkflows(t))
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"apply"}, root, &out))
+
+			after, err := os.ReadFile(filepath.Join(root, protectionFile))
+			require.NoError(t, err)
+			assert.NotContains(t, includeOf(t, after), refPrefix+"old")
+		})
+	})
+}
+
+// withManagedWorkflows は、本番の workflowSets が指す workflow を宣言どおりに用意します。
+// run は package の workflowSets を使うので、そこに載っているものが実在しないと errOrphan で
+// 落ちる —— apply / check の対応を見たいのであって、そこではない。
+func withManagedWorkflows(t *testing.T) map[string]string {
+	t.Helper()
+	files := make(map[string]string, len(workflowSets))
+	for name, set := range workflowSets {
+		items := make([]string, 0, len(set))
+		for _, v := range set {
+			items = append(items, "      - "+yamlScalar(v))
+		}
+		files[name] = "on:\n  push:\n    branches:\n" + strings.Join(items, "\n") + "\n"
+	}
+
+	return files
 }
 
 func Test_requireRefName(t *testing.T) {
@@ -451,6 +602,26 @@ jobs:
     runs-on: ubuntu-latest
 `
 
+// settledWorkflow は、宣言（develop 1件）と既に一致している workflow。
+const settledWorkflow = `name: Probe
+
+on:
+  pull_request:
+    branches:
+      - touched-by-nobody
+  push:
+    branches:
+      - develop
+    paths:
+      - 'x'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    if: ${{ contains(fromJSON('["develop"]'), github.base_ref) }}
+    runs-on: ubuntu-latest
+`
+
 // linesOf は、テスト対象が受け取る形へ整えます。
 func linesOf(s string) []string { return strings.Split(s, "\n") }
 
@@ -616,7 +787,7 @@ func Test_rewriteWorkflow(t *testing.T) {
 	})
 }
 
-func Test_applyOrCheckWorkflows(t *testing.T) {
+func Test_planWorkflows(t *testing.T) {
 	t.Parallel()
 
 	sets := map[string][]string{"probe.yaml": {"develop"}}
@@ -624,86 +795,170 @@ func Test_applyOrCheckWorkflows(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ずれていれば check は errDrift を返す", func(t *testing.T) {
+		t.Run("ずれていれば書き換え後の内容を返す", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errDrift)
-			assert.Contains(t, out.String(), "probe.yaml")
+			got, err := planWorkflows(dir, sets)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Contains(t, got[filepath.Join(dir, "probe.yaml")], "      - develop\n")
 		})
 
-		t.Run("check は書き換えない", func(t *testing.T) {
+		t.Run("ファイルを書き換えない", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
-			var out bytes.Buffer
-			require.Error(t, applyOrCheckWorkflows(dir, sets, true, &out))
+			_, err := planWorkflows(dir, sets)
+			require.NoError(t, err)
+
 			after, err := os.ReadFile(filepath.Join(dir, "probe.yaml"))
 			require.NoError(t, err)
 			assert.Equal(t, workflowFixture, string(after))
 		})
 
-		t.Run("apply の直後は check が通る", func(t *testing.T) {
+		t.Run("一致していれば空の計画を返す", func(t *testing.T) {
 			t.Parallel()
-			dir := writeWorkflows(t, map[string]string{"probe.yaml": workflowFixture})
-			var out bytes.Buffer
-			require.NoError(t, applyOrCheckWorkflows(dir, sets, false, &out))
-			require.NoError(t, applyOrCheckWorkflows(dir, sets, true, &out))
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": settledWorkflow})
+			got, err := planWorkflows(dir, sets)
+			require.NoError(t, err)
+			assert.Empty(t, got)
 		})
 
 		// 宣言の対象外でも、ブランチのパターンを持たない workflow は通す。
 		t.Run("対象外でもパターンを持たなければ通す", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{
-				"probe.yaml": workflowFixture,
+				"probe.yaml": settledWorkflow,
 				"other.yaml": "name: Other\n\non:\n  pull_request:\n\njobs:\n  a:\n    runs-on: x\n",
 			})
-			var out bytes.Buffer
-			require.NoError(t, applyOrCheckWorkflows(dir, sets, false, &out))
+			got, err := planWorkflows(dir, sets)
+			require.NoError(t, err)
+			assert.Empty(t, got)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		// **計画を1つも返さないことまで見る。** 途中まで組んだ計画を返すと、呼び出し側が
+		// それを書き出して部分適用になる。
+		t.Run("辞書順で後のファイルが落ちれば計画を返さない", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{
+				"probe.yaml": workflowFixture,
+				"z.yaml":     "on:\n  push:\n    branches: [evil]\n",
+			})
+			got, err := planWorkflows(dir, sets)
+			require.ErrorIs(t, err, errNotation)
+			assert.Nil(t, got)
+		})
+
 		// 走査対象を失った検査は、合格ではなく検査していない状態である。
 		t.Run("workflow が1件も無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(t.TempDir(), sets, true, &out), errShape)
+			_, err := planWorkflows(t.TempDir(), sets)
+			require.ErrorIs(t, err, errShape)
 		})
 
 		t.Run("宣言が指す workflow が無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{"other.yaml": "name: Other\n\njobs:\n  a:\n    runs-on: x\n"})
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errOrphan)
+			_, err := planWorkflows(dir, sets)
+			require.ErrorIs(t, err, errOrphan)
 		})
 
 		t.Run("宣言が指す workflow が生成対象を持たなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{"probe.yaml": "name: P\n\njobs:\n  a:\n    runs-on: x\n"})
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errOrphan)
+			_, err := planWorkflows(dir, sets)
+			require.ErrorIs(t, err, errOrphan)
 		})
 
 		t.Run("対象外の workflow が起動条件を持てばエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{
-				"probe.yaml": workflowFixture,
+				"probe.yaml": settledWorkflow,
 				"other.yaml": "on:\n  push:\n    branches:\n      - develop\n",
 			})
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errUnmanaged)
+			_, err := planWorkflows(dir, sets)
+			require.ErrorIs(t, err, errUnmanaged)
 		})
 
 		t.Run("ブランチ名を式へ直接書いていればエラーにする", func(t *testing.T) {
 			t.Parallel()
 			dir := writeWorkflows(t, map[string]string{
-				"probe.yaml": workflowFixture,
+				"probe.yaml": settledWorkflow,
 				"other.yaml": "jobs:\n  a:\n    if: ${{ github.base_ref == '" + branches.Default + "' }}\n",
 			})
-			var out bytes.Buffer
-			require.ErrorIs(t, applyOrCheckWorkflows(dir, sets, true, &out), errUnmanaged)
+			_, err := planWorkflows(dir, sets)
+			require.ErrorIs(t, err, errUnmanaged)
+		})
+
+		// Glob で列挙した直後に読めなくなる経路。黙って対象範囲が縮まないこと。
+		t.Run("workflow が読めなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := writeWorkflows(t, map[string]string{"probe.yaml": settledWorkflow})
+			path := filepath.Join(dir, "probe.yaml")
+			require.NoError(t, os.Chmod(path, 0o000))
+			t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+			if _, err := os.ReadFile(path); err == nil {
+				t.Skip("この環境では読み取り権限を落とせません（root 等）")
+			}
+
+			_, err := planWorkflows(dir, sets)
+			require.Error(t, err)
+		})
+	})
+}
+
+func Test_planNames(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 並びが実行のたびに変わると、報告の差分が読めなくなる。
+		t.Run("複数の計画をまたいで名前を並べる", func(t *testing.T) {
+			t.Parallel()
+			got := planNames(plan{"/x/b.json": ""}, plan{"/y/c.yaml": "", "/y/a.yaml": ""})
+			assert.Equal(t, []string{"a.yaml", "b.json", "c.yaml"}, got)
+		})
+
+		t.Run("空の計画には空を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, planNames(plan{}, plan{}))
+		})
+	})
+}
+
+func Test_writePlan(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("計画の内容をそのまま書き出す", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+			require.NoError(t, writePlan(plan{a: "A"}, plan{b: "B"}))
+
+			for path, want := range map[string]string{a: "A", b: "B"} {
+				got, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, want, string(got))
+			}
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("書き込めなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.Mkdir(filepath.Join(dir, "taken"), 0o700))
+			require.Error(t, writePlan(plan{filepath.Join(dir, "taken"): "x"}))
 		})
 	})
 }
@@ -786,6 +1041,14 @@ func Test_workflowTargets(t *testing.T) {
 			})
 		}
 
+		// **突合の逆方向。** yaml.Unmarshal は複数ドキュメントを黙って最初の1つだけ読むが、
+		// 行走査は文書境界を見ずに全行を舐める。どちらが見つけた側でも落ちること。
+		t.Run("複数ドキュメントで行走査だけが見つけてもエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := targetsOf("foo: bar\n---\non:\n  push:\n    branches:\n      - evil\n")
+			require.ErrorIs(t, err, errNotation)
+		})
+
 		// 生成できないものを残せば、宣言を直しても追随せず必ずずれる。
 		t.Run("branches-ignore ならエラーにする", func(t *testing.T) {
 			t.Parallel()
@@ -864,11 +1127,14 @@ func Test_unmanagedExpression(t *testing.T) {
 			assert.Empty(t, unmanagedExpression(linesOf(src)))
 		})
 
-		t.Run("直接比較を見つける", func(t *testing.T) {
-			t.Parallel()
-			src := "    if: ${{ github.base_ref == '" + branches.Default + "' }}\n"
-			assert.Contains(t, unmanagedExpression(linesOf(src)), branches.Default)
-		})
+		// GitHub Actions の式は " でも文字列を書ける。片方だけ見ていると、もう片方が素通りする。
+		for name, quote := range map[string]string{"単一引用符": "'", "二重引用符": `"`} {
+			t.Run(name+"の直接比較を見つける", func(t *testing.T) {
+				t.Parallel()
+				src := "    if: ${{ github.base_ref == " + quote + branches.Default + quote + " }}\n"
+				assert.Contains(t, unmanagedExpression(linesOf(src)), branches.Default)
+			})
+		}
 
 		// 1行に複数の文字列が並ぶと、どれが犯人かは判定できない。当たった値だけを名指すと、
 		// 読んだ人は無関係な方を直しに行く。
@@ -1086,23 +1352,31 @@ func Test_pushBranchFilter(t *testing.T) {
 func Test_mapValue(t *testing.T) {
 	t.Parallel()
 
-	var doc yaml.Node
-	require.NoError(t, yaml.Unmarshal([]byte("a:\n  b: 1\n"), &doc))
-
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("キーに対応する値を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.NotNil(t, mapValue(doc.Content[0], "a"))
-			assert.Equal(t, "1", mapValue(mapValue(doc.Content[0], "a"), "b").Value)
+			root := mappingOf(t, "a:\n  b: 1\n")
+			require.NotNil(t, mapValue(root, "a"))
+			assert.Equal(t, "1", mapValue(mapValue(root, "a"), "b").Value)
 		})
 
 		t.Run("無いキーと mapping でない入力に nil を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Nil(t, mapValue(doc.Content[0], "no-such"))
+			root := mappingOf(t, "a:\n  b: 1\n")
+			assert.Nil(t, mapValue(root, "no-such"))
 			assert.Nil(t, mapValue(nil, "a"))
-			assert.Nil(t, mapValue(mapValue(mapValue(doc.Content[0], "a"), "b"), "c"))
+			assert.Nil(t, mapValue(mapValue(mapValue(root, "a"), "b"), "c"))
 		})
 	})
+}
+
+// mappingOf は、YAML の最上位 mapping の Node を返します。
+func mappingOf(t *testing.T, src string) *yaml.Node {
+	t.Helper()
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(src), &doc))
+
+	return doc.Content[0]
 }

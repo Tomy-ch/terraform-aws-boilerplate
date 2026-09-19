@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
@@ -44,7 +46,9 @@ type fakeRunner struct {
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	failOn string
 	// remoteBranches は、remoteBranchExists が true を返すブランチ。
+	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
 	remoteBranches map[string]bool
+	lsRemoteFails  bool
 }
 
 // runner は、この実行器を差し込んだ runner を返します。
@@ -74,7 +78,16 @@ func (f *fakeRunner) output(name string, args ...string) (string, error) {
 	return f.outputs[call], nil
 }
 
-func (f *fakeRunner) remoteBranchExists(branch string) bool { return f.remoteBranches[branch] }
+// errLsRemote は、origin への照会そのものが失敗したことを模すセンチネル。
+var errLsRemote = xerrors.New("ls-remote に失敗しました")
+
+func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
+	if f.lsRemoteFails {
+		return false, errLsRemote
+	}
+
+	return f.remoteBranches[branch], nil
+}
 
 // taggableRunner は、v1.2.3 を最新タグとして返す実行器を用意します。
 func taggableRunner() *fakeRunner {
@@ -288,6 +301,35 @@ func Test_bump(t *testing.T) {
 	})
 }
 
+func Test_lineChoices(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 一覧を usage へ直接書くと、線を足したときに宣言と案内の片方だけが古くなる。
+		t.Run("宣言の全ての線を区切って並べる", func(t *testing.T) {
+			t.Parallel()
+			got := lineChoices()
+			for _, l := range branches.Lines() {
+				assert.Contains(t, got, string(l))
+			}
+			assert.Equal(t, len(branches.Lines())-1, strings.Count(got, " / "))
+		})
+
+		// usage に現れなければ、呼び出す人はどの値が通るかを知る手段を失う。
+		t.Run("-line の usage に現れる", func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			fs := flag.NewFlagSet("branch", flag.ContinueOnError)
+			fs.SetOutput(&out)
+			fs.String("line", string(branches.LineRelease), "切る線 ("+lineChoices()+")")
+			fs.PrintDefaults()
+			assert.Contains(t, out.String(), lineChoices())
+		})
+	})
+}
+
 func Test_syncDefaultSteps(t *testing.T) {
 	t.Parallel()
 
@@ -491,8 +533,12 @@ func Test_hostRunner(t *testing.T) {
 		t.Run("remoteBranchExists はホストの git で origin のブランチを見る", func(t *testing.T) {
 			t.Chdir(newRepo(t))
 
-			assert.True(t, hostRunner().remoteBranchExists("production"))
-			assert.False(t, hostRunner().remoteBranchExists("release/v9.9.9"))
+			got, err := hostRunner().remoteBranchExists("production")
+			require.NoError(t, err)
+			assert.True(t, got)
+			missing, err := hostRunner().remoteBranchExists("release/v9.9.9")
+			require.NoError(t, err)
+			assert.False(t, missing)
 		})
 	})
 }
@@ -534,14 +580,18 @@ func Test_remoteBranchExists(t *testing.T) {
 		t.Run("origin に同名ブランチがあれば真を返す", func(t *testing.T) {
 			dir := newRepo(t)
 			t.Chdir(dir)
-			assert.True(t, remoteBranchExists("production"))
+			got, err := remoteBranchExists("production")
+			require.NoError(t, err)
+			assert.True(t, got)
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("origin に無いブランチには偽を返す", func(t *testing.T) {
 			dir := newRepo(t)
 			t.Chdir(dir)
-			assert.False(t, remoteBranchExists("release/v9.9.9"))
+			got, err := remoteBranchExists("release/v9.9.9")
+			require.NoError(t, err)
+			assert.False(t, got)
 		})
 	})
 }
@@ -728,6 +778,7 @@ func Test_runBranch(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
 
 		// 取り消しの効かない手順（ブランチ作成・push・デフォルトブランチ切替）の直前に在る
 		// 最後の安全弁。解釈できない入力を通すと、接頭辞の無いブランチ名が作られる。
@@ -739,7 +790,6 @@ func Test_runBranch(t *testing.T) {
 			require.ErrorIs(t, err, errUnknownLine)
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
-		t.Parallel()
 
 		t.Run("解釈できないフラグでは手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()
