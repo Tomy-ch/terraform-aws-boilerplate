@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -77,13 +78,22 @@ type runner struct {
 func main() {
 	log.SetFlags(0)
 
-	if err := execute(hostRunner(), os.Args[1:]); err != nil {
+	decl, err := branches.Load(branches.File)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	defaultBranch, err := decl.DefaultBranch()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	if err := execute(hostRunner(), defaultBranch, os.Args[1:]); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
 // execute は、サブコマンドを選んで実行します。
-func execute(r runner, args []string) error {
+func execute(r runner, defaultBranch string, args []string) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -92,9 +102,9 @@ func execute(r runner, args []string) error {
 
 	switch args[0] {
 	case "tag":
-		err = runTag(r, args[1:])
+		err = runTag(r, defaultBranch, args[1:])
 	case "branch":
-		err = runBranch(r, args[1:])
+		err = runBranch(r, defaultBranch, args[1:])
 	default:
 		return errUnknownSubcommand
 	}
@@ -176,12 +186,13 @@ func bump(v version, kind string) (version, error) {
 
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// syncProductionSteps は、production を origin の最新へ合わせる手順を返します。
-func syncProductionSteps() []step {
+// syncDefaultSteps は、既定ブランチを origin の最新へ合わせる手順を返します。
+// ブランチ名は .github/branches.toml が持つので、ここでは受け取ります。
+func syncDefaultSteps(branch string) []step {
 	return []step{
-		{name: "git", args: []string{"fetch", "origin", "production"}},
-		{name: "git", args: []string{"switch", "production"}},
-		{name: "git", args: []string{"reset", "--hard", "origin/production"}},
+		{name: "git", args: []string{"fetch", "origin", branch}},
+		{name: "git", args: []string{"switch", branch}},
+		{name: "git", args: []string{"reset", "--hard", "origin/" + branch}},
 		{name: "git", args: []string{"fetch", "--tags", "origin"}},
 	}
 }
@@ -248,7 +259,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	}
 }
 
-func runTag(r runner, args []string) error {
+func runTag(r runner, defaultBranch string, args []string) error {
 	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
 
@@ -269,7 +280,7 @@ func runTag(r runner, args []string) error {
 	// switch 前の作業ツリー（別ブランチ）にノートがあるかではない。
 	log.Printf("🔄 productionブランチの最新を取得中...")
 
-	if err := r.runAll(syncProductionSteps()); err != nil {
+	if err := r.runAll(syncDefaultSteps(defaultBranch)); err != nil {
 		return err
 	}
 
@@ -289,11 +300,11 @@ func runTag(r runner, args []string) error {
 	return nil
 }
 
-func runBranch(r runner, args []string) error {
+func runBranch(r runner, defaultBranch string, args []string) error {
 	fs := flag.NewFlagSet("branch", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
 	prefix := fs.String("prefix", "release", "ブランチ名の接頭辞 (release / hotfix)")
-	base := fs.String("base", "production", "分岐元ブランチ")
+	base := fs.String("base", defaultBranch, "分岐元ブランチ")
 
 	if err := parseFlags(fs, args); err != nil {
 		return err

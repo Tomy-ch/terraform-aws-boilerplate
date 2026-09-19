@@ -7,9 +7,9 @@
     "ref_name": {
       "exclude": [],
       "include": [
-        "refs/heads/production",
-        "refs/heads/staging",
         "refs/heads/develop",
+        "refs/heads/staging",
+        "refs/heads/production",
         "refs/heads/release/**/*",
         "refs/heads/hotfix/**/*"
       ]
@@ -58,6 +58,9 @@
         "required_status_checks": [
           {
             "context": "actions-lint"
+          },
+          {
+            "context": "branches-check"
           },
           {
             "context": "commitlint"

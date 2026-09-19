@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -40,16 +41,12 @@ const (
 	// remoteName は、実状態を問い合わせるリモート。
 	remoteName = "origin"
 	// refPrefix は、`git ls-remote --heads` が返す参照の接頭辞。
-	refPrefix     = "refs/heads/"
-	releasePrefix = "release/"
+	refPrefix = "refs/heads/"
 	// commandTimeout は、git 1 コマンドあたりの上限。ネットワーク越しのため余裕を持たせる。
 	commandTimeout = 60 * time.Second
 )
 
 var (
-	// releasePattern は、リリースラインとして扱うブランチ名の形式。プレリリースや
-	// ビルドメタデータは対象外（scripts/release が作る形式に合わせる）。
-	releasePattern     = regexp.MustCompile(`^release/v(\d+)\.(\d+)\.(\d+)$`)
 	errNoReleaseBranch = xerrors.New("❌ origin に release/vX.Y.Z 形式のブランチがありません")
 	errUnexpectedArgs  = xerrors.New("❌ usage: base-branch（引数は取りません）")
 )
@@ -63,14 +60,27 @@ type releaseLine struct {
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], lsRemoteReleases, os.Stdout); err != nil {
+	decl, err := branches.Load(branches.File)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	prefix, err := decl.ReleasePrefix()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	pattern, err := decl.ReleasePattern()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	if err := run(os.Args[1:], lsRemoteReleases(prefix), pattern, os.Stdout); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
 // run は、最新のリリースラインのブランチ名を out へ 1 行で書き出します。
 // list は origin の参照一覧の取得手段で、差し替えられるよう引数で受けます。
-func run(args []string, list func() (string, error), out io.Writer) error {
+func run(args []string, list func() (string, error), pattern *regexp.Regexp, out io.Writer) error {
 	fs := flag.NewFlagSet("base-branch", flag.ContinueOnError)
 
 	if err := fs.Parse(args); err != nil {
@@ -93,7 +103,7 @@ func run(args []string, list func() (string, error), out io.Writer) error {
 		return err
 	}
 
-	latest, err := latestRelease(refs)
+	latest, err := latestRelease(refs, pattern)
 	if err != nil {
 		return err
 	}
@@ -103,12 +113,23 @@ func run(args []string, list func() (string, error), out io.Writer) error {
 	return err
 }
 
-// lsRemoteReleases は、origin のリリースラインの参照一覧を取得します。
-func lsRemoteReleases() (string, error) {
+// lsRemoteReleases は、prefix に一致する origin の参照一覧を取得する関数を返します。
+// prefix は宣言が持つので、ここでは受け取って束ねるだけです。
+func lsRemoteReleases(prefix string) func() (string, error) {
+	return func() (string, error) {
+		return lsRemote(refPrefix + prefix + "*")
+	}
+}
+
+// lsRemote は、glob に一致する origin の参照一覧を取得します。
+func lsRemote(glob string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", remoteName, refPrefix+releasePrefix+"*")
+	// glob は .github/branches.toml の release.prefix から組む。追跡され、レビューを経て、
+	// 保護設定と同じ宣言に置かれた値であり、利用者の入力ではない。コマンド自体は固定で、
+	// 可変なのは最後の引数1つだけ。撤回条件: 宣言の外から glob を受け取る形になったとき。
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--heads", remoteName, glob) //nolint:gosec // 上のコメントを参照
 	// git の失敗理由（認証・名前解決）はそのまま利用者へ見せる。握り潰すと
 	// 「リリースラインが無い」との区別が付かなくなる。
 	cmd.Stderr = os.Stderr
@@ -126,14 +147,14 @@ func lsRemoteReleases() (string, error) {
 // 解釈できる行が 1 つも無い場合はエラーにします。取得自体は成功しうる（リモートに
 // リリースラインがまだ無い、参照の書式が変わった）ため、0 件を「最新は空文字」として
 // 返すと、呼び出し側は解決できなかったことに気付かないまま空のベースを使います。
-func latestRelease(lsRemoteOutput string) (releaseLine, error) {
+func latestRelease(lsRemoteOutput string, pattern *regexp.Regexp) (releaseLine, error) {
 	var (
 		latest releaseLine
 		found  bool
 	)
 
 	for line := range strings.Lines(lsRemoteOutput) {
-		parsed, ok := parseLine(line)
+		parsed, ok := parseLine(line, pattern)
 		if !ok {
 			continue
 		}
@@ -152,7 +173,7 @@ func latestRelease(lsRemoteOutput string) (releaseLine, error) {
 
 // parseLine は、`git ls-remote --heads` の 1 行（`<sha>\t<ref>`）をリリースラインへ変換します。
 // リリースラインの書式に合わない行は対象外として false を返します。
-func parseLine(line string) (releaseLine, bool) {
+func parseLine(line string, pattern *regexp.Regexp) (releaseLine, bool) {
 	_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
 	if !ok {
 		return releaseLine{}, false
@@ -163,7 +184,7 @@ func parseLine(line string) (releaseLine, bool) {
 		return releaseLine{}, false
 	}
 
-	m := releasePattern.FindStringSubmatch(name)
+	m := pattern.FindStringSubmatch(name)
 	if m == nil {
 		return releaseLine{}, false
 	}

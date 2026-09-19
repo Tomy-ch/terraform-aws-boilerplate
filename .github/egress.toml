@@ -83,6 +83,9 @@ classes = ["mise"]
 [job."egress-check.yaml:egress-check"]
 classes = ["mise"]
 
+[job."branches-check.yaml:branches-check"]
+classes = ["mise"]
+
 [job."go-cooldown.yaml:go-cooldown"]
 classes = ["mise"]
 

@@ -49,6 +49,20 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 そして条件が1箇所にしか書かれていないからこそ検査できる。フィルタとその否定へ割ると、不変条件は
 2つの一覧の一致へ移り、それを突き合わせられるものはここに無い。
 
+## 分岐のパターン
+
+保護対象のブランチ、リリース線の形、ブランチ名の接頭辞は
+[`.github/branches.toml`](../branches.toml) **だけ**が持つ（[ADR-0603](../../docs/adr/0603-branch-protection-and-required-checks.md)
+決定1-3）。ここの `on.push.branches` は `make branches-apply` が宣言から組み直し、
+`make branches-check` がずれで落ちる。**手で編集しない。**
+
+**`pull_request` 側は絞らない。** 必須 context を報告する側であり、除外された Pull Request では
+run が起きず、報告の無い check を GitHub は待ち続ける（「必須検査はすべての Pull Request で
+報告される」）。`branches:` を置いてよいのは `push` 側だけである。
+
+宣言に無い workflow が `on.push.branches` を持っていると `branches-check` が落ちる。
+**生成の対象から漏れた宣言は、SSOT を直しても追随せず、古いパターンのまま動き続ける。**
+
 ## 結果コメント
 
 Pull Request のコメントは、**検査が報告すべきことを持っているときにだけ作られる。** 通った検査が

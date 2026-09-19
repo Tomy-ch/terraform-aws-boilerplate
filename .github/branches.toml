@@ -1,0 +1,58 @@
+# 分岐のパターンの単一宣言（SSOT）。
+# make branches-apply で生成先へ反映し、make branches-check でずれを検出する。
+#
+# **保護対象のブランチ、リリース線の形、ブランチ名の接頭辞はここだけが持つ**
+# （ADR-0603 決定1-3）。読む側は生成されるか実行時にここを読むかのいずれかで、
+# 自分でパターンを持たない。同じパターンを2箇所へ直接書かない。
+#
+# 読む側:
+#   生成   .github/settings/branch-protection.json   conditions.ref_name.include
+#   生成   .github/workflows/*.yaml                  on.push.branches
+#   実行時 scripts/base-branch/                      リリース線の判定
+#   実行時 scripts/release/                          タグを打つ先
+#   実行時 scripts/repo-setup/                       初期化で用意するブランチ
+
+# default は、リリースの起点であり GitHub のデフォルトブランチでもある。
+[default]
+branch = "production"
+
+# deploy は実環境へ届くブランチ。ここへの merge が適用の可否と同義である（ADR-0601 決定10）。
+# 順序は下流から上流。repo-setup が作る順序でもある。
+[sets]
+deploy = ["develop", "staging", "production"]
+
+# protected は保護設定の適用対象。GitHub の ruleset へ渡す形は refs/heads/ を前置した
+# fnmatch で、`**/*` は階層を跨ぐ。
+#
+# hotfix を含めるのは、release 線を迂回して production へ入る経路もレビューを通すため。
+protected = ["develop", "staging", "production", "release/**/*", "hotfix/**/*"]
+
+# gate_push は、push 側で走らせる検査の対象。required context を報告しない側なので
+# 絞ってよい（ADR-0603 決定1）。deploy に加えてリリース線を含める。
+gate_push = ["develop", "staging", "production", "release/*"]
+
+# release_push は、リリース線と production だけを見る検査の対象。
+release_push = ["release/*", "production"]
+
+# リリース線の形。base-branch が「最新」を決める入力であり、repo-setup が
+# リリース線かどうかを判定する入力でもある。
+#
+# prefix と pattern を別に持つのは、前者が前方一致の判定に、後者が版の抽出に要るため。
+# pattern の捕捉群は major / minor / patch の順とする。
+[release]
+prefix = "release/"
+pattern = '^release/v(\d+)\.(\d+)\.(\d+)$'
+
+# 作業ブランチの接頭辞。保護対象ではなく、ここから deploy 線へ Pull Request を出す。
+[feature]
+prefix = "feature/"
+
+# push 側の起動条件を生成する先。値は上の [sets] のキー。
+#
+# **ここに無い workflow が on.push.branches を持っていたら check は落ちる。** 生成の対象から
+# 漏れた宣言は、SSOT を直しても追随せず、黙って古いパターンで動き続ける。
+[workflows]
+"trivy-config.yaml" = "gate_push"
+"zizmor.yaml" = "gate_push"
+"trivy-fs.yaml" = "release_push"
+"trivy-release-gate.yaml" = "deploy"

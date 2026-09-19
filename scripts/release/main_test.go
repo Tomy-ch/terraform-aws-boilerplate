@@ -300,7 +300,7 @@ func Test_syncProductionSteps(t *testing.T) {
 				"git switch production",
 				"git reset --hard origin/production",
 				"git fetch --tags origin",
-			}, commands(syncProductionSteps()))
+			}, commands(syncDefaultSteps("production")))
 		})
 	})
 }
@@ -610,7 +610,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.NoError(t, runTag(f.runner(), []string{"-bump", "patch"}))
+			require.NoError(t, runTag(f.runner(), "production", []string{"-bump", "patch"}))
 			assert.Equal(t, []string{
 				fetchTagsCall,
 				tagListCall,
@@ -632,7 +632,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			err := runTag(f.runner(), []string{"-no-such-flag"})
+			err := runTag(f.runner(), "production", []string{"-no-such-flag"})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "failed to parse flags")
 			assert.Empty(t, f.calls)
@@ -643,7 +643,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "bogus"}), errUnknownBump)
+			require.ErrorIs(t, runTag(f.runner(), "production", []string{"-bump", "bogus"}), errUnknownBump)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -653,7 +653,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = "git reset --hard origin/production"
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), "production", []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, annotateTagCall)
 		})
 
@@ -663,7 +663,7 @@ func Test_runTag(t *testing.T) {
 			t.Chdir(t.TempDir())
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errNoReleaseNote)
+			require.ErrorIs(t, runTag(f.runner(), "production", []string{"-bump", "patch"}), errNoReleaseNote)
 			assert.Contains(t, f.calls, "git switch production")
 			assert.NotContains(t, f.calls, annotateTagCall)
 			assert.NotContains(t, f.calls, tagPushCall)
@@ -676,7 +676,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = annotateTagCall
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), "production", []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, tagPushCall)
 			assert.NotContains(t, f.calls, releaseCreateCall)
 		})
@@ -688,7 +688,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = tagPushCall
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), "production", []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, releaseCreateCall)
 		})
 	})
@@ -704,7 +704,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			require.NoError(t, runBranch(f.runner(), []string{"-bump", "minor"}))
+			require.NoError(t, runBranch(f.runner(), "production", []string{"-bump", "minor"}))
 			assert.Equal(t, []string{
 				fetchTagsCall,
 				tagListCall,
@@ -720,7 +720,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			require.NoError(t, runBranch(f.runner(), []string{"-bump", "patch", "-prefix", "hotfix", "-base", "staging"}))
+			require.NoError(t, runBranch(f.runner(), "production", []string{"-bump", "patch", "-prefix", "hotfix", "-base", "staging"}))
 			assert.Contains(t, f.calls, "git switch -c hotfix/v1.2.4 origin/staging")
 			assert.Contains(t, f.calls, "gh repo edit --default-branch hotfix/v1.2.4")
 		})
@@ -733,7 +733,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			err := runBranch(f.runner(), []string{"-no-such-flag"})
+			err := runBranch(f.runner(), "production", []string{"-no-such-flag"})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "failed to parse flags")
 			assert.Empty(t, f.calls)
@@ -743,7 +743,7 @@ func Test_runBranch(t *testing.T) {
 		t.Run("起点となるタグが無ければ初期タグ作成の案内へ差し替える", func(t *testing.T) {
 			t.Parallel()
 
-			err := runBranch((&fakeRunner{}).runner(), []string{"-bump", "patch"})
+			err := runBranch((&fakeRunner{}).runner(), "production", []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errNoTagForBranch)
 			require.NotErrorIs(t, err, errNoTag)
 		})
@@ -753,7 +753,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{failOn: tagListCall}
 
-			err := runBranch(f.runner(), []string{"-bump", "patch"})
+			err := runBranch(f.runner(), "production", []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errFakeCommand)
 			require.NotErrorIs(t, err, errNoTagForBranch)
 		})
@@ -763,7 +763,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.remoteBranches = map[string]bool{"release/v1.3.0": true}
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errBranchExists)
+			require.ErrorIs(t, runBranch(f.runner(), "production", []string{"-bump", "minor"}), errBranchExists)
 			assert.NotContains(t, f.calls, "git status --porcelain")
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
@@ -773,7 +773,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = "git status --porcelain"
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errFakeCommand)
+			require.ErrorIs(t, runBranch(f.runner(), "production", []string{"-bump", "minor"}), errFakeCommand)
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
 
@@ -783,7 +783,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.outputs["git status --porcelain"] = " M main.go\n"
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errDirtyWorktree)
+			require.ErrorIs(t, runBranch(f.runner(), "production", []string{"-bump", "minor"}), errDirtyWorktree)
 			assert.Contains(t, f.calls, "git status --short")
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
@@ -793,7 +793,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = branchPushCall
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errFakeCommand)
+			require.ErrorIs(t, runBranch(f.runner(), "production", []string{"-bump", "minor"}), errFakeCommand)
 			assert.NotContains(t, f.calls, defaultBranchCall)
 		})
 	})
@@ -851,7 +851,7 @@ func Test_execute(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"tag", "-bump", "patch"}))
+			require.NoError(t, execute(f.runner(), "production", []string{"tag", "-bump", "patch"}))
 			assert.Contains(t, f.calls, annotateTagCall)
 			assert.Contains(t, f.calls, tagPushCall)
 			assert.Contains(t, f.calls, releaseCreateCall)
@@ -861,7 +861,7 @@ func Test_execute(t *testing.T) {
 		t.Run("branch はブランチ作成の手順へ振り分ける", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"branch", "-bump", "minor"}))
+			require.NoError(t, execute(f.runner(), "production", []string{"branch", "-bump", "minor"}))
 			assert.Contains(t, f.calls, branchCreateCall)
 			assert.Contains(t, f.calls, branchPushCall)
 			assert.Contains(t, f.calls, defaultBranchCall)
@@ -872,7 +872,7 @@ func Test_execute(t *testing.T) {
 		t.Run("tag のヘルプ要求は失敗にせず手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"tag", "-h"}))
+			require.NoError(t, execute(f.runner(), "production", []string{"tag", "-h"}))
 			assert.Empty(t, f.calls)
 		})
 
@@ -880,7 +880,7 @@ func Test_execute(t *testing.T) {
 		t.Run("branch のヘルプ要求は失敗にせず手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"branch", "-h"}))
+			require.NoError(t, execute(f.runner(), "production", []string{"branch", "-h"}))
 			assert.Empty(t, f.calls)
 		})
 	})
@@ -891,7 +891,7 @@ func Test_execute(t *testing.T) {
 		t.Run("サブコマンドが無ければ使い方を示して手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), nil), errUsage)
+			require.ErrorIs(t, execute(f.runner(), "production", nil), errUsage)
 			assert.Empty(t, f.calls)
 		})
 
@@ -899,19 +899,19 @@ func Test_execute(t *testing.T) {
 		t.Run("未知のサブコマンドでは手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), []string{"bogus"}), errUnknownSubcommand)
+			require.ErrorIs(t, execute(f.runner(), "production", []string{"bogus"}), errUnknownSubcommand)
 			assert.Empty(t, f.calls)
 		})
 
 		// ヘルプ要求だけを飲み込む。失敗まで飲み込むと、タグを打てていないのに 0 で終わる。
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("tag の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
-			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"tag", "-bump", "patch"}), errNoTag)
+			require.ErrorIs(t, execute((&fakeRunner{}).runner(), "production", []string{"tag", "-bump", "patch"}), errNoTag)
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("branch の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
-			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"branch", "-bump", "patch"}), errNoTagForBranch)
+			require.ErrorIs(t, execute((&fakeRunner{}).runner(), "production", []string{"branch", "-bump", "patch"}), errNoTagForBranch)
 		})
 	})
 }

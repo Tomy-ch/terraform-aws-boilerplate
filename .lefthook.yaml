@@ -40,6 +40,16 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make egress-check
 
+    # 保護対象のブランチと起動条件が SSOT（.github/branches.toml）通りか。
+    # ずれたまま commit させない —— 保護対象から漏れたブランチは「保護されていない」
+    # ではなく「保護されているつもり」になる。
+    branches-check:
+      glob:
+        - ".github/branches.toml"
+        - ".github/settings/branch-protection.json"
+        - ".github/workflows/*.{yml,yaml}"
+      run: make branches-check
+
     # uses: と image: の固定。lockfile と実ファイルの drift、および参照されなくなった
     # lockfile のエントリ（orphan）を落とす。
     pin-actions-check:
