@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -261,9 +263,11 @@ func Test_branchPushStep(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("既存かどうかに関わらず 3 本まとめて push する", func(t *testing.T) {
+		t.Run("既存かどうかに関わらず宣言のブランチをまとめて push する", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "git push origin develop staging production", branchPushStep().String())
+			got, ok := branchPushStep()
+			require.True(t, ok)
+			assert.Equal(t, "git push origin "+strings.Join(branches.Deploy, " "), got.String())
 		})
 	})
 }

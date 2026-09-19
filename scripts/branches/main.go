@@ -37,6 +37,10 @@ const (
 	jsonIndent     = "  "
 )
 
+// includePath は、書き換える配列までの経路。requireRefName と includeSpan の両方が
+// これを見るので、経路が2箇所に書かれない。
+var includePath = []string{"conditions", "ref_name", "include"}
+
 var (
 	// errUsage は、サブコマンドの与え方が誤っていることを表す。
 	errUsage = xerrors.New("usage: branches <apply|check>")
@@ -79,7 +83,7 @@ func applyOrCheck(path string, dryRun bool, out io.Writer) error {
 		return xerrors.Wrap(err, path)
 	}
 
-	after, err := rewrite(before)
+	after, err := rewrite(before, branches.Protected)
 	if err != nil {
 		return xerrors.Wrap(err, path)
 	}
@@ -112,7 +116,7 @@ func applyOrCheck(path string, dryRun bool, out io.Writer) error {
 // **まず JSON として検証し、置換は include 配列の区間だけに限る。** 全体を再直列化すると
 // キーの並びが辞書順へ変わり、生成器が触るべきでない箇所まで書き換わる。逆に検証を省いて
 // 文字列置換だけで済ませると、整形が変わった瞬間に別の配列の閉じ括弧へ着地する。
-func rewrite(content []byte) ([]byte, error) {
+func rewrite(content []byte, protected []string) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(content, &doc); err != nil {
 		return nil, xerrors.Wrap(err, "JSON として読めません")
@@ -122,14 +126,21 @@ func rewrite(content []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// **宣言が空なら生成しない。** 保護対象0件の設定は「保護されていない」ではなく
+	// 「保護されているつもり」を作る（ADR-0702 決定13）。定数だから空にならない、は
+	// 保証ではない —— Protected は var であり、書き換えられる。
+	if len(protected) == 0 {
+		return nil, xerrors.Wrap(errShape, "宣言の保護対象が0件です")
+	}
+
 	start, end, err := includeSpan(content)
 	if err != nil {
 		return nil, err
 	}
 
 	indent := indentOf(content, start)
-	items := make([]string, 0, len(branches.Protected))
-	for _, p := range branches.Protected {
+	items := make([]string, 0, len(protected))
+	for _, p := range protected {
 		items = append(items, indent+jsonIndent+strconv.Quote(refPrefix+p))
 	}
 	block := "[\n" + strings.Join(items, ",\n") + "\n" + indent + "]"
@@ -162,48 +173,103 @@ func requireRefName(doc map[string]any) error {
 	return nil
 }
 
-// includeSpan は include の値（配列）が占めるバイト区間を返します。
+// includeSpan は conditions.ref_name.include の値（配列）が占めるバイト区間を返します。
 //
-// 入力は JSON として検証済みなので、`[` から対応する `]` までを数えれば足ります。
-// **行の走査で終端を探さない** —— インライン形式（`"include": []`）や整形の変化で、
-// 無関係な配列の閉じ括弧へ着地する経路が開く。
+// **構造を辿って位置を決める。** バイト列から `"include"` を素朴に探すと、先に現れた
+// 同名のキー —— GitHub の ruleset は conditions.repository_name にも同じ include / exclude の
+// 形を持つ —— や、値として現れた文字列を掴む。掴んだ先を Protected で上書きすれば、
+// 保護設定は「本来の include が古いまま、無関係な配列が壊れた」状態になり、しかも成功で返る。
 func includeSpan(content []byte) (int, int, error) {
-	key := []byte(`"include"`)
-	at := bytes.Index(content, key)
-	if at < 0 {
-		return 0, 0, xerrors.Wrap(errShape, `"include" が見つかりません`)
+	dec := json.NewDecoder(bytes.NewReader(content))
+
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return 0, 0, xerrors.Wrap(errShape, "最上位が object ではありません")
 	}
 
-	start := bytes.IndexByte(content[at:], '[')
-	if start < 0 {
-		return 0, 0, xerrors.Wrap(errShape, `"include" の値が配列ではありません`)
+	start, end, found, err := findArray(dec, includePath)
+	if err != nil {
+		return 0, 0, xerrors.Wrap(errShape, strings.Join(includePath, ".")+" を辿れません")
 	}
-	start += at
+	if !found {
+		return 0, 0, xerrors.Wrap(errShape, strings.Join(includePath, ".")+" がありません")
+	}
 
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(content); i++ {
-		c := content[i]
-		switch {
-		case escaped:
-			escaped = false
-		case c == '\\' && inString:
-			escaped = true
-		case c == '"':
-			inString = !inString
-		case inString:
-		case c == '[':
-			depth++
-		case c == ']':
-			depth--
-			if depth == 0 {
-				return start, i + 1, nil
+	return start, end, nil
+}
+
+// findArray は、開き波括弧を読み終えた object の中で want の経路を辿り、
+// 行き着いた配列のバイト区間を返します。
+func findArray(dec *json.Decoder, want []string) (int, int, bool, error) {
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, 0, false, err
+		}
+		if d, ok := tok.(json.Delim); ok && d == '}' {
+			return 0, 0, false, nil
+		}
+
+		key, _ := tok.(string)
+
+		value, err := dec.Token()
+		if err != nil {
+			return 0, 0, false, err
+		}
+
+		d, ok := value.(json.Delim)
+		if !ok {
+			continue // スカラーは経路にならない
+		}
+
+		switch d {
+		case '{':
+			if len(want) > 1 && key == want[0] {
+				s, e, f, err := findArray(dec, want[1:])
+				if err != nil || f {
+					return s, e, f, err
+				}
+
+				continue
+			}
+			if err := skipContainer(dec); err != nil {
+				return 0, 0, false, err
+			}
+		case '[':
+			if len(want) == 1 && key == want[0] {
+				// Token が返した直後の位置は開き括弧の1つ先にある。
+				at := int(dec.InputOffset()) - 1
+				if err := skipContainer(dec); err != nil {
+					return 0, 0, false, err
+				}
+
+				return at, int(dec.InputOffset()), true, nil
+			}
+			if err := skipContainer(dec); err != nil {
+				return 0, 0, false, err
+			}
+		}
+	}
+}
+
+// skipContainer は、開き括弧を読み終えた container を閉じ括弧まで読み飛ばします。
+func skipContainer(dec *json.Decoder) error {
+	for depth := 1; depth > 0; {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
 			}
 		}
 	}
 
-	return 0, 0, xerrors.Wrap(errShape, `"include" の配列が閉じていません`)
+	return nil
 }
 
 // indentOf は、その位置を含む行の字下げを返します。

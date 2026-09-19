@@ -62,7 +62,7 @@ func Test_rewrite(t *testing.T) {
 
 		t.Run("include を宣言から組み直す", func(t *testing.T) {
 			t.Parallel()
-			got, err := rewrite([]byte(sound))
+			got, err := rewrite([]byte(sound), branches.Protected)
 			require.NoError(t, err)
 
 			want := make([]string, 0, len(branches.Protected))
@@ -76,7 +76,7 @@ func Test_rewrite(t *testing.T) {
 		// 書き換わる。include の区間だけを置き換えていることを、並びで確かめる。
 		t.Run("include 以外の並びと内容をそのまま保つ", func(t *testing.T) {
 			t.Parallel()
-			got, err := rewrite([]byte(sound))
+			got, err := rewrite([]byte(sound), branches.Protected)
 			require.NoError(t, err)
 
 			before, after := sound, string(got)
@@ -93,7 +93,7 @@ func Test_rewrite(t *testing.T) {
 		// exclude が include の前に在るので、終端を「最初に現れる ]」で探すと取り違える。
 		t.Run("直前のインライン配列に引きずられない", func(t *testing.T) {
 			t.Parallel()
-			got, err := rewrite([]byte(sound))
+			got, err := rewrite([]byte(sound), branches.Protected)
 			require.NoError(t, err)
 			assert.Contains(t, string(got), `"exclude": []`)
 		})
@@ -102,25 +102,36 @@ func Test_rewrite(t *testing.T) {
 		t.Run("include がインライン形式でも置き換える", func(t *testing.T) {
 			t.Parallel()
 			inline := `{"conditions":{"ref_name":{"exclude":[],"include":[]}},"name":"x"}`
-			got, err := rewrite([]byte(inline))
+			got, err := rewrite([]byte(inline), branches.Protected)
 			require.NoError(t, err)
 			assert.Equal(t, len(branches.Protected), len(includeOf(t, got)))
 			assert.Contains(t, string(got), `"name":"x"`)
 		})
 
+		// includeSpan の経路解決が壊れると、ここが無関係な配列を書き換えたまま成功する。
+		t.Run("別条件の include を書き換えない", func(t *testing.T) {
+			t.Parallel()
+			const decoy = `{"conditions": {"repository_name": {"include": ["repo-a"]}, "ref_name": {"include": ["refs/heads/old"]}}}`
+			got, err := rewrite([]byte(decoy), branches.Protected)
+			require.NoError(t, err)
+
+			assert.Contains(t, string(got), `"repository_name": {"include": ["repo-a"]}`)
+			assert.Equal(t, len(branches.Protected), len(includeOf(t, got)))
+		})
+
 		// 整形が毎回変わると、内容が同じでも check が落ち続ける。
 		t.Run("2 度かけても同じ結果になる", func(t *testing.T) {
 			t.Parallel()
-			once, err := rewrite([]byte(sound))
+			once, err := rewrite([]byte(sound), branches.Protected)
 			require.NoError(t, err)
-			twice, err := rewrite(once)
+			twice, err := rewrite(once, branches.Protected)
 			require.NoError(t, err)
 			assert.Equal(t, string(once), string(twice))
 		})
 
 		t.Run("末尾に改行を残す", func(t *testing.T) {
 			t.Parallel()
-			got, err := rewrite([]byte(sound))
+			got, err := rewrite([]byte(sound), branches.Protected)
 			require.NoError(t, err)
 			assert.Equal(t, byte('\n'), got[len(got)-1])
 		})
@@ -132,8 +143,16 @@ func Test_rewrite(t *testing.T) {
 		// 読めない入力を取りこぼしとして扱うと、保護設定を空のまま生成しうる。
 		t.Run("JSON として読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			_, err := rewrite([]byte("{ not json"))
+			_, err := rewrite([]byte("{ not json"), branches.Protected)
 			require.Error(t, err)
+		})
+
+		// 宣言が空のまま生成すると、保護対象0件の設定を作ったうえで成功を報告する。
+		// 「保護されていない」ではなく「保護されているつもり」を作る経路。
+		t.Run("宣言の保護対象が0件ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := rewrite([]byte(sound), nil)
+			require.ErrorIs(t, err, errShape)
 		})
 
 		// 構造の不在を補って続行すると、保護対象0件の設定を作ったまま成功で返る。
@@ -144,17 +163,21 @@ func Test_rewrite(t *testing.T) {
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
-				_, err := rewrite([]byte(content))
+				_, err := rewrite([]byte(content), branches.Protected)
 				require.ErrorIs(t, err, errShape)
 			})
 		}
 	})
 }
 
-//nolint:paralleltest // applyOrCheck はファイルを書き換えるため、同じパスを共有しない形で順に回す
 func Test_applyOrCheck(t *testing.T) {
+	t.Parallel()
+
 	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
 		t.Run("ずれていれば check は errDrift を返す", func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			err := applyOrCheck(writeProtection(t, sound), true, &out)
 			require.ErrorIs(t, err, errDrift)
@@ -163,6 +186,7 @@ func Test_applyOrCheck(t *testing.T) {
 
 		// check が書き換えると、検査が対象を自分で直して緑を返すことになる。
 		t.Run("check は書き換えない", func(t *testing.T) {
+			t.Parallel()
 			path := writeProtection(t, sound)
 			var out bytes.Buffer
 			_ = applyOrCheck(path, true, &out)
@@ -173,6 +197,7 @@ func Test_applyOrCheck(t *testing.T) {
 		})
 
 		t.Run("apply は書き換えて成功する", func(t *testing.T) {
+			t.Parallel()
 			path := writeProtection(t, sound)
 			var out bytes.Buffer
 			require.NoError(t, applyOrCheck(path, false, &out))
@@ -184,6 +209,7 @@ func Test_applyOrCheck(t *testing.T) {
 		})
 
 		t.Run("apply の直後は check が通る", func(t *testing.T) {
+			t.Parallel()
 			path := writeProtection(t, sound)
 			var out bytes.Buffer
 			require.NoError(t, applyOrCheck(path, false, &out))
@@ -192,8 +218,11 @@ func Test_applyOrCheck(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
 		// 不在を「ずれなし」として通すと、保護設定を失ったまま緑になる。
 		t.Run("ファイルが無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			err := applyOrCheck(filepath.Join(t.TempDir(), "no-such.json"), true, &out)
 			require.Error(t, err)
@@ -223,6 +252,171 @@ func Test_run(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
 				require.ErrorIs(t, run(args, &out), errUsage)
+			})
+		}
+	})
+}
+
+func Test_requireRefName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("include が配列なら通る", func(t *testing.T) {
+			t.Parallel()
+			doc := map[string]any{"conditions": map[string]any{"ref_name": map[string]any{"include": []any{}}}}
+			require.NoError(t, requireRefName(doc))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 構造の不在を補って続行すると、保護対象0件の設定を作ったまま成功で返る。
+		for name, doc := range map[string]map[string]any{
+			"conditions が無い":          {"name": "x"},
+			"conditions が object でない": {"conditions": "x"},
+			"ref_name が無い":            {"conditions": map[string]any{}},
+			"ref_name が object でない":   {"conditions": map[string]any{"ref_name": "x"}},
+			"include が無い":             {"conditions": map[string]any{"ref_name": map[string]any{"exclude": []any{}}}},
+			"include が配列でない":          {"conditions": map[string]any{"ref_name": map[string]any{"include": "x"}}},
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				require.ErrorIs(t, requireRefName(doc), errShape)
+			})
+		}
+	})
+}
+
+func Test_includeSpan(t *testing.T) {
+	t.Parallel()
+
+	// nest は conditions.ref_name の中身を包んで、経路を持つ最小の保護設定にします。
+	nest := func(refName string) string {
+		return `{"conditions": {"ref_name": ` + refName + `}, "rules": []}`
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("複数行の配列の区間を返す", func(t *testing.T) {
+			t.Parallel()
+			content := []byte("{\n  \"conditions\": {\n    \"ref_name\": {\n      \"include\": [\n        \"a\"\n      ]\n    }\n  }\n}\n")
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, "[\n        \"a\"\n      ]", string(content[start:end]))
+		})
+
+		// GitHub の ruleset は conditions.repository_name にも同じ include / exclude を持つ。
+		// 先に現れたそちらを掴むと、保護対象を無関係な配列へ書き込む。
+		t.Run("別条件の include を掴まない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(`{"conditions": {"repository_name": {"include": ["repo-a"]}, "ref_name": {"include": ["refs/heads/x"]}}}`)
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `["refs/heads/x"]`, string(content[start:end]))
+		})
+
+		// 値として現れた "include" という文字列を、キーと取り違えない。
+		t.Run("値に現れた include という文字列を掴まない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(`{"description": "include", "conditions": {"ref_name": {"exclude": [], "include": ["refs/heads/x"]}}}`)
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `["refs/heads/x"]`, string(content[start:end]))
+		})
+
+		// 同じ object の中で、include より前に現れた配列に引きずられない。
+		t.Run("直前の exclude に引きずられない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(nest(`{"exclude": ["a"], "include": ["b"]}`))
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `["b"]`, string(content[start:end]))
+		})
+
+		// fnmatch は文字クラス [...] を許すので、値に角括弧が来る。
+		t.Run("文字列の中の角括弧を終端と読まない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(nest(`{"include": ["a]b", "c"]}`))
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `["a]b", "c"]`, string(content[start:end]))
+		})
+
+		t.Run("エスケープされた引用符で文字列を抜けない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(nest(`{"include": ["a\"]", "b"]}`))
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `["a\"]", "b"]`, string(content[start:end]))
+		})
+
+		t.Run("入れ子の配列を数え違えない", func(t *testing.T) {
+			t.Parallel()
+			content := []byte(nest(`{"include": [["a"], "b"]}`))
+			start, end, err := requireSpan(t, content)
+			require.NoError(t, err)
+			assert.Equal(t, `[["a"], "b"]`, string(content[start:end]))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 区間を決められないまま続行すると、無関係な位置へ書き込む。
+		for name, content := range map[string]string{
+			"最上位が object でない": `["include"]`,
+			"conditions が無い":  `{"name": "x"}`,
+			"ref_name が無い":    `{"conditions": {"repository_name": {"include": []}}}`,
+			"include が無い":     `{"conditions": {"ref_name": {"exclude": []}}}`,
+			"値が配列でない":         `{"conditions": {"ref_name": {"include": "x"}}}`,
+			"配列が閉じていない":       `{"conditions": {"ref_name": {"include": ["a"`,
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, err := includeSpan([]byte(content))
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+	})
+}
+
+// requireSpan は includeSpan を呼び、区間が content の範囲に収まっていることを確かめます。
+func requireSpan(t *testing.T, content []byte) (int, int, error) {
+	t.Helper()
+
+	start, end, err := includeSpan(content)
+	if err == nil {
+		require.GreaterOrEqual(t, start, 0)
+		require.LessOrEqual(t, end, len(content))
+		require.Less(t, start, end)
+	}
+
+	return start, end, err
+}
+
+func Test_indentOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct {
+			content string
+			at      int
+			want    string
+		}{
+			"行頭からの空白を数える":    {content: "a\n    b", at: 6, want: "    "},
+			"字下げが無ければ空を返す":   {content: "a\nb", at: 2, want: ""},
+			"改行が無い先頭行でも数える":  {content: "  x", at: 2, want: "  "},
+			"位置が行頭そのものでも数える": {content: "a\n  b", at: 2, want: "  "},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tc.want, indentOf([]byte(tc.content), tc.at))
 			})
 		}
 	})

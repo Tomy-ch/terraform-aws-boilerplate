@@ -39,6 +39,8 @@ const (
 var (
 	// errInitialTagExists は、初期タグが既に在り初期化してはいけないことを表す。
 	errInitialTagExists = xerrors.New("があります。初期化を停止します")
+	// errNoManagedBranch は、初期化で用意するブランチが1件も宣言されていないことを表す。
+	errNoManagedBranch = xerrors.New("❌ 初期化で用意するブランチがありません")
 	// errUsage は、サブコマンドが指定されていないことを表す。
 	errUsage             = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
@@ -152,8 +154,15 @@ func branchCreationSteps(existing []string) ([]step, []string) {
 }
 
 // branchPushStep は、用意したブランチをまとめて push する手順を返します。
-func branchPushStep() step {
-	return step{name: "git", args: append([]string{"push", "origin"}, branches.Deploy...)}
+//
+// **宣言が空なら手順を組まない。** 引数無しの `git push origin` は、現在のブランチを
+// 上流の設定に従って push する —— 用意したブランチを push するつもりで、別のものを押し出す。
+func branchPushStep() (step, bool) {
+	if len(branches.Deploy) == 0 {
+		return step{}, false
+	}
+
+	return step{name: "git", args: append([]string{"push", "origin"}, branches.Deploy...)}, true
 }
 
 // defaultBranchStep は、GitHub 上のデフォルトブランチを移す手順を返します。
@@ -274,7 +283,12 @@ func createBranches(r runner) error {
 		return err
 	}
 
-	if err := r.run(branchPushStep()); err != nil {
+	push, ok := branchPushStep()
+	if !ok {
+		return xerrors.Wrap(errNoManagedBranch, "宣言の deploy が0件です")
+	}
+
+	if err := r.run(push); err != nil {
 		return err
 	}
 
