@@ -35,6 +35,8 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
@@ -58,7 +60,12 @@ var (
 	errShape     = xerrors.New("生成先の構造が想定と異なります")
 	errUnmanaged = xerrors.New("宣言の対象外の workflow がブランチのパターンを持っています")
 	errOrphan    = xerrors.New("宣言が指す workflow に生成対象がありません")
+	errNotation  = xerrors.New("workflow の記法を解釈できません")
 )
+
+// branchFilterKeys は on.push の下でブランチを絞り込むキー。**生成できるのは branches だけ**で、
+// もう一方は見つけた時点で落とす —— 書き換えられないものを残せば、必ずずれる。
+var branchFilterKeys = []string{"branches", "branches-ignore"}
 
 // workflowSets は、push 側の起動条件を生成する先と、その集合。
 // ここに無い workflow がパターンを持つときどうなるかは applyOrCheckWorkflows。
@@ -84,6 +91,13 @@ var (
 	// yamlQuoteRe は、素のまま書くと YAML が別の意味に取りうる文字。
 	yamlQuoteRe = regexp.MustCompile(`[*?\[\]{}#,&!|>%@` + "`" + `]`)
 )
+
+// yamlReserved は、YAML 1.1 が文字列以外へ解決する語（小文字で引く）。
+var yamlReserved = map[string]bool{
+	"y": true, "yes": true, "n": true, "no": true,
+	"true": true, "false": true, "on": true, "off": true,
+	"null": true, "~": true,
+}
 
 // main は判断を持たず run へ委譲します（entry と判断の分離は scripts/README.md の Test Strategy）。
 func main() {
@@ -361,13 +375,13 @@ func applyOrCheckWorkflows(dir string, sets map[string][]string, dryRun bool, ou
 		}
 		lines := strings.Split(string(data), "\n")
 
-		hasBranches, hasSet, err := workflowTargets(lines)
+		hasBranches, hasSet, err := workflowTargets(data, lines)
 		if err != nil {
 			return xerrors.Wrap(err, name)
 		}
 
-		if literal := unmanagedLiteral(lines); literal != "" {
-			return xerrors.Wrap(errUnmanaged, name+" が "+literal+" をブランチ名として直接書いています")
+		if expr := unmanagedExpression(lines); expr != "" {
+			return xerrors.Wrap(errUnmanaged, name+" がブランチ名を式へ直接書いています: "+expr)
 		}
 
 		set, mapped := sets[name]
@@ -397,7 +411,9 @@ func applyOrCheckWorkflows(dir string, sets map[string][]string, dryRun bool, ou
 
 			continue
 		}
-		if err := os.WriteFile(path, []byte(after), filePerm); err != nil { //nolint:gosec // path は dir 直下の走査結果であり、外部入力は通らない
+		// path は dir 直下の走査結果で、dir は package 定数から組む。外部入力は通らない。
+		// 撤回条件: dir が root 以外から決まる形になったとき。
+		if err := os.WriteFile(path, []byte(after), filePerm); err != nil { //nolint:gosec // 上のコメントを参照
 			return xerrors.Wrap(err, path)
 		}
 	}
@@ -473,10 +489,31 @@ func expressionLines(lines []string) []int {
 }
 
 // workflowTargets は、その workflow が持つ生成対象の有無を返します。
-func workflowTargets(lines []string) (bool, bool, error) {
-	_, _, _, hasBranches, err := branchesBlock(lines)
+//
+// **2つの独立した経路で見て、食い違えば落とす**（ADR-0702 決定15）。行の走査は正規表現で
+// 構造を近似しており、一致しない形 —— フロースタイル、行末コメント、別名のキー —— を
+// すべて「無い」へ畳む。畳んだ先が成功だと、宣言の外へ直書きされたパターンが誰の目にも
+// 触れないまま緑になる。それはこの道具が防ぐと名乗っている当のものである（決定14）。
+func workflowTargets(data []byte, lines []string) (bool, bool, error) {
+	_, _, _, lineFound, err := branchesBlock(lines)
 	if err != nil {
 		return false, false, err
+	}
+
+	yamlFound, key, flow, err := pushBranchFilter(data)
+	if err != nil {
+		return false, false, err
+	}
+
+	switch {
+	case yamlFound && key != branchFilterKeys[0]:
+		return false, false, xerrors.Wrap(errUnmanaged, "on.push."+key+" は生成できません")
+	case yamlFound && flow:
+		return false, false, xerrors.Wrap(errNotation,
+			"on.push.branches がフロースタイルです（- を並べるブロック形式で書くこと）")
+	case yamlFound != lineFound:
+		return false, false, xerrors.Wrap(errNotation,
+			"on.push.branches を行として特定できません（キーの行末にコメントを置いていないか）")
 	}
 
 	hasSet := false
@@ -488,7 +525,50 @@ func workflowTargets(lines []string) (bool, bool, error) {
 		}
 	}
 
-	return hasBranches, hasSet, nil
+	return lineFound, hasSet, nil
+}
+
+// pushBranchFilter は、YAML として解釈した on.push のブランチ絞り込みを返します。
+// 戻り値は、存在するか・そのキー名・フロースタイルか。
+func pushBranchFilter(data []byte) (bool, string, bool, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return false, "", false, xerrors.Wrap(errShape, "YAML として読めません: "+err.Error())
+	}
+
+	// **空を通さない。** 空の workflow は GitHub が何も起動しない壊れた状態であり、
+	// 「ブランチのパターンを持たない」と同じ扱いにしてよいものではない。
+	if len(doc.Content) == 0 {
+		return false, "", false, xerrors.Wrap(errShape, "空です")
+	}
+	if doc.Content[0].Kind != yaml.MappingNode {
+		return false, "", false, xerrors.Wrap(errShape, "最上位が mapping ではありません")
+	}
+
+	push := mapValue(mapValue(doc.Content[0], "on"), "push")
+	for _, k := range branchFilterKeys {
+		if v := mapValue(push, k); v != nil {
+			return true, k, v.Style&yaml.FlowStyle != 0, nil
+		}
+	}
+
+	return false, "", false, nil
+}
+
+// mapValue は mapping から key に対応する値を返します。**キーは Node の生の文字列で比較する**
+// —— on は YAML 1.1 では真偽値に解決されうるので、型で辿ると見失う。
+func mapValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+
+	return nil
 }
 
 // rewriteWorkflow は、on.push.branches とブランチ集合の式を宣言から組み直します。
@@ -497,6 +577,15 @@ func rewriteWorkflow(lines []string, set []string) (string, error) {
 	// それでいて check は緑を返す（ADR-0702 決定13）。
 	if len(set) == 0 {
 		return "", xerrors.Wrap(errShape, "宣言の集合が0件です")
+	}
+
+	// **書けない値は書かない。** 生成先は YAML の引用スカラーと、単一引用符で囲む
+	// GitHub Actions の式である。値が引用符や改行を含むと囲みが破れ、壊れた workflow を
+	// 成功で書き込む。落とす側へ倒す。
+	for _, v := range set {
+		if v == "" || strings.ContainsAny(v, "'\"\n\r\t") {
+			return "", xerrors.Wrap(errShape, "宣言に書き出せない値があります: "+strconv.Quote(v))
+		}
 	}
 
 	out := slices.Clone(lines)
@@ -632,18 +721,26 @@ func indentWidth(line string) int {
 }
 
 // yamlScalar は、素のまま書くと YAML が別の意味に取りうる値を引用します。
+//
+// 記号だけでは足りない。**YAML 1.1 は on / off / yes / no を真偽値に解決する**ので、
+// そういう名前のブランチを素で書くと項目が文字列でなくなる。先頭の - と数字に見える形も同じ。
 func yamlScalar(v string) string {
-	if yamlQuoteRe.MatchString(v) {
+	if yamlQuoteRe.MatchString(v) || yamlReserved[strings.ToLower(v)] ||
+		strings.HasPrefix(v, "-") || v[0] >= '0' && v[0] <= '9' {
 		return "'" + v + "'"
 	}
 
 	return v
 }
 
-// unmanagedLiteral は、ブランチ名と突き合わせる式が宣言の値を直接書いている箇所を返します。
+// unmanagedExpression は、ブランチ名と突き合わせる式が宣言の値を直接書いている行を返します。
 // 生成できる形（fromJSON の配列）は rewriteWorkflow が揃えるので対象にしない。落とす理由は
 // .github/workflows/README.md の「分岐のパターン」節。
-func unmanagedLiteral(lines []string) string {
+//
+// **値ではなく行を返す。** 1行に複数の文字列が並んでいると、どれが犯人かは判定できない
+// （`github.ref_name == 'develop' && vars.STAGE == 'production'`）。当たった値だけを名指すと、
+// 読んだ人は無関係な方を直しに行く。
+func unmanagedExpression(lines []string) string {
 	for _, i := range expressionLines(lines) {
 		l := lines[i]
 		if !branchRefRe.MatchString(l) || branchSetRe.MatchString(l) {
@@ -651,7 +748,7 @@ func unmanagedLiteral(lines []string) string {
 		}
 		for _, v := range declaredLiterals() {
 			if strings.Contains(l, "'"+v+"'") || strings.Contains(l, `"`+v+`"`) {
-				return v
+				return strings.TrimSpace(l)
 			}
 		}
 	}

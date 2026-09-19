@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branches"
 )
@@ -597,6 +598,21 @@ func Test_rewriteWorkflow(t *testing.T) {
 			_, err := rewriteWorkflow(linesOf(workflowFixture), nil)
 			require.ErrorIs(t, err, errShape)
 		})
+
+		// 生成先は YAML の引用スカラーと、単一引用符で囲む GitHub Actions の式である。
+		// 囲みが破れた workflow を成功で書き込まない。
+		for name, v := range map[string]string{
+			"単一引用符を含む": "a'b",
+			"二重引用符を含む": `a"b`,
+			"改行を含む":    "a\nb",
+			"空文字列":     "",
+		} {
+			t.Run("宣言に"+name+"値があればエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, err := rewriteWorkflow(linesOf(workflowFixture), []string{"develop", v})
+				require.ErrorIs(t, err, errShape)
+			})
+		}
 	})
 }
 
@@ -727,7 +743,7 @@ func Test_workflowTargets(t *testing.T) {
 
 		t.Run("起動条件と集合の式をそれぞれ報告する", func(t *testing.T) {
 			t.Parallel()
-			hasBranches, hasSet, err := workflowTargets(linesOf(workflowFixture))
+			hasBranches, hasSet, err := targetsOf(workflowFixture)
 			require.NoError(t, err)
 			assert.True(t, hasBranches)
 			assert.True(t, hasSet)
@@ -736,12 +752,64 @@ func Test_workflowTargets(t *testing.T) {
 		t.Run("job の結果の集合を生成対象と数えない", func(t *testing.T) {
 			t.Parallel()
 			src := "jobs:\n  a:\n    if: ${{ contains(fromJSON('[\"failure\"]'), needs.b.result) }}\n"
-			hasBranches, hasSet, err := workflowTargets(linesOf(src))
+			hasBranches, hasSet, err := targetsOf(src)
+			require.NoError(t, err)
+			assert.False(t, hasBranches)
+			assert.False(t, hasSet)
+		})
+
+		t.Run("push を持たない workflow を通す", func(t *testing.T) {
+			t.Parallel()
+			hasBranches, hasSet, err := targetsOf("on:\n  pull_request:\n")
 			require.NoError(t, err)
 			assert.False(t, hasBranches)
 			assert.False(t, hasSet)
 		})
 	})
+
+	// **行の走査が読めない形は、すべてここで落ちなければならない。** 落ちずに「対象なし」へ
+	// 畳まれると、宣言の外へ直書きされたパターンが誰の目にも触れないまま check が緑になる。
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, src := range map[string]string{
+			"branches がフロー配列":   "on:\n  push:\n    branches: [develop, evil]\n",
+			"on 自体がフロー":         "on: {push: {branches: [evil]}}\n",
+			"on の行末にコメント":       "on: # trigger\n  push:\n    branches:\n      - evil\n",
+			"push の行末にコメント":     "on:\n  push: # x\n    branches:\n      - evil\n",
+			"branches の行末にコメント": "on:\n  push:\n    branches: # x\n      - evil\n",
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, err := targetsOf(src)
+				require.ErrorIs(t, err, errNotation)
+			})
+		}
+
+		// 生成できないものを残せば、宣言を直しても追随せず必ずずれる。
+		t.Run("branches-ignore ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := targetsOf("on:\n  push:\n    branches-ignore:\n      - evil\n")
+			require.ErrorIs(t, err, errUnmanaged)
+		})
+
+		for name, src := range map[string]string{
+			"空":                "",
+			"YAML として読めない":     "on:\n  push:\n   - a\n  - b\n",
+			"最上位が mapping でない": "- a\n- b\n",
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, err := targetsOf(src)
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+	})
+}
+
+// targetsOf は、2つの経路へ同じ内容を渡します。
+func targetsOf(src string) (bool, bool, error) {
+	return workflowTargets([]byte(src), linesOf(src))
 }
 
 func Test_yamlScalar(t *testing.T) {
@@ -751,11 +819,19 @@ func Test_yamlScalar(t *testing.T) {
 		t.Parallel()
 
 		// 素で書くと YAML が別の意味に取る値だけを引用する。全部引用すると既存の書式を壊す。
+		// 記号だけでは足りない —— YAML 1.1 は on / off / yes / no を真偽値に解決するので、
+		// 素で書くと項目が文字列でなくなる。
 		for in, want := range map[string]string{
 			"develop":   "develop",
 			"release/*": "'release/*'",
 			"a,b":       "'a,b'",
 			"#x":        "'#x'",
+			"on":        "'on'",
+			"OFF":       "'OFF'",
+			"No":        "'No'",
+			"null":      "'null'",
+			"-x":        "'-x'",
+			"2024":      "'2024'",
 		} {
 			t.Run(in+" を "+want+" にする", func(t *testing.T) {
 				t.Parallel()
@@ -765,7 +841,7 @@ func Test_yamlScalar(t *testing.T) {
 	})
 }
 
-func Test_unmanagedLiteral(t *testing.T) {
+func Test_unmanagedExpression(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
@@ -773,18 +849,35 @@ func Test_unmanagedLiteral(t *testing.T) {
 
 		t.Run("生成できる形は対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, unmanagedLiteral(linesOf(workflowFixture)))
+			assert.Empty(t, unmanagedExpression(linesOf(workflowFixture)))
 		})
 
 		t.Run("ブランチ名に触れない式は対象にしない", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, unmanagedLiteral(linesOf("        REF_NAME: ${{ github.ref_name }}\n")))
+			assert.Empty(t, unmanagedExpression(linesOf("        REF_NAME: ${{ github.ref_name }}\n")))
+		})
+
+		// run: のスクリプトは文字列であって式ではない。
+		t.Run("ブロックスカラーの中身は対象にしない", func(t *testing.T) {
+			t.Parallel()
+			src := "    steps:\n      - run: |\n          echo ${{ github.base_ref }} '" + branches.Default + "'\n"
+			assert.Empty(t, unmanagedExpression(linesOf(src)))
 		})
 
 		t.Run("直接比較を見つける", func(t *testing.T) {
 			t.Parallel()
 			src := "    if: ${{ github.base_ref == '" + branches.Default + "' }}\n"
-			assert.Equal(t, branches.Default, unmanagedLiteral(linesOf(src)))
+			assert.Contains(t, unmanagedExpression(linesOf(src)), branches.Default)
+		})
+
+		// 1行に複数の文字列が並ぶと、どれが犯人かは判定できない。当たった値だけを名指すと、
+		// 読んだ人は無関係な方を直しに行く。
+		t.Run("犯人を1つに決めず、行をそのまま返す", func(t *testing.T) {
+			t.Parallel()
+			src := "    if: ${{ github.ref_name == 'develop' && vars.STAGE == '" + branches.Default + "' }}\n"
+			got := unmanagedExpression(linesOf(src))
+			assert.Contains(t, got, "develop")
+			assert.Contains(t, got, branches.Default)
 		})
 	})
 }
@@ -923,6 +1016,93 @@ func Test_expressionLines(t *testing.T) {
 			assert.NotContains(t, got, "          echo ${{ x }}")
 			assert.Contains(t, got, "    if: ${{ x }}")
 			assert.Contains(t, got, "      - run: echo done")
+		})
+	})
+}
+
+func Test_pushBranchFilter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ブロック形式の branches を見つける", func(t *testing.T) {
+			t.Parallel()
+			found, key, flow, err := pushBranchFilter([]byte("on:\n  push:\n    branches:\n      - a\n"))
+			require.NoError(t, err)
+			assert.True(t, found)
+			assert.Equal(t, "branches", key)
+			assert.False(t, flow)
+		})
+
+		t.Run("フロー形式を flow として報告する", func(t *testing.T) {
+			t.Parallel()
+			_, _, flow, err := pushBranchFilter([]byte("on:\n  push:\n    branches: [a]\n"))
+			require.NoError(t, err)
+			assert.True(t, flow)
+		})
+
+		// on は YAML 1.1 では真偽値に解決されうる。型で辿ると見失う。
+		t.Run("on がフローでも辿れる", func(t *testing.T) {
+			t.Parallel()
+			found, _, _, err := pushBranchFilter([]byte("on: {push: {branches: [a]}}\n"))
+			require.NoError(t, err)
+			assert.True(t, found)
+		})
+
+		t.Run("branches-ignore をキー名ごと報告する", func(t *testing.T) {
+			t.Parallel()
+			_, key, _, err := pushBranchFilter([]byte("on:\n  push:\n    branches-ignore:\n      - a\n"))
+			require.NoError(t, err)
+			assert.Equal(t, "branches-ignore", key)
+		})
+
+		// pull_request 側を掴むと、必須 context を報告する側を絞ってしまう。
+		t.Run("pull_request 側の branches を掴まない", func(t *testing.T) {
+			t.Parallel()
+			found, _, _, err := pushBranchFilter([]byte("on:\n  pull_request:\n    branches:\n      - a\n"))
+			require.NoError(t, err)
+			assert.False(t, found)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, src := range map[string]string{
+			"空":                "",
+			"YAML として読めない":     "on:\n  push:\n   - a\n  - b\n",
+			"最上位が mapping でない": "- a\n",
+		} {
+			t.Run(name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, _, err := pushBranchFilter([]byte(src))
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+	})
+}
+
+func Test_mapValue(t *testing.T) {
+	t.Parallel()
+
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte("a:\n  b: 1\n"), &doc))
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("キーに対応する値を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, mapValue(doc.Content[0], "a"))
+			assert.Equal(t, "1", mapValue(mapValue(doc.Content[0], "a"), "b").Value)
+		})
+
+		t.Run("無いキーと mapping でない入力に nil を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Nil(t, mapValue(doc.Content[0], "no-such"))
+			assert.Nil(t, mapValue(nil, "a"))
+			assert.Nil(t, mapValue(mapValue(mapValue(doc.Content[0], "a"), "b"), "c"))
 		})
 	})
 }

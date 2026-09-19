@@ -35,6 +35,8 @@ pre-commit:
     branches-check:
       glob:
         - "scripts/lib/branches/*.go"
+        - "scripts/branches/*.go"
+        - "scripts/lib/yamlblock/*.go"
         - ".github/settings/branch-protection.json"
         - ".github/workflows/*.{yml,yaml}"
       run: make branches-check
