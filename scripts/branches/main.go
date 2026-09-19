@@ -53,22 +53,15 @@ const (
 var includePath = []string{"conditions", "ref_name", "include"}
 
 var (
-	// errUsage は、サブコマンドの与え方が誤っていることを表す。
-	errUsage = xerrors.New("usage: branches <apply|check>")
-	// errDrift は、生成先が宣言からずれていることを表す。
-	errDrift = xerrors.New("生成先が宣言からずれています")
-	// errShape は、生成先が期待する構造を持たないことを表す。
-	errShape = xerrors.New("生成先の構造が想定と異なります")
-	// errUnmanaged は、宣言の対象外の workflow がブランチのパターンを直接書いていることを表す。
+	errUsage     = xerrors.New("usage: branches <apply|check>")
+	errDrift     = xerrors.New("生成先が宣言からずれています")
+	errShape     = xerrors.New("生成先の構造が想定と異なります")
 	errUnmanaged = xerrors.New("宣言の対象外の workflow がブランチのパターンを持っています")
-	// errOrphan は、宣言が指す workflow が生成対象を持たないことを表す。
-	errOrphan = xerrors.New("宣言が指す workflow に生成対象がありません")
+	errOrphan    = xerrors.New("宣言が指す workflow に生成対象がありません")
 )
 
 // workflowSets は、push 側の起動条件を生成する先と、その集合。
-//
-// **ここに無い workflow がブランチのパターンを持っていたら落とす。** 生成の対象から漏れた
-// 記述は、宣言を直しても追随せず、黙って古いパターンで動き続ける（ADR-0603 決定3）。
+// ここに無い workflow がパターンを持つときどうなるかは applyOrCheckWorkflows。
 var workflowSets = map[string][]string{
 	"trivy-config.yaml":       branches.GatePush,
 	"zizmor.yaml":             branches.GatePush,
@@ -92,7 +85,7 @@ var (
 	yamlQuoteRe = regexp.MustCompile(`[*?\[\]{}#,&!|>%@` + "`" + `]`)
 )
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
+// main は判断を持たず run へ委譲します（entry と判断の分離は scripts/README.md の Test Strategy）。
 func main() {
 	log.SetFlags(0)
 
@@ -176,11 +169,8 @@ func applyOrCheck(path string, dryRun bool, out io.Writer) error {
 	return nil
 }
 
-// rewrite は保護設定の conditions.ref_name.include を宣言から組み直します。
-//
-// **まず JSON として検証し、置換は include 配列の区間だけに限る。** 全体を再直列化すると
-// キーの並びが辞書順へ変わり、生成器が触るべきでない箇所まで書き換わる。逆に検証を省いて
-// 文字列置換だけで済ませると、整形が変わった瞬間に別の配列の閉じ括弧へ着地する。
+// rewrite は保護設定の conditions.ref_name.include を宣言から組み直します。まず JSON として
+// 検証し、置換を include 配列の区間だけに限る理由は scripts/README.md の branches/ の行。
 func rewrite(content []byte, protected []string) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(content, &doc); err != nil {
@@ -352,10 +342,7 @@ func indentOf(content []byte, at int) string {
 // ---- workflow の起動条件とブランチ集合 --------------------------------------
 
 // applyOrCheckWorkflows は、workflow のブランチのパターンを宣言へ揃えます。
-//
-// **走査は全 workflow に掛ける。** 宣言に載っている分だけを開くと、宣言の対象外の
-// workflow が直接書いたパターンは誰の目にも触れない —— それが ADR-0603 決定3 が禁じている
-// 状態そのものである。
+// 走査を全 workflow に掛ける理由は scripts/README.md の branches/ の行。
 func applyOrCheckWorkflows(dir string, sets map[string][]string, dryRun bool, out io.Writer) error {
 	paths, err := workflowFiles(dir)
 	if err != nil {
@@ -546,9 +533,7 @@ func rewriteWorkflow(lines []string, set []string) (string, error) {
 }
 
 // branchesBlock は on.push.branches の項目が占める行の区間と、その字下げを返します。
-//
-// **YAML として読み直さない。** 往復させるとコメントも引用の仕方も並びも失われ、生成器が
-// 触るべきでない箇所まで書き換わる。行で扱い、構造は字下げの深さで辿る。
+// YAML として読み直さない理由は scripts/README.md の branches/ の行。
 func branchesBlock(lines []string) (int, int, string, bool, error) {
 	on := -1
 	for i, l := range lines {
@@ -656,10 +641,8 @@ func yamlScalar(v string) string {
 }
 
 // unmanagedLiteral は、ブランチ名と突き合わせる式が宣言の値を直接書いている箇所を返します。
-//
-// **生成できる形（fromJSON の配列）は対象にしない** —— そちらは rewriteWorkflow が揃える。
-// ここが捕まえるのは `github.base_ref == 'production'` のように、生成では追随できない形で
-// 書かれたものである。見つけたら落とす。書き換えられない以上、残せば必ずずれる。
+// 生成できる形（fromJSON の配列）は rewriteWorkflow が揃えるので対象にしない。落とす理由は
+// .github/workflows/README.md の「分岐のパターン」節。
 func unmanagedLiteral(lines []string) string {
 	for _, i := range expressionLines(lines) {
 		l := lines[i]

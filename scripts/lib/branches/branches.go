@@ -20,7 +20,8 @@ const (
 	// Default はリリースの起点であり、GitHub のデフォルトブランチでもある。
 	Default = "production"
 
-	// ReleasePrefix はリリース線の接頭辞。前方一致と部分一致の判定に使う。
+	// ReleasePrefix は、ReleasePattern の前方一致アンカーと、repo-setup の部分一致の
+	// 両方に使われる。
 	ReleasePrefix = "release/"
 
 	// HotfixPrefix は release 線を迂回して Default へ入る経路の接頭辞。
@@ -32,8 +33,8 @@ const (
 // base-branch はこの順序で版を比較する。
 var ReleasePattern = regexp.MustCompile(`^` + ReleasePrefix + `v(\d+)\.(\d+)\.(\d+)$`)
 
-// Deploy は実環境へ届くブランチ。ここへの merge が適用の可否と同義である
-// （ADR-0601 決定10）。並びは下流から上流で、repo-setup が作る順序でもある。
+// Deploy は実環境へ届くブランチ（ADR-0601 決定10）。並びは下流から上流で、
+// repo-setup が作る順序でもある。
 var Deploy = []string{"develop", "staging", Default}
 
 // GatePush は、push 側で走らせる検査の起動対象。**required context を報告しない側なので
@@ -63,7 +64,7 @@ type Line string
 const (
 	// LineRelease は通常のリリース線。
 	LineRelease Line = "release"
-	// LineHotfix は Default への緊急経路。
+	// LineHotfix は HotfixPrefix に対応する線。
 	LineHotfix Line = "hotfix"
 )
 
