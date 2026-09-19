@@ -8,8 +8,7 @@
 // 取り消しの効かない操作（タグの push / Release の作成 / デフォルトブランチの切り替え）を
 // 含むため、make のレシピではなくここに在る。理由は scripts/README.md の release 行。
 //
-// git / gh はホストの認証情報を使うため、ツールランナーではなくホストで実行する
-// （cmd/db-slot と同じ扱い）。
+// git / gh はホストの認証情報を使うため、ツールランナーではなくホストで実行する。
 package main
 
 import (
@@ -37,25 +36,20 @@ const (
 
 var (
 	// semverPattern は、リリースタグとして扱う形式。プレリリースやビルドメタデータは対象外。
-	semverPattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
-	// errNoTag は、起点となるリリースタグが 1 つも無いことを表す。
-	errNoTag = xerrors.New("❌ リリースタグが存在しません。先に初期タグ(v0.0.0)を作成してください")
-	// errNoTagForBranch は、ブランチ作成の起点となるタグが無いことを表す。
+	semverPattern     = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
+	errNoTag          = xerrors.New("❌ リリースタグが存在しません。先に初期タグ(v0.0.0)を作成してください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
 		"➡️ 先に make tag-patch などで初期タグを作成してから再実行してください")
-	// errUnknownBump は、-bump に未知の粒度が渡されたことを表す。
 	errUnknownBump = xerrors.New("unknown -bump (patch / minor / major)")
 	// errHelpRequested は、-h でヘルプを求められたことを表す。失敗ではないため 0 で終える。
 	errHelpRequested = xerrors.New("help requested")
 	// errNoReleaseNote は、タグ本文にするリリースノートが production に無いことを表す。
 	errNoReleaseNote = xerrors.New("が存在しません。タグとリリースをスキップしました")
 	// errBranchExists は、作成しようとしたブランチが origin に既に在ることを表す。
-	errBranchExists = xerrors.New("は既に存在します。処理を中止します")
-	// errDirtyWorktree は、作業ツリーに未コミットの変更が残っていることを表す。
+	errBranchExists  = xerrors.New("は既に存在します。処理を中止します")
 	errDirtyWorktree = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
 	// errUsage は、サブコマンドが指定されていないことを表す。
-	errUsage = xerrors.New("❌ usage: release <tag|branch> [flags]")
-	// errUnknownSubcommand は、未知のサブコマンドが指定されたことを表す。
+	errUsage             = xerrors.New("❌ usage: release <tag|branch> [flags]")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (tag / branch)")
 )
 
@@ -71,9 +65,8 @@ type step struct {
 }
 
 // runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリへ触れずに
-// 検証するための seam（scripts/README.md の Test Strategy「An irreversible step…」）。
+// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
 type runner struct {
-	// run は、手順を 1 つ実行する。
 	run func(s step) error
 	// output は、コマンドの標準出力を取り出す。
 	output func(name string, args ...string) (string, error)
@@ -81,8 +74,6 @@ type runner struct {
 	remoteBranchExists func(branch string) bool
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は execute に置きます
-// （run は 1 手順を実行する関数として既に在るため名前を譲る）。
 func main() {
 	log.SetFlags(0)
 

@@ -9,8 +9,7 @@
 // ここが持つのは git / gh の手順だけ。取り消しの効かない操作（タグの一括削除 / デフォルト
 // ブランチの移動）を含むため make のレシピにしない。理由は scripts/README.md の repo-setup 行。
 //
-// git / gh はホストの認証情報を使うため、ツールランナーではなくホストで実行する
-// （cmd/db-slot と同じ扱い）。
+// git / gh はホストの認証情報を使うため、ツールランナーではなくホストで実行する。
 package main
 
 import (
@@ -39,13 +38,11 @@ const (
 )
 
 var (
-	// managedBranches は、初期化時に用意するブランチ。
 	managedBranches = []string{"develop", "staging", defaultBranch}
 	// errInitialTagExists は、初期タグが既に在り初期化してはいけないことを表す。
 	errInitialTagExists = xerrors.New("があります。初期化を停止します")
 	// errUsage は、サブコマンドが指定されていないことを表す。
-	errUsage = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
-	// errUnknownSubcommand は、未知のサブコマンドが指定されたことを表す。
+	errUsage             = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 )
 
@@ -58,9 +55,8 @@ type step struct {
 }
 
 // runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリを壊さずに
-// 検証するための seam（scripts/README.md の Test Strategy「An irreversible step…」）。
+// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
 type runner struct {
-	// run は、手順を 1 つ実行する。
 	run func(s step) error
 	// output は、コマンドの標準出力を取り出す。
 	output func(name string, args ...string) (string, error)
@@ -68,8 +64,6 @@ type runner struct {
 	branchExists func(branch string) bool
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は execute に置きます
-// （run は 1 手順を実行する関数として既に在るため名前を譲る）。
 func main() {
 	log.SetFlags(0)
 

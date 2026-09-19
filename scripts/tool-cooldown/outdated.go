@@ -116,8 +116,6 @@ func listReleases(ctx context.Context, client *http.Client, t tool) ([]release, 
 		return goModuleReleases(ctx, client, ref)
 	case "npm":
 		return npmReleases(ctx, client, ref)
-	case "pypi":
-		return pypiReleases(ctx, client, extrasRe.ReplaceAllString(ref, ""))
 	default:
 		return nil, xerrors.Wrap(errUnsupportedBackend, t.backend)
 	}
@@ -228,29 +226,6 @@ func npmReleases(ctx context.Context, client *http.Client, pkg string) ([]releas
 	return out, nil
 }
 
-func pypiReleases(ctx context.Context, client *http.Client, pkg string) ([]release, error) {
-	var body struct {
-		Releases map[string][]struct {
-			//nolint:tagliatelle // PyPI の応答フィールド名
-			UploadTime time.Time `json:"upload_time_iso_8601"`
-		} `json:"releases"`
-	}
-	if err := getJSON(ctx, client, pypiBase+pkg+"/json", &body); err != nil {
-		return nil, err
-	}
-
-	out := make([]release, 0, len(body.Releases))
-	for v, files := range body.Releases {
-		// 配布物を 1 つも持たない版は yank 済みで、install できないため候補にしない。
-		if len(files) == 0 || !stableVersion(v) {
-			continue
-		}
-		out = append(out, release{version: v, at: files[0].UploadTime})
-	}
-
-	return out, nil
-}
-
 // stableVersion は数値だけの区切りからなる版かどうかを返します。プレリリース識別子やビルド
 // メタデータを持つ版を弾くのが目的で、ここを通さないと `1.2.0-rc1` が最新として選ばれます。
 func stableVersion(v string) bool {
@@ -333,7 +308,6 @@ func outdatedReport(cands []candidate, now time.Time) string {
 			fmt.Fprintf(&b, "| `%s` | %s | **%s** | %dd | `%s` |\n",
 				c.tool.key, c.tool.version, c.eligible, c.eligibleAge, c.tool.file)
 		}
-		b.WriteString("\n`/tools-upgrade` が同じ窓でこの表を再計算し、宣言と lockfile を更新します。\n\n")
 	}
 
 	b.WriteString("## 窓が明けるのを待っている\n\n")

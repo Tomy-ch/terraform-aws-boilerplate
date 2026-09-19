@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,17 +35,13 @@ import (
 const (
 	miseFile   = "mise.toml"
 	bypassFile = ".github/tool-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
-	// pyRequirementsGlob は PyPI ツールの直接宣言。解決結果は同名の .txt が持つ。
-	pyRequirementsGlob  = "python/*.in"
-	pyRequirementSuffix = ".in"
-	pyLockSuffix        = ".txt"
 
 	// releaseWindowDays は GitHub リリースに紐づく backend の窓。
 	releaseWindowDays = 14
 	// registryWindowDays はパッケージレジストリに紐づく backend の窓。
 	registryWindowDays = 7
 
-	maxBypassMonths = 3 // バイパスの期限に許す最大の先送り幅
+	maxBypassMonths = 3
 
 	fetchTimeout = 30 * time.Second
 	miseTimeout  = 30 * time.Second
@@ -60,7 +55,6 @@ const (
 	githubAPI   = "https://api.github.com/repos/"
 	goProxyBase = "https://proxy.golang.org/"
 	npmBase     = "https://registry.npmjs.org/"
-	pypiBase    = "https://pypi.org/pypi/"
 )
 
 var (
@@ -88,15 +82,6 @@ var (
 	)
 	// sectionRe は TOML のセクション見出し。
 	sectionRe = regexp.MustCompile(`^\s*\[([^\]]+)\]\s*$`)
-	// extrasRe は extras 表記（`graphifyy[sql]` の `[sql]`）。
-	extrasRe = regexp.MustCompile(`\[[^\]]*\]$`)
-	// pyRequirementRe は requirements の 1 行を名前（extras 込み）と版へ割る。`==` で固定された
-	// 行だけを読む。範囲指定は宣言としては版を決めておらず、cooldown を測る対象にならない。
-	pyRequirementRe = regexp.MustCompile(
-		`^([A-Za-z0-9][A-Za-z0-9._\-]*(?:\[[^\]]*\])?)\s*==\s*([A-Za-z0-9][A-Za-z0-9.\-+!]*)`,
-	)
-	// pyNameSepRe は PyPI の名前正規化（`-` `_` `.` の連続を `-` 1 つへ寄せる / PEP 503）。
-	pyNameSepRe = regexp.MustCompile(`[-_.]+`)
 	// bypassLineRe は `"key@version" = { expires = ..., issue = ..., reason = "..." }` を読む。
 	bypassLineRe = regexp.MustCompile(
 		`^"([^"]+)"\s*=\s*\{\s*expires\s*=\s*(\d{4}-\d{2}-\d{2})\s*,\s*issue\s*=\s*(\d+)\s*,\s*reason\s*=\s*"([^"]*)"\s*\}$`,
@@ -148,7 +133,6 @@ type options struct {
 
 func (t tool) id() string { return t.key + "@" + t.version }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -163,7 +147,7 @@ func main() {
 func run(args []string, client *http.Client, now time.Time) error {
 	sub, opt, err := parseArgs(args)
 	if err != nil {
-		// ヘルプ要求は失敗ではないので 0 で終える。usage は flag が既に出力している。
+		// usage は flag が既に出力している。
 		if xerrors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -174,10 +158,7 @@ func run(args []string, client *http.Client, now time.Time) error {
 	// 期限の比較は暦日で行う。時刻を残すと 3 ヶ月の境界が実行時刻とタイムゾーンで動く。
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	paths, err := declarationPaths()
-	if err != nil {
-		return xerrors.Wrap(err, "❌ 宣言ファイルの列挙")
-	}
+	paths := declarationPaths()
 	decls, err := readDeclarations(paths)
 	if err != nil {
 		return xerrors.Wrap(err, "❌ 宣言ファイルの読み取り")
@@ -196,7 +177,6 @@ func run(args []string, client *http.Client, now time.Time) error {
 		return xerrors.Wrap(err, "❌ "+bypassFile)
 	}
 	policyViolations, invalidBypasses := validateBypasses(bypasses, declared, today)
-	policyViolations = append(policyViolations, verifyLocks(declared)...)
 
 	targets := declared
 	if sub == "gate" {
@@ -310,33 +290,9 @@ func parseTools(content []byte) ([]tool, error) {
 	return tools, sc.Err()
 }
 
-// parsePyRequirements は requirements の直接宣言を読む。キーは backend を明示した `pypi:` 付きに
-// 揃える。mise の宣言と同じ形にしておくと、窓の判定もバイパスのキーも経路で分かれずに済む。
-func parsePyRequirements(content []byte) ([]tool, error) {
-	var tools []tool
-	sc := bufio.NewScanner(strings.NewReader(string(content)))
-	for sc.Scan() {
-		trimmed := strings.TrimSpace(sc.Text())
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		m := pyRequirementRe.FindStringSubmatch(trimmed)
-		if m == nil {
-			continue
-		}
-		tools = append(tools, tool{key: "pypi:" + m[1], version: m[2]})
-	}
-	return tools, sc.Err()
-}
-
-// declarationPaths は宣言ファイルを列挙する。
-func declarationPaths() ([]string, error) {
-	reqs, err := filepath.Glob(pyRequirementsGlob)
-	if err != nil {
-		return nil, xerrors.Wrap(err, pyRequirementsGlob)
-	}
-	sort.Strings(reqs)
-	return append([]string{miseFile}, reqs...), nil
+// declarationPaths は版を宣言するファイルを返す。
+func declarationPaths() []string {
+	return []string{miseFile}
 }
 
 // readDeclarations は作業ツリーの宣言ファイルを読む。
@@ -356,15 +312,7 @@ func readDeclarations(paths []string) ([]declaration, error) {
 func parseDeclarations(decls []declaration) ([]tool, error) {
 	var tools []tool
 	for _, d := range decls {
-		var (
-			parsed []tool
-			err    error
-		)
-		if d.path == miseFile {
-			parsed, err = parseTools(d.content)
-		} else {
-			parsed, err = parsePyRequirements(d.content)
-		}
+		parsed, err := parseTools(d.content)
 		if err != nil {
 			return nil, xerrors.Wrap(err, d.path)
 		}
@@ -508,71 +456,9 @@ func backendKind(backend string) string {
 		return "go"
 	case "npm":
 		return "npm"
-	case "pypi", "pipx", "uvx":
-		return "pypi"
 	default:
 		return ""
 	}
-}
-
-// verifyLocks は *.in が宣言する版を、隣の *.txt が固定しているかどうかで確かめる。ハッシュの
-// 照合そのものは install 側の --require-hashes が担うので、ここで見るのは宣言と lockfile が
-// 同じ版を指しているかだけ。食い違ったままだと、cooldown を通した版と実際に入る版が別になる。
-func verifyLocks(declared []tool) []violation {
-	var violations []violation
-	for _, t := range declared {
-		if !strings.HasSuffix(t.file, pyRequirementSuffix) {
-			continue
-		}
-		lockPath := strings.TrimSuffix(t.file, pyRequirementSuffix) + pyLockSuffix
-		content, err := os.ReadFile(lockPath) //nolint:gosec // 宣言ファイルのパスから決まる
-		if err != nil {
-			violations = append(violations, violation{file: t.file, msg: fmt.Sprintf(
-				"%s を読めません（%v）。`make py-lock` で生成してください", lockPath, err,
-			)})
-			continue
-		}
-		name := pyPackageName(t.key)
-		locked, ok := lockedVersion(content, name)
-		if !ok {
-			violations = append(violations, violation{file: t.file, msg: fmt.Sprintf(
-				"%s が宣言する %s が %s にありません。`make py-lock` で再生成してください", t.file, t.id(), lockPath,
-			)})
-			continue
-		}
-		if locked != t.version {
-			violations = append(violations, violation{file: t.file, msg: fmt.Sprintf(
-				"%s の宣言は %s ですが %s が固定しているのは %s です。`make py-lock` で再生成してください",
-				t.file, t.id(), lockPath, name+"=="+locked,
-			)})
-		}
-	}
-	return violations
-}
-
-// lockedVersion は lockfile が name に対して固定している版を返す。
-func lockedVersion(lockContent []byte, name string) (string, bool) {
-	sc := bufio.NewScanner(strings.NewReader(string(lockContent)))
-	for sc.Scan() {
-		m := pyRequirementRe.FindStringSubmatch(strings.TrimSpace(sc.Text()))
-		if m == nil {
-			continue
-		}
-		if pyPackageName(m[1]) == name {
-			return m[2], true
-		}
-	}
-	return "", false
-}
-
-// pyPackageName は宣言のキーから PyPI の正規化名を取り出す。extras は同じ配布物の付随依存を
-// 選ぶ指定でしかなく、パッケージの同一性には関わらない。
-func pyPackageName(key string) string {
-	_, name, found := strings.Cut(key, ":")
-	if !found {
-		name = key
-	}
-	return pyNameSepRe.ReplaceAllString(strings.ToLower(extrasRe.ReplaceAllString(name, "")), "-")
 }
 
 // inspect は対象ツールの公開時刻を引き、窓内のものと取得できなかったものを返す。
@@ -622,8 +508,6 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
 		return npmPackageAt(ctx, client, ref, t.version)
-	case "pypi":
-		return pypiPackageAt(ctx, client, extrasRe.ReplaceAllString(ref, ""), t.version)
 	default:
 		return time.Time{}, xerrors.Wrap(errUnsupportedBackend, t.backend)
 	}
@@ -757,23 +641,6 @@ func npmPackageAt(ctx context.Context, client *http.Client, pkg, version string)
 	return at, nil
 }
 
-func pypiPackageAt(ctx context.Context, client *http.Client, pkg, version string) (time.Time, error) {
-	var body struct {
-		Releases map[string][]struct {
-			//nolint:tagliatelle // PyPI の応答フィールド名
-			UploadTime time.Time `json:"upload_time_iso_8601"`
-		} `json:"releases"`
-	}
-	if err := getJSON(ctx, client, pypiBase+pkg+"/json", &body); err != nil {
-		return time.Time{}, err
-	}
-	files, ok := body.Releases[version]
-	if !ok || len(files) == 0 {
-		return time.Time{}, xerrors.Wrap(errNotFound, pkg+"@"+version)
-	}
-	return files[0].UploadTime, nil
-}
-
 // readBypasses はバイパス lockfile を key@version→bypass として読む。空行とコメント行以外で
 // 解釈できない行、および既出キーの再定義はエラーにする。読み飛ばしや後勝ちの上書きは、その
 // エントリが「存在しない」あるいは「行順で決まる」状態を警告なく作る。
@@ -847,8 +714,8 @@ func validateBypasses(bypasses map[string]bypass, declared []tool, today time.Ti
 		default:
 			if _, ok := inDeclarations[key]; !ok {
 				violations = append(violations, violation{file: bypassFile, msg: fmt.Sprintf(
-					"%s:%d %s は %s / %s のどちらにも存在しません。不要になったエントリは消してください",
-					bypassFile, b.line, key, miseFile, pyRequirementsGlob,
+					"%s:%d %s は %s に存在しません。不要になったエントリは消してください",
+					bypassFile, b.line, key, miseFile,
 				)})
 			}
 		}

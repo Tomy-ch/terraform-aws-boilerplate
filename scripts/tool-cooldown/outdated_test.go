@@ -318,7 +318,7 @@ func Test_outdatedReport(t *testing.T) {
 						key:     "sqlfluff",
 						version: "4.3.0",
 						backend: "pypi:sqlfluff",
-						file:    "python/sqlfluff.in",
+						file:    "mise.toml",
 					},
 					latest: "4.3.0", latestAge: 33,
 					eligible: "4.3.0", eligibleAge: 33, window: registryWindowDays,
@@ -508,42 +508,6 @@ func Test_npmReleases(t *testing.T) {
 	})
 }
 
-func Test_pypiReleases(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("配布物を持たない版は候補にしない", func(t *testing.T) {
-			t.Parallel()
-			client := upstreamStub(t, map[string]string{
-				"/pypi/pkg/json": `{"releases":{
-					"1.2.0":[{"upload_time_iso_8601":"` + daysAgo(20) + `"}],
-					"1.3.0":[]
-				}}`,
-			})
-
-			releases, err := pypiReleases(t.Context(), client, "pkg")
-
-			require.NoError(t, err)
-			require.Len(t, releases, 1)
-			assert.Equal(t, "1.2.0", releases[0].version, "yank 済みの版は install できない")
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("上流が応答しなければエラーを返す", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := pypiReleases(t.Context(), upstreamStub(t, map[string]string{}), "pkg")
-
-			require.Error(t, err)
-		})
-	})
-}
-
 func Test_goModuleReleases(t *testing.T) {
 	t.Parallel()
 
@@ -605,8 +569,7 @@ func Test_listReleases(t *testing.T) {
 			client := upstreamStub(t, map[string]string{
 				"/repos/owner/repo/releases?per_page=100": `[{"tag_name":"v1.2.0","published_at":"` +
 					aged + `","prerelease":false,"draft":false}]`,
-				"/pkg":           `{"time":{"2.0.0":"` + aged + `"}}`,
-				"/pypi/pkg/json": `{"releases":{"3.0.0":[{"upload_time_iso_8601":"` + aged + `"}]}}`,
+				"/pkg": `{"time":{"2.0.0":"` + aged + `"}}`,
 			})
 
 			for _, tc := range []struct {
@@ -615,7 +578,6 @@ func Test_listReleases(t *testing.T) {
 			}{
 				{backend: "aqua:owner/repo", want: "1.2.0"},
 				{backend: "npm:pkg", want: "2.0.0"},
-				{backend: "pypi:pkg", want: "3.0.0"},
 			} {
 				releases, err := listReleases(t.Context(), client, tool{backend: tc.backend})
 
@@ -624,22 +586,6 @@ func Test_listReleases(t *testing.T) {
 				assert.Equal(t, tc.want, releases[0].version, tc.backend)
 			}
 		})
-
-		t.Run("extras を落として PyPI へ問い合わせる", func(t *testing.T) {
-			t.Parallel()
-			client := upstreamStub(t, map[string]string{
-				"/pypi/graphifyy/json": `{"releases":{"0.9.53":[{"upload_time_iso_8601":"` + daysAgo(20) + `"}]}}`,
-			})
-
-			releases, err := listReleases(t.Context(), client, tool{backend: "pypi:graphifyy[sql]"})
-
-			require.NoError(t, err)
-			require.Len(t, releases, 1)
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
 
 		t.Run("公開時刻の取得経路を持たない backend はエラーを返す", func(t *testing.T) {
 			t.Parallel()
