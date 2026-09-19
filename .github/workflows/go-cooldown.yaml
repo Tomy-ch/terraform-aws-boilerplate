@@ -63,6 +63,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # gate は base の go.mod と比較する。既定の浅い取得では base の commit が
+          # 手元に無く、`git show <base>:scripts/go.mod` が exit 128 で落ちる ——
+          # 差分を取れないまま何も検査せずに通るより、そこで落ちる方が正しい。
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Go
