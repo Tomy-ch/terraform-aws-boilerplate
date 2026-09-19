@@ -265,7 +265,7 @@ func added(base string, current []requirement) ([]requirement, error) {
 
 	out, err := exec.CommandContext(ctx, "git", "show", base+":"+goModPath).Output() //nolint:gosec // base は呼び出し側が与える git ref
 	if err != nil {
-		return nil, xerrors.Wrap(err, fmt.Sprintf("git show %s:%s（fetch-depth: 0 で base を取得できていない可能性があります）", base, goModPath))
+		return nil, xerrors.Wrap(err, fmt.Sprintf("git show %s:%s（remote-tracking ref が無い可能性があります。fetch は refspec を明示すること —— ブランチ名だけでは FETCH_HEAD しか更新されません）", base, goModPath))
 	}
 	before, err := parseGoMod(out)
 	if err != nil {

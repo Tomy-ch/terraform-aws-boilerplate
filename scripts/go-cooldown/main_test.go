@@ -1010,7 +1010,7 @@ func Test_added(t *testing.T) {
 
 			_, err := added("no-such-ref", current)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "fetch-depth: 0")
+			assert.Contains(t, err.Error(), "refspec を明示")
 		})
 
 		// base を読めないまま差分を空として返すと、追加した依存がひとつも検査されない。

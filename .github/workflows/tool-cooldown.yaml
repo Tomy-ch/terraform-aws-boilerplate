@@ -104,7 +104,10 @@ jobs:
             exit 0
           fi
 
-          git fetch --no-tags --depth=200 origin "${BASE_REF}"
+          # refspec を明示する。ブランチ名だけを渡す fetch は FETCH_HEAD しか更新せず、
+          # refs/remotes/origin/<base> を作らない —— 直後の `git show origin/<base>:...` が
+          # exit 128 で落ちる。
+          git fetch --no-tags --depth=200 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
           echo "base=origin/${BASE_REF}" >> "$GITHUB_OUTPUT"
 
       # The unauthenticated GitHub API allows 60 requests an hour per IP, which one run of this
