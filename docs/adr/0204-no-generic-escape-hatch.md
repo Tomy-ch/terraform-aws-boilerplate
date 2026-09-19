@@ -1,9 +1,9 @@
-# ADR-0007: Generic Escape Hatchを提供しない
+# ADR-0204: Generic Escape Hatchを提供しない
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0002, ADR-0003, ADR-0004, ADR-0006, ADR-0011
+- Related: ADR-0101, ADR-0102, ADR-0201, ADR-0203, ADR-0301
 
 ## Context
 
@@ -23,7 +23,7 @@ custom_resource_arguments
 - 実際に稼働している構成がboilerplateのテスト範囲外になる
 - security invariantを維持できない（権限や通信経路を外部から追加できるため）
 - upgrade時の影響範囲を判断できない
-- 利用者がProvider resourceのschemaへ依存する（ADR-0004が成立しない）
+- 利用者がProvider resourceのschemaへ依存する（ADR-0201が成立しない）
 
 さらに、Escape Hatchは「ユースケースの定義が不足している」という設計上の信号を隠す。要求は記録されず、正式な契約へ昇格する機会も失われる。
 
@@ -40,13 +40,13 @@ custom_resource_arguments
 2. 「汎用的」とは、受け取る値の意味がユースケースの意味論ではなく、AWS ProviderまたはAWS APIの表現に依存している状態を指す。名前が `extra_*` でなくとも、この条件を満たすものはEscape Hatchとして扱う。
 3. 新しい要求に対しては、以下の3択のいずれかを選ぶ。
 
-   1. boilerplateの正式な機能として、意味論的な契約を追加する（ADR-0004）
-   2. 新しいユースケースとして分離する（ADR-0003）
-   3. boilerplateの責務外と判断する（ADR-0003 決定7に従い記録する）
+   1. boilerplateの正式な機能として、意味論的な契約を追加する（ADR-0201）
+   2. 新しいユースケースとして分離する（ADR-0102）
+   3. boilerplateの責務外と判断する（ADR-0102 決定7に従い記録する）
 
 4. 判断を保留したまま、暫定的なEscape Hatchを導入しない。
 5. tagについては、リポジトリ共通の単一入力により、boilerplateが生成する全resourceへ一律付与する形のみを許容する。resource単位・種別単位でtagを指定する入力は提供しない。
-6. IAMについて、権限の追加が必要な場合は意味論的な権限指定（ADR-0011）の語彙を拡張する。policy documentを受け取る形で解決しない。
+6. IAMについて、権限の追加が必要な場合は意味論的な権限指定（ADR-0301）の語彙を拡張する。policy documentを受け取る形で解決しない。
 7. ネットワークについて、通信経路の追加が必要な場合は、接続先を意味論的に指定する契約（接続対象のユースケースまたは論理的な役割）として定義する。CIDRやruleの直接指定で解決しない。
 8. 本ADRに例外条項を設けない。例外が必要と判断した場合、本ADRをsupersedeする新規ADRとして、適用範囲と限界を再定義する。
 
@@ -54,7 +54,7 @@ custom_resource_arguments
 
 ### 案A: Escape Hatchを提供し、利用は自己責任とする
 
-未対応要求へ即座に対応でき、機能追加の圧力が下がる。ただしboilerplateが保証できる範囲が利用者ごとに異なり、「サポート対象ユースケースの完成度を保証する」という前提（ADR-0002）が成立しなくなる。
+未対応要求へ即座に対応でき、機能追加の圧力が下がる。ただしboilerplateが保証できる範囲が利用者ごとに異なり、「サポート対象ユースケースの完成度を保証する」という前提（ADR-0101）が成立しなくなる。
 
 ### 案B: Escape Hatchを提供し、利用時に警告・検査を行う
 
@@ -62,7 +62,7 @@ Policy Testで危険な注入を検出する運用。検出できるのは既知
 
 ### 案C: 限定的なEscape Hatch（特定resourceのみ上書き可）
 
-範囲を絞れば影響を限定できるように見えるが、対象resourceが公開契約へ固定され、ADR-0005が成立しなくなる。
+範囲を絞れば影響を限定できるように見えるが、対象resourceが公開契約へ固定され、ADR-0202が成立しなくなる。
 
 ### 評価
 

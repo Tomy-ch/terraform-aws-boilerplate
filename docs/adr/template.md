@@ -31,7 +31,7 @@
 | Maintainability |  |  |  |
 | Scope Control |  |  |  |
 
-評価軸の定義は repository-wide/ADR-0002 を参照する。
+評価軸の定義は repository-wide/ADR-0101 を参照する。
 
 ## 意図的に捨てるもの
 
@@ -45,7 +45,7 @@
 ## 検証方法
 
 この決定が守られていることを、どのテストレイヤーで機械的に検出するか。
-検証できない決定は、決定として不完全であるとみなす（repository-wide/ADR-0012）。
+検証できない決定は、決定として不完全であるとみなす（repository-wide/ADR-0401）。
 
 ## 影響
 

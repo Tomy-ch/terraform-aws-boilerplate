@@ -1,9 +1,9 @@
-# ADR-0006: 公開設定は型付きかつ有限とし、Raw JSONと非型付き設定を禁止する
+# ADR-0203: 公開設定は型付きかつ有限とし、Raw JSONと非型付き設定を禁止する
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0002, ADR-0004, ADR-0007, ADR-0011, ADR-0012
+- Related: ADR-0101, ADR-0201, ADR-0204, ADR-0301, ADR-0401
 
 ## Context
 
@@ -14,8 +14,8 @@ Terraformの型システムは `any` や `map(any)` を許容するため、公�
 - 契約が不明確になる（何を渡せるかがコードから読み取れない）
 - validationが困難になる（構造が確定しないため、意味的検査ができない）
 - 破壊的変更を検知できない（schema差分が取得できない）
-- Provider resourceの内部構造が実質的に露出する（ADR-0004が成立しない）
-- 最小権限を保証できない（任意のpolicyが注入され得る、ADR-0011が成立しない）
+- Provider resourceの内部構造が実質的に露出する（ADR-0201が成立しない）
+- 最小権限を保証できない（任意のpolicyが注入され得る、ADR-0301が成立しない）
 - static analysisの精度が低下する
 - 生成系ツールが、存在しない属性や誤った構造を生成しやすくなる
 
@@ -41,9 +41,9 @@ Terraformの型システムは `any` や `map(any)` を許容するため、公�
    additional_settings = {}
    ```
 
-   これらはADR-0007（Generic Escape Hatch禁止）にも該当する。
+   これらはADR-0204（Generic Escape Hatch禁止）にも該当する。
 
-4. 利用者へ任意のJSONを記述させるinterfaceを提供しない。IAM policy、resource policy、bucket policy等はboilerplate内部で生成する（ADR-0011）。
+4. 利用者へ任意のJSONを記述させるinterfaceを提供しない。IAM policy、resource policy、bucket policy等はboilerplate内部で生成する（ADR-0301）。
 
 ### 型の選択順序
 
@@ -65,7 +65,7 @@ Terraformの型システムは `any` や `map(any)` を許容するため、公�
 8. object型は `optional()` を用いて省略可能属性を明示し、既定値を型定義側に置く。
 9. `null` を意味のある値として扱う場合、その意味（未指定・無効化・AWS側既定への委譲のいずれか）をvariableの description に記述する。意味が複数になる `null` を作らない。
 10. 有限集合として表現できる入力は、`string` のまま放置せず enum として `validation` を付ける。
-11. `validation` は型の制約に限定し、セキュリティ上のinvariantは `validation` のみに依存せず Policy Test でも検証する（ADR-0012）。
+11. `validation` は型の制約に限定し、セキュリティ上のinvariantは `validation` のみに依存せず Policy Test でも検証する（ADR-0401）。
 
 ### 例外
 
@@ -83,7 +83,7 @@ Terraformの型システムは `any` や `map(any)` を許容するため、公�
 
 ### 案A: `map(any)` と raw JSON を許容し、documentationで期待構造を説明する
 
-実装は容易で、Providerの変化にも追従しやすい。ただし契約はdocumentationにしか存在せず、機械検証もschema差分検出もできない。ADR-0005の破壊的変更判定が機能しない。
+実装は容易で、Providerの変化にも追従しやすい。ただし契約はdocumentationにしか存在せず、機械検証もschema差分検出もできない。ADR-0202の破壊的変更判定が機能しない。
 
 ### 案B: 型付きを原則とし、JSON入力を「上級者向け」として併置する
 

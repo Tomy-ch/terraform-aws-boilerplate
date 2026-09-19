@@ -1,30 +1,26 @@
 # gitleaks 設定
 # https://github.com/gitleaks/gitleaks#configuration
+#
+# 秘密の検出の権威はこの層が持つ（ADR-0302 決定2）。Trivy の secret scanner は無効化してある。
+# 抑止の条件は ADR-0501 決定13 に従う。
 [extend]
 useDefault = true
 
+# actions-mise-pin-lint のフィクスチャが持つキャッシュキー（`mise-<版>-<digest の先頭8桁>`）。
+#
+# このツールが検査しているのは「キャッシュキーが版と digest の両方を含むこと」そのものなので、
+# フィクスチャは実物と同じ形でなければならない。形を崩せば、検査していた対象が消える。
+# `key:` という語と16進8桁の並びが generic-api-key の keyword + entropy 条件に当たる誤検知で、
+# 値は実在しない。
+#
+# **外すのはこの形に当たる検出そのものであって、ファイルではない。** `paths` で外してはならない
+# —— gitleaks の allowlist は `paths` と `regexes` を AND で評価せず、path が当たった時点で
+# そのファイルの検出がすべて落ちる。`condition = "AND"` を書いても同じだった（8.30.1 で確認）。
+# つまり path による除外は、同じファイルへ後から入った本物の秘密も一緒に見逃す。
+#
+# 撤回条件: キャッシュキーの形式が digest を含まなくなったとき、または actions-mise-pin-lint が
+# 無くなったとき。
 [allowlist]
-description = "生成ファイルは機械生成で秘密の置き場所ではないため除外する"
-paths = [
-  '''.*\.gen\.go$''',
-  '''.*\.sql\.go$''',
-  '''.*_mock\.go$''',
-  '''.*/mock_.*\.go$''',
-  '''openapi/openapi\.gen\.yaml$''',
-  # graphify の抽出キャッシュ。内容アドレス指定の索引で、SHA-256 の羅列が generic-api-key に
-  # 当たる。semantic/ は追跡下にあるため、これはコミット済みの内容を走査から外す除外である。
-  # 外して安全なのは、キャッシュが持つのがリポジトリ内の文書に対する抽出結果とその内容ハッシュ
-  # だけで、元の文書自身は走査対象に残るため。派生物が元に無い値を持ち込むことがない。
-  # なお gitleaks の dir 走査は gitignore を見ないので、追跡外の cache/ast/ もここで一緒に落ちる。
-  '''graphify-out/cache/''',
-  # pnpm のパッケージストア。内容アドレス指定でファイル名が SHA の羅列になり、同梱物と
-  # あわせて generic-api-key / jwt に当たる。gitignore 済みでコミットされ得ず、ここを外しても
-  # 走査範囲は狭まらない。
-  '''\.pnpm-store/''',
-  '''docs/openapi/''',
-  '''docs/coverage/''',
-  '''docs/db-schema/''',
-  '''docs/godoc/''',
-  '''docs/portal/docs\.json$''',
-  '''docs/portal/guides/''',
-]
+description = "actions-mise-pin-lint のフィクスチャ内のキャッシュキー（実在しない合成値）"
+regexTarget = "match"
+regexes = ['mise-\d+\.\d+\.\d+-[0-9a-f]{8}']

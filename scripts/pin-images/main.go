@@ -3,7 +3,7 @@
 //
 // registry の image を指す参照は、書かれた場所によらずこの機構が持つ。`uses:` の行であっても
 // 参照先は GitHub のリポジトリではないため、tag を git ls-remote で commit へ解決する
-// pin-actions では扱えない（docs/design/security.md）。
+// pin-actions では扱えない。
 //
 //	resolve: docker/*/Dockerfile の FROM、docker-compose*.yaml の image:、.github の
 //	         uses: docker:// を走査し、
@@ -68,7 +68,7 @@ var (
 	// workflow / composite action の `uses: [-] docker://<ref>`。GitHub Actions が registry の
 	// image を直接実行するステップの記法で、参照先は GitHub のリポジトリではない。pin-actions は
 	// tag を git ls-remote で commit へ解決する機構なので registry には効かず、digest を扱う
-	// こちらが持つ（docs/design/security.md）。
+	// こちらが持つ。
 	//
 	// ref に tag を必須とするのは、省略が :latest を意味するため。tag 無しを通すと parseRef が
 	// false を返して固定対象から静かに外れ、可動タグのまま CI で走る。一致しない形は
@@ -80,7 +80,7 @@ var (
 	// ここへ落ちる。owner/repo 形式の uses: には反応しない（pin-actions の担当）。
 	looseDockerUsesRe = regexp.MustCompile(`\buses[ \t]*:[ \t]*["']?docker://`)
 	// workflow / composite action の service container の `image: <ref>`。ジョブと同じランナー上で
-	// 走り CI の判定に直接効くので、FROM や compose と同じく固定する（docs/design/security.md）。
+	// 走り CI の判定に直接効くので、FROM や compose と同じく固定する。
 	//
 	// compose の image: と同形だが composeImageRe をそのまま当てられない。workflow の image: は
 	// step の with: 配下にも現れ、そちらは ${{ }} で組み立てられて固定のしようがないためである。
@@ -90,9 +90,8 @@ var (
 	)
 	// serviceImageRe の取りこぼしを拾う緩いパターン。${{ }} を含む行だけは固定対象でないので外す。
 	serviceImageLoose = regexp.MustCompile(`^[ 	]+image[ 	]*:[ 	]*(?:[^\s$]|\$[^{])`)
-	// lockfile 行: "image:tag" = "sha256:..."
-	lockRe   = regexp.MustCompile(`^"([^"]+)"\s*=\s*"(sha256:[0-9a-f]+)"`)
-	digestRe = regexp.MustCompile(`(?m)^Digest:[ \t]+(sha256:[0-9a-f]+)`)
+	lockRe            = regexp.MustCompile(`^"([^"]+)"\s*=\s*"(sha256:[0-9a-f]+)"`)
+	digestRe          = regexp.MustCompile(`(?m)^Digest:[ \t]+(sha256:[0-9a-f]+)`)
 )
 
 var (
@@ -138,7 +137,6 @@ type imageRef struct {
 
 func (r imageRef) key() string { return r.image + ":" + r.tag }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -169,7 +167,7 @@ func run(args []string, wd func() (string, error)) error {
 		fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
 		minAge := fs.Int("min-age-days", 0, "N 日未満の新しすぎる digest は quarantine（0 で無効）")
 		if err := fs.Parse(args[1:]); err != nil {
-			// ヘルプ要求は失敗ではないので 0 で終える。usage は flag が既に出力している。
+			// usage は flag が既に出力している。
 			if xerrors.Is(err, flag.ErrHelp) {
 				return nil
 			}
@@ -189,7 +187,7 @@ func run(args []string, wd func() (string, error)) error {
 
 // targetFiles は走査対象を返す。Dockerfile の FROM、compose の image:、workflow / composite action の
 // uses: docker:// と services の image: の 4 種で、registry の image を指す参照は書かれた場所に
-// よらずこの機構が固定する（docs/design/security.md）。
+// よらずこの機構が固定する。
 //
 // workflow は 2 つの target として登録する。target が 1 ファイルにつき 1 つの正規表現しか持たない
 // ためで、uses: docker:// と service の image: は書式が違う。同じファイルを 2 度走査するが掴む行は

@@ -1,9 +1,9 @@
-# ADR-0008: 外部Terraform moduleへ依存しない
+# ADR-0205: 外部Terraform moduleへ依存しない
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0002, ADR-0004, ADR-0005, ADR-0009, ADR-0010
+- Related: ADR-0101, ADR-0201, ADR-0202, ADR-0206, ADR-0207
 
 ## Context
 
@@ -17,9 +17,9 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 
 これらはいずれも、本リポジトリの設計判断とは無関係な理由で発生する。
 
-さらに本質的な問題として、外部moduleが持つ汎用性がそのまま流入する。汎用moduleは多様な利用者を対象とするため、自由度・default値・resource構成の選択が「誰に対しても妥当」な方向へ設計される。本リポジトリは自由度を制限することで保証範囲を確保する戦略（ADR-0002）を採るため、この性質は直接的に対立する。
+さらに本質的な問題として、外部moduleが持つ汎用性がそのまま流入する。汎用moduleは多様な利用者を対象とするため、自由度・default値・resource構成の選択が「誰に対しても妥当」な方向へ設計される。本リポジトリは自由度を制限することで保証範囲を確保する戦略（ADR-0101）を採るため、この性質は直接的に対立する。
 
-また、外部moduleは内部resource構成を自身の契約として持つ。これを取り込むと、内部構成を実装詳細として扱う決定（ADR-0005）が、外部moduleの層で成立しなくなる。
+また、外部moduleは内部resource構成を自身の契約として持つ。これを取り込むと、内部構成を実装詳細として扱う決定（ADR-0202）が、外部moduleの層で成立しなくなる。
 
 ## Decision
 
@@ -28,7 +28,7 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 1. 実行時依存としてのTerraform moduleを採用しない。対象は publisherを問わない（AWS公式、HashiCorp公式、community製、社内外を問わない）。
 2. utility系module（命名、tag生成、CIDR計算など、resourceを生成しないものを含む）も同様に採用しない。
 3. `module` blockの `source` は、リポジトリ内の相対パスに限る。Terraform Registry、Git URL、HTTP、S3等の外部sourceを使用しない。
-4. 外部moduleのforkおよびvendoringも、「外部moduleへの依存」として扱い採用しない。必要な知見はADR-0009に従い、参照実装として取り込む。
+4. 外部moduleのforkおよびvendoringも、「外部moduleへの依存」として扱い採用しない。必要な知見はADR-0206に従い、参照実装として取り込む。
 5. 本ADRに例外条項を設けない。例外が必要と判断した場合、本ADRをsupersedeする新規ADRとして、許容する依存の範囲・選定基準・upgrade責務・security対応の手順を定義する。
 
 ### provider依存
@@ -45,22 +45,22 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 7. 各moduleは `required_providers` にversion制約を宣言する。制約は、検証済みの下限versionを起点とし、互換性を破壊し得るmajor更新を除外する形とする。上限を過度に固定しない。
 8. `required_version`（Terraform本体）も同様に、検証済みの下限を宣言する。
 9. lock fileは、テストおよびexampleのroot（実際に `terraform init` を行う単位）で管理する。再利用単位のmoduleディレクトリではlock fileを管理しない。
-10. providerのversion更新は、ADR-0012の各テストレイヤーを通過することを条件とする。
+10. providerのversion更新は、ADR-0401の各テストレイヤーを通過することを条件とする。
 
 ### 重複の扱い
 
-11. 外部moduleを使わないことにより、リポジトリ内で類似実装が生じることを許容する。実装の重複のみを理由に共通化しない（ADR-0001 決定17・18）。
-12. 共通化はarchitecture invariantの共有を根拠に行い、その場合も共通化の単位はリポジトリ内部の実装詳細とする（ADR-0003 決定9）。
+11. 外部moduleを使わないことにより、リポジトリ内で類似実装が生じることを許容する。実装の重複のみを理由に共通化しない。
+12. 共通化はarchitecture invariantの共有を根拠に行い、その場合も共通化の単位はリポジトリ内部の実装詳細とする（ADR-0102 決定9）。
 
 ## 検討した代替案
 
 ### 案A: 公式moduleを実行時依存として採用する
 
-実装コストと初期の網羅性で優位。ただし公開契約・default値・内部構成の決定権が外部へ移り、ADR-0004 / 0005 / 0006 / 0010 / 0011 のいずれも、外部module層では保証できない。security fixの適用タイミングも外部のrelease cycleに従属する。
+実装コストと初期の網羅性で優位。ただし公開契約・default値・内部構成の決定権が外部へ移り、ADR-0201 / 0005 / 0006 / 0010 / 0011 のいずれも、外部module層では保証できない。security fixの適用タイミングも外部のrelease cycleに従属する。
 
 ### 案B: 公式moduleをforkして利用する
 
-変更の自由度は得られるが、upstream追従のコストを継続的に負う。fork時点の汎用性は残り、ADR-0002の方向性と一致しない。実質的に「自前実装 + 追従義務」となり、利点が相殺される。
+変更の自由度は得られるが、upstream追従のコストを継続的に負う。fork時点の汎用性は残り、ADR-0101の方向性と一致しない。実質的に「自前実装 + 追従義務」となり、利点が相殺される。
 
 ### 案C: utility系moduleのみ許容する
 
@@ -94,12 +94,12 @@ resourceを生成しないため影響は小さいように見えるが、依存
 - Static Analysis: `module` blockの `source` がリポジトリ内相対パスのみであることを検査する。
 - Static Analysis: `required_providers` および `required_version` の宣言が存在することを検査する。
 - Contract Test: provider version更新時に、公開契約のsnapshotが変化しないことを検証する。
-- Integration / E2E Test: provider version更新時の実挙動を検証する（ADR-0012）。
+- Integration / E2E Test: provider version更新時の実挙動を検証する（ADR-0401）。
 
 ## 影響
 
-- 実装コストは外部module採用時より高い。これはADR-0002の優先順位に基づく受容済みのコストである。
-- 外部moduleの知見は、参照実装として取り込む（ADR-0009）。
+- 実装コストは外部module採用時より高い。これはADR-0101の優先順位に基づく受容済みのコストである。
+- 外部moduleの知見は、参照実装として取り込む（ADR-0206）。
 - 依存管理の対象はprovider とTerraform本体に限定される。
 
 ## 見直し条件

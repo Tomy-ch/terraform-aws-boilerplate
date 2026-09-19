@@ -1,4 +1,4 @@
-# ツールチェーンの pin（ADR-0013 決定19）。**ここが持つのは版の宣言だけ**である。
+# ツールチェーンの pin（ADR-0501 決定19）。**ここが持つのは版の宣言だけ**である。
 #
 # **3つの実行経路がすべてこのファイルを読む。** 版を並べ直した設定を、イメージ側にも
 # workflow 側にも置かない。環境差分を最小にするための要点はここにある。
@@ -13,7 +13,7 @@
 # backend（`aqua:` / `npm:` 等）は、短い名前で一意に解決できないものだけ明示する。レジストリ上で
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
-# **未使用の道具を pin だけ置かない**（ADR-0013 決定33）。ここに在るものは、`.makefiles/` か
+# **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
 # `.github/workflows/` か `docker/tools/Dockerfile` のいずれかが実際に呼ぶ。
 min_version = "2026.6.0"
 
@@ -23,7 +23,7 @@ min_version = "2026.6.0"
 # 言語ランタイム
 # ==============================================================================
 
-# 運用機構の実装言語（ADR-0020 決定6）。go.mod の go ディレクティブ、および
+# 運用機構の実装言語（ADR-0702 決定6）。go.mod の go ディレクティブ、および
 # docker/tools/Dockerfile のベースイメージと揃える（ずれたらイメージのビルドが落ちる）。
 go = "1.27.1"
 
@@ -35,20 +35,20 @@ node = "24.21.0"
 # 実行エンジンと、ローカルの git hook
 # ==============================================================================
 
-# 実行エンジン（ADR-0018 決定1）。OpenTofu を採らない理由は同 ADR 決定3。
+# 実行エンジン（ADR-0502 決定1）。OpenTofu を採らない理由は同 ADR 決定3。
 # module が宣言する required_version は、使用する機能から導かれる下限であって
 # この pin と同じ値ではない（同 決定2）。
 "aqua:hashicorp/terraform" = "1.16.2"
 
-# Static Analysis の権威（ADR-0013 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
+# Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
 # AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
-# Security の権威（ADR-0013 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
-# （ADR-0019 決定2）。Terraform の IaC 走査もここが担う。
+# Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
+# （ADR-0302 決定2）。Terraform の IaC 走査もここが担う。
 "aqua:aquasecurity/trivy" = "0.74.0"
 
-# Secret Scan の権威（ADR-0019 決定1）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
+# Secret Scan の権威（ADR-0302 決定1）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
 "aqua:gitleaks/gitleaks" = "8.30.1"
 
 # ==============================================================================
@@ -71,15 +71,15 @@ hadolint = "2.15.1"
 # 運用機構（scripts/）の Go を検査する。
 golangci-lint = "2.13.2"
 
-# ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0013 決定26）。
+# ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
 lefthook = "2.1.14"
 
-# --- npm エコシステム（ADR-0024 決定10） ---
+# --- npm エコシステム（ADR-0503 決定14） ---
 
 # Markdown の体裁。このリポジトリの主要な成果物が Markdown である以上、既製品が在るなら
-# 自前で書かない（ADR-0013 決定3 の第1条件）。
+# 自前で書かない（ADR-0501 決定3 の第1条件）。
 "npm:markdownlint-cli2" = "0.23.2"
 
-# commit message の検査（ADR-0022）。課すのは type の enum と type / subject の空チェックだけで、
+# commit message の検査。規約の正本は commitlint.config.js。課すのは type の enum と type / subject の空チェックだけで、
 # 一般的な規約集の設定を継承しない（同 決定4）。
 "npm:@commitlint/cli" = "21.2.2"

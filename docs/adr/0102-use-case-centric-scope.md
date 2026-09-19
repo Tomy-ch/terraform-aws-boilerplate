@@ -1,9 +1,9 @@
-# ADR-0003: ユースケース単位でスコープを定義する
+# ADR-0102: ユースケース単位でスコープを定義する
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0001, ADR-0002, ADR-0004, ADR-0007, ADR-0012
+- Related: ADR-0001, ADR-0101, ADR-0201, ADR-0204, ADR-0401
 
 ## Context
 
@@ -22,10 +22,10 @@
 
    - そのユースケースが解決する問題
    - 前提とする実行形態とネットワーク境界
-   - 公開する意味論的interface（ADR-0004）
+   - 公開する意味論的interface（ADR-0201）
    - サポートする範囲（supported）
    - 明示的にサポートしない範囲（unsupported）
-   - 品質保証の方法（ADR-0012）
+   - 品質保証の方法（ADR-0401）
 
 3. 1つのユースケースは1つのアーキテクチャを表現する。1moduleで複数アーキテクチャを表現しない。
 4. 本ADRはサポート対象ユースケースの一覧を固定しない。個々のユースケースの採否は、そのユースケース自身の追加時に判断する。想定する粒度の例は次のとおりとする（例示であり、実装を約束するものではない）。
@@ -51,7 +51,7 @@
 
 ### 合成（composability）
 
-8. ユースケースは、他のユースケースまたは外部システムとの接続点を、意味論的なinputとoutputでのみ持つ（ADR-0004）。
+8. ユースケースは、他のユースケースまたは外部システムとの接続点を、意味論的なinputとoutputでのみ持つ（ADR-0201）。
 9. 内部で共有する実装単位（primitive module）はリポジトリ内部の実装詳細とし、公開契約としない。外部から直接参照されることを前提としない。
 10. 複数ユースケースの組み合わせ方そのもの（どのユースケースをどう並べるか）は、boilerplateの保証対象としない。
 
@@ -60,10 +60,10 @@
 11. 契約が安定していないユースケースは、experimentalとして明示したうえで追加してよい。
 12. experimentalであっても、以下の原則は免除しない。
 
-    - 型付き有限な公開interface（ADR-0006）
-    - Generic Escape Hatchの禁止（ADR-0007）
-    - 最小権限とSecure by Default（ADR-0011）
-    - Static Analysis / Contract Test / Policy Test / Unit Test の実施（ADR-0012）
+    - 型付き有限な公開interface（ADR-0203）
+    - Generic Escape Hatchの禁止（ADR-0204）
+    - 最小権限とSecure by Default（ADR-0301）
+    - Static Analysis / Contract Test / Policy Test / Unit Test の実施（ADR-0401）
 
 13. experimentalが免除されるのは「公開契約の後方互換性」のみとする。
 14. experimentalなユースケースは、stableへの昇格条件と、満たせない場合の削除を、そのユースケースのADRへ記録する。無期限のexperimentalを許容しない。
@@ -72,7 +72,7 @@
 
 ### 案A: AWSサービス単位でmoduleを切る
 
-`ecs` / `rds` / `s3` のような単位。resourceの再利用性は高いが、1moduleが複数アーキテクチャを抱え、optional variableと `enable_*` が増える。ADR-0002の警戒兆候に直接該当する。
+`ecs` / `rds` / `s3` のような単位。resourceの再利用性は高いが、1moduleが複数アーキテクチャを抱え、optional variableと `enable_*` が増える。ADR-0101の警戒兆候に直接該当する。
 
 ### 案B: 単一の巨大moduleで全体構成を受け取る
 
@@ -107,14 +107,14 @@
 ## 検証方法
 
 - 各ユースケースは supported / unsupported を記述したドキュメントを持つこと（Static Analysisで存在を検査）
-- 各ユースケースは最低1つのexampleを持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0012）
+- 各ユースケースは最低1つのexampleを持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
 
 ## 影響
 
 - 利用者要求の一部は明示的に「対象外」と回答される。
 - ユースケース追加の判断は、設定項目追加の判断より重い手続きになる。
-- 実装の重複がユースケース間で発生し得る。重複のみを理由に統合しない（ADR-0001 決定17・18）。
+- 実装の重複がユースケース間で発生し得る。重複のみを理由に統合しない（ADR-0205 決定11）。
 
 ## 見直し条件
 

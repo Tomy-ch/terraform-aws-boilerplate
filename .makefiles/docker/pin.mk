@@ -1,7 +1,7 @@
 ## container image の digest 固定
 ##
 ## **ホストで実行する。** digest の解決に docker を呼ぶため、コンテナの中では成立しない
-## （ツールランナーに docker は入っていない）。ADR-0023 決定4 の分類では、コンテナが
+## （ツールランナーに docker は入っていない）。ADR-0503 決定4 の分類では、コンテナが
 ## 提供できない前提を持つ道具に当たる。
 
 .PHONY: pin-images-resolve ## FROM / compose image の tag を digest へ解決し lockfile を更新

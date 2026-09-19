@@ -23,6 +23,12 @@ const soundADR = `# ADR-0001: なにか
 本文。
 `
 
+// soundADRNo は番号を差し替えた健全な ADR を返します。見出しが名乗る番号は
+// ファイル名の番号と一致していなければならないため、0001 以外のファイルはこれを使います。
+func soundADRNo(number string) string {
+	return strings.Replace(soundADR, "# ADR-0001:", "# ADR-"+number+":", 1)
+}
+
 // writeADRs はリポジトリの実物ではなく一時ディレクトリへ検査対象を組み立てます。
 // 実物を読むテストは、今日の ADR の内容で通ったり落ちたりするようになります。
 func writeADRs(t *testing.T, files map[string]string) string {
@@ -167,10 +173,10 @@ func Test_先頭メタデータ(t *testing.T) {
 		body string
 		want string
 	}{
-		"Status が無い": {body: "# x\n\n- Date: 2026-09-17\n- Scope: repository-wide\n", want: "`Status`"},
-		"Date が無い":   {body: "# x\n\n- Status: Accepted\n- Scope: repository-wide\n", want: "`Date`"},
-		"Scope が無い":  {body: "# x\n\n- Status: Accepted\n- Date: 2026-09-17\n", want: "`Scope`"},
-		"値が空":        {body: "# x\n\n- Status:\n- Date: 2026-09-17\n- Scope: repository-wide\n", want: "`Status`"},
+		"Status が無い": {body: "# ADR-0001: x\n\n- Date: 2026-09-17\n- Scope: repository-wide\n", want: "`Status`"},
+		"Date が無い":   {body: "# ADR-0001: x\n\n- Status: Accepted\n- Scope: repository-wide\n", want: "`Date`"},
+		"Scope が無い":  {body: "# ADR-0001: x\n\n- Status: Accepted\n- Date: 2026-09-17\n", want: "`Scope`"},
+		"値が空":        {body: "# ADR-0001: x\n\n- Status:\n- Date: 2026-09-17\n- Scope: repository-wide\n", want: "`Status`"},
 	}
 
 	for name, tt := range tests {
@@ -191,14 +197,14 @@ func Test_supersedeの参照先(t *testing.T) {
 	t.Parallel()
 
 	superseded := func(status string) string {
-		return "# x\n\n- Status: " + status + "\n- Date: 2026-09-17\n- Scope: repository-wide\n"
+		return "# ADR-0001: x\n\n- Status: " + status + "\n- Date: 2026-09-17\n- Scope: repository-wide\n"
 	}
 
 	t.Run("参照先が在れば通る", func(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": superseded("Superseded by repository-wide/ADR-0002"),
-			"0002-b.md": soundADR,
+			"0002-b.md": soundADRNo("0002"),
 			"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-b.md")),
 		})
 		var out bytes.Buffer
@@ -223,7 +229,7 @@ func Test_supersedeの参照先(t *testing.T) {
 		// 別 scope の同番号 ADR と区別できない。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": superseded("Superseded by ADR-0002"),
-			"0002-b.md": soundADR,
+			"0002-b.md": soundADRNo("0002"),
 			"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-b.md")),
 		})
 		var out bytes.Buffer
@@ -235,7 +241,7 @@ func Test_supersedeの参照先(t *testing.T) {
 		t.Parallel()
 		// 他 scope の ADR はこのディレクトリに無い。見に行くと、必ず落ちる検査になる。
 		root := writeADRs(t, map[string]string{
-			"0001-a.md": superseded("Superseded by ecs-web-service/ADR-0003"),
+			"0001-a.md": superseded("Superseded by ecs-web-service/ADR-0002"),
 			"README.md": index(row("0001", "0001-a.md")),
 		})
 		var out bytes.Buffer
@@ -330,7 +336,7 @@ func Test_索引との突合(t *testing.T) {
 	})
 }
 
-// 番号が identity ではなく順序になったため、参照の実在は機械で見るほかない（ADR-0024 決定5-9）。
+// 番号が identity ではなく順序になったため、参照の実在は機械で見るほかない（ADR-0001 決定5-9）。
 func Test_相互参照の実在(t *testing.T) {
 	t.Parallel()
 
@@ -338,7 +344,7 @@ func Test_相互参照の実在(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": soundADR + "\nADR-0002 を参照する。\n",
-			"0002-b.md": soundADR,
+			"0002-b.md": soundADRNo("0002"),
 			"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-b.md")),
 		})
 		var out bytes.Buffer
@@ -383,7 +389,7 @@ func Test_相互参照の実在(t *testing.T) {
 func Test_相互参照_scopeを伴う参照は見ない(t *testing.T) {
 	t.Parallel()
 
-	// identity は `<scope>/<slug>`（ADR-0024 決定4）。scope を書いた参照はこちらの番号体系の
+	// identity は `<scope>/<slug>`（ADR-0001 決定4）。scope を書いた参照はこちらの番号体系の
 	// 外を指しており、見に行けば必ず落ちる検査になる。
 	root := writeADRs(t, map[string]string{
 		"0001-a.md": soundApexADR("ecs-web-service/ADR-0099 を参照する。"),

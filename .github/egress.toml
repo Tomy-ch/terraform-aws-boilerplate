@@ -42,33 +42,12 @@ hosts = [
 [class.terraform]
 includes = ["mise"]
 hosts = [
-  # provider と module の解決。ADR-0008 により module は取りに行かないが、
+  # provider と module の解決。ADR-0205 により module は取りに行かないが、
   # registry の discovery は provider の解決経路と同じ入口を通る。
   "registry.terraform.io:443",
   "releases.hashicorp.com:443",
   # provider のバイナリの実体。registry が指す先。
   "github-releases.githubusercontent.com:443",
-]
-
-[class.image]
-includes = ["mise"]
-hosts = [
-  "docker.io:443",
-  "index.docker.io:443",
-  "registry-1.docker.io:443",
-  "auth.docker.io:443",
-  "*.docker.io:443",
-  "production.cloudflare.docker.com:443",
-  "production.cloudfront.docker.com:443",
-  "mirror.gcr.io:443",
-  "ghcr.io:443",
-  "pkg-containers.githubusercontent.com:443",
-  "dl-cdn.alpinelinux.org:443",
-  "dl-cdn.alpinelinux.org:80",
-  "deb.debian.org:443",
-  "deb.debian.org:80",
-  "security.debian.org:443",
-  "security.debian.org:80",
 ]
 
 [job."actions-lint.yaml:actions-lint"]
@@ -101,10 +80,10 @@ classes = ["mise"]
 classes = []
 
 [job."go-test.yaml:go-test"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."md-lint.yaml:md-lint"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."notify.yaml:notify"]
 classes = []
@@ -113,16 +92,16 @@ extra = [
 ]
 
 [job."pin-actions-check.yaml:pin-actions-check"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."pin-images-check.yaml:pin-images-check"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."secret-scan.yaml:secret-scan"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."secret-scan.yaml:trivy-secret"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."tidy-check.yaml:changes"]
 classes = []
@@ -148,10 +127,10 @@ extra = [
 ]
 
 [job."trivy-fs.yaml:trivy-fs"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."trivy-fs.yaml:trivy-license"]
-classes = ["image"]
+classes = ["mise"]
 
 [job."trivy-release-gate.yaml:trivy-fs-release"]
 classes = ["mise"]
@@ -161,8 +140,6 @@ extra = [
   "pkg-containers.githubusercontent.com:443",
 ]
 
-# base のみ。エンジンバイナリは GitHub Releases から、ルールパックは
-# github.com への shallow clone で取るため、どちらも base のホストで足りる。
 [job."zizmor.yaml:zizmor"]
-classes = ["image"]
+classes = ["mise"]
 

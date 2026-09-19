@@ -1,9 +1,9 @@
-# ADR-0005: 内部のAWS resource構成を実装詳細として扱う
+# ADR-0202: 内部のAWS resource構成を実装詳細として扱う
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0002, ADR-0004, ADR-0009, ADR-0010, ADR-0012
+- Related: ADR-0101, ADR-0201, ADR-0206, ADR-0207, ADR-0401
 
 ## Context
 
@@ -14,7 +14,7 @@
 - 同一機能を実現する別AWS機構への移行
 - 内部的なresource分割によるリファクタリング
 
-本リポジトリは公式推奨の変化をboilerplate内部で吸収することを方針としている（ADR-0010）。そのためには、内部構成が公開契約に含まれないことを明示的に決めておく必要がある。
+本リポジトリは公式推奨の変化をboilerplate内部で吸収することを方針としている（ADR-0207）。そのためには、内部構成が公開契約に含まれないことを明示的に決めておく必要がある。
 
 一方で、Terraformにはstateという実務上の制約がある。内部resourceのaddressが変わると、利用者のstateには破壊と再作成が生じ得る。「実装詳細である」ことと「利用者に影響がない」ことは同義ではない。この差を埋める手段も併せて決める必要がある。
 
@@ -24,10 +24,10 @@
 
 1. 公開契約は以下に限る。
 
-   - 公開variableの名前・型・意味・既定値（ADR-0004、ADR-0006）
-   - 公開outputの名前・型・意味（ADR-0004）
+   - 公開variableの名前・型・意味・既定値（ADR-0201、ADR-0203）
+   - 公開outputの名前・型・意味（ADR-0201）
    - ユースケースが宣言する機能と性質（ネットワーク境界、可用性、observability、セキュリティのinvariant）
-   - supported / unsupported の宣言（ADR-0003）
+   - supported / unsupported の宣言（ADR-0102）
 
 2. 以下は公開契約に含めない。
 
@@ -52,7 +52,7 @@
 
    - 公開契約を変えない内部resource構成の変更
    - 内部resource addressの変更
-   - 公開契約を変えないdefault値の変更（公式推奨の更新に伴うもの、ADR-0010）
+   - 公開契約を変えないdefault値の変更（公式推奨の更新に伴うもの、ADR-0207）
 
 ### state移行
 
@@ -69,7 +69,7 @@
 
 ### 案A: 内部resource構成を公開契約に含める
 
-利用者はaddressを前提とした運用（targeted apply、state操作、resource単位の監視設定）が可能になる。ただしAWSの推奨構成やProviderの進化に追従できなくなり、ADR-0010と両立しない。
+利用者はaddressを前提とした運用（targeted apply、state操作、resource単位の監視設定）が可能になる。ただしAWSの推奨構成やProviderの進化に追従できなくなり、ADR-0207と両立しない。
 
 ### 案B: 実装詳細と宣言するが、state移行手段は提供しない
 

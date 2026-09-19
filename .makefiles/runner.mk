@@ -38,7 +38,7 @@ RUN_SCRIPT = $(GO_TOOL) sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 ## version manager 自身を入力とする道具の起動。
 ##
 ## 検査の入力が version manager であるため、提供段に version manager を持たないツールランナーでは
-## 成立しない（ADR-0023 決定11）。ホストで実行する。CI も実行環境へ直接用意するので同じ経路になる。
+## 成立しない（ADR-0503 決定11）。ホストで実行する。CI も実行環境へ直接用意するので同じ経路になる。
 RUN_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" $(2)'

@@ -1,25 +1,18 @@
 name: Tool Cooldown
 
-# Every CLI tool version this repository pins is gated here, whichever file declares it. Two files
-# do: `mise.toml` for the tools mise resolves, and `python/*.in` for the PyPI tools, which install
-# from a hash-pinned lockfile instead. The gate is named after what it covers rather than after
-# either declaration site, because a version published inside the window carries the same risk
-# wherever it was written down.
+# Every CLI tool version this repository pins is gated here. `mise.toml` is the sole declaration
+# site, and a version published inside the window carries the same risk whichever tool it belongs to.
 #
-# The lockfiles themselves (transitive dependencies) are out of scope, for the same reason
-# `go-cooldown` only gates direct requirements. A declaration that has drifted from its lockfile is
-# reported as a violation, since the version cleared here would then not be the version installed.
+# Transitive dependencies are out of scope, for the same reason `go-cooldown` only gates direct
+# requirements.
 #
 # The window has two tiers (14 days for a GitHub release, 7 for a package registry) and language
-# runtimes are outside every window — both recorded in ADR-0095 (malicious-package-detection-via-cooldown).
+# runtimes are outside every window.
 #
 # Short names are resolved by asking `mise registry`, because mise decides which backend a name
 # resolves to and a table kept here would drift silently the next time mise changes.
 
-# `pull_request` に paths / branches のフィルタを置かない。除外された Pull Request では run が
-# 1件も起動せず、GitHub は報告されなかった context を「該当しない」とは解釈せずに待ち続ける。
-# その Pull Request は恒久的にマージ可能にならない。起動を絞る必要が生じたら、フィルタではなく
-# job の if: に置く —— skip された job は skipped を報告し、required check はそれを成功として数える。
+# Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
 on:
   pull_request:
   schedule:
@@ -127,12 +120,12 @@ jobs:
           set -euo pipefail
 
           if [ -n "${GATE_BASE}" ]; then
-            go run ./scripts/tool-cooldown gate --base="${GATE_BASE}" --github \
-              --summary-out=tool-cooldown-summary.md \
+            make tool-cooldown-gate RUNNER_MODE=host \
+              BASE="${GATE_BASE}" SUMMARY_OUT=tool-cooldown-summary.md \
               && status=0 || status=$?
           else
-            go run ./scripts/tool-cooldown audit --github \
-              --summary-out=tool-cooldown-summary.md \
+            make tool-cooldown-audit RUNNER_MODE=host \
+              SUMMARY_OUT=tool-cooldown-summary.md \
               && status=0 || status=$?
           fi
 

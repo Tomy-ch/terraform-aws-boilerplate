@@ -1,15 +1,15 @@
-# ADR-0011: 最小権限をdefaultとし、安全な設定をopt-inにしない
+# ADR-0301: 最小権限をdefaultとし、安全な設定をopt-inにしない
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0004, ADR-0006, ADR-0007, ADR-0009, ADR-0010, ADR-0012
+- Related: ADR-0201, ADR-0203, ADR-0204, ADR-0206, ADR-0207, ADR-0401
 
 ## Context
 
 Least Privilegeは一般にIAMの原則として語られるが、実際の権限境界はIAMだけでは決まらない。ネットワーク到達性、resource policy、暗号鍵のkey policy、secretへのアクセス経路、subnet配置のいずれかが緩ければ、IAMが厳密であっても境界は成立しない。
 
-また、安全な設定をopt-inにすると、既定の構成は安全ではない構成になる。利用者が明示的に有効化しなかった箇所が、そのまま脆弱な状態として残る。boilerplateが「安全な構成をエンコードした参照実装」であること（ADR-0002）と、安全性がopt-inであることは両立しない。
+また、安全な設定をopt-inにすると、既定の構成は安全ではない構成になる。利用者が明示的に有効化しなかった箇所が、そのまま脆弱な状態として残る。boilerplateが「安全な構成をエンコードした参照実装」であること（ADR-0101）と、安全性がopt-inであることは両立しない。
 
 さらに、権限拡張の入力を任意のpolicy JSONとして受け取ると、拡張の内容がboilerplateの検証対象外になる。最小権限であるかどうかを機械的に判定できなくなる。
 
@@ -33,8 +33,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 ### 基本原則
 
 2. 安全な設定をopt-inにしない。安全な状態をdefaultとし、緩和が必要な場合にのみ明示的な入力を要求する。
-3. 緩和のための入力も、任意のPolicy JSON等ではなく、意味論的な型付き契約とする（ADR-0004、ADR-0006）。
-4. Secure by Default の対象として、少なくとも以下をユースケースごとに検討し、公式推奨（ADR-0010）に従って設定する。
+3. 緩和のための入力も、任意のPolicy JSON等ではなく、意味論的な型付き契約とする（ADR-0201、ADR-0203）。
+4. Secure by Default の対象として、少なくとも以下をユースケースごとに検討し、公式推奨（ADR-0207）に従って設定する。
 
    - encryption at rest
    - encryption in transit
@@ -54,8 +54,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 ### IAM
 
-6. IAM policy documentはboilerplate内部で生成する。利用者からpolicy JSONまたはpolicy statementを受け取らない（ADR-0007）。
-7. 権限は意味論で受け取り、必要なActionを内部で導出する（ADR-0004 決定4）。語彙（例: `read` / `write`）の意味は、ユースケースのADRで定義し、対応するAction集合をPolicy Testで固定する。
+6. IAM policy documentはboilerplate内部で生成する。利用者からpolicy JSONまたはpolicy statementを受け取らない（ADR-0204）。
+7. 権限は意味論で受け取り、必要なActionを内部で導出する（ADR-0201 決定4）。語彙（例: `read` / `write`）の意味は、ユースケースのADRで定義し、対応するAction集合をPolicy Testで固定する。
 8. Action wildcard（`service:*` および `*`）を使用しない。
 9. Resource wildcard（`"*"`）は、AWS APIがresource-level権限をサポートしないactionに限り許容する。この場合も以下を満たすこと。
 
@@ -72,7 +72,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 13. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
 14. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
 15. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
-16. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0007 決定7）。
+16. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
 
 ### 越境
 
@@ -87,7 +87,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 ### 案A: 安全な設定をopt-inとし、defaultはAWS / Provider既定に従う
 
-利用者の初期導入は容易だが、既定構成が安全でない状態になる。ADR-0002の前提と両立しない。
+利用者の初期導入は容易だが、既定構成が安全でない状態になる。ADR-0101の前提と両立しない。
 
 ### 案B: 最小権限をIAMに限定して適用する
 
@@ -95,7 +95,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 ### 案C: 安全なdefaultを提供しつつ、policy JSONによる拡張を許容する
 
-拡張要求へ即応できるが、拡張内容が検証対象外となり、最小権限であるかを機械判定できない。ADR-0007に該当する。
+拡張要求へ即応できるが、拡張内容が検証対象外となり、最小権限であるかを機械判定できない。ADR-0204に該当する。
 
 ### 評価
 
@@ -130,13 +130,13 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
-- Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0007と共通）。
+- Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
 
 ## 影響
 
 - 権限語彙の拡張は、Policy Testの期待集合の更新を伴う。
 - 実環境での権限境界の検証が、E2E Testの必須項目になる。
-- 利用者が必要とする権限がboilerplateの語彙に存在しない場合、ADR-0003 決定5の3択で判断される。
+- 利用者が必要とする権限がboilerplateの語彙に存在しない場合、ADR-0102 決定5の3択で判断される。
 
 ## 見直し条件
 

@@ -1,9 +1,9 @@
-# ADR-0002: 保証可能性を自由度より優先する
+# ADR-0101: 保証可能性を自由度より優先する
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0001, ADR-0003, ADR-0004, ADR-0006, ADR-0007, ADR-0012
+- Related: ADR-0001, ADR-0102, ADR-0201, ADR-0203, ADR-0204, ADR-0401
 
 ## Context
 
@@ -71,17 +71,17 @@ Terraformの再利用資産には、大きく2つの設計方向がある。
 
 7. リポジトリ全体の基本原則を以下とする。各原則の詳細および例外条件は、対応するADRで定義する。
 
-   1. Test everything that can reasonably be tested.（ADR-0012）
-   2. Do not expose raw AWS resources as the public interface.（ADR-0004）
-   3. Do not depend on external Terraform modules, including official modules.（ADR-0008）
-   4. Use the latest official implementations as reference implementations before building our own.（ADR-0009）
-   5. Optimize for supported use cases, not configurability.（ADR-0003）
-   6. Least privilege must be the default.（ADR-0011）
-   7. Configuration must be semantic, typed, and finite.（ADR-0006）
-   8. Raw JSON and untyped configuration are prohibited by default.（ADR-0006）
-   9. Generic escape hatches are prohibited by default.（ADR-0007）
-   10. Expose intent, not provider schema.（ADR-0004）
-   11. Treat the concrete AWS resource topology as an implementation detail whenever possible.（ADR-0005）
+   1. Test everything that can reasonably be tested.（ADR-0401）
+   2. Do not expose raw AWS resources as the public interface.（ADR-0201）
+   3. Do not depend on external Terraform modules, including official modules.（ADR-0205）
+   4. Use the latest official implementations as reference implementations before building our own.（ADR-0206）
+   5. Optimize for supported use cases, not configurability.（ADR-0102）
+   6. Least privilege must be the default.（ADR-0301）
+   7. Configuration must be semantic, typed, and finite.（ADR-0203）
+   8. Raw JSON and untyped configuration are prohibited by default.（ADR-0203）
+   9. Generic escape hatches are prohibited by default.（ADR-0204）
+   10. Expose intent, not provider schema.（ADR-0201）
+   11. Treat the concrete AWS resource topology as an implementation detail whenever possible.（ADR-0202）
 
 ### 設計レビュー時の確認事項
 
@@ -161,7 +161,7 @@ AWS Provider resourceを薄くラップし、利用者が任意構成を組め�
 
 ## 検証方法
 
-本ADRは上位原則であり、単体で機械検証しない。実効性は各下位ADRの検証手段（ADR-0004 / 0006 / 0007 / 0008 / 0011 / 0012）によって担保する。警戒兆候のうち以下は静的検査の対象とする。
+本ADRは上位原則であり、単体で機械検証しない。実効性は各下位ADRの検証手段（ADR-0201 / 0006 / 0007 / 0008 / 0011 / 0012）によって担保する。警戒兆候のうち以下は静的検査の対象とする。
 
 - 公開variableにおける `any` 型の出現
 - `extra_` / `additional_` / `override` を含むvariable名の出現
@@ -169,7 +169,7 @@ AWS Provider resourceを薄くラップし、利用者が任意構成を組め�
 
 ## 影響
 
-- 利用者の個別要求は、正式なユースケース化・新規ユースケース化・対象外のいずれかへ分類される（ADR-0003）。
+- 利用者の個別要求は、正式なユースケース化・新規ユースケース化・対象外のいずれかへ分類される（ADR-0102）。
 - 「できない」ことが設計上の正しい結果になり得る。
 
 ## 見直し条件

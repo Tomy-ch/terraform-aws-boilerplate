@@ -103,7 +103,6 @@ type rewritePlan struct {
 
 func (r ref) key() string { return r.repo + "@" + r.tag }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -135,7 +134,7 @@ func run(args []string, wd func() (string, error), apiBase string) error {
 		fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
 		minAge := fs.Int("min-age-days", 0, "N 日未満のコミットは quarantine（0 で無効）")
 		if err := fs.Parse(args[1:]); err != nil {
-			// ヘルプ要求は失敗ではないので 0 で終える。usage は flag が既に出力している。
+			// usage は flag が既に出力している。
 			if xerrors.Is(err, flag.ErrHelp) {
 				return nil
 			}
@@ -160,7 +159,7 @@ func parseUses(path, refStr, comment string) (ref, bool) {
 	}
 	// コンテナイメージ参照。GitHub のリポジトリではないので git の ref として解決できず、
 	// owner/repo として分解すると `docker:/` のような無意味なキーになる。固定は digest を扱う
-	// pin-images の責務（docs/design/security.md）。
+	// pin-images の責務。
 	if strings.HasPrefix(path, dockerScheme) {
 		return ref{}, false
 	}
@@ -396,8 +395,7 @@ func refAgeDays(ctx context.Context, apiBase, repo, tag, sha string) (int, error
 // pickRefTime は Release の公開日時と commit の日時のうち新しい方を返す。どちらも不明ならエラー。
 //
 // 新しい方を採るのは、published_at が tag の付け替えで据え置かれ、committer date は任意の過去へ
-// 設定できるため。日付偽装そのものには耐えず、付け替えの検知は lockfile の差分レビューが担う
-// （docs/design/security.md の "The quarantine buys time; it does not verify a date"）。
+// 設定できるため。日付偽装そのものには耐えず、付け替えの検知は lockfile の差分レビューが担う。
 func pickRefTime(published, committed time.Time) (time.Time, error) {
 	switch {
 	case published.IsZero() && committed.IsZero():

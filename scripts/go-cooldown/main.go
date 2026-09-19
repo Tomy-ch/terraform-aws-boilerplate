@@ -5,8 +5,7 @@
 //	audit: go.mod 全件を棚卸しし、窓内のものを報告する。常に 0 で終了する。
 //
 // Go には解決時に窓を強制する機構が無いため、gate は検知器ではなく防御の本体にあたる。npm との
-// 対比は docs/design/security.md、窓の値は ADR-0095、挙動は scripts/README.md の go-cooldown の
-// 行が持つ。
+// 挙動と窓の値は scripts/README.md の go-cooldown の行が持つ。
 //
 // バイパスは .github/go-cooldown-bypass.toml が受ける。期限は go.mod が変わらなくても訪れるので、
 // このツールはスケジュール実行にも載せる必要がある。
@@ -37,7 +36,7 @@ const (
 	bypassFile = ".github/go-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
 	defaultWindowDays = 7
-	maxBypassMonths   = 3 // バイパスの期限に許す最大の先送り幅
+	maxBypassMonths   = 3
 
 	fetchTimeout = 30 * time.Second
 	gitTimeout   = 30 * time.Second
@@ -104,7 +103,6 @@ type options struct {
 
 func (r requirement) key() string { return r.module + "@" + r.version }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
 func main() {
 	log.SetFlags(0)
 
@@ -119,7 +117,7 @@ func main() {
 func run(args []string, now time.Time) error {
 	sub, opt, err := parseArgs(args)
 	if err != nil {
-		// ヘルプ要求は失敗ではないので 0 で終える。usage は flag が既に出力している。
+		// usage は flag が既に出力している。
 		if xerrors.Is(err, flag.ErrHelp) {
 			return nil
 		}

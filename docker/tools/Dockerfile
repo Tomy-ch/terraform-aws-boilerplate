@@ -1,9 +1,9 @@
-# 道具を提供するイメージ。**版の出所はこのファイルではない**（ADR-0023 決定1・決定3）。
+# 道具を提供するイメージ。**版の出所はこのファイルではない**（ADR-0503 決定1・決定2）。
 # 版は mise.toml が持ち、ここが持つのは実行形態だけである。イメージのビルドは mise.toml を
 # 読んで install するので、版を書き写した第二の出所がここにできない。
 #
-# 段を分けるのは、提供段に mise 本体と install のキャッシュを残さないため（同 決定15）。
-# ベースは digest で固定する（同 決定13）——tag だけの参照は、付け替えられた時点で別の
+# 段を分けるのは、提供段に mise 本体と install のキャッシュを残さないため（同 決定11）。
+# ベースは digest で固定する（同 決定10）——tag だけの参照は、付け替えられた時点で別の
 # イメージを黙って引く。
 #
 # ここに terraform は居ない。単一の静的バイナリであり、資格情報の受け渡しに境界を増やさない
@@ -31,9 +31,8 @@ ARG MISE_VERSION
 ENV MISE_DATA_DIR=/root/.local/share/mise \
     MISE_CONFIG_DIR=/root/.config/mise \
     PATH="/root/.local/bin:/root/.local/share/mise/shims:$PATH" \
-    # mise.toml の disable_tools は「ホストへ導入しないもの」の宣言であり（ADR-0024 決定4）、
-    # イメージの中には及ばせない。ここで空へ上書きしないと、コンテナで実行するはずの道具が
-    # install の対象から外れる。宣言そのものは [tools] に在り、版の出所は1つのままである。
+    # ホスト側の MISE_DISABLE_TOOLS をコンテナへ持ち込ませない。導入する道具は [tools] の
+    # 宣言だけで決まる。
     MISE_DISABLE_TOOLS=""
 # パイプのままだとリトライ時に部分受信分が sh へ流れ込むため、ファイルへ落としてから実行する。
 RUN curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors https://mise.run -o /tmp/mise-install.sh \
@@ -45,7 +44,7 @@ WORKDIR /app
 COPY mise.toml ./
 RUN mise trust mise.toml
 
-# ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0023 決定3）。
+# ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
 # ずれたまま進むと、ホストとコンテナで別の Go がツールをビルドする。
 RUN set -eu; \
     declared="$(sed -n 's|^go *= *"\([^"]*\)"$|\1|p' mise.toml)"; \
@@ -56,7 +55,7 @@ RUN set -eu; \
       echo "docker/tools/Dockerfile の FROM と mise.toml の go を揃えてください" >&2; exit 1; }
 
 # 未認証の GitHub API（60 req/hour・IP 単位）ではこの install 群を賄えず 403 になる。
-# トークンはイメージ履歴に焼き込む build 引数ではなく secret で渡す（ADR-0023 決定14）。
+# トークンはイメージ履歴に焼き込む build 引数ではなく secret で渡す（ADR-0503 決定12）。
 # 未指定でも未認証で成立するため、手元のビルドは従来どおり動く。
 RUN --mount=type=secret,id=github_token \
     github_token="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
@@ -114,7 +113,7 @@ CMD []
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段は mise を持たない。mise.toml は**版の宣言として読むだけ**で、install は npm が行う
-# （ADR-0023 決定3・決定15）。mise を入れて npm backend を使う形は採れない —— mise は
+# （ADR-0503 決定3）。mise を入れて npm backend を使う形は採れない —— mise は
 # 宣言された node が「mise 経由で」入っていることを要求し、ベースイメージの node を認めない。
 FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS node_tools
 
@@ -131,13 +130,13 @@ RUN apk add --no-cache bash ca-certificates git make
 WORKDIR /app
 COPY mise.toml ./
 
-# 版の出所は mise.toml だけである（ADR-0023 決定3）。宣言が見つからなければ、空文字のまま
-# 進まずその場で落とす —— 検査が対象を失ったまま成功するのを避ける（ADR-0020 決定13）。
+# 版の出所は mise.toml だけである（ADR-0503 決定3）。宣言が見つからなければ、空文字のまま
+# 進まずその場で落とす —— 検査が対象を失ったまま成功するのを避ける（ADR-0702 決定13）。
 #
 # --ignore-scripts: install 時に依存のライフサイクルスクリプトを実行しない。ハッシュが一致した
 # 配布物であっても script は install 時に走るため、実行させないことでその余地を無くす
-# （ADR-0023 決定9 と同じ判断）。in-tree のパッケージを持つようになった時点で、lockfile と
-# 「宣言に無い script を持ち込んだら失敗させる」形（同 決定10）へ移す。
+# （ADR-0503 決定16 と同じ判断）。in-tree のパッケージを持つようになった時点で、lockfile と
+# 「宣言に無い script を持ち込んだら失敗させる」形（同 決定17）へ移す。
 RUN set -eu; \
     declared_node="$(sed -n 's|^node *= *"\([^"]*\)"$|\1|p' mise.toml)"; \
     [ -n "$declared_node" ] || { echo "mise.toml に node の宣言がありません" >&2; exit 1; }; \

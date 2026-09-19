@@ -1,8 +1,8 @@
 // adr-lint は ADR の構造を検査します。
 //
-// **ADR-0001 が自らの検証方法として挙げた5項目を、そのまま実行するのがこのツールです。**
-// 規範を定めた ADR が自分の検査手段を持たない状態は、ADR-0012 決定3（検証できない決定は
-// 決定として不完全）に自ら反します。
+// **ADR-0001 が自らの検証方法として挙げた項目を、そのまま実行するのがこのツールです。**
+// 規範を定めた ADR が自分の検査手段を持たない状態は、ADR-0401 決定3（検証できない主張を
+// 保証として扱わない）に自ら反します。
 //
 //  1. ファイル名が NNNN-kebab-case-title.md に適合すること
 //  2. 同一 scope 内で番号が重複しないこと
@@ -10,9 +10,14 @@
 //  4. Status が `Superseded by` の場合、参照先 ADR が存在すること
 //  5. root ADR 本文が modules/<use-case>/ 配下の path へ規範的に依存していないこと
 //  6. 本文が参照する ADR-NNNN がすべて実在すること
+//  7. 見出しが名乗る番号が、ファイル名の番号と一致すること
 //
-// 6 は、番号が identity ではなく順序になったことから要る（ADR-0024 決定5-9）。
+// 6 と 7 は、番号が identity ではなく順序になったことから要る（ADR-0001 決定5-9）。
 // 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。
+//
+// 6 だけでは塞がらない。詰め直しの取りこぼしは、指す先が**無い**形ではなく、実在する
+// **別の**決定を指す形で現れるからで、そのとき誤記が唯一残っているのは見出しである。
+// 7 が無ければ、2つのファイルが同じ番号を名乗っていても全件が緑で通る。
 //
 // 併せて、索引（README.md）が実ファイルと食い違っていないことも見ます。索引は
 // 「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
@@ -48,18 +53,20 @@ var (
 	statusLine = regexp.MustCompile(`(?m)^- Status:[ \t]*(\S.*)$`)
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
-	// Superseded by <scope>/ADR-NNNN。scope を伴う形を正とする（ADR-0001 決定11）。
+	// Superseded by <scope>/ADR-NNNN。scope を伴う形を正とする（ADR-0001 決定3）。
 	supersededBy = regexp.MustCompile(`^Superseded by\s+([A-Za-z0-9_-]+)/ADR-(\d{4})\s*$`)
 	// 索引の行。| [NNNN](ファイル名) | タイトル | Status |
 	indexRow = regexp.MustCompile(`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|`)
+	// 本文の H1。`# ADR-NNNN: <題>`
+	headingLine = regexp.MustCompile(`(?m)^# ADR-(\d{4})\b`)
 	// 本文中の ADR 参照。番号が動き得る以上、実在を機械で見るほかない。
 	//
 	// scope を伴う参照（`<scope>/ADR-NNNN`）は除く。他 scope の ADR はこのディレクトリに無く、
-	// 見に行けば必ず落ちる検査になる。identity が `<scope>/<slug>` である以上（ADR-0024 決定4）、
+	// 見に行けば必ず落ちる検査になる。identity が `<scope>/<slug>` である以上（ADR-0001 決定4）、
 	// scope を書いた参照はこちらの番号体系の外を指している。
 	adrRef = regexp.MustCompile(`(^|[^/\w])ADR-(\d{4})`)
 	// 本文が modules/<use-case>/ 配下の path を名指ししている箇所。
-	// root ADR は特定ユースケースの実装詳細へ依存してはならない（ADR-0001 決定15）。
+	// root ADR は特定ユースケースの実装詳細へ依存してはならない（ADR-0001 決定19）。
 	useCasePath = regexp.MustCompile("`?modules/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]+`?")
 	// ただし <use-case> という**プレースホルダ**を含む形は、特定のユースケースを名指ししていない。
 	placeholder = regexp.MustCompile(`modules/<use-case>/`)
@@ -98,6 +105,7 @@ func run(args []string, out io.Writer) error {
 	}
 
 	findings = append(findings, checkNumbers(docs, *root)...)
+	findings = append(findings, checkHeading(docs)...)
 	findings = append(findings, checkMetadata(docs)...)
 	findings = append(findings, checkSupersede(docs, *root)...)
 	findings = append(findings, checkUseCaseDependency(docs)...)
@@ -172,7 +180,7 @@ func collect(root string) ([]doc, []lintreport.Finding, error) {
 }
 
 // checkNumbers は同一 scope 内での番号の重複を検出します。
-// 番号は採番後に再利用しません（ADR-0001 決定4）。欠番は許容します。
+// 同一 scope 内で番号は重複させません。削除に伴う詰め直しは許容します（ADR-0001 決定5-7）。
 func checkNumbers(docs []doc, root string) []lintreport.Finding {
 	seen := make(map[int][]string, len(docs))
 	for _, d := range docs {
@@ -195,6 +203,34 @@ func checkNumbers(docs []doc, root string) []lintreport.Finding {
 			File: root, Line: 1,
 			Message: fmt.Sprintf("番号 %04d が重複しています（%s）", n, strings.Join(names, " / ")),
 		})
+	}
+	return findings
+}
+
+// checkHeading は、本文の H1 が名乗る番号がファイル名の番号と一致することを検査します。
+//
+// **ここは checkCrossReferences が構造的に見られない場所です。** あちらは自分自身への言及を
+// 参照から除いており、見出しはその除外に当たります。番号を詰めたときに見出しの更新を落とすと、
+// 2つのファイルが同じ番号を名乗る状態が、参照の実在検査を全件通過したまま残ります。
+func checkHeading(docs []doc) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, d := range docs {
+		m := headingLine.FindStringSubmatch(d.source)
+		if m == nil {
+			findings = append(findings, lintreport.Finding{
+				File: d.path, Line: 1,
+				Message: "本文に `# ADR-NNNN: <題>` の見出しがありません",
+			})
+			continue
+		}
+
+		num, _ := strconv.Atoi(m[1])
+		if num != d.number {
+			findings = append(findings, lintreport.Finding{
+				File: d.path, Line: 1,
+				Message: fmt.Sprintf("見出しが ADR-%04d を名乗っていますが、ファイル名の番号は %04d です", num, d.number),
+			})
+		}
 	}
 	return findings
 }
@@ -269,7 +305,7 @@ func checkSupersede(docs []doc, root string) []lintreport.Finding {
 
 // checkUseCaseDependency は、root ADR 本文が特定ユースケースの実装詳細へ依存していないかを検査します。
 //
-// 依存の向きは root ADR → use-case ADR の一方向に限ります（ADR-0001 決定13-15）。
+// 依存の向きは root ADR → use-case ADR の一方向に限ります（ADR-0001 決定17-19）。
 // `modules/<use-case>/` のようなプレースホルダは、特定のユースケースを名指ししていないため許容します。
 func checkUseCaseDependency(docs []doc) []lintreport.Finding {
 	var findings []lintreport.Finding
@@ -293,7 +329,7 @@ func checkUseCaseDependency(docs []doc) []lintreport.Finding {
 
 // checkCrossReferences は、本文が参照する ADR-NNNN がすべて実在することを検査します。
 //
-// 番号は identity ではなく順序であり、削除に伴って詰められます（ADR-0024 決定5-6）。
+// 番号は identity ではなく順序であり、削除に伴って詰められます（ADR-0001 決定5-6）。
 // 詰め直しで参照の更新を落とすと、**参照が黙って別の決定を指します。** 実在の検査は
 // 「指す先が無い」ことしか捕まえられませんが、詰め直しの取りこぼしはその形で現れます。
 func checkCrossReferences(docs []doc) []lintreport.Finding {

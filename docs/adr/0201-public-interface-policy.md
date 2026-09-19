@@ -1,9 +1,9 @@
-# ADR-0004: 公開インターフェースは意図を表現し、Provider schemaを露出しない
+# ADR-0201: 公開インターフェースは意図を表現し、Provider schemaを露出しない
 
 - Status: Accepted
 - Date: 2026-09-15
 - Scope: repository-wide
-- Related: ADR-0002, ADR-0003, ADR-0005, ADR-0006, ADR-0010, ADR-0011
+- Related: ADR-0101, ADR-0102, ADR-0202, ADR-0203, ADR-0207, ADR-0301
 
 ## Context
 
@@ -24,8 +24,8 @@ ecs_service = {
 
 - 利用者はAWS Providerのdocumentationを読まなければ設定できない（抽象化が存在しない）
 - 入力の組合せ空間がProviderのschemaと同等になり、テストできない
-- 内部resource構成を変更すると公開契約が壊れる（ADR-0005が成立しない）
-- 安全な既定値を維持できない（ADR-0011が成立しない）
+- 内部resource構成を変更すると公開契約が壊れる（ADR-0202が成立しない）
+- 安全な既定値を維持できない（ADR-0301が成立しない）
 - 属性の意味がAWS側の都合で変化した場合、boilerplateが吸収できない
 
 同様に、IAMを `actions = ["s3:GetObject", "s3:GetObjectVersion", ...]` の形で受け取ると、最小権限の保証主体が利用者側へ移る。
@@ -56,10 +56,10 @@ ecs_service = {
    permissions = ["read"]
    ```
 
-   利用者へIAM Actionの列挙を要求する形を標準としない（ADR-0011）。
+   利用者へIAM Actionの列挙を要求する形を標準としない（ADR-0301）。
 
 5. 役割の指定（例: `service_type = "web"`）から、ALB連携・health check・service構成・security group・log deliveryなどの構成を導出する。個別の有効化フラグを並べる形を標準としない。
-6. 公式推奨で一意に決まる値は、そもそも公開しない（ADR-0010）。公開するのは、利用者固有の要件に属する入力に限る。
+6. 公式推奨で一意に決まる値は、そもそも公開しない（ADR-0207）。公開するのは、利用者固有の要件に属する入力に限る。
 
 ### 出力
 
@@ -73,7 +73,7 @@ ecs_service = {
 9. 各outputは、それを必要とする接続ユースケースとともに正当化する。「あると便利」を理由に追加しない。
 10. ARNやIDを公開する場合も、公開するのは「その識別子が表す役割」であり、内部resourceの構成ではない。命名は役割ベースとする（例: `alb_dns_name` は可、`aws_lb_main_dns_name` のような内部address由来の命名は不可）。
 11. デバッグ目的の情報は公開契約としない。内部状態の観測はTerraform stateおよびAWS側の観測手段で行う。
-12. outputの追加・削除・意味変更は公開契約の変更として扱う（ADR-0005）。
+12. outputの追加・削除・意味変更は公開契約の変更として扱う（ADR-0202）。
 
 ### 例外
 
@@ -83,15 +83,15 @@ ecs_service = {
 
 ### 案A: Provider schemaをそのまま通す（pass-through）
 
-実装コストは最小で、Providerの新機能へ即応できる。ただし抽象化が存在せず、ADR-0002が掲げる保証（安全なdefault、テスト可能性、認知負荷の低減）のいずれも成立しない。
+実装コストは最小で、Providerの新機能へ即応できる。ただし抽象化が存在せず、ADR-0101が掲げる保証（安全なdefault、テスト可能性、認知負荷の低減）のいずれも成立しない。
 
 ### 案B: 意味論的interfaceを基本としつつ、内部resourceへの部分的な直接設定を併置する
 
-移行が容易で個別要求へ対応しやすいが、直接設定経路が既定の利用形態になりやすく、実質的に案Aへ収束する。Generic Escape Hatchの禁止（ADR-0007）とも整合しない。
+移行が容易で個別要求へ対応しやすいが、直接設定経路が既定の利用形態になりやすく、実質的に案Aへ収束する。Generic Escape Hatchの禁止（ADR-0204）とも整合しない。
 
 ### 案C: 内部resourceの全属性をoutputとして公開する
 
-利用者の観測性は最大化されるが、内部構成が公開契約へ固定され、ADR-0005が成立しない。
+利用者の観測性は最大化されるが、内部構成が公開契約へ固定され、ADR-0202が成立しない。
 
 ### 評価
 
@@ -126,7 +126,7 @@ ecs_service = {
 
 - Providerの新機能はboilerplate側の設計判断を経てから公開される。
 - 利用者はAWS Providerのdocumentationを読まずに設定できる状態を目標とする。
-- 内部実装の変更自由度が確保される（ADR-0005）。
+- 内部実装の変更自由度が確保される（ADR-0202）。
 
 ## 見直し条件
 

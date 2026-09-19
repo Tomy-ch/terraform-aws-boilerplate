@@ -25,7 +25,7 @@
 | 一次評価（影響範囲と severity の判断） | 7 営業日以内 |
 | 修正版の公開 | 評価の結果に応じて調整し、報告者へ都度連絡します |
 
-`high` 以上は 48 時間以内に対応へ着手します（[ADR 0004](docs/adr/0004-library-management.md)）。
+`high` 以上は 48 時間以内に対応へ着手します。
 
 ## サポート対象
 
@@ -39,23 +39,21 @@
 
 ## このリポジトリが自分に掛けている検査
 
-多層防御の構成は [ADR 0110](docs/adr/0110-security-operations.md) が持ちます。
+検出手段の割当は [ADR-0501](docs/adr/0501-development-tooling-composition.md) 決定4 が、秘密の混入を独立した層として扱う判断は [ADR-0302](docs/adr/0302-secret-leak-detection.md) が持ちます。
 
 | 層 | 手段 | どこで走るか |
 | --- | --- | --- |
-| 秘密の混入 | gitleaks | pre-push hook と CI（PR は差分、週次で履歴全体） |
+| 秘密の混入 | gitleaks（権威）+ Trivy secret | pre-push hook と CI（Pull Request は作業ツリー、週次で履歴全体） |
 | 依存の脆弱性 | Trivy fs | CI。Pull Request では報告のみで、ブロックは昇格時に判定する |
 | **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） |
-| 自分が書いたコード | Opengrep | CI。GitHub の外へ持ち出せる実体なので、どの環境でも層が残る |
-| 値が外へ出る地点 | Bearer | CI（所見は code scanning へ） |
-| 言語を問わない文字列の検査 | DevSkim | CI（所見は code scanning へ） |
-| ワークフロー定義 | zizmor / actionlint | pre-commit hook と CI |
-| リポジトリ自身の設定 | OpenSSF Scorecard | CI（既定ブランチへの push と週次） |
-| **配信されている応答** | OWASP ZAP（baseline） | CI。アプリを立てて撃つ、唯一の動的検査 |
+| 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH でブロック） |
+| ワークフロー定義 | zizmor（high でブロック）/ actionlint / shellcheck | pre-commit hook と CI |
+| ランナーの外向き通信 | harden-runner（`egress-policy: block`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
+| 供給網の新しすぎる版 | go-cooldown / tool-cooldown | Pull Request と週次 |
+| 参照の固定 | pin-actions / pin-images | CI（action は commit、イメージは digest へ固定） |
 | 依存の更新 | Dependabot + cooldown | 週次 |
 
-**すべてがゲートではありません。** baseline を 0 件に保てる層と「この変更が増やしたか」を問う層だけを赤にし、
 それ以外は所見を見せるだけにしています。赤が常態になると、赤を見て手を止める習慣のほうが先に壊れるためです。
 
 **検出を許容する場合は、抑止ファイルに理由と撤回条件を書きます。** 一括無効化はしません
-（[ADR 0110](docs/adr/0110-security-operations.md) 3.4）。
+（[ADR-0501](docs/adr/0501-development-tooling-composition.md) 決定13）。

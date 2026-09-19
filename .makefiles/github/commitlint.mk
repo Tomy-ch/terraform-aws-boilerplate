@@ -1,6 +1,6 @@
 ## commit message の検査
 ##
-## 規約の正本は docs/adr/0022-commit-and-branch-naming.md。ここが持つのは起動だけである。
+## 規約の正本は commitlint.config.js。ここが持つのは起動だけである。
 ## 機械が課すのは type の enum と type / subject の空チェックだけで、文体と長さはレビューで見る。
 
 .PHONY: commitlint ## 直近の commit message を検査
