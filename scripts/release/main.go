@@ -179,6 +179,17 @@ func bump(v version, kind string) (version, error) {
 
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
+// lineChoices は -line が受け付ける値を usage の文言へ組みます。**一覧をここへ書かない** ——
+// 書くと、線を足したときに宣言と案内の片方だけが古くなる。
+func lineChoices() string {
+	names := make([]string, 0, len(branches.Lines()))
+	for _, l := range branches.Lines() {
+		names = append(names, string(l))
+	}
+
+	return strings.Join(names, " / ")
+}
+
 // syncDefaultSteps は、既定ブランチを origin の最新へ合わせる手順を返します。
 // ブランチ名は宣言（lib/branches）が持つので、ここでは受け取ります。
 func syncDefaultSteps(branch string) []step {
@@ -298,7 +309,7 @@ func runBranch(r runner, args []string) error {
 	bumpKind := fs.String("bump", "", "patch / minor / major")
 	// 接頭辞そのものではなく**線の種類**を受ける。接頭辞を受けると、呼び出し側が
 	// パターンを持つことになる（ADR-0603 決定2）。
-	line := fs.String("line", string(branches.LineRelease), "切る線 (release / hotfix)")
+	line := fs.String("line", string(branches.LineRelease), "切る線 ("+lineChoices()+")")
 	base := fs.String("base", branches.Default, "分岐元ブランチ")
 
 	if err := parseFlags(fs, args); err != nil {
