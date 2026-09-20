@@ -36,6 +36,13 @@ func TestFor(t *testing.T) {
 			assert.Equal(t, "```", mdfence.For("`a`b`c`"))
 		})
 
+		// 最長の連が末尾にあるとは限らない。走査中の最大値を保持できていないと、
+		// 途中に現れた長い連を取りこぼして本文側が抜けられる。
+		t.Run("最長の連が途中にあっても取りこぼさない", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "`````", mdfence.For("a `` b ```` c `"))
+		})
+
 		t.Run("空の本文でも下限を返す", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "```", mdfence.For(""))

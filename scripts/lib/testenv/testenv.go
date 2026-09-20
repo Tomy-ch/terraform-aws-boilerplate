@@ -15,6 +15,14 @@ import (
 // RequireNonRootEnv は、root 実行による skip を失敗へ変える環境変数の名前です。
 const RequireNonRootEnv = "REQUIRE_NONROOT"
 
+// 外界。判断はこれを直に読むので、入口が何かを渡し間違える余地がありません。
+// 既定値が本物を指していることは内部テストが実際の syscall と突き合わせて見ます。
+var (
+	geteuid  = os.Geteuid
+	getenv   = os.Getenv
+	lookPath = exec.LookPath
+)
+
 // reporter は requireNonRoot が使う *testing.T の部分です。分岐を root でない環境から
 // 到達可能にするために切り出しています。
 type reporter interface {
@@ -31,10 +39,10 @@ type reporter interface {
 // ケースが黙って skip され続けることを防ぎます。
 func RequireNonRoot(t *testing.T, reason string) {
 	t.Helper()
-	requireNonRoot(t, reason, os.Geteuid, os.Getenv)
+	requireNonRoot(t, reason)
 }
 
-func requireNonRoot(t reporter, reason string, geteuid func() int, getenv func(string) string) {
+func requireNonRoot(t reporter, reason string) {
 	t.Helper()
 
 	if geteuid() != 0 {
@@ -58,10 +66,10 @@ const RequireShellcheckEnv = "REQUIRE_SHELLCHECK"
 // そこで skip が起きたなら検査範囲が報告より狭くなっています。
 func RequireShellcheck(t *testing.T) {
 	t.Helper()
-	requireShellcheck(t, exec.LookPath, os.Getenv)
+	requireShellcheck(t)
 }
 
-func requireShellcheck(t reporter, lookPath func(string) (string, error), getenv func(string) string) {
+func requireShellcheck(t reporter) {
 	t.Helper()
 
 	if _, err := lookPath(shellcheck.Binary); err == nil {

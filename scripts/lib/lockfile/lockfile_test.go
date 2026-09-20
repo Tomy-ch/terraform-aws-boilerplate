@@ -103,6 +103,7 @@ func TestFormat_Read(t *testing.T) {
 
 			require.ErrorIs(t, err, lockfile.ErrDuplicateKey)
 			assert.ErrorContains(t, err, "2 行目")
+			assert.ErrorContains(t, err, "a@v1", "どのキーが重複したかが分からない")
 		})
 
 		t.Run("値の形が合わない行はエラーにする", func(t *testing.T) {
@@ -111,6 +112,25 @@ func TestFormat_Read(t *testing.T) {
 			_, err := testFormat().Read(writeAt(t, "\"a@v1\" = \"not-a-sha\"\n"))
 
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+		})
+
+		// 部分一致を許すと、行末に付いたゴミが黙って捨てられる。
+		t.Run("行末に解釈できない残りがあればエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := testFormat().Read(writeAt(t, "\"a@v1\" = \""+shaA+"\" ゴミ\n"))
+
+			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+		})
+
+		// Line を書き落とした Format をそのまま使うと nil の regexp を呼んで panic する。
+		t.Run("Line が未設定なら読まずにエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := lockfile.Format{}.Read(writeAt(t, "\"a@v1\" = \""+shaA+"\"\n"))
+
+			require.ErrorIs(t, err, lockfile.ErrNoLinePattern)
+			assert.Nil(t, got)
 		})
 	})
 }
@@ -132,6 +152,21 @@ func TestFormat_Write(t *testing.T) {
 			assert.Equal(t,
 				"# 見出し1。\n# 見出し2。\n\"a@v1\" = \""+shaA+"\"\n\"b@v2\" = \""+shaB+"\"\n",
 				string(got))
+		})
+
+		t.Run("空の対応表でも見出し付きのファイルを書き、読み戻すと空になる", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "pin.toml")
+
+			require.NoError(t, testFormat().Write(path, map[string]string{}))
+
+			body, err := os.ReadFile(path) //nolint:gosec // t.TempDir() 配下
+			require.NoError(t, err)
+			assert.Equal(t, "# 見出し1。\n# 見出し2。\n", string(body))
+
+			got, readErr := testFormat().Read(path)
+			require.NoError(t, readErr)
+			assert.Empty(t, got)
 		})
 
 		t.Run("書いたものを読み直せる", func(t *testing.T) {

@@ -1144,6 +1144,7 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 			err := resolve(root, testTargets(t, root), 14)
 
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+			assert.ErrorContains(t, err, "pin-images-resolve", "直し方の案内が相手のツール名になっている")
 			assert.Equal(t, body, readAll(t, filepath.Join(root, lockFile)),
 				"読めない lockfile を空と見なすと退行先ごと書き潰される")
 		})

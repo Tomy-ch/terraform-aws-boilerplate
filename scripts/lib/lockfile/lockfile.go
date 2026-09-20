@@ -22,6 +22,8 @@ var (
 	ErrInvalidLine = xerrors.New("lockfile に解釈できない行があります")
 	// ErrDuplicateKey は、同一キーが複数回現れた場合のエラー。
 	ErrDuplicateKey = xerrors.New("lockfile にキーの重複があります")
+	// ErrNoLinePattern は、Format.Line を設定せずに読もうとした場合のエラー。
+	ErrNoLinePattern = xerrors.New("lockfile.Format.Line が設定されていません")
 )
 
 // Format は、1つの lockfile の書式です。
@@ -38,6 +40,12 @@ type Format struct {
 
 // Read は lockfile を読みます。解釈できない行とキーの重複はエラーにします。
 func (f Format) Read(path string) (map[string]string, error) {
+	// 設定し忘れた Format をそのまま使うと nil の regexp を呼んで panic する。
+	// 新しい pin ツールが1フィールドを書き落とした日に、落ち方を選べるようにする。
+	if f.Line == nil {
+		return nil, ErrNoLinePattern
+	}
+
 	file, err := os.Open(path) //nolint:gosec // path は呼び出し側が cwd と固定名から組む
 	if err != nil {
 		return nil, err
@@ -52,7 +60,9 @@ func (f Format) Read(path string) (map[string]string, error) {
 			continue
 		}
 		m := f.Line.FindStringSubmatch(line)
-		if m == nil {
+		// 行の一部だけが一致した場合も解釈できない行として扱う。部分一致を許すと、
+		// 行末に付いたゴミが黙って捨てられる（ADR-0702 決定14）。
+		if m == nil || m[0] != line {
 			return nil, xerrors.Wrap(ErrInvalidLine,
 				fmt.Sprintf("%d 行目: %q（make %s を実行するか該当行を削除してください）", lineNo, line, f.Resolve))
 		}

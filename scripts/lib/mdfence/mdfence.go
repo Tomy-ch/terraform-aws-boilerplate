@@ -2,8 +2,11 @@
 //
 // フェンス長を固定にすると、本文にそれ以上のバッククォートが並んだとき本文側がフェンスを
 // 閉じ、外の Markdown へ抜けられます。値の中身を決めるのは pull request なので、長さは
-// 値の側から取ります。規則の所有は .github/workflows/README.md で、複製された実装が
-// 互いに食い違うことは make pr-comment-fence-lint が検査します。
+// 値の側から取ります。規則の所有は .github/workflows/README.md です。
+//
+// 同じ計算は .github/actions/upsert-pr-comment の JavaScript にも在り、両者が食い違わない
+// ことを検査する機構はありません。片方だけ直した日に気づく手段が無いので、どちらかを触るなら
+// もう片方も開くこと。
 package mdfence
 
 import (

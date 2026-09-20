@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -1584,6 +1585,26 @@ func Test_resolve(t *testing.T) {
 			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"actions/checkout@v7.0.0": shaCheckout}, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		// 読めない lockfile を空と見なすと既存ピンが脱落し、退行先ごと書き潰される。
+		// pin-images が同じ保証を持っており、双子で非対称にしない。
+		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := t.TempDir()
+			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" + "invalid line\n"
+			lockPath := writeFile(t, root, lockFile, body)
+			path := writeFile(t, root, ".github/workflows/a.yml", uses)
+			useGitStub(t)
+
+			err := resolve(root, "", []string{path}, 0)
+
+			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+			assert.ErrorContains(t, err, "pin-actions-resolve", "直し方の案内が相手のツール名になっている")
+			got, readErr := os.ReadFile(lockPath) //nolint:gosec // t.TempDir() 配下
+			require.NoError(t, readErr)
+			assert.Equal(t, body, string(got), "読めない lockfile を空と見なすと退行先ごと書き潰される")
 		})
 	})
 }
