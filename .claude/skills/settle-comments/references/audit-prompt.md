@@ -175,8 +175,17 @@ Return exactly one of six per finding. **並びは削る側からである。**
   ライブラリや SDK の固有の挙動。**既定ではなく、通過の結果である。** Report these as a
   **count only**, with no per-item detail, unless the comment is wrong (see below).
 
-A comment that **contradicts the code** outranks all of this. Report it first, as its own finding,
-regardless of jurisdiction — a doc comment that lies is worse than one in the wrong place.
+A comment that **contradicts the code, or the document it cites**, outranks all of this. Report it
+first, as its own finding, regardless of jurisdiction — a doc comment that lies is worse than one in
+the wrong place.
+
+**引用の食い違いは、コードとの食い違いより見つかりにくい。** このリポジトリのコメントは ADR の
+決定番号を名指しする（`（ADR-0702 決定13）`）。番号は identity ではなく順序であり、詰められることが
+ある（ADR-0001 決定5-9）——**引いた先が別の決定へずれても、コードは何も言わない。** コメントが
+番号や節を引いていたら、**その ADR を開いて本文と突き合わせる。** 引用が指す内容と述べている内容が
+違えば、それは引用の誤りとして最優先で報告する。判定は 短縮（誤った引用を落とすか、正しい番号へ
+差し替える）だが、**適用は orchestrator が握る** —— どちらが誤りか（コメントか、実装か、引用先か）は
+コメント整理の判断ではない。
 
 The passes must not report the same comment twice. 先の pass が決着させたものを、後の pass が
 拾い直さない —— Pass 0 で 削除 になったコメントに移設先を探さない。When a comment is both individually

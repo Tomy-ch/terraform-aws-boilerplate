@@ -411,7 +411,8 @@ was applied. **Pass 0 の3類型（経緯 / 日数経過 / 言い直し）によ
 
 Four exclusions come off that set first:
 
-- **A finding whose comment contradicts the code** (`誤り/陳腐化`) is reported, never applied. Which
+- **A finding whose comment contradicts the code, or the document it cites** (`誤り/陳腐化`) is
+  reported, never applied. Which
   side is wrong — the comment or the code — is not a comment-cleanup call, and deleting the comment
   can erase the only surviving evidence of a bug.
 - **`追記なし` 移設 is applied only after the integrator opens the destination and confirms the content
