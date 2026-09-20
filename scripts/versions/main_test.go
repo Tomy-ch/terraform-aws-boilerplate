@@ -335,3 +335,90 @@ func Test_sortedPaths(t *testing.T) {
 		})
 	})
 }
+
+func Test_writeAll(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("複数のファイルへ計画どおり反映する", func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			a := filepath.Join(dir, "a.txt")
+			b := filepath.Join(dir, "b.txt")
+			require.NoError(t, os.WriteFile(a, []byte("old-a"), filePerm))
+			require.NoError(t, os.WriteFile(b, []byte("old-b"), filePerm))
+
+			require.NoError(t, writeAll(map[string]string{a: "new-a", b: "new-b"}))
+
+			assert.Equal(t, "new-a", readFile(t, a))
+			assert.Equal(t, "new-b", readFile(t, b))
+		})
+
+		t.Run("一時ファイルを残さない", func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			a := filepath.Join(dir, "a.txt")
+			require.NoError(t, os.WriteFile(a, []byte("old"), filePerm))
+
+			require.NoError(t, writeAll(map[string]string{a: "new"}))
+
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			for _, e := range entries {
+				assert.NotContains(t, e.Name(), ".versions.tmp")
+			}
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// この道具の存在理由に直結するケース。書き込みが途中で失敗したとき、
+		// 先に処理したファイルが新しい版のまま残ると、呼び出し側からは
+		// 「失敗した」と「一部だけ適用された」が区別できなくなる。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			ok := filepath.Join(dir, "a.txt")
+			ng := filepath.Join(dir, "missing", "b.txt")
+			require.NoError(t, os.WriteFile(ok, []byte("old-a"), filePerm))
+
+			require.Error(t, writeAll(map[string]string{ok: "new-a", ng: "new-b"}))
+
+			assert.Equal(t, "old-a", readFile(t, ok), "先に処理したファイルが書き換わっている")
+			assert.NoFileExists(t, ng)
+		})
+
+		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			ok := filepath.Join(dir, "a.txt")
+			ng := filepath.Join(dir, "missing", "b.txt")
+			require.NoError(t, os.WriteFile(ok, []byte("old-a"), filePerm))
+
+			require.Error(t, writeAll(map[string]string{ok: "new-a", ng: "new-b"}))
+
+			entries, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			for _, e := range entries {
+				assert.NotContains(t, e.Name(), ".versions.tmp")
+			}
+		})
+	})
+}
+
+// readFile は、テスト中にファイルの中身を文字列で読みます。
+func readFile(tb testing.TB, path string) string {
+	tb.Helper()
+
+	body, err := os.ReadFile(path) //nolint:gosec // G304: テストが自分で作った t.TempDir() 配下のみ
+	require.NoError(tb, err)
+
+	return string(body)
+}
