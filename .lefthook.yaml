@@ -40,6 +40,16 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make egress-check
 
+    # 言語ランタイムの版の写しが mise.toml 通りか。**ずれてもビルドは通る**ので、
+    # この検査が無いと「ずれている」と「揃っている」を緑で区別できない。
+    versions-check:
+      glob:
+        - "mise.toml"
+        - "docker/**/Dockerfile"
+        - "scripts/go.mod"
+        - "scripts/versions/*.go"
+      run: make versions-check
+
     # uses: と image: の固定。lockfile と実ファイルの drift、および参照されなくなった
     # lockfile のエントリ（orphan）を落とす。
     pin-actions-check:

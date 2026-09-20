@@ -4,6 +4,7 @@
 # 依存されるファイル
 # Docker関連
 include .makefiles/runner.mk
+include .makefiles/versions.mk
 # DB関連
 # Go言語関連
 # Node関連
