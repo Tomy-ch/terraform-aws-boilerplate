@@ -1457,8 +1457,7 @@ func Test_applyOrCheck(t *testing.T) {
 			require.Error(t, applyOrCheck(root, []string{path}, false))
 		})
 
-		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
-		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
+		// 書き込み失敗はディレクトリを読み取り専用にして作る（rename はファイルの権限を見ない）。
 		t.Run("apply で書き込めなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -1589,8 +1588,6 @@ func Test_resolve(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
-		// 読めない lockfile を空と見なすと既存ピンが脱落し、退行先ごと書き潰される。
-		// pin-images が同じ保証を持っており、双子で非対称にしない。
 		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
 			root := t.TempDir()
 			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" + "invalid line\n"

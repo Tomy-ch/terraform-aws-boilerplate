@@ -34,8 +34,7 @@ type Format struct {
 	Header []string
 	// Resolve は、直し方として案内する make target 名。
 	Resolve string
-	// Perm は書き出すファイルの permission。
-	Perm fs.FileMode
+	Perm    fs.FileMode
 }
 
 // Read は lockfile を読みます。解釈できない行とキーの重複はエラーにします。

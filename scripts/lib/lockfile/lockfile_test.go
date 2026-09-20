@@ -114,7 +114,6 @@ func TestFormat_Read(t *testing.T) {
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
 		})
 
-		// 部分一致を許すと、行末に付いたゴミが黙って捨てられる。
 		t.Run("行末に解釈できない残りがあればエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -123,7 +122,6 @@ func TestFormat_Read(t *testing.T) {
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
 		})
 
-		// Line を書き落とした Format をそのまま使うと nil の regexp を呼んで panic する。
 		t.Run("Line が未設定なら読まずにエラーを返す", func(t *testing.T) {
 			t.Parallel()
 

@@ -34,7 +34,6 @@ func (f *fakeReporter) Fatalf(format string, args ...any) {
 func found(string) (string, error)   { return "/usr/bin/shellcheck", nil }
 func missing(string) (string, error) { return "", os.ErrNotExist }
 
-// swap は外界を差し替え、テストの終わりに戻します。
 func swap(t *testing.T, uid int, env string, look func(string) (string, error)) *fakeReporter {
 	t.Helper()
 

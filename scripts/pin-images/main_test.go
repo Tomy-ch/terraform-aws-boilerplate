@@ -1390,8 +1390,7 @@ func Test_applyOrCheck(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
-		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
-		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
+		// 書き込み失敗はディレクトリを読み取り専用にして作る（rename はファイルの権限を見ない）。
 		t.Run("固定後の書き込みに失敗すればエラーを返す", func(t *testing.T) {
 			t.Parallel()
 			testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")

@@ -16,15 +16,14 @@ import (
 const RequireNonRootEnv = "REQUIRE_NONROOT"
 
 // 外界。判断はこれを直に読むので、入口が何かを渡し間違える余地がありません。
-// 既定値が本物を指していることは内部テストが実際の syscall と突き合わせて見ます。
 var (
 	geteuid  = os.Geteuid
 	getenv   = os.Getenv
 	lookPath = exec.LookPath
 )
 
-// reporter は requireNonRoot が使う *testing.T の部分です。分岐を root でない環境から
-// 到達可能にするために切り出しています。
+// reporter は requireNonRoot と requireShellcheck が使う *testing.T の部分です。判断の分岐を、
+// root でない環境や shellcheck が在る環境からも到達可能にするために切り出しています。
 type reporter interface {
 	Helper()
 	Skip(args ...any)
@@ -32,11 +31,8 @@ type reporter interface {
 }
 
 // RequireNonRoot は、root で実行している場合に reason を添えて skip します。
-// RequireNonRootEnv が空でなければ skip せず失敗させます。
-//
-// 権限を落として書き込みや削除の失敗を作るテストは、root では成立しません —— 落としたはずの
-// 権限が効かず、失敗を作れないまま通ります。CI の実行主体が root へ変わった日に、これらの
-// ケースが黙って skip され続けることを防ぎます。
+// RequireNonRootEnv が空でなければ skip せず失敗させます（理由は scripts/README.md の
+// Test Strategy）。
 func RequireNonRoot(t *testing.T, reason string) {
 	t.Helper()
 	requireNonRoot(t, reason)
@@ -60,10 +56,8 @@ func requireNonRoot(t reporter, reason string) {
 const RequireShellcheckEnv = "REQUIRE_SHELLCHECK"
 
 // RequireShellcheck は、shellcheck が PATH に無ければ skip します。
-// RequireShellcheckEnv が空でなければ skip せず失敗させます。
-//
-// 実物の shellcheck を駆動するテストは、不在の環境では成立しません。CI では必ず在るので、
-// そこで skip が起きたなら検査範囲が報告より狭くなっています。
+// RequireShellcheckEnv が空でなければ skip せず失敗させます（理由は scripts/README.md の
+// Test Strategy）。
 func RequireShellcheck(t *testing.T) {
 	t.Helper()
 	requireShellcheck(t)
