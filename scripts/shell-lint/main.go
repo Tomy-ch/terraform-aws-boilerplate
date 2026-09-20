@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -37,19 +38,36 @@ var (
 	// （ADR-0702 決定13）。このリポジトリに `*.sh` が1つも無い状態は、この道具が
 	// 何も見ていない状態と区別できないので、成功で返さない。
 	errNoTargets = xerrors.New("走査対象の *.sh が1件もありません")
+
+	// errUnparsedFinding は、shellcheck の出力に解釈できない行があった場合のエラー。
+	//
+	// **解釈できない入力は、取りこぼしではなくエラーとして扱う**（ADR-0702 決定14）。
+	// 黙って捨てると、出力形式が変わった日に「指摘なし」と「1行も解釈できなかった」が
+	// 緑で区別できなくなる。
+	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
 )
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(context.Background(), os.Getwd, exec.LookPath); err != nil {
+	if err := run(context.Background(), os.Getwd, exec.LookPath, os.Stdout); err != nil {
 		log.Fatalf("❌ %v", err)
 	}
 }
 
 // run はリポジトリ内のシェルスクリプトを shellcheck に掛け、結果を報告します。
-// wd は走査の基点となるディレクトリの取得手段、lookPath は shellcheck の所在確認手段です。
-func run(ctx context.Context, wd func() (string, error), lookPath func(string) (string, error)) error {
+// wd は走査の基点となるディレクトリの取得手段、lookPath は shellcheck の所在確認手段、
+// out は報告の書き出し先です。
+//
+// **出力そのものが契約である**（指摘のテキストと、検査した件数）。書き出し先を引数で受けるのは、
+// それをテストから読めるようにするためである。標準ロガーへ直接書くと、出力先がプロセス共通に
+// なり、並列なテストが互いの出力を奪い合う。
+func run(
+	ctx context.Context,
+	wd func() (string, error),
+	lookPath func(string) (string, error),
+	out io.Writer,
+) error {
 	root, err := shellcheck.Setup(wd, lookPath)
 	if err != nil {
 		return err
@@ -76,15 +94,21 @@ func run(ctx context.Context, wd func() (string, error), lookPath func(string) (
 		if err != nil {
 			return err
 		}
-		findings = append(findings, prefixFindings(script, out)...)
+		got, err := prefixFindings(script, out)
+		if err != nil {
+			return err
+		}
+
+		findings = append(findings, got...)
 	}
 
 	if len(findings) > 0 {
-		log.Print(strings.Join(findings, "\n"))
+		fmt.Fprintln(out, strings.Join(findings, "\n"))
+
 		return xerrors.Wrap(errFindings, fmt.Sprintf("%d 件", len(findings)))
 	}
 
-	log.Printf("✅ シェルスクリプト %d ファイルを shellcheck で検査しました", len(scripts))
+	fmt.Fprintf(out, "✅ シェルスクリプト %d ファイルを shellcheck で検査しました\n", len(scripts))
 
 	return nil
 }
@@ -127,20 +151,27 @@ func shellScripts(root string) ([]string, error) {
 
 // prefixFindings は shellcheck の出力を 1 行 1 指摘へ整え、先頭をリポジトリ相対パスへ差し替えます。
 // stdin で渡しているため shellcheck 自身は入力を `-` としか呼べず、どのファイルの指摘か言えません。
-func prefixFindings(script, out string) []string {
+//
+// 解釈できない行は errUnparsedFinding にします。空行は指摘を運ばないので読み飛ばします。
+func prefixFindings(script, out string) ([]string, error) {
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
-		return nil
+		return nil, nil
 	}
 
 	var findings []string
 	for line := range strings.SplitSeq(trimmed, "\n") {
-		_, rest, found := strings.Cut(line, ":")
-		if !found {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
+
+		_, rest, found := strings.Cut(line, ":")
+		if !found {
+			return nil, xerrors.Wrap(errUnparsedFinding, script+": "+line)
+		}
+
 		findings = append(findings, script+":"+rest)
 	}
 
-	return findings
+	return findings, nil
 }
