@@ -136,13 +136,16 @@ jobs:
       # is dropped from the console: the per-package percentages live in `coverage.out`, which
       # octocov and `cover-gate` read, and the remaining pass/duration pairs go unused.
       #
-      # REQUIRE_SHELLCHECK turns actions-shellcheck's self-skip into a failure. A skip is invisible
-      # in the default output and would leave the run green while checking less than it reports.
+      # REQUIRE_SHELLCHECK turns actions-shellcheck's self-skip into a failure, and REQUIRE_NONROOT
+      # does the same for the cases that drop a permission to make a write or a delete fail — those
+      # cannot be built while running as root. A skip is invisible in the default output and would
+      # leave the run green while checking less than it reports.
       - name: Run Tests with Coverage
         id: cover-test
         shell: bash
         env:
           REQUIRE_SHELLCHECK: '1'
+          REQUIRE_NONROOT: '1'
         run: |
           set +e
           make go-test-cover RUNNER_MODE=host 2>&1 | tee /tmp/go-test-cover.log | make go-test-fails LOG=-

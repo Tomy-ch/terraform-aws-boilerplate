@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 func writeFile(t *testing.T, path string) {
@@ -100,9 +101,7 @@ func Test_Collect(t *testing.T) {
 
 		t.Run("不在以外の走査失敗は握り潰さず返す", func(t *testing.T) {
 			t.Parallel()
-			if os.Geteuid() == 0 {
-				t.Skip("root では読み取り権限の剥奪が効かない")
-			}
+			testenv.RequireNonRoot(t, "root では読み取り権限の剥奪が効かない")
 			root := t.TempDir()
 			actions := filepath.Join(root, ".github", "actions")
 			writeFile(t, filepath.Join(actions, "setup", "action.yml"))

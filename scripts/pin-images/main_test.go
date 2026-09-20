@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -1525,9 +1526,7 @@ func Test_applyOrCheck(t *testing.T) {
 		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
 		t.Run("固定後の書き込みに失敗すればエラーを返す", func(t *testing.T) {
 			t.Parallel()
-			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
-			}
+			testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 			root := t.TempDir()
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			writeFile(t, df, "FROM alpine:3.24\n")
@@ -1544,9 +1543,7 @@ func Test_applyOrCheck(t *testing.T) {
 		// 未登録参照による中断を防ぐが、書き込み自体の I/O 失敗はそれとは別の窓である。
 		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
 			t.Parallel()
-			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
-			}
+			testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 
 			root := t.TempDir()
 			body := "FROM alpine:3.24\n"

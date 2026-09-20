@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -1620,9 +1621,7 @@ func Test_applyOrCheck(t *testing.T) {
 			writeLockAt(t, root, lock)
 			path := writeFile(t, root, ".github/workflows/a.yml", "      - uses: actions/setup-go@v6\n")
 
-			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用にしても書き込みが通ってしまい、失敗を作れない")
-			}
+			testenv.RequireNonRoot(t, "特権実行では読み取り専用にしても書き込みが通ってしまい、失敗を作れない")
 
 			require.NoError(t, os.Chmod(filepath.Dir(path), 0o500))
 			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o700) })
@@ -1635,9 +1634,7 @@ func Test_applyOrCheck(t *testing.T) {
 		// 「失敗した」と「一部だけ適用された」が区別できなくなる。
 		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
 			t.Parallel()
-			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
-			}
+			testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 
 			root := t.TempDir()
 			writeLockAt(t, root, lock)

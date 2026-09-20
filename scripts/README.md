@@ -88,6 +88,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/yamlblock/`|YAML のブロックスカラー（`key: \|` / `key: >-`）の中身の判定。|
 |`lib/shellcheck/`|shellcheck の起動と結果の解釈。`actions-shellcheck` と `shell-lint` が同じ解釈を共有します。|
 |`lib/lintreport/`|workflow に対する lint が見つけた違反の持ち方と、失敗出力の組み立て。|
+|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot` に通し、`REQUIRE_NONROOT` が立っていれば skip せず失敗させます。|
 
 ## Test Strategy
 
@@ -118,7 +119,9 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
   `httptest` サーバへ向けます。`t.Setenv` は `t.Parallel()` と両立しないので、`t.Parallel()` は
   ケース単位で宣言し、迂回しません。`actions-shellcheck` は例外で、実物の `shellcheck` を駆動し、
   不在なら skip します。`REQUIRE_SHELLCHECK` があるのは、**その skip が実行として通らないようにする**
-  ためです——skip は既定の出力では見えず、報告より少ない検査で緑を残します。
+  ためです——skip は既定の出力では見えず、報告より少ない検査で緑を残します。権限を落として書き込みや
+  削除の失敗を作るケースも同じで、root では落としたはずの権限が効かず成立しません。`lib/testenv` の
+  `RequireNonRoot` を通し、`REQUIRE_NONROOT` で skip を失敗へ変えます。どちらも CI が立てます。
 - **取り返しのつかない手順は、計画として検証し、実行しない。** `release` と `repo-setup` はタグを
   push し、GitHub Release を作り、デフォルトブランチを動かします。手順は `runner` の継ぎ目を通し、
   テストは組み立てたコマンド列と中断条件を assert します。実際に走らせて確かめることは、実際に
