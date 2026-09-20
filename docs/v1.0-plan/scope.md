@@ -1,5 +1,9 @@
 # terraform-aws-boilerplate 要件定義書 v0.2
 
+> **この文書は v1.0 までの暫定である。** v1.0 到達時に削除する。内容は `modules/<use-case>/README.md` と ADR へ移る（ADR-0701 決定2）。
+>
+> **リポジトリに残るものからこの文書を参照しない** —— `modules/<use-case>/README.md`、ADR、`.tf`、コードコメント。参照したくなったなら、その内容は参照先の文書が所有すべきものである。Issue と Pull Request からの参照は許す。
+
 ## 1. 文書の位置づけ
 
 本書は、`terraform-aws-boilerplate`（以下 tabp）の要件定義書 v0.1 に対する議論の結果を統合した改訂版である。対象はtabpが提供するAWS構成と、その接続契約である。`go-boilerplate`（以下 GBp）は参照となる利用者の一つであり、tabpの範囲を規定しない（第3節）。実装の詳細仕様やAccepted ADRの変更を、本書だけで成立させるものではない。

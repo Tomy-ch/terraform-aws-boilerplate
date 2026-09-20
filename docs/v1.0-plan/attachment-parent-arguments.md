@@ -1,5 +1,7 @@
 # Terraform AWS Provider attachment 型 resource の親引数 対応表
 
+> **この文書は暫定の置き場に在る。** Policy Test を配線したとき、その data として移す。移設後にこのパスへの参照が残らないよう、**リポジトリに残るものからこの文書を参照しない**（詳細は [README](README.md)）。
+
 - 確認した Provider version: **hashicorp/aws 6.65.0**（2026-09-16 公開、2026-09-20 時点の latest）。確認日: 2026-09-20。
 - 確認手段: provider リポジトリ `hashicorp/terraform-provider-aws` の `website/docs/r/*.html.markdown` を tag `v6.65.0` で参照し、Registry API（`GET https://registry.terraform.io/v2/provider-docs/<id>`）の本文と diff して一致（末尾改行のみ差）を確認した。
 - URL 列の基底: `https://registry.terraform.io/providers/hashicorp/aws/6.65.0/docs/resources/` —— 以下 `r/<slug>` と略記する。
