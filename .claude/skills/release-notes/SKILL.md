@@ -129,7 +129,8 @@ When the bucket is ambiguous, inspect the changed file paths from step 2 to infe
 
 ### 4. Compose the Release Note
 
-Write `.github/release/<NEW_VERSION>.md` in **Japanese**, following the canonical `v2.1.0` format. The required top-level structure is:
+Write `.github/release/<NEW_VERSION>.md` in **Japanese**. まだ見本が無いので、**この形がそのまま
+見本になる**。The required top-level structure is:
 
 ```markdown
 <!-- markdownlint-disable MD041 -->

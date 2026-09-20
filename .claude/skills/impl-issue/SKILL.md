@@ -235,8 +235,8 @@ it rather than merely mentioning it — a seam that announces an option nobody a
 and the record has already made everything downstream recoverable, so there is no case for holding
 context here.
 
-**At the PR seam, ask.** Everything after it — `make serve`, the curl transcripts, the traces, the CI
-logs — is the heaviest reading left in the run, so this is where compacting pays most and where an
+**At the PR seam, ask.** Everything after it — `terraform plan` の出力、ゲートの実行ログ、CI の
+ログ — is the heaviest reading left in the run, so this is where compacting pays most and where an
 unread notice costs most. The one exception is a run under standing full delegation with the user
 away: there, announce it and continue, because a question nobody is present to answer stalls the run
 at the moment it was told to finish on its own.
