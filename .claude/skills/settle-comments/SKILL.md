@@ -1,7 +1,7 @@
 ---
 name: settle-comments
 description: >-
-  Cut the dead weight out of the EXISTING STOCK of source-code comments in a chosen scope. Dead weight is three things: 経緯 (development history — "previously", "changed to", "originally"), 日数経過 (anything true only on the day it was written — "currently", "for now", "not yet", a deadline), and 読めば意味がわかるもの (a restatement of the code or of the identifier's own name). All three are deleted outright — git owns the history, a declaration owns a deadline, and the code owns what the code says. Two further deletions follow: a fact some test case, `golangci-lint` rule, gate (`adr-lint` / `required-check-lint` / `egress-check` / `pin-*-check`), Policy Test or terraform-docs generated region already keeps true, dropped against a named `file:line`; and a Why written at several declarations, collapsed to one site. Relocation into `docs/adr/` / `modules/<use-case>/docs/adr/` / a README is the fallback for the remainder that cannot simply go, never the goal. Use it whenever a comment narrates development history or says "currently" / "for now"; whenever a comment restates the code, the identifier's name, or what a test or a linter already enforces; whenever comments feel bloated, verbose, over-explained, or essay-like even though each line is individually true; whenever the same reason appears at several declarations and no one place is authoritative; whenever a doc comment has grown into a design argument, threat-model analysis, or rejected-alternative discussion; for a periodic hygiene pass over a package / area / whole repo; before a large PR or a boilerplate cut; and when someone asks 「コメントが長すぎる」「コメントを整理して」「テストと同じことをコメントが書いている」「この Why はコードに置くべきか」「コメントを ADR に移したい」. Modes: 確認して適用 (default), 自動適用 (`--apply`), 報告のみ (`--report-only`). Sole owner of the comment subject — no review skill carries a comment lens — and it runs **unconditionally as the last step of every implementation** over the declarations the change touched (`AGENTS.md`, *Task Execution Protocol*), not as a review whose return gets estimated. Do NOT use it to judge README / docs prose quality, or to delete `// Name は、〜です。` field comments — that convention is deliberately preserved.
+  Cut the dead weight out of the EXISTING STOCK of source-code comments in a chosen scope, tests included. Dead weight is three things: 経緯 (development history — "previously", "changed to", "originally"), 日数経過 (anything true only on the day it was written — "currently", "for now", "not yet", a deadline), and 読めば意味がわかるもの (a restatement of the code or of the identifier's own name). All three are deleted outright — git owns the history, a declaration owns a deadline, and the code owns what the code says. Two further deletions follow: a fact some test case, `golangci-lint` rule, gate (`adr-lint` / `required-check-lint` / `egress-check` / `pin-*-check`) or terraform-docs generated region already keeps true, dropped against a named `file:line`; and a Why written at several declarations, collapsed to one site. Relocation into `docs/adr/` / `modules/<use-case>/docs/adr/` / a README is the fallback for the remainder that cannot simply go, never the goal. Use it whenever a comment narrates development history or says "currently" / "for now"; whenever a comment restates the code, the identifier's name, or what a test or a linter already enforces; whenever a test file's comments restate its `t.Run` case names or narrate where the cases came from; whenever comments feel bloated, verbose, over-explained, or essay-like even though each line is individually true; whenever the same reason appears at several declarations and no one place is authoritative; whenever a doc comment has grown into a design argument, threat-model analysis, or rejected-alternative discussion; for a periodic hygiene pass over a package / area / whole repo; before a large PR or a boilerplate cut; and when someone asks 「コメントが長すぎる」「コメントを整理して」「テストと同じことをコメントが書いている」「この Why はコードに置くべきか」「コメントを ADR に移したい」「テストのコメントを整理して」. Modes: 確認して適用 (default), 自動適用 (`--apply`), 報告のみ (`--report-only`). Sole owner of the comment subject — no review skill carries a comment lens — and it runs **unconditionally as the last step of every implementation** over the declarations the change touched (`AGENTS.md` *作業手順* 6), not as a review whose return gets estimated. Do NOT use it to judge README / docs prose quality, or to delete `// Name は、〜です。` field comments — that convention is deliberately preserved.
 ---
 
 # Settle Comments
@@ -74,8 +74,8 @@ So this skill does not re-litigate whether a Why is good. **上の3類型は、�
 
 If something would — a compile error, a test case, a `golangci-lint` rule, one of this repository's
 own gates (`adr-lint` / `required-check-lint` / `actions-mise-pin-lint` / `egress-check` /
-`pin-actions-check` / `pin-images-check` / `go-cooldown` / `tool-cooldown`), `terraform validate`,
-TFLint, a Policy Test, a Contract Test, or a terraform-docs generated region — then that mechanism is
+`pin-actions-check` / `pin-images-check` / `go-cooldown-gate` / `tool-cooldown-gate`), or a
+terraform-docs generated region — then that mechanism is
 what keeps the fact true and the comment is a second copy
 of it. The two are not peers: the mechanism is updated whenever reality moves, because nothing
 proceeds until it is green again, while the comment is updated only when someone remembers. The copy
@@ -107,6 +107,28 @@ Pass 0 と Pass 1 を抜けたものだけがここへ来る。**ここで初め
 答えが正直に「どの文書でもない —— その制約はこの呼び出し地点にしか存在しない」であるなら、コードが
 管轄であり、コメントはそのまま残る。**ただしこれは既定ではなく例外である。** Pass 0 の3類型に
 当たらず、守り手も無く、移設先も無い —— 3つを通過して初めて 維持 になる。
+
+### テストファイルの読み方
+
+3つの pass はテストにもそのまま当たる —— 経緯も日数経過も言い直しも、テストの中に同じ形で出る。
+変わるのは、テスト特有の構造をどう扱うかだけである。
+
+- **`t.Run` のケース名は判定対象外。** あれは日本語で書かれた仕様記述であって、コメントではない。
+  名前を変えることはテストが何を主張しているかを変えることであり、コメント整理の権限ではない。
+- **ケース名の直上のコメントが、そのケース名を言い直しているだけなら 削除。** Pass 0 の
+  「読めば意味がわかるもの」がそのまま当たる。`// 退化した入力の pin。` が
+  `t.Run("検査対象の job が0件なら成功で返さない", ...)` の上に載っている、という形である。
+- **「このケースが無いと、何が黙って緑になるか」を述べるコメントは 維持 が既定。**
+  これは非自明な Why であり、ケース名が言えるのは*何を検査するか*までで、*検査をやめたときに
+  どちらへ壊れるか*は言えない（ADR-0702 決定13-16）。テストが縮んだ日にそれを止める唯一の記述に
+  なることがある —— 本番側のセンチネル注記が 不要 と判定されて消えていれば、Pass 1 の正本は
+  こちら側へ移っている。**どちらの写しが消えるかは、実行のたびに決め直さない。**
+- **テストヘルパ**（フィクスチャの構築、スタブ、ログの差し替え）の doc コメントは、名前と
+  シグネチャの言い直しになりやすい。非公開なので `revive` の制約も掛からない。
+
+**識別子は本スキルの対象外である。** コメントで消す類型が関数名へ焼き込まれていることがある ——
+`Test_check_輸入したケース` は、削除した経緯コメントと同じものを名前に持っている。本スキルは
+コメントしか見ないのでこれを検出しない。気づいたら補遺で述べ、改名はテストの変更として別に扱う。
 
 ### The next question: what one comment at a time cannot see
 
@@ -253,10 +275,12 @@ question, and the duplication this skill exists to find lives between the pieces
 
 ## Step 1 — Resolve targets
 
-Exclude generated files and tests; they are not this skill's business:
+生成区間だけを除く。**テストは含める** —— `*_test.go` を外す根拠はどこにも無く、外した先に
+受け皿も無い。コメントという主題を持つスキルは本スキルだけで、`/test-review` はテストの観点を
+見るのであってコメントの内容は見ない。
 
 ```sh
-find <scope> -name '*.go' ! -name '*_test.go'
+find <scope> -name '*.go'
 ```
 
 Go 以外（`*.tf`、シェル、Dockerfile、`.makefiles/*.mk`、`.github/**/*.yaml`、`docker-compose.yaml`）
@@ -387,7 +411,8 @@ was applied. **Pass 0 の3類型（経緯 / 日数経過 / 言い直し）によ
 
 Four exclusions come off that set first:
 
-- **A finding whose comment contradicts the code** (`誤り/陳腐化`) is reported, never applied. Which
+- **A finding whose comment contradicts the code, or the document it cites** (`誤り/陳腐化`) is
+  reported, never applied. Which
   side is wrong — the comment or the code — is not a comment-cleanup call, and deleting the comment
   can erase the only surviving evidence of a bug.
 - **`追記なし` 移設 is applied only after the integrator opens the destination and confirms the content
@@ -505,7 +530,7 @@ because no human read the edits one at a time.
   consolidated content either. When the fragments really do add up to a package-level statement, that
   is a 移設 to the package README, which is already a supported destination and is where a reader
   looking for package-level prose goes.
-- **生成区間**（terraform-docs のマーカ内、`// Code generated ... DO NOT EDIT`）と `*_test.go`。
+- **生成区間**（terraform-docs のマーカ内、`// Code generated ... DO NOT EDIT`）。
 - **機能を持つコメント / ディレクティブ** — `//go:generate`、`//nolint`、`//go:build`、`//go:embed`、
   `# tflint-ignore`、`# trivy:ignore`、shebang、`.makefiles/` の `##` ヘルプ注記。これらは散文ではない。
   **抑止（`//nolint` 等）に付いた理由と撤回条件は消さない** —— ADR-0501 決定13 がそれを要求しており、
