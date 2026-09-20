@@ -3,30 +3,29 @@ name: commit
 description: >-
   Analyze the current working-tree changes (staged + unstaged), group them into appropriately-scoped commits with the project's prefix convention (Feat / Fix / Refactor / Perf / Docs / Test / Build / CI / Chore / Style / Revert), and execute each commit in Japanese after user approval. Use it whenever changes are ready to be committed — 「コミットして」「変更をまとめて」. Respects `CLAUDE.md`'s git rules, and warns when the current branch's PR is already merged so a fresh branch is cut first. Do NOT use it to push or open a PR (`submit-pr`).
 argument-hint: '[--dry-run] [--scope=staged|all]'
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git reset:*), Bash(git fetch:*), Bash(git switch:*), Bash(gh pr view:*), Bash(make go-fix:*), Bash(make gate-fix:*), Bash(make load-status:*), Bash(make go-lint:*), Bash(make go-test:*), Bash(make sql-lint:*), Bash(make check-migration-up-version:*), Bash(make check-migration-down-version:*), Bash(make check-migration-up-gap:*), Bash(make check-migration-down-gap:*), Read, AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git reset:*), Bash(git fetch:*), Bash(git switch:*), Bash(gh pr view:*), Bash(make go-fmt:*), Bash(make go-lint:*), Bash(make go-test:*), Bash(make base-branch:*), Bash(lefthook run:*), Read, AskUserQuestion
 ---
 
 # Commit
 
 You have been invoked via `/commit`. Argument string: `$ARGUMENTS`
 
-A Japanese reference translation of this skill is available at `SKILL.ja.md` in the same directory (not loaded as a skill; for human reference only).
-
 This command analyzes uncommitted changes in the working tree and produces one or more git commits with appropriate granularity and the project's prefix convention. All commit messages are in Japanese, per `CLAUDE.md`.
 
-This command intentionally bypasses lefthook on every commit (`git commit --no-verify`) so that pre-commit checks (`make go-lint` / `make go-test` / `make sql-lint` / migration checks) do not fire N times during multi-commit splits. Instead, after all commits succeed, Step 6 runs the whole pre-commit hook once via `lefthook run pre-commit --force` plus `make go-fix` as a single verification pass. The `--force` flag is what makes this work: after this command stages and commits everything the working tree is clean, so a bare `lefthook run pre-commit` would skip every command ("no matching staged files") — `--force` runs the hook anyway. Driving the real hook keeps the gate in sync with `.lefthook.yaml` and runs the commands in parallel.
+This command intentionally bypasses lefthook on every commit (`git commit --no-verify`) so that pre-commit checks (`make actions-lint` / `make md-lint` / `make go-test` ほか) do not fire N times during multi-commit splits. Instead, after all commits succeed, Step 6 runs the whole pre-commit hook once via `lefthook run pre-commit --force` plus `make go-fmt` as a single verification pass. The `--force` flag is what makes this work: after this command stages and commits everything the working tree is clean, so a bare `lefthook run pre-commit` would skip every command ("no matching staged files") — `--force` runs the hook anyway. Driving the real hook keeps the gate in sync with `.lefthook.yaml` and runs the commands in parallel.
 
 ## Step 0. Auto-format
 
-Run `make gate-fix` once at the very start to absorb formatting fixes (gofmt / goimports / auto-fixable lint rules). This removes the most common source of noise from the subsequent diff inspection and reduces the chance the Step 6 verification fails on pure formatting.
+Run `make go-fmt` once at the very start to absorb formatting fixes. This removes the most common source of noise from the subsequent diff inspection and reduces the chance the Step 6 verification fails on pure formatting.
 
 ```sh
-make gate-fix
+make go-fmt
 ```
 
-`gate-fix` rather than `fix`, because this runs on every `/commit` and `fix` drives the same full-config golangci-lint as `lint`. `.makefiles/load.mk` therefore defers it in the `ci-first` band along with the other heavy gates (`repo-ops` §19) and CI's lint reports the formatting drift instead. A bare `make go-fix` still runs unconditionally — an explicitly typed command does what it says.
+`make go-fmt` は `scripts/` の Go だけを整形する。Markdown の体裁は `make md-fix` が持つが、
+そちらはリポジトリ全体に効くので Step 0 では走らせない —— この変更と無関係なファイルを巻き込む。
 
-If `make gate-fix` itself fails, abort and report the failure to the user. Do not continue. Any changes it produces are folded into the working tree and become part of the candidate change set inspected in Step 2. When the band deferred it, it produces no changes by design — do not read that as evidence the tree was already formatted.
+If `make go-fmt` fails, abort and report the failure to the user. Do not continue. Any changes it produces are folded into the working tree and become part of the candidate change set inspected in Step 2.
 
 ## Step 1. Pre-flight Checks
 
@@ -43,11 +42,22 @@ git rev-parse --verify CHERRY_PICK_HEAD 2>/dev/null  # detect ongoing cherry-pic
 git rev-parse --verify REBASE_HEAD 2>/dev/null       # detect ongoing rebase
 ```
 
+**保護対象のパターンを写さない**（ADR-0603 決定3、`AGENTS.md` *Git 規約*）。単一の宣言はまだ
+作成されておらず（`AGENTS.md` *現在の配線状態*）、今日それを持っているのは保護設定の宣言側である:
+
+```sh
+git rev-parse --abbrev-ref HEAD
+jq -r '.conditions.ref_name.include[]' .github/settings/branch-protection.json
+```
+
+現在のブランチが、その一覧のいずれか（`refs/heads/` を外し、`**/*` を glob として読む）に
+当たるなら保護ブランチである。
+
 Save the current HEAD commit hash as `ORIGINAL_HEAD`. This is the rollback target if anything fails during Step 5.
 
 Bail out (do not commit) if any of the following:
 
-- Current branch matches `^(production|develop|staging|release/.+)$`. Per `CLAUDE.md` git rules, never commit to protected branches. Inform the user and ask them to create a feature branch first (e.g., `feature/<issue-or-topic>`).
+- Current branch is a **protected branch**（判定は下記）. Per `AGENTS.md` git rules, never commit to protected branches. Inform the user and ask them to create a feature branch first (e.g., `feature/<issue-or-topic>`).
 - Both staged and unstaged porcelain outputs are empty. Tell the user there is nothing to commit and stop.
 - Any of `MERGE_HEAD` / `CHERRY_PICK_HEAD` / `REBASE_HEAD` is set. The repository is mid-operation; ask the user to resolve that first.
 
@@ -81,7 +91,7 @@ Interpret the result:
     - 「このブランチのまま続ける」 — the user accepts committing on the merged branch; continue on the current branch.
 - **`state` is `CLOSED`** (closed without merge) → not blocked, but note it to the user once (the branch's PR was closed) and continue.
 
-Read `.lefthook.yaml` (if present) and extract the list of `pre-commit:` command entries. The list is displayed in Step 4 so the user knows what is being skipped during the split; Step 6 then re-runs the whole hook via `lefthook run pre-commit --force`. If `.lefthook.yaml` is absent, note that and continue (Step 6 will fall back to running only `make go-fix`).
+Read `.lefthook.yaml` (if present) and extract the list of `pre-commit:` command entries. The list is displayed in Step 4 so the user knows what is being skipped during the split; Step 6 then re-runs the whole hook via `lefthook run pre-commit --force`. If `.lefthook.yaml` is absent, note that and continue (Step 6 will fall back to running only `make go-fmt`).
 
 Parse `$ARGUMENTS`:
 
@@ -104,10 +114,11 @@ git diff --name-only
 
 Treat the following as **rider files** — they never form their own commit, but ride along with the source change that produced them:
 
-- Generated files: `**/*.gen.go`, `**/*.sql.go`, `*_mock.go`, `**/openapi.gen.yaml`, generated content under `docs/portal/guides/`
-- Vendored content: `vendor/**`
+- 生成区間と生成された宣言: `README.md` の terraform-docs 区間、`.terraform.lock.hcl`、
+  `docker/images-pin.toml`、`.github/actions-pin.toml`、および `make egress-apply` /
+  `make versions-apply` が書くインラインブロック
 
-Example: an `openapi/**/*.yaml` change brings its `*.gen.go` outputs with it in the same commit. A `database/dml/**/*.sql` change brings its `internal/infrastructure/rdb/sqlc/gen/*.gen.go` outputs in the same commit.
+Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `mise.toml` version bump brings the `docker/tools/Dockerfile` の `FROM` と `scripts/go.mod` の `go` ディレクティブ（`make versions-apply` の出力）in the same commit.
 
 ## Step 3. Prefix Reference
 
@@ -115,16 +126,16 @@ Use exactly **one** of the following prefixes per commit (capitalized, English, 
 
 | Prefix | Purpose | Examples |
 | --- | --- | --- |
-| `Feat:` | New feature, new endpoint, new migration | New handler, new API in `openapi/`, new SQL under `database/migrations/` |
+| `Feat:` | New capability | A new use-case module under `modules/`, a new gate, a new operations tool under `scripts/` |
 | `Fix:` | Bug fix (correcting behavior that deviates from intent) | Error-handling fix, logic correction |
 | `Refactor:` | Internal cleanup without changing external behavior | Function split, rename, responsibility move, layer reorganization |
 | `Perf:` | Performance improvement | Query optimization, N+1 elimination, allocation reduction |
-| `Docs:` | Documentation change | `README*`, `docs/`, `*.ja.md`, code comments, release notes |
+| `Docs:` | Documentation change | `README*`, `docs/`, ADR, code comments, release notes |
 | `Test:` | Adding or fixing tests | `*_test.go`, test fixtures, test helpers |
-| `Build:` | Build system, dependencies, tooling | `Dockerfile`, `go.mod` / `go.sum`, `makefile`, `.makefiles/**`, `mise.toml` |
+| `Build:` | Build system, dependencies, tooling | `Dockerfile`, `scripts/go.mod` / `go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` |
 | `CI:` | CI/CD configuration | `.github/workflows/**`, `.lefthook.yaml`, GitHub Actions related |
 | `Chore:` | Miscellaneous chores | `.gitignore`, editor settings, `.claude/**`, other small tasks |
-| `Style:` | Formatting-only changes that do not affect logic | Output of `make go-fix`, `gofmt`, `goimports` |
+| `Style:` | Formatting-only changes that do not affect logic | Output of `make go-fmt` / `make md-fix` |
 | `Revert:` | Undoing an existing commit | Output of `git revert`, or an equivalent manual revert |
 
 Do not invent prefixes outside this list. When ambiguous, choose the closest match (most cases are one of `Feat` / `Fix` / `Refactor`).
@@ -133,14 +144,13 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 
 | Path pattern | Candidate prefix |
 | --- | --- |
-| `internal/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
-| `**/*_test.go` | `Test` |
-| `openapi/**/*.yaml` | `Feat` (API change) |
-| `database/migrations/**/*.sql` | `Feat` (schema change) |
-| `database/dml/**/*.sql` | `Feat` / `Refactor` (new query vs. cleanup) |
-| `docs/**/*.md`, `README*.md`, `*.ja.md` | `Docs` |
-| `Dockerfile`, `docker/**`, `go.mod`, `go.sum`, `makefile`, `.makefiles/**`, `mise.toml` | `Build` |
-| `.github/workflows/**`, `.lefthook.yaml` | `CI` |
+| `modules/**/*.tf`, `examples/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
+| `scripts/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
+| `**/*_test.go`, `**/*.tftest.hcl` | `Test` |
+| `docs/adr/**` | `Docs`、番号だけが動くなら `Refactor` |
+| `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
+| `Dockerfile`, `docker/**`, `scripts/go.mod`, `scripts/go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` | `Build` |
+| `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml` | `CI` |
 | `.gitignore`, `.claude/**`, editor settings | `Chore` |
 
 ## Step 4. Propose Grouping
@@ -159,26 +169,38 @@ Build a list of proposed commits with appropriate granularity. Each item:
 
 - **One semantic change = one commit.** Do not mix feature + refactor + fix into a single commit.
 - **Tests may co-locate with the implementation they cover** (a new handler and its tests belong together). If you are only adding tests for existing code, that goes into a standalone `Test:` commit.
-- **Generated artifacts co-locate with their source change.** When `openapi/*.yaml` changes, the regenerated `*.gen.go` files belong in the same commit. The output of `make gen-api` / `make gen-query` follows the same rule.
-- **Formatting-only changes are standalone `Style:` commits.** Output produced by Step 0's `make go-fix` may be folded into the appropriate existing group when it is clearly part of the same change; if it is unrelated, surface it as a separate `Style:` commit.
+- **Generated artifacts co-locate with their source change.** The output of `make egress-apply` /
+  `make versions-apply` / `make pin-actions-apply` / `make pin-images-apply` belongs in the same
+  commit as the declaration that produced it — a declaration committed without its generated blocks
+  leaves the check red on the very next commit.
+- **A renumbering of `docs/adr/**` is one commit with every reference it touches** (ADR-0001 決定7).
+  Split it, and the tree carries broken references for as long as the split lasts.
+- **Formatting-only changes are standalone `Style:` commits.** Output produced by Step 0's `make go-fmt` may be folded into the appropriate existing group when it is clearly part of the same change; if it is unrelated, surface it as a separate `Style:` commit.
 - **`Docs:` is standalone by default.** Exception: when documentation is part of a new feature (e.g., a README added alongside a new package), they may co-locate.
 - **One prefix per commit.** If you feel the urge to write two, the grouping is wrong.
 
 ### Lefthook notice
 
-Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded). Example output when the current config defines lint/test/sql-lint/migration checks:
+Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded). Example
+output for the current config:
 
 ```txt
 This command will run `git commit --no-verify` on every commit.
 The following lefthook pre-commit commands will be SKIPPED during commits but
 re-run together in Step 6 via `lefthook run pre-commit --force` after all commits succeed:
-  - lint                    (make go-lint)
-  - test                    (make go-test)
-  - sql-lint                (make sql-lint)
-  - migration-check-version (make check-migration-up-version check-migration-down-version)
-  - migration-check-gap     (make check-migration-up-gap check-migration-down-gap)
-Plus `make go-fix` as a final formatting pass.
+  - actions-lint      (make actions-lint)
+  - md-lint           (make md-lint)
+  - docker-lint       (make docker-lint)
+  - egress-check      (make egress-check)
+  - versions-check    (make versions-check)
+  - pin-actions-check (make pin-actions-check)
+  - pin-images-check  (make pin-images-check)
+  - go-fmt-check      (make go-fmt-check)
+  - go-test           (make go-test)
+Plus `make go-fmt` as a final formatting pass.
 ```
+
+**列挙を手で書き写さない。** `.lefthook.yaml` が増えたとき、写した一覧は黙って古くなる。
 
 ### Confirmation
 
@@ -239,17 +261,17 @@ If `git add` or `git commit` fails for any group (file-path typo, mid-operation 
 
 ## Step 6. Verification
 
-After all commits succeed, run the full lefthook `pre-commit` hook once with `lefthook run pre-commit --force`, then `make go-fix` as a final formatting pass. The `--force` flag is essential: the commits were made with `--no-verify` and the working tree is now clean, so a bare `lefthook run pre-commit` skips every command ("no matching staged files"); `--force` runs the whole hook regardless of staging. Driving the real hook (instead of a hand-enumerated command list) keeps this gate in sync with `.lefthook.yaml` — newly added `pre-commit` commands are picked up automatically — and lefthook runs them in parallel (`parallel: true`), which is much faster than a sequential re-run.
+After all commits succeed, run the full lefthook `pre-commit` hook once with `lefthook run pre-commit --force`, then `make go-fmt` as a final formatting pass. The `--force` flag is essential: the commits were made with `--no-verify` and the working tree is now clean, so a bare `lefthook run pre-commit` skips every command ("no matching staged files"); `--force` runs the whole hook regardless of staging. Driving the real hook (instead of a hand-enumerated command list) keeps this gate in sync with `.lefthook.yaml` — newly added `pre-commit` commands are picked up automatically — and lefthook runs them in parallel (`parallel: true`), which is much faster than a sequential re-run.
 
-The hook decides for itself how hard to run. `.makefiles/load.mk` sizes the heavy Go gates from the number of open worktrees, and in the `ci-first` band it defers them to CI rather than running them here (`make load-status` reports the current band; `repo-ops` §19 explains it). Do not fight that decision by invoking `make go-lint` / `make go-test` directly to "really" verify — with several windows open, a full local lint costs minutes of saturated host and CI re-runs it identically anyway. Report what the band did and let the push carry the rest.
+**hook は CI の代替ではない**（ADR-0501 決定26）。ここが通ったことは、CI が通ることの証拠ではない。
+`.lefthook.yaml` が持つのは「壊れた状態を CI へ到達させない第一段」だけである。
 
 ### Procedure
 
-0. Run `make -s load-status` and note the resolved band. It tells you, before anything runs, whether the heavy gates will execute locally (`full` / `low`) or be deferred to CI (`ci-first`), so the summary in step 4 can say which verification actually happened.
-1. Run `lefthook run pre-commit --force`. It executes every command under `pre-commit.commands.*` against the working tree (which reflects the committed state) and exits non-zero if any command fails. If `.lefthook.yaml` is absent or `lefthook` is not installed, skip to step 3 (run only `make go-fix`) and note it.
+1. Run `lefthook run pre-commit --force`. It executes every command under `pre-commit.commands.*` against the working tree (which reflects the committed state) and exits non-zero if any command fails. If `.lefthook.yaml` is absent or `lefthook` is not installed, skip to step 3 (run only `make go-fmt`) and note it.
 2. Read lefthook's per-command summary — it lists each command with ✔️ / ❌ and a timing.
-3. Run `make gate-fix`. If it modifies any tracked file, surface the diff to the user — it indicates the committed state was not fully formatted, and the user must decide whether to stage and commit those fixes.
-4. Summarize the outcome to the user: lefthook's pass/fail summary (or the note that lefthook was unavailable) plus whether `make go-fix` produced changes. When the band was `ci-first`, say plainly which gates were deferred and that CI is what verifies them — a summary that reads "検証が通りました" without that qualifier overstates what was checked.
+3. Run `make go-fmt`. If it modifies any tracked file, surface the diff to the user — it indicates the committed state was not fully formatted, and the user must decide whether to stage and commit those fixes.
+4. Summarize the outcome to the user: lefthook's pass/fail summary (or the note that lefthook was unavailable) plus whether `make go-fmt` produced changes. lefthook が落としたコマンドを名指しで報告する —— 「検証が通りました」とだけ書くと、何が通ったのかが消える。
 5. If `lefthook run pre-commit --force` exits non-zero (any command failed), report the failing command (from lefthook's summary) and stop. Do NOT roll back commits — the failure is informational; the user decides whether to add fix-up commits or amend. Tell the user explicitly:
 
    ```txt
@@ -257,7 +279,7 @@ The hook decides for itself how hard to run. `.makefiles/load.mk` sizes the heav
    失敗したコマンド: <lefthook が ❌ を出したコマンド名>
    ```
 
-6. If lefthook passes and `make go-fix` produced no changes, proceed to Step 7.
+6. If lefthook passes and `make go-fmt` produced no changes, proceed to Step 7.
 
 > The repo's `pre-commit` commands are whole-repo `make` targets, so `--force` (which feeds an empty / `{all_files}` set) runs them correctly. If a future command relies on the `{staged_files}` template, revisit this — `--force` would pass it no files.
 
@@ -275,13 +297,6 @@ If the user passes `--no-verify` to `/commit` itself (a future-compatible flag),
   ```txt
   N 件のコミットを作成し、検証コマンドも全て成功しました。
   プッシュは手動で実行してください: `git push`
-  ```
-
-  When the resolved band was `ci-first`:
-
-  ```txt
-  N 件のコミットを作成しました。重い Go ゲートと自動フォーマットは CI へ委譲されています。
-  push 後に CI の結果を確認してください。ローカルでは重いゲートを実行していません。
   ```
 
   When some checks failed:
@@ -303,7 +318,7 @@ If the user passes `--no-verify` to `/commit` itself (a future-compatible flag),
 
 ## Constraints (Summary)
 
-- ❌ Direct commits to `production` / `develop` / `staging` / `release/*` branches
+- ❌ Direct commits to a protected branch（`.github/settings/branch-protection.json` が持つ一覧）
 - ❌ Auto-running `git push` / `git push --force` / `git reset --hard` / `git checkout --` / `git clean -f`
 - ❌ `--no-gpg-sign` / `--amend`
 - ❌ `git add -A` / `git add .` / `git commit -a` (always name files explicitly)
@@ -314,18 +329,18 @@ If the user passes `--no-verify` to `/commit` itself (a future-compatible flag),
 - ✅ `Co-Authored-By` footer
 - ✅ `--no-verify` on every commit produced by this command
 - ✅ Stage only the files in the current group
-- ✅ `make go-fix` once at Step 0 before inspection
+- ✅ `make go-fmt` once at Step 0 before inspection
 - ✅ Capture `ORIGINAL_HEAD` at Step 1 for safe rollback
 - ✅ At Step 1, detect a current branch whose PR is already merged (`gh pr view`) and recommend cutting a fresh branch from the base before committing (degrade gracefully when `gh` is unavailable)
 - ✅ On failure, propose `git reset --mixed <ORIGINAL_HEAD>` via `AskUserQuestion`
-- ✅ Step 6 runs the whole pre-commit hook via `lefthook run pre-commit --force` + `make go-fix`
+- ✅ Step 6 runs the whole pre-commit hook via `lefthook run pre-commit --force` + `make go-fmt`
 - ✅ Always pass `--force` to `lefthook run pre-commit` in Step 6 — without it, lefthook skips every command against the now-clean post-commit tree
 
 ## Checklist
 
 Before reporting completion, confirm:
 
-- [ ] `make go-fix` ran successfully at Step 0
+- [ ] `make go-fmt` ran successfully at Step 0
 - [ ] `ORIGINAL_HEAD` captured before any commit
 - [ ] Commits were made on a non-protected branch
 - [ ] Checked whether the current branch's PR is already merged; if so, recommended cutting a fresh branch (and acted on the user's choice)
@@ -337,6 +352,6 @@ Before reporting completion, confirm:
 - [ ] Each commit used `--no-verify` and was passed via HEREDOC
 - [ ] `git add` named files explicitly (no `-A` / `.`)
 - [ ] Generated artifacts co-located with their source change
-- [ ] Step 6 verification ran `lefthook run pre-commit --force` plus `make go-fix` (or fell back to `make go-fix` when lefthook / `.lefthook.yaml` was unavailable)
+- [ ] Step 6 verification ran `lefthook run pre-commit --force` plus `make go-fmt` (or fell back to `make go-fmt` when lefthook / `.lefthook.yaml` was unavailable)
 - [ ] Verification results (OK / FAIL / no changes) were surfaced to the user
 - [ ] No automatic push was performed

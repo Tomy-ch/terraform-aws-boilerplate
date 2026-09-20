@@ -13,12 +13,10 @@ This skill pushes the current branch to `origin` and ensures a GitHub pull reque
 
 The PR body is filled from `.github/pull_request_template.md`. The skill never auto-pushes, never overwrites an existing PR's title/body, and never force-pushes.
 
-A Japanese reference translation of this skill is available at `SKILL.ja.md` in the same directory (not loaded as a skill; for human reference only).
-
 ## Preconditions
 
 - `gh` CLI is installed and authenticated (`gh auth status` succeeds).
-- Current branch is not a protected branch (`production` / `develop` / `staging` / `release/*`).
+- Current branch is not a protected branch（判定は Step 0）。
 - Working tree is clean. If there are uncommitted changes, the skill aborts and suggests running `/commit` first.
 
 ## Step 0. Pre-flight Checks
@@ -35,9 +33,20 @@ gh auth status
 
 Bail out if any of the following:
 
-- Branch matches `^(production|develop|staging|release/.+)$` → tell the user to switch to a feature branch.
+- Branch is a protected branch → tell the user to switch to a feature branch.
 - `git status --porcelain` is non-empty → tell the user to run `/commit` (or stash) first.
 - `gh auth status` fails → tell the user to run `gh auth login`.
+
+**保護対象のパターンを写さない**（ADR-0603 決定3、`AGENTS.md` *Git 規約*）。単一の宣言はまだ
+作成されておらず（`AGENTS.md` *現在の配線状態*）、今日それを持っているのは保護設定の宣言側である:
+
+```sh
+git rev-parse --abbrev-ref HEAD
+jq -r '.conditions.ref_name.include[]' .github/settings/branch-protection.json
+```
+
+現在のブランチが、その一覧のいずれか（`refs/heads/` を外し、`**/*` を glob として読む）に
+当たるなら保護ブランチである。
 
 The four valid working states going into Step 2:
 
@@ -77,7 +86,7 @@ Why a clean cancel rather than a pause-and-resume: a local review commonly produ
 
 **Depth by change type** — scale the recommendation to what the diff touches (this same scaling also drives the post-PR review at Step 9):
 
-- **Behavior-affecting code** (`internal/**`, `pkg/**` `.go`, SQL, OpenAPI) → recommend the review by default.
+- **Behavior-affecting code** (`modules/**` / `examples/**` の `.tf`、`scripts/**` の `.go`、`.github/` 配下の宣言) → recommend the review by default.
 - **Docs / tooling-dominant changes** (`docs/**`, `*.md`, `.claude/**`, `AGENTS.md`, CI config — no production behavior change) → note the lower ROI so the user can decline quickly; still ask.
 
 Judge the dominant nature of the diff (changed paths / commit prefixes) for the default recommendation, but the user's choice always wins.
@@ -142,8 +151,10 @@ Strip the HTML comment placeholders. If the template is absent, fall back to the
 Fill each template section in Japanese:
 
 - **概要**: 1–3 sentences summarizing the PR's intent. Use commit messages as the primary source.
-- **変更内容**: Bullet list grouped by area (API / DB / 内部ロジック / テスト / ドキュメント など). Reference changed files and commit titles. Group meaningfully — do not paste a raw file list.
-- **動作確認方法**: Concrete verification steps. Adapt to what actually changed: `make serve` + curl for API changes, `make db-local-migrate-up` for migrations, `make go-test` for logic, etc.
+- **変更内容**: Bullet list grouped by area (ユースケース / 運用機構 / CI / 宣言 / テスト / ドキュメント など). Reference changed files and commit titles. Group meaningfully — do not paste a raw file list.
+- **動作確認方法**: 実行した検査と、それが何と言ったか。結論したことではなく。
+  **未配線の道具について「実行した」と書かない**（`AGENTS.md` *現在の配線状態*）—— Terraform 側の
+  検査（TFLint / Conftest / `terraform test`）と plan / apply の経路は、まだ `make` に無い。
 
 If the branch name encodes an issue number, append `closes #N` at the bottom of the body (or fold it into 概要 if natural).
 
@@ -189,22 +200,19 @@ Never use `--force` or `--force-with-lease` unless the user has explicitly reque
 
 On push failure (non-fast-forward, permission denied, network error, etc.), report the error verbatim to the user and stop. Do not attempt automatic recovery.
 
-### The pre-push hook sizes itself — do not pre-empt it
+### pre-push が見るのは秘密の混入だけである
 
-`pre-push` runs the heavy Go gates through `make gate-go-push`, and `.makefiles/load.mk` decides from the number of open worktrees whether they run at full speed, throttled, or are deferred to CI (`repo-ops` §19; `make load-status` reports the band). Let the hook make that call.
+`pre-push` は `make secret-scan` だけを走らせる（`.lefthook.yaml`）。**重いゲートはここを通らない。**
+それらは `pre-commit` と CI が持つので、push は「最後の検査」ではない。
 
-Do **not** run `make go-lint` / `make go-test` by hand before pushing to "make sure" — with several windows open that is minutes of saturated host to rediscover what CI runs identically, and the saturation itself makes unrelated gates fail. Pushing *is* the verification step in the `ci-first` band. If the hook fails for a reason outside this change, `repo-ops` §11 covers the `--no-verify` carve-out.
+混入を検出した場合の第一手は当該資格情報の**失効**であり、履歴からの除去ではない
+([ADR-0302](../../../docs/adr/0302-secret-leak-detection.md) 決定4)。push 済みであれば、
+履歴を書き換えても漏洩の事実は取り消せない。
 
-When the band deferred gates to CI, say so in Step 8's report and treat the PR as unverified until its checks land — do not describe it as passing local verification it never ran.
+push した時点では CI がまだ何も言っていない。**Step 8 の報告で「検証済み」と書かないこと** ——
+検査が何と言ったかは、その run が出すまで分からない。
 
 ## Step 7. Create or Update the PR
-
-Stamp the phase as soon as the PR exists. GitHub records a creation time too, but the two answer
-different questions and the join to it holds only about two thirds of the time:
-
-```sh
-.agents/closed-loop/marks.sh prOpenedAt 2>/dev/null || true
-```
 
 ### Create the PR
 
@@ -233,7 +241,11 @@ EOF
 
 ## Step 8. Report
 
-Print the PR URL and a brief summary in Japanese. Run `make -s load-status`. When its resolved band is `ci-first`, the heavy gates were delegated by the push hook, so wait for their CI result with `gh pr checks --watch` and include the final check status in this report. If checks fail, report the failure and do not describe the PR as verified. Do not wait for CI in `full` or `low`: this step follows delegated verification, not every CI-only check.
+Print the PR URL and a brief summary in Japanese. **CI の結果を `gh pr checks --watch` で待ち、
+その判定をこの報告に含める。** 落ちたものがあれば、失敗したステップのログから読んで報告する
+(`AGENTS.md` *使うコマンド*) —— 実行全体のログを引くと、失敗と無関係な出力が大量に混じる。
+**検査が落ちている Pull Request を「検証済み」と書かない**（merge の可否は実環境への適用の可否と
+同義である。[ADR-0601](../../../docs/adr/0601-change-delivery-path.md) 決定10）。
 
 For the create path:
 
@@ -242,7 +254,7 @@ PR を作成しました: <url>
 ベース: <base-branch>
 タイトル: <title>
 コミット数: N
-CI 委譲: <なし / ci-first。gh pr checks の最終結果>
+CI: <gh pr checks の最終結果。落ちたものがあればその名前>
 ```
 
 For the update path:
@@ -250,7 +262,7 @@ For the update path:
 ```text
 PR を更新しました: <url>
 追加コミット数: N
-CI 委譲: <なし / ci-first。gh pr checks の最終結果>
+CI: <gh pr checks の最終結果。落ちたものがあればその名前>
 ```
 
 ## Step 9. Post-PR Review (confirm)
@@ -268,7 +280,7 @@ Scale the default recommendation to what changed, using the **Depth by change ty
 
 ## Constraints
 
-- ❌ Push to protected branches (`production` / `develop` / `staging` / `release/*`)
+- ❌ Push to a protected branch（`.github/settings/branch-protection.json` が持つ一覧）
 - ❌ `git push --force` / `--force-with-lease` (only with explicit user instruction)
 - ❌ Auto-update an existing PR's title or body (only on explicit user request)
 - ❌ Push while the working tree has uncommitted changes
