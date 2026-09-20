@@ -28,7 +28,16 @@ const shellSuffix = ".sh"
 // 走査から外すディレクトリ名。依存の取得物と VCS の内部で、いずれも我々が書いたものではない。
 var skippedDirs = []string{".git", "node_modules", "vendor", "tmp"}
 
-var errFindings = xerrors.New("shellcheck が指摘を検出しました")
+var (
+	errFindings = xerrors.New("shellcheck が指摘を検出しました")
+
+	// errNoTargets は、走査対象が1件も無い場合のエラー。
+	//
+	// **0件は成功ではない。** 対象を失った検査は、壊れたときに赤ではなく緑を返す
+	// （ADR-0702 決定13）。このリポジトリに `*.sh` が1つも無い状態は、この道具が
+	// 何も見ていない状態と区別できないので、成功で返さない。
+	errNoTargets = xerrors.New("走査対象の *.sh が1件もありません")
+)
 
 func main() {
 	log.SetFlags(0)
@@ -49,6 +58,10 @@ func run(ctx context.Context, wd func() (string, error), lookPath func(string) (
 	scripts, err := shellScripts(root)
 	if err != nil {
 		return err
+	}
+
+	if len(scripts) == 0 {
+		return errNoTargets
 	}
 
 	var findings []string

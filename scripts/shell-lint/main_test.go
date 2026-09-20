@@ -35,20 +35,16 @@ func Test_run(t *testing.T) {
 			require.NoError(t, run(t.Context(), rootAt(root), exec.LookPath))
 		})
 
-		t.Run("シェルスクリプトが 1 つも無くても成功する", func(t *testing.T) {
-			t.Parallel()
-			requireShellcheck(t)
-
-			root := writeScripts(t, map[string]string{"README.md": "not a script\n"})
-
-			require.NoError(t, run(t.Context(), rootAt(root), exec.LookPath))
-		})
-
 		t.Run("除外ディレクトリ配下は検査しない", func(t *testing.T) {
 			t.Parallel()
 			requireShellcheck(t)
 
-			root := writeScripts(t, map[string]string{"vendor/bad.sh": dirtyScript})
+			root := writeScripts(t, map[string]string{
+				"ok.sh":         cleanScript,
+				"vendor/bad.sh": dirtyScript,
+				"tmp/bad.sh":    dirtyScript,
+				".git/bad.sh":   dirtyScript,
+			})
 
 			require.NoError(t, run(t.Context(), rootAt(root), exec.LookPath))
 		})
@@ -56,6 +52,26 @@ func Test_run(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// 0 件は成功ではない（ADR-0702 決定13）。対象を失った検査は、壊れた日に
+		// 赤ではなく緑を返す。「違反が無かった」と「何も見なかった」を区別し続ける。
+		t.Run("走査対象が1件も無ければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			requireShellcheck(t)
+
+			root := writeScripts(t, map[string]string{"README.md": "not a script\n"})
+
+			require.ErrorIs(t, run(t.Context(), rootAt(root), exec.LookPath), errNoTargets)
+		})
+
+		t.Run("除外ディレクトリにしか対象が無ければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			requireShellcheck(t)
+
+			root := writeScripts(t, map[string]string{"vendor/bad.sh": dirtyScript})
+
+			require.ErrorIs(t, run(t.Context(), rootAt(root), exec.LookPath), errNoTargets)
+		})
 
 		t.Run("指摘のあるスクリプトを検出する", func(t *testing.T) {
 			t.Parallel()
