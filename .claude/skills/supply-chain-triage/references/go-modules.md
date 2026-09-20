@@ -1,8 +1,10 @@
 # Evidence collection — Go modules
 
-Read this together with the axis definitions in `SKILL.md`. Go inverts the usual balance: integrity
-is nearly free and freshness has no enforcement at all (`docs/design/security.md` → "Go modules").
-That shapes which axes are cheap here and which carry the weight.
+Read this together with the axis definitions in `SKILL.md`. Go inverts the usual balance:
+integrity is nearly free —— `go.sum` と module proxy の checksum database が既に持っている。
+freshness の側は `make go-cooldown-gate` が見ており（`go.mod` の差分で追加・更新された direct の
+module が cooldown 窓を満たすか）、棚卸しは `make go-cooldown-audit` である。
+**窓を外す判断は、その1回の判断として現れる** —— そこがこの triage の場所である。
 
 Two consequences to hold onto:
 
@@ -113,13 +115,16 @@ For each newly required module, check what it is: a package created recently, wi
 history, pulled in by a mature dependency, is the same smuggling pattern npm sees. Also note whether
 the candidate adds a `main` package or a `cmd/` binary the repo would then build.
 
-Finally, run the reachability question the repo already trusts — but read its limit:
+Finally, ask the reachability question — but read its limit:
 
 ```sh
-govulncheck ./...
+make trivy-fs
 ```
 
-A clean result means no *known* advisory is reachable. `docs/design/security.md` records the cost:
-an advisory the Go vulnerability database has not ingested produces no finding at all, so this says
-nothing about a publish from this week — which is exactly the situation triage is in. Use it as
-corroboration, never as the answer.
+A clean result means no *known* advisory is reachable. **その代償を明示する** —— Go の脆弱性
+データベースがまだ取り込んでいない advisory は、所見を1つも生まない。つまりこの結果は、今週
+publish されたものについて何も言っていない。triage が置かれているのはまさにその状況である。
+裏付けとして使い、答えとして使わない。
+
+このリポジトリに `govulncheck` は配線されていない（`make help` を見よ）。依存の既知脆弱性は
+`make trivy-fs`（報告のみ）と `make trivy-fs-release`（リリース昇格ゲート）が見る。

@@ -121,7 +121,6 @@ The relaxation is bounded, and the bound is the plan:
 - 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、
   `make egress-apply` / `pin-actions-apply` / `pin-images-apply` / `versions-apply` が書く区間。
   **make ターゲット経由の再生成はよい。手で編集するのが違反である**（*トリップワイヤ* 4）
-- `.claude/settings.json` の `permissions.deny` に載っているもの
 
 ## Step 0 — Confirm the four modes (two consecutive `AskUserQuestion` calls)
 

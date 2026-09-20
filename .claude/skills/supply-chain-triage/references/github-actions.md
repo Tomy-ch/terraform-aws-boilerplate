@@ -120,10 +120,12 @@ diff action.old.yml action.new.yml
 
 - New `inputs` are usually benign; a new **default that points at a URL or a token** is not.
 - A JS action's `package.json` gaining dependencies means the bundle now carries code from somewhere
-  else — check the new dependency the way `references/npm.md` does.
-- Note any added network endpoint. This repo runs `harden-runner` in `audit` mode, so egress is
-  recorded but not restricted (`docs/design/security.md` → "Honest limits") — a new endpoint will be
-  visible after the fact, not blocked.
+  else — apply the same axes to that dependency.
+- **追加された通信先に注目する。** このリポジトリの workflow は `harden-runner` を
+  `egress-policy: block` で走らせ、許可先は `.github/egress.toml` が宣言して
+  `make egress-check` が突合する。**宣言に無い宛先は落ちる** —— 事後に見えるのではなく、
+  塞がれる。action の更新が新しい宛先を要求しているなら、それは宣言を1つ増やす判断であり、
+  そこが審査の場所である。
 
 ## Reporting notes
 

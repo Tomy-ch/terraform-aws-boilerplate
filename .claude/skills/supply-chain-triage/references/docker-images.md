@@ -74,9 +74,10 @@ docker buildx imagetools inspect "$IMG" --format '{{json .Image.Config.Labels}}'
   matches upstream.
 - With no labels, no attestation, and no official listing, A is `?`. Say so; do not score `0`.
 
-Note what this repo's own release pipeline already does for images it *builds*
-(`docs/design/security.md` → ADR-0105 (release-image-supply-chain): signing, provenance, SBOM). That covers our artifacts, not
-the third-party base images this axis is about.
+**このリポジトリは配布用のイメージを作らない。** `docker/` に在るのは道具を走らせるための
+ランナーのイメージだけで、署名も provenance も SBOM も出していない。したがってこの軸が見るのは、
+ベースイメージそのもの —— `docker/images-pin.toml` が digest で固定している上流である
+（[ADR-0503](../../../../docs/adr/0503-tool-execution-form.md)）。
 
 ## Axis D — what actually changed
 
