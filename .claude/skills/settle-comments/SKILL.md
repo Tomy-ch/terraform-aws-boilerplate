@@ -381,10 +381,16 @@ settle-comments 検出結果（scope: <X>, 対象 <n> ファイル / <m> パッ�
 集約: <e> 件（対象コメント計 <t> 箇所 / 内訳 重複 <u> ・分散 <v> ・総量過多 <w>）
 パッケージ横断の重複: <x> クラスタ（対象コメント計 <y> 箇所 / <z> パッケージにまたがる）
 総 finding: <sum>（うち要判断 <k>）。<確認して適用のときだけ「これから 1 件ずつ確認します。」を続ける>
+
+補遺: <auditor が判定を持たずに挙げた気づき。無ければこの行ごと省く>
 ```
 
 Count a 集約 finding **once**, not once per member comment — it is one decision. Report the member
 count alongside it so the size of the edit is visible before anyone approves it.
+
+**auditor の `補遺` は素通しする。** 判定を持たないので件数には数えないが、落とすと
+auditor が気づいたことの行き先が無くなる —— 識別子へ焼き込まれた類型のように、本スキルが
+検出できないものはここにしか現れない。
 
 `維持` findings are reported as a count only — they need no decision, and listing them in full buries
 the ones that do. If nothing needs action, say so plainly and stop.
