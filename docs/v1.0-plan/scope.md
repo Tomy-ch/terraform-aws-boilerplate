@@ -82,7 +82,7 @@ Realtimeで`serve`がインスタンス別SQS Queue/SNS Subscriptionを実行時
 
 ```mermaid
 flowchart LR
-  E["env/<br/>develop・staging・release"] --> U["usecase/<br/>公開面・semver対象<br/>resourceを持たない"]
+  E["env/<br/>dev・stg・prd"] --> U["usecase/<br/>公開面・semver対象<br/>resourceを持たない"]
   U --> I["module/internal/<br/>usecase私有"]
   U --> S["module/_shared/<br/>invariant共有時のみ"]
   I --> R["AWS resource"]
@@ -90,6 +90,10 @@ flowchart LR
 ```
 
 envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resourceを直接宣言しない。resourceはすべてmoduleが所有する。
+
+**確定:** envのtokenは`dev` / `stg` / `prd`とする。これはディレクトリ名であると同時に、AWS資源の命名（`<project>-<env>-...`）に入る値でもある。envを増やす場合も同じ長さの短縮形を使う。
+
+`sandbox`と`admin`は例外のtokenであり、**開発者が使うための環境ではない**。`sandbox`は検証の器（第10.2節）、`admin`は管理アカウント（第10.1節）で、どちらもアプリケーションを継続的に載せる場所ではない。ブランチ名（`develop` / `staging` / `release/*`）はenvのtokenとは別の軸であり、混同しない。
 
 | 層 | 責務 | 規約 |
 |---|---|---|
@@ -287,7 +291,7 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 | Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
 | Security | `audit-evidence` | 監査証跡（CloudTrail等）の改ざん防止保管。S3 Object Lock、長期保持、アクセス記録 |
 | Access | `operator-access` | SSM Session Managerのポートフォワーディング、ECS Exec。インバウンドを開けずに人間がprivate資源へ到達 |
-| Data | `data-refresh` | 本番→stagingへの一方向のデータ同期。DBはBE提供のマスキングJobを必須とし、公開画像はコピー、非公開画像は同期しない（第9.6節）。既定は無効 |
+| Data | `data-refresh` | 本番（prd）→stgへの一方向のデータ同期。DBはBE提供のマスキングJobを必須とし、公開画像はコピー、非公開画像は同期しない（第9.6節）。既定は無効 |
 | Compute | `ec2-service` | 小規模のBE・FE向けの代替プラットフォーム。Launch Template、Auto Scaling Group、IAM、Logging（第4節） |
 | Compute | `eks` | サービス全体向けの代替プラットフォーム。Cluster、複数NodeGroup、Pod Identity/IRSA、Add-ons。workloadはk8s-boilerplate（第4.3節） |
 | Compute | `amplify-app` | FE・BFF向けの代替プラットフォーム。App、Branch、Build設定、IAM。SSR関数はFE所有 |
@@ -435,6 +439,7 @@ Log retentionは明示する。
 - ECS Serviceの更新方式とBlue/Greenの対象は実装設計で決め、内部resource詳細を利用側へ過度に露出させない。
 - GBpのproductionイメージに含まれる環境別設定と、ECRからのイメージ供給契約を明示する。ECRは不変タグとpush時スキャンを有効にし、Task定義はdigestで指定する。GBpのcosign署名（keyless。OIDC→Fulcio→Rekor）の検証は発火側のパイプラインで行う。
 - GBpの現行の配送先はGHCRであり、registryは差し替える前提のstubとして書かれている。ECRへ向けること自体は想定内だが、**GBpのタグ生成（直近タグ由来の`<version>`）は同じタグを再pushするため、ECRの不変タグと両立しない**。発火側のタグ方針をdigest主体、または`<version>-<sha>`のみに差し替えることを供給契約の前提とする。
+- envのtoken（`dev` / `stg` / `prd`）はGBpが焼き込む値と一致する（`env/.env.prd`等、`APP_ENV`とイメージタグに現れる）。`REALTIME_TABLE_SUFFIX` / `REALTIME_QUEUE_PREFIX`もこのtokenを使うため、tabpが組む資源名と噛み合う。
 - GBpのイメージには`SERVER_HOST=api.example.com`等の環境別設定が焼き込まれている。`SERVER_HOST`はバインドホストであり、Fargateでは`0.0.0.0`を実行時に注入する。焼き込み値は署名対象に含まれるため、設定変更は再ビルドと再署名を伴う。
 
 ### 9.5 Stateful Resource
@@ -445,7 +450,7 @@ Log retentionは明示する。
 
 ### 9.6 データ同期（data-refresh）
 
-**採用案:** 本番からstagingへ、一方向でデータを同期する機構を提供する。本番データを下位環境へ持ち込むことを禁じる組織もあるため、既定は無効とし、有効化は利用者が判断する。
+**採用案:** prdからstgへ、一方向でデータを同期する機構を提供する。本番データを下位環境へ持ち込むことを禁じる組織もあるため、既定は無効とし、有効化は利用者が判断する。
 
 | 対象 | 扱い | 理由 |
 |---|---|---|
@@ -454,26 +459,26 @@ Log retentionは明示する。
 | 非公開画像・ファイル（`private-media`） | 同期しない。環境ごとの別Bucketで管理する | マスキングできない個人情報（身分証画像等）を含みうる |
 
 - **マスキング:** どの列をどう置き換えるかは業務ロジックであり、BEが`job`として提供する。非公開画像への参照の置き換え（ダミーキー等）もこのJobの責務とする。tabpはJobを実行する場所と順序だけを持つ。
-- **隔離:** 復元先は隔離したsubnetとSecurity Groupに置き、人間とアプリの経路を持たせない。マスキングJobの成功後にのみ、stagingの接続先を切り替える。
+- **隔離:** 復元先は隔離したsubnetとSecurity Groupに置き、人間とアプリの経路を持たせない。マスキングJobの成功後にのみ、stgの接続先を切り替える。
 - **一方向:** 本番側はスナップショットの共有と読み取りの許可だけを持つ。下位環境から本番へ書き込めないことをSCPとIAMで担保する。
 - **暗号化:** AWS管理キー（`aws/rds`）で暗号化したスナップショットはアカウント間で共有できない。同期を有効にする構成では、`private-rds`/`private-aurora`はカスタマー管理キーを使い、下位環境のアカウントへkey grantを与える。
 - **発火:** 同期の開始、成否の確認、失敗時の扱いは発火側の責務とする（第9.4節と同じ分担）。
-- **検証:** developを本番側、sandboxを下位環境側に模して検証する（第10.1節）。同一アカウントの縮退構成ではクロスアカウント処理が動かないため、検証には使わない。逆流の拒否はライブで試さず、SCPとIAMの宣言をPolicy Testで見る。
+- **検証:** devを本番側、sandboxを下位環境側に模して検証する（第10.1節）。同一アカウントの縮退構成ではクロスアカウント処理が動かないため、検証には使わない。逆流の拒否はライブで試さず、SCPとIAMの宣言をPolicy Testで見る。
 
 ## 10. 検証戦略とsandbox運用
 
-**確定:** 検証はusecase単位で行う。すべてを検証環境で捌けない前提で一定のリスクを許容し、リリースはdevelop→stagingを経由する。
+**確定:** 検証はusecase単位で行う。すべてを検証環境で捌けない前提で一定のリスクを許容し、リリースはdev→stgを経由する。
 
 | 層 | 手段 | 検証対象 | 実行場所 |
 |---|---|---|---|
 | mockユニット | `terraform test`＋`mock_provider`、`command = plan` | envごとの値の正しさ（削除保護、Multi-AZ、保持期間等） | どこでも（AWS不要） |
 | sandbox | usecaseごとの`.tftest.hcl`で実apply→検証→自動destroy。前提resourceはテスト用setup moduleで作る | 構成の成立、接続契約、destroy可能性 | sandbox用AWSアカウント（2つ） |
-| 昇格 | develop→staging | 実アカウント固有の参照、運用手順 | 各環境アカウント |
+| 昇格 | dev→stg | 実アカウント固有の参照、運用手順 | 各環境アカウント |
 
-- stagingとreleaseの差異は意図したもの（規模、ドメイン名）に限定し、安全性に関わる設定は揃える。値の異なる箇所はmockのassertでしか担保されないためである。
-- 負荷・クォータ・実トラフィック起因の挙動は、stagingでの負荷テストの責務であり、tabpの範囲外とする。tabpは、タスク数、インスタンスサイズ、Auto Scalingの上下限をenvの値で再現可能にするまでを持つ。
+- stgとprdの差異は意図したもの（規模、ドメイン名）に限定し、安全性に関わる設定は揃える。値の異なる箇所はmockのassertでしか担保されないためである。
+- 負荷・クォータ・実トラフィック起因の挙動は、stgでの負荷テストの責務であり、tabpの範囲外とする。tabpは、タスク数、インスタンスサイズ、Auto Scalingの上下限をenvの値で再現可能にするまでを持つ。
 
-develop/stagingは、Application Auto Scalingのscheduled actionによる時間帯スケーリングをenvの値で扱える。
+dev/stgは、Application Auto Scalingのscheduled actionによる時間帯スケーリングをenvの値で扱える。
 
 利用側（GBp等）に対応機能がないusecaseは、sandboxで汎用のテストクライアントを用いて接続契約を検証する。GBpの実装を突合した結果、テストクライアントが要るのは次である。
 
@@ -485,9 +490,9 @@ Workerのack・再試行・DLQ・drainの検証には、意図的に失敗する
 
 ### 10.1 アカウント構成
 
-管理、sandbox、各環境（develop/staging/release）の5アカウントに分ける。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**developとsandboxの間で行う**。developは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。
+管理（admin）、sandbox、各環境（dev / stg / prd）の5アカウントに分ける。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。
 
-SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevelopへ残り、developは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。
+SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevへ残り、devは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。
 
 ### 10.2 sandbox運用
 
@@ -508,7 +513,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
-| 0. bootstrap | `state``-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、メンバーアカウント4つ（develop / staging / release / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る。人が手で作るのは管理アカウント1つだけである | 管理アカウントが存在すること（手順を文書化） |
+| 0. bootstrap | `state``-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、メンバーアカウント4つ（dev / stg / prd / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る。人が手で作るのは管理アカウント1つだけである | 管理アカウントが存在すること（手順を文書化） |
 | 1. 基盤 | `organization-baseline`、`account-baseline`、`audit-evidence`、`finops`、`ops-notification`、ECR。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
 | 2. ネットワーク | `vpc`（module）、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
 | 3. Compute・データ | `ecs`（module）、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
@@ -531,7 +536,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. 第2.2節のゲートがCIで機能している。tabp内のコード実行resourceは許可リストとADRを持ち、採用した各言語のlint・testがCIで必ず走る。
 1. 観測の三モードがexporter設定の切り替えと`controlled-external-egress`の有効化だけで成立する。AWS基盤系アラームがモードに関係なく発報し、`ops-notification`の通知先へ届く。メトリクス途絶を検知できる。egress制御が第9.2節のとおり機能し、`controlled-external-egress`を有効にしていない環境から外部へ到達できない。
 1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。
-1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、developとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
+1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、devとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
 1. `media-ingest`で、スキャン結果が脅威なしでないオブジェクトを読めないことを確認する。
 1. Security Default、Stateful Resourceの保護、復元可能性、主要Computeのデプロイ方式が文書と検査で確認される。
 1. FE成果物の更新が配信へ反映され、`index.html`とhash付きassetでキャッシュ方針が分かれている。tabpが生成するIAMのうち、成果物用BucketとDistributionへの書き込み権限を持つのは`deployment-identity`のRoleだけである。
@@ -594,7 +599,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（developとsandboxの間、第10.1節）。
+**v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（devとsandboxの間、第10.1節）。
 
 ## 13. 参照資料
 
