@@ -107,6 +107,9 @@ classes = ["mise"]
 [job."pin-images-check.yaml:pin-images-check"]
 classes = ["mise"]
 
+[job."versions-check.yaml:versions-check"]
+classes = ["mise"]
+
 [job."secret-scan.yaml:secret-scan"]
 classes = ["mise"]
 
