@@ -1,17 +1,13 @@
-# ローカルの git hook。**速いフィードバックのために置き、CI の代替としない**（ADR-0501 決定26）。
+# ローカルの git hook（ADR-0501 決定26 / ADR-0702 決定19）。CI の代替にしない ——
+# hook でのみ成立する検査を作らない。
 #
-# hook は `--no-verify` で迂回される前提で設計する。hook でのみ成立する検査を作らない。
-# 権威は CI であり、ここに在るのは「壊れた状態を CI へ到達させない第一段」に過ぎない。
-#
-# コマンドは素で書く。検査の定義は `.makefiles/` が1箇所で持ち、ここはその起動だけを持つ
-# （ADR-0503 決定8）。実行環境の切り替えは make 側の RUNNER_MODE が受ける。
+# コマンドは素で書く（ADR-0503 決定8。検査の定義は `.makefiles/` が1箇所で持つ）。
 #
 # 導入: `lefthook install` で .git/hooks に配置する。
 
 pre-commit:
   parallel: true
   commands:
-    # workflow 定義の検査群。下位の検査を1本で回す（束ねている中身は .makefiles/github/lint.mk）。
     actions-lint:
       glob:
         - ".github/workflows/*.{yml,yaml}"
@@ -20,8 +16,6 @@ pre-commit:
         - "scripts/**/*.go"
       run: make actions-lint
 
-    # Markdown の体裁。このリポジトリの主要な成果物が Markdown であるため、対象が無いコミットは
-    # まれだが、glob で発火を絞る。
     md-lint:
       glob: "**/*.md"
       run: make md-lint
@@ -30,15 +24,15 @@ pre-commit:
       glob: "docker/**/Dockerfile"
       run: make docker-lint
 
-    # allowed-endpoints が SSOT（.github/egress.toml）通りか。
-    # apply を忘れた状態を commit させない。
+    # allowed-endpoints が SSOT 通りか（.makefiles/github/egress.mk）。
     egress-check:
       glob:
         - ".github/egress.toml"
         - ".github/workflows/*.{yml,yaml}"
       run: make egress-check
 
-    # mise.toml からの版のずれを検査する。理由は .makefiles/versions.mk を見よ。
+    # 言語ランタイムの版の写しが mise.toml 通りか。**ずれてもビルドは通る**ので、
+    # この検査が無いと「ずれている」と「揃っている」を緑で区別できない。
     versions-check:
       glob:
         - "mise.toml"
@@ -47,16 +41,13 @@ pre-commit:
         - "scripts/versions/*.go"
       run: make versions-check
 
-    # uses: の固定。lockfile と実ファイルの drift、および参照されなくなった lockfile の
-    # エントリ（orphan）を落とす。
+    # uses: / image: が lockfile 通りか。orphan を落とすのは pin-actions-check だけである。
     pin-actions-check:
       glob:
         - ".github/workflows/*.{yml,yaml}"
         - ".github/actions/**/*.{yml,yaml}"
         - ".github/actions-pin.toml"
       run: make pin-actions-check
-
-    # image: の固定。lockfile と実ファイルの drift を落とす。pin-actions と違い orphan は見ない。
     pin-images-check:
       glob:
         - "docker/**/Dockerfile"
@@ -64,7 +55,7 @@ pre-commit:
         - "docker/images-pin.toml"
       run: make pin-images-check
 
-    # 運用機構の整形とテスト。ゲートは「検査をやめると緑になる」ため、テストを hook から外さない。
+    # ゲートは「検査をやめると緑になる」ため、テストを hook から外さない。
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
@@ -77,17 +68,15 @@ pre-commit:
 
 commit-msg:
   commands:
-    # 規約の正本は commitlint.config.js（詳細と理由はそちらに書いてある）。
-    #
-    # commitlint は自動化が作る commit では走らない（`--no-verify` とは別の抜け道。原則はファイル冒頭）。
-    # 本体は CI 側の範囲検査（make commitlint-range）である。
+    # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
+    # commit があるので本体は CI の範囲検査である（.github/workflows/commitlint.yaml）。
     commitlint:
       run: cat {1} | docker compose run --rm -T node_tool_runner commitlint
 
 pre-push:
   parallel: true
   commands:
-    # push 予定の commit 範囲に秘密が無いこと。検出時は通さない（ADR-0302 決定4）。
-    # 検出したら、まず当該資格情報を失効させる。履歴の書き換えではない（理由: ADR-0302 決定11-12）。
+    # push 予定の commit 範囲に秘密が無いこと（ADR-0302 決定4・11-13、
+    # .makefiles/security/gitleaks.mk）。
     secret-scan:
       run: make secret-scan

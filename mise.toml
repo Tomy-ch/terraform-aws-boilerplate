@@ -41,7 +41,8 @@ node = "24.21.0"
 "aqua:hashicorp/terraform" = "1.16.2"
 
 # Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
-# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
+# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ
+# —— そのファイルはまだ無い（AGENTS.md「現在の配線状態」）。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
 # Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する

@@ -148,7 +148,7 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 | `scripts/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
 | `**/*_test.go`, `**/*.tftest.hcl` | `Test` |
 | `docs/adr/**` | `Docs`、番号だけが動くなら `Refactor` |
-| `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
+| `modules/<use-case>/README.md`, `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
 | `Dockerfile`, `docker/**`, `scripts/go.mod`, `scripts/go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` | `Build` |
 | `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml` | `CI` |
 | `.gitignore`, `.claude/**`, editor settings | `Chore` |
@@ -263,8 +263,11 @@ If `git add` or `git commit` fails for any group (file-path typo, mid-operation 
 
 After all commits succeed, run the full lefthook `pre-commit` hook once with `lefthook run pre-commit --force`, then `make go-fmt` as a final formatting pass. The `--force` flag is essential: the commits were made with `--no-verify` and the working tree is now clean, so a bare `lefthook run pre-commit` skips every command ("no matching staged files"); `--force` runs the whole hook regardless of staging. Driving the real hook (instead of a hand-enumerated command list) keeps this gate in sync with `.lefthook.yaml` — newly added `pre-commit` commands are picked up automatically — and lefthook runs them in parallel (`parallel: true`), which is much faster than a sequential re-run.
 
+`lefthook run pre-commit --force` は `.lefthook.yaml` の `pre-commit.commands.*` をそのまま
+並列で実行する。**手で列挙した一覧に置き換えないこと** —— 置き換えると、新しく足された検査が
+このスキル経由の検証から静かに落ちる。
+
 **hook は CI の代替ではない**（ADR-0501 決定26）。ここが通ったことは、CI が通ることの証拠ではない。
-`.lefthook.yaml` が持つのは「壊れた状態を CI へ到達させない第一段」だけである。
 
 ### Procedure
 

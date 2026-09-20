@@ -43,7 +43,9 @@ type fakeRunner struct {
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	failOn string
 	// remoteBranches は、remoteBranchExists が true を返すブランチ。
+	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
 	remoteBranches map[string]bool
+	lsRemoteFails  bool
 }
 
 // runner は、この実行器を差し込んだ runner を返します。
@@ -73,7 +75,16 @@ func (f *fakeRunner) output(name string, args ...string) (string, error) {
 	return f.outputs[call], nil
 }
 
-func (f *fakeRunner) remoteBranchExists(branch string) bool { return f.remoteBranches[branch] }
+// errLsRemote は、origin への照会そのものが失敗したことを模すセンチネル。
+var errLsRemote = xerrors.New("ls-remote に失敗しました")
+
+func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
+	if f.lsRemoteFails {
+		return false, errLsRemote
+	}
+
+	return f.remoteBranches[branch], nil
+}
 
 // taggableRunner は、v1.2.3 を最新タグとして返す実行器を用意します。
 func taggableRunner() *fakeRunner {
@@ -490,8 +501,13 @@ func Test_hostRunner(t *testing.T) {
 		t.Run("remoteBranchExists はホストの git で origin のブランチを見る", func(t *testing.T) {
 			t.Chdir(newRepo(t))
 
-			assert.True(t, hostRunner().remoteBranchExists("production"))
-			assert.False(t, hostRunner().remoteBranchExists("release/v9.9.9"))
+			got, err := hostRunner().remoteBranchExists("production")
+			require.NoError(t, err)
+			assert.True(t, got)
+
+			missing, err := hostRunner().remoteBranchExists("release/v9.9.9")
+			require.NoError(t, err)
+			assert.False(t, missing)
 		})
 	})
 }
@@ -533,14 +549,34 @@ func Test_remoteBranchExists(t *testing.T) {
 		t.Run("origin に同名ブランチがあれば真を返す", func(t *testing.T) {
 			dir := newRepo(t)
 			t.Chdir(dir)
-			assert.True(t, remoteBranchExists("production"))
+			got, err := remoteBranchExists("production")
+			require.NoError(t, err)
+			assert.True(t, got)
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("origin に無いブランチには偽を返す", func(t *testing.T) {
 			dir := newRepo(t)
 			t.Chdir(dir)
-			assert.False(t, remoteBranchExists("release/v9.9.9"))
+			got, err := remoteBranchExists("release/v9.9.9")
+			require.NoError(t, err)
+			assert.False(t, got)
+		})
+	})
+
+	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+	t.Run("異常系", func(t *testing.T) {
+		// **exit code 2 だけが「無い」である。** origin を解決できないときの 128 を
+		// 「無い」と読むと、衝突しているブランチへ向かって取り消しの効かない手順が走る。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("origin を解決できなければ偽ではなくエラーを返す", func(t *testing.T) {
+			dir := newRepo(t)
+			t.Chdir(dir)
+			gitIn(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "no-such-repo"))
+
+			got, err := remoteBranchExists("production")
+			require.Error(t, err)
+			assert.False(t, got)
 		})
 	})
 }
@@ -728,6 +764,20 @@ func Test_runBranch(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// **「無い」と「確認できなかった」を畳むと、ここが通ってしまう。** 照会に失敗した
+		// だけで「衝突なし」と読み、取り消しの効かない手順へ進む。
+		t.Run("origin へ照会できなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			f.lsRemoteFails = true
+
+			err := runBranch(f.runner(), []string{"-bump", "patch"})
+			require.ErrorIs(t, err, errLsRemote)
+			assert.NotContains(t, f.calls, branchCreateCall)
+			assert.NotContains(t, f.calls, branchPushCall)
+			assert.NotContains(t, f.calls, defaultBranchCall)
+		})
 
 		t.Run("解釈できないフラグでは手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()

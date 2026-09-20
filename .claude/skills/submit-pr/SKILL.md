@@ -206,7 +206,7 @@ On push failure (non-fast-forward, permission denied, network error, etc.), repo
 それらは `pre-commit` と CI が持つので、push は「最後の検査」ではない。
 
 混入を検出した場合の第一手は当該資格情報の**失効**であり、履歴からの除去ではない
-([ADR-0302](../../../docs/adr/0302-secret-leak-detection.md) 決定4)。push 済みであれば、
+（[ADR-0302](../../../docs/adr/0302-secret-leak-detection.md) 決定4）。push 済みであれば、
 履歴を書き換えても漏洩の事実は取り消せない。
 
 push した時点では CI がまだ何も言っていない。**Step 8 の報告で「検証済み」と書かないこと** ——
@@ -243,7 +243,7 @@ EOF
 
 Print the PR URL and a brief summary in Japanese. **CI の結果を `gh pr checks --watch` で待ち、
 その判定をこの報告に含める。** 落ちたものがあれば、失敗したステップのログから読んで報告する
-(`AGENTS.md` *使うコマンド*) —— 実行全体のログを引くと、失敗と無関係な出力が大量に混じる。
+（`AGENTS.md` *使うコマンド*）—— 実行全体のログを引くと、失敗と無関係な出力が大量に混じる。
 **検査が落ちている Pull Request を「検証済み」と書かない**（merge の可否は実環境への適用の可否と
 同義である。[ADR-0601](../../../docs/adr/0601-change-delivery-path.md) 決定10）。
 
