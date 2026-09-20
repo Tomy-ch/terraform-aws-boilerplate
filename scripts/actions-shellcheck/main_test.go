@@ -892,7 +892,8 @@ func Test_remapFindings(t *testing.T) {
 			t.Parallel()
 			s := step{file: ".github/actions/a/action.yaml", firstLine: 9}
 			out := "-:3:15: note: Double quote to prevent globbing [SC2086]\n"
-			findings := remapFindings(s, out)
+			findings, err := remapFindings(s, out)
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], ".github/actions/a/action.yaml:10:15:")
 			assert.Contains(t, findings[0], "[SC2086]")
@@ -901,7 +902,8 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("列番号は本文のインデント幅だけずらす", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9, colBase: 8}
-			findings := remapFindings(s, "-:3:15: note: msg [SC2086]\n")
+			findings, err := remapFindings(s, "-:3:15: note: msg [SC2086]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:10:23:")
 		})
@@ -909,7 +911,8 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("本文 1 行目の指摘は本文開始行を指す", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9}
-			findings := remapFindings(s, "-:2:1: note: msg [SC1000]\n")
+			findings, err := remapFindings(s, "-:2:1: note: msg [SC1000]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:9:1:")
 		})
@@ -917,45 +920,62 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("shebang 行の指摘は run キー行を指す", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9}
-			findings := remapFindings(s, "-:1:1: error: msg [SC1008]\n")
+			findings, err := remapFindings(s, "-:1:1: error: msg [SC1008]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:8:1:")
 		})
 
 		t.Run("指摘なしなら空を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 1}, ""))
+			findings, err := remapFindings(step{file: "action.yaml", firstLine: 1}, "")
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+		})
+
+		t.Run("指摘の間の空行を読み飛ばす", func(t *testing.T) {
+			t.Parallel()
+			out := "-:3:15: note: A [SC2086]\n\n-:4:1: note: B [SC2034]\n"
+			findings, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.NoError(t, err)
+			assert.Len(t, findings, 2)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("解析できない行は無視する", func(t *testing.T) {
+		// 解釈できない行を黙って捨てると、出力形式が変わった日に「指摘なし」と
+		// 「1行も解釈できなかった」が緑で区別できなくなる（ADR-0702 決定14）。
+		t.Run("解析できない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 1}, "unexpected output\n"))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 1}, "unexpected output\n")
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("行番号が整数として読めない行は無視する", func(t *testing.T) {
+		t.Run("行番号が整数として読めない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:99999999999999999999:15: note: msg [SC2086]\n"
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 9}, out))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("列番号が整数として読めない行は無視する", func(t *testing.T) {
+		t.Run("列番号が整数として読めない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:3:99999999999999999999: note: msg [SC2086]\n"
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 9}, out))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("読める行と読めない行が混ざれば読める行だけを返す", func(t *testing.T) {
+		// **読める行だけを返してはならない。** 1行でも解釈できなければ、その実行は
+		// 「何件見たか」を答えられていない。
+		t.Run("読める行と読めない行が混ざってもエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:99999999999999999999:15: note: broken [SC2086]\n-:3:15: note: msg [SC2086]\n"
 
-			findings := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
 
-			require.Len(t, findings, 1)
-			assert.Contains(t, findings[0], "action.yaml:10:15:")
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 	})
 }

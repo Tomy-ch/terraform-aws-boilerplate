@@ -68,6 +68,13 @@ var (
 	errActionSymlinkDir        = xerrors.New("ディレクトリへのシンボリックリンクは走査できません。実体を置くか、リンクを外してください")
 	errActionSymlinkUnresolved = xerrors.New("解決できないシンボリックリンクがあります")
 	errMultipleDocuments       = xerrors.New("action 定義に複数の YAML ドキュメントがあります。--- 区切りの 2 番目以降は検査されません")
+
+	// errUnparsedFinding は、shellcheck の出力に解釈できない行があった場合のエラー。
+	//
+	// **解釈できない入力は、取りこぼしではなくエラーとして扱う**（ADR-0702 決定14）。
+	// 黙って捨てると、出力形式が変わった日に「指摘なし」と「1行も解釈できなかった」が
+	// 緑で区別できなくなる。
+	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
 )
 
 type step struct {
@@ -433,7 +440,13 @@ func check(ctx context.Context, steps []step) (result, error) {
 			return result{}, err
 		}
 		res.checked++
-		res.findings = append(res.findings, remapFindings(s, out)...)
+
+		got, err := remapFindings(s, out)
+		if err != nil {
+			return result{}, err
+		}
+
+		res.findings = append(res.findings, got...)
 	}
 	return res, nil
 }
@@ -517,20 +530,38 @@ func exprEnd(expr string) int {
 	return -1
 }
 
-func remapFindings(s step, out string) []string {
+// remapFindings は shellcheck の出力を、元の workflow 上の行・桁へ読み替えます。
+//
+// 解釈できない行は errUnparsedFinding にします。空行は指摘を運ばないので読み飛ばします。
+func remapFindings(s step, out string) ([]string, error) {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return nil, nil
+	}
+
 	lineBase := s.firstLine - shebangLines - firstBodyIndex
+
 	var findings []string
-	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+
+	for line := range strings.SplitSeq(trimmed, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
 		m := findingRe.FindStringSubmatch(line)
 		if m == nil {
-			continue
+			return nil, xerrors.Wrap(errUnparsedFinding, s.file+": "+line)
 		}
+
 		row, rowErr := strconv.Atoi(m[1])
 		col, colErr := strconv.Atoi(m[2])
+
 		if rowErr != nil || colErr != nil {
-			continue
+			return nil, xerrors.Wrap(errUnparsedFinding, s.file+": 行・桁が数値ではありません: "+line)
 		}
+
 		findings = append(findings, fmt.Sprintf("  %s:%d:%d:%s", s.file, lineBase+row, col+s.colBase, m[3]))
 	}
-	return findings
+
+	return findings, nil
 }
