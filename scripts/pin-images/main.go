@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
@@ -102,17 +103,15 @@ var (
 	// errCreatedUnparsable は、inspect 出力から image config の created を解析できなかった場合のエラー。
 	errCreatedUnparsable = xerrors.New("created を解析できません")
 	// errLockInvalidLine は、lockfile に代入として解釈できない行があった場合のエラー。
-	errLockInvalidLine = xerrors.New("lockfile に解釈できない行があります")
-	// errLockDuplicateKey は、lockfile に同一キーが複数回現れた場合のエラー。
+	errLockInvalidLine  = xerrors.New("lockfile に解釈できない行があります")
 	errLockDuplicateKey = xerrors.New("lockfile にキーの重複があります")
 	// errLockMissingImage は、参照されている image が lockfile に登録されていない場合のエラー。
 	errLockMissingImage = xerrors.New("lockfile に未登録の base image があります")
 	// errPinDrift は、check で未固定・lockfile 不一致の image 参照を検出した場合のエラー。
-	errPinDrift = xerrors.New("image 参照が未固定か lockfile と不一致です")
-	// errNoStepBack は、退行先の無い出来立て digest しか無く採用を見送った場合のエラー。
-	errNoStepBack = xerrors.New("退行先の無い出来立て image は採用できません")
-	// errLooseRef は、固定対象として解釈できない image 参照を検出した場合のエラー。
-	errLooseRef = xerrors.New("固定対象として解釈できない image 参照があります")
+	errPinDrift       = xerrors.New("image 参照が未固定か lockfile と不一致です")
+	errNoStepBack     = xerrors.New("退行先の無い出来立て image は採用できません")
+	errLooseRef       = xerrors.New("固定対象として解釈できない image 参照があります")
+	errMissingRewrite = xerrors.New("書き換え対象に内容の対応が無いパスがあります")
 )
 
 // target は走査対象のファイルと、その参照行を捕捉する正規表現（prefix/ref/suffix の 3 グループ）。
@@ -129,7 +128,8 @@ type target struct {
 	exemptTagless func(data string) map[string]bool
 }
 
-// imageRef は FROM が参照する registry image 1 件。key は image:tag。
+// imageRef は registry image を指す参照 1 件（FROM / compose の image: / uses: docker:// /
+// service の image: のいずれか）。key は image:tag。
 type imageRef struct {
 	image string // 例: golang, nginx, ghcr.io/foo/bar
 	tag   string // 例: 1.26.5-alpine
@@ -230,8 +230,7 @@ func targetFiles(root string) ([]target, error) {
 // 一致ゼロになり、その状態は「固定漏れ無し」と区別が付かない。緩いパターンで補い、残った行は
 // 呼び出し元が fail-close する。
 //
-// ブロックスカラーの中身は YAML の構造ではなく単なるテキストなので走査から外す。外さないと
-// `run:` スクリプトが uses: を含む文字列を出力するだけで検出が誤爆する。
+// ブロックスカラーの中身は判定対象から外す（理由は scripts/lib/yamlblock の package doc）。
 func detectLooseRefs(data string, t target) []int {
 	blanked := t.re.ReplaceAllStringFunc(data, func(line string) string {
 		return strings.Repeat(" ", len(line))
@@ -324,8 +323,9 @@ func globFiles(root, pat string) ([]string, error) {
 	return m, nil
 }
 
-// parseRef は FROM / compose image の ref を image:tag へ分解する。第2戻り値が false なら対象外
-// （tag 無し＝ビルドステージ参照 / scratch、あるいは registry port を tag と誤認する形）。
+// parseRef は image 参照の ref を image:tag へ分解する（対象4種いずれも共通）。第2戻り値が
+// false なら対象外（tag 無し＝ビルドステージ参照 / scratch、あるいは registry port を tag と
+// 誤認する形）。
 func parseRef(ref string) (imageRef, bool) {
 	name, _, _ := strings.Cut(ref, "@") // 既存の @digest を捨てる
 	image, tag, ok := lastColonSplit(name)
@@ -523,7 +523,8 @@ func inspect(ctx context.Context, ref string, extra ...string) (string, error) {
 	return string(out), nil
 }
 
-// rewritePins は lock を元に FROM を digest 固定した内容と、lock 未登録の image キー一覧を返す。
+// rewritePins は lock を元に image 参照（対象4種いずれも共通）を digest 固定した内容と、lock
+// 未登録の image キー一覧を返す。
 // lock に無い image は「未登録」として報告し、行は書き換えない（digest は剥がさない）。
 func rewritePins(data string, re *regexp.Regexp, lock map[string]string) (string, []string) {
 	var missing []string
@@ -546,9 +547,7 @@ func rewritePins(data string, re *regexp.Regexp, lock map[string]string) (string
 // applyOrCheck は lockfile を SSOT に FROM を digest 固定する。dryRun=true は書き換えず
 // 未固定/未登録/drift を非ゼロ終了で報告する。tag のみへ戻す正規化はしない（fail-closed）。
 //
-// 全ファイルを読み切って未登録の有無を確定させてから書き込む。1 ファイルずつ書きながら進むと、
-// 後続ファイルの未登録参照で中断したときに「exit 1 なのに作業ツリーは書き換え済み」という
-// 中途半端な状態が残る。
+// 書き出す前に全て確定させる方針は scripts/README.md の Test Strategy が持つ。
 func applyOrCheck(root string, targets []target, dryRun bool) error {
 	if err := validateLoose(root, targets); err != nil {
 		return err
@@ -558,37 +557,71 @@ func applyOrCheck(root string, targets []target, dryRun bool) error {
 		return xerrors.Wrap(err, "read lockfile（先に make pin-images-resolve を実行してください）")
 	}
 	var missing, drifted, pending []string
-	rewritten := map[string]string{}
+	original := map[string]string{}
+	current := map[string]string{}
+	var order []string
 	for _, t := range targets {
-		data, err := os.ReadFile(t.path)
-		if err != nil {
-			return xerrors.Wrap(err, "read "+rel(root, t.path))
+		if _, ok := current[t.path]; !ok {
+			data, err := os.ReadFile(t.path)
+			if err != nil {
+				return xerrors.Wrap(err, "read "+rel(root, t.path))
+			}
+			original[t.path] = string(data)
+			current[t.path] = string(data)
+			order = append(order, t.path)
 		}
-		out, miss := rewritePins(string(data), t.re, lock)
+		out, miss := rewritePins(current[t.path], t.re, lock)
 		missing = append(missing, miss...)
-		if out == string(data) {
-			continue
-		}
-		if dryRun {
-			drifted = append(drifted, rel(root, t.path))
-			continue
-		}
-		pending = append(pending, t.path)
-		rewritten[t.path] = out
+		current[t.path] = out
 	}
 
 	if err := validateMissing(missing); err != nil {
 		return err
 	}
 
-	for _, path := range pending {
-		if err := os.WriteFile(path, []byte(rewritten[path]), filePerm); err != nil {
-			return xerrors.Wrap(err, "write "+rel(root, path))
+	rewritten := map[string]string{}
+	for _, path := range order {
+		if current[path] == original[path] {
+			continue
 		}
+		if dryRun {
+			drifted = append(drifted, rel(root, path))
+			continue
+		}
+		pending = append(pending, path)
+		rewritten[path] = current[path]
+	}
+
+	changes, err := changesOf(pending, rewritten)
+	if err != nil {
+		return err
+	}
+
+	// rename 中に落ちる窓は atomicwrite.Apply 側の既知の残余（scripts/lib/atomicwrite）。
+	if err := atomicwrite.Apply(changes, filePerm); err != nil {
+		return err
+	}
+
+	for _, path := range pending {
 		log.Printf("  updated %s", rel(root, path))
 	}
 
 	return report(drifted, dryRun, len(pending))
+}
+
+// changesOf は、書き換え対象のパス一覧と内容の対応から、書き込み用の対応表を組みます。
+// 対応を持たないパスはエラーにする。
+func changesOf(paths []string, rewritten map[string]string) (map[string]string, error) {
+	changes := make(map[string]string, len(paths))
+	for _, path := range paths {
+		body, ok := rewritten[path]
+		if !ok {
+			return nil, xerrors.Wrap(errMissingRewrite, path)
+		}
+		changes[path] = body
+	}
+
+	return changes, nil
 }
 
 // validateMissing は lockfile 未登録の image があればエラーを返す。書き込みより前に呼ぶことで、

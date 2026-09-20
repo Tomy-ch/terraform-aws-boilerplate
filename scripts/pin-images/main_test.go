@@ -28,7 +28,6 @@ const (
 // createdLayout は docker buildx imagetools inspect --format が出力する created の形式。
 const createdLayout = "2006-01-02 15:04:05 -0700 MST"
 
-// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。
 var errWD = xerrors.New("getwd failed")
 
 // usesTarget / composeTarget / dockerfileTarget は、ファイルを介さず走査対象 1 件を組み立てる。
@@ -44,7 +43,6 @@ func dockerfileTarget() target {
 	return target{re: fromRe, loose: fromLooseRe, exemptTagless: dockerfileExemptTagless}
 }
 
-// testTargets は root 配下の走査対象を集める。
 func testTargets(t *testing.T, root string) []target {
 	t.Helper()
 	targets, err := targetFiles(root)
@@ -91,7 +89,6 @@ func useDockerStub(t *testing.T, body string) {
 	t.Setenv("PATH", writeDockerStub(t, body)+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// captureLog は log の出力先を差し替え、書き込まれた内容を読めるようにする。
 func captureLog(t *testing.T) *strings.Builder {
 	t.Helper()
 	var b strings.Builder
@@ -312,7 +309,6 @@ func Test_targetFiles(t *testing.T) {
 
 			targets, err := targetFiles(root)
 			require.NoError(t, err)
-			// Dockerfile / compose が 1 つずつ、workflow が 2 つ。
 			require.Len(t, targets, 4)
 			for _, tg := range targets {
 				assert.NotNil(t, tg.loose, tg.path)
@@ -1339,6 +1335,51 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 	})
 }
 
+func Test_changesOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("パスと内容の対応をそのまま組む", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := changesOf([]string{"b", "a"}, map[string]string{"a": "A", "b": "B", "c": "C"})
+
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{"a": "A", "b": "B"}, got)
+		})
+
+		t.Run("対象が空なら空の対応表を返す", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := changesOf(nil, map[string]string{"a": "A"})
+
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// ゼロ値を通すと、そのファイルが空で atomic に上書きされる。呼び出し側が
+		// pending と rewritten を組み違えた場合に、成功として通さない。
+		t.Run("内容の対応が無いパスがあればエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := changesOf(
+				[]string{"docker/app/Dockerfile", "docker-compose.yaml"},
+				map[string]string{"docker/app/Dockerfile": "FROM alpine\n"},
+			)
+
+			require.ErrorIs(t, err, errMissingRewrite)
+			assert.ErrorContains(t, err, "docker-compose.yaml")
+			assert.Nil(t, got)
+		})
+	})
+}
+
 func Test_applyOrCheck(t *testing.T) {
 	t.Parallel()
 
@@ -1372,6 +1413,26 @@ func Test_applyOrCheck(t *testing.T) {
 
 			assert.Equal(t,
 				"      - uses: actions/checkout@v7\n      - uses: docker://alpine:3.24@"+digestAlpine+"\n",
+				readAll(t, wf))
+		})
+
+		// 同じ workflow に uses: docker:// と service の image: が両方あると、target が
+		// 2 件登録される。原本を読み直す実装では後の target が先の固定を踏み潰し、片方が
+		// 未固定のまま「更新した」と報告された。
+		t.Run("同じファイルに2つの target が掛かっても両方とも固定する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			wf := filepath.Join(root, ".github", "workflows", "ci.yaml")
+			writeFile(t, wf, "    services:\n      db:\n        image: alpine:3.24\n"+
+				"    steps:\n      - uses: docker://golang:1.26-alpine\n")
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "docker"), 0o750))
+			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+
+			require.NoError(t, applyOrCheck(root, testTargets(t, root), false))
+
+			assert.Equal(t,
+				"    services:\n      db:\n        image: alpine:3.24@"+digestAlpine+"\n"+
+					"    steps:\n      - uses: docker://golang:1.26-alpine@"+digestGolang+"\n",
 				readAll(t, wf))
 		})
 
@@ -1460,21 +1521,51 @@ func Test_applyOrCheck(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
+		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
+		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
 		t.Run("固定後の書き込みに失敗すればエラーを返す", func(t *testing.T) {
 			t.Parallel()
 			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用ファイルへも書けるため検証できない")
+				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 			}
 			root := t.TempDir()
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			writeFile(t, df, "FROM alpine:3.24\n")
 			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
-			require.NoError(t, os.Chmod(df, 0o400))
+			require.NoError(t, os.Chmod(filepath.Dir(df), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(df), 0o700) })
 
 			err := applyOrCheck(root, testTargets(t, root), false)
 
 			require.ErrorIs(t, err, os.ErrPermission)
-			assert.ErrorContains(t, err, filepath.Join("docker", "app", "Dockerfile"))
+		})
+
+		// 「exit 1 なのに一部だけ書き換わっている」状態を残さない。validate の前倒しは
+		// 未登録参照による中断を防ぐが、書き込み自体の I/O 失敗はそれとは別の窓である。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			if os.Geteuid() == 0 {
+				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
+			}
+
+			root := t.TempDir()
+			body := "FROM alpine:3.24\n"
+			// 走査対象は docker/*/Dockerfile の glob。パスの昇順で app が先、zz が後になる。
+			first := filepath.Join(root, "docker", "app", "Dockerfile")
+			second := filepath.Join(root, "docker", "zz", "Dockerfile")
+			writeFile(t, first, body)
+			writeFile(t, second, body)
+			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+
+			targets := testTargets(t, root)
+			require.NoError(t, os.Chmod(filepath.Dir(second), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(second), 0o700) })
+
+			require.Error(t, applyOrCheck(root, targets, false))
+
+			got, err := os.ReadFile(first) //nolint:gosec // G304: テストが自分で作った t.TempDir() 配下のみ
+			require.NoError(t, err)
+			assert.Equal(t, body, string(got), "先に処理したファイルが書き換わっている")
 		})
 	})
 }
@@ -1534,7 +1625,6 @@ func Test_validateMissing(t *testing.T) {
 	})
 }
 
-// readAll はテスト対象が書き換えたファイルの内容を返す。
 func readAll(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir 配下
@@ -1542,7 +1632,6 @@ func readAll(t *testing.T, path string) string {
 	return string(b)
 }
 
-// stubWD は、固定のディレクトリを返す作業ディレクトリの取得手段です。
 func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }

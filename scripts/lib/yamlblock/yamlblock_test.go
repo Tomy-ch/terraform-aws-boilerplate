@@ -9,7 +9,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
 )
 
-// lines は行の並びを 1 つの内容へ組み立てる。
 func lines(rows ...string) string {
 	return strings.Join(rows, "\n")
 }

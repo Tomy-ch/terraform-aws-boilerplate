@@ -55,10 +55,8 @@ jobs:
           egress-policy: audit
 `
 
-// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。
 var errWD = xerrors.New("getwd failed")
 
-// testWorkflow は allowed-endpoints ブロックを 1 つ持つ workflow の雛形を返す。
 func testWorkflow(jobID string, hosts ...string) string {
 	var b strings.Builder
 	b.WriteString("name: T\n\njobs:\n  " + jobID + ":\n    steps:\n")
@@ -71,7 +69,6 @@ func testWorkflow(jobID string, hosts ...string) string {
 	return b.String()
 }
 
-// newTestRepo は SSOT と workflow を持つ一時リポジトリを作り、その root を返す。
 func newTestRepo(t *testing.T, workflows map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -886,6 +883,26 @@ func Test_writeChanges(t *testing.T) {
 			root := t.TempDir()
 			err := writeChanges(root, map[string]string{filepath.Join(root, "missing", "a.yaml"): "body"}, false)
 			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		// 「exit 1 なのに一部だけ書き換わっている」状態を残さない。呼び出し側には
+		// エラーしか見えないので、部分適用が起きると区別できなくなる。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			first := filepath.Join(root, "a.yaml")
+			require.NoError(t, os.WriteFile(first, []byte("old"), 0o600))
+
+			err := writeChanges(root, map[string]string{
+				first:                                    "new",
+				filepath.Join(root, "missing", "b.yaml"): "new",
+			}, false)
+
+			require.Error(t, err)
+
+			got, readErr := os.ReadFile(first) //nolint:gosec // path from t.TempDir
+			require.NoError(t, readErr)
+			assert.Equal(t, "old", string(got), "先に処理したファイルが書き換わっている")
 		})
 	})
 }

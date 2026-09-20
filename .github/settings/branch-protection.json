@@ -90,6 +90,9 @@
             "context": "trivy-config"
           },
           {
+            "context": "versions-check"
+          },
+          {
             "context": "zizmor"
           }
         ]

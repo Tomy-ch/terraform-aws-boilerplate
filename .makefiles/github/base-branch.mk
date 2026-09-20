@@ -2,7 +2,6 @@
 # -----ホスト上で実行するコマンド群-----
 .PHONY: base-branch ## 最新のリリースライン(release/vX.Y.Z)のブランチ名を1行で出力する
 
-# -----ホスト上で実行するコマンド群-----
 # 解決は scripts/base-branch（テスト付き）が持つ。origin/HEAD も GitHub のデフォルトブランチも
 # 古い答えを黙って返す理由と「最新」の定義は scripts/base-branch のパッケージコメント。
 #

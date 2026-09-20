@@ -81,7 +81,6 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "ADR 1 件")
 	})
 
-	// 退化した入力の pin。検査対象を持たないまま緑を返さない。
 	t.Run("ADR が0件なら成功で返さない", func(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{"README.md": index()})

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -554,10 +555,12 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 
 		return nil
 	}
+	// 半端な書き換えを残さない実装は atomicwrite.Apply が持つ（scripts/lib/atomicwrite）。
+	if err := atomicwrite.Apply(changes, filePerm); err != nil {
+		return err
+	}
+
 	for _, f := range paths {
-		if err := os.WriteFile(f, []byte(changes[f]), filePerm); err != nil { //nolint:gosec // path from cwd glob
-			return xerrors.Wrap(err, "write "+relTo(root, f))
-		}
 		log.Printf("  updated %s", relTo(root, f))
 	}
 	log.Printf("✅ %d ファイルへ反映しました", len(paths))

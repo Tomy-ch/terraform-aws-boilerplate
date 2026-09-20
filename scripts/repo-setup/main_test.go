@@ -18,7 +18,6 @@ import (
 const (
 	// missingCommand は、PATH に存在しない実行ファイル名。失敗する手順を組み立てるために使います。
 	missingCommand = "gobp-repo-setup-missing-command"
-	// ghRepoViewCall は、リポジトリ名を引く output 呼び出しの記録表記。
 	ghRepoViewCall = `gh repo view --json name,owner -q .owner.login + "/" + .name`
 	// initialTagCall / initialTagPushCall は、初期タグを打つ 2 手順の記録表記。
 	initialTagCall     = "git tag -a v0.0.0 -m Initial boilerplate tag"
@@ -27,7 +26,6 @@ const (
 	branchPushCall = "git push origin develop staging production"
 )
 
-// errFakeCommand は、差し替えた実行器が返す失敗。
 var errFakeCommand = xerrors.New("fake command failed")
 
 // fakeRunner は、git / gh を一切起動せず呼び出しの並びだけを控える実行器。
@@ -40,12 +38,10 @@ type fakeRunner struct {
 	outputs map[string]string
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	// allowFail は実行層の責務なのでここでは解釈しません。
-	failOn string
-	// branches は、branchExists が true を返すブランチ。
+	failOn   string
 	branches map[string]bool
 }
 
-// runner は、この実行器を差し込んだ runner を返します。
 func (f *fakeRunner) runner() runner {
 	return runner{run: f.run, output: f.output, branchExists: f.branchExists}
 }

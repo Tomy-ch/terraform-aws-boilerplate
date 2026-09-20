@@ -72,7 +72,6 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"-workflows", dir}, &out))
 	})
 
-	// 退化した入力の pin。
 	t.Run("コメント投稿 job が0件なら成功で返さない", func(t *testing.T) {
 		t.Parallel()
 		dir := writeWorkflows(t, map[string]string{"a.yaml": "jobs:\n  x:\n    runs-on: y\n"})
@@ -212,9 +211,7 @@ func Test_secretName(t *testing.T) {
 	}
 }
 
-// ここから下は輸入した検査項目。
-
-func Test_secretReferences_輸入したケース(t *testing.T) {
+func Test_secretReferences_式の書き方の差(t *testing.T) {
 	t.Parallel()
 
 	t.Run("複数行にまたがる式でも中身を見る", func(t *testing.T) {
@@ -250,7 +247,7 @@ func Test_secretReferences_輸入したケース(t *testing.T) {
 	})
 }
 
-func Test_scanWorkflow_輸入したケース(t *testing.T) {
+func Test_scanWorkflow_許可された参照とenvの切り分け(t *testing.T) {
 	t.Parallel()
 
 	t.Run("許可された GITHUB_TOKEN だけなら違反にしない", func(t *testing.T) {

@@ -339,6 +339,7 @@ func Test_parseAction(t *testing.T) {
 			t.Parallel()
 			_, err := parseAction("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 
@@ -647,6 +648,7 @@ func Test_countRunSteps(t *testing.T) {
 			t.Parallel()
 			count, err := countRunSteps("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "decode action.yaml")
 			assert.Zero(t, count)
 		})
@@ -655,6 +657,7 @@ func Test_countRunSteps(t *testing.T) {
 			t.Parallel()
 			count, err := countRunSteps("action.yaml", []byte("runs: &r\n  steps: *r\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "decode action.yaml")
 			assert.Zero(t, count)
 		})
@@ -892,7 +895,8 @@ func Test_remapFindings(t *testing.T) {
 			t.Parallel()
 			s := step{file: ".github/actions/a/action.yaml", firstLine: 9}
 			out := "-:3:15: note: Double quote to prevent globbing [SC2086]\n"
-			findings := remapFindings(s, out)
+			findings, err := remapFindings(s, out)
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], ".github/actions/a/action.yaml:10:15:")
 			assert.Contains(t, findings[0], "[SC2086]")
@@ -901,7 +905,8 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("列番号は本文のインデント幅だけずらす", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9, colBase: 8}
-			findings := remapFindings(s, "-:3:15: note: msg [SC2086]\n")
+			findings, err := remapFindings(s, "-:3:15: note: msg [SC2086]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:10:23:")
 		})
@@ -909,7 +914,8 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("本文 1 行目の指摘は本文開始行を指す", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9}
-			findings := remapFindings(s, "-:2:1: note: msg [SC1000]\n")
+			findings, err := remapFindings(s, "-:2:1: note: msg [SC1000]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:9:1:")
 		})
@@ -917,45 +923,62 @@ func Test_remapFindings(t *testing.T) {
 		t.Run("shebang 行の指摘は run キー行を指す", func(t *testing.T) {
 			t.Parallel()
 			s := step{file: "action.yaml", firstLine: 9}
-			findings := remapFindings(s, "-:1:1: error: msg [SC1008]\n")
+			findings, err := remapFindings(s, "-:1:1: error: msg [SC1008]\n")
+			require.NoError(t, err)
 			require.Len(t, findings, 1)
 			assert.Contains(t, findings[0], "action.yaml:8:1:")
 		})
 
 		t.Run("指摘なしなら空を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 1}, ""))
+			findings, err := remapFindings(step{file: "action.yaml", firstLine: 1}, "")
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+		})
+
+		t.Run("指摘の間の空行を読み飛ばす", func(t *testing.T) {
+			t.Parallel()
+			out := "-:3:15: note: A [SC2086]\n\n-:4:1: note: B [SC2034]\n"
+			findings, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.NoError(t, err)
+			assert.Len(t, findings, 2)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("解析できない行は無視する", func(t *testing.T) {
+		// 解釈できない行を黙って捨てると、出力形式が変わった日に「指摘なし」と
+		// 「1行も解釈できなかった」が緑で区別できなくなる（ADR-0702 決定14）。
+		t.Run("解析できない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 1}, "unexpected output\n"))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 1}, "unexpected output\n")
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("行番号が整数として読めない行は無視する", func(t *testing.T) {
+		t.Run("行番号が整数として読めない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:99999999999999999999:15: note: msg [SC2086]\n"
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 9}, out))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("列番号が整数として読めない行は無視する", func(t *testing.T) {
+		t.Run("列番号が整数として読めない行はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:3:99999999999999999999: note: msg [SC2086]\n"
-			assert.Empty(t, remapFindings(step{file: "action.yaml", firstLine: 9}, out))
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 
-		t.Run("読める行と読めない行が混ざれば読める行だけを返す", func(t *testing.T) {
+		// **読める行だけを返してはならない。** 1行でも解釈できなければ、その実行は
+		// 「何件見たか」を答えられていない。
+		t.Run("読める行と読めない行が混ざってもエラーにする", func(t *testing.T) {
 			t.Parallel()
 			out := "-:99999999999999999999:15: note: broken [SC2086]\n-:3:15: note: msg [SC2086]\n"
 
-			findings := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
+			_, err := remapFindings(step{file: "action.yaml", firstLine: 9}, out)
 
-			require.Len(t, findings, 1)
-			assert.Contains(t, findings[0], "action.yaml:10:15:")
+			require.ErrorIs(t, err, errUnparsedFinding)
 		})
 	})
 }
@@ -1195,6 +1218,7 @@ func Test_requireSingleDocument(t *testing.T) {
 			t.Parallel()
 			err := requireSingleDocument("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 
@@ -1202,6 +1226,7 @@ func Test_requireSingleDocument(t *testing.T) {
 			t.Parallel()
 			err := requireSingleDocument("action.yaml", []byte("name: a\n---\nruns: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 	})
@@ -1728,6 +1753,22 @@ func Test_run(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// 0 件は成功ではない（ADR-0702 決定13）。対象を失った検査は、壊れた日に
+		// 赤ではなく緑を返す。「指摘が無かった」と「何も見なかった」を区別し続ける。
+		t.Run("走査対象の composite action が1件も無ければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			require.ErrorIs(t, run(t.Context(), stubWD(t.TempDir()), stubLookPath(nil)), errNoTargets)
+		})
+
+		t.Run("action 定義の置き場が空ならエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, actionsDir), 0o750))
+
+			require.ErrorIs(t, run(t.Context(), stubWD(root), stubLookPath(nil)), errNoTargets)
+		})
 
 		t.Run("shellcheck が PATH に無ければ走査へ進まず失敗する", func(t *testing.T) {
 			t.Parallel()

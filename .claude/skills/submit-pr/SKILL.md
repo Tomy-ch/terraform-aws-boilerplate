@@ -16,7 +16,7 @@ The PR body is filled from `.github/pull_request_template.md`. The skill never a
 ## Preconditions
 
 - `gh` CLI is installed and authenticated (`gh auth status` succeeds).
-- Current branch is not a protected branch (`production` / `develop` / `staging` / `release/*`).
+- Current branch is not a protected branch（判定は Step 0）。
 - Working tree is clean. If there are uncommitted changes, the skill aborts and suggests running `/commit` first.
 
 ## Step 0. Pre-flight Checks
@@ -33,9 +33,20 @@ gh auth status
 
 Bail out if any of the following:
 
-- Branch matches `^(production|develop|staging|release/.+)$` → tell the user to switch to a feature branch.
+- Branch is a protected branch → tell the user to switch to a feature branch.
 - `git status --porcelain` is non-empty → tell the user to run `/commit` (or stash) first.
 - `gh auth status` fails → tell the user to run `gh auth login`.
+
+**保護対象のパターンを写さない**（ADR-0603 決定3、`AGENTS.md` *Git 規約*）。単一の宣言はまだ
+作成されておらず（`AGENTS.md` *現在の配線状態*）、今日それを持っているのは保護設定の宣言側である:
+
+```sh
+git rev-parse --abbrev-ref HEAD
+jq -r '.conditions.ref_name.include[]' .github/settings/branch-protection.json
+```
+
+現在のブランチが、その一覧のいずれか（`refs/heads/` を外し、`**/*` を glob として読む）に
+当たるなら保護ブランチである。
 
 The four valid working states going into Step 2:
 
@@ -75,7 +86,7 @@ Why a clean cancel rather than a pause-and-resume: a local review commonly produ
 
 **Depth by change type** — scale the recommendation to what the diff touches (this same scaling also drives the post-PR review at Step 9):
 
-- **Behavior-affecting code** (`modules/**` `.tf`, `scripts/**` `.go`, gate declarations under `.github/`) → recommend the review by default.
+- **Behavior-affecting code** (`modules/**` / `examples/**` の `.tf`、`scripts/**` の `.go`、`.github/` 配下の宣言) → recommend the review by default.
 - **Docs / tooling-dominant changes** (`docs/**`, `*.md`, `.claude/**`, `AGENTS.md`, CI config — no production behavior change) → note the lower ROI so the user can decline quickly; still ask.
 
 Judge the dominant nature of the diff (changed paths / commit prefixes) for the default recommendation, but the user's choice always wins.
@@ -140,8 +151,10 @@ Strip the HTML comment placeholders. If the template is absent, fall back to the
 Fill each template section in Japanese:
 
 - **概要**: 1–3 sentences summarizing the PR's intent. Use commit messages as the primary source.
-- **変更内容**: Bullet list grouped by area (API / DB / 内部ロジック / テスト / ドキュメント など). Reference changed files and commit titles. Group meaningfully — do not paste a raw file list.
-- **動作確認方法**: 実行した検査と、それが何と言ったか。結論したことではなく。未配線の道具について「実行した」と書かない（AGENTS.md「現在の配線状態」）。
+- **変更内容**: Bullet list grouped by area (ユースケース / 運用機構 / CI / 宣言 / テスト / ドキュメント など). Reference changed files and commit titles. Group meaningfully — do not paste a raw file list.
+- **動作確認方法**: 実行した検査と、それが何と言ったか。結論したことではなく。
+  **未配線の道具について「実行した」と書かない**（`AGENTS.md` *現在の配線状態*）—— Terraform 側の
+  検査（TFLint / Conftest / `terraform test`）と plan / apply の経路は、まだ `make` に無い。
 
 If the branch name encodes an issue number, append `closes #N` at the bottom of the body (or fold it into 概要 if natural).
 
@@ -201,13 +214,6 @@ push した時点では CI がまだ何も言っていない。**Step 8 の報�
 
 ## Step 7. Create or Update the PR
 
-Stamp the phase as soon as the PR exists. GitHub records a creation time too, but the two answer
-different questions and the join to it holds only about two thirds of the time:
-
-```sh
-.agents/closed-loop/marks.sh prOpenedAt 2>/dev/null || true
-```
-
 ### Create the PR
 
 ```sh
@@ -237,8 +243,9 @@ EOF
 
 Print the PR URL and a brief summary in Japanese. **CI の結果を `gh pr checks --watch` で待ち、
 その判定をこの報告に含める。** 落ちたものがあれば、失敗したステップのログから読んで報告する
-（AGENTS.md *使うコマンド*）—— 実行全体のログを引くと、失敗と無関係な出力が大量に混じる。
-**検査が落ちている Pull Request を「検証済み」と書かない。**
+（`AGENTS.md` *使うコマンド*）—— 実行全体のログを引くと、失敗と無関係な出力が大量に混じる。
+**検査が落ちている Pull Request を「検証済み」と書かない**（merge の可否は実環境への適用の可否と
+同義である。[ADR-0601](../../../docs/adr/0601-change-delivery-path.md) 決定10）。
 
 For the create path:
 
@@ -273,7 +280,7 @@ Scale the default recommendation to what changed, using the **Depth by change ty
 
 ## Constraints
 
-- ❌ Push to protected branches (`production` / `develop` / `staging` / `release/*`)
+- ❌ Push to a protected branch（`.github/settings/branch-protection.json` が持つ一覧）
 - ❌ `git push --force` / `--force-with-lease` (only with explicit user instruction)
 - ❌ Auto-update an existing PR's title or body (only on explicit user request)
 - ❌ Push while the working tree has uncommitted changes

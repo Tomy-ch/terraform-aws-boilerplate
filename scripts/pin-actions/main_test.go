@@ -32,10 +32,8 @@ var (
 )
 
 var (
-	// errAge は、ageFn の失敗伝播を検証するためのセンチネルです。
 	errAge = xerrors.New("age lookup failed")
-	// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。
-	errWD = xerrors.New("getwd failed")
+	errWD  = xerrors.New("getwd failed")
 )
 
 func testLock() map[string]string {
@@ -234,7 +232,6 @@ func Test_readLock(t *testing.T) {
 	})
 }
 
-// writeLockFile は body を lockfile として一時ディレクトリへ書き出し、そのパスを返す。
 func writeLockFile(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "actions-pin.toml")
@@ -853,12 +850,12 @@ func Test_planRewrites(t *testing.T) {
 
 			_, err := planRewrites(root, []string{filepath.Join(root, "absent.yml")}, testLock())
 
+			require.ErrorIs(t, err, os.ErrNotExist)
 			require.ErrorContains(t, err, "absent.yml")
 		})
 	})
 }
 
-// writeFile は root からの相対パスへ body を書き出し、その絶対パスを返す。
 func writeFile(t *testing.T, root, name, body string) string {
 	t.Helper()
 	path := filepath.Join(root, name)
@@ -963,6 +960,7 @@ func Test_collectKeys(t *testing.T) {
 
 			_, err := collectKeys(root, []string{filepath.Join(root, "absent.yml")})
 
+			require.ErrorIs(t, err, os.ErrNotExist)
 			require.ErrorContains(t, err, "absent.yml")
 		})
 	})
@@ -1614,19 +1612,48 @@ func Test_applyOrCheck(t *testing.T) {
 			require.Error(t, applyOrCheck(root, []string{path}, false))
 		})
 
+		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
+		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
 		t.Run("apply で書き込めなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeLockAt(t, root, lock)
 			path := writeFile(t, root, ".github/workflows/a.yml", "      - uses: actions/setup-go@v6\n")
-			require.NoError(t, os.Chmod(path, 0o400))
-			t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 
 			if os.Geteuid() == 0 {
 				t.Skip("特権実行では読み取り専用にしても書き込みが通ってしまい、失敗を作れない")
 			}
 
+			require.NoError(t, os.Chmod(filepath.Dir(path), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o700) })
+
 			require.Error(t, applyOrCheck(root, []string{path}, false))
+		})
+
+		// 「exit 1 なのに一部だけ書き換わっている」状態を残さない。
+		// 呼び出し側にはエラーしか見えないので、部分適用が起きると
+		// 「失敗した」と「一部だけ適用された」が区別できなくなる。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			if os.Geteuid() == 0 {
+				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
+			}
+
+			root := t.TempDir()
+			writeLockAt(t, root, lock)
+
+			body := "      - uses: actions/setup-go@v6\n"
+			first := writeFile(t, root, ".github/workflows/a.yml", body)
+			second := writeFile(t, root, "blocked/b.yml", body)
+
+			require.NoError(t, os.Chmod(filepath.Dir(second), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(second), 0o700) })
+
+			require.Error(t, applyOrCheck(root, []string{first, second}, false))
+
+			got, err := os.ReadFile(first) //nolint:gosec // G304: テストが自分で作った t.TempDir() 配下のみ
+			require.NoError(t, err)
+			assert.Equal(t, body, string(got), "先に処理したファイルが書き換わっている")
 		})
 	})
 }
@@ -1798,7 +1825,6 @@ func Test_relAll(t *testing.T) {
 	})
 }
 
-// writeLockAt は root 配下の既定パスへ lockfile を書き出す。
 func writeLockAt(t *testing.T, root string, lock map[string]string) {
 	t.Helper()
 	path := filepath.Join(root, lockFile)
@@ -1869,7 +1895,6 @@ func agoRFC3339(n int) string {
 	return time.Now().Add(-time.Duration(n)*hoursPerDay*time.Hour - time.Minute).Format(time.RFC3339)
 }
 
-// stubWD は、固定のディレクトリを返す作業ディレクトリの取得手段です。
 func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }

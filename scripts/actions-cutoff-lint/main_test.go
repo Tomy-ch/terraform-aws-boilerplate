@@ -55,11 +55,11 @@ func Test_run(t *testing.T) {
 
 	t.Run("reusable workflow 呼び出しは timeout の対象外", func(t *testing.T) {
 		t.Parallel()
-		// 呼び出し job には timeout-minutes を書けない（invalid key）。
+		// 呼び出し job には timeout-minutes を書けない（invalid key）。scanWorkflow は
+		// この job を checkedJobs の分母からも外す。
 		src := "jobs:\n  notify:\n    uses: ./.github/workflows/notify.yaml\n" + sound[len("jobs:\n"):]
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"-workflows", writeWorkflows(t, map[string]string{"a.yaml": "jobs:\n  notify:\n    uses: ./x.yaml\n  lint:\n    timeout-minutes: 1\n"})}, &out))
-		_ = src
+		require.NoError(t, run([]string{"-workflows", writeWorkflows(t, map[string]string{"a.yaml": src})}, &out))
 	})
 
 	t.Run("コメント投稿ステップに if: が無ければ落ちる", func(t *testing.T) {
@@ -75,7 +75,7 @@ func Test_run(t *testing.T) {
 
 	t.Run("if: が打ち切りに到達しなければ落ちる", func(t *testing.T) {
 		t.Parallel()
-		// failure() は cancelled では false になる。「status 関数を持つか」で書くと取り逃がす。
+		// failure() が cancelled で false になる理由は Test_reachesCancelled_式の書き方の差 を参照。
 		src := "jobs:\n  lint:\n    timeout-minutes: 1\n    steps:\n      - if: failure()\n        uses: ./.github/actions/upsert-pr-comment\n        with:\n          title: \"## ⚠️ CUT OFF\"\n"
 		var out bytes.Buffer
 		err := run([]string{"-workflows", writeWorkflows(t, map[string]string{"a.yaml": src})}, &out)
@@ -93,7 +93,6 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "打ち切り時の見出しがありません")
 	})
 
-	// 退化した入力の pin。
 	t.Run("検査対象の job が0件なら成功で返さない", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
@@ -185,7 +184,7 @@ func Test_scanWorkflow(t *testing.T) {
 
 	t.Run("reusable 呼び出しは checkedJobs に数えない", func(t *testing.T) {
 		t.Parallel()
-		// 呼び出し job には timeout-minutes を書けない（invalid key）ため、検査の分母から外す。
+		// 分母から外す理由は Test_run の「reusable workflow 呼び出しは timeout の対象外」を参照。
 		src := "jobs:\n  notify:\n    uses: ./.github/workflows/notify.yaml\n  lint:\n    timeout-minutes: 1\n"
 		got := scanWorkflow("a.yaml", src)
 		assert.Equal(t, 1, got.checkedJobs)
@@ -246,8 +245,6 @@ func Test_cutOffHeading(t *testing.T) {
 	assert.False(t, cutOffHeading.MatchString("cut off"))
 }
 
-// ここから下は輸入した検査項目。実運用で踏んだ形から足されたケースを、こちらの実装へ当て直す。
-
 func Test_hasJobTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -306,7 +303,7 @@ func Test_conditionOf_続き行の打ち切り(t *testing.T) {
 	assert.NotContains(t, got.value, "uses")
 }
 
-func Test_reachesCancelled_輸入したケース(t *testing.T) {
+func Test_reachesCancelled_式の書き方の差(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {

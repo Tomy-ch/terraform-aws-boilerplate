@@ -3,7 +3,7 @@ name: commit
 description: >-
   Analyze the current working-tree changes (staged + unstaged), group them into appropriately-scoped commits with the project's prefix convention (Feat / Fix / Refactor / Perf / Docs / Test / Build / CI / Chore / Style / Revert), and execute each commit in Japanese after user approval. Use it whenever changes are ready to be committed — 「コミットして」「変更をまとめて」. Respects `CLAUDE.md`'s git rules, and warns when the current branch's PR is already merged so a fresh branch is cut first. Do NOT use it to push or open a PR (`submit-pr`).
 argument-hint: '[--dry-run] [--scope=staged|all]'
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git reset:*), Bash(git fetch:*), Bash(git switch:*), Bash(gh pr view:*), Bash(make go-fmt:*), Bash(make go-lint:*), Bash(make go-test:*), Bash(lefthook run:*), Read, AskUserQuestion
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git add:*), Bash(git commit:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(git reset:*), Bash(git fetch:*), Bash(git switch:*), Bash(gh pr view:*), Bash(make go-fmt:*), Bash(make go-lint:*), Bash(make go-test:*), Bash(make base-branch:*), Bash(lefthook run:*), Read, AskUserQuestion
 ---
 
 # Commit
@@ -22,7 +22,10 @@ Run `make go-fmt` once at the very start to absorb formatting fixes. This remove
 make go-fmt
 ```
 
-If it fails, abort and report the failure to the user. Do not continue. Any changes it produces are folded into the working tree and become part of the candidate change set inspected in Step 2.
+`make go-fmt` は `scripts/` の Go だけを整形する。Markdown の体裁は `make md-fix` が持つが、
+そちらはリポジトリ全体に効くので Step 0 では走らせない —— この変更と無関係なファイルを巻き込む。
+
+If `make go-fmt` fails, abort and report the failure to the user. Do not continue. Any changes it produces are folded into the working tree and become part of the candidate change set inspected in Step 2.
 
 ## Step 1. Pre-flight Checks
 
@@ -39,11 +42,22 @@ git rev-parse --verify CHERRY_PICK_HEAD 2>/dev/null  # detect ongoing cherry-pic
 git rev-parse --verify REBASE_HEAD 2>/dev/null       # detect ongoing rebase
 ```
 
+**保護対象のパターンを写さない**（ADR-0603 決定3、`AGENTS.md` *Git 規約*）。単一の宣言はまだ
+作成されておらず（`AGENTS.md` *現在の配線状態*）、今日それを持っているのは保護設定の宣言側である:
+
+```sh
+git rev-parse --abbrev-ref HEAD
+jq -r '.conditions.ref_name.include[]' .github/settings/branch-protection.json
+```
+
+現在のブランチが、その一覧のいずれか（`refs/heads/` を外し、`**/*` を glob として読む）に
+当たるなら保護ブランチである。
+
 Save the current HEAD commit hash as `ORIGINAL_HEAD`. This is the rollback target if anything fails during Step 5.
 
 Bail out (do not commit) if any of the following:
 
-- Current branch matches `^(production|develop|staging|release/.+)$`. Per `CLAUDE.md` git rules, never commit to protected branches. Inform the user and ask them to create a feature branch first (e.g., `feature/<issue-or-topic>`).
+- Current branch is a **protected branch**（判定は下記）. Per `AGENTS.md` git rules, never commit to protected branches. Inform the user and ask them to create a feature branch first (e.g., `feature/<issue-or-topic>`).
 - Both staged and unstaged porcelain outputs are empty. Tell the user there is nothing to commit and stop.
 - Any of `MERGE_HEAD` / `CHERRY_PICK_HEAD` / `REBASE_HEAD` is set. The repository is mid-operation; ask the user to resolve that first.
 
@@ -100,9 +114,11 @@ git diff --name-only
 
 Treat the following as **rider files** — they never form their own commit, but ride along with the source change that produced them:
 
-- Generated regions and generated declarations: the terraform-docs region in a `README.md`, `.terraform.lock.hcl`, `docker/images-pin.toml`, `.github/actions-pin.toml`, and every inline block written by `make egress-apply` / `make branches-apply`
+- 生成区間と生成された宣言: `README.md` の terraform-docs 区間、`.terraform.lock.hcl`、
+  `docker/images-pin.toml`、`.github/actions-pin.toml`、および `make egress-apply` /
+  `make versions-apply` が書くインラインブロック
 
-Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `.github/branches.toml` change brings the regenerated `branch-protection.json` include list and `on.push.branches` blocks.
+Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `mise.toml` version bump brings the `docker/tools/Dockerfile` の `FROM` と `scripts/go.mod` の `go` ディレクティブ（`make versions-apply` の出力）in the same commit.
 
 ## Step 3. Prefix Reference
 
@@ -110,16 +126,16 @@ Use exactly **one** of the following prefixes per commit (capitalized, English, 
 
 | Prefix | Purpose | Examples |
 | --- | --- | --- |
-| `Feat:` | New capability | A new use-case module, a new gate, a new operations tool under `scripts/` |
+| `Feat:` | New capability | A new use-case module under `modules/`, a new gate, a new operations tool under `scripts/` |
 | `Fix:` | Bug fix (correcting behavior that deviates from intent) | Error-handling fix, logic correction |
 | `Refactor:` | Internal cleanup without changing external behavior | Function split, rename, responsibility move, layer reorganization |
 | `Perf:` | Performance improvement | Query optimization, N+1 elimination, allocation reduction |
-| `Docs:` | Documentation change | `README*`, `docs/`, `*.ja.md`, code comments, release notes |
+| `Docs:` | Documentation change | `README*`, `docs/`, ADR, code comments, release notes |
 | `Test:` | Adding or fixing tests | `*_test.go`, test fixtures, test helpers |
-| `Build:` | Build system, dependencies, tooling | `Dockerfile`, `go.mod` / `go.sum`, `makefile`, `.makefiles/**`, `mise.toml` |
+| `Build:` | Build system, dependencies, tooling | `Dockerfile`, `scripts/go.mod` / `go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` |
 | `CI:` | CI/CD configuration | `.github/workflows/**`, `.lefthook.yaml`, GitHub Actions related |
 | `Chore:` | Miscellaneous chores | `.gitignore`, editor settings, `.claude/**`, other small tasks |
-| `Style:` | Formatting-only changes that do not affect logic | Output of `make go-fmt` |
+| `Style:` | Formatting-only changes that do not affect logic | Output of `make go-fmt` / `make md-fix` |
 | `Revert:` | Undoing an existing commit | Output of `git revert`, or an equivalent manual revert |
 
 Do not invent prefixes outside this list. When ambiguous, choose the closest match (most cases are one of `Feat` / `Fix` / `Refactor`).
@@ -128,13 +144,13 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 
 | Path pattern | Candidate prefix |
 | --- | --- |
-| `modules/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
+| `modules/**/*.tf`, `examples/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
 | `scripts/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
-| `**/*_test.go` | `Test` |
-| `modules/<use-case>/README.md`, `docs/**/*.md`, `README.md`, `AGENTS.md` | `Docs` |
-| `docs/adr/**` | `Docs`, or `Refactor` when only the numbering moves |
+| `**/*_test.go`, `**/*.tftest.hcl` | `Test` |
+| `docs/adr/**` | `Docs`、番号だけが動くなら `Refactor` |
+| `modules/<use-case>/README.md`, `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
 | `Dockerfile`, `docker/**`, `scripts/go.mod`, `scripts/go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` | `Build` |
-| `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml`, `.github/branches.toml` | `CI` |
+| `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml` | `CI` |
 | `.gitignore`, `.claude/**`, editor settings | `Chore` |
 
 ## Step 4. Propose Grouping
@@ -153,27 +169,38 @@ Build a list of proposed commits with appropriate granularity. Each item:
 
 - **One semantic change = one commit.** Do not mix feature + refactor + fix into a single commit.
 - **Tests may co-locate with the implementation they cover** (a new handler and its tests belong together). If you are only adding tests for existing code, that goes into a standalone `Test:` commit.
-- **Generated artifacts co-locate with their source change.** The output of `make egress-apply` / `make branches-apply` / `make pin-actions-apply` / `make pin-images-apply` belongs in the same commit as the declaration that produced it — a declaration committed without its generated blocks leaves the check red on the very next commit.
-- **A renumbering of `docs/adr/**` is one commit with every reference it touches.** ADR-0001 決定7 requires it: split, and the tree carries broken references for as long as the split lasts.
+- **Generated artifacts co-locate with their source change.** The output of `make egress-apply` /
+  `make versions-apply` / `make pin-actions-apply` / `make pin-images-apply` belongs in the same
+  commit as the declaration that produced it — a declaration committed without its generated blocks
+  leaves the check red on the very next commit.
+- **A renumbering of `docs/adr/**` is one commit with every reference it touches** (ADR-0001 決定7).
+  Split it, and the tree carries broken references for as long as the split lasts.
 - **Formatting-only changes are standalone `Style:` commits.** Output produced by Step 0's `make go-fmt` may be folded into the appropriate existing group when it is clearly part of the same change; if it is unrelated, surface it as a separate `Style:` commit.
 - **`Docs:` is standalone by default.** Exception: when documentation is part of a new feature (e.g., a README added alongside a new package), they may co-locate.
 - **One prefix per commit.** If you feel the urge to write two, the grouping is wrong.
 
 ### Lefthook notice
 
-Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded). Example output for the current config:
+Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded). Example
+output for the current config:
 
 ```txt
 This command will run `git commit --no-verify` on every commit.
 The following lefthook pre-commit commands will be SKIPPED during commits but
 re-run together in Step 6 via `lefthook run pre-commit --force` after all commits succeed:
-  - lint                    (make go-lint)
-  - test                    (make go-test)
-  - egress-check            (make egress-check)
-  - branches-check          (make branches-check)
-  - pin-actions-check       (make pin-actions-check)
+  - actions-lint      (make actions-lint)
+  - md-lint           (make md-lint)
+  - docker-lint       (make docker-lint)
+  - egress-check      (make egress-check)
+  - versions-check    (make versions-check)
+  - pin-actions-check (make pin-actions-check)
+  - pin-images-check  (make pin-images-check)
+  - go-fmt-check      (make go-fmt-check)
+  - go-test           (make go-test)
 Plus `make go-fmt` as a final formatting pass.
 ```
+
+**列挙を手で書き写さない。** `.lefthook.yaml` が増えたとき、写した一覧は黙って古くなる。
 
 ### Confirmation
 
@@ -210,7 +237,7 @@ EOF
 - **Body**: Optional. If present, leave one blank line after the title and wrap around 72 characters. Prefer "why" over "what".
 - **Language**: Japanese (per the output rule in `CLAUDE.md`).
 - **`Co-Authored-By` footer**: Required. `Claude <model> <noreply@anthropic.com>`, where `<model>` is the identity of the model actually executing the commit, as the harness states it (e.g. `Opus 5 (1M context)`) — never guessed. Do not write a version number into this file: it would be the same fact in two places, and the copy nobody re-reads is the one that goes stale.
-- **`Refs:` footer (review-applied commits only)**: when a commit applies a finding from `full-apply` / `impl-review` / `code-review` (the change traces back to a review ledger), add a `Refs: <reviews-dir>/mod_*.md (<severity>)` line in the footer so the commit links to the finding. Omit it for ordinary commits.
+- **`Refs:` footer (review-applied commits only)**: when a commit applies a finding from `/impl-review` or `/test-review`, say which finding in the body. Omit it for ordinary commits.
 - **HEREDOC**: Required (keeps the title + blank line + body + footer layout intact).
 - **`--no-verify`**: Required for every commit produced by this command. This is an explicit, command-scoped carve-out from the project-wide rule; the rationale is documented in Step 4 (lefthook is run once manually before push, not N times during the split).
 - **Never use `-a`, `git add -A`, or `git add .`.** Always stage files by name (avoids sweeping in `.env` or credentials).
@@ -240,12 +267,15 @@ After all commits succeed, run the full lefthook `pre-commit` hook once with `le
 並列で実行する。**手で列挙した一覧に置き換えないこと** —— 置き換えると、新しく足された検査が
 このスキル経由の検証から静かに落ちる。
 
+**hook は CI の代替ではない**（ADR-0501 決定26）。ここが通ったことは、CI が通ることの証拠ではない。
+`.lefthook.yaml` が持つのは「壊れた状態を CI へ到達させない第一段」だけである。
+
 ### Procedure
 
 1. Run `lefthook run pre-commit --force`. It executes every command under `pre-commit.commands.*` against the working tree (which reflects the committed state) and exits non-zero if any command fails. If `.lefthook.yaml` is absent or `lefthook` is not installed, skip to step 3 (run only `make go-fmt`) and note it.
 2. Read lefthook's per-command summary — it lists each command with ✔️ / ❌ and a timing.
 3. Run `make go-fmt`. If it modifies any tracked file, surface the diff to the user — it indicates the committed state was not fully formatted, and the user must decide whether to stage and commit those fixes.
-4. Summarize the outcome to the user: lefthook's pass/fail summary (or the note that lefthook was unavailable) plus whether `make go-fmt` produced changes. lefthook が落ちたコマンドを名指しで報告する —— 「検証が通りました」とだけ書くと、何が通ったのかが消える。
+4. Summarize the outcome to the user: lefthook's pass/fail summary (or the note that lefthook was unavailable) plus whether `make go-fmt` produced changes. lefthook が落としたコマンドを名指しで報告する —— 「検証が通りました」とだけ書くと、何が通ったのかが消える。
 5. If `lefthook run pre-commit --force` exits non-zero (any command failed), report the failing command (from lefthook's summary) and stop. Do NOT roll back commits — the failure is informational; the user decides whether to add fix-up commits or amend. Tell the user explicitly:
 
    ```txt
@@ -292,7 +322,7 @@ If the user passes `--no-verify` to `/commit` itself (a future-compatible flag),
 
 ## Constraints (Summary)
 
-- ❌ Direct commits to `production` / `develop` / `staging` / `release/*` branches
+- ❌ Direct commits to a protected branch（`.github/settings/branch-protection.json` が持つ一覧）
 - ❌ Auto-running `git push` / `git push --force` / `git reset --hard` / `git checkout --` / `git clean -f`
 - ❌ `--no-gpg-sign` / `--amend`
 - ❌ `git add -A` / `git add .` / `git commit -a` (always name files explicitly)

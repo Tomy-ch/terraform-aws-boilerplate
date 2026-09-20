@@ -1,4 +1,4 @@
-# harden-runner の allowed-endpoints の SSOT。インラインブロックを手で編集してはならない。
+# harden-runner の allowed-endpoints の SSOT。
 # クラスの意味・追加手順・反映と検査のコマンドは .github/workflows/README.md の Runner Hardening 節。
 
 [class.base]
@@ -105,6 +105,9 @@ extra = [
 classes = ["mise"]
 
 [job."pin-images-check.yaml:pin-images-check"]
+classes = ["mise"]
+
+[job."versions-check.yaml:versions-check"]
 classes = ["mise"]
 
 [job."secret-scan.yaml:secret-scan"]
