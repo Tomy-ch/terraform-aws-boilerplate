@@ -72,7 +72,7 @@ A comparison built on a wrong premise about the current code is worse than no co
 looks decidable.
 
 Before anything else, establish the current state — what exists, what constrains it, whether a
-decision already stands in `docs/adr/` or `docs/design/`. If that state is unclear or contested,
+decision already stands in `docs/adr/` or `modules/<use-case>/docs/adr/`. If that state is unclear or contested,
 **stop and say so**: the user should run `repo-truth` first. Do not invoke it yourself and do not
 paper over the gap with an assumption, because the assumption then silently shapes every option.
 
