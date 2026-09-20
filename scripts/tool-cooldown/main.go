@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -47,7 +48,6 @@ const (
 	miseTimeout  = 30 * time.Second
 	gitTimeout   = 30 * time.Second
 	fetchWorkers = 4 // GitHub API のレート制限に配慮して go-cooldown より絞る
-	minFenceLen  = 3 // CommonMark のフェンス下限
 	hoursPerDay  = 24
 	summaryPerm  = 0o644
 	outputPerm   = 0o600
@@ -819,30 +819,6 @@ func report(
 	return blockingCount
 }
 
-// fenceFor は text を包むのに足りるフェンスを返す。長さは text 中の最長バッククォート連 + 1。
-func fenceFor(text string) string {
-	longest, run := 0, 0
-	for _, r := range text {
-		if r == '`' {
-			run++
-			if run > longest {
-				longest = run
-			}
-			continue
-		}
-		run = 0
-	}
-	return strings.Repeat("`", max(minFenceLen, longest+1))
-}
-
-// fenced は見出しと、フェンスで包んだ本体を書く。値は mise.toml 由来で pull request が中身を
-// 決めるため、見出しだけをテンプレート側に残して値はフェンスへ入れる。
-func fenced(b *strings.Builder, heading string, lines []string) {
-	body := strings.Join(lines, "\n")
-	fence := fenceFor(body)
-	fmt.Fprintf(b, "## %s (%d)\n\n%stext\n%s\n%s\n\n", heading, len(lines), fence, body, fence)
-}
-
 // summary は GITHUB_STEP_SUMMARY 用の Markdown を組む。
 func summary(
 	sub string, findings []finding, unresolved, skipped []tool,
@@ -860,7 +836,7 @@ func summary(
 		for _, v := range policyViolations {
 			lines = append(lines, v.msg)
 		}
-		fenced(&b, "宣言側の違反", lines)
+		mdfence.Section(&b, "宣言側の違反", lines)
 	}
 	if len(blocked) > 0 {
 		lines := make([]string, 0, len(blocked))
@@ -868,21 +844,21 @@ func summary(
 			lines = append(lines, fmt.Sprintf("- %s（%s）— 公開 %d 日 / 窓 %d 日（%s）",
 				f.tool.id(), f.tool.backend, f.ageDays, f.window, f.published.Format(time.DateOnly)))
 		}
-		fenced(&b, "cooldown 未達", lines)
+		mdfence.Section(&b, "cooldown 未達", lines)
 	}
 	if len(reported) > 0 {
 		lines := make([]string, 0, len(reported))
 		for _, f := range reported {
 			lines = append(lines, fmt.Sprintf("- %s（%s）— 公開 %d 日 / 窓 %d 日", f.tool.id(), f.tool.backend, f.ageDays, f.window))
 		}
-		fenced(&b, "参考: 窓内だがブロックしないもの", lines)
+		mdfence.Section(&b, "参考: 窓内だがブロックしないもの", lines)
 	}
 	if len(unresolved) > 0 {
 		lines := make([]string, 0, len(unresolved))
 		for _, t := range unresolved {
 			lines = append(lines, fmt.Sprintf("- %s（%s）", t.id(), t.backend))
 		}
-		fenced(&b, "公開時刻を取得できなかったもの", lines)
+		mdfence.Section(&b, "公開時刻を取得できなかったもの", lines)
 	}
 	return b.String()
 }

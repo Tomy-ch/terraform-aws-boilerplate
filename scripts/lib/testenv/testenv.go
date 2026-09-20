@@ -6,7 +6,10 @@ package testenv
 
 import (
 	"os"
+	"os/exec"
 	"testing"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
 )
 
 // RequireNonRootEnv は、root 実行による skip を失敗へ変える環境変数の名前です。
@@ -43,4 +46,31 @@ func requireNonRoot(t reporter, reason string, geteuid func() int, getenv func(s
 		return
 	}
 	t.Skip(reason)
+}
+
+// RequireShellcheckEnv は、shellcheck 不在による skip を失敗へ変える環境変数の名前です。
+const RequireShellcheckEnv = "REQUIRE_SHELLCHECK"
+
+// RequireShellcheck は、shellcheck が PATH に無ければ skip します。
+// RequireShellcheckEnv が空でなければ skip せず失敗させます。
+//
+// 実物の shellcheck を駆動するテストは、不在の環境では成立しません。CI では必ず在るので、
+// そこで skip が起きたなら検査範囲が報告より狭くなっています。
+func RequireShellcheck(t *testing.T) {
+	t.Helper()
+	requireShellcheck(t, exec.LookPath, os.Getenv)
+}
+
+func requireShellcheck(t reporter, lookPath func(string) (string, error), getenv func(string) string) {
+	t.Helper()
+
+	if _, err := lookPath(shellcheck.Binary); err == nil {
+		return
+	}
+	if getenv(RequireShellcheckEnv) != "" {
+		t.Fatalf("shellcheck が PATH にありません（%s 指定時は skip しません）", RequireShellcheckEnv)
+
+		return
+	}
+	t.Skip("shellcheck が PATH にありません")
 }

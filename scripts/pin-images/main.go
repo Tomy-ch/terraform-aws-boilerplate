@@ -25,7 +25,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -40,6 +39,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
 )
@@ -95,6 +95,17 @@ var (
 	digestRe          = regexp.MustCompile(`(?m)^Digest:[ \t]+(sha256:[0-9a-f]+)`)
 )
 
+// lockFormat は、この SSOT の書式。値の形と見出しだけがツールごとに違う。
+var lockFormat = lockfile.Format{
+	Line: lockRe,
+	Header: []string{
+		"Docker base image / docker compose image の pin 対象 digest（SSOT）。",
+		"make pin-images-resolve で解決・make pin-images-apply で Dockerfile / docker-compose へ反映する。",
+	},
+	Resolve: "pin-images-resolve",
+	Perm:    filePerm,
+}
+
 var (
 	// errUsage は、サブコマンドが無いか未知の場合のエラー。
 	errUsage = xerrors.New("usage: pin-images <resolve|apply|check>")
@@ -102,9 +113,6 @@ var (
 	errDigestUnparsable = xerrors.New("Digest 行を解析できません")
 	// errCreatedUnparsable は、inspect 出力から image config の created を解析できなかった場合のエラー。
 	errCreatedUnparsable = xerrors.New("created を解析できません")
-	// errLockInvalidLine は、lockfile に代入として解釈できない行があった場合のエラー。
-	errLockInvalidLine  = xerrors.New("lockfile に解釈できない行があります")
-	errLockDuplicateKey = xerrors.New("lockfile にキーの重複があります")
 	// errLockMissingImage は、参照されている image が lockfile に登録されていない場合のエラー。
 	errLockMissingImage = xerrors.New("lockfile に未登録の base image があります")
 	// errPinDrift は、check で未固定・lockfile 不一致の image 参照を検出した場合のエラー。
@@ -355,8 +363,8 @@ func resolve(root string, targets []target, minAgeDays int) error {
 	// lockfile 不在（初回）は空マップで続行するが、それ以外の読み込み失敗は握り潰さず fail-close する
 	// （既存ピンが lock から脱落して quarantine の退行先が消え、出来立ての未検証 digest を掴むか
 	// errNoStepBack で落ちるかの二択になるのを防ぐ。applyOrCheck と対称）。
-	existing, err := readLock(filepath.Join(root, lockFile))
-	if !isIgnorableLockErr(err) {
+	existing, err := lockFormat.Read(filepath.Join(root, lockFile))
+	if !lockfile.IsIgnorableErr(err) {
 		return xerrors.Wrap(err, "read lockfile")
 	}
 
@@ -387,7 +395,7 @@ func resolve(root string, targets []target, minAgeDays int) error {
 		log.Printf("  ⚠️ %s", n)
 	}
 
-	if err := writeLock(filepath.Join(root, lockFile), lock); err != nil {
+	if err := lockFormat.Write(filepath.Join(root, lockFile), lock); err != nil {
 		return xerrors.Wrap(err, "write lockfile")
 	}
 	log.Printf("✅ %s に %d 件を書き出しました", lockFile, len(lock))
@@ -552,7 +560,7 @@ func applyOrCheck(root string, targets []target, dryRun bool) error {
 	if err := validateLoose(root, targets); err != nil {
 		return err
 	}
-	lock, err := readLock(filepath.Join(root, lockFile))
+	lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 	if err != nil {
 		return xerrors.Wrap(err, "read lockfile（先に make pin-images-resolve を実行してください）")
 	}
@@ -653,58 +661,6 @@ func report(drifted []string, dryRun bool, changed int) error {
 	log.Printf("✅ 全 base image が lockfile 通りに固定されています")
 
 	return nil
-}
-
-func writeLock(path string, lock map[string]string) error {
-	keys := make([]string, 0, len(lock))
-	for k := range lock {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	b.WriteString("# Docker base image / docker compose image の pin 対象 digest（SSOT）。\n")
-	b.WriteString("# make pin-images-resolve で解決・make pin-images-apply で Dockerfile / docker-compose へ反映する。\n")
-	for _, k := range keys {
-		fmt.Fprintf(&b, "%q = %q\n", k, lock[k])
-	}
-	return os.WriteFile(path, []byte(b.String()), filePerm)
-}
-
-// isIgnorableLockErr は、lockfile 読み込みエラーのうち無視して続行してよいものを判定する。
-// nil（成功）と「ファイル不在」（初回 resolve）のみ true。それ以外（解釈できない行・キー重複・
-// 権限エラー等）は fail-close 対象。
-func isIgnorableLockErr(err error) bool {
-	return err == nil || xerrors.Is(err, os.ErrNotExist)
-}
-
-// readLock は lockfile を image:tag→digest として読む。空行とコメント行以外で代入として解釈
-// できない行、および既出キーの再定義はエラーにする。読み飛ばしや後勝ちの上書きは、そのエントリが
-// 「存在しない」あるいは「行順で決まる」状態を警告なく作り、lockfile が SSOT として機能しなくなる。
-func readLock(path string) (map[string]string, error) {
-	f, err := os.Open(path) //nolint:gosec // path is constructed from cwd + literal filename
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	lock := map[string]string{}
-	sc := bufio.NewScanner(f)
-	for lineNo := 1; sc.Scan(); lineNo++ {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		m := lockRe.FindStringSubmatch(line)
-		if m == nil {
-			return nil, xerrors.Wrap(errLockInvalidLine,
-				fmt.Sprintf("%d 行目: %q（make pin-images-resolve を実行するか該当行を削除してください）", lineNo, line))
-		}
-		if _, dup := lock[m[1]]; dup {
-			return nil, xerrors.Wrap(errLockDuplicateKey,
-				fmt.Sprintf("%d 行目: %q（make pin-images-resolve を実行するか重複行を削除してください）", lineNo, m[1]))
-		}
-		lock[m[1]] = m[2]
-	}
-	return lock, sc.Err()
 }
 
 func rel(root, p string) string {

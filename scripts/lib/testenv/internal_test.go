@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,6 +92,58 @@ func Test_requireNonRoot(t *testing.T) {
 			assert.True(t, f.failed)
 			assert.False(t, f.skipped, "失敗させるべき場面で skip した")
 			assert.Contains(t, f.message, RequireNonRootEnv)
+		})
+	})
+}
+
+func found(string) (string, error)   { return "/usr/bin/shellcheck", nil }
+func missing(string) (string, error) { return "", os.ErrNotExist }
+
+func Test_requireShellcheck(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("PATH に在れば skip も失敗もしない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeReporter{}
+
+			requireShellcheck(f, found, func(string) string { return "" })
+
+			assert.False(t, f.skipped)
+			assert.False(t, f.failed)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("PATH に無ければ skip する", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeReporter{}
+
+			requireShellcheck(f, missing, func(string) string { return "" })
+
+			assert.True(t, f.skipped)
+			assert.False(t, f.failed)
+		})
+
+		// skip は既定の出力に現れない。CI で失敗へ変えられなければ、報告より少ない検査で
+		// 緑が残り続ける。
+		t.Run("PATH に無く環境変数が立っていれば skip せず失敗する", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeReporter{}
+
+			requireShellcheck(f, missing, func(k string) string {
+				assert.Equal(t, RequireShellcheckEnv, k)
+
+				return "1"
+			})
+
+			assert.True(t, f.failed)
+			assert.False(t, f.skipped, "失敗させるべき場面で skip した")
+			assert.Contains(t, f.message, RequireShellcheckEnv)
 		})
 	})
 }

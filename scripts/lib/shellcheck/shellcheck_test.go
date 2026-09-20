@@ -11,9 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
-
-const requireShellcheckEnv = "REQUIRE_SHELLCHECK"
 
 const cleanScript = "#!/bin/sh\nset -eu\necho hello\n"
 
@@ -69,7 +68,7 @@ func TestRun(t *testing.T) {
 
 		t.Run("指摘の無い内容には何も返さない", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			out, err := shellcheck.Run(t.Context(), cleanScript)
 
@@ -79,7 +78,7 @@ func TestRun(t *testing.T) {
 
 		t.Run("指摘のある内容を gcc 形式で返す", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			out, err := shellcheck.Run(t.Context(), dirtyScript)
 
@@ -93,25 +92,13 @@ func TestRun(t *testing.T) {
 
 		t.Run("起動できなければ指摘と区別して報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			_, err := shellcheck.Run(canceledContext(t), cleanScript)
 
 			require.ErrorIs(t, err, shellcheck.ErrRun)
 		})
 	})
-}
-
-func requireShellcheck(t *testing.T) {
-	t.Helper()
-
-	if _, err := exec.LookPath(shellcheck.Binary); err == nil {
-		return
-	}
-	if os.Getenv(requireShellcheckEnv) != "" {
-		t.Fatalf("shellcheck が PATH にありません（%s 指定時は skip しません）", requireShellcheckEnv)
-	}
-	t.Skip("shellcheck が PATH にありません")
 }
 
 func canceledContext(t *testing.T) context.Context {
