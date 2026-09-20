@@ -76,7 +76,7 @@ The exclusion days must be a non-negative integer. `0` disables the cooldown (ad
 **解除されないもの**（`AGENTS.md` *保護された文書* と *トリップワイヤ* 4）。
 
 - `AGENTS.md` / `LICENSE` / Accepted ADR の本文
-- 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、`.github/actions-pin.toml`、`make egress-apply` / `branches-apply` が書くインラインブロック
+- 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、`.github/actions-pin.toml`、`make egress-apply` / `versions-apply` が書くインラインブロック
 - digest の更新と無関係なファイル。`FROM` / compose `image:` の**タグ**、`RUN` / `COPY`、compose の他のキー、`scripts/pin-images` 自体を**変えない** —— タグの版上げが要るなら、報告して止まる
 
 ## Execution Steps

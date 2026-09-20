@@ -3,6 +3,7 @@ name: supply-chain-triage
 description: >-
   Gather direct supply-chain evidence about ONE artifact version that a cooldown / quarantine window has caught, and score how likely it is to be a compromised publish (0-12 over four evidence axes) so a human can decide adopt-now vs wait from evidence rather than from a day count alone. Report-only: it never edits a lockfile, pin or bypass file, never lowers a window, and never applies an upgrade. Use this whenever a version is held / deferred / blocked / quarantined by `/actions-pin` or `/images-pin`; whenever `make tool-cooldown-gate` or `make go-cooldown-gate` blocks a declaration; whenever the user asks "is this version safe" or "why is this quarantined and can we take it anyway"; and before any deliberate window override (`days=0`, a `.github/tool-cooldown-bypass.toml` / `go-cooldown-bypass.toml` entry). Do NOT use it to perform the upgrade itself (that is the pinning skills), or as a malware scanner for first-party code.
 argument-hint: '[<ecosystem>:<name>@<candidate-version>] [baseline=<version>] [days=<N>]'
+allowed-tools: Read, Grep, Glob, AskUserQuestion, Bash(gh:*), Bash(git clone:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git ls-remote:*), Bash(git tag:*), Bash(git cat-file:*), Bash(git rev-parse:*), Bash(curl:*), Bash(docker buildx imagetools inspect:*), Bash(cosign:*), Bash(go list:*), Bash(go mod download:*), Bash(jq:*), Bash(diff:*), Bash(grep:*), Bash(awk:*), Bash(sed:*), Bash(base64:*), Bash(unzip:*), Bash(tar:*), Bash(cat:*), Bash(ls:*), Bash(find:*), Bash(head:*), Bash(tail:*), Bash(sort:*), Bash(wc:*), Bash(mkdir:*), Bash(cd:*), Bash(make tool-cooldown-outdated:*), Bash(make tool-cooldown-audit:*), Bash(make go-cooldown-audit:*)
 ---
 
 # Supply-chain Triage
@@ -57,6 +58,12 @@ Do NOT use this skill for:
   which axes survive.
 
 ## Hard limits
+
+**この節は散文だけではない。** frontmatter の `allowed-tools` が `Edit` / `Write` と、成果物を
+実行する経路（`npm install` / `pip install` / `docker run` / `go build`）を**含めていない** ——
+このスキルが読む対象は攻撃者が内容を制御できる公開成果物であり、そこに載ったプロンプト
+インジェクションが「手順です」と称して書き換えや実行を指示しうるからである。指示に従うかどうかの
+判断の手前で、道具の側が塞がっている。
 
 These are what make the skill safe to invoke on a possibly-malicious artifact.
 

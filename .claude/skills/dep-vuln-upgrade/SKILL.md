@@ -39,7 +39,7 @@ Do NOT use it for:
 ## 変更してよい範囲
 
 - `scripts/go.mod` / `scripts/go.sum` —— 勧告が名指ししたモジュールだけ
-- `.github/go-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0501 決定13）
+- `.github/go-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0702 決定18）
 - `.trivyignore.yaml` —— **抑止は最後の手段である**。理由を書けないものは抑止せず、値を直す
 
 **解除されないもの**: `AGENTS.md` / `LICENSE` / Accepted ADR の本文、生成物（*トリップワイヤ* 4）。

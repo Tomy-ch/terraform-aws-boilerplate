@@ -1,7 +1,7 @@
 ---
 name: canonicalize-doc
 description: >-
-  Create or sync an English-canonical / Japanese-translation Markdown pair for a README, SKILL, or ADR, preserving heading structure, code blocks, and link targets 1:1. **This skill cannot run today**: ADR-0701 決定7 forbids translation pairs (`*.ja.md`) and 決定6 makes Japanese canonical, so the skill exists for the v1.0.0 transition that flips the canonical side to English — and it refuses to produce a pair until 決定7 has been superseded by a human (a 停止点 owned by ADR-0001 決定2-3). Use it when that supersede has landed and a document needs its counterpart produced or re-synced. Do NOT use it to write a document's content (`sync-readme` / the owning document per ADR-0701 決定2), to edit Accepted ADR bodies, or to translate ad hoc — a one-off translation that lands in the tree is exactly what 決定7 forbids.
+  Create or sync an English-canonical / Japanese-translation Markdown pair for a README, SKILL, or ADR, preserving heading structure, code blocks, and link targets 1:1. **This skill cannot run today**: ADR-0701 決定6 makes Japanese canonical and 決定7 forbids translation pairs (`*.ja.md`), which is exactly what this skill produces. It refuses to write anything until 決定7 has been superseded — a 停止点 owned by ADR-0001 決定2-3, decided by a human, and **the shape of any such supersede is not recorded anywhere yet**. Use it once that supersede has landed and a document needs its counterpart produced or re-synced. Do NOT use it to write a document's content (`sync-readme` / the owning document per ADR-0701 決定2), to edit Accepted ADR bodies, or to translate ad hoc — a one-off translation that lands in the tree is exactly what 決定7 forbids.
 ---
 
 # Canonicalize Doc
@@ -26,8 +26,11 @@ description: >-
    以下の既定より優先させる。このスキルの記述は、supersede が landing した時点の形を先取りした
    ものにすぎない。
 
-v1.0.0 でこの切り替えを行う予定であること自体は、`AGENTS.md` *v1.0.0 までの暫定* が述べている
-範囲の外にある —— **暫定節は ADR の運用を解除しない。**
+**このスキルが将来どう使われるかは、まだどの文書も決めていない。** ADR-0701 の *見直し条件* は
+3つ（日本語を読まない開発者の継続的な参加 / 生成区間の増加 / 決定11 の例外の増加）を挙げており、
+特定のリリースを条件に挙げてはいない。`AGENTS.md` *v1.0.0 までの暫定* も ADR の運用は解除しない。
+**したがって、ここに「いつ・どう切り替えるか」を書かない** —— 書けばそれが、どの決定にも
+支えられていない唯一の記述になる。
 
 ## When to Use
 

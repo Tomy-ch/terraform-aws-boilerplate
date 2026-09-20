@@ -40,9 +40,10 @@ Output is in Japanese. Note this is for **whole-repository verification**, not d
 use `impl-review` / `/code-review`).
 
 **The focus of verification is "implementation cleanliness" = readability, maintainability, and
-design straightforwardness.** Mechanical convention violations such as layer-boundary crossings,
-dependency direction, and naming conventions are assumed to be caught by lint (depguard, etc.) and
-are in principle not re-reported. It catches implementation- and design-quality problems that lint
+design straightforwardness.** Naming conventions and obvious misuse are caught by `make go-lint`
+and are in principle not re-reported. **Layer-boundary crossings and dependency direction are NOT
+checked** —— `.golangci.yaml` deliberately carries no layer-boundary rules, so do not drop such a
+finding on the assumption that lint already has it. It catches implementation- and design-quality problems that lint
 cannot detect and that only a human reading the code would notice. Whether comments stay limited to
 describing behavior/contract (redundant or self-evident comments, or missing WHY in the code) is also
 in scope.

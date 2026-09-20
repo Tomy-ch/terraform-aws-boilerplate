@@ -46,7 +46,7 @@ Do NOT use it for:
 `AGENTS.md` *v1.0.0 までの暫定* がリポジトリ直下の設定ファイルの編集を解除している。触れてよいのは次だけ。
 
 - `mise.toml` の `[tools]` —— **ユーザーが明示的に承認したエントリだけ**
-- `.github/tool-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0501 決定13）
+- `.github/tool-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0702 決定18）
 - `scripts/go.mod` / `docker/tools/Dockerfile` —— `make versions-apply` の出力としてのみ
 
 **解除されないもの**: `AGENTS.md` / `LICENSE` / Accepted ADR の本文、生成物（*トリップワイヤ* 4）。
@@ -142,6 +142,7 @@ make go-test
 
 - **上流を確認できなかったものを「最新」と読まない。** 数が0でないまま報告を終えない。
 - **バイパスは最後の手段である。** 理由を書けないものは抑止せず、値そのものを直す（ADR-0501 決定13）。
+  バイパスには期限が要り、期限切れ・3ヶ月超・対象不存在はゲートを落とす（ADR-0702 決定18）。
 - 版を下げる方向の「更新」を採らない。解決結果が pin より小さいなら、それは解決の失敗である。
 - 道具はそのまま実行する。version manager のサブコマンドで包まない（ADR-0501 決定20）。
 - このスキルは push しない。

@@ -62,7 +62,7 @@ The exclusion days must be a non-negative integer. `0` disables the quarantine (
 **解除されないもの**（`AGENTS.md` *保護された文書* と *トリップワイヤ* 4）。
 
 - `AGENTS.md` / `LICENSE` / Accepted ADR の本文
-- 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、`docker/images-pin.toml`、`make egress-apply` / `branches-apply` が書くインラインブロック
+- 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、`docker/images-pin.toml`、`make egress-apply` / `versions-apply` が書くインラインブロック
 - ピンの更新と無関係なファイル。`with:` の入力、ステップのロジック、`scripts/pin-actions` を**変えない** —— 版上げが入力の変更を要するなら、報告して止まる
 
 ## The Target-Selection Rule (core of this skill)

@@ -17,9 +17,11 @@ This is for **whole-repository verification**, not diff/PR-scoped review. For di
 / `/code-review`.
 
 **The focus of verification is "implementation cleanliness"** (readability, maintainability,
-cohesion, design straightforwardness). Mechanical convention violations such as layer-boundary
-crossings, dependency direction, and naming conventions are **assumed to be caught by lint (depguard,
-etc.)** and are in principle not re-reported. It concentrates on implementation- and design-quality
+cohesion, design straightforwardness). Naming conventions and obvious misuse are caught by
+`make go-lint` and are in principle not re-reported. **Layer-boundary crossings and dependency
+direction are NOT checked here** —— `.golangci.yaml` deliberately carries no layer-boundary rules
+(this repository ships Terraform configuration, not a Go application), so do not drop such a finding
+on the assumption that lint already has it. It concentrates on implementation- and design-quality
 problems that lint cannot detect and that only a human reading the code would notice. Whether comments
 stay limited to describing behavior/contract (redundant or self-evident comments, or missing WHY in
 the code) is also in scope.
