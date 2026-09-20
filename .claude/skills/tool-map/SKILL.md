@@ -20,7 +20,7 @@ Parse `$ARGUMENTS` for the following optional flags. For each flag missing or in
 | --- | --- | --- |
 | `--lang` | `en` / `ja` | `ja` |
 | `--output` | `inline` / `file` | `inline` |
-| `--output-path` | any relative path | `./TOOL_MAP.md` (en) or `./TOOL_MAP.ja.md` (ja) — only used if `--output=file` |
+| `--output-path` | any relative path | `./TOOL_MAP.md` — only used if `--output=file`。**訳文ペアは作らない**（ADR-0701 決定7） |
 | `--include` | comma-separated subset of `commands,skills,agents` | `commands,skills,agents` (all three) |
 
 `AskUserQuestion` fallback questions (only ask for unresolved flags):

@@ -1,14 +1,14 @@
 ---
 name: actions-pin
 description: >-
-  Audit and upgrade the SHA-pinned GitHub Actions referenced by `.github/workflows/**` and `.github/actions/**` (nested composite actions included), with a supply-chain quarantine and automatic step-back to the previous aged version, so a freshly published — possibly compromised — release is never adopted. Default is minor-only; pass `major` to also bump major versions; pass a number or `days=N` to set the exclusion window (default 14). Where no aged release exists to step back to it chains `/supply-chain-triage`, and it stops on an exact tag whose SHA moved as a security event rather than a refresh. Use on a routine cadence or after an Actions security advisory. Sibling of `tools-upgrade` (`mise.toml`) and `images-pin` (Docker image digests).
+  Audit and upgrade the SHA-pinned GitHub Actions referenced by `.github/workflows/**` and `.github/actions/**` (nested composite actions included), with a supply-chain quarantine and automatic step-back to the previous aged version, so a freshly published — possibly compromised — release is never adopted. Default is minor-only; pass `major` to also bump major versions; pass a number or `days=N` to set the exclusion window (default 14). Where no aged release exists to step back to it chains `/supply-chain-triage`, and it stops on an exact tag whose SHA moved as a security event rather than a refresh. Use on a routine cadence or after an Actions security advisory. Sibling of `images-pin` (Docker image digests).
 ---
 
 # GitHub Actions Pin Upgrade
 
 This skill audits and upgrades the SHA-pinned GitHub Actions in `.github/workflows/**` and `.github/actions/**`, with a **supply-chain quarantine gate** plus an **automatic step-back**: releases newer than the exclusion window (`PIN_ACTIONS_MIN_AGE_DAYS`, default 14) are never adopted; instead the skill pins the newest version that is already older than the window. A freshly-published (possibly compromised) version is thus never pulled in before upstream has time to detect and revoke it.
 
-It is the sibling of `tools-upgrade` — that skill covers `mise.toml` `[tools]`; this one covers GitHub Actions pins. They share the same quarantine philosophy but operate on different SSOTs.
+It is the sibling of `images-pin` — that one pins Docker image digests; this one pins GitHub Actions `uses:`. They share the same quarantine philosophy but operate on different SSOTs. `mise.toml` の `[tools]` に対する同種の窓は `make tool-cooldown-gate` が持つ（スキルはまだ無い）。
 
 ## How Pinning Works in This Repo
 
@@ -33,9 +33,8 @@ Use this skill when:
 
 Do NOT use this skill for:
 
-- `mise.toml` tool versions — use `/tools-upgrade`
-- Go itself — use `/go-upgrade`
-- Go モジュールの依存 — `/dep-vuln-upgrade`、棚卸しは `make go-cooldown-audit`
+- `mise.toml` の道具の版 — `make tool-cooldown-audit` / `tool-cooldown-outdated` で棚卸しする。上げたあとは `make versions-check`
+- Go モジュールの依存 — `make go-cooldown-audit` で棚卸しする
 - Local composite actions (`uses: ./...`) — they have no `@ref` and are not pinned
 
 ## Arguments

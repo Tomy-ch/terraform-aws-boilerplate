@@ -1,7 +1,7 @@
 ---
 name: images-pin
 description: >-
-  Audit and refresh the digest pins for the Docker images referenced by `FROM` in `docker/*/Dockerfile` and by `image:` in `docker-compose*.yaml`, with a supply-chain cooldown that refuses freshly-rebuilt digests (default 14 days; `days=N` to override, `0` disables). The image tag (`golang:1.27.1-bookworm`, `node:24.21.0-alpine`) is the version source of truth, is kept in step with `mise.toml` `[tools]`, and belongs to `go-upgrade` / `tools-upgrade` — this skill NEVER changes tags, only the trailing `@sha256:...` digest. A fresh image with no prior lock entry to step back to is refused rather than adopted; bootstrap one only deliberately via `days=0`, after chaining `/supply-chain-triage`. Use on a routine cadence, after a base-image / registry security advisory, or to pin an image that was previously quarantined once it has aged. Sibling of `actions-pin`, which pins GitHub Actions `uses:` instead.
+  Audit and refresh the digest pins for the Docker images referenced by `FROM` in `docker/*/Dockerfile` and by `image:` in `docker-compose*.yaml`, with a supply-chain cooldown that refuses freshly-rebuilt digests (default 14 days; `days=N` to override, `0` disables). The image tag (`golang:1.27.1-bookworm`, `node:24.21.0-alpine`) is the version source of truth, is kept in step with `mise.toml` `[tools]` (enforced by `make versions-check`) — this skill NEVER changes tags, only the trailing `@sha256:...` digest. A fresh image with no prior lock entry to step back to is refused rather than adopted; bootstrap one only deliberately via `days=0`, after chaining `/supply-chain-triage`. Use on a routine cadence, after a base-image / registry security advisory, or to pin an image that was previously quarantined once it has aged. Sibling of `actions-pin`, which pins GitHub Actions `uses:` instead.
 ---
 
 # Docker Base Image Pin Refresh
@@ -10,7 +10,11 @@ This skill audits and refreshes the **digest pins** of the `FROM` base images in
 
 It is the sibling of `actions-pin` — that skill pins GitHub Actions `uses:` to commit SHAs; this one pins Docker base images to digests. They share the same cooldown philosophy but operate on different SSOTs.
 
-**タグはこのスキルのものではない。** `docker/tools/Dockerfile` の `golang:1.27.1-bookworm` / `node:24.21.0-alpine` は `mise.toml` の `[tools]` と揃える約束で、上げるのは `/go-upgrade` と `/tools-upgrade` の仕事である。**揃っているかを見る検査は無い** —— ずれるとイメージのビルドが落ちる、というのが唯一の強制である（`mise.toml` のコメントがそう述べている）。このスキルが触るのはタグの後ろの `@sha256:...` だけ。版上げが要るなら止めて、持ち主のスキルへ回す。
+**タグはこのスキルのものではない。** `docker/tools/Dockerfile` の `golang:1.27.1-bookworm` /
+`node:24.21.0-alpine` は `mise.toml` の `[tools]` の写しであり、**`make versions-check` が揃って
+いることを検査する**（`scripts/versions`）。版を上げるときは `mise.toml` を直して
+`make versions-apply` を走らせる —— このスキルは触らない。ここが触るのはタグの後ろの
+`@sha256:...` だけである。
 
 ## How Pinning Works in This Repo
 
@@ -42,7 +46,7 @@ Official images are rebuilt often (base-OS CVE patches), so a fresh current dige
 
 Do NOT use this skill for:
 
-- イメージの**版/タグ**（Go / node のランタイム）を上げる — `/go-upgrade` か `/tools-upgrade`。`mise.toml` の `[tools]` と揃える。
+- イメージの**版/タグ**（Go / node のランタイム）を上げる — `mise.toml` の `[tools]` を直して `make versions-apply`。
 - GitHub Actions `uses:` pins — use `/actions-pin`.
 - Dockerfile lint findings — use `make docker-lint`.
 
