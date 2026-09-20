@@ -8,7 +8,7 @@ description: >-
 
 This skill audits and upgrades the SHA-pinned GitHub Actions in `.github/workflows/**` and `.github/actions/**`, with a **supply-chain quarantine gate** plus an **automatic step-back**: releases newer than the exclusion window (`PIN_ACTIONS_MIN_AGE_DAYS`, default 14) are never adopted; instead the skill pins the newest version that is already older than the window. A freshly-published (possibly compromised) version is thus never pulled in before upstream has time to detect and revoke it.
 
-It is the sibling of `images-pin` — that one pins Docker image digests; this one pins GitHub Actions `uses:`. They share the same quarantine philosophy but operate on different SSOTs. `mise.toml` の `[tools]` に対する同種の窓は `make tool-cooldown-gate` が持つ（スキルはまだ無い）。
+It is the sibling of `images-pin` — that one pins Docker image digests; this one pins GitHub Actions `uses:`. They share the same quarantine philosophy but operate on different SSOTs. `mise.toml` の `[tools]` に対する同種の窓は `/tools-upgrade` が持つ。
 
 ## How Pinning Works in This Repo
 
@@ -33,8 +33,9 @@ Use this skill when:
 
 Do NOT use this skill for:
 
-- `mise.toml` の道具の版 — `make tool-cooldown-audit` / `tool-cooldown-outdated` で棚卸しする。上げたあとは `make versions-check`
-- Go モジュールの依存 — `make go-cooldown-audit` で棚卸しする
+- `mise.toml` の道具の版 — `/tools-upgrade`
+- Go のランタイム — `/go-upgrade`
+- 勧告が名指しした Go モジュール — `/dep-vuln-upgrade`
 - Local composite actions (`uses: ./...`) — they have no `@ref` and are not pinned
 
 ## Arguments

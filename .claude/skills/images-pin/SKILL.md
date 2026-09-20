@@ -12,9 +12,12 @@ It is the sibling of `actions-pin` — that skill pins GitHub Actions `uses:` to
 
 **タグはこのスキルのものではない。** `docker/tools/Dockerfile` の `golang:1.27.1-bookworm` /
 `node:24.21.0-alpine` は `mise.toml` の `[tools]` の写しであり、**`make versions-check` が揃って
-いることを検査する**（`scripts/versions`）。版を上げるときは `mise.toml` を直して
-`make versions-apply` を走らせる —— このスキルは触らない。ここが触るのはタグの後ろの
-`@sha256:...` だけである。
+いることを検査する**（`scripts/versions`）。版を上げるのは `/go-upgrade` と `/tools-upgrade` の
+仕事で、どちらも `mise.toml` を直して `make versions-apply` を走らせる —— このスキルは触らない。
+ここが触るのはタグの後ろの `@sha256:...` だけである。
+
+**Go の版上げとは結合している。** タグが変わると digest が古いまま残り、貼り直そうとすると
+rule 3（退行先の無い出来立て）に当たる。詳細は `/go-upgrade` の第4段。
 
 ## How Pinning Works in This Repo
 
@@ -46,7 +49,7 @@ Official images are rebuilt often (base-OS CVE patches), so a fresh current dige
 
 Do NOT use this skill for:
 
-- イメージの**版/タグ**（Go / node のランタイム）を上げる — `mise.toml` の `[tools]` を直して `make versions-apply`。
+- イメージの**版/タグ**（Go / node のランタイム）を上げる — `/go-upgrade` か `/tools-upgrade`。どちらも `mise.toml` を直して `make versions-apply` を走らせる。
 - GitHub Actions `uses:` pins — use `/actions-pin`.
 - Dockerfile lint findings — use `make docker-lint`.
 

@@ -31,8 +31,8 @@ only — they are command recipes, not prose for human readers.
 
 ## When to Use
 
-- A cooldown window caught a candidate and someone must decide whether to wait: `make
-  tool-cooldown-gate` / `go-cooldown-gate` blocked a declaration,
+- A cooldown window caught a candidate and someone must decide whether to wait: `/tools-upgrade`
+  classified a release 窓待ち, `/dep-vuln-upgrade` hit the 7-day window on a fix,
   `/actions-pin` had to step back or hold, `/images-pin` hit rule 2 / rule 3.
   That audit is detection-only by design — it says an override happened, not whether it was safe.
   This skill supplies the missing half.
@@ -46,9 +46,9 @@ only — they are command recipes, not prose for human readers.
 
 Do NOT use this skill for:
 
-- Performing the upgrade — that is `/actions-pin` /
+- Performing the upgrade — that is `/tools-upgrade` / `/dep-vuln-upgrade` / `/actions-pin` /
   `/images-pin`. This skill only reports.
-- Triaging a CVE in a dependency already in the tree — `make trivy-fs` が報告する側であり、このスキルの対象ではない。
+- Triaging a CVE in a dependency already in the tree — that is `/dep-vuln-upgrade`.
 - Scanning first-party code for defects — that is `/impl-review` and the `gosec` / CodeQL gates.
 - **A routine `images-pin` rule 2 hold.** For a mutable image tag two of the four axes are usually
   unanswerable (there is no source diff for a rebuild), so triage will normally confirm the hold
