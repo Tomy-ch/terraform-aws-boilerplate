@@ -231,8 +231,7 @@ func targetFiles(root string) ([]target, error) {
 // 一致ゼロになり、その状態は「固定漏れ無し」と区別が付かない。緩いパターンで補い、残った行は
 // 呼び出し元が fail-close する。
 //
-// ブロックスカラーの中身は YAML の構造ではなく単なるテキストなので走査から外す。外さないと
-// `run:` スクリプトが uses: を含む文字列を出力するだけで検出が誤爆する。
+// ブロックスカラーの中身は判定対象から外す（理由は scripts/lib/yamlblock の package doc）。
 func detectLooseRefs(data string, t target) []int {
 	blanked := t.re.ReplaceAllStringFunc(data, func(line string) string {
 		return strings.Repeat(" ", len(line))
@@ -547,9 +546,7 @@ func rewritePins(data string, re *regexp.Regexp, lock map[string]string) (string
 // applyOrCheck は lockfile を SSOT に FROM を digest 固定する。dryRun=true は書き換えず
 // 未固定/未登録/drift を非ゼロ終了で報告する。tag のみへ戻す正規化はしない（fail-closed）。
 //
-// 全ファイルを読み切って未登録の有無を確定させてから書き込む。1 ファイルずつ書きながら進むと、
-// 後続ファイルの未登録参照で中断したときに「exit 1 なのに作業ツリーは書き換え済み」という
-// 中途半端な状態が残る。
+// 書き出す前に全て確定させる方針は scripts/README.md の Test Strategy が持つ。
 func applyOrCheck(root string, targets []target, dryRun bool) error {
 	if err := validateLoose(root, targets); err != nil {
 		return err
@@ -582,7 +579,7 @@ func applyOrCheck(root string, targets []target, dryRun bool) error {
 		return err
 	}
 
-	// validate は済んでいるが、書き込み自体の I/O が2件目で落ちる窓は別に残る。
+	// rename 中に落ちる窓は atomicwrite.Apply 側の既知の残余（scripts/lib/atomicwrite）。
 	if err := atomicwrite.Apply(changesOf(pending, rewritten), filePerm); err != nil {
 		return err
 	}

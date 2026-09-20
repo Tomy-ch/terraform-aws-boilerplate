@@ -215,8 +215,7 @@ func fileRefs(data string) []ref {
 // 「固定漏れ無し」と区別が付かない。緩いパターンで補い、解釈できない値が残れば呼び出し元が
 // fail-close する。ローカル参照と版を持たない参照は誤検知を避けるため対象外。
 //
-// ブロックスカラーの中身は YAML の構造ではなく単なるテキストなので走査から外す。外さないと
-// `run:` スクリプトが uses: を含む文字列を出力するだけで検出が誤爆する。
+// ブロックスカラーの中身は判定対象から外す（理由は scripts/lib/yamlblock の package doc）。
 func detectLooseUses(data string) []string {
 	var found []string
 	inBlockScalar := yamlblock.ContentLines(data)
@@ -461,8 +460,7 @@ func rewritePins(data string, lock map[string]string) (string, []string) {
 }
 
 // planRewrites は全ファイルを読み切り、固定後の内容と fail-close 条件を確定させる。
-// 1 ファイルずつ書きながら進むと、未登録参照で中断したときに「exit 1 なのに作業ツリーは書き換え済み」
-// という中途半端な状態が残るため、判定と書き込みを分ける。
+// 書き出す前に全て確定させる方針は scripts/README.md の Test Strategy が持つ。
 func planRewrites(root string, files []string, lock map[string]string) (*rewritePlan, error) {
 	plan := &rewritePlan{changes: map[string]string{}, used: map[string]bool{}}
 	for _, f := range files {
@@ -543,7 +541,7 @@ func applyOrCheck(root string, files []string, dryRun bool) error {
 
 		return nil
 	}
-	// 途中で落ちたとき「exit 1 なのに一部だけ書き換わっている」状態を残さない。
+	// 半端な書き換えを残さない実装は atomicwrite.Apply が持つ（scripts/lib/atomicwrite）。
 	if err := atomicwrite.Apply(plan.changes, filePerm); err != nil {
 		return err
 	}

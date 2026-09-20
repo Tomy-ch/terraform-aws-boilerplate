@@ -19,7 +19,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// tmpSuffix は一時ファイルの接尾辞。作業ツリーへ残っても正体が分かる名前にする。
+// 作業ツリーへ残っても正体が分かる名前にする。
 const tmpSuffix = ".atomicwrite.tmp"
 
 // Apply は changes（パス→新しい内容）をすべてのファイルへ反映します。
@@ -71,11 +71,7 @@ func modeOf(path string, fallback fs.FileMode) fs.FileMode {
 	return info.Mode().Perm()
 }
 
-// SortedPaths は changes のキーを昇順で返します。呼び出し側が報告の順序を揃えるために使います。
-func SortedPaths(changes map[string]string) []string {
-	return sortedPaths(changes)
-}
-
+// sortedPaths は changes のキーを昇順で返します。
 func sortedPaths(changes map[string]string) []string {
 	paths := make([]string, 0, len(changes))
 	for path := range changes {

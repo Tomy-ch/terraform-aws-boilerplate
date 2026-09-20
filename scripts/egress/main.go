@@ -555,7 +555,7 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 
 		return nil
 	}
-	// 途中で落ちたとき「exit 1 なのに一部だけ書き換わっている」状態を残さない。
+	// 半端な書き換えを残さない実装は atomicwrite.Apply が持つ（scripts/lib/atomicwrite）。
 	if err := atomicwrite.Apply(changes, filePerm); err != nil {
 		return err
 	}

@@ -105,28 +105,6 @@ func TestApply(t *testing.T) {
 	})
 }
 
-func TestSortedPaths(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("昇順で返す", func(t *testing.T) {
-			t.Parallel()
-
-			got := atomicwrite.SortedPaths(map[string]string{"b": "", "a": "", "c": ""})
-
-			assert.Equal(t, []string{"a", "b", "c"}, got)
-		})
-
-		t.Run("空なら空を返す", func(t *testing.T) {
-			t.Parallel()
-
-			assert.Empty(t, atomicwrite.SortedPaths(map[string]string{}))
-		})
-	})
-}
-
 // read は、テスト中にファイルの中身を文字列で読みます。
 func read(t *testing.T, path string) string {
 	t.Helper()

@@ -26,24 +26,17 @@ import (
 
 const shellSuffix = ".sh"
 
-// 走査から外すディレクトリ名。依存の取得物と VCS の内部で、いずれも我々が書いたものではない。
+// 走査から外すディレクトリ名。依存の取得物、VCS の内部、ビルド成果物（tmp/bin）のいずれかで、
+// どれも我々が手で書いたシェルではない。
 var skippedDirs = []string{".git", "node_modules", "vendor", "tmp"}
 
 var (
 	errFindings = xerrors.New("shellcheck が指摘を検出しました")
 
-	// errNoTargets は、走査対象が1件も無い場合のエラー。
-	//
-	// **0件は成功ではない。** 対象を失った検査は、壊れたときに赤ではなく緑を返す
-	// （ADR-0702 決定13）。このリポジトリに `*.sh` が1つも無い状態は、この道具が
-	// 何も見ていない状態と区別できないので、成功で返さない。
+	// errNoTargets: 対象0件は成功として返さない（ADR-0702 決定13）。
 	errNoTargets = xerrors.New("走査対象の *.sh が1件もありません")
 
-	// errUnparsedFinding は、shellcheck の出力に解釈できない行があった場合のエラー。
-	//
-	// **解釈できない入力は、取りこぼしではなくエラーとして扱う**（ADR-0702 決定14）。
-	// 黙って捨てると、出力形式が変わった日に「指摘なし」と「1行も解釈できなかった」が
-	// 緑で区別できなくなる。
+	// errUnparsedFinding: shellcheck 出力の1行でも解釈できなければ返す（ADR-0702 決定14）。
 	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
 )
 
@@ -57,11 +50,8 @@ func main() {
 
 // run はリポジトリ内のシェルスクリプトを shellcheck に掛け、結果を報告します。
 // wd は走査の基点となるディレクトリの取得手段、lookPath は shellcheck の所在確認手段、
-// out は報告の書き出し先です。
-//
-// **出力そのものが契約である**（指摘のテキストと、検査した件数）。書き出し先を引数で受けるのは、
-// それをテストから読めるようにするためである。標準ロガーへ直接書くと、出力先がプロセス共通に
-// なり、並列なテストが互いの出力を奪い合う。
+// out は報告の書き出し先です（不純な依存を引数で受け取る規約は scripts/README.md の
+// Test Strategy が持つ）。
 func run(
 	ctx context.Context,
 	wd func() (string, error),
@@ -151,8 +141,6 @@ func shellScripts(root string) ([]string, error) {
 
 // prefixFindings は shellcheck の出力を 1 行 1 指摘へ整え、先頭をリポジトリ相対パスへ差し替えます。
 // stdin で渡しているため shellcheck 自身は入力を `-` としか呼べず、どのファイルの指摘か言えません。
-//
-// 解釈できない行は errUnparsedFinding にします。空行は指摘を運ばないので読み飛ばします。
 func prefixFindings(script, out string) ([]string, error) {
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {

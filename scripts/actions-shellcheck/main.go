@@ -69,11 +69,7 @@ var (
 	errActionSymlinkUnresolved = xerrors.New("解決できないシンボリックリンクがあります")
 	errMultipleDocuments       = xerrors.New("action 定義に複数の YAML ドキュメントがあります。--- 区切りの 2 番目以降は検査されません")
 
-	// errUnparsedFinding は、shellcheck の出力に解釈できない行があった場合のエラー。
-	//
-	// **解釈できない入力は、取りこぼしではなくエラーとして扱う**（ADR-0702 決定14）。
-	// 黙って捨てると、出力形式が変わった日に「指摘なし」と「1行も解釈できなかった」が
-	// 緑で区別できなくなる。
+	// errUnparsedFinding: shellcheck 出力の1行でも解釈できなければ返す（ADR-0702 決定14）。
 	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
 )
 
@@ -531,8 +527,6 @@ func exprEnd(expr string) int {
 }
 
 // remapFindings は shellcheck の出力を、元の workflow 上の行・桁へ読み替えます。
-//
-// 解釈できない行は errUnparsedFinding にします。空行は指摘を運ばないので読み飛ばします。
 func remapFindings(s step, out string) ([]string, error) {
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {

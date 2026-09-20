@@ -33,11 +33,8 @@ const (
 )
 
 var (
-	// errUsage は、サブコマンドの与え方が誤っていることを表す。
 	errUsage = xerrors.New("usage: versions <apply|check>")
-	// errDrift は、写しが宣言からずれていることを表す。
 	errDrift = xerrors.New("版の写しが mise.toml からずれています")
-	// errShape は、宣言か写しが期待する形を持たないことを表す。
 	errShape = xerrors.New("版の宣言または写しの形が想定と異なります")
 )
 
@@ -67,7 +64,6 @@ type declared struct {
 
 // rule は、1つのファイルの中で正規表現に一致した箇所を1つの版へ揃える単位。
 type rule struct {
-	// label は報告に出す名前。
 	label string
 	// file は root からの相対パス。
 	file string
