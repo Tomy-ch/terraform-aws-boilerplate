@@ -268,6 +268,7 @@ After all commits succeed, run the full lefthook `pre-commit` hook once with `le
 このスキル経由の検証から静かに落ちる。
 
 **hook は CI の代替ではない**（ADR-0501 決定26）。ここが通ったことは、CI が通ることの証拠ではない。
+`.lefthook.yaml` が持つのは「壊れた状態を CI へ到達させない第一段」だけである。
 
 ### Procedure
 
