@@ -11,4 +11,4 @@
 #
 # 出力はブランチ名 1 行だけ。コマンド置換でそのまま受けられるよう、@ で余計な行を出さない。
 base-branch:
-	@$(call RUN_SCRIPT,base-branch,)
+	@$(call RUN_SCRIPT_HOST,base-branch,)
