@@ -74,6 +74,8 @@ func Test_run(t *testing.T) {
 
 			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
+			// 出力そのものが契約である —— CI ログを読む人が、どの写しがずれたかを知る唯一の手掛かり。
+			assert.Contains(t, out.String(), "Dockerfile")
 		})
 
 		t.Run("apply は写しを宣言へ揃える", func(t *testing.T) {
@@ -168,6 +170,10 @@ func Test_parseMise(t *testing.T) {
 			"node が無い":  "[tools]\ngo = \"1.27.1\"\n",
 			"tools が無い": "[env]\ngo = \"1.27.1\"\n",
 			"空":         "",
+			// TOML は引用符付きキーもインラインテーブルも許す。この読み取り器はどちらも
+			// 解釈しないので、黙って「宣言が無い」側へ落ちることを固定する。
+			"go が引用符付きキー":   "[tools]\n\"go\" = \"1.27.1\"\nnode = \"24.21.0\"\n",
+			"go がインラインテーブル": "[tools]\ngo = { version = \"1.27.1\" }\nnode = \"24.21.0\"\n",
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
@@ -180,8 +186,7 @@ func Test_parseMise(t *testing.T) {
 		t.Run("ファイルが無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, err := parseMise(filepath.Join(t.TempDir(), "no-such.toml"))
-			require.Error(t, err)
-			require.NotErrorIs(t, err, errDrift)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
 }
@@ -253,6 +258,77 @@ func Test_dockerFromRe(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
 		})
+
+		// 版は `\d+(?:\.\d+){0,2}` なので1〜3桁を許す。3桁だけを試していると、
+		// 桁数を絞る方向の変更が起きても気づけない。
+		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
+			t.Parallel()
+			src := "FROM golang:1-bookworm\nFROM golang:1.27-bookworm\n"
+			assert.Len(t, dockerFromRe("golang").FindAllString(src, -1), 2)
+		})
+
+		// suffix は必須である（`-bookworm` 等）。無い FROM は写しとして扱わない。
+		t.Run("suffix の無い FROM を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM golang:1.27.1\n", -1))
+		})
+	})
+}
+
+func Test_applyAll(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("差分が無ければ宣言の版を報告して成功する", func(t *testing.T) {
+			t.Parallel()
+
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+
+			var out bytes.Buffer
+
+			require.NoError(t, applyAll(root, true, &out))
+			assert.Contains(t, out.String(), "1.27.1")
+			assert.Contains(t, out.String(), "24.21.0")
+		})
+
+		t.Run("dryRun でなければ写しを揃えて成功する", func(t *testing.T) {
+			t.Parallel()
+
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			root := newRepo(t, soundMise, drifted, soundGoMod)
+
+			var out bytes.Buffer
+
+			require.NoError(t, applyAll(root, false, &out))
+			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("dryRun は書き換えず errDrift を返す", func(t *testing.T) {
+			t.Parallel()
+
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			root := newRepo(t, soundMise, drifted, soundGoMod)
+
+			var out bytes.Buffer
+
+			require.ErrorIs(t, applyAll(root, true, &out), errDrift)
+			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
+			assert.Contains(t, out.String(), "Dockerfile")
+		})
+
+		t.Run("mise.toml が読めなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+
+			require.ErrorIs(t, applyAll(t.TempDir(), true, &out), os.ErrNotExist)
+		})
 	})
 }
 
@@ -295,7 +371,8 @@ func Test_plan(t *testing.T) {
 			t.Parallel()
 			rs := []rule{{label: "x", file: "no-such", re: goDirectiveRe, version: "1", count: 1}}
 			_, err := plan(rs, t.TempDir())
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			require.NotErrorIs(t, err, errShape, "対応表の異常と読み取りの失敗を取り違えている")
 		})
 	})
 }
@@ -353,8 +430,8 @@ func Test_writeAll(t *testing.T) {
 
 			require.NoError(t, writeAll(map[string]string{a: "new-a", b: "new-b"}))
 
-			assert.Equal(t, "new-a", readFile(t, a))
-			assert.Equal(t, "new-b", readFile(t, b))
+			assert.Equal(t, "new-a", readAt(t, dir, "a.txt"))
+			assert.Equal(t, "new-b", readAt(t, dir, "b.txt"))
 		})
 
 		t.Run("一時ファイルを残さない", func(t *testing.T) {
@@ -390,8 +467,29 @@ func Test_writeAll(t *testing.T) {
 
 			require.Error(t, writeAll(map[string]string{ok: "new-a", ng: "new-b"}))
 
-			assert.Equal(t, "old-a", readFile(t, ok), "先に処理したファイルが書き換わっている")
+			assert.Equal(t, "old-a", readAt(t, dir, "a.txt"), "先に処理したファイルが書き換わっている")
 			assert.NoFileExists(t, ng)
+		})
+
+		// **これは「望ましい挙動」ではなく、既知の限界の固定である。**
+		//
+		// writeAll は一時ファイルへ全部書いてから rename するが、rename 自体が途中で
+		// 失敗する窓は消せない（writeAll の doc コメントがそう述べている）。このケースは
+		// その窓が実際にどう現れるかを記録し、緩和が入ったときに赤くなるようにする。
+		t.Run("rename が途中で失敗すると、先に rename した分は新版のまま残る", func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			a := filepath.Join(dir, "a.txt")
+			b := filepath.Join(dir, "b.txt")
+			require.NoError(t, os.WriteFile(a, []byte("old-a"), filePerm))
+			// b を既存のディレクトリにすると、そこへの rename が失敗する。
+			require.NoError(t, os.Mkdir(b, 0o750))
+
+			require.Error(t, writeAll(map[string]string{a: "new-a", b: "new-b"}))
+
+			assert.Equal(t, "new-a", readAt(t, dir, "a.txt"),
+				"rename の窓が塞がれたなら、このケースを書き換えること")
 		})
 
 		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
@@ -411,14 +509,4 @@ func Test_writeAll(t *testing.T) {
 			}
 		})
 	})
-}
-
-// readFile は、テスト中にファイルの中身を文字列で読みます。
-func readFile(tb testing.TB, path string) string {
-	tb.Helper()
-
-	body, err := os.ReadFile(path) //nolint:gosec // G304: テストが自分で作った t.TempDir() 配下のみ
-	require.NoError(tb, err)
-
-	return string(body)
 }
