@@ -45,7 +45,7 @@ tabpは汎用的なAWS resource wrapper集ではない。業務系システム�
 | 所有者 | 層 | 責務 |
 |---|---|---|
 | FE | 表現 | 操作と表示。BEから受け取るデータ、画像URL、処理状態を表現する。認可の正本や署名鍵を持たない |
-| BE（GBp利用アプリ） | 処理 | HTTP API、業務認可、状態遷移、ジョブ、メッセージ処理、非公開画像の閲覧可否とURL発行、通知内容の決定 |
+| BE（GBp利用アプリ） | 処理 | HTTP API、業務認可、状態遷移、ジョブ、メッセージ処理、非公開画像の閲覧可否とURL発行、通知内容の決定。**責務の割当であり、実装の有無ではない** —— 非公開画像の署名付きURL発行は現行GBpに無い（第6.2節） |
 | tabp | リソース | AWSリソース、IAM、ネットワーク、接続、監視、デプロイ先の機構、検証済みの利用構成 |
 | 発火側 | — | 起動後の確認、更新、失敗検知、復旧トリガー。必要に応じて後続作業を連鎖起動する |
 
@@ -166,7 +166,7 @@ GBpは同じコンテナイメージをコマンドで切り替える。ECS専�
 | GBpコマンド | 実行特性 | tabpの標準配置・必要な接続 |
 |---|---|---|
 | `serve` | HTTP APIと、必要時にSSEを提供して常駐 | ALB背後のECS Service。`/health`等のヘルスチェック、drainとSSE接続時間を整合 |
-| `worker <name>` | SQSを継続ポーリング。ack、再試行、DLQ、終了時drainを処理。既定では業務Handlerなし | v1.0標準はECS Service。SQS、Task Role、Queue滞留に基づくAuto Scalingを接続 |
+| `worker <name>` | SQSを継続ポーリング。ack、再試行、DLQ、終了時drainを処理。`:8081`にHTTPヘルスリスナ（`/healthz` liveness、`/readyz` readiness）を持つ | v1.0標準はECS Service。SQS、Task Role、Queue滞留に基づくAuto Scalingを接続。ヘルスチェックはこのリスナを使う |
 | `outbox-relay --channel=...` | 常駐。HTTPヘルスリスナなし | チャネルごとのECS Service。配送先、外向き通信、ログ・メトリクスによる監視 |
 | `job <name> [args...]` | 単発。成功0、失敗は非0 | ECS RunTask。Scheduler、EventBridge、手動発火等から起動 |
 | `migrate-up` | 単発 | Service更新前のECS RunTask。成功確認は発火側 |
@@ -176,13 +176,15 @@ GBpは同じコンテナイメージをコマンドで切り替える。ECS専�
 
 ### 5.1 Worker
 
-WorkerはSIGTERMを受けてdrainし、通常の停止では成功終了できる。v1.0の標準はServiceとし、最小タスク数1で接続を確認する。0タスクまでの縮退は、起動遅延、復帰、処理中の縮退を実AWSで検証した後のオプションとする。SQSをPipesで消費して単発Taskを起動する構成は、GBpの既存Workerのack・再試行・DLQ経路と別物なので標準に含めない。
+WorkerはSIGTERMを受けてdrainし、通常の停止では成功終了できる。業務Handlerは利用側BEが登録する —— GBpはclone直後にsample worker（`withdrawal-archive`）を持つが、sampleを除去すると登録済みHandlerが無くなり、worker起動は未知のworker名として即終了する。v1.0の標準はServiceとし、最小タスク数1で接続を確認する。
+
+DLQへの退避経路は2つある。アプリ側のFailureHandlerが`CONSUMER_QUEUE_DLQ_URL`へ送る経路と、brokerのRedrivePolicyが`maxReceiveCount`超過で送る経路である。`queue-worker`がどちらを標準とするかは実装時に決め、公開契約へ書く。0タスクまでの縮退は、起動遅延、復帰、処理中の縮退を実AWSで検証した後のオプションとする。SQSをPipesで消費して単発Taskを起動する構成は、GBpの既存Workerのack・再試行・DLQ経路と別物なので標準に含めない。
 
 Queue滞留に基づくAuto Scalingは、「滞留数÷実行中タスク数」のmetric mathで構成する。
 
 ### 5.2 ジョブの重複と失敗
 
-- **確定:** GBp既存の保守Jobは冪等かつ並行安全。汎用の`job_id`排他ストアは追加しない。
+- **確定:** GBp既存の保守Job（`outbox-gc`、`idempotency-gc`、`orphan-cleanup`）は冪等かつ並行安全（GBp ADR-0109、`orphan-cleanup`は自身のREADME）。汎用の`job_id`排他ストアは追加しない。sample由来のJobはこの保証の外である。
 - 新規JobはBE側で、再実行と並行実行に耐えることを個別に示す。耐えないJobだけ、発火側の排他またはJob固有のロックを設計する。
 - EventBridge Schedulerの再試行・DLQはtarget起動失敗だけを扱う。Task起動後のコンテナ失敗は、ECS停止イベント、終了コード、ログで別に検知する。
 - GBpに汎用ジョブ履歴テーブル、進捗率、取消APIを要求しない。終了コードのエラー分類機構も採用しない。
@@ -192,6 +194,7 @@ Queue滞留に基づくAuto Scalingは、「滞留数÷実行中タスク数」�
 GBpのRealtimeは、業務Transaction→outbox→EventLog→SNS→`serve`インスタンス別SQS Queue→SSEの経路を使う。
 
 - **確定:** AWS上の永続Table/TopicはTerraformが所有する。`realtime-init`はローカル（Docker Compose）専用とし、AWSでは実行しない。
+- 所有する資源はDynamoDB 3 table（`realtime_event_log_<suffix>` / `realtime_stream_ticket_<suffix>` / `realtime_instance_lease_<suffix>`。suffixは`REALTIME_TABLE_SUFFIX`）とSNS Topic 1つ。key schemaとTTL属性はGBpの`TableSpec`に合わせ、一致を検証項目とする。
 - `serve`のTask RoleにTable/Topicの作成権限を付与しない。
 - tabpは静的Queueを全インスタンス分は作らない。用途に絞ったIAM権限、永続Table/Topicとの接続、DLQ、観測を用意する。孤立したインスタンス資源の回収Jobを発火する。
 
@@ -199,20 +202,22 @@ GBpのRealtimeは、業務Transaction→outbox→EventLog→SNS→`serve`イン�
 
 **確定:** インスタンス別Queueの範囲はprefixで制限する。タグは監査・リソース把握用に限定する。
 
-- SQS: `arn:aws:sqs:<region>:<account>:<project>-<env>-``<service>-``rt-*` に対し、CreateQueue、DeleteQueue、SetQueueAttributes、ReceiveMessage、DeleteMessage を許可する。
-- SNS: 対象TopicへのSubscribe/Unsubscribe。`sns:Protocol = sqs`、`sns:Endpoint`をprefix付きQueue ARNに限定する。
-- 回収Jobは`ListQueues`の`QueueNamePrefix`で列挙する。
-- prefixはenvとサービス名を含める。SQSの名前上限80文字に対し、インスタンス識別子の長さを管理する。
-- 作成時に監査用タグを付ける場合は`sqs:TagQueue`を追加する。
+- Queue名は`<REALTIME_QUEUE_PREFIX>-<instance id>`である。instance idはGBpが起動ごとに採番するUUID（36文字）でtabpからは制御できない。**tabpが管理するのはprefixであり、43文字以内に収める**（SQSの名前上限80文字に対するGBp側の制約）。
+- `serve`のTask Roleに与えるのは、prefixで絞ったQueueに対する CreateQueue、**GetQueueAttributes**、SetQueueAttributes、ReceiveMessage、DeleteMessage、DeleteQueue と、対象Topicに対する Subscribe、**SetSubscriptionAttributes**、Unsubscribe、**Publish**（失効通知）である。GetQueueAttributesとSetSubscriptionAttributesが欠けると`serve`は起動に失敗する。
+- SNSのSubscribeは`sns:Protocol = sqs`、`sns:Endpoint`をprefix付きQueue ARNに限定する。UnsubscribeとSetSubscriptionAttributesのIAM resourceはsubscription ARNであり、Topic ARNだけでは足りない可能性がある（実装前にAWSの文書で確認する）。
+- 回収Jobが呼ぶのは`sns:ListSubscriptionsByTopic`→`sns:Unsubscribe`→`sqs:GetQueueUrl`→`sqs:DeleteQueue`と、lease tableへのDynamoDB操作である。**`ListQueues`は呼ばない。**
+- 回収はinstance idのsuffixで照合しprefixを問わない。`REALTIME_QUEUE_PREFIX`を変えると、旧prefixの残骸に対して`GetQueueUrl`がAccessDeniedとなり回収Jobが毎回失敗する。prefixを変える運用をするなら、IAMの範囲をその想定に合わせる。
+- GBpはQueueにタグを付けない（`CreateQueue`は`QueueName`のみ）。`sqs:TagQueue`は不要である。
 
 ### 5.5 tabp規約（GBpをtabpに載せる前提条件）
 
 **確定:** 以下はデプロイ基盤の制約であり、GBpの非ベンダーロック方針と衝突するためGBpには焼き込まない。tabpの規約として定義する。
 
+Workerの業務Handlerがat-least-once前提で冪等であること、SSEのクライアントが`Last-Event-ID`で再接続することは、**GBpが既に自身の契約として持っている**。tabpの規約として重複して定義せず、GBpの契約を前提とする。
+
 - マイグレーションは後方互換（expand/contract）であること。tabpは内容を検査しない。違反するとrollbackが成立しない。
-- Workerの業務Handlerはat-least-once前提で冪等であること。
-- Fargateの`stopTimeout`（最大120秒）とSQSのvisibility timeoutを整合させること。drainが間に合わないメッセージは再配送される。
-- SSEはクライアント側で再接続（`Last-Event-ID`）する前提とすること。ALBのidle timeoutとheartbeatを整合させる。
+- Fargateの`stopTimeout`（最大120秒）を、GBpが持つ時間と整合させること。GBp側の既定は`APP_SHUTDOWN_TIMEOUT` 65秒、`WORKER_DRAIN_TIMEOUT` 30秒、`CONSUMER_QUEUE_VISIBILITY_TIMEOUT` 30秒で、`serve`のSSE drainは固定10秒である。**`stopTimeout`が`APP_SHUTDOWN_TIMEOUT`より短いと停止が切り詰められる**ため、65秒以上にするか`APP_SHUTDOWN_TIMEOUT`を実行時に縮める。drainが間に合わないメッセージは再配送される。
+- SSEの基盤側要件を満たすこと。ALBのidle timeoutをheartbeat間隔より大きくし、stream pathのresponse bufferingを無効にし、**stream pathのアクセスログからquery stringを除外または秘匿する**（ticketがquery parameterで渡るため）。
 - `public-api-gateway`経由のSSEはunsupportedとし、SSEは`public-api-alb`に寄せる。REST APIの response streaming（`STREAM`）を使えば SSE は技術的には成立するが、regional/private エンドポイントの idle timeout が5分、最長15分で切れ、endpoint caching と content encoding が使えず、追加課金が発生するため。
 
 ## 6. 画像・ファイル配信
@@ -306,7 +311,7 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 | `webhook-processing` | 外部HTTP→BEの`serve`→必要ならSQS→`queue-worker`。認証・業務判断はBE |
 | `release-flow` | 発火側→`migrate-up`成功確認→Service更新→状態確認→必要時の復旧トリガー |
 | `fe-release-flow` | 発火側→FE成果物のS3配置→CloudFront invalidation→配信確認。`index.html`とhash付きassetでキャッシュ方針を分ける |
-| `failure-recovery` | Scheduler起動失敗、Task失敗、SQS DLQ、outbox dead行の検知と発火側による再処理 |
+| `failure-recovery` | Scheduler起動失敗、Task失敗、SQS DLQ、outbox dead行の検知と発火側による再処理。dead行の再処理はGBpの`outbox-relay replay`を使う（第9.3節） |
 | `backup-restore` | DB、業務画像、DynamoDB、OpenSearch、Secrets、AppConfigの版を対象とする保持要件に従ったバックアップ・版管理・復元確認。Cognito User Poolはネイティブな復元手段がなくunsupported |
 | `staff-console` | 職員向け管理画面。`identity-integration`のOIDC→公開ALBの認証action→送信元IP制限→`serve`配下で配信。業務認可はBE |
 | `domain-event-fanout` | `outbox-delivery`→EventBridge custom bus→複数の`event-queue-worker`。1:Nの配信とproducerの発行権限 |
@@ -387,7 +392,9 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 
 ### 9.3 観測
 
-**確定:** GBpは常にOTLPで出力する。出力先の切り替えはtabpが持つCollectorのexporter設定で行い、GBp側は変更しない。
+**確定:** GBpのテレメトリのトランスポートはOTLPに固定されている（console exporterを持たない）。ただし**既定では無効である** —— `OBS_TRACES_EXPORTER` / `OBS_METRICS_EXPORTER` / `OBS_LOGS_EXPORTER` がシグナルごとのゲートで、GBpのイメージに焼き込まれた値は空である。**有効化はtabpが実行時の環境変数で行う**（`OBS_*_EXPORTER=otlp` と `ENDPOINT_OTLP`）。出力先の切り替えはtabpが持つCollectorのexporter設定で行い、GBpのコードは変更しない。
+
+アプリのログはOTLPとは独立に常にstdoutへ出る（`APP_MODE=production`でJSON、`development`でconsole形式）。`OBS_LOGS_EXPORTER=otlp`とawslogsドライバを併用すると二重化するため、どちらを使うかを決める。
 
 | モード | アプリのテレメトリ（GBp→Collector） | AWSネイティブのシグナル |
 |---|---|---|
@@ -398,7 +405,9 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 - **otelモードの入力:** HTTPSのOTLP endpoint、認証情報（Secrets Manager参照、必要ならmTLS用CA）。obp固有の設定は持たない。
 - **想定する送り先:** 自宅に置くobp（observability-boilerplate、Grafanaスタック）。公開方式（Cloudflare Tunnel等）はobp側の責務とする。AWS外へ送るため、`otel`と`dual`は`controlled-external-egress`の有効化を前提とする（第9.2節）。
 - **Collector:** 送信キューと再送を持たせ、送り先の停止がアプリに影響しないようにする。Fargateのローカルストレージはタスク停止で消えるため、長時間停止時のテレメトリ欠損を許容する。サンプリングとフィルタを契約に含める。
-- **Collectorの配置:** sidecarかgatewayかはsandboxでの実測コストで決める。tail samplingを使う場合はgatewayが必須。cloudwatchモードではSigV4署名のためCollectorを省略できない。
+- **Collectorの配置:** sidecarかgatewayかはsandboxでの実測コストで決める。tail samplingを使う場合はgatewayが必須。cloudwatchモードでは、traceとmetricはSigV4署名のためCollectorを省略できない。ログだけはawslogsドライバで直接CloudWatch Logsへ届くため、Collectorを介さない経路もある。
+- **サンプリング:** GBpは`ParentBased(AlwaysSample)`で固定されており、アプリ側につまみが無い。サンプリングとフィルタはCollector側でしか実現できない。
+- **Prometheus scrape経路:** GBpは`/metrics`（`serve`のみ、production環境では独立サーバを起動しない）でBasic認証つきの一部メトリクスを出す。これはOTLPに乗らないため、必要ならCollectorのprometheus receiverと`METRICS_USERNAME` / `METRICS_PASSWORD`の注入が要る。
 
 **ログの所有:** 各usecaseが自分のLog Group（S3にしか出せないログ種別はBucket）を所有し、所在を出力契約に含める。
 
@@ -409,7 +418,9 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 
 **analytics:** AWSネイティブのログ（ALB、CloudFront、S3アクセスログ、VPC Flow Logs）の集計に限定する。アプリログの分析は送り先backend（obp）の責務とする。CloudWatch LogsをAthenaから直接引くconnectorは、実体がLambdaのため採用しない。LokiはS3に独自形式で保存するため、analyticsとobpで保存先は共有しない。
 
-**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗、outbox dead行）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
+**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。
+
+**outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**3モード共通で成立する経路はstdoutログのmetric filterだけ**であり、ログ文言への依存になる。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
 **Grafanaからの参照（pull経路）:** GrafanaはCloudWatch datasourceで照会する。tabpは読み取り専用のIAM Roleと、IAM Roles Anywhereのtrust anchor/profileを出力する。trust anchorには自前のCAを使う（AWS Private CAは予算超過のため）。長期アクセスキーは使わない。GetMetricDataの課金に対し、ダッシュボードの自動更新間隔を管理する。
 
@@ -422,7 +433,9 @@ Log retentionは明示する。
 - **tabpの責務:** 終了コード、停止理由、ログを取得可能にする（Task定義、Log Group、ECS停止イベント）。
 - `migrate-up`が失敗した場合は`serve`を更新しない。
 - ECS Serviceの更新方式とBlue/Greenの対象は実装設計で決め、内部resource詳細を利用側へ過度に露出させない。
-- GBpのproductionイメージに含まれる環境別設定と、ECRからのイメージ供給契約を明示する。ECRは不変タグとpush時スキャンを有効にし、Task定義はdigestで指定する。GBpのcosign署名の検証は発火側のパイプラインで行う。
+- GBpのproductionイメージに含まれる環境別設定と、ECRからのイメージ供給契約を明示する。ECRは不変タグとpush時スキャンを有効にし、Task定義はdigestで指定する。GBpのcosign署名（keyless。OIDC→Fulcio→Rekor）の検証は発火側のパイプラインで行う。
+- GBpの現行の配送先はGHCRであり、registryは差し替える前提のstubとして書かれている。ECRへ向けること自体は想定内だが、**GBpのタグ生成（直近タグ由来の`<version>`）は同じタグを再pushするため、ECRの不変タグと両立しない**。発火側のタグ方針をdigest主体、または`<version>-<sha>`のみに差し替えることを供給契約の前提とする。
+- GBpのイメージには`SERVER_HOST=api.example.com`等の環境別設定が焼き込まれている。`SERVER_HOST`はバインドホストであり、Fargateでは`0.0.0.0`を実行時に注入する。焼き込み値は署名対象に含まれるため、設定変更は再ビルドと再署名を伴う。
 
 ### 9.5 Stateful Resource
 
@@ -462,7 +475,13 @@ Log retentionは明示する。
 
 develop/stagingは、Application Auto Scalingのscheduled actionによる時間帯スケーリングをenvの値で扱える。
 
-利用側（GBp等）に対応機能がないusecaseは、sandboxで汎用のテストクライアントを用いて接続契約を検証する。
+利用側（GBp等）に対応機能がないusecaseは、sandboxで汎用のテストクライアントを用いて接続契約を検証する。GBpの実装を突合した結果、テストクライアントが要るのは次である。
+
+`static-web` / `amplify-app`（FE成果物）、`cache`（キャッシュ抽象を持たない）、`search`、`analytics` / `business-analytics`、`runtime-config`、`email-delivery` / `email-inbound` / `sms-push-delivery`（送信adapterが無い。フィードバックのSQS消費側だけはworkerで受けられる）、`private-media` / `media-ingest`（Storage境界は`Put`/`List`/`Delete`のみでURLを返さない）、`data-refresh`（マスキングJobが無い）、`identity-integration`（検証側は在るがトークン取得側が無い）、`event-job`（イベントからJob引数への写像が無い。第12節）。
+
+GBpで直接検証できるのは、`public-api-alb` / `private-api` / `public-api-gateway`、`service-to-service`、`private-rds` / `private-aurora`、`queue-worker` / `event-queue-worker`、`on-demand-job` / `scheduled-job`、`outbox-delivery`、`realtime-delivery`、`public-media` である。
+
+Workerのack・再試行・DLQ・drainの検証には、意図的に失敗するHandlerが要る。GBpに専用のものは無いが、sample worker（`withdrawal-archive`）が永続エラーと再試行の両経路を持つため、これで成立する。**sampleを除去したGBpでは成立しない。**
 
 ### 10.1 アカウント構成
 
@@ -503,7 +522,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. 第7節の41ユースケースと9接続シナリオ、第8節の原案候補カバレッジが成立している。各々のsupported/unsupported、意味論的な入出力、所有者、検証方法が記録されている。
 1. 第4.1節の対応表が埋まり、Lightsailの適用除外リストとECS移行経路が文書化されている。
 1. 各usecaseがmockユニットとsandboxでの実apply/destroyで確認されている（第10節）。複数Service・NodeGroup等の代表的な1:N構成を検証する。第3.1節の3つの層検査がCIで機能している。
-1. 参照利用者であるGBpの1つのイメージを、役割別のService/Taskとして起動できる。Workerのack・再試行・DLQ・drain、Jobの起動失敗とコンテナ失敗、Outbox配送と再処理をそれぞれ確認できる。
+1. 参照利用者であるGBpのイメージを、役割別のService/Taskとして起動できる。GBpのイメージは環境ごとに1つで（環境別設定を焼き込む）、役割はコマンドで切り替える。Workerのack・再試行・DLQ・drain、Jobの起動失敗とコンテナ失敗、Outbox配送と再処理をそれぞれ確認できる。
 1. `migrate-up`が失敗したときに`serve`を更新しない経路が、接続例（第7.1節）で成立することを示す。tabpは終了コード、停止理由、ログを取得可能にし（第9.4節）、発火側が終了コードで完了・失敗を判定して後続作業または復旧を起動できる。
 1. 公開画像は専用CloudFrontサブドメインから読める。非公開画像・ファイルは署名付きURLで読め、未署名・期限切れURLとS3直接アクセスでは読めない。配信URLにS3ホスト名・Bucket名が現れない。署名はsandboxのテストクライアントで行い、実AWSで確認する。
 1. Realtime構成で、SSE配信、インスタンス別Queueの生成・回収、孤立資源回収、prefixで制限したIAMを確認する。永続Table/TopicがTerraform所有であり、AWSで`realtime-init`を実行しない。
@@ -558,6 +577,8 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 | Subscription Filterの配分 | cloudwatch/dualモードの実装時 | 1 Log Groupあたり2枠の用途割り当て |
 | Glue Catalogの所有者 | `analytics`/`business-analytics`の実装前 | 共有時の所有者 |
 | 条件付き候補 | 具体的な連携要件の発生時 | `aws-bridge-lambda`のみ。ネイティブ統合で解けない具体的な連携が現れた場合に、第2.2節のゲートを通して採用する |
+| outbox dead行の検知経路 | `outbox-delivery`の実装前 | GBpでのdeadの表現はDB行・OTel counter・Warnログの3つで、AWSネイティブのシグナルは無い。counter経由は`otel`モードでCloudWatchに届かず、3モード共通で成立するのはstdoutログのmetric filterだけ（ログ文言への依存）。どちらを採るか、または`otel`モードでのアプリ系アラートをGrafana Alertingへ寄せるか |
+| GBpへ渡す環境変数の契約 | Compute usecaseの実装前 | `OBS_*_EXPORTER` / `ENDPOINT_OTLP` / `SERVER_HOST` / `REALTIME_*` / `OUTBOX_*` / `CONSUMER_QUEUE_*` / `AUTH_*` / DB系のうち、どれをmoduleの入力契約として型付きで持ち、どれをenvの値とするか。焼き込み値（`SERVER_HOST`、`OBJECT_STORAGE_BUCKET`、`REALTIME_QUEUE_PREFIX`等）との優先関係を含む |
 | 層検査の入力形式と道具 | 最初のusecaseの実装前（フェーズ1） | 第3.1節の検査(1)(2)はHCLだけで判定できるが、ADR-0402 決定11 はPolicy Testの入力を`terraform show -json`と定める。source-levelの検査をどの層に置くか（ADR-0402のsupersedeか、ADR-0501 決定4の表の更新か）。Conftestとterraform-config-inspectは`mise.toml`に未pinで、導入はADR-0501の更新を伴う |
 | 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
