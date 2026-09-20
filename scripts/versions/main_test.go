@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// soundMise は、宣言として最小限の形を持つ mise.toml。
 const soundMise = `min_version = "2026.6.0"
 
 [env]
@@ -36,8 +35,8 @@ go 1.27.1
 require ()
 `
 
-// newRepo は、宣言と写しを持つ一時リポジトリの root を返します。実物を読むテストは、
-// 今日のリポジトリの内容で通ったり落ちたりするようになります。
+// newRepo は、宣言と写しを持つ一時リポジトリの root を返します
+// （フィクスチャ方針は scripts/README.md の Test Strategy 節）。
 func newRepo(t *testing.T, mise, dockerfile, gomod string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -51,7 +50,6 @@ func newRepo(t *testing.T, mise, dockerfile, gomod string) string {
 	return root
 }
 
-// readAt は root 配下のファイルを読みます。
 func readAt(t *testing.T, root string, parts ...string) string {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(append([]string{root}, parts...)...))
@@ -308,6 +306,27 @@ func Test_applyAll(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// applyAll は複数のファイルへ書き込む。changes の組み立てを配線し損ねた場合に
+		// 部分適用が残らないことを、この呼び出し経路で固定する。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			driftedMod := strings.ReplaceAll(soundGoMod, "go 1.27.1", "go 1.26.0")
+			root := newRepo(t, soundMise, drifted, driftedMod)
+
+			// 書き込みは昇順（docker/... が先、scripts/... が後）。後者の一時ファイル名を
+			// ディレクトリで塞ぎ、先に書いた分が残らないことを見る。
+			blocked := filepath.Join(root, "scripts", "go.mod.atomicwrite.tmp")
+			require.NoError(t, os.MkdirAll(blocked, 0o700))
+
+			var out bytes.Buffer
+
+			require.Error(t, applyAll(root, false, &out))
+			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"),
+				"先に処理したファイルが書き換わっている")
+		})
 
 		t.Run("dryRun は書き換えず errDrift を返す", func(t *testing.T) {
 			t.Parallel()

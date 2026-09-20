@@ -48,7 +48,7 @@ func TestApply(t *testing.T) {
 			require.NoError(t, os.WriteFile(a, []byte("old"), filePerm))
 
 			require.NoError(t, atomicwrite.Apply(map[string]string{a: "new"}, filePerm))
-			assertNoTemp(t, dir)
+			assertOnly(t, dir, "a.txt")
 		})
 	})
 
@@ -72,16 +72,21 @@ func TestApply(t *testing.T) {
 			assert.NoFileExists(t, ng)
 		})
 
+		// 書き込みはパスの昇順なので、失敗する missing/b.txt より前に a.txt を置くことで
+		// 「一時ファイルを作ってから消した」経路を踏む。Apply は最初の失敗で打ち切るため、
+		// 後ろに対象を足しても現行の実装では書き込みが試みられない。
 		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			ok := filepath.Join(dir, "a.txt")
+			first := filepath.Join(dir, "a.txt")
 			ng := filepath.Join(dir, "missing", "b.txt")
-			require.NoError(t, os.WriteFile(ok, []byte("old-a"), filePerm))
+			require.NoError(t, os.WriteFile(first, []byte("old-a"), filePerm))
 
-			require.Error(t, atomicwrite.Apply(map[string]string{ok: "new-a", ng: "new-b"}, filePerm))
-			assertNoTemp(t, dir)
+			require.Error(t, atomicwrite.Apply(map[string]string{first: "new-a", ng: "new-b"}, filePerm))
+
+			assertOnly(t, dir, "a.txt")
+			assert.Equal(t, "old-a", read(t, first), "先に処理したファイルが書き換わっている")
 		})
 
 		// **これは「望ましい挙動」ではなく、既知の限界の固定である。**
@@ -105,7 +110,6 @@ func TestApply(t *testing.T) {
 	})
 }
 
-// read は、テスト中にファイルの中身を文字列で読みます。
 func read(t *testing.T, path string) string {
 	t.Helper()
 
@@ -115,16 +119,22 @@ func read(t *testing.T, path string) string {
 	return string(body)
 }
 
-// assertNoTemp は、ディレクトリに一時ファイルが残っていないことを確かめます。
-func assertNoTemp(t *testing.T, dir string) {
+// assertOnly は、ディレクトリの中身が want と完全に一致することを確かめます。
+//
+// 一時ファイルの名前で照合しない。接尾辞は atomicwrite の非公開定数で、テストから参照できない
+// ため写しになる。写した側は、定数が変われば「残っていないこと」を検査せずに通る。
+func assertOnly(t *testing.T, dir string, want ...string) {
 	t.Helper()
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 
+	got := make([]string, 0, len(entries))
 	for _, e := range entries {
-		assert.NotContains(t, e.Name(), ".atomicwrite.tmp")
+		got = append(got, e.Name())
 	}
+
+	assert.ElementsMatch(t, want, got, "想定外のファイルが残っている")
 }
 
 func TestApply_モードの引き継ぎ(t *testing.T) {

@@ -32,10 +32,8 @@ var (
 )
 
 var (
-	// errAge は、ageFn の失敗伝播を検証するためのセンチネルです。
 	errAge = xerrors.New("age lookup failed")
-	// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。
-	errWD = xerrors.New("getwd failed")
+	errWD  = xerrors.New("getwd failed")
 )
 
 func testLock() map[string]string {
@@ -234,7 +232,6 @@ func Test_readLock(t *testing.T) {
 	})
 }
 
-// writeLockFile は body を lockfile として一時ディレクトリへ書き出し、そのパスを返す。
 func writeLockFile(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "actions-pin.toml")
@@ -853,12 +850,12 @@ func Test_planRewrites(t *testing.T) {
 
 			_, err := planRewrites(root, []string{filepath.Join(root, "absent.yml")}, testLock())
 
+			require.ErrorIs(t, err, os.ErrNotExist)
 			require.ErrorContains(t, err, "absent.yml")
 		})
 	})
 }
 
-// writeFile は root からの相対パスへ body を書き出し、その絶対パスを返す。
 func writeFile(t *testing.T, root, name, body string) string {
 	t.Helper()
 	path := filepath.Join(root, name)
@@ -963,6 +960,7 @@ func Test_collectKeys(t *testing.T) {
 
 			_, err := collectKeys(root, []string{filepath.Join(root, "absent.yml")})
 
+			require.ErrorIs(t, err, os.ErrNotExist)
 			require.ErrorContains(t, err, "absent.yml")
 		})
 	})
@@ -1827,7 +1825,6 @@ func Test_relAll(t *testing.T) {
 	})
 }
 
-// writeLockAt は root 配下の既定パスへ lockfile を書き出す。
 func writeLockAt(t *testing.T, root string, lock map[string]string) {
 	t.Helper()
 	path := filepath.Join(root, lockFile)
@@ -1898,7 +1895,6 @@ func agoRFC3339(n int) string {
 	return time.Now().Add(-time.Duration(n)*hoursPerDay*time.Hour - time.Minute).Format(time.RFC3339)
 }
 
-// stubWD は、固定のディレクトリを返す作業ディレクトリの取得手段です。
 func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
