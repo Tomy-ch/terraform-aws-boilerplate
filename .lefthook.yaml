@@ -11,8 +11,7 @@
 pre-commit:
   parallel: true
   commands:
-    # workflow 定義の検査群。actionlint / composite の run: / シェル / required check の整合 /
-    # PR コメントの secret とフェンス / mise 導入 action の三点一致を1本で回す。
+    # workflow 定義の検査群。下位の検査を1本で回す（束ねている中身は .makefiles/github/lint.mk）。
     actions-lint:
       glob:
         - ".github/workflows/*.{yml,yaml}"
@@ -27,7 +26,6 @@ pre-commit:
       glob: "**/*.md"
       run: make md-lint
 
-    # Dockerfile の検査。
     docker-lint:
       glob: "docker/**/Dockerfile"
       run: make docker-lint
@@ -40,8 +38,7 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make egress-check
 
-    # 言語ランタイムの版の写しが mise.toml 通りか。**ずれてもビルドは通る**ので、
-    # この検査が無いと「ずれている」と「揃っている」を緑で区別できない。
+    # mise.toml からの版のずれを検査する。理由は .makefiles/versions.mk を見よ。
     versions-check:
       glob:
         - "mise.toml"
@@ -50,14 +47,16 @@ pre-commit:
         - "scripts/versions/*.go"
       run: make versions-check
 
-    # uses: と image: の固定。lockfile と実ファイルの drift、および参照されなくなった
-    # lockfile のエントリ（orphan）を落とす。
+    # uses: の固定。lockfile と実ファイルの drift、および参照されなくなった lockfile の
+    # エントリ（orphan）を落とす。
     pin-actions-check:
       glob:
         - ".github/workflows/*.{yml,yaml}"
         - ".github/actions/**/*.{yml,yaml}"
         - ".github/actions-pin.toml"
       run: make pin-actions-check
+
+    # image: の固定。lockfile と実ファイルの drift を落とす。pin-actions と違い orphan は見ない。
     pin-images-check:
       glob:
         - "docker/**/Dockerfile"
@@ -78,11 +77,10 @@ pre-commit:
 
 commit-msg:
   commands:
-    # 規約の正本は commitlint.config.js。機械が課すのは type の enum と type / subject の空チェックだけで、
-    # 文体と長さはレビューで見る。
+    # 規約の正本は commitlint.config.js（詳細と理由はそちらに書いてある）。
     #
-    # **hook だけでは何も保証しない。** `--no-verify` で日常的に飛ぶうえ、自動化が作る commit は
-    # ローカル hook を走らせない。本体は CI 側の範囲検査（make commitlint-range）である。
+    # commitlint は自動化が作る commit では走らない（`--no-verify` とは別の抜け道。原則はファイル冒頭）。
+    # 本体は CI 側の範囲検査（make commitlint-range）である。
     commitlint:
       run: cat {1} | docker compose run --rm -T node_tool_runner commitlint
 
@@ -90,8 +88,6 @@ pre-push:
   parallel: true
   commands:
     # push 予定の commit 範囲に秘密が無いこと。検出時は通さない（ADR-0302 決定4）。
-    #
-    # 混入を検出した場合の第一手は当該資格情報の**失効**であり、履歴からの除去ではない。
-    # push 済みであれば、履歴を書き換えても漏洩の事実は取り消せない。
+    # 検出したら、まず当該資格情報を失効させる。履歴の書き換えではない（理由: ADR-0302 決定11-12）。
     secret-scan:
       run: make secret-scan

@@ -78,7 +78,7 @@ type rule struct {
 	count int
 }
 
-// main は 1:1 テスト規約の対象外で分岐を検査できないため、判断は run に置きます。
+// main は判断を持ちません。分岐は run に置きます（scripts/README.md の Test Strategy）。
 func main() {
 	log.SetFlags(0)
 
