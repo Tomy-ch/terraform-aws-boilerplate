@@ -35,7 +35,7 @@ tabpは汎用的なAWS resource wrapper集ではない。業務系システム�
 - 会社固有の要件に左右される接続（オンプレ、取引先、定義外のクロスアカウント）、SQS FIFO、DRを対象外とした（第7.2節）。
 - 観測を cloudwatch / otel / dual の三モードとし、otelモードの送り先をAWS外（自宅のobp）と想定した（第9.3節）。
 - 本番から下位環境へのデータ同期（`data-refresh`）を追加した（第9.6節）。
-- 検証戦略、sandbox 2アカウント構成、実装順序とbootstrapを新設した（第10節）。
+- 検証戦略、アカウント構成、実装順序とbootstrapを新設した（第10節）。
 - usecase Issueの必須項目と完了条件を追加した（第11.1節）。
 
 ## 2. 層責務原則とシステム責務
@@ -458,7 +458,7 @@ Log retentionは明示する。
 - **一方向:** 本番側はスナップショットの共有と読み取りの許可だけを持つ。下位環境から本番へ書き込めないことをSCPとIAMで担保する。
 - **暗号化:** AWS管理キー（`aws/rds`）で暗号化したスナップショットはアカウント間で共有できない。同期を有効にする構成では、`private-rds`/`private-aurora`はカスタマー管理キーを使い、下位環境のアカウントへkey grantを与える。
 - **発火:** 同期の開始、成否の確認、失敗時の扱いは発火側の責務とする（第9.4節と同じ分担）。
-- **検証:** sandboxの2アカウント間で、本番側と下位環境側を模して検証する（第10.1節）。同一アカウントの縮退構成ではクロスアカウント処理が動かないため、検証には使わない。
+- **検証:** developを本番側、sandboxを下位環境側に模して検証する（第10.1節）。同一アカウントの縮退構成ではクロスアカウント処理が動かないため、検証には使わない。逆流の拒否はライブで試さず、SCPとIAMの宣言をPolicy Testで見る。
 
 ## 10. 検証戦略とsandbox運用
 
@@ -485,7 +485,9 @@ Workerのack・再試行・DLQ・drainの検証には、意図的に失敗する
 
 ### 10.1 アカウント構成
 
-管理、sandbox（2アカウント）、各環境（develop/staging/release）のアカウントを分ける。sandboxを2アカウントとするのは、スナップショット共有、KMSのkey grant、SCPによる方向の強制といったクロスアカウント処理を実際に検証するためである。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。
+管理、sandbox、各環境（develop/staging/release）の5アカウントに分ける。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**developとsandboxの間で行う**。developは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。
+
+SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevelopへ残り、developは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。
 
 ### 10.2 sandbox運用
 
@@ -506,7 +508,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
-| 0. bootstrap | `state``-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、sandbox 2アカウント、Identity Centerは`organization-baseline`がフェーズ1で作る | なし（手順を文書化） |
+| 0. bootstrap | `state``-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、メンバーアカウント4つ（develop / staging / release / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る。人が手で作るのは管理アカウント1つだけである | 管理アカウントが存在すること（手順を文書化） |
 | 1. 基盤 | `organization-baseline`、`account-baseline`、`audit-evidence`、`finops`、`ops-notification`、ECR。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
 | 2. ネットワーク | `vpc`（module）、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
 | 3. Compute・データ | `ecs`（module）、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
@@ -529,7 +531,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. 第2.2節のゲートがCIで機能している。tabp内のコード実行resourceは許可リストとADRを持ち、採用した各言語のlint・testがCIで必ず走る。
 1. 観測の三モードがexporter設定の切り替えと`controlled-external-egress`の有効化だけで成立する。AWS基盤系アラームがモードに関係なく発報し、`ops-notification`の通知先へ届く。メトリクス途絶を検知できる。egress制御が第9.2節のとおり機能し、`controlled-external-egress`を有効にしていない環境から外部へ到達できない。
 1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。
-1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらず、下位環境から本番へ書き込めないことを、sandboxの2アカウント間で確認する。
+1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、developとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
 1. `media-ingest`で、スキャン結果が脅威なしでないオブジェクトを読めないことを確認する。
 1. Security Default、Stateful Resourceの保護、復元可能性、主要Computeのデプロイ方式が文書と検査で確認される。
 1. FE成果物の更新が配信へ反映され、`index.html`とhash付きassetでキャッシュ方針が分かれている。tabpが生成するIAMのうち、成果物用BucketとDistributionへの書き込み権限を持つのは`deployment-identity`のRoleだけである。
@@ -592,7 +594,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（sandboxを2アカウント、第10.1節）。
+**v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（developとsandboxの間、第10.1節）。
 
 ## 13. 参照資料
 
