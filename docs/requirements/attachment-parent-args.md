@@ -266,7 +266,7 @@
 6. **親側 inline 引数との二重管理**。`aws_sqs_queue.policy` と `aws_sqs_queue_policy` を別 module に置く（Provider は permanent diff を出すが CI の検査 3 には掛からない）。`aws_iam_role.managed_policy_arns`（Deprecated だが存在）は排他管理なので別 module の attachment を毎 apply 剥がす。
 7. **検査 1 の死角**。attachment が usecase 直下でなく `_shared/` に居れば検査 1 は通り、検査 3 も `var.` 経由なら通る。
 
-**塞ぐ案（肯定形にする）**
+### 塞ぐ案（肯定形にする）
 
 - **案 A: 親引数は「同一 module 内の managed resource への直接参照」でなければならない。** `terraform show -json` の `configuration` を走査し、attachment 型の親引数の `references` が `aws_<親型>.<name>`（`.id/.arn/.name/.url` 付き）**ちょうど 1 つ**で、かつその address が **同じ `module_calls` ノードの `resources` に存在**することを要求する。`var.` / `data.` / `local.` / `module.` / リテラル / `each.*` はすべて違反。親引数の表（本書 §2）を Rego のデータとして持ち、nested path は `protected_resource.s3_bucket.bucket_name` のように dotted path で書く。
   - 費用: (i) 表のメンテナンス（Provider の minor で resource が増える）。(ii) 親を持たない型（§2 末尾）と、親が Terraform 外にある型（`aws_ssoadmin_*` の `instance_arn`、`aws_cloudwatch_event_bus_policy` の default bus）を allow-list に載せる必要がある。(iii) **`data.` 経由の usecase 間 attachment が全面禁止になる**。これは要件 3.1 の「resource-level policy は親を所有する module が 1 文書だけ生成する」と整合する（policy は親の module が生成し、grantee ARN を入力で受ける）ので、要件と矛盾しない。ただし `aws_sns_topic_subscription` のように「親 = topic、相手 = 別 usecase の SQS」で subscription をどちらの usecase に置くかは要件側で決める必要がある（案 A は topic 側を強制する）。
