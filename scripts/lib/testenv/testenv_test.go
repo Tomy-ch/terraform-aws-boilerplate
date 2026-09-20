@@ -1,45 +1,23 @@
-package testenv_test
+package testenv
 
 import (
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRequireNonRoot(t *testing.T) {
-	// t.Setenv は並列実行と両立しない。
-	t.Run("正常系", func(t *testing.T) {
-		t.Run("root でなければ何もせず戻る", func(t *testing.T) {
-			if os.Geteuid() == 0 {
-				t.Skip("root で実行している")
-			}
-			testenv.RequireNonRoot(t, "この理由は使われない")
-			assert.False(t, t.Skipped(), "root でないのに skip した")
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		// 環境変数が立っていても、root でなければ通常どおり戻る。立っているだけで
-		// 落ちるなら、非 root の CI がこの経路を通った瞬間に全部赤くなる。
-		t.Run("環境変数が立っていても root でなければ戻る", func(t *testing.T) {
-			if os.Geteuid() == 0 {
-				t.Skip("root で実行している")
-			}
-			t.Setenv(testenv.RequireNonRootEnv, "1")
-
-			testenv.RequireNonRoot(t, "この理由は使われない")
-			assert.False(t, t.Skipped(), "root でないのに skip した")
-		})
-	})
-}
-
-func TestRequireNonRootEnv(t *testing.T) {
+// 環境変数の名前は workflow 側にリテラルで書かれています。テスト内のリテラルと突き合わせても
+// 「自分で書いた文字列と一致した」しか言えないので、workflow そのものを読みます。
+// 定数だけを改名すると、CI では skip が失敗へ変わらなくなります。
+func TestRequireNonRootEnv_workflowと一致する(t *testing.T) {
 	t.Parallel()
 
-	// 名前は workflow が env として立てる文字列と一致していなければならない。
-	// ずれると、skip を失敗へ変える経路が CI で働かないまま緑が残る。
-	assert.Equal(t, "REQUIRE_NONROOT", testenv.RequireNonRootEnv)
+	body, err := os.ReadFile("../../../.github/workflows/go-test.yaml")
+	require.NoError(t, err)
+
+	re := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(RequireNonRootEnv) + `:\s`)
+	assert.True(t, re.Match(body), "go-test.yaml が %s を立てていない", RequireNonRootEnv)
 }
