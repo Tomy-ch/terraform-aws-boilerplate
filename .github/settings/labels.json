@@ -108,5 +108,30 @@
     "name": "feedback-integration",
     "description": "週次が関心ごとにまとめた検討課題。根拠の Feedback Issue を本文から辿れる",
     "color": "5319e7"
+  },
+  {
+    "name": "type:usecase",
+    "description": "定義書 第7節のユースケース",
+    "color": "1d76db"
+  },
+  {
+    "name": "type:scenario",
+    "description": "定義書 第7.1節の接続シナリオ",
+    "color": "0e8a16"
+  },
+  {
+    "name": "type:module",
+    "description": "独立させる必要のあるmodule",
+    "color": "5319e7"
+  },
+  {
+    "name": "type:cross-cutting",
+    "description": "usecaseに属さない横断作業",
+    "color": "fbca04"
+  },
+  {
+    "name": "type:decision",
+    "description": "定義書 第12節の未決事項",
+    "color": "b60205"
   }
 ]
