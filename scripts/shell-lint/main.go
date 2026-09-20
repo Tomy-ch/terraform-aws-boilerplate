@@ -33,10 +33,8 @@ var skippedDirs = []string{".git", "node_modules", "vendor", "tmp"}
 var (
 	errFindings = xerrors.New("shellcheck が指摘を検出しました")
 
-	// errNoTargets: 対象0件は成功として返さない（ADR-0702 決定13）。
 	errNoTargets = xerrors.New("走査対象の *.sh が1件もありません")
 
-	// errUnparsedFinding: shellcheck 出力の1行でも解釈できなければ返す（ADR-0702 決定14）。
 	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
 )
 

@@ -124,7 +124,6 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "jobs: が見つかりません")
 	})
 
-	// 退化した入力の pin。ゲートは「何も検査せず緑を報告する」方向へ壊れる。
 	t.Run("required status check が0件なら成功で返さない", func(t *testing.T) {
 		t.Parallel()
 		root := writeFixture(t, map[string]string{
@@ -307,9 +306,7 @@ func Test_readWorkflows(t *testing.T) {
 	})
 }
 
-// ここから下は輸入した検査項目。
-
-func Test_check_輸入したケース(t *testing.T) {
+func Test_check_検査の対象外(t *testing.T) {
 	t.Parallel()
 
 	t.Run("push 側のフィルタは残っていてよい", func(t *testing.T) {

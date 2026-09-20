@@ -15,9 +15,7 @@ import (
 )
 
 const (
-	// tagListCall は、タグ一覧を引く output 呼び出しの記録表記。
-	tagListCall = "git tag"
-	// fetchTagsCall は、タグを取り直す手順の記録表記。
+	tagListCall   = "git tag"
 	fetchTagsCall = "git fetch --tags origin"
 	// annotateTagCall / tagPushCall / releaseCreateCall は、取り消しの効かない 3 手順の記録表記。
 	annotateTagCall   = "git tag -a v1.2.4 -F .github/release/v1.2.4.md"
@@ -29,7 +27,6 @@ const (
 	defaultBranchCall = "gh repo edit --default-branch release/v1.3.0"
 )
 
-// errFakeCommand は、差し替えた実行器が返す失敗。
 var errFakeCommand = xerrors.New("fake command failed")
 
 // fakeRunner は、git / gh を一切起動せず呼び出しの並びだけを控える実行器。
@@ -42,13 +39,11 @@ type fakeRunner struct {
 	outputs map[string]string
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	failOn string
-	// remoteBranches は、remoteBranchExists が true を返すブランチ。
 	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
 	remoteBranches map[string]bool
 	lsRemoteFails  bool
 }
 
-// runner は、この実行器を差し込んだ runner を返します。
 func (f *fakeRunner) runner() runner {
 	return runner{run: f.run, output: f.output, remoteBranchExists: f.remoteBranchExists}
 }
@@ -75,7 +70,6 @@ func (f *fakeRunner) output(name string, args ...string) (string, error) {
 	return f.outputs[call], nil
 }
 
-// errLsRemote は、origin への照会そのものが失敗したことを模すセンチネル。
 var errLsRemote = xerrors.New("ls-remote に失敗しました")
 
 func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {

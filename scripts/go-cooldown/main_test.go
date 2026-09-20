@@ -34,7 +34,6 @@ require (
 )
 `
 
-// goModOneRequire は、direct な require を 1 本だけ持つ最小の go.mod。
 const goModOneRequire = `module m
 
 go 1.26.5
@@ -139,7 +138,6 @@ func useGateRepo(t *testing.T, base, current string) {
 	t.Chdir(dir)
 }
 
-// writeWorkTreeBypass は、作業ディレクトリの規定位置へバイパス lockfile を書く。
 func writeWorkTreeBypass(t *testing.T, dir, body string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(bypassFile)), 0o750))
@@ -1220,7 +1218,7 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("異常系", func(t *testing.T) {
-		// Go には解決時に窓を強制する機構が無く、gate が落とさなければ窓はどこにも存在しない。
+		// 理由は Test_report と同じ。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無い窓内の direct require を失敗にする", func(t *testing.T) {
 			out := captureLog(t)

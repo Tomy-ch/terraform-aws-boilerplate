@@ -50,7 +50,6 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"-workflows", writeWorkflows(t, map[string]string{"a.yaml": src})}, &out))
 	})
 
-	// 退化した入力の pin。
 	t.Run("workflow が0件なら成功で返さない", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
@@ -216,12 +215,7 @@ func Test_stepIndentOf(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// ここから下は輸入した検査項目。
-//
-// 輸入元が持つ extractFenceFor / compareImplementations は移植していない。あれは
-// コメント投稿アクションの中に複製された shell 関数の突き合わせで、こちらには複製が無い。
-
-func Test_findInterpolatedSpans_輸入したケース(t *testing.T) {
+func Test_findInterpolatedSpans_spanの境界(t *testing.T) {
 	t.Parallel()
 
 	t.Run("改行を跨いだ2つのバッククォートを1つの span と見なさない", func(t *testing.T) {
@@ -241,7 +235,7 @@ func Test_findInterpolatedSpans_輸入したケース(t *testing.T) {
 	})
 }
 
-func Test_isFenced_輸入したケース(t *testing.T) {
+func Test_isFenced_ステップの境界(t *testing.T) {
 	t.Parallel()
 
 	t.Run("空行を挟んでも同じステップの details-summary を見つける", func(t *testing.T) {
@@ -258,13 +252,13 @@ func Test_isFenced_輸入したケース(t *testing.T) {
 
 	t.Run("ステップを開く - が上に無い呼び出しでも、後続の details-summary を自分のものにしない", func(t *testing.T) {
 		t.Parallel()
-		// "-" が無いと桁の基準が取れず、後続の深い行をすべて自分のものと見なしかねない。
+		// 桁が0へ倒れる仕組みは Test_stepIndentOf を参照。
 		lines := strings.Split("        uses: ./.github/actions/upsert-pr-comment\n      - uses: other\n        with:\n          details-summary: 'log'\n", "\n")
 		assert.False(t, isFenced(lines, 0))
 	})
 }
 
-func Test_findFixedFences_輸入したケース(t *testing.T) {
+func Test_findFixedFences_フェンスを出さない行と行番号(t *testing.T) {
 	t.Parallel()
 
 	t.Run("フェンスを出さない echo 行を違反にしない", func(t *testing.T) {

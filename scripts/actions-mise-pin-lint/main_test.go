@@ -163,15 +163,13 @@ func Test_run_違反の出力(t *testing.T) {
 	})
 }
 
-// ここから下は輸入した検査項目。
-
 func Test_digestPrefixLength(t *testing.T) {
 	t.Parallel()
 	// キャッシュキーへ埋める桁数。変えるとキーの形が変わり、既存のキャッシュが全て外れる。
 	assert.Equal(t, 8, digestPrefixLength)
 }
 
-func Test_readPin_輸入したケース(t *testing.T) {
+func Test_readPin_読み取れない値と空の値(t *testing.T) {
 	t.Parallel()
 
 	t.Run("読み取れない値を空で返す", func(t *testing.T) {

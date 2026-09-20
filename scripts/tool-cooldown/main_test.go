@@ -45,7 +45,6 @@ const miseOneAquaTool = `[tools]
 "aqua:owner/repo" = "1.2.3"
 `
 
-// errRoundTrip は、往復そのものが失敗したことを表すテスト用のエラー。
 var errRoundTrip = xerrors.New("round trip failed")
 
 // upstreamRedirect は、上流ホスト宛のリクエストをテストサーバへ向け替える RoundTripper。
@@ -68,7 +67,6 @@ func (u upstreamRedirect) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func (unreachableUpstream) RoundTrip(*http.Request) (*http.Response, error) { return nil, errRoundTrip }
 
-// offlineClient は、どのリクエストも往復に失敗する HTTP クライアントを返します。
 func offlineClient() *http.Client { return &http.Client{Transport: unreachableUpstream{}} }
 
 // fakeUpstream は、上流宛のリクエストを handler が受け取るようにした HTTP クライアントを返します。
@@ -120,7 +118,6 @@ func requestedPath(t *testing.T, target tool) string {
 	}
 }
 
-// captureLog は、log の出力先を差し替えて fn が書いた内容を集めます。
 func captureLog(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf strings.Builder
@@ -138,7 +135,6 @@ func writeBypass(t *testing.T, body string) string {
 	return path
 }
 
-// releasedOn は、aqua:owner/repo@1.2.3 の公開日だけを返す上流を組みます。
 func releasedOn(t *testing.T, publishedOn string) *http.Client {
 	t.Helper()
 	return fakeUpstream(t, respondJSON(
@@ -190,14 +186,12 @@ func useRepoWithoutMise(t *testing.T) {
 	t.Chdir(dir)
 }
 
-// writeWorkTreeBypass は、作業ディレクトリの規定位置へバイパス lockfile を書きます。
 func writeWorkTreeBypass(t *testing.T, dir, body string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(bypassFile)), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, bypassFile), []byte(body), 0o600))
 }
 
-// runCaptured は run を実行し、書き出されたログとエラーを返します。
 func runCaptured(t *testing.T, args []string, client *http.Client, now time.Time) (string, error) {
 	t.Helper()
 	var err error
@@ -1114,7 +1108,6 @@ func Test_inspect(t *testing.T) {
 
 	now := day("2026-08-06")
 
-	// released は、指定日に公開された aqua リリースだけを返す上流を組みます。
 	released := func(t *testing.T, repo, version, publishedOn string) *http.Client {
 		t.Helper()
 		return fakeUpstream(t, respondJSON(
@@ -1847,7 +1840,7 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, err.Error(), "base との差分")
 		})
 
-		// 解決できないキーを黙って落とすと、そのツールだけ検査されないまま通る。
+		// 理由は Test_resolveBackends と同じ。
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("backend を解決できないキーがあれば失敗にする", func(t *testing.T) {
 			useMiseWorkTree(t, "[tools]\nno-such-tool-for-cooldown-test = \"1.0.0\"\n")
@@ -1896,7 +1889,7 @@ func Test_fetchBody(t *testing.T) {
 			assert.JSONEq(t, `{"name":"ok"}`, string(out))
 		})
 
-		// GitHub 以外の上流へトークンを送ると、資格情報を無関係な第三者へ渡すことになる。
+		// 理由は Test_getJSON と同じ。
 		t.Run("GitHub API にだけトークンを載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 2)

@@ -11,7 +11,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 )
 
-// writeFile は親ディレクトリごとファイルを作る。
 func writeFile(t *testing.T, path string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))

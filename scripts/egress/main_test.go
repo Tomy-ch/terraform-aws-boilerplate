@@ -55,10 +55,8 @@ jobs:
           egress-policy: audit
 `
 
-// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。
 var errWD = xerrors.New("getwd failed")
 
-// testWorkflow は allowed-endpoints ブロックを 1 つ持つ workflow の雛形を返す。
 func testWorkflow(jobID string, hosts ...string) string {
 	var b strings.Builder
 	b.WriteString("name: T\n\njobs:\n  " + jobID + ":\n    steps:\n")
@@ -71,7 +69,6 @@ func testWorkflow(jobID string, hosts ...string) string {
 	return b.String()
 }
 
-// newTestRepo は SSOT と workflow を持つ一時リポジトリを作り、その root を返す。
 func newTestRepo(t *testing.T, workflows map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
