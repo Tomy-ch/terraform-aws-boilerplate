@@ -339,6 +339,7 @@ func Test_parseAction(t *testing.T) {
 			t.Parallel()
 			_, err := parseAction("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 
@@ -647,6 +648,7 @@ func Test_countRunSteps(t *testing.T) {
 			t.Parallel()
 			count, err := countRunSteps("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "decode action.yaml")
 			assert.Zero(t, count)
 		})
@@ -655,6 +657,7 @@ func Test_countRunSteps(t *testing.T) {
 			t.Parallel()
 			count, err := countRunSteps("action.yaml", []byte("runs: &r\n  steps: *r\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "decode action.yaml")
 			assert.Zero(t, count)
 		})
@@ -1215,6 +1218,7 @@ func Test_requireSingleDocument(t *testing.T) {
 			t.Parallel()
 			err := requireSingleDocument("action.yaml", []byte("runs: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 
@@ -1222,6 +1226,7 @@ func Test_requireSingleDocument(t *testing.T) {
 			t.Parallel()
 			err := requireSingleDocument("action.yaml", []byte("name: a\n---\nruns: [\n"))
 			require.Error(t, err)
+			require.ErrorIs(t, err, errYAMLParse)
 			require.ErrorContains(t, err, "parse action.yaml")
 		})
 	})
@@ -1748,6 +1753,22 @@ func Test_run(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// 0 件は成功ではない（ADR-0702 決定13）。対象を失った検査は、壊れた日に
+		// 赤ではなく緑を返す。「指摘が無かった」と「何も見なかった」を区別し続ける。
+		t.Run("走査対象の composite action が1件も無ければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			require.ErrorIs(t, run(t.Context(), stubWD(t.TempDir()), stubLookPath(nil)), errNoTargets)
+		})
+
+		t.Run("action 定義の置き場が空ならエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, actionsDir), 0o750))
+
+			require.ErrorIs(t, run(t.Context(), stubWD(root), stubLookPath(nil)), errNoTargets)
+		})
 
 		t.Run("shellcheck が PATH に無ければ走査へ進まず失敗する", func(t *testing.T) {
 			t.Parallel()

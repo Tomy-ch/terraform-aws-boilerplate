@@ -69,8 +69,12 @@ var (
 	errActionSymlinkUnresolved = xerrors.New("解決できないシンボリックリンクがあります")
 	errMultipleDocuments       = xerrors.New("action 定義に複数の YAML ドキュメントがあります。--- 区切りの 2 番目以降は検査されません")
 
-	// errUnparsedFinding: shellcheck 出力の1行でも解釈できなければ返す（ADR-0702 決定14）。
 	errUnparsedFinding = xerrors.New("shellcheck の出力に解釈できない行があります")
+
+	errNoTargets = xerrors.New("走査対象の composite action が1件もありません")
+
+	// errYAMLParse: YAML 側の生エラーを包む。文言の一致ではなくセンチネルで到達できるようにする。
+	errYAMLParse = xerrors.New("action 定義を YAML として読めません")
 )
 
 type step struct {
@@ -106,6 +110,10 @@ func run(ctx context.Context, wd func() (string, error), lookPath func(string) (
 	files, steps, err := collectSteps(os.DirFS(root))
 	if err != nil {
 		return err
+	}
+
+	if len(files) == 0 {
+		return errNoTargets
 	}
 
 	res, err := check(ctx, steps)
@@ -205,7 +213,7 @@ func isActionFile(name string) bool {
 func parseAction(file string, data []byte) ([]step, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, xerrors.Wrap(err, "parse "+file)
+		return nil, xerrors.Wrap(xerrors.Join(errYAMLParse, err), "parse "+file)
 	}
 	if err := requireSingleDocument(file, data); err != nil {
 		return nil, err
@@ -236,7 +244,7 @@ func requireSingleDocument(file string, data []byte) error {
 		if xerrors.Is(err, io.EOF) {
 			return nil
 		}
-		return xerrors.Wrap(err, "parse "+file)
+		return xerrors.Wrap(xerrors.Join(errYAMLParse, err), "parse "+file)
 	}
 	var second any
 	switch err := dec.Decode(&second); {
@@ -245,7 +253,7 @@ func requireSingleDocument(file string, data []byte) error {
 	case xerrors.Is(err, io.EOF):
 		return nil
 	default:
-		return xerrors.Wrap(err, "parse "+file)
+		return xerrors.Wrap(xerrors.Join(errYAMLParse, err), "parse "+file)
 	}
 }
 
@@ -255,7 +263,7 @@ func requireSingleDocument(file string, data []byte) error {
 func countRunSteps(file string, data []byte) (int, error) {
 	var doc any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return 0, xerrors.Wrap(err, "decode "+file)
+		return 0, xerrors.Wrap(xerrors.Join(errYAMLParse, err), "decode "+file)
 	}
 	steps := fieldValue(fieldValue(doc, "runs"), "steps")
 	if steps == nil {
