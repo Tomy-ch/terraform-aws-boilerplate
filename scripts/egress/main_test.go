@@ -887,6 +887,26 @@ func Test_writeChanges(t *testing.T) {
 			err := writeChanges(root, map[string]string{filepath.Join(root, "missing", "a.yaml"): "body"}, false)
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
+
+		// 「exit 1 なのに一部だけ書き換わっている」状態を残さない。呼び出し側には
+		// エラーしか見えないので、部分適用が起きると区別できなくなる。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			first := filepath.Join(root, "a.yaml")
+			require.NoError(t, os.WriteFile(first, []byte("old"), 0o600))
+
+			err := writeChanges(root, map[string]string{
+				first:                                    "new",
+				filepath.Join(root, "missing", "b.yaml"): "new",
+			}, false)
+
+			require.Error(t, err)
+
+			got, readErr := os.ReadFile(first) //nolint:gosec // path from t.TempDir
+			require.NoError(t, readErr)
+			assert.Equal(t, "old", string(got), "先に処理したファイルが書き換わっている")
+		})
 	})
 }
 

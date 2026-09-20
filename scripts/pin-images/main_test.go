@@ -1460,21 +1460,51 @@ func Test_applyOrCheck(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
+		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
+		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
 		t.Run("固定後の書き込みに失敗すればエラーを返す", func(t *testing.T) {
 			t.Parallel()
 			if os.Geteuid() == 0 {
-				t.Skip("特権実行では読み取り専用ファイルへも書けるため検証できない")
+				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 			}
 			root := t.TempDir()
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			writeFile(t, df, "FROM alpine:3.24\n")
 			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
-			require.NoError(t, os.Chmod(df, 0o400))
+			require.NoError(t, os.Chmod(filepath.Dir(df), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(df), 0o700) })
 
 			err := applyOrCheck(root, testTargets(t, root), false)
 
 			require.ErrorIs(t, err, os.ErrPermission)
-			assert.ErrorContains(t, err, filepath.Join("docker", "app", "Dockerfile"))
+		})
+
+		// 「exit 1 なのに一部だけ書き換わっている」状態を残さない。validate の前倒しは
+		// 未登録参照による中断を防ぐが、書き込み自体の I/O 失敗はそれとは別の窓である。
+		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
+			t.Parallel()
+			if os.Geteuid() == 0 {
+				t.Skip("特権実行では読み取り専用ディレクトリへも書けるため検証できない")
+			}
+
+			root := t.TempDir()
+			body := "FROM alpine:3.24\n"
+			// 走査対象は docker/*/Dockerfile の glob。パスの昇順で app が先、zz が後になる。
+			first := filepath.Join(root, "docker", "app", "Dockerfile")
+			second := filepath.Join(root, "docker", "zz", "Dockerfile")
+			writeFile(t, first, body)
+			writeFile(t, second, body)
+			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+
+			targets := testTargets(t, root)
+			require.NoError(t, os.Chmod(filepath.Dir(second), 0o500))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(second), 0o700) })
+
+			require.Error(t, applyOrCheck(root, targets, false))
+
+			got, err := os.ReadFile(first) //nolint:gosec // G304: テストが自分で作った t.TempDir() 配下のみ
+			require.NoError(t, err)
+			assert.Equal(t, body, string(got), "先に処理したファイルが書き換わっている")
 		})
 	})
 }

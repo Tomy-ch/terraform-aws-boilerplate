@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
@@ -542,10 +543,12 @@ func applyOrCheck(root string, files []string, dryRun bool) error {
 
 		return nil
 	}
+	// 途中で落ちたとき「exit 1 なのに一部だけ書き換わっている」状態を残さない。
+	if err := atomicwrite.Apply(plan.changes, filePerm); err != nil {
+		return err
+	}
+
 	for _, f := range paths {
-		if err := os.WriteFile(f, []byte(plan.changes[f]), filePerm); err != nil {
-			return xerrors.Wrap(err, "write "+rel(root, f))
-		}
 		log.Printf("  updated %s", rel(root, f))
 	}
 	log.Printf("✅ %d ファイルを固定しました", len(paths))

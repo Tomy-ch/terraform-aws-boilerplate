@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
@@ -581,14 +582,26 @@ func applyOrCheck(root string, targets []target, dryRun bool) error {
 		return err
 	}
 
+	// validate は済んでいるが、書き込み自体の I/O が2件目で落ちる窓は別に残る。
+	if err := atomicwrite.Apply(changesOf(pending, rewritten), filePerm); err != nil {
+		return err
+	}
+
 	for _, path := range pending {
-		if err := os.WriteFile(path, []byte(rewritten[path]), filePerm); err != nil {
-			return xerrors.Wrap(err, "write "+rel(root, path))
-		}
 		log.Printf("  updated %s", rel(root, path))
 	}
 
 	return report(drifted, dryRun, len(pending))
+}
+
+// changesOf は、書き換え対象のパス一覧と内容の対応から、書き込み用の対応表を組みます。
+func changesOf(paths []string, rewritten map[string]string) map[string]string {
+	changes := make(map[string]string, len(paths))
+	for _, path := range paths {
+		changes[path] = rewritten[path]
+	}
+
+	return changes
 }
 
 // validateMissing は lockfile 未登録の image があればエラーを返す。書き込みより前に呼ぶことで、

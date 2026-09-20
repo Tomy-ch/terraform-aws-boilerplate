@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -133,50 +134,10 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 		return errDrift
 	}
 
-	if err := writeAll(changes); err != nil {
+	if err := atomicwrite.Apply(changes, filePerm); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "✅ versions-apply: %s へ反映しました\n", strings.Join(names, ", "))
-
-	return nil
-}
-
-// writeAll は、計画した内容をすべてのファイルへ反映します。
-//
-// **一時ファイルへ全部書き切ってから、まとめて rename する。** 素朴に `os.WriteFile` を並べると、
-// 2つ目で失敗したとき1つ目だけが新しい版になった作業ツリーが残る。呼び出し側にはエラーしか
-// 見えないので、**「失敗した」と「一部だけ適用された」が区別できなくなる。**
-//
-// rename の途中で落ちる窓は残るが、write の途中で落ちる窓よりはるかに狭い。消せないので、
-// 残った一時ファイルは後始末する。
-func writeAll(changes map[string]string) error {
-	paths := sortedPaths(changes)
-	temps := make(map[string]string, len(paths))
-
-	defer func() {
-		for _, tmp := range temps {
-			_ = os.Remove(tmp)
-		}
-	}()
-
-	for _, path := range paths {
-		tmp := path + ".versions.tmp"
-		// path は root と package 定数から組む。外部入力は通らない。
-		// 撤回条件: 経路が root 以外から決まる形になったとき。
-		if err := os.WriteFile(tmp, []byte(changes[path]), filePerm); err != nil { //nolint:gosec // 上のコメントを参照
-			return xerrors.Wrap(err, tmp)
-		}
-
-		temps[path] = tmp
-	}
-
-	for _, path := range paths {
-		if err := os.Rename(temps[path], path); err != nil {
-			return xerrors.Wrap(err, path)
-		}
-
-		delete(temps, path)
-	}
 
 	return nil
 }
@@ -309,15 +270,4 @@ func planNames(changes map[string]string) []string {
 	sort.Strings(names)
 
 	return names
-}
-
-// sortedPaths は書き換え先を、並びを決めて返します。
-func sortedPaths(changes map[string]string) []string {
-	paths := make([]string, 0, len(changes))
-	for path := range changes {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-
-	return paths
 }
