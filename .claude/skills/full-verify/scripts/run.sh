@@ -274,7 +274,10 @@ GEN_DIRS=( )
 is_generated_path() { # $1=path（REPO_ROOT 相対 or 絶対）
   local path=$1
   local rel="${path#"$REPO_ROOT"/}" d
-  for d in "${GEN_DIRS[@]}"; do case "$rel" in "$d"/*|"$d") return 0 ;; *) ;; esac; done
+  # 件数ガードは必須。bash < 4.4（macOS 既定の 3.2 を含む）は set -u 下で空配列の
+  # "${arr[@]}" を unbound variable として落とすため、GEN_DIRS が空だと即死する。
+  [ "${#GEN_DIRS[@]}" -gt 0 ] &&
+    for d in "${GEN_DIRS[@]}"; do case "$rel" in "$d"/*|"$d") return 0 ;; *) ;; esac; done
   case "$path" in *.gen.*|*.sql.go|*_mock.go) return 0 ;; *) ;; esac
   return 1
 }
@@ -310,7 +313,7 @@ enumerate_files() {
     local nameargs=() x
     for x in ${allow//,/ }; do nameargs+=( -o -name "*.$x" ); done
     unset 'nameargs[0]'
-    findcmd+=( \( "${nameargs[@]}" \) )
+    [ "${#nameargs[@]}" -gt 0 ] && findcmd+=( \( "${nameargs[@]}" \) )
   fi
 
   local rel xp
@@ -337,8 +340,8 @@ enumerate_files() {
     fi
   done < <( "${findcmd[@]}" 2>/dev/null | sort -u )
 
-  # プロダクション先、テスト後
-  MODULES+=( "${prod[@]}" )
+  # プロダクション先、テスト後。どちらも件数ガードが要る（bash < 4.4 の空配列展開）
+  [ "${#prod[@]}" -gt 0 ] && MODULES+=( "${prod[@]}" )
   [ "${#tests[@]}" -gt 0 ] && MODULES+=( "${tests[@]}" )
 }
 
