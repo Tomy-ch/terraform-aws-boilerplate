@@ -51,6 +51,21 @@ Run **every pass** below over the same files, in order. 先の pass で決着し
 
 **3類型のいずれでもない場合にだけ、Pass 1 へ進む。**
 
+### テストファイル（`*_test.go`）
+
+**テストは対象に含まれる。** 3つの pass はそのまま当たる。変わるのは、テスト特有の構造の扱いだけ。
+
+- **`t.Run` のケース名は判定対象外** —— 日本語で書かれた仕様記述であって、コメントではない。
+- **ケース名の直上のコメントが、そのケース名を言い直しているだけなら 削除**（Pass 0 の3類型のうち
+  「読めば意味がわかるもの」）。
+- **「このケースが無いと何が黙って緑になるか」を述べるコメントは 維持 が既定。** ケース名が言えるのは
+  何を検査するかまでで、検査をやめたときにどちらへ壊れるかは言えない（ADR-0702 決定13-16）。
+  本番側のセンチネル注記が既に消えていれば、Pass 1 の正本はこちら側である —— 消す前にそれを確かめる。
+- **テストヘルパの doc コメント**（フィクスチャ、スタブ、ログの差し替え）は、名前とシグネチャの
+  言い直しになりやすい。非公開なので `revive exported` の制約は掛からない。
+- **識別子は対象外。** `Test_check_輸入したケース` のように、消す類型が関数名へ焼き込まれていても
+  本スキルは検出しない。気づいたら所見として述べるに留め、finding にはしない。
+
 ### Pass 1 — per comment: is a mechanism already guarding this?
 
 管轄より先に問う。これも移設を伴わずに消せるからである。
@@ -60,10 +75,14 @@ Run **every pass** below over the same files, in order. 先の pass で決着し
 A compile error, a test case, a `golangci-lint` rule（`errcheck` / `errorlint` / `nilerr` /
 `gosec` / `revive` 等）, one of this repository's own gates（`adr-lint` / `required-check-lint` /
 `actions-mise-pin-lint` / `pr-comment-secret-lint` / `pr-comment-fence-lint` / `actions-cutoff-lint` /
-`egress-check` / `pin-actions-check` / `pin-images-check` / `go-cooldown` / `tool-cooldown` /
-`shell-lint` / `actions-shellcheck` / `zizmor` / `actionlint`）, `terraform validate`, TFLint, Trivy,
-a Policy Test, a Contract Test, or a terraform-docs generated region — any of these means the fact
-already has a guard and the comment is a second copy of it. Verdict **不要**.
+`egress-check` / `pin-actions-check` / `pin-images-check` / `go-cooldown-gate` /
+`tool-cooldown-gate` / `shell-lint` / `actions-shellcheck` / `zizmor` / `actionlint` /
+`trivy-config`）, or a terraform-docs generated region — any of these means the fact already has a
+guard and the comment is a second copy of it. Verdict **不要**.
+
+**Terraform 側の検査（`terraform validate` / TFLint / Policy Test / Contract Test）は、このリポジトリに
+まだ配線されていない**（`AGENTS.md` *現在の配線状態*）。守り手として名指ししない —— 存在しない
+ゲートを根拠に 不要 と判定すると、どこにも無い契約を消すことになる。配線されたらここへ足す。
 
 **逆向きの注意がひとつある。** ゲートそのものを説明しているコメントは、そのゲートに守られていない。
 `scripts/<tool>/main.go` 先頭の「解いている問題」や、workflow の「なぜこのフィルタを置かないか」は、
@@ -257,7 +276,7 @@ a comment left alone.
   そのツールが存在する理由そのもので、他のどの文書も持っていない。
   **ただし除外されるのは概要としての本体だけで、その中に混じった経緯と日数経過は Pass 0 の対象で
   ある。** 「以前はシェルで書いていた」「現在は未配線」は、概要の中にあっても消す。
-- **生成区間と `*_test.go`** — the orchestrator excludes them; if any reached you, skip them.
+- **生成区間** — the orchestrator excludes it; if any reached you, skip it.
 
 ## Go exported-declaration caveat
 
