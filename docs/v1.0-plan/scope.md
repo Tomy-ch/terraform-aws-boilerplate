@@ -502,7 +502,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
-| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、メンバーアカウント4つ（dev / stg / prd / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る。人が手で作るのは管理アカウント1つだけである | 管理アカウントが存在すること（手順を文書化） |
+| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを立ち上げる。state BucketをAWS CLIで作成し、同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が変更なしを示すまで突合する。OIDC ProviderとCI Roleはその後にTerraformで書き、人のローカル権限で1回だけapplyする（ADR-0602 決定4-8）。Organizations、メンバーアカウント4つ（dev / stg / prd / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る。人が手で作るのは管理アカウント1つだけである。Identity Centerはフェーズ1で作られるため、フェーズ0の人はそれ以外の資格情報で管理アカウントへ入る —— 一時利用とし、完了後に無効化する。実行の記録（実行者、日時、対象アカウント、適用したcommit）はADR-0602 決定10に従い、bootstrap完了後はstate backendへの書き込みをCIのroleに限る（同 決定11） | 管理アカウントが存在すること（手順を文書化） |
 | 1. 基盤 | `organization-baseline`、`account-baseline`、`audit-evidence`、`finops`、`ops-notification`、ECR。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
 | 2. ネットワーク | `vpc`（module）、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
 | 3. Compute・データ | `ecs`（module）、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
@@ -524,7 +524,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. Realtime構成で、SSE配信、インスタンス別Queueの生成・回収、孤立資源回収、prefixで制限したIAMを確認する。永続Table/TopicがTerraform所有であり、AWSで`realtime-init`を実行しない。
 1. 第2.2節のゲートがCIで機能している。tabp内のコード実行resourceは許可リストとADRを持ち、採用した各言語のlint・testがCIで必ず走る。
 1. 観測の三モードがexporter設定の切り替えと`controlled-external-egress`の有効化だけで成立する。AWS基盤系アラームがモードに関係なく発報し、`ops-notification`の通知先へ届く。メトリクス途絶を検知できる。egress制御が第9.2節のとおり機能し、`controlled-external-egress`を有効にしていない環境から外部へ到達できない。
-1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。
+1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。フェーズ0のbootstrap実行者だけが例外で、その資格情報は完了後に無効化されている（第10.3節、ADR-0602 決定9-11）。
 1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、devとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
 1. `media-ingest`で、スキャン結果が脅威なしでないオブジェクトを読めないことを確認する。
 1. Security Default、Stateful Resourceの保護、復元可能性、主要Computeのデプロイ方式が文書と検査で確認される。
