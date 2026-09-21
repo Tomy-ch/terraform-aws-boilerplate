@@ -651,12 +651,14 @@ func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version str
 			Type         string            `yaml:"type"`
 			URL          string            `yaml:"url"`
 			Replacements map[string]string `yaml:"replacements"`
-			// Overrides は goos ごとに url を差し替える。読み飛ばすと、base の url が
+			// Overrides は goos と goarch ごとに url を差し替える。読み飛ばすと、base の url が
 			// probe の環境向けでないパッケージに対して存在しない URL を叩き、配布されている
-			// 道具を「その版は無い」として落とす。
+			// 道具を「その版は無い」として落とす。goarch を見ないと、逆に別の環境向けの
+			// override を掴む。
 			Overrides []struct {
-				GOOS string `yaml:"goos"`
-				URL  string `yaml:"url"`
+				GOOS   string `yaml:"goos"`
+				GOArch string `yaml:"goarch"`
+				URL    string `yaml:"url"`
 			} `yaml:"overrides"`
 		} `yaml:"packages"`
 	}
@@ -673,16 +675,19 @@ func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version str
 		return "", xerrors.Wrap(errUnsupportedPackage, repo+": type=\""+pkg.Type+"\"")
 	}
 
+	// 該当する環境の override が在るなら、その url が空でもそこで決める。base へ黙って
+	// 退くと、別の環境向けのテンプレートが組み上がって無関係な配布物へ 200 で解決し得る。
+	// goarch を書かない override は、その goos のすべての環境に掛かる。
 	urlTemplate := pkg.URL
 	for _, o := range pkg.Overrides {
-		if o.GOOS == probeOS && o.URL != "" {
+		if o.GOOS == probeOS && (o.GOArch == "" || o.GOArch == probeArch) {
 			urlTemplate = o.URL
 
 			break
 		}
 	}
 	if urlTemplate == "" {
-		return "", xerrors.Wrap(errUnsupportedPackage, repo+": url が無い")
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": この環境向けの url が無い")
 	}
 
 	return renderAquaURL(urlTemplate, pkg.Replacements, version)
@@ -709,9 +714,12 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 		return v
 	}
 
-	// trimV は aqua が提供する関数で、レジストリの url が広く使う。標準の text/template には
-	// 無いため、登録しなければ Parse の時点で落ちる。ここに無い関数を使う定義は解釈できない
-	// ものとして扱われ、gate は素通しではなく失敗の側へ倒れる。
+	// trimV は aqua が提供する関数で、レジストリの url が最も広く使う。標準の text/template
+	// には無いため、登録しなければ Parse の時点で落ちる。
+	//
+	// **aqua 本体はこれに加えて sprig の関数群を登録するが、ここは trimV だけを解する。**
+	// `trimPrefix` 等を使う定義（`golang/go` など）は解釈できないものとして扱われ、gate は
+	// 素通しではなく失敗の側へ倒れる。必要になった時点で、依存を足すかどうかを決める。
 	tmpl, err := template.New("url").
 		Funcs(template.FuncMap{"trimV": func(v string) string { return strings.TrimPrefix(v, "v") }}).
 		Parse(urlTemplate)
@@ -729,13 +737,7 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 		return "", xerrors.Wrap(errUnsupportedPackage, "render url: "+execErr.Error())
 	}
 
-	// trimV を通した url は先頭の `v` を落とすため、素の版とそれを外した形の両方を認める。
-	// どちらも指していない URL は、その版に固有の配布物ではない。
 	rendered := out.String()
-	if !strings.Contains(rendered, version) && !strings.Contains(rendered, strings.TrimPrefix(version, "v")) {
-		return "", xerrors.Wrap(errUnversionedArtifact, rendered)
-	}
-
 	parsed, err := url.Parse(rendered)
 	if err != nil {
 		return "", xerrors.Wrap(errUnsupportedPackage, "parse url: "+err.Error())
@@ -744,11 +746,23 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 		return "", xerrors.Wrap(errUnsupportedPackage, "叩けない URL: "+rendered)
 	}
 
+	// **path だけを見る。** クエリやフラグメントに版を置いた URL は、サーバがそれを無視すれば
+	// どの版でも同じ配布物を指す —— `/latest/x.sh?v=1.2.3` は窓の判定を素通しにする。
+	// trimV を通した url は先頭の `v` を落とすため、素の版とそれを外した形の両方を認める。
+	trimmed := strings.TrimPrefix(version, "v")
+	if version == "" || trimmed == "" {
+		return "", xerrors.Wrap(errUnversionedArtifact, "版が空である")
+	}
+	if !strings.Contains(parsed.Path, version) && !strings.Contains(parsed.Path, trimmed) {
+		return "", xerrors.Wrap(errUnversionedArtifact, rendered)
+	}
+
 	return rendered, nil
 }
 
 // hostIsLiteral は、テンプレートのホスト部分に展開の入る余地が無いことを見る。ホストが
 // 補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れてしまう。
+// **見るのはそれだけである** —— スキームと userinfo は、展開したあとに呼び出し側が検める。
 func hostIsLiteral(urlTemplate string) bool {
 	action := strings.Index(urlTemplate, "{{")
 	if action < 0 {

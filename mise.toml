@@ -14,8 +14,9 @@
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
 # **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
-# `.github/workflows/` か `docker/tools/Dockerfile` のいずれかが実際に呼ぶ。AWS CLI だけが例外で、
-# 呼ぶのは ADR-0602 決定4 の bootstrap の手順である —— **その手順書はまだ無い。**
+# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。**呼び手をまだ持たないものが3つある**
+# —— terraform と tflint は Terraform 側の検査が未配線であるため（AGENTS.md「現在の配線状態」）、
+# AWS CLI は ADR-0602 決定4 の bootstrap の手順書がまだ無いためである。
 min_version = "2026.6.0"
 
 [tools]

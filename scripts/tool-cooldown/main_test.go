@@ -1550,6 +1550,15 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
+		// aqua 本体は sprig を登録するがここは trimV だけを解する。素通しではなく失敗へ倒れる
+		// ことを固定する —— 黙って別の URL を組むより、解釈できないと言う方が安全である。
+		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL(`https://cdn.example.com/{{trimPrefix "go" .Version}}.zip`, nil, "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
 		t.Run("壊れたテンプレートはエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1562,7 +1571,26 @@ func Test_renderAquaURL(t *testing.T) {
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := renderAquaURL("https://cdn.example.com/installer.sh", nil, "1.2.3")
+			// path 以外へ版を置いた形は、サーバがそれを無視すれば固定 URL と同じものを指す。
+			for name, tmpl := range map[string]string{
+				"版がどこにも無い":   "https://cdn.example.com/installer.sh",
+				"版がクエリにだけ在る": "https://cdn.example.com/latest/installer.sh?v={{.Version}}",
+				"版が素片にだけ在る":  "https://cdn.example.com/latest/installer.sh#{{.Version}}",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := renderAquaURL(tmpl, nil, "1.2.3")
+					require.ErrorIs(t, err, errUnversionedArtifact)
+				})
+			}
+		})
+
+		// 空の版に対しては strings.Contains が常に真を返し、検査が無条件通過に化ける。
+		t.Run("版が空なら errUnversionedArtifact を返す", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/t.zip", nil, "")
 			require.ErrorIs(t, err, errUnversionedArtifact)
 		})
 
@@ -1671,6 +1699,33 @@ func Test_aquaArtifactURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/only-linux-1.2.3.tar.gz", got)
 		})
 
+		// 実在のレジストリに goos + goarch で分岐する override が在る（aws/session-manager-plugin
+		// など）。goarch を見ないと、別の環境向けの url を掴む。
+		t.Run("goos が一致しても goarch が違う override は採らない", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        goarch: mips\n" +
+				"        url: https://cdn.example.com/mips-{{.Version}}.zip\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+
+		t.Run("goarch を書かない override は その goos のすべてに掛かる", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: https://cdn.example.com/any-{{.Version}}.zip\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/any-1.2.3.zip", got)
+		})
+
 		t.Run("probe の goos に一致する override が無ければ base を使う", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -1734,6 +1789,18 @@ func Test_aquaArtifactURL(t *testing.T) {
 		t.Run("type が http でなければ errUnsupportedPackage を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondText(path, "packages:\n  - type: github_release\n    url: https://x/y\n"))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		// base へ黙って退くと、別の環境向けのテンプレートが無関係な配布物へ 200 で解決し得る。
+		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: \"\"\n"
+			client := fakeUpstream(t, respondText(path, body))
 
 			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
 			require.ErrorIs(t, err, errUnsupportedPackage)
