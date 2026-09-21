@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -865,140 +866,6 @@ func Test_rewritePins(t *testing.T) {
 	})
 }
 
-func Test_isIgnorableLockErr(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("nil は無視可能", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, isIgnorableLockErr(nil))
-		})
-
-		t.Run("ファイル不在は無視可能", func(t *testing.T) {
-			t.Parallel()
-			_, err := readLock(filepath.Join(t.TempDir(), "absent.toml"))
-			require.ErrorIs(t, err, os.ErrNotExist)
-			assert.True(t, isIgnorableLockErr(err))
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("不在以外のエラーは無視不可", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, isIgnorableLockErr(errLockInvalidLine))
-		})
-	})
-}
-
-func Test_readLock(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("コメントと空行を読み飛ばして image:tag→digest として読み込む", func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			path := filepath.Join(dir, "images-pin.toml")
-			body := "# comment\n" +
-				"\n" +
-				"\"alpine:3.24\" = \"" + digestAlpine + "\"\n" +
-				"\"golang:1.26-alpine\" = \"" + digestGolang + "\"\n"
-			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-			lock, err := readLock(path)
-			require.NoError(t, err)
-			assert.Equal(t, map[string]string{
-				"alpine:3.24":        digestAlpine,
-				"golang:1.26-alpine": digestGolang,
-			}, lock)
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("解釈できない行は読み飛ばさずエラーにする", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "images-pin.toml")
-			body := "\"alpine:3.24\" = \"" + digestAlpine + "\"\n" + "invalid line\n"
-			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-			_, err := readLock(path)
-
-			require.ErrorIs(t, err, errLockInvalidLine)
-			assert.ErrorContains(t, err, "2 行目")
-		})
-
-		t.Run("キーの重複は後勝ちにせずエラーにする", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "images-pin.toml")
-			body := "\"alpine:3.24\" = \"" + digestAlpine + "\"\n" +
-				"\"alpine:3.24\" = \"" + digestStale + "\"\n"
-			require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-			_, err := readLock(path)
-
-			require.ErrorIs(t, err, errLockDuplicateKey)
-			assert.ErrorContains(t, err, "alpine:3.24")
-		})
-
-		t.Run("ファイルが存在しなければエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			_, err := readLock(filepath.Join(t.TempDir(), "absent.toml"))
-			require.Error(t, err)
-		})
-	})
-}
-
-func Test_writeLock(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("キー昇順で書き出し readLock で読み戻せる", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "images-pin.toml")
-			require.NoError(t, writeLock(path, testLock()))
-
-			body, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir 配下
-			require.NoError(t, err)
-			assert.Less(t,
-				strings.Index(string(body), `"alpine:3.24"`),
-				strings.Index(string(body), `"golang:1.26-alpine"`))
-
-			lock, err := readLock(path)
-			require.NoError(t, err)
-			assert.Equal(t, testLock(), lock)
-		})
-
-		t.Run("空の lock でも SSOT の説明ヘッダを持つファイルを作る", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "images-pin.toml")
-			require.NoError(t, writeLock(path, map[string]string{}))
-
-			body, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir 配下
-			require.NoError(t, err)
-			assert.Contains(t, string(body), "pin-images-resolve")
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("存在しないディレクトリ配下へは書けずエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "absent", "images-pin.toml")
-			require.Error(t, writeLock(path, testLock()))
-		})
-	})
-}
-
 func Test_minCreated(t *testing.T) {
 	t.Parallel()
 
@@ -1235,7 +1102,7 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 
 			require.NoError(t, resolve(root, testTargets(t, root), 0))
 
-			lock, err := readLock(filepath.Join(root, lockFile))
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"alpine:3.24": digestAlpine}, lock)
 		})
@@ -1248,7 +1115,7 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 
 			require.NoError(t, resolve(root, testTargets(t, root), 14))
 
-			lock, err := readLock(filepath.Join(root, lockFile))
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"alpine:3.24": digestStale}, lock)
 		})
@@ -1276,7 +1143,8 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 
 			err := resolve(root, testTargets(t, root), 14)
 
-			require.ErrorIs(t, err, errLockInvalidLine)
+			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+			assert.ErrorContains(t, err, "pin-images-resolve", "直し方の案内が相手のツール名になっている")
 			assert.Equal(t, body, readAll(t, filepath.Join(root, lockFile)),
 				"読めない lockfile を空と見なすと退行先ごと書き潰される")
 		})
@@ -1394,7 +1262,7 @@ func Test_applyOrCheck(t *testing.T) {
 			cf := filepath.Join(root, "docker-compose.yaml")
 			writeFile(t, df, "FROM golang:1.26-alpine AS builder\n")
 			writeFile(t, cf, "  db:\n    image: alpine:3.24\n")
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			require.NoError(t, applyOrCheck(root, testTargets(t, root), false))
 
@@ -1408,7 +1276,7 @@ func Test_applyOrCheck(t *testing.T) {
 			wf := filepath.Join(root, ".github", "workflows", "ci.yaml")
 			writeFile(t, wf, "      - uses: actions/checkout@v7\n      - uses: docker://alpine:3.24\n")
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "docker"), 0o750))
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			require.NoError(t, applyOrCheck(root, testTargets(t, root), false))
 
@@ -1427,7 +1295,7 @@ func Test_applyOrCheck(t *testing.T) {
 			writeFile(t, wf, "    services:\n      db:\n        image: alpine:3.24\n"+
 				"    steps:\n      - uses: docker://golang:1.26-alpine\n")
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "docker"), 0o750))
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			require.NoError(t, applyOrCheck(root, testTargets(t, root), false))
 
@@ -1443,7 +1311,7 @@ func Test_applyOrCheck(t *testing.T) {
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			body := "FROM alpine:3.24@" + digestAlpine + "\n"
 			writeFile(t, df, body)
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			require.NoError(t, applyOrCheck(root, testTargets(t, root), true))
 
@@ -1461,7 +1329,7 @@ func Test_applyOrCheck(t *testing.T) {
 			body := "      - uses: docker://alpine\n"
 			writeFile(t, wf, body)
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "docker"), 0o750))
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			err := applyOrCheck(root, testTargets(t, root), false)
 
@@ -1474,7 +1342,7 @@ func Test_applyOrCheck(t *testing.T) {
 			root := t.TempDir()
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			writeFile(t, df, "FROM alpine:3.24\n")
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			err := applyOrCheck(root, testTargets(t, root), true)
 
@@ -1490,7 +1358,7 @@ func Test_applyOrCheck(t *testing.T) {
 			cf := filepath.Join(root, "docker-compose.yaml")
 			writeFile(t, df, "FROM alpine:3.24\n")
 			writeFile(t, cf, "  db:\n    image: busybox:1.36\n")
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			err := applyOrCheck(root, testTargets(t, root), false)
 
@@ -1515,22 +1383,21 @@ func Test_applyOrCheck(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "docker"), 0o750))
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			err := applyOrCheck(root, []target{{path: filepath.Join(root, "absent"), re: fromRe}}, false)
 
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
-		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
-		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
+		// 書き込み失敗はディレクトリを読み取り専用にして作る（rename はファイルの権限を見ない）。
 		t.Run("固定後の書き込みに失敗すればエラーを返す", func(t *testing.T) {
 			t.Parallel()
 			testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 			root := t.TempDir()
 			df := filepath.Join(root, "docker", "app", "Dockerfile")
 			writeFile(t, df, "FROM alpine:3.24\n")
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 			require.NoError(t, os.Chmod(filepath.Dir(df), 0o500))
 			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(df), 0o700) })
 
@@ -1552,7 +1419,7 @@ func Test_applyOrCheck(t *testing.T) {
 			second := filepath.Join(root, "docker", "zz", "Dockerfile")
 			writeFile(t, first, body)
 			writeFile(t, second, body)
-			require.NoError(t, writeLock(filepath.Join(root, lockFile), testLock()))
+			require.NoError(t, lockFormat.Write(filepath.Join(root, lockFile), testLock()))
 
 			targets := testTargets(t, root)
 			require.NoError(t, os.Chmod(filepath.Dir(second), 0o500))
@@ -1648,7 +1515,7 @@ func Test_run(t *testing.T) {
 
 			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
 
-			lock, err := readLock(filepath.Join(root, lockFile))
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, lock, "resolve 以外へ振り分けると lockfile が据え置かれる")
 		})

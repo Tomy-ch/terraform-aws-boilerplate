@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -41,7 +42,6 @@ const (
 	fetchTimeout = 30 * time.Second
 	gitTimeout   = 30 * time.Second
 	fetchWorkers = 8
-	minFenceLen  = 3 // CommonMark のフェンス下限
 	hoursPerDay  = 24
 	summaryPerm  = 0o644
 	outputPerm   = 0o600
@@ -586,32 +586,6 @@ func report(
 	return blockingCount
 }
 
-// fenceFor は text を包むのに足りるフェンスを返す。長さは text 中の最長バッククォート連 + 1 で、
-// 最低 3。text 側がフェンスを閉じられないことが、この計算の目的である。
-func fenceFor(text string) string {
-	longest, run := 0, 0
-	for _, r := range text {
-		if r == '`' {
-			run++
-			if run > longest {
-				longest = run
-			}
-			continue
-		}
-		run = 0
-	}
-	return strings.Repeat("`", max(minFenceLen, longest+1))
-}
-
-// fenced は見出しと、フェンスで包んだ本体を書く。module path は go.mod 由来で、この検査が
-// 動く時点では pull request が中身を決めている。見出しは読ませたいのでテンプレート側に残し、
-// 値の側だけをフェンスへ入れる。
-func fenced(b *strings.Builder, heading string, lines []string) {
-	body := strings.Join(lines, "\n")
-	fence := fenceFor(body)
-	fmt.Fprintf(b, "## %s (%d)\n\n%stext\n%s\n%s\n\n", heading, len(lines), fence, body, fence)
-}
-
 // summary は GITHUB_STEP_SUMMARY 用の Markdown を組む。
 func summary(
 	sub string, findings []finding, unresolved []requirement,
@@ -622,7 +596,7 @@ func summary(
 	_, blocked, reported := classify(sub, findings, bypasses, invalid)
 
 	if len(policyViolations) > 0 {
-		fenced(&b, "バイパス設定の違反", policyViolations)
+		mdfence.Section(&b, "バイパス設定の違反", policyViolations)
 	}
 	if len(blocked) > 0 {
 		lines := make([]string, 0, len(blocked))
@@ -630,21 +604,21 @@ func summary(
 			lines = append(lines, fmt.Sprintf("- %s — 公開 %d 日（%s）",
 				f.req.key(), f.ageDays, f.published.Format(time.DateOnly)))
 		}
-		fenced(&b, "cooldown 未達", lines)
+		mdfence.Section(&b, "cooldown 未達", lines)
 	}
 	if len(reported) > 0 {
 		lines := make([]string, 0, len(reported))
 		for _, f := range reported {
 			lines = append(lines, fmt.Sprintf("- %s — 公開 %d 日", f.req.key(), f.ageDays))
 		}
-		fenced(&b, "参考: 窓内だがブロックしないもの", lines)
+		mdfence.Section(&b, "参考: 窓内だがブロックしないもの", lines)
 	}
 	if len(unresolved) > 0 {
 		lines := make([]string, 0, len(unresolved))
 		for _, r := range unresolved {
 			lines = append(lines, "- "+r.key())
 		}
-		fenced(&b, "公開時刻を取得できなかったもの", lines)
+		mdfence.Section(&b, "公開時刻を取得できなかったもの", lines)
 	}
 	// 件数の行は常に付くので、同じ Builder へ先に書くと節の有無を見分けられなくなる。
 	// 本文を組み終えてから前置きすることで、節が 1 つも無い場合にそう述べられる。

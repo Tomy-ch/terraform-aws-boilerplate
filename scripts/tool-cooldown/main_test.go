@@ -1472,53 +1472,6 @@ func Test_sortedKeys(t *testing.T) {
 	})
 }
 
-func Test_fenceFor(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("バッククォートを含まない本体は 3 連で足りる", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "```", fenceFor("- ふつうの行"))
-		})
-
-		// 本体と同じ長さのフェンスだと、本体側がフェンスを閉じて外の Markdown へ抜けられる。
-		t.Run("本体の最長連より 1 つ長い連を返す", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "`````", fenceFor("`` と ```` と `"))
-		})
-
-		t.Run("3 連を含む本体は 4 連で包む", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "````", fenceFor("``` を含む理由"))
-		})
-	})
-}
-
-func Test_fenced(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("見出しに件数を添えて本体を text フェンスで包む", func(t *testing.T) {
-			t.Parallel()
-			var b strings.Builder
-			fenced(&b, "cooldown 未達", []string{"- a", "- b"})
-			assert.Equal(t, "## cooldown 未達 (2)\n\n```text\n- a\n- b\n```\n\n", b.String())
-		})
-
-		// 値は mise.toml 由来で pull request が中身を決めるため、フェンス長は値の側から取る。
-		t.Run("本体がフェンスを閉じられない長さで包む", func(t *testing.T) {
-			t.Parallel()
-			var b strings.Builder
-			fenced(&b, "見出し", []string{"``` を含む理由"})
-			assert.Equal(t, "## 見出し (1)\n\n````text\n``` を含む理由\n````\n\n", b.String())
-		})
-	})
-}
-
 //nolint:paralleltest // log の出力先を差し替えて検証するため並列化できない
 func Test_report(t *testing.T) {
 	blocked := finding{

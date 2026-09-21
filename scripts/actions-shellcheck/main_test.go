@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,9 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
-
-const requireShellcheckEnv = "REQUIRE_SHELLCHECK"
 
 const compositeAction = `name: sample
 description: sample
@@ -124,19 +122,6 @@ func testFS(files map[string]string) fstest.MapFS {
 		fsys[path] = &fstest.MapFile{Data: []byte(body)}
 	}
 	return fsys
-}
-
-// requireShellcheck は実物の shellcheck を要求する。手元に無い環境では skip するが、
-// REQUIRE_SHELLCHECK を立てた実行では skip せず落とす（根拠は scripts/README.md の Notes）。
-func requireShellcheck(t *testing.T) {
-	t.Helper()
-	if _, err := exec.LookPath(shellcheck.Binary); err == nil {
-		return
-	}
-	if os.Getenv(requireShellcheckEnv) != "" {
-		t.Fatalf("shellcheck が PATH にありません（%s 指定時は skip しません）", requireShellcheckEnv)
-	}
-	t.Skip("shellcheck が PATH にありません")
 }
 
 func canceledContext(t *testing.T) context.Context {
@@ -991,7 +976,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("対象外 shell は検査せず skip として報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			steps := []step{
 				{file: "action.yaml", shell: "bash", script: "echo ok\n", firstLine: 1},
 				{file: "action.yaml", shell: "pwsh", script: "Write-Host hi\n", firstLine: 5},
@@ -1007,7 +992,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("実 action と同じ形の本文から指摘を行番号付きで返す", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			steps, err := parseAction("action.yaml", []byte(strings.Replace(
 				compositeAction, "        echo world\n", "        x=\"a b\"; echo $x\n", 1,
 			)))
@@ -1022,7 +1007,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("alias で共有された run も shellcheck に掛けアンカー先の位置で報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			_, steps, err := collectSteps(testFS(map[string]string{
 				".github/actions/a/action.yaml": aliasDefectAction,
 			}))
@@ -1039,7 +1024,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("引用符付きスカラーの run も列位置ごと報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			_, steps, err := collectSteps(testFS(map[string]string{
 				".github/actions/a/action.yaml": quotedDefectAction,
 			}))
@@ -1054,7 +1039,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("マージキーで継承した plain スカラーの run も列位置ごと報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			_, steps, err := collectSteps(testFS(map[string]string{
 				".github/actions/a/action.yaml": mergeDefectAction,
 			}))
@@ -1075,7 +1060,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("shellcheck の失敗はそのまま伝播する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			steps := []step{{file: "action.yaml", shell: "bash", script: "echo ok\n", firstLine: 1}}
 			res, err := check(canceledContext(t), steps)
 			require.Error(t, err)
@@ -1086,7 +1071,7 @@ func Test_check(t *testing.T) {
 
 		t.Run("閉じていない式は検査せずエラーにする", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			steps := []step{{file: "action.yaml", shell: "bash", script: "echo ${{ inputs.a\n", firstLine: 9}}
 			_, err := check(t.Context(), steps)
 			require.Error(t, err)
@@ -1744,7 +1729,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("指摘の無いスクリプトは成功する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			root := writeActionRoot(t, compositeAction)
 
 			require.NoError(t, run(t.Context(), stubWD(root), stubLookPath(nil)))
@@ -1808,7 +1793,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("指摘が残っていれば件数を添えて失敗する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 			root := writeActionRoot(t, quotedDefectAction)
 
 			err := run(t.Context(), stubWD(root), stubLookPath(nil))

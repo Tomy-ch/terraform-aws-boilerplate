@@ -18,7 +18,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 
 ## Directory Structure
 
-1ツール1ディレクトリ、名前はそれが何をするかです。2つ以上が必要とするものは `lib/` が持ちます。
+1ツール1ディレクトリ、名前はそれが何をするかです。**1つの決定を2つ以上が必要とするなら `lib/` が持ちます** —— 文書が所有する規則（フェンス長、lockfile の書式）や、複数のツールが同じ契約を共有する箇所です。言語の定型句（map のキーを並べる、相対パスを取る）は、同じ形をしていても各ツールに置きます（[0205](../docs/adr/0205-module-dependency-policy.md) 決定11）。
 名前が運べない「何のためにあるか」は *Script Categories* が持ちます。
 
 ## Script Categories
@@ -33,7 +33,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`actions-shellcheck/`|Parse every `action.yaml` / `action.yml` under `.github/actions/**`, extract `runs.steps[].run` from the composite ones and check each script with `shellcheck` over stdin, remapping every finding back to its line in the `action.yaml`. Fills the gap that `actionlint` walks only `.github/workflows` and cannot be pointed at an action manifest (handed one directly, it parses it as a workflow and fails), so the shell inside a composite action was checked by nothing. The dialect comes from the step's `shell:` — passed to shellcheck as a shebang, which also settles the target shell without a `-s` flag; `pwsh` / `python` / `cmd` and an expression-valued `shell:` are counted as skipped instead. `${{ }}` expressions are masked to a placeholder that preserves the line count, the same approach `actionlint` takes for workflow `run:`. Per file, the number of extracted steps must equal the number a plain decode of the same YAML counts, and a mismatch exits non-zero — the two routes break independently, so a broken extractor cannot pass as a clean run; a `run:` written as a folded scalar (`>`) is rejected outright, because folding drops the line breaks a finding's position is mapped back through. Masking is also the reason this script says nothing about whether an expression was quoted — that question survives the mask only for a checker that reads the interpolation site itself, which is `make zizmor`'s job.|`make actions-lint` / `make actions-shellcheck`|
 |`shell-lint/`|リポジトリ内の `*.sh` を `shellcheck` で検査する。composite action の中のシェルは `actions-shellcheck` が見るが、**ファイルとして置かれたシェルはどのゲートにも掛かっていなかった**。フックやセットアップの入口はそこに居る —— 編集のたび、あるいはセッションのたびに走るのに、壊れても CI は緑を返す。内容をそのまま渡すので、指摘の行・列は写し戻さずに使える（起動の詳細は `lib/shellcheck`）。走査対象が0件なら非ゼロで終わる。|`make actions-lint` / `make shell-lint`|
 |`pr-comment-secret-lint/`|Split every workflow in `.github/workflows/` into jobs and fail when a job using `./.github/actions/upsert-pr-comment` references a secret other than `GITHUB_TOKEN`, workflow-wide `env:` included. Enforces a rule `actionlint` cannot express — see [`.github/workflows/README.md`](../.github/workflows/README.md) for why the rule exists. Reach: direct `secrets` references inside a `${{ }}` expression, whether `secrets.NAME`, `secrets['NAME']`, or the whole context (`toJSON(secrets)`); a secret read in one job and handed on through `needs.<job>.outputs` is beyond static reach and passes.|`make actions-lint` / `make pr-comment-secret-lint`|
-|`pr-comment-fence-lint/`|Fail when a workflow's `run:` block emits a fixed-length Markdown fence around a PR comment body, when the duplicated `fence_for` helpers stop agreeing with each other, and when a workflow that passes a body through interpolates a value into an inline code span. Enforces rules `actionlint` cannot express — see [`.github/workflows/README.md`](../.github/workflows/README.md) for why a fence must be sized from the text it wraps. Reach: literal fences in an `echo`, textual equality between the helper implementations, and a span written literally around a shell expansion — one built through a variable or assembled by `jq` is invisible here, and whether a given body is attacker-controlled is not decidable at all; both are left to the rule. The span check is file-scoped and keeps an exclusion map for a workflow whose body is not yet on a safe path: an entry names the issue tracking it, is printed on every run so a skipped file cannot pass for a checked one, and goes away when that issue is fixed.|`make actions-lint` / `make pr-comment-fence-lint`|
+|`pr-comment-fence-lint/`|Fail when a workflow's `run:` block emits a fixed-length Markdown fence around a PR comment body, and when a workflow that passes a body through interpolates a value into an inline code span. Enforces rules `actionlint` cannot express — see [`.github/workflows/README.md`](../.github/workflows/README.md) for why a fence must be sized from the text it wraps. Reach: literal fences in an `echo`, and a span written literally around a shell expansion — one built through a variable or assembled by `jq` is invisible here, and whether a given body is attacker-controlled is not decidable at all; both are left to the rule. The span check is file-scoped and keeps an exclusion map for a workflow whose body is not yet on a safe path: an entry names the issue tracking it, is printed on every run so a skipped file cannot pass for a checked one, and goes away when that issue is fixed.|`make actions-lint` / `make pr-comment-fence-lint`|
 |`actions-cutoff-lint/`|Fail when a job carries no `timeout-minutes`, and when a step calling `./.github/actions/upsert-pr-comment` has an `if:` a cancelled job cannot reach or a `title:` with no cut-off heading. Enforces rules `actionlint` cannot express — see [`.github/workflows/README.md`](../.github/workflows/README.md) for what a cut-off has to leave behind and why the three are one check. Reach: `always()` / `cancelled()` in the condition, `failure()` deliberately not counting since it is false for a cancelled job; the literal `CUT OFF` in the title expression; jobs calling a reusable workflow are skipped because the key is invalid there. Structure is read by column rather than by a YAML parser, which holds because a block scalar's body is always more indented than its key — `actionlint` runs first in the same target and guarantees the input parses at all. A condition that negates its own reachability (`!always()`) is writable and not statically caught — the rule is what holds.|`make actions-lint` / `make actions-cutoff-lint`|
 |`required-check-lint/`|保護設定が required とした context を報告する job が実在し、その workflow の起動条件が check を取りこぼさない形であることを検査する。`pull_request` に paths / branches のフィルタを置くと、除外された Pull Request では run が1件も起動せず、GitHub は報告されなかった context を「該当しない」とは解釈せずに待ち続ける —— **その Pull Request は恒久的にマージ可能にならない**。起動条件は `on:` から外し、job の `if:` で表現する（skip された job は skipped を報告し、required check はそれを成功として数える）。検査の入力は `.github/settings/branch-protection.json` そのもの。検査が独自の一覧を持つと、宣言を変えたときに片方だけが動く。|`make actions-lint` / `make required-check-lint`|
 |`actions-mise-pin-lint/`|CI が mise 本体を導入する composite action の3点——`MISE_VERSION`（入れる版）/ `MISE_SHA256`（その版の digest）/ キャッシュキー（復元したバイナリをどの版・どの digest として扱うか）——が一致していることを検査する。版だけを上げて digest を据え置くと、キャッシュは古いバイナリを新しい版として返し続ける。キーが版と digest の両方を含んでいれば、どちらが動いてもキーが変わり、復元は外れる。3点のどれかが読み取れない時点で落とす —— 検証があるように見えて効いていない状態を許さない。|`make actions-lint` / `make actions-mise-pin-lint`|
@@ -88,7 +88,9 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/yamlblock/`|YAML のブロックスカラー（`key: \|` / `key: >-`）の中身の判定。|
 |`lib/shellcheck/`|shellcheck の起動と結果の解釈。`actions-shellcheck` と `shell-lint` が同じ解釈を共有します。|
 |`lib/lintreport/`|workflow に対する lint が見つけた違反の持ち方と、失敗出力の組み立て。|
-|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot` に通し、`REQUIRE_NONROOT` が立っていれば skip せず失敗させます。|
+|`lib/mdfence/`|Markdown のコードフェンスを、囲む本文から長さを決めて組む。長さを固定にすると本文側がフェンスを閉じて外へ抜けられます。規則の所有は [`.github/workflows/README.md`](../.github/workflows/README.md)。同じ計算が `upsert-pr-comment` の JavaScript にもあり、**両者の食い違いを検査する機構はありません**。|
+|`lib/lockfile/`|pin の SSOT が使う `"key" = "value"` 形式の読み書き。書式は `pin-actions` と `pin-images` で同じで、値の形と見出しだけが違います。解釈できない行とキーの重複はエラーにします。|
+|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。|
 
 ## Test Strategy
 
@@ -118,10 +120,13 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
   差し替え、ツールが組み立てた引数列そのものをテスト対象にします。GitHub API とモジュールレジストリは
   `httptest` サーバへ向けます。`t.Setenv` は `t.Parallel()` と両立しないので、`t.Parallel()` は
   ケース単位で宣言し、迂回しません。`actions-shellcheck` は例外で、実物の `shellcheck` を駆動し、
-  不在なら skip します。`REQUIRE_SHELLCHECK` があるのは、**その skip が実行として通らないようにする**
-  ためです——skip は既定の出力では見えず、報告より少ない検査で緑を残します。権限を落として書き込みや
-  削除の失敗を作るケースも同じで、root では落としたはずの権限が効かず成立しません。`lib/testenv` の
-  `RequireNonRoot` を通し、`REQUIRE_NONROOT` で skip を失敗へ変えます。どちらも CI が立てます。
+  不在なら skip します。**その skip が実行として通らないようにする**のが `REQUIRE_SHELLCHECK` で、
+  skip は既定の出力では見えず、報告より少ない検査で緑を残すからです。権限を落として書き込みや削除の
+  失敗を作るケースも同じで、root では落としたはずの権限が効かず成立しません。どちらも `lib/testenv`
+  （`RequireShellcheck` / `RequireNonRoot`）を通し、`REQUIRE_SHELLCHECK` / `REQUIRE_NONROOT` で
+  skip を失敗へ変えます。CI が両方を立てます。書き込みは一時ファイル経由（`lib/atomicwrite`）を
+  通るので、**書き込み失敗のケースはファイルではなく親ディレクトリを読み取り専用にして作ります**
+  —— rename はファイルの権限を見ないため、ファイルだけを落としても通ってしまいます。
 - **取り返しのつかない手順は、計画として検証し、実行しない。** `release` と `repo-setup` はタグを
   push し、GitHub Release を作り、デフォルトブランチを動かします。手順は `runner` の継ぎ目を通し、
   テストは組み立てたコマンド列と中断条件を assert します。実際に走らせて確かめることは、実際に

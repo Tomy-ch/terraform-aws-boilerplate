@@ -14,9 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
-
-const requireShellcheckEnv = "REQUIRE_SHELLCHECK"
 
 const cleanScript = "#!/bin/sh\nset -eu\necho hello\n"
 
@@ -31,7 +30,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("指摘の無いスクリプトだけなら成功する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{"ok.sh": cleanScript})
 
@@ -41,7 +40,7 @@ func Test_run(t *testing.T) {
 		// 「所見なし」の報告は、見た件数を伴わなければ「何も見なかった」と区別できない。
 		t.Run("成功時に検査した件数を報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			var out bytes.Buffer
 			root := writeScripts(t, map[string]string{"a.sh": cleanScript, "b.sh": cleanScript})
@@ -52,7 +51,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("除外ディレクトリ配下は検査しない", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{
 				"ok.sh":         cleanScript,
@@ -72,7 +71,7 @@ func Test_run(t *testing.T) {
 		// 赤ではなく緑を返す。「違反が無かった」と「何も見なかった」を区別し続ける。
 		t.Run("走査対象が1件も無ければエラーを返す", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{"README.md": "not a script\n"})
 
@@ -81,7 +80,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("除外ディレクトリにしか対象が無ければエラーを返す", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{"vendor/bad.sh": dirtyScript})
 
@@ -92,7 +91,7 @@ func Test_run(t *testing.T) {
 		// 黙ってスキップされても、このケースが無ければ誰も気づかない。
 		t.Run("走査対象が読めなければエラーを返す", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := t.TempDir()
 			require.NoError(t, os.Symlink(
@@ -105,7 +104,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("指摘のあるスクリプトを検出する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{"bad.sh": dirtyScript})
 
@@ -115,7 +114,7 @@ func Test_run(t *testing.T) {
 		// 出力そのものが契約である —— 人が読んで直す手掛かりはこれしかない。
 		t.Run("指摘のテキストにどのファイルの何行目かを載せる", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			var out bytes.Buffer
 			root := writeScripts(t, map[string]string{"bad.sh": dirtyScript})
@@ -126,7 +125,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("複数ファイルの指摘を合算して報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			var out bytes.Buffer
 			root := writeScripts(t, map[string]string{"a.sh": dirtyScript, "b.sh": dirtyScript})
@@ -147,7 +146,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("基点ディレクトリを解決できなければ報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			failing := func() (string, error) { return "", os.ErrPermission }
 
@@ -156,7 +155,7 @@ func Test_run(t *testing.T) {
 
 		t.Run("shellcheck の起動自体に失敗したら報告する", func(t *testing.T) {
 			t.Parallel()
-			requireShellcheck(t)
+			testenv.RequireShellcheck(t)
 
 			root := writeScripts(t, map[string]string{"ok.sh": cleanScript})
 
@@ -288,18 +287,6 @@ func writeScripts(t *testing.T, files map[string]string) string {
 // rootAt は固定の基点を返す wd 相当の関数を作ります。
 func rootAt(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
-}
-
-func requireShellcheck(t *testing.T) {
-	t.Helper()
-
-	if _, err := exec.LookPath(shellcheck.Binary); err == nil {
-		return
-	}
-	if os.Getenv(requireShellcheckEnv) != "" {
-		t.Fatalf("shellcheck が PATH にありません（%s 指定時は skip しません）", requireShellcheckEnv)
-	}
-	t.Skip("shellcheck が PATH にありません")
 }
 
 func canceledContext(t *testing.T) context.Context {
