@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -60,8 +61,13 @@ const (
 	npmBase     = "https://registry.npmjs.org/"
 
 	// aquaRegistryBase は aqua のパッケージ定義の取得元。GitHub Release を持たない
-	// パッケージの配布物がどこに在るかは、ここにしか書かれていない。
-	aquaRegistryBase = "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs/"
+	// パッケージの配布物がどこに在るかは、ここにしか書かれていない。commit へ固定する
+	// 理由は scripts/README.md の tool-cooldown 行が持つ。
+	aquaRegistryRef  = "d51845df817e99dd5ca867bf24216ea662fa38a9"
+	aquaRegistryBase = "https://raw.githubusercontent.com/aquaproj/aqua-registry/" + aquaRegistryRef + "/pkgs/"
+
+	// artifactScheme は配布物の取得に認める唯一のスキーム。
+	artifactScheme = "https"
 
 	// probeOS / probeArch は配布物を叩くときに名乗る環境。**どの環境で実行しても同じ版に
 	// 同じ判定を出すため**に固定する —— 窓が測るのは「その版が世に出てから何日経ったか」で
@@ -85,6 +91,8 @@ var (
 	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
 	// errNoLastModified は、配布物が公開時刻を名乗らなかった場合のエラー。
 	errNoLastModified = xerrors.New("artifact has no Last-Modified")
+	// errUnversionedArtifact は、配布物の URL がその版を指していない場合のエラー。
+	errUnversionedArtifact = xerrors.New("artifact url does not bind the version")
 	// errBypassInvalidLine は、バイパス lockfile に解釈できない行があった場合のエラー。
 	errBypassInvalidLine = xerrors.New("invalid bypass line")
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
@@ -643,6 +651,13 @@ func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version str
 			Type         string            `yaml:"type"`
 			URL          string            `yaml:"url"`
 			Replacements map[string]string `yaml:"replacements"`
+			// Overrides は goos ごとに url を差し替える。読み飛ばすと、base の url が
+			// probe の環境向けでないパッケージに対して存在しない URL を叩き、配布されている
+			// 道具を「その版は無い」として落とす。
+			Overrides []struct {
+				GOOS string `yaml:"goos"`
+				URL  string `yaml:"url"`
+			} `yaml:"overrides"`
 		} `yaml:"packages"`
 	}
 	if unmarshalErr := yaml.Unmarshal([]byte(body), &registry); unmarshalErr != nil {
@@ -654,16 +669,38 @@ func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version str
 	}
 
 	pkg := registry.Packages[0]
-	if pkg.Type != "http" || pkg.URL == "" {
+	if pkg.Type != "http" {
 		return "", xerrors.Wrap(errUnsupportedPackage, repo+": type=\""+pkg.Type+"\"")
 	}
 
-	return renderAquaURL(pkg.URL, pkg.Replacements, version)
+	urlTemplate := pkg.URL
+	for _, o := range pkg.Overrides {
+		if o.GOOS == probeOS && o.URL != "" {
+			urlTemplate = o.URL
+
+			break
+		}
+	}
+	if urlTemplate == "" {
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": url が無い")
+	}
+
+	return renderAquaURL(urlTemplate, pkg.Replacements, version)
 }
 
-// renderAquaURL は aqua の URL テンプレートを展開する。replacements は aqua が goos / goarch を
-// 配布物の名乗りへ読み替える表で、これを飛ばすと存在しない URL を叩いて 404 に化ける。
+// renderAquaURL は aqua の URL テンプレートを展開し、得た URL が安全に叩ける形かを検める。
+// replacements は aqua が goos / goarch を配布物の名乗りへ読み替える表で、これを飛ばすと
+// 存在しない URL を叩いて 404 に化ける。
+//
+// テンプレートは第三者のレジストリ由来の文字列である。ホストが補間で作られる形を認めず、
+// 展開後のスキームを https に限り、**展開結果がその版を指していることを要求する** ——
+// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返し、窓の判定を
+// 素通しにする。
 func renderAquaURL(urlTemplate string, replacements map[string]string, version string) (string, error) {
+	if !hostIsLiteral(urlTemplate) {
+		return "", xerrors.Wrap(errUnsupportedPackage, "ホストが補間で作られている: "+urlTemplate)
+	}
+
 	replace := func(v string) string {
 		if to, ok := replacements[v]; ok {
 			return to
@@ -672,9 +709,14 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 		return v
 	}
 
-	tmpl, err := template.New("url").Option("missingkey=error").Parse(urlTemplate)
+	// trimV は aqua が提供する関数で、レジストリの url が広く使う。標準の text/template には
+	// 無いため、登録しなければ Parse の時点で落ちる。ここに無い関数を使う定義は解釈できない
+	// ものとして扱われ、gate は素通しではなく失敗の側へ倒れる。
+	tmpl, err := template.New("url").
+		Funcs(template.FuncMap{"trimV": func(v string) string { return strings.TrimPrefix(v, "v") }}).
+		Parse(urlTemplate)
 	if err != nil {
-		return "", xerrors.Wrap(err, "parse url template")
+		return "", xerrors.Wrap(errUnsupportedPackage, "parse url template: "+err.Error())
 	}
 
 	var out strings.Builder
@@ -683,12 +725,46 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 		Arch:    replace(probeArch),
 		Version: version,
 	}); execErr != nil {
-		// テンプレートがここに無いフィールドを参照している。埋めれば動くかもしれないが、
-		// 埋めた値が正しい保証は無い。**辿れないものは辿れないと言う。**
+		// 埋めれば動くかもしれないが、埋めた値が正しい保証は無い。**辿れないものは辿れないと言う。**
 		return "", xerrors.Wrap(errUnsupportedPackage, "render url: "+execErr.Error())
 	}
 
-	return out.String(), nil
+	// trimV を通した url は先頭の `v` を落とすため、素の版とそれを外した形の両方を認める。
+	// どちらも指していない URL は、その版に固有の配布物ではない。
+	rendered := out.String()
+	if !strings.Contains(rendered, version) && !strings.Contains(rendered, strings.TrimPrefix(version, "v")) {
+		return "", xerrors.Wrap(errUnversionedArtifact, rendered)
+	}
+
+	parsed, err := url.Parse(rendered)
+	if err != nil {
+		return "", xerrors.Wrap(errUnsupportedPackage, "parse url: "+err.Error())
+	}
+	if parsed.Scheme != artifactScheme || parsed.Host == "" || parsed.User != nil {
+		return "", xerrors.Wrap(errUnsupportedPackage, "叩けない URL: "+rendered)
+	}
+
+	return rendered, nil
+}
+
+// hostIsLiteral は、テンプレートのホスト部分に展開の入る余地が無いことを見る。ホストが
+// 補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れてしまう。
+func hostIsLiteral(urlTemplate string) bool {
+	action := strings.Index(urlTemplate, "{{")
+	if action < 0 {
+		return true
+	}
+	prefix := artifactScheme + "://"
+	if !strings.HasPrefix(urlTemplate, prefix) {
+		return false
+	}
+	// スキームの直後からホストが終わる最初の "/" までに、展開が現れないこと。
+	pathStart := strings.Index(urlTemplate[len(prefix):], "/")
+	if pathStart < 0 {
+		return false
+	}
+
+	return action > len(prefix)+pathStart
 }
 
 // lastModified は HEAD を投げて Last-Modified を time へ直す。本文は取らない —— 配布物は
@@ -699,7 +775,12 @@ func lastModified(ctx context.Context, client *http.Client, url string) (time.Ti
 		return time.Time{}, xerrors.Wrap(err, "new head request")
 	}
 
-	resp, err := client.Do(req)
+	// リダイレクトを追わない。追えば、検証を通した宛先とは別のホストが応答を返し得る ——
+	// 公開時刻を名乗る主体が、こちらの認めた配布元であることが保証できなくなる。
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		return time.Time{}, xerrors.Wrap(err, "head "+url)
 	}

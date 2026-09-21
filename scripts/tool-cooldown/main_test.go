@@ -1403,7 +1403,7 @@ func Test_publishedAt(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml":
+				case aquaRegistryPath(t, "owner/repo"):
 					_, _ = io.WriteString(w, aquaHTTPRegistry)
 				case "/tool-linux-x86_64-1.2.3.zip":
 					w.Header().Set("Last-Modified", "Fri, 04 Sep 2026 19:13:50 GMT")
@@ -1466,6 +1466,16 @@ const aquaHTTPRegistry = `packages:
       amd64: x86_64
 `
 
+// aquaRegistryPath は、その repo の定義が置かれる取得元のパスを返します。**固定値を書き写さない**
+// —— 取得元を別の ref へ動かしたとき、写しは黙って一致しなくなる。
+func aquaRegistryPath(t *testing.T, repo string) string {
+	t.Helper()
+	u, err := url.Parse(aquaRegistryBase + repo + "/registry.yaml")
+	require.NoError(t, err)
+
+	return u.Path
+}
+
 // respondLastModified は、path に一致したときだけ Last-Modified 付きの 200 を返します。
 func respondLastModified(path, lastModified string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1510,6 +1520,16 @@ func Test_renderAquaURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
 		})
 
+		// aqua のレジストリの url は trimV を広く使う。登録しなければ Parse の時点で落ち、
+		// 本来たどれる配布物が「解釈できない定義」に化ける。
+		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL("https://cdn.example.com/t_{{trimV .Version}}.zip", nil, "v1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/t_1.2.3.zip", got)
+		})
+
 		t.Run("replacements に無い名前はそのまま使う", func(t *testing.T) {
 			t.Parallel()
 
@@ -1522,8 +1542,7 @@ func Test_renderAquaURL(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 埋めれば動くかもしれないが、埋めた値が正しい保証は無い。当てずっぽうの URL を叩いて
-		// 得た時刻は、窓の判定を黙って狂わせる。
+		// 当てずっぽうの URL を叩いて得た時刻は、窓の判定を黙って狂わせる。
 		t.Run("渡していないフィールドを参照するテンプレートはエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1536,6 +1555,39 @@ func Test_renderAquaURL(t *testing.T) {
 
 			_, err := renderAquaURL("https://cdn.example.com/{{.Version", nil, "1.2.3")
 			require.Error(t, err)
+		})
+
+		// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返す。落とさないと
+		// そのパッケージは公開直後の版でも常に窓を満たし、**ゲートが素通しに化ける。**
+		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/installer.sh", nil, "1.2.3")
+			require.ErrorIs(t, err, errUnversionedArtifact)
+		})
+
+		// 理由は hostIsLiteral の doc コメントが持つ。
+		t.Run("ホストが補間で作られる URL はエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			for name, tmpl := range map[string]string{
+				"ホストごと補間":  "https://{{.OS}}.example.com/{{.Version}}.zip",
+				"スキームから補間": "{{.OS}}://cdn.example.com/{{.Version}}.zip",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := renderAquaURL(tmpl, nil, "1.2.3")
+					require.ErrorIs(t, err, errUnsupportedPackage)
+				})
+			}
+		})
+
+		t.Run("https 以外のスキームはエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("http://cdn.example.com/{{.Version}}.zip", nil, "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 	})
 }
@@ -1598,10 +1650,38 @@ func Test_lastModified(t *testing.T) {
 func Test_aquaArtifactURL(t *testing.T) {
 	t.Parallel()
 
-	const path = "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml"
+	path := aquaRegistryPath(t, "owner/repo")
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
+
+		// base の url が probe の環境向けでないパッケージがある。overrides を読み飛ばすと
+		// 存在しない URL を叩き、配布されている道具を「その版は無い」として落とす。
+		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: https://cdn.example.com/only-{{.OS}}-{{.Version}}.tar.gz\n" +
+				"      - goos: darwin\n" +
+				"        url: https://cdn.example.com/mac-{{.Version}}.pkg\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/only-linux-1.2.3.tar.gz", got)
+		})
+
+		t.Run("probe の goos に一致する override が無ければ base を使う", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: darwin\n" +
+				"        url: https://cdn.example.com/mac-{{.Version}}.pkg\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
 
 		t.Run("type http の定義から配布物の URL を組む", func(t *testing.T) {
 			t.Parallel()
@@ -1659,7 +1739,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		t.Run("url が空なら errUnsupportedPackage を返す", func(t *testing.T) {
+		t.Run("base にも override にも url が無ければ errUnsupportedPackage を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondText(path, "packages:\n  - type: http\n"))
 
@@ -1672,7 +1752,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 func Test_aquaArtifactAt(t *testing.T) {
 	t.Parallel()
 
-	const registryPath = "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml"
+	registryPath := aquaRegistryPath(t, "owner/repo")
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
