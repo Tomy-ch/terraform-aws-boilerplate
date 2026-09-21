@@ -72,6 +72,7 @@ jobs:
             api.npmjs.org:443
             api.osv.dev:443
             npm.jsr.io:443
+            awscli.amazonaws.com:443
             mirror.gcr.io:443
             ghcr.io:443
             pkg-containers.githubusercontent.com:443

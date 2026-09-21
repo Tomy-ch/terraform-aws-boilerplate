@@ -37,6 +37,10 @@ hosts = [
   "api.npmjs.org:443",
   "api.osv.dev:443",
   "npm.jsr.io:443",
+  # GitHub Release を持たない aqua パッケージ（`type: http`）の配布元。cooldown は公開時刻を
+  # ここが配布物へ付けた Last-Modified から取り、遮断されると窓を満たさないのではなく
+  # **確認できない**として落ちる。
+  "awscli.amazonaws.com:443",
 ]
 
 [class.terraform]
