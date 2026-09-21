@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -897,9 +898,7 @@ func Test_runPruneReleaseNotes(t *testing.T) {
 
 		// 消せなかったノートを黙って飛ばすと、初期化後のリポジトリに前身のリリース履歴が残る。
 		t.Run("ノートを消せなければどのファイルかを含むエラーにする", func(t *testing.T) {
-			if os.Geteuid() == 0 {
-				t.Skip("特権実行では書き込み権限を落としても unlink が通ってしまい、削除の失敗を作れない")
-			}
+			testenv.RequireNonRoot(t, "特権実行では書き込み権限を落としても unlink が通ってしまい、削除の失敗を作れない")
 
 			dir := t.TempDir()
 			noteDir := filepath.Join(dir, releaseNoteDir)
