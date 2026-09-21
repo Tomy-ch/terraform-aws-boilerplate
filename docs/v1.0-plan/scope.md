@@ -248,7 +248,7 @@ v1.0は41のユースケースと9の接続シナリオを対象とする（採�
 |---|---|---|
 | FE | `static-web` | Route53/ACM/WAF→CloudFront→FE成果物用S3。成果物用BucketとDistribution IDを出力し、メンテナンス時の固定応答を入力で持つ |
 | HTTP | `public-api-alb` | 公開ALB（WAF・rate-based ruleを付与可能）→ECS Service(`serve`)。OIDC認証action、送信元IP制限、メンテナンス時の固定応答を入力で持つ |
-| HTTP | `public-api-gateway` | API Gateway REST API（WAFとusage plan/API keyはREST APIのみ）→VPC link V2→内部ALB→ECS Service(`serve`)。SSEはunsupported |
+| HTTP | `public-api-gateway` | API Gateway REST API（WAFとusage plan/API keyはREST APIのみ）→VPC link V2→内部ALB→ECS Service(`serve`)。SSEはunsupported。**AWSはREST APIでのVPC link V2とALB統合を提供するが、AWS Providerの`aws_apigatewayv2_vpc_link`はHTTP API向けと記載され、REST用の`aws_api_gateway_vpc_link`はNLBを取る。どのresourceでこのlinkを作るかは実装前に確認する** |
 | HTTP | `private-api` | 内部到達に限定したALB→ECS Service(`serve`) |
 | HTTP | `service-to-service` | 複数のGBpサービス間の内部通信（east-west）。内部ALBかECS Service Connect/Cloud Mapかは実装時に決定 |
 | Identity | `identity-integration` | Cognitoまたは外部OIDC→FEの認証フロー→BEのBearer/JWKS検証。業務認可はBE。利用者種別（顧客・職員）ごとにUser PoolまたはApp Clientを分ける。**外部OIDCを選ぶ場合、JWKS取得に`controlled-external-egress`の有効化が要る**（第9.2節） |
@@ -306,7 +306,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | `failure-recovery` | Scheduler起動失敗、Task失敗、SQS DLQ、outbox dead行の検知と発火側による再処理。dead行の再処理はGBpの`outbox-relay replay`（dead行をpendingへ戻す）を使う。検知経路は第12節の決定に従う |
 | `backup-restore` | DB、業務画像、DynamoDB、OpenSearch、Secrets、AppConfigの版を対象とする保持要件に従ったバックアップ・版管理・復元確認。Cognito User Poolはネイティブな復元手段がなくunsupported |
 | `staff-console` | 職員向け管理画面。`identity-integration`のOIDC→公開ALBの認証action→送信元IP制限→`serve`配下で配信。業務認可はBE |
-| `domain-event-fanout` | `outbox-delivery`→EventBridge custom bus→複数の`event-queue-worker`。1:Nの配信とproducerの発行権限 |
+| `domain-event-fanout` | `outbox-delivery`→EventBridge custom bus→複数の`event-queue-worker`。1:Nの配信とproducerの発行権限。**GBpの`outbox-relay`はEventBridgeへ直接発行できない**（チャネルは`http`と`realtime`、publisherは`http`と`sqs`のみ）ため、SQSまたはHTTPからEventBridgeへ橋渡しする経路が要る |
 
 - `release-flow`の発火側パイプライン（例: GitHub Actionsのworkflow）は接続例であり、tabpの保証範囲外とする。
 - `event-job`の入力契約（イベントからJob入力への写像、サイズ、検証、再実行）は実装前に決める（第12節）。EventBridgeからTaskを起動できることだけで、イベント処理の完成とは扱わない。
