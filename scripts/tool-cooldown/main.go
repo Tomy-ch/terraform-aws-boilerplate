@@ -27,7 +27,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -55,6 +58,16 @@ const (
 	githubAPI   = "https://api.github.com/repos/"
 	goProxyBase = "https://proxy.golang.org/"
 	npmBase     = "https://registry.npmjs.org/"
+
+	// aquaRegistryBase は aqua のパッケージ定義の取得元。GitHub Release を持たない
+	// パッケージの配布物がどこに在るかは、ここにしか書かれていない。
+	aquaRegistryBase = "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/pkgs/"
+
+	// probeOS / probeArch は配布物を叩くときに名乗る環境。**どの環境で実行しても同じ版に
+	// 同じ判定を出すため**に固定する —— 窓が測るのは「その版が世に出てから何日経ったか」で
+	// あって、手元がどの環境かではない。
+	probeOS   = "linux"
+	probeArch = "amd64"
 )
 
 var (
@@ -68,6 +81,10 @@ var (
 	errNotFound = xerrors.New("version not found upstream")
 	// errUpstreamStatus は、上流が想定外のステータスを返した場合のエラー。
 	errUpstreamStatus = xerrors.New("unexpected upstream status")
+	// errUnsupportedPackage は、aqua の定義が配布物の所在を辿れない形だった場合のエラー。
+	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
+	// errNoLastModified は、配布物が公開時刻を名乗らなかった場合のエラー。
+	errNoLastModified = xerrors.New("artifact has no Last-Modified")
 	// errBypassInvalidLine は、バイパス lockfile に解釈できない行があった場合のエラー。
 	errBypassInvalidLine = xerrors.New("invalid bypass line")
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
@@ -394,7 +411,7 @@ func diffAdded(before, current []tool) []tool {
 }
 
 // resolveBackends は各ツールの backend を決め、対象と除外（core backend）へ振り分ける。
-// 短縮名は mise registry の先頭候補を採る。mise 自身が選ぶのと同じ順序である。
+// 短縮名は miseRegistry 経由で解決する（候補の選び方は firstBackend を見よ）。
 func resolveBackends(ctx context.Context, tools []tool) ([]tool, []tool, error) {
 	var targets, skipped []tool
 	for _, t := range tools {
@@ -503,7 +520,17 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 	_, ref, _ := strings.Cut(t.backend, ":")
 	switch backendKind(t.backend) {
 	case "github":
-		return githubReleaseAt(ctx, client, ref, t.version)
+		at, err := githubReleaseAt(ctx, client, ref, t.version)
+		if err == nil {
+			return at, nil
+		}
+		// Release を出さない上流は、aqua の配布物定義（`type: http`）が指す先の Last-Modified へ
+		// 退く。tag の日付を採らない理由は scripts/README.md の tool-cooldown 行が持つ。
+		if xerrors.Is(err, errNotFound) && strings.HasPrefix(t.backend, "aqua:") {
+			return aquaArtifactAt(ctx, client, ref, t.version)
+		}
+
+		return time.Time{}, err
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
@@ -586,6 +613,115 @@ func githubReleaseAt(ctx context.Context, client *http.Client, repo, version str
 		lastErr = err
 	}
 	return time.Time{}, lastErr
+}
+
+// aquaArtifactAt は aqua の `type: http` パッケージの配布物へ HEAD を投げ、配布元が付けた
+// Last-Modified を返す。
+//
+// 定義の取得元は mise / aqua が install 先を決めるために読むのと同じ registry である。
+// ここが汚染されていれば入るバイナリ自体が攻撃者のものになるので、この参照が信頼を増やすことはない。
+// 辿れない形の定義は誤魔化さずエラーにする —— 呼び出し側はそれを「取得できなかった」として扱い、
+// gate はそこで落ちる。
+func aquaArtifactAt(ctx context.Context, client *http.Client, repo, version string) (time.Time, error) {
+	url, err := aquaArtifactURL(ctx, client, repo, version)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return lastModified(ctx, client, url)
+}
+
+// aquaArtifactURL は registry の定義から、この版の配布物の URL を組む。
+func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version string) (string, error) {
+	body, err := getText(ctx, client, aquaRegistryBase+repo+"/registry.yaml")
+	if err != nil {
+		return "", err
+	}
+
+	var registry struct {
+		Packages []struct {
+			Type         string            `yaml:"type"`
+			URL          string            `yaml:"url"`
+			Replacements map[string]string `yaml:"replacements"`
+		} `yaml:"packages"`
+	}
+	if unmarshalErr := yaml.Unmarshal([]byte(body), &registry); unmarshalErr != nil {
+		return "", xerrors.Wrap(unmarshalErr, "parse aqua registry "+repo)
+	}
+	if len(registry.Packages) != 1 {
+		// 複数のパッケージを束ねる定義では、宣言された名前がどれに当たるかをここでは決められない。
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": packages が 1 件ではない")
+	}
+
+	pkg := registry.Packages[0]
+	if pkg.Type != "http" || pkg.URL == "" {
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": type=\""+pkg.Type+"\"")
+	}
+
+	return renderAquaURL(pkg.URL, pkg.Replacements, version)
+}
+
+// renderAquaURL は aqua の URL テンプレートを展開する。replacements は aqua が goos / goarch を
+// 配布物の名乗りへ読み替える表で、これを飛ばすと存在しない URL を叩いて 404 に化ける。
+func renderAquaURL(urlTemplate string, replacements map[string]string, version string) (string, error) {
+	replace := func(v string) string {
+		if to, ok := replacements[v]; ok {
+			return to
+		}
+
+		return v
+	}
+
+	tmpl, err := template.New("url").Option("missingkey=error").Parse(urlTemplate)
+	if err != nil {
+		return "", xerrors.Wrap(err, "parse url template")
+	}
+
+	var out strings.Builder
+	if execErr := tmpl.Execute(&out, struct{ OS, Arch, Version string }{
+		OS:      replace(probeOS),
+		Arch:    replace(probeArch),
+		Version: version,
+	}); execErr != nil {
+		// テンプレートがここに無いフィールドを参照している。埋めれば動くかもしれないが、
+		// 埋めた値が正しい保証は無い。**辿れないものは辿れないと言う。**
+		return "", xerrors.Wrap(errUnsupportedPackage, "render url: "+execErr.Error())
+	}
+
+	return out.String(), nil
+}
+
+// lastModified は HEAD を投げて Last-Modified を time へ直す。本文は取らない —— 配布物は
+// 数十 MB あり、必要なのはヘッダだけである。
+func lastModified(ctx context.Context, client *http.Client, url string) (time.Time, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "new head request")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "head "+url)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return time.Time{}, xerrors.Wrap(errNotFound, url)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return time.Time{}, xerrors.Wrap(errUpstreamStatus, fmt.Sprintf("%s: %d", url, resp.StatusCode))
+	}
+
+	raw := resp.Header.Get("Last-Modified")
+	if raw == "" {
+		return time.Time{}, xerrors.Wrap(errNoLastModified, url)
+	}
+	at, err := http.ParseTime(raw)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "parse Last-Modified "+raw)
+	}
+
+	return at.UTC(), nil
 }
 
 // goModuleAt は module proxy の .info を返す。mise の go backend はパッケージパスを受けるが

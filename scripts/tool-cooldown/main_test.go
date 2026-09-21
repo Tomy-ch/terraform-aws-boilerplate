@@ -428,7 +428,6 @@ func Test_windowFor(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// GitHub リリースは tag の付け替えが起こり得るぶん、pin-actions / pin-images と同じ窓を採る。
 		t.Run("GitHub リリース系の窓は 14 日", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, releaseWindowDays, windowFor("aqua:owner/repo"))
@@ -458,7 +457,7 @@ func Test_escapeModulePath(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 未エスケープの大文字は proxy が 404 を返し「存在しないバージョン」に化ける。
+		// 化け方は escapeModulePath の doc コメントが持つ。
 		t.Run("大文字を ! + 小文字へ変換する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github.com/!burnt!sushi/toml", escapeModulePath("github.com/BurntSushi/toml"))
@@ -1174,7 +1173,7 @@ func Test_inspect(t *testing.T) {
 			assert.Empty(t, unresolved)
 		})
 
-		// 取得は並行で走るため、並べ直さないと同じ入力でも報告の順序が実行ごとに変わる。
+		// 並べ直す理由は "unresolved は識別子順に並べる" と同じ。
 		t.Run("findings は経過日数の短い順に並べる", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1399,6 +1398,27 @@ func Test_publishedAt(t *testing.T) {
 			assert.Equal(t, "/repos/owner/repo/releases/tags/v1.2.3", got)
 		})
 
+		// Release を出さない上流では、ここで諦めるとそのツールが恒久的に unresolved になる。
+		t.Run("GitHub リリースが無い aqua は配布物の Last-Modified へ退く", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml":
+					_, _ = io.WriteString(w, aquaHTTPRegistry)
+				case "/tool-linux-x86_64-1.2.3.zip":
+					w.Header().Set("Last-Modified", "Fri, 04 Sep 2026 19:13:50 GMT")
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+
+			at, err := publishedAt(t.Context(), client,
+				tool{key: "aqua:owner/repo", version: "1.2.3", backend: "aqua:owner/repo"})
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+
 		t.Run("go は module proxy を引く", func(t *testing.T) {
 			t.Parallel()
 			got := requestedPath(t, tool{key: "go:go.uber.org/mock/mockgen", version: "0.6.0", backend: "go:go.uber.org/mock/mockgen"})
@@ -1415,12 +1435,278 @@ func Test_publishedAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		// aqua 以外の GitHub 系 backend は配布物の所在を辿る手立てを持たない。退かずに落とす。
+		t.Run("aqua 以外はリリースが無い時点でエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := publishedAt(t.Context(), client,
+				tool{key: "ubi:owner/repo", version: "1.2.3", backend: "ubi:owner/repo"})
+			require.ErrorIs(t, err, errNotFound)
+		})
+
 		t.Run("取得経路を持たない backend はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
 
 			_, err := publishedAt(t.Context(), client, tool{key: "asdf:x", version: "1.0.0", backend: "asdf:x"})
 			require.ErrorIs(t, err, errUnsupportedBackend)
+		})
+	})
+}
+
+// aquaHTTPRegistry は、配布物を GitHub 以外から取る aqua パッケージの定義。aws-cli がこの形。
+const aquaHTTPRegistry = `packages:
+  - type: http
+    repo_owner: owner
+    repo_name: repo
+    version_source: github_tag
+    url: https://cdn.example.com/tool-{{.OS}}-{{.Arch}}-{{.Version}}.zip
+    replacements:
+      amd64: x86_64
+`
+
+// respondLastModified は、path に一致したときだけ Last-Modified 付きの 200 を返します。
+func respondLastModified(path, lastModified string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if lastModified != "" {
+			w.Header().Set("Last-Modified", lastModified)
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// respondText は、path に一致したときだけ body を返します。
+func respondText(path, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, body)
+	}
+}
+
+func Test_renderAquaURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// replacements を飛ばすと存在しない URL を叩き、404 が「その版は無い」に化ける。
+		t.Run("replacements を適用してから展開する", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL(
+				"https://cdn.example.com/tool-{{.OS}}-{{.Arch}}-{{.Version}}.zip",
+				map[string]string{"amd64": "x86_64"},
+				"1.2.3",
+			)
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+
+		t.Run("replacements に無い名前はそのまま使う", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL("https://cdn.example.com/{{.OS}}/{{.Arch}}/{{.Version}}", nil, "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/linux/amd64/1.2.3", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 埋めれば動くかもしれないが、埋めた値が正しい保証は無い。当てずっぽうの URL を叩いて
+		// 得た時刻は、窓の判定を黙って狂わせる。
+		t.Run("渡していないフィールドを参照するテンプレートはエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/{{.Format}}/{{.Version}}", nil, "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		t.Run("壊れたテンプレートはエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/{{.Version", nil, "1.2.3")
+			require.Error(t, err)
+		})
+	})
+}
+
+func Test_lastModified(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Last-Modified を UTC の時刻として返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", "Fri, 04 Sep 2026 19:13:50 GMT"))
+
+			at, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("配布物が無ければ errNotFound を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("想定外のステータスは errUpstreamStatus を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusInternalServerError))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errUpstreamStatus)
+		})
+
+		// ヘッダが無いとき time のゼロ値を返すと、呼び出し側はそれを「公開から数十年経過」と
+		// 読み、そのツールが窓を無条件で通過する。
+		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errNoLastModified)
+		})
+
+		t.Run("解釈できない Last-Modified はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", "yesterday"))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.Error(t, err)
+		})
+	})
+}
+
+func Test_aquaArtifactURL(t *testing.T) {
+	t.Parallel()
+
+	const path = "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml"
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("type http の定義から配布物の URL を組む", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, aquaHTTPRegistry))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("定義を取れなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("解釈できない定義はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "\tpackages: [[["))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.Error(t, err)
+		})
+
+		// 決められない理由は aquaArtifactURL の当該分岐が持つ。
+		t.Run("packages が 1 件でなければ errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+
+			for name, body := range map[string]string{
+				"0 件": "packages: []\n",
+				"2 件": aquaHTTPRegistry + "  - type: http\n    url: https://cdn.example.com/other\n",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					client := fakeUpstream(t, respondText(path, body))
+
+					_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+					require.ErrorIs(t, err, errUnsupportedPackage)
+				})
+			}
+		})
+
+		// GitHub Release から取る型は、そもそもこの経路へ来ない。来たなら定義の読み違いである。
+		t.Run("type が http でなければ errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "packages:\n  - type: github_release\n    url: https://x/y\n"))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		t.Run("url が空なら errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "packages:\n  - type: http\n"))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+	})
+}
+
+func Test_aquaArtifactAt(t *testing.T) {
+	t.Parallel()
+
+	const registryPath = "/aquaproj/aqua-registry/main/pkgs/owner/repo/registry.yaml"
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("定義を引いてから配布物の Last-Modified を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case registryPath:
+					_, _ = io.WriteString(w, aquaHTTPRegistry)
+				case "/tool-linux-x86_64-1.2.3.zip":
+					w.Header().Set("Last-Modified", "Fri, 04 Sep 2026 19:13:50 GMT")
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+
+			at, err := aquaArtifactAt(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 定義は読めたが、その版の配布物がまだ（あるいはもう）無い場合。
+		t.Run("配布物が無ければ errNotFound を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(registryPath, aquaHTTPRegistry))
+
+			_, err := aquaArtifactAt(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errNotFound)
 		})
 	})
 }
