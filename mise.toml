@@ -14,8 +14,8 @@
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
 # **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
-# `.github/workflows/` か `docker/tools/Dockerfile` のいずれか、または ADR-0602 決定4 が定める
-# bootstrap の手順が実際に呼ぶ。
+# `.github/workflows/` か `docker/tools/Dockerfile` のいずれかが実際に呼ぶ。AWS CLI だけが例外で、
+# 呼ぶのは ADR-0602 決定4 の bootstrap の手順である —— **その手順書はまだ無い。**
 min_version = "2026.6.0"
 
 [tools]
@@ -42,7 +42,8 @@ node = "24.21.0"
 "aqua:hashicorp/terraform" = "1.16.2"
 
 # Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
-# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
+# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ
+# —— そのファイルはまだ無い（AGENTS.md「現在の配線状態」）。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
 # Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
