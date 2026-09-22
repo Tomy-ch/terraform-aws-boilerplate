@@ -30,7 +30,8 @@
 （[ADR-0503](docs/adr/0503-tool-execution-form.md) 決定1）。
 
 ```sh
-mise install                 # ホストへ道具を導入する
+mise install                 # ホストへ道具を導入する（mise.toml の全エントリ）
+make host-tools-install      # うち、手元での実行がホストのものだけ（terraform / AWS CLI）
 make help                    # 検査とターゲットの一覧
 make md-lint                 # 既定は RUNNER_MODE=container（docker compose 経由）
 make md-lint RUNNER_MODE=host  # ホストの mise が入れたもので実行する
