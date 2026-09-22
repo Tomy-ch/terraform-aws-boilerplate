@@ -3,6 +3,7 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,14 +31,17 @@ func (f *fakeReporter) Fatalf(format string, args ...any) {
 	f.message = fmt.Sprintf(format, args...)
 }
 
-// swap は外界を差し替え、テストの終わりに戻します。
-func swap(t *testing.T, uid int, env string) *fakeReporter {
+func found(string) (string, error)   { return "/usr/bin/shellcheck", nil }
+func missing(string) (string, error) { return "", os.ErrNotExist }
+
+func swap(t *testing.T, uid int, env string, look func(string) (string, error)) *fakeReporter {
 	t.Helper()
 
-	oldEuid, oldEnv := geteuid, getenv
+	oldEuid, oldEnv, oldLook := geteuid, getenv, lookPath
 	geteuid = func() int { return uid }
 	getenv = func(string) string { return env }
-	t.Cleanup(func() { geteuid, getenv = oldEuid, oldEnv })
+	lookPath = look
+	t.Cleanup(func() { geteuid, getenv, lookPath = oldEuid, oldEnv, oldLook })
 
 	return &fakeReporter{}
 }
@@ -47,12 +51,17 @@ func swap(t *testing.T, uid int, env string) *fakeReporter {
 func Test_外界の既定値(t *testing.T) { //nolint:paralleltest // パッケージ変数を読む
 	assert.Equal(t, os.Geteuid(), geteuid(), "geteuid が os.Geteuid を指していない")
 	assert.Equal(t, os.Getenv("PATH"), getenv("PATH"), "getenv が os.Getenv を指していない")
+
+	want, wantErr := exec.LookPath("go")
+	got, gotErr := lookPath("go")
+	assert.Equal(t, want, got, "lookPath が exec.LookPath を指していない")
+	assert.Equal(t, wantErr == nil, gotErr == nil)
 }
 
 func Test_requireNonRoot(t *testing.T) { //nolint:paralleltest // パッケージ変数を差し替える
 	t.Run("正常系", func(t *testing.T) {
 		t.Run("root でなければ skip も失敗もしない", func(t *testing.T) {
-			f := swap(t, 1000, "")
+			f := swap(t, 1000, "", nil)
 
 			requireNonRoot(f, "理由")
 
@@ -63,7 +72,7 @@ func Test_requireNonRoot(t *testing.T) { //nolint:paralleltest // パッケー�
 		// 環境変数が立っているだけで落ちるなら、非 root の CI がこの経路を通った瞬間に
 		// 全部赤くなる。
 		t.Run("root でなければ環境変数が立っていても失敗しない", func(t *testing.T) {
-			f := swap(t, 1000, "1")
+			f := swap(t, 1000, "1", nil)
 
 			requireNonRoot(f, "理由")
 
@@ -74,7 +83,7 @@ func Test_requireNonRoot(t *testing.T) { //nolint:paralleltest // パッケー�
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Run("root なら理由を添えて skip する", func(t *testing.T) {
-			f := swap(t, 0, "")
+			f := swap(t, 0, "", nil)
 
 			requireNonRoot(f, "権限を落としても効かない")
 
@@ -86,13 +95,47 @@ func Test_requireNonRoot(t *testing.T) { //nolint:paralleltest // パッケー�
 		// これがこのパッケージの存在理由。skip は既定の出力に現れないので、CI では
 		// 失敗へ変えられなければ「報告より少ない検査で緑」が残り続ける。
 		t.Run("root かつ環境変数が立っていれば skip せず失敗する", func(t *testing.T) {
-			f := swap(t, 0, "1")
+			f := swap(t, 0, "1", nil)
 
 			requireNonRoot(f, "権限を落としても効かない")
 
 			assert.True(t, f.failed)
 			assert.False(t, f.skipped, "失敗させるべき場面で skip した")
 			assert.Contains(t, f.message, RequireNonRootEnv)
+		})
+	})
+}
+
+func Test_requireShellcheck(t *testing.T) { //nolint:paralleltest // パッケージ変数を差し替える
+	t.Run("正常系", func(t *testing.T) {
+		t.Run("PATH に在れば skip も失敗もしない", func(t *testing.T) {
+			f := swap(t, 1000, "", found)
+
+			requireShellcheck(f)
+
+			assert.False(t, f.skipped)
+			assert.False(t, f.failed)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Run("PATH に無ければ skip する", func(t *testing.T) {
+			f := swap(t, 1000, "", missing)
+
+			requireShellcheck(f)
+
+			assert.True(t, f.skipped)
+			assert.False(t, f.failed)
+		})
+
+		t.Run("PATH に無く環境変数が立っていれば skip せず失敗する", func(t *testing.T) {
+			f := swap(t, 1000, "1", missing)
+
+			requireShellcheck(f)
+
+			assert.True(t, f.failed)
+			assert.False(t, f.skipped, "失敗させるべき場面で skip した")
+			assert.Contains(t, f.message, RequireShellcheckEnv)
 		})
 	})
 }

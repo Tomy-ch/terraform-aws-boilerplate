@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -165,79 +166,6 @@ func Test_rewritePins(t *testing.T) {
 			assert.Equal(t, []string{"some/action@v1.2.3"}, missing)
 		})
 	})
-}
-
-func Test_readLock(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("コメント行と空行は読み飛ばして repo@tag→SHA を読み込む", func(t *testing.T) {
-			t.Parallel()
-			body := "# comment\n" +
-				"\n" +
-				"\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" +
-				"\"actions/setup-go@v6\" = \"" + shaSetupGo + "\"\n"
-
-			lock, err := readLock(writeLockFile(t, body))
-
-			require.NoError(t, err)
-			assert.Equal(t, map[string]string{
-				"actions/checkout@v7.0.0": shaCheckout,
-				"actions/setup-go@v6":     shaSetupGo,
-			}, lock)
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("ファイルが存在しなければエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			_, err := readLock(filepath.Join(t.TempDir(), "absent.toml"))
-			require.Error(t, err)
-		})
-
-		t.Run("代入として解釈できない行があれば行番号付きでエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" +
-				"invalid line\n"
-
-			_, err := readLock(writeLockFile(t, body))
-
-			require.ErrorIs(t, err, errLockInvalidLine)
-			require.ErrorContains(t, err, "2 行目")
-		})
-
-		t.Run("先頭行がいきなり不正でも行番号を 1 と報告する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := readLock(writeLockFile(t, "invalid line\n"))
-
-			require.ErrorIs(t, err, errLockInvalidLine)
-			require.ErrorContains(t, err, "1 行目")
-		})
-
-		t.Run("キーが重複していれば後勝ちにせずエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" +
-				"\"actions/checkout@v7.0.0\" = \"" + shaSetupGo + "\"\n"
-
-			_, err := readLock(writeLockFile(t, body))
-
-			require.ErrorIs(t, err, errLockDuplicateKey)
-			require.ErrorContains(t, err, "2 行目")
-			require.ErrorContains(t, err, "actions/checkout@v7.0.0")
-		})
-	})
-}
-
-func writeLockFile(t *testing.T, body string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "actions-pin.toml")
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-	return path
 }
 
 func Test_quarantine(t *testing.T) {
@@ -395,35 +323,6 @@ func Test_selectSHA(t *testing.T) {
 			out := headSHA + "\trefs/heads/main\n"
 			_, err := selectSHA(out, tag)
 			require.ErrorIs(t, err, errRefNotFound)
-		})
-	})
-}
-
-func Test_isIgnorableLockErr(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("nil は無視可能", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, isIgnorableLockErr(nil))
-		})
-
-		t.Run("ファイル不在は無視可能", func(t *testing.T) {
-			t.Parallel()
-			_, err := os.Open(filepath.Join(t.TempDir(), "absent.toml"))
-			require.Error(t, err)
-			assert.True(t, isIgnorableLockErr(err))
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("不在以外のエラーは無視不可（fail-close）", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, isIgnorableLockErr(errAge))
 		})
 	})
 }
@@ -1125,61 +1024,6 @@ func Test_daysSince(t *testing.T) {
 	})
 }
 
-func Test_writeLock(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("書き出した lockfile をそのまま読み戻せる", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "actions-pin.toml")
-
-			require.NoError(t, writeLock(path, testLock()))
-
-			got, err := readLock(path)
-			require.NoError(t, err)
-			assert.Equal(t, testLock(), got)
-		})
-
-		t.Run("キーを昇順に並べて差分レビューが安定するようにする", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "actions-pin.toml")
-			require.NoError(t, writeLock(path, testLock()))
-
-			data, err := os.ReadFile(path) //nolint:gosec // path は t.TempDir() 由来
-			require.NoError(t, err)
-
-			body := string(data)
-			assert.Less(t,
-				strings.Index(body, "actions/checkout@v7.0.0"),
-				strings.Index(body, "github/codeql-action@v4"))
-		})
-
-		t.Run("参照が無ければエントリを 1 件も持たない lockfile になる", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "actions-pin.toml")
-
-			require.NoError(t, writeLock(path, map[string]string{}))
-
-			got, err := readLock(path)
-			require.NoError(t, err)
-			assert.Empty(t, got)
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("書き込めないパスならエラーを返す", func(t *testing.T) {
-			t.Parallel()
-			path := filepath.Join(t.TempDir(), "absent-dir", "actions-pin.toml")
-
-			require.Error(t, writeLock(path, testLock()))
-		})
-	})
-}
-
 //nolint:paralleltest // GITHUB_TOKEN の付与を検証するため t.Setenv を使用しており並列化できない
 func Test_githubGet(t *testing.T) {
 	type payload struct {
@@ -1613,8 +1457,7 @@ func Test_applyOrCheck(t *testing.T) {
 			require.Error(t, applyOrCheck(root, []string{path}, false))
 		})
 
-		// 書き込みは一時ファイル経由なので、読み取り専用にするのは**ディレクトリ**である。
-		// ファイルを読み取り専用にしても rename は通る（ディレクトリが書ければ置き換わる）。
+		// 書き込み失敗はディレクトリを読み取り専用にして作る（rename はファイルの権限を見ない）。
 		t.Run("apply で書き込めなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -1668,7 +1511,7 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, "", nil, 0))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got, "走査で参照が見つからなければ lockfile は空になる")
 		})
@@ -1681,7 +1524,7 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, "", []string{path}, 0))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got)
 		})
@@ -1695,7 +1538,7 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, "", []string{path}, 0))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"actions/checkout@v7.0.0": shaCheckout}, got)
 		})
@@ -1709,7 +1552,7 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"actions/checkout@v7.0.0": shaSetupGo},
 				got, "出来立ての解決先を採用すると検疫が素通りする")
@@ -1724,7 +1567,7 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, githubTimesStub(t, 1, 1), []string{path}, 14))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got, "退行先の無い出来立ての解決先を載せると未検証 SHA が固定される")
 		})
@@ -1738,9 +1581,27 @@ func Test_resolve(t *testing.T) {
 
 			require.NoError(t, resolve(root, githubTimesStub(t, 100, 100), []string{path}, 14))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"actions/checkout@v7.0.0": shaCheckout}, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := t.TempDir()
+			body := "\"actions/checkout@v7.0.0\" = \"" + shaCheckout + "\"\n" + "invalid line\n"
+			lockPath := writeFile(t, root, lockFile, body)
+			path := writeFile(t, root, ".github/workflows/a.yml", uses)
+			useGitStub(t)
+
+			err := resolve(root, "", []string{path}, 0)
+
+			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+			assert.ErrorContains(t, err, "pin-actions-resolve", "直し方の案内が相手のツール名になっている")
+			got, readErr := os.ReadFile(lockPath) //nolint:gosec // t.TempDir() 配下
+			require.NoError(t, readErr)
+			assert.Equal(t, body, string(got), "読めない lockfile を空と見なすと退行先ごと書き潰される")
 		})
 	})
 }
@@ -1826,7 +1687,7 @@ func writeLockAt(t *testing.T, root string, lock map[string]string) {
 	t.Helper()
 	path := filepath.Join(root, lockFile)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
-	require.NoError(t, writeLock(path, lock))
+	require.NoError(t, lockFormat.Write(path, lock))
 }
 
 // useGitStub は実 git を呼ばずに ls-remote の出力を差し替えるダミーを PATH 先頭へ載せる。
@@ -1913,7 +1774,7 @@ func Test_run(t *testing.T) {
 
 			require.NoError(t, run([]string{"resolve"}, stubWD(root), ""))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Empty(t, got, "resolve 以外へ振り分けると lockfile が据え置かれる")
 		})
@@ -1943,7 +1804,7 @@ func Test_run(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, pinned, string(data))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, lock, got, "resolve へ振り分けると lockfile が書き直される")
 		})
@@ -1955,7 +1816,7 @@ func Test_run(t *testing.T) {
 
 			require.NoError(t, run([]string{"resolve", "-h"}, stubWD(root), ""))
 
-			got, err := readLock(filepath.Join(root, lockFile))
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, lock, got, "ヘルプ要求で resolve まで進むと lockfile が書き直される")
 		})

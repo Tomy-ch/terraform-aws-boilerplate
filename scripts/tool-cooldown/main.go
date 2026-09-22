@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -27,8 +28,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -47,7 +52,6 @@ const (
 	miseTimeout  = 30 * time.Second
 	gitTimeout   = 30 * time.Second
 	fetchWorkers = 4 // GitHub API のレート制限に配慮して go-cooldown より絞る
-	minFenceLen  = 3 // CommonMark のフェンス下限
 	hoursPerDay  = 24
 	summaryPerm  = 0o644
 	outputPerm   = 0o600
@@ -55,6 +59,21 @@ const (
 	githubAPI   = "https://api.github.com/repos/"
 	goProxyBase = "https://proxy.golang.org/"
 	npmBase     = "https://registry.npmjs.org/"
+
+	// aquaRegistryBase は aqua のパッケージ定義の取得元。GitHub Release を持たない
+	// パッケージの配布物がどこに在るかは、ここにしか書かれていない。commit へ固定する
+	// 理由は scripts/README.md の tool-cooldown 行が持つ。
+	aquaRegistryRef  = "d51845df817e99dd5ca867bf24216ea662fa38a9"
+	aquaRegistryBase = "https://raw.githubusercontent.com/aquaproj/aqua-registry/" + aquaRegistryRef + "/pkgs/"
+
+	// artifactScheme は配布物の取得に認める唯一のスキーム。
+	artifactScheme = "https"
+
+	// probeOS / probeArch は配布物を叩くときに名乗る環境。**どの環境で実行しても同じ版に
+	// 同じ判定を出すため**に固定する —— 窓が測るのは「その版が世に出てから何日経ったか」で
+	// あって、手元がどの環境かではない。
+	probeOS   = "linux"
+	probeArch = "amd64"
 )
 
 var (
@@ -68,6 +87,12 @@ var (
 	errNotFound = xerrors.New("version not found upstream")
 	// errUpstreamStatus は、上流が想定外のステータスを返した場合のエラー。
 	errUpstreamStatus = xerrors.New("unexpected upstream status")
+	// errUnsupportedPackage は、aqua の定義が配布物の所在を辿れない形だった場合のエラー。
+	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
+	// errNoLastModified は、配布物が公開時刻を名乗らなかった場合のエラー。
+	errNoLastModified = xerrors.New("artifact has no Last-Modified")
+	// errUnversionedArtifact は、配布物の URL がその版を指していない場合のエラー。
+	errUnversionedArtifact = xerrors.New("artifact url does not bind the version")
 	// errBypassInvalidLine は、バイパス lockfile に解釈できない行があった場合のエラー。
 	errBypassInvalidLine = xerrors.New("invalid bypass line")
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
@@ -394,7 +419,7 @@ func diffAdded(before, current []tool) []tool {
 }
 
 // resolveBackends は各ツールの backend を決め、対象と除外（core backend）へ振り分ける。
-// 短縮名は mise registry の先頭候補を採る。mise 自身が選ぶのと同じ順序である。
+// 短縮名は miseRegistry 経由で解決する（候補の選び方は firstBackend を見よ）。
 func resolveBackends(ctx context.Context, tools []tool) ([]tool, []tool, error) {
 	var targets, skipped []tool
 	for _, t := range tools {
@@ -503,7 +528,17 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 	_, ref, _ := strings.Cut(t.backend, ":")
 	switch backendKind(t.backend) {
 	case "github":
-		return githubReleaseAt(ctx, client, ref, t.version)
+		at, err := githubReleaseAt(ctx, client, ref, t.version)
+		if err == nil {
+			return at, nil
+		}
+		// Release を出さない上流は、aqua の配布物定義（`type: http`）が指す先の Last-Modified へ
+		// 退く。tag の日付を採らない理由は scripts/README.md の tool-cooldown 行が持つ。
+		if xerrors.Is(err, errNotFound) && strings.HasPrefix(t.backend, "aqua:") {
+			return aquaArtifactAt(ctx, client, ref, t.version)
+		}
+
+		return time.Time{}, err
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
@@ -586,6 +621,202 @@ func githubReleaseAt(ctx context.Context, client *http.Client, repo, version str
 		lastErr = err
 	}
 	return time.Time{}, lastErr
+}
+
+// aquaArtifactAt は aqua の `type: http` パッケージの配布物へ HEAD を投げ、配布元が付けた
+// Last-Modified を返す。
+//
+// 定義の取得元は mise / aqua が install 先を決めるために読むのと同じ registry である。
+// ここが汚染されていれば入るバイナリ自体が攻撃者のものになるので、この参照が信頼を増やすことはない。
+// 辿れない形の定義は誤魔化さずエラーにする —— 呼び出し側はそれを「取得できなかった」として扱い、
+// gate はそこで落ちる。
+func aquaArtifactAt(ctx context.Context, client *http.Client, repo, version string) (time.Time, error) {
+	url, err := aquaArtifactURL(ctx, client, repo, version)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return lastModified(ctx, client, url)
+}
+
+// aquaArtifactURL は registry の定義から、この版の配布物の URL を組む。
+func aquaArtifactURL(ctx context.Context, client *http.Client, repo, version string) (string, error) {
+	body, err := getText(ctx, client, aquaRegistryBase+repo+"/registry.yaml")
+	if err != nil {
+		return "", err
+	}
+
+	var registry struct {
+		Packages []struct {
+			Type         string            `yaml:"type"`
+			URL          string            `yaml:"url"`
+			Replacements map[string]string `yaml:"replacements"`
+			// Overrides は goos と goarch ごとに url を差し替える。読み飛ばすと、base の url が
+			// probe の環境向けでないパッケージに対して存在しない URL を叩き、配布されている
+			// 道具を「その版は無い」として落とす。goarch を見ないと、逆に別の環境向けの
+			// override を掴む。
+			Overrides []struct {
+				GOOS   string `yaml:"goos"`
+				GOArch string `yaml:"goarch"`
+				URL    string `yaml:"url"`
+			} `yaml:"overrides"`
+		} `yaml:"packages"`
+	}
+	if unmarshalErr := yaml.Unmarshal([]byte(body), &registry); unmarshalErr != nil {
+		return "", xerrors.Wrap(unmarshalErr, "parse aqua registry "+repo)
+	}
+	if len(registry.Packages) != 1 {
+		// 複数のパッケージを束ねる定義では、宣言された名前がどれに当たるかをここでは決められない。
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": packages が 1 件ではない")
+	}
+
+	pkg := registry.Packages[0]
+	if pkg.Type != "http" {
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": type=\""+pkg.Type+"\"")
+	}
+
+	// 該当する環境の override が在るなら、その url が空でもそこで決める。base へ黙って
+	// 退くと、別の環境向けのテンプレートが組み上がって無関係な配布物へ 200 で解決し得る。
+	// goarch を書かない override は、その goos のすべての環境に掛かる。
+	urlTemplate := pkg.URL
+	for _, o := range pkg.Overrides {
+		if o.GOOS == probeOS && (o.GOArch == "" || o.GOArch == probeArch) {
+			urlTemplate = o.URL
+
+			break
+		}
+	}
+	if urlTemplate == "" {
+		return "", xerrors.Wrap(errUnsupportedPackage, repo+": この環境向けの url が無い")
+	}
+
+	return renderAquaURL(urlTemplate, pkg.Replacements, version)
+}
+
+// renderAquaURL は aqua の URL テンプレートを展開し、得た URL が安全に叩ける形かを検める。
+// replacements は aqua が goos / goarch を配布物の名乗りへ読み替える表で、これを飛ばすと
+// 存在しない URL を叩いて 404 に化ける。
+//
+// テンプレートは第三者のレジストリ由来の文字列である。ホストが補間で作られる形を認めず、
+// 展開後のスキームを https に限り、**展開結果がその版を指していることを要求する** ——
+// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返し、窓の判定を
+// 素通しにする。
+func renderAquaURL(urlTemplate string, replacements map[string]string, version string) (string, error) {
+	if !hostIsLiteral(urlTemplate) {
+		return "", xerrors.Wrap(errUnsupportedPackage, "ホストが補間で作られている: "+urlTemplate)
+	}
+
+	replace := func(v string) string {
+		if to, ok := replacements[v]; ok {
+			return to
+		}
+
+		return v
+	}
+
+	// trimV は aqua が提供する関数で、レジストリの url が最も広く使う。標準の text/template
+	// には無いため、登録しなければ Parse の時点で落ちる。
+	//
+	// **aqua 本体はこれに加えて sprig の関数群を登録するが、ここは trimV だけを解する。**
+	// `trimPrefix` 等を使う定義（`golang/go` など）は解釈できないものとして扱われ、gate は
+	// 素通しではなく失敗の側へ倒れる。必要になった時点で、依存を足すかどうかを決める。
+	tmpl, err := template.New("url").
+		Funcs(template.FuncMap{"trimV": func(v string) string { return strings.TrimPrefix(v, "v") }}).
+		Parse(urlTemplate)
+	if err != nil {
+		return "", xerrors.Wrap(errUnsupportedPackage, "parse url template: "+err.Error())
+	}
+
+	var out strings.Builder
+	if execErr := tmpl.Execute(&out, struct{ OS, Arch, Version string }{
+		OS:      replace(probeOS),
+		Arch:    replace(probeArch),
+		Version: version,
+	}); execErr != nil {
+		// 埋めれば動くかもしれないが、埋めた値が正しい保証は無い。**辿れないものは辿れないと言う。**
+		return "", xerrors.Wrap(errUnsupportedPackage, "render url: "+execErr.Error())
+	}
+
+	rendered := out.String()
+	parsed, err := url.Parse(rendered)
+	if err != nil {
+		return "", xerrors.Wrap(errUnsupportedPackage, "parse url: "+err.Error())
+	}
+	if parsed.Scheme != artifactScheme || parsed.Host == "" || parsed.User != nil {
+		return "", xerrors.Wrap(errUnsupportedPackage, "叩けない URL: "+rendered)
+	}
+
+	// **path だけを見る。** クエリやフラグメントに版を置いた URL は、サーバがそれを無視すれば
+	// どの版でも同じ配布物を指す —— `/latest/x.sh?v=1.2.3` は窓の判定を素通しにする。
+	// trimV を通した url は先頭の `v` を落とすため、素の版とそれを外した形の両方を認める。
+	trimmed := strings.TrimPrefix(version, "v")
+	if version == "" || trimmed == "" {
+		return "", xerrors.Wrap(errUnversionedArtifact, "版が空である")
+	}
+	if !strings.Contains(parsed.Path, version) && !strings.Contains(parsed.Path, trimmed) {
+		return "", xerrors.Wrap(errUnversionedArtifact, rendered)
+	}
+
+	return rendered, nil
+}
+
+// hostIsLiteral は、テンプレートのホスト部分に展開の入る余地が無いことを見る。ホストが
+// 補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れてしまう。
+// **見るのはそれだけである** —— スキームと userinfo は、展開したあとに呼び出し側が検める。
+func hostIsLiteral(urlTemplate string) bool {
+	action := strings.Index(urlTemplate, "{{")
+	if action < 0 {
+		return true
+	}
+	prefix := artifactScheme + "://"
+	if !strings.HasPrefix(urlTemplate, prefix) {
+		return false
+	}
+	// スキームの直後からホストが終わる最初の "/" までに、展開が現れないこと。
+	pathStart := strings.Index(urlTemplate[len(prefix):], "/")
+	if pathStart < 0 {
+		return false
+	}
+
+	return action > len(prefix)+pathStart
+}
+
+// lastModified は HEAD を投げて Last-Modified を time へ直す。本文は取らない —— 配布物は
+// 数十 MB あり、必要なのはヘッダだけである。
+func lastModified(ctx context.Context, client *http.Client, url string) (time.Time, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "new head request")
+	}
+
+	// リダイレクトを追わない。追えば、検証を通した宛先とは別のホストが応答を返し得る ——
+	// 公開時刻を名乗る主体が、こちらの認めた配布元であることが保証できなくなる。
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "head "+url)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return time.Time{}, xerrors.Wrap(errNotFound, url)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return time.Time{}, xerrors.Wrap(errUpstreamStatus, fmt.Sprintf("%s: %d", url, resp.StatusCode))
+	}
+
+	raw := resp.Header.Get("Last-Modified")
+	if raw == "" {
+		return time.Time{}, xerrors.Wrap(errNoLastModified, url)
+	}
+	at, err := http.ParseTime(raw)
+	if err != nil {
+		return time.Time{}, xerrors.Wrap(err, "parse Last-Modified "+raw)
+	}
+
+	return at.UTC(), nil
 }
 
 // goModuleAt は module proxy の .info を返す。mise の go backend はパッケージパスを受けるが
@@ -683,9 +914,8 @@ func readBypasses(path string) (map[string]bypass, error) {
 	return out, sc.Err()
 }
 
-// validateBypasses はバイパス自身の規約違反と、そのせいで無効になったキーを返す。期限切れを
-// 失敗にするのは、外したまま放置されたバイパスが恒久 allowlist と区別できなくなるため。上限を
-// 置くのは、期限を遠い未来へ置くだけで同じ状態を作れてしまうため。無効なバイパスは効力も失う。
+// validateBypasses はバイパス自身の規約違反と、そのせいで無効になったキーを返す。無効になった
+// キーは hasBypass で効力を失う。期限必須・上限3ヶ月・対象存在の規約自体は ADR-0702 決定18 が持つ。
 func validateBypasses(bypasses map[string]bypass, declared []tool, today time.Time) ([]violation, map[string]struct{}) {
 	inDeclarations := make(map[string]struct{}, len(declared))
 	for _, t := range declared {
@@ -757,8 +987,8 @@ func hasBypass(bypasses map[string]bypass, invalid map[string]struct{}, t tool) 
 }
 
 // report は結果を標準出力へ書き、終了コードを非ゼロにすべき件数を返す。audit は窓内の finding では
-// 落ちない。ただしバイパス自身の規約違反だけは audit でも失敗させる。期限切れの回収がスケジュール
-// 実行に懸かっているため。
+// 落ちない。ただしバイパス自身の規約違反だけは audit でも失敗させる（定期実行を要する理由は
+// ADR-0702 決定18）。
 func report(
 	sub string, findings []finding, unresolved, skipped []tool,
 	policyViolations []violation, bypasses map[string]bypass, invalid map[string]struct{},
@@ -819,30 +1049,6 @@ func report(
 	return blockingCount
 }
 
-// fenceFor は text を包むのに足りるフェンスを返す。長さは text 中の最長バッククォート連 + 1。
-func fenceFor(text string) string {
-	longest, run := 0, 0
-	for _, r := range text {
-		if r == '`' {
-			run++
-			if run > longest {
-				longest = run
-			}
-			continue
-		}
-		run = 0
-	}
-	return strings.Repeat("`", max(minFenceLen, longest+1))
-}
-
-// fenced は見出しと、フェンスで包んだ本体を書く。値は mise.toml 由来で pull request が中身を
-// 決めるため、見出しだけをテンプレート側に残して値はフェンスへ入れる。
-func fenced(b *strings.Builder, heading string, lines []string) {
-	body := strings.Join(lines, "\n")
-	fence := fenceFor(body)
-	fmt.Fprintf(b, "## %s (%d)\n\n%stext\n%s\n%s\n\n", heading, len(lines), fence, body, fence)
-}
-
 // summary は GITHUB_STEP_SUMMARY 用の Markdown を組む。
 func summary(
 	sub string, findings []finding, unresolved, skipped []tool,
@@ -860,7 +1066,7 @@ func summary(
 		for _, v := range policyViolations {
 			lines = append(lines, v.msg)
 		}
-		fenced(&b, "宣言側の違反", lines)
+		mdfence.Section(&b, "宣言側の違反", lines)
 	}
 	if len(blocked) > 0 {
 		lines := make([]string, 0, len(blocked))
@@ -868,21 +1074,21 @@ func summary(
 			lines = append(lines, fmt.Sprintf("- %s（%s）— 公開 %d 日 / 窓 %d 日（%s）",
 				f.tool.id(), f.tool.backend, f.ageDays, f.window, f.published.Format(time.DateOnly)))
 		}
-		fenced(&b, "cooldown 未達", lines)
+		mdfence.Section(&b, "cooldown 未達", lines)
 	}
 	if len(reported) > 0 {
 		lines := make([]string, 0, len(reported))
 		for _, f := range reported {
 			lines = append(lines, fmt.Sprintf("- %s（%s）— 公開 %d 日 / 窓 %d 日", f.tool.id(), f.tool.backend, f.ageDays, f.window))
 		}
-		fenced(&b, "参考: 窓内だがブロックしないもの", lines)
+		mdfence.Section(&b, "参考: 窓内だがブロックしないもの", lines)
 	}
 	if len(unresolved) > 0 {
 		lines := make([]string, 0, len(unresolved))
 		for _, t := range unresolved {
 			lines = append(lines, fmt.Sprintf("- %s（%s）", t.id(), t.backend))
 		}
-		fenced(&b, "公開時刻を取得できなかったもの", lines)
+		mdfence.Section(&b, "公開時刻を取得できなかったもの", lines)
 	}
 	return b.String()
 }

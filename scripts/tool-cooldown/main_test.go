@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -428,7 +429,6 @@ func Test_windowFor(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// GitHub リリースは tag の付け替えが起こり得るぶん、pin-actions / pin-images と同じ窓を採る。
 		t.Run("GitHub リリース系の窓は 14 日", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, releaseWindowDays, windowFor("aqua:owner/repo"))
@@ -458,7 +458,7 @@ func Test_escapeModulePath(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 未エスケープの大文字は proxy が 404 を返し「存在しないバージョン」に化ける。
+		// 化け方は escapeModulePath の doc コメントが持つ。
 		t.Run("大文字を ! + 小文字へ変換する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "github.com/!burnt!sushi/toml", escapeModulePath("github.com/BurntSushi/toml"))
@@ -1174,7 +1174,7 @@ func Test_inspect(t *testing.T) {
 			assert.Empty(t, unresolved)
 		})
 
-		// 取得は並行で走るため、並べ直さないと同じ入力でも報告の順序が実行ごとに変わる。
+		// 並べ直す理由は "unresolved は識別子順に並べる" と同じ。
 		t.Run("findings は経過日数の短い順に並べる", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1399,6 +1399,27 @@ func Test_publishedAt(t *testing.T) {
 			assert.Equal(t, "/repos/owner/repo/releases/tags/v1.2.3", got)
 		})
 
+		// Release を出さない上流では、ここで諦めるとそのツールが恒久的に unresolved になる。
+		t.Run("GitHub リリースが無い aqua は配布物の Last-Modified へ退く", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case aquaRegistryPath(t, "owner/repo"):
+					_, _ = io.WriteString(w, aquaHTTPRegistry)
+				case "/tool-linux-x86_64-1.2.3.zip":
+					w.Header().Set("Last-Modified", "Fri, 04 Sep 2026 19:13:50 GMT")
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+
+			at, err := publishedAt(t.Context(), client,
+				tool{key: "aqua:owner/repo", version: "1.2.3", backend: "aqua:owner/repo"})
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+
 		t.Run("go は module proxy を引く", func(t *testing.T) {
 			t.Parallel()
 			got := requestedPath(t, tool{key: "go:go.uber.org/mock/mockgen", version: "0.6.0", backend: "go:go.uber.org/mock/mockgen"})
@@ -1415,12 +1436,522 @@ func Test_publishedAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		// レート制限や 500 を「リリース無し」と取り違えて配布物へ退くと、窓の基準時刻が
+		// 静かにすり替わる。退く条件が errNotFound であることを、誤りの側からも固定する。
+		t.Run("aqua でも 404 以外のエラーでは配布物へ退かない", func(t *testing.T) {
+			t.Parallel()
+
+			var registryHit atomic.Bool
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "aqua-registry") {
+					registryHit.Store(true)
+				}
+				w.WriteHeader(http.StatusInternalServerError)
+			})
+
+			_, err := publishedAt(t.Context(), client,
+				tool{key: "aqua:owner/repo", version: "1.2.3", backend: "aqua:owner/repo"})
+			require.ErrorIs(t, err, errUpstreamStatus)
+			assert.False(t, registryHit.Load(), "レジストリへ退いている")
+		})
+
+		// aqua 以外の GitHub 系 backend は配布物の所在を辿る手立てを持たない。退かずに落とす。
+		t.Run("aqua 以外はリリースが無い時点でエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := publishedAt(t.Context(), client,
+				tool{key: "ubi:owner/repo", version: "1.2.3", backend: "ubi:owner/repo"})
+			require.ErrorIs(t, err, errNotFound)
+		})
+
 		t.Run("取得経路を持たない backend はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
 
 			_, err := publishedAt(t.Context(), client, tool{key: "asdf:x", version: "1.0.0", backend: "asdf:x"})
 			require.ErrorIs(t, err, errUnsupportedBackend)
+		})
+	})
+}
+
+// aquaHTTPRegistry は、配布物を GitHub 以外から取る aqua パッケージの定義。aws-cli がこの形。
+const aquaHTTPRegistry = `packages:
+  - type: http
+    repo_owner: owner
+    repo_name: repo
+    version_source: github_tag
+    url: https://cdn.example.com/tool-{{.OS}}-{{.Arch}}-{{.Version}}.zip
+    replacements:
+      amd64: x86_64
+`
+
+// aquaRegistryPath は、その repo の定義が置かれる取得元のパスを返します。**固定値を書き写さない**
+// —— 取得元を別の ref へ動かしたとき、写しは黙って一致しなくなる。
+func aquaRegistryPath(t *testing.T, repo string) string {
+	t.Helper()
+	u, err := url.Parse(aquaRegistryBase + repo + "/registry.yaml")
+	require.NoError(t, err)
+
+	return u.Path
+}
+
+// respondLastModified は、path に一致したときだけ Last-Modified 付きの 200 を返します。
+func respondLastModified(path, lastModified string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if lastModified != "" {
+			w.Header().Set("Last-Modified", lastModified)
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// respondText は、path に一致したときだけ body を返します。
+func respondText(path, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, body)
+	}
+}
+
+func Test_renderAquaURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// replacements を飛ばすと存在しない URL を叩き、404 が「その版は無い」に化ける。
+		t.Run("replacements を適用してから展開する", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL(
+				"https://cdn.example.com/tool-{{.OS}}-{{.Arch}}-{{.Version}}.zip",
+				map[string]string{"amd64": "x86_64"},
+				"1.2.3",
+			)
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+
+		// aqua のレジストリの url は trimV を広く使う。登録しなければ Parse の時点で落ち、
+		// 本来たどれる配布物が「解釈できない定義」に化ける。
+		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL("https://cdn.example.com/t_{{trimV .Version}}.zip", nil, "v1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/t_1.2.3.zip", got)
+		})
+
+		t.Run("replacements に無い名前はそのまま使う", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := renderAquaURL("https://cdn.example.com/{{.OS}}/{{.Arch}}/{{.Version}}", nil, "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/linux/amd64/1.2.3", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 当てずっぽうの URL を叩いて得た時刻は、窓の判定を黙って狂わせる。
+		t.Run("渡していないフィールドを参照するテンプレートはエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/{{.Format}}/{{.Version}}", nil, "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		// aqua 本体は sprig を登録するがここは trimV だけを解する。素通しではなく失敗へ倒れる
+		// ことを固定する —— 黙って別の URL を組むより、解釈できないと言う方が安全である。
+		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL(`https://cdn.example.com/{{trimPrefix "go" .Version}}.zip`, nil, "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		t.Run("壊れたテンプレートはエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/{{.Version", nil, "1.2.3")
+			require.Error(t, err)
+		})
+
+		// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返す。落とさないと
+		// そのパッケージは公開直後の版でも常に窓を満たし、**ゲートが素通しに化ける。**
+		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
+			t.Parallel()
+
+			// path 以外へ版を置いた形は、サーバがそれを無視すれば固定 URL と同じものを指す。
+			for name, tmpl := range map[string]string{
+				"版がどこにも無い":   "https://cdn.example.com/installer.sh",
+				"版がクエリにだけ在る": "https://cdn.example.com/latest/installer.sh?v={{.Version}}",
+				"版が素片にだけ在る":  "https://cdn.example.com/latest/installer.sh#{{.Version}}",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := renderAquaURL(tmpl, nil, "1.2.3")
+					require.ErrorIs(t, err, errUnversionedArtifact)
+				})
+			}
+		})
+
+		// 空の版に対しては strings.Contains が常に真を返し、検査が無条件通過に化ける。
+		t.Run("版が空なら errUnversionedArtifact を返す", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := renderAquaURL("https://cdn.example.com/t.zip", nil, "")
+			require.ErrorIs(t, err, errUnversionedArtifact)
+		})
+
+		// 理由は hostIsLiteral の doc コメントが持つ。
+		t.Run("ホストが補間で作られる URL はエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			for name, tmpl := range map[string]string{
+				"ホストごと補間":  "https://{{.OS}}.example.com/{{.Version}}.zip",
+				"スキームから補間": "{{.OS}}://cdn.example.com/{{.Version}}.zip",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := renderAquaURL(tmpl, nil, "1.2.3")
+					require.ErrorIs(t, err, errUnsupportedPackage)
+				})
+			}
+		})
+
+		// hostIsLiteral は展開を含む非 https を先に弾くため、ここを通すには展開を含まない形が要る。
+		// 展開入りの非 https で書くと、名乗りと違う分岐を踏んだまま緑になる。
+		t.Run("展開後の URL が叩けない形ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			for name, tmpl := range map[string]string{
+				"https でない":    "http://cdn.example.com/1.2.3.zip",
+				"ホストが空":        "https:///{{.Version}}.zip",
+				"userinfo を含む": "https://user:pass@cdn.example.com/{{.Version}}.zip",
+				"ホストが偽装されている":  "https://trusted.example.com@evil.example.com/{{.Version}}.zip",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					_, err := renderAquaURL(tmpl, nil, "1.2.3")
+					require.ErrorIs(t, err, errUnsupportedPackage)
+				})
+			}
+		})
+	})
+}
+
+func Test_aquaRegistryBase(t *testing.T) {
+	t.Parallel()
+
+	// 取得元のパスはテストが定数から導くため、この定数の構造が壊れても経路の一致は保たれる。
+	// ref は pin の更新で動くので、ref に依らない部分だけを独立に固定する。
+	t.Run("aqua の公式レジストリの pkgs を指す", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, strings.HasPrefix(aquaRegistryBase,
+			"https://raw.githubusercontent.com/aquaproj/aqua-registry/"), aquaRegistryBase)
+		assert.True(t, strings.HasSuffix(aquaRegistryBase, "/pkgs/"), aquaRegistryBase)
+		assert.Contains(t, aquaRegistryBase, aquaRegistryRef)
+	})
+}
+
+func Test_hostIsLiteral(t *testing.T) {
+	t.Parallel()
+
+	// ホストが補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れる。
+	// renderAquaURL 経由では踏めない枝があるため、ここで直接固定する。
+	for name, tc := range map[string]struct {
+		tmpl string
+		want bool
+	}{
+		"展開を1つも含まない":     {"https://cdn.example.com/t-1.2.3.zip", true},
+		"展開が path にだけ在る": {"https://cdn.example.com/{{.Version}}.zip", true},
+		"ホストが補間で作られる":    {"https://{{.OS}}.example.com/{{.Version}}.zip", false},
+		"スキームが補間で作られる":   {"{{.OS}}://cdn.example.com/{{.Version}}.zip", false},
+		"https で始まらない":   {"http://cdn.example.com/{{.Version}}.zip", false},
+		"ホストの終わりを決められない": {"https://cdn.example.com{{.Version}}", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, hostIsLiteral(tc.tmpl))
+		})
+	}
+}
+
+func Test_lastModified(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Last-Modified を UTC の時刻として返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", "Fri, 04 Sep 2026 19:13:50 GMT"))
+
+			at, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("配布物が無ければ errNotFound を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("想定外のステータスは errUpstreamStatus を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusInternalServerError))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errUpstreamStatus)
+		})
+
+		// ヘッダが無いとき time のゼロ値を返すと、呼び出し側はそれを「公開から数十年経過」と
+		// 読み、そのツールが窓を無条件で通過する。
+		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errNoLastModified)
+		})
+
+		// 追えば、検証を通した宛先とは別のホストが公開時刻を名乗れる。CheckRedirect を外しても
+		// 落ちないままだと、この1行が守っているものを誰も見ていないことになる。
+		t.Run("リダイレクトを追わず、その先も叩かない", func(t *testing.T) {
+			t.Parallel()
+
+			var followed atomic.Bool
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/elsewhere.zip" {
+					followed.Store(true)
+					w.Header().Set("Last-Modified", "Mon, 01 Jan 2001 00:00:00 GMT")
+					w.WriteHeader(http.StatusOK)
+
+					return
+				}
+				w.Header().Set("Location", "https://evil.example.com/elsewhere.zip")
+				w.WriteHeader(http.StatusFound)
+			})
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.ErrorIs(t, err, errUpstreamStatus)
+			assert.False(t, followed.Load(), "リダイレクト先を叩いている")
+		})
+
+		t.Run("解釈できない Last-Modified はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondLastModified("/a.zip", "yesterday"))
+
+			_, err := lastModified(t.Context(), client, "https://cdn.example.com/a.zip")
+			require.Error(t, err)
+		})
+	})
+}
+
+func Test_aquaArtifactURL(t *testing.T) {
+	t.Parallel()
+
+	path := aquaRegistryPath(t, "owner/repo")
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// base の url が probe の環境向けでないパッケージがある。overrides を読み飛ばすと
+		// 存在しない URL を叩き、配布されている道具を「その版は無い」として落とす。
+		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: https://cdn.example.com/only-{{.OS}}-{{.Version}}.tar.gz\n" +
+				"      - goos: darwin\n" +
+				"        url: https://cdn.example.com/mac-{{.Version}}.pkg\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/only-linux-1.2.3.tar.gz", got)
+		})
+
+		// 実在のレジストリに goos + goarch で分岐する override が在る（aws/session-manager-plugin
+		// など）。goarch を見ないと、別の環境向けの url を掴む。
+		t.Run("goos が一致しても goarch が違う override は採らない", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        goarch: mips\n" +
+				"        url: https://cdn.example.com/mips-{{.Version}}.zip\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+
+		t.Run("goarch を書かない override は その goos のすべてに掛かる", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: https://cdn.example.com/any-{{.Version}}.zip\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/any-1.2.3.zip", got)
+		})
+
+		t.Run("probe の goos に一致する override が無ければ base を使う", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: darwin\n" +
+				"        url: https://cdn.example.com/mac-{{.Version}}.pkg\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+
+		t.Run("type http の定義から配布物の URL を組む", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, aquaHTTPRegistry))
+
+			got, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("定義を取れなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("解釈できない定義はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "\tpackages: [[["))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.Error(t, err)
+		})
+
+		// 決められない理由は aquaArtifactURL の当該分岐が持つ。
+		t.Run("packages が 1 件でなければ errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+
+			for name, body := range map[string]string{
+				"0 件": "packages: []\n",
+				"2 件": aquaHTTPRegistry + "  - type: http\n    url: https://cdn.example.com/other\n",
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					client := fakeUpstream(t, respondText(path, body))
+
+					_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+					require.ErrorIs(t, err, errUnsupportedPackage)
+				})
+			}
+		})
+
+		// GitHub Release から取る型は、そもそもこの経路へ来ない。来たなら定義の読み違いである。
+		t.Run("type が http でなければ errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "packages:\n  - type: github_release\n    url: https://x/y\n"))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+
+		// base へ黙って退くと、別の環境向けのテンプレートが無関係な配布物へ 200 で解決し得る。
+		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
+			t.Parallel()
+			body := aquaHTTPRegistry + "    overrides:\n" +
+				"      - goos: " + probeOS + "\n" +
+				"        url: \"\"\n"
+			client := fakeUpstream(t, respondText(path, body))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+			// 同じセンチネルを後段の URL 検査も返すため、早期のガードを消しても緑のままになる。
+			// どちらが落としたかをメッセージで区別する（report が利用者へそのまま出す）。
+			assert.Contains(t, err.Error(), "この環境向けの url が無い")
+		})
+
+		t.Run("base にも override にも url が無ければ errUnsupportedPackage を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(path, "packages:\n  - type: http\n"))
+
+			_, err := aquaArtifactURL(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errUnsupportedPackage)
+		})
+	})
+}
+
+func Test_aquaArtifactAt(t *testing.T) {
+	t.Parallel()
+
+	registryPath := aquaRegistryPath(t, "owner/repo")
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("定義を引いてから配布物の Last-Modified を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case registryPath:
+					_, _ = io.WriteString(w, aquaHTTPRegistry)
+				case "/tool-linux-x86_64-1.2.3.zip":
+					w.Header().Set("Last-Modified", "Fri, 04 Sep 2026 19:13:50 GMT")
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			})
+
+			at, err := aquaArtifactAt(t.Context(), client, "owner/repo", "1.2.3")
+			require.NoError(t, err)
+			assert.Equal(t, "2026-09-04T19:13:50Z", at.Format(time.RFC3339))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 定義は読めたが、その版の配布物がまだ（あるいはもう）無い場合。
+		t.Run("配布物が無ければ errNotFound を返す", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondText(registryPath, aquaHTTPRegistry))
+
+			_, err := aquaArtifactAt(t.Context(), client, "owner/repo", "1.2.3")
+			require.ErrorIs(t, err, errNotFound)
 		})
 	})
 }
@@ -1468,53 +1999,6 @@ func Test_sortedKeys(t *testing.T) {
 		t.Run("空のマップでは空を返す", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, sortedKeys(map[string]bypass{}))
-		})
-	})
-}
-
-func Test_fenceFor(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("バッククォートを含まない本体は 3 連で足りる", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "```", fenceFor("- ふつうの行"))
-		})
-
-		// 本体と同じ長さのフェンスだと、本体側がフェンスを閉じて外の Markdown へ抜けられる。
-		t.Run("本体の最長連より 1 つ長い連を返す", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "`````", fenceFor("`` と ```` と `"))
-		})
-
-		t.Run("3 連を含む本体は 4 連で包む", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "````", fenceFor("``` を含む理由"))
-		})
-	})
-}
-
-func Test_fenced(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("見出しに件数を添えて本体を text フェンスで包む", func(t *testing.T) {
-			t.Parallel()
-			var b strings.Builder
-			fenced(&b, "cooldown 未達", []string{"- a", "- b"})
-			assert.Equal(t, "## cooldown 未達 (2)\n\n```text\n- a\n- b\n```\n\n", b.String())
-		})
-
-		// 値は mise.toml 由来で pull request が中身を決めるため、フェンス長は値の側から取る。
-		t.Run("本体がフェンスを閉じられない長さで包む", func(t *testing.T) {
-			t.Parallel()
-			var b strings.Builder
-			fenced(&b, "見出し", []string{"``` を含む理由"})
-			assert.Equal(t, "## 見出し (1)\n\n````text\n``` を含む理由\n````\n\n", b.String())
 		})
 	})
 }
@@ -1666,7 +2150,6 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), "--base")
 		})
 
-		// ヘルプ要求を解析失敗と同じ扱いにすると、`-h` が異常終了に化ける。
 		t.Run("ヘルプ要求は flag.ErrHelp のまま返す", func(t *testing.T) {
 			t.Parallel()
 

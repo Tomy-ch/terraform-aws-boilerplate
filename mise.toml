@@ -14,7 +14,9 @@
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
 # **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
-# `.github/workflows/` か `docker/tools/Dockerfile` のいずれかが実際に呼ぶ。
+# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。**呼び手をまだ持たないものが3つある**
+# —— terraform と tflint は Terraform 側の検査が未配線であるため（AGENTS.md「現在の配線状態」）、
+# AWS CLI は ADR-0602 決定4 の bootstrap の手順書がまだ無いためである。
 min_version = "2026.6.0"
 
 [tools]
@@ -51,6 +53,12 @@ node = "24.21.0"
 
 # Secret Scan の権威（ADR-0302 決定1）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
 "aqua:gitleaks/gitleaks" = "8.30.1"
+
+# bootstrap の段1 が state backend の実体を作る道具（ADR-0602 決定4）。人が扱う AWS 資格情報を
+# コンテナ境界越しに渡さないため、ホストで実行しツールランナーのイメージへは入れない。
+# ADR-0503 決定5 は terraform を名指した決定であり、この道具には及んでいない。
+# 配布物は GitHub ではなく awscli.amazonaws.com から来る（aqua の定義が `type: http`）。
+"aqua:aws/aws-cli" = "2.36.40"
 
 # ==============================================================================
 # 検査の道具
