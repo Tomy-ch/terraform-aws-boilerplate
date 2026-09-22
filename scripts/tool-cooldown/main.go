@@ -914,9 +914,8 @@ func readBypasses(path string) (map[string]bypass, error) {
 	return out, sc.Err()
 }
 
-// validateBypasses はバイパス自身の規約違反と、そのせいで無効になったキーを返す。期限切れを
-// 失敗にするのは、外したまま放置されたバイパスが恒久 allowlist と区別できなくなるため。上限を
-// 置くのは、期限を遠い未来へ置くだけで同じ状態を作れてしまうため。無効なバイパスは効力も失う。
+// validateBypasses はバイパス自身の規約違反と、そのせいで無効になったキーを返す。無効になった
+// キーは hasBypass で効力を失う。期限必須・上限3ヶ月・対象存在の規約自体は ADR-0702 決定18 が持つ。
 func validateBypasses(bypasses map[string]bypass, declared []tool, today time.Time) ([]violation, map[string]struct{}) {
 	inDeclarations := make(map[string]struct{}, len(declared))
 	for _, t := range declared {
@@ -988,8 +987,8 @@ func hasBypass(bypasses map[string]bypass, invalid map[string]struct{}, t tool) 
 }
 
 // report は結果を標準出力へ書き、終了コードを非ゼロにすべき件数を返す。audit は窓内の finding では
-// 落ちない。ただしバイパス自身の規約違反だけは audit でも失敗させる。期限切れの回収がスケジュール
-// 実行に懸かっているため。
+// 落ちない。ただしバイパス自身の規約違反だけは audit でも失敗させる（定期実行を要する理由は
+// ADR-0702 決定18）。
 func report(
 	sub string, findings []finding, unresolved, skipped []tool,
 	policyViolations []violation, bypasses map[string]bypass, invalid map[string]struct{},

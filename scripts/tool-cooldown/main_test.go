@@ -2150,7 +2150,6 @@ func Test_parseArgs(t *testing.T) {
 			assert.Contains(t, err.Error(), "--base")
 		})
 
-		// ヘルプ要求を解析失敗と同じ扱いにすると、`-h` が異常終了に化ける。
 		t.Run("ヘルプ要求は flag.ErrHelp のまま返す", func(t *testing.T) {
 			t.Parallel()
 
