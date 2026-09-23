@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 )
 
 const soundMise = `min_version = "2026.6.0"
@@ -22,6 +24,8 @@ go = "1.27.1"
 node = "24.21.0"
 "aqua:hashicorp/terraform" = "1.16.2"
 "aqua:aws/aws-cli" = "2.36.40"
+"npm:markdownlint-cli2" = "0.23.2"
+"npm:@commitlint/cli" = "21.2.2"
 `
 
 // soundHostTools は、焼き込んだ版を両方持つレシピ。**行頭の `\t@` を含める** —— 置換で前置きが
@@ -33,11 +37,20 @@ const soundHostTools = `host-tools-install:
 	@mise reshim
 `
 
-// soundDockerfile は、写しを両方持つ Dockerfile。
+// soundDockerfile は、写しをすべて持つ Dockerfile。**レシピの継続行をそのまま含める** ——
+// 行頭の空白と行末の `; \` は、置換で前置きが落ちる欠陥が現れる唯一の場所である。
 const soundDockerfile = `# FROM golang:9.9.9-bookworm は例示であって写しではない
 FROM golang:1.27.1-bookworm@sha256:aaa AS builder
+RUN set -eu; \
+    declared_go="1.27.1"; \
+    true
 FROM golang:1.27.1-bookworm@sha256:aaa AS tools
 FROM node:24.21.0-alpine@sha256:bbb AS node_tools
+RUN set -eu; \
+    declared_node="24.21.0"; \
+    npm install -g --ignore-scripts \
+      "markdownlint-cli2@0.23.2" \
+      "@commitlint/cli@21.2.2"
 `
 
 // driftedHostTools は、terraform の版だけが宣言からずれたレシピ。**この写し先を起点にする
@@ -91,8 +104,8 @@ func miseWithout(t *testing.T, key string) string {
 	dropped := false
 
 	for _, line := range strings.Split(soundMise, "\n") {
-		if m := miseSectionRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
-			section = m[1]
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "[") {
+			section = strings.Trim(trimmed, "[]")
 		}
 		if section == "tools" {
 			trimmed := strings.TrimSpace(line)
@@ -164,6 +177,25 @@ func Test_run(t *testing.T) {
 
 			require.NoError(t, run([]string{"apply"}, root, &out))
 			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
+		})
+
+		// 起点にする理由は driftedHostTools の宣言と同じ —— この写し先からずれた入力が無いと、
+		// **Dockerfile の焼き込み側へ apply が書き込む経路が一度も実行されない。**
+		t.Run("apply は Dockerfile の照合値と npm の版も揃える", func(t *testing.T) {
+			t.Parallel()
+			drifted := strings.NewReplacer(
+				`declared_go="1.27.1"`, `declared_go="1.0.0"`,
+				`declared_node="24.21.0"`, `declared_node="1.0.0"`,
+				`"markdownlint-cli2@0.23.2"`, `"markdownlint-cli2@1.0.0"`,
+				`"@commitlint/cli@21.2.2"`, `"@commitlint/cli@1.0.0"`,
+			).Replace(soundDockerfile)
+			require.NotEqual(t, soundDockerfile, drifted, "ずらせていない")
+			root := newRepo(t, soundMise, drifted, soundGoMod)
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
 		t.Run("apply は複数のファイルを同時に揃える", func(t *testing.T) {
@@ -238,23 +270,6 @@ func Test_versionPattern(t *testing.T) {
 			assert.Equal(t, 0, regexp.MustCompile(versionPattern).NumSubexp())
 		})
 
-		// 両パッケージで揃える理由は bareKeyPattern の宣言が持つ。**ここが守るのは自分の側の
-		// 集合が TOML 仕様からずれないことだけで、両者の等価性ではない** —— 同じ表を
-		// scripts/tool-cooldown のテストにも置いてあるが、両方を同じ方向へ動かせば
-		// どちらも落ちない。
-		t.Run("裸のキーは TOML の仕様どおりの文字だけを許す", func(t *testing.T) {
-			t.Parallel()
-
-			re := regexp.MustCompile(`^` + bareKeyPattern + `$`)
-			for _, ok := range []string{"go", "golangci-lint", "node_tool", "1password-cli", "A1"} {
-				assert.True(t, re.MatchString(ok), ok)
-			}
-			// `:` `/` を含む backend 付きのキーと、dotted key は裸で書けない。
-			for _, ng := range []string{"", "aqua:owner/repo", "npm:@scope/pkg", "tools.go", "a b"} {
-				assert.False(t, re.MatchString(ng), ng)
-			}
-		})
-
 		t.Run("1〜3桁の版だけに一致する", func(t *testing.T) {
 			t.Parallel()
 
@@ -303,97 +318,6 @@ func Test_goDirectiveRe(t *testing.T) {
 	})
 }
 
-func Test_miseSectionRe(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		for name, tc := range map[string]struct{ line, section string }{
-			"tools の見出し": {"[tools]", "tools"},
-			"env の見出し":   {"[env]", "env"},
-			// ネストした table は "tools" と一致しないので、parseMise が読み飛ばす。
-			// ここが `[tools.go]` から "tools" を返すようになると、別の table のキーを拾う。
-			"ネストした見出し":     {"[tools.go]", "tools.go"},
-			"見出しの後ろに注記がある": {"[tools] # 注記", "tools"},
-		} {
-			t.Run(name+"から名前を返す", func(t *testing.T) {
-				t.Parallel()
-
-				m := miseSectionRe.FindStringSubmatch(tc.line)
-				require.NotNil(t, m, "一致しない")
-				assert.Equal(t, tc.section, m[1])
-			})
-		}
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		// 見出しでない行を見出しと取り違えると、section が変わって別の table のキーを読む。
-		for name, line := range map[string]string{
-			"開き括弧が無い": "tools]",
-			"閉じ括弧が無い": "[tools",
-			"名前が空":    "[]",
-			"代入行":     `go = "1.27.1"`,
-		} {
-			t.Run(name+"は見出しにしない", func(t *testing.T) {
-				t.Parallel()
-				assert.Nil(t, miseSectionRe.FindStringSubmatch(line))
-			})
-		}
-	})
-}
-
-func Test_miseKeyRe(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		for name, tc := range map[string]struct{ line, key, version string }{
-			"裸のキー":     {`go = "1.27.1"`, "go", "1.27.1"},
-			"引用符付きのキー": {`"aqua:aws/aws-cli" = "2.36.40"`, "aqua:aws/aws-cli", "2.36.40"},
-			// 裸で書けるキーを引用符で囲むのも TOML では正しい。
-			"引用符で囲んだ裸のキー": {`"go" = "1.27.1"`, "go", "1.27.1"},
-		} {
-			t.Run(name+"を読む", func(t *testing.T) {
-				t.Parallel()
-
-				m := miseKeyRe.FindStringSubmatch(tc.line)
-				require.NotNil(t, m, "一致しない")
-
-				key := m[1]
-				if key == "" {
-					key = m[2]
-				}
-				assert.Equal(t, tc.key, key)
-				assert.Equal(t, tc.version, m[3])
-			})
-		}
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		// 引用符を対で要求する理由は miseKeyRe の宣言が持つ。ここはそれを外したときに
-		// 何が通ってしまうかを固定する。
-		for name, line := range map[string]string{
-			"開き引用符だけ":     `"aqua:aws/aws-cli = "2.36.40"`,
-			"閉じ引用符だけ":     `aqua:aws/aws-cli" = "2.36.40"`,
-			"値が配列":        `"aqua:aws/aws-cli" = ["2.36.40"]`,
-			"値がインラインテーブル": `"aqua:aws/aws-cli" = { version = "2.36.40" }`,
-			"値に引用符が無い":    `go = 1.27.1`,
-			"見出し行":        `[tools]`,
-		} {
-			t.Run(name+"は掴まない", func(t *testing.T) {
-				t.Parallel()
-				assert.Nil(t, miseKeyRe.FindStringSubmatch(line))
-			})
-		}
-	})
-}
-
 func Test_parseMise(t *testing.T) {
 	t.Parallel()
 
@@ -408,6 +332,7 @@ func Test_parseMise(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, declared{
 				Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40",
+				Markdownlint: "0.23.2", Commitlint: "21.2.2",
 			}, got)
 		})
 
@@ -430,6 +355,18 @@ func Test_parseMise(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "1.27.1", got.Go)
 		})
+
+		// tool option 付きの宣言も mise では正しい。読めないと、宣言が在るのに「無い」と
+		// 報告する —— 直す先が宣言の側に無いエラーになる。
+		t.Run("tool option 付きの宣言を読む", func(t *testing.T) {
+			t.Parallel()
+			src := strings.Replace(soundMise,
+				`"aqua:aws/aws-cli" = "2.36.40"`, `"aqua:aws/aws-cli" = { version = "2.36.40" }`, 1)
+			root := newRepo(t, src, soundDockerfile, soundGoMod)
+			got, err := parseMise(filepath.Join(root, miseFile))
+			require.NoError(t, err)
+			assert.Equal(t, "2.36.40", got.AWSCLI)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -447,27 +384,36 @@ func Test_parseMise(t *testing.T) {
 			})
 		}
 
-		// TOML はインラインテーブルも配列も許すが、この読み取り器はどちらも解釈しない。
-		// **配列は mise が複数版の併存のために実際に使う記法である** —— 黙って別の値を拾わず
-		// 「宣言が無い」側へ落ちることを固定する。
+		// **[tools] に解釈できない行が在れば、欠落ではなく行そのものを名指して落ちる。**
+		// 判定は misetoml が持つ。ここが固定するのは、その落ち方が parseMise を通しても
+		// 保たれること —— 握り潰して「宣言が無い」へ丸めると、直す先が分からなくなる。
+		//
+		// **配列は mise が複数版の併存のために実際に使う記法である。** 黙ってどれかを拾わない。
 		arrayed := strings.Replace(soundMise,
 			`"aqua:hashicorp/terraform" = "1.16.2"`, `"aqua:hashicorp/terraform" = ["1.16.2", "1.9.0"]`, 1)
 		multiline := strings.Replace(soundMise,
 			`"aqua:hashicorp/terraform" = "1.16.2"`, "\"aqua:hashicorp/terraform\" = [\n  \"1.16.2\",\n]", 1)
 
 		for name, src := range map[string]string{
-			"tools が無い":        "[env]\ngo = \"1.27.1\"\n",
-			"空":                "",
-			"go がインラインテーブル":    strings.Replace(soundMise, "go = \"1.27.1\"", "go = { version = \"1.27.1\" }", 1),
 			"terraform が配列":    arrayed,
 			"terraform が複数行配列": multiline,
-			"aws-cli がインラインテーブル": strings.Replace(soundMise,
-				`"aqua:aws/aws-cli" = "2.36.40"`, `"aqua:aws/aws-cli" = { version = "2.36.40" }`, 1),
-			// miseKeyRe の対の要求を、parseMise を通した側でも固定する。
 			"キーの開き引用符だけがある": strings.Replace(soundMise,
 				`"aqua:aws/aws-cli" = "2.36.40"`, `"aqua:aws/aws-cli = "2.36.40"`, 1),
 			"キーの閉じ引用符だけがある": strings.Replace(soundMise,
 				`"aqua:aws/aws-cli" = "2.36.40"`, `aqua:aws/aws-cli" = "2.36.40"`, 1),
+		} {
+			t.Run(name+"なら行を名指してエラーにする", func(t *testing.T) {
+				t.Parallel()
+				root := newRepo(t, src, soundDockerfile, soundGoMod)
+				_, err := parseMise(filepath.Join(root, miseFile))
+				require.ErrorIs(t, err, misetoml.ErrInvalidLine)
+			})
+		}
+
+		// 行は読めたが、要求するキーがそもそも [tools] に無い場合。
+		for name, src := range map[string]string{
+			"tools が無い": "[env]\ngo = \"1.27.1\"\n",
+			"空":         "",
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
@@ -720,6 +666,69 @@ func Test_applyAll(t *testing.T) {
 	})
 }
 
+func Test_shellVarRe(t *testing.T) {
+	t.Parallel()
+
+	re := shellVarRe("declared_go")
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// レシピの継続行は空白で始まり、行末に `; \` を持つ。前置きを群の外で消費すると
+		// 置換でその空白ごと消え、シェルの継続が壊れる。
+		t.Run("継続行の前置きと行末を保ったまま版だけ差し替える", func(t *testing.T) {
+			t.Parallel()
+			r := rule{label: "go の照合値", file: "Dockerfile", re: re, version: "1.27.1", count: 1}
+			got, err := applyRule(r, "    declared_go=\"1.0.0\"; \\\n")
+			require.NoError(t, err)
+			assert.Equal(t, "    declared_go=\"1.27.1\"; \\\n", got)
+		})
+
+		t.Run("コメント行を対象にしない", func(t *testing.T) {
+			t.Parallel()
+			src := "# declared_go=\"9.9.9\"\n    declared_go=\"1.0.0\"; \\\n"
+			assert.Len(t, re.FindAllString(src, -1), 1)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 名前が前方一致で掴めると、declared_node の行を go の照合値として書き換える。
+		t.Run("別の名前の変数を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, re.FindAllString("    declared_node=\"24.21.0\"; \\\n", -1))
+		})
+	})
+}
+
+func Test_npmPkgRe(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("scope 付きのパッケージ名を掴む", func(t *testing.T) {
+			t.Parallel()
+			// `@` がパッケージ名の中にも区切りにも現れる。錨を引用符から始めないと、
+			// scope の `@` を版の区切りと取り違える。
+			r := rule{
+				label: "commitlint", file: "Dockerfile",
+				re: npmPkgRe(commitlintPkg), version: "21.2.2", count: 1,
+			}
+			got, err := applyRule(r, "      \"@commitlint/cli@1.0.0\" \\\n")
+			require.NoError(t, err)
+			assert.Equal(t, "      \"@commitlint/cli@21.2.2\" \\\n", got)
+		})
+
+		t.Run("同じ行に並ぶ別パッケージを巻き込まない", func(t *testing.T) {
+			t.Parallel()
+			src := "      \"markdownlint-cli2@0.23.2\" \"@commitlint/cli@21.2.2\"\n"
+			assert.Len(t, npmPkgRe(markdownlintPkg).FindAllString(src, -1), 1)
+		})
+	})
+}
+
 func Test_rules(t *testing.T) {
 	t.Parallel()
 
@@ -747,15 +756,21 @@ func Test_rules(t *testing.T) {
 			}
 
 			got := map[string]target{}
-			for _, r := range rules(declared{Go: "1", Node: "2", Terraform: "3", AWSCLI: "4"}) {
+			for _, r := range rules(declared{
+				Go: "1", Node: "2", Terraform: "3", AWSCLI: "4", Markdownlint: "5", Commitlint: "6",
+			}) {
 				got[r.label] = target{file: r.file, version: r.version, count: r.count}
 			}
 			assert.Equal(t, map[string]target{
-				"golang イメージ":   {file: "docker/tools/Dockerfile", version: "1", count: 2},
-				"node イメージ":     {file: "docker/tools/Dockerfile", version: "2", count: 1},
-				"go ディレクティブ":    {file: "scripts/go.mod", version: "1", count: 1},
-				"terraform の導入": {file: ".makefiles/host-tools.mk", version: "3", count: 1},
-				"AWS CLI の導入":   {file: ".makefiles/host-tools.mk", version: "4", count: 1},
+				"golang イメージ":      {file: "docker/tools/Dockerfile", version: "1", count: 2},
+				"node イメージ":        {file: "docker/tools/Dockerfile", version: "2", count: 1},
+				"go ディレクティブ":       {file: "scripts/go.mod", version: "1", count: 1},
+				"terraform の導入":    {file: ".makefiles/host-tools.mk", version: "3", count: 1},
+				"AWS CLI の導入":      {file: ".makefiles/host-tools.mk", version: "4", count: 1},
+				"go の照合値":          {file: "docker/tools/Dockerfile", version: "1", count: 1},
+				"node の照合値":        {file: "docker/tools/Dockerfile", version: "2", count: 1},
+				"markdownlint の導入": {file: "docker/tools/Dockerfile", version: "5", count: 1},
+				"commitlint の導入":   {file: "docker/tools/Dockerfile", version: "6", count: 1},
 			}, got)
 		})
 	})

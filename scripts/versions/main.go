@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -35,6 +36,13 @@ const (
 	// が焼き込む名前でもある。同じ文字列が宣言側と写し側の両方の錨になる。
 	terraformTool = "aqua:hashicorp/terraform"
 	awsCLITool    = "aqua:aws/aws-cli"
+
+	// npm の道具は、宣言側のキーと写し側の名前が `npm:` の有無だけ違う。**片方から導く** ——
+	// 2つ並べて書くと、パッケージ名を直した側だけが動く。
+	markdownlintPkg  = "markdownlint-cli2"
+	commitlintPkg    = "@commitlint/cli"
+	markdownlintTool = "npm:" + markdownlintPkg
+	commitlintTool   = "npm:" + commitlintPkg
 )
 
 var (
@@ -45,29 +53,12 @@ var (
 
 // versionPattern は版の桁の並び。**1〜3桁を許す** —— `go = "1"` も `= "1.27"` も
 // `= "1.27.1"` も宣言として現れる。捕獲群を持たないので、これを使う正規表現の群番号は
-// この式の有無で動かない —— 群を1つ足すと dockerFromRe と miseInstallRe の後置きが `${3}` へ
+// この式の有無で動かない —— 群を1つ足すと dockerFromRe と bakedRe の後置きが `${3}` へ
 // ずれ、goDirectiveRe は版の桁を `${2}` として拾う。Go はどちらもエラーにしない。
 // **その不変条件は Test_versionPattern が固定する。**
 const versionPattern = `\d+(?:\.\d+){0,2}`
 
-// bareKeyPattern は TOML の裸キーに使える文字。仕様が許すのは ASCII 英数字と `_` `-` だけで、
-// `:` や `/` を含む backend 付きのキーは引用符付きでしか書けない。**数字始まりも仕様では
-// 正しい**（`1password-cli` のような名前が在り得る）。
-//
-// **同じ [tools] を scripts/tool-cooldown も読む。** 集合がずれると、一方だけが読める宣言が
-// 生まれ、もう一方は黙ってその道具を検査の対象から外す。
-const bareKeyPattern = `[A-Za-z0-9_-]+`
-
 var (
-	// miseSectionRe は `[tools]` のような table の見出し。
-	miseSectionRe = regexp.MustCompile(`^\[([^\]]+)\]`)
-	// miseKeyRe は `go = "1.27.1"` と `"aqua:aws/aws-cli" = "2.36.40"` の両方を捉える代入。
-	// 裸のキーが許す文字は bareKeyPattern が持つ。
-	//
-	// **引用符は対で要求する。** 前後を独立した `"?` にすると `"go = "1.27.1"` のような壊れた行も
-	// 読めてしまい、手編集で壊れた宣言から拾った値のまま写しを書き換える。第1群が引用符付きの
-	// キー、第2群が裸のキーで、どちらか一方だけが埋まる。
-	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
 	// versionRe は、宣言側から読んだ版がその形をしているかを見る。検める理由は applyRule の
@@ -84,14 +75,35 @@ func dockerFromRe(image string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^[^#\n]*?(FROM\s+` + regexp.QuoteMeta(image) + `:)` + versionPattern + `(-[\w.-]+)`)
 }
 
-// miseInstallRe は `.makefiles/` が焼き込んだ `mise install "<名前>@<版>"` を捉える正規表現を
-// 返します。**閉じ引用符を第2群に取るのは、版を行末に置かないためである** —— 行末が錨だと、
-// 末尾の空白や継続行の有無で一致が変わる。
+// bakedRe は `<前置き><錨><版><閉じ>` の形で焼き込まれた版を捉える正規表現を返します。
 //
-// `[^#\n]*?` でコメント行を除く。`\n` を落とすと行をまたいで広がる。**前置きは第1群の中に入れる**
-// —— レシピ行は `\t@` で始まり、群の外で消費すると置換でその2文字ごと消える。
+// **閉じを第2群に取るのは、版を行末に置かないためである** —— 行末が錨だと、末尾の空白や
+// 継続行の有無で一致が変わる。
+//
+// `[^#\n]*?` でコメント行を除く。`\n` を落とすと Go の文字クラスは改行にも一致するので、
+// マッチが行をまたいで広がり、間の行ごと置換で消える。件数は変わらないので件数のガードも
+// 通り抜ける。**前置きは第1群の中に入れる** —— Makefile のレシピ行は `\t@` で、シェルの
+// 継続行は空白で始まり、群の外で消費すると置換でその文字ごと消える。
+func bakedRe(anchor, closing string) *regexp.Regexp {
+	return regexp.MustCompile(
+		`(?m)^([^#\n]*?` + regexp.QuoteMeta(anchor) + `)` + versionPattern + `(` + regexp.QuoteMeta(closing) + `)`)
+}
+
+// miseInstallRe は `.makefiles/` が焼き込んだ `mise install "<名前>@<版>"` を捉えます。
 func miseInstallRe(tool string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^([^#\n]*?mise install "` + regexp.QuoteMeta(tool) + `@)` + versionPattern + `(")`)
+	return bakedRe(`mise install "`+tool+`@`, `"`)
+}
+
+// npmPkgRe は Dockerfile が `npm install -g` へ渡す `"<パッケージ>@<版>"` を捉えます。
+func npmPkgRe(pkg string) *regexp.Regexp {
+	return bakedRe(`"`+pkg+`@`, `"`)
+}
+
+// shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。**ARG ではなく
+// シェル変数にするのは、`--build-arg` で外から差し替えられないようにするためである** ——
+// 差し替えられる値で照合する検査は、照合しているふりをしているだけになる。
+func shellVarRe(name string) *regexp.Regexp {
+	return bakedRe(name+`="`, `"`)
 }
 
 type declared struct {
@@ -99,6 +111,10 @@ type declared struct {
 	Node      string
 	Terraform string
 	AWSCLI    string
+	// Markdownlint / Commitlint は npm エコシステムの道具で、Dockerfile の node 段が
+	// `npm install -g` へ版付きで渡す。
+	Markdownlint string
+	Commitlint   string
 }
 
 // rule は、1つのファイルの中で正規表現に一致した箇所を1つの版へ揃える単位。
@@ -157,8 +173,11 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 
 	names := planNames(changes)
 	if len(names) == 0 {
-		fmt.Fprintf(out, "✅ versions: go %s / node %s / terraform %s / aws-cli %s の写しが宣言と一致しています\n",
-			v.Go, v.Node, v.Terraform, v.AWSCLI)
+		// **照合した宣言をすべて名乗る。** 一部しか挙げないと、表から落ちた宣言があっても
+		// 報告は同じ形で緑を返す。
+		fmt.Fprintf(out,
+			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / markdownlint %s / commitlint %s の写しが宣言と一致しています\n",
+			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Markdownlint, v.Commitlint)
 
 		return nil
 	}
@@ -193,6 +212,12 @@ func rules(v declared) []rule {
 		{label: "go ディレクティブ", file: "scripts/go.mod", re: goDirectiveRe, version: v.Go, count: 1},
 		{label: "terraform の導入", file: hostToolsMk, re: miseInstallRe(terraformTool), version: v.Terraform, count: 1},
 		{label: "AWS CLI の導入", file: hostToolsMk, re: miseInstallRe(awsCLITool), version: v.AWSCLI, count: 1},
+		// ベースイメージの実ランタイムと突き合わせる側の値（ADR-0503 決定3）。イメージの
+		// タグ（上の2行）が合っていても、tag が指す中身がずれていればこちらが落とす。
+		{label: "go の照合値", file: toolsDockerfile, re: shellVarRe("declared_go"), version: v.Go, count: 1},
+		{label: "node の照合値", file: toolsDockerfile, re: shellVarRe("declared_node"), version: v.Node, count: 1},
+		{label: "markdownlint の導入", file: toolsDockerfile, re: npmPkgRe(markdownlintPkg), version: v.Markdownlint, count: 1},
+		{label: "commitlint の導入", file: toolsDockerfile, re: npmPkgRe(commitlintPkg), version: v.Commitlint, count: 1},
 	}
 }
 
@@ -270,63 +295,37 @@ func applyRule(r rule, content string) (string, error) {
 	return r.re.ReplaceAllString(content, "${1}"+r.version+"${2}"), nil
 }
 
-// parseMise は mise.toml の [tools] が宣言する版を返します。**用途特化の最小の読み取りで、
-// TOML の仕様には準拠しない** —— 見るのは `[tools]` 直下の、rules が写し先を持つキーだけである。
+// parseMise は mise.toml の [tools] が宣言する版のうち、rules が写し先を持つものを返します。
+//
+// **[tools] の読み取りそのものは misetoml が持つ。** 同じ宣言を読む実装をリポジトリに2つ置くと、
+// 一方だけが読める宣言が生まれる。ここが決めるのは、どのキーを要求するかだけである。
 func parseMise(path string) (declared, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
+	entries, err := misetoml.ParseFile(path)
 	if err != nil {
-		return declared{}, xerrors.Wrap(err, path)
+		return declared{}, err
 	}
 
 	var v declared
-	section := ""
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if m := miseSectionRe.FindStringSubmatch(line); m != nil {
-			section = m[1]
-
-			continue
-		}
-		if section != "tools" {
-			continue
-		}
-		if m := miseKeyRe.FindStringSubmatch(line); m != nil {
-			key := m[1]
-			if key == "" {
-				key = m[2]
-			}
-
-			switch key {
-			case "go":
-				v.Go = m[3]
-			case "node":
-				v.Node = m[3]
-			case terraformTool:
-				v.Terraform = m[3]
-			case awsCLITool:
-				v.AWSCLI = m[3]
-			}
-		}
-	}
-
-	// **宣言が欠けていたらそこで止める。** 空のまま進むと、写しを空の版で書き潰す。
 	var missing []string
 	for _, d := range []struct {
-		name  string
-		value string
+		name string
+		dst  *string
 	}{
-		{"go", v.Go},
-		{"node", v.Node},
-		{terraformTool, v.Terraform},
-		{awsCLITool, v.AWSCLI},
+		{"go", &v.Go},
+		{"node", &v.Node},
+		{terraformTool, &v.Terraform},
+		{awsCLITool, &v.AWSCLI},
+		{markdownlintTool, &v.Markdownlint},
+		{commitlintTool, &v.Commitlint},
 	} {
-		if d.value == "" {
+		// **宣言が欠けていたらそこで止める。** 空のまま進むと、写しを空の版で書き潰す。
+		version, ok := misetoml.Lookup(entries, d.name)
+		if !ok {
 			missing = append(missing, d.name)
+
+			continue
 		}
+		*d.dst = version
 	}
 	if len(missing) > 0 {
 		return declared{}, xerrors.Wrap(errShape, miseFile+" の [tools] に "+strings.Join(missing, ", ")+" がありません")

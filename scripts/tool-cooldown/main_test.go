@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -20,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -209,31 +210,6 @@ func day(s string) time.Time {
 	return d
 }
 
-func Test_bareKeyPattern(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		// 両パッケージで揃える理由は bareKeyPattern の宣言が持つ。**ここが守るのは自分の側の
-		// 集合が TOML 仕様からずれないことだけで、両者の等価性ではない** —— 同じ表を
-		// scripts/versions のテストにも置いてあるが、両方を同じ方向へ動かせば
-		// どちらも落ちない。
-		t.Run("裸のキーは TOML の仕様どおりの文字だけを許す", func(t *testing.T) {
-			t.Parallel()
-
-			re := regexp.MustCompile(`^` + bareKeyPattern + `$`)
-			for _, ok := range []string{"go", "golangci-lint", "node_tool", "1password-cli", "A1"} {
-				assert.True(t, re.MatchString(ok), ok)
-			}
-			// `:` `/` を含む backend 付きのキーと、dotted key は裸で書けない。
-			for _, ng := range []string{"", "aqua:owner/repo", "npm:@scope/pkg", "tools.go", "a b"} {
-				assert.False(t, re.MatchString(ng), ng)
-			}
-		})
-	})
-}
-
 func Test_parseTools(t *testing.T) {
 	t.Parallel()
 
@@ -270,14 +246,13 @@ func Test_parseTools(t *testing.T) {
 			}
 		})
 
-		// mise は tool option 付きの table 形式も受け付ける。version を持つ宣言は形が違ってもゲートに載せ、
-		// version の無い行（option だけの table や別の構造）は拾わずに読み進める。
-		t.Run("version を持つ table 形式の宣言は読み、version の無い行は拾わずに読み進める", func(t *testing.T) {
+		// mise は tool option 付きの table 形式も受け付ける。形が違うだけでゲートから外れると、
+		// 窓の検査が黙って抜ける。
+		t.Run("version を持つ table 形式の宣言も読む", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseTools([]byte("[tools]\n" +
 				`node = { version = "24.11.0" }` + "\n" +
 				`"npm:markdownlint-cli2" = { version = "0.23.2", trust_policy_excludes = ["fastq@1.20.2"] }` + "\n" +
-				`"npm:some-tool" = { allow_builds = ["esbuild"] }` + "\n" +
 				`sqlc = "1.31.1"` + "\n"))
 			require.NoError(t, err)
 
@@ -286,6 +261,22 @@ func Test_parseTools(t *testing.T) {
 				ids = append(ids, tool.id())
 			}
 			assert.ElementsMatch(t, []string{"node@24.11.0", "npm:markdownlint-cli2@0.23.2", "sqlc@1.31.1"}, ids)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// **読み飛ばすと、その道具は窓の検査から外れたままゲートが緑を返す**（ADR-0702 決定14）。
+		// 版を持たない宣言は、このツールが測れるものを持たないのだから、黙って対象から落とさず
+		// 宣言の側を直させる。判定は misetoml が持ち、ここが固定するのは握り潰さないことである。
+		t.Run("version を持たない table 形式は読み飛ばさずエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseTools([]byte("[tools]\n" +
+				`sqlc = "1.31.1"` + "\n" +
+				`"npm:some-tool" = { allow_builds = ["esbuild"] }` + "\n"))
+			require.ErrorIs(t, err, misetoml.ErrInvalidLine)
+			assert.Contains(t, err.Error(), "npm:some-tool", "直す先の行を報告していない")
 		})
 	})
 }

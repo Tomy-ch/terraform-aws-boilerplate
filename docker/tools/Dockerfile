@@ -46,13 +46,17 @@ RUN mise trust mise.toml
 
 # ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
 # ずれたまま進むと、ホストとコンテナで別の Go がツールをビルドする。
+#
+# **宣言側の値は焼き込みであり、`make versions-apply` が書いて `versions-check` が守る。**
+# ここで mise.toml から値を抜き出さないのは、そうするとこのファイルが宣言の読み手になるためで
+# ある —— 読み手が増えるほど、一方だけが読める書式が生まれる余地が増える。読むのは
+# scripts/lib/misetoml だけにして、ここへは結果を書き写す。
 RUN set -eu; \
-    declared="$(sed -n 's|^go *= *"\([^"]*\)"$|\1|p' mise.toml)"; \
-    [ -n "$declared" ] || { echo "mise.toml に go の宣言がありません" >&2; exit 1; }; \
+    declared_go="1.27.1"; \
     actual="$(go version | sed 's|^go version go\([^ ]*\).*|\1|')"; \
-    [ "$declared" = "$actual" ] || { \
-      echo "Go の版がずれています: mise.toml=$declared / ベースイメージ=$actual" >&2; \
-      echo "docker/tools/Dockerfile の FROM と mise.toml の go を揃えてください" >&2; exit 1; }
+    [ "$declared_go" = "$actual" ] || { \
+      echo "Go の版がずれています: 宣言=$declared_go / ベースイメージ=$actual" >&2; \
+      echo "docker/tools/Dockerfile の FROM と mise.toml の go を揃えてください（make versions-apply）" >&2; exit 1; }
 
 # 未認証の GitHub API（60 req/hour・IP 単位）ではこの install 群を賄えず 403 になる。
 # トークンはイメージ履歴に焼き込む build 引数ではなく secret で渡す（ADR-0503 決定12）。
@@ -128,30 +132,24 @@ SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 RUN apk add --no-cache bash ca-certificates git make
 
 WORKDIR /app
-COPY mise.toml ./
 
-# 版の出所は mise.toml だけである（ADR-0503 決定3）。宣言が見つからなければ、空文字のまま
-# 進まずその場で落とす —— 検査が対象を失ったまま成功するのを避ける（ADR-0702 決定13）。
+# 版の出所は mise.toml だけである（ADR-0503 決定1）。**ここに在るのはその写しであり、
+# `make versions-apply` が書いて `versions-check` が守る。** この段は mise.toml を読まない ——
+# 宣言を読む実装は scripts/lib/misetoml だけに置く。
 #
 # --ignore-scripts: install 時に依存のライフサイクルスクリプトを実行しない。ハッシュが一致した
 # 配布物であっても script は install 時に走るため、実行させないことでその余地を無くす
 # （ADR-0503 決定16 と同じ判断）。in-tree のパッケージを持つようになった時点で、lockfile と
 # 「宣言に無い script を持ち込んだら失敗させる」形（同 決定17）へ移す。
 RUN set -eu; \
-    declared_node="$(sed -n 's|^node *= *"\([^"]*\)"$|\1|p' mise.toml)"; \
-    [ -n "$declared_node" ] || { echo "mise.toml に node の宣言がありません" >&2; exit 1; }; \
+    declared_node="24.21.0"; \
     actual_node="$(node --version | sed 's|^v||')"; \
     [ "$declared_node" = "$actual_node" ] || { \
-      echo "Node の版がずれています: mise.toml=$declared_node / ベースイメージ=$actual_node" >&2; \
-      echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください" >&2; exit 1; }; \
-    ver() { \
-      v="$(sed -n "s|^\"npm:$1\" *= *\"\([^\"]*\)\"$|\1|p" mise.toml)"; \
-      [ -n "$v" ] || { echo "mise.toml に npm:$1 の宣言がありません" >&2; exit 1; }; \
-      printf '%s' "$v"; \
-    }; \
+      echo "Node の版がずれています: 宣言=$declared_node / ベースイメージ=$actual_node" >&2; \
+      echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください（make versions-apply）" >&2; exit 1; }; \
     npm install -g --ignore-scripts \
-      "markdownlint-cli2@$(ver markdownlint-cli2)" \
-      "@commitlint/cli@$(ver @commitlint/cli)"; \
+      "markdownlint-cli2@0.23.2" \
+      "@commitlint/cli@21.2.2"; \
     npm cache clean --force; \
     rm -rf /root/.npm
 

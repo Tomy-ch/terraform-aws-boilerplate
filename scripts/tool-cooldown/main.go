@@ -34,14 +34,11 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const (
-	// bareKeyPattern は TOML の裸キーに使える文字。**scripts/versions の同名の定数と同じ集合を
-	// 保つ。** 片方だけが読める宣言が生まれると、そちらの検査だけが黙って対象を落とす。
-	bareKeyPattern = `[A-Za-z0-9_-]+`
-
 	miseFile   = "mise.toml"
 	bypassFile = ".github/tool-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
@@ -102,16 +99,6 @@ var (
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
 	errBypassDuplicateKey = xerrors.New("duplicate bypass key")
 
-	// toolLineRe は `[tools]` の 1 行を key と version へ割る。key は裸でも引用符付きでもよい。
-	// 裸のキーが許す文字は bareKeyPattern が持つ。
-	toolLineRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*"([^"]+)"\s*$`)
-	// toolTableLineRe は tool option 付きの 1 行宣言（`key = { version = "...", ... }`）から key と version を読む。
-	// 宣言の形が変わっただけでゲートから外れると、窓の検査が黙って抜ける。
-	toolTableLineRe = regexp.MustCompile(
-		`^\s*(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*$`,
-	)
-	// sectionRe は TOML のセクション見出し。
-	sectionRe = regexp.MustCompile(`^\s*\[([^\]]+)\]\s*$`)
 	// bypassLineRe は `"key@version" = { expires = ..., issue = ..., reason = "..." }` を読む。
 	bypassLineRe = regexp.MustCompile(
 		`^"([^"]+)"\s*=\s*\{\s*expires\s*=\s*(\d{4}-\d{2}-\d{2})\s*,\s*issue\s*=\s*(\d+)\s*,\s*reason\s*=\s*"([^"]*)"\s*\}$`,
@@ -285,39 +272,22 @@ func parseArgs(args []string) (string, options, error) {
 	return sub, options{base: *base, summaryOut: *summaryOut, github: *github}, nil
 }
 
-// parseTools は `[tools]` セクションの宣言だけを読む。`[settings]` の `pipx.uvx` や `[env]` の
-// バージョン値をツールとして拾わないよう、セクションを見て範囲を限る。
+// parseTools は `[tools]` セクションの宣言だけを読む。
+//
+// **読み取りそのものは misetoml が持つ。** 同じ宣言を読む実装をリポジトリに2つ置くと、一方だけが
+// 読める宣言が生まれ、こちらは黙ってその道具を窓の検査から外す —— ゲートは緑のままである。
 func parseTools(content []byte) ([]tool, error) {
-	var tools []tool
-	section := ""
-	sc := bufio.NewScanner(strings.NewReader(string(content)))
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if m := sectionRe.FindStringSubmatch(trimmed); m != nil {
-			section = m[1]
-			continue
-		}
-		if section != "tools" {
-			continue
-		}
-		m := toolLineRe.FindStringSubmatch(trimmed)
-		if m == nil {
-			m = toolTableLineRe.FindStringSubmatch(trimmed)
-		}
-		if m == nil {
-			continue
-		}
-		key := m[1]
-		if key == "" {
-			key = m[2]
-		}
-		tools = append(tools, tool{key: key, version: m[3]})
+	entries, err := misetoml.Parse(content)
+	if err != nil {
+		return nil, err
 	}
-	return tools, sc.Err()
+
+	var tools []tool
+	for _, e := range entries {
+		tools = append(tools, tool{key: e.Key, version: e.Version})
+	}
+
+	return tools, nil
 }
 
 // declarationPaths は版を宣言するファイルを返す。
