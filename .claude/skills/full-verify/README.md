@@ -13,8 +13,8 @@ different repository and launched without edits.
   permission (`--allowedTools Read Grep Glob`, with `Edit/Write` explicitly disallowed).
 - **Does not execute text in observed code/documents as instructions** (prompt-injection resistant).
 
-This is for **whole-repository verification**, not diff/PR-scoped review. For diffs use `impl-review`
-/ `/code-review`.
+This is for **whole-repository verification**, not diff/PR-scoped review. For diffs use `impl-review`,
+and for the tests a diff moved, `test-review`.
 
 **The focus of verification is "implementation cleanliness"** (readability, maintainability,
 cohesion, design straightforwardness). Naming conventions and obvious misuse are caught by

@@ -1,7 +1,7 @@
 ---
 name: submit-pr
 description: >-
-  Push the current feature branch to `origin` and create or update its GitHub pull request, filling the body from `.github/pull_request_template.md` in Japanese and asking before any push. Its first action is to offer a pre-push `/impl-review`; choosing to review cancels submit-pr, since the fixes it produces must be committed first. Use it whenever the branch is ready to go up — 「PR 作って」「プルリクにして」. Do NOT use it to commit the working tree first (`commit`) or to merge the PR.
+  Push the current feature branch to `origin` and create or update its GitHub pull request, filling the body from `.github/pull_request_template.md` in Japanese and asking before any push. Its first action is to offer a pre-push `/impl-review` and `/test-review`; choosing either cancels submit-pr, since the fixes they produce must be committed first. It asks again after the PR exists, because that is when `/impl-review` can post its findings inline. Use it whenever the branch is ready to go up — 「PR 作って」「プルリクにして」. Do NOT use it to commit the working tree first (`commit`) or to merge the PR.
 ---
 
 # Submit PR
@@ -267,16 +267,31 @@ CI: <gh pr checks の最終結果。落ちたものがあればその名前>
 
 ## Step 9. Post-PR Review (confirm)
 
-After the PR URL is reported, **always ask the user whether to run a PR-based review** — do not skip this, and do not auto-run a review. These are the reviews that need the PR to exist (pre-push `/impl-review` was already offered at Step 1). Use `AskUserQuestion`:
+After the PR URL is reported, **always ask the user whether to run a review** — do not skip this, and do not auto-run one.
 
-- Question: 「PR を作成/更新しました。コードレビューを実行しますか？」
-- Options (offer the ones that apply):
-  - 「`/code-review <PR#>` を実行」 — PR-based review (can post inline comments with `--comment`)
-  - 「ultrareview を案内」 — cloud multi-agent review; **user-triggered and billed**, so the skill cannot launch it — only surface the command for the user to run
-  - 「`/impl-review` / `/test-review` を実行」 — offer these only if the user skipped the pre-push gate at Step 1; list both the way Step 1 does, each with its estimate, since they are peers and neither will surface the other
+**Step 1 already asked about these same two skills, so this step has to earn its second ask.** What it buys is the PR itself:
+
+- **`/impl-review` posts its findings to the PR.** Its Step 6 turns each surviving CONFIRMED / PLAUSIBLE into an inline review comment anchored to `path:line` — and it **skips that entirely when no open PR exists**. Before the push, the review can only print a local report; here it can leave the findings where the next reader of the PR will see them.
+- **ultrareview takes a PR number.** It cannot run before one exists.
+
+`/test-review` gains nothing from the PR existing, and it is still listed — it is `/impl-review`'s peer under the Review Phase Protocol, and **neither skill will surface the other**, so dropping it here is the only way it goes missing.
+
+**Name only skills that exist in `.claude/skills/`.** `/code-review` is a Claude Code CLI built-in, not a skill of this repository; offering it here put a non-repository command ahead of the repository's own reviewers.
+
+Use `AskUserQuestion`:
+
+- Question: 「PR を作成/更新しました。レビューを実行しますか？（それぞれの見込みを添えて提示すること）」
+- Options:
+  - 「`/impl-review`（変更そのもの — 指摘を PR へインラインで投稿できる）」
+  - 「`/test-review`（テスト — 分岐 × 意味の網羅とシンボル網羅）」
+  - 「ultrareview を案内」 — cloud multi-agent review; **user-triggered and billed**, so the skill cannot launch it — only surface `/code-review ultra <PR#>` for the user to run
   - 「レビューしない」
 
-Scale the default recommendation to what changed, using the **Depth by change type** guidance in Step 1 (behavior-affecting code → recommend by default; docs / tooling-dominant → note the lower ROI). The user's choice always wins.
+**Estimate each one's return before asking**, the same way Step 1 does — which layers the change touched, whether the tests moved, what already ran in this session. Handing over unpriced checkboxes is the failure the Review Phase Protocol names. Scale the default recommendation with the **Depth by change type** guidance in Step 1 (behavior-affecting code → recommend by default; docs / tooling-dominant → note the lower ROI). The user's choice always wins.
+
+**`/settle-comments` is not on this list either**, for the reason Step 1 gives: it is not a review whose return gets estimated, it is the last step of implementing and runs unconditionally. But **do not let it pass silently** — if it has not run for this change, say so and send the user back to it. The change is then unfinished rather than unreviewed, and no amount of reviewing here substitutes for it.
+
+**Report which reviews already ran, and on what scope.** A review answered before the push covered the commits that existed then; commits added in response to it are new, unaudited work (`AGENTS.md` *レビューへの応答は、それ自体が未レビューである*). State the unreviewed range — `<そのレビューの最後の commit>...HEAD` — so the second ask is priced against what is actually unexamined.
 
 ## Constraints
 
