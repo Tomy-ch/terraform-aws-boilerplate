@@ -30,6 +30,11 @@ import (
 const (
 	miseFile = "mise.toml"
 	filePerm = 0o644
+
+	// terraformTool / awsCLITool は mise.toml の [tools] のキーであり、`.makefiles/host-tools.mk`
+	// が焼き込む名前でもある。同じ文字列が宣言側と写し側の両方の錨になる。
+	terraformTool = "aqua:hashicorp/terraform"
+	awsCLITool    = "aqua:aws/aws-cli"
 )
 
 var (
@@ -41,8 +46,9 @@ var (
 var (
 	// miseSectionRe は `[tools]` のような table の見出し。
 	miseSectionRe = regexp.MustCompile(`^\[([^\]]+)\]`)
-	// miseKeyRe は `go = "1.27.1"` のような代入。
-	miseKeyRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*"([^"]+)"`)
+	// miseKeyRe は `go = "1.27.1"` と `"aqua:aws/aws-cli" = "2.36.40"` の両方を捉える代入。
+	// backend 付きのキーは `:` と `/` を含むため TOML では引用符が要る（mise.toml 冒頭の注記）。
+	miseKeyRe = regexp.MustCompile(`^"?([A-Za-z_][A-Za-z0-9_:/.@-]*)"?\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )\d+(?:\.\d+){0,2}$`)
 )
@@ -56,10 +62,21 @@ func dockerFromRe(image string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^[^#\n]*?(FROM\s+` + regexp.QuoteMeta(image) + `:)\d+(?:\.\d+){0,2}(-[\w.-]+)`)
 }
 
-// declared は mise.toml が宣言する版。
+// miseInstallRe は `.makefiles/` が焼き込んだ `mise install "<名前>@<版>"` を捉える正規表現を
+// 返します。**閉じ引用符を第2群に取るのは、版を行末に置かないためである** —— 行末が錨だと、
+// 末尾の空白や継続行の有無で一致が変わる。
+//
+// `[^#\n]*?` でコメント行を除く。`\n` を落とすと行をまたいで広がる。**前置きは第1群の中に入れる**
+// —— レシピ行は `\t@` で始まり、群の外で消費すると置換でその2文字ごと消える。
+func miseInstallRe(tool string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^([^#\n]*?mise install "` + regexp.QuoteMeta(tool) + `@)\d+(?:\.\d+){0,2}(")`)
+}
+
 type declared struct {
-	Go   string
-	Node string
+	Go        string
+	Node      string
+	Terraform string
+	AWSCLI    string
 }
 
 // rule は、1つのファイルの中で正規表現に一致した箇所を1つの版へ揃える単位。
@@ -118,7 +135,8 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 
 	names := planNames(changes)
 	if len(names) == 0 {
-		fmt.Fprintf(out, "✅ versions: go %s / node %s の写しが宣言と一致しています\n", v.Go, v.Node)
+		fmt.Fprintf(out, "✅ versions: go %s / node %s / terraform %s / aws-cli %s の写しが宣言と一致しています\n",
+			v.Go, v.Node, v.Terraform, v.AWSCLI)
 
 		return nil
 	}
@@ -140,12 +158,17 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 
 // rules は、宣言から写しへの対応を返します。**ここが対応表の唯一の在処である。**
 func rules(v declared) []rule {
-	const toolsDockerfile = "docker/tools/Dockerfile"
+	const (
+		toolsDockerfile = "docker/tools/Dockerfile"
+		hostToolsMk     = ".makefiles/host-tools.mk"
+	)
 
 	return []rule{
 		{label: "golang イメージ", file: toolsDockerfile, re: dockerFromRe("golang"), version: v.Go, count: 2},
 		{label: "node イメージ", file: toolsDockerfile, re: dockerFromRe("node"), version: v.Node, count: 1},
 		{label: "go ディレクティブ", file: "scripts/go.mod", re: goDirectiveRe, version: v.Go, count: 1},
+		{label: "terraform の導入", file: hostToolsMk, re: miseInstallRe(terraformTool), version: v.Terraform, count: 1},
+		{label: "AWS CLI の導入", file: hostToolsMk, re: miseInstallRe(awsCLITool), version: v.AWSCLI, count: 1},
 	}
 }
 
@@ -209,7 +232,7 @@ func applyRule(r rule, content string) (string, error) {
 }
 
 // parseMise は mise.toml の [tools] が宣言する版を返します。**用途特化の最小の読み取りで、
-// TOML の仕様には準拠しない** —— 見るのは `[tools]` 直下の `go` と `node` だけである。
+// TOML の仕様には準拠しない** —— 見るのは `[tools]` 直下の、rules が写し先を持つキーだけである。
 func parseMise(path string) (declared, error) {
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -238,17 +261,28 @@ func parseMise(path string) (declared, error) {
 				v.Go = m[2]
 			case "node":
 				v.Node = m[2]
+			case terraformTool:
+				v.Terraform = m[2]
+			case awsCLITool:
+				v.AWSCLI = m[2]
 			}
 		}
 	}
 
 	// **宣言が欠けていたらそこで止める。** 空のまま進むと、写しを空の版で書き潰す。
 	var missing []string
-	if v.Go == "" {
-		missing = append(missing, "go")
-	}
-	if v.Node == "" {
-		missing = append(missing, "node")
+	for _, d := range []struct {
+		name  string
+		value string
+	}{
+		{"go", v.Go},
+		{"node", v.Node},
+		{terraformTool, v.Terraform},
+		{awsCLITool, v.AWSCLI},
+	} {
+		if d.value == "" {
+			missing = append(missing, d.name)
+		}
 	}
 	if len(missing) > 0 {
 		return declared{}, xerrors.Wrap(errShape, miseFile+" の [tools] に "+strings.Join(missing, ", ")+" がありません")

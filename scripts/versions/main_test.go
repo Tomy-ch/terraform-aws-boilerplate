@@ -19,6 +19,17 @@ go = "should-be-ignored"
 [tools]
 go = "1.27.1"
 node = "24.21.0"
+"aqua:hashicorp/terraform" = "1.16.2"
+"aqua:aws/aws-cli" = "2.36.40"
+`
+
+// soundHostTools は、焼き込んだ版を両方持つレシピ。**行頭の `\t@` を含める** —— 置換で前置きが
+// 落ちる欠陥は、前置きの無い入力では現れない。
+const soundHostTools = `host-tools-install:
+	@command -v mise >/dev/null 2>&1 || exit 1
+	@mise install "aqua:hashicorp/terraform@1.16.2"
+	@mise install "aqua:aws/aws-cli@2.36.40"
+	@mise reshim
 `
 
 // soundDockerfile は、写しを両方持つ Dockerfile。
@@ -46,8 +57,41 @@ func newRepo(t *testing.T, mise, dockerfile, gomod string) string {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "docker", "tools", "Dockerfile"), []byte(dockerfile), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "go.mod"), []byte(gomod), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".makefiles"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".makefiles", "host-tools.mk"), []byte(soundHostTools), 0o600))
 
 	return root
+}
+
+// miseWithout は soundMise から [tools] の宣言を1つだけ落とした内容を返します。
+//
+// **他の宣言は残す。** 全部欠けた入力では、テストの名前が指す宣言の欠落を検出したのか、
+// 別の宣言の欠落を検出したのかを区別できない。落とす対象が実在したことも確かめる ——
+// 綴りを間違えると、何も落とさない入力で「エラーになった」を確認してしまう。
+func miseWithout(t *testing.T, key string) string {
+	t.Helper()
+
+	var kept []string
+	section := ""
+	dropped := false
+
+	for _, line := range strings.Split(soundMise, "\n") {
+		if m := miseSectionRe.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+			section = m[1]
+		}
+		if section == "tools" {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, key+" =") || strings.HasPrefix(trimmed, `"`+key+`" =`) {
+				dropped = true
+
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	require.True(t, dropped, "落とす対象 %q が soundMise の [tools] に無い", key)
+
+	return strings.Join(kept, "\n")
 }
 
 func readAt(t *testing.T, root string, parts ...string) string {
@@ -146,12 +190,25 @@ func Test_parseMise(t *testing.T) {
 			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
 			got, err := parseMise(filepath.Join(root, miseFile))
 			require.NoError(t, err)
-			assert.Equal(t, declared{Go: "1.27.1", Node: "24.21.0"}, got)
+			assert.Equal(t, declared{
+				Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40",
+			}, got)
+		})
+
+		// backend 付きのキーは `:` と `/` を含むため TOML では引用符が要る。引用符を剥がせないと
+		// 宣言が在るのに「無い」と報告する。
+		t.Run("引用符付きキーを読む", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+			got, err := parseMise(filepath.Join(root, miseFile))
+			require.NoError(t, err)
+			assert.Equal(t, "1.16.2", got.Terraform)
+			assert.Equal(t, "2.36.40", got.AWSCLI)
 		})
 
 		t.Run("コメントを読み飛ばす", func(t *testing.T) {
 			t.Parallel()
-			src := "[tools]\n# go = \"0.0.0\"\ngo = \"1.27.1\"\nnode = \"24.21.0\"\n"
+			src := strings.Replace(soundMise, "go = \"1.27.1\"", "# go = \"0.0.0\"\ngo = \"1.27.1\"", 1)
 			root := newRepo(t, src, soundDockerfile, soundGoMod)
 			got, err := parseMise(filepath.Join(root, miseFile))
 			require.NoError(t, err)
@@ -162,16 +219,24 @@ func Test_parseMise(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 空のまま進むと、写しを空の版で書き潰す。
+		// 空のまま進むと、写しを空の版で書き潰す。**1つだけ落とす** —— 他も欠けた入力だと、
+		// 名前が指す宣言の欠落を検出したのかが分からない。
+		for _, key := range []string{"go", "node", terraformTool, awsCLITool} {
+			t.Run(key+" が無ければエラーにする", func(t *testing.T) {
+				t.Parallel()
+				root := newRepo(t, miseWithout(t, key), soundDockerfile, soundGoMod)
+				_, err := parseMise(filepath.Join(root, miseFile))
+				require.ErrorIs(t, err, errShape)
+				assert.Contains(t, err.Error(), key, "欠落した宣言の名前を報告していない")
+			})
+		}
+
 		for name, src := range map[string]string{
-			"go が無い":    "[tools]\nnode = \"24.21.0\"\n",
-			"node が無い":  "[tools]\ngo = \"1.27.1\"\n",
 			"tools が無い": "[env]\ngo = \"1.27.1\"\n",
 			"空":         "",
-			// TOML は引用符付きキーもインラインテーブルも許す。この読み取り器はどちらも
-			// 解釈しないので、黙って「宣言が無い」側へ落ちることを固定する。
-			"go が引用符付きキー":   "[tools]\n\"go\" = \"1.27.1\"\nnode = \"24.21.0\"\n",
-			"go がインラインテーブル": "[tools]\ngo = { version = \"1.27.1\" }\nnode = \"24.21.0\"\n",
+			// TOML はインラインテーブルも許すが、この読み取り器は解釈しない。黙って
+			// 「宣言が無い」側へ落ちることを固定する。
+			"go がインラインテーブル": strings.Replace(soundMise, "go = \"1.27.1\"", "go = { version = \"1.27.1\" }", 1),
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
@@ -273,6 +338,51 @@ func Test_dockerFromRe(t *testing.T) {
 	})
 }
 
+func Test_miseInstallRe(t *testing.T) {
+	t.Parallel()
+
+	re := miseInstallRe(terraformTool)
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// **前置きを群の外で消費すると、置換でレシピ行の `\t@` ごと消える。** 一致件数は
+		// 変わらないので件数のガードは通り抜け、壊れた Makefile が書き出される。
+		t.Run("レシピ行の前置きを保ったまま版だけ差し替える", func(t *testing.T) {
+			t.Parallel()
+			r := rule{label: "terraform", file: "host-tools.mk", re: re, version: "1.16.2", count: 1}
+			got, err := applyRule(r, "\t@mise install \"aqua:hashicorp/terraform@1.0.0\"\n")
+			require.NoError(t, err)
+			assert.Equal(t, "\t@mise install \"aqua:hashicorp/terraform@1.16.2\"\n", got)
+		})
+
+		t.Run("コメント行を対象にしない", func(t *testing.T) {
+			t.Parallel()
+			src := "# @mise install \"aqua:hashicorp/terraform@9.9.9\"\n\t@mise install \"aqua:hashicorp/terraform@1.0.0\"\n"
+			assert.Len(t, re.FindAllString(src, -1), 1)
+		})
+
+		t.Run("別の道具を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, re.FindAllString("\t@mise install \"aqua:aws/aws-cli@2.36.40\"\n", -1))
+		})
+
+		// 版は `\d+(?:\.\d+){0,2}` なので1〜3桁を許す。3桁だけを試していると、桁数を絞る
+		// 方向の変更が起きても気づけない。
+		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
+			t.Parallel()
+			src := "\t@mise install \"aqua:hashicorp/terraform@1\"\n\t@mise install \"aqua:hashicorp/terraform@1.16\"\n"
+			assert.Len(t, re.FindAllString(src, -1), 2)
+		})
+
+		// 閉じ引用符が錨である。無い行を掴むと、版の終わりを決められないまま置換する。
+		t.Run("閉じ引用符の無い行を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, re.FindAllString("\t@mise install aqua:hashicorp/terraform@1.16.2\n", -1))
+		})
+	})
+}
+
 func Test_applyAll(t *testing.T) {
 	t.Parallel()
 
@@ -363,10 +473,27 @@ func Test_rules(t *testing.T) {
 			assert.NotEmpty(t, rules(declared{Go: "1", Node: "2"}))
 		})
 
+		// plan が守るのは「表が空」までである。**表から1行消えても、残りが一致していれば
+		// 緑が返る** —— 写しが1つ検査されなくなったことを、誰も報せない。表そのものを固定する。
+		t.Run("写し先をすべて覆う", func(t *testing.T) {
+			t.Parallel()
+
+			files := map[string]int{}
+			for _, r := range rules(declared{Go: "1", Node: "2", Terraform: "3", AWSCLI: "4"}) {
+				files[r.file]++
+			}
+			assert.Equal(t, map[string]int{
+				"docker/tools/Dockerfile":  2,
+				"scripts/go.mod":           1,
+				".makefiles/host-tools.mk": 2,
+			}, files)
+		})
+
 		t.Run("宣言の版をそのまま持つ", func(t *testing.T) {
 			t.Parallel()
-			for _, r := range rules(declared{Go: "1.27.1", Node: "24.21.0"}) {
-				assert.Contains(t, []string{"1.27.1", "24.21.0"}, r.version, r.label)
+			v := declared{Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40"}
+			for _, r := range rules(v) {
+				assert.Contains(t, []string{"1.27.1", "24.21.0", "1.16.2", "2.36.40"}, r.version, r.label)
 				assert.Positive(t, r.count, r.label)
 			}
 		})
