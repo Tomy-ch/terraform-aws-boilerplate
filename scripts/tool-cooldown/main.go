@@ -98,6 +98,8 @@ var (
 	errBypassInvalidLine = xerrors.New("invalid bypass line")
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
 	errBypassDuplicateKey = xerrors.New("duplicate bypass key")
+	// errNoDeclarations は、宣言ファイルから道具を1件も読めなかった場合のエラー。
+	errNoDeclarations = xerrors.New("no tool declarations found")
 
 	// bypassLineRe は `"key@version" = { expires = ..., issue = ..., reason = "..." }` を読む。
 	bypassLineRe = regexp.MustCompile(
@@ -183,6 +185,17 @@ func run(args []string, client *http.Client, now time.Time) error {
 	declared, err := parseDeclarations(decls)
 	if err != nil {
 		return xerrors.Wrap(err, "❌ 宣言ファイルの解析")
+	}
+
+	// **検査対象が0件なら成功で終わらない**（ADR-0702 決定13）。宣言が1件も読めない状態は、
+	// 供給網の窓を全件について測らなかったということである。「ゲートが外れた」と「合格した」を
+	// 区別できないまま緑を返すと、宣言の書式が変わった日にこの検査は黙って無効になる。
+	//
+	// 見るのは差分（gate の targets）ではなく宣言の全体である。差分が0件なのは正常な状態だが、
+	// 宣言そのものが0件なのは読み取りが壊れた状態である。
+	if len(declared) == 0 {
+		return xerrors.Wrap(errNoDeclarations,
+			"❌ "+strings.Join(paths, ", ")+" から道具の宣言を1件も読めませんでした（[tools] の見出しと書式を確認してください）")
 	}
 
 	if sub == "outdated" {
@@ -272,10 +285,8 @@ func parseArgs(args []string) (string, options, error) {
 	return sub, options{base: *base, summaryOut: *summaryOut, github: *github}, nil
 }
 
-// parseTools は `[tools]` セクションの宣言だけを読む。
-//
-// **読み取りそのものは misetoml が持つ。** 同じ宣言を読む実装をリポジトリに2つ置くと、一方だけが
-// 読める宣言が生まれ、こちらは黙ってその道具を窓の検査から外す —— ゲートは緑のままである。
+// parseTools は `[tools]` セクションの宣言だけを読む。読み取りそのものは misetoml が持ち、
+// 実装を重複させてはいけない理由はそのパッケージの doc コメントが持つ。
 func parseTools(content []byte) ([]tool, error) {
 	entries, err := misetoml.Parse(content)
 	if err != nil {
@@ -696,7 +707,7 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 	//
 	// **aqua 本体はこれに加えて sprig の関数群を登録するが、ここは trimV だけを解する。**
 	// `trimPrefix` 等を使う定義（`golang/go` など）は解釈できないものとして扱われ、gate は
-	// 素通しではなく失敗の側へ倒れる。必要になった時点で、依存を足すかどうかを決める。
+	// 素通しではなく失敗の側へ倒れる。
 	tmpl, err := template.New("url").
 		Funcs(template.FuncMap{"trimV": func(v string) string { return strings.TrimPrefix(v, "v") }}).
 		Parse(urlTemplate)
@@ -739,7 +750,10 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 
 // hostIsLiteral は、テンプレートのホスト部分に展開の入る余地が無いことを見る。ホストが
 // 補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れてしまう。
-// **見るのはそれだけである** —— スキームと userinfo は、展開したあとに呼び出し側が検める。
+//
+// ホストの終わりを探すのに `https://` という既知の接頭辞を前提にするので、**展開を含む
+// テンプレートは、接頭辞が一致しない時点でここでも false になる。** 展開を含まない形の
+// スキームと userinfo はここでは検めず、最終の判定は展開後に呼び出し側が行う。
 func hostIsLiteral(urlTemplate string) bool {
 	action := strings.Index(urlTemplate, "{{")
 	if action < 0 {
@@ -796,8 +810,8 @@ func lastModified(ctx context.Context, client *http.Client, url string) (time.Ti
 	return at.UTC(), nil
 }
 
-// goModuleAt は module proxy の .info を返す。mise の go backend はパッケージパスを受けるが
-// proxy が知るのはモジュールパスなので、解決するまで末尾要素を落としながら遡る。
+// goModuleAt は module proxy の .info を返す。パッケージパスからモジュールパスへ遡る理由は
+// goModuleVersions の doc コメントが持つ。
 func goModuleAt(ctx context.Context, client *http.Client, pkg, version string) (time.Time, error) {
 	var body struct {
 		//nolint:tagliatelle // module proxy の応答フィールド名

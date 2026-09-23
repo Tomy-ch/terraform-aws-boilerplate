@@ -33,7 +33,7 @@ var (
 )
 
 var (
-	// sectionRe は TOML の table 見出し。`[tools.foo]` は `tools` と別の節として扱われる。
+	// sectionRe は TOML の table 見出し。名前は sectionName が正規化する。
 	sectionRe = regexp.MustCompile(`^\[([^\]]+)\]\s*(?:#.*)?$`)
 	// valueRe は `key = "版"`。キーは裸でも引用符付きでもよい。
 	valueRe = regexp.MustCompile(`^(?:"([^"]+)"|(` + BareKeyPattern + `))\s*=\s*"([^"]+)"\s*(?:#.*)?$`)
@@ -57,8 +57,7 @@ type Entry struct {
 // 中で解釈できない行に当たったらエラーを返します —— **読み飛ばして先へ進みません。**
 //
 // 受け付ける形は `key = "版"` と `key = { version = "版", ... }` の2つです。複数版を並べる配列
-// （`go = ["1.27.1", "1.26.0"]`）は受け付けません。どれが有効かを黙って選ぶより、呼び手に
-// 気づかせる方が安全だからです。
+// （`go = ["1.27.1", "1.26.0"]`）は受け付けません（理由は scripts/README.md の lib/misetoml）。
 func Parse(content []byte) ([]Entry, error) {
 	var entries []Entry
 	seen := make(map[string]int)
@@ -71,7 +70,7 @@ func Parse(content []byte) ([]Entry, error) {
 			continue
 		}
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
-			section = m[1]
+			section = sectionName(m[1])
 
 			continue
 		}
@@ -121,6 +120,25 @@ func Lookup(entries []Entry, key string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// sectionName は table 見出しの名前を正規化します。
+//
+// **TOML は角括弧の内側の空白を許し、引用符付きの table 名も許す。** `[ tools ]` も `["tools"]`
+// も `[tools]` と同じ table である。正規化しないと、有効な別表記が「`[tools]` ではない節」に
+// なり、**その中身が丸ごと読み飛ばされたうえでエラーも出ない** —— 解釈できない行をエラーに
+// する本パッケージの規律が、節見出しの表記ゆれには及ばないまま抜ける。
+//
+// `[tools.foo]` のような dotted key は正規化しても `tools` にはならず、別の節のままである。
+func sectionName(raw string) string {
+	name := strings.TrimSpace(raw)
+	for _, quote := range []string{`"`, `'`} {
+		if len(name) >= 2 && strings.HasPrefix(name, quote) && strings.HasSuffix(name, quote) {
+			return name[1 : len(name)-1]
+		}
+	}
+
+	return name
 }
 
 // parseLine は `[tools]` の1行を key と版へ割ります。どちらの形にも当たらなければ ok が false。

@@ -939,11 +939,8 @@ func Test_addedFrom(t *testing.T) {
 	})
 }
 
-// stubMise は PATH の先頭へ偽の mise を置きます。
-//
-// 実物を呼ぶと、テストがこのマシンに mise が入っているかどうかで通ったり落ちたりするようになり、
-// ツールについてのテストであることをやめます。境界（外部コマンドの起動）で差し替えることで、
-// **ツールが組み立てた引数列そのもの**を検査対象にできます。
+// stubMise は PATH の先頭へ偽の mise を置きます。境界で差し替える理由は scripts/README.md の
+// Test Strategy 節が持ちます。
 func stubMise(t *testing.T, script string) {
 	t.Helper()
 
@@ -1606,7 +1603,6 @@ func Test_renderAquaURL(t *testing.T) {
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
-			// path 以外へ版を置いた形は、サーバがそれを無視すれば固定 URL と同じものを指す。
 			for name, tmpl := range map[string]string{
 				"版がどこにも無い":   "https://cdn.example.com/installer.sh",
 				"版がクエリにだけ在る": "https://cdn.example.com/latest/installer.sh?v={{.Version}}",
@@ -2207,6 +2203,19 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out, "aqua:owner/repo@1.2.3（aqua:owner/repo）は公開 1 日で cooldown 14 日")
 		})
 
+		// `[ tools ]` は TOML として `[tools]` と等価であり、正規化し損なうと見出しの空白1つで
+		// 供給網の検査が全面的に効かなくなる。判定は misetoml が持ち、ここが固定するのは
+		// 検査の対象として実際に届くことである。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("見出しの内側に空白がある宣言も検査の対象にする", func(t *testing.T) {
+			useMiseWorkTree(t, "[ tools ]\n\"aqua:owner/repo\" = \"1.2.3\"\n")
+
+			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now)
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "aqua:owner/repo@1.2.3")
+		})
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無いツールでも窓を越えていれば通す", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)
@@ -2257,6 +2266,22 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("異常系", func(t *testing.T) {
+		// 宣言0件を成功で終わらせない理由は run のガード注記が持つ。`[tools]` 節が無い場合と
+		// 空の場合の両方で、そのガードが働くことを固定する。
+		for name, content := range map[string]string{
+			"[tools] 節が無い": "[settings]\nfoo = \"1\"\n",
+			"[tools] 節が空":  "[tools]\n",
+		} {
+			//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+			t.Run(name+"なら audit を成功で終わらせない", func(t *testing.T) {
+				useMiseWorkTree(t, content)
+
+				_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+
+				require.ErrorIs(t, err, errNoDeclarations)
+			})
+		}
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無い窓内のツールを失敗にする", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)

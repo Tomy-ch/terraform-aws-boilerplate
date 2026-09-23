@@ -46,8 +46,6 @@ func TestParse(t *testing.T) {
 		t.Run("行末のコメントを値に混ぜない", func(t *testing.T) {
 			t.Parallel()
 
-			// 旧 tool-cooldown の正規表現は行末を `\s*$` で閉じていたため、この行は
-			// **一致せず黙って読み飛ばされていた** —— その道具が検査の対象から外れる。
 			got, err := misetoml.Parse([]byte("[tools]\ngo = \"1.27.1\" # 実装言語\n"))
 			require.NoError(t, err)
 			assert.Equal(t, []misetoml.Entry{{Key: "go", Version: "1.27.1"}}, got)
@@ -56,7 +54,6 @@ func TestParse(t *testing.T) {
 		t.Run("[tools] の外は読まない", func(t *testing.T) {
 			t.Parallel()
 
-			// `[settings]` や `[env]` が持つ版らしき値を道具として拾わない。
 			got, err := misetoml.Parse([]byte("[settings]\n" +
 				"pipx_uvx = \"1.2.3\"\n" +
 				"[tools]\n" +
@@ -94,6 +91,33 @@ func TestParse(t *testing.T) {
 			assert.Equal(t, []misetoml.Entry{{Key: "go", Version: "1.27.1"}}, got)
 		})
 
+		// 正規化しない実装では、下の表記はいずれも `[tools]` と別の節になり、供給網の
+		// 検査が対象を1件も持たないまま緑を返す（理由は sectionName の宣言）。
+		for name, heading := range map[string]string{
+			"内側の両端に空白":  "[ tools ]",
+			"内側の右に空白":   "[tools ]",
+			"内側の左に空白":   "[ tools]",
+			"二重引用符付き":   `["tools"]`,
+			"単一引用符付き":   `['tools']`,
+			"引用符と空白の両方": `[ "tools" ]`,
+		} {
+			t.Run(name+"の見出しも [tools] として読む", func(t *testing.T) {
+				t.Parallel()
+
+				got, err := misetoml.Parse([]byte(heading + "\ngo = \"1.27.1\"\n"))
+				require.NoError(t, err)
+				assert.Equal(t, []misetoml.Entry{{Key: "go", Version: "1.27.1"}}, got)
+			})
+		}
+
+		t.Run("正規化しても [tools.foo] は [tools] にならない", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := misetoml.Parse([]byte("[ tools.node ]\nversion = \"24.21.0\"\n"))
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+
 		t.Run("[tools] が無ければ空を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -106,8 +130,7 @@ func TestParse(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// **このケース群が本パッケージの存在理由である。** どれも以前は黙って読み飛ばされ、
-		// その道具が検査の対象から外れたまま、ゲートは緑を返していた（ADR-0702 決定14）。
+		// **読み飛ばすと、その道具は検査の対象から外れたままゲートが緑を返す**（ADR-0702 決定14）。
 		for _, tt := range []struct {
 			name string
 			line string
@@ -244,7 +267,6 @@ func TestBareKeyPattern(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// TOML 仕様が裸キーに許すのは ASCII 英数字と `_` `-` だけである。
 		for _, key := range []string{"go", "node", "golangci-lint", "a_b", "0start", "A1"} {
 			assert.True(t, re.MatchString(key), key)
 		}
@@ -253,8 +275,7 @@ func TestBareKeyPattern(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// これらは引用符を要する。裸で通すと、引用符付きでしか書けない宣言を
-		// 裸キーとして読んでしまう。
+		// 裸で通すと、引用符付きでしか書けない宣言を裸キーとして読んでしまう。
 		for _, key := range []string{"aqua:aws/aws-cli", "npm:markdownlint-cli2", "foo.bar", "a b", ""} {
 			assert.False(t, re.MatchString(key), key)
 		}
