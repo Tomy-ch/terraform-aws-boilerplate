@@ -43,14 +43,23 @@ var (
 	errShape = xerrors.New("版の宣言または写しの形が想定と異なります")
 )
 
+// versionPattern は版の桁の並び。**1〜3桁を許す** —— `go = "1"` も `= "1.27"` も
+// `= "1.27.1"` も宣言として現れる。捕獲群を持たないので、これを使う正規表現の群番号は
+// この式の有無で動かない。
+const versionPattern = `\d+(?:\.\d+){0,2}`
+
 var (
 	// miseSectionRe は `[tools]` のような table の見出し。
 	miseSectionRe = regexp.MustCompile(`^\[([^\]]+)\]`)
 	// miseKeyRe は `go = "1.27.1"` と `"aqua:aws/aws-cli" = "2.36.40"` の両方を捉える代入。
 	// backend 付きのキーは `:` と `/` を含むため TOML では引用符が要る（mise.toml 冒頭の注記）。
-	miseKeyRe = regexp.MustCompile(`^"?([A-Za-z_][A-Za-z0-9_:/.@-]*)"?\s*=\s*"([^"]+)"`)
+	//
+	// **引用符は対で要求する。** 前後を独立した `"?` にすると `"go = "1.27.1"` のような壊れた行も
+	// 読めてしまい、手編集で壊れた宣言から拾った値のまま写しを書き換える。第1群が引用符付きの
+	// キー、第2群が裸のキーで、どちらか一方だけが埋まる。
+	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_-]*))\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
-	goDirectiveRe = regexp.MustCompile(`(?m)^(go )\d+(?:\.\d+){0,2}$`)
+	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
 )
 
 // dockerFromRe は Dockerfile の `FROM <image>:<version><suffix>` を捉える正規表現を返します。
@@ -59,7 +68,7 @@ var (
 // マッチが行をまたいで広がり、間の行ごと置換で消える。件数は変わらないので、件数のガードも
 // 通り抜ける。
 func dockerFromRe(image string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^[^#\n]*?(FROM\s+` + regexp.QuoteMeta(image) + `:)\d+(?:\.\d+){0,2}(-[\w.-]+)`)
+	return regexp.MustCompile(`(?m)^[^#\n]*?(FROM\s+` + regexp.QuoteMeta(image) + `:)` + versionPattern + `(-[\w.-]+)`)
 }
 
 // miseInstallRe は `.makefiles/` が焼き込んだ `mise install "<名前>@<版>"` を捉える正規表現を
@@ -69,7 +78,7 @@ func dockerFromRe(image string) *regexp.Regexp {
 // `[^#\n]*?` でコメント行を除く。`\n` を落とすと行をまたいで広がる。**前置きは第1群の中に入れる**
 // —— レシピ行は `\t@` で始まり、群の外で消費すると置換でその2文字ごと消える。
 func miseInstallRe(tool string) *regexp.Regexp {
-	return regexp.MustCompile(`(?m)^([^#\n]*?mise install "` + regexp.QuoteMeta(tool) + `@)\d+(?:\.\d+){0,2}(")`)
+	return regexp.MustCompile(`(?m)^([^#\n]*?mise install "` + regexp.QuoteMeta(tool) + `@)` + versionPattern + `(")`)
 }
 
 type declared struct {
@@ -256,15 +265,20 @@ func parseMise(path string) (declared, error) {
 			continue
 		}
 		if m := miseKeyRe.FindStringSubmatch(line); m != nil {
-			switch m[1] {
+			key := m[1]
+			if key == "" {
+				key = m[2]
+			}
+
+			switch key {
 			case "go":
-				v.Go = m[2]
+				v.Go = m[3]
 			case "node":
-				v.Node = m[2]
+				v.Node = m[3]
 			case terraformTool:
-				v.Terraform = m[2]
+				v.Terraform = m[3]
 			case awsCLITool:
-				v.AWSCLI = m[2]
+				v.AWSCLI = m[3]
 			}
 		}
 	}

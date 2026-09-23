@@ -39,6 +39,11 @@ FROM golang:1.27.1-bookworm@sha256:aaa AS tools
 FROM node:24.21.0-alpine@sha256:bbb AS node_tools
 `
 
+// driftedHostTools は、terraform の版だけが宣言からずれたレシピ。**この写し先を起点にする
+// ケースが無いと、apply が host-tools.mk へ実際に書き込む経路も、check がこのファイル名を
+// 報告に載せる経路も、一度も実行されない。**
+var driftedHostTools = strings.ReplaceAll(soundHostTools, "terraform@1.16.2", "terraform@1.0.0")
+
 const soundGoMod = `module example
 
 go 1.27.1
@@ -48,8 +53,17 @@ require ()
 
 // newRepo は、宣言と写しを持つ一時リポジトリの root を返します
 // （フィクスチャ方針は scripts/README.md の Test Strategy 節）。
-func newRepo(t *testing.T, mise, dockerfile, gomod string) string {
+// hostTools は任意で、省略すると soundHostTools を書きます。**位置引数を増やさないのは、
+// 4本の文字列が並ぶ呼び出しで取り違えても型が通るためです。**
+func newRepo(t *testing.T, mise, dockerfile, gomod string, hostTools ...string) string {
 	t.Helper()
+	require.LessOrEqual(t, len(hostTools), 1, "host-tools.mk の内容は1つだけ渡せます")
+
+	mk := soundHostTools
+	if len(hostTools) == 1 {
+		mk = hostTools[0]
+	}
+
 	root := t.TempDir()
 
 	require.NoError(t, os.WriteFile(filepath.Join(root, miseFile), []byte(mise), 0o600))
@@ -58,7 +72,7 @@ func newRepo(t *testing.T, mise, dockerfile, gomod string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "go.mod"), []byte(gomod), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".makefiles"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, ".makefiles", "host-tools.mk"), []byte(soundHostTools), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".makefiles", "host-tools.mk"), []byte(mk), 0o600))
 
 	return root
 }
@@ -131,6 +145,37 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out.String(), "Dockerfile")
 		})
 
+		// 起点にする理由は driftedHostTools の宣言が持つ。
+		t.Run("check は host-tools.mk のずれも名前を挙げて報告する", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			assert.Equal(t, driftedHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
+			assert.Contains(t, out.String(), "host-tools.mk")
+		})
+
+		t.Run("apply は host-tools.mk の版も揃える", func(t *testing.T) {
+			t.Parallel()
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, driftedHostTools)
+			var out bytes.Buffer
+
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
+		})
+
+		t.Run("apply は複数のファイルを同時に揃える", func(t *testing.T) {
+			t.Parallel()
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			root := newRepo(t, soundMise, drifted, soundGoMod, driftedHostTools)
+			var out bytes.Buffer
+
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
+			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
+		})
+
 		t.Run("apply の直後は check が通る", func(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, soundMise, strings.ReplaceAll(soundDockerfile, "1.27.1", "1.26.0"), soundGoMod)
@@ -145,6 +190,8 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"check"}, newRepo(t, soundMise, soundDockerfile, soundGoMod), &out))
 			assert.Contains(t, out.String(), "1.27.1")
+			assert.Contains(t, out.String(), "1.16.2")
+			assert.Contains(t, out.String(), "2.36.40")
 			assert.Contains(t, out.String(), "24.21.0")
 		})
 	})
@@ -175,6 +222,130 @@ func Test_run(t *testing.T) {
 			require.Error(t, run([]string{"apply"}, root, &out))
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
+	})
+}
+
+func Test_goDirectiveRe(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
+		t.Run("1〜3桁の版に一致する", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, goDirectiveRe.FindAllString("go 1\ngo 1.27\ngo 1.27.1\n", -1), 3)
+		})
+
+		// **行末に錨を打つ。** 外すと `go 1.27.1 # comment` の版だけを差し替えて注記を残すなど、
+		// go.mod として壊れた行を作りながら件数のガードは通る。
+		t.Run("行末に余りがある行を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, goDirectiveRe.FindAllString("go 1.27.1 \n", -1))
+			assert.Empty(t, goDirectiveRe.FindAllString("go 1.27.1.2\n", -1))
+		})
+
+		// go.mod は toolchain も持つ。掴むと go ディレクティブの写しが2件になり、件数が合わなくなる。
+		t.Run("toolchain 行を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, goDirectiveRe.FindAllString("toolchain go1.27.1\n", -1))
+		})
+
+		t.Run("行頭でない go を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, goDirectiveRe.FindAllString("\tgo 1.27.1\n", -1))
+		})
+	})
+}
+
+func Test_miseSectionRe(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct{ line, section string }{
+			"tools の見出し": {"[tools]", "tools"},
+			"env の見出し":   {"[env]", "env"},
+			// ネストした table は "tools" と一致しないので、parseMise が読み飛ばす。
+			// ここが `[tools.go]` から "tools" を返すようになると、別の table のキーを拾う。
+			"ネストした見出し":     {"[tools.go]", "tools.go"},
+			"見出しの後ろに注記がある": {"[tools] # 注記", "tools"},
+		} {
+			t.Run(name+"から名前を返す", func(t *testing.T) {
+				t.Parallel()
+
+				m := miseSectionRe.FindStringSubmatch(tc.line)
+				require.NotNil(t, m, "一致しない")
+				assert.Equal(t, tc.section, m[1])
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 見出しでない行を見出しと取り違えると、section が変わって別の table のキーを読む。
+		for name, line := range map[string]string{
+			"開き括弧が無い": "tools]",
+			"閉じ括弧が無い": "[tools",
+			"名前が空":    "[]",
+			"代入行":     `go = "1.27.1"`,
+		} {
+			t.Run(name+"は見出しにしない", func(t *testing.T) {
+				t.Parallel()
+				assert.Nil(t, miseSectionRe.FindStringSubmatch(line))
+			})
+		}
+	})
+}
+
+func Test_miseKeyRe(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct{ line, key, version string }{
+			"裸のキー":     {`go = "1.27.1"`, "go", "1.27.1"},
+			"引用符付きのキー": {`"aqua:aws/aws-cli" = "2.36.40"`, "aqua:aws/aws-cli", "2.36.40"},
+			// 裸で書けるキーを引用符で囲むのも TOML では正しい。
+			"引用符で囲んだ裸のキー": {`"go" = "1.27.1"`, "go", "1.27.1"},
+		} {
+			t.Run(name+"を読む", func(t *testing.T) {
+				t.Parallel()
+
+				m := miseKeyRe.FindStringSubmatch(tc.line)
+				require.NotNil(t, m, "一致しない")
+
+				key := m[1]
+				if key == "" {
+					key = m[2]
+				}
+				assert.Equal(t, tc.key, key)
+				assert.Equal(t, tc.version, m[3])
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 引用符を対で要求する理由は miseKeyRe の宣言が持つ。ここはそれを外したときに
+		// 何が通ってしまうかを固定する。
+		for name, line := range map[string]string{
+			"開き引用符だけ":     `"aqua:aws/aws-cli = "2.36.40"`,
+			"閉じ引用符だけ":     `aqua:aws/aws-cli" = "2.36.40"`,
+			"値が配列":        `"aqua:aws/aws-cli" = ["2.36.40"]`,
+			"値がインラインテーブル": `"aqua:aws/aws-cli" = { version = "2.36.40" }`,
+			"値に引用符が無い":    `go = 1.27.1`,
+			"見出し行":        `[tools]`,
+		} {
+			t.Run(name+"は掴まない", func(t *testing.T) {
+				t.Parallel()
+				assert.Nil(t, miseKeyRe.FindStringSubmatch(line))
+			})
+		}
 	})
 }
 
@@ -231,12 +402,27 @@ func Test_parseMise(t *testing.T) {
 			})
 		}
 
+		// TOML はインラインテーブルも配列も許すが、この読み取り器はどちらも解釈しない。
+		// **配列は mise が複数版の併存のために実際に使う記法である** —— 黙って別の値を拾わず
+		// 「宣言が無い」側へ落ちることを固定する。
+		arrayed := strings.Replace(soundMise,
+			`"aqua:hashicorp/terraform" = "1.16.2"`, `"aqua:hashicorp/terraform" = ["1.16.2", "1.9.0"]`, 1)
+		multiline := strings.Replace(soundMise,
+			`"aqua:hashicorp/terraform" = "1.16.2"`, "\"aqua:hashicorp/terraform\" = [\n  \"1.16.2\",\n]", 1)
+
 		for name, src := range map[string]string{
-			"tools が無い": "[env]\ngo = \"1.27.1\"\n",
-			"空":         "",
-			// TOML はインラインテーブルも許すが、この読み取り器は解釈しない。黙って
-			// 「宣言が無い」側へ落ちることを固定する。
-			"go がインラインテーブル": strings.Replace(soundMise, "go = \"1.27.1\"", "go = { version = \"1.27.1\" }", 1),
+			"tools が無い":        "[env]\ngo = \"1.27.1\"\n",
+			"空":                "",
+			"go がインラインテーブル":    strings.Replace(soundMise, "go = \"1.27.1\"", "go = { version = \"1.27.1\" }", 1),
+			"terraform が配列":    arrayed,
+			"terraform が複数行配列": multiline,
+			"aws-cli がインラインテーブル": strings.Replace(soundMise,
+				`"aqua:aws/aws-cli" = "2.36.40"`, `"aqua:aws/aws-cli" = { version = "2.36.40" }`, 1),
+			// miseKeyRe の対の要求を、parseMise を通した側でも固定する。
+			"キーの開き引用符だけがある": strings.Replace(soundMise,
+				`"aqua:aws/aws-cli" = "2.36.40"`, `"aqua:aws/aws-cli = "2.36.40"`, 1),
+			"キーの閉じ引用符だけがある": strings.Replace(soundMise,
+				`"aqua:aws/aws-cli" = "2.36.40"`, `aqua:aws/aws-cli" = "2.36.40"`, 1),
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
@@ -322,8 +508,7 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
 		})
 
-		// 版は `\d+(?:\.\d+){0,2}` なので1〜3桁を許す。3桁だけを試していると、
-		// 桁数を絞る方向の変更が起きても気づけない。
+		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "FROM golang:1-bookworm\nFROM golang:1.27-bookworm\n"
@@ -367,8 +552,7 @@ func Test_miseInstallRe(t *testing.T) {
 			assert.Empty(t, re.FindAllString("\t@mise install \"aqua:aws/aws-cli@2.36.40\"\n", -1))
 		})
 
-		// 版は `\d+(?:\.\d+){0,2}` なので1〜3桁を許す。3桁だけを試していると、桁数を絞る
-		// 方向の変更が起きても気づけない。
+		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "\t@mise install \"aqua:hashicorp/terraform@1\"\n\t@mise install \"aqua:hashicorp/terraform@1.16\"\n"
@@ -399,6 +583,8 @@ func Test_applyAll(t *testing.T) {
 			require.NoError(t, applyAll(root, true, &out))
 			assert.Contains(t, out.String(), "1.27.1")
 			assert.Contains(t, out.String(), "24.21.0")
+			assert.Contains(t, out.String(), "1.16.2")
+			assert.Contains(t, out.String(), "2.36.40")
 		})
 
 		t.Run("dryRun でなければ写しを揃えて成功する", func(t *testing.T) {
@@ -474,34 +660,75 @@ func Test_rules(t *testing.T) {
 		})
 
 		// plan が守るのは「表が空」までである。**表から1行消えても、残りが一致していれば
-		// 緑が返る** —— 写しが1つ検査されなくなったことを、誰も報せない。表そのものを固定する。
-		t.Run("写し先をすべて覆う", func(t *testing.T) {
+		// 緑が返る** —— 写しが1つ検査されなくなったことを、誰も報せない。
+		//
+		// **宣言ごとに違う版を渡す。** 集合への所属や件数の合計では、rule 同士の割当が
+		// 入れ替わっても通ってしまう。
+		t.Run("表そのものを固定する", func(t *testing.T) {
 			t.Parallel()
 
-			files := map[string]int{}
+			type target struct {
+				file    string
+				version string
+				count   int
+			}
+
+			got := map[string]target{}
 			for _, r := range rules(declared{Go: "1", Node: "2", Terraform: "3", AWSCLI: "4"}) {
-				files[r.file]++
+				got[r.label] = target{file: r.file, version: r.version, count: r.count}
 			}
-			assert.Equal(t, map[string]int{
-				"docker/tools/Dockerfile":  2,
-				"scripts/go.mod":           1,
-				".makefiles/host-tools.mk": 2,
-			}, files)
-		})
-
-		t.Run("宣言の版をそのまま持つ", func(t *testing.T) {
-			t.Parallel()
-			v := declared{Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40"}
-			for _, r := range rules(v) {
-				assert.Contains(t, []string{"1.27.1", "24.21.0", "1.16.2", "2.36.40"}, r.version, r.label)
-				assert.Positive(t, r.count, r.label)
-			}
+			assert.Equal(t, map[string]target{
+				"golang イメージ":   {file: "docker/tools/Dockerfile", version: "1", count: 2},
+				"node イメージ":     {file: "docker/tools/Dockerfile", version: "2", count: 1},
+				"go ディレクティブ":    {file: "scripts/go.mod", version: "1", count: 1},
+				"terraform の導入": {file: ".makefiles/host-tools.mk", version: "3", count: 1},
+				"AWS CLI の導入":   {file: ".makefiles/host-tools.mk", version: "4", count: 1},
+			}, got)
 		})
 	})
 }
 
 func Test_plan(t *testing.T) {
 	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 同じファイルに複数の rule が掛かる。**途中の状態を持ち回らないと、2つ目の rule が
+		// 1つ目の書き換えを捨てる。** 実物の Dockerfile には golang と node が両方在るので
+		// 統合テストが間接的に守っているが、その保証は「たまたま2件掛かっている」に依っている。
+		t.Run("同じファイルへ複数の rule を順に当てる", func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			path := filepath.Join(root, "f")
+			require.NoError(t, os.WriteFile(path, []byte("FROM golang:1.0.0-a\nFROM node:1.0.0-b\n"), 0o600))
+
+			changes, err := plan([]rule{
+				{label: "golang", file: "f", re: dockerFromRe("golang"), version: "9.9.9", count: 1},
+				{label: "node", file: "f", re: dockerFromRe("node"), version: "8.8.8", count: 1},
+			}, root)
+
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{path: "FROM golang:9.9.9-a\nFROM node:8.8.8-b\n"}, changes)
+		})
+
+		// 一致しているファイルを changes に入れると、atomicwrite が無用に書き、apply の報告に
+		// 出ないはずの名前が並ぶ。
+		t.Run("一致しているファイルは changes に入れない", func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "f"), []byte("FROM golang:1.27.1-a\n"), 0o600))
+
+			changes, err := plan([]rule{
+				{label: "golang", file: "f", re: dockerFromRe("golang"), version: "1.27.1", count: 1},
+			}, root)
+
+			require.NoError(t, err)
+			assert.Empty(t, changes)
+		})
+	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
