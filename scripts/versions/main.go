@@ -49,17 +49,24 @@ var (
 // 守ると、ここへ群を1つ足した日に3つの正規表現が同時にずれ、置換が err == nil のまま壊れる。
 const versionPattern = `\d+(?:\.\d+){0,2}`
 
+// bareKeyPattern は TOML の裸キーに使える文字。仕様が許すのは ASCII 英数字と `_` `-` だけで、
+// `:` や `/` を含む backend 付きのキーは引用符付きでしか書けない。**数字始まりも仕様では
+// 正しい**（`1password-cli` のような名前が在り得る）。
+//
+// **同じ [tools] を scripts/tool-cooldown も読む。** 集合がずれると、一方だけが読める宣言が
+// 生まれ、もう一方は黙ってその道具を検査の対象から外す。
+const bareKeyPattern = `[A-Za-z0-9_-]+`
+
 var (
 	// miseSectionRe は `[tools]` のような table の見出し。
 	miseSectionRe = regexp.MustCompile(`^\[([^\]]+)\]`)
 	// miseKeyRe は `go = "1.27.1"` と `"aqua:aws/aws-cli" = "2.36.40"` の両方を捉える代入。
-	// backend 付きのキー（`aqua:owner/repo`）は `:` と `/` を含む。TOML の裸キーに使えるのは
-	// ASCII 英数字と `_` `-` だけなので、そうしたキーは引用符付きでしか書けない。
+	// 裸のキーが許す文字は bareKeyPattern が持つ。
 	//
 	// **引用符は対で要求する。** 前後を独立した `"?` にすると `"go = "1.27.1"` のような壊れた行も
 	// 読めてしまい、手編集で壊れた宣言から拾った値のまま写しを書き換える。第1群が引用符付きの
 	// キー、第2群が裸のキーで、どちらか一方だけが埋まる。
-	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_-]*))\s*=\s*"([^"]+)"`)
+	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
 	// versionRe は、宣言側から読んだ版がその形をしているかを見る。**一致に使う形と置換に

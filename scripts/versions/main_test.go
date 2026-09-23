@@ -240,6 +240,22 @@ func Test_versionPattern(t *testing.T) {
 			assert.Equal(t, 0, regexp.MustCompile(versionPattern).NumSubexp())
 		})
 
+		// **同じ [tools] を scripts/tool-cooldown も読む。** 集合がずれると、一方だけが読める
+		// 宣言が生まれ、もう一方は黙ってその道具を検査の対象から外す。同じ表を両方のテストが
+		// 持ち、どちらかを動かせば落ちる形にしておく。
+		t.Run("裸のキーは TOML の仕様どおりの文字だけを許す", func(t *testing.T) {
+			t.Parallel()
+
+			re := regexp.MustCompile(`^` + bareKeyPattern + `$`)
+			for _, ok := range []string{"go", "golangci-lint", "node_tool", "1password-cli", "A1"} {
+				assert.True(t, re.MatchString(ok), ok)
+			}
+			// `:` `/` を含む backend 付きのキーと、dotted key は裸で書けない。
+			for _, ng := range []string{"", "aqua:owner/repo", "npm:@scope/pkg", "tools.go", "a b"} {
+				assert.False(t, re.MatchString(ng), ng)
+			}
+		})
+
 		t.Run("1〜3桁の版だけに一致する", func(t *testing.T) {
 			t.Parallel()
 

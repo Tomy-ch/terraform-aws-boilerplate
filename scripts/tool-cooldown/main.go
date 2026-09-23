@@ -38,6 +38,10 @@ import (
 )
 
 const (
+	// bareKeyPattern は TOML の裸キーに使える文字。**scripts/versions の同名の定数と同じ集合を
+	// 保つ。** 片方だけが読める宣言が生まれると、そちらの検査だけが黙って対象を落とす。
+	bareKeyPattern = `[A-Za-z0-9_-]+`
+
 	miseFile   = "mise.toml"
 	bypassFile = ".github/tool-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
@@ -99,11 +103,12 @@ var (
 	errBypassDuplicateKey = xerrors.New("duplicate bypass key")
 
 	// toolLineRe は `[tools]` の 1 行を key と version へ割る。key は裸でも引用符付きでもよい。
-	toolLineRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|([A-Za-z0-9_.\-]+))\s*=\s*"([^"]+)"\s*$`)
+	// 裸のキーが許す文字は bareKeyPattern が持つ。
+	toolLineRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*"([^"]+)"\s*$`)
 	// toolTableLineRe は tool option 付きの 1 行宣言（`key = { version = "...", ... }`）から key と version を読む。
 	// 宣言の形が変わっただけでゲートから外れると、窓の検査が黙って抜ける。
 	toolTableLineRe = regexp.MustCompile(
-		`^\s*(?:"([^"]+)"|([A-Za-z0-9_.\-]+))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*$`,
+		`^\s*(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*$`,
 	)
 	// sectionRe は TOML のセクション見出し。
 	sectionRe = regexp.MustCompile(`^\s*\[([^\]]+)\]\s*$`)
