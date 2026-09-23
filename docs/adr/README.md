@@ -55,6 +55,7 @@
 | [0501](0501-development-tooling-composition.md) | 検証と運用の道具を既存ツールの組み合わせで構成する | Accepted |
 | [0502](0502-execution-engine-selection.md) | 実行エンジンにTerraformを採用し、OpenTofuを採らない | Accepted |
 | [0503](0503-tool-execution-form.md) | 道具の宣言を1つに保ち、実行環境を3経路に分ける | Accepted |
+| [0504](0504-credential-handling-tool-execution.md) | 実AWSの資格情報を扱う道具をホストで実行する | Accepted |
 
 ### 06 変更の経路と CI
 
@@ -83,7 +84,7 @@ ADR-0101 がリポジトリ全体の評価軸と原則を定義し、他のADR�
 6. ADR-0401 → ADR-0501 → ADR-0402 → ADR-0302（検証のレイヤー、それを担う道具、検査そのものの検証、履歴に対する検査）
 7. ADR-0601 → ADR-0602 → ADR-0603（変更が実環境へ届く経路、それを成立させるbootstrap、mergeを守るゲート）
 8. ADR-0502（実行エンジンの選定）
-9. ADR-0702 → ADR-0503（Terraformの外側にある運用の機構と、道具の宣言・実行環境）
+9. ADR-0702 → ADR-0503 → ADR-0504（Terraformの外側にある運用の機構、道具の宣言・実行環境、そして資格情報を扱う道具の実行環境）
 10. ADR-0001 → ADR-0701（ADRと文書自体の運用）
 
 ## 依存関係
