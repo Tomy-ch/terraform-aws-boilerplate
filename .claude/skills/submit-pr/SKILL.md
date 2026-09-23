@@ -63,7 +63,15 @@ Immediately after the pre-flight bail-outs pass — **before composing anything 
 
 **Name both explicitly.** The Review Phase Protocol in `AGENTS.md` gives one subject to each skill — `/impl-review` the change, `/test-review` the tests — and neither offers to run the other. So this question is the only place both are visible at once, and listing just one would silently drop the other from every flow that goes through here. Do NOT auto-run either of them.
 
-**`/settle-comments` is deliberately not on this list.** It is not a review whose return gets estimated; it runs unconditionally as the last step of implementing. Offering it here would read as though there is a path that skips it. If it has not run, the change is unfinished rather than unreviewed — say so and send the user back to it instead of adding a checkbox.
+**`/settle-comments` is deliberately not on this list.** It is not a review whose return gets estimated; it runs unconditionally as the last step of implementing. Offering it as a checkbox would read as though there is a path that skips it. Say which of three states the change is in:
+
+| State | What to do |
+| --- | --- |
+| ran | proceed, and say so |
+| did not run | **send the user back to it.** The change is unfinished rather than unreviewed, and nothing offered here substitutes for it |
+| nothing for it to audit | say that, and proceed |
+
+**The third state is narrow.** It means the change touched no file whose comment stock is the subject — a skill's `SKILL.md`, prose under `docs/**`, a PR template. It does **not** mean "this change added no comments": `/settle-comments` audits the whole comment stock of every file the change touched, so a change that edits code without adding a comment still has something to audit. Claiming the third state when the second is true is how the step silently stops running.
 
 Per the same protocol, **estimate each one's return before asking** — which layers the change touched, whether the tests moved at all, what an earlier skill in this session already covered — and say which you expect to pay off and which you expect to return nothing. Handing over unpriced checkboxes is the failure this protocol names.
 
@@ -269,14 +277,11 @@ CI: <gh pr checks の最終結果。落ちたものがあればその名前>
 
 After the PR URL is reported, **always ask the user whether to run a review** — do not skip this, and do not auto-run one.
 
-**Step 1 already asked about these same two skills, so this step has to earn its second ask.** What it buys is the PR itself:
-
-- **`/impl-review` posts its findings to the PR.** Its Step 6 turns each surviving CONFIRMED / PLAUSIBLE into an inline review comment anchored to `path:line` — and it **skips that entirely when no open PR exists**. Before the push, the review can only print a local report; here it can leave the findings where the next reader of the PR will see them.
-- **ultrareview takes a PR number.** It cannot run before one exists.
+**Step 1 already asked about these same two skills, so this step has to earn its second ask.** One thing changed, and it is enough: **`/impl-review` can now post.** Its Step 6 turns each surviving CONFIRMED / PLAUSIBLE into an inline review comment anchored to `path:line`, and it **skips that entirely when no open PR exists** — before the push a review can only print a local report, while here it leaves the findings where the next reader of the PR will see them.
 
 `/test-review` gains nothing from the PR existing, and it is still listed — it is `/impl-review`'s peer under the Review Phase Protocol, and **neither skill will surface the other**, so dropping it here is the only way it goes missing.
 
-**Name only skills that exist in `.claude/skills/`.** `/code-review` is a Claude Code CLI built-in, not a skill of this repository; offering it here put a non-repository command ahead of the repository's own reviewers.
+**Name only skills that exist in `.claude/skills/`.** `/code-review` and `/code-review ultra` are Claude Code CLI built-ins, not skills of this repository. This step offers the repository's own reviewers; a CLI feature is the user's to reach for, and listing it here put a non-repository command among them.
 
 Use `AskUserQuestion`:
 
@@ -284,12 +289,11 @@ Use `AskUserQuestion`:
 - Options:
   - 「`/impl-review`（変更そのもの — 指摘を PR へインラインで投稿できる）」
   - 「`/test-review`（テスト — 分岐 × 意味の網羅とシンボル網羅）」
-  - 「ultrareview を案内」 — cloud multi-agent review; **user-triggered and billed**, so the skill cannot launch it — only surface `/code-review ultra <PR#>` for the user to run
   - 「レビューしない」
 
 **Estimate each one's return before asking**, the same way Step 1 does — which layers the change touched, whether the tests moved, what already ran in this session. Handing over unpriced checkboxes is the failure the Review Phase Protocol names. Scale the default recommendation with the **Depth by change type** guidance in Step 1 (behavior-affecting code → recommend by default; docs / tooling-dominant → note the lower ROI). The user's choice always wins.
 
-**`/settle-comments` is not on this list either**, for the reason Step 1 gives: it is not a review whose return gets estimated, it is the last step of implementing and runs unconditionally. But **do not let it pass silently** — if it has not run for this change, say so and send the user back to it. The change is then unfinished rather than unreviewed, and no amount of reviewing here substitutes for it.
+**`/settle-comments` is not on this list either**, and the same three states apply as at Step 1 — ran / did not run / nothing for it to audit. Say which one holds; do not let it pass silently.
 
 **Report which reviews already ran, and on what scope.** A review answered before the push covered the commits that existed then; commits added in response to it are new, unaudited work (`AGENTS.md` *レビューへの応答は、それ自体が未レビューである*). State the unreviewed range — `<そのレビューの最後の commit>...HEAD` — so the second ask is priced against what is actually unexamined.
 
