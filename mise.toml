@@ -3,26 +3,20 @@
 # **版の出所はここだけである。** 版を並べ直した設定を、イメージ側にも workflow 側にも置かない。
 # 環境差分を最小にするための要点はここにある。
 #
-#   ローカル  mise がホストへ導入したものを直接実行する
-#   CI        主要ランタイムは各 setup アクションが用意し、残りをこのファイルから読み込む
-#   コンテナ  Go 側の道具はこのファイルを読んで install し、npm 側は下記の写しから install する
+# 実行経路ごとの分担は ADR-0503 決定1、コンテナ内の Go / npm の分担は docker/tools/README.md。
 #
-# **宣言を読む実装は scripts/lib/misetoml だけである。** 写しを持つ側は読み手ではない ——
-# `docker/tools/Dockerfile` の `FROM`・ベースイメージとの照合値・npm の版、`scripts/go.mod` の
-# `go`、`.makefiles/host-tools.mk` の導入行は、`make versions-apply` がここから書き、
-# `make versions-check` が守る。読み手が増えるほど、一方だけが読める書式が生まれる余地が増える。
+# **宣言を読む実装は scripts/lib/misetoml だけである**（理由は同パッケージの doc）。写しを持つ側は
+# 読み手ではなく、`make versions-apply` がここから書き `make versions-check` が守る —— 写し先の
+# 一覧は scripts/README.md の versions/ が持つ。
 #
-# ベースイメージが提供するランタイムの版がこのファイルの宣言とずれた場合、イメージの
-# ビルドが落ちる。3経路の版が黙って割れるのを、ビルド時に止める。
+# ベースイメージの版が宣言とずれるとイメージのビルドが落ちる（ADR-0503 決定3）。
 #
 # backend（`aqua:` / `npm:` 等）は、短い名前で一意に解決できないものだけ明示する。レジストリ上で
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
 # **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
-# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。**起動する呼び手をまだ持たないものが
-# 3つある** —— terraform と tflint は Terraform 側の検査が未配線であるため（AGENTS.md「現在の
-# 配線状態」）、AWS CLI は ADR-0602 決定4 の bootstrap の手順書がまだ無いためである。
-# うち terraform と AWS CLI は、`.makefiles/host-tools.mk` が導入までを持つ。
+# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。何がまだ配線されていないかは
+# AGENTS.md「現在の配線状態」が追跡する —— 配線され次第そこから消える運用がある。
 min_version = "2026.6.0"
 
 [tools]
@@ -49,8 +43,7 @@ node = "24.21.0"
 "aqua:hashicorp/terraform" = "1.16.2"
 
 # Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
-# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ
-# —— そのファイルはまだ無い（AGENTS.md「現在の配線状態」）。
+# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
 # Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
@@ -95,5 +88,5 @@ lefthook = "2.1.12"
 "npm:markdownlint-cli2" = "0.23.2"
 
 # commit message の検査。規約の正本は commitlint.config.js。課すのは type の enum と type / subject の空チェックだけで、
-# 一般的な規約集の設定を継承しない（同 決定4）。
+# 一般的な規約集の設定を継承しない。
 "npm:@commitlint/cli" = "21.2.2"

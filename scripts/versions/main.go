@@ -68,9 +68,7 @@ var (
 
 // dockerFromRe は Dockerfile の `FROM <image>:<version><suffix>` を捉える正規表現を返します。
 //
-// **コメント行を除く。** `[^#\n]*?` の `\n` を落とすと、Go の文字クラスは改行にも一致するので
-// マッチが行をまたいで広がり、間の行ごと置換で消える。件数は変わらないので、件数のガードも
-// 通り抜ける。
+// コメント行を除く理由（`[^#\n]*?` から `\n` を落としてはいけない理由）は bakedRe の宣言が持つ。
 func dockerFromRe(image string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^[^#\n]*?(FROM\s+` + regexp.QuoteMeta(image) + `:)` + versionPattern + `(-[\w.-]+)`)
 }

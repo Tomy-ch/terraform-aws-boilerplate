@@ -1,13 +1,6 @@
-# 道具を提供するイメージ。**版の出所はこのファイルではない**（ADR-0503 決定1・決定2）。
-# 版は mise.toml が持ち、ここが持つのは実行形態だけである。イメージのビルドは mise.toml を
-# 読んで install するので、版を書き写した第二の出所がここにできない。
-#
-# 段を分けるのは、提供段に mise 本体と install のキャッシュを残さないため（同 決定11）。
-# ベースは digest で固定する（同 決定10）——tag だけの参照は、付け替えられた時点で別の
-# イメージを黙って引く。
-#
-# ここに terraform は居ない。単一の静的バイナリであり、資格情報の受け渡しに境界を増やさない
-# ため、ホストで実行する（同 決定5）。
+# 道具を提供するイメージ。**版の出所はこのファイルではない。** 版の出所・段構成・terraform を
+# ここに含めない理由は docker/tools/README.md が持つ（ADR-0503 決定1・2・5・10・11）。
+# **terraform をここへ足さない。**
 
 # mise 本体の版。全ステージ共通。
 ARG MISE_VERSION=v2026.9.9
@@ -47,10 +40,8 @@ RUN mise trust mise.toml
 # ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
 # ずれたまま進むと、ホストとコンテナで別の Go がツールをビルドする。
 #
-# **宣言側の値は焼き込みであり、`make versions-apply` が書いて `versions-check` が守る。**
-# ここで mise.toml から値を抜き出さないのは、そうするとこのファイルが宣言の読み手になるためで
-# ある —— 読み手が増えるほど、一方だけが読める書式が生まれる余地が増える。読むのは
-# scripts/lib/misetoml だけにして、ここへは結果を書き写す。
+# 値をここで mise.toml から直接読まない理由は mise.toml 冒頭が持つ。焼き込みは
+# `make versions-apply` が書き `versions-check` が守る。
 RUN set -eu; \
     declared_go="1.27.1"; \
     actual="$(go version | sed 's|^go version go\([^ ]*\).*|\1|')"; \
@@ -58,8 +49,7 @@ RUN set -eu; \
       echo "Go の版がずれています: 宣言=$declared_go / ベースイメージ=$actual" >&2; \
       echo "docker/tools/Dockerfile の FROM と mise.toml の go を揃えてください（make versions-apply）" >&2; exit 1; }
 
-# 未認証の GitHub API（60 req/hour・IP 単位）ではこの install 群を賄えず 403 になる。
-# トークンはイメージ履歴に焼き込む build 引数ではなく secret で渡す（ADR-0503 決定12）。
+# トークンの渡し方と未認証時の制限は docker/tools/README.md が持つ（ADR-0503 決定12）。
 # 未指定でも未認証で成立するため、手元のビルドは従来どおり動く。
 RUN --mount=type=secret,id=github_token \
     github_token="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
@@ -116,16 +106,11 @@ CMD []
 # Node ランタイムは公式の alpine イメージを使う。mise の Node は alpine 上でソースからの
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
-# この段は mise を持たない。mise.toml は**版の宣言として読むだけ**で、install は npm が行う
-# （ADR-0503 決定3）。mise を入れて npm backend を使う形は採れない —— mise は
-# 宣言された node が「mise 経由で」入っていることを要求し、ベースイメージの node を認めない。
+# この段が mise を使わない理由は docker/tools/README.md が持つ。
 FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS node_tools
 
-# パイプの左側が失敗しても右側が成功すれば RUN が通ってしまう既定を塞ぐ。
-# 下の版の検査はコマンド置換の中でパイプを使うため、これが無いと**検査が実行されないまま緑になる**。
-#
-# `/bin/sh` ではなく実体のシェルを名指しするのは、`sh` が pipefail を持つ保証が無いためである
-# （alpine の `sh` は busybox で、pipefail を持たない）。
+# pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
+# alpine の `sh` は busybox で、pipefail を持たない。
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
 # git: commitlint が commit の範囲を読む。
@@ -133,14 +118,11 @@ RUN apk add --no-cache bash ca-certificates git make
 
 WORKDIR /app
 
-# 版の出所は mise.toml だけである（ADR-0503 決定1）。**ここに在るのはその写しであり、
-# `make versions-apply` が書いて `versions-check` が守る。** この段は mise.toml を読まない ——
-# 宣言を読む実装は scripts/lib/misetoml だけに置く。
+# 版の出所は mise.toml だけである（ADR-0503 決定1）。この段が mise.toml を読まない理由は
+# mise.toml 冒頭が持つ。
 #
-# --ignore-scripts: install 時に依存のライフサイクルスクリプトを実行しない。ハッシュが一致した
-# 配布物であっても script は install 時に走るため、実行させないことでその余地を無くす
-# （ADR-0503 決定16 と同じ判断）。in-tree のパッケージを持つようになった時点で、lockfile と
-# 「宣言に無い script を持ち込んだら失敗させる」形（同 決定17）へ移す。
+# `--ignore-scripts` の理由と、in-tree のパッケージが現れたときの移行先は
+# docker/tools/README.md と ADR-0503 決定16-18 が持つ。
 RUN set -eu; \
     declared_node="24.21.0"; \
     actual_node="$(node --version | sed 's|^v||')"; \

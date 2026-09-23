@@ -387,8 +387,6 @@ func Test_parseMise(t *testing.T) {
 		// **[tools] に解釈できない行が在れば、欠落ではなく行そのものを名指して落ちる。**
 		// 判定は misetoml が持つ。ここが固定するのは、その落ち方が parseMise を通しても
 		// 保たれること —— 握り潰して「宣言が無い」へ丸めると、直す先が分からなくなる。
-		//
-		// **配列は mise が複数版の併存のために実際に使う記法である。** 黙ってどれかを拾わない。
 		arrayed := strings.Replace(soundMise,
 			`"aqua:hashicorp/terraform" = "1.16.2"`, `"aqua:hashicorp/terraform" = ["1.16.2", "1.9.0"]`, 1)
 		multiline := strings.Replace(soundMise,
@@ -528,7 +526,8 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
 		})
 
-		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の同名ケースが持つ。
+		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
+		// 「1〜3桁の版に一致する」ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "FROM golang:1-bookworm\nFROM golang:1.27-bookworm\n"
@@ -551,7 +550,7 @@ func Test_miseInstallRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 前置きを群の外で消費したときに何が起きるかは miseInstallRe の宣言が持つ。
+		// 前置きを群の外で消費したときに何が起きるかは bakedRe の宣言が持つ。
 		t.Run("レシピ行の前置きを保ったまま版だけ差し替える", func(t *testing.T) {
 			t.Parallel()
 			r := rule{label: "terraform", file: "host-tools.mk", re: re, version: "1.16.2", count: 1}
@@ -571,7 +570,8 @@ func Test_miseInstallRe(t *testing.T) {
 			assert.Empty(t, re.FindAllString("\t@mise install \"aqua:aws/aws-cli@2.36.40\"\n", -1))
 		})
 
-		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の同名ケースが持つ。
+		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
+		// 「1〜3桁の版に一致する」ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "\t@mise install \"aqua:hashicorp/terraform@1\"\n\t@mise install \"aqua:hashicorp/terraform@1.16\"\n"

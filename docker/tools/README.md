@@ -34,10 +34,12 @@
 **`terraform` はここに居ない。** 人と CI が最も頻繁に叩く単一の静的バイナリであり、資格情報の
 受け渡しに境界を増やさないため、mise がホストへ入れたものを直接実行する（ADR-0503 決定5）。
 
-`node_tools` は mise を持たない。`mise.toml` は**版の宣言として読むだけ**で、install は npm が行う
-（同 決定3）—— mise は宣言された node が mise 経由で入っていることを要求し、ベースイメージの node を
-認めないためである。`--ignore-scripts` を付けるのは、ハッシュが一致した配布物であっても script は
-install 時に走るためで、実行させないことでその余地を無くす（同 決定16）。
+`node_tools` は mise を持たず、install は npm が行う —— mise は宣言された node が mise 経由で
+入っていることを要求し、ベースイメージの node を認めないためである。**この段は `mise.toml` を
+読まない。** 版は `make versions-apply` が書き `make versions-check` が守る写しとして Dockerfile に
+在り、宣言を読む実装は [`scripts/lib/misetoml`](../../scripts/README.md) だけに置く。
+`--ignore-scripts` を付けるのは、ハッシュが一致した配布物であっても script は install 時に走る
+ためで、実行させないことでその余地を無くす（同 決定16）。
 
 ## docker-compose サービス
 
