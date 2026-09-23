@@ -212,7 +212,7 @@ func Test_run(t *testing.T) {
 			})
 		}
 
-		// 片方だけ書き換わった状態が残ると、呼び出し側には「失敗した」としか見えない。
+		// 部分適用が残らない理由は applyAll の宣言が持つ。
 		t.Run("写しの1つが壊れていれば他も書き換えない", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
@@ -232,17 +232,16 @@ func Test_versionPattern(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// **捕獲群を持たないことが、3つの正規表現の群番号を動かさない条件である。**
-		// ここへ群を1つ足すと dockerFromRe と miseInstallRe の後置きが ${3} へずれ、
-		// goDirectiveRe は版の桁を ${2} として拾う。Go はどちらもエラーにしない。
+		// 捕獲群を持たないことの意味（ずれると何が起きるか）は versionPattern の宣言が持つ。
 		t.Run("捕獲群を持たない", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, 0, regexp.MustCompile(versionPattern).NumSubexp())
 		})
 
-		// **同じ [tools] を scripts/tool-cooldown も読む。** 集合がずれると、一方だけが読める
-		// 宣言が生まれ、もう一方は黙ってその道具を検査の対象から外す。同じ表を両方のテストが
-		// 持ち、どちらかを動かせば落ちる形にしておく。
+		// 両パッケージで揃える理由は bareKeyPattern の宣言が持つ。**ここが守るのは自分の側の
+		// 集合が TOML 仕様からずれないことだけで、両者の等価性ではない** —— 同じ表を
+		// scripts/tool-cooldown のテストにも置いてあるが、両方を同じ方向へ動かせば
+		// どちらも落ちない。
 		t.Run("裸のキーは TOML の仕様どおりの文字だけを許す", func(t *testing.T) {
 			t.Parallel()
 
@@ -276,7 +275,8 @@ func Test_goDirectiveRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
+		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない
+		// —— 同じ理由で dockerFromRe と miseInstallRe のテストも1〜3桁を確かめる。
 		t.Run("1〜3桁の版に一致する", func(t *testing.T) {
 			t.Parallel()
 			assert.Len(t, goDirectiveRe.FindAllString("go 1\ngo 1.27\ngo 1.27.1\n", -1), 3)
@@ -435,8 +435,8 @@ func Test_parseMise(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 空のまま進むと、写しを空の版で書き潰す。**1つだけ落とす** —— 他も欠けた入力だと、
-		// 名前が指す宣言の欠落を検出したのかが分からない。
+		// 空のまま進むとどうなるかは parseMise の当該チェックが持つ。1つだけ落とす方針は
+		// miseWithout の宣言が持つ。
 		for _, key := range []string{"go", "node", terraformTool, awsCLITool} {
 			t.Run(key+" が無ければエラーにする", func(t *testing.T) {
 				t.Parallel()
@@ -504,7 +504,7 @@ func Test_applyRule(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 写しが増えたことも減ったことも、宣言との対応が崩れた合図である。
+		// 下限ではなく厳密な件数である理由は rule.count の宣言が持つ。
 		for name, src := range map[string]string{
 			"件数が足りない": "FROM golang:1.0.0-bookworm\n",
 			"件数が多い":   "FROM golang:1.0.0-a\nFROM golang:1.0.0-b\nFROM golang:1.0.0-c\n",
@@ -517,9 +517,8 @@ func Test_applyRule(t *testing.T) {
 			})
 		}
 
-		// **一致は versionPattern で見るのに置換が無検査だと、宣言に書かれた何でも写し先へ
-		// 埋まる。** Go の置換文字列は `$` を後方参照として解釈するので、`1.2.3$1` は別の群へ
-		// 化け、写し先が Makefile なら `$(shell ...)` が実行され得る。
+		// 宣言側の版を検める理由は applyRule の当該チェックが持つ。ここはそれを外したときに
+		// 何が通ってしまうかを固定する。
 		for name, version := range map[string]string{
 			"後方参照を含む":   "1.2.3$1",
 			"シェル関数を含む":  "1.2.3$(shell touch x)",
@@ -537,8 +536,7 @@ func Test_applyRule(t *testing.T) {
 			})
 		}
 
-		// 群が無い正規表現では `${1}` が空文字へ落ち、前置きを失った内容が err == nil のまま
-		// 書き出される。Go は存在しない群の参照をエラーにしない。
+		// 捕獲群が無いとき何が起きるかは applyRule の当該チェックが持つ。
 		t.Run("写し先の正規表現が捕獲群を持たなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -549,7 +547,7 @@ func Test_applyRule(t *testing.T) {
 			require.ErrorIs(t, err, errShape)
 		})
 
-		// 空で書き換えると `FROM golang:-bookworm` を作り、件数のガードは通る。
+		// 空の版で書き換えたときに何が起きるかは applyRule の当該チェックが持つ。
 		t.Run("宣言側の版が空ならエラーにする", func(t *testing.T) {
 			t.Parallel()
 			empty := r
@@ -566,8 +564,7 @@ func Test_dockerFromRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 文字クラスから改行を落とすと、マッチが行をまたいで広がり、間の行が置換で消える。
-		// 件数は変わらないので、件数のガードも通り抜ける。
+		// 改行を文字クラスから落としたときに何が起きるかは dockerFromRe の宣言が持つ。
 		t.Run("コメント行を対象にしない", func(t *testing.T) {
 			t.Parallel()
 			src := "# FROM golang:9.9.9-bookworm\nFROM golang:1.0.0-bookworm\n"
@@ -585,7 +582,7 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
 		})
 
-		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
+		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の同名ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "FROM golang:1-bookworm\nFROM golang:1.27-bookworm\n"
@@ -608,8 +605,7 @@ func Test_miseInstallRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// **前置きを群の外で消費すると、置換でレシピ行の `\t@` ごと消える。** 一致件数は
-		// 変わらないので件数のガードは通り抜け、壊れた Makefile が書き出される。
+		// 前置きを群の外で消費したときに何が起きるかは miseInstallRe の宣言が持つ。
 		t.Run("レシピ行の前置きを保ったまま版だけ差し替える", func(t *testing.T) {
 			t.Parallel()
 			r := rule{label: "terraform", file: "host-tools.mk", re: re, version: "1.16.2", count: 1}
@@ -629,7 +625,7 @@ func Test_miseInstallRe(t *testing.T) {
 			assert.Empty(t, re.FindAllString("\t@mise install \"aqua:aws/aws-cli@2.36.40\"\n", -1))
 		})
 
-		// 桁の並びは versionPattern が持つ。3桁だけを試していると、そこが絞られても気づけない。
+		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の同名ケースが持つ。
 		t.Run("1桁・2桁の版にも一致する", func(t *testing.T) {
 			t.Parallel()
 			src := "\t@mise install \"aqua:hashicorp/terraform@1\"\n\t@mise install \"aqua:hashicorp/terraform@1.16\"\n"
@@ -730,7 +726,7 @@ func Test_rules(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 対応表が空になると、何も検査していない状態が「一致」として報告される。
+		// 表が空のときに「一致」を返してしまう理由は plan の当該ガードが持つ。
 		t.Run("空でない", func(t *testing.T) {
 			t.Parallel()
 			assert.NotEmpty(t, rules(declared{Go: "1", Node: "2"}))
@@ -810,7 +806,7 @@ func Test_plan(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 表が空になったことを「一致」と報告しない。
+		// 理由は plan の当該ガードが持つ。
 		t.Run("対応表が空ならエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, err := plan(nil, t.TempDir())

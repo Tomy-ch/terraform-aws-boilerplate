@@ -277,7 +277,7 @@ func parseArgs(args []string) (string, options, error) {
 		return "", options{}, xerrors.Wrap(err, "❌ フラグを解釈できません")
 	}
 
-	// gate は差分を取れないと何も検査しないまま通るため、比較対象の不在を先に落とす。
+	// 比較対象の不在を先に落とす。差分を取れないまま進んだときの危険は baseDeclarations が持つ。
 	if sub == "gate" && *base == "" {
 		return "", options{}, xerrors.Wrap(errUsage, "❌ gate には --base が要ります（比較対象が無いと差分を取れません）")
 	}
@@ -398,8 +398,8 @@ func verifyRef(ctx context.Context, base string) error {
 	return nil
 }
 
-// addedFrom は base 時点の宣言と現在の宣言を突き合わせる。base を読めなかった場合に空の差分を
-// 返すと、gate は何も検査しないまま通る。解析の失敗はエラーとして表に出す。
+// addedFrom は base 時点の宣言と現在の宣言を突き合わせる。空の差分を返したときの危険は
+// baseDeclarations が持つ。解析の失敗はエラーとして表に出す。
 func addedFrom(baseDecls []declaration, current []tool) ([]tool, error) {
 	before, err := parseDeclarations(baseDecls)
 	if err != nil {
@@ -528,7 +528,9 @@ func inspect(ctx context.Context, client *http.Client, targets []tool, now time.
 	return findings, unresolved
 }
 
-// publishedAt は backend ごとの上流からそのバージョンの公開時刻を取る。
+// publishedAt は backend ごとの上流からそのバージョンの公開時刻を取る。**見つからない場合は
+// 必ずエラーを返す** —— ゼロ値の time.Time を返すと、呼び出し側はそれを「公開から数十年経過」と
+// 読み、そのツールが cooldown を無条件で通過する。
 func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, error) {
 	_, ref, _ := strings.Cut(t.backend, ":")
 	switch backendKind(t.backend) {
@@ -839,9 +841,9 @@ func goModuleAt(ctx context.Context, client *http.Client, pkg, version string) (
 		}
 		lastErr = err
 	}
-	// pkg に `/` が無いとループが 1 度も回らない。ここで nil を返すと呼び出し側はゼロ値時刻を
-	// 「公開から数十年経過」と読み、そのツールが cooldown を無条件で通過する。「問い合わせた結果
-	// 見つからない」と「一度も問い合わせていない」は、公開時刻を得られていない点で同じ扱いにする。
+	// pkg に `/` が無いとループが 1 度も回らない。ゼロ値を返せない理由は publishedAt が持つ。
+	// 「問い合わせた結果見つからない」と「一度も問い合わせていない」は、公開時刻を得られて
+	// いない点で同じ扱いにする。
 	if lastErr == nil {
 		return time.Time{}, xerrors.Wrap(errNotFound, pkg+"@"+version)
 	}

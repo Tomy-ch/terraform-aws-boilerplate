@@ -45,8 +45,9 @@ var (
 
 // versionPattern は版の桁の並び。**1〜3桁を許す** —— `go = "1"` も `= "1.27"` も
 // `= "1.27.1"` も宣言として現れる。捕獲群を持たないので、これを使う正規表現の群番号は
-// この式の有無で動かない。**その不変条件は Test_versionPattern が固定する** —— コメントだけで
-// 守ると、ここへ群を1つ足した日に3つの正規表現が同時にずれ、置換が err == nil のまま壊れる。
+// この式の有無で動かない —— 群を1つ足すと dockerFromRe と miseInstallRe の後置きが `${3}` へ
+// ずれ、goDirectiveRe は版の桁を `${2}` として拾う。Go はどちらもエラーにしない。
+// **その不変条件は Test_versionPattern が固定する。**
 const versionPattern = `\d+(?:\.\d+){0,2}`
 
 // bareKeyPattern は TOML の裸キーに使える文字。仕様が許すのは ASCII 英数字と `_` `-` だけで、
@@ -69,9 +70,8 @@ var (
 	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|(` + bareKeyPattern + `))\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
-	// versionRe は、宣言側から読んだ版がその形をしているかを見る。**一致に使う形と置換に
-	// 入れる値が別物だと、`1.2.3$1` のような値がそのまま写し先へ埋まる** —— Go の置換文字列は
-	// `$` を後方参照として解釈し、写し先が Makefile なら `$(shell ...)` が実行され得る。
+	// versionRe は、宣言側から読んだ版がその形をしているかを見る。検める理由は applyRule の
+	// 当該チェックが持つ。
 	versionRe = regexp.MustCompile(`^` + versionPattern + `$`)
 )
 
@@ -110,7 +110,7 @@ type rule struct {
 	// version は宣言側の値。
 	version string
 	// count は期待する一致件数。**下限ではなく厳密な件数である** —— 写しが増えたことも
-	// 減ったことも、どちらも宣言との対応が崩れた合図なので落とす（ADR-0702 決定15）。
+	// 減ったことも、どちらも宣言との対応が崩れた合図なので落とす。
 	count int
 }
 
@@ -247,7 +247,9 @@ func applyRule(r rule, content string) (string, error) {
 	}
 
 	// **書き込む値も版の形に照らす。** 一致は versionPattern で見るのに置換は無検査、という
-	// 非対称を塞ぐ。宣言は手で編集されるので、余分な空白も `$` も現実に入り得る。
+	// 非対称を塞ぐ —— 宣言は手で編集されるので、余分な空白も `$` も現実に入り得る。Go の置換
+	// 文字列は `$` を後方参照として解釈するので、`1.2.3$1` のような値は別の群へ化けて写し先へ
+	// 埋まり、写し先が Makefile なら `$(shell ...)` が実行され得る。
 	if !versionRe.MatchString(r.version) {
 		return "", xerrors.Wrap(errShape, r.label+": 宣言側の版が版の形をしていません: "+r.version)
 	}

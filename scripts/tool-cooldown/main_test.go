@@ -215,9 +215,10 @@ func Test_bareKeyPattern(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// **同じ [tools] を scripts/versions も読む。** 集合がずれると、一方だけが読める宣言が
-		// 生まれ、もう一方は黙ってその道具を検査の対象から外す。同じ表を両方のテストが持ち、
-		// どちらかを動かせば落ちる形にしておく。
+		// 両パッケージで揃える理由は bareKeyPattern の宣言が持つ。**ここが守るのは自分の側の
+		// 集合が TOML 仕様からずれないことだけで、両者の等価性ではない** —— 同じ表を
+		// scripts/versions のテストにも置いてあるが、両方を同じ方向へ動かせば
+		// どちらも落ちない。
 		t.Run("裸のキーは TOML の仕様どおりの文字だけを許す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1235,7 +1236,7 @@ func Test_getJSON(t *testing.T) {
 			assert.Equal(t, "ok", body["name"])
 		})
 
-		// 未認証の GitHub API は 60 req/hour で、1 回の実行を賄えず全件 unresolved に化ける。
+		// 理由は fetchBody のコメントと同じ。
 		t.Run("GitHub API にはトークンを Authorization ヘッダで載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 1)
@@ -1401,7 +1402,7 @@ func Test_npmPackageAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// ゼロ値の時刻を返すと公開から数十年経った扱いになり、窓を無条件に通過する。
+		// 理由は publishedAt のコメントと同じ。
 		t.Run("time に載っていないバージョンはエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondJSON("/@redocly/cli", `{"time":{"2.31.3":"2026-07-01T00:00:00Z"}}`))
@@ -1552,7 +1553,7 @@ func Test_renderAquaURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// replacements を飛ばすと存在しない URL を叩き、404 が「その版は無い」に化ける。
+		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("replacements を適用してから展開する", func(t *testing.T) {
 			t.Parallel()
 
@@ -1565,8 +1566,7 @@ func Test_renderAquaURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
 		})
 
-		// aqua のレジストリの url は trimV を広く使う。登録しなければ Parse の時点で落ち、
-		// 本来たどれる配布物が「解釈できない定義」に化ける。
+		// 理由は renderAquaURL の trimV についてのコメントが持つ。
 		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
 			t.Parallel()
 
@@ -1595,8 +1595,8 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// aqua 本体は sprig を登録するがここは trimV だけを解する。素通しではなく失敗へ倒れる
-		// ことを固定する —— 黙って別の URL を組むより、解釈できないと言う方が安全である。
+		// 対応範囲は renderAquaURL の trimV についてのコメントが持つ。素通しではなく失敗へ
+		// 倒れることを、ここで固定する。
 		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1611,8 +1611,7 @@ func Test_renderAquaURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返す。落とさないと
-		// そのパッケージは公開直後の版でも常に窓を満たし、**ゲートが素通しに化ける。**
+		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1696,8 +1695,8 @@ func Test_aquaRegistryBase(t *testing.T) {
 func Test_hostIsLiteral(t *testing.T) {
 	t.Parallel()
 
-	// ホストが補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れる。
-	// renderAquaURL 経由では踏めない枝があるため、ここで直接固定する。
+	// 理由は hostIsLiteral の doc コメントが持つ。renderAquaURL 経由では踏めない枝があるため、
+	// ここで直接固定する。
 	for name, tc := range map[string]struct {
 		tmpl string
 		want bool
@@ -1752,8 +1751,7 @@ func Test_lastModified(t *testing.T) {
 			require.ErrorIs(t, err, errUpstreamStatus)
 		})
 
-		// ヘッダが無いとき time のゼロ値を返すと、呼び出し側はそれを「公開から数十年経過」と
-		// 読み、そのツールが窓を無条件で通過する。
+		// 理由は publishedAt のコメントと同じ。
 		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
@@ -1803,8 +1801,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// base の url が probe の環境向けでないパッケージがある。overrides を読み飛ばすと
-		// 存在しない URL を叩き、配布されている道具を「その版は無い」として落とす。
+		// 理由は aquaArtifactURL の Overrides フィールドのコメントが持つ。
 		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -1914,7 +1911,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// base へ黙って退くと、別の環境向けのテンプレートが無関係な配布物へ 200 で解決し得る。
+		// 理由は aquaArtifactURL の override ループのコメントが持つ。
 		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -2000,7 +1997,7 @@ func Test_hasBypass(t *testing.T) {
 			assert.False(t, hasBypass(map[string]bypass{}, map[string]struct{}{}, target))
 		})
 
-		// 規約違反のバイパスが効いたままだと、期限そのものが何も担保しないことになる。
+		// 理由は Test_classify の同種ケースと同じ。
 		t.Run("無効化されたキーは登録があっても無効と判定する", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, hasBypass(bypasses, map[string]struct{}{"aqua:owner/repo@1.2.3": {}}, target))
