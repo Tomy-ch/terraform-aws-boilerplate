@@ -45,14 +45,16 @@ var (
 
 // versionPattern は版の桁の並び。**1〜3桁を許す** —— `go = "1"` も `= "1.27"` も
 // `= "1.27.1"` も宣言として現れる。捕獲群を持たないので、これを使う正規表現の群番号は
-// この式の有無で動かない。
+// この式の有無で動かない。**その不変条件は Test_versionPattern が固定する** —— コメントだけで
+// 守ると、ここへ群を1つ足した日に3つの正規表現が同時にずれ、置換が err == nil のまま壊れる。
 const versionPattern = `\d+(?:\.\d+){0,2}`
 
 var (
 	// miseSectionRe は `[tools]` のような table の見出し。
 	miseSectionRe = regexp.MustCompile(`^\[([^\]]+)\]`)
 	// miseKeyRe は `go = "1.27.1"` と `"aqua:aws/aws-cli" = "2.36.40"` の両方を捉える代入。
-	// backend 付きのキーは `:` と `/` を含むため TOML では引用符が要る（mise.toml 冒頭の注記）。
+	// backend 付きのキー（`aqua:owner/repo`）は `:` と `/` を含む。TOML の裸キーに使えるのは
+	// ASCII 英数字と `_` `-` だけなので、そうしたキーは引用符付きでしか書けない。
 	//
 	// **引用符は対で要求する。** 前後を独立した `"?` にすると `"go = "1.27.1"` のような壊れた行も
 	// 読めてしまい、手編集で壊れた宣言から拾った値のまま写しを書き換える。第1群が引用符付きの
@@ -60,6 +62,10 @@ var (
 	miseKeyRe = regexp.MustCompile(`^(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_-]*))\s*=\s*"([^"]+)"`)
 	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
+	// versionRe は、宣言側から読んだ版がその形をしているかを見る。**一致に使う形と置換に
+	// 入れる値が別物だと、`1.2.3$1` のような値がそのまま写し先へ埋まる** —— Go の置換文字列は
+	// `$` を後方参照として解釈し、写し先が Makefile なら `$(shell ...)` が実行され得る。
+	versionRe = regexp.MustCompile(`^` + versionPattern + `$`)
 )
 
 // dockerFromRe は Dockerfile の `FROM <image>:<version><suffix>` を捉える正規表現を返します。
@@ -165,7 +171,9 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 	return nil
 }
 
-// rules は、宣言から写しへの対応を返します。**ここが対応表の唯一の在処である。**
+// rules は、宣言から写しへの対応を返します。**写し先の対応表はここが唯一の在処である。**
+// ただし mise.toml 側で何を読むかは parseMise が別に持つ —— 道具を足すときは、declared の
+// フィールド・parseMise の分岐・欠落の検査・この表の4つを揃える必要がある。
 func rules(v declared) []rule {
 	const (
 		toolsDockerfile = "docker/tools/Dockerfile"
@@ -229,6 +237,19 @@ func applyRule(r rule, content string) (string, error) {
 	// 壊れた行を作り、しかも件数のガードは通る。
 	if r.version == "" {
 		return "", xerrors.Wrap(errShape, r.label+": 宣言側の版が空です")
+	}
+
+	// **書き込む値も版の形に照らす。** 一致は versionPattern で見るのに置換は無検査、という
+	// 非対称を塞ぐ。宣言は手で編集されるので、余分な空白も `$` も現実に入り得る。
+	if !versionRe.MatchString(r.version) {
+		return "", xerrors.Wrap(errShape, r.label+": 宣言側の版が版の形をしていません: "+r.version)
+	}
+
+	// **置換は前置きの群 ${1} を要する。** 群が無い正規表現を渡されると、Go は参照を
+	// エラーにせず空文字へ落とすので、前置きを失った内容が err == nil のまま書き出される。
+	// 後置きの ${2} は goDirectiveRe のように持たない rule もあり、そちらは空でよい。
+	if r.re.NumSubexp() < 1 {
+		return "", xerrors.Wrap(errShape, r.label+": 写し先の正規表現が前置きの捕獲群を持ちません")
 	}
 
 	found := len(r.re.FindAllString(content, -1))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -221,6 +222,34 @@ func Test_run(t *testing.T) {
 
 			require.Error(t, run([]string{"apply"}, root, &out))
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
+		})
+	})
+}
+
+func Test_versionPattern(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// **捕獲群を持たないことが、3つの正規表現の群番号を動かさない条件である。**
+		// ここへ群を1つ足すと dockerFromRe と miseInstallRe の後置きが ${3} へずれ、
+		// goDirectiveRe は版の桁を ${2} として拾う。Go はどちらもエラーにしない。
+		t.Run("捕獲群を持たない", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 0, regexp.MustCompile(versionPattern).NumSubexp())
+		})
+
+		t.Run("1〜3桁の版だけに一致する", func(t *testing.T) {
+			t.Parallel()
+
+			re := regexp.MustCompile(`^` + versionPattern + `$`)
+			for _, ok := range []string{"1", "1.27", "1.27.1"} {
+				assert.True(t, re.MatchString(ok), ok)
+			}
+			for _, ng := range []string{"", "1.27.1.2", "1.27.1 ", " 1.27.1", "1.27.1$1", "v1.27.1", "1.27.1-rc1"} {
+				assert.False(t, re.MatchString(ng), ng)
+			}
 		})
 	})
 }
@@ -471,6 +500,38 @@ func Test_applyRule(t *testing.T) {
 				require.ErrorIs(t, err, errShape)
 			})
 		}
+
+		// **一致は versionPattern で見るのに置換が無検査だと、宣言に書かれた何でも写し先へ
+		// 埋まる。** Go の置換文字列は `$` を後方参照として解釈するので、`1.2.3$1` は別の群へ
+		// 化け、写し先が Makefile なら `$(shell ...)` が実行され得る。
+		for name, version := range map[string]string{
+			"後方参照を含む":   "1.2.3$1",
+			"シェル関数を含む":  "1.2.3$(shell touch x)",
+			"末尾に空白がある":  "1.27.1 ",
+			"桁が多すぎる":    "1.2.3.4",
+			"接頭辞が付いている": "v1.27.1",
+		} {
+			t.Run("宣言側の版が"+name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+
+				bad := r
+				bad.version = version
+				_, err := applyRule(bad, "FROM golang:1.0.0-a\nFROM golang:1.0.0-b\n")
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+
+		// 群が無い正規表現では `${1}` が空文字へ落ち、前置きを失った内容が err == nil のまま
+		// 書き出される。Go は存在しない群の参照をエラーにしない。
+		t.Run("写し先の正規表現が捕獲群を持たなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			noGroup := r
+			noGroup.re = regexp.MustCompile(`FROM golang:` + versionPattern + `-bookworm`)
+			noGroup.count = 1
+			_, err := applyRule(noGroup, "FROM golang:1.0.0-bookworm\n")
+			require.ErrorIs(t, err, errShape)
+		})
 
 		// 空で書き換えると `FROM golang:-bookworm` を作り、件数のガードは通る。
 		t.Run("宣言側の版が空ならエラーにする", func(t *testing.T) {
