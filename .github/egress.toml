@@ -1,5 +1,5 @@
 # harden-runner の allowed-endpoints の SSOT。
-# クラスの意味・追加手順・反映と検査のコマンドは .github/workflows/README.md の Runner Hardening 節。
+# クラスの意味・追加手順・反映と検査のコマンドは .github/workflows/README.md の「ランナーの封じ込め」節。
 
 [class.base]
 hosts = [
@@ -96,7 +96,16 @@ classes = []
 [job."go-test.yaml:go-test"]
 classes = ["mise"]
 
+[job."go-test.yaml:test-mapping"]
+classes = ["mise"]
+
 [job."md-lint.yaml:md-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:adr-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:skill-lint"]
 classes = ["mise"]
 
 [job."notify.yaml:notify"]

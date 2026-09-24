@@ -20,6 +20,19 @@ pre-commit:
       glob: "**/*.md"
       run: make md-lint
 
+    # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
+    adr-lint:
+      glob: "**/*.md"
+      run: make adr-lint
+
+    # 何を見るかと、なぜ要るかは scripts/README.md の skill-lint 行が持つ。
+    skill-lint:
+      glob:
+        - ".claude/skills/**/*.md"
+        - "makefile"
+        - ".makefiles/**/*.mk"
+      run: make skill-lint
+
     docker-lint:
       glob: "docker/**/Dockerfile"
       run: make docker-lint
@@ -66,6 +79,11 @@ pre-commit:
         - "scripts/go.sum"
       run: make go-test
 
+    # 何を見るかと、なぜ go-test と別に要るかは scripts/README.md の test-mapping 行が持つ。
+    test-mapping:
+      glob: "scripts/**/*.go"
+      run: make test-mapping
+
 commit-msg:
   commands:
     # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
@@ -76,7 +94,7 @@ commit-msg:
 pre-push:
   parallel: true
   commands:
-    # push 予定の commit 範囲に秘密が無いこと（ADR-0302 決定4・11-13、
+    # push 予定の commit 範囲に秘密が無いこと（ADR-0302 決定6 の走査範囲の表、
     # .makefiles/security/gitleaks.mk）。
     secret-scan:
       run: make secret-scan
