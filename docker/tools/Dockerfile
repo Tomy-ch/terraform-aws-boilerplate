@@ -9,7 +9,7 @@ ARG MISE_VERSION=v2026.9.9
 # ==============================================================================
 # go_tools_builder: mise.toml の宣言どおりに道具を入れ、バイナリだけを取り出す
 # ==============================================================================
-FROM golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS go_tools_builder
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go_tools_builder
 
 # パイプの左側が失敗しても右側が成功すれば RUN が通ってしまう既定を塞ぐ。
 # 下の版の検査はコマンド置換の中でパイプを使うため、これが無いと**検査が実行されないまま緑になる**。
@@ -76,7 +76,7 @@ RUN mkdir /out \
 # ==============================================================================
 # go_tools: 運用機構（scripts/）を走らせる。mise 本体も install キャッシュもここには無い
 # ==============================================================================
-FROM golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS go_tools
+FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS go_tools
 
 # git: 運用機構の多くが git を呼ぶ（base-branch は ls-remote、release は tag、commitlint の
 #      範囲取得は rev-list）。テストもこれらを実際に起動して引数列を検査する。
@@ -107,7 +107,7 @@ CMD []
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段が mise を使わない理由は docker/tools/README.md が持つ。
-FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS node_tools
+FROM node:26.9.0-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070 AS node_tools
 
 # pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
 # alpine の `sh` は busybox で、pipefail を持たない。
