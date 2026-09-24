@@ -37,7 +37,7 @@ so the quality and format of findings stay consistent:
   follow.
 
 Output is in Japanese. Note this is for **whole-repository verification**, not diff review (for diffs
-use `impl-review` / `/code-review`).
+use `impl-review`; for the tests a diff moved, `test-review`).
 
 **The focus of verification is "implementation cleanliness" = readability, maintainability, and
 design straightforwardness.** Naming conventions and obvious misuse are caught by `make go-lint`
@@ -58,7 +58,6 @@ in scope.
 
 When not to use:
 
-- Diff/PR-scoped review → `impl-review` / `/code-review`.
 - 変更そのもののレビュー → `impl-review`（差分が主題。こちらはリポジトリ全体）。
 - テストの監査 → `test-review`。
 - Applying fixes → this skill is read-only. It reports only; it does not fix.
@@ -67,7 +66,7 @@ When not to use:
 
 `full-verify` (whole, non-diff **detection**) → `full-apply` (**application**) form a pair. Use these
 two when you want to take an overview of the whole and fix it. For diff scope use `impl-review`
-(adversarial, different model) / `/code-review`; for test quality use `test-review`; for layer
+(adversarial, different model); for test quality use `test-review`; for layer
 差分のレビューには `impl-review` を、テストの監査には `test-review` を使う。
 
 ## Arguments (with Defaults)

@@ -201,18 +201,38 @@ make egress-check
 
 ## 8. `versions-check` が落ちる
 
-`mise.toml` の `[tools]`（正本）と、その写し（`docker/tools/Dockerfile` の `FROM golang:` 2件と
-`FROM node:` 1件、`scripts/go.mod` の `go` ディレクティブ）がずれている。
+`mise.toml` の `[tools]`（正本）と、それを書き写している箇所がずれている。
 
 ```sh
 make versions-apply
 ```
 
+**写し先の一覧をここに置かない。** 対応表を持つのは `scripts/versions/main.go` の `rules()` で、
+読める形の説明は [`scripts/README.md`](../../../scripts/README.md) の `versions/` の行が持つ
+（ADR-0701 決定1）。ここへ写すと、次に写し先が増えた日にこの節だけが古いまま残る ——
+実際そうなった。
+
+**出力はファイル名までしか言わない。**
+
+```text
+❌ 版の写しが宣言からずれています: Dockerfile（make versions-apply で反映）
+```
+
+1つのファイルが複数の写しを持つので、**どの写しがずれたかは出力から分からない。**
+`make versions-apply` を走らせて `git diff` を読むのが早い。
+
+形が壊れている場合（一致件数が合わない、宣言側の版が版の形をしていない）は、ラベルとパスが出る。
+
+```text
+go の照合値 (docker/tools/Dockerfile): 一致が 0 件、期待は 1 件
+```
+
+こちらは `apply` では直らない。**写しが消えたか、対応表がその形を知らないかのどちらか**であり、
+`rules()` 側の更新が要る。
+
 **ずれてもイメージのビルドは通る。** 落ちるのは、ずれた版に無い機能を使ったときだけである。
 だからこの検査が要る —— 無いと「ずれている」と「揃っている」が緑で区別できない。
-
-一致件数は**厳密**に見るので、写しが増えたときも減ったときも落ちる。`FROM` を1つ足したり
-レジストリを前置したりすると、対応表（`scripts/versions/main.go` の `rules`）の更新が要る。
+一致件数を**厳密**に見るのも同じ理由で、写しが増えたときも減ったときも落ちる。
 
 ## 9. pre-push `secret-scan` が自分の足していない秘密を報告する
 

@@ -20,6 +20,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
+
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -244,14 +246,13 @@ func Test_parseTools(t *testing.T) {
 			}
 		})
 
-		// mise は tool option 付きの table 形式も受け付ける。version を持つ宣言は形が違ってもゲートに載せ、
-		// version の無い行（option だけの table や別の構造）は拾わずに読み進める。
-		t.Run("version を持つ table 形式の宣言は読み、version の無い行は拾わずに読み進める", func(t *testing.T) {
+		// mise は tool option 付きの table 形式も受け付ける。形が違うだけでゲートから外れると、
+		// 窓の検査が黙って抜ける。
+		t.Run("version を持つ table 形式の宣言も読む", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseTools([]byte("[tools]\n" +
 				`node = { version = "24.11.0" }` + "\n" +
 				`"npm:markdownlint-cli2" = { version = "0.23.2", trust_policy_excludes = ["fastq@1.20.2"] }` + "\n" +
-				`"npm:some-tool" = { allow_builds = ["esbuild"] }` + "\n" +
 				`sqlc = "1.31.1"` + "\n"))
 			require.NoError(t, err)
 
@@ -260,6 +261,22 @@ func Test_parseTools(t *testing.T) {
 				ids = append(ids, tool.id())
 			}
 			assert.ElementsMatch(t, []string{"node@24.11.0", "npm:markdownlint-cli2@0.23.2", "sqlc@1.31.1"}, ids)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// **読み飛ばすと、その道具は窓の検査から外れたままゲートが緑を返す**（ADR-0702 決定14）。
+		// 版を持たない宣言は、このツールが測れるものを持たないのだから、黙って対象から落とさず
+		// 宣言の側を直させる。判定は misetoml が持ち、ここが固定するのは握り潰さないことである。
+		t.Run("version を持たない table 形式は読み飛ばさずエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseTools([]byte("[tools]\n" +
+				`sqlc = "1.31.1"` + "\n" +
+				`"npm:some-tool" = { allow_builds = ["esbuild"] }` + "\n"))
+			require.ErrorIs(t, err, misetoml.ErrInvalidLine)
+			assert.Contains(t, err.Error(), "npm:some-tool", "直す先の行を報告していない")
 		})
 	})
 }
@@ -922,11 +939,8 @@ func Test_addedFrom(t *testing.T) {
 	})
 }
 
-// stubMise は PATH の先頭へ偽の mise を置きます。
-//
-// 実物を呼ぶと、テストがこのマシンに mise が入っているかどうかで通ったり落ちたりするようになり、
-// ツールについてのテストであることをやめます。境界（外部コマンドの起動）で差し替えることで、
-// **ツールが組み立てた引数列そのもの**を検査対象にできます。
+// stubMise は PATH の先頭へ偽の mise を置きます。境界で差し替える理由は scripts/README.md の
+// Test Strategy 節が持ちます。
 func stubMise(t *testing.T, script string) {
 	t.Helper()
 
@@ -1210,7 +1224,7 @@ func Test_getJSON(t *testing.T) {
 			assert.Equal(t, "ok", body["name"])
 		})
 
-		// 未認証の GitHub API は 60 req/hour で、1 回の実行を賄えず全件 unresolved に化ける。
+		// 理由は fetchBody のコメントと同じ。
 		t.Run("GitHub API にはトークンを Authorization ヘッダで載せる", func(t *testing.T) {
 			t.Setenv("GITHUB_TOKEN", "test-token")
 			auth := make(chan string, 1)
@@ -1376,7 +1390,7 @@ func Test_npmPackageAt(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// ゼロ値の時刻を返すと公開から数十年経った扱いになり、窓を無条件に通過する。
+		// 理由は publishedAt のコメントと同じ。
 		t.Run("time に載っていないバージョンはエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondJSON("/@redocly/cli", `{"time":{"2.31.3":"2026-07-01T00:00:00Z"}}`))
@@ -1527,7 +1541,7 @@ func Test_renderAquaURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// replacements を飛ばすと存在しない URL を叩き、404 が「その版は無い」に化ける。
+		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("replacements を適用してから展開する", func(t *testing.T) {
 			t.Parallel()
 
@@ -1540,8 +1554,7 @@ func Test_renderAquaURL(t *testing.T) {
 			assert.Equal(t, "https://cdn.example.com/tool-linux-x86_64-1.2.3.zip", got)
 		})
 
-		// aqua のレジストリの url は trimV を広く使う。登録しなければ Parse の時点で落ち、
-		// 本来たどれる配布物が「解釈できない定義」に化ける。
+		// 理由は renderAquaURL の trimV についてのコメントが持つ。
 		t.Run("aqua の trimV を展開できる", func(t *testing.T) {
 			t.Parallel()
 
@@ -1570,8 +1583,8 @@ func Test_renderAquaURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// aqua 本体は sprig を登録するがここは trimV だけを解する。素通しではなく失敗へ倒れる
-		// ことを固定する —— 黙って別の URL を組むより、解釈できないと言う方が安全である。
+		// 対応範囲は renderAquaURL の trimV についてのコメントが持つ。素通しではなく失敗へ
+		// 倒れることを、ここで固定する。
 		t.Run("未対応のテンプレート関数を使う定義はエラーにする", func(t *testing.T) {
 			t.Parallel()
 
@@ -1586,12 +1599,10 @@ func Test_renderAquaURL(t *testing.T) {
 			require.Error(t, err)
 		})
 
-		// 版を含まない固定 URL は、どの版に対しても同じ古い Last-Modified を返す。落とさないと
-		// そのパッケージは公開直後の版でも常に窓を満たし、**ゲートが素通しに化ける。**
+		// 理由は renderAquaURL の doc コメントが持つ。
 		t.Run("版を指さない URL は errUnversionedArtifact を返す", func(t *testing.T) {
 			t.Parallel()
 
-			// path 以外へ版を置いた形は、サーバがそれを無視すれば固定 URL と同じものを指す。
 			for name, tmpl := range map[string]string{
 				"版がどこにも無い":   "https://cdn.example.com/installer.sh",
 				"版がクエリにだけ在る": "https://cdn.example.com/latest/installer.sh?v={{.Version}}",
@@ -1671,8 +1682,8 @@ func Test_aquaRegistryBase(t *testing.T) {
 func Test_hostIsLiteral(t *testing.T) {
 	t.Parallel()
 
-	// ホストが補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れる。
-	// renderAquaURL 経由では踏めない枝があるため、ここで直接固定する。
+	// 理由は hostIsLiteral の doc コメントが持つ。renderAquaURL 経由では踏めない枝があるため、
+	// ここで直接固定する。
 	for name, tc := range map[string]struct {
 		tmpl string
 		want bool
@@ -1727,8 +1738,7 @@ func Test_lastModified(t *testing.T) {
 			require.ErrorIs(t, err, errUpstreamStatus)
 		})
 
-		// ヘッダが無いとき time のゼロ値を返すと、呼び出し側はそれを「公開から数十年経過」と
-		// 読み、そのツールが窓を無条件で通過する。
+		// 理由は publishedAt のコメントと同じ。
 		t.Run("Last-Modified が無ければ errNoLastModified を返す", func(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondLastModified("/a.zip", ""))
@@ -1778,8 +1788,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// base の url が probe の環境向けでないパッケージがある。overrides を読み飛ばすと
-		// 存在しない URL を叩き、配布されている道具を「その版は無い」として落とす。
+		// 理由は aquaArtifactURL の Overrides フィールドのコメントが持つ。
 		t.Run("probe の goos に一致する override を base より優先する", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -1889,7 +1898,7 @@ func Test_aquaArtifactURL(t *testing.T) {
 			require.ErrorIs(t, err, errUnsupportedPackage)
 		})
 
-		// base へ黙って退くと、別の環境向けのテンプレートが無関係な配布物へ 200 で解決し得る。
+		// 理由は aquaArtifactURL の override ループのコメントが持つ。
 		t.Run("該当 goos の override の url が空なら base へ退かない", func(t *testing.T) {
 			t.Parallel()
 			body := aquaHTTPRegistry + "    overrides:\n" +
@@ -1975,7 +1984,7 @@ func Test_hasBypass(t *testing.T) {
 			assert.False(t, hasBypass(map[string]bypass{}, map[string]struct{}{}, target))
 		})
 
-		// 規約違反のバイパスが効いたままだと、期限そのものが何も担保しないことになる。
+		// 理由は Test_classify の同種ケースと同じ。
 		t.Run("無効化されたキーは登録があっても無効と判定する", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, hasBypass(bypasses, map[string]struct{}{"aqua:owner/repo@1.2.3": {}}, target))
@@ -2194,6 +2203,19 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out, "aqua:owner/repo@1.2.3（aqua:owner/repo）は公開 1 日で cooldown 14 日")
 		})
 
+		// `[ tools ]` は TOML として `[tools]` と等価であり、正規化し損なうと見出しの空白1つで
+		// 供給網の検査が全面的に効かなくなる。判定は misetoml が持ち、ここが固定するのは
+		// 検査の対象として実際に届くことである。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("見出しの内側に空白がある宣言も検査の対象にする", func(t *testing.T) {
+			useMiseWorkTree(t, "[ tools ]\n\"aqua:owner/repo\" = \"1.2.3\"\n")
+
+			out, err := runCaptured(t, []string{"audit"}, releasedOn(t, fresh), now)
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "aqua:owner/repo@1.2.3")
+		})
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無いツールでも窓を越えていれば通す", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)
@@ -2244,6 +2266,22 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("異常系", func(t *testing.T) {
+		// 宣言0件を成功で終わらせない理由は run のガード注記が持つ。`[tools]` 節が無い場合と
+		// 空の場合の両方で、そのガードが働くことを固定する。
+		for name, content := range map[string]string{
+			"[tools] 節が無い": "[settings]\nfoo = \"1\"\n",
+			"[tools] 節が空":  "[tools]\n",
+		} {
+			//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+			t.Run(name+"なら audit を成功で終わらせない", func(t *testing.T) {
+				useMiseWorkTree(t, content)
+
+				_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+
+				require.ErrorIs(t, err, errNoDeclarations)
+			})
+		}
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無い窓内のツールを失敗にする", func(t *testing.T) {
 			useMiseGateRepo(t, "[tools]\n", miseOneAquaTool)

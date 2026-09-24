@@ -34,6 +34,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -97,16 +98,9 @@ var (
 	errBypassInvalidLine = xerrors.New("invalid bypass line")
 	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
 	errBypassDuplicateKey = xerrors.New("duplicate bypass key")
+	// errNoDeclarations は、宣言ファイルから道具を1件も読めなかった場合のエラー。
+	errNoDeclarations = xerrors.New("no tool declarations found")
 
-	// toolLineRe は `[tools]` の 1 行を key と version へ割る。key は裸でも引用符付きでもよい。
-	toolLineRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|([A-Za-z0-9_.\-]+))\s*=\s*"([^"]+)"\s*$`)
-	// toolTableLineRe は tool option 付きの 1 行宣言（`key = { version = "...", ... }`）から key と version を読む。
-	// 宣言の形が変わっただけでゲートから外れると、窓の検査が黙って抜ける。
-	toolTableLineRe = regexp.MustCompile(
-		`^\s*(?:"([^"]+)"|([A-Za-z0-9_.\-]+))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*$`,
-	)
-	// sectionRe は TOML のセクション見出し。
-	sectionRe = regexp.MustCompile(`^\s*\[([^\]]+)\]\s*$`)
 	// bypassLineRe は `"key@version" = { expires = ..., issue = ..., reason = "..." }` を読む。
 	bypassLineRe = regexp.MustCompile(
 		`^"([^"]+)"\s*=\s*\{\s*expires\s*=\s*(\d{4}-\d{2}-\d{2})\s*,\s*issue\s*=\s*(\d+)\s*,\s*reason\s*=\s*"([^"]*)"\s*\}$`,
@@ -193,6 +187,17 @@ func run(args []string, client *http.Client, now time.Time) error {
 		return xerrors.Wrap(err, "❌ 宣言ファイルの解析")
 	}
 
+	// **検査対象が0件なら成功で終わらない**（ADR-0702 決定13）。宣言が1件も読めない状態は、
+	// 供給網の窓を全件について測らなかったということである。「ゲートが外れた」と「合格した」を
+	// 区別できないまま緑を返すと、宣言の書式が変わった日にこの検査は黙って無効になる。
+	//
+	// 見るのは差分（gate の targets）ではなく宣言の全体である。差分が0件なのは正常な状態だが、
+	// 宣言そのものが0件なのは読み取りが壊れた状態である。
+	if len(declared) == 0 {
+		return xerrors.Wrap(errNoDeclarations,
+			"❌ "+strings.Join(paths, ", ")+" から道具の宣言を1件も読めませんでした（[tools] の見出しと書式を確認してください）")
+	}
+
 	if sub == "outdated" {
 		return reportOutdated(client, declared, opt, now)
 	}
@@ -272,7 +277,7 @@ func parseArgs(args []string) (string, options, error) {
 		return "", options{}, xerrors.Wrap(err, "❌ フラグを解釈できません")
 	}
 
-	// gate は差分を取れないと何も検査しないまま通るため、比較対象の不在を先に落とす。
+	// 比較対象の不在を先に落とす。差分を取れないまま進んだときの危険は baseDeclarations が持つ。
 	if sub == "gate" && *base == "" {
 		return "", options{}, xerrors.Wrap(errUsage, "❌ gate には --base が要ります（比較対象が無いと差分を取れません）")
 	}
@@ -280,39 +285,20 @@ func parseArgs(args []string) (string, options, error) {
 	return sub, options{base: *base, summaryOut: *summaryOut, github: *github}, nil
 }
 
-// parseTools は `[tools]` セクションの宣言だけを読む。`[settings]` の `pipx.uvx` や `[env]` の
-// バージョン値をツールとして拾わないよう、セクションを見て範囲を限る。
+// parseTools は `[tools]` セクションの宣言だけを読む。読み取りそのものは misetoml が持ち、
+// 実装を重複させてはいけない理由はそのパッケージの doc コメントが持つ。
 func parseTools(content []byte) ([]tool, error) {
-	var tools []tool
-	section := ""
-	sc := bufio.NewScanner(strings.NewReader(string(content)))
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if m := sectionRe.FindStringSubmatch(trimmed); m != nil {
-			section = m[1]
-			continue
-		}
-		if section != "tools" {
-			continue
-		}
-		m := toolLineRe.FindStringSubmatch(trimmed)
-		if m == nil {
-			m = toolTableLineRe.FindStringSubmatch(trimmed)
-		}
-		if m == nil {
-			continue
-		}
-		key := m[1]
-		if key == "" {
-			key = m[2]
-		}
-		tools = append(tools, tool{key: key, version: m[3]})
+	entries, err := misetoml.Parse(content)
+	if err != nil {
+		return nil, err
 	}
-	return tools, sc.Err()
+
+	var tools []tool
+	for _, e := range entries {
+		tools = append(tools, tool{key: e.Key, version: e.Version})
+	}
+
+	return tools, nil
 }
 
 // declarationPaths は版を宣言するファイルを返す。
@@ -393,8 +379,8 @@ func verifyRef(ctx context.Context, base string) error {
 	return nil
 }
 
-// addedFrom は base 時点の宣言と現在の宣言を突き合わせる。base を読めなかった場合に空の差分を
-// 返すと、gate は何も検査しないまま通る。解析の失敗はエラーとして表に出す。
+// addedFrom は base 時点の宣言と現在の宣言を突き合わせる。空の差分を返したときの危険は
+// baseDeclarations が持つ。解析の失敗はエラーとして表に出す。
 func addedFrom(baseDecls []declaration, current []tool) ([]tool, error) {
 	before, err := parseDeclarations(baseDecls)
 	if err != nil {
@@ -523,7 +509,9 @@ func inspect(ctx context.Context, client *http.Client, targets []tool, now time.
 	return findings, unresolved
 }
 
-// publishedAt は backend ごとの上流からそのバージョンの公開時刻を取る。
+// publishedAt は backend ごとの上流からそのバージョンの公開時刻を取る。**見つからない場合は
+// 必ずエラーを返す** —— ゼロ値の time.Time を返すと、呼び出し側はそれを「公開から数十年経過」と
+// 読み、そのツールが cooldown を無条件で通過する。
 func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, error) {
 	_, ref, _ := strings.Cut(t.backend, ":")
 	switch backendKind(t.backend) {
@@ -719,7 +707,7 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 	//
 	// **aqua 本体はこれに加えて sprig の関数群を登録するが、ここは trimV だけを解する。**
 	// `trimPrefix` 等を使う定義（`golang/go` など）は解釈できないものとして扱われ、gate は
-	// 素通しではなく失敗の側へ倒れる。必要になった時点で、依存を足すかどうかを決める。
+	// 素通しではなく失敗の側へ倒れる。
 	tmpl, err := template.New("url").
 		Funcs(template.FuncMap{"trimV": func(v string) string { return strings.TrimPrefix(v, "v") }}).
 		Parse(urlTemplate)
@@ -762,7 +750,10 @@ func renderAquaURL(urlTemplate string, replacements map[string]string, version s
 
 // hostIsLiteral は、テンプレートのホスト部分に展開の入る余地が無いことを見る。ホストが
 // 補間で決まる定義を認めると、レジストリ側の記述だけで任意の宛先への要求を作れてしまう。
-// **見るのはそれだけである** —— スキームと userinfo は、展開したあとに呼び出し側が検める。
+//
+// ホストの終わりを探すのに `https://` という既知の接頭辞を前提にするので、**展開を含む
+// テンプレートは、接頭辞が一致しない時点でここでも false になる。** 展開を含まない形の
+// スキームと userinfo はここでは検めず、最終の判定は展開後に呼び出し側が行う。
 func hostIsLiteral(urlTemplate string) bool {
 	action := strings.Index(urlTemplate, "{{")
 	if action < 0 {
@@ -819,8 +810,8 @@ func lastModified(ctx context.Context, client *http.Client, url string) (time.Ti
 	return at.UTC(), nil
 }
 
-// goModuleAt は module proxy の .info を返す。mise の go backend はパッケージパスを受けるが
-// proxy が知るのはモジュールパスなので、解決するまで末尾要素を落としながら遡る。
+// goModuleAt は module proxy の .info を返す。パッケージパスからモジュールパスへ遡る理由は
+// goModuleVersions の doc コメントが持つ。
 func goModuleAt(ctx context.Context, client *http.Client, pkg, version string) (time.Time, error) {
 	var body struct {
 		//nolint:tagliatelle // module proxy の応答フィールド名
@@ -834,9 +825,9 @@ func goModuleAt(ctx context.Context, client *http.Client, pkg, version string) (
 		}
 		lastErr = err
 	}
-	// pkg に `/` が無いとループが 1 度も回らない。ここで nil を返すと呼び出し側はゼロ値時刻を
-	// 「公開から数十年経過」と読み、そのツールが cooldown を無条件で通過する。「問い合わせた結果
-	// 見つからない」と「一度も問い合わせていない」は、公開時刻を得られていない点で同じ扱いにする。
+	// pkg に `/` が無いとループが 1 度も回らない。ゼロ値を返せない理由は publishedAt が持つ。
+	// 「問い合わせた結果見つからない」と「一度も問い合わせていない」は、公開時刻を得られて
+	// いない点で同じ扱いにする。
 	if lastErr == nil {
 		return time.Time{}, xerrors.Wrap(errNotFound, pkg+"@"+version)
 	}

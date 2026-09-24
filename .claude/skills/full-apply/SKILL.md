@@ -34,7 +34,7 @@ verify → commit → record into the ledger and mod."
 When not to use:
 
 - Detection (review generation) itself → `full-verify`.
-- Diff/PR review → `impl-review` / `/code-review`.
+- Diff/PR review → `impl-review`（テストの監査は `test-review`）。
 - A one-off commit task → `commit`.
 
 ## Positioning (Division of Labor with Other Skills)

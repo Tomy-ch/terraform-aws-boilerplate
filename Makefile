@@ -3,6 +3,7 @@
 # 実行基盤と道具の版
 include .makefiles/runner.mk
 include .makefiles/versions.mk
+include .makefiles/host-tools.mk
 
 # GitHub関連
 include .makefiles/github/operation/release-branch.mk
