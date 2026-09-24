@@ -210,7 +210,7 @@ gh label list --limit 40          # 実在するラベルだけを使う
 gh issue create --title "<title>" --label <label> --body-file <file>
 ```
 
-**issue テンプレートはこのリポジトリに無い**（`.github/ISSUE_TEMPLATE/` が存在しない）。
+**issue テンプレートはこのリポジトリに無い**（.github/ISSUE_TEMPLATE/ が存在しない）。
 上の節構成がそのまま本文になる。**title と body は日本語**（ADR-0701 決定9）。
 
 Report the URL, and say which premises were verified at runtime and which only statically.

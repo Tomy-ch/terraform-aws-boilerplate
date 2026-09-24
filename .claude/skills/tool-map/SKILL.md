@@ -37,7 +37,7 @@ Scan only project-level paths under the current working directory:
 
 | Type | Path glob | Entry file |
 | --- | --- | --- |
-| commands | `.claude/commands/` | `<name>.md` <!-- skill-lint-ignore --> |
+| commands | .claude/commands/（未作成） | `<name>.md` |
 | agents | `.claude/agents/` | `<name>.md` |
 
 Discovery commands (use `Bash` with `find` / `ls`, then `Read` per file):
@@ -175,14 +175,14 @@ When `--output=inline`, skip this step (no file was written).
 - Scan scope is **project-level only**. Do NOT read or list anything under `~/.claude/`.
 - Plugin-provided entries are out of scope.
 - Do NOT modify any scanned entry. This command only inspects.
-- If `.claude/commands/`, `.claude/skills/`, or `.claude/agents/` does not exist, treat its entry count as 0 and note it in the report rather than erroring. <!-- skill-lint-ignore -->
+- If .claude/commands/, .claude/skills/, or .claude/agents/ does not exist, treat its entry count as 0 and note it in the report rather than erroring.
 
 ## Checklist
 
 Before reporting completion, confirm:
 
 - [ ] All required inputs resolved (via `$ARGUMENTS` or `AskUserQuestion`)
-- [ ] Only project-level `.claude/{commands,skills,agents}/` scanned
+- [ ] Only project-level .claude/{commands,skills,agents}/ scanned
 - [ ] `*.ja.md` files excluded from the skills scan
 - [ ] Frontmatter parsed for each entry (name, description, type-specific fields)
 - [ ] Dependencies detected per the documented rules (self-refs excluded; broken edges recorded)

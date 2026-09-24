@@ -43,7 +43,7 @@ question has no index. スキル群、`.makefiles/` の各 `.mk`、`.lefthook.ya
 スキルを、`make help` は target を並べるが、どちらも目標には答えない。
 
 The failure this skill is shaped around is specific: **a plausible command is indistinguishable from
-a documented one.** `make terraform-test` / `make plan` —— どちらも在って当然に見え、書き下せば
+a documented one.** make terraform-test / make plan —— どちらも在って当然に見え、書き下せば
 権威に読め、訊いた人はそのまま叩く。**どちらも存在しない**（`AGENTS.md` *現在の配線状態* が、
 Terraform 側の検査も plan / apply の経路も未配線だと述べている）。
 
@@ -101,7 +101,7 @@ a target is named for what it does, not for how the goal was phrased.
 
 | Registry | What it holds | Index |
 | --- | --- | --- |
-| make targets | 正規の操作のほぼすべて | `make help`（**`.makefiles/README.md` は存在しない**） |
+| make targets | 正規の操作のほぼすべて | `make help`（**一覧の正本**）。どの `.mk` が何を担うかは `.makefiles/README.md` |
 | git hooks | commit / push 時に何が走るか | `.lefthook.yaml` |
 | CI | PR で何が走るか、どの環境で | `.github/workflows/` と同ディレクトリの `README.md` |
 | 運用機構 | 各ツールが何を解いているか | `scripts/README.md` |
@@ -114,8 +114,9 @@ a target is named for what it does, not for how the goal was phrased.
 
 Keyword search comes last, as a net for what the indexes missed.
 
-**存在の確認は `make help` で行う。** `.mk` を読んで target 名を見つけても、`Makefile` が
-その `.mk` を include していなければ実行できない。`make help` は実際に解決される一覧を出す。
+**存在の確認は `make help` で行う。** `.mk` に target 名を見つけたことは、それが実行できる
+ことを意味しない —— 条件は `.makefiles/README.md` が持つ。`make help` だけが、実際に解決される
+一覧を出す。
 
 ## Step 3 — Establish the operational envelope
 

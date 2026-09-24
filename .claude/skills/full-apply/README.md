@@ -20,7 +20,7 @@ full-apply   ──applies──────▶  code fixes + commits
   ledger and mod."
 - **Skips (defers) suspicious findings** (design decision / policy choice / public-API break / unknown
   impact) and leaves a reason. It only fixes the "clear and local, no-design-decision" ones.
-- Robust to interruption / `/clear`: the unprocessed part can be reconstructed and resumed from the
+- Robust to interruption (a Claude Code /clear included): the unprocessed part can be reconstructed and resumed from the
   `working.md` ledger and each `mod_*.md`'s status comment.
 
 ## Usage
