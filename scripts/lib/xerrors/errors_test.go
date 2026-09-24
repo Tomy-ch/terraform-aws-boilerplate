@@ -149,3 +149,63 @@ func TestStackTrace(t *testing.T) {
 		})
 	})
 }
+
+func TestNewf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("書式に引数を埋めたerrorを生成する", func(t *testing.T) {
+			t.Parallel()
+			err := Newf("%s の %d 行目", "mise.toml", 12)
+			require.EqualError(t, err, "mise.toml の 12 行目")
+		})
+
+		t.Run("引数が無い場合は書式をそのまま使う", func(t *testing.T) {
+			t.Parallel()
+			require.EqualError(t, Newf("verb を含まない"), "verb を含まない")
+		})
+
+		// 素の fmt.Errorf へ差し替えてもメッセージの assert は緑のままになるため、
+		// このパッケージの存在理由であるスタックの付加そのものを見る。
+		t.Run("スタックトレースを付加する", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, StackTrace(Newf("%s", "stack-msg")), "TestNewf")
+		})
+	})
+}
+
+func TestWrapf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("元エラーと書式済みメッセージの両方を含むerrorを返す", func(t *testing.T) {
+			t.Parallel()
+			baseErr := errors.New("base error")
+			actual := Wrapf(baseErr, "%s の解析", "mise.toml")
+			require.Error(t, actual)
+			assert.Contains(t, actual.Error(), "mise.toml の解析")
+			assert.Contains(t, actual.Error(), baseErr.Error())
+		})
+
+		// 呼び出し側は wrap 済みのエラーへ ErrorIs で到達する。チェーンが切れると、
+		// センチネルを見ているテストが静かに通らなくなる。
+		t.Run("元エラーへのチェーンを保つ", func(t *testing.T) {
+			t.Parallel()
+			baseErr := errors.New("base error")
+			assert.True(t, Is(Wrapf(baseErr, "%d 件", 3), baseErr))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("nilをwrapするとnilを返す", func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, Wrapf(nil, "%s", "wrapped"))
+		})
+	})
+}
