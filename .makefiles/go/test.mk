@@ -20,6 +20,12 @@ go-test-cover:
 cover-gate:
 	@$(call RUN_SCRIPT,cover-gate,-profile coverage.out -threshold $(COVERAGE_THRESHOLD))
 
+.PHONY: test-mapping ## 関数・メソッドとテストが 1:1 で対応していることを検査
+##
+## 規約の正本は .claude/skills/scaffold-test。何を見るかは scripts/README.md の test-mapping 行。
+test-mapping:
+	@$(call RUN_SCRIPT,test-mapping,)
+
 .PHONY: go-tidy-check ## go.mod / go.sum が整っていることを検査
 go-tidy-check:
 	@$(GO_TOOL) sh -c 'go -C scripts mod tidy && git diff --exit-code scripts/go.mod scripts/go.sum'
