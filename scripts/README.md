@@ -42,7 +42,14 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 
 |Script|Description|Invoked By|
 |---|---|---|
-|`adr-lint/`|ADR の構造を検査する。[ADR-0001 (adr-process-and-placement)](../docs/adr/0001-adr-process-and-placement.md) が自らの検証方法として挙げた項目を、そのまま実行するのがこのツール —— **規範を定めた ADR が自分の検査手段を持たない状態は、ADR-0401 決定3（検証できない主張を保証として扱わない）に自ら反する**。見るもの: ファイル名が `NNNN-kebab-case-title.md` に適合すること / 同一 scope 内で番号が重複しないこと / 先頭メタデータに Status・Date・Scope があること / `Superseded by` の参照先が実在すること / root ADR 本文が `modules/<use-case>/` 配下の path へ規範的に依存していないこと / 本文が参照する `ADR-NNNN` がすべて実在すること。最後の1つが要るのは、番号が identity ではなく順序になった（ADR-0001 決定5-9）ことから —— 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。併せて索引（`docs/adr/README.md`）が実ファイルと食い違っていないことも見る。索引は ADR の一覧が存在する唯一の場所で、そこがずれると読み手は決定へ到達できない。|`make adr-lint`|
+|`adr-lint/`|ADR の構造を検査する。[ADR-0001 (adr-process-and-placement)](../docs/adr/0001-adr-process-and-placement.md) が自らの検証方法として挙げた項目を、そのまま実行するのがこのツール —— **規範を定めた ADR が自分の検査手段を持たない状態は、ADR-0401 決定3（検証できない主張を保証として扱わない）に自ら反する**。見るもの: ファイル名が `NNNN-kebab-case-title.md` に適合すること / 同一 scope 内で番号が重複しないこと / 先頭メタデータに Status・Date・Scope があること / `Superseded by` の参照先が実在すること / root ADR 本文が `modules/<use-case>/` 配下の path へ規範的に依存していないこと / 本文が参照する `ADR-NNNN` がすべて実在すること。最後の1つが要るのは、番号が identity ではなく順序になった（ADR-0001 決定5-9）ことから —— 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。**同じ理由で、`docs/adr/` の外から ADR を指すパス形式のリンク（`[0101](docs/adr/0101-architecture-principles.md)`）も見る** —— 参照の主要な書式はそちらで、`AGENTS.md` と各 README に在り、番号と slug の両方を持つので突き合わせれば必ず落ちる。リンクの文言と指し先の番号を突き合わせるのは、詰め直しの取りこぼしが「指す先が無い」形ではなく「文言だけが古い」形で現れるため。併せて索引（`docs/adr/README.md`）が実ファイルと食い違っていないことも見る。索引は ADR の一覧が存在する唯一の場所で、そこがずれると読み手は決定へ到達できない。|`make adr-lint`|
+
+### 規約の検査
+
+|Script|Description|Invoked By|
+|---|---|---|
+|`skill-lint/`|`.claude/skills/**` の Markdown が inline code span で名指しした `make` ターゲット・`/<skill>`・パスが実在するかを検査する。**スキルは検査を持たない散文であり、名指しした先が消えても何も赤くならない** —— 嘘をついたスキルは、読んだ人が叩くまで嘘だと分からず、叩いた人は「この手順は古い」ではなく「自分の環境が壊れている」と読む。例示と参照はコードフェンスの位置で分ける（`lib/mdscan`）。**抑止の仕組みを持たない** —— フェンスの外の inline code span は実在するものを名指しする、という契約に例外を作らないため。存在しないものを述べたい文（`how-to` の「在って当然に見えるが存在しない」ターゲットなど）は、コードスパンに入れずに書く。パス参照は**先頭セグメントがリポジトリ直下に実在するものだけ**を対象にする。未配線の領域（`modules/` / `examples/`）への言及はずれではなく予告であり、その領域が作られた日に検査が自動で始まる。|`make skill-lint`|
+|`test-mapping/`|`scripts/**` の関数・メソッドが、規約どおりの名前の `TestXxx` をちょうど1つ持つことを `go/ast` で検査する。規約の正本は `.claude/skills/scaffold-test` で、**これまで書き手の自制だけが守っていた**。**枠が欠けても `go-test` は緑である** —— `go-test` が見るのはテストの合否であって、対応する `TestXxx` を持たない関数が在ることは、テストが落ちる形では現れない。道具が見るのは枠の有無だけで、ある対象の検証が別の対象へ畳み込まれていないか、assert がその対象の判断を実際に突いているかは見えない（そこは `/test-review` の Lens 5）。逃げ道は allowlist ではなく、規約名の `TestXxx` を宣言して `t.Skip` に理由を書くこと —— 理由が空でないリテラルであることと、**他のテストを名指ししていない**ことも見る（名指しされたテストが縮んだ日も緑のまま残るため）。|`make test-mapping`|
 
 ### カバレッジのゲート
 
@@ -89,6 +96,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/shellcheck/`|shellcheck の起動と結果の解釈。`actions-shellcheck` と `shell-lint` が同じ解釈を共有します。|
 |`lib/lintreport/`|workflow に対する lint が見つけた違反の持ち方と、失敗出力の組み立て。|
 |`lib/mdfence/`|Markdown のコードフェンスを、囲む本文から長さを決めて組む。長さを固定にすると本文側がフェンスを閉じて外へ抜けられます。規則の所有は [`.github/workflows/README.md`](../.github/workflows/README.md)。同じ計算が `upsert-pr-comment` の JavaScript にもあり、**両者の食い違いを検査する機構はありません**。|
+|`lib/mdscan/`|Markdown をコードフェンスの外だけ走査し、inline code span を取り出す。名指しした先の実在を検査する道具は、**例示と参照を区別できなければ成立しません** —— フェンスの中の `make no-such-target` は使い方の例であって参照ではなく、対象に含めると正しい文書が恒久的に落ちます。`lib/mdfence` がフェンスを**組む**側で、こちらが**読む**側です。|
 |`lib/lockfile/`|pin の SSOT が使う `"key" = "value"` 形式の読み書き。書式は `pin-actions` と `pin-images` で同じで、値の形と見出しだけが違います。解釈できない行とキーの重複はエラーにします。|
 |`lib/misetoml/`|`mise.toml` の `[tools]` が宣言する版の読み取り。**この宣言を読む実装はここだけです** —— 同じ表を複数の実装が各々の正規表現で読むと、一方だけが読める宣言が生まれ、もう一方は黙ってその道具を検査の対象から外します。落ちるのは検査ではなく検査の対象の方で、ゲートは緑を返します。解釈できない行とキーの重複はエラーにします（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定14）。複数版の配列は受け付けません —— どれが有効かを黙って選ぶより、呼び手に気づかせる方が安全だからです。|
 |`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。|
