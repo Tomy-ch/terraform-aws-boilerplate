@@ -175,7 +175,7 @@ When `--output=inline`, skip this step (no file was written).
 - Scan scope is **project-level only**. Do NOT read or list anything under `~/.claude/`.
 - Plugin-provided entries are out of scope.
 - Do NOT modify any scanned entry. This command only inspects.
-- If .claude/commands/, .claude/skills/, or .claude/agents/ does not exist, treat its entry count as 0 and note it in the report rather than erroring.
+- If .claude/commands/（未作成）, `.claude/skills/`, or `.claude/agents/` does not exist, treat its entry count as 0 and note it in the report rather than erroring.
 
 ## Checklist
 
