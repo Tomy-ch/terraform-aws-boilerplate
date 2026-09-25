@@ -31,7 +31,7 @@
 
 だから「このターゲットは在るか」の答えは `.mk` を読むことではなく、`make help` を叩くことである。
 
-## 起動の4つの形
+## 検査の起動
 
 検査の定義は1箇所に置き、実行環境の差は起動の前置きだけで表す（[0503](../docs/adr/0503-tool-execution-form.md) 決定8-9）。
 前置きは `runner.mk` が組み立て、`RUNNER_MODE`（既定 `container`、CI は `host`）で切り替わる。
@@ -41,10 +41,16 @@
 | `$(GO_TOOL)` | Go 側のツールランナー | `mise.toml` が pin した Go 製の既製品（golangci-lint、trivy、hadolint ほか） |
 | `$(NODE_TOOL)` | npm 側のツールランナー | markdownlint-cli2、commitlint |
 | `$(call RUN_SCRIPT,<名前>,<引数>)` | `scripts/<名前>` をビルドして起動 | このリポジトリが書いた検査 |
-| `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **検査の入力が version manager 自身であるもの** |
+| `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **提供段のコンテナに無い前提を要するもの** —— version manager 自身を入力にする、`docker` を呼ぶ、`git` / `gh` がホストの資格情報を使う |
 
-最後の1つが要るのは、提供段に version manager を残さない形でイメージを組んでいるためである
-（[0503](../docs/adr/0503-tool-execution-form.md) 決定11）。その段の中では version manager を入力にできない。
+最後の1つが要る理由は呼び出し側ごとに違い、いずれも「ツールランナーが提供できない前提」に帰着する
+—— 提供段に version manager を残さない形でイメージを組んでいる（[0503](../docs/adr/0503-tool-execution-form.md) 決定11）、
+ツールランナーに `docker` が入っていない、`git` / `gh` がホストの資格情報を使う。**どれに当たるかは
+呼び出し元の `.mk` のコメントが持つ。**
+
+**この表は検査の起動を尽くす。操作系はここに入らない** —— `github/operation/` の
+`RELEASE_TOOL` / `REPO_SETUP` は `go -C scripts run` を直接呼び、`RUNNER_MODE` を経由しない。
+取り消しの効かない操作をホストの資格情報で行うためで、理由は各 `.mk` のコメントが持つ。
 
 `RUN_SCRIPT` がビルドしてから起動するのは、`scripts/` がモジュールルートで `go -C scripts run` が
 作業ディレクトリをそこへ移す一方、各ツールはリポジトリ直下を基準にパスを解決するためである。
