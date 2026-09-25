@@ -13,9 +13,10 @@
 // 3 は**先頭セグメントがリポジトリ直下に実在するものだけ**を対象にします。まだ無い領域を
 // 名指しした記述はずれではなく予告であり、その領域が作られた日に検査が自動で始まります。
 //
-// 例示と参照はフェンスの位置で分けます（lib/mdscan）。**抑止の仕組みは持ちません** ——
-// フェンスの外の inline code span は実在するものを名指しする、という契約に例外を作らない
-// ためです。存在しないものを述べたい文は、コードスパンに入れずに書きます。
+// 例示と参照はフェンスの位置で分けます（lib/mdscan）。フェンスの外の inline code span は
+// 実在するものを名指しする、という契約です。**行単位で検査を黙らせる口は持ちません** ——
+// 通らない行を通すためのマーカは溜まり、対象が消えても残るためです。存在しないものを
+// 述べたい文は、コードスパンに入れずに書きます。
 package main
 
 import (
@@ -422,14 +423,9 @@ func asRepoPath(span string, roots map[string]bool, fromDir, root string) (strin
 	if text == "" {
 		return "", false
 	}
-	// `..` を含む参照は対象にしない。**先頭セグメントの門は `..` に対して無力である** ——
-	// 任意のディレクトリの親は必ず実在するので、`existsIn` が常に真を返し、リポジトリの外を
-	// Stat することになる。存在の有無だけとはいえ、文書へ1行足すだけで外を覗ける。
-	for _, seg := range strings.Split(text, "/") {
-		if seg == ".." {
-			return "", false
-		}
-	}
+	// **`..` はここで弾かない。** 列挙の展開は後段で起きるため、`{a,..}` のように括弧の中へ
+	// 隠されたものは、この時点では生のセグメント `{a,..}` にしか見えない。外へ出るかどうかは、
+	// 展開し終えた候補に対して resolves が判定する。
 
 	head, _, _ := strings.Cut(text, "/")
 	if !roots[head] && !existsIn(filepath.Join(root, fromDir), head) {
@@ -475,9 +471,20 @@ func pathExists(root, fromDir, candidate string) bool {
 // 違反にします。黙って諦めると、そこだけ検査が消える。
 const maxBraceCandidates = 64
 
+// maxBraceGroups は、1つの候補が持てる `{` の総数の上限です。
+//
+// 候補数の上限だけでは足りません —— `{{{…a…}}}` は候補を1件しか生まないので上限に触れない
+// 一方、1組剥がすたびに文字列全体を組み直すため、`{` の数に対して**二乗**の時間と記憶域を
+// 使います。組み直しの費用は入れ子か並列かを区別しないので、数えるのは深さではなく総数です
+// （実測で、入れ子 40,000 段が 3.9 秒・1.6GB、並列 32,000 群が 1.0 秒）。
+const maxBraceGroups = 32
+
 // expandBraces は `{a,b}` の列挙を、それぞれの候補へ展開します。入れ子も展開します。
 // 展開数が上限を超えた場合は false を返します。
 func expandBraces(text string) ([]string, bool) {
+	if strings.Count(text, "{") > maxBraceGroups {
+		return nil, false
+	}
 	begin := strings.IndexByte(text, '{')
 	if begin < 0 {
 		return []string{text}, true
@@ -561,11 +568,51 @@ func resolves(root, fromDir, candidate string) bool {
 		candidate = parent
 	}
 	for _, base := range []string{root, filepath.Join(root, fromDir)} {
-		if _, err := os.Stat(filepath.Join(base, filepath.FromSlash(candidate))); err == nil {
-			return true
+		target := filepath.Join(base, filepath.FromSlash(candidate))
+		// **リポジトリの外は見ない。** ここが最後の関門である —— `..` は列挙の中へ隠せるので、
+		// 文字列を見て弾く門はすり抜けられる。Stat する直前に、解決した先が root の下へ
+		// 収まっていることを確かめる。存在の有無だけでも、文書へ1行足せば外を覗けてしまう。
+		if escapes(root, target) {
+			continue
 		}
+		if _, err := os.Stat(target); err != nil {
+			continue
+		}
+		// **字面が内側でも、実体は外側であり得る。** os.Stat は symlink を辿るのに対し
+		// escapes は文字列しか見ないので、リポジトリの中から外を指す symlink は2つの間を
+		// すり抜ける。辿った先に対してもう一度確かめる。
+		if escapesReal(root, target) {
+			continue
+		}
+		return true
 	}
 	return false
+}
+
+// escapes は、target が root の外へ出ているかを返します。
+func escapes(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// escapesReal は、symlink を辿った実体が root の外にあるかを返します。
+//
+// root 自身も symlink の下に在り得る（macOS の `/var` は `/private/var` を指す）ので、
+// 両側を同じ規則で解決してから比べます。解決できないものは外として扱います —— 判定が
+// できないときに通す門は、門を置かないことと変わりません。
+func escapesReal(root, target string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return true
+	}
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return true
+	}
+	return escapes(realRoot, realTarget)
 }
 
 // literalParent は、最初にワイルドカードを含むセグメントより前の部分を返します。

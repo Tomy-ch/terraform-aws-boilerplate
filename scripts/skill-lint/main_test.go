@@ -500,9 +500,11 @@ func Test_asRepoPath(t *testing.T) {
 			// パス参照が「シンボルだから」と検査対象から外れる。
 			"前半が実在しなければパスとして扱う": {span: "scripts/lib/absent.Wrap", want: "scripts/lib/absent.Wrap", ok: true},
 			"先頭が直下に無ければパスでない":   {span: "modules/foo/README.md", ok: false},
-			"`..` を含めばパスでない":    {span: "../../../etc/passwd", ok: false},
-			"途中の `..` もパスでない":   {span: "docs/../../etc/passwd", ok: false},
-			"参照元の隣にも無ければパスでない":  {span: "references/audit.md", ok: false},
+			// `..` の判定は、展開し終えた候補に対して resolves が行う。ここでは通す。
+			"`..` を含む形はここでは弾かない": {span: "docs/../../etc/passwd.txt", want: "docs/../../etc/passwd.txt", ok: true},
+			// 先頭が `..` なら親は必ず在るので、先頭セグメントの門は素通りする。
+			"先頭が `..` でも弾かない":  {span: "../README.md", want: "../README.md", ok: true},
+			"参照元の隣にも無ければパスでない": {span: "references/audit.md", ok: false},
 		}
 
 		for name, tt := range tests {
@@ -548,12 +550,16 @@ func Test_pathExists(t *testing.T) {
 			candidate string
 			want      bool
 		}{
-			"ルートから解決する":              {candidate: "docs/adr/0001-x.md", want: true},
-			"参照元の隣から解決する":            {candidate: "references/note.md", want: true},
-			"どちらでも解決しなければ false":     {candidate: "docs/absent.md", want: false},
-			"列挙はすべて実在して初めて真":         {candidate: ".claude/{skills,agents}/", want: true},
-			"列挙の片方が欠ければ偽":            {candidate: ".claude/{skills,commands}/", want: false},
-			"展開が上限を超えれば偽":            {candidate: ".claude/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/x.md", want: false},
+			"ルートから解決する":          {candidate: "docs/adr/0001-x.md", want: true},
+			"参照元の隣から解決する":        {candidate: "references/note.md", want: true},
+			"どちらでも解決しなければ false": {candidate: "docs/absent.md", want: false},
+			"列挙はすべて実在して初めて真":     {candidate: ".claude/{skills,agents}/", want: true},
+			"列挙の片方が欠ければ偽":        {candidate: ".claude/{skills,commands}/", want: false},
+			"展開が上限を超えれば偽":        {candidate: ".claude/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/x.md", want: false},
+			// 列挙の中へ隠した `..` は、展開して初めて現れる。
+			"列挙へ隠した `..` でも外へ出さない": {candidate: "docs/{../..}/x.md", want: false},
+			// asRepoPath が通したそのままの形。admit した側だけを固定すると、拒む側が動いても気づかない。
+			"素の `..` でも外へ出さない":       {candidate: "docs/../../etc/passwd.txt", want: false},
 			"ワイルドカードはその手前の実在を見る":     {candidate: "docs/adr/*.md", want: true},
 			"ワイルドカードの手前が無ければ偽":       {candidate: "docs/absent/*.md", want: false},
 			"先頭からワイルドカードなら確かめる部分が無い": {candidate: "**/*.go", want: true},
@@ -571,6 +577,11 @@ func Test_pathExists(t *testing.T) {
 // alternatives は、選択肢を n 個持つ列挙を組み立てます。展開数がちょうど n になります。
 func alternatives(n int) string {
 	return "{" + strings.TrimSuffix(strings.Repeat("x,", n), ",") + "}"
+}
+
+// nested は、`{` を n 個入れ子にした列挙を組み立てます。候補は常に1件です。
+func nested(n int) string {
+	return strings.Repeat("{", n) + "a" + strings.Repeat("}", n)
 }
 
 func Test_expandBraces(t *testing.T) {
@@ -607,10 +618,35 @@ func Test_expandBraces(t *testing.T) {
 			require.True(t, ok)
 			assert.Len(t, got, maxBraceCandidates)
 		})
+
+		// 群の数の側にも同じ対が要る。片側だけでは `>` と `>=` を区別できない。
+		t.Run("群の数が上限ちょうどなら展開する", func(t *testing.T) {
+			t.Parallel()
+			got, ok := expandBraces("docs/" + nested(maxBraceGroups) + ".md")
+			require.True(t, ok)
+			assert.Equal(t, []string{"docs/a.md"}, got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("入れ子が多すぎたら false を返す", func(t *testing.T) {
+			t.Parallel()
+			// 候補数の上限では止まらない —— 入れ子は候補を1件しか生まないまま、
+			// `{` の数に対して二乗の時間と記憶域を使う。
+			got, ok := expandBraces("docs/" + nested(maxBraceGroups+1) + ".md")
+			assert.False(t, ok)
+			assert.Nil(t, got)
+		})
+
+		// 費用は入れ子か並列かを区別しない。数えているのが深さなら、この形が素通りする。
+		t.Run("並列でも同じ上限で打ち切る", func(t *testing.T) {
+			t.Parallel()
+			got, ok := expandBraces("docs/" + strings.Repeat("{x}", maxBraceGroups+1) + ".md")
+			assert.False(t, ok)
+			assert.Nil(t, got)
+		})
 
 		t.Run("上限を1つ超えたら false を返す", func(t *testing.T) {
 			t.Parallel()
@@ -682,11 +718,114 @@ func Test_resolves(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		assert.True(t, resolves(root, ".", "docs/adr/0001-x.md"))
-		assert.True(t, resolves(root, ".claude/skills/commit", "note.md"))
-		assert.False(t, resolves(root, ".", "docs/absent.md"))
-		assert.True(t, resolves(root, ".", "docs/adr/<name>.md"), "形が置かれる場所が在れば真")
-		assert.False(t, resolves(root, ".", "absent/<name>.md"))
+		tests := map[string]struct {
+			fromDir   string
+			candidate string
+			want      bool
+		}{
+			"ルートから解決する":      {fromDir: ".", candidate: "docs/adr/0001-x.md", want: true},
+			"参照元の隣から解決する":    {fromDir: ".claude/skills/commit", candidate: "note.md", want: true},
+			"どちらでも解決しなければ偽":  {fromDir: ".", candidate: "docs/absent.md", want: false},
+			"形が置かれる場所が在れば真":  {fromDir: ".", candidate: "docs/adr/<name>.md", want: true},
+			"形が置かれる場所が無ければ偽": {fromDir: ".", candidate: "absent/<name>.md", want: false},
+			// **外は見ない。** 実在しても偽を返す —— 真偽が漏れると存在の有無のオラクルになる。
+			"リポジトリの外は必ず偽":  {fromDir: ".", candidate: "../..", want: false},
+			"参照元から辿っても外は偽": {fromDir: ".claude/skills/commit", candidate: "../../../..", want: false},
+			// 基点が2つある理由そのもの。1つ目で打ち切ると、参照元から遡る書き方がすべて落ちる。
+			"最初の基点が外へ出ても次の基点で解決する": {fromDir: ".claude/skills/commit", candidate: "../../../docs/adr/0001-x.md", want: true},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, resolves(root, tt.fromDir, tt.candidate))
+			})
+		}
+
+		// 字面の門は通る。**os.Stat が symlink を辿るので、そこで外が見えてしまう。**
+		t.Run("symlink でリポジトリの外を指していれば偽", func(t *testing.T) {
+			t.Parallel()
+			linked := fixture(t, map[string]string{"docs/.keep": ""})
+			outside := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte(""), 0o644))
+			require.NoError(t, os.Symlink(outside, filepath.Join(linked, "docs", "outside")))
+
+			assert.False(t, resolves(linked, ".", "docs/outside/secret.txt"))
+		})
+	})
+}
+
+func Test_escapes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		const root = "/repo"
+
+		tests := map[string]struct {
+			root   string
+			target string
+			want   bool
+		}{
+			"root の下は偽": {root: root, target: "/repo/docs/x.md", want: false},
+			"root 自身は偽": {root: root, target: "/repo", want: false},
+			"ちょうど1段上は真": {root: root, target: "/", want: true},
+			"隣は真":       {root: root, target: "/other/x.md", want: true},
+			// 文字列の接頭辞で判定すると、これが内側として通る。
+			"接頭辞が同じだけの別ディレクトリは真": {root: root, target: "/repository/x.md", want: true},
+			// 相対と絶対が混じると filepath.Rel は解けない。**判定できないものは外として扱う。**
+			// ここを偽で返すと、解けなかったことが「内側だった」として通る。
+			"相対と絶対が混じれば真": {root: root, target: "relative/x.md", want: true},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, escapes(tt.root, filepath.FromSlash(tt.target)))
+			})
+		}
+	})
+}
+
+func Test_escapesReal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("実体が root の下なら偽", func(t *testing.T) {
+			t.Parallel()
+			root := fixture(t, map[string]string{"docs/x.md": ""})
+			assert.False(t, escapesReal(root, filepath.Join(root, "docs", "x.md")))
+		})
+
+		// **字面では内側に見える。** symlink を辿って初めて外だと分かる。
+		t.Run("symlink が外を指していれば真", func(t *testing.T) {
+			t.Parallel()
+			root := fixture(t, map[string]string{"docs/.keep": ""})
+			outside := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte(""), 0o644))
+			link := filepath.Join(root, "docs", "outside")
+			require.NoError(t, os.Symlink(outside, link))
+
+			target := filepath.Join(link, "secret.txt")
+			require.False(t, escapes(root, target), "字面の門は通ってしまう")
+			assert.True(t, escapesReal(root, target))
+		})
+
+		t.Run("target を解決できなければ真", func(t *testing.T) {
+			t.Parallel()
+			root := fixture(t, map[string]string{"docs/x.md": ""})
+			assert.True(t, escapesReal(root, filepath.Join(root, "absent", "x.md")))
+		})
+
+		// root 側も同じ向きで倒す。片側だけ fail-closed にしても門は開く。
+		t.Run("root を解決できなければ真", func(t *testing.T) {
+			t.Parallel()
+			absent := filepath.Join(t.TempDir(), "absent")
+			assert.True(t, escapesReal(absent, filepath.Join(absent, "x.md")))
+		})
 	})
 }
 
