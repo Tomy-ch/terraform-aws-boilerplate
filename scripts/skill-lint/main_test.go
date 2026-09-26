@@ -29,7 +29,7 @@ func fixture(t *testing.T, files map[string]string) string {
 // soundRepo は、違反を1件も持たない最小のリポジトリです。
 func soundRepo() map[string]string {
 	return map[string]string{
-		"makefile":                       "include .makefiles/lint.mk\n\n.PHONY: help\nhelp:\n\t@echo\n",
+		makefile:                         "include .makefiles/lint.mk\n\n.PHONY: help\nhelp:\n\t@echo\n",
 		".makefiles/lint.mk":             ".PHONY: md-lint ## Markdown を検査\nmd-lint:\n\t@echo\n",
 		".claude/skills/commit/SKILL.md": "`make md-lint` と `make help` と `/commit` と `.makefiles/lint.mk`\n",
 	}
@@ -113,7 +113,7 @@ func Test_run(t *testing.T) {
 		t.Run("make のターゲットを1件も読めなければ合格ではなく番兵で返す", func(t *testing.T) {
 			t.Parallel()
 			files := soundRepo()
-			files["makefile"] = "# ターゲットの宣言が無い\n"
+			files[makefile] = "# ターゲットの宣言が無い\n"
 			files[".makefiles/lint.mk"] = ""
 			var out bytes.Buffer
 			err := run([]string{"-root", fixture(t, files)}, &out)
@@ -281,7 +281,7 @@ func Test_collectMakeTargets(t *testing.T) {
 
 		t.Run("include した先が無ければエラー", func(t *testing.T) {
 			t.Parallel()
-			root := fixture(t, map[string]string{"makefile": "include .makefiles/missing.mk\n"})
+			root := fixture(t, map[string]string{makefile: "include .makefiles/missing.mk\n"})
 			_, err := collectMakeTargets(root)
 			require.Error(t, err)
 		})

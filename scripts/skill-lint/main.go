@@ -36,9 +36,11 @@ import (
 )
 
 const (
-	toolName   = "skill-lint"
-	skillsDir  = ".claude/skills"
-	makefile   = "makefile"
+	toolName  = "skill-lint"
+	skillsDir = ".claude/skills"
+	// 綴りは実ファイルと厳密に一致させること。macOS のファイルシステムは大文字小文字を
+	// 区別しないので、取り違えても手元では開けてしまい、Linux の CI でだけ落ちる。
+	makefile   = "Makefile"
 	skillDoc   = ".md"
 	scratchDir = "tmp"
 )
