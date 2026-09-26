@@ -38,8 +38,8 @@ import (
 const (
 	toolName  = "skill-lint"
 	skillsDir = ".claude/skills"
-	// 綴りは実ファイルと厳密に一致させること。macOS のファイルシステムは大文字小文字を
-	// 区別しないので、取り違えても手元では開けてしまい、Linux の CI でだけ落ちる。
+	// 綴りは実ファイルと厳密に一致させること。macOS はファイル名の大文字小文字を区別しない
+	// ので、取り違えても手元では開けてしまい、気づけない。
 	makefile   = "Makefile"
 	skillDoc   = ".md"
 	scratchDir = "tmp"
@@ -56,7 +56,8 @@ var (
 	includeLine = regexp.MustCompile(`(?m)^include\s+(\S+)\s*$`)
 	// .PHONY の宣言。`##` 以降はヘルプの注記で、ターゲット名ではない。
 	phonyLine = regexp.MustCompile(`^\.PHONY:\s*(.+)$`)
-	// 規則の行。`target: prereq` の形。変数代入（`X := v` / `X = v`）はここへ来ない。
+	// 規則の行。`target: prereq` の形。`X = v` はコロンが無いので当たらないが、`X := v` は
+	// 当たる —— 代入を規則から外すのは parseTargets である。
 	ruleLine = regexp.MustCompile(`^([A-Za-z0-9_%.+/ -]+):(.*)$`)
 	// パスに見えて参照ではないもの。空白とシェル / URL の約物を含む span は文章か command である。
 	notAPath = regexp.MustCompile("[\\s$\\\\#?!\"'()|`:;@]")
@@ -468,7 +469,7 @@ func pathExists(root, fromDir, candidate string) bool {
 
 // maxBraceCandidates は `{a,b}` の展開を打ち切る上限です。
 //
-// 展開数は群の数に対して指数で増えます（`{a,b,c,d,e,f}` を9つ並べた135文字で1千万件）。
+// 展開数は群の数に対して指数で増えます（`{a,b,c,d,e,f}` を9つ並べた117文字で1千万件）。
 // 文書へ1行足すだけでゲートを潰せてしまうので、上限を超えたものは**検査できないもの**として
 // 違反にします。黙って諦めると、そこだけ検査が消える。
 const maxBraceCandidates = 64
