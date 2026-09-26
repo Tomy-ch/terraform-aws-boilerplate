@@ -119,6 +119,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       # shellcheck: mise.toml holds the pinned version actions-shellcheck's tests are checked
       # against, so the runner's own build is not enough (scripts/README.md, Test Strategy).

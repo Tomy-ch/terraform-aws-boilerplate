@@ -67,6 +67,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       - name: Check version copies match the declaration
         id: versions
