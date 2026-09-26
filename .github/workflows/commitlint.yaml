@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   commitlint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # A base..head range exists only in a pull-request context. Rather than invent a substitute
     # range on workflow_dispatch — which would be the same silent degradation this job exists to

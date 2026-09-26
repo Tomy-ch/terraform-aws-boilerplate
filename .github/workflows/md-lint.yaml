@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   md-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -125,7 +125,7 @@ jobs:
 
   # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
   adr-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -183,7 +183,7 @@ jobs:
 
   # 何を見るかと、なぜ要るかは scripts/README.md の skill-lint 行が持つ。
   skill-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

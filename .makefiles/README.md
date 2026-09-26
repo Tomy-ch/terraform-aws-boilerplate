@@ -10,7 +10,7 @@
 | ディレクトリ | 関心事 |
 | --- | --- |
 | `docker/` | Dockerfile と compose の検査、image digest の固定 |
-| `github/` | workflow と action の検査、commit message、egress の SSOT、action の固定、ベースブランチの解決 |
+| `github/` | workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決 |
 | `github/operation/` | リリースブランチ・リリースタグ・リポジトリ初期化の操作 |
 | `github/setting/` | ブランチ保護・ラベル・リポジトリ設定の適用 |
 | `go/` | 運用機構（`scripts/`）の Go の整形・Lint・テスト |

@@ -56,6 +56,7 @@
 | [0502](0502-execution-engine-selection.md) | 実行エンジンにTerraformを採用し、OpenTofuを採らない | Accepted |
 | [0503](0503-tool-execution-form.md) | 道具の宣言を1つに保ち、実行環境を3経路に分ける | Accepted |
 | [0504](0504-credential-handling-tool-execution.md) | 実AWSの資格情報を扱う道具をホストで実行する | Accepted |
+| [0505](0505-ci-runner-image-pinning.md) | CIランナーのイメージを単一の宣言へ固定する | Accepted |
 
 ### 06 変更の経路と CI
 

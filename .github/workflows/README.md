@@ -195,6 +195,19 @@ harden-runner は checkout の**前**に走らなければならない —— ch
 見えない失敗に当たったとき読むのはそこで、直し方はクラスか `extra` を広げることであって、
 `audit` へ落とすことではない。
 
+## ランナーの版
+
+`runs-on:` が名指しする label は [`.github/runners-pin.toml`](../runners-pin.toml) が SSOT で、
+`make pin-runners-apply` が各 workflow へ書き込み、`make pin-runners-check` がずれで落ちる
+（[ADR-0505](../../docs/adr/0505-ci-runner-image-pinning.md)）。
+
+`ubuntu-latest` が指す先は GitHub の都合で入れ替わる。**版が動くことは選べないが、動いたことが
+diff に出ることは選べる。** 宣言を書き換えて apply した回だけが移行であり、それ以外の回に
+ランナーは動かない。
+
+label を手で書き換えない —— `make pin-runners-check` が拒む。宣言のどちらの側にも無い label は
+エラーになるので、新しい種類のランナーを使うときは先に宣言へ足す。
+
 ## 共有 composite action
 
 再利用する composite action は [`.github/actions/`](../actions/) に置く。

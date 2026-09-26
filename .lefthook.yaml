@@ -37,6 +37,13 @@ pre-commit:
       glob: "docker/**/Dockerfile"
       run: make docker-lint
 
+    # runs-on が SSOT 通りか（.makefiles/github/pin.mk）。
+    pin-runners-check:
+      glob:
+        - ".github/runners-pin.toml"
+        - ".github/workflows/*.{yml,yaml}"
+      run: make pin-runners-check
+
     # allowed-endpoints が SSOT 通りか（.makefiles/github/egress.mk）。
     egress-check:
       glob:
