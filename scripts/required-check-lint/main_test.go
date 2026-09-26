@@ -12,9 +12,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// writeFixture はリポジトリの実物ではなく一時ディレクトリへ検査対象を組み立てます。
-// 実物を読むテストは、リポジトリの今日の内容で通ったり落ちたりするようになり、
-// ツールについてのテストであることをやめます。
 func writeFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -322,7 +319,6 @@ func Test_check_検査の対象外(t *testing.T) {
 		// required でない check は、報告されなくてもマージを止めない。
 		src := "on:\n  pull_request:\n    paths:\n      - x\n\njobs:\n  other:\n    runs-on: x\n  build:\n    runs-on: x\n"
 		got := check([]string{"other"}, []Source{{File: "a.yaml", Source: src}}, "r.json")
-		// other は required なのでフィルタが違反になる。build は required でないので問われない。
 		require.Len(t, got, 1)
 		assert.Contains(t, got[0].Message, "`other`")
 	})
@@ -331,5 +327,71 @@ func Test_check_検査の対象外(t *testing.T) {
 		t.Parallel()
 		src := "on:\n  pull_request:\n  push:\n    paths:\n      - x\n\njobs:\n  build:\n    runs-on: x\n"
 		assert.Empty(t, check([]string{"build"}, []Source{{File: "a.yaml", Source: src}}, "r.json"))
+	})
+}
+
+func Test_triggerFindings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("pull_request にフィルタが無ければ違反を返さない", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  pull_request:\n  push:\n\njobs:\n  build:\n    runs-on: x\n"
+			assert.Empty(t, triggerFindings("build", Source{File: "a.yaml", Source: src}))
+		})
+
+		t.Run("配列記法の pull_request はフィルタを書けないので違反を返さない", func(t *testing.T) {
+			t.Parallel()
+			src := "on: [push, pull_request]\njobs:\n  build:\n    runs-on: x\n"
+			assert.Empty(t, triggerFindings("build", Source{File: "a.yaml", Source: src}))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("pull_request トリガーが無ければ workflow の先頭を指して1件返す", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  push:\n\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 1)
+			assert.Equal(t, "a.yaml", got[0].File)
+			assert.Equal(t, 1, got[0].Line)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+			assert.Contains(t, got[0].Message, "`build`")
+		})
+
+		t.Run("配列記法に pull_request が無ければ違反にする", func(t *testing.T) {
+			t.Parallel()
+			// 配列記法の肯定側だけを見ていると、含まれているかの判定を外しても緑のまま残る。
+			src := "on: [push]\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 1)
+			assert.Equal(t, 1, got[0].Line)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+		})
+
+		t.Run("空の source もトリガー無しとして違反にする", func(t *testing.T) {
+			t.Parallel()
+			// 読めなかった workflow を「フィルタが無い」側へ倒すと、検査は何も見ずに緑を返す。
+			got := triggerFindings("build", Source{File: "a.yaml"})
+			require.Len(t, got, 1)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+		})
+
+		t.Run("残ったフィルタをその行番号とともに1つずつ返す", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  pull_request:\n    paths:\n      - x\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 2)
+			assert.Equal(t, "a.yaml", got[0].File)
+			assert.Equal(t, 3, got[0].Line)
+			assert.Contains(t, got[0].Message, "`paths`")
+			assert.Contains(t, got[0].Message, "`build`")
+			assert.Equal(t, 5, got[1].Line)
+			assert.Contains(t, got[1].Message, "`branches`")
+		})
 	})
 }

@@ -136,7 +136,7 @@ Read the indexes and pick entries by *what concern they own*, not by keyword mat
 | `AGENTS.md` の *正典となる文書* | どの問いをどの文書が所有するか。索引の索引である |
 | `scripts/README.md` | 運用機構の各ツールが何を解いているか、および Test Strategy |
 | `.github/workflows/README.md` | workflow の規則、必須検査の考え方、結果コメント |
-| `make help` | 実在する make ターゲットの一覧。`.makefiles/` に README は無い |
+| `make help` | 実在する make ターゲットの**一覧の正本**。どの `.mk` が何を担うかは `.makefiles/README.md`（一覧は持たない） |
 | the README chain from the path in question up to its nearest ancestor | 責務境界、supported / unsupported、設計意図 |
 | `modules/<use-case>/README.md` と `modules/<use-case>/docs/adr/` | 当該ユースケースの公開契約と固有の判断（**未作成**） |
 

@@ -14,7 +14,7 @@ jobs:
   # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
   changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -66,7 +66,7 @@ jobs:
     needs: changes
     # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -119,6 +119,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       # shellcheck: mise.toml holds the pinned version actions-shellcheck's tests are checked
       # against, so the runner's own build is not enough (scripts/README.md, Test Strategy).
@@ -340,3 +341,64 @@ jobs:
           if [ "$cover_code" != "0" ] || [ "$gate_code" != "0" ]; then
             exit 1
           fi
+
+  # 何を見るかと、なぜ go-test と別に要るかは scripts/README.md の test-mapping 行が持つ。
+  test-mapping:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+            awscli.amazonaws.com:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the 1:1 test mapping gate
+        run: make test-mapping RUNNER_MODE=host

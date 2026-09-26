@@ -1,0 +1,3 @@
+# GitHub-hosted runner の label（SSOT）。
+# make pin-runners-apply で workflow の runs-on へ反映する。
+"ubuntu-latest" = "ubuntu-24.04"
