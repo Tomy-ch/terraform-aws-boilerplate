@@ -85,6 +85,19 @@ func TestFormat_Read(t *testing.T) {
 			assert.ErrorContains(t, err, "sample-resolve", "直し方の案内が Resolve から来ていない")
 		})
 
+		t.Run("Resolve を持たない Format は存在しない make target を案内しない", func(t *testing.T) {
+			t.Parallel()
+			// 再生成の手段を持たない Format へ target を案内すると、走らせても同じ行で
+			// 同じエラーが返る循環した指示になる。
+			f := testFormat()
+			f.Header = nil
+			f.Resolve = ""
+			_, err := f.Read(writeAt(t, "broken\n"))
+			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
+			assert.Contains(t, err.Error(), "該当行を削除してください")
+			assert.NotContains(t, err.Error(), "make ")
+		})
+
 		t.Run("先頭行がいきなり不正でも行番号を 1 と報告する", func(t *testing.T) {
 			t.Parallel()
 

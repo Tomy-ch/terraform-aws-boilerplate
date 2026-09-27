@@ -52,14 +52,12 @@ var (
 	looseRunsOnRe = regexp.MustCompile(`(^|[^A-Za-z0-9_-])["']?runs-on["']?[ \t]*:`)
 )
 
+// lockFormat は宣言の読み取りの形です。**Header と Resolve を持ちません** ——
+// このツールは宣言を書き出さないので、書き出し用の見出しは使われず、壊れた行への案内として
+// 案内できる再生成の target も無い（apply を走らせても同じ行で同じエラーが返る）。
 var lockFormat = lockfile.Format{
 	Line: lockRe,
-	Header: []string{
-		"GitHub-hosted runner の label（SSOT）。",
-		"make pin-runners-apply で workflow の runs-on へ反映する。",
-	},
-	Resolve: "pin-runners-apply",
-	Perm:    filePerm,
+	Perm: filePerm,
 }
 
 var (
