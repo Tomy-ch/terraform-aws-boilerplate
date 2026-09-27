@@ -65,23 +65,18 @@ var lockFormat = lockfile.Format{
 var (
 	// errUsage は、サブコマンドが無いか未知の場合のエラー。
 	errUsage = xerrors.New("usage: pin-runners <apply|check>")
-	// errNoPins は、宣言が1件も読めなかった場合のエラー。**空の宣言で全件を通さない。**
-	// 固定先を持たない実行は、固定したことにならない。
+	// errNoPins は、宣言が1件も読めなかった場合のエラー（ADR-0505 決定4）。
 	errNoPins = xerrors.New("runner の宣言が1件もありません")
-	// errNoRunsOn は、走査した workflow に `runs-on:` が1件も無かった場合のエラー。
-	// 検査対象を失ったことと、違反が無かったことを区別する。
+	// errNoRunsOn は、走査した workflow に `runs-on:` が1件も無かった場合のエラー（ADR-0505 決定4）。
 	errNoRunsOn = xerrors.New("workflow に runs-on が1件もありません")
 	// errUnknownRunner は、宣言のどちらの側にも無い label を見た場合のエラー。
-	// 式や列の形もここへ来る —— 読めない入力を取りこぼしとして黙って通さない。
+	// 式や列の形もここへ来る（ADR-0505 決定3）。
 	errUnknownRunner = xerrors.New("宣言にも固定先にも無い runner label です")
 	// errRunnerDrift は、check が固定されていない `runs-on:` を見つけた場合のエラー。
 	errRunnerDrift = xerrors.New("runs-on が宣言からずれています")
-	// errPinNotTerminal は、固定先が別の宣言のキーでもある場合のエラー。
-	// 自己写像・連鎖・値の誤記がここへ来ます。**宣言1行でゲートを無効化できないようにする門です**
-	// —— 固定先の集合に浮動 label が入ると、その label は「固定済み」として素通りします。
+	// errPinNotTerminal は、固定先が別の宣言のキーでもある場合のエラー（checkTerminal）。
 	errPinNotTerminal = xerrors.New("固定先が別の宣言のキーでもあります")
-	// errPinOrphan は、どの `runs-on:` にも当たらない宣言がある場合のエラー。
-	// 対象を失った宣言は、固定しているように読めて何も固定していません。
+	// errPinOrphan は、どの `runs-on:` にも当たらない宣言がある場合のエラー（checkOrphan）。
 	errPinOrphan = xerrors.New("どの runs-on にも当たらない宣言があります")
 )
 
@@ -115,8 +110,7 @@ func run(args []string, wd func() (string, error), out io.Writer) error {
 // applyOrCheck は、宣言を読んで各 workflow の `runs-on:` を突き合わせます。
 // dryRun が真なら書き込まず、ずれを errRunnerDrift で報せます。
 //
-// **1バイトも書く前に全ファイルを検証します。** 途中で未知の label に当たった実行が、
-// そこまでの書き換えだけを作業ツリーへ残すと、直し方が固定の適用ではなくなる。
+// 書き込みは全ファイルの検証の後です（scripts/README.md の Test Strategy）。
 func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	pins, err := lockFormat.Read(filepath.Join(root, pinFile))
 	if err != nil {
@@ -213,7 +207,8 @@ func workflowFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// rewrite は source の `runs-on:` を固定先へ揃え、揃えた内容と見た `runs-on:` の件数を返します。
+// rewrite は source の `runs-on:` を固定先へ揃え、揃えた内容と見た `runs-on:` の label を
+// 出現順に返します。
 //
 // ブロックスカラーの中身は見ません。`run:` の中の文字列が `runs-on:` を含むだけで
 // 書き換わってしまうためで、その判定は yamlblock が1箇所で持っています。
@@ -227,9 +222,7 @@ func rewrite(source string, pins map[string]string, pinned map[string]bool) (str
 		}
 		m := runsOnRe.FindStringSubmatch(line)
 		if m == nil {
-			// **名指ししているのに厳密な形で読めなかったものは、取りこぼしではなくエラーである。**
-			// 行頭からの一致だけを見ると、YAML が受ける別記法（`runs-on : x` / `"runs-on": x` /
-			// フロー写像）が黙って通る。注記は名指しではないので対象から外す。
+			// 注記は名指しではないので外す。名指しの別記法をエラーへ回す理由は looseRunsOnRe。
 			if !strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") && looseRunsOnRe.MatchString(line) {
 				return "", nil, xerrors.Wrapf(errUnknownRunner, "%d 行目: %q", i+1, line)
 			}
@@ -291,8 +284,6 @@ func report(out io.Writer, drifted []string, files, runsOn int) error {
 	if len(drifted) > 0 {
 		return xerrors.Wrapf(errRunnerDrift, "make pin-runners-apply してコミットしてください: %s", strings.Join(drifted, ", "))
 	}
-	// **両方の件数を出す。** 片方だけだと、抽出が壊れて対象が減っても数字が動かない
-	// （ADR-0702 決定15）。ファイル数は走査の広さ、runs-on 件数は抽出の結果である。
 	_, err := io.WriteString(out, "✅ "+toolName+": workflow "+strconv.Itoa(files)+" 件の runs-on "+strconv.Itoa(runsOn)+" 件が宣言通りに固定されています\n")
 	return err
 }

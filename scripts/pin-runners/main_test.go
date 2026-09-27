@@ -13,20 +13,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testPins は健全な宣言です。**孤児を含めません** —— 参照されない対を「健全」の定義へ
-// 入れると、孤児を検出しない実装がそのまま正しいものとして固定されます。
+// testPins は健全な宣言です。孤児を含めません。
 const testPins = `# comment
 "ubuntu-latest" = "ubuntu-24.04"
 `
 
-// floatingYAML は、まだ固定されていない workflow。
 const floatingYAML = `name: T
 jobs:
   one:
     runs-on: ubuntu-latest
 `
 
-// pinnedYAML は、既に宣言どおりに固定されている workflow。
 const pinnedYAML = `name: T
 jobs:
   one:
@@ -56,7 +53,6 @@ func soundRepo() map[string]string {
 
 var (
 	// errWD は、作業ディレクトリの取得が失敗したことを表すテスト側のセンチネルです。
-	// **require.Error では、run が別の理由で落ちても通ってしまいます。**
 	errWD = xerrors.New("getwd failed")
 	// errWrite は、出力の書き込みが失敗したことを表すテスト側のセンチネルです。
 	errWrite = xerrors.New("write failed")
