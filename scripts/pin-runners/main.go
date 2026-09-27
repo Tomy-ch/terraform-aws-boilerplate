@@ -40,7 +40,16 @@ var (
 	// runsOnRe は `runs-on:` の行。値と、行末の注記までを分けて捕まえます。
 	// 値に空白を含む形（列・`group:`・`${{ }}`）はここで捕まらず、捕まえられなかったこと
 	// 自体を errUnknownRunner で落とします。
-	runsOnRe = regexp.MustCompile(`^(\s*runs-on:\s+)([^\s#]+)([ \t]*(?:#.*)?)$`)
+	//
+	// **注記は空白を挟んだ `#` に限ります。** YAML では空白の無い `#` は注記を始めないので、
+	// `ubuntu-24.04#x` の `#x` を注記として切り落とすと、GitHub が受け取る label と
+	// この検査が見る label が食い違います。
+	runsOnRe = regexp.MustCompile(`^([ \t]*runs-on:[ \t]+)(\S+)((?:[ \t]+#.*)?[ \t]*)$`)
+	// looseRunsOnRe は `runs-on` を名指ししているように見える行。**厳密な runsOnRe で
+	// 解釈できなかったものを、取りこぼしではなくエラーへ回すための門です。** YAML は
+	// `runs-on : x` / `"runs-on": x` / `one: {runs-on: x}` をどれも受けるので、
+	// 行頭からの一致だけを見る門はそれらを黙って通します。
+	looseRunsOnRe = regexp.MustCompile(`(^|[^A-Za-z0-9_-])["']?runs-on["']?[ \t]*:`)
 )
 
 var lockFormat = lockfile.Format{
@@ -67,6 +76,13 @@ var (
 	errUnknownRunner = xerrors.New("宣言にも固定先にも無い runner label です")
 	// errRunnerDrift は、check が固定されていない `runs-on:` を見つけた場合のエラー。
 	errRunnerDrift = xerrors.New("runs-on が宣言からずれています")
+	// errPinNotTerminal は、固定先が別の宣言のキーでもある場合のエラー。
+	// 自己写像・連鎖・値の誤記がここへ来ます。**宣言1行でゲートを無効化できないようにする門です**
+	// —— 固定先の集合に浮動 label が入ると、その label は「固定済み」として素通りします。
+	errPinNotTerminal = xerrors.New("固定先が別の宣言のキーでもあります")
+	// errPinOrphan は、どの `runs-on:` にも当たらない宣言がある場合のエラー。
+	// 対象を失った宣言は、固定しているように読めて何も固定していません。
+	errPinOrphan = xerrors.New("どの runs-on にも当たらない宣言があります")
 )
 
 func main() {
@@ -109,6 +125,9 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if len(pins) == 0 {
 		return xerrors.Wrapf(errNoPins, "%s", pinFile)
 	}
+	if err := checkTerminal(pins); err != nil {
+		return xerrors.Wrapf(err, "%s", pinFile)
+	}
 	pinned := pinnedSet(pins)
 
 	files, err := workflowFiles(root)
@@ -118,6 +137,7 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 
 	changes := map[string]string{}
 	var drifted []string
+	used := map[string]bool{}
 	total := 0
 	for _, rel := range files {
 		path := filepath.Join(root, rel)
@@ -125,11 +145,14 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 		if err != nil {
 			return xerrors.Wrapf(err, "%s の読み取り", rel)
 		}
-		updated, seen, err := rewrite(string(source), pins, pinned)
+		updated, labels, err := rewrite(string(source), pins, pinned)
 		if err != nil {
 			return xerrors.Wrapf(err, "%s", rel)
 		}
-		total += seen
+		total += len(labels)
+		for _, l := range labels {
+			used[l] = true
+		}
 		if updated == string(source) {
 			continue
 		}
@@ -139,10 +162,13 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if total == 0 {
 		return xerrors.Wrapf(errNoRunsOn, "%s", workflowDir)
 	}
+	if err := checkOrphan(pins, used); err != nil {
+		return xerrors.Wrapf(err, "%s", pinFile)
+	}
 	sort.Strings(drifted)
 
 	if dryRun {
-		return report(out, drifted, len(files))
+		return report(out, drifted, len(files), total)
 	}
 	if len(changes) > 0 {
 		if err := atomicwrite.Apply(changes, filePerm); err != nil {
@@ -191,40 +217,83 @@ func workflowFiles(root string) ([]string, error) {
 //
 // ブロックスカラーの中身は見ません。`run:` の中の文字列が `runs-on:` を含むだけで
 // 書き換わってしまうためで、その判定は yamlblock が1箇所で持っています。
-func rewrite(source string, pins map[string]string, pinned map[string]bool) (string, int, error) {
+func rewrite(source string, pins map[string]string, pinned map[string]bool) (string, []string, error) {
 	body := yamlblock.ContentLines(source)
 	lines := strings.Split(source, "\n")
-	seen := 0
+	var labels []string
 	for i, line := range lines {
 		if body[i+1] {
 			continue
 		}
 		m := runsOnRe.FindStringSubmatch(line)
 		if m == nil {
-			if strings.HasPrefix(strings.TrimSpace(line), "runs-on:") {
-				return "", 0, xerrors.Wrapf(errUnknownRunner, "%d 行目: %s", i+1, strings.TrimSpace(line))
+			// **名指ししているのに厳密な形で読めなかったものは、取りこぼしではなくエラーである。**
+			// 行頭からの一致だけを見ると、YAML が受ける別記法（`runs-on : x` / `"runs-on": x` /
+			// フロー写像）が黙って通る。注記は名指しではないので対象から外す。
+			if !strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") && looseRunsOnRe.MatchString(line) {
+				return "", nil, xerrors.Wrapf(errUnknownRunner, "%d 行目: %q", i+1, line)
 			}
 			continue
 		}
-		seen++
 		label := m[2]
+		labels = append(labels, label)
 		switch {
-		case pinned[label]:
 		case pins[label] != "":
 			lines[i] = m[1] + pins[label] + m[3]
+		case pinned[label]:
 		default:
-			return "", 0, xerrors.Wrapf(errUnknownRunner, "%d 行目: %s", i+1, label)
+			return "", nil, xerrors.Wrapf(errUnknownRunner, "%d 行目: %q", i+1, label)
 		}
 	}
-	return strings.Join(lines, "\n"), seen, nil
+	return strings.Join(lines, "\n"), labels, nil
+}
+
+// checkTerminal は、固定先が別の宣言のキーでもある対を拒みます。
+//
+// 固定先の集合は「もう書き換えなくてよい label」の集合として使われるので、そこへ浮動 label が
+// 入ると、その label はどこに現れても素通りします。自己写像・連鎖・値の誤記がこれに当たり、
+// **宣言1行でゲートが無効になる**。キーと値の集合が素であることを先に確かめます。
+func checkTerminal(pins map[string]string) error {
+	for _, k := range sortedKeys(pins) {
+		if _, isKey := pins[pins[k]]; isKey {
+			return xerrors.Wrapf(errPinNotTerminal, "%q = %q", k, pins[k])
+		}
+	}
+	return nil
+}
+
+// checkOrphan は、どの `runs-on:` にも当たらなかった宣言を拒みます。
+//
+// 対象を失った宣言は、固定しているように読めて何も固定していません。キーとして当たれば
+// 書き換えの対象があり、値として当たれば固定済みの対象がある —— どちらも無いものが孤児です。
+func checkOrphan(pins map[string]string, used map[string]bool) error {
+	for _, k := range sortedKeys(pins) {
+		if !used[k] && !used[pins[k]] {
+			return xerrors.Wrapf(errPinOrphan, "%q = %q", k, pins[k])
+		}
+	}
+	return nil
+}
+
+// sortedKeys は宣言のキーを昇順で返します。map の走査順は実行ごとに変わるので、
+// どの対で落ちたかを報せるエラーが実行ごとに入れ替わらないようにします。
+func sortedKeys(pins map[string]string) []string {
+	keys := make([]string, 0, len(pins))
+	for k := range pins {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // report は check の判定を書き出します。ずれていれば errRunnerDrift を返します。
-func report(out io.Writer, drifted []string, files int) error {
+func report(out io.Writer, drifted []string, files, runsOn int) error {
 	if len(drifted) > 0 {
 		return xerrors.Wrapf(errRunnerDrift, "make pin-runners-apply してコミットしてください: %s", strings.Join(drifted, ", "))
 	}
-	_, err := io.WriteString(out, "✅ "+toolName+": workflow "+strconv.Itoa(files)+" 件の runs-on が宣言通りに固定されています\n")
+	// **両方の件数を出す。** 片方だけだと、抽出が壊れて対象が減っても数字が動かない
+	// （ADR-0702 決定15）。ファイル数は走査の広さ、runs-on 件数は抽出の結果である。
+	_, err := io.WriteString(out, "✅ "+toolName+": workflow "+strconv.Itoa(files)+" 件の runs-on "+strconv.Itoa(runsOn)+" 件が宣言通りに固定されています\n")
 	return err
 }
 
