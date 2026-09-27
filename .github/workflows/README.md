@@ -100,6 +100,7 @@ truthy 側へ置く。
 | --- | --- | --- |
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
+| `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
@@ -193,6 +194,15 @@ harden-runner は checkout の**前**に走らなければならない —— ch
 塞がれた宛先は harden-runner の run summary に拒否された接続として現れる。job のログからは理由の
 見えない失敗に当たったとき読むのはそこで、直し方はクラスか `extra` を広げることであって、
 `audit` へ落とすことではない。
+
+## ランナーの版
+
+`runs-on:` が名指しする label は [`.github/runners-pin.toml`](../runners-pin.toml) が SSOT で、
+`make pin-runners-apply` が各 workflow へ書き込み、`make pin-runners-check` がずれで落ちる。
+label を手で書き換えない —— check が拒む。
+
+**何を固定し何を固定しないかは [ADR-0505](../../docs/adr/0505-ci-runner-label-pinning.md) が所有する。**
+止まるのは OS の版が入れ替わることだけで、同じ label の下でのイメージ更新は止まらない。
 
 ## 共有 composite action
 

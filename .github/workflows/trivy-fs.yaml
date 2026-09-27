@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   trivy-fs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Job-scoped rather than workflow-scoped: once this file gained a second job,
     # zizmor's excessive-permissions audit rates a workflow-level pull-requests:
@@ -170,7 +170,7 @@ jobs:
   # Report-only until a prohibited-license policy exists, and it writes no SARIF for the same
   # reason — see README.md の「通知の起動条件」.
   trivy-license:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

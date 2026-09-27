@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   tool-cooldown:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -80,6 +80,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       # `mise registry` is what resolves a short name to its backend, so mise has to be present
       # even though no tool is installed here.

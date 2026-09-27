@@ -31,7 +31,7 @@ jobs:
   trivy-fs-release:
     # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
     if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["develop", "staging", "production"]'), github.base_ref) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

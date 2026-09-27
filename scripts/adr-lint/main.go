@@ -11,6 +11,7 @@
 //  5. root ADR 本文が modules/<use-case>/ 配下の path へ規範的に依存していないこと
 //  6. 本文が参照する ADR-NNNN がすべて実在すること
 //  7. 見出しが名乗る番号が、ファイル名の番号と一致すること
+//  8. docs/adr/ の**外**から ADR を指すリンクが、実在する ADR を指していること
 //
 // 6 と 7 は、番号が identity ではなく順序になったことから要る（ADR-0001 決定5-9）。
 // 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。
@@ -18,6 +19,12 @@
 // 6 だけでは塞がらない。詰め直しの取りこぼしは、指す先が**無い**形ではなく、実在する
 // **別の**決定を指す形で現れるからで、そのとき誤記が唯一残っているのは見出しである。
 // 7 が無ければ、2つのファイルが同じ番号を名乗っていても全件が緑で通る。
+//
+// 8 が 6 と別に要るのは、**参照の主要な書式が docs/adr/ の外に在る**からです。AGENTS.md や
+// 各 README が ADR を指すときの形は `[0101](docs/adr/0101-architecture-principles.md)` であり、
+// 6 の走査はそこへ届きません。番号を詰めた瞬間、外側のリンクは実在する**別の**決定を指します。
+// リンクの文言（`[0101]`）と指し先の番号を突き合わせるのは、詰め直しの取りこぼしが
+// 「指す先が無い」形ではなく「文言だけが古い」形で現れるためです。
 //
 // 併せて、索引（README.md）が実ファイルと食い違っていないことも見ます。索引は
 // 「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
@@ -29,6 +36,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -36,10 +44,12 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const (
+	defaultRepo  = "."
 	defaultRoot  = "docs/adr"
 	indexFile    = "README.md"
 	templateFile = "template.md"
@@ -49,7 +59,7 @@ var (
 	// ADR のファイル名。番号は4桁、続きは kebab-case。
 	// 大文字とアンダースコアを弾くのは、同じ決定が2つの綴りで置かれるのを防ぐため。
 	fileName = regexp.MustCompile(`^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$`)
-	// 先頭メタデータ。値の形は問わず、存在だけを見る。
+	// 先頭メタデータの行。checkMetadata が存在を見る。
 	statusLine = regexp.MustCompile(`(?m)^- Status:[ \t]*(\S.*)$`)
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
@@ -70,15 +80,27 @@ var (
 	useCasePath = regexp.MustCompile("`?modules/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]+`?")
 	// ただし <use-case> という**プレースホルダ**を含む形は、特定のユースケースを名指ししていない。
 	placeholder = regexp.MustCompile(`modules/<use-case>/`)
+	// Markdown のリンク。`[文言](指し先)` の形。指し先の後ろに title が付く形も許す。
+	markdownLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+	// リンクの文言が番号を名乗っている形。`[0101]` と `[ADR-0101]` のどちらも使われている。
+	linkTextNumber = regexp.MustCompile(`^(?:ADR-)?(\d{4})$`)
+	// このリポジトリの作業ツリーの外を指すリンク。scheme 付きの URL と、サイトのルートからの
+	// 絶対パスが該当する。**`/docs/adr/0001-x.md` は作業ツリーの docs/adr/ ではない** ——
+	// 相対として解決すると同じ場所に見えるため、ここで分けないと外部の参照を自分の番号体系で裁く。
+	externalLink = regexp.MustCompile(`^(?:[a-z][a-z0-9+.-]*:|/)`)
 )
 
-// 検査対象を1件も持たないまま成功で終えないための番兵。
-var errNoADR = xerrors.New("ADR が1件も見つかりません")
+// 番兵（ADR-0702 決定13）。検査対象0件を成功として終えない。
+var (
+	errNoADR       = xerrors.New("ADR が1件も見つかりません")
+	errNoMarkdown  = xerrors.New("ADR を指し得る Markdown が1件も見つかりません")
+	errNoReference = xerrors.New("ADR を名指しした文書から、リンクを1件も取り出せません")
+)
 
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		if xerrors.Is(err, errNoADR) {
+		if xerrors.Is(err, errNoADR) || xerrors.Is(err, errNoMarkdown) || xerrors.Is(err, errNoReference) {
 			log.Printf("❌ adr-lint: %v", err)
 			os.Exit(2)
 		}
@@ -90,6 +112,7 @@ func run(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("adr-lint", flag.ContinueOnError)
 	fs.SetOutput(out)
 	root := fs.String("root", defaultRoot, "ADR を探すディレクトリ")
+	repo := fs.String("repo", defaultRepo, "ADR を指すリンクを探すリポジトリのルート")
 	if err := fs.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
@@ -117,21 +140,27 @@ func run(args []string, out io.Writer) error {
 	}
 	findings = append(findings, indexFindings...)
 
+	pathFindings, refs, err := checkPathReferences(*repo, *root, docs)
+	if err != nil {
+		return err
+	}
+	findings = append(findings, pathFindings...)
+
 	if len(findings) > 0 {
-		sortFindings(findings)
+		lintreport.Sort(findings)
 		fmt.Fprintf(out, "❌ adr-lint: %d 件の不整合\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
 		return xerrors.Newf("%d 件の不整合", len(findings))
 	}
 
-	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件の構造を確認しました\n", len(docs))
+	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件の構造と、外からの参照 %d 件を確認しました\n", len(docs), refs)
 	return nil
 }
 
 // doc は検査対象の ADR 1件です。
 type doc struct {
 	path   string // root からの相対パス
-	name   string // ファイル名
+	name   string
 	number int
 	source string
 }
@@ -409,11 +438,180 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 	return findings, nil
 }
 
-func sortFindings(f []lintreport.Finding) {
-	sort.SliceStable(f, func(i, j int) bool {
-		if f[i].File != f[j].File {
-			return f[i].File < f[j].File
+// checkPathReferences は、docs/adr/ の**外**から ADR を指すリンクを検査し、違反と参照の件数を返します。
+//
+// 番号は identity ではなく順序であり、削除に伴って詰められます（ADR-0001 決定5-9）。詰めた瞬間、
+// 外側のリンクは実在する**別の**決定を指します。指し先のファイル名が番号と slug の両方を持つため、
+// 突き合わせれば必ず落ちます。
+//
+// 件数を返すのは、**0件のまま緑を返す経路を呼び出し側が塞げるようにする**ためです。走査の範囲が
+// 壊れたとき、この検査は違反0件の合格として現れます。
+func checkPathReferences(repo, root string, docs []doc) ([]lintreport.Finding, int, error) {
+	index := make(map[int]string, len(docs))
+	for _, d := range docs {
+		index[d.number] = d.name
+	}
+
+	// root は「ファイルシステム上の位置」として渡ってくるが、リンクの指し先と突き合わせるには
+	// repo からの相対で要る。両方を root 1つで兼ねると、repo とは別の場所を -root に渡したとき、
+	// 突合が一度も成立しないまま緑になる。
+	adrDir, err := filepath.Rel(repo, root)
+	if err != nil {
+		return nil, 0, xerrors.Wrapf(err, "%s から見た %s の位置", repo, root)
+	}
+	adrDir = filepath.ToSlash(adrDir)
+
+	files, err := collectMarkdown(repo, adrDir)
+	if err != nil {
+		return nil, 0, err
+	}
+	// README.md すら見つからないなら、走査が対象を失っている。
+	if len(files) == 0 {
+		return nil, 0, errNoMarkdown
+	}
+
+	var findings []lintreport.Finding
+	refs, mentions := 0, 0
+	for _, file := range files {
+		raw, err := os.ReadFile(filepath.Clean(filepath.Join(repo, filepath.FromSlash(file))))
+		if err != nil {
+			return nil, 0, xerrors.Wrapf(err, "%s の読み取り", file)
 		}
-		return f[i].Line < f[j].Line
+		for _, line := range mdscan.Lines(raw) {
+			if mentionsADR(line.Text, adrDir, index) {
+				mentions++
+			}
+			for _, m := range markdownLink.FindAllStringSubmatch(line.Text, -1) {
+				name, ok := adrTarget(m[2], path.Dir(file), adrDir)
+				if !ok {
+					continue
+				}
+				refs++
+				findings = append(findings, matchReference(file, line.Number, m[1], name, index)...)
+			}
+		}
+	}
+
+	// **抽出の件数を、独立した経路で得た件数と突き合わせる**（ADR-0702 決定15）。実在する ADR の
+	// ファイル名を含む行は在るのに、リンクを1件も取り出せないなら、壊れているのは解析の側である。
+	// 突き合わせが無ければ、文書が解析の効かない書式（reference-style link など）へ寄った日に、
+	// この検査は「外からの参照 0 件」で緑を返し続ける。
+	//
+	// 数えるのを「実在する ADR のファイル名」にしているのは、解析が**正しく退けた**もの
+	// （外部 URL、索引、雛形）で食い違わせないためである。
+	if mentions > 0 && refs == 0 {
+		return nil, 0, errNoReference
+	}
+	return findings, refs, nil
+}
+
+// mentionsADR は、行が実在する ADR への道筋（`<adrDir>/<ファイル名>`）を含むかを返します。
+//
+// リンクの書式に依らない経路であることが要点で、ここが markdownLink と同じ形を見ると
+// 突き合わせが成立しません。置き場所まで見るのは、同名のファイルが別のディレクトリに在る
+// 場合に食い違わせないためです。
+func mentionsADR(line, adrDir string, index map[int]string) bool {
+	for _, name := range index {
+		if strings.Contains(line, adrDir+"/"+name) {
+			return true
+		}
+	}
+	return false
+}
+
+// adrTarget は、リンクの指し先が root 配下の ADR なら、そのファイル名を返します。
+//
+// 外部 URL を外すのは、番号体系がこのリポジトリのものではないからです。他リポジトリの ADR を
+// 指すリンクは正しく、ここで実在を問えば必ず落ちます。
+func adrTarget(target, fromDir, root string) (string, bool) {
+	if externalLink.MatchString(target) {
+		return "", false
+	}
+	clean, _, _ := strings.Cut(target, "#")
+	resolved := path.Clean(path.Join(fromDir, clean))
+	if path.Dir(resolved) != root {
+		return "", false
+	}
+	// 索引と雛形は root に在るが ADR ではない。検査 6 と同じ扱いにする。
+	switch base := path.Base(resolved); base {
+	case indexFile, templateFile:
+		return "", false
+	default:
+		return base, true
+	}
+}
+
+// matchReference は、リンクの文言と指し先を ADR の実体に突き合わせます。
+func matchReference(file string, line int, text, name string, index map[int]string) []lintreport.Finding {
+	at := func(msg string) lintreport.Finding {
+		return lintreport.Finding{File: file, Line: line, Message: msg}
+	}
+
+	m := fileName.FindStringSubmatch(name)
+	if m == nil {
+		return []lintreport.Finding{at(name + " は ADR のファイル名の形ではありません")}
+	}
+	number, _ := strconv.Atoi(m[1])
+
+	actual, ok := index[number]
+	if !ok {
+		return []lintreport.Finding{at(fmt.Sprintf("参照先の ADR-%04d が存在しません: %s", number, name))}
+	}
+	if actual != name {
+		return []lintreport.Finding{at(fmt.Sprintf("参照先が実在しません: %s（ADR-%04d は %s）", name, number, actual))}
+	}
+
+	// 文言が番号を名乗っているなら、指し先の番号と一致していなければならない。詰め直しの
+	// 取りこぼしは、指し先ではなく**文言だけが古い**形で現れる。
+	if t := linkTextNumber.FindStringSubmatch(text); t != nil {
+		if stated, _ := strconv.Atoi(t[1]); stated != number {
+			return []lintreport.Finding{at(fmt.Sprintf("リンクの文言 [%s] が指し先 %s と食い違っています", text, name))}
+		}
+	}
+	return nil
+}
+
+// collectMarkdown は、repo 配下の Markdown を repo からの相対パスで集めます。adrDir 配下は
+// 検査 6 が既に見ているため外します。
+func collectMarkdown(repo, adrDir string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(repo, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(repo, p)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if skipDir(rel, adrDir) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(rel, ".md") {
+			files = append(files, rel)
+		}
+		return nil
 	})
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s の走査", repo)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// skipDir は、走査に入らないディレクトリを判定します。
+//
+// .claude/worktrees は**別の作業のためのチェックアウト**であり、このリポジトリの記述ではありません。
+// そこを読むと、無関係な作業の状態でこの検査が落ちます。
+func skipDir(rel, adrDir string) bool {
+	switch rel {
+	case ".", "":
+		return false
+	case adrDir, ".git", "tmp", "node_modules", ".claude/worktrees":
+		return true
+	}
+	return strings.HasSuffix(rel, "/node_modules")
 }

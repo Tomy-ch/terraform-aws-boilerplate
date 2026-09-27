@@ -12,6 +12,10 @@ md-lint:
 md-fix:
 	@$(NODE_TOOL) markdownlint-cli2 --fix $(MD_GLOBS)
 
-.PHONY: adr-lint ## ADR の構造を検査（ADR-0001 が定めた検証方法）
+.PHONY: adr-lint ## ADR の構造と、外から ADR を指すリンクを検査
 adr-lint:
 	@$(call RUN_SCRIPT,adr-lint,)
+
+.PHONY: skill-lint ## スキルが名指しした make target / スキル / パスの実在を検査
+skill-lint:
+	@$(call RUN_SCRIPT,skill-lint,)

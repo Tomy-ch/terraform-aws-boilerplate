@@ -273,3 +273,32 @@ func Test_findFixedFences_フェンスを出さない行と行番号(t *testing.
 		assert.Equal(t, 2, got[0].Line)
 	})
 }
+
+func Test_indentOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			line string
+			want int
+		}{
+			"字下げの無い行":         {line: "jobs:", want: 0},
+			"半角空白の字下げ":        {line: "      - uses: x", want: 6},
+			"タブは1文字として数える":    {line: "\tuses: x", want: 1},
+			"空白とタブの混在":        {line: " \t uses: x", want: 3},
+			"空行":              {line: "", want: 0},
+			"空白だけの行は行の長さを返す":  {line: "    ", want: 4},
+			"行の途中の空白は数えない":    {line: "  a b", want: 2},
+			"字下げに使わない空白は数えない": {line: "　uses: x", want: 0},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, indentOf(tt.line))
+			})
+		}
+	})
+}

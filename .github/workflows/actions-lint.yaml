@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   actions-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -67,6 +67,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise

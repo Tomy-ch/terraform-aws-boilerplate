@@ -1,7 +1,7 @@
 ---
 name: scaffold-test
 description: >-
-  Generate a Go unit test file for an existing function / method under `scripts/`, following the viewpoints declared by the nearest ancestor README's Test Strategy section — which for this repository is `scripts/README.md`, the one place that owns them. One `TestXxx` per function or method: 1:1, no bundling. **この規約を機械的に強制する仕組みはこのリポジトリに無い** —— 守るのは書き手であり、監査するのは `/test-review` の Lens 5 である。Use it whenever a new or changed subject needs unit tests, or someone asks 「テストを書いて」「テストを追加して」. Read-only on implementation code — never edits the subject under test. Do NOT use it to review existing tests (`test-review`).
+  Generate a Go unit test file for an existing function / method under `scripts/`, following the viewpoints declared by the nearest ancestor README's Test Strategy section — which for this repository is `scripts/README.md`, the one place that owns them. One `TestXxx` per function or method: 1:1, no bundling. **枠の有無は `make test-mapping` が pre-commit と CI で強制する** —— 枠を欠いたまま commit は通らない。枠の中身がその対象を実際に突いているかは道具に見えず、そこは `/test-review` の Lens 5 が監査する。Use it whenever a new or changed subject needs unit tests, or someone asks 「テストを書いて」「テストを追加して」. Read-only on implementation code — never edits the subject under test. Do NOT use it to review existing tests (`test-review`).
 ---
 
 # Scaffold Test
@@ -138,7 +138,15 @@ Fallback behavior:
    対象**（失敗経路が `tb.Fatalf` を呼ぶヘルパなど）で、それでも規約名の `TestXxx` を宣言し、
    `t.Skip("<なぜ検証できないか>")` を書く。**「他のテストがカバーしている」は免除ではない** ——
    そのテストが縮んだ後も緑のままになる。
-   **この 1:1 を機械的に強制する仕組みはこのリポジトリに無い。** 監査するのは `/test-review` の
+   **枠が在るかどうかは `make test-mapping` が検査する**（`.lefthook.yaml` の pre-commit と
+   `.github/workflows/go-test.yaml`）。判定の詳細はそのツールの doc コメントが持つので写さない。
+   **規則1 の命名に対して道具が1つだけ緩い。** 関数は規則1 が公開・非公開それぞれの形を述べて
+   いるので、その形だけを受ける。**メソッドは規則1 がどちらを正とするか決めていない**ため、
+   レシーバの型が公開かどうかに依らず `TestT_Bar` と `Test_T_Bar` の**どちらか一方**が在れば
+   通す。両方在るのは違反である。**書き手が従うのは規則1 の形**であって、道具が寛容であることは
+   別の形を選んでよい理由にならない。上の `t.Skip` も道具が見る（理由が空でないこと、他のテストを名指ししないこと）。
+   **道具に見えないものが2つ残る** —— ある対象の検証が別の対象の `TestXxx` へ畳み込まれて
+   いないか、assert がその対象の判断を実際に突いているか。監査するのは `/test-review` の
    Lens 5（シンボル網羅）であり、生成時に守るのは書き手である。
 3. **最外の2つの `t.Run` グループは、リテラルの `正常系` と `異常系` だけ。**
    - `t.Run("正常系", ...)` / `t.Run("異常系", ...)` をそのまま使う。接頭辞ではなくその2文字である。
@@ -318,5 +326,6 @@ Before reporting completion, confirm:
 - [ ] エラーの assert がすべて `require.*`、終端の値の検証がすべて `assert.*` である。
 - [ ] フィクスチャが `t.TempDir()` の下にあり、リポジトリの実物を読んでいない。
 - [ ] 被テスト対象のソースファイルを編集していない。
-- [ ] `make go-fmt` / `make go-lint` / `make go-test` が通った。`make cover-gate` が落ちていない。
+- [ ] `make go-fmt` / `make go-lint` / `make go-test` / `make test-mapping` が通った。
+      `make cover-gate` が落ちていない。
 - [ ] 退化入力のケースを摂動で確かめた。

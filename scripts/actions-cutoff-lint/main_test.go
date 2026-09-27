@@ -339,7 +339,6 @@ func Test_scanWorkflow_同じステップの複数欠落(t *testing.T) {
 	require.Len(t, got.findings, 2)
 	assert.Contains(t, got.findings[0].Message, "if: がありません")
 	assert.Contains(t, got.findings[1].Message, "title: がありません")
-	// どちらもステップ先頭の行を指す。
 	assert.Equal(t, 5, got.findings[0].Line)
 	assert.Equal(t, 5, got.findings[1].Line)
 }
@@ -352,4 +351,87 @@ func Test_scanWorkflow_timeout違反の行番号(t *testing.T) {
 	got := scanWorkflow("a.yaml", src)
 	require.Len(t, got.findings, 1)
 	assert.Equal(t, 2, got.findings[0].Line)
+}
+
+func Test_checkCommentStep(t *testing.T) {
+	t.Parallel()
+
+	const (
+		usesLine   = "        uses: ./.github/actions/upsert-pr-comment"
+		withLine   = "        with:"
+		soundTitle = "          title: \"${{ steps.x.outputs.title || '## ⚠️ CUT OFF (no result produced)' }}\""
+	)
+
+	// ステップの先頭行を5行目に置く。違反が step.Number を指すのか該当キーの行を指すのかを
+	// 区別できる位置にする。
+	buildStep := func(lines ...string) workflow.Step {
+		step := workflow.Step{Number: 5}
+		for i, text := range lines {
+			step.Lines = append(step.Lines, workflow.Line{Number: 5 + i, Text: text})
+		}
+		return step
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("打ち切りに到達する if: と打ち切りの見出しがそろえば違反を返さない", func(t *testing.T) {
+			t.Parallel()
+			got := checkCommentStep("a.yaml", "lint", buildStep(
+				"      - if: always()", usesLine, withLine, soundTitle))
+			assert.Empty(t, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			lines    []string
+			messages []string
+			numbers  []int
+		}{
+			"if: が無い": {
+				lines:    []string{"      - uses: ./.github/actions/upsert-pr-comment", withLine, soundTitle},
+				messages: []string{"if: がありません"},
+				numbers:  []int{5},
+			},
+			// if: を先頭以外へ置く。先頭に置くと cond.line が step.Number と一致し、
+			// 実装が誤って step.Number を返す退行を区別できない。
+			"if: が打ち切りに到達しない": {
+				lines:    []string{"      - uses: ./.github/actions/upsert-pr-comment", "        if: failure()", withLine, soundTitle},
+				messages: []string{"打ち切りに到達しません"},
+				numbers:  []int{6},
+			},
+			"title: が無い": {
+				lines:    []string{"      - if: always()", usesLine, withLine, "          body-file: /tmp/x"},
+				messages: []string{"title: がありません"},
+				numbers:  []int{5},
+			},
+			"title: に打ち切りの見出しが無い": {
+				lines:    []string{"      - if: always()", usesLine, withLine, "          title: \"## 結果\""},
+				messages: []string{"打ち切り時の見出しがありません"},
+				numbers:  []int{8},
+			},
+			"行を1つも持たないステップ": {
+				lines:    nil,
+				messages: []string{"if: がありません", "title: がありません"},
+				numbers:  []int{5, 5},
+			},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got := checkCommentStep("a.yaml", "lint", buildStep(tt.lines...))
+				require.Len(t, got, len(tt.messages))
+				for i, f := range got {
+					assert.Equal(t, "a.yaml", f.File)
+					assert.Equal(t, tt.numbers[i], f.Line)
+					assert.Contains(t, f.Message, tt.messages[i])
+					assert.Contains(t, f.Message, "`lint`")
+				}
+			})
+		}
+	})
 }

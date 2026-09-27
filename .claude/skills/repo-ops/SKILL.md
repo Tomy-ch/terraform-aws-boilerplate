@@ -56,7 +56,7 @@ description: >-
 
 | 答えたいこと | 読む先 | 権威に見えるが違うもの |
 | --- | --- | --- |
-| どの make target が何を走らせるか | `.makefiles/**/*.mk`、一覧は `make help` | `.makefiles/README.md` は**存在しない** |
+| どの make target が何を走らせるか | `.makefiles/**/*.mk`、一覧は `make help` | `.makefiles/README.md`。**ターゲットの一覧は持たない** |
 | なぜそう決まっているか | `docs/adr/`（一覧は `docs/adr/README.md` —— **一覧が存在する唯一の場所**） | supersede 済みの ADR。Status を見る |
 | ユースケースの責務境界・公開契約 | `modules/<use-case>/README.md`（**未作成**） | — |
 | そのユースケース固有の判断 | `modules/<use-case>/docs/adr/`（**未作成**） | root の ADR。上書きしない（ADR-0001 決定17-19） |

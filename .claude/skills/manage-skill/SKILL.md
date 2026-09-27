@@ -34,7 +34,7 @@ Do NOT use it for:
 - 正典となる文書の編集（`docs/**`、`README.md`、ADR）—— 所有は
   [ADR-0701](../../../docs/adr/0701-documentation-ownership-and-language.md) 決定2 が持ち、
   Accepted ADR の本文は `AGENTS.md` の *保護された文書* が守る。
-- 他の AI ツールの設定（`.cursor/`、`.gemini/`、`.github/copilot-instructions.md`）—— `AGENTS.md`
+- 他の AI ツールの設定（.cursor/、.gemini/、.github/copilot-instructions.md）—— `AGENTS.md`
   *エージェント設定ファイルの保護* の範囲外。
 
 ## Scope note (AGENTS.md)
@@ -98,7 +98,7 @@ improve）で続けてよいかを訊く。**「公式の手順に従った」�
   唯一の部分であり、嘘をついても何も落ちず、どのゲートも捕まえない。名指ししている兄弟スキル、
   レンズ、モード、フラグ、パス —— 本体と突き合わせ、同じ編集の中で直す。別件にしない。
 - 上の2つは**掃き出しとしても効く** —— `.claude/skills/*/SKILL.md` 全体に対して同じ基準で走らせてよい。
-- 任意: `argument-hint` と `allowed-tools`（引数を取る、あるいは固定の道具集合を使う `/command` の
+- 任意: `argument-hint` と `allowed-tools`（引数を取る、あるいは固定の道具集合を使う slash command の
   とき。`commit` が手本）。要らなければ置かない。
 
 ### 3. Language rules
@@ -118,14 +118,37 @@ improve）で続けてよいかを訊く。**「公式の手順に従った」�
 - **`make` の target は `make help` に在るものだけを書く。** 無い target を書くことは、嘘をつくことと
   区別できない（`how-to` が同じ規律を持つ）。Terraform 側の検査（TFLint / Conftest / `terraform test`）と
   plan / apply の経路は**まだ配線されていない**（`AGENTS.md` *現在の配線状態*）。
-- **`.claude/skills/` に無いスキルを `/name` で指さない。** 輸入や新設でスキルが増えるなら、
+- **`.claude/skills/` に無いスキルを `/<name>` で指さない。** 輸入や新設でスキルが増えるなら、
   参照を足すのは**その回**である。
 - **未配線の道具を、存在するものとして書かない**（ADR-0701 決定13）。
 - **ADR の番号と決定番号は、引く前に開く。** 番号は identity ではなく順序であり、詰められることが
   ある（ADR-0001 決定5-9）。
 
-新設・更新のたびに、そのスキルが名指しした `make` target / スキル名 / パス / ADR 番号を
-**機械的に走査して確かめる**。読み返すだけでは見つからない。
+新設・更新のたびに、名指しした先が実在することを**機械で**確かめる。読み返すだけでは見つからない。
+
+- `make skill-lint` —— `make` target / `/<skill>` / パス。`.claude/skills/**` の Markdown が
+  inline code span で名指ししたものを見る。フェンスの中は例示なので見ない。
+- `make adr-lint` —— ADR の番号と slug。`docs/adr/` の**外**から指すパス形式のリンクも見る。
+
+どちらも exit code で確かめる。出力を眺めて「通ったようだ」と書かない。
+
+**抑止の仕組みは置いていない。** 行単位で検査を黙らせるマーカは持たず、通らない行を通すための口は無い。存在しないものを述べたい文は珍しくない
+——「この target は在って当然に見えるが存在しない」、他の AI ツールの設定を対象外として挙げる
+一覧、特定のスキルではなく slash command 一般を指す語。**そういう対象はコードスパンに入れずに書く。**
+
+```text
+悪い: `make terraform-test` は存在しない   ← 検査は名指しと読む。文意は読めない
+良い: make terraform-test は存在しない
+```
+
+口を作らないのは、**抑止が溜まる**からである。対象が消えてもマーカは残り、何も赤くならないので
+誰も気づかない。口の無い規則のほうが守られる。
+
+**フェンスは口ではなく、例示の置き場所である。** コマンドをコマンドの形で見せたいなら、
+フェンス（```）で囲む。フェンスの中は検査しない —— そこに在るのは参照ではなく例示だからで、
+この区別は `lib/mdscan` が持つ設計そのものである。
+**囲まずにバッククォートだけで書くことは、`how-to` が警告している失敗そのもの**である ——
+それらしいコマンドは、記録されたコマンドと見分けがつかない。
 
 ### 5. Eval artifacts stay out of version control
 
@@ -156,7 +179,7 @@ gitignore された `tmp/` の下（例 `tmp/skills/manage-skill/<skill-name>-wo
 
 - どのスキルかを確定する（`.claude/skills/<name>/`）。`name` とディレクトリは変えない。
 - インストールされたプラグインのスキルと違い、リポジトリのスキルはその場で書ける ——
-  `/tmp` へ写す手順は要らない。
+  一時ディレクトリへ写す手順は要らない。
 - 評価の基準線として、編集前のスキルを公式の手順どおり `tmp/` へスナップショットする。
 - 編集後、§4 の走査を必ず走らせる。**description を本体と突き合わせて正す**（§2）。
 
@@ -195,8 +218,7 @@ gitignore された `tmp/` の下（例 `tmp/skills/manage-skill/<skill-name>-wo
   `description`。
 - `description` が §2 の採用基準を通る —— 起動の判断を助けない行が無く、本体が支えない主張が無く、
   本体が持っていない事実を消していない。
-- **§4 の走査を走らせた** —— 名指しした `make` target がすべて `make help` に在り、名指しした
-  スキルが `.claude/skills/` に在り、パスと ADR の番号が実在する。
+- **§4 の走査を走らせた** —— `make skill-lint` と `make adr-lint` が、どちらも exit code 0 で返った。
 - 評価の成果物を commit していない（ワークスペースは gitignore された `tmp/` の下）。
 - 保護された経路へ触れていない。変更は `.claude/skills/**` に限られている。
 - 答えを知らない実際の問題で1度通し、契約に欄が無かった場所・埋められなかった欄をすべて直した。

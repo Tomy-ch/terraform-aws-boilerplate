@@ -631,8 +631,8 @@ func Test_applyAll(t *testing.T) {
 			driftedMod := strings.ReplaceAll(soundGoMod, "go 1.27.1", "go 1.26.0")
 			root := newRepo(t, soundMise, drifted, driftedMod)
 
-			// 書き込みは昇順（docker/... が先、scripts/... が後）。後者の一時ファイル名を
-			// ディレクトリで塞ぎ、先に書いた分が残らないことを見る。
+			// 書き込みは昇順（docker/... が先、scripts/... が後）。この順序が変わると、
+			// 後者を塞ぐこの手法自体が成立しなくなる。
 			blocked := filepath.Join(root, "scripts", "go.mod.atomicwrite.tmp")
 			require.NoError(t, os.MkdirAll(blocked, 0o700))
 
@@ -852,6 +852,65 @@ func Test_planNames(t *testing.T) {
 		t.Run("空には空を返す", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, planNames(map[string]string{}))
+		})
+	})
+}
+
+func Test_bakedRe(t *testing.T) {
+	t.Parallel()
+
+	re := bakedRe(`v="`, `"`)
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// applyRule は置換に ${1} と ${2} を要する。群が欠けると、Go は参照をエラーにせず
+		// 空文字へ落とすので、前置きや閉じを失った内容が err == nil のまま書き出される。
+		t.Run("前置きと閉じの2つの捕獲群を持つ", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 2, re.NumSubexp())
+		})
+
+		t.Run("前置きと行末を保ったまま版だけ差し替える", func(t *testing.T) {
+			t.Parallel()
+			got := re.ReplaceAllString("\t@v=\"1.0.0\"; \\\n", "${1}1.27.1${2}")
+			assert.Equal(t, "\t@v=\"1.27.1\"; \\\n", got)
+		})
+
+		// 3桁だけを試すと絞られても気づけない理由は Test_goDirectiveRe の
+		// 「1〜3桁の版に一致する」ケースが持つ。
+		t.Run("1〜3桁の版に一致する", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, re.FindAllString("v=\"1\"\nv=\"1.27\"\nv=\"1.27.1\"\n", -1), 3)
+		})
+
+		// 錨と閉じはリテラルとして扱う。中和しないと、閉じの `)` は括弧の不一致で
+		// コンパイルに失敗し、錨の `.` は任意の1文字に化けて別の行を掴む。
+		t.Run("錨と閉じの正規表現メタ文字を中和する", func(t *testing.T) {
+			t.Parallel()
+			meta := bakedRe(`v.n(`, `)`)
+			assert.Len(t, meta.FindAllString("v.n(1.27.1)\n", -1), 1)
+			assert.Empty(t, meta.FindAllString("vxn(1.27.1)\n", -1))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("コメント行を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, re.FindAllString("# v=\"9.9.9\"\nv=\"1.0.0\"\n", -1), 1)
+		})
+
+		// 閉じが錨である。無い行を掴むと、版の終わりを決められないまま置換する。
+		t.Run("閉じの無い行を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, re.FindAllString("v=\"1.27.1\n", -1))
+		})
+
+		t.Run("版の形をしていない値を掴まない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, re.FindAllString("v=\"latest\"\n", -1))
 		})
 	})
 }

@@ -281,7 +281,7 @@ After the PR URL is reported, **always ask the user whether to run a review** â€
 
 `/test-review` gains nothing from the PR existing, and it is still listed â€” it is `/impl-review`'s peer under the Review Phase Protocol, and **neither skill will surface the other**, so dropping it here is the only way it goes missing.
 
-**Name only skills that exist in `.claude/skills/`.** `/code-review` and `/code-review ultra` are Claude Code CLI built-ins, not skills of this repository. This step offers the repository's own reviewers; a CLI feature is the user's to reach for, and listing it here put a non-repository command among them.
+**Name only skills that exist in `.claude/skills/`.** /code-review and /code-review ultra are Claude Code CLI built-ins, not skills of this repository. This step offers the repository's own reviewers; a CLI feature is the user's to reach for, and listing it here put a non-repository command among them.
 
 Use `AskUserQuestion`:
 

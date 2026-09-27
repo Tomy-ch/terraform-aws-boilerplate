@@ -32,7 +32,9 @@ type Format struct {
 	Line *regexp.Regexp
 	// Header は書き出す先頭のコメント行。
 	Header []string
-	// Resolve は、直し方として案内する make target 名。
+	// Resolve は、直し方として案内する make target 名。**lockfile を再生成する target に限る。**
+	// 空のときは案内から落ちる —— 生成する手段を持たない Format へ、走らせても同じエラーが返る
+	// target を案内すると、読み手は循環した指示を受け取る。
 	Resolve string
 	Perm    fs.FileMode
 }
@@ -52,6 +54,10 @@ func (f Format) Read(path string) (map[string]string, error) {
 	defer func() { _ = file.Close() }()
 
 	lock := map[string]string{}
+	retry := ""
+	if f.Resolve != "" {
+		retry = "make " + f.Resolve + " を実行するか"
+	}
 	sc := bufio.NewScanner(file)
 	for lineNo := 1; sc.Scan(); lineNo++ {
 		line := strings.TrimSpace(sc.Text())
@@ -63,11 +69,11 @@ func (f Format) Read(path string) (map[string]string, error) {
 		// 行末に付いたゴミが黙って捨てられる（ADR-0702 決定14）。
 		if m == nil || m[0] != line {
 			return nil, xerrors.Wrap(ErrInvalidLine,
-				fmt.Sprintf("%d 行目: %q（make %s を実行するか該当行を削除してください）", lineNo, line, f.Resolve))
+				fmt.Sprintf("%d 行目: %q（%s該当行を削除してください）", lineNo, line, retry))
 		}
 		if _, dup := lock[m[1]]; dup {
 			return nil, xerrors.Wrap(ErrDuplicateKey,
-				fmt.Sprintf("%d 行目: %q（make %s を実行するか重複行を削除してください）", lineNo, m[1], f.Resolve))
+				fmt.Sprintf("%d 行目: %q（%s重複行を削除してください）", lineNo, m[1], retry))
 		}
 		lock[m[1]] = m[2]
 	}

@@ -105,7 +105,7 @@ For each distinct external action, fetch its release list with dates (`gh api re
 
 ### 3. Verify `with:` for Major Bumps
 
-`resolve` / `apply` / `actionlint` catch syntax, NOT semantic input changes. For every action whose **major changes**, read its release notes / `action.yml` and compare against every `with:` block this repo uses. **上流で観測された例**（いずれもこのリポジトリが使っている action ではなく、壊れ方の形を示すためのもの）: 入力名の改名（`git-token` → `branch-token`）、既定の除外範囲の変更（dotfile を除くようになる）、対になる action の下限の引き上げ。 If the repo's actual inputs remain compatible → keep the bump. If a breaking input change applies → **hold the action and report the required change**; do not auto-apply. (Minor-only refreshes within a major skip this check.) <!-- skill-lint-ignore -->
+`resolve` / `apply` / `actionlint` catch syntax, NOT semantic input changes. For every action whose **major changes**, read its release notes / `action.yml` and compare against every `with:` block this repo uses. **上流で観測された例**（いずれもこのリポジトリが使っている action ではなく、壊れ方の形を示すためのもの）: 入力名の改名（`git-token` → `branch-token`）、既定の除外範囲の変更（dotfile を除くようになる）、対になる action の下限の引き上げ。 If the repo's actual inputs remain compatible → keep the bump. If a breaking input change applies → **hold the action and report the required change**; do not auto-apply. (Minor-only refreshes within a major skip this check.)
 
 ### 4. Triage Where Step-back Is Not Available
 

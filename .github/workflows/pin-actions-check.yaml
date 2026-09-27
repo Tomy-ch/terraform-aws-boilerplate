@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   pin-actions-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -67,6 +67,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       - name: Check actions are pinned
         id: pin

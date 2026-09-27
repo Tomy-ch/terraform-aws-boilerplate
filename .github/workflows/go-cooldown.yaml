@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   go-cooldown:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -71,6 +71,7 @@ jobs:
         with:
           go-version-file: scripts/go.mod
           cache: true
+          cache-dependency-path: scripts/go.sum
 
       # The default checkout is shallow, so the base commit is absent and `git show
       # <base>:go.mod` fails. Fetching the base ref explicitly is what makes the diff

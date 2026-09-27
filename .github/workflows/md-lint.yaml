@@ -1,7 +1,11 @@
 name: Markdown Lint
 
-# `make md-lint` is wired into the lefthook pre-commit hook only, so `--no-verify` and edits
-# made through the GitHub web UI reach a merge unchecked. Every stage runs here.
+# `make md-lint` / `make adr-lint` / `make skill-lint` が配線されているのは lefthook の
+# pre-commit だけなので、`--no-verify` と GitHub の Web UI 経由の編集は検査を通らずに
+# merge へ届く。**すべての段をここで走らせる。**
+#
+# 3つを1つの workflow に置くのは、どれも主題が Markdown だからである。体裁（md-lint）、
+# ADR の構造と参照（adr-lint）、スキルが名指しした先の実在（skill-lint）。
 #
 # CI ではコンテナを起こさない。markdownlint-cli2 は mise が npm backend で解決する道具であり、
 # CI の実行環境へ直接用意して `RUNNER_MODE=host` で呼ぶ。道具の版は手元と同じ mise.toml が決める。
@@ -22,7 +26,7 @@ concurrency:
 
 jobs:
   md-lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -118,3 +122,119 @@ jobs:
       - name: Fail if Markdown lint failed
         if: always() && steps.md-lint.outputs.status != 'success'
         run: exit 1
+
+  # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
+  adr-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+            awscli.amazonaws.com:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run ADR lint
+        run: make adr-lint RUNNER_MODE=host
+
+  # 何を見るかと、なぜ要るかは scripts/README.md の skill-lint 行が持つ。
+  skill-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            *.actions.githubusercontent.com:443
+            *.blob.core.windows.net:443
+            mise.jdx.dev:443
+            mise-versions.jdx.dev:443
+            mise.run:443
+            mise.en.dev:443
+            aquaproj.github.io:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            index.golang.org:443
+            storage.googleapis.com:443
+            dl.google.com:443
+            go.dev:443
+            golang.org:443
+            nodejs.org:443
+            registry.npmjs.org:443
+            tuf-repo-cdn.sigstore.dev:443
+            rekor.sigstore.dev:443
+            fulcio.sigstore.dev:443
+            api.npmjs.org:443
+            api.osv.dev:443
+            npm.jsr.io:443
+            awscli.amazonaws.com:443
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run skill lint
+        run: make skill-lint RUNNER_MODE=host

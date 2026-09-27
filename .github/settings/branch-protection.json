@@ -60,6 +60,9 @@
             "context": "actions-lint"
           },
           {
+            "context": "adr-lint"
+          },
+          {
             "context": "commitlint"
           },
           {
@@ -84,7 +87,16 @@
             "context": "pin-images-check"
           },
           {
+            "context": "pin-runners-check"
+          },
+          {
             "context": "secret-scan"
+          },
+          {
+            "context": "skill-lint"
+          },
+          {
+            "context": "test-mapping"
           },
           {
             "context": "trivy-config"
