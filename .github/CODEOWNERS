@@ -9,6 +9,7 @@
 
 # Supply-chain controls — the pin lockfiles and the two bypass ledgers.
 .github/actions-pin.toml              @Tomy-ch
+.github/runners-pin.toml              @Tomy-ch
 .github/go-cooldown-bypass.toml       @Tomy-ch
 .github/tool-cooldown-bypass.toml     @Tomy-ch
 docker/images-pin.toml                @Tomy-ch
