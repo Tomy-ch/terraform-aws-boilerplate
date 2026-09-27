@@ -1,9 +1,9 @@
-# ADR-0505: CIランナーのイメージを単一の宣言へ固定する
+# ADR-0505: CIランナーの label を単一の宣言へ固定する
 
 - Status: Accepted
 - Date: 2026-09-26
 - Scope: repository-wide
-- Related: [0501](0501-development-tooling-composition.md), [0503](0503-tool-execution-form.md), [0702](0702-repository-operations-substrate.md)
+- Related: ADR-0501, ADR-0503, ADR-0702
 
 ## Context
 
@@ -12,17 +12,20 @@ GitHub Actions の `runs-on:` が受け取る `ubuntu-latest` のような label
 別の OS の上で検査していたことに、何かが壊れるまで気づけない。
 
 このリポジトリは既に2種類の版を単一の宣言へ固定している —— 道具の版は `mise.toml`
-（[0501](0501-development-tooling-composition.md) 決定19）、ベースイメージは digest
-（[0503](0503-tool-execution-form.md) 決定10）。CIランナーだけが浮動のまま残っており、しかも
+（[ADR-0501](0501-development-tooling-composition.md)（検証と運用の道具を既存ツールの組み合わせで構成する）決定19）、ベースイメージは digest
+（[ADR-0503](0503-tool-execution-form.md)（道具の宣言を1つに保ち、実行環境を3経路に分ける）決定10）。CIランナーだけが浮動のまま残っており、しかも
 それは**その2つを実行する土台**である。土台が動けば、固定した上の層の意味も動く。
 
 故障モードは、版が動くこと自体ではない。**動いたことが diff に出ないこと**である。移行の日に
 何かが壊れたとき、原因の候補としてはリポジトリの変更しか挙がらない。
 
-GitHub の公式文書は `-latest` と版付き label のどちらを推奨するとも述べていない。述べているのは
-「`-latest` は GitHub が提供する最新の安定版であって、OSベンダの最新とは限らない」ことだけである。
-したがってどちらを採っても公式推奨からの逸脱ではなく、[0207](0207-default-value-policy.md) 決定11
+GitHub の公式文書（`actions/runner-images`）は「不要な移行を避けたければ yaml で版を明示せよ」と
+述べており、版付き label の採用は公式推奨からの逸脱ではない。[ADR-0207](0207-default-value-policy.md)（既定値の方針）決定11
 の記録を要しない。
+
+**ただし版付き label も不変ではない。** 同じ文書は「ランナーイメージのソフトウェアは概ね週次で
+更新する」と述べており、`ubuntu-24.04` の下で中身は動き続ける。**本決定が止めるのは OS の版が
+入れ替わることだけである** —— digest による固定（ADR-0503 決定10）と同じ強さの保証ではない。
 
 ## Decision
 
@@ -31,9 +34,9 @@ GitHub の公式文書は `-latest` と版付き label のどちらを推奨す�
 2. **workflow へ label を直接書かない。** 写しは `make pin-runners-apply` が書き込み、
    `make pin-runners-check` が宣言とのずれで落とす。
 3. 宣言のどちらの側にも無い label は**エラーとする**。列・`group:`・`${{ }}` の形も同様に扱う。
-   読めない形を取りこぼしとして通さない（[0702](0702-repository-operations-substrate.md) 決定14）。
+   読めない形を取りこぼしとして通さない（[ADR-0702](0702-repository-operations-substrate.md)（リポジトリ運用機構を独立した区分とし、Goで実装する）決定14）。
 4. 宣言が0件、または走査した `runs-on:` が0件のとき、成功で返さない
-   （[0702](0702-repository-operations-substrate.md) 決定13）。
+   （[ADR-0702](0702-repository-operations-substrate.md)（リポジトリ運用機構を独立した区分とし、Goで実装する）決定13）。
 5. 版を上げるのは、宣言を書き換えて `apply` を実行することによる。**その回の diff が移行そのもので
    ある。**
 
@@ -58,13 +61,14 @@ GitHub の公式文書は `-latest` と版付き label のどちらを推奨す�
 | Testability | 検査対象が無い | 写し同士を突き合わせる手段が無い | 宣言と写しの一致を機械で判定する |
 | Contract Clarity | どの OS で検査しているかが宣言に無い | 28箇所のどれが正本か決まらない | 正本が1つ |
 | Maintainability | 手間ゼロ | 版上げが28箇所の編集 | 版上げが宣言1行の編集 |
-| Scope Control | — | — | 対象は `.github/workflows` の `runs-on:` に限る |
+| Scope Control | 責務は増えないが、どの OS で検査しているかを誰も所有しない | 版が28箇所へ散り、正本が決まらない | 対象は `.github/workflows` の `runs-on:` に限り、正本は1つ |
 
-評価軸の定義は [0101](0101-architecture-principles.md) を参照する。
+評価軸の定義は [ADR-0101](0101-architecture-principles.md)（アーキテクチャの原則）を参照する。
 
 ## 意図的に捨てるもの
 
-- **新しいランナーイメージが配られた日に、何もせず乗ること。** 移行は明示の操作になる。
+- **新しい OS の版へ、何もせず乗ること。** 移行は明示の操作になる。イメージの週次更新には
+  引き続き何もせず乗る —— それを止める手段を GitHub-hosted runner は提供していない。
 - **`-latest` が持つ「GitHub が安定と判断した版に自動で追随する」性質。** 追随するかどうかを
   こちらが決める代わりに、決めなければ古いままになる。
 
@@ -73,13 +77,15 @@ GitHub の公式文書は `-latest` と版付き label のどちらを推奨す�
 - 保証すること: すべての `runs-on:` が宣言と一致していること。宣言のどちらの側にも無い label と、
   読めない形の `runs-on:` が黙って通らないこと。走査対象を失った実行が成功で返らないこと。
 - 保証しないこと: 固定先の label が GitHub に実在すること。固定先が EOL に達したことの検出。
-  self-hosted runner（`runs-on` が label の集合を取る形は本決定の対象外である）。
+  **同一 label の下でランナーイメージの中身が更新されないこと** —— GitHub は概ね週次で更新し、
+  それを固定する手段を提供していない。なお self-hosted runner と、`runs-on` が label の集合を
+  取る形は、本決定の下では導入できない（決定3 がエラーにする）。導入するなら *見直し条件* に当たる。
 
 ## 検証方法
 
 `make pin-runners-check`（`scripts/pin-runners`）が、宣言と各 workflow の `runs-on:` を突き合わせる。
 pre-commit フックと CI の `pin-runners-check` job が実行する。判定は `apply` と同じ経路を書き換え
-なしで走らせたものであり、別実装を持たない（[0702](0702-repository-operations-substrate.md) 決定10-12）。
+なしで走らせたものであり、別実装を持たない（[ADR-0702](0702-repository-operations-substrate.md)（リポジトリ運用機構を独立した区分とし、Goで実装する）決定10-12）。
 
 ## 影響
 
@@ -91,5 +97,6 @@ pre-commit フックと CI の `pin-runners-check` job が実行する。判定�
 
 - GitHub が版付き label の提供をやめたとき。
 - self-hosted runner、または `runs-on` が label の集合を取る形を導入したとき。
-- 固定先が EOL に達したことを検出する必要が出たとき —— `pin-actions` / `pin-images` が持つような
-  鮮度の仕組みが要る。本決定はそれを持たない。
+- 固定先が EOL に達したこと、または同一 label の下でのイメージ更新を検出する必要が出たとき
+  —— `pin-actions` / `pin-images` が持つような鮮度の仕組みが要る。本決定はそれを持たない。
+- GitHub がランナーイメージを digest で固定する手段を提供したとき。
