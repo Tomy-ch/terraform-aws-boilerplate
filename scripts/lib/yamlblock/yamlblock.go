@@ -15,7 +15,8 @@ import (
 
 // headerRe は値がブロックスカラー（`|` / `>`）で始まる行。
 // 字下げ指示子と chomp 指示子は YAML がどちらの順序も許すため（`|2-` / `|-2`）両方を受ける。
-var headerRe = regexp.MustCompile(`:[ \t]*[|>][+-]?\d?[+-]?[ \t]*(?:#.*)?$`)
+// 注記は code が落とすので、ここでは受けない。
+var headerRe = regexp.MustCompile(`:[ \t]*[|>][+-]?\d?[+-]?[ \t]*$`)
 
 // ContentLines は data のうちブロックスカラーの中身に当たる行番号（1 始まり）を返す。
 //
@@ -34,7 +35,19 @@ func ContentLines(data string) map[int]bool {
 			}
 			headerIndent = -1
 		}
-		if headerRe.MatchString(line) {
+		// **注記を落としてからヘッダを判定する。** 落とさずに判定すると、注記の中の `: |` が
+		// ヘッダに見える —— コメント行（`  # see also: |`）と行末の注記（`name: x # todo: |`）の
+		// 両方がそれに当たり、どちらも後続の行を「中身」へ落として呼び出し側の走査から消す。
+		// YAML の注記は行頭か空白の直後の `#` から始まる。引用符の中の `#` まで落とすが、
+		// その向きは「ヘッダと見なさない」側 —— 走査対象が増える方 —— なので安全側である。
+		head := line
+		for k := range len(head) {
+			if head[k] == '#' && (k == 0 || head[k-1] == ' ' || head[k-1] == '\t') {
+				head = head[:k]
+				break
+			}
+		}
+		if headerRe.MatchString(head) {
 			headerIndent = indent
 		}
 	}

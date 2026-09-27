@@ -80,5 +80,19 @@ func Test_ContentLines(t *testing.T) {
 			got := yamlblock.ContentLines(lines("  - run: echo one", "      継続に見える行"))
 			assert.Empty(t, got)
 		})
+
+		t.Run("末尾が | のコメント行をヘッダとして扱わない", func(t *testing.T) {
+			t.Parallel()
+			// 注記の中の `: |` をヘッダと読むと、後続の深い字下げの行がすべて中身になり、
+			// 呼び出し側の走査から消える。
+			got := yamlblock.ContentLines(lines("jobs:", "  # see also: |", "    runs-on: ubuntu-latest"))
+			assert.Empty(t, got)
+		})
+
+		t.Run("行末の注記の中の | もヘッダとして扱わない", func(t *testing.T) {
+			t.Parallel()
+			got := yamlblock.ContentLines(lines("  name: x # todo: |", "      continued"))
+			assert.Empty(t, got)
+		})
 	})
 }
