@@ -29,7 +29,7 @@ gh api /repos/{owner}/{repo}/rulesets/{ruleset_id}
 | `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、マージ方法は merge commit か squash に限定（rebase merge を除外）。 |
 | `copilot_code_review` | Copilot が各 PR を自動レビューする。push のたび、および draft に対しても実行する。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
-| `required_status_checks` | 13 件のチェックが成功してからマージする。 |
+| `required_status_checks` | 17 件のチェックが成功してからマージする。 |
 
 ### 単独メンテナのリポジトリに `pull_request` を適用する場合
 
@@ -47,9 +47,9 @@ GitHub の案内は、ruleset に Code Quality の閾値を宣言する**前に*
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
-| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check` |
-| コードと構成 | `go-test`、`trivy-config`、`secret-scan` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
+| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`skill-lint`、`versions-check` |
+| コードと構成 | `go-test`、`test-mapping`、`trivy-config`、`secret-scan` |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**
 GitHub は報告の無い check を「該当しない」とは読まず待ち続け、その pull request は恒久的に
