@@ -70,6 +70,20 @@ func TestApply(t *testing.T) {
 			assert.NoFileExists(t, ng)
 		})
 
+		t.Run("前回の残骸が在れば、上書きせずに落ちる", func(t *testing.T) {
+			t.Parallel()
+			// 強制終了で残った一時ファイルは、人が正体を見て消すまで次を通さない。
+			// symlink のケースと合わせて「既に在れば落ちる」の両側を固定する。
+			dir := t.TempDir()
+			target := filepath.Join(dir, "a.txt")
+			require.NoError(t, os.WriteFile(target, []byte("old"), 0o600))
+			require.NoError(t, os.WriteFile(target+".atomicwrite.tmp", []byte("stale"), 0o600))
+
+			require.Error(t, atomicwrite.Apply(map[string]string{target: "new"}, 0o644))
+			assert.Equal(t, "old", read(t, target))
+			assert.Equal(t, "stale", read(t, target+".atomicwrite.tmp"), "残骸を消している")
+		})
+
 		t.Run("一時ファイルの名前に何かが在れば、辿らず書かずに落ちる", func(t *testing.T) {
 			t.Parallel()
 			// **接尾辞をここだけ写す。** 攻撃の形を作るには名前が要る。写しであることは

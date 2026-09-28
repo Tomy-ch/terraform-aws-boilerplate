@@ -25,6 +25,9 @@ const tmpSuffix = ".atomicwrite.tmp"
 //
 // 書き込みの順序は安定させる（パスの昇順）。失敗したときにどこまで進んだかが
 // 実行ごとに変わると、再現できない。
+//
+// **`<path>.atomicwrite.tmp` が既に在れば、そのパスで失敗します。** 強制終了で残った
+// 一時ファイルは、人が正体を見て消すまで次の実行を通しません。
 func Apply(changes map[string]string, perm fs.FileMode) error {
 	paths := sortedPaths(changes)
 	temps := make(map[string]string, len(paths))
