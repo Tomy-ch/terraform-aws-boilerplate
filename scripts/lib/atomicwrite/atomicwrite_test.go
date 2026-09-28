@@ -75,6 +75,27 @@ func TestApply(t *testing.T) {
 		// 書き込みはパスの昇順なので、失敗する missing/b.txt より前に a.txt を置くことで
 		// 「一時ファイルを作ってから消した」経路を踏む。Apply は最初の失敗で打ち切るため、
 		// 後ろに対象を足しても現行の実装では書き込みが試みられない。
+		t.Run("一時ファイルの名前に何かが在れば、辿らず書かずに落ちる", func(t *testing.T) {
+			t.Parallel()
+			// 一時ファイルの名前は走査したファイル名から決まるので、その名前の symlink を
+			// 作業ツリーへ置ける。辿って書くとリポジトリの外を書き換える。
+			//
+			// **接尾辞をここだけ写す。** 攻撃の形を作るには名前が要る。写しであることは
+			// 承知のうえで、定数が変わればこのケースは symlink を置く場所を外し、
+			// 「落ちる」を主張しなくなる（緑になる）。
+			dir := t.TempDir()
+			target := filepath.Join(dir, "a.txt")
+			require.NoError(t, os.WriteFile(target, []byte("old"), 0o600))
+
+			outside := filepath.Join(t.TempDir(), "victim")
+			require.NoError(t, os.WriteFile(outside, []byte("untouched"), 0o600))
+			require.NoError(t, os.Symlink(outside, target+".atomicwrite.tmp"))
+
+			require.Error(t, atomicwrite.Apply(map[string]string{target: "new"}, 0o644))
+			assert.Equal(t, "untouched", read(t, outside), "ツリーの外へ書いている")
+			assert.Equal(t, "old", read(t, target))
+		})
+
 		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
 			t.Parallel()
 

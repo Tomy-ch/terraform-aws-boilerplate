@@ -38,10 +38,23 @@ func Apply(changes map[string]string, perm fs.FileMode) error {
 
 	for _, path := range paths {
 		tmp := path + tmpSuffix
-		// path は呼び出し側が宣言と走査から組む。利用者の入力は通らない。
-		// 撤回条件: 経路が外部入力から決まる形になったとき。
-		if err := os.WriteFile(tmp, []byte(changes[path]), modeOf(path, perm)); err != nil { //nolint:gosec // 上のコメントを参照
-			return xerrors.Wrap(err, "write "+tmp)
+		// **O_EXCL で開く。** 一時ファイルの名前は走査したファイル名から決まるので、
+		// その名前の symlink を作業ツリーへ置けば `os.WriteFile` はそれを辿り、リポジトリの
+		// 外へ書く。O_EXCL は既に在るものを拒むので、symlink も前回の残骸も作成の時点で
+		// 落ちる —— 先に調べてから開く形と違い、その間に挿し替える隙が無い。
+		// 撤回条件: 一時ファイルの名前が予測できない形になったとき。
+		f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, modeOf(path, perm)) //nolint:gosec // 上のコメントを参照
+		if err != nil {
+			return xerrors.Wrap(err, "create "+tmp)
+		}
+
+		_, writeErr := f.WriteString(changes[path])
+		closeErr := f.Close()
+		if writeErr != nil {
+			return xerrors.Wrap(writeErr, "write "+tmp)
+		}
+		if closeErr != nil {
+			return xerrors.Wrap(closeErr, "close "+tmp)
 		}
 
 		temps[path] = tmp
