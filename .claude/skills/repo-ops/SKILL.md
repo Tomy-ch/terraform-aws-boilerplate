@@ -42,7 +42,7 @@ description: >-
 | `trivy-*` が「所見なし」と言うが、本当に見たのか疑わしい | §5 |
 | `egress-check` が落ちる | §5 |
 | cooldown ゲートが、いま宣言した版を拒む | §6 |
-| `pin-actions-check` / `pin-images-check` が drift 以外の理由で落ちる | §7 |
+| ピンの検査が drift 以外の理由で落ちる | §7 |
 | `versions-check` が落ちる | §8 |
 | pre-push `secret-scan` が自分の足していない秘密を報告する | §9 |
 | hook の summary の記号が読めない / 何が走ったのか分からない | §10 |
@@ -182,10 +182,10 @@ make egress-check
 3ヶ月超・どれにも当たらないエントリのいずれでもゲートを落とすので、失効したバイパスが
 通し続けることはない（ADR-0702 決定18）。
 
-## 7. `pin-actions-check` / `pin-images-check` が drift 以外で落ちる
+## 7. ピンの検査が drift 以外で落ちる
 
-どちらも fail-closed で、drift より広い条件で落ちる。**いずれもリポジトリ側の状態の問題**で、
-上流の問題ではない。
+`pin-actions-check` / `pin-images-check` / `pin-runners-check` はいずれも fail-closed で、
+drift より広い条件で落ちる。**いずれもリポジトリ側の状態の問題**で、上流の問題ではない。
 
 | 失敗 | 意味 | 直し方 |
 | --- | --- | --- |
@@ -194,6 +194,17 @@ make egress-check
 | lockfile に参照されていないエントリ | workflow を消したときの置き去り。lockfile が実態を映さなくなる | 同上 |
 | 固定対象として解釈できない `uses:` | フロー mapping / 引用キー / ブロックスカラー / alias。**書き換えられないので固定されない** | 素のブロック記法へ書き直す。**抑止しない** |
 | `未登録`（images） | lockfile に無い image が `FROM` / `image:` に現れた | `make pin-images-resolve` |
+
+`pin-runners-check` は lockfile を書き出さないので、`resolve` に当たる手が無い。解釈できない行への
+案内は「当該行を消す」だけになる。落ち方も固有で、宣言と `runs-on:` の両側を見る。
+
+| 失敗 | 意味 | 直し方 |
+| --- | --- | --- |
+| 宣言が0件 | `.github/runners-pin.toml` が空、または全行がコメント | 固定先を書く。**空の宣言で全件を通さない** |
+| `runs-on:` が0件 | 走査した workflow のどれにも `runs-on:` が無い | 走査の範囲が壊れた印。`.github/workflows` 直下を見る |
+| 読めない `runs-on:` | 列 / `group:` / `${{ }}` / キーの別記法（`runs-on : x`、`"runs-on": x`、フロー写像） | 素の `runs-on: <label>` へ書き直す。**抑止しない** |
+| 固定先が別の宣言のキー | 自己写像・連鎖・値の誤記。固定先の集合へ浮動 label が入る | 宣言を直す。固定先は終端でなければならない |
+| どの `runs-on:` にも当たらない宣言 | 対象を失った宣言。固定しているように読めて何も固定していない | 当該の対を消す |
 
 `resolve` が `既存ピンを維持` と言うのは cooldown が働いた印で、失敗ではない（§6）。
 
