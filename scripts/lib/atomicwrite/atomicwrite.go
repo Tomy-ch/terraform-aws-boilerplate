@@ -1,8 +1,7 @@
 // Package atomicwrite は、複数ファイルの書き換えを1箇所へ集める。
 //
-// このリポジトリの道具のいくつかは、宣言を正として複数のファイルを書き換える
-// （pin-actions の `uses:`、pin-images の `FROM`、egress の allowed-endpoints、
-// versions の版の写し）。素朴に `os.WriteFile` を並べると、2つ目で失敗したとき
+// このリポジトリの道具のいくつかは、宣言を正として複数のファイルを書き換える。
+// 素朴に `os.WriteFile` を並べると、2つ目で失敗したとき
 // 1つ目だけが新しい内容になった作業ツリーが残る。呼び出し側にはエラーしか見えないので、
 // **「失敗した」と「一部だけ適用された」が区別できなくなる。**
 //
@@ -38,10 +37,9 @@ func Apply(changes map[string]string, perm fs.FileMode) error {
 
 	for _, path := range paths {
 		tmp := path + tmpSuffix
-		// **O_EXCL で開く。** 一時ファイルの名前は走査したファイル名から決まるので、
-		// その名前の symlink を作業ツリーへ置けば `os.WriteFile` はそれを辿り、リポジトリの
-		// 外へ書く。O_EXCL は既に在るものを拒むので、symlink も前回の残骸も作成の時点で
-		// 落ちる —— 先に調べてから開く形と違い、その間に挿し替える隙が無い。
+		// 一時ファイルの名前は走査したファイル名から予測できる。O_EXCL は既に在るもの（symlink も
+		// 前回の残骸も）を拒むので、その名前に置かれた symlink を辿ってツリーの外へ書くことは無い。
+		// 先に調べてから開く形と違い、その間に挿し替える隙が無い。
 		// 撤回条件: 一時ファイルの名前が予測できない形になったとき。
 		f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, modeOf(path, perm)) //nolint:gosec // 上のコメントを参照
 		if err != nil {
@@ -84,7 +82,6 @@ func modeOf(path string, fallback fs.FileMode) fs.FileMode {
 	return info.Mode().Perm()
 }
 
-// sortedPaths は changes のキーを昇順で返します。
 func sortedPaths(changes map[string]string) []string {
 	paths := make([]string, 0, len(changes))
 	for path := range changes {

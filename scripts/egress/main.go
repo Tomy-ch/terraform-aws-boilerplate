@@ -3,7 +3,7 @@
 //	apply: .github/egress.toml を元に各 workflow の allowed-endpoints ブロックを書き換える。
 //	check: apply と同じ判定を書き換えなしで行い、ドリフトがあれば非ゼロ終了する（CI / hook 用）。
 //
-// 詳細は .github/workflows/README.md の Runner Hardening 節を参照。
+// 詳細は .github/workflows/README.md の「ランナーの封じ込め」節を参照。
 package main
 
 import (
@@ -41,10 +41,9 @@ var (
 )
 
 var (
-	// errUsage は、サブコマンドが無いか未知の場合のエラー。
 	errUsage      = xerrors.New("usage: egress <apply|check>")
 	errSSOTSyntax = xerrors.New("SSOT に解釈できない行があります")
-	// errSSOTDuplicate は、SSOT にセクション / キー / ホストの重複があった場合のエラー。
+	// errSSOTDuplicate は、SSOT にセクション / キー / 配列要素の重複があった場合のエラー。
 	errSSOTDuplicate    = xerrors.New("SSOT に重複があります")
 	errSSOTUnknownClass = xerrors.New("SSOT が未定義のクラスを参照しています")
 	errSSOTClassCycle   = xerrors.New("SSOT のクラス継承が循環しています")
@@ -56,8 +55,7 @@ var (
 	errPolicyMismatch  = xerrors.New("workflow の egress-policy と SSOT の宣言が食い違います")
 	errJobMissing      = xerrors.New("SSOT に未登録のジョブがあります")
 	errJobOrphan       = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
-	// errEgressDrift は、check で SSOT との差分を検出した場合のエラー。
-	errEgressDrift = xerrors.New("allowed-endpoints が SSOT からずれています")
+	errEgressDrift     = xerrors.New("allowed-endpoints が SSOT からずれています")
 )
 
 // class は能力クラス 1 件。includes は継承元クラス、hosts は自クラスが足す host:port。
@@ -73,7 +71,7 @@ type jobSpec struct {
 	policy  string
 }
 
-// ssot は .github/egress.toml の内容。order は宣言順（出力の並びを SSOT が決める）。
+// ssot は .github/egress.toml の内容。jobOrder は job セクションの宣言順。
 type ssot struct {
 	classes   map[string]*class
 	jobs      map[string]*jobSpec
@@ -439,9 +437,6 @@ func applyOrCheck(root string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	// `.yaml` と `.yml` の両方を見る。GitHub はどちらも workflow として実行するので、
-	// 片方だけを走査すると、`.yml` で置かれた job の allowed-endpoints を誰も突き合わせず、
-	// SSOT が知らない job として素通りする。
 	var files []string
 	for _, ext := range []string{"*.yaml", "*.yml"} {
 		matched, err := filepath.Glob(filepath.Join(root, ".github", "workflows", ext))
@@ -562,7 +557,6 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 
 		return nil
 	}
-	// 半端な書き換えを残さない実装は atomicwrite.Apply が持つ（scripts/lib/atomicwrite）。
 	if err := atomicwrite.Apply(changes, filePerm); err != nil {
 		return err
 	}
