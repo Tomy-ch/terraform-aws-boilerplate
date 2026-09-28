@@ -439,9 +439,16 @@ func applyOrCheck(root string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yaml"))
-	if err != nil {
-		return xerrors.Wrap(err, "glob workflows")
+	// `.yaml` と `.yml` の両方を見る。GitHub はどちらも workflow として実行するので、
+	// 片方だけを走査すると、`.yml` で置かれた job の allowed-endpoints を誰も突き合わせず、
+	// SSOT が知らない job として素通りする。
+	var files []string
+	for _, ext := range []string{"*.yaml", "*.yml"} {
+		matched, err := filepath.Glob(filepath.Join(root, ".github", "workflows", ext))
+		if err != nil {
+			return xerrors.Wrap(err, "glob workflows")
+		}
+		files = append(files, matched...)
 	}
 	sort.Strings(files)
 

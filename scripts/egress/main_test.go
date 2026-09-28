@@ -106,6 +106,19 @@ func Test_run(t *testing.T) {
 			assert.NotContains(t, string(got), "stale:443")
 		})
 
+		t.Run(".yml の workflow も走査対象にする", func(t *testing.T) {
+			t.Parallel()
+			// GitHub は .yaml と .yml をどちらも workflow として実行する。片方だけを
+			// 走査していると、SSOT が知らない job が黙って通る。SSOT は c.yml を
+			// 知らないので、走査していれば errJobMissing で落ちる。
+			root := newTestRepo(t, map[string]string{
+				"a.yaml": testWorkflow("one", "b1:443", "b2:443", "m1:443", "m2:443", "i1:443", "x1:443"),
+				"b.yaml": bYAML,
+				"c.yml":  testWorkflow("three", "b1:443"),
+			})
+			require.ErrorIs(t, run([]string{"check"}, func() (string, error) { return root, nil }), errJobMissing)
+		})
+
 		t.Run("check はドリフトが無ければ成功する", func(t *testing.T) {
 			t.Parallel()
 			root := newTestRepo(t, map[string]string{
