@@ -1,8 +1,7 @@
 // Package atomicwrite は、複数ファイルの書き換えを1箇所へ集める。
 //
-// このリポジトリの道具のいくつかは、宣言を正として複数のファイルを書き換える
-// （pin-actions の `uses:`、pin-images の `FROM`、egress の allowed-endpoints、
-// versions の版の写し）。素朴に `os.WriteFile` を並べると、2つ目で失敗したとき
+// このリポジトリの道具のいくつかは、宣言を正として複数のファイルを書き換える。
+// 素朴に `os.WriteFile` を並べると、2つ目で失敗したとき
 // 1つ目だけが新しい内容になった作業ツリーが残る。呼び出し側にはエラーしか見えないので、
 // **「失敗した」と「一部だけ適用された」が区別できなくなる。**
 //
@@ -26,6 +25,9 @@ const tmpSuffix = ".atomicwrite.tmp"
 //
 // 書き込みの順序は安定させる（パスの昇順）。失敗したときにどこまで進んだかが
 // 実行ごとに変わると、再現できない。
+//
+// **`<path>.atomicwrite.tmp` が既に在れば、そのパスで失敗します。** 強制終了で残った
+// 一時ファイルは、人が正体を見て消すまで次の実行を通しません。
 func Apply(changes map[string]string, perm fs.FileMode) error {
 	paths := sortedPaths(changes)
 	temps := make(map[string]string, len(paths))
@@ -38,10 +40,22 @@ func Apply(changes map[string]string, perm fs.FileMode) error {
 
 	for _, path := range paths {
 		tmp := path + tmpSuffix
-		// path は呼び出し側が宣言と走査から組む。利用者の入力は通らない。
-		// 撤回条件: 経路が外部入力から決まる形になったとき。
-		if err := os.WriteFile(tmp, []byte(changes[path]), modeOf(path, perm)); err != nil { //nolint:gosec // 上のコメントを参照
-			return xerrors.Wrap(err, "write "+tmp)
+		// 一時ファイルの名前は走査したファイル名から予測できる。O_EXCL は既に在るもの（symlink も
+		// 前回の残骸も）を拒むので、その名前に置かれた symlink を辿ってツリーの外へ書くことは無い。
+		// 先に調べてから開く形と違い、その間に挿し替える隙が無い。
+		// 撤回条件: 一時ファイルの名前が予測できない形になったとき。
+		f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, modeOf(path, perm)) //nolint:gosec // 上のコメントを参照
+		if err != nil {
+			return xerrors.Wrap(err, "create "+tmp)
+		}
+
+		_, writeErr := f.WriteString(changes[path])
+		closeErr := f.Close()
+		if writeErr != nil {
+			return xerrors.Wrap(writeErr, "write "+tmp)
+		}
+		if closeErr != nil {
+			return xerrors.Wrap(closeErr, "close "+tmp)
 		}
 
 		temps[path] = tmp
@@ -71,7 +85,6 @@ func modeOf(path string, fallback fs.FileMode) fs.FileMode {
 	return info.Mode().Perm()
 }
 
-// sortedPaths は changes のキーを昇順で返します。
 func sortedPaths(changes map[string]string) []string {
 	paths := make([]string, 0, len(changes))
 	for path := range changes {

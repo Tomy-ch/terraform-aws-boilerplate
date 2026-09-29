@@ -21,9 +21,9 @@ merge を正しく着地させる。衝突したパスをクラスへ分け、�
 ## Why this exists
 
 **このリポジトリで衝突マーカーが落ちる先の多くは、誰も手で編集すべきでないファイルである。**
-`.github/workflows/*.yaml` の `allowed-endpoints` ブロック、ピンの lockfile、`scripts/go.mod` の
-`go` 行、`docker/tools/Dockerfile` の `FROM` タグ —— どれにも生成器か resolver が在り、**どれにも
-「正しい側」が無い**。
+`.github/workflows/*.yaml` の `allowed-endpoints` ブロックと `runs-on:` の行、ピンの lockfile、
+`scripts/go.mod` の `go` 行、`docker/tools/Dockerfile` の `FROM` タグ —— どれにも生成器か resolver が
+在り、**どれにも「正しい側」が無い**。
 
 片側を選ぶと、最悪の結果になる —— マーカーの無いファイル、レビューを通るファイル、そして
 **正本から再生成できなくなったファイル**。`egress-check` / `pin-*-check` / `versions-check` が
@@ -74,6 +74,7 @@ git diff --name-only --diff-filter=U
 | --- | --- | --- |
 | 生成されたインラインブロック | `.github/workflows/*.yaml` の `allowed-endpoints` | 行を選ばない。正本は `.github/egress.toml`。そちらを先に解決し、`make egress-apply` |
 | ピンの lockfile | `.github/actions-pin.toml`、`docker/images-pin.toml` | 行を選ばない。`make pin-actions-resolve` + `apply` / `pin-images-resolve` + `apply` |
+| 生成された行 | `.github/workflows/*.yaml` の `runs-on:` | 行を選ばない。正本は `.github/runners-pin.toml`。そちらを先に解決し、`make pin-runners-apply`。**マーカを持たないので手書きと見分けが付かない** —— 衝突しなくても、片側が workflow を足していればずれる |
 | 版の写し | `scripts/go.mod` の `go` 行、`docker/tools/Dockerfile` の `FROM` タグ | 正本は `mise.toml`。そちらを先に解決し、`make versions-apply` |
 | 依存の lockfile | `scripts/go.sum` | 行を選ばない。`go -C scripts mod tidy` |
 | 保護設定 | `.github/settings/branch-protection.json` | **和集合にしない。** 片方が required から外した検査を、機械的な和集合は黙って戻す。宣言の意図を人へ返す |

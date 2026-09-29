@@ -55,9 +55,7 @@ func TestApply(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// このパッケージの存在理由に直結するケース。書き込みが途中で失敗したとき、
-		// 先に処理したファイルが新しい内容のまま残ると、呼び出し側からは
-		// 「失敗した」と「一部だけ適用された」が区別できなくなる。
+		// このパッケージの存在理由に直結するケース（package doc の「一部だけ適用された」）。
 		t.Run("途中で書けなければ、先のファイルも書き換えない", func(t *testing.T) {
 			t.Parallel()
 
@@ -72,9 +70,41 @@ func TestApply(t *testing.T) {
 			assert.NoFileExists(t, ng)
 		})
 
+		t.Run("前回の残骸が在れば、上書きせずに落ちる", func(t *testing.T) {
+			t.Parallel()
+			// 強制終了で残った一時ファイルは、人が正体を見て消すまで次を通さない。
+			// symlink のケースと合わせて「既に在れば落ちる」の両側を固定する。
+			dir := t.TempDir()
+			target := filepath.Join(dir, "a.txt")
+			require.NoError(t, os.WriteFile(target, []byte("old"), 0o600))
+			require.NoError(t, os.WriteFile(target+".atomicwrite.tmp", []byte("stale"), 0o600))
+
+			require.Error(t, atomicwrite.Apply(map[string]string{target: "new"}, 0o644))
+			assert.Equal(t, "old", read(t, target))
+			assert.Equal(t, "stale", read(t, target+".atomicwrite.tmp"), "残骸を消している")
+		})
+
+		t.Run("一時ファイルの名前に何かが在れば、辿らず書かずに落ちる", func(t *testing.T) {
+			t.Parallel()
+			// **接尾辞をここだけ写す。** 攻撃の形を作るには名前が要る。写しであることは
+			// 承知のうえで、定数が変わればこのケースは symlink を置く場所を外し、
+			// 「落ちる」を主張しなくなる（緑になる）。
+			dir := t.TempDir()
+			target := filepath.Join(dir, "a.txt")
+			require.NoError(t, os.WriteFile(target, []byte("old"), 0o600))
+
+			outside := filepath.Join(t.TempDir(), "victim")
+			require.NoError(t, os.WriteFile(outside, []byte("untouched"), 0o600))
+			require.NoError(t, os.Symlink(outside, target+".atomicwrite.tmp"))
+
+			require.Error(t, atomicwrite.Apply(map[string]string{target: "new"}, 0o644))
+			assert.Equal(t, "untouched", read(t, outside), "ツリーの外へ書いている")
+			assert.Equal(t, "old", read(t, target))
+		})
+
 		// 書き込みはパスの昇順なので、失敗する missing/b.txt より前に a.txt を置くことで
 		// 「一時ファイルを作ってから消した」経路を踏む。Apply は最初の失敗で打ち切るため、
-		// 後ろに対象を足しても現行の実装では書き込みが試みられない。
+		// 後ろに対象を足しても書き込みが試みられない。
 		t.Run("失敗しても一時ファイルを残さない", func(t *testing.T) {
 			t.Parallel()
 

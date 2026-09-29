@@ -124,9 +124,11 @@ Fallback behavior:
 
 観点を具体的なテストファイルの骨子へ写像する規則。
 
-1. **1つの関数・メソッドにつき1つの `TestXxx`。** 関数 `Foo` は `func TestFoo(t *testing.T)`。
-   非公開の `parseVersion` は `func Test_parseVersion(t *testing.T)`（既存の様式）。メソッド
-   `(*Client).Fetch` は `func TestClient_Fetch(t *testing.T)`。同じ対象に複数の `TestXxx` を作らない。
+1. **1つの関数・メソッドにつき1つの `TestXxx`。** 公開された関数 `Foo` は `func TestFoo(t *testing.T)`
+   か `func Test_Foo(t *testing.T)`。非公開の `parseVersion` は `func Test_parseVersion(t *testing.T)`
+   （こちらは1つの形だけ）。メソッド `(*Client).Fetch` は `func TestClient_Fetch(t *testing.T)` か
+   `func Test_Client_Fetch(t *testing.T)`。**公開された対象は2つの形のどちらでもよいが、同じ対象に
+   複数の `TestXxx` を作らない。** `lib/` の公開関数は `Test_` 形で揃っている。
    - **逆向きにも効く —— 公開されたすべての関数・メソッドが自分の `TestXxx` を持ち、1:1 は
      「弱いテストを避けたい」に優先する。** assert が今のところ薄いという理由で枠を消さない。
      枠を残しておけば、意味のあるテストが後から入る場所になる。他のテストが間接的に通っている
@@ -140,11 +142,10 @@ Fallback behavior:
    そのテストが縮んだ後も緑のままになる。
    **枠が在るかどうかは `make test-mapping` が検査する**（`.lefthook.yaml` の pre-commit と
    `.github/workflows/go-test.yaml`）。判定の詳細はそのツールの doc コメントが持つので写さない。
-   **規則1 の命名に対して道具が1つだけ緩い。** 関数は規則1 が公開・非公開それぞれの形を述べて
-   いるので、その形だけを受ける。**メソッドは規則1 がどちらを正とするか決めていない**ため、
-   レシーバの型が公開かどうかに依らず `TestT_Bar` と `Test_T_Bar` の**どちらか一方**が在れば
-   通す。両方在るのは違反である。**書き手が従うのは規則1 の形**であって、道具が寛容であることは
-   別の形を選んでよい理由にならない。上の `t.Skip` も道具が見る（理由が空でないこと、他のテストを名指ししないこと）。
+   **道具は規則1 と同じ範囲を受ける。** 公開された対象は `TestFoo` と `Test_Foo`（メソッドは
+   `TestT_Bar` と `Test_T_Bar`）の**どちらか一方**が在れば通し、両方在るのは違反である。
+   非公開の関数は `Test_foo` だけを受ける。**型は対象外**で、道具が見るのは関数とメソッドだけである。
+   上の `t.Skip` も道具が見る（理由が空でないこと、他のテストを名指ししないこと）。
    **道具に見えないものが2つ残る** —— ある対象の検証が別の対象の `TestXxx` へ畳み込まれて
    いないか、assert がその対象の判断を実際に突いているか。監査するのは `/test-review` の
    Lens 5（シンボル網羅）であり、生成時に守るのは書き手である。

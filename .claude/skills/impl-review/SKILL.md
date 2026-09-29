@@ -244,11 +244,12 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 
 | 触れた区分 | 走らせるもの |
 | --- | --- |
-| `scripts/**` | `make go-test` / `make go-lint` / `make go-fmt-check` |
+| `scripts/**` | `make go-test` / `make go-lint` / `make go-fmt-check` / `make test-mapping` / `make cover-gate` |
 | `docs/adr/**` / `modules/*/docs/adr/**` | `make adr-lint` |
-| `.github/**` | `make actions-lint` / `make zizmor` / `make egress-check` / `make pin-actions-check` |
+| `.github/**` | `make actions-lint` / `make zizmor` / `make egress-check` / `make pin-actions-check` / `make pin-images-check` / `make pin-runners-check` |
+| `.github/settings/**` | `make required-check-lint` |
 | `docker/**` | `make docker-lint` / `make trivy-config` |
-| `*.md` | `make md-lint` |
+| `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
 | `modules/**` / `*.tf` | `terraform fmt -check` / `terraform validate` / `make trivy-config` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が

@@ -181,22 +181,15 @@ Build a list of proposed commits with appropriate granularity. Each item:
 
 ### Lefthook notice
 
-Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded). Example
-output for the current config:
+Along with the grouping proposal, display the lefthook commands that will be **skipped** during the commit phase but **re-run together in Step 6** via `lefthook run pre-commit --force` as a verification gate. Read them dynamically from `.lefthook.yaml` (the list is configuration, not hardcoded).
+**出力の形だけを示す** —— 中身を写した例示は、`.lefthook.yaml` が増えた日に黙って古くなる:
 
 ```txt
 This command will run `git commit --no-verify` on every commit.
 The following lefthook pre-commit commands will be SKIPPED during commits but
 re-run together in Step 6 via `lefthook run pre-commit --force` after all commits succeed:
-  - actions-lint      (make actions-lint)
-  - md-lint           (make md-lint)
-  - docker-lint       (make docker-lint)
-  - egress-check      (make egress-check)
-  - versions-check    (make versions-check)
-  - pin-actions-check (make pin-actions-check)
-  - pin-images-check  (make pin-images-check)
-  - go-fmt-check      (make go-fmt-check)
-  - go-test           (make go-test)
+  - <name>            (<run>)
+  - …（`.lefthook.yaml` の `pre-commit.commands.*` をすべて、宣言順に）
 Plus `make go-fmt` as a final formatting pass.
 ```
 
