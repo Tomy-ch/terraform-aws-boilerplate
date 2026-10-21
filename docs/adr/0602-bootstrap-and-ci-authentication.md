@@ -54,7 +54,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    1. AWS CLI で state backend の実体を作成する
    2. 同じ構成を表す Terraform を書き、`import` block で取り込む。`terraform plan` が変更なしを示すまで Terraform 側を修正する
    3. OIDC provider と IAM role の use-case を書く
-   4. 人のローカル権限で1回だけ apply する
+   4. 人のローカル権限で apply する（決定9・10 の例外。回復の契機でも同じ手順を踏む）
    5. 以後、CI が OIDC で role を assume して実行する
 
 5. 段1 が CLI であるのは、state backend が存在しない時点では Terraform が state を保存できないためである。**この理由が成立しない構成物を CLI で作成しない。** OIDC provider と IAM role は段2 の完了後に Terraform で作成できるため、CLI の対象としない。
@@ -62,9 +62,12 @@ CI の権限については循環の性質が異なる。backend さえあれば
 7. CLI の手順と `import` block を同一の変更で提供する。片方のみを変更しない。
 8. 段2 の完了条件を「`terraform plan` が変更なしを示すこと」とする。この条件の充足をもって、CLI が作成した実体と Terraform の宣言が一致したとみなす。
 
-### ADR-0601 決定5・6 の例外
+### ADR-0601 決定2-6 の例外
 
-9. 段4 のローカルからの apply を、ADR-0601 決定5（人がローカル環境から本番環境へ直接 apply しない）と決定6（apply 対象は merge された commit と一致する）の例外とする。例外の範囲を次に限る。
+9. 段4 のローカルからの apply を、ADR-0601 決定2-6 の例外とする。外れるのは、Review と Merge の後に apply
+   する順序（決定2）、Pull Request の時点で apply しないこと（決定3）、merge 後に CI/CD が apply すること
+   （決定4）、人がローカル環境から本番環境へ直接 apply しないこと（決定5）、apply 対象が merge された
+   commit と一致すること（決定6）である。例外の範囲を次に限る。
 
    - 対象: 本 ADR 決定1 が定める bootstrap の構成物のみ
    - 契機: 次のいずれか
@@ -80,8 +83,14 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
 10. 例外の apply は、Pull Request のブランチ上の commit から行い、その Pull Request を apply の後に merge する。
     いずれの契機でも、apply の前は CI が role を assume できず、plan が required check を満たさないため
-    （ADR-0603 決定12・14）、merge を先に行えない。例外を実行した記録（実行者、日時、対象アカウント、
-    適用した commit）を、その Pull Request の本文に残す。記録を残さない実行を認めない。
+    （ADR-0603 決定12・14）、merge を先に行えない。次を条件とする。
+
+    - apply の前に、その commit に対するローカルの plan の結果を Pull Request に記録する。plan 以外の
+      required check がその commit で成功しており、保護設定が承認者を要求している場合はその承認を得ている
+    - 例外を実行した記録（実行者、日時、対象アカウント、適用した commit）を、その Pull Request の本文に残す。
+      記録を残さない実行を認めない
+    - merge の前に、Pull Request の head に対する CI の plan が変更なしを示すこと。apply の後に commit を
+      足した場合も、この条件で判定する。apply した構成と merge される構成の一致を、この plan が担う
 11. bootstrap の完了後、state backend への書き込みを CI の role に限定する。bootstrap 実行者の書き込み権限を残さない。ADR-0601 決定5 を、手順ではなく権限として裏打ちする。
 
     裏打ちの範囲を次に限る。
@@ -94,23 +103,31 @@ CI の権限については循環の性質が異なる。backend さえあれば
 ### CI 認証
 
 12. CI から AWS への認証を、OIDC による role の assume とする。長期のアクセスキーを CI の secret として保持しない。
-13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。
+13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。plan の role は
+    state の読み取りと復号を持つ。plan に必要だからである。したがって plan の role を assume できる主体は
+    state を読める。state に置く秘密の扱いは、当該 use-case の ADR が決定する。
 14. 各 role の信頼条件を、GitHub Actions の OIDC claim のうち **environment** によって限定する。ref と
     event による限定（`ref:` / `pull_request` 形式の `sub`）を用いない。ref の限定は environment の
     deployment branch policy が、event の限定は workflow の起動条件が担う。
 
     - 信頼条件は `aud` と、`sub` が含むリポジトリと environment 名を、当該リポジトリの固定値との完全一致で
-      限定する。リポジトリは名前に加えて、変更されない識別子（リポジトリと所有者の ID）でも限定する
-    - role ごとに environment を分ける。plan の role の environment は保護ブランチと同一リポジトリの
-      Pull Request を許し、apply の role の environment は保護ブランチだけを許す
+      限定する。加えて、リポジトリと所有者の変更されない識別子（ID）を表す claim でも限定する。用いる
+      claim と AWS の条件キーは、実装の前に一次資料で確かめ、当該 use-case の ADR に記録する（ADR-0501 決定21）
+    - role ごとに environment を分ける。plan の role の environment は保護ブランチと Pull Request を許し、
+      apply の role の environment は保護ブランチだけを許す。deployment branch policy が Pull Request の
+      ref をどう扱うかは、実装の前に一次資料で確かめ、当該 use-case の ADR に記録する
+    - fork からの Pull Request では、plan の job を role の assume の前に失敗させる。skip にしない
+      （ADR-0603 決定17 により skip は成功として数えられる）。この限定は deployment branch policy に頼らず、
+      job の条件で行う
     - environment の宣言（名前、deployment branch policy、管理者による保護の迂回の可否）を、保護設定の
       宣言（ADR-0603 決定4）の一部としてリポジトリへ置き、適用と突合の対象とする（同 決定4-7）
     - deployment branch policy の保護ブランチのパターンは、分岐のパターンの単一宣言（ADR-0603 決定1）から
       生成する。environment の宣言にパターンを直接書かない（同 決定3）
     - environment の管理者による保護の迂回を無効とする。これは ADR-0603 決定22 が禁じるブランチの保護規則の
       bypass とは別の設定である
-    - apply の role を assume する job の起動条件を、保護ブランチへの push と、当該 use-case が宣言した
-      手動の起動に限る。environment は同じ ref から起動された event を区別しないためである
+    - apply の role を assume する job の起動条件を、保護ブランチへの push と手動の起動に限る。手動の起動は
+      ref や commit を入力に取らず、起動したブランチの最新の commit だけを対象とする。environment は同じ ref
+      から起動された event を区別しないためである
 
 15. 信頼条件にワイルドカードを用いない。この禁止を、当該 use-case の Policy Test の invariant として実装する（ADR-0402 決定6）。
 16. apply の role が持つ権限の与え方（Action の列挙か permissions boundary か）は、当該 use-case の ADR が決定する。ADR-0301 決定8（Action wildcard の禁止）はこの role にも適用されるため、`*` による解決を採らない。
@@ -150,7 +167,7 @@ event を区別できないことは採用案と同じであり、どちらも w
 
 | 評価軸 | 案A: 管理外 | 案B: 全て CLI + import | 案C: 長期キー | 案D: ref で限定 | 案E: 回復を例外にしない | 採用案 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Security | 低（最強の構成が未検査） | 中（信頼条件が未検査で実在する） | 低（無期限の資格情報） | 中（信頼条件の変更が頻発する） | 低（ADR-0601 の経路を失う） | 高 |
+| Security | 低（最強の構成が未検査） | 中（信頼条件が未検査で実在する） | 低（無期限の資格情報） | 中（誤った信頼条件を入れる機会がリリース線ごとに生じる） | 低（ADR-0601 の経路を失う） | 高 |
 | Testability | 低 | 中（Policy が二重になる） | 中 | 中（期待値がリリース線ごとに変わる） | 中 | 高 |
 | Contract Clarity | 低 | 中 | 中 | 低（決定15 と両立しない） | 中 | 高 |
 | Scope Control | 中 | 中 | 高 | 中 | 高 | 中（GitHub 側の宣言が増える） |
@@ -168,28 +185,30 @@ event を区別できないことは採用案と同じであり、どちらも w
 ## 保証範囲
 
 - 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）
-- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その権限は決定13 が読み取りに限る）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
+- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は変更系を持たないが、state を読める。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
 
 ## 検証方法
 
 - Static Analysis: CI の workflow が長期のアクセスキーを参照していないこと（決定12）
 - Static Analysis: plan を行う job と apply を行う job が、異なる role を assume すること（決定13）
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
-- Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と宣言された手動の起動に限られること（決定14）
+- Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
+- Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
+- Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）
 - Policy Test: 信頼条件の `sub` が environment 形式であり、ref 形式と event 形式を含まないこと（決定14）
 - Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること。environment 名が environment の宣言に存在すること（決定14）
 - Policy Test: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
-- 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること（決定14、ADR-0603 決定4-7）
+- 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply の environment が保護ブランチのパターンだけを許すこと（決定14、ADR-0603 決定4-7）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が変更なしを示さない限り段3 へ進まない
 
-決定9 の契機の判定と決定10 の記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定11 のうち member account の SCP と root 資格情報の中央管理は、本 ADR では検査しない。
+決定9 の契機の判定と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理は、本 ADR では検査しない。
 
 ## 影響
 
 - bootstrap は2つの use-case として実装され、他のユースケースと同じテスト要件を負う。
-- ADR-0601 決定5・6 に、範囲と契機が限定された例外が1つ存在することになる。その契機は初回と回復の2つである。
+- ADR-0601 決定2-6 に、範囲と契機が限定された例外が1つ存在することになる。その契機は初回と回復の2つである。
 - 別アカウントの CI から bootstrap の構成物を作れるアカウントでは、初回の例外を使わない。そのための cross-account の経路は、明示的なユースケースとして設計される（ADR-0301 決定17）。
 - 保護設定の宣言に environment が加わり、ADR-0603 の適用と突合の対象が広がる。
 - apply の role の権限設計（決定16）が、当該 use-case の最大の設計課題になる。ADR-0301 決定8 のもとでは wildcard による解決が採れない。
