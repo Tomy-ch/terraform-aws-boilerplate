@@ -543,11 +543,20 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 - 依存するusecaseと判断Issue（第10.3節、第12節）
 - 検証方法
 
-完了条件は全usecaseで統一する。ただし、sandboxでの破棄を前提にできないusecase（常駐層、実行時に資源を作るもの）の代替条件は第12節で決める。
+完了条件は全usecaseで統一する。ただし、sandboxでの破棄を前提にできないusecaseは、ADR-0401 決定14 の区分に従って条件2・3を置き換える（#98）。
+
+| 区分 | usecase | 条件2・3 の置き換え |
+|---|---|---|
+| 複製を作れる | `state-backend` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する |
+| 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
+| 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
+| 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks` | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
+
+期待残存は、resourceの型ではなく、識別子・状態・期限で宣言する（ADR-0401 決定16）。
 
 1. mockユニット（`terraform test`＋`mock_provider`）が通る
 1. sandboxでapply→検証→destroyが通る
-1. destroy後の残存検出が0件
+1. destroy後の残存検出が0件（期待残存を宣言したものは、その照合で余剰0件）
 1. 第2.2節のゲートと、第3.1節の3つの層検査を通過する
 1. 公開契約と関連ADR・文書が更新されている
 
@@ -579,7 +588,6 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
 | 通知Topicのアカウント配置 | フェーズ1 | 所有者は`ops-notification`で確定。残るは、Topicをどのアカウントに置くか（第10.1節は監視アカウントを設けない）と、他アカウントからpublishする場合の越境契約。メトリクス途絶時の扱いを含む |
-| 常駐層usecaseの完了条件 | フェーズ1の着手前 | 第11.1節のsandboxでのapply→destroyと残存0件を満たせないusecase（state-backend、organization-baseline、deployment-identity、finops、ops-notification、実行時に資源を作るrealtime-delivery・eks）の代替条件 |
 | 同一アカウント構成の扱い | フェーズ1 | 第10.1節は縮退ケースとしてサポートするとするが、第9.6節は検証に使わないとし、受入条件にもない。検証手段を与えるかunsupportedとするか（ADR-0401 決定3） |
 | コード実行許可リストの人間レビューの成立条件 | フェーズ1 | 第2.2節はCODEOWNERSによる人間レビューを必須とするが、メンテナ1人の間は承認者が存在せず発火しない。代替のゲート（ADRの存在検査等）と、人間レビューを有効化する時点 |
 
@@ -587,7 +595,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。
+**フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。
 
 **v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（devとsandboxの間、第10.1節）。
 
