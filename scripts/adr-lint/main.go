@@ -12,6 +12,10 @@
 //  6. 本文が参照する、scope を伴わない ADR-NNNN がすべて同じ scope に実在すること
 //  7. 見出しが名乗る番号が、ファイル名の番号と一致すること
 //  8. docs/adr/ の**外**から ADR を指すリンクが、実在する ADR を指していること
+//  9. 索引の Status 列が、本文の Status と一致すること
+//  10. Status が ADR-0001 決定3 の値のいずれかであること
+//  11. 本文が参照する、scope を伴う `<scope>/ADR-NNNN` が、その scope に実在すること
+//  12. 同一 scope 内で slug が重複しないこと
 //
 // 6 と 7 は、番号が identity ではなく順序になったことから要る（ADR-0001 決定5-9）。
 // 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。
@@ -30,8 +34,9 @@
 // その scope の「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
 //
 // 検査は scope ごとに掛けます。scope は -root の root scope と、-repo 配下の
-// usecases/<use-case>/docs/adr/ を持つユースケースです（ADR-0001 決定12）。1-4・6・7 と索引は
+// usecases/<use-case>/docs/adr/ を持つユースケースです（ADR-0001 決定12）。1-3・6・7・9・10・12 は
 // scope の内側で完結し、5 は root scope だけに掛け、8 は use-case ADR の置き場所も「外」として読みます。
+// 4 と 11 は宛先が別の scope に在りうるため、すべての scope を読み終えてから掛けます。
 package main
 
 import (
@@ -70,14 +75,18 @@ var (
 	statusLine = regexp.MustCompile(`(?m)^- Status:[ \t]*(\S.*)$`)
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
-	// scope を伴う形を正とする（ADR-0001 決定3）。
-	supersededBy = regexp.MustCompile(`^Superseded by\s+([A-Za-z0-9_-]+)/ADR-(\d{4})\s*$`)
+	// 宛先は identity の `<scope>/<slug>` で書く（ADR-0001 決定3・4）。slug の形は fileName の第2群と同じ。
+	supersededBy = regexp.MustCompile(`^Superseded by\s+([A-Za-z0-9_-]+)/([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
 	indexRow     = regexp.MustCompile(`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|`)
-	headingLine  = regexp.MustCompile(`(?m)^# ADR-(\d{4})\b`)
-	// scope を伴う参照（`<scope>/ADR-NNNN`）は除く。他 scope の ADR はこのディレクトリに無く、
-	// 見に行けば必ず落ちる検査になる。identity が `<scope>/<slug>` である以上（ADR-0001 決定4）、
-	// scope を書いた参照はこちらの番号体系の外を指している。
+	// Status は行の最後のセルとする。最後のセルならタイトルに `|` や `](` が入っても位置がずれない。
+	// リンクのセルと Status の間にセルが1つも無い行は、Status 列を持たない。
+	indexStatus = regexp.MustCompile(`^\|\s*\[\d{4}\]\([^)]+\)\s*\|.*\|[ \t]*([^|]*?)[ \t]*\|[ \t]*$`)
+	headingLine = regexp.MustCompile(`(?m)^# ADR-(\d{4})\b`)
+	// scope を伴う参照（`<scope>/ADR-NNNN`）は除く。宛先の番号体系が別の scope に在り、scopedRef が引く。
 	adrRef = regexp.MustCompile(`(^|[^/\w])ADR-(\d{4})`)
+	// adrRef と同じ出現に当たらない。scope の左に境界を置くのは、`repository-wide` を `wide` と取らないため。
+	// `/` と `.` を境界に含めないのは、`docs/adr/ADR-0001` のような path の一部を参照と読まないため。
+	scopedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.-])([A-Za-z0-9_-]+)/ADR-(\d{4})`)
 	// 先頭の境界は消費して捕獲群 1 だけを報告に使う。RE2 は後読みを持たず、`\b` は `-` と
 	// 日本語の直後で立たない。`/` を境界に含めるのは、相対パスで書いた path を取り逃さないため。
 	useCasePath    = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]*)`)
@@ -143,6 +152,8 @@ func run(args []string, out io.Writer) error {
 		checked = append(checked, scopeDocs{scope: s, docs: docs})
 		total += len(docs)
 	}
+	findings = append(findings, checkSupersede(checked)...)
+	findings = append(findings, checkScopedReferences(checked)...)
 
 	pathFindings, refs, err := checkPathReferences(*repo, checked)
 	if err != nil {
@@ -170,7 +181,6 @@ type scope struct {
 	dir  string
 }
 
-// scopeDocs は、検査を終えた scope とその ADR です。
 type scopeDocs struct {
 	scope scope
 	docs  []doc
@@ -242,8 +252,9 @@ func checkScope(s scope) ([]doc, []lintreport.Finding, error) {
 
 	findings = append(findings, checkNumbers(docs, s.dir)...)
 	findings = append(findings, checkHeading(docs)...)
+	findings = append(findings, checkSlugs(docs, s.dir)...)
 	findings = append(findings, checkMetadata(docs)...)
-	findings = append(findings, checkSupersede(docs, s)...)
+	findings = append(findings, checkStatusValue(docs)...)
 	// 決定19 が縛るのは root ADR だけである。use-case ADR が自分の path を名指しするのは正しい。
 	if s.name == rootScope {
 		findings = append(findings, checkUseCaseDependency(docs)...)
@@ -262,6 +273,7 @@ type doc struct {
 	path   string // root からの相対パス
 	name   string
 	number int
+	slug   string // ファイル名から番号を除いた部分。identity は `<scope>/<slug>`（ADR-0001 決定4）
 	source string
 }
 
@@ -300,7 +312,7 @@ func collect(root string) ([]doc, []lintreport.Finding, error) {
 			return nil, nil, xerrors.Wrapf(err, "%s の読み取り", path)
 		}
 		num, _ := strconv.Atoi(m[1])
-		docs = append(docs, doc{path: path, name: name, number: num, source: string(raw)})
+		docs = append(docs, doc{path: path, name: name, number: num, slug: m[2], source: string(raw)})
 	}
 
 	sort.Slice(docs, func(i, j int) bool { return docs[i].name < docs[j].name })
@@ -329,6 +341,36 @@ func checkNumbers(docs []doc, root string) []lintreport.Finding {
 		findings = append(findings, lintreport.Finding{
 			File: root, Line: 1,
 			Message: fmt.Sprintf("番号 %04d が重複しています（%s）", n, strings.Join(names, " / ")),
+		})
+	}
+	return findings
+}
+
+// checkSlugs は同一 scope 内での slug の重複を検出します。
+//
+// identity は `<scope>/<slug>` であり（ADR-0001 決定4）、`Superseded by` は slug で宛先を引きます。
+// 番号だけが違う2つのファイルが同じ slug を名乗ると、宛先がどちらの決定か決まりません。
+func checkSlugs(docs []doc, root string) []lintreport.Finding {
+	seen := make(map[string][]string, len(docs))
+	for _, d := range docs {
+		seen[d.slug] = append(seen[d.slug], d.name)
+	}
+
+	var findings []lintreport.Finding
+	slugs := make([]string, 0, len(seen))
+	for slug := range seen {
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+
+	for _, slug := range slugs {
+		names := seen[slug]
+		if len(names) <= 1 {
+			continue
+		}
+		findings = append(findings, lintreport.Finding{
+			File: root, Line: 1,
+			Message: fmt.Sprintf("slug %s が重複しています（%s）", slug, strings.Join(names, " / ")),
 		})
 	}
 	return findings
@@ -385,46 +427,77 @@ func checkMetadata(docs []doc) []lintreport.Finding {
 	return findings
 }
 
-// checkSupersede は Status が `Superseded by` の場合に、参照先 ADR の実在を検査します。
+func statusOf(d doc) (string, bool) {
+	m := statusLine.FindStringSubmatch(d.source)
+	if m == nil {
+		return "", false
+	}
+	return strings.TrimSpace(m[1]), true
+}
+
+// checkStatusValue は、Status が ADR-0001 決定3 の値のいずれかであることを検査します。
 //
-// 参照先が無いまま supersede を宣言すると、読み手は「置き換わった先」へ到達できません。
-func checkSupersede(docs []doc, s scope) []lintreport.Finding {
-	exists := make(map[int]bool, len(docs))
+// `Superseded by` で始まるものの宛先の形は checkSupersede が見ます。
+func checkStatusValue(docs []doc) []lintreport.Finding {
+	var findings []lintreport.Finding
 	for _, d := range docs {
-		exists[d.number] = true
+		status, ok := statusOf(d)
+		if !ok {
+			continue // 不在は checkMetadata が報告済み
+		}
+		switch {
+		case status == "Proposed", status == "Accepted", status == "Deprecated":
+		case strings.HasPrefix(status, "Superseded by"):
+		default:
+			findings = append(findings, lintreport.Finding{
+				File: d.path, Line: 1,
+				Message: fmt.Sprintf("Status が `Proposed` / `Accepted` / `Superseded by <scope>/<slug>` / `Deprecated` のいずれでもありません（%s）", status),
+			})
+		}
+	}
+	return findings
+}
+
+// checkSupersede は Status が `Superseded by` の場合に、宛先の ADR の実在を検査します。
+//
+// 参照先が無いまま supersede を宣言すると、読み手は「置き換わった先」へ到達できません。宛先は
+// 別の scope に在りうるため（ADR-0001 決定23）、すべての scope を読み終えてから引きます。
+func checkSupersede(scopes []scopeDocs) []lintreport.Finding {
+	slugs := make(map[string]map[string]bool, len(scopes))
+	for _, s := range scopes {
+		set := make(map[string]bool, len(s.docs))
+		for _, d := range s.docs {
+			set[d.slug] = true
+		}
+		slugs[s.scope.name] = set
 	}
 
 	var findings []lintreport.Finding
-	for _, d := range docs {
-		m := statusLine.FindStringSubmatch(d.source)
-		if m == nil {
-			continue // 不在は checkMetadata が報告済み
-		}
-		status := strings.TrimSpace(m[1])
-		if !strings.HasPrefix(status, "Superseded by") {
-			continue
-		}
+	for _, s := range scopes {
+		for _, d := range s.docs {
+			status, ok := statusOf(d)
+			if !ok || !strings.HasPrefix(status, "Superseded by") {
+				continue
+			}
+			at := func(msg string) {
+				findings = append(findings, lintreport.Finding{File: d.path, Line: 1, Message: msg})
+			}
 
-		sm := supersededBy.FindStringSubmatch(status)
-		if sm == nil {
-			findings = append(findings, lintreport.Finding{
-				File: d.path, Line: 1,
-				Message: fmt.Sprintf("Status の形式が `Superseded by <scope>/ADR-NNNN` ではありません（%s）", status),
-			})
-			continue
-		}
-
-		// 他 scope の ADR はこのディレクトリに無い。ここで実在を見るのは同一 scope のものだけとする。
-		target, numStr := sm[1], sm[2]
-		if target != s.name {
-			continue
-		}
-		num, _ := strconv.Atoi(numStr)
-		if !exists[num] {
-			findings = append(findings, lintreport.Finding{
-				File: d.path, Line: 1,
-				Message: fmt.Sprintf("Superseded by の参照先 ADR-%s が %s に存在しません", numStr, s.dir),
-			})
+			sm := supersededBy.FindStringSubmatch(status)
+			if sm == nil {
+				at(fmt.Sprintf("Status の形式が `Superseded by <scope>/<slug>` ではありません（%s）", status))
+				continue
+			}
+			target, slug := sm[1], sm[2]
+			set, ok := slugs[target]
+			switch {
+			case !ok:
+				at(fmt.Sprintf("Superseded by の宛先の scope %s が見つかりません", target))
+			case target == s.scope.name && slug == d.slug:
+				at("Superseded by が自分自身を指しています")
+			case !set[slug]:
+				at(fmt.Sprintf("Superseded by の参照先 %s/%s が存在しません", target, slug))
+			}
 		}
 	}
 	return findings
@@ -485,9 +558,53 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 	return findings
 }
 
+// checkScopedReferences は、本文が参照する `<scope>/ADR-NNNN` が、その scope に実在することを検査します。
+//
+// scope を伴わない参照は checkCrossReferences が自 scope で引きます。Status 行は checkSupersede が
+// 見るので、ここでは読みません。
+func checkScopedReferences(scopes []scopeDocs) []lintreport.Finding {
+	numbers := make(map[string]map[int]bool, len(scopes))
+	for _, s := range scopes {
+		set := make(map[int]bool, len(s.docs))
+		for _, d := range s.docs {
+			set[d.number] = true
+		}
+		numbers[s.scope.name] = set
+	}
+
+	var findings []lintreport.Finding
+	for _, s := range scopes {
+		for _, d := range s.docs {
+			for i, line := range strings.Split(d.source, "\n") {
+				if statusLine.MatchString(line) {
+					continue
+				}
+				for _, m := range scopedRef.FindAllStringSubmatch(line, -1) {
+					target, numStr := m[1], m[2]
+					set, ok := numbers[target]
+					num, _ := strconv.Atoi(numStr)
+					var msg string
+					switch {
+					case !ok:
+						msg = fmt.Sprintf("参照先 %s/ADR-%s の scope %s が見つかりません", target, numStr, target)
+					case !set[num]:
+						msg = fmt.Sprintf("参照先の %s/ADR-%s が存在しません", target, numStr)
+					default:
+						continue
+					}
+					findings = append(findings, lintreport.Finding{File: d.path, Line: i + 1, Message: msg})
+				}
+			}
+		}
+	}
+	return findings
+}
+
 // checkIndex は索引が実ファイルと一致していることを検査します。
 //
 // 索引はその scope の「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
+// Status 列は、索引の行が指すファイルが実ファイルと一致するときだけ本文と比べます。番号の詰め直しの
+// 途中では、行が別の ADR の Status を持っているためです。
 func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 	path := filepath.Join(root, indexFile)
 	raw, err := os.ReadFile(filepath.Clean(path))
@@ -495,17 +612,29 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 		return nil, xerrors.Wrapf(err, "%s の読み取り", path)
 	}
 
-	listed := make(map[int]string)
-	for _, line := range strings.Split(string(raw), "\n") {
-		if m := indexRow.FindStringSubmatch(line); m != nil {
-			num, _ := strconv.Atoi(m[1])
-			listed[num] = m[2]
+	type entry struct {
+		file     string
+		status   string
+		statusOK bool
+		line     int
+	}
+	listed := make(map[int]entry)
+	for i, line := range strings.Split(string(raw), "\n") {
+		m := indexRow.FindStringSubmatch(line)
+		if m == nil {
+			continue
 		}
+		num, _ := strconv.Atoi(m[1])
+		e := entry{file: m[2], line: i + 1}
+		if sm := indexStatus.FindStringSubmatch(line); sm != nil && sm[1] != "" {
+			e.status, e.statusOK = sm[1], true
+		}
+		listed[num] = e
 	}
 
 	var findings []lintreport.Finding
 	for _, d := range docs {
-		target, ok := listed[d.number]
+		e, ok := listed[d.number]
 		if !ok {
 			findings = append(findings, lintreport.Finding{
 				File: path, Line: 1,
@@ -513,13 +642,21 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 			})
 			continue
 		}
-		if target != d.name {
-			findings = append(findings, lintreport.Finding{
-				File: path, Line: 1,
-				Message: fmt.Sprintf("索引の ADR-%04d が %s を指していますが、実ファイルは %s です", d.number, target, d.name),
-			})
-		}
 		delete(listed, d.number)
+		at := func(msg string) {
+			findings = append(findings, lintreport.Finding{File: path, Line: e.line, Message: msg})
+		}
+		if e.file != d.name {
+			at(fmt.Sprintf("索引の ADR-%04d が %s を指していますが、実ファイルは %s です", d.number, e.file, d.name))
+			continue
+		}
+		if !e.statusOK {
+			at(fmt.Sprintf("索引の ADR-%04d の行から Status 列を読めません", d.number))
+			continue
+		}
+		if status, ok := statusOf(d); ok && status != e.status {
+			at(fmt.Sprintf("索引の ADR-%04d の Status は %q ですが、本文は %q です", d.number, e.status, status))
+		}
 	}
 
 	numbers := make([]int, 0, len(listed))
@@ -529,8 +666,8 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 	sort.Ints(numbers)
 	for _, n := range numbers {
 		findings = append(findings, lintreport.Finding{
-			File: path, Line: 1,
-			Message: fmt.Sprintf("索引の ADR-%04d（%s）に対応する実ファイルがありません", n, listed[n]),
+			File: path, Line: listed[n].line,
+			Message: fmt.Sprintf("索引の ADR-%04d（%s）に対応する実ファイルがありません", n, listed[n].file),
 		})
 	}
 

@@ -71,7 +71,15 @@ func index(rows ...string) string {
 }
 
 func row(num, file string) string {
-	return "| [" + num + "](" + file + ") | なにか | Accepted |"
+	return rowWithStatus(num, file, "Accepted")
+}
+
+func rowWithStatus(num, file, status string) string {
+	return "| [" + num + "](" + file + ") | なにか | " + status + " |"
+}
+
+func withStatus(source, status string) string {
+	return strings.Replace(source, "- Status: Accepted", "- Status: "+status, 1)
 }
 
 func Test_run(t *testing.T) {
@@ -167,13 +175,26 @@ func Test_run_ユースケースのADR(t *testing.T) {
 			t.Parallel()
 			root := rootOnly(t)
 			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
-				"0001-a.md": soundADR + "\nrepository-wide/ADR-0101 を前提とする。\n",
+				"0001-a.md": soundADR + "\nrepository-wide/ADR-0001 を前提とする。\n",
 				"README.md": index(row("0001", "0001-a.md")),
 			})
 			var out bytes.Buffer
 			require.NoError(t, run(args(root), &out))
 			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
 			assert.NotContains(t, out.String(), "docs/adr を持たないユースケース")
+		})
+
+		t.Run("昇格した use-case ADR は root の slug を宛先にして supersede できる", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			status := "Superseded by repository-wide/a"
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
+				"0001-b.md": withStatus(soundADR, status),
+				"README.md": index(rowWithStatus("0001", "0001-b.md", status)),
+			})
+			var out bytes.Buffer
+			require.NoError(t, run(args(root), &out))
+			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
 		})
 	})
 
@@ -219,6 +240,20 @@ func Test_run_ユースケースのADR(t *testing.T) {
 					"README.md": index(row("0001", "0001-a.md")),
 				},
 				wantMessage: "参照先の ADR-0101 が存在しません",
+			},
+			"scope を伴う番号は宛先の scope で引く": {
+				files: map[string]string{
+					"0001-a.md": soundADR + "\nrepository-wide/ADR-0099 を参照する。\n",
+					"README.md": index(row("0001", "0001-a.md")),
+				},
+				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
+			},
+			"root に無い slug への supersede を落とす": {
+				files: map[string]string{
+					"0001-a.md": withStatus(soundADR, "Superseded by repository-wide/missing"),
+					"README.md": index(rowWithStatus("0001", "0001-a.md", "Superseded by repository-wide/missing")),
+				},
+				wantMessage: "Superseded by の参照先 repository-wide/missing が存在しません",
 			},
 		}
 
@@ -315,7 +350,6 @@ func Test_discoverScopes(t *testing.T) {
 			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}, {name: "a", dir: a}, {name: "b", dir: b}}, got)
 		})
 
-		// 綴り違いの置き場所（docs/adrs/ など）も同じ分岐に落ちる。名前を返さなければ、黙って検査の外に残る。
 		t.Run("docs/adr を持たないユースケースは scope にせず名前を返す", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -363,7 +397,6 @@ func Test_discoverScopes(t *testing.T) {
 			assert.Contains(t, err.Error(), "usecases")
 		})
 
-		// root scope と同じ名前は、checkScope と checkPathReferences が root として扱ってしまう。
 		t.Run("root scope と同じ名前のユースケースはエラー", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -372,7 +405,6 @@ func Test_discoverScopes(t *testing.T) {
 			require.ErrorIs(t, err, errReservedScope)
 		})
 
-		// DirEntry.IsDir はシンボリックリンクに false を返す。飛ばすと、そのユースケースが黙って外れる。
 		t.Run("シンボリックリンクのユースケースはエラー", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -492,8 +524,6 @@ func Test_ファイル名の規約(t *testing.T) {
 	}
 }
 
-// 「ADR が1件も無い」と「全てのファイル名が規約違反で外れた」を区別する。
-// 後者を番兵で返すと、直すべき違反が出力されないまま終わる。
 func Test_ファイル名違反だけのときも違反として報告する(t *testing.T) {
 	t.Parallel()
 
@@ -553,56 +583,61 @@ func Test_先頭メタデータ(t *testing.T) {
 func Test_supersedeの参照先(t *testing.T) {
 	t.Parallel()
 
-	superseded := func(status string) string {
-		return "# ADR-0001: x\n\n- Status: " + status + "\n- Date: 2026-09-17\n- Scope: repository-wide\n"
+	superseded := func(status string) map[string]string {
+		return map[string]string{
+			"0001-a.md": withStatus(soundADR, status),
+			"0002-b.md": soundADRNo("0002"),
+			"README.md": index(rowWithStatus("0001", "0001-a.md", status), row("0002", "0002-b.md")),
+		}
 	}
 
-	t.Run("参照先が在れば通る", func(t *testing.T) {
+	t.Run("参照先の slug が在れば通る", func(t *testing.T) {
 		t.Parallel()
-		root := writeADRs(t, map[string]string{
-			"0001-a.md": superseded("Superseded by repository-wide/ADR-0002"),
-			"0002-b.md": soundADRNo("0002"),
-			"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-b.md")),
-		})
+		root := writeADRs(t, superseded("Superseded by repository-wide/b"))
 		var out bytes.Buffer
 		require.NoError(t, run(args(root), &out))
 	})
 
-	t.Run("参照先が無ければ落ちる", func(t *testing.T) {
-		t.Parallel()
-		root := writeADRs(t, map[string]string{
-			"0001-a.md": superseded("Superseded by repository-wide/ADR-0099"),
-			"README.md": index(row("0001", "0001-a.md")),
-		})
-		var out bytes.Buffer
-		require.Error(t, run(args(root), &out))
-		assert.Contains(t, out.String(), "参照先 ADR-0099")
-	})
+	tests := map[string]struct {
+		status      string
+		wantMessage string
+	}{
+		"参照先が無ければ落ちる": {
+			status:      "Superseded by repository-wide/missing",
+			wantMessage: "参照先 repository-wide/missing が存在しません",
+		},
+		// identity は <scope>/<slug>（ADR-0001 決定4）。番号は詰められるので宛先にならない。
+		"番号で書いた宛先は落とす": {
+			status:      "Superseded by repository-wide/ADR-0002",
+			wantMessage: "形式が",
+		},
+		"scope を伴わない形は落とす": {
+			status:      "Superseded by b",
+			wantMessage: "形式が",
+		},
+		"どの scope にも当たらない宛先は落とす": {
+			status:      "Superseded by ecs-web-service/b",
+			wantMessage: "宛先の scope ecs-web-service が見つかりません",
+		},
+		"自分自身を指せば落とす": {
+			status:      "Superseded by repository-wide/a",
+			wantMessage: "自分自身を指しています",
+		},
+		"by を伴わない Superseded は落とす": {
+			status:      "Superseded",
+			wantMessage: "いずれでもありません",
+		},
+	}
 
-	t.Run("scope を伴わない形は落とす", func(t *testing.T) {
-		t.Parallel()
-		// identity は <scope>/<slug>（ADR-0001 決定4）。scope が無いと、
-		// 別 scope の同番号 ADR と区別できない。
-		root := writeADRs(t, map[string]string{
-			"0001-a.md": superseded("Superseded by ADR-0002"),
-			"0002-b.md": soundADRNo("0002"),
-			"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-b.md")),
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, superseded(tt.status))
+			var out bytes.Buffer
+			require.Error(t, run(args(root), &out))
+			assert.Contains(t, out.String(), tt.wantMessage)
 		})
-		var out bytes.Buffer
-		require.Error(t, run(args(root), &out))
-		assert.Contains(t, out.String(), "形式が")
-	})
-
-	t.Run("他 scope の参照先は実在を見ない", func(t *testing.T) {
-		t.Parallel()
-		// 他 scope の ADR はこのディレクトリに無い。見に行くと、必ず落ちる検査になる。
-		root := writeADRs(t, map[string]string{
-			"0001-a.md": superseded("Superseded by ecs-web-service/ADR-0002"),
-			"README.md": index(row("0001", "0001-a.md")),
-		})
-		var out bytes.Buffer
-		require.NoError(t, run(args(root), &out))
-	})
+	}
 }
 
 func Test_ユースケースへの依存(t *testing.T) {
@@ -681,6 +716,17 @@ func Test_索引との突合(t *testing.T) {
 		assert.Contains(t, out.String(), "対応する実ファイルがありません")
 	})
 
+	t.Run("索引の Status が本文と食い違えば落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeADRs(t, map[string]string{
+			"0001-a.md": soundADR,
+			"README.md": index(rowWithStatus("0001", "0001-a.md", "Proposed")),
+		})
+		var out bytes.Buffer
+		require.Error(t, run(args(root), &out))
+		assert.Contains(t, out.String(), `索引の ADR-0001 の Status は "Proposed" ですが、本文は "Accepted" です`)
+	})
+
 	t.Run("索引が無ければエラー", func(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{"0001-a.md": soundADR})
@@ -736,17 +782,29 @@ func Test_相互参照の実在(t *testing.T) {
 	})
 }
 
-func Test_相互参照_scopeを伴う参照は見ない(t *testing.T) {
+func Test_相互参照_scopeを伴う参照(t *testing.T) {
 	t.Parallel()
 
-	// identity は `<scope>/<slug>`（ADR-0001 決定4）。scope を書いた参照はこちらの番号体系の
-	// 外を指しており、見に行けば必ず落ちる検査になる。
-	root := writeADRs(t, map[string]string{
-		"0001-a.md": soundApexADR("ecs-web-service/ADR-0099 を参照する。"),
-		"README.md": index(row("0001", "0001-a.md")),
+	t.Run("宛先の scope に実在すれば通る", func(t *testing.T) {
+		t.Parallel()
+		root := writeADRs(t, map[string]string{
+			"0001-a.md": soundApexADR("repository-wide/ADR-0001 を参照する。"),
+			"README.md": index(row("0001", "0001-a.md")),
+		})
+		var out bytes.Buffer
+		require.NoError(t, run(args(root), &out))
 	})
-	var out bytes.Buffer
-	require.NoError(t, run(args(root), &out))
+
+	t.Run("どの scope にも当たらない宛先は落とす", func(t *testing.T) {
+		t.Parallel()
+		root := writeADRs(t, map[string]string{
+			"0001-a.md": soundApexADR("ecs-web-service/ADR-0099 を参照する。"),
+			"README.md": index(row("0001", "0001-a.md")),
+		})
+		var out bytes.Buffer
+		require.Error(t, run(args(root), &out))
+		assert.Contains(t, out.String(), "scope ecs-web-service が見つかりません")
+	})
 }
 
 func soundApexADR(text string) string {
@@ -838,7 +896,6 @@ func Test_checkPathReferences(t *testing.T) {
 				outside:  map[string]string{"usecases/demo/docs/adr/0001-a.md": "[0001](../../../../docs/adr/0001-a.md)\n"},
 				wantRefs: 1,
 			},
-			// 外部として退けるリンクを言及に数えると、取り出していない参照があるように見えて番兵が立つ。
 			"サイトのルートからの絶対パスは実在する ADR の名前でも数えない": {
 				outside:  map[string]string{"AGENTS.md": "[0001](/docs/adr/0001-a.md)\n"},
 				wantRefs: 0,
@@ -921,8 +978,7 @@ func Test_checkPathReferences(t *testing.T) {
 
 		t.Run("ADR を名指ししているのにリンクを取り出せなければ番兵で返す", func(t *testing.T) {
 			t.Parallel()
-			// reference-style link は markdownLink が拾えない。解析が対応しない書式へ文書が
-			// 寄った日に「参照 0 件」で緑を返さないことを固定する（ADR-0702 決定15）。
+			// reference-style link は markdownLink が拾えない書式の例。突合の意図は checkPathReferences を見よ。
 			repo := writeRepo(t, adrs, map[string]string{
 				"AGENTS.md": "決定は [ADR][ref] を見よ。\n\n[ref]: docs/adr/0001-a.md\n",
 			})
@@ -1015,10 +1071,9 @@ func Test_mentionedDirs(t *testing.T) {
 			},
 			"別のディレクトリの同名は拾わない":     {line: "[x](docs/other/0001-a.md)", from: ".", want: map[string]bool{}},
 			"番号は在るが slug が違えば拾わない": {line: "docs/adr/0001-renamed.md", from: ".", want: map[string]bool{}},
-			// adrTarget が外部として退ける形を数えると、取り出せない参照があるように見える。
-			"サイトのルートからの絶対パスは拾わない": {line: "[0001](/docs/adr/0001-a.md)", from: ".", want: map[string]bool{}},
-			"索引は ADR ではない":        {line: "[索引](docs/adr/README.md)", from: ".", want: map[string]bool{}},
-			"名指しが無ければ空":           {line: "ただの散文", from: ".", want: map[string]bool{}},
+			"サイトのルートからの絶対パスは拾わない":  {line: "[0001](/docs/adr/0001-a.md)", from: ".", want: map[string]bool{}},
+			"索引は ADR ではない":         {line: "[索引](docs/adr/README.md)", from: ".", want: map[string]bool{}},
+			"名指しが無ければ空":            {line: "ただの散文", from: ".", want: map[string]bool{}},
 		}
 
 		for name, tt := range tests {
@@ -1244,6 +1299,7 @@ func Test_collect(t *testing.T) {
 			require.Len(t, docs, 2)
 			assert.Equal(t, []string{"0001-a.md", "0002-b.md"}, []string{docs[0].name, docs[1].name})
 			assert.Equal(t, []int{1, 2}, []int{docs[0].number, docs[1].number})
+			assert.Equal(t, []string{"a", "b"}, []string{docs[0].slug, docs[1].slug})
 			assert.Equal(t, filepath.Join(root, "0001-a.md"), docs[0].path)
 			assert.Equal(t, soundADR, docs[0].source)
 		})
@@ -1274,8 +1330,6 @@ func Test_collect(t *testing.T) {
 			assert.Equal(t, "0001-a.md", docs[0].name)
 		})
 
-		// 「1件も無い」と「全件が規約違反で外れた」は、どちらも docs が空になる。
-		// ここを空として固定しておかないと、番兵を立てる側（run）が両者を区別できない。
 		t.Run("ADR が1件も無ければ違反も無い空を返す", func(t *testing.T) {
 			t.Parallel()
 			root := writeADRs(t, map[string]string{"README.md": index()})
@@ -1381,6 +1435,60 @@ func Test_checkNumbers(t *testing.T) {
 			require.Len(t, findings, 2)
 			assert.Contains(t, findings[0].Message, "番号 0002")
 			assert.Contains(t, findings[1].Message, "番号 0009")
+		})
+	})
+}
+
+func Test_checkSlugs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string][]doc{
+			"slug が重複していない": {
+				{name: "0001-a.md", slug: "a"},
+				{name: "0002-b.md", slug: "b"},
+			},
+			"ADR が1件もない": nil,
+		}
+
+		for name, docs := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Empty(t, checkSlugs(docs, "docs/adr"))
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("番号だけが違う同じ slug を列挙して報告する", func(t *testing.T) {
+			t.Parallel()
+			docs := []doc{
+				{name: "0001-a.md", slug: "a"},
+				{name: "0002-a.md", slug: "a"},
+			}
+			findings := checkSlugs(docs, "docs/adr")
+			require.Len(t, findings, 1)
+			assert.Equal(t, "docs/adr", findings[0].File)
+			assert.Equal(t, 1, findings[0].Line)
+			assert.Equal(t, "slug a が重複しています（0001-a.md / 0002-a.md）", findings[0].Message)
+		})
+
+		t.Run("重複が複数あれば slug の昇順で並べる", func(t *testing.T) {
+			t.Parallel()
+			docs := []doc{
+				{name: "0001-z.md", slug: "z"},
+				{name: "0002-z.md", slug: "z"},
+				{name: "0003-b.md", slug: "b"},
+				{name: "0004-b.md", slug: "b"},
+			}
+			findings := checkSlugs(docs, "docs/adr")
+			require.Len(t, findings, 2)
+			assert.Contains(t, findings[0].Message, "slug b")
+			assert.Contains(t, findings[1].Message, "slug z")
 		})
 	})
 }
@@ -1528,75 +1636,164 @@ func Test_checkMetadata(t *testing.T) {
 	})
 }
 
-func Test_checkSupersede(t *testing.T) {
+func Test_statusOf(t *testing.T) {
 	t.Parallel()
 
-	superseded := func(status string) string {
-		return "# ADR-0001: x\n\n- Status: " + status + "\n- Date: 2026-09-17\n- Scope: repository-wide\n"
+	tests := map[string]struct {
+		source string
+		want   string
+		wantOK bool
+	}{
+		"値の前後の空白を除く":  {source: "- Status:   Accepted  \n", want: "Accepted", wantOK: true},
+		"Status 行が無い": {source: "- Date: 2026-09-17\n"},
+		"値が空":         {source: "- Status:\n"},
 	}
-	target := doc{path: "0002-b.md", name: "0002-b.md", number: 2, source: soundADRNo("0002")}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := statusOf(doc{source: tt.source})
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func Test_checkStatusValue(t *testing.T) {
+	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		tests := map[string][]doc{
-			"Superseded でない Status は見ない": {
-				{path: "0001-a.md", number: 1, source: soundADR},
-			},
-			"同一 scope の参照先が実在する": {
-				{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-0002")},
-				target,
-			},
-			// 他 scope の ADR はこのディレクトリに無い。見に行けば必ず落ちる検査になる。
-			"他 scope の参照先は実在を見ない": {
-				{path: "0001-a.md", number: 1, source: superseded("Superseded by ecs-web-service/ADR-0099")},
-			},
-			// Status の不在は checkMetadata が報告済み。ここで二重に出さない。
-			"Status 行そのものが無い": {
-				{path: "0001-a.md", number: 1, source: "# ADR-0001: x\n\n- Date: 2026-09-17\n"},
-			},
-			"ADR が1件もない": nil,
-		}
-
-		for name, docs := range tests {
-			t.Run(name, func(t *testing.T) {
+		for _, status := range []string{"Proposed", "Accepted", "Deprecated", "Superseded by repository-wide/a"} {
+			t.Run(status, func(t *testing.T) {
 				t.Parallel()
-				assert.Empty(t, checkSupersede(docs, scope{name: rootScope, dir: "docs/adr"}))
+				assert.Empty(t, checkStatusValue([]doc{{path: "0001-a.md", source: withStatus(soundADR, status)}}))
 			})
 		}
 
-		t.Run("use-case scope では repository-wide への参照の実在を見ない", func(t *testing.T) {
+		t.Run("Superseded by の形式違反は見ない", func(t *testing.T) {
 			t.Parallel()
-			docs := []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-0099")}}
-			assert.Empty(t, checkSupersede(docs, scope{name: "demo", dir: "usecases/demo/docs/adr"}))
+			assert.Empty(t, checkStatusValue([]doc{{path: "0001-a.md", source: withStatus(soundADR, "Superseded by ADR-0002")}}))
+		})
+
+		t.Run("Status 行そのものが無い", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, checkStatusValue([]doc{{path: "0001-a.md", source: "# ADR-0001: x\n\n- Date: 2026-09-17\n"}}))
+		})
+
+		t.Run("ADR が1件もない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, checkStatusValue(nil))
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		for _, status := range []string{"Superseded", "Superseded-by repository-wide/a", "Acceptd", "accepted", "Accepted （暫定）"} {
+			t.Run(status, func(t *testing.T) {
+				t.Parallel()
+				findings := checkStatusValue([]doc{{path: "0001-a.md", source: withStatus(soundADR, status)}})
+				require.Len(t, findings, 1)
+				assert.Equal(t, "0001-a.md", findings[0].File)
+				assert.Equal(t, 1, findings[0].Line)
+				assert.Contains(t, findings[0].Message, "いずれでもありません（"+status+"）")
+			})
+		}
+	})
+}
+
+func Test_checkSupersede(t *testing.T) {
+	t.Parallel()
+
+	superseded := func(status string) string {
+		return withStatus(soundADR, status)
+	}
+	adr := func(slug, source string) doc {
+		return doc{path: "0001-" + slug + ".md", name: "0001-" + slug + ".md", slug: slug, source: source}
+	}
+	scopes := func(root, demo []doc) []scopeDocs {
+		return []scopeDocs{
+			{scope: scope{name: rootScope, dir: "docs/adr"}, docs: root},
+			{scope: scope{name: "demo", dir: "usecases/demo/docs/adr"}, docs: demo},
+		}
+	}
+	target := adr("b", soundADR)
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string][]scopeDocs{
+			"Superseded でない Status は見ない": scopes([]doc{adr("a", soundADR)}, nil),
+			"同一 scope の参照先が実在する": scopes(
+				[]doc{adr("a", superseded("Superseded by repository-wide/b")), target}, nil),
+			"use-case scope から root の参照先を引く": scopes(
+				[]doc{target}, []doc{adr("a", superseded("Superseded by repository-wide/b"))}),
+			// 宛先の slug が自分と同じでも、scope が違えば別の決定である。
+			"他 scope の同じ slug は自分自身ではない": scopes(
+				[]doc{target}, []doc{adr("b", superseded("Superseded by repository-wide/b"))}),
+			"Status 行そのものが無い": scopes([]doc{adr("a", "# ADR-0001: x\n\n- Date: 2026-09-17\n")}, nil),
+			"ADR が1件もない":      nil,
+		}
+
+		for name, in := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Empty(t, checkSupersede(in))
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
 		tests := map[string]struct {
-			docs        []doc
+			in          []scopeDocs
 			wantMessage string
 		}{
 			"同一 scope の参照先が実在しない": {
-				docs:        []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-0099")}},
-				wantMessage: "Superseded by の参照先 ADR-0099 が docs/adr に存在しません",
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/missing"))}, nil),
+				wantMessage: "Superseded by の参照先 repository-wide/missing が存在しません",
+			},
+			"use-case scope の参照先が root に実在しない": {
+				in:          scopes([]doc{target}, []doc{adr("a", superseded("Superseded by repository-wide/missing"))}),
+				wantMessage: "Superseded by の参照先 repository-wide/missing が存在しません",
+			},
+			"宛先の scope がどれにも当たらない": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by ecs-web-service/b"))}, nil),
+				wantMessage: "Superseded by の宛先の scope ecs-web-service が見つかりません",
+			},
+			"自分自身を指す": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/a"))}, nil),
+				wantMessage: "Superseded by が自分自身を指しています",
+			},
+			"番号で書いた宛先": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/ADR-0002")), target}, nil),
+				wantMessage: "形式が `Superseded by <scope>/<slug>` ではありません",
+			},
+			"番号を伴うファイル名で書いた宛先": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/0001-b")), target}, nil),
+				wantMessage: "参照先 repository-wide/0001-b が存在しません",
 			},
 			"scope を伴わない形": {
-				docs:        []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by ADR-0002")}, target},
+				in:          scopes([]doc{adr("a", superseded("Superseded by b")), target}, nil),
 				wantMessage: "形式が",
 			},
-			"番号が3桁": {
-				docs:        []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-002")}, target},
+			"slug が大文字を含む": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/B")), target}, nil),
 				wantMessage: "形式が",
 			},
-			"番号が5桁": {
-				docs:        []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-00021")}, target},
+			"slug が連続するハイフンを含む": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/b--c")), target}, nil),
+				wantMessage: "形式が",
+			},
+			"宛先が無い": {
+				in:          scopes([]doc{adr("a", superseded("Superseded by"))}, nil),
 				wantMessage: "形式が",
 			},
 			"末尾に余分な語が続く": {
-				docs:        []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-0002 （理由）")}, target},
+				in:          scopes([]doc{adr("a", superseded("Superseded by repository-wide/b （理由）")), target}, nil),
 				wantMessage: "形式が",
 			},
 		}
@@ -1604,21 +1801,13 @@ func Test_checkSupersede(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				findings := checkSupersede(tt.docs, scope{name: rootScope, dir: "docs/adr"})
+				findings := checkSupersede(tt.in)
 				require.Len(t, findings, 1)
 				assert.Equal(t, "0001-a.md", findings[0].File)
 				assert.Equal(t, 1, findings[0].Line)
 				assert.Contains(t, findings[0].Message, tt.wantMessage)
 			})
 		}
-
-		t.Run("use-case scope では自分の名前で書いた参照先の実在を見る", func(t *testing.T) {
-			t.Parallel()
-			docs := []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by demo/ADR-0099")}}
-			findings := checkSupersede(docs, scope{name: "demo", dir: "usecases/demo/docs/adr"})
-			require.Len(t, findings, 1)
-			assert.Contains(t, findings[0].Message, "Superseded by の参照先 ADR-0099 が usecases/demo/docs/adr に存在しません")
-		})
 	})
 }
 
@@ -1738,7 +1927,6 @@ func Test_checkCrossReferences(t *testing.T) {
 			"自分自身への言及は参照として見ない": {
 				{path: "0001-a.md", number: 1, source: soundADR + "\nADR-0001 は本文書である。\n"},
 			},
-			// identity は <scope>/<slug>。scope を書いた参照はこちらの番号体系の外を指す。
 			"scope を伴う参照は見ない": {
 				{path: "0001-a.md", number: 1, source: soundADR + "\necs-web-service/ADR-0099 を参照する。\n"},
 			},
@@ -1795,13 +1983,92 @@ func Test_checkCrossReferences(t *testing.T) {
 	})
 }
 
+func Test_checkScopedReferences(t *testing.T) {
+	t.Parallel()
+
+	scopes := func(root, demo []doc) []scopeDocs {
+		return []scopeDocs{
+			{scope: scope{name: rootScope, dir: "docs/adr"}, docs: root},
+			{scope: scope{name: "demo", dir: "usecases/demo/docs/adr"}, docs: demo},
+		}
+	}
+	rootADR := doc{path: "0001-a.md", number: 1, source: soundADR}
+	body := func(text string) []doc {
+		return []doc{{path: "0001-x.md", number: 1, source: "本文\n" + text + "\n"}}
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string][]scopeDocs{
+			"他 scope に実在する":      scopes([]doc{rootADR}, body("repository-wide/ADR-0001 を前提とする。")),
+			"同じ scope を前置して実在する": scopes([]doc{rootADR}, body("demo/ADR-0001")),
+			"scope を伴わない参照は見ない":  scopes([]doc{rootADR}, body("ADR-0099")),
+			"path の一部は参照ではない":    scopes([]doc{rootADR}, body("docs/adr/ADR-0099 と ./ADR-0099 と a.b/ADR-0099")),
+			"Status 行は読まない":      scopes([]doc{rootADR}, body("- Status: Superseded by nowhere/ADR-0099")),
+			"ADR が1件もない":         nil,
+		}
+
+		for name, in := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Empty(t, checkScopedReferences(in))
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			in          []scopeDocs
+			wantMessage string
+		}{
+			"宛先の scope に番号が無い": {
+				in:          scopes([]doc{rootADR}, body("repository-wide/ADR-0099")),
+				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
+			},
+			"宛先の scope がどれにも当たらない": {
+				in:          scopes([]doc{rootADR}, body("ecs-web-service/ADR-0001")),
+				wantMessage: "参照先 ecs-web-service/ADR-0001 の scope ecs-web-service が見つかりません",
+			},
+			"scope の綴りを途中から取らない": {
+				in:          scopes([]doc{rootADR}, body("（repository-wide/ADR-0099）")),
+				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
+			},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				findings := checkScopedReferences(tt.in)
+				require.Len(t, findings, 1)
+				assert.Equal(t, "0001-x.md", findings[0].File)
+				assert.Equal(t, 2, findings[0].Line)
+				assert.Equal(t, tt.wantMessage, findings[0].Message)
+			})
+		}
+	})
+
+	t.Run("adrRef と同じ出現に当たらない", func(t *testing.T) {
+		t.Parallel()
+		line := "ADR-0001 と repository-wide/ADR-0002"
+		plain := adrRef.FindAllStringSubmatch(line, -1)
+		scoped := scopedRef.FindAllStringSubmatch(line, -1)
+		require.Len(t, plain, 1)
+		require.Len(t, scoped, 1)
+		assert.Equal(t, "0001", plain[0][2])
+		assert.Equal(t, "0002", scoped[0][2])
+	})
+}
+
 func Test_checkIndex(t *testing.T) {
 	t.Parallel()
 
 	docsOf := func(root string, names ...string) []doc {
 		out := make([]doc, 0, len(names))
 		for i, name := range names {
-			out = append(out, doc{path: filepath.Join(root, name), name: name, number: i + 1})
+			out = append(out, doc{path: filepath.Join(root, name), name: name, number: i + 1, source: soundADR})
 		}
 		return out
 	}
@@ -1821,7 +2088,29 @@ func Test_checkIndex(t *testing.T) {
 			assert.Empty(t, findings)
 		})
 
-		// 番兵は checkScope が errNoADR で立てる。この関数は空を返すのが正しい。
+		t.Run("タイトルに `](` や `|` を含んでも Status 列を取り違えない", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index("| [0001](0001-a.md) | [x](y) と a \\| b | Accepted |"),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+		})
+
+		t.Run("本文に Status が無ければ索引の Status を比べない", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index(rowWithStatus("0001", "0001-a.md", "Proposed")),
+			})
+			docs := []doc{{path: filepath.Join(root, "0001-a.md"), name: "0001-a.md", number: 1, source: "# ADR-0001: x\n"}}
+			findings, err := checkIndex(root, docs)
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+		})
+
 		t.Run("索引も ADR も空なら違反は無い", func(t *testing.T) {
 			t.Parallel()
 			root := writeADRs(t, map[string]string{"README.md": index()})
@@ -1857,8 +2146,57 @@ func Test_checkIndex(t *testing.T) {
 			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
 			require.NoError(t, err)
 			require.Len(t, findings, 1)
+			assert.Equal(t, 5, findings[0].Line)
 			assert.Equal(t, "索引の ADR-0001 が 0001-old-name.md を指していますが、実ファイルは 0001-a.md です", findings[0].Message)
 		})
+
+		t.Run("ファイル名が食い違う行では Status を比べない", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index(rowWithStatus("0001", "0001-old-name.md", "Proposed")),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+			require.NoError(t, err)
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "実ファイルは 0001-a.md です")
+		})
+
+		t.Run("Status が食い違えば行の行番号で落とす", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"0002-b.md": soundADRNo("0002"),
+				"README.md": index(row("0001", "0001-a.md"), rowWithStatus("0002", "0002-b.md", "Proposed")),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md", "0002-b.md"))
+			require.NoError(t, err)
+			require.Len(t, findings, 1)
+			assert.Equal(t, filepath.Join(root, "README.md"), findings[0].File)
+			assert.Equal(t, 6, findings[0].Line)
+			assert.Equal(t, `索引の ADR-0002 の Status は "Proposed" ですが、本文は "Accepted" です`, findings[0].Message)
+		})
+
+		unreadable := map[string]string{
+			"リンクのセルしか無い":         "| [0001](0001-a.md) |",
+			"Status 列を持たない2セルの行": "| [0001](0001-a.md) | なにか |",
+			"Status のセルが空":       "| [0001](0001-a.md) | なにか | |",
+		}
+
+		for name, r := range unreadable {
+			t.Run(name+"なら Status 列を読めない行として落とす", func(t *testing.T) {
+				t.Parallel()
+				root := writeADRs(t, map[string]string{
+					"0001-a.md": soundADR,
+					"README.md": index(r),
+				})
+				findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+				require.NoError(t, err)
+				require.Len(t, findings, 1)
+				assert.Equal(t, 5, findings[0].Line)
+				assert.Equal(t, "索引の ADR-0001 の行から Status 列を読めません", findings[0].Message)
+			})
+		}
 
 		t.Run("実体の無い行は番号の昇順で残らず報告する", func(t *testing.T) {
 			t.Parallel()
@@ -1873,6 +2211,8 @@ func Test_checkIndex(t *testing.T) {
 			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
 			require.NoError(t, err)
 			require.Len(t, findings, 2)
+			assert.Equal(t, 7, findings[0].Line)
+			assert.Equal(t, 6, findings[1].Line)
 			assert.Equal(t, "索引の ADR-0003（0003-gone.md）に対応する実ファイルがありません", findings[0].Message)
 			assert.Equal(t, "索引の ADR-0009（0009-gone.md）に対応する実ファイルがありません", findings[1].Message)
 		})
