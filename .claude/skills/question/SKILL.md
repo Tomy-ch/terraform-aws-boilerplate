@@ -122,7 +122,7 @@ If no installed skill owns the question, say so plainly and stop. That is a find
 skill set — not a reason to answer it here.
 
 **The repository's own index is a destination too.** `AGENTS.md` の *正典となる文書* が、決定は
-`docs/adr/README.md`、ユースケースの責務境界は `modules/<use-case>/README.md`、運用機構の観点は
+`docs/adr/README.md`、ユースケースの責務境界は `usecases/<use-case>/README.md`、運用機構の観点は
 `scripts/README.md` が持つと述べている。問いの持ち主がスキルではなく文書であることは珍しくない。
 
 ## Step 4 — Hand off

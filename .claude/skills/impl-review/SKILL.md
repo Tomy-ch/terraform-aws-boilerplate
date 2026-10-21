@@ -146,12 +146,12 @@ skill the single point through which the other two are remembered.
   | 区分 | パス | 何が壊れ得るか |
   | --- | --- | --- |
   | 決定（root） | `docs/adr/**` | 決定と実装の乖離、supersede の連鎖、番号参照、**ユースケース固有の判断が root へ漏れていないか** |
-  | 決定（use-case） | `modules/<use-case>/docs/adr/**` | root ADR の上書き、昇格すべき判断の据え置き |
+  | 決定（use-case） | `usecases/<use-case>/docs/adr/**` | root ADR の上書き、昇格すべき判断の据え置き |
   | 運用機構 | `scripts/**` | **検査が対象を失ったまま緑を返す** |
   | 宣言 | `mise.toml` / `.github/settings/**` / `.github/egress.toml` / `*-pin.toml` | 宣言と実態のずれ |
   | CI | `.github/workflows/**` / `.github/actions/**` | 起動しない check、権限の過剰、補間の注入 |
   | 実行形態 | `docker/**` / `docker-compose.yaml` / `.makefiles/**` | 版の出所の二重化、検査の定義の重複 |
-  | インフラ | `modules/**` / `env/**` / `*.tf` | 公開契約、最小権限、Policy invariant、テスト層の割当 |
+  | インフラ | `usecases/**` / `modules/**` / `env/**` / `*.tf` | 公開契約、最小権限、Policy invariant、テスト層の割当 |
 
 - **宣言を触った変更は、それを読む側をすべて洗う。** 版・パターン・許可リストは複数箇所が読む。
   片方だけが更新された状態は、両方を実行するまで検出できない。
@@ -162,12 +162,12 @@ skill the single point through which the other two are remembered.
   # root
   ls docs/adr/*.md
   # 触れたユースケースの use-case ADR（存在すれば）
-  ls modules/<use-case>/docs/adr/*.md 2>/dev/null
+  ls usecases/<use-case>/docs/adr/*.md 2>/dev/null
   ```
 
   **配置そのものが所有範囲を表す**（決定14）ので、「どこに置かれているか」は読み飛ばす書式ではなく、
-  その決定が誰を拘束するかの宣言である。`modules/foo/` を触った変更は、root ADR と
-  `modules/foo/docs/adr/` の**両方**に拘束される。`modules/bar/docs/adr/` には拘束されない。
+  その決定が誰を拘束するかの宣言である。`usecases/foo/` を触った変更は、root ADR と
+  `usecases/foo/docs/adr/` の**両方**に拘束される。`usecases/bar/docs/adr/` には拘束されない。
 
 ## Step 2 — Fan-out Finders (different model, concurrent)
 
@@ -180,7 +180,7 @@ parameter.
 | Finder | Tier | Run when | 見るもの |
 | --- | --- | --- | --- |
 | `adr-conformance` | 1 | always | 変更が触れた領域を所有する ADR の決定に反していないか。**ADR を読まずに書けるなら、それはこのレンズの対象ではない** |
-| `adr-placement` | 1 | `docs/adr/**` または `modules/*/docs/adr/**` を触れたとき | 決定が正しい階層に置かれているか、依存方向が root → use-case を保っているか |
+| `adr-placement` | 1 | `docs/adr/**` または `usecases/*/docs/adr/**` を触れたとき | 決定が正しい階層に置かれているか、依存方向が root → use-case を保っているか |
 | `gate-discipline` | 2 | `scripts/**` / `.makefiles/**` / `.github/workflows/**` を触れたとき | 検査が**対象を持たないまま成功で返る**経路、握り潰した戻り値、黙って範囲を縮める分岐 |
 | `security` | 2 | always | 最小権限、資格情報の経路、秘密の露出、注入 |
 | `correctness` | 2 | always | 論理の誤り、境界、エラーの扱い |
@@ -195,12 +195,12 @@ ADR-0001 の配置・所有権・依存方向・昇格を見る。**ADR の中�
 ことになっているか**が主題である。
 
 - **配置**（決定12-14）—— repository-wide なら `docs/adr/`、特定ユースケースの内部実装に関する判断なら
-  `modules/<use-case>/docs/adr/`。resource 単位の root ADR を新設していないか（決定16）。
+  `usecases/<use-case>/docs/adr/`。resource 単位の root ADR を新設していないか（決定16）。
 - **主語**（決定15）—— 主語が AWS resource になっていないか。「Security Group をどう作るか」ではなく
   「当該ユースケースのネットワーク境界をどう保証するか」であるべき。
 - **依存方向**（決定17-19）—— **root ADR が特定ユースケースの実装詳細へ依存していないか。** 例示として
   触れる場合も、その存在を前提とした記述になっていないか。これは `make adr-lint` の検査項目5が
-  `modules/<use-case>/` への path 参照を機械的に見るが、**path を書かずに前提だけ持ち込む形は
+  `usecases/<use-case>/` への path 参照を機械的に見るが、**path を書かずに前提だけ持ち込む形は
   機械では捕まらない** —— そこがこのレンズの取り分である。
 - **昇格**（決定20-22）—— 2つ以上のユースケースへ同じ原則が当たっているのに use-case ADR のままか。
   逆に、「同じ resource を使っている」「実装が似ている」だけを根拠に root へ上げていないか（決定21）。
@@ -245,12 +245,12 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 | 触れた区分 | 走らせるもの |
 | --- | --- |
 | `scripts/**` | `make go-test` / `make go-lint` / `make go-fmt-check` / `make test-mapping` / `make cover-gate` |
-| `docs/adr/**` / `modules/*/docs/adr/**` | `make adr-lint` |
+| `docs/adr/**` / `usecases/*/docs/adr/**` | `make adr-lint` |
 | `.github/**` | `make actions-lint` / `make zizmor` / `make egress-check` / `make pin-actions-check` / `make pin-images-check` / `make pin-runners-check` |
 | `.github/settings/**` | `make required-check-lint` |
 | `docker/**` | `make docker-lint` / `make trivy-config` |
 | `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
-| `modules/**` / `*.tf` | `terraform fmt -check` / `terraform validate` / `make trivy-config` |
+| `usecases/**` / `modules/**` / `env/**` / `*.tf` | `terraform fmt -check` / `terraform validate` / `make trivy-config` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が
 持っていないターゲットを走らせたつもりで報告しない。Terraform 側の lint（TFLint / Conftest /

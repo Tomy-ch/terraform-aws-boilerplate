@@ -58,8 +58,8 @@ description: >-
 | --- | --- | --- |
 | どの make target が何を走らせるか | `.makefiles/**/*.mk`、一覧は `make help` | `.makefiles/README.md`。**ターゲットの一覧は持たない** |
 | なぜそう決まっているか | `docs/adr/`（一覧は `docs/adr/README.md` —— **一覧が存在する唯一の場所**） | supersede 済みの ADR。Status を見る |
-| ユースケースの責務境界・公開契約 | `modules/<use-case>/README.md`（**未作成**） | — |
-| そのユースケース固有の判断 | `modules/<use-case>/docs/adr/`（**未作成**） | root の ADR。上書きしない（ADR-0001 決定17-19） |
+| ユースケースの責務境界・公開契約 | `usecases/<use-case>/README.md`（**未作成**） | — |
+| そのユースケース固有の判断 | `usecases/<use-case>/docs/adr/`（**未作成**） | root の ADR。上書きしない（ADR-0001 決定17-19） |
 | 運用機構の各ツールが何を解いているか | `scripts/README.md` | ツールのコードだけ。**なぜ**はここに無い |
 | 運用機構のテスト観点 | `scripts/README.md` の *Test Strategy* 節 | — |
 | workflow の規則・必須検査の考え方 | `.github/workflows/README.md` | — |
@@ -80,7 +80,7 @@ terraform-docs が `README.md` の中へ書く区間、`make egress-apply` / `pi
 ### 資料が食い違ったら
 
 `AGENTS.md` *指示の優先順位* に従う —— `AGENTS.md` → root の Accepted ADR →
-`modules/<use-case>/` の Accepted ADR → ユーザーの指示。設計意図と実装方針については
+`usecases/<use-case>/` の Accepted ADR → ユーザーの指示。設計意図と実装方針については
 **README > Code > SKILL**。**権威を主張する2つが食い違っていたら、そこで止まる**
 （*トリップワイヤ* 5）—— 気づくことが仕事であり、解決することは仕事ではない。
 

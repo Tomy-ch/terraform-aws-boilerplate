@@ -1,7 +1,7 @@
 ---
 name: sync-readme
 description: >-
-  Update one README so its file / directory listing matches what is actually on disk beneath it — missing entries, renamed paths, removed files, outdated one-line descriptions — while respecting nested README boundaries (a subdirectory with its own README gets a one-line digest and a link, never an inlined expansion) and never touching a terraform-docs generated region. Use it when files were added, renamed or removed under a documented directory and its README no longer describes what is there. Operates on exactly one README per invocation. Do NOT use it to write a README's substantive content — 責務境界 / supported / unsupported / 公開契約 belong to `modules/<use-case>/README.md` itself (ADR-0102 決定2, ADR-0701 決定2) — to judge prose quality, or to reconcile a README's claims with code behavior (`/impl-review` の declaration-drift レンズ).
+  Update one README so its file / directory listing matches what is actually on disk beneath it — missing entries, renamed paths, removed files, outdated one-line descriptions — while respecting nested README boundaries (a subdirectory with its own README gets a one-line digest and a link, never an inlined expansion) and never touching a terraform-docs generated region. Use it when files were added, renamed or removed under a documented directory and its README no longer describes what is there. Operates on exactly one README per invocation. Do NOT use it to write a README's substantive content — 責務境界 / supported / unsupported / 公開契約 belong to `usecases/<use-case>/README.md` itself (ADR-0102 決定2, ADR-0701 決定2) — to judge prose quality, or to reconcile a README's claims with code behavior (`/impl-review` の declaration-drift レンズ).
 ---
 
 # Sync README
@@ -11,7 +11,7 @@ README を、その直下に実際に在るファイル・ディレクトリの�
 中身を展開しない。
 
 **このスキルが直すのは「何が在るか」であって「それが何を保証するか」ではない。** 責務境界、
-supported / unsupported、公開契約は `modules/<use-case>/README.md` そのものが所有する
+supported / unsupported、公開契約は `usecases/<use-case>/README.md` そのものが所有する
 （[ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定2、
 [ADR-0701](../../../docs/adr/0701-documentation-ownership-and-language.md) 決定2）。
 一覧が古いことと、保証が間違っていることは別の欠陥であり、後者をこのスキルが書き足さない。

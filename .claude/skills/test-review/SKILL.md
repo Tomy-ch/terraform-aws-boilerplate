@@ -1,7 +1,7 @@
 ---
 name: test-review
 description: >-
-  Independent quality review of the tests that pin this repository down — the Go tests under `scripts/**` that hold the operations tooling, and the Terraform-side tests (`terraform test` / Contract / Policy) that hold `modules/<use-case>/` — structural compliance, gate-degeneracy coverage (does a case assert an error when the tool has nothing to inspect?), semantic quality (weak assertions, message-instead-of-sentinel, over-stubbing), branch x meaning completeness read from the subject source, and symbols with no test at all. Defaults to the changed test files; branch-vs-base or specific paths are selectable at the start. Read-only — it reports and the user fixes. Use it after writing or changing tests, before a PR, or whenever someone asks 「テストをレビューして」「このテストで十分か」「テスト観点が足りているか」. The only owner of the test viewpoint: `/impl-review` is the peer asked for separately under the Review Phase Protocol in `AGENTS.md`, `/settle-comments` runs as the last step of implementing rather than as a review, and none of them chains another. Do NOT use it to review implementation code (`impl-review`) or to judge comments (`settle-comments`).
+  Independent quality review of the tests that pin this repository down — the Go tests under `scripts/**` that hold the operations tooling, and the Terraform-side tests (`terraform test` / Contract / Policy) that hold `usecases/<use-case>/` — structural compliance, gate-degeneracy coverage (does a case assert an error when the tool has nothing to inspect?), semantic quality (weak assertions, message-instead-of-sentinel, over-stubbing), branch x meaning completeness read from the subject source, and symbols with no test at all. Defaults to the changed test files; branch-vs-base or specific paths are selectable at the start. Read-only — it reports and the user fixes. Use it after writing or changing tests, before a PR, or whenever someone asks 「テストをレビューして」「このテストで十分か」「テスト観点が足りているか」. The only owner of the test viewpoint: `/impl-review` is the peer asked for separately under the Review Phase Protocol in `AGENTS.md`, `/settle-comments` runs as the last step of implementing rather than as a review, and none of them chains another. Do NOT use it to review implementation code (`impl-review`) or to judge comments (`settle-comments`).
 ---
 
 # Test Review
@@ -44,7 +44,7 @@ Do NOT use this skill for:
 - [`docs/adr/0702-repository-operations-substrate.md`](../../../docs/adr/0702-repository-operations-substrate.md)
   決定13-17 —— 検査の規律とテストの要件。観点の根拠がここにある。
 - [`docs/adr/0401-testing-policy.md`](../../../docs/adr/0401-testing-policy.md) —— レイヤーと責務の表。
-  対象が `modules/**` / `env/**` 側のテストである場合の観点はこちらが持つ。
+  対象が `usecases/**` / `modules/**` / `env/**` 側のテストである場合の観点はこちらが持つ。
 - 対象の `*_test.go`。
 - 対応する subject（同パッケージの、`_test` を除いた `.go`）。**code-origin の2レンズ（Lens 4 / Lens 5）
   はこれが無いと成立しない。**
@@ -62,7 +62,7 @@ Do NOT use this skill for:
 | 区分 | 対象 | 観点の正本 |
 | --- | --- | --- |
 | 運用機構 | `scripts/**/*_test.go` | [`scripts/README.md`](../../../scripts/README.md) Test Strategy 節、[ADR-0702](../../../docs/adr/0702-repository-operations-substrate.md) 決定13-17 |
-| インフラ | `modules/<use-case>/tests/**`、`modules/<use-case>/reference/**`、`env/**`、`*.tftest.hcl`、Policy Test | [ADR-0401](../../../docs/adr/0401-testing-policy.md) 決定4 のレイヤー表、[ADR-0402](../../../docs/adr/0402-policy-test-scope-and-verification.md) |
+| インフラ | `usecases/<use-case>/tests/**`、`usecases/<use-case>/reference/**`、`env/**`、`*.tftest.hcl`、Policy Test | [ADR-0401](../../../docs/adr/0401-testing-policy.md) 決定4 のレイヤー表、[ADR-0402](../../../docs/adr/0402-policy-test-scope-and-verification.md) |
 
 **インフラ側のレンズは層の割当を見る。** ADR-0401 決定4 は故障モードごとに検出手段を割り当てており、
 テストがどの層に属するかは書き手の好みではない。
@@ -92,7 +92,7 @@ Do NOT use this skill for:
 - **Trivy と Conftest の境界**（ADR-0402）—— 「このリポジトリの ADR を読まなければ書けないルールか」で
   分かれる。読まずに書けるルールが Conftest 側に居たら、それは Trivy の取り分である。
 
-**`modules/<use-case>/` を触ったなら、そのユースケースの `docs/adr/` も観点の出所になる**
+**`usecases/<use-case>/` を触ったなら、そのユースケースの `docs/adr/` も観点の出所になる**
 （ADR-0001 決定12-14）。root ADR だけを読んで判定しない。
 
 ## First Step: Resolve Scope
@@ -110,7 +110,7 @@ Do NOT use this skill for:
   - 「特定パス / パッケージ（自由入力）」
   - 「キャンセル」
 
-対象が `scripts/**` か `modules/**` かで走るレンズが変わる。両方が動いていれば両方を走らせ、
+対象が `scripts/**` か Terraform（`usecases/**` / `modules/**` / `env/**`）かで走るレンズが変わる。両方が動いていれば両方を走らせ、
 **レポートで区分を分ける** —— 観点の正本が違うものを1つの一覧に混ぜると、どちらの基準で見た
 finding なのかが読み取れなくなる。
 
@@ -131,8 +131,8 @@ Lens 1-3 はそれに対して読むものを持たない。
 対象ごとに:
 
 1. `scripts/**` が対象なら `scripts/README.md` の Test Strategy 節と ADR-0702 決定13-17 を読む（各1回）。
-2. `modules/**` / `env/**` が対象なら ADR-0401 決定4-20、ADR-0402、および
-   `modules/<use-case>/README.md` と `modules/<use-case>/docs/adr/` を読む。
+2. `usecases/**` / `modules/**` / `env/**` が対象なら ADR-0401 決定4-20、ADR-0402、および
+   `usecases/<use-case>/README.md` と `usecases/<use-case>/docs/adr/` を読む。
 3. subject を読む。
 4. 同パッケージの sibling test を読む。
 
@@ -293,7 +293,7 @@ PLAUSIBLE / REFUTED を付ける。
 # Test Review レポート
 
 対象: <スコープ + ファイル一覧>
-区分: 運用機構（scripts/**）/ インフラ（modules/**）—— 走らせた区分だけを挙げる
+区分: 運用機構（scripts/**）/ インフラ（usecases/** / modules/** / env/**）—— 走らせた区分だけを挙げる
 レンズ: 構造準拠 / 退化入力 / 意味的品質 / 観点ギャップ(branch×meaning) / シンボル網羅
       （インフラ区分は上記に加えて 層の割当 / Policy invariant の実装有無 / example の参照）
 verifier 通過: CONFIRMED <n> 件 / PLAUSIBLE <m> 件 / REFUTED <k> 件（フィルタ済み）

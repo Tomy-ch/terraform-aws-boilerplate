@@ -59,8 +59,8 @@ the code) is also in scope.
 
 - 意図の正は `CLAUDE.md` / `AGENTS.md` / `README.md` と `docs/adr/**` である（ADR-0701 決定2 の
   所有表）。このリポジトリではこれらが常に在るので、「意図が文書化されていない」経路へ落ちることは無い。
-- ユースケースを触るなら、そのユースケースの `modules/<use-case>/README.md` と
-  `modules/<use-case>/docs/adr/` も基準に入る（ADR-0001 決定12-14）。root ADR だけを読んで判定しない。
+- ユースケースを触るなら、そのユースケースの `usecases/<use-case>/README.md` と
+  `usecases/<use-case>/docs/adr/` も基準に入る（ADR-0001 決定12-14）。root ADR だけを読んで判定しない。
 - Points that cannot be verified are not filled in by guessing — they are explicitly stated in the
   output as "unverifiable (basis missing)."
 

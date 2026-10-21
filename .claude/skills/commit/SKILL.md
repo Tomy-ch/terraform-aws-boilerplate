@@ -126,7 +126,7 @@ Use exactly **one** of the following prefixes per commit (capitalized, English, 
 
 | Prefix | Purpose | Examples |
 | --- | --- | --- |
-| `Feat:` | New capability | A new use-case module under `modules/`, a new gate, a new operations tool under `scripts/` |
+| `Feat:` | New capability | A new use case under `usecases/`, a new gate, a new operations tool under `scripts/` |
 | `Fix:` | Bug fix (correcting behavior that deviates from intent) | Error-handling fix, logic correction |
 | `Refactor:` | Internal cleanup without changing external behavior | Function split, rename, responsibility move, layer reorganization |
 | `Perf:` | Performance improvement | Query optimization, N+1 elimination, allocation reduction |
@@ -144,11 +144,11 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 
 | Path pattern | Candidate prefix |
 | --- | --- |
-| `modules/**/*.tf`, `env/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
+| `usecases/**/*.tf`, `modules/**/*.tf`, `env/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
 | `scripts/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
 | `**/*_test.go`, `**/*.tftest.hcl` | `Test` |
 | `docs/adr/**` | `Docs`、番号だけが動くなら `Refactor` |
-| `modules/<use-case>/README.md`, `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
+| `usecases/<use-case>/README.md`, `docs/**/*.md`, `README*.md`, `AGENTS.md` | `Docs` |
 | `Dockerfile`, `docker/**`, `scripts/go.mod`, `scripts/go.sum`, `Makefile`, `.makefiles/**`, `mise.toml` | `Build` |
 | `.github/workflows/**`, `.github/actions/**`, `.lefthook.yaml`, `.github/egress.toml` | `CI` |
 | `.gitignore`, `.claude/**`, editor settings | `Chore` |

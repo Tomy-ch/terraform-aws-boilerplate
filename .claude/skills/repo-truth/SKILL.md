@@ -104,9 +104,9 @@ The classification decides what counts as an answer, and — more importantly �
 | --- | --- | --- |
 | Fact — how does it behave | the implementation on the request path | the path does not exist; say so rather than describing a plausible one |
 | Rule — what should be done here | the governing document | **the rule may be undefined** — a finding in its own right, but only once Step 2 has exhausted the owning index |
-| Rationale — why is it this way | `docs/adr/`（root）と `modules/<use-case>/docs/adr/`（当該ユースケース） | the decision was made implicitly and never recorded |
+| Rationale — why is it this way | `docs/adr/`（root）と `usecases/<use-case>/docs/adr/`（当該ユースケース） | the decision was made implicitly and never recorded |
 | Procedure — how is it done here | `.makefiles/**`, `.lefthook.yaml`, `.github/workflows/`, `scripts/README.md` | **no canonical procedure may exist** — same bar; never invent a command to close the gap |
-| Contract — what does this module promise | `modules/<use-case>/README.md` の supported / unsupported と公開 `variable` / `output` | 責務外と判断されたか、まだ書かれていない（ADR-0102 決定5・7） |
+| Contract — what does this module promise | `usecases/<use-case>/README.md` の supported / unsupported と公開 `variable` / `output` | 責務外と判断されたか、まだ書かれていない（ADR-0102 決定5・7） |
 | History — when and why did it change | `git log`, merged PRs | — |
 
 A question often carries an unstated assumption about which kind it is. "How do I run only the
@@ -138,7 +138,7 @@ Read the indexes and pick entries by *what concern they own*, not by keyword mat
 | `.github/workflows/README.md` | workflow の規則、必須検査の考え方、結果コメント |
 | `make help` | 実在する make ターゲットの**一覧の正本**。どの `.mk` が何を担うかは `.makefiles/README.md`（一覧は持たない） |
 | the README chain from the path in question up to its nearest ancestor | 責務境界、supported / unsupported、設計意図 |
-| `modules/<use-case>/README.md` と `modules/<use-case>/docs/adr/` | 当該ユースケースの公開契約と固有の判断（**未作成**） |
+| `usecases/<use-case>/README.md` と `usecases/<use-case>/docs/adr/` | 当該ユースケースの公開契約と固有の判断（**未作成**） |
 
 **索引を機能名で検索するだけでは足りない。** `AGENTS.md` がそう述べている —— 文書は、それが所有する
 関心事の名前で置かれているのであって、探し物の名前では置かれていない。
@@ -164,7 +164,7 @@ is worse than having no answer, because it reads as a settled fact and the next 
 Two things `repo-ops` section 0 establishes that this skill must not soften:
 
 - **Precedence when sources disagree** は `AGENTS.md` *指示の優先順位* が持つ ——
-  `AGENTS.md` → root の Accepted ADR → `modules/<use-case>/` の Accepted ADR → ユーザーの指示。
+  `AGENTS.md` → root の Accepted ADR → `usecases/<use-case>/` の Accepted ADR → ユーザーの指示。
   設計意図と実装方針については **README > Code > SKILL**。
 - **権威を主張する2つの情報源が食い違っていたら、そこで止まる。** 気づくことが仕事であり、
   解決することは仕事ではない（`AGENTS.md` *トリップワイヤ* 5）。
