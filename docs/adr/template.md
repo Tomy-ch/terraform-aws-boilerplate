@@ -1,6 +1,6 @@
 # ADR-NNNN: <決定の要約>
 
-- Status: Proposed | Accepted | Superseded by <scope>/ADR-NNNN | Deprecated
+- Status: Proposed | Accepted | Superseded by <scope>/<slug> | Deprecated
 - Date: YYYY-MM-DD
 - Scope: repository-wide | <use-case-name>
 - Related: <scope>/ADR-NNNN, ...
