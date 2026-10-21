@@ -67,6 +67,7 @@ const (
 	// use-case ADR の置き場所は usecases/<use-case>/docs/adr/（ADR-0001 決定12）。
 	useCasesDir = "usecases"
 	useCaseADR  = "docs/adr"
+	scopeChars  = `[A-Za-z0-9_-]+`
 )
 
 var (
@@ -76,7 +77,7 @@ var (
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
 	// 宛先は identity の `<scope>/<slug>` で書く（ADR-0001 決定3・4）。slug の形は fileName の第2群と同じ。
-	supersededBy = regexp.MustCompile(`^Superseded by\s+([A-Za-z0-9_-]+)/([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
+	supersededBy = regexp.MustCompile(`^Superseded by\s+(` + scopeChars + `)/([a-z0-9]+(?:-[a-z0-9]+)*)\s*$`)
 	indexRow     = regexp.MustCompile(`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|`)
 	// Status は行の最後のセルとする。最後のセルならタイトルに `|` や `](` が入っても位置がずれない。
 	// リンクのセルと Status の間にセルが1つも無い行は、Status 列を持たない。
@@ -86,7 +87,10 @@ var (
 	adrRef = regexp.MustCompile(`(^|[^/\w])ADR-(\d{4})`)
 	// adrRef と同じ出現に当たらない。scope の左に境界を置くのは、`repository-wide` を `wide` と取らないため。
 	// `/` と `.` を境界に含めないのは、`docs/adr/ADR-0001` のような path の一部を参照と読まないため。
-	scopedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.-])([A-Za-z0-9_-]+)/ADR-(\d{4})`)
+	scopedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.-])(` + scopeChars + `)/ADR-(\d{4})`)
+	// scope の名前に使える文字。scopedRef と supersededBy が名前をこの形で切り出すため、外れた名前の
+	// ユースケースを指す参照は、どちらにも当たらないまま検査の外に残る。
+	scopeName = regexp.MustCompile(`^` + scopeChars + `$`)
 	// 先頭の境界は消費して捕獲群 1 だけを報告に使う。RE2 は後読みを持たず、`\b` は `-` と
 	// 日本語の直後で立たない。`/` を境界に含めるのは、相対パスで書いた path を取り逃さないため。
 	useCasePath    = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]*)`)
@@ -106,6 +110,7 @@ var (
 	errNoADR       = xerrors.New("ADR が1件も見つかりません")
 	errNoMarkdown  = xerrors.New("ADR を指し得る Markdown が1件も見つかりません")
 	errNoReference = xerrors.New("ADR を名指しした文書から、リンクを1件も取り出せません")
+	errNoScopedRef = xerrors.New("scope を伴う ADR 参照を含む行から、参照を1件も取り出せません")
 )
 
 // scope の発見で、置き場所を解釈できなかったときの失敗。どれも黙って検査の外へ倒さない（ADR-0702 決定14）。
@@ -113,12 +118,14 @@ var (
 	errSymlink       = xerrors.New("シンボリックリンクは scope の置き場所として扱いません")
 	errReservedScope = xerrors.New("root scope と同じ名前のユースケースは置けません")
 	errNotDirectory  = xerrors.New("ADR の置き場所がディレクトリではありません")
+	errScopeName     = xerrors.New("ユースケースの名前が scope として使えない文字を含みます")
 )
 
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		if xerrors.Is(err, errNoADR) || xerrors.Is(err, errNoMarkdown) || xerrors.Is(err, errNoReference) {
+		if xerrors.Is(err, errNoADR) || xerrors.Is(err, errNoMarkdown) || xerrors.Is(err, errNoReference) ||
+			xerrors.Is(err, errNoScopedRef) {
 			log.Printf("❌ adr-lint: %v", err)
 			os.Exit(2)
 		}
@@ -153,7 +160,11 @@ func run(args []string, out io.Writer) error {
 		total += len(docs)
 	}
 	findings = append(findings, checkSupersede(checked)...)
-	findings = append(findings, checkScopedReferences(checked)...)
+	scopedFindings, scopedRefs, err := checkScopedReferences(checked)
+	if err != nil {
+		return err
+	}
+	findings = append(findings, scopedFindings...)
 
 	pathFindings, refs, err := checkPathReferences(*repo, checked)
 	if err != nil {
@@ -168,7 +179,8 @@ func run(args []string, out io.Writer) error {
 		return xerrors.Newf("%d 件の不整合", len(findings))
 	}
 
-	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件（%d scope）の構造と、外からの参照 %d 件を確認しました\n", total, len(scopes), refs)
+	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件（%d scope）の構造と、scope を伴う参照 %d 件と、外からの参照 %d 件を確認しました\n",
+		total, len(scopes), scopedRefs, refs)
 	if len(skipped) > 0 {
 		fmt.Fprintf(out, "   docs/adr を持たないユースケース: %s\n", strings.Join(skipped, ", "))
 	}
@@ -217,6 +229,9 @@ func discoverScopes(repo, root string) ([]scope, []string, error) {
 		// 同じ名前だと、checkScope と checkPathReferences がこの scope を root として扱う。
 		if e.Name() == rootScope {
 			return nil, nil, xerrors.Wrapf(errReservedScope, "%s", filepath.Join(base, e.Name()))
+		}
+		if !scopeName.MatchString(e.Name()) {
+			return nil, nil, xerrors.Wrapf(errScopeName, "%s", filepath.Join(base, e.Name()))
 		}
 		dir := filepath.Join(base, e.Name(), filepath.FromSlash(useCaseADR))
 		info, err := os.Lstat(dir)
@@ -435,6 +450,17 @@ func statusOf(d doc) (string, bool) {
 	return strings.TrimSpace(m[1]), true
 }
 
+// metadataLine は、先頭メタデータの Status 行が本文の何行目か（0 始まり）を返します。無ければ -1 を返します。
+//
+// statusOf と同じく最初の一致をメタデータとして扱います。本文に同じ形の行が続いても、それは参照を持つ本文です。
+func metadataLine(source string) int {
+	loc := statusLine.FindStringIndex(source)
+	if loc == nil {
+		return -1
+	}
+	return strings.Count(source[:loc[0]], "\n")
+}
+
 // checkStatusValue は、Status が ADR-0001 決定3 の値のいずれかであることを検査します。
 //
 // `Superseded by` で始まるものの宛先の形は checkSupersede が見ます。
@@ -541,7 +567,12 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 
 	var findings []lintreport.Finding
 	for _, d := range docs {
+		status := metadataLine(d.source)
 		for i, line := range strings.Split(d.source, "\n") {
+			// Status 行の宛先は checkSupersede が見る。
+			if i == status {
+				continue
+			}
 			for _, m := range adrRef.FindAllStringSubmatch(line, -1) {
 				num, _ := strconv.Atoi(m[2])
 				// 自分自身への言及（見出しなど）は参照ではない。
@@ -558,11 +589,16 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 	return findings
 }
 
-// checkScopedReferences は、本文が参照する `<scope>/ADR-NNNN` が、その scope に実在することを検査します。
+// checkScopedReferences は、本文が参照する `<scope>/ADR-NNNN` が、その scope に実在することを検査し、
+// 違反と参照の件数を返します。
 //
 // scope を伴わない参照は checkCrossReferences が自 scope で引きます。Status 行は checkSupersede が
 // 見るので、ここでは読みません。
-func checkScopedReferences(scopes []scopeDocs) []lintreport.Finding {
+//
+// **抽出の件数を、正規表現を使わない経路で得た件数と突き合わせます**（ADR-0702 決定15）。scope を伴う
+// 参照が0件なのは正常な状態なので、0件そのものは落としません。落とすのは、`/ADR-NNNN` を含む行が在るのに
+// scopedRef が1件も取り出せないときです。
+func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error) {
 	numbers := make(map[string]map[int]bool, len(scopes))
 	for _, s := range scopes {
 		set := make(map[int]bool, len(s.docs))
@@ -573,13 +609,19 @@ func checkScopedReferences(scopes []scopeDocs) []lintreport.Finding {
 	}
 
 	var findings []lintreport.Finding
+	refs, mentions := 0, 0
 	for _, s := range scopes {
 		for _, d := range s.docs {
+			status := metadataLine(d.source)
 			for i, line := range strings.Split(d.source, "\n") {
-				if statusLine.MatchString(line) {
+				if i == status {
 					continue
 				}
+				if mentionsScopedADR(line) {
+					mentions++
+				}
 				for _, m := range scopedRef.FindAllStringSubmatch(line, -1) {
+					refs++
 					target, numStr := m[1], m[2]
 					set, ok := numbers[target]
 					num, _ := strconv.Atoi(numStr)
@@ -597,7 +639,28 @@ func checkScopedReferences(scopes []scopeDocs) []lintreport.Finding {
 			}
 		}
 	}
-	return findings
+	if mentions > 0 && refs == 0 {
+		return nil, 0, errNoScopedRef
+	}
+	return findings, refs, nil
+}
+
+// mentionsScopedADR は、行が `<文字>/ADR-NNNN` の形を含むかを、正規表現を使わずに判定します。
+//
+// scopedRef と同じ形を見ると突き合わせが成立しないので、左の境界も scope の文字種も問いません。
+func mentionsScopedADR(line string) bool {
+	const marker = "/ADR-"
+	for rest := line; ; {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			return false
+		}
+		digits := rest[i+len(marker):]
+		if i > 0 && len(digits) >= 4 && strings.Trim(digits[:4], "0123456789") == "" {
+			return true
+		}
+		rest = rest[i+len(marker):]
+	}
 }
 
 // checkIndex は索引が実ファイルと一致していることを検査します。
@@ -618,13 +681,22 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 		statusOK bool
 		line     int
 	}
+	var findings []lintreport.Finding
 	listed := make(map[int]entry)
 	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
 		m := indexRow.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
 		num, _ := strconv.Atoi(m[1])
+		if first, dup := listed[num]; dup {
+			findings = append(findings, lintreport.Finding{
+				File: path, Line: i + 1,
+				Message: fmt.Sprintf("索引に ADR-%04d の行が重複しています（最初の行は %d 行目）", num, first.line),
+			})
+			continue
+		}
 		e := entry{file: m[2], line: i + 1}
 		if sm := indexStatus.FindStringSubmatch(line); sm != nil && sm[1] != "" {
 			e.status, e.statusOK = sm[1], true
@@ -632,7 +704,6 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 		listed[num] = e
 	}
 
-	var findings []lintreport.Finding
 	for _, d := range docs {
 		e, ok := listed[d.number]
 		if !ok {

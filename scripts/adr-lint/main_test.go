@@ -405,6 +405,15 @@ func Test_discoverScopes(t *testing.T) {
 			require.ErrorIs(t, err, errReservedScope)
 		})
 
+		t.Run("scope として使えない文字を含む名前のユースケースはエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeUseCaseADRs(t, repo, "a.b", nil)
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errScopeName)
+			assert.Contains(t, err.Error(), "a.b")
+		})
+
 		t.Run("シンボリックリンクのユースケースはエラー", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -804,6 +813,17 @@ func Test_相互参照_scopeを伴う参照(t *testing.T) {
 		var out bytes.Buffer
 		require.Error(t, run(args(root), &out))
 		assert.Contains(t, out.String(), "scope ecs-web-service が見つかりません")
+	})
+
+	t.Run("参照を含む行から1件も取り出せなければ番兵で返す", func(t *testing.T) {
+		t.Parallel()
+		root := writeADRs(t, map[string]string{
+			"0001-a.md": soundApexADR("a.b/ADR-0001 を参照する。"),
+			"README.md": index(row("0001", "0001-a.md")),
+		})
+		var out bytes.Buffer
+		require.ErrorIs(t, run(args(root), &out), errNoScopedRef)
+		assert.NotContains(t, out.String(), "✅")
 	})
 }
 
@@ -1659,6 +1679,26 @@ func Test_statusOf(t *testing.T) {
 	}
 }
 
+func Test_metadataLine(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source string
+		want   int
+	}{
+		"先頭メタデータの Status 行": {source: "# ADR-0001: x\n\n- Status: Accepted\n", want: 2},
+		"同じ形の行が続いても最初の行":    {source: "- Status: Accepted\n本文\n- Status: demo/ADR-0001\n", want: 0},
+		"Status 行が無い":       {source: "# ADR-0001: x\n", want: -1},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, metadataLine(tt.source))
+		})
+	}
+}
+
 func Test_checkStatusValue(t *testing.T) {
 	t.Parallel()
 
@@ -1930,6 +1970,9 @@ func Test_checkCrossReferences(t *testing.T) {
 			"scope を伴う参照は見ない": {
 				{path: "0001-a.md", number: 1, source: soundADR + "\necs-web-service/ADR-0099 を参照する。\n"},
 			},
+			"Status 行の宛先は見ない": {
+				{path: "0001-a.md", number: 1, source: withStatus(soundADR, "Superseded by ADR-0099")},
+			},
 			"語の途中に現れる形は参照ではない": {
 				{path: "0001-a.md", number: 1, source: soundADR + "\nxADR-0099\n"},
 			},
@@ -1955,6 +1998,14 @@ func Test_checkCrossReferences(t *testing.T) {
 			assert.Equal(t, "0001-a.md", findings[0].File)
 			assert.Equal(t, 2, findings[0].Line)
 			assert.Equal(t, "参照先の ADR-0099 が存在しません", findings[0].Message)
+		})
+
+		t.Run("メタデータの後に続く Status 形の行は本文として見る", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: soundADR + "\n- Status: ADR-0099\n"}
+			findings := checkCrossReferences([]doc{d})
+			require.Len(t, findings, 1)
+			assert.Equal(t, 10, findings[0].Line)
 		})
 
 		t.Run("行頭の参照も見る", func(t *testing.T) {
@@ -2001,20 +2052,36 @@ func Test_checkScopedReferences(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string][]scopeDocs{
-			"他 scope に実在する":      scopes([]doc{rootADR}, body("repository-wide/ADR-0001 を前提とする。")),
-			"同じ scope を前置して実在する": scopes([]doc{rootADR}, body("demo/ADR-0001")),
-			"scope を伴わない参照は見ない":  scopes([]doc{rootADR}, body("ADR-0099")),
-			"path の一部は参照ではない":    scopes([]doc{rootADR}, body("docs/adr/ADR-0099 と ./ADR-0099 と a.b/ADR-0099")),
-			"Status 行は読まない":      scopes([]doc{rootADR}, body("- Status: Superseded by nowhere/ADR-0099")),
-			"ADR が1件もない":         nil,
+			"他 scope に実在する":        scopes([]doc{rootADR}, body("repository-wide/ADR-0001 を前提とする。")),
+			"同じ scope を前置して実在する":   scopes([]doc{rootADR}, body("demo/ADR-0001")),
+			"scope を伴わない参照は見ない":    scopes([]doc{rootADR}, body("ADR-0099")),
+			"メタデータの Status 行は読まない": scopes([]doc{rootADR}, []doc{{path: "0001-x.md", number: 1, source: withStatus(soundADR, "Superseded by nowhere/ADR-0099")}}),
+			"ADR が1件もない":           nil,
 		}
 
 		for name, in := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				assert.Empty(t, checkScopedReferences(in))
+				findings, _, err := checkScopedReferences(in)
+				require.NoError(t, err)
+				assert.Empty(t, findings)
 			})
 		}
+
+		t.Run("取り出した参照の件数を返す", func(t *testing.T) {
+			t.Parallel()
+			_, refs, err := checkScopedReferences(scopes([]doc{rootADR}, body("repository-wide/ADR-0001 と demo/ADR-0001")))
+			require.NoError(t, err)
+			assert.Equal(t, 2, refs)
+		})
+
+		// scope を伴う参照が0件の木は正常である。番兵は抽出との食い違いにだけ立つ。
+		t.Run("参照を含む行が無ければ0件で通る", func(t *testing.T) {
+			t.Parallel()
+			_, refs, err := checkScopedReferences(scopes([]doc{rootADR}, body("ADR-0001")))
+			require.NoError(t, err)
+			assert.Zero(t, refs)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -2024,6 +2091,10 @@ func Test_checkScopedReferences(t *testing.T) {
 			in          []scopeDocs
 			wantMessage string
 		}{
+			"メタデータの後に続く Status 形の行は本文として見る": {
+				in:          scopes([]doc{rootADR}, []doc{{path: "0001-x.md", number: 1, source: "- Status: Accepted\n- Status: repository-wide/ADR-0099\n"}}),
+				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
+			},
 			"宛先の scope に番号が無い": {
 				in:          scopes([]doc{rootADR}, body("repository-wide/ADR-0099")),
 				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
@@ -2041,12 +2112,21 @@ func Test_checkScopedReferences(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				findings := checkScopedReferences(tt.in)
+				findings, _, err := checkScopedReferences(tt.in)
+				require.NoError(t, err)
 				require.Len(t, findings, 1)
 				assert.Equal(t, "0001-x.md", findings[0].File)
 				assert.Equal(t, 2, findings[0].Line)
 				assert.Equal(t, tt.wantMessage, findings[0].Message)
 			})
+		}
+	})
+
+	t.Run("参照を含む行が在るのに1件も取り出せなければ番兵で返す", func(t *testing.T) {
+		t.Parallel()
+		for _, text := range []string{"docs/adr/ADR-0099", "a.b/ADR-0099", "*demo*/ADR-0001"} {
+			_, _, err := checkScopedReferences(scopes([]doc{rootADR}, body(text)))
+			require.ErrorIs(t, err, errNoScopedRef, text)
 		}
 	})
 
@@ -2060,6 +2140,30 @@ func Test_checkScopedReferences(t *testing.T) {
 		assert.Equal(t, "0001", plain[0][2])
 		assert.Equal(t, "0002", scoped[0][2])
 	})
+}
+
+func Test_mentionsScopedADR(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		line string
+		want bool
+	}{
+		"scope を伴う参照":     {line: "repository-wide/ADR-0001 を前提とする。", want: true},
+		"path の一部も数える":    {line: "docs/adr/ADR-0001", want: true},
+		"2つ目の出現で当たる":      {line: "/ADR-x と a/ADR-0001", want: true},
+		"scope を伴わない参照":   {line: "ADR-0001", want: false},
+		"行頭の /ADR- は数えない": {line: "/ADR-0001", want: false},
+		"番号が4桁に満たない":      {line: "a/ADR-001", want: false},
+		"番号の代わりに雛形の記法":    {line: "<scope>/ADR-NNNN", want: false},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, mentionsScopedADR(tt.line))
+		})
+	}
 }
 
 func Test_checkIndex(t *testing.T) {
@@ -2093,6 +2197,17 @@ func Test_checkIndex(t *testing.T) {
 			root := writeADRs(t, map[string]string{
 				"0001-a.md": soundADR,
 				"README.md": index("| [0001](0001-a.md) | [x](y) と a \\| b | Accepted |"),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+		})
+
+		t.Run("改行が CRLF の索引でも Status 列を読む", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": strings.ReplaceAll(index(row("0001", "0001-a.md")), "\n", "\r\n"),
 			})
 			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
 			require.NoError(t, err)
@@ -2175,6 +2290,21 @@ func Test_checkIndex(t *testing.T) {
 			assert.Equal(t, filepath.Join(root, "README.md"), findings[0].File)
 			assert.Equal(t, 6, findings[0].Line)
 			assert.Equal(t, `索引の ADR-0002 の Status は "Proposed" ですが、本文は "Accepted" です`, findings[0].Message)
+		})
+
+		t.Run("同じ番号の行が重複すれば後の行を落とし、最初の行を突き合わせる", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index(rowWithStatus("0001", "0001-a.md", "Proposed"), row("0001", "0001-a.md")),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+			require.NoError(t, err)
+			require.Len(t, findings, 2)
+			assert.Equal(t, 6, findings[0].Line)
+			assert.Equal(t, "索引に ADR-0001 の行が重複しています（最初の行は 5 行目）", findings[0].Message)
+			assert.Equal(t, 5, findings[1].Line)
+			assert.Contains(t, findings[1].Message, `Status は "Proposed"`)
 		})
 
 		unreadable := map[string]string{
