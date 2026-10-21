@@ -471,7 +471,7 @@ For each non-`維持` finding, in descending impact order:
    reasoning is simply gone. When the auditor found the destination **already states the content**
    (`追記なし`), there is no document write: the finding lands as a 短縮 to the residue plus a link,
    and only the code changes.
-4. If the destination is an **ADR**, do not decide the ADR's shape yourself. ADR-0001 決定2 は、v1.0.0 までは
+4. If the destination is an **ADR**, do not decide the ADR's shape yourself. ADR-0001 決定2 は、v1.0.0 までは <!-- v1.0.0 で削除: #141 -->
    受理済みの ADR の本文を直接書き換え、以後は supersede で改訂すると定める。新しい根拠が新規の記録として
    着地するのか、既存の決定を改訂するのかはリポジトリ方針の判断であって、コメント整理の判断ではない。
    Ask: 「root ADR を新規に起こす」 / 「use-case ADR（`modules/<use-case>/docs/adr/`）として起こす」 /

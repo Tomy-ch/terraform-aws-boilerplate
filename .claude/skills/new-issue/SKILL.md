@@ -187,7 +187,7 @@ can read is a backlog nobody uses.
 | An existing issue covers it | Comment there with the new finding |
 | The fix is small enough to just make | Offer to make it now |
 | Step 2 disproved the premise | Report that; file nothing |
-| It is a decision, not a task | ADR を提案する（`docs/adr/`。**ADR の変更は停止点である** —— v1.0.0 までは本文の書き換え、以後は supersede。ADR-0001 決定2・3） |
+| It is a decision, not a task | ADR を提案する（`docs/adr/`。**ADR の変更は停止点である** —— v1.0.0 までは本文の書き換え、以後は supersede。ADR-0001 決定2・3） <!-- v1.0.0 で削除: #141 --> |
 | ユースケースの責務境界の話だった | `modules/<use-case>/README.md` の supported / unsupported へ（ADR-0102 決定7） |
 | **Terraform 本体が無いと対象0件になる** | それを issue の本文に書く —— 何が要るか、入ったときに**どう変容するか** |
 

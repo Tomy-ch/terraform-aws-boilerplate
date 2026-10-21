@@ -118,7 +118,7 @@
 | 公式推奨から外れる構成の採用 | [0207](docs/adr/0207-default-value-policy.md) 決定11 —— 外れる対象・理由・影響・代替案・見直し条件を記録する |
 | 新しいユースケースの追加、および要求を責務外と判断すること | [0102](docs/adr/0102-use-case-centric-scope.md) 決定5・7 |
 | experimental なユースケースの stable への昇格、および削除 | [0102](docs/adr/0102-use-case-centric-scope.md) 決定14 |
-| ADR の supersede（v1.0.0 までは Accepted ADR の本文の書き換え） | [0001](docs/adr/0001-adr-process-and-placement.md) 決定2・3 |
+| ADR の supersede（v1.0.0 までは Accepted ADR の本文の書き換え） | [0001](docs/adr/0001-adr-process-and-placement.md) 決定2・3 <!-- v1.0.0 で削除: #141 --> |
 | 検出結果の新規の抑止 | [0501](docs/adr/0501-development-tooling-composition.md) 決定13 —— 理由を書けないものは抑止せず、値そのものを直す |
 | amend したうえで既存の Pull Request ブランチへ push すること | *Git 規約* —— そこにある文言をそのまま使う |
 
@@ -162,7 +162,7 @@
 
 ### v1.0.0 までの暫定
 
-> **暫定の節である。v1.0.0 で削除する。**
+> **暫定の節である。v1.0.0 で削除する。** <!-- v1.0.0 で削除: #141 -->
 
 v1.0.0 より前では次を解除する。
 
@@ -222,4 +222,4 @@ v1.0.0 より前では次を解除する。
 - Accepted ADR の本文（`docs/adr/0001-*.md` 以降で Status が Accepted のもの）
 - `LICENSE`
 
-> v1.0.0 までは `AGENTS.md` の承認要件を解除する —— *v1.0.0 までの暫定* を見よ。ADR の immutable も v1.0.0 までは適用しないが（0001 決定2）、Accepted ADR の本文の承認要件は解除しない。
+> v1.0.0 までは `AGENTS.md` の承認要件を解除する —— *v1.0.0 までの暫定* を見よ。ADR の immutable も v1.0.0 までは適用しないが（0001 決定2）、Accepted ADR の本文の承認要件は解除しない。 <!-- v1.0.0 で削除: #141 -->

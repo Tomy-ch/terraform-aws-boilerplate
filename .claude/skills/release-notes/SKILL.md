@@ -56,7 +56,7 @@ Do NOT read git history, run diffs, or write any file until both values are conf
 
 ## 変更してよい範囲
 
-`AGENTS.md` *v1.0.0 までの暫定* が `.github/` の編集を解除している。**作成してよいのは次だけ**である。
+`AGENTS.md` *v1.0.0 までの暫定* が `.github/` の編集を解除している。**作成してよいのは次だけ**である。 <!-- v1.0.0 で削除: #141 -->
 
 - `.github/release/<NEW_VERSION>.md` (new file only)
 
@@ -121,7 +121,7 @@ When the bucket is ambiguous, inspect the changed file paths from step 2 to infe
 | 触れた場所 | 読者にとっての意味 |
 | --- | --- |
 | `modules/` / `examples/` | 公開契約の変更。**利用者に最も影響する** |
-| `docs/adr/` | 決定の追加・変更（v1.0.0 までは本文の書き換え、以後は supersede）。**規範が変わった** |
+| `docs/adr/` | 決定の追加・変更（v1.0.0 までは本文の書き換え、以後は supersede）。**規範が変わった** <!-- v1.0.0 で削除: #141 --> |
 | `scripts/` / `.makefiles/` | 運用機構。検査の増減はここに出る |
 | `.github/workflows/` / `.github/settings/` | CI と保護設定。必須検査が増減したなら明記する |
 | `docker/` / `mise.toml` | 実行環境と道具の版 |

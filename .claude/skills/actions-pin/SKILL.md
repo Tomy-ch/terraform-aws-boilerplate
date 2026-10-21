@@ -53,7 +53,7 @@ The exclusion days must be a non-negative integer. `0` disables the quarantine (
 
 ## 変更してよい範囲
 
-`AGENTS.md` の *変更してよい範囲* は `.github/` を「指示なしに触らない」側に置いているが、*v1.0.0 までの暫定* がそれを解除している。このスキルの起動がその指示に当たる。触れてよいのは次だけ。
+`AGENTS.md` の *変更してよい範囲* は `.github/` を「指示なしに触らない」側に置いているが、*v1.0.0 までの暫定* がそれを解除している。このスキルの起動がその指示に当たる。触れてよいのは次だけ。 <!-- v1.0.0 で削除: #141 -->
 
 - `.github/workflows/*.{yml,yaml}` — `uses:` の末尾コメントのタグと `@<sha>`（`make pin-actions-apply` が書く）
 - `.github/actions/*/action.{yml,yaml}` — 同上
