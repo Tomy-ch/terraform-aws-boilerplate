@@ -180,7 +180,7 @@ func Test_run_ユースケースのADR(t *testing.T) {
 			})
 			var out bytes.Buffer
 			require.NoError(t, run(args(root), &out))
-			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
+			assert.Contains(t, out.String(), "ADR 2 件（2 scope）の構造と、scope を伴う参照 1 件と、")
 			assert.NotContains(t, out.String(), "docs/adr を持たないユースケース")
 		})
 
@@ -218,6 +218,14 @@ func Test_run_ユースケースのADR(t *testing.T) {
 					"README.md": index(row("0001", "0001-a.md")),
 				},
 				wantMessage: "先頭メタデータに `Date` がありません",
+			},
+			"scope の中の slug の重複を落とす": {
+				files: map[string]string{
+					"0001-a.md": soundADR,
+					"0002-a.md": soundADRNo("0002"),
+					"README.md": index(row("0001", "0001-a.md"), row("0002", "0002-a.md")),
+				},
+				wantMessage: "slug a が重複しています",
 			},
 			"scope の中の番号の重複を落とす": {
 				files: map[string]string{
@@ -350,6 +358,16 @@ func Test_discoverScopes(t *testing.T) {
 			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}, {name: "a", dir: a}, {name: "b", dir: b}}, got)
 		})
 
+		t.Run("大文字と数字とアンダースコアを含む名前は scope にする", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeUseCaseADRs(t, repo, "Demo_2", nil)
+			scopes, _, err := discoverScopes(repo, "docs/adr")
+			require.NoError(t, err)
+			require.Len(t, scopes, 2)
+			assert.Equal(t, "Demo_2", scopes[1].name)
+		})
+
 		t.Run("docs/adr を持たないユースケースは scope にせず名前を返す", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -403,6 +421,14 @@ func Test_discoverScopes(t *testing.T) {
 			writeUseCaseADRs(t, repo, rootScope, nil)
 			_, _, err := discoverScopes(repo, "docs/adr")
 			require.ErrorIs(t, err, errReservedScope)
+		})
+
+		t.Run("scope として使えない文字を含む名前のユースケースは docs/adr が無くてもエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "a.b"), 0o750))
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errScopeName)
 		})
 
 		t.Run("scope として使えない文字を含む名前のユースケースはエラー", func(t *testing.T) {
@@ -2005,7 +2031,7 @@ func Test_checkCrossReferences(t *testing.T) {
 			d := doc{path: "0001-a.md", number: 1, source: soundADR + "\n- Status: ADR-0099\n"}
 			findings := checkCrossReferences([]doc{d})
 			require.Len(t, findings, 1)
-			assert.Equal(t, 10, findings[0].Line)
+			assert.Equal(t, strings.Count(soundADR, "\n")+2, findings[0].Line)
 		})
 
 		t.Run("行頭の参照も見る", func(t *testing.T) {
@@ -2044,6 +2070,7 @@ func Test_checkScopedReferences(t *testing.T) {
 		}
 	}
 	rootADR := doc{path: "0001-a.md", number: 1, source: soundADR}
+	rootOnlyADR := doc{path: "0002-b.md", number: 2, source: soundADRNo("0002")}
 	body := func(text string) []doc {
 		return []doc{{path: "0001-x.md", number: 1, source: "本文\n" + text + "\n"}}
 	}
@@ -2052,8 +2079,10 @@ func Test_checkScopedReferences(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string][]scopeDocs{
-			"他 scope に実在する":        scopes([]doc{rootADR}, body("repository-wide/ADR-0001 を前提とする。")),
-			"同じ scope を前置して実在する":   scopes([]doc{rootADR}, body("demo/ADR-0001")),
+			"他 scope に実在する":      scopes([]doc{rootADR}, body("repository-wide/ADR-0001 を前提とする。")),
+			"同じ scope を前置して実在する": scopes([]doc{rootADR}, body("demo/ADR-0001")),
+			// 番号が宛先の scope にだけ在る。自 scope で引けば落ちる。
+			"宛先の scope にだけ在る番号を引く": scopes([]doc{rootADR, rootOnlyADR}, body("repository-wide/ADR-0002")),
 			"scope を伴わない参照は見ない":    scopes([]doc{rootADR}, body("ADR-0099")),
 			"メタデータの Status 行は読まない": scopes([]doc{rootADR}, []doc{{path: "0001-x.md", number: 1, source: withStatus(soundADR, "Superseded by nowhere/ADR-0099")}}),
 			"ADR が1件もない":           nil,
@@ -2103,9 +2132,14 @@ func Test_checkScopedReferences(t *testing.T) {
 				in:          scopes([]doc{rootADR}, body("ecs-web-service/ADR-0001")),
 				wantMessage: "参照先 ecs-web-service/ADR-0001 の scope ecs-web-service が見つかりません",
 			},
-			"scope の綴りを途中から取らない": {
+			"全角括弧の直後の参照も取り出す": {
 				in:          scopes([]doc{rootADR}, body("（repository-wide/ADR-0099）")),
 				wantMessage: "参照先の repository-wide/ADR-0099 が存在しません",
+			},
+			// 番号が別の scope にだけ在る。宛先でなく全 scope で引けば通ってしまう。
+			"宛先の scope に無い番号は他 scope に在っても落とす": {
+				in:          scopes([]doc{rootADR, rootOnlyADR}, body("demo/ADR-0002")),
+				wantMessage: "参照先の demo/ADR-0002 が存在しません",
 			},
 		}
 
@@ -2128,6 +2162,13 @@ func Test_checkScopedReferences(t *testing.T) {
 			_, _, err := checkScopedReferences(scopes([]doc{rootADR}, body(text)))
 			require.ErrorIs(t, err, errNoScopedRef, text)
 		}
+	})
+
+	t.Run("取り出せる参照が別の行に在っても、取り出せない行があれば番兵で返す", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := checkScopedReferences(scopes([]doc{rootADR}, body("repository-wide/ADR-0001\na.b/ADR-0001")))
+		require.ErrorIs(t, err, errNoScopedRef)
+		assert.Contains(t, err.Error(), "0001-x.md:3")
 	})
 
 	t.Run("adrRef と同じ出現に当たらない", func(t *testing.T) {
@@ -2155,6 +2196,7 @@ func Test_mentionsScopedADR(t *testing.T) {
 		"scope を伴わない参照":   {line: "ADR-0001", want: false},
 		"行頭の /ADR- は数えない": {line: "/ADR-0001", want: false},
 		"番号が4桁に満たない":      {line: "a/ADR-001", want: false},
+		"4桁目が数字でない":       {line: "a/ADR-001x", want: false},
 		"番号の代わりに雛形の記法":    {line: "<scope>/ADR-NNNN", want: false},
 	}
 
@@ -2277,6 +2319,18 @@ func Test_checkIndex(t *testing.T) {
 			assert.Contains(t, findings[0].Message, "実ファイルは 0001-a.md です")
 		})
 
+		t.Run("ファイル名が食い違う行は Status 列が読めなくてもファイル名だけを報告する", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index("| [0001](0001-old-name.md) | なにか | |"),
+			})
+			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
+			require.NoError(t, err)
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "実ファイルは 0001-a.md です")
+		})
+
 		t.Run("Status が食い違えば行の行番号で落とす", func(t *testing.T) {
 			t.Parallel()
 			root := writeADRs(t, map[string]string{
@@ -2311,6 +2365,7 @@ func Test_checkIndex(t *testing.T) {
 			"リンクのセルしか無い":         "| [0001](0001-a.md) |",
 			"Status 列を持たない2セルの行": "| [0001](0001-a.md) | なにか |",
 			"Status のセルが空":       "| [0001](0001-a.md) | なにか | |",
+			"行末の | が無い":          "| [0001](0001-a.md) | なにか | Accepted",
 		}
 
 		for name, r := range unreadable {

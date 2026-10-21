@@ -595,9 +595,10 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 // scope を伴わない参照は checkCrossReferences が自 scope で引きます。Status 行は checkSupersede が
 // 見るので、ここでは読みません。
 //
-// **抽出の件数を、正規表現を使わない経路で得た件数と突き合わせます**（ADR-0702 決定15）。scope を伴う
-// 参照が0件なのは正常な状態なので、0件そのものは落としません。落とすのは、`/ADR-NNNN` を含む行が在るのに
-// scopedRef が1件も取り出せないときです。
+// **抽出を、正規表現を使わない経路と行ごとに突き合わせます**（ADR-0702 決定15）。scope を伴う
+// 参照が0件なのは正常な状態なので、0件そのものは落としません。落とすのは、`/ADR-NNNN` を含む行から
+// scopedRef が1件も取り出せないときです。木全体で突き合わせると、取り出せた参照が1件在るだけで
+// 別の行の取りこぼしが隠れます。
 func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error) {
 	numbers := make(map[string]map[int]bool, len(scopes))
 	for _, s := range scopes {
@@ -609,7 +610,7 @@ func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error
 	}
 
 	var findings []lintreport.Finding
-	refs, mentions := 0, 0
+	refs := 0
 	for _, s := range scopes {
 		for _, d := range s.docs {
 			status := metadataLine(d.source)
@@ -617,10 +618,11 @@ func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error
 				if i == status {
 					continue
 				}
-				if mentionsScopedADR(line) {
-					mentions++
+				matches := scopedRef.FindAllStringSubmatch(line, -1)
+				if len(matches) == 0 && mentionsScopedADR(line) {
+					return nil, 0, xerrors.Wrapf(errNoScopedRef, "%s:%d", d.path, i+1)
 				}
-				for _, m := range scopedRef.FindAllStringSubmatch(line, -1) {
+				for _, m := range matches {
 					refs++
 					target, numStr := m[1], m[2]
 					set, ok := numbers[target]
@@ -638,9 +640,6 @@ func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error
 				}
 			}
 		}
-	}
-	if mentions > 0 && refs == 0 {
-		return nil, 0, errNoScopedRef
 	}
 	return findings, refs, nil
 }
