@@ -51,9 +51,9 @@
 
 | 必要なもの | 読む先 |
 | --- | --- |
-| 受理されたすべての決定、1行ずつ | [`docs/adr/README.md`](docs/adr/README.md) —— ADR の一覧が存在する唯一の場所 |
+| repository-wide の受理された決定、1行ずつ | [`docs/adr/README.md`](docs/adr/README.md) —— repository-wide の ADR の一覧が存在する唯一の場所 |
 | ユースケースの責務境界・supported / unsupported・公開契約 | `usecases/<use-case>/README.md`（[0102](docs/adr/0102-use-case-centric-scope.md) 決定2、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2）—— 未作成 |
-| そのユースケースに固有の設計判断 | `usecases/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）—— 未作成 |
+| そのユースケースに固有の設計判断 | `usecases/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）。一覧は同ディレクトリの `README.md` —— 未作成 |
 | **AWS Provider の schema は version で変わる** | 記憶ではなく Terraform MCP Server → Terraform Registry → Provider Documentation の順に確認する（[0501](docs/adr/0501-development-tooling-composition.md) 決定21）。記憶にある argument 名は、確認するまで仮説である |
 | どのテスト層が何を検出するか | [0401](docs/adr/0401-testing-policy.md) 決定4。それを担う道具は [0501](docs/adr/0501-development-tooling-composition.md) 決定4 |
 | どの文書が何を所有し、開発の経緯はどこへ行くか | [0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2・3 |
@@ -63,7 +63,7 @@
 実装に着手する前に。
 
 1. **触ろうとしているディレクトリを所有する `README.md` を読む。** 無ければ最も近い祖先まで遡る。そこが述べる責務境界と supported / unsupported は、ゲートが検査できる範囲より広い。
-2. **上の索引を開き、変更が触れる決定を所有する項目を読む。** 何が決まっているかは `docs/adr/README.md` が、その適用範囲は当該ユースケースの `README.md` が持つ。
+2. **上の索引を開き、変更が触れる決定を所有する項目を読む。** 何が決まっているかは `docs/adr/README.md` と当該ユースケースの `docs/adr/README.md` が、その適用範囲は当該ユースケースの `README.md` が持つ。
 3. **既存の実装が既に覆っていないかを確認する。** 同じユースケース内を先に探し、新規作成より既存の編集を選ぶ。重複のみを理由に共通化しないこと（[0205](docs/adr/0205-module-dependency-policy.md) 決定11）と、重複に気づかず二重に書くことは別である。
 4. **契約をコードより先に動かす。** 公開 `variable` / `output` の変更は公開契約の変更であり（[0201](docs/adr/0201-public-interface-policy.md)、[0202](docs/adr/0202-internal-topology-as-implementation-detail.md) 決定1）、Contract Test の更新を伴う。内部 resource の address を変える変更は、同じ変更の中で `moved` block を提供する（[0202](docs/adr/0202-internal-topology-as-implementation-detail.md) 決定6）。
 5. **変更の種類に対応するテスト層を先に更新する**（[0501](docs/adr/0501-development-tooling-composition.md) 決定29）。どの層かは [0401](docs/adr/0401-testing-policy.md) 決定4 と [0501](docs/adr/0501-development-tooling-composition.md) 決定9 が決める。

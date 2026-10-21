@@ -81,6 +81,8 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 
 11. 番号体系はscopeごとに独立させる。リポジトリ全体で一意である必要はない。群の切り方も
     scopeごとに独立し、use-case scope が repository-wide と同じ群を持つ必要はない。
+    scopeを伴わない `ADR-NNNN` は、それが書かれたADRと同じscopeのADRを指す。他scopeのADRを
+    指すときはscopeを前置する。
 
 ### 配置
 
@@ -88,6 +90,9 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 
     - repository-wide ADR: `docs/adr/`
     - use-case-local ADR: `usecases/<use-case>/docs/adr/`
+
+    各scopeの索引は、そのscopeのADRディレクトリ直下の `README.md` に置く（`docs/adr/README.md`、
+    `usecases/<use-case>/docs/adr/README.md`）。root の索引は use-case ADR を載せない。
 
 13. 原則は以下とする。
 
@@ -191,7 +196,7 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 
 ## 保証範囲
 
-- 保証すること: ADR本文どうしの相互参照が、常に実在するADRを指すこと。索引が実ファイルと一致すること
+- 保証すること: ADR本文どうしの相互参照が、常に実在するADRを指すこと。各scopeの索引が実ファイルと一致すること
 - 保証しないこと: リポジトリの外（git 履歴、Pull Requestの本文、会話の記録）に残る番号参照の解決
 
 ## 検証方法
@@ -203,9 +208,9 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 - 本文の見出しが名乗る番号がファイル名の番号と一致すること（決定7）
 - 先頭メタデータに Status / Date / Scope が存在すること
 - Status が `Superseded by` の場合、参照先ADRが存在すること（決定3）
-- **ADR本文が参照する `ADR-NNNN` が、すべて実在すること**（決定7・9）
-- 索引が実ファイルと一致すること
-- root ADR本文が `usecases/<use-case>/` 配下のpathへ規範的に依存していないこと（決定19）
+- **ADR本文が参照する、scopeを伴わない `ADR-NNNN` が、すべて同じscopeに実在すること**（決定7・9・11）
+- 各scopeの索引が、そのscopeの実ファイルと一致すること（決定12）
+- root ADR本文が特定ユースケースのディレクトリ（`usecases/<use-case>/`）またはその配下のpathを名指ししていないこと（決定19）
 
 決定2 の但し書き（v1.0.0 までの直接の書き換え）は機械判定できない。v1.0.0 に達したときの削除は、 <!-- v1.0.0 で削除: #141 -->
 見直し条件が持つ。

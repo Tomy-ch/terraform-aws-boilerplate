@@ -42,7 +42,7 @@ make md-lint RUNNER_MODE=host  # ホストの mise が入れたもので実行�
 
 ## 読む順序
 
-1. [`docs/adr/README.md`](docs/adr/README.md) —— **受理されたすべての決定の一覧が存在する唯一の場所。**
+1. [`docs/adr/README.md`](docs/adr/README.md) —— **repository-wide の受理された決定の一覧が存在する唯一の場所。**
    番号は前二桁が関心事の群、後二桁が群内のスロットである。
 2. [`AGENTS.md`](AGENTS.md) —— このリポジトリでどう作業するか。AI コーディングエージェント向けだが、
    人が読んでも規約として通る。
