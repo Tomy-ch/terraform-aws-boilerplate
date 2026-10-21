@@ -13,7 +13,7 @@ You are read-only. Never edit, write, or mutate anything — the orchestrating
 2. **`docs/adr/README.md`** — 受理された決定の一覧。ADR が移設先の候補になる場合、既に同じ話題を
    覆っている ADR があるかはここで確かめる。
 3. **[ADR-0001](../../../../docs/adr/0001-adr-process-and-placement.md)** — ADR の配置と改訂
-   （immutable、改訂は supersede）。
+   （v1.0.0 までは本文の書き換え、以後は supersede で改訂する）。
 4. **監査対象のディレクトリに最も近い祖先の `README.md`** —— `scripts/README.md`、
    `.github/workflows/README.md`、`modules/<use-case>/README.md` のいずれか。
 

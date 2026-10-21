@@ -79,7 +79,7 @@ git diff --name-only --diff-filter=U
 | 依存の lockfile | `scripts/go.sum` | 行を選ばない。`go -C scripts mod tidy` |
 | 保護設定 | `.github/settings/branch-protection.json` | **和集合にしない。** 片方が required から外した検査を、機械的な和集合は黙って戻す。宣言の意図を人へ返す |
 | 追記専用の索引 | `docs/adr/README.md` の表 | 両側のエントリの和集合 —— **ただし同じ番号が両側に現れたら Step 5 へ渡す** |
-| ADR の本文 | `docs/adr/*.md` | **衝突すること自体が異常である。** ADR-0001 決定2 は Accepted ADR を immutable とする。片方が既存の本文を書き換えている。人へ返す |
+| ADR の本文 | `docs/adr/*.md` | **両側が同じ決定を変えている。** v1.0.0 までは Accepted ADR の本文を直接書き換えるため（ADR-0001 決定2）、決定の変更どうしが衝突する。どちらを採るかは決定の変更であり停止点なので、人へ返す。v1.0.0 以後の衝突は immutable の違反を示す |
 | Terraform の lockfile | `.terraform.lock.hcl` | **まだ存在しない。** 入ったら `terraform providers lock` が持ち主で、行を選ばない |
 | 実装 | それ以外すべて | **機械的でない。** マーカーを残して手渡す |
 
@@ -131,7 +131,7 @@ make pin-images-check
 - 実装の意味的な衝突
 - **同じ ADR 番号が両側に現れた** —— ADR-0001 決定7 の採番の詰め直しが両側で走った形。
   番号は identity ではないので、どちらを詰め直すかは人が決める
-- **Accepted ADR の本文の衝突** —— immutable の違反が既に起きている
+- **Accepted ADR の本文の衝突** —— 決定の変更どうしの衝突（v1.0.0 以後は immutable の違反）
 - **保護設定の宣言の衝突** —— 片方が検査を外している可能性がある
 - 宣言そのものの衝突（`mise.toml` の同じキー、`.github/egress.toml` の同じ job）
 

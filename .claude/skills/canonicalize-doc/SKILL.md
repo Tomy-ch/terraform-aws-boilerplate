@@ -1,7 +1,7 @@
 ---
 name: canonicalize-doc
 description: >-
-  Create or sync an English-canonical / Japanese-translation Markdown pair for a README, SKILL, or ADR, preserving heading structure, code blocks, and link targets 1:1. **This skill cannot run today**: ADR-0701 決定6 makes Japanese canonical and 決定7 forbids translation pairs (`*.ja.md`), which is exactly what this skill produces. It refuses to write anything until 決定7 has been superseded — a 停止点 owned by ADR-0001 決定2-3, decided by a human, and **the shape of any such supersede is not recorded anywhere yet**. Use it once that supersede has landed and a document needs its counterpart produced or re-synced. Do NOT use it to write a document's content (`sync-readme` / the owning document per ADR-0701 決定2), to edit Accepted ADR bodies, or to translate ad hoc — a one-off translation that lands in the tree is exactly what 決定7 forbids.
+  Create or sync an English-canonical / Japanese-translation Markdown pair for a README, SKILL, or ADR, preserving heading structure, code blocks, and link targets 1:1. **This skill cannot run today**: ADR-0701 決定6 makes Japanese canonical and 決定7 forbids translation pairs (`*.ja.md`), which is exactly what this skill produces. It refuses to write anything until 決定7 has been changed (rewritten in place before v1.0.0, superseded after — ADR-0001 決定2) — a 停止点 owned by ADR-0001 決定2-3, decided by a human, and **the shape of any such change is not recorded anywhere yet**. Use it once that change has landed and a document needs its counterpart produced or re-synced. Do NOT use it to write a document's content (`sync-readme` / the owning document per ADR-0701 決定2), to edit Accepted ADR bodies, or to translate ad hoc — a one-off translation that lands in the tree is exactly what 決定7 forbids.
 ---
 
 # Canonicalize Doc
@@ -17,34 +17,34 @@ description: >-
 
 このスキルの成果物はその決定7 が禁じているものそのものである。したがって:
 
-1. **`docs/adr/0701-documentation-ownership-and-language.md` の Status を開いて確かめる。**
-   `Accepted` のままで、決定7 を supersede した ADR が `docs/adr/README.md` の一覧に無いなら、
-   **ここで止まる。** ユーザーへそう報せ、ファイルを1つも書かない。
-2. ADR の supersede は**停止点**である（`AGENTS.md` *停止点*、ADR-0001 決定2-3）。
+1. **`docs/adr/0701-documentation-ownership-and-language.md` の決定7 を開いて確かめる。**
+   今も翻訳ペアを禁じているなら、**ここで止まる。** ユーザーへそう報せ、ファイルを1つも書かない。
+2. 決定7 の改定は**停止点**である（`AGENTS.md` *停止点*、ADR-0001 決定2-3）。v1.0.0 までは本文の
+   書き換えで、以後は supersede で行われる（ADR-0001 決定2）。
    このスキルがその判断を代行しない。**スキルが自分で規則の例外を宣言することは、抜け道である。**
-3. supersede が済んでいるなら、その新しい ADR が定める**正本の側と訳文の命名**を読み、
-   以下の既定より優先させる。このスキルの記述は、supersede が landing した時点の形を先取りした
+3. 改定が済んでいるなら、改定後の決定が定める**正本の側と訳文の命名**を読み、
+   以下の既定より優先させる。このスキルの記述は、改定が landing した時点の形を先取りした
    ものにすぎない。
 
 **このスキルが将来どう使われるかは、まだどの文書も決めていない。** ADR-0701 の *見直し条件* は
 3つ（日本語を読まない開発者の継続的な参加 / 生成区間の増加 / 決定11 の例外の増加）を挙げており、
-特定のリリースを条件に挙げてはいない。`AGENTS.md` *v1.0.0 までの暫定* も ADR の運用は解除しない。
+特定のリリースを条件に挙げてはいない。ADR-0001 決定2 の但し書きが変えるのは決定の変え方であって、決定7 の中身ではない。
 **したがって、ここに「いつ・どう切り替えるか」を書かない** —— 書けばそれが、どの決定にも
 支えられていない唯一の記述になる。
 
 ## When to Use
 
-決定7 が supersede された後に:
+決定7 が改定された後に:
 
 - 正本しか無い文書の対の片側を作る。
 - 両方在るが、ずれた対を同期させる。
 
-Supported document types（supersede 後の ADR が別を定めればそちらが勝つ）:
+Supported document types（改定後の決定が別を定めればそちらが勝つ）:
 
 - Claude Code のスキル: `.claude/skills/<name>/` の `SKILL.md` とその対。
 - README: 同じディレクトリに並べる `README.md` とその対。
 - `docs/**` の文書: `docs/<path>/<name>.md` とその対。**Accepted ADR の本文は対象外**
-  —— immutable であり（ADR-0001 決定2）、`AGENTS.md` の *保護された文書* が守る。
+  —— 決定そのものであり、その変更は停止点である（ADR-0001 決定2-3）。`AGENTS.md` の *保護された文書* が守る。
 
 Do NOT use this skill for:
 
@@ -97,7 +97,7 @@ Do NOT use this skill for:
 - `translation-from-canonical`: `foo.md` → `foo.<訳文の接尾辞>.md`（同じディレクトリ）。
 - `sync-both`: 正としなかった側を書き直す。
 
-接尾辞と、どちらが正本かは、決定7 を supersede した ADR が持つ。**ここへ写さない。**
+接尾辞と、どちらが正本かは、改定後の決定が持つ。**ここへ写さない。**
 
 ### 3. Translate (or sync)
 
@@ -106,7 +106,7 @@ Do NOT use this skill for:
 - **訳さないもの**: 識別子、ファイルパス、コマンド、コードそのもの。ADR-0701 決定8 が英語のまま
   置くと定めたもの（HCL の識別子、ファイル名、commit message の prefix、技術用語）は、
   どちら側でも英語のままである。
-- スキルのファイルなら、frontmatter の規約は supersede 後の ADR が定めるものに従う。
+- スキルのファイルなら、frontmatter の規約は 改定後の決定が定めるものに従う。
 
 ### 4. Write the output
 
@@ -140,10 +140,10 @@ make md-lint
 
 ## Checklist
 
-- [ ] **ADR-0701 決定7 の supersede を確かめた。** 済んでいなければ、ファイルを1つも書かずに止めた。
+- [ ] **ADR-0701 決定7 の改定を確かめた。** 済んでいなければ、ファイルを1つも書かずに止めた。
 - [ ] source のパスを `AskUserQuestion` で確認した。
 - [ ] 向きを確認した。`sync-both` なら、どちらを正とするかも確認した。
-- [ ] 出力先が、supersede 後の ADR が定める命名に従っている。
+- [ ] 出力先が、改定後の決定が定める命名に従っている。
 - [ ] 見出しの構造とコードブロックが 1:1 である。
 - [ ] `make md-lint` が綺麗に終わった。
 - [ ] 対の外のファイルを書き換えていない。

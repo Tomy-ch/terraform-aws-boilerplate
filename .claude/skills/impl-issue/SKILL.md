@@ -117,7 +117,7 @@ The relaxation is bounded, and the bound is the plan:
 **このスキルの実行中も解除されないもの**（issue が何を求めていても触らない）:
 
 - `AGENTS.md` / `LICENSE`
-- **Accepted ADR の本文**（ADR-0001 決定2 の immutable。改訂は supersede であり、それは停止点である）
+- **Accepted ADR の本文**（その変更は停止点である。v1.0.0 までは本文の書き換え、以後は supersede で行う —— ADR-0001 決定2）
 - 生成物 —— terraform-docs の生成区間、`.terraform.lock.hcl`、tfautomv の出力、
   `make egress-apply` / `pin-actions-apply` / `pin-images-apply` / `versions-apply` が書く区間。
   **make ターゲット経由の再生成はよい。手で編集するのが違反である**（*トリップワイヤ* 4）
