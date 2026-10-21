@@ -15,7 +15,7 @@
 **Terraform の実装はまだ無い。** 決定（`docs/adr/`）と、それを守る機構（`.github/` / `.makefiles/` /
 `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `modules/` / `examples/` —— 実装とユースケースが無い
+- `modules/` / `env/` —— 実装とユースケースが無い
 - Terraform 側の検査 —— `.tflint.hcl`、Conftest の Policy Test、`terraform test` のいずれも未作成で、
   `make` にも配線されていない（[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が
   割り当てた道具のうち、Terraform に掛かるものが揃っていない）
@@ -117,7 +117,7 @@
 | --- | --- |
 | 公式推奨から外れる構成の採用 | [0207](docs/adr/0207-default-value-policy.md) 決定11 —— 外れる対象・理由・影響・代替案・見直し条件を記録する |
 | 新しいユースケースの追加、および要求を責務外と判断すること | [0102](docs/adr/0102-use-case-centric-scope.md) 決定5・7 |
-| experimental なユースケースの stable への昇格、および削除 | [0102](docs/adr/0102-use-case-centric-scope.md) 決定14 |
+| experimental なユースケースの stable への昇格、および削除 | [0102](docs/adr/0102-use-case-centric-scope.md) 決定22 |
 | ADR の supersede（v1.0.0 までは Accepted ADR の本文の書き換え） | [0001](docs/adr/0001-adr-process-and-placement.md) 決定2・3 <!-- v1.0.0 で削除: #141 --> |
 | 検出結果の新規の抑止 | [0501](docs/adr/0501-development-tooling-composition.md) 決定13 —— 理由を書けないものは抑止せず、値そのものを直す |
 | amend したうえで既存の Pull Request ブランチへ push すること | *Git 規約* —— そこにある文言をそのまま使う |
@@ -146,7 +146,7 @@
 ### 変更してよい
 
 - `modules/` 配下
-- `examples/` 配下
+- `env/` 配下
 - `docs/` 配下（Accepted ADR の本文を除く）
 
 ### 指示なしに触らない

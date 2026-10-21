@@ -1,9 +1,9 @@
 # ADR-0205: 外部Terraform moduleへ依存しない
 
 - Status: Accepted
-- Date: 2026-09-15
+- Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0101, ADR-0201, ADR-0202, ADR-0206, ADR-0207
+- Related: ADR-0101, ADR-0102, ADR-0201, ADR-0202, ADR-0206, ADR-0207, ADR-0402
 
 ## Context
 
@@ -44,13 +44,13 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 
 7. 各moduleは `required_providers` にversion制約を宣言する。制約は、検証済みの下限versionを起点とし、互換性を破壊し得るmajor更新を除外する形とする。上限を過度に固定しない。
 8. `required_version`（Terraform本体）も同様に、検証済みの下限を宣言する。
-9. lock fileは、テストおよびexampleのroot（実際に `terraform init` を行う単位）で管理する。再利用単位のmoduleディレクトリではlock fileを管理しない。
+9. lock fileは、テスト、env、referenceのroot（実際に `terraform init` を行う単位）で管理する。再利用単位のmoduleディレクトリではlock fileを管理しない。
 10. providerのversion更新は、ADR-0401の各テストレイヤーを通過することを条件とする。
 
 ### 重複の扱い
 
 11. 外部moduleを使わないことにより、リポジトリ内で類似実装が生じることを許容する。実装の重複のみを理由に共通化しない。
-12. 共通化はarchitecture invariantの共有を根拠に行い、その場合も共通化の単位はリポジトリ内部の実装詳細とする（ADR-0102 決定9）。
+12. moduleをユースケースの間で共通化しない（ADR-0102 決定16）。ユースケースの間で共通の不変条件は、コードの共有ではなくPolicy Testが保証する（ADR-0402）。
 
 ## 検討した代替案
 

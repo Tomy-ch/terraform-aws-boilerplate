@@ -1,7 +1,7 @@
 # ADR-0401: テストを第一級の設計要件とする
 
 - Status: Accepted
-- Date: 2026-09-15
+- Date: 2026-10-21
 - Scope: repository-wide
 - Related: ADR-0101, ADR-0102, ADR-0201, ADR-0202, ADR-0203, ADR-0207, ADR-0301
 
@@ -70,11 +70,11 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
 9. Pull RequestでAWS実環境を必須としない。実環境テストの失敗により、実環境に依存しない検証がブロックされる状態を避ける。
 10. 変更が特定ユースケースに閉じる場合、Integration / E2E Test の対象を当該ユースケースへ限定してよい。ただしReleaseでは全ユースケースを対象とする。
 
-### fixtureとexample
+### fixtureとreference
 
-11. 各サポート対象ユースケースは、最低1つのexampleを持つ。
-12. exampleはdocumentationであると同時にtest fixtureとして扱う。テストから参照されないexampleを置かない。
-13. exampleは、そのユースケースの推奨構成を表現する。サポート対象外の構成をexampleとして示さない。
+11. 各サポート対象ユースケースは、最低1つのreference（推奨構成を表す root。置き場は ADR-0102 決定12）を持つ。
+12. referenceはdocumentationであると同時にtest fixtureとして扱う。テストから参照されないreferenceを置かない。
+13. referenceは、そのユースケースの推奨構成を表現する。サポート対象外の構成をreferenceとして示さない。
 
 ### 実環境テストの扱い
 
@@ -129,7 +129,7 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
 
 本ADR自体の遵守は、以下で検査する。
 
-- 各サポート対象ユースケースにexampleが存在し、テストから参照されていること
+- 各サポート対象ユースケースにreferenceが存在し、テストから参照されていること
 - 各サポート対象ユースケースにContract TestおよびPolicy Testが存在すること
 - Pull Request契機のテストが、AWS credentialsなしで完了すること
 
@@ -137,7 +137,7 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
 
 - 新しい公開設定の追加は、検証手段の追加を伴う。
 - 実環境テストの実行は契機が限定されるため、Provider更新時のレビュー範囲が重要になる（ADR-0206 決定12）。
-- exampleの追加・変更はテスト資産の変更として扱われる。
+- referenceの追加・変更はテスト資産の変更として扱われる。
 
 ## 見直し条件
 
