@@ -44,7 +44,7 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 
 7. 各moduleは `required_providers` にversion制約を宣言する。制約は、検証済みの下限versionを起点とし、互換性を破壊し得るmajor更新を除外する形とする。上限を過度に固定しない。
 8. `required_version`（Terraform本体）も同様に、検証済みの下限を宣言する。
-9. lock fileは、envとreferenceのroot（実際に `terraform init` を行う単位）で管理する。referenceはテストのfixtureを兼ねる（ADR-0401 決定12）。root でない module のディレクトリではlock fileを管理しない。
+9. lock fileは、envとreferenceのroot（apply の起点、またはテストのfixtureとして `terraform init` を行う単位）で管理する。referenceはテストのfixtureを兼ねる（ADR-0401 決定12）。root でない module のディレクトリではlock fileを管理しない。テストのために root でない module で行う init は、lock を持たずに provider を解決し、その版は決定7 の制約だけが縛る。
 10. providerのversion更新は、ADR-0401の各テストレイヤーを通過することを条件とする。
 
 ### 重複の扱い

@@ -16,9 +16,11 @@
 `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `modules/` / `env/` —— 実装とユースケースが無い
-- Terraform 側の検査 —— `.tflint.hcl`、Conftest の Policy Test、`terraform test` のいずれも未作成で、
-  `make` にも配線されていない（[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が
-  割り当てた道具のうち、Terraform に掛かるものが揃っていない）
+- Terraform 側の検査のうち、`terraform fmt` / `terraform validate` / TFLint / `terraform test` は
+  `make` と pre-commit にだけ在り、CI に載っていない（`make help` の `tf-*`）
+- Conftest の Policy Test と層検査 —— 未作成で、`make` にも配線されていない
+  （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
+  Terraform に掛かるものが揃っていない）
 - plan / apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路が存在しない
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）
   —— まだ作成しておらず、保護対象のパターンは保護設定の宣言側にだけ在る

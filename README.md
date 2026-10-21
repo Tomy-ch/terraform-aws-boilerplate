@@ -22,7 +22,7 @@
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
 | `usecases/` / `modules/` / `env/` | **未着手** —— ユースケースの実装が無い |
-| Terraform 側の検査 | **未配線** —— `.tflint.hcl`、Conftest、`terraform test` はまだ無い |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make` と pre-commit に配線済み。CI と Conftest は未配線 |
 
 ## 使い方
 
