@@ -107,7 +107,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | 出力用のSSM Parameter | 契約を書き出すmodule |
 | resource-level policy（S3/SQS/SNS/KMS） | 親resourceを所有するmoduleが1文書だけ生成する。不変条件は無条件に出し、用途別の許可はgrantee種別をキーにした型付き入力で受ける |
 
-- 検査は3本とする。(1) usecase直下にmanaged resourceが無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
+- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下にmanaged resourceが無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
 - moduleの粒度は関心事（強制すべき不変条件）の単位とする。置き場の既定は`modules/<usecase>/internal/`とし、`_shared/`へ出すのはinvariantを共有するときだけとする（ADR-0205 決定11-12）。
 - IAM Policyはセキュリティに直結するため、`"*"`のaction・resourceの禁止などの最小権限検査をpolicy testで別途担保する。
 - 入力を持たず引数を公式推奨に固定した1-resourceのmoduleは、薄いラップに当たらない。ADR-0101 決定9 が警戒するのはProviderの引数と`variable`の1:1対応であって、resourceの数ではない。
@@ -578,7 +578,6 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | outbox dead行の検知経路 | `outbox-delivery`の実装前 | GBpでのdeadの表現はDB行・OTel counter・Warnログの3つで、AWSネイティブのシグナルは無い。counter経由は`otel`モードでCloudWatchに届かず、3モード共通で成立するのはstdoutログのmetric filterだけ（ログ文言への依存）。どちらを採るか、または`otel`モードでのアプリ系アラートをGrafana Alertingへ寄せるか |
 | GBpへ渡す環境変数の契約 | Compute usecaseの実装前 | `OBS_*_EXPORTER` / `ENDPOINT_OTLP` / `SERVER_HOST` / `REALTIME_*` / `OUTBOX_*` / `CONSUMER_QUEUE_*` / `AUTH_*` / DB系のうち、どれをmoduleの入力契約として型付きで持ち、どれをenvの値とするか。焼き込み値（`SERVER_HOST`、`OBJECT_STORAGE_BUCKET`、`REALTIME_QUEUE_PREFIX`等）との優先関係を含む |
 | 逆流拒否のPolicy invariant | `data-refresh`の実装前 | 第9.6節と受入条件11が「SCPとIAMの宣言をPolicy Testで見る」としたが、何を判定するかが無い。下位環境のOUに付くSCPがprdのどのActionをDenyするか、`data-refresh`のIAMが本番側にread系しか持たないこと。SCPは`organization-baseline`のplanに、IAMは`data-refresh`のplanに現れるため、1つのinvariantが2つのusecaseのplanをまたぐ（ADR-0402 決定11） |
-| 層検査の入力形式と道具 | 最初のusecaseの実装前（**フェーズ0**） | 第3.1節の検査(1)(2)はHCLだけで判定できるが、ADR-0402 決定11 はPolicy Testの入力を`terraform show -json`と定める。source-levelの検査をどの層に置くか（ADR-0402のsupersedeか、ADR-0501 決定4の表の更新か）。Conftestとterraform-config-inspectは`mise.toml`に未pinで、導入はADR-0501の更新を伴う |
 | 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
 | 通知Topicのアカウント配置 | フェーズ1 | 所有者は`ops-notification`で確定。残るは、Topicをどのアカウントに置くか（第10.1節は監視アカウントを設けない）と、他アカウントからpublishする場合の越境契約。メトリクス途絶時の扱いを含む |
@@ -590,7 +589,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ0の横断決定（#11）で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）。
+**フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。
 
 **v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（devとsandboxの間、第10.1節）。
 
