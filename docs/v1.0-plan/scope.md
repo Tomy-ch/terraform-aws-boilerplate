@@ -332,7 +332,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **確定:** v1.0を切る前に、元文書のCapability・Composite候補も一通り成立させる。以下はカバレッジ台帳であり、module単位を決める表ではない。各候補は用途と所有権に応じて、第7節のusecase内部、独立したusecase、または接続例に配置する。採否を変更する場合は、その Pull Request の本文へ記録する。
 
-**確定:** usecase必須（第3節）の帰結として、envから呼ばれる候補はすべてusecaseとする。`ec2-service`、`eks`、`amplify-app`、`lightsail-service`、`analytics`、`finops`、`deployment-identity`は第7節のusecaseに含める。`ecs`、`cdn`、Capability群（`vpc`、`alb`等）はusecase内部のmoduleとする。**複数のusecaseが使う一般moduleは、独立したIssueとして起票し、最初の消費者のusecase Issueをblockする。**1つのusecaseだけが必要とする機構は、そのusecaseの`internal/`に置き、作業はそのusecaseのIssueに含める（第3.1節、ADR-0102 決定15-16）。`bastion`は`operator-access`に統合する。
+**確定:** usecase必須（第3節）の帰結として、envから呼ばれる候補はすべてusecaseとする。`ec2-service`、`eks`、`amplify-app`、`lightsail-service`、`analytics`、`finops`、`deployment-identity`は第7節のusecaseに含める。`ecs`、`cdn`、Capability群（`vpc`、`alb`等）はusecaseが合成するmoduleとし、一般moduleにするか`internal/`に置くかは、どのusecaseでも同じ形で成立するかで決める（ADR-0102 決定15）。**複数のusecaseが使う一般moduleは、独立したIssueとして起票し、最初の消費者のusecase Issueをblockする。**1つのusecaseだけが必要とする機構は、そのusecaseの`internal/`に置き、作業はそのusecaseのIssueに含める（第3.1節、ADR-0102 決定15-16）。`bastion`は`operator-access`に統合する。
 
 | 元の分類 | カバレッジ対象 |
 |---|---|
