@@ -1,9 +1,9 @@
 # ADR-0501: 検証と運用の道具を既存ツールの組み合わせで構成する
 
 - Status: Accepted
-- Date: 2026-09-16
+- Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0101, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0401, ADR-0601
+- Related: ADR-0101, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0401, ADR-0402, ADR-0601
 
 ## Context
 
@@ -37,12 +37,12 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 ### レイヤーと道具の割当
 
-4. ADR-0401 決定4 のレイヤーへ、次のとおり道具を割り当てる。各レイヤーの権威を1つとする。
+4. ADR-0401 決定4 のレイヤーへ、次のとおり道具を割り当てる。各レイヤーの権威を1つとする。ただし Static Analysis は、決定5 のとおり範囲で2つに分ける。
 
    | レイヤー | 道具 | 実 AWS |
    | --- | --- | --- |
    | Syntax | `terraform fmt` / `terraform validate` | 不要 |
-   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用） | 不要 |
+   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース） | 不要 |
    | Security | Trivy | 不要 |
    | Unit | `terraform test`（`command = plan` + mock provider） | 不要 |
    | Contract | `terraform test` | 不要 |
@@ -53,6 +53,13 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
    | Drift | `terraform plan -refresh-only` | 必要 |
 
 5. TFLint は `terraform validate` の代替ではなく補完として置く。
+
+   Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
+   ソースの構造の規約を持つ —— usecase 直下に managed resource が無いこと、module の `source` が層ごとに許された方向
+   だけを指すこと、attachment 型の resource が親と同じ module に在ること、backend 設定の不変条件。同じ規約を両方に
+   書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
+   決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
+   届く module に検査が限られるためである。Conftest は Policy 層で既に用いており、道具は増えない。
 6. Security scan の第一候補を Trivy とする。Checkov は、Trivy に存在しないルールが必要な場合に限り併用する。Trivy と重複する検査を無目的に二重化しない。
 7. Static Analysis / Security / Unit / Contract / Policy は AWS credentials なしで完了すること（ADR-0401 決定6）。Unit Test では `mock_provider` / `mock_resource` / `mock_data` を用い、実 AWS API へ依存しない。
 8. Policy Test の入力を `terraform show -json` の出力とする。これにより ADR-0401 決定19 の要件を満たす。
@@ -181,12 +188,13 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 
 ## 保証範囲
 
-- 保証すること: ADR-0401 の各レイヤーに、実行可能な道具が1つ割り当てられていること。抑止が理由とともに記録されていること
+- 保証すること: ADR-0401 の各レイヤーに実行可能な道具が割り当てられ、各範囲の権威が1つであること（Static Analysis は決定5 の範囲で2つ）。抑止が理由とともに記録されていること
 - 保証しないこと: 各道具が検出する範囲の網羅性。道具が報告しない誤りが存在しないこと
 
 ## 検証方法
 
 - Static Analysis: 決定4 の各レイヤーに対応する CI ジョブが存在すること
+- Static Analysis: 決定5 の構造の規約の Rego が、違反する入力と違反しない入力の両方のテストを持つこと（ADR-0402 決定8 と同じ規律）
 - Static Analysis: 抑止エントリが、検出 ID と対象の組かつ理由付きであること（決定13）
 - Static Analysis: CI の必須検査で用いる道具が、すべて manifest に pin されていること（決定19）
 - Static Analysis: `<manager> exec` を含む recipe / hook 定義が存在しないこと（決定20）
