@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0001, ADR-0101, ADR-0201, ADR-0202, ADR-0204, ADR-0205, ADR-0401, ADR-0402, ADR-0501
+- Related: ADR-0001, ADR-0101, ADR-0201, ADR-0202, ADR-0204, ADR-0205, ADR-0301, ADR-0401, ADR-0402, ADR-0501, ADR-0601, ADR-0602
 
 ## Context
 
@@ -65,28 +65,30 @@
     | 層 | 置き場 | 持つもの |
     | --- | --- | --- |
     | env | `env/<env>/` | 環境ごとの値と、usecase の組み合わせ。apply の起点 |
-    | usecase | `modules/<usecase>/` | 公開契約（決定2）と、module の合成 |
-    | module | `modules/<usecase>/internal/<module>/` | resource と、その不変条件 |
+    | usecase | `modules/<use-case>/` | 公開契約（決定2）と、module の合成 |
+    | module | `modules/<use-case>/internal/<module>/` | resource と、その不変条件 |
 
-    ユースケースの推奨構成は `modules/<usecase>/reference/` に置く（ADR-0401 決定11-13）。リポジトリ直下に置かない。
+    ユースケースの推奨構成は `modules/<use-case>/reference/` に置く（ADR-0401 決定11-13）。リポジトリ直下に置かない。
 
 13. 公開契約と semver の保証の対象は usecase だけとする。env は利用者が値を持つ層であり、module は決定9 のとおり内部実装である。
-14. usecase のディレクトリに `resource` を置かない。置けるのは `terraform`、`module`、`variable`、`output`、`locals`、`data`、`moved`、`removed`、`import`、`check`、`ephemeral` の block に限る。ユースケースごとの差異は module の合成と入出力で表し、不変条件の強制は module が持つ。
-15. 1つの module は1つの機構をまとめ、その名前はまとめた機構を名指す。AWS サービスの単位で module を切らない —— 同じサービスの resource でも、ユースケースが違えば機構が違う。
+14. `modules/<use-case>/` 直下の `*.tf` に、`resource` block と `provider` block を置かない。対象は直下に限り、`internal/` と `reference/` は含まない。ユースケースごとの差異は module の合成と入出力で表し、不変条件の強制は module が持つ。usecase は env から呼ばれる子 module なので、root module にしか置けない block（`import` 等）もここには置かない。
+15. 1つの module は1つの機構をまとめる。AWS サービスの単位で module を切らず、ユースケースごとの差異を module の入力で切り替えない —— 同じサービスの resource でも、ユースケースが違えば機構が違う。
 16. module をユースケースの間で共有しない。共有するのは resource の実体であり、受け渡しは ARN、ID、Endpoint、DNS 名などの識別子で行う。
 
     - 同じユースケースの中: module の output を、別の module の input に渡す
-    - ユースケースの間: 受け側のユースケースが識別子を `variable` で受け、自分の module へ渡す。env が送り側の output をそこへ渡す。root をまたぐ受け渡しは remote state または SSM Parameter で行う
+    - ユースケースの間: 受け側のユースケースが識別子を `variable` で受け、自分の module へ渡す。env が送り側の output をそこへ渡す。root をまたぐ受け渡しは remote state または SSM Parameter で行う。remote state は送り側の state 全体の読み取りを要するので、どちらを使うかと、受け側に許す権限は ADR-0301 に従う
     - 他のユースケースの内部 resource の address へ依存しない
 
 17. module block の `source` が指してよい先を、層ごとに次へ限る。
 
-    - env は `modules/<usecase>/` だけを指す
+    - env は `modules/<use-case>/` だけを指す
     - usecase は自分の `internal/` だけを指す
     - `internal/` の module は、同じユースケースの `internal/` だけを指す
     - `reference/` は、それを持つユースケースだけを指す
 
-18. ユースケース内の配線（Security Group のルール、IAM Policy、DNS レコード、resource-level policy 等）は、独立した resource として置かない。受け側の module の意味論的な入力として表す（ADR-0201 決定4-5）。attachment 型の resource（bucket policy、queue policy、Security Group のルール、role policy 等）は、親の resource と同じ module に置く。
+    `source` はリポジトリ内の相対パスに限り（ADR-0205 決定3）、正規化した後のパスで判定する。
+
+18. ユースケース内の配線（Security Group のルール、IAM Policy、DNS レコード、resource-level policy 等）は、独立した resource として置かない。受け側の module の意味論的な入力として表す。attachment 型の resource（bucket policy、queue policy、Security Group のルール、role policy 等）は、親の resource と同じ module に置く。
 
 ### experimental
 
@@ -121,7 +123,7 @@
 
 ### 案E: ユースケースの間で共有する module の置き場を設ける
 
-共通の不変条件（Public Access Block、TLS の強制、暗号化の明示等）を1箇所で書ける。ただし、置き場は「どこにも属さない部品」の受け皿になり、共有された module は利用するユースケースごとの差異を入力の切り替えで抱える —— 案A と同じ形である。共通の不変条件は Policy Test が plan から判定できるので（ADR-0402）、コードを共有しなくても保証は成立する。
+共通の不変条件（Public Access Block、TLS の強制、暗号化の明示等）を1箇所で書ける。ただし、置き場は「どこにも属さない部品」の受け皿になり、共有された module は利用するユースケースごとの差異を入力の切り替えで抱える —— 案A と同じ形である。共通の不変条件は、ADR-0402 の割当に従って Security（Trivy）と Policy Test が判定するので、コードを共有しなくても保証は成立する。
 
 ### 評価
 
@@ -153,22 +155,22 @@
 - 各ユースケースは最低1つの reference を持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
 - 次の3つを、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
-  - usecase のディレクトリに managed resource が無いこと（決定14）
+  - `modules/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
   - attachment 型の resource の親を指す引数が `module.` 参照を持たないこと、すなわち親と同じ module に在ること（決定18）
 
-決定15（module が1つの機構をまとめること）は機械判定できない。module の名前が AWS サービス名だけになっている、入力に `purpose` や用途の切り替えが現れる、は崩れ始めた徴候であり、レビューで見る。
+決定15（module が1つの機構をまとめること）は機械判定できない。module の名前がまとめた機構ではなく AWS サービス名だけになっている、入力に `purpose` や用途の切り替えが現れる、は崩れ始めた徴候であり、レビューで見る。
 
 ## 影響
 
 - 利用者要求の一部は明示的に「対象外」と回答される。
 - ユースケース追加の判断は、設定項目追加の判断より重い手続きになる。
 - 実装の重複がユースケース間で発生し得る。重複のみを理由に統合しない（ADR-0205 決定11）。同じサービスの resource を持つ module が、ユースケースごとに作られる。
-- 共通の不変条件は、コードの共有ではなく Policy Test が保証する（ADR-0205 決定12）。Policy Test が判定できない不変条件は、各 module の Unit Test が持つ。
+- 共通の不変条件は、コードの共有ではなく、ADR-0402 の割当に従って Security（Trivy）と Policy Test が保証する。
 - 環境ごとの差異は env に集まり、usecase は環境を知らない。
 
 ## 見直し条件
 
 - unsupportedへ分類した要求が、複数ユースケースで反復して発生した場合
 - ユースケース間の実装重複が、セキュリティ修正の追従を阻害するレベルに達した場合
-- ユースケースの間で共通の不変条件が、plan から判定できず Policy Test で保証できない場合
+- ユースケースの間で共通の不変条件が、Security（Trivy）でも Policy Test でも判定できない場合

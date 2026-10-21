@@ -64,7 +64,7 @@ Realtimeで`serve`がインスタンス別SQS Queue/SNS Subscriptionを実行時
 
 ## 3. 公開境界と構成
 
-**確定:** 構成は env → usecase → module の三層とし、envは必ずusecaseを経由する。公開面とsemver保証の対象はusecaseのみで、moduleは内部実装とする。ディレクトリは `env/<env>/`、`modules/<usecase>/`、`modules/<usecase>/internal/<module>/` とし、推奨構成は `modules/<usecase>/reference/` に置く（ADR-0102 決定11-13）。moduleはusecaseの間で共有しない（同 決定16）。
+**確定:** 構成は env → usecase → module の三層とし、envは必ずusecaseを経由する。公開面とsemver保証の対象はusecaseのみで、moduleは内部実装とする。ディレクトリは `env/<env>/`、`modules/<use-case>/`、`modules/<use-case>/internal/<module>/` とし、推奨構成は `modules/<use-case>/reference/` に置く（ADR-0102 決定11-13）。moduleはusecaseの間で共有しない（同 決定16）。
 
 ```mermaid
 flowchart LR
@@ -85,7 +85,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | usecase | ユースケースごとの構成 | 公開契約を持つ。supported/unsupported、入出力、所有者、検証方法を記録する。resourceを宣言せず、moduleの合成と入出力だけを持つ |
 | module | resourceの所有と不変条件の強制。関心事の単位で束ねる | 公開面をベストプラクティスで絞る。属性を素通しするだけの薄いラップは作らない |
 
-- `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`modules/<usecase>/`のみ、usecaseは自分の`internal/`のみ、`internal/`の module は同じusecaseの`internal/`配下のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
+- `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`modules/<use-case>/`のみ、usecaseは自分の`internal/`のみ、`internal/`の module は同じusecaseの`internal/`配下のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
 - usecase間の接続識別子はARN、ID、Endpoint、DNS名、Subnet ID等とし、他usecaseの内部resource addressへ依存しない。受け渡しはremote stateまたはSSM Parameterで行う。
 - 同一役割の複数ServiceやNodeGroupを表現できる。ただし任意の組合せを許す無制限な設定口は作らない。
 - stateの分割粒度（ライフサイクル単位で分ける案）はusecase実装時に確定する。
@@ -94,7 +94,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 ### 3.1 usecaseは合成層である
 
-**確定:** usecaseディレクトリに `resource` を1つも置かない。置けるのは `terraform`（`required_providers`、`required_version`。ADR-0205 決定7-8）、`module`、`variable`、`output`、`locals`、`data`、`moved`、`removed`、`import`、`check`、`ephemeral` とする。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（ADR-0201 決定4-5）。
+**確定:** usecaseディレクトリ直下の `*.tf` に `resource` と `provider` を1つも置かない（ADR-0102 決定14）。usecaseは子moduleなので、root moduleにしか置けない `import` も置かない。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（同 決定18）。
 
 | 配線したいもの | 表し方 |
 |---|---|
@@ -105,8 +105,8 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | 出力用のSSM Parameter | 契約を書き出すmodule |
 | resource-level policy（S3/SQS/SNS/KMS） | 親resourceを所有するmoduleが1文書だけ生成する。不変条件は無条件に出し、用途別の許可はgrantee種別をキーにした型付き入力で受ける |
 
-- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下にmanaged resourceが無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
-- moduleは1つの機構をまとめ、名前はその機構を名指す。AWSサービスの単位で切らない。置き場は`modules/<usecase>/internal/`だけで、usecaseの間で共有する置き場は設けない。usecaseの間で共通の不変条件はPolicy Testが保証する（ADR-0102 決定15-16、ADR-0205 決定12）。
+- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下の `*.tf` に `resource` と `provider` が無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
+- moduleは1つの機構をまとめ、名前はその機構を名指す。AWSサービスの単位で切らない。置き場は`modules/<use-case>/internal/`だけで、usecaseの間で共有する置き場は設けない。usecaseの間で共通の不変条件はPolicy Testが保証する（ADR-0102 決定15-16、ADR-0205 決定12）。
 - IAM Policyはセキュリティに直結するため、`"*"`のaction・resourceの禁止などの最小権限検査をpolicy testで別途担保する。
 - 入力を持たず引数を公式推奨に固定した1-resourceのmoduleは、薄いラップに当たらない。ADR-0101 決定9 が警戒するのはProviderの引数と`variable`の1:1対応であって、resourceの数ではない。
 - usecaseをまたぐgranteeをConditionで限定するときは、同一のenv rootの中でusecaseの出力を参照できる場合に限り、その参照による依存順序の解決を試みる。rootをまたぐ受け渡しはremote stateまたはSSM Parameterであり、resource参照にはならない。受け側のpolicyが送り側のARNを要し、送り側が受け側のARNを要して循環する場合に限り、名前規約から導いたprefixベースのARN patternをConditionに用い、根拠を当該usecaseのADRへ記録する（ADR-0301 決定11）。送り側を先にapplyする2段の手順を規約にしない。

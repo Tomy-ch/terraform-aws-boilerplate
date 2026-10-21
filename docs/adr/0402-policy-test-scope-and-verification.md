@@ -1,9 +1,9 @@
 # ADR-0402: Policy Testの適用範囲と、その検証方法を定める
 
 - Status: Accepted
-- Date: 2026-09-16
+- Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0202, ADR-0204, ADR-0301, ADR-0401, ADR-0501
+- Related: ADR-0102, ADR-0202, ADR-0204, ADR-0301, ADR-0401, ADR-0501
 
 ## Context
 
@@ -60,7 +60,7 @@ ADR-0501 決定4 は Security レイヤーを Trivy へ、Policy レイヤーを
     - 命名規約は文字列の一致であり、偶然の一致で判定が通る
     - address は boilerplate が所有する。変更時は ADR-0202 決定6 が `moved` block を要求するため、Policy の更新漏れが plan に現れる
 
-15. address に依存する Policy は、依存する address を1箇所へ集約する。module の構造を変更したときに、更新すべき Policy を特定できる形とする。
+15. address に依存する Policy は、依存する address を1箇所へ集約する。module の構造を変更したときに、更新すべき Policy を特定できる形とする。module はユースケースの内部にあり（ADR-0102 決定12）、address は `module.<use-case>.module.<module>.<type>.<name>` の入れ子になる。同じ名前の module がユースケースごとに在りうるので、集約はユースケースを含む address で行う。
 16. 役割判定のための専用ツールを実装しない。ADR-0501 決定3 の3条件のうち、第1条件（既存ツールで実現できない）を満たさない。
 
 ## 検討した代替案
