@@ -16,6 +16,7 @@
 | `go/` | 運用機構（`scripts/`）の Go の整形・Lint・テスト |
 | `markdown/` | Markdown の体裁、ADR の構造、スキルの参照の実在 |
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
+| `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test`）と、その検査自体の検査 |
 | 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入） |
 
 各ツールが何を検査するかは [`scripts/README.md`](../scripts/README.md) が持つ。ここはその起動だけを持つ。
@@ -42,6 +43,7 @@
 | `$(NODE_TOOL)` | npm 側のツールランナー | markdownlint-cli2、commitlint |
 | `$(call RUN_SCRIPT,<名前>,<引数>)` | `scripts/<名前>` をビルドして起動 | このリポジトリが書いた検査 |
 | `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **提供段のコンテナに無い前提を要するもの** —— version manager 自身を入力にする、`docker` を呼ぶ、`git` / `gh` がホストの資格情報を使う |
+| 前置きなし（`terraform` を直接） | ホストの terraform | Terraform 側の検査（ADR-0503 決定4・5）。TFLint だけは `$(GO_TOOL)` を経由する |
 
 最後の1つが要る理由は呼び出し側ごとに違い、いずれも「ツールランナーが提供できない前提」に帰着する
 —— 提供段に version manager を残さない形でイメージを組んでいる（[0503](../docs/adr/0503-tool-execution-form.md) 決定11）、

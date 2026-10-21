@@ -91,6 +91,40 @@ pre-commit:
       glob: "scripts/**/*.go"
       run: make test-mapping
 
+    # Terraform 側の検査（.makefiles/terraform/gates.mk）。make は対象が0件なら落ちるので、
+    # Terraform コードが無いツリーでは tf-no-targets で skip を明示する。`--force` でも skip に
+    # なり、summary に条件による skip として出る。
+    tf-fmt-check:
+      glob:
+        - "usecases/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "modules/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "env/**/*.{tf,tftest.hcl,tfmock.hcl}"
+      skip:
+        - run: make -s tf-no-targets
+      run: make tf-fmt-check
+    tf-lint:
+      glob:
+        - "usecases/**/*.tf"
+        - "modules/**/*.tf"
+        - "env/**/*.tf"
+        - ".tflint.hcl"
+      skip:
+        - run: make -s tf-no-targets
+      run: make tf-lint
+    # validate と test は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
+    tf-validate-test:
+      glob:
+        - "usecases/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "modules/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "env/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "**/.terraform.lock.hcl"
+      skip:
+        - run: make -s tf-no-targets
+      run: make -k tf-validate tf-test
+    tf-gates-test:
+      glob: ".makefiles/terraform/*.mk"
+      run: make tf-gates-test
+
 commit-msg:
   commands:
     # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない

@@ -29,6 +29,9 @@ include .makefiles/security/gitleaks.mk
 include .makefiles/security/go-cooldown.mk
 include .makefiles/security/tool-cooldown.mk
 include .makefiles/security/zizmor.mk
+# Terraform関連
+include .makefiles/terraform/gates.mk
+include .makefiles/terraform/gates-test.mk
 # Docker関連
 include .makefiles/docker/lint.mk
 include .makefiles/docker/pin.mk
