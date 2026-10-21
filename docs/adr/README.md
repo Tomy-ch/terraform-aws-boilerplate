@@ -65,6 +65,7 @@
 | [0601](0601-change-delivery-path.md) | 変更経路をGitに限定し、applyをmerge後のCI/CDで行う | Accepted |
 | [0602](0602-bootstrap-and-ci-authentication.md) | bootstrapをCLIとimportで立ち上げ、CI認証をOIDCとする | Accepted |
 | [0603](0603-branch-protection-and-required-checks.md) | 分岐のパターンと保護設定を単一の宣言で管理し、required checkの基準を定める | Accepted |
+| [0604](0604-state-split-by-apply-role.md) | state を apply する role ごとに分け、env ごとに identity と workload の2つの root とする | Accepted |
 
 ### 07 文書と運用機構
 
@@ -83,7 +84,7 @@ ADR-0101 がリポジトリ全体の評価軸と原則を定義し、他のADR�
 4. ADR-0205 → ADR-0206 → ADR-0207（依存と設定値の根拠）
 5. ADR-0301（セキュリティ）
 6. ADR-0401 → ADR-0501 → ADR-0402 → ADR-0302（検証のレイヤー、それを担う道具、検査そのものの検証、履歴に対する検査）
-7. ADR-0601 → ADR-0602 → ADR-0603（変更が実環境へ届く経路、それを成立させるbootstrap、mergeを守るゲート）
+7. ADR-0601 → ADR-0602 → ADR-0603 → ADR-0604（変更が実環境へ届く経路、それを成立させるbootstrap、mergeを守るゲート、stateとrootの分け方）
 8. ADR-0502（実行エンジンの選定）
 9. ADR-0702 → ADR-0503 → ADR-0504 → ADR-0505（Terraformの外側にある運用の機構、道具の宣言・実行環境、資格情報を扱う道具の実行環境、そしてそれらを実行するCIランナーの固定）
 10. ADR-0001 → ADR-0701（ADRと文書自体の運用）

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0501, ADR-0601, ADR-0402, ADR-0603
+- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0501, ADR-0601, ADR-0402, ADR-0603, ADR-0604
 
 ## Context
 
@@ -106,6 +106,11 @@ CI の権限については循環の性質が異なる。backend さえあれば
 13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。plan の role は
     state の読み取りと復号を持つ。plan に必要だからである。したがって plan の role を assume できる主体は
     state を読める。state に置く秘密の扱いは、当該 use-case の ADR が決定する。
+
+    apply を行う role を、さらに2つに分ける。bootstrap の構成物（決定1）を変更する apply-identity の
+    role と、それ以外を変更する apply の role である。apply の role に bootstrap の構成物を変更する権限を
+    与えない。apply-identity の role は、本 ADR が apply の role に課す条件（決定14-16）にすべて従い、
+    apply の role とは別の environment を持つ。
 14. 各 role の信頼条件を、GitHub Actions の OIDC claim のうち **environment** によって限定する。ref と
     event による限定（`ref:` / `pull_request` 形式の `sub`）を用いない。ref の限定は environment の
     deployment branch policy が、event の限定は workflow の起動条件が担う。
@@ -134,8 +139,8 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
 ### 本 ADR で決定しない事項
 
-17. state のロック方式（別テーブルによるロックか、backend が提供する lock file か）は、採用する Terraform version の確定後に、当該 use-case の ADR で決定する。ADR-0601 決定16 が要求するのは排他制御が成立することのみである。
-18. state の分割単位は、ADR-0601 決定15 のとおり引き続き未決とし、本 ADR の対象外とする。環境の表現方法は ADR-0102 決定11-12 が決める。
+17. state のロック方式は本 ADR の対象外とし、ADR-0604 が決める。ADR-0601 決定16 が要求するのは排他制御が成立することのみである。
+18. state の分割単位は本 ADR の対象外とし、ADR-0604 が決める。環境の表現方法は ADR-0102 決定11-12 が決める。
 
 ## 検討した代替案
 
@@ -184,7 +189,7 @@ event を区別できないことは採用案と同じであり、どちらも w
 
 ## 保証範囲
 
-- 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）
+- 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。apply の role が bootstrap の構成物を変更できないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）
 - 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は変更系を持たないが、state を読める。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
 
 ## 検証方法
@@ -193,6 +198,8 @@ event を区別できないことは採用案と同じであり、どちらも w
 - Static Analysis: plan を行う job と apply を行う job が、異なる role を assume すること（決定13）
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
 - Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
+- Static Analysis: apply-identity の role を assume する job が、apply の role を assume する job と異なる role と `environment` を宣言すること（決定13-14）
+- Policy Test: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend）に対する変更系の Action を許さないこと（決定13）
 - Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
 - Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）
