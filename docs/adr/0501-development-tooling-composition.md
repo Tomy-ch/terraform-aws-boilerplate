@@ -55,8 +55,7 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 5. TFLint は `terraform validate` の代替ではなく補完として置く。
 
    Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
-   ソースの構造の規約を持つ —— usecase 直下に managed resource が無いこと、module の `source` が層ごとに許された方向
-   だけを指すこと、attachment 型の resource が親と同じ module に在ること、backend 設定の不変条件。同じ規約を両方に
+   ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則と、backend 設定の不変条件。同じ規約を両方に
    書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
    届く module に検査が限られるためである。Conftest は Policy 層で既に用いており、道具は増えない。

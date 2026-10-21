@@ -21,7 +21,7 @@
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
-| `modules/` / `examples/` | **未着手** —— ユースケースの実装が無い |
+| `modules/` / `env/` | **未着手** —— ユースケースの実装が無い |
 | Terraform 側の検査 | **未配線** —— `.tflint.hcl`、Conftest、`terraform test` はまだ無い |
 
 ## 使い方

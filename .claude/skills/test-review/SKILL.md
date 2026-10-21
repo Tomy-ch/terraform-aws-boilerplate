@@ -44,7 +44,7 @@ Do NOT use this skill for:
 - [`docs/adr/0702-repository-operations-substrate.md`](../../../docs/adr/0702-repository-operations-substrate.md)
   決定13-17 —— 検査の規律とテストの要件。観点の根拠がここにある。
 - [`docs/adr/0401-testing-policy.md`](../../../docs/adr/0401-testing-policy.md) —— レイヤーと責務の表。
-  対象が `modules/**` / `examples/**` 側のテストである場合の観点はこちらが持つ。
+  対象が `modules/**` / `env/**` 側のテストである場合の観点はこちらが持つ。
 - 対象の `*_test.go`。
 - 対応する subject（同パッケージの、`_test` を除いた `.go`）。**code-origin の2レンズ（Lens 4 / Lens 5）
   はこれが無いと成立しない。**
@@ -62,7 +62,7 @@ Do NOT use this skill for:
 | 区分 | 対象 | 観点の正本 |
 | --- | --- | --- |
 | 運用機構 | `scripts/**/*_test.go` | [`scripts/README.md`](../../../scripts/README.md) Test Strategy 節、[ADR-0702](../../../docs/adr/0702-repository-operations-substrate.md) 決定13-17 |
-| インフラ | `modules/<use-case>/tests/**`、`examples/**`、`*.tftest.hcl`、Policy Test | [ADR-0401](../../../docs/adr/0401-testing-policy.md) 決定4 のレイヤー表、[ADR-0402](../../../docs/adr/0402-policy-test-scope-and-verification.md) |
+| インフラ | `modules/<use-case>/tests/**`、`modules/<use-case>/reference/**`、`env/**`、`*.tftest.hcl`、Policy Test | [ADR-0401](../../../docs/adr/0401-testing-policy.md) 決定4 のレイヤー表、[ADR-0402](../../../docs/adr/0402-policy-test-scope-and-verification.md) |
 
 **インフラ側のレンズは層の割当を見る。** ADR-0401 決定4 は故障モードごとに検出手段を割り当てており、
 テストがどの層に属するかは書き手の好みではない。
@@ -131,7 +131,7 @@ Lens 1-3 はそれに対して読むものを持たない。
 対象ごとに:
 
 1. `scripts/**` が対象なら `scripts/README.md` の Test Strategy 節と ADR-0702 決定13-17 を読む（各1回）。
-2. `modules/**` / `examples/**` が対象なら ADR-0401 決定4-20、ADR-0402、および
+2. `modules/**` / `env/**` が対象なら ADR-0401 決定4-20、ADR-0402、および
    `modules/<use-case>/README.md` と `modules/<use-case>/docs/adr/` を読む。
 3. subject を読む。
 4. 同パッケージの sibling test を読む。

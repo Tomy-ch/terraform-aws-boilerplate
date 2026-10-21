@@ -98,7 +98,7 @@ The two review skills are peers: neither invokes the other, and each is asked fo
 
 ## AI Modification Scope
 
-`AGENTS.md` *変更してよい範囲* は既定を `modules/` / `examples/` / `docs/`（Accepted ADR の本文を除く）
+`AGENTS.md` *変更してよい範囲* は既定を `modules/` / `env/` / `docs/`（Accepted ADR の本文を除く）
 に限り、リポジトリ直下の設定ファイル・`.github/`・`LICENSE` を「指示なしに触らない」側に置く。
 *v1.0.0 までの暫定* が `LICENSE` を除いてそれを解除しており、**このスキルの起動がその指示に当たる** —— <!-- v1.0.0 で削除: #141 -->
 issue が対象面を決めるのであって、CI・道具・イメージ・文書についての issue が既定の3箇所の中で
@@ -414,7 +414,7 @@ a decision was significant is exactly how drift goes unreported.
 
 | # | Trip-wire | Default | Why |
 | --- | --- | --- | --- |
-| 1 | 計画に無いファイルを触る、**既定の3箇所の中で**（`modules/` / `examples/` / `docs/`） | Record | 面は広がったが、`AGENTS.md` が既に許している範囲である |
+| 1 | 計画に無いファイルを触る、**既定の3箇所の中で**（`modules/` / `env/` / `docs/`） | Record | 面は広がったが、`AGENTS.md` が既に許している範囲である |
 | 1′ | 同じことを**その外で**（リポジトリ直下の設定ファイル、`.github/`、`scripts/`、`.makefiles/`、`docker/`） | **Halt** | 計画が許可された面である。広げるのは人の判断 |
 | 2 | 計画が退けた選択肢、または第3の選択肢を採る | **Halt** | 退けたことには理由があった。黙って覆すとその理由が捨てられる |
 | 3 | lint / CI の失敗が**設計の規則**に根ざしている | **Halt** | 書式ではない。満たすことが設計を変える |

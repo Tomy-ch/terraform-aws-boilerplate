@@ -151,7 +151,7 @@ skill the single point through which the other two are remembered.
   | 宣言 | `mise.toml` / `.github/settings/**` / `.github/egress.toml` / `*-pin.toml` | 宣言と実態のずれ |
   | CI | `.github/workflows/**` / `.github/actions/**` | 起動しない check、権限の過剰、補間の注入 |
   | 実行形態 | `docker/**` / `docker-compose.yaml` / `.makefiles/**` | 版の出所の二重化、検査の定義の重複 |
-  | インフラ | `modules/**` / `examples/**` / `*.tf` | 公開契約、最小権限、Policy invariant、テスト層の割当 |
+  | インフラ | `modules/**` / `env/**` / `*.tf` | 公開契約、最小権限、Policy invariant、テスト層の割当 |
 
 - **宣言を触った変更は、それを読む側をすべて洗う。** 版・パターン・許可リストは複数箇所が読む。
   片方だけが更新された状態は、両方を実行するまで検出できない。
