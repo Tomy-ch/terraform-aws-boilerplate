@@ -70,7 +70,7 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 11. module のテストは当該 module 配下へ置く。
 
     ```text
-    modules/<use-case>/
+    usecases/<use-case>/
     ├── main.tf
     ├── variables.tf
     ├── outputs.tf

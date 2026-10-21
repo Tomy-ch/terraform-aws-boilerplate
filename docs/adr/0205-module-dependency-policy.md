@@ -50,7 +50,7 @@ Terraformには、AWS公式・HashiCorp公式・community製の再利用module�
 ### 重複の扱い
 
 11. 外部moduleを使わないことにより、リポジトリ内で類似実装が生じることを許容する。実装の重複のみを理由に共通化しない。
-12. moduleをユースケースの間で共通化しない（ADR-0102 決定16）。
+12. 共通化はarchitecture invariantの共有を根拠に行い、共通化の単位は一般module（`modules/<module>/`）とする。一般moduleもリポジトリ内部の実装詳細である（ADR-0102 決定9・12・15）。
 
 ## 検討した代替案
 

@@ -87,7 +87,7 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 12. ADRは適用範囲に応じて2階層で管理する。
 
     - repository-wide ADR: `docs/adr/`
-    - use-case-local ADR: `modules/<use-case>/docs/adr/`
+    - use-case-local ADR: `usecases/<use-case>/docs/adr/`
 
 13. 原則は以下とする。
 
@@ -205,7 +205,7 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 - Status が `Superseded by` の場合、参照先ADRが存在すること（決定3）
 - **ADR本文が参照する `ADR-NNNN` が、すべて実在すること**（決定7・9）
 - 索引が実ファイルと一致すること
-- root ADR本文が `modules/<use-case>/` 配下のpathへ規範的に依存していないこと（決定19）
+- root ADR本文が `usecases/<use-case>/` 配下のpathへ規範的に依存していないこと（決定19）
 
 決定2 の但し書き（v1.0.0 までの直接の書き換え）は機械判定できない。v1.0.0 に達したときの削除は、 <!-- v1.0.0 で削除: #141 -->
 見直し条件が持つ。

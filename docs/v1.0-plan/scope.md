@@ -1,8 +1,8 @@
 # terraform-aws-boilerplate v1.0 の範囲
 
-> **この文書は v1.0 までの暫定である。** v1.0 到達時に削除する。内容は `modules/<use-case>/README.md` と ADR へ移る（ADR-0701 決定2）。 <!-- v1.0.0 で削除: #141 -->
+> **この文書は v1.0 までの暫定である。** v1.0 到達時に削除する。内容は `usecases/<use-case>/README.md` と ADR へ移る（ADR-0701 決定2）。 <!-- v1.0.0 で削除: #141 -->
 >
-> **リポジトリに残るものからこの文書を参照しない** —— `modules/<use-case>/README.md`、ADR、`.tf`、コードコメント。参照したくなったなら、その内容は参照先の文書が所有すべきものである。Issue と Pull Request からの参照は許す。
+> **リポジトリに残るものからこの文書を参照しない** —— `usecases/<use-case>/README.md`、ADR、`.tf`、コードコメント。参照したくなったなら、その内容は参照先の文書が所有すべきものである。Issue と Pull Request からの参照は許す。
 
 ## 1. 文書の位置づけ
 
@@ -64,13 +64,16 @@ Realtimeで`serve`がインスタンス別SQS Queue/SNS Subscriptionを実行時
 
 ## 3. 公開境界と構成
 
-**確定:** 構成は env → usecase → module の三層とし、envは必ずusecaseを経由する。公開面とsemver保証の対象はusecaseのみで、moduleは内部実装とする。ディレクトリは `env/<env>/`、`modules/<use-case>/`、`modules/<use-case>/internal/<module>/` とし、推奨構成は `modules/<use-case>/reference/` に置く（ADR-0102 決定11-13）。moduleはusecaseの間で共有しない（同 決定16）。
+**確定:** 構成は env → usecase → module の三層とし、envは必ずusecaseを経由する。公開面とsemver保証の対象はusecaseのみで、moduleは内部実装とする。ディレクトリは `env/<env>/`、`usecases/<use-case>/`、一般moduleの `modules/<module>/`、usecaseに固有のmoduleの `usecases/<use-case>/internal/<module>/` とし、推奨構成は `usecases/<use-case>/reference/` に置く（ADR-0102 決定11-13）。`internal/` は一般moduleで表せないものがあるときだけ置く。共有のための別の置き場は設けない（同 決定15-16）。
 
 ```mermaid
 flowchart LR
   E["env/<br/>dev・stg・prd"] --> U["usecase/<br/>公開面・semver対象<br/>resourceを持たない"]
-  U --> I["module/internal/<br/>usecase私有"]
-  I --> R["AWS resource"]
+  U --> M["modules/<br/>一般module"]
+  U --> I["usecases/<use-case>/internal/<br/>usecaseに固有のmodule"]
+  I --> M
+  M --> R["AWS resource"]
+  I --> R
 ```
 
 envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resourceを直接宣言しない。resourceはすべてmoduleが所有する。
@@ -85,7 +88,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | usecase | ユースケースごとの構成 | 公開契約を持つ。supported/unsupported、入出力、所有者、検証方法を記録する。resourceを宣言せず、moduleの合成と入出力だけを持つ |
 | module | resourceの所有と不変条件の強制。関心事の単位で束ねる | 公開面をベストプラクティスで絞る。属性を素通しするだけの薄いラップは作らない |
 
-- `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`modules/<use-case>/`のみ、usecaseは自分の`internal/`のみ、`internal/`の module は同じusecaseの`internal/`配下のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
+- `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`usecases/<use-case>/`のみ、usecaseは`modules/`と自分の`internal/`のみ、`internal/`の module は`modules/`と同じusecaseの`internal/`配下のみ、一般moduleは`modules/`のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
 - usecase間の接続識別子はARN、ID、Endpoint、DNS名、Subnet ID等とし、他usecaseの内部resource addressへ依存しない。受け渡しはremote stateまたはSSM Parameterで行う。
 - 同一役割の複数ServiceやNodeGroupを表現できる。ただし任意の組合せを許す無制限な設定口は作らない。
 - stateの分割粒度（ライフサイクル単位で分ける案）はusecase実装時に確定する。
@@ -106,14 +109,14 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | resource-level policy（S3/SQS/SNS/KMS） | 親resourceを所有するmoduleが1文書だけ生成する。不変条件は無条件に出し、用途別の許可はgrantee種別をキーにした型付き入力で受ける |
 
 - 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下の `*.tf` に `resource` と `provider` が無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
-- moduleは1つの機構をまとめ、名前はその機構を名指す。AWSサービスの単位で切らない。置き場は`modules/<use-case>/internal/`だけで、usecaseの間で共有する置き場は設けない。usecaseの間で共通の不変条件はPolicy Testが保証する（ADR-0102 決定15-16、ADR-0205 決定12）。
+- moduleは1つの機構をまとめる。一般module（`modules/`）は、どのusecaseでも同じ形で成立する機構だけを持ち、usecaseごとの差異を入力の切り替えで抱えない。一般moduleで表せない機構は、それを使うusecaseの`internal/`に置く。attachment型を親と同じmoduleに置く制約（検査(3)）により、一般moduleのresourceに固有のattachmentが要るなら、親のresourceごと`internal/`に置く（ADR-0102 決定15-16、ADR-0205 決定12）。
 - IAM Policyはセキュリティに直結するため、`"*"`のaction・resourceの禁止などの最小権限検査をpolicy testで別途担保する。
 - 入力を持たず引数を公式推奨に固定した1-resourceのmoduleは、薄いラップに当たらない。ADR-0101 決定9 が警戒するのはProviderの引数と`variable`の1:1対応であって、resourceの数ではない。
 - usecaseをまたぐgranteeをConditionで限定するときは、同一のenv rootの中でusecaseの出力を参照できる場合に限り、その参照による依存順序の解決を試みる。rootをまたぐ受け渡しはremote stateまたはSSM Parameterであり、resource参照にはならない。受け側のpolicyが送り側のARNを要し、送り側が受け側のARNを要して循環する場合に限り、名前規約から導いたprefixベースのARN patternをConditionに用い、根拠を当該usecaseのADRへ記録する（ADR-0301 決定11）。送り側を先にapplyする2段の手順を規約にしない。
 
 ### 3.2 ADR-0102との関係
 
-[ADR-0102](https://github.com/Tomy-ch/terraform-aws-boilerplate/blob/release/v0.1.0/docs/adr/0102-use-case-centric-scope.md)の「ユースケース公開、primitiveは内部」という骨格は維持される。改訂はenv層の追加、moduleの位置づけ（1つの機構をまとめ不変条件を強制する、usecase私有の内部部品）、moduleをusecaseの間で共有しないことの明記に留まる（決定11-18）。元文書のCapability公開＋Composition Preset案は採用しない。
+[ADR-0102](https://github.com/Tomy-ch/terraform-aws-boilerplate/blob/release/v0.1.0/docs/adr/0102-use-case-centric-scope.md)の「ユースケース公開、primitiveは内部」という骨格は維持される。改訂はenv層の追加と、moduleの位置づけ（1つの機構をまとめ不変条件を強制する内部部品。一般moduleと、usecaseに固有の`internal/`の2種）の明記に留まる（決定11-18）。元文書のCapability公開＋Composition Preset案は採用しない。
 
 ## 4. Computeとプラットフォーム
 
@@ -329,7 +332,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **確定:** v1.0を切る前に、元文書のCapability・Composite候補も一通り成立させる。以下はカバレッジ台帳であり、module単位を決める表ではない。各候補は用途と所有権に応じて、第7節のusecase内部、独立したusecase、または接続例に配置する。採否を変更する場合は、その Pull Request の本文へ記録する。
 
-**確定:** usecase必須（第3節）の帰結として、envから呼ばれる候補はすべてusecaseとする。`ec2-service`、`eks`、`amplify-app`、`lightsail-service`、`analytics`、`finops`、`deployment-identity`は第7節のusecaseに含める。`ecs`、`cdn`、Capability群（`vpc`、`alb`等）はusecase内部のmoduleとする。**moduleはusecaseの間で共有しないので、moduleの作業はそれを持つusecaseのIssueに含める。**AWSサービス単位のmodule Issueは立てない（第3.1節、ADR-0102 決定15-16）。`bastion`は`operator-access`に統合する。
+**確定:** usecase必須（第3節）の帰結として、envから呼ばれる候補はすべてusecaseとする。`ec2-service`、`eks`、`amplify-app`、`lightsail-service`、`analytics`、`finops`、`deployment-identity`は第7節のusecaseに含める。`ecs`、`cdn`、Capability群（`vpc`、`alb`等）はusecase内部のmoduleとする。**複数のusecaseが使う一般moduleは、独立したIssueとして起票し、最初の消費者のusecase Issueをblockする。**1つのusecaseだけが必要とする機構は、そのusecaseの`internal/`に置き、作業はそのusecaseのIssueに含める（第3.1節、ADR-0102 決定15-16）。`bastion`は`operator-access`に統合する。
 
 | 元の分類 | カバレッジ対象 |
 |---|---|
@@ -338,7 +341,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Messaging / Event | `sqs`, `sns`, `eventbridge` |
 | Identity / Communication | `cognito`, `ses` |
 | Container / Artifact | `ecr` |
-| Shared security / configuration | `kms`, `secrets`。それを使うusecaseごとのmoduleとして持ち、暗号化とSecrets管理のカバレッジは外さない |
+| Shared security / configuration | `kms`, `secrets`。独立moduleの要否は判断するが、暗号化とSecrets管理のカバレッジは外さない |
 | Composite | `bastion`, `ecs`, `cdn`, `ec2-service`, `eks`, `analytics`, `amplify-app`, `lightsail-service`, `finops`, `deployment-identity` |
 
 | 候補 | 必要範囲 |
