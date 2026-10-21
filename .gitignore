@@ -35,9 +35,10 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# lock file は test と example の root（実際に init を行う単位）でのみ管理する。
+# lock file は test、env、reference の root（実際に init を行う単位）でのみ管理する。
 # 再利用単位の module ディレクトリでは持たない（ADR-0205 決定9）。
 modules/**/.terraform.lock.hcl
+!modules/*/reference/.terraform.lock.hcl
 
 # ------------------------------------------------------------------------------
 # 運用機構（scripts/）
