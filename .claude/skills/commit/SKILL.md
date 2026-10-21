@@ -144,7 +144,7 @@ Do not invent prefixes outside this list. When ambiguous, choose the closest mat
 
 | Path pattern | Candidate prefix |
 | --- | --- |
-| `modules/**/*.tf`, `examples/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
+| `modules/**/*.tf`, `env/**/*.tf` | `Feat` / `Fix` / `Refactor` (judge from the diff) |
 | `scripts/**/*.go` (non-test) | `Feat` / `Fix` / `Refactor` / `Perf` (judge from the diff) |
 | `**/*_test.go`, `**/*.tftest.hcl` | `Test` |
 | `docs/adr/**` | `Docs`、番号だけが動くなら `Refactor` |

@@ -94,7 +94,7 @@ Why a clean cancel rather than a pause-and-resume: a local review commonly produ
 
 **Depth by change type** — scale the recommendation to what the diff touches (this same scaling also drives the post-PR review at Step 9):
 
-- **Behavior-affecting code** (`modules/**` / `examples/**` の `.tf`、`scripts/**` の `.go`、`.github/` 配下の宣言) → recommend the review by default.
+- **Behavior-affecting code** (`modules/**` / `env/**` の `.tf`、`scripts/**` の `.go`、`.github/` 配下の宣言) → recommend the review by default.
 - **Docs / tooling-dominant changes** (`docs/**`, `*.md`, `.claude/**`, `AGENTS.md`, CI config — no production behavior change) → note the lower ROI so the user can decline quickly; still ask.
 
 Judge the dominant nature of the diff (changed paths / commit prefixes) for the default recommendation, but the user's choice always wins.
