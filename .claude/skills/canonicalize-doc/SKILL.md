@@ -17,7 +17,8 @@ description: >-
 
 このスキルの成果物はその決定7 が禁じているものそのものである。したがって:
 
-1. **`docs/adr/0701-documentation-ownership-and-language.md` の決定7 を開いて確かめる。**
+1. **`docs/adr/0701-documentation-ownership-and-language.md` を開いて確かめる。** Status が
+   `Superseded by` なら、`docs/adr/README.md` の一覧から後継の ADR を辿り、その決定を読む。読んだ決定が
    今も翻訳ペアを禁じているなら、**ここで止まる。** ユーザーへそう報せ、ファイルを1つも書かない。
 2. 決定7 の改定は**停止点**である（`AGENTS.md` *停止点*、ADR-0001 決定2-3）。v1.0.0 までは本文の
    書き換えで、以後は supersede で行われる（ADR-0001 決定2）。

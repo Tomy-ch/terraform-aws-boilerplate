@@ -1,7 +1,7 @@
 ---
 name: new-issue
 description: >-
-  Turn a question about a possible change into a GitHub issue whose premises have been verified against the actual implementation — or into the finding that it should not be an issue at all. Use whenever the user wonders aloud whether something is feasible, reports behavior they think is wrong, proposes a refactor, or asks 「これ issue にしといて」「これって直せる？」「こういう機能入れられる？」. The value is not drafting prose: it is tracing the request path end to end before asserting anything, refusing to guess when information is missing, and writing each factual claim so it is individually falsifiable later. Filing is gated behind "should this be an issue at all" — an existing issue that only needs a comment, or a fix small enough to just make, is not a new issue. Do NOT use it to work an issue that already exists (`impl-issue`), to review a diff (`impl-review`), or to write an ADR (`docs/adr/` —— **supersede は停止点である**).
+  Turn a question about a possible change into a GitHub issue whose premises have been verified against the actual implementation — or into the finding that it should not be an issue at all. Use whenever the user wonders aloud whether something is feasible, reports behavior they think is wrong, proposes a refactor, or asks 「これ issue にしといて」「これって直せる？」「こういう機能入れられる？」. The value is not drafting prose: it is tracing the request path end to end before asserting anything, refusing to guess when information is missing, and writing each factual claim so it is individually falsifiable later. Filing is gated behind "should this be an issue at all" — an existing issue that only needs a comment, or a fix small enough to just make, is not a new issue. Do NOT use it to work an issue that already exists (`impl-issue`), to review a diff (`impl-review`), or to write an ADR (`docs/adr/` —— **ADR の変更は停止点である**).
 argument-hint: '[question or description] [--verify=runtime|static] [--output=file|draft]'
 ---
 
@@ -187,7 +187,7 @@ can read is a backlog nobody uses.
 | An existing issue covers it | Comment there with the new finding |
 | The fix is small enough to just make | Offer to make it now |
 | Step 2 disproved the premise | Report that; file nothing |
-| It is a decision, not a task | ADR を提案する（`docs/adr/`。**supersede は停止点である** —— ADR-0001 決定2・3） |
+| It is a decision, not a task | ADR を提案する（`docs/adr/`。**ADR の変更は停止点である** —— v1.0.0 までは本文の書き換え、以後は supersede。ADR-0001 決定2・3） |
 | ユースケースの責務境界の話だった | `modules/<use-case>/README.md` の supported / unsupported へ（ADR-0102 決定7） |
 | **Terraform 本体が無いと対象0件になる** | それを issue の本文に書く —— 何が要るか、入ったときに**どう変容するか** |
 

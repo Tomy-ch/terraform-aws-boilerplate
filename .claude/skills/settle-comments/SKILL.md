@@ -441,8 +441,8 @@ at all.
 
 **Do not apply a 移設 that would write to a destination document.** Report those with their count and
 proposed landing form, and say that 確認して適用 is where they land. The reason is not caution in
-general, it is the ADR question below: whether a rationale becomes a new record or a rewrite of an
-existing one revises another is a repository-policy call under ADR-0001 決定2's revision rule, and a
+general, it is the ADR question below: whether a rationale becomes a new record or
+revises an existing decision is a repository-policy call under ADR-0001 決定2's revision rule, and a
 mode whose contract is "no questions" has no way to ask it. Keeping that one question alive would
 break the contract; answering it silently would settle a policy question by generator.
 
