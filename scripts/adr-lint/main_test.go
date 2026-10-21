@@ -273,9 +273,9 @@ func Test_ユースケースへの依存(t *testing.T) {
 
 	t.Run("プレースホルダは許容する", func(t *testing.T) {
 		t.Parallel()
-		// `modules/<use-case>/` は特定のユースケースを名指ししていない。
+		// `usecases/<use-case>/` は特定のユースケースを名指ししていない。
 		root := writeADRs(t, map[string]string{
-			"0001-a.md": body("配置は `modules/<use-case>/docs/adr/` とする。"),
+			"0001-a.md": body("配置は `usecases/<use-case>/docs/adr/` とする。"),
 			"README.md": index(row("0001", "0001-a.md")),
 		})
 		var out bytes.Buffer
@@ -286,7 +286,7 @@ func Test_ユースケースへの依存(t *testing.T) {
 		t.Parallel()
 		// 依存の向きは root → use-case の一方向に限る（ADR-0001 決定17-19）。
 		root := writeADRs(t, map[string]string{
-			"0001-a.md": body("`modules/ecs-web-service/main.tf` を参照する。"),
+			"0001-a.md": body("`usecases/ecs-web-service/main.tf` を参照する。"),
 			"README.md": index(row("0001", "0001-a.md")),
 		})
 		var out bytes.Buffer
@@ -297,7 +297,7 @@ func Test_ユースケースへの依存(t *testing.T) {
 	t.Run("違反の行番号は該当行を指す", func(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{
-			"0001-a.md": body("一行目\n`modules/ecs/x.tf`"),
+			"0001-a.md": body("一行目\n`usecases/ecs/x.tf`"),
 			"README.md": index(row("0001", "0001-a.md")),
 		})
 		var out bytes.Buffer
@@ -1118,12 +1118,18 @@ func Test_checkUseCaseDependency(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]string{
-			// `modules/<use-case>/` は特定のユースケースを名指ししていない。
-			"プレースホルダは許容する":    "配置は `modules/<use-case>/docs/adr/` とする。",
-			"modules を含まない本文": "ここには path が無い。",
+			// `usecases/<use-case>/` は特定のユースケースを名指ししていない。
+			"プレースホルダは許容する":     "配置は `usecases/<use-case>/docs/adr/` とする。",
+			"usecases を含まない本文": "ここには path が無い。",
 			// use-case 名は kebab-case。大文字を含む綴りはユースケースの path ではない。
-			"大文字を含む綴りは当たらない": "`modules/EcsWebService/main.tf`",
-			"配下を伴わない形は当たらない": "`modules/ecs-web-service/`",
+			"大文字を含む綴りは当たらない": "`usecases/EcsWebService/main.tf`",
+			"配下を伴わない形は当たらない": "`usecases/ecs-web-service/`",
+			// 一般 module（ADR-0102 決定12）はユースケースではない。特定ユースケースへの依存を見る検査の外にある。
+			"一般 module の path は当たらない": "`modules/s3/main.tf`",
+			// ユースケースの置き場は usecases/ に移った。modules/ 配下はユースケースの path ではない。
+			"旧い modules/<名前>/ の形は当たらない": "`modules/ecs-web-service/main.tf`",
+			"snake_case の名前は当たらない":      "`usecases/ecs_web_service/main.tf`",
+			"glob だけで名前が無い形は当たらない":      "`usecases/*/main.tf`",
 		}
 
 		for name, text := range tests {
@@ -1145,27 +1151,37 @@ func Test_checkUseCaseDependency(t *testing.T) {
 		t.Run("特定のユースケースの path を該当行で報告する", func(t *testing.T) {
 			t.Parallel()
 			// 依存の向きは root → use-case の一方向に限る。
-			d := doc{path: "0001-a.md", number: 1, source: "一行目\n二行目\n`modules/ecs-web-service/main.tf` を参照する。\n"}
+			d := doc{path: "0001-a.md", number: 1, source: "一行目\n二行目\n`usecases/ecs-web-service/main.tf` を参照する。\n"}
 			findings := checkUseCaseDependency([]doc{d})
 			require.Len(t, findings, 1)
 			assert.Equal(t, "0001-a.md", findings[0].File)
 			assert.Equal(t, 3, findings[0].Line)
 			assert.Contains(t, findings[0].Message, "特定ユースケースの path")
-			assert.Contains(t, findings[0].Message, "modules/ecs-web-service/main.tf")
+			assert.Contains(t, findings[0].Message, "usecases/ecs-web-service/main.tf")
 		})
 
 		t.Run("同じ行に2箇所あれば2件返す", func(t *testing.T) {
 			t.Parallel()
-			d := doc{path: "0001-a.md", number: 1, source: "modules/a/main.tf と modules/b/main.tf\n"}
+			d := doc{path: "0001-a.md", number: 1, source: "usecases/a/main.tf と usecases/b/main.tf\n"}
 			findings := checkUseCaseDependency([]doc{d})
 			require.Len(t, findings, 2)
 			assert.Equal(t, 1, findings[0].Line)
 			assert.Equal(t, 1, findings[1].Line)
+			assert.Contains(t, findings[0].Message, "（usecases/a/main.tf）")
+			assert.Contains(t, findings[1].Message, "（usecases/b/main.tf）")
+		})
+
+		t.Run("バッククォートの無い path は path だけを報告する", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: "usecases/ecs/x.tf を参照する。\n"}
+			findings := checkUseCaseDependency([]doc{d})
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "（usecases/ecs/x.tf）")
 		})
 
 		t.Run("プレースホルダと実名が混在しても実名だけを報告する", func(t *testing.T) {
 			t.Parallel()
-			d := doc{path: "0001-a.md", number: 1, source: "`modules/<use-case>/main.tf`\n`modules/ecs/main.tf`\n"}
+			d := doc{path: "0001-a.md", number: 1, source: "`usecases/<use-case>/main.tf`\n`usecases/ecs/main.tf`\n"}
 			findings := checkUseCaseDependency([]doc{d})
 			require.Len(t, findings, 1)
 			assert.Equal(t, 2, findings[0].Line)

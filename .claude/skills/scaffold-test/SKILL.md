@@ -30,7 +30,7 @@ description: >-
 
 Do NOT use this skill for:
 
-- **実 AWS を要するテスト** —— `modules/` にユースケースが入ってからの話で、層の割当は ADR-0401 決定4 が持つ。このスキルが作るのは同一パッケージの unit test である。
+- **実 AWS を要するテスト** —— `usecases/` にユースケースが入ってからの話で、層の割当は ADR-0401 決定4 が持つ。このスキルが作るのは同一パッケージの unit test である。
 - 既存のテストファイル全体の書き直し —— このスキルは新しいテストを書く。部分的な手直しは手で行う。
 - 実装コードの生成（テストファイルだけを書き、被テスト対象を編集しない）。
 - 既存のテストのレビュー —— `/test-review` が所管する。
@@ -44,7 +44,7 @@ Do NOT use this skill for:
 - 対象のソースファイル —— signature、引数、戻り値、エラーセンチネル、同パッケージのヘルパ。
 - 最も近い祖先の `README.md` で、**実際に Test Strategy 節を持つもの**まで歩いて解決する（見出しの語は README ごとに揺れる —— `Test Strategy` / `Test strategy` / `Testing Strategy` —— ので、語ではなく意味で合わせる）。節を持たないより近い README も読む。そこはその配下の命名・ヘルパ・不変条件を持つ。**一覧引きではなく歩いて解決すること** —— 下の一覧は歩いた先の現時点のスナップショットであり、そこに無い配下は「歩く先が無い」のではなく「まだ書かれていない」である。
   - `scripts/README.md` for `scripts/**` —— **いまはここ1つだけが Test Strategy 節を持つ**。
-  - `modules/<use-case>/README.md` —— 未作成。作られたらそこが当該ユースケースの観点を持つ（ADR-0401 決定4、ADR-0102 決定2）。
+  - `usecases/<use-case>/README.md` —— 未作成。作られたらそこが当該ユースケースの観点を持つ（ADR-0401 決定4、ADR-0102 決定2）。
 - 同パッケージの sibling test —— import、ヘルパの signature、フィクスチャの組み立て方、外界の差し替え方の構造的な手本。衝突したら README が勝つ。
 
 **Writes (with confirmation)**:

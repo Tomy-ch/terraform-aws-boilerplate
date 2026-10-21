@@ -67,18 +67,22 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 ### テストの配置
 
-11. module のテストは当該 module 配下へ置く。
+11. テストは対象の配下の `tests/` へ置く。usecase、一般 module、`internal/` の module のいずれも同じとする（ADR-0102 決定12）。公開契約を持つのは usecase だけなので（ADR-0102 決定13）、Contract Test は usecase の `tests/` に置く。
 
     ```text
-    modules/<use-case>/
+    usecases/<use-case>/
     ├── main.tf
     ├── variables.tf
     ├── outputs.tf
+    ├── internal/<module>/
+    │   └── tests/
     └── tests/
         ├── defaults.tftest.hcl
         ├── validation.tftest.hcl
         ├── contract.tftest.hcl
         └── behavior.tftest.hcl
+    modules/<module>/
+    └── tests/
     ```
 
 12. 実 AWS に resource を作成するテストを、作成しないテストと同一ファイルへ混在させない。

@@ -167,7 +167,7 @@ gitignore された `tmp/` の下（例 `tmp/skills/manage-skill/<skill-name>-wo
 - 決定的な多段の流れをユーザーの選択で分岐させるなら、自由文ではなく `AskUserQuestion` を使う
   （`commit` / `submit-pr` が手本）。
 - **正本は実行時に読む** —— `scripts/README.md` の Test Strategy 節、`docs/adr/README.md`、
-  `modules/<use-case>/README.md`。規則をスキルへ写さない。写した瞬間に、正本が動いてもこちらは動かなくなる。
+  `usecases/<use-case>/README.md`。規則をスキルへ写さない。写した瞬間に、正本が動いてもこちらは動かなくなる。
 
 ## Creating a new skill
 

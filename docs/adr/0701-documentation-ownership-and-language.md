@@ -1,7 +1,7 @@
 # ADR-0701: 文書の所有と言語を定める
 
 - Status: Accepted
-- Date: 2026-09-16
+- Date: 2026-10-21
 - Scope: repository-wide
 - Related: ADR-0001, ADR-0102, ADR-0206, ADR-0401, ADR-0501
 
@@ -30,7 +30,7 @@
    | --- | --- |
    | 設計判断とその根拠 | ADR（配置は ADR-0001 に従う） |
    | AI コーディングエージェントの作業規約 | `AGENTS.md` |
-   | ユースケースの責務境界・supported / unsupported | `modules/<use-case>/README.md`（ADR-0102 決定2） |
+   | ユースケースの責務境界・supported / unsupported | `usecases/<use-case>/README.md`（ADR-0102 決定2） |
    | 公式実装の参照記録 | ADR-0206 決定8 が定める位置 |
    | module の input / output の一覧 | terraform-docs の生成区間 |
    | 開発の経緯・変更履歴 | git |

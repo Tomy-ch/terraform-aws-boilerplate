@@ -8,7 +8,7 @@
 //  2. 同一 scope 内で番号が重複しないこと
 //  3. 先頭メタデータに Status / Date / Scope が存在すること
 //  4. Status が `Superseded by` の場合、参照先 ADR が存在すること
-//  5. root ADR 本文が modules/<use-case>/ 配下の path へ規範的に依存していないこと
+//  5. root ADR 本文が usecases/<use-case>/ 配下の path へ規範的に依存していないこと
 //  6. 本文が参照する ADR-NNNN がすべて実在すること
 //  7. 見出しが名乗る番号が、ファイル名の番号と一致すること
 //  8. docs/adr/ の**外**から ADR を指すリンクが、実在する ADR を指していること
@@ -75,11 +75,11 @@ var (
 	// 見に行けば必ず落ちる検査になる。identity が `<scope>/<slug>` である以上（ADR-0001 決定4）、
 	// scope を書いた参照はこちらの番号体系の外を指している。
 	adrRef = regexp.MustCompile(`(^|[^/\w])ADR-(\d{4})`)
-	// 本文が modules/<use-case>/ 配下の path を名指ししている箇所。
+	// 本文が usecases/<use-case>/ 配下の path を名指ししている箇所。
 	// root ADR は特定ユースケースの実装詳細へ依存してはならない（ADR-0001 決定19）。
-	useCasePath = regexp.MustCompile("`?modules/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]+`?")
+	useCasePath = regexp.MustCompile("`?usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]+`?")
 	// ただし <use-case> という**プレースホルダ**を含む形は、特定のユースケースを名指ししていない。
-	placeholder = regexp.MustCompile(`modules/<use-case>/`)
+	placeholder = regexp.MustCompile(`usecases/<use-case>/`)
 	// Markdown のリンク。`[文言](指し先)` の形。指し先の後ろに title が付く形も許す。
 	markdownLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
 	// リンクの文言が番号を名乗っている形。`[0101]` と `[ADR-0101]` のどちらも使われている。
@@ -335,7 +335,7 @@ func checkSupersede(docs []doc, root string) []lintreport.Finding {
 // checkUseCaseDependency は、root ADR 本文が特定ユースケースの実装詳細へ依存していないかを検査します。
 //
 // 依存の向きは root ADR → use-case ADR の一方向に限ります（ADR-0001 決定17-19）。
-// `modules/<use-case>/` のようなプレースホルダは、特定のユースケースを名指ししていないため許容します。
+// `usecases/<use-case>/` のようなプレースホルダは、特定のユースケースを名指ししていないため許容します。
 func checkUseCaseDependency(docs []doc) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, d := range docs {

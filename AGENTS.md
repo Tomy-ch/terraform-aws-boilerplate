@@ -15,7 +15,7 @@
 **Terraform の実装はまだ無い。** 決定（`docs/adr/`）と、それを守る機構（`.github/` / `.makefiles/` /
 `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `modules/` / `env/` —— 実装とユースケースが無い
+- `usecases/` / `modules/` / `env/` —— 実装とユースケースが無い
 - Terraform 側の検査 —— `.tflint.hcl`、Conftest の Policy Test、`terraform test` のいずれも未作成で、
   `make` にも配線されていない（[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が
   割り当てた道具のうち、Terraform に掛かるものが揃っていない）
@@ -32,7 +32,7 @@
 
 1. **AGENTS.md**（本書）—— エージェントの作業規約
 2. **`docs/adr/*.md`** —— repository-wide の Accepted ADR
-3. **`modules/<use-case>/docs/adr/*.md`** —— 当該ユースケースの Accepted ADR。root ADR を上書きしない（[0001](docs/adr/0001-adr-process-and-placement.md) 決定17-19）
+3. **`usecases/<use-case>/docs/adr/*.md`** —— 当該ユースケースの Accepted ADR。root ADR を上書きしない（[0001](docs/adr/0001-adr-process-and-placement.md) 決定17-19）
 4. ユーザーの指示
 
 ## 何を推奨するか
@@ -52,8 +52,8 @@
 | 必要なもの | 読む先 |
 | --- | --- |
 | 受理されたすべての決定、1行ずつ | [`docs/adr/README.md`](docs/adr/README.md) —— ADR の一覧が存在する唯一の場所 |
-| ユースケースの責務境界・supported / unsupported・公開契約 | `modules/<use-case>/README.md`（[0102](docs/adr/0102-use-case-centric-scope.md) 決定2、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2）—— 未作成 |
-| そのユースケースに固有の設計判断 | `modules/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）—— 未作成 |
+| ユースケースの責務境界・supported / unsupported・公開契約 | `usecases/<use-case>/README.md`（[0102](docs/adr/0102-use-case-centric-scope.md) 決定2、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2）—— 未作成 |
+| そのユースケースに固有の設計判断 | `usecases/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）—— 未作成 |
 | **AWS Provider の schema は version で変わる** | 記憶ではなく Terraform MCP Server → Terraform Registry → Provider Documentation の順に確認する（[0501](docs/adr/0501-development-tooling-composition.md) 決定21）。記憶にある argument 名は、確認するまで仮説である |
 | どのテスト層が何を検出するか | [0401](docs/adr/0401-testing-policy.md) 決定4。それを担う道具は [0501](docs/adr/0501-development-tooling-composition.md) 決定4 |
 | どの文書が何を所有し、開発の経緯はどこへ行くか | [0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2・3 |
@@ -145,6 +145,7 @@
 
 ### 変更してよい
 
+- `usecases/` 配下
 - `modules/` 配下
 - `env/` 配下
 - `docs/` 配下（Accepted ADR の本文を除く）

@@ -1,7 +1,7 @@
 ---
 name: settle-comments
 description: >-
-  Cut the dead weight out of the EXISTING STOCK of source-code comments in a chosen scope, tests included. Dead weight is three things: 経緯 (development history — "previously", "changed to", "originally"), 日数経過 (anything true only on the day it was written — "currently", "for now", "not yet", a deadline), and 読めば意味がわかるもの (a restatement of the code or of the identifier's own name). All three are deleted outright — git owns the history, a declaration owns a deadline, and the code owns what the code says. Two further deletions follow: a fact some test case, `golangci-lint` rule, gate (`adr-lint` / `required-check-lint` / `egress-check` / `pin-*-check`) or terraform-docs generated region already keeps true, dropped against a named `file:line`; and a Why written at several declarations, collapsed to one site. Relocation into `docs/adr/` / `modules/<use-case>/docs/adr/` / a README is the fallback for the remainder that cannot simply go, never the goal. Use it whenever a comment narrates development history or says "currently" / "for now"; whenever a comment restates the code, the identifier's name, or what a test or a linter already enforces; whenever a test file's comments restate its `t.Run` case names or narrate where the cases came from; whenever comments feel bloated, verbose, over-explained, or essay-like even though each line is individually true; whenever the same reason appears at several declarations and no one place is authoritative; whenever a doc comment has grown into a design argument, threat-model analysis, or rejected-alternative discussion; for a periodic hygiene pass over a package / area / whole repo; before a large PR or a boilerplate cut; and when someone asks 「コメントが長すぎる」「コメントを整理して」「テストと同じことをコメントが書いている」「この Why はコードに置くべきか」「コメントを ADR に移したい」「テストのコメントを整理して」. Modes: 確認して適用 (default), 自動適用 (`--apply`), 報告のみ (`--report-only`). Sole owner of the comment subject — no review skill carries a comment lens — and it runs **unconditionally as the last step of every implementation** over the declarations the change touched (`AGENTS.md` *作業手順* 6), not as a review whose return gets estimated. Do NOT use it to judge README / docs prose quality, or to delete `// Name は、〜です。` field comments — that convention is deliberately preserved.
+  Cut the dead weight out of the EXISTING STOCK of source-code comments in a chosen scope, tests included. Dead weight is three things: 経緯 (development history — "previously", "changed to", "originally"), 日数経過 (anything true only on the day it was written — "currently", "for now", "not yet", a deadline), and 読めば意味がわかるもの (a restatement of the code or of the identifier's own name). All three are deleted outright — git owns the history, a declaration owns a deadline, and the code owns what the code says. Two further deletions follow: a fact some test case, `golangci-lint` rule, gate (`adr-lint` / `required-check-lint` / `egress-check` / `pin-*-check`) or terraform-docs generated region already keeps true, dropped against a named `file:line`; and a Why written at several declarations, collapsed to one site. Relocation into `docs/adr/` / `usecases/<use-case>/docs/adr/` / a README is the fallback for the remainder that cannot simply go, never the goal. Use it whenever a comment narrates development history or says "currently" / "for now"; whenever a comment restates the code, the identifier's name, or what a test or a linter already enforces; whenever a test file's comments restate its `t.Run` case names or narrate where the cases came from; whenever comments feel bloated, verbose, over-explained, or essay-like even though each line is individually true; whenever the same reason appears at several declarations and no one place is authoritative; whenever a doc comment has grown into a design argument, threat-model analysis, or rejected-alternative discussion; for a periodic hygiene pass over a package / area / whole repo; before a large PR or a boilerplate cut; and when someone asks 「コメントが長すぎる」「コメントを整理して」「テストと同じことをコメントが書いている」「この Why はコードに置くべきか」「コメントを ADR に移したい」「テストのコメントを整理して」. Modes: 確認して適用 (default), 自動適用 (`--apply`), 報告のみ (`--report-only`). Sole owner of the comment subject — no review skill carries a comment lens — and it runs **unconditionally as the last step of every implementation** over the declarations the change touched (`AGENTS.md` *作業手順* 6), not as a review whose return gets estimated. Do NOT use it to judge README / docs prose quality, or to delete `// Name は、〜です。` field comments — that convention is deliberately preserved.
 ---
 
 # Settle Comments
@@ -199,7 +199,7 @@ and a scan that never claims to find paraphrase is more useful than a judgment c
 | ADR をどこに置き、どう改訂するか | [ADR-0001](../../../docs/adr/0001-adr-process-and-placement.md)、`docs/adr/README.md` |
 | 運用機構（`scripts/**`）の観点と規律 | [`scripts/README.md`](../../../scripts/README.md)、[ADR-0702](../../../docs/adr/0702-repository-operations-substrate.md) |
 | workflow の規則 | [`.github/workflows/README.md`](../../../.github/workflows/README.md) |
-| ユースケースの責務境界と公開契約 | `modules/<use-case>/README.md`（ADR-0102 決定2） |
+| ユースケースの責務境界と公開契約 | `usecases/<use-case>/README.md`（ADR-0102 決定2） |
 
 実行のたびに読み、そのまま適用する。変わっているかもしれず、記憶にある版では足りない。
 
@@ -217,13 +217,13 @@ refuse outright:
 - **ライブラリや API の固有の挙動**（この SDK はこの環境変数を読む、`git ls-remote` はこの形で返す、
   AWS のこの argument はこう振る舞う）は選択肢の中からの選択ではない。呼んでいるものの性質であり、
   依存を上げれば変わる。居場所は呼び出し地点のコメントである。判定: 維持。
-- **ユースケースの責務境界と supported / unsupported** は `modules/<use-case>/README.md` が所有する
+- **ユースケースの責務境界と supported / unsupported** は `usecases/<use-case>/README.md` が所有する
   （ADR-0102 決定2、ADR-0701 決定2）。ADR へ送らない。
 - **運用機構のテスト観点**は `scripts/README.md` の Test Strategy 節が所有する。
 
 **ADR を移設先に選んだら、root と use-case のどちらかを決める**（ADR-0001 決定12-14）。
-`modules/<use-case>/` のコードから抜いた根拠が、そのユースケースの内部実装についてのものなら
-`modules/<use-case>/docs/adr/` である。root へ置くと、**root ADR が特定ユースケースの実装詳細へ
+`usecases/<use-case>/` のコードから抜いた根拠が、そのユースケースの内部実装についてのものなら
+`usecases/<use-case>/docs/adr/` である。root へ置くと、**root ADR が特定ユースケースの実装詳細へ
 依存する形**になり、決定19 に反する。判断がつかない場合は昇格の判断（決定20-22）に当たり、
 それは停止点である —— 移設先を決めずに finding として差し出す。
 
@@ -246,7 +246,7 @@ already answers it; skip the call entirely when both are fixed.
 - 「settle-comments の対象スコープを選んでください」
   - 「指定パス配下（パッケージ / ディレクトリを続けて指定）」
   - 「ベースブランチとの diff で変更されたファイル」
-  - 「区分全体（`scripts/` / `.github/workflows/` / `.makefiles/` / `docker/` / `modules/` から選択）」
+  - 「区分全体（`scripts/` / `.github/workflows/` / `.makefiles/` / `docker/` / `usecases/` / `modules/` / `env/` から選択）」
   - 「キャンセル」
 - 「検出結果をどう適用しますか？」
   - 「1 件ずつ確認して書き換える」 ← 既定
@@ -300,7 +300,7 @@ done | sort -rn | head -30
 ```
 
 Group the resolved files by directory — that is the fan-out unit, because jurisdiction is a
-per-directory judgment（`scripts/<tool>/`、`.github/workflows/`、`modules/<use-case>/` のそれぞれが、
+per-directory judgment（`scripts/<tool>/`、`.github/workflows/`、`usecases/<use-case>/` のそれぞれが、
 移設先の候補となる README を持ちうる）。
 
 ## Step 2 — Fan out read-only auditors in parallel
@@ -377,7 +377,7 @@ settle-comments 検出結果（scope: <X>, 対象 <n> ファイル / <m> パッ�
   削減: <行数> 行（うち 経緯 <h> / 日数経過 <i> / 言い直し <j>）
   ...（各 finding: 場所・対象コメント・判定・根拠・着地形）
 
-移設先の内訳: docs/adr/ <p> 件 / modules/<use-case>/docs/adr/ <q> 件 / modules/<use-case>/README.md <r> 件 / その他の README <s> 件
+移設先の内訳: docs/adr/ <p> 件 / usecases/<use-case>/docs/adr/ <q> 件 / usecases/<use-case>/README.md <r> 件 / その他の README <s> 件
 集約: <e> 件（対象コメント計 <t> 箇所 / 内訳 重複 <u> ・分散 <v> ・総量過多 <w>）
 パッケージ横断の重複: <x> クラスタ（対象コメント計 <y> 箇所 / <z> パッケージにまたがる）
 総 finding: <sum>（うち要判断 <k>）。<確認して適用のときだけ「これから 1 件ずつ確認します。」を続ける>
@@ -474,7 +474,7 @@ For each non-`維持` finding, in descending impact order:
 4. If the destination is an **ADR**, do not decide the ADR's shape yourself. ADR-0001 決定2 は、v1.0.0 までは <!-- v1.0.0 で削除: #141 -->
    受理済みの ADR の本文を直接書き換え、以後は supersede で改訂すると定める。新しい根拠が新規の記録として
    着地するのか、既存の決定を改訂するのかはリポジトリ方針の判断であって、コメント整理の判断ではない。
-   Ask: 「root ADR を新規に起こす」 / 「use-case ADR（`modules/<use-case>/docs/adr/`）として起こす」 /
+   Ask: 「root ADR を新規に起こす」 / 「use-case ADR（`usecases/<use-case>/docs/adr/`）として起こす」 /
    「既存 ADR-NNNN を改訂する」 / 「ADR ではなく README へ」 / 「今回は移設しない」。
    ADR-0701 決定7 は訳文ペアを禁じているので、正本は日本語の1ファイルだけである。どれを選んでも、
    `docs/adr/README.md` の索引を同じ変更で更新する —— 索引は ADR の一覧が存在する唯一の場所であり、

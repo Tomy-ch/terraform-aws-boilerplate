@@ -260,13 +260,13 @@
 
 「親引数に `module.` が含まれない」は**否定形の述語**であり、親が「同一 module の resource」であることを何も保証しない。抜け道は次のとおり。
 
-1. **`var.` 経由**。兄弟の `internal/` に attachment だけの module を作り、親 ID を variable で受ける。
+1. **`var.` 経由**。別の module（一般 module か、兄弟の `internal/`）に attachment だけの module を作り、親 ID を variable で受ける。
 2. **`data.` 経由**。`data.aws_sqs_queue.x.url` / `data.aws_s3_bucket.x.id` / `data.terraform_remote_state` / `data.aws_ssm_parameter`。要件 3 が usecase 間の受け渡しに remote state / SSM を認めているので、**usecase 間の attachment はこの形で必ず現れる**。
 3. **`local.` の間接参照**。`locals { q = module.queue.url }` → `queue_url = local.q`。plan JSON の `configuration.*.expressions.<arg>.references` は `local.q` までしか展開しない。
 4. **文字列組み立て**。`format("https://sqs.%s.amazonaws.com/%s/%s", ...)`、`"arn:aws:..."` リテラル、`each.value` / `each.key`（`for_each` の map を module 出力から組む）。
 5. **nested block の親**。`aws_guardduty_malware_protection_plan.protected_resource.s3_bucket.bucket_name`、`aws_api_gateway_method_settings` の `rest_api_id` + `stage_name` の組、`aws_flow_log` の 6 択 Optional。トップレベル引数だけ見る Rego は素通しする。
 6. **親側 inline 引数との二重管理**。`aws_sqs_queue.policy` と `aws_sqs_queue_policy` を別 module に置く（Provider は permanent diff を出すが CI の検査 3 には掛からない）。`aws_iam_role.managed_policy_arns`（Deprecated だが存在）は排他管理なので別 module の attachment を毎 apply 剥がす。
-7. **検査 1 の死角**。attachment が usecase 直下でなく別の `internal/` の module に居れば検査 1 は通り、検査 3 も `var.` 経由なら通る。
+7. **検査 1 の死角**。attachment が usecase 直下でなく別の module（一般 module か `internal/`）に居れば検査 1 は通り、検査 3 も `var.` 経由なら通る。
 
 ### 塞ぐ案（肯定形にする）
 
@@ -296,6 +296,6 @@
 
 ## 隣接して気づいたこと
 
-要件 3.1 の検査 3 は「usecase 層」の規則として書かれているが、検査 1 で usecase 直下に resource が無い以上、検査 3 が実際に走る対象は `internal/` の module である。要件の文言をそのように直すか、検査 3 の適用範囲を明記した方がよい。
+要件 3.1 の検査 3 は「usecase 層」の規則として書かれているが、検査 1 で usecase 直下に resource が無い以上、検査 3 が実際に走る対象は一般 module と `internal/` の module である。要件の文言をそのように直すか、検査 3 の適用範囲を明記した方がよい。
 
 作業ファイル: `/tmp/tabp/awsdocs/repo/website/docs/r/`（v6.65.0 の docs 全 1718 ファイル）、抽出スクリプト `/tmp/tabp/awsdocs/args.sh`。

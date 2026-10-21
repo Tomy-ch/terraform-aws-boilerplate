@@ -72,7 +72,7 @@ A comparison built on a wrong premise about the current code is worse than no co
 looks decidable.
 
 Before anything else, establish the current state — what exists, what constrains it, whether a
-decision already stands in `docs/adr/` or `modules/<use-case>/docs/adr/`. If that state is unclear or contested,
+decision already stands in `docs/adr/` or `usecases/<use-case>/docs/adr/`. If that state is unclear or contested,
 **stop and say so**: the user should run `repo-truth` first. Do not invoke it yourself and do not
 paper over the gap with an assumption, because the assumption then silently shapes every option.
 
@@ -83,7 +83,7 @@ a precedent is not an authorization.
 **Look for that decision by concern, not by keyword.** `AGENTS.md` states plainly that searching the
 index for your feature's words is not enough, because a document is named for the concern it owns.
 Read the entries in `docs/adr/README.md` —— **ADR の一覧が存在する唯一の場所** —— and pick by what
-each one governs. 触っているユースケースがあるなら `modules/<use-case>/docs/adr/` も同じ拘束力を
+each one governs. 触っているユースケースがあるなら `usecases/<use-case>/docs/adr/` も同じ拘束力を
 持つ（ADR-0001 決定12-14）。 A decision missed this way does not
 surface as an error — it surfaces as a comparison that re-litigates something already settled, which
 is the most expensive output this skill can produce.
@@ -95,7 +95,7 @@ identical problem somewhere else. When it does, placement, construction, and cal
 decided by that precedent, and scoring options would be inventing a branch that does not exist.
 
 This is the cheapest step and the most frequently skipped one. 運用機構なら `scripts/` の既存ツールを、
-ユースケースなら同じ `modules/<use-case>/` の中を先に探す（`AGENTS.md` *作業手順* 3）。Read the owning
+ユースケースなら同じ `usecases/<use-case>/` の中を先に探す（`AGENTS.md` *作業手順* 3）。Read the owning
 `README.md` at runtime rather than reasoning from the shape of the problem。
 
 **重複のみを理由に共通化しないこと**（ADR-0205 決定11）**と、重複に気づかず二重に書くことは別である。**
@@ -108,7 +108,7 @@ Enumerate what a layer actually contains and look at each one's shape; do not gr
 
 **構造で引く道具があれば、ここがその使いどころである** —— 問いと語を1つも共有しない先例は、
 テキスト検索が構造的に届かない唯一の場合だからである。**そういう索引はこのリポジトリにまだ無い。**
-無い以上、この段は列挙で代替する: 候補になる区分（`scripts/` のツール群、`modules/<use-case>/`）を
+無い以上、この段は列挙で代替する: 候補になる区分（`scripts/` のツール群、`usecases/<use-case>/`）を
 `ls` で並べ、1つずつ形を見る。**概念で grep しない** —— 届かないことが分かっている手段である。
 
 Confirm any candidate in source before calling it isomorphic — 構造の近さは、同じ形の問題を解いて

@@ -17,7 +17,7 @@ The core is Claude's own judgment loop (not a headless script). For each finding
 "read the actual code → judge whether it needs no design decision or is suspicious → fix or defer →
 verify → commit → record into the ledger and mod."
 
-- 既定のスコープは `AGENTS.md` *変更してよい範囲* が定める `modules/` / `env/` /
+- 既定のスコープは `AGENTS.md` *変更してよい範囲* が定める `usecases/` / `modules/` / `env/` /
   `docs/`（Accepted ADR の本文を除く）。ユーザーが明示的に広げたなら（`scripts/` /
   `.makefiles/` / `.github/` など）、それに従う。**v1.0.0 までの暫定**がその解除を既に許している。 <!-- v1.0.0 で削除: #141 -->
 - **Never change protected targets**: `AGENTS.md`、`LICENSE`、生成物（terraform-docs の生成区間、`.terraform.lock.hcl`、`make *-apply` が書くインラインブロック）、
@@ -72,7 +72,7 @@ mechanism itself is delegated to the `commit` skill (see 6.).
 
 If `--scope` etc. are unspecified, confirm them all at once via `AskUserQuestion`. Items to confirm:
 
-- **Target directories**: 既定は `AGENTS.md` *変更してよい範囲*（`modules/` / `env/` /
+- **Target directories**: 既定は `AGENTS.md` *変更してよい範囲*（`usecases/` / `modules/` / `env/` /
   `docs/`）。`scripts/` / `.makefiles/` / `.github/` / リポジトリ直下は "out of scope /
   not changeable without explicit instruction" in CLAUDE.md, so including them **requires the user's
   explicit consent**.

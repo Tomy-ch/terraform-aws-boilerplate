@@ -1,7 +1,7 @@
 # ADR-0302: 履歴への秘密の混入を独立した検証レイヤーとして扱う
 
 - Status: Accepted
-- Date: 2026-09-16
+- Date: 2026-10-21
 - Scope: repository-wide
 - Related: ADR-0301, ADR-0401, ADR-0501, ADR-0402, ADR-0602
 
@@ -33,7 +33,7 @@ ADR-0602 決定12 が長期のアクセスキーをCIから排除し、ADR-0203 
    | Secret Scan | gitleaks（走査対象はcommitと履歴） | 不要 |
 
 2. 本レイヤーの権威をgitleaksとする。Trivyのsecret scanningは無効化し、Trivyはmisconfigurationの走査に限定する。ADR-0402 決定3（1つの検査に権威は1つ）の適用である。
-3. 本レイヤーはTerraformコードの正しさを検証しない。したがって `modules/` 配下に限らず、リポジトリ全体を対象とする。
+3. 本レイヤーはTerraformコードの正しさを検証しない。したがって Terraform のコードの置き場に限らず、リポジトリ全体を対象とする。
 
 ### fail-closed
 

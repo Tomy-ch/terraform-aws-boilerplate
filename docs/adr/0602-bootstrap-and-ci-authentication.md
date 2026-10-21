@@ -44,7 +44,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    - Terraform の state backend
    - GitHub Actions から AWS を操作するための OIDC provider と IAM role
 
-2. bootstrap の構成物も use-case として `modules/` 配下へ置く（ADR-0102）。bootstrap であることを理由に、型付き契約（ADR-0203）・Generic Escape Hatch の禁止（ADR-0204）・最小権限（ADR-0301）・テスト（ADR-0401）のいずれも免除しない。
+2. bootstrap の構成物も use-case として `usecases/` 配下へ置く（ADR-0102）。bootstrap であることを理由に、型付き契約（ADR-0203）・Generic Escape Hatch の禁止（ADR-0204）・最小権限（ADR-0301）・テスト（ADR-0401）のいずれも免除しない。
 3. bootstrap 層であることは、適用の契機が異なることのみを意味する。公開契約とテストの要件は他のユースケースと同一とする。
 
 ### 順序

@@ -15,7 +15,7 @@ You are read-only. Never edit, write, or mutate anything — the orchestrating
 3. **[ADR-0001](../../../../docs/adr/0001-adr-process-and-placement.md)** — ADR の配置と改訂
    （v1.0.0 までは本文の書き換え、以後は supersede で改訂する）。 <!-- v1.0.0 で削除: #141 -->
 4. **監査対象のディレクトリに最も近い祖先の `README.md`** —— `scripts/README.md`、
-   `.github/workflows/README.md`、`modules/<use-case>/README.md` のいずれか。
+   `.github/workflows/README.md`、`usecases/<use-case>/README.md` のいずれか。
 
 **コメントが何を含んでよいかを所有する文書は、このリポジトリにまだ無い。** 判定基準は本書と
 `SKILL.md` が持っている。両者が食い違ったら `SKILL.md` が勝つ。
@@ -258,7 +258,7 @@ as "design rationale". Refuse these two outright:
   var. That is not a choice among alternatives; it is a property of the thing being called, and it
   changes when the dependency is upgraded. Verdict: **維持**.
 - **ユースケースの責務境界と supported / unsupported** — その居場所は
-  `modules/<use-case>/README.md`（ADR-0102 決定2、ADR-0701 決定2）であって、ADR ではない。
+  `usecases/<use-case>/README.md`（ADR-0102 決定2、ADR-0701 決定2）であって、ADR ではない。
 - **運用機構のテスト観点** — その居場所は `scripts/README.md` の Test Strategy 節である。
 
 `docs/adr/` takes only a **choice among alternatives with lasting consequences** or a deliberate
@@ -320,7 +320,7 @@ Your final message **is** the data the orchestrator consumes. No preamble.
 - 根拠: なぜその判定か。削除 なら、経緯は「いま読む人が何を決められるか」が空であること、日数経過は
   その語そのもの、言い直しはそれを冗長にしているコードの引用。移設 なら「この判断を覆す人が更新を
   義務づけられる文書」を名指しする
-- 移設先: docs/adr/NNNN-....md の <節> / modules/<use-case>/docs/adr/NNNN-....md / modules/<use-case>/README.md / scripts/README.md / .github/workflows/README.md
+- 移設先: docs/adr/NNNN-....md の <節> / usecases/<use-case>/docs/adr/NNNN-....md / usecases/<use-case>/README.md / scripts/README.md / .github/workflows/README.md
   - 追記する文面: （実際の文章）
 - 着地形（変更前 → 変更後）:
   ```go
