@@ -1126,6 +1126,10 @@ func Test_checkUseCaseDependency(t *testing.T) {
 			"配下を伴わない形は当たらない": "`usecases/ecs-web-service/`",
 			// 一般 module（ADR-0102 決定12）はユースケースではない。特定ユースケースへの依存を見る検査の外にある。
 			"一般 module の path は当たらない": "`modules/s3/main.tf`",
+			// ユースケースの置き場は usecases/ に移った。modules/ 配下はユースケースの path ではない。
+			"旧い modules/<名前>/ の形は当たらない": "`modules/ecs-web-service/main.tf`",
+			"snake_case の名前は当たらない":      "`usecases/ecs_web_service/main.tf`",
+			"glob だけで名前が無い形は当たらない":      "`usecases/*/main.tf`",
 		}
 
 		for name, text := range tests {
@@ -1163,6 +1167,16 @@ func Test_checkUseCaseDependency(t *testing.T) {
 			require.Len(t, findings, 2)
 			assert.Equal(t, 1, findings[0].Line)
 			assert.Equal(t, 1, findings[1].Line)
+			assert.Contains(t, findings[0].Message, "（usecases/a/main.tf）")
+			assert.Contains(t, findings[1].Message, "（usecases/b/main.tf）")
+		})
+
+		t.Run("バッククォートの無い path は path だけを報告する", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: "usecases/ecs/x.tf を参照する。\n"}
+			findings := checkUseCaseDependency([]doc{d})
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "（usecases/ecs/x.tf）")
 		})
 
 		t.Run("プレースホルダと実名が混在しても実名だけを報告する", func(t *testing.T) {
