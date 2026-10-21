@@ -441,8 +441,8 @@ at all.
 
 **Do not apply a 移設 that would write to a destination document.** Report those with their count and
 proposed landing form, and say that 確認して適用 is where they land. The reason is not caution in
-general, it is the ADR question below: whether a rationale becomes a new record or a rewrite of an
-existing one supersedes another is a repository-policy call under ADR-0001's immutability rule, and a
+general, it is the ADR question below: whether a rationale becomes a new record or
+revises an existing decision is a repository-policy call under ADR-0001 決定2's revision rule, and a
 mode whose contract is "no questions" has no way to ask it. Keeping that one question alive would
 break the contract; answering it silently would settle a policy question by generator.
 
@@ -471,11 +471,11 @@ For each non-`維持` finding, in descending impact order:
    reasoning is simply gone. When the auditor found the destination **already states the content**
    (`追記なし`), there is no document write: the finding lands as a 短縮 to the residue plus a link,
    and only the code changes.
-4. If the destination is an **ADR**, do not decide the ADR's shape yourself. ADR-0001 は受理済みの
-   ADR を immutable とし、改訂を supersede として扱う。新しい根拠が新規の記録として着地するのか、
-   既存の決定を supersede するのかはリポジトリ方針の判断であって、コメント整理の判断ではない。
+4. If the destination is an **ADR**, do not decide the ADR's shape yourself. ADR-0001 決定2 は、v1.0.0 までは <!-- v1.0.0 で削除: #141 -->
+   受理済みの ADR の本文を直接書き換え、以後は supersede で改訂すると定める。新しい根拠が新規の記録として
+   着地するのか、既存の決定を改訂するのかはリポジトリ方針の判断であって、コメント整理の判断ではない。
    Ask: 「root ADR を新規に起こす」 / 「use-case ADR（`modules/<use-case>/docs/adr/`）として起こす」 /
-   「既存 ADR-NNNN を supersede する」 / 「ADR ではなく README へ」 / 「今回は移設しない」。
+   「既存 ADR-NNNN を改訂する」 / 「ADR ではなく README へ」 / 「今回は移設しない」。
    ADR-0701 決定7 は訳文ペアを禁じているので、正本は日本語の1ファイルだけである。どれを選んでも、
    `docs/adr/README.md` の索引を同じ変更で更新する —— 索引は ADR の一覧が存在する唯一の場所であり、
    そこがずれると読み手は決定へ到達できない。`make adr-lint` がその整合を見る。
@@ -496,7 +496,7 @@ because no human read the edits one at a time.
 
 - `make go-fmt` then `make go-lint` —— `revive` は、規約が要求する場所で doc コメントが消えたことを捕まえる。
 - `make md-lint` when a Markdown destination was written.
-- `make adr-lint` when an ADR was added or superseded —— 索引と本文の整合、および参照している
+- `make adr-lint` when an ADR was added or revised —— 索引と本文の整合、および参照している
   `ADR-NNNN` が実在することを見る。
 - workflow / `.makefiles/` のコメントを触ったなら `make actions-lint`。コメントに見えて実は
   ディレクティブだったものを消していないかは、そこで落ちる。

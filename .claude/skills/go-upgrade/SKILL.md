@@ -37,7 +37,7 @@ git switch -c feature/go-upgrade-<TARGET> "origin/$BASE"
 
 ## 変更してよい範囲
 
-`AGENTS.md` の *v1.0.0 までの暫定* がリポジトリ直下の設定ファイルの編集を解除している。触れてよいのは次だけ。
+`AGENTS.md` の *v1.0.0 までの暫定* がリポジトリ直下の設定ファイルの編集を解除している。触れてよいのは次だけ。 <!-- v1.0.0 で削除: #141 -->
 
 - `mise.toml` の `[tools] go`
 - `scripts/go.mod` / `scripts/go.sum`（`make versions-apply` と `go mod tidy` が書く）

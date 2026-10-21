@@ -1,6 +1,6 @@
 # terraform-aws-boilerplate v1.0 の範囲
 
-> **この文書は v1.0 までの暫定である。** v1.0 到達時に削除する。内容は `modules/<use-case>/README.md` と ADR へ移る（ADR-0701 決定2）。
+> **この文書は v1.0 までの暫定である。** v1.0 到達時に削除する。内容は `modules/<use-case>/README.md` と ADR へ移る（ADR-0701 決定2）。 <!-- v1.0.0 で削除: #141 -->
 >
 > **リポジトリに残るものからこの文書を参照しない** —— `modules/<use-case>/README.md`、ADR、`.tf`、コードコメント。参照したくなったなら、その内容は参照先の文書が所有すべきものである。Issue と Pull Request からの参照は許す。
 
