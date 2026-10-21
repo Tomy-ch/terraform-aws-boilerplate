@@ -118,7 +118,7 @@
 | 公式推奨から外れる構成の採用 | [0207](docs/adr/0207-default-value-policy.md) 決定11 —— 外れる対象・理由・影響・代替案・見直し条件を記録する |
 | 新しいユースケースの追加、および要求を責務外と判断すること | [0102](docs/adr/0102-use-case-centric-scope.md) 決定5・7 |
 | experimental なユースケースの stable への昇格、および削除 | [0102](docs/adr/0102-use-case-centric-scope.md) 決定14 |
-| ADR の supersede | [0001](docs/adr/0001-adr-process-and-placement.md) 決定2・3 |
+| ADR の supersede（v1.0.0 までは Accepted ADR の本文の書き換え） | [0001](docs/adr/0001-adr-process-and-placement.md) 決定2・3、*v1.0.0 までの暫定* |
 | 検出結果の新規の抑止 | [0501](docs/adr/0501-development-tooling-composition.md) 決定13 —— 理由を書けないものは抑止せず、値そのものを直す |
 | amend したうえで既存の Pull Request ブランチへ push すること | *Git 規約* —— そこにある文言をそのまま使う |
 
@@ -169,7 +169,7 @@ v1.0.0 より前では次を解除する。
 - `AGENTS.md`、リポジトリ直下の設定ファイル、`.github/` を、変更ごとの承認なしに編集してよい
 - `LICENSE` は解除しない
 
-**ADR の運用は解除しない。** [0001](docs/adr/0001-adr-process-and-placement.md) 決定2 の immutable と supersede による変更は、v1.0.0 より前でも適用する。Accepted ADR の本文を上書きしない。誤字と参照リンクの修正はこの限りではない（同 決定2）。番号は identity ではなく順序であり、削除に伴って詰めてよい（同 決定5-9）—— 詰めるときは決定7 が挙げる更新を同一の変更で行う。`make adr-lint` がその整合を見る。
+**[0001](docs/adr/0001-adr-process-and-placement.md) 決定2 の immutable の記述は、v1.0.0 に達するまで無効とする。** 同 決定2 が定める supersede による変更も、同じ期間は適用しない。0001 の本文はこの無効化を述べないので、0001 を読むときは本節を併せて読む。**決定を変えるときは、Accepted ADR の本文の直接の書き換えを推奨する。** 新しい ADR による supersede より優先して選ぶ —— v1.0.0 より前の ADR は、経緯ではなく今有効な決定だけを述べる形に保つ。旧い本文は git が持つ。**承認の要件は解除しない** —— 決定の変更は *停止点* のままであり、書き換えの前に案を差し出して承認を得る（*保護された文書*）。番号は identity ではなく順序であり、削除に伴って詰めてよい（同 決定5-9）—— 詰めるときは決定7 が挙げる更新を同一の変更で行う。`make adr-lint` がその整合を見る。
 
 ## 道具の導入
 
@@ -222,4 +222,4 @@ v1.0.0 より前では次を解除する。
 - Accepted ADR の本文（`docs/adr/0001-*.md` 以降で Status が Accepted のもの）
 - `LICENSE`
 
-> v1.0.0 までは `AGENTS.md` の承認要件を解除する —— *v1.0.0 までの暫定* を見よ。ADR の immutable 運用は解除しない。
+> v1.0.0 までは `AGENTS.md` の承認要件を解除する —— *v1.0.0 までの暫定* を見よ。ADR の immutable も解除するが、Accepted ADR の本文の承認要件は解除しない。
