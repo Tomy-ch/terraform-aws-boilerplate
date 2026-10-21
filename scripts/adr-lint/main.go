@@ -8,8 +8,8 @@
 //  2. 同一 scope 内で番号が重複しないこと
 //  3. 先頭メタデータに Status / Date / Scope が存在すること
 //  4. Status が `Superseded by` の場合、参照先 ADR が存在すること
-//  5. root ADR 本文が usecases/<use-case>/ 配下の path へ規範的に依存していないこと
-//  6. 本文が参照する ADR-NNNN がすべて実在すること
+//  5. root ADR 本文が usecases/<use-case>/ そのもの、またはその配下の path へ規範的に依存していないこと
+//  6. 本文が参照する、scope を伴わない ADR-NNNN がすべて同じ scope に実在すること
 //  7. 見出しが名乗る番号が、ファイル名の番号と一致すること
 //  8. docs/adr/ の**外**から ADR を指すリンクが、実在する ADR を指していること
 //
@@ -27,7 +27,11 @@
 // 「指す先が無い」形ではなく「文言だけが古い」形で現れるためです。
 //
 // 併せて、索引（README.md）が実ファイルと食い違っていないことも見ます。索引は
-// 「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
+// その scope の「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
+//
+// 検査は scope ごとに掛けます。scope は -root の root scope と、-repo 配下の
+// usecases/<use-case>/docs/adr/ を持つユースケースです（ADR-0001 決定12）。1-4・6・7 と索引は
+// scope の内側で完結し、5 は root scope だけに掛け、8 は use-case ADR の置き場所も「外」として読みます。
 package main
 
 import (
@@ -53,48 +57,53 @@ const (
 	defaultRoot  = "docs/adr"
 	indexFile    = "README.md"
 	templateFile = "template.md"
+	// root scope の名前。`Superseded by <scope>/...` の scope と同じ綴りである。
+	rootScope = "repository-wide"
+	// use-case ADR の置き場所は usecases/<use-case>/docs/adr/（ADR-0001 決定12）。
+	useCasesDir = "usecases"
+	useCaseADR  = "docs/adr"
 )
 
 var (
-	// ADR のファイル名。番号は4桁、続きは kebab-case。
 	// 大文字とアンダースコアを弾くのは、同じ決定が2つの綴りで置かれるのを防ぐため。
-	fileName = regexp.MustCompile(`^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$`)
-	// 先頭メタデータの行。checkMetadata が存在を見る。
+	fileName   = regexp.MustCompile(`^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$`)
 	statusLine = regexp.MustCompile(`(?m)^- Status:[ \t]*(\S.*)$`)
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
-	// Superseded by <scope>/ADR-NNNN。scope を伴う形を正とする（ADR-0001 決定3）。
+	// scope を伴う形を正とする（ADR-0001 決定3）。
 	supersededBy = regexp.MustCompile(`^Superseded by\s+([A-Za-z0-9_-]+)/ADR-(\d{4})\s*$`)
-	// 索引の行。| [NNNN](ファイル名) | タイトル | Status |
-	indexRow = regexp.MustCompile(`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|`)
-	// 本文の H1。`# ADR-NNNN: <題>`
-	headingLine = regexp.MustCompile(`(?m)^# ADR-(\d{4})\b`)
-	// 本文中の ADR 参照。番号が動き得る以上、実在を機械で見るほかない。
-	//
+	indexRow     = regexp.MustCompile(`^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|`)
+	headingLine  = regexp.MustCompile(`(?m)^# ADR-(\d{4})\b`)
 	// scope を伴う参照（`<scope>/ADR-NNNN`）は除く。他 scope の ADR はこのディレクトリに無く、
 	// 見に行けば必ず落ちる検査になる。identity が `<scope>/<slug>` である以上（ADR-0001 決定4）、
 	// scope を書いた参照はこちらの番号体系の外を指している。
 	adrRef = regexp.MustCompile(`(^|[^/\w])ADR-(\d{4})`)
-	// 本文が usecases/<use-case>/ 配下の path を名指ししている箇所。
-	// root ADR は特定ユースケースの実装詳細へ依存してはならない（ADR-0001 決定19）。
-	useCasePath = regexp.MustCompile("`?usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]+`?")
-	// ただし <use-case> という**プレースホルダ**を含む形は、特定のユースケースを名指ししていない。
-	placeholder = regexp.MustCompile(`usecases/<use-case>/`)
-	// Markdown のリンク。`[文言](指し先)` の形。指し先の後ろに title が付く形も許す。
-	markdownLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
-	// リンクの文言が番号を名乗っている形。`[0101]` と `[ADR-0101]` のどちらも使われている。
+	// 先頭の境界は消費して捕獲群 1 だけを報告に使う。RE2 は後読みを持たず、`\b` は `-` と
+	// 日本語の直後で立たない。`/` を境界に含めるのは、相対パスで書いた path を取り逃さないため。
+	useCasePath    = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]*)`)
+	placeholder    = regexp.MustCompile(`usecases/<use-case>/`)
+	markdownLink   = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
 	linkTextNumber = regexp.MustCompile(`^(?:ADR-)?(\d{4})$`)
+	useCaseADRDir  = regexp.MustCompile(`^` + useCasesDir + `/[^/]+/` + useCaseADR + `$`)
+	pathToken      = regexp.MustCompile(`[A-Za-z0-9_./-]+\.md`)
 	// このリポジトリの作業ツリーの外を指すリンク。scheme 付きの URL と、サイトのルートからの
 	// 絶対パスが該当する。**`/docs/adr/0001-x.md` は作業ツリーの docs/adr/ ではない** ——
 	// 相対として解決すると同じ場所に見えるため、ここで分けないと外部の参照を自分の番号体系で裁く。
 	externalLink = regexp.MustCompile(`^(?:[a-z][a-z0-9+.-]*:|/)`)
 )
 
-// 番兵（ADR-0702 決定13）。検査対象0件を成功として終えない。
+// 番兵（ADR-0702 決定13・15）。検査対象0件、および抽出の取りこぼしを、成功として終えない。
 var (
 	errNoADR       = xerrors.New("ADR が1件も見つかりません")
 	errNoMarkdown  = xerrors.New("ADR を指し得る Markdown が1件も見つかりません")
 	errNoReference = xerrors.New("ADR を名指しした文書から、リンクを1件も取り出せません")
+)
+
+// scope の発見で、置き場所を解釈できなかったときの失敗。どれも黙って検査の外へ倒さない（ADR-0702 決定14）。
+var (
+	errSymlink       = xerrors.New("シンボリックリンクは scope の置き場所として扱いません")
+	errReservedScope = xerrors.New("root scope と同じ名前のユースケースは置けません")
+	errNotDirectory  = xerrors.New("ADR の置き場所がディレクトリではありません")
 )
 
 func main() {
@@ -117,30 +126,25 @@ func run(args []string, out io.Writer) error {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 
-	docs, findings, err := collect(*root)
+	scopes, skipped, err := discoverScopes(*repo, *root)
 	if err != nil {
 		return err
 	}
-	// 「ADR が1件も無い」と「全てのファイル名が規約違反で検査対象から外れた」は別である。
-	// 後者を番兵で返すと、直すべき違反が出力されないまま終わる。
-	if len(docs) == 0 && len(findings) == 0 {
-		return errNoADR
+
+	var findings []lintreport.Finding
+	checked := make([]scopeDocs, 0, len(scopes))
+	total := 0
+	for _, s := range scopes {
+		docs, scopeFindings, err := checkScope(s)
+		if err != nil {
+			return err
+		}
+		findings = append(findings, scopeFindings...)
+		checked = append(checked, scopeDocs{scope: s, docs: docs})
+		total += len(docs)
 	}
 
-	findings = append(findings, checkNumbers(docs, *root)...)
-	findings = append(findings, checkHeading(docs)...)
-	findings = append(findings, checkMetadata(docs)...)
-	findings = append(findings, checkSupersede(docs, *root)...)
-	findings = append(findings, checkUseCaseDependency(docs)...)
-	findings = append(findings, checkCrossReferences(docs)...)
-
-	indexFindings, err := checkIndex(*root, docs)
-	if err != nil {
-		return err
-	}
-	findings = append(findings, indexFindings...)
-
-	pathFindings, refs, err := checkPathReferences(*repo, *root, docs)
+	pathFindings, refs, err := checkPathReferences(*repo, checked)
 	if err != nil {
 		return err
 	}
@@ -153,8 +157,104 @@ func run(args []string, out io.Writer) error {
 		return xerrors.Newf("%d 件の不整合", len(findings))
 	}
 
-	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件の構造と、外からの参照 %d 件を確認しました\n", len(docs), refs)
+	fmt.Fprintf(out, "✅ adr-lint: ADR %d 件（%d scope）の構造と、外からの参照 %d 件を確認しました\n", total, len(scopes), refs)
+	if len(skipped) > 0 {
+		fmt.Fprintf(out, "   docs/adr を持たないユースケース: %s\n", strings.Join(skipped, ", "))
+	}
 	return nil
+}
+
+// scope は番号体系を共有する ADR の置き場所です。番号は scope ごとに独立します（ADR-0001 決定11）。
+type scope struct {
+	name string // root scope は rootScope、use-case scope はユースケースの名前
+	dir  string
+}
+
+// scopeDocs は、検査を終えた scope とその ADR です。
+type scopeDocs struct {
+	scope scope
+	docs  []doc
+}
+
+// discoverScopes は、root scope と、repo 配下で docs/adr/ を持つユースケースの scope を返します。
+//
+// use-case scope を引数ではなく発見で得るのは、置き場所を足しただけで検査対象に入るようにするためです。
+// 呼び出し側が列挙すると、列挙し忘れた scope が黙って検査の外に残ります。
+//
+// docs/adr/ を持たないユースケースは scope にせず、その名前を返します。綴り違いの置き場所も同じ分岐に
+// 落ちるため、名前を出さなければ黙って検査の外に残ります。
+func discoverScopes(repo, root string) ([]scope, []string, error) {
+	scopes := []scope{{name: rootScope, dir: root}}
+
+	base := filepath.Join(repo, useCasesDir)
+	entries, err := os.ReadDir(base)
+	if xerrors.Is(err, os.ErrNotExist) {
+		return scopes, nil, nil
+	}
+	if err != nil {
+		return nil, nil, xerrors.Wrapf(err, "%s の読み取り", base)
+	}
+
+	var skipped []string
+	for _, e := range entries {
+		// DirEntry.IsDir はシンボリックリンクに false を返す。飛ばせば、そのユースケースが黙って外れる。
+		if e.Type()&os.ModeSymlink != 0 {
+			return nil, nil, xerrors.Wrapf(errSymlink, "%s", filepath.Join(base, e.Name()))
+		}
+		if !e.IsDir() {
+			continue
+		}
+		// 同じ名前だと、checkScope と checkPathReferences がこの scope を root として扱う。
+		if e.Name() == rootScope {
+			return nil, nil, xerrors.Wrapf(errReservedScope, "%s", filepath.Join(base, e.Name()))
+		}
+		dir := filepath.Join(base, e.Name(), filepath.FromSlash(useCaseADR))
+		info, err := os.Lstat(dir)
+		if xerrors.Is(err, os.ErrNotExist) {
+			skipped = append(skipped, e.Name())
+			continue
+		}
+		if err != nil {
+			return nil, nil, xerrors.Wrapf(err, "%s の確認", dir)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, nil, xerrors.Wrapf(errSymlink, "%s", dir)
+		}
+		if !info.IsDir() {
+			return nil, nil, xerrors.Wrapf(errNotDirectory, "%s", dir)
+		}
+		scopes = append(scopes, scope{name: e.Name(), dir: dir})
+	}
+	return scopes, skipped, nil
+}
+
+// checkScope は、1つの scope の ADR を読み出し、scope の内側で完結する検査を掛けます。
+func checkScope(s scope) ([]doc, []lintreport.Finding, error) {
+	docs, findings, err := collect(s.dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 「ADR が1件も無い」と「全てのファイル名が規約違反で検査対象から外れた」は別である。
+	// 後者を番兵で返すと、直すべき違反が出力されないまま終わる。
+	if len(docs) == 0 && len(findings) == 0 {
+		return nil, nil, xerrors.Wrapf(errNoADR, "%s", s.dir)
+	}
+
+	findings = append(findings, checkNumbers(docs, s.dir)...)
+	findings = append(findings, checkHeading(docs)...)
+	findings = append(findings, checkMetadata(docs)...)
+	findings = append(findings, checkSupersede(docs, s)...)
+	// 決定19 が縛るのは root ADR だけである。use-case ADR が自分の path を名指しするのは正しい。
+	if s.name == rootScope {
+		findings = append(findings, checkUseCaseDependency(docs)...)
+	}
+	findings = append(findings, checkCrossReferences(docs)...)
+
+	indexFindings, err := checkIndex(s.dir, docs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return docs, append(findings, indexFindings...), nil
 }
 
 // doc は検査対象の ADR 1件です。
@@ -181,7 +281,6 @@ func collect(root string) ([]doc, []lintreport.Finding, error) {
 		if e.IsDir() || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		// 索引と雛形は ADR ではない。
 		if name == indexFile || name == templateFile {
 			continue
 		}
@@ -208,8 +307,7 @@ func collect(root string) ([]doc, []lintreport.Finding, error) {
 	return docs, findings, nil
 }
 
-// checkNumbers は同一 scope 内での番号の重複を検出します。
-// 同一 scope 内で番号は重複させません。削除に伴う詰め直しは許容します（ADR-0001 決定5-7）。
+// checkNumbers は同一 scope 内での番号の重複を検出します。削除に伴う詰め直しは許容します（ADR-0001 決定5-7）。
 func checkNumbers(docs []doc, root string) []lintreport.Finding {
 	seen := make(map[int][]string, len(docs))
 	for _, d := range docs {
@@ -290,7 +388,7 @@ func checkMetadata(docs []doc) []lintreport.Finding {
 // checkSupersede は Status が `Superseded by` の場合に、参照先 ADR の実在を検査します。
 //
 // 参照先が無いまま supersede を宣言すると、読み手は「置き換わった先」へ到達できません。
-func checkSupersede(docs []doc, root string) []lintreport.Finding {
+func checkSupersede(docs []doc, s scope) []lintreport.Finding {
 	exists := make(map[int]bool, len(docs))
 	for _, d := range docs {
 		exists[d.number] = true
@@ -317,15 +415,15 @@ func checkSupersede(docs []doc, root string) []lintreport.Finding {
 		}
 
 		// 他 scope の ADR はこのディレクトリに無い。ここで実在を見るのは同一 scope のものだけとする。
-		scope, numStr := sm[1], sm[2]
-		if scope != "repository-wide" {
+		target, numStr := sm[1], sm[2]
+		if target != s.name {
 			continue
 		}
 		num, _ := strconv.Atoi(numStr)
 		if !exists[num] {
 			findings = append(findings, lintreport.Finding{
 				File: d.path, Line: 1,
-				Message: fmt.Sprintf("Superseded by の参照先 ADR-%s が %s に存在しません", numStr, root),
+				Message: fmt.Sprintf("Superseded by の参照先 ADR-%s が %s に存在しません", numStr, s.dir),
 			})
 		}
 	}
@@ -340,7 +438,8 @@ func checkUseCaseDependency(docs []doc) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, d := range docs {
 		for i, line := range strings.Split(d.source, "\n") {
-			for _, hit := range useCasePath.FindAllString(line, -1) {
+			for _, m := range useCasePath.FindAllStringSubmatch(line, -1) {
+				hit := m[1]
 				if placeholder.MatchString(hit) {
 					continue
 				}
@@ -388,7 +487,7 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 
 // checkIndex は索引が実ファイルと一致していることを検査します。
 //
-// 索引は「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
+// 索引はその scope の「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
 func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 	path := filepath.Join(root, indexFile)
 	raw, err := os.ReadFile(filepath.Clean(path))
@@ -438,56 +537,76 @@ func checkIndex(root string, docs []doc) ([]lintreport.Finding, error) {
 	return findings, nil
 }
 
-// checkPathReferences は、docs/adr/ の**外**から ADR を指すリンクを検査し、違反と参照の件数を返します。
+// checkPathReferences は、root の docs/adr/ の**外**から ADR を指すリンクを検査し、違反と参照の件数を返します。
 //
-// 番号は identity ではなく順序であり、削除に伴って詰められます（ADR-0001 決定5-9）。詰めた瞬間、
-// 外側のリンクは実在する**別の**決定を指します。指し先のファイル名が番号と slug の両方を持つため、
-// 突き合わせれば必ず落ちます。
+// リンクは、指し先のディレクトリが属する scope の ADR と突き合わせます。
+//
+// use-case ADR の置き場所は「外」として読みます。use-case ADR から root ADR へのリンク（決定18）は、
+// root の番号を詰めたときに壊れる主要な経路だからです。
 //
 // 件数を返すのは、**0件のまま緑を返す経路を呼び出し側が塞げるようにする**ためです。走査の範囲が
 // 壊れたとき、この検査は違反0件の合格として現れます。
-func checkPathReferences(repo, root string, docs []doc) ([]lintreport.Finding, int, error) {
-	index := make(map[int]string, len(docs))
-	for _, d := range docs {
-		index[d.number] = d.name
-	}
-
-	// root は「ファイルシステム上の位置」として渡ってくるが、リンクの指し先と突き合わせるには
-	// repo からの相対で要る。両方を root 1つで兼ねると、repo とは別の場所を -root に渡したとき、
+func checkPathReferences(repo string, scopes []scopeDocs) ([]lintreport.Finding, int, error) {
+	// scope の置き場所は「ファイルシステム上の位置」として渡ってくるが、リンクの指し先と突き合わせるには
+	// repo からの相対で要る。両方を1つで兼ねると、repo とは別の場所を -root に渡したとき、
 	// 突合が一度も成立しないまま緑になる。
-	adrDir, err := filepath.Rel(repo, root)
-	if err != nil {
-		return nil, 0, xerrors.Wrapf(err, "%s から見た %s の位置", repo, root)
+	indexes := make(map[string]map[int]string, len(scopes))
+	dirs := make(map[string]bool, len(scopes))
+	rootDir := ""
+	for _, s := range scopes {
+		dir, err := filepath.Rel(repo, s.scope.dir)
+		if err != nil {
+			return nil, 0, xerrors.Wrapf(err, "%s から見た %s の位置", repo, s.scope.dir)
+		}
+		dir = filepath.ToSlash(dir)
+		index := make(map[int]string, len(s.docs))
+		for _, d := range s.docs {
+			index[d.number] = d.name
+		}
+		indexes[dir] = index
+		dirs[dir] = true
+		if s.scope.name == rootScope {
+			rootDir = dir
+		}
 	}
-	adrDir = filepath.ToSlash(adrDir)
 
-	files, err := collectMarkdown(repo, adrDir)
+	files, err := collectMarkdown(repo, rootDir)
 	if err != nil {
 		return nil, 0, err
 	}
-	// README.md すら見つからないなら、走査が対象を失っている。
 	if len(files) == 0 {
 		return nil, 0, errNoMarkdown
 	}
 
 	var findings []lintreport.Finding
-	refs, mentions := 0, 0
+	refs := make(map[string]int, len(dirs))
+	mentions := make(map[string]int, len(dirs))
 	for _, file := range files {
 		raw, err := os.ReadFile(filepath.Clean(filepath.Join(repo, filepath.FromSlash(file))))
 		if err != nil {
 			return nil, 0, xerrors.Wrapf(err, "%s の読み取り", file)
 		}
+		from := path.Dir(file)
 		for _, line := range mdscan.Lines(raw) {
-			if mentionsADR(line.Text, adrDir, index) {
-				mentions++
+			for dir := range mentionedDirs(line.Text, from, indexes) {
+				mentions[dir]++
 			}
 			for _, m := range markdownLink.FindAllStringSubmatch(line.Text, -1) {
-				name, ok := adrTarget(m[2], path.Dir(file), adrDir)
-				if !ok {
+				if unknown, ok := unknownScopeDir(m[2], from, dirs); ok {
+					findings = append(findings, lintreport.Finding{
+						File: file, Line: line.Number,
+						Message: "どの scope にも当たらない ADR の置き場所を指しています: " + unknown,
+					})
 					continue
 				}
-				refs++
-				findings = append(findings, matchReference(file, line.Number, m[1], name, index)...)
+				dir, name, ok := adrTarget(m[2], from, dirs)
+				// 同じ置き場所の中のリンクは「外から」ではない。索引の行は checkIndex が、本文の番号は
+				// checkCrossReferences が既に見ており、ここで数えると同じずれを二重に報告する。
+				if !ok || dir == from {
+					continue
+				}
+				refs[dir]++
+				findings = append(findings, matchReference(file, line.Number, m[1], name, indexes[dir])...)
 			}
 		}
 	}
@@ -498,46 +617,94 @@ func checkPathReferences(repo, root string, docs []doc) ([]lintreport.Finding, i
 	// この検査は「外からの参照 0 件」で緑を返し続ける。
 	//
 	// 数えるのを「実在する ADR のファイル名」にしているのは、解析が**正しく退けた**もの
-	// （外部 URL、索引、雛形）で食い違わせないためである。
-	if mentions > 0 && refs == 0 {
-		return nil, 0, errNoReference
+	// （外部 URL、索引、雛形）で食い違わせないためである。突き合わせを scope ごとに行うのは、
+	// 合算すると、ある scope へのリンクが1件取れただけで別の scope の取りこぼしが隠れるためである。
+	mentioned := make([]string, 0, len(mentions))
+	for dir := range mentions {
+		mentioned = append(mentioned, dir)
 	}
-	return findings, refs, nil
-}
-
-// mentionsADR は、行が実在する ADR への道筋（`<adrDir>/<ファイル名>`）を含むかを返します。
-//
-// リンクの書式に依らない経路であることが要点で、ここが markdownLink と同じ形を見ると
-// 突き合わせが成立しません。置き場所まで見るのは、同名のファイルが別のディレクトリに在る
-// 場合に食い違わせないためです。
-func mentionsADR(line, adrDir string, index map[int]string) bool {
-	for _, name := range index {
-		if strings.Contains(line, adrDir+"/"+name) {
-			return true
+	sort.Strings(mentioned)
+	for _, dir := range mentioned {
+		if refs[dir] == 0 {
+			return nil, 0, xerrors.Wrapf(errNoReference, "%s", dir)
 		}
 	}
-	return false
+	total := 0
+	for _, n := range refs {
+		total += n
+	}
+	return findings, total, nil
 }
 
-// adrTarget は、リンクの指し先が root 配下の ADR なら、そのファイル名を返します。
+// mentionedDirs は、行が実在する ADR への道筋を含む置き場所を返します。from 自身は外します。
 //
-// 外部 URL を外すのは、番号体系がこのリポジトリのものではないからです。他リポジトリの ADR を
-// 指すリンクは正しく、ここで実在を問えば必ず落ちます。
-func adrTarget(target, fromDir, root string) (string, bool) {
+// リンクの書式に依らない経路であることが要点で、ここが markdownLink と同じ形を見ると突き合わせが
+// 成立しません。道筋は、行のある文書からの相対と、リポジトリのルートからの両方で解決します。
+// 文字列の包含で見ると、`usecases/x/docs/adr/0001-a.md` が root の `docs/adr/0001-a.md` に当たり、
+// 指し先の scope に無い ADR が別の scope の言及として数えられます。
+func mentionedDirs(line, from string, indexes map[string]map[int]string) map[string]bool {
+	hit := make(map[string]bool)
+	for _, token := range pathToken.FindAllString(line, -1) {
+		// adrTarget が外部として退ける形を数えると、取り出せない参照があるように見えて番兵が立つ。
+		if strings.HasPrefix(token, "/") {
+			continue
+		}
+		for _, base := range []string{from, "."} {
+			resolved := path.Clean(path.Join(base, token))
+			dir := path.Dir(resolved)
+			index, ok := indexes[dir]
+			if !ok || dir == from {
+				continue
+			}
+			m := fileName.FindStringSubmatch(path.Base(resolved))
+			if m == nil {
+				continue
+			}
+			if num, _ := strconv.Atoi(m[1]); index[num] == path.Base(resolved) {
+				hit[dir] = true
+			}
+		}
+	}
+	return hit
+}
+
+// unknownScopeDir は、リンクの指し先が usecases/<use-case>/docs/adr/ の形をしているのに、どの scope にも
+// 当たらないとき、その置き場所を返します。
+//
+// adrTarget は scope に無い置き場所を ADR ではないものとして退けるので、ここで拾わなければ綴り違いの
+// ユースケースを指すリンクは何とも突き合わされないまま通ります。
+func unknownScopeDir(target, fromDir string, dirs map[string]bool) (string, bool) {
 	if externalLink.MatchString(target) {
 		return "", false
 	}
 	clean, _, _ := strings.Cut(target, "#")
-	resolved := path.Clean(path.Join(fromDir, clean))
-	if path.Dir(resolved) != root {
+	dir := path.Dir(path.Clean(path.Join(fromDir, clean)))
+	if dirs[dir] || !useCaseADRDir.MatchString(dir) {
 		return "", false
 	}
-	// 索引と雛形は root に在るが ADR ではない。検査 6 と同じ扱いにする。
+	return dir, true
+}
+
+// adrTarget は、リンクの指し先が dirs のいずれかの直下の ADR なら、その置き場所とファイル名を返します。
+//
+// 外部 URL を外すのは、番号体系がこのリポジトリのものではないからです。他リポジトリの ADR を
+// 指すリンクは正しく、ここで実在を問えば必ず落ちます。
+func adrTarget(target, fromDir string, dirs map[string]bool) (string, string, bool) {
+	if externalLink.MatchString(target) {
+		return "", "", false
+	}
+	clean, _, _ := strings.Cut(target, "#")
+	resolved := path.Clean(path.Join(fromDir, clean))
+	dir := path.Dir(resolved)
+	if !dirs[dir] {
+		return "", "", false
+	}
+	// 索引と雛形は ADR の置き場所に在るが ADR ではない。collect と同じ扱いにする。
 	switch base := path.Base(resolved); base {
 	case indexFile, templateFile:
-		return "", false
+		return "", "", false
 	default:
-		return base, true
+		return dir, base, true
 	}
 }
 

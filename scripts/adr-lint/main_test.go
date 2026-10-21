@@ -23,17 +23,12 @@ const soundADR = `# ADR-0001: なにか
 本文。
 `
 
-// soundADRNo は番号を差し替えた健全な ADR を返します。見出しが名乗る番号は
-// ファイル名の番号と一致していなければならないため、0001 以外のファイルはこれを使います。
+// 見出しが名乗る番号はファイル名の番号と一致していなければならないため、0001 以外のファイルはこれを使います。
 func soundADRNo(number string) string {
 	return strings.Replace(soundADR, "# ADR-0001:", "# ADR-"+number+":", 1)
 }
 
-// writeADRs はリポジトリの実物ではなく一時ディレクトリへ検査対象を組み立て、ADR の置き場所を
-// 返します。実物を読むテストは、今日の ADR の内容で通ったり落ちたりするようになります。
-//
-// ADR を docs/adr/ の下へ置き、その外へ README.md を1つ置くのは、**検査8 が「外から指すリンク」を
-// 主題にしている**ためです。外が存在しない木は、この道具が想定する形ではありません。
+// docs/adr/ の外へ README.md を1つ置くのは、外を走査する検査8 が対象0件で止まるのを避けるためです。
 func writeADRs(t *testing.T, files map[string]string) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -46,17 +41,25 @@ func writeADRs(t *testing.T, files map[string]string) string {
 	return root
 }
 
-// repoOf は、ADR の置き場所からリポジトリのルートを返します。
 func repoOf(root string) string {
 	return filepath.Dir(filepath.Dir(root))
 }
 
-// args は run へ渡す既定の引数です。-repo を省くと既定の "." が効き、テストが実物の木を読みます。
+func writeUseCaseADRs(t *testing.T, repo, name string, files map[string]string) string {
+	t.Helper()
+	dir := filepath.Join(repo, "usecases", name, "docs", "adr")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	for file, body := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(body), 0o600))
+	}
+	return dir
+}
+
+// -repo を省くと既定の "." が効き、テストが実物の木を読みます。
 func args(root string) []string {
 	return []string{"-root", root, "-repo", repoOf(root)}
 }
 
-// index は、渡した ADR をすべて載せた索引を組み立てます。
 func index(rows ...string) string {
 	var b strings.Builder
 	b.WriteString("# ADR\n\n| ID | タイトル | Status |\n| --- | --- | --- |\n")
@@ -110,6 +113,345 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
 		require.Error(t, run([]string{"-root", filepath.Join(t.TempDir(), "missing"), "-repo", t.TempDir()}, &out))
+	})
+}
+
+func Test_run_ユースケースのADR(t *testing.T) {
+	t.Parallel()
+
+	rootOnly := func(t *testing.T) string {
+		t.Helper()
+		return writeADRs(t, map[string]string{
+			"0001-a.md": soundADR,
+			"README.md": index(row("0001", "0001-a.md")),
+		})
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("番号は scope ごとに独立している", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			var out bytes.Buffer
+			require.NoError(t, run(args(root), &out))
+			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
+		})
+
+		t.Run("docs/adr を持たないユースケースを出力に挙げる", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			require.NoError(t, os.MkdirAll(filepath.Join(repoOf(root), "usecases", "no-adr"), 0o750))
+			var out bytes.Buffer
+			require.NoError(t, run(args(root), &out))
+			assert.Contains(t, out.String(), "docs/adr を持たないユースケース: no-adr")
+		})
+
+		t.Run("use-case ADR は自分のユースケースの path を名指ししてよい", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
+				"0001-a.md": soundADR + "\n`usecases/demo/main.tf` を参照する。\n",
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			var out bytes.Buffer
+			require.NoError(t, run(args(root), &out))
+			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
+		})
+
+		t.Run("use-case ADR は scope を前置して root の ADR を指してよい", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
+				"0001-a.md": soundADR + "\nrepository-wide/ADR-0101 を前提とする。\n",
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			var out bytes.Buffer
+			require.NoError(t, run(args(root), &out))
+			assert.Contains(t, out.String(), "ADR 2 件（2 scope）")
+			assert.NotContains(t, out.String(), "docs/adr を持たないユースケース")
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			files       map[string]string
+			wantMessage string
+		}{
+			"見出しの番号の食い違いを落とす": {
+				files: map[string]string{
+					"0001-a.md": soundADRNo("0002"),
+					"README.md": index(row("0001", "0001-a.md")),
+				},
+				wantMessage: "見出しが ADR-0002 を名乗っています",
+			},
+			"メタデータの欠落を落とす": {
+				files: map[string]string{
+					"0001-a.md": strings.Replace(soundADR, "- Date: 2026-09-17\n", "", 1),
+					"README.md": index(row("0001", "0001-a.md")),
+				},
+				wantMessage: "先頭メタデータに `Date` がありません",
+			},
+			"scope の中の番号の重複を落とす": {
+				files: map[string]string{
+					"0001-a.md": soundADR,
+					"0001-b.md": soundADR,
+					"README.md": index(row("0001", "0001-a.md")),
+				},
+				wantMessage: "番号 0001 が重複しています",
+			},
+			"索引との食い違いを落とす": {
+				files: map[string]string{
+					"0001-a.md": soundADR,
+					"README.md": index(),
+				},
+				wantMessage: "0001-a.md が索引に載っていません",
+			},
+			"scope を伴わない番号は自 scope で引く": {
+				files: map[string]string{
+					"0001-a.md": soundADR + "\nADR-0101 を参照する。\n",
+					"README.md": index(row("0001", "0001-a.md")),
+				},
+				wantMessage: "参照先の ADR-0101 が存在しません",
+			},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				root := writeADRs(t, map[string]string{
+					"0001-a.md": soundADR,
+					"0101-b.md": soundADRNo("0101"),
+					"README.md": index(row("0001", "0001-a.md"), row("0101", "0101-b.md")),
+				})
+				writeUseCaseADRs(t, repoOf(root), "demo", tt.files)
+				var out bytes.Buffer
+				require.Error(t, run(args(root), &out))
+				assert.Contains(t, out.String(), filepath.Join("usecases", "demo", "docs", "adr"))
+				assert.Contains(t, out.String(), tt.wantMessage)
+			})
+		}
+
+		sentinels := map[string]map[string]string{
+			"ADR ディレクトリが空なら成功で返さない":      nil,
+			"ADR ディレクトリに索引しか無ければ成功で返さない": {"README.md": index()},
+		}
+
+		for name, files := range sentinels {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				root := rootOnly(t)
+				writeUseCaseADRs(t, repoOf(root), "demo", files)
+				var out bytes.Buffer
+				err := run(args(root), &out)
+				require.ErrorIs(t, err, errNoADR)
+			})
+		}
+
+		t.Run("索引が無ければエラー", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{"0001-a.md": soundADR})
+			var out bytes.Buffer
+			err := run(args(root), &out)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), filepath.Join("usecases", "demo", "docs", "adr", "README.md"))
+		})
+
+		t.Run("scope の発見に失敗すれば検査せずにエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			require.NoError(t, os.WriteFile(filepath.Join(repoOf(root), "usecases"), nil, 0o600))
+			var out bytes.Buffer
+			require.Error(t, run(args(root), &out))
+			assert.NotContains(t, out.String(), "✅")
+		})
+
+		t.Run("use-case の ADR を名指ししているのにリンクを取り出せなければ番兵で返す", func(t *testing.T) {
+			t.Parallel()
+			root := rootOnly(t)
+			writeUseCaseADRs(t, repoOf(root), "demo", map[string]string{
+				"0001-a.md": soundADR,
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			require.NoError(t, os.WriteFile(filepath.Join(repoOf(root), "README.md"),
+				[]byte("[0001](docs/adr/0001-a.md)\n\n[ADR][ref]\n\n[ref]: usecases/demo/docs/adr/0001-a.md\n"), 0o600))
+			var out bytes.Buffer
+			err := run(args(root), &out)
+			require.ErrorIs(t, err, errNoReference)
+			assert.Contains(t, err.Error(), "usecases/demo/docs/adr")
+		})
+	})
+}
+
+func Test_discoverScopes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("usecases が無ければ root だけを返す", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			got, skipped, err := discoverScopes(repo, "docs/adr")
+			require.NoError(t, err)
+			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}}, got)
+			assert.Empty(t, skipped)
+		})
+
+		t.Run("docs/adr を持つユースケースを名前の昇順で root の後に返す", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			b := writeUseCaseADRs(t, repo, "b", nil)
+			a := writeUseCaseADRs(t, repo, "a", nil)
+			got, _, err := discoverScopes(repo, "docs/adr")
+			require.NoError(t, err)
+			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}, {name: "a", dir: a}, {name: "b", dir: b}}, got)
+		})
+
+		// 綴り違いの置き場所（docs/adrs/ など）も同じ分岐に落ちる。名前を返さなければ、黙って検査の外に残る。
+		t.Run("docs/adr を持たないユースケースは scope にせず名前を返す", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "no-adr", "docs", "adrs"), 0o750))
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "a-no-adr"), 0o750))
+			b := writeUseCaseADRs(t, repo, "b", nil)
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "usecases", "README.md"), []byte("# x\n"), 0o600))
+			got, skipped, err := discoverScopes(repo, "docs/adr")
+			require.NoError(t, err)
+			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}, {name: "b", dir: b}}, got)
+			assert.Equal(t, []string{"a-no-adr", "no-adr"}, skipped)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("docs/adr がディレクトリでなければエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "demo", "docs"), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "usecases", "demo", "docs", "adr"), nil, 0o600))
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errNotDirectory)
+			assert.Contains(t, err.Error(), filepath.Join("usecases", "demo", "docs", "adr"))
+		})
+
+		// 不在以外の失敗を「docs/adr を持たない」へ倒すと、そのユースケースが黙って外れる。
+		t.Run("docs/adr の確認が不在以外で失敗すればエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "demo"), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "usecases", "demo", "docs"), nil, 0o600))
+			_, skipped, err := discoverScopes(repo, "docs/adr")
+			require.Error(t, err)
+			assert.Nil(t, skipped)
+		})
+
+		t.Run("usecases がディレクトリでなければエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(repo, "usecases"), nil, 0o600))
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "usecases")
+		})
+
+		// root scope と同じ名前は、checkScope と checkPathReferences が root として扱ってしまう。
+		t.Run("root scope と同じ名前のユースケースはエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeUseCaseADRs(t, repo, rootScope, nil)
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errReservedScope)
+		})
+
+		// DirEntry.IsDir はシンボリックリンクに false を返す。飛ばすと、そのユースケースが黙って外れる。
+		t.Run("シンボリックリンクのユースケースはエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			target := writeUseCaseADRs(t, t.TempDir(), "real", nil)
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases"), 0o750))
+			require.NoError(t, os.Symlink(filepath.Dir(filepath.Dir(target)), filepath.Join(repo, "usecases", "link")))
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errSymlink)
+			assert.Contains(t, err.Error(), filepath.Join("usecases", "link"))
+		})
+
+		t.Run("シンボリックリンクの docs/adr はエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			target := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "demo", "docs"), 0o750))
+			require.NoError(t, os.Symlink(target, filepath.Join(repo, "usecases", "demo", "docs", "adr")))
+			_, _, err := discoverScopes(repo, "docs/adr")
+			require.ErrorIs(t, err, errSymlink)
+		})
+	})
+}
+
+func Test_checkScope(t *testing.T) {
+	t.Parallel()
+
+	naming := soundADR + "\n`usecases/demo/main.tf`\n"
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("use-case scope ではユースケースへの依存を見ない", func(t *testing.T) {
+			t.Parallel()
+			dir := writeUseCaseADRs(t, t.TempDir(), "demo", map[string]string{
+				"0001-a.md": naming,
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			docs, findings, err := checkScope(scope{name: "demo", dir: dir})
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+			assert.Len(t, docs, 1)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("root scope ではユースケースへの依存を落とす", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, map[string]string{
+				"0001-a.md": naming,
+				"README.md": index(row("0001", "0001-a.md")),
+			})
+			_, findings, err := checkScope(scope{name: rootScope, dir: root})
+			require.NoError(t, err)
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "特定ユースケースの path")
+		})
+
+		t.Run("ファイル名がすべて規約違反なら番兵ではなく違反を返す", func(t *testing.T) {
+			t.Parallel()
+			dir := writeUseCaseADRs(t, t.TempDir(), "demo", map[string]string{
+				"bad_name.md": soundADR,
+				"README.md":   index(),
+			})
+			docs, findings, err := checkScope(scope{name: "demo", dir: dir})
+			require.NoError(t, err)
+			assert.Empty(t, docs)
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "ファイル名が")
+		})
+
+		t.Run("ADR が0件なら置き場所を添えて番兵で返す", func(t *testing.T) {
+			t.Parallel()
+			dir := writeUseCaseADRs(t, t.TempDir(), "demo", map[string]string{"README.md": index()})
+			_, _, err := checkScope(scope{name: "demo", dir: dir})
+			require.ErrorIs(t, err, errNoADR)
+			assert.Contains(t, err.Error(), dir)
+		})
 	})
 }
 
@@ -228,7 +570,6 @@ func Test_supersedeの参照先(t *testing.T) {
 
 	t.Run("参照先が無ければ落ちる", func(t *testing.T) {
 		t.Parallel()
-		// 参照先が無いまま supersede を宣言すると、読み手は置き換わった先へ到達できない。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": superseded("Superseded by repository-wide/ADR-0099"),
 			"README.md": index(row("0001", "0001-a.md")),
@@ -273,7 +614,6 @@ func Test_ユースケースへの依存(t *testing.T) {
 
 	t.Run("プレースホルダは許容する", func(t *testing.T) {
 		t.Parallel()
-		// `usecases/<use-case>/` は特定のユースケースを名指ししていない。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": body("配置は `usecases/<use-case>/docs/adr/` とする。"),
 			"README.md": index(row("0001", "0001-a.md")),
@@ -284,7 +624,6 @@ func Test_ユースケースへの依存(t *testing.T) {
 
 	t.Run("特定のユースケースを名指しすれば落ちる", func(t *testing.T) {
 		t.Parallel()
-		// 依存の向きは root → use-case の一方向に限る（ADR-0001 決定17-19）。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": body("`usecases/ecs-web-service/main.tf` を参照する。"),
 			"README.md": index(row("0001", "0001-a.md")),
@@ -311,7 +650,6 @@ func Test_索引との突合(t *testing.T) {
 
 	t.Run("索引に載っていなければ落ちる", func(t *testing.T) {
 		t.Parallel()
-		// 索引は ADR の一覧が存在する唯一の場所。載っていない決定へ読み手は到達できない。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": soundADR,
 			"README.md": index(),
@@ -351,7 +689,6 @@ func Test_索引との突合(t *testing.T) {
 	})
 }
 
-// 番号が identity ではなく順序になったため、参照の実在は機械で見るほかない（ADR-0001 決定5-9）。
 func Test_相互参照の実在(t *testing.T) {
 	t.Parallel()
 
@@ -368,7 +705,6 @@ func Test_相互参照の実在(t *testing.T) {
 
 	t.Run("存在しない ADR への参照は落とす", func(t *testing.T) {
 		t.Parallel()
-		// 詰め直しで参照の更新を落とすと、この形で現れる。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": soundADR + "\nADR-0099 を参照する。\n",
 			"README.md": index(row("0001", "0001-a.md")),
@@ -380,7 +716,6 @@ func Test_相互参照の実在(t *testing.T) {
 
 	t.Run("自分自身への言及は参照として見ない", func(t *testing.T) {
 		t.Parallel()
-		// 見出し（`# ADR-0001: …`）や「本ADR」の言い換えは参照ではない。
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": "# ADR-0001: なにか\n\n- Status: Accepted\n- Date: 2026-09-17\n- Scope: repository-wide\n\nADR-0001 は本文書である。\n",
 			"README.md": index(row("0001", "0001-a.md")),
@@ -418,7 +753,6 @@ func soundApexADR(text string) string {
 	return soundADR + "\n" + text + "\n"
 }
 
-// writeRepo は、docs/adr/ とその外の文書を持つリポジトリを組み立て、ルートを返します。
 func writeRepo(t *testing.T, adrs, outside map[string]string) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -443,6 +777,12 @@ func Test_checkPathReferences(t *testing.T) {
 		"README.md": index(row("0001", "0001-a.md")),
 	}
 	docs := []doc{{path: "0001-a.md", name: "0001-a.md", number: 1}}
+	scoped := func(repo string) []scopeDocs {
+		return []scopeDocs{
+			{scope: scope{name: rootScope, dir: filepath.Join(repo, "docs", "adr")}, docs: docs},
+			{scope: scope{name: "demo", dir: filepath.Join(repo, "usecases", "demo", "docs", "adr")}, docs: docs},
+		}
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -487,13 +827,33 @@ func Test_checkPathReferences(t *testing.T) {
 				outside:  map[string]string{"AGENTS.md": "[索引](docs/adr/README.md) [雛形](docs/adr/template.md)\n"},
 				wantRefs: 0,
 			},
+			"同じ ADR ディレクトリの中のリンクは外からの参照として数えない": {
+				outside: map[string]string{
+					"usecases/demo/docs/adr/README.md": "| [0001](0001-gone.md) | x | Accepted |\n",
+					"AGENTS.md":                        "[0001](usecases/demo/docs/adr/0001-a.md)\n",
+				},
+				wantRefs: 1,
+			},
+			"use-case ADR から root の ADR への相対リンクも突き合わせる": {
+				outside:  map[string]string{"usecases/demo/docs/adr/0001-a.md": "[0001](../../../../docs/adr/0001-a.md)\n"},
+				wantRefs: 1,
+			},
+			// 外部として退けるリンクを言及に数えると、取り出していない参照があるように見えて番兵が立つ。
+			"サイトのルートからの絶対パスは実在する ADR の名前でも数えない": {
+				outside:  map[string]string{"AGENTS.md": "[0001](/docs/adr/0001-a.md)\n"},
+				wantRefs: 0,
+			},
+			"use-case の ADR へのリンクはその scope の ADR と突き合わせる": {
+				outside:  map[string]string{"AGENTS.md": "[0001](usecases/demo/docs/adr/0001-a.md)\n"},
+				wantRefs: 1,
+			},
 		}
 
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				repo := writeRepo(t, adrs, tt.outside)
-				findings, refs, err := checkPathReferences(repo, filepath.Join(repo, "docs", "adr"), docs)
+				findings, refs, err := checkPathReferences(repo, scoped(repo))
 				require.NoError(t, err)
 				assert.Empty(t, findings)
 				assert.Equal(t, tt.wantRefs, refs)
@@ -524,13 +884,21 @@ func Test_checkPathReferences(t *testing.T) {
 				outside:     map[string]string{"AGENTS.md": "[x](docs/adr/notes.md)\n"},
 				wantMessage: "ADR のファイル名の形ではありません",
 			},
+			"どの scope にも当たらない use-case の ADR の置き場所を指せば落とす": {
+				outside:     map[string]string{"AGENTS.md": "[0001](usecases/typo/docs/adr/0001-a.md)\n"},
+				wantMessage: "どの scope にも当たらない",
+			},
+			"use-case の ADR を指す slug が違えば落とす": {
+				outside:     map[string]string{"AGENTS.md": "[0001](usecases/demo/docs/adr/0001-renamed.md)\n"},
+				wantMessage: "参照先が実在しません",
+			},
 		}
 
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				repo := writeRepo(t, adrs, tt.outside)
-				findings, _, err := checkPathReferences(repo, filepath.Join(repo, "docs", "adr"), docs)
+				findings, _, err := checkPathReferences(repo, scoped(repo))
 				require.NoError(t, err)
 				require.Len(t, findings, 1)
 				assert.Contains(t, findings[0].Message, tt.wantMessage)
@@ -539,6 +907,18 @@ func Test_checkPathReferences(t *testing.T) {
 			})
 		}
 
+		t.Run("use-case ADR から root の ADR へのリンクの文言が食い違えば落とす", func(t *testing.T) {
+			t.Parallel()
+			repo := writeRepo(t, adrs, map[string]string{
+				"usecases/demo/docs/adr/0001-a.md": "[0002](../../../../docs/adr/0001-a.md)\n",
+			})
+			findings, _, err := checkPathReferences(repo, scoped(repo))
+			require.NoError(t, err)
+			require.Len(t, findings, 1)
+			assert.Equal(t, "usecases/demo/docs/adr/0001-a.md", findings[0].File)
+			assert.Contains(t, findings[0].Message, "リンクの文言")
+		})
+
 		t.Run("ADR を名指ししているのにリンクを取り出せなければ番兵で返す", func(t *testing.T) {
 			t.Parallel()
 			// reference-style link は markdownLink が拾えない。解析が対応しない書式へ文書が
@@ -546,45 +926,142 @@ func Test_checkPathReferences(t *testing.T) {
 			repo := writeRepo(t, adrs, map[string]string{
 				"AGENTS.md": "決定は [ADR][ref] を見よ。\n\n[ref]: docs/adr/0001-a.md\n",
 			})
-			_, _, err := checkPathReferences(repo, filepath.Join(repo, "docs", "adr"), docs)
+			_, _, err := checkPathReferences(repo, scoped(repo))
 			require.Error(t, err)
 			assert.True(t, xerrors.Is(err, errNoReference))
+		})
+
+		t.Run("別の scope へのリンクが取れても、取りこぼした scope は番兵で返す", func(t *testing.T) {
+			t.Parallel()
+			repo := writeRepo(t, adrs, map[string]string{
+				"AGENTS.md": "[0001](usecases/demo/docs/adr/0001-a.md)\n\n決定は [ADR][ref] を見よ。\n\n[ref]: docs/adr/0001-a.md\n",
+			})
+			_, _, err := checkPathReferences(repo, scoped(repo))
+			require.ErrorIs(t, err, errNoReference)
+			assert.Contains(t, err.Error(), "docs/adr")
+		})
+
+		t.Run("root へのリンクが取れても、取りこぼした use-case scope は番兵で返す", func(t *testing.T) {
+			t.Parallel()
+			repo := writeRepo(t, adrs, map[string]string{
+				"AGENTS.md": "[0001](docs/adr/0001-a.md)\n\n[ADR][ref]\n\n[ref]: usecases/demo/docs/adr/0001-a.md\n",
+			})
+			_, _, err := checkPathReferences(repo, scoped(repo))
+			require.ErrorIs(t, err, errNoReference)
+			assert.Contains(t, err.Error(), "usecases/demo/docs/adr")
+		})
+
+		t.Run("読めない Markdown があれば黙って飛ばさずエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := writeRepo(t, adrs, map[string]string{"README.md": "# x\n"})
+			require.NoError(t, os.Symlink("absent", filepath.Join(repo, "AGENTS.md")))
+			_, _, err := checkPathReferences(repo, scoped(repo))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "AGENTS.md")
+		})
+
+		t.Run("scope の置き場所を repo からの相対で表せなければエラー", func(t *testing.T) {
+			t.Parallel()
+			repo := writeRepo(t, adrs, map[string]string{"README.md": "# x\n"})
+			_, _, err := checkPathReferences(repo, []scopeDocs{{scope: scope{name: rootScope, dir: "docs/adr"}, docs: docs}})
+			require.Error(t, err)
 		})
 
 		t.Run("外に Markdown が1件も無ければ合格ではなく番兵で返す", func(t *testing.T) {
 			t.Parallel()
 			repo := writeRepo(t, adrs, nil)
-			_, _, err := checkPathReferences(repo, filepath.Join(repo, "docs", "adr"), docs)
+			_, _, err := checkPathReferences(repo, scoped(repo))
 			require.Error(t, err)
 			assert.True(t, xerrors.Is(err, errNoMarkdown))
 		})
 	})
 }
 
-func Test_mentionsADR(t *testing.T) {
+func Test_mentionedDirs(t *testing.T) {
 	t.Parallel()
 
-	idx := map[int]string{1: "0001-a.md"}
+	indexes := map[string]map[int]string{
+		"docs/adr":               {1: "0001-a.md"},
+		"usecases/demo/docs/adr": {1: "0001-a.md"},
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]struct {
 			line string
-			want bool
+			from string
+			want map[string]bool
 		}{
-			"リンクの外でも実在する ADR への道筋を拾う": {line: "[ref]: docs/adr/0001-a.md", want: true},
-			"通常のリンクも拾う":               {line: "[0001](docs/adr/0001-a.md)", want: true},
-			"別のディレクトリの同名は拾わない":        {line: "[x](docs/other/0001-a.md)", want: false},
-			"実在しない ADR は拾わない":         {line: "[x](docs/adr/9999-absent.md)", want: false},
-			"索引は ADR ではない":            {line: "[索引](docs/adr/README.md)", want: false},
-			"名指しが無ければ拾わない":            {line: "ただの散文", want: false},
+			"root の ADR への道筋": {line: "[0001](docs/adr/0001-a.md)", from: ".", want: map[string]bool{"docs/adr": true}},
+			"use-case の道筋は root の言及に数えない": {
+				line: "[0001](usecases/demo/docs/adr/0001-a.md)", from: ".",
+				want: map[string]bool{"usecases/demo/docs/adr": true},
+			},
+			"自分の置き場所は外す":  {line: "docs/adr/0001-a.md", from: "docs/adr", want: map[string]bool{}},
+			"リンクの外の道筋も拾う": {line: "[ref]: docs/adr/0001-a.md", from: ".", want: map[string]bool{"docs/adr": true}},
+			"use-case への相対の道筋を拾う": {
+				line: "[0001](../demo/docs/adr/0001-a.md)", from: "usecases/other",
+				want: map[string]bool{"usecases/demo/docs/adr": true},
+			},
+			"入れ子の文書からリポジトリのルート起点で書いた道筋も拾う": {
+				line: "`docs/adr/0001-a.md`", from: "scripts", want: map[string]bool{"docs/adr": true},
+			},
+			"指し先の scope に無い ADR は同名でも拾わない": {
+				line: "[0001](usecases/x/docs/adr/0001-a.md)", from: ".", want: map[string]bool{},
+			},
+			"外部 URL の中の同名は拾わない": {
+				line: "https://example.com/o/r/blob/main/docs/adr/0001-a.md", from: ".", want: map[string]bool{},
+			},
+			"別のディレクトリの同名は拾わない":     {line: "[x](docs/other/0001-a.md)", from: ".", want: map[string]bool{}},
+			"番号は在るが slug が違えば拾わない": {line: "docs/adr/0001-renamed.md", from: ".", want: map[string]bool{}},
+			// adrTarget が外部として退ける形を数えると、取り出せない参照があるように見える。
+			"サイトのルートからの絶対パスは拾わない": {line: "[0001](/docs/adr/0001-a.md)", from: ".", want: map[string]bool{}},
+			"索引は ADR ではない":        {line: "[索引](docs/adr/README.md)", from: ".", want: map[string]bool{}},
+			"名指しが無ければ空":           {line: "ただの散文", from: ".", want: map[string]bool{}},
 		}
 
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				assert.Equal(t, tt.want, mentionsADR(tt.line, "docs/adr", idx))
+				assert.Equal(t, tt.want, mentionedDirs(tt.line, tt.from, indexes))
+			})
+		}
+	})
+}
+
+func Test_unknownScopeDir(t *testing.T) {
+	t.Parallel()
+
+	dirs := map[string]bool{"docs/adr": true, "usecases/demo/docs/adr": true}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			target  string
+			fromDir string
+			want    string
+			ok      bool
+		}{
+			"scope に無い use-case の ADR の置き場所": {
+				target: "usecases/typo/docs/adr/0001-a.md", fromDir: ".", want: "usecases/typo/docs/adr", ok: true,
+			},
+			"相対で書いても解決して当てる": {
+				target: "../typo/docs/adr/0001-a.md#x", fromDir: "usecases/demo", want: "usecases/typo/docs/adr", ok: true,
+			},
+			"scope の置き場所は当たらない":        {target: "usecases/demo/docs/adr/0001-a.md", fromDir: ".", ok: false},
+			"root の置き場所は当たらない":         {target: "docs/adr/0001-a.md", fromDir: ".", ok: false},
+			"ADR の置き場所でない path は当たらない": {target: "usecases/typo/README.md", fromDir: ".", ok: false},
+			"外部 URL は見ない":              {target: "https://example.com/usecases/typo/docs/adr/0001-a.md", fromDir: ".", ok: false},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, ok := unknownScopeDir(tt.target, tt.fromDir, dirs)
+				assert.Equal(t, tt.ok, ok)
+				assert.Equal(t, tt.want, got)
 			})
 		}
 	})
@@ -599,10 +1076,15 @@ func Test_adrTarget(t *testing.T) {
 		tests := map[string]struct {
 			target  string
 			fromDir string
+			wantDir string
 			want    string
 			ok      bool
 		}{
-			"ルートからの参照":      {target: "docs/adr/0001-a.md", fromDir: ".", want: "0001-a.md", ok: true},
+			"ルートからの参照": {target: "docs/adr/0001-a.md", fromDir: ".", want: "0001-a.md", ok: true},
+			"use-case の ADR ディレクトリはその dir を返す": {
+				target: "../../usecases/demo/docs/adr/0001-a.md", fromDir: "docs/adr",
+				wantDir: "usecases/demo/docs/adr", want: "0001-a.md", ok: true,
+			},
 			"入れ子からの相対参照":    {target: "../docs/adr/0001-a.md", fromDir: "scripts", want: "0001-a.md", ok: true},
 			"アンカーを落とす":      {target: "docs/adr/0001-a.md#x", fromDir: ".", want: "0001-a.md", ok: true},
 			"scheme 付きは見ない": {target: "https://example.com/docs/adr/0001-a.md", fromDir: ".", ok: false},
@@ -617,9 +1099,15 @@ func Test_adrTarget(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := adrTarget(tt.target, tt.fromDir, "docs/adr")
+				dirs := map[string]bool{"docs/adr": true, "usecases/demo/docs/adr": true}
+				dir, got, ok := adrTarget(tt.target, tt.fromDir, dirs)
 				assert.Equal(t, tt.ok, ok)
 				if tt.ok {
+					wantDir := tt.wantDir
+					if wantDir == "" {
+						wantDir = "docs/adr"
+					}
+					assert.Equal(t, wantDir, dir)
 					assert.Equal(t, tt.want, got)
 				}
 			})
@@ -718,9 +1206,11 @@ func Test_skipDir(t *testing.T) {
 			rel  string
 			want bool
 		}{
-			"ルートは入る":                  {rel: ".", want: false},
-			"通常のディレクトリは入る":            {rel: "scripts", want: false},
-			"ADR の置き場所は入らない":          {rel: "docs/adr", want: true},
+			"ルートは入る":         {rel: ".", want: false},
+			"通常のディレクトリは入る":   {rel: "scripts", want: false},
+			"ADR の置き場所は入らない": {rel: "docs/adr", want: true},
+			// use-case ADR から root の ADR へのリンクは、ここを読まなければ検査されない。
+			"use-case の ADR の置き場所は入る": {rel: "usecases/demo/docs/adr", want: false},
 			".git は入らない":              {rel: ".git", want: true},
 			"作業場所は入らない":               {rel: "tmp", want: true},
 			"別の作業の worktree は入らない":    {rel: ".claude/worktrees", want: true},
@@ -815,6 +1305,16 @@ func Test_collect(t *testing.T) {
 			assert.Contains(t, findings[0].Message, "ファイル名が")
 		})
 
+		t.Run("読めない ADR があれば黙って飛ばさずエラー", func(t *testing.T) {
+			t.Parallel()
+			root := writeADRs(t, nil)
+			require.NoError(t, os.Symlink("absent", filepath.Join(root, "0001-a.md")))
+			docs, _, err := collect(root)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "0001-a.md")
+			assert.Nil(t, docs)
+		})
+
 		t.Run("ディレクトリが存在しなければエラー", func(t *testing.T) {
 			t.Parallel()
 			missing := filepath.Join(t.TempDir(), "absent")
@@ -857,7 +1357,6 @@ func Test_checkNumbers(t *testing.T) {
 
 		t.Run("同じ番号を名乗るファイルを列挙して報告する", func(t *testing.T) {
 			t.Parallel()
-			// 同じ番号が2つ在ると、`ADR-0001` という参照がどちらを指すか決まらない。
 			docs := []doc{
 				{name: "0001-a.md", number: 1},
 				{name: "0001-b.md", number: 1},
@@ -925,7 +1424,6 @@ func Test_checkHeading(t *testing.T) {
 				d:           doc{path: "0001-a.md", number: 1, source: "# ADR-0002: なにか\n"},
 				wantMessage: "見出しが ADR-0002 を名乗っていますが、ファイル名の番号は 0001 です",
 			},
-			// 番号は4桁。前後1桁ずれた形は見出しとして認めない。
 			"番号が3桁": {
 				d:           doc{path: "0001-a.md", number: 1, source: "# ADR-001: なにか\n"},
 				wantMessage: "見出しがありません",
@@ -1033,7 +1531,6 @@ func Test_checkMetadata(t *testing.T) {
 func Test_checkSupersede(t *testing.T) {
 	t.Parallel()
 
-	// superseded は Status 行だけを差し替えた ADR を返します。
 	superseded := func(status string) string {
 		return "# ADR-0001: x\n\n- Status: " + status + "\n- Date: 2026-09-17\n- Scope: repository-wide\n"
 	}
@@ -1064,9 +1561,15 @@ func Test_checkSupersede(t *testing.T) {
 		for name, docs := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				assert.Empty(t, checkSupersede(docs, "docs/adr"))
+				assert.Empty(t, checkSupersede(docs, scope{name: rootScope, dir: "docs/adr"}))
 			})
 		}
+
+		t.Run("use-case scope では repository-wide への参照の実在を見ない", func(t *testing.T) {
+			t.Parallel()
+			docs := []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by repository-wide/ADR-0099")}}
+			assert.Empty(t, checkSupersede(docs, scope{name: "demo", dir: "usecases/demo/docs/adr"}))
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -1101,13 +1604,21 @@ func Test_checkSupersede(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				findings := checkSupersede(tt.docs, "docs/adr")
+				findings := checkSupersede(tt.docs, scope{name: rootScope, dir: "docs/adr"})
 				require.Len(t, findings, 1)
 				assert.Equal(t, "0001-a.md", findings[0].File)
 				assert.Equal(t, 1, findings[0].Line)
 				assert.Contains(t, findings[0].Message, tt.wantMessage)
 			})
 		}
+
+		t.Run("use-case scope では自分の名前で書いた参照先の実在を見る", func(t *testing.T) {
+			t.Parallel()
+			docs := []doc{{path: "0001-a.md", number: 1, source: superseded("Superseded by demo/ADR-0099")}}
+			findings := checkSupersede(docs, scope{name: "demo", dir: "usecases/demo/docs/adr"})
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "Superseded by の参照先 ADR-0099 が usecases/demo/docs/adr に存在しません")
+		})
 	})
 }
 
@@ -1118,15 +1629,16 @@ func Test_checkUseCaseDependency(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]string{
-			// `usecases/<use-case>/` は特定のユースケースを名指ししていない。
-			"プレースホルダは許容する":     "配置は `usecases/<use-case>/docs/adr/` とする。",
-			"usecases を含まない本文": "ここには path が無い。",
-			// use-case 名は kebab-case。大文字を含む綴りはユースケースの path ではない。
-			"大文字を含む綴りは当たらない": "`usecases/EcsWebService/main.tf`",
-			"配下を伴わない形は当たらない": "`usecases/ecs-web-service/`",
+			"プレースホルダは許容する":            "配置は `usecases/<use-case>/docs/adr/` とする。",
+			"プレースホルダのディレクトリだけの形も許容する": "`usecases/<use-case>/` に置く。",
+			"usecases を含まない本文":        "ここには path が無い。",
+			"大文字を含む綴りは当たらない":          "`usecases/EcsWebService/main.tf`",
+			// 名前の終端を `/` で確かめない限り、`usecases/ecs_web` が `usecases/ecs` として当たる。
+			"末尾の / を伴わない名前だけの形は当たらない": "`usecases/ecs-web-service`",
+			"語の途中から始まる綴りは当たらない":       "`myusecases/foo/bar`",
+			"kebab の接頭辞を持つ綴りは当たらない":   "`old-usecases/foo/bar`",
 			// 一般 module（ADR-0102 決定12）はユースケースではない。特定ユースケースへの依存を見る検査の外にある。
-			"一般 module の path は当たらない": "`modules/s3/main.tf`",
-			// ユースケースの置き場は usecases/ に移った。modules/ 配下はユースケースの path ではない。
+			"一般 module の path は当たらない":   "`modules/s3/main.tf`",
 			"旧い modules/<名前>/ の形は当たらない": "`modules/ecs-web-service/main.tf`",
 			"snake_case の名前は当たらない":      "`usecases/ecs_web_service/main.tf`",
 			"glob だけで名前が無い形は当たらない":      "`usecases/*/main.tf`",
@@ -1150,7 +1662,6 @@ func Test_checkUseCaseDependency(t *testing.T) {
 
 		t.Run("特定のユースケースの path を該当行で報告する", func(t *testing.T) {
 			t.Parallel()
-			// 依存の向きは root → use-case の一方向に限る。
 			d := doc{path: "0001-a.md", number: 1, source: "一行目\n二行目\n`usecases/ecs-web-service/main.tf` を参照する。\n"}
 			findings := checkUseCaseDependency([]doc{d})
 			require.Len(t, findings, 1)
@@ -1179,6 +1690,28 @@ func Test_checkUseCaseDependency(t *testing.T) {
 			assert.Contains(t, findings[0].Message, "（usecases/ecs/x.tf）")
 		})
 
+		t.Run("ユースケースのディレクトリだけを名指ししても報告する", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: "`usecases/ecs-web-service/` を参照する。\n"}
+			findings := checkUseCaseDependency([]doc{d})
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "（usecases/ecs-web-service/）")
+		})
+
+		t.Run("相対パスで書いた path は境界の文字を含めずに報告する", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: "[x](../../usecases/ecs/main.tf)\n"}
+			findings := checkUseCaseDependency([]doc{d})
+			require.Len(t, findings, 1)
+			assert.Contains(t, findings[0].Message, "（usecases/ecs/main.tf）")
+		})
+
+		t.Run("括弧の直後の path も報告する", func(t *testing.T) {
+			t.Parallel()
+			d := doc{path: "0001-a.md", number: 1, source: "(usecases/ecs/main.tf)\n"}
+			require.Len(t, checkUseCaseDependency([]doc{d}), 1)
+		})
+
 		t.Run("プレースホルダと実名が混在しても実名だけを報告する", func(t *testing.T) {
 			t.Parallel()
 			d := doc{path: "0001-a.md", number: 1, source: "`usecases/<use-case>/main.tf`\n`usecases/ecs/main.tf`\n"}
@@ -1202,7 +1735,6 @@ func Test_checkCrossReferences(t *testing.T) {
 				{path: "0001-a.md", number: 1, source: soundADR + "\nADR-0002 を参照する。\n"},
 				other,
 			},
-			// 見出しや「本ADR」の言い換えは参照ではない。
 			"自分自身への言及は参照として見ない": {
 				{path: "0001-a.md", number: 1, source: soundADR + "\nADR-0001 は本文書である。\n"},
 			},
@@ -1229,7 +1761,6 @@ func Test_checkCrossReferences(t *testing.T) {
 
 		t.Run("存在しない参照先を該当行で報告する", func(t *testing.T) {
 			t.Parallel()
-			// 詰め直しで参照の更新を落とすと、この形で現れる。
 			d := doc{path: "0001-a.md", number: 1, source: "一行目\nADR-0099 を参照する。\n"}
 			findings := checkCrossReferences([]doc{d})
 			require.Len(t, findings, 1)
@@ -1267,7 +1798,6 @@ func Test_checkCrossReferences(t *testing.T) {
 func Test_checkIndex(t *testing.T) {
 	t.Parallel()
 
-	// docsOf は、索引と突き合わせる ADR の一覧を組み立てます。
 	docsOf := func(root string, names ...string) []doc {
 		out := make([]doc, 0, len(names))
 		for i, name := range names {
@@ -1291,8 +1821,7 @@ func Test_checkIndex(t *testing.T) {
 			assert.Empty(t, findings)
 		})
 
-		// 索引も ADR も空なら突合する対象が無い。ここを緑のまま終えないための番兵は
-		// run が errNoADR で立てており、この関数は空を返すのが正しい。
+		// 番兵は checkScope が errNoADR で立てる。この関数は空を返すのが正しい。
 		t.Run("索引も ADR も空なら違反は無い", func(t *testing.T) {
 			t.Parallel()
 			root := writeADRs(t, map[string]string{"README.md": index()})
@@ -1307,7 +1836,6 @@ func Test_checkIndex(t *testing.T) {
 
 		t.Run("索引に載っていなければ落とす", func(t *testing.T) {
 			t.Parallel()
-			// 索引は ADR の一覧が存在する唯一の場所。載っていない決定へ読み手は到達できない。
 			root := writeADRs(t, map[string]string{
 				"0001-a.md": soundADR,
 				"README.md": index(),

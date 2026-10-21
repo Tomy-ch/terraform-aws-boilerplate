@@ -2,7 +2,7 @@
 
 このディレクトリは、リポジトリ全体へ適用される設計判断を管理する。
 
-特定ユースケースにのみ適用される設計判断は、ここではなく `usecases/<use-case>/docs/adr/` へ配置する。配置・番号体系・昇格条件・レビュー観点は [ADR-0001](0001-adr-process-and-placement.md) に従う。
+特定ユースケースにのみ適用される設計判断は、ここではなく `usecases/<use-case>/docs/adr/` へ配置し、その一覧は同ディレクトリの `README.md` が持つ。配置・番号体系・昇格条件・レビュー観点は [ADR-0001](0001-adr-process-and-placement.md) に従う。
 
 ## 一覧
 
