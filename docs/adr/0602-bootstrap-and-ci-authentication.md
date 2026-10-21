@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0501, ADR-0601, ADR-0402, ADR-0603
+- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0501, ADR-0601, ADR-0402, ADR-0603, ADR-0604
 
 ## Context
 
@@ -135,7 +135,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 ### 本 ADR で決定しない事項
 
 17. state のロック方式（別テーブルによるロックか、backend が提供する lock file か）は、採用する Terraform version の確定後に、当該 use-case の ADR で決定する。ADR-0601 決定16 が要求するのは排他制御が成立することのみである。
-18. state の分割単位は、ADR-0601 決定15 のとおり引き続き未決とし、本 ADR の対象外とする。環境の表現方法は ADR-0102 決定11-12 が決める。
+18. state の分割単位は本 ADR の対象外とし、ADR-0604 が決める。環境の表現方法は ADR-0102 決定11-12 が決める。
 
 ## 検討した代替案
 

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0401, ADR-0501
+- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0604
 
 ## Context
 
@@ -70,7 +70,7 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 
 ### 本 ADR で決定しない事項
 
-15. state backend の選定と state の分割単位は本 ADR の対象外とし、別 ADR で決定する。環境（dev / staging / production 等）の表現方法は ADR-0102 決定11-12 が決める。
+15. state backend の選定は本 ADR の対象外とし、別 ADR で決定する。state の分割単位は ADR-0604 が決める。環境（dev / staging / production 等）の表現方法は ADR-0102 決定11-12 が決める。
 16. 本 ADR が前提とするのは、apply が排他制御（lock）のもとで実行されることのみとする。この前提を満たさない backend を採用する場合、決定6 の保証は成立しない。
 
 ## 検討した代替案

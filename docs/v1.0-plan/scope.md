@@ -91,7 +91,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 - `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`usecases/<use-case>/`のみ、usecaseは`modules/`と自分の`internal/`のみ、`internal/`の module は`modules/`と同じusecaseの`internal/`配下のみ、一般moduleは`modules/`のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
 - usecase間の接続識別子はARN、ID、Endpoint、DNS名、Subnet ID等とし、他usecaseの内部resource addressへ依存しない。受け渡しはremote stateまたはSSM Parameterで行う。
 - 同一役割の複数ServiceやNodeGroupを表現できる。ただし任意の組合せを許す無制限な設定口は作らない。
-- stateの分割粒度（ライフサイクル単位で分ける案）はusecase実装時に確定する。
+- stateは、1つのenvをidentity rootとworkload rootの2つに分ける（ADR-0604）。usecaseの間の受け渡しは、同じworkload rootの中ではoutputからvariableへ渡す。
 
 **確定:** usecaseの範囲はGBpの機能の有無で決めない。接続契約はエンドポイント、プロトコル、認証、ネットワーク境界の水準で定義し、利用側の実装に依存させない。GBpは参照となる利用者の一つであり、tabpの範囲を規定するものではない。
 
@@ -571,7 +571,6 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 | 論点 | 決める時点 | 内容 |
 |---|---|---|
-| stateの分割粒度 | usecase実装時 | ライフサイクル単位（network/data/app/edge程度）で分ける案 |
 | usecase間の所有権 | 各usecase実装時 | ECS Target Group、VPC Link、S3/CloudFront/OAC/Key Group、DB/Secrets、EventBridge Bus/Rule/Schedulerの所有者と入出力 |
 | `event-job`の入力契約 | EventBridge/S3イベント処理の実装前 | 参照（bucket/key、event ID）を渡す案。理由はECS overridesのサイズ上限。検証、再実行を含む |
 | `service-to-service`の方式 | 実装前 | 内部ALB（`private-api`の流用）かECS Service Connect/Cloud Mapか |
@@ -598,7 +597,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。
+**フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 
 **v0.1から解決済みとした論点:** 公開module境界（第3節）、Realtime永続資源の所有者（第5.3節）、Observability方式の骨格（第9.3節）、Lambda例外規定の適用範囲（第2.2節）、egressの到達経路と制御方式（第9.2節）、data-refreshの検証構成（devとsandboxの間、第10.1節）。
 

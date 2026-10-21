@@ -65,6 +65,7 @@
 | [0601](0601-change-delivery-path.md) | 変更経路をGitに限定し、applyをmerge後のCI/CDで行う | Accepted |
 | [0602](0602-bootstrap-and-ci-authentication.md) | bootstrapをCLIとimportで立ち上げ、CI認証をOIDCとする | Accepted |
 | [0603](0603-branch-protection-and-required-checks.md) | 分岐のパターンと保護設定を単一の宣言で管理し、required checkの基準を定める | Accepted |
+| [0604](0604-state-split-by-apply-role.md) | state を apply する role ごとに分け、env ごとに identity と workload の2つの root とする | Accepted |
 
 ### 07 文書と運用機構
 
