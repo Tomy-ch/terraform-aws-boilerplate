@@ -534,9 +534,9 @@ gh api "repos/<owner>/<repo>/rules/branches/$(make -s base-branch | sed 's|/|%2F
 **merge の可否は、実環境への適用の可否と同義である**（ADR-0601 決定10）。検証が失敗している
 Pull Request を merge しない。
 
-Terraform 側の検査（TFLint / Conftest / `terraform test` / plan）は**まだ配線されていない**。
-`usecases/` と `modules/` に実装が入るまで、この段はそれらを「走らせた」と報告しない（`AGENTS.md`
-*現在の配線状態*）。
+Terraform 側の検査のうち fmt / validate / TFLint / `terraform test` は `make tf-*` に在るが、CI には
+載っていない。Conftest と plan は**まだ配線されていない**。この段はそれらを「CI が走らせた」と報告しない
+（`AGENTS.md` *現在の配線状態*）。
 
 ### Merge
 

@@ -116,8 +116,8 @@ improve）で続けてよいかを訊く。**「公式の手順に従った」�
 先が消えても何も赤くならない。**
 
 - **`make` の target は `make help` に在るものだけを書く。** 無い target を書くことは、嘘をつくことと
-  区別できない（`how-to` が同じ規律を持つ）。Terraform 側の検査（TFLint / Conftest / `terraform test`）と
-  plan / apply の経路は**まだ配線されていない**（`AGENTS.md` *現在の配線状態*）。
+  区別できない（`how-to` が同じ規律を持つ）。Terraform 側の Conftest と plan / apply の経路は
+  **まだ配線されていない**（`AGENTS.md` *現在の配線状態*）。
 - **`.claude/skills/` に無いスキルを `/<name>` で指さない。** 輸入や新設でスキルが増えるなら、
   参照を足すのは**その回**である。
 - **未配線の道具を、存在するものとして書かない**（ADR-0701 決定13）。
