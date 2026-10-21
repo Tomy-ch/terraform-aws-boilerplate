@@ -89,7 +89,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | module | resourceの所有と不変条件の強制。関心事の単位で束ねる | 公開面をベストプラクティスで絞る。属性を素通しするだけの薄いラップは作らない |
 
 - `module`ブロックの`source`が指してよい先を層ごとに固定し、外れたらCIで失敗させる。`env/`は`usecases/<use-case>/`のみ、usecaseは`modules/`と自分の`internal/`のみ、`internal/`の module は`modules/`と同じusecaseの`internal/`配下のみ、一般moduleは`modules/`のみを指す。他usecaseの`internal/`を指すことを禁じる（ADR-0102 決定17）。
-- usecase間の接続識別子はARN、ID、Endpoint、DNS名、Subnet ID等とし、他usecaseの内部resource addressへ依存しない。受け渡しはremote stateまたはSSM Parameterで行う。
+- usecase間の接続識別子はARN、ID、Endpoint、DNS名、Subnet ID等とし、他usecaseの内部resource addressへ依存しない。rootをまたぐ受け渡しはremote stateまたはSSM Parameterで行う（ADR-0102 決定16）。
 - 同一役割の複数ServiceやNodeGroupを表現できる。ただし任意の組合せを許す無制限な設定口は作らない。
 - stateは、1つのenvをidentity rootとworkload rootの2つに分ける（ADR-0604）。usecaseの間の受け渡しは、同じworkload rootの中ではoutputからvariableへ渡す。
 
@@ -481,7 +481,7 @@ Workerのack・再試行・DLQ・drainの検証には、意図的に失敗する
 
 管理（admin）、sandbox、各環境（dev / stg / prd）の5アカウントに分ける。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。
 
-SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevへ残り、devは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。各アカウントは自分のstate Bucket・CMK・OIDC Provider・CI Roleを持ち、管理アカウントのstate Bucketには管理アカウント自身のstateだけを置く（#96）。
+SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevへ残り、devは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。各アカウントは自分のstate Bucket・CMK・OIDC Provider・CI Roleを持ち、管理アカウントのstate Bucketには管理アカウント自身のstateだけを置く（#96）。例外は、メンバーアカウントを立ち上げる間のそのアカウントのbootstrapの構成物で、立ち上げの後にメンバー側へ移す（#142、ADR-0604 決定6）。
 
 ### 10.2 sandbox運用
 
@@ -590,7 +590,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
 | 通知Topicのアカウント配置 | フェーズ1 | 所有者は`ops-notification`で確定。残るは、Topicをどのアカウントに置くか（第10.1節は監視アカウントを設けない）と、他アカウントからpublishする場合の越境契約。メトリクス途絶時の扱いを含む |
-| 同一アカウント構成の扱い | フェーズ1 | 第10.1節は縮退ケースとしてサポートするとするが、第9.6節は検証に使わないとし、受入条件にもない。検証手段を与えるかunsupportedとするか（ADR-0401 決定3） |
+| 同一アカウント構成の扱い | フェーズ1 | 第10.1節は縮退ケースとしてサポートするとするが、第9.6節は検証に使わないとし、受入条件にもない。検証手段を与えるかunsupportedとするか（ADR-0401 決定3）。サポートするなら、stateのrootとkeyをADR-0604 決定1に従ってあわせて決める |
 | コード実行許可リストの人間レビューの成立条件 | フェーズ1 | 第2.2節はCODEOWNERSによる人間レビューを必須とするが、メンテナ1人の間は承認者が存在せず発火しない。代替のゲート（ADRの存在検査等）と、人間レビューを有効化する時点 |
 
 各論点は、決める時点に合わせて判断Issueとして起票し、該当usecaseのIssueと依存関係を張る。
