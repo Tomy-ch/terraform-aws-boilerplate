@@ -9,8 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const soundADR = `# ADR-0001: なにか
@@ -113,14 +111,13 @@ func Test_run(t *testing.T) {
 		root := writeADRs(t, map[string]string{"README.md": index()})
 		var out bytes.Buffer
 		err := run(args(root), &out)
-		require.Error(t, err)
-		assert.True(t, xerrors.Is(err, errNoADR))
+		require.ErrorIs(t, err, errNoADR)
 	})
 
 	t.Run("ディレクトリが無ければエラー", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
-		require.Error(t, run([]string{"-root", filepath.Join(t.TempDir(), "missing"), "-repo", t.TempDir()}, &out))
+		require.ErrorIs(t, run([]string{"-root", filepath.Join(t.TempDir(), "missing"), "-repo", t.TempDir()}, &out), os.ErrNotExist)
 	})
 }
 
@@ -358,14 +355,14 @@ func Test_discoverScopes(t *testing.T) {
 			assert.Equal(t, []scope{{name: rootScope, dir: "docs/adr"}, {name: "a", dir: a}, {name: "b", dir: b}}, got)
 		})
 
-		t.Run("大文字と数字とアンダースコアを含む名前は scope にする", func(t *testing.T) {
+		t.Run("数字とハイフンを含む kebab-case の名前は scope にする", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
-			writeUseCaseADRs(t, repo, "Demo_2", nil)
+			writeUseCaseADRs(t, repo, "web-2", nil)
 			scopes, _, err := discoverScopes(repo, "docs/adr")
 			require.NoError(t, err)
 			require.Len(t, scopes, 2)
-			assert.Equal(t, "Demo_2", scopes[1].name)
+			assert.Equal(t, "web-2", scopes[1].name)
 		})
 
 		t.Run("docs/adr を持たないユースケースは scope にせず名前を返す", func(t *testing.T) {
@@ -423,7 +420,7 @@ func Test_discoverScopes(t *testing.T) {
 			require.ErrorIs(t, err, errReservedScope)
 		})
 
-		t.Run("scope として使えない文字を含む名前のユースケースは docs/adr が無くてもエラー", func(t *testing.T) {
+		t.Run("kebab-case でない名前のユースケースは docs/adr が無くてもエラー", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(repo, "usecases", "a.b"), 0o750))
@@ -431,14 +428,16 @@ func Test_discoverScopes(t *testing.T) {
 			require.ErrorIs(t, err, errScopeName)
 		})
 
-		t.Run("scope として使えない文字を含む名前のユースケースはエラー", func(t *testing.T) {
-			t.Parallel()
-			repo := t.TempDir()
-			writeUseCaseADRs(t, repo, "a.b", nil)
-			_, _, err := discoverScopes(repo, "docs/adr")
-			require.ErrorIs(t, err, errScopeName)
-			assert.Contains(t, err.Error(), "a.b")
-		})
+		for _, name := range []string{"a.b", "Demo", "demo_2", "-demo", "demo-", "demo--web"} {
+			t.Run("kebab-case でない名前のユースケースはエラー "+name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				writeUseCaseADRs(t, repo, name, nil)
+				_, _, err := discoverScopes(repo, "docs/adr")
+				require.ErrorIs(t, err, errScopeName)
+				assert.Contains(t, err.Error(), name)
+			})
+		}
 
 		t.Run("シンボリックリンクのユースケースはエラー", func(t *testing.T) {
 			t.Parallel()
@@ -569,7 +568,7 @@ func Test_ファイル名違反だけのときも違反として報告する(t *
 	var out bytes.Buffer
 	err := run(args(root), &out)
 	require.Error(t, err)
-	assert.False(t, xerrors.Is(err, errNoADR))
+	assert.NotErrorIs(t, err, errNoADR)
 	assert.Contains(t, out.String(), "ファイル名が")
 }
 
@@ -1029,8 +1028,7 @@ func Test_checkPathReferences(t *testing.T) {
 				"AGENTS.md": "決定は [ADR][ref] を見よ。\n\n[ref]: docs/adr/0001-a.md\n",
 			})
 			_, _, err := checkPathReferences(repo, scoped(repo))
-			require.Error(t, err)
-			assert.True(t, xerrors.Is(err, errNoReference))
+			require.ErrorIs(t, err, errNoReference)
 		})
 
 		t.Run("別の scope へのリンクが取れても、取りこぼした scope は番兵で返す", func(t *testing.T) {
@@ -1058,7 +1056,7 @@ func Test_checkPathReferences(t *testing.T) {
 			repo := writeRepo(t, adrs, map[string]string{"README.md": "# x\n"})
 			require.NoError(t, os.Symlink("absent", filepath.Join(repo, "AGENTS.md")))
 			_, _, err := checkPathReferences(repo, scoped(repo))
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.Contains(t, err.Error(), "AGENTS.md")
 		})
 
@@ -1073,8 +1071,7 @@ func Test_checkPathReferences(t *testing.T) {
 			t.Parallel()
 			repo := writeRepo(t, adrs, nil)
 			_, _, err := checkPathReferences(repo, scoped(repo))
-			require.Error(t, err)
-			assert.True(t, xerrors.Is(err, errNoMarkdown))
+			require.ErrorIs(t, err, errNoMarkdown)
 		})
 	})
 }
@@ -1292,7 +1289,7 @@ func Test_collectMarkdown(t *testing.T) {
 		t.Run("走査先が無ければエラー", func(t *testing.T) {
 			t.Parallel()
 			_, err := collectMarkdown(filepath.Join(t.TempDir(), "absent"), "docs/adr")
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
 }
@@ -1410,7 +1407,7 @@ func Test_collect(t *testing.T) {
 			root := writeADRs(t, nil)
 			require.NoError(t, os.Symlink("absent", filepath.Join(root, "0001-a.md")))
 			docs, _, err := collect(root)
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.Contains(t, err.Error(), "0001-a.md")
 			assert.Nil(t, docs)
 		})
@@ -1419,7 +1416,7 @@ func Test_collect(t *testing.T) {
 			t.Parallel()
 			missing := filepath.Join(t.TempDir(), "absent")
 			docs, findings, err := collect(missing)
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.Contains(t, err.Error(), missing)
 			assert.Nil(t, docs)
 			assert.Nil(t, findings)
@@ -2436,7 +2433,7 @@ func Test_checkIndex(t *testing.T) {
 			t.Parallel()
 			root := writeADRs(t, map[string]string{"0001-a.md": soundADR})
 			findings, err := checkIndex(root, docsOf(root, "0001-a.md"))
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.Contains(t, err.Error(), "README.md")
 			assert.Nil(t, findings)
 		})

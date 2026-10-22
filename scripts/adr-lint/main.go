@@ -16,6 +16,7 @@
 //  10. Status が ADR-0001 決定3 の値のいずれかであること
 //  11. 本文が参照する、scope を伴う `<scope>/ADR-NNNN` が、その scope に実在すること
 //  12. 同一 scope 内で slug が重複しないこと
+//  13. ユースケースの名前が kebab-case であること
 //
 // 11 の抽出は、正規表現を使わない経路で数えた件数と行ごとに突き合わせます（ADR-0702 決定15）。
 // 6 と 7 は、番号が identity ではなく順序になったことから要る（ADR-0001 決定5-9）。
@@ -89,9 +90,8 @@ var (
 	// adrRef と同じ出現に当たらない。scope の左に境界を置くのは、`repository-wide` を `wide` と取らないため。
 	// `/` と `.` を境界に含めないのは、`docs/adr/ADR-0001` のような path の一部を参照と読まないため。
 	scopedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.-])(` + scopeChars + `)/ADR-(\d{4})`)
-	// scope として切り出せる名前。命名規則ではなく道具の制約である。scopedRef と supersededBy は名前を
-	// この形で切り出すので、外れた名前のユースケースは黙って検査の外に残る代わりに失敗させる。
-	scopeName = regexp.MustCompile(`^` + scopeChars + `$`)
+	// ユースケースの名前は kebab-case（ADR-0001 決定12）。参照から切り出す側（scopeChars）より狭い。
+	scopeName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	// 先頭の境界は消費して捕獲群 1 だけを報告に使う。RE2 は後読みを持たず、`\b` は `-` と
 	// 日本語の直後で立たない。`/` を境界に含めるのは、相対パスで書いた path を取り逃さないため。
 	useCasePath    = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])(usecases/(?:<use-case>|[a-z0-9-]+)/[a-zA-Z0-9_./*-]*)`)
@@ -119,7 +119,7 @@ var (
 	errSymlink       = xerrors.New("シンボリックリンクは scope の置き場所として扱いません")
 	errReservedScope = xerrors.New("root scope と同じ名前のユースケースは置けません")
 	errNotDirectory  = xerrors.New("ADR の置き場所がディレクトリではありません")
-	errScopeName     = xerrors.New("ユースケースの名前が scope として使えない文字を含みます")
+	errScopeName     = xerrors.New("ユースケースの名前が kebab-case ではありません（ADR-0001 決定12）")
 )
 
 func main() {
