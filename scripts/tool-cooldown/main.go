@@ -5,6 +5,8 @@
 //	       報告し、非ゼロで終了する。
 //	audit: 宣言の全件を棚卸しし、窓内のものを報告する。窓を理由には落ちないが、バイパス自身の
 //	       規約違反（期限切れ・期限過長・対象不在）では失敗する。
+//	check: 宣言を読めることだけを確かめる。上流に問い合わせないので、tflint --init が plugin を
+//	       取得する前に走らせ、読めない記述と許さない取得元をそこで止める。
 //
 // バイパスは .github/tool-cooldown-bypass.toml が受ける。期限は宣言が変わらなくても訪れるので、
 // このツールはスケジュール実行にも載せる必要がある。窓の値と規約は scripts/README.md の
@@ -187,6 +189,12 @@ func run(args []string, client *http.Client, now time.Time) error {
 			"❌ "+strings.Join(paths, ", ")+" から道具の宣言を1件も読めませんでした（[tools] の見出しと書式を確認してください）")
 	}
 
+	// check は宣言を読めることだけを見る。上流に問い合わせないので、取得の前に走らせられる。
+	if sub == "check" {
+		log.Printf("✅ tool-cooldown check: 宣言 %d 件を読めました", len(declared))
+		return nil
+	}
+
 	if sub == "outdated" {
 		return reportOutdated(client, declared, opt, now)
 	}
@@ -249,13 +257,13 @@ func run(args []string, client *http.Client, now time.Time) error {
 func parseArgs(args []string) (string, options, error) {
 	if len(args) == 0 {
 		return "", options{}, xerrors.Wrap(errUsage,
-			"❌ usage: tool-cooldown <gate|audit|outdated> [--base=<git-ref>] [--summary-out=<path>] [--github]")
+			"❌ usage: tool-cooldown <gate|audit|outdated|check> [--base=<git-ref>] [--summary-out=<path>] [--github]")
 	}
 
 	sub := args[0]
-	if sub != "gate" && sub != "audit" && sub != "outdated" {
+	if sub != "gate" && sub != "audit" && sub != "outdated" && sub != "check" {
 		return "", options{}, xerrors.Wrap(errUsage,
-			fmt.Sprintf("❌ 未知のサブコマンド %q（gate | audit | outdated）", sub))
+			fmt.Sprintf("❌ 未知のサブコマンド %q（gate | audit | outdated | check）", sub))
 	}
 
 	fs := flag.NewFlagSet(sub, flag.ContinueOnError)
