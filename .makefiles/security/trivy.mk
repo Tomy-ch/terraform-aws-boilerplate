@@ -43,5 +43,21 @@ trivy-license:
 ##
 ## 上の脆弱性ターゲット群は `--scanners vuln` を明示して secret を落としているため、これは報告の
 ## 追加ではなく検査そのものの追加である。severity では絞らない —— 秘密に「軽微な漏洩」は無い。
-trivy-secret:
+trivy-secret: trivy-secret-canary
 	@$(GO_TOOL) trivy fs --scanners secret --exit-code 1 --ignorefile .trivyignore.yaml $(TRIVY_SKIP_FLAGS) --format $(TRIVY_FORMAT) .
+
+.PHONY: trivy-secret-canary ## 埋めた偽の秘密を trivy-secret が検出できることを確かめる
+##
+## Trivy の結果は所見のあるファイルしか載せず、走査した件数を報告しない。走査が対象を失っても
+## 「所見なし」と区別できないので（ADR-0702 決定13）、本走査の前に、実行時に作った偽の秘密を
+## 検出させる。秘密の文字列はリポジトリに置かない —— 置けば gitleaks と本走査が拾う。
+## 置き場所を tmp/ にするのは、container の経路でもツールランナーから見えるため。
+## 出力は stderr へ出す。trivy-secret の stdout は json / sarif として読まれる。
+trivy-secret-canary:
+	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/trivy-secret-canary.XXXXXX); \
+	trap 'rm -rf "$$dir"' EXIT; \
+	printf 'token = "ghp_%s"\n' "$$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" > "$$dir/canary.txt"; \
+	if $(GO_TOOL) trivy fs --scanners secret --exit-code 1 $(TRIVY_SKIP_FLAGS) --quiet "$$dir" >/dev/null; then \
+		echo "❌ trivy-secret-canary: 埋めた偽の秘密を検出できませんでした" >&2; exit 1; \
+	fi; \
+	echo "✅ trivy-secret-canary: 埋めた偽の秘密を検出しました" >&2
