@@ -841,7 +841,7 @@ func Test_相互参照_scopeを伴う参照(t *testing.T) {
 		assert.Contains(t, out.String(), "scope ecs-web-service が見つかりません")
 	})
 
-	t.Run("参照を含む行から1件も取り出せなければ番兵で返す", func(t *testing.T) {
+	t.Run("参照を含む行から取り出しきれなければ番兵で返す", func(t *testing.T) {
 		t.Parallel()
 		root := writeADRs(t, map[string]string{
 			"0001-a.md": soundApexADR("a.b/ADR-0001 を参照する。"),
@@ -2156,11 +2156,20 @@ func Test_checkScopedReferences(t *testing.T) {
 		}
 	})
 
-	t.Run("参照を含む行が在るのに1件も取り出せなければ番兵で返す", func(t *testing.T) {
+	t.Run("参照を含む行から取り出しきれなければ番兵で返す", func(t *testing.T) {
 		t.Parallel()
-		for _, text := range []string{"docs/adr/ADR-0099", "a.b/ADR-0099", "*demo*/ADR-0001"} {
+		for _, text := range []string{"a.b/ADR-0099", "x.repository-wide/ADR-0001", "demo/ADR-0001 と a.b/ADR-0001"} {
 			_, _, err := checkScopedReferences(scopes([]doc{rootADR}, body(text)))
 			require.ErrorIs(t, err, errNoScopedRef, text)
+		}
+	})
+
+	t.Run("path と URL と雛形は参照として数えない", func(t *testing.T) {
+		t.Parallel()
+		for _, text := range []string{"docs/adr/ADR-0099", "https://example.com/foo/ADR-0099", "<scope>/ADR-0099", "*demo*/ADR-0001"} {
+			_, refs, err := checkScopedReferences(scopes([]doc{rootADR}, body(text)))
+			require.NoError(t, err, text)
+			assert.Zero(t, refs, text)
 		}
 	})
 
@@ -2183,27 +2192,48 @@ func Test_checkScopedReferences(t *testing.T) {
 	})
 }
 
-func Test_mentionsScopedADR(t *testing.T) {
+func Test_scopedMentions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
 		line string
-		want bool
+		want int
 	}{
-		"scope を伴う参照":     {line: "repository-wide/ADR-0001 を前提とする。", want: true},
-		"path の一部も数える":    {line: "docs/adr/ADR-0001", want: true},
-		"2つ目の出現で当たる":      {line: "/ADR-x と a/ADR-0001", want: true},
-		"scope を伴わない参照":   {line: "ADR-0001", want: false},
-		"行頭の /ADR- は数えない": {line: "/ADR-0001", want: false},
-		"番号が4桁に満たない":      {line: "a/ADR-001", want: false},
-		"4桁目が数字でない":       {line: "a/ADR-001x", want: false},
-		"番号の代わりに雛形の記法":    {line: "<scope>/ADR-NNNN", want: false},
+		"scope を伴う参照":        {line: "repository-wide/ADR-0001 を前提とする。", want: 1},
+		"同じ行の複数の参照":          {line: "demo/ADR-0001 と a.b/ADR-0002", want: 2},
+		"左が . の名前も数える":       {line: "a.b/ADR-0001", want: 1},
+		"scope を伴わない参照":      {line: "ADR-0001", want: 0},
+		"path の一部は数えない":      {line: "docs/adr/ADR-0001", want: 0},
+		"URL の path は数えない":   {line: "https://example.com/foo/ADR-0001", want: 0},
+		"雛形の scope は数えない":    {line: "<scope>/ADR-0001", want: 0},
+		"行頭の /ADR- は数えない":    {line: "/ADR-0001", want: 0},
+		"番号が4桁に満たない":         {line: "a/ADR-001", want: 0},
+		"4桁目が数字でない":          {line: "a/ADR-001x", want: 0},
+		"番号の代わりに雛形の記法":       {line: "a/ADR-NNNN", want: 0},
+		"数えない出現の後ろに在る参照も数える": {line: "docs/adr/ADR-0001 と a/ADR-0002", want: 1},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, mentionsScopedADR(tt.line))
+			assert.Equal(t, tt.want, scopedMentions(tt.line))
+		})
+	}
+}
+
+func Test_isScopeChar(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range []byte("azAZ09_-") {
+		t.Run("受理する "+string(b), func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, isScopeChar(b))
+		})
+	}
+	for _, b := range []byte("./<>* ") {
+		t.Run("受理しない "+string(b), func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, isScopeChar(b))
 		})
 	}
 }

@@ -17,6 +17,7 @@
 //  11. 本文が参照する、scope を伴う `<scope>/ADR-NNNN` が、その scope に実在すること
 //  12. 同一 scope 内で slug が重複しないこと
 //
+// 11 の抽出は、正規表現を使わない経路で数えた件数と行ごとに突き合わせます（ADR-0702 決定15）。
 // 6 と 7 は、番号が identity ではなく順序になったことから要る（ADR-0001 決定5-9）。
 // 番号は削除に伴って詰められるため、**参照が黙って別の決定を指す**経路が開く。
 //
@@ -30,7 +31,7 @@
 // リンクの文言（`[0101]`）と指し先の番号を突き合わせるのは、詰め直しの取りこぼしが
 // 「指す先が無い」形ではなく「文言だけが古い」形で現れるためです。
 //
-// 併せて、索引（README.md）が実ファイルと食い違っていないことも見ます。索引は
+// 併せて、索引（README.md）が実ファイルと食い違っていないこと、同じ番号の行が重複していないことも見ます。索引は
 // その scope の「ADR の一覧が存在する唯一の場所」であり、そこがずれると読み手は決定へ到達できません。
 //
 // 検査は scope ごとに掛けます。scope は -root の root scope と、-repo 配下の
@@ -88,8 +89,8 @@ var (
 	// adrRef と同じ出現に当たらない。scope の左に境界を置くのは、`repository-wide` を `wide` と取らないため。
 	// `/` と `.` を境界に含めないのは、`docs/adr/ADR-0001` のような path の一部を参照と読まないため。
 	scopedRef = regexp.MustCompile(`(?:^|[^A-Za-z0-9_/.-])(` + scopeChars + `)/ADR-(\d{4})`)
-	// scope の名前に使える文字。scopedRef と supersededBy が名前をこの形で切り出すため、外れた名前の
-	// ユースケースを指す参照は、どちらにも当たらないまま検査の外に残る。
+	// scope として切り出せる名前。命名規則ではなく道具の制約である。scopedRef と supersededBy は名前を
+	// この形で切り出すので、外れた名前のユースケースは黙って検査の外に残る代わりに失敗させる。
 	scopeName = regexp.MustCompile(`^` + scopeChars + `$`)
 	// 先頭の境界は消費して捕獲群 1 だけを報告に使う。RE2 は後読みを持たず、`\b` は `-` と
 	// 日本語の直後で立たない。`/` を境界に含めるのは、相対パスで書いた path を取り逃さないため。
@@ -110,7 +111,7 @@ var (
 	errNoADR       = xerrors.New("ADR が1件も見つかりません")
 	errNoMarkdown  = xerrors.New("ADR を指し得る Markdown が1件も見つかりません")
 	errNoReference = xerrors.New("ADR を名指しした文書から、リンクを1件も取り出せません")
-	errNoScopedRef = xerrors.New("scope を伴う ADR 参照を含む行から、参照を1件も取り出せません")
+	errNoScopedRef = xerrors.New("scope を伴う ADR 参照を含む行から、参照を取り出しきれません")
 )
 
 // scope の発見で、置き場所を解釈できなかったときの失敗。どれも黙って検査の外へ倒さない（ADR-0702 決定14）。
@@ -595,10 +596,9 @@ func checkCrossReferences(docs []doc) []lintreport.Finding {
 // scope を伴わない参照は checkCrossReferences が自 scope で引きます。Status 行は checkSupersede が
 // 見るので、ここでは読みません。
 //
-// **抽出を、正規表現を使わない経路と行ごとに突き合わせます**（ADR-0702 決定15）。scope を伴う
-// 参照が0件なのは正常な状態なので、0件そのものは落としません。落とすのは、`/ADR-NNNN` を含む行から
-// scopedRef が1件も取り出せないときです。木全体で突き合わせると、取り出せた参照が1件在るだけで
-// 別の行の取りこぼしが隠れます。
+// **抽出の件数を、正規表現を使わない経路で数えた件数と行ごとに突き合わせます**（ADR-0702 決定15）。
+// scope を伴う参照が0件なのは正常な状態なので、0件そのものは落としません。木全体や行の有無で
+// 突き合わせると、取り出せた参照が1件在るだけで別の取りこぼしが隠れます。
 func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error) {
 	numbers := make(map[string]map[int]bool, len(scopes))
 	for _, s := range scopes {
@@ -619,7 +619,7 @@ func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error
 					continue
 				}
 				matches := scopedRef.FindAllStringSubmatch(line, -1)
-				if len(matches) == 0 && mentionsScopedADR(line) {
+				if len(matches) != scopedMentions(line) {
 					return nil, 0, xerrors.Wrapf(errNoScopedRef, "%s:%d", d.path, i+1)
 				}
 				for _, m := range matches {
@@ -644,22 +644,39 @@ func checkScopedReferences(scopes []scopeDocs) ([]lintreport.Finding, int, error
 	return findings, refs, nil
 }
 
-// mentionsScopedADR は、行が `<文字>/ADR-NNNN` の形を含むかを、正規表現を使わずに判定します。
+// scopedMentions は、行に `<scope>/ADR-NNNN` の形がいくつ在るかを、正規表現を使わずに数えます。
 //
-// scopedRef と同じ形を見ると突き合わせが成立しないので、左の境界も scope の文字種も問いません。
-func mentionsScopedADR(line string) bool {
+// `/ADR-NNNN` の左に scope の文字が1つも無いもの（`<scope>/ADR-NNNN` の雛形、行頭）と、scope の文字の
+// さらに左が `/` のもの（`docs/adr/ADR-NNNN` や URL の path）は、参照ではないので数えません。左が `.` の
+// ものは数えます。scopedRef はそれを取り出さないので、scope として切り出せない名前は番兵で落ちます。
+func scopedMentions(line string) int {
 	const marker = "/ADR-"
-	for rest := line; ; {
-		i := strings.Index(rest, marker)
-		if i < 0 {
-			return false
+	n := 0
+	for i := 0; ; {
+		j := strings.Index(line[i:], marker)
+		if j < 0 {
+			return n
 		}
-		digits := rest[i+len(marker):]
-		if i > 0 && len(digits) >= 4 && strings.Trim(digits[:4], "0123456789") == "" {
-			return true
+		at := i + j
+		i = at + len(marker)
+		digits := line[i:]
+		if len(digits) < 4 || strings.Trim(digits[:4], "0123456789") != "" {
+			continue
 		}
-		rest = rest[i+len(marker):]
+		start := at
+		for start > 0 && isScopeChar(line[start-1]) {
+			start--
+		}
+		if start == at || (start > 0 && line[start-1] == '/') {
+			continue
+		}
+		n++
 	}
+}
+
+// isScopeChar は、b が scopeChars の文字であるかを返します。
+func isScopeChar(b byte) bool {
+	return b == '_' || b == '-' || ('0' <= b && b <= '9') || ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
 }
 
 // checkIndex は索引が実ファイルと一致していることを検査します。
