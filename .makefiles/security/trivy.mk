@@ -4,7 +4,7 @@
 ## lang-pkgs の空 Result が混ざらない。`.trivyignore.yaml` は自動検出されないため `--ignorefile` の
 ## 明示が要り、その結果として抑止が他のスキャナへ暗黙に波及しない。
 ##
-## 秘密の検出の権威は gitleaks が持つ（ADR-0302 決定1）。trivy-secret はそれと重複するが、意図した
+## 秘密の検出の権威は gitleaks が持つ（ADR-0302 決定2）。trivy-secret はそれと重複するが、意図した
 ## 重複である —— Trivy は誤検知が少なく、gitleaks の正規表現 / エントロピー網は取りこぼしが少ない。
 ##
 ## 出力形式は既定の table が人向け。CI は json / sarif を渡して stdout をリダイレクトする。trivy は
@@ -53,11 +53,16 @@ trivy-secret: trivy-secret-canary
 ## 検出させる。秘密の文字列はリポジトリに置かない —— 置けば gitleaks と本走査が拾う。
 ## 置き場所を tmp/ にするのは、container の経路でもツールランナーから見えるため。
 ## 出力は stderr へ出す。trivy-secret の stdout は json / sarif として読まれる。
+## 検出は終了コードではなく結果の RuleID で見る。`--exit-code 1` の非0は、検出と trivy 自身の異常終了を
+## 区別できない。
 trivy-secret-canary:
 	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/trivy-secret-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	printf 'token = "ghp_%s"\n' "$$(head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)" > "$$dir/canary.txt"; \
-	if $(GO_TOOL) trivy fs --scanners secret --exit-code 1 $(TRIVY_SKIP_FLAGS) --quiet "$$dir" >/dev/null; then \
-		echo "❌ trivy-secret-canary: 埋めた偽の秘密を検出できませんでした" >&2; exit 1; \
-	fi; \
+	out=$$($(GO_TOOL) trivy fs --scanners secret --exit-code 0 $(TRIVY_SKIP_FLAGS) --quiet --format json "$$dir") || { \
+		echo "❌ trivy-secret-canary: trivy が異常終了しました" >&2; exit 1; }; \
+	case "$$out" in \
+	*'"RuleID": "github-pat"'*) ;; \
+	*) echo "❌ trivy-secret-canary: 埋めた偽の秘密を検出できませんでした" >&2; exit 1 ;; \
+	esac; \
 	echo "✅ trivy-secret-canary: 埋めた偽の秘密を検出しました" >&2
