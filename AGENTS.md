@@ -12,10 +12,10 @@
 
 ## 現在の配線状態
 
-**Terraform の実装はまだ無い。** 決定（`docs/adr/`）と、それを守る機構（`.github/` / `.makefiles/` /
-`scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
+**Terraform の実装は一般 module の `modules/s3/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+（`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `usecases/` / `modules/` / `env/` —— 実装とユースケースが無い
+- `usecases/` / `env/` —— ユースケースと環境が無い
 - Terraform 側の検査のうち、`terraform fmt` / `terraform validate` / TFLint / `terraform test` は
   `make` と pre-commit にだけ在り、CI に載っていない（`make help` の `tf-*`）
 - Conftest の Policy Test と層検査 —— 未作成で、`make` にも配線されていない
