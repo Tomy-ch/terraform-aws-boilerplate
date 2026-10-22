@@ -32,7 +32,7 @@ ADR-0602 決定12 が長期のアクセスキーをCIから排除し、ADR-0203 
    | --- | --- | --- |
    | Secret Scan | gitleaks（走査対象はcommitと履歴） | 不要 |
 
-2. 本レイヤーの権威をgitleaksとする。Trivyのsecret scanningは無効化し、Trivyはmisconfigurationの走査に限定する。ADR-0402 決定3（1つの検査に権威は1つ）の適用である。
+2. 本レイヤーの権威をgitleaksとする。Trivyのsecret scanningは作業ツリーに対する補助として併用し、権威を持たせない。gitleaksの正規表現とエントロピーの網は取りこぼしが少なく、Trivyのルールは誤検知が少ないため、両者は異なる取りこぼしを持つ。ADR-0402 決定3（1つの検査に権威は1つ）の適用である。
 3. 本レイヤーはTerraformコードの正しさを検証しない。したがって Terraform のコードの置き場に限らず、リポジトリ全体を対象とする。
 
 ### fail-closed
@@ -103,7 +103,7 @@ ADR-0602 決定12 が長期のアクセスキーをCIから排除し、ADR-0203 
 ## 検証方法
 
 - Static Analysis: Secret Scanのジョブが存在し、失敗時にPull Requestを通さない設定であること（決定4）
-- Static Analysis: Trivyの実行にsecret scannerが含まれていないこと（決定2）
+- Static Analysis: Trivyのsecret scanningが、本走査の前に実行時に作った偽の秘密を検出できること（決定2、`make trivy-secret-canary`）
 - Static Analysis: 抑止エントリがfingerprintまたはpath単位であり、理由を伴うこと（決定9・10）
 - Static Analysis: 定期実行のジョブが全履歴を対象としていること（決定6・8）
 
