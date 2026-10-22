@@ -95,8 +95,7 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
     `usecases/<use-case>/docs/adr/README.md`）。root の索引は use-case ADR を載せない。
 
     `<use-case>` は use-case-local ADR の scope 名を兼ね、kebab-case（`[a-z0-9]+(-[a-z0-9]+)*`）とする。
-    scope を伴う参照（決定11）と `Superseded by`（決定3）はこの名前で宛先を引くため、それ以外の文字を
-    含む名前の scope は、参照から宛先として切り出せない。
+    scope を伴う参照（決定11）と `Superseded by`（決定3）は、この名前で宛先を引く。
 
 13. 原則は以下とする。
 

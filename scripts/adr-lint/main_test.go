@@ -359,10 +359,11 @@ func Test_discoverScopes(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeUseCaseADRs(t, repo, "web-2", nil)
+			writeUseCaseADRs(t, repo, "3d-viewer", nil)
 			scopes, _, err := discoverScopes(repo, "docs/adr")
 			require.NoError(t, err)
-			require.Len(t, scopes, 2)
-			assert.Equal(t, "web-2", scopes[1].name)
+			require.Len(t, scopes, 3)
+			assert.Equal(t, []string{"3d-viewer", "web-2"}, []string{scopes[1].name, scopes[2].name})
 		})
 
 		t.Run("docs/adr を持たないユースケースは scope にせず名前を返す", func(t *testing.T) {
@@ -428,7 +429,7 @@ func Test_discoverScopes(t *testing.T) {
 			require.ErrorIs(t, err, errScopeName)
 		})
 
-		for _, name := range []string{"a.b", "Demo", "demo_2", "-demo", "demo-", "demo--web"} {
+		for _, name := range []string{"a.b", "Demo", "demo_2", "-demo", "demo-", "demo--web", "デモ"} {
 			t.Run("kebab-case でない名前のユースケースはエラー "+name, func(t *testing.T) {
 				t.Parallel()
 				repo := t.TempDir()

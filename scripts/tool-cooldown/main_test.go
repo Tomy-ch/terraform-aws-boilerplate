@@ -853,6 +853,15 @@ func Test_baseDeclarations(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("作業ツリーではなく base 時点の中身を返す", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, "[tools]\n")
+			got, err := baseDeclarations("HEAD", []string{miseFile})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, miseOneAquaTool, string(got[0].content))
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("base に無い宣言ファイルは飛ばす", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 			got, err := baseDeclarations("HEAD", []string{"python/no-such-file-for-cooldown-test.in"})
@@ -868,6 +877,14 @@ func Test_baseDeclarations(t *testing.T) {
 		t.Run("base の ref を解決できなければエラーにする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{miseFile})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("mise.toml 以外の宣言ファイルでも ref を解決できなければエラーにする", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			_, err := baseDeclarations("refs/heads/no-such-branch-for-cooldown-test", []string{"python/no-such-file-for-cooldown-test.in"})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "base を取得できていない可能性があります")
 		})
