@@ -58,15 +58,30 @@ tf-gates-test:
 		expect fail "broken-$$pos:tf-validate" "$$root/$$pos-validate" tf-validate "$$(failed_line tf-validate "$$root/$$pos-validate/$$dir")"; \
 		expect fail "broken-$$pos:tf-test" "$$root/$$pos-test" tf-test "$$(failed_line tf-test "$$root/$$pos-test/$$dir")"; \
 	done; \
+	for t in validate test; do ok "$$root/both-$$t/modules/a"; ok "$$root/both-$$t/usecases/b"; done; \
+	for d in modules/a usecases/b; do \
+		printf 'output "missing" {\n  value = var.missing\n}\n' >> "$$root/both-validate/$$d/main.tf"; \
+		sed 's/== "a"/== "b"/' "$$root/both-test/$$d/tests/ok.tftest.hcl" > "$$root/both-test/$$d/tests/ok.new"; \
+		mv "$$root/both-test/$$d/tests/ok.new" "$$root/both-test/$$d/tests/ok.tftest.hcl"; \
+	done; \
+	expect fail "broken-both:tf-validate" "$$root/both-validate" tf-validate "$$(failed_line tf-validate "$$root/both-validate/modules/a $$root/both-validate/usecases/b")"; \
+	expect fail "broken-both:tf-test" "$$root/both-test" tf-test "$$(failed_line tf-test "$$root/both-test/modules/a $$root/both-test/usecases/b")"; \
 	ok "$$root/init/modules/a"; printf 'terraform {\n  required_version = "< 0.1.0"\n}\n' > "$$root/init/modules/a/versions.tf"; \
 	expect fail "broken:tf-init" "$$root/init" tf-validate "$$(failed_line tf-init "$$root/init/modules/a")"; \
 	for d in env/dev env/dev/identity usecases/x/reference; do \
-		rm -rf "$$root/root"; ok "$$root/root/$$d"; stale_lock "$$root/root/$$d"; \
+		rm -rf "$$root/root"; ok "$$root/root/$$d"; stale_lock "$$root/root/$$d"; cp "$$root/root/$$d/.terraform.lock.hcl" "$$root/lock.orig"; \
 		expect fail "root-readonly:$$d" "$$root/root" tf-validate "$$(failed_line tf-init "$$root/root/$$d")"; \
+		if ! cmp -s "$$root/lock.orig" "$$root/root/$$d/.terraform.lock.hcl"; then failed="$$failed root-lock-unchanged:$$d"; fi; \
 	done; \
 	for d in modules/a usecases/x env/dev/other; do \
 		rm -rf "$$root/nonroot"; ok "$$root/nonroot/$$d"; stale_lock "$$root/nonroot/$$d"; \
 		expect pass "non-root-writable:$$d" "$$root/nonroot" tf-validate; \
 	done; \
+	mkdir -p "$$root/bin"; \
+	printf '#!/bin/sh\nleft=$$(env | grep "^AWS_" | grep -vE "^AWS_(SHARED_CREDENTIALS_FILE|CONFIG_FILE|EC2_METADATA_DISABLED)=")\nif [ -n "$$left" ]; then echo "AWS の環境変数が残っています: $$left"; exit 1; fi\n' > "$$root/bin/terraform"; \
+	chmod +x "$$root/bin/terraform"; \
+	out=$$(AWS_ACCESS_KEY_ID=x AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/ AWS_PROFILE=p \
+		$(MAKE) -s --no-print-directory tf-validate TF_BASE="$$root/ok" TF_BIN="$$PWD/$$root/bin/terraform" 2>&1) \
+		|| { failed="$$failed aws-env-stripped"; echo "$$out"; }; \
 	if [ -n "$$failed" ]; then echo "❌ tf-gates-test: 期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ tf-gates-test: 全ケースが期待どおりでした"

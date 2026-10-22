@@ -18,16 +18,20 @@ TF_SCAN_DIRS = $(TF_BASE)/usecases $(TF_BASE)/modules $(TF_BASE)/env
 export TF_PLUGIN_CACHE_DIR ?= $(CURDIR)/tmp/terraform-plugin-cache
 # plugin の置き場の階層は OS / arch を含まないので、経路ごとに分ける。
 TFLINT_PLUGIN_DIR_REL = tmp/tflint-plugins/$(RUNNER_MODE)
-# 資格情報を持つ手元でも、持たない CI と同じ条件で走らせる（ADR-0401 決定6）。
-TF = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE \
-	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true terraform
+# 資格情報を持つ手元でも、持たない CI と同じ条件で走らせる（ADR-0401 決定6）。SDK が資格情報を
+# 読む環境変数は名前を列挙しきれないので、AWS_ で始まるものをすべて外してから与える。
+TF_ENV = env $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p') \
+	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
+TF_BIN ?= terraform
+TF = $(TF_ENV) $(TF_BIN)
 
 # tests/ の下の setup module は列挙しない。親の terraform test が読む。
 # find の失敗はパイプの後ろで消えるので、出力を受けてから終了コードを見る。
 define TF_LIST_DIRS
 $$(scan=""; for d in $(TF_SCAN_DIRS); do if [ -d "$$d" ]; then scan="$$scan $$d"; fi; done; \
 	if [ -n "$$scan" ]; then \
-		found=$$(find $$scan -name '*.tf' -not -path '*/.terraform/*' -not -path '*/tests/*') || exit 1; \
+		found=$$(find $$scan -name '*.tf' -not -path '*/.terraform/*' -not -path '*/tests/*') \
+			|| { echo "❌ Terraform の走査に失敗しました（$$scan）" >&2; exit 1; }; \
 		printf '%s\n' "$$found" | sed -e '/^$$/d' -e 's|/[^/]*$$||' | sort -u; \
 	fi)
 endef
@@ -96,7 +100,8 @@ tf-test: tf-init
 .PHONY: tf-lint ## TFLint で Terraform を検査（初回は ruleset の取得を伴う）
 tf-lint:
 	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); \
-	$(GO_TOOL) sh -c 'set -eu; export TFLINT_PLUGIN_DIR="$$PWD/$(TFLINT_PLUGIN_DIR_REL)"; \
+	$(MAKE) -s --no-print-directory tool-cooldown-check; \
+	$(TF_ENV) $(GO_TOOL) sh -c 'set -eu; export TFLINT_PLUGIN_DIR="$$PWD/$(TFLINT_PLUGIN_DIR_REL)"; \
 		mkdir -p "$$TFLINT_PLUGIN_DIR"; tflint --init --config="$$PWD/.tflint.hcl"; failed=""; \
 		for d in "$$@"; do tflint --chdir="$$d" --config="$$PWD/.tflint.hcl" || failed="$$failed $$d"; done; \
 		if [ -n "$$failed" ]; then echo "❌ tf-lint が落ちたディレクトリ:$$failed"; exit 1; fi' _ $$dirs

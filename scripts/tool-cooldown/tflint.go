@@ -48,9 +48,9 @@ func parseTflintPlugins(content []byte) ([]tool, error) {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
-		// 複数行のコメントは中に plugin を隠せるので、読まずにエラーにする。
+		// 複数行のコメントは中に plugin を隠せる。行単位では区別できないので、`/*` を含む行は読まない。
 		if strings.Contains(line, "/*") {
-			return nil, xerrors.Wrap(ErrInvalidTflint, fmt.Sprintf("%d 行目: 複数行のコメントは読めません", lineNo))
+			return nil, xerrors.Wrap(ErrInvalidTflint, fmt.Sprintf("%d 行目: `/*` を含む行は読めません（複数行のコメントと区別できないため）", lineNo))
 		}
 
 		if !inBlock {

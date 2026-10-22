@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +10,7 @@ import (
 )
 
 const tflintFixture = `# コメント
+// 行コメント
 config {
   format = "compact"
 }
@@ -16,7 +19,7 @@ plugin "terraform" {
   enabled = true
 }
 
-plugin "aws" {
+plugin "aws" { # 開始
   enabled = true
   version = "0.49.0" # 固定
   source  = "github.com/terraform-linters/tflint-ruleset-aws"
@@ -82,6 +85,14 @@ func Test_parseTflintPlugins(t *testing.T) {
 				require.ErrorIs(t, err, ErrInvalidTflint)
 			})
 		}
+
+		// 読み取りの失敗は記述の誤りと区別して返す。
+		t.Run("読み取れない長さの行は ErrInvalidTflint ではないエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseTflintPlugins([]byte(strings.Repeat("a", bufio.MaxScanTokenSize+1) + "\n"))
+			require.Error(t, err)
+			require.NotErrorIs(t, err, ErrInvalidTflint)
+		})
 
 		t.Run("閉じていない plugin はエラーにする", func(t *testing.T) {
 			t.Parallel()
