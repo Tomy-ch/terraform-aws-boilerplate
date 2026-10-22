@@ -5,6 +5,8 @@
 //	       報告し、非ゼロで終了する。
 //	audit: 宣言の全件を棚卸しし、窓内のものを報告する。窓を理由には落ちないが、バイパス自身の
 //	       規約違反（期限切れ・期限過長・対象不在）では失敗する。
+//	check: 宣言を読めることだけを確かめる。上流に問い合わせないので、tflint --init が plugin を
+//	       取得する前に走らせ、読めない記述と許さない取得元をそこで止める。
 //
 // バイパスは .github/tool-cooldown-bypass.toml が受ける。期限は宣言が変わらなくても訪れるので、
 // このツールはスケジュール実行にも載せる必要がある。窓の値と規約は scripts/README.md の
@@ -23,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -42,9 +45,7 @@ const (
 	miseFile   = "mise.toml"
 	bypassFile = ".github/tool-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
-	// releaseWindowDays は GitHub リリースに紐づく backend の窓。
-	releaseWindowDays = 14
-	// registryWindowDays はパッケージレジストリに紐づく backend の窓。
+	releaseWindowDays  = 14
 	registryWindowDays = 7
 
 	maxBypassMonths = 3
@@ -78,28 +79,21 @@ const (
 )
 
 var (
-	// errUsage は、サブコマンドやフラグの与え方が誤っていることを表すエラー。
-	errUsage = xerrors.New("invalid usage")
-	// errBlocking は、gate を通せない違反が残っていることを表すエラー。
+	errUsage    = xerrors.New("invalid usage")
 	errBlocking = xerrors.New("blocking violations")
 	// errUnsupportedBackend は、公開時刻の取得経路を持たない backend を指すエラー。
 	errUnsupportedBackend = xerrors.New("no publish-time source for this backend")
 	// errNotFound は、上流がそのバージョンを知らない場合のエラー。
-	errNotFound = xerrors.New("version not found upstream")
-	// errUpstreamStatus は、上流が想定外のステータスを返した場合のエラー。
+	errNotFound       = xerrors.New("version not found upstream")
 	errUpstreamStatus = xerrors.New("unexpected upstream status")
 	// errUnsupportedPackage は、aqua の定義が配布物の所在を辿れない形だった場合のエラー。
 	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
-	// errNoLastModified は、配布物が公開時刻を名乗らなかった場合のエラー。
-	errNoLastModified = xerrors.New("artifact has no Last-Modified")
+	errNoLastModified     = xerrors.New("artifact has no Last-Modified")
 	// errUnversionedArtifact は、配布物の URL がその版を指していない場合のエラー。
 	errUnversionedArtifact = xerrors.New("artifact url does not bind the version")
-	// errBypassInvalidLine は、バイパス lockfile に解釈できない行があった場合のエラー。
-	errBypassInvalidLine = xerrors.New("invalid bypass line")
-	// errBypassDuplicateKey は、バイパス lockfile にキーの重複があった場合のエラー。
-	errBypassDuplicateKey = xerrors.New("duplicate bypass key")
-	// errNoDeclarations は、宣言ファイルから道具を1件も読めなかった場合のエラー。
-	errNoDeclarations = xerrors.New("no tool declarations found")
+	errBypassInvalidLine   = xerrors.New("invalid bypass line")
+	errBypassDuplicateKey  = xerrors.New("duplicate bypass key")
+	errNoDeclarations      = xerrors.New("no tool declarations found")
 
 	// bypassLineRe は `"key@version" = { expires = ..., issue = ..., reason = "..." }` を読む。
 	bypassLineRe = regexp.MustCompile(
@@ -187,15 +181,18 @@ func run(args []string, client *http.Client, now time.Time) error {
 		return xerrors.Wrap(err, "❌ 宣言ファイルの解析")
 	}
 
-	// **検査対象が0件なら成功で終わらない**（ADR-0702 決定13）。宣言が1件も読めない状態は、
-	// 供給網の窓を全件について測らなかったということである。「ゲートが外れた」と「合格した」を
-	// 区別できないまま緑を返すと、宣言の書式が変わった日にこの検査は黙って無効になる。
-	//
-	// 見るのは差分（gate の targets）ではなく宣言の全体である。差分が0件なのは正常な状態だが、
-	// 宣言そのものが0件なのは読み取りが壊れた状態である。
-	if len(declared) == 0 {
+	// **検査対象が0件なら成功で終わらない**（ADR-0702 決定13）。見るのは差分（gate の targets）
+	// ではなく宣言の全体である。差分が0件なのは正常な状態だが、宣言そのものが0件なのは読み取りが
+	// 壊れた状態である。
+	if countFrom(declared, miseFile) == 0 {
 		return xerrors.Wrap(errNoDeclarations,
 			"❌ "+strings.Join(paths, ", ")+" から道具の宣言を1件も読めませんでした（[tools] の見出しと書式を確認してください）")
+	}
+
+	// check は宣言を読めることだけを見る。上流に問い合わせないので、取得の前に走らせられる。
+	if sub == "check" {
+		log.Printf("✅ tool-cooldown check: 宣言 %d 件を読めました", len(declared))
+		return nil
 	}
 
 	if sub == "outdated" {
@@ -260,13 +257,13 @@ func run(args []string, client *http.Client, now time.Time) error {
 func parseArgs(args []string) (string, options, error) {
 	if len(args) == 0 {
 		return "", options{}, xerrors.Wrap(errUsage,
-			"❌ usage: tool-cooldown <gate|audit|outdated> [--base=<git-ref>] [--summary-out=<path>] [--github]")
+			"❌ usage: tool-cooldown <gate|audit|outdated|check> [--base=<git-ref>] [--summary-out=<path>] [--github]")
 	}
 
 	sub := args[0]
-	if sub != "gate" && sub != "audit" && sub != "outdated" {
+	if sub != "gate" && sub != "audit" && sub != "outdated" && sub != "check" {
 		return "", options{}, xerrors.Wrap(errUsage,
-			fmt.Sprintf("❌ 未知のサブコマンド %q（gate | audit | outdated）", sub))
+			fmt.Sprintf("❌ 未知のサブコマンド %q（gate | audit | outdated | check）", sub))
 	}
 
 	fs := flag.NewFlagSet(sub, flag.ContinueOnError)
@@ -301,9 +298,8 @@ func parseTools(content []byte) ([]tool, error) {
 	return tools, nil
 }
 
-// declarationPaths は版を宣言するファイルを返す。
 func declarationPaths() []string {
-	return []string{miseFile}
+	return []string{miseFile, tflintFile}
 }
 
 // readDeclarations は作業ツリーの宣言ファイルを読む。
@@ -312,6 +308,10 @@ func readDeclarations(paths []string) ([]declaration, error) {
 	for _, path := range paths {
 		content, err := os.ReadFile(path) //nolint:gosec // path は declarationPaths が決めたもの
 		if err != nil {
+			// .tflint.hcl は無くてよい。無ければ tflint は plugin を取得しない。
+			if filepath.Base(path) == tflintFile && xerrors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return nil, xerrors.Wrap(err, path)
 		}
 		decls = append(decls, declaration{path: path, content: content})
@@ -323,7 +323,11 @@ func readDeclarations(paths []string) ([]declaration, error) {
 func parseDeclarations(decls []declaration) ([]tool, error) {
 	var tools []tool
 	for _, d := range decls {
-		parsed, err := parseTools(d.content)
+		parse := parseTools
+		if filepath.Base(d.path) == tflintFile {
+			parse = parseTflintPlugins
+		}
+		parsed, err := parse(d.content)
 		if err != nil {
 			return nil, xerrors.Wrap(err, d.path)
 		}
@@ -333,6 +337,18 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 		}
 	}
 	return tools, nil
+}
+
+// countFrom は path が宣言した道具の件数を返す。0件の判定をファイルごとに行うのは、別の
+// ファイルの件数が、mise.toml を読めなかったことを隠すからである。
+func countFrom(tools []tool, path string) int {
+	n := 0
+	for _, t := range tools {
+		if filepath.Base(t.file) == path {
+			n++
+		}
+	}
+	return n
 }
 
 // added は base 時点の宣言に無かった (key, version) の組を返す。
@@ -448,7 +464,6 @@ func firstBackend(registryOutput []byte, name string) (string, error) {
 	return fields[0], nil
 }
 
-// windowFor は backend の性質から窓を決める。
 func windowFor(backend string) int {
 	switch backendKind(backend) {
 	case "github":

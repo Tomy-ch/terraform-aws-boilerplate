@@ -297,6 +297,17 @@ func Test_parseDeclarations(t *testing.T) {
 			assert.Equal(t, "aqua:owner/repo@1.2.3", got[0].id())
 		})
 
+		t.Run(".tflint.hcl は plugin の宣言として読む", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseDeclarations([]declaration{
+				{path: tflintFile, content: []byte(tflintFixture)},
+			})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, "github:terraform-linters/tflint-ruleset-aws@0.49.0", got[0].id())
+			assert.Equal(t, tflintFile, got[0].file)
+		})
+
 		t.Run("宣言元のパスをツールに持たせる", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDeclarations([]declaration{
@@ -328,11 +339,11 @@ func Test_declarationPaths(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 宣言の出所は mise.toml だけである。ここが増えたら、窓の判定も readDeclarations も
-		// 追随しているかを確かめること。
-		t.Run("mise.toml を返す", func(t *testing.T) {
+		// ここが増えたら、窓の判定も readDeclarations も parseDeclarations も追随しているかを
+		// 確かめること。
+		t.Run("mise.toml と .tflint.hcl を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, []string{miseFile}, declarationPaths())
+			assert.Equal(t, []string{miseFile, tflintFile}, declarationPaths())
 		})
 	})
 }
@@ -354,6 +365,14 @@ func Test_readDeclarations(t *testing.T) {
 			assert.Equal(t, path, got[0].path)
 			assert.Equal(t, miseOneAquaTool, string(got[0].content))
 		})
+
+		// 理由は readDeclarations の .tflint.hcl を飛ばす分岐のコメントが持つ。
+		t.Run(".tflint.hcl が無ければ飛ばす", func(t *testing.T) {
+			t.Parallel()
+			got, err := readDeclarations([]string{filepath.Join(t.TempDir(), tflintFile)})
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -363,7 +382,44 @@ func Test_readDeclarations(t *testing.T) {
 		t.Run("読めないパスはエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, err := readDeclarations([]string{filepath.Join(t.TempDir(), "no-such-file")})
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		t.Run("mise.toml が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := readDeclarations([]string{filepath.Join(t.TempDir(), "missing", miseFile)})
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		// 飛ばしてよいのは無いときだけである。在るのに読めない .tflint.hcl を飛ばすと、
+		// その plugin は窓を掛けられないまま取得される。
+		t.Run(".tflint.hcl が在るのに読めなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), tflintFile)
+			require.NoError(t, os.Mkdir(path, 0o700))
+
+			_, err := readDeclarations([]string{path})
 			require.Error(t, err)
+		})
+	})
+}
+
+func Test_countFrom(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("指定したファイルが宣言した件数だけを数える", func(t *testing.T) {
+			t.Parallel()
+			tools := []tool{{file: miseFile}, {file: tflintFile}, {file: miseFile}}
+			assert.Equal(t, 2, countFrom(tools, miseFile))
+			assert.Equal(t, 1, countFrom(tools, tflintFile))
+		})
+
+		t.Run("該当が無ければ0を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, 0, countFrom([]tool{{file: tflintFile}}, miseFile))
 		})
 	})
 }
@@ -921,6 +977,27 @@ func Test_addedFrom(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, "sqlc@1.32.0", got[0].id())
+		})
+
+		t.Run("base の .tflint.hcl に同じ plugin があれば追加として返さない", func(t *testing.T) {
+			t.Parallel()
+			got, err := addedFrom([]declaration{
+				{path: miseFile, content: []byte(miseFixture)},
+				{path: tflintFile, content: []byte(tflintFixture)},
+			}, []tool{{key: "github:terraform-linters/tflint-ruleset-aws", version: "0.49.0", file: tflintFile}})
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+
+		t.Run("base に .tflint.hcl が無ければ、その plugin を追加として返す", func(t *testing.T) {
+			t.Parallel()
+			got, err := addedFrom([]declaration{{path: miseFile, content: []byte(miseFixture)}}, []tool{
+				{key: "sqlc", version: "1.31.1"},
+				{key: "github:terraform-linters/tflint-ruleset-aws", version: "0.49.0", file: tflintFile},
+			})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, "github:terraform-linters/tflint-ruleset-aws@0.49.0", got[0].id())
 		})
 	})
 
@@ -2117,6 +2194,15 @@ func Test_parseArgs(t *testing.T) {
 			assert.Equal(t, options{}, opt)
 		})
 
+		t.Run("check を受け付ける", func(t *testing.T) {
+			t.Parallel()
+
+			sub, _, err := parseArgs([]string{"check"})
+
+			require.NoError(t, err)
+			assert.Equal(t, "check", sub)
+		})
+
 		t.Run("与えられたフラグを options へ載せる", func(t *testing.T) {
 			t.Parallel()
 
@@ -2137,7 +2223,7 @@ func Test_parseArgs(t *testing.T) {
 			_, _, err := parseArgs(nil)
 
 			require.ErrorIs(t, err, errUsage)
-			assert.Contains(t, err.Error(), "usage: tool-cooldown <gate|audit|outdated>")
+			assert.Contains(t, err.Error(), "usage: tool-cooldown <gate|audit|outdated|check>")
 		})
 
 		t.Run("未知のサブコマンドはエラーにする", func(t *testing.T) {
@@ -2193,6 +2279,17 @@ func Test_run(t *testing.T) {
 
 	//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 	t.Run("正常系", func(t *testing.T) {
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("check は上流に問い合わせずに宣言を読めれば成功する", func(t *testing.T) {
+			dir := useMiseWorkTree(t, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(tflintFixture), 0o600))
+
+			out, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "宣言 2 件を読めました")
+		})
+
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("audit は窓内のツールを報告しつつ正常終了する", func(t *testing.T) {
 			useMiseWorkTree(t, miseOneAquaTool)
@@ -2281,6 +2378,53 @@ func Test_run(t *testing.T) {
 				require.ErrorIs(t, err, errNoDeclarations)
 			})
 		}
+
+		// 経路のどこかで .tflint.hcl の plugin が落ちると、単体のテストは緑のまま gate だけが素通しになる。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は base に無い .tflint.hcl の窓内の plugin を失敗にする", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(tflintFile, []byte(tflintFixture), 0o600))
+			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+				published := map[string]string{
+					"/repos/owner/repo/releases/tags/v1.2.3":                            aged,
+					"/repos/terraform-linters/tflint-ruleset-aws/releases/tags/v0.49.0": fresh,
+				}[r.URL.Path]
+				if published == "" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"published_at":"`+published+`T00:00:00Z"}`)
+			})
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, client, now)
+
+			require.ErrorIs(t, err, errBlocking)
+			assert.Contains(t, out, "::error file=.tflint.hcl::github:terraform-linters/tflint-ruleset-aws@0.49.0")
+		})
+
+		// check は tflint --init の前に走る。上流へ問い合わせずに、許さない取得元で落ちる必要がある。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("check は上流に問い合わせず、許さない取得元の plugin で失敗する", func(t *testing.T) {
+			dir := useMiseWorkTree(t, miseOneAquaTool)
+			untrusted := "plugin \"x\" {\n  version = \"1.0.0\"\n  source = \"github.com/someone/tflint-ruleset-x\"\n}\n"
+			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(untrusted), 0o600))
+
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+
+			require.ErrorIs(t, err, ErrUntrustedPlugin)
+		})
+
+		// .tflint.hcl の件数で 0件の判定が満たされると、mise.toml を読めなくなった日に緑で通る。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("mise.toml が0件なら .tflint.hcl に plugin があっても成功で終わらせない", func(t *testing.T) {
+			dir := useMiseWorkTree(t, "[tools]\n")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, tflintFile), []byte(tflintFixture), 0o600))
+
+			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
+
+			require.ErrorIs(t, err, errNoDeclarations)
+		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("gate は base に無い窓内のツールを失敗にする", func(t *testing.T) {
