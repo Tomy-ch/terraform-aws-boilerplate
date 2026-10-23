@@ -7,8 +7,7 @@ variable "name" {
     error_message = "name は英小文字・数字・ハイフンだけで、先頭と末尾は英小文字か数字にしてください。"
   }
 
-  # S3 が予約している接頭辞（https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html）。
-  # 接尾辞の禁止は、module が付ける `-an` で終わるので当たらない。
+  # S3 が予約している接頭辞。接尾辞の禁止は、module が付ける `-an` で終わるので当たらない。
   validation {
     condition     = !anytrue([for p in ["xn--", "sthree-", "amzn-s3-demo-"] : startswith(var.name, p)])
     error_message = "name を S3 が予約している接頭辞（xn--、sthree-、amzn-s3-demo-）で始めないでください。"

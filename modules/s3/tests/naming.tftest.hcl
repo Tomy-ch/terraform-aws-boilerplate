@@ -44,11 +44,31 @@ run "name_too_long" {
   expect_failures = [aws_s3_bucket.this]
 }
 
-run "name_invalid_characters" {
+run "name_uppercase" {
   command = plan
 
   variables {
-    name = "Tabp_Mgmt"
+    name = "tabp-Mgmt"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "name_underscore" {
+  command = plan
+
+  variables {
+    name = "tabp_mgmt"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "name_dot" {
+  command = plan
+
+  variables {
+    name = "tabp.mgmt"
   }
 
   expect_failures = [var.name]
@@ -110,7 +130,7 @@ run "name_empty" {
   expect_failures = [var.name]
 }
 
-run "name_reserved_prefix" {
+run "name_reserved_prefix_xn" {
   command = plan
 
   variables {
@@ -120,7 +140,54 @@ run "name_reserved_prefix" {
   expect_failures = [var.name]
 }
 
-# Trivy にも Policy Test にも無い性質なので、Policy Test（#74）が配線されるまで Unit で持つ。
+run "name_reserved_prefix_sthree" {
+  command = plan
+
+  variables {
+    name = "sthree-abc"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "name_reserved_prefix_amzn_s3_demo" {
+  command = plan
+
+  variables {
+    name = "amzn-s3-demo-abc"
+  }
+
+  expect_failures = [var.name]
+}
+
+# 予約された文字列は接頭辞としてだけ拒む。
+run "name_reserved_string_not_prefix" {
+  command = plan
+
+  variables {
+    name = "a-xn--sthree-amzn-s3-demo-b"
+  }
+
+  assert {
+    condition     = output.bucket_name == "a-xn--sthree-amzn-s3-demo-b-123456789012-ap-northeast-1-an"
+    error_message = "予約された文字列を途中に含むだけの name が拒まれています。"
+  }
+}
+
+run "name_near_reserved_prefix" {
+  command = plan
+
+  variables {
+    name = "xn-abc"
+  }
+
+  assert {
+    condition     = output.bucket_name == "xn-abc-123456789012-ap-northeast-1-an"
+    error_message = "予約された接頭辞に近いだけの name が拒まれています。"
+  }
+}
+
+# Trivy が見ない性質なので Unit で持つ（README「保証しないもの」）。
 run "bucket_attributes" {
   command = plan
 
@@ -136,5 +203,25 @@ run "bucket_attributes" {
   assert {
     condition     = aws_s3_bucket.this.force_destroy == false
     error_message = "force_destroy が false ではありません。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_ownership_controls.this.rule).object_ownership == "BucketOwnerEnforced"
+    error_message = "object_ownership が BucketOwnerEnforced ではありません。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_versioning.this.versioning_configuration).status == "Enabled"
+    error_message = "版管理が Enabled ではありません。"
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
+    error_message = "既定の暗号化が AES256 ではありません。"
+  }
+
+  assert {
+    condition     = toset(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).blocked_encryption_types) == toset(["SSE-C"])
+    error_message = "SSE-C を拒否していません。"
   }
 }

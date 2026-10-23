@@ -37,8 +37,8 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 ## 保証しないもの
 
 - TLS を要求する Policy が入るまで、この module は平文の通信を拒否しない
-- Public Access Block・所有権・版管理・暗号化の値は Trivy（`make trivy-config`）が手元で見る。CI の trivy-config は `.tf` の変更では起動しない
-- `bucket_namespace` と `force_destroy` の値は `tests/naming.tftest.hcl` が mock の plan で見る。Policy Test（#74）が配線されたら、そちらへ移す
+- Trivy（`make trivy-config`）が落とすのは Public Access Block の値だけである。版管理の検査（AWS-0090）は MEDIUM でゲートの閾値より下にあり、所有権を見る検査は無く、暗号化の検査（AWS-0132）は抑止している
+- `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Policy Test（#75）が配線されたら、そちらへ移す
 
 ## 版
 
@@ -50,7 +50,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 参照日: 2026-10-22
 
 - AWS / HashiCorp が publisher の S3 の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search?q=s3&provider=aws` の結果に namespace `aws-ia`・`hashicorp`・`aws` が無い）
-- 参照した一次資料: AWS Provider 6.68.0 の schema と文書、Amazon S3 User Guide（[account regional namespace](https://docs.aws.amazon.com/AmazonS3/latest/userguide/gpbucketnamespaces.html)、[SSE-C の既定](https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-s3-c-encryption-setting-faq.html)）
+- 参照した一次資料: AWS Provider 6.68.0 の schema と文書、Amazon S3 User Guide（[account regional namespace](https://docs.aws.amazon.com/AmazonS3/latest/userguide/gpbucketnamespaces.html)、[SSE-C の既定](https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-s3-c-encryption-setting-faq.html)、[Bucket の命名規則](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html)）
 
 採用した知見:
 
@@ -66,7 +66,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 ## 公式推奨からの逸脱（ADR-0207 決定11）
 
-この記録は、#19 で `usecases/state-backend/docs/adr/` ができたときにそこへ移す（ADR-0207 決定11 は当該ユースケースの ADR を記録先とする）。
+この module を使うすべてのユースケースが、次の逸脱を引き継ぐ。
 
 | 対象 | 理由（ユースケース上の制約） | 影響 | 代替案 | 見直し条件 |
 | --- | --- | --- | --- | --- |
