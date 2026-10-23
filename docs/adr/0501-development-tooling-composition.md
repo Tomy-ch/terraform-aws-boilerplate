@@ -44,7 +44,7 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
    | Syntax | `terraform fmt` / `terraform validate` | 不要 |
    | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース） | 不要 |
    | Security | Trivy | 不要 |
-   | Unit | `terraform test`（`command = plan` + mock provider） | 不要 |
+   | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
    | Policy | Conftest / OPA（入力は `terraform show -json`） | 不要 |
    | Integration | `terraform test`（実 provider） | 必要 |
