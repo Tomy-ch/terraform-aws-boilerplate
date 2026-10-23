@@ -1,16 +1,16 @@
 name: Config Scan
 
-# Trivy misconfiguration scanning for Dockerfiles, kept out of trivy-fs.yaml on
-# purpose. The two share a tool and nothing else: this one has a different target
-# (Dockerfiles, not dependency manifests), a different path filter, and a different
-# gate (HIGH+ blocks here, while dependency findings are reported and gated at
-# release time). Folding it into the dependency scan would also break that
+# Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
+# trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
+# different target (Terraform and Dockerfiles, not dependency manifests), a
+# different path filter, and a different gate (HIGH+ blocks here, while dependency
+# findings are reported and gated at release time). Folding it into the dependency
+# scan would also break that
 # workflow's summary, which counts .Results[].Vulnerabilities and would have to
 # start distinguishing .Misconfigurations from it.
 #
-# docker-compose files are NOT covered: Trivy ships no compose checks, so the
-# scanner detects only the five Dockerfiles under docker/. hadolint
-# (docker-lint.yaml) lints the same files for style and correctness; this workflow
+# docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
+# (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
 # is the security-policy layer over them.
 
 on:
@@ -25,6 +25,9 @@ on:
       - '.makefiles/security/trivy.mk'
       - '.trivyignore.yaml'
       - 'docker/**/Dockerfile'
+      - 'usecases/**/*.tf'
+      - 'modules/**/*.tf'
+      - 'env/**/*.tf'
   pull_request:
   workflow_dispatch:
 
@@ -84,6 +87,9 @@ jobs:
               - '.makefiles/security/trivy.mk'
               - '.trivyignore.yaml'
               - 'docker/**/Dockerfile'
+              - 'usecases/**/*.tf'
+              - 'modules/**/*.tf'
+              - 'env/**/*.tf'
 
   trivy-config:
     needs: changes
