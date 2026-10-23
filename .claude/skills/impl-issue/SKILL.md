@@ -447,7 +447,7 @@ reading that file, not by recalling the run.
 
 ```bash
 make versions-apply    # mise.toml       → scripts/go.mod / docker/tools/Dockerfile
-make egress-apply      # .github/egress.toml → workflow の allowed-endpoints
+make egress-apply      # .github/egress.toml → workflow の bullfrog の with:
 make pin-actions-apply # .github/actions-pin.toml → uses: の @sha
 make pin-images-apply  # docker/images-pin.toml   → FROM の @sha256
 ```

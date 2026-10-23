@@ -118,7 +118,7 @@ Treat the following as **rider files** — they never form their own commit, but
   `docker/images-pin.toml`、`.github/actions-pin.toml`、および `make egress-apply` /
   `make versions-apply` が書くインラインブロック
 
-Example: a `.github/egress.toml` change brings the regenerated `allowed-endpoints` blocks with it in the same commit. A `mise.toml` version bump brings the `docker/tools/Dockerfile` の `FROM` と `scripts/go.mod` の `go` ディレクティブ（`make versions-apply` の出力）in the same commit.
+Example: a `.github/egress.toml` change brings the regenerated bullfrog `with:` blocks with it in the same commit. A `mise.toml` version bump brings the `docker/tools/Dockerfile` の `FROM` と `scripts/go.mod` の `go` ディレクティブ（`make versions-apply` の出力）in the same commit.
 
 ## Step 3. Prefix Reference
 
