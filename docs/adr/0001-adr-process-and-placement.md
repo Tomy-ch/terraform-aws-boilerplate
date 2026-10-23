@@ -94,6 +94,9 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
     各scopeの索引は、そのscopeのADRディレクトリ直下の `README.md` に置く（`docs/adr/README.md`、
     `usecases/<use-case>/docs/adr/README.md`）。root の索引は use-case ADR を載せない。
 
+    `<use-case>` は use-case-local ADR の scope 名を兼ね、kebab-case（`[a-z0-9]+(-[a-z0-9]+)*`）とする。
+    scope を伴う参照（決定11）と `Superseded by`（決定3）は、この名前で宛先を引く。
+
 13. 原則は以下とする。
 
     > Repository-wide decisions are stored at the repository level.
@@ -206,6 +209,7 @@ identity の扱い**（決定4-11）だけで、他の決定はそのまま引�
 - ファイル名が `NNNN-kebab-case-title.md` に適合すること（決定10）
 - 同一scope内で番号が重複しないこと（決定11）
 - 同一scope内で slug が重複しないこと（決定4）
+- use-case の名前が kebab-case であること（決定12）
 - 本文の見出しが名乗る番号がファイル名の番号と一致すること（決定7）
 - 先頭メタデータに Status / Date / Scope が存在すること
 - Status が決定3 の値のいずれかであること（決定3）
