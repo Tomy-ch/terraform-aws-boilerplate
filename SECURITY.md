@@ -48,7 +48,7 @@
 | **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） |
 | 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH でブロック） |
 | ワークフロー定義 | zizmor（high でブロック）/ actionlint / shellcheck | pre-commit hook と CI |
-| ランナーの外向き通信 | harden-runner（`egress-policy: block`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
+| ランナーの外向き通信 | bullfrog（`egress-policy: block`、`enable-sudo: false`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
 | 供給網の新しすぎる版 | go-cooldown / tool-cooldown | Pull Request と週次 |
 | 参照の固定 | pin-actions / pin-images | CI（action は commit、イメージは digest へ固定） |
 | 依存の更新 | Dependabot + cooldown | 週次 |

@@ -21,7 +21,7 @@ merge を正しく着地させる。衝突したパスをクラスへ分け、�
 ## Why this exists
 
 **このリポジトリで衝突マーカーが落ちる先の多くは、誰も手で編集すべきでないファイルである。**
-`.github/workflows/*.yaml` の `allowed-endpoints` ブロックと `runs-on:` の行、ピンの lockfile、
+`.github/workflows/*.yaml` の bullfrog step の `with:` と `runs-on:` の行、ピンの lockfile、
 `scripts/go.mod` の `go` 行、`docker/tools/Dockerfile` の `FROM` タグ —— どれにも生成器か resolver が
 在り、**どれにも「正しい側」が無い**。
 
@@ -30,7 +30,7 @@ merge を正しく着地させる。衝突したパスをクラスへ分け、�
 後で捕まえるが、それは別の人の Pull Request の上で、その人が触っていないコードの失敗として出る。
 
 second reason is quieter. **衝突しなかったことは、終わっていることを意味しない。**
-`allowed-endpoints` は `.github/egress.toml` から生成される —— 2つのブランチが別々の job を足せば、
+bullfrog の `with:` は `.github/egress.toml` から生成される —— 2つのブランチが別々の job を足せば、
 テキストとしては1行も衝突しないまま、生成物だけが古くなる。**衝突の名前を持つスキルは、
 まさにその場合に起動されない。** だからこのスキルは merge の名前を持つ。
 
@@ -72,7 +72,7 @@ git diff --name-only --diff-filter=U
 
 | Class | Paths | Resolution |
 | --- | --- | --- |
-| 生成されたインラインブロック | `.github/workflows/*.yaml` の `allowed-endpoints` | 行を選ばない。正本は `.github/egress.toml`。そちらを先に解決し、`make egress-apply` |
+| 生成されたインラインブロック | `.github/workflows/*.yaml` の bullfrog step の `with:` | 行を選ばない。正本は `.github/egress.toml`。そちらを先に解決し、`make egress-apply` |
 | ピンの lockfile | `.github/actions-pin.toml`、`docker/images-pin.toml` | 行を選ばない。`make pin-actions-resolve` + `apply` / `pin-images-resolve` + `apply` |
 | 生成された行 | `.github/workflows/*.yaml` の `runs-on:` | 行を選ばない。正本は `.github/runners-pin.toml`。そちらを先に解決し、`make pin-runners-apply`。**マーカを持たないので手書きと見分けが付かない** —— 衝突しなくても、片側が workflow を足していればずれる |
 | 版の写し | `scripts/go.mod` の `go` 行、`docker/tools/Dockerfile` の `FROM` タグ | 正本は `mise.toml`。そちらを先に解決し、`make versions-apply` |

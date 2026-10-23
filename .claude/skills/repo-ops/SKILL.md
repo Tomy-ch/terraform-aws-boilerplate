@@ -158,7 +158,7 @@ ADR-0702 決定13 に反しているので、それ自体が finding である�
 `egress-check` が落ちるのは、`.github/egress.toml`（正本）を変えて反映していないとき。
 
 ```sh
-make egress-apply     # 25 箇所の allowed-endpoints ブロックへ反映
+make egress-apply     # 各 job の bullfrog の with: へ反映
 make egress-check
 ```
 

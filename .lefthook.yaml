@@ -44,7 +44,7 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make pin-runners-check
 
-    # allowed-endpoints が SSOT 通りか（.makefiles/github/egress.mk）。
+    # bullfrog の with: が SSOT 通りか（.makefiles/github/egress.mk）。
     egress-check:
       glob:
         - ".github/egress.toml"

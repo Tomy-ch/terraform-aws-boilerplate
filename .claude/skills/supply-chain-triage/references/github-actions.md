@@ -121,7 +121,7 @@ diff action.old.yml action.new.yml
 - New `inputs` are usually benign; a new **default that points at a URL or a token** is not.
 - A JS action's `package.json` gaining dependencies means the bundle now carries code from somewhere
   else — apply the same axes to that dependency.
-- **追加された通信先に注目する。** このリポジトリの workflow は `harden-runner` を
+- **追加された通信先に注目する。** このリポジトリの workflow は `bullfrogsec/bullfrog` を
   `egress-policy: block` で走らせ、許可先は `.github/egress.toml` が宣言して
   `make egress-check` が突合する。**宣言に無い宛先は落ちる** —— 事後に見えるのではなく、
   塞がれる。action の更新が新しい宛先を要求しているなら、それは宣言を1つ増やす判断であり、

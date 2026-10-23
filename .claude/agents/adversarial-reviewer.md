@@ -57,7 +57,7 @@ The orchestrator gives you:
   エラーの取り違え、`errors.Is` の対象センチネル違い、並行実行の競合、外部コマンドの終了コードを
   見ていない、部分的な書き込みで中断したときに壊れた成果物が残る。
 - **declaration-drift** — 宣言と実体のずれ。宣言が1箇所にある建て付け（`mise.toml` が版の SSOT、
-  `.github/egress.toml` が allowed-endpoints の SSOT、`*-pin.toml` が固定の lockfile、
+  `.github/egress.toml` が bullfrog の with: の SSOT、`*-pin.toml` が固定の lockfile、
   `.github/settings/branch-protection.json` が required check の SSOT）に対し、生成先・利用先の
   どちらかだけが動いていないか。**宣言を増やしたのに、それが実体と一致しているかを確かめる経路が
   無い**場合もこのレンズが拾う。文書が「存在する」と述べている機構が実際には配線されていない、も
