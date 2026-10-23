@@ -52,7 +52,6 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
-            *.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
             mise.run

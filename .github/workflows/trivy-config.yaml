@@ -62,7 +62,6 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
-            *.blob.core.windows.net
 
       # fetch-depth: 0 so the PR's base and head commits are present locally. The filter
       # below compares them with `git diff`; the default shallow checkout fetches only the
@@ -117,7 +116,6 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
-            *.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
             mise.run

@@ -183,7 +183,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 
 | クラス | 宛先 | 当たるもの |
 | --- | --- | --- |
-| `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、`*.blob.core.windows.net`。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
+| `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`（結果と cache の置き場の `productionresultssa<N>.blob.core.windows.net` は bullfrog の agent が既定で許す）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |

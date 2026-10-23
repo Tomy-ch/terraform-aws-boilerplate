@@ -16,7 +16,8 @@ hosts = [
   "raw.githubusercontent.com",
   "release-assets.githubusercontent.com",
   "*.actions.githubusercontent.com",
-  "*.blob.core.windows.net",
+  # 結果と cache の置き場（productionresultssa<N>.blob.core.windows.net）は bullfrog の agent が既定で
+  # 許すので書かない。`*.blob.core.windows.net` は誰でも作れる Azure Storage のアカウントへの持ち出し口になる。
 ]
 
 [class.mise]
