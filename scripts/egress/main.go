@@ -1,6 +1,6 @@
-// Package main は harden-runner の allowed-endpoints を SSOT から生成・検証するツール。
+// Package main は bullfrog の通信制限（with: ブロック）を SSOT から生成・検証するツール。
 //
-//	apply: .github/egress.toml を元に各 workflow の allowed-endpoints ブロックを書き換える。
+//	apply: .github/egress.toml を元に、各 job の先頭にある bullfrog step の with: を書き換える。
 //	check: apply と同じ判定を書き換えなしで行い、ドリフトがあれば非ゼロ終了する（CI / hook 用）。
 //
 // 詳細は .github/workflows/README.md の「ランナーの封じ込め」節を参照。
@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,27 +18,52 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
+
+// scalarKeys はスカラーで書くキー。それ以外のキーは配列で書く。
+var scalarKeys = map[string]bool{"egress_policy": true}
+
+// elementMark は SSOT の本文に現れない文字で、配列の要素の位置を示す。
+const elementMark = "\x00"
 
 const (
 	ssotFile = ".github/egress.toml"
 	filePerm = 0o644
-	// policyAudit は allowed-endpoints を持たない唯一の egress-policy。
+	// policyAudit は許可リストを持たない唯一の egress-policy。
 	policyAudit = "audit"
 	policyBlock = "block"
-	// blockIndentStep は allowed-endpoints キーに対するホスト行の相対字下げ。
-	blockIndentStep = 2
+	// bullfrogAction は step を見つける錨。SHA は pin-actions が書くので、ここでは名前だけを見る。
+	bullfrogAction = "bullfrogsec/bullfrog"
+	// withIndent / itemIndent は workflow.SplitSteps が前提とする桁（step は6桁の "- "）から決まる。
+	withIndent = "        "
+	keyIndent  = "          "
+	itemIndent = "            "
 )
 
 var (
-	sectionRe      = regexp.MustCompile(`^\[(class|job)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
-	scalarRe       = regexp.MustCompile(`^(\w+)\s*=\s*"([^"]*)"$`)
-	arrayHeadRe    = regexp.MustCompile(`^(\w+)\s*=\s*\[(.*)$`)
-	quotedRe       = regexp.MustCompile(`"([^"]*)"`)
-	jobIDRe        = regexp.MustCompile(`^  ([A-Za-z_][A-Za-z0-9_-]*):\s*$`)
-	egressPolicyRe = regexp.MustCompile(`^\s*egress-policy:\s*(\S+)\s*$`)
-	endpointsKeyRe = regexp.MustCompile(`^(\s*)allowed-endpoints:\s*>\s*$`)
+	sectionRe   = regexp.MustCompile(`^\[(class|job)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
+	scalarRe    = regexp.MustCompile(`^(\w+)\s*=\s*"([^"]*)"$`)
+	arrayHeadRe = regexp.MustCompile(`^(\w+)\s*=\s*\[(.*)$`)
+	quotedRe    = regexp.MustCompile(`"([^"]*)"`)
+	// domainRe は bullfrog の allowed-domains が受け付ける形のうち、先頭の `*.` だけをワイルドカードとして
+	// 許す。道具は途中や単独の `*` も通すが、意図より広い範囲を開けるので宣言で拒む。
+	domainRe   = regexp.MustCompile(`^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
+	stepNameRe = regexp.MustCompile(`^ {6}- name: \S`)
+	stepUsesRe = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
+	stepWithRe = regexp.MustCompile(`^ {8}with:$`)
+	commentRe  = regexp.MustCompile(`^\s*#`)
+	// reusableRe は reusable workflow を呼ぶジョブ（runner を持たない）の `uses:` 行。
+	reusableRe = regexp.MustCompile(`^ {4}uses:\s*\S`)
+	// elementListRe は、配列の `[` と `]` の間から引用符付きの要素を elementMark に置き換えた残りが取れる形。
+	elementListRe = regexp.MustCompile(`^\s*(?:\x00\s*,\s*)*(?:\x00\s*,?\s*)?$`)
+	// shallowLineRe は job の本文に現れてはならない、job の見出しより浅い（または桁0以外の
+	// 見出しと同じ桁の）行。切り出しが読めなかった見出しは、直前の job の本文にこの形で残る。
+	shallowLineRe = regexp.MustCompile(`^(?: {1,3}[^\s#]|\t)`)
+	// loopbackPrefix は allowed-ips に書ける範囲。allowed-ips はドメインの判定を経ずに通すので、
+	// runner 自身の中（ローカルの DNS 転送役）より外を開けさせない。
+	loopbackPrefix = netip.MustParsePrefix("127.0.0.0/8")
 )
 
 var (
@@ -49,19 +75,31 @@ var (
 	errSSOTClassCycle   = xerrors.New("SSOT のクラス継承が循環しています")
 	errSSOTBaseClass    = xerrors.New("base クラスは全ジョブへ暗黙に適用されるため classes に書けません")
 	// errSSOTPolicy は、egress_policy の値が不正、または audit ジョブが許可リストを持つ場合のエラー。
-	errSSOTPolicy      = xerrors.New("SSOT の egress_policy が不正です")
-	errWorkflowJobless = xerrors.New("ジョブに属さない harden-runner の記述があります")
-	errBlockComment    = xerrors.New("allowed-endpoints ブロックにホスト以外の行があります")
-	errPolicyMismatch  = xerrors.New("workflow の egress-policy と SSOT の宣言が食い違います")
-	errJobMissing      = xerrors.New("SSOT に未登録のジョブがあります")
-	errJobOrphan       = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
-	errEgressDrift     = xerrors.New("allowed-endpoints が SSOT からずれています")
+	errSSOTPolicy = xerrors.New("SSOT の egress_policy が不正です")
+	// errSSOTDomain は、ポート付き・途中のワイルドカードなど、ドメイン名として書けない宛先のエラー。
+	errSSOTDomain     = xerrors.New("SSOT の宛先がドメイン名の形をしていません")
+	errSSOTIP         = xerrors.New("SSOT の ips が 127.0.0.0/8 内の IPv4 アドレスまたは CIDR ではありません")
+	errSSOTIPScope    = xerrors.New("ips は base クラスだけが持てます")
+	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
+	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
+	// steps は 4 桁、step は 6 桁の `- ` で書く（scripts/lib/workflow の切り出しの前提）。
+	errJobUnparsed   = xerrors.New("steps を読み取れないジョブがあります")
+	errStepMissing   = xerrors.New("steps を持つのに bullfrog の step が無いジョブがあります")
+	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの最初の step ではありません")
+	errStepDuplicate = xerrors.New("1 つのジョブに bullfrog の step が複数あります")
+	// errStepMalformed は、bullfrog の step が生成器の書ける形（name / uses / with だけ）を外れているか、
+	// step の外で bullfrog が名指しされている場合のエラー。apply では直らない。
+	errStepMalformed = xerrors.New("bullfrog の step が想定外の形をしています")
+	errJobMissing    = xerrors.New("SSOT に未登録のジョブがあります")
+	errJobOrphan     = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
+	errNoTargets     = xerrors.New("bullfrog の step が 1 件も見つかりません")
+	errEgressDrift   = xerrors.New("bullfrog の with: が SSOT からずれています")
 )
 
-// class は能力クラス 1 件。includes は継承元クラス、hosts は自クラスが足す host:port。
 type class struct {
 	includes []string
 	hosts    []string
+	ips      []string
 }
 
 // jobSpec は 1 ジョブの宣言。key は `<workflow ファイル名>:<job id>`。
@@ -77,6 +115,7 @@ type ssot struct {
 	jobs      map[string]*jobSpec
 	jobOrder  []string
 	baseHosts []string
+	baseIPs   []string
 }
 
 // orderedHosts は初出順を保ったまま重複を落とすホスト集合。
@@ -85,15 +124,13 @@ type orderedHosts struct {
 	seen map[string]bool
 }
 
-// block は workflow 内の allowed-endpoints ブロック 1 件の位置と中身。
-type block struct {
+// target は workflow 内の bullfrog step 1 件のうち、生成器が書く with: の範囲。
+type target struct {
 	jobKey string
-	// keyLine は `allowed-endpoints: >` の行番号（0 起点）。
-	keyLine int
-	// endLine はホスト行の終端（0 起点・排他）。
-	endLine int
-	indent  int
-	hosts   []string
+	// start / end は差し替える行の範囲（0 起点・end は排他）。with: が無い step では start == end で、
+	// uses: の直後へ挿入する。
+	start int
+	end   int
 }
 
 func main() {
@@ -123,7 +160,6 @@ func run(args []string, wd func() (string, error)) error {
 	}
 }
 
-// parseSSOT は SSOT の本文をクラス定義とジョブ宣言へ分解する。
 func parseSSOT(data string) (*ssot, error) {
 	s := &ssot{classes: map[string]*class{}, jobs: map[string]*jobSpec{}}
 	var curClass *class
@@ -172,7 +208,6 @@ func stripComment(line string) string {
 	return line
 }
 
-// openSection は新しい `[class.x]` / `[job."x"]` を登録する。既出なら重複エラー。
 func (s *ssot) openSection(kind, name string) error {
 	if _, dup := s.classes[name]; dup && kind == "class" {
 		return xerrors.Wrap(errSSOTDuplicate, "class "+name)
@@ -190,32 +225,40 @@ func (s *ssot) openSection(kind, name string) error {
 }
 
 // parseAssignment は lines[i] から始まる代入を読み、キー・値・消費した最終行を返す。
-// 配列は `]` が現れるまで後続行を取り込む。
+// 配列は `]` が現れるまで後続行を取り込む。要素は二重引用符の文字列をカンマで区切ったものに限る。
 func parseAssignment(lines []string, i int) (string, []string, int, error) {
+	start := i
 	line := strings.TrimSpace(stripComment(lines[i]))
 	if m := scalarRe.FindStringSubmatch(line); m != nil {
+		if !scalarKeys[m[1]] {
+			return "", nil, 0, xerrors.Wrap(errSSOTSyntax, fmt.Sprintf("%d 行目: %s は配列で書く", i+1, m[1]))
+		}
 		return m[1], []string{m[2]}, i, nil
 	}
 	m := arrayHeadRe.FindStringSubmatch(line)
 	if m == nil {
 		return "", nil, 0, xerrors.Wrap(errSSOTSyntax, fmt.Sprintf("%d 行目: %q", i+1, line))
 	}
-	key, rest := m[1], m[2]
-	var values []string
-	for {
-		closed := strings.Contains(rest, "]")
-		for _, q := range quotedRe.FindAllStringSubmatch(rest, -1) {
-			values = append(values, q[1])
-		}
-		if closed {
-			return key, values, i, nil
-		}
+	key, body := m[1], m[2]
+	if scalarKeys[key] {
+		return "", nil, 0, xerrors.Wrap(errSSOTSyntax, fmt.Sprintf("%d 行目: %s はスカラーで書く", i+1, key))
+	}
+	for !strings.Contains(body, "]") {
 		i++
 		if i >= len(lines) {
 			return "", nil, 0, xerrors.Wrap(errSSOTSyntax, "配列が閉じられていません: "+key)
 		}
-		rest = stripComment(lines[i])
+		body += "\n" + stripComment(lines[i])
 	}
+	inner, after, _ := strings.Cut(body, "]")
+	if strings.TrimSpace(after) != "" || !elementListRe.MatchString(quotedRe.ReplaceAllString(inner, elementMark)) {
+		return "", nil, 0, xerrors.Wrap(errSSOTSyntax, fmt.Sprintf("%d-%d 行目: %s（要素は二重引用符の文字列をカンマで区切る）", start+1, i+1, key))
+	}
+	var values []string
+	for _, q := range quotedRe.FindAllStringSubmatch(inner, -1) {
+		values = append(values, q[1])
+	}
+	return key, values, i, nil
 }
 
 func assign(c *class, j *jobSpec, key string, values []string) error {
@@ -227,6 +270,8 @@ func assign(c *class, j *jobSpec, key string, values []string) error {
 		c.includes = values
 	case c != nil && key == "hosts":
 		c.hosts = values
+	case c != nil && key == "ips":
+		c.ips = values
 	case j != nil && key == "classes":
 		j.classes = values
 	case j != nil && key == "extra":
@@ -251,12 +296,46 @@ func requireUnique(values []string) error {
 	return nil
 }
 
+// validateDomain は bullfrog の allowed-domains へ書ける宛先かを判定する。
+func validateDomain(d string) error {
+	if !domainRe.MatchString(d) {
+		return xerrors.Wrap(errSSOTDomain, d)
+	}
+	return nil
+}
+
+// validateIP は loopbackPrefix 内の IPv4 アドレスまたは IPv4 CIDR かを判定する。
+func validateIP(v string) error {
+	if a, err := netip.ParseAddr(v); err == nil && a.Is4() && loopbackPrefix.Contains(a) {
+		return nil
+	}
+	if p, err := netip.ParsePrefix(v); err == nil && p.Addr().Is4() &&
+		p.Bits() >= loopbackPrefix.Bits() && loopbackPrefix.Contains(p.Addr()) {
+		return nil
+	}
+	return xerrors.Wrap(errSSOTIP, v)
+}
+
 // validate は SSOT 単体で判定できる不整合を返す。
 func (s *ssot) validate() error {
 	if base, ok := s.classes["base"]; ok {
 		s.baseHosts = base.hosts
+		s.baseIPs = base.ips
 	}
 	for name, c := range s.classes {
+		if len(c.ips) > 0 && name != "base" {
+			return xerrors.Wrap(errSSOTIPScope, name)
+		}
+		for _, ip := range c.ips {
+			if err := validateIP(ip); err != nil {
+				return xerrors.Wrap(err, name)
+			}
+		}
+		for _, h := range c.hosts {
+			if err := validateDomain(h); err != nil {
+				return xerrors.Wrap(err, name)
+			}
+		}
 		for _, inc := range c.includes {
 			if _, ok := s.classes[inc]; !ok {
 				return xerrors.Wrap(errSSOTUnknownClass, name+" includes "+inc)
@@ -277,7 +356,7 @@ func (s *ssot) validateJob(key string, j *jobSpec) error {
 		j.policy = policyBlock
 	case policyAudit:
 		if len(j.classes) > 0 || len(j.extra) > 0 {
-			return xerrors.Wrap(errSSOTPolicy, key+": audit は allowed-endpoints を持ちません")
+			return xerrors.Wrap(errSSOTPolicy, key+": audit は許可リストを持ちません")
 		}
 	default:
 		return xerrors.Wrap(errSSOTPolicy, key+": "+j.policy)
@@ -288,6 +367,11 @@ func (s *ssot) validateJob(key string, j *jobSpec) error {
 		}
 		if _, ok := s.classes[cn]; !ok {
 			return xerrors.Wrap(errSSOTUnknownClass, key+" classes "+cn)
+		}
+	}
+	for _, h := range j.extra {
+		if err := validateDomain(h); err != nil {
+			return xerrors.Wrap(err, key)
 		}
 	}
 	_, err := s.hostsFor(key)
@@ -343,91 +427,156 @@ func (o *orderedHosts) add(hosts []string) {
 	}
 }
 
-// scanWorkflow は 1 ファイルの harden-runner 記述を、ジョブ単位の egress-policy と
-// allowed-endpoints ブロックへ分解する。name は workflow のファイル名。
-func scanWorkflow(name string, lines []string) (map[string]string, []block, error) {
-	policies := map[string]string{}
-	var blocks []block
-	jobs := workflowJobs(lines)
-
-	for i := 0; i < len(lines); i++ {
-		if m := egressPolicyRe.FindStringSubmatch(lines[i]); m != nil {
-			if jobs[i] == "" {
-				return nil, nil, xerrors.Wrap(errWorkflowJobless, fmt.Sprintf("%s %d 行目", name, i+1))
-			}
-			policies[name+":"+jobs[i]] = m[1]
-			continue
-		}
-		m := endpointsKeyRe.FindStringSubmatch(lines[i])
-		if m == nil {
-			continue
-		}
-		if jobs[i] == "" {
-			return nil, nil, xerrors.Wrap(errWorkflowJobless, fmt.Sprintf("%s %d 行目", name, i+1))
-		}
-		b, err := readBlock(name, lines, i, len(m[1]))
-		if err != nil {
-			return nil, nil, err
-		}
-		b.jobKey = name + ":" + jobs[i]
-		blocks = append(blocks, b)
-		i = b.endLine - 1
+// scanJobs は 1 ファイルを job に割り、steps を持つ job ごとに bullfrog step の with: の範囲を返す。
+// reusable workflow の呼び出しは runner を持たないので対象外。それ以外で steps を読み取れない job は、
+// bullfrog の有無を判定できないので拒む。
+// step の中で見つけた件数を、ファイル全体で名指しされた件数と突き合わせる（ADR-0702 決定15）。
+func scanJobs(name, data string) ([]target, error) {
+	split := workflow.SplitJobs(data)
+	if !split.Found || len(split.Jobs) == 0 {
+		return nil, xerrors.Wrap(errWorkflowNoJobs, name)
 	}
-	return policies, blocks, nil
-}
-
-// workflowJobs は各行が属する `jobs:` 直下の job id を行番号順に返す。ジョブの外は空文字。
-func workflowJobs(lines []string) []string {
-	out := make([]string, len(lines))
-	inJobs, job := false, ""
-	for i, line := range lines {
+	if l, ok := unclaimedLine(data, split); ok {
+		return nil, xerrors.Wrap(errJobUnparsed, fmt.Sprintf("%s %d 行目: %q", name, l.Number, l.Text))
+	}
+	var targets []target
+	total := mentionsBullfrog(split.Preamble)
+	for _, job := range split.Jobs {
+		total += mentionsBullfrog(job.Lines)
+		key := name + ":" + job.ID
+		if i := slices.IndexFunc(job.Lines, func(l workflow.Line) bool { return shallowLineRe.MatchString(l.Text) }); i >= 0 {
+			return nil, xerrors.Wrap(errJobUnparsed, fmt.Sprintf("%s %d 行目: %q", key, job.Lines[i].Number, job.Lines[i].Text))
+		}
+		steps := workflow.SplitSteps(job)
+		if len(steps) == 0 {
+			if slices.ContainsFunc(job.Lines, func(l workflow.Line) bool { return reusableRe.MatchString(l.Text) }) {
+				continue
+			}
+			return nil, xerrors.Wrap(errJobUnparsed, fmt.Sprintf("%s %d 行目", key, job.Number))
+		}
+		var found []int
+		for i, st := range steps {
+			if mentionsBullfrog(st.Lines) > 0 {
+				found = append(found, i)
+			}
+		}
 		switch {
-		case strings.HasPrefix(line, "#"):
-		case line != "" && !strings.HasPrefix(line, " "):
-			inJobs, job = strings.HasPrefix(line, "jobs:"), ""
-		case inJobs:
-			if m := jobIDRe.FindStringSubmatch(line); m != nil {
-				job = m[1]
-			}
+		case len(found) == 0:
+			return nil, xerrors.Wrap(errStepMissing, key)
+		case len(found) > 1:
+			return nil, xerrors.Wrap(errStepDuplicate, key)
+		case found[0] != 0:
+			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[0]].Number))
 		}
-		out[i] = job
+		t, err := checkStepShape(steps[0])
+		if err != nil {
+			return nil, xerrors.Wrap(err, key)
+		}
+		t.jobKey = key
+		targets = append(targets, t)
 	}
-	return out
+	if total != len(targets) {
+		return nil, xerrors.Wrap(errStepMalformed,
+			fmt.Sprintf("%s: step の外で %s が名指しされています（step 内 %d 件 / 全体 %d 件）", name, bullfrogAction, len(targets), total))
+	}
+	return targets, nil
 }
 
-// readBlock は keyLine から始まる折り畳みスカラーのホスト行を読む。
-// ホスト 1 個以外の行（コメント・複数トークン）は握り潰さず fail-close する
-// （fail-closed の範囲は scripts/README.md の egress 行）。
-func readBlock(name string, lines []string, keyLine, indent int) (block, error) {
-	b := block{keyLine: keyLine, endLine: keyLine + 1, indent: indent}
-	for j := keyLine + 1; j < len(lines); j++ {
-		line := lines[j]
-		if strings.TrimSpace(line) == "" {
-			break
-		}
-		if len(line)-len(strings.TrimLeft(line, " ")) <= indent {
-			break
-		}
-		host := strings.TrimSpace(line)
-		if strings.HasPrefix(host, "#") || strings.ContainsAny(host, " \t") {
-			return block{}, xerrors.Wrap(errBlockComment, fmt.Sprintf("%s %d 行目: %q", name, j+1, host))
-		}
-		b.hosts = append(b.hosts, host)
-		b.endLine = j + 1
+// unclaimedLine は、切り出しがどの job にも preamble にも割り当てなかった行のうち、`jobs:` の行・空行・
+// コメント以外のものを返す。最初の job の見出しが読めないと、その本文はどこにも残らない。
+func unclaimedLine(data string, split workflow.Split) (workflow.Line, bool) {
+	claimed := map[int]bool{}
+	for _, l := range split.Preamble {
+		claimed[l.Number] = true
 	}
-	return b, nil
+	for _, job := range split.Jobs {
+		claimed[job.Number] = true
+		for _, l := range job.Lines {
+			claimed[l.Number] = true
+		}
+	}
+	jobsSeen := false
+	for i, text := range strings.Split(data, "\n") {
+		if claimed[i+1] || strings.TrimSpace(text) == "" || commentRe.MatchString(text) {
+			continue
+		}
+		if !jobsSeen && strings.HasPrefix(text, "jobs:") {
+			jobsSeen = true
+			continue
+		}
+		return workflow.Line{Number: i + 1, Text: text}, true
+	}
+	return workflow.Line{}, false
 }
 
-func renderBlock(hosts []string, indent int) []string {
-	pad := strings.Repeat(" ", indent+blockIndentStep)
-	out := make([]string, 0, len(hosts))
+// mentionsBullfrog はコメント行を除いて bullfrog を名指しする行を数える。
+func mentionsBullfrog(lines []workflow.Line) int {
+	n := 0
+	for _, l := range lines {
+		if !commentRe.MatchString(l.Text) && strings.Contains(l.Text, bullfrogAction) {
+			n++
+		}
+	}
+	return n
+}
+
+// checkStepShape は bullfrog step が `- name:` → `uses:` → 任意の `with:` だけから成ることを確かめ、
+// 差し替える with: の範囲を返す。if: や continue-on-error: が付いた step は宣言どおりに見えて
+// 遮断しないので、生成器が丸ごと書ける形以外は拒む。step の後ろに続く空行とコメントは次の step の
+// ものなので残す。
+func checkStepShape(st workflow.Step) (target, error) {
+	ls := st.Lines
+	malformed := func(l workflow.Line) error {
+		return xerrors.Wrap(errStepMalformed, fmt.Sprintf("%d 行目: %q", l.Number, l.Text))
+	}
+	if len(ls) < 2 || !stepNameRe.MatchString(ls[0].Text) {
+		return target{}, malformed(ls[0])
+	}
+	if !stepUsesRe.MatchString(ls[1].Text) {
+		return target{}, malformed(ls[1])
+	}
+	i := 2
+	t := target{start: ls[1].Number, end: ls[1].Number}
+	if i < len(ls) && stepWithRe.MatchString(ls[i].Text) {
+		i++
+		for i < len(ls) && strings.HasPrefix(ls[i].Text, keyIndent) {
+			i++
+		}
+		t.end = ls[i-1].Number
+	}
+	for ; i < len(ls); i++ {
+		if strings.TrimSpace(ls[i].Text) != "" && !commentRe.MatchString(ls[i].Text) {
+			return target{}, malformed(ls[i])
+		}
+	}
+	return t, nil
+}
+
+// renderWith は 1 ジョブ分の with: ブロックを返す。enable-sudo: false は全ジョブで書く（ADR-0702 決定21）。
+// dns-policy は既定値と同じでも書き、上流の既定が変わっても名前解決の制限が黙って外れないようにする。
+func renderWith(policy string, ips, hosts []string) []string {
+	out := []string{withIndent + "with:", keyIndent + "egress-policy: " + policy}
+	if policy == policyBlock {
+		out = append(out, keyIndent+"dns-policy: allowed-domains-only")
+	}
+	out = append(out, keyIndent+"enable-sudo: false")
+	if policy == policyAudit {
+		return out
+	}
+	if len(ips) > 0 {
+		out = append(out, keyIndent+"allowed-ips: |")
+		for _, ip := range ips {
+			out = append(out, itemIndent+ip)
+		}
+	}
+	out = append(out, keyIndent+"allowed-domains: |")
 	for _, h := range hosts {
-		out = append(out, pad+h)
+		out = append(out, itemIndent+h)
 	}
 	return out
 }
 
-// applyOrCheck は SSOT を正本に allowed-endpoints を書き換える。dryRun=true は差分を非ゼロ終了で報告する。
+// applyOrCheck は SSOT を正本に bullfrog の with: を書き換える。dryRun=true は書かない。
 func applyOrCheck(root string, dryRun bool) error {
 	raw, err := os.ReadFile(filepath.Join(root, ssotFile)) //nolint:gosec // path is cwd + literal filename
 	if err != nil {
@@ -450,6 +599,9 @@ func applyOrCheck(root string, dryRun bool) error {
 	changes, used, err := s.planFiles(files)
 	if err != nil {
 		return err
+	}
+	if len(used) == 0 {
+		return xerrors.Wrap(errNoTargets, filepath.Join(".github", "workflows"))
 	}
 	if orphans := orphanJobs(s, used); len(orphans) > 0 {
 		return xerrors.Wrap(errJobOrphan, strings.Join(orphans, ", ")+"（"+ssotFile+" の該当エントリを削除してください）")
@@ -478,48 +630,34 @@ func (s *ssot) planFiles(files []string) (map[string]string, map[string]bool, er
 	return changes, used, nil
 }
 
-// rewriteFile は 1 ファイルの allowed-endpoints ブロックを SSOT 由来の内容へ差し替えた本文を返す。
+// rewriteFile は 1 ファイルの bullfrog step の with: を SSOT 由来の内容へ差し替えた本文を返す。
 func (s *ssot) rewriteFile(name, data string, used map[string]bool) (string, error) {
-	lines := strings.Split(data, "\n")
-	policies, blocks, err := scanWorkflow(name, lines)
+	targets, err := scanJobs(name, data)
 	if err != nil {
 		return "", err
 	}
-	byJob := map[string]bool{}
-	for _, b := range blocks {
-		byJob[b.jobKey] = true
-	}
-	for key, policy := range policies {
-		if err := s.checkPolicy(key, policy, byJob[key]); err != nil {
+	for _, t := range targets {
+		if err := s.checkJob(t.jobKey); err != nil {
 			return "", err
 		}
-		used[key] = true
+		used[t.jobKey] = true
 	}
-	// 後ろから差し替えて、先行ブロックの行番号を保つ。
-	for _, v := range slices.Backward(blocks) {
-		b := v
-		hosts, err := s.hostsFor(b.jobKey)
+	lines := strings.Split(data, "\n")
+	// 後ろから差し替えて、先行する step の行番号を保つ。
+	for _, t := range slices.Backward(targets) {
+		hosts, err := s.hostsFor(t.jobKey)
 		if err != nil {
 			return "", err
 		}
-		lines = append(lines[:b.keyLine+1:b.keyLine+1],
-			append(renderBlock(hosts, b.indent), lines[b.endLine:]...)...)
+		block := renderWith(s.jobs[t.jobKey].policy, s.baseIPs, hosts)
+		lines = append(lines[:t.start:t.start], append(block, lines[t.end:]...)...)
 	}
 	return strings.Join(lines, "\n"), nil
 }
 
-// checkPolicy は workflow 側の egress-policy と SSOT の宣言、ブロックの在否の 3 者が揃うことを検証する。
-func (s *ssot) checkPolicy(key, policy string, hasBlock bool) error {
-	j, ok := s.jobs[key]
-	if !ok {
+func (s *ssot) checkJob(key string) error {
+	if _, ok := s.jobs[key]; !ok {
 		return xerrors.Wrap(errJobMissing, key+"（"+ssotFile+" へ追加してください）")
-	}
-	if j.policy != policy {
-		return xerrors.Wrap(errPolicyMismatch, fmt.Sprintf("%s: workflow=%s SSOT=%s", key, policy, j.policy))
-	}
-	if hasBlock != (policy == policyBlock) {
-		return xerrors.Wrap(errPolicyMismatch,
-			fmt.Sprintf("%s: egress-policy=%s に対して allowed-endpoints の在否が合いません", key, policy))
 	}
 	return nil
 }
@@ -553,7 +691,7 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 			}
 			return xerrors.Wrap(errEgressDrift, "make egress-apply してコミットしてください: "+strings.Join(rels, ", "))
 		}
-		log.Printf("✅ 全ジョブの allowed-endpoints が %s 通りです", ssotFile)
+		log.Printf("✅ 全ジョブの bullfrog の with: が %s 通りです", ssotFile)
 
 		return nil
 	}

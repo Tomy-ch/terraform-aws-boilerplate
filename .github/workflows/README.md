@@ -158,17 +158,24 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 ## ランナーの封じ込め
 
-このディレクトリのすべての job は `step-security/harden-runner` を `egress-policy: block` で、
-自分の `allowed-endpoints` とともに開始する。外向きの接続を一覧に照らし、それ以外を拒む ——
-侵害された action や道具のダウンロードが、その job に用の無い宛先へ持ち出せない。
+このディレクトリのすべての job は、最初の step で `bullfrogsec/bullfrog` を `egress-policy: block`・
+`dns-policy: allowed-domains-only`・`enable-sudo: false` で、自分の `allowed-domains` とともに開始する。
+外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
+その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
+そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
+決定20-23 が持つ。
 
 このステップは**すべての job にインラインで置かれる。これは好みではなく制約である。**
 ローカルの composite action（`uses: ./.github/actions/*`）はリポジトリを checkout して初めて解決され、
-harden-runner は checkout の**前**に走らなければならない —— checkout 自体が外向きの呼び出しであり、
+bullfrog は checkout の**前**に走らなければならない —— checkout 自体が外向きの呼び出しであり、
 それを守ることが目的だからである。括り出すと、塞ぐために置いた窓が開く。
 
 **固定されていないのは一覧の出所の方である。** [`.github/egress.toml`](../egress.toml) が SSOT で、
-`make egress-apply` が各 job へ書き込み、`make egress-check` がインラインのブロックとのずれで落ちる。
+`make egress-apply` が各 job の `with:` を丸ごと書き、`make egress-check` がずれで落ちる。step が
+`name` / `uses` / `with` 以外のキー（`if:` や `continue-on-error:`）を持つこと、job の最初の step で
+ないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
+6桁のハイフンで始める）も、同じ検査が拒む。拒む条件の一覧は
+[`scripts/README.md`](../../scripts/README.md) の `egress/` の行が持つ。
 
 **job は宛先ではなく能力のクラスを宣言する。** job が何に到達するかは、その job が*何をするか*から
 決まり、job 自身の素性からは決まらない —— 実行は `make` から docker、コンテナ内の `mise` へ降りるので、
@@ -176,9 +183,10 @@ harden-runner は checkout の**前**に走らなければならない —— ch
 
 | クラス | 宛先 | 当たるもの |
 | --- | --- | --- |
-| `base` | harden-runner 自身のエージェント、GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com` | **すべての job に暗黙に適用される。** `classes` に書かない |
-| `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、`astral.sh` と PyPI、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
+| `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、`*.blob.core.windows.net`。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
+| `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
+| `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
@@ -187,12 +195,13 @@ harden-runner は checkout の**前**に走らなければならない —— ch
 クラスに置かれた job こそ、この仕組みが取り除こうとしている失敗である。** 必要より少し広いクラスも、
 その外側はすべて拒む。
 
-宛先を足すには `.github/egress.toml` を編集し（能力から導かれるならクラスへ、そうでなければ job の
-`extra` へ）、`make egress-apply` を実行して生成されたブロックを commit する。インラインのブロックを
-手で編集しない —— `make egress-check` が拒む。
+宛先はポートを付けないドメイン名で書く。bullfrog は port で絞らないので、ポート付きは宣言の検査が
+拒む。`*.example.com` は apex を含まない。宛先を足すには `.github/egress.toml` を編集し（能力から
+導かれるならクラスへ、そうでなければ job の `extra` へ）、`make egress-apply` を実行して生成された
+`with:` を commit する。インラインの `with:` を手で編集しない —— `make egress-check` が拒む。
 
-塞がれた宛先は harden-runner の run summary に拒否された接続として現れる。job のログからは理由の
-見えない失敗に当たったとき読むのはそこで、直し方はクラスか `extra` を広げることであって、
+塞がれた宛先は、run の job summary に bullfrog が出す接続ごとの判定の表に現れる。job のログからは
+理由の見えない失敗に当たったとき読むのはそこで、直し方はクラスか `extra` を広げることであって、
 `audit` へ落とすことではない。
 
 ## ランナーの版

@@ -6,7 +6,7 @@
 "actions/github-script@v9" = "3a2844b7e9c422d3c10d287c895573f7108da1b3"
 "actions/setup-go@v7" = "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
 "actions/upload-artifact@v7" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+"bullfrogsec/bullfrog@v0.11.1" = "7dee337d4575320b6d8cbe9a56d48d2fb765963a"
 "dorny/paths-filter@v4" = "ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 "github/codeql-action@v4.37.9" = "cdf488f595d80d6e07e03d4674febd5ab45fa938"
 "k1LoW/octocov-action@v1" = "a167dc0dee441b7ffc45e1b862ab55ec0d87f278"
-"step-security/harden-runner@v2.21.0" = "05e31511f85b41b11d1cf0ef85d0992719546e2c"

@@ -1,46 +1,51 @@
-# harden-runner の allowed-endpoints の SSOT。
-# クラスの意味・追加手順・反映と検査のコマンドは .github/workflows/README.md の「ランナーの封じ込め」節。
+# 各 job の先頭にある bullfrog の allowed-domains / allowed-ips の SSOT。
+# クラスの意味・書式・追加手順・反映と検査のコマンドは .github/workflows/README.md の「ランナーの封じ込め」節。
 
 [class.base]
+# hosted runner の一部では、egress proxy が /etc/resolv.conf の先頭の nameserver を
+# 127.0.0.100 のローカル転送役へ書き換える（actions/runner-images#14925）。bullfrog は既定でこれを
+# DNS サーバとして信用しないので、許さないと名前解決が止まる。転送先の問い合わせも bullfrog の
+# DNS 判定を通るため、許すドメインは広がらない。外す条件は、runner の resolv.conf が 127.0.0.53
+# だけを指すようになること。
+ips = ["127.0.0.100"]
 hosts = [
-  "agent.api.stepsecurity.io:443",
-  "api.github.com:443",
-  "github.com:443",
-  "codeload.github.com:443",
-  "objects.githubusercontent.com:443",
-  "raw.githubusercontent.com:443",
-  "release-assets.githubusercontent.com:443",
-  "*.actions.githubusercontent.com:443",
-  "*.blob.core.windows.net:443",
+  "api.github.com",
+  "github.com",
+  "codeload.github.com",
+  "objects.githubusercontent.com",
+  "raw.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "*.actions.githubusercontent.com",
+  "*.blob.core.windows.net",
 ]
 
 [class.mise]
 hosts = [
-  "mise.jdx.dev:443",
-  "mise-versions.jdx.dev:443",
-  "mise.run:443",
-  "mise.en.dev:443",
-  "aquaproj.github.io:443",
-  "proxy.golang.org:443",
-  "sum.golang.org:443",
-  "index.golang.org:443",
-  "storage.googleapis.com:443",
-  "dl.google.com:443",
-  "go.dev:443",
-  "golang.org:443",
-  "nodejs.org:443",
-  "registry.npmjs.org:443",
-  "tuf-repo-cdn.sigstore.dev:443",
-  "rekor.sigstore.dev:443",
-  "fulcio.sigstore.dev:443",
+  "mise.jdx.dev",
+  "mise-versions.jdx.dev",
+  "mise.run",
+  "mise.en.dev",
+  "aquaproj.github.io",
+  "proxy.golang.org",
+  "sum.golang.org",
+  "index.golang.org",
+  "storage.googleapis.com",
+  "dl.google.com",
+  "go.dev",
+  "golang.org",
+  "nodejs.org",
+  "registry.npmjs.org",
+  "tuf-repo-cdn.sigstore.dev",
+  "rekor.sigstore.dev",
+  "fulcio.sigstore.dev",
   # aube（mise 内蔵の npm インストーラ）が依存解決時に問い合わせる supply-chain 情報源。遮断すると解決自体が失敗する
-  "api.npmjs.org:443",
-  "api.osv.dev:443",
-  "npm.jsr.io:443",
+  "api.npmjs.org",
+  "api.osv.dev",
+  "npm.jsr.io",
   # GitHub Release を持たない aqua パッケージ（`type: http`）の配布元。cooldown は公開時刻を
   # ここが配布物へ付けた Last-Modified から取り、遮断されると窓を満たさないのではなく
   # **確認できない**として落ちる。
-  "awscli.amazonaws.com:443",
+  "awscli.amazonaws.com",
 ]
 
 [class.terraform]
@@ -48,10 +53,10 @@ includes = ["mise"]
 hosts = [
   # provider と module の解決。ADR-0205 により module は取りに行かないが、
   # registry の discovery は provider の解決経路と同じ入口を通る。
-  "registry.terraform.io:443",
-  "releases.hashicorp.com:443",
+  "registry.terraform.io",
+  "releases.hashicorp.com",
   # provider のバイナリの実体。registry が指す先。
-  "github-releases.githubusercontent.com:443",
+  "github-releases.githubusercontent.com",
 ]
 
 [class.trivy]
@@ -59,9 +64,9 @@ includes = ["mise"]
 hosts = [
   # 脆弱性 DB と checks バンドルは OCI artifact として配布される。取れないと trivy は
   # 「所見なし」ではなく FATAL で落ちる —— 検査が働かなかったことが緑に化けない。
-  "mirror.gcr.io:443",
-  "ghcr.io:443",
-  "pkg-containers.githubusercontent.com:443",
+  "mirror.gcr.io",
+  "ghcr.io",
+  "pkg-containers.githubusercontent.com",
 ]
 
 [job."actions-lint.yaml:actions-lint"]
@@ -77,8 +82,8 @@ classes = []
 # 一度も出ていかない。そのため、この 2 ホストが欠けていても依存を足す PR が現れるまで
 # 誰も気づかず、現れた瞬間にその PR だけが fetch failed で落ちる。
 extra = [
-  "api.securityscorecards.dev:443",
-  "api.deps.dev:443",
+  "api.securityscorecards.dev",
+  "api.deps.dev",
 ]
 
 [job."docker-lint.yaml:docker-lint"]
@@ -114,7 +119,7 @@ classes = ["mise"]
 [job."notify.yaml:notify"]
 classes = []
 extra = [
-  "hooks.slack.com:443",
+  "hooks.slack.com",
 ]
 
 [job."pin-actions-check.yaml:pin-actions-check"]
