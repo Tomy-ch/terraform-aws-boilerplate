@@ -8,9 +8,9 @@ description: >-
 
 勧告が**名指しした**モジュールだけを、修正版まで上げる。
 
-**このリポジトリの依存の解決系は1つだけである** —— `scripts/go.mod` の Go モジュール。
-`modules/` に Terraform の実装が入れば provider の版という別の面が生まれるが、それは
-`.terraform.lock.hcl` の話で、このスキルの対象ではない。
+**このスキルが扱う依存の解決系は1つだけである** —— `scripts/go.mod` の Go モジュール。
+Terraform の provider の版は別の面だが、それは `.terraform.lock.hcl` の話で、このスキルの
+対象ではない。
 
 ## 勧告はどこから来るか
 
