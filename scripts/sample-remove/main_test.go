@@ -31,7 +31,6 @@ var fixtureDomains = []domain{
 	{name: "tool", paths: []string{"tool"}},
 }
 
-// writeTree は、root の下に files（パス→内容）を作ります。
 func writeTree(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for p, c := range files {
@@ -41,7 +40,6 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 	}
 }
 
-// fixtureTree は、fixtureDomains に対応する作業ツリーを作り、その追跡ファイルの一覧を返します。
 func fixtureTree(t *testing.T) (string, []string) {
 	t.Helper()
 	root := t.TempDir()

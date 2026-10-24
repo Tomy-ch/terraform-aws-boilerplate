@@ -332,7 +332,6 @@ func dropContexts(root string, ds []domain, p *plan) error {
 		}
 		last := strings.TrimSpace(lines[idx+1]) == "}"
 		lines = append(lines[:idx-1], lines[idx+2:]...)
-		// 末尾の要素を外したら、1つ前の要素の後ろの `,` を外す。
 		if last && idx-2 >= 0 && strings.TrimSpace(lines[idx-2]) == "}," {
 			lines[idx-2] = strings.TrimSuffix(lines[idx-2], ",")
 		}
