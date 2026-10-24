@@ -59,9 +59,9 @@ jobs:
             relevant:
               - '.github/workflows/terraform-gates.yaml'
               - '.github/actions/setup-mise/**'
-              - 'usecases/**/*.{tf,tftest.hcl,tfmock.hcl}'
-              - 'modules/**/*.{tf,tftest.hcl,tfmock.hcl}'
-              - 'env/**/*.{tf,tftest.hcl,tfmock.hcl}'
+              - 'usecases/**'
+              - 'modules/**'
+              - 'env/**'
               - '**/.terraform.lock.hcl'
               - '.tflint.hcl'
               - 'mise.toml'
@@ -264,6 +264,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # -k: a validate failure still reports the test results; either failure fails the step.
+      # No secret reaches this step: init runs whatever provider the PR's configuration resolves.
       - name: Run terraform validate and terraform test
         run: make -k tf-validate tf-test RUNNER_MODE=host
 

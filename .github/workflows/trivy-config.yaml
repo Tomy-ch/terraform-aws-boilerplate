@@ -3,12 +3,12 @@ name: Config Scan
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
 # trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
 # different target (Terraform and Dockerfiles, not dependency manifests), a
-# different path filter, and a different gate (MEDIUM+ blocks here: a misconfiguration
-# is introduced by the change under review, whereas a dependency finding is inherited
-# from an upstream advisory and is reported, then gated at release time). Folding it into the dependency
-# scan would also break that
-# workflow's summary, which counts .Results[].Vulnerabilities and would have to
-# start distinguishing .Misconfigurations from it.
+# different path filter, and a different gate (a misconfiguration blocks here: it is
+# introduced by the change under review, whereas a dependency finding is inherited
+# from an upstream advisory and is reported, then gated at release time). Folding it
+# into the dependency scan would also break that workflow's summary, which counts
+# .Results[].Vulnerabilities and would have to start distinguishing .Misconfigurations
+# from it.
 #
 # docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
 # (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
@@ -25,6 +25,9 @@ on:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'
       - '.trivyignore.yaml'
+      - '.github/actions/setup-mise/**'
+      - 'mise.toml'
+      - 'Makefile'
       - 'docker/**/Dockerfile'
       - 'usecases/**/*.tf'
       - 'modules/**/*.tf'
@@ -86,6 +89,9 @@ jobs:
               - '.github/workflows/trivy-config.yaml'
               - '.makefiles/security/trivy.mk'
               - '.trivyignore.yaml'
+              - '.github/actions/setup-mise/**'
+              - 'mise.toml'
+              - 'Makefile'
               - 'docker/**/Dockerfile'
               - 'usecases/**/*.tf'
               - 'modules/**/*.tf'
@@ -179,8 +185,8 @@ jobs:
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "title=## ✅ Config Scan: PASS (no MEDIUM+ misconfiguration)" >> "$GITHUB_OUTPUT"
-            echo "No MEDIUM, HIGH or CRITICAL misconfiguration found." > trivy-config-summary.md
+            echo "title=## ✅ Config Scan: PASS (no misconfiguration at or above the gate)" >> "$GITHUB_OUTPUT"
+            echo "No misconfiguration at or above the gate's severity was found." > trivy-config-summary.md
             exit 0
           fi
 
@@ -230,6 +236,6 @@ jobs:
           category: trivy-misconfig
 
       # Accepted exceptions live in .trivyignore.yaml, pinned per path.
-      - name: Fail if a MEDIUM+ misconfiguration was found
+      - name: Fail if a misconfiguration at or above the gate was found
         if: always() && steps.summarize.outputs.count != '0'
         run: exit 1
