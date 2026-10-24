@@ -50,10 +50,8 @@ var (
 	makeInvocation = regexp.MustCompile(`^make(\s|$)`)
 	// make へ渡してよい形。外れた語が出たときの扱いは makeTargets を見よ。
 	makeArgument = regexp.MustCompile(`^[A-Za-z0-9_%.<>{},*/-]+$`)
-	// スキルの参照。`/impl-review` の形。
-	skillRef = regexp.MustCompile(`^/([a-z][a-z0-9-]*)$`)
-	// makefile の include 行。
-	includeLine = regexp.MustCompile(`(?m)^include\s+(\S+)\s*$`)
+	skillRef     = regexp.MustCompile(`^/([a-z][a-z0-9-]*)$`)
+	includeLine  = regexp.MustCompile(`(?m)^include\s+(\S+)\s*$`)
 	// .PHONY の宣言。`##` 以降はヘルプの注記で、ターゲット名ではない。
 	phonyLine = regexp.MustCompile(`^\.PHONY:\s*(.+)$`)
 	// 規則の行。`target: prereq` の形。`X = v` はコロンが無いので当たらないが、`X := v` は
@@ -151,7 +149,6 @@ func run(args []string, out io.Writer) error {
 	return nil
 }
 
-// env は1つの文書を検査するのに要る、リポジトリ側の実体です。
 type env struct {
 	root    string
 	roots   map[string]bool
@@ -225,7 +222,6 @@ func makeTargets(span string) []string {
 	return targets
 }
 
-// targetSet は make が解決できるターゲットの集合です。
 type targetSet struct {
 	exact    map[string]bool
 	patterns []*regexp.Regexp
@@ -269,7 +265,6 @@ func collectMakeTargets(root string) (targetSet, error) {
 		files = append(files, m[1])
 	}
 
-	// include の値は makefile の中身であり、root の外を指しうる。
 	r, err := os.OpenRoot(root)
 	if err != nil {
 		return set, xerrors.Wrapf(err, "%s を開く", root)
@@ -288,7 +283,6 @@ func collectMakeTargets(root string) (targetSet, error) {
 	return set, nil
 }
 
-// parseTargets は makefile 断片1つからターゲット名を取り出します。
 func parseTargets(content string) []string {
 	var names []string
 	for _, line := range strings.Split(content, "\n") {
@@ -357,7 +351,6 @@ func placeholderPattern(text string) *regexp.Regexp {
 	return regexp.MustCompile(b.String())
 }
 
-// collectSkills は .claude/skills/ 直下のディレクトリ名を集めます。
 func collectSkills(root string) (map[string]bool, error) {
 	entries, err := os.ReadDir(filepath.Join(root, skillsDir))
 	if err != nil {
@@ -485,8 +478,7 @@ const maxBraceCandidates = 64
 //
 // 候補数の上限だけでは足りません —— `{{{…a…}}}` は候補を1件しか生まないので上限に触れない
 // 一方、1組剥がすたびに文字列全体を組み直すため、`{` の数に対して**二乗**の時間と記憶域を
-// 使います。組み直しの費用は入れ子か並列かを区別しないので、数えるのは深さではなく総数です
-// （実測で、入れ子 40,000 段が 3.9 秒・1.6GB、並列 32,000 群が 1.0 秒）。
+// 使います。組み直しの費用は入れ子か並列かを区別しないので、数えるのは深さではなく総数です。
 const maxBraceGroups = 32
 
 // expandBraces は `{a,b}` の列挙を、それぞれの候補へ展開します。入れ子も展開します。
@@ -599,7 +591,6 @@ func resolves(root, fromDir, candidate string) bool {
 	return false
 }
 
-// escapes は、target が root の外へ出ているかを返します。
 func escapes(root, target string) bool {
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
