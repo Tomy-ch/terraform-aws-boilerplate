@@ -26,10 +26,10 @@ gh api /repos/{owner}/{repo}/rulesets/{ruleset_id}
 | --- | --- |
 | `deletion` | 対象ブランチを削除できない。 |
 | `non_fast_forward` | 対象ブランチへの force-push を拒否する。 |
-| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、マージ方法は merge commit か squash に限定（rebase merge を除外）。 |
+| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
 | `copilot_code_review` | Copilot が各 PR を自動レビューする。push のたび、および draft に対しても実行する。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
-| `required_status_checks` | 17 件のチェックが成功してからマージする。 |
+| `required_status_checks` | 宣言したチェックがすべて成功してからマージする。 |
 
 ### 単独メンテナのリポジトリに `pull_request` を適用する場合
 
@@ -41,15 +41,18 @@ GitHub の案内は、ruleset に Code Quality の閾値を宣言する**前に*
 
 ### Required status check はすべての PR で報告経路を持つ必要がある
 
-宣言する required context は、いずれも pull request 自身がやったことでしか落ちず、checkout だけで
-再現するものに限ります。継承した状態を報告するチェックや、runner の外のサービスに依存するチェックは
-この一覧に入れません。
+宣言する required context は、その赤が変更そのものについての事実であるものに限ります
+（ADR-0603 決定9-11）。継承した状態を報告するチェックはこの一覧に入れません。固定した版の道具の
+取得（TFLint の ruleset を含む）は、取得先の障害で赤になっても再実行で消え、判定を変えません。
+`tf-validate-test` はそれと違い、root でない module の provider を実行時点の最新で解決するので、
+checkout だけでは再現しない部分を持ちます。これは ADR-0603 決定10 が認めた例外です。
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`skill-lint`、`versions-check` |
-| コードと構成 | `go-test`、`test-mapping`、`trivy-config`、`secret-scan` |
+| サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
+| コードと構成 | `go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`trivy-config`、`secret-scan` |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**
 GitHub は報告の無い check を「該当しない」とは読まず待ち続け、その pull request は恒久的に

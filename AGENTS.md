@@ -16,8 +16,6 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— ユースケースと環境が無い
-- Terraform 側の検査のうち、`terraform fmt` / `terraform validate` / TFLint / `terraform test` は
-  `make` と pre-commit にだけ在り、CI に載っていない（`make help` の `tf-*`）
 - Conftest の Policy Test と層検査 —— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）

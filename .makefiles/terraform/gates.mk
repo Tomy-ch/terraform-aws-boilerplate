@@ -1,7 +1,8 @@
 ## Terraform 側の検査（ADR-0501 決定4・28）
 ##
 ## 実行経路は .makefiles/README.md の表が持つ（ADR-0503 決定4・5）。
-## どれも運用機構（scripts/）を経由しない（ADR-0702 決定3）。
+## terraform を実行する経路は運用機構（scripts/）を経由しない（ADR-0702 決定3）。tf-lint だけは先に
+## tool-cooldown-check を呼ぶ。
 ##
 ## 走査の対象が0件なら失敗する。Terraform コードの無いツリーで pre-commit が通るのは、
 ## .lefthook.yaml が tf-no-targets で skip を明示するからであり、ここが成功を返すからではない。
@@ -23,6 +24,7 @@ TFLINT_PLUGIN_DIR_REL = tmp/tflint-plugins/$(RUNNER_MODE)
 TF_ENV = env $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p') \
 	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 TF_BIN ?= terraform
+TFLINT_BIN ?= tflint
 TF = $(TF_ENV) $(TF_BIN)
 
 # tests/ の下の setup module は列挙しない。親の terraform test が読む。
@@ -102,8 +104,8 @@ tf-lint:
 	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); \
 	$(MAKE) -s --no-print-directory tool-cooldown-check; \
 	$(TF_ENV) $(GO_TOOL) sh -c 'set -eu; export TFLINT_PLUGIN_DIR="$$PWD/$(TFLINT_PLUGIN_DIR_REL)"; \
-		mkdir -p "$$TFLINT_PLUGIN_DIR"; tflint --init --config="$$PWD/.tflint.hcl"; failed=""; \
-		for d in "$$@"; do tflint --chdir="$$d" --config="$$PWD/.tflint.hcl" || failed="$$failed $$d"; done; \
+		mkdir -p "$$TFLINT_PLUGIN_DIR"; $(TFLINT_BIN) --init --config="$$PWD/.tflint.hcl"; failed=""; \
+		for d in "$$@"; do $(TFLINT_BIN) --chdir="$$d" --config="$$PWD/.tflint.hcl" || failed="$$failed $$d"; done; \
 		if [ -n "$$failed" ]; then echo "❌ tf-lint が落ちたディレクトリ:$$failed"; exit 1; fi' _ $$dirs
 
 # .lefthook.yaml の skip 条件。

@@ -76,6 +76,7 @@ classes = ["mise"]
 [job."commitlint.yaml:commitlint"]
 classes = ["mise"]
 
+# sample:begin
 [job."dependency-review.yaml:dependency-review"]
 classes = []
 # OpenSSF Scorecard の要約（show-openssf-scorecard は既定で有効）が引くデータ源。
@@ -86,6 +87,7 @@ extra = [
   "api.securityscorecards.dev",
   "api.deps.dev",
 ]
+# sample:end
 
 [job."docker-lint.yaml:docker-lint"]
 classes = ["mise"]
@@ -149,6 +151,52 @@ classes = ["mise"]
 
 [job."tool-outdated-report.yaml:report"]
 classes = ["mise"]
+
+# sample:begin
+[job."sonarcloud.yaml:preflight"]
+classes = []
+
+# 走査器の本体は binaries.sonarsource.com から、JRE と解析エンジンは scanner.sonarcloud.io から、
+# 解析の送り先は api.sonarcloud.io と sonarcloud.io。署名の検証鍵は keyserver.ubuntu.com から取り、
+# gpg がその SRV レコードを引くので配下も要る。keys.openpgp.org は scan-action の鍵の取得の代替先
+# （src/main/gpg-verification.js）。
+# 解析のキャッシュと architecture の報告が向かう S3（analysis-sensorcache-*、dna-visualization-*）は
+# 許可しない。遮断されても解析は完了し、quality gate を読める。
+[job."sonarcloud.yaml:sonarcloud"]
+classes = []
+extra = [
+  "sonarcloud.io",
+  "api.sonarcloud.io",
+  "scanner.sonarcloud.io",
+  "binaries.sonarsource.com",
+  "keyserver.ubuntu.com",
+  "*.keyserver.ubuntu.com",
+  "keys.openpgp.org",
+]
+
+[job."sonarcloud.yaml:report"]
+classes = []
+
+[job."sample-remove-check.yaml:sample-remove-check"]
+classes = ["mise"]
+# sample:end
+
+[job."terraform-gates.yaml:changes"]
+classes = []
+
+# terraform 本体は releases.hashicorp.com から入る（aqua registry の hashicorp/terraform）。
+[job."terraform-gates.yaml:tf-fmt-check"]
+classes = ["terraform"]
+
+# terraform を呼ばない。ruleset は GitHub Release から取る。
+[job."terraform-gates.yaml:tf-lint"]
+classes = ["mise"]
+
+[job."terraform-gates.yaml:tf-validate-test"]
+classes = ["terraform"]
+
+[job."terraform-gates.yaml:tf-gates-test"]
+classes = ["terraform"]
 
 [job."trivy-config.yaml:changes"]
 classes = []

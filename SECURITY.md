@@ -45,8 +45,8 @@
 | --- | --- | --- |
 | 秘密の混入 | gitleaks（権威）+ Trivy secret | pre-push hook と CI（Pull Request は作業ツリー、週次で履歴全体） |
 | 依存の脆弱性 | Trivy fs | CI。Pull Request では報告のみで、ブロックは昇格時に判定する |
-| **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） |
-| 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH でブロック） |
+| **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） <!-- sample:line --> |
+| 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH / MEDIUM でブロック） |
 | ワークフロー定義 | zizmor（high でブロック）/ actionlint / shellcheck | pre-commit hook と CI |
 | ランナーの外向き通信 | bullfrog（`egress-policy: block`、`enable-sudo: false`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
 | 供給網の新しすぎる版 | go-cooldown / tool-cooldown | Pull Request と週次 |
