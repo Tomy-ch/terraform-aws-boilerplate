@@ -18,7 +18,7 @@ Terraform の provider の版は別の面だが、それは `.terraform.lock.hcl
 | --- | --- |
 | `make trivy-fs` | 依存の既知の脆弱性。**`--ignore-unfixed`** なので、修正版のあるものだけ |
 | `make trivy-fs-release` | 修正版の無いものも含む。リリース昇格のゲート |
-| `dependency-review` の job | PR が持ち込む依存の変更 |
+| `dependency-review` の job | PR が持ち込む依存の変更 <!-- sample:line --> |
 | 手書きの一覧 | 「package current → fixed (CVE)」の行 |
 
 **`trivy-fs` が「所見なし」と言ったとき、見たことの証拠を確かめる。** 脆弱性 DB を取得できずに
