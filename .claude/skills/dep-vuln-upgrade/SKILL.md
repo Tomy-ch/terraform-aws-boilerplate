@@ -1,7 +1,7 @@
 ---
 name: dep-vuln-upgrade
 description: >-
-  Patch the specific Go modules a security advisory names, in `scripts/go.mod` — targeting only the named packages rather than a blanket refresh, including indirect modules, and handing every entry the cooldown catches to `/supply-chain-triage`. Use it whenever the user pastes a vulnerability report — Trivy (`make trivy-fs`), the dependency-review job, Dependabot, or a hand-written list of "package current → fixed (CVE)" lines — and wants those exact modules bumped to a fixed version. Safe patches are applied; only major-version bumps and deliberate cooldown overrides are asked about. Do NOT use it for a routine "bump everything" audit (`/tools-upgrade` owns `mise.toml`), to upgrade the Go runtime (`/go-upgrade`), to re-pin a GitHub Action or a Docker image (`/actions-pin`, `/images-pin`), or for a general dependency refresh with no advisory behind it (`go -C scripts get -u ./...`).
+  Patch the specific Go modules a security advisory names, in `scripts/go.mod` — targeting only the named packages rather than a blanket refresh, including indirect modules, and handing every entry the cooldown catches to `/supply-chain-triage`. Use it whenever the user pastes a vulnerability report — Trivy (`make trivy-fs`), a pull-request dependency check, Dependabot, or a hand-written list of "package current → fixed (CVE)" lines — and wants those exact modules bumped to a fixed version. Safe patches are applied; only major-version bumps and deliberate cooldown overrides are asked about. Do NOT use it for a routine "bump everything" audit (`/tools-upgrade` owns `mise.toml`), to upgrade the Go runtime (`/go-upgrade`), to re-pin a GitHub Action or a Docker image (`/actions-pin`, `/images-pin`), or for a general dependency refresh with no advisory behind it (`go -C scripts get -u ./...`).
 ---
 
 # Advisory-driven Dependency Patch
@@ -18,7 +18,7 @@ Terraform の provider の版は別の面だが、それは `.terraform.lock.hcl
 | --- | --- |
 | `make trivy-fs` | 依存の既知の脆弱性。**`--ignore-unfixed`** なので、修正版のあるものだけ |
 | `make trivy-fs-release` | 修正版の無いものも含む。リリース昇格のゲート |
-| `dependency-review` の job | PR が持ち込む依存の変更 |
+| `dependency-review` の job | PR が持ち込む依存の変更 <!-- sample:line --> |
 | 手書きの一覧 | 「package current → fixed (CVE)」の行 |
 
 **`trivy-fs` が「所見なし」と言ったとき、見たことの証拠を確かめる。** 脆弱性 DB を取得できずに

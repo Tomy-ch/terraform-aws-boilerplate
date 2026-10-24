@@ -90,6 +90,9 @@
             "context": "pin-runners-check"
           },
           {
+            "context": "sample-remove-check"
+          },
+          {
             "context": "secret-scan"
           },
           {

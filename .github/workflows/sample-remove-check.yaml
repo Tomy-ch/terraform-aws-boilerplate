@@ -1,0 +1,96 @@
+name: Sample Remove Check
+
+# サンプルの印と manifest が壊れていないことと、実際に取り除いた後もリポジトリの検査が通ることを
+# 確かめる。印は取り除くときに初めて解釈されるので、壊れた印は派生リポジトリで初めて表に出る。
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sample-remove-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go node npm:markdownlint-cli2
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the sample markers and the manifest
+        run: make sample-remove-check RUNNER_MODE=host
+
+      - name: Remove the samples
+        run: make setup-remove-samples RUNNER_MODE=host
+
+      # Looser than the engine on purpose, so a marker it failed to recognise still shows up here.
+      # git grep exits 1 for no match and 2 or more for its own failure.
+      - name: No sample marker remains
+        shell: bash
+        run: |
+          rc=0
+          git grep -n -i -E 'sample[[:space:]]*:[a-z]' || rc=$?
+          case "$rc" in
+            0) echo "sample: markers remain after the removal"; exit 1 ;;
+            1) ;;
+            *) echo "git grep failed with exit code $rc"; exit 1 ;;
+          esac
+
+      # -k: report every check that breaks, not only the first.
+      - name: The repository checks still pass after the removal
+        shell: bash
+        run: |
+          make -k egress-check pin-actions-check required-check-lint md-lint test-mapping RUNNER_MODE=host
+          go -C scripts vet ./...
