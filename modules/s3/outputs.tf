@@ -7,7 +7,3 @@ output "bucket_arn" {
   description = "Bucket の ARN。"
   value       = aws_s3_bucket.this.arn
 }
-
-output "t4_missing" {
-  value = var.t4_missing
-}

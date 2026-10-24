@@ -13,3 +13,9 @@ variable "name" {
     error_message = "name を S3 が予約している接頭辞（xn--、sthree-、amzn-s3-demo-）で始めないでください。"
   }
 }
+
+variable "t4_unused" {
+  type        = string
+  description = "T4"
+  default     = ""
+}
