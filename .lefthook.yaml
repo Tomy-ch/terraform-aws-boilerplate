@@ -108,6 +108,13 @@ pre-commit:
         - "modules/**"
         - "env/**"
         - ".tflint.hcl"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+        - "scripts/tool-cooldown/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
       run: make tf-lint
@@ -122,7 +129,9 @@ pre-commit:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test
     tf-gates-test:
-      glob: ".makefiles/terraform/*.mk"
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
       run: make tf-gates-test
 
 commit-msg:

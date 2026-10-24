@@ -29,9 +29,9 @@ on:
       - 'mise.toml'
       - 'Makefile'
       - 'docker/**/Dockerfile'
-      - 'usecases/**/*.tf'
-      - 'modules/**/*.tf'
-      - 'env/**/*.tf'
+      - 'usecases/**'
+      - 'modules/**'
+      - 'env/**'
   pull_request:
   workflow_dispatch:
 
@@ -93,9 +93,9 @@ jobs:
               - 'mise.toml'
               - 'Makefile'
               - 'docker/**/Dockerfile'
-              - 'usecases/**/*.tf'
-              - 'modules/**/*.tf'
-              - 'env/**/*.tf'
+              - 'usecases/**'
+              - 'modules/**'
+              - 'env/**'
 
   trivy-config:
     needs: changes
