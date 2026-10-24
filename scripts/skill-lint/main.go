@@ -269,8 +269,15 @@ func collectMakeTargets(root string) (targetSet, error) {
 		files = append(files, m[1])
 	}
 
+	// include の値は makefile の中身であり、root の外を指しうる。
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return set, xerrors.Wrapf(err, "%s を開く", root)
+	}
+	defer func() { _ = r.Close() }()
+
 	for _, f := range files {
-		c, err := os.ReadFile(filepath.Clean(filepath.Join(root, f)))
+		c, err := r.ReadFile(f)
 		if err != nil {
 			return set, xerrors.Wrapf(err, "%s の読み取り", f)
 		}

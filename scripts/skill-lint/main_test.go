@@ -285,6 +285,16 @@ func Test_collectMakeTargets(t *testing.T) {
 			_, err := collectMakeTargets(root)
 			require.Error(t, err)
 		})
+
+		t.Run("include が root の外を指せば、先に実体が在ってもエラー", func(t *testing.T) {
+			t.Parallel()
+			parent := fixture(t, map[string]string{
+				"outside.mk":       ".PHONY: outside\noutside:\n\t@echo\n",
+				"repo/" + makefile: "include ../outside.mk\n",
+			})
+			_, err := collectMakeTargets(filepath.Join(parent, "repo"))
+			require.Error(t, err)
+		})
 	})
 }
 
