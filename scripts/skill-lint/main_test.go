@@ -101,7 +101,6 @@ func Test_run(t *testing.T) {
 
 		t.Run("参照を1件も読めなければ合格ではなく番兵で返す", func(t *testing.T) {
 			t.Parallel()
-			// 文書は在るのに参照が取れないのは、抽出が壊れた形である。
 			files := soundRepo()
 			files[".claude/skills/commit/SKILL.md"] = "名指しを1つも持たない散文\n"
 			var out bytes.Buffer
@@ -283,6 +282,16 @@ func Test_collectMakeTargets(t *testing.T) {
 			t.Parallel()
 			root := fixture(t, map[string]string{makefile: "include .makefiles/missing.mk\n"})
 			_, err := collectMakeTargets(root)
+			require.Error(t, err)
+		})
+
+		t.Run("include が root の外を指せば、先に実体が在ってもエラー", func(t *testing.T) {
+			t.Parallel()
+			parent := fixture(t, map[string]string{
+				"outside.mk":       ".PHONY: outside\noutside:\n\t@echo\n",
+				"repo/" + makefile: "include ../outside.mk\n",
+			})
+			_, err := collectMakeTargets(filepath.Join(parent, "repo"))
 			require.Error(t, err)
 		})
 	})
@@ -498,9 +507,8 @@ func Test_asRepoPath(t *testing.T) {
 			"パッケージとシンボルの組はパスでない":  {span: "scripts/lib/xerrors.Wrap", ok: false},
 			// 前半が実在しなければシンボルの名指しではない。ここを落とすと、綴りを誤った
 			// パス参照が「シンボルだから」と検査対象から外れる。
-			"前半が実在しなければパスとして扱う": {span: "scripts/lib/absent.Wrap", want: "scripts/lib/absent.Wrap", ok: true},
-			"先頭が直下に無ければパスでない":   {span: "modules/foo/README.md", ok: false},
-			// `..` の判定は、展開し終えた候補に対して resolves が行う。ここでは通す。
+			"前半が実在しなければパスとして扱う":  {span: "scripts/lib/absent.Wrap", want: "scripts/lib/absent.Wrap", ok: true},
+			"先頭が直下に無ければパスでない":    {span: "modules/foo/README.md", ok: false},
 			"`..` を含む形はここでは弾かない": {span: "docs/../../etc/passwd.txt", want: "docs/../../etc/passwd.txt", ok: true},
 			// 先頭が `..` なら親は必ず在るので、先頭セグメントの門は素通りする。
 			"先頭が `..` でも弾かない":  {span: "../README.md", want: "../README.md", ok: true},
@@ -550,13 +558,12 @@ func Test_pathExists(t *testing.T) {
 			candidate string
 			want      bool
 		}{
-			"ルートから解決する":          {candidate: "docs/adr/0001-x.md", want: true},
-			"参照元の隣から解決する":        {candidate: "references/note.md", want: true},
-			"どちらでも解決しなければ false": {candidate: "docs/absent.md", want: false},
-			"列挙はすべて実在して初めて真":     {candidate: ".claude/{skills,agents}/", want: true},
-			"列挙の片方が欠ければ偽":        {candidate: ".claude/{skills,commands}/", want: false},
-			"展開が上限を超えれば偽":        {candidate: ".claude/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/x.md", want: false},
-			// 列挙の中へ隠した `..` は、展開して初めて現れる。
+			"ルートから解決する":            {candidate: "docs/adr/0001-x.md", want: true},
+			"参照元の隣から解決する":          {candidate: "references/note.md", want: true},
+			"どちらでも解決しなければ false":   {candidate: "docs/absent.md", want: false},
+			"列挙はすべて実在して初めて真":       {candidate: ".claude/{skills,agents}/", want: true},
+			"列挙の片方が欠ければ偽":          {candidate: ".claude/{skills,commands}/", want: false},
+			"展開が上限を超えれば偽":          {candidate: ".claude/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/{a,b,c,d}/x.md", want: false},
 			"列挙へ隠した `..` でも外へ出さない": {candidate: "docs/{../..}/x.md", want: false},
 			// asRepoPath が通したそのままの形。admit した側だけを固定すると、拒む側が動いても気づかない。
 			"素の `..` でも外へ出さない":       {candidate: "docs/../../etc/passwd.txt", want: false},
@@ -742,7 +749,6 @@ func Test_resolves(t *testing.T) {
 			})
 		}
 
-		// 字面の門は通る。**os.Stat が symlink を辿るので、そこで外が見えてしまう。**
 		t.Run("symlink でリポジトリの外を指していれば偽", func(t *testing.T) {
 			t.Parallel()
 			linked := fixture(t, map[string]string{"docs/.keep": ""})
@@ -800,7 +806,6 @@ func Test_escapesReal(t *testing.T) {
 			assert.False(t, escapesReal(root, filepath.Join(root, "docs", "x.md")))
 		})
 
-		// **字面では内側に見える。** symlink を辿って初めて外だと分かる。
 		t.Run("symlink が外を指していれば真", func(t *testing.T) {
 			t.Parallel()
 			root := fixture(t, map[string]string{"docs/.keep": ""})
