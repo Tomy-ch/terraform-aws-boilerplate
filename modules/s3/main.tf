@@ -5,7 +5,7 @@ locals {
   bucket_name = "${var.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
 }
 
-resource "aws_s3_bucket" "this" {
+resource   "aws_s3_bucket"   "this" {
   bucket           = local.bucket_name
   bucket_namespace = "account-regional"
   force_destroy    = false
