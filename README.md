@@ -17,13 +17,13 @@
 | 区分 | 状態 |
 | --- | --- |
 | `docs/adr/` | 22 件の Accepted ADR。`make adr-lint` が構造と相互参照を検査する |
-| `.github/workflows/` | 19 workflow。必須検査 12 件が pull request を止める |
+| `.github/workflows/` | 22 workflow。必須検査は `.github/settings/branch-protection.json` が 21 件を宣言する |
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
 | `modules/` | 一般 module の `s3/` だけ |
 | `usecases/` / `env/` | **未着手** —— ユースケースと環境が無い |
-| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make` と pre-commit に配線済み。CI と Conftest は未配線 |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make`・pre-commit・CI に配線済み。Conftest は未配線 |
 
 ## 使い方
 
