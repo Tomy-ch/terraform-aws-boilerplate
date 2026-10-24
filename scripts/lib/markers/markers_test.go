@@ -46,9 +46,9 @@ func TestMarkers_Count(t *testing.T) {
 			assert.Equal(t, 3, n)
 		})
 
-		t.Run("コメントの外の語は印として数えない", func(t *testing.T) {
+		t.Run("名前空間を含まない行は数えない", func(t *testing.T) {
 			t.Parallel()
-			n, err := m.Count("sample:line\n")
+			n, err := m.Count("a\n# 普通のコメント\n")
 			require.NoError(t, err)
 			assert.Equal(t, 0, n)
 		})
@@ -57,9 +57,17 @@ func TestMarkers_Count(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("解釈できない印はエラーにする", func(t *testing.T) {
+		// コメントの外に置いた印は取り除かれないので、綴りの揺れとして落とす。
+		t.Run("コメントの外の印はエラーにする", func(t *testing.T) {
 			t.Parallel()
-			_, err := m.Count("ok\n# sample:lines\n")
+			_, err := m.Count("sample:line\n")
+			require.ErrorIs(t, err, markers.ErrUnknownMarker)
+		})
+
+		t.Run("解釈できない印はエラーにして0を返す", func(t *testing.T) {
+			t.Parallel()
+			n, err := m.Count("ok\n# sample:lines\n")
+			assert.Zero(t, n)
 			require.ErrorIs(t, err, markers.ErrUnknownMarker)
 			assert.Contains(t, err.Error(), "2 行目")
 		})
@@ -124,6 +132,16 @@ func TestMarkers_Strip(t *testing.T) {
 				want: "a\n\n\nb\nc",
 			},
 			{
+				name: "CRLF のファイルの行末を保つ",
+				in:   "a\r\n<!-- sample:replace-begin -->\r\nb\r\n<!-- sample:replace-with -->\r\n<!-- = c -->\r\n<!-- sample:replace-end -->\r\n",
+				want: "a\r\nc\r\n",
+			},
+			{
+				name: "空の内容は空のまま返す",
+				in:   "",
+				want: "",
+			},
+			{
 				name: "印が無ければ内容を変えない",
 				in:   "a\nb\n",
 				want: "a\nb\n",
@@ -156,6 +174,8 @@ func TestMarkers_Strip(t *testing.T) {
 			{name: "入れ子の replace-begin はエラーにする", in: "# sample:replace-begin\n# sample:replace-begin", wantErr: markers.ErrNestedReplace},
 			{name: "replace-with が2回あればエラーにする", in: "# sample:replace-begin\n# sample:replace-with\n# sample:replace-with", wantErr: markers.ErrUnbalanced},
 			{name: "replace の区間の中の begin はエラーにする", in: "# sample:replace-begin\n# sample:begin", wantErr: markers.ErrUnbalanced},
+			{name: "begin の中の = の形でない戻す行もエラーにする", in: "# sample:begin\n# sample:replace-begin\n# sample:replace-with\nraw\n# sample:replace-end\n# sample:end", wantErr: markers.ErrBadReplacement},
+			{name: "replace の区間の中の line はエラーにする", in: "# sample:replace-begin\n# sample:line", wantErr: markers.ErrUnbalanced},
 			{name: "= の形でない戻す行はエラーにする", in: "# sample:replace-begin\n# sample:replace-with\nraw\n# sample:replace-end", wantErr: markers.ErrBadReplacement, wantMsg: "3 行目"},
 			{name: "解釈できない印はエラーにする", in: "# sample:bgin", wantErr: markers.ErrUnknownMarker},
 		}

@@ -46,6 +46,21 @@ func TestMarkers_kind(t *testing.T) {
 			require.ErrorIs(t, err, ErrUnknownMarker)
 		})
 
+		for _, line := range []string{"# SAMPLE:begin", "<!-- sample :line -->", "/* sample:line */", "-- sample:line"} {
+			t.Run("綴りの揺れた印 "+line+" はエラーにする", func(t *testing.T) {
+				t.Parallel()
+				_, _, err := m.kind(line)
+				require.ErrorIs(t, err, ErrUnknownMarker)
+			})
+		}
+
+		t.Run("名前空間に続く : の無い語は印として扱わない", func(t *testing.T) {
+			t.Parallel()
+			_, ok, err := m.kind("see scripts/sample-remove/")
+			require.NoError(t, err)
+			assert.False(t, ok)
+		})
+
 		t.Run("1行に2つの印があればエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, _, err := m.kind("# sample:begin # sample:end")
@@ -69,6 +84,8 @@ func Test_restore(t *testing.T) {
 			{name: "// の行を戻す", in: "// = x := 1", want: "x := 1"},
 			{name: "HTML コメントの行を戻す", in: "<!-- = 本文 -->", want: "本文"},
 			{name: "= の後ろが空なら空行に戻す", in: "# =", want: ""},
+			{name: "空の HTML コメントの行は空行に戻す", in: "<!-- = -->", want: ""},
+			{name: "字下げのタブを残す", in: "\t# = x", want: "\tx"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

@@ -75,13 +75,18 @@ jobs:
       - name: Remove the samples
         run: make setup-remove-samples RUNNER_MODE=host
 
+      # Looser than the engine on purpose, so a marker it failed to recognise still shows up here.
+      # git grep exits 1 for no match and 2 or more for its own failure.
       - name: No sample marker remains
         shell: bash
         run: |
-          if git grep -n -E '(//|#|<!--)[[:space:]]*sample:' ; then
-            echo "sample: markers remain after the removal"
-            exit 1
-          fi
+          rc=0
+          git grep -n -i -E 'sample[[:space:]]*:[a-z]' || rc=$?
+          case "$rc" in
+            0) echo "sample: markers remain after the removal"; exit 1 ;;
+            1) ;;
+            *) echo "git grep failed with exit code $rc"; exit 1 ;;
+          esac
 
       # -k: report every check that breaks, not only the first.
       - name: The repository checks still pass after the removal

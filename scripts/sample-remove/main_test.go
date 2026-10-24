@@ -69,9 +69,8 @@ func Test_gitLsFiles(t *testing.T) {
 
 		t.Run("追跡されているファイルだけを返す", func(t *testing.T) {
 			t.Parallel()
-			if _, err := exec.LookPath("git"); err != nil {
-				t.Skip("git がありません")
-			}
+			_, err := exec.LookPath("git")
+			require.NoError(t, err, "git が要ります")
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{"a.txt": "a", "dir/b.txt": "b", "untracked.txt": "u"})
 			for _, args := range [][]string{{"init", "-q"}, {"add", "a.txt", "dir/b.txt"}} {
@@ -88,8 +87,10 @@ func Test_gitLsFiles(t *testing.T) {
 
 		t.Run("リポジトリでなければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			_, err := gitLsFiles(t.TempDir())
+			root := t.TempDir()
+			_, err := gitLsFiles(root)
 			require.Error(t, err)
+			assert.Contains(t, err.Error(), "git ls-files")
 		})
 	})
 }
@@ -98,24 +99,57 @@ func Test_run(t *testing.T) {
 	t.Parallel()
 	noList := func(string) ([]string, error) { return nil, nil }
 
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("check は件数を書き、何も書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			var w bytes.Buffer
+			require.NoError(t, run([]string{"check"}, root, fixtureDomains, func(string) ([]string, error) { return list, nil }, &w))
+			assert.Equal(t, "✅ sample-remove check: 印 4 個（2 ファイル）、manifest のパス 3 件、pin 2 件を確認しました\n", w.String())
+			assert.FileExists(t, filepath.Join(root, "scan.properties"))
+		})
+
+		t.Run("apply --dry-run は計画を書き、何も書き換えない", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			var w bytes.Buffer
+			require.NoError(t, run([]string{"apply", "--dry-run"}, root, fixtureDomains, func(string) ([]string, error) { return list, nil }, &w))
+			assert.Contains(t, w.String(), "消すパス（3 件）:")
+			assert.True(t, strings.HasSuffix(w.String(), "（--dry-run のため何も書き換えていません）\n"))
+			b, err := os.ReadFile(filepath.Join(root, "README.md"))
+			require.NoError(t, err)
+			assert.Contains(t, string(b), "sample:begin")
+			assert.FileExists(t, filepath.Join(root, "scan.properties"))
+		})
+
+		t.Run("apply は計画を書いてから反映する", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			var w bytes.Buffer
+			require.NoError(t, run([]string{"apply"}, root, fixtureDomains, func(string) ([]string, error) { return list, nil }, &w))
+			assert.Contains(t, w.String(), "外す pin（1 件）:")
+			assert.NoFileExists(t, filepath.Join(root, "scan.properties"))
+		})
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
 		for _, args := range [][]string{nil, {"bogus"}, {"check", "x"}, {"apply", "--force"}, {"apply", "--dry-run", "x"}} {
 			t.Run("引数 "+strings.Join(args, " ")+" は使い方のエラーにする", func(t *testing.T) {
 				t.Parallel()
-				err := run(args, t.TempDir(), noList, &bytes.Buffer{})
+				err := run(args, t.TempDir(), fixtureDomains, noList, &bytes.Buffer{})
 				require.ErrorIs(t, err, errUsage)
 			})
 		}
 
-		// 実リポジトリの manifest で走らせるので、manifest のパスが無い一時ディレクトリでは
-		// 書き換えより前に落ちる。
 		t.Run("apply は manifest のパスが無ければ何も書かずに落ちる", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{"README.md": "<!-- sample:line -->\n"})
-			err := run([]string{"apply"}, root, func(string) ([]string, error) { return []string{"README.md"}, nil }, &bytes.Buffer{})
+			err := run([]string{"apply"}, root, fixtureDomains, func(string) ([]string, error) { return []string{"README.md"}, nil }, &bytes.Buffer{})
 			require.ErrorIs(t, err, errMissingPath)
 			b, err := os.ReadFile(filepath.Join(root, "README.md"))
 			require.NoError(t, err)
@@ -133,11 +167,6 @@ func Test_countPins(t *testing.T) {
 		t.Run("domain をまたいで pin を数える", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, 2, countPins(fixtureDomains))
-		})
-
-		t.Run("manifest の pin は1件以上ある", func(t *testing.T) {
-			t.Parallel()
-			assert.Positive(t, countPins(manifest))
 		})
 	})
 }
@@ -163,11 +192,22 @@ func Test_build(t *testing.T) {
 			assert.Contains(t, string(b), "sample:begin")
 		})
 
+		// tool/main.go は解釈できない印を持つ。消すパスの中まで走査すると build が落ちる。
 		t.Run("消すパスの中の印は解釈しない", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
-			_, err := build(root, fixtureDomains, func(string) ([]string, error) { return list, nil })
+			p, err := build(root, fixtureDomains, func(string) ([]string, error) { return list, nil })
 			require.NoError(t, err)
+			assert.NotContains(t, p.markedFiles, "tool/main.go")
+		})
+
+		t.Run("消すパスが0件でも印があれば通す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{"a.md": "<!-- sample:line -->\n", pinFile: fixtureLock})
+			p, err := build(root, nil, func(string) ([]string, error) { return []string{"a.md"}, nil })
+			require.NoError(t, err)
+			assert.Equal(t, 1, p.markerCount)
 		})
 	})
 
@@ -198,6 +238,15 @@ func Test_build(t *testing.T) {
 			require.ErrorIs(t, err, sentinel)
 		})
 
+		// manifest のパスだけで通すと、印の解釈が壊れて何も拾わなくなっても緑になる。
+		t.Run("消すパスがあっても印が0件ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{"a.md": "a\n", "gone.txt": "x", pinFile: fixtureLock})
+			_, err := build(root, []domain{{name: "x", paths: []string{"gone.txt"}}}, func(string) ([]string, error) { return []string{"a.md", "gone.txt"}, nil })
+			require.ErrorIs(t, err, errNoTargets)
+		})
+
 		t.Run("印も消すパスも無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -222,6 +271,23 @@ func Test_build(t *testing.T) {
 			writeTree(t, root, map[string]string{"README.md": "<!-- sample:lin -->\n"})
 			_, err := build(root, fixtureDomains, func(string) ([]string, error) { return list, nil })
 			require.ErrorIs(t, err, markers.ErrUnknownMarker)
+		})
+
+		t.Run("pin の不備を build のエラーとして返す", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			ds := append([]domain{{name: "x", pins: []string{"acme/none@v9"}}}, fixtureDomains...)
+			_, err := build(root, ds, func(string) ([]string, error) { return list, nil })
+			require.ErrorIs(t, err, errMissingPin)
+		})
+
+		t.Run("context の不備を build のエラーとして返す", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
+			ds := append([]domain{{name: "x", contexts: []string{"none"}}}, fixtureDomains...)
+			_, err := build(root, ds, func(string) ([]string, error) { return list, nil })
+			require.ErrorIs(t, err, errMissingContext)
 		})
 
 		t.Run("追跡ファイルを読めなければエラーにする", func(t *testing.T) {
@@ -313,6 +379,24 @@ func Test_pinReferenced(t *testing.T) {
 			assert.False(t, got)
 		})
 
+		t.Run("action の下の path を指す参照も数える", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{".github/workflows/w.yaml": "    - uses: acme/scan/sub@bbbb\n"})
+			got, err := pinReferenced(root, "acme/scan@v1", []string{".github/workflows/w.yaml"}, &plan{writes: map[string]string{}})
+			require.NoError(t, err)
+			assert.True(t, got)
+		})
+
+		t.Run("composite action の参照も数える", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{".github/actions/x/action.yaml": "    - uses: \"acme/scan@bbbb\"\n"})
+			got, err := pinReferenced(root, "acme/scan@v1", []string{".github/actions/x/action.yaml"}, &plan{writes: map[string]string{}})
+			require.NoError(t, err)
+			assert.True(t, got)
+		})
+
 		t.Run("workflow 以外の言及は参照として数えない", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -325,6 +409,12 @@ func Test_pinReferenced(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("@ の無いキーはエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := pinReferenced(t.TempDir(), "acme/scan", nil, &plan{writes: map[string]string{}})
+			require.ErrorIs(t, err, errMissingPin)
+		})
 
 		t.Run("workflow を読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
@@ -396,6 +486,14 @@ func Test_dropContexts(t *testing.T) {
 			require.ErrorIs(t, err, errMissingContext)
 		})
 
+		t.Run("宣言に2回ある context はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: strings.Replace(fixtureProtection, `"context": "a"`, `"context": "scan"`, 1)})
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
+			require.ErrorIs(t, err, errMissingContext)
+		})
+
 		t.Run("3行の形でない context はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -448,6 +546,13 @@ func Test_report(t *testing.T) {
 			report(&w, plan{deletes: []string{"a"}, markedFiles: []string{"z.md", "b.md"}, markerCount: 3, droppedPins: []string{"acme/scan@v1"}, droppedContexts: []string{"scan"}})
 			assert.Equal(t, "消すパス（1 件）:\n  - a\n印を取り除くファイル（2 件、印 3 個）:\n  - b.md\n  - z.md\n外す pin（1 件）:\n  - acme/scan@v1\n必須検査から外す context（1 件）:\n  - scan\n", w.String())
 		})
+
+		t.Run("空の plan でも各見出しを0件で書く", func(t *testing.T) {
+			t.Parallel()
+			var w bytes.Buffer
+			report(&w, plan{})
+			assert.Equal(t, "消すパス（0 件）:\n印を取り除くファイル（0 件、印 0 個）:\n外す pin（0 件）:\n必須検査から外す context（0 件）:\n", w.String())
+		})
 	})
 }
 
@@ -489,7 +594,17 @@ func Test_apply(t *testing.T) {
 			t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 			require.Error(t, apply(root, p))
 			assert.FileExists(t, filepath.Join(root, "scan.properties"))
+			assert.FileExists(t, filepath.Join(root, ".github/workflows/scan.yaml"))
 			assert.DirExists(t, filepath.Join(root, "tool"))
+			for path, want := range map[string]string{
+				"README.md":           "a\n<!-- sample:begin -->\nscan の説明\n<!-- sample:end -->\nb\n",
+				pinFile:               fixtureLock,
+				".github/egress.toml": "[x]\n# sample:begin\n[job.\"scan.yaml:scan\"]\n# sample:end\n",
+			} {
+				b, err := os.ReadFile(filepath.Join(root, path))
+				require.NoError(t, err)
+				assert.Equal(t, want, string(b), path)
+			}
 		})
 	})
 }

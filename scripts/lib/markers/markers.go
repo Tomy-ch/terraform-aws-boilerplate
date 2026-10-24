@@ -40,13 +40,17 @@ var stashed = regexp.MustCompile(`^([ \t]*)(?:(?://|#)[ \t]*=[ \t]?(.*)|<!--[ \t
 type Markers struct {
 	ns string
 	re *regexp.Regexp
+	// loose は、大文字小文字やコメント記号の違いを問わずに名前空間を探す。re が拾わずに loose が
+	// 拾う行は、綴りの揺れた印である。
+	loose *regexp.Regexp
 }
 
 // New は、名前空間 ns の印を扱う Markers を返します。
 func New(ns string) Markers {
 	return Markers{
-		ns: ns,
-		re: regexp.MustCompile(`(?://|#|<!--)[ \t]*` + regexp.QuoteMeta(ns) + `:([A-Za-z0-9_-]*)`),
+		ns:    ns,
+		re:    regexp.MustCompile(`(?://|#|<!--)[ \t]*` + regexp.QuoteMeta(ns) + `:([A-Za-z0-9_-]*)`),
+		loose: regexp.MustCompile(`(?i)` + regexp.QuoteMeta(ns) + `[ \t]*:[a-z]`),
 	}
 }
 
@@ -54,11 +58,11 @@ func New(ns string) Markers {
 func (m Markers) Count(content string) (int, error) {
 	n := 0
 	for i, line := range strings.Split(content, "\n") {
-		kind, ok, err := m.kind(line)
+		_, ok, err := m.kind(line)
 		if err != nil {
 			return 0, xerrors.Wrapf(err, "%d 行目", i+1)
 		}
-		if ok && kind != "" {
+		if ok {
 			n++
 		}
 	}
@@ -71,6 +75,13 @@ func (m Markers) Count(content string) (int, error) {
 // いずれかならエラーを返し、内容は返しません。エラーには行番号を付けます。
 func (m Markers) Strip(content string) (string, error) {
 	lines := strings.Split(content, "\n")
+	// CRLF のファイルは行末の \r を外して解釈し、書き戻すときに付け直す。
+	crlf := strings.Contains(content, "\r\n")
+	if crlf {
+		for i := range lines {
+			lines[i] = strings.TrimSuffix(lines[i], "\r")
+		}
+	}
 	out := make([]string, 0, len(lines))
 	// seam は、直前に行を取り除いたことを表す。取り除いた跡に空行が2つ並ぶのを避ける。
 	seam := false
@@ -150,6 +161,9 @@ func (m Markers) Strip(content string) (string, error) {
 	if depth != 0 {
 		return "", xerrors.Wrapf(ErrUnbalanced, "%d 行目の begin が閉じていません", blockStart)
 	}
+	if crlf {
+		return strings.Join(out, "\r\n"), nil
+	}
 	return strings.Join(out, "\n"), nil
 }
 
@@ -157,6 +171,9 @@ func (m Markers) Strip(content string) (string, error) {
 func (m Markers) kind(line string) (kind string, ok bool, err error) {
 	matches := m.re.FindAllStringSubmatch(line, -1)
 	if len(matches) == 0 {
+		if m.loose.MatchString(line) {
+			return "", false, xerrors.Wrapf(ErrUnknownMarker, "%s: の印の綴りが揺れています（小文字で、//・#・<!-- の直後に置く）", m.ns)
+		}
 		return "", false, nil
 	}
 	if len(matches) > 1 {

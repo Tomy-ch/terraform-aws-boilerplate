@@ -96,6 +96,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Forks never receive SONAR_TOKEN; a pull request from a branch of this repository does, and its
+      # author can change sonar-project.properties. The values the scan reports are checked below.
       - name: Scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
@@ -119,6 +121,22 @@ jobs:
               *) ;;
             esac
           done < "$task_file"
+        shell: bash
+
+      # The token goes to these values below, so they are checked before any request is made.
+      - name: Check the analysis task values
+        env:
+          CE_TASK_ID: ${{ steps.task.outputs.ceTaskId }}
+          SERVER_URL: ${{ steps.task.outputs.serverUrl }}
+        run: |
+          case "${SERVER_URL-}" in
+            https://sonarcloud.io) ;;
+            *) echo "::error::unexpected serverUrl in the analysis task: ${SERVER_URL-}"; exit 1 ;;
+          esac
+          if ! [[ "${CE_TASK_ID-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::unexpected ceTaskId in the analysis task"
+            exit 1
+          fi
         shell: bash
 
       - name: Wait for the analysis to complete
@@ -231,7 +249,10 @@ jobs:
             echo "status=findings" >> "$GITHUB_OUTPUT"
             echo "title=## ⚠️ SonarCloud: quality gate ${GATE:-NONE} (reported, not enforced)" >> "$GITHUB_OUTPUT"
           fi
-          echo "${DASHBOARD:-no dashboard URL was reported}" > "$out"
+          case "${DASHBOARD-}" in
+            https://sonarcloud.io/*) echo "$DASHBOARD" > "$out" ;;
+            *) echo "No dashboard URL on sonarcloud.io was reported." > "$out" ;;
+          esac
         shell: bash
 
       - name: Comment SonarCloud result on PR

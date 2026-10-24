@@ -79,8 +79,9 @@ var (
 	errUsage = xerrors.New("❌ usage: sample-remove <check|apply [--dry-run]>")
 	// errNoFiles は、走査対象のファイルが1件も無いことを表す。
 	errNoFiles = xerrors.New("❌ git ls-files が1件も返しませんでした")
-	// errNoTargets は、印も manifest のパスも1件も無く、取り除くものが無いことを表す。
-	errNoTargets = xerrors.New("❌ sample: の印と manifest のパスが1件もありません")
+	// errNoTargets は、印が1つも無いことを表す。manifest のパスだけでは、印の解釈が壊れて何も拾わなく
+	// なった状態と区別できない。
+	errNoTargets = xerrors.New("❌ sample: の印が1つも見つかりません")
 	// errMissingPath は、manifest のパスが実在しないことを表す。
 	errMissingPath = xerrors.New("❌ manifest のパスがありません")
 	// errMissingPin は、manifest の pin のキーが lockfile に無いことを表す。
@@ -115,7 +116,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ 作業ディレクトリを取得できません: %v", err)
 	}
-	if err := run(os.Args[1:], root, gitLsFiles, os.Stdout); err != nil {
+	if err := run(os.Args[1:], root, manifest, gitLsFiles, os.Stdout); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -140,21 +141,21 @@ func gitLsFiles(root string) ([]string, error) {
 }
 
 // run は、サブコマンドを選んで実行します。
-func run(args []string, root string, list func(string) ([]string, error), w io.Writer) error {
+func run(args []string, root string, ds []domain, list func(string) ([]string, error), w io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
 	}
 	switch {
 	case args[0] == "check" && len(args) == 1:
-		p, err := build(root, manifest, list)
+		p, err := build(root, ds, list)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "✅ sample-remove check: 印 %d 個（%d ファイル）、manifest のパス %d 件、pin %d 件を確認しました\n",
-			p.markerCount, len(p.markedFiles), len(p.deletes), countPins(manifest))
+			p.markerCount, len(p.markedFiles), len(p.deletes), countPins(ds))
 		return nil
 	case args[0] == "apply" && len(args) == 1, args[0] == "apply" && len(args) == 2 && args[1] == "--dry-run":
-		p, err := build(root, manifest, list)
+		p, err := build(root, ds, list)
 		if err != nil {
 			return err
 		}
@@ -221,7 +222,7 @@ func build(root string, ds []domain, list func(string) ([]string, error)) (plan,
 		p.markerCount += n
 		p.markedFiles = append(p.markedFiles, f)
 	}
-	if p.markerCount == 0 && len(p.deletes) == 0 {
+	if p.markerCount == 0 {
 		return plan{}, errNoTargets
 	}
 	if err := prunePins(root, ds, files, &p); err != nil {
@@ -278,8 +279,11 @@ func prunePins(root string, ds []domain, files []string, p *plan) error {
 // pinReferenced は、pin のキーが指す action を、取り除いたあとに残る workflow / action が
 // `uses:` で参照しているかを返します。
 func pinReferenced(root, key string, files []string, p *plan) (bool, error) {
-	action := key[:strings.LastIndex(key, "@")]
-	uses := regexp.MustCompile(`uses:\s*["']?` + regexp.QuoteMeta(action) + `@`)
+	action, _, ok := strings.Cut(key, "@")
+	if !ok {
+		return false, xerrors.Wrap(errMissingPin, key+"（@ で版を区切っていません）")
+	}
+	uses := regexp.MustCompile(`uses:\s*["']?` + regexp.QuoteMeta(action) + `(/[^@\s]*)?@`)
 	for _, f := range files {
 		if !strings.HasPrefix(f, ".github/workflows/") && !strings.HasPrefix(f, ".github/actions/") {
 			continue
@@ -334,6 +338,11 @@ func dropContexts(root string, ds []domain, p *plan) error {
 		lines = append(lines[:idx-1], lines[idx+2:]...)
 		if last && idx-2 >= 0 && strings.TrimSpace(lines[idx-2]) == "}," {
 			lines[idx-2] = strings.TrimSuffix(lines[idx-2], ",")
+		}
+		for _, line := range lines {
+			if strings.TrimSpace(line) == `"context": "`+ctx+`"` {
+				return xerrors.Wrap(errMissingContext, ctx+"（宣言に2回以上あります）")
+			}
 		}
 		p.droppedContexts = append(p.droppedContexts, ctx)
 	}
