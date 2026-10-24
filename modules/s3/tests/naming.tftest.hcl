@@ -15,7 +15,7 @@ run "account_regional_name" {
   }
 
   assert {
-    condition     = output.bucket_name == "tabp-mgmt-tfstate-123456789012-ap-northeast-1-xx"
+    condition     = output.bucket_name == "tabp-mgmt-tfstate-123456789012-ap-northeast-1-an"
     error_message = "完全な名前が name と account_id と region から組まれていません。"
   }
 }
