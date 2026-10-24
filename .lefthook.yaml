@@ -96,17 +96,17 @@ pre-commit:
     # なり、summary に条件による skip として出る。
     tf-fmt-check:
       glob:
-        - "usecases/**/*.{tf,tftest.hcl,tfmock.hcl}"
-        - "modules/**/*.{tf,tftest.hcl,tfmock.hcl}"
-        - "env/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
       skip:
         - run: make -s tf-no-targets
       run: make tf-fmt-check
     tf-lint:
       glob:
-        - "usecases/**/*.tf"
-        - "modules/**/*.tf"
-        - "env/**/*.tf"
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
         - ".tflint.hcl"
       skip:
         - run: make -s tf-no-targets
@@ -114,9 +114,9 @@ pre-commit:
     # validate と test は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
     tf-validate-test:
       glob:
-        - "usecases/**/*.{tf,tftest.hcl,tfmock.hcl}"
-        - "modules/**/*.{tf,tftest.hcl,tfmock.hcl}"
-        - "env/**/*.{tf,tftest.hcl,tfmock.hcl}"
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
         - "**/.terraform.lock.hcl"
       skip:
         - run: make -s tf-no-targets
