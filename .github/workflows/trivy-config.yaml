@@ -3,7 +3,7 @@ name: Config Scan
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
 # trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
 # different target (Terraform and Dockerfiles, not dependency manifests), a
-# different path filter, and a different gate (HIGH+ blocks here, while dependency
+# different path filter, and a different gate (MEDIUM+ blocks here, while dependency
 # findings are reported and gated at release time). Folding it into the dependency
 # scan would also break that
 # workflow's summary, which counts .Results[].Vulnerabilities and would have to
@@ -181,8 +181,8 @@ jobs:
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "title=## ✅ Config Scan: PASS (no HIGH+ misconfiguration)" >> "$GITHUB_OUTPUT"
-            echo "No HIGH or CRITICAL misconfiguration found." > trivy-config-summary.md
+            echo "title=## ✅ Config Scan: PASS (no MEDIUM+ misconfiguration)" >> "$GITHUB_OUTPUT"
+            echo "No MEDIUM, HIGH or CRITICAL misconfiguration found." > trivy-config-summary.md
             exit 0
           fi
 
@@ -235,6 +235,6 @@ jobs:
       # under review rather than inherited from an upstream advisory, so it blocks
       # here instead of being deferred to a release gate. Accepted exceptions live
       # in .trivyignore.yaml, pinned per path.
-      - name: Fail if a HIGH+ misconfiguration was found
+      - name: Fail if a MEDIUM+ misconfiguration was found
         if: always() && steps.summarize.outputs.count != '0'
         run: exit 1

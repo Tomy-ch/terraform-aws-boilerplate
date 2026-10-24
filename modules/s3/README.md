@@ -37,7 +37,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 ## 保証しないもの
 
 - TLS を要求する Policy が入るまで、この module は平文の通信を拒否しない
-- Trivy（`make trivy-config`）が落とすのは Public Access Block の値だけである。版管理の検査（AWS-0090）は MEDIUM でゲートの閾値より下にあり、所有権を見る検査は無く、暗号化の検査（AWS-0132）は抑止している
+- Trivy（`make trivy-config`）が落とすのは Public Access Block と版管理（AWS-0090）の値である。所有権を見る検査は無く、暗号化の検査（AWS-0132）は抑止している
 - `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Policy Test（#75）が配線されたら、そちらへ移す
 
 ## 版

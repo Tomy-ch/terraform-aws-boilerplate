@@ -22,9 +22,9 @@ TRIVY_VULN_FLAGS := --scanners vuln --pkg-types library --severity CRITICAL,HIGH
 
 # tmp/ は gitignore された作業領域で、tf-gates-test の fixture が置かれる。commit されない構成の
 # 誤設定で手元のゲートを落とさない。
-.PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（CRITICAL,HIGH でゲート）
+.PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（CRITICAL,HIGH,MEDIUM でゲート）
 trivy-config:
-	@$(GO_TOOL) trivy config --severity CRITICAL,HIGH --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --skip-dirs tmp --format $(TRIVY_FORMAT) .
+	@$(GO_TOOL) trivy config --severity CRITICAL,HIGH,MEDIUM --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --skip-dirs tmp --format $(TRIVY_FORMAT) .
 
 .PHONY: trivy-fs ## 依存の既知脆弱性を検査（報告のみ。ブロック判定は trivy-fs-release が持つ）
 trivy-fs:
