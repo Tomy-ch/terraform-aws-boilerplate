@@ -150,6 +150,23 @@ classes = ["mise"]
 [job."tool-outdated-report.yaml:report"]
 classes = ["mise"]
 
+[job."terraform-gates.yaml:changes"]
+classes = []
+
+# terraform 本体は releases.hashicorp.com から入る（aqua registry の hashicorp/terraform）。
+[job."terraform-gates.yaml:tf-fmt-check"]
+classes = ["terraform"]
+
+# terraform を呼ばない。ruleset は GitHub Release から取る。
+[job."terraform-gates.yaml:tf-lint"]
+classes = ["mise"]
+
+[job."terraform-gates.yaml:tf-validate-test"]
+classes = ["terraform"]
+
+[job."terraform-gates.yaml:tf-gates-test"]
+classes = ["terraform"]
+
 [job."trivy-config.yaml:changes"]
 classes = []
 
