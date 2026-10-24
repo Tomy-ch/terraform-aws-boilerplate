@@ -1,7 +1,8 @@
 ## Terraform 側の検査（ADR-0501 決定4・28）
 ##
 ## 実行経路は .makefiles/README.md の表が持つ（ADR-0503 決定4・5）。
-## どれも運用機構（scripts/）を経由しない（ADR-0702 決定3）。
+## terraform を実行する経路は運用機構（scripts/）を経由しない（ADR-0702 決定3）。tf-lint だけは先に
+## tool-cooldown-check を呼ぶ。
 ##
 ## 走査の対象が0件なら失敗する。Terraform コードの無いツリーで pre-commit が通るのは、
 ## .lefthook.yaml が tf-no-targets で skip を明示するからであり、ここが成功を返すからではない。
