@@ -162,8 +162,15 @@ jobs:
           tools: aqua:aquasecurity/trivy
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # The gate exits non-zero on a finding, which would skip the summary below; the exit
+      # code is recorded instead and judged by the last step.
       - name: Trivy config scan (JSON)
-        run: make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=json > trivy-config.json
+        id: scan
+        run: |
+          set +e
+          make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=json > trivy-config.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
         shell: bash
 
       - name: Create Trivy config summary (Markdown)
@@ -220,9 +227,13 @@ jobs:
           body-file: trivy-config-summary.md
           details-summary: '📄 Summary'
 
+      # Report only: the verdict comes from the JSON scan.
       - name: Trivy config scan (SARIF)
         if: always()
-        run: make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=sarif > trivy-config.sarif
+        run: |
+          set +e
+          make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=sarif > trivy-config.sarif
+          exit 0
         shell: bash
 
       # Its own category so misconfiguration alerts stay separable from the
@@ -236,6 +247,19 @@ jobs:
           category: trivy-misconfig
 
       # Accepted exceptions live in .trivyignore.yaml, pinned per path.
+      # A non-zero exit with no finding counted is the canary or trivy itself failing.
       - name: Fail if a misconfiguration at or above the gate was found
-        if: always() && steps.summarize.outputs.count != '0'
-        run: exit 1
+        if: always()
+        shell: bash
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
+          COUNT: ${{ steps.summarize.outputs.count }}
+        run: |
+          if [ "${COUNT-}" != "0" ]; then
+            echo "misconfigurations at or above the gate: ${COUNT:-not counted}"
+            exit 1
+          fi
+          if [ "${SCAN_CODE-}" != "0" ]; then
+            echo "make trivy-config exited with ${SCAN_CODE:-no exit code} without a counted finding"
+            exit 1
+          fi
