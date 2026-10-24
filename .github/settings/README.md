@@ -26,7 +26,7 @@ gh api /repos/{owner}/{repo}/rulesets/{ruleset_id}
 | --- | --- |
 | `deletion` | 対象ブランチを削除できない。 |
 | `non_fast_forward` | 対象ブランチへの force-push を拒否する。 |
-| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit か squash に限定（rebase merge を除外）。 |
+| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
 | `copilot_code_review` | Copilot が各 PR を自動レビューする。push のたび、および draft に対しても実行する。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
 | `required_status_checks` | 21 件のチェックが成功してからマージする。 |
