@@ -156,7 +156,8 @@ classes = ["mise"]
 [job."sonarcloud.yaml:preflight"]
 classes = []
 
-# 走査器の本体と JRE は sonarcloud.io と binaries.sonarsource.com から、署名の検証鍵は keyserver から取る。
+# 走査器の本体は binaries.sonarsource.com から、JRE と解析の送り先は sonarcloud.io から取る。
+# 署名の検証鍵は keyserver.ubuntu.com から取り、gpg がその SRV レコードを引くので配下も要る。
 [job."sonarcloud.yaml:sonarcloud"]
 classes = []
 extra = [
@@ -164,7 +165,7 @@ extra = [
   "*.sonarcloud.io",
   "binaries.sonarsource.com",
   "keyserver.ubuntu.com",
-  "keys.openpgp.org",
+  "*.keyserver.ubuntu.com",
 ]
 
 [job."sonarcloud.yaml:report"]

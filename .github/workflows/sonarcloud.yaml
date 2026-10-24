@@ -3,10 +3,9 @@ name: SonarCloud
 # 保守性（重複・複雑度）の報告。権威を持たない補助で、quality gate の結果では落とさない
 # （ADR-0501 決定6）。
 
+# Pull requests only: on the free plan, analysing a branch that is not the organisation's main
+# branch is refused, and reading its quality gate returns 403.
 on:
-  push:
-    branches:
-      - 'release/*'
   pull_request:
   workflow_dispatch:
 
@@ -87,7 +86,7 @@ jobs:
             *.sonarcloud.io
             binaries.sonarsource.com
             keyserver.ubuntu.com
-            keys.openpgp.org
+            *.keyserver.ubuntu.com
 
       # fetch-depth: 0 so the scanner can attribute lines to commits for new-code detection.
       - name: Checkout
