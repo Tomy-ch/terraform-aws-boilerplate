@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/markers"
@@ -32,6 +34,8 @@ const (
 	namespace = "sample"
 	// pinFile は、GitHub Actions の pin の SSOT。
 	pinFile = ".github/actions-pin.toml"
+	// gitTimeout は、git ls-files の上限。
+	gitTimeout = 60 * time.Second
 	// protectionFile は、必須検査の宣言。JSON なので印を置けない。
 	protectionFile = ".github/settings/branch-protection.json"
 )
@@ -118,7 +122,10 @@ func main() {
 
 // gitLsFiles は、root で追跡されているファイルの一覧を返します。
 func gitLsFiles(root string) ([]string, error) {
-	cmd := exec.Command("git", "-C", root, "ls-files", "-z")
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-files", "-z")
+	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, xerrors.Wrap(err, "git ls-files")
@@ -194,7 +201,7 @@ func build(root string, ds []domain, list func(string) ([]string, error)) (plan,
 		if under(f, p.deletes) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(root, f))
+		b, err := os.ReadFile(filepath.Clean(filepath.Join(root, f)))
 		if err != nil {
 			return plan{}, xerrors.Wrapf(errRead, "%s: %v", f, err)
 		}
@@ -230,7 +237,7 @@ func build(root string, ds []domain, list func(string) ([]string, error)) (plan,
 // ものを lockfile から外す書き換えを p へ加えます。
 func prunePins(root string, ds []domain, files []string, p *plan) error {
 	lockPath := filepath.Join(root, pinFile)
-	b, err := os.ReadFile(lockPath)
+	b, err := os.ReadFile(filepath.Clean(lockPath))
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", pinFile, err)
 	}
@@ -282,7 +289,7 @@ func pinReferenced(root, key string, files []string, p *plan) (bool, error) {
 		}
 		content, ok := p.writes[f]
 		if !ok {
-			b, err := os.ReadFile(filepath.Join(root, f))
+			b, err := os.ReadFile(filepath.Clean(filepath.Join(root, f)))
 			if err != nil {
 				return false, xerrors.Wrapf(errRead, "%s: %v", f, err)
 			}
@@ -307,7 +314,7 @@ func dropContexts(root string, ds []domain, p *plan) error {
 	if len(targets) == 0 {
 		return nil
 	}
-	b, err := os.ReadFile(filepath.Join(root, protectionFile))
+	b, err := os.ReadFile(filepath.Clean(filepath.Join(root, protectionFile)))
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", protectionFile, err)
 	}

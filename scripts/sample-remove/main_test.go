@@ -46,13 +46,13 @@ func fixtureTree(t *testing.T) (string, []string) {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
-		pinFile:                         fixtureLock,
-		".github/workflows/scan.yaml":   "steps:\n  - uses: acme/scan@bbbb # v1\n  - uses: acme/shared@cccc # v2\n",
-		".github/workflows/keep.yaml":   "steps:\n  - uses: acme/shared@cccc # v2\n  - uses: actions/checkout@aaaa # v7.0.1\n",
-		"scan.properties":               "k=v\n",
-		"tool/main.go":                  "// sample:bogus は消える側なので走査しない\n",
-		"README.md":                     "a\n<!-- sample:begin -->\nscan の説明\n<!-- sample:end -->\nb\n",
-		".github/egress.toml":           "[x]\n# sample:begin\n[job.\"scan.yaml:scan\"]\n# sample:end\n",
+		pinFile:                       fixtureLock,
+		".github/workflows/scan.yaml": "steps:\n  - uses: acme/scan@bbbb # v1\n  - uses: acme/shared@cccc # v2\n",
+		".github/workflows/keep.yaml": "steps:\n  - uses: acme/shared@cccc # v2\n  - uses: actions/checkout@aaaa # v7.0.1\n",
+		"scan.properties":             "k=v\n",
+		"tool/main.go":                "// sample:bogus は消える側なので走査しない\n",
+		"README.md":                   "a\n<!-- sample:begin -->\nscan の説明\n<!-- sample:end -->\nb\n",
+		".github/egress.toml":         "[x]\n# sample:begin\n[job.\"scan.yaml:scan\"]\n# sample:end\n",
 	}
 	writeTree(t, root, files)
 	list := make([]string, 0, len(files))
@@ -77,7 +77,7 @@ func Test_gitLsFiles(t *testing.T) {
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{"a.txt": "a", "dir/b.txt": "b", "untracked.txt": "u"})
 			for _, args := range [][]string{{"init", "-q"}, {"add", "a.txt", "dir/b.txt"}} {
-				require.NoError(t, exec.Command("git", append([]string{"-C", root}, args...)...).Run())
+				require.NoError(t, exec.CommandContext(t.Context(), "git", append([]string{"-C", root}, args...)...).Run())
 			}
 			got, err := gitLsFiles(root)
 			require.NoError(t, err)
