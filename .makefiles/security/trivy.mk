@@ -17,28 +17,29 @@ TRIVY_SKIP_FLAGS := --skip-version-check
 # 脆弱性スキャンの共通条件。
 TRIVY_VULN_FLAGS := --scanners vuln --pkg-types library --severity CRITICAL,HIGH,MEDIUM
 
-# trivy-config のゲートの閾値。trivy-config-canary も同じ値で走る。
-TRIVY_CONFIG_SEVERITY := CRITICAL,HIGH,MEDIUM
-
+# trivy-config のゲートの条件。trivy-config-canary も同じ条件で走る。
 # tmp/ は gitignore された作業領域で、tf-gates-test の fixture が置かれる。commit されない構成の
-# 誤設定で手元のゲートを落とさない。
-.PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（CRITICAL,HIGH,MEDIUM でゲート）
+# 誤設定で手元のゲートを落とさない。canary は fixture を走査の起点として渡すので、これに掛からない。
+TRIVY_CONFIG_FLAGS := --severity CRITICAL,HIGH,MEDIUM --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --skip-dirs tmp
+
+.PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（閾値は TRIVY_CONFIG_FLAGS）
 trivy-config: trivy-config-canary
-	@$(GO_TOOL) trivy config --severity $(TRIVY_CONFIG_SEVERITY) --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --skip-dirs tmp --format $(TRIVY_FORMAT) .
+	@$(GO_TOOL) trivy config $(TRIVY_CONFIG_FLAGS) --format $(TRIVY_FORMAT) .
 
 .PHONY: trivy-config-canary ## trivy-config の閾値が MEDIUM の誤設定を落とすことを検査
 ## 閾値が緩められると、MEDIUM の誤設定は件数0の「所見なし」として通る。本走査の前に、MEDIUM の
-## 所見だけを持つ Dockerfile を実行時に作り、同じ閾値で検出させる。置き場所と出力先と判定の仕方は
-## trivy-secret-canary と同じ理由による。
+## 所見だけを持つ Dockerfile を実行時に作り、本走査と同じ条件で落ちることを確かめる。置き場所と
+## 出力先は trivy-secret-canary と同じ理由による。非0の終了は検出と trivy の異常終了を区別できない
+## ので、所見の ID と合わせて見る。
 trivy-config-canary:
 	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/trivy-config-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	printf 'FROM alpine:latest\nUSER nobody\nHEALTHCHECK CMD true\n' > "$$dir/Dockerfile"; \
-	out=$$($(GO_TOOL) trivy config --severity $(TRIVY_CONFIG_SEVERITY) --exit-code 0 $(TRIVY_SKIP_FLAGS) --quiet --format json "$$dir") || { \
-		echo "❌ trivy-config-canary: trivy が異常終了しました" >&2; exit 1; }; \
-	case "$$out" in \
+	rc=0; out=$$($(GO_TOOL) trivy config $(TRIVY_CONFIG_FLAGS) --quiet --format json "$$dir") || rc=$$?; \
+	case "$$rc:$$out" in \
+	0:*) echo "❌ trivy-config-canary: MEDIUM の誤設定（DS-0001）を持つ構成でゲートが落ちませんでした" >&2; exit 1 ;; \
 	*'"ID": "DS-0001"'*) ;; \
-	*) echo "❌ trivy-config-canary: MEDIUM の誤設定（DS-0001）を閾値の内側で検出できませんでした" >&2; exit 1 ;; \
+	*) echo "❌ trivy-config-canary: trivy が DS-0001 を報告せずに終了しました（終了コード $$rc。異常終了か、DS-0001 の ID・重大度の変更）" >&2; exit 1 ;; \
 	esac; \
 	echo "✅ trivy-config-canary: MEDIUM の誤設定を閾値の内側で検出しました" >&2
 
