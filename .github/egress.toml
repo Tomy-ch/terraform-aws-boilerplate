@@ -76,6 +76,7 @@ classes = ["mise"]
 [job."commitlint.yaml:commitlint"]
 classes = ["mise"]
 
+# sample:begin
 [job."dependency-review.yaml:dependency-review"]
 classes = []
 # OpenSSF Scorecard の要約（show-openssf-scorecard は既定で有効）が引くデータ源。
@@ -86,6 +87,7 @@ extra = [
   "api.securityscorecards.dev",
   "api.deps.dev",
 ]
+# sample:end
 
 [job."docker-lint.yaml:docker-lint"]
 classes = ["mise"]
@@ -149,6 +151,25 @@ classes = ["mise"]
 
 [job."tool-outdated-report.yaml:report"]
 classes = ["mise"]
+
+# sample:begin
+[job."sonarcloud.yaml:preflight"]
+classes = []
+
+# 走査器の本体と JRE は sonarcloud.io と binaries.sonarsource.com から、署名の検証鍵は keyserver から取る。
+[job."sonarcloud.yaml:sonarcloud"]
+classes = []
+extra = [
+  "sonarcloud.io",
+  "*.sonarcloud.io",
+  "binaries.sonarsource.com",
+  "keyserver.ubuntu.com",
+  "keys.openpgp.org",
+]
+
+[job."sonarcloud.yaml:report"]
+classes = []
+# sample:end
 
 [job."terraform-gates.yaml:changes"]
 classes = []

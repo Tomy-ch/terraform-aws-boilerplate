@@ -1,0 +1,247 @@
+name: SonarCloud
+
+# 保守性（重複・複雑度）の報告。権威を持たない補助で、quality gate の結果では落とさない
+# （ADR-0501 決定6）。SONAR_TOKEN が無いリポジトリでは走査せず、そのことを PR に書く。
+# このリポジトリのサンプルであり、make setup-remove-samples で取り除ける。
+
+on:
+  push:
+    branches:
+      - 'release/*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      configured: ${{ steps.token.outputs.configured }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+
+      - name: Check whether SONAR_TOKEN is set
+        id: token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "${SONAR_TOKEN:-}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SONAR_TOKEN is not set, so the SonarCloud scan is skipped"
+          fi
+        shell: bash
+
+  sonarcloud:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      gate: ${{ steps.gate.outputs.status }}
+      dashboard: ${{ steps.task.outputs.dashboardUrl }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            sonarcloud.io
+            *.sonarcloud.io
+            binaries.sonarsource.com
+            keyserver.ubuntu.com
+            keys.openpgp.org
+
+      # fetch-depth: 0 so the scanner can attribute lines to commits for new-code detection.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      # The scan only queues the analysis; its result is read back from the queue entry.
+      - name: Read analysis task
+        id: task
+        run: |
+          set -euo pipefail
+          task_file=.scannerwork/report-task.txt
+          if [ ! -f "$task_file" ]; then
+            echo "::error::$task_file was not produced, so the analysis cannot be read back"
+            exit 1
+          fi
+          # A value may itself contain '=' (URLs do), so split on the first one only.
+          while IFS= read -r line; do
+            key=${line%%=*}
+            case "$key" in
+              ceTaskId|serverUrl|dashboardUrl) echo "$key=${line#*=}" >> "$GITHUB_OUTPUT" ;;
+              *) ;;
+            esac
+          done < "$task_file"
+        shell: bash
+
+      - name: Wait for the analysis to complete
+        id: analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          CE_TASK_ID: ${{ steps.task.outputs.ceTaskId }}
+          SERVER_URL: ${{ steps.task.outputs.serverUrl }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            task=$(curl -sS --fail-with-body -H "Authorization: Bearer ${SONAR_TOKEN}" \
+              "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}")
+            status=$(jq -r '.task.status // "UNKNOWN"' <<<"$task")
+            case "$status" in
+              SUCCESS)
+                echo "analysisId=$(jq -r '.task.analysisId // ""' <<<"$task")" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              FAILED|CANCELED)
+                echo "::error::the SonarCloud analysis finished as $status"
+                exit 1
+                ;;
+              *) sleep 10 ;;
+            esac
+          done
+          echo "::error::the SonarCloud analysis did not complete within 10 minutes"
+          exit 1
+        shell: bash
+
+      # Reported, not enforced. A gate that is not assigned is reported as NONE rather than read as a pass.
+      - name: Read the quality gate
+        id: gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SERVER_URL: ${{ steps.task.outputs.serverUrl }}
+          ANALYSIS_ID: ${{ steps.analysis.outputs.analysisId }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANALYSIS_ID:-}" ]; then
+            echo "::error::the completed task carried no analysisId, so the quality gate cannot be read"
+            exit 1
+          fi
+          status=$(curl -sS --fail-with-body -H "Authorization: Bearer ${SONAR_TOKEN}" \
+            "${SERVER_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}" \
+            | jq -r '.projectStatus.status // "NONE"')
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Quality gate: $status" >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
+
+  # Separate from the scan so the job that posts to the PR never holds SONAR_TOKEN.
+  report:
+    needs: [preflight, sonarcloud]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build PR comment body
+        id: comment
+        if: always()
+        env:
+          CONFIGURED: ${{ needs.preflight.outputs.configured }}
+          SCAN_RESULT: ${{ needs.sonarcloud.result }}
+          GATE: ${{ needs.sonarcloud.outputs.gate }}
+          DASHBOARD: ${{ needs.sonarcloud.outputs.dashboard }}
+        run: |
+          set -euo pipefail
+          out=sonarcloud-comment.md
+          if [ "${CONFIGURED-}" != "true" ]; then
+            echo "status=not-run" >> "$GITHUB_OUTPUT"
+            echo "title=## ⚠️ SonarCloud: NOT RUN (SONAR_TOKEN is not set)" >> "$GITHUB_OUTPUT"
+            echo "Set the SONAR_TOKEN secret to report, or remove the scan with make setup-remove-samples." > "$out"
+            exit 0
+          fi
+          if [ "${SCAN_RESULT-}" != "success" ]; then
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "title=## ❌ SonarCloud: FAILED (${SCAN_RESULT:-no result})" >> "$GITHUB_OUTPUT"
+            echo "The scan did not produce a result; see the run log." > "$out"
+            exit 0
+          fi
+          if [ "${GATE-}" = "OK" ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "title=## ✅ SonarCloud: quality gate OK" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=findings" >> "$GITHUB_OUTPUT"
+            echo "title=## ⚠️ SonarCloud: quality gate ${GATE:-NONE} (reported, not enforced)" >> "$GITHUB_OUTPUT"
+          fi
+          echo "${DASHBOARD:-no dashboard URL was reported}" > "$out"
+        shell: bash
+
+      - name: Comment SonarCloud result on PR
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- sonarcloud-result -->'
+          status: ${{ steps.comment.outputs.status }}
+          title: "${{ steps.comment.outputs.title || '## ⚠️ SonarCloud: CUT OFF (no result produced)' }}"
+          body-file: sonarcloud-comment.md
