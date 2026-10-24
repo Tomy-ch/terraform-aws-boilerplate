@@ -83,7 +83,8 @@ jobs:
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
             sonarcloud.io
-            *.sonarcloud.io
+            api.sonarcloud.io
+            scanner.sonarcloud.io
             binaries.sonarsource.com
             keyserver.ubuntu.com
             *.keyserver.ubuntu.com

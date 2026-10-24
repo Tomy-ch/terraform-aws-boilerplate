@@ -156,14 +156,18 @@ classes = ["mise"]
 [job."sonarcloud.yaml:preflight"]
 classes = []
 
-# 走査器の本体は binaries.sonarsource.com から、JRE と解析の送り先は sonarcloud.io から取る。
-# 署名の検証鍵は keyserver.ubuntu.com から取り、gpg がその SRV レコードを引くので配下も要る。
-# keys.openpgp.org は scan-action の鍵の取得の代替先（src/main/gpg-verification.js）。
+# 走査器の本体は binaries.sonarsource.com から、JRE と解析エンジンは scanner.sonarcloud.io から、
+# 解析の送り先は api.sonarcloud.io と sonarcloud.io。署名の検証鍵は keyserver.ubuntu.com から取り、
+# gpg がその SRV レコードを引くので配下も要る。keys.openpgp.org は scan-action の鍵の取得の代替先
+# （src/main/gpg-verification.js）。
+# 解析のキャッシュと architecture の報告が向かう S3（analysis-sensorcache-*、dna-visualization-*）は
+# 許可しない。遮断されても解析は完了し、quality gate を読める。
 [job."sonarcloud.yaml:sonarcloud"]
 classes = []
 extra = [
   "sonarcloud.io",
-  "*.sonarcloud.io",
+  "api.sonarcloud.io",
+  "scanner.sonarcloud.io",
   "binaries.sonarsource.com",
   "keyserver.ubuntu.com",
   "*.keyserver.ubuntu.com",
