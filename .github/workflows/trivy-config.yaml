@@ -3,8 +3,9 @@ name: Config Scan
 # Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
 # trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
 # different target (Terraform and Dockerfiles, not dependency manifests), a
-# different path filter, and a different gate (MEDIUM+ blocks here, while dependency
-# findings are reported and gated at release time). Folding it into the dependency
+# different path filter, and a different gate (MEDIUM+ blocks here: a misconfiguration
+# is introduced by the change under review, whereas a dependency finding is inherited
+# from an upstream advisory and is reported, then gated at release time). Folding it into the dependency
 # scan would also break that
 # workflow's summary, which counts .Results[].Vulnerabilities and would have to
 # start distinguishing .Misconfigurations from it.
@@ -66,9 +67,8 @@ jobs:
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
 
-      # fetch-depth: 0 so the PR's base and head commits are present locally. The filter
-      # below compares them with `git diff`; the default shallow checkout fetches only the
-      # merge commit, so neither parent resolves.
+      # fetch-depth: 0 so the PR's base and head commits are present locally for the filter's
+      # `git diff`.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,9 +79,7 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
-          # An empty token selects `git diff` over the compare API. The API refuses a
-          # large diff outright (`this diff is taking too long to generate`), and a filter
-          # that reaches no verdict runs every gated job instead of skipping it.
+          # An empty token selects `git diff` over the compare API, which refuses a large diff.
           token: ''
           filters: |
             relevant:
@@ -231,10 +229,7 @@ jobs:
           sarif_file: trivy-config.sarif
           category: trivy-misconfig
 
-      # Unlike the dependency scan, a misconfiguration is introduced by the change
-      # under review rather than inherited from an upstream advisory, so it blocks
-      # here instead of being deferred to a release gate. Accepted exceptions live
-      # in .trivyignore.yaml, pinned per path.
+      # Accepted exceptions live in .trivyignore.yaml, pinned per path.
       - name: Fail if a MEDIUM+ misconfiguration was found
         if: always() && steps.summarize.outputs.count != '0'
         run: exit 1
