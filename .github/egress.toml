@@ -158,6 +158,7 @@ classes = []
 
 # 走査器の本体は binaries.sonarsource.com から、JRE と解析の送り先は sonarcloud.io から取る。
 # 署名の検証鍵は keyserver.ubuntu.com から取り、gpg がその SRV レコードを引くので配下も要る。
+# keys.openpgp.org は scan-action の鍵の取得の代替先（src/main/gpg-verification.js）。
 [job."sonarcloud.yaml:sonarcloud"]
 classes = []
 extra = [
@@ -166,6 +167,7 @@ extra = [
   "binaries.sonarsource.com",
   "keyserver.ubuntu.com",
   "*.keyserver.ubuntu.com",
+  "keys.openpgp.org",
 ]
 
 [job."sonarcloud.yaml:report"]

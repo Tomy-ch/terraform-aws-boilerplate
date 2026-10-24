@@ -87,6 +87,7 @@ jobs:
             binaries.sonarsource.com
             keyserver.ubuntu.com
             *.keyserver.ubuntu.com
+            keys.openpgp.org
 
       # fetch-depth: 0 so the scanner can attribute lines to commits for new-code detection.
       - name: Checkout
