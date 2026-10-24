@@ -12,7 +12,7 @@
 
 ## 現在の状態
 
-**Terraform の実装はまだ無い。** 存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
+**Terraform の実装は一般 module の `modules/s3/` だけである。** そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
 
 | 区分 | 状態 |
 | --- | --- |
@@ -21,7 +21,8 @@
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
-| `usecases/` / `modules/` / `env/` | **未着手** —— ユースケースの実装が無い |
+| `modules/` | 一般 module の `s3/` だけ |
+| `usecases/` / `env/` | **未着手** —— ユースケースと環境が無い |
 | Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make` と pre-commit に配線済み。CI と Conftest は未配線 |
 
 ## 使い方

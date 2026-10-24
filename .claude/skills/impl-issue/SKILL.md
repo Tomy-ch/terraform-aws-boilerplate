@@ -513,8 +513,8 @@ Open the PR first via `submit-pr`, so CI starts while you verify locally.
 
 ### merge のゲート —— 何が「動いた」の証拠か
 
-**このリポジトリに起動して叩ける API は無い。** `usecases/` と `modules/` が空である以上、実行時に確かめられる
-振る舞いも無い。だからこの段が見るのは**ゲートが実際に何と言ったか**であり、それ以外ではない。
+**このリポジトリに起動して叩ける API は無い。** `usecases/` と `env/` が無く、`modules/` の module は実環境へ
+apply しない（`AGENTS.md` *トリップワイヤ* 8）以上、エージェントが実行時に確かめられる振る舞いは無い。だからこの段が見るのは**ゲートが実際に何と言ったか**であり、それ以外ではない。
 
 ```bash
 gh pr checks <n>
