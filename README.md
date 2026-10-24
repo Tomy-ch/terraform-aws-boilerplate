@@ -17,7 +17,7 @@
 | 区分 | 状態 |
 | --- | --- |
 | `docs/adr/` | 22 件の Accepted ADR。`make adr-lint` が構造と相互参照を検査する |
-| `.github/workflows/` | 22 workflow。必須検査は `.github/settings/branch-protection.json` が 21 件を宣言する |
+| `.github/workflows/` | CI の定義。必須検査の一覧は `.github/settings/branch-protection.json` が持つ |
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
@@ -59,6 +59,20 @@ make setup-repo    # タグ・ブランチ・ラベル・ルールセットを�
 
 **取り消しの効かない操作を含む**（タグの一括削除、デフォルトブランチの移動）。実行前に
 [`scripts/repo-setup/`](scripts/repo-setup/) が何をするかを読むこと。
+
+<!-- sample:begin -->
+このリポジトリのサンプルは、派生リポジトリが使わなければ取り除く。外部の契約を要する走査
+（SonarCloud、Dependency Review）もここに含まれる。
+
+```sh
+make setup-remove-samples DRY_RUN=1   # 取り除くものを表示するだけ
+make setup-remove-samples             # 取り除く。commit はしない
+```
+
+SonarCloud を残す場合は、SonarCloud にプロジェクトを作り、`SONAR_TOKEN` を Actions の secret に
+登録する。登録するまでは、走査は Pull Request に「NOT RUN」と書くだけで落ちない。何がサンプルで、
+どう印を置くかは [`scripts/README.md`](scripts/README.md) の `sample-remove/` の行が持つ。
+<!-- sample:end -->
 
 ## ライセンス
 

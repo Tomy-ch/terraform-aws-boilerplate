@@ -169,6 +169,9 @@ extra = [
 
 [job."sonarcloud.yaml:report"]
 classes = []
+
+[job."sample-remove-check.yaml:sample-remove-check"]
+classes = ["mise"]
 # sample:end
 
 [job."terraform-gates.yaml:changes"]

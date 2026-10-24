@@ -102,7 +102,7 @@ truthy 側へ置く。
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` を除く4 job | 15 | 同上（新設） |
-| `sonarcloud.yaml` の3 job | 15 | 同上（新設） <!-- sample:line --> |
+| `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。

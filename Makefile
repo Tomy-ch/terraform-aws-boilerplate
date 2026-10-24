@@ -17,6 +17,7 @@ include .makefiles/github/commitlint.mk
 include .makefiles/github/pin.mk
 include .makefiles/github/egress.mk
 include .makefiles/github/workflows.mk
+include .makefiles/github/operation/sample-remove.mk # sample:line
 # Go言語関連
 include .makefiles/go/fmt.mk
 include .makefiles/go/golangci-lint.mk
