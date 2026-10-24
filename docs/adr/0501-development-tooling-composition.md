@@ -97,6 +97,8 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 14. 検査を無条件に skip しない。テストや開発を容易にする目的で、安全側の設定（public access の遮断、暗号化、IAM の限定、security group の限定、`validation`）を弱めない。必要な場合は設計変更として扱う（ADR-0102 決定5）。
 
+    CI と道具構成の単純さ —— 道具の数、job の数、実行時間、設定の短さ —— を理由に、検査を減らしたり、ゲートの閾値を緩めたりしない。閾値の値は検査の定義（`.makefiles/`）が持ち、本 ADR は持たない。閾値を緩める変更は本決定の変更として扱う。必須検査に何を入れるかの基準は ADR-0603 決定9-11 が持つ。権威を1つにするための重複の排除（決定4・6、案B）は本項の対象外である。
+
 ### リファクタリング
 
 15. resource / module の rename・移動に伴う `moved` block の候補生成に tfautomv を利用してよい。候補の採否は人が判断する。ADR-0202 決定6 が要求する移行手段の提供責任は、道具へ移らない。
@@ -185,6 +187,7 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 ## 意図的に捨てるもの
 
 - 道具の総数を最小にすること
+- CI と道具構成の単純さ（決定14）
 - 検査の重複による「取りこぼしの保険」
 - 単一ベンダーに統合された実行体験
 - 検査内容を完全に所有すること
@@ -203,6 +206,7 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 - Static Analysis: `<manager> exec` を含む recipe / hook 定義が存在しないこと（決定20）
 - Static Analysis: Renovate 設定で terraform module manager が無効化されていること（決定17）
 - レビュー: 決定28 の実行結果を Pull Request に記録すること
+- レビュー: 検査の削除または閾値の緩和を含む Pull Request が、本 ADR の変更を伴うこと（決定14）
 
 ## 影響
 
