@@ -323,10 +323,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # go: the tf-lint cases run tool-cooldown-check, which is built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform
+          tools: aqua:hashicorp/terraform go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the Terraform gates' own tests

@@ -1,8 +1,8 @@
 ## Terraform 側の検査（gates.mk）そのものの検査
 ##
 ## fixture は provider を持たない構成で毎回 tmp/ に作り、TF_BASE で差し替える。init がネットワークを
-## 要さず、本番の走査（usecases/・modules/・env/）にも混ざらない。tf-lint は ruleset の取得を伴うので
-## ここでは0件の判定だけを見る。
+## 要さず、本番の走査（usecases/・modules/・env/）にも混ざらない。tf-lint は ruleset の取得を伴うので、
+## 0件以外のケースでは TFLINT_BIN を偽の tflint に差し替え、失敗の集約だけを見る。
 
 TF_GATES_TEST_DIR = tmp/tf-gates-test
 
@@ -83,5 +83,22 @@ tf-gates-test:
 	out=$$(AWS_ACCESS_KEY_ID=x AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/ AWS_PROFILE=p \
 		$(MAKE) -s --no-print-directory tf-validate TF_BASE="$$root/ok" TF_BIN="$$PWD/$$root/bin/terraform" 2>&1) \
 		|| { failed="$$failed aws-env-stripped"; echo "$$out"; }; \
+	printf '#!/bin/sh\nfor a in "$$@"; do case "$$a" in --chdir=*) d="$${a#--chdir=}";; esac; done\nif [ -n "$${d:-}" ] && [ -e "$$d/lint-bad" ]; then echo "lint-bad: $$d"; exit 2; fi\n' > "$$root/bin/tflint"; \
+	chmod +x "$$root/bin/tflint"; \
+	lint() { \
+		want="$$1"; case_name="$$2"; base="$$3"; pattern="$${4:-}"; \
+		out=$$($(MAKE) -s --no-print-directory tf-lint TF_BASE="$$base" TFLINT_BIN="$$root/bin/tflint" 2>&1); rc=$$?; \
+		if [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
+		elif [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
+		elif [ -n "$$pattern" ] && ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then failed="$$failed $$case_name"; echo "$$out"; \
+		fi; \
+	}; \
+	lint pass "ok:tf-lint" "$$root/ok"; \
+	for pos in first last both; do \
+		ok "$$root/lint-$$pos/modules/a"; ok "$$root/lint-$$pos/usecases/b"; \
+		case "$$pos" in first) bad=modules/a;; last) bad=usecases/b;; both) bad="modules/a usecases/b";; esac; \
+		want=""; for d in $$bad; do touch "$$root/lint-$$pos/$$d/lint-bad"; want="$$want $$root/lint-$$pos/$$d"; done; \
+		lint fail "broken-$$pos:tf-lint" "$$root/lint-$$pos" "$$(failed_line tf-lint "$${want# }")"; \
+	done; \
 	if [ -n "$$failed" ]; then echo "❌ tf-gates-test: 期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ tf-gates-test: 全ケースが期待どおりでした"
