@@ -17,6 +17,7 @@ on:
       - '.github/workflows/semgrep.yaml'
       - '.makefiles/security/semgrep.mk'
       - '.makefiles/runner.mk'
+      - '.makefiles/terraform/gates.mk'
       - 'Makefile'
       - 'docker-compose.yaml'
       - 'docker/images-pin.toml'
@@ -78,6 +79,7 @@ jobs:
               - '.github/workflows/semgrep.yaml'
               - '.makefiles/security/semgrep.mk'
               - '.makefiles/runner.mk'
+              - '.makefiles/terraform/gates.mk'
               - 'Makefile'
               - 'docker-compose.yaml'
               - 'docker/images-pin.toml'
@@ -185,20 +187,20 @@ jobs:
           sarif_file: tmp/semgrep/out/results.sarif
           category: semgrep
 
-      # A non-zero exit with no finding counted is the canary, the zero-target check or
-      # semgrep itself failing.
-      - name: Fail if a finding was reported
+      # The verdict is make's exit code: the threshold lives in .makefiles/security/semgrep.mk
+      # alone, and results.json lists findings of every severity. The count only reports.
+      - name: Fail if the gate failed
         if: always()
         shell: bash
         env:
           SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
           COUNT: ${{ steps.summarize.outputs.count }}
         run: |
-          if [ "${COUNT-}" != "0" ]; then
-            echo "Semgrep findings: ${COUNT:-not counted}"
+          if [ -z "${COUNT-}" ]; then
+            echo "no Semgrep result was counted"
             exit 1
           fi
           if [ "${SCAN_CODE-}" != "0" ]; then
-            echo "make semgrep exited with ${SCAN_CODE:-no exit code} without a counted finding"
+            echo "make semgrep exited with ${SCAN_CODE:-no exit code} (findings counted: ${COUNT})"
             exit 1
           fi
