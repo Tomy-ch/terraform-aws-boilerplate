@@ -240,7 +240,11 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 1 to add, 0 to change, 0 to destroy.` であり、追加が `module.state_backend.module.s3.aws_s3_bucket_policy.this` だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する
+2. 結果が `Plan: 5 to import, 14 to add, 0 to change, 0 to destroy.` であり、追加が次の14件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する
+
+   - `module.state_backend.module.s3.aws_s3_bucket_policy.this`
+   - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
+   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
 3. Bucket に Policy がまだ無いことを確かめる。段4 の apply は、在る Policy を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
 
    ```bash
@@ -252,6 +256,101 @@ state backend が無い時点では Terraform が state を保存できないの
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
 plan の出力にはアカウント ID が入る。Pull Request へ載せるときは、アカウント ID を伏せた要約にする。
+
+### 段3. deployment-identity の値を用意する
+
+`env/<env>/identity/main.tf` の `module "deployment_identity"` が、OIDC provider と plan / apply / apply-identity の3 role を作る（[`usecases/deployment-identity`](../../usecases/deployment-identity/README.md)）。段3 で人が行うのは、その入力の値を自分のリポジトリに合わせることだけである。
+
+1. `github` の4つの値を、role を assume させるリポジトリのものにする。ID は次で得る
+
+   ```bash
+   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+   ```
+
+2. リポジトリの OIDC の `sub` が immutable 形式であることを確かめる。`use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` であること。`false` なら先へ進まない。旧形式の `sub` は unsupported である（`usecases/deployment-identity/README.md`）
+
+   ```bash
+   gh api repos/<owner>/<repo>/actions/oidc/customization/sub
+   ```
+
+3. 値を変えた commit で Pull Request を開き、段2 の plan をやり直す。件数と一覧が段2 の手順2 のとおりであること
+
+### 段4. 一時 IAM user のローカル権限で apply する
+
+段4 は ADR-0602 決定9・10 の例外であり、記録を残さない実行を認めない。**CI の plan の経路（#185）ができるまで、段4 を実行しない。** 段4 の Pull Request は、merge の前に、その head に対する CI の plan が変更なしを示す必要がある（同 決定10）。その plan を走らせる workflow と environment は #185 が作る。段4 は、#185 の Pull Request の上で行う。
+
+段4 の apply の入口は make に作らない。terraform を直接実行する。以下はすべて段1 の手順1 と同じ bash で実行する。
+
+1. Pull Request の head を checkout し、`git status` が何も示さないことを確かめ、`git rev-parse HEAD` を控える
+2. 段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意し、段2 の手順1 の「make を使えない場合」の1行目で `unset_env` を用意する
+3. 作る対象がまだ無いことを確かめる。どれかが在れば止まり、誰がなぜ作ったかを確かめる。`import` で取り込まない（ADR-0202 決定7）
+
+   ```bash
+   aws iam list-open-id-connect-providers
+   for r in plan apply apply-identity; do aws iam get-role --role-name "tabp-admin-ci-${r}"; done
+   ```
+
+   1つ目の結果に `token.actions.githubusercontent.com` が無く、3つの `get-role` がすべて `NoSuchEntity` を返すこと
+
+4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）
+
+   ```bash
+   umask 077; mkdir -p tmp/plan
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan"
+   ```
+
+5. apply の直前に、Bucket に Policy がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy を黙って置き換え、plan はそれを示さない
+
+   ```bash
+   aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   ```
+
+   `NoSuchBucketPolicy` のエラーが返ること
+
+6. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
+
+   ```bash
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity apply -input=false "$PWD/tmp/plan/admin-identity.tfplan"
+   rm -f "$PWD/tmp/plan/admin-identity.tfplan"
+   ```
+
+7. apply の後に確かめる
+   - `make plan-admin-identity` が `No changes.` を示す。示さなければ、その出力を Pull Request に記録して止まる
+   - `aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"` の `ClientIDList` が `sts.amazonaws.com` だけである
+   - 3つの role で、`aws iam list-role-policies` が役割の名前の1つだけを、`aws iam list-attached-role-policies` が空を返す
+   - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
+8. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、apply の role の変更が拒否されること
+
+   ```bash
+   arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
+   aws iam simulate-principal-policy --policy-source-arn "$(arn plan)" \
+     --action-names s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration \
+       s3:GetBucketRequestPayment s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration \
+       s3:GetBucketObjectLockConfiguration s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning \
+       s3:GetEncryptionConfiguration s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls \
+     --resource-arns "arn:aws:s3:::${BUCKET}" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+   aws iam simulate-principal-policy --policy-source-arn "$(arn apply)" \
+     --action-names iam:UpdateAssumeRolePolicy iam:PutRolePolicy \
+     --resource-arns "$(arn apply-identity)" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+   aws iam simulate-principal-policy --policy-source-arn "$(arn apply)" \
+     --action-names s3:PutBucketPolicy s3:DeleteBucketPolicy \
+     --resource-arns "arn:aws:s3:::${BUCKET}" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+   ```
+
+   1つ目がすべて `allowed`、2つ目と3つ目がすべて `explicitDeny` であること。apply-identity の role にも、1つ目と同じ Action を当てて `allowed` を確かめる。違えば Pull Request に記録して止まる
+
+9. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
+10. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
+
+途中で失敗したとき:
+
+- lock が残ったら、他に apply が走っていないことを確かめてから `terraform force-unlock <ID>` で外す
+- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
+- `EntityAlreadyExists` が返ったら、手順3 に戻る
 
 ## 一時 IAM user の削除
 
@@ -286,9 +385,20 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 1 to add, 0 to change, 0 to destroy` を示し、追加が Bucket Policy だけだった
+- [ ] `make plan-admin-identity` が `5 to import, 14 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の14件だけだった
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
+
+段4 の終了時:
+
+- [ ] OIDC provider と3つの role が、段4 の前に存在しなかった
+- [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
+- [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を返した
+- [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
+- [ ] provider の audience、role の policy、Bucket Policy の読み戻しが宣言どおりだった
+- [ ] `simulate-principal-policy` で、plan と apply-identity の role の読み取りが `allowed`、apply の role の変更が `explicitDeny` だった
+- [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
+- [ ] merge の前に、CI の plan が変更なしを示した
 
 一時 IAM user の削除の終了時:
 
