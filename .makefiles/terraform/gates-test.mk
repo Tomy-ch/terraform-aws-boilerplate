@@ -73,6 +73,13 @@ tf-gates-test:
 		expect fail "root-readonly:$$d" "$$root/root" tf-validate "$$(failed_line tf-init "$$root/root/$$d")"; \
 		if ! cmp -s "$$root/lock.orig" "$$root/root/$$d/.terraform.lock.hcl"; then failed="$$failed root-lock-unchanged:$$d"; fi; \
 	done; \
+	ok "$$root/backend-dir/env/dev/identity"; mkdir -p "$$root/backend-dir/env/dev/identity/.terraform" "$$root/backend-dir/env/dev/identity/mod"; \
+	printf 'output "x" {\n  value = 1\n}\n' > "$$root/backend-dir/env/dev/identity/mod/main.tf"; \
+	printf 'module "m" {\n  source = "./mod"\n}\n' > "$$root/backend-dir/env/dev/identity/module.tf"; \
+	printf 'terraform {\n  backend "s3" {\n    key    = "identity/terraform.tfstate"\n    region = "ap-northeast-1"\n  }\n}\n' > "$$root/backend-dir/env/dev/identity/backend.tf"; \
+	printf '{\n  "version": 3,\n  "terraform_version": "1.16.2",\n  "backend": {\n    "type": "s3",\n    "config": {\n      "bucket": "b",\n      "key": "identity/terraform.tfstate",\n      "region": "ap-northeast-1"\n    },\n    "hash": 0\n  }\n}\n' > "$$root/backend-dir/env/dev/identity/.terraform/terraform.tfstate"; \
+	for t in tf-validate tf-test; do expect pass "backend-dir:$$t" "$$root/backend-dir" "$$t"; done; \
+	if [ -e "$$root/backend-dir/env/dev/identity/tmp" ]; then failed="$$failed backend-dir:data-dir-outside-tmp"; fi; \
 	for d in modules/a usecases/x env/dev/other; do \
 		rm -rf "$$root/nonroot"; ok "$$root/nonroot/$$d"; stale_lock "$$root/nonroot/$$d"; \
 		expect pass "non-root-writable:$$d" "$$root/nonroot" tf-validate; \

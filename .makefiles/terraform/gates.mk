@@ -21,8 +21,14 @@ export TF_PLUGIN_CACHE_DIR ?= $(CURDIR)/tmp/terraform-plugin-cache
 TFLINT_PLUGIN_DIR_REL = tmp/tflint-plugins/$(RUNNER_MODE)
 # 資格情報を持つ手元でも、持たない CI と同じ条件で走らせる（ADR-0401 決定6）。SDK が資格情報を
 # 読む環境変数は名前を列挙しきれないので、AWS_ で始まるものをすべて外してから与える。
-TF_ENV = env $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p') \
+AWS_ENV_UNSET = $$(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/-u \1/p')
+TF_ENV = env $(AWS_ENV_UNSET) \
 	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
+# 検査の init は root の .terraform を使わない。手元で実 AWS の backend に init した root
+# （make init-admin-identity など）が .terraform に backend の設定を残すと、-backend=false の init が
+# その backend の資格情報を探して落ちる。ディレクトリごとの作業領域を TF_BASE の tmp/ の下に置く。
+# terraform は相対の TF_DATA_DIR を -chdir の先から解決するので、絶対パスで渡す。
+TF_GATES_DATA = $(abspath $(TF_BASE))/tmp/tf-gates-data
 TF_BIN ?= terraform
 TFLINT_BIN ?= tflint
 TF = $(TF_ENV) $(TF_BIN)
@@ -53,6 +59,10 @@ is_root() ( \
 )
 endef
 
+define TF_DATA_DIR_OF
+data_dir() { printf '%s/%s' "$(TF_GATES_DATA)" "$$(printf '%s' "$${1#$(TF_BASE)/}" | tr '/' '_')"; }
+endef
+
 define TF_REPORT_FAILED
 if [ -n "$$failed" ]; then echo "❌ $@ が落ちたディレクトリ:$$failed"; exit 1; fi
 endef
@@ -73,27 +83,27 @@ tf-fmt-check:
 
 .PHONY: tf-init
 tf-init:
-	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_IS_ROOT); \
+	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_IS_ROOT); $(TF_DATA_DIR_OF); \
 	mkdir -p "$$TF_PLUGIN_CACHE_DIR"; failed=""; \
 	for d in $$dirs; do \
 		lock=""; if is_root "$$d"; then lock="-lockfile=readonly"; fi; \
-		$(TF) -chdir="$$d" init -backend=false -input=false $$lock || failed="$$failed $$d"; \
+		TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" init -backend=false -input=false $$lock || failed="$$failed $$d"; \
 	done; \
 	$(TF_REPORT_FAILED)
 
 .PHONY: tf-validate ## Terraform の構成を検査（provider の取得を伴う）
 tf-validate: tf-init
-	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); failed=""; \
-	for d in $$dirs; do $(TF) -chdir="$$d" validate || failed="$$failed $$d"; done; \
+	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_DATA_DIR_OF); failed=""; \
+	for d in $$dirs; do TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" validate || failed="$$failed $$d"; done; \
 	$(TF_REPORT_FAILED)
 
 .PHONY: tf-test ## terraform test を実行（*.tftest.hcl を持つディレクトリ）
 tf-test: tf-init
-	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); tested=""; failed=""; \
+	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_DATA_DIR_OF); tested=""; failed=""; \
 	has_tests() { for f in "$$1"/*.tftest.hcl "$$1"/tests/*.tftest.hcl; do if [ -e "$$f" ]; then return 0; fi; done; return 1; }; \
 	for d in $$dirs; do \
 		if has_tests "$$d"; then \
-			tested="$$tested $$d"; $(TF) -chdir="$$d" test || failed="$$failed $$d"; \
+			tested="$$tested $$d"; TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" test || failed="$$failed $$d"; \
 		fi; \
 	done; \
 	if [ -z "$$tested" ]; then echo "❌ *.tftest.hcl を持つディレクトリが0件です（走査: $(TF_SCAN_DIRS)）"; exit 1; fi; \
