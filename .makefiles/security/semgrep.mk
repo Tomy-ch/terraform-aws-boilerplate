@@ -17,14 +17,16 @@ SEMGREP_OUT := tmp/semgrep/out
 SEMGREP_FLAGS := semgrep scan --config terraform --metrics off --disable-version-check --error --strict \
 	--json-output=/tmp/out/results.json --sarif-output=/tmp/out/results.sarif /work/src
 
-# $(1) の cfg/ へ固定した commit の terraform/ の rule を写す。
+# $(1) の cfg/ へ固定した commit の terraform/ の rule を写す。tarball には rule ごとのテスト用の
+# サンプル（攻撃コードを含む）も入っているので、terraform/ の yaml 以外は展開しない。
 define SEMGREP_STAGE_RULES
 rules=$$(mktemp -d tmp/semgrep-rules.XXXXXX); \
-tar -xzf $(SEMGREP_RULES_TGZ) -C "$$rules" --strip-components 1; \
-mkdir -p "$(1)/cfg"; \
-cp -R "$$rules/terraform" "$(1)/cfg/"; \
+tar -tzf $(SEMGREP_RULES_TGZ) > "$$rules/all"; \
+sed -n '/^[^/]*\/terraform\/.*\.yaml$$/p' "$$rules/all" > "$$rules/members"; \
+mkdir -p "$$rules/x" "$(1)/cfg"; \
+tar -xzf $(SEMGREP_RULES_TGZ) -C "$$rules/x" --strip-components 1 -T "$$rules/members"; \
+cp -R "$$rules/x/terraform" "$(1)/cfg/"; \
 rm -rf "$$rules"; \
-find "$(1)/cfg/terraform" -type f ! -name '*.yaml' -exec rm -f {} +; \
 sum=$$(cd "$(1)/cfg" && find terraform -name '*.yaml' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d ' ' -f 1); \
 [ "$$sum" = "$(SEMGREP_RULES_SHA256)" ] \
 	|| { echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) の terraform/ の rule が宣言と一致しません（$$sum）" >&2; exit 1; }; \
