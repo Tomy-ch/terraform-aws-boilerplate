@@ -108,7 +108,7 @@ Free plan のアカウントは、使えるサービスと機能が限られ、�
 
 #### 2-0b. aws login 用のプロファイルを作る
 
-名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットが呼び出し元の `AWS_` の環境変数をすべて外したうえで `AWS_PROFILE=tabp-bootstrap` を渡す。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
+名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットは、資格情報や terraform の振る舞いを変える呼び出し元の環境変数（`AWS_` で始まるもの、`TF_CLI_ARGS*`、`TF_VAR_*`、`TF_LOG*` ほか。一覧の正本は `scripts/tf-local` の `env-unset`）を外したうえで、`AWS_PROFILE=tabp-bootstrap` を渡す。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
 
 | 対象 | 必要バージョン |
 | --- | --- |
@@ -231,11 +231,14 @@ state backend が無い時点では Terraform が state を保存できないの
    make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
 
    ```bash
-   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN AWS_PROFILE=tabp-bootstrap \
+   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS)=' | sed 's/=$//; s/^/-u /')
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN AWS_PROFILE=tabp-bootstrap \
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
      terraform -chdir=env/admin/identity plan -lock=false -input=false
    ```
+
+   この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
 2. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
 

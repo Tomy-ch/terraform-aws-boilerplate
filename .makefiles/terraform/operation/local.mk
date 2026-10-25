@@ -1,6 +1,7 @@
 ## 人が手元から Terraform を動かす入口
 ##
-## gates.mk の検査と違い、ホストの AWS の資格情報を使う（ADR-0504 決定1）。apply と、-target を通せる
+## gates.mk の検査と違い、ホストの ~/.aws の tabp-bootstrap の profile の資格情報を使う（ADR-0504 決定1）。
+## 呼び出し元の環境変数の資格情報は使わない。apply と、-target を通せる
 ## 口は持たない（ADR-0601 決定3-5、ADR-0202 決定7）。root を足す変更が、その root の init / plan を足す。
 ##
 ## 値の算出と検証はすべて scripts/tf-local が持ち、ここは分岐を持たない（ADR-0702 決定3）。
