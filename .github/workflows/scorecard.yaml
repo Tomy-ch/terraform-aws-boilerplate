@@ -50,8 +50,8 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
-            api.osv.dev
             api.deps.dev
+            api.osv.dev
             www.bestpractices.dev
 
       - name: Checkout
