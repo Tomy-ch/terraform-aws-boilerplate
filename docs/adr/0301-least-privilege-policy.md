@@ -56,7 +56,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 6. IAM policy documentはboilerplate内部で生成する。利用者からpolicy JSONまたはpolicy statementを受け取らない（ADR-0204）。
 7. 権限は意味論で受け取り、必要なActionを内部で導出する（ADR-0201 決定4）。語彙（例: `read` / `write`）の意味は、ユースケースのADRで定義し、対応するAction集合をPolicy Testで固定する。
-8. Action wildcard（`service:*` および `*`）を使用しない。
+8. 権限を与える statement（`Effect` が `Allow`）で、Action wildcard（`service:*` および `*`）を使用しない。拒否する statement（`Deny`）は、対象の Action を漏れなく覆うために wildcard を使ってよい。
 9. Resource wildcard（`"*"`）は、AWS APIがresource-level権限をサポートしないactionに限り許容する。この場合も以下を満たすこと。
 
    - 当該actionを個別のstatementへ分離する
@@ -123,7 +123,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 ## 検証方法
 
 - Policy Test（必須）: 以下をinvariantとして検証する。
-  - IAM policyに Action wildcard が存在しないこと
+  - policy document の Allow の statement に Action wildcard が存在しないこと
   - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと
   - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること

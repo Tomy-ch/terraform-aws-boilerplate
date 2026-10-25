@@ -52,7 +52,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 4. 次の順序で立ち上げる。
 
    1. AWS CLI で state backend の実体を作成する
-   2. 同じ構成を表す Terraform を書き、`import` block で取り込む。`terraform plan` が変更なしを示すまで Terraform 側を修正する
+   2. 同じ構成を表す Terraform を書き、`import` block で取り込む。`terraform plan` が取り込んだ resource に変更を示さなくなるまで Terraform 側を修正する
    3. OIDC provider と IAM role の use-case を書く
    4. 人のローカル権限で apply する（決定9・10 の例外。回復の契機でも同じ手順を踏む）
    5. 以後、CI が OIDC で role を assume して実行する
@@ -60,7 +60,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 5. 段1 が CLI であるのは、state backend が存在しない時点では Terraform が state を保存できないためである。**この理由が成立しない構成物を CLI で作成しない。** OIDC provider と IAM role は段2 の完了後に Terraform で作成できるため、CLI の対象としない。
 6. 段2 で `terraform import` コマンドを用いない。`import` block を用い、state を書く前に plan で突合する。config と実物の不一致を、state を書いたあとの plan で発見する経路を採らない。
 7. CLI の手順と `import` block を同一の変更で提供する。片方のみを変更しない。
-8. 段2 の完了条件を「`terraform plan` が変更なしを示すこと」とする。この条件の充足をもって、CLI が作成した実体と Terraform の宣言が一致したとみなす。
+8. 段2 の完了条件を「`terraform plan` が、取り込んだ resource に変更も破棄も示さず、追加が段1 で CLI が作成しない構成物（決定5）に限られること」とする。この条件の充足をもって、CLI が作成した実体と Terraform の宣言が一致したとみなす。
 
 ### ADR-0601 決定2-6 の例外
 
@@ -208,7 +208,7 @@ event を区別できないことは採用案と同じであり、どちらも w
 - Policy Test: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
 - 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply の environment が保護ブランチのパターンだけを許すこと（決定14、ADR-0603 決定4-7）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
-- 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が変更なしを示さない限り段3 へ進まない
+- 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
 
 決定9 の契機の判定と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理は、本 ADR では検査しない。
 
