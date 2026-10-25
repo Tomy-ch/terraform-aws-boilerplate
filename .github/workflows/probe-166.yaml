@@ -1,0 +1,141 @@
+name: Probe 166
+
+# Throwaway measurement for #166 step 0. Removed in the next commit.
+# Measures which docker invocation shapes the bullfrog agent permits under enable-sudo: false,
+# and whether Semgrep accepts a commit-pinned raw URL as --config.
+
+on:
+  push:
+    branches:
+      - feature/166-terraform-security-tools
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      NODE_IMG: node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+      CHECKOV_IMG: bridgecrew/checkov:3.3.30@sha256:4b65e89f1fde292249fc0aa0d0db43302c036dfe39f7370b2d3517571082b894
+      KICS_IMG: checkmarx/kics:v2.2.0@sha256:ef29dbac14b046b1ef65f3280646112e927a61781c5f01bca1aeb723e0b96003
+      SEMGREP_IMG: semgrep/semgrep:1.181.1@sha256:3db5c7af55eb1f512eac0abf0ab69a97b52c74b5e9a27314c221aee1a78d7ab2
+      RULE_URL: https://raw.githubusercontent.com/semgrep/semgrep-rules/16b9e6d45f10649f6a531ec4838ed9924372c3bc/terraform/lang/security/s3-public-rw-bucket.yaml
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            docker.io
+            *.docker.io
+            *.docker.com
+            production.cloudfront.docker.com
+            *.r2.cloudflarestorage.com
+            semgrep.dev
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fixture
+        run: |
+          mkdir -p probe/tf
+          cat > probe/tf/main.tf <<'EOF'
+          resource "aws_s3_bucket" "b" {
+            bucket = "probe"
+            acl    = "public-read-write"
+          }
+          resource "aws_s3_bucket_public_access_block" "b" {
+            bucket                  = aws_s3_bucket.b.id
+            block_public_acls       = false
+            block_public_policy     = false
+            ignore_public_acls      = false
+            restrict_public_buckets = false
+          }
+          resource "aws_s3_bucket_ownership_controls" "b" {
+            bucket = aws_s3_bucket.b.id
+            rule {
+              object_ownership = "ObjectWriter"
+            }
+          }
+          resource "aws_s3_bucket_acl" "b" {
+            bucket = aws_s3_bucket.b.id
+            acl    = "private"
+          }
+          EOF
+
+      - name: A - docker run with a host bind mount
+        continue-on-error: true
+        run: docker run --rm -v "$PWD/probe:/src:ro" "$NODE_IMG" ls /src/tf
+
+      - name: B - docker create, cp, start without a bind mount
+        continue-on-error: true
+        run: |
+          set -eu
+          id=$(docker create "$NODE_IMG" ls -R /src)
+          docker cp probe/. "$id:/src"
+          docker start -a "$id"
+          docker rm "$id"
+
+      - name: C - uses docker://
+        continue-on-error: true
+        uses: docker://node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+        with:
+          args: ls /github/workspace/probe/tf
+
+      - name: D1 - semgrep p/terraform via create/cp/start
+        continue-on-error: true
+        run: |
+          set -u
+          id=$(docker create -w /src "$SEMGREP_IMG" semgrep scan --config p/terraform --metrics off --disable-version-check --error --json /src)
+          docker cp probe/tf/. "$id:/src"
+          docker start -a "$id" > d1.json; echo "exit=$?"
+          docker rm "$id" >/dev/null
+          jq -c '{ids: [.results[].check_id], scanned: .paths.scanned, errors: (.errors|length)}' d1.json
+
+      - name: D2 - semgrep pinned raw URL via create/cp/start
+        continue-on-error: true
+        run: |
+          set -u
+          id=$(docker create -w /src "$SEMGREP_IMG" semgrep scan --config "$RULE_URL" --metrics off --disable-version-check --error --json /src)
+          docker cp probe/tf/. "$id:/src"
+          docker start -a "$id" > d2.json; echo "exit=$?"
+          docker rm "$id" >/dev/null
+          jq -c '{ids: [.results[].check_id], scanned: .paths.scanned, errors: (.errors|length)}' d2.json
+
+      - name: E - checkov with network none via create/cp/start
+        continue-on-error: true
+        run: |
+          set -u
+          id=$(docker create --network none "$CHECKOV_IMG" -d /src --framework terraform --skip-download --compact -o json)
+          docker cp probe/tf/. "$id:/src"
+          timeout 300 docker start -a "$id" > e.json; echo "exit=$?"
+          docker rm -f "$id" >/dev/null
+          jq -c '(if type=="array" then .[0] else . end) | {summary, failed: [.results.failed_checks[].check_id]}' e.json
+
+      - name: F - kics with network none via create/cp/start and cp out
+        continue-on-error: true
+        run: |
+          set -u
+          id=$(docker create --network none -e DISABLE_CRASH_REPORT=0 "$KICS_IMG" scan -p /src --type Terraform --disable-secrets --no-progress --ci -o /out --report-formats json)
+          docker cp probe/tf/. "$id:/src"
+          timeout 300 docker start -a "$id"; echo "exit=$?"
+          docker cp "$id:/out/results.json" f.json
+          docker rm -f "$id" >/dev/null
+          jq -c '{files_scanned, total: .total_counter, queries: [.queries[] | {query_name, query_id, severity}]}' f.json
