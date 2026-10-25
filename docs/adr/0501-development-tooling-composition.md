@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0101, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0401, ADR-0402, ADR-0601
+- Related: ADR-0101, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0302, ADR-0401, ADR-0402, ADR-0503, ADR-0601, ADR-0603
 
 ## Context
 
@@ -21,6 +21,8 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 これらを自前実装で埋めると、ADR-0101 が優先する対象（安全性・再現性・テスト可能性）とは無関係な実装資産を継続保守することになる。一方、道具を無方針に並べると同一の故障モードを複数の道具が報告し、どの道具がそのレイヤーの権威なのかが決まらない。ADR-0401 決定2 は、裏返せば「1つの故障モードに1つの権威」を要求する。
 
+Security は事情が違う。誤設定の規則は道具ごとに独立に書かれており、ある道具に無い規則は他の道具にしか無い（例: S3 の ACL の無効化（BucketOwnerEnforced）は Trivy に無く、Checkov には在る）。1つの道具を権威にすると、その道具の規則集合の欠けが、そのまま保証範囲の欠けになる。
+
 さらに、AWS Provider の schema は version によって変化する。argument を記憶から推測すると、実行するまで検出されない誤りになる。
 
 ## Decision
@@ -37,13 +39,13 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 ### レイヤーと道具の割当
 
-4. ADR-0401 決定4 のレイヤーへ、次のとおり道具を割り当てる。各レイヤーの権威を1つとする。ただし Static Analysis は、決定5 のとおり範囲で2つに分ける。
+4. ADR-0401 決定4 のレイヤーへ、次のとおり道具を割り当てる。各レイヤーの権威を1つとする。ただし Static Analysis は決定5 のとおり範囲で2つに分け、Security は決定6 のとおり複数の道具をそれぞれゲートとして併用する。
 
    | レイヤー | 道具 | 実 AWS |
    | --- | --- | --- |
    | Syntax | `terraform fmt` / `terraform validate` | 不要 |
    | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース） | 不要 |
-   | Security | Trivy | 不要 |
+   | Security | Trivy / Checkov / KICS / Semgrep CE（決定6） | 不要 |
    | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
    | Policy | Conftest / OPA（入力は `terraform show -json`） | 不要 |
@@ -59,7 +61,18 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
    書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
    届く module に検査が限られるためである。Conftest は Policy 層で既に用いており、道具は増えない。
-6. Security scan の第一候補を Trivy とする。Checkov は、Trivy に存在しないルールが必要な場合に限り併用する。Trivy と重複する検査を無目的に二重化しない。
+6. Security は、**規則の出どころが異なる道具を併用し、そのすべてをゲートとする。** 対象が同じでも、規則を書いた主体が違えば別の道具として入れる。
+
+   | 道具 | 規則の出どころ |
+   | --- | --- |
+   | Trivy | Aqua Security（trivy-checks） |
+   | Checkov | Prisma Cloud（Bridgecrew） |
+   | KICS | Checkmarx |
+   | Semgrep CE | semgrep-rules（リポジトリに置かず、実行時に取得する） |
+
+   各道具のゲートの閾値は検査の定義（`.makefiles/`）が持つ。severity を返さない道具は全件で落とす。同じ誤設定を複数の道具が報告した場合、どれか1つを権威として他を黙らせない。値を直すか、報告した道具それぞれに決定13 の抑止を置く。
+
+   道具を足すかどうかの基準は、規則の出どころが既存のどれとも違うことである。出どころが同じ道具（同じ規則集合を取り込んだもの）は足さない。
 
    <!-- sample:begin -->
    SonarCloud は、決定4 の表のどの層も持たない保守性の観点（重複・複雑度）を報告するために、権威を持たない補助として併用する。必須検査にせず、quality gate の結果で Pull Request を止めない。所見が Trivy・TFLint と重なる場合、判定は決定4 の表の道具に従う。SonarCloud は外部の資格情報を要するので、派生リポジトリが外せる手段を運用機構として持つ。
@@ -95,15 +108,17 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 ### 抑止
 
-13. 検査結果の抑止（TFLint / Trivy / Checkov / Conftest / Terraform の warning）は、次をすべて満たす場合に限る。
+13. 検査結果の抑止（TFLint / Trivy / Checkov / KICS / Semgrep / Conftest / Terraform の warning）は、次をすべて満たす場合に限る。
 
     - 抑止の単位を、ルールやスキャナ単位ではなく、検出 ID と対象パスの組とする
     - 各エントリに「なぜ許容できるか」を記述する。理由を書けないものは抑止せず、値そのものを直す
     - 条件が変われば削除する。恒久 allowlist にしない
+    - 道具が検出 ID と対象パスの組を外部の設定ファイルで表せない場合は、対象のファイルか resource に付ける inline の抑止を用いる。inline の抑止も検出 ID を名指し、理由と撤回条件を同じ箇所に書く。ID を取らない形（パスだけ、ブロックだけを外すもの）と、ID も対象も読めない形（結果のハッシュ）は用いない
+    - 同じ誤設定を複数の道具が報告し、値を直さずに許容する場合は、報告した道具それぞれに抑止を置き、理由は同じものとする。理由の正本を1箇所（use-case ADR か module の `README.md`）に置き、各抑止はそこを指す
 
 14. 検査を無条件に skip しない。テストや開発を容易にする目的で、安全側の設定（public access の遮断、暗号化、IAM の限定、security group の限定、`validation`）を弱めない。必要な場合は設計変更として扱う（ADR-0102 決定5）。
 
-    CI と道具構成の単純さ —— 道具の数、job の数、実行時間、設定の短さ —— を理由に、検査を減らしたり、ゲートの閾値を緩めたりしない。閾値の値は検査の定義（`.makefiles/`）が持ち、本 ADR は持たない。閾値を緩める変更は本決定の変更として扱う。必須検査に何を入れるかの基準は ADR-0603 決定9-11 が持つ。権威を1つにするための重複の排除（決定4・6、案B）は本項の対象外である。
+    CI と道具構成の単純さ —— 道具の数、job の数、実行時間、設定の短さ —— を理由に、検査を減らしたり、ゲートの閾値を緩めたりしない。閾値の値は検査の定義（`.makefiles/`）が持ち、本 ADR は持たない。閾値を緩める変更は本決定の変更として扱う。必須検査に何を入れるかの基準は ADR-0603 決定9-11 が持つ。権威を1つにするための重複の排除（決定4・5）は本項の対象外である。Security の道具（決定6）を減らすことは、本項の対象に含む。
 
 ### リファクタリング
 
@@ -118,6 +133,8 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 ### version の固定と実行
 
 19. 本 ADR が挙げる道具の version を、リポジトリ直下の単一 manifest で pin する。pin されていない道具を CI の必須検査に用いない。
+
+    ただし、上流がコンテナイメージとして配布し、ADR-0503 決定4 によりそのイメージで実行する道具は、版を `docker-compose.yaml` の `image:` の tag が、digest を `docker/images-pin.toml` が持つ。この道具を manifest へ重ねて宣言しない。Semgrep CE のルール集合は、semgrep-rules の commit をその検査の定義（`.makefiles/security/semgrep.mk`）で固定し、リポジトリへ置かずに実行時に取得する。
 20. 道具はそのまま（bare）実行する。version manager のサブコマンドで包む形（`<manager> exec -- <command>`）を、手元・hook・CI recipe のいずれでも用いない。包みが必要に見える場合の対処は `PATH` の修正であり、wrapper の追加ではない。
 
 ### Provider 仕様の参照
@@ -160,9 +177,9 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 ### 導入順序
 
-31. 初期導入を Terraform CLI / TFLint / `terraform test` / Trivy / Renovate / Terraform MCP Server とする。
+31. 初期導入を Terraform CLI / TFLint / `terraform test` / Trivy / Checkov / KICS / Semgrep CE / Renovate / Terraform MCP Server とする。
 32. 次段階を Conftest（OPA）/ Infracost / tfautomv / Terratest / ローカル hook とする。
-33. Checkov / terraform-docs / Rover / Inframap は必要が生じた時点で導入する。未使用の道具を pin だけ置かない。
+33. terraform-docs / Rover / Inframap は必要が生じた時点で導入する。未使用の道具を pin だけ置かない。
 
 ## 検討した代替案
 
@@ -170,45 +187,53 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 
 依存する外部ツールが無くなり、検査の内容を完全に所有できる。ただし Static Analysis / Security / Policy / Cost / Drift の各層に独自実装を持つことになり、ADR-0101 が優先する対象と無関係な保守負債が発生する。security ルールの網羅性は、専門ツールのルールセットに追随できない。
 
-### 案B: 重複を許容して道具を並べる
+### 案B: すべてのレイヤーで重複を許容して道具を並べる
 
-Trivy と Checkov と TFLint の security ルールを同時に有効化する等。取りこぼしは減るが、同一の故障モードを複数の道具が別の ID で報告するため、抑止が道具ごとに分散し、どれが権威かが決まらない。ADR-0401 決定2 の「故障モードごとに検出手段を割り当てる」構造が崩れる。
+取りこぼしは減るが、Static Analysis・Unit・Policy のように本リポジトリが規則を書く層では、同じ規則を2つの記法で保守することになり、どちらが正かが決まらない。ADR-0401 決定2 の「故障モードごとに検出手段を割り当てる」構造が崩れる。**Security だけはこの欠点を持たない** —— 規則を書くのは外部であり、本リポジトリが保守するのは抑止だけである。採用案は Security に限って重複を許容する。
 
 ### 案C: マネージドプラットフォームへ検証と実行を寄せる
 
 Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。配線コストは最小になるが、検証の構成がプラットフォームの機能セットに従属し、ADR-0401 のレイヤー定義を維持できるかがベンダー側の都合で決まる。ローカルと CI で同一の検査を再現する手段も、プラットフォームの提供範囲に依存する。
 
+### 案D: Security も1つの道具を権威とする
+
+抑止が1箇所に集まり、所見の数も最小になる。ただし保証範囲がその道具の規則集合の欠けをそのまま引き継ぐ。Trivy は S3 の ACL の無効化を検査しない。規則を足すにはカスタムルールを自前で保守することになり、決定1・3 に反する。
+
 ### 評価
 
-| 評価軸 | 案A: 自前実装 | 案B: 重複許容 | 案C: プラットフォーム | 採用案: 既存ツールを1層1つ |
-| --- | --- | --- | --- | --- |
-| Security | 低（網羅性を追随できない） | 中（抑止が分散する） | 中（提供範囲に従属） | 高 |
-| Testability | 中 | 中 | 中 | 高（層と権威が1:1） |
-| Contract Clarity | 中 | 低（権威が不定） | 中 | 高 |
-| Scope Control | 低（実装資産が増える） | 低（道具が増え続ける） | 中 | 高（導入順序を規定） |
-| Maintainability | 低 | 低 | 中（外部都合で変動） | 中 |
-| Reproducibility | 中 | 中 | 低（手元で再現しにくい） | 高（pin + bare 実行） |
-| 実装コスト | 高 | 低 | 低 | 中 |
+| 評価軸 | 案A: 自前実装 | 案B: 全層で重複許容 | 案C: プラットフォーム | 案D: Security も1権威 | 採用案: 1層1権威、Security は併用 |
+| --- | --- | --- | --- | --- | --- |
+| Security | 低（網羅性を追随できない） | 中（抑止が分散する） | 中（提供範囲に従属） | 中（1つの規則集合の欠けを引き継ぐ） | 高 |
+| Testability | 中 | 中 | 中 | 高 | 高（canary で各ゲートが落ちうることを示す） |
+| Contract Clarity | 中 | 低（権威が不定） | 中 | 高 | 中（Security は道具ごとに判定し、抑止も道具ごと） |
+| Scope Control | 低（実装資産が増える） | 低（道具が増え続ける） | 中 | 高 | 中（Security の道具は出どころの基準でだけ増える） |
+| Maintainability | 低 | 低 | 中（外部都合で変動） | 中 | 中（同じ理由の抑止が道具の数だけ要る） |
+| Reproducibility | 中 | 中 | 低（手元で再現しにくい） | 高 | 高（pin + digest + bare 実行） |
+| 実装コスト | 高 | 低 | 低 | 低 | 中 |
 
 ## 意図的に捨てるもの
 
 - 道具の総数を最小にすること
 - CI と道具構成の単純さ（決定14）
-- 検査の重複による「取りこぼしの保険」
+- Security 以外のレイヤーで、検査の重複による「取りこぼしの保険」
+- Security の所見について、どの道具が正かを1つに決めること
+- 同じ誤設定の抑止が1箇所で済むこと
 - 単一ベンダーに統合された実行体験
 - 検査内容を完全に所有すること
 
 ## 保証範囲
 
-- 保証すること: ADR-0401 の各レイヤーに実行可能な道具が割り当てられ、各範囲の権威が1つであること（Static Analysis は決定5 の範囲で2つ）。抑止が理由とともに記録されていること
-- 保証しないこと: 各道具が検出する範囲の網羅性。道具が報告しない誤りが存在しないこと
+- 保証すること: ADR-0401 の各レイヤーに実行可能な道具が割り当てられ、各範囲の権威が1つであること（Static Analysis は決定5 の範囲で2つ、Security は決定6 の道具がそれぞれゲートであること）。抑止が理由とともに記録されていること
+- 保証しないこと: 各道具が検出する範囲の網羅性と、Security の道具の和集合の網羅性。道具が報告しない誤りが存在しないこと
 
 ## 検証方法
 
 - Static Analysis: 決定4 の各レイヤーに対応する CI ジョブが存在すること
 - Static Analysis: 決定5 の構造の規約の Rego が、違反する入力と違反しない入力の両方のテストを持つこと（ADR-0402 決定8 と同じ規律）
 - Static Analysis: 抑止エントリが、検出 ID と対象の組かつ理由付きであること（決定13）
-- Static Analysis: CI の必須検査で用いる道具が、すべて manifest に pin されていること（決定19）
+- Static Analysis: CI の必須検査で用いる道具が、すべて manifest に pin されているか、イメージの digest が lockfile に固定されていること（決定19）
+- Static Analysis: 決定6 の各道具に、本走査と同じ条件で落ちることを示す canary があること
+- Static Analysis: 決定6 の各道具のジョブが required context として宣言されていること
 - Static Analysis: `<manager> exec` を含む recipe / hook 定義が存在しないこと（決定20）
 - Static Analysis: Renovate 設定で terraform module manager が無効化されていること（決定17）
 - レビュー: 決定28 の実行結果を Pull Request に記録すること
@@ -217,11 +242,13 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 ## 影響
 
 - 決定4 の表が、ADR-0401 のレイヤーについて、どの検査を誰が持つかの唯一の記述になる。同表のレイヤーに属さない検査の割当は、それを定める ADR が持つ（Secret Scan は ADR-0302 決定2）。
-- 検出結果の抑止が、道具ごとの設定ファイルへ理由付きで残る。
+- 検出結果の抑止が、道具ごとの設定ファイルか、決定13 の inline の形で、理由付きで残る。Security の同じ誤設定の抑止は、道具の数だけ置かれる。
 - 実 AWS を必要とする検証は Integration / E2E に限られ、それ以外は credentials なしで完結する。
 
 ## 見直し条件
 
 - `terraform test` が Policy Test 相当の表明を、外部 policy engine なしで表現できるようになった場合
 - 割り当てた道具のいずれかが保守されなくなった場合
-- 同一レイヤーに2つ目の道具が必要という判断が反復して発生した場合
+- Security 以外の同一レイヤーに2つ目の道具が必要という判断が反復して発生した場合
+- Security の道具のいずれかが、他の道具と同じ規則集合を取り込むようになった場合（出どころの基準を満たさなくなる）
+- Security の道具のいずれかがライセンスを変え、本リポジトリでの利用条件を満たさなくなった場合
