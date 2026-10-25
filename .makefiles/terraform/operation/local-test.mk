@@ -49,6 +49,8 @@ tf-local-test:
 	done; \
 	new aws-fails; echo 255 > "$$root/aws-fails/bin/aws.rc"; : > "$$root/aws-fails/bin/aws.out"; \
 	run aws-fails init-admin-identity; if [ "$$rc" -eq 0 ]; then bad aws-fails:rc; fi; no_terraform aws-fails; \
+	new aws-fails-with-identity; echo 255 > "$$root/aws-fails-with-identity/bin/aws.rc"; \
+	run aws-fails-with-identity init-admin-identity; if [ "$$rc" -eq 0 ]; then bad aws-fails-with-identity:rc; fi; no_terraform aws-fails-with-identity; \
 	new root-user; printf '123456789012\tarn:aws:iam::123456789012:root\n' > "$$root/root-user/bin/aws.out"; \
 	run root-user init-admin-identity; if [ "$$rc" -eq 0 ]; then bad root-user:rc; fi; no_terraform root-user; \
 	new env; \
@@ -58,6 +60,10 @@ tf-local-test:
 		$(MAKE) -s --no-print-directory plan-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" TF_PLAN_LOG_DIR="$$c/log" 2>&1) || bad env:rc; \
 	want=$$(printf 'AWS_EC2_METADATA_DISABLED=true\nAWS_PROFILE=tabp-bootstrap'); \
 	for f in aws.env tf.env; do if [ "$$(cat "$$c/bin/$$f" 2>/dev/null)" != "$$want" ]; then bad "env:$$f"; fi; done; \
+	new env-init; \
+	c="$$root/env-init"; out=$$(AWS_ACCESS_KEY_ID=x AWS_PROFILE=other TF_CLI_ARGS_init=-x TF_DATA_DIR=/tmp/x TF_LOG=trace TF_VAR_a=b \
+		$(MAKE) -s --no-print-directory init-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" 2>&1) || bad env-init:rc; \
+	if [ "$$(cat "$$c/bin/tf.env" 2>/dev/null)" != "$$want" ]; then bad env-init:tf.env; fi; \
 	new no-root; rm -rf "$$root/no-root/base/env/admin/identity"; \
 	run no-root init-admin-identity; if [ "$$rc" -eq 0 ]; then bad no-root:rc; fi; no_aws no-root; \
 	for v in missing twice malformed; do \

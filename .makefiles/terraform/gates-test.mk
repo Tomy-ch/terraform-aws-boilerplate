@@ -80,11 +80,11 @@ tf-gates-test:
 	printf '{\n  "version": 3,\n  "terraform_version": "1.16.2",\n  "backend": {\n    "type": "s3",\n    "config": {\n      "bucket": "b",\n      "key": "identity/terraform.tfstate",\n      "region": "ap-northeast-1"\n    },\n    "hash": 0\n  }\n}\n' > "$$root/backend-dir/env/dev/identity/.terraform/terraform.tfstate"; \
 	for t in tf-validate tf-test; do expect pass "backend-dir:$$t" "$$root/backend-dir" "$$t"; done; \
 	if [ -e "$$root/backend-dir/env/dev/identity/tmp" ]; then failed="$$failed backend-dir:data-dir-outside-tmp"; fi; \
-	ok "$$root/collide/modules/a_b/c"; ok "$$root/collide/modules/a/b_c"; \
-	for d in a_b/c a/b_c; do mkdir -p "$$root/collide/modules/$$d/m"; printf 'output "x" {\n  value = 1\n}\n' > "$$root/collide/modules/$$d/m/main.tf"; done; \
-	printf 'module "m" {\n  source = "./m"\n}\n' > "$$root/collide/modules/a_b/c/module.tf"; \
-	mv "$$root/collide/modules/a/b_c/m" "$$root/collide/modules/a/b_c/m2"; \
-	printf 'module "m" {\n  source = "./m2"\n}\n' > "$$root/collide/modules/a/b_c/module.tf"; \
+	ok "$$root/collide/modules/a_/b"; ok "$$root/collide/modules/a/_b"; \
+	for d in a_/b a/_b; do mkdir -p "$$root/collide/modules/$$d/m"; printf 'output "x" {\n  value = 1\n}\n' > "$$root/collide/modules/$$d/m/main.tf"; done; \
+	printf 'module "m" {\n  source = "./m"\n}\n' > "$$root/collide/modules/a_/b/module.tf"; \
+	mv "$$root/collide/modules/a/_b/m" "$$root/collide/modules/a/_b/m2"; \
+	printf 'module "m" {\n  source = "./m2"\n}\n' > "$$root/collide/modules/a/_b/module.tf"; \
 	for t in tf-validate tf-test; do expect pass "data-dir-collide:$$t" "$$root/collide" "$$t"; done; \
 	for d in modules/a usecases/x env/dev/other; do \
 		rm -rf "$$root/nonroot"; ok "$$root/nonroot/$$d"; stale_lock "$$root/nonroot/$$d"; \
