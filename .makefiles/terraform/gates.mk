@@ -59,8 +59,9 @@ is_root() ( \
 )
 endef
 
+# パスを1つの名前へ写す。_ を _u、/ を __ にして、別のディレクトリが同じ名前にならないようにする。
 define TF_DATA_DIR_OF
-data_dir() { printf '%s/%s' "$(TF_GATES_DATA)" "$$(printf '%s' "$${1#$(TF_BASE)/}" | tr '/' '_')"; }
+data_dir() { printf '%s/%s' "$(TF_GATES_DATA)" "$$(printf '%s' "$${1#$(TF_BASE)/}" | sed -e 's/_/_u/g' -e 's|/|__|g')"; }
 endef
 
 define TF_REPORT_FAILED

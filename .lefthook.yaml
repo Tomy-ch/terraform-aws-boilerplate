@@ -137,6 +137,9 @@ pre-commit:
       glob:
         - "Makefile"
         - ".makefiles/**"
+        - "env/**"
+        - "usecases/state-backend/**"
+        - "modules/s3/**"
       run: make tf-local-test
 
 commit-msg:
