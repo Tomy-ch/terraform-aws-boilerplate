@@ -1,4 +1,7 @@
 # Docker base image / docker compose image の pin 対象 digest（SSOT）。
 # make pin-images-resolve で解決・make pin-images-apply で Dockerfile / docker-compose へ反映する。
+"bridgecrew/checkov:3.3.26" = "sha256:8e63f217cb084f1c1a067326a9cf6e37d54bdc82e5822210d50ca4e2f647dd93"
+"checkmarx/kics:v2.1.20" = "sha256:3e5a268eb8adda2e5a483c9359ddfc4cd520ab856a7076dc0b1d8784a37e2602"
 "golang:1.27.3-bookworm" = "sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5"
 "node:24.22.1-alpine" = "sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
+"semgrep/semgrep:1.180.0" = "sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3"

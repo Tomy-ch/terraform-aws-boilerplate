@@ -46,7 +46,7 @@ node = "24.22.1"
 # AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
-# Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
+# Security の道具の1つ（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
 # （ADR-0302 決定2）。Terraform の IaC 走査もここが担う。
 "aqua:aquasecurity/trivy" = "0.75.0"
 

@@ -26,6 +26,9 @@ include .makefiles/go/test.mk
 include .makefiles/markdown/lint.mk
 # セキュリティ関連
 include .makefiles/security/trivy.mk
+include .makefiles/security/checkov.mk
+include .makefiles/security/kics.mk
+include .makefiles/security/semgrep.mk
 include .makefiles/security/gitleaks.mk
 include .makefiles/security/go-cooldown.mk
 include .makefiles/security/tool-cooldown.mk
