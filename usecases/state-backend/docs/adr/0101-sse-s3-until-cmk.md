@@ -9,7 +9,7 @@
 
 AWS は、S3 の暗号化に customer managed key（CMK）による SSE-KMS を使うと、鍵の権限・ローテーション・監査を制御できるとする。Trivy は CMK を使わない Bucket を AWS-0132 として報告する。
 
-bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `import` block で取り込んで `terraform plan` が変更なしを示すまで突合する（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定4・6・8）。CLI で作ってよいのは、Terraform が state を保存するために要るものだけである（同 決定5）。CMK と key policy はそれに当たらない。
+bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `import` block で取り込んで `terraform plan` が取り込んだ resource に変更を示さなくなるまで突合する（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定4・6・8）。CLI で作ってよいのは、Terraform が state を保存するために要るものだけである（同 決定5）。CMK と key policy はそれに当たらない。
 
 ## Decision
 
