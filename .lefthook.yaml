@@ -140,6 +140,7 @@ pre-commit:
         - "env/**"
         - "usecases/state-backend/**"
         - "modules/s3/**"
+        - "scripts/tf-local/**"
       run: make tf-local-test
 
 commit-msg:

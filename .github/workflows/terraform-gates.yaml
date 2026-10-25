@@ -54,7 +54,7 @@ jobs:
         with:
           # An empty token selects `git diff` over the compare API, which refuses a large diff.
           token: ''
-          # scripts/: tf-lint runs tool-cooldown-check, which is built from these sources.
+          # scripts/: tf-lint runs tool-cooldown-check and tf-local-test runs tf-local, both built from these sources.
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -68,6 +68,7 @@ jobs:
               - '.makefiles/**'
               - 'Makefile'
               - 'scripts/tool-cooldown/**'
+              - 'scripts/tf-local/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
