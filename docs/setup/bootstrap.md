@@ -174,15 +174,13 @@ state backend が無い時点では Terraform が state を保存できないの
 
 以下のコマンドは bash で実行する。fish など他のシェルを使っているなら、先に `bash` を起動してから貼り付ける。
 
-1. 変数を用意する。`ACCOUNT_ID` が12桁の数字でなければ、`make aws-login` をやり直してからこの手順を繰り返す
+1. 変数を用意する。`ACCOUNT_ID` が12桁の数字でなければ `BUCKET` を設定せずにエラーを出すので、その場合は `make aws-login` をやり直してからこの手順を繰り返す
 
    ```bash
    export AWS_PROFILE=tabp-bootstrap
    REGION=ap-northeast-1
    ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
-   [[ $ACCOUNT_ID =~ ^[0-9]{12}$ ]] || { echo "ACCOUNT_ID が12桁ではありません: '$ACCOUNT_ID'" >&2; false; }
-   BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"
-   echo "$BUCKET"
+   if [[ $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"; echo "$BUCKET"; else unset BUCKET; echo "ACCOUNT_ID が12桁ではありません: '$ACCOUNT_ID'" >&2; fi
    ```
 
 2. Bucket を作る。Object Ownership は作成時に `BucketOwnerEnforced` を指定する
