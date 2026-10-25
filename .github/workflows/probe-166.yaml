@@ -122,10 +122,11 @@ jobs:
       - name: E - checkov with network none via create/cp/start
         continue-on-error: true
         run: |
-          set -u
+          set +e
           id=$(docker create --network none "$CHECKOV_IMG" -d /src --framework terraform --skip-download --compact -o json)
           docker cp probe/tf/. "$id:/src"
           timeout 300 docker start -a "$id" > e.json; echo "exit=$?"
+          head -c 400 e.json; echo
           docker rm -f "$id" >/dev/null
           jq -c '(if type=="array" then .[0] else . end) | {summary, failed: [.results.failed_checks[].check_id]}' e.json
 
