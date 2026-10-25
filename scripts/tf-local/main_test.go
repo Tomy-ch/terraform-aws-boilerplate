@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +19,12 @@ const (
 	backendOK    = "terraform {\n  backend \"s3\" {\n    key    = \"identity/terraform.tfstate\"\n    region = \"ap-northeast-1\"\n  }\n}\n"
 	providersOK  = "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\n"
 )
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errWrite }
+
+var errWrite = errors.New("write failed")
 
 func rootWith(t *testing.T, backend, providers string) string {
 	t.Helper()
@@ -73,6 +82,21 @@ func Test_run(t *testing.T) {
 			})
 		}
 
+		t.Run("region を決められなければ何も出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			root := rootWith(t, backendOK, "provider \"aws\" {\n  region = \"us-east-1\"\n}\n")
+			require.ErrorIs(t, run([]string{"region", root}, strings.NewReader(""), &out, os.ReadFile), errRegionMismatch)
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("出力に失敗すれば失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			require.ErrorIs(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, strings.NewReader(""), failingWriter{}, os.ReadFile), errWrite)
+		})
+
 		t.Run("値を決められなければ何も出力しない", func(t *testing.T) {
 			t.Parallel()
 
@@ -116,6 +140,29 @@ func Test_runBucket(t *testing.T) {
 			require.ErrorIs(t, err, errUsage)
 		})
 
+		t.Run("値の無いフラグは失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runBucket([]string{"-project"}, strings.NewReader(identityUser))
+			require.ErrorIs(t, err, errUsage)
+		})
+
+		t.Run("-region を欠くと Bucket 名を組まない", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin"}, strings.NewReader(identityUser))
+			require.ErrorIs(t, err, errRegionMalformed)
+		})
+
+		t.Run("標準入力を読めなければ資格情報の誤りとは別に失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			errRead := errors.New("read failed")
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"}, iotest.ErrReader(errRead))
+			require.ErrorIs(t, err, errRead)
+			assert.NotErrorIs(t, err, errIdentity)
+		})
+
 		t.Run("フラグを欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
@@ -148,6 +195,39 @@ func Test_rootRegion(t *testing.T) {
 
 			_, err := rootRegion(t.TempDir(), os.ReadFile)
 			require.ErrorIs(t, err, errBackendMissing)
+		})
+
+		t.Run("backend.tf を読めなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			deny := func(string) ([]byte, error) { return nil, fs.ErrPermission }
+			_, err := rootRegion(t.TempDir(), deny)
+			require.ErrorIs(t, err, errBackendMissing)
+		})
+
+		t.Run("backend の region が無ければ provider が正しくても backend.tf を名指しして失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			root := rootWith(t, "terraform {\n  backend \"s3\" {}\n}\n", providersOK)
+			_, err := rootRegion(root, os.ReadFile)
+			require.ErrorIs(t, err, errRegionNotOne)
+			assert.Contains(t, err.Error(), filepath.Join(root, "backend.tf"))
+		})
+
+		t.Run("backend の region の形が誤っていれば失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := rootRegion(rootWith(t, "region = \"Tokyo\"\n", providersOK), os.ReadFile)
+			require.ErrorIs(t, err, errRegionMalformed)
+		})
+
+		t.Run("provider の region の形が誤っていれば providers.tf を名指しして失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			root := rootWith(t, backendOK, "provider \"aws\" {\n  region = \"Tokyo\"\n}\n")
+			_, err := rootRegion(root, os.ReadFile)
+			require.ErrorIs(t, err, errRegionMalformed)
+			assert.Contains(t, err.Error(), filepath.Join(root, "providers.tf"))
 		})
 
 		t.Run("providers.tf が無ければ失敗する", func(t *testing.T) {
@@ -190,8 +270,38 @@ func Test_backendRegion(t *testing.T) {
 		}
 	})
 
+	t.Run("コメントの region は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := backendRegion("# region = \"us-east-1\"\n  region = \"ap-northeast-1\"\n")
+		require.NoError(t, err)
+		assert.Equal(t, "ap-northeast-1", got)
+	})
+
+	t.Run("空白の無い書き方も読む", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := backendRegion("\tregion=\"ap-northeast-1\"\n")
+		require.NoError(t, err)
+		assert.Equal(t, "ap-northeast-1", got)
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("コメントの region しか無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := backendRegion("# region = \"ap-northeast-1\"\n")
+			require.ErrorIs(t, err, errRegionNotOne)
+		})
+
+		t.Run("region が変数の参照なら失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := backendRegion("region = var.region\n")
+			require.ErrorIs(t, err, errRegionNotOne)
+		})
 
 		t.Run("region が無ければ失敗する", func(t *testing.T) {
 			t.Parallel()
@@ -232,6 +342,14 @@ func Test_callerAccount(t *testing.T) {
 			assert.Equal(t, "123456789012", got)
 		})
 
+		t.Run("名前が root の IAM user は拒まない", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := callerAccount("123456789012\tarn:aws:iam::123456789012:user/root\n")
+			require.NoError(t, err)
+			assert.Equal(t, "123456789012", got)
+		})
+
 		t.Run("assumed role の資格情報は受け入れる", func(t *testing.T) {
 			t.Parallel()
 
@@ -245,12 +363,14 @@ func Test_callerAccount(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]string{
-			"空なら失敗する":        "",
-			"11桁なら失敗する":      "12345678901\tarn:aws:iam::12345678901:user/b\n",
-			"13桁なら失敗する":      "1234567890123\tarn:aws:iam::1234567890123:user/b\n",
-			"Arn が無ければ失敗する":  "123456789012\n",
-			"フィールドが多ければ失敗する": "123456789012\tarn:aws:iam::123456789012:user/b\textra\n",
-			"数字でなければ失敗する":    "None\tNone\n",
+			"空なら失敗する":           "",
+			"11桁なら失敗する":         "12345678901\tarn:aws:iam::12345678901:user/b\n",
+			"13桁なら失敗する":         "1234567890123\tarn:aws:iam::1234567890123:user/b\n",
+			"Arn が無ければ失敗する":     "123456789012\n",
+			"フィールドが多ければ失敗する":    "123456789012\tarn:aws:iam::123456789012:user/b\textra\n",
+			"数字でなければ失敗する":       "None\tNone\n",
+			"12文字でも数字でなければ失敗する": "12345678901a\tarn:aws:iam::12345678901a:user/b\n",
+			"2行分の出力なら失敗する":      identityUser + identityUser,
 		}
 		for name, identity := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -261,12 +381,17 @@ func Test_callerAccount(t *testing.T) {
 			})
 		}
 
-		t.Run("root の資格情報は拒む", func(t *testing.T) {
-			t.Parallel()
+		for name, identity := range map[string]string{
+			"root の資格情報は拒む":        "123456789012\tarn:aws:iam::123456789012:root\n",
+			"CRLF の root の資格情報も拒む": "123456789012\tarn:aws:iam::123456789012:root\r\n",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 
-			_, err := callerAccount("123456789012\tarn:aws:iam::123456789012:root\n")
-			require.ErrorIs(t, err, errRootCredentials)
-		})
+				_, err := callerAccount(identity)
+				require.ErrorIs(t, err, errRootCredentials)
+			})
+		}
 	})
 }
 
@@ -292,6 +417,9 @@ func Test_bucketName(t *testing.T) {
 			"project が空なら失敗する":      {"", "admin"},
 			"env が空なら失敗する":          {"tabp", ""},
 			"project にハイフンがあれば失敗する": {"ta-bp", "admin"},
+			"env に大文字があれば失敗する":      {"tabp", "Admin"},
+			"env にハイフンがあれば失敗する":     {"tabp", "ad-min"},
+			"env に改行があれば失敗する":       {"tabp", "admin\n"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
