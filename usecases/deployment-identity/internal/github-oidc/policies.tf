@@ -62,9 +62,9 @@ locals {
       { Sid = "ListStateBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn },
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.workload_state_key },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.workload_state_key}.tflock" },
-      # bootstrap の構成物と state Bucket の設定を変えさせない Deny（deployment-identity/ADR-0201 決定5）。
+      # bootstrap の構成物、identity root の state、state Bucket の設定を変えさせない Deny（deployment-identity/ADR-0201 決定5）。
       { Sid = "DenyIdentityChange", Effect = "Deny", Action = "iam:*", Resource = local.identity_arns },
-      { Sid = "DenyIdentityStateWrite", Effect = "Deny", Action = ["s3:DeleteObject", "s3:PutObject"], Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
+      { Sid = "DenyIdentityStateWrite", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
       { Sid = "DenyStateBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = var.state_bucket_arn },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
     ]

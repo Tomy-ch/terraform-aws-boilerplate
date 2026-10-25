@@ -97,7 +97,7 @@ Policy Test（#75 / #73）は未配線で、CI の経路（#185）と sandbox �
 - 実 API が読み戻した信頼条件や policy が宣言と違い、plan が毎回差分を出すこと
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
-- 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root と workload root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。片方だけを変えると、CI の role が state を読み書きできなくなる
+- 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
 - identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - 信頼条件にワイルドカードが無いこと、apply の role の有効な権限が bootstrap の構成物を変更できないこと（Policy Test の項目）。Unit Test は今の入力での文書を固定するだけである。Action wildcard を検出する Security の道具も無い（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の検証方法）
 

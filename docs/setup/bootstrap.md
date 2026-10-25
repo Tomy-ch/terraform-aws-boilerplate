@@ -346,7 +346,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim apply "$key" s3:PutObject s3:DeleteObject
    ```
 
-   期待は順に、15行・16行・1行・2行がすべて `allowed`、続く2つがそれぞれ1行の `implicitDeny`、最後の3つが2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる
+   期待は順に、15行・16行・1行・2行がすべて `allowed`、続く2つがそれぞれ1行の `implicitDeny`、最後の3つが2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
 
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）

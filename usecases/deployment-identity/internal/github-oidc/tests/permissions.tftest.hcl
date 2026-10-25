@@ -70,7 +70,7 @@ run "policies" {
       {
         Sid    = "DenyIdentityStateWrite"
         Effect = "Deny"
-        Action = ["s3:DeleteObject", "s3:PutObject"]
+        Action = ["s3:Delete*", "s3:Put*"]
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock",
