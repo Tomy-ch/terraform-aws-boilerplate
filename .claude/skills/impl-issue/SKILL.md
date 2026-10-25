@@ -506,9 +506,6 @@ trickling: the user sees the shape of the whole run at once.
 
 ## Step 8 — PR, then runtime verification, then merge
 
-When this step merges the pull request, stamp it — a merge performed here is observed by nobody
-else until the loop goes back to `gh` for it:
-
 Open the PR first via `submit-pr`, so CI starts while you verify locally.
 
 ### PR の Development へ issue を紐付ける
