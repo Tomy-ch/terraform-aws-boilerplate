@@ -370,7 +370,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 - 設定値は[ADR-0207](https://github.com/Tomy-ch/terraform-aws-boilerplate/blob/release/v0.1.0/docs/adr/0207-default-value-policy.md)に従い、AWS公式推奨をProvider/AWSの暗黙defaultより優先する。保証したいsecurity/reliability設定は明示する。
 - 保持期間、可用性、容量、スケーリング、削除方針等の利用者固有の要件は焼き込まない。安全性の不変条件を維持しながら、入力を必要最小限に絞る。
 - **暗号化の例外:** ALBのアクセスログの出力先BucketはSSE-KMSに非対応のため、SSE-S3とする。S3サーバーアクセスログはS3ではなくCloudWatch Logsへ配送し、この例外に含めない（第9.3節）。
-- **検査の分担:** AWS一般のベストプラクティスとして成立するmisconfigurationはTrivyが担う（`make trivy-config`、required済み）。Policy Testは、ADR-0402 決定1-3 により**本リポジトリのADRを読まなければ書けないinvariantに限る**。Trivyが既定で持つ検査をPolicyへ重複して書かない。Trivyが本リポジトリのinvariantより緩い場合は、Trivyを無効化せずPolicyを追加して厳格化する（同 決定4）。
+- **検査の分担:** AWS一般のベストプラクティスとして成立するmisconfigurationはSecurityの道具が担う（Trivy / Checkov / KICS / Semgrep CE。`make trivy-config` / `make checkov` / `make kics` / `make semgrep`、ADR-0501 決定6）。Policy Testは、ADR-0402 決定1-3 により**本リポジトリのADRを読まなければ書けないinvariantに限る**。Securityの道具のいずれかが既定で持つ検査をPolicyへ重複して書かない。その道具が本リポジトリのinvariantより緩い場合は、無効化せずPolicyを追加して厳格化する（同 決定4）。
 
 ### 9.2 Egress
 
