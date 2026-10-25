@@ -10,6 +10,7 @@ state は、そのアカウントを変更できる主体だけが書ける場�
 
 - Terraform の S3 backend が、CI のランナーと bootstrap の実行者の手元から、AWS の公開 API の endpoint で読み書きする。AWS の上で動く処理は無い
 - 外への egress は無い。Bucket は Public Access Block の4項目をすべて有効にし、ACL を無効にする（`BucketOwnerEnforced`）
+- TLS でない要求は、Bucket Policy の Deny で拒否する
 
 ## 公開契約
 
@@ -33,7 +34,7 @@ Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an` 
 | 段 | 持つもの | 状態 |
 | --- | --- | --- |
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
-| 段3-4 | TLS を要求する Bucket Policy | 未実装（#19） |
+| 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは #20 の段4 の apply |
 | 段5 | CMK と SSE-KMS への切り替え、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、lifecycle、S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。#20・#107・#108 の後） |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
@@ -67,7 +68,7 @@ unsupported:
 ## 検証方法
 
 - Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名を確かめる。Bucket の属性の値は `modules/s3/tests/` が見る
-- 段2 の突合: 人が実 AWS で `terraform plan` を実行し、取り込み以外の変更が0件であることを確かめる（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定8）。`import` block が `modules/s3` の resource をすべて覆っていること、その id が正しいことを見るのはこの plan だけで、自動の検査は無い
+- 段2 の突合: 人が実 AWS で `terraform plan` を実行し、取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないものだけであることを確かめる（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定8）。`import` block が `modules/s3` の resource をすべて覆っていること、その id が正しいことを見るのはこの plan だけで、自動の検査は無い
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。実行ごとに sandbox へ複製を作り、apply→検証→destroy して、期待残存との照合で余剰0件を確かめる。複製は常駐する Bucket と backend・名前・鍵を共有しない
 
 sandbox のアカウント（`organization-baseline`、フェーズ1）が無い間は、複製のテストを実行しない。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
@@ -75,6 +76,9 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - account regional namespace の Bucket の作成が、実 API で通らないこと
 - 実 provider が `import` block の id を受け付けないこと、取り込んだ後の read が宣言と異なる値を返すこと（人が行う段2 の plan だけが見る）
 - `force_destroy = false` の Bucket が、版の付いた object と delete marker を残したまま destroy に失敗すること
+- TLS でない要求が、実 API で Bucket Policy に拒否されること
+- 新しく作るときに、Bucket Policy の作成が Public Access Block の設定と競合して失敗すること
+- 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、#20 の段4 の apply の後の plan が見る）
 
 Policy Test（#75）と層検査（#74）は未配線である。配線された後に遡って検証する。
 

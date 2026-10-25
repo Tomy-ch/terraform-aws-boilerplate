@@ -168,7 +168,7 @@ Cost Explorer は API では有効化できず、コンソールで初めて開�
 
 ### 段1. AWS CLI で state Bucket を作る
 
-state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは `modules/s3` が宣言するものと同じ構成に限る —— 版管理、Public Access Block、Object Ownership、既定の暗号化（SSE-S3 と SSE-C の拒否）。Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。段2 の plan が差分を出す。
+state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは `modules/s3` が宣言するものと同じ構成に限る —— 版管理、Public Access Block、Object Ownership、既定の暗号化（SSE-S3 と SSE-C の拒否）。Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。
 
 名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
 
@@ -240,7 +240,14 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
+2. 結果が `Plan: 5 to import, 1 to add, 0 to change, 0 to destroy.` であり、追加が `module.state_backend.module.s3.aws_s3_bucket_policy.this` だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する
+3. Bucket に Policy がまだ無いことを確かめる。段4 の apply は、在る Policy を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
+
+   ```bash
+   aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   ```
+
+   `NoSuchBucketPolicy` のエラーが返ること。Policy が返ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
@@ -279,7 +286,8 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 0 to add, 0 to change, 0 to destroy` を示した
+- [ ] `make plan-admin-identity` が `5 to import, 1 to add, 0 to change, 0 to destroy` を示し、追加が Bucket Policy だけだった
+- [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 一時 IAM user の削除の終了時:
