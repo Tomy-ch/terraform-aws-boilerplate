@@ -7,9 +7,9 @@
 ## `# nosemgrep: <rule-id>` で持つ（ADR-0501 決定13）。rule-id は `terraform.` から始まる。
 ## 既定の .semgrepignore は tests/ を外すので、空の .semgrepignore を置いて Trivy と同じ面を見る。
 SEMGREP_RULES_COMMIT := 16b9e6d45f10649f6a531ec4838ed9924372c3bc
-# 上の commit の terraform/**/*.yaml を名前順に並べた sha256 の一覧の sha256。codeload の tarball は
+# 上の commit の terraform/ の *.yaml / *.yml を名前順に並べた sha256 の一覧の sha256。codeload の tarball は
 # バイト列が安定しないので、展開した中身で照合する。commit を上げるときは同時に上げる。
-SEMGREP_RULES_SHA256 := 4f9e33d41e826e5be15dff1f9e6d8b4869110220cc5e50536e930ee72d9c712b
+SEMGREP_RULES_SHA256 := ebdaecff1b7b4c9f0419488afe3358ea99bb43baca37af889aef963b92157849
 SEMGREP_RULES_TGZ := tmp/semgrep-rules-$(SEMGREP_RULES_COMMIT).tar.gz
 SEMGREP_WORK := tmp/semgrep/work
 SEMGREP_OUT := tmp/semgrep/out
@@ -18,18 +18,21 @@ SEMGREP_FLAGS := semgrep scan --config terraform --metrics off --disable-version
 	--json-output=/tmp/out/results.json --sarif-output=/tmp/out/results.sarif /work/src
 
 # $(1) の cfg/ へ固定した commit の terraform/ の rule を写す。tarball には rule ごとのテスト用の
-# サンプル（攻撃コードを含む）も入っているので、terraform/ の yaml 以外は展開しない。
+# サンプル（攻撃コードを含む）も入っているので、terraform/ の rule 以外は展開しない。tar は空の
+# member 一覧を「全部」と読むので、空なら展開の前に落とす。
 define SEMGREP_STAGE_RULES
 rules=$$(mktemp -d tmp/semgrep-rules.XXXXXX); \
 tar -tzf $(SEMGREP_RULES_TGZ) > "$$rules/all"; \
-sed -n '/^[^/]*\/terraform\/.*\.yaml$$/p' "$$rules/all" > "$$rules/members"; \
+sed -n '/^[^/]*\/terraform\/.*\.ya\{0,1\}ml$$/p' "$$rules/all" > "$$rules/members"; \
+[ -s "$$rules/members" ] || { rm -rf "$$rules"; \
+	echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) に terraform/ の rule がありません" >&2; exit 1; }; \
 mkdir -p "$$rules/x" "$(1)/cfg"; \
 tar -xzf $(SEMGREP_RULES_TGZ) -C "$$rules/x" --strip-components 1 -T "$$rules/members"; \
 cp -R "$$rules/x/terraform" "$(1)/cfg/"; \
 rm -rf "$$rules"; \
-sum=$$(cd "$(1)/cfg" && find terraform -name '*.yaml' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d ' ' -f 1); \
+sum=$$(cd "$(1)/cfg" && find terraform -type f \( -name '*.yaml' -o -name '*.yml' \) | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d ' ' -f 1); \
 [ "$$sum" = "$(SEMGREP_RULES_SHA256)" ] \
-	|| { echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) の terraform/ の rule が宣言と一致しません（$$sum）" >&2; exit 1; }; \
+	|| { echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) の terraform/ の rule が宣言と一致しません（$${sum}）" >&2; exit 1; }; \
 : > "$(1)/src/.semgrepignore"
 endef
 
@@ -44,7 +47,7 @@ semgrep: semgrep-canary
 	$(call SEMGREP_STAGE_RULES,$(SEMGREP_WORK)); \
 	rc=0; $(call IMAGE_RUN,semgrep_runner,$(SEMGREP_WORK),$(SEMGREP_OUT),-w /work/cfg,$(SEMGREP_FLAGS)) || rc=$$?; \
 	want=$$(find $(SEMGREP_WORK)/src -type f \( -name '*.tf' -o -name '*.hcl' \) | wc -l | tr -d ' '); \
-	n=$$(jq '.paths.scanned // [] | length' $(SEMGREP_OUT)/results.json); \
+	n=$$(jq -e '.paths.scanned | if type == "array" then length else error("paths.scanned が無い") end' $(SEMGREP_OUT)/results.json); \
 	if [ "$$n" -eq 0 ] || [ "$$n" -lt "$$want" ]; then \
 		echo "❌ semgrep: 走査したファイル $$n 件が、写した .tf / .hcl の $$want 件に届きません" >&2; exit 1; fi; \
 	echo "semgrep: ファイル $$n 件を走査しました（終了コード $${rc}）" >&2; \

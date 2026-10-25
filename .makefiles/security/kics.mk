@@ -13,10 +13,10 @@ kics: kics-canary
 	@set -eu; rm -rf $(KICS_WORK) $(KICS_OUT); $(call TF_SCAN_STAGE,$(KICS_WORK)); \
 	rc=0; $(call IMAGE_RUN,kics_runner,$(KICS_WORK),$(KICS_OUT),$(KICS_CREATE),$(KICS_FLAGS)) || rc=$$?; \
 	want=$$(find $(KICS_WORK)/src -name '*.tf' | wc -l | tr -d ' '); \
-	n=$$(jq '.files_scanned // 0' $(KICS_OUT)/results.json); \
+	n=$$(jq -e '.files_scanned | if type == "number" then . else error("files_scanned が無い") end' $(KICS_OUT)/results.json); \
 	if [ "$$n" -eq 0 ] || [ "$$n" -lt "$$want" ]; then \
 		echo "❌ kics: 走査したファイル $$n 件が、写した .tf の $$want 件に届きません" >&2; exit 1; fi; \
-	bad=$$(jq '(.files_scanned - .files_parsed) + .queries_failed_to_execute' $(KICS_OUT)/results.json); \
+	bad=$$(jq -e '[.files_scanned, .files_parsed, .queries_failed_to_execute] | if any(type != "number") then error("件数の欄が無い") else (.[0] - .[1]) + .[2] end' $(KICS_OUT)/results.json); \
 	if [ "$$bad" -ne 0 ]; then \
 		echo "❌ kics: 解釈できなかったファイルか実行できなかった query が $$bad 件あります（KICS は終了コードに出さない）" >&2; exit 1; fi; \
 	echo "kics: ファイル $$n 件を走査しました（終了コード $${rc}）" >&2; \

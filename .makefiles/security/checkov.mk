@@ -7,9 +7,9 @@ CHECKOV_WORK := tmp/checkov/work
 CHECKOV_OUT := tmp/checkov/out
 CHECKOV_FLAGS := --framework terraform --skip-download --compact --quiet -o cli -o json -o sarif --output-file-path console,/tmp/out/results_json.json,/tmp/out/results_sarif.sarif
 # results_json.json は framework が1つなら object、複数なら array になる。
-CHECKOV_RESOURCE_COUNT := jq '[(if type == "array" then .[] else . end) | .summary.resource_count] | add // 0'
+CHECKOV_RESOURCE_COUNT := jq -e '[(if type == "array" then .[] else . end) | .summary.resource_count] | if length == 0 or any(type != "number") then error("resource_count が無い") else add end'
 # Checkov は解釈できないファイルを飛ばして終了コードを変えない。件数は summary にだけ出る。
-CHECKOV_PARSING_ERRORS := jq '[(if type == "array" then .[] else . end) | .summary.parsing_errors] | add // 0'
+CHECKOV_PARSING_ERRORS := jq -e '[(if type == "array" then .[] else . end) | .summary.parsing_errors] | if length == 0 or any(type != "number") then error("parsing_errors が無い") else add end'
 
 .PHONY: checkov ## Terraform の誤設定を Checkov で検査（所見があれば落ちる）
 checkov: checkov-canary
