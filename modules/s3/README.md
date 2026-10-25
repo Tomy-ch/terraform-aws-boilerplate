@@ -16,8 +16,10 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 
 | 出力 | 使う側 |
 | --- | --- |
-| `bucket_name` | #19（backend の設定と bootstrap の手順） |
-| `bucket_arn` | #20（CI の role の IAM で Resource を state Bucket に絞る） |
+| `bucket_name` | `state-backend`（backend の設定と、bootstrap の段2 の `import` block の id） |
+| `bucket_arn` | `state-backend` を経て #20（CI の role の IAM で Resource を state Bucket に絞る） |
+
+`bucket_name` は Bucket の属性ではなく、module が組んだ名前を返す。`import` block の id に使えるよう、Bucket を参照しない（参照すると取り込み先との間で循環する）。値が Bucket の名前と一致することは `tests/naming.tftest.hcl` が見る。
 
 ## まだ持たないもの
 
@@ -28,7 +30,7 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 | Bucket Policy（TLS を要求する Deny） | #19 の段3-4 |
 | SSE-KMS への切り替え、root ごとの書き込みの拒否（ADR-0604 決定9）、lifecycle、S3 サーバーアクセスログの CloudWatch Logs への配送 | #19 の段5 |
 
-段1 の CLI は、この module と同じ名前（`-<account_id>-<region>-an`）と同じ namespace で Bucket を作る必要がある。その手順は #19 が `docs/setup/bootstrap.md` に書く。
+段1 の CLI は、この module と同じ名前（`-<account_id>-<region>-an`）と同じ namespace で Bucket を作る必要がある。その手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段1 が持つ。
 
 Bucket Policy は、テストが mock の下で文書の中身を確かめられるよう `jsonencode` で組む（`mock_provider` の下では `aws_iam_policy_document` の `json` が意味の無い文字列になる）。
 
@@ -61,13 +63,13 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 採用しなかった知見と理由:
 
 - global namespace と推測しにくい名前: 削除した名前を他人が取り直せる問題が残る
-- MFA delete: root しか有効にできず、lifecycle と併用できない（[MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)。#19 で記録する）
+- MFA delete: root しか有効にできず、lifecycle と併用できない（[MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)。記録は `usecases/state-backend/docs/adr/0102-no-mfa-delete-or-object-lock.md`）
 - `aws_iam_policy_document`: mock の下で文書を確かめられない
 
 ## 公式推奨からの逸脱（ADR-0207 決定11）
 
 この module を使うすべてのユースケースが、次の逸脱を引き継ぐ。
 
-| 対象 | 理由（ユースケース上の制約） | 影響 | 代替案 | 見直し条件 |
-| --- | --- | --- | --- | --- |
-| KMS（customer managed key）ではなく SSE-S3 で暗号化する（Trivy AWS-0132） | state-backend の bootstrap の段1・段2 は SSE-S3 と決まっており（scope.md 第10.3節）、CMK は段5 で作る | 段5 までは、鍵の権限で読み手を絞れない。この間に他の usecase がこの module を使うと、その Bucket も SSE-S3 になる | 段1 の CLI で CMK を作る（ADR-0602 決定5 が退ける）、AWS 管理鍵（段1 の構成と一致せず、段2 の plan が変更なしにならない） | #19 の段5 で SSE-KMS に切り替えたとき。それより前に他の usecase がこの module を使うとき。`.trivyignore.yaml` の抑止も同時に見直す |
+| 対象 | 理由 | この module を使う他の usecase への影響 | 見直し条件 |
+| --- | --- | --- | --- |
+| KMS（customer managed key）ではなく SSE-S3 で暗号化する（Trivy AWS-0132） | `usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md` | 段5 までは、鍵の権限で読み手を絞れない。この間に他の usecase がこの module を使うと、その Bucket も SSE-S3 になる | state-backend の段5 で SSE-KMS に切り替えたとき。それより前に他の usecase がこの module を使うとき。`.trivyignore.yaml` の抑止も同時に見直す |
