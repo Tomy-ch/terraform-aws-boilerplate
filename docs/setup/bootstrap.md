@@ -240,7 +240,7 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 14 to add, 0 to change, 0 to destroy.` であり、追加が次の14件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する
+2. 結果が `Plan: 5 to import, 14 to add, 0 to change, 0 to destroy.` であり、追加が次の14件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
    - `module.state_backend.module.s3.aws_s3_bucket_policy.this`
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
@@ -295,14 +295,14 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）
 
    ```bash
-   umask 077; mkdir -p tmp/plan
    env $unset_env AWS_PROFILE=tabp-bootstrap \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   env $unset_env AWS_PROFILE=tabp-bootstrap \
-     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan"
+   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
    ```
 
-5. apply の直前に、Bucket に Policy がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy を黙って置き換え、plan はそれを示さない
+5. apply の前の条件を確かめる（ADR-0602 決定10）。手順1 で控えた commit で、plan 以外の required check が成功していること。保護設定が承認者を要求しているなら、その承認を得ていること。満たさなければ apply しない
+6. apply の直前に、Bucket に Policy がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy を黙って置き換え、plan はそれを示さない
 
    ```bash
    aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
@@ -310,7 +310,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    `NoSuchBucketPolicy` のエラーが返ること
 
-6. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
+7. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
 
    ```bash
    env $unset_env AWS_PROFILE=tabp-bootstrap \
@@ -318,33 +318,38 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    rm -f "$PWD/tmp/plan/admin-identity.tfplan"
    ```
 
-7. apply の後に確かめる
+8. apply の後に確かめる
    - `make plan-admin-identity` が `No changes.` を示す。示さなければ、その出力を Pull Request に記録して止まる
    - `aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"` の `ClientIDList` が `sts.amazonaws.com` だけである
-   - 3つの role で、`aws iam list-role-policies` が役割の名前の1つだけを、`aws iam list-attached-role-policies` が空を返す
+   - 3つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity`。role 名と違い、apply-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
    - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
-8. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、apply の role の変更が拒否されること
+9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること
 
    ```bash
    arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
-   aws iam simulate-principal-policy --policy-source-arn "$(arn plan)" \
-     --action-names s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration \
-       s3:GetBucketRequestPayment s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration \
-       s3:GetBucketObjectLockConfiguration s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning \
-       s3:GetEncryptionConfiguration s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls \
-     --resource-arns "arn:aws:s3:::${BUCKET}" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
-   aws iam simulate-principal-policy --policy-source-arn "$(arn apply)" \
-     --action-names iam:UpdateAssumeRolePolicy iam:PutRolePolicy \
-     --resource-arns "$(arn apply-identity)" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
-   aws iam simulate-principal-policy --policy-source-arn "$(arn apply)" \
-     --action-names s3:PutBucketPolicy s3:DeleteBucketPolicy \
-     --resource-arns "arn:aws:s3:::${BUCKET}" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+   sim() { role=$1 res=$2; shift 2
+     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" \
+       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
+   reads="s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment
+     s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration
+     s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration
+     s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls"
+   key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate"
+   sim plan "arn:aws:s3:::${BUCKET}" $reads
+   sim apply-identity "arn:aws:s3:::${BUCKET}" $reads s3:PutBucketPolicy
+   sim apply-identity "$key" s3:PutObject
+   sim apply-identity "$(arn plan)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
+   sim plan "$key" s3:PutObject
+   sim plan "$(arn plan)" iam:PutRolePolicy
+   sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
+   sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy
+   sim apply "$key" s3:PutObject s3:DeleteObject
    ```
 
-   1つ目がすべて `allowed`、2つ目と3つ目がすべて `explicitDeny` であること。apply-identity の role にも、1つ目と同じ Action を当てて `allowed` を確かめる。違えば Pull Request に記録して止まる
+   期待は順に、15行・16行・1行・2行がすべて `allowed`、続く2つがそれぞれ1行の `implicitDeny`、最後の3つが2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる
 
-9. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
-10. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
+10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
+11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 
 途中で失敗したとき:
 
@@ -389,14 +394,21 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
+段3 の終了時:
+
+- [ ] `env/<env>/identity/main.tf` の `github` の4つの値が、自分のリポジトリのものである
+- [ ] `use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` である
+- [ ] 値を変えた commit で、段2 の plan が段2 の手順2 の件数と一覧を示した
+
 段4 の終了時:
 
 - [ ] OIDC provider と3つの role が、段4 の前に存在しなかった
 - [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
+- [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
 - [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
 - [ ] provider の audience、role の policy、Bucket Policy の読み戻しが宣言どおりだった
-- [ ] `simulate-principal-policy` で、plan と apply-identity の role の読み取りが `allowed`、apply の role の変更が `explicitDeny` だった
+- [ ] `simulate-principal-policy` の行数と判定が、段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
 

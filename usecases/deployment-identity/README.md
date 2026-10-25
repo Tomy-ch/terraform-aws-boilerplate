@@ -15,7 +15,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
-| `project` | `string`（英小文字と数字） | role 名の先頭に置くプロジェクトの token |
+| `project` | `string`（英小文字と数字、38文字以内） | role 名の先頭に置くプロジェクトの token。最も長い role 名（`<project>-sandbox-ci-apply-identity`）を IAM の上限の64文字に収める |
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | role を置くアカウントの env の token。GitHub の environment 名の前半にもなる |
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
@@ -42,7 +42,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
 - 3つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
   - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り
-  - apply: workload root の key と lock file の読み書き。bootstrap の構成物と state Bucket の設定の変更は Deny する
+  - apply: workload root の key と lock file の読み書き。bootstrap の構成物、identity root の key と lock file、state Bucket の設定の変更は Deny する
   - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる
 - role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす）
 
@@ -58,6 +58,7 @@ supported:
 unsupported:
 
 - 旧形式の `sub`（`repo:<owner>/<repo>:...`）のリポジトリと、GitHub Enterprise Server（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定5）。旧形式のリポジトリは、opt-in で immutable 形式にしてから使う
+- Enterprise Managed User の個人アカウントが所有するリポジトリ。login が `_` を含み、`github.owner` の検査が受け付けない。その login が `sub` にどう現れるかを確かめていない
 - fork からの Pull Request で plan を成立させること。plan の job は fork の Pull Request で assume の前に失敗する（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14）
 - 締め出しから回復する資格情報の発行と管理、break-glass（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）
 - 管理アカウントの root による、role と provider の変更を防ぐこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
@@ -96,6 +97,8 @@ Policy Test（#75 / #73）は未配線で、CI の経路（#185）と sandbox �
 - 実 API が読み戻した信頼条件や policy が宣言と違い、plan が毎回差分を出すこと
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
+- 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root と workload root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。片方だけを変えると、CI の role が state を読み書きできなくなる
+- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - 信頼条件にワイルドカードが無いこと、apply の role の有効な権限が bootstrap の構成物を変更できないこと（Policy Test の項目）。Unit Test は今の入力での文書を固定するだけである。Action wildcard を検出する Security の道具も無い（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の検証方法）
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
@@ -131,4 +134,4 @@ Policy Test（#75 / #73）は未配線で、CI の経路（#185）と sandbox �
 ## 版
 
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.16.2（`mise.toml`）だけである
-- AWS Provider は `>= 6.68.0, < 7.0.0`。reference と identity root の lock は 6.70.0 を固定する。権限の列挙は 6.70.0 の source から導いた（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定2）
+- AWS Provider は `>= 6.68.0, < 7.0.0`。6.68.0 に固定した複製で `terraform validate` と `terraform test` が通ることを確かめた。reference と identity root の lock は 6.70.0 を固定する。権限の列挙は 6.70.0 の source から導いたもので、6.68.0 が同じ API を呼ぶことは確かめていない（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定2）

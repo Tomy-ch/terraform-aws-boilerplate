@@ -14,7 +14,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 ## Decision
 
 1. 信頼条件は1文とし、Principal を当該アカウントの GitHub Actions の OIDC provider、Action を `sts:AssumeRoleWithWebIdentity` とする。条件演算子は `StringEquals` だけを使う。
-2. 条件キーと値を次に固定する。
+2. 条件キーと値を次に固定する。条件キーは、IAM User Guide の「Available keys for OIDC federation」の GitHub の表にあるものに限る。`repository_id` と `repository_owner_id` は同表で信頼条件にだけ使える（Available in session が No）。
 
    | 条件キー | 値 |
    | --- | --- |
@@ -26,8 +26,8 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 3. environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` に固定し、入力にしない。role ごとに environment を分けることを、利用者が崩せないようにする。
 4. OIDC provider の audience は `sts.amazonaws.com` の1つに限り、`thumbprint_list` を設定しない。
 5. 旧形式の `sub` と GitHub Enterprise Server を扱わない（`README.md` の unsupported）。
-6. deployment branch policy は `GITHUB_REF` に対して照合され、Pull Request を契機とする job の ref は `refs/pull/<番号>/merge` である（GitHub の文書）。plan の environment は保護ブランチに加えてこの ref を許し、apply と apply-identity の environment は許さない。environment の宣言は #185 が置く。
-7. environment 形式の `sub` の形（決定2）は、旧形式の environment 形式と、immutable 形式の `ref` 形式の例からの推論である。最初の CI の実行（#185）で実 token の claim を確かめ、本 ADR に記録する。
+6. deployment branch policy は `GITHUB_REF` に対して照合され、Pull Request を契機とする job の ref は `refs/pull/<番号>/merge` である（GitHub の文書）。plan の environment は保護ブランチに加えてこの ref を許し、apply と apply-identity の environment は許さない。environment の宣言は、保護設定の宣言（repository-wide/ADR-0603 (branch-protection-and-required-checks) 決定4）が持つ。
+7. environment 形式の `sub` の形（決定2）は、旧形式の environment 形式と、immutable 形式の `ref` 形式の例からの推論であり、実 token の claim で確かめるまで仮説として扱う。確かめた claim は本 ADR に記録する。
 
 ## 検討した代替案
 
@@ -69,7 +69,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 
 - Unit Test: `internal/github-oidc/tests/trust.tftest.hcl` が、3つの role の信頼条件の文書を完全一致で、`tests/validation.tftest.hcl` が名前に `*` `?` `:` を含む入力の拒否を確かめる
 - Policy Test（未配線。#75 / #73）: repository-wide/ADR-0602 の検証方法の、信頼条件のワイルドカードの不在、environment 形式、完全一致の項目
-- 実 token（#185）: 決定7
+- 実 token: 決定7。最初の CI の plan が role を assume できることで確かめる（`docs/setup/bootstrap.md` の段4）
 
 ## 影響
 

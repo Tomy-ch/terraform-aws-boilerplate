@@ -17,7 +17,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 2. 列挙は、identity root の resource について AWS Provider 6.70.0 の source（`internal/service/s3`・`internal/service/iam`）の Read・Create・Update・Delete が呼ぶ API から導く。対応は下の表が持つ。Provider の版を上げる変更は、この表を見直す。
 3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定）に要る分に限る。段5 の CMK・ログ・lifecycle の権限は、段5 の変更が先に足す。
 4. Resource は、state Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。
-5. apply の role に、3つの role と OIDC provider への `iam:*`、state Bucket への `s3:Put*` と `s3:Delete*`、state の object への `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物と state Bucket の設定を変えられないようにする。
+5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:PutObject` と `s3:DeleteObject`、state Bucket への `s3:Put*` と `s3:Delete*`、state の object への `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、state Bucket の設定を変えられないようにする。
 6. apply-identity の role は、自分を含む3つの role の信頼条件と policy を変更できる。誤った信頼条件が merge されると CI は締め出され、回復は repository-wide/ADR-0602 決定9 の回復の契機になる。
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
 
@@ -85,7 +85,7 @@ KMS の鍵とログの resource の形（#107、#108）が無く、正しく列�
 - Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、3つの role の policy の文書と、inline policy と managed policy の排他を完全一致で確かめる
 - 手順: `docs/setup/bootstrap.md` の段4 が、apply の後に `aws iam simulate-principal-policy` で、表の Action が plan と apply-identity の role に許され、apply の role の bootstrap の構成物への変更が拒否されることを確かめる
 - Policy Test（未配線。#75 / #73）: repository-wide/ADR-0602 の検証方法の、apply の role の有効な権限の項目
-- Action の wildcard の不在を検出する Security の道具は、今は無い。Trivy は IAM の inline policy の Action wildcard を報告しない（#20 の作業で trivy 0.74.0 にて確認）
+- Action の wildcard の不在を検出する Security の道具は、今は無い。Trivy は IAM の inline policy と customer managed policy の Action wildcard を報告しない（`mise.toml` の版で確かめた）
 
 ## 影響
 
@@ -98,3 +98,4 @@ KMS の鍵とログの resource の形（#107、#108）が無く、正しく列�
 - apply の role が IAM の role を作る usecase が入るとき（permissions boundary を決める）
 - inline policy の文字数が上限に近づいたとき
 - CI の plan か apply が AccessDenied で失敗したとき
+- Trivy の版を上げるとき（Action wildcard を検出するようになったかを確かめる）
