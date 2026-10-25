@@ -108,7 +108,7 @@ Free plan のアカウントは、使えるサービスと機能が限られ、�
 
 #### 2-0b. aws login 用のプロファイルを作る
 
-名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作り、Terraform は `AWS_PROFILE=tabp-bootstrap` を付けて実行する。このプロファイルは一時 user と一緒に削除するもので、手順はコピペ実行が前提である。このため、毎回付けるコストは問題にならない。`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
+名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットは、資格情報や terraform の振る舞いを変える呼び出し元の環境変数（`AWS_` で始まるもの、`TF_CLI_ARGS*`、`TF_VAR_*`、`TF_LOG*` ほか。一覧の正本は `scripts/tf-local` の `env-unset`）を外したうえで、`AWS_PROFILE=tabp-bootstrap` を渡す。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
 
 | 対象 | 必要バージョン |
 | --- | --- |
@@ -119,7 +119,7 @@ S3 backend は Provider と別に、Terraform 本体に内蔵の SDK で認証�
 
 1. `aws --version`、`terraform version` で上表を満たすことを確認する
 2. 環境変数 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY` が設定されていないことを確認する（`env | grep AWS_`）。設定されていると `AWS_PROFILE` より優先される
-3. `aws login --profile tabp-bootstrap` を実行し、リージョンを聞かれたら `ap-northeast-1` を入力する
+3. `make aws-login` を実行し、リージョンを聞かれたら `ap-northeast-1` を入力する
 4. ブラウザで一時 IAM user のセッションを選ぶ。root のセッションが一覧に出ても選ばない
 5. `~/.aws/config` に次のブロックが作られたことを確認する
 
@@ -129,22 +129,15 @@ S3 backend は Provider と別に、Terraform 本体に内蔵の SDK で認証�
    region = ap-northeast-1
    ```
 
-6. Arn が一時 IAM user であることを確認する
+6. Arn が一時 IAM user であることを確認する。Terraform から読めることは、段2 の `make plan-admin-identity` が確かめる
 
    ```bash
    aws sts get-caller-identity --profile tabp-bootstrap
    ```
 
-7. provider ブロックと backend ブロックに `profile` を書かない状態で、次が通ることを確認する
+認証情報は `~/.aws/login/cache` にキャッシュされる。15分ごとに自動更新され、最長12時間で失効する。失効したら `make aws-login` を再実行する。
 
-   ```bash
-   AWS_PROFILE=tabp-bootstrap terraform init
-   AWS_PROFILE=tabp-bootstrap terraform plan
-   ```
-
-認証情報は `~/.aws/login/cache` にキャッシュされる。15分ごとに自動更新され、最長12時間で失効する。失効したら `aws login --profile tabp-bootstrap` を再実行する。
-
-AWS Provider または Terraform 本体が `aws login` の認証情報を読めない版である場合は、`credential_process = aws configure export-credentials --profile tabp-bootstrap --format process` を持つ別のプロファイルを作り、`AWS_PROFILE` にはそちらを指定して回避する。
+AWS Provider または Terraform 本体が `aws login` の認証情報を読めない版である場合は、`credential_process = aws configure export-credentials --profile tabp-bootstrap --format process` を持つ別のプロファイルを作り、`AWS_PROFILE` にはそちらを指定して回避する。make のターゲットは profile を `tabp-bootstrap` に固定しているので、この場合は使えない。
 
 #### 2-0c. 1日の作業の終了時
 
@@ -179,13 +172,15 @@ state backend が無い時点では Terraform が state を保存できないの
 
 名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
 
-1. 変数を用意する
+以下のコマンドは bash で実行する。fish など他のシェルを使っているなら、先に `bash` を起動してから貼り付ける。
+
+1. 変数を用意する。`ACCOUNT_ID` が12桁の数字でなければ `BUCKET` を設定せずにエラーを出すので、その場合は `make aws-login` をやり直してからこの手順を繰り返す
 
    ```bash
    export AWS_PROFILE=tabp-bootstrap
    REGION=ap-northeast-1
-   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-   BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"
+   ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
+   if [[ $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"; echo "$BUCKET"; else unset BUCKET; echo "ACCOUNT_ID が12桁ではありません: '$ACCOUNT_ID'" >&2; fi
    ```
 
 2. Bucket を作る。Object Ownership は作成時に `BucketOwnerEnforced` を指定する
@@ -223,24 +218,29 @@ state backend が無い時点では Terraform が state を保存できないの
 
 ### 段2. Terraform で取り込み、plan で突合する
 
-`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` は block に書かず、init の引数で渡す。
+`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` は block に書かず、init の引数で渡す。`make init-admin-identity` がアカウント ID から Bucket 名を組んで渡す。
 
 段2 では apply しない。state を書くのは段4 のローカルの apply であり、ADR-0601 決定5 の例外は段4 だけに掛かる（ADR-0602 決定9）。plan は lock を取らずに実行する（ADR-0604 決定8）。
 
-1. init する。段1 で Bucket が在るので、backend の初期化はそのまま通る
+1. plan する。`make plan-admin-identity` は先に `make init-admin-identity` を実行し、plan の出力を `tmp/plan/admin-identity.log` に残す。log の1行目は plan した commit である
 
    ```bash
-   AWS_PROFILE=tabp-bootstrap terraform -chdir=env/admin/identity init -lockfile=readonly \
-     -backend-config="bucket=${BUCKET}"
+   make plan-admin-identity
    ```
 
-2. plan する
+   make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
 
    ```bash
-   AWS_PROFILE=tabp-bootstrap terraform -chdir=env/admin/identity plan -lock=false
+   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS)=' | sed 's/=$//; s/^/-u /')
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
+   env $unset_env AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity plan -lock=false -input=false
    ```
 
-3. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
+   この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
+
+2. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
@@ -272,14 +272,14 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 - [ ] 一時 IAM user に MFA が登録され、アクセスキーが0個
 - [ ] root のアクセスキーが0個
 - [ ] root からサインアウトし、root の認証情報を保管した
-- [ ] `aws sts get-caller-identity --profile tabp-bootstrap` が一時 IAM user を返し、`AWS_PROFILE=tabp-bootstrap terraform plan` が通る
+- [ ] `aws sts get-caller-identity --profile tabp-bootstrap` が一時 IAM user を返す
 - [ ] primary contact と代替連絡先3種が登録済み
 - [ ] Cost Explorer が有効で、Cost Anomaly Detection の monitor が存在する
 
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `terraform -chdir=env/admin/identity plan -lock=false` が `5 to import, 0 to add, 0 to change, 0 to destroy` を示した
+- [ ] `make plan-admin-identity` が `5 to import, 0 to add, 0 to change, 0 to destroy` を示した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 一時 IAM user の削除の終了時:

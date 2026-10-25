@@ -73,6 +73,19 @@ tf-gates-test:
 		expect fail "root-readonly:$$d" "$$root/root" tf-validate "$$(failed_line tf-init "$$root/root/$$d")"; \
 		if ! cmp -s "$$root/lock.orig" "$$root/root/$$d/.terraform.lock.hcl"; then failed="$$failed root-lock-unchanged:$$d"; fi; \
 	done; \
+	ok "$$root/backend-dir/env/dev/identity"; mkdir -p "$$root/backend-dir/env/dev/identity/.terraform" "$$root/backend-dir/env/dev/identity/mod"; \
+	printf 'output "x" {\n  value = 1\n}\n' > "$$root/backend-dir/env/dev/identity/mod/main.tf"; \
+	printf 'module "m" {\n  source = "./mod"\n}\n' > "$$root/backend-dir/env/dev/identity/module.tf"; \
+	printf 'terraform {\n  backend "s3" {\n    key    = "identity/terraform.tfstate"\n    region = "ap-northeast-1"\n  }\n}\n' > "$$root/backend-dir/env/dev/identity/backend.tf"; \
+	printf '{\n  "version": 3,\n  "terraform_version": "1.16.2",\n  "backend": {\n    "type": "s3",\n    "config": {\n      "bucket": "b",\n      "key": "identity/terraform.tfstate",\n      "region": "ap-northeast-1"\n    },\n    "hash": 0\n  }\n}\n' > "$$root/backend-dir/env/dev/identity/.terraform/terraform.tfstate"; \
+	for t in tf-validate tf-test; do expect pass "backend-dir:$$t" "$$root/backend-dir" "$$t"; done; \
+	if [ -e "$$root/backend-dir/env/dev/identity/tmp" ]; then failed="$$failed backend-dir:data-dir-outside-tmp"; fi; \
+	ok "$$root/collide/modules/a_/b"; ok "$$root/collide/modules/a/_b"; \
+	for d in a_/b a/_b; do mkdir -p "$$root/collide/modules/$$d/m"; printf 'output "x" {\n  value = 1\n}\n' > "$$root/collide/modules/$$d/m/main.tf"; done; \
+	printf 'module "m" {\n  source = "./m"\n}\n' > "$$root/collide/modules/a_/b/module.tf"; \
+	mv "$$root/collide/modules/a/_b/m" "$$root/collide/modules/a/_b/m2"; \
+	printf 'module "m" {\n  source = "./m2"\n}\n' > "$$root/collide/modules/a/_b/module.tf"; \
+	for t in tf-validate tf-test; do expect pass "data-dir-collide:$$t" "$$root/collide" "$$t"; done; \
 	for d in modules/a usecases/x env/dev/other; do \
 		rm -rf "$$root/nonroot"; ok "$$root/nonroot/$$d"; stale_lock "$$root/nonroot/$$d"; \
 		expect pass "non-root-writable:$$d" "$$root/nonroot" tf-validate; \

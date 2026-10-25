@@ -79,11 +79,19 @@ pre-commit:
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
+    # env/admin/identity と docs/setup/bootstrap.md は scripts/tf-local のテストが写しの正本として読む。
+    # usecases/state-backend と modules/s3 は、その正本が追従する元。
     go-test:
       glob:
         - "scripts/**/*.go"
         - "scripts/go.mod"
         - "scripts/go.sum"
+        - "Makefile"
+        - ".makefiles/**"
+        - "env/**"
+        - "usecases/state-backend/**"
+        - "modules/s3/**"
+        - "docs/setup/bootstrap.md"
       run: make go-test
 
     # 何を見るかと、なぜ go-test と別に要るかは scripts/README.md の test-mapping 行が持つ。
