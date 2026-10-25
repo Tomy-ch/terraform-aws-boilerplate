@@ -16,6 +16,7 @@ misconfigurations:
     paths:
       - "modules/s3/encryption.tf"
     statement: |
+      理由の正本は usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md（Checkov の CKV_AWS_145 の抑止と同じ）。
       bootstrap の段1・段2 の state Bucket は SSE-S3 で暗号化する（docs/v1.0-plan/scope.md 第10.3節、
       ADR-0602 決定5・8）。CMK は段5 で作るので、段2 で import する構成は KMS を持てない。
       撤回条件: #19 の段5 で modules/s3 を SSE-KMS に切り替えたとき。それより前に state-backend
