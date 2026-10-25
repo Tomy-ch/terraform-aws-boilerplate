@@ -4,8 +4,6 @@
 ## lang-pkgs の空 Result が混ざらない。`.trivyignore.yaml` は自動検出されないため `--ignorefile` の
 ## 明示が要り、その結果として抑止が他のスキャナへ暗黙に波及しない。
 ##
-## 秘密の検出の権威は gitleaks が持つ。trivy-secret は補助として併用する（ADR-0302 決定2）。
-##
 ## 出力形式は既定の table が人向け。CI は json / sarif を渡して stdout をリダイレクトする。trivy は
 ## 診断ログを stderr へ出すので stdout は純粋な json / sarif になる。**ただし make 自身がレシピ行を
 ## stdout へエコーするため、機械可読な出力を取るときは必ず `make -s` で呼ぶこと。** `-s` を落とすと
@@ -14,7 +12,6 @@ TRIVY_FORMAT ?= table
 
 TRIVY_SKIP_FLAGS := --skip-version-check
 
-# 脆弱性スキャンの共通条件。
 TRIVY_VULN_FLAGS := --scanners vuln --pkg-types library --severity CRITICAL,HIGH,MEDIUM
 
 # trivy-config のゲートの条件。trivy-config-canary も同じ条件で走る。

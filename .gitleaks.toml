@@ -1,7 +1,7 @@
 # gitleaks 設定
 # https://github.com/gitleaks/gitleaks#configuration
 #
-# 秘密の検出の権威はこの層が持つ（ADR-0302 決定2）。Trivy の secret scanning は権威を持たない補助として併用する。
+# gitleaks は Secret Scan の検出器の1つで、trufflehog・Trivy の secret scanning と併置する（ADR-0302 決定2）。
 # 抑止の条件は ADR-0501 決定13 に従う。
 [extend]
 useDefault = true

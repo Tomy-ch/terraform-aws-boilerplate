@@ -1,0 +1,8 @@
+# trufflehog の抑止（全契機）。1行1つの path の正規表現で、各行の直前に理由と撤回条件を書く。
+# 理由を書けないものは抑止せず、値そのものを直す（ADR-0302 決定9・10）。
+# 検出器単位の無効化（--exclude-detectors）と行の印（trufflehog:ignore）は使わない。
+
+# make pin-actions-apply が書く生成物で、値は公開の commit SHA だけである。
+# `sonarqube-scan-action` の名前と40桁の16進が SonarCloud 検出器のトークンの形に当たる誤検知。
+# 撤回: SonarCloud のサンプルを外したとき、または検出器がこの行に当たらなくなったとき。
+^\.github/actions-pin\.toml$
