@@ -52,7 +52,9 @@ define TF_SCAN_STAGE
 mkdir -p "$(1)/src"; scan=""; \
 for d in $(TF_SCAN_DIRS); do if [ -d "$$d" ]; then scan="$$scan $$d"; fi; done; \
 if [ -z "$$scan" ]; then echo "❌ $@: 走査の対象が0件です（$(TF_SCAN_DIRS)）" >&2; exit 1; fi; \
-tar --exclude .terraform -cf - $$scan | tar -xf - -C "$(1)/src"
+tar --exclude .terraform -cf "$(1)/stage.tar" $$scan; \
+tar -xf "$(1)/stage.tar" -C "$(1)/src"; \
+rm -f "$(1)/stage.tar"
 endef
 
 ## 運用機構（scripts/）の起動

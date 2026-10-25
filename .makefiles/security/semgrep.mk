@@ -7,10 +7,14 @@
 ## `# nosemgrep: <rule-id>` で持つ（ADR-0501 決定13）。rule-id は `terraform.` から始まる。
 ## 既定の .semgrepignore は tests/ を外すので、空の .semgrepignore を置いて Trivy と同じ面を見る。
 SEMGREP_RULES_COMMIT := 16b9e6d45f10649f6a531ec4838ed9924372c3bc
+# 上の commit の terraform/**/*.yaml を名前順に並べた sha256 の一覧の sha256。codeload の tarball は
+# バイト列が安定しないので、展開した中身で照合する。commit を上げるときは同時に上げる。
+SEMGREP_RULES_SHA256 := 4f9e33d41e826e5be15dff1f9e6d8b4869110220cc5e50536e930ee72d9c712b
 SEMGREP_RULES_TGZ := tmp/semgrep-rules-$(SEMGREP_RULES_COMMIT).tar.gz
 SEMGREP_WORK := tmp/semgrep/work
 SEMGREP_OUT := tmp/semgrep/out
-SEMGREP_FLAGS := semgrep scan --config terraform --metrics off --disable-version-check --error \
+# --strict は解釈できなかった箇所（warn の errors）でも非0にする。無いと、その箇所の所見が黙って消える。
+SEMGREP_FLAGS := semgrep scan --config terraform --metrics off --disable-version-check --error --strict \
 	--json-output=/tmp/out/results.json --sarif-output=/tmp/out/results.sarif /work/src
 
 # $(1) の cfg/ へ固定した commit の terraform/ の rule を写す。
@@ -18,10 +22,12 @@ define SEMGREP_STAGE_RULES
 rules=$$(mktemp -d tmp/semgrep-rules.XXXXXX); \
 tar -xzf $(SEMGREP_RULES_TGZ) -C "$$rules" --strip-components 1; \
 mkdir -p "$(1)/cfg"; \
-(cd "$$rules" && find terraform -name '*.yaml' | tar -cf - -T -) | tar -xf - -C "$(1)/cfg"; \
+cp -R "$$rules/terraform" "$(1)/cfg/"; \
 rm -rf "$$rules"; \
-[ -n "$$(find "$(1)/cfg/terraform" -name '*.yaml' | head -1)" ] \
-	|| { echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) に terraform/ の rule がありません" >&2; exit 1; }; \
+find "$(1)/cfg/terraform" -type f ! -name '*.yaml' -exec rm -f {} +; \
+sum=$$(cd "$(1)/cfg" && find terraform -name '*.yaml' | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -d ' ' -f 1); \
+[ "$$sum" = "$(SEMGREP_RULES_SHA256)" ] \
+	|| { echo "❌ $@: semgrep-rules $(SEMGREP_RULES_COMMIT) の terraform/ の rule が宣言と一致しません（$$sum）" >&2; exit 1; }; \
 : > "$(1)/src/.semgrepignore"
 endef
 
@@ -35,8 +41,10 @@ semgrep: semgrep-canary
 	@set -eu; rm -rf $(SEMGREP_WORK) $(SEMGREP_OUT); $(call TF_SCAN_STAGE,$(SEMGREP_WORK)); \
 	$(call SEMGREP_STAGE_RULES,$(SEMGREP_WORK)); \
 	rc=0; $(call IMAGE_RUN,semgrep_runner,$(SEMGREP_WORK),$(SEMGREP_OUT),-w /work/cfg,$(SEMGREP_FLAGS)) || rc=$$?; \
+	want=$$(find $(SEMGREP_WORK)/src -type f \( -name '*.tf' -o -name '*.hcl' \) | wc -l | tr -d ' '); \
 	n=$$(jq '.paths.scanned // [] | length' $(SEMGREP_OUT)/results.json); \
-	if [ "$$n" -eq 0 ]; then echo "❌ semgrep: 走査したファイルが0件です" >&2; exit 1; fi; \
+	if [ "$$n" -eq 0 ] || [ "$$n" -lt "$$want" ]; then \
+		echo "❌ semgrep: 走査したファイル $$n 件が、写した .tf / .hcl の $$want 件に届きません" >&2; exit 1; fi; \
 	echo "semgrep: ファイル $$n 件を走査しました（終了コード $${rc}）" >&2; \
 	exit $$rc
 
