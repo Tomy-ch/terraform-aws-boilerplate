@@ -13,7 +13,7 @@ endef
 
 # 偽の terraform。呼ばれるたびに引数を1行追記する。tf.fail-plan があれば plan だけ失敗する。
 define TF_LOCAL_FAKE_TERRAFORM
-printf '#!/bin/sh\nd=$$(dirname "$$0")\nprintf "%%s\\n" "$$*" >> "$$d/tf.args"\nenv | grep "^AWS_" | sort > "$$d/tf.env" || true\necho "fake terraform output"\ncase " $$* " in *" plan "*) if [ -f "$$d/tf.fail-plan" ]; then exit 1; fi;; esac\nexit 0\n' > "$$1/terraform"; \
+printf '#!/bin/sh\nd=$$(dirname "$$0")\nprintf "%%s\\n" "$$*" >> "$$d/tf.args"\nenv | grep -E "^(AWS_|TF_CLI_ARGS|TF_WORKSPACE=|TF_DATA_DIR=)" | sort > "$$d/tf.env" || true\necho "fake terraform output"\ncase " $$* " in *" plan "*) if [ -f "$$d/tf.fail-plan" ]; then exit 1; fi;; esac\nexit 0\n' > "$$1/terraform"; \
 chmod +x "$$1/terraform"
 endef
 
@@ -51,7 +51,8 @@ tf-local-test:
 	run root-user init-admin-identity; if [ "$$rc" -eq 0 ]; then bad root-user:rc; fi; no_terraform root-user; \
 	new env; \
 	c="$$root/env"; out=$$(AWS_ACCESS_KEY_ID=x AWS_PROFILE=other AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/ \
-		$(MAKE) -s --no-print-directory init-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" 2>&1) || bad env:rc; \
+		TF_CLI_ARGS=-x TF_CLI_ARGS_init=-x TF_CLI_ARGS_plan=-target=a.b TF_WORKSPACE=w TF_DATA_DIR=/tmp/x \
+		$(MAKE) -s --no-print-directory plan-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" TF_PLAN_LOG_DIR="$$c/log" 2>&1) || bad env:rc; \
 	want=$$(printf 'AWS_EC2_METADATA_DISABLED=true\nAWS_PROFILE=tabp-bootstrap'); \
 	for f in aws.env tf.env; do if [ "$$(cat "$$c/bin/$$f" 2>/dev/null)" != "$$want" ]; then bad "env:$$f"; fi; done; \
 	new no-root; rm -rf "$$root/no-root/base/env/admin/identity"; \
@@ -75,6 +76,10 @@ tf-local-test:
 	new plan-fails; touch "$$root/plan-fails/bin/tf.fail-plan"; run plan-fails plan-admin-identity; \
 	if [ "$$rc" -eq 0 ]; then bad plan-fails:rc; fi; \
 	if ! grep -qF 'fake terraform output' "$$root/plan-fails/log/admin-identity.log" 2>/dev/null; then bad plan-fails:log-output; fi; \
+	new no-git; c="$$root/no-git"; printf '#!/bin/sh\nexit 128\n' > "$$c/bin/git"; chmod +x "$$c/bin/git"; \
+	out=$$(PATH="$$c/bin:$$PATH" $(MAKE) -s --no-print-directory plan-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" TF_PLAN_LOG_DIR="$$c/log" 2>&1); rc=$$?; \
+	if [ "$$rc" -eq 0 ]; then bad no-git:rc; fi; \
+	if grep -q ' plan ' "$$c/bin/tf.args" 2>/dev/null; then bad no-git:plan-ran; fi; \
 	new login; c="$$root/login"; out=$$(AWS_PROFILE=other AWS_ACCESS_KEY_ID=x \
 		$(MAKE) -s --no-print-directory aws-login AWS_BIN="$$c/bin/aws" 2>&1) || bad login:rc; \
 	if [ "$$(cat "$$c/bin/aws.args" 2>/dev/null)" != "login --profile tabp-bootstrap" ]; then bad login:aws-args; fi; \

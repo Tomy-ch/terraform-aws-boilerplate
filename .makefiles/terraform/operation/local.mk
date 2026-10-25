@@ -7,49 +7,44 @@
 AWS_BIN ?= aws
 TF_PLAN_LOG_DIR ?= tmp/plan
 TF_LOCAL_PROJECT := tabp
+TF_LOCAL_PROFILE := tabp-bootstrap
 # $(1)=env $(2)=identity|workload（ADR-0604 決定5）
 TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
-TF_LOCAL_ENV = env $(AWS_ENV_UNSET) AWS_PROFILE=$(1) AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
+# 引数を足す・対象の state を変える TF_ の環境変数も外す（-target を環境変数から通させない）。
+TF_LOCAL_ENV = env $(AWS_ENV_UNSET) $$(env | sed -n 's/^\(TF_CLI_ARGS[A-Za-z0-9_]*\)=.*/-u \1/p') -u TF_WORKSPACE -u TF_DATA_DIR \
+	AWS_PROFILE=$(1) AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 
 # $(1)=env $(2)=root $(3)=profile
 #
-# backend block は式を持てないので、Bucket 名の規則を写して組む。正本は modules/s3 と
-# usecases/state-backend で、写しのずれは tf-local-test が env/admin/identity のテストの期待値と
-# 突き合わせて見る。region は backend の値を使う（state Bucket は provider と同じ region に在る）。
+# 値の算出は scripts/tf-local（ADR-0702 決定3）。tf-local は sh -c の中で動くので、値は export した変数で渡す。
 define TF_LOCAL_INIT
-set -euo pipefail; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; \
-if [ ! -f "$$dir/backend.tf" ]; then echo "❌ $$dir/backend.tf がありません" >&2; exit 1; fi; \
-region=$$(sed -n 's/^[[:space:]]*region[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$$dir/backend.tf"); \
-if [ "$$(printf '%s\n' "$$region" | grep -c .)" -ne 1 ] || [[ ! $$region =~ ^[a-z]{2}(-[a-z]+)+-[0-9]$$ ]]; then \
-	echo "❌ $$dir/backend.tf から region を1つに決められません: '$$region'" >&2; exit 1; \
-fi; \
-identity=$$($(call TF_LOCAL_ENV,$(3)) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); \
-account=$${identity%%[[:space:]]*}; arn=$${identity##*[[:space:]]}; \
-if [[ ! $$account =~ ^[0-9]{12}$$ ]]; then echo "❌ アカウント ID を取得できません: '$$account'（make aws-login を実行してください）" >&2; exit 1; fi; \
-if [[ $$arn == *:root ]]; then echo "❌ root の資格情報では実行しません: $$arn" >&2; exit 1; fi; \
-$(call TF_LOCAL_ENV,$(3)) $(TF_BIN) -chdir="$$dir" init -input=false -lockfile=readonly \
-	-backend-config="bucket=$(TF_LOCAL_PROJECT)-$(1)-tfstate-$$account-$$region-an"
+set -euo pipefail; export dir="$(call TF_LOCAL_DIR,$(1),$(2))"; \
+export region; region=$$($(call RUN_SCRIPT_HOST,tf-local,region "$$dir")); \
+bucket=$$($(call TF_LOCAL_ENV,$(3)) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text \
+	| $(call RUN_SCRIPT_HOST,tf-local,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region")); \
+$(call TF_LOCAL_ENV,$(3)) $(TF_BIN) -chdir="$$dir" init -input=false -lockfile=readonly -backend-config="bucket=$$bucket"
 endef
 
 # plan は lock を取らない（ADR-0604 決定8）。どの commit の plan かを log の1行目に残す（ADR-0602 決定10）。
 define TF_LOCAL_PLAN
 set -euo pipefail; mkdir -p "$(TF_PLAN_LOG_DIR)"; \
-dirty=""; if [ -n "$$(git status --porcelain)" ]; then dirty=" （作業ツリーに未コミットの変更あり）"; fi; \
-{ echo "commit: $$(git rev-parse HEAD)$$dirty"; \
+commit=$$(git rev-parse HEAD); status=$$(git status --porcelain); \
+dirty=""; if [ -n "$$status" ]; then dirty=" （作業ツリーに未コミットの変更あり）"; fi; \
+{ echo "commit: $$commit$$dirty"; \
 	$(call TF_LOCAL_ENV,$(3)) $(TF_BIN) -chdir="$(call TF_LOCAL_DIR,$(1),$(2))" plan -lock=false -input=false -no-color 2>&1; \
 } | tee "$(TF_PLAN_LOG_DIR)/$(1)-$(2).log"
 endef
 
 .PHONY: aws-login ## bootstrap のプロファイル（tabp-bootstrap）で aws login する
 aws-login:
-	@env $(AWS_ENV_UNSET) $(AWS_BIN) login --profile tabp-bootstrap
+	@env $(AWS_ENV_UNSET) $(AWS_BIN) login --profile $(TF_LOCAL_PROFILE)
 
 .PHONY: init-admin-identity ## 管理アカウントの identity root を state Bucket の backend で init する（要 make aws-login）
 init-admin-identity: SHELL := /bin/bash
 init-admin-identity:
-	@$(call TF_LOCAL_INIT,admin,identity,tabp-bootstrap)
+	@$(call TF_LOCAL_INIT,admin,identity,$(TF_LOCAL_PROFILE))
 
 .PHONY: plan-admin-identity ## 管理アカウントの identity root を lock を取らずに plan し、出力を tmp/plan/ に残す（要 make aws-login）
 plan-admin-identity: SHELL := /bin/bash
 plan-admin-identity: init-admin-identity
-	@$(call TF_LOCAL_PLAN,admin,identity,tabp-bootstrap)
+	@$(call TF_LOCAL_PLAN,admin,identity,$(TF_LOCAL_PROFILE))

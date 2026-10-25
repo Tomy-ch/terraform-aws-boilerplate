@@ -26,7 +26,7 @@ TF_ENV = env $(AWS_ENV_UNSET) \
 	AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 # 検査の init は root の .terraform を使わない。手元で実 AWS の backend に init した root
 # （make init-admin-identity など）が .terraform に backend の設定を残すと、-backend=false の init が
-# その backend の資格情報を探して落ちる。ディレクトリごとの作業領域を TF_BASE の tmp/ の下に置く。
+# その backend の資格情報を探して落ちる。
 # terraform は相対の TF_DATA_DIR を -chdir の先から解決するので、絶対パスで渡す。
 TF_GATES_DATA = $(abspath $(TF_BASE))/tmp/tf-gates-data
 TF_BIN ?= terraform
@@ -59,7 +59,7 @@ is_root() ( \
 )
 endef
 
-# パスを1つの名前へ写す。_ を _u、/ を __ にして、別のディレクトリが同じ名前にならないようにする。
+# パスを1つの名前へ写す。別のディレクトリが同じ名前にならないよう、_ を先にエスケープする。
 define TF_DATA_DIR_OF
 data_dir() { printf '%s/%s' "$(TF_GATES_DATA)" "$$(printf '%s' "$${1#$(TF_BASE)/}" | sed -e 's/_/_u/g' -e 's|/|__|g')"; }
 endef
