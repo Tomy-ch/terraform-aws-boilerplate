@@ -103,6 +103,7 @@ truthy 側へ置く。
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` を除く4 job | 15 | 同上（新設） |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
+| `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
@@ -189,6 +190,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
+| `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。

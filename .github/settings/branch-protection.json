@@ -63,6 +63,9 @@
             "context": "adr-lint"
           },
           {
+            "context": "checkov"
+          },
+          {
             "context": "commitlint"
           },
           {
@@ -73,6 +76,9 @@
           },
           {
             "context": "go-test"
+          },
+          {
+            "context": "kics"
           },
           {
             "context": "md-lint"
@@ -94,6 +100,9 @@
           },
           {
             "context": "secret-scan"
+          },
+          {
+            "context": "semgrep"
           },
           {
             "context": "skill-lint"

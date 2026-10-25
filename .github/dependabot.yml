@@ -34,6 +34,20 @@ updates:
         patterns:
           - "*"
 
+  # 上流のイメージで実行する Security の道具（docker-compose.yaml の image:）。tag を上げる PR では
+  # make pin-images-resolve / pin-images-apply で digest を付け直す。
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 5
+    groups:
+      docker-compose:
+        patterns:
+          - "*"
+
   # ---- GitHub Actions ----
   - package-ecosystem: "github-actions"
     directory: "/"

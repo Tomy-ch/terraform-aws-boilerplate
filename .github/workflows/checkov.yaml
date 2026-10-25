@@ -1,0 +1,205 @@
+name: Checkov
+
+# Checkov over the Terraform tree, one of the Security layer's gates (ADR-0501 decision 6).
+# Checkov returns no severity, so any finding fails; accepted exceptions are inline
+# #checkov:skip comments. The tool runs from its upstream image without a bind mount, which
+# the runner's egress agent refuses (.makefiles/runner.mk IMAGE_RUN).
+
+on:
+  push:
+    branches:
+      - 'release/*'
+      - develop
+      - staging
+      - production
+    paths:
+      - '.github/workflows/checkov.yaml'
+      - '.makefiles/security/checkov.mk'
+      - '.makefiles/runner.mk'
+      - 'Makefile'
+      - 'docker-compose.yaml'
+      - 'docker/images-pin.toml'
+      - 'usecases/**'
+      - 'modules/**'
+      - 'env/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Filter the changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          # An empty token selects `git diff` over the compare API, which refuses a large diff.
+          token: ''
+          filters: |
+            relevant:
+              - '.github/workflows/checkov.yaml'
+              - '.makefiles/security/checkov.mk'
+              - '.makefiles/runner.mk'
+              - 'Makefile'
+              - 'docker-compose.yaml'
+              - 'docker/images-pin.toml'
+              - 'usecases/**'
+              - 'modules/**'
+              - 'env/**'
+
+  checkov:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            registry-1.docker.io
+            auth.docker.io
+            production.cloudfront.docker.com
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The gate exits non-zero on a finding, which would skip the summary below; the exit
+      # code is recorded instead and judged by the last step.
+      - name: Checkov scan
+        id: scan
+        run: |
+          set +e
+          make -s checkov
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+        shell: bash
+
+      - name: Create Checkov summary (Markdown)
+        id: summarize
+        run: |
+          set -euo pipefail
+          out=tmp/checkov/out/results_json.json
+          # A framework yields an object; several yield an array.
+          COUNT=$(jq '[(if type == "array" then .[] else . end) | .results.failed_checks // [] | .[]] | length' "$out")
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "title=## ✅ Checkov: PASS (no failed check)" >> "$GITHUB_OUTPUT"
+            echo "No failed Checkov check." > checkov-summary.md
+            exit 0
+          fi
+
+          echo "title=## 🚨 Checkov: FOUND (${COUNT})" >> "$GITHUB_OUTPUT"
+          jq -r '
+            (if type == "array" then .[] else . end)
+            | .results.failed_checks // [] | .[]
+            | "- `\(.file_path):\(.file_line_range[0])` \(.check_id) — \(.check_name)\n  - \(.resource)"
+          ' "$out" > checkov-summary.md
+        shell: bash
+
+      - name: Upload Checkov report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: checkov
+          path: |
+            tmp/checkov/out/
+            checkov-summary.md
+
+      - name: Comment Checkov result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- checkov-result -->'
+          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          title: "${{ steps.summarize.outputs.title || '## ⚠️ Checkov: CUT OFF (no result produced)' }}"
+          body-file: checkov-summary.md
+          details-summary: '📄 Summary'
+
+      - name: Upload Checkov SARIF to code scanning
+        if: always() && hashFiles('tmp/checkov/out/results_sarif.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: tmp/checkov/out/results_sarif.sarif
+          category: checkov
+
+      # A non-zero exit with no failed check counted is the canary, the zero-target check or
+      # checkov itself failing.
+      - name: Fail if a check failed
+        if: always()
+        shell: bash
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
+          COUNT: ${{ steps.summarize.outputs.count }}
+        run: |
+          if [ "${COUNT-}" != "0" ]; then
+            echo "failed Checkov checks: ${COUNT:-not counted}"
+            exit 1
+          fi
+          if [ "${SCAN_CODE-}" != "0" ]; then
+            echo "make checkov exited with ${SCAN_CODE:-no exit code} without a counted finding"
+            exit 1
+          fi
