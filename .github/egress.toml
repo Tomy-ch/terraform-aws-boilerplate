@@ -216,3 +216,15 @@ classes = ["trivy"]
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]
 
+
+# #166 手順0 の捨ての計測。次の commit で消す。
+[job."probe-166.yaml:probe"]
+classes = []
+extra = [
+  "docker.io",
+  "*.docker.io",
+  "*.docker.com",
+  "production.cloudfront.docker.com",
+  "*.r2.cloudflarestorage.com",
+  "semgrep.dev",
+]
