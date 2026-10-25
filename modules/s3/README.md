@@ -66,6 +66,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 - global namespace と推測しにくい名前: 削除した名前を他人が取り直せる問題が残る
 - MFA delete: root しか有効にできず、lifecycle と併用できない（[MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)。記録は `usecases/state-backend/docs/adr/0102-no-mfa-delete-or-object-lock.md`）
+- リージョン間の複製（security best practices の「Consider S3 Cross-Region Replication」）: 今の消費者 `state-backend` の責務外（`usecases/state-backend/README.md` の unsupported）。Checkov の CKV_AWS_144 はこの判断で抑止している。複製を要る usecase がこの module を使うときに見直す
 - `aws_iam_policy_document`: mock の下で文書を確かめられない
 - `s3:TlsVersion` で TLS の最低版を求める: AWS は 2024-02 に AWS service API endpoint での TLS 1.0 / 1.1 の受け付けを終えると告知しており、1.2 より上の値は公式推奨で一意に決まらない
 - Policy と Public Access Block の間の `depends_on`: Deny だけの Policy は public に当たらず、順序を要する根拠を一次資料で確かめられない
