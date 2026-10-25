@@ -10,8 +10,11 @@ TF_LOCAL_PROJECT := tabp
 TF_LOCAL_PROFILE := tabp-bootstrap
 # $(1)=env $(2)=identity|workload（ADR-0604 決定5）
 TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
-# 引数を足す・対象の state を変える TF_ の環境変数も外す（-target を環境変数から通させない）。
-TF_LOCAL_ENV = env $(AWS_ENV_UNSET) $$(env | sed -n 's/^\(TF_CLI_ARGS[A-Za-z0-9_]*\)=.*/-u \1/p') -u TF_WORKSPACE -u TF_DATA_DIR \
+# 引数・入力・対象の state・provider を変える TF_ の環境変数と、資格情報を含みうる trace を出す TF_LOG も外す
+# （-target を環境変数から通させない、plan の log に trace を残さない）。
+TF_LOCAL_ENV = env $(AWS_ENV_UNSET) \
+	$$(env | sed -n -e 's/^\(TF_CLI_ARGS[A-Za-z0-9_]*\)=.*/-u \1/p' -e 's/^\(TF_VAR_[A-Za-z0-9_]*\)=.*/-u \1/p' -e 's/^\(TF_LOG[A-Za-z0-9_]*\)=.*/-u \1/p') \
+	-u TF_WORKSPACE -u TF_DATA_DIR -u TF_CLI_CONFIG_FILE -u TF_REATTACH_PROVIDERS \
 	AWS_PROFILE=$(1) AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 
 # $(1)=env $(2)=root $(3)=profile

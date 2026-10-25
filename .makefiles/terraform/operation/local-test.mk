@@ -13,7 +13,7 @@ endef
 
 # 偽の terraform。呼ばれるたびに引数を1行追記する。tf.fail-plan があれば plan だけ失敗する。
 define TF_LOCAL_FAKE_TERRAFORM
-printf '#!/bin/sh\nd=$$(dirname "$$0")\nprintf "%%s\\n" "$$*" >> "$$d/tf.args"\nenv | grep -E "^(AWS_|TF_CLI_ARGS|TF_WORKSPACE=|TF_DATA_DIR=)" | sort > "$$d/tf.env" || true\necho "fake terraform output"\ncase " $$* " in *" plan "*) if [ -f "$$d/tf.fail-plan" ]; then exit 1; fi;; esac\nexit 0\n' > "$$1/terraform"; \
+printf '#!/bin/sh\nd=$$(dirname "$$0")\nprintf "%%s\\n" "$$*" >> "$$d/tf.args"\nenv | grep -E "^(AWS_|TF_CLI_ARGS|TF_WORKSPACE=|TF_DATA_DIR=|TF_LOG|TF_CLI_CONFIG_FILE=|TF_REATTACH_PROVIDERS=|TF_VAR_)" | sort > "$$d/tf.env" || true\necho "fake terraform output"\ncase " $$* " in *" plan "*) if [ -f "$$d/tf.fail-plan" ]; then exit 1; fi;; esac\nexit 0\n' > "$$1/terraform"; \
 chmod +x "$$1/terraform"
 endef
 
@@ -41,6 +41,7 @@ tf-local-test:
 	if [ "$$(cat "$$root/ok/bin/aws.args" 2>/dev/null)" != "sts get-caller-identity --region ap-northeast-1 --query [Account,Arn] --output text" ]; then bad ok:aws-args; fi; \
 	if [ "$$(cat "$$root/ok/bin/tf.args" 2>/dev/null)" != "-chdir=$$root/ok/base/env/admin/identity init -input=false -lockfile=readonly -backend-config=bucket=$$bucket" ]; then bad ok:terraform-args; fi; \
 	if ! grep -qF -- "== \"$$bucket\"" env/admin/identity/tests/imports.tftest.hcl; then bad ok:bucket-name-drift; fi; \
+	if ! grep -qF -- 'BUCKET="tabp-admin-tfstate-$${ACCOUNT_ID}-$${REGION}-an"' docs/setup/bootstrap.md; then bad ok:bootstrap-bucket-drift; fi; \
 	for v in empty short; do \
 		new "account-$$v"; \
 		case "$$v" in empty) : > "$$root/account-$$v/bin/aws.out";; short) printf '12345678901\tarn:aws:iam::12345678901:user/bootstrap\n' > "$$root/account-$$v/bin/aws.out";; esac; \
@@ -53,6 +54,7 @@ tf-local-test:
 	new env; \
 	c="$$root/env"; out=$$(AWS_ACCESS_KEY_ID=x AWS_PROFILE=other AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/ \
 		TF_CLI_ARGS=-x TF_CLI_ARGS_init=-x TF_CLI_ARGS_plan=-target=a.b TF_WORKSPACE=w TF_DATA_DIR=/tmp/x \
+		TF_LOG=trace TF_LOG_PATH=/tmp/x TF_LOG_PROVIDER=trace TF_CLI_CONFIG_FILE=/tmp/x TF_REATTACH_PROVIDERS=x TF_VAR_a=b \
 		$(MAKE) -s --no-print-directory plan-admin-identity TF_BASE="$$c/base" AWS_BIN="$$c/bin/aws" TF_BIN="$$c/bin/terraform" TF_PLAN_LOG_DIR="$$c/log" 2>&1) || bad env:rc; \
 	want=$$(printf 'AWS_EC2_METADATA_DISABLED=true\nAWS_PROFILE=tabp-bootstrap'); \
 	for f in aws.env tf.env; do if [ "$$(cat "$$c/bin/$$f" 2>/dev/null)" != "$$want" ]; then bad "env:$$f"; fi; done; \
