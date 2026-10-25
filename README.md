@@ -16,7 +16,7 @@
 
 | 区分 | 状態 |
 | --- | --- |
-| `docs/adr/` | 22 件の Accepted ADR。`make adr-lint` が構造と相互参照を検査する |
+| `docs/adr/` | repository-wide の Accepted ADR。一覧は `docs/adr/README.md` が持ち、`make adr-lint` が構造と相互参照を検査する |
 | `.github/workflows/` | CI の定義。必須検査の一覧は `.github/settings/branch-protection.json` が持つ |
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |

@@ -16,7 +16,7 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend` と管理アカウントの identity root のほかに、ユースケースと環境が無い
-- Conftest の Policy Test と層検査 —— 未作成で、`make` にも配線されていない
+- Conftest の Policy Test と、HCL のソースの検査（層検査、コード実行の検出）—— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）
 - plan / apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路が存在しない
