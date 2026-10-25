@@ -39,7 +39,7 @@ trivy-config-canary:
 	case "$$rc:$$out" in \
 	0:*) echo "❌ trivy-config-canary: MEDIUM の誤設定（DS-0001）を持つ構成でゲートが落ちませんでした" >&2; exit 1 ;; \
 	*'"ID": "DS-0001"'*) ;; \
-	*) echo "❌ trivy-config-canary: trivy が DS-0001 を報告せずに終了しました（終了コード $$rc。異常終了か、DS-0001 の ID・重大度の変更）" >&2; exit 1 ;; \
+	*) echo "❌ trivy-config-canary: trivy が DS-0001 を報告せずに終了しました（終了コード $${rc}。異常終了か、DS-0001 の ID・重大度の変更）" >&2; exit 1 ;; \
 	esac; \
 	echo "✅ trivy-config-canary: MEDIUM の誤設定を閾値の内側で検出しました" >&2
 
