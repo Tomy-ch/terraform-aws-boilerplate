@@ -25,3 +25,28 @@ run "outputs" {
     error_message = "3つの role の ARN が互いに異なっていません。"
   }
 }
+
+# project・env・state_bucket_arn が内部の module へ取り違えずに渡ることを、admin でない値で見る。
+run "wiring" {
+  command = apply
+
+  variables {
+    project          = "t4bp"
+    env              = "dev"
+    state_bucket_arn = "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
+  }
+
+  assert {
+    condition = module.github_oidc.roles == {
+      plan           = { name = "t4bp-dev-ci-plan", environment = "dev-plan" }
+      apply          = { name = "t4bp-dev-ci-apply", environment = "dev-apply" }
+      apply_identity = { name = "t4bp-dev-ci-apply-identity", environment = "dev-apply-identity" }
+    }
+    error_message = "role と environment の名前が、project と env から組まれていません。"
+  }
+
+  assert {
+    condition     = jsondecode(module.github_oidc.role_policies["plan"]).Statement[0].Resource == "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
+    error_message = "state_bucket_arn が内部の module の権限へ渡っていません。"
+  }
+}

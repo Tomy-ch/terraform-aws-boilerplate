@@ -97,3 +97,55 @@ run "role_names" {
     error_message = "role のセッションの上限が1時間になっていません。"
   }
 }
+
+# role と environment の名前が、admin に固定されず入力から組まれることを見る。
+run "names_follow_inputs" {
+  command = apply
+
+  variables {
+    name_prefix = "t4bp-dev"
+    env         = "dev"
+  }
+
+  assert {
+    condition     = [aws_iam_role.this["plan"].name, aws_iam_role.this["apply"].name, aws_iam_role.this["apply_identity"].name] == ["t4bp-dev-ci-plan", "t4bp-dev-ci-apply", "t4bp-dev-ci-apply-identity"]
+    error_message = "role の名前が name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role.this["apply_identity"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:octo-org@123456/octo-repo@456789:environment:dev-apply-identity"
+    error_message = "信頼条件の environment が env から組まれていません。"
+  }
+}
+
+# 公開 output の値は、この map の取り違えをそのまま受け継ぐ。
+run "outputs_per_role" {
+  command = apply
+
+  assert {
+    condition = output.role_arns == {
+      plan           = aws_iam_role.this["plan"].arn
+      apply          = aws_iam_role.this["apply"].arn
+      apply_identity = aws_iam_role.this["apply_identity"].arn
+    }
+    error_message = "role_arns が、役割ごとにその役割の role の ARN を返していません。"
+  }
+
+  assert {
+    condition = output.roles == {
+      plan           = { name = "tabp-admin-ci-plan", environment = "admin-plan" }
+      apply          = { name = "tabp-admin-ci-apply", environment = "admin-apply" }
+      apply_identity = { name = "tabp-admin-ci-apply-identity", environment = "admin-apply-identity" }
+    }
+    error_message = "roles が、役割ごとの role 名と environment 名を返していません。"
+  }
+
+  assert {
+    condition = output.role_policies == {
+      plan           = aws_iam_role_policy.this["plan"].policy
+      apply          = aws_iam_role_policy.this["apply"].policy
+      apply_identity = aws_iam_role_policy.this["apply_identity"].policy
+    }
+    error_message = "role_policies が、役割ごとにその役割の inline policy を返していません。"
+  }
+}

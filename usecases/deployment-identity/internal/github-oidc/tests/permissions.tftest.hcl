@@ -23,7 +23,28 @@ run "policies" {
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
         ]
       },
-      { Sid = "ReadStateBucketConfiguration", Effect = "Allow", Action = local.state_bucket_read_actions, Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
+      {
+        Sid    = "ReadStateBucketConfiguration"
+        Effect = "Allow"
+        Action = [
+          "s3:GetAccelerateConfiguration",
+          "s3:GetBucketAcl",
+          "s3:GetBucketCORS",
+          "s3:GetBucketLogging",
+          "s3:GetBucketObjectLockConfiguration",
+          "s3:GetBucketOwnershipControls",
+          "s3:GetBucketPolicy",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:GetBucketRequestPayment",
+          "s3:GetBucketTagging",
+          "s3:GetBucketVersioning",
+          "s3:GetBucketWebsite",
+          "s3:GetEncryptionConfiguration",
+          "s3:GetLifecycleConfiguration",
+          "s3:GetReplicationConfiguration",
+        ]
+        Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+      },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
         Sid      = "ReadCiRoles"
@@ -46,10 +67,19 @@ run "policies" {
         Action   = "iam:*"
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn, aws_iam_openid_connect_provider.github.arn]
       },
+      {
+        Sid    = "DenyIdentityStateWrite"
+        Effect = "Deny"
+        Action = ["s3:DeleteObject", "s3:PutObject"]
+        Resource = [
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock",
+        ]
+      },
       { Sid = "DenyStateBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/*" },
     ]
-    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物と state Bucket の変更の拒否になっていません。"
+    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・state Bucket の変更の拒否になっていません。"
   }
 
   assert {
@@ -57,7 +87,28 @@ run "policies" {
       { Sid = "ListStateBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
       { Sid = "WriteIdentityState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate" },
       { Sid = "LockIdentityState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock" },
-      { Sid = "ReadStateBucketConfiguration", Effect = "Allow", Action = local.state_bucket_read_actions, Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
+      {
+        Sid    = "ReadStateBucketConfiguration"
+        Effect = "Allow"
+        Action = [
+          "s3:GetAccelerateConfiguration",
+          "s3:GetBucketAcl",
+          "s3:GetBucketCORS",
+          "s3:GetBucketLogging",
+          "s3:GetBucketObjectLockConfiguration",
+          "s3:GetBucketOwnershipControls",
+          "s3:GetBucketPolicy",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:GetBucketRequestPayment",
+          "s3:GetBucketTagging",
+          "s3:GetBucketVersioning",
+          "s3:GetBucketWebsite",
+          "s3:GetEncryptionConfiguration",
+          "s3:GetLifecycleConfiguration",
+          "s3:GetReplicationConfiguration",
+        ]
+        Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+      },
       {
         Sid      = "ConfigureStateBucket"
         Effect   = "Allow"
@@ -85,11 +136,6 @@ run "policies" {
       },
     ]
     error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物の管理になっていません。"
-  }
-
-  assert {
-    condition     = length(local.state_bucket_read_actions) == 15
-    error_message = "state Bucket の設定の読み取りの Action が、aws_s3_bucket と付随する resource の Read が呼ぶ15件になっていません。"
   }
 
   assert {
