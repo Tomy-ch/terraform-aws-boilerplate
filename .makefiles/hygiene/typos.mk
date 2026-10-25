@@ -3,8 +3,9 @@
 ## 設定は .typos.toml。対象の除外と、誤検知として受け入れた語の理由はそこが持つ。
 
 ## 走査対象が追跡ファイルを覆っていることを、git の一覧と突き合わせて確かめる。外してよいのは
-## .typos.toml の extend-exclude と同じ生成物だけで、両者は揃えて変える。
-TYPOS_EXPECTED_EXCLUDES := (^|/)\.terraform\.lock\.hcl$$|^scripts/go\.sum$$
+## .typos.toml の extend-exclude と同じ生成物と、typos が走査から外す自身の設定ファイルだけで、
+## 前者は .typos.toml と揃えて変える。
+TYPOS_EXPECTED_EXCLUDES := (^|/)\.terraform\.lock\.hcl$$|^scripts/go\.sum$$|^\.typos\.toml$$
 
 .PHONY: typos ## 綴りの誤りが無いことを検査
 typos: typos-canary
