@@ -141,5 +141,8 @@ RUN set -eu; \
     npm cache clean --force; \
     rm -rf /root/.npm
 
+# root で動かさない理由は go_tools 段の USER 直上が持つ。
+USER 65534:65534
+
 ENTRYPOINT []
 CMD []
