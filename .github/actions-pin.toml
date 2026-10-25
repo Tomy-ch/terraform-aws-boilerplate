@@ -11,3 +11,4 @@
 "dorny/paths-filter@v4" = "ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d"
 "github/codeql-action@v4.39.1" = "9b3254085494b55a0f7c4c2b3d2d52cc712ce370"
 "k1LoW/octocov-action@v1" = "a167dc0dee441b7ffc45e1b862ab55ec0d87f278"
+"ossf/scorecard-action@v2.4.4" = "2d1146689b8cda280b9bc96326124645441f03bc"

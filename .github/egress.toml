@@ -140,6 +140,10 @@ classes = ["mise"]
 [job."secret-scan.yaml:trivy-secret"]
 classes = ["mise"]
 
+# --no-verification と --no-update で、走査そのものは外へ出ない。
+[job."secret-scan.yaml:trufflehog"]
+classes = ["mise"]
+
 [job."tidy-check.yaml:changes"]
 classes = []
 
@@ -216,3 +220,19 @@ classes = ["trivy"]
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]
 
+[job."hygiene.yaml:typos"]
+classes = ["mise"]
+
+[job."hygiene.yaml:editorconfig-check"]
+classes = ["mise"]
+
+# Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・パッケージの情報）。publish しないので
+# api.scorecard.dev と sigstore は要らない。action の image（ghcr.io）は job の開始時に取得され、
+# bullfrog より前にある。
+[job."scorecard.yaml:scorecard"]
+classes = []
+extra = [
+  "api.osv.dev",
+  "api.deps.dev",
+  "www.bestpractices.dev",
+]

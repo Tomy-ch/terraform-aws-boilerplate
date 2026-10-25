@@ -13,6 +13,8 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | Pull Request のゲート | すべての Pull Request | lint / テスト / 宣言と実体のずれで merge を止める |
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
+| リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
+| 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ## 必須検査はすべての Pull Request で報告される
@@ -104,6 +106,7 @@ truthy 側へ置く。
 | `terraform-gates.yaml` の `changes` を除く4 job | 15 | 同上（新設） |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
+| `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、
@@ -134,8 +137,9 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
 | `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
 
-秘密の走査（gitleaks / Trivy secret）と `zizmor`（high）は所見で job を落とすので、failure モードが
-既に届けている。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
+秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
+failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
+code scanning の alert である。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
 意図的に繋いでいない。
 
 ## Go のクールダウン
