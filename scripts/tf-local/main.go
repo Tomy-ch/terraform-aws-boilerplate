@@ -14,6 +14,7 @@
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
+// plan-header だけは git を起動して作業ツリーを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -51,6 +52,8 @@ var (
 	regionPattern  = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 	accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
 	tokenPattern   = regexp.MustCompile(`^[a-z0-9]+$`)
+	commitPattern  = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// unsetPrefixes と unsetNames は、資格情報・引数・入力・対象の state・provider を変える変数と、
 	// 資格情報を含みうる trace を出す変数。TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
@@ -67,6 +70,7 @@ var (
 	errRootCredentials  = xerrors.New("❌ root の資格情報では実行しません")
 	errToken            = xerrors.New("❌ project と env は英小文字と数字だけです")
 	errGit              = xerrors.New("❌ plan した commit を git から決められません")
+	errEnvName          = xerrors.New("❌ 外す環境変数の名前が不正です")
 )
 
 type deps struct {
@@ -107,7 +111,7 @@ func run(args []string, out io.Writer, d deps) error {
 			return errUsage
 		}
 
-		value = envUnset(d.environ)
+		value, err = envUnset(d.environ)
 	case "plan-header":
 		if len(args) != 1 {
 			return errUsage
@@ -232,14 +236,22 @@ func bucketName(project, env, account, region string) (string, error) {
 }
 
 // envUnset は、environ のうち外す変数を `-u <名前>` の並びで返します。外す変数が無ければ空文字を返す。
-func envUnset(environ []string) string {
+// make はこの出力を単語分割して env に渡すので、外す変数の名前が変数名の形でなければ、
+// 黙って残さずに失敗します。
+func envUnset(environ []string) (string, error) {
 	var names []string
 
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
-			names = append(names, name)
+		if !slices.Contains(unsetNames, name) && !slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			continue
 		}
+
+		if !envNamePattern.MatchString(name) {
+			return "", xerrors.Wrap(errEnvName, fmt.Sprintf("%q", name))
+		}
+
+		names = append(names, name)
 	}
 
 	slices.Sort(names)
@@ -249,7 +261,7 @@ func envUnset(environ []string) string {
 		flags = append(flags, "-u "+name)
 	}
 
-	return strings.Join(flags, " ")
+	return strings.Join(flags, " "), nil
 }
 
 // planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10）。git が答えられなければ、
@@ -265,7 +277,12 @@ func planHeader(git func(args ...string) (string, error)) (string, error) {
 		return "", xerrors.Wrap(errGit, err.Error())
 	}
 
-	header := "commit: " + strings.TrimSpace(commit)
+	commit = strings.TrimSpace(commit)
+	if !commitPattern.MatchString(commit) {
+		return "", xerrors.Wrap(errGit, fmt.Sprintf("rev-parse HEAD が %q を返しました", commit))
+	}
+
+	header := "commit: " + commit
 	if strings.TrimSpace(status) != "" {
 		header += " （作業ツリーに未コミットの変更あり）"
 	}

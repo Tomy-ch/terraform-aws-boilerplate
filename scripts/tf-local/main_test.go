@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,15 +46,19 @@ func rootWith(t *testing.T, backend, providers string) string {
 }
 
 func stubGit(status, failOn string) func(args ...string) (string, error) {
+	return stubGitWith(commitSHA+"\n", status, failOn)
+}
+
+func stubGitWith(revParse, status, failOn string) func(args ...string) (string, error) {
 	return func(args ...string) (string, error) {
 		if args[0] == failOn {
 			return "", errExec
 		}
 
-		switch args[0] {
-		case "rev-parse":
-			return commitSHA + "\n", nil
-		case "status":
+		switch {
+		case slices.Equal(args, []string{"rev-parse", "HEAD"}):
+			return revParse, nil
+		case slices.Equal(args, []string{"status", "--porcelain"}):
 			return status, nil
 		}
 
@@ -94,6 +99,14 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"env-unset"}, &out, testDeps([]string{"AWS_PROFILE=x", "HOME=/h"})))
 			assert.Equal(t, "-u AWS_PROFILE\n", out.String())
+		})
+
+		t.Run("env-unset は外す変数が無ければ空行を出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"env-unset"}, &out, testDeps([]string{"HOME=/h"})))
+			assert.Equal(t, "\n", out.String())
 		})
 
 		t.Run("plan-header は commit の行を1行で出す", func(t *testing.T) {
@@ -141,6 +154,14 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			args := []string{"bucket", "-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", ""}
 			require.ErrorIs(t, run(args, &out, testDeps(nil)), errIdentity)
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("外す変数の名前が不正なら何も出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.ErrorIs(t, run([]string{"env-unset"}, &out, testDeps([]string{"AWS_X Y=1"})), errEnvName)
 			assert.Empty(t, out.String())
 		})
 
@@ -341,6 +362,13 @@ func Test_backendRegion(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("空なら失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := backendRegion("")
+			require.ErrorIs(t, err, errRegionNotOne)
+		})
+
 		t.Run("コメントの region しか無ければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
@@ -415,6 +443,7 @@ func Test_callerAccount(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]string{
+			"空白だけなら失敗する":        "  \n\t\n",
 			"空なら失敗する":           "",
 			"11桁なら失敗する":         "12345678901\tarn:aws:iam::12345678901:user/b\n",
 			"13桁なら失敗する":         "1234567890123\tarn:aws:iam::1234567890123:user/b\n",
@@ -461,7 +490,12 @@ func Test_bucketName(t *testing.T) {
 			assert.Equal(t, "tabp-admin-tfstate-123456789012-ap-northeast-1-an", got)
 		})
 
-		// 写しのずれを見るので、正本である実物を読む（ADR-0702 決定17 の但し書き）。
+	})
+
+	// 写しと正本のずれを見るので、正本である実物を読む（ADR-0702 決定17 の但し書き）。
+	t.Run("写しと正本のずれ", func(t *testing.T) {
+		t.Parallel()
+
 		t.Run("env/admin/identity のテストが期待する名前と一致する", func(t *testing.T) {
 			t.Parallel()
 
@@ -471,6 +505,15 @@ func Test_bucketName(t *testing.T) {
 			tftest, err := os.ReadFile(filepath.Join("..", "..", "env", "admin", "identity", "tests", "imports.tftest.hcl"))
 			require.NoError(t, err)
 			assert.Contains(t, string(tftest), `== "`+got+`"`)
+		})
+
+		t.Run("docs/setup/bootstrap.md の make を使わない手順が同じ変数を外す", func(t *testing.T) {
+			t.Parallel()
+
+			doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "setup", "bootstrap.md"))
+			require.NoError(t, err)
+			want := "grep -oE '^((" + strings.Join(unsetPrefixes, "|") + ")[A-Za-z0-9_]*|" + strings.Join(unsetNames, "|") + ")='"
+			assert.Contains(t, string(doc), want)
 		})
 
 		t.Run("docs/setup/bootstrap.md の段1 の組み立てと一致する", func(t *testing.T) {
@@ -501,12 +544,14 @@ func Test_bucketName(t *testing.T) {
 			})
 		}
 
-		t.Run("region の形が誤っていれば失敗する", func(t *testing.T) {
-			t.Parallel()
+		for _, region := range []string{"Tokyo", "ap-northeast-1\n"} {
+			t.Run("region の形が誤っていれば失敗する "+region, func(t *testing.T) {
+				t.Parallel()
 
-			_, err := bucketName("tabp", "admin", "123456789012", "Tokyo")
-			require.ErrorIs(t, err, errRegionMalformed)
-		})
+				_, err := bucketName("tabp", "admin", "123456789012", region)
+				require.ErrorIs(t, err, errRegionMalformed)
+			})
+		}
 	})
 }
 
@@ -519,35 +564,70 @@ func Test_envUnset(t *testing.T) {
 		t.Run("資格情報と振る舞いを変える変数を外し、ほかは残す", func(t *testing.T) {
 			t.Parallel()
 
-			got := envUnset([]string{
+			got, err := envUnset([]string{
 				"HOME=/h", "PATH=/bin", "TF_PLUGIN_CACHE_DIR=/c", "TF_IN_AUTOMATION=1",
 				"AWS_PROFILE=other", "AWS_ACCESS_KEY_ID=x", "AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/",
 				"TF_CLI_ARGS=-x", "TF_CLI_ARGS_plan=-target=a.b", "TF_VAR_a=b",
 				"TF_LOG=trace", "TF_LOG_PATH=/tmp/x", "TF_LOG_PROVIDER=trace",
 				"TF_WORKSPACE=w", "TF_DATA_DIR=/d", "TF_CLI_CONFIG_FILE=/f", "TF_REATTACH_PROVIDERS=x",
 			})
+			require.NoError(t, err)
 			assert.Equal(t, "-u AWS_ACCESS_KEY_ID -u AWS_CONTAINER_CREDENTIALS_FULL_URI -u AWS_PROFILE"+
 				" -u TF_CLI_ARGS -u TF_CLI_ARGS_plan -u TF_CLI_CONFIG_FILE -u TF_DATA_DIR"+
 				" -u TF_LOG -u TF_LOG_PATH -u TF_LOG_PROVIDER -u TF_REATTACH_PROVIDERS -u TF_VAR_a -u TF_WORKSPACE", got)
 		})
 
-		t.Run("外す変数が無ければ空にする", func(t *testing.T) {
+		for name, environ := range map[string][]string{
+			"外す変数が無ければ空にする":     {"HOME=/h", "TF_PLUGIN_CACHE_DIR=/c"},
+			"環境が空なら空にする":        nil,
+			"名前が前方一致するだけの変数は残す": {"MY_AWS_PROFILE=x", "TF_WORKSPACE_X=y", "TF_DATA_DIRS=z"},
+			"名前が空のエントリは外さない":    {"=x"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				got, err := envUnset(environ)
+				require.NoError(t, err)
+				assert.Empty(t, got)
+			})
+		}
+
+		t.Run("= の無いエントリは全体を名前として扱う", func(t *testing.T) {
 			t.Parallel()
 
-			assert.Empty(t, envUnset([]string{"HOME=/h", "TF_PLUGIN_CACHE_DIR=/c"}))
+			got, err := envUnset([]string{"AWS_PROFILE", "HOME"})
+			require.NoError(t, err)
+			assert.Equal(t, "-u AWS_PROFILE", got)
 		})
 
-		t.Run("名前が前方一致するだけの変数は残す", func(t *testing.T) {
+		t.Run("接頭辞そのものの名前も外す", func(t *testing.T) {
 			t.Parallel()
 
-			assert.Empty(t, envUnset([]string{"MY_AWS_PROFILE=x", "TF_WORKSPACE_X=y", "TF_DATA_DIRS=z"}))
+			got, err := envUnset([]string{"AWS_=x", "TF_VAR_=y"})
+			require.NoError(t, err)
+			assert.Equal(t, "-u AWS_ -u TF_VAR_", got)
 		})
 
 		t.Run("同じ名前が2度あっても1度だけ外す", func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, "-u AWS_PROFILE", envUnset([]string{"AWS_PROFILE=a", "AWS_PROFILE=b"}))
+			got, err := envUnset([]string{"AWS_PROFILE=a", "AWS_PROFILE=b"})
+			require.NoError(t, err)
+			assert.Equal(t, "-u AWS_PROFILE", got)
 		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, kv := range []string{"AWS_X Y=1", "TF_VAR_*=1", "TF_LOG;rm=1"} {
+			t.Run("外す変数の名前が不正なら失敗する "+kv, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := envUnset([]string{kv})
+				require.ErrorIs(t, err, errEnvName)
+			})
+		}
 	})
 }
 
@@ -576,6 +656,19 @@ func Test_planHeader(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		for name, revParse := range map[string]string{
+			"rev-parse が空なら失敗する":           "",
+			"rev-parse が空白だけなら失敗する":        " \n",
+			"rev-parse が commit でなければ失敗する": "HEAD\n",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := planHeader(stubGitWith(revParse, "", ""))
+				require.ErrorIs(t, err, errGit)
+			})
+		}
 
 		for _, sub := range []string{"rev-parse", "status"} {
 			t.Run(sub+" が失敗すれば失敗する", func(t *testing.T) {
@@ -609,10 +702,65 @@ func Test_gitOutput(t *testing.T) {
 		t.Run("git が失敗すれば失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := gitOutput("-C", t.TempDir(), "rev-parse", "HEAD")
+			_, err := gitOutput("no-such-subcommand")
 
 			var exitErr *exec.ExitError
 			require.ErrorAs(t, err, &exitErr)
+			assert.Contains(t, err.Error(), "git no-such-subcommand")
 		})
+	})
+}
+
+// TestLocalMk は、local.mk のレシピが tf-local の値を aws と terraform へ渡す配線を、make -n の
+// 展開結果で見る。レシピそのものが対象なので実物の local.mk を読む。
+func TestLocalMk(t *testing.T) {
+	t.Parallel()
+
+	expand := func(t *testing.T, target string) string {
+		t.Helper()
+
+		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target)
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+		})
+
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+
+		return string(out)
+	}
+
+	const envPrefix = "env $unset_env AWS_PROFILE=tabp-bootstrap AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
+
+	t.Run("init は失敗で止まり、aws と terraform の両方に絞った環境を渡す", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "init-admin-identity")
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu;"), got)
+		assert.Equal(t, 2, strings.Count(got, envPrefix), got)
+		assert.Contains(t, got, envPrefix+" aws sts get-caller-identity --region \"$region\" --query '[Account,Arn]' --output text")
+		assert.Contains(t, got, `init -input=false -lockfile=readonly -backend-config="bucket=$bucket"`)
+		assert.Contains(t, got, "bucket -project tabp -env admin")
+	})
+
+	t.Run("plan は init の後に lock を取らずに走り、log を所有者だけの権限で作り直す", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "plan-admin-identity")
+		initAt := strings.Index(got, "-lockfile=readonly")
+		planAt := strings.Index(got, "plan -lock=false -input=false -no-color")
+		require.GreaterOrEqual(t, initAt, 0, got)
+		require.Greater(t, planAt, initAt, got)
+		assert.Contains(t, got, "set -eu -o pipefail; umask 077;")
+		assert.Contains(t, got, `rm -f "$log"`)
+		assert.Contains(t, got, `| tee "$log"`)
+		assert.Equal(t, 3, strings.Count(got, envPrefix), got)
+	})
+
+	t.Run("aws-login は絞った環境で bootstrap の profile にログインする", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "aws-login")
+		assert.Contains(t, got, "env $unset_env aws login --profile tabp-bootstrap")
 	})
 }
