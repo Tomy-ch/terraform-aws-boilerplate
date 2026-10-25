@@ -141,6 +141,9 @@ pre-commit:
         - "usecases/state-backend/**"
         - "modules/s3/**"
         - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       run: make tf-local-test
 
 commit-msg:
