@@ -1,0 +1,8 @@
+# trufflehog の抑止（全履歴の走査だけ）。履歴にだけ残る検出を置き、commit 範囲と作業ツリーの
+# 走査は狭めない（ADR-0302 決定9）。書式は .trufflehog-exclude-paths.txt と同じ。
+
+# renderAquaURL が userinfo を拒むことを固定するテストの合成値（`user:pass@cdn.example.com`）が
+# 履歴の commit に残っており、URI 検出器に当たる。実在しないホストの値で、作業ツリーでは
+# password を持たない形に直してある。
+# 撤回: 当該 commit が履歴から無くなったとき（履歴の書き換えは人の判断。ADR-0302 決定13）。
+^scripts/tool-cooldown/main_test\.go$

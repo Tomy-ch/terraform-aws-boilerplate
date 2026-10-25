@@ -424,6 +424,8 @@ func Test_pinReferenced(t *testing.T) {
 	})
 }
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const fixtureProtection = `{
   "required_status_checks": [
     {
@@ -438,6 +440,8 @@ const fixtureProtection = `{
   ]
 }
 `
+
+// editorconfig-checker-enable
 
 func Test_dropContexts(t *testing.T) {
 	t.Parallel()

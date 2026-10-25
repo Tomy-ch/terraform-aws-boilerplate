@@ -23,12 +23,16 @@ func writeFixture(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const rulesetOneContext = `{
   "rules": [
     {"type": "required_status_checks",
      "parameters": {"required_status_checks": [{"context": "build"}]}}
   ]
 }`
+
+// editorconfig-checker-enable
 
 func Test_run(t *testing.T) {
 	t.Parallel()

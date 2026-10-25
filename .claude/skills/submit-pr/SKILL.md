@@ -210,7 +210,7 @@ On push failure (non-fast-forward, permission denied, network error, etc.), repo
 
 ### pre-push が見るのは秘密の混入だけである
 
-`pre-push` は `make secret-scan` だけを走らせる（`.lefthook.yaml`）。**重いゲートはここを通らない。**
+`pre-push` は `make secret-scan` と `make trufflehog-scan` だけを走らせる（`.lefthook.yaml`）。**重いゲートはここを通らない。**
 それらは `pre-commit` と CI が持つので、push は「最後の検査」ではない。
 
 混入を検出した場合の第一手は当該資格情報の**失効**であり、履歴からの除去ではない

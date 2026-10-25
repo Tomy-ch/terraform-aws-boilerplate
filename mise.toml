@@ -1,7 +1,6 @@
 # ツールチェーンの pin（ADR-0501 決定19）。**ここが持つのは版の宣言だけ**である。
 #
 # **版の出所はここだけである。** 版を並べ直した設定を、イメージ側にも workflow 側にも置かない。
-# 環境差分を最小にするための要点はここにある。
 #
 # 実行経路ごとの分担は ADR-0503 決定1、コンテナ内の Go / npm の分担は docker/tools/README.md。
 #
@@ -15,8 +14,7 @@
 # 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
 #
 # **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
-# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。何がまだ配線されていないかは
-# AGENTS.md「現在の配線状態」が追跡する —— 配線され次第そこから消える運用がある。
+# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。
 min_version = "2026.6.0"
 
 [tools]
@@ -46,12 +44,16 @@ node = "24.22.1"
 # AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
 "aqua:terraform-linters/tflint" = "0.64.0"
 
-# Security の道具の1つ（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
-# （ADR-0302 決定2）。Terraform の IaC 走査もここが担う。
+# Security の道具の1つ（ADR-0501 決定4・決定6）。Terraform の IaC 走査もここが担う。secret scanning は
+# 作業ツリーに対する Secret Scan の検出器の1つとして併用する（ADR-0302 決定2）。
 "aqua:aquasecurity/trivy" = "0.75.0"
 
-# Secret Scan の権威（ADR-0302 決定1）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
+# Secret Scan の検出器（ADR-0302 決定2）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
 "aqua:gitleaks/gitleaks" = "8.30.1"
+
+# Secret Scan の検出器（ADR-0302 決定2）。gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。
+# AGPL-3.0 の利用の前提は ADR-0302「影響」が持つ。
+"aqua:trufflesecurity/trufflehog" = "3.99.2"
 
 # bootstrap の段1 が state backend の実体を作る道具（ADR-0602 決定4）。**ホストで実行する理由は
 # ADR-0504 が持つ。**
@@ -75,6 +77,10 @@ shellcheck = "0.11.0"
 # ツールランナーの Dockerfile を検査する。
 hadolint = "2.15.1"
 
+"aqua:crate-ci/typos" = "1.51.1"
+
+"aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"
+
 # 運用機構（scripts/）の Go を検査する。
 golangci-lint = "2.15.0"
 
@@ -87,6 +93,5 @@ lefthook = "2.2.1"
 # 自前で書かない（ADR-0501 決定3 の第1条件）。
 "npm:markdownlint-cli2" = "0.24.0"
 
-# commit message の検査。規約の正本は commitlint.config.js。課すのは type の enum と type / subject の空チェックだけで、
-# 一般的な規約集の設定を継承しない。
+# commit message の検査。規約の正本は commitlint.config.js。
 "npm:@commitlint/cli" = "21.2.4"

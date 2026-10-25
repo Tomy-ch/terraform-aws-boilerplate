@@ -94,7 +94,7 @@ jobs:
         id: summarize
         run: |
           set -euo pipefail
-          
+
           # total vulnerability count
           COUNT=$(jq '
             .Results
@@ -102,7 +102,7 @@ jobs:
             | flatten
             | length
           ' trivy-fs.json)
-          
+
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
           if [ "$COUNT" -eq 0 ]; then

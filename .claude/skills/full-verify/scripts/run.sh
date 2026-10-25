@@ -144,8 +144,8 @@ log "主要言語=$LANG (主要コード拡張子=.${PRIMARY_EXT:-?})"
 # --- 設計文書の検出 ----------------------------------------------------------
 : > "$STRUCT/design_docs.txt"
 for pat in 'INTENT.md' 'CLAUDE.md' 'AGENTS.md' 'README.md' 'README.*' \
-           'docs/architecture*' 'docs/rules*' 'docs/decisions*' 'docs/ADR*' \
-           'docs/adr*' 'docs/**/*.md' 'ARCHITECTURE.md' 'DESIGN.md'; do
+            'docs/architecture*' 'docs/rules*' 'docs/decisions*' 'docs/ADR*' \
+            'docs/adr*' 'docs/**/*.md' 'ARCHITECTURE.md' 'DESIGN.md'; do
   # shellcheck disable=SC2044
   # shellcheck disable=SC2086 # $pat は glob。展開させるのが目的なので引用しない
   for f in $(cd "$REPO_ROOT" && ls -1 $pat 2>/dev/null); do
@@ -376,9 +376,9 @@ if have tree; then
 else
   # find ベースの簡易ツリー
   (cd "$SRC" && find . -maxdepth 3 -type d \
-     -not -path '*/.git*' -not -path '*/node_modules*' -not -path '*/vendor*' \
-     -not -path '*/target*' -not -path '*/dist*' -not -path '*/build*' \
-     -not -path '*/reviews*' | sort) > "$STRUCT/tree.txt"
+      -not -path '*/.git*' -not -path '*/node_modules*' -not -path '*/vendor*' \
+      -not -path '*/target*' -not -path '*/dist*' -not -path '*/build*' \
+      -not -path '*/reviews*' | sort) > "$STRUCT/tree.txt"
 fi
 
 # --- 公開シグネチャ（best-effort grep）--------------------------------------
@@ -719,8 +719,8 @@ if [ "$PARALLEL" -gt 1 ]; then
   # 進行状況は per-unit 更新だと競合するため、開始時(既出)と終了時のみ更新する。
   export -f process_module run_one mod_id render log have cb_on_fail cb_reset
   export OUT STRUCT REPO_ROOT SRC PROMPTS EFFORT READONLY_TOOLS TIMEOUT_MIN MAX_TURNS \
-         BASIS STOP_FLAG PARALLEL LIMIT_WAIT ARCH_DOC \
-         LIMIT_RE CB_FILE CB_FAST_SECS CB_THRESHOLD
+          BASIS STOP_FLAG PARALLEL LIMIT_WAIT ARCH_DOC \
+          LIMIT_RE CB_FILE CB_FAST_SECS CB_THRESHOLD
   printf '%s\n' "${MODULES[@]}" \
     | xargs -I{} -P "$PARALLEL" bash -c 'process_module "$@"' _ {}
   write_progress
@@ -777,7 +777,7 @@ ${OUTREL}/_index.md の本文だけを出力せよ。
 手順:
 1. ${OUTREL}/architecture.md を Read（設計起因の所見）。スタブ（生成失敗の記録）なら無視してよい。
 2. Glob で ${OUTREL}/mod_*.md を全件列挙し、各ファイルを Read する。
-   ただし内容が「問題なし」のみのファイル（指摘ゼロ）は集約対象から除外する。
+    ただし内容が「問題なし」のみのファイル（指摘ゼロ）は集約対象から除外する。
 3. ${OUTREL}/_structure/meta.txt を Read（基準・対象の確認）。
 
 出力要件:
