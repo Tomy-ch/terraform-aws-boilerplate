@@ -128,7 +128,7 @@ manifest が版を固定できる範囲には限りがある。
 ## 検証方法
 
 - Static Analysis: 同一の検査に対して、実行環境ごとの定義が存在しないこと（決定8）
-- Static Analysis: CIの定義が道具を用意する手段が、決定1 の manifest を読むものであること。上流のイメージで実行する道具は、`docker-compose.yaml` の `image:` を読むこと（決定2・10）
+- Static Analysis: CIの定義が道具を用意する手段が、決定1 の manifest を読むものであること（決定2）
 - Static Analysis: ベースイメージと上流のイメージが digest で固定されていること（決定10）
 - **イメージのビルド**: ランタイムの版が manifest の宣言と一致しない場合にビルドが失敗すること（決定3）
 - Static Analysis: PyPI の lockfile の全エントリが版とハッシュを持つこと（決定15）

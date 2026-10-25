@@ -134,7 +134,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
 19. 本 ADR が挙げる道具の version を、リポジトリ直下の単一 manifest で pin する。pin されていない道具を CI の必須検査に用いない。
 
-    ただし、上流がコンテナイメージとして配布し、ADR-0503 決定4 によりそのイメージで実行する道具は manifest に載せない。その版と digest の置き場は ADR-0503 決定10 が持つ。Semgrep CE のルール集合は、semgrep-rules の commit をその検査の定義（`.makefiles/security/semgrep.mk`）で固定し、リポジトリへ置かずに実行時に取得する。Semgrep Rules License v1.0 がルールの配布を許さないためである。
+    ただし、上流がコンテナイメージとして配布し、ADR-0503 決定4 によりそのイメージで実行する道具は manifest に載せない。その版と digest の置き場は ADR-0503 決定10 が持つ。Semgrep CE のルール集合は、semgrep-rules の commit をその検査の定義（`.makefiles/security/semgrep.mk`）で固定し、リポジトリへ置かずに実行時に取得する。[Semgrep Rules License v1.0](https://semgrep.dev/legal/rules-license)がルールの配布を許さないためである。
 20. 道具はそのまま（bare）実行する。version manager のサブコマンドで包む形（`<manager> exec -- <command>`）を、手元・hook・CI recipe のいずれでも用いない。包みが必要に見える場合の対処は `PATH` の修正であり、wrapper の追加ではない。
 
 ### Provider 仕様の参照
