@@ -13,7 +13,7 @@
 //
 // backend block は式を持てないので、Bucket 名の規則をここに写す。正本は modules/s3 と
 // usecases/state-backend で、写しのずれは make tf-local-test が env/admin/identity のテストの
-// 期待値と突き合わせて見る。
+// 期待値と突き合わせて見る。state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
 package main
 
 import (

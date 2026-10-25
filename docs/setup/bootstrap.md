@@ -228,6 +228,15 @@ state backend が無い時点では Terraform が state を保存できないの
    make plan-admin-identity
    ```
 
+   make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
+
+   ```bash
+   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
+   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN AWS_PROFILE=tabp-bootstrap \
+     terraform -chdir=env/admin/identity plan -lock=false -input=false
+   ```
+
 2. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
