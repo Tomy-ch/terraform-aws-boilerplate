@@ -14,13 +14,18 @@ import (
 const (
 	identityUser = "123456789012\tarn:aws:iam::123456789012:user/bootstrap\n"
 	backendOK    = "terraform {\n  backend \"s3\" {\n    key    = \"identity/terraform.tfstate\"\n    region = \"ap-northeast-1\"\n  }\n}\n"
+	providersOK  = "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\n"
 )
 
-func rootWith(t *testing.T, backend string) string {
+func rootWith(t *testing.T, backend, providers string) string {
 	t.Helper()
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "backend.tf"), []byte(backend), 0o600))
+
+	if providers != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "providers.tf"), []byte(providers), 0o600))
+	}
 
 	return dir
 }
@@ -35,7 +40,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
-			require.NoError(t, run([]string{"region", rootWith(t, backendOK)}, strings.NewReader(""), &out, os.ReadFile))
+			require.NoError(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, strings.NewReader(""), &out, os.ReadFile))
 			assert.Equal(t, "ap-northeast-1\n", out.String())
 		})
 
@@ -129,7 +134,7 @@ func Test_rootRegion(t *testing.T) {
 		t.Run("root の backend.tf を読む", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := rootRegion(rootWith(t, backendOK), os.ReadFile)
+			got, err := rootRegion(rootWith(t, backendOK, providersOK), os.ReadFile)
 			require.NoError(t, err)
 			assert.Equal(t, "ap-northeast-1", got)
 		})
@@ -143,6 +148,27 @@ func Test_rootRegion(t *testing.T) {
 
 			_, err := rootRegion(t.TempDir(), os.ReadFile)
 			require.ErrorIs(t, err, errBackendMissing)
+		})
+
+		t.Run("providers.tf が無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := rootRegion(rootWith(t, backendOK, ""), os.ReadFile)
+			require.ErrorIs(t, err, errProvidersMissing)
+		})
+
+		t.Run("provider と backend の region が違えば失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := rootRegion(rootWith(t, backendOK, "provider \"aws\" {\n  region = \"us-east-1\"\n}\n"), os.ReadFile)
+			require.ErrorIs(t, err, errRegionMismatch)
+		})
+
+		t.Run("provider の region を1つに決められなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := rootRegion(rootWith(t, backendOK, "provider \"aws\" {}\n"), os.ReadFile)
+			require.ErrorIs(t, err, errRegionNotOne)
 		})
 	})
 }

@@ -2,7 +2,8 @@
 // terraform に渡す値を組み立てて検証するツール。
 //
 //	tf-local region <root>
-//	    <root>/backend.tf の backend の region を1行で出す
+//	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
+//	    region と違えば失敗する（Bucket 名の region は provider の region から決まる）
 //	tf-local bucket -project <p> -env <e> -region <r>
 //	    標準入力の `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
 //	    state Bucket の名前を1行で出す
@@ -34,13 +35,15 @@ var (
 	accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
 	tokenPattern   = regexp.MustCompile(`^[a-z0-9]+$`)
 
-	errUsage           = xerrors.New("❌ usage: tf-local region <root> | tf-local bucket -project <p> -env <e> -region <r>")
-	errBackendMissing  = xerrors.New("❌ backend.tf がありません")
-	errRegionNotOne    = xerrors.New("❌ backend.tf の region が1つではありません")
-	errRegionMalformed = xerrors.New("❌ region の形が不正です")
-	errIdentity        = xerrors.New("❌ アカウント ID を取得できません（make aws-login を実行してください）")
-	errRootCredentials = xerrors.New("❌ root の資格情報では実行しません")
-	errToken           = xerrors.New("❌ project と env は英小文字と数字だけです")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | tf-local bucket -project <p> -env <e> -region <r>")
+	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
+	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
+	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
+	errRegionNotOne     = xerrors.New("❌ backend.tf の region が1つではありません")
+	errRegionMalformed  = xerrors.New("❌ region の形が不正です")
+	errIdentity         = xerrors.New("❌ アカウント ID を取得できません（make aws-login を実行してください）")
+	errRootCredentials  = xerrors.New("❌ root の資格情報では実行しません")
+	errToken            = xerrors.New("❌ project と env は英小文字と数字だけです")
 )
 
 func main() {
@@ -111,14 +114,35 @@ func runBucket(args []string, in io.Reader) (string, error) {
 }
 
 func rootRegion(root string, readFile func(string) ([]byte, error)) (string, error) {
-	path := filepath.Join(root, "backend.tf")
+	backendPath := filepath.Join(root, "backend.tf")
 
-	content, err := readFile(path)
+	backend, err := readFile(backendPath)
 	if err != nil {
-		return "", xerrors.Wrap(errBackendMissing, path)
+		return "", xerrors.Wrap(errBackendMissing, backendPath)
 	}
 
-	return backendRegion(string(content))
+	providersPath := filepath.Join(root, "providers.tf")
+
+	providers, err := readFile(providersPath)
+	if err != nil {
+		return "", xerrors.Wrap(errProvidersMissing, providersPath)
+	}
+
+	region, err := backendRegion(string(backend))
+	if err != nil {
+		return "", xerrors.Wrap(err, backendPath)
+	}
+
+	providerRegion, err := backendRegion(string(providers))
+	if err != nil {
+		return "", xerrors.Wrap(err, providersPath)
+	}
+
+	if region != providerRegion {
+		return "", xerrors.Wrap(errRegionMismatch, fmt.Sprintf("backend=%s provider=%s", region, providerRegion))
+	}
+
+	return region, nil
 }
 
 // backendRegion は、0件・複数件・形の誤りを、どれか1つを選ばずにエラーにします。選んだ値が実際の Bucket の region と違えば、別の名前の

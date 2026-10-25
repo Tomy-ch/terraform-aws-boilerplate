@@ -25,6 +25,7 @@ tf-local-test:
 	new() { \
 		c="$$root/$$1"; mkdir -p "$$c/bin" "$$c/base/env/admin/identity"; \
 		printf 'terraform {\n  backend "s3" {\n    key    = "identity/terraform.tfstate"\n    region = "ap-northeast-1"\n  }\n}\n' > "$$c/base/env/admin/identity/backend.tf"; \
+		printf 'provider "aws" {\n  region = "ap-northeast-1"\n}\n' > "$$c/base/env/admin/identity/providers.tf"; \
 		set -- "$$c/bin"; $(TF_LOCAL_FAKE_AWS); $(TF_LOCAL_FAKE_TERRAFORM); \
 		printf '123456789012\tarn:aws:iam::123456789012:user/bootstrap\n' > "$$c/bin/aws.out"; \
 	}; \
@@ -39,7 +40,7 @@ tf-local-test:
 	if [ "$$rc" -ne 0 ]; then bad ok:rc; fi; \
 	if [ "$$(cat "$$root/ok/bin/aws.args" 2>/dev/null)" != "sts get-caller-identity --region ap-northeast-1 --query [Account,Arn] --output text" ]; then bad ok:aws-args; fi; \
 	if [ "$$(cat "$$root/ok/bin/tf.args" 2>/dev/null)" != "-chdir=$$root/ok/base/env/admin/identity init -input=false -lockfile=readonly -backend-config=bucket=$$bucket" ]; then bad ok:terraform-args; fi; \
-	if ! grep -qF -- "$$bucket" env/admin/identity/tests/imports.tftest.hcl; then bad ok:bucket-name-drift; fi; \
+	if ! grep -qF -- "== \"$$bucket\"" env/admin/identity/tests/imports.tftest.hcl; then bad ok:bucket-name-drift; fi; \
 	for v in empty short; do \
 		new "account-$$v"; \
 		case "$$v" in empty) : > "$$root/account-$$v/bin/aws.out";; short) printf '12345678901\tarn:aws:iam::12345678901:user/bootstrap\n' > "$$root/account-$$v/bin/aws.out";; esac; \
@@ -66,13 +67,14 @@ tf-local-test:
 		esac; \
 		run "region-$$v" init-admin-identity; if [ "$$rc" -eq 0 ]; then bad "region-$$v:rc"; fi; no_aws "region-$$v"; \
 	done; \
-	new plan; run plan plan-admin-identity; \
+	new plan; mkdir -p "$$root/plan/log"; : > "$$root/plan/log/admin-identity.log"; chmod 644 "$$root/plan/log/admin-identity.log"; run plan plan-admin-identity; \
 	if [ "$$rc" -ne 0 ]; then bad plan:rc; fi; \
 	if [ "$$(sed -n 2p "$$root/plan/bin/tf.args" 2>/dev/null)" != "-chdir=$$root/plan/base/env/admin/identity plan -lock=false -input=false -no-color" ]; then bad plan:terraform-args; fi; \
 	if ! sed -n 1p "$$root/plan/bin/tf.args" 2>/dev/null | grep -q ' init '; then bad plan:init-first; fi; \
 	log="$$root/plan/log/admin-identity.log"; \
 	if ! sed -n 1p "$$log" 2>/dev/null | grep -q '^commit: [0-9a-f]\{40\}'; then bad plan:log-commit; fi; \
 	if ! grep -qF 'fake terraform output' "$$log" 2>/dev/null; then bad plan:log-output; fi; \
+	if [ "$$(ls -l "$$log" 2>/dev/null | cut -c1-10)" != "-rw-------" ]; then bad plan:log-mode; fi; \
 	new plan-fails; touch "$$root/plan-fails/bin/tf.fail-plan"; run plan-fails plan-admin-identity; \
 	if [ "$$rc" -eq 0 ]; then bad plan-fails:rc; fi; \
 	if ! grep -qF 'fake terraform output' "$$root/plan-fails/log/admin-identity.log" 2>/dev/null; then bad plan-fails:log-output; fi; \

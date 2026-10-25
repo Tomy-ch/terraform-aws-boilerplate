@@ -26,8 +26,9 @@ $(call TF_LOCAL_ENV,$(3)) $(TF_BIN) -chdir="$$dir" init -input=false -lockfile=r
 endef
 
 # plan は lock を取らない（ADR-0604 決定8）。どの commit の plan かを log の1行目に残す（ADR-0602 決定10）。
+# log はアカウント ID を含むので、所有者だけが読める権限で作る。
 define TF_LOCAL_PLAN
-set -euo pipefail; mkdir -p "$(TF_PLAN_LOG_DIR)"; \
+set -euo pipefail; umask 077; mkdir -p "$(TF_PLAN_LOG_DIR)"; rm -f "$(TF_PLAN_LOG_DIR)/$(1)-$(2).log"; \
 commit=$$(git rev-parse HEAD); status=$$(git status --porcelain); \
 dirty=""; if [ -n "$$status" ]; then dirty=" （作業ツリーに未コミットの変更あり）"; fi; \
 { echo "commit: $$commit$$dirty"; \
