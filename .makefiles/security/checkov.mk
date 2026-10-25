@@ -8,6 +8,8 @@ CHECKOV_OUT := tmp/checkov/out
 CHECKOV_FLAGS := --framework terraform --skip-download --compact --quiet -o cli -o json -o sarif --output-file-path console,/tmp/out/results_json.json,/tmp/out/results_sarif.sarif
 # results_json.json は framework が1つなら object、複数なら array になる。
 CHECKOV_RESOURCE_COUNT := jq '[(if type == "array" then .[] else . end) | .summary.resource_count] | add // 0'
+# Checkov は解釈できないファイルを飛ばして終了コードを変えない。件数は summary にだけ出る。
+CHECKOV_PARSING_ERRORS := jq '[(if type == "array" then .[] else . end) | .summary.parsing_errors] | add // 0'
 
 .PHONY: checkov ## Terraform の誤設定を Checkov で検査（所見があれば落ちる）
 checkov: checkov-canary
@@ -15,6 +17,8 @@ checkov: checkov-canary
 	rc=0; $(call IMAGE_RUN,checkov_runner,$(CHECKOV_WORK),$(CHECKOV_OUT),,-d /work/src $(CHECKOV_FLAGS)) || rc=$$?; \
 	n=$$($(CHECKOV_RESOURCE_COUNT) $(CHECKOV_OUT)/results_json.json); \
 	if [ "$$n" -eq 0 ]; then echo "❌ checkov: 走査した resource が0件です" >&2; exit 1; fi; \
+	p=$$($(CHECKOV_PARSING_ERRORS) $(CHECKOV_OUT)/results_json.json); \
+	if [ "$$p" -ne 0 ]; then echo "❌ checkov: 解釈できなかったファイルが $$p 件あります" >&2; exit 1; fi; \
 	echo "checkov: resource $$n 件を走査しました（終了コード $${rc}）" >&2; \
 	exit $$rc
 
