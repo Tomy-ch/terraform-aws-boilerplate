@@ -61,6 +61,9 @@ RUN --mount=type=secret,id=github_token \
     && mise install "aqua:terraform-linters/tflint" \
     && mise install "aqua:aquasecurity/trivy" \
     && mise install "aqua:gitleaks/gitleaks" \
+    && mise install "aqua:trufflesecurity/trufflehog" \
+    && mise install "aqua:crate-ci/typos" \
+    && mise install "aqua:editorconfig-checker/editorconfig-checker" \
     && mise install "aqua:zizmorcore/zizmor"
 
 RUN mkdir /out \
@@ -71,6 +74,9 @@ RUN mkdir /out \
     && cp "$(mise which tflint)"         /out/ \
     && cp "$(mise which trivy)"          /out/ \
     && cp "$(mise which gitleaks)"       /out/ \
+    && cp "$(mise which trufflehog)"     /out/ \
+    && cp "$(mise which typos)"          /out/ \
+    && cp "$(mise which editorconfig-checker)" /out/ \
     && cp "$(mise which zizmor)"         /out/
 
 # ==============================================================================
