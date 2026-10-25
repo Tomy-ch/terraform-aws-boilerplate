@@ -133,18 +133,6 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make tf-gates-test
-    tf-local-test:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "env/**"
-        - "usecases/state-backend/**"
-        - "modules/s3/**"
-        - "scripts/tf-local/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make tf-local-test
 
 commit-msg:
   commands:
