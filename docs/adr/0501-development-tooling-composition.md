@@ -58,7 +58,9 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
    ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、backend 設定の不変条件、ADR-0103 決定9-11 のコード実行の検出。同じ規約を両方に
    書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
-   届く module に検査が限られるためである。Conftest は Policy 層で既に用いており、道具は増えない。
+   届く module に検査が限られるためである。コード実行の検出をこの入力に置くのは、plan の中で実行される構成要素が
+   あり、`terraform show -json` を入力とすると判定より先に実行を許すためである（ADR-0103 決定11）。Conftest は
+   Policy 層で既に用いており、道具は増えない。
 6. Security scan の第一候補を Trivy とする。Checkov は、Trivy に存在しないルールが必要な場合に限り併用する。Trivy と重複する検査を無目的に二重化しない。
 
    <!-- sample:begin -->

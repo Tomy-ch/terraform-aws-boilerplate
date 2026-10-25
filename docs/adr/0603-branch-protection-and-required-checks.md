@@ -150,7 +150,9 @@ required status check には、機構として2つの落とし穴がある。
     - fast-forwardでない更新の禁止
     - 削除の禁止
     - required status check
-    - code owner による review の要求
+
+    承認者数を緩和する場合も、code owner による review の要求を宣言から外さない。この要求は承認者数と
+    独立には効かず、承認できる code owner が居ない間は merge を止めない。
 
 ### 統合方式
 
