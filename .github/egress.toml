@@ -70,6 +70,17 @@ hosts = [
   "pkg-containers.githubusercontent.com",
 ]
 
+[class.docker-hub]
+# 上流のイメージで実行する Security の道具（ADR-0503 決定4）の pull。layer の実体は Cloudflare の R2 から
+# 配られる。`*.r2.cloudflarestorage.com` は誰でも作れるバケットへの持ち出し口になるので、Docker Hub の
+# バケットのホストだけを許す。
+hosts = [
+  "registry-1.docker.io",
+  "auth.docker.io",
+  "production.cloudfront.docker.com",
+  "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
+]
+
 [class.deps-dev]
 # パッケージの供給網の情報（deps.dev）。依存の評価をする job が引く。
 hosts = [
@@ -213,6 +224,25 @@ classes = []
 [job."trivy-config.yaml:trivy-config"]
 classes = ["trivy"]
 
+[job."checkov.yaml:changes"]
+classes = []
+
+[job."checkov.yaml:checkov"]
+classes = ["docker-hub"]
+
+[job."kics.yaml:changes"]
+classes = []
+
+[job."kics.yaml:kics"]
+classes = ["docker-hub"]
+
+[job."semgrep.yaml:changes"]
+classes = []
+
+# rule は codeload.github.com（base）から commit を固定して取る。走査そのものは network を持たない。
+[job."semgrep.yaml:semgrep"]
+classes = ["docker-hub"]
+
 [job."trivy-fs.yaml:trivy-fs"]
 classes = ["trivy"]
 
@@ -239,16 +269,4 @@ classes = ["deps-dev"]
 extra = [
   "api.osv.dev",
   "www.bestpractices.dev",
-]
-
-# #166 手順0 の捨ての計測。次の commit で消す。
-[job."probe-166.yaml:probe"]
-classes = []
-extra = [
-  "docker.io",
-  "*.docker.io",
-  "*.docker.com",
-  "production.cloudfront.docker.com",
-  "*.r2.cloudflarestorage.com",
-  "semgrep.dev",
 ]
