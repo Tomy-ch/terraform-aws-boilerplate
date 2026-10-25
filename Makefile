@@ -34,7 +34,6 @@ include .makefiles/security/zizmor.mk
 include .makefiles/terraform/gates.mk
 include .makefiles/terraform/gates-test.mk
 include .makefiles/terraform/operation/local.mk
-include .makefiles/terraform/operation/local-test.mk
 # Docker関連
 include .makefiles/docker/lint.mk
 include .makefiles/docker/pin.mk

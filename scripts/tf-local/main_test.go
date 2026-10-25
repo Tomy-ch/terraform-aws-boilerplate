@@ -3,12 +3,13 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,13 +19,17 @@ const (
 	identityUser = "123456789012\tarn:aws:iam::123456789012:user/bootstrap\n"
 	backendOK    = "terraform {\n  backend \"s3\" {\n    key    = \"identity/terraform.tfstate\"\n    region = \"ap-northeast-1\"\n  }\n}\n"
 	providersOK  = "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\n"
+	commitSHA    = "0123456789abcdef0123456789abcdef01234567"
 )
 
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errWrite }
 
-var errWrite = errors.New("write failed")
+var (
+	errWrite = errors.New("write failed")
+	errExec  = errors.New("git failed")
+)
 
 func rootWith(t *testing.T, backend, providers string) string {
 	t.Helper()
@@ -39,6 +44,27 @@ func rootWith(t *testing.T, backend, providers string) string {
 	return dir
 }
 
+func stubGit(status, failOn string) func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
+		if args[0] == failOn {
+			return "", errExec
+		}
+
+		switch args[0] {
+		case "rev-parse":
+			return commitSHA + "\n", nil
+		case "status":
+			return status, nil
+		}
+
+		return "", fmt.Errorf("unexpected git %v", args)
+	}
+}
+
+func testDeps(environ []string) deps {
+	return deps{readFile: os.ReadFile, environ: environ, git: stubGit("", "")}
+}
+
 func Test_run(t *testing.T) {
 	t.Parallel()
 
@@ -49,17 +75,33 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
-			require.NoError(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, strings.NewReader(""), &out, os.ReadFile))
+			require.NoError(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, &out, testDeps(nil)))
 			assert.Equal(t, "ap-northeast-1\n", out.String())
 		})
 
-		t.Run("bucket は標準入力の資格情報から Bucket 名を1行で出す", func(t *testing.T) {
+		t.Run("bucket は資格情報から Bucket 名を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
-			args := []string{"bucket", "-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"}
-			require.NoError(t, run(args, strings.NewReader(identityUser), &out, os.ReadFile))
+			args := []string{"bucket", "-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", identityUser}
+			require.NoError(t, run(args, &out, testDeps(nil)))
 			assert.Equal(t, "tabp-admin-tfstate-123456789012-ap-northeast-1-an\n", out.String())
+		})
+
+		t.Run("env-unset は外す名前を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"env-unset"}, &out, testDeps([]string{"AWS_PROFILE=x", "HOME=/h"})))
+			assert.Equal(t, "-u AWS_PROFILE\n", out.String())
+		})
+
+		t.Run("plan-header は commit の行を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"plan-header"}, &out, testDeps(nil)))
+			assert.Equal(t, "commit: "+commitSHA+"\n", out.String())
 		})
 	})
 
@@ -71,13 +113,15 @@ func Test_run(t *testing.T) {
 			"知らないサブコマンドは失敗する":         {"apply"},
 			"region に root が無ければ失敗する": {"region"},
 			"region に余分な引数があれば失敗する":   {"region", "a", "b"},
+			"env-unset に引数があれば失敗する":   {"env-unset", "x"},
+			"plan-header に引数があれば失敗する": {"plan-header", "x"},
 		}
 		for name, args := range cases {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
 				var out bytes.Buffer
-				require.ErrorIs(t, run(args, strings.NewReader(""), &out, os.ReadFile), errUsage)
+				require.ErrorIs(t, run(args, &out, testDeps(nil)), errUsage)
 				assert.Empty(t, out.String())
 			})
 		}
@@ -87,23 +131,33 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 			root := rootWith(t, backendOK, "provider \"aws\" {\n  region = \"us-east-1\"\n}\n")
-			require.ErrorIs(t, run([]string{"region", root}, strings.NewReader(""), &out, os.ReadFile), errRegionMismatch)
+			require.ErrorIs(t, run([]string{"region", root}, &out, testDeps(nil)), errRegionMismatch)
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("Bucket 名を決められなければ何も出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			args := []string{"bucket", "-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", ""}
+			require.ErrorIs(t, run(args, &out, testDeps(nil)), errIdentity)
+			assert.Empty(t, out.String())
+		})
+
+		t.Run("commit を決められなければ何も出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			d := testDeps(nil)
+			d.git = stubGit("", "rev-parse")
+			require.ErrorIs(t, run([]string{"plan-header"}, &out, d), errGit)
 			assert.Empty(t, out.String())
 		})
 
 		t.Run("出力に失敗すれば失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			require.ErrorIs(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, strings.NewReader(""), failingWriter{}, os.ReadFile), errWrite)
-		})
-
-		t.Run("値を決められなければ何も出力しない", func(t *testing.T) {
-			t.Parallel()
-
-			var out bytes.Buffer
-			args := []string{"bucket", "-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"}
-			require.ErrorIs(t, run(args, strings.NewReader(""), &out, os.ReadFile), errIdentity)
-			assert.Empty(t, out.String())
+			require.ErrorIs(t, run([]string{"region", rootWith(t, backendOK, providersOK)}, failingWriter{}, testDeps(nil)), errWrite)
 		})
 	})
 }
@@ -114,59 +168,57 @@ func Test_runBucket(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("フラグと標準入力から Bucket 名を組む", func(t *testing.T) {
+		t.Run("フラグから Bucket 名を組む", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"}, strings.NewReader(identityUser))
+			got, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", identityUser})
 			require.NoError(t, err)
 			assert.Equal(t, "tabp-admin-tfstate-123456789012-ap-northeast-1-an", got)
+		})
+
+		t.Run("region が違えば名前の region も変わる", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runBucket([]string{"-project", "tabp", "-env", "dev", "-region", "us-east-1", "-identity", identityUser})
+			require.NoError(t, err)
+			assert.Equal(t, "tabp-dev-tfstate-123456789012-us-east-1-an", got)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("知らないフラグは失敗する", func(t *testing.T) {
+		for name, args := range map[string][]string{
+			"知らないフラグは失敗する": {"-target", "x"},
+			"余分な引数は失敗する":   {"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", identityUser, "x"},
+			"値の無いフラグは失敗する": {"-project"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := runBucket(args)
+				require.ErrorIs(t, err, errUsage)
+			})
+		}
+
+		t.Run("-identity を欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := runBucket([]string{"-target", "x"}, strings.NewReader(identityUser))
-			require.ErrorIs(t, err, errUsage)
-		})
-
-		t.Run("余分な引数は失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "x"}, strings.NewReader(identityUser))
-			require.ErrorIs(t, err, errUsage)
-		})
-
-		t.Run("値の無いフラグは失敗する", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runBucket([]string{"-project"}, strings.NewReader(identityUser))
-			require.ErrorIs(t, err, errUsage)
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"})
+			require.ErrorIs(t, err, errIdentity)
 		})
 
 		t.Run("-region を欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := runBucket([]string{"-project", "tabp", "-env", "admin"}, strings.NewReader(identityUser))
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-identity", identityUser})
 			require.ErrorIs(t, err, errRegionMalformed)
 		})
 
-		t.Run("標準入力を読めなければ資格情報の誤りとは別に失敗する", func(t *testing.T) {
+		t.Run("-project を欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
-			errRead := errors.New("read failed")
-			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1"}, iotest.ErrReader(errRead))
-			require.ErrorIs(t, err, errRead)
-			assert.NotErrorIs(t, err, errIdentity)
-		})
-
-		t.Run("フラグを欠くと Bucket 名を組まない", func(t *testing.T) {
-			t.Parallel()
-
-			_, err := runBucket([]string{"-env", "admin", "-region", "ap-northeast-1"}, strings.NewReader(identityUser))
+			_, err := runBucket([]string{"-env", "admin", "-region", "ap-northeast-1", "-identity", identityUser})
 			require.ErrorIs(t, err, errToken)
 		})
 	})
@@ -408,6 +460,26 @@ func Test_bucketName(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "tabp-admin-tfstate-123456789012-ap-northeast-1-an", got)
 		})
+
+		// 写しのずれを見るので、正本である実物を読む（ADR-0702 決定17 の但し書き）。
+		t.Run("env/admin/identity のテストが期待する名前と一致する", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := bucketName("tabp", "admin", "123456789012", "ap-northeast-1")
+			require.NoError(t, err)
+
+			tftest, err := os.ReadFile(filepath.Join("..", "..", "env", "admin", "identity", "tests", "imports.tftest.hcl"))
+			require.NoError(t, err)
+			assert.Contains(t, string(tftest), `== "`+got+`"`)
+		})
+
+		t.Run("docs/setup/bootstrap.md の段1 の組み立てと一致する", func(t *testing.T) {
+			t.Parallel()
+
+			doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "setup", "bootstrap.md"))
+			require.NoError(t, err)
+			assert.Contains(t, string(doc), `BUCKET="`+fmt.Sprintf(bucketFormat, "tabp", "admin", "${ACCOUNT_ID}", "${REGION}")+`"`)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -434,6 +506,113 @@ func Test_bucketName(t *testing.T) {
 
 			_, err := bucketName("tabp", "admin", "123456789012", "Tokyo")
 			require.ErrorIs(t, err, errRegionMalformed)
+		})
+	})
+}
+
+func Test_envUnset(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("資格情報と振る舞いを変える変数を外し、ほかは残す", func(t *testing.T) {
+			t.Parallel()
+
+			got := envUnset([]string{
+				"HOME=/h", "PATH=/bin", "TF_PLUGIN_CACHE_DIR=/c", "TF_IN_AUTOMATION=1",
+				"AWS_PROFILE=other", "AWS_ACCESS_KEY_ID=x", "AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/",
+				"TF_CLI_ARGS=-x", "TF_CLI_ARGS_plan=-target=a.b", "TF_VAR_a=b",
+				"TF_LOG=trace", "TF_LOG_PATH=/tmp/x", "TF_LOG_PROVIDER=trace",
+				"TF_WORKSPACE=w", "TF_DATA_DIR=/d", "TF_CLI_CONFIG_FILE=/f", "TF_REATTACH_PROVIDERS=x",
+			})
+			assert.Equal(t, "-u AWS_ACCESS_KEY_ID -u AWS_CONTAINER_CREDENTIALS_FULL_URI -u AWS_PROFILE"+
+				" -u TF_CLI_ARGS -u TF_CLI_ARGS_plan -u TF_CLI_CONFIG_FILE -u TF_DATA_DIR"+
+				" -u TF_LOG -u TF_LOG_PATH -u TF_LOG_PROVIDER -u TF_REATTACH_PROVIDERS -u TF_VAR_a -u TF_WORKSPACE", got)
+		})
+
+		t.Run("外す変数が無ければ空にする", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, envUnset([]string{"HOME=/h", "TF_PLUGIN_CACHE_DIR=/c"}))
+		})
+
+		t.Run("名前が前方一致するだけの変数は残す", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, envUnset([]string{"MY_AWS_PROFILE=x", "TF_WORKSPACE_X=y", "TF_DATA_DIRS=z"}))
+		})
+
+		t.Run("同じ名前が2度あっても1度だけ外す", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, "-u AWS_PROFILE", envUnset([]string{"AWS_PROFILE=a", "AWS_PROFILE=b"}))
+		})
+	})
+}
+
+func Test_planHeader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("作業ツリーが clean なら commit だけを書く", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := planHeader(stubGit("", ""))
+			require.NoError(t, err)
+			assert.Equal(t, "commit: "+commitSHA, got)
+		})
+
+		t.Run("未コミットの変更があれば注記する", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := planHeader(stubGit(" M x\n", ""))
+			require.NoError(t, err)
+			assert.Equal(t, "commit: "+commitSHA+" （作業ツリーに未コミットの変更あり）", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, sub := range []string{"rev-parse", "status"} {
+			t.Run(sub+" が失敗すれば失敗する", func(t *testing.T) {
+				t.Parallel()
+
+				_, err := planHeader(stubGit("", sub))
+				require.ErrorIs(t, err, errGit)
+			})
+		}
+	})
+}
+
+func Test_gitOutput(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("git の標準出力を返す", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := gitOutput("--version")
+			require.NoError(t, err)
+			assert.True(t, strings.HasPrefix(got, "git version "), got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("git が失敗すれば失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := gitOutput("-C", t.TempDir(), "rev-parse", "HEAD")
+
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
 		})
 	})
 }

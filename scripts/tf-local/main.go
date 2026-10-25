@@ -1,33 +1,50 @@
 // Package main は、人が手元から Terraform を動かす入口（.makefiles/terraform/operation/local.mk）が
-// terraform に渡す値を組み立てて検証するツール。
+// aws と terraform に渡す値を組み立てて検証するツール。
 //
 //	tf-local region <root>
 //	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
 //	    region と違えば失敗する（Bucket 名の region は provider の region から決まる）
-//	tf-local bucket -project <p> -env <e> -region <r>
-//	    標準入力の `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
+//	tf-local bucket -project <p> -env <e> -region <r> -identity <out>
+//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
 //	    state Bucket の名前を1行で出す
+//	tf-local env-unset
+//	    aws と terraform の振る舞いを呼び出し元の環境変数で変えさせないために外す名前を、
+//	    `env` に渡す `-u <名前>` の並びで出す
+//	tf-local plan-header
+//	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
+// make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
 // backend block は式を持てないので、Bucket 名の規則をここに写す。正本は modules/s3 と
-// usecases/state-backend で、写しのずれは make tf-local-test が env/admin/identity のテストの
-// 期待値と突き合わせて見る。state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
+// usecases/state-backend で、写しのずれはテストが env/admin/identity のテストの期待値と
+// docs/setup/bootstrap.md の段1 に突き合わせて見る（ADR-0702 決定17 の但し書き）。
+// state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
+
+// bucketFormat は、modules/s3 の `<name>-<account_id>-<region>-an` に、usecases/state-backend の
+// name（`<project>-<env>-tfstate`）を入れた形。
+const bucketFormat = "%s-%s-tfstate-%s-%s-an"
+
+const gitTimeout = 30 * time.Second
 
 var (
 	regionLine     = regexp.MustCompile(`^\s*region\s*=\s*"([^"]*)"`)
@@ -35,26 +52,38 @@ var (
 	accountPattern = regexp.MustCompile(`^[0-9]{12}$`)
 	tokenPattern   = regexp.MustCompile(`^[a-z0-9]+$`)
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | tf-local bucket -project <p> -env <e> -region <r>")
+	// unsetPrefixes と unsetNames は、資格情報・引数・入力・対象の state・provider を変える変数と、
+	// 資格情報を含みうる trace を出す変数。TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
+	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
+	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
+
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
-	errRegionNotOne     = xerrors.New("❌ backend.tf の region が1つではありません")
+	errRegionNotOne     = xerrors.New("❌ region が1つではありません")
 	errRegionMalformed  = xerrors.New("❌ region の形が不正です")
 	errIdentity         = xerrors.New("❌ アカウント ID を取得できません（make aws-login を実行してください）")
 	errRootCredentials  = xerrors.New("❌ root の資格情報では実行しません")
 	errToken            = xerrors.New("❌ project と env は英小文字と数字だけです")
+	errGit              = xerrors.New("❌ plan した commit を git から決められません")
 )
+
+type deps struct {
+	readFile func(string) ([]byte, error)
+	environ  []string
+	git      func(args ...string) (string, error)
+}
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.ReadFile); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
-func run(args []string, in io.Reader, out io.Writer, readFile func(string) ([]byte, error)) error {
+func run(args []string, out io.Writer, d deps) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -70,9 +99,21 @@ func run(args []string, in io.Reader, out io.Writer, readFile func(string) ([]by
 			return errUsage
 		}
 
-		value, err = rootRegion(args[1], readFile)
+		value, err = rootRegion(args[1], d.readFile)
 	case "bucket":
-		value, err = runBucket(args[1:], in)
+		value, err = runBucket(args[1:])
+	case "env-unset":
+		if len(args) != 1 {
+			return errUsage
+		}
+
+		value = envUnset(d.environ)
+	case "plan-header":
+		if len(args) != 1 {
+			return errUsage
+		}
+
+		value, err = planHeader(d.git)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -86,11 +127,12 @@ func run(args []string, in io.Reader, out io.Writer, readFile func(string) ([]by
 	return err
 }
 
-func runBucket(args []string, in io.Reader) (string, error) {
+func runBucket(args []string) (string, error) {
 	fs := flag.NewFlagSet("bucket", flag.ContinueOnError)
 	project := fs.String("project", "", "")
 	env := fs.String("env", "", "")
 	region := fs.String("region", "", "")
+	identity := fs.String("identity", "", "")
 
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
@@ -100,12 +142,7 @@ func runBucket(args []string, in io.Reader) (string, error) {
 		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
 	}
 
-	identity, err := io.ReadAll(in)
-	if err != nil {
-		return "", xerrors.Wrap(err, "標準入力の読み取り")
-	}
-
-	account, err := callerAccount(string(identity))
+	account, err := callerAccount(*identity)
 	if err != nil {
 		return "", err
 	}
@@ -145,8 +182,8 @@ func rootRegion(root string, readFile func(string) ([]byte, error)) (string, err
 	return region, nil
 }
 
-// backendRegion は、0件・複数件・形の誤りを、どれか1つを選ばずにエラーにします。選んだ値が実際の Bucket の region と違えば、別の名前の
-// Bucket へ init することになるためです。
+// backendRegion は、0件・複数件・形の誤りを、どれか1つを選ばずにエラーにします。選んだ値が実際の
+// Bucket の region と違えば、別の名前の Bucket へ init することになるためです。
 func backendRegion(content string) (string, error) {
 	var regions []string
 
@@ -182,8 +219,6 @@ func callerAccount(identity string) (string, error) {
 	return fields[0], nil
 }
 
-// bucketName は、state Bucket の完全な名前を組みます（modules/s3 の `<name>-<account_id>-<region>-an`、
-// name は usecases/state-backend の `<project>-<env>-tfstate`）。
 func bucketName(project, env, account, region string) (string, error) {
 	if !tokenPattern.MatchString(project) || !tokenPattern.MatchString(env) {
 		return "", xerrors.Wrap(errToken, fmt.Sprintf("project=%q env=%q", project, env))
@@ -193,5 +228,62 @@ func bucketName(project, env, account, region string) (string, error) {
 		return "", xerrors.Wrap(errRegionMalformed, region)
 	}
 
-	return fmt.Sprintf("%s-%s-tfstate-%s-%s-an", project, env, account, region), nil
+	return fmt.Sprintf(bucketFormat, project, env, account, region), nil
+}
+
+// envUnset は、environ のうち外す変数を `-u <名前>` の並びで返します。外す変数が無ければ空文字を返す。
+func envUnset(environ []string) string {
+	var names []string
+
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			names = append(names, name)
+		}
+	}
+
+	slices.Sort(names)
+
+	flags := make([]string, 0, len(names))
+	for _, name := range slices.Compact(names) {
+		flags = append(flags, "-u "+name)
+	}
+
+	return strings.Join(flags, " ")
+}
+
+// planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10）。git が答えられなければ、
+// どの commit の plan かを残せないので失敗します。
+func planHeader(git func(args ...string) (string, error)) (string, error) {
+	commit, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return "", xerrors.Wrap(errGit, err.Error())
+	}
+
+	status, err := git("status", "--porcelain")
+	if err != nil {
+		return "", xerrors.Wrap(errGit, err.Error())
+	}
+
+	header := "commit: " + strings.TrimSpace(commit)
+	if strings.TrimSpace(status) != "" {
+		header += " （作業ツリーに未コミットの変更あり）"
+	}
+
+	return header, nil
+}
+
+func gitOutput(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // 引数は planHeader が組んだ固定値
+	cmd.Stderr = os.Stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", xerrors.Wrap(err, "git "+strings.Join(args, " "))
+	}
+
+	return string(out), nil
 }
