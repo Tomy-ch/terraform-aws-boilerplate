@@ -20,6 +20,20 @@ run "account_regional_name" {
   }
 }
 
+# usecase の import block が id に使うので、plan の時点で Bucket の名前と一致していなければならない。
+run "bucket_name_output_matches_bucket" {
+  command = plan
+
+  variables {
+    name = "tabp-admin-tfstate"
+  }
+
+  assert {
+    condition     = output.bucket_name == aws_s3_bucket.this.bucket
+    error_message = "bucket_name が Bucket の名前と一致していません。"
+  }
+}
+
 # ARN は plan では決まらないので、mock の apply で確かめる。
 run "bucket_arn_output" {
   command = apply
@@ -160,7 +174,6 @@ run "name_reserved_prefix_amzn_s3_demo" {
   expect_failures = [var.name]
 }
 
-# 予約された文字列は接頭辞としてだけ拒む。
 run "name_reserved_string_not_prefix" {
   command = plan
 

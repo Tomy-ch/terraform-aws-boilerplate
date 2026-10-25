@@ -171,6 +171,81 @@ Cost Explorer は API では有効化できず、コンソールで初めて開�
 
 有効化と同時に Cost Anomaly Detection が自動設定され、AWS services monitor と日次サマリーの通知が作られる。翌日以降に Cost Anomaly Detection の「Cost monitors」で monitor が存在すること、通知先メールが意図したアドレスであることを確認する。
 
+## 段1-5
+
+### 段1. AWS CLI で state Bucket を作る
+
+state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは `modules/s3` が宣言するものと同じ構成に限る —— 版管理、Public Access Block、Object Ownership、既定の暗号化（SSE-S3 と SSE-C の拒否）。Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。段2 の plan が差分を出す。
+
+名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
+
+1. 変数を用意する
+
+   ```bash
+   export AWS_PROFILE=tabp-bootstrap
+   REGION=ap-northeast-1
+   ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+   BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"
+   ```
+
+2. Bucket を作る。Object Ownership は作成時に `BucketOwnerEnforced` を指定する
+
+   ```bash
+   aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
+     --bucket-namespace account-regional \
+     --create-bucket-configuration "LocationConstraint=${REGION}" \
+     --object-ownership BucketOwnerEnforced
+   ```
+
+3. Public Access Block、版管理、既定の暗号化を設定する
+
+   ```bash
+   aws s3api put-public-access-block --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
+     --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+   aws s3api put-bucket-versioning --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
+     --versioning-configuration Status=Enabled
+   aws s3api put-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
+     --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BlockedEncryptionTypes":{"EncryptionType":["SSE-C"]}}]}'
+   ```
+
+4. 設定を読み戻して確かめる
+
+   ```bash
+   aws s3api get-public-access-block --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-ownership-controls --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-versioning --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   ```
+
+   Public Access Block の4項目が `true`、所有権が `BucketOwnerEnforced`、版管理が `Enabled`、暗号化が `AES256` で `SSE-C` を拒否していること。1つでも違えば、手順3 をやり直す。4つがすべて一致するまで段2 へ進まない。
+
+名前や namespace を誤ったときは、空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消して作り直す。
+
+### 段2. Terraform で取り込み、plan で突合する
+
+`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` は block に書かず、init の引数で渡す。
+
+段2 では apply しない。state を書くのは段4 のローカルの apply であり、ADR-0601 決定5 の例外は段4 だけに掛かる（ADR-0602 決定9）。plan は lock を取らずに実行する（ADR-0604 決定8）。
+
+1. init する。段1 で Bucket が在るので、backend の初期化はそのまま通る
+
+   ```bash
+   AWS_PROFILE=tabp-bootstrap terraform -chdir=env/admin/identity init -lockfile=readonly \
+     -backend-config="bucket=${BUCKET}"
+   ```
+
+2. plan する
+
+   ```bash
+   AWS_PROFILE=tabp-bootstrap terraform -chdir=env/admin/identity plan -lock=false
+   ```
+
+3. 結果が `Plan: 5 to import, 0 to add, 0 to change, 0 to destroy.` であることを確かめる。取り込みのほかに変更が0件であることをもって、段2 の完了とする（ADR-0602 決定8）
+
+差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
+
+plan の出力にはアカウント ID が入る。Pull Request へ載せるときは、アカウント ID を伏せた要約にする。
+
 ## 一時 IAM user の削除
 
 bootstrap の段5（CI による apply）が成功するまでは削除しない。それまでは、段4 をやり直す手段として残しておく。
@@ -200,6 +275,12 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 - [ ] `aws sts get-caller-identity --profile tabp-bootstrap` が一時 IAM user を返し、`AWS_PROFILE=tabp-bootstrap terraform plan` が通る
 - [ ] primary contact と代替連絡先3種が登録済み
 - [ ] Cost Explorer が有効で、Cost Anomaly Detection の monitor が存在する
+
+段2 の終了時:
+
+- [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
+- [ ] `terraform -chdir=env/admin/identity plan -lock=false` が `5 to import, 0 to add, 0 to change, 0 to destroy` を示した
+- [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 一時 IAM user の削除の終了時:
 

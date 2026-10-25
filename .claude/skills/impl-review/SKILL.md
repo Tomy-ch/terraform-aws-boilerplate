@@ -166,8 +166,8 @@ skill the single point through which the other two are remembered.
   ```
 
   **配置そのものが所有範囲を表す**（決定14）ので、「どこに置かれているか」は読み飛ばす書式ではなく、
-  その決定が誰を拘束するかの宣言である。`usecases/foo/` を触った変更は、root ADR と
-  `usecases/foo/docs/adr/` の**両方**に拘束される。`usecases/bar/docs/adr/` には拘束されない。
+  その決定が誰を拘束するかの宣言である。usecases/foo/ を触った変更は、root ADR と
+  usecases/foo/docs/adr/ の**両方**に拘束される。usecases/bar/docs/adr/ には拘束されない。
 
 ## Step 2 — Fan-out Finders (different model, concurrent)
 

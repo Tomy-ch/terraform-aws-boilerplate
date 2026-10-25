@@ -12,10 +12,10 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は一般 module の `modules/s3/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/`（bootstrap の段1・段2 の分）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `usecases/` / `env/` —— ユースケースと環境が無い
+- `usecases/` / `env/` —— `state-backend` と管理アカウントの identity root のほかに、ユースケースと環境が無い
 - Conftest の Policy Test と層検査 —— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）
@@ -52,8 +52,8 @@
 | 必要なもの | 読む先 |
 | --- | --- |
 | repository-wide の受理された決定、1行ずつ | [`docs/adr/README.md`](docs/adr/README.md) —— repository-wide の ADR の一覧が存在する唯一の場所 |
-| ユースケースの責務境界・supported / unsupported・公開契約 | `usecases/<use-case>/README.md`（[0102](docs/adr/0102-use-case-centric-scope.md) 決定2、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2）—— 未作成 |
-| そのユースケースに固有の設計判断 | `usecases/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）。一覧は同ディレクトリの `README.md` —— 未作成 |
+| ユースケースの責務境界・supported / unsupported・公開契約 | `usecases/<use-case>/README.md`（[0102](docs/adr/0102-use-case-centric-scope.md) 決定2、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2） |
+| そのユースケースに固有の設計判断 | `usecases/<use-case>/docs/adr/`（[0001](docs/adr/0001-adr-process-and-placement.md) 決定12-13）。一覧は同ディレクトリの `README.md` |
 | **AWS Provider の schema は version で変わる** | 記憶ではなく Terraform MCP Server → Terraform Registry → Provider Documentation の順に確認する（[0501](docs/adr/0501-development-tooling-composition.md) 決定21）。記憶にある argument 名は、確認するまで仮説である |
 | どのテスト層が何を検出するか | [0401](docs/adr/0401-testing-policy.md) 決定4。それを担う道具は [0501](docs/adr/0501-development-tooling-composition.md) 決定4 |
 | どの文書が何を所有し、開発の経緯はどこへ行くか | [0701](docs/adr/0701-documentation-ownership-and-language.md) 決定2・3 |
