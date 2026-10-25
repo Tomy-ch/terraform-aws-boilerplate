@@ -34,6 +34,10 @@
 **`terraform` はここに居ない。** 人と CI が最も頻繁に叩く単一の静的バイナリであり、資格情報の
 受け渡しに境界を増やさないため、mise がホストへ入れたものを直接実行する（ADR-0503 決定5）。
 
+**Checkov / KICS / Semgrep CE もここに居ない。** 上流がイメージとして配布する道具であり、そのイメージで
+実行する。版は `docker-compose.yaml` の `image:` の tag が、digest は `docker/images-pin.toml` が持つ
+（ADR-0503 決定4・10、ADR-0501 決定19）。
+
 `node_tools` は mise を持たず、install は npm が行う —— mise は宣言された node が mise 経由で
 入っていることを要求し、ベースイメージの node を認めないためである。**この段は `mise.toml` を
 読まない。** 版は `make versions-apply` が書き `make versions-check` が守る写しとして Dockerfile に
