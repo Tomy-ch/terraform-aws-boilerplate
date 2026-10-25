@@ -37,7 +37,7 @@ const soundHostTools = `host-tools-install:
 	@mise reshim
 `
 
-// editorconfig-checker-disable
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 // soundDockerfile は、写しをすべて持つ Dockerfile。**レシピの継続行をそのまま含める** ——
 // 行頭の空白と行末の `; \` は、置換で前置きが落ちる欠陥が現れる唯一の場所である。

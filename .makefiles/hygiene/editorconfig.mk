@@ -3,9 +3,8 @@
 ## 引数を渡さないと git が追跡するファイルをすべて見る。.editorconfig-checker.json は空に保つ
 ## —— 除外を足すと、検査対象が黙って縮む。レシピがそれを強制する。
 ##
-## Go の raw string に置いた YAML / シェルの fixture は、Go の字下げ（tab）ではなく埋め込んだ言語の
-## 字下げを持つ。gofmt は raw string の中身を保つので、そこだけを
-## `// editorconfig-checker-disable` / `-enable` で囲む。Go 全体の字下げの検査は外さない。
+## 抑止は `// editorconfig-checker-disable` / `-enable` で囲んだ範囲に限り、印ごとに理由と撤回条件を
+## 書く（ADR-0501 決定13）。ファイルや形式の単位で外さない。
 
 .PHONY: editorconfig-check ## ファイルが .editorconfig の宣言に一致することを検査
 editorconfig-check: editorconfig-check-canary

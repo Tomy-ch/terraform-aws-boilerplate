@@ -1585,7 +1585,7 @@ func Test_publishedAt(t *testing.T) {
 	})
 }
 
-// editorconfig-checker-disable
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 // aquaHTTPRegistry は、配布物を GitHub 以外から取る aqua パッケージの定義。aws-cli がこの形。
 const aquaHTTPRegistry = `packages:

@@ -18,7 +18,7 @@ const testPins = `# comment
 "ubuntu-latest" = "ubuntu-24.04"
 `
 
-// editorconfig-checker-disable
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const floatingYAML = `name: T
 jobs:
@@ -161,7 +161,7 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("ブロックスカラーの中の runs-on は書き換えない", func(t *testing.T) {
 			t.Parallel()
 			files := soundRepo()
-			// editorconfig-checker-disable
+			// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 			files[workflowDir+"/a.yaml"] = pinnedYAML + `    steps:
       - run: |
           echo "runs-on: ubuntu-latest"
