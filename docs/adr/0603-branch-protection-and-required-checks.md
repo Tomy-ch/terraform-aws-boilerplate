@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0601, ADR-0602, ADR-0302, ADR-0702, ADR-0503
+- Related: ADR-0601, ADR-0602, ADR-0302, ADR-0702, ADR-0503, ADR-0103
 
 本ADRは、保護設定を宣言と実態の突合で管理していた先行ADRをsupersedeする。
 
@@ -150,6 +150,7 @@ required status check には、機構として2つの落とし穴がある。
     - fast-forwardでない更新の禁止
     - 削除の禁止
     - required status check
+    - code owner による review の要求
 
 ### 統合方式
 

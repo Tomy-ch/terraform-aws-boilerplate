@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0101, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0401, ADR-0402, ADR-0601
+- Related: ADR-0101, ADR-0103, ADR-0202, ADR-0205, ADR-0206, ADR-0301, ADR-0401, ADR-0402, ADR-0601
 
 ## Context
 
@@ -55,7 +55,7 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
 5. TFLint は `terraform validate` の代替ではなく補完として置く。
 
    Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
-   ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則と、backend 設定の不変条件。同じ規約を両方に
+   ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、backend 設定の不変条件、ADR-0103 決定9-11 のコード実行の検出。同じ規約を両方に
    書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
    届く module に検査が限られるためである。Conftest は Policy 層で既に用いており、道具は増えない。
