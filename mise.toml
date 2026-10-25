@@ -27,10 +27,10 @@ min_version = "2026.6.0"
 
 # 運用機構の実装言語（ADR-0702 決定6）。go.mod の go ディレクティブ、および
 # docker/tools/Dockerfile のベースイメージと揃える（ずれたらイメージのビルドが落ちる）。
-go = "1.27.1"
+go = "1.27.3"
 
 # npm エコシステムの道具のためのランタイム。同じくベースイメージと揃える。
-node = "24.21.0"
+node = "24.22.1"
 
 
 # ==============================================================================
@@ -48,7 +48,7 @@ node = "24.21.0"
 
 # Security の権威（ADR-0501 決定4・決定6）。secret scanner は無効化し misconfiguration に限定する
 # （ADR-0302 決定2）。Terraform の IaC 走査もここが担う。
-"aqua:aquasecurity/trivy" = "0.74.0"
+"aqua:aquasecurity/trivy" = "0.75.0"
 
 # Secret Scan の権威（ADR-0302 決定1）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
 "aqua:gitleaks/gitleaks" = "8.30.1"
@@ -64,7 +64,7 @@ node = "24.21.0"
 
 # template injection の検出。shellcheck 系には構造的に見えない —— ${{ }} はシェルがパースする
 # 前に置換されるため、補間された式は文字列ではなくコードになる。だから lint に束ねず横に並べる。
-"aqua:zizmorcore/zizmor" = "1.30.0"
+"aqua:zizmorcore/zizmor" = "1.31.1"
 
 # workflow 定義の構文と式、run: のシェルを検査する。走査が及ぶのは .github/workflows だけで、
 # composite action の中は scripts/actions-shellcheck が埋める。
@@ -76,17 +76,17 @@ shellcheck = "0.11.0"
 hadolint = "2.15.1"
 
 # 運用機構（scripts/）の Go を検査する。
-golangci-lint = "2.13.2"
+golangci-lint = "2.15.0"
 
 # ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
-lefthook = "2.1.12"
+lefthook = "2.2.1"
 
 # --- npm エコシステム（ADR-0503 決定14） ---
 
 # Markdown の体裁。このリポジトリの主要な成果物が Markdown である以上、既製品が在るなら
 # 自前で書かない（ADR-0501 決定3 の第1条件）。
-"npm:markdownlint-cli2" = "0.23.2"
+"npm:markdownlint-cli2" = "0.24.0"
 
 # commit message の検査。規約の正本は commitlint.config.js。課すのは type の enum と type / subject の空チェックだけで、
 # 一般的な規約集の設定を継承しない。
-"npm:@commitlint/cli" = "21.2.2"
+"npm:@commitlint/cli" = "21.2.4"

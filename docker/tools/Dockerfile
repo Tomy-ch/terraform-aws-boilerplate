@@ -9,7 +9,7 @@ ARG MISE_VERSION=v2026.9.9
 # ==============================================================================
 # go_tools_builder: mise.toml の宣言どおりに道具を入れ、バイナリだけを取り出す
 # ==============================================================================
-FROM golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS go_tools_builder
+FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS go_tools_builder
 
 # パイプの左側が失敗しても右側が成功すれば RUN が通ってしまう既定を塞ぐ。
 # 下の版の検査はコマンド置換の中でパイプを使うため、これが無いと**検査が実行されないまま緑になる**。
@@ -43,7 +43,7 @@ RUN mise trust mise.toml
 # 値をここで mise.toml から直接読まない理由は mise.toml 冒頭が持つ。焼き込みは
 # `make versions-apply` が書き `versions-check` が守る。
 RUN set -eu; \
-    declared_go="1.27.1"; \
+    declared_go="1.27.3"; \
     actual="$(go version | sed 's|^go version go\([^ ]*\).*|\1|')"; \
     [ "$declared_go" = "$actual" ] || { \
       echo "Go の版がずれています: 宣言=$declared_go / ベースイメージ=$actual" >&2; \
@@ -76,7 +76,7 @@ RUN mkdir /out \
 # ==============================================================================
 # go_tools: 運用機構（scripts/）を走らせる。mise 本体も install キャッシュもここには無い
 # ==============================================================================
-FROM golang:1.27.1-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS go_tools
+FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS go_tools
 
 # git: 運用機構の多くが git を呼ぶ（base-branch は ls-remote、release は tag、commitlint の
 #      範囲取得は rev-list）。テストもこれらを実際に起動して引数列を検査する。
@@ -107,7 +107,7 @@ CMD []
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段が mise を使わない理由は docker/tools/README.md が持つ。
-FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS node_tools
+FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS node_tools
 
 # pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
 # alpine の `sh` は busybox で、pipefail を持たない。
@@ -124,14 +124,14 @@ WORKDIR /app
 # `--ignore-scripts` の理由と、in-tree のパッケージが現れたときの移行先は
 # docker/tools/README.md と ADR-0503 決定16-18 が持つ。
 RUN set -eu; \
-    declared_node="24.21.0"; \
+    declared_node="24.22.1"; \
     actual_node="$(node --version | sed 's|^v||')"; \
     [ "$declared_node" = "$actual_node" ] || { \
       echo "Node の版がずれています: 宣言=$declared_node / ベースイメージ=$actual_node" >&2; \
       echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください（make versions-apply）" >&2; exit 1; }; \
     npm install -g --ignore-scripts \
-      "markdownlint-cli2@0.23.2" \
-      "@commitlint/cli@21.2.2"; \
+      "markdownlint-cli2@0.24.0" \
+      "@commitlint/cli@21.2.4"; \
     npm cache clean --force; \
     rm -rf /root/.npm
 

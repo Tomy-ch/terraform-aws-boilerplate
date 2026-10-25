@@ -55,6 +55,9 @@ var errRoundTrip = xerrors.New("round trip failed")
 type upstreamRedirect struct {
 	scheme string
 	host   string
+	// next はそのテストサーバ専用の Transport。http.DefaultTransport を共有すると、並列の別テストの
+	// httptest.Server.Close が DefaultTransport の接続を閉じ、通信中のリクエストが切れる。
+	next http.RoundTripper
 }
 
 // unreachableUpstream は、上流へ到達できない状況を再現する RoundTripper。実ネットワークへ出ないことも
@@ -65,7 +68,7 @@ func (u upstreamRedirect) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
 	clone.URL.Scheme = u.scheme
 	clone.URL.Host = u.host
-	return http.DefaultTransport.RoundTrip(clone)
+	return u.next.RoundTrip(clone)
 }
 
 func (unreachableUpstream) RoundTrip(*http.Request) (*http.Response, error) { return nil, errRoundTrip }
@@ -80,7 +83,7 @@ func fakeUpstream(t *testing.T, handler http.HandlerFunc) *http.Client {
 
 	base, err := url.Parse(srv.URL)
 	require.NoError(t, err)
-	return &http.Client{Transport: upstreamRedirect{scheme: base.Scheme, host: base.Host}}
+	return &http.Client{Transport: upstreamRedirect{scheme: base.Scheme, host: base.Host, next: srv.Client().Transport}}
 }
 
 // respondJSON は、path に一致したときだけ body を返し、それ以外は 404 を返すハンドラを組みます。
