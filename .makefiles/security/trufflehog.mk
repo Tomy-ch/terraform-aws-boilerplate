@@ -67,10 +67,10 @@ trufflehog-canary:
 	id=$$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 16); \
 	secret=$$(head -c 512 /dev/urandom | base64 | LC_ALL=C tr -dc 'A-Za-z0-9/+' | head -c 40); \
 	printf '[default]\naws_access_key_id = AKIA%s\naws_secret_access_key = %s\n' "$$id" "$$secret" > "$$dir/credentials"; \
-	git -C "$$dir" init -q; \
-	commit() { git -C "$$dir" -c user.name=canary -c user.email=canary@example.invalid -c commit.gpgsign=false "$$@"; }; \
+	$(CANARY_GIT) -C "$$dir" init -q; \
+	commit() { $(CANARY_GIT) -C "$$dir" -c user.name=canary -c user.email=canary@example.invalid -c commit.gpgsign=false "$$@"; }; \
 	commit commit -q --allow-empty -m base; \
-	from=$$(git -C "$$dir" rev-parse HEAD); \
+	from=$$($(CANARY_GIT) -C "$$dir" rev-parse HEAD); \
 	commit add credentials; commit commit -q -m canary; \
 	rc=0; out=$$($(GO_TOOL) trufflehog git "file://$$dir" --since-commit "$$from" --branch HEAD \
 		$(filter-out --json,$(TRUFFLEHOG_FLAGS)) --json \

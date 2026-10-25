@@ -21,6 +21,12 @@ git rev-parse --verify --quiet "$(COMMITLINT_FROM)^{commit}" >/dev/null || { \
 	echo "❌ 走査範囲の起点 $(COMMITLINT_FROM) が解決できません。浅い取得か、ref の取り違えです" >&2; exit 2; }
 endef
 
+## canary が一時のリポジトリを操作するときの git。git の hook の中では GIT_DIR / GIT_INDEX_FILE などが
+## 外側のリポジトリを指しており、`git -C <一時の場所>` でもそちらへ commit・add してしまう。hook も
+## 外側の設定から走るので外す。
+CANARY_GIT := env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
+	-u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_PREFIX git -c core.hooksPath=/dev/null
+
 .PHONY: secret-scan ## push 予定の commit 範囲に秘密が無いことを検査
 secret-scan:
 	@set -eu; $(SECRET_SCAN_FROM_GUARD); \

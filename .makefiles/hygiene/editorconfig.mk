@@ -23,7 +23,7 @@ editorconfig-check-canary:
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
 	printf 'a:\n\tb: c\n' > "$$dir/canary.yaml"; \
-	git -C "$$dir" init -q; git -C "$$dir" add -A; \
+	$(CANARY_GIT) -C "$$dir" init -q; $(CANARY_GIT) -C "$$dir" add -A; \
 	rc=0; out=$$($(GO_TOOL) sh -c 'cd "$$1" && exec editorconfig-checker' sh "$$dir" 2>&1) || rc=$$?; \
 	case "$$rc:$$out" in \
 	0:*) echo "❌ editorconfig-check-canary: tab で字下げした YAML で落ちませんでした" >&2; exit 1 ;; \
