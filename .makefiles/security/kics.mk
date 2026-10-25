@@ -12,6 +12,7 @@ KICS_FLAGS := scan -p /work/src --type Terraform --disable-secrets --no-progress
 kics: kics-canary
 	@set -eu; rm -rf $(KICS_WORK) $(KICS_OUT); $(call TF_SCAN_STAGE,$(KICS_WORK)); \
 	rc=0; $(call IMAGE_RUN,kics_runner,$(KICS_WORK),$(KICS_OUT),$(KICS_CREATE),$(KICS_FLAGS)) || rc=$$?; \
+	$(call SARIF_NORMALIZE,$(KICS_OUT)/results.sarif); \
 	want=$$(find $(KICS_WORK)/src -name '*.tf' | wc -l | tr -d ' '); \
 	n=$$(jq -e '.files_scanned | if type == "number" then . else error("files_scanned が無い") end' $(KICS_OUT)/results.json); \
 	if [ "$$n" -eq 0 ] || [ "$$n" -lt "$$want" ]; then \

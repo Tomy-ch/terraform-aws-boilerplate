@@ -15,6 +15,7 @@ CHECKOV_PARSING_ERRORS := jq -e '[(if type == "array" then .[] else . end) | .su
 checkov: checkov-canary
 	@set -eu; rm -rf $(CHECKOV_WORK) $(CHECKOV_OUT); $(call TF_SCAN_STAGE,$(CHECKOV_WORK)); \
 	rc=0; $(call IMAGE_RUN,checkov_runner,$(CHECKOV_WORK),$(CHECKOV_OUT),,-d /work/src $(CHECKOV_FLAGS)) || rc=$$?; \
+	$(call SARIF_NORMALIZE,$(CHECKOV_OUT)/results_sarif.sarif); \
 	n=$$($(CHECKOV_RESOURCE_COUNT) $(CHECKOV_OUT)/results_json.json); \
 	if [ "$$n" -eq 0 ]; then echo "❌ checkov: 走査した resource が0件です" >&2; exit 1; fi; \
 	p=$$($(CHECKOV_PARSING_ERRORS) $(CHECKOV_OUT)/results_json.json); \

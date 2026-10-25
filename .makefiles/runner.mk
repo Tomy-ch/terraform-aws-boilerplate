@@ -47,6 +47,18 @@ IMAGE_RUN = sh -c 'set -eu; \
 	docker cp "$$id:/tmp/out/." "$(3)" || { echo "❌ $(1): 結果を取り出せませんでした" >&2; [ "$$rc" -ne 0 ] || rc=1; }; \
 	exit $$rc'
 
+## IMAGE_RUN が取り出した SARIF $(1) を code scanning が読める形にする。パスは /work/src/ を外して
+## リポジトリの相対パスへ戻し、source の中で抑止した result（suppressions を持つもの）は落とす ——
+## code scanning は suppressions を見ずに open の alert として載せる。
+define SARIF_NORMALIZE
+if [ -f "$(1)" ]; then \
+	jq '(.runs[].results) |= map(select((.suppressions // []) | length == 0)) \
+		| (.. | objects | select(has("artifactLocation")) | .artifactLocation.uri) |= sub("^(\\.\\./)*/?work/src/"; "")' \
+		"$(1)" > "$(1).tmp"; \
+	mv "$(1).tmp" "$(1)"; \
+fi
+endef
+
 ## IMAGE_RUN へ渡す Terraform の走査の対象（TF_SCAN_DIRS）を $(1)/src へ写す。.terraform は写さない。
 define TF_SCAN_STAGE
 mkdir -p "$(1)/src"; scan=""; \

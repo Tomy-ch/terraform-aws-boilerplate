@@ -46,6 +46,7 @@ semgrep: semgrep-canary
 	@set -eu; rm -rf $(SEMGREP_WORK) $(SEMGREP_OUT); $(call TF_SCAN_STAGE,$(SEMGREP_WORK)); \
 	$(call SEMGREP_STAGE_RULES,$(SEMGREP_WORK)); \
 	rc=0; $(call IMAGE_RUN,semgrep_runner,$(SEMGREP_WORK),$(SEMGREP_OUT),-w /work/cfg,$(SEMGREP_FLAGS)) || rc=$$?; \
+	$(call SARIF_NORMALIZE,$(SEMGREP_OUT)/results.sarif); \
 	want=$$(find $(SEMGREP_WORK)/src -type f \( -name '*.tf' -o -name '*.hcl' \) | wc -l | tr -d ' '); \
 	n=$$(jq -e '.paths.scanned | if type == "array" then length else error("paths.scanned が無い") end' $(SEMGREP_OUT)/results.json); \
 	if [ "$$n" -eq 0 ] || [ "$$n" -lt "$$want" ]; then \
