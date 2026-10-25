@@ -36,6 +36,62 @@ run "project_at_limit_with_sandbox" {
   }
 }
 
+run "env_dev" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "dev"
+  }
+
+  assert {
+    condition     = output.bucket_name == "tabp-dev-tfstate-123456789012-ap-northeast-1-an"
+    error_message = "env = dev から Bucket 名が組まれていません。"
+  }
+}
+
+run "env_stg" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "stg"
+  }
+
+  assert {
+    condition     = output.bucket_name == "tabp-stg-tfstate-123456789012-ap-northeast-1-an"
+    error_message = "env = stg から Bucket 名が組まれていません。"
+  }
+}
+
+run "env_prd" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "prd"
+  }
+
+  assert {
+    condition     = output.bucket_name == "tabp-prd-tfstate-123456789012-ap-northeast-1-an"
+    error_message = "env = prd から Bucket 名が組まれていません。"
+  }
+}
+
+run "project_digits" {
+  command = plan
+
+  variables {
+    project = "t4bp2"
+    env     = "admin"
+  }
+
+  assert {
+    condition     = output.bucket_name == "t4bp2-admin-tfstate-123456789012-ap-northeast-1-an"
+    error_message = "数字を含む project が受け入れられていません。"
+  }
+}
+
 run "project_hyphen" {
   command = plan
 
@@ -75,6 +131,28 @@ run "env_unknown" {
   variables {
     project = "tabp"
     env     = "mgmt"
+  }
+
+  expect_failures = [var.env]
+}
+
+run "env_uppercase" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "Dev"
+  }
+
+  expect_failures = [var.env]
+}
+
+run "env_suffix" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "devx"
   }
 
   expect_failures = [var.env]

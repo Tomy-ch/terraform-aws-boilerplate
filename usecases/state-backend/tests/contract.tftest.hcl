@@ -1,4 +1,4 @@
-# 公開 output の名前と型を固定する。変えるなら公開契約の変更として扱う（ADR-0202 決定4）。
+# 公開 output の名前と、それが返す値の配線を固定する。変えるなら公開契約の変更として扱う（ADR-0202 決定4）。
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
