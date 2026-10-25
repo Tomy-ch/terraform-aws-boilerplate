@@ -18,7 +18,7 @@ state は、そのアカウントを変更できる主体だけが書ける場�
 | `project` | `string`（英小文字と数字） | 名前の先頭に置くプロジェクトの token |
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | Bucket を置くアカウントの env の token（[scope.md 第3節](../../docs/v1.0-plan/scope.md)） |
 
-Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。
+Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` が内部の入力 `name` の誤りとして plan で落とす。
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -94,7 +94,7 @@ Policy Test（#75）と層検査（#74）は未配線である。配線された
 採用しなかった知見と理由:
 
 - DynamoDB の lock table: deprecated であり、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8 が lock file を採る
-- MFA delete と Object Lock: [ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
+- MFA delete と Object Lock: [state-backend/ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
 - resource identity での import: Terraform 1.12 以上を要し、Bucket 名の id で足りる
 - backend の `allowed_account_ids`: アカウント ID をリポジトリに書くことになる
 
@@ -102,9 +102,9 @@ Policy Test（#75）と層検査（#74）は未配線である。配線された
 
 記録は use-case ADR が持つ。一覧は [`docs/adr/README.md`](docs/adr/README.md)。
 
-- 管理アカウント自身の state Bucket を管理アカウントに置く: [ADR-0001](docs/adr/0001-management-account-placement.md)
-- 段5 まで SSE-S3: [ADR-0101](docs/adr/0101-sse-s3-until-cmk.md)
-- MFA delete と Object Lock を掛けない: [ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
+- 管理アカウント自身の state Bucket を管理アカウントに置く: [state-backend/ADR-0001](docs/adr/0001-management-account-placement.md)
+- 段5 まで SSE-S3: [state-backend/ADR-0101](docs/adr/0101-sse-s3-until-cmk.md)
+- MFA delete と Object Lock を掛けない: [state-backend/ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
 
 ## 版
 

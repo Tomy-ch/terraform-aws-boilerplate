@@ -57,7 +57,7 @@
 ### state移行
 
 6. 内部resource addressの変更は、`moved` block等の移行手段を同一変更内で提供することを必須とする。移行手段を提供できない変更は、破壊的変更として扱う。
-7. 利用者による `terraform state` 直接操作、targeted apply、内部resourceの `import` を前提としない。これらを前提とする運用手順をドキュメント化しない。本リポジトリ自身が env の root に置く `import` block は、利用者による import に当たらない。対象は bootstrap の段2（ADR-0602 決定6）と、アカウント間の所有の移転（ADR-0604 決定6）に限る。
+7. 利用者による `terraform state` 直接操作、targeted apply、内部resourceの `import` を前提としない。これらを前提とする運用手順をドキュメント化しない。本リポジトリ自身が env の root に置く `import` block は、利用者による import に当たらない。対象は bootstrap の段2（[ADR-0602](0602-bootstrap-and-ci-authentication.md)（bootstrapをCLIとimportで立ち上げ、CI認証をOIDCとする）決定6）と、アカウント間の所有の移転（[ADR-0604](0604-state-split-by-apply-role.md)（state を apply する role ごとに分け、env ごとに identity と workload の2つの root とする）決定6）に限る。
 8. resourceの置換（replace）が避けられない変更は、それ自体が公開契約を変えなくても、影響と移行手順を明示したうえでminor以上の変更として扱う。
 
 ### 物理名

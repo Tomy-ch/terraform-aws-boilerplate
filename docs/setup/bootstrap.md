@@ -211,13 +211,13 @@ state backend が無い時点では Terraform が state を保存できないの
 4. 設定を読み戻して確かめる
 
    ```bash
-   aws s3api get-public-access-block --bucket "$BUCKET"
-   aws s3api get-bucket-ownership-controls --bucket "$BUCKET"
-   aws s3api get-bucket-versioning --bucket "$BUCKET"
-   aws s3api get-bucket-encryption --bucket "$BUCKET"
+   aws s3api get-public-access-block --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-ownership-controls --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-versioning --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
    ```
 
-   Public Access Block の4項目が `true`、所有権が `BucketOwnerEnforced`、版管理が `Enabled`、暗号化が `AES256` で `SSE-C` を拒否していること。
+   Public Access Block の4項目が `true`、所有権が `BucketOwnerEnforced`、版管理が `Enabled`、暗号化が `AES256` で `SSE-C` を拒否していること。1つでも違えば、手順3 をやり直す。4つがすべて一致するまで段2 へ進まない。
 
 名前や namespace を誤ったときは、空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消して作り直す。
 

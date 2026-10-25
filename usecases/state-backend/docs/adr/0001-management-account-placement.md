@@ -9,12 +9,12 @@
 
 state Bucket は env ごとに、その env のアカウントに置く（repository-wide/ADR-0604 (state-split-by-apply-role) 決定7）。管理アカウントも state を持つ —— `state-backend`・`deployment-identity`・`organization-baseline` と、メンバーアカウントを立ち上げる間の bootstrap の構成物（同 決定6）である。
 
-AWS Organizations のベストプラクティスは、resource を管理アカウント以外へ置くこと、管理アカウントには管理アカウントでなければならないものだけを置くことを勧める。SCP と RCP は管理アカウントの主体と resource に効かない。
+AWS Organizations のベストプラクティスは、resource を管理アカウント以外へ置くこと、管理アカウントには管理アカウントでなければならないものだけを置くことを勧める。SCP と RCP は管理アカウントの主体と resource に効かない。本 ADR はこの推奨から外れる配置を記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。
 
 ## Decision
 
-1. 管理アカウントの state Bucket を管理アカウントに置く。その Bucket には、管理アカウントの identity root の state だけを置く。
-2. これを公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。
+1. 管理アカウント自身の state を、管理アカウントの state Bucket に置く。別のアカウントへ寄せない。
+2. その Bucket に置くのは、管理アカウントの identity root と workload root の state、およびメンバーアカウントを立ち上げる間に管理アカウントの identity root が持つ bootstrap の構成物の state（repository-wide/ADR-0604 (state-split-by-apply-role) 決定6）に限る。メンバーアカウントの恒久の state を置かない。
 
 ## 検討した代替案
 
@@ -50,7 +50,7 @@ AWS Organizations のベストプラクティスは、resource を管理アカ�
 
 ## 影響
 
-管理アカウントの state Bucket の防御は、bucket policy・key policy・CloudTrail・root の封印に限られる。前の3つは bootstrap の段5 で入る（`README.md` の「段ごとに持つもの」）。
+管理アカウントの state Bucket の防御は、bucket policy・key policy・CloudTrail・root の封印に限られる。bucket policy は段3-4（TLS の要求）と段5（書き込みの拒否）、key policy は段5 で入る（`README.md` の「段ごとに持つもの」）。CloudTrail の data events は `audit-evidence` が持つ。
 
 ## 見直し条件
 
