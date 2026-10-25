@@ -29,7 +29,7 @@ pre-commit:
     skill-lint:
       glob:
         - ".claude/skills/**/*.md"
-        - "makefile"
+        - "Makefile"
         - ".makefiles/**/*.mk"
       run: make skill-lint
 
