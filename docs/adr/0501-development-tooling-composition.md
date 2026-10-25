@@ -70,12 +70,12 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | KICS | Checkmarx |
    | Semgrep CE | semgrep-rules（リポジトリに置かず、実行時に取得する） |
 
-   各道具のゲートの閾値は検査の定義（`.makefiles/`）が持つ。severity を返さない道具は全件で落とす。同じ誤設定を複数の道具が報告した場合、どれか1つを権威として他を黙らせない。値を直すか、報告した道具それぞれに決定13 の抑止を置く。
+   各道具のゲートの閾値は検査の定義（`.makefiles/`）が持つ（決定14）。同じ誤設定を複数の道具が報告した場合、どれか1つを権威として他を黙らせない。値を直すか、報告した道具それぞれに決定13 の抑止を置く。
 
    道具を足すかどうかの基準は、規則の出どころが既存のどれとも違うことである。出どころが同じ道具（同じ規則集合を取り込んだもの）は足さない。
 
    <!-- sample:begin -->
-   SonarCloud は、決定4 の表のどの層も持たない保守性の観点（重複・複雑度）を報告するために、権威を持たない補助として併用する。必須検査にせず、quality gate の結果で Pull Request を止めない。所見が Trivy・TFLint と重なる場合、判定は決定4 の表の道具に従う。SonarCloud は外部の資格情報を要するので、派生リポジトリが外せる手段を運用機構として持つ。
+   SonarCloud は、決定4 の表のどの層も持たない保守性の観点（重複・複雑度）を報告するために、権威を持たない補助として併用する。必須検査にせず、quality gate の結果で Pull Request を止めない。所見が Security の道具（決定6）・TFLint と重なる場合、判定は決定4 の表の道具に従う。SonarCloud は外部の資格情報を要するので、派生リポジトリが外せる手段を運用機構として持つ。
    <!-- sample:end -->
 7. Static Analysis / Security / Unit / Contract / Policy は AWS credentials なしで完了すること（ADR-0401 決定6）。Unit Test では `mock_provider` / `mock_resource` / `mock_data` を用い、実 AWS API へ依存しない。
 8. Policy Test の入力を `terraform show -json` の出力とする。これにより ADR-0401 決定19 の要件を満たす。
@@ -132,7 +132,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
 19. 本 ADR が挙げる道具の version を、リポジトリ直下の単一 manifest で pin する。pin されていない道具を CI の必須検査に用いない。
 
-    ただし、上流がコンテナイメージとして配布し、ADR-0503 決定4 によりそのイメージで実行する道具は、版を `docker-compose.yaml` の `image:` の tag が、digest を `docker/images-pin.toml` が持つ。この道具を manifest へ重ねて宣言しない。Semgrep CE のルール集合は、semgrep-rules の commit をその検査の定義（`.makefiles/security/semgrep.mk`）で固定し、リポジトリへ置かずに実行時に取得する。
+    ただし、上流がコンテナイメージとして配布し、ADR-0503 決定4 によりそのイメージで実行する道具は manifest に載せない。その版と digest の置き場は ADR-0503 決定10 が持つ。Semgrep CE のルール集合は、semgrep-rules の commit をその検査の定義（`.makefiles/security/semgrep.mk`）で固定し、リポジトリへ置かずに実行時に取得する。Semgrep Rules License v1.0 がルールの配布を許さないためである。
 20. 道具はそのまま（bare）実行する。version manager のサブコマンドで包む形（`<manager> exec -- <command>`）を、手元・hook・CI recipe のいずれでも用いない。包みが必要に見える場合の対処は `PATH` の修正であり、wrapper の追加ではない。
 
 ### Provider 仕様の参照

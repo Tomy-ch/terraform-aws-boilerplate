@@ -150,7 +150,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
 ### 案B: OIDC provider と IAM role も CLI で作成し、import する
 
-bootstrap の手段が CLI に統一される。ただし信頼条件の JSON が、実在する前に一度も検査を通らない。CLI が流し込む JSON を Conftest で検査することは可能だが、その JSON の構造は plan の出力とは異なるため、同一の invariant に対して Policy を2本持つことになる。ADR-0402 決定3 が Trivy との間で避けている検査の重複を、Policy の内側に作ることになる。
+bootstrap の手段が CLI に統一される。ただし信頼条件の JSON が、実在する前に一度も検査を通らない。CLI が流し込む JSON を Conftest で検査することは可能だが、その JSON の構造は plan の出力とは異なるため、同一の invariant に対して Policy を2本持つことになる。ADR-0402 決定3 が Security の道具との間で避けている検査の重複を、Policy の内側に作ることになる。
 
 ### 案C: 長期のアクセスキーを CI の secret として保持する
 
