@@ -244,13 +244,13 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 
 | 触れた区分 | 走らせるもの |
 | --- | --- |
-| `scripts/**` | `make go-test` / `make go-lint` / `make go-fmt-check` / `make test-mapping` / `make cover-gate` |
+| `scripts/**` | `make go-test` / `make go-lint` / `make go-fmt-check` / `make test-mapping` / `make cover-gate`。`scripts/tf-local/**` / `scripts/lib/**` なら `make tf-local-test` も |
 | `docs/adr/**` / `usecases/*/docs/adr/**` | `make adr-lint` |
 | `.github/**` | `make actions-lint` / `make zizmor` / `make egress-check` / `make pin-actions-check` / `make pin-images-check` / `make pin-runners-check` |
 | `.github/settings/**` | `make required-check-lint` |
 | `docker/**` | `make docker-lint` / `make trivy-config` |
 | `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
-| `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` |
+| `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` / `make tf-local-test` |
 | `.makefiles/terraform/**` | `make tf-gates-test` / `make tf-local-test` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が
