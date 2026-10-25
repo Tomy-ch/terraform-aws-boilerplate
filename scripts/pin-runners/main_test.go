@@ -18,6 +18,8 @@ const testPins = `# comment
 "ubuntu-latest" = "ubuntu-24.04"
 `
 
+// editorconfig-checker-disable
+
 const floatingYAML = `name: T
 jobs:
   one:
@@ -29,6 +31,8 @@ jobs:
   one:
     runs-on: ubuntu-24.04
 `
+
+// editorconfig-checker-enable
 
 // fixture は t.TempDir() の下へツリーを建てて root を返します。実物のツリーは読みません
 // （ADR-0702 決定17）。
@@ -157,10 +161,12 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("ブロックスカラーの中の runs-on は書き換えない", func(t *testing.T) {
 			t.Parallel()
 			files := soundRepo()
+			// editorconfig-checker-disable
 			files[workflowDir+"/a.yaml"] = pinnedYAML + `    steps:
       - run: |
           echo "runs-on: ubuntu-latest"
 `
+			// editorconfig-checker-enable
 			root := fixture(t, files)
 			require.NoError(t, applyOrCheck(root, true, &strings.Builder{}))
 		})

@@ -23,12 +23,16 @@ func writeFixture(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// editorconfig-checker-disable
+
 const rulesetOneContext = `{
   "rules": [
     {"type": "required_status_checks",
      "parameters": {"required_status_checks": [{"context": "build"}]}}
   ]
 }`
+
+// editorconfig-checker-enable
 
 func Test_run(t *testing.T) {
 	t.Parallel()

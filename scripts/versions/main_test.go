@@ -37,6 +37,8 @@ const soundHostTools = `host-tools-install:
 	@mise reshim
 `
 
+// editorconfig-checker-disable
+
 // soundDockerfile は、写しをすべて持つ Dockerfile。**レシピの継続行をそのまま含める** ——
 // 行頭の空白と行末の `; \` は、置換で前置きが落ちる欠陥が現れる唯一の場所である。
 const soundDockerfile = `# FROM golang:9.9.9-bookworm は例示であって写しではない
@@ -52,6 +54,8 @@ RUN set -eu; \
       "markdownlint-cli2@0.23.2" \
       "@commitlint/cli@21.2.2"
 `
+
+// editorconfig-checker-enable
 
 // driftedHostTools は、terraform の版だけが宣言からずれたレシピ。**この写し先を起点にする
 // ケースが無いと、apply が host-tools.mk へ実際に書き込む経路も、check がこのファイル名を

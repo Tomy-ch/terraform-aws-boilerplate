@@ -22,6 +22,8 @@ func writeWorkflows(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// editorconfig-checker-disable
+
 const sound = `jobs:
   lint:
     timeout-minutes: 10
@@ -32,6 +34,8 @@ const sound = `jobs:
         with:
           title: "${{ steps.x.outputs.title || '## ⚠️ CUT OFF (no result produced)' }}"
 `
+
+// editorconfig-checker-enable
 
 func Test_run(t *testing.T) {
 	t.Parallel()

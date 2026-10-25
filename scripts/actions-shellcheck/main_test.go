@@ -19,6 +19,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
+// editorconfig-checker-disable
+
 const compositeAction = `name: sample
 description: sample
 runs:
@@ -92,6 +94,8 @@ const miscasedUsingAction = `runs:
     - shell: bash
       run: echo hi
 `
+
+// editorconfig-checker-enable
 
 var (
 	// errWD は、作業ディレクトリの取得失敗の伝播を検証するためのセンチネルです。

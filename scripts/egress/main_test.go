@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// editorconfig-checker-disable
+
 const testSSOT = `# comment
 [class.base]
 hosts = ["b1.test", "b2.test"]
@@ -38,6 +40,8 @@ classes = []
 [job."b.yaml:audited"]
 egress_policy = "audit"
 `
+
+// editorconfig-checker-enable
 
 const workflowHead = "name: T\n\njobs:\n"
 
