@@ -138,11 +138,20 @@ jobs:
 
       - name: Create KICS summary (Markdown)
         id: summarize
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
         run: |
           set -euo pipefail
           out=tmp/kics/out/results.json
           COUNT=$(jq '[(.queries // [])[] | .files // [] | .[]] | length' "$out")
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          # make can fail with no finding (a canary, the coverage check, a parse failure).
+          if [ "$COUNT" -eq 0 ] && [ "${SCAN_CODE-}" != "0" ]; then
+            echo "title=## ❌ KICS: GATE FAILED (make kics exited ${SCAN_CODE:-without a code})" >> "$GITHUB_OUTPUT"
+            echo "The gate failed without a finding; read the KICS scan step log." > kics-summary.md
+            exit 0
+          fi
 
           if [ "$COUNT" -eq 0 ]; then
             echo "title=## ✅ KICS: PASS (no finding)" >> "$GITHUB_OUTPUT"
@@ -175,7 +184,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           marker: '<!-- kics-result -->'
-          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          status: "${{ steps.summarize.outputs.count == '0' && steps.scan.outputs.exit_code == '0' && 'success' || 'findings' }}"
           title: "${{ steps.summarize.outputs.title || '## ⚠️ KICS: CUT OFF (no result produced)' }}"
           body-file: kics-summary.md
           details-summary: '📄 Summary'
