@@ -46,7 +46,7 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
    - workflow の構文および `run:` のシェル検査
    - template injection の検出
-   - 秘密の検出（ADR-0302 決定1）
+   - 秘密の検出（ADR-0302 決定1・2）
 
 ### 形
 

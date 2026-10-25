@@ -64,6 +64,8 @@ Terraform 本体が提供するのは `fmt` / `validate` / `test` / `plan` / `sh
    <!-- sample:begin -->
    SonarCloud は、決定4 の表のどの層も持たない保守性の観点（重複・複雑度）を報告するために、権威を持たない補助として併用する。必須検査にせず、quality gate の結果で Pull Request を止めない。所見が Trivy・TFLint と重なる場合、判定は決定4 の表の道具に従う。SonarCloud は外部の資格情報を要するので、派生リポジトリが外せる手段を運用機構として持つ。
    <!-- sample:end -->
+
+   OpenSSF Scorecard は、リポジトリの供給網の衛生（参照の固定、token の権限、危険な workflow など）を定期的に報告するために、権威を持たない補助として併用する。必須検査にせず、スコアで Pull Request を止めない。結果は code scanning へ SARIF で送り、外部へ公開（`publish_results`）しない —— 公開は job の step を特定の action に限る API の条件を要し、runner の封じ込め（ADR-0702 決定20-23）を先頭に置く本リポジトリの job はそれを満たさない。所見が zizmor・Trivy・参照の固定の検査と重なる場合、判定はそれらに従う。
 7. Static Analysis / Security / Unit / Contract / Policy は AWS credentials なしで完了すること（ADR-0401 決定6）。Unit Test では `mock_provider` / `mock_resource` / `mock_data` を用い、実 AWS API へ依存しない。
 8. Policy Test の入力を `terraform show -json` の出力とする。これにより ADR-0401 決定19 の要件を満たす。
 9. Unit Test と Policy Test を混同しない。入力から構成を導出するロジックの検証（既定値、条件分岐、`for_each`、ARN 組み立て）は Unit、アーキテクチャ invariant の強制（public access 禁止、wildcard 禁止、暗号化必須）は Policy とする。同一の性質を両方へ書かない。
@@ -214,7 +216,7 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 
 ## 影響
 
-- 道具の追加は本 ADR の更新を伴う。決定4 の表が、どの検査を誰が持つかの唯一の記述になる。
+- 道具の追加は本 ADR の更新を伴う。決定4 の表が、ADR-0401 のレイヤーについて、どの検査を誰が持つかの唯一の記述になる。同表のレイヤーに属さない検査の割当は、それを定める ADR が持つ（Secret Scan は ADR-0302 決定2）。
 - 検出結果の抑止が、道具ごとの設定ファイルへ理由付きで残る。
 - 実 AWS を必要とする検証は Integration / E2E に限られ、それ以外は credentials なしで完結する。
 
