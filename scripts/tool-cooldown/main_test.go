@@ -1585,6 +1585,8 @@ func Test_publishedAt(t *testing.T) {
 	})
 }
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 // aquaHTTPRegistry は、配布物を GitHub 以外から取る aqua パッケージの定義。aws-cli がこの形。
 const aquaHTTPRegistry = `packages:
   - type: http
@@ -1595,6 +1597,8 @@ const aquaHTTPRegistry = `packages:
     replacements:
       amd64: x86_64
 `
+
+// editorconfig-checker-enable
 
 // aquaRegistryPath は、その repo の定義が置かれる取得元のパスを返します。**固定値を書き写さない**
 // —— 取得元を別の ref へ動かしたとき、写しは黙って一致しなくなる。
@@ -1746,7 +1750,7 @@ func Test_renderAquaURL(t *testing.T) {
 			for name, tmpl := range map[string]string{
 				"https でない":    "http://cdn.example.com/1.2.3.zip",
 				"ホストが空":        "https:///{{.Version}}.zip",
-				"userinfo を含む": "https://user:pass@cdn.example.com/{{.Version}}.zip",
+				"userinfo を含む": "https://user@cdn.example.com/{{.Version}}.zip",
 				"ホストが偽装されている":  "https://trusted.example.com@evil.example.com/{{.Version}}.zip",
 			} {
 				t.Run(name, func(t *testing.T) {

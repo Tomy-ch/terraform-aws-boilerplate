@@ -14,6 +14,7 @@
 | `github/operation/` | リリースブランチ・リリースタグ・リポジトリ初期化の操作 |
 | `github/setting/` | ブランチ保護・ラベル・リポジトリ設定の適用 |
 | `go/` | 運用機構（`scripts/`）の Go の整形・Lint・テスト |
+| `hygiene/` | 綴りと `.editorconfig` の一致 |
 | `markdown/` | Markdown の体裁、ADR の構造、スキルの参照の実在 |
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
 | `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test`）と、その検査自体の検査 |

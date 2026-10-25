@@ -69,6 +69,9 @@
             "context": "docker-lint"
           },
           {
+            "context": "editorconfig-check"
+          },
+          {
             "context": "egress-check"
           },
           {
@@ -115,6 +118,12 @@
           },
           {
             "context": "trivy-config"
+          },
+          {
+            "context": "trufflehog"
+          },
+          {
+            "context": "typos"
           },
           {
             "context": "versions-check"

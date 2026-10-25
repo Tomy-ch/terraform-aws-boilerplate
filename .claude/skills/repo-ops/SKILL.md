@@ -253,7 +253,8 @@ go の照合値 (docker/tools/Dockerfile): 一致が 0 件、期待は 1 件
 **混入を検出した場合の第一手は当該資格情報の失効であり、履歴からの除去ではない**
 （ADR-0302 決定11-12）。push 済みであれば、履歴を書き換えても漏洩の事実は取り消せない。
 
-誤検知なら `.gitleaksignore` へ。**理由を書けないものは足さない。**
+誤検知なら、検出した道具の抑止へ置く —— gitleaks は `.gitleaksignore` / `.gitleaks.toml`、trufflehog は
+`.trufflehog-exclude-paths*.txt`（ADR-0302 決定9）。**理由を書けないものは足さない。**
 
 ## 10. hook の summary が読めない
 

@@ -24,9 +24,15 @@ include .makefiles/go/golangci-lint.mk
 include .makefiles/go/test.mk
 # Markdown関連
 include .makefiles/markdown/lint.mk
+
+# リポジトリの衛生
+include .makefiles/hygiene/editorconfig.mk
+include .makefiles/hygiene/typos.mk
+
 # セキュリティ関連
 include .makefiles/security/trivy.mk
 include .makefiles/security/gitleaks.mk
+include .makefiles/security/trufflehog.mk
 include .makefiles/security/go-cooldown.mk
 include .makefiles/security/tool-cooldown.mk
 include .makefiles/security/zizmor.mk

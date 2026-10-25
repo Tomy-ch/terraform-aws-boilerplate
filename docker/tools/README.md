@@ -28,7 +28,7 @@
 
 | 段 | 道具 |
 | --- | --- |
-| `go_tools` | `terraform` を除く mise 管理の道具 —— `tflint` / `trivy` / `gitleaks` / `zizmor` / `actionlint` / `shellcheck` / `hadolint` / `golangci-lint` / `lefthook` |
+| `go_tools` | `terraform` を除く mise 管理の道具 —— `tflint` / `trivy` / `gitleaks` / `trufflehog` / `typos` / `editorconfig-checker` / `zizmor` / `actionlint` / `shellcheck` / `hadolint` / `golangci-lint` / `lefthook` |
 | `node_tools` | `markdownlint-cli2` / `@commitlint/cli` |
 
 **`terraform` はここに居ない。** 人と CI が最も頻繁に叩く単一の静的バイナリであり、資格情報の

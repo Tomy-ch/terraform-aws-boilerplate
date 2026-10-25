@@ -1,52 +1,27 @@
+# エディタへの宣言であり、editorconfig-checker が実物との一致を検査する（make editorconfig-check）。
+#
+# 字下げは、整形器を持つ形式では整形器の出力に一致する値を宣言する —— terraform fmt は space 2、
+# gofmt は tab。整形器と食い違う宣言を置くと、整形した結果が違反になる。
 root = true
+
 [*]
-insert_final_newline = true
-indent_style = tab
-indent_size = 4
-end_of_line = lf
 charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
 
 [*.go]
 indent_style = tab
 indent_size = 4
 
-[*.json]
-indent_style = space
+[{Makefile,makefile,*.mk}]
+indent_style = tab
 indent_size = 2
 
+# 行末の2空白は改行である。リストの続き行はマーカーの幅に揃うので、幅を固定しない
+# （リストの字下げは markdownlint が持つ）。
 [*.md]
-indent_size = 2
-indent_style = space
 trim_trailing_whitespace = false
-
-[*.mk]
-indent_style = tab
-indent_size = 2
-
-[*.sql]
-indent_style = space
-indent_size = 4
-
-[*.sh]
-indent_style = space
-indent_size = 2
-
-[*.toml]
-indent_style = space
-indent_size = 2
-
-[*.yml]
-indent_style = space
-indent_size = 2
-
-[*.yaml]
-indent_style = space
-indent_size = 2
-
-[Dockerfile]
-indent_style = space
-indent_size = 2
-
-[makefile]
-indent_style = tab
-indent_size = 2
+indent_size = unset

@@ -70,6 +70,12 @@ hosts = [
   "pkg-containers.githubusercontent.com",
 ]
 
+[class.deps-dev]
+# パッケージの供給網の情報（deps.dev）。依存の評価をする job が引く。
+hosts = [
+  "api.deps.dev",
+]
+
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
 
@@ -78,14 +84,13 @@ classes = ["mise"]
 
 # sample:begin
 [job."dependency-review.yaml:dependency-review"]
-classes = []
+classes = ["deps-dev"]
 # OpenSSF Scorecard の要約（show-openssf-scorecard は既定で有効）が引くデータ源。
 # 呼ぶのは「その PR が新しく足した依存」がある時だけなので、依存を増やさない PR では
-# 一度も出ていかない。そのため、この 2 ホストが欠けていても依存を足す PR が現れるまで
+# 一度も出ていかない。そのため、この宛先と deps-dev が欠けていても依存を足す PR が現れるまで
 # 誰も気づかず、現れた瞬間にその PR だけが fetch failed で落ちる。
 extra = [
   "api.securityscorecards.dev",
-  "api.deps.dev",
 ]
 # sample:end
 
@@ -138,6 +143,10 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."secret-scan.yaml:trivy-secret"]
+classes = ["mise"]
+
+# --no-verification と --no-update で、走査そのものは外へ出ない。
+[job."secret-scan.yaml:trufflehog"]
 classes = ["mise"]
 
 [job."tidy-check.yaml:changes"]
@@ -216,3 +225,18 @@ classes = ["trivy"]
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]
 
+[job."hygiene.yaml:typos"]
+classes = ["mise"]
+
+[job."hygiene.yaml:editorconfig-check"]
+classes = ["mise"]
+
+# Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・パッケージの情報）。publish しないので
+# api.scorecard.dev と sigstore は要らない。action の image（ghcr.io）は job の開始時に取得され、
+# bullfrog より前にある。
+[job."scorecard.yaml:scorecard"]
+classes = ["deps-dev"]
+extra = [
+  "api.osv.dev",
+  "www.bestpractices.dev",
+]
