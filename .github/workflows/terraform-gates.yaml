@@ -332,3 +332,6 @@ jobs:
 
       - name: Run the Terraform gates' own tests
         run: make tf-gates-test RUNNER_MODE=host
+
+      - name: Run the tests of the local Terraform entry points
+        run: make tf-local-test RUNNER_MODE=host

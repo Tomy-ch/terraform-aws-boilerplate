@@ -133,6 +133,11 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make tf-gates-test
+    tf-local-test:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+      run: make tf-local-test
 
 commit-msg:
   commands:
