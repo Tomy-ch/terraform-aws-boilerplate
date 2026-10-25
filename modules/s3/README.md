@@ -38,7 +38,8 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 ## 保証しないもの
 
-- Trivy（`make trivy-config`）が落とすのは Public Access Block と版管理（AWS-0090）の値である。所有権と TLS の要求を見る検査は無く、暗号化の検査（AWS-0132）は抑止している
+- Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は、どの道具についても確かめていない
+- 暗号化（Trivy AWS-0132、Checkov CKV_AWS_145）、アクセスログ、lifecycle、通知、リージョン間の複製、MFA delete、IAM Access Analyzer、tag の検査と、Semgrep の版管理の誤検出は抑止している。理由と撤回条件は各抑止の箇所（`.trivyignore.yaml`、`main.tf` / `policy.tf` / `encryption.tf` の先頭と `aws_s3_bucket.this`）が持つ
 - `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で見る。どちらも Policy Test（#75）が配線されたら、そちらへ移す
 - TLS でない要求が実際の S3 API で拒否されることは、どのテストも見ていない（E2E。ADR-0401 決定4）
 
@@ -76,4 +77,4 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 | 対象 | 理由 | この module を使う他の usecase への影響 | 見直し条件 |
 | --- | --- | --- | --- |
-| KMS（customer managed key）ではなく SSE-S3 で暗号化する（Trivy AWS-0132） | `usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md` | 段5 までは、鍵の権限で読み手を絞れない。この間に他の usecase がこの module を使うと、その Bucket も SSE-S3 になる | state-backend の段5 で SSE-KMS に切り替えたとき。それより前に他の usecase がこの module を使うとき。`.trivyignore.yaml` の抑止も同時に見直す |
+| KMS（customer managed key）ではなく SSE-S3 で暗号化する（Trivy AWS-0132、Checkov CKV_AWS_145） | `usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md` | 段5 までは、鍵の権限で読み手を絞れない。この間に他の usecase がこの module を使うと、その Bucket も SSE-S3 になる | state-backend の段5 で SSE-KMS に切り替えたとき。それより前に他の usecase がこの module を使うとき。`.trivyignore.yaml` と `main.tf` の `#checkov:skip=CKV_AWS_145` の抑止も同時に見直す |

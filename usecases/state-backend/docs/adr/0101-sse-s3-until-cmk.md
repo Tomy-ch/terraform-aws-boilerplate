@@ -7,7 +7,7 @@
 
 ## Context
 
-AWS は、S3 の暗号化に customer managed key（CMK）による SSE-KMS を使うと、鍵の権限・ローテーション・監査を制御できるとする。Trivy は CMK を使わない Bucket を AWS-0132 として報告する。
+AWS は、S3 の暗号化に customer managed key（CMK）による SSE-KMS を使うと、鍵の権限・ローテーション・監査を制御できるとする。Trivy は CMK を使わない Bucket を AWS-0132 として、Checkov は CKV_AWS_145 として報告する。
 
 bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `import` block で取り込んで `terraform plan` が取り込んだ resource に変更を示さなくなるまで突合する（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定4・6・8）。CLI で作ってよいのは、Terraform が state を保存するために要るものだけである（同 決定5）。CMK と key policy はそれに当たらない。
 
@@ -15,7 +15,7 @@ bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `im
 
 1. bootstrap の段1 から段4 まで、state Bucket の既定の暗号化を SSE-S3（`AES256`）とし、SSE-C を拒否する。
 2. 段5 で CMK を作り、SSE-KMS へ切り替える。そのとき backend に `kms_key_id` を書く。
-3. 決定1 を公式推奨からの逸脱として記録し（repository-wide/ADR-0207 (default-value-policy) 決定11）、Trivy の AWS-0132 を `modules/s3/encryption.tf` に限って抑止する（repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
+3. 決定1 を公式推奨からの逸脱として記録し（repository-wide/ADR-0207 (default-value-policy) 決定11）、CMK を使わない暗号化を報告する Security の各道具の検査を、その道具が報告する path に限って抑止する —— Trivy の AWS-0132 は `modules/s3/encryption.tf`、Checkov の CKV_AWS_145 は `modules/s3/main.tf` の `aws_s3_bucket.this`（repository-wide/ADR-0501 (development-tooling-composition) 決定6・13）。
 
 ## 検討した代替案
 
@@ -52,10 +52,11 @@ key policy の JSON が、検査を通らないまま実在する。repository-w
 
 - Unit Test: `modules/s3/tests/naming.tftest.hcl` の `bucket_attributes` が、暗号化の値（`AES256`）と SSE-C の拒否を mock の plan で確かめる
 - Security: `make trivy-config` が AWS-0132 を `modules/s3/encryption.tf` 以外の path で報告しないこと。抑止の宣言は `.trivyignore.yaml` が持つ
+- Security: `make checkov` が CKV_AWS_145 を `modules/s3/main.tf` の `aws_s3_bucket.this` 以外で報告しないこと。抑止の宣言はその resource の `#checkov:skip` が持つ
 
 ## 影響
 
-段5 より前に他の usecase が `modules/s3` を使うと、その Bucket も SSE-S3 になる。その変更の中で抑止を見直す（`.trivyignore.yaml` の撤回条件）。
+段5 より前に他の usecase が `modules/s3` を使うと、その Bucket も SSE-S3 になる。その変更の中で抑止を見直す（`.trivyignore.yaml` と `#checkov:skip` の撤回条件）。
 
 ## 見直し条件
 
