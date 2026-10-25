@@ -17,6 +17,7 @@
 | `markdown/` | Markdown の体裁、ADR の構造、スキルの参照の実在 |
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
 | `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test`）と、その検査自体の検査 |
+| `terraform/operation/` | 人が手元から Terraform を動かす入口（AWS へのログイン、env の root の init と plan）と、その検査 |
 | 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入） |
 
 各ツールが何を検査するかは [`scripts/README.md`](../scripts/README.md) が持つ。ここはその起動だけを持つ。
@@ -53,6 +54,8 @@
 **この表は検査の起動を尽くす。操作系はここに入らない** —— `github/operation/` の
 `RELEASE_TOOL` / `REPO_SETUP` は `go -C scripts run` を直接呼び、`RUNNER_MODE` を経由しない。
 取り消しの効かない操作をホストの資格情報で行うためで、理由は各 `.mk` のコメントが持つ。
+`terraform/operation/` も同じ理由で表の外にあり、ホストの terraform と AWS CLI を人の資格情報で起動する。
+`TF_ENV`（資格情報を外す）を経由しない。
 
 `RUN_SCRIPT` がビルドしてから起動するのは、`scripts/` がモジュールルートで `go -C scripts run` が
 作業ディレクトリをそこへ移す一方、各ツールはリポジトリ直下を基準にパスを解決するためである。
