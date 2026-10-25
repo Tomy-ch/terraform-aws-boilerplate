@@ -79,3 +79,5 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 | 対象 | 理由 | この module を使う他の usecase への影響 | 見直し条件 |
 | --- | --- | --- | --- |
 | KMS（customer managed key）ではなく SSE-S3 で暗号化する（Trivy AWS-0132、Checkov CKV_AWS_145） | `usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md` | 段5 までは、鍵の権限で読み手を絞れない。この間に他の usecase がこの module を使うと、その Bucket も SSE-S3 になる | state-backend の段5 で SSE-KMS に切り替えたとき。それより前に他の usecase がこの module を使うとき。`.trivyignore.yaml` と `main.tf` の `#checkov:skip=CKV_AWS_145` の抑止も同時に見直す |
+| MFA delete を掛けない（KICS c5b31ab9） | `usecases/state-backend/docs/adr/0102-no-mfa-delete-or-object-lock.md` | この module の Bucket は MFA delete を持たない | 同 ADR が変わったとき。`main.tf` 先頭の `kics-scan disable` も同時に見直す |
+| リージョン間の複製を持たない（Checkov CKV_AWS_144） | `usecases/state-backend/README.md` の unsupported | リージョン障害への備えは、この module を使う usecase が持つ | 複製を要る usecase がこの module を使うとき。`main.tf` の `#checkov:skip=CKV_AWS_144` も同時に見直す |
