@@ -139,11 +139,20 @@ jobs:
 
       - name: Create Semgrep summary (Markdown)
         id: summarize
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
         run: |
           set -euo pipefail
           out=tmp/semgrep/out/results.json
           COUNT=$(jq '(.results // []) | length' "$out")
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          # make can fail with no finding (the canary, the coverage check, a parse failure).
+          if [ "$COUNT" -eq 0 ] && [ "${SCAN_CODE-}" != "0" ]; then
+            echo "title=## ❌ Semgrep: GATE FAILED (make semgrep exited ${SCAN_CODE:-without a code})" >> "$GITHUB_OUTPUT"
+            echo "The gate failed without a finding; read the Semgrep scan step log." > semgrep-summary.md
+            exit 0
+          fi
 
           if [ "$COUNT" -eq 0 ]; then
             echo "title=## ✅ Semgrep: PASS (no finding)" >> "$GITHUB_OUTPUT"
@@ -174,7 +183,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           marker: '<!-- semgrep-result -->'
-          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          status: "${{ steps.summarize.outputs.count == '0' && steps.scan.outputs.exit_code == '0' && 'success' || 'findings' }}"
           title: "${{ steps.summarize.outputs.title || '## ⚠️ Semgrep: CUT OFF (no result produced)' }}"
           body-file: semgrep-summary.md
           details-summary: '📄 Summary'
