@@ -511,6 +511,20 @@ else until the loop goes back to `gh` for it:
 
 Open the PR first via `submit-pr`, so CI starts while you verify locally.
 
+### PR の Development へ issue を紐付ける
+
+**PR を作ったら、その場で対応する issue が PR の Development 欄に載っていることを確かめる。** 本文の
+`closes #<n>` は `submit-pr` がブランチ名 `feature/<n>-<slug>` から足すが、GitHub がそれを紐付けとして
+扱うのは base がデフォルトブランチのときだけである。Step 2 のとおりデフォルトブランチは1つ前の
+リリース線に留まりうるので、キーワードが在っても欄は空のことがある。
+
+```bash
+gh pr view <pr> --json closingIssuesReferences -q '[.closingIssuesReferences[].number]'
+```
+
+結果に `<n>` が無ければ、PR の Development 欄から issue を手で紐付ける必要がある。それを run record へ
+書き、merge の確認（下の *Merge*）でユーザーへ依頼する。紐付けを確かめないまま merge へ進まない。
+
 ### merge のゲート —— 何が「動いた」の証拠か
 
 **このリポジトリに起動して叩ける API は無い。** `usecases/` と `env/` が無く、`modules/` の module は実環境へ
@@ -610,6 +624,7 @@ decision points this skill exists to create.
 - ✅ At a seam, write the record and recommend compacting — asking at the PR seam, announcing at the
   Step 5 one, and announcing at both when the user has delegated and left.
 - ✅ Pass every sub-skill its settled answers, apply mode included.
+- ✅ PR を作ったら、issue が PR の Development 欄に載っていることを `closingIssuesReferences` で確かめる。
 - ✅ Say explicitly which gates ran and which did not.
 - ✅ Read the traces, not just the status code.
 - ✅ Verify a finding at runtime before filing an issue for it.
