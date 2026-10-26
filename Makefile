@@ -31,6 +31,9 @@ include .makefiles/hygiene/typos.mk
 
 # セキュリティ関連
 include .makefiles/security/trivy.mk
+include .makefiles/security/checkov.mk
+include .makefiles/security/kics.mk
+include .makefiles/security/semgrep.mk
 include .makefiles/security/gitleaks.mk
 include .makefiles/security/trufflehog.mk
 include .makefiles/security/go-cooldown.mk

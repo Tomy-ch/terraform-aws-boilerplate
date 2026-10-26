@@ -46,7 +46,7 @@
 | 秘密の混入 | gitleaks / trufflehog / Trivy secret（どれか1つの検出で落とす） | pre-push hook と CI（gitleaks・trufflehog は Pull Request が積んだ commit 範囲と週次の履歴全体、Trivy は作業ツリー） |
 | 依存の脆弱性 | Trivy fs | CI。Pull Request では報告のみで、ブロックは昇格時に判定する |
 | **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） <!-- sample:line --> |
-| 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH / MEDIUM でブロック） |
+| 構成の誤設定 | Trivy config / Checkov / KICS / Semgrep CE（規則の出どころが異なる4つ。ADR-0501 決定6） | CI でブロック。閾値は `.makefiles/security/` の各定義が持つ |
 | ワークフロー定義 | zizmor（high でブロック）/ actionlint / shellcheck | pre-commit hook と CI |
 | ランナーの外向き通信 | bullfrog（`egress-policy: block`、`enable-sudo: false`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
 | 供給網の新しすぎる版 | go-cooldown / tool-cooldown | Pull Request と週次 |

@@ -16,7 +16,7 @@ MFA delete は Bucket の所有者（root）しか有効にできず、lifecycle
 1. state Bucket に MFA delete を有効にしない。
 2. state Bucket に Object Lock を有効にしない。
 3. state の上書きと削除への耐性は、版管理（`Enabled`）と、bootstrap の段5 で入る拒否（state と lock file の書き込みを apply の role ごとに限る。repository-wide/ADR-0604 (state-split-by-apply-role) 決定9・10）で担う。
-4. 決定1・2 を公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。
+4. 決定1・2 を公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。決定1 について KICS の c5b31ab9（MFA delete）を `modules/s3/main.tf` に限って抑止する（repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
 
 ## 検討した代替案
 
@@ -53,6 +53,7 @@ state の版を、書き込みの権限を持つ主体からも守ること。
 
 - Unit Test: `modules/s3/tests/naming.tftest.hcl` の `bucket_attributes` が、版管理が `Enabled` であることを mock の plan で確かめる
 - `modules/s3` は `aws_s3_bucket_object_lock_configuration` を持たず、`aws_s3_bucket_versioning` に `mfa` を渡さない。これを見る検査は無い。Policy Test（#75）が配線されたら、そちらで固定する
+- Security: `make kics` が c5b31ab9 を `modules/s3/main.tf` 以外の path で報告しないこと。抑止の宣言は同ファイル先頭の `kics-scan disable` が持つ
 
 ## 影響
 

@@ -49,6 +49,7 @@ unsupported:
 
 - 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
+- state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 
 未決:
 
