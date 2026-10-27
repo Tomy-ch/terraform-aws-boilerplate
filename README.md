@@ -12,7 +12,7 @@
 
 ## 現在の状態
 
-**Terraform の実装は、ユースケースの `state-backend` と、それが使う一般 module の `modules/s3/` だけである。** `state-backend` は bootstrap の段1・段2 の分だけを持つ。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
+**Terraform の実装は、bootstrap のユースケースの `state-backend` と `deployment-identity`、`state-backend` が使う一般 module の `modules/s3/` だけである。** どちらも bootstrap の段1-4 の分だけを持つ。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
 
 | 区分 | 状態 |
 | --- | --- |
@@ -22,7 +22,7 @@
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
 | `modules/` | 一般 module の `s3/` だけ |
-| `usecases/` | `state-backend/` だけ（bootstrap の段1・段2 の分） |
+| `usecases/` | `state-backend/` と `deployment-identity/` だけ（bootstrap の段1-4 の分） |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
 | Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make`・pre-commit・CI に配線済み。Conftest は未配線 |
 

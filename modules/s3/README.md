@@ -18,7 +18,7 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 | 出力 | 使う側 |
 | --- | --- |
 | `bucket_name` | `state-backend`（backend の設定と、bootstrap の段2 の `import` block の id） |
-| `bucket_arn` | `state-backend` を経て #20（CI の role の IAM で Resource を state Bucket に絞る） |
+| `bucket_arn` | `state-backend` を経て `deployment-identity`（CI の role の IAM で Resource を state Bucket に絞る） |
 
 `bucket_name` は Bucket の属性ではなく、module が組んだ名前を返す。`import` block の id に使えるよう、Bucket を参照しない（参照すると取り込み先との間で循環する）。値が Bucket の名前と一致することは `tests/naming.tftest.hcl` が見る。
 
