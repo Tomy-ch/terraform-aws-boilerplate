@@ -151,8 +151,8 @@ required status check には、機構として2つの落とし穴がある。
     - 削除の禁止
     - required status check
 
-    承認者数を緩和する場合も、code owner による review の要求を宣言から外さない。この要求は承認者数と
-    独立には効かず、承認できる code owner が居ない間は merge を止めない。
+    承認者数を緩和する場合も、code owner による review の要求を宣言から外さない。この要求が merge を
+    止めるかは承認者数と独立ではなく、本 ADR はそれを保証しない。
 
 ### 統合方式
 
@@ -231,7 +231,7 @@ required status check には、機構として2つの落とし穴がある。
 - 整合の検査: 該当workflowの `pull_request` トリガーにフィルタが存在しないこと（決定16・19）
 - Static Analysis: 宣言に bypass の列挙が存在しないこと（決定22）
 - Static Analysis: environment の宣言で、管理者による保護の迂回が無効であること（決定4・22）
-- Static Analysis: 決定23 が挙げる各設定が宣言に存在すること
+- Static Analysis: 決定23 が挙げる各設定と、code owner による review の要求が宣言に存在すること
 - 定期実行: 突合の検査を、Pull Request契機とは独立に実行する。実態はリポジトリの変更なしに
   変わり得るため
 
