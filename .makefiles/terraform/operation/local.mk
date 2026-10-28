@@ -16,7 +16,8 @@ TF_LOCAL = $(call RUN_SCRIPT_HOST,tf-local,$(1))
 # $(1)=env $(2)=identity|workload（ADR-0604 決定5）
 TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
 # 直前に unset_env=$(tf-local env-unset) を代入してから使う。
-TF_LOCAL_ENV = env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
+# TF_CLI_CONFIG_FILE=/dev/null は dev_overrides による provider の差し替えを封じる（docs/setup/bootstrap.md 2-0b）。
+TF_LOCAL_ENV = env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 
 # $(1)=env $(2)=root
 define TF_LOCAL_INIT
