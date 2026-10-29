@@ -1,7 +1,5 @@
 ## 検査をどこで走らせるか。**検査の定義そのものはここに書かない。**
-##
-## 同一の検査に対してローカル用とCI用の2つの定義を作らない。定義は1箇所に置き、実行環境の差は
-## この前置きだけで表す。2つ書くと、片方だけが更新された状態を両方実行するまで検出できない。
+## 実行環境の差はこの前置きだけで表す（ADR-0503 決定8）。
 ##
 ##   RUNNER_MODE=container （既定）  mise.toml から組んだイメージで実行する
 ##   RUNNER_MODE=host              用意済みの道具を直接実行する
@@ -18,6 +16,7 @@ else
 # イメージの install 群を賄えず 403 になる。
 # 生成物をホストの所有者で書き出すため uid/gid を渡す（root で書くと本人が消せない）。
 COMPOSE_RUN = RUNNER_UID=$$(id -u) RUNNER_GID=$$(id -g) \
+	RUNNER_GIT_COMMON_DIR="$$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
 	GITHUB_TOKEN="$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null || true)}" \
 	docker compose run --rm -T
 GO_TOOL := $(COMPOSE_RUN) go_tool_runner

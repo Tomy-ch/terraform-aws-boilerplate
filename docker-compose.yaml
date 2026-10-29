@@ -21,6 +21,9 @@ services:
     user: "${RUNNER_UID:-1000}:${RUNNER_GID:-1000}"
     volumes:
       - .:/app
+      # git worktree の .git は、ホストの絶対パスにある共通の git ディレクトリを指す。同じパスに
+      # 読み取り専用で置かないと、コンテナの中の git が履歴にも追跡ファイルにも届かない。
+      - ${RUNNER_GIT_COMMON_DIR:-./.git}:${RUNNER_GIT_COMMON_DIR:-/tmp/git-common}:ro
     working_dir: /app
     environment:
       # 非 root で走るため、道具が書ける HOME を与える。
