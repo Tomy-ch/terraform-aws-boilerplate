@@ -12,6 +12,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const consistent = `
     - uses: actions/cache@abc
       with:
@@ -20,6 +22,8 @@ const consistent = `
         MISE_VERSION: 2026.7.12
         MISE_SHA256: dad54e0b843908324282b8673f9c0ebc3a4da0c49ad2da309a49bfbc918ba180
 `
+
+// editorconfig-checker-enable
 
 func writeAction(t *testing.T, body string) string {
 	t.Helper()

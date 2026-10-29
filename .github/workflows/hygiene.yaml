@@ -1,0 +1,204 @@
+name: Repository Hygiene
+
+# どちらもリポジトリ全体を読むので paths フィルタを置かない。lefthook の pre-commit にも
+# 配線してあるが、--no-verify と Web UI の編集はそこを通らない。
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typos:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:crate-ci/typos
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run typos
+        id: typos
+        shell: bash
+        run: |
+          set +e
+
+          make typos RUNNER_MODE=host 2>&1 | tee /tmp/typos.log
+
+          code=${PIPESTATUS[0]}
+
+          if [ "$code" -eq 0 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "title=## ✅ Spelling: PASS (typos)" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "title=## ❌ Spelling: FAIL (typos)" >> "$GITHUB_OUTPUT"
+          fi
+
+          exit 0
+
+      - name: Comment typos result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- typos-result -->'
+          status: ${{ steps.typos.outputs.status }}
+          title: "${{ steps.typos.outputs.title || '## ⚠️ Spelling: CUT OFF (no result produced)' }}"
+          body-file: /tmp/typos.log
+          details-summary: 'typos log'
+
+      - name: Fail if typos failed
+        if: always() && steps.typos.outputs.status != 'success'
+        run: exit 1
+
+  editorconfig-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:editorconfig-checker/editorconfig-checker
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run editorconfig-checker
+        id: editorconfig
+        shell: bash
+        run: |
+          set +e
+
+          make editorconfig-check RUNNER_MODE=host 2>&1 | tee /tmp/editorconfig.log
+
+          code=${PIPESTATUS[0]}
+
+          if [ "$code" -eq 0 ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "title=## ✅ EditorConfig: PASS (editorconfig-checker)" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "title=## ❌ EditorConfig: FAIL (editorconfig-checker)" >> "$GITHUB_OUTPUT"
+          fi
+
+          exit 0
+
+      - name: Comment editorconfig-checker result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- editorconfig-check-result -->'
+          status: ${{ steps.editorconfig.outputs.status }}
+          title: "${{ steps.editorconfig.outputs.title || '## ⚠️ EditorConfig: CUT OFF (no result produced)' }}"
+          body-file: /tmp/editorconfig.log
+          details-summary: 'editorconfig-checker log'
+
+      - name: Fail if editorconfig-checker failed
+        if: always() && steps.editorconfig.outputs.status != 'success'
+        run: exit 1

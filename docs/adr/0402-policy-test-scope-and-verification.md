@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR-0501 決定4 は Security レイヤーを Trivy へ、Policy レイヤーを Conftest / OPA へ割り当てた。しかし両者が検出する対象は重なる。S3 の public access、暗号化の未設定、RDS の public access、IAM の wildcard は、いずれも Trivy が既定ルールとして持ち、同時に本リポジトリが invariant として持ちたいものでもある。
+ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgrep CE へ、Policy レイヤーを Conftest / OPA へ割り当てた。しかし両者が検出する対象は重なる。S3 の public access、暗号化の未設定、RDS の public access、IAM の wildcard は、いずれも Security の道具が既定ルールとして持ち、同時に本リポジトリが invariant として持ちたいものでもある。
 
 境界を決めないと、同一の違反が2つの ID で報告される。抑止（ADR-0501 決定13）が2箇所へ分散し、片方だけを消した状態が「対応済み」に見える。ADR-0501 決定9 は Unit と Policy の境界を定めたが、Security と Policy の境界は定めていない。
 
@@ -23,13 +23,13 @@ ADR-0501 決定4 は Security レイヤーを Trivy へ、Policy レイヤーを
 
    | レイヤー | 対象 |
    | --- | --- |
-   | Security（Trivy） | AWS 一般のベストプラクティスとして成立する misconfiguration |
+   | Security（ADR-0501 決定6 の道具） | AWS 一般のベストプラクティスとして成立する misconfiguration |
    | Policy（Conftest / OPA） | 本リポジトリのアーキテクチャ invariant であり、外部のルールセットが知り得ないもの |
 
 2. 判定の基準を「本リポジトリの ADR を読まなければ書けないルールか」とする。読まずに書けるものは Security、読まなければ書けないものは Policy とする。
-3. Trivy が既定ルールとして持つ検査を Policy として重複して書かない。重複が生じた場合、Security を権威とし、Policy 側を削る。
-4. Trivy のルールが本リポジトリの invariant より緩い場合、Trivy を無効化せず、Policy を追加して厳格化する。**抑止と厳格化を混同しない。**
-5. 抑止は、その検査の権威を持つ側の設定にのみ書く（ADR-0501 決定13）。
+3. Security の道具（ADR-0501 決定6）の**いずれか**が既定ルールとして持つ検査を、Policy として重複して書かない。重複が生じた場合、Security を権威とし、Policy 側を削る。Security の道具の間の重複は本決定の対象外とする（ADR-0501 決定6・13）。
+4. Security の道具のルールが本リポジトリの invariant より緩い場合、その道具を無効化せず、Policy を追加して厳格化する。**抑止と厳格化を混同しない。**
+5. 抑止は、その検査の権威を持つ層の設定にのみ書く。Security の所見は、報告した道具それぞれに書く（ADR-0501 決定13）。
 6. 境界の適用例を次とする。この表は例示であり、Policy の一覧ではない。
 
    | 検査 | 権威 | 理由 |
@@ -95,7 +95,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 ## 保証範囲
 
-- 保証すること: 1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと
+- 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと
 - 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足
 
 ## 検証方法
@@ -113,6 +113,6 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 ## 見直し条件
 
-- Trivy がカスタムルールの記述において Conftest と同等の表現力を持ち、両レイヤーを統合できると判断できる場合
+- Security の道具のいずれかがカスタムルールの記述において Conftest と同等の表現力を持ち、両レイヤーを統合できると判断できる場合
 - address による役割判定が、module の粒度の変更に追随できなくなった場合
 - Policy の数が、レビューによる重複判定（決定3）では追えない規模に達した場合

@@ -24,7 +24,7 @@ Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an` 
 | 出力 | 使う側 |
 | --- | --- |
 | `bucket_name` | identity root と workload root の backend の `bucket`、段2 の `import` block の id |
-| `bucket_arn` | `deployment-identity`（#20）。CI の role の IAM で、S3 の Action の Resource を state Bucket に絞る |
+| `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
 
 - ログの所在: まだ無い。S3 サーバーアクセスログの CloudWatch Logs への配送は段5 で足し、その Log Group を出力に加える
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `state-backend` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
@@ -34,8 +34,8 @@ Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an` 
 | 段 | 持つもの | 状態 |
 | --- | --- | --- |
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
-| 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは #20 の段4 の apply |
-| 段5 | CMK と SSE-KMS への切り替え、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、lifecycle、S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。#20・#107・#108 の後） |
+| 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、段4 は CI の plan の経路（#185）の後に行う |
+| 段5 | CMK と SSE-KMS への切り替え、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、lifecycle、S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。段4・#107・#108 の後） |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
 
@@ -49,6 +49,7 @@ unsupported:
 
 - 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
+- state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 
 未決:
 
@@ -61,9 +62,9 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: 無い。`deployment-identity`（#20）がこのユースケースの `bucket_arn` を受ける
+- ユースケース: 無い。`deployment-identity` がこのユースケースの `bucket_arn` を受ける
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
-- 段5 は `deployment-identity`（#20）の apply-identity の role と、kms（#107）・log-group（#108）の一般 module を要る
+- 段5 は `deployment-identity` の apply と apply-identity の role の ARN（`apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す
 
 ## 検証方法
 
@@ -78,7 +79,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - `force_destroy = false` の Bucket が、版の付いた object と delete marker を残したまま destroy に失敗すること
 - TLS でない要求が、実 API で Bucket Policy に拒否されること
 - 新しく作るときに、Bucket Policy の作成が Public Access Block の設定と競合して失敗すること
-- 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、#20 の段4 の apply の後の plan が見る）
+- 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、段4 の apply の後の plan が見る）
 
 Policy Test（#75）と層検査（#74）は未配線である。配線された後に遡って検証する。
 

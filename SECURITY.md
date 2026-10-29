@@ -39,18 +39,20 @@
 
 ## このリポジトリが自分に掛けている検査
 
-検出手段の割当は [ADR-0501](docs/adr/0501-development-tooling-composition.md) 決定4 が、秘密の混入を独立した層として扱う判断は [ADR-0302](docs/adr/0302-secret-leak-detection.md) が持ちます。
+検出手段の割当は [ADR-0501](docs/adr/0501-development-tooling-composition.md) 決定4 が、秘密の混入を独立した層として扱う判断とその検出手段の割当は [ADR-0302](docs/adr/0302-secret-leak-detection.md) 決定2 が持ちます。
 
 | 層 | 手段 | どこで走るか |
 | --- | --- | --- |
-| 秘密の混入 | gitleaks（権威）+ Trivy secret | pre-push hook と CI（Pull Request は作業ツリー、週次で履歴全体） |
+| 秘密の混入 | gitleaks / trufflehog / Trivy secret（どれか1つの検出で落とす） | pre-push hook と CI（gitleaks・trufflehog は Pull Request が積んだ commit 範囲と週次の履歴全体、Trivy は作業ツリー） |
 | 依存の脆弱性 | Trivy fs | CI。Pull Request では報告のみで、ブロックは昇格時に判定する |
 | **この Pull Request が増やした依存** | Dependency Review | CI（Pull Request の差分だけを見る） <!-- sample:line --> |
-| 構成の誤設定 | Trivy config | CI（CRITICAL / HIGH / MEDIUM でブロック） |
+| 構成の誤設定 | Trivy config / Checkov / KICS / Semgrep CE（規則の出どころが異なる4つ。ADR-0501 決定6） | CI でブロック。閾値は `.makefiles/security/` の各定義が持つ |
 | ワークフロー定義 | zizmor（high でブロック）/ actionlint / shellcheck | pre-commit hook と CI |
 | ランナーの外向き通信 | bullfrog（`egress-policy: block`、`enable-sudo: false`） | 全 job。許可リストの SSOT は `.github/egress.toml` |
 | 供給網の新しすぎる版 | go-cooldown / tool-cooldown | Pull Request と週次 |
 | 参照の固定 | pin-actions / pin-images | CI（action は commit、イメージは digest へ固定） |
+| 綴りと `.editorconfig` | typos / editorconfig-checker | pre-commit hook と CI |
+| 供給網の衛生 | OpenSSF Scorecard（報告のみ。code scanning へ） | 週次と既定ブランチへの push |
 | 依存の更新 | Dependabot + cooldown | 週次 |
 
 それ以外は所見を見せるだけにしています。赤が常態になると、赤を見て手を止める習慣のほうが先に壊れるためです。

@@ -20,6 +20,13 @@ pre-commit:
       glob: "**/*.md"
       run: make md-lint
 
+    # 対象を絞らない。.typos.toml / .editorconfig の変更は、全ファイルの判定を変える。
+    typos:
+      run: make typos
+
+    editorconfig-check:
+      run: make editorconfig-check
+
     # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
     adr-lint:
       glob: "**/*.md"
@@ -37,14 +44,12 @@ pre-commit:
       glob: "docker/**/Dockerfile"
       run: make docker-lint
 
-    # runs-on が SSOT 通りか（.makefiles/github/pin.mk）。
     pin-runners-check:
       glob:
         - ".github/runners-pin.toml"
         - ".github/workflows/*.{yml,yaml}"
       run: make pin-runners-check
 
-    # bullfrog の with: が SSOT 通りか（.makefiles/github/egress.mk）。
     egress-check:
       glob:
         - ".github/egress.toml"
@@ -142,6 +147,12 @@ pre-commit:
         - ".makefiles/**"
       run: make tf-gates-test
 
+    secret-gates-test:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+      run: make secret-gates-test
+
 commit-msg:
   commands:
     # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
@@ -156,3 +167,7 @@ pre-push:
     # .makefiles/security/gitleaks.mk）。
     secret-scan:
       run: make secret-scan
+
+    # 同じ範囲を trufflehog でも走査する（.makefiles/security/trufflehog.mk）。
+    trufflehog-scan:
+      run: make trufflehog-scan

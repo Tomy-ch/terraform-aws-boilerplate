@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const tflintFixture = `# コメント
 // 行コメント
 config {
@@ -29,6 +31,8 @@ rule "terraform_unused_declarations" {
   enabled = true
 }
 `
+
+// editorconfig-checker-enable
 
 func Test_parseTflintPlugins(t *testing.T) {
 	t.Parallel()

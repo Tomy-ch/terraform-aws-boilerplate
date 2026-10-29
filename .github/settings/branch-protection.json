@@ -63,16 +63,25 @@
             "context": "adr-lint"
           },
           {
+            "context": "checkov"
+          },
+          {
             "context": "commitlint"
           },
           {
             "context": "docker-lint"
           },
           {
+            "context": "editorconfig-check"
+          },
+          {
             "context": "egress-check"
           },
           {
             "context": "go-test"
+          },
+          {
+            "context": "kics"
           },
           {
             "context": "md-lint"
@@ -96,6 +105,9 @@
             "context": "secret-scan"
           },
           {
+            "context": "semgrep"
+          },
+          {
             "context": "skill-lint"
           },
           {
@@ -115,6 +127,12 @@
           },
           {
             "context": "trivy-config"
+          },
+          {
+            "context": "trufflehog"
+          },
+          {
+            "context": "typos"
           },
           {
             "context": "versions-check"

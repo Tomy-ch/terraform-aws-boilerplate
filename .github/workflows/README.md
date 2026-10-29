@@ -13,6 +13,8 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | Pull Request のゲート | すべての Pull Request | lint / テスト / 宣言と実体のずれで merge を止める |
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
+| リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
+| 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ## 必須検査はすべての Pull Request で報告される
@@ -103,7 +105,9 @@ truthy 側へ置く。
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` を除く4 job | 15 | 同上（新設） |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
+| `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
+| `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、
@@ -134,8 +138,9 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
 | `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
 
-秘密の走査（gitleaks / Trivy secret）と `zizmor`（high）は所見で job を落とすので、failure モードが
-既に届けている。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
+秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
+failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
+code scanning の alert である。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
 意図的に繋いでいない。
 
 ## Go のクールダウン
@@ -185,10 +190,12 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 
 | クラス | 宛先 | 当たるもの |
 | --- | --- | --- |
-| `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`（結果と cache の置き場の `productionresultssa<N>.blob.core.windows.net` は bullfrog の agent が既定で許す）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
+| `base` | GitHub API / web / codeload、`objects` / `raw` / `release-assets.githubusercontent.com`、`*.actions.githubusercontent.com`、結果と cache の置き場のうち bullfrog の agent が既定で許さない番号の `productionresultssa<N>.blob.core.windows.net`（足し方は宣言のコメント）。IP は `127.0.0.100`（理由と外す条件は宣言のコメント。IP はドメインの判定を経ずに通すので、宣言の検査が `127.0.0.0/8` の外を拒む） | **すべての job に暗黙に適用される。** `classes` に書かない |
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
+| `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
+| `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。

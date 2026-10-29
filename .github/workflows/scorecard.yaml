@@ -1,0 +1,92 @@
+name: OpenSSF Scorecard
+
+# 供給網の衛生の週次報告。何も止めない。publish_results は false に保つ（ADR-0501 決定6）。
+#
+# Scorecard の push / schedule は既定ブランチだけを評価する。既定ブランチはリリース線
+# （release/*）である前提で、push は release/* に限り、job の if: で既定ブランチに絞る。
+# 既定ブランチが release/* の外へ移ったら、push の branches: も合わせる。
+#
+# private なリポジトリで GitHub Advanced Security が無い場合、Scorecard Action は動かない。
+# その派生リポジトリはこの workflow と、.github/egress.toml の `scorecard.yaml:scorecard` を
+# 同じ変更で削除する（片方だけだと make egress-check が落ちる）。
+
+on:
+  push:
+    branches:
+      - 'release/**'
+  schedule:
+    - cron: '30 2 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scorecard:
+    if: ${{ github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
+            api.deps.dev
+            api.osv.dev
+            www.bestpractices.dev
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: false
+
+      - name: Upload Scorecard report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: scorecard
+          path: scorecard.sarif
+          if-no-files-found: ignore
+
+      - name: Upload Scorecard SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard
+
+  # See README.md の「通知の起動条件」.
+  notify-failure:
+    needs: scorecard
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.scorecard.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: scorecard
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

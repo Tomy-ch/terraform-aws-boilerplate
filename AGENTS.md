@@ -12,10 +12,10 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/`（bootstrap の段1・段2 の分）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `usecases/` / `env/` —— `state-backend` と管理アカウントの identity root のほかに、ユースケースと環境が無い
+- `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
 - Conftest の Policy Test と、HCL のソースの検査（層検査、コード実行の検出）—— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）

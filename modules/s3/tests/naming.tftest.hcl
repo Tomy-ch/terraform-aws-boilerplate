@@ -200,7 +200,7 @@ run "name_near_reserved_prefix" {
   }
 }
 
-# Trivy が見ない性質なので Unit で持つ（README「保証しないもの」）。
+# Security の道具が見ない、または一部の道具しか見ない性質なので Unit で持つ（README「保証しないもの」）。
 run "bucket_attributes" {
   command = plan
 

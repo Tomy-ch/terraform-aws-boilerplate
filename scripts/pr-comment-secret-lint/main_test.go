@@ -23,6 +23,8 @@ func writeWorkflows(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const commentingJob = `jobs:
   lint:
     steps:
@@ -30,6 +32,8 @@ const commentingJob = `jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 `
+
+// editorconfig-checker-enable
 
 func Test_run(t *testing.T) {
 	t.Parallel()

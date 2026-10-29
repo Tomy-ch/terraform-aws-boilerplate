@@ -22,6 +22,8 @@ func writeWorkflows(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
 const sound = `jobs:
   lint:
     timeout-minutes: 10
@@ -32,6 +34,8 @@ const sound = `jobs:
         with:
           title: "${{ steps.x.outputs.title || '## ⚠️ CUT OFF (no result produced)' }}"
 `
+
+// editorconfig-checker-enable
 
 func Test_run(t *testing.T) {
 	t.Parallel()

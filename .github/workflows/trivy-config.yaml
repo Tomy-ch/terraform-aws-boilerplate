@@ -69,6 +69,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
 
       # fetch-depth: 0 so the PR's base and head commits are present locally for the filter's
       # `git diff`.
@@ -126,6 +127,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
             mise.run
