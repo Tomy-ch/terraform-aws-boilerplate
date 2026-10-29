@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-16
 - Scope: repository-wide
-- Related: ADR-0001, ADR-0401, ADR-0501, ADR-0402, ADR-0302, ADR-0603
+- Related: ADR-0001, ADR-0401, ADR-0501, ADR-0402, ADR-0302, ADR-0603, ADR-0103
 
 ## Context
 

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0604
+- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0604
 
 ## Context
 
@@ -51,7 +51,7 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 ### 検証との関係
 
 8. Pull Request 契機で実行するレイヤーは ADR-0401 決定8 に従う。本 ADR はそこへ `terraform plan` と Infracost（ADR-0501 決定24）を加える。
-9. AWS credentials を要する検証を、要さない検証より先に実行しない。credentials の取得失敗によって ADR-0401 決定6 のレイヤーが巻き添えで失敗する順序を採らない。
+9. AWS credentials を要する検証を、要さない検証より先に実行しない。credentials の取得失敗によって ADR-0401 決定6 のレイヤーが巻き添えで失敗する順序を採らない。`terraform` を AWS credentials 付きで実行する job（`terraform plan` を含む）は、ADR-0103 のコード実行の検出の成功に依存させる。
 10. 検証が失敗した Pull Request を merge しない。merge 後に apply が起動する以上、merge の可否が実環境への適用の可否と同義になる。
 
 ### Drift
