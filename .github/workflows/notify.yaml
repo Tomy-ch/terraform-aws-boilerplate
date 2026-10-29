@@ -95,6 +95,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa31.blob.core.windows.net
             hooks.slack.com
 
       # Transport-agnostic. In a reusable workflow the github context belongs to the
