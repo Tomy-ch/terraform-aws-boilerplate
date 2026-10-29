@@ -108,7 +108,7 @@ Free plan のアカウントは、使えるサービスと機能が限られ、�
 
 #### 2-0b. aws login 用のプロファイルを作る
 
-名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットは、資格情報や terraform の振る舞いを変える呼び出し元の環境変数（`AWS_` で始まるもの、`TF_CLI_ARGS*`、`TF_VAR_*`、`TF_LOG*` ほか。一覧の正本は `scripts/tf-local` の `env-unset`）を外したうえで、`AWS_PROFILE=tabp-bootstrap` を渡す。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
+名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットは、資格情報や terraform の振る舞いを変える呼び出し元の環境変数（`AWS_` で始まるもの、`TF_CLI_ARGS*`、`TF_VAR_*`、`TF_LOG*` ほか。一覧の正本は `scripts/tf-local` の `env-unset`）を外したうえで、`AWS_PROFILE=tabp-bootstrap` と `TF_CLI_CONFIG_FILE=/dev/null` を渡す。後者は `~/.terraformrc` と `~/.terraform.d/*.tfrc` を読ませない —— そこにある `dev_overrides` は lock の hash の検証を経ずに provider を差し替える。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
 
 | 対象 | 必要バージョン |
 | --- | --- |
@@ -232,9 +232,9 @@ state backend が無い時点では Terraform が state を保存できないの
 
    ```bash
    unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS)=' | sed 's/=$//; s/^/-u /')
-   env $unset_env AWS_PROFILE=tabp-bootstrap \
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   env $unset_env AWS_PROFILE=tabp-bootstrap \
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity plan -lock=false -input=false
    ```
 
@@ -295,9 +295,9 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）
 
    ```bash
-   env $unset_env AWS_PROFILE=tabp-bootstrap \
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap \
+   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
    ```
 
@@ -313,7 +313,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 7. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
 
    ```bash
-   env $unset_env AWS_PROFILE=tabp-bootstrap \
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity apply -input=false "$PWD/tmp/plan/admin-identity.tfplan"
    rm -f "$PWD/tmp/plan/admin-identity.tfplan"
    ```

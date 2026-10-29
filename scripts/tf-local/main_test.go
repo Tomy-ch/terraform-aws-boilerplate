@@ -516,6 +516,16 @@ func Test_bucketName(t *testing.T) {
 			assert.Contains(t, string(doc), want)
 		})
 
+		t.Run("docs/setup/bootstrap.md の make を使わない terraform の実行がすべて CLI の設定を読ませない", func(t *testing.T) {
+			t.Parallel()
+
+			doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "setup", "bootstrap.md"))
+			require.NoError(t, err)
+			all := strings.Count(string(doc), "env $unset_env AWS_PROFILE=tabp-bootstrap")
+			require.Positive(t, all)
+			assert.Equal(t, all, strings.Count(string(doc), "env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null "))
+		})
+
 		t.Run("docs/setup/bootstrap.md の段1 の組み立てと一致する", func(t *testing.T) {
 			t.Parallel()
 
@@ -730,7 +740,7 @@ func TestLocalMk(t *testing.T) {
 		return string(out)
 	}
 
-	const envPrefix = "env $unset_env AWS_PROFILE=tabp-bootstrap AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
+	const envPrefix = "env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
 
 	t.Run("init は失敗で止まり、aws と terraform の両方に絞った環境を渡す", func(t *testing.T) {
 		t.Parallel()
