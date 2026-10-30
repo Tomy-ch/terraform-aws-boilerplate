@@ -84,7 +84,8 @@ trufflehog-canary:
 	echo "✅ trufflehog-canary: 埋めた偽の AWS キーを検証なしで検出しました" >&2
 
 ## 範囲走査の番兵そのものの検査。起点が空のときと解決できないとき、gitleaks・trufflehog の両方が
-## 所見なしで通らず、それぞれの番兵で落ちることを確かめる。道具は起動しない（番兵で止まる）。
+## 所見なしで通らず、それぞれの番兵で落ちることを確かめる。gitleaks の走査数の番兵は、作った出力に
+## 当てて確かめる。道具は起動しない。
 ## 子の make は失敗の理由を問わず 2 を返すので、どの番兵で落ちたかは文言で見る。
 .PHONY: secret-gates-test ## 秘密の範囲走査が、起点を解決できないとき通らないことを検査
 secret-gates-test:
@@ -100,5 +101,15 @@ secret-gates-test:
 			esac; \
 		done; \
 	done; \
+	mkdir -p tmp; d=$$(mktemp -d tmp/secret-gates-test.XXXXXX); trap 'rm -rf "$$d"' EXIT; \
+	printf 'INF 3 commits scanned.\n' > "$$d/three"; printf 'INF 0 commits scanned.\n' > "$$d/zero"; \
+	printf 'ERR error="stderr is not empty"\n' > "$$d/none"; \
+	for c in three:3:0 zero:3:2 none:3:2 zero:0:0; do \
+		f=$${c%%:*}; r=$${c#*:}; want=$${r%%:*}; exp=$${r#*:}; \
+		rc=0; ( $(call GITLEAKS_COUNT_CHECK,"$$d/$$f","$$n" -eq "$$want") ) 2>/dev/null || rc=$$?; \
+		[ "$$rc" = "$$exp" ] || failed="$$failed gitleaks-count($$f,want=$$want,rc=$$rc)"; \
+	done; \
+	rc=0; ( $(call GITLEAKS_COUNT_CHECK,"$$d/zero","$$n" -gt 0) ) 2>/dev/null || rc=$$?; \
+	[ "$$rc" = 2 ] || failed="$$failed gitleaks-count(history-zero,rc=$$rc)"; \
 	if [ -n "$$failed" ]; then echo "❌ secret-gates-test:$$failed" >&2; exit 1; fi; \
-	echo "✅ secret-gates-test: 起点が空・解決不能の範囲走査は、gitleaks・trufflehog ともそれぞれの番兵で落ちました" >&2
+	echo "✅ secret-gates-test: 起点が空・解決不能の範囲走査と、走査した commit の数が合わない gitleaks は、それぞれの番兵で落ちました" >&2
