@@ -27,6 +27,10 @@ pre-commit:
     editorconfig-check:
       run: make editorconfig-check
 
+    # 対象を絞らない。抑止が名指すファイルの改名・削除でも、抑止は対象を失う。
+    secret-suppression-lint:
+      run: make secret-suppression-lint
+
     # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
     adr-lint:
       glob: "**/*.md"
@@ -163,11 +167,9 @@ commit-msg:
 pre-push:
   parallel: true
   commands:
-    # push 予定の commit 範囲に秘密が無いこと（ADR-0302 決定6 の走査範囲の表、
-    # .makefiles/security/gitleaks.mk）。
+    # 範囲は ADR-0302 決定6 の表が持つ。
     secret-scan:
       run: make secret-scan
 
-    # 同じ範囲を trufflehog でも走査する（.makefiles/security/trufflehog.mk）。
     trufflehog-scan:
       run: make trufflehog-scan
