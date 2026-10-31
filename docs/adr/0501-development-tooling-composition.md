@@ -48,7 +48,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | Security | Trivy / Checkov / KICS / Semgrep CE（決定6） | 不要 |
    | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
-   | Policy | Conftest / OPA（入力は `terraform show -json`） | 不要 |
+   | Policy | Conftest / OPA（入力は plan の JSON 表現の `resource_changes`。決定8） | 不要 |
    | Integration | `terraform test`（実 provider） | 必要 |
    | E2E | Terratest（Go） | 必要 |
    | Cost | Infracost | 不要 |
@@ -89,7 +89,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
    OpenSSF Scorecard は、リポジトリの供給網の衛生（参照の固定、token の権限、危険な workflow など）を定期的に報告するために、権威を持たない補助として併用する。必須検査にせず、スコアで Pull Request を止めない。結果は code scanning へ SARIF で送り、外部へ公開（`publish_results`）しない —— 公開は job の step を特定の action に限る API の条件を要し、runner の封じ込め（ADR-0702 決定20-23）を先頭に置く本リポジトリの job はそれを満たさない。所見が zizmor・Trivy・参照の固定の検査と重なる場合、判定はそれらに従う。
 7. Static Analysis / Security / Unit / Contract / Policy は AWS credentials なしで完了すること（ADR-0401 決定6）。Unit Test では `mock_provider` / `mock_resource` / `mock_data` を用い、実 AWS API へ依存しない。
-8. Policy Test の入力を `terraform show -json` の出力とする。これにより ADR-0401 決定19 の要件を満たす。
+8. Policy Test の入力を、plan の JSON 表現の `resource_changes` とする。資格情報なしでは mock provider の下の `terraform test -json -verbose` の `test_plan`、実 plan では `terraform show -json` の出力から得る。前者は版付きで文書化された形式ではないので、Policy が `plan_format_version` を検査する。これにより ADR-0401 決定19 の要件を満たす。
 9. Unit Test と Policy Test を混同しない。入力から構成を導出するロジックの検証（既定値、条件分岐、`for_each`、ARN 組み立て）は Unit、アーキテクチャ invariant の強制（public access 禁止、wildcard 禁止、暗号化必須）は Policy とする。同一の性質を両方へ書かない。
 10. 実システムの振る舞いの検証は、`terraform test` で表現できないものに限り Terratest へ移す。Terraform 内部の構造検証のために Terratest を使用しない。
 

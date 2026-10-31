@@ -77,6 +77,10 @@ shellcheck = "0.11.0"
 # ツールランナーの Dockerfile を検査する。
 hadolint = "2.15.1"
 
+# Static Analysis のソースの構造の規約（入力は HCL のソース）と、Policy（入力は plan の JSON 表現）を持つ
+# （ADR-0501 決定4・5・8）。OPA を内蔵するため、OPA を別に pin しない。
+"aqua:open-policy-agent/conftest" = "0.71.1"
+
 "aqua:crate-ci/typos" = "1.51.1"
 
 "aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"

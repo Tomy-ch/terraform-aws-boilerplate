@@ -21,10 +21,11 @@
 | `.makefiles/` | 検査の定義。`RUNNER_MODE` でホストとコンテナを切り替える |
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
+| `conftest/` | Conftest の Rego と宣言。`plan/` が Policy Test（[`conftest/plan/README.md`](conftest/plan/README.md)） |
 | `modules/` | 一般 module の `s3/` だけ |
 | `usecases/` | `state-backend/` と `deployment-identity/` だけ（bootstrap の段1-4 の分） |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
-| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make`・pre-commit・CI に配線済み。Conftest は未配線 |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）は `make`・pre-commit・CI に配線済み。HCL のソースの検査は未配線 |
 
 ## 使い方
 

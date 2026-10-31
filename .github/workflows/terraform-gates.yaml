@@ -74,6 +74,8 @@ jobs:
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
+              - 'conftest/plan/**'
+              - 'conftest/data/policy-plan.json'
 
   tf-fmt-check:
     needs: changes
@@ -279,6 +281,75 @@ jobs:
       # No secret reaches this step: init runs whatever provider the PR's configuration resolves.
       - name: Run terraform validate and terraform test
         run: make -k tf-validate tf-test RUNNER_MODE=host
+
+  tf-policy:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The canary runs first: a gate that cannot fail says nothing about the reference roots.
+      # No secret reaches this step: the plan runs under mock_provider without credentials.
+      - name: Run the Policy Test
+        run: make tf-policy-canary tf-policy RUNNER_MODE=host
 
   tf-gates-test:
     needs: changes

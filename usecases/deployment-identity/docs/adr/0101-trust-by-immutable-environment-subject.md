@@ -63,12 +63,13 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 ## 保証範囲
 
 - 保証すること: 信頼条件の文書が、入力から決定2 の形に組まれること（Unit Test）
-- 保証しないこと: 決定2 の `sub` の形が実 token と一致すること（決定7 の確認まで）。信頼条件にワイルドカードが無いことと、environment 名が environment の宣言に存在することの検査（Policy Test は未配線）
+- 保証しないこと: 決定2 の `sub` の形が実 token と一致すること（決定7 の確認まで）
 
 ## 検証方法
 
 - Unit Test: `internal/github-oidc/tests/trust.tftest.hcl` が、3つの role の信頼条件の文書を完全一致で、`tests/validation.tftest.hcl` が名前に `*` `?` `:` を含む入力の拒否を確かめる
-- Policy Test（未配線。#75 / #73）: repository-wide/ADR-0602 の検証方法の、信頼条件のワイルドカードの不在、environment 形式、完全一致の項目
+- Policy Test（`make tf-policy`）: repository-wide/ADR-0602 の検証方法の、信頼条件のワイルドカードの不在、environment 形式、完全一致の項目
+- 運用機構（`make repo-settings-check`）: environment 名が environment の宣言に存在すること
 - 実 token: 決定7。最初の CI の plan が role を assume できることで確かめる（`docs/setup/bootstrap.md` の段4）
 
 ## 影響
