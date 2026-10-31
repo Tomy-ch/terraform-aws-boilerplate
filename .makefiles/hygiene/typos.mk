@@ -12,7 +12,8 @@ typos: typos-canary
 	@set -eu; mkdir -p tmp; got=$$(mktemp tmp/typos-files.XXXXXX); want=$$(mktemp tmp/typos-files.XXXXXX); \
 	trap 'rm -f "$$got" "$$want"' EXIT; \
 	$(GO_TOOL) typos --files | sed 's|^\./||' | sort > "$$got"; \
-	git ls-files | grep -v -E '$(TYPOS_EXPECTED_EXCLUDES)' | sort > "$$want"; \
+	git -c core.quotepath=false ls-files | grep -v -E '$(TYPOS_EXPECTED_EXCLUDES)' | sort > "$$want"; \
+	test -s "$$want" || { echo "❌ typos: 追跡ファイルの一覧が0件です" >&2; exit 2; }; \
 	missing=$$(comm -13 "$$got" "$$want"); \
 	test -z "$$missing" || { echo "❌ typos: 追跡ファイルが走査対象から外れています:" >&2; echo "$$missing" | head -n 20 >&2; exit 2; }; \
 	$(GO_TOOL) typos --format brief

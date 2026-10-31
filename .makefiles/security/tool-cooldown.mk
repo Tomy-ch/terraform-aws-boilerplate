@@ -22,7 +22,7 @@ tool-cooldown-gate:
 tool-cooldown-audit:
 	@$(TOOL_COOLDOWN_ENV) $(call RUN_SCRIPT_HOST,tool-cooldown,audit $(COOLDOWN_REPORT))
 
-.PHONY: tool-cooldown-outdated ## 上流の新版を調べ、窓を満たす更新先を報告（ゲートしない）
+.PHONY: tool-cooldown-outdated ## 上流の新版を調べ、窓を満たす更新先を報告（窓ではゲートしない。上流を確認できなければ失敗）
 ## gate も audit も宣言済みの版の齢しか測らないため、上流に新版が出たことはどちらも見ない。
 tool-cooldown-outdated:
 	@$(TOOL_COOLDOWN_ENV) $(call RUN_SCRIPT_HOST,tool-cooldown,outdated $(if $(OUT),--summary-out=$(OUT),))

@@ -95,17 +95,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          go run ./scripts/tool-cooldown outdated --summary-out=tool-outdated.md
-          cat tool-outdated.md >> "${GITHUB_STEP_SUMMARY}"
+          set -uo pipefail
+          # The report lists what could not be confirmed, so it reaches the summary even when the
+          # survey fails on it.
+          rc=0
+          make tool-cooldown-outdated RUNNER_MODE=host OUT=tool-outdated.md || rc=$?
+          if [ -f tool-outdated.md ]; then
+            cat tool-outdated.md >> "${GITHUB_STEP_SUMMARY}"
+          elif [ "${rc}" -eq 0 ]; then
+            echo "::error::the survey succeeded without writing tool-outdated.md"
+            exit 1
+          fi
+          exit "${rc}"
 
       # The issue is the notification, so it is created only while something is actionable and is
       # closed again once nothing is. Reusing one title as the identity key keeps a weekly schedule
-      # from filing a new issue every Monday.
+      # from filing a new issue every Monday. It also runs after a survey that failed on some tools,
+      # so one unconfirmable tool does not stop the notice for the others.
       - name: Create or update the report issue
+        if: ${{ !cancelled() && steps.survey.outputs.actionable != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           ACTIONABLE: ${{ steps.survey.outputs.actionable }}
+          FAILED: ${{ steps.survey.outputs.failed }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -121,7 +133,21 @@ jobs:
             });
             const existing = issues.find(issue => issue.title === title);
 
-            if (Number(process.env.ACTIONABLE) === 0) {
+            // An empty count means the survey never wrote its output; closing the issue on it would
+            // report "nothing to update" without having looked.
+            const actionable = process.env.ACTIONABLE ?? '';
+            const failed = process.env.FAILED ?? '';
+            if (!/^[0-9]+$/.test(actionable) || !/^[0-9]+$/.test(failed)) {
+              core.setFailed(`survey did not report its counts (actionable=${JSON.stringify(actionable)}, failed=${JSON.stringify(failed)})`);
+              return;
+            }
+
+            // Nothing actionable is only "nothing to update" when every tool was confirmed.
+            if (Number(actionable) === 0 && Number(failed) > 0) {
+              return;
+            }
+
+            if (Number(actionable) === 0) {
               if (existing) {
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: existing.number,
