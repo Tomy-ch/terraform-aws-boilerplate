@@ -37,6 +37,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
 
       # fetch-depth: 0 so the PR's base and head commits are present locally. The filter
@@ -99,6 +100,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
@@ -382,6 +384,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
