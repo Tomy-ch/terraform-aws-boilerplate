@@ -103,9 +103,12 @@ CI の権限については循環の性質が異なる。backend さえあれば
 ### CI 認証
 
 12. CI から AWS への認証を、OIDC による role の assume とする。長期のアクセスキーを CI の secret として保持しない。
-13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。plan の role は
-    state の読み取りと復号を持つ。plan に必要だからである。したがって plan の role を assume できる主体は
-    state を読める。state に置く秘密の扱いは、当該 use-case の ADR が決定する。
+13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。ただし、
+    plan の出力を置く Bucket への `s3:PutObject` だけは与える。この Bucket は state Bucket と分け、
+    plan の role に object の削除の権限を与えず、版管理を有効にする。plan の role は state の読み取りと
+    復号を持つ。plan に必要だからである。したがって plan の role を assume できる主体は state を読める。
+    state に置く秘密の扱いは、当該 use-case の ADR が決定する。plan の出力の全文は、公開されるログ・
+    Pull Request のコメント・artifact に出さない。
 
     apply を行う role を、さらに2つに分ける。bootstrap の構成物（決定1）を変更する apply-identity の
     role と、それ以外を変更する apply の role である。apply の role に bootstrap の構成物を変更する権限を
