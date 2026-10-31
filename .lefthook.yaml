@@ -157,6 +157,22 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make tf-gates-test
+    # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
+    infra-code-gate:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "conftest/**"
+        - "docs/adr/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/lib/**"
+        - ".github/CODEOWNERS"
+        - ".github/settings/branch-protection.json"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make infra-code-gate-test infra-code-gate
 
     secret-gates-test:
       glob:
