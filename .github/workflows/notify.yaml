@@ -2,7 +2,7 @@ name: Notify
 
 # Reusable notification for the security workflows, in two modes.
 #
-#   failure   (`failed-job`) — a scanner that runs on a weekly schedule broke. A PR
+#   failure   (`failed-job`) — a scanner that runs on a schedule broke. A PR
 #             failure is already visible to its author; a scheduled failure is not
 #             visible to anyone, so it needs to be pushed somewhere a human reads.
 #   detection (`detected` + `details`) — a scanner that deliberately does NOT fail the
