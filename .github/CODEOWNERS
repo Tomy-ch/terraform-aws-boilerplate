@@ -32,6 +32,13 @@ mise.toml                             @Tomy-ch
 # every workflow that carries the job.
 .github/egress.toml                   @Tomy-ch
 
+# The Policy Test declarations (ADR-0402 決定15). Dropping a document type or a role address from
+# the data, or an override from a reference root's policy input, shrinks what the Policy reads
+# while every check stays green.
+conftest/plan/                        @Tomy-ch
+conftest/data/policy-plan.json        @Tomy-ch
+usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
+
 # インフラ内コードの検出（ADR-0103 決定14）。どれを弱めても検出は緑のまま通る。
 # 許可リストに本リポジトリ所有の項目を足す変更は、その項目のソースの所在の行をここに足す
 # （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。

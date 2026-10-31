@@ -31,6 +31,6 @@ ADR-0701 決定2 が文書の所有を割り当てている。その表に「要
 | ファイル | 内容 | v1.0 到達時 |
 | --- | --- | --- |
 | [scope.md](scope.md) | 採用ユースケース、接続シナリオ、横断要件、検証戦略、受入条件、残る判断 | 削除する |
-| [attachment-parent-arguments.md](attachment-parent-arguments.md) | AWS Provider の attachment 型 resource と「親を指す引数」の対応表。`scope.md` 第3.1節の層検査(3)が判定に使う | Policy Test の data へ移す |
+| [attachment-parent-arguments.md](attachment-parent-arguments.md) | AWS Provider の attachment 型 resource と「親を指す引数」の対応表。`scope.md` 第3.1節の層検査(3)が判定に使う | 層検査（#74）の data へ移す |
 
 `attachment-parent-arguments.md` だけは削除ではなく移設である。層検査が実際に読むデータであり、検査が配線された時点でその隣へ移る。

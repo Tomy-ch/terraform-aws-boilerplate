@@ -52,7 +52,7 @@ state の版を、書き込みの権限を持つ主体からも守ること。
 ## 検証方法
 
 - Unit Test: `modules/s3/tests/naming.tftest.hcl` の `bucket_attributes` が、版管理が `Enabled` であることを mock の plan で確かめる
-- `modules/s3` は `aws_s3_bucket_object_lock_configuration` を持たず、`aws_s3_bucket_versioning` に `mfa` を渡さない。これを見る検査は無い。Policy Test（#75）が配線されたら、そちらで固定する
+- `modules/s3` は `aws_s3_bucket_object_lock_configuration` を持たず、`aws_s3_bucket_versioning` に `mfa` を渡さない。これを見る検査は無い（Policy で固定するかは #210）
 - Security: `make kics` が c5b31ab9 を `modules/s3/main.tf` 以外の path で報告しないこと。抑止の宣言は同ファイル先頭の `kics-scan disable` が持つ
 
 ## 影響

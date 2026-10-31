@@ -16,7 +16,7 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
-- Conftest の Policy Test と、HCL のソースの検査のうち層検査 —— 未作成で、`make` にも配線されていない
+- HCL のソースの検査のうち層検査 —— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）。HCL のソースの検査のうちコード実行の検出は
   `make infra-code-gate` に配線済み

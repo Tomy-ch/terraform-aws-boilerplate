@@ -40,7 +40,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 - Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は、どの道具についても確かめていない
 - 暗号化（Trivy AWS-0132、Checkov CKV_AWS_145）、アクセスログ、lifecycle、通知、リージョン間の複製、MFA delete、IAM Access Analyzer、tag の検査と、Semgrep の版管理の誤検出は抑止している。理由と撤回条件は各抑止の箇所（`.trivyignore.yaml`、`main.tf` / `policy.tf` / `encryption.tf` の先頭と `aws_s3_bucket.this`）が持つ
-- `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で見る。どちらも Policy Test（#75）が配線されたら、そちらへ移す
+- `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で見る。どちらも入力から導いた値の固定であり、Unit Test に属する（ADR-0501 決定9）
 - TLS でない要求が実際の S3 API で拒否されることは、どのテストも見ていない（E2E。ADR-0401 決定4）
 
 ## 版
