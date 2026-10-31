@@ -54,6 +54,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/adrdoc"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -61,21 +62,18 @@ import (
 
 const (
 	defaultRepo  = "."
-	defaultRoot  = "docs/adr"
+	defaultRoot  = adrdoc.RootDir
 	indexFile    = "README.md"
 	templateFile = "template.md"
-	// root scope の名前。`Superseded by <scope>/...` の scope と同じ綴りである。
-	rootScope = "repository-wide"
-	// use-case ADR の置き場所は usecases/<use-case>/docs/adr/（ADR-0001 決定12）。
-	useCasesDir = "usecases"
-	useCaseADR  = "docs/adr"
-	scopeChars  = `[A-Za-z0-9_-]+`
+	rootScope    = adrdoc.RootScope
+	useCasesDir  = adrdoc.UseCasesDir
+	useCaseADR   = adrdoc.UseCaseDir
+	scopeChars   = `[A-Za-z0-9_-]+`
 )
 
 var (
-	// 大文字とアンダースコアを弾くのは、同じ決定が2つの綴りで置かれるのを防ぐため。
-	fileName   = regexp.MustCompile(`^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$`)
-	statusLine = regexp.MustCompile(`(?m)^- Status:[ \t]*(\S.*)$`)
+	fileName   = adrdoc.FileName
+	statusLine = adrdoc.StatusLine
 	dateLine   = regexp.MustCompile(`(?m)^- Date:[ \t]*(\S.*)$`)
 	scopeLine  = regexp.MustCompile(`(?m)^- Scope:[ \t]*(\S.*)$`)
 	// 宛先は identity の `<scope>/<slug>` で書く（ADR-0001 決定3・4）。slug の形は fileName の第2群と同じ。
@@ -284,7 +282,6 @@ func checkScope(s scope) ([]doc, []lintreport.Finding, error) {
 	return docs, append(findings, indexFindings...), nil
 }
 
-// doc は検査対象の ADR 1件です。
 type doc struct {
 	path   string // root からの相対パス
 	name   string
