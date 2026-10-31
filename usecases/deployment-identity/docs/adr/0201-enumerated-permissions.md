@@ -15,11 +15,12 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 
 1. 3つの role の権限を、role ごとの inline policy に Action を列挙して与える。Allow の文に `*` と `service:*` の Action、`"*"` の Resource、部分的なワイルドカード（`s3:GetBucket*` 等）を使わない。permissions boundary を課さない。
 2. 列挙は、identity root の resource について AWS Provider 6.70.0 の source（`internal/service/s3`・`internal/service/iam`）の Read・Create・Update・Delete が呼ぶ API から導く。対応は下の表が持つ。Provider の版を上げる変更は、この表を見直す。
-3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定）に要る分に限る。段5 の CMK・ログ・lifecycle の権限は、段5 の変更が先に足す。
-4. Resource は、state Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。
-5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:Put*` と `s3:Delete*`、state Bucket への `s3:Put*` と `s3:Delete*`、state の object への `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、state Bucket の設定を変えられないようにする。
+3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定、plan の出力の Bucket とその lifecycle）に要る分に限る。段5 の CMK・ログと、state Bucket の lifecycle の権限は、段5 の変更が先に足す。
+4. Resource は、state Bucket と plan の出力の Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。
+5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:Put*` と `s3:Delete*`、state Bucket と plan の出力の Bucket への `s3:Put*` と `s3:Delete*`、state の object と plan の出力の object への `s3:Put*` と `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、2つの Bucket の設定、plan の出力を変えられないようにする。
 6. apply-identity の role は、自分を含む3つの role の信頼条件と policy を変更できる。誤った信頼条件が merge されると CI は締め出され、回復は repository-wide/ADR-0602 決定9 の回復の契機になる。
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
+8. plan の role に、plan の出力の Bucket の object への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13 の例外）。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。段5 で暗号化を CMK へ切り替える変更が、plan の role の `kms:GenerateDataKey` を先に足す。
 
 ### Action の導出
 
@@ -27,6 +28,8 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 | --- | --- | --- | --- |
 | S3 backend（state） | ListObjects、GetObject、PutObject | `s3:ListBucket`、`s3:GetObject`、`s3:PutObject` | 3つ（書き込みは apply 系の自分の key だけ） |
 | S3 backend（lock file） | GetObject、PutObject、DeleteObject | `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject` | apply 系の自分の `.tflock` だけ |
+| plan の出力 | PutObject | `s3:PutObject` | plan（plan の出力の Bucket の object だけ） |
+| `aws_s3_bucket_lifecycle_configuration`（plan の出力の Bucket） | Get / Put / DeleteBucketLifecycle | `s3:GetLifecycleConfiguration`、`s3:PutLifecycleConfiguration` | 読みは plan、apply-identity。書きは apply-identity |
 | `aws_s3_bucket` の Read | HeadBucket（region の解決を含む） | `s3:ListBucket` | plan、apply-identity |
 | 同 | GetBucketPolicy / GetBucketAcl / GetBucketCors / GetBucketWebsite / GetBucketVersioning / GetBucketAccelerateConfiguration / GetBucketRequestPayment / GetBucketLogging / GetBucketLifecycleConfiguration / GetBucketReplication / GetBucketEncryption / GetObjectLockConfiguration / GetBucketTagging | `s3:GetBucketPolicy`、`s3:GetBucketAcl`、`s3:GetBucketCORS`、`s3:GetBucketWebsite`、`s3:GetBucketVersioning`、`s3:GetAccelerateConfiguration`、`s3:GetBucketRequestPayment`、`s3:GetBucketLogging`、`s3:GetLifecycleConfiguration`、`s3:GetReplicationConfiguration`、`s3:GetEncryptionConfiguration`、`s3:GetBucketObjectLockConfiguration`、`s3:GetBucketTagging` | plan、apply-identity |
 | `aws_s3_bucket_public_access_block` | Get / Put / DeletePublicAccessBlock | `s3:GetBucketPublicAccessBlock`、`s3:PutBucketPublicAccessBlock` | 読みは plan、apply-identity。書きは apply-identity |
@@ -42,7 +45,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 | `aws_iam_role_policies_exclusive` | ListRolePolicies、DeleteRolePolicy | 同名の `iam:` | 同上 |
 | `aws_iam_role_policy_attachments_exclusive` | ListAttachedRolePolicies、DetachRolePolicy | 同名の `iam:` | 同上 |
 
-与えないもの: `s3:CreateBucket` と `s3:DeleteBucket`（state Bucket の作り直しを権限の側でも止める）、`iam:AttachRolePolicy`（managed policy を付けない）、`iam:TagRole` などの tag の書き込み（tag を付けない）、`iam:PutRolePermissionsBoundary` と `iam:DeleteRolePermissionsBoundary`、`iam:PassRole`、`iam:RemoveRoleFromInstanceProfile`（instance profile を持たない）。`aws_caller_identity` の `sts:GetCallerIdentity` は権限を要さない。
+与えないもの: `s3:CreateBucket` と `s3:DeleteBucket`（2つの Bucket の作り直しを権限の側でも止める）、`iam:AttachRolePolicy`（managed policy を付けない）、`iam:TagRole` などの tag の書き込み（tag を付けない）、`iam:PutRolePermissionsBoundary` と `iam:DeleteRolePermissionsBoundary`、`iam:PassRole`、`iam:RemoveRoleFromInstanceProfile`（instance profile を持たない）。`aws_caller_identity` の `sts:GetCallerIdentity` は権限を要さない。
 
 ## 検討した代替案
 
