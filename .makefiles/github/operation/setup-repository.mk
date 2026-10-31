@@ -4,7 +4,7 @@
 # git / gh の手順（タグの作り直し・ブランチ整備・デフォルトブランチ移動・リリースノート整理）は
 # scripts/repo-setup（テスト付き）が持つ。取り消しの効かない操作ばかりで、分岐を実地で確かめようと
 # するとリポジトリを本当に壊すしかないため、手順をシェルに置かない。
-# ラベル・ルールセット・ワークフローの初期化は個別の make ターゲットなので、連鎖はここに残す。
+# ラベル・ルールセット・environment・ワークフローの初期化は個別の make ターゲットなので、連鎖はここに残す。
 # ホストの認証情報を使うためツールランナーは経由しない。
 REPO_SETUP := go -C scripts run ./repo-setup
 
@@ -29,9 +29,10 @@ setup-repo:
 
 	@$(REPO_SETUP) prune-release-notes
 
-	@echo "🔧 ルールセットの適用を開始します..."
+	@echo "🔧 ルールセットと environment の適用を開始します..."
 	@$(MAKE) apply-branch-protection
-	@echo "✅ ルールセットの適用を終了します。"
+	@$(MAKE) apply-environments
+	@echo "✅ ルールセットと environment の適用を終了します。"
 
 	@git remote remove upstream || true
 	@echo "✅ Initialization complete. Default branch: production"
