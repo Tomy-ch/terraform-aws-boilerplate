@@ -58,7 +58,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
    Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
    ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、backend 設定の不変条件、ADR-0103 決定9-11 のコード実行の検出。同じ規約を両方に
-   書かない。この用途の Conftest の入力は HCL のソース（`--parser hcl2`）とし、Policy 層の入力（決定8、ADR-0402
+   書かない。この用途の Conftest の入力は HCL のソース（パーサは拡張子で選び、JSON の構成は ADR-0103 決定11 のとおり未対応として落とす）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定）、plan した root から
    届く module に検査が限られるためである。コード実行の検出をこの入力に置くのは、plan の中で実行される構成要素が
    あり、`terraform show -json` を入力とすると判定より先に実行を許すためである（ADR-0103 決定11）。Conftest は
