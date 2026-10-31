@@ -20,11 +20,11 @@ tf-policy: tf-init
 	command -v jq >/dev/null || { echo "❌ jq がホストにありません（tf-policy は入力の抽出と件数の突き合わせに使う）"; exit 1; }; \
 	roots=$$(for d in $(TF_BASE)/usecases/*/reference; do if [ -d "$$d" ]; then echo "$$d"; fi; done); \
 	if [ -z "$$roots" ]; then echo "❌ Policy の入力にする reference の root が0件です（$(TF_BASE)/usecases/*/reference）"; exit 1; fi; \
-	missing=""; for d in $$roots; do if [ ! -f "$$d/tests/policy.tftest.hcl" ]; then missing="$$missing $$d"; fi; done; \
-	if [ -n "$$missing" ]; then echo "❌ tests/policy.tftest.hcl を持たない reference の root:$$missing"; exit 1; fi; \
+	missing=""; for d in $$roots; do if [ ! -f "$$d/tests/policy-input.tftest.hcl" ]; then missing="$$missing $$d"; fi; done; \
+	if [ -n "$$missing" ]; then echo "❌ tests/policy-input.tftest.hcl を持たない reference の root:$$missing"; exit 1; fi; \
 	sources=$$(find $(POLICY_PLAN_DIR) -name '*.rego' -not -name '*_test.rego'); \
 	if [ -z "$$sources" ]; then echo "❌ Rego のテストが0件です（Policy も無い: $(POLICY_PLAN_DIR)）"; exit 1; fi; \
-	other=$$(grep -lE '^(warn|violation)[A-Za-z0-9_]*( contains|\[| *:?=)|^deny[A-Za-z0-9_]*( *\[| *:?=)|^deny[A-Za-z0-9_]+ contains' $$sources </dev/null || true); \
+	other=$$(for f in $$sources; do grep -E '^(default +)?(deny|warn|violation)' "$$f" | grep -vqE '^deny contains ' && echo "$$f"; done || true); \
 	if [ -n "$$other" ]; then echo "❌ deny contains 以外の形で書かれた規則があります（warn は失敗にならず、下の検査も届かない）: $$other"; exit 1; fi; \
 	no_test=""; for f in $$sources; do \
 		if grep -q '^deny contains' "$$f"; then \
@@ -33,7 +33,7 @@ tf-policy: tf-init
 		fi; \
 	done; \
 	if [ -n "$$no_test" ]; then echo "❌ 違反する入力と違反しない入力の両方のテストを持たない Policy（ADR-0402 決定8・9）:$$no_test"; exit 1; fi; \
-	untested=""; for id in $$(grep -ho '\[PLAN-[A-Z]*-[0-9]*\]' $$sources </dev/null | sort -u); do \
+	untested=""; for id in $$(grep -ho '\[PLAN-[A-Z0-9]*-[0-9]*\]' $$sources </dev/null | sort -u); do \
 		find $(POLICY_PLAN_DIR) -name '*_test.rego' -exec grep -qF -- "\"$$id" {} + || untested="$$untested $$id"; \
 	done; \
 	if [ -n "$$untested" ]; then echo "❌ テストが一度も名指ししない違反の ID（ADR-0402 決定8・9）:$$untested"; exit 1; fi; \
@@ -47,7 +47,7 @@ tf-policy: tf-init
 	rm -rf "$(TF_POLICY_INPUT)"; mkdir -p "$(TF_POLICY_INPUT)"; inputs=""; failed=""; \
 	for d in $$roots; do \
 		name=$$(printf '%s' "$${d#$(TF_BASE)/usecases/}" | sed 's|/reference$$||'); out="$(TF_POLICY_INPUT)/$$name"; \
-		if ! TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" test -filter=tests/policy.tftest.hcl -json -verbose > "$$out.jsonl"; then \
+		if ! TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" test -filter=tests/policy-input.tftest.hcl -json -verbose > "$$out.jsonl"; then \
 			jq -r 'select(.["@level"] == "error") | .["@message"]' "$$out.jsonl" 2>/dev/null || true; failed="$$failed $$d"; continue; \
 		fi; \
 		n=$$(jq -s '[.[] | select(.type == "test_plan")] | length' "$$out.jsonl"); \
@@ -66,41 +66,49 @@ TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 
 define TF_POLICY_FIXTURE
 mkdir -p "$$1/usecases/x/reference/tests"; printf '%s\n' "$$2" > "$$1/usecases/x/reference/main.tf"; \
-printf 'run "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy.tftest.hcl"
+printf 'run "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"
 endef
 
 .PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・違反・unknown の文書で落ち、違反の無い入力で通ることを検査
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
-	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "documents": {"terraform_data": ["input"]}, "deployment_identity": {"roles": [], "oidc_provider": ""}}}' > "$$root/data.json"; \
+	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}}}' > "$$root/data.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
 		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" "$$@" 2>&1); rc=$$?; \
-		if [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
+		if [ "$$want" = pass ] && { [ "$$rc" -ne 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
 	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_trust*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
-	expect pass ok "$$root/ok" "" POLICY_PLAN_DIR="$$root/rego"; \
+	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \
 	expect fail empty "$$root/empty" "reference の root が0件"; \
-	fixture "$$root/no-test" 'resource "terraform_data" "doc" {}'; rm "$$root/no-test/usecases/x/reference/tests/policy.tftest.hcl"; \
-	expect fail no-policy-test "$$root/no-test" "tests/policy.tftest.hcl を持たない"; \
+	fixture "$$root/no-test" 'resource "terraform_data" "doc" {}'; rm "$$root/no-test/usecases/x/reference/tests/policy-input.tftest.hcl"; \
+	expect fail no-policy-test "$$root/no-test" "tests/policy-input.tftest.hcl を持たない"; \
 	fixture "$$root/star" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "*", Resource = "*" }] }) }'; \
 	expect fail star "$$root/star" "[PLAN-IAM-01]" POLICY_PLAN_DIR="$$root/rego"; \
 	fixture "$$root/unknown" 'resource "terraform_data" "a" {}'; \
 	printf '%s\n' 'resource "terraform_data" "doc" { input = terraform_data.a.id }' >> "$$root/unknown/usecases/x/reference/main.tf"; \
 	expect fail unknown "$$root/unknown" "[PLAN-INPUT-04]" POLICY_PLAN_DIR="$$root/rego"; \
-	cp -R "$$root/ok" "$$root/two-runs"; printf 'run "again" {\n  command = plan\n}\n' >> "$$root/two-runs/usecases/x/reference/tests/policy.tftest.hcl"; \
+	cp -R "$$root/ok" "$$root/two-runs"; printf 'run "again" {\n  command = plan\n}\n' >> "$$root/two-runs/usecases/x/reference/tests/policy-input.tftest.hcl"; \
 	expect fail two-runs "$$root/two-runs" "test_plan が 2 件" POLICY_PLAN_DIR="$$root/rego"; \
+	cp -R "$$root/ok" "$$root/zero-runs"; printf '# run を持たない\n' > "$$root/zero-runs/usecases/x/reference/tests/policy-input.tftest.hcl"; \
+	expect fail zero-runs "$$root/zero-runs" "test_plan が 0 件" POLICY_PLAN_DIR="$$root/rego"; \
 	cp -R "$$root/ok" "$$root/broken-tf"; printf 'output "x" {\n  value = var.missing\n}\n' >> "$$root/broken-tf/usecases/x/reference/main.tf"; \
 	expect fail broken-tf "$$root/broken-tf" "tf-policy が落ちたディレクトリ" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/no-rego"; \
 	expect fail no-rego "$$root/ok" "Rego のテストが0件" POLICY_PLAN_DIR="$$root/no-rego"; \
 	cp -R "$$root/rego" "$$root/no-pass"; sed '/^test_pass_/,/^}/d' "$$root/no-pass/iam_action_wildcard_test.rego" > "$$root/t" && mv "$$root/t" "$$root/no-pass/iam_action_wildcard_test.rego"; \
 	expect fail no-pass-test "$$root/ok" "両方のテストを持たない" POLICY_PLAN_DIR="$$root/no-pass"; \
+	cp -R "$$root/rego" "$$root/no-violation"; sed '/^test_violation_/,/^}/d' "$$root/no-violation/iam_action_wildcard_test.rego" > "$$root/t" && mv "$$root/t" "$$root/no-violation/iam_action_wildcard_test.rego"; \
+	expect fail no-violation-test "$$root/ok" "両方のテストを持たない" POLICY_PLAN_DIR="$$root/no-violation"; \
+	cp -R "$$root/rego" "$$root/failing-test"; printf '\ntest_pass_fails if false\n' >> "$$root/failing-test/iam_action_wildcard_test.rego"; \
+	expect fail failing-rego-test "$$root/ok" "Rego のテストが落ちました" POLICY_PLAN_DIR="$$root/failing-test"; \
+	cp -R "$$root/rego" "$$root/deny-if"; printf 'package plan.extra\n\ndeny if false\n' > "$$root/deny-if/extra.rego"; \
+	expect fail deny-if "$$root/ok" "deny contains 以外の形" POLICY_PLAN_DIR="$$root/deny-if"; \
 	cp -R "$$root/rego" "$$root/untested-id"; printf '\ndeny contains "[PLAN-IAM-99]" if false\n' >> "$$root/untested-id/iam_action_wildcard.rego"; \
 	expect fail untested-id "$$root/ok" "[PLAN-IAM-99]" POLICY_PLAN_DIR="$$root/untested-id"; \
 	cp -R "$$root/rego" "$$root/warn-rule"; printf '\nwarn contains "w" if false\n' >> "$$root/warn-rule/iam_action_wildcard.rego"; \

@@ -37,4 +37,4 @@ mise.toml                             @Tomy-ch
 # while every check stays green.
 conftest/plan/                        @Tomy-ch
 conftest/data/policy-plan.json        @Tomy-ch
-usecases/*/reference/tests/policy.tftest.hcl  @Tomy-ch
+usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
