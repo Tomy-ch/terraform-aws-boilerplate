@@ -33,18 +33,18 @@ test_violation_missing_document if {
 }
 
 test_pass_valid_input if {
-	count(gate.deny) == 0 with input as fixture.plan([valid]) with data.policy_plan.required_documents as []
+	count(gate.deny) == 0 with input as fixture.plan([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
 }
 
 # mock provider は表に無い computed な属性に乱数を入れる。表に無い属性は読まない。
 test_pass_untracked_attribute if {
 	rc := {"address": "module.x.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {"policy": "l3mra53t"}, "after_unknown": {}}}
-	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as []
+	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
 }
 
 test_pass_delete_only if {
 	rc := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
-	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as []
+	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
 }
 
 test_violation_no_statement if {
@@ -73,7 +73,7 @@ test_violation_condition_null if {
 
 test_pass_single_statement_object if {
 	rc := fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.this", "policy", {"Statement": fixture.allow("s3:GetObject")})
-	count(gate.deny) == 0 with input as fixture.plan([rc]) with data.policy_plan.required_documents as []
+	count(gate.deny) == 0 with input as fixture.plan([rc]) with data.policy_plan.required_documents as ["aws_iam_policy"]
 }
 
 test_violation_effect_not_allow_or_deny if {
@@ -105,7 +105,7 @@ test_violation_statement_scalar if {
 
 test_pass_condition_object_and_action_array if {
 	s := {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "*", "Condition": {"Bool": {"aws:SecureTransport": "true"}}}
-	count(gate.deny) == 0 with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.required_documents as []
+	count(gate.deny) == 0 with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
 }
 
 test_violation_missing_format_version if {
@@ -142,4 +142,16 @@ test_violation_declaration_required_type_not_in_table if {
 
 test_pass_declaration if {
 	not fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid])
+}
+
+test_violation_declaration_empty_tables if {
+	every key in ["documents", "required_documents"] {
+		empty := {"documents": {}, "required_documents": []}[key]
+		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as object.union(object.remove(data.policy_plan, [key]), {key: empty})
+	}
+}
+
+test_pass_data_source_not_read if {
+	read := {"address": "data.aws_iam_policy_document.x", "mode": "data", "type": "aws_iam_policy", "change": {"actions": ["read"], "after": {"policy": "not json"}, "after_unknown": {}}}
+	count(gate.deny) == 0 with input as fixture.plan([valid, read]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
 }

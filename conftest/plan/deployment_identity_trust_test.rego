@@ -165,3 +165,8 @@ test_violation_subject_with_surrounding_text if {
 test_violation_subject_owner_id_mismatch if {
 	fixture.has("[PLAN-TRUST-08]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:repository_owner_id": "999"})})])
 }
+
+test_pass_indexed_provider_address if {
+	indexed := object.union(provider, {"address": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github[0]"})
+	count(p.deny) == 0 with input as fixture.plan([indexed, role([statement({"StringEquals": eq})])])
+}

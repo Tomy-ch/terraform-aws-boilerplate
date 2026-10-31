@@ -2,10 +2,11 @@
 # plan の JSON 表現である（ADR-0402 決定11）。Policy は contents.resource_changes だけを読む。
 package plan.lib
 
-# 削除だけの変更は、変更後の文書を持たない。
+# 削除だけの変更は、変更後の文書を持たない。data source の読み取りは作る文書ではない。
 changes contains {"path": f.path, "rc": rc} if {
 	some f in input
 	some rc in f.contents.resource_changes
+	object.get(rc, "mode", "managed") == "managed"
 	rc.change.actions != ["delete"]
 }
 

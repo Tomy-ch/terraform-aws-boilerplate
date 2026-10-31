@@ -76,11 +76,13 @@ well_formed_change(rc) if {
 well_formed_declaration(decl) if {
 	is_string(decl.plan_format_version)
 	is_object(decl.documents)
+	count(decl.documents) > 0
 	every attrs in decl.documents {
 		is_array(attrs)
 		count(attrs) > 0
 	}
 	is_array(decl.required_documents)
+	count(decl.required_documents) > 0
 	every type in decl.required_documents {
 		type in object.keys(decl.documents)
 	}

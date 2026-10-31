@@ -10,7 +10,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 
 `env/` の root は入力にしない。資格情報なしでは plan できないためで、実 provider の plan は CI の plan の経路（#185）が `terraform show -json` で与える。それまで `env/admin/identity` の値は Policy Test の外にある。
 
-入力は `tmp/tf-policy/` に書かれる。mock の値だけを含み、artifact や Pull Request のコメントへは出さない。
+入力は `tmp/tf-policy/` に書かれる。mock の値だけを含む。`make tf-policy` も CI の `tf-policy` job も、これを artifact や Pull Request のコメントへ出さない。
 
 ## 宣言
 
@@ -31,12 +31,12 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 | --- | --- | --- |
 | `plan.input` | `PLAN-DATA-01`、`PLAN-INPUT-*` | 宣言の欠落、入力が0件、形の版が違う、`resource_changes` が空か配列でない、文書が unknown、文書が JSON として読めない、文書が IAM の policy 文書の形でない、必須の型が無い、変更の要素の形が違う |
 | `plan.iam_action_wildcard` | `PLAN-IAM-*` | Allow の statement の Action の `*`・`<service>:*`（大文字小文字を区別しない。[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と、同じ効果を持つ `NotAction`。Deny と部分 wildcard は見ない |
-| `plan.deployment_identity_trust` | `PLAN-TRUST-*` | `deployment-identity` の role の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15、[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md)）。値は持たない |
+| `plan.deployment_identity_trust` | `PLAN-TRUST-*` | `deployment-identity` の role の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15、[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md)）。リポジトリと所有者の値は持たない（issuer と aud は固定値で見る） |
 
-`plan.iam_action_wildcard` は文書が0件なら、`plan.deployment_identity_trust` は宣言した role が入力に無ければ落ちる（`PLAN-*-00`）。
+`plan.iam_action_wildcard` は文書が0件なら、`plan.deployment_identity_trust` は宣言した role が入力に無ければ落ちる（`PLAN-*-00`）。この2つと `PLAN-INPUT-07` は、結合した入力の全体で数える。ある root から型や role が消えても、別の root が持っていれば落ちない。
 
 ## Policy を足すとき
 
-- `<name>.rego` と `<name>_test.rego` を同じディレクトリに置く。規則は `deny contains` で書き、違反の ID（`[PLAN-<区分>-<番号>]`）を持たせる。テストは `test_violation_` と `test_pass_` で始まる名前の両方を持ち、各 ID をどこかのテストが名指しする。どれかが欠けると `make tf-policy` が落ちる（同 決定8・9）
+- `<name>.rego` と `<name>_test.rego` を同じディレクトリに置く。規則は `deny contains` で書き、違反の ID（`[PLAN-<区分>-<番号>]`）を持たせる。テストは `test_violation_` と `test_pass_` で始まる名前の両方を持ち、各 ID をどこかのテストが名指しする（名指しの有無までを見る。違反側のテストが名指すかは見ない）。どれかが欠けると `make tf-policy` が落ちる（同 決定8・9）
 - 見る resource の型と address は `../data/policy-plan.json` に足す
 - Security の道具（[ADR-0501](../../docs/adr/0501-development-tooling-composition.md) 決定6）の既定のルールと重ならないことを、本リポジトリの書き方の文書で確かめる（ADR-0402 決定3）。確かめた結果は Pull Request に書く

@@ -97,7 +97,7 @@ allow_web_identity(s) if {
 federated_by_provider(path, s) if {
 	some c in lib.changes
 	c.path == path
-	c.rc.address == cfg.oidc_provider
+	lib.strip_index(c.rc.address) == cfg.oidc_provider
 	is_string(c.rc.change.after.arn)
 	s.Principal == {"Federated": c.rc.change.after.arn}
 }
