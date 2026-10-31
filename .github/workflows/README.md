@@ -52,6 +52,15 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 そして条件が1箇所にしか書かれていないからこそ検査できる。フィルタとその否定へ割ると、不変条件は
 2つの一覧の一致へ移り、それを突き合わせられるものはここに無い。
 
+### インフラ内コードの検出への依存
+
+`terraform` を AWS credentials 付きで実行する job は、インフラ内コードの検出の成功に依存させる
+（ADR-0601 決定9、ADR-0103）。`needs:` は workflow をまたげないので、その job を置く workflow の中に
+`make infra-code-gate` を走らせる job を置き、`needs:` で依存する。条件は
+`needs.<id>.result == 'success'` と書き、上の fail open の形を使わない —— fail open で書くと、検出が
+落ちても credentials を伴う job が走る。検出の job は path で絞らない。判定を変える入力（宣言、Rego、
+ADR、code owner の宣言）が広く、skip された required check は成功として数えられるためである。
+
 ## 結果コメント
 
 Pull Request のコメントは、**検査が報告すべきことを持っているときにだけ作られる。** 通った検査が
@@ -104,7 +113,7 @@ truthy 側へ置く。
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` を除く4 job | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` を除く5 job | 15 | 同上（新設） |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |

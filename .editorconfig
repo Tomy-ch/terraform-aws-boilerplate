@@ -1,7 +1,7 @@
 # エディタへの宣言であり、editorconfig-checker が実物との一致を検査する（make editorconfig-check）。
 #
 # 字下げは、整形器を持つ形式では整形器の出力に一致する値を宣言する —— terraform fmt は space 2、
-# gofmt は tab。整形器と食い違う宣言を置くと、整形した結果が違反になる。
+# gofmt と conftest fmt（opa fmt）は tab。整形器と食い違う宣言を置くと、整形した結果が違反になる。
 root = true
 
 [*]
@@ -13,6 +13,10 @@ indent_style = space
 indent_size = 2
 
 [*.go]
+indent_style = tab
+indent_size = 4
+
+[*.rego]
 indent_style = tab
 indent_size = 4
 

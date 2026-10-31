@@ -34,15 +34,20 @@ CI の権限については循環の性質が異なる。backend さえあれば
 - **権限による裏打ちは、すべての主体には及ばない。** bucket policy や key policy による拒否は
   IAM principal に効くが、AWS Organizations の management account の root には SCP が効かず、
   root は bucket policy を削除できる。裏打ちの範囲を決定として書かなければ、保証の外にある主体が見えない。
+- **plan の出力は、公開リポジトリでは誰でも読める場所に出る。** GitHub Actions の実行ログは公開され、
+  artifact はログインした誰でも取得できる。`terraform plan` の全文には、アカウント ID、ARN、resource の
+  構成、秘密の値が載りうる。全文を非公開の置き場に書くには、書く主体が要る。plan の job は Pull Request の
+  コードを実行するため、別の job へ全文を渡すと、その受け渡しが再び公開の経路を通る。
 
 ## Decision
 
 ### 対象
 
-1. bootstrap を「CI が Terraform を実行できるようになるまでに必要な構成」と定義し、対象を次の2つに限る。
+1. bootstrap を「CI が Terraform を実行できるようになるまでに必要な構成」と定義し、対象を次の3つに限る。
 
    - Terraform の state backend
    - GitHub Actions から AWS を操作するための OIDC provider と IAM role
+   - plan の出力の置き場（決定13）
 
 2. bootstrap の構成物も use-case として `usecases/` 配下へ置く（ADR-0102）。bootstrap であることを理由に、型付き契約（ADR-0203）・Generic Escape Hatch の禁止（ADR-0204）・最小権限（ADR-0301）・テスト（ADR-0401）のいずれも免除しない。
 3. bootstrap 層であることは、適用の契機が異なることのみを意味する。公開契約とテストの要件は他のユースケースと同一とする。
@@ -103,12 +108,12 @@ CI の権限については循環の性質が異なる。backend さえあれば
 ### CI 認証
 
 12. CI から AWS への認証を、OIDC による role の assume とする。長期のアクセスキーを CI の secret として保持しない。
-13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。ただし、
-    plan の出力を置く Bucket への `s3:PutObject` だけは与える。この Bucket は state Bucket と分け、
-    plan の role に object の削除の権限を与えず、版管理を有効にする。plan の role は state の読み取りと
-    復号を持つ。plan に必要だからである。したがって plan の role を assume できる主体は state を読める。
-    state に置く秘密の扱いは、当該 use-case の ADR が決定する。plan の出力の全文は、公開されるログ・
-    Pull Request のコメント・artifact に出さない。
+13. plan を行う role と apply を行う role を分ける。plan の role に変更系の権限を与えない。ただし、plan の
+    出力を置く Bucket への `s3:PutObject` だけは与える。この Bucket は state Bucket と分け、plan の role に
+    object の削除の権限を与えず、版管理を有効にする。plan の出力の全文は、公開されるログ・Pull Request の
+    コメント・artifact に出さない。plan の role は state の読み取りと復号を持つ。plan に必要だからである。
+    したがって plan の role を assume できる主体は state を読める。state に置く秘密の扱いは、当該 use-case
+    の ADR が決定する。
 
     apply を行う role を、さらに2つに分ける。bootstrap の構成物（決定1）を変更する apply-identity の
     role と、それ以外を変更する apply の role である。apply の role に bootstrap の構成物を変更する権限を
@@ -171,16 +176,22 @@ event を区別できないことは採用案と同じであり、どちらも w
 例外が1回限りに保たれる。ただし誤った信頼条件が merge された時点で、ADR-0601 の経路に戻る手段が
 ローカル apply の例外の範囲内に存在しなくなる。回復は記録の義務（決定10）を負わない操作として、範囲の外で行われる。
 
+### 案F: plan の出力を、Pull Request のコードを実行しない別の job が書く
+
+plan の role は変更系の権限を一切持たずに済む。ただし plan の全文を job の間で受け渡す必要があり、
+公開リポジトリでは artifact をログインした誰でも取得できる。全文を公開しないという目的が、受け渡しの
+経路で崩れる。
+
 ### 評価
 
-| 評価軸 | 案A: 管理外 | 案B: 全て CLI + import | 案C: 長期キー | 案D: ref で限定 | 案E: 回復を例外にしない | 採用案 |
-| --- | --- | --- | --- | --- | --- | --- |
-| Security | 低（最強の構成が未検査） | 中（信頼条件が未検査で実在する） | 低（無期限の資格情報） | 中（誤った信頼条件を入れる機会がリリース線ごとに生じる） | 低（ADR-0601 の経路を失う） | 高 |
-| Testability | 低 | 中（Policy が二重になる） | 中 | 中（期待値がリリース線ごとに変わる） | 中 | 高 |
-| Contract Clarity | 低 | 中 | 中 | 低（決定15 と両立しない） | 中 | 高 |
-| Scope Control | 中 | 中 | 高 | 中 | 高 | 中（GitHub 側の宣言が増える） |
-| Reproducibility | 低（手順のみ） | 中 | 中 | 中 | 低（範囲外の操作） | 高（plan による突合） |
-| 手順の単純さ | 高 | 中 | 高 | 中 | 高 | 低（意図的） |
+| 評価軸 | 案A: 管理外 | 案B: 全て CLI + import | 案C: 長期キー | 案D: ref で限定 | 案E: 回復を例外にしない | 案F: 別の job が書く | 採用案 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Security | 低（最強の構成が未検査） | 中（信頼条件が未検査で実在する） | 低（無期限の資格情報） | 中（誤った信頼条件を入れる機会がリリース線ごとに生じる） | 低（ADR-0601 の経路を失う） | 低（受け渡しで全文が公開される） | 高 |
+| Testability | 低 | 中（Policy が二重になる） | 中 | 中（期待値がリリース線ごとに変わる） | 中 | 中 | 高 |
+| Contract Clarity | 低 | 中 | 中 | 低（決定15 と両立しない） | 中 | 中 | 高 |
+| Scope Control | 中 | 中 | 高 | 中 | 高 | 中 | 中（GitHub 側の宣言が増える） |
+| Reproducibility | 低（手順のみ） | 中 | 中 | 中 | 低（範囲外の操作） | 中 | 高（plan による突合） |
+| 手順の単純さ | 高 | 中 | 高 | 中 | 高 | 中 | 低（意図的） |
 
 ## 意図的に捨てるもの
 
@@ -189,26 +200,31 @@ event を区別できないことは採用案と同じであり、どちらも w
 - CI の資格情報を設定画面のみで完結させること
 - ローカル apply の例外が、アカウントごとに1回で終わること
 - 信頼条件を AWS 側の宣言だけで読めること。契機の限定は GitHub の environment の宣言と合わせて読む
+- plan の role が書き込みを一切持たないこと。plan の出力の置き場への `s3:PutObject` だけを持つ
+- plan の全文を Pull Request の画面で読めること。全文は AWS の認証を経て読む
 
 ## 保証範囲
 
 - 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。apply の role が bootstrap の構成物を変更できないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）
-- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は変更系を持たないが、state を読める。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
+- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は plan の出力の置き場への書き込みのほかに変更系を持たないが、state を読める。決定13）。その主体が plan の出力の置き場へ偽の出力を書くこと（版管理により上書き前の版は残り、削除はできない。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
 
 ## 検証方法
 
 - Static Analysis: CI の workflow が長期のアクセスキーを参照していないこと（決定12）
 - Static Analysis: plan を行う job と apply を行う job が、異なる role を assume すること（決定13）
+- Static Analysis: plan を行う job が artifact を上げず、Pull Request へ plan の全文をコメントしないこと（決定13）
+- Policy Test（未配線。#185）: plan の role の変更系の Action が、plan の出力の置き場への `s3:PutObject` に限られること（決定13）
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
 - Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
 - Static Analysis: apply-identity の role を assume する job が、apply の role を assume する job と異なる role と `environment` を宣言すること（決定13-14）
-- Policy Test: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend）に対する変更系の Action を許さないこと（決定13）
+- Policy Test（未配線。#209）: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend、plan の出力の置き場）に対する変更系の Action を許さないこと（決定13）
 - Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
 - Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）
 - Policy Test: 信頼条件の `sub` が environment 形式であり、ref 形式と event 形式を含まないこと（決定14）
-- Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること。environment 名が environment の宣言に存在すること（決定14）
-- Policy Test: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
+- Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること（決定14）
+- 運用機構（`make repo-settings-check`、ADR-0501 決定5）: environment 名が environment の宣言に存在すること（決定14）
+- Policy Test（未配線。#19）: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
 - 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply の environment が保護ブランチのパターンだけを許すこと（決定14、ADR-0603 決定4-7）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない

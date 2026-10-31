@@ -81,6 +81,9 @@
             "context": "go-test"
           },
           {
+            "context": "infra-code-gate"
+          },
+          {
             "context": "kics"
           },
           {
@@ -127,6 +130,9 @@
           },
           {
             "context": "tf-validate-test"
+          },
+          {
+            "context": "tf-policy"
           },
           {
             "context": "trivy-config"
