@@ -81,7 +81,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - 新しく作るときに、Bucket Policy の作成が Public Access Block の設定と競合して失敗すること
 - 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、段4 の apply の後の plan が見る）
 
-Policy Test（#75）と層検査（#74）は未配線である。配線された後に遡って検証する。
+Policy Test（`make tf-policy`）は `reference/tests/policy.tftest.hcl` の plan に対して、Bucket Policy の Allow の Action の wildcard の不在を確かめる。object lock と `mfa` の不在を見る Policy は無い（#210）。層検査（#74）は未配線である。配線された後に遡って検証する。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
