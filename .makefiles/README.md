@@ -17,7 +17,7 @@
 | `hygiene/` | 綴りと `.editorconfig` の一致 |
 | `markdown/` | Markdown の体裁、ADR の構造、スキルの参照の実在 |
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
-| `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test`）と、その検査自体の検査 |
+| `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test`、インフラ内コードの検出）と、その検査自体の検査 |
 | `terraform/operation/` | 人が手元から Terraform を動かす入口（AWS へのログイン、env の root の init と plan） |
 | 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入） |
 

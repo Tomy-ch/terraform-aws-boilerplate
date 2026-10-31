@@ -16,9 +16,10 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
-- Conftest の Policy Test と、HCL のソースの検査（層検査、コード実行の検出）—— 未作成で、`make` にも配線されていない
+- Conftest の Policy Test と、HCL のソースの検査のうち層検査 —— 未作成で、`make` にも配線されていない
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
-  Terraform に掛かるものが揃っていない）
+  Terraform に掛かるものが揃っていない）。HCL のソースの検査のうちコード実行の検出は
+  `make infra-code-gate` に配線済み
 - plan / apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路が存在しない
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
   宣言は `.github/settings/branches.json` に在り、ruleset と environment はそこから生成するが、

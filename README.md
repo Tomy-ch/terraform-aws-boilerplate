@@ -24,7 +24,7 @@
 | `modules/` | 一般 module の `s3/` だけ |
 | `usecases/` | `state-backend/` と `deployment-identity/` だけ（bootstrap の段1-4 の分） |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
-| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` は `make`・pre-commit・CI に配線済み。Conftest は未配線 |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` と、Conftest によるインフラ内コードの検出は `make`・pre-commit・CI に配線済み。Conftest の層検査と Policy Test は未配線 |
 
 ## 使い方
 
