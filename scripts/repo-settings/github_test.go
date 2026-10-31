@@ -208,7 +208,7 @@ func Test_fetchLive(t *testing.T) {
 			"GET /repos/o/r/rulesets/7": ok(`{"name": "bp"}`),
 			envListPath(1):              ok(`{"total_count": 1, "environments": [{"name": "copilot", "protection_rules": [], "can_admins_bypass": true, "deployment_branch_policy": null}]}`),
 		})
-		got, err := fetchLive(context.Background(), c, repo, "bp")
+		got, err := fetchLive(context.Background(), c, c, repo, "bp")
 		require.NoError(t, err)
 		assert.Equal(t, int64(7), got.RulesetID)
 		assert.Equal(t, map[string]any{"name": "bp"}, got.Ruleset)
@@ -219,14 +219,14 @@ func Test_fetchLive(t *testing.T) {
 	t.Run("ruleset を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		_, err := fetchLive(context.Background(), c, repo, "bp")
+		_, err := fetchLive(context.Background(), c, c, repo, "bp")
 		require.ErrorIs(t, err, errHTTP)
 	})
 
 	t.Run("environment を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{rulesetListPath(1): ok(`[]`)})
-		_, err := fetchLive(context.Background(), c, repo, "bp")
+		_, err := fetchLive(context.Background(), c, c, repo, "bp")
 		require.ErrorIs(t, err, errHTTP)
 		assert.Contains(t, err.Error(), "GET /repos/o/r/environments")
 	})

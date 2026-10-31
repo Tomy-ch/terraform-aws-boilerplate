@@ -262,6 +262,7 @@ func Test_requiredDeployFrom(t *testing.T) {
 		{"admin-apply", deployFromProtected, true},
 		{"admin-apply-identity", deployFromProtected, true},
 		{"admin-plan", deployFromProtectedPR, true},
+		{"repo-settings", deployFromProtected, true},
 		{"copilot", "", false},
 		{"admin-planner", "", false},
 	}

@@ -87,15 +87,15 @@ func pagedPath(path string, page int) string {
 	return fmt.Sprintf("%s%sper_page=%d&page=%d", path, sep, perPage, page)
 }
 
-// fetchLive は ruleset と environment の実態を読みます。GET だけを使います。
-func fetchLive(ctx context.Context, c githubClient, repo, rulesetName string) (live, error) {
+// fetchLive は ruleset を rc で、environment を ec で読みます。GET だけを使います。
+func fetchLive(ctx context.Context, rc, ec githubClient, repo, rulesetName string) (live, error) {
 	var got live
-	ruleset, id, err := fetchRuleset(ctx, c, repo, rulesetName)
+	ruleset, id, err := fetchRuleset(ctx, rc, repo, rulesetName)
 	if err != nil {
 		return live{}, err
 	}
 	got.Ruleset, got.RulesetID = ruleset, id
-	envs, err := fetchEnvironments(ctx, c, repo)
+	envs, err := fetchEnvironments(ctx, ec, repo)
 	if err != nil {
 		return live{}, err
 	}
