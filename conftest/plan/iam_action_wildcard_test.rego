@@ -53,3 +53,17 @@ test_pass_deny_wildcard_and_partial_wildcard if {
 	deny_all := {"Effect": "Deny", "Action": ["iam:*", "*"], "Resource": "*"}
 	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*", "s3:?etObject"])])])
 }
+
+test_violation_star_service_wildcard if {
+	fixture.has("[PLAN-IAM-01]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow("*:*")])])
+}
+
+test_pass_deny_not_action if {
+	s := {"Effect": "Deny", "NotAction": "s3:GetObject", "Resource": "*"}
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([s])])
+}
+
+test_pass_delete_only_change if {
+	gone := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "before": {"policy": json.marshal({"Statement": [fixture.allow("*")]})}, "after_unknown": {}}}
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")]), gone])
+}

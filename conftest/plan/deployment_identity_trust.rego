@@ -21,8 +21,9 @@ trusts contains r if {
 }
 
 deny contains msg if {
-	count({d | some d in lib.documents; d.type == "aws_iam_role"; lib.strip_index(d.address) in cfg.roles}) == 0
-	msg := sprintf("[PLAN-TRUST-00] 信頼条件の対象が0件です（%v）。address が変わったなら data.policy_plan.deployment_identity を直してください", [cfg.roles])
+	some role in cfg.roles
+	count({d | some d in lib.documents; d.type == "aws_iam_role"; lib.strip_index(d.address) == role}) == 0
+	msg := sprintf("[PLAN-TRUST-00] 信頼条件の対象 %s が入力にありません。address が変わったなら data.policy_plan.deployment_identity を直してください", [role])
 }
 
 deny contains msg if {

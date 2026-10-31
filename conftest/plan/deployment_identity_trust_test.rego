@@ -100,3 +100,68 @@ test_violation_legacy_subject if {
 test_violation_subject_id_mismatch if {
 	fixture.has("[PLAN-TRUST-08]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:repository_id": "999"})})])
 }
+
+test_pass_every_instance if {
+	roles := [fixture.doc("aws_iam_role", sprintf("module.deployment_identity.module.github_oidc.aws_iam_role.this[%q]", [k]), "assume_role_policy", {"Statement": [statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": sprintf("repo:octo-org@123456/octo-repo@456789:environment:admin-%s", [k])})})]}) | some k in ["plan", "apply", "apply-identity"]]
+	count(p.deny) == 0 with input as fixture.plan(array.concat([provider], roles))
+}
+
+test_violation_declared_role_absent if {
+	msgs := p.deny with input as trust([statement({"StringEquals": eq})]) with data.policy_plan.deployment_identity.roles as ["module.deployment_identity.module.github_oidc.aws_iam_role.this", "module.nope.aws_iam_role.x"]
+	fixture.has("[PLAN-TRUST-00] 信頼条件の対象 module.nope.aws_iam_role.x ", msgs)
+}
+
+test_pass_undeclared_role_not_inspected if {
+	other := fixture.doc("aws_iam_role", "module.other.aws_iam_role.this", "assume_role_policy", {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole", "Principal": {"Service": "ec2.amazonaws.com"}}]})
+	count(p.deny) == 0 with input as fixture.plan([provider, role([statement({"StringEquals": eq})]), other])
+}
+
+test_violation_zero_statements if {
+	fixture.has("[PLAN-TRUST-01]", p.deny) with input as trust([])
+}
+
+test_violation_effect_deny if {
+	fixture.has("[PLAN-TRUST-02]", p.deny) with input as trust([object.union(statement({"StringEquals": eq}), {"Effect": "Deny"})])
+}
+
+test_violation_not_principal_or_not_action if {
+	every extra in [{"NotPrincipal": {"AWS": "arn:aws:iam::123456789012:root"}}, {"NotAction": "sts:TagSession"}] {
+		fixture.has("[PLAN-TRUST-02]", p.deny) with input as trust([object.union(statement({"StringEquals": eq}), extra)])
+	}
+}
+
+test_violation_provider_absent if {
+	fixture.has("[PLAN-TRUST-03]", p.deny) with input as fixture.plan([role([statement({"StringEquals": eq})])])
+}
+
+test_violation_provider_in_other_file if {
+	files := [
+		{"path": "a.json", "contents": {"plan_format_version": "1.2", "resource_changes": [role([statement({"StringEquals": eq})])]}},
+		{"path": "b.json", "contents": {"plan_format_version": "1.2", "resource_changes": [provider]}},
+	]
+	fixture.has("[PLAN-TRUST-03]", p.deny) with input as files
+}
+
+test_violation_condition_without_string_equals if {
+	msgs := p.deny with input as trust([statement({"StringLike": eq})])
+	fixture.has("[PLAN-TRUST-04]", msgs)
+	fixture.has("[PLAN-TRUST-05]", msgs)
+}
+
+test_violation_question_mark_value if {
+	fixture.has("[PLAN-TRUST-06]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:repository_id": "4567?9"})})])
+}
+
+test_violation_event_subject if {
+	fixture.has("[PLAN-TRUST-08]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": "repo:octo-org@123456/octo-repo@456789:pull_request"})})])
+}
+
+test_violation_subject_with_surrounding_text if {
+	every sub in ["xrepo:octo-org@123456/octo-repo@456789:environment:admin-plan", "repo:octo-org@123456/octo-repo@456789:environment:admin-plan:x"] {
+		fixture.has("[PLAN-TRUST-08]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": sub})})])
+	}
+}
+
+test_violation_subject_owner_id_mismatch if {
+	fixture.has("[PLAN-TRUST-08]", p.deny) with input as trust([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:repository_owner_id": "999"})})])
+}
