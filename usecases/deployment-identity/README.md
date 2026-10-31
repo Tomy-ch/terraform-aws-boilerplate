@@ -79,7 +79,7 @@ unsupported:
 
 - ユースケース: `state-backend`（`bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
-- GitHub 側の environment の宣言と、role を assume する workflow は #185 が作る。それまでは、どの role も assume されない
+- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。role を assume する workflow は #185 が作る。それまでは、どの role も assume されない
 
 段5 で apply-identity の権限を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 

@@ -277,7 +277,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 ### 段4. 一時 IAM user のローカル権限で apply する
 
-段4 は ADR-0602 決定9・10 の例外であり、記録を残さない実行を認めない。**CI の plan の経路（#185）ができるまで、段4 を実行しない。** 段4 の Pull Request は、merge の前に、その head に対する CI の plan が変更なしを示す必要がある（同 決定10）。その plan を走らせる workflow と environment は #185 が作る。段4 は、#185 の Pull Request の上で行う。
+段4 は ADR-0602 決定9・10 の例外であり、記録を残さない実行を認めない。**CI の plan の経路（#185）ができるまで、段4 を実行しない。** 段4 の Pull Request は、merge の前に、その head に対する CI の plan が変更なしを示す必要がある（同 決定10）。その plan を走らせる workflow は #185 が作る。environment は `.github/settings/environments.json` が宣言し、管理者が `make apply-environments` で適用する。段4 は、#185 の Pull Request の上で行う。
 
 段4 の apply の入口は make に作らない。terraform を直接実行する。以下はすべて段1 の手順1 と同じ bash で実行する。
 
