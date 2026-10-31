@@ -43,6 +43,7 @@ jobs:
             *.actions.githubusercontent.com
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
 
       - name: Check whether SONAR_TOKEN is set
         id: token
@@ -86,6 +87,7 @@ jobs:
             *.actions.githubusercontent.com
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
             sonarcloud.io
             api.sonarcloud.io
             scanner.sonarcloud.io
@@ -220,6 +222,7 @@ jobs:
             *.actions.githubusercontent.com
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

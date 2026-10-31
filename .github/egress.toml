@@ -22,6 +22,7 @@ hosts = [
   # 作れる Azure Storage のアカウントへの持ち出し口になる。
   "productionresultssa30.blob.core.windows.net",
   "productionresultssa31.blob.core.windows.net",
+  "productionresultssa32.blob.core.windows.net",
 ]
 
 [class.mise]

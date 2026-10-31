@@ -10,7 +10,7 @@
 host-tools-install:
 	@command -v mise >/dev/null 2>&1 \
 		|| { echo "❌ mise が PATH にありません。README「使い方」を見てください。"; exit 1; }
-	@mise install "aqua:hashicorp/terraform@1.16.2"
+	@mise install "aqua:hashicorp/terraform@1.16.6"
 	@mise install "aqua:aws/aws-cli@2.36.40"
 	@mise reshim
 	@echo "✅ ホストで実行する道具を導入しました。"

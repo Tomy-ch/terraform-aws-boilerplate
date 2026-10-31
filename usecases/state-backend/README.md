@@ -113,5 +113,5 @@ Policy Test（#75）と層検査（#74）は未配線である。配線された
 
 ## 版
 
-- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` と `override_resource` の要求であり、実行して確かめたのは 1.16.2（`mise.toml`）だけである。identity root は `>= 1.15.0`（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の `aws login` の条件）
+- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` と `override_resource` の要求であり、実行して確かめたのは 1.16.6（`mise.toml`）だけである。identity root は `>= 1.15.0`（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の `aws login` の条件）
 - AWS Provider は `>= 6.68.0, < 7.0.0`。reference と identity root の lock は 6.70.0 を固定する

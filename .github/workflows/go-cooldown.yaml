@@ -43,6 +43,7 @@ jobs:
             *.actions.githubusercontent.com
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
             mise.run
