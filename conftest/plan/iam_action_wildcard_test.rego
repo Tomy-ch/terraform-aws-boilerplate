@@ -11,6 +11,18 @@ test_violation_service_star_in_array_uppercase if {
 	fixture.has("[PLAN-IAM-01]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow(["s3:GetObject", "IAM:*"])])])
 }
 
+test_violation_equivalent_wildcards if {
+	every a in ["**", "s3:**", "iam:?*", "s3:*?"] {
+		fixture.has("[PLAN-IAM-01]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow(a)])])
+	}
+}
+
+test_violation_user_and_group_policy if {
+	user := fixture.doc("aws_iam_user_policy", "module.x.aws_iam_user_policy.this", "policy", {"Statement": [fixture.allow("*")]})
+	group := fixture.doc("aws_iam_group_policy", "module.x.aws_iam_group_policy.this", "policy", {"Statement": [fixture.allow("*")]})
+	count([m | some m in p.deny; startswith(m, "[PLAN-IAM-01]")]) == 2 with input as fixture.plan([user, group])
+}
+
 test_violation_not_action if {
 	s := {"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}
 	fixture.has("[PLAN-IAM-02]", p.deny) with input as fixture.plan([fixture.role_policy([s])])
@@ -39,5 +51,5 @@ test_pass_specific_actions if {
 # ADR-0301 決定8 は Deny の wildcard と部分 wildcard を禁じない。
 test_pass_deny_wildcard_and_partial_wildcard if {
 	deny_all := {"Effect": "Deny", "Action": ["iam:*", "*"], "Resource": "*"}
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*"])])])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*", "s3:?etObject"])])])
 }

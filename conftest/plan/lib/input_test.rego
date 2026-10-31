@@ -46,3 +46,32 @@ test_pass_delete_only if {
 	rc := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
 	count(gate.deny) == 0 with input as fixture.plan([valid, rc])
 }
+
+test_violation_no_statement if {
+	rc := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", "policy", {"statement": [fixture.allow("*")]})
+	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([rc])
+}
+
+test_violation_top_level_array if {
+	rc := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", "policy", [{"Statement": [fixture.allow("*")]}])
+	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([rc])
+}
+
+test_violation_statement_not_object if {
+	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy(["x", 5])])
+}
+
+test_violation_action_not_string if {
+	s := {"Effect": "Allow", "Action": {"x": 1}, "Resource": "*"}
+	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy([s])])
+}
+
+test_violation_condition_null if {
+	s := {"Effect": "Allow", "Action": "sts:AssumeRoleWithWebIdentity", "Condition": null}
+	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy([s])])
+}
+
+test_pass_single_statement_object if {
+	rc := fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.this", "policy", {"Statement": fixture.allow("s3:GetObject")})
+	count(gate.deny) == 0 with input as fixture.plan([rc])
+}

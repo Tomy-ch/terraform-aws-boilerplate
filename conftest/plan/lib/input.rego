@@ -34,4 +34,46 @@ deny contains msg if {
 	msg := sprintf("[PLAN-INPUT-05] %s: %s の %s が JSON の文書として読めません", [d.path, d.address, d.attr])
 }
 
+# JSON として読めても、IAM の文書の形でなければ Policy の規則は未定義になって黙る。形をここで固定する。
+deny contains msg if {
+	some r in lib.readable
+	not well_formed(r.body)
+	msg := sprintf("[PLAN-INPUT-06] %s: %s の %s が IAM の policy 文書の形（Statement と、その Effect / Action / NotAction / Condition の型）ではありません", [r.document.path, r.document.address, r.document.attr])
+}
+
 resource_changes_present(f) if count(f.contents.resource_changes) > 0
+
+well_formed(body) if {
+	is_object(body)
+	statement_container(body.Statement)
+	every s in lib.statements(body) {
+		well_formed_statement(s)
+	}
+}
+
+statement_container(x) if is_array(x)
+
+statement_container(x) if is_object(x)
+
+well_formed_statement(s) if {
+	is_object(s)
+	is_string(s.Effect)
+	strings_or_absent(s, "Action")
+	strings_or_absent(s, "NotAction")
+	object_or_absent(s, "Condition")
+}
+
+strings_or_absent(s, key) if not key in object.keys(s)
+
+strings_or_absent(s, key) if is_string(s[key])
+
+strings_or_absent(s, key) if {
+	is_array(s[key])
+	every x in s[key] {
+		is_string(x)
+	}
+}
+
+object_or_absent(s, key) if not key in object.keys(s)
+
+object_or_absent(s, key) if is_object(s[key])

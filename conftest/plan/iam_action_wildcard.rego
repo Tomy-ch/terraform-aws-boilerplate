@@ -26,6 +26,8 @@ deny contains msg if {
 	msg := sprintf("[PLAN-IAM-02] %s: %s の %s が NotAction で許可しています", [r.document.path, r.document.address, r.document.attr])
 }
 
-wildcard(a) if a == "*"
+# IAM の照合では * は任意の列、? は任意の1文字である。名前の部分が * と ? だけで * を含めば、
+# "*" / "<service>:*" と同じ範囲になる（"**"、"s3:**"、"iam:?*"）。
+wildcard(a) if regex.match(`^[*?]*\*[*?]*$`, a)
 
-wildcard(a) if endswith(a, ":*")
+wildcard(a) if regex.match(`^[^:]*:[*?]*\*[*?]*$`, a)
