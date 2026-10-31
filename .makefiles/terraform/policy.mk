@@ -61,6 +61,7 @@ tf-policy: tf-init
 		inputs="$$inputs $$out.json"; \
 	done; \
 	$(TF_REPORT_FAILED); \
+	if [ -z "$$inputs" ]; then echo "❌ Policy の入力が0件です（reference の root から test_plan を1件も得られませんでした）"; exit 1; fi; \
 	result=$$($(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) $$inputs) || { \
 		echo "$$result"; echo "❌ Policy の違反があります"; exit 1; }; \
 	echo "$$result"; echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
