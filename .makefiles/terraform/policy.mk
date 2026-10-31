@@ -5,11 +5,14 @@
 ## init は gates.mk の tf-init を共有するので、tf-validate / tf-test と1回の make で一緒に呼ぶ。
 ##
 ## conftest verify はテストが0件でも、conftest test は入力が0件でも失敗しない。件数はここで独立に数える。
+##
+## conftest は名前が deny / warn / violation で始まる規則をすべて評価する（deny_list のような名前も含む）。
+## 規則は deny contains の形だけを認め、それ以外を落とす。
 
-POLICY_PLAN_DIR ?= conftest/plan
+POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
 POLICY_PLAN_DECL = conftest/data/policy-plan.json
-POLICY_PLAN_DATA ?= $(POLICY_PLAN_DECL)
+POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
 TF_POLICY_INPUT = $(TF_BASE)/tmp/tf-policy
@@ -33,6 +36,8 @@ tf-policy: tf-init
 		fi; \
 	done; \
 	if [ -n "$$no_test" ]; then echo "❌ 違反する入力と違反しない入力の両方のテストを持たない Policy（ADR-0402 決定8・9）:$$no_test"; exit 1; fi; \
+	no_id=$$(for f in $$sources; do awk -v f="$$f" '/^deny contains/ { open = 1; id = 0; start = NR } open && /\[PLAN-[A-Z0-9]*-[0-9]*\]/ { id = 1 } open && (/^}/ || (NR == start && !/\{ *$$/)) { if (!id) print f ":" start; open = 0 }' "$$f"; done); \
+	if [ -n "$$no_id" ]; then echo "❌ 違反の ID（[PLAN-<区分>-<番号>]）を持たない deny 規則があります（ID ごとのテストの要求が届かない）: $$no_id"; exit 1; fi; \
 	untested=""; for id in $$(grep -ho '\[PLAN-[A-Z0-9]*-[0-9]*\]' $$sources </dev/null | sort -u); do \
 		find $(POLICY_PLAN_DIR) -name '*_test.rego' -exec grep -qF -- "\"$$id" {} + || untested="$$untested $$id"; \
 	done; \
@@ -109,6 +114,10 @@ tf-policy-canary:
 	expect fail failing-rego-test "$$root/ok" "Rego のテストが落ちました" POLICY_PLAN_DIR="$$root/failing-test"; \
 	cp -R "$$root/rego" "$$root/deny-if"; printf 'package plan.extra\n\ndeny if false\n' > "$$root/deny-if/extra.rego"; \
 	expect fail deny-if "$$root/ok" "deny contains 以外の形" POLICY_PLAN_DIR="$$root/deny-if"; \
+	cp -R "$$root/rego" "$$root/no-id"; printf '\ndeny contains "unnamed" if false\n' >> "$$root/no-id/iam_action_wildcard.rego"; \
+	expect fail deny-without-id "$$root/ok" "ID（[PLAN-<区分>-<番号>]）を持たない" POLICY_PLAN_DIR="$$root/no-id"; \
+	cp -R "$$root/rego" "$$root/helper"; printf '\ndeny_list := {"x"}\n' >> "$$root/helper/iam_action_wildcard.rego"; \
+	expect fail deny-prefixed-helper "$$root/ok" "deny contains 以外の形" POLICY_PLAN_DIR="$$root/helper"; \
 	cp -R "$$root/rego" "$$root/untested-id"; printf '\ndeny contains "[PLAN-IAM-99]" if false\n' >> "$$root/untested-id/iam_action_wildcard.rego"; \
 	expect fail untested-id "$$root/ok" "[PLAN-IAM-99]" POLICY_PLAN_DIR="$$root/untested-id"; \
 	cp -R "$$root/rego" "$$root/warn-rule"; printf '\nwarn contains "w" if false\n' >> "$$root/warn-rule/iam_action_wildcard.rego"; \
