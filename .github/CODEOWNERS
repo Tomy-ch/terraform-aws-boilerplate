@@ -31,3 +31,17 @@ mise.toml                             @Tomy-ch
 # The runner egress allowlist SSOT (bullfrog) — `make egress-apply` writes each entry out to
 # every workflow that carries the job.
 .github/egress.toml                   @Tomy-ch
+
+# インフラ内コードの検出（ADR-0103 決定14）。どれを弱めても検出は緑のまま通る。
+# 許可リストに本リポジトリ所有の項目を足す変更は、その項目のソースの所在の行をここに足す
+# （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。
+conftest/hcl/                              @Tomy-ch
+conftest/data/                             @Tomy-ch
+scripts/infra-code-gate/                   @Tomy-ch
+scripts/lib/adrdoc/                        @Tomy-ch
+scripts/tf-job-lint/                       @Tomy-ch
+.makefiles/terraform/infra-code.mk         @Tomy-ch
+.makefiles/terraform/infra-code-test.mk    @Tomy-ch
+.github/workflows/terraform-gates.yaml     @Tomy-ch
+.github/settings/branch-protection.json    @Tomy-ch
+.github/CODEOWNERS                         @Tomy-ch
