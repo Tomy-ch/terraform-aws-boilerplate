@@ -46,7 +46,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 ## 版
 
 - AWS Provider は `>= 6.68.0, < 7.0.0`。6.68.0 に固定した複製で `terraform validate` と `terraform test` が通ることを確かめた
-- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.16.2（`mise.toml`）だけである
+- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.16.6（`mise.toml`）だけである
 
 ## 公式実装の参照（ADR-0206 決定7・8）
 
