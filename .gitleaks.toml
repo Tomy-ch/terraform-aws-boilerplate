@@ -1,7 +1,5 @@
-# gitleaks 設定
 # https://github.com/gitleaks/gitleaks#configuration
 #
-# gitleaks は Secret Scan の検出器の1つで、trufflehog・Trivy の secret scanning と併置する（ADR-0302 決定2）。
 # 抑止の条件は ADR-0501 決定13 に従う。
 [extend]
 useDefault = true
@@ -13,14 +11,15 @@ useDefault = true
 # `key:` という語と16進8桁の並びが generic-api-key の keyword + entropy 条件に当たる誤検知で、
 # 値は実在しない。
 #
-# **外すのはこの形に当たる検出そのものであって、ファイルではない。** `paths` で外してはならない
-# —— gitleaks の allowlist は `paths` と `regexes` を AND で評価せず、path が当たった時点で
-# そのファイルの検出がすべて落ちる。`condition = "AND"` を書いても同じだった（8.30.1 で確認）。
-# つまり path による除外は、同じファイルへ後から入った本物の秘密も一緒に見逃す。
+# **外すのは、このファイルの中でこの形に当たる検出だけである。** `condition = "AND"` を外さない
+# —— 既定の OR では `paths` が当たった時点でそのファイルの検出がすべて落ち、同じファイルへ後から
+# 入った本物の秘密も一緒に見逃す。
 #
 # 撤回条件: キャッシュキーの形式が digest を含まなくなったとき、または actions-mise-pin-lint が
 # 無くなったとき。
 [allowlist]
 description = "actions-mise-pin-lint のフィクスチャ内のキャッシュキー（実在しない合成値）"
+condition = "AND"
+paths = ['''^scripts/actions-mise-pin-lint/main_test\.go$''']
 regexTarget = "match"
 regexes = ['mise-\d+\.\d+\.\d+-[0-9a-f]{8}']

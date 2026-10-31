@@ -164,7 +164,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:editorconfig-checker/editorconfig-checker
+          tools: go aqua:editorconfig-checker/editorconfig-checker
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run editorconfig-checker

@@ -122,9 +122,10 @@ ADR-0602 決定12 が長期のアクセスキーをCIから排除し、ADR-0203 
 
 - Static Analysis: Secret Scanのジョブが存在し、失敗時にPull Requestを通さない設定であること（決定4）
 - Static Analysis: Trivyのsecret scanningが、本走査の前に実行時に作った偽の秘密を検出できること（決定2、`make trivy-secret-canary`）
+- Static Analysis: gitleaksが、本走査と同じ引数・設定・抑止で、実行時に作った偽の資格情報を commit した一時のリポジトリから、commit範囲と全履歴の両方で検出できること（決定2・6、`make gitleaks-canary`）。gitleaksは検出と異常終了を同じ終了コードで返すので、終了コードだけでは検出器が働いたことを確かめられない
 - Static Analysis: trufflehogが、本走査と同じ引数で、実行時に作った偽の資格情報を commit した一時のリポジトリから検証なしで検出できること（決定2、`make trufflehog-canary`）
 - Static Analysis: commit範囲の走査が、範囲の起点を解決できないときに通さないこと（決定6、`make secret-gates-test`）
-- Static Analysis: 抑止エントリがfingerprintまたはpath単位であり、理由を伴うこと（決定9・10）
+- Static Analysis: 抑止エントリがfingerprintまたはpath単位であり、理由を伴うこと（決定9・10、`make secret-suppression-lint`）。抑止を広げても走査は緑のまま残るので、単位と理由は走査とは別に検める。検めるのは理由の欄が撤回条件を含むことまでで、理由の正しさは検査しない
 - Static Analysis: 定期実行のジョブが全履歴を対象としていること（決定6・8）
 
 ## 影響
