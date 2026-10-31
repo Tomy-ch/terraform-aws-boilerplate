@@ -98,4 +98,3 @@ KMS の鍵とログの resource の形（#107、#108）が無く、正しく列�
 - apply の role が IAM の role を作る usecase が入るとき（permissions boundary を決める）
 - inline policy の文字数が上限に近づいたとき
 - CI の plan か apply が AccessDenied で失敗したとき
-- Trivy の版を上げるとき（Action wildcard を検出するようになったかを確かめる）

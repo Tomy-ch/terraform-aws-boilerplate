@@ -42,6 +42,8 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
    | 意味論的な権限指定から導出された Action の集合と、生成された policy が完全一致すること | Policy | 導出規則は当該ユースケースの ADR が持つ（ADR-0301 決定7） |
    | OIDC の信頼条件にワイルドカードが存在しないこと | Policy | 対象と条件の形が本リポジトリの設計に属する |
 
+   Security の道具の既定のルールが、本リポジトリの書き方の文書を検出しない場合は、決定4 により Policy が持つ。IAM の Action wildcard はその例である。
+
 ### Policy 自体の検証
 
 7. Policy はコードであり、テストを持つ。Policy のテストを CI の必須検査とする。
@@ -51,7 +53,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 ### Policy が依存してよい入力
 
-11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy は両者に共通する `resource_changes` だけを読む。
+11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy が判定に読むのは両者に共通する `resource_changes` だけである（形の版の検査は ADR-0501 決定8）。
 12. Policy は resource の Terraform address（`module.<name>.<type>.<name>`）に依存してよい。ADR-0202 が address を実装詳細としているのは**公開契約に対して**であり、リポジトリ内部の検査には及ばない。
 13. 「インターネット公開点である」等のアーキテクチャ上の役割を、address によって判定する。tag、名前の規約、および利用者が入力できる値を、役割判定の根拠にしない。
 14. 決定13 の理由を次とする。
