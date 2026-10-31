@@ -51,7 +51,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 ### Policy が依存してよい入力
 
-11. Policy の入力を `terraform show -json` の出力とする（ADR-0501 決定8）。
+11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy は両者に共通する `resource_changes` だけを読む。
 12. Policy は resource の Terraform address（`module.<name>.<type>.<name>`）に依存してよい。ADR-0202 が address を実装詳細としているのは**公開契約に対して**であり、リポジトリ内部の検査には及ばない。
 13. 「インターネット公開点である」等のアーキテクチャ上の役割を、address によって判定する。tag、名前の規約、および利用者が入力できる値を、役割判定の根拠にしない。
 14. 決定13 の理由を次とする。
