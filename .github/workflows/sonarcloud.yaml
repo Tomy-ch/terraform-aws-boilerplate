@@ -41,6 +41,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
 
       - name: Check whether SONAR_TOKEN is set
@@ -83,6 +84,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             sonarcloud.io
             api.sonarcloud.io
@@ -216,6 +218,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
 
       - name: Checkout

@@ -60,6 +60,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
 
       - name: Checkout
@@ -116,6 +117,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             registry-1.docker.io
             auth.docker.io

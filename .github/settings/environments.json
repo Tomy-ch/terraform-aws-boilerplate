@@ -1,0 +1,6 @@
+[
+  { "name": "admin-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false },
+  { "name": "admin-apply", "deploy_from": "protected", "can_admins_bypass": false },
+  { "name": "admin-apply-identity", "deploy_from": "protected", "can_admins_bypass": false },
+  { "name": "copilot", "deploy_from": "any", "can_admins_bypass": false }
+]

@@ -20,6 +20,7 @@ hosts = [
   # 既定で許すのは sa0〜sa19 だけである（bullfrogsec/agent の pkg/agent/types.go）。それより後の番号は、
   # GitHub が実際に割り当てたものだけを1つずつ足す。`*.blob.core.windows.net` や番号の範囲は、誰でも
   # 作れる Azure Storage のアカウントへの持ち出し口になる。
+  "productionresultssa30.blob.core.windows.net",
   "productionresultssa31.blob.core.windows.net",
 ]
 
@@ -115,6 +116,12 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."pin-runners-check.yaml:pin-runners-check"]
+classes = ["mise"]
+
+[job."repo-settings.yaml:repo-settings-check"]
+classes = ["mise"]
+
+[job."repo-settings.yaml:repo-settings-drift"]
 classes = ["mise"]
 
 [job."go-cooldown.yaml:go-cooldown"]

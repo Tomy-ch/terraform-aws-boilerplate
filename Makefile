@@ -9,7 +9,7 @@ include .makefiles/host-tools.mk
 include .makefiles/github/operation/release-branch.mk
 include .makefiles/github/operation/release-tag.mk
 include .makefiles/github/setting/github.mk
-include .makefiles/github/setting/branch-ruleset.mk
+include .makefiles/github/setting/repo-settings.mk
 include .makefiles/github/setting/label-setting.mk
 include .makefiles/github/base-branch.mk
 include .makefiles/github/lint.mk

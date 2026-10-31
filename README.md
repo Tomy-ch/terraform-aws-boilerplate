@@ -55,7 +55,7 @@ make md-lint RUNNER_MODE=host  # ホストの mise が入れたもので実行�
 ## このリポジトリから派生する
 
 ```sh
-make setup-repo    # タグ・ブランチ・ラベル・ルールセットを初期化する
+make setup-repo    # タグ・ブランチ・ラベル・ルールセット・environment を初期化する
 ```
 
 **取り消しの効かない操作を含む**（タグの一括削除、デフォルトブランチの移動）。実行前に

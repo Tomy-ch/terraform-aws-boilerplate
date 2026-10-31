@@ -1,0 +1,4 @@
+{
+  "deploy": ["production", "staging", "develop"],
+  "lines": ["release/", "hotfix/"]
+}

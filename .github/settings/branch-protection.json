@@ -99,6 +99,9 @@
             "context": "pin-runners-check"
           },
           {
+            "context": "repo-settings-check"
+          },
+          {
             "context": "sample-remove-check"
           },
           {

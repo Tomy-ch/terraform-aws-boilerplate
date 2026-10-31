@@ -49,6 +49,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
@@ -150,6 +151,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev
@@ -211,6 +213,7 @@ jobs:
             raw.githubusercontent.com
             release-assets.githubusercontent.com
             *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             mise.jdx.dev
             mise-versions.jdx.dev

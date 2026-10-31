@@ -1,26 +1,48 @@
 # リポジトリ設定
 
-このディレクトリには、リポジトリ単位の GitHub 設定を JSON で格納しています（ブランチルールセットとラベル定義）。このボイラープレートから派生したリポジトリを、Web UI をクリックして回るのではなく再現可能な形で構成するためのものです。
+このディレクトリには、リポジトリ単位の GitHub 設定を JSON で格納しています（分岐のパターン、ブランチルールセット、デプロイの environment、ラベル定義）。このボイラープレートから派生したリポジトリを、Web UI をクリックして回るのではなく再現可能な形で構成するためのものです。
 
-## これらは意図の宣言であり、実態の写しではない
+## 宣言と実態の突合
 
-JSON は一方向の適用に渡す入力であって、GitHub が現在強制している内容のミラーではありません。
+保護設定 —— `branch-protection.json` と `environments.json` —— は、宣言から適用し、実態と突き合わせます（ADR-0603 決定4-6）。判定は `scripts/repo-settings` が持ちます。
 
-- `make apply-branch-protection` が `branch-protection.json` を `branch-protection` という名前のリポジトリルールセットとして送り、`make create-default-labels` が `labels.json` を送ります。いずれも派生リポジトリの初期化時に `make setup-repo` から一度だけ呼ばれます。
-- 以後これらを再実行する仕組みも、実態と突き合わせる仕組みもありません。Web UI からルールが外された場合も、JSON を変更したまま適用を走らせなかった場合も、宣言と実態は何の兆候も無いままずれます。
+| 操作 | make | 書き換えるもの | 誰が |
+| --- | --- | --- | --- |
+| 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間 | 誰でも |
+| 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
+| 突合 | `repo-settings-drift` | 無し（GET のみ） | CI（毎日と手動）、誰でも |
+| 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
 
-したがってこのディレクトリが答えるのは「このリポジトリが何を強制するつもりか」であって、「このリポジトリが何を強制しているか」ではありません。後者は GitHub に直接問い合わせてください。
+- 宣言を変える Pull Request は、merge の後に適用します。適用は `make setup-repo` も呼びます。
+- 突合は Pull Request とは独立に毎日走り（`.github/workflows/repo-settings.yaml`）、ずれは失敗として通知されます。管理画面で設定を変えると、ここで赤になります。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
+- 適用は、宣言に無い environment を消しません。消すと secret ごと失われるためで、突合がそれを報告し、人が消すか宣言へ足します。
+- **CI の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返さず、CI の `GITHUB_TOKEN` は読み取りの権限です（ADR-0603 決定6）。突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は管理者が手元で `make repo-settings-drift` を実行したときに見ます。
 
-```sh
-gh api /repos/{owner}/{repo}/rulesets
-gh api /repos/{owner}/{repo}/rulesets/{ruleset_id}
-```
+## branches.json
 
-いずれもリポジトリの通常の read 権限で参照でき、public リポジトリなら未認証でも参照できます。実態の確認に管理者権限のトークンは要りません。
+分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` は固定名で保護するブランチ、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。
+
+読み手のうち、`branch-protection.json` の include と environment の deployment branch policy はここから生成します。`scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と workflow の起動条件は、まだパターンを自分で持っています。
+
+## environments.json
+
+デプロイの environment の宣言です。宣言は実態の environment の全集合で、宣言に無い environment が実在すれば突合が報告します —— 存在しない environment を参照した workflow は、その名前の environment を保護なしで作るためです。
+
+| キー | 意味 |
+| --- | --- |
+| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに3つが揃い、どの `env` にも当たらない3種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
+| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`any`（deployment branch policy を持たない） |
+| `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
+
+- パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
+- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。承認者を置かないのは単独メンテナで承認できる人が自分しかいないためで、ADR-0601 決定7 が任意とする機構を使わない選択です。
+- `copilot` は Copilot coding agent が作る environment です。宣言に含め、管理者の迂回を無効にします。
+- `can_admins_bypass` は GitHub の REST の文書に載っていない値です。適用はこれを送り、突合は応答の値を見ます。適用の後も突合が「迂回が有効」と報告するなら、environment の設定画面で "Allow administrators to bypass configured protection rules" を外してください。
 
 ## branch-protection.json
 
-`conditions.ref_name.include` の対象は `production` / `staging` / `develop` / `release/**/*` / `hotfix/**/*` です。各ルールの宣言内容は次のとおりです。
+`conditions.ref_name.include` は `branches.json` から `make repo-settings-apply` が生成する区間です。手で書き換えると `repo-settings-check` が落ちます。それ以外の値は手で書きます。各ルールの宣言内容は次のとおりです。
 
 | ルール | 宣言している内容 |
 | --- | --- |
@@ -50,7 +72,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 | 群 | context |
 | --- | --- |
 | 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`、`zizmor` |
-| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`skill-lint`、`versions-check` |
+| 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
 

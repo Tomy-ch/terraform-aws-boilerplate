@@ -54,6 +54,13 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
       run: make pin-runners-check
 
+    repo-settings-check:
+      glob:
+        - ".github/settings/*.json"
+        - "env/**/*.tf"
+        - "scripts/repo-settings/**/*.go"
+      run: make repo-settings-check
+
     egress-check:
       glob:
         - ".github/egress.toml"
