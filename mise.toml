@@ -77,6 +77,10 @@ shellcheck = "0.11.0"
 # ツールランナーの Dockerfile を検査する。
 hadolint = "2.15.1"
 
+# 役割は ADR-0501 決定4・5。OPA を内蔵するため、OPA を別に pin しない。
+# mise のレジストリは aqua と asdf の2つの backend を持つ。
+"aqua:open-policy-agent/conftest" = "0.71.1"
+
 "aqua:crate-ci/typos" = "1.51.1"
 
 "aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"
