@@ -7,7 +7,7 @@ import data.plan.lib
 # 宣言そのものが欠けると、それを参照する規則が未定義になって黙る。
 deny contains msg if {
 	not well_formed_declaration(data.policy_plan)
-	msg := "[PLAN-DATA-01] conftest/data/policy-plan.json の policy_plan が、plan_format_version / documents / required_documents / deployment_identity の形を満たしていません"
+	msg := "[PLAN-DATA-01] 宣言の policy_plan が、plan_format_version / documents / required_documents / deployment_identity の形を満たしていません"
 }
 
 deny contains msg if {

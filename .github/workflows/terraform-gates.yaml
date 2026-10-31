@@ -75,7 +75,6 @@ jobs:
               - 'scripts/go.mod'
               - 'scripts/go.sum'
               - 'conftest/plan/**'
-              - 'conftest/data/policy-plan.json'
 
   tf-fmt-check:
     needs: changes

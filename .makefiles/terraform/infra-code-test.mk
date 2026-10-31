@@ -5,8 +5,7 @@ IC_TEST_DIR = tmp/infra-code-test
 # fixture の宣言。リポジトリの宣言の今日の中身で、検査の検査が通ったり落ちたりしないように、型の分類も
 # 許可リストもここで閉じる。$$2 は許可リストの中身。
 define IC_FIXTURE_DECL
-mkdir -p "$$1/data"; \
-printf '{"infra_code_decl": {"types": {"resource.aws_s3_bucket": {"executes_code": false}, "data.aws_region": {"executes_code": false}, "resource.aws_instance": {"executes_code": true, "body_args": ["user_data"]}, "data.external": {"executes_code": true, "path_args": ["program"]}}, "providers": {"registry.terraform.io/hashicorp/aws": {"command_blocks": []}}, "languages": {}, "allowlist": [%s]}}\n' "$${2:-}" > "$$1/data/infra-code.json"
+printf '{"infra_code_decl": {"types": {"resource.aws_s3_bucket": {"executes_code": false}, "data.aws_region": {"executes_code": false}, "resource.aws_instance": {"executes_code": true, "body_args": ["user_data"]}, "data.external": {"executes_code": true, "path_args": ["program"]}}, "providers": {"registry.terraform.io/hashicorp/aws": {"command_blocks": []}}, "languages": {}, "allowlist": [%s]}}\n' "$${2:-}" > "$$1/decl.json"
 endef
 
 define IC_FIXTURE_OK
@@ -23,7 +22,7 @@ infra-code-gate-test:
 	expect_make() { \
 		want="$$1"; case_name="$$2"; target="$$3"; base="$$4"; pattern="$$5"; shift 5; \
 		if [ -d "$$base/.git" ] && [ ! -e "$$base/.untracked" ]; then git -C "$$base" add -A >/dev/null 2>&1; fi; \
-		out=$$($(MAKE) -s --no-print-directory "$$target" IC_BASE="$$base" IC_DATA="$$base/data" "$$@" 2>&1); rc=$$?; \
+		out=$$($(MAKE) -s --no-print-directory "$$target" IC_BASE="$$base" IC_DECL="$$base/decl.json" "$$@" 2>&1); rc=$$?; \
 		if [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ -n "$$pattern" ] && ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then failed="$$failed $$case_name"; echo "$$out"; \
@@ -87,8 +86,11 @@ infra-code-gate-test:
 	expect_make pass verify-ok infra-code-verify "$$d" "走って通りました"; \
 	expect_make fail verify-fails infra-code-verify "$$d" "テストが1件も走っていません" CONFTEST_BIN="$$root/conftest-fails"; \
 	expect_make fail verify-runs-nothing infra-code-verify "$$d" "テストが1件も走っていません" CONFTEST_BIN="$$root/conftest-silent"; \
-	expect_make fail decl-fails infra-code-decl-check "$$d" "no-such-decl.json" IC_DECL_ARGS="-decl no-such-decl.json"; \
+	expect_make fail decl-fails infra-code-decl-check "$$d" "no-such-decl.json" IC_DECL=no-such-decl.json; \
 	expect_make fail gate-aggregates infra-code-gate "$$d" "❌ infra-code-gate が落ちた検査: infra-code-verify infra-code-decl-check infra-code-detect" \
-		CONFTEST_BIN="$$root/conftest-fails" IC_DECL_ARGS="-decl no-such-decl.json"; \
+		CONFTEST_BIN="$$root/conftest-fails" IC_DECL=no-such-decl.json; \
+	d=$$(case_dir sibling-decl); printf 'resource "aws_not_classified" "c" {}\n' > "$$d/modules/a/c.tf"; \
+	printf '{"infra_code_decl": {"types": {"resource.aws_not_classified": {"executes_code": false}}}}\n' > "$$d/injected.json"; \
+	expect fail sibling-decl-is-not-read "$$d" "IC010 [未分類の型]"; \
 	if [ -n "$$failed" ]; then echo "❌ infra-code-gate-test が期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ infra-code-gate-test: 全ケースが期待どおりでした"

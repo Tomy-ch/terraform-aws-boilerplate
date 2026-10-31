@@ -15,6 +15,9 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+// testDeclPath は、テストの写しで宣言を置くパスです。
+const testDeclPath = "conftest/hcl/infra_code/decl.json"
+
 func writeFile(t *testing.T, p, content string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
@@ -45,7 +48,7 @@ func codeownersFor(extra ...string) string {
 func buildRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
-	writeFile(t, filepath.Join(repo, defaultDeclPath), declOK)
+	writeFile(t, filepath.Join(repo, testDeclPath), declOK)
 	writeFile(t, filepath.Join(repo, defaultRulesetPath), rulesetOK)
 	writeFile(t, filepath.Join(repo, defaultCodeownersPath), codeownersFor("usecases/x/internal/fn/src"))
 	writeFile(t, filepath.Join(repo, "usecases/x/internal/fn/src/handler.py"), "x")
@@ -60,7 +63,7 @@ func Test_runDecl(t *testing.T) {
 		t.Parallel()
 		repo := buildRepo(t)
 		var out bytes.Buffer
-		require.NoError(t, runDecl(nil, repo, &out))
+		require.NoError(t, runDecl([]string{"-decl", testDeclPath}, repo, &out))
 		assert.Contains(t, out.String(), "許可リスト 2 項目")
 	})
 
@@ -69,11 +72,12 @@ func Test_runDecl(t *testing.T) {
 
 		tests := map[string]struct {
 			mutate func(t *testing.T, repo string)
+			noDecl bool
 			want   error
 			msg    string
 		}{
 			"宣言が無ければエラー": {
-				mutate: func(t *testing.T, repo string) { require.NoError(t, os.Remove(filepath.Join(repo, defaultDeclPath))) },
+				mutate: func(t *testing.T, repo string) { require.NoError(t, os.Remove(filepath.Join(repo, testDeclPath))) },
 				want:   os.ErrNotExist,
 			},
 			"保護設定に required が無ければ0件のエラー": {
@@ -81,6 +85,9 @@ func Test_runDecl(t *testing.T) {
 					writeFile(t, filepath.Join(repo, defaultRulesetPath), `{"rules": []}`)
 				},
 				want: errNoInput,
+			},
+			"宣言の指定が無ければ使い方のエラー": {
+				mutate: func(*testing.T, string) {}, noDecl: true, want: errUsage,
 			},
 			"保護設定が無ければエラー": {
 				mutate: func(t *testing.T, repo string) {
@@ -121,7 +128,11 @@ func Test_runDecl(t *testing.T) {
 				repo := buildRepo(t)
 				tt.mutate(t, repo)
 				var out bytes.Buffer
-				err := runDecl(nil, repo, &out)
+				args := []string{"-decl", testDeclPath}
+				if tt.noDecl {
+					args = nil
+				}
+				err := runDecl(args, repo, &out)
 				require.ErrorIs(t, err, tt.want)
 				if tt.msg != "" {
 					assert.Contains(t, out.String(), tt.msg)
@@ -149,7 +160,7 @@ func Test_readDeclaration(t *testing.T) {
 
 		tests := map[string]struct {
 			content string
-			extra   string
+			dir     bool
 			want    error
 		}{
 			"未知のキーはエラー":                {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}, "extra": 1}}`, want: errDeclShape},
@@ -159,15 +170,15 @@ func Test_readDeclaration(t *testing.T) {
 			"型の分類が0行なら0件のエラー":          {content: `{"infra_code_decl": {"types": {}}}`, want: errNoInput},
 			"JSON として壊れていればエラー":        {content: `{"infra_code_decl": `, want: errDeclShape},
 			"値の後ろの続きはエラー":              {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}}} {}`, want: errDeclShape},
-			"宣言の置き場所に他のファイルがあればエラー":    {content: declOK, extra: "extra.json", want: errDeclShape},
+			"ディレクトリを渡せばエラー":            {content: declOK, dir: true, want: errDeclShape},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				p := filepath.Join(t.TempDir(), "d.json")
 				writeFile(t, p, tt.content)
-				if tt.extra != "" {
-					writeFile(t, filepath.Join(filepath.Dir(p), tt.extra), "{}")
+				if tt.dir {
+					p = filepath.Dir(p)
 				}
 				_, err := readDeclaration(p)
 				require.ErrorIs(t, err, tt.want)
@@ -466,7 +477,7 @@ func Test_ownedTargets(t *testing.T) {
 	}}
 	got := ownedTargets(d)
 	assert.Equal(t, append(append([]string{}, codeownerTargets...), "usecases/x/src"), got)
-	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
+	assert.Len(t, codeownerTargets, 9, "固定の対象を書き換えていない")
 }
 
 func Test_readCodeowners(t *testing.T) {
@@ -556,11 +567,11 @@ func Test_codeownersMatch(t *testing.T) {
 		"祖先のディレクトリの行が当たる":        {pattern: "conftest/", target: "conftest/hcl/", want: true},
 		"固定しない名前はどの深さにも当たる":      {pattern: "hcl", target: "conftest/hcl/", want: true},
 		"* はすべてに当たる":             {pattern: "*", target: "a/b.json", want: true},
-		"** は0段以上に当たる":           {pattern: "conftest/**/infra-code.json", target: "conftest/data/infra-code.json", want: true},
-		"拡張子の glob":              {pattern: "*.json", target: "conftest/data/infra-code.json", want: true},
+		"** は0段以上に当たる":           {pattern: "conftest/**/decl.json", target: "conftest/hcl/infra_code/decl.json", want: true},
+		"拡張子の glob":              {pattern: "*.json", target: "conftest/hcl/infra_code/decl.json", want: true},
 		"ディレクトリだけの行はファイルに当たらない":  {pattern: "infra-code.mk/", target: ".makefiles/terraform/infra-code.mk", want: false},
 		"固定した行は別の深さに当たらない":       {pattern: "/hcl/", target: "conftest/hcl/", want: false},
-		"別のパスには当たらない":            {pattern: "conftest/data/", target: "conftest/hcl/", want: false},
+		"別のパスには当たらない":            {pattern: "conftest/plan/", target: "conftest/hcl/", want: false},
 		"子のディレクトリの行は親に当たらない":     {pattern: "conftest/hcl/", target: "conftest/", want: false},
 		"dir/* は直下に当たる":          {pattern: "conftest/*", target: "conftest/README.md", want: true},
 		"dir/* は孫には当たらない":        {pattern: "/scripts/*", target: "scripts/lib/adrdoc/", want: false},

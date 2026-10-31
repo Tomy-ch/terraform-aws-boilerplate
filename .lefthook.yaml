@@ -150,7 +150,6 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
-        - "conftest/data/policy-plan.json"
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy

@@ -23,9 +23,9 @@ func Test_run(t *testing.T) {
 		}{
 			"サブコマンドが無ければ使い方のエラー":       {args: nil, want: errUsage},
 			"未知のサブコマンドは使い方のエラー":        {args: []string{"lint"}, want: errUsage},
-			"decl は宣言を読みに行く":           {args: []string{"decl"}, want: os.ErrNotExist},
+			"decl は宣言を読みに行く":           {args: []string{"decl", "-decl", "d.json"}, want: os.ErrNotExist},
 			"count は走査の root を見に行く":    {args: []string{"count", "-results", "r", "-combined", "c", "modules"}, want: errMissingRoot},
-			"rego-tests は Rego を読みに行く": {args: []string{"rego-tests", "-report", "r", "-namespaces", "n"}, want: os.ErrNotExist},
+			"rego-tests は Rego を読みに行く": {args: []string{"rego-tests", "-policy", "p", "-report", "r", "-namespaces", "n"}, want: os.ErrNotExist},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
@@ -40,7 +40,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		repo := buildRepo(t)
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"decl", "-repo", repo}, t.TempDir(), &out))
+		require.NoError(t, run([]string{"decl", "-repo", repo, "-decl", testDeclPath}, t.TempDir(), &out))
 		assert.Contains(t, out.String(), "許可リスト 2 項目")
 	})
 }

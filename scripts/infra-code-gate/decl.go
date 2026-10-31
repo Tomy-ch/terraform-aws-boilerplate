@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	defaultDeclPath       = "conftest/data/infra-code.json"
 	defaultRulesetPath    = ".github/settings/branch-protection.json"
 	defaultCodeownersPath = ".github/CODEOWNERS"
 	// gateContext は検出の job が報告する required context です（ADR-0103 決定14）。
@@ -32,7 +31,6 @@ const (
 // 本リポジトリ所有の項目が指すソースの所在は、宣言から足します。
 var codeownerTargets = []string{
 	"conftest/hcl/",
-	"conftest/data/",
 	"scripts/infra-code-gate/",
 	"scripts/lib/adrdoc/",
 	"scripts/tf-job-lint/",
@@ -110,7 +108,7 @@ type ownerRule struct {
 func runDecl(args []string, repo string, out io.Writer) error {
 	fset := flag.NewFlagSet("decl", flag.ContinueOnError)
 	fset.SetOutput(out)
-	declPath := fset.String("decl", defaultDeclPath, "許可リストの宣言のパス")
+	declPath := fset.String("decl", "", "許可リストの宣言のパス。Conftest の --data に渡すものと同じファイル")
 	rulesetPath := fset.String("ruleset", defaultRulesetPath, "保護設定の宣言のパス")
 	codeownersPath := fset.String("codeowners", defaultCodeownersPath, "code owner の宣言のパス")
 	repoFlag := fset.String("repo", repo, "リポジトリの root")
@@ -118,6 +116,9 @@ func runDecl(args []string, repo string, out io.Writer) error {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 	repo = *repoFlag
+	if *declPath == "" {
+		return xerrors.Wrap(errUsage, "decl -decl <path>")
+	}
 
 	d, err := readDeclaration(filepath.Join(repo, *declPath))
 	if err != nil {
@@ -149,16 +150,14 @@ func runDecl(args []string, repo string, out io.Writer) error {
 // readDeclaration は宣言を読みます。未知のキーと重複したキーはエラーにします。宣言の読み手は Rego と
 // ここの2つで、どちらかが黙って読み飛ばしたキーは、もう片方の判定とずれたまま残るためです。
 func readDeclaration(p string) (*declaration, error) {
-	// Conftest は置き場所のファイルをすべて読み、同じキーを深くマージする。ここが読まないファイルが
-	// 置き場所に在れば、ここを通らずに宣言を足せる。
-	entries, err := os.ReadDir(filepath.Dir(p))
+	// ディレクトリを Conftest の --data に渡すと、その中のファイルがすべて深くマージされる。宣言は
+	// 1つのファイルとして渡す。
+	info, err := os.Stat(filepath.Clean(p))
 	if err != nil {
-		return nil, xerrors.Wrapf(err, "%s の読み取り", filepath.Dir(p))
+		return nil, xerrors.Wrapf(err, "%s の読み取り", p)
 	}
-	for _, e := range entries {
-		if e.Name() != filepath.Base(p) {
-			return nil, xerrors.Wrapf(errDeclShape, "宣言の置き場所 %s に %s 以外のもの %s があります", filepath.Dir(p), filepath.Base(p), e.Name())
-		}
+	if !info.Mode().IsRegular() {
+		return nil, xerrors.Wrapf(errDeclShape, "%s は通常のファイルではありません", p)
 	}
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {

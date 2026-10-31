@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,7 +39,7 @@ type regoSuite struct {
 func runRegoTests(args []string, repo string, out io.Writer) error {
 	fset := flag.NewFlagSet("rego-tests", flag.ContinueOnError)
 	fset.SetOutput(out)
-	policyDir := fset.String("policy", "conftest/hcl", "Rego の置き場所")
+	policyDirs := fset.String("policy", "", "Rego の置き場所（, 区切り）。conftest verify の -p と同じもの")
 	reportPath := fset.String("report", "", "`conftest verify --report notes` の出力のパス")
 	namespaces := fset.String("namespaces", "", "検出が評価する名前空間（, 区切り）。規則を持つ package はこのどれかでなければならない")
 	repoFlag := fset.String("repo", repo, "Rego の置き場所を解くリポジトリの root")
@@ -46,16 +47,22 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 	repo = *repoFlag
-	if *reportPath == "" || *namespaces == "" {
-		return xerrors.Wrap(errUsage, "rego-tests -report <path> -namespaces <ns,...>")
+	if *reportPath == "" || *namespaces == "" || *policyDirs == "" {
+		return xerrors.Wrap(errUsage, "rego-tests -policy <dir,...> -report <path> -namespaces <ns,...>")
 	}
 
-	suite, err := scanRego(filepath.Join(repo, *policyDir), strings.Split(*namespaces, ","))
-	if err != nil {
-		return err
+	suite := &regoSuite{ids: map[string]string{}, tests: map[string]string{}}
+	for _, dir := range strings.Split(*policyDirs, ",") {
+		s, err := scanRego(filepath.Join(repo, dir), strings.Split(*namespaces, ","))
+		if err != nil {
+			return err
+		}
+		maps.Copy(suite.ids, s.ids)
+		maps.Copy(suite.tests, s.tests)
+		suite.findings = append(suite.findings, s.findings...)
 	}
 	if len(suite.ids) == 0 {
-		return xerrors.Wrapf(errNoInput, "%s に ID を持つ deny が1つもありません", *policyDir)
+		return xerrors.Wrapf(errNoInput, "%s に ID を持つ deny が1つもありません", *policyDirs)
 	}
 	results, err := readReport(*reportPath)
 	if err != nil {

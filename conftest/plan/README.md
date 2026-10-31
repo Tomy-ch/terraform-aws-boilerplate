@@ -14,7 +14,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 
 ## 宣言
 
-[`../data/policy-plan.json`](../data/policy-plan.json) が1箇所に持つ（同 決定15）。
+[`decl.json`](decl.json) が1箇所に持つ（同 決定15）。`make` は `--data` にこのファイルだけを渡す。
 
 | キー | 中身 |
 | --- | --- |
@@ -38,5 +38,5 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 ## Policy を足すとき
 
 - `<name>.rego` と `<name>_test.rego` を同じディレクトリに置く。規則は `deny contains` で書き、違反の ID（`[PLAN-<区分>-<番号>]`）を持たせる。テストは `test_violation_` と `test_pass_` で始まる名前の両方を持ち、各 ID をどこかのテストが名指しする（名指しの有無までを見る。違反側のテストが名指すかは見ない）。どれかが欠けると `make tf-policy` が落ちる（同 決定8・9）
-- 見る resource の型と address は `../data/policy-plan.json` に足す
+- 見る resource の型と address は `decl.json` に足す
 - Security の道具（[ADR-0501](../../docs/adr/0501-development-tooling-composition.md) 決定6）の既定のルールと重ならないことを、本リポジトリの書き方の文書で確かめる（ADR-0402 決定3）。確かめた結果は Pull Request に書く

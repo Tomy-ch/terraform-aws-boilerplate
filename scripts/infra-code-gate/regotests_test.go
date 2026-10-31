@@ -30,11 +30,20 @@ func Test_runRegoTests(t *testing.T) {
 		return repo, p
 	}
 
+	t.Run("複数の置き場所の ID とテストを合わせて見る", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, "package infra_code\n", reportOK)
+		writeFile(t, filepath.Join(repo, "conftest/other/a_test.rego"), policyTestOK)
+		var out bytes.Buffer
+		require.NoError(t, runRegoTests([]string{"-policy", "conftest/hcl,conftest/other", "-report", p, "-namespaces", "infra_code"}, repo, &out))
+		assert.Contains(t, out.String(), "ID 1 件")
+	})
+
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 		repo, p := setup(t, policyOK, policyTestOK, reportOK)
 		var out bytes.Buffer
-		require.NoError(t, runRegoTests([]string{"-report", p, "-namespaces", "infra_code"}, repo, &out))
+		require.NoError(t, runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}, repo, &out))
 		assert.Contains(t, out.String(), "ID 1 件")
 	})
 
@@ -86,9 +95,9 @@ func Test_runRegoTests(t *testing.T) {
 				if tt.policy == "" {
 					require.NoError(t, os.RemoveAll(filepath.Join(repo, "conftest")))
 				}
-				args := []string{"-report", p, "-namespaces", "infra_code"}
+				args := []string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}
 				if tt.noReport {
-					args = []string{"-namespaces", "infra_code"}
+					args = []string{"-policy", "conftest/hcl", "-namespaces", "infra_code"}
 				}
 				var out bytes.Buffer
 				err := runRegoTests(args, repo, &out)
