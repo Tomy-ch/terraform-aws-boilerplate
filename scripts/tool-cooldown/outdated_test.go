@@ -684,6 +684,22 @@ func Test_reportOutdated(t *testing.T) {
 
 			require.Error(t, err)
 		})
+
+		// 確認できなかったツールを「更新なし」と同じ成功で返すと、呼び出し側は何も見ずに報告を閉じる。
+		t.Run("上流を確認できなければ本文を書いたうえで番兵で返す", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{})
+			out := filepath.Join(t.TempDir(), "report.md")
+
+			err := reportOutdated(client, []tool{
+				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
+			}, options{summaryOut: out}, outdatedNow)
+
+			require.ErrorIs(t, err, errUnconfirmed)
+			body, readErr := os.ReadFile(out) //nolint:gosec // out は t.TempDir() 配下
+			require.NoError(t, readErr)
+			assert.Contains(t, string(body), "上流を確認できなかった")
+		})
 	})
 }
 

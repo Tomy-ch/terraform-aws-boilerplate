@@ -86,6 +86,7 @@ var (
 	// errNotFound は、上流がそのバージョンを知らない場合のエラー。
 	errNotFound       = xerrors.New("version not found upstream")
 	errUpstreamStatus = xerrors.New("unexpected upstream status")
+	errUnconfirmed    = xerrors.New("upstream could not be confirmed")
 	// errUnsupportedPackage は、aqua の定義が配布物の所在を辿れない形だった場合のエラー。
 	errUnsupportedPackage = xerrors.New("unsupported aqua package definition")
 	errNoLastModified     = xerrors.New("artifact has no Last-Modified")
