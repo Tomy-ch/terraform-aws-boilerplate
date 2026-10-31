@@ -109,7 +109,7 @@ truthy 側へ置く。
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
-| `repo-settings.yaml` の2 job | 15 | 同上（新設） |
+| `repo-settings.yaml` の2 job、`repo-settings-sync.yaml:repo-settings-sync` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、
@@ -143,7 +143,8 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
 failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
 code scanning の alert である。`repo-settings.yaml` の突合も failure モードだけを持つ —— ずれで
-job を落とすので、failure モードがそれを届ける。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
+job を落とすので、failure モードがそれを届ける。`repo-settings-sync.yaml` の適用は push と手動で
+起動するが、同じく failure モードを繋ぐ —— merge の後の失敗を、merge した作者はもう見ていない。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
 意図的に繋いでいない。
 
 ## Go のクールダウン

@@ -11,12 +11,17 @@
 | 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間 | 誰でも |
 | 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
 | 突合 | `repo-settings-drift` | 無し（GET のみ） | CI（毎日と手動）、誰でも |
-| 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
+| 適用 | `repo-settings-sync-app` | GitHub の ruleset / environment | CI（`repo-settings-sync.yaml`。既定ブランチへの push と手動） |
+| 初回と回復の適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
+| App の確認 | `repo-settings-drift-app` | 無し（GET のみ） | App の秘密鍵を持つ人 |
 
-- 宣言を変える Pull Request は、merge の後に適用します。適用は `make setup-repo` も呼びます。
+- 宣言を変える Pull Request は、merge の push で CI が適用します（ADR-0603 決定30）。書き込みは `github-app.json` が宣言する GitHub App の短命の token で行い、書く前に App の実際の権限・install 先・token が届くリポジトリが宣言どおりかを確かめ、ずれていれば1件も書きません。書いた後は ruleset を App の token で（`bypass_actors` を含めて）、environment を `GITHUB_TOKEN` で読み直し、ずれが残れば失敗します。失敗は `notify.yaml` で通知されます。
+- App の作成、秘密鍵の登録、初回の適用の手順は [`docs/setup/repository-settings-app.md`](../../docs/setup/repository-settings-app.md) にあります。App は `bypass_actors` に入れません（ADR-0603 決定22）。
+- App の秘密鍵は environment `repo-settings` の secret です。この environment は保護ブランチの run から参照でき、job の `if:` が既定ブランチに限ります。**既定ブランチ以外の保護ブランチへ merge された workflow が鍵に届くことは防げません**（ADR-0603 保証範囲）。App の設定画面（権限、install 先）を変えられる主体による変更は、次の適用の失敗で検出します。
+- 管理者による初回の適用は `make setup-repo` も呼びます。
 - 突合は Pull Request とは独立に毎日走り（`.github/workflows/repo-settings.yaml`）、ずれは失敗として通知されます。管理画面で設定を変えると、ここで赤になります。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
 - 適用は、宣言に無い environment を消しません。消すと secret ごと失われるためで、突合がそれを報告し、人が消すか宣言へ足します。
-- **CI の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返さず、CI の `GITHUB_TOKEN` は読み取りの権限です（ADR-0603 決定6）。突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は管理者が手元で `make repo-settings-drift` を実行したときに見ます。
+- **CI の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返さず、CI の `GITHUB_TOKEN` は読み取りの権限です（ADR-0603 決定6）。突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は、CI の適用が書いた後に App の token で読み直すときと、管理者が手元で `make repo-settings-drift` を実行したときに見ます。
 
 ## branches.json
 

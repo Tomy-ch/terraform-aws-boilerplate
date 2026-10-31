@@ -28,6 +28,12 @@ mise.toml                             @Tomy-ch
 .github/settings/branches.json        @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
 
+# The GitHub App that applies the protection settings from CI (ADR-0603 決定30). Whoever changes
+# these can rewrite the rulesets and environments once the change is merged.
+.github/settings/github-app.json          @Tomy-ch
+.github/workflows/repo-settings-sync.yaml @Tomy-ch
+scripts/repo-settings/                    @Tomy-ch
+
 # The runner egress allowlist SSOT (bullfrog) — `make egress-apply` writes each entry out to
 # every workflow that carries the job.
 .github/egress.toml                   @Tomy-ch
