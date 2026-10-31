@@ -42,6 +42,8 @@ include .makefiles/security/zizmor.mk
 # Terraform関連
 include .makefiles/terraform/gates.mk
 include .makefiles/terraform/gates-test.mk
+include .makefiles/terraform/infra-code.mk
+include .makefiles/terraform/infra-code-test.mk
 include .makefiles/terraform/policy.mk
 include .makefiles/terraform/operation/local.mk
 # Docker関連

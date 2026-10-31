@@ -22,6 +22,12 @@ rules:
   self-repository:
     disable: true
 
+  # 資格情報を作業ツリーに残す checkout。ADR-0103 決定11 が、検出に依存せず terraform を走らせる job に
+  # 禁じている。既定の severity はゲートの閾値（high）に届かないので、上げてゲートにする。
+  artipacked:
+    remap:
+      severity: high
+
   # Fires on any workflow that combines a caching setup action (mise / setup-go)
   # with a trigger set zizmor associates with publishing, which is nearly every
   # workflow here — a file list would rot on every addition. Detection is "low

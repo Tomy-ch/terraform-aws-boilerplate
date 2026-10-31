@@ -1,0 +1,34 @@
+{
+  "infra_code_decl": {
+    "types": {
+      "action.aws_lambda_invoke": {"executes_code": true},
+      "data.aws_caller_identity": {"executes_code": false},
+      "data.aws_lambda_invocation": {"executes_code": true},
+      "data.aws_region": {"executes_code": false},
+      "data.external": {"executes_code": true, "path_args": ["program"]},
+      "resource.aws_iam_openid_connect_provider": {"executes_code": false},
+      "resource.aws_iam_role": {"executes_code": false},
+      "resource.aws_iam_role_policies_exclusive": {"executes_code": false},
+      "resource.aws_iam_role_policy": {"executes_code": false},
+      "resource.aws_iam_role_policy_attachments_exclusive": {"executes_code": false},
+      "resource.aws_instance": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
+      "resource.aws_lambda_invocation": {"executes_code": true},
+      "resource.aws_launch_configuration": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
+      "resource.aws_launch_template": {"executes_code": true, "body_args": ["user_data"]},
+      "resource.aws_lightsail_instance": {"executes_code": true, "body_args": ["user_data"]},
+      "resource.aws_s3_bucket": {"executes_code": false},
+      "resource.aws_s3_bucket_ownership_controls": {"executes_code": false},
+      "resource.aws_s3_bucket_policy": {"executes_code": false},
+      "resource.aws_s3_bucket_public_access_block": {"executes_code": false},
+      "resource.aws_s3_bucket_server_side_encryption_configuration": {"executes_code": false},
+      "resource.aws_s3_bucket_versioning": {"executes_code": false},
+      "resource.aws_spot_fleet_request": {"executes_code": true, "body_args": ["launch_specification.user_data"]},
+      "resource.aws_spot_instance_request": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]}
+    },
+    "providers": {
+      "registry.terraform.io/hashicorp/aws": {"command_blocks": []}
+    },
+    "languages": {},
+    "allowlist": []
+  }
+}

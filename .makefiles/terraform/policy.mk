@@ -11,7 +11,7 @@
 
 POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
-POLICY_PLAN_DECL = conftest/data/policy-plan.json
+POLICY_PLAN_DECL = conftest/plan/decl.json
 POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
