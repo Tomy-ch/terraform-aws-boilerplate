@@ -1,0 +1,15 @@
+{
+  "policy_plan": {
+    "plan_format_version": "1.2",
+    "documents": {
+      "aws_iam_role": ["assume_role_policy"],
+      "aws_iam_role_policy": ["policy"],
+      "aws_iam_policy": ["policy"],
+      "aws_s3_bucket_policy": ["policy"]
+    },
+    "deployment_identity": {
+      "roles": ["module.deployment_identity.module.github_oidc.aws_iam_role.this"],
+      "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github"
+    }
+  }
+}
