@@ -51,13 +51,13 @@ services:
   # IMAGE_RUN が `docker compose config --images` で読み、mount を使わずに docker create / cp / start
   # で行う。`docker compose run` では起動しない。
   checkov_runner:
-    image: bridgecrew/checkov:3.3.26@sha256:8e63f217cb084f1c1a067326a9cf6e37d54bdc82e5822210d50ca4e2f647dd93
+    image: bridgecrew/checkov:3.3.30@sha256:4b65e89f1fde292249fc0aa0d0db43302c036dfe39f7370b2d3517571082b894
 
   kics_runner:
-    image: checkmarx/kics:v2.1.20@sha256:3e5a268eb8adda2e5a483c9359ddfc4cd520ab856a7076dc0b1d8784a37e2602
+    image: checkmarx/kics:v2.2.0@sha256:ef29dbac14b046b1ef65f3280646112e927a61781c5f01bca1aeb723e0b96003
 
   semgrep_runner:
-    image: semgrep/semgrep:1.180.0@sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3
+    image: semgrep/semgrep:1.182.1@sha256:451b3d875c00dac7ed5db5293e584a07de11449a409c10b3c2d2652f429630b6
 
 secrets:
   # mise のツール解決を認証付きにするビルド時トークン。未認証の GitHub API は
