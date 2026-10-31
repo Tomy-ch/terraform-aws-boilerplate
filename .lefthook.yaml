@@ -142,21 +142,29 @@ pre-commit:
       skip:
         - run: make -s tf-no-targets
       run: make tf-lint
-    # validate と test は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
+    # validate と test と policy は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
     tf-validate-test:
       glob:
         - "usecases/**"
         - "modules/**"
         - "env/**"
         - "**/.terraform.lock.hcl"
+        - "conftest/plan/**"
+        - "conftest/data/policy-plan.json"
       skip:
         - run: make -s tf-no-targets
-      run: make -k tf-validate tf-test
+      run: make -k tf-validate tf-test tf-policy
     tf-gates-test:
       glob:
         - "Makefile"
         - ".makefiles/**"
       run: make tf-gates-test
+    tf-policy-canary:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - "conftest/plan/**"
+      run: make tf-policy-canary
 
     secret-gates-test:
       glob:

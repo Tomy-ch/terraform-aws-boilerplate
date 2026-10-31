@@ -31,3 +31,10 @@ mise.toml                             @Tomy-ch
 # The runner egress allowlist SSOT (bullfrog) — `make egress-apply` writes each entry out to
 # every workflow that carries the job.
 .github/egress.toml                   @Tomy-ch
+
+# The Policy Test declarations (ADR-0402 決定15). Dropping a document type or a role address from
+# the data, or an override from a reference root's policy input, shrinks what the Policy reads
+# while every check stays green.
+conftest/plan/                        @Tomy-ch
+conftest/data/policy-plan.json        @Tomy-ch
+usecases/*/reference/tests/policy.tftest.hcl  @Tomy-ch
