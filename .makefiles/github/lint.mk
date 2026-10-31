@@ -1,17 +1,18 @@
 ## GitHub Actions の定義に対する検査
 ##
-## 4つの道具が別々の問いに答える。束ねると、片方が消えたときに気付けない。
+## 道具ごとに別々の問いに答える。束ねると、片方が消えたときに気付けない。
 ##
 ##   actionlint              workflow の構文・式・run: のシェル。走査は .github/workflows だけ
 ##   actions-shellcheck      composite action の run:。actionlint は action 定義を渡すと
 ##                           workflow として解釈して構文エラーで落ちるため、ここが埋める
 ##   shell-lint              ファイルとして置かれた *.sh
 ##   required-check-lint     保護設定が required とした context の報告 job の実在と、起動条件
+##   tf-job-lint             credentials を持たずに terraform を走らせる job の権限・checkout・uses:（ADR-0103 決定11）
 ##   zizmor                  template injection。${{ }} はシェルがパースする**前**に置換されるため、
 ##                           補間された式は文字列ではなくコードになる。shellcheck 系には構造的に見えない
 
 .PHONY: actions-lint ## GitHub Actions の定義を検査（actionlint + composite + シェル）
-actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint
+actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint tf-job-lint
 
 .PHONY: actionlint ## workflow の構文と run: のシェルを検査
 actionlint:
@@ -28,6 +29,10 @@ shell-lint:
 .PHONY: required-check-lint ## 保護設定が required とした context の報告 job と起動条件を検査
 required-check-lint:
 	@$(call RUN_SCRIPT,required-check-lint,)
+
+.PHONY: tf-job-lint ## credentials を持たずに terraform を走らせる job の権限・checkout・uses: を検査
+tf-job-lint:
+	@$(call RUN_SCRIPT,tf-job-lint,)
 
 .PHONY: pr-comment-secret-lint ## PR へコメントする job に GITHUB_TOKEN 以外の secret を渡していないか検査
 pr-comment-secret-lint:
