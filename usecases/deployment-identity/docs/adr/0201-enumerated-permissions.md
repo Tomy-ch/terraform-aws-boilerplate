@@ -87,8 +87,8 @@ KMS の鍵とログの resource の形（#107、#108）が無く、正しく列�
 
 - Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、3つの role の policy の文書と、inline policy と managed policy の排他を完全一致で確かめる
 - 手順: `docs/setup/bootstrap.md` の段4 が、apply の後に `aws iam simulate-principal-policy` で、表の Action が plan と apply-identity の role に許され、apply の role の bootstrap の構成物への変更が拒否されることを確かめる
-- Policy Test（未配線。#75 / #73）: repository-wide/ADR-0602 の検証方法の、apply の role の有効な権限の項目
-- Action の wildcard の不在を検出する Security の道具は無い（見直し条件の Trivy の版を上げるときに確かめ直す）。Trivy は IAM の inline policy と customer managed policy の Action wildcard を報告しない（`mise.toml` の版で確かめた）
+- Policy Test（`make tf-policy`）: Allow の Action の `*`・`service:*` の不在（repository-wide/ADR-0301 決定8）と、`NotAction` の Allow の不在
+- Policy Test（未配線。#209）: repository-wide/ADR-0602 の検証方法の、apply の role の有効な権限の項目
 
 ## 影響
 
@@ -101,4 +101,3 @@ KMS の鍵とログの resource の形（#107、#108）が無く、正しく列�
 - apply の role が IAM の role を作る usecase が入るとき（permissions boundary を決める）
 - inline policy の文字数が上限に近づいたとき
 - CI の plan か apply が AccessDenied で失敗したとき
-- Trivy の版を上げるとき（Action wildcard を検出するようになったかを確かめる）

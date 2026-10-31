@@ -64,7 +64,8 @@ RUN --mount=type=secret,id=github_token \
     && mise install "aqua:trufflesecurity/trufflehog" \
     && mise install "aqua:crate-ci/typos" \
     && mise install "aqua:editorconfig-checker/editorconfig-checker" \
-    && mise install "aqua:zizmorcore/zizmor"
+    && mise install "aqua:zizmorcore/zizmor" \
+    && mise install "aqua:open-policy-agent/conftest"
 
 RUN mkdir /out \
     && cp "$(mise which actionlint)"     /out/ \
@@ -77,7 +78,8 @@ RUN mkdir /out \
     && cp "$(mise which trufflehog)"     /out/ \
     && cp "$(mise which typos)"          /out/ \
     && cp "$(mise which editorconfig-checker)" /out/ \
-    && cp "$(mise which zizmor)"         /out/
+    && cp "$(mise which zizmor)"         /out/ \
+    && cp "$(mise which conftest)"       /out/
 
 # ==============================================================================
 # go_tools: 運用機構（scripts/）を走らせる。mise 本体も install キャッシュもここには無い

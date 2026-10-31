@@ -213,17 +213,18 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Static Analysis: CI の workflow が長期のアクセスキーを参照していないこと（決定12）
 - Static Analysis: plan を行う job と apply を行う job が、異なる role を assume すること（決定13）
 - Static Analysis: plan を行う job が artifact を上げず、Pull Request へ plan の全文をコメントしないこと（決定13）
-- Policy Test: plan の role の変更系の Action が、plan の出力の置き場への `s3:PutObject` に限られること（決定13）
+- Policy Test（未配線。#185）: plan の role の変更系の Action が、plan の出力の置き場への `s3:PutObject` に限られること（決定13）
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
 - Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
 - Static Analysis: apply-identity の role を assume する job が、apply の role を assume する job と異なる role と `environment` を宣言すること（決定13-14）
-- Policy Test: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend、plan の出力の置き場）に対する変更系の Action を許さないこと（決定13）
+- Policy Test（未配線。#209）: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend、plan の出力の置き場）に対する変更系の Action を許さないこと（決定13）
 - Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
 - Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）
 - Policy Test: 信頼条件の `sub` が environment 形式であり、ref 形式と event 形式を含まないこと（決定14）
-- Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること。environment 名が environment の宣言に存在すること（決定14）
-- Policy Test: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
+- Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること（決定14）
+- 運用機構（`make repo-settings-check`、ADR-0501 決定5）: environment 名が environment の宣言に存在すること（決定14）
+- Policy Test（未配線。#19）: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
 - 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply の environment が保護ブランチのパターンだけを許すこと（決定14、ADR-0603 決定4-7）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない

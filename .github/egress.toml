@@ -226,6 +226,9 @@ classes = ["mise"]
 [job."terraform-gates.yaml:tf-validate-test"]
 classes = ["terraform"]
 
+[job."terraform-gates.yaml:tf-policy"]
+classes = ["terraform"]
+
 [job."terraform-gates.yaml:tf-gates-test"]
 classes = ["terraform"]
 
