@@ -72,6 +72,18 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errUsage
 	}
+	allowed := map[string]map[string]bool{
+		"apply": {}, "check": {}, "drift": {"repo": true}, "sync": {"repo": true, "only": true},
+	}
+	unused := false
+	fs.Visit(func(f *flag.Flag) {
+		if !allowed[args[0]][f.Name] {
+			unused = true
+		}
+	})
+	if unused {
+		return errUsage
+	}
 	root, err := wd()
 	if err != nil {
 		return xerrors.Wrap(err, "作業ディレクトリの取得")

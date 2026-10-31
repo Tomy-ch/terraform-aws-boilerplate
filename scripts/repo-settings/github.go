@@ -116,6 +116,10 @@ func fetchRuleset(ctx context.Context, c githubClient, repo, rulesetName string)
 			return nil, 0, err
 		}
 		for _, r := range list {
+			// source_type が無い要素を数えずに進むと、同名の ruleset を見落として重複して作る。
+			if r.SourceType == "" {
+				return nil, 0, xerrors.Wrapf(errUnexpectedResponse, "ruleset %d に source_type がありません", r.ID)
+			}
 			if r.Name == rulesetName && r.SourceType == "Repository" {
 				ids = append(ids, r.ID)
 			}

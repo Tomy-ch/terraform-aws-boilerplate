@@ -44,6 +44,45 @@ func Test_identityEnvs(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 
+	t.Run(".terraform の下は読まない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/a/identity/main.tf", identityModule(`"../../../usecases/deployment-identity"`, `"a"`))
+		writeFile(t, root, "env/a/identity/.terraform/modules/x/main.tf", identityModule(`var.source`, `"z"`))
+		got, err := identityEnvs(root)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a"}, got)
+	})
+
+	unreadable := []struct {
+		name  string
+		setup func(t *testing.T, root string)
+	}{
+		// 読み飛ばすと、別の root が見つかる限り緑のまま、その root の env が検査から落ちる。
+		{"JSON の構成があれば失敗する", func(t *testing.T, root string) {
+			writeFile(t, root, "env/b/identity/main.tf.json", `{"module": {}}`)
+		}},
+		{"symlink があれば失敗する", func(t *testing.T, root string) {
+			require.NoError(t, os.Symlink(filepath.Join(root, "env/a"), filepath.Join(root, "env/c")))
+		}},
+		{"別の module を経由した呼び出しは件数が食い違って失敗する", func(t *testing.T, root string) {
+			writeFile(t, root, "env/b/identity/main.tf", "module \"wrap\" {\n  source = \"../../../modules/wrap\"\n  # usecases/deployment-identity を env = \"b\" で呼ぶ\n}\n")
+		}},
+		{"相対パスでない source は件数が食い違って失敗する", func(t *testing.T, root string) {
+			writeFile(t, root, "env/b/identity/main.tf", identityModule(`"git::https://example.com/x.git//usecases/deployment-identity"`, `"b"`))
+		}},
+	}
+	for _, tc := range unreadable {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, root, "env/a/identity/main.tf", identityModule(`"../../../usecases/deployment-identity"`, `"a"`))
+			tc.setup(t, root)
+			_, err := identityEnvs(root)
+			require.ErrorIs(t, err, errTerraform)
+		})
+	}
+
 	t.Run("読めない .tf が1つでもあれば失敗する", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -66,9 +105,10 @@ func Test_moduleEnvs(t *testing.T) {
 			identityModule(`"../../../usecases/state-backend"`, `"s"`)+
 				identityModule(`"../../../usecases/deployment-identity"`, `"a"`)+
 				"resource \"x\" \"y\" {}\n")
-		got, err := moduleEnvs(p, target(root))
+		got, mentioned, err := moduleEnvs(p, target(root))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"a"}, got)
+		assert.Equal(t, 1, mentioned)
 	})
 
 	cases := []struct {
@@ -82,20 +122,21 @@ func Test_moduleEnvs(t *testing.T) {
 		{"env が変数なら失敗する", identityModule(`"../../../usecases/deployment-identity"`, `var.env`)},
 		{"env が文字列でなければ失敗する", identityModule(`"../../../usecases/deployment-identity"`, `1`)},
 		{"env が式で組まれていれば失敗する", identityModule(`"../../../usecases/deployment-identity"`, `"${local.env}"`)},
+		{"env が空なら失敗する", identityModule(`"../../../usecases/deployment-identity"`, `""`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			p := writeFile(t, root, "env/a/identity/main.tf", tc.body)
-			_, err := moduleEnvs(p, target(root))
+			_, _, err := moduleEnvs(p, target(root))
 			require.ErrorIs(t, err, errTerraform)
 		})
 	}
 
 	t.Run("ファイルを読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		_, err := moduleEnvs(filepath.Join(t.TempDir(), "none.tf"), "x")
+		_, _, err := moduleEnvs(filepath.Join(t.TempDir(), "none.tf"), "x")
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
@@ -128,6 +169,7 @@ func Test_literalString(t *testing.T) {
 		{"数なら失敗する", `env = 1`},
 		{"変数を参照していれば失敗する", `env = var.env`},
 		{"関数を呼んでいれば失敗する", `env = lower("A")`},
+		{"空の文字列なら失敗する", `env = ""`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

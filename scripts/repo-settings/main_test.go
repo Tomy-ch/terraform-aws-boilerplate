@@ -95,6 +95,8 @@ func Test_run(t *testing.T) {
 		{"未知のフラグは usage で失敗する", []string{"check", "-nope"}},
 		{"sync に -only が無ければ usage で失敗する", []string{"sync", "-repo=o/r"}},
 		{"sync の -only が未知なら usage で失敗する", []string{"sync", "-repo=o/r", "-only", "labels"}},
+		{"使わないフラグは usage で失敗する", []string{"apply", "-repo=o/r"}},
+		{"drift に -only を渡せば usage で失敗する", []string{"drift", "-repo=o/r", "-only", "ruleset"}},
 	}
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {

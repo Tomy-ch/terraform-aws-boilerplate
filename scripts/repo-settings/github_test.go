@@ -307,6 +307,15 @@ func Test_fetchRuleset(t *testing.T) {
 		assert.Zero(t, id)
 	})
 
+	t.Run("source_type の無い要素があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{
+			rulesetListPath(1): ok(`[{"id": 7, "name": "bp"}]`),
+		})
+		_, _, err := fetchRuleset(context.Background(), c, repo, "bp")
+		require.ErrorIs(t, err, errUnexpectedResponse)
+	})
+
 	t.Run("同名が2件なら失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{

@@ -75,6 +75,8 @@ func Test_checkKeys(t *testing.T) {
 		{"入れ子の object のキーの重複も拒む", `[{"name": "a", "name": "b"}]`, true},
 		{"配列の中の不正なキーも拒む", `[{"name": "a"}, {"nope": 1}]`, true},
 		{"壊れた JSON は拒む", `{"deploy": [`, true},
+		{"閉じられていない object は拒む", `{"deploy": ["a"]`, true},
+		{"キーの位置の構文エラーは拒む", `{"deploy": ["a"],}`, true},
 		{"空の入力は拒む", ``, true},
 	}
 	for _, tc := range cases {

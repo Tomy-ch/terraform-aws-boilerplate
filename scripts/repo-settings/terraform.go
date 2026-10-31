@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// Terraform のソースから読むのは、deployment-identity へ渡す env の値だけである（ADR-0501 決定5 の但し書き）。
+// Terraform のソースから読むのは、deployment-identity を呼ぶ module を見分ける source と、env のリテラル値だけである（ADR-0501 決定5 の但し書き）。
 const (
 	envDir             = "env"
 	identityUseCaseDir = "usecases/deployment-identity"
@@ -32,21 +33,35 @@ var (
 
 // identityEnvs は env/ の下の .tf を読み、source が deployment-identity を指す module の env の値を返します。
 // source と env はリテラルの文字列に限る。それ以外は読めないものとしてエラーにする（ADR-0702 決定14）。
+// .tf.json と symlink は読めない形式としてエラーにする。
+// 見分けた module の件数は、ソースの字面に現れる deployment-identity の件数と突き合わせる（ADR-0702 決定15）。
 func identityEnvs(root string) ([]string, error) {
 	target := filepath.Join(root, identityUseCaseDir)
 	seen := map[string]bool{}
 	var envs []string
+	modules, mentions := 0, 0
 	err := filepath.WalkDir(filepath.Join(root, envDir), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".tf") {
+		switch {
+		case d.IsDir() && d.Name() == ".terraform":
+			return filepath.SkipDir
+		case d.IsDir():
+			return nil
+		case d.Type()&fs.ModeSymlink != 0:
+			return xerrors.Wrapf(errTerraform, "%s: symlink は読みません", path)
+		case strings.HasSuffix(path, ".tf.json"):
+			return xerrors.Wrapf(errTerraform, "%s: JSON の構成は読みません", path)
+		case !strings.HasSuffix(path, ".tf"):
 			return nil
 		}
-		found, err := moduleEnvs(path, target)
+		found, mentioned, err := moduleEnvs(path, target)
 		if err != nil {
 			return err
 		}
+		modules += len(found)
+		mentions += mentioned
 		for _, e := range found {
 			if !seen[e] {
 				seen[e] = true
@@ -58,6 +73,9 @@ func identityEnvs(root string) ([]string, error) {
 	if err != nil {
 		return nil, xerrors.Wrapf(err, "%s の走査", envDir)
 	}
+	if modules != mentions {
+		return nil, xerrors.Wrapf(errTerraform, "%s の字面に %s が %d 回現れますが、見分けた module は %d 件です", envDir, identityUseCaseDir, mentions, modules)
+	}
 	if len(envs) == 0 {
 		return nil, xerrors.Wrapf(errNoIdentityRoot, "%s", envDir)
 	}
@@ -65,18 +83,20 @@ func identityEnvs(root string) ([]string, error) {
 	return envs, nil
 }
 
-func moduleEnvs(path, target string) ([]string, error) {
+// moduleEnvs は、見分けた module の env の値と、ソースの字面に identityUseCaseDir が現れた回数を返します。
+func moduleEnvs(path, target string) ([]string, int, error) {
 	src, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		return nil, xerrors.Wrapf(err, "%s の読み取り", path)
+		return nil, 0, xerrors.Wrapf(err, "%s の読み取り", path)
 	}
+	mentioned := bytes.Count(src, []byte(identityUseCaseDir))
 	file, diags := hclsyntax.ParseConfig(src, path, hcl.InitialPos)
 	if diags.HasErrors() {
-		return nil, xerrors.Wrapf(errTerraform, "%s: %s", path, diags.Error())
+		return nil, 0, xerrors.Wrapf(errTerraform, "%s: %s", path, diags.Error())
 	}
 	body, ok := file.Body.(*hclsyntax.Body)
 	if !ok {
-		return nil, xerrors.Wrapf(errTerraform, "%s: 本体を読めません", path)
+		return nil, 0, xerrors.Wrapf(errTerraform, "%s: 本体を読めません", path)
 	}
 	var envs []string
 	for _, block := range body.Blocks {
@@ -85,18 +105,18 @@ func moduleEnvs(path, target string) ([]string, error) {
 		}
 		source, err := literalString(block.Body, "source")
 		if err != nil {
-			return nil, xerrors.Wrapf(err, "%s の module %q", path, strings.Join(block.Labels, "."))
+			return nil, 0, xerrors.Wrapf(err, "%s の module %q", path, strings.Join(block.Labels, "."))
 		}
 		if filepath.Join(filepath.Dir(path), source) != target {
 			continue
 		}
 		env, err := literalString(block.Body, "env")
 		if err != nil {
-			return nil, xerrors.Wrapf(err, "%s の module %q", path, strings.Join(block.Labels, "."))
+			return nil, 0, xerrors.Wrapf(err, "%s の module %q", path, strings.Join(block.Labels, "."))
 		}
 		envs = append(envs, env)
 	}
-	return envs, nil
+	return envs, mentioned, nil
 }
 
 // literalString は body の属性 name を、変数も関数も使わないリテラルの文字列として読みます。
@@ -108,6 +128,9 @@ func literalString(body *hclsyntax.Body, name string) (string, error) {
 	value, diags := attr.Expr.Value(nil)
 	if diags.HasErrors() || value.Type() != cty.String || !value.IsKnown() || value.IsNull() {
 		return "", xerrors.Wrapf(errTerraform, "%s がリテラルの文字列ではありません", name)
+	}
+	if value.AsString() == "" {
+		return "", xerrors.Wrapf(errTerraform, "%s が空です", name)
 	}
 	return value.AsString(), nil
 }
