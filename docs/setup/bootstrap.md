@@ -336,18 +336,26 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
      s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration
      s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls"
    key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate"
+   plan_bucket="arn:aws:s3:::${BUCKET/-tfstate-/-tfplan-}"
    sim plan "arn:aws:s3:::${BUCKET}" $reads
    sim apply-identity "arn:aws:s3:::${BUCKET}" $reads s3:PutBucketPolicy
    sim apply-identity "$key" s3:PutObject
    sim apply-identity "$(arn plan)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
+   sim plan "$plan_bucket" $reads
+   sim plan "${plan_bucket}/pr/1/x" s3:PutObject
+   sim apply-identity "$plan_bucket" $reads s3:PutLifecycleConfiguration
    sim plan "$key" s3:PutObject
    sim plan "$(arn plan)" iam:PutRolePolicy
+   sim plan "${plan_bucket}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
+   sim plan "${plan_bucket}/x" s3:PutObject
    sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
    sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy
    sim apply "$key" s3:PutObject s3:DeleteObject
+   sim apply "$plan_bucket" s3:PutBucketPolicy s3:PutLifecycleConfiguration
+   sim apply "${plan_bucket}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
    ```
 
-   期待は順に、15行・16行・1行・2行がすべて `allowed`、続く2つがそれぞれ1行の `implicitDeny`、最後の3つが2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
+   期待は順に、15行・16行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・2行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
 
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
