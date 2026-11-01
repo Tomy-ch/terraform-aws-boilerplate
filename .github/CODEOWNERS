@@ -34,6 +34,11 @@ mise.toml                             @Tomy-ch
 .github/workflows/repo-settings-sync.yaml @Tomy-ch
 scripts/repo-settings/                    @Tomy-ch
 
+# The CI plan path (ADR-0602 決定13). Whoever changes these decides what the plan role's credentials
+# reach and whether the full plan text stays out of the public log.
+.makefiles/terraform/operation/ci.mk      @Tomy-ch
+scripts/tf-local/                         @Tomy-ch
+
 # The runner egress allowlist SSOT (bullfrog) — `make egress-apply` writes each entry out to
 # every workflow that carries the job.
 .github/egress.toml                   @Tomy-ch

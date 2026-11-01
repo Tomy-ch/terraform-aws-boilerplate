@@ -1,5 +1,5 @@
-// Package main は、人が手元から Terraform を動かす入口（.makefiles/terraform/operation/local.mk）が
-// aws と terraform に渡す値を組み立てて検証するツール。
+// Package main は、Terraform を動かす入口（人の手元の .makefiles/terraform/operation/local.mk と、
+// CI の ci.mk）が aws と terraform に渡す値を組み立てて検証するツール。
 //
 //	tf-local region <root>
 //	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
@@ -12,13 +12,21 @@
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
+//	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity> -account <id>
+//	    CI が assume する role の ARN を1行で出す
+//	tf-local oidc-sub <token-file>
+//	    GitHub Actions の OIDC token の sub を1行で出す
+//	tf-local plan-summary -exitcode <0|2> <show.json>
+//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す
+//	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
+//	    plan の出力を置く object の key を1行で出す
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-sub と plan-summary はファイルを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
-// backend block は式を持てないので、Bucket 名の規則をここに写す。正本は modules/s3 と
+// backend block は式を持てないので、Bucket 名と role 名の規則をここに写す。正本は modules/s3 と
 // usecases/state-backend で、写しのずれはテストが env/admin/identity のテストの期待値と
 // docs/setup/bootstrap.md の段1 に突き合わせて見る（ADR-0702 決定17 の但し書き）。
 // state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
@@ -60,7 +68,7 @@ var (
 	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -118,6 +126,18 @@ func run(args []string, out io.Writer, d deps) error {
 		}
 
 		value, err = planHeader(d.git)
+	case "role-arn":
+		value, err = runRoleARN(args[1:])
+	case "oidc-sub":
+		if len(args) != 2 {
+			return errUsage
+		}
+
+		value, err = oidcSub(args[1], d.readFile)
+	case "plan-summary":
+		value, err = runPlanSummary(args[1:], d.readFile)
+	case "plan-key":
+		value, err = runPlanKey(args[1:])
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
