@@ -16,3 +16,9 @@
 | --- | --- | --- |
 | [0101](0101-sse-s3-until-cmk.md) | bootstrap の段5 まで state Bucket を SSE-S3 で暗号化する | Accepted |
 | [0102](0102-no-mfa-delete-or-object-lock.md) | state Bucket に MFA delete と Object Lock を掛けない | Accepted |
+
+### 02 plan の出力
+
+| ID | タイトル | Status |
+| --- | --- | --- |
+| [0201](0201-plan-output-bucket.md) | CI の plan の出力を、保持日数で消える専用の Bucket に置く | Accepted |
