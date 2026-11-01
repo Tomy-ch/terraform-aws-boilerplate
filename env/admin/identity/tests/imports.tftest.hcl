@@ -9,10 +9,15 @@ mock_provider "aws" {
   }
 }
 
-# deployment_identity の state_bucket_arn の validation を通すため、Bucket の ARN だけ形のある値にする。
+# deployment_identity の state_bucket_arn と plan_output_bucket_arn の validation を通すため、Bucket の ARN だけ形のある値にする。
 override_resource {
   target = module.state_backend.module.s3.aws_s3_bucket.this
   values = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
+}
+
+override_resource {
+  target = module.state_backend.module.plan_output.aws_s3_bucket.this
+  values = { arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" }
 }
 
 override_resource {

@@ -19,6 +19,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | role を置くアカウントの env の token。GitHub の environment 名の前半にもなる |
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
+| `plan_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key にだけ書ける |
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -99,7 +100,7 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、CI �
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
-- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
+- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` と `plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
