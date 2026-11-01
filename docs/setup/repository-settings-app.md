@@ -25,7 +25,7 @@ ruleset の値は `.github/settings/branch-protection.json` を、environment �
    make repo-settings-drift
    ```
 
-2. ずれの1件ごとに、宣言を実態へ寄せるか、実態を宣言へ寄せるかを決める。寄せる向きが決まっていない項目（例: `copilot_code_review` と、宣言だけに在る required の context）は、その判断を持つ issue で先に決める。**決めずに次へ進まない** —— 以後は merge のたびに CI が宣言全体を適用するので、実態だけに残した値は黙って上書きされる。
+2. ずれの1件ごとに、宣言を実態へ寄せるか、実態を宣言へ寄せるかを決める。寄せる向きが決まっていない項目は、その判断を持つ issue で先に決める。**決めずに次へ進まない** —— 以後は merge のたびに CI が宣言全体を適用するので、実態だけに残した値は黙って上書きされる。
 3. 宣言を変えるなら、その Pull Request を merge する。
 
 ## 2. 初回の適用
