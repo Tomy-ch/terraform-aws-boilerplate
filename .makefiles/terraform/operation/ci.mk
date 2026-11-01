@@ -25,8 +25,8 @@ curl -fsS --retry 3 -H "Authorization: bearer $$ACTIONS_ID_TOKEN_REQUEST_TOKEN" 
 sub=$$($(call TF_LOCAL,oidc-sub "$$token")); echo "OIDC の sub: $$sub"; \
 role=$$($(call TF_LOCAL,role-arn -project $(TF_LOCAL_PROJECT) -env $(1) -role $(2) -account "$$CI_ACCOUNT_ID")); \
 creds=$$(env $$unset_env AWS_EC2_METADATA_DISABLED=true $(AWS_BIN) sts assume-role-with-web-identity --region "$$region" \
-  --role-arn "$$role" --role-session-name "gha-$$GITHUB_RUN_ID-$$GITHUB_RUN_ATTEMPT" --web-identity-token "file://$$token" \
-  --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text); \
+--role-arn "$$role" --role-session-name "gha-$$GITHUB_RUN_ID-$$GITHUB_RUN_ATTEMPT" --web-identity-token "file://$$token" \
+--query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text); \
 rm -f "$$token"; read -r key secret session <<<"$$creds"; \
 for v in "$$key" "$$secret" "$$session"; do echo "::add-mask::$$v"; done; \
 cfg="env $$unset_env $(AWS_BIN) configure set --profile $(call CI_PROFILE,$(1),$(2))"; \
@@ -46,16 +46,16 @@ region=$$($(call TF_LOCAL,region "$$dir")); export region; \
 identity=$$($(TF_LOCAL_ENV) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); export identity; \
 bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity")); \
 $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$$bucket" >> "$$out" 2>&1 \
-  || { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }; \
+|| { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }; \
 plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
-  || { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
+|| { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
 rc=0; $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan -lock=false -input=false -no-color -detailed-exitcode -out="$$tfplan" >> "$$out" 2>&1 || rc=$$?; \
 echo "plan の終了コード: $$rc"; export rc; \
 test "$$rc" = 1 || $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" show -json "$$tfplan" > "$$json" 2>> "$$out" || rc=1; \
 key=$$($(call TF_LOCAL,plan-key -pr "$$CI_PR" -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
 sha=$$(openssl dgst -sha256 -binary "$$out" | base64); echo "plan の全文: key=$$key sha256=$$sha"; \
 version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
-  --checksum-sha256 "$$sha" --expected-bucket-owner "$${identity%%[[:space:]]*}" --query VersionId --output text); \
+--checksum-sha256 "$$sha" --expected-bucket-owner "$${identity%%[[:space:]]*}" --query VersionId --output text); \
 echo "plan の全文の版 ID: $$version"; rm -f "$$tfplan" "$$out"; \
 test "$$rc" != 1 || { echo "❌ plan が失敗しました。全文は上の key にあります" >&2; exit 1; }; \
 summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")); echo "$$summary"; \
