@@ -21,3 +21,10 @@ misconfigurations:
       ADR-0602 決定5・8）。CMK は段5 で作るので、段2 で import する構成は KMS を持てない。
       撤回条件: #19 の段5 で modules/s3 を SSE-KMS に切り替えたとき。それより前に state-backend
       以外の usecase がこの module を使う場合は、その変更の中でこの抑止を見直す。
+  - id: AWS-0132
+    paths:
+      - "usecases/state-backend/internal/plan-output/encryption.tf"
+    statement: |
+      理由の正本は usecases/state-backend/docs/adr/0201-plan-output-bucket.md（Checkov の CKV_AWS_145 の抑止と同じ）。
+      plan の出力の Bucket は段4 で作り、state Bucket と同じく段5 まで SSE-S3 で暗号化する。
+      撤回条件: 段5 でこの Bucket を SSE-KMS に切り替えたとき。

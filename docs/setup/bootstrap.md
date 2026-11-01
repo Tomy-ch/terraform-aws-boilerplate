@@ -240,9 +240,10 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 14 to add, 0 to change, 0 to destroy.` であり、追加が次の14件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 5 to import, 21 to add, 0 to change, 0 to destroy.` であり、追加が次の21件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
    - `module.state_backend.module.s3.aws_s3_bucket_policy.this`
+   - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
    - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
 3. Bucket に Policy がまだ無いことを確かめる。段4 の apply は、在る Policy を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
@@ -390,7 +391,7 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 14 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の14件だけだった
+- [ ] `make plan-admin-identity` が `5 to import, 21 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の21件だけだった
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
