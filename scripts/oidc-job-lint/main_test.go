@@ -18,65 +18,69 @@ const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-ap
 
 var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity"}
 
-const planWorkflow = `name: Terraform Gates
+var planWorkflow = strings.Join([]string{
+	"name: Terraform Gates",
+	"",
+	"on:",
+	"  pull_request:",
+	"",
+	"permissions:",
+	"  contents: read",
+	"",
+	"jobs:",
+	"  infra-code-gate:",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - run: make infra-code-gate",
+	"",
+	"  plan-admin-identity:",
+	"    needs: infra-code-gate",
+	"    runs-on: ubuntu-24.04",
+	"    environment: admin-plan",
+	"    permissions:",
+	"      contents: read",
+	"      id-token: write",
+	"    steps:",
+	"      - name: Refuse untrusted Pull Requests",
+	"        id: refuse-untrusted",
+	"        run: test \"$HEAD_REPO_ID\" = \"$REPO_ID\"",
+	"      - name: Run terraform plan through make",
+	"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host",
+	"      - uses: ./.github/actions/setup-mise",
+	"        with:",
+	"          tools: aqua:hashicorp/terraform",
+	"      - run: make ci-plan-admin-identity RUNNER_MODE=host",
+	"",
+}, "\n")
 
-on:
-  pull_request:
-
-permissions:
-  contents: read
-
-jobs:
-  infra-code-gate:
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - run: make infra-code-gate
-
-  plan-admin-identity:
-    needs: infra-code-gate
-    runs-on: ubuntu-24.04
-    environment: admin-plan
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Refuse untrusted Pull Requests
-        id: refuse-untrusted
-        run: test "$HEAD_REPO_ID" = "$REPO_ID"
-      - name: Run terraform plan through make
-        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
-      - uses: ./.github/actions/setup-mise
-        with:
-          tools: aqua:hashicorp/terraform
-      - run: make ci-plan-admin-identity RUNNER_MODE=host
-`
-
-const applyWorkflow = `name: Terraform Apply
-
-on:
-  push:
-    branches: [release/v0.1.0]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  apply-admin-identity:
-    runs-on: ubuntu-24.04
-    environment:
-      name: admin-apply-identity
-    concurrency:
-      group: admin-identity
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host
-`
+var applyWorkflow = strings.Join([]string{
+	"name: Terraform Apply",
+	"",
+	"on:",
+	"  push:",
+	"    branches: [release/v0.1.0]",
+	"  workflow_dispatch:",
+	"",
+	"permissions:",
+	"  contents: read",
+	"",
+	"jobs:",
+	"  apply-admin-identity:",
+	"    runs-on: ubuntu-24.04",
+	"    environment:",
+	"      name: admin-apply-identity",
+	"    concurrency:",
+	"      group: admin-identity",
+	"      cancel-in-progress: false",
+	"    permissions:",
+	"      contents: read",
+	"      id-token: write",
+	"    steps:",
+	"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host",
+	"",
+}, "\n")
 
 func repoWith(t *testing.T, workflows map[string]string, decl string) (string, string) {
 	t.Helper()
