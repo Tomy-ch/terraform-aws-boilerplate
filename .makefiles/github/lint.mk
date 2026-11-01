@@ -8,6 +8,7 @@
 ##   shell-lint              ファイルとして置かれた *.sh
 ##   required-check-lint     保護設定が required とした context の報告 job の実在と、起動条件
 ##   tf-job-lint             credentials を持たずに terraform を走らせる job の権限・checkout・uses:（ADR-0103 決定11）
+##   oidc-job-lint           OIDC で role を assume する job の environment・役割・起動条件（ADR-0602 決定12-14）
 ##   zizmor                  template injection。${{ }} はシェルがパースする**前**に置換されるため、
 ##                           補間された式は文字列ではなくコードになる。shellcheck 系には構造的に見えない
 
@@ -33,6 +34,10 @@ required-check-lint:
 .PHONY: tf-job-lint ## credentials を持たずに terraform を走らせる job の権限・checkout・uses: を検査
 tf-job-lint:
 	@$(call RUN_SCRIPT,tf-job-lint,)
+
+.PHONY: oidc-job-lint ## OIDC で role を assume する job の environment・役割・起動条件を検査
+oidc-job-lint:
+	@$(call RUN_SCRIPT,oidc-job-lint,)
 
 .PHONY: pr-comment-secret-lint ## PR へコメントする job に GITHUB_TOKEN 以外の secret を渡していないか検査
 pr-comment-secret-lint:
