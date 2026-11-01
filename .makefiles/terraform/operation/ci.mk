@@ -2,6 +2,7 @@
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
+## plan には ADR-0604 決定11 の Policy（plan.stateful_protection）を掛ける。
 ## 公開されるログに terraform の出力を出さない。全文は plan の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID だけを出す（ADR-0602 決定13）。apply の口は持たない（#205）。
 ##
@@ -59,6 +60,8 @@ version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --buc
 echo "plan の全文の版 ID: $$version"; rm -f "$$tfplan" "$$out"; \
 test "$$rc" != 1 || { echo "❌ plan が失敗しました。全文は上の key にあります" >&2; exit 1; }; \
 summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")); echo "$$summary"; \
+$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color --namespace plan.stateful_protection --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" \
+|| { echo "❌ 保護の対象の削除か置換が、許可の宣言に無いまま plan にあります（ADR-0604 決定11・12）" >&2; exit 1; }; \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
 endef
 

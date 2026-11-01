@@ -843,6 +843,7 @@ func TestCiMk(t *testing.T) {
 		assert.Contains(t, got, `show -json "$tfplan" > "$json" 2>> "$out"`)
 		assert.Contains(t, got, `--checksum-sha256 "$sha"`)
 		assert.Contains(t, got, `plan-summary -exitcode "$rc" "$json"`)
+		assert.Contains(t, got, `conftest test --combine --no-color --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json"`)
 		assert.NotContains(t, got, `tee "$log"`)
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
