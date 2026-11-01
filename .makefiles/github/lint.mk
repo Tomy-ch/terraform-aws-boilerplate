@@ -13,7 +13,7 @@
 ##                           補間された式は文字列ではなくコードになる。shellcheck 系には構造的に見えない
 
 .PHONY: actions-lint ## GitHub Actions の定義を検査（actionlint + composite + シェル）
-actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint tf-job-lint
+actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint tf-job-lint oidc-job-lint
 
 .PHONY: actionlint ## workflow の構文と run: のシェルを検査
 actionlint:

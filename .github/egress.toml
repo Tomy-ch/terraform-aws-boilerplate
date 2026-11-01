@@ -92,6 +92,20 @@ hosts = [
   "api.deps.dev",
 ]
 
+[class.aws]
+# OIDC で role を assume し、AWS の API を呼ぶ job（ADR-0602 決定12）。region は env/*/providers.tf の
+# region に合わせる。iam は global の endpoint だけを持つ。
+# S3 の Bucket の名前はアカウント ID を含み、公開の宣言に置けないので、virtual-hosted-style の endpoint を
+# wildcard で許す。blob / R2 の wildcard を退けた理由（誰でも作れる置き場への持ち出し口）はここにも
+# 当たるが、bullfrog は名前解決の結果の IP で判定するので、正確な名前を書いても持ち出し口は狭まらない。
+# 外す条件は、Bucket を path-style で呼ぶか、bullfrog が名前そのもので判定するようになること。
+hosts = [
+  "sts.ap-northeast-1.amazonaws.com",
+  "iam.amazonaws.com",
+  "s3.ap-northeast-1.amazonaws.com",
+  "*.s3.ap-northeast-1.amazonaws.com",
+]
+
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
 
@@ -238,6 +252,9 @@ classes = ["terraform"]
 # conftest は GitHub Release から入る。Rego と宣言はリポジトリ内に在り、実行時に取りに行かない。
 [job."terraform-gates.yaml:infra-code-gate"]
 classes = ["mise"]
+
+[job."terraform-gates.yaml:plan-admin-identity"]
+classes = ["terraform", "aws"]
 
 [job."trivy-config.yaml:changes"]
 classes = []

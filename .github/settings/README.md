@@ -80,6 +80,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
+| plan（ADR-0603 決定12-14 の例外） | `plan-admin-identity`。AWS の状態と資格情報の取得に依存し、変更に誤りが無くても赤になりうる。fork と Dependabot の Pull Request では拒否の step で失敗するので、それらは merge できない |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**
 GitHub は報告の無い check を「該当しない」とは読まず待ち続け、その pull request は恒久的に

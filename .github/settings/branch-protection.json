@@ -102,6 +102,9 @@
             "context": "pin-runners-check"
           },
           {
+            "context": "plan-admin-identity"
+          },
+          {
             "context": "repo-settings-check"
           },
           {
