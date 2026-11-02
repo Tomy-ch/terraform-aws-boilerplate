@@ -19,8 +19,8 @@
 //   - plan の job は、workflow の起動が pull_request だけで、`needs` に infra-code-gate を持ち（ADR-0601 決定9）、
 //     id が refuse-untrusted で if: を持たない step を資格情報の取得より前に置き（ADR-0602 決定14）、
 //     terraform を `make ci-plan-*` でだけ走らせる（lock を取らない経路。ADR-0604 決定8）
-//   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで、cancel-in-progress: false の
-//     concurrency を持つ（ADR-0601 決定3-5）
+//   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
+//     cancel-in-progress: false の concurrency を持つ —— 後から起動した run が、実行中の apply を途中で止めない
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
