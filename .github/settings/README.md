@@ -41,7 +41,8 @@
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
 - 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
-- 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。承認者を置かないのは単独メンテナで承認できる人が自分しかいないためで、ADR-0601 決定7 が任意とする機構を使わない選択です。
+- 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
+  - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
 - `copilot` は Copilot coding agent が作る environment です。宣言に含め、管理者の迂回を無効にします。
 - `can_admins_bypass` は GitHub の REST の文書に載っていない値です。適用はこれを送り、突合は応答の値を見ます。適用の後も突合が「迂回が有効」と報告するなら、environment の設定画面で "Allow administrators to bypass configured protection rules" を外してください。
 
