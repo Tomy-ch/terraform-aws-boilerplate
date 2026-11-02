@@ -13,7 +13,7 @@ import (
 
 const (
 	account   = "123456789012"
-	immutable = "repo:Tomy-ch@182787471/terraform-aws-boilerplate@1370808564:environment:admin-plan"
+	immutable = "repo:octo-org@123456/octo-repo@456789:environment:admin-plan"
 )
 
 func jwtWith(payload string) string {
