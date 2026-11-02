@@ -4,7 +4,7 @@
 ## terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## plan には ADR-0604 決定11 の Policy（plan.stateful_protection）を掛ける。
 ## 公開されるログに terraform の出力を出さない。全文は plan の出力の Bucket に置き、ログには終了コード・
-## 件数・object の key・SHA-256・版 ID だけを出す（ADR-0602 決定13）。apply の口は持たない（#205）。
+## 件数・object の key・SHA-256・版 ID だけを出す（ADR-0602 決定13）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の

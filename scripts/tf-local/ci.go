@@ -13,8 +13,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// CI の plan の経路（.makefiles/terraform/operation/ci.mk）が使うサブコマンド。公開されるログに出るので、
-// エラーの文に入力の値（アカウント ID、token、Bucket の key）を入れない。
+// このファイルのサブコマンドは、エラーの文が公開されるログに出るので、入力の値（アカウント ID、token、
+// Bucket の key）を入れない。
 
 // roleFormat は、usecases/deployment-identity の role 名 `<project>-<env>-ci-<役割>` の写し。
 const roleFormat = "arn:aws:iam::%s:role/%s-%s-ci-%s"

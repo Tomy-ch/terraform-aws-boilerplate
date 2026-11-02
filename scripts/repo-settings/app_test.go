@@ -39,7 +39,6 @@ func pkcs1PEM() string {
 
 func fixedNow() time.Time { return time.Unix(1_700_000_000, 0) }
 
-// appRoutes は installation の確認と token の発行と、token が届くリポジトリの一覧を返す GitHub。
 func appRoutes(t *testing.T) map[string]fakeResponse {
 	t.Helper()
 	routes := liveRoutes(t)

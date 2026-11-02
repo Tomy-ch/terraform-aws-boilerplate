@@ -5,9 +5,6 @@ name: Repo Settings Sync
 # 書き込みは .github/settings/github-app.json の App の installation token で行う。GITHUB_TOKEN には
 # Administration の権限が無い。App の秘密鍵は environment repo-settings（保護ブランチだけ）の secret に
 # 置き、job の if: で既定ブランチの run に限る —— 宣言の正本は既定ブランチの宣言1つである。
-# 書き込みの前に App の権限と対象リポジトリを宣言と突き合わせ、ずれていれば何も書かない。
-# 書き込みの後に ruleset を App の token で、environment を GITHUB_TOKEN で読み直し、最後に
-# 読み取りの token だけで突合する。
 
 on:
   push:

@@ -418,8 +418,7 @@ jobs:
       - name: Run the Terraform gates' own tests
         run: make tf-gates-test RUNNER_MODE=host
 
-  # No path filter: the declaration, the Rego, the ADRs and the code-owner declaration all change the verdict.
-  # Why: README.md の「必須検査はすべての Pull Request で報告される」.
+  # path で絞らない: README.md の「インフラ内コードの検出への依存」.
   infra-code-gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -485,8 +484,7 @@ jobs:
       - name: Detect infrastructure code
         run: make infra-code-gate RUNNER_MODE=host
 
-  # 管理アカウントの identity root の plan（ADR-0602 決定13-14、ADR-0601 決定9）。path で skip しない。
-  # 全文は plan の出力の Bucket に置き、公開されるログには要約だけを出す（.makefiles/terraform/operation/ci.mk）。
+  # 管理アカウントの identity root の plan。規則は README.md の「plan の job」.
   plan-admin-identity:
     needs: infra-code-gate
     if: ${{ needs.infra-code-gate.result == 'success' }}

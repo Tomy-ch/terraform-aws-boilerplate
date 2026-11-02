@@ -1,4 +1,4 @@
-# import block の取り込み先と id は見ない。terraform test には検査の手段が無く、段2 の plan だけが見る。
+# import block の取り込み先と id は見ない（usecases/state-backend/README.md「検証方法」の段2 の突合）。
 # mock の provider からは import できないので、取り込み先をすべて override する。
 mock_provider "aws" {
   mock_data "aws_caller_identity" {

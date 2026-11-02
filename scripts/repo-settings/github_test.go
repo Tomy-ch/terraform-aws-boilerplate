@@ -360,7 +360,6 @@ func Test_fetchEnvironments(t *testing.T) {
 			CanAdminsBypass: boolPtr(false), Reviewers: 2, WaitTimer: 3,
 			Policy: &customOnly, Patterns: map[string]int64{"main": 5},
 		}, got["a-plan"])
-		// custom でない environment には一覧を問わない。
 		assert.Equal(t, liveEnv{Policy: &branchPolicy{ProtectedBranches: true}}, got["copilot"])
 	})
 

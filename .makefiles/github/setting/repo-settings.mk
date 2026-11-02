@@ -1,10 +1,8 @@
 ## リポジトリの保護設定（ruleset と environment）の宣言・適用・突合
 ##
-## 判定は scripts/repo-settings が持つ。宣言は .github/settings/ の branches.json /
-## environments.json / branch-protection.json。apply-* は GitHub の実態を書き換えるので、
-## 管理者の資格情報を持つ人が実行する（初回と回復）。以後の適用は CI の repo-settings-sync が
-## github-app.json の App の token で行う（ADR-0603 決定30）。突合（drift）は読み取りの権限だけで
-## 動く（ADR-0603 決定6）。
+## 判定は scripts/repo-settings が持つ。apply-* は GitHub の実態を書き換えるので、管理者の資格情報を
+## 持つ人が実行する（初回と回復）。*-app は App の token を使う（ADR-0603 決定30）。突合（drift）は
+## 読み取りの権限だけで動く（ADR-0603 決定6）。
 .PHONY: repo-settings-apply ## branches.json から branch-protection.json の include を生成
 .PHONY: repo-settings-check ## 保護設定の宣言が整合しているか検証（書き換えなし・CI/hook用）
 .PHONY: repo-settings-drift ## 保護設定の宣言と GitHub の実態を突き合わせる（読み取りのみ）

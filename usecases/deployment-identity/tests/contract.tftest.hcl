@@ -1,4 +1,4 @@
-# 公開 output の名前と、それが返す値の配線を固定する。変えるなら公開契約の変更として扱う（ADR-0202 決定4）。
+# 公開 output の名前と、それが返す値の配線を固定する（ADR-0202 決定4）。
 mock_provider "aws" {}
 
 variables {
@@ -27,7 +27,7 @@ run "outputs" {
   }
 }
 
-# project・env・2つの Bucket の ARN が内部の module へ取り違えずに渡ることを、admin でない値で見る。
+# 取り違えが見えるよう、上の admin とは別の値を渡す。
 run "wiring" {
   command = apply
 
