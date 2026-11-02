@@ -27,7 +27,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 4. OIDC provider の audience は `sts.amazonaws.com` の1つに限り、`thumbprint_list` を設定しない。
 5. 旧形式の `sub` と GitHub Enterprise Server を扱わない（`README.md` の unsupported）。
 6. deployment branch policy は `GITHUB_REF` に対して照合され、Pull Request を契機とする job の ref は `refs/pull/<番号>/merge` である（GitHub の文書）。plan の environment は保護ブランチに加えてこの ref を許し、apply と apply-identity の environment は許さない。environment の宣言は、保護設定の宣言（repository-wide/ADR-0603 (branch-protection-and-required-checks) 決定4）が持つ。
-7. environment 形式の `sub` の形（決定2）は、旧形式の environment 形式と、immutable 形式の `ref` 形式の例からの推論であり、実 token の claim で確かめるまで仮説として扱う。確かめた claim は本 ADR に記録する。
+7. 実 token の `sub` は決定2 の environment 形式をとる。信頼条件は `StringEquals` で完全一致を見るため、形が異なれば CI の assume が失敗し、その role を使う job は失敗する。この形の検査は、その assume の成否が持つ。
 
 ## 検討した代替案
 
@@ -63,7 +63,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 ## 保証範囲
 
 - 保証すること: 信頼条件の文書が、入力から決定2 の形に組まれること（Unit Test）
-- 保証しないこと: 決定2 の `sub` の形が実 token と一致すること（決定7 の確認まで）
+- 保証しないこと: 決定2 の `sub` の形が実 token と一致すること（Unit Test では見えない。不一致は決定7 の assume の失敗として現れる）
 
 ## 検証方法
 
