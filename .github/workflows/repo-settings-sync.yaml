@@ -1,0 +1,100 @@
+name: Repo Settings Sync
+
+# 保護設定（ruleset と environment）を宣言から適用する（ADR-0603 決定30）。
+#
+# 書き込みは .github/settings/github-app.json の App の installation token で行う。GITHUB_TOKEN には
+# Administration の権限が無い。App の秘密鍵は environment repo-settings（保護ブランチだけ）の secret に
+# 置き、job の if: で既定ブランチの run に限る —— 宣言の正本は既定ブランチの宣言1つである。
+# 書き込みの前に App の権限と対象リポジトリを宣言と突き合わせ、ずれていれば何も書かない。
+# 書き込みの後に ruleset を App の token で、environment を GITHUB_TOKEN で読み直し、最後に
+# 読み取りの token だけで突合する。
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  repo-settings-sync:
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: repo-settings
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      - name: Apply the settings declarations with the App
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO_SETTINGS_APP_PRIVATE_KEY: ${{ secrets.REPO_SETTINGS_APP_PRIVATE_KEY }}
+        run: make repo-settings-sync-app RUNNER_MODE=host
+
+  # See README.md の「通知の起動条件」.
+  notify-failure:
+    needs: repo-settings-sync
+    if: ${{ always() && contains(fromJSON('["failure", "cancelled"]'), needs.repo-settings-sync.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: repo-settings-sync
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

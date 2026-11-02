@@ -46,6 +46,7 @@ include .makefiles/terraform/infra-code.mk
 include .makefiles/terraform/infra-code-test.mk
 include .makefiles/terraform/policy.mk
 include .makefiles/terraform/operation/local.mk
+include .makefiles/terraform/operation/ci.mk
 # Docker関連
 include .makefiles/docker/lint.mk
 include .makefiles/docker/pin.mk

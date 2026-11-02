@@ -25,7 +25,7 @@
     {
       "type": "pull_request",
       "parameters": {
-        "required_approving_review_count": 0,
+        "required_approving_review_count": 1,
         "dismiss_stale_reviews_on_push": true,
         "required_reviewers": [],
         "require_code_owner_review": true,
@@ -93,6 +93,9 @@
           },
           {
             "context": "pin-runners-check"
+          },
+          {
+            "context": "plan-admin-identity"
           },
           {
             "context": "repo-settings-check"

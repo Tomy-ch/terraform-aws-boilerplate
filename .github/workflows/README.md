@@ -61,6 +61,20 @@ skip が誰も稼いでいない緑を必須 context へ渡し、**フィルタ�
 落ちても credentials を伴う job が走る。検出の job は path で絞らない。判定を変える入力（宣言、Rego、
 ADR、code owner の宣言）が広く、skip された required check は成功として数えられるためである。
 
+### plan の job
+
+`terraform-gates.yaml` の `plan-admin-identity` は、environment `admin-plan` の下で OIDC により plan の
+role を assume し（ADR-0602 決定14）、管理アカウントの identity root を plan する。path で絞らない
+—— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
+
+- **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
+  には終了コード・件数・object の key・SHA-256・版 ID だけを出す（ADR-0602 決定13、
+  `.makefiles/terraform/operation/ci.mk`）。全文は AWS の認証を経て読む
+- **fork・Dependabot の Pull Request では、資格情報を取る前の step で失敗する。** skip にしない
+  （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
+  この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
+- job の形（environment、取る role、起動条件、拒否の step、terraform の経路）は `make oidc-job-lint` が見る
+
 ## 結果コメント
 
 Pull Request のコメントは、**検査が報告すべきことを持っているときにだけ作られる。** 通った検査が
@@ -118,7 +132,7 @@ truthy 側へ置く。
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
-| `repo-settings.yaml` の2 job | 15 | 同上（新設） |
+| `repo-settings.yaml` の2 job、`repo-settings-sync.yaml:repo-settings-sync` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、
@@ -152,7 +166,8 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
 failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
 code scanning の alert である。`repo-settings.yaml` の突合も failure モードだけを持つ —— ずれで
-job を落とすので、failure モードがそれを届ける。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
+job を落とすので、failure モードがそれを届ける。`repo-settings-sync.yaml` の適用は push と手動で
+起動するが、同じく failure モードを繋ぐ —— merge の後の失敗を、merge した作者はもう見ていない。`trivy-license` は誰もまだ問題だと合意していないライセンスを報告するため、
 意図的に繋いでいない。
 
 ## Go のクールダウン

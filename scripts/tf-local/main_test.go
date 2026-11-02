@@ -116,6 +116,40 @@ func Test_run(t *testing.T) {
 			require.NoError(t, run([]string{"plan-header"}, &out, testDeps(nil)))
 			assert.Equal(t, "commit: "+commitSHA+"\n", out.String())
 		})
+
+		t.Run("role-arn は role の ARN を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			args := []string{"role-arn", "-project", "tabp", "-env", "admin", "-role", "plan", "-account", "123456789012"}
+			require.NoError(t, run(args, &out, testDeps(nil)))
+			assert.Equal(t, "arn:aws:iam::123456789012:role/tabp-admin-ci-plan\n", out.String())
+		})
+
+		t.Run("oidc-sub は sub を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"oidc-sub", fileWith(t, jwtWith(`{"sub":"`+immutable+`"}`))}, &out, testDeps(nil)))
+			assert.Equal(t, immutable+"\n", out.String())
+		})
+
+		t.Run("plan-summary は要約を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			path := fileWith(t, planWith(change("a.b", `"create"`), ""))
+			require.NoError(t, run([]string{"plan-summary", "-exitcode", "2", path}, &out, testDeps(nil)))
+			assert.Equal(t, "Plan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n", out.String())
+		})
+
+		t.Run("plan-key は key を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"plan-key", "-pr", "1", "-run", "2", "-attempt", "3", "-root", "admin-identity"}, &out, testDeps(nil)))
+			assert.Equal(t, "pr/1/2-3-admin-identity.txt\n", out.String())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -128,6 +162,8 @@ func Test_run(t *testing.T) {
 			"region に余分な引数があれば失敗する":   {"region", "a", "b"},
 			"env-unset に引数があれば失敗する":   {"env-unset", "x"},
 			"plan-header に引数があれば失敗する": {"plan-header", "x"},
+			"oidc-sub にファイルが無ければ失敗する": {"oidc-sub"},
+			"oidc-sub に余分な引数があれば失敗する": {"oidc-sub", "a", "b"},
 		}
 		for name, args := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -772,5 +808,55 @@ func TestLocalMk(t *testing.T) {
 
 		got := expand(t, "aws-login")
 		assert.Contains(t, got, "env $unset_env aws login --profile tabp-bootstrap")
+	})
+}
+
+// TestCiMk は、ci.mk のレシピが CI の profile で plan し、terraform の出力を公開されるログに出さない
+// 配線を、make -n の展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
+func TestCiMk(t *testing.T) {
+	t.Parallel()
+
+	expand := func(t *testing.T, target string) string {
+		t.Helper()
+
+		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target)
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+		})
+
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+
+		return string(out)
+	}
+
+	const envPrefix = "env $unset_env AWS_PROFILE=tabp-admin-ci-plan TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
+
+	t.Run("plan は CI の profile だけで、lock を取らずに走り、terraform の出力をファイルへ書く", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "ci-plan-admin-identity")
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
+		assert.NotContains(t, got, "AWS_PROFILE=tabp-bootstrap")
+		assert.Contains(t, got, envPrefix+" terraform -chdir=\"$dir\" init -input=false -no-color -lockfile=readonly")
+		assert.Contains(t, got, `plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1`)
+		assert.Contains(t, got, `show -json "$tfplan" > "$json" 2>> "$out"`)
+		assert.Contains(t, got, `--checksum-sha256 "$sha"`)
+		assert.Contains(t, got, `plan-summary -exitcode "$rc" "$json"`)
+		assert.Contains(t, got, `conftest test --combine --no-color --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json"`)
+		assert.NotContains(t, got, `tee "$log"`)
+		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
+	})
+
+	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "ci-aws-credentials")
+		assert.Equal(t, 1, strings.Count(got, "assume-role-with-web-identity"), got)
+		assert.Contains(t, got, "audience=sts.amazonaws.com")
+		assert.Contains(t, got, "role-arn -project tabp -env admin -role plan")
+		assert.Contains(t, got, `rm -f "$token"`)
+		assert.Contains(t, got, "configure set --profile tabp-admin-ci-plan")
+		assert.NotContains(t, got, "AWS_ACCESS_KEY_ID")
 	})
 }

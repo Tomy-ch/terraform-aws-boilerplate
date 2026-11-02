@@ -240,9 +240,10 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 14 to add, 0 to change, 0 to destroy.` であり、追加が次の14件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 5 to import, 21 to add, 0 to change, 0 to destroy.` であり、追加が次の21件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
    - `module.state_backend.module.s3.aws_s3_bucket_policy.this`
+   - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
    - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
 3. Bucket に Policy がまだ無いことを確かめる。段4 の apply は、在る Policy を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
@@ -335,18 +336,26 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
      s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration
      s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls"
    key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate"
+   plan_bucket="arn:aws:s3:::${BUCKET/-tfstate-/-tfplan-}"
    sim plan "arn:aws:s3:::${BUCKET}" $reads
    sim apply-identity "arn:aws:s3:::${BUCKET}" $reads s3:PutBucketPolicy
    sim apply-identity "$key" s3:PutObject
    sim apply-identity "$(arn plan)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
+   sim plan "$plan_bucket" $reads
+   sim plan "${plan_bucket}/pr/1/x" s3:PutObject
+   sim apply-identity "$plan_bucket" $reads s3:PutLifecycleConfiguration
    sim plan "$key" s3:PutObject
    sim plan "$(arn plan)" iam:PutRolePolicy
+   sim plan "${plan_bucket}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
+   sim plan "${plan_bucket}/x" s3:PutObject
    sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
    sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy
    sim apply "$key" s3:PutObject s3:DeleteObject
+   sim apply "$plan_bucket" s3:PutBucketPolicy s3:PutLifecycleConfiguration
+   sim apply "${plan_bucket}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
    ```
 
-   期待は順に、15行・16行・1行・2行がすべて `allowed`、続く2つがそれぞれ1行の `implicitDeny`、最後の3つが2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
+   期待は順に、15行・16行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・2行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
 
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
@@ -390,7 +399,7 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 14 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の14件だけだった
+- [ ] `make plan-admin-identity` が `5 to import, 21 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の21件だけだった
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 

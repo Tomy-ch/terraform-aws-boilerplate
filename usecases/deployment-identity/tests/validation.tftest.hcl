@@ -1,20 +1,22 @@
 mock_provider "aws" {}
 
 variables {
-  project          = "tabp"
-  env              = "admin"
-  github           = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
-  state_bucket_arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  project                = "tabp"
+  env                    = "admin"
+  github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
+  state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
 run "accepts_boundary_inputs" {
   command = plan
 
   variables {
-    project          = "abcdefghijklmnopqrstuvwxyz012345678901"
-    env              = "sandbox"
-    github           = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
-    state_bucket_arn = "arn:aws-cn:s3:::tabp-sandbox-tfstate-123456789012-cn-north-1-an"
+    project                = "abcdefghijklmnopqrstuvwxyz012345678901"
+    env                    = "sandbox"
+    github                 = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
+    state_bucket_arn       = "arn:aws-cn:s3:::tabp-sandbox-tfstate-123456789012-cn-north-1-an"
+    plan_output_bucket_arn = "arn:aws-cn:s3:::tabp-sandbox-tfplan-123456789012-cn-north-1-an"
   }
 
   assert {
@@ -165,6 +167,26 @@ run "rejects_trailing_slash_in_bucket_arn" {
   }
 
   expect_failures = [var.state_bucket_arn]
+}
+
+run "rejects_non_s3_plan_output_arn" {
+  command = plan
+
+  variables {
+    plan_output_bucket_arn = "arn:aws:iam::123456789012:role/x"
+  }
+
+  expect_failures = [var.plan_output_bucket_arn]
+}
+
+run "rejects_object_arn_as_plan_output_bucket" {
+  command = plan
+
+  variables {
+    plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*"
+  }
+
+  expect_failures = [var.plan_output_bucket_arn]
 }
 
 run "rejects_wildcard_in_owner" {

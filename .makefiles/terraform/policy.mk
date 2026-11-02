@@ -79,7 +79,7 @@ endef
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
-	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}}}' > "$$root/data.json"; \
+	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket"], "allow": {}}}}' > "$$root/data.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
 		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" "$$@" 2>&1); rc=$$?; \

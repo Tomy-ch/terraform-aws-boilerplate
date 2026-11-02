@@ -22,3 +22,8 @@ variable "state_bucket_arn" {
   description = "state Bucket の ARN。S3 の Action の Resource をこの Bucket と、その state の key に絞る。"
   type        = string
 }
+
+variable "plan_output_bucket_arn" {
+  description = "plan の出力の Bucket の ARN。plan の role の書き込みと、Bucket の設定の Resource をこの Bucket に絞る。"
+  type        = string
+}

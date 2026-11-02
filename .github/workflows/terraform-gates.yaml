@@ -484,3 +484,99 @@ jobs:
 
       - name: Detect infrastructure code
         run: make infra-code-gate RUNNER_MODE=host
+
+  # 管理アカウントの identity root の plan（ADR-0602 決定13-14、ADR-0601 決定9）。path で skip しない。
+  # 全文は plan の出力の Bucket に置き、公開されるログには要約だけを出す（.makefiles/terraform/operation/ci.mk）。
+  plan-admin-identity:
+    needs: infra-code-gate
+    if: ${{ needs.infra-code-gate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+
+      # skip ではなく失敗にする（ADR-0602 決定14）。fork と Dependabot の run は secret を受けない。
+      - name: Refuse untrusted Pull Requests
+        id: refuse-untrusted
+        env:
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          REPO_ID: ${{ github.repository_id }}
+          ACTOR: ${{ github.actor }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          test "$HEAD_REPO_ID" = "$REPO_ID" || { echo "❌ fork からの Pull Request では plan の role を assume しません"; exit 1; }
+          test "$ACTOR" != "dependabot[bot]" || { echo "❌ Dependabot の Pull Request では plan の role を assume しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Plan the identity root
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          CI_PR: ${{ github.event.pull_request.number }}
+        run: make ci-plan-admin-identity RUNNER_MODE=host

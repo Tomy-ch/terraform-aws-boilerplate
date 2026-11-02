@@ -8,7 +8,7 @@
 
 policy の文書が参照する ARN は、`override_resource`（`override_during = plan`）で instance ごとに与える。与えないと文書が plan で unknown になり、`[PLAN-INPUT-04]` で落ちる。
 
-`env/` の root は入力にしない。資格情報なしでは plan できないためで、実 provider の plan は CI の plan の経路（#185）が `terraform show -json` で与える。それまで `env/admin/identity` の値は Policy Test の外にある。
+`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan の経路（`.makefiles/terraform/operation/ci.mk`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection` だけを掛ける。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。
 
 入力は `tmp/tf-policy/` に書かれる。mock の値だけを含む。`make tf-policy` も CI の `tf-policy` job も、これを artifact や Pull Request のコメントへ出さない。
 
@@ -22,6 +22,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 | `documents` | policy の文書として読む resource の型と属性。表に無い型の文書は読まない。mock provider は表に無い computed な属性にも乱数を入れるので、属性の名前だけでは拾わない |
 | `required_documents` | 入力のどこかに必ず現れる型。現れなければ `[PLAN-INPUT-07]` で落ちる。表から型が消えても黙らないための宣言 |
 | `deployment_identity` | 信頼条件を見る role と OIDC provider の address。index key を除いた形で書く。宣言した role が入力に無ければ `[PLAN-TRUST-00]` で落ちる |
+| `stateful_protection` | 削除と置換から守る resource の型（`protected_types`。`aws_s3_bucket` を必ず含む）と、root ごとの意図した削除と置換の許可（`allow`。root の名前をキーに、`address` と空でない `reason` の並び）。root の名前は入力のファイル名から `.json` を除いたもの。形が崩れれば `[PLAN-STATE-00]` で落ちる |
 
 宣言そのものが欠けたり形が違ったりすれば `[PLAN-DATA-01]` で落ちる。
 
@@ -31,6 +32,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 | --- | --- | --- |
 | `plan.input` | `PLAN-DATA-01`、`PLAN-INPUT-*` | 宣言の欠落、入力が0件、形の版が違う、`resource_changes` が空か配列でない、文書が unknown、文書が JSON として読めない、文書が IAM の policy 文書の形でない、必須の型が無い、変更の要素の形が違う |
 | `plan.iam_action_wildcard` | `PLAN-IAM-*` | Allow の statement の Action の `*`・`<service>:*`（大文字小文字を区別しない。[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と、同じ効果を持つ `NotAction`。Deny と部分 wildcard は見ない |
+| `plan.stateful_protection` | `PLAN-STATE-*` | 保護の対象の型の削除と置換のうち、その root の許可の宣言に無いもの。許可の宣言のうち、その root の plan のどの削除と置換にも当たらないもの（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11・12）。入力に無い root の許可は見ない |
 | `plan.deployment_identity_trust` | `PLAN-TRUST-*` | `deployment-identity` の role の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15、[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md)）。リポジトリと所有者の値は持たない（issuer と aud は固定値で見る） |
 
 `plan.iam_action_wildcard` は文書が0件なら、`plan.deployment_identity_trust` は宣言した role が入力に無ければ落ちる（`PLAN-*-00`）。この2つと `PLAN-INPUT-07` は、結合した入力の全体で数える。ある root から型や role が消えても、別の root が持っていれば落ちない。

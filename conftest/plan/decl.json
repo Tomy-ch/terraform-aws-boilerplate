@@ -31,6 +31,12 @@
         "module.deployment_identity.module.github_oidc.aws_iam_role.this"
       ],
       "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github"
+    },
+    "stateful_protection": {
+      "protected_types": [
+        "aws_s3_bucket"
+      ],
+      "allow": {}
     }
   }
 }

@@ -15,6 +15,11 @@
 //	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis も見る
 //	drift  実態を GET で読み、宣言との差分を報せる
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
+//
+// drift と sync は -app を受けます。-app のとき、ruleset の読み書きと environment の書き込みを、
+// .github/settings/github-app.json が宣言する GitHub App の installation token で行います（ADR-0603 決定30）。
+// 秘密鍵は環境変数 REPO_SETTINGS_APP_PRIVATE_KEY から読みます。sync -app は書き込みの後に実態を読み直し、
+// 書いた側にずれが残れば失敗します。
 package main
 
 import (
@@ -45,23 +50,25 @@ const (
 )
 
 var (
-	errUsage        = xerrors.New("usage: repo-settings <apply|check|drift|sync> [-repo owner/name] [-only ruleset|environments]")
+	errUsage        = xerrors.New("usage: repo-settings <apply|check|drift|sync> [-repo owner/name] [-only ruleset|environments] [-app]")
 	errIncludeDrift = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
 	errDrift        = xerrors.New("宣言と実態がずれています")
 	errNoToken      = xerrors.New("GITHUB_TOKEN がありません")
 	errNoRepo       = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
+	errNotApplied   = xerrors.New("書き込みの後も宣言と実態がずれています")
 )
 
 func main() {
 	log.SetFlags(0)
 	client := &http.Client{Timeout: requestTimeout}
-	if err := run(os.Args[1:], os.Getwd, githubClient{base: defaultAPI, token: os.Getenv("GITHUB_TOKEN"), http: client}, os.Stdout); err != nil {
+	app := appSource{key: os.Getenv(appKeyEnv), now: time.Now}
+	if err := run(os.Args[1:], os.Getwd, githubClient{base: defaultAPI, token: os.Getenv("GITHUB_TOKEN"), http: client}, app, os.Stdout); err != nil {
 		log.Fatalf("❌ %s: %v", toolName, err)
 	}
 }
 
 // run は引数を解釈してサブコマンドを呼びます。依存はすべて引数で受け取ります（scripts/README.md の Test Strategy）。
-func run(args []string, wd func() (string, error), c githubClient, out io.Writer) error {
+func run(args []string, wd func() (string, error), c githubClient, app appSource, out io.Writer) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -69,11 +76,12 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "", "対象のリポジトリ（owner/name）")
 	only := fs.String("only", "", "sync の対象（ruleset か environments）")
+	useApp := fs.Bool("app", false, "GitHub App の token で ruleset を読み書きする")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errUsage
 	}
 	allowed := map[string]map[string]bool{
-		"apply": {}, "check": {}, "drift": {"repo": true}, "sync": {"repo": true, "only": true},
+		"apply": {}, "check": {}, "drift": {"repo": true, "app": true}, "sync": {"repo": true, "only": true, "app": true},
 	}
 	unused := false
 	fs.Visit(func(f *flag.Flag) {
@@ -98,7 +106,13 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		if *repo == "" {
 			return errNoRepo
 		}
-		return drift(ctx, root, c, *repo, out)
+		rc := c
+		if *useApp {
+			if rc, err = appClient(ctx, c, root, *repo, app); err != nil {
+				return err
+			}
+		}
+		return drift(ctx, root, rc, c, *repo, out)
 	case "sync":
 		if *only != onlyRuleset && *only != onlyEnvironments {
 			return errUsage
@@ -109,7 +123,13 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		if c.token == "" {
 			return errNoToken
 		}
-		return syncSettings(ctx, root, c, *repo, *only, out)
+		wc := c
+		if *useApp {
+			if wc, err = appClient(ctx, c, root, *repo, app); err != nil {
+				return err
+			}
+		}
+		return syncSettings(ctx, root, c, wc, *repo, *only, *useApp, out)
 	default:
 		return errUsage
 	}
@@ -202,9 +222,9 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	return nil
 }
 
-// drift は実態を読み、宣言との差分を報せます。書き込みはしません。
-func drift(ctx context.Context, root string, c githubClient, repo string, out io.Writer) error {
-	want, got, d, err := observe(ctx, root, c, repo)
+// drift は実態を読み、宣言との差分を報せます。ruleset は rc で、environment は ec で読みます。書き込みはしません。
+func drift(ctx context.Context, root string, rc, ec githubClient, repo string, out io.Writer) error {
+	want, got, d, err := observe(ctx, root, rc, ec, repo)
 	if err != nil {
 		return err
 	}
@@ -228,22 +248,26 @@ func drift(ctx context.Context, root string, c githubClient, repo string, out io
 	return nil
 }
 
-// syncSettings は drift と同じ差分を、only が指す側について GitHub への書き込みで解消します。
-// 要求はすべて組んでから送ります。宣言に無い environment は消しません。
-func syncSettings(ctx context.Context, root string, c githubClient, repo, only string, out io.Writer) error {
-	want, _, d, err := observe(ctx, root, c, repo)
+// syncSettings は drift と同じ差分を、only が指す側について wc での書き込みで解消します。読み取りは c です。
+// 要求はすべて組んでから送ります。宣言に無い environment は消しません。verify が真なら、書き込みの後に
+// ruleset を wc で、environment を c で読み直し、書いた側にずれが残れば失敗します。
+func syncSettings(ctx context.Context, root string, c, wc githubClient, repo, only string, verify bool, out io.Writer) error {
+	want, _, d, err := observe(ctx, root, c, c, repo)
 	if err != nil {
 		return err
 	}
 	reqs := planRequests(d, want, repo, only)
 	for _, r := range reqs {
-		if err := c.do(ctx, r.Method, r.Path, r.Body, nil); err != nil {
+		if err := wc.do(ctx, r.Method, r.Path, r.Body, nil); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "🔧 %s %s\n", r.Method, r.Path)
 	}
 	if only == onlyEnvironments && len(d.Extra) > 0 {
 		fmt.Fprintf(out, "⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: %s\n", strings.Join(d.Extra, ", "))
+	}
+	if verify {
+		return verifySynced(ctx, root, c, wc, repo, only, len(reqs), out)
 	}
 	if len(reqs) == 0 {
 		fmt.Fprintf(out, "✅ %s: %s の %s へ送る要求はありません\n", toolName, repo, only)
@@ -253,13 +277,44 @@ func syncSettings(ctx context.Context, root string, c githubClient, repo, only s
 	return nil
 }
 
-func observe(ctx context.Context, root string, c githubClient, repo string) (desired, live, diff, error) {
+// verifySynced は sync の後の実態を読み直します。ruleset は App の token で読むので bypass_actors も突合し、
+// 観測できないものが残ることを許しません。
+func verifySynced(ctx context.Context, root string, c, wc githubClient, repo, only string, sent int, out io.Writer) error {
+	_, _, d, err := observe(ctx, root, wc, c, repo)
+	if err != nil {
+		return err
+	}
+	var left []string
+	if only == onlyRuleset {
+		if d.Ruleset.Missing {
+			left = append(left, "ruleset が実在しません")
+		}
+		left = append(left, d.Ruleset.Findings...)
+		left = append(left, d.Unobserved...)
+	} else {
+		for _, e := range d.Envs {
+			for _, f := range e.Findings {
+				left = append(left, fmt.Sprintf("environment %s: %s", e.Name, f))
+			}
+		}
+	}
+	if len(left) > 0 {
+		for _, f := range left {
+			fmt.Fprintf(out, "  - %s\n", f)
+		}
+		return xerrors.Wrapf(errNotApplied, "%s: %d 件", only, len(left))
+	}
+	fmt.Fprintf(out, "✅ %s: %s の %s は宣言どおりです（送った要求 %d 件）\n", toolName, repo, only, sent)
+	return nil
+}
+
+func observe(ctx context.Context, root string, rc, ec githubClient, repo string) (desired, live, diff, error) {
 	want, err := loadDesired(root)
 	if err != nil {
 		return desired{}, live{}, diff{}, err
 	}
 	name, _ := want.Ruleset["name"].(string)
-	got, err := fetchLive(ctx, c, repo, name)
+	got, err := fetchLive(ctx, rc, ec, repo, name)
 	if err != nil {
 		return desired{}, live{}, diff{}, err
 	}

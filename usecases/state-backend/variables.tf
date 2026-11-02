@@ -18,3 +18,14 @@ variable "env" {
     error_message = "env は dev / stg / prd / sandbox / admin のいずれかにしてください。"
   }
 }
+
+variable "plan_output_retention_days" {
+  description = "CI の plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える。"
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.plan_output_retention_days >= 1 && floor(var.plan_output_retention_days) == var.plan_output_retention_days
+    error_message = "plan_output_retention_days は1以上の整数にしてください。"
+  }
+}

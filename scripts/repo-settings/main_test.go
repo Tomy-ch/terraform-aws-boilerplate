@@ -101,7 +101,7 @@ func Test_run(t *testing.T) {
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), githubClient{}, &bytes.Buffer{})
+			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), githubClient{}, appSource{}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errUsage)
 		})
 	}
@@ -117,7 +117,7 @@ func Test_run(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f, c := newFakeGitHub(t, liveRoutes(t))
-			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), c, &bytes.Buffer{})
+			err := run(tc.args, fixedWD(writeRepo(t, syncedRuleset)), c, appSource{}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errNoRepo)
 			assert.Empty(t, f.requests)
 		})
@@ -127,24 +127,24 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		errWD := errors.New("no wd")
 		wd := func() (string, error) { return "", errWD }
-		require.ErrorIs(t, run([]string{"check"}, wd, githubClient{}, &bytes.Buffer{}), errWD)
+		require.ErrorIs(t, run([]string{"check"}, wd, githubClient{}, appSource{}, &bytes.Buffer{}), errWD)
 	})
 
 	t.Run("check と apply を呼ぶ", func(t *testing.T) {
 		t.Parallel()
 		root := writeRepo(t, rulesetFixture)
-		require.ErrorIs(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}), errIncludeDrift)
+		require.ErrorIs(t, run([]string{"check"}, fixedWD(root), githubClient{}, appSource{}, &bytes.Buffer{}), errIncludeDrift)
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"apply"}, fixedWD(root), githubClient{}, &out))
+		require.NoError(t, run([]string{"apply"}, fixedWD(root), githubClient{}, appSource{}, &out))
 		assert.Contains(t, out.String(), "include を書き換えました")
-		require.NoError(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}))
+		require.NoError(t, run([]string{"check"}, fixedWD(root), githubClient{}, appSource{}, &bytes.Buffer{}))
 	})
 
 	t.Run("drift は -repo のリポジトリを読む", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedRuleset)), c, appSource{}, &out))
 		require.NotEmpty(t, f.requests)
 		assert.Equal(t, rulesetListPath(1), "GET "+f.requests[0].target)
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです\n", out.String())
@@ -154,7 +154,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		c.token = ""
-		err := run([]string{"sync", "-repo=o/r", "-only", onlyRuleset}, fixedWD(writeRepo(t, syncedRuleset)), c, &bytes.Buffer{})
+		err := run([]string{"sync", "-repo=o/r", "-only", onlyRuleset}, fixedWD(writeRepo(t, syncedRuleset)), c, appSource{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errNoToken)
 		assert.Empty(t, f.requests)
 	})
@@ -163,8 +163,47 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyEnvironments}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyEnvironments}, fixedWD(writeRepo(t, syncedRuleset)), c, appSource{}, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の environments へ送る要求はありません\n", out.String())
+	})
+
+	app := appSource{key: pkcs1PEM(), now: fixedNow}
+
+	t.Run("drift -app は ruleset を App の token で読み、environment を GITHUB_TOKEN で読む", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, appRoutes(t))
+		require.NoError(t, run([]string{"drift", "-repo=o/r", "-app"}, fixedWD(writeAppRepo(t, appDeclFixture)), c, app, &bytes.Buffer{}))
+		auth := map[string]string{}
+		for _, r := range f.requests {
+			auth[r.target] = r.auth
+		}
+		assert.Equal(t, "Bearer ghs_inst", auth["/repos/o/r/rulesets/7"])
+		assert.Equal(t, "Bearer tkn", auth["/repos/o/r/environments?per_page=100&page=1"])
+	})
+
+	t.Run("sync -app は App の token で書き、書いた後に読み直す", func(t *testing.T) {
+		t.Parallel()
+		routes := appRoutes(t)
+		routes["PUT /repos/o/r/environments/x-plan"] = ok(`{}`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyRuleset, "-app"}, fixedWD(writeAppRepo(t, appDeclFixture)), c, app, &out))
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset は宣言どおりです（送った要求 0 件）\n", out.String())
+		assert.Len(t, f.writes(), 1, "token の発行だけを POST する")
+	})
+
+	for _, sub := range [][]string{{"drift", "-repo=o/r", "-app"}, {"sync", "-repo=o/r", "-only", onlyRuleset, "-app"}} {
+		t.Run(sub[0]+" -app は App の宣言が無ければ何も書かずに失敗する", func(t *testing.T) {
+			t.Parallel()
+			f, c := newFakeGitHub(t, appRoutes(t))
+			require.Error(t, run(sub, fixedWD(writeRepo(t, syncedRuleset)), c, app, &bytes.Buffer{}))
+			assert.Empty(t, f.writes())
+		})
+	}
+
+	t.Run("-app は apply と check では受けない", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"check", "-app"}, fixedWD(writeRepo(t, syncedRuleset)), githubClient{}, app, &bytes.Buffer{}), errUsage)
 	})
 }
 
@@ -328,7 +367,7 @@ func Test_drift(t *testing.T) {
 		root := writeRepo(t, syncedRuleset)
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, drift(context.Background(), root, c, repo, &out))
+		require.NoError(t, drift(context.Background(), root, c, c, repo, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです\n", out.String())
 		assert.Empty(t, f.writes())
 	})
@@ -343,7 +382,7 @@ func Test_drift(t *testing.T) {
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		err := drift(context.Background(), root, c, repo, &out)
+		err := drift(context.Background(), root, c, c, repo, &out)
 		require.ErrorIs(t, err, errDrift)
 		assert.Equal(t, strings.Join([]string{
 			"❌ repo-settings: o/r で宣言と実態のずれが 3 件あります",
@@ -361,7 +400,7 @@ func Test_drift(t *testing.T) {
 		routes["GET /repos/o/r/rulesets/7"] = ok(strings.Replace(syncedRuleset, ",\n  \"bypass_actors\": []", "", 1))
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, drift(context.Background(), root, c, repo, &out))
+		require.NoError(t, drift(context.Background(), root, c, c, repo, &out))
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 突合の対象外（観測できない）: ruleset の bypass_actors（write 権限の無い読み取りには返らない）",
 			"✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです（突合の対象外 1 件を除く）",
@@ -371,7 +410,7 @@ func Test_drift(t *testing.T) {
 	t.Run("実態を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, &bytes.Buffer{}), errHTTP)
 	})
 }
 
@@ -382,7 +421,7 @@ func Test_syncSettings(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyRuleset, false, &out))
 		assert.Empty(t, f.writes())
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset へ送る要求はありません\n", out.String())
 	})
@@ -399,7 +438,7 @@ func Test_syncSettings(t *testing.T) {
 		routes["POST /repos/o/r/environments/x-plan/deployment-branch-policies"] = ok(`{}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyEnvironments, false, &out))
 		writes := f.writes()
 		targets := make([]string, 0, len(writes))
 		for _, w := range writes {
@@ -436,7 +475,7 @@ func Test_syncSettings(t *testing.T) {
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
 		f, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyEnvironments, false, &out))
 		assert.Empty(t, f.writes())
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: other",
@@ -454,7 +493,7 @@ func Test_syncSettings(t *testing.T) {
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &out))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyRuleset, false, &out))
 		assert.Equal(t, "✅ repo-settings: o/r の ruleset へ送る要求はありません\n", out.String())
 	})
 
@@ -464,7 +503,7 @@ func Test_syncSettings(t *testing.T) {
 		routes["GET /repos/o/r/rulesets/7"] = ok(`{"name": "branch-protection", "rules": []}`)
 		routes["PUT /repos/o/r/rulesets/7"] = ok(`{}`)
 		f, c := newFakeGitHub(t, routes)
-		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyRuleset, &bytes.Buffer{}))
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyRuleset, false, &bytes.Buffer{}))
 		writes := f.writes()
 		require.Len(t, writes, 1)
 		assert.JSONEq(t, compactJSON(t, syncedRuleset), writes[0].body)
@@ -478,7 +517,7 @@ func Test_syncSettings(t *testing.T) {
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`)
 		f, c := newFakeGitHub(t, routes)
-		err := syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyEnvironments, &bytes.Buffer{})
+		err := syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, c, repo, onlyEnvironments, false, &bytes.Buffer{})
 		require.ErrorIs(t, err, errHTTP)
 		writes := f.writes()
 		require.Len(t, writes, 1)
@@ -488,7 +527,7 @@ func Test_syncSettings(t *testing.T) {
 	t.Run("宣言を読めなければ何も送らない", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
-		require.ErrorIs(t, syncSettings(context.Background(), writeRepo(t, rulesetFixture), c, repo, onlyRuleset, &bytes.Buffer{}), errIncludeDrift)
+		require.ErrorIs(t, syncSettings(context.Background(), writeRepo(t, rulesetFixture), c, c, repo, onlyRuleset, false, &bytes.Buffer{}), errIncludeDrift)
 		assert.Empty(t, f.requests)
 	})
 }
@@ -506,7 +545,7 @@ func Test_observe(t *testing.T) {
 	t.Run("宣言と実態と差分を返す", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, liveRoutes(t))
-		want, got, d, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, repo)
+		want, got, d, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, c, repo)
 		require.NoError(t, err)
 		assert.Len(t, want.Envs, 4)
 		assert.Len(t, got.Envs, 4)
@@ -516,7 +555,7 @@ func Test_observe(t *testing.T) {
 	t.Run("宣言を読めなければ GitHub へ問わない", func(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
-		_, _, _, err := observe(context.Background(), writeRepo(t, rulesetFixture), c, repo)
+		_, _, _, err := observe(context.Background(), writeRepo(t, rulesetFixture), c, c, repo)
 		require.ErrorIs(t, err, errIncludeDrift)
 		assert.Empty(t, f.requests)
 	})
@@ -524,7 +563,7 @@ func Test_observe(t *testing.T) {
 	t.Run("実態を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
-		_, _, _, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, repo)
+		_, _, _, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, c, repo)
 		require.ErrorIs(t, err, errHTTP)
 	})
 }
