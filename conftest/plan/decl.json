@@ -31,7 +31,10 @@
         "module.deployment_identity.module.github_oidc.aws_iam_role.this"
       ],
       "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github",
-      "plan_role_policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+      "plan_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+      }
     },
     "stateful_protection": {
       "protected_types": [
