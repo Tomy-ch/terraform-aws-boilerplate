@@ -213,7 +213,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Static Analysis: CI の workflow が長期のアクセスキーを参照していないこと（決定12）
 - Static Analysis: plan を行う job と apply を行う job が、異なる role を assume すること（決定13）
 - Static Analysis: plan を行う job が artifact を上げず、Pull Request へ plan の全文をコメントしないこと（決定13）
-- Unit Test: 当該 use-case の Unit Test が、plan の role の変更系の Action が plan の出力の置き場への `s3:PutObject` に限られることを確かめる（決定13）。Policy Test は未配線
+- Policy Test: plan の role の変更系の Action が、plan の出力の置き場への `s3:PutObject` に限られること（決定13）
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
 - Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
 - Static Analysis: apply-identity の role を assume する job が、apply の role を assume する job と異なる role と `environment` を宣言すること（決定13-14）

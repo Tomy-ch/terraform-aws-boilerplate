@@ -87,7 +87,7 @@ tf-policy-canary:
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
-	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_trust*.rego; \
+	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
 	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \
