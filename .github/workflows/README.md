@@ -68,8 +68,14 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 —— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
-  には終了コード・件数・object の key・SHA-256・版 ID だけを出す（ADR-0602 決定13、
-  `.makefiles/terraform/operation/ci.mk`）。全文は AWS の認証を経て読む
+  には終了コード・件数・object の key・SHA-256・版 ID と、Policy の違反の文（resource の address）だけを
+  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）
+- **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
+  書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
+  `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、
+  `openssl dgst -sha256 -binary plan.txt | base64` がログの sha256 と一致することを確かめる
+- **AWS のアカウント ID は environment `admin-plan` の secret `AWS_ACCOUNT_ID` に置く。** 宣言
+  （`environments.json`）は secret を持たないので、管理者が置く。無ければ拒否の step で失敗する
 - **fork・Dependabot の Pull Request では、資格情報を取る前の step で失敗する。** skip にしない
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）

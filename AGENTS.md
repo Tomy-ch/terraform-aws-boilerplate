@@ -20,7 +20,8 @@
   （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
   Terraform に掛かるものが揃っていない）。HCL のソースの検査のうちコード実行の検出は
   `make infra-code-gate` に配線済み
-- plan / apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路が存在しない
+- apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の apply の経路が存在しない。
+  plan の経路は、管理アカウントの identity root の分だけ `terraform-gates.yaml` の `plan-admin-identity` に配線済み
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
   宣言は `.github/settings/branches.json` に在り、ruleset と environment はそこから生成するが、
   `scripts/` のブランチ操作と workflow の起動条件はまだパターンを自分で持つ（同 決定2-3）
