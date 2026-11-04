@@ -18,6 +18,8 @@ const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-ap
 
 var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity"}
 
+var planPerms = []string{"contents: read", "id-token: write"}
+
 var planWorkflow = strings.Join([]string{
 	"name: Terraform Gates",
 	"",
@@ -46,11 +48,14 @@ var planWorkflow = strings.Join([]string{
 	"      - name: Refuse untrusted Pull Requests",
 	"        id: refuse-untrusted",
 	"        run: test \"$HEAD_REPO_ID\" = \"$REPO_ID\"",
-	"      - name: Run terraform plan through make",
-	"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          persist-credentials: false",
 	"      - uses: ./.github/actions/setup-mise",
 	"        with:",
 	"          tools: aqua:hashicorp/terraform",
+	"      - name: Run terraform plan through make",
+	"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host",
 	"      - run: make ci-plan-admin-identity RUNNER_MODE=host",
 	"",
 }, "\n")
@@ -252,6 +257,39 @@ func Test_check(t *testing.T) {
 		assert.Contains(t, messages(f), "workflow 全体の permissions に id-token")
 	})
 
+	t.Run("1行の {} の permissions は読めないとして違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: { contents: read, id-token: write }\n", 1)
+		n, f := check("p.yaml", src, envs)
+		assert.Zero(t, n)
+		assert.Contains(t, messages(f), "job plan-admin-identity の permissions を読めません")
+	})
+
+	t.Run("job の write-all は読めないとして違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: write-all\n", 1)
+		_, f := check("p.yaml", src, envs)
+		assert.Contains(t, messages(f), "job plan-admin-identity の permissions を読めません")
+	})
+
+	t.Run("workflow 全体の write-all は違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(planWorkflow, "permissions:\n  contents: read\n\njobs:", "permissions: write-all\n\njobs:", 1)
+		_, f := check("p.yaml", src, envs)
+		assert.Contains(t, messages(f), "workflow 全体の permissions を読めません")
+	})
+
+	t.Run("jobs: を読めない workflow の id-token は違反", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", strings.Replace(planWorkflow, "\njobs:\n", "\n\"jobs\":\n", 1), envs)
+		assert.Zero(t, n)
+		assert.Contains(t, messages(f), "job の permissions として読めません")
+	})
+
 	t.Run("長期のアクセスキーの参照は違反", func(t *testing.T) {
 		t.Parallel()
 
@@ -293,7 +331,7 @@ func Test_checkJob(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkJob("p.yaml", jobWith(t, c.from, c.to), envs, on, onLine)), c.want)
+			assert.Contains(t, messages(checkJob("p.yaml", jobWith(t, c.from, c.to), planPerms, envs, on, onLine)), c.want)
 		})
 	}
 
@@ -301,20 +339,34 @@ func Test_checkJob(t *testing.T) {
 		t.Parallel()
 
 		job := jobWith(t, "      - run: make ci-plan-admin-identity", "      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan\n      - run: make ci-plan-admin-identity")
-		assert.Contains(t, messages(checkJob("p.yaml", job, envs, on, onLine)), "（2 回）")
+		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "（2 回）")
+	})
+
+	t.Run("contents: read と id-token: write 以外の権限は違反", func(t *testing.T) {
+		t.Parallel()
+
+		f := checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), append(planPerms, "pull-requests: write"), envs, on, onLine)
+		assert.Contains(t, messages(f), "pull-requests: write")
+	})
+
+	t.Run("資格情報の後の action は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobWith(t, "      - run: make ci-plan-admin-identity", "      - uses: octo/comment@v1\n      - run: make ci-plan-admin-identity")
+		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "action を呼ばない")
 	})
 
 	t.Run("規則を満たす job は違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), envs, on, onLine))
+		assert.Empty(t, checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), planPerms, envs, on, onLine))
 	})
 
 	t.Run("apply の役割は apply の規則で見る", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, applyWorkflow, "apply-admin-identity")
-		f := checkJob("a.yaml", job, envs, map[string][]workflow.Line{"pull_request": nil}, 1)
+		f := checkJob("a.yaml", job, planPerms, envs, map[string][]workflow.Line{"pull_request": nil}, 1)
 		assert.Contains(t, messages(f), "push と workflow_dispatch だけ")
 	})
 }
@@ -383,7 +435,21 @@ func Test_checkPlan(t *testing.T) {
 		t.Parallel()
 
 		job := planWith(t, "        id: refuse-untrusted\n", "        id: refuse-untrusted\n        if: github.event_name == 'pull_request'\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "if: を置かない")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "if: と continue-on-error: を置かない")
+	})
+
+	t.Run("拒否の step の continue-on-error: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "        id: refuse-untrusted\n", "        id: refuse-untrusted\n        continue-on-error: true\n")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "continue-on-error: を置かない")
+	})
+
+	t.Run("local.mk の plan の入口は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make plan-admin-identity RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "make ci-plan-* でだけ")
 	})
 
 	t.Run("make ci-plan-* 以外の terraform は違反", func(t *testing.T) {
@@ -602,4 +668,68 @@ func Test_cancelsNothing(t *testing.T) {
 			assert.Equal(t, c.want, cancelsNothing(jobOf(t, "jobs:\n  a:\n"+c.body, "a")))
 		})
 	}
+}
+
+func Test_countTokenLines(t *testing.T) {
+	t.Parallel()
+
+	src := strings.Join([]string{
+		"permissions: write-all",
+		"    permissions: { contents: read, id-token: write }",
+		"      id-token: write",
+		"      # id-token: write",
+		"      id-token: read",
+	}, "\n")
+	assert.Equal(t, 3, countTokenLines(src))
+}
+
+func Test_unreadable(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, unreadable([]string{"write-all"}))
+	assert.True(t, unreadable([]string{`"write-all"`}))
+	assert.True(t, unreadable([]string{"{ id-token: write }"}))
+	assert.False(t, unreadable([]string{"{}"}))
+	assert.False(t, unreadable([]string{"read-all"}))
+	assert.False(t, unreadable([]string{"contents: read", "id-token: write"}))
+}
+
+func Test_checkSteps(t *testing.T) {
+	t.Parallel()
+
+	finding := func(line int, format string, _ ...any) lintreport.Finding {
+		return lintreport.Finding{Line: line, Message: format}
+	}
+	credOf := func(job workflow.Job) workflow.Line {
+		for _, l := range job.Lines {
+			if credentials.MatchString(l.Text) {
+				return l
+			}
+		}
+
+		return workflow.Line{}
+	}
+
+	t.Run("規則を満たせば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		assert.Empty(t, checkSteps(job, credOf(job), finding))
+	})
+
+	t.Run("persist-credentials: false の無い checkout は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, strings.Replace(planWorkflow, "          persist-credentials: false\n", "          fetch-depth: 1\n", 1), "plan-admin-identity")
+		assert.Contains(t, messages(checkSteps(job, credOf(job), finding)), "persist-credentials: false")
+	})
+
+	t.Run("資格情報の前の action は違反にしない", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		for _, f := range checkSteps(job, credOf(job), finding) {
+			assert.NotContains(t, f.Message, "action を呼ばない")
+		}
+	})
 }

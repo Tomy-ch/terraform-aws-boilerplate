@@ -50,7 +50,10 @@ const (
 )
 
 var (
-	idToken       = regexp.MustCompile(`^["']?id-token["']?:[ \t]*["']?write\b`)
+	idToken = regexp.MustCompile(`^["']?id-token["']?:[ \t]*["']?write\b`)
+	// idTokenAny と writeAll は、permissionsBlock とは別の経路で token を得うる行を数える。
+	idTokenAny    = regexp.MustCompile(`(?:^|[\s{,])["']?id-token["']?[ \t]*:[ \t]*["']?write\b`)
+	writeAll      = regexp.MustCompile(`\bpermissions:[ \t]*["']?write-all\b`)
 	permissionsAt = regexp.MustCompile(`^( *)permissions:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	longKey       = regexp.MustCompile(`(?i)aws_access_key_id|aws_secret_access_key|aws-access-key-id|aws-secret-access-key`)
 	envScalar     = regexp.MustCompile(`^ {4}environment:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
@@ -60,7 +63,8 @@ var (
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
 	ciPlan        = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
 	// tf-job-lint と同じく、サブコマンドを列挙しない。terraform を入れる行（mise の tools）は起動ではないので含めない。
-	runsTerraform = regexp.MustCompile(`\bmake\b.*\stf-|(?:^|[\s;&|(/"'])(?:terraform|tofu)["']?(?:\s|$)`)
+	// local.mk の init-* / plan-* も terraform を走らせる。それ以外の名前の make のターゲットは字面からは選べない。
+	runsTerraform = regexp.MustCompile(`\bmake\b.*\s(?:tf|init|plan)-|(?:^|[\s;&|(/"'])(?:terraform|tofu)["']?(?:\s|$)`)
 	nameLine      = regexp.MustCompile(`^\s+(?:- )?name:`)
 	installsTF    = regexp.MustCompile(`aqua:hashicorp/terraform\b`)
 	onKey         = regexp.MustCompile(`^["']?on["']?:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
@@ -72,6 +76,10 @@ var (
 	noCancel      = regexp.MustCompile(`^ {6}cancel-in-progress:[ \t]*false[ \t]*(?:#.*)?$`)
 	stepID        = regexp.MustCompile(`^ {6}(?:- | {2})id:[ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})if:`)
+	stepContinue  = regexp.MustCompile(`^ {6}(?:- | {2})continue-on-error:`)
+	stepUses      = regexp.MustCompile(`^ {6}(?:- | {2})uses:`)
+	checkoutUses  = regexp.MustCompile(`^ {6}(?:- | {2})uses:[ \t]*["']?actions/checkout@`)
+	noPersist     = regexp.MustCompile(`^ {10}persist-credentials:[ \t]*["']?false["']?[ \t]*(?:#.*)?$`)
 	commentLine   = regexp.MustCompile(`^\s*#`)
 )
 
@@ -171,28 +179,71 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		}
 	}
 	split := workflow.SplitJobs(source)
-	if values, at, ok := permissionsBlock(split.Preamble, ""); ok && hasIDToken(values) {
-		findings = append(findings, lintreport.Finding{File: file, Line: at,
-			Message: "workflow 全体の permissions に id-token を置かないでください。token を要る job の permissions に置きます"})
+	// attributed は、token を得うる行のうち、下で job か workflow 全体の permissions として読めた行の数。
+	attributed := 0
+	if values, at, ok := permissionsBlock(split.Preamble, ""); ok {
+		switch {
+		case unreadable(values):
+			attributed++
+			findings = append(findings, lintreport.Finding{File: file, Line: at,
+				Message: "workflow 全体の permissions を読めません。write-all と1行の {} は使わず、権限を1行ずつ書いてください"})
+		case hasIDToken(values):
+			attributed++
+			findings = append(findings, lintreport.Finding{File: file, Line: at,
+				Message: "workflow 全体の permissions に id-token を置かないでください。token を要る job の permissions に置きます"})
+		}
 	}
 	on, onLine := triggers(split.Preamble)
 	targets := 0
 	for _, job := range split.Jobs {
-		values, _, ok := permissionsBlock(job.Lines, "    ")
+		values, at, ok := permissionsBlock(job.Lines, "    ")
+		if ok && unreadable(values) {
+			attributed++
+			findings = append(findings, lintreport.Finding{File: file, Line: at,
+				Message: fmt.Sprintf("job %s の permissions を読めません。write-all と1行の {} は使わず、権限を1行ずつ書いてください", job.ID)})
+			continue
+		}
 		if !ok || !hasIDToken(values) {
 			continue
 		}
+		attributed++
 		targets++
-		findings = append(findings, checkJob(file, job, envs, on, onLine)...)
+		findings = append(findings, checkJob(file, job, values, envs, on, onLine)...)
+	}
+	if n := countTokenLines(source); n > attributed {
+		findings = append(findings, lintreport.Finding{File: file, Line: 1,
+			Message: fmt.Sprintf("id-token: write か write-all を持つ行 %d 件のうち %d 件を、job の permissions として読めません", n, n-attributed)})
 	}
 	return targets, findings
 }
 
-func checkJob(file string, job workflow.Job, envs []string, on map[string][]workflow.Line, onLine int) []lintreport.Finding {
+// countTokenLines は、job の切り出しとは別に、token を得うる行をファイル全体で数えます。
+func countTokenLines(source string) int {
+	n := 0
+	for _, text := range strings.Split(source, "\n") {
+		if !commentLine.MatchString(text) && (idTokenAny.MatchString(text) || writeAll.MatchString(text)) {
+			n++
+		}
+	}
+	return n
+}
+
+// unreadable は、permissions の値が write-all か1行の {} の並びで、ここの読み方では権限を取り出せないかを返します。
+func unreadable(values []string) bool {
+	return len(values) == 1 && (strings.Trim(values[0], `"'`) == "write-all" || (strings.HasPrefix(values[0], "{") && values[0] != "{}"))
+}
+
+func checkJob(file string, job workflow.Job, permissions, envs []string, on map[string][]workflow.Line, onLine int) []lintreport.Finding {
 	finding := func(line int, format string, args ...any) lintreport.Finding {
 		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job %s: ", job.ID) + fmt.Sprintf(format, args...)}
 	}
 	var findings []lintreport.Finding
+
+	for _, v := range permissions {
+		if v != "contents: read" && !idToken.MatchString(v) {
+			findings = append(findings, finding(job.Number, "permissions は contents: read と id-token: write だけにしてください（%s）", v))
+		}
+	}
 
 	env, envLine := environment(job)
 	switch {
@@ -220,6 +271,7 @@ func checkJob(file string, job workflow.Job, envs []string, on map[string][]work
 	if env != "" && env != e[1]+"-"+role {
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
+	findings = append(findings, checkSteps(job, cred, finding)...)
 
 	if role == "plan" {
 		return append(findings, checkPlan(job, cred, on, onLine, finding)...)
@@ -242,8 +294,8 @@ func checkPlan(job workflow.Job, cred workflow.Line, on map[string][]workflow.Li
 		}
 		refused = step.Number < cred.Number
 		for _, l := range step.Lines {
-			if stepIf.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "step %s に if: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", refuseStepID))
+			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "step %s に if: と continue-on-error: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", refuseStepID))
 			}
 		}
 	}
@@ -281,6 +333,29 @@ func checkApply(job workflow.Job, on map[string][]workflow.Line, onLine int, fin
 	}
 	if !cancelsNothing(job) {
 		findings = append(findings, finding(job.Number, "apply の job に cancel-in-progress: false の concurrency を置いてください"))
+	}
+	return findings
+}
+
+// checkSteps は、資格情報を持つ job の checkout が資格情報を残さないことと、資格情報を取った後に
+// action を呼ばないことを検査します。
+func checkSteps(job workflow.Job, cred workflow.Line, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, step := range workflow.SplitSteps(job) {
+		checkout, persists := false, false
+		for _, l := range step.Lines {
+			if commentLine.MatchString(l.Text) {
+				continue
+			}
+			checkout = checkout || checkoutUses.MatchString(l.Text)
+			persists = persists || noPersist.MatchString(l.Text)
+			if l.Number > cred.Number && stepUses.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "資格情報を取った後の step で action を呼ばないでください。session が action へ届きます"))
+			}
+		}
+		if checkout && !persists {
+			findings = append(findings, finding(step.Number, "actions/checkout に persist-credentials: false を置いてください"))
+		}
 	}
 	return findings
 }
