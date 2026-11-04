@@ -14,4 +14,9 @@ run "reference_bucket_name" {
     condition     = module.state_backend.bucket_name == "tabp-admin-tfstate-123456789012-ap-northeast-1-an"
     error_message = "reference の値から state Bucket の名前が組まれていません。"
   }
+
+  assert {
+    condition     = module.state_backend.plan_output_bucket_name == "tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+    error_message = "reference の値から plan の出力の Bucket の名前が組まれていません。"
+  }
 }

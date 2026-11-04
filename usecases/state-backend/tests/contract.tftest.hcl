@@ -70,3 +70,17 @@ run "plan_output_retention_days_fraction" {
 
   expect_failures = [var.plan_output_retention_days]
 }
+
+# 既定の 7 とは別の値を渡し、公開入力が内部の lifecycle まで届くことを見る。
+run "plan_output_retention_days_wiring" {
+  command = plan
+
+  variables {
+    plan_output_retention_days = 3
+  }
+
+  assert {
+    condition     = module.plan_output.retention_days == { current = 3, noncurrent = 3 }
+    error_message = "plan_output_retention_days が plan の出力の lifecycle の日数に届いていません。"
+  }
+}
