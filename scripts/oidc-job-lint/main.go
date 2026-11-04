@@ -51,8 +51,10 @@ const (
 
 var (
 	idToken = regexp.MustCompile(`^["']?id-token["']?:[ \t]*["']?write\b`)
-	// idTokenAny と writeAll は、permissionsBlock とは別の経路で token を得うる行を数える。
-	idTokenAny    = regexp.MustCompile(`(?:^|[\s{,])["']?id-token["']?[ \t]*:[ \t]*["']?write\b`)
+	// idTokenKey と writeAll は、permissionsBlock とは別の経路で token を得うる行を数える。値が次の行に続く形も
+	// 拾うために、値が read か none と読めない id-token の行はすべて数える。
+	idTokenKey    = regexp.MustCompile(`(?:^|[\s{,])["']?id-token["']?[ \t]*:(.*)$`)
+	tokenDenied   = regexp.MustCompile(`^[ \t]*["']?(?:read|none)["']?[ \t]*(?:[,}#].*)?$`)
 	writeAll      = regexp.MustCompile(`\bpermissions:[ \t]*["']?write-all\b`)
 	permissionsAt = regexp.MustCompile(`^( *)permissions:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	longKey       = regexp.MustCompile(`(?i)aws_access_key_id|aws_secret_access_key|aws-access-key-id|aws-secret-access-key`)
@@ -78,6 +80,7 @@ var (
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})if:`)
 	stepContinue  = regexp.MustCompile(`^ {6}(?:- | {2})continue-on-error:`)
 	stepUses      = regexp.MustCompile(`^ {6}(?:- | {2})uses:`)
+	anyUses       = regexp.MustCompile(`^\s+(?:- )?["']?uses["']?[ \t]*:`)
 	checkoutUses  = regexp.MustCompile(`^ {6}(?:- | {2})uses:[ \t]*["']?actions/checkout@`)
 	noPersist     = regexp.MustCompile(`^ {10}persist-credentials:[ \t]*["']?false["']?[ \t]*(?:#.*)?$`)
 	commentLine   = regexp.MustCompile(`^\s*#`)
@@ -221,7 +224,10 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 func countTokenLines(source string) int {
 	n := 0
 	for _, text := range strings.Split(source, "\n") {
-		if !commentLine.MatchString(text) && (idTokenAny.MatchString(text) || writeAll.MatchString(text)) {
+		if commentLine.MatchString(text) {
+			continue
+		}
+		if m := idTokenKey.FindStringSubmatch(text); (m != nil && !tokenDenied.MatchString(m[1])) || writeAll.MatchString(text) {
 			n++
 		}
 	}
@@ -255,7 +261,7 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, on map[
 
 	var credLines []workflow.Line
 	for _, l := range job.Lines {
-		if !commentLine.MatchString(l.Text) && credentials.MatchString(l.Text) {
+		if !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && credentials.MatchString(l.Text) {
 			credLines = append(credLines, l)
 		}
 	}
@@ -292,7 +298,8 @@ func checkPlan(job workflow.Job, cred workflow.Line, on map[string][]workflow.Li
 		if !hasStepID(step, refuseStepID) {
 			continue
 		}
-		refused = step.Number < cred.Number
+		// 資格情報を取る step 自身は、拒否の step と認めない。
+		refused = step.Number < cred.Number && !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool { return l.Number == cred.Number })
 		for _, l := range step.Lines {
 			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) {
 				findings = append(findings, finding(l.Number, "step %s に if: と continue-on-error: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", refuseStepID))
@@ -338,10 +345,21 @@ func checkApply(job workflow.Job, on map[string][]workflow.Line, onLine int, fin
 }
 
 // checkSteps は、資格情報を持つ job の checkout が資格情報を残さないことと、資格情報を取った後に
-// action を呼ばないことを検査します。
+// action を呼ばないことを検査します。step に切り出せなかった uses: は、job の行から別に数えて落とします。
 func checkSteps(job workflow.Job, cred workflow.Line, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
+	total, seen := 0, 0
+	for _, l := range job.Lines {
+		if !commentLine.MatchString(l.Text) && anyUses.MatchString(l.Text) {
+			total++
+		}
+	}
 	for _, step := range workflow.SplitSteps(job) {
+		for _, l := range step.Lines {
+			if !commentLine.MatchString(l.Text) && anyUses.MatchString(l.Text) {
+				seen++
+			}
+		}
 		checkout, persists := false, false
 		for _, l := range step.Lines {
 			if commentLine.MatchString(l.Text) {
@@ -356,6 +374,9 @@ func checkSteps(job workflow.Job, cred workflow.Line, finding func(int, string, 
 		if checkout && !persists {
 			findings = append(findings, finding(step.Number, "actions/checkout に persist-credentials: false を置いてください"))
 		}
+	}
+	if total > seen {
+		findings = append(findings, finding(job.Number, "steps を読めません（uses: %d 件のうち %d 件）。step は steps: より2桁深い `- ` で書いてください", total, total-seen))
 	}
 	return findings
 }
