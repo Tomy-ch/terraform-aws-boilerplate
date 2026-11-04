@@ -80,7 +80,7 @@ var (
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})if:`)
 	stepContinue  = regexp.MustCompile(`^ {6}(?:- | {2})continue-on-error:`)
 	stepUses      = regexp.MustCompile(`^ {6}(?:- | {2})uses:`)
-	anyUses       = regexp.MustCompile(`^\s+(?:- )?["']?uses["']?[ \t]*:`)
+	anyUses       = regexp.MustCompile(`^\s+(?:-\s*)?["']?uses["']?\s*:|^\s+-?\s*\{[^}]*\buses\s*:`)
 	checkoutUses  = regexp.MustCompile(`^ {6}(?:- | {2})uses:[ \t]*["']?actions/checkout@`)
 	noPersist     = regexp.MustCompile(`^ {10}persist-credentials:[ \t]*["']?false["']?[ \t]*(?:#.*)?$`)
 	commentLine   = regexp.MustCompile(`^\s*#`)
@@ -363,6 +363,11 @@ func checkSteps(job workflow.Job, cred workflow.Line, finding func(int, string, 
 		checkout, persists := false, false
 		for _, l := range step.Lines {
 			if commentLine.MatchString(l.Text) {
+				continue
+			}
+			if anyUses.MatchString(l.Text) && !stepUses.MatchString(l.Text) {
+				// 引用符付きのキーやフロースタイルの step は、下の2つの検査が読めない。
+				findings = append(findings, finding(l.Number, "uses: を読み取れません。`- uses: <action>` の形で書いてください"))
 				continue
 			}
 			checkout = checkout || checkoutUses.MatchString(l.Text)

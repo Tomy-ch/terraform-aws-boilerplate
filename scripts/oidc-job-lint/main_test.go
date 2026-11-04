@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,8 +162,7 @@ func Test_run(t *testing.T) {
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow}, envDecl)
 		require.NoError(t, os.Chmod(filepath.Join(wf, "apply.yml"), 0))
 		err := run(wf, env, &bytes.Buffer{})
-		require.Error(t, err)
-		require.NotErrorIs(t, err, errNoTarget)
+		require.ErrorIs(t, err, fs.ErrPermission)
 		assert.Contains(t, err.Error(), "apply.yml の読み取り")
 	})
 
@@ -300,7 +301,7 @@ func Test_check(t *testing.T) {
 
 		n, f := check("p.yaml", strings.Replace(planWorkflow, "\njobs:\n", "\n\"jobs\":\n", 1), envs)
 		assert.Zero(t, n)
-		assert.Contains(t, messages(f), "job の permissions として読めません")
+		assert.Contains(t, messages(f), "id-token: write か write-all を持つ行 1 件のうち 1 件を、job の permissions として読めません")
 	})
 
 	unreadableCases := map[string]string{
@@ -409,6 +410,13 @@ func Test_checkJob(t *testing.T) {
 		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "（0 回）")
 	})
 
+	t.Run("name: に ci-aws-credentials を含んでも run: の1回だけを数える", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, strings.Replace(planWorkflow, "      - name: Run terraform plan through make", "      - name: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", 1), "plan-admin-identity")
+		assert.Empty(t, checkJob("p.yaml", job, planPerms, envs, on, onLine))
+	})
+
 	t.Run("規則を満たす job は違反0件", func(t *testing.T) {
 		t.Parallel()
 
@@ -429,8 +437,8 @@ func Test_checkPlan(t *testing.T) {
 	t.Parallel()
 
 	on := map[string][]workflow.Line{"pull_request": nil}
-	finding := func(line int, format string, _ ...any) lintreport.Finding {
-		return lintreport.Finding{Line: line, Message: format}
+	finding := func(line int, format string, args ...any) lintreport.Finding {
+		return lintreport.Finding{Line: line, Message: fmt.Sprintf(format, args...)}
 	}
 	credOf := func(job workflow.Job) workflow.Line {
 		for _, l := range job.Lines {
@@ -466,7 +474,7 @@ func Test_checkPlan(t *testing.T) {
 		t.Parallel()
 
 		job := planWith(t, "needs: infra-code-gate", "needs: [changes]")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "needs に %s")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "needs に infra-code-gate を置いてください")
 	})
 
 	t.Run("拒否の step が無ければ違反", func(t *testing.T) {
@@ -790,6 +798,9 @@ func Test_countTokenLines(t *testing.T) {
 		"コメントの id-token は数えない":            {"      # id-token: write", 0},
 		"id-token: read は数えない":            {"      id-token: read", 0},
 		"1行の {} の中の id-token: none は数えない": {"    permissions: { id-token: none }", 0},
+		"引用符付きの id-token: read は数えない":     {"      id-token: \"read\"", 0},
+		"コメント付きの id-token: read は数えない":    {"      id-token: read # c", 0},
+		"ブロックの id-token: none は数えない":      {"      id-token: none", 0},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -826,8 +837,8 @@ func Test_unreadable(t *testing.T) {
 func Test_checkSteps(t *testing.T) {
 	t.Parallel()
 
-	finding := func(line int, format string, _ ...any) lintreport.Finding {
-		return lintreport.Finding{Line: line, Message: format}
+	finding := func(line int, format string, args ...any) lintreport.Finding {
+		return lintreport.Finding{Line: line, Message: fmt.Sprintf(format, args...)}
 	}
 	credOf := func(job workflow.Job) workflow.Line {
 		for _, l := range job.Lines {
@@ -870,6 +881,33 @@ func Test_checkSteps(t *testing.T) {
 		assert.Empty(t, checkSteps(job, credOf(job), finding))
 	})
 
+	t.Run("引用符付きのキーとフロースタイルの uses: は読めないとして違反", func(t *testing.T) {
+		t.Parallel()
+
+		for name, step := range map[string]string{
+			"引用符付きのキー":     "      - \"uses\": octo/comment@v1",
+			"キーの後の空白":      "      - uses : octo/comment@v1",
+			"フロースタイル":      "      - { name: Comment, uses: octo/comment@v1 }",
+			"継続行の引用符付きのキー": "      - name: Comment\n        'uses': octo/comment@v1",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				job := jobOf(t, strings.Replace(planWorkflow, "      - run: make ci-plan-admin-identity", step+"\n      - run: make ci-plan-admin-identity", 1), "plan-admin-identity")
+				assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), finding)))
+			})
+		}
+	})
+
+	t.Run("引用符付きのキーの checkout は読めないとして違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(planWorkflow, "      - uses: actions/checkout@", "      - \"uses\": actions/checkout@", 1)
+		src = strings.Replace(src, "          persist-credentials: false\n", "", 1)
+		job := jobOf(t, src, "plan-admin-identity")
+		assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), finding)))
+	})
+
 	t.Run("steps と同じ桁の並びは読めないとして違反", func(t *testing.T) {
 		t.Parallel()
 
@@ -883,6 +921,6 @@ func Test_checkSteps(t *testing.T) {
 			"",
 		}, "\n")
 		job := jobOf(t, src, "apply")
-		assert.Contains(t, messages(checkSteps(job, credOf(job), finding)), "steps を読めません")
+		assert.Contains(t, messages(checkSteps(job, credOf(job), finding)), "steps を読めません（uses: 2 件のうち 2 件）")
 	})
 }
