@@ -20,9 +20,11 @@
 //	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す
 //	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
 //	    plan の出力を置く object の key を1行で出す
+//	tf-local policy-result -namespace <ns> <conftest.json>
+//	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。評価が0件なら失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-sub と plan-summary はファイルを読む。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result はファイルを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -68,7 +70,7 @@ var (
 	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ...")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -138,6 +140,8 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runPlanSummary(args[1:], d.readFile)
 	case "plan-key":
 		value, err = runPlanKey(args[1:])
+	case "policy-result":
+		value, err = runPolicyResult(args[1:], d.readFile)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}

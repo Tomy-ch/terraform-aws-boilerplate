@@ -36,6 +36,10 @@ var (
 	errPlanExitCode = xerrors.New("❌ plan の終了コードは 0 か 2 です")
 	errPlanMismatch = xerrors.New("❌ plan の終了コードと JSON の変更の有無が食い違います")
 	errPlanKey      = xerrors.New("❌ plan の出力の key を組めません")
+
+	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
+	errPolicyEmpty     = xerrors.New("❌ 名前空間の規則が1つも評価されていません")
+	errPolicyViolation = xerrors.New("❌ Policy の違反があります")
 )
 
 func runRoleARN(args []string) (string, error) {
@@ -288,4 +292,71 @@ func planKey(pr, branch, runID, attempt, root string) (string, error) {
 	default:
 		return "", xerrors.Wrap(errPlanKey, "-pr と -branch のどちらか1つを渡してください")
 	}
+}
+
+type policyEntry struct {
+	Namespace string `json:"namespace"`
+	Successes int    `json:"successes"`
+	Failures  []struct {
+		Msg string `json:"msg"`
+	} `json:"failures"`
+	Warnings   []json.RawMessage `json:"warnings"`
+	Exceptions []json.RawMessage `json:"exceptions"`
+}
+
+func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (string, error) {
+	fs := flag.NewFlagSet("policy-result", flag.ContinueOnError)
+	namespace := fs.String("namespace", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() != 1 || *namespace == "" {
+		return "", errUsage
+	}
+
+	data, err := readFile(fs.Arg(0))
+	if err != nil {
+		return "", xerrors.Wrap(errPolicyJSON, "ファイルを読めません")
+	}
+
+	return policyResult(*namespace, data)
+}
+
+// policyResult は、`conftest test -o json --namespace <namespace>` の結果を読み、名前空間の規則が
+// 1つも評価されていなければ失敗します。conftest は名前空間に当たる package が無くても、
+// 0件の評価を成功として返すためです。
+func policyResult(namespace string, data []byte) (string, error) {
+	var entries []policyEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return "", xerrors.Wrap(errPolicyJSON, err.Error())
+	}
+
+	var (
+		evaluated int
+		messages  []string
+	)
+
+	for _, e := range entries {
+		if e.Namespace != namespace {
+			continue
+		}
+
+		evaluated += e.Successes + len(e.Failures) + len(e.Warnings) + len(e.Exceptions)
+
+		for _, f := range e.Failures {
+			messages = append(messages, f.Msg)
+		}
+	}
+
+	if evaluated == 0 {
+		return "", xerrors.Wrap(errPolicyEmpty, namespace)
+	}
+
+	if len(messages) > 0 {
+		return "", xerrors.Wrap(errPolicyViolation, strings.Join(messages, "\n"))
+	}
+
+	return fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", namespace, evaluated), nil
 }

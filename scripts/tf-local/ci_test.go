@@ -78,6 +78,24 @@ func Test_roleARN(t *testing.T) {
 		}
 	})
 
+	t.Run("usecases/deployment-identity の role 名の規則と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		uc, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "main.tf"))
+		require.NoError(t, err)
+		assert.Regexp(t, `name_prefix\s*=\s*"\$\{var\.project\}-\$\{var\.env\}"`, string(uc))
+
+		roles, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "internal", "github-oidc", "main.tf"))
+		require.NoError(t, err)
+		for _, role := range roleNames {
+			assert.Contains(t, string(roles), `"${var.name_prefix}-ci-`+role+`"`)
+
+			got, err := roleARN("tabp", "admin", role, account)
+			require.NoError(t, err)
+			assert.Equal(t, "arn:aws:iam::"+account+":role/tabp-admin-ci-"+role, got)
+		}
+	})
+
 	cases := map[string][4]string{
 		"知らない役割は失敗する":           {"tabp", "admin", "admin", account},
 		"下線の役割名は失敗する":           {"tabp", "admin", "apply_identity", account},
@@ -456,4 +474,99 @@ func Test_planKey(t *testing.T) {
 			require.ErrorIs(t, err, errPlanKey)
 		})
 	}
+}
+
+func Test_runPolicyResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ファイルの結果を読む", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runPolicyResult([]string{"-namespace", "plan.p", fileWith(t, `[{"namespace":"plan.p","successes":3}]`)}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 3 件を評価し、違反はありません", got)
+	})
+
+	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPolicyResult([]string{"-namespace", "plan.p", filepath.Join(t.TempDir(), "missing")}, os.ReadFile)
+		require.ErrorIs(t, err, errPolicyJSON)
+	})
+
+	t.Run("名前空間が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPolicyResult([]string{"f"}, os.ReadFile)
+		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("ファイルが1つでなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPolicyResult([]string{"-namespace", "plan.p"}, os.ReadFile)
+		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("知らないフラグは失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPolicyResult([]string{"-x", "plan.p", "f"}, os.ReadFile)
+		require.ErrorIs(t, err, errUsage)
+	})
+}
+
+func Test_policyResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("規則が評価され違反が無ければ件数を出す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := policyResult("plan.p", []byte(`[{"filename":"Combined","namespace":"plan.p","successes":2,"warnings":[{"msg":"w"}]}]`))
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 3 件を評価し、違反はありません", got)
+	})
+
+	t.Run("違反があれば、その文を持って失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte(`[{"namespace":"plan.p","successes":2,"failures":[{"msg":"[PLAN-STATE-01] x"}]}]`))
+		require.ErrorIs(t, err, errPolicyViolation)
+		assert.Contains(t, err.Error(), "[PLAN-STATE-01] x")
+	})
+
+	t.Run("名前空間の規則が0件の評価なら失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte(`[{"namespace":"plan.p","successes":0}]`))
+		require.ErrorIs(t, err, errPolicyEmpty)
+	})
+
+	t.Run("別の名前空間の評価は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte(`[{"namespace":"plan.q","successes":5}]`))
+		require.ErrorIs(t, err, errPolicyEmpty)
+	})
+
+	t.Run("例外だけでも評価として数える", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte(`[{"namespace":"plan.p","exceptions":[{"msg":"e"}]}]`))
+		require.NoError(t, err)
+	})
+
+	t.Run("結果が空の配列なら失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte(`[]`))
+		require.ErrorIs(t, err, errPolicyEmpty)
+	})
+
+	t.Run("JSON でなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult("plan.p", []byte("FAIL - x"))
+		require.ErrorIs(t, err, errPolicyJSON)
+	})
 }
