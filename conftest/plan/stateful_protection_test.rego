@@ -89,6 +89,16 @@ test_violation_plan_without_resource_changes if {
 	fixture.has("[PLAN-STATE-03] tmp/ci-plan/admin-identity.json: resource_changes が配列ではありません", msgs)
 }
 
+test_violation_resource_changes_not_array if {
+	msgs := stateful_protection.deny with input as [{"path": "p.json", "contents": {"format_version": "1.2", "resource_changes": "abc"}}] with data.policy_plan.stateful_protection as decl
+	fixture.has("[PLAN-STATE-03] p.json: resource_changes が配列ではありません", msgs)
+}
+
+test_violation_change_without_address if {
+	msgs := stateful_protection.deny with input as fixture.plan([{"type": "aws_s3_bucket", "change": {"actions": ["delete"]}}]) with data.policy_plan.stateful_protection as decl
+	fixture.has("[PLAN-STATE-03]", msgs)
+}
+
 test_violation_removal_without_type if {
 	msgs := stateful_protection.deny with input as fixture.plan([{"address": bucket, "change": {"actions": ["delete"]}}]) with data.policy_plan.stateful_protection as decl
 	fixture.has("[PLAN-STATE-03]", msgs)
