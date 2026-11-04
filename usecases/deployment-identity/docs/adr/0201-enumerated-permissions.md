@@ -20,7 +20,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:Put*` と `s3:Delete*`、state Bucket と plan の出力の Bucket への `s3:Put*` と `s3:Delete*`、state の object と plan の出力の object への `s3:Put*` と `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、2つの Bucket の設定、plan の出力を変えられないようにする。
 6. apply-identity の role は、自分を含む3つの role の信頼条件と policy を変更できる。誤った信頼条件が merge されると CI は締め出され、回復は repository-wide/ADR-0602 決定9 の回復の契機になる。
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
-8. plan の role に、plan の出力の Bucket の object への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13 の例外）。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。段5 で暗号化を CMK へ切り替える変更が、plan の role の `kms:GenerateDataKey` を先に足す。
+8. plan の role に、plan の出力の Bucket の `pr/*` と `branch/*` の key への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13 の例外）。Pull Request の plan と保護ブランチの plan を key の接頭辞で分ける。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。段5 で暗号化を CMK へ切り替える変更が、plan の role の `kms:GenerateDataKey` を先に足す。
 
 ### Action の導出
 
@@ -28,7 +28,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 | --- | --- | --- | --- |
 | S3 backend（state） | ListObjects、GetObject、PutObject | `s3:ListBucket`、`s3:GetObject`、`s3:PutObject` | 3つ（書き込みは apply 系の自分の key だけ） |
 | S3 backend（lock file） | GetObject、PutObject、DeleteObject | `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject` | apply 系の自分の `.tflock` だけ |
-| plan の出力 | PutObject | `s3:PutObject` | plan（plan の出力の Bucket の object だけ） |
+| plan の出力 | PutObject | `s3:PutObject` | plan（plan の出力の Bucket の `pr/*` と `branch/*` の object だけ） |
 | `aws_s3_bucket_lifecycle_configuration`（plan の出力の Bucket） | Get / Put / DeleteBucketLifecycle | `s3:GetLifecycleConfiguration`、`s3:PutLifecycleConfiguration` | 読みは plan、apply-identity。書きは apply-identity |
 | `aws_s3_bucket` の Read | HeadBucket（region の解決を含む） | `s3:ListBucket` | plan、apply-identity |
 | 同 | GetBucketPolicy / GetBucketAcl / GetBucketCors / GetBucketWebsite / GetBucketVersioning / GetBucketAccelerateConfiguration / GetBucketRequestPayment / GetBucketLogging / GetBucketLifecycleConfiguration / GetBucketReplication / GetBucketEncryption / GetObjectLockConfiguration / GetBucketTagging | `s3:GetBucketPolicy`、`s3:GetBucketAcl`、`s3:GetBucketCORS`、`s3:GetBucketWebsite`、`s3:GetBucketVersioning`、`s3:GetAccelerateConfiguration`、`s3:GetBucketRequestPayment`、`s3:GetBucketLogging`、`s3:GetLifecycleConfiguration`、`s3:GetReplicationConfiguration`、`s3:GetEncryptionConfiguration`、`s3:GetBucketObjectLockConfiguration`、`s3:GetBucketTagging` | plan、apply-identity |
