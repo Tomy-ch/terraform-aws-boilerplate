@@ -1,44 +1,39 @@
-# Paths whose review is reserved to a specific role, rather than any reviewer.
+# 特定の役割にだけ review を委ねるパス。
 #
-# GitHub enforces these entries only under the "Require review from Code Owners"
-# branch-protection rule; without it they merely auto-request the reviewer.
+# GitHub がこの宣言を強制するのは、保護設定の「Require review from Code Owners」が有効なときだけである。
+# 無効なら、reviewer を自動で指名するだけになる。
 #
-# The paths below share a shape: the automation around them checks that declarations
-# agree with one another, never that a declaration should have been made at all.
-# Weakening one leaves every check green, and review is what is left.
+# 以下のパスは同じ形をしている。周りの自動化が検査するのは宣言どうしが合っていることであって、
+# その宣言をそもそも置くべきだったかではない。どれを弱めても検査はすべて緑のまま通り、残るのは review である。
 
-# Supply-chain controls — the pin lockfiles and the two bypass ledgers.
+# サプライチェーンの統制 —— pin の lockfile と、2つの bypass の台帳。
 .github/actions-pin.toml              @Tomy-ch
 .github/runners-pin.toml              @Tomy-ch
 .github/go-cooldown-bypass.toml       @Tomy-ch
 .github/tool-cooldown-bypass.toml     @Tomy-ch
 docker/images-pin.toml                @Tomy-ch
 
-# The Go cooldown gate reads the `go.mod` diff and covers direct requirements only,
-# which leaves indirect modules to review.
+# Go の cooldown gate は `go.mod` の差分を読み、直接の依存だけを覆う。間接の module は review に残る。
 scripts/go.mod                        @Tomy-ch
 scripts/go.sum                        @Tomy-ch
 
-# The version SSOT. `tool-cooldown.yaml` covers the CLI tools declared here; the
-# language runtimes are exempt by the file's own declaration.
+# 版の SSOT。`tool-cooldown.yaml` はここで宣言する CLI の道具を覆い、言語の runtime はそのファイル自身の宣言で対象外になる。
 mise.toml                             @Tomy-ch
 
-# The branch-pattern SSOT and the deployment environments (ADR-0603 決定1・4). An environment
-# that allows more branches, or a pattern that protects fewer, still passes every check.
+# 分岐のパターンの SSOT と、デプロイ先の environment（ADR-0603 決定1・4）。許す分岐が多い environment も、
+# 保護するものが少ないパターンも、検査はすべて通る。
 .github/settings/branches.json        @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
 
-# The runner egress allowlist SSOT (bullfrog) — `make egress-apply` writes each entry out to
-# every workflow that carries the job.
+# runner の egress の許可リストの SSOT（bullfrog）。`make egress-apply` が、その job を持つすべての workflow へ書き出す。
 .github/egress.toml                   @Tomy-ch
 
-# The Policy Test and its declaration conftest/plan/decl.json (ADR-0402 決定15). Dropping a document
-# type or a role address from the declaration, or an override from a reference root's policy input,
-# shrinks what the Policy reads while every check stays green.
+# Policy Test とその宣言 conftest/plan/decl.json（ADR-0402 決定15）。宣言から文書の型や role の address を
+# 落としても、reference root の policy input から override を落としても、Policy が読む範囲が縮んだまま検査は緑で通る。
 conftest/plan/                        @Tomy-ch
 usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
 
-# インフラ内コードの検出（ADR-0103 決定14）。どれを弱めても検出は緑のまま通る。
+# インフラ内コードの検出（ADR-0103 決定14）。
 # 許可リストに本リポジトリ所有の項目を足す変更は、その項目のソースの所在の行をここに足す
 # （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。
 conftest/hcl/                              @Tomy-ch
