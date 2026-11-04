@@ -31,6 +31,13 @@ matched(root, address) if {
 	r.address == address
 }
 
+# 形の崩れた要素は removals にも許可の突き合わせにも現れないので、ここで落とす。
+well_formed_change(rc) if {
+	is_string(rc.address)
+	is_string(rc.type)
+	is_array(rc.change.actions)
+}
+
 verb(actions) := "置換" if count(actions) > 1
 
 verb(actions) := "削除" if count(actions) == 1
@@ -71,4 +78,17 @@ deny contains msg if {
 	some a in object.get(decl.allow, root, [])
 	not matched(root, a.address)
 	msg := sprintf("[PLAN-STATE-02] %s: 許可の宣言 %s が、この plan のどの削除と置換にも当たりません", [f.path, a.address])
+}
+
+deny contains msg if {
+	some f in input
+	not is_array(object.get(f.contents, "resource_changes", null))
+	msg := sprintf("[PLAN-STATE-03] %s: resource_changes が配列ではありません。plan の JSON の形を読めません", [f.path])
+}
+
+deny contains msg if {
+	some f in input
+	some i, rc in f.contents.resource_changes
+	not well_formed_change(rc)
+	msg := sprintf("[PLAN-STATE-03] %s: resource_changes[%d] が address・type・change.actions の形を満たしていません", [f.path, i])
 }

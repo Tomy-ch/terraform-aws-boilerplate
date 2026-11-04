@@ -143,6 +143,15 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "Plan: 0 to import, 1 to add, 0 to change, 0 to destroy.\n", out.String())
 		})
 
+		t.Run("policy-result は評価の件数を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			path := fileWith(t, `[{"namespace":"plan.p","successes":2}]`)
+			require.NoError(t, run([]string{"policy-result", "-namespace", "plan.p", "-rules", "2", path}, &out, testDeps(nil)))
+			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
+		})
+
 		t.Run("plan-key は key を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -839,12 +848,15 @@ func TestCiMk(t *testing.T) {
 		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
 		assert.NotContains(t, got, "AWS_PROFILE=tabp-bootstrap")
 		assert.Contains(t, got, envPrefix+" terraform -chdir=\"$dir\" init -input=false -no-color -lockfile=readonly")
+		assert.Contains(t, got, `-backend-config="bucket=$bucket" >> "$out" 2>&1`)
+		assert.Contains(t, got, `output -raw plan_output_bucket_name 2>> "$out"`)
 		assert.Contains(t, got, `plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1`)
 		assert.Contains(t, got, `show -json "$tfplan" > "$json" 2>> "$out"`)
 		assert.Contains(t, got, `--checksum-sha256 "$sha"`)
 		assert.Contains(t, got, `plan-summary -exitcode "$rc" "$json"`)
 		assert.Contains(t, got, `conftest test --combine --no-color -o json --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json" > "$pol"`)
-		assert.Contains(t, got, `policy-result -namespace plan.stateful_protection "$pol"`)
+		assert.Contains(t, got, `rules=$(grep -c '^deny contains' conftest/plan/stateful_protection.rego)`)
+		assert.Contains(t, got, `policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`)
 		assert.NotContains(t, got, `tee "$log"`)
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
@@ -857,6 +869,7 @@ func TestCiMk(t *testing.T) {
 		assert.Contains(t, got, "audience=sts.amazonaws.com")
 		assert.Contains(t, got, "role-arn -project tabp -env admin -role plan")
 		assert.Contains(t, got, `rm -f "$token"`)
+		assert.Contains(t, got, `do echo "::add-mask::$v"; done`)
 		assert.Contains(t, got, "configure set --profile tabp-admin-ci-plan")
 		assert.NotContains(t, got, "AWS_ACCESS_KEY_ID")
 	})

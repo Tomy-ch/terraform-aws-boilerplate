@@ -40,6 +40,7 @@ var (
 	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
 	errPolicyEmpty     = xerrors.New("❌ 名前空間の規則が1つも評価されていません")
 	errPolicyViolation = xerrors.New("❌ Policy の違反があります")
+	errPolicyCount     = xerrors.New("❌ 評価された規則の数が、宣言された規則の数と一致しません")
 )
 
 func runRoleARN(args []string) (string, error) {
@@ -307,12 +308,13 @@ type policyEntry struct {
 func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (string, error) {
 	fs := flag.NewFlagSet("policy-result", flag.ContinueOnError)
 	namespace := fs.String("namespace", "", "")
+	rules := fs.Int("rules", 0, "")
 
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
 
-	if fs.NArg() != 1 || *namespace == "" {
+	if fs.NArg() != 1 || *namespace == "" || *rules < 1 {
 		return "", errUsage
 	}
 
@@ -321,13 +323,14 @@ func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (stri
 		return "", xerrors.Wrap(errPolicyJSON, "ファイルを読めません")
 	}
 
-	return policyResult(*namespace, data)
+	return policyResult(*namespace, *rules, data)
 }
 
-// policyResult は、`conftest test -o json --namespace <namespace>` の結果を読み、名前空間の規則が
-// 1つも評価されていなければ失敗します。conftest は名前空間に当たる package が無くても、
-// 0件の評価を成功として返すためです。
-func policyResult(namespace string, data []byte) (string, error) {
+// policyResult は、`conftest test -o json --namespace <namespace>` の結果を読み、違反が無いのに
+// 評価された規則が rules 件でなければ失敗します。conftest は名前空間に当たる package が無くても、
+// 規則が減っても、評価できた分だけを成功として返すためです。conftest は違反の無い規則を successes に、
+// 違反の文を failures に数えるので、違反があるときは件数を突き合わせられない。
+func policyResult(namespace string, rules int, data []byte) (string, error) {
 	var entries []policyEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return "", xerrors.Wrap(errPolicyJSON, err.Error())
@@ -356,6 +359,10 @@ func policyResult(namespace string, data []byte) (string, error) {
 
 	if len(messages) > 0 {
 		return "", xerrors.Wrap(errPolicyViolation, strings.Join(messages, "\n"))
+	}
+
+	if evaluated != rules {
+		return "", xerrors.Wrapf(errPolicyCount, "%s: 評価 %d 件、宣言 %d 件", namespace, evaluated, rules)
 	}
 
 	return fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", namespace, evaluated), nil

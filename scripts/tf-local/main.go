@@ -20,17 +20,19 @@
 //	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す
 //	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
 //	    plan の出力を置く object の key を1行で出す
-//	tf-local policy-result -namespace <ns> <conftest.json>
-//	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。評価が0件なら失敗する
+//	tf-local policy-result -namespace <ns> -rules <n> <conftest.json>
+//	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
+//	    評価が n 件でなければ失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
 // plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result はファイルを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
-// backend block は式を持てないので、Bucket 名と role 名の規則をここに写す。正本は modules/s3 と
-// usecases/state-backend で、写しのずれはテストが env/admin/identity のテストの期待値と
-// docs/setup/bootstrap.md の段1 に突き合わせて見る（ADR-0702 決定17 の但し書き）。
+// backend block は式を持てないので、Bucket 名と role 名の規則をここに写す。Bucket 名の正本は modules/s3 と
+// usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
+// env/admin/identity のテストの期待値と docs/setup/bootstrap.md の段1、deployment-identity の .tf に
+// 突き合わせて見る（ADR-0702 決定17 の但し書き）。
 // state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
 package main
 
@@ -70,7 +72,7 @@ var (
 	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")

@@ -84,6 +84,26 @@ test_violation_declaration_missing if {
 	fixture.has("[PLAN-STATE-00]", msgs)
 }
 
+test_violation_plan_without_resource_changes if {
+	msgs := stateful_protection.deny with input as [{"path": "tmp/ci-plan/admin-identity.json", "contents": {"format_version": "1.2"}}] with data.policy_plan.stateful_protection as decl
+	fixture.has("[PLAN-STATE-03] tmp/ci-plan/admin-identity.json: resource_changes が配列ではありません", msgs)
+}
+
+test_violation_removal_without_type if {
+	msgs := stateful_protection.deny with input as fixture.plan([{"address": bucket, "change": {"actions": ["delete"]}}]) with data.policy_plan.stateful_protection as decl
+	fixture.has("[PLAN-STATE-03]", msgs)
+}
+
+test_violation_change_without_actions if {
+	msgs := stateful_protection.deny with input as fixture.plan([{"address": bucket, "type": "aws_s3_bucket", "change": {}}]) with data.policy_plan.stateful_protection as decl
+	fixture.has("[PLAN-STATE-03]", msgs)
+}
+
+test_pass_well_formed_changes if {
+	msgs := stateful_protection.deny with input as fixture.plan([change("aws_iam_role.x", "aws_iam_role", ["create"])]) with data.policy_plan.stateful_protection as decl
+	count(msgs) == 0
+}
+
 test_pass_root_of_nested_path if {
 	stateful_protection.root_of("a/b/state-backend.json") == "state-backend"
 	stateful_protection.root_of("p.json") == "p"
