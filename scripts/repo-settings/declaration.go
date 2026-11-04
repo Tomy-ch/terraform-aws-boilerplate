@@ -192,8 +192,7 @@ func validateEnvironments(envs []environment) error {
 
 func requiredDeployFrom(name string) (string, bool) {
 	switch {
-	// App の秘密鍵を置く environment（ADR-0603 決定30）。Pull Request の run に鍵を渡さない。
-	case name == appEnvironment, strings.HasSuffix(name, "-apply"), strings.HasSuffix(name, "-apply-identity"):
+	case strings.HasSuffix(name, "-apply"), strings.HasSuffix(name, "-apply-identity"):
 		return deployFromProtected, true
 	case strings.HasSuffix(name, "-plan"):
 		return deployFromProtectedPR, true
