@@ -24,8 +24,8 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | 出力 | 使う側 |
 | --- | --- |
 | `plan_role_arn` | 人が確かめるときの参照。CI の plan の job は assume の前に state を読めないので、この output を読まず、`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む（規則の一致は `tf-local` のテストが見る） |
-| `apply_role_arn` | apply の job（未配線）。段5 の state Bucket の Bucket Policy（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。#19） |
-| `apply_identity_role_arn` | apply-identity の job（未配線）。段5 の Bucket Policy（#19） |
+| `apply_role_arn` | workload root の apply の job（未配線。#222）。段5 の state Bucket の Bucket Policy（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。#19） |
+| `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。段5 の Bucket Policy（#19） |
 
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
@@ -70,6 +70,7 @@ unsupported:
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
 - apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。止めるのは Pull Request のレビューである
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
+- write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 
 ## 所有者
 
@@ -80,7 +81,7 @@ unsupported:
 
 - ユースケース: `state-backend`（`bucket_arn`、`plan_output_bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
-- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が assume する。apply と apply-identity の role を assume する workflow はまだ無い
+- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が assume する。apply の role を assume する workflow はまだ無い（#222）
 
 段5 で apply-identity の権限を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 
@@ -91,9 +92,9 @@ unsupported:
 - 段2 の突合と段4 の確認: 人が実 AWS で行う（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄すると認証や組織の構造を失う」に当たる。destroy しない。Policy Test、拒否されるべき主体の assume や操作が拒否されることの確認、drift 0 で代える（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)）
 
-apply の role の有効な権限の Policy Test（#209）は未配線で、CI の apply の経路と sandbox のアカウント（#21）も無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+apply の role の有効な権限の Policy Test（#209）は未配線で、workload root の apply の経路（#222）と sandbox のアカウント（#21）も無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
-- immutable 形式の environment の `sub` の形が、apply 系の environment の実 token と違うこと。plan の role は CI の plan の assume が確かめる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
+- immutable 形式の environment の `sub` の形が、environment `<env>-apply` の実 token と違うこと。plan と apply-identity の role は CI の plan と apply の assume が確かめる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 - deployment branch policy の扱いの想定違いで、plan の environment が Pull Request を許さないこと、apply 系の environment が Pull Request を許すこと
 - 権限の列挙が Provider の実際の呼び出しを覆わず、CI の plan や apply が AccessDenied で失敗すること。apply-identity の読み取りが欠けると、その修正の apply も失敗し、回復の契機になる
 - 実 API が読み戻した信頼条件や policy が宣言と違い、plan が毎回差分を出すこと
