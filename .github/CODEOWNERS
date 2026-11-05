@@ -25,6 +25,12 @@ mise.toml                             @Tomy-ch
 .github/settings/branches.json        @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
 
+# CI の plan の経路（ADR-0602 決定13）。これを変える主体が、plan の role の資格情報がどこへ届くかと、
+# plan の全文が公開のログに出ないかを決める。
+.makefiles/terraform/operation/ci.mk  @Tomy-ch
+scripts/tf-local/                     @Tomy-ch
+scripts/oidc-job-lint/                @Tomy-ch
+
 # runner の egress の許可リストの SSOT（bullfrog）。`make egress-apply` が、その job を持つすべての workflow へ書き出す。
 .github/egress.toml                   @Tomy-ch
 

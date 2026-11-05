@@ -17,6 +17,7 @@
       "resource.aws_launch_template": {"executes_code": true, "body_args": ["user_data"]},
       "resource.aws_lightsail_instance": {"executes_code": true, "body_args": ["user_data"]},
       "resource.aws_s3_bucket": {"executes_code": false},
+      "resource.aws_s3_bucket_lifecycle_configuration": {"executes_code": false},
       "resource.aws_s3_bucket_ownership_controls": {"executes_code": false},
       "resource.aws_s3_bucket_policy": {"executes_code": false},
       "resource.aws_s3_bucket_public_access_block": {"executes_code": false},

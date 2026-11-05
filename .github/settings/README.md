@@ -13,7 +13,7 @@
 | 突合 | `repo-settings-drift` | 無し（GET のみ） | CI（毎日と手動）、誰でも |
 | 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
 
-- 宣言を変える Pull Request は、merge の後に適用します。適用は `make setup-repo` も呼びます。
+- 宣言を変える Pull Request は、merge の後に管理者が適用します。CI は保護設定を書き込みません（ADR-0603 決定30）。適用は `make setup-repo` も呼びます。
 - 突合は Pull Request とは独立に毎日走り（`.github/workflows/repo-settings.yaml`）、ずれは失敗として通知されます。管理画面で設定を変えると、ここで赤になります。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
 - 適用は、宣言に無い environment を消しません。消すと secret ごと失われるためで、突合がそれを報告し、人が消すか宣言へ足します。
 - **CI の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返さず、CI の `GITHUB_TOKEN` は読み取りの権限です（ADR-0603 決定6）。突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は管理者が手元で `make repo-settings-drift` を実行したときに見ます。
@@ -36,7 +36,8 @@
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
 - 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
-- 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。承認者を置かないのは単独メンテナで承認できる人が自分しかいないためで、ADR-0601 決定7 が任意とする機構を使わない選択です。
+- 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
+  - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
 - `copilot` は Copilot coding agent が作る environment です。宣言に含め、管理者の迂回を無効にします。
 - `can_admins_bypass` は GitHub の REST の文書に載っていない値です。適用はこれを送り、突合は応答の値を見ます。適用の後も突合が「迂回が有効」と報告するなら、environment の設定画面で "Allow administrators to bypass configured protection rules" を外してください。
 
@@ -74,6 +75,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
+| plan（ADR-0603 決定12-14 の例外） | `plan-admin-identity`。AWS の状態と資格情報の取得に依存し、変更に誤りが無くても赤になりうる。fork と Dependabot の Pull Request では拒否の step で失敗するので、それらは merge できない |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**
 GitHub は報告の無い check を「該当しない」とは読まず待ち続け、その pull request は恒久的に

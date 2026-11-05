@@ -19,12 +19,13 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | role を置くアカウントの env の token。GitHub の environment 名の前半にもなる |
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
+| `plan_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key にだけ書ける |
 
 | 出力 | 使う側 |
 | --- | --- |
-| `plan_role_arn` | GitHub Actions の plan の job の `role-to-assume`（#185） |
-| `apply_role_arn` | 同 apply の job（#185）。段5 の state Bucket の Bucket Policy（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。#19） |
-| `apply_identity_role_arn` | 同 apply-identity の job（#185）。段5 の Bucket Policy（#19） |
+| `plan_role_arn` | 人が確かめるときの参照。CI の plan の job は assume の前に state を読めないので、この output を読まず、`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む（規則の一致は `tf-local` のテストが見る） |
+| `apply_role_arn` | apply の job（未配線）。段5 の state Bucket の Bucket Policy（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。#19） |
+| `apply_identity_role_arn` | apply-identity の job（未配線）。段5 の Bucket Policy（#19） |
 
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
@@ -77,29 +78,29 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `state-backend`（`bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
+- ユースケース: `state-backend`（`bucket_arn`、`plan_output_bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
-- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。role を assume する workflow は #185 が作る。それまでは、どの role も assume されない
+- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が assume する。apply と apply-identity の role を assume する workflow はまだ無い
 
 段5 で apply-identity の権限を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 
 ## 検証方法
 
 - Unit Test（mock）: `internal/github-oidc/tests/` が、3つの role の信頼条件と policy の文書、名前、セッションの上限、OIDC provider の URL と audience、inline policy と managed policy の排他を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction` の不在を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction` の不在を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
 - 段2 の突合と段4 の確認: 人が実 AWS で行う（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄すると認証や組織の構造を失う」に当たる。destroy しない。Policy Test、拒否されるべき主体の assume や操作が拒否されることの確認、drift 0 で代える（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)）
 
-apply の role の有効な権限の Policy Test（#209）は未配線で、CI の経路（#185）と sandbox のアカウント（#21）も無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+apply の role の有効な権限の Policy Test（#209）は未配線で、CI の apply の経路と sandbox のアカウント（#21）も無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
-- immutable 形式の environment の `sub` の形が実 token と違い、どの role も assume できないこと（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
+- immutable 形式の environment の `sub` の形が、apply 系の environment の実 token と違うこと。plan の role は CI の plan の assume が確かめる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 - deployment branch policy の扱いの想定違いで、plan の environment が Pull Request を許さないこと、apply 系の environment が Pull Request を許すこと
 - 権限の列挙が Provider の実際の呼び出しを覆わず、CI の plan や apply が AccessDenied で失敗すること。apply-identity の読み取りが欠けると、その修正の apply も失敗し、回復の契機になる
 - 実 API が読み戻した信頼条件や policy が宣言と違い、plan が毎回差分を出すこと
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
-- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
+- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` と `plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

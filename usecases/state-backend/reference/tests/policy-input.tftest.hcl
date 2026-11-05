@@ -16,6 +16,12 @@ override_resource {
   values          = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
 }
 
+override_resource {
+  target          = module.state_backend.module.plan_output.aws_s3_bucket.this
+  override_during = plan
+  values          = { arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" }
+}
+
 run "policy_input" {
   command = plan
 }

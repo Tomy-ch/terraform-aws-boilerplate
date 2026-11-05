@@ -1,4 +1,4 @@
-# 公開 output の名前と、それが返す値の配線を固定する。変えるなら公開契約の変更として扱う（ADR-0202 決定4）。
+# 公開 output の名前と、それが返す値の配線を固定する（ADR-0202 決定4）。
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
@@ -24,5 +24,63 @@ run "outputs" {
   assert {
     condition     = output.bucket_arn == module.s3.bucket_arn
     error_message = "bucket_arn が state Bucket の ARN を返していません。"
+  }
+
+  assert {
+    condition     = output.plan_output_bucket_name == "tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+    error_message = "plan_output_bucket_name が plan の出力の Bucket の完全な名前を返していません。"
+  }
+
+  assert {
+    condition     = output.plan_output_bucket_arn == module.plan_output.bucket_arn
+    error_message = "plan_output_bucket_arn が plan の出力の Bucket の ARN を返していません。"
+  }
+
+  assert {
+    condition     = output.plan_output_bucket_arn != output.bucket_arn
+    error_message = "plan の出力の Bucket が state Bucket と分かれていません。"
+  }
+}
+
+run "plan_output_retention_days_default" {
+  command = plan
+
+  assert {
+    condition     = var.plan_output_retention_days == 7
+    error_message = "plan_output_retention_days の既定が7日になっていません。"
+  }
+}
+
+run "plan_output_retention_days_zero" {
+  command = plan
+
+  variables {
+    plan_output_retention_days = 0
+  }
+
+  expect_failures = [var.plan_output_retention_days]
+}
+
+run "plan_output_retention_days_fraction" {
+  command = plan
+
+  variables {
+    plan_output_retention_days = 1.5
+  }
+
+  expect_failures = [var.plan_output_retention_days]
+}
+
+# 既定の 7 とは別の値を渡し、公開入力が内部の lifecycle まで届くことを見る。
+run "plan_output_retention_days_wiring" {
+  command = plan
+
+  variables {
+    plan_output_retention_days = 3
+  }
+
+  assert {
+    condition     = module.plan_output.retention_days == { current = 3, noncurrent = 3 }
+    error_message = "plan_output_retention_days が plan の出力の lifecycle の日数に届いていません。"
   }
 }

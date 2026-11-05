@@ -112,7 +112,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 
 ## 検証方法
 
-- Static Analysis: apply を行う workflow の契機が、保護ブランチへの push に限定されていること
+- Static Analysis: apply を行う workflow の契機が、保護ブランチへの push と、ref や commit を入力に取らない手動の起動に限定されていること（ADR-0602 決定14）
 - Static Analysis: Pull Request 契機の workflow に apply が含まれないこと
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
 - 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
