@@ -257,6 +257,13 @@ classes = ["mise"]
 [job."terraform-gates.yaml:plan-admin-identity"]
 classes = ["terraform", "aws"]
 
+# terraform-gates.yaml の infra-code-gate と同じ検出。
+[job."terraform-apply.yaml:apply-infra-code-gate"]
+classes = ["mise"]
+
+[job."terraform-apply.yaml:apply-admin-identity"]
+classes = ["terraform", "aws"]
+
 [job."trivy-config.yaml:changes"]
 classes = []
 

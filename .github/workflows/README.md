@@ -16,6 +16,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | 保護設定の突合 | 毎日と手動 | ruleset と environment の実態を宣言と突き合わせ、ずれで落ちて通知する |
+| apply | デフォルトブランチの release line への push | 管理アカウントの identity root を apply する。失敗を通知する |
 | リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ## 必須検査はすべての Pull Request で報告される
@@ -81,6 +82,48 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - job の形（environment、取る role、起動条件、拒否の step、terraform の経路）は `make oidc-job-lint` が見る
 
+### apply の job
+
+`terraform-apply.yaml` の `apply-admin-identity` は、release line への push で起動し、environment
+`admin-apply-identity` の下で OIDC により apply-identity の role を assume して（ADR-0602 決定14）、
+管理アカウントの identity root を apply する。path で絞らない。
+
+- **apply するのは、release line のうちデフォルトブランチであるものだけである。** 1つの state に複数の
+  ブランチが apply すると、遅れたブランチの push が古い構成を apply し直す。`hotfix/*` と deploy ブランチ
+  （`develop`・`staging`・`production`）の push は起動しない。hotfix の間（`scripts/release` が
+  デフォルトブランチを `hotfix/*` へ移す）は、release line の push も apply しない
+- **hotfix を閉じたら、管理者がデフォルトブランチを release line へ戻す**
+  （`gh repo edit --default-branch release/vX.Y.Z`）。戻さない限り、release line への merge は apply の
+  job を skip し続け、run は skip だけを示す
+- **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
+  （`plan.stateful_protection`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
+  `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
+- **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
+  run を止めない。資格情報を取る前の step（`refuse-stale`）が、デフォルトブランチとその先頭の commit を
+  API から取り直し、どちらかが違えば失敗する
+- **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
+  run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
+- **公開されるログに terraform の出力を出さない。** ログと job summary には、終了コード・件数・Policy の
+  違反の文だけを出す。apply の全文はランナーの外に出さない
+- **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` に置く。**
+  無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
+- 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
+  `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
+- workload root（`env/<env>/*.tf`）の apply の job、`make ci-apply-<env>`、environment `admin-apply` の
+  secret は、workload root を足す変更が足す
+- job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency）は
+  `make oidc-job-lint` が、`CI_APPLY` の分岐（plan か Policy が落ちたら apply しない）は
+  `make tf-gates-test` が見る
+
+保証しないこと:
+
+- **Pull Request の plan と、apply の plan が同じであること。** 必須検査は base の更新を要求しない
+  （`branch-protection.json` の `strict_required_status_checks_policy: false`）ので、merge された木は
+  最後に plan された木と違いうる。apply の job の plan と Policy が最後の関門である
+- **新しい release line が、古い線の未リリースの変更を持つこと。** 新しい線は `production` から切るので、
+  古い線をリリースする前に切ってデフォルトブランチを移すと、apply が古い線の変更を巻き戻す。
+  `scripts/release` の手順（タグを打ってから次の線を切る）を外れたときを検出する検査は無い
+
 ## 結果コメント
 
 Pull Request のコメントは、**検査が報告すべきことを持っているときにだけ作られる。** 通った検査が
@@ -133,7 +176,8 @@ truthy 側へ置く。
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` を除く5 job | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate` | 15 | 同上（新設） |
+| `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
@@ -168,6 +212,10 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | --- | --- | --- |
 | `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
 | `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
+
+`terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
+失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job が落ちると apply の job は
+`skipped` で終わるので、どちらの job の `failure` / `cancelled` でも通知する。
 
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
 failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
