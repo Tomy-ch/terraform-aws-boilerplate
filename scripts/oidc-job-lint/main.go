@@ -16,11 +16,16 @@
 //
 //   - environment を字面で宣言し、その名前が environments.json に在る
 //   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割>` をちょうど1回呼び、`<env>-<役割>` が environment の名前と一致する
-//   - plan の job は、workflow の起動が pull_request だけで、`needs` に infra-code-gate を持ち（ADR-0601 決定9）、
-//     id が refuse-untrusted で if: を持たない step を資格情報の取得より前に置き（ADR-0602 決定14）、
-//     terraform を `make ci-plan-*` でだけ走らせる（lock を取らない経路。ADR-0604 決定8）
+//   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
+//     その job の成功を条件に含める（ADR-0601 決定9）。検出の job は if: と continue-on-error: を持たない
+//   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: を持たない step を
+//     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
+//     （lock を取らない経路。ADR-0604 決定8）
 //   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
-//     cancel-in-progress: false の concurrency を持つ —— 後から起動した run が、実行中の apply を途中で止めない
+//     job か workflow 全体に cancel-in-progress: false の concurrency を持ち —— 後から起動した run が、
+//     実行中の apply を途中で止めない ——、id が refuse-stale で if: を持たない step を資格情報の取得より前に置き
+//     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
+//     apply する経路。ADR-0604 決定11）
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
@@ -45,8 +50,8 @@ import (
 const (
 	defaultWorkflowsDir     = ".github/workflows"
 	defaultEnvironmentsFile = ".github/settings/environments.json"
-	refuseStepID            = "refuse-untrusted"
-	detectionJob            = "infra-code-gate"
+	refuseUntrusted         = "refuse-untrusted"
+	refuseStale             = "refuse-stale"
 )
 
 var (
@@ -64,6 +69,10 @@ var (
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
 	ciPlan        = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
+	ciApply       = regexp.MustCompile(`\bmake\b.*\bci-apply-[a-z0-9-]+`)
+	ciEntry       = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
+	// -test の自己テストだけを走らせる job は、検出を走らせない。
+	detection = regexp.MustCompile(`\bmake\b.*\sinfra-code-gate(?:\s|$)`)
 	// tf-job-lint と同じく、サブコマンドを列挙しない。terraform を入れる行（mise の tools）は起動ではないので含めない。
 	// local.mk の init-* / plan-* も terraform を走らせる。それ以外の名前の make のターゲットは字面からは選べない。
 	runsTerraform = regexp.MustCompile(`\bmake\b.*\s(?:tf|init|plan)-|(?:^|[\s;&|(/"'])(?:terraform|tofu)["']?(?:\s|$)`)
@@ -73,9 +82,11 @@ var (
 	triggerKey    = regexp.MustCompile(`^ {2}([a-z_]+):`)
 	inputsKey     = regexp.MustCompile(`^ {4}inputs:`)
 	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
+	jobKeyAt      = regexp.MustCompile(`^ {4}([a-z-]+):[ \t]*(.*?)[ \t]*$`)
+	anyContinue   = regexp.MustCompile(`^\s+(?:- )?continue-on-error:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
-	concurrencyAt = regexp.MustCompile(`^ {4}concurrency:[ \t]*(?:#.*)?$`)
-	noCancel      = regexp.MustCompile(`^ {6}cancel-in-progress:[ \t]*false[ \t]*(?:#.*)?$`)
+	concurrencyAt = regexp.MustCompile(`^( *)concurrency:[ \t]*(?:#.*)?$`)
+	noCancel      = regexp.MustCompile(`^( *)cancel-in-progress:[ \t]*false[ \t]*(?:#.*)?$`)
 	stepID        = regexp.MustCompile(`^ {6}(?:- | {2})id:[ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})if:`)
 	stepContinue  = regexp.MustCompile(`^ {6}(?:- | {2})continue-on-error:`)
@@ -197,6 +208,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		}
 	}
 	on, onLine := triggers(split.Preamble)
+	w := workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
 	targets := 0
 	for _, job := range split.Jobs {
 		values, at, ok := permissionsBlock(job.Lines, "    ")
@@ -211,7 +223,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		}
 		attributed++
 		targets++
-		findings = append(findings, checkJob(file, job, values, envs, on, onLine)...)
+		findings = append(findings, checkJob(file, job, values, envs, w)...)
 	}
 	if n := countTokenLines(source); n > attributed {
 		findings = append(findings, lintreport.Finding{File: file, Line: 1,
@@ -239,7 +251,15 @@ func unreadable(values []string) bool {
 	return len(values) == 1 && (strings.Trim(values[0], `"'`) == "write-all" || (strings.HasPrefix(values[0], "{") && values[0] != "{}"))
 }
 
-func checkJob(file string, job workflow.Job, permissions, envs []string, on map[string][]workflow.Line, onLine int) []lintreport.Finding {
+// workflowInfo は、job の検査が読む workflow 全体の部分です。
+type workflowInfo struct {
+	on       map[string][]workflow.Line
+	onLine   int
+	preamble []workflow.Line
+	jobs     []workflow.Job
+}
+
+func checkJob(file string, job workflow.Job, permissions, envs []string, w workflowInfo) []lintreport.Finding {
 	finding := func(line int, format string, args ...any) lintreport.Finding {
 		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job %s: ", job.ID) + fmt.Sprintf(format, args...)}
 	}
@@ -278,68 +298,119 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, on map[
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
 	findings = append(findings, checkSteps(job, cred, finding)...)
+	findings = append(findings, checkDetection(job, w.jobs, finding)...)
 
 	if role == "plan" {
-		return append(findings, checkPlan(job, cred, on, onLine, finding)...)
+		return append(findings, checkPlan(job, cred, w, finding)...)
 	}
-	return append(findings, checkApply(job, on, onLine, finding)...)
+	return append(findings, checkApply(job, cred, w, finding)...)
 }
 
-func checkPlan(job workflow.Job, cred workflow.Line, on map[string][]workflow.Line, onLine int, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+func checkPlan(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
-	if keys := triggerNames(on); !slices.Equal(keys, []string{"pull_request"}) {
-		findings = append(findings, finding(onLine, "plan の job を持つ workflow の起動は pull_request だけにしてください（%s）", strings.Join(keys, ", ")))
+	if keys := triggerNames(w.on); !slices.Equal(keys, []string{"pull_request"}) {
+		findings = append(findings, finding(w.onLine, "plan の job を持つ workflow の起動は pull_request だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
-	if !slices.Contains(needs(job), detectionJob) {
-		findings = append(findings, finding(job.Number, "needs に %s を置いてください。plan は検出より先に Pull Request のコードを実行しません（ADR-0601 決定9）", detectionJob))
+	findings = append(findings, checkRefusal(job, cred, refuseUntrusted, finding)...)
+	return append(findings, checkTerraform(job, ciPlan, "plan", finding)...)
+}
+
+func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	keys := triggerNames(w.on)
+	if len(keys) == 0 || slices.ContainsFunc(keys, func(k string) bool { return k != "push" && k != "workflow_dispatch" }) {
+		findings = append(findings, finding(w.onLine, "apply の job を持つ workflow の起動は push と workflow_dispatch だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
+	for _, l := range w.on["workflow_dispatch"] {
+		if inputsKey.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "apply の workflow_dispatch に inputs を置かないでください。ref や commit を入力に取らせません（ADR-0602 決定14）"))
+		}
+	}
+	if !cancelsNothing(job.Lines, "    ") && !cancelsNothing(w.preamble, "") {
+		findings = append(findings, finding(job.Number, "apply の job か workflow 全体に cancel-in-progress: false の concurrency を置いてください"))
+	}
+	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
+	return append(findings, checkTerraform(job, ciApply, "apply", finding)...)
+}
+
+// checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
+// 検出の job は名前ではなく、`make infra-code-gate` を走らせることで見分けます。job の if: は、status の
+// 関数で検出の失敗を越えないよう、その成功を含むときだけ認めます。
+func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var detectors []workflow.Job
+	for _, n := range needs(job) {
+		for _, j := range jobs {
+			if j.ID == n && detects(j) {
+				detectors = append(detectors, j)
+			}
+		}
+	}
+	if len(detectors) == 0 {
+		return []lintreport.Finding{finding(job.Number, "needs に、make infra-code-gate を走らせる job を同じ workflow の中に置いてください。資格情報を取る job は検出より先にコードを実行しません（ADR-0601 決定9）")}
+	}
+	var findings []lintreport.Finding
+	for _, d := range detectors {
+		if _, at, ok := jobKey(d, "if"); ok {
+			findings = append(findings, finding(at, "検出の job %s に if: を置かないでください。skip は成功と同じく後続を止めません", d.ID))
+		}
+		for _, l := range d.Lines {
+			if !commentLine.MatchString(l.Text) && anyContinue.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "検出の job %s に continue-on-error: を置かないでください", d.ID))
+			}
+		}
+	}
+	cond, at, ok := jobKey(job, "if")
+	if ok && !slices.ContainsFunc(detectors, func(d workflow.Job) bool {
+		return regexp.MustCompile(`\bneeds\.` + regexp.QuoteMeta(d.ID) + `\.result\s*==\s*'success'`).MatchString(cond)
+	}) {
+		findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", detectors[0].ID))
+	}
+	return findings
+}
+
+// checkRefusal は、id の step が資格情報の取得より前に在り、if: と continue-on-error: を持たないことを検査します。
+// 拒否は skip ではなく失敗にします（ADR-0602 決定14）。
+func checkRefusal(job workflow.Job, cred workflow.Line, id string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
 	refused := false
 	for _, step := range workflow.SplitSteps(job) {
-		if !hasStepID(step, refuseStepID) {
+		if !hasStepID(step, id) {
 			continue
 		}
 		// 資格情報を取る step 自身は、拒否の step と認めない。
 		refused = step.Number < cred.Number && !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool { return l.Number == cred.Number })
 		for _, l := range step.Lines {
 			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "step %s に if: と continue-on-error: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", refuseStepID))
+				findings = append(findings, finding(l.Number, "step %s に if: と continue-on-error: を置かないでください。拒否は skip ではなく失敗にします（ADR-0602 決定14）", id))
 			}
 		}
 	}
 	if !refused {
-		findings = append(findings, finding(cred.Number, "資格情報を取る前に、id が %s の step を置いてください（ADR-0602 決定14）", refuseStepID))
-	}
-	plans := 0
-	for _, l := range job.Lines {
-		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
-			continue
-		}
-		if ciPlan.MatchString(l.Text) {
-			plans++
-		}
-		if runsTerraform.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "plan の job は terraform を make ci-plan-* でだけ走らせてください（ADR-0604 決定8）"))
-		}
-	}
-	if plans == 0 {
-		findings = append(findings, finding(job.Number, "plan の job に make ci-plan-* がありません"))
+		findings = append(findings, finding(cred.Number, "資格情報を取る前に、id が %s の step を置いてください（ADR-0602 決定14）", id))
 	}
 	return findings
 }
 
-func checkApply(job workflow.Job, on map[string][]workflow.Line, onLine int, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+// checkTerraform は、job が terraform を entry の make でだけ走らせることを検査します。plan の入口は lock を
+// 取らず（ADR-0604 決定8）、apply の入口は Policy を通った plan だけを apply する（同 決定11）ので、
+// 役割の違う入口も認めません。
+func checkTerraform(job workflow.Job, entry *regexp.Regexp, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
-	keys := triggerNames(on)
-	if len(keys) == 0 || slices.ContainsFunc(keys, func(k string) bool { return k != "push" && k != "workflow_dispatch" }) {
-		findings = append(findings, finding(onLine, "apply の job を持つ workflow の起動は push と workflow_dispatch だけにしてください（%s）", strings.Join(keys, ", ")))
-	}
-	for _, l := range on["workflow_dispatch"] {
-		if inputsKey.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "apply の workflow_dispatch に inputs を置かないでください。ref や commit を入力に取らせません（ADR-0602 決定14）"))
+	entries := 0
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
+			continue
+		}
+		matched := entry.MatchString(l.Text)
+		if matched {
+			entries++
+		}
+		if runsTerraform.MatchString(l.Text) || (!matched && ciEntry.MatchString(l.Text)) {
+			findings = append(findings, finding(l.Number, "%s の job は terraform を make ci-%s-* でだけ走らせてください", role, role))
 		}
 	}
-	if !cancelsNothing(job) {
-		findings = append(findings, finding(job.Number, "apply の job に cancel-in-progress: false の concurrency を置いてください"))
+	if entries == 0 {
+		findings = append(findings, finding(job.Number, "%s の job に make ci-%s-* がありません", role, role))
 	}
 	return findings
 }
@@ -522,20 +593,49 @@ func hasStepID(step workflow.Step, id string) bool {
 	return false
 }
 
-// cancelsNothing は、job が cancel-in-progress: false を明示した concurrency を持つかを返します。
-func cancelsNothing(job workflow.Job) bool {
-	for i, l := range job.Lines {
-		if !concurrencyAt.MatchString(l.Text) {
+// cancelsNothing は、indent の桁の concurrency が cancel-in-progress: false を明示しているかを返します。
+func cancelsNothing(lines []workflow.Line, indent string) bool {
+	for i, l := range lines {
+		if m := concurrencyAt.FindStringSubmatch(l.Text); m == nil || m[1] != indent {
 			continue
 		}
-		for _, next := range job.Lines[i+1:] {
-			if !strings.HasPrefix(next.Text, "      ") {
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next.Text) == "" || commentLine.MatchString(next.Text) {
+				continue
+			}
+			if !strings.HasPrefix(next.Text, indent+"  ") {
 				break
 			}
-			if noCancel.MatchString(next.Text) {
+			if m := noCancel.FindStringSubmatch(next.Text); m != nil && m[1] == indent+"  " {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// detects は、job が `make infra-code-gate` を走らせるかを返します。
+func detects(job workflow.Job) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
+		return !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && detection.MatchString(l.Text)
+	})
+}
+
+// jobKey は、job の直下の key の値と行を返します。値が次の行へ続く形は、続く行を空白でつないで返します。
+func jobKey(job workflow.Job, key string) (string, int, bool) {
+	for i, l := range job.Lines {
+		m := jobKeyAt.FindStringSubmatch(l.Text)
+		if m == nil || m[1] != key {
+			continue
+		}
+		parts := []string{m[2]}
+		for _, next := range job.Lines[i+1:] {
+			if !strings.HasPrefix(next.Text, "      ") {
+				break
+			}
+			parts = append(parts, strings.TrimSpace(next.Text))
+		}
+		return strings.TrimSpace(strings.Join(parts, " ")), l.Number, true
+	}
+	return "", 0, false
 }

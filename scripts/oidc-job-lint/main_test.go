@@ -68,27 +68,65 @@ var applyWorkflow = strings.Join([]string{
 	"",
 	"on:",
 	"  push:",
-	"    branches: [release/v0.1.0]",
-	"  workflow_dispatch:",
+	"    branches: ['release/*']",
 	"",
 	"permissions:",
 	"  contents: read",
 	"",
+	"concurrency:",
+	"  group: terraform-apply-admin-identity",
+	"  cancel-in-progress: false",
+	"",
 	"jobs:",
+	"  apply-infra-code-gate:",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - run: make infra-code-gate-test RUNNER_MODE=host",
+	"      - run: make infra-code-gate RUNNER_MODE=host",
+	"",
 	"  apply-admin-identity:",
+	"    needs: apply-infra-code-gate",
+	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
 	"    runs-on: ubuntu-24.04",
 	"    environment:",
 	"      name: admin-apply-identity",
-	"    concurrency:",
-	"      group: admin-identity",
-	"      cancel-in-progress: false",
 	"    permissions:",
 	"      contents: read",
 	"      id-token: write",
 	"    steps:",
+	"      - name: Refuse stale commits",
+	"        id: refuse-stale",
+	"        run: test \"$SHA\" = \"$HEAD\"",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          persist-credentials: false",
 	"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host",
+	"      - run: make ci-apply-admin-identity RUNNER_MODE=host",
 	"",
 }, "\n")
+
+func infoOf(source string) workflowInfo {
+	split := workflow.SplitJobs(source)
+	on, onLine := triggers(split.Preamble)
+
+	return workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
+}
+
+func credOf(job workflow.Job) workflow.Line {
+	for _, l := range job.Lines {
+		if credentials.MatchString(l.Text) {
+			return l
+		}
+	}
+
+	return workflow.Line{}
+}
+
+func formatted(line int, format string, args ...any) lintreport.Finding {
+	return lintreport.Finding{Line: line, Message: fmt.Sprintf(format, args...)}
+}
 
 func repoWith(t *testing.T, workflows map[string]string, decl string) (string, string) {
 	t.Helper()
@@ -189,7 +227,7 @@ func Test_run(t *testing.T) {
 		wf, env := repoWith(t, map[string]string{"plan.yaml": bad}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, &out), errViolations)
-		assert.Contains(t, out.String(), "needs に infra-code-gate")
+		assert.Contains(t, out.String(), "make infra-code-gate を走らせる job")
 	})
 
 	t.Run("workflow のディレクトリが無ければ失敗する", func(t *testing.T) {
@@ -357,7 +395,7 @@ func Test_check(t *testing.T) {
 func Test_checkJob(t *testing.T) {
 	t.Parallel()
 
-	on, onLine := map[string][]workflow.Line{"pull_request": nil}, 1
+	w := infoOf(planWorkflow)
 	jobWith := func(t *testing.T, from, to string) workflow.Job {
 		t.Helper()
 
@@ -373,12 +411,13 @@ func Test_checkJob(t *testing.T) {
 		"CI_ENV が無ければ違反":             {" CI_ENV=admin", "", "CI_ENV と CI_ROLE を明示"},
 		"environment と役割の食い違いは違反":    {"environment: admin-plan", "environment: admin-apply", "一致しません"},
 		"environment と env の食い違いは違反": {"CI_ENV=admin", "CI_ENV=dev", "一致しません"},
+		"needs に検出が無ければ違反":           {"needs: infra-code-gate", "needs: [changes]", "make infra-code-gate を走らせる job"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkJob("p.yaml", jobWith(t, c.from, c.to), planPerms, envs, on, onLine)), c.want)
+			assert.Contains(t, messages(checkJob("p.yaml", jobWith(t, c.from, c.to), planPerms, envs, w)), c.want)
 		})
 	}
 
@@ -386,13 +425,13 @@ func Test_checkJob(t *testing.T) {
 		t.Parallel()
 
 		job := jobWith(t, "      - run: make ci-plan-admin-identity", "      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan\n      - run: make ci-plan-admin-identity")
-		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "（2 回）")
+		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, w)), "（2 回）")
 	})
 
 	t.Run("contents: read と id-token: write 以外の権限は違反", func(t *testing.T) {
 		t.Parallel()
 
-		f := checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), append(planPerms, "pull-requests: write"), envs, on, onLine)
+		f := checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), append(planPerms, "pull-requests: write"), envs, w)
 		assert.Contains(t, messages(f), "pull-requests: write")
 	})
 
@@ -400,34 +439,41 @@ func Test_checkJob(t *testing.T) {
 		t.Parallel()
 
 		job := jobWith(t, "      - run: make ci-plan-admin-identity", "      - uses: octo/comment@v1\n      - run: make ci-plan-admin-identity")
-		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "action を呼ばない")
+		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, w)), "action を呼ばない")
 	})
 
 	t.Run("name: の中の ci-aws-credentials は呼び出しと数えない", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(strings.Replace(planWorkflow, "        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host", "        run: aws sts assume-role-with-web-identity", 1), "      - name: Run terraform plan through make", "      - name: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", 1), "plan-admin-identity")
-		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, on, onLine)), "（0 回）")
+		assert.Contains(t, messages(checkJob("p.yaml", job, planPerms, envs, w)), "（0 回）")
 	})
 
 	t.Run("name: に ci-aws-credentials を含んでも run: の1回だけを数える", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(planWorkflow, "      - name: Run terraform plan through make", "      - name: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", 1), "plan-admin-identity")
-		assert.Empty(t, checkJob("p.yaml", job, planPerms, envs, on, onLine))
+		assert.Empty(t, checkJob("p.yaml", job, planPerms, envs, w))
 	})
 
 	t.Run("規則を満たす job は違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), planPerms, envs, on, onLine))
+		assert.Empty(t, checkJob("p.yaml", jobOf(t, planWorkflow, "plan-admin-identity"), planPerms, envs, w))
+	})
+
+	t.Run("規則を満たす apply の job は違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkJob("a.yaml", jobOf(t, applyWorkflow, "apply-admin-identity"), planPerms, envs, infoOf(applyWorkflow)))
 	})
 
 	t.Run("apply の役割は apply の規則で見る", func(t *testing.T) {
 		t.Parallel()
 
-		job := jobOf(t, applyWorkflow, "apply-admin-identity")
-		f := checkJob("a.yaml", job, planPerms, envs, map[string][]workflow.Line{"pull_request": nil}, 1)
+		aw := infoOf(applyWorkflow)
+		aw.on = map[string][]workflow.Line{"pull_request": nil}
+		f := checkJob("a.yaml", jobOf(t, applyWorkflow, "apply-admin-identity"), planPerms, envs, aw)
 		assert.Contains(t, messages(f), "push と workflow_dispatch だけ")
 		assert.NotContains(t, messages(f), "一致しません", "CI_ROLE=apply-identity を apply と読まない")
 	})
@@ -436,19 +482,7 @@ func Test_checkJob(t *testing.T) {
 func Test_checkPlan(t *testing.T) {
 	t.Parallel()
 
-	on := map[string][]workflow.Line{"pull_request": nil}
-	finding := func(line int, format string, args ...any) lintreport.Finding {
-		return lintreport.Finding{Line: line, Message: fmt.Sprintf(format, args...)}
-	}
-	credOf := func(job workflow.Job) workflow.Line {
-		for _, l := range job.Lines {
-			if credentials.MatchString(l.Text) {
-				return l
-			}
-		}
-
-		return workflow.Line{}
-	}
+	w := infoOf(planWorkflow)
 	planWith := func(t *testing.T, from, to string) workflow.Job {
 		t.Helper()
 
@@ -459,29 +493,266 @@ func Test_checkPlan(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, planWorkflow, "plan-admin-identity")
-		assert.Empty(t, checkPlan(job, credOf(job), on, 1, finding))
+		assert.Empty(t, checkPlan(job, credOf(job), w, formatted))
 	})
 
 	t.Run("pull_request 以外の起動は違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, planWorkflow, "plan-admin-identity")
-		f := checkPlan(job, credOf(job), map[string][]workflow.Line{"pull_request": nil, "push": nil}, 1, finding)
-		assert.Contains(t, messages(f), "pull_request だけ")
+		pw := infoOf(planWorkflow)
+		pw.on = map[string][]workflow.Line{"pull_request": nil, "push": nil}
+		assert.Contains(t, messages(checkPlan(job, credOf(job), pw, formatted)), "pull_request だけ")
 	})
 
-	t.Run("needs に検出が無ければ違反", func(t *testing.T) {
+	t.Run("pull_request_target だけの起動は違反", func(t *testing.T) {
 		t.Parallel()
 
-		job := planWith(t, "needs: infra-code-gate", "needs: [changes]")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "needs に infra-code-gate を置いてください")
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		pw := infoOf(planWorkflow)
+		pw.on = map[string][]workflow.Line{"pull_request_target": nil}
+		assert.Contains(t, messages(checkPlan(job, credOf(job), pw, formatted)), "pull_request だけ")
 	})
 
 	t.Run("拒否の step が無ければ違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := planWith(t, "id: refuse-untrusted", "id: other")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "資格情報を取る前に")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), w, formatted)), "id が refuse-untrusted の step")
+	})
+
+	t.Run("make ci-plan-* 以外の terraform は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: terraform -chdir=env/admin/identity plan\n")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), w, formatted)), "make ci-plan-* でだけ")
+	})
+
+	t.Run("make ci-apply-* は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make ci-apply-admin-identity RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), w, formatted)), "make ci-plan-* でだけ")
+	})
+}
+
+func Test_checkApply(t *testing.T) {
+	t.Parallel()
+
+	w := infoOf(applyWorkflow)
+	job := jobOf(t, applyWorkflow, "apply-admin-identity")
+	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
+		t.Helper()
+
+		src := strings.Replace(applyWorkflow, from, to, 1)
+		require.NotEqual(t, applyWorkflow, src, "置き換え元が見つからない")
+
+		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
+	}
+
+	t.Run("規則を満たせば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkApply(job, credOf(job), w, formatted))
+	})
+
+	t.Run("入力の無い workflow_dispatch は違反にしない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "    branches: ['release/*']\n", "    branches: ['release/*']\n  workflow_dispatch:\n")
+		assert.Empty(t, checkApply(j, credOf(j), aw, formatted))
+	})
+
+	t.Run("pull_request の起動は違反", func(t *testing.T) {
+		t.Parallel()
+
+		aw := infoOf(applyWorkflow)
+		aw.on = map[string][]workflow.Line{"push": nil, "pull_request": nil}
+		assert.Contains(t, messages(checkApply(job, credOf(job), aw, formatted)), "push と workflow_dispatch だけ")
+	})
+
+	t.Run("起動条件が読めなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		aw := infoOf(applyWorkflow)
+		aw.on = map[string][]workflow.Line{}
+		assert.Contains(t, messages(checkApply(job, credOf(job), aw, formatted)), "push と workflow_dispatch だけ")
+	})
+
+	t.Run("workflow_dispatch の inputs は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "    branches: ['release/*']\n", "    branches: ['release/*']\n  workflow_dispatch:\n    inputs:\n      ref:\n        type: string\n")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "inputs を置かない")
+	})
+
+	t.Run("workflow の cancel-in-progress: true は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "  cancel-in-progress: false\n", "  cancel-in-progress: true\n")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "cancel-in-progress: false の concurrency")
+	})
+
+	t.Run("job の cancel-in-progress: false でも満たす", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(applyWorkflow, "concurrency:\n  group: terraform-apply-admin-identity\n  cancel-in-progress: false\n", "", 1)
+		src = strings.Replace(src, "    environment:\n      name: admin-apply-identity\n", "    environment:\n      name: admin-apply-identity\n    concurrency:\n      group: x\n      cancel-in-progress: false\n", 1)
+		j := jobOf(t, src, "apply-admin-identity")
+		assert.Empty(t, checkApply(j, credOf(j), infoOf(src), formatted))
+	})
+
+	t.Run("拒否の step が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "id: refuse-stale", "id: other")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "id が refuse-stale の step")
+	})
+
+	t.Run("plan の job の拒否の step では満たさない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "id: refuse-stale", "id: refuse-untrusted")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "id が refuse-stale の step")
+	})
+
+	t.Run("make ci-apply-* 以外の terraform は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n      - run: terraform -chdir=env/admin/identity apply -auto-approve\n")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "make ci-apply-* でだけ")
+	})
+
+	t.Run("make ci-plan-* は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make ci-apply-admin-identity RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "make ci-apply-* でだけ")
+	})
+
+	t.Run("make ci-apply-* が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "make ci-apply-admin-identity", "echo")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "make ci-apply-* がありません")
+	})
+}
+
+func Test_checkDetection(t *testing.T) {
+	t.Parallel()
+
+	w := infoOf(applyWorkflow)
+	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
+		t.Helper()
+
+		src := strings.Replace(applyWorkflow, from, to, 1)
+		require.NotEqual(t, applyWorkflow, src, "置き換え元が見つからない")
+
+		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
+	}
+
+	t.Run("検出の job に依り、if: がその成功を見れば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkDetection(jobOf(t, applyWorkflow, "apply-admin-identity"), w.jobs, formatted))
+	})
+
+	t.Run("if: が無ければ既定の成功の条件で足りる", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n", "")
+		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
+	})
+
+	t.Run("名前ではなく中身で検出の job を見分ける", func(t *testing.T) {
+		t.Parallel()
+
+		f := checkDetection(jobOf(t, planWorkflow, "plan-admin-identity"), infoOf(planWorkflow).jobs, formatted)
+		assert.Empty(t, f, "infra-code-gate という名前の job も、make infra-code-gate を走らせるので認める")
+	})
+
+	t.Run("needs の job が検出を走らせなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
+	})
+
+	t.Run("検出の自己テストだけの job は検出と認めない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - run: make infra-code-gate-test RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
+	})
+
+	t.Run("name: とコメントの中の検出は認めない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - name: make infra-code-gate\n        run: echo\n        # make infra-code-gate\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
+	})
+
+	t.Run("別の workflow に在る同名の job は認めない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Contains(t, messages(checkDetection(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(planWorkflow).jobs, formatted)), "make infra-code-gate を走らせる job")
+	})
+
+	t.Run("if: が検出の成功を見なければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "needs.apply-infra-code-gate.result == 'success' && ", "always() && ")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-infra-code-gate.result == 'success'")
+	})
+
+	t.Run("検出の job の if: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "  apply-infra-code-gate:\n    runs-on: ubuntu-24.04\n", "  apply-infra-code-gate:\n    if: github.event_name == 'push'\n    runs-on: ubuntu-24.04\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "検出の job apply-infra-code-gate に if:")
+	})
+
+	t.Run("検出の job の continue-on-error: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		for name, to := range map[string]string{
+			"job":  "  apply-infra-code-gate:\n    continue-on-error: true\n    runs-on: ubuntu-24.04\n",
+			"step": "  apply-infra-code-gate:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: make infra-code-gate\n        continue-on-error: true\n",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				src := strings.Replace(applyWorkflow, "  apply-infra-code-gate:\n    runs-on: ubuntu-24.04\n", to, 1)
+				assert.Contains(t, messages(checkDetection(jobOf(t, src, "apply-admin-identity"), infoOf(src).jobs, formatted)), "continue-on-error:")
+			})
+		}
+	})
+}
+
+func Test_checkRefusal(t *testing.T) {
+	t.Parallel()
+
+	planWith := func(t *testing.T, from, to string) workflow.Job {
+		t.Helper()
+
+		src := strings.Replace(planWorkflow, from, to, 1)
+		require.NotEqual(t, planWorkflow, src, "置き換え元が見つからない")
+
+		return jobOf(t, src, "plan-admin-identity")
+	}
+
+	t.Run("資格情報の前の拒否の step は違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		assert.Empty(t, checkRefusal(job, credOf(job), refuseUntrusted, formatted))
+	})
+
+	t.Run("拒否の step が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "id: refuse-untrusted", "id: other")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "資格情報を取る前に")
 	})
 
 	t.Run("拒否の step が資格情報の後なら違反", func(t *testing.T) {
@@ -490,109 +761,126 @@ func Test_checkPlan(t *testing.T) {
 		src := strings.Replace(planWorkflow, "      - name: Refuse untrusted Pull Requests\n        id: refuse-untrusted\n        run: test \"$HEAD_REPO_ID\" = \"$REPO_ID\"\n", "", 1)
 		src = strings.Replace(src, "      - run: make ci-plan-admin-identity", "      - id: refuse-untrusted\n        run: exit 1\n      - run: make ci-plan-admin-identity", 1)
 		job := jobOf(t, src, "plan-admin-identity")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "資格情報を取る前に")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "資格情報を取る前に")
 	})
 
 	t.Run("拒否の step が資格情報を取る step 自身なら違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(strings.Replace(planWorkflow, "        id: refuse-untrusted\n", "        id: other\n", 1), "      - name: Run terraform plan through make\n        run: make ci-aws-credentials", "      - name: Run terraform plan through make\n        id: refuse-untrusted\n        run: make ci-aws-credentials", 1), "plan-admin-identity")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "資格情報を取る前に")
-	})
-
-	t.Run("pull_request_target だけの起動は違反", func(t *testing.T) {
-		t.Parallel()
-
-		job := jobOf(t, planWorkflow, "plan-admin-identity")
-		f := checkPlan(job, credOf(job), map[string][]workflow.Line{"pull_request_target": nil}, 1, finding)
-		assert.Contains(t, messages(f), "pull_request だけ")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "資格情報を取る前に")
 	})
 
 	t.Run("拒否の step の if: は違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := planWith(t, "        id: refuse-untrusted\n", "        id: refuse-untrusted\n        if: github.event_name == 'pull_request'\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "if: と continue-on-error: を置かない")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "if: と continue-on-error: を置かない")
 	})
 
 	t.Run("拒否の step の continue-on-error: は違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := planWith(t, "        id: refuse-untrusted\n", "        id: refuse-untrusted\n        continue-on-error: true\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "continue-on-error: を置かない")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "continue-on-error: を置かない")
 	})
 
-	t.Run("local.mk の plan の入口は違反", func(t *testing.T) {
+	t.Run("別の id の拒否の step では満たさない", func(t *testing.T) {
 		t.Parallel()
 
-		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make plan-admin-identity RUNNER_MODE=host\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "make ci-plan-* でだけ")
-	})
-
-	t.Run("make ci-plan-* 以外の terraform は違反", func(t *testing.T) {
-		t.Parallel()
-
-		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: terraform -chdir=env/admin/identity plan\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "make ci-plan-* でだけ")
-	})
-
-	t.Run("make tf- の terraform も違反", func(t *testing.T) {
-		t.Parallel()
-
-		job := planWith(t, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make -s tf-validate\n")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "make ci-plan-* でだけ")
-	})
-
-	t.Run("make ci-plan-* が無ければ違反", func(t *testing.T) {
-		t.Parallel()
-
-		job := planWith(t, "make ci-plan-admin-identity", "echo")
-		assert.Contains(t, messages(checkPlan(job, credOf(job), on, 1, finding)), "make ci-plan-* がありません")
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseStale, formatted)), "id が refuse-stale の step")
 	})
 }
 
-func Test_checkApply(t *testing.T) {
+func Test_checkTerraform(t *testing.T) {
 	t.Parallel()
 
-	finding := func(line int, format string, _ ...any) lintreport.Finding {
-		return lintreport.Finding{Line: line, Message: format}
+	planWith := func(t *testing.T, add string) workflow.Job {
+		t.Helper()
+
+		return jobOf(t, strings.Replace(planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"+add, 1), "plan-admin-identity")
 	}
-	job := jobOf(t, applyWorkflow, "apply-admin-identity")
-	on, onLine := triggers(workflow.SplitJobs(applyWorkflow).Preamble)
 
-	t.Run("push と入力の無い workflow_dispatch と concurrency があれば違反0件", func(t *testing.T) {
+	t.Run("入口だけで走らせれば違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkApply(job, on, onLine, finding))
+		assert.Empty(t, checkTerraform(jobOf(t, planWorkflow, "plan-admin-identity"), ciPlan, "plan", formatted))
 	})
 
-	t.Run("pull_request の起動は違反", func(t *testing.T) {
+	cases := map[string]string{
+		"terraform の直接の起動は違反": "      - run: terraform -chdir=env/admin/identity plan\n",
+		"local.mk の入口は違反":     "      - run: make plan-admin-identity RUNNER_MODE=host\n",
+		"make tf- は違反":        "      - run: make -s tf-validate\n",
+		"別の役割の CI の入口は違反":     "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n",
+	}
+	for name, add := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkTerraform(planWith(t, add), ciPlan, "plan", formatted)), "make ci-plan-* でだけ")
+		})
+	}
+
+	t.Run("terraform を入れる行は起動と数えない", func(t *testing.T) {
 		t.Parallel()
 
-		f := checkApply(job, map[string][]workflow.Line{"push": nil, "pull_request": nil}, 1, finding)
-		assert.Contains(t, messages(f), "push と workflow_dispatch だけ")
+		assert.Empty(t, checkTerraform(planWith(t, "      - run: echo aqua:hashicorp/terraform\n"), ciPlan, "plan", formatted))
 	})
 
-	t.Run("起動条件が読めなければ違反", func(t *testing.T) {
+	t.Run("入口が無ければ違反", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Contains(t, messages(checkApply(job, map[string][]workflow.Line{}, 1, finding)), "push と workflow_dispatch だけ")
+		job := jobOf(t, strings.Replace(planWorkflow, "make ci-plan-admin-identity", "echo", 1), "plan-admin-identity")
+		assert.Contains(t, messages(checkTerraform(job, ciPlan, "plan", formatted)), "make ci-plan-* がありません")
 	})
+}
 
-	t.Run("workflow_dispatch の inputs は違反", func(t *testing.T) {
-		t.Parallel()
+func Test_detects(t *testing.T) {
+	t.Parallel()
 
-		src := strings.Replace(applyWorkflow, "  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      ref:\n        type: string\n", 1)
-		on, onLine := triggers(workflow.SplitJobs(src).Preamble)
-		assert.Contains(t, messages(checkApply(job, on, onLine, finding)), "inputs を置かない")
-	})
+	cases := map[string]struct {
+		step string
+		want bool
+	}{
+		"make infra-code-gate を走らせる": {"      - run: make infra-code-gate RUNNER_MODE=host\n", true},
+		"引数の無い make infra-code-gate": {"      - run: make infra-code-gate\n", true},
+		"自己テストだけは偽":                  {"      - run: make infra-code-gate-test\n", false},
+		"name: の中は偽":                 {"      - name: make infra-code-gate\n        run: echo\n", false},
+		"コメントは偽":                     {"      # - run: make infra-code-gate\n      - run: echo\n", false},
+		"make を通さない検出の道具は偽":          {"      - run: ./tmp/bin/infra-code-gate\n", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("cancel-in-progress: false が無ければ違反", func(t *testing.T) {
-		t.Parallel()
+			assert.Equal(t, c.want, detects(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a")))
+		})
+	}
+}
 
-		bad := jobOf(t, strings.Replace(applyWorkflow, "      cancel-in-progress: false\n", "      cancel-in-progress: true\n", 1), "apply-admin-identity")
-		assert.Contains(t, messages(checkApply(bad, on, onLine, finding)), "concurrency")
-	})
+func Test_jobKey(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		body string
+		want string
+		ok   bool
+	}{
+		"1行の値":            {"    if: ${{ always() }}\n    runs-on: x\n", "${{ always() }}", true},
+		"ブロックの値をつなぐ":      {"    if: >-\n      a &&\n      b\n    runs-on: x\n", ">- a && b", true},
+		"step の if: は見ない": {"    steps:\n      - if: x\n        run: y\n", "", false},
+		"無ければ偽":           {"    runs-on: x\n", "", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, _, ok := jobKey(jobOf(t, "jobs:\n  a:\n"+c.body, "a"), "if")
+			assert.Equal(t, c.ok, ok)
+			assert.Equal(t, c.want, got)
+		})
+	}
 }
 
 func Test_hasIDToken(t *testing.T) {
@@ -778,9 +1066,21 @@ func Test_cancelsNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, c.want, cancelsNothing(jobOf(t, "jobs:\n  a:\n"+c.body, "a")))
+			assert.Equal(t, c.want, cancelsNothing(jobOf(t, "jobs:\n  a:\n"+c.body, "a").Lines, "    "))
 		})
 	}
+
+	t.Run("workflow 全体の false を読む", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, cancelsNothing(lines("concurrency:", "  group: x", "  cancel-in-progress: false", "jobs:"), ""))
+	})
+
+	t.Run("別の桁の false は読まない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, cancelsNothing(lines("concurrency:", "  group: x", "    cancel-in-progress: false", "jobs:"), ""))
+	})
 }
 
 func Test_countTokenLines(t *testing.T) {
@@ -837,38 +1137,25 @@ func Test_unreadable(t *testing.T) {
 func Test_checkSteps(t *testing.T) {
 	t.Parallel()
 
-	finding := func(line int, format string, args ...any) lintreport.Finding {
-		return lintreport.Finding{Line: line, Message: fmt.Sprintf(format, args...)}
-	}
-	credOf := func(job workflow.Job) workflow.Line {
-		for _, l := range job.Lines {
-			if credentials.MatchString(l.Text) {
-				return l
-			}
-		}
-
-		return workflow.Line{}
-	}
-
 	t.Run("規則を満たせば違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, planWorkflow, "plan-admin-identity")
-		assert.Empty(t, checkSteps(job, credOf(job), finding))
+		assert.Empty(t, checkSteps(job, credOf(job), formatted))
 	})
 
 	t.Run("persist-credentials: false の無い checkout は違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(planWorkflow, "          persist-credentials: false\n", "          fetch-depth: 1\n", 1), "plan-admin-identity")
-		assert.Contains(t, messages(checkSteps(job, credOf(job), finding)), "persist-credentials: false")
+		assert.Contains(t, messages(checkSteps(job, credOf(job), formatted)), "persist-credentials: false")
 	})
 
 	t.Run("資格情報の後の action は違反", func(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(planWorkflow, "      - run: make ci-plan-admin-identity", "      - uses: octo/comment@v1\n      - run: make ci-plan-admin-identity", 1), "plan-admin-identity")
-		f := checkSteps(job, credOf(job), finding)
+		f := checkSteps(job, credOf(job), formatted)
 		require.Len(t, f, 1, "資格情報の前の checkout と setup-mise は数えない")
 		assert.Contains(t, f[0].Message, "action を呼ばない")
 		assert.Greater(t, f[0].Line, credOf(job).Number)
@@ -878,7 +1165,7 @@ func Test_checkSteps(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(planWorkflow, "      - run: make ci-plan-admin-identity", "        # uses: octo/comment@v1\n      - run: make ci-plan-admin-identity", 1), "plan-admin-identity")
-		assert.Empty(t, checkSteps(job, credOf(job), finding))
+		assert.Empty(t, checkSteps(job, credOf(job), formatted))
 	})
 
 	t.Run("引用符付きのキーとフロースタイルの uses: は読めないとして違反", func(t *testing.T) {
@@ -894,7 +1181,7 @@ func Test_checkSteps(t *testing.T) {
 				t.Parallel()
 
 				job := jobOf(t, strings.Replace(planWorkflow, "      - run: make ci-plan-admin-identity", step+"\n      - run: make ci-plan-admin-identity", 1), "plan-admin-identity")
-				assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), finding)))
+				assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), formatted)))
 			})
 		}
 	})
@@ -905,7 +1192,7 @@ func Test_checkSteps(t *testing.T) {
 		src := strings.Replace(planWorkflow, "      - uses: actions/checkout@", "      - \"uses\": actions/checkout@", 1)
 		src = strings.Replace(src, "          persist-credentials: false\n", "", 1)
 		job := jobOf(t, src, "plan-admin-identity")
-		assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), finding)))
+		assert.Equal(t, "uses: を読み取れません。`- uses: <action>` の形で書いてください\n", messages(checkSteps(job, credOf(job), formatted)))
 	})
 
 	t.Run("steps と同じ桁の並びは読めないとして違反", func(t *testing.T) {
@@ -921,6 +1208,6 @@ func Test_checkSteps(t *testing.T) {
 			"",
 		}, "\n")
 		job := jobOf(t, src, "apply")
-		assert.Contains(t, messages(checkSteps(job, credOf(job), finding)), "steps を読めません（uses: 2 件のうち 2 件）")
+		assert.Contains(t, messages(checkSteps(job, credOf(job), formatted)), "steps を読めません（uses: 2 件のうち 2 件）")
 	})
 }
