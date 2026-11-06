@@ -14,18 +14,30 @@
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
 //	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity> -account <id>
 //	    CI が assume する role の ARN を1行で出す
+//	tf-local oidc-url
+//	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
+//	    要求先か要求の token が環境変数に無ければ失敗する
+//	tf-local oidc-token <response-file>
+//	    OIDC token の要求の応答（JSON）から token を1行で出す
 //	tf-local oidc-sub <token-file>
 //	    GitHub Actions の OIDC token の sub を1行で出す
-//	tf-local plan-summary -exitcode <0|2> <show.json>
-//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す
+//	tf-local plan-summary -exitcode <0|1|2> <show.json>
+//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す。終了コードが 1 なら
+//	    JSON を読まずに plan の失敗として落ちる
 //	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
 //	    plan の出力を置く object の key を1行で出す
-//	tf-local policy-result -namespace <ns> -rules <n> <conftest.json>
+//	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
-//	    評価が n 件でなければ失敗する
+//	    評価が rego の `deny contains` の数でなければ失敗する
+//
+//	tf-local account -identity <out>
+//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
+//	tf-local sha256 <file>
+//	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result はファイルを読む。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・policy-result・sha256 は
+// ファイルを読み、oidc-url は環境変数を読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -33,11 +45,11 @@
 // usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
 // env/admin/identity のテストの期待値と docs/setup/bootstrap.md の段1、deployment-identity の .tf に
 // 突き合わせて見る（ADR-0702 決定17 の但し書き）。
-// state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -68,11 +80,13 @@ var (
 	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// unsetPrefixes と unsetNames は、資格情報・引数・入力・対象の state・provider を変える変数と、
-	// 資格情報を含みうる trace を出す変数。TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
+	// 資格情報を含みうる trace を出す変数と、CI の job の OIDC token を新たに要求できる変数。
+	// TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
 	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
-	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
+	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
+		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -132,6 +146,18 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = planHeader(d.git)
 	case "role-arn":
 		value, err = runRoleARN(args[1:])
+	case "oidc-url":
+		if len(args) != 1 {
+			return errUsage
+		}
+
+		value, err = oidcURL(d.environ)
+	case "oidc-token":
+		if len(args) != 2 {
+			return errUsage
+		}
+
+		value, err = oidcToken(args[1], d.readFile)
 	case "oidc-sub":
 		if len(args) != 2 {
 			return errUsage
@@ -144,6 +170,14 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runPlanKey(args[1:])
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
+	case "account":
+		value, err = runAccount(args[1:])
+	case "sha256":
+		if len(args) != 2 {
+			return errUsage
+		}
+
+		value, err = fileSHA256(args[1], d.readFile)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -172,12 +206,41 @@ func runBucket(args []string) (string, error) {
 		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
 	}
 
-	account, err := callerAccount(*identity)
+	account, err := accountOf(*identity)
 	if err != nil {
 		return "", err
 	}
 
 	return bucketName(*project, *env, account, *region)
+}
+
+func runAccount(args []string) (string, error) {
+	fs := flag.NewFlagSet("account", flag.ContinueOnError)
+	identity := fs.String("identity", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() > 0 {
+		return "", errUsage
+	}
+
+	return accountOf(*identity)
+}
+
+// accountOf は、callerAccount の失敗の文から入力の値を落とします。文は CI の公開されるログに出る。
+func accountOf(identity string) (string, error) {
+	account, err := callerAccount(identity)
+	if errors.Is(err, errRootCredentials) {
+		return "", errRootCredentials
+	}
+
+	if err != nil {
+		return "", errIdentity
+	}
+
+	return account, nil
 }
 
 func rootRegion(root string, readFile func(string) ([]byte, error)) (string, error) {
@@ -269,7 +332,7 @@ func envUnset(environ []string) (string, error) {
 
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(unsetNames, name) && !slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+		if !unset(name) {
 			continue
 		}
 
@@ -288,6 +351,10 @@ func envUnset(environ []string) (string, error) {
 	}
 
 	return strings.Join(flags, " "), nil
+}
+
+func unset(name string) bool {
+	return slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) })
 }
 
 // planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10）。git が答えられなければ、

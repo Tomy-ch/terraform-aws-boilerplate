@@ -25,8 +25,8 @@ mise.toml                             @Tomy-ch
 .github/settings/branches.json        @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
 
-# CI の plan の経路（ADR-0602 決定13）。これを変える主体が、plan の role の資格情報がどこへ届くかと、
-# plan の全文が公開のログに出ないかを決める。
+# CI の plan と apply の経路（ADR-0602 決定13・14）。これを変える主体が、CI の role の資格情報がどこへ届くかと、
+# terraform の全文が公開のログに出ないかと、何がいつ apply されるかを決める。
 .makefiles/terraform/operation/ci.mk  @Tomy-ch
 scripts/tf-local/                     @Tomy-ch
 scripts/oidc-job-lint/                @Tomy-ch
@@ -49,5 +49,6 @@ scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/infra-code.mk         @Tomy-ch
 .makefiles/terraform/infra-code-test.mk    @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
+.github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch

@@ -70,7 +70,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 - Unit Test: `internal/github-oidc/tests/trust.tftest.hcl` が、3つの role の信頼条件の文書を完全一致で、`tests/validation.tftest.hcl` が名前に `*` `?` `:` を含む入力の拒否を確かめる
 - Policy Test（`make tf-policy`）: repository-wide/ADR-0602 の検証方法の、信頼条件のワイルドカードの不在、environment 形式、完全一致の項目
 - 運用機構（`make repo-settings-check`）: environment 名が environment の宣言に存在すること
-- 実 token: 決定7。plan の role は、CI の plan の job が assume できることで毎回確かめる。apply 系の role は、apply の経路ができてから同じ形で確かめる
+- 実 token: 決定7。plan の role は CI の plan の job が、apply-identity の role は CI の apply の job（`.github/workflows/terraform-apply.yaml`）が、assume できることで毎回確かめる。apply の role は、workload root の apply の job ができてから同じ形で確かめる
 
 ## 影響
 

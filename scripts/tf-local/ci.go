@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -19,6 +21,12 @@ import (
 // roleFormat は、usecases/deployment-identity の role 名 `<project>-<env>-ci-<役割>` の写し。
 const roleFormat = "arn:aws:iam::%s:role/%s-%s-ci-%s"
 
+// oidcAudience は、usecases/deployment-identity の OIDC provider の client_id_list の写し。
+const oidcAudience = "sts.amazonaws.com"
+
+// oidcHostSuffix は、GitHub Actions が ACTIONS_ID_TOKEN_REQUEST_URL に置く要求先の host。
+const oidcHostSuffix = ".actions.githubusercontent.com"
+
 const maxTokenSize = 16 << 10
 
 var (
@@ -30,17 +38,22 @@ var (
 
 	errRole         = xerrors.New("❌ role の ARN を組めません（project・env・役割・アカウント ID のいずれかが不正です）")
 	errOIDCToken    = xerrors.New("❌ OIDC token から sub を読めません")
+	errOIDCRequest  = xerrors.New("❌ OIDC token を要求できません（job に id-token: write がありません）")
+	errOIDCResponse = xerrors.New("❌ OIDC token の要求の応答から token を読めません")
 	errPlanJSON     = xerrors.New("❌ plan の JSON を解釈できません")
 	errPlanEmpty    = xerrors.New("❌ plan の JSON に resource の変更が1件もありません。検査の対象が0件です")
 	errPlanErrored  = xerrors.New("❌ plan はエラーで終わっています")
+	errPlanFailed   = xerrors.New("❌ plan が失敗しました（終了コード 1）")
 	errPlanExitCode = xerrors.New("❌ plan の終了コードは 0 か 2 です")
 	errPlanMismatch = xerrors.New("❌ plan の終了コードと JSON の変更の有無が食い違います")
 	errPlanKey      = xerrors.New("❌ plan の出力の key を組めません")
+	errDigest       = xerrors.New("❌ SHA-256 を計算するファイルを読めません")
 
 	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
 	errPolicyEmpty     = xerrors.New("❌ 名前空間の規則が1つも評価されていません")
 	errPolicyViolation = xerrors.New("❌ Policy の違反があります")
 	errPolicyCount     = xerrors.New("❌ 評価された規則の数が、宣言された規則の数と一致しません")
+	errPolicyRules     = xerrors.New("❌ rego から規則の数を読めません")
 )
 
 func runRoleARN(args []string) (string, error) {
@@ -68,6 +81,62 @@ func roleARN(project, env, role, account string) (string, error) {
 	}
 
 	return fmt.Sprintf(roleFormat, account, project, env, role), nil
+}
+
+// oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。要求の
+// token は curl が環境変数から直接読み、ここは出さない。
+func oidcURL(environ []string) (string, error) {
+	var request, bearer string
+
+	for _, kv := range environ {
+		if v, ok := strings.CutPrefix(kv, "ACTIONS_ID_TOKEN_REQUEST_URL="); ok {
+			request = v
+		}
+
+		if v, ok := strings.CutPrefix(kv, "ACTIONS_ID_TOKEN_REQUEST_TOKEN="); ok {
+			bearer = v
+		}
+	}
+
+	if request == "" || bearer == "" {
+		return "", errOIDCRequest
+	}
+
+	// bearer は audience を問わず token を発行させられるので、GitHub の要求先の外へ送らない。
+	u, err := url.Parse(request)
+	if err != nil || u.Scheme != "https" || u.User != nil || !strings.HasSuffix(u.Hostname(), oidcHostSuffix) || u.Hostname() == oidcHostSuffix {
+		return "", xerrors.Wrap(errOIDCRequest, "要求先が GitHub Actions の https の URL ではありません")
+	}
+
+	q := u.Query()
+	q.Set("audience", oidcAudience)
+	u.RawQuery = q.Encode()
+
+	return u.String(), nil
+}
+
+// oidcToken は、OIDC token の要求の応答 `{"value": "<JWT>"}` から token を返します。JWT の形でなければ
+// 失敗し、token は文に入れない。
+func oidcToken(path string, readFile func(string) ([]byte, error)) (string, error) {
+	raw, err := readFile(path)
+	if err != nil {
+		return "", xerrors.Wrap(errOIDCResponse, "応答のファイルを読めません")
+	}
+
+	var resp struct {
+		Value string `json:"value"`
+	}
+
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", xerrors.Wrap(errOIDCResponse, "応答が JSON ではありません")
+	}
+
+	parts := strings.Split(resp.Value, ".")
+	if len(resp.Value) > maxTokenSize || len(parts) != 3 || slices.Contains(parts, "") || strings.ContainsAny(resp.Value, " \t\r\n") {
+		return "", xerrors.Wrap(errOIDCResponse, "value が JWT の形ではありません")
+	}
+
+	return resp.Value, nil
 }
 
 // oidcSub は、GitHub Actions の OIDC token（JWT）の payload の sub を返します。署名は検証しない
@@ -165,6 +234,11 @@ func runPlanSummary(args []string, readFile func(string) ([]byte, error)) (strin
 
 	if fs.NArg() != 1 {
 		return "", errUsage
+	}
+
+	// plan が失敗すれば show の JSON は無いので、ファイルより先に終了コードを見る。
+	if *exitCode == "1" {
+		return "", errPlanFailed
 	}
 
 	data, err := readFile(fs.Arg(0))
@@ -308,14 +382,24 @@ type policyEntry struct {
 func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (string, error) {
 	fs := flag.NewFlagSet("policy-result", flag.ContinueOnError)
 	namespace := fs.String("namespace", "", "")
-	rules := fs.Int("rules", 0, "")
+	rego := fs.String("rego", "", "")
 
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
 
-	if fs.NArg() != 1 || *namespace == "" || *rules < 1 {
+	if fs.NArg() != 1 || *namespace == "" || *rego == "" {
 		return "", errUsage
+	}
+
+	src, err := readFile(*rego)
+	if err != nil {
+		return "", xerrors.Wrap(errPolicyRules, "ファイルを読めません")
+	}
+
+	rules := countRules(src)
+	if rules == 0 {
+		return "", xerrors.Wrap(errPolicyRules, "deny contains が1つもありません")
 	}
 
 	data, err := readFile(fs.Arg(0))
@@ -323,7 +407,20 @@ func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (stri
 		return "", xerrors.Wrap(errPolicyJSON, "ファイルを読めません")
 	}
 
-	return policyResult(*namespace, *rules, data)
+	return policyResult(*namespace, rules, data)
+}
+
+// countRules は、rego の行頭の `deny contains` を数えます。conftest が評価した規則の数と独立に得る宣言の側である。
+func countRules(rego []byte) int {
+	n := 0
+
+	for line := range strings.SplitSeq(string(rego), "\n") {
+		if strings.HasPrefix(line, "deny contains") {
+			n++
+		}
+	}
+
+	return n
 }
 
 // policyResult は、`conftest test -o json --namespace <namespace>` の結果を読み、違反が無いのに
@@ -366,4 +463,17 @@ func policyResult(namespace string, rules int, data []byte) (string, error) {
 	}
 
 	return fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", namespace, evaluated), nil
+}
+
+// fileSHA256 は、ファイルの SHA-256 を base64 で返します。S3 は受け取った本文をこの値と突き合わせ、違えば
+// 書き込みを拒む。
+func fileSHA256(path string, readFile func(string) ([]byte, error)) (string, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return "", errDigest
+	}
+
+	sum := sha256.Sum256(data)
+
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }

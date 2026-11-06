@@ -37,6 +37,7 @@ var codeownerTargets = []string{
 	".makefiles/terraform/infra-code.mk",
 	".makefiles/terraform/infra-code-test.mk",
 	".github/workflows/terraform-gates.yaml",
+	".github/workflows/terraform-apply.yaml",
 	".github/settings/branch-protection.json",
 	".github/CODEOWNERS",
 }

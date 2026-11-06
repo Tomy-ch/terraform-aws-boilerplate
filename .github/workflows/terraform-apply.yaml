@@ -1,0 +1,192 @@
+name: Terraform Apply
+
+# release line への merge の後に、管理アカウントの identity root を CI が apply する。規則は README.md の
+# 「apply の job」。apply の手順の定義は .makefiles/terraform/operation/ci.mk だけが持つ。
+
+on:
+  push:
+    branches:
+      - 'release/*'
+
+permissions:
+  contents: read
+
+# 待っている run は後から来た run に置き換わる。
+concurrency:
+  group: terraform-apply-admin-identity
+  cancel-in-progress: false
+
+jobs:
+  # terraform-gates.yaml の infra-code-gate と同じ検出をこの workflow にも置く。
+  # path で絞らない: README.md の「インフラ内コードの検出への依存」.
+  apply-infra-code-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: infra-code-gate is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the infrastructure-code gate's own tests
+        run: make infra-code-gate-test RUNNER_MODE=host
+
+      - name: Detect infrastructure code
+        run: make infra-code-gate RUNNER_MODE=host
+
+  # 管理アカウントの identity root の apply。規則は README.md の「apply の job」.
+  apply-admin-identity:
+    needs: apply-infra-code-gate
+    if: ${{ needs.apply-infra-code-gate.result == 'success' && github.ref_name == github.event.repository.default_branch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-apply-identity
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+
+      # 再実行は元の run の commit と payload を使うので、job の if: は古い run を止めない。
+      # skip ではなく失敗にする（ADR-0602 決定14）。
+      - name: Refuse stale commits
+        id: refuse-stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          default=$(gh api "repos/$REPO" --jq .default_branch)
+          test "$REF" = "$default" || { echo "❌ $REF はデフォルトブランチ（$default）ではないので apply しません"; exit 1; }
+          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので apply しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-apply-identity の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the apply-identity role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host
+
+      - name: Apply the identity root
+        run: make ci-apply-admin-identity RUNNER_MODE=host
+
+  # See README.md の「通知の起動条件」.
+  notify-failure:
+    needs: [apply-infra-code-gate, apply-admin-identity]
+    if: ${{ always() && github.ref_name == github.event.repository.default_branch && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result)) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: ${{ needs.apply-admin-identity.result == 'skipped' && 'apply-infra-code-gate' || 'apply-admin-identity' }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

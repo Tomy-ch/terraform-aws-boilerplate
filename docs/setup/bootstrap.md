@@ -231,7 +231,7 @@ state backend が無い時点では Terraform が state を保存できないの
    make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
 
    ```bash
-   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS)=' | sed 's/=$//; s/^/-u /')
+   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN)=' | sed 's/=$//; s/^/-u /')
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
@@ -366,9 +366,30 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 - 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
 - `EntityAlreadyExists` が返ったら、手順3 に戻る
 
+### 段5. CI が apply する
+
+段4 の後の変更は、release line への merge を契機に、CI の apply の job（`terraform-apply.yaml` の `apply-admin-identity`）が apply-identity の role で apply する（ADR-0602 決定4）。人は apply しない。起動の条件と job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」が持つ。
+
+1. apply の workflow を足す Pull Request を merge する前に、管理者が environment `admin-apply-identity` に secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く（`gh secret set AWS_ACCOUNT_ID --env admin-apply-identity`）。宣言は secret を持たず、突合も見ない
+2. merge の後の最初の run で、`apply-infra-code-gate` と `apply-admin-identity` が緑であること、ログの plan の要約が `No changes.` であること、Policy の違反が無いこと、`OIDC の sub` の行が `:environment:admin-apply-identity` で終わることを確かめる。run の URL を issue に残す（アカウント ID を載せない）。この run は apply の経路の最初の確認であり、段5 の成功ではない
+3. 段5 の変更（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行）は、前の変更の CI の apply が緑で、その後の CI の plan が変更なしを示してから merge する。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge し、その apply が緑になってから次を merge する。待っている run は後から来た run に置き換わるので、続けて merge すると2つが1回の apply に入る
+4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する
+
+途中で失敗したとき:
+
+- 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ないので、terraform のエラーの詳細は一時 IAM user の `make plan-admin-identity` で見る
+- 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
+- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で `terraform force-unlock <ID>` で外す。書き込みの拒否が入った後は、人の主体は lock file を消せない。CI で外す経路は未配線であり（#226）、配線されるまでは書き込みの拒否を入れない
+
+段5 の成功は、次のすべてを満たしたときとする。
+
+- 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
+- 書き込みの拒否が入った後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
+- CI で残った lock を外す経路が在り、lock の無い状態で一度走った
+
 ## 一時 IAM user の削除
 
-bootstrap の段5（CI による apply）が成功するまでは削除しない。それまでは、段4 をやり直す手段として残しておく。
+bootstrap の段5 が成功するまでは削除しない。それまでは、段4 をやり直す手段と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
@@ -420,6 +441,14 @@ bootstrap の段5（CI による apply）が成功するまでは削除しない
 - [ ] `simulate-principal-policy` の行数と判定が、段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
+
+段5 の終了時:
+
+- [ ] apply の workflow の merge の前に、environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を置いた
+- [ ] 最初の run が緑で、plan の要約が `No changes.`、`OIDC の sub` が `:environment:admin-apply-identity` で終わった
+- [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
+- [ ] 一時 IAM user の `put-object` が state Bucket で `AccessDenied` を返した
+- [ ] CI で lock を外す経路が、lock の無い状態で一度走った
 
 一時 IAM user の削除の終了時:
 

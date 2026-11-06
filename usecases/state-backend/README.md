@@ -39,9 +39,9 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | 段 | 持つもの | 状態 |
 | --- | --- | --- |
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
-| 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、段4 は CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示した後に行う |
+| 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
-| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、state Bucket の lifecycle、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。段4・#107・#108 の後） |
+| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、state Bucket の lifecycle、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。#107・#108 の後）。CI の apply（`terraform-apply.yaml`）が apply する |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
 

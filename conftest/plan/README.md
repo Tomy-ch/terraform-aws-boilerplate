@@ -8,7 +8,7 @@
 
 policy の文書が参照する ARN は、`override_resource`（`override_during = plan`）で instance ごとに与える。与えないと文書が plan で unknown になり、`[PLAN-INPUT-04]` で落ちる。
 
-`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan の経路（`.makefiles/terraform/operation/ci.mk`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection` だけを掛ける。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。
+`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`.makefiles/terraform/operation/ci.mk` の `CI_PLAN` と `CI_APPLY`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection` だけを掛ける。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。
 
 入力は `tmp/tf-policy/` に書かれる。mock の値だけを含む。`make tf-policy` も CI の `tf-policy` job も、これを artifact や Pull Request のコメントへ出さない。
 
@@ -32,7 +32,7 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 | --- | --- | --- |
 | `plan.input` | `PLAN-DATA-01`、`PLAN-INPUT-*` | 宣言の欠落、入力が0件、形の版が違う、`resource_changes` が空か配列でない、文書が unknown、文書が JSON として読めない、文書が IAM の policy 文書の形でない、必須の型が無い、変更の要素の形が違う |
 | `plan.iam_action_wildcard` | `PLAN-IAM-*` | Allow の statement の Action の `*`・`<service>:*`（大文字小文字を区別しない。[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と、同じ効果を持つ `NotAction`。Deny と部分 wildcard は見ない |
-| `plan.stateful_protection` | `PLAN-STATE-*` | 保護の対象の型の削除と置換のうち、その root の許可の宣言に無いもの。許可の宣言のうち、その root の plan のどの削除と置換にも当たらないもの（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11・12）。入力に無い root の許可は見ない。CI の plan には `plan.input` を掛けないので、`resource_changes` が配列でない入力と、`address`・`type`・`change.actions` を欠く要素はここで落とす |
+| `plan.stateful_protection` | `PLAN-STATE-*` | 保護の対象の型の削除と置換のうち、その root の許可の宣言に無いもの。許可の宣言のうち、その root の plan のどの削除と置換にも当たらないもの（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11・12）。入力に無い root の許可は見ない。CI の plan と apply の plan には `plan.input` を掛けないので、`resource_changes` が配列でない入力と、`address`・`type`・`change.actions` を欠く要素はここで落とす |
 | `plan.deployment_identity_plan_role` | `PLAN-ROLE-*` | `deployment-identity` の plan の role の Allow が、読み取りの Action（動詞が Get・List・Describe・Head と、`kms:Decrypt`・`kms:GenerateDataKey`）と、plan の出力の Bucket の `pr/*`・`branch/*` への `s3:PutObject` だけであること。`NotAction`・`NotResource` を使わないこと。宣言した policy の外から plan の role へ policy を付けないことと、inline policy と managed policy の排他がその policy だけを残すこと。Bucket は入力に無いので、名前の形（`-tfplan-`）で見る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定13、[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定8） |
 | `plan.deployment_identity_trust` | `PLAN-TRUST-*` | `deployment-identity` の role の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15、[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md)）。リポジトリと所有者の値は持たない（issuer と aud は固定値で見る） |
 
