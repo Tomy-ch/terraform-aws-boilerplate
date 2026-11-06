@@ -94,7 +94,6 @@ var (
 	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	jobKeyAt      = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
 	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults|env|shell|container|services)["']?[ \t]*:`)
-	// make は環境変数の MAKEFLAGS もオプションとして読むので、-n や -i を env: から渡せる。
 	makeFlags     = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b`)
 	pathKey       = regexp.MustCompile(`^\s+["']?PATH["']?[ \t]*:`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
@@ -411,8 +410,8 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 }
 
 // checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します。make は環境変数の
-// MAKEFLAGS もオプションとして読み、PATH は起動する make と道具を替え、step の shell: と workflow 全体の defaults: は run: の本文を実行させずに
-// 成功させうる。job と入口の step の continue-on-error: と if: は、失敗も skip も成功として報告させる
+// MAKEFLAGS もオプションとして読み（-n や -i を env: から渡せる）、PATH は起動する make と道具を替え、step の
+// shell: と workflow 全体の defaults: は run: の本文を実行させずに成功させうる。job と入口の step の continue-on-error: と if: は、失敗も skip も成功として報告させる
 // （plan の job は required check、apply の job は通知の起動条件である）。
 func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding

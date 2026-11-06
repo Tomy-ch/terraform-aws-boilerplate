@@ -616,7 +616,6 @@ func Test_runPolicyResult(t *testing.T) {
 	}
 }
 
-// regoWith は、行頭の `deny contains` を n 個持つ rego を書きます。
 func regoWith(t *testing.T, n int) string {
 	t.Helper()
 

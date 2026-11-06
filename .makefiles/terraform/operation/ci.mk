@@ -1,7 +1,7 @@
 ## CI が Terraform を動かす入口（.github/workflows/terraform-gates.yaml の plan と、terraform-apply.yaml の apply）
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
-## terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
+## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
 ## （ADR-0702 決定3・24）。plan と apply には ADR-0604 決定11 の Policy（plan.stateful_protection）を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan の全文は plan の出力の Bucket に置き、ログには終了コード・
@@ -40,7 +40,7 @@ echo "✅ $(call CI_PROFILE,$(1),$(2)) の profile に資格情報を置きま�
 endef
 
 # CI_PLAN と CI_APPLY が共有する。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
-# 全文、plan、その JSON と Policy の結果は、成否にかかわらず終了時に消す。$(1)=env $(2)=root
+# $(1)=env $(2)=root
 define CI_PREPARE
 set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; root="$(1)-$(2)"; \
 out="$$d/$$root.txt"; json="$$d/$$root.json"; tfplan="$$d/$$root.tfplan"; pol="$$d/$$root.policy.json"; \

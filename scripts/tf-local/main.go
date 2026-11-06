@@ -45,7 +45,6 @@
 // usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
 // env/admin/identity のテストの期待値と docs/setup/bootstrap.md の段1、deployment-identity の .tf に
 // 突き合わせて見る（ADR-0702 決定17 の但し書き）。
-// state-backend が組んだ名前を init の前に読めるようになったら、写しを消す。
 package main
 
 import (
@@ -350,7 +349,6 @@ func envUnset(environ []string) (string, error) {
 	return strings.Join(flags, " "), nil
 }
 
-// unset は、aws と terraform へ渡さない変数の名前かを返します。
 func unset(name string) bool {
 	return slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) })
 }
