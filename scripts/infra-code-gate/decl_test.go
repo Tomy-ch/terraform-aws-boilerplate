@@ -478,6 +478,7 @@ func Test_ownedTargets(t *testing.T) {
 	got := ownedTargets(d)
 	assert.Equal(t, append(append([]string{}, codeownerTargets...), "usecases/x/src"), got)
 	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
+	assert.Contains(t, codeownerTargets, ".github/workflows/terraform-apply.yaml", "検出の job を持つ apply の workflow も対象にする")
 }
 
 func Test_readCodeowners(t *testing.T) {

@@ -69,29 +69,30 @@ var (
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
-	ciPlan        = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
-	ciApply       = regexp.MustCompile(`\bmake\b.*\bci-apply-[a-z0-9-]+`)
-	ciEntry       = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
-	// run: の値が make で始まり、後続のコマンドで終了コードを隠さない形だけを、検出を走らせる step と認める。
-	// -test の自己テストだけを走らせる step は、検出を走らせない。
-	detection = regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?:[ \t]*make\s[^|;&#]*?\binfra-code-gate(?:\s[^|;&#]*)?$`)
+	// CI の入口と検出は、run: の値が make と変数の代入とターゲット1つだけの形に限る。make のオプション
+	// （-n・-i・-C・-f 等）や後続のコマンドは、実行しないか終了コードを隠しうる。
+	ciPlan    = makeRun(`ci-plan-[a-z0-9-]+`)
+	ciApply   = makeRun(`ci-apply-[a-z0-9-]+`)
+	ciEntry   = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
+	detection = makeRun(`infra-code-gate`)
 	// status の関数・論理和・否定は、検出の失敗を越えて job を走らせうる。!= は比較なので除く。
 	statusEscape = regexp.MustCompile(`\b(?:always|cancelled|failure)\(\)|\|\||!(?:[^=]|$)`)
-	pushPaths    = regexp.MustCompile(`^ {4}["']?paths(?:-ignore)?["']?[ \t]*:`)
+	pushPaths    = regexp.MustCompile(`^\s+["']?paths(?:-ignore)?["']?[ \t]*:`)
 	// tf-job-lint と同じく、サブコマンドを列挙しない。terraform を入れる行（mise の tools）は起動ではないので含めない。
 	// local.mk の init-* / plan-* も terraform を走らせる。それ以外の名前の make のターゲットは字面からは選べない。
 	runsTerraform = regexp.MustCompile(`\bmake\b.*\s(?:tf|init|plan)-|(?:^|[\s;&|(/"'])(?:terraform|tofu)["']?(?:\s|$)`)
 	nameLine      = regexp.MustCompile(`^\s+(?:- )?name:`)
 	installsTF    = regexp.MustCompile(`aqua:hashicorp/terraform\b`)
 	onKey         = regexp.MustCompile(`^["']?on["']?:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
-	triggerKey    = regexp.MustCompile(`^ {2}([a-z_]+):`)
-	inputsKey     = regexp.MustCompile(`^ {4}inputs:`)
+	triggerKey    = regexp.MustCompile(`^ {2}([a-z_]+):[ \t]*([^#]*?)[ \t]*(?:#.*)?$`)
+	inputsKey     = regexp.MustCompile(`^\s+["']?inputs["']?[ \t]*:`)
 	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	jobKeyAt      = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
-	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error)["']?[ \t]*:`)
+	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults)["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
-	concurrencyAt = regexp.MustCompile(`^( *)concurrency:[ \t]*(?:#.*)?$`)
-	noCancel      = regexp.MustCompile(`^( *)cancel-in-progress:[ \t]*false[ \t]*(?:#.*)?$`)
+	concurrencyAt = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:[ \t]*(?:#.*)?$`)
+	concurrencyKy = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:`)
+	noCancel      = regexp.MustCompile(`^( *)["']?cancel-in-progress["']?[ \t]*:[ \t]*false[ \t]*(?:#.*)?$`)
 	stepID        = regexp.MustCompile(`^ {6}(?:- | {2})id:[ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})["']?if["']?[ \t]*:`)
 	stepContinue  = regexp.MustCompile(`^ {6}(?:- | {2})["']?continue-on-error["']?[ \t]*:`)
@@ -326,6 +327,13 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 	if len(keys) == 0 || slices.ContainsFunc(keys, func(k string) bool { return k != "push" && k != "workflow_dispatch" }) {
 		findings = append(findings, finding(w.onLine, "apply の job を持つ workflow の起動は push と workflow_dispatch だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
+	for _, k := range []string{"push", "workflow_dispatch"} {
+		for _, l := range w.on[k] {
+			if strings.Contains(l.Text, "{") {
+				findings = append(findings, finding(l.Number, "apply の workflow の起動条件をフロー形式で書かないでください。paths と inputs を読めません"))
+			}
+		}
+	}
 	for _, l := range w.on["workflow_dispatch"] {
 		if inputsKey.MatchString(l.Text) {
 			findings = append(findings, finding(l.Number, "apply の workflow_dispatch に inputs を置かないでください。ref や commit を入力に取らせません（ADR-0602 決定14）"))
@@ -336,8 +344,9 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 			findings = append(findings, finding(l.Number, "apply の workflow の push に paths を置かないでください。AWS の側の状態は、どのファイルを変えたかと無関係に plan を変えます"))
 		}
 	}
-	// workflow 全体の concurrency は run ごと取り消すので、在るならそれ自身が false でなければならない。
-	if hasConcurrency(w.preamble, "") && !cancelsNothing(w.preamble, "") || !hasConcurrency(w.preamble, "") && !cancelsNothing(job.Lines, "    ") {
+	// workflow 全体と job の concurrency は、どちらも実行中の run か job を取り消しうるので、在るものはすべて false でなければならない。
+	wfHas, jobHas := hasConcurrency(w.preamble, ""), hasConcurrency(job.Lines, "    ")
+	if !wfHas && !jobHas || wfHas && !cancelsNothing(w.preamble, "") || jobHas && !cancelsNothing(job.Lines, "    ") {
 		findings = append(findings, finding(job.Number, "apply の job か workflow 全体に cancel-in-progress: false の concurrency を置いてください"))
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
@@ -367,7 +376,7 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 		}
 		for _, l := range d.Lines {
 			if !commentLine.MatchString(l.Text) && skipsOrHides.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "検出の job %s に if: と continue-on-error: を置かないでください。skip も失敗の無視も、成功と同じく後続を止めません", d.ID))
+				findings = append(findings, finding(l.Number, "検出の job %s に if:・continue-on-error:・working-directory:・defaults: を置かないでください。skip も失敗の無視も別の場所での実行も、成功と同じく後続を止めません", d.ID))
 			}
 		}
 	}
@@ -378,9 +387,7 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	if statusEscape.MatchString(cond) {
 		findings = append(findings, finding(at, "job の if: に status の関数・|| ・! を置かないでください。検出の失敗を越えて走ります"))
 	}
-	if !slices.ContainsFunc(detectors, func(d workflow.Job) bool {
-		return regexp.MustCompile(`\bneeds\.` + regexp.QuoteMeta(d.ID) + `\.result\s*==\s*'success'`).MatchString(cond)
-	}) {
+	if !slices.ContainsFunc(detectors, func(d workflow.Job) bool { return requiresSuccess(cond, d.ID) }) {
 		findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", detectors[0].ID))
 	}
 	return findings
@@ -556,6 +563,10 @@ func triggers(preamble []workflow.Line) (map[string][]workflow.Line, int) {
 			if k := triggerKey.FindStringSubmatch(next.Text); k != nil {
 				current = k[1]
 				out[current] = nil
+				// 値を同じ行に書いた起動条件（フロー形式）は、本文として残して検査に読ませる。
+				if k[2] != "" {
+					out[current] = append(out[current], next)
+				}
 				continue
 			}
 			out[current] = append(out[current], next)
@@ -632,6 +643,21 @@ func cancelsNothing(lines []workflow.Line, indent string) bool {
 	return false
 }
 
+// makeRun は、step の run: の値が `make`、変数の代入、target の1つ、変数の代入だけで成る行に当たる正規表現を返します。
+func makeRun(target string) *regexp.Regexp {
+	const assign = `(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s|;&#'"]*)*`
+	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make` + assign + `\s+` + target + assign + `[ \t]*$`)
+}
+
+// requiresSuccess は、if: の式が && で結んだ項の1つとして、そのまま needs.<id>.result == 'success' を持つかを返します。
+// 括弧で包んだ比較は、別の比較に使われうるので認めません。
+func requiresSuccess(cond, id string) bool {
+	cond = strings.TrimSpace(strings.TrimLeft(cond, ">|-+ "))
+	cond = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(cond, "${{"), "}}"))
+	term := regexp.MustCompile(`^needs\.` + regexp.QuoteMeta(id) + `\.result\s*==\s*'success'$`)
+	return slices.ContainsFunc(strings.Split(cond, "&&"), func(t string) bool { return term.MatchString(strings.TrimSpace(t)) })
+}
+
 // detects は、job が `make infra-code-gate` を走らせる step を持つかを返します。
 func detects(job workflow.Job) bool {
 	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool { return detection.MatchString(l.Text) })
@@ -640,7 +666,8 @@ func detects(job workflow.Job) bool {
 // hasConcurrency は、indent の桁に concurrency: を持つかを返します。値を1行に書いた形も数えます。
 func hasConcurrency(lines []workflow.Line, indent string) bool {
 	return slices.ContainsFunc(lines, func(l workflow.Line) bool {
-		return strings.HasPrefix(l.Text, indent+"concurrency:") || strings.HasPrefix(l.Text, indent+`"concurrency":`)
+		m := concurrencyKy.FindStringSubmatch(l.Text)
+		return m != nil && m[1] == indent
 	})
 }
 
