@@ -18,7 +18,11 @@
 //   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割>` をちょうど1回呼び、`<env>-<役割>` が environment の名前と一致する
 //   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
 //     その job の成功を条件に含め、status の関数・論理和・否定を置かない（ADR-0601 決定9）。検出の job は
-//     needs:・if:・continue-on-error:・working-directory:・defaults: を持たず、検出の step は終了コードを隠さない
+//     needs:・if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を持たず、
+//     検出の step は `make infra-code-gate` と RUNNER_MODE=host だけで終了コードを隠さない
+//   - workflow 全体と対象の job に MAKEFLAGS と PATH を渡さず、workflow 全体に defaults: を、job に
+//     continue-on-error:・container:・services:・defaults: を、CI の入口の step に if:・continue-on-error:・shell: を
+//     置かない —— どれも入口を実行させないか、失敗を成功として報告させる
 //   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
 //     （lock を取らない経路。ADR-0604 決定8）
@@ -69,8 +73,9 @@ var (
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
-	// CI の入口と検出は、run: の値が make と変数の代入とターゲット1つだけの形に限る。make のオプション
-	// （-n・-i・-C・-f 等）や後続のコマンドは、実行しないか終了コードを隠しうる。
+	// CI の入口と検出は、run: の値が make とターゲット1つと RUNNER_MODE=host だけの形に限る。make のオプション
+	// （-n・-i・-C・-f 等）、後続のコマンド、ほかの変数の代入（MAKEFLAGS・SHELL・道具や Policy の場所の差し替え）は、
+	// 実行しないか、終了コードを隠すか、検査の対象を替えうる。
 	ciPlan    = makeRun(`ci-plan-[a-z0-9-]+`)
 	ciApply   = makeRun(`ci-apply-[a-z0-9-]+`)
 	ciEntry   = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
@@ -88,7 +93,12 @@ var (
 	inputsKey     = regexp.MustCompile(`^\s+["']?inputs["']?[ \t]*:`)
 	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	jobKeyAt      = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
-	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults)["']?[ \t]*:`)
+	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults|env|shell|container|services)["']?[ \t]*:`)
+	// make は環境変数の MAKEFLAGS もオプションとして読むので、-n や -i を env: から渡せる。
+	makeFlags     = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b`)
+	pathKey       = regexp.MustCompile(`^\s+["']?PATH["']?[ \t]*:`)
+	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
+	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	concurrencyAt = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:[ \t]*(?:#.*)?$`)
 	concurrencyKy = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:`)
@@ -305,6 +315,7 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	}
 	findings = append(findings, checkSteps(job, cred, finding)...)
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
+	findings = append(findings, checkHidden(job, w, finding)...)
 
 	if role == "plan" {
 		return append(findings, checkPlan(job, cred, w, finding)...)
@@ -375,8 +386,14 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 			findings = append(findings, finding(at, "検出の job %s に needs: を置かないでください", d.ID))
 		}
 		for _, l := range d.Lines {
-			if !commentLine.MatchString(l.Text) && skipsOrHides.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "検出の job %s に if:・continue-on-error:・working-directory:・defaults: を置かないでください。skip も失敗の無視も別の場所での実行も、成功と同じく後続を止めません", d.ID))
+			if commentLine.MatchString(l.Text) {
+				continue
+			}
+			if skipsOrHides.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "検出の job %s に if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を置かないでください。skip も失敗の無視も別の場所や別の shell での実行も、成功と同じく後続を止めません", d.ID))
+			}
+			if makeFlags.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "検出の job %s で MAKEFLAGS を渡さないでください。-n や -i は何も検査せずに成功します", d.ID))
 			}
 		}
 	}
@@ -389,6 +406,46 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	}
 	if !slices.ContainsFunc(detectors, func(d workflow.Job) bool { return requiresSuccess(cond, d.ID) }) {
 		findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", detectors[0].ID))
+	}
+	return findings
+}
+
+// checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します。make は環境変数の
+// MAKEFLAGS もオプションとして読み、PATH は起動する make と道具を替え、step の shell: と workflow 全体の defaults: は run: の本文を実行させずに
+// 成功させうる。job と入口の step の continue-on-error: と if: は、失敗も skip も成功として報告させる
+// （plan の job は required check、apply の job は通知の起動条件である）。
+func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, l := range append(slices.Clone(w.preamble), job.Lines...) {
+		if commentLine.MatchString(l.Text) {
+			continue
+		}
+		if makeFlags.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "MAKEFLAGS を渡さないでください。-n や -i は何も実行せずに成功します"))
+		}
+		if pathKey.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "PATH を替えないでください。make と terraform を別のものに差し替えます"))
+		}
+	}
+	for _, l := range w.preamble {
+		if defaultsAt.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "資格情報を取る job を持つ workflow に defaults: を置かないでください。run: の shell と場所を替えます"))
+		}
+	}
+	for _, key := range []string{"continue-on-error", "container", "services", "defaults"} {
+		if _, at, ok := jobKey(job, key); ok {
+			findings = append(findings, finding(at, "資格情報を取る job に %s: を置かないでください", key))
+		}
+	}
+	for _, step := range workflow.SplitSteps(job) {
+		if !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool { return ciEntry.MatchString(l.Text) && !commentLine.MatchString(l.Text) }) {
+			continue
+		}
+		for _, l := range step.Lines {
+			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "CI の入口の step に if:・continue-on-error:・shell: を置かないでください。skip も失敗も成功として報告されます"))
+			}
+		}
 	}
 	return findings
 }
@@ -643,10 +700,10 @@ func cancelsNothing(lines []workflow.Line, indent string) bool {
 	return false
 }
 
-// makeRun は、step の run: の値が `make`、変数の代入、target の1つ、変数の代入だけで成る行に当たる正規表現を返します。
+// makeRun は、step の run: の値が `make`、target の1つ、前後どちらかの RUNNER_MODE=host だけで成る行に当たる正規表現を返します。
 func makeRun(target string) *regexp.Regexp {
-	const assign = `(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s|;&#'"]*)*`
-	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make` + assign + `\s+` + target + assign + `[ \t]*$`)
+	const mode = `(?:\s+RUNNER_MODE=host)?`
+	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make` + mode + `\s+` + target + mode + `[ \t]*$`)
 }
 
 // requiresSuccess は、if: の式が && で結んだ項の1つとして、そのまま needs.<id>.result == 'success' を持つかを返します。

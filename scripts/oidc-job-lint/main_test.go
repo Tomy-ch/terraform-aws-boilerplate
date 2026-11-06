@@ -428,7 +428,7 @@ func Test_checkJob(t *testing.T) {
 	jobWith := func(t *testing.T, from, to string) workflow.Job {
 		t.Helper()
 
-		return jobOf(t, strings.Replace(planWorkflow, from, to, 1), "plan-admin-identity")
+		return jobOf(t, replaced(t, planWorkflow, from, to), "plan-admin-identity")
 	}
 
 	cases := map[string]struct{ from, to, want string }{
@@ -515,7 +515,7 @@ func Test_checkPlan(t *testing.T) {
 	planWith := func(t *testing.T, from, to string) workflow.Job {
 		t.Helper()
 
-		return jobOf(t, strings.Replace(planWorkflow, from, to, 1), "plan-admin-identity")
+		return jobOf(t, replaced(t, planWorkflow, from, to), "plan-admin-identity")
 	}
 
 	t.Run("規則を満たせば違反0件", func(t *testing.T) {
@@ -573,8 +573,7 @@ func Test_checkApply(t *testing.T) {
 	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
 		t.Helper()
 
-		src := strings.Replace(applyWorkflow, from, to, 1)
-		require.NotEqual(t, applyWorkflow, src, "置き換え元が見つからない")
+		src := replaced(t, applyWorkflow, from, to)
 
 		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
 	}
@@ -583,6 +582,13 @@ func Test_checkApply(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkApply(job, credOf(job), w, formatted))
+	})
+
+	t.Run("workflow 全体と job の両方が cancel-in-progress: false なら違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, applyEnv, applyEnv+jobConcurrency("false"))
+		assert.Empty(t, checkApply(j, credOf(j), aw, formatted))
 	})
 
 	t.Run("入力の無い workflow_dispatch は違反にしない", func(t *testing.T) {
@@ -770,8 +776,7 @@ func Test_checkDetection(t *testing.T) {
 	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
 		t.Helper()
 
-		src := strings.Replace(applyWorkflow, from, to, 1)
-		require.NotEqual(t, applyWorkflow, src, "置き換え元が見つからない")
+		src := replaced(t, applyWorkflow, from, to)
 
 		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
 	}
@@ -944,11 +949,98 @@ func Test_checkDetection(t *testing.T) {
 		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
 	})
 
+	const (
+		detJob  = "  apply-infra-code-gate:\n    runs-on: ubuntu-24.04\n"
+		detStep = "      - run: make infra-code-gate RUNNER_MODE=host\n"
+	)
+	hidden := map[string]struct{ from, to, want string }{
+		"検出の job の defaults: は違反":  {detJob, "  apply-infra-code-gate:\n    defaults:\n      run:\n        shell: sh\n    runs-on: ubuntu-24.04\n", "defaults:"},
+		"検出の job の env: は違反":       {detJob, "  apply-infra-code-gate:\n    env:\n      X: y\n    runs-on: ubuntu-24.04\n", "env:"},
+		"検出の job の container: は違反": {detJob, "  apply-infra-code-gate:\n    container: alpine\n    runs-on: ubuntu-24.04\n", "container:"},
+		"検出の job の MAKEFLAGS は違反":  {detJob, "  apply-infra-code-gate:\n    env:\n      MAKEFLAGS: -n\n    runs-on: ubuntu-24.04\n", "MAKEFLAGS を渡さない"},
+		"検出の step の shell: は違反":    {detStep, detStep + "        shell: sh -c true {0}\n", "shell:"},
+		"検出の step の引用符付き env: は違反": {detStep, detStep + "        \"env\":\n          X: y\n", "env:"},
+	}
+	for name, c := range hidden {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, c.from, c.to)
+			assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), c.want)
+		})
+	}
+
+	t.Run("検出の job のコメントの if: は読まない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n        # if: false\n")
+		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
+	})
+
 	t.Run("検出の step の working-directory: は違反", func(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n        working-directory: /tmp\n")
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "working-directory:")
+	})
+}
+
+func Test_checkHidden(t *testing.T) {
+	t.Parallel()
+
+	const entry = "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n"
+	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
+		t.Helper()
+
+		src := replaced(t, applyWorkflow, from, to)
+
+		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
+	}
+
+	t.Run("規則を満たせば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkHidden(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow), formatted))
+	})
+
+	t.Run("plan の workflow も規則を満たせば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkHidden(jobOf(t, planWorkflow, "plan-admin-identity"), infoOf(planWorkflow), formatted))
+	})
+
+	cases := map[string]struct{ from, to, want string }{
+		"job の env: の MAKEFLAGS は違反":           {applyEnv, applyEnv + "    env:\n      MAKEFLAGS: -i\n", "MAKEFLAGS を渡さない"},
+		"workflow 全体の env: の GNUMAKEFLAGS は違反": {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  GNUMAKEFLAGS: -n\n", "MAKEFLAGS を渡さない"},
+		"workflow 全体の defaults: は違反":           {"permissions:\n  contents: read\n", "permissions:\n  contents: read\ndefaults:\n  run:\n    shell: sh -c true {0}\n", "defaults: を置かない"},
+		"job の env: の PATH は違反":                {applyEnv, applyEnv + "    env:\n      PATH: /tmp/evil:/usr/bin\n", "PATH を替えない"},
+		"job の continue-on-error: は違反":         {applyEnv, applyEnv + "    continue-on-error: true\n", "continue-on-error: を置かない"},
+		"job の container: は違反":                 {applyEnv, applyEnv + "    container: alpine\n", "container: を置かない"},
+		"入口の step の continue-on-error: は違反":    {entry, entry + "        continue-on-error: true\n", "入口の step"},
+		"入口の step の if: は違反":                   {entry, "      - if: false\n        run: make ci-apply-admin-identity RUNNER_MODE=host\n", "入口の step"},
+		"入口の step の shell: は違反":                {entry, entry + "        shell: sh -c true {0}\n", "入口の step"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, c.from, c.to)
+			assert.Contains(t, messages(checkHidden(j, aw, formatted)), c.want)
+		})
+	}
+
+	t.Run("コメントの MAKEFLAGS は読まない", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, entry, "      # MAKEFLAGS=-n\n"+entry)
+		assert.Empty(t, checkHidden(j, aw, formatted))
+	})
+
+	t.Run("plan の入口の step の continue-on-error: も違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n        continue-on-error: true\n")
+		assert.Contains(t, messages(checkHidden(jobOf(t, src, "plan-admin-identity"), infoOf(src), formatted)), "入口の step")
 	})
 }
 
@@ -958,10 +1050,7 @@ func Test_checkRefusal(t *testing.T) {
 	planWith := func(t *testing.T, from, to string) workflow.Job {
 		t.Helper()
 
-		src := strings.Replace(planWorkflow, from, to, 1)
-		require.NotEqual(t, planWorkflow, src, "置き換え元が見つからない")
-
-		return jobOf(t, src, "plan-admin-identity")
+		return jobOf(t, replaced(t, planWorkflow, from, to), "plan-admin-identity")
 	}
 
 	t.Run("資格情報の前の拒否の step は違反0件", func(t *testing.T) {
@@ -992,6 +1081,13 @@ func Test_checkRefusal(t *testing.T) {
 
 		job := jobOf(t, strings.Replace(strings.Replace(planWorkflow, "        id: refuse-untrusted\n", "        id: other\n", 1), "      - name: Run terraform plan through make\n        run: make ci-aws-credentials", "      - name: Run terraform plan through make\n        id: refuse-untrusted\n        run: make ci-aws-credentials", 1), "plan-admin-identity")
 		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "資格情報を取る前に")
+	})
+
+	t.Run("拒否の step の引用符付きの continue-on-error: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, "        id: refuse-untrusted\n", "        id: refuse-untrusted\n        \"continue-on-error\": true\n")
+		assert.Contains(t, messages(checkRefusal(job, credOf(job), refuseUntrusted, formatted)), "continue-on-error:")
 	})
 
 	t.Run("拒否の step の if: は違反", func(t *testing.T) {
@@ -1101,7 +1197,10 @@ func Test_detects(t *testing.T) {
 		"-C（別のディレクトリ）は偽":             {"      - run: make -C /tmp infra-code-gate\n", false},
 		"-f（別の Makefile）は偽":          {"      - run: make -f /dev/null infra-code-gate\n", false},
 		"後置の -n は偽":                  {"      - run: make infra-code-gate -n\n", false},
-		"変数の代入は認める":                  {"      - run: make RUNNER_MODE=host infra-code-gate V=1\n", true},
+		"RUNNER_MODE=host は認める":      {"      - run: make RUNNER_MODE=host infra-code-gate\n", true},
+		"MAKEFLAGS=n（実行しない）は偽":       {"      - run: make infra-code-gate MAKEFLAGS=n\n", false},
+		"SHELL の差し替えは偽":              {"      - run: make SHELL=/usr/bin/true infra-code-gate\n", false},
+		"ほかの変数の代入は偽":                 {"      - run: make infra-code-gate V=1\n", false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1120,14 +1219,21 @@ func Test_makeRun(t *testing.T) {
 		line string
 		want bool
 	}{
-		"make と target":        {"      - run: make ci-plan-admin-identity", true},
-		"前後の変数の代入":             {"        run: make V=1 ci-plan-admin-identity RUNNER_MODE=host", true},
-		"引用符付きの run キー":        {"      - \"run\": make ci-plan-admin-identity", true},
-		"オプションは当たらない":          {"      - run: make -n ci-plan-admin-identity", false},
-		"後続のコマンドは当たらない":        {"      - run: make ci-plan-admin-identity && true", false},
-		"step の桁でなければ当たらない":    {"    run: make ci-plan-admin-identity", false},
-		"run: の値が make で始まらない": {"      - run: env make ci-plan-admin-identity", false},
-		"target が2つは当たらない":     {"      - run: make ci-plan-a ci-plan-b", false},
+		"make と target":         {"      - run: make ci-plan-admin-identity", true},
+		"後ろの RUNNER_MODE=host":  {"        run: make ci-plan-admin-identity RUNNER_MODE=host", true},
+		"前の RUNNER_MODE=host":   {"      - run: make RUNNER_MODE=host ci-plan-admin-identity", true},
+		"host 以外の RUNNER_MODE":  {"      - run: make ci-plan-admin-identity RUNNER_MODE=container", false},
+		"MAKEFLAGS の代入は当たらない":   {"      - run: make MAKEFLAGS=-i ci-plan-admin-identity", false},
+		"SHELL の代入は当たらない":       {"      - run: make ci-plan-admin-identity SHELL=/usr/bin/true", false},
+		"道具の差し替えは当たらない":         {"      - run: make ci-plan-admin-identity TF_BIN=/bin/true", false},
+		"Policy の場所の差し替えは当たらない": {"      - run: make ci-plan-admin-identity POLICY_PLAN_DIR=x", false},
+		"コマンド置換の代入は当たらない":       {"      - run: make X=$(terraform${IFS}apply) ci-plan-admin-identity", false},
+		"引用符付きの run キー":         {"      - \"run\": make ci-plan-admin-identity", true},
+		"オプションは当たらない":           {"      - run: make -n ci-plan-admin-identity", false},
+		"後続のコマンドは当たらない":         {"      - run: make ci-plan-admin-identity && true", false},
+		"step の桁でなければ当たらない":     {"    run: make ci-plan-admin-identity", false},
+		"run: の値が make で始まらない":  {"      - run: env make ci-plan-admin-identity", false},
+		"target が2つは当たらない":      {"      - run: make ci-plan-a ci-plan-b", false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1146,6 +1252,7 @@ func Test_requiresSuccess(t *testing.T) {
 		want bool
 	}{
 		"式の中の1項":          {"${{ needs.g.result == 'success' && github.ref_name == 'x' }}", true},
+		"後ろの項":            {"${{ github.ref_name == 'x' && needs.g.result == 'success' }}", true},
 		"式の記号の無い1項":       {"needs.g.result=='success'", true},
 		"ブロックの値":          {">- needs.g.result == 'success' && a", true},
 		"括弧で包んだ比較は認めない":   {"${{ (needs.g.result == 'success') == false }}", false},
@@ -1281,6 +1388,15 @@ func Test_triggers(t *testing.T) {
 			assert.Equal(t, c.want, triggerNames(on))
 		})
 	}
+
+	t.Run("同じ行に値を書いた起動条件は本文として残す", func(t *testing.T) {
+		t.Parallel()
+
+		on, _ := triggers(lines("on:", "  push: { branches: [x], paths: [y] }", "  workflow_dispatch:", "jobs:"))
+		require.Len(t, on["push"], 1)
+		assert.Equal(t, "  push: { branches: [x], paths: [y] }", on["push"][0].Text)
+		assert.Empty(t, on["workflow_dispatch"])
+	})
 
 	t.Run("起動条件の本文を返す", func(t *testing.T) {
 		t.Parallel()
