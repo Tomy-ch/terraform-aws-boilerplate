@@ -80,7 +80,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **fork・Dependabot の Pull Request では、資格情報を取る前の step で失敗する。** skip にしない
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
-- job の形（environment、取る role、起動条件、拒否の step、terraform の経路）は `make oidc-job-lint` が見る
+- job の形（environment、取る role、起動条件、拒否の step、terraform の経路、`run:` と `env:` に置けるもの）は
+  `make oidc-job-lint` が見る。拒否の step の本文はシェルなので字面からは選べず、code owner のレビューが持つ
 
 ### apply の job
 
@@ -111,7 +112,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
 - workload root（`env/<env>/*.tf`）の apply の job、`make ci-apply-<env>`、environment `admin-apply` の
   secret は、workload root を足す変更が足す
-- job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency）は
+- job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency、
+  `run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
   のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
   terraform・aws・conftest でレシピを走らせて見る
