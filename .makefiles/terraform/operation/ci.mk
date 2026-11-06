@@ -13,7 +13,8 @@
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の
 ## 要求先は GitHub Actions が渡す。tf-local は sh -c の中で動くので、引数に使う値は export する。
 
-CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
+# terraform は -out を -chdir の先から解くので、絶対パスにする。
+CI_PLAN_DIR ?= $(abspath $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan)
 CI_ENV ?= admin
 CI_ROLE ?= plan
 # $(1)=env $(2)=役割。role 名と同じ形にする（tf-local role-arn）。

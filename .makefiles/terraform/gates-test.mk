@@ -143,7 +143,7 @@ tf-gates-test:
 		elif [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; then failed="$$failed ci-apply:$$case_name"; echo "$$out"; \
 		elif [ -n "$$pattern" ] && ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then failed="$$failed ci-apply:$$case_name"; echo "$$out"; \
 		elif [ "$$(grep -c '^[^ ]* apply ' "$$cb/calls")" != "$$applies" ]; then failed="$$failed ci-apply-count:$$case_name"; cat "$$cb/calls"; \
-		elif [ "$$applies" = 1 ] && ! grep -qF -- " apply -input=false -no-color $$planned" "$$cb/calls"; then failed="$$failed ci-apply-plan:$$case_name"; cat "$$cb/calls"; \
+		elif [ "$$applies" = 1 ] && { [ -z "$$planned" ] || ! grep -qF -- " apply -input=false -no-color $$planned" "$$cb/calls"; }; then failed="$$failed ci-apply-plan:$$case_name"; cat "$$cb/calls"; \
 		elif grep ' plan ' "$$cb/calls" | grep -qF -- -lock=false; then failed="$$failed ci-apply-lock:$$case_name"; cat "$$cb/calls"; \
 		fi; \
 	}; \
