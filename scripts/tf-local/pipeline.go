@@ -18,8 +18,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// policyNamespace は、CI の plan と apply が掛ける Policy です（ADR-0604 決定11）。ほかの package は
-// mock の入力を前提にしているので、実 provider の plan には掛けない。
+// policyNamespace は、CI の plan と apply が掛ける唯一の Policy です（ADR-0604 決定11）。ほかの package を
+// 実 provider の plan に掛けない理由は conftest/plan/README.md の「入力」。
 const policyNamespace = "plan.stateful_protection"
 
 var (

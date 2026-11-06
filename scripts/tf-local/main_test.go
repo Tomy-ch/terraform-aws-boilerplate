@@ -821,8 +821,8 @@ func TestLocalMk(t *testing.T) {
 	})
 }
 
-// TestCiMk は、ci.mk のレシピが CI の profile で plan し、terraform の出力を公開されるログに出さない
-// 配線を、make -n の展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
+// TestCiMk は、ci.mk のレシピが CI の profile で tf-local の ci-plan / ci-apply を呼ぶ配線を、make -n の
+// 展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
 func TestCiMk(t *testing.T) {
 	t.Parallel()
 

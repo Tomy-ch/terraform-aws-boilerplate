@@ -18,13 +18,13 @@
 //   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割>` をちょうど1回呼び、`<env>-<役割>` が environment の名前と一致する
 //   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
 //     その job の成功を条件に含め、status の関数・論理和・否定を置かない（ADR-0601 決定9）。検出の job は
-//     needs: と if: と continue-on-error: を持たず、検出の step は終了コードを隠さない
+//     needs:・if:・continue-on-error:・working-directory:・defaults: を持たず、検出の step は終了コードを隠さない
 //   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
 //     （lock を取らない経路。ADR-0604 決定8）
 //   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
-//     push に paths を持たず、cancel-in-progress: false の concurrency を（workflow 全体に在ればそれが、
-//     無ければ job が）持ち —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で if: を持たない step を資格情報の取得より前に置き
+//     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
+//     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で if: を持たない step を資格情報の取得より前に置き
 //     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
 //

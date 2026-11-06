@@ -2,8 +2,7 @@
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## plan と apply の順序と失敗の扱いは tf-local の ci-plan / ci-apply が持ち、terraform・aws・conftest は
-## そこから AWS_* を外した環境で profile だけを使って起動する（ADR-0702 決定3 の CI の入口）。
-## 人の手元の入口（local.mk）と bootstrap の手順は、tf-local を通らずに terraform を実行できる。
+## そこから AWS_* を外した環境で profile だけを使って起動する（ADR-0702 決定3-4 の CI の入口）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の
