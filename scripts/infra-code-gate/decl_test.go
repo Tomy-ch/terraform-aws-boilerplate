@@ -477,7 +477,7 @@ func Test_ownedTargets(t *testing.T) {
 	}}
 	got := ownedTargets(d)
 	assert.Equal(t, append(append([]string{}, codeownerTargets...), "usecases/x/src"), got)
-	assert.Len(t, codeownerTargets, 9, "固定の対象を書き換えていない")
+	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
 }
 
 func Test_readCodeowners(t *testing.T) {
