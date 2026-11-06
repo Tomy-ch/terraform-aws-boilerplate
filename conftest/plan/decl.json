@@ -19,6 +19,9 @@
       ],
       "aws_s3_bucket_policy": [
         "policy"
+      ],
+      "aws_kms_key_policy": [
+        "policy"
       ]
     },
     "required_documents": [
@@ -38,7 +41,9 @@
     },
     "stateful_protection": {
       "protected_types": [
-        "aws_s3_bucket"
+        "aws_s3_bucket",
+        "aws_kms_key",
+        "aws_kms_key_policy"
       ],
       "allow": {}
     }
