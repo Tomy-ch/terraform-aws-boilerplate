@@ -55,8 +55,8 @@ $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=r
 || { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }
 endef
 
-# plan を JSON にし、終了コードと突き合わせた要約を出す。plan が失敗していれば show も失敗し、判定は
-# plan-summary が持つ。$(1)=plan の追加の引数
+# plan し、終了コードを出して JSON にする。plan が失敗していれば show も失敗するが、ここでは落とさず、
+# 判定は呼び出し側の plan-summary が持つ。$(1)=plan の追加の引数
 define CI_TERRAFORM_PLAN
 rc=0; $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan $(1)-input=false -no-color -detailed-exitcode -out="$$tfplan" >> "$$out" 2>&1 || rc=$$?; \
 echo "plan の終了コード: $$rc"; export rc; \
