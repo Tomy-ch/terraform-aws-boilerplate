@@ -24,8 +24,14 @@
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
 //	    評価が n 件でなければ失敗する
 //
-// aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result はファイルを読む。
+//	tf-local ci-plan -project <p> -env <e> -root <identity|workload> -profile <profile> -base <dir> -dir <dir>
+//	    -terraform <bin> -aws <bin> -conftest <bin> -policy <dir> -decl <file> -pr <n> -run <id> -attempt <n>
+//	    CI の plan。lock を取らずに plan し、全文を plan の出力の Bucket に置き、Policy を掛ける
+//	tf-local ci-apply（-pr・-run・-attempt を除いて ci-plan と同じ）
+//	    CI の apply。lock を取って plan し直し、Policy を通った plan だけを apply する
+//
+// ci-plan と ci-apply だけが terraform・aws・conftest を起動する（ADR-0702 決定3 の CI の入口）。それ以外は
+// 値だけを返し、人の手元の入口では make が terraform を起動する。plan-header は git を起動して作業ツリーを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -74,7 +80,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file> | ci-plan ... | ci-apply ...")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -91,12 +97,13 @@ type deps struct {
 	readFile func(string) ([]byte, error)
 	environ  []string
 	git      func(args ...string) (string, error)
+	stderr   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, stderr: os.Stderr}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -146,6 +153,8 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runPlanKey(args[1:])
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
+	case "ci-plan", "ci-apply":
+		return runCI(args[0], args[1:], out, d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -271,7 +280,7 @@ func envUnset(environ []string) (string, error) {
 
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(unsetNames, name) && !slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+		if !unset(name) {
 			continue
 		}
 
@@ -290,6 +299,11 @@ func envUnset(environ []string) (string, error) {
 	}
 
 	return strings.Join(flags, " "), nil
+}
+
+// unset は、aws と terraform へ渡さない変数の名前かを返します。
+func unset(name string) bool {
+	return slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) })
 }
 
 // planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10）。git が答えられなければ、

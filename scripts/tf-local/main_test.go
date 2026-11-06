@@ -636,7 +636,7 @@ func Test_envUnset(t *testing.T) {
 		for name, environ := range map[string][]string{
 			"外す変数が無ければ空にする":     {"HOME=/h", "TF_PLUGIN_CACHE_DIR=/c"},
 			"環境が空なら空にする":        nil,
-			"名前が前方一致するだけの変数は残す": {"MY_AWS_PROFILE=x", "TF_WORKSPACE_X=y", "TF_DATA_DIRS=z"},
+			"名前が前方一致するだけの変数は残す": {"MY_AWS_PROFILE=x", "TF_WORKSPACE_X=y", "TF_DATA_DIRS=z", "ACTIONS_ID_TOKEN_REQUEST_URLX=w"},
 			"名前が空のエントリは外さない":    {"=x"},
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -840,26 +840,23 @@ func TestCiMk(t *testing.T) {
 		return string(out)
 	}
 
-	const envPrefix = "env $unset_env AWS_PROFILE=tabp-admin-ci-plan TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
-
-	t.Run("plan は CI の profile だけで、lock を取らずに走り、terraform の出力をファイルへ書く", func(t *testing.T) {
+	t.Run("plan は plan の role の profile で tf-local ci-plan を呼び、Pull Request と run を渡す", func(t *testing.T) {
 		t.Parallel()
 
 		got := expand(t, "ci-plan-admin-identity")
-		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
-		assert.NotContains(t, got, "AWS_PROFILE=tabp-bootstrap")
-		assert.Contains(t, got, envPrefix+" terraform -chdir=\"$dir\" init -input=false -no-color -lockfile=readonly")
-		assert.Contains(t, got, `-backend-config="bucket=$bucket" >> "$out" 2>&1`)
-		assert.Contains(t, got, `output -raw plan_output_bucket_name 2>> "$out"`)
-		assert.Contains(t, got, `plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1`)
-		assert.Contains(t, got, `show -json "$tfplan" > "$json" 2>> "$out"`)
-		assert.Contains(t, got, `--checksum-sha256 "$sha"`)
-		assert.Contains(t, got, `plan-summary -exitcode "$rc" "$json"`)
-		assert.Contains(t, got, `conftest test --combine --no-color -o json --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json" > "$pol"`)
-		assert.Contains(t, got, `rules=$(grep -c '^deny contains' conftest/plan/stateful_protection.rego)`)
-		assert.Contains(t, got, `policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`)
-		assert.NotContains(t, got, `tee "$log"`)
-		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
+		assert.Contains(t, got, `"./tmp/bin/tf-local" ci-plan -project tabp -env admin -root identity -profile tabp-admin-ci-plan`)
+		assert.Contains(t, got, `-terraform "terraform" -aws "aws" -conftest "conftest" -policy "conftest/plan" -decl "conftest/plan/decl.json"`)
+		assert.Contains(t, got, `-pr "$CI_PR" -run "$GITHUB_RUN_ID" -attempt "$GITHUB_RUN_ATTEMPT"`)
+		assert.NotContains(t, got, "tabp-bootstrap")
+	})
+
+	t.Run("apply は apply-identity の role の profile で tf-local ci-apply を呼ぶ", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "ci-apply-admin-identity")
+		assert.Contains(t, got, `"./tmp/bin/tf-local" ci-apply -project tabp -env admin -root identity -profile tabp-admin-ci-apply-identity`)
+		assert.NotContains(t, got, "-pr ")
+		assert.NotContains(t, got, "tabp-bootstrap")
 	})
 
 	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {

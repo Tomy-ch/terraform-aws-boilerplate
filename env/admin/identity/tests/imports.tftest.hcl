@@ -44,7 +44,7 @@ run "admin_state_bucket_name" {
     error_message = "管理アカウントの state Bucket の名前が tabp-admin-tfstate-<account_id>-<region>-an になっていません。"
   }
 
-  # CI の plan が init の後に読む output（.makefiles/terraform/operation/ci.mk）。
+  # CI の plan が init の後に読む output（scripts/tf-local の ci-plan）。
   assert {
     condition     = output.plan_output_bucket_name == "tabp-admin-tfplan-123456789012-ap-northeast-1-an"
     error_message = "output plan_output_bucket_name が管理アカウントの plan の出力の Bucket の名前を返していません。"

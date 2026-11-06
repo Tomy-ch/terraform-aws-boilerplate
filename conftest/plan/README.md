@@ -8,7 +8,7 @@
 
 policy の文書が参照する ARN は、`override_resource`（`override_during = plan`）で instance ごとに与える。与えないと文書が plan で unknown になり、`[PLAN-INPUT-04]` で落ちる。
 
-`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`.makefiles/terraform/operation/ci.mk` の `CI_PLAN` と `CI_APPLY`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection` だけを掛ける。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。
+`env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`scripts/tf-local` の `ci-plan` と `ci-apply`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection` だけを掛ける。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。
 
 入力は `tmp/tf-policy/` に書かれる。mock の値だけを含む。`make tf-policy` も CI の `tf-policy` job も、これを artifact や Pull Request のコメントへ出さない。
 

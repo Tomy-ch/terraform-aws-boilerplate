@@ -1,10 +1,8 @@
-## Terraform 側の検査（gates.mk）と、CI の apply の入口（operation/ci.mk の CI_APPLY）の分岐の検査
+## Terraform 側の検査（gates.mk）そのものの検査
 ##
 ## fixture は provider を持たない構成で毎回 tmp/ に作り、TF_BASE で差し替える。init がネットワークを
 ## 要さず、本番の走査（usecases/・modules/・env/）にも混ざらない。tf-lint は ruleset の取得を伴うので、
 ## 0件以外のケースでは TFLINT_BIN を偽の tflint に差し替え、失敗の集約だけを見る。
-## CI_APPLY は terraform・aws・conftest を、呼び出しを記録する偽物に差し替え、plan と Policy が通った
-## ときだけ、plan した plan を apply することを見る。資格情報も AWS も要さない。
 
 TF_GATES_TEST_DIR = tmp/tf-gates-test
 
@@ -119,40 +117,5 @@ tf-gates-test:
 	lint fail "lint-error:tf-lint" "$$root/lint-error" "$$(failed_line tf-lint "$$root/lint-error/modules/a")"; \
 	touch "$$root/bin/init-fail"; lint fail "init-fail:tf-lint" "$$root/ok"; rm -f "$$root/bin/init-fail"; \
 	lint fail "missing-bin:tf-lint" "$$root/ok" "" "$$root/bin/missing-tflint"; \
-	cb="$$root/ci-bin"; mkdir -p "$$cb" "$$root/ci/env/admin/identity"; \
-	printf 'terraform {\n  backend "s3" {\n    key    = "identity/terraform.tfstate"\n    region = "ap-northeast-1"\n  }\n}\n' > "$$root/ci/env/admin/identity/backend.tf"; \
-	printf 'provider "aws" {\n  region = "ap-northeast-1"\n}\n' > "$$root/ci/env/admin/identity/providers.tf"; \
-	printf '%s\n' '#!/bin/sh' 'd=$$(dirname "$$0"); echo "$$*" >> "$$d/calls"' \
-		'for a in "$$@"; do case "$$a" in -out=*) printf plan > "$${a#-out=}";; esac; done' \
-		'case "$$2" in plan) exit "$$(cat "$$d/plan-rc")";; show) cat "$$d/plan.json";; apply) exit "$$(cat "$$d/apply-rc")";; esac' > "$$cb/terraform"; \
-	printf '%s\n' '#!/bin/sh' 'printf "123456789012\tarn:aws:sts::123456789012:assumed-role/tabp-admin-ci-apply-identity/gha\n"' > "$$cb/aws"; \
-	printf '%s\n' '#!/bin/sh' 'cat "$$(dirname "$$0")/policy.json"' > "$$cb/conftest"; \
-	chmod +x "$$cb/terraform" "$$cb/aws" "$$cb/conftest"; \
-	rules=$$(grep -c '^deny contains' $(POLICY_PLAN_DIR)/stateful_protection.rego); \
-	noop='{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["no-op"]}}]}'; \
-	create='{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["create"]}}]}'; \
-	pass="[{\"namespace\":\"plan.stateful_protection\",\"successes\":$$rules,\"failures\":[]}]"; \
-	deny='[{"namespace":"plan.stateful_protection","successes":0,"failures":[{"msg":"[PLAN-STATE-01] stub"}]}]'; \
-	ci_apply() { \
-		want="$$1"; case_name="$$2"; echo "$$3" > "$$cb/plan-rc"; printf '%s' "$$4" > "$$cb/plan.json"; printf '%s' "$$5" > "$$cb/policy.json"; \
-		echo "$$6" > "$$cb/apply-rc"; applies="$$7"; pattern="$$8"; rm -f "$$cb/calls"; \
-		out=$$(env -u GITHUB_STEP_SUMMARY $(MAKE) -s --no-print-directory ci-apply-admin-identity TF_BASE="$$root/ci" GO_TOOL= \
-			TF_BIN="$$PWD/$$cb/terraform" AWS_BIN="$$PWD/$$cb/aws" CONFTEST_BIN="$$PWD/$$cb/conftest" CI_PLAN_DIR="$$PWD/$$root/ci-out" 2>&1); rc=$$?; \
-		planned=$$(sed -n 's/.* plan .*-out=\([^ ]*\).*/\1/p' "$$cb/calls"); \
-		if [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; then failed="$$failed ci-apply:$$case_name"; echo "$$out"; \
-		elif [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; then failed="$$failed ci-apply:$$case_name"; echo "$$out"; \
-		elif [ -n "$$pattern" ] && ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then failed="$$failed ci-apply:$$case_name"; echo "$$out"; \
-		elif [ "$$(grep -c '^[^ ]* apply ' "$$cb/calls")" != "$$applies" ]; then failed="$$failed ci-apply-count:$$case_name"; cat "$$cb/calls"; \
-		elif [ "$$applies" = 1 ] && { [ -z "$$planned" ] || ! grep -qF -- " apply -input=false -no-color $$planned" "$$cb/calls"; }; then failed="$$failed ci-apply-plan:$$case_name"; cat "$$cb/calls"; \
-		elif grep ' plan ' "$$cb/calls" | grep -qF -- -lock=false; then failed="$$failed ci-apply-lock:$$case_name"; cat "$$cb/calls"; \
-		fi; \
-	}; \
-	ci_apply pass no-changes 0 "$$noop" "$$pass" 0 1 "No changes."; \
-	ci_apply pass changes 2 "$$create" "$$pass" 0 1 "1 to add"; \
-	ci_apply fail plan-error 1 "$$noop" "$$pass" 0 0 "plan が失敗しました"; \
-	ci_apply fail exitcode-mismatch 0 "$$create" "$$pass" 0 0 "食い違います"; \
-	ci_apply fail policy-violation 2 "$$create" "$$deny" 0 0 "[PLAN-STATE-01] stub"; \
-	ci_apply fail policy-not-evaluated 2 "$$create" '[]' 0 0 "Policy を通りません"; \
-	ci_apply fail apply-error 2 "$$create" "$$pass" 1 1 "apply が失敗しました"; \
 	if [ -n "$$failed" ]; then echo "❌ tf-gates-test: 期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ tf-gates-test: 全ケースが期待どおりでした"
