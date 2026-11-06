@@ -670,6 +670,14 @@ func Test_oidcURL(t *testing.T) {
 		assert.Equal(t, "https://t.actions.githubusercontent.com/x?audience=sts.amazonaws.com", got)
 	})
 
+	t.Run("port 付きの host も受理する", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := oidcURL([]string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com:443/x", bearer})
+		require.NoError(t, err)
+		assert.Equal(t, "https://t.actions.githubusercontent.com:443/x?audience=sts.amazonaws.com", got)
+	})
+
 	t.Run("audience は usecases/deployment-identity の OIDC provider と一致する", func(t *testing.T) {
 		t.Parallel()
 
@@ -679,16 +687,19 @@ func Test_oidcURL(t *testing.T) {
 	})
 
 	cases := map[string][]string{
-		"要求先が無ければ失敗する":          {bearer},
-		"要求の token が無ければ失敗する":   {request},
-		"空の要求先は失敗する":            {"ACTIONS_ID_TOKEN_REQUEST_URL=", bearer},
-		"https でなければ失敗する":       {"ACTIONS_ID_TOKEN_REQUEST_URL=http://t.actions.githubusercontent.com/x", bearer},
-		"host が無ければ失敗する":        {"ACTIONS_ID_TOKEN_REQUEST_URL=https:///x", bearer},
-		"GitHub の外の host は失敗する": {"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x", bearer},
-		"host の末尾だけが似ていれば失敗する":  {"ACTIONS_ID_TOKEN_REQUEST_URL=https://evil-actions.githubusercontent.com.example/x", bearer},
-		"userinfo を持てば失敗する":     {"ACTIONS_ID_TOKEN_REQUEST_URL=https://u:p@t.actions.githubusercontent.com/x", bearer},
-		"URL でなければ失敗する":         {"ACTIONS_ID_TOKEN_REQUEST_URL=://x", bearer},
-		"環境が空なら失敗する":            nil,
+		"要求先が無ければ失敗する":           {bearer},
+		"要求の token が無ければ失敗する":    {request},
+		"空の要求先は失敗する":             {"ACTIONS_ID_TOKEN_REQUEST_URL=", bearer},
+		"https でなければ失敗する":        {"ACTIONS_ID_TOKEN_REQUEST_URL=http://t.actions.githubusercontent.com/x", bearer},
+		"host が無ければ失敗する":         {"ACTIONS_ID_TOKEN_REQUEST_URL=https:///x", bearer},
+		"GitHub の外の host は失敗する":  {"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x", bearer},
+		"host の末尾だけが似ていれば失敗する":   {"ACTIONS_ID_TOKEN_REQUEST_URL=https://evil-actions.githubusercontent.com.example/x", bearer},
+		"先頭の . の無い似た host は失敗する": {"ACTIONS_ID_TOKEN_REQUEST_URL=https://evilactions.githubusercontent.com/x", bearer},
+		"先頭のラベルが無い host は失敗する":   {"ACTIONS_ID_TOKEN_REQUEST_URL=https://.actions.githubusercontent.com/x", bearer},
+		"ドメインそのものは失敗する":          {"ACTIONS_ID_TOKEN_REQUEST_URL=https://actions.githubusercontent.com/x", bearer},
+		"userinfo を持てば失敗する":      {"ACTIONS_ID_TOKEN_REQUEST_URL=https://u:p@t.actions.githubusercontent.com/x", bearer},
+		"URL でなければ失敗する":          {"ACTIONS_ID_TOKEN_REQUEST_URL=://x", bearer},
+		"環境が空なら失敗する":             nil,
 	}
 	for name, environ := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -703,6 +714,15 @@ func Test_oidcURL(t *testing.T) {
 func Test_oidcToken(t *testing.T) {
 	t.Parallel()
 
+	t.Run("ちょうど maxTokenSize なら受理する", func(t *testing.T) {
+		t.Parallel()
+
+		token := "a.b." + strings.Repeat("c", maxTokenSize-4)
+		got, err := oidcToken(fileWith(t, `{"value":"`+token+`"}`), os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, token, got)
+	})
+
 	t.Run("応答の value を返す", func(t *testing.T) {
 		t.Parallel()
 
@@ -712,14 +732,18 @@ func Test_oidcToken(t *testing.T) {
 	})
 
 	cases := map[string]string{
-		"value が無ければ失敗する":     `{"count":1}`,
-		"value が空なら失敗する":      `{"value":""}`,
-		"JWT の形でなければ失敗する":     `{"value":"a.b"}`,
-		"空白を含めば失敗する":          `{"value":"a.b.c d"}`,
-		"改行を含めば失敗する":          `{"value":"a.b.c\n"}`,
-		"JSON でなければ失敗する":      `value=a.b.c`,
-		"value が文字列でなければ失敗する": `{"value":1}`,
-		"大きすぎれば失敗する":          `{"value":"a.b.` + strings.Repeat("c", maxTokenSize) + `"}`,
+		"value が無ければ失敗する":          `{"count":1}`,
+		"value が空なら失敗する":           `{"value":""}`,
+		"JWT の形でなければ失敗する":          `{"value":"a.b"}`,
+		"空白を含めば失敗する":               `{"value":"a.b.c d"}`,
+		"改行を含めば失敗する":               `{"value":"a.b.c\n"}`,
+		"JSON でなければ失敗する":           `value=a.b.c`,
+		"value が文字列でなければ失敗する":      `{"value":1}`,
+		"maxTokenSize を1つ超えれば失敗する": `{"value":"a.b.` + strings.Repeat("c", maxTokenSize-3) + `"}`,
+		"区切りだけの value は失敗する":       `{"value":".."}`,
+		"空の片を含めば失敗する":              `{"value":"a..c"}`,
+		"4片の JWT は失敗する":            `{"value":"a.b.c.d"}`,
+		"タブを含めば失敗する":               `{"value":"a.b\tx.c"}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

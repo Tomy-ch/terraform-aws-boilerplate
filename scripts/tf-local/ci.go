@@ -104,7 +104,7 @@ func oidcURL(environ []string) (string, error) {
 
 	// bearer は audience を問わず token を発行させられるので、GitHub の要求先の外へ送らない。
 	u, err := url.Parse(request)
-	if err != nil || u.Scheme != "https" || u.User != nil || !strings.HasSuffix(u.Hostname(), oidcHostSuffix) {
+	if err != nil || u.Scheme != "https" || u.User != nil || !strings.HasSuffix(u.Hostname(), oidcHostSuffix) || u.Hostname() == oidcHostSuffix {
 		return "", xerrors.Wrap(errOIDCRequest, "要求先が GitHub Actions の https の URL ではありません")
 	}
 
@@ -131,7 +131,8 @@ func oidcToken(path string, readFile func(string) ([]byte, error)) (string, erro
 		return "", xerrors.Wrap(errOIDCResponse, "応答が JSON ではありません")
 	}
 
-	if resp.Value == "" || len(resp.Value) > maxTokenSize || len(strings.Split(resp.Value, ".")) != 3 || strings.ContainsAny(resp.Value, " \t\r\n") {
+	parts := strings.Split(resp.Value, ".")
+	if len(resp.Value) > maxTokenSize || len(parts) != 3 || slices.Contains(parts, "") || strings.ContainsAny(resp.Value, " \t\r\n") {
 		return "", xerrors.Wrap(errOIDCResponse, "value が JWT の形ではありません")
 	}
 
