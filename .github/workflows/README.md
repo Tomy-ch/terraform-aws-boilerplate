@@ -70,7 +70,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
   には終了コード・件数・object の key・SHA-256・版 ID と、Policy の違反の文（resource の address）だけを
-  出す（ADR-0602 決定13、`scripts/tf-local` の `ci-plan`）
+  出す（ADR-0602 決定13、`.makefiles/terraform/operation/ci.mk`）
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
   `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、
@@ -97,7 +97,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   job を skip し続け、run は skip だけを示す
 - **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
   （`plan.stateful_protection`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
-  `scripts/tf-local` の `ci-apply`）。plan は lock を取る。変更の無い plan も apply する
+  `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
   run を止めない。資格情報を取る前の step（`refuse-stale`）が、デフォルトブランチとその先頭の commit を
   API から取り直し、どちらかが違えば失敗する
@@ -112,8 +112,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - workload root（`env/<env>/*.tf`）の apply の job、`make ci-apply-<env>`、environment `admin-apply` の
   secret は、workload root を足す変更が足す
 - job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency）は
-  `make oidc-job-lint` が、`ci-apply` の分岐（plan か Policy が落ちたら apply しない）は
-  `scripts/tf-local` のテストが見る
+  `make oidc-job-lint` が、`CI_APPLY` の順序（plan と Policy の判定が apply より前にあること）は
+  `scripts/tf-local` の `TestCiMk` が、その判定（plan が失敗したか、Policy を通らなければ非ゼロで終わること）は
+  `tf-local` の `plan-summary` と `policy-result` のテストが見る
 
 保証しないこと:
 

@@ -261,6 +261,20 @@ func Test_runPlanSummary(t *testing.T) {
 		require.ErrorIs(t, err, errPlanJSON)
 	})
 
+	t.Run("終了コードが1なら、ファイルを読まずに plan の失敗として落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPlanSummary([]string{"-exitcode", "1", filepath.Join(t.TempDir(), "missing")}, os.ReadFile)
+		require.ErrorIs(t, err, errPlanFailed)
+	})
+
+	t.Run("終了コードが1なら、JSON が読めても plan の失敗として落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPlanSummary([]string{"-exitcode", "1", fileWith(t, planWith(change("a.b", `"no-op"`), ""))}, os.ReadFile)
+		require.ErrorIs(t, err, errPlanFailed)
+	})
+
 	t.Run("ファイルが1つでなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -672,5 +686,32 @@ func Test_policyResult(t *testing.T) {
 
 		_, err := policyResult("plan.p", 3, []byte("FAIL - x"))
 		require.ErrorIs(t, err, errPolicyJSON)
+	})
+}
+
+func Test_fileSHA256(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ファイルの SHA-256 を base64 で返す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := fileSHA256(fileWith(t, "abc"), os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=", got)
+	})
+
+	t.Run("空のファイルも空の本文の SHA-256 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := fileSHA256(fileWith(t, ""), os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=", got)
+	})
+
+	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := fileSHA256(filepath.Join(t.TempDir(), "missing"), os.ReadFile)
+		require.ErrorIs(t, err, errDigest)
 	})
 }

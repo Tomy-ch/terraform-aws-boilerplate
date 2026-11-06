@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -33,9 +34,11 @@ var (
 	errPlanJSON     = xerrors.New("❌ plan の JSON を解釈できません")
 	errPlanEmpty    = xerrors.New("❌ plan の JSON に resource の変更が1件もありません。検査の対象が0件です")
 	errPlanErrored  = xerrors.New("❌ plan はエラーで終わっています")
+	errPlanFailed   = xerrors.New("❌ plan が失敗しました（終了コード 1）")
 	errPlanExitCode = xerrors.New("❌ plan の終了コードは 0 か 2 です")
 	errPlanMismatch = xerrors.New("❌ plan の終了コードと JSON の変更の有無が食い違います")
 	errPlanKey      = xerrors.New("❌ plan の出力の key を組めません")
+	errDigest       = xerrors.New("❌ SHA-256 を計算するファイルを読めません")
 
 	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
 	errPolicyEmpty     = xerrors.New("❌ 名前空間の規則が1つも評価されていません")
@@ -165,6 +168,11 @@ func runPlanSummary(args []string, readFile func(string) ([]byte, error)) (strin
 
 	if fs.NArg() != 1 {
 		return "", errUsage
+	}
+
+	// plan が失敗すれば show の JSON は無いので、ファイルより先に終了コードを見る。
+	if *exitCode == "1" {
+		return "", errPlanFailed
 	}
 
 	data, err := readFile(fs.Arg(0))
@@ -366,4 +374,17 @@ func policyResult(namespace string, rules int, data []byte) (string, error) {
 	}
 
 	return fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", namespace, evaluated), nil
+}
+
+// fileSHA256 は、ファイルの SHA-256 を base64 で返します。S3 は受け取った本文をこの値と突き合わせ、違えば
+// 書き込みを拒む。
+func fileSHA256(path string, readFile func(string) ([]byte, error)) (string, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return "", errDigest
+	}
+
+	sum := sha256.Sum256(data)
+
+	return base64.StdEncoding.EncodeToString(sum[:]), nil
 }

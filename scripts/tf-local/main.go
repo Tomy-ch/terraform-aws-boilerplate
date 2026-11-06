@@ -24,14 +24,13 @@
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
 //	    評価が n 件でなければ失敗する
 //
-//	tf-local ci-plan -project <p> -env <e> -root <identity|workload> -profile <profile> -base <dir> -dir <dir>
-//	    -terraform <bin> -aws <bin> -conftest <bin> -policy <dir> -decl <file> -pr <n> -run <id> -attempt <n>
-//	    CI の plan。lock を取らずに plan し、全文を plan の出力の Bucket に置き、Policy を掛ける
-//	tf-local ci-apply（-pr・-run・-attempt を除いて ci-plan と同じ）
-//	    CI の apply。lock を取って plan し直し、Policy を通った plan だけを apply する
+//	tf-local account -identity <out>
+//	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
+//	tf-local sha256 <file>
+//	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
 //
-// ci-plan と ci-apply だけが terraform・aws・conftest を起動する（ADR-0702 決定3 の CI の入口）。それ以外は
-// 値だけを返し、人の手元の入口では make が terraform を起動する。plan-header は git を起動して作業ツリーを読む。
+// aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result・sha256 はファイルを読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -80,7 +79,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file> | ci-plan ... | ci-apply ...")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file> | account -identity <out> | sha256 <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -97,13 +96,12 @@ type deps struct {
 	readFile func(string) ([]byte, error)
 	environ  []string
 	git      func(args ...string) (string, error)
-	stderr   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, stderr: os.Stderr}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -153,8 +151,14 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runPlanKey(args[1:])
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
-	case "ci-plan", "ci-apply":
-		return runCI(args[0], args[1:], out, d)
+	case "account":
+		value, err = runAccount(args[1:])
+	case "sha256":
+		if len(args) != 2 {
+			return errUsage
+		}
+
+		value, err = fileSHA256(args[1], d.readFile)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -189,6 +193,21 @@ func runBucket(args []string) (string, error) {
 	}
 
 	return bucketName(*project, *env, account, *region)
+}
+
+func runAccount(args []string) (string, error) {
+	fs := flag.NewFlagSet("account", flag.ContinueOnError)
+	identity := fs.String("identity", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() > 0 {
+		return "", errUsage
+	}
+
+	return callerAccount(*identity)
 }
 
 func rootRegion(root string, readFile func(string) ([]byte, error)) (string, error) {

@@ -152,6 +152,22 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
 		})
 
+		t.Run("account は資格情報からアカウント ID を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"account", "-identity", identityUser}, &out, testDeps(nil)))
+			assert.Equal(t, "123456789012\n", out.String())
+		})
+
+		t.Run("sha256 はファイルの SHA-256 を base64 で1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"sha256", fileWith(t, "abc")}, &out, testDeps(nil)))
+			assert.Equal(t, "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=\n", out.String())
+		})
+
 		t.Run("plan-key は key を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -173,6 +189,8 @@ func Test_run(t *testing.T) {
 			"plan-header に引数があれば失敗する": {"plan-header", "x"},
 			"oidc-sub にファイルが無ければ失敗する": {"oidc-sub"},
 			"oidc-sub に余分な引数があれば失敗する": {"oidc-sub", "a", "b"},
+			"sha256 にファイルが無ければ失敗する":   {"sha256"},
+			"sha256 に余分な引数があれば失敗する":   {"sha256", "a", "b"},
 		}
 		for name, args := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -451,6 +469,61 @@ func Test_backendRegion(t *testing.T) {
 			})
 		}
 	})
+}
+
+func Test_unset(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		"AWS_PROFILE": true, "TF_VAR_x": true, "ACTIONS_ID_TOKEN_REQUEST_URL": true, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": true,
+		"HOME": false, "TF_PLUGIN_CACHE_DIR": false, "ACTIONS_ID_TOKEN_REQUEST_URLX": false,
+	}
+	for name, want := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, want, unset(name))
+		})
+	}
+}
+
+func Test_runAccount(t *testing.T) {
+	t.Parallel()
+
+	t.Run("資格情報からアカウント ID を取り出す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runAccount([]string{"-identity", identityUser})
+		require.NoError(t, err)
+		assert.Equal(t, "123456789012", got)
+	})
+
+	t.Run("root の資格情報は拒む", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAccount([]string{"-identity", "123456789012\tarn:aws:iam::123456789012:root\n"})
+		require.ErrorIs(t, err, errRootCredentials)
+	})
+
+	t.Run("資格情報が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAccount(nil)
+		require.ErrorIs(t, err, errIdentity)
+	})
+
+	usage := map[string][]string{
+		"余分な引数があれば失敗する": {"-identity", identityUser, "x"},
+		"知らないフラグは失敗する":  {"-x", "y"},
+	}
+	for name, args := range usage {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runAccount(args)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
 }
 
 func Test_callerAccount(t *testing.T) {
@@ -821,8 +894,8 @@ func TestLocalMk(t *testing.T) {
 	})
 }
 
-// TestCiMk は、ci.mk のレシピが CI の profile で tf-local の ci-plan / ci-apply を呼ぶ配線を、make -n の
-// 展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
+// TestCiMk は、ci.mk のレシピが CI の profile で plan と apply を行い、terraform の出力を公開されるログに
+// 出さない配線を、make -n の展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
 func TestCiMk(t *testing.T) {
 	t.Parallel()
 
@@ -840,23 +913,65 @@ func TestCiMk(t *testing.T) {
 		return string(out)
 	}
 
-	t.Run("plan は plan の role の profile で tf-local ci-plan を呼び、Pull Request と run を渡す", func(t *testing.T) {
+	envPrefix := func(role string) string {
+		return "env $unset_env AWS_PROFILE=tabp-admin-ci-" + role + " TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1"
+	}
+
+	// order は、want の各部分文字列が got にこの順で現れることを見る。
+	order := func(t *testing.T, got string, want ...string) {
+		t.Helper()
+
+		at := 0
+		for _, w := range want {
+			i := strings.Index(got[at:], w)
+			require.GreaterOrEqual(t, i, 0, "%q が %q より後にありません: %s", w, got[:at], got)
+			at += i + len(w)
+		}
+	}
+
+	t.Run("plan は CI の profile だけで lock を取らずに走り、全文を置いてから判定する", func(t *testing.T) {
 		t.Parallel()
 
 		got := expand(t, "ci-plan-admin-identity")
-		assert.Contains(t, got, `"./tmp/bin/tf-local" ci-plan -project tabp -env admin -root identity -profile tabp-admin-ci-plan`)
-		assert.Contains(t, got, `-terraform "terraform" -aws "aws" -conftest "conftest" -policy "conftest/plan" -decl "conftest/plan/decl.json"`)
-		assert.Contains(t, got, `-pr "$CI_PR" -run "$GITHUB_RUN_ID" -attempt "$GITHUB_RUN_ATTEMPT"`)
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
 		assert.NotContains(t, got, "tabp-bootstrap")
+		assert.Contains(t, got, `trap 'rm -f "$out" "$tfplan"' EXIT`)
+		order(t, got,
+			envPrefix("plan")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$bucket" >> "$out" 2>&1`,
+			`output -raw plan_output_bucket_name 2>> "$out"`,
+			`plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
+			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
+			`sha256 "$out"`,
+			`account -identity "$identity"`,
+			envPrefix("plan")+` aws s3api put-object`,
+			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
+			`plan-summary -exitcode "$rc" "$json"`,
+			`conftest test --combine --no-color -o json --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json" > "$pol"`,
+			`policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`,
+		)
+		assert.Contains(t, got, `rules=$(grep -c '^deny contains' conftest/plan/stateful_protection.rego)`)
+		assert.NotContains(t, got, " apply ")
+		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
 
-	t.Run("apply は apply-identity の role の profile で tf-local ci-apply を呼ぶ", func(t *testing.T) {
+	t.Run("apply は apply-identity の profile で lock を取って plan し直し、Policy を通ってから apply する", func(t *testing.T) {
 		t.Parallel()
 
 		got := expand(t, "ci-apply-admin-identity")
-		assert.Contains(t, got, `"./tmp/bin/tf-local" ci-apply -project tabp -env admin -root identity -profile tabp-admin-ci-apply-identity`)
-		assert.NotContains(t, got, "-pr ")
 		assert.NotContains(t, got, "tabp-bootstrap")
+		assert.NotContains(t, got, "-lock=false")
+		assert.NotContains(t, got, "put-object")
+		assert.Contains(t, got, `trap 'rm -f "$out" "$tfplan"' EXIT`)
+		order(t, got,
+			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly`,
+			`plan -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
+			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
+			`plan-summary -exitcode "$rc" "$json"`,
+			`policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`,
+			envPrefix("apply-identity")+` terraform -chdir="$dir" apply -input=false -no-color "$tfplan" >> "$out" 2>&1`,
+		)
+		assert.Equal(t, 1, strings.Count(got, " apply -input=false"), got)
+		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
 
 	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {
