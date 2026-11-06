@@ -312,6 +312,14 @@ func Test_runBucket(t *testing.T) {
 			assert.NotContains(t, err.Error(), "123456789012")
 		})
 
+		t.Run("root の資格情報は Bucket 名を組まない", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", "123456789012\tarn:aws:iam::123456789012:root\n"})
+			require.ErrorIs(t, err, errRootCredentials)
+			assert.NotContains(t, err.Error(), "123456789012")
+		})
+
 		t.Run("-identity を欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
@@ -567,17 +575,22 @@ func Test_runAccount(t *testing.T) {
 		require.ErrorIs(t, err, errIdentity)
 	})
 
-	t.Run("失敗の文に資格情報の値を入れない", func(t *testing.T) {
-		t.Parallel()
+	leaks := map[string]struct {
+		identity string
+		want     error
+	}{
+		"読めない identity の失敗の文に値を入れない": {"123456789012\tarn:aws:iam::123456789012:user/b\textra\n", errIdentity},
+		"root の資格情報の失敗の文に値を入れない":     {"123456789012\tarn:aws:iam::123456789012:root\n", errRootCredentials},
+	}
+	for name, c := range leaks {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-		_, err := runAccount([]string{"-identity", "123456789012\tarn:aws:iam::123456789012:user/b\textra\n"})
-		require.ErrorIs(t, err, errIdentity)
-		assert.NotContains(t, err.Error(), "123456789012")
-
-		_, err = runAccount([]string{"-identity", "123456789012\tarn:aws:iam::123456789012:root\n"})
-		require.ErrorIs(t, err, errRootCredentials)
-		assert.NotContains(t, err.Error(), "123456789012")
-	})
+			_, err := runAccount([]string{"-identity", c.identity})
+			require.ErrorIs(t, err, c.want)
+			assert.NotContains(t, err.Error(), "123456789012")
+		})
+	}
 
 	usage := map[string][]string{
 		"余分な引数があれば失敗する": {"-identity", identityUser, "x"},
@@ -1055,27 +1068,37 @@ func TestCiMk(t *testing.T) {
 	})
 }
 
-// ciFakes は、ci.mk のレシピが起動する terraform・aws・conftest の偽物です。呼び出しを calls に1行ずつ残し、
-// 結果は knobs のファイル（init-rc・plan-rc・plan.json・policy.json・apply-rc）で切り替える。plan と apply
-// は全文に secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
+// ciFakes は、ci.mk のレシピが起動する terraform・aws・conftest・curl・git の偽物です。呼び出しを calls に
+// 1行ずつ残し、結果は knobs のファイル（*-rc・identity・oidc-response・plan.json・policy.json）で切り替える。
+// plan・apply・assume-role は secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
 const ciFakes = `#!/bin/sh
 k=%[1]q
 rc() { cat "$k/$1" 2>/dev/null || echo 0; }
 echo "$(basename "$0") $*" >> "$k/calls"
 case "$(basename "$0")" in
 aws)
-	case "$1" in
-	sts) printf '123456789012\tarn:aws:iam::123456789012:user/ci\n' ;;
-	s3api) echo v-1 ;;
+	case "$1 $2" in
+	"sts get-caller-identity") cat "$k/identity" 2>/dev/null || printf '123456789012\tarn:aws:iam::123456789012:user/ci\n'; exit "$(rc sts-rc)" ;;
+	"sts assume-role-with-web-identity") printf 'KEY-SECRET\tSECRET-SECRET\tSESSION-SECRET\n'; exit "$(rc assume-rc)" ;;
+	s3api*) echo v-1; exit "$(rc s3api-rc)" ;;
 	esac
 	exit 0 ;;
 conftest) cat "$k/policy.json"; exit 1 ;;
+curl)
+	for a; do test "$prev" = -o && out=$a; prev=$a; done
+	cat "$k/oidc-response" > "$out"
+	exit "$(rc curl-rc)" ;;
+git)
+	case "$1" in
+	rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;
+	esac
+	exit 0 ;;
 esac
 for a; do case "$a" in -chdir=*) ;; *) sub=$a; break ;; esac; done
 for a; do last=$a; done
 case "$sub" in
 init) exit "$(rc init-rc)" ;;
-output) echo plan-output-bucket ;;
+output) echo plan-output-bucket; exit "$(rc output-rc)" ;;
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
@@ -1109,7 +1132,8 @@ func TestCiRecipes(t *testing.T) {
 		left                       []string
 	}
 
-	recipe := func(t *testing.T, target string, knobs map[string]string) result {
+	// env は既定の環境を上書きする。git と curl は PATH の先頭の偽物が受ける。
+	recipe := func(t *testing.T, target string, knobs map[string]string, env ...string) result {
 		t.Helper()
 
 		root := t.TempDir()
@@ -1131,7 +1155,7 @@ func TestCiRecipes(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
 		}
 
-		for _, tool := range []string{"terraform", "aws", "conftest"} {
+		for _, tool := range []string{"terraform", "aws", "conftest", "curl", "git"} {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "bin", tool), fmt.Appendf(nil, ciFakes, k), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
 		}
 
@@ -1141,13 +1165,16 @@ func TestCiRecipes(t *testing.T) {
 			"POLICY_PLAN_DIR="+policy, "POLICY_PLAN_DECL="+filepath.Join(policy, "decl.json"))
 		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
-				strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "CI_PR=")
-		}), "CI_PR=7", "GITHUB_RUN_ID=8", "GITHUB_RUN_ATTEMPT=1", "GITHUB_STEP_SUMMARY="+summary)
+				strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "CI_") || strings.HasPrefix(kv, "ACTIONS_ID_TOKEN_REQUEST_") || strings.HasPrefix(kv, "PATH=")
+		}), "PATH="+filepath.Join(root, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"CI_PR=7", "GITHUB_RUN_ID=8", "GITHUB_RUN_ATTEMPT=1", "GITHUB_STEP_SUMMARY="+summary)
+		cmd.Env = append(cmd.Env, env...)
 
 		combined, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(filepath.Join(k, "calls"))
 		written, _ := os.ReadFile(summary)
-		entries, _ := os.ReadDir(plans)
+		entries, dirErr := os.ReadDir(plans)
+		require.NoError(t, dirErr, "レシピが作業ディレクトリを作っていません: %s", combined)
 
 		left := make([]string, 0, len(entries))
 		for _, e := range entries {
@@ -1183,7 +1210,7 @@ func TestCiRecipes(t *testing.T) {
 		return n
 	}
 
-	t.Run("apply", func(t *testing.T) {
+	t.Run("apply の入口", func(t *testing.T) {
 		t.Parallel()
 
 		ok := map[string]struct{ planRC, plan string }{
@@ -1259,12 +1286,45 @@ func TestCiRecipes(t *testing.T) {
 			t.Parallel()
 
 			r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass, "apply-rc": "1"})
+			require.Error(t, r.err, r.out)
+			require.Contains(t, r.calls, " plan ", "偽物が PLAN-SECRET を出す経路を通っていません")
+			require.Equal(t, 1, applies(r.calls), "偽物が APPLY-SECRET を出す経路を通っていません")
 			assert.NotContains(t, r.out, "PLAN-SECRET")
 			assert.NotContains(t, r.out, "APPLY-SECRET")
 		})
+
+		t.Run("job summary が無くても成功する", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass}, "GITHUB_STEP_SUMMARY=")
+			require.NoError(t, r.err, r.out)
+			assert.Equal(t, 1, applies(r.calls), r.calls)
+			assert.Empty(t, r.summary)
+		})
+
+		prepare := map[string]struct {
+			knobs map[string]string
+			want  string
+		}{
+			"root の資格情報なら init を呼ばない":     {map[string]string{"identity": "123456789012\tarn:aws:iam::123456789012:root\n"}, "root の資格情報では実行しません"},
+			"identity を取れなければ init を呼ばない": {map[string]string{"sts-rc": "255"}, ""},
+		}
+		for name, c := range prepare {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-apply-admin-identity", c.knobs)
+				require.Error(t, r.err, r.out)
+				assert.Contains(t, r.out, c.want)
+				assert.Contains(t, r.calls, "aws sts get-caller-identity")
+				assert.NotContains(t, r.calls, " init ")
+				assert.NotContains(t, r.out, "123456789012")
+				assert.Empty(t, r.left, "作業ファイルが残っています")
+			})
+		}
 	})
 
-	t.Run("plan", func(t *testing.T) {
+	t.Run("plan の入口", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("全文を版 ID 付きで置き、Policy を掛け、apply しない", func(t *testing.T) {
@@ -1290,6 +1350,7 @@ func TestCiRecipes(t *testing.T) {
 			"plan が失敗しても全文を置いてから失敗する":         {map[string]string{"plan-rc": "1", "plan.json": noop, "policy.json": pass}, "全文は上の key にあります"},
 			"Policy に違反すれば全文を置いてから失敗する":       {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": violated}, "[PLAN-STATE-01] stub"},
 			"plan を JSON にできなくても全文を置いてから失敗する": {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": pass}, "plan の JSON を解釈できません"},
+			"Policy が評価されなくても全文を置いてから失敗する":    {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": "[]"}, "Policy を通りません"},
 		}
 		for name, c := range fail {
 			t.Run(name, func(t *testing.T) {
@@ -1304,5 +1365,112 @@ func TestCiRecipes(t *testing.T) {
 				assert.Empty(t, r.left, "作業ファイルが残っています")
 			})
 		}
+
+		t.Run("変更が無ければ No changes. を置く", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-plan-admin-identity", map[string]string{"plan-rc": "0", "plan.json": noop, "policy.json": pass})
+			require.NoError(t, r.err, r.out)
+			assert.Equal(t, 1, count(r.calls, "aws s3api put-object"), r.calls)
+			assert.Contains(t, r.summary, "No changes.")
+		})
+
+		early := map[string]struct {
+			knobs map[string]string
+			env   []string
+			want  string
+			plans bool
+		}{
+			"plan の出力の Bucket の名前を読めなければ plan を呼ばない": {map[string]string{"output-rc": "1"}, nil, "Bucket の名前を state から読めません", false},
+			"全文を置けなければ判定へ進まない":                       {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass, "s3api-rc": "1"}, nil, "plan の全文: key=", true},
+			"Pull Request の番号が無ければ全文を置かない":           {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass}, []string{"CI_PR="}, "plan の出力の key を組めません", true},
+		}
+		for name, c := range early {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-plan-admin-identity", c.knobs, c.env...)
+				require.Error(t, r.err, r.out)
+				assert.Contains(t, r.out, c.want)
+				assert.Equal(t, c.plans, strings.Contains(r.calls, " plan "), r.calls)
+				assert.NotContains(t, r.out, "plan の全文の版 ID")
+				assert.Zero(t, count(r.calls, "conftest"), r.calls)
+				assert.Empty(t, r.summary)
+				assert.Empty(t, r.left, "作業ファイルが残っています")
+			})
+		}
+	})
+
+	t.Run("資格情報", func(t *testing.T) {
+		t.Parallel()
+
+		jwt := jwtWith(`{"sub":"repo:o/r:environment:admin-plan"}`)
+		response := map[string]string{"oidc-response": `{"value":"` + jwt + `"}`}
+		env := []string{
+			"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=bearer",
+			"CI_ACCOUNT_ID=123456789012",
+		}
+		const assume = "aws sts assume-role-with-web-identity"
+
+		t.Run("assume して profile を置き、token と応答を消す", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-aws-credentials", response, env...)
+			require.NoError(t, r.err, r.out)
+			assert.Equal(t, 1, count(r.calls, assume), r.calls)
+			assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-plan")
+			assert.Equal(t, 4, count(r.calls, "aws configure set --profile tabp-admin-ci-plan "), r.calls)
+			for _, v := range []string{"KEY-SECRET", "SECRET-SECRET", "SESSION-SECRET"} {
+				assert.Contains(t, r.out, "::add-mask::"+v)
+			}
+			assert.Contains(t, r.out, "OIDC の sub: repo:o/r:environment:admin-plan")
+			assert.NotContains(t, r.out, jwt)
+			assert.Contains(t, r.out, "profile に資格情報を置きました")
+			assert.Empty(t, r.left, "token と応答が残っています")
+		})
+
+		t.Run("役割の profile と role を取る", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-aws-credentials", response, append(slices.Clone(env), "CI_ROLE=apply-identity")...)
+			require.NoError(t, r.err, r.out)
+			assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity")
+			assert.Equal(t, 4, count(r.calls, "aws configure set --profile tabp-admin-ci-apply-identity "), r.calls)
+		})
+
+		fail := map[string]struct {
+			knobs map[string]string
+			env   []string
+			want  string
+		}{
+			"要求先が無ければ token を要求しない":              {response, []string{"ACTIONS_ID_TOKEN_REQUEST_URL="}, "id-token: write がありません"},
+			"token を要求できなければ assume しない":         {map[string]string{"oidc-response": "", "curl-rc": "22"}, nil, ""},
+			"応答から token を読めなければ assume しない":      {map[string]string{"oidc-response": "nope"}, nil, "token を読めません"},
+			"sub が environment でなければ assume しない": {map[string]string{"oidc-response": `{"value":"` + jwtWith(`{"sub":"repo:o/r:ref:refs/heads/main"}`) + `"}`}, nil, "sub を読めません"},
+			"アカウント ID が不正なら assume しない":          {response, []string{"CI_ACCOUNT_ID=1234"}, "role の ARN を組めません"},
+		}
+		for name, c := range fail {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-aws-credentials", c.knobs, append(slices.Clone(env), c.env...)...)
+				require.Error(t, r.err, r.out)
+				assert.Contains(t, r.out, c.want)
+				assert.Zero(t, count(r.calls, assume), r.calls)
+				assert.Zero(t, count(r.calls, "aws configure"), r.calls)
+				assert.Empty(t, r.left, "token と応答が残っています")
+			})
+		}
+
+		t.Run("assume できなければ profile を置かない", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-aws-credentials", map[string]string{"oidc-response": response["oidc-response"], "assume-rc": "254"}, env...)
+			require.Error(t, r.err, r.out)
+			assert.Equal(t, 1, count(r.calls, assume), r.calls)
+			assert.Zero(t, count(r.calls, "aws configure"), r.calls)
+			assert.NotContains(t, r.out, "profile に資格情報を置きました")
+			assert.Empty(t, r.left, "token と応答が残っています")
+		})
 	})
 }
