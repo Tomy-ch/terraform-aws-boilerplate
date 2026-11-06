@@ -24,8 +24,9 @@
 //   - workflow 全体と対象の job と検出の job に MAKEFLAGS・MAKEFILES・PATH を書かず、GITHUB_PATH と
 //     GITHUB_ENV に書き込まず、YAML のアンカーとエイリアスを使わない。workflow 全体に defaults: と env: を、job に
 //     continue-on-error:・container:・services:・defaults:・env: を、資格情報を取る step と CI の入口の step に
-//     if:・continue-on-error:・shell:・working-directory: を置かない。step の env: は拒否の step と入口が読む
-//     名前（stepEnvKeys）に限り、run: を持つ step は拒否の step・資格情報を取る step・CI の入口に限る —— どれも
+//     if:・continue-on-error:・shell:・working-directory: を、拒否の step に shell:・working-directory: を置かない。
+//     step の env: は拒否の step と入口が読む名前（stepEnvKeys）に限り、run: を持つ step は資格情報より前の
+//     役割の拒否の step・資格情報を取る step・CI の入口に限る —— どれも
 //     入口を実行させないか、道具を替えるか、失敗を成功として報告させる
 //   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
@@ -107,7 +108,8 @@ var (
 	yamlAlias     = regexp.MustCompile(`(?:^|[:\-][ \t]+)[&*][A-Za-z0-9_-]+(?:[ \t]|$)|<<[ \t]*:`)
 	envAt         = regexp.MustCompile(`^["']?env["']?[ \t]*:`)
 	stepEnv       = regexp.MustCompile(`^ {6}(?:- | {2})["']?env["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
-	stepEnvKey    = regexp.MustCompile(`^ {10}["']?([^"':\s]+)["']?[ \t]*:`)
+	stepEnvKey    = regexp.MustCompile(`^ +["']?([^"':\s]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
+	blockScalar   = regexp.MustCompile(`^[|>][-+0-9]*(?:[ \t]+#.*)?$`)
 	stepRun       = regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:`)
 	stepWorkDir   = regexp.MustCompile(`^ {6}(?:- | {2})["']?working-directory["']?[ \t]*:`)
 	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
@@ -336,7 +338,11 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	}
 	findings = append(findings, checkSteps(job, cred, finding)...)
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
-	findings = append(findings, checkHidden(job, w, finding)...)
+	refusal := refuseStale
+	if role == "plan" {
+		refusal = refuseUntrusted
+	}
+	findings = append(findings, checkHidden(job, cred, refusal, w, finding)...)
 
 	if role == "plan" {
 		return append(findings, checkPlan(job, cred, w, finding)...)
@@ -443,7 +449,7 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 // working-directory:、workflow 全体の defaults: は run: の本文を別のものとして実行させうる。job と入口の step の
 // continue-on-error: と if: は、失敗も skip も成功として報告させる（plan の job は required check、apply の job は
 // 通知の起動条件である）。run: は字面からは中身を選べないので、置ける step を閉じた集合に限る。
-func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+func checkHidden(job workflow.Job, cred workflow.Line, refusal string, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, l := range append(slices.Clone(w.preamble), job.Lines...) {
 		if commentLine.MatchString(l.Text) {
@@ -473,16 +479,19 @@ func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...
 		if !ok {
 			continue
 		}
-		entry, cred := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
-		if !entry && !cred && !hasStepID(step, refuseUntrusted) && !hasStepID(step, refuseStale) {
-			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、拒否の step・make ci-aws-credentials・CI の入口だけにしてください。ほかの run: は後続の step の PATH と環境を替えます"))
-		}
-		if !entry && !cred {
-			continue
+		entry, credStep := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
+		// 拒否の step と認めるのは、役割の id を持ち資格情報より前に在るものだけ。後ろの run: は資格情報を読める。
+		refuses := hasStepID(step, refusal) && step.Number < cred.Number
+		if !entry && !credStep && !refuses {
+			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、資格情報より前の拒否の step・make ci-aws-credentials・CI の入口だけにしてください。ほかの run: は後続の step の PATH と環境を替えるか、資格情報を読みます"))
 		}
 		for _, l := range step.Lines {
-			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "資格情報を取る step と CI の入口の step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせえます"))
+			switch {
+			case (entry || credStep) && (stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text)):
+				findings = append(findings, finding(l.Number, "資格情報を取る step と CI の入口の step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせます"))
+			case !entry && !credStep && (stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text)):
+				// 拒否の step の if: と continue-on-error: は checkRefusal が見る。
+				findings = append(findings, finding(l.Number, "拒否の step に shell:・working-directory: を置かないでください。拒否を実行させずに通します"))
 			}
 		}
 	}
@@ -501,16 +510,17 @@ func checkIndirect(l workflow.Line, finding func(int, string, ...any) lintreport
 	return findings
 }
 
-// checkStepEnv は、step の env: が stepEnvKeys の名前だけを、1段深いブロック形式で持つことを検査します。
+// checkStepEnv は、step の env: が stepEnvKeys の名前だけを、ブロック形式で持つことを検査します。名前の桁は
+// 最初の名前の行で決め、それより深い行はブロックスカラーの値の続きとしてだけ認める。
 func checkStepEnv(step workflow.Step, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
-	in := false
+	in, keyIndent, inValue := false, 0, false
 	for _, l := range step.Lines {
 		if commentLine.MatchString(l.Text) || strings.TrimSpace(l.Text) == "" {
 			continue
 		}
 		if m := stepEnv.FindStringSubmatch(l.Text); m != nil {
-			in = true
+			in, keyIndent, inValue = true, 0, false
 			if m[1] != "" && !strings.HasPrefix(m[1], "#") {
 				findings = append(findings, finding(l.Number, "step の env: はブロック形式で書いてください。名前を読めません"))
 			}
@@ -521,11 +531,19 @@ func checkStepEnv(step workflow.Step, finding func(int, string, ...any) lintrepo
 			in = false
 			continue
 		}
-		if indent > 10 {
+		if keyIndent == 0 {
+			keyIndent = indent
+		}
+		if indent > keyIndent && inValue {
 			continue
 		}
 		m := stepEnvKey.FindStringSubmatch(l.Text)
-		if m == nil || !slices.Contains(stepEnvKeys, m[1]) {
+		if indent != keyIndent || m == nil {
+			findings = append(findings, finding(l.Number, "step の env: の名前を読めません。名前は同じ桁に、値の続きはブロックスカラー（| か >）で書いてください"))
+			continue
+		}
+		inValue = blockScalar.MatchString(m[2])
+		if !slices.Contains(stepEnvKeys, m[1]) {
 			findings = append(findings, finding(l.Number, "資格情報を取る job の step の env: に置けるのは %s だけです。ほかの名前は道具やシェルを替えます", strings.Join(stepEnvKeys, "・")))
 		}
 	}

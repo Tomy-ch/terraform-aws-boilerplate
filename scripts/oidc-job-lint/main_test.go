@@ -411,7 +411,9 @@ func Test_check(t *testing.T) {
 
 		src := planWorkflow + "        env:\n          AWS_ACCESS_KEY_ID: ${{ secrets.KEY }}\n"
 		_, f := check("p.yaml", src, envs)
-		assert.Contains(t, messages(f), "長期のアクセスキー")
+		require.Len(t, f, 2)
+		assert.Contains(t, f[0].Message, "長期のアクセスキー")
+		assert.Contains(t, f[1].Message, "env: に置けるのは")
 	})
 
 	t.Run("コメントの中のキー名は違反にしない", func(t *testing.T) {
@@ -442,9 +444,11 @@ func Test_checkJob(t *testing.T) {
 		"environment と役割の食い違いは違反":    {"environment: admin-plan", "environment: admin-apply", "一致しません"},
 		"environment と env の食い違いは違反": {"CI_ENV=admin", "CI_ENV=dev", "一致しません"},
 		"needs に検出が無ければ違反":           {"needs: infra-code-gate", "needs: [changes]", "make infra-code-gate を走らせる job"},
+		"入口を隠す形も検査する":                {"    environment: admin-plan\n", "    environment: admin-plan\n    continue-on-error: true\n", "continue-on-error: を置かない"},
 		"資格情報の step の SHELL の代入は違反":  {"CI_ROLE=plan RUNNER_MODE=host", "CI_ROLE=plan RUNNER_MODE=host SHELL='/bin/bash -x'", "資格情報を取る step は"},
 		"資格情報の step の道具の差し替えは違反":     {"CI_ROLE=plan RUNNER_MODE=host", "CI_ROLE=plan AWS_BIN=./x RUNNER_MODE=host", "資格情報を取る step は"},
 		"資格情報の step の後続のコマンドは違反":     {"CI_ROLE=plan RUNNER_MODE=host", "CI_ROLE=plan RUNNER_MODE=host; cat ~/.aws/credentials", "資格情報を取る step は"},
+		"ブロックスカラーの資格情報の step は違反":    {"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host", "        run: |\n          make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host\n          cat ~/.aws/credentials", "資格情報を取る step は"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -468,8 +472,15 @@ func Test_checkJob(t *testing.T) {
 		accepted := strings.Split(alt[1], "|")
 		slices.Sort(declared)
 		slices.Sort(accepted)
-		require.NotEmpty(t, declared)
+		assert.NotEmpty(t, declared)
 		assert.Equal(t, declared, accepted)
+	})
+
+	t.Run("資格情報の step に RUNNER_MODE=host が無くても違反ではない", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobWith(t, "CI_ROLE=plan RUNNER_MODE=host", "CI_ROLE=plan")
+		assert.NotContains(t, messages(checkJob("p.yaml", job, planPerms, envs, w)), "資格情報を取る step は")
 	})
 
 	t.Run("ci-aws-credentials を2回呼べば違反", func(t *testing.T) {
@@ -976,7 +987,10 @@ func Test_checkDetection(t *testing.T) {
 		detStep = "      - run: make infra-code-gate RUNNER_MODE=host\n"
 	)
 	hidden := map[string]struct{ from, to, want string }{
-		"検出の job の defaults: は違反":       {detJob, "  apply-infra-code-gate:\n    defaults:\n      run:\n        shell: sh\n    runs-on: ubuntu-24.04\n", "defaults:"},
+		"検出の job の defaults: は違反":       {detJob, "  apply-infra-code-gate:\n    defaults: {}\n    runs-on: ubuntu-24.04\n", "defaults:"},
+		"検出の job の services: は違反":       {detJob, "  apply-infra-code-gate:\n    services: {}\n    runs-on: ubuntu-24.04\n", "services:"},
+		"検出の job の MFLAGS は違反":          {detStep, detStep + "        env:\n          MFLAGS: -n\n", "MAKEFLAGS と MAKEFILES を渡さない"},
+		"検出の job の似た名前のターゲットは違反":        {detStep, detStep + "      - run: make infra-code-gate-testx RUNNER_MODE=host\n", "run: は make infra-code-gate-test と make infra-code-gate だけ"},
 		"検出の job の env: は違反":            {detJob, "  apply-infra-code-gate:\n    env:\n      X: y\n    runs-on: ubuntu-24.04\n", "env:"},
 		"検出の job の container: は違反":      {detJob, "  apply-infra-code-gate:\n    container: alpine\n    runs-on: ubuntu-24.04\n", "container:"},
 		"検出の job の MAKEFLAGS は違反":       {detJob, "  apply-infra-code-gate:\n    env:\n      MAKEFLAGS: -n\n    runs-on: ubuntu-24.04\n", "MAKEFLAGS と MAKEFILES を渡さない"},
@@ -1010,6 +1024,18 @@ func Test_checkDetection(t *testing.T) {
 	})
 }
 
+// hiddenOf は、checkJob と同じく job の役割から拒否の id を決めて checkHidden を呼びます。
+func hiddenOf(t *testing.T, job workflow.Job, w workflowInfo, f func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	t.Helper()
+
+	refusal := refuseStale
+	if strings.Contains(job.ID, "plan") {
+		refusal = refuseUntrusted
+	}
+
+	return checkHidden(job, credOf(job), refusal, w, f)
+}
+
 func Test_checkHidden(t *testing.T) {
 	t.Parallel()
 
@@ -1028,13 +1054,13 @@ func Test_checkHidden(t *testing.T) {
 	t.Run("規則を満たせば違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkHidden(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow), formatted))
+		assert.Empty(t, hiddenOf(t, jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow), formatted))
 	})
 
 	t.Run("plan の workflow も規則を満たせば違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkHidden(jobOf(t, planWorkflow, "plan-admin-identity"), infoOf(planWorkflow), formatted))
+		assert.Empty(t, hiddenOf(t, jobOf(t, planWorkflow, "plan-admin-identity"), infoOf(planWorkflow), formatted))
 	})
 
 	cases := map[string]struct{ from, to, want string }{
@@ -1044,11 +1070,18 @@ func Test_checkHidden(t *testing.T) {
 		"job の env: の PATH は違反":                {applyEnv, applyEnv + "    env:\n      PATH: /tmp/evil:/usr/bin\n", "PATH を替えない"},
 		"job の continue-on-error: は違反":         {applyEnv, applyEnv + "    continue-on-error: true\n", "continue-on-error: を置かない"},
 		"job の container: は違反":                 {applyEnv, applyEnv + "    container: alpine\n", "container: を置かない"},
+		"job の services: は違反":                  {applyEnv, applyEnv + "    services: {}\n", "services: を置かない"},
+		"job の defaults: は違反":                  {applyEnv, applyEnv + "    defaults: {}\n", "defaults: を置かない"},
+		"引用符付きの PATH は違反":                      {entry, entry + "        env:\n          \"PATH\": /tmp/evil\n", "PATH を替えない"},
+		"資格情報の step の if: は違反":                 {cred, "      - if: false\n        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host\n", "資格情報を取る step と"},
+		"資格情報の step の shell: は違反":              {cred, cred + "        shell: sh -c true {0}\n", "資格情報を取る step と"},
+		"拒否の step の shell: は違反":                {"        run: test \"$SHA\" = \"$HEAD\"", "        run: test \"$SHA\" = \"$HEAD\"\n        shell: sh -c true {0}", "拒否の step に shell:"},
+		"拒否の step の working-directory: は違反":    {"        run: test \"$SHA\" = \"$HEAD\"", "        run: test \"$SHA\" = \"$HEAD\"\n        working-directory: /tmp", "拒否の step に shell:"},
 		"入口の step の continue-on-error: は違反":    {entry, entry + "        continue-on-error: true\n", "入口の step"},
 		"入口の step の if: は違反":                   {entry, "      - if: false\n        run: make ci-apply-admin-identity RUNNER_MODE=host\n", "入口の step"},
 		"入口の step の shell: は違反":                {entry, entry + "        shell: sh -c true {0}\n", "入口の step"},
 		"入口の step の working-directory: は違反":    {entry, entry + "        working-directory: usecases\n", "入口の step"},
-		"資格情報の step の working-directory: は違反":  {cred, cred + "        working-directory: usecases\n", "入口の step"},
+		"資格情報の step の working-directory: は違反":  {cred, cred + "        working-directory: usecases\n", "資格情報を取る step と"},
 		"workflow 全体の env: の MAKEFILES は違反":    {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  MAKEFILES: .github/x.mk\n", "MAKEFLAGS と MAKEFILES を渡さない"},
 		"workflow 全体の env: は違反":                {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  X: y\n", "defaults: と env: を置かない"},
 		"job の env: は違反":                       {applyEnv, applyEnv + "    env:\n      X: y\n", "env: を置かない"},
@@ -1057,7 +1090,9 @@ func Test_checkHidden(t *testing.T) {
 		"資格情報の step の env: の BASH_ENV は違反":     {cred, cred + "        env:\n          BASH_ENV: ./x.sh\n", "env: に置けるのは"},
 		"拒否の step から GITHUB_PATH に書けば違反":       {"test \"$SHA\" = \"$HEAD\"", "echo /tmp/b >> \"$GITHUB_PATH\"", "GITHUB_PATH と GITHUB_ENV"},
 		"拒否の step から GITHUB_ENV に書けば違反":        {"test \"$SHA\" = \"$HEAD\"", "echo X=1 >> \"$GITHUB_ENV\"", "GITHUB_PATH と GITHUB_ENV"},
-		"ほかの run: の step は違反":                  {cred, "      - run: echo hi\n" + cred, "run: は、拒否の step"},
+		"ほかの run: の step は違反":                  {cred, "      - run: echo hi\n" + cred, "run: は、資格情報より前の拒否の step"},
+		"資格情報の後の拒否 id の step の run: は違反":       {entry, "      - id: refuse-stale\n        run: cat ~/.aws/credentials\n" + entry, "run: は、資格情報より前の拒否の step"},
+		"役割の違う拒否 id の step の run: は違反":         {cred, "      - id: refuse-untrusted\n        run: echo hi\n" + cred, "run: は、資格情報より前の拒否の step"},
 		"エイリアスで持ち込む env: は違反":                  {entry, entry + "        env: *m\n", "アンカーとエイリアス"},
 	}
 	for name, c := range cases {
@@ -1065,7 +1100,7 @@ func Test_checkHidden(t *testing.T) {
 			t.Parallel()
 
 			j, aw := applyWith(t, c.from, c.to)
-			assert.Contains(t, messages(checkHidden(j, aw, formatted)), c.want)
+			assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), c.want)
 		})
 	}
 
@@ -1073,21 +1108,21 @@ func Test_checkHidden(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, entry, entry+"        env:\n          CI_ACCOUNT_ID: x\n          CI_PR: \"1\"\n")
-		assert.Empty(t, checkHidden(j, aw, formatted))
+		assert.Empty(t, hiddenOf(t, j, aw, formatted))
 	})
 
 	t.Run("コメントの MAKEFLAGS は読まない", func(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, entry, "      # MAKEFLAGS=-n\n"+entry)
-		assert.Empty(t, checkHidden(j, aw, formatted))
+		assert.Empty(t, hiddenOf(t, j, aw, formatted))
 	})
 
 	t.Run("plan の入口の step の continue-on-error: も違反", func(t *testing.T) {
 		t.Parallel()
 
 		src := replaced(t, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n        continue-on-error: true\n")
-		assert.Contains(t, messages(checkHidden(jobOf(t, src, "plan-admin-identity"), infoOf(src), formatted)), "入口の step")
+		assert.Contains(t, messages(hiddenOf(t, jobOf(t, src, "plan-admin-identity"), infoOf(src), formatted)), "入口の step")
 	})
 }
 
@@ -1770,10 +1805,16 @@ func Test_checkStepEnv(t *testing.T) {
 		lines []string
 		want  string
 	}{
-		"許していない名前は違反":     {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          GOFLAGS: -toolexec=x"}, "env: に置けるのは"},
-		"引用符付きの名前も読む":     {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          \"BASH_ENV\": ./x"}, "env: に置けるのは"},
-		"フロー形式は違反":        {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env: {CI_PR: 1}"}, "ブロック形式"},
-		"引用符付きの env: も読む": {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        \"env\":", "          TF_BIN: x"}, "env: に置けるのは"},
+		"許していない名前は違反":          {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          GOFLAGS: -toolexec=x"}, "env: に置けるのは"},
+		"引用符付きの名前も読む":          {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          \"BASH_ENV\": ./x"}, "env: に置けるのは"},
+		"フロー形式は違反":             {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env: {CI_PR: 1}"}, "ブロック形式"},
+		"引用符付きの env: も読む":      {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        \"env\":", "          TF_BIN: x"}, "env: に置けるのは"},
+		"深く字下げした名前も読む":         {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "            TF_BIN: /bin/true"}, "env: に置けるのは"},
+		"桁のずれた名前は読めない":         {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "            CI_PR: \"1\"", "           TF_BIN: /bin/true"}, "名前を読めません"},
+		"ブロックスカラーでない値の続きは読めない": {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          CI_PR: \"1\"", "            TF_BIN: /bin/true"}, "名前を読めません"},
+		"- env: の下の深い名前も読む":    {[]string{"      - env:", "            TF_BIN: /bin/true", "        run: make ci-apply-admin-identity RUNNER_MODE=host"}, "env: に置けるのは"},
+		"env: の行末コメントの後の名前も読む": {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env: # c", "          TF_BIN: x"}, "env: に置けるのは"},
+		"空行を挟んでも名前を読む":         {[]string{"      - run: make ci-apply-admin-identity RUNNER_MODE=host", "        env:", "          CI_PR: \"1\"", "", "          TF_BIN: x"}, "env: に置けるのは"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
