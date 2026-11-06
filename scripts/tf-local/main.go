@@ -68,9 +68,11 @@ var (
 	envNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 	// unsetPrefixes と unsetNames は、資格情報・引数・入力・対象の state・provider を変える変数と、
-	// 資格情報を含みうる trace を出す変数。TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
+	// 資格情報を含みうる trace を出す変数と、CI の job の OIDC token を新たに要求できる変数。
+	// TF_PLUGIN_CACHE_DIR は lock の hash で検証されるので残す。
 	unsetPrefixes = []string{"AWS_", "TF_CLI_ARGS", "TF_VAR_", "TF_LOG"}
-	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS"}
+	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
+		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
 	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")

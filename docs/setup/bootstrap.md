@@ -231,7 +231,7 @@ state backend が無い時点では Terraform が state を保存できないの
    make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
 
    ```bash
-   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS)=' | sed 's/=$//; s/^/-u /')
+   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN)=' | sed 's/=$//; s/^/-u /')
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
@@ -379,7 +379,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 - 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ないので、terraform のエラーの詳細は一時 IAM user の `make plan-admin-identity` で見る
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
-- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で `terraform force-unlock <ID>` で外す。書き込みの拒否が入った後は、人の主体は lock file を消せないので、CI で外す経路（#226）を使う
+- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で `terraform force-unlock <ID>` で外す。書き込みの拒否が入った後は、人の主体は lock file を消せない。CI で外す経路は未配線であり（#226）、配線されるまでは書き込みの拒否を入れない
 
 段5 の成功は、次のすべてを満たしたときとする。
 
