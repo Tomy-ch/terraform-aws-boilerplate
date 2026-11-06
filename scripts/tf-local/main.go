@@ -14,15 +14,21 @@
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
 //	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity> -account <id>
 //	    CI が assume する role の ARN を1行で出す
+//	tf-local oidc-url
+//	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
+//	    要求先か要求の token が環境変数に無ければ失敗する
+//	tf-local oidc-token <response-file>
+//	    OIDC token の要求の応答（JSON）から token を1行で出す
 //	tf-local oidc-sub <token-file>
 //	    GitHub Actions の OIDC token の sub を1行で出す
-//	tf-local plan-summary -exitcode <0|2> <show.json>
-//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す
+//	tf-local plan-summary -exitcode <0|1|2> <show.json>
+//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す。終了コードが 1 なら
+//	    JSON を読まずに plan の失敗として落ちる
 //	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
 //	    plan の出力を置く object の key を1行で出す
-//	tf-local policy-result -namespace <ns> -rules <n> <conftest.json>
+//	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
-//	    評価が n 件でなければ失敗する
+//	    評価が rego の `deny contains` の数でなければ失敗する
 //
 //	tf-local account -identity <out>
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
@@ -30,7 +36,8 @@
 //	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-sub・plan-summary・policy-result・sha256 はファイルを読む。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・policy-result・sha256 は
+// ファイルを読み、oidc-url は環境変数を読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -43,6 +50,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -79,7 +87,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rules <n> <file> | account -identity <out> | sha256 <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -139,6 +147,18 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = planHeader(d.git)
 	case "role-arn":
 		value, err = runRoleARN(args[1:])
+	case "oidc-url":
+		if len(args) != 1 {
+			return errUsage
+		}
+
+		value, err = oidcURL(d.environ)
+	case "oidc-token":
+		if len(args) != 2 {
+			return errUsage
+		}
+
+		value, err = oidcToken(args[1], d.readFile)
 	case "oidc-sub":
 		if len(args) != 2 {
 			return errUsage
@@ -207,7 +227,17 @@ func runAccount(args []string) (string, error) {
 		return "", errUsage
 	}
 
-	return callerAccount(*identity)
+	// CI の公開されるログに出るので、callerAccount が文に入れた入力の値を落とす。
+	account, err := callerAccount(*identity)
+	if errors.Is(err, errRootCredentials) {
+		return "", errRootCredentials
+	}
+
+	if err != nil {
+		return "", errIdentity
+	}
+
+	return account, nil
 }
 
 func rootRegion(root string, readFile func(string) ([]byte, error)) (string, error) {

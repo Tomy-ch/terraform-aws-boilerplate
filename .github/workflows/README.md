@@ -103,8 +103,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   API から取り直し、どちらかが違えば失敗する
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
-- **公開されるログに terraform の出力を出さない。** ログと job summary には、終了コード・件数・Policy の
-  違反の文だけを出す。apply の全文はランナーの外に出さない
+- **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
+  apply の成否だけを、job summary には件数と apply の成否だけを出す。apply の全文はランナーの外に出さない
 - **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` に置く。**
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
@@ -112,9 +112,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - workload root（`env/<env>/*.tf`）の apply の job、`make ci-apply-<env>`、environment `admin-apply` の
   secret は、workload root を足す変更が足す
 - job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency）は
-  `make oidc-job-lint` が、`CI_APPLY` の順序（plan と Policy の判定が apply より前にあること）は
-  `scripts/tf-local` の `TestCiMk` が、その判定（plan が失敗したか、Policy を通らなければ非ゼロで終わること）は
-  `tf-local` の `plan-summary` と `policy-result` のテストが見る
+  `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
+  のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
+  terraform・aws・conftest でレシピを走らせて見る
 
 保証しないこと:
 

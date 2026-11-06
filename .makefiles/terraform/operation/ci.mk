@@ -20,17 +20,19 @@ CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
 
 # $(1)=env $(2)=役割
 define CI_AWS_CREDENTIALS
-set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; token="$$d/oidc-token"; export token CI_ACCOUNT_ID; \
-test -n "$${ACTIONS_ID_TOKEN_REQUEST_URL:-}" && test -n "$${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" || { echo "❌ OIDC token を要求できません（job に id-token: write がありません）" >&2; exit 1; }; \
+set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; token="$$d/oidc-token"; resp="$$d/oidc-response"; \
+trap 'rm -f "$$token" "$$resp"' EXIT; export token resp CI_ACCOUNT_ID; \
+url=$$($(call TF_LOCAL,oidc-url)); \
 unset_env=$$($(call TF_LOCAL,env-unset)); \
 region=$$($(call TF_LOCAL,region "$(call TF_LOCAL_DIR,$(1),identity)")); \
-curl -fsS --retry 3 -H "Authorization: bearer $$ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -er .value > "$$token"; \
+curl -fsS --retry 3 -H "Authorization: bearer $$ACTIONS_ID_TOKEN_REQUEST_TOKEN" -o "$$resp" "$$url"; \
+$(call TF_LOCAL,oidc-token "$$resp") > "$$token"; \
 sub=$$($(call TF_LOCAL,oidc-sub "$$token")); echo "OIDC の sub: $$sub"; \
 role=$$($(call TF_LOCAL,role-arn -project $(TF_LOCAL_PROJECT) -env $(1) -role $(2) -account "$$CI_ACCOUNT_ID")); \
 creds=$$(env $$unset_env AWS_EC2_METADATA_DISABLED=true $(AWS_BIN) sts assume-role-with-web-identity --region "$$region" \
 --role-arn "$$role" --role-session-name "gha-$$GITHUB_RUN_ID-$$GITHUB_RUN_ATTEMPT" --web-identity-token "file://$$token" \
 --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text); \
-rm -f "$$token"; read -r key secret session <<<"$$creds"; \
+read -r key secret session <<<"$$creds"; \
 for v in "$$key" "$$secret" "$$session"; do echo "::add-mask::$$v"; done; \
 cfg="env $$unset_env $(AWS_BIN) configure set --profile $(call CI_PROFILE,$(1),$(2))"; \
 $$cfg aws_access_key_id "$$key"; $$cfg aws_secret_access_key "$$secret"; $$cfg aws_session_token "$$session"; $$cfg region "$$region"; \
@@ -38,15 +40,16 @@ echo "✅ $(call CI_PROFILE,$(1),$(2)) の profile に資格情報を置きま�
 endef
 
 # CI_PLAN と CI_APPLY が共有する。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
-# 全文と plan のファイルは、成否にかかわらず終了時に消す。$(1)=env $(2)=root
+# 全文、plan、その JSON と Policy の結果は、成否にかかわらず終了時に消す。$(1)=env $(2)=root
 define CI_PREPARE
 set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; root="$(1)-$(2)"; \
-out="$$d/$$root.txt"; json="$$d/$$root.json"; tfplan="$$d/$$root.tfplan"; rm -f "$$out" "$$json" "$$tfplan"; \
-trap 'rm -f "$$out" "$$tfplan"' EXIT; export dir root out json; \
+out="$$d/$$root.txt"; json="$$d/$$root.json"; tfplan="$$d/$$root.tfplan"; pol="$$d/$$root.policy.json"; \
+rm -f "$$out" "$$json" "$$tfplan" "$$pol"; trap 'rm -f "$$out" "$$json" "$$tfplan" "$$pol"' EXIT; export dir root out json pol; \
 unset_env=$$($(call TF_LOCAL,env-unset)); \
 header=$$($(call TF_LOCAL,plan-header)); echo "$$header" | tee "$$out"; \
 region=$$($(call TF_LOCAL,region "$$dir")); export region; \
 identity=$$($(TF_LOCAL_ENV) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); export identity; \
+account=$$($(call TF_LOCAL,account -identity "$$identity")); \
 bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity")); \
 $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$$bucket" >> "$$out" 2>&1 \
 || { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }
@@ -62,9 +65,8 @@ endef
 
 # $$json の plan に Policy を掛け、違反か評価の欠けがあれば失敗する。
 define CI_POLICY
-pol="$$d/$$root.policy.json"; rules=$$(grep -c '^deny contains' $(POLICY_PLAN_DIR)/stateful_protection.rego); export pol rules; \
 $(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace plan.stateful_protection --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" > "$$pol" || :; \
-$(call TF_LOCAL,policy-result -namespace plan.stateful_protection -rules "$$rules" "$$pol") \
+$(call TF_LOCAL,policy-result -namespace plan.stateful_protection -rego $(POLICY_PLAN_DIR)/stateful_protection.rego "$$pol") \
 || { echo "❌ ADR-0604 決定11・12 の Policy を通りません（理由は上の行）" >&2; exit 1; }
 endef
 
@@ -76,12 +78,12 @@ plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_
 || { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
 $(call CI_TERRAFORM_PLAN,-lock=false ); \
 key=$$($(call TF_LOCAL,plan-key -pr "$$CI_PR" -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
-sha=$$($(call TF_LOCAL,sha256 "$$out")); account=$$($(call TF_LOCAL,account -identity "$$identity")); \
+sha=$$($(call TF_LOCAL,sha256 "$$out")); \
 echo "plan の全文: key=$$key sha256=$$sha"; \
 version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
 --checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
 echo "plan の全文の版 ID: $$version"; \
-summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")); echo "$$summary"; \
+summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
 $(CI_POLICY); \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
 endef

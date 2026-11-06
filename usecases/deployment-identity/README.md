@@ -68,7 +68,7 @@ unsupported:
 保証しないこと:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
-- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースと identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく、レビューを要求するかは ruleset の承認者数に依る。権限の拡大を見る Policy Test も無い（#209 は apply の role だけを対象にする）
+- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply と apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限る。#209 は apply の role だけを対象にする）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 

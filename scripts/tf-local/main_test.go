@@ -148,7 +148,7 @@ func Test_run(t *testing.T) {
 
 			var out bytes.Buffer
 			path := fileWith(t, `[{"namespace":"plan.p","successes":2}]`)
-			require.NoError(t, run([]string{"policy-result", "-namespace", "plan.p", "-rules", "2", path}, &out, testDeps(nil)))
+			require.NoError(t, run([]string{"policy-result", "-namespace", "plan.p", "-rego", regoWith(t, 2), path}, &out, testDeps(nil)))
 			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
 		})
 
@@ -168,6 +168,23 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=\n", out.String())
 		})
 
+		t.Run("oidc-url は要求先を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			environ := []string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=b"}
+			require.NoError(t, run([]string{"oidc-url"}, &out, testDeps(environ)))
+			assert.Equal(t, "https://t.example/x?audience=sts.amazonaws.com\n", out.String())
+		})
+
+		t.Run("oidc-token は token を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"oidc-token", fileWith(t, `{"value":"a.b.c"}`)}, &out, testDeps(nil)))
+			assert.Equal(t, "a.b.c\n", out.String())
+		})
+
 		t.Run("plan-key は key を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -181,16 +198,18 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string][]string{
-			"引数が無ければ失敗する":             nil,
-			"知らないサブコマンドは失敗する":         {"apply"},
-			"region に root が無ければ失敗する": {"region"},
-			"region に余分な引数があれば失敗する":   {"region", "a", "b"},
-			"env-unset に引数があれば失敗する":   {"env-unset", "x"},
-			"plan-header に引数があれば失敗する": {"plan-header", "x"},
-			"oidc-sub にファイルが無ければ失敗する": {"oidc-sub"},
-			"oidc-sub に余分な引数があれば失敗する": {"oidc-sub", "a", "b"},
-			"sha256 にファイルが無ければ失敗する":   {"sha256"},
-			"sha256 に余分な引数があれば失敗する":   {"sha256", "a", "b"},
+			"引数が無ければ失敗する":               nil,
+			"知らないサブコマンドは失敗する":           {"apply"},
+			"region に root が無ければ失敗する":   {"region"},
+			"region に余分な引数があれば失敗する":     {"region", "a", "b"},
+			"env-unset に引数があれば失敗する":     {"env-unset", "x"},
+			"plan-header に引数があれば失敗する":   {"plan-header", "x"},
+			"oidc-sub にファイルが無ければ失敗する":   {"oidc-sub"},
+			"oidc-sub に余分な引数があれば失敗する":   {"oidc-sub", "a", "b"},
+			"sha256 にファイルが無ければ失敗する":     {"sha256"},
+			"oidc-url に引数があれば失敗する":      {"oidc-url", "x"},
+			"oidc-token にファイルが無ければ失敗する": {"oidc-token"},
+			"sha256 に余分な引数があれば失敗する":     {"sha256", "a", "b"},
 		}
 		for name, args := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -510,6 +529,18 @@ func Test_runAccount(t *testing.T) {
 
 		_, err := runAccount(nil)
 		require.ErrorIs(t, err, errIdentity)
+	})
+
+	t.Run("失敗の文に資格情報の値を入れない", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAccount([]string{"-identity", "123456789012\tarn:aws:iam::123456789012:user/b\textra\n"})
+		require.ErrorIs(t, err, errIdentity)
+		assert.NotContains(t, err.Error(), "123456789012")
+
+		_, err = runAccount([]string{"-identity", "123456789012\tarn:aws:iam::123456789012:root\n"})
+		require.ErrorIs(t, err, errRootCredentials)
+		assert.NotContains(t, err.Error(), "123456789012")
 	})
 
 	usage := map[string][]string{
@@ -935,21 +966,20 @@ func TestCiMk(t *testing.T) {
 		got := expand(t, "ci-plan-admin-identity")
 		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
 		assert.NotContains(t, got, "tabp-bootstrap")
-		assert.Contains(t, got, `trap 'rm -f "$out" "$tfplan"' EXIT`)
+		assert.Contains(t, got, `trap 'rm -f "$out" "$json" "$tfplan" "$pol"' EXIT`)
 		order(t, got,
+			`account -identity "$identity"`,
 			envPrefix("plan")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$bucket" >> "$out" 2>&1`,
 			`output -raw plan_output_bucket_name 2>> "$out"`,
 			`plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
 			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
 			`sha256 "$out"`,
-			`account -identity "$identity"`,
 			envPrefix("plan")+` aws s3api put-object`,
 			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
 			`plan-summary -exitcode "$rc" "$json"`,
 			`conftest test --combine --no-color -o json --namespace plan.stateful_protection --policy conftest/plan --data conftest/plan/decl.json "$json" > "$pol"`,
-			`policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`,
+			`policy-result -namespace plan.stateful_protection -rego conftest/plan/stateful_protection.rego "$pol"`,
 		)
-		assert.Contains(t, got, `rules=$(grep -c '^deny contains' conftest/plan/stateful_protection.rego)`)
 		assert.NotContains(t, got, " apply ")
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
@@ -961,13 +991,13 @@ func TestCiMk(t *testing.T) {
 		assert.NotContains(t, got, "tabp-bootstrap")
 		assert.NotContains(t, got, "-lock=false")
 		assert.NotContains(t, got, "put-object")
-		assert.Contains(t, got, `trap 'rm -f "$out" "$tfplan"' EXIT`)
+		assert.Contains(t, got, `trap 'rm -f "$out" "$json" "$tfplan" "$pol"' EXIT`)
 		order(t, got,
 			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly`,
 			`plan -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
 			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
 			`plan-summary -exitcode "$rc" "$json"`,
-			`policy-result -namespace plan.stateful_protection -rules "$rules" "$pol"`,
+			`policy-result -namespace plan.stateful_protection -rego conftest/plan/stateful_protection.rego "$pol"`,
 			envPrefix("apply-identity")+` terraform -chdir="$dir" apply -input=false -no-color "$tfplan" >> "$out" 2>&1`,
 		)
 		assert.Equal(t, 1, strings.Count(got, " apply -input=false"), got)
@@ -979,11 +1009,264 @@ func TestCiMk(t *testing.T) {
 
 		got := expand(t, "ci-aws-credentials")
 		assert.Equal(t, 1, strings.Count(got, "assume-role-with-web-identity"), got)
-		assert.Contains(t, got, "audience=sts.amazonaws.com")
+		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`, "assume-role-with-web-identity")
+		assert.Contains(t, got, `trap 'rm -f "$token" "$resp"' EXIT`)
+		assert.NotContains(t, got, "jq ")
 		assert.Contains(t, got, "role-arn -project tabp -env admin -role plan")
-		assert.Contains(t, got, `rm -f "$token"`)
 		assert.Contains(t, got, `do echo "::add-mask::$v"; done`)
 		assert.Contains(t, got, "configure set --profile tabp-admin-ci-plan")
 		assert.NotContains(t, got, "AWS_ACCESS_KEY_ID")
+	})
+}
+
+// ciFakes は、ci.mk のレシピが起動する terraform・aws・conftest の偽物です。呼び出しを calls に1行ずつ残し、
+// 結果は knobs のファイル（init-rc・plan-rc・plan.json・policy.json・apply-rc）で切り替える。plan と apply
+// は全文に secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
+const ciFakes = `#!/bin/sh
+k=%[1]q
+rc() { cat "$k/$1" 2>/dev/null || echo 0; }
+echo "$(basename "$0") $*" >> "$k/calls"
+case "$(basename "$0")" in
+aws)
+  case "$1" in
+  sts) printf '123456789012\tarn:aws:iam::123456789012:user/ci\n' ;;
+  s3api) echo v-1 ;;
+  esac
+  exit 0 ;;
+conftest) cat "$k/policy.json"; exit 1 ;;
+esac
+for a; do case "$a" in -chdir=*) ;; *) sub=$a; break ;; esac; done
+for a; do last=$a; done
+case "$sub" in
+init) exit "$(rc init-rc)" ;;
+output) echo plan-output-bucket ;;
+plan)
+  for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
+  echo PLAN-SECRET
+  exit "$(rc plan-rc)" ;;
+show) test -s "$last" || exit 1; cat "$k/plan.json" ;;
+apply) echo APPLY-SECRET; exit "$(rc apply-rc)" ;;
+esac
+`
+
+// TestCiRecipes は、ci.mk のレシピを偽物の道具で実際に走らせ、判定の失敗が apply と後続を止めることと、
+// plan の全文を置いてから失敗することを見る。判定そのものは tf-local のテストが持ち、ここはレシピが
+// その終了コードを握り潰さないことを固定する（ADR-0604 決定11、ADR-0702 決定24）。
+func TestCiRecipes(t *testing.T) {
+	t.Parallel()
+
+	bin := filepath.Join(t.TempDir(), "tf-local")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".")
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	const (
+		noop     = `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["no-op"]}}]}`
+		create   = `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["create"]}}]}`
+		pass     = `[{"namespace":"plan.stateful_protection","successes":2}]`
+		violated = `[{"namespace":"plan.stateful_protection","successes":1,"failures":[{"msg":"[PLAN-STATE-01] stub"}]}]`
+	)
+
+	type result struct {
+		out, calls, summary, plans string
+		err                        error
+		left                       []string
+	}
+
+	recipe := func(t *testing.T, target string, knobs map[string]string) result {
+		t.Helper()
+
+		root := t.TempDir()
+		k := filepath.Join(root, "knobs")
+		identity := filepath.Join(root, "base", "env", "admin", "identity")
+		policy := filepath.Join(root, "policy")
+		plans := filepath.Join(root, "plans")
+		summary := filepath.Join(root, "summary.md")
+
+		for _, d := range []string{k, identity, policy, filepath.Join(root, "bin")} {
+			require.NoError(t, os.MkdirAll(d, 0o700))
+		}
+
+		require.NoError(t, os.WriteFile(filepath.Join(identity, "backend.tf"), []byte(backendOK), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(identity, "providers.tf"), []byte(providersOK), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(policy, "stateful_protection.rego"), []byte("deny contains msg if {\n}\n\ndeny contains msg if {\n}\n"), 0o600))
+
+		for name, v := range knobs {
+			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
+		}
+
+		for _, tool := range []string{"terraform", "aws", "conftest"} {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "bin", tool), fmt.Appendf(nil, ciFakes, k), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+		}
+
+		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=",
+			"TF_LOCAL="+bin+" $(1)", "TF_BASE="+filepath.Join(root, "base"), "CI_PLAN_DIR="+plans,
+			"TF_BIN="+filepath.Join(root, "bin", "terraform"), "AWS_BIN="+filepath.Join(root, "bin", "aws"), "CONFTEST_BIN="+filepath.Join(root, "bin", "conftest"),
+			"POLICY_PLAN_DIR="+policy, "POLICY_PLAN_DECL="+filepath.Join(policy, "decl.json"))
+		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
+				strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "CI_PR=")
+		}), "CI_PR=7", "GITHUB_RUN_ID=8", "GITHUB_RUN_ATTEMPT=1", "GITHUB_STEP_SUMMARY="+summary)
+
+		combined, err := cmd.CombinedOutput()
+		calls, _ := os.ReadFile(filepath.Join(k, "calls"))
+		written, _ := os.ReadFile(summary)
+		entries, _ := os.ReadDir(plans)
+
+		left := make([]string, 0, len(entries))
+		for _, e := range entries {
+			left = append(left, e.Name())
+		}
+
+		return result{out: string(combined), calls: string(calls), summary: string(written), plans: plans, err: err, left: left}
+	}
+
+	count := func(calls, prefix string) int {
+		n := 0
+
+		for line := range strings.Lines(calls) {
+			if strings.HasPrefix(line, prefix) {
+				n++
+			}
+		}
+
+		return n
+	}
+
+	const applyCall = "terraform -chdir="
+
+	applies := func(calls string) int {
+		n := 0
+
+		for line := range strings.Lines(calls) {
+			if strings.HasPrefix(line, applyCall) && strings.Contains(line, " apply ") {
+				n++
+			}
+		}
+
+		return n
+	}
+
+	t.Run("apply", func(t *testing.T) {
+		t.Parallel()
+
+		ok := map[string]struct{ planRC, plan string }{
+			"変更が無くても保存した plan を apply する": {"0", noop},
+			"変更があれば保存した plan を apply する":  {"2", create},
+		}
+		for name, c := range ok {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": c.planRC, "plan.json": c.plan, "policy.json": pass})
+				require.NoError(t, r.err, r.out)
+				assert.Equal(t, 1, applies(r.calls), r.calls)
+				saved := filepath.Join(r.plans, "admin-identity.tfplan")
+				assert.Contains(t, r.calls, "-out="+saved, "plan した先")
+				assert.Contains(t, r.calls, "apply -input=false -no-color "+saved, "plan したファイルを apply する")
+				assert.Contains(t, r.out, "✅ apply が終わりました")
+				assert.Contains(t, r.summary, "apply が終わりました")
+				assert.Zero(t, count(r.calls, "aws s3api"), "apply は全文を Bucket に置かない")
+				assert.NotContains(t, r.calls, "-lock=false")
+				assert.Empty(t, r.left, "作業ファイルが残っています")
+			})
+		}
+
+		fail := map[string]struct {
+			knobs map[string]string
+			want  string
+		}{
+			"plan が失敗すれば apply しない":         {map[string]string{"plan-rc": "1", "plan.json": noop, "policy.json": pass}, "plan が失敗しました"},
+			"終了コードと JSON が食い違えば apply しない":  {map[string]string{"plan-rc": "0", "plan.json": create, "policy.json": pass}, "食い違います"},
+			"plan を JSON にできなければ apply しない": {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": pass}, "plan の JSON を解釈できません"},
+			"Policy に違反すれば apply しない":       {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": violated}, "[PLAN-STATE-01] stub"},
+			"Policy が評価されなければ apply しない":    {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": "[]"}, "Policy を通りません"},
+			"conftest が何も出さなければ apply しない":  {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": ""}, "Policy を通りません"},
+			"評価の数が規則の数と違えば apply しない":       {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": `[{"namespace":"plan.stateful_protection","successes":3}]`}, "一致しません"},
+		}
+		for name, c := range fail {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-apply-admin-identity", c.knobs)
+				require.Error(t, r.err, r.out)
+				assert.Contains(t, r.out, c.want)
+				assert.Zero(t, applies(r.calls), r.calls)
+				assert.NotContains(t, r.out, "✅ apply")
+				assert.Empty(t, r.summary)
+				assert.Empty(t, r.left, "作業ファイルが残っています")
+			})
+		}
+
+		t.Run("init が失敗すれば plan を呼ばない", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-apply-admin-identity", map[string]string{"init-rc": "1"})
+			require.Error(t, r.err, r.out)
+			assert.Contains(t, r.out, "init が失敗しました")
+			assert.NotContains(t, r.calls, " plan ")
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+
+		t.Run("apply が失敗すれば非ゼロで終わり、成功を出さない", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass, "apply-rc": "1"})
+			require.Error(t, r.err, r.out)
+			assert.Equal(t, 1, applies(r.calls), r.calls)
+			assert.Contains(t, r.out, "apply が失敗しました")
+			assert.NotContains(t, r.out, "✅ apply")
+			assert.Empty(t, r.summary)
+		})
+
+		t.Run("terraform の出力を公開されるログに出さない", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass, "apply-rc": "1"})
+			assert.NotContains(t, r.out, "PLAN-SECRET")
+			assert.NotContains(t, r.out, "APPLY-SECRET")
+		})
+	})
+
+	t.Run("plan", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("全文を版 ID 付きで置き、Policy を掛け、apply しない", func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-plan-admin-identity", map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": pass})
+			require.NoError(t, r.err, r.out)
+			assert.Equal(t, 1, count(r.calls, "aws s3api put-object"), r.calls)
+			assert.Contains(t, r.calls, "--bucket plan-output-bucket --key pr/7/8-1-admin-identity.txt")
+			assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
+			assert.Contains(t, r.calls, "plan -lock=false")
+			assert.Zero(t, applies(r.calls), r.calls)
+			assert.Contains(t, r.out, "plan の全文の版 ID: v-1")
+			assert.Contains(t, r.summary, "- 版 ID: `v-1`")
+			assert.NotContains(t, r.out, "PLAN-SECRET")
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+
+		fail := map[string]struct {
+			knobs map[string]string
+			want  string
+		}{
+			"plan が失敗しても全文を置いてから失敗する":         {map[string]string{"plan-rc": "1", "plan.json": noop, "policy.json": pass}, "全文は上の key にあります"},
+			"Policy に違反すれば全文を置いてから失敗する":       {map[string]string{"plan-rc": "2", "plan.json": create, "policy.json": violated}, "[PLAN-STATE-01] stub"},
+			"plan を JSON にできなくても全文を置いてから失敗する": {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": pass}, "plan の JSON を解釈できません"},
+		}
+		for name, c := range fail {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				r := recipe(t, "ci-plan-admin-identity", c.knobs)
+				require.Error(t, r.err, r.out)
+				assert.Contains(t, r.out, c.want)
+				assert.Equal(t, 1, count(r.calls, "aws s3api put-object"), r.calls)
+				assert.NotContains(t, r.out, "PLAN-SECRET")
+				assert.Empty(t, r.summary)
+				assert.Empty(t, r.left, "作業ファイルが残っています")
+			})
+		}
 	})
 }
