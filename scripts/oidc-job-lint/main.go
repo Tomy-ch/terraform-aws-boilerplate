@@ -15,20 +15,25 @@
 // 対象の job に:
 //
 //   - environment を字面で宣言し、その名前が environments.json に在る
-//   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割>` をちょうど1回呼び、`<env>-<役割>` が environment の名前と一致する
+//   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割> RUNNER_MODE=host` だけの run: をちょうど1回持ち、
+//     `<env>-<役割>` が environment の名前と一致する
 //   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
 //     その job の成功を条件に含め、status の関数・論理和・否定を置かない（ADR-0601 決定9）。検出の job は
 //     needs:・if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を持たず、
-//     検出の step は `make infra-code-gate` と RUNNER_MODE=host だけで終了コードを隠さない
-//   - workflow 全体と対象の job に MAKEFLAGS と PATH を渡さず、workflow 全体に defaults: を、job に
-//     continue-on-error:・container:・services:・defaults: を、CI の入口の step に if:・continue-on-error:・shell: を
-//     置かない —— どれも入口を実行させないか、失敗を成功として報告させる
-//   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: を持たない step を
+//     run: は `make infra-code-gate-test` と `make infra-code-gate`（RUNNER_MODE=host だけ）に限る
+//   - workflow 全体と対象の job と検出の job に MAKEFLAGS・MAKEFILES・PATH を書かず、GITHUB_PATH と
+//     GITHUB_ENV に書き込まず、YAML のアンカーとエイリアスを使わない。workflow 全体に defaults: と env: を、job に
+//     continue-on-error:・container:・services:・defaults:・env: を、資格情報を取る step と CI の入口の step に
+//     if:・continue-on-error:・shell:・working-directory: を置かない。step の env: は拒否の step と入口が読む
+//     名前（stepEnvKeys）に限り、run: を持つ step は拒否の step・資格情報を取る step・CI の入口に限る —— どれも
+//     入口を実行させないか、道具を替えるか、失敗を成功として報告させる
+//   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
 //     （lock を取らない経路。ADR-0604 決定8）
 //   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
 //     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
-//     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で if: を持たない step を資格情報の取得より前に置き
+//     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で
+//     if: と continue-on-error: を持たない step を資格情報の取得より前に置き
 //     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
 //
@@ -71,6 +76,7 @@ var (
 	envScalar     = regexp.MustCompile(`^ {4}environment:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	envName       = regexp.MustCompile(`^ {6}name:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
+	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=[a-z0-9]+\s+CI_ROLE=[a-z-]+`)
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
 	// CI の入口と検出は、run: の値が make とターゲット1つと RUNNER_MODE=host だけの形に限る。make のオプション
@@ -94,8 +100,17 @@ var (
 	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	jobKeyAt      = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
 	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults|env|shell|container|services)["']?[ \t]*:`)
-	makeFlags     = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b`)
-	pathKey       = regexp.MustCompile(`^\s+["']?PATH["']?[ \t]*:`)
+	makeFlags     = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b|\bMAKEFILES\b`)
+	pathKey       = regexp.MustCompile(`(?:^|[\s{,])["']?PATH["']?[ \t]*:`)
+	stepFiles     = regexp.MustCompile(`\bGITHUB_(?:PATH|ENV)\b`)
+	// アンカーとエイリアスは、別の場所に書いた値をこの行へ持ち込む。行ごとの読み方では追えない。
+	yamlAlias     = regexp.MustCompile(`(?:^|[:\-][ \t]+)[&*][A-Za-z0-9_-]+(?:[ \t]|$)|<<[ \t]*:`)
+	envAt         = regexp.MustCompile(`^["']?env["']?[ \t]*:`)
+	stepEnv       = regexp.MustCompile(`^ {6}(?:- | {2})["']?env["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
+	stepEnvKey    = regexp.MustCompile(`^ {10}["']?([^"':\s]+)["']?[ \t]*:`)
+	stepRun       = regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:`)
+	stepWorkDir   = regexp.MustCompile(`^ {6}(?:- | {2})["']?working-directory["']?[ \t]*:`)
+	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
 	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
@@ -111,6 +126,10 @@ var (
 	noPersist     = regexp.MustCompile(`^ {10}persist-credentials:[ \t]*["']?false["']?[ \t]*(?:#.*)?$`)
 	commentLine   = regexp.MustCompile(`^\s*#`)
 )
+
+// stepEnvKeys は、資格情報を取る job の step が env: に置いてよい名前です。拒否の step が読む値と、
+// 入口が読む値に限る。ほかの名前を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
+var stepEnvKeys = []string{"GH_TOKEN", "REPO", "REF", "SHA", "ACCOUNT_ID", "HEAD_REPO_ID", "REPO_ID", "ACTOR", "CI_ACCOUNT_ID", "CI_PR"}
 
 var (
 	errNoTarget   = xerrors.New("OIDC で role を assume する job が1つもありません")
@@ -309,6 +328,9 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 		return append(findings, finding(cred.Number, "ci-aws-credentials に CI_ENV と CI_ROLE を明示してください"))
 	}
 	role := r[1]
+	if !credRun.MatchString(cred.Text) {
+		findings = append(findings, finding(cred.Number, "資格情報を取る step は run: make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割> RUNNER_MODE=host だけにしてください。ほかの代入やオプションは、token を出力させるか道具を替えます"))
+	}
 	if env != "" && env != e[1]+"-"+role {
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
@@ -392,7 +414,13 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 				findings = append(findings, finding(l.Number, "検出の job %s に if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を置かないでください。skip も失敗の無視も別の場所や別の shell での実行も、成功と同じく後続を止めません", d.ID))
 			}
 			if makeFlags.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "検出の job %s で MAKEFLAGS を渡さないでください。-n や -i は何も検査せずに成功します", d.ID))
+				findings = append(findings, finding(l.Number, "検出の job %s で MAKEFLAGS と MAKEFILES を渡さないでください。-n や -i は何も検査せずに成功します", d.ID))
+			}
+			findings = append(findings, checkIndirect(l, finding)...)
+		}
+		for _, step := range workflow.SplitSteps(d) {
+			if runs, ok := stepRunLine(step); ok && !detectionRun.MatchString(runs.Text) {
+				findings = append(findings, finding(runs.Number, "検出の job %s の run: は make infra-code-gate-test と make infra-code-gate だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", d.ID))
 			}
 		}
 	}
@@ -410,9 +438,11 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 }
 
 // checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します。make は環境変数の
-// MAKEFLAGS もオプションとして読み（-n や -i を env: から渡せる）、PATH は起動する make と道具を替え、step の
-// shell: と workflow 全体の defaults: は run: の本文を実行させずに成功させうる。job と入口の step の continue-on-error: と if: は、失敗も skip も成功として報告させる
-// （plan の job は required check、apply の job は通知の起動条件である）。
+// MAKEFLAGS をオプションとして、MAKEFILES を先に読む makefile として読み（-n や SHELL の差し替えを env: から
+// 渡せる）、PATH・GITHUB_PATH・GITHUB_ENV・env: の変数は起動する make と道具とシェルを替え、step の shell: と
+// working-directory:、workflow 全体の defaults: は run: の本文を別のものとして実行させうる。job と入口の step の
+// continue-on-error: と if: は、失敗も skip も成功として報告させる（plan の job は required check、apply の job は
+// 通知の起動条件である）。run: は字面からは中身を選べないので、置ける step を閉じた集合に限る。
 func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, l := range append(slices.Clone(w.preamble), job.Lines...) {
@@ -420,33 +450,95 @@ func checkHidden(job workflow.Job, w workflowInfo, finding func(int, string, ...
 			continue
 		}
 		if makeFlags.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "MAKEFLAGS を渡さないでください。-n や -i は何も実行せずに成功します"))
+			findings = append(findings, finding(l.Number, "MAKEFLAGS と MAKEFILES を渡さないでください。-n や -i、先に読む makefile は何も実行せずに成功させます"))
 		}
 		if pathKey.MatchString(l.Text) {
 			findings = append(findings, finding(l.Number, "PATH を替えないでください。make と terraform を別のものに差し替えます"))
 		}
+		findings = append(findings, checkIndirect(l, finding)...)
 	}
 	for _, l := range w.preamble {
-		if defaultsAt.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "資格情報を取る job を持つ workflow に defaults: を置かないでください。run: の shell と場所を替えます"))
+		if defaultsAt.MatchString(l.Text) || envAt.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "資格情報を取る job を持つ workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます"))
 		}
 	}
-	for _, key := range []string{"continue-on-error", "container", "services", "defaults"} {
+	for _, key := range []string{"continue-on-error", "container", "services", "defaults", "env"} {
 		if _, at, ok := jobKey(job, key); ok {
 			findings = append(findings, finding(at, "資格情報を取る job に %s: を置かないでください", key))
 		}
 	}
 	for _, step := range workflow.SplitSteps(job) {
-		if !slices.ContainsFunc(step.Lines, func(l workflow.Line) bool { return ciEntry.MatchString(l.Text) && !commentLine.MatchString(l.Text) }) {
+		findings = append(findings, checkStepEnv(step, finding)...)
+		runs, ok := stepRunLine(step)
+		if !ok {
+			continue
+		}
+		entry, cred := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
+		if !entry && !cred && !hasStepID(step, refuseUntrusted) && !hasStepID(step, refuseStale) {
+			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、拒否の step・make ci-aws-credentials・CI の入口だけにしてください。ほかの run: は後続の step の PATH と環境を替えます"))
+		}
+		if !entry && !cred {
 			continue
 		}
 		for _, l := range step.Lines {
-			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "CI の入口の step に if:・continue-on-error:・shell: を置かないでください。skip も失敗も成功として報告されます"))
+			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "資格情報を取る step と CI の入口の step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせえます"))
 			}
 		}
 	}
 	return findings
+}
+
+// checkIndirect は、step の外から PATH と環境を替える書き込みと、別の場所の値を持ち込むアンカーを検査します。
+func checkIndirect(l workflow.Line, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	if stepFiles.MatchString(l.Text) {
+		findings = append(findings, finding(l.Number, "GITHUB_PATH と GITHUB_ENV に書かないでください。後続の step の PATH と環境を替えます"))
+	}
+	if yamlAlias.MatchString(l.Text) {
+		findings = append(findings, finding(l.Number, "YAML のアンカーとエイリアスを使わないでください。持ち込んだ値を読めません"))
+	}
+	return findings
+}
+
+// checkStepEnv は、step の env: が stepEnvKeys の名前だけを、1段深いブロック形式で持つことを検査します。
+func checkStepEnv(step workflow.Step, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	in := false
+	for _, l := range step.Lines {
+		if commentLine.MatchString(l.Text) || strings.TrimSpace(l.Text) == "" {
+			continue
+		}
+		if m := stepEnv.FindStringSubmatch(l.Text); m != nil {
+			in = true
+			if m[1] != "" && !strings.HasPrefix(m[1], "#") {
+				findings = append(findings, finding(l.Number, "step の env: はブロック形式で書いてください。名前を読めません"))
+			}
+			continue
+		}
+		indent := len(l.Text) - len(strings.TrimLeft(l.Text, " "))
+		if !in || indent <= 8 {
+			in = false
+			continue
+		}
+		if indent > 10 {
+			continue
+		}
+		m := stepEnvKey.FindStringSubmatch(l.Text)
+		if m == nil || !slices.Contains(stepEnvKeys, m[1]) {
+			findings = append(findings, finding(l.Number, "資格情報を取る job の step の env: に置けるのは %s だけです。ほかの名前は道具やシェルを替えます", strings.Join(stepEnvKeys, "・")))
+		}
+	}
+	return findings
+}
+
+func stepRunLine(step workflow.Step) (workflow.Line, bool) {
+	for _, l := range step.Lines {
+		if stepRun.MatchString(l.Text) {
+			return l, true
+		}
+	}
+	return workflow.Line{}, false
 }
 
 // checkRefusal は、id の step が資格情報の取得より前に在り、if: と continue-on-error: を持たないことを検査します。
