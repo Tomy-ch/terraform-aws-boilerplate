@@ -172,9 +172,9 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
-			environ := []string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=b"}
+			environ := []string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=b"}
 			require.NoError(t, run([]string{"oidc-url"}, &out, testDeps(environ)))
-			assert.Equal(t, "https://t.example/x?audience=sts.amazonaws.com\n", out.String())
+			assert.Equal(t, "https://t.actions.githubusercontent.com/x?audience=sts.amazonaws.com\n", out.String())
 		})
 
 		t.Run("oidc-token は token を1行で出す", func(t *testing.T) {
@@ -304,6 +304,14 @@ func Test_runBucket(t *testing.T) {
 			})
 		}
 
+		t.Run("失敗の文に資格情報の値を入れない", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-region", "ap-northeast-1", "-identity", "123456789012\tarn:aws:iam::123456789012:user/b\textra\n"})
+			require.ErrorIs(t, err, errIdentity)
+			assert.NotContains(t, err.Error(), "123456789012")
+		})
+
 		t.Run("-identity を欠くと Bucket 名を組まない", func(t *testing.T) {
 			t.Parallel()
 
@@ -324,6 +332,34 @@ func Test_runBucket(t *testing.T) {
 			_, err := runBucket([]string{"-env", "admin", "-region", "ap-northeast-1", "-identity", identityUser})
 			require.ErrorIs(t, err, errToken)
 		})
+	})
+}
+
+func Test_accountOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("IAM user の identity からアカウント ID を返す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := accountOf(identityUser)
+		require.NoError(t, err)
+		assert.Equal(t, "123456789012", got)
+	})
+
+	t.Run("root の資格情報は値を落として errRootCredentials を返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := accountOf("123456789012\tarn:aws:iam::123456789012:root\n")
+		require.ErrorIs(t, err, errRootCredentials)
+		assert.NotContains(t, err.Error(), "123456789012")
+	})
+
+	t.Run("読めない identity は値を落として errIdentity を返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := accountOf("123456789012\tarn:aws:iam::123456789012:user/b\textra\n")
+		require.ErrorIs(t, err, errIdentity)
+		assert.NotContains(t, err.Error(), "123456789012")
 	})
 }
 
@@ -1028,11 +1064,11 @@ rc() { cat "$k/$1" 2>/dev/null || echo 0; }
 echo "$(basename "$0") $*" >> "$k/calls"
 case "$(basename "$0")" in
 aws)
-  case "$1" in
-  sts) printf '123456789012\tarn:aws:iam::123456789012:user/ci\n' ;;
-  s3api) echo v-1 ;;
-  esac
-  exit 0 ;;
+	case "$1" in
+	sts) printf '123456789012\tarn:aws:iam::123456789012:user/ci\n' ;;
+	s3api) echo v-1 ;;
+	esac
+	exit 0 ;;
 conftest) cat "$k/policy.json"; exit 1 ;;
 esac
 for a; do case "$a" in -chdir=*) ;; *) sub=$a; break ;; esac; done
@@ -1041,9 +1077,9 @@ case "$sub" in
 init) exit "$(rc init-rc)" ;;
 output) echo plan-output-bucket ;;
 plan)
-  for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
-  echo PLAN-SECRET
-  exit "$(rc plan-rc)" ;;
+	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
+	echo PLAN-SECRET
+	exit "$(rc plan-rc)" ;;
 show) test -s "$last" || exit 1; cat "$k/plan.json" ;;
 apply) echo APPLY-SECRET; exit "$(rc apply-rc)" ;;
 esac

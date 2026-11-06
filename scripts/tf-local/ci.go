@@ -21,6 +21,12 @@ import (
 // roleFormat は、usecases/deployment-identity の role 名 `<project>-<env>-ci-<役割>` の写し。
 const roleFormat = "arn:aws:iam::%s:role/%s-%s-ci-%s"
 
+// oidcAudience は、usecases/deployment-identity の OIDC provider の client_id_list の写し。
+const oidcAudience = "sts.amazonaws.com"
+
+// oidcHostSuffix は、GitHub Actions が ACTIONS_ID_TOKEN_REQUEST_URL に置く要求先の host。
+const oidcHostSuffix = ".actions.githubusercontent.com"
+
 const maxTokenSize = 16 << 10
 
 var (
@@ -96,13 +102,14 @@ func oidcURL(environ []string) (string, error) {
 		return "", errOIDCRequest
 	}
 
+	// bearer は audience を問わず token を発行させられるので、GitHub の要求先の外へ送らない。
 	u, err := url.Parse(request)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		return "", xerrors.Wrap(errOIDCRequest, "要求先が https の URL ではありません")
+	if err != nil || u.Scheme != "https" || u.User != nil || !strings.HasSuffix(u.Hostname(), oidcHostSuffix) {
+		return "", xerrors.Wrap(errOIDCRequest, "要求先が GitHub Actions の https の URL ではありません")
 	}
 
 	q := u.Query()
-	q.Set("audience", "sts.amazonaws.com")
+	q.Set("audience", oidcAudience)
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil

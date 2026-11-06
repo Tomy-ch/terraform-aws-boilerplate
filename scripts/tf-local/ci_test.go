@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -648,7 +649,7 @@ func Test_oidcURL(t *testing.T) {
 	t.Parallel()
 
 	const (
-		request = "ACTIONS_ID_TOKEN_REQUEST_URL=https://token.actions.example/x?api-version=2.0"
+		request = "ACTIONS_ID_TOKEN_REQUEST_URL=https://run-actions-1-azure-eastus.actions.githubusercontent.com/x?api-version=2.0"
 		bearer  = "ACTIONS_ID_TOKEN_REQUEST_TOKEN=secret-bearer"
 	)
 
@@ -657,26 +658,37 @@ func Test_oidcURL(t *testing.T) {
 
 		got, err := oidcURL([]string{request, bearer, "HOME=/h"})
 		require.NoError(t, err)
-		assert.Equal(t, "https://token.actions.example/x?api-version=2.0&audience=sts.amazonaws.com", got)
+		assert.Equal(t, "https://run-actions-1-azure-eastus.actions.githubusercontent.com/x?api-version=2.0&audience=sts.amazonaws.com", got)
 		assert.NotContains(t, got, "secret-bearer")
 	})
 
 	t.Run("audience が既に在れば STS のものに置き換える", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := oidcURL([]string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x?audience=other", bearer})
+		got, err := oidcURL([]string{"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x?audience=other", bearer})
 		require.NoError(t, err)
-		assert.Equal(t, "https://t.example/x?audience=sts.amazonaws.com", got)
+		assert.Equal(t, "https://t.actions.githubusercontent.com/x?audience=sts.amazonaws.com", got)
+	})
+
+	t.Run("audience は usecases/deployment-identity の OIDC provider と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		tf, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "internal", "github-oidc", "main.tf"))
+		require.NoError(t, err)
+		assert.Regexp(t, `client_id_list\s*=\s*\["`+regexp.QuoteMeta(oidcAudience)+`"\]`, string(tf))
 	})
 
 	cases := map[string][]string{
-		"要求先が無ければ失敗する":        {bearer},
-		"要求の token が無ければ失敗する": {request},
-		"空の要求先は失敗する":          {"ACTIONS_ID_TOKEN_REQUEST_URL=", bearer},
-		"https でなければ失敗する":     {"ACTIONS_ID_TOKEN_REQUEST_URL=http://t.example/x", bearer},
-		"host が無ければ失敗する":      {"ACTIONS_ID_TOKEN_REQUEST_URL=https:///x", bearer},
-		"URL でなければ失敗する":       {"ACTIONS_ID_TOKEN_REQUEST_URL=://x", bearer},
-		"環境が空なら失敗する":          nil,
+		"要求先が無ければ失敗する":          {bearer},
+		"要求の token が無ければ失敗する":   {request},
+		"空の要求先は失敗する":            {"ACTIONS_ID_TOKEN_REQUEST_URL=", bearer},
+		"https でなければ失敗する":       {"ACTIONS_ID_TOKEN_REQUEST_URL=http://t.actions.githubusercontent.com/x", bearer},
+		"host が無ければ失敗する":        {"ACTIONS_ID_TOKEN_REQUEST_URL=https:///x", bearer},
+		"GitHub の外の host は失敗する": {"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.example/x", bearer},
+		"host の末尾だけが似ていれば失敗する":  {"ACTIONS_ID_TOKEN_REQUEST_URL=https://evil-actions.githubusercontent.com.example/x", bearer},
+		"userinfo を持てば失敗する":     {"ACTIONS_ID_TOKEN_REQUEST_URL=https://u:p@t.actions.githubusercontent.com/x", bearer},
+		"URL でなければ失敗する":         {"ACTIONS_ID_TOKEN_REQUEST_URL=://x", bearer},
+		"環境が空なら失敗する":            nil,
 	}
 	for name, environ := range cases {
 		t.Run(name, func(t *testing.T) {

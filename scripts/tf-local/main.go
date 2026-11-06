@@ -206,7 +206,7 @@ func runBucket(args []string) (string, error) {
 		return "", xerrors.Wrap(errUsage, strings.Join(fs.Args(), " "))
 	}
 
-	account, err := callerAccount(*identity)
+	account, err := accountOf(*identity)
 	if err != nil {
 		return "", err
 	}
@@ -226,8 +226,12 @@ func runAccount(args []string) (string, error) {
 		return "", errUsage
 	}
 
-	// CI の公開されるログに出るので、callerAccount が文に入れた入力の値を落とす。
-	account, err := callerAccount(*identity)
+	return accountOf(*identity)
+}
+
+// accountOf は、callerAccount の失敗の文から入力の値を落とします。文は CI の公開されるログに出る。
+func accountOf(identity string) (string, error) {
+	account, err := callerAccount(identity)
 	if errors.Is(err, errRootCredentials) {
 		return "", errRootCredentials
 	}
