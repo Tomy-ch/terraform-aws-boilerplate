@@ -395,6 +395,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim apply-identity "${kms}:key/x" kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
    sim apply-identity "${kms}:alias/tabp-admin-tfstate" kms:UpdateAlias kms:DeleteAlias
    sim apply-identity "${kms}:alias/other" kms:CreateAlias
+   simc apply-identity "${kms}:key/x" "ContextKeyName=kms:ResourceAliases,ContextKeyValues=alias/other,ContextKeyType=stringList" kms:DescribeKey kms:PutKeyPolicy
    sim plan "${kms}:key/x" kms:DescribeKey
    simc plan "${kms}:key/x" "$alias" kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey
    sim apply "${kms}:key/x" kms:PutKeyPolicy kms:ScheduleKeyDeletion
@@ -403,7 +404,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    simc apply-identity "*" "ContextKeyName=kms:KeyOrigin,ContextKeyValues=EXTERNAL,ContextKeyType=string" kms:CreateKey
    ```
 
-   期待は順に、1行・1行・7行・1行・1行・4行・1行がすべて `allowed`、続く6つが7行・2行・1行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは鍵を作る変更の apply と、その後の CI の plan が確かめる
+   期待は順に、1行・1行・7行・1行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは鍵を作る変更の apply と、その後の CI の plan が確かめる
 
 途中で失敗したとき:
 

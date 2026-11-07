@@ -98,6 +98,16 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 拡張要求へ即応できるが、拡張内容が検証対象外となり、最小権限であるかを機械判定できない。ADR-0204に該当する。
 
+### 案D: KMS の鍵の Key Policy でアカウントへ `kms:*` を委任し、暗号操作を IAM で与える（決定12 に対して）
+
+AWS の既定の Key Policy と、console が作る key users の文（`kms:CreateGrant` を `kms:GrantIsForAWSResource` で限る形）はこの形である。鍵を使える主体が、アカウントの IAM の Allow のどこからでも増え、鍵ごとの一覧が Key Policy に残らない。AWS の「Least-privilege permissions」も、`kms:*` の委任は IAM で更に絞るときに限るとし、Key Policy で principal を名指すことを挙げる。決定12 は後者を採り、前者からの逸脱として次を記録する（ADR-0207 決定11）。
+
+- 外れる対象: 既定の Key Policy の `kms:*` のアカウントへの委任、IAM で暗号操作を与える形
+- 理由: 鍵を使う主体を鍵ごとに Key Policy の1箇所で名指し、IAM の Allow や grant から鍵を使う経路を作らない
+- 影響: security は、IAM の Allow を足しても鍵を使えない。availability は、鍵を使う主体を足すたびに Key Policy の変更が要り、AWS のサービスが grant を要る消費者（RDS・ECR など）は `kms:CreateGrant` を `kms:ViaService` と `kms:GrantIsForAWSResource` で限った文を Key Policy に足す変更が要る。Key Policy は 32,768 文字が上限である。cost は変わらない
+- 代替案: 本案D
+- 見直し条件: 下の「見直し条件」
+
 ### 評価
 
 | 評価軸 | 案A: opt-in | 案B: IAM限定 | 案C: JSON拡張可 | 採用案: 全面default |
@@ -129,7 +139,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
   - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
-  - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。CI の plan の role の Allow に暗号操作が無いこと
+  - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作が無いこと
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
@@ -145,4 +155,4 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 - AWS側にresource-level権限が追加され、Resource wildcardの許容箇所が解消できるようになった場合
 - cross-accountを必要とするユースケースが複数発生した場合
 - 意味論的な権限語彙では表現できない権限要求が反復した場合
-- IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合
+- IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合。1つの鍵の Key Policy が名指す主体と文で 32,768 文字の上限に近づいた場合。grant を要るサービスの消費者が、Key Policy の文の追加では成り立たなかった場合

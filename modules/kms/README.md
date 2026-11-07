@@ -107,8 +107,8 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 
 ## 公式推奨からの逸脱（ADR-0207 決定11）
 
-この module を使うすべてのユースケースが、次の逸脱を引き継ぐ。
+この module を使うすべてのユースケースが、次の逸脱を引き継ぐ。暗号操作を Key Policy に限る判断そのものは [ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定12 が持つ。
 
 | 対象 | 理由 | 由来 | 影響（security / availability / cost） | 代替案 | 見直し条件 |
 | --- | --- | --- | --- | --- | --- |
-| アカウントへの委任を、既定の Key Policy の `kms:*` ではなく、鍵の管理の21 Action（暗号操作と `kms:CreateGrant` を含まない）にする | Key Policy が暗号操作の主体を名指す唯一の境界になり、IAM の `kms:` の許可や grant から鍵を使う経路を作らない（KMS「Least-privilege permissions」は `kms:*` を IAM で更に絞るときに限るとする）。ADR-0301 決定8 の Action wildcard の禁止にも当たらない | ユースケースの制約ではなく、この module の判断 | security: 鍵を使う主体はすべて `users` で名指し、IAM だけでは鍵を使えない。委任の文が暗号操作を含まないことは `PLAN-KMS-08` が見る。availability: AWS が鍵の管理の API を足したとき、列挙を直すまでその操作を使えない。grant を要る消費者（RDS・ECR など）は `kms:GrantIsForAWSResource` の条件付きの文を足す変更を要る。cost: 鍵の課金は変わらない | 既定の Key Policy の `kms:*` の委任、console の key administrators の集合（部分 wildcard）の委任。採らない理由は「採用しなかった知見と理由」 | AWS が鍵の管理の API を足したとき。grant を要る消費者が着手したとき。AWS Provider の major 更新時（ADR-0206 決定12） |
+| アカウントへの委任を、既定の Key Policy の `kms:*` ではなく、鍵の管理の21 Action（暗号操作と `kms:CreateGrant` を含まない）にする | Key Policy が暗号操作の主体を名指す唯一の境界になり、IAM の `kms:` の許可や grant から鍵を使う経路を作らない（KMS「Least-privilege permissions」は `kms:*` を IAM で更に絞るときに限るとする）。ADR-0301 決定8 の Action wildcard の禁止にも当たらない | ユースケースの制約ではなく、repository-wide/ADR-0301 決定12（記録は同 ADR の案D） | security: 鍵を使う主体はすべて `users` で名指し、IAM だけでは鍵を使えない。委任の文が暗号操作を含まないことは `PLAN-KMS-08` が見る。availability: AWS が鍵の管理の API を足したとき、列挙を直すまでその操作を使えない。grant を要る消費者（RDS・ECR など）は `kms:GrantIsForAWSResource` の条件付きの文を足す変更を要る。cost: 鍵の課金は変わらない | 既定の Key Policy の `kms:*` の委任、console の key administrators の集合（部分 wildcard）の委任。採らない理由は「採用しなかった知見と理由」 | AWS が鍵の管理の API を足したとき。grant を要る消費者が着手したとき。AWS Provider の major 更新時（ADR-0206 決定12） |

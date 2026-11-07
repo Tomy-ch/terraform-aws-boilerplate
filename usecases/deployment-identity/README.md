@@ -71,7 +71,7 @@ unsupported:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
 - apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply と apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限る。#209 は apply の role だけを対象にする）
-- apply-identity の role が、このアカウントのすべての KMS の鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無く、鍵を作る apply の途中では alias も無いので、鍵の ARN へ絞るまではアカウントの鍵の pattern で与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
+- apply-identity の role が、このアカウントの alias の無い KMS の鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無く、鍵を作る apply の途中では alias も無いので、鍵の ARN へ絞るまでは、alias が無い鍵か state の alias だけが付いた鍵に限って与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 
@@ -106,13 +106,15 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
 - identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_alias_name`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
+- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。鍵を作る変更の apply が初めて見る。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-参照日: 2026-10-25
+参照日: 2026-10-25（KMS の権限の分は 2026-11-07）
 
 - AWS / HashiCorp が publisher の GitHub Actions の OIDC の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search` を `q` = `github-oidc` / `oidc` / `github` / `github-actions` / `iam-role`、`provider=aws` で引いた結果に、namespace `aws`・`aws-ia`・`hashicorp`・`aws-samples` が無い）
 - 参照した一次資料: IAM User Guide の「Create a role for OpenID Connect federation」の GitHub の節、「Available keys for OIDC federation」の GitHub の表、「Create an OpenID Connect (OIDC) identity provider in IAM」、AWS Provider 6.70.0 の `aws_iam_openid_connect_provider` / `aws_iam_role` / `aws_iam_role_policy` / `aws_iam_role_policies_exclusive` / `aws_iam_role_policy_attachments_exclusive` の文書・schema・source
+- KMS の権限について参照した一次資料: AWS KMS Developer Guide の「AWS KMS permissions」（Action ごとの resource と条件キー）、「AWS KMS condition keys」（`kms:KeySpec`・`kms:KeyUsage`・`kms:KeyOrigin`・`kms:MultiRegion`・`kms:BypassPolicyLockoutSafetyCheck`・`kms:ResourceAliases`）、「Least-privilege permissions」、「Default key policy」、AWS Provider 6.70.0 の `internal/service/kms` の `key.go`・`alias.go`・`key_policy.go` の source
 - 補助として参照した資料（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定3 の外）: GitHub の「OpenID Connect reference」と「Deployments and environments」
 
 採用した知見:
@@ -122,8 +124,15 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - `thumbprint_list` を設定しない。GitHub については IAM が自前の CA ライブラリで検証する。一度設定して後から外すと、Terraform は元の値を使い続ける
 - environment の保護規則で、role を使える job を限る
 - `aws_iam_role` の `inline_policy` と `managed_policy_arns`（deprecated）を使わず、個別の resource と排他の resource を使う
+- `kms:CreateKey` と `kms:ListAliases` は resource-level 権限を持たないので Resource `"*"`。`kms:CreateAlias` は alias と鍵の両方に権限を要る
+- lockout の安全チェックの迂回を `kms:BypassPolicyLockoutSafetyCheck` の Deny で拒む（AWS の例と同じ形）
+- 鍵を名前で限る `kms:ResourceAliases` を、plan の role は `ForAnyValue` で、alias の無い作成中の鍵も扱う apply-identity は `ForAllValues` で使う
 
 採用しなかった知見と理由:
+
+- AWS の例の、`kms:MultiRegion = false` などを Allow の Condition に置く形: Provider が既定の値を要求に載せないので、Deny の形にした（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定1）
+- 既定の Key Policy の `kms:*` のアカウントへの委任と、IAM で暗号操作を与える形: 鍵を使う主体を Key Policy の1箇所に揃える（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定12）
+- 鍵の ARN を `aws:ResourceAccount` で限る Condition: ARN の account の欄と同じで、何も狭めない
 
 - AWS の例の `StringLike` と `repo:<owner>/<repo>:*`: リポジトリの全 job が assume できる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 案A）
 - `environment` / `ref` / `job_workflow_ref` / `actor_id` の条件キー: `environment` は `sub` と同じ値、ref は environment の deployment branch policy が限る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14）、`actor_id` は人が増えると信頼条件の変更が要る
