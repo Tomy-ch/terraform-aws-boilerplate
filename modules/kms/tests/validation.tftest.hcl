@@ -196,12 +196,48 @@ run "users_rejects_empty_log_group" {
   expect_failures = [var.users]
 }
 
-run "users_rejects_log_group_with_wildcard_or_colon" {
+run "users_rejects_log_group_with_asterisk" {
   command = plan
 
   variables {
     users = {
-      services = { logs = ["*", "a?b", "a:b", "a b"] }
+      services = { logs = ["*"] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_log_group_with_question_mark" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = ["a?b"] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_log_group_with_colon" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = ["a:b"] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_log_group_with_space" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = ["a b"] }
     }
   }
 
