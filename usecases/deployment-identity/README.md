@@ -78,11 +78,11 @@ unsupported:
 ## 所有者
 
 - OIDC provider と3つの role は、このユースケースが所有する。sandbox の掃除用 Role（#76）が provider を使うときは、そのときに provider の ARN を出力に足す
-- state Bucket は `state-backend` が所有する。このユースケースは ARN を受け、role の権限の Resource に使う
+- state Bucket と state の鍵は `state-backend` が所有する。このユースケースは Bucket の ARN と鍵の alias の名前を受け、role の権限の Resource と Condition に使う
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `state-backend`（`bucket_arn`、`plan_output_bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
+- ユースケース: `state-backend`（`bucket_arn`、`state_key_alias_name`、`plan_output_bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
 - GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が assume する。apply の role を assume する workflow はまだ無い（#222）
 
@@ -91,7 +91,7 @@ unsupported:
 ## 検証方法
 
 - Unit Test（mock）: `internal/github-oidc/tests/` が、3つの role の信頼条件と policy の文書、名前、セッションの上限、OIDC provider の URL と audience、inline policy と managed policy の排他を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction` の不在を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction`・`NotResource` の不在と、Allow の Resource `"*"` が `resource_wildcard_actions` の宣言（`kms:CreateKey`・`kms:ListAliases`）に限られること（同 決定9）と、KMS の暗号操作の Allow の不在（同 決定12）を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
 - 段2 の突合と段4 の確認: 人が実 AWS で行う（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄すると認証や組織の構造を失う」に当たる。destroy しない。Policy Test、拒否されるべき主体の assume や操作が拒否されることの確認、drift 0 で代える（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)）
 
@@ -133,7 +133,6 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - AWS の例の、`kms:MultiRegion = false` などを Allow の Condition に置く形: Provider が既定の値を要求に載せないので、Deny の形にした（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定1）
 - 既定の Key Policy の `kms:*` のアカウントへの委任と、IAM で暗号操作を与える形: 鍵を使う主体を Key Policy の1箇所に揃える（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定12）
 - 鍵の ARN を `aws:ResourceAccount` で限る Condition: ARN の account の欄と同じで、何も狭めない
-
 - AWS の例の `StringLike` と `repo:<owner>/<repo>:*`: リポジトリの全 job が assume できる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 案A）
 - `environment` / `ref` / `job_workflow_ref` / `actor_id` の条件キー: `environment` は `sub` と同じ値、ref は environment の deployment branch policy が限る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14）、`actor_id` は人が増えると信頼条件の変更が要る
 - AWS managed policy（`ReadOnlyAccess` 等）: [ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定10
