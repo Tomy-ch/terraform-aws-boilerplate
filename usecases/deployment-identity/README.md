@@ -19,6 +19,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | role を置くアカウントの env の token。GitHub の environment 名の前半にもなる |
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
+| `state_key_alias_name` | `string`（`alias/<name>`。`alias/aws/` は受けない） | このアカウントの state の鍵の alias（`state-backend` の `state_key_alias_name`）。apply-identity の role はこの alias だけを作れ、plan の role はこの alias の付いた鍵だけを読める |
 | `plan_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key にだけ書ける |
 
 | 出力 | 使う側 |
@@ -42,7 +43,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
 - 3つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
-  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の鍵の設定と alias の読み取り
+  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の alias の付いた鍵の設定の読み取りと、alias の一覧
   - apply: workload root の key と lock file の読み書き。bootstrap の構成物、identity root の key と lock file、state Bucket の設定の変更は Deny する
   - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる。state の鍵と alias を作り、Key Policy と rotation を設定できる。鍵の削除・無効化と alias の削除・付け替えはできない
   - 暗号操作（`kms:Decrypt` など）は IAM では与えない。state の鍵の Key Policy が CI の role を名指して許す
@@ -62,7 +63,7 @@ unsupported:
 - 旧形式の `sub`（`repo:<owner>/<repo>:...`）のリポジトリと、GitHub Enterprise Server（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定5）。旧形式のリポジトリは、opt-in で immutable 形式にしてから使う
 - Enterprise Managed User の個人アカウントが所有するリポジトリ。login が `_` を含み、`github.owner` の検査が受け付けない。その login が `sub` にどう現れるかを確かめていない
 - fork からの Pull Request で plan を成立させること。plan の job は fork の Pull Request で assume の前に失敗する（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14）
-- 締め出しから回復する資格情報の発行と管理、break-glass（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）
+- 締め出しから回復する資格情報の発行と管理、break-glass（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
 - 管理アカウントの root による、role と provider の変更を防ぐこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
 - 同じアカウントに、このユースケースの外で GitHub Actions の OIDC provider を作ること。provider は URL ごとに1つしか置けない
 
@@ -70,7 +71,7 @@ unsupported:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
 - apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply と apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限る。#209 は apply の role だけを対象にする）
-- plan と apply-identity の role が、このアカウントのすべての KMS の鍵の Key Policy と rotation の状態を読めること、apply-identity の role がそれらの Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無いので、鍵の ARN へ絞るまではアカウントの鍵の pattern で与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
+- apply-identity の role が、このアカウントのすべての KMS の鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無く、鍵を作る apply の途中では alias も無いので、鍵の ARN へ絞るまではアカウントの鍵の pattern で与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 
@@ -103,7 +104,7 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
-- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn` と `plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
+- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_alias_name`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

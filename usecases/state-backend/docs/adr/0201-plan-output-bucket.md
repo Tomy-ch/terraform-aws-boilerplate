@@ -11,7 +11,7 @@ CI の plan の全文は、公開されるログ・Pull Request のコメント�
 
 段4 の Pull Request は、merge の前に、その head に対する CI の plan が変更なしを示す必要がある（同 決定10）。CI の plan は全文をこの Bucket に書くので、Bucket が段4 の apply より後にしか無いと、段4 の Pull Request の plan は書き込みで失敗し、merge の条件を満たせない。
 
-plan の出力は、上書きの前の版を残し、日数が過ぎたら消えなければならない。plan の role は object を消せないので（同 決定13）、古い出力を消せるのは lifecycle だけである。一方、state Bucket の lifecycle は段5 で足す（`usecases/state-backend/README.md` の段の表。deployment-identity/ADR-0201 (enumerated-permissions) 決定3 は、その権限を段5 へ送る）。一般 module の `modules/s3` に lifecycle を足すと state Bucket にも付き、plan の出力の Bucket にだけ付けるには入力で resource の有無を切り替えることになる（repository-wide/ADR-0102 (use-case-centric-scope) 決定15）。
+plan の出力は、上書きの前の版を残し、日数が過ぎたら消えなければならない。plan の role は object を消せないので（同 決定13）、古い出力を消せるのは lifecycle だけである。一方、state Bucket の lifecycle は段5 で足す（`usecases/state-backend/README.md` の段の表。その権限は deployment-identity/ADR-0201 (enumerated-permissions) 決定3 が持つ）。一般 module の `modules/s3` に lifecycle を足すと state Bucket にも付き、plan の出力の Bucket にだけ付けるには入力で resource の有無を切り替えることになる（repository-wide/ADR-0102 (use-case-centric-scope) 決定15）。
 
 ## Decision
 

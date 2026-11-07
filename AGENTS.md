@@ -6,13 +6,13 @@
 
 すべての作業に3つの制約が掛かる。
 
-1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Trivy、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定19、[0401](docs/adr/0401-testing-policy.md) 決定3）。
+1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Trivy、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定20、[0401](docs/adr/0401-testing-policy.md) 決定3）。
 2. **アーキテクチャと方針の決定は、人のゲートを残す。** 決定と選択肢を差し出すのであって、選ばない。どこがそれに当たるかは *手を止めてよい場所* が閉じた一覧として持ち、その外では決めて、決定を Pull Request へ記録する。
 3. **インフラは AI に依存しない。** `terraform validate` / `terraform test` / `terraform plan` / `terraform apply` と CI の必須検査は、エージェントが1つも居ない状態で通らなければならない。必須検査の経路へ自らを差し込む道具は、ここに置かない。
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/` と `modules/kms/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分と、段5 の state の鍵の権限）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/` と `modules/kms/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い

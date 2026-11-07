@@ -65,23 +65,24 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 10. AWS managed policyは原則として採用しない。service-linked role、およびAWSが機能上その使用を要求する場合に限り許容し、根拠を記録する。それ以外はcustomer managed policyを生成する。
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
+12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク
 
-12. ネットワークの既定をdeny とする。必要な通信のみを許可する。
-13. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
-14. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
-15. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
-16. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
+13. ネットワークの既定をdeny とする。必要な通信のみを許可する。
+14. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
+15. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
+16. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
+17. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
 
 ### 越境
 
-17. cross-account accessを既定で許容しない。必要な場合は、明示的なユースケースとして設計し、信頼関係の条件（account、Condition、外部ID等）を型付き契約として受け取る。
-18. 緊急時の権限昇格（break-glass）の経路をboilerplateとして提供しない。これは本リポジトリの責務外とし、組織のIAM運用側で扱う。この判断はユースケースのunsupported一覧へ記載する。
+18. cross-account accessを既定で許容しない。必要な場合は、明示的なユースケースとして設計し、信頼関係の条件（account、Condition、外部ID等）を型付き契約として受け取る。
+19. 緊急時の権限昇格（break-glass）の経路をboilerplateとして提供しない。これは本リポジトリの責務外とし、組織のIAM運用側で扱う。この判断はユースケースのunsupported一覧へ記載する。
 
 ### 検証
 
-19. 上記のうち機械判定可能なものは、Policy Testのinvariantとして実装する。invariantを持たない安全性の主張を、保証として扱わない。
+20. 上記のうち機械判定可能なものは、Policy Testのinvariantとして実装する。invariantを持たない安全性の主張を、保証として扱わない。
 
 ## 検討した代替案
 
@@ -128,6 +129,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
   - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
+  - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。CI の plan の role の Allow に暗号操作が無いこと
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
@@ -143,3 +145,4 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 - AWS側にresource-level権限が追加され、Resource wildcardの許容箇所が解消できるようになった場合
 - cross-accountを必要とするユースケースが複数発生した場合
 - 意味論的な権限語彙では表現できない権限要求が反復した場合
+- IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合

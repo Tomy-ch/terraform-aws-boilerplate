@@ -13,10 +13,10 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 
 ## Decision
 
-1. 3つの role の権限を、role ごとの inline policy に Action を列挙して与える。Allow の文に `*` と `service:*` の Action、`"*"` の Resource、部分的なワイルドカード（`s3:GetBucket*` 等）を使わない。permissions boundary を課さない。ただし、resource-level 権限を持たない Action（`kms:CreateKey`・`kms:ListAliases`）は、`"*"` の Resource を Action ごとの別の文で与える（repository-wide/ADR-0301 決定9）。`kms:CreateKey` は鍵の種類（`kms:KeySpec`・`kms:KeyUsage`）の Condition で限り、多リージョンの鍵と lockout の安全チェックの迂回を Deny で拒む。Provider は偽の `MultiRegion` と `BypassPolicyLockoutSafetyCheck` を要求に載せないので、Allow の Condition では限れない。
+1. 3つの role の権限を、role ごとの inline policy に Action を列挙して与える。Allow の文に `*` と `service:*` の Action、`"*"` の Resource、部分的なワイルドカード（`s3:GetBucket*` 等）を使わない。permissions boundary を課さない。ただし、resource-level 権限を持たない Action（`kms:CreateKey`・`kms:ListAliases`）は、`"*"` の Resource を Action ごとの別の文で与える（repository-wide/ADR-0301 決定9）。`kms:CreateKey` は鍵の種類（`kms:KeySpec`・`kms:KeyUsage`）の Condition で限る。多リージョンの鍵、外部の鍵素材の鍵（`kms:KeyOrigin` が `AWS_KMS` 以外）、lockout の安全チェックの迂回は Deny で拒む。Provider はこれらの値を既定のとき要求に載せず、載らない値を KMS がどう評価するかを実際の要求で確かめていないので、どちらの評価でも既定の作成を妨げない Deny の形にする。
 2. 列挙は、identity root の resource について AWS Provider 6.70.0 の source（`internal/service/s3`・`internal/service/iam`・`internal/service/kms`）の Read・Create・Update・Delete が呼ぶ API から導く。対応は下の表が持つ。Provider の版を上げる変更は、この表を見直す。
-3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定、plan の出力の Bucket とその lifecycle）と、段5 の state の鍵（鍵、Key Policy、alias）と state Bucket の lifecycle に要る分に限る。段5 のログの権限は、ログの resource を足す変更が先に足す。3つの role の暗号操作（`kms:Decrypt`・`kms:GenerateDataKey` など）は IAM では与えず、state の鍵の Key Policy が role を名指して許す。
-4. Resource は、state Bucket と plan の出力の Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。state の鍵の ARN は、鍵を作る apply より前には無い。鍵の管理と読み取りの Action は、鍵の ARN を参照できるようになるまで、このアカウントとリージョンの鍵の pattern（`arn:<partition>:kms:<region>:<account>:key/*`）に与え、`aws:ResourceAccount` の Condition を置く（repository-wide/ADR-0301 決定11）。この Condition は pattern を狭めない。`state-backend` が鍵の ARN を出力した後の変更が、Resource を鍵の ARN に絞る。alias は `alias/<project>-<env>-tfstate` の ARN に限る。この名前は `state-backend` が `modules/kms` に渡す名前と同じ規則で組む。
+3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定、plan の出力の Bucket とその lifecycle）と、段5 の state の鍵（鍵、Key Policy、alias）と state Bucket の lifecycle に要る分に限る。段5 のログの権限は、ログの resource を足す変更が先に足す。3つの role の暗号操作は IAM では与えず、state の鍵の Key Policy が role を名指して許す（repository-wide/ADR-0301 決定12）。
+4. Resource は、state Bucket と plan の出力の Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。state の鍵の ARN は、鍵を作る apply より前には無い。鍵の Action は、鍵の ARN を参照できるようになるまで、このアカウントとリージョンの鍵の pattern（`arn:<partition>:kms:<region>:<account>:key/*`）に与える（repository-wide/ADR-0301 決定11）。plan の role の読み取りは、`kms:ResourceAliases` の Condition で state の鍵の alias が付いた鍵に限る。apply-identity の role は、鍵を作る apply の途中（alias より前の rotation の設定と Key Policy の設定）でも同じ鍵を扱うので、alias でも、ARN の account の欄以上の条件でも限れず、pattern のまま与える。`state-backend` が鍵の ARN を出力した後の変更が、Resource を鍵の ARN に絞る。alias は、入力の `state_key_alias_name`（`state-backend` の出力）の ARN に限る。
 5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:Put*` と `s3:Delete*`、state Bucket と plan の出力の Bucket への `s3:Put*` と `s3:Delete*`、state の object と plan の出力の object への `s3:Put*` と `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、2つの Bucket の設定、plan の出力を変えられないようにする。
 6. apply-identity の role は、自分を含む3つの role の信頼条件と policy を変更できる。誤った信頼条件が merge されると CI は締め出され、回復は repository-wide/ADR-0602 決定9 の回復の契機になる。
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
@@ -87,7 +87,7 @@ plan の role は Pull Request の作者が任意のコードで使える資格�
 ## 保証範囲
 
 - 保証すること: 3つの role の policy の文書が、上の表と決定5 の Deny から組まれていること（Unit Test）
-- 保証しないこと: 列挙が Provider の実際の呼び出しを漏れなく覆うこと（段4 の後の人の確認と、CI の plan が見る）。apply の role の有効な権限が bootstrap の構成物の変更を許さないことの検査（Policy Test は未配線）。state の鍵の ARN へ絞るまで、plan と apply-identity の role がこのアカウントのすべての鍵の Key Policy と rotation の状態を読め、apply-identity の role がそれらの Key Policy を書き換えられること（決定4）
+- 保証しないこと: 列挙が Provider の実際の呼び出しを漏れなく覆うこと（段4 の後の人の確認と、CI の plan が見る）。apply の role の有効な権限が bootstrap の構成物の変更を許さないことの検査（Policy Test は未配線）。state の鍵の ARN へ絞るまで、apply-identity の role がこのアカウントのすべての鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること（決定4）。apply の role が state の鍵の設定を変えられないことは、apply の role に KMS の Allow が無いことだけが支え、Deny は無い
 
 ## 検証方法
 
@@ -108,4 +108,4 @@ plan の role は Pull Request の作者が任意のコードで使える資格�
 - apply の role が IAM の role を作る usecase が入るとき（permissions boundary を決める）
 - inline policy の文字数が上限に近づいたとき
 - CI の plan か apply が AccessDenied で失敗したとき
-- `state-backend` が state の鍵の ARN を出力したとき（決定4 の pattern を鍵の ARN に絞る）
+- `state-backend` が state の鍵の ARN を出力したとき（決定4 の pattern を鍵の ARN に絞り、apply の role に state の鍵の管理の Action の Deny を足す。repository-wide/ADR-0604 決定10）
