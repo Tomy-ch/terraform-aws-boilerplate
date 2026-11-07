@@ -45,13 +45,13 @@ test_violation_no_documents if {
 }
 
 test_pass_specific_actions if {
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow(["s3:GetObject", "s3:PutObject"])])])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow(["s3:GetObject", "s3:PutObject"])])]) with data.policy_plan.resource_wildcard_actions as []
 }
 
 # ADR-0301 決定8 は Deny の wildcard と部分 wildcard を禁じない。
 test_pass_deny_wildcard_and_partial_wildcard if {
 	deny_all := {"Effect": "Deny", "Action": ["iam:*", "*"], "Resource": "*"}
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*", "s3:?etObject"])])])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*", "s3:?etObject"])])]) with data.policy_plan.resource_wildcard_actions as []
 }
 
 test_violation_resource_wildcard_outside_list if {
@@ -96,7 +96,33 @@ test_pass_kms_without_crypto_in_identity_policy if {
 	manage := fixture.allow(["kms:DescribeKey", "kms:PutKeyPolicy", "kms:GetKeyPolicy", "kms:List*"])
 	deny := {"Effect": "Deny", "Action": "kms:Decrypt", "Resource": "*"}
 	key_policy := fixture.doc("aws_kms_key_policy", "module.x.aws_kms_key_policy.this", "policy", {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/r"}, "Action": "kms:Decrypt", "Resource": "*"}]})
-	count([m | some m in p.deny; startswith(m, "[PLAN-IAM-04]")]) == 0 with input as fixture.plan([fixture.role_policy([manage, deny]), key_policy])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([manage, deny]), key_policy]) with data.policy_plan.resource_wildcard_actions as []
+}
+
+test_violation_user_and_group_policy_resource_wildcard_and_crypto if {
+	s := {"Effect": "Allow", "Action": ["kms:Decrypt", "s3:GetObject"], "Resource": "*"}
+	user := fixture.doc("aws_iam_user_policy", "module.x.aws_iam_user_policy.this", "policy", {"Statement": [s]})
+	group := fixture.doc("aws_iam_group_policy", "module.x.aws_iam_group_policy.this", "policy", {"Statement": [s]})
+	msgs := p.deny with input as fixture.plan([user, group]) with data.policy_plan.resource_wildcard_actions as []
+	count([m | some m in msgs; startswith(m, "[PLAN-IAM-03]")]) == 4
+	count([m | some m in msgs; startswith(m, "[PLAN-IAM-04]")]) == 2
+}
+
+test_violation_not_resource if {
+	s := {"Effect": "Allow", "Action": "kms:DescribeKey", "NotResource": "arn:aws:kms:ap-northeast-1:123456789012:key/x"}
+	fixture.has("[PLAN-IAM-05]", p.deny) with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.resource_wildcard_actions as []
+}
+
+test_pass_deny_not_resource if {
+	s := {"Effect": "Deny", "Action": "s3:DeleteObject", "NotResource": "arn:aws:s3:::b/keep/*"}
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([s, fixture.allow("s3:GetObject")])]) with data.policy_plan.resource_wildcard_actions as []
+}
+
+test_violation_unused_resource_wildcard_declaration if {
+	s := {"Effect": "Allow", "Action": "kms:CreateKey", "Resource": "*"}
+	msgs := p.deny with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.resource_wildcard_actions as ["kms:CreateKey", "kms:ListAliases"]
+	fixture.has("[PLAN-IAM-06] data.policy_plan.resource_wildcard_actions の kms:listaliases ", msgs)
+	not fixture.has("[PLAN-IAM-06] data.policy_plan.resource_wildcard_actions の kms:createkey ", msgs)
 }
 
 test_violation_star_service_wildcard if {
@@ -105,10 +131,10 @@ test_violation_star_service_wildcard if {
 
 test_pass_deny_not_action if {
 	s := {"Effect": "Deny", "NotAction": "s3:GetObject", "Resource": "*"}
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([s])])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.resource_wildcard_actions as []
 }
 
 test_pass_delete_only_change if {
 	gone := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "before": {"policy": json.marshal({"Statement": [fixture.allow("*")]})}, "after_unknown": {}}}
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")]), gone])
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")]), gone]) with data.policy_plan.resource_wildcard_actions as []
 }

@@ -46,8 +46,34 @@ deny contains msg if {
 	msg := sprintf("[PLAN-IAM-03] %s: %s の %s が Resource \"*\" で %s を許可しています。resource-level 権限を持たない Action は data.policy_plan.resource_wildcard_actions に宣言してください", [r.document.path, r.document.address, r.document.attr, a])
 }
 
+# NotResource の Allow は、除いた resource の外のすべてを許すので、Resource "*" と同じく扱う。
+deny contains msg if {
+	some r in lib.readable
+	r.document.type in identity_policy_types
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+	s.NotResource
+	msg := sprintf("[PLAN-IAM-05] %s: %s の %s が NotResource で許可しています", [r.document.path, r.document.address, r.document.attr])
+}
+
+# 宣言のうち、結合した入力のどの Resource "*" の Allow にも現れないものは、黙って許可を残すので落とす。
+wildcard_resource_actions_in_use contains a if {
+	some r in lib.readable
+	r.document.type in identity_policy_types
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+	"*" in lib.as_array(object.get(s, "Resource", []))
+	some a in lib.lower_all(s.Action)
+}
+
+deny contains msg if {
+	some a in resource_wildcard_actions
+	not a in wildcard_resource_actions_in_use
+	msg := sprintf("[PLAN-IAM-06] data.policy_plan.resource_wildcard_actions の %s は、入力のどの Resource \"*\" の Allow にも使われていません。使わなくなったなら宣言から外してください", [a])
+}
+
 # ADR-0301 決定12: KMS の暗号操作は IAM で与えず、鍵の Key Policy が principal を名指して許す。
-# 部分 wildcard（kms:Gen*）も、IAM の照合と同じく暗号操作に当たれば落とす。
+# 部分 wildcard（kms:Gen*）も、IAM の照合と同じく暗号操作に当たれば落とす。区切りを持たない照合にするため null を渡す。
 deny contains msg if {
 	some r in lib.readable
 	r.document.type in identity_policy_types
@@ -55,7 +81,7 @@ deny contains msg if {
 	s.Effect == "Allow"
 	some a in lib.lower_all(s.Action)
 	some c in kms_key_policy.crypto_actions
-	glob.match(a, [], c)
+	glob.match(a, null, c)
 	msg := sprintf("[PLAN-IAM-04] %s: %s の %s が KMS の暗号操作 %s を IAM で許可しています。鍵の Key Policy で principal を名指してください", [r.document.path, r.document.address, r.document.attr, c])
 }
 

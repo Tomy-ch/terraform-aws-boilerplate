@@ -290,6 +290,16 @@ run "rejects_alias_name_without_prefix" {
   expect_failures = [var.state_key_alias_name]
 }
 
+run "rejects_empty_alias_name" {
+  command = plan
+
+  variables {
+    state_key_alias_name = "alias/"
+  }
+
+  expect_failures = [var.state_key_alias_name]
+}
+
 run "rejects_aws_managed_alias_name" {
   command = plan
 

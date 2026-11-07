@@ -319,6 +319,22 @@ run "key_arns_follow_inputs" {
   }
 
   assert {
+    condition = [jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[11].Resource, jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[11].Condition] == [
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*",
+      { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } },
+    ]
+    error_message = "apply-identity の鍵の読み取りが、data source と入力の alias から組まれていません。"
+  }
+
+  assert {
+    condition = [jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[12].Resource, jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[12].Condition] == [
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*",
+      { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } },
+    ]
+    error_message = "apply-identity の鍵の管理が、data source と入力の alias から組まれていません。"
+  }
+
+  assert {
     condition = jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[13] == {
       Sid       = "CreateStateKeyAlias"
       Effect    = "Allow"
@@ -331,25 +347,46 @@ run "key_arns_follow_inputs" {
 }
 
 # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
-# mock の ARN は実物より短いので、実際の長さの ARN を与えて数える。
+# mock の ARN は実物より短いので、入力が許す最も長い値（38文字の project と sandbox、250文字の alias、aws-cn の
+# 63文字の Bucket）と、それに対応する長さの ARN を与えて数える。
 run "policy_length" {
   command = apply
 
+  variables {
+    name_prefix            = "abcdefghijklmnopqrstuvwxyz012345678901-sandbox"
+    state_bucket_arn       = format("arn:aws-cn:s3:::%063d", 1)
+    state_key_alias_name   = format("alias/%0250d", 0)
+    plan_output_bucket_arn = format("arn:aws-cn:s3:::%063d", 2)
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-cn" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "cn-northwest-1" }
+  }
   override_resource {
     target = aws_iam_role.this["plan"]
-    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" }
+    values = { arn = "arn:aws-cn:iam::123456789012:role/abcdefghijklmnopqrstuvwxyz012345678901-sandbox-ci-plan" }
   }
   override_resource {
     target = aws_iam_role.this["apply"]
-    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" }
+    values = { arn = "arn:aws-cn:iam::123456789012:role/abcdefghijklmnopqrstuvwxyz012345678901-sandbox-ci-apply" }
   }
   override_resource {
     target = aws_iam_role.this["apply_identity"]
-    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" }
+    values = { arn = "arn:aws-cn:iam::123456789012:role/abcdefghijklmnopqrstuvwxyz012345678901-sandbox-ci-apply-identity" }
   }
   override_resource {
     target = aws_iam_openid_connect_provider.github
-    values = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+    values = { arn = "arn:aws-cn:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+  }
+
+  assert {
+    condition     = length(var.state_key_alias_name) == 256 && length(trimprefix(var.state_bucket_arn, "arn:aws-cn:s3:::")) == 63
+    error_message = "境界の入力の長さが、alias の 256 文字と Bucket 名の 63 文字になっていません。"
   }
 
   assert {
