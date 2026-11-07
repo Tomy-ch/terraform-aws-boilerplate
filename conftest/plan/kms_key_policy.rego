@@ -1,4 +1,4 @@
-# Key Policy が鍵の利用者を名指し、外へ開かないこと（ADR-0301 決定1・17）。Security の道具は aws_kms_key_policy の
+# Key Policy が鍵の利用者を名指し、外へ開かないこと（ADR-0301 決定1・12・18）。Security の道具は aws_kms_key_policy の
 # 文書を見ないので、Policy が持つ（ADR-0402 決定4）。規則はすべて文書ごとで、Key Policy が0件なら何も言わない。
 package plan.kms_key_policy
 

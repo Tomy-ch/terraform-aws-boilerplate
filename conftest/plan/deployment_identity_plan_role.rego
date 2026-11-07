@@ -15,12 +15,9 @@ default role := ""
 
 role := object.get(cfg, "role", "")
 
-# 読み取りの Action は、名前の動詞が Get・List・Describe・Head で始まるものとする。
+# 暗号操作は動詞で読み取りに入らないので落ちる。plan の role の復号と鍵の生成は、IAM ではなく state の鍵の
+# Key Policy が許す（deployment-identity/ADR-0201 決定3）。
 read_verbs := ["get", "list", "describe", "head"]
-
-# 動詞では読み取りに見えないが、変更系でない Action。決定13 は plan の role に state の復号を持たせ、
-# deployment-identity/ADR-0201 決定8 は CMK への切り替えで plan の出力の暗号化の鍵の生成を足す。
-non_mutating := {"kms:decrypt", "kms:generatedatakey"}
 
 # 入力に Bucket の resource が無いので、plan の出力の Bucket を address で引けない。名前の形で見る。
 plan_output_key := `^arn:aws:s3:::[^/*?]+-tfplan-[^/*?]+/(pr|branch)/\*$`
@@ -41,8 +38,6 @@ read_only(action) if {
 	startswith(parts[1], v)
 }
 
-read_only(action) if action in non_mutating
-
 after(address) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == address
@@ -52,7 +47,7 @@ role_name := after(role).name
 
 policy_name := after(target).name
 
-# plan の role に付く policy の resource。role を名前で指すので、名前が unknown なものはどの role に付くか読めない。
+# policy の resource は role を名前で指すので、名前が unknown なものはどの role に付くか読めない。
 attached contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "after": c.rc.change.after, "unknown": c.rc.change.after_unknown} if {
 	some c in lib.changes
 	c.rc.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment", "aws_iam_role_policies_exclusive", "aws_iam_role_policy_attachments_exclusive"}
@@ -108,7 +103,7 @@ deny contains msg if {
 	msg := sprintf("[PLAN-ROLE-03] %s: plan の role の s3:PutObject に Resource がありません", [a.path])
 }
 
-# 宣言した policy の外から plan の role へ権限を足す形。exclusive の2つは、宣言の外で付いた policy を外す。
+# exclusive の2つは権限を足さず、宣言の外で付いた policy を外すので、ここでは見ない。
 deny contains msg if {
 	some a in attached
 	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}

@@ -28,6 +28,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | --- | --- |
 | `bucket_name` | identity root と workload root の backend の `bucket`、段2 の `import` block の id |
 | `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
+| `state_key_alias_name` | [`deployment-identity`](../deployment-identity/README.md)。apply-identity の role の alias の作成と、plan の role の鍵の読み取りを、この alias に絞る。入力だけから決まるので、段5 で鍵を作る前から参照できる |
 | `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 
@@ -41,7 +42,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
 | 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
-| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、state Bucket の lifecycle、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。#107・#108 の後）。CI の apply（`terraform-apply.yaml`）が apply する |
+| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、state Bucket の lifecycle、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。ログの分は #108 の後）。CI の apply（`terraform-apply.yaml`）が apply する。apply-identity が鍵と alias と state Bucket の lifecycle を作る権限は `deployment-identity` にある |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
 
@@ -54,7 +55,7 @@ supported:
 
 unsupported:
 
-- 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）
+- 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 - plan の出力を保持日数より長く残すこと
@@ -71,9 +72,9 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: 無い。`deployment-identity` がこのユースケースの `bucket_arn` を受ける
+- ユースケース: 無い。`deployment-identity` がこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_alias_name` を受ける
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
-- 段5 は `deployment-identity` の apply と apply-identity の role の ARN（`apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す
+- 段5 は `deployment-identity` の3つの role の ARN（`plan_role_arn` / `apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。plan の role は plan の出力を書くのに鍵の `kms:GenerateDataKey` を要り、それを IAM ではなく Key Policy が許すので、Key Policy に名指す。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias と state Bucket の lifecycle の分は足してあり、ログの分は #108 の後に足す。apply-identity の権限は `state_key_alias_name` の alias だけを作れる
 
 ## 検証方法
 

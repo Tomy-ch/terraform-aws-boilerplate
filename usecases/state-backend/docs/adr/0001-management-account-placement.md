@@ -20,7 +20,7 @@ AWS Organizations のベストプラクティスは、resource を管理アカ�
 
 ### 案A: 委任管理者アカウントへ集約する
 
-管理アカウントの state を別アカウントに置く。管理アカウントへの cross-account の書き込みが常設になり、repository-wide/ADR-0301 (least-privilege-policy) 決定17 の明示的なユースケースを1つ増やす。フェーズ0 の時点では、管理アカウントの他にアカウントが存在しない。
+管理アカウントの state を別アカウントに置く。管理アカウントへの cross-account の書き込みが常設になり、repository-wide/ADR-0301 (least-privilege-policy) 決定18 の明示的なユースケースを1つ増やす。フェーズ0 の時点では、管理アカウントの他にアカウントが存在しない。
 
 ### 評価
 

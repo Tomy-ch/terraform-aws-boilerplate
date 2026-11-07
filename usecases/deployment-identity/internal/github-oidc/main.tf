@@ -2,6 +2,10 @@
 # e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たず、tag の書き込みの権限も持たない（deployment-identity/ADR-0201）。撤回: 共通の tag 入力を配線したとき。
 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+data "aws_partition" "current" {}
+
 # thumbprint_list は書かない（deployment-identity/ADR-0101 決定4）。
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"

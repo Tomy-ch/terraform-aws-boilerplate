@@ -65,23 +65,24 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 10. AWS managed policyは原則として採用しない。service-linked role、およびAWSが機能上その使用を要求する場合に限り許容し、根拠を記録する。それ以外はcustomer managed policyを生成する。
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
+12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク
 
-12. ネットワークの既定をdeny とする。必要な通信のみを許可する。
-13. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
-14. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
-15. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
-16. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
+13. ネットワークの既定をdeny とする。必要な通信のみを許可する。
+14. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
+15. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
+16. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
+17. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
 
 ### 越境
 
-17. cross-account accessを既定で許容しない。必要な場合は、明示的なユースケースとして設計し、信頼関係の条件（account、Condition、外部ID等）を型付き契約として受け取る。
-18. 緊急時の権限昇格（break-glass）の経路をboilerplateとして提供しない。これは本リポジトリの責務外とし、組織のIAM運用側で扱う。この判断はユースケースのunsupported一覧へ記載する。
+18. cross-account accessを既定で許容しない。必要な場合は、明示的なユースケースとして設計し、信頼関係の条件（account、Condition、外部ID等）を型付き契約として受け取る。
+19. 緊急時の権限昇格（break-glass）の経路をboilerplateとして提供しない。これは本リポジトリの責務外とし、組織のIAM運用側で扱う。この判断はユースケースのunsupported一覧へ記載する。
 
 ### 検証
 
-19. 上記のうち機械判定可能なものは、Policy Testのinvariantとして実装する。invariantを持たない安全性の主張を、保証として扱わない。
+20. 上記のうち機械判定可能なものは、Policy Testのinvariantとして実装する。invariantを持たない安全性の主張を、保証として扱わない。
 
 ## 検討した代替案
 
@@ -96,6 +97,17 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 ### 案C: 安全なdefaultを提供しつつ、policy JSONによる拡張を許容する
 
 拡張要求へ即応できるが、拡張内容が検証対象外となり、最小権限であるかを機械判定できない。ADR-0204に該当する。
+
+### 案D: KMS の鍵の Key Policy でアカウントへ `kms:*` を委任し、暗号操作を IAM で与える（決定12 に対して）
+
+AWS の既定の Key Policy と、console が作る key users の文（`kms:CreateGrant` を `kms:GrantIsForAWSResource` で限る形）はこの形である。鍵を使える主体が、アカウントの IAM の Allow のどこからでも増え、鍵ごとの一覧が Key Policy に残らない。AWS の「Least-privilege permissions」も、`kms:*` の委任は IAM で更に絞るときに限るとし、Key Policy で principal を名指すことを挙げる。決定12 は後者を採り、前者からの逸脱として次を記録する（ADR-0207 (default-value-policy) 決定11）。
+
+- どのユースケース上の制約によるか: ユースケースの制約に由来しない。repository-wide の原則である
+- 外れる対象: 既定の Key Policy の `kms:*` のアカウントへの委任、IAM で暗号操作を与える形
+- 理由: 鍵を使う主体を鍵ごとに Key Policy の1箇所で名指し、IAM の Allow や grant から鍵を使う経路を作らない
+- 影響: security は、IAM の Allow を足しても鍵を使えない。availability は、鍵を使う主体を足すたびに Key Policy の変更が要り、AWS のサービスが grant を要る消費者（RDS・ECR など）は `kms:CreateGrant` を `kms:ViaService` と `kms:GrantIsForAWSResource` で限った文を Key Policy に足す変更が要る。Key Policy は 32,768 文字が上限である。cost は変わらない
+- 代替案: 本案D
+- 見直し条件: 下の「見直し条件」
 
 ### 評価
 
@@ -124,10 +136,11 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 - Policy Test（必須）: 以下をinvariantとして検証する。
   - policy document の Allow の statement に Action wildcard が存在しないこと
-  - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと
+  - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと。同じ範囲を与える `NotResource` の Allow が無いこと。許可リストに、使われていない action が残っていないこと
   - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
+  - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
@@ -143,3 +156,4 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 - AWS側にresource-level権限が追加され、Resource wildcardの許容箇所が解消できるようになった場合
 - cross-accountを必要とするユースケースが複数発生した場合
 - 意味論的な権限語彙では表現できない権限要求が反復した場合
+- IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合。1つの鍵の Key Policy が名指す主体と文で 32,768 文字の上限に近づいた場合。grant を要るサービスの消費者が、Key Policy の文の追加では成り立たなかった場合

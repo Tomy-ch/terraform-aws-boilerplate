@@ -29,7 +29,7 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
 
 1. Terraformコードは「`terraform plan` が成功する」ことのみをもって正しいと判断しない。
 2. 異なる故障モードは、異なる種類のテストで検出する。
-3. テスト方法を説明できない設定・機能を公開しない。検証できない主張を保証として扱わない（ADR-0101 決定9、ADR-0301 決定19）。
+3. テスト方法を説明できない設定・機能を公開しない。検証できない主張を保証として扱わない（ADR-0101 決定9、ADR-0301 決定20）。
 
 ### レイヤーと責務
 
@@ -39,7 +39,7 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
    | --- | --- | --- |
    | Static Analysis | 構文・書式の逸脱、既知の誤設定パターン、本リポジトリの規約違反（`any` の使用、`extra_*` variable、外部module source等） | 不要 |
    | Contract Test | 公開variable / outputのschemaの意図しない変更（ADR-0202 決定4） | 不要 |
-   | Policy Test | security / reliability invariantの違反（ADR-0301 決定19） | 不要 |
+   | Policy Test | security / reliability invariantの違反（ADR-0301 決定20） | 不要 |
    | Unit Test | 入力から構成を導出するロジックの誤り（条件分岐、意味論的入力からの導出） | 不要 |
    | Integration Test | resource間の結合、AWS API側の制約（作成順序、属性の相互排他、置換条件） | 必要 |
    | E2E Test | 利用者視点の振る舞い（到達性、実行結果、権限境界の実効性） | 必要 |
@@ -96,7 +96,7 @@ Infrastructure as Codeでは、構文的に正しいことと、期待するイ�
 
 18. security invariantの検証はPolicy Testとして実装し、レビューによる目視確認に依存しない。
 19. Policy Testは、Terraformのplan出力（機械可読形式）を対象とする。実装形式の選定は本ADRで固定しない。
-20. ADR-0301 決定19に該当するinvariantは、Policy Testとして実装されて初めて「保証されている」と扱う。
+20. ADR-0301 決定20に該当するinvariantは、Policy Testとして実装されて初めて「保証されている」と扱う。
 
 ## 検討した代替案
 
