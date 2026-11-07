@@ -73,7 +73,7 @@ unsupported:
 
 - ユースケース: 無い。`deployment-identity` がこのユースケースの `bucket_arn` を受ける
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
-- 段5 は `deployment-identity` の apply と apply-identity の role の ARN（`apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す
+- 段5 は `deployment-identity` の apply と apply-identity の role の ARN（`apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias と state Bucket の lifecycle の分は足してあり、ログの分は #108 の後に足す。alias の名前は `alias/<project>-<env>-tfstate` で、apply-identity の権限はこの名前の alias だけを作れる
 
 ## 検証方法
 

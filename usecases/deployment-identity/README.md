@@ -42,9 +42,10 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
 - 3つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
-  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り
+  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の鍵の設定と alias の読み取り
   - apply: workload root の key と lock file の読み書き。bootstrap の構成物、identity root の key と lock file、state Bucket の設定の変更は Deny する
-  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる
+  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる。state の鍵と alias を作り、Key Policy と rotation を設定できる。鍵の削除・無効化と alias の削除・付け替えはできない
+  - 暗号操作（`kms:Decrypt` など）は IAM では与えない。state の鍵の Key Policy が CI の role を名指して許す
 - role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす）
 
 これらは usecase に固有の module `internal/github-oidc/` が持つ（[ADR-0102](../../docs/adr/0102-use-case-centric-scope.md) 決定15）。信頼条件が GitHub の claim に、権限が bootstrap の構成物と state の key に固有で、どの usecase でも同じ形で成立する機構ではないためである。
@@ -69,6 +70,7 @@ unsupported:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
 - apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply と apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限る。#209 は apply の role だけを対象にする）
+- plan と apply-identity の role が、このアカウントのすべての KMS の鍵の Key Policy と rotation の状態を読めること、apply-identity の role がそれらの Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無いので、鍵の ARN へ絞るまではアカウントの鍵の pattern で与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 

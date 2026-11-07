@@ -373,7 +373,31 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 1. apply の workflow を足す Pull Request を merge する前に、管理者が environment `admin-apply-identity` に secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く（`gh secret set AWS_ACCOUNT_ID --env admin-apply-identity`）。宣言は secret を持たず、突合も見ない
 2. merge の後の最初の run で、`apply-infra-code-gate` と `apply-admin-identity` が緑であること、ログの plan の要約が `No changes.` であること、Policy の違反が無いこと、`OIDC の sub` の行が `:environment:admin-apply-identity` で終わることを確かめる。run の URL を issue に残す（アカウント ID を載せない）。この run は apply の経路の最初の確認であり、段5 の成功ではない
 3. 段5 の変更（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行）は、前の変更の CI の apply が緑で、その後の CI の plan が変更なしを示してから merge する。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge し、その apply が緑になってから次を merge する。待っている run は後から来た run に置き換わるので、続けて merge すると2つが1回の apply に入る
-4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する
+   - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
+   - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
+4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えないと `implicitDeny` になる。state の鍵と lifecycle の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
+
+   ```bash
+   kms="arn:aws:kms:${REGION}:${ACCOUNT_ID}"
+   acct="ContextKeyName=aws:ResourceAccount,ContextKeyValues=${ACCOUNT_ID},ContextKeyType=string"
+   spec="ContextKeyName=kms:KeySpec,ContextKeyValues=SYMMETRIC_DEFAULT,ContextKeyType=string ContextKeyName=kms:KeyUsage,ContextKeyValues=ENCRYPT_DECRYPT,ContextKeyType=string"
+   simc() { role=$1 res=$2 ctx=$3; shift 3
+     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" --context-entries $ctx \
+       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
+   simc apply-identity "*" "$spec" kms:CreateKey
+   sim apply-identity "*" kms:ListAliases
+   simc apply-identity "${kms}:key/x" "$acct" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy kms:CreateAlias
+   simc apply-identity "${kms}:alias/tabp-admin-tfstate" "$acct" kms:CreateAlias
+   sim apply-identity "arn:aws:s3:::${BUCKET}" s3:PutLifecycleConfiguration
+   simc plan "${kms}:key/x" "$acct" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
+   sim plan "*" kms:ListAliases
+   simc apply-identity "${kms}:key/x" "$acct" kms:ScheduleKeyDeletion kms:DisableKey kms:DeleteAlias kms:Decrypt
+   simc plan "${kms}:key/x" "$acct" kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey
+   simc apply-identity "*" "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
+   simc apply-identity "*" "ContextKeyName=kms:MultiRegion,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey
+   ```
+
+   期待は順に、1行・1行・7行・1行・1行・4行・1行がすべて `allowed`、続く2つが4行・3行ですべて `implicitDeny`、最後の2つが2行・1行ですべて `explicitDeny` であること。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す
 
 途中で失敗したとき:
 
