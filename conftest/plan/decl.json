@@ -1,6 +1,10 @@
 {
   "policy_plan": {
     "plan_format_version": "1.2",
+    "resource_wildcard_actions": [
+      "kms:CreateKey",
+      "kms:ListAliases"
+    ],
     "documents": {
       "aws_iam_role": [
         "assume_role_policy"

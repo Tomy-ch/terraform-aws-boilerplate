@@ -54,6 +54,32 @@ test_pass_deny_wildcard_and_partial_wildcard if {
 	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([deny_all, fixture.allow(["s3:Get*", "s3:Put*", "s3:?etObject"])])])
 }
 
+test_violation_resource_wildcard_outside_list if {
+	s := {"Effect": "Allow", "Action": ["kms:ListAliases", "kms:DescribeKey"], "Resource": "*"}
+	msgs := p.deny with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.resource_wildcard_actions as ["kms:ListAliases"]
+	fixture.has("[PLAN-IAM-03]", msgs)
+	count([m | some m in msgs; startswith(m, "[PLAN-IAM-03]")]) == 1
+}
+
+test_violation_resource_wildcard_in_array if {
+	s := {"Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::b/*", "*"]}
+	fixture.has("[PLAN-IAM-03]", p.deny) with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.resource_wildcard_actions as ["kms:CreateKey"]
+}
+
+test_violation_resource_wildcard_without_declaration if {
+	s := {"Effect": "Allow", "Action": "kms:CreateKey", "Resource": "*"}
+	fixture.has("[PLAN-IAM-03]", p.deny) with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan as object.remove(data.policy_plan, ["resource_wildcard_actions"])
+}
+
+# 宣言は大文字小文字を区別しない。Deny と resource-based policy の "*" は見ない。
+test_pass_resource_wildcard if {
+	allow := {"Effect": "Allow", "Action": "KMS:CreateKey", "Resource": "*", "Condition": {"StringEquals": {"kms:KeySpec": "SYMMETRIC_DEFAULT"}}}
+	deny := {"Effect": "Deny", "Action": "kms:PutKeyPolicy", "Resource": "*"}
+	key_policy := fixture.doc("aws_kms_key_policy", "module.x.aws_kms_key_policy.this", "policy", {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": "kms:DescribeKey", "Resource": "*"}]})
+	bucket := fixture.doc("aws_s3_bucket_policy", "module.x.aws_s3_bucket_policy.this", "policy", {"Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}]})
+	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([allow, deny]), key_policy, bucket]) with data.policy_plan.resource_wildcard_actions as ["kms:createkey"]
+}
+
 test_violation_star_service_wildcard if {
 	fixture.has("[PLAN-IAM-01]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow("*:*")])])
 }
