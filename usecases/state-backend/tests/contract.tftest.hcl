@@ -42,6 +42,21 @@ run "outputs" {
   }
 }
 
+# alias の名前は deployment-identity の権限が受けるので、鍵より前に plan で決まらなければならない。
+run "state_key_alias_name" {
+  command = plan
+
+  variables {
+    project = "t4bp"
+    env     = "dev"
+  }
+
+  assert {
+    condition     = output.state_key_alias_name == "alias/t4bp-dev-tfstate"
+    error_message = "state_key_alias_name が alias/<project>-<env>-tfstate を返していません。"
+  }
+}
+
 run "plan_output_retention_days_default" {
   command = plan
 
@@ -71,7 +86,7 @@ run "plan_output_retention_days_fraction" {
   expect_failures = [var.plan_output_retention_days]
 }
 
-# 既定の 7 とは別の値を渡し、公開入力が内部の lifecycle まで届くことを見る。
+# 既定の 7 とは別の値を渡す。既定のままでは、配線が切れていても通る。
 run "plan_output_retention_days_wiring" {
   command = plan
 

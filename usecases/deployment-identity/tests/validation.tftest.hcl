@@ -5,6 +5,7 @@ variables {
   env                    = "admin"
   github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  state_key_alias_name   = "alias/tabp-admin-tfstate"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
@@ -277,4 +278,52 @@ run "rejects_hyphen_in_project" {
   }
 
   expect_failures = [var.project]
+}
+
+run "rejects_alias_name_without_prefix" {
+  command = plan
+
+  variables {
+    state_key_alias_name = "tabp-admin-tfstate"
+  }
+
+  expect_failures = [var.state_key_alias_name]
+}
+
+run "rejects_aws_managed_alias_name" {
+  command = plan
+
+  variables {
+    state_key_alias_name = "alias/aws/s3"
+  }
+
+  expect_failures = [var.state_key_alias_name]
+}
+
+run "rejects_wildcard_in_alias_name" {
+  command = plan
+
+  variables {
+    state_key_alias_name = "alias/tabp-*"
+  }
+
+  expect_failures = [var.state_key_alias_name]
+}
+
+run "accepts_250_character_alias_name" {
+  command = plan
+
+  variables {
+    state_key_alias_name = format("alias/%0250d", 0)
+  }
+}
+
+run "rejects_251_character_alias_name" {
+  command = plan
+
+  variables {
+    state_key_alias_name = format("alias/%0251d", 0)
+  }
+
+  expect_failures = [var.state_key_alias_name]
 }

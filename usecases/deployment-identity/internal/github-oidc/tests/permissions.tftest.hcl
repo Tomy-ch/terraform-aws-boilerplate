@@ -15,6 +15,7 @@ variables {
   env                    = "admin"
   github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  state_key_alias_name   = "alias/tabp-admin-tfstate"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
@@ -80,19 +81,19 @@ run "policies" {
         Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
       },
       { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/*"] },
+      {
+        Sid       = "ReadStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
+      },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
         Sid      = "ReadCiRoles"
         Effect   = "Allow"
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
-      },
-      {
-        Sid       = "ReadStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
       },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
     ]
@@ -208,21 +209,11 @@ run "policies" {
         Resource  = "*"
         Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
       },
-      {
-        Sid       = "ManageStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
-      },
-      {
-        Sid       = "CreateStateKeyAlias"
-        Effect    = "Allow"
-        Action    = "kms:CreateAlias"
-        Resource  = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"]
-        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
-      },
+      { Sid = "ReadStateKey", Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/*" },
+      { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/*" },
+      { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"] },
       { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
+      { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },
       { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
@@ -231,26 +222,9 @@ run "policies" {
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
       },
-      {
-        Sid       = "ReadStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
-      },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
     ]
     error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物と state の鍵の管理になっていません。"
-  }
-
-  # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
-  assert {
-    condition = alltrue([
-      length(aws_iam_role_policy.this["plan"].policy) <= 10240,
-      length(aws_iam_role_policy.this["apply"].policy) <= 10240,
-      length(aws_iam_role_policy.this["apply_identity"].policy) <= 10240,
-    ])
-    error_message = "inline policy が 10,240 文字を超えています。"
   }
 
   assert {
@@ -290,5 +264,87 @@ run "policies" {
       [aws_iam_role.this["apply_identity"].name, 0],
     ]
     error_message = "role に managed policy を付けない設定になっていません。"
+  }
+}
+
+# 鍵の ARN は data source から、alias は入力から組む。Bucket の ARN と違う値を与え、どちらを読んだかを区別する。
+run "key_arns_follow_inputs" {
+  command = apply
+
+  variables {
+    name_prefix          = "t4bp-dev"
+    state_key_alias_name = "alias/other-tfstate"
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_role_policy.this["plan"].policy).Statement[6] == {
+      Sid       = "ReadStateKey"
+      Effect    = "Allow"
+      Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+      Resource  = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"
+      Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } }
+    }
+    error_message = "plan の role の鍵の読み取りが、data source の partition・region・account と入力の alias から組まれていません。"
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[13] == {
+      Sid      = "CreateStateKeyAlias"
+      Effect   = "Allow"
+      Action   = "kms:CreateAlias"
+      Resource = ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:alias/other-tfstate", "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"]
+    }
+    error_message = "apply-identity の alias の作成が、data source の partition・region・account と入力の alias から組まれていません。"
+  }
+}
+
+# inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
+# mock の ARN は実物より短いので、実際の長さの ARN を与えて数える。
+run "policy_length" {
+  command = apply
+
+  override_resource {
+    target = aws_iam_role.this["plan"]
+    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" }
+  }
+  override_resource {
+    target = aws_iam_role.this["apply"]
+    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" }
+  }
+  override_resource {
+    target = aws_iam_role.this["apply_identity"]
+    values = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" }
+  }
+  override_resource {
+    target = aws_iam_openid_connect_provider.github
+    values = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.this["plan"].policy) <= 10240
+    error_message = "plan の role の inline policy が 10,240 文字を超えています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.this["apply"].policy) <= 10240
+    error_message = "apply の role の inline policy が 10,240 文字を超えています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.this["apply_identity"].policy) <= 10240
+    error_message = "apply-identity の role の inline policy が 10,240 文字を超えています。"
   }
 }

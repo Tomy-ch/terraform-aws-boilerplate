@@ -61,6 +61,16 @@ variable "state_bucket_arn" {
   }
 }
 
+variable "state_key_alias_name" {
+  description = "このアカウントの state の鍵の alias の名前（`state-backend` の `state_key_alias_name`）。apply-identity の role の alias の作成と、plan の role の鍵の読み取りをこの alias に絞る。"
+  type        = string
+
+  validation {
+    condition     = can(regex("^alias/[a-zA-Z0-9/_-]{1,250}$", var.state_key_alias_name)) && !startswith(var.state_key_alias_name, "alias/aws/")
+    error_message = "state_key_alias_name は alias/ で始まり、続く名前が英数字・/・_・- の250文字以内で、alias/aws/ で始まらない名前にしてください。"
+  }
+}
+
 variable "plan_output_bucket_arn" {
   description = "このアカウントの plan の出力の Bucket の ARN（`state-backend` の `plan_output_bucket_arn`）。plan の role の書き込みと、Bucket の設定の Action をこの Bucket に絞る。"
   type        = string

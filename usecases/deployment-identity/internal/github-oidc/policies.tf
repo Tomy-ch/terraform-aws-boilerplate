@@ -6,10 +6,10 @@ locals {
   plan_output_keys = ["${var.plan_output_bucket_arn}/pr/*", "${var.plan_output_bucket_arn}/branch/*"]
 
   # state の鍵の Resource は、鍵の ARN ではなくアカウントの鍵の pattern で与える（deployment-identity/ADR-0201 決定4）。
-  kms_arn_prefix      = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
-  state_key_pattern   = "${local.kms_arn_prefix}:key/*"
-  state_key_alias_arn = "${local.kms_arn_prefix}:alias/${var.name_prefix}-tfstate"
-  own_account         = { StringEquals = { "aws:ResourceAccount" = data.aws_caller_identity.current.account_id } }
+  kms_arn_prefix         = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
+  state_key_pattern      = "${local.kms_arn_prefix}:key/*"
+  state_key_alias_arn    = "${local.kms_arn_prefix}:${var.state_key_alias_name}"
+  state_key_read_actions = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
 
   identity_role_arns = [for k in keys(local.roles) : aws_iam_role.this[k].arn]
   identity_arns      = concat(local.identity_role_arns, [aws_iam_openid_connect_provider.github.arn])
@@ -63,13 +63,6 @@ locals {
       ]
       Resource = local.identity_role_arns
     },
-    {
-      Sid       = "ReadStateKey"
-      Effect    = "Allow"
-      Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-      Resource  = local.state_key_pattern
-      Condition = local.own_account
-    },
     # kms:ListAliases は resource-level 権限を持たない（repository-wide/ADR-0301 決定9）。
     { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
   ]
@@ -84,6 +77,14 @@ locals {
         { Sid = "ReadPlanOutputBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.plan_output_bucket_arn },
         # 削除の権限を与えない。上書きされた出力は版として残る（repository-wide/ADR-0602 決定13）。
         { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = local.plan_output_keys },
+        # plan の role は鍵を作らないので、alias の付いた state の鍵にだけ読みを限れる。
+        {
+          Sid       = "ReadStateKey"
+          Effect    = "Allow"
+          Action    = local.state_key_read_actions
+          Resource  = local.state_key_pattern
+          Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = var.state_key_alias_name } }
+        },
       ],
       local.identity_read_statements,
     )
@@ -148,17 +149,14 @@ locals {
           Resource  = "*"
           Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
         },
-        {
-          Sid       = "ManageStateKey"
-          Effect    = "Allow"
-          Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
-          Resource  = local.state_key_pattern
-          Condition = local.own_account
-        },
+        # 鍵を作る apply の途中では alias がまだ無いので、alias で鍵を絞れない（deployment-identity/ADR-0201 決定4）。
+        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = local.state_key_pattern },
+        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = local.state_key_pattern },
         # CreateAlias は alias と鍵の両方に権限を要る。
-        { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = [local.state_key_alias_arn, local.state_key_pattern], Condition = local.own_account },
-        # 偽の MultiRegion と BypassPolicyLockoutSafetyCheck は要求に載らず、Allow の条件にできない（deployment-identity/ADR-0201 決定1）。
+        { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = [local.state_key_alias_arn, local.state_key_pattern] },
+        # Provider が載せない値を KMS がどちらに評価しても既定の作成を妨げない Deny で拒む（deployment-identity/ADR-0201 決定1）。
         { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
+        { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },
         { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       ],
       local.identity_read_statements,
