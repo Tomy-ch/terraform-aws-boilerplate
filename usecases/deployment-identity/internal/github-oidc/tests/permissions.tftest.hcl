@@ -1,4 +1,14 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
 
 variables {
   name_prefix            = "tabp-admin"
@@ -77,8 +87,16 @@ run "policies" {
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
       },
+      {
+        Sid       = "ReadStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
+      },
+      { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
     ]
-    error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root の resource の読み取りと、plan の出力の書き込みだけになっていません。"
+    error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root の resource と state の鍵の読み取りと、plan の出力の書き込みだけになっていません。"
   }
 
   assert {
@@ -139,7 +157,7 @@ run "policies" {
       {
         Sid      = "ConfigureStateBucket"
         Effect   = "Allow"
-        Action   = ["s3:DeleteBucketPolicy", "s3:PutBucketOwnershipControls", "s3:PutBucketPolicy", "s3:PutBucketPublicAccessBlock", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration"]
+        Action   = ["s3:DeleteBucketPolicy", "s3:PutBucketOwnershipControls", "s3:PutBucketPolicy", "s3:PutBucketPublicAccessBlock", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration", "s3:PutLifecycleConfiguration"]
         Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
       },
       { Sid = "ListPlanOutputBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" },
@@ -183,6 +201,29 @@ run "policies" {
         Action   = ["iam:CreateRole", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy", "iam:UpdateRole", "iam:UpdateRoleDescription"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
       },
+      {
+        Sid       = "CreateStateKey"
+        Effect    = "Allow"
+        Action    = "kms:CreateKey"
+        Resource  = "*"
+        Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
+      },
+      {
+        Sid       = "ManageStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
+      },
+      {
+        Sid       = "CreateStateKeyAlias"
+        Effect    = "Allow"
+        Action    = "kms:CreateAlias"
+        Resource  = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"]
+        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
+      },
+      { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
+      { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
         Sid      = "ReadCiRoles"
@@ -190,8 +231,26 @@ run "policies" {
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
       },
+      {
+        Sid       = "ReadStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { StringEquals = { "aws:ResourceAccount" = "123456789012" } }
+      },
+      { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
     ]
-    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物の管理になっていません。"
+    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物と state の鍵の管理になっていません。"
+  }
+
+  # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
+  assert {
+    condition = alltrue([
+      length(aws_iam_role_policy.this["plan"].policy) <= 10240,
+      length(aws_iam_role_policy.this["apply"].policy) <= 10240,
+      length(aws_iam_role_policy.this["apply_identity"].policy) <= 10240,
+    ])
+    error_message = "inline policy が 10,240 文字を超えています。"
   }
 
   assert {
