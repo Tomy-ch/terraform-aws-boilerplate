@@ -87,12 +87,12 @@ test_pass_deny_star_principal if {
 }
 
 test_violation_star_principal if {
-	"[PLAN-KMS-01]" in ids([root, {"Effect": "Allow", "Principal": "*", "Action": "kms:Decrypt", "Resource": "*"}])
+	ids([root, {"Effect": "Allow", "Principal": "*", "Action": "kms:Decrypt", "Resource": "*"}]) == {"[PLAN-KMS-01]"}
 }
 
 test_violation_star_in_aws_principals if {
 	every v in ["*", ["arn:aws:iam::123456789012:role/a", "*"]] {
-		"[PLAN-KMS-01]" in ids([root, json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": v}])])
+		ids([root, json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": v}])]) == {"[PLAN-KMS-01]"}
 	}
 }
 
@@ -102,13 +102,26 @@ test_violation_no_account_delegation if {
 	}
 }
 
+# 委任のアカウントが決まらない文書では、値を委任のアカウントと比べる規則は落とす側（05）か黙る側（03）に倒れる。どちらでも 02 が文書を落とす。
+test_violation_account_undefined if {
+	other := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::210987654321:role/a"}])
+	ids([logs]) == {"[PLAN-KMS-02]", "[PLAN-KMS-05]"}
+	ids([other]) == {"[PLAN-KMS-02]"}
+}
+
 test_violation_two_account_delegations if {
 	"[PLAN-KMS-02]" in ids([root, root, via_s3])
 }
 
-test_violation_root_arn_with_suffix if {
-	r := json.patch(root, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:rootx"}])
-	"[PLAN-KMS-02]" in ids([r, via_s3])
+test_violation_root_arn_malformed if {
+	every a in ["arn:aws:iam::123456789012:rootx", "xarn:aws:iam::123456789012:root", "arn:aws:iam::12345678901:root"] {
+		"[PLAN-KMS-02]" in ids([json.patch(root, [{"op": "replace", "path": "/Principal/AWS", "value": a}]), via_s3])
+	}
+}
+
+test_pass_own_assumed_role if {
+	s := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:sts::123456789012:assumed-role/a/b"}])
+	count(ids([root, s])) == 0
 }
 
 # AWS は12桁のアカウント ID をそのアカウントへの委任として受ける。ARN でない principal は同じアカウントと読まない。
@@ -118,6 +131,7 @@ test_violation_principal_not_in_account if {
 		"210987654321",
 		"arn:aws:sts::210987654321:assumed-role/a/b",
 		"AROAEXAMPLEUNIQUEID",
+		"xarn:aws:iam::123456789012:role/a",
 	] {
 		"[PLAN-KMS-03]" in ids([root, json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": a}])])
 	}
@@ -130,8 +144,20 @@ test_violation_role_not_limited_by_via_service if {
 		with_condition(via_s3, {"StringNotEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}),
 		with_condition(via_s3, {"StringEqualsIfExists": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}),
 		with_condition(via_s3, {"StringLike": {"kms:ViaService": "*"}}),
+		with_condition(via_s3, {"StringLike": {"kms:ViaService": ["s3.ap-northeast-1.amazonaws.com", "*"]}}),
+		with_condition(via_s3, {"StringEquals": {"kms:ViaService": "s3.amazonaws.com"}}),
+		with_condition(via_s3, {"StringEquals": {"kms:ViaService": 1}}),
 	] {
 		"[PLAN-KMS-04]" in ids([root, s])
+	}
+}
+
+test_pass_role_limited_by_via_service if {
+	every c in [
+		{"StringLike": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}},
+		{"StringEquals": {"kms:ViaService": ["s3.ap-northeast-1.amazonaws.com", "sqs.ap-northeast-1.amazonaws.com"]}},
+	] {
+		count(ids([root, with_condition(via_s3, c)])) == 0
 	}
 }
 
@@ -140,10 +166,16 @@ test_violation_service_not_limited_by_source if {
 		without(logs, "/Condition"),
 		with_condition(logs, {"Bool": {"aws:SecureTransport": "true"}}),
 		with_condition(logs, {"StringEquals": {"kms:ViaService": "logs.ap-northeast-1.amazonaws.com"}}),
+		with_condition(logs, {"StringEquals": {"kms:EncryptionContextKeys": "aws:logs:arn"}}),
 		with_condition(logs, {"StringEquals": {"aws:SourceAccount": "210987654321"}}),
 		with_condition(logs, {"ArnLike": {"aws:SourceArn": "*"}}),
 		with_condition(logs, {"ArnLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/*"}}),
+		with_condition(logs, {"ArnLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/?"}}),
+		with_condition(logs, {"ArnEquals": {"aws:SourceArn": "foo:bar:baz:qux:123456789012:x"}}),
+		with_condition(logs, {"ArnEquals": {"aws:SourceArn": "arn:aws-cn:cloudtrail:cn-north-1:123456789012:trail/x"}}),
+		with_condition(logs, {"ArnEquals": {"aws:SourceArn": "arn:aws:s3:::bucket"}}),
 		with_condition(logs, {"StringLike": {"kms:EncryptionContext:aws:secretsmanager:secret": "*"}}),
+		with_condition(logs, {"StringEquals": {"kms:EncryptionContext:aws:dynamodb:tableName": "x"}}),
 		with_condition(logs, {"ArnEquals": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:210987654321:trail/x"}}),
 		with_condition(logs, {"ArnNotEquals": {"kms:EncryptionContext:aws:logs:arn": "arn:aws:logs:ap-northeast-1:123456789012:log-group:/x"}}),
 		with_condition(logs, {"Null": {"kms:EncryptionContext:aws:logs:arn": "true"}}),
@@ -153,24 +185,44 @@ test_violation_service_not_limited_by_source if {
 	}
 }
 
+# 限る条件の値が1つでも外を指せば落とす。ほかの値やキーが委任のアカウントに限っていても通さない。
+test_violation_service_source_partly_foreign if {
+	every c in [
+		{"StringEquals": {"aws:SourceAccount": ["123456789012", "210987654321"]}},
+		{"ArnEquals": {"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/x", "arn:aws:cloudtrail:ap-northeast-1:210987654321:trail/x"]}},
+		{"ArnEquals": {"kms:EncryptionContext:aws:logs:arn": ["arn:aws:logs:ap-northeast-1:123456789012:log-group:/x", "arn:aws:logs:ap-northeast-1:210987654321:log-group:/x"]}},
+		{"StringEquals": {"aws:SourceAccount": "123456789012"}, "ArnEquals": {"aws:SourceArn": "arn:aws:sns:ap-northeast-1:210987654321:t"}},
+		{"StringEquals": {"aws:SourceAccount": "210987654321", "kms:EncryptionContext:foo": "bar"}},
+	] {
+		"[PLAN-KMS-05]" in ids([root, with_condition(logs, c)])
+	}
+}
+
 test_violation_service_array_without_source if {
 	s := json.patch(without(logs, "/Condition"), [{"op": "replace", "path": "/Principal/Service", "value": ["logs.ap-northeast-1.amazonaws.com", "cloudtrail.amazonaws.com"]}])
 	"[PLAN-KMS-05]" in ids([root, s])
 }
 
-test_pass_service_limited_by_source_account_or_arn if {
+test_pass_service_limited_by_source if {
 	every c in [
 		{"StringEquals": {"aws:SourceAccount": "123456789012"}},
 		{"ArnEquals": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/x"}},
+		{"ArnLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/x"}},
 		{"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": "arn:aws:sns:ap-northeast-1:123456789012:t"}},
+		{"StringEquals": {"aws:SourceAccount": "123456789012"}, "ArnLike": {"aws:SourceArn": "arn:aws:s3:::bucket"}},
 	] {
 		count(ids([root, with_condition(logs, c)])) == 0
 	}
 }
 
 test_violation_for_all_values_encryption_context if {
-	every op in ["ForAllValues:StringEquals", "ForAllValues:ArnEquals", "forallvalues:arnequals"] {
-		"[PLAN-KMS-06]" in ids([root, with_condition(logs, {op: {"kms:EncryptionContext:aws:logs:arn": ["x"]}})])
+	every c in [
+		{"ForAllValues:StringEquals": {"kms:EncryptionContext:aws:logs:arn": ["x"]}},
+		{"ForAllValues:ArnEquals": {"kms:EncryptionContext:aws:logs:arn": ["x"]}},
+		{"forallvalues:arnequals": {"KMS:EncryptionContext:aws:logs:arn": ["x"]}},
+		{"ForAllValues:StringEquals": {"kms:EncryptionContextKeys": ["aws:logs:arn"]}},
+	] {
+		"[PLAN-KMS-06]" in ids([root, with_condition(logs, c)])
 	}
 }
 
@@ -184,22 +236,40 @@ test_pass_for_all_values_on_deny_and_other_keys if {
 test_violation_unreadable_principal if {
 	every s in [
 		{"Effect": "Allow", "NotPrincipal": {"AWS": "arn:aws:iam::123456789012:role/a"}, "Action": "kms:Decrypt", "Resource": "*"},
+		{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/a"}, "NotPrincipal": {"AWS": "arn:aws:iam::123456789012:role/b"}, "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Principal": "arn:aws:iam::123456789012:role/a", "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Principal": {"Federated": "arn:aws:iam::210987654321:saml-provider/x"}, "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Principal": {"CanonicalUser": "x"}, "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Principal": {}, "Action": "kms:Decrypt", "Resource": "*"},
+		{"Effect": "Allow", "Principal": {"AWS": []}, "Action": "kms:Decrypt", "Resource": "*"},
+		{"Effect": "Allow", "Principal": {"Service": []}, "Action": "kms:Decrypt", "Resource": "*"},
 		{"Effect": "Allow", "Principal": {"AWS": {"x": 1}}, "Action": "kms:Decrypt", "Resource": "*"},
 	] {
 		"[PLAN-KMS-07]" in ids([root, s])
 	}
 }
 
+test_pass_readable_principal_shapes if {
+	both := json.patch(via_s3, [{"op": "add", "path": "/Principal/Service", "value": ["logs.ap-northeast-1.amazonaws.com"]}, {"op": "add", "path": "/Condition/ArnEquals", "value": logs.Condition.ArnEquals}])
+	not "[PLAN-KMS-07]" in ids([root, both])
+	not "[PLAN-KMS-07]" in ids([root, {"Effect": "Allow", "Principal": "*", "Action": "kms:Decrypt", "Resource": "*"}])
+}
+
 test_violation_delegation_with_crypto_or_grant if {
-	every extra in [["kms:Decrypt"], ["KMS:CreateGrant"], ["kms:GenerateDataKey*"], ["kms:Create*"], ["kms:*"]] {
-		r := json.patch(root, [{"op": "replace", "path": "/Action", "value": array.concat(root.Action, extra)}])
-		"[PLAN-KMS-08]" in ids([r, via_s3])
+	every a in [
+		"kms:CreateGrant", "kms:Decapsulate", "kms:Decrypt", "kms:DeriveSharedSecret", "kms:Encapsulate", "kms:Encrypt",
+		"kms:GenerateDataKey", "kms:GenerateDataKeyPair", "kms:GenerateDataKeyPairWithoutPlaintext",
+		"kms:GenerateDataKeyWithoutPlaintext", "kms:GenerateMac", "kms:GetPublicKey", "kms:ReEncryptFrom", "kms:ReEncryptTo",
+		"kms:Sign", "kms:Verify", "kms:VerifyMac",
+		"KMS:CreateGrant", "kms:GenerateDataKey*", "kms:Create*", "kms:*", "kms:Decrypt?",
+	] {
+		"[PLAN-KMS-08]" in ids([json.patch(root, [{"op": "replace", "path": "/Action", "value": array.concat(root.Action, [a])}]), via_s3])
 	}
+}
+
+test_pass_delegation_single_action if {
+	count(ids([json.patch(root, [{"op": "replace", "path": "/Action", "value": "kms:DescribeKey"}]), via_s3])) == 0
 }
 
 test_violation_delegation_with_not_action if {

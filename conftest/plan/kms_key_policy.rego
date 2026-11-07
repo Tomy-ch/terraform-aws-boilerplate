@@ -23,7 +23,7 @@ account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 roots(body) := [a | some s in allows(body); some a in aws_principals(s); account_root(a)]
 
-# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まり、決まらなければ値を見る規則は限っていないと読む。
+# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とし、05 は限っていないと読み、03 は見ない。
 account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
 
 same_account(arn, acct) if regex.match(sprintf(`^arn:aws[a-z-]*:(iam|sts)::%s:`, [acct]), arn)
@@ -54,7 +54,7 @@ no_wildcard(v) if {
 
 # 鍵の暗号操作と grant。アカウントへの委任に置くと、IAM の許可だけで鍵を使えるようになる。
 crypto_actions := {
-	"kms:creategrant", "kms:decrypt", "kms:derivesharedsecret", "kms:encrypt", "kms:generatedatakey",
+	"kms:creategrant", "kms:decapsulate", "kms:decrypt", "kms:derivesharedsecret", "kms:encapsulate", "kms:encrypt", "kms:generatedatakey",
 	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
 	"kms:generatemac", "kms:getpublickey", "kms:reencryptfrom", "kms:reencryptto", "kms:sign", "kms:verify",
 	"kms:verifymac",
@@ -110,43 +110,62 @@ deny contains msg if {
 	some s in allows(r.body)
 	some svc in service_principals(s)
 	not source_limited(s, r.body)
-	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext）を限らずに許可しています", [r.document.path, r.document.address, svc])
+	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext の ARN）を限らずに許可しています", [r.document.path, r.document.address, svc])
 }
 
-source_limited(s, body) if {
-	vs := limiting_values(s, "aws:sourceaccount")
-	count(vs) > 0
-	every v in vs { v == account(body) }
+# 限る条件の値は、1つでも委任のアカウントの外を指せば、ほかの条件が限っていても開く。
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	some svc in service_principals(s)
+	some v in source_values(s)
+	not own_source(v, s, r.body)
+	msg := sprintf("[PLAN-KMS-05] %s: %s が %s の要求元に、委任のアカウントの外の値 %v を置いています", [r.document.path, r.document.address, svc, v])
 }
 
-source_limited(s, body) if {
-	vs := limiting_values(s, "aws:sourcearn")
-	count(vs) > 0
-	every v in vs { own_arn(v, body) }
-}
-
-source_limited(s, body) if {
+source_keys(s) := {k |
 	some k in limiting_keys(s)
-	startswith(k, "kms:encryptioncontext:")
-	vs := limiting_values(s, k)
-	count(vs) > 0
-	every v in vs { own_context(v, body) }
+	source_key(k)
 }
 
-own_arn(v, body) if {
+source_key("aws:sourceaccount")
+
+source_key("aws:sourcearn")
+
+source_key(k) if startswith(k, "kms:encryptioncontext:")
+
+source_values(s) := [v | some k in source_keys(s); some v in limiting_values(s, k)]
+
+source_limited(s, body) if {
+	some v in source_values(s)
+	own_source(v, s, body)
+}
+
+# アカウント ID か、委任と同じ partition とアカウントの ARN。ARN でない暗号化コンテキストの値は要求元を限らない。
+# アカウントの欄が空の ARN（S3 の Bucket）は、aws:SourceAccount が同じ文で委任のアカウントに限るときだけ認める。
+own_source(v, _, body) if {
 	no_wildcard(v)
+	v == account(body)
+}
+
+own_source(v, _, body) if {
+	own_partition_arn(v, body)
 	split(v, ":")[4] == account(body)
 }
 
-own_context(v, body) if {
-	no_wildcard(v)
-	startswith(v, "arn:")
-	split(v, ":")[4] == account(body)
+own_source(v, s, body) if {
+	own_partition_arn(v, body)
+	split(v, ":")[4] == ""
+	some a in limiting_values(s, "aws:sourceaccount")
+	a == account(body)
 }
 
-own_context(v, _) if {
+own_partition_arn(v, body) if {
 	no_wildcard(v)
-	not startswith(v, "arn:")
+	parts := split(v, ":")
+	count(parts) >= 6
+	parts[0] == "arn"
+	parts[1] == split(roots(body)[0], ":")[1]
 }
 
 # ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。
@@ -178,6 +197,7 @@ readable_principal(s) if {
 	count(s.Principal) > 0
 	every k, v in s.Principal {
 		k in {"AWS", "Service"}
+		count(lib.as_array(v)) > 0
 		every x in lib.as_array(v) { is_string(x) }
 	}
 }
