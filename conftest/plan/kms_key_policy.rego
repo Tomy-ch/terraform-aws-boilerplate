@@ -19,14 +19,46 @@ service_principals(s) := lib.as_array(object.get(s.Principal, "Service", [])) if
 
 service_principals(s) := [] if not is_object(s.Principal)
 
-account_root(arn) if regex.match(`^arn:[a-z-]+:iam::[0-9]{12}:root$`, arn)
-
-account_of(arn) := split(arn, ":")[4]
-
-# IAM は条件キーの大文字小文字を区別しない。
-condition_keys(s) := {lower(k) | some _, kv in object.get(s, "Condition", {}); some k, _ in kv}
+account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 roots(body) := [a | some s in allows(body); some a in aws_principals(s); account_root(a)]
+
+# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まり、決まらなければ値を見る規則は限っていないと読む。
+account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
+
+same_account(arn, acct) if regex.match(sprintf(`^arn:aws[a-z-]*:(iam|sts)::%s:`, [acct]), arn)
+
+# 限る条件として認める演算子。IfExists はキーの無い要求を通し、Not 系と Null は限らない。
+limiting_operators := {"stringequals", "stringlike", "arnequals", "arnlike"}
+
+# IAM は条件キーの大文字小文字を区別しない。
+limiting_values(s, key) := [v |
+	some op, kv in object.get(s, "Condition", {})
+	lower(op) in limiting_operators
+	some k, vs in kv
+	lower(k) == key
+	some v in lib.as_array(vs)
+]
+
+limiting_keys(s) := {lower(k) |
+	some op, kv in object.get(s, "Condition", {})
+	lower(op) in limiting_operators
+	some k, _ in kv
+}
+
+no_wildcard(v) if {
+	is_string(v)
+	not contains(v, "*")
+	not contains(v, "?")
+}
+
+# 鍵の暗号操作と grant。アカウントへの委任に置くと、IAM の許可だけで鍵を使えるようになる。
+crypto_actions := {
+	"kms:creategrant", "kms:decrypt", "kms:derivesharedsecret", "kms:encrypt", "kms:generatedatakey",
+	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
+	"kms:generatemac", "kms:getpublickey", "kms:reencryptfrom", "kms:reencryptto", "kms:sign", "kms:verify",
+	"kms:verifymac",
+}
 
 deny contains msg if {
 	some r in key_policies
@@ -47,13 +79,12 @@ deny contains msg if {
 
 deny contains msg if {
 	some r in key_policies
-	count(roots(r.body)) == 1
-	account := account_of(roots(r.body)[0])
+	acct := account(r.body)
 	some s in allows(r.body)
 	some a in aws_principals(s)
 	a != "*"
-	account_of(a) != account
-	msg := sprintf("[PLAN-KMS-03] %s: %s が別のアカウントの %s に許可しています", [r.document.path, r.document.address, a])
+	not same_account(a, acct)
+	msg := sprintf("[PLAN-KMS-03] %s: %s が、委任のアカウントの ARN でない %s に許可しています", [r.document.path, r.document.address, a])
 }
 
 deny contains msg if {
@@ -61,34 +92,109 @@ deny contains msg if {
 	some s in allows(r.body)
 	some a in aws_principals(s)
 	not account_root(a)
-	not "kms:viaservice" in condition_keys(s)
+	not via_service_limited(s)
 	msg := sprintf("[PLAN-KMS-04] %s: %s が %s に、経由するサービス（kms:ViaService）を限らずに許可しています", [r.document.path, r.document.address, a])
+}
+
+via_service_limited(s) if {
+	vs := limiting_values(s, "kms:viaservice")
+	count(vs) > 0
+	every v in vs {
+		is_string(v)
+		regex.match(`^[a-z0-9-]+\.[a-z0-9-]+\.amazonaws\.com$`, v)
+	}
 }
 
 deny contains msg if {
 	some r in key_policies
 	some s in allows(r.body)
 	some svc in service_principals(s)
-	not source_limited(s)
-	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（aws:SourceArn・aws:SourceAccount・kms:EncryptionContext）を限らずに許可しています", [r.document.path, r.document.address, svc])
+	not source_limited(s, r.body)
+	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext）を限らずに許可しています", [r.document.path, r.document.address, svc])
 }
 
-source_limited(s) if "aws:sourcearn" in condition_keys(s)
+source_limited(s, body) if {
+	vs := limiting_values(s, "aws:sourceaccount")
+	count(vs) > 0
+	every v in vs { v == account(body) }
+}
 
-source_limited(s) if "aws:sourceaccount" in condition_keys(s)
+source_limited(s, body) if {
+	vs := limiting_values(s, "aws:sourcearn")
+	count(vs) > 0
+	every v in vs { own_arn(v, body) }
+}
 
-source_limited(s) if {
-	some k in condition_keys(s)
+source_limited(s, body) if {
+	some k in limiting_keys(s)
 	startswith(k, "kms:encryptioncontext:")
+	vs := limiting_values(s, k)
+	count(vs) > 0
+	every v in vs { own_context(v, body) }
 }
 
-# ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。
+own_arn(v, body) if {
+	no_wildcard(v)
+	split(v, ":")[4] == account(body)
+}
+
+own_context(v, body) if {
+	no_wildcard(v)
+	startswith(v, "arn:")
+	split(v, ":")[4] == account(body)
+}
+
+own_context(v, _) if {
+	no_wildcard(v)
+	not startswith(v, "arn:")
+}
+
+# ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。
 deny contains msg if {
 	some r in key_policies
-	some s in lib.statements(r.body)
+	some s in allows(r.body)
 	some op, kv in object.get(s, "Condition", {})
 	startswith(lower(op), "forallvalues:")
 	some k, _ in kv
 	startswith(lower(k), "kms:encryptioncontext")
 	msg := sprintf("[PLAN-KMS-06] %s: %s が %s を ForAllValues で条件にしています", [r.document.path, r.document.address, k])
 }
+
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	not readable_principal(s)
+	msg := sprintf("[PLAN-KMS-07] %s: %s の Allow の Principal を読めません（NotPrincipal、Principal の欠落、AWS・Service 以外の種類）", [r.document.path, r.document.address])
+}
+
+readable_principal(s) if {
+	not s.NotPrincipal
+	s.Principal == "*"
+}
+
+readable_principal(s) if {
+	not s.NotPrincipal
+	is_object(s.Principal)
+	count(s.Principal) > 0
+	every k, v in s.Principal {
+		k in {"AWS", "Service"}
+		every x in lib.as_array(v) { is_string(x) }
+	}
+}
+
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	account_root(a)
+	some act in delegated_too_much(s)
+	msg := sprintf("[PLAN-KMS-08] %s: %s がアカウントへの委任に %s を置いています（暗号操作・grant・wildcard は名指した相手にだけ許す）", [r.document.path, r.document.address, act])
+}
+
+delegated_too_much(s) := {a |
+	some a in lib.lower_all(s.Action)
+	a in crypto_actions
+} | {a |
+	some a in lib.lower_all(s.Action)
+	regex.match(`[*?]`, a)
+} | {"NotAction" | s.NotAction}
