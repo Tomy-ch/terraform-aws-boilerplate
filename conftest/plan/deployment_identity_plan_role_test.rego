@@ -19,11 +19,10 @@ attachments_exclusive := rc("aws_iam_role_policy_attachments_exclusive", "module
 
 plan_policy(statements) := object.union(fixture.role_policy(statements), {"change": {"after": object.union(fixture.role_policy(statements).change.after, {"name": "plan", "role": "ci-plan"})}})
 
-# plan の role と、その権限を固定する exclusive の2つを揃えた入力。
 with_role(statements, others) := fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, plan_policy(statements)], others))
 
 test_pass_reads_and_plan_output_write if {
-	statements := [fixture.allow(["s3:GetObject", "s3:ListBucket", "iam:GetRole", "ec2:DescribeVpcs", "s3:HeadObject", "kms:Decrypt", "kms:GenerateDataKey"]), write_output]
+	statements := [fixture.allow(["s3:GetObject", "s3:ListBucket", "iam:GetRole", "ec2:DescribeVpcs", "s3:HeadObject", "kms:Decrypt"]), write_output]
 	count(p.deny) == 0 with input as with_role(statements, []) with data.policy_plan.deployment_identity as decl
 }
 
@@ -63,7 +62,7 @@ test_violation_not_resource if {
 }
 
 test_violation_mutating_action if {
-	every a in ["s3:DeleteObject", "iam:CreateRole", "S3:PUTBUCKETPOLICY", "*", "s3:*", "s3:Put*", "kms:Encrypt", ["s3:GetObject", "s3:DeleteObject"]] {
+	every a in ["s3:DeleteObject", "iam:CreateRole", "S3:PUTBUCKETPOLICY", "*", "s3:*", "s3:Put*", "kms:Encrypt", "kms:GenerateDataKey", ["s3:GetObject", "s3:DeleteObject"]] {
 		fixture.has("[PLAN-ROLE-02]", p.deny) with input as with_role([fixture.allow(a)], []) with data.policy_plan.deployment_identity as decl
 	}
 }
