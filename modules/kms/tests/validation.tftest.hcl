@@ -47,7 +47,6 @@ run "name_rejects_empty" {
   expect_failures = [var.name]
 }
 
-# alias/<name> は 256 文字まで（KMS の CreateAlias）。alias/ の6文字を除いて 250 文字が境界。
 run "name_accepts_250_characters" {
   command = plan
 
@@ -151,6 +150,64 @@ run "users_rejects_log_group_arn" {
   expect_failures = [var.users]
 }
 
+run "users_rejects_role_arn_without_name" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/", via = "s3" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_512_character_log_group" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = [format("/%0511d", 0)] }
+    }
+  }
+}
+
+run "users_rejects_513_character_log_group" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = [format("/%0512d", 0)] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_empty_log_group" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = [""] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_log_group_with_wildcard_or_colon" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = ["*", "a?b", "a:b", "a b"] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
 run "users_rejects_duplicate_log_group" {
   command = plan
 
@@ -188,7 +245,34 @@ run "users_rejects_other_partition_role" {
   expect_failures = [aws_kms_key_policy.this]
 }
 
-# Key Policy は 32768 文字まで（KMS の PutKeyPolicy）。
+# 57 個の 501 文字の名前と 196 文字の名前で、文書がちょうど 32768 文字になる。
+run "policy_accepts_32768_characters" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = concat([for i in range(57) : format("/%0500d", i)], [format("/%s", join("", [for i in range(195) : "z"]))]) }
+    }
+  }
+
+  assert {
+    condition     = length(aws_kms_key_policy.this.policy) == 32768
+    error_message = "境界の文書が 32768 文字になっていません。文書の形が変わったなら、名前の長さを直してください。"
+  }
+}
+
+run "policy_rejects_32769_characters" {
+  command = plan
+
+  variables {
+    users = {
+      services = { logs = concat([for i in range(57) : format("/%0500d", i)], [format("/%s", join("", [for i in range(196) : "z"]))]) }
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
 run "policy_rejects_over_32kb" {
   command = plan
 

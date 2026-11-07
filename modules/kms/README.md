@@ -51,7 +51,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 | 足すもの | 足す消費者 |
 | --- | --- |
 | `via = "logs"`・`via = "sns"`、SNS へ publish するサービス（CloudWatch Alarm・EventBridge）の文 | ops-notification（#25） |
-| CloudTrail の文（`kms:DescribeKey` は `aws:SourceArn` で trail を限る形） | audit-evidence（#22・#23） |
+| CloudTrail の文（`kms:DescribeKey` は `aws:SourceArn` で trail を限る形） | account-baseline（#22）・audit-evidence（#23） |
 | 他のアカウントへの許可と `aws_kms_grant` | data-refresh（#59）。方式（Key Policy か grant か）は未決 |
 | S3 の暗号化コンテキストでの Bucket の限定 | S3 Bucket Key の有無が決まったとき（有無で object ARN と bucket ARN が入れ替わる） |
 | us-east-1 など別の region の鍵 | その region の鍵を要る消費者。この module は呼ばれた provider の region に1本作る |
@@ -61,8 +61,9 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 - 暗号操作は、Key Policy で名指した role とサービスだけに許す。IAM で `AdministratorAccess` を持つ人の主体も、そのままでは復号できない。名指されない主体が鍵で暗号化された object を読むには、委任された `kms:PutKeyPolicy` で文を足す必要があり、その変更は次の apply で戻る。bootstrap の途中の一時 IAM user もこれに当たる（state を SSE-KMS にした後の段5 の手順の扱いは #19 が持つ）
 - Key Policy の Deny は持たない。鍵の管理（`kms:PutKeyPolicy` を含む）はアカウントへ委任しているので、どの主体が Key Policy を書き換えられるかは IAM が決める。書き込みを拒む Deny は消費者の IAM の側が持つ（ADR-0602 決定11、ADR-0604 決定10）
 - 入力から導いた値（鍵の属性、alias の名前、Key Policy の文書、validation と precondition）は `tests/` が mock の plan と apply で見る。Unit Test に属する（ADR-0501 決定9）。`aws_kms_key` の inline の `policy` を使わないことは、plan で値が決まらない（computed）ので、テストではなくこのファイルの構成が持つ
-- Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持つ。この module を呼ぶ reference の root はまだ無く、それまでは Rego のテストだけが規則を検証し、plan への適用は入力が0件で何も見ない
-- 部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い
+- Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持つ。この module を呼ぶ reference の root はまだ無く、それまでは Rego のテストだけが規則を検証し、plan への適用は入力が0件で何も見ない。最初にこの module を呼ぶ消費者は、reference の root で呼んだうえで、`conftest/plan/decl.json` の `required_documents` に `aws_kms_key_policy` を足す。足さなければ、Key Policy が入力から消えても Policy は黙る
+- アカウントへの委任の文を除く部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い
+- 鍵は作成の時点では既定の Key Policy（アカウントへの `kms:*`）を持ち、`aws_kms_key_policy` が直後に置き換える。置き換えが落ちたときは、次の apply までその状態が残る。`aws_kms_key_policy` を構成から外すと、Provider は既定の Key Policy を書き戻す（Provider の `aws_kms_key_policy` の NOTE）。外す変更と address の付け替えは `conftest/plan` の `plan.stateful_protection` が CI の plan と apply で拒む
 - CloudWatch Logs の文は、CloudWatch Logs の文書の例のとおり `kms:Describe*` を暗号化コンテキストの条件と同じ文に置く。KMS の文書は、`kms:EncryptionContext:*` の条件を受ける操作に `DescribeKey` を挙げておらず、それ以外の操作にこの条件を使うと拒否されるとする。この食い違いの下で CloudWatch Logs への配送と読み出しが通ることは、どのテストも見ていない
 - 実際の AWS に対して、次はどのテストも確かめていない。最初の消費者の CI の apply と、その後の CI の plan が `No changes.` を示すことで確かめる（#19）。sandbox での複製の作成・破棄、残存の検出、期待残存（削除の猶予中の鍵）の照合は、sandbox のアカウント（#21）と掃除の CI（#76）が揃うまで行わない
   - lockout の安全チェックが、委任の文と、鍵を管理する role の IAM で通ること
@@ -76,7 +77,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。引数と既定値は v6.68.0 の Provider の文書で確かめた。`terraform test` を走らせたのは、lock の無いこの module で init が選んだ版だけである
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数と既定値は v6.68.0 の Provider の文書で確かめた。`terraform test` を走らせたのは、lock の無いこの module で init が選んだ 6.72.0 だけである
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.16.6（`mise.toml`）だけである
 
 ## 公式実装の参照（ADR-0206 決定7・8）
@@ -107,6 +108,6 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 
 この module を使うすべてのユースケースが、次の逸脱を引き継ぐ。
 
-| 対象 | 理由 | この module を使う他の usecase への影響 | 見直し条件 |
-| --- | --- | --- | --- |
-| アカウントへの委任を、既定の Key Policy の `kms:*` ではなく、鍵の管理の21 Action（暗号操作と `kms:CreateGrant` を含まない）にする | Key Policy が暗号操作の主体を名指す唯一の境界になり、IAM の `kms:` の許可や grant から鍵を使う経路を作らない（KMS「Least-privilege permissions」は `kms:*` を IAM で更に絞るときに限るとする）。ADR-0301 決定8 の Action wildcard の禁止にも当たらない | 鍵を使う主体は、すべて `users` で名指す。IAM だけでは鍵を使えない。grant を要る消費者（RDS・ECR など）は、`kms:GrantIsForAWSResource` の条件付きの文を足す変更を要る。AWS が鍵の管理の API を足したとき、列挙を直さないと管理できない操作が残る | AWS が鍵の管理の API を足したとき。grant を要る消費者が着手したとき。AWS Provider の major 更新時（ADR-0206 決定12） |
+| 対象 | 理由 | 由来 | 影響（security / availability / cost） | 代替案 | 見直し条件 |
+| --- | --- | --- | --- | --- | --- |
+| アカウントへの委任を、既定の Key Policy の `kms:*` ではなく、鍵の管理の21 Action（暗号操作と `kms:CreateGrant` を含まない）にする | Key Policy が暗号操作の主体を名指す唯一の境界になり、IAM の `kms:` の許可や grant から鍵を使う経路を作らない（KMS「Least-privilege permissions」は `kms:*` を IAM で更に絞るときに限るとする）。ADR-0301 決定8 の Action wildcard の禁止にも当たらない | ユースケースの制約ではなく、この module の判断 | security: 鍵を使う主体はすべて `users` で名指し、IAM だけでは鍵を使えない。委任の文が暗号操作を含まないことは `PLAN-KMS-08` が見る。availability: AWS が鍵の管理の API を足したとき、列挙を直すまでその操作を使えない。grant を要る消費者（RDS・ECR など）は `kms:GrantIsForAWSResource` の条件付きの文を足す変更を要る。cost: 鍵の課金は変わらない | 既定の Key Policy の `kms:*` の委任、console の key administrators の集合（部分 wildcard）の委任。採らない理由は「採用しなかった知見と理由」 | AWS が鍵の管理の API を足したとき。grant を要る消費者が着手したとき。AWS Provider の major 更新時（ADR-0206 決定12） |

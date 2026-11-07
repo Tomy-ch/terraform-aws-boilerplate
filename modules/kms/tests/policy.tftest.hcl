@@ -90,6 +90,21 @@ run "roles_via_s3" {
   }
 }
 
+run "single_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3" }]
+    }
+  }
+
+  assert {
+    condition     = jsondecode(aws_kms_key_policy.this.policy).Statement[1].Principal == { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
+    error_message = "role が1件のときも Principal.AWS が配列になっていません。"
+  }
+}
+
 # 入力の並べ替えで文書が変わると、差分が出続ける。
 run "roles_order_does_not_matter" {
   command = plan

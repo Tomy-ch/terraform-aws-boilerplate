@@ -24,6 +24,7 @@ variable "users" {
       logs = optional(list(string), [])
     }), {})
   })
+  nullable = false
 
   # 誰も暗号操作できない鍵は作る意味が無い。管理の委任は暗号操作を含まない。
   validation {
@@ -46,6 +47,7 @@ variable "users" {
     error_message = "users.roles に同じ role と via の組を重ねないでください。"
   }
 
+  # Key Policy の ArnEquals は * と ? をワイルドカードとして読むので、名前の文字をここで閉じる。
   validation {
     condition     = alltrue([for n in var.users.services.logs : can(regex("^[.\\-_/#A-Za-z0-9]{1,512}$", n))])
     error_message = "users.services.logs は Log Group の名前（ARN ではない）にしてください。"
