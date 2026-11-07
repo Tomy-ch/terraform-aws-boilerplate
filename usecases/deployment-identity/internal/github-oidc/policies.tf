@@ -10,6 +10,7 @@ locals {
   state_key_pattern      = "${local.kms_arn_prefix}:key/*"
   state_key_alias_arn    = "${local.kms_arn_prefix}:${var.state_key_alias_name}"
   state_key_read_actions = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+  state_key_or_unaliased = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = var.state_key_alias_name } }
 
   identity_role_arns = [for k in keys(local.roles) : aws_iam_role.this[k].arn]
   identity_arns      = concat(local.identity_role_arns, [aws_iam_openid_connect_provider.github.arn])
@@ -149,11 +150,11 @@ locals {
           Resource  = "*"
           Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
         },
-        # 鍵を作る apply の途中では alias がまだ無いので、alias で鍵を絞れない（deployment-identity/ADR-0201 決定4）。
-        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = local.state_key_pattern },
-        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = local.state_key_pattern },
+        # 鍵を作る apply の途中では alias がまだ無いので、alias が無い鍵か state の alias だけが付いた鍵に限る（deployment-identity/ADR-0201 決定4）。
+        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = local.state_key_pattern, Condition = local.state_key_or_unaliased },
+        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = local.state_key_pattern, Condition = local.state_key_or_unaliased },
         # CreateAlias は alias と鍵の両方に権限を要る。
-        { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = [local.state_key_alias_arn, local.state_key_pattern] },
+        { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = [local.state_key_alias_arn, local.state_key_pattern], Condition = local.state_key_or_unaliased },
         # Provider が載せない値を KMS がどちらに評価しても既定の作成を妨げない Deny で拒む（deployment-identity/ADR-0201 決定1）。
         { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
         { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },

@@ -209,9 +209,27 @@ run "policies" {
         Resource  = "*"
         Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
       },
-      { Sid = "ReadStateKey", Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/*" },
-      { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/*" },
-      { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"] },
+      {
+        Sid       = "ReadStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
+      },
+      {
+        Sid       = "ManageStateKey"
+        Effect    = "Allow"
+        Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
+        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
+      },
+      {
+        Sid       = "CreateStateKeyAlias"
+        Effect    = "Allow"
+        Action    = "kms:CreateAlias"
+        Resource  = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"]
+        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
+      },
       { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
       { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },
       { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
@@ -302,10 +320,11 @@ run "key_arns_follow_inputs" {
 
   assert {
     condition = jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[13] == {
-      Sid      = "CreateStateKeyAlias"
-      Effect   = "Allow"
-      Action   = "kms:CreateAlias"
-      Resource = ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:alias/other-tfstate", "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"]
+      Sid       = "CreateStateKeyAlias"
+      Effect    = "Allow"
+      Action    = "kms:CreateAlias"
+      Resource  = ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:alias/other-tfstate", "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"]
+      Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } }
     }
     error_message = "apply-identity の alias の作成が、data source の partition・region・account と入力の alias から組まれていません。"
   }

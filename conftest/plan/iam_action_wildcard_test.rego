@@ -80,6 +80,25 @@ test_pass_resource_wildcard if {
 	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([allow, deny]), key_policy, bucket]) with data.policy_plan.resource_wildcard_actions as ["kms:createkey"]
 }
 
+test_violation_kms_crypto_action if {
+	every a in ["kms:Decrypt", "KMS:GenerateDataKey", "kms:ReEncryptFrom", "kms:CreateGrant", "kms:Gen*", "kms:?ecrypt", "kms:Get*"] {
+		fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow(a)])])
+	}
+}
+
+test_violation_kms_crypto_action_in_managed_policy if {
+	rc := fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.this", "policy", {"Statement": [fixture.allow("kms:Encrypt")]})
+	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc])
+}
+
+# 鍵の管理の Action、Deny の暗号操作、Key Policy の暗号操作は見ない。
+test_pass_kms_without_crypto_in_identity_policy if {
+	manage := fixture.allow(["kms:DescribeKey", "kms:PutKeyPolicy", "kms:GetKeyPolicy", "kms:List*"])
+	deny := {"Effect": "Deny", "Action": "kms:Decrypt", "Resource": "*"}
+	key_policy := fixture.doc("aws_kms_key_policy", "module.x.aws_kms_key_policy.this", "policy", {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/r"}, "Action": "kms:Decrypt", "Resource": "*"}]})
+	count([m | some m in p.deny; startswith(m, "[PLAN-IAM-04]")]) == 0 with input as fixture.plan([fixture.role_policy([manage, deny]), key_policy])
+}
+
 test_violation_star_service_wildcard if {
 	fixture.has("[PLAN-IAM-01]", p.deny) with input as fixture.plan([fixture.role_policy([fixture.allow("*:*")])])
 }
