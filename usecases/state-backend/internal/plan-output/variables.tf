@@ -17,6 +17,7 @@ variable "name" {
 variable "retention_days" {
   description = "plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える。"
   type        = number
+  nullable    = false
 
   validation {
     condition     = var.retention_days >= 1 && floor(var.retention_days) == var.retention_days
