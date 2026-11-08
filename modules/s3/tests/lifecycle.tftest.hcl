@@ -6,10 +6,16 @@ mock_provider "aws" {
     defaults = { region = "ap-northeast-1" }
   }
 
-  # prefix は Optional かつ Computed で、mock の apply は設定しない文字列を乱数で埋める。空を既定にして、
-  # 設定した prefix だけが値として残るようにする。
+  # prefix・大きさ・days は Optional かつ Computed で、mock の apply は設定しない値を乱数か 0 で埋める。
+  # 設定しうる値と重ならない既定を置き、設定した値だけが既定から外れるようにする。
   mock_resource "aws_s3_bucket_lifecycle_configuration" {
-    defaults = { rule = { prefix = "", filter = { prefix = "" } } }
+    defaults = {
+      rule = {
+        prefix     = ""
+        filter     = { prefix = "", object_size_greater_than = -1, object_size_less_than = -1 }
+        expiration = { days = -1 }
+      }
+    }
   }
 }
 
@@ -33,7 +39,7 @@ run "lifecycle_rule" {
 
   assert {
     condition     = length(one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).and) == 0 && length(one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).tag) == 0
-    error_message = "lifecycle の規則の filter が tag で対象を絞っています。"
+    error_message = "lifecycle の規則の filter が and か tag で対象を絞っています。"
   }
 
   assert {
@@ -67,8 +73,7 @@ run "lifecycle_rule" {
   }
 }
 
-# days・prefix・bucket は plan では決まらない。mock の apply は設定しない number を 0 に、prefix を上の既定の空にし、
-# 設定した値はそのまま残す。
+# days・prefix・大きさ・bucket は plan では決まらないので、mock の apply で上の既定のままであることを見る。
 run "whole_bucket_without_current_version_expiration" {
   command = apply
 
@@ -78,17 +83,23 @@ run "whole_bucket_without_current_version_expiration" {
   }
 
   assert {
-    condition     = aws_s3_bucket_lifecycle_configuration.this.rule[0].prefix == "" && one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).prefix == ""
-    error_message = "lifecycle の規則が prefix で対象を絞っています。"
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).prefix == ""
+    error_message = "lifecycle の規則の filter が prefix で対象を絞っています。"
+  }
+
+  # rule 直下の prefix は非推奨の属性で、偽になると Terraform は assert の診断を出す前に panic する。落ちること自体は変わらない。
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.this.rule[0].prefix == ""
+    error_message = "lifecycle の規則が rule の prefix で対象を絞っています。"
   }
 
   assert {
-    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_greater_than == 0 && one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_less_than == 0
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_greater_than == -1 && one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_less_than == -1
     error_message = "lifecycle の規則が object の大きさで対象を絞っています。"
   }
 
   assert {
-    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).days == 0
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).days == -1
     error_message = "現行版を日数で失効させています。"
   }
 }
