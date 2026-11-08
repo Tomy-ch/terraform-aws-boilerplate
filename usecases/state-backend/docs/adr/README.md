@@ -16,6 +16,7 @@
 | --- | --- | --- |
 | [0101](0101-sse-s3-until-cmk.md) | bootstrap の段5 まで state Bucket を SSE-S3 で暗号化する | Accepted |
 | [0102](0102-no-mfa-delete-or-object-lock.md) | state Bucket に MFA delete と Object Lock を掛けない | Accepted |
+| [0103](0103-expire-noncurrent-state-versions.md) | state Bucket の上書きされた版を、保持日数で消す | Accepted |
 
 ### 02 plan の出力
 

@@ -20,6 +20,7 @@ CI の plan の全文は公開されるログに出さず、state Bucket と分�
 | --- | --- | --- |
 | `project` | `string`（英小文字と数字） | 名前の先頭に置くプロジェクトの token |
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | Bucket を置くアカウントの env の token（[scope.md 第3節](../../docs/v1.0-plan/scope.md)） |
+| `state_noncurrent_version_retention_days` | `number`（1以上の整数、既定値なし） | 上書きされた state の版を残す日数。この日数を過ぎた版は消え、その版へは戻せない。現行版は失効させない（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)） |
 | `plan_output_retention_days` | `number`（1以上の整数、既定7） | plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える |
 
 state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an`、plan の出力の Bucket は `<project>-<env>-tfplan-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` と `internal/plan-output` が内部の入力 `name` の誤りとして plan で落とす。
@@ -42,7 +43,8 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
 | 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
-| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、state Bucket の lifecycle、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。ログの分は #108 の後）。CI の apply（`terraform-apply.yaml`）が apply する。apply-identity が鍵と alias と state Bucket の lifecycle を作る権限は `deployment-identity` にある |
+| 段4 | state Bucket の lifecycle（上書きされた版を保持日数で消す） | `modules/s3`。段1 の CLI では作らず、段2 の plan に追加として現れる |
+| 段5 | CMK と SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。ログの分は #108 の後）。CI の apply（`terraform-apply.yaml`）が apply する。apply-identity が鍵と alias を作る権限は `deployment-identity` にある |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
 
@@ -59,10 +61,12 @@ unsupported:
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 - plan の出力を保持日数より長く残すこと
+- 保持日数を過ぎた state の版へ戻すこと（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 
 未決:
 
 - 1つのアカウントに複数の env を置く構成。サポートするかを決めるときに、root と key をあわせて決める（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定1）
+- state Bucket を AWS Backup で backup すること（AWS Prescriptive Guidance の Backend best practices が版管理とあわせて推奨する）
 
 ## 所有者
 
@@ -74,11 +78,11 @@ unsupported:
 
 - ユースケース: 無い。`deployment-identity` がこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_alias_name` を受ける
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
-- 段5 は `deployment-identity` の3つの role の ARN（`plan_role_arn` / `apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。plan の role は plan の出力を書くのに鍵の `kms:GenerateDataKey` を要り、それを IAM ではなく Key Policy が許すので、Key Policy に名指す。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias と state Bucket の lifecycle の分は足してあり、ログの分は #108 の後に足す。apply-identity の権限は `state_key_alias_name` の alias だけを作れる
+- 段5 は `deployment-identity` の3つの role の ARN（`plan_role_arn` / `apply_role_arn` / `apply_identity_role_arn`）と、kms（#107）・log-group（#108）の一般 module を要る。plan の role は plan の出力を書くのに鍵の `kms:GenerateDataKey` を要り、それを IAM ではなく Key Policy が許すので、Key Policy に名指す。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias の分は足してあり、ログの分は #108 の後に足す。apply-identity の権限は `state_key_alias_name` の alias だけを作れる
 
 ## 検証方法
 
-- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `plan_output_retention_days` の検査を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名を確かめる。Bucket の属性の値は `modules/s3/tests/` と `internal/plan-output/tests/` が見る。lifecycle の規則も後者が見る
+- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `state_noncurrent_version_retention_days`・`plan_output_retention_days` の検査と配線を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名を確かめる。Bucket の属性の値と lifecycle の規則は `modules/s3/tests/` と `internal/plan-output/tests/` が見る
 - 段2 の突合: 人が実 AWS で `terraform plan` を実行し、取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないものだけであることを確かめる（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定8）。`import` block が `modules/s3` の resource をすべて覆っていること、その id が正しいことを見るのはこの plan だけで、自動の検査は無い
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。実行ごとに sandbox へ複製を作り、apply→検証→destroy して、期待残存との照合で余剰0件を確かめる。複製は常駐する Bucket と backend・名前・鍵を共有しない
 
@@ -90,22 +94,23 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - TLS でない要求が、実 API で Bucket Policy に拒否されること
 - 新しく作るときに、Bucket Policy の作成が Public Access Block の設定と競合して失敗すること
 - 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、段4 の apply の後の plan が見る）
-- plan の出力の Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
+- 2つの Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
 
 Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、2つの Bucket の Bucket Policy の Allow の Action の wildcard の不在を確かめる。object lock と `mfa` の不在を見る Policy は無い（#210）。層検査（#74）は未配線である。配線された後に遡って検証する。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-参照日: 2026-10-25
+参照日: 2026-10-25（lifecycle と backup の項は 2026-11-08）
 
 - AWS / HashiCorp が publisher の state backend の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search` を `q` = `tfstate` / `backend` / `state-backend` / `s3-backend`、`provider=aws` で引いた結果に、namespace `aws-ia`・`hashicorp`・`aws`・`aws-samples` が無い）
-- 参照した一次資料: [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[import block](https://developer.hashicorp.com/terraform/language/block/import)、AWS Provider 6.70.0 の `aws_s3_bucket` 系の文書と schema、AWS CLI 2.36.40 の `s3api` reference
+- 参照した一次資料: [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[import block](https://developer.hashicorp.com/terraform/language/block/import)、AWS Provider 6.70.0 の `aws_s3_bucket` 系の文書と schema、AWS CLI 2.36.40 の `s3api` reference、[AWS Prescriptive Guidance の Backend best practices](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/backend.html)、[Security Hub の S3 の control](https://docs.aws.amazon.com/securityhub/latest/userguide/s3-controls.html)（S3.10）、[S3 Lifecycle の設定例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html)
 
 採用した知見:
 
 - lock を S3 backend の lock file で取る（DynamoDB による lock は deprecated）
 - `import` block で取り込み、`terraform import` コマンドを使わない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定6）
 - backend の `bucket` を部分構成で渡す。名前にアカウント ID が入るので、派生したリポジトリが backend の block を書き換えずに済む
+- 版管理を持つ Bucket に lifecycle を置き、上書きされた版を保持日数で消す（Security Hub S3.10。[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 
 採用しなかった知見と理由:
 
