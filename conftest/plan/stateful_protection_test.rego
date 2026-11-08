@@ -3,7 +3,7 @@ package plan.stateful_protection_test
 import data.plan.fixture
 import data.plan.stateful_protection
 
-decl := {"protected_types": ["aws_s3_bucket"], "allow": {}}
+decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {}}
 
 bucket := "module.state_backend.module.s3.aws_s3_bucket.this"
 
@@ -45,25 +45,25 @@ test_pass_data_source_is_not_a_removal if {
 }
 
 test_pass_allowed_removal_in_its_root if {
-	d := {"protected_types": ["aws_s3_bucket"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d
 	count(msgs) == 0
 }
 
 test_violation_allow_of_another_root_does_not_apply if {
-	d := {"protected_types": ["aws_s3_bucket"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-01] tmp/ci-plan/admin-identity.json", msgs)
 }
 
 test_violation_unmatched_allow_entry if {
-	d := {"protected_types": ["aws_s3_bucket"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["no-op"])]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-02]", msgs)
 }
 
 test_pass_allow_entry_of_absent_root_is_not_checked if {
-	d := {"protected_types": ["aws_s3_bucket"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["no-op"])]) with data.policy_plan.stateful_protection as d
 	count(msgs) == 0
 }
@@ -74,7 +74,7 @@ test_violation_declaration_without_state_bucket_type if {
 }
 
 test_violation_declaration_with_empty_reason if {
-	d := {"protected_types": ["aws_s3_bucket"], "allow": {"p": [{"address": bucket, "reason": ""}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"p": [{"address": bucket, "reason": ""}]}}
 	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-00]", msgs)
 }
@@ -221,9 +221,113 @@ test_pass_disabling_or_removing_rules_keeps_versions if {
 	count(msgs) == 0
 }
 
-test_pass_shortening_of_unprotected_lifecycle if {
-	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([rule(90, 0)], [rule(1, 0)])]) with data.policy_plan.stateful_protection as decl
+test_violation_declaration_without_lifecycle_type if {
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([rule(90, 0)], [rule(1, 0)])]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket"], "allow": {}}
+	fixture.has("[PLAN-STATE-00]", msgs)
+}
+
+test_pass_shortening_of_another_type if {
+	rc := object.union(lifecycle_update([rule(90, 0)], [rule(1, 0)]), {"type": "aws_s3_bucket_versioning"})
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as decl
 	count(msgs) == 0
+}
+
+dated(date) := object.union(rule(90, 0), {"expiration": [{"days": 0, "date": date}]})
+
+test_violation_current_expiration_by_date_added if {
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([rule(90, 0)], [dated("2026-12-01T00:00:00Z")])]) with data.policy_plan.stateful_protection as lifecycle_decl
+	fixture.has("[PLAN-STATE-04]", msgs)
+}
+
+test_violation_current_expiration_date_moved_earlier if {
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([dated("2027-01-01T00:00:00Z")], [dated("2026-12-01T00:00:00Z")])]) with data.policy_plan.stateful_protection as lifecycle_decl
+	fixture.has("[PLAN-STATE-04]", msgs)
+}
+
+test_pass_current_expiration_date_moved_later if {
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([dated("2026-12-01T00:00:00Z")], [dated("2027-01-01T00:00:00Z")])]) with data.policy_plan.stateful_protection as lifecycle_decl
+	count(msgs) == 0
+}
+
+test_pass_removing_the_shortest_of_two_rules_lengthens if {
+	shortest := object.union(rule(30, 0), {"id": "s"})
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([rule(90, 0), shortest], [rule(60, 0)])]) with data.policy_plan.stateful_protection as lifecycle_decl
+	count(msgs) == 0
+}
+
+test_pass_rule_without_status_is_not_enabled if {
+	no_status := object.remove(rule(1, 0), ["status"])
+	msgs := stateful_protection.deny with input as fixture.plan([lifecycle_update([rule(90, 0)], [no_status])]) with data.policy_plan.stateful_protection as lifecycle_decl
+	count(msgs) == 0
+}
+
+test_violation_unknown_after_days if {
+	rc := object.union(lifecycle_update([rule(90, 0)], [{"id": "r", "status": "Enabled", "noncurrent_version_expiration": [{}], "expiration": [{"days": 0}]}]), {"change": {"after_unknown": {"rule": [{"noncurrent_version_expiration": [{"noncurrent_days": true}]}]}}})
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as lifecycle_decl
+	fixture.has("[PLAN-STATE-06]", msgs)
+}
+
+test_violation_unknown_after_rules if {
+	rc := object.union(lifecycle_update([rule(90, 0)], []), {"change": {"after_unknown": {"rule": true}}})
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as lifecycle_decl
+	fixture.has("[PLAN-STATE-06]", msgs)
+}
+
+test_pass_unknown_values_of_a_created_lifecycle if {
+	rc := {"address": lifecycle, "type": "aws_s3_bucket_lifecycle_configuration", "change": {"actions": ["create"], "before": null, "after": {"rule": [rule(90, 0)]}, "after_unknown": {"rule": [{"expiration": [{"days": true}]}]}}}
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as lifecycle_decl
+	count(msgs) == 0
+}
+
+test_pass_unknown_values_outside_the_limits if {
+	rc := object.union(lifecycle_update([rule(90, 0)], [rule(90, 0)]), {"change": {"after_unknown": {"rule": [{"filter": [{"prefix": true}]}]}}})
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as lifecycle_decl
+	count(msgs) == 0
+}
+
+other_lifecycle := "module.state_backend.module.s3.aws_s3_bucket_lifecycle_configuration.that"
+
+forgotten := {"address": lifecycle, "type": "aws_s3_bucket_lifecycle_configuration", "change": {"actions": ["forget"], "before": {"rule": [rule(90, 0)]}, "after": null}}
+
+created(rules) := {"address": other_lifecycle, "type": "aws_s3_bucket_lifecycle_configuration", "change": {"actions": ["create"], "before": null, "after": {"rule": rules}}}
+
+test_violation_forget_of_protected_type if {
+	msgs := stateful_protection.deny with input as fixture.plan([forgotten]) with data.policy_plan.stateful_protection as lifecycle_decl
+	some m in msgs
+	contains(m, "[PLAN-STATE-01]")
+	contains(m, "管理から除外")
+}
+
+test_violation_shortening_by_forget_and_create_at_another_address if {
+	d := object.union(lifecycle_decl, {"allow": {"p": [{"address": lifecycle, "reason": "address を替える"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([forgotten, created([rule(1, 0)])]) with data.policy_plan.stateful_protection as d
+	fixture.has(sprintf("[PLAN-STATE-04] p.json: %s", [other_lifecycle]), msgs)
+}
+
+test_pass_moving_to_another_address_without_shortening if {
+	d := object.union(lifecycle_decl, {"allow": {"p": [{"address": lifecycle, "reason": "address を替える"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([forgotten, created([rule(90, 0)])]) with data.policy_plan.stateful_protection as d
+	count(msgs) == 0
+}
+
+test_violation_shorten_allow_matched_only_in_another_root if {
+	d := object.union(lifecycle_decl, {"shorten_allow": {"admin-identity": [{"address": lifecycle, "reason": "保持日数を見直す"}], "workload": [{"address": lifecycle, "reason": "保持日数を見直す"}]}})
+	inputs := array.concat(plan_at("tmp/ci-plan/admin-identity.json", [lifecycle_update([rule(90, 0)], [rule(90, 0)])]), plan_at("tmp/ci-plan/workload.json", [lifecycle_update([rule(90, 0)], [rule(30, 0)])]))
+	msgs := stateful_protection.deny with input as inputs with data.policy_plan.stateful_protection as d
+	fixture.has("[PLAN-STATE-05] tmp/ci-plan/admin-identity.json", msgs)
+	count(msgs) == 1
+}
+
+test_pass_shorten_allow_entry_of_absent_root_is_not_checked if {
+	d := object.union(lifecycle_decl, {"shorten_allow": {"workload": [{"address": lifecycle, "reason": "保持日数を見直す"}]}})
+	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [lifecycle_update([rule(90, 0)], [rule(90, 0)])]) with data.policy_plan.stateful_protection as d
+	count(msgs) == 0
+}
+
+test_violation_shorten_allow_address_not_a_string if {
+	d := object.union(lifecycle_decl, {"shorten_allow": {"p": [{"address": 1, "reason": "保持日数を見直す"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan.stateful_protection as d
+	fixture.has("[PLAN-STATE-00]", msgs)
 }
 
 test_violation_removal_of_protected_lifecycle if {
