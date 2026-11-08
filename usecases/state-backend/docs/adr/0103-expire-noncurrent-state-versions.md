@@ -64,7 +64,7 @@ state の key の配置（repository-wide/ADR-0604 (state-split-by-apply-role)�
 
 - Unit Test: `modules/s3/tests/lifecycle.tftest.hcl` が、規則の各要素の値、filter が tag で絞らないこと、現行版を日付で失効させないこと、版の数で残さないこと、入力の検査を mock の plan で確かめる。現行版を日数で失効させないこと、filter が prefix と大きさで絞らないこと、規則が state Bucket に付くことは mock の apply で確かめる。既定値が無いことと null を受けないことを見る検査は無い
 - Contract Test: `usecases/state-backend/tests/contract.tftest.hcl` が、公開入力の検査と、値が規則へ届くことを確かめる
-- Policy Test: `plan.stateful_protection` が、日数の短縮と失効の日付の前倒し（`PLAN-STATE-04`）、使われない短縮の許可（`05`）、plan で決まらない日数（`06`）を落とす。管理からの除外と別 address での作成を組にした短縮も落とす。Rego のテストと、実 provider の plan への適用で確かめた
+- Policy Test: `plan.stateful_protection` が、日数の短縮と失効の日付の前倒し（`PLAN-STATE-04`）、使われない短縮の許可（`05`）、plan で決まらない日数（`06`）を落とす。管理からの除外と別 address での作成を組にした短縮も落とす。同じ Bucket の2つ目の lifecycle（`07`）と inline の lifecycle_rule（`08`）も落とす。Rego のテスト（`conftest/plan/stateful_protection_test.rego`）と `make tf-policy` が固定する
 - Security: `make checkov` が `modules/s3` で CKV2_AWS_61 と CKV_AWS_300 を報告しないこと
 
 ## 影響

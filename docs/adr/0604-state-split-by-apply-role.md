@@ -42,7 +42,7 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### stateful な resource の保護
 
 11. identity root と workload root の plan に、保護の対象として宣言した型の resource の削除、置換、または管理からの除外（`removed` block の `destroy = false`）が含まれる場合、Policy Test で失敗させる。対象の型の宣言は、その Policy Test が持つ（ADR-0402）。state Bucket の型を必ず含める。この Policy Test は、Pull Request の plan と、apply の job が apply する plan の両方に掛ける。apply の job は、失敗したら apply しない。
-12. 意図した削除と置換は、対象の address と理由を、許可の宣言に足すことで明示する。許可の宣言は root ごとに持つ。許可の宣言のうち、その root の plan のどの削除と置換にも当たらない項目は、Policy Test で失敗させる。Policy Test は、保護の対象の型ごとに、削除と同じく取り返しのつかない属性の変更（例: 版を消す日数の短縮）を宣言してよい。その変更も、対象の address と理由を root ごとの許可の宣言に足すことで明示し、どの変更にも当たらない項目を Policy Test で失敗させる。どの属性の変更を宣言するかとその理由は、その型を持つユースケースの ADR が持つ。
+12. 意図した削除、置換、管理からの除外は、対象の address と理由を、許可の宣言に足すことで明示する。許可の宣言は root ごとに持つ。許可の宣言のうち、その root の plan のどの削除・置換・管理からの除外にも当たらない項目は、Policy Test で失敗させる。Policy Test は、保護の対象の型ごとに、削除と同じく取り返しのつかない属性の変更（例: 版を消す日数の短縮）を宣言してよい。その変更も、対象の address と理由を root ごとの許可の宣言に足すことで明示し、どの変更にも当たらない項目を Policy Test で失敗させる。どの属性の変更を宣言するかとその理由は、その型を持つユースケースの ADR が持つ。
 
 ## 検討した代替案
 
@@ -89,6 +89,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
   - workload root の中での、誤った apply の影響の局所化
   - workload root が大きくなったときの plan の時間と、apply のロックの待ち
   - 宣言していない型の resource の削除と置換。plan を経ない操作（`terraform destroy` 等）による削除
+  - 対象の Bucket が plan で決まらない lifecycle を作るときに、同じ Bucket の既存の lifecycle と突き合わせること
 
 ## 検証方法
 
