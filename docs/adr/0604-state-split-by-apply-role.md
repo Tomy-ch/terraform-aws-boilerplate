@@ -41,8 +41,8 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 
 ### stateful な resource の保護
 
-11. identity root と workload root の plan に、保護の対象として宣言した型の resource の削除または置換が含まれる場合、Policy Test で失敗させる。対象の型の宣言は、その Policy Test が持つ（ADR-0402）。state Bucket の型を必ず含める。この Policy Test は、Pull Request の plan と、apply の job が apply する plan の両方に掛ける。apply の job は、失敗したら apply しない。
-12. 意図した削除と置換は、対象の address と理由を、許可の宣言に足すことで明示する。許可の宣言は root ごとに持つ。許可の宣言のうち、その root の plan のどの削除と置換にも当たらない項目は、Policy Test で失敗させる。
+11. identity root と workload root の plan に、保護の対象として宣言した型の resource の削除、置換、または管理からの除外（`removed` block の `destroy = false`）が含まれる場合、Policy Test で失敗させる。対象の型の宣言は、その Policy Test が持つ（ADR-0402）。state Bucket の型を必ず含める。この Policy Test は、Pull Request の plan と、apply の job が apply する plan の両方に掛ける。apply の job は、失敗したら apply しない。
+12. 意図した削除と置換は、対象の address と理由を、許可の宣言に足すことで明示する。許可の宣言は root ごとに持つ。許可の宣言のうち、その root の plan のどの削除と置換にも当たらない項目は、Policy Test で失敗させる。Policy Test は、保護の対象の型ごとに、削除と同じく取り返しのつかない属性の変更（例: 版を消す日数の短縮）を宣言してよい。その変更も、対象の address と理由を root ごとの許可の宣言に足すことで明示し、どの変更にも当たらない項目を Policy Test で失敗させる。どの属性の変更を宣言するかとその理由は、その型を持つユースケースの ADR が持つ。
 
 ## 検討した代替案
 
@@ -83,7 +83,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 
 - 保証すること:
   - IAM principal である apply の role が、identity root の state と lock file を書き換えず、state Bucket と state の鍵の設定を変更しないこと
-  - 保護の対象として宣言した型の resource の削除と置換が、許可の宣言なしに、plan を経る apply へ進まないこと
+  - 保護の対象として宣言した型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更が、許可の宣言なしに、plan を経る apply へ進まないこと
 - 保証しないこと:
   - 管理アカウントの root による state Bucket への書き込みと、bucket policy の削除（ADR-0602 決定11）
   - workload root の中での、誤った apply の影響の局所化
@@ -100,7 +100,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否すること（決定9）
 - Policy Test: apply の role の権限（IAM policy と、課す場合は permissions boundary を合わせた有効な権限）が、決定10 の変更を state Bucket と state の鍵に対して許さないこと（決定10）
-- Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除または置換を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
+- Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響
 

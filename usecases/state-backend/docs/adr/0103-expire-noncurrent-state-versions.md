@@ -19,7 +19,7 @@ state Bucket は版管理を持つ（state-backend/ADR-0102 (no-mfa-delete-or-ob
 4. 残す版の数（`newer_noncurrent_versions`）で版を残さない。
 5. 規則を `modules/s3` に、入力で resource や block の有無を切り替えずに置く（repository-wide/ADR-0102 (use-case-centric-scope) 決定15）。
 6. 未完了の multipart upload を中止する1日は、公式推奨の値ではない独自判断である（repository-wide/ADR-0207 (default-value-policy) 決定4）。S3 backend は大きな state を multipart で置き、未完了の upload は失敗からしか生じず、それを再開する主体は無い。
-7. 保持日数を短くする変更と、現行版を失効させる規則を足す変更は、root ごとの短縮の許可の宣言に address と理由を足さない限り、CI の plan と apply で落とす（Policy Test）。lifecycle の削除と置換も、state Bucket と同じく保護の対象にする（repository-wide/ADR-0604 (state-split-by-apply-role) 決定11・12）。
+7. 保持日数を短くする変更と、現行版を失効させる規則を足す変更を、repository-wide/ADR-0604 (state-split-by-apply-role) 決定12 の取り返しのつかない属性の変更として宣言する。root ごとの短縮の許可の宣言に address と理由を足さない限り、CI の plan と apply で落とす。lifecycle の型を保護の対象にする（同 決定11）。
 
 ## 検討した代替案
 
@@ -62,9 +62,9 @@ state の key の配置（repository-wide/ADR-0604 (state-split-by-apply-role)�
 
 ## 検証方法
 
-- Unit Test: `modules/s3/tests/lifecycle.tftest.hcl` が、規則の各要素の値、filter が tag で絞らないこと、現行版を日付で失効させないこと、版の数で残さないこと、入力の検査を mock の plan で確かめる。現行版を日数で失効させないこと、filter が prefix と大きさで絞らないこと、規則が state Bucket に付くことは mock の apply で確かめる。既定値が無いことを見る検査は無い
+- Unit Test: `modules/s3/tests/lifecycle.tftest.hcl` が、規則の各要素の値、filter が tag で絞らないこと、現行版を日付で失効させないこと、版の数で残さないこと、入力の検査を mock の plan で確かめる。現行版を日数で失効させないこと、filter が prefix と大きさで絞らないこと、規則が state Bucket に付くことは mock の apply で確かめる。既定値が無いことと null を受けないことを見る検査は無い
 - Contract Test: `usecases/state-backend/tests/contract.tftest.hcl` が、公開入力の検査と、値が規則へ届くことを確かめる
-- Policy Test: `plan.stateful_protection` の `PLAN-STATE-04`・`05` が、日数の短縮と、使われない短縮の許可を落とす。Rego のテストが、短縮・失効の追加・規則の改名・有効化・置換と、延長・作成・無効化を固定する
+- Policy Test: `plan.stateful_protection` が、日数の短縮と失効の日付の前倒し（`PLAN-STATE-04`）、使われない短縮の許可（`05`）、plan で決まらない日数（`06`）を落とす。管理からの除外と別 address での作成を組にした短縮も落とす。Rego のテストと、実 provider の plan への適用で確かめた
 - Security: `make checkov` が `modules/s3` で CKV2_AWS_61 と CKV_AWS_300 を報告しないこと
 
 ## 影響

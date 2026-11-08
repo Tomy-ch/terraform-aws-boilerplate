@@ -47,7 +47,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 - `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で見る。lifecycle の規則と入力の検査は `tests/lifecycle.tftest.hcl` が見る。現行版の失効の `days`、filter の `prefix`、付く Bucket は plan では決まらないので、mock の apply で見る。いずれも module の宣言から導いた値の固定であり、Unit Test に属する（ADR-0501 決定9）
 - TLS でない要求が実際の S3 API で拒否されることは、どのテストも見ていない（E2E。ADR-0401 決定4）
 - lifecycle が実際に日数どおりに版を消すこと（S3 は失効を非同期に行う）
-- `noncurrent_version_retention_days` が既定値を持たないこと。テストはどれも値を渡すので、既定値を足しても落ちない。見るのはレビューだけである
+- `noncurrent_version_retention_days` が既定値を持たないことと、null を受けないこと（`nullable = false`）。テストはどれも値を渡し、null を渡す run は `expect_failures` で受けられないので、どちらを外しても落ちない。見るのはレビューだけである
 - lifecycle を版管理の後に作ること（`depends_on`）。作成の順序は mock では現れず、見るテストは無い
 
 ## 版
