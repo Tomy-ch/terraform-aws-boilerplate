@@ -38,6 +38,58 @@ well_formed_change(rc) if {
 	is_array(rc.change.actions)
 }
 
+# state-backend/ADR-0103 決定7（保持日数の短縮）。保護の対象に宣言した lifecycle で、有効な規則が版を消す
+# 日数の最小が、変更の前より短くなる変更を落とす。前に日数が無ければ、どの日数も短くなったと読む。
+lifecycle_type := "aws_s3_bucket_lifecycle_configuration"
+
+default shorten_allow := {}
+
+shorten_allow := decl.shorten_allow if is_object(decl.shorten_allow)
+
+days(state, block, attr) := {d |
+	some r in object.get(state, "rule", [])
+	r.status == "Enabled"
+	bs := object.get(r, block, [])
+	is_array(bs)
+	some b in bs
+	d := b[attr]
+	is_number(d)
+	d > 0
+}
+
+shorter(before, after, block, attr) if {
+	count(days(after, block, attr)) > 0
+	count(days(before, block, attr)) == 0
+}
+
+shorter(before, after, block, attr) if {
+	count(days(before, block, attr)) > 0
+	min(days(after, block, attr)) < min(days(before, block, attr))
+}
+
+reductions contains {"root": root_of(f.path), "path": f.path, "address": rc.address} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	object.get(rc, "mode", "managed") == "managed"
+	rc.type == lifecycle_type
+	rc.type in decl.protected_types
+	is_object(rc.change.before)
+	is_object(rc.change.after)
+	some pair in [["noncurrent_version_expiration", "noncurrent_days"], ["expiration", "days"]]
+	shorter(rc.change.before, rc.change.after, pair[0], pair[1])
+}
+
+shorten_allowed(root, address) if {
+	some a in object.get(shorten_allow, root, [])
+	a.address == address
+}
+
+shorten_matched(root, address) if {
+	some r in reductions
+	r.root == root
+	r.address == address
+}
+
 verb(actions) := "置換" if count(actions) > 1
 
 verb(actions) := "削除" if count(actions) == 1
@@ -58,11 +110,20 @@ well_formed(d) if {
 			e.reason != ""
 		}
 	}
+	is_object(object.get(d, "shorten_allow", {}))
+	every _, entries in object.get(d, "shorten_allow", {}) {
+		is_array(entries)
+		every e in entries {
+			is_string(e.address)
+			is_string(e.reason)
+			e.reason != ""
+		}
+	}
 }
 
 deny contains msg if {
 	not well_formed(decl)
-	msg := "[PLAN-STATE-00] 宣言の policy_plan.stateful_protection が、protected_types（aws_s3_bucket を含む）と allow（root ごとの address と空でない reason の並び）の形を満たしていません"
+	msg := "[PLAN-STATE-00] 宣言の policy_plan.stateful_protection が、protected_types（aws_s3_bucket を含む）と allow・shorten_allow（root ごとの address と空でない reason の並び）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -78,6 +139,20 @@ deny contains msg if {
 	some a in object.get(decl.allow, root, [])
 	not matched(root, a.address)
 	msg := sprintf("[PLAN-STATE-02] %s: 許可の宣言 %s が、この plan のどの削除と置換にも当たりません", [f.path, a.address])
+}
+
+deny contains msg if {
+	some r in reductions
+	not shorten_allowed(r.root, r.address)
+	msg := sprintf("[PLAN-STATE-04] %s: %s が版を消す日数を短くします。日数を過ぎた版はすぐに消えます。意図した変更なら、root %s の短縮の許可の宣言に address と理由を足してください", [r.path, r.address, r.root])
+}
+
+deny contains msg if {
+	some f in input
+	root := root_of(f.path)
+	some a in object.get(shorten_allow, root, [])
+	not shorten_matched(root, a.address)
+	msg := sprintf("[PLAN-STATE-05] %s: 短縮の許可の宣言 %s が、この plan のどの日数の短縮にも当たりません", [f.path, a.address])
 }
 
 deny contains msg if {
