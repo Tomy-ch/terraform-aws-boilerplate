@@ -17,6 +17,7 @@ variable "name" {
 variable "noncurrent_version_retention_days" {
   description = "上書きされた版を残す日数。この日数を過ぎた版は lifecycle が消す。現行版は失効させない。"
   type        = number
+  nullable    = false
 
   validation {
     condition     = var.noncurrent_version_retention_days >= 1 && floor(var.noncurrent_version_retention_days) == var.noncurrent_version_retention_days
