@@ -49,25 +49,35 @@ default shorten_allow := {}
 
 shorten_allow := decl.shorten_allow if is_object(decl.shorten_allow)
 
-# RFC 3339 の日付は文字列の順序が時刻の順序と一致するので、日数と同じ min で比べる。
-limits(state, block, attr) := {v |
+# 日付は時刻の offset が混ざると文字列の順序が時刻の順序と一致しないので、ナノ秒に直して日数と同じ min で比べる。
+limits(state, block, attr) := {n |
 	some r in object.get(state, "rule", [])
 	r.status == "Enabled"
 	bs := object.get(r, block, [])
 	is_array(bs)
 	some b in bs
-	v := b[attr]
-	limit(v)
+	n := limit_value(b[attr])
 }
 
-limit(v) if {
+limit_value(v) := v if {
 	is_number(v)
 	v > 0
 }
 
-limit(v) if {
+limit_value(v) := time.parse_rfc3339_ns(v) if {
 	is_string(v)
 	v != ""
+}
+
+# 読めない日付は、どの日付より早いかを決められない。
+unreadable_date(state) if {
+	some r in object.get(state, "rule", [])
+	bs := object.get(r, "expiration", [])
+	is_array(bs)
+	some b in bs
+	is_string(b.date)
+	b.date != ""
+	not time.parse_rfc3339_ns(b.date)
 }
 
 earlier(before, after, block, attr) if {
@@ -154,6 +164,48 @@ unknown_lifecycles contains {"path": p.f.path, "address": p.rc.address} if {
 	unknown_limit(r)
 }
 
+unknown_lifecycles contains {"path": p.f.path, "address": p.rc.address} if {
+	some p in priors
+	unreadable_date(p.rc.change.after)
+}
+
+# S3 は Bucket の lifecycle を1つの設定として置き換えるので、同じ Bucket の2つ目の lifecycle は先の規則を黙って
+# 消す。bucket が plan で決まらない作成は突き合わせられない。
+remaining_lifecycles contains {"f": f, "address": rc.address, "bucket": rc.change.after.bucket} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	protected_lifecycle(rc)
+	is_object(rc.change.after)
+	is_string(rc.change.after.bucket)
+}
+
+shared_buckets contains {"path": a.f.path, "bucket": a.bucket, "addresses": sort([a.address, b.address])} if {
+	some a in remaining_lifecycles
+	some b in remaining_lifecycles
+	a.f.path == b.f.path
+	a.bucket == b.bucket
+	a.address < b.address
+}
+
+# 保護の対象の Bucket の非推奨の inline lifecycle_rule は、lifecycle の resource の外で規則を書き換える。
+inline_lifecycles contains {"path": f.path, "address": rc.address} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	object.get(rc, "mode", "managed") == "managed"
+	rc.type == "aws_s3_bucket"
+	rc.type in decl.protected_types
+	is_object(rc.change.after)
+	rules := object.get(rc.change.after, "lifecycle_rule", [])
+	is_array(rules)
+	count(rules) > 0
+	rules != prior_lifecycle_rules(rc.change)
+}
+
+# 作成には前の値が無い。前の値を持つ更新では、別の lifecycle の resource から読み戻した規則が残るので、変わったときだけ見る。
+default prior_lifecycle_rules(_) := []
+
+prior_lifecycle_rules(change) := object.get(change.before, "lifecycle_rule", []) if is_object(change.before)
+
 shorten_allowed(root, address) if {
 	some a in object.get(shorten_allow, root, [])
 	a.address == address
@@ -216,7 +268,7 @@ deny contains msg if {
 	root := root_of(f.path)
 	some a in object.get(decl.allow, root, [])
 	not matched(root, a.address)
-	msg := sprintf("[PLAN-STATE-02] %s: 許可の宣言 %s が、この plan のどの削除と置換にも当たりません", [f.path, a.address])
+	msg := sprintf("[PLAN-STATE-02] %s: 許可の宣言 %s が、この plan のどの削除・置換・管理からの除外にも当たりません", [f.path, a.address])
 }
 
 deny contains msg if {
@@ -235,7 +287,17 @@ deny contains msg if {
 
 deny contains msg if {
 	some u in unknown_lifecycles
-	msg := sprintf("[PLAN-STATE-06] %s: %s が版を消す日数か日付か規則の有効が plan で決まらず、短くなるかを読めません。plan で決まる値にしてください", [u.path, u.address])
+	msg := sprintf("[PLAN-STATE-06] %s: %s が版を消す日数か日付か規則の有効が plan で決まらないか、日付を RFC 3339 として読めず、短くなるかを読めません。plan で決まる RFC 3339 の値にしてください", [u.path, u.address])
+}
+
+deny contains msg if {
+	some s in shared_buckets
+	msg := sprintf("[PLAN-STATE-07] %s: %s と %s が同じ Bucket の lifecycle です。S3 は後に書いた方で先の規則を消します。1つにしてください", [s.path, s.addresses[0], s.addresses[1]])
+}
+
+deny contains msg if {
+	some i in inline_lifecycles
+	msg := sprintf("[PLAN-STATE-08] %s: %s が非推奨の inline の lifecycle_rule で規則を書き換えます。aws_s3_bucket_lifecycle_configuration で書いてください", [i.path, i.address])
 }
 
 deny contains msg if {
