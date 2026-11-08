@@ -7,6 +7,10 @@ mock_provider "aws" {
   }
 }
 
+variables {
+  state_noncurrent_version_retention_days = 90
+}
+
 run "name_follows_project_env" {
   command = plan
 

@@ -16,7 +16,6 @@ locals {
 resource "aws_s3_bucket" "this" {
   #checkov:skip=CKV_AWS_145:段5 まで SSE-S3（usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md）。撤回: 段5 で SSE-KMS に切り替えたとき
   #checkov:skip=CKV_AWS_18:アクセスログの配送は段5 で足す（README）。撤回: 段5 で足したとき
-  #checkov:skip=CKV2_AWS_61:lifecycle は段5 で足す（README）。撤回: 段5 で足したとき
   #checkov:skip=CKV2_AWS_62:通知はこの module に足さない（README、root の ADR-0102 決定15・18）。撤回: 通知をこの module の責務にしたとき
   #checkov:skip=CKV_AWS_144:リージョン間の複製は state-backend の責務外（usecases/state-backend/README.md）。撤回: 責務に入れたとき
   bucket           = local.bucket_name
@@ -55,4 +54,29 @@ resource "aws_s3_bucket_versioning" "this" {
   versioning_configuration {
     status = "Enabled"
   }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "this" {
+  bucket = aws_s3_bucket.this.id
+
+  rule {
+    id     = "expire-noncurrent-versions"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_retention_days
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.this]
 }

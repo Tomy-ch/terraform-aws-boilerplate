@@ -5,6 +5,7 @@ provider "aws" {
 module "state_backend" {
   source = "../"
 
-  project = "tabp"
-  env     = "admin"
+  project                                 = "tabp"
+  env                                     = "admin"
+  state_noncurrent_version_retention_days = 90
 }

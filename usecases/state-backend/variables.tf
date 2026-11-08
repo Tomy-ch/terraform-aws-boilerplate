@@ -19,6 +19,16 @@ variable "env" {
   }
 }
 
+variable "state_noncurrent_version_retention_days" {
+  description = "上書きされた state の版を残す日数。この日数を過ぎた版は消え、その版へは戻せない。現行版は失効させない（state-backend/ADR-0103）。"
+  type        = number
+
+  validation {
+    condition     = var.state_noncurrent_version_retention_days >= 1 && floor(var.state_noncurrent_version_retention_days) == var.state_noncurrent_version_retention_days
+    error_message = "state_noncurrent_version_retention_days は1以上の整数にしてください。"
+  }
+}
+
 variable "plan_output_retention_days" {
   description = "CI の plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える。"
   type        = number
