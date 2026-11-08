@@ -66,7 +66,6 @@ unsupported:
 未決:
 
 - 1つのアカウントに複数の env を置く構成。サポートするかを決めるときに、root と key をあわせて決める（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定1）
-- state Bucket を AWS Backup で backup すること（AWS Prescriptive Guidance の Backend best practices が版管理とあわせて推奨する）
 
 ## 所有者
 
@@ -96,7 +95,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、段4 の apply の後の plan が見る）
 - 2つの Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
 
-Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、2つの Bucket の Bucket Policy の Allow の Action の wildcard の不在を確かめる。object lock と `mfa` の不在を見る Policy は無い（#210）。層検査（#74）は未配線である。配線された後に遡って検証する。
+Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、2つの Bucket の Bucket Policy の Allow の Action の wildcard の不在を確かめる。CI の plan と apply は、実際の plan に `plan.stateful_protection` を掛け、2つの Bucket と lifecycle の削除と置換、lifecycle が版を消す日数の短縮を、許可の宣言なしには落とす（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md) 決定7）。object lock と `mfa` の不在を見る Policy は無い（#210）。層検査（#74）は未配線である。配線された後に遡って検証する。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
@@ -116,6 +115,7 @@ Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` �
 
 - DynamoDB の lock table: deprecated であり、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8 が lock file を採る
 - MFA delete と Object Lock: [state-backend/ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
+- AWS Backup による state Bucket の backup（AWS Prescriptive Guidance の Backend best practices が版管理とあわせて推奨する）: AWS Backup は独立したユースケースにせず、関係するユースケースの内部で扱う（[scope.md 第8節](../../docs/v1.0-plan/scope.md)）。このユースケースの回復点は、版管理と保持日数のあいだ上書きされた版を残す lifecycle（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）が担う。backup を足すかは `backup-restore`（#66）が決める
 - resource identity での import: Terraform 1.12 以上を要し、Bucket 名の id で足りる
 - backend の `allowed_account_ids`: アカウント ID をリポジトリに書くことになる
 
