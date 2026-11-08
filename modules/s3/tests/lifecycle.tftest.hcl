@@ -5,6 +5,12 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+
+  # prefix は Optional かつ Computed で、mock の apply は設定しない文字列を乱数で埋める。空を既定にして、
+  # 設定した prefix だけが値として残るようにする。
+  mock_resource "aws_s3_bucket_lifecycle_configuration" {
+    defaults = { rule = { prefix = "", filter = { prefix = "" } } }
+  }
 }
 
 variables {
@@ -26,6 +32,11 @@ run "lifecycle_rule" {
   }
 
   assert {
+    condition     = length(one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).and) == 0 && length(one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).tag) == 0
+    error_message = "lifecycle の規則の filter が tag で対象を絞っています。"
+  }
+
+  assert {
     condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].noncurrent_version_expiration).noncurrent_days == 90
     error_message = "上書きされた版が noncurrent_version_retention_days で消えません。"
   }
@@ -33,6 +44,16 @@ run "lifecycle_rule" {
   assert {
     condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).expired_object_delete_marker == true
     error_message = "失効した delete marker を消していません。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).date == null
+    error_message = "現行版を日付で失効させています。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].noncurrent_version_expiration).newer_noncurrent_versions == null
+    error_message = "版の数で上書きされた版を残しています。"
   }
 
   assert {
@@ -46,24 +67,29 @@ run "lifecycle_rule" {
   }
 }
 
-# days は Optional かつ Computed なので plan では決まらない。mock の apply は設定しない number を 0 にし、
-# 設定した日数はそのまま残すので、0 であることで現行版の失効が無いことを見る。
-run "no_current_version_expiration" {
+# days・prefix・bucket は plan では決まらない。mock の apply は設定しない number を 0 に、prefix を上の既定の空にし、
+# 設定した値はそのまま残す。
+run "whole_bucket_without_current_version_expiration" {
   command = apply
+
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.this.bucket == aws_s3_bucket.this.id
+    error_message = "lifecycle がこの module の Bucket に付いていません。"
+  }
+
+  assert {
+    condition     = aws_s3_bucket_lifecycle_configuration.this.rule[0].prefix == "" && one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).prefix == ""
+    error_message = "lifecycle の規則が prefix で対象を絞っています。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_greater_than == 0 && one(aws_s3_bucket_lifecycle_configuration.this.rule[0].filter).object_size_less_than == 0
+    error_message = "lifecycle の規則が object の大きさで対象を絞っています。"
+  }
 
   assert {
     condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).days == 0
     error_message = "現行版を日数で失効させています。"
-  }
-
-  assert {
-    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].expiration).date == null
-    error_message = "現行版を日付で失効させています。"
-  }
-
-  assert {
-    condition     = one(aws_s3_bucket_lifecycle_configuration.this.rule[0].noncurrent_version_expiration).newer_noncurrent_versions == null
-    error_message = "版の数で上書きされた版を残しています。"
   }
 }
 
@@ -98,6 +124,16 @@ run "retention_days_zero" {
 
   variables {
     noncurrent_version_retention_days = 0
+  }
+
+  expect_failures = [var.noncurrent_version_retention_days]
+}
+
+run "retention_days_negative" {
+  command = plan
+
+  variables {
+    noncurrent_version_retention_days = -1
   }
 
   expect_failures = [var.noncurrent_version_retention_days]

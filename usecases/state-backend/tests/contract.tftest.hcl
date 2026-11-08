@@ -115,6 +115,19 @@ run "state_noncurrent_version_retention_days_wiring" {
   }
 }
 
+run "state_noncurrent_version_retention_days_minimum" {
+  command = plan
+
+  variables {
+    state_noncurrent_version_retention_days = 1
+  }
+
+  assert {
+    condition     = module.s3.noncurrent_version_retention_days == 1
+    error_message = "state_noncurrent_version_retention_days = 1 が受け付けられていません。"
+  }
+}
+
 run "state_noncurrent_version_retention_days_zero" {
   command = plan
 
