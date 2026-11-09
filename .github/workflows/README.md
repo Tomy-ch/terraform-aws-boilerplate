@@ -292,6 +292,14 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 導かれるならクラスへ、そうでなければ job の `extra` へ）、`make egress-apply` を実行して生成された
 `with:` を commit する。インラインの `with:` を手で編集しない —— `make egress-check` が拒む。
 
+**Terraform を実行する job の AWS の宛先は、Terraform の設定から突き合わせる。** 宣言の `root` が
+CI の実行する root とそれを実行する job を、`type` が resource / data source の型の呼ぶ宛先を持つ。
+`make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
+`type` の宛先を持たない job で落ちる。新しい AWS のサービスの型を足す変更は、その `type` と、
+クラスへの宛先の追加を同じ変更に含める。宛先が欠けると、Provider は遮断された呼び出しを再試行し続け、
+job は理由を出さずに時間切れになる —— plan が通っても apply で初めて呼ぶ API があるので、plan の
+成功はこの欠落を示さない。backend や資格情報の交換のように型を経ない呼び出しは、この突き合わせの外にある。
+
 塞がれた宛先は、run の job summary に bullfrog が出す接続ごとの判定の表に現れる。job のログからは
 理由の見えない失敗に当たったとき読むのはそこで、直し方はクラスか `extra` を広げることであって、
 `audit` へ落とすことではない。
