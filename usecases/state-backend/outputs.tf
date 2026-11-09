@@ -10,7 +10,7 @@ output "bucket_arn" {
 
 output "state_key_alias_name" {
   description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。apply-identity の role の IAM で、alias の作成と plan の role の鍵の読み取りをこの alias に絞るのに使う。"
-  value       = "alias/${var.project}-${var.env}-tfstate"
+  value       = module.kms.alias_name
 }
 
 output "plan_output_bucket_name" {

@@ -14,7 +14,7 @@ bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `im
 ## Decision
 
 1. bootstrap の段1 から段4 まで、state Bucket の既定の暗号化を SSE-S3（`AES256`）とし、SSE-C を拒否する。
-2. 段5 で CMK を作り、SSE-KMS へ切り替える。そのとき backend に `kms_key_id` を書く。
+2. CMK（鍵・Key Policy・alias）は、state backend の構成物として identity root の Terraform が作る（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定1・5。CLI では作らない）。新しいアカウントでは段4 の apply が、段4 を終えたアカウントでは CI の apply が作る。段5 で SSE-KMS へ切り替え、そのとき backend に `kms_key_id` を書く。
 3. 決定1 を公式推奨からの逸脱として記録し（repository-wide/ADR-0207 (default-value-policy) 決定11）、CMK を使わない暗号化を報告する Security の各道具の検査を、その道具が報告する path に限って抑止する —— Trivy の AWS-0132 は `modules/s3/encryption.tf`、Checkov の CKV_AWS_145 は `modules/s3/main.tf` の `aws_s3_bucket.this`（repository-wide/ADR-0501 (development-tooling-composition) 決定6・13）。
 
 ## 検討した代替案
@@ -53,6 +53,7 @@ key policy の JSON が、検査を通らないまま実在する。repository-w
 - Unit Test: `modules/s3/tests/naming.tftest.hcl` の `bucket_attributes` が、暗号化の値（`AES256`）と SSE-C の拒否を mock の plan で確かめる
 - Security: `make trivy-config` が AWS-0132 を `modules/s3/encryption.tf` 以外の path で報告しないこと。抑止の宣言は `.trivyignore.yaml` が持つ
 - Security: `make checkov` が CKV_AWS_145 を `modules/s3/main.tf` の `aws_s3_bucket.this` 以外で報告しないこと。抑止の宣言はその resource の `#checkov:skip` が持つ
+- 決定2: identity root の plan に `module.state_backend.module.kms` の3 resource が追加として現れ、段1 の CLI では作らないこと（`docs/setup/bootstrap.md` 段2 の一覧。一覧を設定と突き合わせる検査は無い）。alias の名前は `env/admin/identity/tests/imports.tftest.hcl` が見る
 
 ## 影響
 

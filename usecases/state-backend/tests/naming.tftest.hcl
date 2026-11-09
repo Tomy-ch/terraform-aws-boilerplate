@@ -5,10 +5,17 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
 }
 
 variables {
   state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+  }
 }
 
 run "name_follows_project_env" {

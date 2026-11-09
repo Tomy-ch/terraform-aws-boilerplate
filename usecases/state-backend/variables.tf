@@ -19,6 +19,26 @@ variable "env" {
   }
 }
 
+variable "ci_role_arns" {
+  description = "state の鍵で暗号操作を許す CI の role の ARN。plan は CI の plan、apply_identity は identity root の apply の role。どちらも鍵と同じアカウントの role にする。"
+  type = object({
+    plan           = string
+    apply_identity = string
+  })
+  nullable = false
+
+  validation {
+    condition     = alltrue([for arn in values(var.ci_role_arns) : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", arn))])
+    error_message = "ci_role_arns の値は IAM role の ARN にしてください。user・root・ワイルドカードは受けません。"
+  }
+
+  # 同じ role を2つの役割に渡すと、plan が apply-identity の権限で走っても気づけない。
+  validation {
+    condition     = var.ci_role_arns.plan != var.ci_role_arns.apply_identity
+    error_message = "ci_role_arns の plan と apply_identity に同じ role を渡さないでください。"
+  }
+}
+
 variable "state_noncurrent_version_retention_days" {
   description = "上書きされた state の版を残す日数。この日数を過ぎた版は消え、その版へは戻せない。現行版は失効させない（state-backend/ADR-0103）。"
   type        = number

@@ -44,6 +44,15 @@ test_pass_data_source_is_not_a_removal if {
 	count(msgs) == 0
 }
 
+# 宣言（decl.json）を差し替えずに読む。state の鍵の2型が保護の対象から外れると、ここが落ちる。
+test_violation_delete_of_state_key_under_declaration if {
+	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [
+		change("module.state_backend.module.kms.aws_kms_key.this", "aws_kms_key", ["delete"]),
+		change("module.state_backend.module.kms.aws_kms_key_policy.this", "aws_kms_key_policy", ["delete"]),
+	])
+	count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == 2
+}
+
 test_pass_allowed_removal_in_its_root if {
 	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d

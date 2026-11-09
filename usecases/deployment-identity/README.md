@@ -24,9 +24,9 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 
 | 出力 | 使う側 |
 | --- | --- |
-| `plan_role_arn` | 人が確かめるときの参照。CI の plan の job は assume の前に state を読めないので、この output を読まず、`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む（規則の一致は `tf-local` のテストが見る） |
+| `plan_role_arn` | 人が確かめるときの参照。CI の plan の job は assume の前に state を読めないので、この output を読まず、`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む（規則の一致は `tf-local` のテストが見る）。`state-backend` の `ci_role_arns.plan`（state の鍵の Key Policy） |
 | `apply_role_arn` | workload root の apply の job（未配線。#222）。段5 の state Bucket の Bucket Policy（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。#19） |
-| `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。段5 の Bucket Policy（#19） |
+| `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。`state-backend` の `ci_role_arns.apply_identity`（state の鍵の Key Policy）。段5 の Bucket Policy（#19） |
 
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
@@ -82,7 +82,7 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `state-backend`（`bucket_arn`、`state_key_alias_name`、`plan_output_bucket_arn`）。段5 の `state-backend` は、このユースケースの role の ARN を受ける（#19）
+- ユースケース: `state-backend`（`bucket_arn`、`state_key_alias_name`、`plan_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn` と `apply_identity_role_arn` を `ci_role_arns` に受ける
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
 - GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が assume する。apply の role を assume する workflow はまだ無い（#222）
 
@@ -106,7 +106,7 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
 - identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_alias_name`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
-- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。鍵を作る変更の apply が初めて見る。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
+- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。段4 を終えたアカウントへ鍵を足す CI の apply が初めて見る。新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので、見る機会が無い。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 

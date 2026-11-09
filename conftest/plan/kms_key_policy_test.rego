@@ -3,7 +3,7 @@ package plan.kms_key_policy_test
 import data.plan.fixture
 import data.plan.kms_key_policy as p
 
-# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の出力がこの Policy を通ることの代わりになる。
+# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend の reference の plan への適用が見る。
 root := {
 	"Sid": "AccountKeyAdministration",
 	"Effect": "Allow",

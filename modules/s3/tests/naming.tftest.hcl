@@ -24,7 +24,7 @@ run "account_regional_name" {
   }
 }
 
-# usecase の import block が id に使うので、plan の時点で Bucket の名前と一致していなければならない。
+# import block が id に使うので、plan の時点で Bucket の名前と一致していなければならない（README「持つもの」の bucket_name）。
 run "bucket_name_output_matches_bucket" {
   command = plan
 

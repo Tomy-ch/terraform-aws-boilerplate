@@ -127,6 +127,7 @@ test_violation_required_type_absent if {
 	msgs := gate.deny with input as fixture.plan([valid])
 	fixture.has("[PLAN-INPUT-07] aws_iam_role ", msgs)
 	fixture.has("[PLAN-INPUT-07] aws_s3_bucket_policy ", msgs)
+	fixture.has("[PLAN-INPUT-07] aws_kms_key_policy ", msgs)
 	not fixture.has("[PLAN-INPUT-07] aws_iam_role_policy ", msgs)
 }
 

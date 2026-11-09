@@ -54,6 +54,12 @@ run "key_invariants" {
     condition     = aws_kms_alias.this.name == "alias/tabp-admin-tfstate"
     error_message = "alias の名前が alias/<name> になっていません。"
   }
+
+  # 消費者は鍵の作成を待たずにこの値で alias を名指すので、plan で決まらなければならない。
+  assert {
+    condition     = output.alias_name == aws_kms_alias.this.name
+    error_message = "alias_name が alias の名前を返していません。"
+  }
 }
 
 # key_id と ARN は plan では決まらないので、mock の apply で確かめる。

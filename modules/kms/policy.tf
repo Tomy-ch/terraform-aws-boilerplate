@@ -70,6 +70,9 @@ resource "aws_kms_key_policy" "this" {
   policy                             = local.policy
   bypass_policy_lockout_safety_check = false
 
+  # Key Policy の書き込みが落ちても alias は残す（README「保証しないもの」）。
+  depends_on = [aws_kms_alias.this]
+
   lifecycle {
     # variable の validation が他の object を参照できるのは Terraform 1.9 からで、下限の 1.7.0（versions.tf）では書けない。
     precondition {
