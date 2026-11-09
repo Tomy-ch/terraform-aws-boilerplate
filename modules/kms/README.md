@@ -22,7 +22,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | --- | --- |
 | `key_arn` | 鍵を使う resource（S3 の暗号化と Bucket Policy の条件、backend の `kms_key_id`、Log Group の `kms_key_id`）と、鍵を管理する role の IAM の Resource |
 
-消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、手元の手順が鍵の ARN を引くために使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
+消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、手元の手順が鍵の ARN を引くことと、鍵の ARN が無いときに消費者の IAM が `kms:ResourceAliases` の条件で鍵を限ることに使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
 
 ### Key Policy の文書
 
@@ -61,10 +61,10 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると 
 - 暗号操作は、Key Policy で名指した role とサービスだけに許す。IAM で `AdministratorAccess` を持つ人の主体も、そのままでは復号できない。名指されない主体が鍵で暗号化された object を読むには、委任された `kms:PutKeyPolicy` で文を足す必要があり、その変更は次の apply で戻る。bootstrap の途中の一時 IAM user もこれに当たる（state を SSE-KMS にした後の段5 の手順の扱いは #19 が持つ）
 - Key Policy の Deny は持たない。鍵の管理（`kms:PutKeyPolicy` を含む）はアカウントへ委任しているので、どの主体が Key Policy を書き換えられるかは IAM が決める。書き込みを拒む Deny は、置くなら消費者の IAM の側に置く（ADR-0604 決定10）。deployment-identity は、鍵の ARN を参照できるまで Deny を持たない
 - 入力から導いた値（鍵の属性、alias の名前、Key Policy の文書、validation と precondition）は `tests/` が mock の plan と apply で見る。Unit Test に属する（ADR-0501 決定9）。`aws_kms_key` の inline の `policy` を使わないことは、plan で値が決まらない（computed）ので、テストではなくこのファイルの構成が持つ
-- Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持つ。この module を呼ぶ reference の root はまだ無く、それまでは Rego のテストだけが規則を検証し、plan への適用は入力が0件で何も見ない。最初にこの module を呼ぶ消費者は、reference の root で呼んだうえで、`conftest/plan/decl.json` の `required_documents` に `aws_kms_key_policy` を足す。足さなければ、Key Policy が入力から消えても Policy は黙る
+- Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持ち、`state-backend` の reference の root の plan に掛かる。`aws_kms_key_policy` は `conftest/plan/decl.json` の `required_documents` に在るので、Key Policy が入力から消えると Policy が落ちる
 - アカウントへの委任の文を除く部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い
-- 鍵は作成の時点では既定の Key Policy（アカウントへの `kms:*`）を持ち、`aws_kms_key_policy` が直後に置き換える。置き換えが落ちたときは、次の apply までその状態が残る。`aws_kms_key_policy` を destroy すると、Provider は既定の Key Policy を書き戻す（Provider の `aws_kms_key_policy` の NOTE）。destroy と、`moved` を伴わない address の変更（置換）は、`conftest/plan` の `plan.stateful_protection` が CI の plan と apply で拒む。CI の plan と apply が掛かるのは、CI の入口を持つ root だけである。`removed`（`destroy = false`）は state から外すだけで、鍵の側は変わらない
-- `plan.kms_key_policy` の Rego のテストが使う委任の文は、`policy.tf` の列挙を手で写したもので、一致は検査しない。この module の出力が `PLAN-KMS-*` を通ることは、最初の消費者が reference の root で呼ぶまで、その写しを通じてしか確かめていない
+- 鍵は作成の時点では既定の Key Policy（アカウントへの `kms:*`）を持ち、alias の作成の後に `aws_kms_key_policy` が置き換える。置き換えが落ちたときは、alias の付いた鍵が既定の Key Policy のまま次の apply まで残る。alias の作成が落ちたときは、alias の無い鍵が残る。この順序を見るテストは無い。`aws_kms_key_policy` を destroy すると、Provider は既定の Key Policy を書き戻す（Provider の `aws_kms_key_policy` の NOTE）。destroy と、`moved` を伴わない address の変更（置換）は、`conftest/plan` の `plan.stateful_protection` が CI の plan と apply で拒む。CI の plan と apply が掛かるのは、CI の入口を持つ root だけである。`removed`（`destroy = false`）は state から外すだけで、鍵の側は変わらない
+- `plan.kms_key_policy` の Rego のテストが使う委任の文は、`policy.tf` の列挙を手で写したもので、一致は検査しない。この module の出力が `PLAN-KMS-*` を通ることは、`state-backend` の reference の root の plan が確かめる
 - CloudWatch Logs の文は、CloudWatch Logs の文書の例のとおり `kms:Describe*` を暗号化コンテキストの条件と同じ文に置く。KMS の文書は、`kms:EncryptionContext:*` の条件を受ける操作に `DescribeKey` を挙げておらず、それ以外の操作にこの条件を使うと拒否されるとする。この食い違いの下で CloudWatch Logs への配送と読み出しが通ることは、どのテストも見ていない
 - 実際の AWS に対して、次はどのテストも確かめていない。最初の消費者の CI の apply と、その後の CI の plan が `No changes.` を示すことで確かめる（#19）。sandbox での複製の作成・破棄、残存の検出、期待残存（削除の猶予中の鍵）の照合は、sandbox のアカウント（#21）と掃除の CI（#76）が揃うまで行わない
   - lockout の安全チェックが、委任の文と、鍵を管理する role の IAM で通ること

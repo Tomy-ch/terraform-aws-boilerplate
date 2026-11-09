@@ -240,10 +240,11 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 22 to add, 0 to change, 0 to destroy.` であり、追加が次の22件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 5 to import, 25 to add, 0 to change, 0 to destroy.` であり、追加が次の25件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
    - `module.state_backend.module.s3` の `aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の2件（後者は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
    - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
+   - `module.state_backend.module.kms` の `aws_kms_key.this`、`aws_kms_key_policy.this`、`aws_kms_alias.this` の3件（state の鍵）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
    - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
 3. Bucket に Policy と lifecycle がまだ無いことを確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
@@ -254,6 +255,14 @@ state backend が無い時点では Terraform が state を保存できないの
    ```
 
    順に `NoSuchBucketPolicy` と `NoSuchLifecycleConfiguration` のエラーが返ること。Policy か lifecycle が返ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
+
+   state の鍵の alias もまだ無いことを確かめる。在ると、段4 の apply は鍵を作った後の alias の作成で落ち、alias の無い鍵が残る
+
+   ```bash
+   aws kms list-aliases --query "Aliases[?AliasName=='alias/tabp-admin-tfstate']" --output text
+   ```
+
+   何も出力されないこと
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
@@ -327,6 +336,8 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - 3つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity`。role 名と違い、apply-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
    - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
    - `aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` が規則を1つだけ返し、その規則が `Status` `Enabled`、空の `Filter`、`Expiration` の `ExpiredObjectDeleteMarker` `true`（`Days` と `Date` が無い）、`NoncurrentVersionExpiration` の `NoncurrentDays` が `state_noncurrent_version_retention_days` の値、`AbortIncompleteMultipartUpload` の `DaysAfterInitiation` `1` を持つ
+   - `aws kms describe-key --key-id alias/tabp-admin-tfstate` が `KeyState` `Enabled`、`KeySpec` `SYMMETRIC_DEFAULT`、`KeyUsage` `ENCRYPT_DECRYPT`、`MultiRegion` `false`、`Origin` `AWS_KMS` を、`aws kms get-key-rotation-status --key-id alias/tabp-admin-tfstate` が `KeyRotationEnabled` `true` と `RotationPeriodInDays` `365` を返す
+   - `aws kms get-key-policy --key-id alias/tabp-admin-tfstate --policy-name default` が、アカウントへの委任の文と、plan と apply-identity の2つの role に S3 経由の `kms:Decrypt`・`kms:GenerateDataKey` を許す文の2つだけを返す
 9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること
 
    ```bash
@@ -367,6 +378,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 - lock が残ったら、他に apply が走っていないことを確かめてから `terraform force-unlock <ID>` で外す
 - 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
+- Key Policy の書き込みが `MalformedPolicyDocumentException` で落ちたら、作ったばかりの role が IAM にまだ伝わっていない。commit を変えずに手順4 からやり直す
 - `EntityAlreadyExists` が返ったら、手順3 に戻る
 
 ### 段5. CI が apply する
@@ -453,8 +465,8 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 22 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の22件だけだった
-- [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
+- [ ] `make plan-admin-identity` が `5 to import, 25 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の25件だけだった
+- [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返し、`alias/tabp-admin-tfstate` が無かった
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 段3 の終了時:
@@ -470,7 +482,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
 - [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
-- [ ] provider の audience、role の policy、Bucket Policy と lifecycle の読み戻しが宣言どおりだった
+- [ ] provider の audience、role の policy、Bucket Policy と lifecycle、state の鍵と Key Policy の読み戻しが宣言どおりだった
 - [ ] `simulate-principal-policy` の行数と判定が、段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
