@@ -1424,7 +1424,6 @@ func Test_applyOrCheck(t *testing.T) {
 			require.ErrorIs(t, applyOrCheck(root, true), errEgressDrift)
 		})
 
-		// apply が orphan で落ちるときも、ずれた workflow を書き換えない。
 		t.Run("workflow に現れないジョブ宣言を弾き、apply でも何も書かない", func(t *testing.T) {
 			t.Parallel()
 			root := newTestRepo(t, map[string]string{"a.yaml": staleWorkflow("one")})

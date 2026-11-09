@@ -88,7 +88,7 @@ var (
 	errSSOTTypeName   = xerrors.New("SSOT の type が resource / data source の型の接頭辞の形をしていません")
 	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
 	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
-	// steps は 4 桁、step は 6 桁の `- ` で書く（scripts/lib/workflow の切り出しの前提）。
+	// 読める形は scripts/lib/workflow の切り出しが決める。
 	errJobUnparsed   = xerrors.New("steps を読み取れないジョブがあります")
 	errStepMissing   = xerrors.New("steps を持つのに bullfrog の step が無いジョブがあります")
 	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの最初の step ではありません")
@@ -602,9 +602,8 @@ func mentionsBullfrog(lines []workflow.Line) int {
 }
 
 // checkStepShape は bullfrog step が `- name:` → `uses:` → 任意の `with:` だけから成ることを確かめ、
-// 差し替える with: の範囲を返す。if: や continue-on-error: が付いた step は宣言どおりに見えて
-// 遮断しないので、生成器が丸ごと書ける形以外は拒む。step の後ろに続く空行とコメントは次の step の
-// ものなので残す。
+// 差し替える with: の範囲を返す。それ以外の形を拒む理由は scripts/README.md の egress 行が持つ。
+// step の後ろに続く空行とコメントは次の step のものなので残す。
 func checkStepShape(st workflow.Step) (target, error) {
 	ls := st.Lines
 	malformed := func(l workflow.Line) error {

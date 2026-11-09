@@ -31,8 +31,8 @@ var (
 var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": true}
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
-// その root を実行するジョブの許可リストにあることを確かめる。宛先が欠けると、Provider は遮断された
-// 呼び出しを再試行し続け、ジョブは理由を出さずに時間切れになる。
+// その root を実行するジョブの許可リストにあることを確かめる。欠けたときの症状は
+// .github/workflows/README.md の「ランナーの封じ込め」節が持つ。
 func (s *ssot) checkEndpoints(repo string) error {
 	if len(s.rootOrder) == 0 {
 		return errNoRoots
@@ -101,7 +101,7 @@ func (s *ssot) requireHosts(jobs, hosts []string) error {
 }
 
 // collectTypes は root から相対パスの module を辿り、使われる resource / data source の型を整列して返す。
-// 型が 1 件も無い root は、検査が何も見ていないのと区別できないので拒む。
+// 型が 1 件も無い root は拒む（ADR-0702 決定13）。
 func collectTypes(repo, root string) ([]string, error) {
 	found := map[string]bool{}
 	if err := walkModule(repo, root, found, map[string]bool{}); err != nil {

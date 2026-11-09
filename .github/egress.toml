@@ -87,7 +87,6 @@ hosts = [
 ]
 
 [class.deps-dev]
-# パッケージの供給網の情報（deps.dev）。依存の評価をする job が引く。
 hosts = [
   "api.deps.dev",
 ]
@@ -111,8 +110,7 @@ hosts = [
   "*.s3-control.ap-northeast-1.amazonaws.com",
 ]
 
-# CI が Terraform を実行する root と、それを実行するジョブ。egress-check が root から module を辿って
-# resource / data source の型を集め、型が呼ぶ宛先（下の type）がそのジョブの許可リストにあることを見る。
+# CI が Terraform を実行する root と、それを実行するジョブ。
 [root."env/admin/identity"]
 jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity"]
 
