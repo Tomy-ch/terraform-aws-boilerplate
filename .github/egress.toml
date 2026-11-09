@@ -111,6 +111,35 @@ hosts = [
   "*.s3-control.ap-northeast-1.amazonaws.com",
 ]
 
+# CI が Terraform を実行する root と、それを実行するジョブ。egress-check が root から module を辿って
+# resource / data source の型を集め、型が呼ぶ宛先（下の type）がそのジョブの許可リストにあることを見る。
+[root."env/admin/identity"]
+jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity"]
+
+# resource / data source の型が呼ぶ宛先。名前は型そのものか、`_` で終わる接頭辞で、最も長く当たる
+# ものを使う。API を呼ばない型は hosts を空にする。
+[type.aws_caller_identity]
+hosts = ["sts.ap-northeast-1.amazonaws.com"]
+
+[type.aws_iam_]
+hosts = ["iam.amazonaws.com"]
+
+[type.aws_kms_]
+hosts = ["kms.ap-northeast-1.amazonaws.com"]
+
+[type.aws_partition]
+hosts = []
+
+[type.aws_region]
+hosts = []
+
+[type.aws_s3_]
+hosts = [
+  "s3.ap-northeast-1.amazonaws.com",
+  "*.s3.ap-northeast-1.amazonaws.com",
+  "*.s3-control.ap-northeast-1.amazonaws.com",
+]
+
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
 

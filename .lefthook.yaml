@@ -65,6 +65,8 @@ pre-commit:
       glob:
         - ".github/egress.toml"
         - ".github/workflows/*.{yml,yaml}"
+        - "{env,usecases,modules}/**/*.tf"
+        - "scripts/egress/**/*.go"
       run: make egress-check
 
     # 言語ランタイムの版の写しが mise.toml 通りか。**ずれてもビルドは通る**ので、

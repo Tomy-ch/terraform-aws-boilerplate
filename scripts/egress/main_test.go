@@ -39,6 +39,15 @@ classes = []
 
 [job."b.yaml:audited"]
 egress_policy = "audit"
+
+[root."tf/root"]
+jobs = ["a.yaml:one", "b.yaml:audited"]
+
+[type.aws_x_]
+hosts = ["i1.test"]
+
+[type.aws_none]
+hosts = []
 `
 
 // editorconfig-checker-enable
@@ -51,6 +60,9 @@ var (
 	oneHosts = []string{"b1.test", "b2.test", "m1.test", "m2.test", "i1.test", "x1.test"}
 	testIPs  = []string{"127.0.0.100"}
 )
+
+// testTerraform は testSSOT の root "tf/root" に置く設定。型は testSSOT の 2 つの type に 1 つずつ当たる。
+const testTerraform = "resource \"aws_x_thing\" \"a\" {}\ndata \"aws_none\" \"b\" {}\n"
 
 // testWorkflow は bullfrog の step の uses: 行に tail を続け、その後ろへ checkout の step を置いた 1 ジョブの workflow。
 func testWorkflow(jobID string, tail ...string) string {
@@ -84,10 +96,26 @@ func newTestRepo(t *testing.T, workflows map[string]string) string {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT), filePerm))
+	writeFile(t, root, "tf/root/main.tf", testTerraform)
 	for name, body := range workflows {
 		require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", name), []byte(body), filePerm))
 	}
 	return root
+}
+
+// writeFile は root 直下からのスラッシュ区切りのパスへ body を書く。
+func writeFile(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+	require.NoError(t, os.WriteFile(p, []byte(body), filePerm))
+}
+
+func newSSOT() *ssot {
+	return &ssot{
+		classes: map[string]*class{}, jobs: map[string]*jobSpec{},
+		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{},
+	}
 }
 
 func mustParse(t *testing.T, body string) *ssot {
@@ -186,6 +214,19 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, staleWorkflow("one"), string(got))
 		})
 
+		t.Run("型が呼ぶ宛先がジョブに無ければ、apply は何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{
+				"a.yaml": staleWorkflow("one"),
+				"b.yaml": bWorkflow(),
+			})
+			writeFile(t, root, "tf/root/kms.tf", "resource \"aws_x_key\" \"k\" {}\nresource \"aws_y_key\" \"k\" {}\n")
+			require.ErrorIs(t, run([]string{"apply"}, func() (string, error) { return root, nil }), errTypeUnmapped)
+			got, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "a.yaml")) //nolint:gosec // path from t.TempDir
+			require.NoError(t, err)
+			assert.Equal(t, staleWorkflow("one"), string(got))
+		})
+
 		t.Run("作業ディレクトリの取得失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			err := run([]string{"check"}, func() (string, error) { return "", errWD })
@@ -209,6 +250,11 @@ func Test_parseSSOT(t *testing.T) {
 			assert.Equal(t, []string{"127.0.0.100"}, s.baseIPs)
 			assert.Equal(t, []string{"mise"}, s.classes["image"].includes)
 			assert.Equal(t, policyAudit, s.jobs["b.yaml:audited"].policy)
+			assert.Equal(t, []string{"tf/root"}, s.rootOrder)
+			assert.Equal(t, []string{"a.yaml:one", "b.yaml:audited"}, s.roots["tf/root"].jobs)
+			assert.Equal(t, []string{"aws_x_", "aws_none"}, s.typeOrder)
+			assert.Equal(t, []string{"i1.test"}, s.types["aws_x_"].hosts)
+			assert.Empty(t, s.types["aws_none"].hosts)
 		})
 
 		t.Run("egress_policy 未指定は block とみなす", func(t *testing.T) {
@@ -373,9 +419,9 @@ func Test_assign(t *testing.T) {
 		t.Run("クラスのキーを載せる", func(t *testing.T) {
 			t.Parallel()
 			c := &class{}
-			require.NoError(t, assign(c, nil, "includes", []string{"mise"}))
-			require.NoError(t, assign(c, nil, "hosts", []string{"a.test"}))
-			require.NoError(t, assign(c, nil, "ips", []string{"127.0.0.100"}))
+			require.NoError(t, assign(section{class: c}, "includes", []string{"mise"}))
+			require.NoError(t, assign(section{class: c}, "hosts", []string{"a.test"}))
+			require.NoError(t, assign(section{class: c}, "ips", []string{"127.0.0.100"}))
 			assert.Equal(t, []string{"mise"}, c.includes)
 			assert.Equal(t, []string{"a.test"}, c.hosts)
 			assert.Equal(t, []string{"127.0.0.100"}, c.ips)
@@ -384,12 +430,26 @@ func Test_assign(t *testing.T) {
 		t.Run("ジョブのキーを載せる", func(t *testing.T) {
 			t.Parallel()
 			j := &jobSpec{}
-			require.NoError(t, assign(nil, j, "classes", []string{"image"}))
-			require.NoError(t, assign(nil, j, "extra", []string{"a.test"}))
-			require.NoError(t, assign(nil, j, "egress_policy", []string{policyAudit}))
+			require.NoError(t, assign(section{job: j}, "classes", []string{"image"}))
+			require.NoError(t, assign(section{job: j}, "extra", []string{"a.test"}))
+			require.NoError(t, assign(section{job: j}, "egress_policy", []string{policyAudit}))
 			assert.Equal(t, []string{"image"}, j.classes)
 			assert.Equal(t, []string{"a.test"}, j.extra)
 			assert.Equal(t, policyAudit, j.policy)
+		})
+
+		t.Run("root のキーを載せる", func(t *testing.T) {
+			t.Parallel()
+			r := &rootSpec{}
+			require.NoError(t, assign(section{root: r}, "jobs", []string{"a.yaml:one"}))
+			assert.Equal(t, []string{"a.yaml:one"}, r.jobs)
+		})
+
+		t.Run("type のキーを載せる", func(t *testing.T) {
+			t.Parallel()
+			ty := &typeSpec{}
+			require.NoError(t, assign(section{typ: ty}, "hosts", []string{"a.test"}))
+			assert.Equal(t, []string{"a.test"}, ty.hosts)
 		})
 	})
 
@@ -398,22 +458,32 @@ func Test_assign(t *testing.T) {
 
 		t.Run("未知のキーを弾く", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, assign(&class{}, nil, "endpoints", []string{"a.test"}), errSSOTSyntax)
+			require.ErrorIs(t, assign(section{class: &class{}}, "endpoints", []string{"a.test"}), errSSOTSyntax)
 		})
 
 		t.Run("クラスのキーをジョブへ書けない", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, assign(nil, &jobSpec{}, "includes", []string{"mise"}), errSSOTSyntax)
+			require.ErrorIs(t, assign(section{job: &jobSpec{}}, "includes", []string{"mise"}), errSSOTSyntax)
 		})
 
 		t.Run("ips をジョブへ書けない", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, assign(nil, &jobSpec{}, "ips", []string{"127.0.0.100"}), errSSOTSyntax)
+			require.ErrorIs(t, assign(section{job: &jobSpec{}}, "ips", []string{"127.0.0.100"}), errSSOTSyntax)
+		})
+
+		t.Run("root へ hosts を書けない", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, assign(section{root: &rootSpec{}}, "hosts", []string{"a.test"}), errSSOTSyntax)
+		})
+
+		t.Run("type へ jobs を書けない", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, assign(section{typ: &typeSpec{}}, "jobs", []string{"a.yaml:one"}), errSSOTSyntax)
 		})
 
 		t.Run("リスト内の重複を弾く", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, assign(&class{}, nil, "hosts", []string{"a.test", "a.test"}), errSSOTDuplicate)
+			require.ErrorIs(t, assign(section{class: &class{}}, "hosts", []string{"a.test", "a.test"}), errSSOTDuplicate)
 		})
 	})
 }
@@ -446,32 +516,42 @@ func Test_ssot_openSection(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("クラスとジョブを登録する", func(t *testing.T) {
+		t.Run("各セクションを登録し、代入の宛先を返す", func(t *testing.T) {
 			t.Parallel()
-			s := &ssot{classes: map[string]*class{}, jobs: map[string]*jobSpec{}}
-			require.NoError(t, s.openSection("class", "base"))
-			require.NoError(t, s.openSection("job", "a.yaml:one"))
-			assert.NotNil(t, s.classes["base"])
+			s := newSSOT()
+			c, err := s.openSection("class", "base")
+			require.NoError(t, err)
+			j, err := s.openSection("job", "a.yaml:one")
+			require.NoError(t, err)
+			r, err := s.openSection("root", "tf/root")
+			require.NoError(t, err)
+			ty, err := s.openSection("type", "aws_x_")
+			require.NoError(t, err)
+			assert.Equal(t, section{class: s.classes["base"]}, c)
+			assert.Equal(t, section{job: s.jobs["a.yaml:one"]}, j)
+			assert.Equal(t, section{root: s.roots["tf/root"]}, r)
+			assert.Equal(t, section{typ: s.types["aws_x_"]}, ty)
 			assert.Equal(t, []string{"a.yaml:one"}, s.jobOrder)
+			assert.Equal(t, []string{"tf/root"}, s.rootOrder)
+			assert.Equal(t, []string{"aws_x_"}, s.typeOrder)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("クラスの重複を弾く", func(t *testing.T) {
-			t.Parallel()
-			s := &ssot{classes: map[string]*class{}, jobs: map[string]*jobSpec{}}
-			require.NoError(t, s.openSection("class", "base"))
-			require.ErrorIs(t, s.openSection("class", "base"), errSSOTDuplicate)
-		})
-
-		t.Run("ジョブの重複を弾く", func(t *testing.T) {
-			t.Parallel()
-			s := &ssot{classes: map[string]*class{}, jobs: map[string]*jobSpec{}}
-			require.NoError(t, s.openSection("job", "a.yaml:one"))
-			require.ErrorIs(t, s.openSection("job", "a.yaml:one"), errSSOTDuplicate)
-		})
+		for kind, name := range map[string]string{
+			"class": "base", "job": "a.yaml:one", "root": "tf/root", "type": "aws_x_",
+		} {
+			t.Run(kind+"の重複を弾く", func(t *testing.T) {
+				t.Parallel()
+				s := newSSOT()
+				_, err := s.openSection(kind, name)
+				require.NoError(t, err)
+				_, err = s.openSection(kind, name)
+				require.ErrorIs(t, err, errSSOTDuplicate)
+			})
+		}
 	})
 }
 
@@ -521,6 +601,71 @@ func Test_ssot_validate(t *testing.T) {
 				"[job.\"w.yaml:j\"]\nclasses = [\"a\"]\n"
 			_, err := parseSSOT(body)
 			require.ErrorIs(t, err, errSSOTClassCycle)
+		})
+
+		for name, body := range map[string]string{
+			"大文字を含む":  "[type.AWS_x_]\nhosts = []\n",
+			"_ が続く":   "[type.aws__x]\nhosts = []\n",
+			"_ で始まる":  "[type._aws]\nhosts = []\n",
+			"ハイフンを含む": "[type.aws-x]\nhosts = []\n",
+		} {
+			t.Run("type の名前が"+name+"なら弾く", func(t *testing.T) {
+				t.Parallel()
+				_, err := parseSSOT(body)
+				require.ErrorIs(t, err, errSSOTTypeName)
+			})
+		}
+
+		t.Run("type の port 付きの宛先を弾く", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSSOT("[type.aws_x_]\nhosts = [\"kms.test:443\"]\n")
+			require.ErrorIs(t, err, errSSOTDomain)
+		})
+
+		t.Run("root の不正を validateRoot から伝播する", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSSOT("[root.\"tf/root\"]\njobs = [\"w.yaml:nope\"]\n")
+			require.ErrorIs(t, err, errSSOTUnknownJob)
+		})
+	})
+}
+
+func Test_ssot_validateRoot(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("宣言済みのジョブを持つ相対パスを受ける", func(t *testing.T) {
+			t.Parallel()
+			s := mustParse(t, testSSOT)
+			assert.NoError(t, s.validateRoot("env/admin/identity", &rootSpec{jobs: []string{"a.yaml:one"}}))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, root := range map[string]string{
+			"絶対パス":        "/env/admin",
+			"親を指す":        "../env",
+			"途中で親へ戻る":     "env/../../x",
+			"正規化されていない":   "env//admin",
+			"末尾にスラッシュがある": "env/admin/",
+			"現在のディレクトリ":   ".",
+			"バックスラッシュを含む": `env\admin`,
+		} {
+			t.Run(name+"の root を弾く", func(t *testing.T) {
+				t.Parallel()
+				s := mustParse(t, testSSOT)
+				require.ErrorIs(t, s.validateRoot(root, &rootSpec{}), errSSOTRootPath)
+			})
+		}
+
+		t.Run("未定義のジョブを弾く", func(t *testing.T) {
+			t.Parallel()
+			s := mustParse(t, testSSOT)
+			require.ErrorIs(t, s.validateRoot("tf/root", &rootSpec{jobs: []string{"w.yaml:nope"}}), errSSOTUnknownJob)
 		})
 	})
 }

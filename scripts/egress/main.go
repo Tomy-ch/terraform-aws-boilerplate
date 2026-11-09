@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/netip"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -43,13 +44,15 @@ const (
 )
 
 var (
-	sectionRe   = regexp.MustCompile(`^\[(class|job)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
+	sectionRe   = regexp.MustCompile(`^\[(class|job|root|type)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
 	scalarRe    = regexp.MustCompile(`^(\w+)\s*=\s*"([^"]*)"$`)
 	arrayHeadRe = regexp.MustCompile(`^(\w+)\s*=\s*\[(.*)$`)
 	quotedRe    = regexp.MustCompile(`"([^"]*)"`)
 	// domainRe は bullfrog の allowed-domains が受け付ける形のうち、先頭の `*.` だけをワイルドカードとして
 	// 許す。道具は途中や単独の `*` も通すが、意図より広い範囲を開けるので宣言で拒む。
-	domainRe   = regexp.MustCompile(`^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
+	domainRe = regexp.MustCompile(`^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
+	// typeNameRe は resource / data source の型名、またはその `_` で終わる接頭辞。
+	typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$`)
 	stepNameRe = regexp.MustCompile(`^ {6}- name: \S`)
 	stepUsesRe = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
 	stepWithRe = regexp.MustCompile(`^ {8}with:$`)
@@ -80,6 +83,9 @@ var (
 	errSSOTDomain     = xerrors.New("SSOT の宛先がドメイン名の形をしていません")
 	errSSOTIP         = xerrors.New("SSOT の ips が 127.0.0.0/8 内の IPv4 アドレスまたは CIDR ではありません")
 	errSSOTIPScope    = xerrors.New("ips は base クラスだけが持てます")
+	errSSOTUnknownJob = xerrors.New("SSOT の root が未定義のジョブを参照しています")
+	errSSOTRootPath   = xerrors.New("SSOT の root がリポジトリ内の正規化された相対パスではありません")
+	errSSOTTypeName   = xerrors.New("SSOT の type が resource / data source の型の接頭辞の形をしていません")
 	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
 	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
 	// steps は 4 桁、step は 6 桁の `- ` で書く（scripts/lib/workflow の切り出しの前提）。
@@ -109,13 +115,35 @@ type jobSpec struct {
 	policy  string
 }
 
-// ssot は .github/egress.toml の内容。jobOrder は job セクションの宣言順。
+// rootSpec は CI が Terraform を実行する root 1 件の宣言。jobs はその root を実行するジョブ。
+type rootSpec struct {
+	jobs []string
+}
+
+// typeSpec は resource / data source の型の接頭辞 1 件が呼ぶ宛先。
+type typeSpec struct {
+	hosts []string
+}
+
+// ssot は .github/egress.toml の内容。*Order は各セクションの宣言順。
 type ssot struct {
 	classes   map[string]*class
 	jobs      map[string]*jobSpec
 	jobOrder  []string
+	roots     map[string]*rootSpec
+	rootOrder []string
+	types     map[string]*typeSpec
+	typeOrder []string
 	baseHosts []string
 	baseIPs   []string
+}
+
+// section は解析中のセクション。どれか 1 つだけが nil でない。
+type section struct {
+	class *class
+	job   *jobSpec
+	root  *rootSpec
+	typ   *typeSpec
 }
 
 // orderedHosts は初出順を保ったまま重複を落とすホスト集合。
@@ -161,9 +189,11 @@ func run(args []string, wd func() (string, error)) error {
 }
 
 func parseSSOT(data string) (*ssot, error) {
-	s := &ssot{classes: map[string]*class{}, jobs: map[string]*jobSpec{}}
-	var curClass *class
-	var curJob *jobSpec
+	s := &ssot{
+		classes: map[string]*class{}, jobs: map[string]*jobSpec{},
+		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{},
+	}
+	var cur section
 	var seen map[string]bool
 
 	lines := strings.Split(data, "\n")
@@ -173,15 +203,15 @@ func parseSSOT(data string) (*ssot, error) {
 			continue
 		}
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
-			name := m[2] + m[3]
-			if err := s.openSection(m[1], name); err != nil {
+			opened, err := s.openSection(m[1], m[2]+m[3])
+			if err != nil {
 				return nil, err
 			}
-			curClass, curJob = s.classes[name], s.jobs[name]
+			cur = opened
 			seen = map[string]bool{}
 			continue
 		}
-		if curClass == nil && curJob == nil {
+		if cur == (section{}) {
 			return nil, xerrors.Wrap(errSSOTSyntax, fmt.Sprintf("%d 行目: %q（セクションの外に値があります）", i+1, line))
 		}
 		key, values, next, err := parseAssignment(lines, i)
@@ -193,7 +223,7 @@ func parseSSOT(data string) (*ssot, error) {
 			return nil, xerrors.Wrap(errSSOTDuplicate, fmt.Sprintf("%d 行目: キー %q", i+1, key))
 		}
 		seen[key] = true
-		if err := assign(curClass, curJob, key, values); err != nil {
+		if err := assign(cur, key, values); err != nil {
 			return nil, xerrors.Wrap(err, fmt.Sprintf("%d 行目", i+1))
 		}
 	}
@@ -208,20 +238,38 @@ func stripComment(line string) string {
 	return line
 }
 
-func (s *ssot) openSection(kind, name string) error {
-	if _, dup := s.classes[name]; dup && kind == "class" {
-		return xerrors.Wrap(errSSOTDuplicate, "class "+name)
-	}
-	if _, dup := s.jobs[name]; dup && kind == "job" {
-		return xerrors.Wrap(errSSOTDuplicate, "job "+name)
-	}
-	if kind == "class" {
+// openSection は kind のセクション name を登録し、以降の代入の宛先を返す。
+func (s *ssot) openSection(kind, name string) (section, error) {
+	dup := func() (section, error) { return section{}, xerrors.Wrap(errSSOTDuplicate, kind+" "+name) }
+	switch kind {
+	case "class":
+		if _, ok := s.classes[name]; ok {
+			return dup()
+		}
 		s.classes[name] = &class{}
-		return nil
+		return section{class: s.classes[name]}, nil
+	case "job":
+		if _, ok := s.jobs[name]; ok {
+			return dup()
+		}
+		s.jobs[name] = &jobSpec{}
+		s.jobOrder = append(s.jobOrder, name)
+		return section{job: s.jobs[name]}, nil
+	case "root":
+		if _, ok := s.roots[name]; ok {
+			return dup()
+		}
+		s.roots[name] = &rootSpec{}
+		s.rootOrder = append(s.rootOrder, name)
+		return section{root: s.roots[name]}, nil
+	default:
+		if _, ok := s.types[name]; ok {
+			return dup()
+		}
+		s.types[name] = &typeSpec{}
+		s.typeOrder = append(s.typeOrder, name)
+		return section{typ: s.types[name]}, nil
 	}
-	s.jobs[name] = &jobSpec{}
-	s.jobOrder = append(s.jobOrder, name)
-	return nil
 }
 
 // parseAssignment は lines[i] から始まる代入を読み、キー・値・消費した最終行を返す。
@@ -261,10 +309,11 @@ func parseAssignment(lines []string, i int) (string, []string, int, error) {
 	return key, values, i, nil
 }
 
-func assign(c *class, j *jobSpec, key string, values []string) error {
+func assign(cur section, key string, values []string) error {
 	if err := requireUnique(values); err != nil {
 		return xerrors.Wrap(err, key)
 	}
+	c, j := cur.class, cur.job
 	switch {
 	case c != nil && key == "includes":
 		c.includes = values
@@ -278,6 +327,10 @@ func assign(c *class, j *jobSpec, key string, values []string) error {
 		j.extra = values
 	case j != nil && key == "egress_policy" && len(values) == 1:
 		j.policy = values[0]
+	case cur.root != nil && key == "jobs":
+		cur.root.jobs = values
+	case cur.typ != nil && key == "hosts":
+		cur.typ.hosts = values
 	default:
 		return xerrors.Wrap(errSSOTSyntax, "未知のキー "+key)
 	}
@@ -345,6 +398,34 @@ func (s *ssot) validate() error {
 	for _, key := range s.jobOrder {
 		if err := s.validateJob(key, s.jobs[key]); err != nil {
 			return err
+		}
+	}
+	for _, name := range s.rootOrder {
+		if err := s.validateRoot(name, s.roots[name]); err != nil {
+			return err
+		}
+	}
+	for _, name := range s.typeOrder {
+		if !typeNameRe.MatchString(name) {
+			return xerrors.Wrap(errSSOTTypeName, name)
+		}
+		for _, h := range s.types[name].hosts {
+			if err := validateDomain(h); err != nil {
+				return xerrors.Wrap(err, "type "+name)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRoot は root のパスがリポジトリの外や別名を指さないこと、jobs が宣言済みのジョブであることを見る。
+func (s *ssot) validateRoot(name string, r *rootSpec) error {
+	if !filepath.IsLocal(name) || path.Clean(name) != name || name == "." || strings.Contains(name, `\`) {
+		return xerrors.Wrap(errSSOTRootPath, name)
+	}
+	for _, key := range r.jobs {
+		if _, ok := s.jobs[key]; !ok {
+			return xerrors.Wrap(errSSOTUnknownJob, name+" jobs "+key)
 		}
 	}
 	return nil
@@ -584,6 +665,9 @@ func applyOrCheck(root string, dryRun bool) error {
 	}
 	s, err := parseSSOT(string(raw))
 	if err != nil {
+		return err
+	}
+	if err := s.checkEndpoints(root); err != nil {
 		return err
 	}
 	var files []string
