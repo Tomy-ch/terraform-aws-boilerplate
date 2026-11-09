@@ -540,6 +540,7 @@ jobs:
             github-releases.githubusercontent.com
             sts.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
