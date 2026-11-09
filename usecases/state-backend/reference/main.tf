@@ -8,4 +8,8 @@ module "state_backend" {
   project                                 = "tabp"
   env                                     = "admin"
   state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+  }
 }

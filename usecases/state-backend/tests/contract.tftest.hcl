@@ -6,12 +6,19 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
 }
 
 variables {
   project                                 = "tabp"
   env                                     = "admin"
   state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+  }
 }
 
 run "outputs" {
@@ -41,6 +48,75 @@ run "outputs" {
     condition     = output.plan_output_bucket_arn != output.bucket_arn
     error_message = "plan の出力の Bucket が state Bucket と分かれていません。"
   }
+
+  assert {
+    condition     = output.state_key_arn == module.kms.key_arn
+    error_message = "state_key_arn が state の鍵の ARN を返していません。"
+  }
+}
+
+run "state_key_users" {
+  command = plan
+
+  assert {
+    condition = local.state_key_users.roles == [
+      { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3" },
+      { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", via = "s3" },
+    ]
+    error_message = "鍵の暗号操作を許す相手が、S3 経由の plan と apply-identity の role の2つになっていません。"
+  }
+}
+
+run "ci_role_arns_same_role" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_plan_user" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:user/tabp-admin-ci-plan"
+      apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_apply_identity_root" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply_identity = "arn:aws:iam::123456789012:root"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_wildcard" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:role/*"
+      apply_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
 }
 
 # alias の名前は deployment-identity の権限が受けるので、鍵より前に plan で決まらなければならない。
@@ -55,6 +131,11 @@ run "state_key_alias_name" {
   assert {
     condition     = output.state_key_alias_name == "alias/t4bp-dev-tfstate"
     error_message = "state_key_alias_name が alias/<project>-<env>-tfstate を返していません。"
+  }
+
+  assert {
+    condition     = output.state_key_alias_name == "alias/${local.state_name}"
+    error_message = "state_key_alias_name が、鍵に渡す name と同じ local から組まれていません。"
   }
 }
 

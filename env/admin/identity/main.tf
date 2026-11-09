@@ -4,6 +4,10 @@ module "state_backend" {
   project                                 = "tabp"
   env                                     = "admin"
   state_noncurrent_version_retention_days = 90
+  ci_role_arns = {
+    plan           = module.deployment_identity.plan_role_arn
+    apply_identity = module.deployment_identity.apply_identity_role_arn
+  }
 }
 
 module "deployment_identity" {
