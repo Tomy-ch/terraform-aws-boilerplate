@@ -240,19 +240,20 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 21 to add, 0 to change, 0 to destroy.` であり、追加が次の21件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 5 to import, 22 to add, 0 to change, 0 to destroy.` であり、追加が次の22件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
-   - `module.state_backend.module.s3.aws_s3_bucket_policy.this`
+   - `module.state_backend.module.s3` の `aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の2件（後者は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
    - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
    - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
-3. Bucket に Policy がまだ無いことを確かめる。段4 の apply は、在る Policy を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
+3. Bucket に Policy と lifecycle がまだ無いことを確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
 
    ```bash
    aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
    ```
 
-   `NoSuchBucketPolicy` のエラーが返ること。Policy が返ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
+   順に `NoSuchBucketPolicy` と `NoSuchLifecycleConfiguration` のエラーが返ること。Policy か lifecycle が返ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
@@ -303,13 +304,14 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    ```
 
 5. apply の前の条件を確かめる（ADR-0602 決定10）。手順1 で控えた commit で、plan 以外の required check が成功していること。保護設定が承認者を要求しているなら、その承認を得ていること。満たさなければ apply しない
-6. apply の直前に、Bucket に Policy がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy を黙って置き換え、plan はそれを示さない
+6. apply の直前に、Bucket に Policy と lifecycle がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換え、plan はそれを示さない
 
    ```bash
    aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+   aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
    ```
 
-   `NoSuchBucketPolicy` のエラーが返ること
+   順に `NoSuchBucketPolicy` と `NoSuchLifecycleConfiguration` のエラーが返ること
 
 7. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
 
@@ -324,6 +326,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - `aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"` の `ClientIDList` が `sts.amazonaws.com` だけである
    - 3つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity`。role 名と違い、apply-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
    - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
+   - `aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` が規則を1つだけ返し、その規則が `Status` `Enabled`、空の `Filter`、`Expiration` の `ExpiredObjectDeleteMarker` `true`（`Days` と `Date` が無い）、`NoncurrentVersionExpiration` の `NoncurrentDays` が `state_noncurrent_version_retention_days` の値、`AbortIncompleteMultipartUpload` の `DaysAfterInitiation` `1` を持つ
 9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること
 
    ```bash
@@ -338,7 +341,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate"
    plan_bucket="arn:aws:s3:::${BUCKET/-tfstate-/-tfplan-}"
    sim plan "arn:aws:s3:::${BUCKET}" $reads
-   sim apply-identity "arn:aws:s3:::${BUCKET}" $reads s3:PutBucketPolicy
+   sim apply-identity "arn:aws:s3:::${BUCKET}" $reads s3:PutBucketPolicy s3:PutLifecycleConfiguration
    sim apply-identity "$key" s3:PutObject
    sim apply-identity "$(arn plan)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
    sim plan "$plan_bucket" $reads
@@ -349,13 +352,13 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim plan "${plan_bucket}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
    sim plan "${plan_bucket}/x" s3:PutObject
    sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
-   sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy
+   sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy s3:PutLifecycleConfiguration
    sim apply "$key" s3:PutObject s3:DeleteObject
    sim apply "$plan_bucket" s3:PutBucketPolicy s3:PutLifecycleConfiguration
    sim apply "${plan_bucket}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
    ```
 
-   期待は順に、15行・16行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・2行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
+   期待は順に、15行・17行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・3行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
 
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
@@ -376,7 +379,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`StringEquals`・`Bool`）は条件キーが無いと一致しない。alias が無い作成直後の鍵での apply-identity の評価（`ForAllValues` の条件キーが無いとき）は、ここでは確かめず、鍵を作る変更の apply が確かめる。state の鍵と lifecycle の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
+4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`StringEquals`・`Bool`）は条件キーが無いと一致しない。alias が無い作成直後の鍵での apply-identity の評価（`ForAllValues` の条件キーが無いとき）は、ここでは確かめず、鍵を作る変更の apply が確かめる。state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
 
    ```bash
    kms="arn:aws:kms:${REGION}:${ACCOUNT_ID}"
@@ -389,7 +392,6 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim apply-identity "*" kms:ListAliases
    simc apply-identity "${kms}:key/x" "$alias" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy kms:CreateAlias
    simc apply-identity "${kms}:alias/tabp-admin-tfstate" "$alias" kms:CreateAlias
-   sim apply-identity "arn:aws:s3:::${BUCKET}" s3:PutLifecycleConfiguration
    simc plan "${kms}:key/x" "$alias" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
    sim plan "*" kms:ListAliases
    sim apply-identity "${kms}:key/x" kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
@@ -404,7 +406,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    simc apply-identity "*" "ContextKeyName=kms:KeyOrigin,ContextKeyValues=EXTERNAL,ContextKeyType=string" kms:CreateKey
    ```
 
-   期待は順に、1行・1行・7行・1行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（state の alias を与えた行は `allowed`、別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは鍵を作る変更の apply と、その後の CI の plan が確かめる
+   期待は順に、1行・1行・7行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（state の alias を与えた行は `allowed`、別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは鍵を作る変更の apply と、その後の CI の plan が確かめる
 
 途中で失敗したとき:
 
@@ -451,8 +453,8 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 21 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の21件だけだった
-- [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を返した
+- [ ] `make plan-admin-identity` が `5 to import, 22 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の22件だけだった
+- [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 段3 の終了時:
@@ -466,9 +468,9 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] OIDC provider と3つの role が、段4 の前に存在しなかった
 - [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 - [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
-- [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を返した
+- [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
-- [ ] provider の audience、role の policy、Bucket Policy の読み戻しが宣言どおりだった
+- [ ] provider の audience、role の policy、Bucket Policy と lifecycle の読み戻しが宣言どおりだった
 - [ ] `simulate-principal-policy` の行数と判定が、段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した

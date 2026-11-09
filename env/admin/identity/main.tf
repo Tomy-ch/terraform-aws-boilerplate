@@ -1,8 +1,9 @@
 module "state_backend" {
   source = "../../../usecases/state-backend"
 
-  project = "tabp"
-  env     = "admin"
+  project                                 = "tabp"
+  env                                     = "admin"
+  state_noncurrent_version_retention_days = 90
 }
 
 module "deployment_identity" {

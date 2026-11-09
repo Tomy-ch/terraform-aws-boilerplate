@@ -7,6 +7,10 @@ mock_provider "aws" {
   }
 }
 
+variables {
+  noncurrent_version_retention_days = 90
+}
+
 # Bucket の ARN は plan では決まらないので、mock の apply で確かめる。
 run "deny_insecure_transport" {
   command = apply

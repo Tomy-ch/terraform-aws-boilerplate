@@ -7,6 +7,10 @@ mock_provider "aws" {
   }
 }
 
+variables {
+  noncurrent_version_retention_days = 90
+}
+
 run "account_regional_name" {
   command = plan
 

@@ -11,7 +11,7 @@ CI の plan の全文は、公開されるログ・Pull Request のコメント�
 
 段4 の Pull Request は、merge の前に、その head に対する CI の plan が変更なしを示す必要がある（同 決定10）。CI の plan は全文をこの Bucket に書くので、Bucket が段4 の apply より後にしか無いと、段4 の Pull Request の plan は書き込みで失敗し、merge の条件を満たせない。
 
-plan の出力は、上書きの前の版を残し、日数が過ぎたら消えなければならない。plan の role は object を消せないので（同 決定13）、古い出力を消せるのは lifecycle だけである。一方、state Bucket の lifecycle は段5 で足す（`usecases/state-backend/README.md` の段の表。その権限は deployment-identity/ADR-0201 (enumerated-permissions) 決定3 が持つ）。一般 module の `modules/s3` に lifecycle を足すと state Bucket にも付き、plan の出力の Bucket にだけ付けるには入力で resource の有無を切り替えることになる（repository-wide/ADR-0102 (use-case-centric-scope) 決定15）。
+plan の出力は、上書きの前の版を残し、日数が過ぎたら消えなければならない。plan の role は object を消せないので（同 決定13）、古い出力を消せるのは lifecycle だけである。state Bucket の lifecycle は現行版を失効させない（state-backend/ADR-0103 (expire-noncurrent-state-versions)）。plan の出力の Bucket は現行版を失効させるので、`modules/s3` を使うと、現行版の失効の有無を入力で切り替えることになる（repository-wide/ADR-0102 (use-case-centric-scope) 決定15）。
 
 ## Decision
 
@@ -24,9 +24,9 @@ plan の出力は、上書きの前の版を残し、日数が過ぎたら消え
 
 ## 検討した代替案
 
-### 案A: `modules/s3` に lifecycle を足し、日数を入力にする
+### 案A: `modules/s3` に現行版の失効を足し、入力で切り替える
 
-lifecycle が state Bucket にも付く。state の現行版を失効させてはならないので、現行版の失効の有無を入力で切り替えることになる（repository-wide/ADR-0102 決定15）。state Bucket の lifecycle が段5 から段4 へ前倒しになり、段5 とした段の割当と食い違う。
+`modules/s3` の lifecycle は state Bucket にも付く。state の現行版を失効させてはならないので、現行版の失効の有無を入力で切り替えることになる（repository-wide/ADR-0102 決定15）。
 
 ### 案B: Bucket を段5 で作る
 
@@ -75,10 +75,10 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 
 ## 影響
 
-`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みを与える（deployment-identity/ADR-0201 の表）。CI の plan の job は、Bucket の名前を identity root の output `plan_output_bucket_name` から得る。
+`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みを与える（deployment-identity/ADR-0201 の表）。CI の plan の job は、Bucket の名前を identity root の output `plan_output_bucket_name` から得る。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
 
 ## 見直し条件
 
 - bootstrap の段5 で SSE-KMS へ切り替えたとき（決定5・6 を書き換え、抑止を外す）
-- `modules/s3` が lifecycle を、入力で resource の有無を切り替えずに持てるようになったとき（決定3 を見直す）
+- `modules/s3` の lifecycle が、入力で resource や block の有無を切り替えずに現行版の失効を持てるようになったとき（決定3 を見直す）
 - plan の全文を保持日数より長く残す要件ができたとき

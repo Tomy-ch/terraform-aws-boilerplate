@@ -46,10 +46,12 @@
     "stateful_protection": {
       "protected_types": [
         "aws_s3_bucket",
+        "aws_s3_bucket_lifecycle_configuration",
         "aws_kms_key",
         "aws_kms_key_policy"
       ],
-      "allow": {}
+      "allow": {},
+      "shorten_allow": {}
     }
   }
 }

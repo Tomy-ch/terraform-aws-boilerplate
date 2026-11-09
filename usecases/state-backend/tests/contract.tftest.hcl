@@ -9,8 +9,9 @@ mock_provider "aws" {
 }
 
 variables {
-  project = "tabp"
-  env     = "admin"
+  project                                 = "tabp"
+  env                                     = "admin"
+  state_noncurrent_version_retention_days = 90
 }
 
 run "outputs" {
@@ -98,4 +99,51 @@ run "plan_output_retention_days_wiring" {
     condition     = module.plan_output.retention_days == { current = 3, noncurrent = 3 }
     error_message = "plan_output_retention_days が plan の出力の lifecycle の日数に届いていません。"
   }
+}
+
+# ファイル先頭の 90 とは別の値を渡す。同じ値では、配線が切れていても通る。
+run "state_noncurrent_version_retention_days_wiring" {
+  command = plan
+
+  variables {
+    state_noncurrent_version_retention_days = 45
+  }
+
+  assert {
+    condition     = module.s3.noncurrent_version_retention_days == 45
+    error_message = "state_noncurrent_version_retention_days が state Bucket の lifecycle の日数に届いていません。"
+  }
+}
+
+run "state_noncurrent_version_retention_days_minimum" {
+  command = plan
+
+  variables {
+    state_noncurrent_version_retention_days = 1
+  }
+
+  assert {
+    condition     = module.s3.noncurrent_version_retention_days == 1
+    error_message = "state_noncurrent_version_retention_days = 1 が受け付けられていません。"
+  }
+}
+
+run "state_noncurrent_version_retention_days_zero" {
+  command = plan
+
+  variables {
+    state_noncurrent_version_retention_days = 0
+  }
+
+  expect_failures = [var.state_noncurrent_version_retention_days]
+}
+
+run "state_noncurrent_version_retention_days_fraction" {
+  command = plan
+
+  variables {
+    state_noncurrent_version_retention_days = 1.5
+  }
+
+  expect_failures = [var.state_noncurrent_version_retention_days]
 }
