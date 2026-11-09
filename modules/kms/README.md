@@ -13,7 +13,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | 入力 | 意味 |
 | --- | --- |
 | `name` | alias の名前の後半。英数字・`/`・`_`・`-` だけで 1-250 文字、`aws/` で始めない（KMS の `CreateAlias`）。前半 `<project>-<env>-<purpose>` は呼び出す usecase が組み、その形は usecase のテストで固定する |
-| `users.roles` | 鍵を使う IAM role の ARN と、経由するサービス（`via`）の組。同じアカウントと partition の role だけを受ける（plan で落ちる） |
+| `users.roles` | 鍵を使う IAM role の ARN と、経由するサービス（`via`）の組。同じアカウントと partition の role だけを受ける（ARN が plan で決まれば plan で、決まらなければ apply で落ちる） |
 | `users.services.logs` | 鍵で暗号化する CloudWatch Logs の Log Group の名前。module が鍵と同じアカウントと region の ARN を組む |
 
 `users` は合わせて1件以上を要る。管理の委任は暗号操作を含まないので、利用者の無い鍵は誰も使えない。
@@ -43,7 +43,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 
 `kms:ViaService` は IAM の主体が AWS のサービスを経由して呼ぶ要求にだけ当たる条件で、role はこの鍵を直接は使えない。CloudWatch Logs の文はサービス principal に対する許可で、暗号化コンテキストで Log Group を名指して限る。
 
-Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると plan で落ちる。
+Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると落ちる（role の ARN が plan で決まれば plan で、決まらなければ apply で）。
 
 ## まだ持たないもの
 

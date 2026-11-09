@@ -377,9 +377,10 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 途中で失敗したとき:
 
 - lock が残ったら、他に apply が走っていないことを確かめてから `terraform force-unlock <ID>` で外す
-- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す。やり直しの手順6 では、前の apply が書いた Policy と lifecycle が返る。その2つが state に在り、手順4 の plan が残りの resource の追加だけを示すことで、手順6 の確認に代える
+- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
 - Key Policy の書き込みが `MalformedPolicyDocumentException` で落ちたら、作ったばかりの role が IAM にまだ伝わっていない。commit を変えずに手順4 からやり直す
 - `EntityAlreadyExists` が返ったら、手順3 に戻る
+- やり直しの手順6 で Policy か lifecycle が返ったら、それが前の apply の書いたものとして state に在ることを `terraform state list` で確かめる。state に在るものは手順4 の plan が差分を示すので、手順6 の確認に代える。state に無いものが返ったら、誰がなぜ置いたかを確かめるまで止まる
 
 ### 段5. CI が apply する
 

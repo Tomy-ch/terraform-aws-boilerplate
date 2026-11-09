@@ -53,6 +53,7 @@ key policy の JSON が、検査を通らないまま実在する。repository-w
 - Unit Test: `modules/s3/tests/naming.tftest.hcl` の `bucket_attributes` が、暗号化の値（`AES256`）と SSE-C の拒否を mock の plan で確かめる
 - Security: `make trivy-config` が AWS-0132 を `modules/s3/encryption.tf` 以外の path で報告しないこと。抑止の宣言は `.trivyignore.yaml` が持つ
 - Security: `make checkov` が CKV_AWS_145 を `modules/s3/main.tf` の `aws_s3_bucket.this` 以外で報告しないこと。抑止の宣言はその resource の `#checkov:skip` が持つ
+- 決定2: identity root の plan に `module.state_backend.module.kms` の3 resource が追加として現れ、段1 の CLI では作らないこと（`docs/setup/bootstrap.md` 段2 の一覧。一覧を設定と突き合わせる検査は無い）。alias の名前は `env/admin/identity/tests/imports.tftest.hcl` が見る
 
 ## 影響
 
