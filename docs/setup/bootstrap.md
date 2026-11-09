@@ -377,7 +377,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 途中で失敗したとき:
 
 - lock が残ったら、他に apply が走っていないことを確かめてから `terraform force-unlock <ID>` で外す
-- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
+- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す。やり直しの手順6 では、前の apply が書いた Policy と lifecycle が返る。その2つが state に在り、手順4 の plan が残りの resource の追加だけを示すことで、手順6 の確認に代える
 - Key Policy の書き込みが `MalformedPolicyDocumentException` で落ちたら、作ったばかりの role が IAM にまだ伝わっていない。commit を変えずに手順4 からやり直す
 - `EntityAlreadyExists` が返ったら、手順3 に戻る
 
@@ -391,7 +391,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`StringEquals`・`Bool`）は条件キーが無いと一致しない。alias が無い作成直後の鍵での apply-identity の評価（`ForAllValues` の条件キーが無いとき）は、ここでは確かめず、鍵を作る変更の apply が確かめる。state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
+4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`StringEquals`・`Bool`）は条件キーが無いと一致しない。alias が無い作成直後の鍵での apply-identity の評価（`ForAllValues` の条件キーが無いとき）は、ここでは確かめない。段4 を終えたアカウントへ鍵を足す CI の apply が確かめ、新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので確かめる機会が無い。state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
 
    ```bash
    kms="arn:aws:kms:${REGION}:${ACCOUNT_ID}"
@@ -418,7 +418,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    simc apply-identity "*" "ContextKeyName=kms:KeyOrigin,ContextKeyValues=EXTERNAL,ContextKeyType=string" kms:CreateKey
    ```
 
-   期待は順に、1行・1行・7行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（state の alias を与えた行は `allowed`、別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは鍵を作る変更の apply と、その後の CI の plan が確かめる
+   期待は順に、1行・1行・7行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（state の alias を与えた行は `allowed`、別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは、段4 を終えたアカウントへ鍵を足す CI の apply と、その後の CI の plan が確かめる
 
 途中で失敗したとき:
 

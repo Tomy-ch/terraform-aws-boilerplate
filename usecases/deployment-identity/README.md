@@ -106,7 +106,7 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
 - identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_alias_name`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
-- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。鍵を作る変更の apply が初めて見る。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
+- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。段4 を終えたアカウントへ鍵を足す CI の apply が初めて見る。新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので、見る機会が無い。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
