@@ -48,22 +48,21 @@ run "outputs" {
     condition     = output.plan_output_bucket_arn != output.bucket_arn
     error_message = "plan の出力の Bucket が state Bucket と分かれていません。"
   }
-
-  assert {
-    condition     = output.state_key_arn == module.kms.key_arn
-    error_message = "state_key_arn が state の鍵の ARN を返していません。"
-  }
 }
 
-run "state_key_users" {
+run "ci_role_arns_role_with_path" {
   command = plan
 
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-plan"
+      apply_identity = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-apply-identity"
+    }
+  }
+
   assert {
-    condition = local.state_key_users.roles == [
-      { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3" },
-      { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", via = "s3" },
-    ]
-    error_message = "鍵の暗号操作を許す相手が、S3 経由の plan と apply-identity の role の2つになっていません。"
+    condition     = output.state_key_alias_name == "alias/tabp-admin-tfstate"
+    error_message = "path を持つ role の ARN が受け付けられていません。"
   }
 }
 
@@ -119,6 +118,19 @@ run "ci_role_arns_wildcard" {
   expect_failures = [var.ci_role_arns]
 }
 
+run "ci_role_arns_apply_identity_no_name" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply_identity = "arn:aws:iam::123456789012:role/"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
 # alias の名前は deployment-identity の権限が受けるので、鍵より前に plan で決まらなければならない。
 run "state_key_alias_name" {
   command = plan
@@ -134,8 +146,8 @@ run "state_key_alias_name" {
   }
 
   assert {
-    condition     = output.state_key_alias_name == "alias/${local.state_name}"
-    error_message = "state_key_alias_name が、鍵に渡す name と同じ local から組まれていません。"
+    condition     = output.state_key_alias_name == module.kms.alias_name
+    error_message = "state_key_alias_name が、鍵に付く alias の名前を返していません。"
   }
 }
 

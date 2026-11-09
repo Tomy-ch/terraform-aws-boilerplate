@@ -65,6 +65,10 @@ run "admin_state_bucket_name" {
     condition     = output.plan_output_bucket_name == "tabp-admin-tfplan-123456789012-ap-northeast-1-an"
     error_message = "output plan_output_bucket_name が管理アカウントの plan の出力の Bucket の名前を返していません。"
   }
+}
+
+run "admin_state_key_alias_name" {
+  command = plan
 
   assert {
     condition     = module.state_backend.state_key_alias_name == "alias/tabp-admin-tfstate"

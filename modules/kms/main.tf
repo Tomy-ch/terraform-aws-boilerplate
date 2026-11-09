@@ -18,7 +18,11 @@ resource "aws_kms_key" "this" {
   bypass_policy_lockout_safety_check = false
 }
 
+locals {
+  alias_name = "alias/${var.name}"
+}
+
 resource "aws_kms_alias" "this" {
-  name          = "alias/${var.name}"
+  name          = local.alias_name
   target_key_id = aws_kms_key.this.key_id
 }
