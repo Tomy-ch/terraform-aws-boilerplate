@@ -162,6 +162,11 @@ make egress-apply     # 各 job の bullfrog の with: へ反映
 make egress-check
 ```
 
+Terraform 側でも落ちる —— 宣言の root が使い始めた resource / data source の型に当たる `type` が無い、
+`type` の宛先を job の許可リストが持たない、`type` の宛先を許す job がどの root にも名指されていない。
+**`make egress-apply` では直らない。** `.github/egress.toml` の `type` / クラスの宛先 / `root` を足す
+（手順は `.github/workflows/README.md` の「ランナーの封じ込め」節）。
+
 同じホストを複数の job が要るなら、`extra` を繰り返さず**クラスを作る** —— `.github/egress.toml`
 の README がその規則を持つ。
 

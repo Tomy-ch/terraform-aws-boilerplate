@@ -279,6 +279,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 | `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
 | `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
+| `aws` | STS・IAM・KMS・S3（S3 Control を含む）の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、Terraform で AWS の API を呼ぶ job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
@@ -295,8 +296,11 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 **Terraform を実行する job の AWS の宛先は、Terraform の設定から突き合わせる。** 宣言の `root` が
 CI の実行する root とそれを実行する job を、`type` が resource / data source の型の呼ぶ宛先を持つ。
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
-`type` の宛先を持たない job で落ちる。新しい AWS のサービスの型を足す変更は、その `type` と、
-クラスへの宛先の追加を同じ変更に含める。宛先が欠けると、Provider は遮断された呼び出しを再試行し続け、
+`type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
+新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
+Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
+当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型
+（S3 の directory bucket など）は、型名で別に宣言する。宛先が欠けると、Provider は遮断された呼び出しを再試行し続け、
 job は理由を出さずに時間切れになる —— plan が通っても apply で初めて呼ぶ API があるので、plan の
 成功はこの欠落を示さない。backend や資格情報の交換のように型を経ない呼び出しは、この突き合わせの外にある。
 

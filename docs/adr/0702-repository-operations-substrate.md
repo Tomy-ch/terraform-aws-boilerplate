@@ -72,7 +72,7 @@ ADR-0501 決定4 は、Terraformコードの故障モードごとに道具を割
 
 ### outbound 制限
 
-20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。
+20. CI のすべての job は、最初の step で runner の外向き通信を許可リストへ固定する。許可リストは決定10 の形で持つ —— 宣言は `.github/egress.toml`、適用は `make egress-apply`、検査は `make egress-check` である。Terraform を実行する job の許可リストは、その root が使う resource / data source の型が呼ぶ宛先を含む。
 21. 名前解決も、許可したドメインに限る。遮断を始めた後の step に sudo を残さない。sudo が残る job では、step の中から通信制限そのものを外せる。
 22. 手段は `bullfrogsec/bullfrog` とする。契約なしで遮断し、`api-token` を渡さなければ接続の記録を外へ送らない。
 23. 手段の挙動についての本 ADR の記述は、`.github/actions-pin.toml` が固定した版のソースから読んだものとする。版を上げる Pull Request は、その記述を確かめ直す。
