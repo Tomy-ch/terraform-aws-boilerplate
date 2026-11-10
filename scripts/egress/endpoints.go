@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -25,10 +27,17 @@ var (
 	errTypeUnmapped    = xerrors.New("SSOT の type に当たらない resource / data source の型があります")
 	errEndpointMissing = xerrors.New("型が呼ぶ宛先が、root を実行するジョブの許可リストにありません")
 	errTypeOrphan      = xerrors.New("SSOT に、どの root の型にも当たらない type があります")
+	errJobNoRoot       = xerrors.New("type の宛先を許すジョブが、どの root にも名指されていません")
+	errSymlink         = xerrors.New("Terraform の設定に symlink があります")
+	// errBlockCount は、解析で数えたブロックと字面で数えたブロックの件数が食い違う場合のエラー（ADR-0702 決定15）。
+	errBlockCount = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
 )
 
 // typeBlocks は provider の型をラベルの先頭に持つブロック。
-var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": true}
+var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": true, "action": true}
+
+// blockLineRe は型を持つブロックと module の開始行。check の中の data を数えるため字下げを許す。
+var blockLineRe = regexp.MustCompile(`(?m)^[ \t]*(?:resource|data|ephemeral|action|module)[ \t]+"`)
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
 // その root を実行するジョブの許可リストにあることを確かめる。欠けたときの症状は
@@ -67,6 +76,36 @@ func (s *ssot) checkEndpoints(repo string) error {
 	if len(orphans) > 0 {
 		return xerrors.Wrap(errTypeOrphan, strings.Join(orphans, ", ")+"（"+ssotFile+" の該当エントリを削除してください）")
 	}
+	return s.requireRoots()
+}
+
+// requireRoots は、いずれかの type の宛先を許すジョブが、どれかの root に名指されていることを見る。
+// root の宣言だけを起点にすると、宣言し忘れた root を実行するジョブは突き合わせを受けずに通る。
+func (s *ssot) requireRoots() error {
+	named := map[string]bool{}
+	for _, name := range s.rootOrder {
+		for _, key := range s.roots[name].jobs {
+			named[key] = true
+		}
+	}
+	typeHosts := map[string]bool{}
+	for _, t := range s.types {
+		for _, h := range t.hosts {
+			typeHosts[h] = true
+		}
+	}
+	for _, key := range s.jobOrder {
+		if named[key] {
+			continue
+		}
+		hosts, err := s.hostsFor(key)
+		if err != nil {
+			return err
+		}
+		if i := slices.IndexFunc(hosts, func(h string) bool { return typeHosts[h] }); i >= 0 {
+			return xerrors.Wrap(errJobNoRoot, fmt.Sprintf("%s は %s を許します（%s の root の jobs へ追加してください）", key, hosts[i], ssotFile))
+		}
+	}
 	return nil
 }
 
@@ -101,10 +140,15 @@ func (s *ssot) requireHosts(jobs, hosts []string) error {
 }
 
 // collectTypes は root から相対パスの module を辿り、使われる resource / data source の型を整列して返す。
-// 型が 1 件も無い root は拒む（ADR-0702 決定13）。
+// 読み取りは repo の中に閉じる。型が 1 件も無い root は拒む（ADR-0702 決定13）。
 func collectTypes(repo, root string) ([]string, error) {
+	r, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, xerrors.Wrap(err, "open "+repo)
+	}
+	defer func() { _ = r.Close() }()
 	found := map[string]bool{}
-	if err := walkModule(repo, root, found, map[string]bool{}); err != nil {
+	if err := walkModule(r, root, found, map[string]bool{}); err != nil {
 		return nil, err
 	}
 	if len(found) == 0 {
@@ -118,22 +162,24 @@ func collectTypes(repo, root string) ([]string, error) {
 	return types, nil
 }
 
-// walkModule は dir の *.tf を読み、型を found へ足し、呼ぶ module へ降りる。dir はリポジトリ直下からの
-// スラッシュ区切りのパス。*.tf.json は読まないので、在れば拒む。
-func walkModule(repo, dir string, found, visited map[string]bool) error {
+// walkModule は dir の *.tf を読み、型を found へ足し、呼ぶ module へ降りる。dir は repo 直下からの
+// スラッシュ区切りのパス。*.tf.json は読まないので、在れば拒む。symlink は宣言した木の外を読ませるので拒む。
+func walkModule(repo *os.Root, dir string, found, visited map[string]bool) error {
 	if visited[dir] {
 		return nil
 	}
 	visited[dir] = true
-	base := filepath.Join(repo, filepath.FromSlash(dir))
-	jsons, err := filepath.Glob(filepath.Join(base, "*.tf.json"))
+	if err := rejectSymlink(repo, dir); err != nil {
+		return xerrors.Wrap(err, dir)
+	}
+	jsons, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf.json"))
 	if err != nil {
 		return xerrors.Wrap(err, "glob "+dir)
 	}
 	if len(jsons) > 0 {
-		return xerrors.Wrap(errTerraformSyntax, relTo(repo, jsons[0])+"（*.tf.json は読めません）")
+		return xerrors.Wrap(errTerraformSyntax, jsons[0]+"（*.tf.json は読めません）")
 	}
-	files, err := filepath.Glob(filepath.Join(base, "*.tf"))
+	files, err := fs.Glob(repo.FS(), path.Join(dir, "*.tf"))
 	if err != nil {
 		return xerrors.Wrap(err, "glob "+dir)
 	}
@@ -141,14 +187,17 @@ func walkModule(repo, dir string, found, visited map[string]bool) error {
 		return xerrors.Wrap(errNoTerraform, dir)
 	}
 	for _, f := range files {
-		sources, err := scanTerraformFile(f, found)
+		if err := rejectSymlink(repo, f); err != nil {
+			return xerrors.Wrap(err, f)
+		}
+		sources, err := scanTerraformFile(repo, f, found)
 		if err != nil {
-			return xerrors.Wrap(err, relTo(repo, f))
+			return xerrors.Wrap(err, f)
 		}
 		for _, src := range sources {
 			next := path.Join(dir, src)
 			if !filepath.IsLocal(next) {
-				return xerrors.Wrap(errModuleSource, relTo(repo, f)+": "+src+"（リポジトリの外を指します）")
+				return xerrors.Wrap(errModuleSource, f+": "+src+"（リポジトリの外を指します）")
 			}
 			if err := walkModule(repo, next, found, visited); err != nil {
 				return err
@@ -158,9 +207,25 @@ func walkModule(repo, dir string, found, visited map[string]bool) error {
 	return nil
 }
 
-// scanTerraformFile は 1 ファイルの resource / data / ephemeral の型を found へ足し、module の source を返す。
-func scanTerraformFile(file string, found map[string]bool) ([]string, error) {
-	src, err := os.ReadFile(file) //nolint:gosec // path from a glob under the declared root
+// rejectSymlink は repo の中の name が symlink なら拒む。存在しない name は後続の glob が 0 件として扱う。
+func rejectSymlink(repo *os.Root, name string) error {
+	info, err := repo.Lstat(name)
+	if xerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return xerrors.Wrap(err, "lstat")
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return errSymlink
+	}
+	return nil
+}
+
+// scanTerraformFile は 1 ファイルの resource / data / ephemeral / action の型（check の中の data を含む）を
+// found へ足し、module の source を返す。解析で数えたブロックを字面の件数と突き合わせる。
+func scanTerraformFile(repo *os.Root, file string, found map[string]bool) ([]string, error) {
+	src, err := repo.ReadFile(file)
 	if err != nil {
 		return nil, xerrors.Wrap(err, "read")
 	}
@@ -173,22 +238,46 @@ func scanTerraformFile(file string, found map[string]bool) ([]string, error) {
 		return nil, xerrors.Wrap(errTerraformSyntax, "本体を読めません")
 	}
 	var sources []string
+	counted := 0
 	for _, b := range body.Blocks {
 		switch {
 		case typeBlocks[b.Type]:
-			if len(b.Labels) != 2 {
-				return nil, xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
+			if err := addType(b, found); err != nil {
+				return nil, err
 			}
-			found[b.Labels[0]] = true
+			counted++
+		case b.Type == "check":
+			for _, nested := range b.Body.Blocks {
+				if nested.Type != "data" {
+					continue
+				}
+				if err := addType(nested, found); err != nil {
+					return nil, err
+				}
+				counted++
+			}
 		case b.Type == "module":
 			source, err := moduleSource(b.Body)
 			if err != nil {
 				return nil, xerrors.Wrap(err, fmt.Sprintf("%d 行目: module %q", b.TypeRange.Start.Line, strings.Join(b.Labels, ".")))
 			}
 			sources = append(sources, source)
+			counted++
 		}
 	}
+	if lines := len(blockLineRe.FindAllIndex(src, -1)); lines != counted {
+		return nil, xerrors.Wrap(errBlockCount, fmt.Sprintf("解析 %d 件 / 字面 %d 件", counted, lines))
+	}
 	return sources, nil
+}
+
+// addType は型を持つブロックのラベルの先頭を found へ足す。
+func addType(b *hclsyntax.Block, found map[string]bool) error {
+	if len(b.Labels) != 2 {
+		return xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
+	}
+	found[b.Labels[0]] = true
+	return nil
 }
 
 // moduleSource は module の source を、`./` か `../` で始まるリテラルの文字列として読む。

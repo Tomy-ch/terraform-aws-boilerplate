@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -38,6 +40,15 @@ func endpointRepo(t *testing.T, body string) string {
 	return repo
 }
 
+// openRoot は dir を読み取りの起点として開き、テストの終わりに閉じる。
+func openRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	r, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close() })
+	return r
+}
+
 func parseBody(t *testing.T, src string) *hclsyntax.Body {
 	t.Helper()
 	f, diags := hclsyntax.ParseConfig([]byte(src), "t.tf", hcl.InitialPos)
@@ -64,7 +75,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 
 		t.Run("base の宛先もジョブの許可リストとして数える", func(t *testing.T) {
 			t.Parallel()
-			s := endpointSSOT(t, rootOne+"[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
 			repo := endpointRepo(t, "data \"aws_sts_x\" \"c\" {}\n")
 			assert.NoError(t, s.checkEndpoints(repo))
 		})
@@ -81,7 +92,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 
 		t.Run("ジョブを持たない root を弾く", func(t *testing.T) {
 			t.Parallel()
-			s := endpointSSOT(t, "[root.r]\njobs = []\n[type.aws_kms_]\nhosts = []\n")
+			s := endpointSSOT(t, "[root.r]\njobs = []\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
 			require.ErrorIs(t, s.checkEndpoints(repo), errRootNoJobs)
 		})
@@ -125,13 +136,62 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			require.ErrorIs(t, err, errTypeOrphan)
 			assert.Contains(t, err.Error(), "aws_s3_")
 		})
+
+		t.Run("type の宛先を許すジョブが root に名指されていなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"b.yaml:two\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
+			repo := endpointRepo(t, "data \"aws_sts_x\" \"c\" {}\n")
+			err := s.checkEndpoints(repo)
+			require.ErrorIs(t, err, errJobNoRoot)
+			assert.Contains(t, err.Error(), "a.yaml:one")
+		})
+	})
+}
+
+func Test_ssot_requireRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("type の宛先を許すジョブがすべて root に名指されていれば成功する", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			assert.NoError(t, s.requireRoots())
+		})
+
+		t.Run("type の宛先を許さないジョブと audit のジョブは名指されなくてよい", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			assert.NotContains(t, s.roots["r"].jobs, "b.yaml:two")
+			assert.NotContains(t, s.roots["r"].jobs, "b.yaml:audited")
+			assert.NoError(t, s.requireRoots())
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("type の宛先を許すジョブが root に名指されていなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"b.yaml:two\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			err := s.requireRoots()
+			require.ErrorIs(t, err, errJobNoRoot)
+			assert.Contains(t, err.Error(), "a.yaml:one")
+		})
+
+		t.Run("base の宛先を type が要るなら全ジョブが名指しの対象になる", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
+			require.ErrorIs(t, s.requireRoots(), errJobNoRoot)
+		})
 	})
 }
 
 func Test_ssot_matchType(t *testing.T) {
 	t.Parallel()
 
-	s := endpointSSOT(t, "[type.aws_iam_]\nhosts = []\n[type.aws_iam_policy_document]\nhosts = []\n[type.aws_region]\nhosts = []\n")
+	s := endpointSSOT(t, "[type.aws_iam_]\nhosts = [\"iam.test\"]\n[type.aws_iam_policy_document]\nhosts = []\n[type.aws_region]\nhosts = []\n")
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -260,7 +320,7 @@ func Test_walkModule(t *testing.T) {
 			writeFile(t, repo, "r/main.tf", "module \"a\" {\n  source = \"./m\"\n}\nmodule \"b\" {\n  source = \"./m\"\n}\n")
 			writeFile(t, repo, "r/m/main.tf", "module \"back\" {\n  source = \"../\"\n}\nresource \"aws_x\" \"x\" {}\n")
 			found, visited := map[string]bool{}, map[string]bool{}
-			require.NoError(t, walkModule(repo, "r", found, visited))
+			require.NoError(t, walkModule(openRoot(t, repo), "r", found, visited))
 			assert.Equal(t, map[string]bool{"aws_x": true}, found)
 			assert.Equal(t, map[string]bool{"r": true, "r/m": true}, visited)
 		})
@@ -270,7 +330,7 @@ func Test_walkModule(t *testing.T) {
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
 			writeFile(t, repo, "r/tests/main.tf", "resource \"aws_unrelated\" \"u\" {}\n")
 			found := map[string]bool{}
-			require.NoError(t, walkModule(repo, "r", found, map[string]bool{}))
+			require.NoError(t, walkModule(openRoot(t, repo), "r", found, map[string]bool{}))
 			assert.Equal(t, map[string]bool{"aws_x": true}, found)
 		})
 	})
@@ -282,26 +342,108 @@ func Test_walkModule(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, "r/README.md", "x")
-			require.ErrorIs(t, walkModule(repo, "r", map[string]bool{}, map[string]bool{}), errNoTerraform)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errNoTerraform)
 		})
 
 		t.Run("*.tf.json を持つディレクトリを弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
 			writeFile(t, repo, "r/extra.tf.json", `{"resource": {"aws_hidden": {"h": {}}}}`)
-			require.ErrorIs(t, walkModule(repo, "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
 		})
 
 		t.Run("リポジトリの外を指す module を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "module \"a\" {\n  source = \"../../outside\"\n}\n")
-			require.ErrorIs(t, walkModule(repo, "r", map[string]bool{}, map[string]bool{}), errModuleSource)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errModuleSource)
 		})
 
 		t.Run("ファイルの解釈の失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" {\n")
-			require.ErrorIs(t, walkModule(repo, "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
+		})
+
+		t.Run("symlink の *.tf を弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
+			outside := t.TempDir()
+			writeFile(t, outside, "o.tf", "resource \"aws_hidden\" \"h\" {}\n")
+			require.NoError(t, os.Symlink(filepath.Join(outside, "o.tf"), filepath.Join(repo, "r", "link.tf")))
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errSymlink)
+		})
+
+		t.Run("symlink の module ディレクトリを弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "module \"m\" {\n  source = \"./m\"\n}\n")
+			outside := t.TempDir()
+			writeFile(t, outside, "main.tf", "resource \"aws_hidden\" \"h\" {}\n")
+			require.NoError(t, os.Symlink(outside, filepath.Join(repo, "r", "m")))
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errSymlink)
+		})
+	})
+}
+
+func Test_rejectSymlink(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("通常のファイルとディレクトリを受ける", func(t *testing.T) {
+			t.Parallel()
+			root := openRoot(t, endpointRepo(t, "x"))
+			assert.NoError(t, rejectSymlink(root, "r"))
+			assert.NoError(t, rejectSymlink(root, "r/main.tf"))
+		})
+
+		t.Run("存在しないパスは後続の検査へ委ねる", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, rejectSymlink(openRoot(t, t.TempDir()), "missing"))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("symlink を弾く", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(dir, "link")))
+			require.ErrorIs(t, rejectSymlink(openRoot(t, dir), "link"), errSymlink)
+		})
+	})
+}
+
+func Test_addType(t *testing.T) {
+	t.Parallel()
+
+	block := func(t *testing.T, src string) *hclsyntax.Block {
+		t.Helper()
+		f, diags := hclsyntax.ParseConfig([]byte(src), "t.tf", hcl.InitialPos)
+		require.False(t, diags.HasErrors(), diags.Error())
+		body, ok := f.Body.(*hclsyntax.Body)
+		require.True(t, ok)
+		return body.Blocks[0]
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ラベルの先頭を型として足す", func(t *testing.T) {
+			t.Parallel()
+			found := map[string]bool{}
+			require.NoError(t, addType(block(t, "data \"aws_a\" \"x\" {}\n"), found))
+			assert.Equal(t, map[string]bool{"aws_a": true}, found)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ラベルが 2 つでなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, addType(block(t, "data \"aws_a\" {}\n"), map[string]bool{}), errTerraformSyntax)
 		})
 	})
 }
@@ -317,10 +459,29 @@ func Test_scanTerraformFile(t *testing.T) {
 			repo := endpointRepo(t, "resource \"aws_a\" \"a\" {}\ndata \"aws_b\" \"b\" {}\nephemeral \"aws_c\" \"c\" {}\n"+
 				"import {\n  to = aws_a.a\n  id = \"x\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\n")
 			found := map[string]bool{}
-			sources, err := scanTerraformFile(repo+"/r/main.tf", found)
+			sources, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
 			require.NoError(t, err)
 			assert.Equal(t, map[string]bool{"aws_a": true, "aws_b": true, "aws_c": true}, found)
 			assert.Equal(t, []string{"./m"}, sources)
+		})
+
+		t.Run("check の中の data と action の型を足す", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "check \"c\" {\n  data \"aws_d\" \"d\" {}\n  assert {\n    condition     = true\n    error_message = \"x\"\n  }\n}\n"+
+				"action \"aws_e\" \"e\" {}\n")
+			found := map[string]bool{}
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]bool{"aws_d": true, "aws_e": true}, found)
+		})
+
+		t.Run("コメントの中のブロックの字面は数えない", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "# resource \"aws_z\" \"z\" {}\nresource \"aws_a\" \"a\" {}\n")
+			found := map[string]bool{}
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]bool{"aws_a": true}, found)
 		})
 	})
 
@@ -329,30 +490,50 @@ func Test_scanTerraformFile(t *testing.T) {
 
 		t.Run("読めないファイルを弾く", func(t *testing.T) {
 			t.Parallel()
-			_, err := scanTerraformFile(t.TempDir()+"/missing.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, t.TempDir()), "missing.tf", map[string]bool{})
 			require.Error(t, err)
 		})
 
 		t.Run("解釈できない構文を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_a\" {\n")
-			_, err := scanTerraformFile(repo+"/r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
 			require.ErrorIs(t, err, errTerraformSyntax)
 		})
 
 		t.Run("ラベルが 2 つでない resource を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_a\" {}\n")
-			_, err := scanTerraformFile(repo+"/r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
 			require.ErrorIs(t, err, errTerraformSyntax)
 		})
 
 		t.Run("module の source の失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "module \"m\" {\n  source = \"hashicorp/consul/aws\"\n}\n")
-			_, err := scanTerraformFile(repo+"/r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
 			require.ErrorIs(t, err, errModuleSource)
 		})
+
+		t.Run("check の中の data のラベルの不正を伝播する", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "check \"c\" {\n  data \"aws_d\" {}\n}\n")
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+			require.ErrorIs(t, err, errTerraformSyntax)
+		})
+
+		for name, body := range map[string]string{
+			// 走査が読まないブロックの中に型が在ると、解析の件数が字面より少なくなる。
+			"知らないブロックの中の resource": "terraform {\n  resource \"aws_z\" \"z\" {}\n}\nresource \"aws_a\" \"a\" {}\n",
+			"heredoc の中のブロックの字面":   "locals {\n  t = <<EOT\nresource \"aws_z\" \"z\" {}\nEOT\n}\nresource \"aws_a\" \"a\" {}\n",
+		} {
+			t.Run(name+"で件数が食い違えば弾く", func(t *testing.T) {
+				t.Parallel()
+				repo := endpointRepo(t, body)
+				_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+				require.ErrorIs(t, err, errBlockCount)
+			})
+		}
 	})
 }
 

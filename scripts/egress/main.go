@@ -51,12 +51,14 @@ var (
 	// domainRe は bullfrog の allowed-domains が受け付ける形のうち、先頭の `*.` だけをワイルドカードとして
 	// 許す。道具は途中や単独の `*` も通すが、意図より広い範囲を開けるので宣言で拒む。
 	domainRe = regexp.MustCompile(`^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
-	// typeNameRe は resource / data source の型名、またはその `_` で終わる接頭辞。
-	typeNameRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_?$`)
-	stepNameRe = regexp.MustCompile(`^ {6}- name: \S`)
-	stepUsesRe = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
-	stepWithRe = regexp.MustCompile(`^ {8}with:$`)
-	commentRe  = regexp.MustCompile(`^\s*#`)
+	// typeNameRe は resource / data source の型名。typePrefixRe は `_` で終わる接頭辞で、provider 名だけの
+	// 接頭辞（`aws_`）はサービスをまたいで当たるので、少なくとも 2 要素を要る。
+	typeNameRe   = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$`)
+	typePrefixRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)+_$`)
+	stepNameRe   = regexp.MustCompile(`^ {6}- name: \S`)
+	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
+	stepWithRe   = regexp.MustCompile(`^ {8}with:$`)
+	commentRe    = regexp.MustCompile(`^\s*#`)
 	// reusableRe は reusable workflow を呼ぶジョブ（runner を持たない）の `uses:` 行。
 	reusableRe = regexp.MustCompile(`^ {4}uses:\s*\S`)
 	// elementListRe は、配列の `[` と `]` の間から引用符付きの要素を elementMark に置き換えた残りが取れる形。
@@ -86,6 +88,8 @@ var (
 	errSSOTUnknownJob = xerrors.New("SSOT の root が未定義のジョブを参照しています")
 	errSSOTRootPath   = xerrors.New("SSOT の root がリポジトリ内の正規化された相対パスではありません")
 	errSSOTTypeName   = xerrors.New("SSOT の type が resource / data source の型の接頭辞の形をしていません")
+	// errSSOTTypeHosts は、宛先の無い接頭辞の type のエラー。API を呼ばない型は型名そのもので宣言する。
+	errSSOTTypeHosts  = xerrors.New("SSOT の接頭辞の type が宛先を持ちません")
 	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
 	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
 	// 読める形は scripts/lib/workflow の切り出しが決める。
@@ -406,8 +410,12 @@ func (s *ssot) validate() error {
 		}
 	}
 	for _, name := range s.typeOrder {
-		if !typeNameRe.MatchString(name) {
+		prefix := typePrefixRe.MatchString(name)
+		if !prefix && !typeNameRe.MatchString(name) {
 			return xerrors.Wrap(errSSOTTypeName, name)
+		}
+		if prefix && len(s.types[name].hosts) == 0 {
+			return xerrors.Wrap(errSSOTTypeHosts, name)
 		}
 		for _, h := range s.types[name].hosts {
 			if err := validateDomain(h); err != nil {
