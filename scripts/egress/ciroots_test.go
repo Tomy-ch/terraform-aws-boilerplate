@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,9 +43,14 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("リポジトリを開けなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(filepath.Join(t.TempDir(), "missing"), nil), os.ErrNotExist)
+		})
+
 		t.Run("ci.mk が無ければ弾く", func(t *testing.T) {
 			t.Parallel()
-			require.Error(t, bindingSSOT(t).checkCIRoots(t.TempDir(), nil))
+			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(t.TempDir(), nil), os.ErrNotExist)
 		})
 
 		t.Run("ci.mk を解釈できなければ弾く", func(t *testing.T) {
@@ -57,7 +64,7 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, ciMakefile, testCIMake)
-			require.Error(t, bindingSSOT(t).checkCIRoots(repo, []string{"missing.yaml"}))
+			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(repo, []string{"missing.yaml"}), os.ErrNotExist)
 		})
 
 		t.Run("宣言の名指すジョブが root を実行していなければ弾く", func(t *testing.T) {
@@ -87,19 +94,21 @@ func Test_parseCIMake(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, data := range map[string]string{
-			"入口が 1 件も無い":                        "ci-aws-credentials:\n\t@$(call CI_AWS_CREDENTIALS,a,b)\n",
-			"見出しの次の行が呼び出しでない":                   "ci-plan-t-identity:\n\t@echo x\n",
-			"見出しがファイルの最終行":                      "ci-plan-t-identity:",
-			"plan の入口が CI_APPLY を呼ぶ":            "ci-plan-t-identity:\n\t@$(call CI_APPLY,t,identity)\n",
-			"root の種類が identity / workload でない": "ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n",
-			"入口が重複している":                         testCIMake + testCIMake,
-			"見出しを経ない呼び出しの字面がある":                 testCIMake + "x: y\n\t@$(call CI_PLAN,t,identity)\n",
+		// 異常系はどれも errCIMake を返すので、落ちた理由を文で区別する。重複は件数の突き合わせでも落ちる。
+		for name, c := range map[string]struct{ data, reason string }{
+			"入口が 1 件も無い":                        {"ci-aws-credentials:\n\t@$(call CI_AWS_CREDENTIALS,a,b)\n", "入口が 1 件もありません"},
+			"見出しの次の行が呼び出しでない":                   {"ci-plan-t-identity:\n\t@echo x\n", "次の行が $(call CI_PLAN,"},
+			"見出しがファイルの最終行":                      {"ci-plan-t-identity:", "次の行が $(call CI_PLAN,"},
+			"plan の入口が CI_APPLY を呼ぶ":            {"ci-plan-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_PLAN,"},
+			"root の種類が identity / workload でない": {"ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n", "次の行が $(call CI_PLAN,"},
+			"入口が重複している":                         {testCIMake + testCIMake, "ci-plan-t-identity が重複しています"},
+			"見出しを経ない呼び出しの字面がある":                 {testCIMake + "x: y\n\t@$(call CI_PLAN,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
 		} {
 			t.Run(name+"なら弾く", func(t *testing.T) {
 				t.Parallel()
-				_, err := parseCIMake(data)
+				_, err := parseCIMake(c.data)
 				require.ErrorIs(t, err, errCIMake)
+				assert.Contains(t, err.Error(), c.reason)
 			})
 		}
 	})
@@ -191,6 +200,16 @@ func Test_ranRoots(t *testing.T) {
 			})
 		}
 
+		t.Run("job の外で入口を名指せば弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, ".github/workflows/a.yaml", "name: T\nenv:\n  TARGET: ci-plan-t-identity\n\njobs:\n"+
+				strings.TrimPrefix(ciWorkflow("one", "make \"$TARGET\""), workflowHead))
+			_, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
+			require.ErrorIs(t, err, errCIOutsideJob)
+			assert.Contains(t, err.Error(), "a.yaml 3 行目")
+		})
+
 		t.Run("ci.mk に無い入口を呼べば弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
@@ -199,6 +218,27 @@ func Test_ranRoots(t *testing.T) {
 			require.ErrorIs(t, err, errCITargetUnknown)
 			assert.Contains(t, err.Error(), "ci-apply-t-workload")
 		})
+	})
+}
+
+func Test_entryTokens(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for text, want := range map[string][]string{
+			"        run: make ci-plan-a-identity ci-apply-a-identity RUNNER_MODE=host": {"ci-plan-a-identity", "ci-apply-a-identity"},
+			"        run: make ci-plan-${{ x }}":                                        {"ci-plan-"},
+			"        run: make tf-ci-plan-a-identity lint":                              nil,
+			"      - name: Plan ci-plan-a-identity":                                     nil,
+			"        # make ci-plan-a-identity":                                         nil,
+		} {
+			t.Run(text+" から入口の名前を拾う", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, want, entryTokens(workflow.Line{Number: 1, Text: text}))
+			})
+		}
 	})
 }
 
@@ -221,7 +261,7 @@ func Test_ssot_checkBindings(t *testing.T) {
 			t.Parallel()
 			err := bindingSSOT(t).checkBindings(map[string][]string{"a.yaml:one": {"env/t/identity", "env/t"}})
 			require.ErrorIs(t, err, errRootUnbound)
-			assert.Contains(t, err.Error(), "env/t")
+			assert.Contains(t, err.Error(), "env/t を実行します")
 		})
 
 		t.Run("root を名指されていないジョブが root を実行すれば弾く", func(t *testing.T) {

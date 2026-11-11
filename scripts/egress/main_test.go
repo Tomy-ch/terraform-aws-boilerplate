@@ -1469,6 +1469,21 @@ func Test_applyOrCheck(t *testing.T) {
 			require.ErrorIs(t, applyOrCheck(newTestRepo(t, nil), false), errNoTargets)
 		})
 
+		t.Run(".yml の workflow のジョブが実行する root も突き合わせる", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{
+				"a.yaml": syncedWorkflow("one", policyBlock, oneHosts...),
+				"b.yaml": bWorkflow(),
+			})
+			writeFile(t, root, ciMakefile, testCIMake+"ci-plan-t-workload:\n\t@$(call CI_PLAN,t,workload)\n")
+			writeFile(t, root, ".github/workflows/b.yml", syncedWorkflow("three", policyBlock, "b1.test", "b2.test")+
+				"\n      - name: Workload\n        run: make ci-plan-t-workload\n")
+			require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT+"\n[job.\"b.yml:three\"]\nclasses = []\n"), filePerm))
+			err := applyOrCheck(root, true)
+			require.ErrorIs(t, err, errRootUnbound)
+			assert.Contains(t, err.Error(), "b.yml:three")
+		})
+
 		t.Run("宣言に無い root を実行するジョブを弾き、apply でも何も書かない", func(t *testing.T) {
 			t.Parallel()
 			root := newTestRepo(t, map[string]string{
