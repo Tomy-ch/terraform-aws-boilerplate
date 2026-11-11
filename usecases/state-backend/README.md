@@ -32,7 +32,8 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | --- | --- |
 | `bucket_name` | identity root と workload root の backend の `bucket`、段2 の `import` block の id |
 | `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
-| `state_key_alias_name` | [`deployment-identity`](../deployment-identity/README.md)。apply-identity の role の alias の作成と、plan の role の鍵の読み取りを、この alias に絞る。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
+| `state_key_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の鍵の権限と、apply の role の鍵の Deny の Resource を、この鍵に絞る |
+| `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順は値を直書きし、`env/admin/identity/tests/imports.tftest.hcl` がその値をこの出力と突き合わせる。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
 | `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 
@@ -79,10 +80,10 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `deployment-identity` の `plan_role_arn`・`apply_identity_role_arn` を `ci_role_arns` に受ける。`deployment-identity` はこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_alias_name` を受ける。どちらの向きも resource の ARN を渡すだけで、role と Bucket は互いに依存しない
+- ユースケース: `deployment-identity` の `plan_role_arn`・`apply_identity_role_arn` を `ci_role_arns` に受ける。`deployment-identity` はこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_arn` を受ける。どちらの向きも resource の ARN を渡すだけで、role と Bucket は互いに依存しない
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
 - plan の role は plan の出力を書くのに鍵の `kms:GenerateDataKey` を要り、それを IAM ではなく Key Policy が許すので、Key Policy に名指す。apply の role は workload root の state を暗号化するときに要るので、workload root を足す変更が Key Policy に足す
-- 段5 は log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias の分は足してあり、ログの分は #108 の後に足す。apply-identity の権限は `state_key_alias_name` の alias だけを作れる
+- 段5 は log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias の分は足してあり、ログの分は #108 の後に足す。CI の role は鍵と alias を作れないので、鍵の作り直しは CI では行えない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）
 
 ## 検証方法
 

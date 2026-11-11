@@ -21,9 +21,9 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | 出力 | 使う側 |
 | --- | --- |
 | `key_arn` | 鍵を使う resource（S3 の暗号化と Bucket Policy の条件、backend の `kms_key_id`、Log Group の `kms_key_id`）と、鍵を管理する role の IAM の Resource |
-| `alias_name` | 鍵の ARN が無いときに鍵を名指す消費者（`state-backend` の `state_key_alias_name`）。入力だけから決まるので、鍵より前に参照できる |
+| `alias_name` | 人の手順が鍵を名指す名前（`state-backend` の `state_key_alias_name`）。入力だけから決まるので、鍵より前に参照できる |
 
-消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、手元の手順が鍵の ARN を引くことと、鍵の ARN が無いときに消費者の IAM が `kms:ResourceAliases` の条件で鍵を限ることに使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
+消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、手元の手順が鍵の ARN を引くことに使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
 
 ### Key Policy の文書
 
@@ -61,7 +61,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 ## 保証しないもの
 
 - 暗号操作は、Key Policy で名指した role とサービスだけに許す。IAM で `AdministratorAccess` を持つ人の主体も、そのままでは復号できない。名指されない主体が鍵で暗号化された object を読むには、委任された `kms:PutKeyPolicy` で文を足す必要があり、その変更は次の apply で戻る。bootstrap の途中の一時 IAM user もこれに当たる（state を SSE-KMS にした後の段5 の手順の扱いは #19 が持つ）
-- Key Policy の Deny は持たない。鍵の管理（`kms:PutKeyPolicy` を含む）はアカウントへ委任しているので、どの主体が Key Policy を書き換えられるかは IAM が決める。書き込みを拒む Deny は、置くなら消費者の IAM の側に置く（ADR-0604 決定10）。deployment-identity は、鍵の ARN を参照できるまで Deny を持たない
+- Key Policy の Deny は持たない。鍵の管理（`kms:PutKeyPolicy` を含む）はアカウントへ委任しているので、どの主体が Key Policy を書き換えられるかは IAM が決める。書き込みを拒む Deny は、置くなら消費者の IAM の側に置く（ADR-0604 決定10）。deployment-identity は apply の role に、上の委任の Action のすべてを鍵の ARN に対する Deny で与える
 - 入力から導いた値（鍵の属性、alias の名前、Key Policy の文書、validation と precondition）は `tests/` が mock の plan と apply で見る。Unit Test に属する（ADR-0501 決定9）。`aws_kms_key` の inline の `policy` を使わないことは、plan で値が決まらない（computed）ので、テストではなくこのファイルの構成が持つ
 - Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持ち、`state-backend` の reference の root の plan に掛かる。`aws_kms_key_policy` は `conftest/plan/decl.json` の `required_documents` に在るので、Key Policy が入力から消えると Policy が落ちる
 - アカウントへの委任の文を除く部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い

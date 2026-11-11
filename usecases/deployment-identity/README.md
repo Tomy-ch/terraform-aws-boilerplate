@@ -19,8 +19,10 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | role を置くアカウントの env の token。GitHub の environment 名の前半にもなる |
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
-| `state_key_alias_name` | `string`（`alias/<name>`。`alias/aws/` は受けない） | このアカウントの state の鍵の alias（`state-backend` の `state_key_alias_name`）。apply-identity の role はこの alias だけを作れ、plan の role はこの alias の付いた鍵だけを読める |
+| `state_key_arn` | `string`（KMS の鍵の ARN。alias の ARN と多リージョンの鍵は受けない） | このアカウントの state の鍵（`state-backend` の `state_key_arn`）。plan と apply-identity の role の鍵の権限と、apply の role の鍵の Deny をこの鍵に絞る。role と同じ partition・リージョン・アカウントの鍵でなければ、plan で（ARN が plan で決まらなければ apply で）落ちる |
 | `plan_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key にだけ書ける |
+
+`state_key_arn` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -43,9 +45,9 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
 - 3つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
-  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の alias の付いた鍵の設定の読み取りと、alias の一覧
-  - apply: workload root の key と lock file の読み書き。bootstrap の構成物、identity root の key と lock file、state Bucket の設定の変更は Deny する
-  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる。state の鍵と alias を作り、Key Policy と rotation を設定できる。鍵の削除・無効化と alias の削除・付け替えはできない
+  - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の鍵の設定の読み取りと、alias の一覧
+  - apply: workload root の key と lock file の読み書き。bootstrap の構成物、identity root の key と lock file、state Bucket の設定、state の鍵の管理（読み取りを含む）は Deny する
+  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む3つの role の信頼条件と権限を変更できる。state の鍵の Key Policy と rotation を設定できる。鍵と alias の作成、鍵の削除・無効化、alias の削除・付け替えはできない
   - 暗号操作（`kms:Decrypt` など）は IAM では与えない。state の鍵の Key Policy が CI の role を名指して許す
 - role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす）
 
@@ -71,18 +73,17 @@ unsupported:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
 - apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply と apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限る。#209 は apply の role だけを対象にする）
-- apply-identity の role が、このアカウントの alias の無い KMS の鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること。state の鍵の ARN は鍵を作るまで無く、鍵を作る apply の途中では alias も無いので、鍵の ARN へ絞るまでは、alias が無い鍵か state の alias だけが付いた鍵に限って与える（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
 
 ## 所有者
 
 - OIDC provider と3つの role は、このユースケースが所有する。sandbox の掃除用 Role（#76）が provider を使うときは、そのときに provider の ARN を出力に足す
-- state Bucket と state の鍵は `state-backend` が所有する。このユースケースは Bucket の ARN と鍵の alias の名前を受け、role の権限の Resource と Condition に使う
+- state Bucket と state の鍵は `state-backend` が所有する。このユースケースは Bucket と鍵の ARN を受け、role の権限の Resource に使う
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `state-backend`（`bucket_arn`、`state_key_alias_name`、`plan_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn` と `apply_identity_role_arn` を `ci_role_arns` に受ける
+- ユースケース: `state-backend`（`bucket_arn`、`state_key_arn`、`plan_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn` と `apply_identity_role_arn` を `ci_role_arns` に受ける
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
 - GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` の写しで、`env/` の root が渡す `env` ごとに3つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が assume する。apply の role を assume する workflow はまだ無い（#222）
 
@@ -91,7 +92,7 @@ unsupported:
 ## 検証方法
 
 - Unit Test（mock）: `internal/github-oidc/tests/` が、3つの role の信頼条件と policy の文書、名前、セッションの上限、OIDC provider の URL と audience、inline policy と managed policy の排他を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction`・`NotResource` の不在と、Allow の Resource `"*"` が `resource_wildcard_actions` の宣言（`kms:CreateKey`・`kms:ListAliases`）に限られること（同 決定9）と、KMS の暗号操作の Allow の不在（同 決定12）を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction`・`NotResource` の不在と、Allow の Resource `"*"` が `resource_wildcard_actions` の宣言（`kms:ListAliases`）に限られること（同 決定9）と、KMS の暗号操作の Allow の不在（同 決定12）を確かめる。`state-backend` の reference の plan と結合した入力で、apply の role の鍵の Deny が Key Policy の委任の Action のすべてを覆うことも確かめる（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定5）。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
 - 段2 の突合と段4 の確認: 人が実 AWS で行う（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄すると認証や組織の構造を失う」に当たる。destroy しない。Policy Test、拒否されるべき主体の assume や操作が拒否されることの確認、drift 0 で代える（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)）
 
@@ -104,17 +105,18 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 拒否されるべき主体（他のリポジトリ、別の environment、Pull Request の job からの apply 系の role）の assume が拒否されること
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
-- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_alias_name`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは段2 の plan だけである
+- identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_arn`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN しか観測できず、見るのは CI の plan だけである。鍵の ARN は precondition が partition・リージョン・アカウントまでを見るが、同じアカウントの別の鍵との取り違えは見ない
 - apply の role の有効な権限が bootstrap の構成物を変更できないこと（#209）。Unit Test は今の入力での文書を固定するだけである
-- `kms:ResourceAliases` の Condition が、実際の要求で文書どおりに評価されること。とくに apply-identity の `ForAllValues` が、alias の無い作成直後の鍵で `true` になること。段4 を終えたアカウントへ鍵を足す CI の apply が初めて見る。新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので、見る機会が無い。KMS の文書は、鍵の alias が上限を超えるとこの条件を満たさないとする。その数え方は確かめていない
+- apply の role の鍵の Deny が、実際の要求で文書どおりに評価されること。`simulate-principal-policy` は IAM の評価だけを見る。apply の role を assume する job は無い（#222）
+- apply の role の鍵の Deny が読み取りも塞いでも、workload root の S3 backend が鍵の読み取り（`kms:DescribeKey`）を呼ばないこと。S3 の SSE-KMS の暗号操作は Deny に含まないが、backend の source では確かめていない（段5 の切り替えで見る）
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-参照日: 2026-10-25（KMS の権限の分は 2026-11-07）
+参照日: 2026-10-25（KMS の権限の分は 2026-11-07、alias の操作の権限は 2026-11-12）
 
 - AWS / HashiCorp が publisher の GitHub Actions の OIDC の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search` を `q` = `github-oidc` / `oidc` / `github` / `github-actions` / `iam-role`、`provider=aws` で引いた結果に、namespace `aws`・`aws-ia`・`hashicorp`・`aws-samples` が無い）
 - 参照した一次資料: IAM User Guide の「Create a role for OpenID Connect federation」の GitHub の節、「Available keys for OIDC federation」の GitHub の表、「Create an OpenID Connect (OIDC) identity provider in IAM」、AWS Provider 6.70.0 の `aws_iam_openid_connect_provider` / `aws_iam_role` / `aws_iam_role_policy` / `aws_iam_role_policies_exclusive` / `aws_iam_role_policy_attachments_exclusive` の文書・schema・source
-- KMS の権限について参照した一次資料: AWS KMS Developer Guide の「AWS KMS permissions」（Action ごとの resource と条件キー）、「AWS KMS condition keys」（`kms:KeySpec`・`kms:KeyUsage`・`kms:KeyOrigin`・`kms:MultiRegion`・`kms:BypassPolicyLockoutSafetyCheck`・`kms:ResourceAliases`）、「Least-privilege permissions」、「Default key policy」、AWS Provider 6.70.0 の `internal/service/kms` の `key.go`・`alias.go`・`key_policy.go` の source
+- KMS の権限について参照した一次資料: AWS KMS Developer Guide の「AWS KMS permissions」（Action ごとの resource と条件キー）、「AWS KMS condition keys」（`kms:BypassPolicyLockoutSafetyCheck`）、「Controlling access to aliases」、「Least-privilege permissions」、「Default key policy」、AWS Provider 6.70.0 の `internal/service/kms` の `key.go`・`alias.go`・`key_policy.go` の source
 - 補助として参照した資料（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定3 の外）: GitHub の「OpenID Connect reference」と「Deployments and environments」
 
 採用した知見:
@@ -124,13 +126,12 @@ apply の role の有効な権限の Policy Test（#209）は未配線で、work
 - `thumbprint_list` を設定しない。GitHub については IAM が自前の CA ライブラリで検証する。一度設定して後から外すと、Terraform は元の値を使い続ける
 - environment の保護規則で、role を使える job を限る
 - `aws_iam_role` の `inline_policy` と `managed_policy_arns`（deprecated）を使わず、個別の resource と排他の resource を使う
-- `kms:CreateKey` と `kms:ListAliases` は resource-level 権限を持たないので Resource `"*"`。`kms:CreateAlias` は alias と鍵の両方に権限を要る
+- `kms:ListAliases` は resource-level 権限を持たないので Resource `"*"`。alias の作成・付け替え・削除は alias と鍵の両方に権限を要るので、鍵の ARN への Deny がそれらも塞ぐ
 - lockout の安全チェックの迂回を `kms:BypassPolicyLockoutSafetyCheck` の Deny で拒む（AWS の例と同じ形）
-- 鍵を名前で限る `kms:ResourceAliases` を、plan の role は `ForAnyValue` で、alias の無い作成中の鍵も扱う apply-identity は `ForAllValues` で使う
 
 採用しなかった知見と理由:
 
-- AWS の例の、`kms:MultiRegion = false` などを Allow の Condition に置く形: Provider が既定の値を要求に載せないので、Deny の形にした（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定1）
+- AWS の例の、`kms:CreateKey` を Condition 付きで IAM で与える形: state の鍵は段4 で作られた後に CI が作り直す経路が無く、使わない Resource `"*"` の Allow を残さない（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定3）
 - 既定の Key Policy の `kms:*` のアカウントへの委任と、IAM で暗号操作を与える形: 鍵を使う主体を Key Policy の1箇所に揃える（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定12）
 - 鍵の ARN を `aws:ResourceAccount` で限る Condition: ARN の account の欄と同じで、何も狭めない
 - AWS の例の `StringLike` と `repo:<owner>/<repo>:*`: リポジトリの全 job が assume できる（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 案A）
