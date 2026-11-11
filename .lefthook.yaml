@@ -58,17 +58,20 @@ pre-commit:
       glob:
         - ".github/settings/*.json"
         - "env/**/*.tf"
-        - "scripts/repo-settings/**/*.go"
+        - "scripts/repo-settings/*.go"
+        - "scripts/lib/**"
       run: make repo-settings-check
 
     egress-check:
       glob:
         - ".github/egress.toml"
         - ".github/workflows/*.{yml,yaml}"
+        - "{env,usecases,modules}/**/*.tf"
+        - "scripts/egress/*.go"
+        - "scripts/lib/**"
       run: make egress-check
 
-    # 言語ランタイムの版の写しが mise.toml 通りか。**ずれてもビルドは通る**ので、
-    # この検査が無いと「ずれている」と「揃っている」を緑で区別できない。
+    # 何を見るかと、なぜ要るかは scripts/README.md の versions 行が持つ。
     versions-check:
       glob:
         - "mise.toml"
@@ -91,7 +94,7 @@ pre-commit:
         - "docker/images-pin.toml"
       run: make pin-images-check
 
-    # ゲートは「検査をやめると緑になる」ため、テストを hook から外さない。
+    # テストを hook から外さない（ADR-0702 決定16）。
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
