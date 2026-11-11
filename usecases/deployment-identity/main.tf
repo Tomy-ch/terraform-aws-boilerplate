@@ -5,6 +5,6 @@ module "github_oidc" {
   env                    = var.env
   github                 = var.github
   state_bucket_arn       = var.state_bucket_arn
-  state_key_alias_name   = var.state_key_alias_name
+  state_key_arn          = var.state_key_arn
   plan_output_bucket_arn = var.plan_output_bucket_arn
 }

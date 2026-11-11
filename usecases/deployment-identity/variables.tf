@@ -61,13 +61,14 @@ variable "state_bucket_arn" {
   }
 }
 
-variable "state_key_alias_name" {
-  description = "このアカウントの state の鍵の alias の名前（`state-backend` の `state_key_alias_name`）。apply-identity の role の alias の作成と、plan の role の鍵の読み取りをこの alias に絞る。"
+variable "state_key_arn" {
+  description = "このアカウントの state の鍵の ARN（`state-backend` の `state_key_arn`）。plan と apply-identity の role の鍵の Action と、apply の role の鍵の Deny をこの鍵に絞る。"
   type        = string
 
+  # 多リージョンの鍵（mrk-）を受けないのは、modules/kms が多リージョンの鍵を作らないからである。
   validation {
-    condition     = can(regex("^alias/[a-zA-Z0-9/_-]{1,250}$", var.state_key_alias_name)) && !startswith(var.state_key_alias_name, "alias/aws/")
-    error_message = "state_key_alias_name は alias/ で始まり、続く名前が英数字・/・_・- の250文字以内で、alias/aws/ で始まらない名前にしてください。"
+    condition     = can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.state_key_arn))
+    error_message = "state_key_arn は KMS の鍵の ARN（arn:<partition>:kms:<region>:<account>:key/<key-id>）にしてください。alias の ARN と多リージョンの鍵は受けません。"
   }
 }
 

@@ -5,12 +5,33 @@ locals {
   # pr/ は Pull Request の plan、branch/ は保護ブランチの plan（deployment-identity/ADR-0201 決定8）。
   plan_output_keys = ["${var.plan_output_bucket_arn}/pr/*", "${var.plan_output_bucket_arn}/branch/*"]
 
-  # state の鍵の Resource は、鍵の ARN ではなくアカウントの鍵の pattern で与える（deployment-identity/ADR-0201 決定4）。
-  kms_arn_prefix         = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
-  state_key_pattern      = "${local.kms_arn_prefix}:key/*"
-  state_key_alias_arn    = "${local.kms_arn_prefix}:${var.state_key_alias_name}"
   state_key_read_actions = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-  state_key_or_unaliased = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = var.state_key_alias_name } }
+  # modules/kms の Key Policy がアカウントへ委任する Action のすべて（modules/kms/policy.tf の administration_actions。
+  # deployment-identity/ADR-0201 決定5）。読み取りも含む。
+  state_key_administration_actions = [
+    "kms:CancelKeyDeletion",
+    "kms:CreateAlias",
+    "kms:DeleteAlias",
+    "kms:DescribeKey",
+    "kms:DisableKey",
+    "kms:DisableKeyRotation",
+    "kms:EnableKey",
+    "kms:EnableKeyRotation",
+    "kms:GetKeyPolicy",
+    "kms:GetKeyRotationStatus",
+    "kms:ListGrants",
+    "kms:ListKeyPolicies",
+    "kms:ListResourceTags",
+    "kms:PutKeyPolicy",
+    "kms:RevokeGrant",
+    "kms:RotateKeyOnDemand",
+    "kms:ScheduleKeyDeletion",
+    "kms:TagResource",
+    "kms:UntagResource",
+    "kms:UpdateAlias",
+    "kms:UpdateKeyDescription",
+  ]
+  state_key_arn_prefix = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:key/"
 
   identity_role_arns = [for k in keys(local.roles) : aws_iam_role.this[k].arn]
   identity_arns      = concat(local.identity_role_arns, [aws_iam_openid_connect_provider.github.arn])
@@ -78,14 +99,7 @@ locals {
         { Sid = "ReadPlanOutputBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.plan_output_bucket_arn },
         # 削除の権限を与えない。上書きされた出力は版として残る（repository-wide/ADR-0602 決定13）。
         { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = local.plan_output_keys },
-        # plan の role は鍵を作らないので、alias の付いた state の鍵にだけ読みを限れる。
-        {
-          Sid       = "ReadStateKey"
-          Effect    = "Allow"
-          Action    = local.state_key_read_actions
-          Resource  = local.state_key_pattern
-          Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = var.state_key_alias_name } }
-        },
+        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
       ],
       local.identity_read_statements,
     )
@@ -101,6 +115,8 @@ locals {
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
       { Sid = "DenyPlanOutputBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = var.plan_output_bucket_arn },
       { Sid = "DenyPlanOutputWrite", Effect = "Deny", Action = ["s3:DeleteObjectVersion", "s3:Put*"], Resource = "${var.plan_output_bucket_arn}/*" },
+      # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
+      { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
     ]
 
     apply_identity = concat(
@@ -142,23 +158,10 @@ locals {
           ]
           Resource = local.identity_role_arns
         },
-        # kms:CreateKey は resource-level 権限を持たない（repository-wide/ADR-0301 決定9）。Provider は KeySpec と KeyUsage を常に送る。
-        {
-          Sid       = "CreateStateKey"
-          Effect    = "Allow"
-          Action    = "kms:CreateKey"
-          Resource  = "*"
-          Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
-        },
-        # 鍵を作る apply の途中では alias がまだ無いので、alias が無い鍵か state の alias だけが付いた鍵に限る（deployment-identity/ADR-0201 決定4）。
-        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = local.state_key_pattern, Condition = local.state_key_or_unaliased },
-        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = local.state_key_pattern, Condition = local.state_key_or_unaliased },
-        # CreateAlias は alias と鍵の両方に権限を要る。
-        { Sid = "CreateStateKeyAlias", Effect = "Allow", Action = "kms:CreateAlias", Resource = [local.state_key_alias_arn, local.state_key_pattern], Condition = local.state_key_or_unaliased },
-        # Provider が載せない値を KMS がどちらに評価しても既定の作成を妨げない Deny で拒む（deployment-identity/ADR-0201 決定1）。
-        { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
-        { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },
-        { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
+        # 鍵と alias を作る権限は与えない（deployment-identity/ADR-0201 決定3）。
+        { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
+        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = var.state_key_arn },
+        { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = "kms:PutKeyPolicy", Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       ],
       local.identity_read_statements,
     )
@@ -174,4 +177,12 @@ resource "aws_iam_role_policy" "this" {
     Version   = "2012-10-17"
     Statement = local.statements[each.key]
   })
+
+  lifecycle {
+    # 別のアカウントやリージョンの鍵を渡すと、apply-identity は自分の state の鍵を管理できなくなる。
+    precondition {
+      condition     = startswith(var.state_key_arn, local.state_key_arn_prefix)
+      error_message = "state_key_arn が、role と同じ partition・リージョン・アカウントの鍵ではありません。"
+    }
+  }
 }

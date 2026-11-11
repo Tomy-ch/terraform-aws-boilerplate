@@ -1,11 +1,22 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  # state_key_arn の precondition は、鍵の ARN を data source の partition・region・account と比べる。
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
 
 variables {
   project                = "tabp"
   env                    = "admin"
   github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_alias_name   = "alias/tabp-admin-tfstate"
+  state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
@@ -280,60 +291,79 @@ run "rejects_hyphen_in_project" {
   expect_failures = [var.project]
 }
 
-run "rejects_alias_name_without_prefix" {
+run "accepts_key_arn_in_other_partition" {
   command = plan
 
   variables {
-    state_key_alias_name = "tabp-admin-tfstate"
+    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   }
 
-  expect_failures = [var.state_key_alias_name]
-}
-
-run "rejects_empty_alias_name" {
-  command = plan
-
-  variables {
-    state_key_alias_name = "alias/"
+  override_data {
+    target = module.github_oidc.data.aws_partition.current
+    values = { partition = "aws-us-gov" }
   }
-
-  expect_failures = [var.state_key_alias_name]
-}
-
-run "rejects_aws_managed_alias_name" {
-  command = plan
-
-  variables {
-    state_key_alias_name = "alias/aws/s3"
-  }
-
-  expect_failures = [var.state_key_alias_name]
-}
-
-run "rejects_wildcard_in_alias_name" {
-  command = plan
-
-  variables {
-    state_key_alias_name = "alias/tabp-*"
-  }
-
-  expect_failures = [var.state_key_alias_name]
-}
-
-run "accepts_250_character_alias_name" {
-  command = plan
-
-  variables {
-    state_key_alias_name = format("alias/%0250d", 0)
+  override_data {
+    target = module.github_oidc.data.aws_region.current
+    values = { region = "us-gov-west-1" }
   }
 }
 
-run "rejects_251_character_alias_name" {
+run "rejects_alias_arn" {
   command = plan
 
   variables {
-    state_key_alias_name = format("alias/%0251d", 0)
+    state_key_arn = "arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate"
   }
 
-  expect_failures = [var.state_key_alias_name]
+  expect_failures = [var.state_key_arn]
+}
+
+run "rejects_key_wildcard" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+  }
+
+  expect_failures = [var.state_key_arn]
+}
+
+run "rejects_multi_region_key" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:kms:ap-northeast-1:123456789012:key/mrk-1234abcd12ab34cd56ef1234567890ab"
+  }
+
+  expect_failures = [var.state_key_arn]
+}
+
+run "rejects_bare_key_id" {
+  command = plan
+
+  variables {
+    state_key_arn = "00000000-0000-0000-0000-000000000000"
+  }
+
+  expect_failures = [var.state_key_arn]
+}
+
+run "rejects_bucket_arn_as_key" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
+  }
+
+  expect_failures = [var.state_key_arn]
+}
+
+run "rejects_empty_key_arn" {
+  command = plan
+
+  variables {
+    state_key_arn = ""
+  }
+
+  expect_failures = [var.state_key_arn]
 }

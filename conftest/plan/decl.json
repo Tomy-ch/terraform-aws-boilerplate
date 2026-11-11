@@ -2,7 +2,6 @@
   "policy_plan": {
     "plan_format_version": "1.2",
     "resource_wildcard_actions": [
-      "kms:CreateKey",
       "kms:ListAliases"
     ],
     "documents": {
@@ -42,6 +41,9 @@
       "plan_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+      },
+      "apply_role": {
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]"
       }
     },
     "stateful_protection": {
