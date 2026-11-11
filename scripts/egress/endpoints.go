@@ -29,6 +29,11 @@ var (
 	errTypeOrphan      = xerrors.New("SSOT に、どの root の型にも当たらない type があります")
 	errJobNoRoot       = xerrors.New("type の宛先を許すジョブが、どの root にも名指されていません")
 	errSymlink         = xerrors.New("Terraform の設定に symlink があります")
+	errRegionUnknown   = xerrors.New("root の aws の provider の region をリテラルとして読めません")
+	errRegionMismatch  = xerrors.New("type の宛先の region が、root の aws の provider の region にありません")
+	// errRegionNotOne は aws の provider の region が 2 つ以上の root のエラー。resource がどの provider を
+	// 使うかを読まないので、region ごとの宛先の過不足を判定できない。
+	errRegionNotOne = xerrors.New("root の aws の provider の region が 1 つではありません")
 	// errBlockCount は、解析で数えたブロックと字面で数えたブロックの件数が食い違う場合のエラー（ADR-0702 決定15）。
 	errBlockCount = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
 )
@@ -38,6 +43,13 @@ var typeBlocks = map[string]bool{"resource": true, "data": true, "ephemeral": tr
 
 // blockLineRe は型を持つブロックと module の開始行。check の中の data を数えるため字下げを許す。
 var blockLineRe = regexp.MustCompile(`(?m)^[ \t]*(?:resource|data|ephemeral|action|module)[ \t]+"`)
+
+// regionLabelRe は AWS の region の形。regionSuffixRe は宛先のラベルの末尾にある region で、
+// `s3-us-west-2` のように `-` で続く形も拾う。
+var (
+	regionLabelRe  = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`)
+	regionSuffixRe = regexp.MustCompile(`(?:^|-)([a-z]{2}(?:-[a-z]+)+-[0-9]+)$`)
+)
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
 // その root を実行するジョブの許可リストにあることを確かめる。欠けたときの症状は
@@ -52,10 +64,11 @@ func (s *ssot) checkEndpoints(repo string) error {
 		if len(r.jobs) == 0 {
 			return xerrors.Wrap(errRootNoJobs, name)
 		}
-		types, err := collectTypes(repo, name)
+		types, dirs, err := collectTypes(repo, name)
 		if err != nil {
 			return xerrors.Wrap(err, "root "+name)
 		}
+		var hosts []string
 		for _, t := range types {
 			prefix, ok := s.matchType(t)
 			if !ok {
@@ -65,6 +78,10 @@ func (s *ssot) checkEndpoints(repo string) error {
 			if err := s.requireHosts(r.jobs, s.types[prefix].hosts); err != nil {
 				return xerrors.Wrap(err, fmt.Sprintf("root %s: %s", name, t))
 			}
+			hosts = append(hosts, s.types[prefix].hosts...)
+		}
+		if err := checkRegions(repo, dirs, hosts); err != nil {
+			return xerrors.Wrap(err, "root "+name)
 		}
 	}
 	var orphans []string
@@ -149,27 +166,126 @@ func (s *ssot) requireHosts(jobs, hosts []string) error {
 	return nil
 }
 
-// collectTypes は root から相対パスの module を辿り、使われる resource / data source の型を整列して返す。
-// 読み取りは repo の中に閉じる。型が 1 件も無い root は拒む（ADR-0702 決定13）。
-func collectTypes(repo, root string) ([]string, error) {
+// collectTypes は root から相対パスの module を辿り、使われる resource / data source の型と、読んだ
+// ディレクトリを整列して返す。読み取りは repo の中に閉じる。型が 1 件も無い root は拒む（ADR-0702 決定13）。
+func collectTypes(repo, root string) ([]string, []string, error) {
+	r, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, nil, xerrors.Wrap(err, "open "+repo)
+	}
+	defer func() { _ = r.Close() }()
+	found, visited := map[string]bool{}, map[string]bool{}
+	if err := walkModule(r, root, found, visited); err != nil {
+		return nil, nil, err
+	}
+	if len(found) == 0 {
+		return nil, nil, errNoTypes
+	}
+	return sortedKeys(found), sortedKeys(visited), nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// checkRegions は hosts のうち region を含む宛先の region が、dirs の aws の provider のただ 1 つの region と
+// 一致することを見る。region を含む宛先が無ければ provider を読まない。
+func checkRegions(repo string, dirs, hosts []string) error {
+	var regional []string
+	for _, h := range hosts {
+		if hostRegion(h) != "" {
+			regional = append(regional, h)
+		}
+	}
+	if len(regional) == 0 {
+		return nil
+	}
+	regions, err := providerRegions(repo, dirs)
+	if err != nil {
+		return err
+	}
+	if len(regions) != 1 {
+		return xerrors.Wrap(errRegionNotOne, strings.Join(regions, ", "))
+	}
+	for _, h := range regional {
+		if hostRegion(h) != regions[0] {
+			return xerrors.Wrap(errRegionMismatch, fmt.Sprintf("%s（provider: %s）", h, regions[0]))
+		}
+	}
+	return nil
+}
+
+// hostRegion は宛先のラベルのうち region の形のものを返す。無ければ空文字列。
+func hostRegion(h string) string {
+	for label := range strings.SplitSeq(h, ".") {
+		if m := regionSuffixRe.FindStringSubmatch(label); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// providerRegions は dirs の *.tf にある aws の provider の region を整列して返す。region を持たない
+// provider は環境変数の region で動くので、宛先と突き合わせられず拒む。
+func providerRegions(repo string, dirs []string) ([]string, error) {
 	r, err := os.OpenRoot(repo)
 	if err != nil {
 		return nil, xerrors.Wrap(err, "open "+repo)
 	}
 	defer func() { _ = r.Close() }()
 	found := map[string]bool{}
-	if err := walkModule(r, root, found, map[string]bool{}); err != nil {
-		return nil, err
+	for _, dir := range dirs {
+		files, err := fs.Glob(r.FS(), path.Join(dir, "*.tf"))
+		if err != nil {
+			return nil, xerrors.Wrap(err, "glob "+dir)
+		}
+		for _, f := range files {
+			if err := fileRegions(r, f, found); err != nil {
+				return nil, xerrors.Wrap(err, f)
+			}
+		}
 	}
 	if len(found) == 0 {
-		return nil, errNoTypes
+		return nil, xerrors.Wrap(errRegionUnknown, "aws の provider がありません")
 	}
-	types := make([]string, 0, len(found))
-	for t := range found {
-		types = append(types, t)
+	return sortedKeys(found), nil
+}
+
+// fileRegions は 1 ファイルの aws の provider の region を found へ足す。
+func fileRegions(repo *os.Root, file string, found map[string]bool) error {
+	src, err := repo.ReadFile(file)
+	if err != nil {
+		return xerrors.Wrap(err, "read")
 	}
-	slices.Sort(types)
-	return types, nil
+	parsed, diags := hclsyntax.ParseConfig(src, file, hcl.InitialPos)
+	if diags.HasErrors() {
+		return xerrors.Wrap(errTerraformSyntax, diags.Error())
+	}
+	body, ok := parsed.Body.(*hclsyntax.Body)
+	if !ok {
+		return xerrors.Wrap(errTerraformSyntax, "本体を読めません")
+	}
+	for _, b := range body.Blocks {
+		if b.Type != "provider" || len(b.Labels) != 1 || b.Labels[0] != "aws" {
+			continue
+		}
+		line := fmt.Sprintf("%d 行目", b.TypeRange.Start.Line)
+		attr, ok := b.Body.Attributes["region"]
+		if !ok {
+			return xerrors.Wrap(errRegionUnknown, line+": region がありません")
+		}
+		value, diags := attr.Expr.Value(nil)
+		if diags.HasErrors() || !value.IsKnown() || value.IsNull() || value.Type() != cty.String || !regionLabelRe.MatchString(value.AsString()) {
+			return xerrors.Wrap(errRegionUnknown, line+": region が region の形のリテラルではありません")
+		}
+		found[value.AsString()] = true
+	}
+	return nil
 }
 
 // walkModule は dir の *.tf を読み、型を found へ足し、呼ぶ module へ降りる。dir は repo 直下からの

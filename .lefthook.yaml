@@ -67,6 +67,7 @@ pre-commit:
         - ".github/egress.toml"
         - ".github/workflows/*.{yml,yaml}"
         - "{env,usecases,modules}/**/*.tf"
+        - ".makefiles/terraform/operation/ci.mk"
         - "scripts/egress/*.go"
         - "scripts/lib/**"
       run: make egress-check
