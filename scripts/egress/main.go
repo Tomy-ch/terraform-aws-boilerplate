@@ -697,6 +697,13 @@ func applyOrCheck(root string, dryRun bool) error {
 	if orphans := orphanJobs(s, used); len(orphans) > 0 {
 		return xerrors.Wrap(errJobOrphan, strings.Join(orphans, ", ")+"（"+ssotFile+" の該当エントリを削除してください）")
 	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, filepath.Base(f))
+	}
+	if err := s.checkCIRoots(root, names); err != nil {
+		return err
+	}
 	return writeChanges(root, changes, dryRun)
 }
 
