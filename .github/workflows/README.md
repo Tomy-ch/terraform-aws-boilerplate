@@ -298,8 +298,9 @@ CI の実行する root とそれを実行する job を、`type` が resource /
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
 `type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
 job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` を `.makefiles/terraform/operation/ci.mk`
-の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。root が辿る aws の
-provider の `region` はただ 1 つでなければならず、region を含む `type` の宛先はそれに一致しなければ落ちる。
+の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。region を含む
+`type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
+それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型
