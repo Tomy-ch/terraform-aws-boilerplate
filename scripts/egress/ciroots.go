@@ -21,14 +21,16 @@ var (
 	errCITargetUnknown = xerrors.New("workflow が呼ぶ CI の入口が ci.mk にありません")
 	errRootUnbound     = xerrors.New("ジョブが実行する root を、SSOT の root がそのジョブとして名指していません")
 	errRootJobIdle     = xerrors.New("SSOT の root が名指すジョブが、その root を実行していません")
+	// errCIOutsideJob は job の外（jobs: より前の env: など）に入口の名前がある workflow のエラー。
+	// どの job がそれを実行するかを読めない。
+	errCIOutsideJob = xerrors.New("workflow の job の外に CI の入口の名前があります")
 )
 
 var (
 	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- で始まるトークンを
-	// CI の入口の呼び出しとみなし、make を介さない書き方でも拾う。ciTargetRe に全体が当たらないもの
-	// （式で組んだ名前、名前に使わない字が続くもの）は、切り詰めずにそのまま未知の入口として落とす。
-	ciTokenRe  = regexp.MustCompile(`[A-Za-z0-9_-]+`)
-	ciTargetRe = regexp.MustCompile(`^ci-(?:plan|apply)-[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	// CI の入口の呼び出しとみなし、make を介さない書き方でも拾う。ci.mk に無いもの（式で組んだ名前、
+	// 名前に使わない字が続くもの）は、切り詰めずにそのまま未知の入口として落とす。
+	ciTokenRe = regexp.MustCompile(`[A-Za-z0-9_-]+`)
 	// stepNameLineRe は step の名前の行。名前に入口の名前が在っても、それを実行しているとは数えない。
 	stepNameLineRe = regexp.MustCompile(`^\s+(?:- )?name:`)
 	// ciRuleRe / ciCallRe は ci.mk の入口の見出しと、その次の行の呼び出し。
@@ -108,18 +110,18 @@ func ranRoots(repo *os.Root, names []string, targets map[string]string) (map[str
 		if err != nil {
 			return nil, xerrors.Wrap(err, "read "+f)
 		}
-		for _, job := range workflow.SplitJobs(string(data)).Jobs {
+		split := workflow.SplitJobs(string(data))
+		for _, l := range split.Preamble {
+			if toks := entryTokens(l); len(toks) > 0 {
+				return nil, xerrors.Wrap(errCIOutsideJob, fmt.Sprintf("%s %d 行目: %s", name, l.Number, toks[0]))
+			}
+		}
+		for _, job := range split.Jobs {
 			key := name + ":" + job.ID
 			for _, l := range job.Lines {
-				if commentRe.MatchString(l.Text) || stepNameLineRe.MatchString(l.Text) {
-					continue
-				}
-				for _, tok := range ciTokenRe.FindAllString(l.Text, -1) {
-					if !strings.HasPrefix(tok, "ci-plan-") && !strings.HasPrefix(tok, "ci-apply-") {
-						continue
-					}
+				for _, tok := range entryTokens(l) {
 					dir, ok := targets[tok]
-					if !ok || !ciTargetRe.MatchString(tok) {
+					if !ok {
 						return nil, xerrors.Wrap(errCITargetUnknown, fmt.Sprintf("%s %d 行目: %s（%s）", key, l.Number, tok, ciMakefile))
 					}
 					if !slices.Contains(ran[key], dir) {
@@ -130,6 +132,20 @@ func ranRoots(repo *os.Root, names []string, targets map[string]string) (map[str
 		}
 	}
 	return ran, nil
+}
+
+// entryTokens は 1 行のうち CI の入口の名前とみなすトークンを返す。コメントと step の名前の行は読まない。
+func entryTokens(l workflow.Line) []string {
+	if commentRe.MatchString(l.Text) || stepNameLineRe.MatchString(l.Text) {
+		return nil
+	}
+	var toks []string
+	for _, tok := range ciTokenRe.FindAllString(l.Text, -1) {
+		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") {
+			toks = append(toks, tok)
+		}
+	}
+	return toks
 }
 
 // checkBindings は、ジョブが実際に実行する root と、SSOT の root が名指すジョブが一致することを見る。

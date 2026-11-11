@@ -72,6 +72,15 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			assert.NoError(t, s.checkEndpoints(repo))
 		})
 
+		t.Run("module を辿った root の provider の region と型が呼ぶ宛先の region が一致すれば成功する", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:kms\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:kms\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n[type.aws_none]\nhosts = []\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\ndata \"aws_none\" \"n\" {}\n")
+			writeFile(t, repo, "r/m/main.tf", "resource \"aws_kms_key\" \"k\" {}\n")
+			assert.NoError(t, s.checkEndpoints(repo))
+		})
+
 		t.Run("base の宛先もジョブの許可リストとして数える", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
@@ -328,6 +337,12 @@ func Test_collectTypes(t *testing.T) {
 			repo := endpointRepo(t, "module \"a\" {\n  source = \"./missing\"\n}\n")
 			_, _, err := collectTypes(repo, "r")
 			require.ErrorIs(t, err, errNoTerraform)
+		})
+
+		t.Run("リポジトリを開けなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := collectTypes(filepath.Join(t.TempDir(), "missing"), "r")
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
 }
@@ -687,6 +702,14 @@ func Test_checkRegions(t *testing.T) {
 			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
 		})
 
+		t.Run("2 つ目の宛先の region が合わなくても弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			err := checkRegions(repo, []string{"r"}, []string{"kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com"})
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
+		})
+
 		t.Run("provider の region が 2 つ以上なら、宛先の region が片方に当たっても弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider+"provider \"aws\" {\n  alias  = \"us\"\n  region = \"us-east-1\"\n}\n")
@@ -717,7 +740,7 @@ func Test_hostRegion(t *testing.T) {
 			"s3-control.amazonaws.com":                 "",
 			"s3-external-1.amazonaws.com":              "",
 		} {
-			t.Run(host+" の region を返す", func(t *testing.T) {
+			t.Run(host+" の region は「"+want+"」", func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, want, hostRegion(host))
 			})
@@ -761,7 +784,7 @@ func Test_providerRegions(t *testing.T) {
 		t.Run("リポジトリを開けなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			_, err := providerRegions(filepath.Join(t.TempDir(), "missing"), []string{"r"})
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
 }
@@ -786,13 +809,15 @@ func Test_fileRegions(t *testing.T) {
 
 		t.Run("読めないファイルを弾く", func(t *testing.T) {
 			t.Parallel()
-			require.Error(t, fileRegions(openRoot(t, t.TempDir()), "missing.tf", map[string]bool{}))
+			require.ErrorIs(t, fileRegions(openRoot(t, t.TempDir()), "missing.tf", map[string]bool{}), os.ErrNotExist)
 		})
 
 		for name, body := range map[string]string{
 			"region が無い":            "provider \"aws\" {}\n",
 			"region が変数":            "provider \"aws\" {\n  region = var.region\n}\n",
 			"region が region の形でない": "provider \"aws\" {\n  region = \"tokyo\"\n}\n",
+			"region が文字列でない":        "provider \"aws\" {\n  region = 1\n}\n",
+			"region が null":         "provider \"aws\" {\n  region = null\n}\n",
 		} {
 			t.Run(name+"なら弾く", func(t *testing.T) {
 				t.Parallel()
