@@ -59,6 +59,7 @@ pre-commit:
         - ".github/settings/*.json"
         - "env/**/*.tf"
         - "scripts/repo-settings/*.go"
+        - "scripts/lib/**"
       run: make repo-settings-check
 
     egress-check:
@@ -67,6 +68,7 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
         - "{env,usecases,modules}/**/*.tf"
         - "scripts/egress/*.go"
+        - "scripts/lib/**"
       run: make egress-check
 
     # 何を見るかと、なぜ要るかは scripts/README.md の versions 行が持つ。

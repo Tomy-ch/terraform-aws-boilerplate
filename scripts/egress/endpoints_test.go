@@ -180,6 +180,14 @@ func Test_ssot_requireRoots(t *testing.T) {
 			assert.Contains(t, err.Error(), "a.yaml:one")
 		})
 
+		t.Run("wildcard で type の宛先を覆うジョブも名指しの対象になる", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:wide\"]\nextra = [\"*.ex.test\"]\n[root.r]\njobs = [\"a.yaml:one\"]\n[type.aws_kms_]\nhosts = [\"kms.ex.test\"]\n")
+			err := s.requireRoots()
+			require.ErrorIs(t, err, errJobNoRoot)
+			assert.Contains(t, err.Error(), "c.yaml:wide")
+		})
+
 		t.Run("base の宛先を type が要るなら全ジョブが名指しの対象になる", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
@@ -251,6 +259,12 @@ func Test_ssot_requireHosts(t *testing.T) {
 		t.Run("audit のジョブは見ない", func(t *testing.T) {
 			t.Parallel()
 			assert.NoError(t, s.requireHosts([]string{"b.yaml:audited"}, []string{"kms.test"}))
+		})
+
+		t.Run("wildcard で宛先を覆うジョブは宛先を持つとみなす", func(t *testing.T) {
+			t.Parallel()
+			w := endpointSSOT(t, "[job.\"c.yaml:wide\"]\nextra = [\"*.ex.test\"]\n")
+			assert.NoError(t, w.requireHosts([]string{"c.yaml:wide"}, []string{"kms.ex.test"}))
 		})
 
 		t.Run("宛先が空なら何も要らない", func(t *testing.T) {
@@ -412,6 +426,50 @@ func Test_rejectSymlink(t *testing.T) {
 			require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(dir, "link")))
 			require.ErrorIs(t, rejectSymlink(openRoot(t, dir), "link"), errSymlink)
 		})
+
+		t.Run("repo の中を指す途中の要素の symlink を弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
+			require.NoError(t, os.Symlink("r", filepath.Join(repo, "env")))
+			err := rejectSymlink(openRoot(t, repo), "env/main.tf")
+			require.ErrorIs(t, err, errSymlink)
+			assert.Contains(t, err.Error(), "env")
+		})
+	})
+}
+
+func Test_covers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct{ allowed, host string }{
+			"字面の一致": {"kms.test", "kms.test"},
+			"wildcard が 1 段のサブドメインに当たる":  {"*.test", "kms.test"},
+			"wildcard が深いサブドメインに当たる":     {"*.amazonaws.com", "kms.ap-northeast-1.amazonaws.com"},
+			"wildcard が wildcard の宛先を覆う": {"*.amazonaws.com", "*.s3.ap-northeast-1.amazonaws.com"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.True(t, covers([]string{"other.test", tc.allowed}, tc.host))
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct{ allowed, host string }{
+			"wildcard は apex に当たらない": {"*.amazonaws.com", "amazonaws.com"},
+			"別のドメイン":                 {"*.example.com", "kms.test"},
+			"許可リストが空":                {"", "kms.test"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.False(t, covers([]string{tc.allowed}, tc.host))
+			})
+		}
 	})
 }
 

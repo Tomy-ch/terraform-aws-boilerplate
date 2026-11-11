@@ -53,7 +53,7 @@ var (
 	domainRe = regexp.MustCompile(`^(?:\*\.)?[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
 	// typeNameRe は resource / data source の型名。typePrefixRe は `_` で終わる接頭辞で、provider 名だけの
 	// 接頭辞（`aws_`）はサービスをまたいで当たるので、少なくとも 2 要素を要る。
-	typeNameRe   = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$`)
+	typeNameRe   = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`)
 	typePrefixRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)+_$`)
 	stepNameRe   = regexp.MustCompile(`^ {6}- name: \S`)
 	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)

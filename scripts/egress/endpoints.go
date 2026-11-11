@@ -88,11 +88,9 @@ func (s *ssot) requireRoots() error {
 			named[key] = true
 		}
 	}
-	typeHosts := map[string]bool{}
-	for _, t := range s.types {
-		for _, h := range t.hosts {
-			typeHosts[h] = true
-		}
+	var typeHosts []string
+	for _, name := range s.typeOrder {
+		typeHosts = append(typeHosts, s.types[name].hosts...)
 	}
 	for _, key := range s.jobOrder {
 		if named[key] {
@@ -102,8 +100,8 @@ func (s *ssot) requireRoots() error {
 		if err != nil {
 			return err
 		}
-		if i := slices.IndexFunc(hosts, func(h string) bool { return typeHosts[h] }); i >= 0 {
-			return xerrors.Wrap(errJobNoRoot, fmt.Sprintf("%s は %s を許します（%s の root の jobs へ追加してください）", key, hosts[i], ssotFile))
+		if i := slices.IndexFunc(typeHosts, func(h string) bool { return covers(hosts, h) }); i >= 0 {
+			return xerrors.Wrap(errJobNoRoot, fmt.Sprintf("%s は %s を許します（%s の root の jobs へ追加してください）", key, typeHosts[i], ssotFile))
 		}
 	}
 	return nil
@@ -120,6 +118,18 @@ func (s *ssot) matchType(t string) (string, bool) {
 	return best, best != ""
 }
 
+// covers は許可リスト allowed が宛先 h へ通すかを、bullfrog と同じく path.Match の意味で判定する。
+// `*.example.com` は apex を含まず、`*` は `.` をまたいで深いサブドメインにも当たる。
+func covers(allowed []string, h string) bool {
+	return slices.ContainsFunc(allowed, func(a string) bool {
+		if a == h {
+			return true
+		}
+		ok, err := path.Match(a, h)
+		return err == nil && ok
+	})
+}
+
 // requireHosts は hosts が jobs のどれの許可リストにもあることを見る。audit のジョブは遮断しないので見ない。
 func (s *ssot) requireHosts(jobs, hosts []string) error {
 	for _, key := range jobs {
@@ -131,7 +141,7 @@ func (s *ssot) requireHosts(jobs, hosts []string) error {
 			return err
 		}
 		for _, h := range hosts {
-			if !slices.Contains(allowed, h) {
+			if !covers(allowed, h) {
 				return xerrors.Wrap(errEndpointMissing, fmt.Sprintf("%s → %s（%s のクラスか extra へ追加してください）", h, key, ssotFile))
 			}
 		}
@@ -207,17 +217,23 @@ func walkModule(repo *os.Root, dir string, found, visited map[string]bool) error
 	return nil
 }
 
-// rejectSymlink は repo の中の name が symlink なら拒む。存在しない name は後続の glob が 0 件として扱う。
+// rejectSymlink は repo の中の name の各要素のどれかが symlink なら拒む。os.Root は途中の要素の
+// symlink を repo の中に限って辿るので、最後の要素だけを見ると宣言と違う木を読む。
+// 存在しない要素は後続の glob が 0 件として扱う。
 func rejectSymlink(repo *os.Root, name string) error {
-	info, err := repo.Lstat(name)
-	if xerrors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return xerrors.Wrap(err, "lstat")
-	}
-	if info.Mode()&fs.ModeSymlink != 0 {
-		return errSymlink
+	cur := ""
+	for _, elem := range strings.Split(name, "/") {
+		cur = path.Join(cur, elem)
+		info, err := repo.Lstat(cur)
+		if xerrors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return xerrors.Wrap(err, "lstat")
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return xerrors.Wrap(errSymlink, cur)
+		}
 	}
 	return nil
 }

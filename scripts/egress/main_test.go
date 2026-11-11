@@ -609,7 +609,6 @@ func Test_ssot_validate(t *testing.T) {
 			"_ で始まる":   "[type._aws]\nhosts = []\n",
 			"ハイフンを含む":  "[type.aws-x]\nhosts = []\n",
 			"1 要素の接頭辞": "[type.aws_]\nhosts = [\"x.test\"]\n",
-			"1 要素の型名":  "[type.aws]\nhosts = []\n",
 		} {
 			t.Run("type の名前が"+name+"なら弾く", func(t *testing.T) {
 				t.Parallel()
@@ -629,6 +628,13 @@ func Test_ssot_validate(t *testing.T) {
 			s, err := parseSSOT("[type.aws_x]\nhosts = []\n")
 			require.NoError(t, err)
 			assert.Empty(t, s.types["aws_x"].hosts)
+		})
+
+		t.Run("1 要素の型名の type は受ける", func(t *testing.T) {
+			t.Parallel()
+			s, err := parseSSOT("[type.http]\nhosts = [\"example.test\"]\n")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"example.test"}, s.types["http"].hosts)
 		})
 
 		t.Run("type の port 付きの宛先を弾く", func(t *testing.T) {
