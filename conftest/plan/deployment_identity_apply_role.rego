@@ -31,13 +31,15 @@ delegated(body) := {a |
 	some a in lib.lower_all(s.Action)
 }
 
-# 鍵の ARN を Resource に持つ Deny の Action。apply の role の Deny は鍵ごとに置くので、鍵の ARN でない Resource の文は数えない。
+# 鍵の ARN を Resource に持つ、Condition の無い Deny の Action。apply の role の Deny は鍵ごとに置くので、鍵の ARN でない
+# Resource の文は数えない。Condition の付いた Deny は、条件の外の要求を拒まないので数えない。
 denied contains a if {
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
 	r.document.address == target
 	some s in lib.statements(r.body)
 	s.Effect == "Deny"
+	count(object.get(s, "Condition", {})) == 0
 	some res in lib.as_array(object.get(s, "Resource", []))
 	key_arn(res)
 	some a in lib.lower_all(s.Action)
@@ -55,6 +57,13 @@ deny contains msg if {
 deny contains msg if {
 	count(key_policies) == 0
 	msg := "[PLAN-APPLY-00] 突き合わせる Key Policy（aws_kms_key_policy）が入力にありません"
+}
+
+# 委任の Principal を読めない Key Policy では、突き合わせる Action が0件になり、下の規則が黙る。
+deny contains msg if {
+	some r in key_policies
+	count(delegated(r.body)) == 0
+	msg := sprintf("[PLAN-APPLY-00] %s: %s に、アカウントへの委任の Allow（Principal の AWS が :root の ARN）がありません", [r.document.path, r.document.address])
 }
 
 deny contains msg if {

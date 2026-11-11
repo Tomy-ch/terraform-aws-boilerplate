@@ -14,7 +14,7 @@ output "state_key_arn" {
 }
 
 output "state_key_alias_name" {
-  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。bootstrap の手順が鍵を名指す名前である。手順は値を直書きし、identity root のテストがその値をこの出力と突き合わせる。"
+  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。bootstrap の手順が鍵を名指す名前である。手順と identity root のテストがそれぞれ同じ値を直書きし、テストはこの出力をその直書きで固定する。手順とテストの直書きの一致は検査しない。"
   value       = module.kms.alias_name
 }
 

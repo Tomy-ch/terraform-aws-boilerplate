@@ -33,7 +33,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `bucket_name` | identity root と workload root の backend の `bucket`、段2 の `import` block の id |
 | `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
 | `state_key_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の鍵の権限と、apply の role の鍵の Deny の Resource を、この鍵に絞る |
-| `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順は値を直書きし、`env/admin/identity/tests/imports.tftest.hcl` がその値をこの出力と突き合わせる。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
+| `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` がそれぞれ同じ値を直書きし、テストはこの出力をその直書きで固定する（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
 | `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 

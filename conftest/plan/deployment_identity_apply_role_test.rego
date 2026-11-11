@@ -43,6 +43,17 @@ test_violation_deny_not_on_key if {
 	}
 }
 
+# 条件の外の要求は拒まないので、Condition の付いた Deny は覆っていると数えない。
+test_violation_conditional_deny if {
+	conditional := object.union(key_statement("kms:PutKeyPolicy", key), {"Condition": {"Bool": {"aws:MultiFactorAuthPresent": "false"}}})
+	fixture.has("[PLAN-APPLY-01]", p.deny) with input as fixture.plan([key_policy("kms:PutKeyPolicy"), apply_policy([conditional])]) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_delegation_unreadable if {
+	bare := fixture.doc("aws_kms_key_policy", "module.k.aws_kms_key_policy.this", "policy", {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "123456789012"}, "Action": "kms:PutKeyPolicy", "Resource": "*"}]})
+	fixture.has("[PLAN-APPLY-00]", p.deny) with input as fixture.plan([bare, apply_policy([key_statement("kms:PutKeyPolicy", key)])]) with data.policy_plan.deployment_identity as decl
+}
+
 test_violation_allow_is_not_deny if {
 	allow := {"Effect": "Allow", "Action": "kms:PutKeyPolicy", "Resource": key}
 	fixture.has("[PLAN-APPLY-01]", p.deny) with input as fixture.plan([key_policy("kms:PutKeyPolicy"), apply_policy([allow])]) with data.policy_plan.deployment_identity as decl
