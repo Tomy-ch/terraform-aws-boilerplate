@@ -115,7 +115,8 @@ hosts = [
 jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity"]
 
 # resource / data source の型が呼ぶ宛先。名前は型そのものか、`_` で終わる接頭辞で、最も長く当たる
-# ものを使う。API を呼ばない型は hosts を空にする。
+# ものを使う。接頭辞は provider 名の次の要素まで含め（`aws_s3_`。`aws_` は拒む）、宛先を持つ。API を呼ばない
+# 型は、型名そのもので hosts を空にする。
 [type.aws_caller_identity]
 hosts = ["sts.ap-northeast-1.amazonaws.com"]
 
