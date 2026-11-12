@@ -23,8 +23,8 @@ variable "state_bucket_arn" {
   type        = string
 }
 
-variable "state_key_alias_name" {
-  description = "state の鍵の alias の名前（`alias/<name>`）。apply-identity の alias の作成と、plan の role の鍵の読み取りをこの alias に絞る。"
+variable "state_key_arn" {
+  description = "state の鍵の ARN。plan と apply-identity の鍵の Action と、apply の role の鍵の Deny の Resource をこの鍵に絞る。"
   type        = string
 }
 

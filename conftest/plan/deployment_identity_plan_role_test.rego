@@ -26,7 +26,7 @@ test_pass_reads_and_plan_output_write if {
 	count(p.deny) == 0 with input as with_role(statements, []) with data.policy_plan.deployment_identity as decl
 }
 
-# plan の role の鍵の読み取りは、Condition で alias に限り、ListAliases は "*" の Resource で与える（本番の policy と同じ形）。
+# 読み取りの文が Condition と "*" の Resource（kms:ListAliases）を持っていても拒まないこと。
 test_pass_reads_with_condition_and_wildcard_resource if {
 	read_key := {
 		"Effect": "Allow",

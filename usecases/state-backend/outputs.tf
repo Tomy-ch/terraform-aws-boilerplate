@@ -8,8 +8,13 @@ output "bucket_arn" {
   value       = module.s3.bucket_arn
 }
 
+output "state_key_arn" {
+  description = "state の鍵の ARN。CI の role の IAM で、鍵の Action と apply の role の鍵の Deny の Resource をこの鍵に絞るのに使う。"
+  value       = module.kms.key_arn
+}
+
 output "state_key_alias_name" {
-  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。apply-identity の role の IAM で、alias の作成と plan の role の鍵の読み取りをこの alias に絞るのに使う。"
+  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。bootstrap の手順が鍵を名指す名前である。手順と identity root のテストがそれぞれ同じ値を直書きし、テストはこの出力をその直書きで固定する。手順とテストの直書きの一致は検査しない。"
   value       = module.kms.alias_name
 }
 

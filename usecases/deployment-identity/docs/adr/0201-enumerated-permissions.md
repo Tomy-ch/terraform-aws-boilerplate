@@ -13,11 +13,11 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 
 ## Decision
 
-1. 3つの role の権限を、role ごとの inline policy に Action を列挙して与える。Allow の文に `*` と `service:*` の Action、`"*"` の Resource、部分的なワイルドカード（`s3:GetBucket*` 等）を使わない。permissions boundary を課さない。ただし、resource-level 権限を持たない Action（`kms:CreateKey`・`kms:ListAliases`）は、`"*"` の Resource を Action ごとの別の文で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定9）。`kms:CreateKey` は鍵の種類（`kms:KeySpec`・`kms:KeyUsage`）の Condition で限る。多リージョンの鍵、外部の鍵素材の鍵（`kms:KeyOrigin` が `AWS_KMS` 以外）、lockout の安全チェックの迂回は Deny で拒む。Provider はこれらの値を既定のとき要求に載せない。KMS の文書は、要求に無い値も既定値で評価するとしているが、実際の要求では確かめていないので、どちらの評価でも既定の作成を妨げない Deny の形にする。
+1. 3つの role の権限を、role ごとの inline policy に Action を列挙して与える。Allow の文に `*` と `service:*` の Action、`"*"` の Resource、部分的なワイルドカード（`s3:GetBucket*` 等）を使わない。permissions boundary を課さない。ただし、resource-level 権限を持たない Action（`kms:ListAliases`）は、`"*"` の Resource を Action ごとの別の文で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定9）。Key Policy の書き込みでの lockout の安全チェックの迂回（`kms:BypassPolicyLockoutSafetyCheck`）は Deny で拒む。
 2. 列挙は、identity root の resource について AWS Provider 6.70.0 の source（`internal/service/s3`・`internal/service/iam`・`internal/service/kms`）の Read・Create・Update・Delete が呼ぶ API から導く。対応は下の表が持つ。Provider の版を上げる変更は、この表を見直す。
-3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定とその lifecycle、plan の出力の Bucket とその lifecycle、state の鍵（鍵、Key Policy、alias））に要る分に限る。段5 のログの権限は、ログの resource を足す変更が先に足す。3つの role の暗号操作は IAM では与えず、state の鍵の Key Policy が role を名指して許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。
-4. Resource は、state Bucket と plan の出力の Bucket の ARN とその key、3つの role と OIDC provider の resource 参照で限定する。state の鍵の ARN は、鍵を作る apply より前には無い。鍵の Action は、鍵の ARN を参照できるようになるまで、このアカウントとリージョンの鍵の pattern（`arn:<partition>:kms:<region>:<account>:key/*`）に与える（repository-wide/ADR-0301 (least-privilege-policy) 決定11）。plan の role の読み取りは、`kms:ResourceAliases` の Condition で state の鍵の alias が付いた鍵に限る。apply-identity の role は、鍵を作る apply の途中（alias より前の rotation の設定と、作成直後の読み取り）でも同じ鍵を扱うので、`ForAllValues` の `kms:ResourceAliases` で、alias が無い鍵か state の鍵の alias だけが付いた鍵に限る。alias の無いほかの鍵は限れない。この条件が alias の無い鍵で真になることは KMS の文書によるもので、実際の要求では、段4 を終えたアカウントへ鍵を足す CI の apply が初めて確かめる。新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので、確かめる機会が無い。`state-backend` が鍵の ARN を出力した後の変更が、Resource を鍵の ARN に絞る。alias は、入力の `state_key_alias_name`（`state-backend` の出力）の ARN に限る。
-5. apply の role に、3つの role と OIDC provider への `iam:*`、identity root の key と lock file への `s3:Put*` と `s3:Delete*`、state Bucket と plan の出力の Bucket への `s3:Put*` と `s3:Delete*`、state の object と plan の出力の object への `s3:Put*` と `s3:DeleteObjectVersion` を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、2つの Bucket の設定、plan の出力を変えられないようにする。
+3. 権限は段4 の構成物（OIDC provider、3つの role と inline policy、state Bucket の段1-4 の設定とその lifecycle、plan の出力の Bucket とその lifecycle、state の鍵（鍵、Key Policy、alias））に要る分に限る。state の鍵と alias を作る権限は与えない。新しいアカウントでは段4 の apply が一時 IAM user の権限で作る。鍵と alias の作り直しは CI では行えず、要るときは作成の権限を足す変更を先に merge する。段5 のログの権限は、ログの resource を足す変更が先に足す。3つの role の暗号操作は IAM では与えず、state の鍵の Key Policy が role を名指して許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。
+4. Resource は、state Bucket と plan の出力の Bucket の ARN とその key、3つの role と OIDC provider、state の鍵の resource 参照で限定する。state の鍵の ARN は入力の `state_key_arn`（`state-backend` の出力）で受け、role と同じ partition・リージョン・アカウントの鍵であることを plan で（ARN が plan で決まらなければ apply で）確かめる。
+5. apply の role に、次を Deny で与える（repository-wide/ADR-0301 (least-privilege-policy) 決定8 は Deny の wildcard を許す）。3つの role と OIDC provider への `iam:*`。identity root の key と lock file への `s3:Put*` と `s3:Delete*`。state Bucket と plan の出力の Bucket への `s3:Put*` と `s3:Delete*`。state Bucket のすべての object への `s3:DeleteObjectVersion`。plan の出力の Bucket のすべての object への `s3:Put*` と `s3:DeleteObjectVersion`。state の鍵への、`modules/kms` が Key Policy でアカウントへ委任する管理の Action のすべて（repository-wide/ADR-0604 (state-split-by-apply-role) 決定10）。workload root の key と lock file への書き込みは apply の role が行うので拒まない。鍵の Deny は `kms:*` にしない。Key Policy が role を名指して許す暗号操作（決定3）まで塞ぐからである。KMS では IAM の Allow は Key Policy がアカウントへ委任した Action にしか効かないので、委任の Action を覆えば足りる。alias の削除と付け替えは鍵への権限も要るので、鍵の Deny が塞ぐ。以後 workload の usecase のための Allow を足しても、bootstrap の構成物、identity root の state、2つの Bucket の設定、state の版、plan の出力、state の鍵の設定を変えられないようにする。
 6. apply-identity の role は、自分を含む3つの role の信頼条件と policy を変更できる。誤った信頼条件が merge されると CI は締め出され、回復は repository-wide/ADR-0602 決定9 の回復の契機になる。
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
 8. plan の role に、plan の出力の Bucket の `pr/*` と `branch/*` の key への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13 の例外）。Pull Request の plan と保護ブランチの plan を key の接頭辞で分ける。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。plan の出力を state の鍵で暗号化するのに要る `kms:GenerateDataKey` は IAM では与えず、Key Policy が plan の role を名指して許す（決定3）。
@@ -44,14 +44,12 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 | `aws_iam_role_policy` | Get / Put / DeleteRolePolicy | `iam:GetRolePolicy`、`iam:PutRolePolicy`、`iam:DeleteRolePolicy` | 読みは plan、apply-identity。書きは apply-identity |
 | `aws_iam_role_policies_exclusive` | ListRolePolicies、DeleteRolePolicy | 同名の `iam:` | 同上 |
 | `aws_iam_role_policy_attachments_exclusive` | ListAttachedRolePolicies、DetachRolePolicy | 同名の `iam:` | 同上 |
-| `aws_kms_key` | CreateKey | `kms:CreateKey` | apply-identity |
-| 同 | DescribeKey、GetKeyPolicy、GetKeyRotationStatus、ListResourceTags | 同名の `kms:` | plan、apply-identity |
+| `aws_kms_key` | DescribeKey、GetKeyPolicy、GetKeyRotationStatus、ListResourceTags | 同名の `kms:` | plan、apply-identity |
 | 同 | EnableKeyRotation | `kms:EnableKeyRotation` | apply-identity |
 | `aws_kms_key_policy` | PutKeyPolicy（Read は DescribeKey と GetKeyPolicy） | `kms:PutKeyPolicy` | apply-identity |
 | `aws_kms_alias` | ListAliases | `kms:ListAliases` | plan、apply-identity |
-| 同 | CreateAlias（alias と鍵の両方に要る） | `kms:CreateAlias` | apply-identity |
 
-与えないもの: `s3:CreateBucket` と `s3:DeleteBucket`（2つの Bucket の作り直しを権限の側でも止める）、`iam:AttachRolePolicy`（managed policy を付けない）、`iam:TagRole` などの tag の書き込み（tag を付けない）、`iam:PutRolePermissionsBoundary` と `iam:DeleteRolePermissionsBoundary`、`iam:PassRole`、`iam:RemoveRoleFromInstanceProfile`（instance profile を持たない）。`kms:ScheduleKeyDeletion`・`kms:DisableKey`・`kms:DisableKeyRotation`・`kms:EnableKey`・`kms:UpdateKeyDescription`・`kms:DeleteAlias`・`kms:UpdateAlias`（鍵の作り直しと alias の付け替えを権限の側でも止める）、`kms:TagResource`（tag を付けない）、暗号操作（決定3）。`aws_caller_identity` の `sts:GetCallerIdentity` は権限を要さない。
+与えないもの: `s3:CreateBucket` と `s3:DeleteBucket`（2つの Bucket の作り直しを権限の側でも止める）、`iam:AttachRolePolicy`（managed policy を付けない）、`iam:TagRole` などの tag の書き込み（tag を付けない）、`iam:PutRolePermissionsBoundary` と `iam:DeleteRolePermissionsBoundary`、`iam:PassRole`、`iam:RemoveRoleFromInstanceProfile`（instance profile を持たない）。`kms:CreateKey`・`kms:CreateAlias`（state の鍵と alias を CI で作らない。決定3）、`kms:ScheduleKeyDeletion`・`kms:DisableKey`・`kms:DisableKeyRotation`・`kms:EnableKey`・`kms:UpdateKeyDescription`・`kms:DeleteAlias`・`kms:UpdateAlias`（鍵の作り直しと alias の付け替えを権限の側でも止める）、`kms:TagResource`（tag を付けない）、暗号操作（決定3）。`aws_caller_identity` の `sts:GetCallerIdentity` は権限を要さない。
 
 ## 検討した代替案
 
@@ -86,15 +84,16 @@ plan の role は Pull Request の作者が任意のコードで使える資格�
 
 ## 保証範囲
 
-- 保証すること: 3つの role の policy の文書が、上の表と決定5 の Deny から組まれていること（Unit Test）
-- 保証しないこと: 列挙が Provider の実際の呼び出しを漏れなく覆うこと（段4 の後の人の確認と、CI の plan が見る）。apply の role の有効な権限が bootstrap の構成物の変更を許さないことの検査（Policy Test は未配線）。state の鍵の ARN へ絞るまで、apply-identity の role がこのアカウントの alias の無い鍵の Key Policy と rotation の状態を読み、Key Policy を書き換えられること（決定4）。apply の role が state の鍵の設定を変えられないことは、apply の role に KMS の Allow が無いことだけが支え、Deny は無い
+- 保証すること: 3つの role の policy の文書が、上の表と決定5 の Deny から組まれていること（Unit Test）。決定5 の鍵の Deny の Action が、`modules/kms` が Key Policy でアカウントへ委任する Action を覆うこと（Policy Test）
+- 保証しないこと: 列挙が Provider の実際の呼び出しを漏れなく覆うこと（段4 の後の人の確認と、CI の plan が見る）。apply の role の有効な権限が bootstrap の構成物の変更を許さないことの検査（Policy Test は未配線）
 
 ## 検証方法
 
 - Unit Test: `internal/github-oidc/tests/permissions.tftest.hcl` が、3つの role の policy の文書と、inline policy と managed policy の排他を完全一致で確かめる
 - 手順: `docs/setup/bootstrap.md` の段4 の手順9 と段5 の手順4 が、apply の後に `aws iam simulate-principal-policy` で、表の Action が plan と apply-identity の role に許され、与えないものと apply の role の bootstrap の構成物への変更が拒否されることを確かめる
-- Policy Test（`make tf-policy`）: Allow の Action の `*`・`service:*` の不在（repository-wide/ADR-0301 (least-privilege-policy) 決定8）と、`NotAction`・`NotResource` の Allow の不在、Allow の Resource `"*"` が決定1 の2つの Action（`resource_wildcard_actions` の宣言）に限られること（同 決定9）、KMS の暗号操作と `kms:CreateGrant` の Allow の不在（決定3、同 決定12）
+- Policy Test（`make tf-policy`）: Allow の Action の `*`・`service:*` の不在（repository-wide/ADR-0301 (least-privilege-policy) 決定8）と、`NotAction`・`NotResource` の Allow の不在、Allow の Resource `"*"` が決定1 の Action（`kms:ListAliases`。`resource_wildcard_actions` の宣言）に限られること（同 決定9）、KMS の暗号操作と `kms:CreateGrant` の Allow の不在（決定3、同 決定12）
 - Policy Test（`make tf-policy`）: plan の role の Allow が読み取りと、plan の出力の Bucket の `pr/*`・`branch/*` への `s3:PutObject` だけであることと、宣言した policy の外から plan の role に権限が付かないこと（決定8）
+- Policy Test（`make tf-policy`）: apply の role の inline policy が、state の鍵の Key Policy がアカウントへ委任する Action のすべてを、鍵の ARN への Deny で拒むこと（決定5。`plan.deployment_identity_apply_role`）
 - Policy Test（未配線。#209）: repository-wide/ADR-0602 の検証方法の、apply の role の有効な権限の項目
 
 ## 影響
@@ -108,5 +107,5 @@ plan の role は Pull Request の作者が任意のコードで使える資格�
 - apply の role が IAM の role を作る usecase が入るとき（permissions boundary を決める）
 - inline policy の文字数が上限に近づいたとき
 - CI の plan か apply が AccessDenied で失敗したとき
-- `state-backend` が state の鍵の ARN を出力したとき（決定4 の pattern を鍵の ARN に絞り、apply の role に state の鍵の管理の Action の Deny を足す。repository-wide/ADR-0604 (state-split-by-apply-role) 決定10）
-- KMS が `kms:KeyOrigin` の値を足したとき（決定1 の Deny は外部の鍵素材の値を列挙している）
+- `modules/kms` が Key Policy でアカウントへ委任する Action を変えるとき（決定5 の鍵の Deny の列挙を合わせる）
+- state の鍵の作成の権限を足すとき（鍵の種類 `kms:KeySpec`・`kms:KeyUsage`、多リージョン `kms:MultiRegion`、鍵素材 `kms:KeyOrigin` を限る条件と、`resource_wildcard_actions` への `kms:CreateKey` の追加を併せて決める）

@@ -22,6 +22,6 @@ module "deployment_identity" {
     repository_id = "1370808564"
   }
   state_bucket_arn       = module.state_backend.bucket_arn
-  state_key_alias_name   = module.state_backend.state_key_alias_name
+  state_key_arn          = module.state_backend.state_key_arn
   plan_output_bucket_arn = module.state_backend.plan_output_bucket_arn
 }

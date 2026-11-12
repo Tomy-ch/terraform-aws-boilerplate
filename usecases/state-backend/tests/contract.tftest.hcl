@@ -48,6 +48,11 @@ run "outputs" {
     condition     = output.plan_output_bucket_arn != output.bucket_arn
     error_message = "plan の出力の Bucket が state Bucket と分かれていません。"
   }
+
+  assert {
+    condition     = output.state_key_arn == module.kms.key_arn
+    error_message = "state_key_arn が state の鍵の ARN を返していません。"
+  }
 }
 
 run "ci_role_arns_role_with_path" {
@@ -131,7 +136,7 @@ run "ci_role_arns_apply_identity_no_name" {
   expect_failures = [var.ci_role_arns]
 }
 
-# alias の名前は deployment-identity の権限が受けるので、鍵より前に plan で決まらなければならない。
+# alias の名前は bootstrap の手順が鍵を名指す名前なので、鍵より前に plan で決まらなければならない。
 run "state_key_alias_name" {
   command = plan
 

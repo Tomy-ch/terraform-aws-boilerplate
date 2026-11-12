@@ -371,6 +371,30 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    期待は順に、15行・17行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・3行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
 
+   state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）は次で確かめる。`simc` は条件キーを `--context-entries` で与える `sim` である
+
+   ```bash
+   state_key=$(aws kms describe-key --region "$REGION" --key-id alias/tabp-admin-tfstate --query KeyMetadata.Arn --output text)
+   other="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000000"
+   simc() { role=$1 res=$2 ctx=$3; shift 3
+     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" --context-entries $ctx \
+       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
+   sim apply-identity "$state_key" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy
+   sim apply-identity "*" kms:ListAliases
+   sim plan "$state_key" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
+   sim plan "*" kms:ListAliases
+   sim apply-identity "*" kms:CreateKey
+   sim apply-identity "$state_key" kms:CreateAlias kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
+   sim apply-identity "$other" kms:DescribeKey kms:PutKeyPolicy
+   sim plan "$state_key" kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey
+   sim plan "$other" kms:DescribeKey
+   sim apply "$state_key" kms:Decrypt kms:GenerateDataKey
+   sim apply "$state_key" kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription
+   simc apply-identity "*" "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:PutKeyPolicy
+   ```
+
+   期待は順に、6行・1行・4行・1行がすべて `allowed`、続く6つが1行・8行・2行・3行・1行・2行ですべて `implicitDeny`、最後の2つが21行・1行ですべて `explicitDeny` であること。CI の role は鍵と alias を作れず、鍵の権限は state の鍵の ARN に限られる（別の鍵の行は `implicitDeny`）。apply の role は state の鍵の管理の Action を読み取りも含めて Deny され、暗号操作は Deny されない（`implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は IAM の評価だけを見るので、KMS が実際の要求で Deny をどう評価するかは確かめない
+
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 
@@ -392,34 +416,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`StringEquals`・`Bool`）は条件キーが無いと一致しない。alias が無い作成直後の鍵での apply-identity の評価（`ForAllValues` の条件キーが無いとき）は、ここでは確かめない。段4 を終えたアカウントへ鍵を足す CI の apply が確かめ、新しいアカウントでは段4 の apply が一時 IAM user の権限で鍵を作るので確かめる機会が無い。state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）は次で確かめる。`arn` と `sim` は段4 の手順9 のもの
-
-   ```bash
-   kms="arn:aws:kms:${REGION}:${ACCOUNT_ID}"
-   alias="ContextKeyName=kms:ResourceAliases,ContextKeyValues=alias/tabp-admin-tfstate,ContextKeyType=stringList"
-   spec="ContextKeyName=kms:KeySpec,ContextKeyValues=SYMMETRIC_DEFAULT,ContextKeyType=string ContextKeyName=kms:KeyUsage,ContextKeyValues=ENCRYPT_DECRYPT,ContextKeyType=string"
-   simc() { role=$1 res=$2 ctx=$3; shift 3
-     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" --context-entries $ctx \
-       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
-   simc apply-identity "*" "$spec" kms:CreateKey
-   sim apply-identity "*" kms:ListAliases
-   simc apply-identity "${kms}:key/x" "$alias" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy kms:CreateAlias
-   simc apply-identity "${kms}:alias/tabp-admin-tfstate" "$alias" kms:CreateAlias
-   simc plan "${kms}:key/x" "$alias" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
-   sim plan "*" kms:ListAliases
-   sim apply-identity "${kms}:key/x" kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
-   sim apply-identity "${kms}:alias/tabp-admin-tfstate" kms:UpdateAlias kms:DeleteAlias
-   sim apply-identity "${kms}:alias/other" kms:CreateAlias
-   simc apply-identity "${kms}:key/x" "ContextKeyName=kms:ResourceAliases,ContextKeyValues=alias/other,ContextKeyType=stringList" kms:DescribeKey kms:PutKeyPolicy
-   sim plan "${kms}:key/x" kms:DescribeKey
-   simc plan "${kms}:key/x" "$alias" kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey
-   sim apply "${kms}:key/x" kms:PutKeyPolicy kms:ScheduleKeyDeletion
-   simc apply-identity "*" "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
-   simc apply-identity "*" "ContextKeyName=kms:MultiRegion,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey
-   simc apply-identity "*" "ContextKeyName=kms:KeyOrigin,ContextKeyValues=EXTERNAL,ContextKeyType=string" kms:CreateKey
-   ```
-
-   期待は順に、1行・1行・7行・1行・4行・1行がすべて `allowed`、続く7つが7行・2行・1行・2行・1行・3行・2行ですべて `implicitDeny`、最後の3つが2行・1行・1行ですべて `explicitDeny` であること。plan の role の鍵の読み取りは、alias が state の鍵の alias のときだけ許される（alias を与えない行は `implicitDeny`）。apply-identity の鍵の操作は、alias が無い鍵か state の alias だけが付いた鍵に限られる（state の alias を与えた行は `allowed`、別の alias の付いた鍵の行は `implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は条件キーを人が与えるので、KMS が実際の要求にその値を載せることは確かめない。それは、段4 を終えたアカウントへ鍵を足す CI の apply と、その後の CI の plan が確かめる
+4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。state の鍵の権限を変えたときは、段4 の手順9 の state の鍵の block で確かめる
 
 途中で失敗したとき:
 

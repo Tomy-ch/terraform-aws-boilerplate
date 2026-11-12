@@ -15,7 +15,7 @@ variables {
   env                    = "admin"
   github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_alias_name   = "alias/tabp-admin-tfstate"
+  state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
@@ -82,11 +82,10 @@ run "policies" {
       },
       { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/*"] },
       {
-        Sid       = "ReadStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
+        Sid      = "ReadStateKey"
+        Effect   = "Allow"
+        Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
@@ -124,8 +123,36 @@ run "policies" {
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/*" },
       { Sid = "DenyPlanOutputBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" },
       { Sid = "DenyPlanOutputWrite", Effect = "Deny", Action = ["s3:DeleteObjectVersion", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/*" },
+      {
+        Sid    = "DenyStateKeyChange"
+        Effect = "Deny"
+        Action = [
+          "kms:CancelKeyDeletion",
+          "kms:CreateAlias",
+          "kms:DeleteAlias",
+          "kms:DescribeKey",
+          "kms:DisableKey",
+          "kms:DisableKeyRotation",
+          "kms:EnableKey",
+          "kms:EnableKeyRotation",
+          "kms:GetKeyPolicy",
+          "kms:GetKeyRotationStatus",
+          "kms:ListGrants",
+          "kms:ListKeyPolicies",
+          "kms:ListResourceTags",
+          "kms:PutKeyPolicy",
+          "kms:RevokeGrant",
+          "kms:RotateKeyOnDemand",
+          "kms:ScheduleKeyDeletion",
+          "kms:TagResource",
+          "kms:UntagResource",
+          "kms:UpdateAlias",
+          "kms:UpdateKeyDescription",
+        ]
+        Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      },
     ]
-    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・2つの Bucket・plan の出力の変更の拒否になっていません。"
+    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・2つの Bucket・plan の出力・state の鍵の変更の拒否になっていません。"
   }
 
   assert {
@@ -202,37 +229,9 @@ run "policies" {
         Action   = ["iam:CreateRole", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:DetachRolePolicy", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:UpdateAssumeRolePolicy", "iam:UpdateRole", "iam:UpdateRoleDescription"]
         Resource = [aws_iam_role.this["apply"].arn, aws_iam_role.this["apply_identity"].arn, aws_iam_role.this["plan"].arn]
       },
-      {
-        Sid       = "CreateStateKey"
-        Effect    = "Allow"
-        Action    = "kms:CreateKey"
-        Resource  = "*"
-        Condition = { StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" } }
-      },
-      {
-        Sid       = "ReadStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
-      },
-      {
-        Sid       = "ManageStateKey"
-        Effect    = "Allow"
-        Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
-        Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
-        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
-      },
-      {
-        Sid       = "CreateStateKeyAlias"
-        Effect    = "Allow"
-        Action    = "kms:CreateAlias"
-        Resource  = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:key/*"]
-        Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/tabp-admin-tfstate" } }
-      },
-      { Sid = "DenyMultiRegionKey", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { Bool = { "kms:MultiRegion" = "true" } } },
-      { Sid = "DenyExternalKeyOrigin", Effect = "Deny", Action = "kms:CreateKey", Resource = "*", Condition = { StringEquals = { "kms:KeyOrigin" = ["AWS_CLOUDHSM", "EXTERNAL", "EXTERNAL_KEY_STORE"] } } },
-      { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
+      { Sid = "ReadStateKey", Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" },
+      { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" },
+      { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = "kms:PutKeyPolicy", Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
         Sid      = "ReadCiRoles"
@@ -285,13 +284,12 @@ run "policies" {
   }
 }
 
-# 鍵の ARN は data source から、alias は入力から組む。Bucket の ARN と違う値を与え、どちらを読んだかを区別する。
-run "key_arns_follow_inputs" {
+# 鍵の Resource は入力の ARN をそのまま使う。既定の値と違う鍵を、data source を合わせて与え、入力を読んだかを区別する。
+run "key_arn_follows_input" {
   command = apply
 
   variables {
-    name_prefix          = "t4bp-dev"
-    state_key_alias_name = "alias/other-tfstate"
+    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
   }
 
   override_data {
@@ -308,54 +306,62 @@ run "key_arns_follow_inputs" {
   }
 
   assert {
-    condition = jsondecode(aws_iam_role_policy.this["plan"].policy).Statement[6] == {
-      Sid       = "ReadStateKey"
-      Effect    = "Allow"
-      Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-      Resource  = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"
-      Condition = { "ForAnyValue:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } }
-    }
-    error_message = "plan の role の鍵の読み取りが、data source の partition・region・account と入力の alias から組まれていません。"
-  }
-
-  assert {
-    condition = [jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[11].Resource, jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[11].Condition] == [
-      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*",
-      { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } },
+    condition = [
+      jsondecode(aws_iam_role_policy.this["plan"].policy).Statement[6].Resource,
+      jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[9].Resource,
+      jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[10].Resource,
+      jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[11].Resource,
+      ] == [
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
+      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
     ]
-    error_message = "apply-identity の鍵の読み取りが、data source と入力の alias から組まれていません。"
-  }
-
-  assert {
-    condition = [jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[12].Resource, jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[12].Condition] == [
-      "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*",
-      { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } },
-    ]
-    error_message = "apply-identity の鍵の管理が、data source と入力の alias から組まれていません。"
-  }
-
-  assert {
-    condition = jsondecode(aws_iam_role_policy.this["apply_identity"].policy).Statement[13] == {
-      Sid       = "CreateStateKeyAlias"
-      Effect    = "Allow"
-      Action    = "kms:CreateAlias"
-      Resource  = ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:alias/other-tfstate", "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"]
-      Condition = { "ForAllValues:StringEquals" = { "kms:ResourceAliases" = "alias/other-tfstate" } }
-    }
-    error_message = "apply-identity の alias の作成が、data source の partition・region・account と入力の alias から組まれていません。"
+    error_message = "plan の読み取り、apply の Deny、apply-identity の読み取りと管理の Resource が、入力の鍵の ARN になっていません。"
   }
 }
 
+# 別のアカウントの鍵を渡すと、apply-identity が自分の state の鍵を管理できなくなる。
+run "key_in_other_account" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:kms:ap-northeast-1:210987654321:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_iam_role_policy.this]
+}
+
+run "key_in_other_region" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_iam_role_policy.this]
+}
+
+run "key_in_other_partition" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws-cn:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_iam_role_policy.this]
+}
+
 # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
-# mock の ARN は実物より短いので、入力が許す最も長い値（38文字の project と sandbox、250文字の alias、aws-cn の
-# 63文字の Bucket）と、それに対応する長さの ARN を与えて数える。
+# mock の ARN は実物より短いので、入力が許す最も長い値（38文字の project と sandbox、aws-cn の 63文字の Bucket）と、
+# それに対応する長さの ARN を与えて数える。
 run "policy_length" {
   command = apply
 
   variables {
     name_prefix            = "abcdefghijklmnopqrstuvwxyz012345678901-sandbox"
     state_bucket_arn       = format("arn:aws-cn:s3:::%063d", 1)
-    state_key_alias_name   = format("alias/%0250d", 0)
+    state_key_arn          = "arn:aws-cn:kms:cn-northwest-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn = format("arn:aws-cn:s3:::%063d", 2)
   }
 
@@ -385,8 +391,8 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(var.state_key_alias_name) == 256 && length(trimprefix(var.state_bucket_arn, "arn:aws-cn:s3:::")) == 63
-    error_message = "境界の入力の長さが、alias の 256 文字と Bucket 名の 63 文字になっていません。"
+    condition     = length(trimprefix(var.state_bucket_arn, "arn:aws-cn:s3:::")) == 63
+    error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
   }
 
   assert {

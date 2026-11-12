@@ -1,12 +1,23 @@
 # 公開 output の名前と、それが返す値の配線を固定する（ADR-0202 決定4）。
-mock_provider "aws" {}
+mock_provider "aws" {
+  # state_key_arn の precondition は、鍵の ARN を data source の partition・region・account と比べる。
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "123456789012" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+}
 
 variables {
   project                = "tabp"
   env                    = "admin"
   github                 = { owner = "octo-org", owner_id = "123456", repository = "octo-repo", repository_id = "456789" }
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
-  state_key_alias_name   = "alias/tabp-admin-tfstate"
+  state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
@@ -36,7 +47,7 @@ run "wiring" {
     project                = "t4bp"
     env                    = "dev"
     state_bucket_arn       = "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
-    state_key_alias_name   = "alias/t4bp-dev-tfstate"
+    state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/abcdef01-2345-6789-abcd-ef0123456789"
     plan_output_bucket_arn = "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an"
   }
 
@@ -60,7 +71,7 @@ run "wiring" {
   }
 
   assert {
-    condition     = jsondecode(module.github_oidc.role_policies["plan"]).Statement[6].Condition["ForAnyValue:StringEquals"]["kms:ResourceAliases"] == "alias/t4bp-dev-tfstate"
-    error_message = "state_key_alias_name が内部の module の権限へ渡っていません。"
+    condition     = jsondecode(module.github_oidc.role_policies["plan"]).Statement[6].Resource == "arn:aws:kms:ap-northeast-1:123456789012:key/abcdef01-2345-6789-abcd-ef0123456789"
+    error_message = "state_key_arn が内部の module の権限へ渡っていません。"
   }
 }

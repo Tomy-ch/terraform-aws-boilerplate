@@ -14,7 +14,7 @@ bootstrap の段1 は AWS CLI で state Bucket を作り、段2 はそれを `im
 ## Decision
 
 1. bootstrap の段1 から段4 まで、state Bucket の既定の暗号化を SSE-S3（`AES256`）とし、SSE-C を拒否する。
-2. CMK（鍵・Key Policy・alias）は、state backend の構成物として identity root の Terraform が作る（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定1・5。CLI では作らない）。新しいアカウントでは段4 の apply が、段4 を終えたアカウントでは CI の apply が作る。段5 で SSE-KMS へ切り替え、そのとき backend に `kms_key_id` を書く。
+2. CMK（鍵・Key Policy・alias）は、state backend の構成物として identity root の Terraform が作る（repository-wide/ADR-0602 (bootstrap-and-ci-authentication) 決定1・5。CLI では作らない）。新しいアカウントでは段4 の apply が作る。段4 を終えたアカウントの CI は鍵を作り直せない（deployment-identity/ADR-0201 決定3）。段5 で SSE-KMS へ切り替え、そのとき backend に `kms_key_id` を書く。
 3. 決定1 を公式推奨からの逸脱として記録し（repository-wide/ADR-0207 (default-value-policy) 決定11）、CMK を使わない暗号化を報告する Security の各道具の検査を、その道具が報告する path に限って抑止する —— Trivy の AWS-0132 は `modules/s3/encryption.tf`、Checkov の CKV_AWS_145 は `modules/s3/main.tf` の `aws_s3_bucket.this`（repository-wide/ADR-0501 (development-tooling-composition) 決定6・13）。
 
 ## 検討した代替案
