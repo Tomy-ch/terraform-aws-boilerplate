@@ -19,7 +19,7 @@ root := {
 }
 
 via_s3 := {
-	"Sid": "RolesViaS3",
+	"Sid": "RolesViaS3ReadWrite",
 	"Effect": "Allow",
 	"Principal": {"AWS": [
 		"arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
@@ -185,7 +185,6 @@ test_violation_service_not_limited_by_source if {
 	}
 }
 
-# 限る条件の値が1つでも外を指せば落とす。ほかの値やキーが委任のアカウントに限っていても通さない。
 test_violation_service_source_partly_foreign if {
 	every c in [
 		{"StringEquals": {"aws:SourceAccount": ["123456789012", "210987654321"]}},

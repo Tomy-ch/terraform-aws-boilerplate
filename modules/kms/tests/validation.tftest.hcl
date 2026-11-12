@@ -13,7 +13,7 @@ mock_provider "aws" {
 variables {
   name = "tabp-admin-tfstate"
   users = {
-    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3" }]
+    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
   }
 }
 
@@ -80,7 +80,7 @@ run "users_rejects_unknown_via" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "sns" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "sns", access = "read-write" }]
     }
   }
 
@@ -92,7 +92,7 @@ run "users_rejects_user_arn" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:user/bootstrap", via = "s3" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:user/bootstrap", via = "s3", access = "read-write" }]
     }
   }
 
@@ -104,7 +104,7 @@ run "users_rejects_wildcard_arn" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/*", via = "s3" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/*", via = "s3", access = "read-write" }]
     }
   }
 
@@ -116,7 +116,7 @@ run "users_rejects_account_root" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:root", via = "s3" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:root", via = "s3", access = "read-write" }]
     }
   }
 
@@ -129,8 +129,8 @@ run "users_rejects_duplicate_role" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3" },
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3" },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
       ]
     }
   }
@@ -155,7 +155,7 @@ run "users_rejects_role_arn_without_name" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/", via = "s3" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/", via = "s3", access = "read-write" }]
     }
   }
 
@@ -262,7 +262,7 @@ run "users_rejects_other_account_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::210987654321:role/r", via = "s3" }]
+      roles = [{ arn = "arn:aws:iam::210987654321:role/r", via = "s3", access = "read-write" }]
     }
   }
 
@@ -274,7 +274,7 @@ run "users_rejects_other_partition_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws-cn:iam::123456789012:role/r", via = "s3" }]
+      roles = [{ arn = "arn:aws-cn:iam::123456789012:role/r", via = "s3", access = "read-write" }]
     }
   }
 
@@ -315,6 +315,129 @@ run "policy_rejects_over_32kb" {
   variables {
     users = {
       services = { logs = [for i in range(70) : format("/%0500d", i)] }
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_unknown_access" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "write" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_without_objects" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_objects_on_read_write" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::bkt/k"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_bucket_arn_as_object" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_non_s3_object" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:logs:ap-northeast-1:123456789012:log-group:x"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_with_asterisk" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/identity/*"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_with_question_mark" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k?"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_object" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k", "arn:aws:s3:::bkt/k"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_same_role_with_other_access" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] },
+      ]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_in_other_partition" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws-cn:s3:::bkt/k"] }]
     }
   }
 

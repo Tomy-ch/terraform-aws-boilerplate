@@ -28,7 +28,12 @@ statement(condition) := {
 # 入れ子 module と index key 付きの address を、data の index 無しの address と照合する。
 role(statements) := fixture.doc("aws_iam_role", "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]", "assume_role_policy", {"Statement": statements})
 
-trust(statements) := fixture.plan([provider, role(statements)])
+# apply-identity の role は他の role と別の resource に在り、decl.json がその address も宣言する。
+apply_identity_role(statements) := fixture.doc("aws_iam_role", "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity", "assume_role_policy", {"Statement": statements})
+
+valid_apply_identity := apply_identity_role([statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": "repo:octo-org@123456/octo-repo@456789:environment:admin-apply-identity"})})])
+
+trust(statements) := fixture.plan([provider, role(statements), valid_apply_identity])
 
 test_pass_immutable_environment_subject if {
 	count(p.deny) == 0 with input as trust([statement({"StringEquals": eq})])
@@ -102,8 +107,8 @@ test_violation_subject_id_mismatch if {
 }
 
 test_pass_every_instance if {
-	roles := [fixture.doc("aws_iam_role", sprintf("module.deployment_identity.module.github_oidc.aws_iam_role.this[%q]", [k]), "assume_role_policy", {"Statement": [statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": sprintf("repo:octo-org@123456/octo-repo@456789:environment:admin-%s", [k])})})]}) | some k in ["plan", "apply", "apply-identity"]]
-	count(p.deny) == 0 with input as fixture.plan(array.concat([provider], roles))
+	roles := [fixture.doc("aws_iam_role", sprintf("module.deployment_identity.module.github_oidc.aws_iam_role.this[%q]", [k]), "assume_role_policy", {"Statement": [statement({"StringEquals": object.union(eq, {"token.actions.githubusercontent.com:sub": sprintf("repo:octo-org@123456/octo-repo@456789:environment:admin-%s", [env])})})]}) | some k, env in {"plan": "plan", "apply": "apply", "unlock_identity": "unlock-identity"}]
+	count(p.deny) == 0 with input as fixture.plan(array.concat([provider, valid_apply_identity], roles))
 }
 
 test_violation_declared_role_absent if {
@@ -113,7 +118,7 @@ test_violation_declared_role_absent if {
 
 test_pass_undeclared_role_not_inspected if {
 	other := fixture.doc("aws_iam_role", "module.other.aws_iam_role.this", "assume_role_policy", {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole", "Principal": {"Service": "ec2.amazonaws.com"}}]})
-	count(p.deny) == 0 with input as fixture.plan([provider, role([statement({"StringEquals": eq})]), other])
+	count(p.deny) == 0 with input as fixture.plan([provider, role([statement({"StringEquals": eq})]), valid_apply_identity, other])
 }
 
 test_violation_zero_statements if {
@@ -168,5 +173,10 @@ test_violation_subject_owner_id_mismatch if {
 
 test_pass_indexed_provider_address if {
 	indexed := object.union(provider, {"address": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github[0]"})
-	count(p.deny) == 0 with input as fixture.plan([indexed, role([statement({"StringEquals": eq})])])
+	count(p.deny) == 0 with input as fixture.plan([indexed, role([statement({"StringEquals": eq})]), valid_apply_identity])
+}
+
+test_violation_apply_identity_role_inspected if {
+	broken := apply_identity_role([statement({"StringLike": eq})])
+	fixture.has("[PLAN-TRUST-04]", p.deny) with input as fixture.plan([provider, role([statement({"StringEquals": eq})]), broken])
 }

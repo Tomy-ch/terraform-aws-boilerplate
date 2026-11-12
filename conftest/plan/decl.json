@@ -35,7 +35,8 @@
     ],
     "deployment_identity": {
       "roles": [
-        "module.deployment_identity.module.github_oidc.aws_iam_role.this"
+        "module.deployment_identity.module.github_oidc.aws_iam_role.this",
+        "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity"
       ],
       "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github",
       "plan_role": {
@@ -44,6 +45,12 @@
       },
       "apply_role": {
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]"
+      },
+      "unlock_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"unlock_identity\"]",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"unlock_identity\"]",
+        "lock_key": "identity/terraform.tfstate.tflock",
+        "state_bucket": "module.state_backend.module.s3.aws_s3_bucket.this"
       }
     },
     "stateful_protection": {

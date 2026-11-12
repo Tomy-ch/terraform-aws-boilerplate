@@ -9,8 +9,8 @@ output "bucket_arn" {
 }
 
 output "state_key_arn" {
-  description = "state の鍵の ARN。CI の role の IAM で、鍵の Action と apply の role の鍵の Deny の Resource をこの鍵に絞るのに使う。"
-  value       = module.kms.key_arn
+  description = "state の鍵の ARN。CI の role の IAM で、鍵の Action と apply の role の鍵の Deny の Resource をこの鍵に絞るのに使う。Key Policy の置き換えを待たないので、鍵を使う resource には渡さない。"
+  value       = module.kms.key_arn_for_iam
 }
 
 output "state_key_alias_name" {

@@ -12,3 +12,8 @@ output "apply_identity_role_arn" {
   description = "apply-identity の role の ARN。identity root を apply する job が assume する。"
   value       = module.github_oidc.role_arns["apply_identity"]
 }
+
+output "unlock_identity_role_arn" {
+  description = "unlock-identity の role の ARN。identity root の state に残った lock を外す job が assume する。"
+  value       = module.github_oidc.role_arns["unlock_identity"]
+}

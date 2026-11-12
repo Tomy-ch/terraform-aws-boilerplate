@@ -20,10 +20,11 @@ variable "env" {
 }
 
 variable "ci_role_arns" {
-  description = "state の鍵で暗号操作を許す CI の role の ARN。plan は CI の plan、apply_identity は identity root の apply の role。どちらも鍵と同じアカウントの role にする。"
+  description = "state の鍵で暗号操作を許す CI の role の ARN。plan は CI の plan、apply_identity は identity root の apply、unlock_identity は identity root の lock を外す role。plan と apply_identity には復号と鍵の生成を、unlock_identity には identity root の lock file の復号だけを許す。どれも鍵と同じアカウントの role にする。"
   type = object({
-    plan           = string
-    apply_identity = string
+    plan            = string
+    apply_identity  = string
+    unlock_identity = string
   })
   nullable = false
 
@@ -32,10 +33,10 @@ variable "ci_role_arns" {
     error_message = "ci_role_arns の値は IAM role の ARN にしてください。user・root・ワイルドカードは受けません。"
   }
 
-  # 同じ role を2つの役割に渡すと、plan が apply-identity の権限で走っても気づけない。
+  # 同じ role を2つの役割に渡すと、ある役割が別の役割の権限で走っても気づけない。
   validation {
-    condition     = var.ci_role_arns.plan != var.ci_role_arns.apply_identity
-    error_message = "ci_role_arns の plan と apply_identity に同じ role を渡さないでください。"
+    condition     = length(distinct(values(var.ci_role_arns))) == length(values(var.ci_role_arns))
+    error_message = "ci_role_arns の plan・apply_identity・unlock_identity に同じ role を渡さないでください。"
   }
 }
 

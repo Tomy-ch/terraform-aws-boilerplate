@@ -9,7 +9,7 @@ key := "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234
 
 key_policy(actions) := fixture.doc("aws_kms_key_policy", "module.k.aws_kms_key_policy.this", "policy", {"Statement": [
 	{"Sid": "AccountKeyAdministration", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": actions, "Resource": "*"},
-	{"Sid": "RolesViaS3", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-plan"}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"},
+	{"Sid": "RolesViaS3ReadWrite", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-plan"}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"},
 ]})
 
 apply_policy(statements) := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"apply\"]", "policy", {"Statement": statements})

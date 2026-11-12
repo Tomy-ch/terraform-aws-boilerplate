@@ -32,9 +32,15 @@ override_resource {
 }
 
 override_resource {
-  target          = module.deployment_identity.module.github_oidc.aws_iam_role.this["apply_identity"]
+  target          = module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity
   override_during = plan
   values          = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" }
+}
+
+override_resource {
+  target          = module.deployment_identity.module.github_oidc.aws_iam_role.this["unlock_identity"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" }
 }
 
 run "policy_input" {

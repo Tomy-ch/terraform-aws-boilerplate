@@ -28,31 +28,13 @@ account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
 
 same_account(arn, acct) if regex.match(sprintf(`^arn:aws[a-z-]*:(iam|sts)::%s:`, [acct]), arn)
 
-# 限る条件として認める演算子。IfExists はキーの無い要求を通し、Not 系と Null は限らない。
-limiting_operators := {"stringequals", "stringlike", "arnequals", "arnlike"}
-
-# IAM は条件キーの大文字小文字を区別しない。
-limiting_values(s, key) := [v |
-	some op, kv in object.get(s, "Condition", {})
-	lower(op) in limiting_operators
-	some k, vs in kv
-	lower(k) == key
-	some v in lib.as_array(vs)
-]
-
 limiting_keys(s) := {lower(k) |
 	some op, kv in object.get(s, "Condition", {})
-	lower(op) in limiting_operators
+	lower(op) in lib.limiting_operators
 	some k, _ in kv
 }
 
-no_wildcard(v) if {
-	is_string(v)
-	not contains(v, "*")
-	not contains(v, "?")
-}
-
-# 鍵の暗号操作と grant。アカウントへの委任に置くと、IAM の許可だけで鍵を使えるようになる。
+# 鍵の暗号操作と grant。アカウントへの委任に置かない（ADR-0301 決定12）。
 crypto_actions := {
 	"kms:creategrant", "kms:decapsulate", "kms:decrypt", "kms:derivesharedsecret", "kms:encapsulate", "kms:encrypt", "kms:generatedatakey",
 	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
@@ -97,7 +79,7 @@ deny contains msg if {
 }
 
 via_service_limited(s) if {
-	vs := limiting_values(s, "kms:viaservice")
+	vs := lib.limiting_values(s, "kms:viaservice")
 	count(vs) > 0
 	every v in vs {
 		is_string(v)
@@ -134,7 +116,7 @@ source_key("aws:sourcearn")
 
 source_key(k) if startswith(k, "kms:encryptioncontext:")
 
-source_values(s) := [v | some k in source_keys(s); some v in limiting_values(s, k)]
+source_values(s) := [v | some k in source_keys(s); some v in lib.limiting_values(s, k)]
 
 source_limited(s, body) if {
 	some v in source_values(s)
@@ -144,7 +126,7 @@ source_limited(s, body) if {
 # アカウント ID か、委任と同じ partition とアカウントの ARN。ARN でない暗号化コンテキストの値は要求元を限らない。
 # アカウントの欄が空の ARN（S3 の Bucket）は、aws:SourceAccount が同じ文で委任のアカウントに限るときだけ認める。
 own_source(v, _, body) if {
-	no_wildcard(v)
+	lib.no_wildcard(v)
 	v == account(body)
 }
 
@@ -156,12 +138,12 @@ own_source(v, _, body) if {
 own_source(v, s, body) if {
 	own_partition_arn(v, body)
 	split(v, ":")[4] == ""
-	some a in limiting_values(s, "aws:sourceaccount")
+	some a in lib.limiting_values(s, "aws:sourceaccount")
 	a == account(body)
 }
 
 own_partition_arn(v, body) if {
-	no_wildcard(v)
+	lib.no_wildcard(v)
 	parts := split(v, ":")
 	count(parts) >= 6
 	parts[0] == "arn"

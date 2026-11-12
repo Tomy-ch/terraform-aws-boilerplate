@@ -24,7 +24,7 @@ run "accepts_boundary_inputs" {
   command = plan
 
   variables {
-    project                = "abcdefghijklmnopqrstuvwxyz012345678901"
+    project                = "abcdefghijklmnopqrstuvwxyz01234567890"
     env                    = "sandbox"
     github                 = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
     state_bucket_arn       = "arn:aws-cn:s3:::tabp-sandbox-tfstate-123456789012-cn-north-1-an"
@@ -32,8 +32,8 @@ run "accepts_boundary_inputs" {
   }
 
   assert {
-    condition     = module.github_oidc.roles.apply_identity.name == "abcdefghijklmnopqrstuvwxyz012345678901-sandbox-ci-apply-identity"
-    error_message = "project が38文字・env が sandbox・owner が39文字・repository が100文字の入力で、64文字の role 名が組まれていません。"
+    condition     = module.github_oidc.roles.unlock_identity.name == "abcdefghijklmnopqrstuvwxyz01234567890-sandbox-ci-unlock-identity"
+    error_message = "project が37文字・env が sandbox・owner が39文字・repository が100文字の入力で、64文字の role 名が組まれていません。"
   }
 }
 
@@ -61,11 +61,11 @@ run "accepts_prd" {
   }
 }
 
-run "rejects_project_over_38_chars" {
+run "rejects_project_over_37_chars" {
   command = plan
 
   variables {
-    project = "abcdefghijklmnopqrstuvwxyz0123456789012"
+    project = "abcdefghijklmnopqrstuvwxyz012345678901"
   }
 
   expect_failures = [var.project]
