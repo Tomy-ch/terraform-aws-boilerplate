@@ -17,6 +17,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | 保護設定の突合 | 毎日と手動 | ruleset と environment の実態を宣言と突き合わせ、ずれで落ちて通知する |
 | apply | デフォルトブランチの release line への push | 管理アカウントの identity root を apply する。失敗を通知する |
+| lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
 | リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ## 必須検査はすべての Pull Request で報告される
@@ -110,9 +111,16 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
   `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
-- workload root（`env/<env>/*.tf`）の apply の job、`make ci-apply-<env>`、environment `admin-apply` の
-  secret は、workload root を足す変更が足す
-- job の形（environment、取る role、起動条件、検出への依存、拒否の step、terraform の経路、concurrency、
+- **apply する木で、resource の作成の順序を確かめる。** `apply-resource-order-check` が
+  `make resource-order-check`（[`conftest/hcl/resource_order/`](../../conftest/hcl/resource_order/README.md)）を
+  走らせ、apply の job はその成功を `needs` と `if:` で待つ。Pull Request では必須検査の `terraform-gates.yaml` の
+  `tf-lint` が同じ検査を走らせ、その配線が外れれば `make oidc-job-lint` が落ちる。ただし必須検査は base の
+  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの順序の検査の job だけで、どちらも
+  決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）
+- workload root（`env/<env>/*.tf`）の apply の job と lock の解除の job、`make ci-apply-<env>` と
+  `make ci-unlock-<env>`、environment `admin-apply` の secret、workload root の lock を外す role と
+  その environment は、workload root を足す変更が足す
+- job の形（environment、取る role、起動条件、検出と順序の検査への依存、拒否の step、terraform の経路、concurrency、
   `run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
   のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
@@ -126,6 +134,76 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **新しい release line が、古い線の未リリースの変更を持つこと。** 新しい線は `production` から切るので、
   古い線をリリースする前に切ってデフォルトブランチを移すと、apply が古い線の変更を巻き戻す。
   `scripts/release` の手順（タグを打ってから次の線を切る）を外れたときを検出する検査は無い
+
+### lock の解除の job
+
+`terraform-unlock.yaml` の `unlock-admin-identity` は、人が `workflow_dispatch` で起動し、environment
+`admin-unlock-identity` の下で unlock-identity の role を assume して、管理アカウントの identity root の
+state に残った lock file（`identity/terraform.tfstate.tflock`）を外す。apply の job が timeout・cancel・
+ランナーの障害で止まると lock file が残り、以後の apply は lock の取得で落ちる。書き込みの拒否
+（ADR-0604 決定9）が入った後は、state Bucket に書ける IAM の主体は CI の role だけなので、人はこの job で外す。
+
+- **unlock-identity の role は、この lock file を外すことしかできない。** 持つのは、prefix を lock file の
+  key に限った state Bucket の一覧と、lock file の読み取りと削除だけである。復号は、state の鍵の Key Policy が
+  同じ lock file の object に限って許す。`s3:PutObject` と `s3:DeleteObjectVersion` は持たない
+  （deployment-identity/ADR-0201 決定9）。environment は apply の environment と分け、保護ブランチだけを
+  許す（ADR-0602 決定13-14）
+- **apply の concurrency の group に入らない。** この workflow は自分の group を `cancel-in-progress: false`
+  で持つ。apply の run を待たせも取り消しもせず、lock の解除の run どうしは直列になる。apply に対する安全性は
+  次の3つが担う
+  - **閾値**: 消すのは、apply の job の `timeout-minutes` に余裕を足した時間より古い lock だけである。apply の
+    job はその時間を超えて走らないので、走っている apply の lock は閾値に届かない。古さは S3 が記録した
+    lock file の `LastModified` で測る。閾値は `scripts/tf-local` の定数で、apply の job の
+    `timeout-minutes` とのずれは tf-local のテストが見る
+  - **読んだ版の条件**: 読んで判定した版だけを、その ETag を条件にした削除（`delete-object --if-match`）で
+    消す。判定の後に lock file が置き換わっていれば、削除は失敗する。レシピがこの形で消すことは
+    `TestCiRecipes` が見る
+  - **Terraform の lock の取得**: Terraform v1.16.6（版は `mise.toml`。`scripts/tf-local` の `lockFormatTerraform`
+    との一致は tf-local のテストが見る）の S3 backend は、lock file を `If-None-Match: *` の
+    条件付きの書き込みで作る（`lockWithFile`）。lock file が在る間は apply の lock の取得が失敗するので、
+    2つの apply が同時に lock を持つことは無い。この性質を見る検査はリポジトリに無い
+
+  group が同じ root の apply の job の group と違うことは、`make oidc-job-lint` が workflow をまたいで照合する
+- **新しい lock は消さない。** ID などを出して失敗する。lock が無ければ何も消さずに成功する
+- **CI のランナーが apply の job で取った lock だけを消す。** apply の job は plan で lock を取ってから apply
+  するので、`Operation` が `OperationTypePlan` と `OperationTypeApply` の lock を消す。`Who` が `runner@` で
+  始まらない lock と、`Operation` がそのどちらでもない lock は、古くても ID などを出して失敗する（ADR-0604 決定8）。人の手元の apply の
+  lock は、その apply を実行した人が `terraform force-unlock` で外す
+- **版を指定せずに消す。** 版管理の下で delete marker になり、消した lock の版は lifecycle の日数
+  （state-backend/ADR-0103）まで残る。ログに消した lock の版 ID と delete marker の版 ID を出すので、
+  run のログから版を辿れる。版 ID の無い（版管理の外の）lock は消さずに失敗する
+- **terraform は呼ばない。** `terraform force-unlock` は init を要し、lock の ID を lock file から読むので
+  ID の照合が自己参照になり、削除に条件を付けない
+- **ログに出すのは lock の ID・Operation・Who・Version・Created・LastModified・経過分と版 ID だけである。**
+  `Path`（Bucket 名がアカウント ID を含む）と `Info` は出さない。`Who` は GitHub-hosted runner の利用者
+  （`runner@` で始まる）のときだけそのまま出し、それ以外は伏せる —— 人の手元の利用者名とホスト名を
+  公開のログに出さない
+- **自動では起動しない。** 残った lock は apply が途中で止まった信号であり、外す前に人が止まった run の
+  ログを見る。push でも起動しない —— merge のたびに lock を消す経路になる
+- **外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する。** release line の先頭の
+  commit のままなら `refuse-stale` を通る
+- 古い commit の拒否（`refuse-stale`）と検出への依存（`unlock-infra-code-gate`）は、apply の job と同じで
+  ある。job の `if:` は ref で絞らないので、デフォルトブランチ以外から起動した run は skip ではなく
+  `refuse-stale` で失敗する。hotfix の間は、デフォルトブランチ（`hotfix/*`）から起動する
+- **AWS のアカウント ID は environment `admin-unlock-identity` の secret `AWS_ACCOUNT_ID` に置く。** 無ければ
+  拒否の step で失敗する
+- 通知は持たない。人が起動し、結果を画面で見る
+- egress の `root` の名指しのため、この job も Terraform の job と同じ `aws` クラスの宛先（IAM・KMS・
+  S3 Control を含む）を許す。呼ぶのは STS と S3 だけである
+- job の形は `make oidc-job-lint` が、`CI_UNLOCK` が lock の無いとき以外は lock を消すか非ゼロで終わり、
+  新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の `TestCiRecipes` が
+  偽物の aws でレシピを走らせて見る
+
+保証しないこと:
+
+- **CI のランナーの plan と apply の lock が、apply の job のものであること。** `Who` と `Operation` は lock の
+  書き手が書く値で、`runner@` で始まる利用者が apply の job の外で取った plan と apply の lock も、閾値を超えれば消す
+- **読めない lock file を外すこと。** 中身を Terraform の lock として読めない lock file と、版 ID の無い
+  lock file は、消さずに失敗する。書き込みの拒否の後は、それを外す経路がこのリポジトリに無く、外せる人の
+  主体は管理アカウントの root だけになる
+- **起動できる人を絞ること。** write 権限を持つ人なら起動できる。environment の reviewer は置かない ——
+  障害のときに人が1人しか居なくても外せるようにする。実行されるのはデフォルトブランチの先頭の workflow と
+  コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる
 
 ## 結果コメント
 
@@ -179,7 +257,8 @@ truthy 側へ置く。
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate` | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check` | 15 | 同上（新設） |
+| `terraform-unlock.yaml` の2 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
@@ -217,8 +296,10 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
-失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job が落ちると apply の job は
-`skipped` で終わるので、どちらの job の `failure` / `cancelled` でも通知する。
+失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job か順序の検査の job が落ちると
+apply の job は `skipped` で終わるので、3つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
+job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。`terraform-unlock.yaml` は
+通知を持たない —— 人が起動し、結果を画面で見ている。
 
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
 failure モードが既に届けている。`scorecard.yaml` は failure モードだけを持つ —— 所見の届け先は
@@ -279,7 +360,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 | `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
 | `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
-| `aws` | STS・IAM・KMS・S3（S3 Control を含む）の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、Terraform で AWS の API を呼ぶ job |
+| `aws` | STS・IAM・KMS・S3（S3 Control を含む）の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、AWS の API を呼ぶ job（Terraform の job と lock の解除の job） |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
@@ -297,7 +378,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 CI の実行する root とそれを実行する job を、`type` が resource / data source の型の呼ぶ宛先を持つ。
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
 `type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
-job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` を `.makefiles/terraform/operation/ci.mk`
+job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` / `ci-unlock-*` を `.makefiles/terraform/operation/ci.mk`
 の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。region を含む
 `type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
 それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
