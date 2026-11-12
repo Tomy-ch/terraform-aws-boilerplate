@@ -168,9 +168,6 @@ classes = ["mise"]
 [job."repo-settings.yaml:repo-settings-check"]
 classes = ["mise"]
 
-[job."repo-settings.yaml:repo-settings-drift"]
-classes = ["mise"]
-
 [job."go-cooldown.yaml:go-cooldown"]
 classes = ["mise"]
 
