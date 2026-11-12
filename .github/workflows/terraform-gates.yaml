@@ -57,7 +57,8 @@ jobs:
         with:
           # An empty token selects `git diff` over the compare API, which refuses a large diff.
           token: ''
-          # scripts/: tf-lint runs tool-cooldown-check, which is built from these sources.
+          # scripts/: tf-lint runs tool-cooldown-check, and the resource-order check runs
+          # infra-code-gate and tf-local, which are built from these sources.
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -71,10 +72,13 @@ jobs:
               - '.makefiles/**'
               - 'Makefile'
               - 'scripts/tool-cooldown/**'
+              - 'scripts/infra-code-gate/**'
+              - 'scripts/tf-local/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
               - 'conftest/plan/**'
+              - 'conftest/hcl/**'
 
   tf-fmt-check:
     needs: changes
@@ -198,11 +202,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint runs tool-cooldown-check first, which is built from scripts/.
+      # go: tf-lint runs tool-cooldown-check first, and the resource-order check runs infra-code-gate
+      # and tf-local; all three are built from scripts/. conftest: the resource-order check.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:terraform-linters/tflint go
+          tools: aqua:terraform-linters/tflint aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # GITHUB_TOKEN: `tflint --init` fetches the ruleset through the GitHub Releases API, which
@@ -211,6 +216,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make tf-lint RUNNER_MODE=host
+
+      # Static Analysis の Conftest の側（HCL のソースの構造の規約）。TFLint と同じ層の検査である。
+      - name: Run the resource-order check's own tests
+        run: make resource-order-check-test RUNNER_MODE=host
+
+      - name: Check the resource order
+        run: make resource-order-check RUNNER_MODE=host
 
   tf-validate-test:
     needs: changes

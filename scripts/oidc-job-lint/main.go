@@ -37,6 +37,13 @@
 //     if: と continue-on-error: を持たない step を資格情報の取得より前に置き
 //     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
+//   - lock の解除の job（`make ci-unlock-*` を持つ job）は、unlock-identity の role を取り、workflow の起動が
+//     入力の無い workflow_dispatch だけで、cancel-in-progress: false の concurrency と refuse-stale の step を持ち、
+//     terraform も他の CI の入口も走らせず、同じ workflow に plan と apply の job を置かない。concurrency の group は
+//     字面で書き、`make ci-unlock-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の、
+//     字面の group と一致しない —— group はリポジトリの中で workflow をまたいで共有され、同じ group では lock の解除の
+//     起動が待機中の apply の run を取り消す
+//   - plan と apply の job は unlock-identity の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
@@ -61,8 +68,10 @@ import (
 const (
 	defaultWorkflowsDir     = ".github/workflows"
 	defaultEnvironmentsFile = ".github/settings/environments.json"
+	defaultRulesetFile      = ".github/settings/branch-protection.json"
 	refuseUntrusted         = "refuse-untrusted"
 	refuseStale             = "refuse-stale"
+	unlockRole              = "unlock-identity"
 )
 
 var (
@@ -79,14 +88,18 @@ var (
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
 	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=[a-z0-9]+\s+CI_ROLE=[a-z-]+`)
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
-	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity)(?:\s|$)`)
-	// CI の入口と検出は、run: の値が make とターゲット1つと RUNNER_MODE=host だけの形に限る。make のオプション
-	// （-n・-i・-C・-f 等）、後続のコマンド、ほかの変数の代入（MAKEFLAGS・SHELL・道具や Policy の場所の差し替え）は、
-	// 実行しないか、終了コードを隠すか、検査の対象を替えうる。
-	ciPlan    = makeRun(`ci-plan-[a-z0-9-]+`)
-	ciApply   = makeRun(`ci-apply-[a-z0-9-]+`)
-	ciEntry   = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
-	detection = makeRun(`infra-code-gate`)
+	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity)(?:\s|$)`)
+	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
+	ciPlan      = makeRun(`ci-plan-[a-z0-9-]+`)
+	ciApply     = makeRun(`ci-apply-[a-z0-9-]+`)
+	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
+	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
+	unlockEntry = regexp.MustCompile(`\bmake\b.*\bci-unlock-([a-z0-9-]+)`)
+	applyEntry  = regexp.MustCompile(`\bmake\b.*\bci-apply-([a-z0-9-]+)`)
+	planEntry   = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
+	runEntry    = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
+	detection   = makeRun(`infra-code-gate`)
+	orderCheck  = makeRun(`resource-order-check`)
 	// status の関数・論理和・否定は、検出の失敗を越えて job を走らせうる。!= は比較なので除く。
 	statusEscape = regexp.MustCompile(`\b(?:always|cancelled|failure)\(\)|\|\||!(?:[^=]|$)`)
 	pushPaths    = regexp.MustCompile(`^\s+["']?paths(?:-ignore)?["']?[ \t]*:`)
@@ -94,16 +107,17 @@ var (
 	// local.mk の init-* / plan-* も terraform を走らせる。それ以外の名前の make のターゲットは字面からは選べない。
 	runsTerraform = regexp.MustCompile(`\bmake\b.*\s(?:tf|init|plan)-|(?:^|[\s;&|(/"'])(?:terraform|tofu)["']?(?:\s|$)`)
 	nameLine      = regexp.MustCompile(`^\s+(?:- )?name:`)
-	installsTF    = regexp.MustCompile(`aqua:hashicorp/terraform\b`)
-	onKey         = regexp.MustCompile(`^["']?on["']?:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
-	triggerKey    = regexp.MustCompile(`^ {2}([a-z_]+):[ \t]*([^#]*?)[ \t]*(?:#.*)?$`)
-	inputsKey     = regexp.MustCompile(`^\s+["']?inputs["']?[ \t]*:`)
-	needsScalar   = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
-	jobKeyAt      = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
-	skipsOrHides  = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults|env|shell|container|services)["']?[ \t]*:`)
-	makeFlags     = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b|\bMAKEFILES\b`)
-	pathKey       = regexp.MustCompile(`(?:^|[\s{,])["']?PATH["']?[ \t]*:`)
-	stepFiles     = regexp.MustCompile(`\bGITHUB_(?:PATH|ENV)\b`)
+	// installsTF は、mise の tools: で terraform を入れる行。run: の行は、同じ字面を含んでも起動として検査する。
+	installsTF   = regexp.MustCompile(`^\s+["']?tools["']?[ \t]*:.*\baqua:hashicorp/terraform\b`)
+	onKey        = regexp.MustCompile(`^["']?on["']?:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
+	triggerKey   = regexp.MustCompile(`^ {2}([a-z_]+):[ \t]*([^#]*?)[ \t]*(?:#.*)?$`)
+	inputsKey    = regexp.MustCompile(`^\s+["']?inputs["']?[ \t]*:`)
+	needsScalar  = regexp.MustCompile(`^ {4}needs:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
+	jobKeyAt     = regexp.MustCompile(`^ {4}["']?([a-z-]+)["']?[ \t]*:[ \t]*(.*?)[ \t]*$`)
+	skipsOrHides = regexp.MustCompile(`^\s+(?:- )?["']?(?:if|continue-on-error|working-directory|defaults|env|shell|container|services)["']?[ \t]*:`)
+	makeFlags    = regexp.MustCompile(`\b(?:GNU)?MAKEFLAGS\b|\bMFLAGS\b|\bMAKEFILES\b`)
+	pathKey      = regexp.MustCompile(`(?:^|[\s{,])["']?PATH["']?[ \t]*:`)
+	stepFiles    = regexp.MustCompile(`\bGITHUB_(?:PATH|ENV)\b`)
 	// アンカーとエイリアスは、別の場所に書いた値をこの行へ持ち込む。行ごとの読み方では追えない。
 	yamlAlias     = regexp.MustCompile(`(?:^|[:\-][ \t]+)[&*][A-Za-z0-9_-]+(?:[ \t]|$)|<<[ \t]*:`)
 	envAt         = regexp.MustCompile(`^["']?env["']?[ \t]*:`)
@@ -113,11 +127,15 @@ var (
 	stepRun       = regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:`)
 	stepWorkDir   = regexp.MustCompile(`^ {6}(?:- | {2})["']?working-directory["']?[ \t]*:`)
 	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
+	orderRun      = makeRun(`resource-order-check(?:-test)?`)
+	orderTestRun  = makeRun(`resource-order-check-test`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
 	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	concurrencyAt = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:[ \t]*(?:#.*)?$`)
 	concurrencyKy = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:`)
+	concurrencyIs = regexp.MustCompile(`^( *)["']?concurrency["']?[ \t]*:[ \t]*([^#\s][^#]*?)[ \t]*(?:#.*)?$`)
+	groupAt       = regexp.MustCompile(`^( *)["']?group["']?[ \t]*:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	noCancel      = regexp.MustCompile(`^( *)["']?cancel-in-progress["']?[ \t]*:[ \t]*false[ \t]*(?:#.*)?$`)
 	stepID        = regexp.MustCompile(`^ {6}(?:- | {2})id:[ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
 	stepIf        = regexp.MustCompile(`^ {6}(?:- | {2})["']?if["']?[ \t]*:`)
@@ -137,11 +155,12 @@ var (
 	errNoTarget   = xerrors.New("OIDC で role を assume する job が1つもありません")
 	errViolations = xerrors.New("違反があります")
 	errEnvDecl    = xerrors.New("environments.json を読めません")
+	errRuleset    = xerrors.New("保護設定の宣言から required の context を読めません")
 )
 
 func main() {
 	log.SetFlags(0)
-	if err := run(defaultWorkflowsDir, defaultEnvironmentsFile, os.Stdout); err != nil {
+	if err := run(defaultWorkflowsDir, defaultEnvironmentsFile, defaultRulesetFile, os.Stdout); err != nil {
 		if xerrors.Is(err, errNoTarget) {
 			log.Printf("❌ oidc-job-lint: %v", err)
 			os.Exit(2)
@@ -150,8 +169,12 @@ func main() {
 	}
 }
 
-func run(dir, envFile string, out io.Writer) error {
+func run(dir, envFile, rulesetFile string, out io.Writer) error {
 	envs, err := readEnvironments(envFile)
+	if err != nil {
+		return err
+	}
+	required, err := readRequiredContexts(rulesetFile)
 	if err != nil {
 		return err
 	}
@@ -171,8 +194,12 @@ func run(dir, envFile string, out io.Writer) error {
 		}
 	}
 
-	var findings []lintreport.Finding
+	var (
+		findings []lintreport.Finding
+		groups   []groupRecord
+	)
 	targets := 0
+	prOrder := false
 	for _, p := range workflow.SelectFiles(names, dir) {
 		raw, err := root.ReadFile(filepath.Base(p))
 		if err != nil {
@@ -181,7 +208,11 @@ func run(dir, envFile string, out io.Writer) error {
 		n, f := check(p, string(raw), envs)
 		targets += n
 		findings = append(findings, f...)
+		groups = append(groups, groupRecords(p, string(raw))...)
+		prOrder = prOrder || runsRequiredOrderCheck(string(raw), required)
 	}
+	findings = append(findings, checkUnlockIsolation(groups)...)
+	findings = append(findings, checkPullRequestOrder(dir, groups, prOrder)...)
 	if len(findings) > 0 {
 		fmt.Fprintf(out, "❌ oidc-job-lint: %d 件の違反\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
@@ -192,6 +223,65 @@ func run(dir, envFile string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "✅ oidc-job-lint: OIDC で role を assume する job %d 件の environment・役割・起動条件を確認しました\n", targets)
 	return nil
+}
+
+// readRequiredContexts は、保護設定の宣言が required とする status check の context を返します。0件の宣言は、
+// どの job も必須検査ではないと判定させてしまうので、読めないのと同じに扱います。
+func readRequiredContexts(path string) (map[string]bool, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, xerrors.Wrapf(errRuleset, "%s: %v", path, err)
+	}
+	var decl struct {
+		Rules []struct {
+			Type       string `json:"type"`
+			Parameters struct {
+				Checks []struct {
+					Context string `json:"context"`
+				} `json:"required_status_checks"`
+			} `json:"parameters"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &decl); err != nil {
+		return nil, xerrors.Wrapf(errRuleset, "%s: %v", path, err)
+	}
+	contexts := map[string]bool{}
+	for _, r := range decl.Rules {
+		if r.Type != "required_status_checks" {
+			continue
+		}
+		for _, c := range r.Parameters.Checks {
+			if c.Context != "" {
+				contexts[c.Context] = true
+			}
+		}
+	}
+	if len(contexts) == 0 {
+		return nil, xerrors.Wrapf(errRuleset, "%s: required の context が1つもありません", path)
+	}
+	return contexts, nil
+}
+
+// runsRequiredOrderCheck は、pull_request で起動する workflow に、required の context を報告する job で、
+// make resource-order-check-test と make resource-order-check の両方を走らせるものがあるかを返します。
+func runsRequiredOrderCheck(source string, required map[string]bool) bool {
+	split := workflow.SplitJobs(source)
+	on, _ := triggers(split.Preamble)
+	if _, ok := on["pull_request"]; !ok {
+		return false
+	}
+	return slices.ContainsFunc(split.Jobs, func(j workflow.Job) bool {
+		return required[j.ID] && runsGate(j, orderGate) && hasLine(j, orderTestRun)
+	})
+}
+
+// checkPullRequestOrder は、apply の job が待つ順序の検査を、Pull Request の必須検査も走らせることを検査します。
+// apply の側だけでは、順序を崩す変更が merge されてから apply が止まる。
+func checkPullRequestOrder(dir string, records []groupRecord, found bool) []lintreport.Finding {
+	if found || !slices.ContainsFunc(records, func(r groupRecord) bool { return !r.unlock }) {
+		return nil
+	}
+	return []lintreport.Finding{{File: dir, Line: 1, Message: "pull_request で起動し保護設定が required とする job に、make resource-order-check-test と make resource-order-check を走らせるものがありません。apply の job が待つ順序の検査を、merge の前の必須検査にも置いてください"}}
 }
 
 // readEnvironments は、宣言された environment の名前を返します。0件の宣言は、どの job の environment も
@@ -336,15 +426,22 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	if env != "" && env != e[1]+"-"+role {
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
+	findings = append(findings, checkRole(job, cred, role, finding)...)
 	findings = append(findings, checkSteps(job, cred, finding)...)
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
+	// plan の入口の job が unlock-identity の role を取った違反は checkRole が出すので、plan の規則で見る。
+	// ほかの role を取った plan の入口の job は、apply の規則が落とす。
+	plan := !isUnlock(job) && (role == "plan" || (role == unlockRole && hasLine(job, planEntry)))
 	refusal := refuseStale
-	if role == "plan" {
+	if plan {
 		refusal = refuseUntrusted
 	}
 	findings = append(findings, checkHidden(job, cred, refusal, w, finding)...)
 
-	if role == "plan" {
+	switch {
+	case isUnlock(job):
+		return append(findings, checkUnlock(job, cred, w, finding)...)
+	case plan:
 		return append(findings, checkPlan(job, cred, w, finding)...)
 	}
 	return append(findings, checkApply(job, cred, w, finding)...)
@@ -365,70 +462,282 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 	if len(keys) == 0 || slices.ContainsFunc(keys, func(k string) bool { return k != "push" && k != "workflow_dispatch" }) {
 		findings = append(findings, finding(w.onLine, "apply の job を持つ workflow の起動は push と workflow_dispatch だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
-	for _, k := range []string{"push", "workflow_dispatch"} {
-		for _, l := range w.on[k] {
-			if strings.Contains(l.Text, "{") {
-				findings = append(findings, finding(l.Number, "apply の workflow の起動条件をフロー形式で書かないでください。paths と inputs を読めません"))
-			}
-		}
-	}
-	for _, l := range w.on["workflow_dispatch"] {
-		if inputsKey.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "apply の workflow_dispatch に inputs を置かないでください。ref や commit を入力に取らせません（ADR-0602 決定14）"))
-		}
-	}
+	findings = append(findings, checkTriggerForm(w, "apply", finding)...)
 	for _, l := range w.on["push"] {
 		if pushPaths.MatchString(l.Text) {
 			findings = append(findings, finding(l.Number, "apply の workflow の push に paths を置かないでください。AWS の側の状態は、どのファイルを変えたかと無関係に plan を変えます"))
 		}
 	}
-	// workflow 全体と job の concurrency は、どちらも実行中の run か job を取り消しうるので、在るものはすべて false でなければならない。
-	wfHas, jobHas := hasConcurrency(w.preamble, ""), hasConcurrency(job.Lines, "    ")
-	if !wfHas && !jobHas || wfHas && !cancelsNothing(w.preamble, "") || jobHas && !cancelsNothing(job.Lines, "    ") {
-		findings = append(findings, finding(job.Number, "apply の job か workflow 全体に cancel-in-progress: false の concurrency を置いてください"))
-	}
+	findings = append(findings, checkNoCancel(job, w, "apply", finding)...)
+	findings = append(findings, checkOrderGate(job, w.jobs, finding)...)
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
 	return append(findings, checkTerraform(job, ciApply, "apply", finding)...)
 }
 
-// checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
-// 検出の job は名前ではなく、`make infra-code-gate` を走らせることで見分けます。job の if: は、status の
-// 関数で検出の失敗を越えないよう、その成功を含むときだけ認めます。
-func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
-	var detectors []workflow.Job
-	for _, n := range needs(job) {
-		for _, j := range jobs {
-			if j.ID == n && detects(j) {
-				detectors = append(detectors, j)
+// checkTriggerForm は、push と workflow_dispatch の起動条件がブロック形式で、workflow_dispatch が inputs を
+// 持たないことを検査します。kind は違反の文に出す job の種別です。
+func checkTriggerForm(w workflowInfo, kind string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, k := range []string{"push", "workflow_dispatch"} {
+		for _, l := range w.on[k] {
+			if strings.Contains(l.Text, "{") {
+				findings = append(findings, finding(l.Number, "%s の workflow の起動条件をフロー形式で書かないでください。paths と inputs を読めません", kind))
 			}
+		}
+	}
+	for _, l := range w.on["workflow_dispatch"] {
+		if inputsKey.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "%s の workflow_dispatch に inputs を置かないでください。ref や commit を入力に取らせません（ADR-0602 決定14）", kind))
+		}
+	}
+	return findings
+}
+
+// checkNoCancel は、job か workflow 全体に concurrency が在り、在るものがすべて cancel-in-progress: false で
+// あることを検査します。どちらの concurrency も実行中の run か job を取り消しうる。
+func checkNoCancel(job workflow.Job, w workflowInfo, kind string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	wfHas, jobHas := hasConcurrency(w.preamble, ""), hasConcurrency(job.Lines, "    ")
+	if !wfHas && !jobHas || wfHas && !cancelsNothing(w.preamble, "") || jobHas && !cancelsNothing(job.Lines, "    ") {
+		return []lintreport.Finding{finding(job.Number, "%s の job か workflow 全体に cancel-in-progress: false の concurrency を置いてください", kind)}
+	}
+	return nil
+}
+
+// checkRole は、lock の解除の job が unlock-identity の role を取り、ほかの job がそれを取らないことを検査します。
+func checkRole(job workflow.Job, cred workflow.Line, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	unlock := isUnlock(job)
+	switch {
+	case unlock && role != unlockRole:
+		return []lintreport.Finding{finding(cred.Number, "lock の解除の job は unlock-identity の role を取ってください（%s）。lock file を消す権限だけを持つ role です", role)}
+	case !unlock && role == unlockRole:
+		return []lintreport.Finding{finding(cred.Number, "unlock-identity の role は lock の解除の job（make ci-unlock-*）だけが取ってください")}
+	}
+	return nil
+}
+
+// checkUnlock は、state に残った lock を外す job を検査します。人が起動したときだけ走り、実行中の lock の解除を
+// 取り消さず、terraform も他の入口も走らせないことを見ます。apply の group との不一致は checkUnlockIsolation が見る。
+func checkUnlock(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	if keys := triggerNames(w.on); !slices.Equal(keys, []string{"workflow_dispatch"}) {
+		findings = append(findings, finding(w.onLine, "lock の解除の job を持つ workflow の起動は workflow_dispatch だけにしてください。push で起動すると、merge のたびに lock を消す経路になります（%s）", strings.Join(keys, ", ")))
+	}
+	findings = append(findings, checkTriggerForm(w, "lock の解除", finding)...)
+	findings = append(findings, checkNoCancel(job, w, "lock の解除", finding)...)
+	for _, j := range w.jobs {
+		if j.ID != job.ID && hasLine(j, runEntry) {
+			findings = append(findings, finding(j.Number, "lock の解除の job と同じ workflow に plan と apply の job（%s）を置かないでください。同じ run の中で lock の解除と並んで走ります", j.ID))
+		}
+	}
+	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
+	return append(findings, checkUnlockEntry(job, finding)...)
+}
+
+// checkUnlockEntry は、lock の解除の job が make ci-unlock-* をちょうど1回だけ走らせ、terraform も他の CI の入口も
+// 走らせないことを検査します。
+func checkUnlockEntry(job workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	entries := 0
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
+			continue
+		}
+		matched := ciUnlock.MatchString(l.Text)
+		if matched {
+			entries++
+		}
+		if runsTerraform.MatchString(l.Text) || (!matched && ciEntry.MatchString(l.Text)) {
+			findings = append(findings, finding(l.Number, "lock の解除の job は terraform も他の CI の入口も走らせず、make ci-unlock-* だけを走らせてください"))
+		}
+	}
+	if entries != 1 {
+		findings = append(findings, finding(job.Number, "lock の解除の job は make ci-unlock-* を1回だけ走らせてください（%d 回）", entries))
+	}
+	return findings
+}
+
+// groupRecord は、資格情報を取る job のうち lock の解除の job と apply の job の、入口の `<env>-<root>` と
+// 実効の concurrency の group です。
+type groupRecord struct {
+	file   string
+	job    workflow.Job
+	root   string
+	group  string
+	unlock bool
+}
+
+// groupRecords は、workflow の lock の解除の job と apply の job を、workflow をまたぐ照合のために取り出します。
+func groupRecords(file, source string) []groupRecord {
+	split := workflow.SplitJobs(source)
+	var records []groupRecord
+	for _, job := range split.Jobs {
+		values, _, ok := permissionsBlock(job.Lines, "    ")
+		if !ok || !hasIDToken(values) {
+			continue
+		}
+		unlock := isUnlock(job)
+		entry := applyEntry
+		if unlock {
+			entry = unlockEntry
+		}
+		root := entryRoot(job, entry)
+		if root == "" {
+			continue
+		}
+		records = append(records, groupRecord{file: file, job: job, root: root, group: effectiveGroup(job, split.Preamble), unlock: unlock})
+	}
+	return records
+}
+
+// entryRoot は、job が走らせる最初の CI の入口から、re が取り出す `<env>-<root>` を返します。無ければ空文字を返す。
+func entryRoot(job workflow.Job, re *regexp.Regexp) string {
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) {
+			continue
+		}
+		if m := re.FindStringSubmatch(l.Text); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// checkUnlockIsolation は、lock の解除の job の concurrency の group が、同じ root の apply の job の group と
+// 字面で違うことを検査します。GitHub の concurrency の group はリポジトリの中で workflow をまたいで共有され、
+// 同じ group では lock の解除の起動が、待機中の apply の run を取り消す。
+func checkUnlockIsolation(records []groupRecord) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, u := range records {
+		if !u.unlock {
+			continue
+		}
+		if problem := isolationProblem(u, records); problem != "" {
+			findings = append(findings, lintreport.Finding{File: u.file, Line: u.job.Number, Message: fmt.Sprintf("job %s: %s", u.job.ID, problem)})
+		}
+	}
+	return findings
+}
+
+// isolationProblem は、lock の解除の job u の group が apply の job の group と違うと確かめられない理由を返します。
+// 確かめられれば空文字を返す。比べる相手は、u の入口と同じ `<env>-<root>` の apply の入口を走らせる job に限り、
+// ちょうど1つを要る。
+func isolationProblem(u groupRecord, records []groupRecord) string {
+	if !isLiteral(u.group) {
+		return "lock の解除の job の concurrency の group を字面で書いてください。apply の job の group と違うことを確かめられません"
+	}
+	var applies []groupRecord
+	for _, a := range records {
+		if !a.unlock && a.root == u.root {
+			applies = append(applies, a)
+		}
+	}
+	if len(applies) != 1 {
+		return fmt.Sprintf("make ci-apply-%s を走らせる apply の job が、ちょうど1つではありません（%d 件）。concurrency の group を比べる相手が決まりません", u.root, len(applies))
+	}
+	a := applies[0]
+	if !isLiteral(a.group) {
+		return fmt.Sprintf("apply の job %s（%s）の concurrency の group を字面で読めません。lock の解除の job の group と違うことを確かめられません", a.job.ID, a.file)
+	}
+	if a.group == u.group {
+		return fmt.Sprintf("concurrency の group %q が、apply の job %s（%s）の group と同じです。lock の解除の起動が、待機中の apply の run を取り消します", u.group, a.job.ID, a.file)
+	}
+	return ""
+}
+
+// isLiteral は、実効の group が字面で読めた値かを返します。空文字は読めなかった group で、式は実行時まで値が決まらない。
+func isLiteral(group string) bool {
+	return group != "" && !strings.Contains(group, "${{")
+}
+
+// effectiveGroup は、job の concurrency が在ればその group を、無ければ workflow 全体の group を返します。
+func effectiveGroup(job workflow.Job, preamble []workflow.Line) string {
+	if hasConcurrency(job.Lines, "    ") {
+		return concurrencyGroup(job.Lines, "    ")
+	}
+	return concurrencyGroup(preamble, "")
+}
+
+// concurrencyGroup は、indent の桁の concurrency の group を、引用符を外して返します。1行に書いた形は値そのものを返す。
+// 読めなければ空文字を返す。
+func concurrencyGroup(lines []workflow.Line, indent string) string {
+	for i, l := range lines {
+		if m := concurrencyIs.FindStringSubmatch(l.Text); m != nil && m[1] == indent {
+			return literalGroup(m[2])
+		}
+		if m := concurrencyAt.FindStringSubmatch(l.Text); m == nil || m[1] != indent {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next.Text) == "" || commentLine.MatchString(next.Text) {
+				continue
+			}
+			if !strings.HasPrefix(next.Text, indent+"  ") {
+				break
+			}
+			if m := groupAt.FindStringSubmatch(next.Text); m != nil && m[1] == indent+"  " {
+				return literalGroup(m[2])
+			}
+		}
+	}
+	return ""
+}
+
+// literalGroup は、1行に書いた group の値から引用符を外して返します。ブロックスカラー（| や >）とフロー形式は
+// 値が次の行か括弧の中にあって読めないので、空文字を返す。
+func literalGroup(value string) string {
+	if blockScalar.MatchString(value) || strings.HasPrefix(value, "{") {
+		return ""
+	}
+	return strings.Trim(value, `"'`)
+}
+
+func isUnlock(job workflow.Job) bool {
+	return hasLine(job, unlockEntry)
+}
+
+func hasLine(job workflow.Job, re *regexp.Regexp) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
+		return !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && re.MatchString(l.Text)
+	})
+}
+
+// gate は、資格情報を取る job が needs に置ける、資格情報を持たない検査の job の種類です。job は名前ではなく、
+// 走らせる make のターゲット（marks）で見分けます。runs はその job に置ける run: の閉じた集合です。
+type gate struct {
+	label, targets string
+	marks, runs    *regexp.Regexp
+}
+
+var (
+	detectionGate = gate{label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", marks: detection, runs: detectionRun}
+	orderGate     = gate{label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", marks: orderCheck, runs: orderRun}
+)
+
+// checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
+// needs に置けるのは検出の job と順序の検査の job だけで、どちらも同じ形の規則で見ます。job の if: は、
+// status の関数で失敗を越えないよう、検出の成功と、needs のすべての順序の検査の成功を含むときだけ認めます。
+func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var detectors, orders []workflow.Job
+	var findings []lintreport.Finding
+	for _, n := range needs(job) {
+		i := slices.IndexFunc(jobs, func(j workflow.Job) bool { return j.ID == n })
+		switch {
+		case i >= 0 && runsGate(jobs[i], detectionGate):
+			detectors = append(detectors, jobs[i])
+		case i >= 0 && runsGate(jobs[i], orderGate):
+			orders = append(orders, jobs[i])
+		default:
+			findings = append(findings, finding(job.Number, "needs の %s は、検出の job（make infra-code-gate）でも順序の検査の job（make resource-order-check）でもありません。資格情報を取る job が待つ job は、この2つの形に限ります", n))
 		}
 	}
 	if len(detectors) == 0 {
-		return []lintreport.Finding{finding(job.Number, "needs に、make infra-code-gate を走らせる job を同じ workflow の中に置いてください。資格情報を取る job は検出より先にコードを実行しません（ADR-0601 決定9）")}
+		return append(findings, finding(job.Number, "needs に、make infra-code-gate を走らせる job を同じ workflow の中に置いてください。資格情報を取る job は検出より先にコードを実行しません（ADR-0601 決定9）"))
 	}
-	var findings []lintreport.Finding
 	for _, d := range detectors {
-		// 依存先が skip すると検出の job も skip され、後続は走らないまま失敗も報告されない。
-		if _, at, ok := jobKey(d, "needs"); ok {
-			findings = append(findings, finding(at, "検出の job %s に needs: を置かないでください", d.ID))
-		}
-		for _, l := range d.Lines {
-			if commentLine.MatchString(l.Text) {
-				continue
-			}
-			if skipsOrHides.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "検出の job %s に if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を置かないでください。skip も失敗の無視も別の場所や別の shell での実行も、成功と同じく後続を止めません", d.ID))
-			}
-			if makeFlags.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "検出の job %s で MAKEFLAGS と MAKEFILES を渡さないでください。-n や -i は何も検査せずに成功します", d.ID))
-			}
-			findings = append(findings, checkIndirect(l, finding)...)
-		}
-		for _, step := range workflow.SplitSteps(d) {
-			if runs, ok := stepRunLine(step); ok && !detectionRun.MatchString(runs.Text) {
-				findings = append(findings, finding(runs.Number, "検出の job %s の run: は make infra-code-gate-test と make infra-code-gate だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", d.ID))
-			}
-		}
+		findings = append(findings, checkGateJob(d, detectionGate, finding)...)
+	}
+	for _, o := range orders {
+		findings = append(findings, checkGateJob(o, orderGate, finding)...)
 	}
 	cond, at, ok := jobKey(job, "if")
 	if !ok {
@@ -440,15 +749,54 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	if !slices.ContainsFunc(detectors, func(d workflow.Job) bool { return requiresSuccess(cond, d.ID) }) {
 		findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", detectors[0].ID))
 	}
+	for _, o := range orders {
+		if !requiresSuccess(cond, o.ID) {
+			findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", o.ID))
+		}
+	}
 	return findings
 }
 
-// checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します。make は環境変数の
-// MAKEFLAGS をオプションとして、MAKEFILES を先に読む makefile として読み（-n や SHELL の差し替えを env: から
-// 渡せる）、PATH・GITHUB_PATH・GITHUB_ENV・env: の変数は起動する make と道具とシェルを替え、step の shell: と
-// working-directory:、workflow 全体の defaults: は run: の本文を別のものとして実行させうる。job と入口の step の
-// continue-on-error: と if: は、失敗も skip も成功として報告させる（plan の job は required check、apply の job は
-// 通知の起動条件である）。run: は字面からは中身を選べないので、置ける step を閉じた集合に限る。
+// checkGateJob は、needs の先の検査の job が skip も失敗の無視もできず、決めたターゲットだけを走らせることを検査します。
+func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	// 依存先が skip すると検査の job も skip され、後続は走らないまま失敗も報告されない。
+	if _, at, ok := jobKey(d, "needs"); ok {
+		findings = append(findings, finding(at, "%s %s に needs: を置かないでください", g.label, d.ID))
+	}
+	for _, l := range d.Lines {
+		if commentLine.MatchString(l.Text) {
+			continue
+		}
+		if skipsOrHides.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "%s %s に if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を置かないでください。skip も失敗の無視も別の場所や別の shell での実行も、成功と同じく後続を止めません", g.label, d.ID))
+		}
+		if makeFlags.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "%s %s で MAKEFLAGS と MAKEFILES を渡さないでください。-n や -i は何も検査せずに成功します", g.label, d.ID))
+		}
+		findings = append(findings, checkIndirect(l, finding)...)
+	}
+	for _, step := range workflow.SplitSteps(d) {
+		if runs, ok := stepRunLine(step); ok && !g.runs.MatchString(runs.Text) {
+			findings = append(findings, finding(runs.Number, "%s %s の run: は %s だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", g.label, d.ID, g.targets))
+		}
+	}
+	return findings
+}
+
+// checkOrderGate は、apply の job が順序の検査の job を needs に持つことを検査します。
+func checkOrderGate(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	for _, n := range needs(job) {
+		if slices.ContainsFunc(jobs, func(j workflow.Job) bool { return j.ID == n && !runsGate(j, detectionGate) && runsGate(j, orderGate) }) {
+			return nil
+		}
+	}
+	return []lintreport.Finding{finding(job.Number, "apply の job の needs に、make resource-order-check を走らせる job を同じ workflow の中に置いてください。Pull Request の検査は merge された木を見ません")}
+}
+
+// checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します（plan の job は
+// required check、apply の job は通知の起動条件である）。run: は字面からは中身を選べないので、置ける step を
+// 閉じた集合に限る。各形を拒む理由は、その違反の文が持つ。
 func checkHidden(job workflow.Job, cred workflow.Line, refusal string, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, l := range append(slices.Clone(w.preamble), job.Lines...) {
@@ -824,9 +1172,9 @@ func requiresSuccess(cond, id string) bool {
 	return slices.ContainsFunc(strings.Split(cond, "&&"), func(t string) bool { return term.MatchString(strings.TrimSpace(t)) })
 }
 
-// detects は、job が `make infra-code-gate` を走らせる step を持つかを返します。
-func detects(job workflow.Job) bool {
-	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool { return detection.MatchString(l.Text) })
+// runsGate は、job が g の検査そのもの（自己テストではない方のターゲット）を走らせるかを返します。
+func runsGate(job workflow.Job, g gate) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool { return g.marks.MatchString(l.Text) })
 }
 
 // hasConcurrency は、indent の桁に concurrency: を持つかを返します。値を1行に書いた形も数えます。

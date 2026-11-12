@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -190,14 +189,17 @@ func validateEnvironments(envs []environment) error {
 	return nil
 }
 
+// requiredDeployFrom は、deployment-identity の role が名指す environment の deploy_from を返します。
+// plan の environment だけが Pull Request を許し、ほかは保護ブランチだけを許す（ADR-0602 決定14）。
 func requiredDeployFrom(name string) (string, bool) {
+	_, suffix, ok := splitIdentity(name)
 	switch {
-	case strings.HasSuffix(name, "-apply"), strings.HasSuffix(name, "-apply-identity"):
-		return deployFromProtected, true
-	case strings.HasSuffix(name, "-plan"):
+	case !ok:
+		return "", false
+	case suffix == planSuffix:
 		return deployFromProtectedPR, true
 	default:
-		return "", false
+		return deployFromProtected, true
 	}
 }
 

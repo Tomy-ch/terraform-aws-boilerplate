@@ -30,12 +30,13 @@
 
 | キー | 意味 |
 | --- | --- |
-| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに3つが揃い、どの `env` にも当たらない3種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
+| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` / `*-unlock-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに4つが揃い、どの `env` にも当たらない4種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
 | `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`any`（deployment branch policy を持たない） |
 | `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
-- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` / `*-unlock-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 新しい environment を参照する workflow は、その environment を `make apply-environments` で宣言から作り、必要な secret を置いてから merge します。先に merge すると、走った workflow が GitHub に保護なしの environment を作らせます。手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 が持ちます。
 - 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
   - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
 - `copilot` は Copilot coding agent が作る environment です。宣言に含め、管理者の迂回を無効にします。
