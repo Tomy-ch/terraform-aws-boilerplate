@@ -117,8 +117,23 @@ func main() {
 	}
 }
 
+// argCounts は、位置引数だけを取るサブコマンドの、サブコマンド名を含む引数の数。
+var argCounts = map[string]int{
+	"region":      2,
+	"env-unset":   1,
+	"plan-header": 1,
+	"oidc-url":    1,
+	"oidc-token":  2,
+	"oidc-sub":    2,
+	"sha256":      2,
+}
+
 func run(args []string, out io.Writer, d deps) error {
 	if len(args) == 0 {
+		return errUsage
+	}
+
+	if n, ok := argCounts[args[0]]; ok && len(args) != n {
 		return errUsage
 	}
 
@@ -129,46 +144,22 @@ func run(args []string, out io.Writer, d deps) error {
 
 	switch args[0] {
 	case "region":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = rootRegion(args[1], d.readFile)
 	case "bucket":
 		value, err = runBucket(args[1:])
 	case "state-key":
 		value, err = runStateKey(args[1:])
 	case "env-unset":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = envUnset(d.environ)
 	case "plan-header":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = planHeader(d.git)
 	case "role-arn":
 		value, err = runRoleARN(args[1:])
 	case "oidc-url":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = oidcURL(d.environ)
 	case "oidc-token":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = oidcToken(args[1], d.readFile)
 	case "oidc-sub":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = oidcSub(args[1], d.readFile)
 	case "plan-summary":
 		value, err = runPlanSummary(args[1:], d.readFile)
@@ -179,10 +170,6 @@ func run(args []string, out io.Writer, d deps) error {
 	case "account":
 		value, err = runAccount(args[1:])
 	case "sha256":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = fileSHA256(args[1], d.readFile)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
