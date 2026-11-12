@@ -40,8 +40,8 @@ classes = []
 [job."b.yaml:audited"]
 egress_policy = "audit"
 
-[root."tf/root"]
-jobs = ["a.yaml:one", "b.yaml:audited"]
+[root."env/t/identity"]
+jobs = ["a.yaml:one"]
 
 [type.aws_x_]
 hosts = ["i1.test"]
@@ -61,10 +61,14 @@ var (
 	testIPs  = []string{"127.0.0.100"}
 )
 
-// testTerraform は testSSOT の root "tf/root" に置く設定。型は testSSOT の 2 つの type に 1 つずつ当たる。
+// testTerraform は testSSOT の root "env/t/identity" に置く設定。型は testSSOT の 2 つの type に 1 つずつ当たる。
 const testTerraform = "resource \"aws_x_thing\" \"a\" {}\ndata \"aws_none\" \"b\" {}\n"
 
+// testCIMake は testSSOT の root を実行する CI の入口。testWorkflow の one のジョブが呼ぶ。
+const testCIMake = "ci-plan-t-identity: SHELL := /bin/bash\nci-plan-t-identity:\n\t@$(call CI_PLAN,t,identity)\n"
+
 // testWorkflow は bullfrog の step の uses: 行に tail を続け、その後ろへ checkout の step を置いた 1 ジョブの workflow。
+// one のジョブは、さらに testSSOT の root を CI の入口で実行する。
 func testWorkflow(jobID string, tail ...string) string {
 	var b strings.Builder
 	b.WriteString(workflowHead + "  " + jobID + ":\n    steps:\n")
@@ -73,6 +77,9 @@ func testWorkflow(jobID string, tail ...string) string {
 		b.WriteString(l + "\n")
 	}
 	b.WriteString("\n      - name: Checkout\n")
+	if jobID == "one" {
+		b.WriteString("\n      - name: Plan\n        run: make ci-plan-t-identity\n")
+	}
 	return b.String()
 }
 
@@ -96,7 +103,8 @@ func newTestRepo(t *testing.T, workflows map[string]string) string {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT), filePerm))
-	writeFile(t, root, "tf/root/main.tf", testTerraform)
+	writeFile(t, root, "env/t/identity/main.tf", testTerraform)
+	writeFile(t, root, ciMakefile, testCIMake)
 	for name, body := range workflows {
 		require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", name), []byte(body), filePerm))
 	}
@@ -220,7 +228,7 @@ func Test_run(t *testing.T) {
 				"a.yaml": staleWorkflow("one"),
 				"b.yaml": bWorkflow(),
 			})
-			writeFile(t, root, "tf/root/kms.tf", "resource \"aws_x_key\" \"k\" {}\nresource \"aws_y_key\" \"k\" {}\n")
+			writeFile(t, root, "env/t/identity/kms.tf", "resource \"aws_x_key\" \"k\" {}\nresource \"aws_y_key\" \"k\" {}\n")
 			require.ErrorIs(t, run([]string{"apply"}, func() (string, error) { return root, nil }), errTypeUnmapped)
 			got, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "a.yaml")) //nolint:gosec // path from t.TempDir
 			require.NoError(t, err)
@@ -250,8 +258,8 @@ func Test_parseSSOT(t *testing.T) {
 			assert.Equal(t, []string{"127.0.0.100"}, s.baseIPs)
 			assert.Equal(t, []string{"mise"}, s.classes["image"].includes)
 			assert.Equal(t, policyAudit, s.jobs["b.yaml:audited"].policy)
-			assert.Equal(t, []string{"tf/root"}, s.rootOrder)
-			assert.Equal(t, []string{"a.yaml:one", "b.yaml:audited"}, s.roots["tf/root"].jobs)
+			assert.Equal(t, []string{"env/t/identity"}, s.rootOrder)
+			assert.Equal(t, []string{"a.yaml:one"}, s.roots["env/t/identity"].jobs)
 			assert.Equal(t, []string{"aws_x_", "aws_none"}, s.typeOrder)
 			assert.Equal(t, []string{"i1.test"}, s.types["aws_x_"].hosts)
 			assert.Empty(t, s.types["aws_none"].hosts)
@@ -1459,6 +1467,38 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("workflow が 1 本も無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, applyOrCheck(newTestRepo(t, nil), false), errNoTargets)
+		})
+
+		t.Run(".yml の workflow のジョブが実行する root も突き合わせる", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{
+				"a.yaml": syncedWorkflow("one", policyBlock, oneHosts...),
+				"b.yaml": bWorkflow(),
+			})
+			writeFile(t, root, ciMakefile, testCIMake+"ci-plan-t-workload:\n\t@$(call CI_PLAN,t,workload)\n")
+			writeFile(t, root, ".github/workflows/b.yml", syncedWorkflow("three", policyBlock, "b1.test", "b2.test")+
+				"\n      - name: Workload\n        run: make ci-plan-t-workload\n")
+			require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT+"\n[job.\"b.yml:three\"]\nclasses = []\n"), filePerm))
+			err := applyOrCheck(root, true)
+			require.ErrorIs(t, err, errRootUnbound)
+			assert.Contains(t, err.Error(), "b.yml:three")
+		})
+
+		t.Run("宣言に無い root を実行するジョブを弾き、apply でも何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{
+				"a.yaml": staleWorkflow("one"),
+				"b.yaml": bWorkflow(),
+			})
+			writeFile(t, root, ciMakefile, testCIMake+"ci-plan-t-workload:\n\t@$(call CI_PLAN,t,workload)\n")
+			stale := staleWorkflow("one") + "\n      - name: Workload\n        run: make ci-plan-t-workload\n"
+			writeFile(t, root, ".github/workflows/a.yaml", stale)
+			err := applyOrCheck(root, false)
+			require.ErrorIs(t, err, errRootUnbound)
+			assert.Contains(t, err.Error(), "env/t ")
+			got, readErr := openRoot(t, root).ReadFile(".github/workflows/a.yaml")
+			require.NoError(t, readErr)
+			assert.Equal(t, stale, string(got))
 		})
 
 		t.Run("SSOT が解釈できなければ workflow を書き換えない", func(t *testing.T) {
