@@ -1,5 +1,4 @@
 locals {
-  # state Bucket と state の鍵の alias は同じ名前を持つ。
   state_name = "${var.project}-${var.env}-tfstate"
 }
 
@@ -8,6 +7,7 @@ module "s3" {
 
   name                              = local.state_name
   noncurrent_version_retention_days = var.state_noncurrent_version_retention_days
+  kms_key_arn                       = module.kms.key_arn
 }
 
 module "kms" {
@@ -27,4 +27,5 @@ module "plan_output" {
 
   name           = "${var.project}-${var.env}-tfplan"
   retention_days = var.plan_output_retention_days
+  kms_key_arn    = module.kms.key_arn
 }
