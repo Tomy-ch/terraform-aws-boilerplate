@@ -12,6 +12,9 @@ AWS_BIN ?= aws
 TF_PLAN_LOG_DIR ?= tmp/plan
 TF_LOCAL_PROJECT := tabp
 TF_LOCAL_PROFILE := tabp-bootstrap
+# state の鍵の alias が無いときに init を失敗させる（fail）か、鍵を渡さずに SSE-S3 で書く（sse-s3）か。
+# sse-s3 は段2-4 で人が明示して選び、Bucket の既定が AES256 のときだけ効く（docs/setup/bootstrap.md）。
+TF_LOCAL_MISSING_STATE_KEY ?= fail
 TF_LOCAL = $(call RUN_SCRIPT_HOST,tf-local,$(1))
 # $(1)=env $(2)=identity|workload（ADR-0604 決定5）
 TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
@@ -19,14 +22,24 @@ TF_LOCAL_DIR = $(TF_BASE)/env/$(1)$(if $(filter identity,$(2)),/identity)
 # TF_CLI_CONFIG_FILE=/dev/null は dev_overrides による provider の差し替えを封じる（docs/setup/bootstrap.md 2-0b）。
 TF_LOCAL_ENV = env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1
 
+# init に渡す state の鍵の引数を kms に置く。鍵が無ければ空になり、$$kms は引用せずに展開して消える。
+# 直前に unset_env・region・identity・account・bucket を代入してから使う。$(1)=env $(2)=fail|sse-s3
+define TF_STATE_KEY
+aliases=$$($(TF_LOCAL_ENV) $(AWS_BIN) kms list-aliases --region "$$region" --output json); export aliases; \
+encryption=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api get-bucket-encryption --region "$$region" --bucket "$$bucket" --expected-bucket-owner "$$account" --output json); export encryption; \
+kms=$$($(call TF_LOCAL,state-key -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity" -aliases "$$aliases" -encryption "$$encryption" -missing $(2)))
+endef
+
 # $(1)=env $(2)=root
 define TF_LOCAL_INIT
 set -eu; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; export dir; \
 unset_env=$$($(call TF_LOCAL,env-unset)); \
 region=$$($(call TF_LOCAL,region "$$dir")); export region; \
 identity=$$($(TF_LOCAL_ENV) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); export identity; \
+account=$$($(call TF_LOCAL,account -identity "$$identity")); \
 bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity")); \
-$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -lockfile=readonly -backend-config="bucket=$$bucket"
+$(call TF_STATE_KEY,$(1),$(TF_LOCAL_MISSING_STATE_KEY)); \
+$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -lockfile=readonly -backend-config="bucket=$$bucket" $$kms
 endef
 
 # plan は lock を取らない（ADR-0604 決定8）。log はアカウント ID を含むので、所有者だけが読める権限で

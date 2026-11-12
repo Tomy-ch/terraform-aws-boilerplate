@@ -10,7 +10,7 @@
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の
-## 要求先は GitHub Actions が渡す。tf-local は sh -c の中で動くので、引数に使う値は export する。
+## 要求先は GitHub Actions が渡す。tf-local に渡す値の export は local.mk 冒頭の注記に従う。
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
 CI_ENV ?= admin
@@ -51,12 +51,13 @@ region=$$($(call TF_LOCAL,region "$$dir")); export region; \
 identity=$$($(TF_LOCAL_ENV) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); export identity; \
 account=$$($(call TF_LOCAL,account -identity "$$identity")); \
 bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity")); \
-$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$$bucket" >> "$$out" 2>&1 \
+$(call TF_STATE_KEY,$(1),fail); \
+$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$$bucket" $$kms >> "$$out" 2>&1 \
 || { echo "❌ init が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }
 endef
 
-# plan し、終了コードを出して JSON にする。plan が失敗していれば show も失敗するが、ここでは落とさず、
-# 判定は呼び出し側の plan-summary が持つ。$(1)=plan の追加の引数
+# plan が失敗していれば show も失敗するが、ここでは落とさず、判定は呼び出し側の plan-summary が持つ。
+# $(1)=plan の追加の引数
 define CI_TERRAFORM_PLAN
 rc=0; $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan $(1)-input=false -no-color -detailed-exitcode -out="$$tfplan" >> "$$out" 2>&1 || rc=$$?; \
 echo "plan の終了コード: $$rc"; export rc; \
