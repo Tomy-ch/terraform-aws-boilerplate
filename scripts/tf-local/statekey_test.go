@@ -169,7 +169,10 @@ func Test_stateKey(t *testing.T) {
 
 			tf, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "variables.tf"))
 			require.NoError(t, err)
-			assert.Contains(t, string(tf), `:key/`+strings.TrimPrefix(keyIDPattern.String(), "^"))
+			_, block, found := strings.Cut(string(tf), `variable "state_key_arn" {`)
+			require.True(t, found)
+			block, _, _ = strings.Cut(block, "\n}\n")
+			assert.Contains(t, block, `:key/`+strings.TrimPrefix(keyIDPattern.String(), "^"))
 		})
 	})
 
@@ -187,6 +190,7 @@ func Test_stateKey(t *testing.T) {
 			"既定が鍵を名指さない SSE-KMS（aws/s3）なら失敗する":       {withAlias, encKMS(""), missingFail, errStateKeyMismatch},
 			"既定の鍵が鍵 ID だけで書かれていれば一致と見ない":             {withAlias, encKMS(stateKeyID), missingFail, errStateKeyMismatch},
 			"既定の鍵が alias の ARN なら一致と見ない":             {withAlias, encKMS("arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate"), missingFail, errStateKeyMismatch},
+			"名前が接頭辞で一致するだけの alias は state の鍵と見ない":    {aliasesJSON(aliasEntry("alias/tabp-admin-tfstate-old", "arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate-old", stateKeyID)), encAES256, missingFail, errStateKeyMissing},
 			"別の env の alias だけなら state の鍵と見ない":       {aliasesJSON(aliasEntry("alias/tabp-dev-tfstate", "arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-dev-tfstate", stateKeyID)), encAES256, missingFail, errStateKeyMissing},
 			"alias の一覧に Aliases が無ければ sse-s3 でも通さない": {`{}`, encAES256, missingSSES3, errStateKeyAliases},
 		} {

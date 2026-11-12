@@ -960,7 +960,8 @@ func TestLocalMk(t *testing.T) {
 
 		cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target}, vars...)...)
 		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
+				strings.HasPrefix(kv, "TF_LOCAL_MISSING_STATE_KEY=")
 		})
 
 		out, err := cmd.CombinedOutput()
@@ -1023,12 +1024,10 @@ func TestLocalMk(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
 		}
 
-		for _, tool := range []string{"terraform", "aws"} {
-			require.NoError(t, os.WriteFile(filepath.Join(root, "bin", tool), fmt.Appendf(nil, ciFakes, k), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
-		}
+		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws")
 
 		args := append([]string{"-C", filepath.Join("..", ".."), "-s", "--no-print-directory", "init-admin-identity", "RUNNER_MODE=host",
-			"TF_LOCAL=" + bin + " $(1)", "TF_BASE=" + filepath.Join(root, "base"),
+			"TF_LOCAL=" + tfLocalShell(bin), "TF_BASE=" + filepath.Join(root, "base"),
 			"TF_BIN=" + filepath.Join(root, "bin", "terraform"), "AWS_BIN=" + filepath.Join(root, "bin", "aws")}, vars...)
 		cmd := exec.CommandContext(t.Context(), "make", args...)
 		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
@@ -1058,6 +1057,7 @@ func TestLocalMk(t *testing.T) {
 		calls, out, err := run(t, nil)
 		require.NoError(t, err, out)
 		assert.Contains(t, initLine(calls), "-backend-config=kms_key_id=arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab")
+		assert.NotContains(t, out, "SSE-S3 で書きます")
 	})
 
 	t.Run("鍵が無く sse-s3 を選べば、kms_key_id を渡さずに init し、そう告げる", func(t *testing.T) {
@@ -1070,6 +1070,20 @@ func TestLocalMk(t *testing.T) {
 		assert.NotContains(t, line, "-backend-config=kms_key_id=")
 		assert.Contains(t, out, "init に鍵を渡さず SSE-S3 で書きます")
 	})
+
+	for name, knobs := range map[string]map[string]string{
+		"alias の一覧を取れなければ init を呼ばない":      {"kms-rc": "1"},
+		"Bucket の既定の暗号化を取れなければ init を呼ばない": {"encryption-rc": "1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			calls, out, err := run(t, knobs, "TF_LOCAL_MISSING_STATE_KEY=sse-s3")
+			require.Error(t, err, out)
+			assert.Contains(t, calls, "aws kms list-aliases", "判定の経路を通っていません")
+			assert.Empty(t, initLine(calls), calls)
+		})
+	}
 
 	t.Run("鍵が無ければ既定では init を呼ばない", func(t *testing.T) {
 		t.Parallel()
@@ -1236,7 +1250,9 @@ esac
 for a; do case "$a" in -chdir=*) ;; *) sub=$a; break ;; esac; done
 for a; do last=$a; done
 case "$sub" in
-init) exit "$(rc init-rc)" ;;
+init)
+	for a; do case "$a" in init|-*) ;; *) echo "terraform: positional argument: '$a'" >&2; exit 64 ;; esac; done
+	exit "$(rc init-rc)" ;;
 output) echo plan-output-bucket; exit "$(rc output-rc)" ;;
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
@@ -1246,6 +1262,21 @@ show) test -s "$last" || exit 1; cat "$k/plan.json" ;;
 apply) echo APPLY-SECRET; exit "$(rc apply-rc)" ;;
 esac
 `
+
+// writeFakes は、ciFakes の偽物の道具を dir に置き、結果を knobs のファイルで切り替えるようにする。
+func writeFakes(t *testing.T, dir, knobs string, tools ...string) {
+	t.Helper()
+
+	for _, tool := range tools {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, tool), fmt.Appendf(nil, ciFakes, knobs), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+	}
+}
+
+// tfLocalShell は、make の TF_LOCAL を差し替える値を返す。実物（RUN_SCRIPT_HOST）と同じく sh -c の中で
+// 起動するので、レシピが export しない値は tf-local に届かない。
+func tfLocalShell(bin string) string {
+	return "sh -c 'set -eu; exec " + bin + " $(1)'"
+}
 
 // TestCiRecipes は、ci.mk のレシピを偽物の道具で実際に走らせ、判定の失敗が apply と後続を止めることと、
 // plan の全文を置いてから失敗することを見る。判定そのものは tf-local のテストが持ち、ここはレシピが
@@ -1294,12 +1325,10 @@ func TestCiRecipes(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
 		}
 
-		for _, tool := range []string{"terraform", "aws", "conftest", "curl", "git"} {
-			require.NoError(t, os.WriteFile(filepath.Join(root, "bin", tool), fmt.Appendf(nil, ciFakes, k), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
-		}
+		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws", "conftest", "curl", "git")
 
 		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=",
-			"TF_LOCAL="+bin+" $(1)", "TF_BASE="+filepath.Join(root, "base"), "CI_PLAN_DIR="+plans,
+			"TF_LOCAL="+tfLocalShell(bin), "TF_BASE="+filepath.Join(root, "base"), "CI_PLAN_DIR="+plans,
 			"TF_BIN="+filepath.Join(root, "bin", "terraform"), "AWS_BIN="+filepath.Join(root, "bin", "aws"), "CONFTEST_BIN="+filepath.Join(root, "bin", "conftest"),
 			"POLICY_PLAN_DIR="+policy, "POLICY_PLAN_DECL="+filepath.Join(policy, "decl.json"))
 		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
