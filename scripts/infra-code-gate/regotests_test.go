@@ -47,6 +47,17 @@ func Test_runRegoTests(t *testing.T) {
 		assert.Contains(t, out.String(), "ID 1 件")
 	})
 
+	t.Run("IC 以外の区分の ID も、違反と非違反のテストの対を要求する", func(t *testing.T) {
+		t.Parallel()
+		policy := "package resource_order\n\ndeny contains msg if {\n\tmsg := \"RO001 [宣言の形] x\"\n}\n"
+		test := "package resource_order\n\ntest_RO001_allow_ok if { true }\n"
+		repo, p := setup(t, policy, test, "data.resource_order.test_RO001_allow_ok: PASS (1ms)\n")
+		var out bytes.Buffer
+		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "resource_order"}, repo, &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.Contains(t, out.String(), "ID RO001 に test_RO001_deny_* のテストがありません")
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
