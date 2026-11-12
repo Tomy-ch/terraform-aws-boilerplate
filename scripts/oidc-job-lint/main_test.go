@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
@@ -191,12 +192,28 @@ var gatesWorkflow = strings.Join([]string{
 	"permissions:",
 	"  contents: read",
 	"jobs:",
-	"  tf-lint:",
+	"  changes:",
 	"    runs-on: ubuntu-24.04",
+	"    outputs:",
+	"      relevant: ${{ steps.filter.outputs.relevant }}",
 	"    steps:",
-	"      - run: make tf-lint RUNNER_MODE=host",
-	"      - run: make resource-order-check-test RUNNER_MODE=host",
-	"      - run: make resource-order-check RUNNER_MODE=host",
+	"      - id: filter",
+	"        uses: dorny/paths-filter@0000000000000000000000000000000000000000",
+	"  tf-lint:",
+	"    needs: changes",
+	"    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - name: Run TFLint",
+	"        env:",
+	"          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+	"        run: make tf-lint RUNNER_MODE=host",
+	"      - name: Run the resource-order check's own tests",
+	"        run: make resource-order-check-test RUNNER_MODE=host",
+	"      - name: Check the resource order",
+	"        run: make resource-order-check RUNNER_MODE=host",
 	"",
 }, "\n")
 
@@ -306,7 +323,7 @@ func Test_run(t *testing.T) {
 	t.Run("Pull Request の必須検査が順序の検査を走らせなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "      - run: make resource-order-check RUNNER_MODE=host\n", "", 1)}, envDecl)
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
 		assert.Contains(t, out.String(), "make resource-order-check-test と make resource-order-check を走らせるものがありません")
@@ -316,7 +333,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow}, envDecl)
-		require.ErrorIs(t, run(wf, env, filepath.Join(t.TempDir(), "missing.json"), &bytes.Buffer{}), errRuleset)
+		require.ErrorIs(t, run(wf, env, filepath.Join(t.TempDir(), "missing.json"), &bytes.Buffer{}), requiredchecks.ErrRead)
 	})
 
 	t.Run("別の workflow の検出の job は needs に数えない", func(t *testing.T) {
@@ -2598,75 +2615,131 @@ func Test_literalGroup(t *testing.T) {
 	}
 }
 
-func Test_readRequiredContexts(t *testing.T) {
-	t.Parallel()
-
-	write := func(t *testing.T, body string) string {
-		t.Helper()
-
-		p := filepath.Join(t.TempDir(), "b.json")
-		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
-
-		return p
-	}
-
-	t.Run("required_status_checks の context だけを返す", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := readRequiredContexts(write(t, `{"rules": [{"type": "deletion"}, {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "tf-lint"}, {"context": "go-test"}]}}]}`))
-		require.NoError(t, err)
-		assert.Equal(t, map[string]bool{"tf-lint": true, "go-test": true}, got)
-	})
-
-	for name, body := range map[string]string{
-		"JSON でない":               "nope",
-		"required の context が無い": `{"rules": [{"type": "deletion"}]}`,
-		"context が空":             `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": ""}]}}]}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			_, err := readRequiredContexts(write(t, body))
-			require.ErrorIs(t, err, errRuleset)
-		})
-	}
-
-	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := readRequiredContexts(filepath.Join(t.TempDir(), "missing.json"))
-		require.ErrorIs(t, err, errRuleset)
-	})
-}
-
-func Test_runsRequiredOrderCheck(t *testing.T) {
+func Test_checkRequiredOrderJobs(t *testing.T) {
 	t.Parallel()
 
 	required := map[string]bool{"tf-lint": true}
 	const (
-		check = "      - run: make resource-order-check RUNNER_MODE=host\n"
-		self  = "      - run: make resource-order-check-test RUNNER_MODE=host\n"
+		check = "        run: make resource-order-check RUNNER_MODE=host\n"
+		self  = "        run: make resource-order-check-test RUNNER_MODE=host\n"
 	)
 
-	t.Run("必須検査の job が両方を走らせれば真", func(t *testing.T) {
+	t.Run("必須検査の job が両方を走らせれば1件で違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.True(t, runsRequiredOrderCheck(gatesWorkflow, required))
+		n, f := checkRequiredOrderJobs("g.yaml", gatesWorkflow, required)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, f)
 	})
 
 	for name, src := range map[string]string{
-		"検査そのものが無い":           strings.Replace(gatesWorkflow, check, "", 1),
-		"自己テストが無い":            strings.Replace(gatesWorkflow, self, "", 1),
+		"検査そのものが無い":           strings.Replace(gatesWorkflow, check, "        run: echo\n", 1),
+		"自己テストが無い":            strings.Replace(gatesWorkflow, self, "        run: echo\n", 1),
 		"required でない job":    strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
 		"pull_request で起動しない": strings.Replace(gatesWorkflow, "  pull_request:\n", "  push:\n", 1),
-		"変数を足した make は数えない":   strings.Replace(gatesWorkflow, check, "      - run: make resource-order-check RUNNER_MODE=host RO_NS=x\n", 1),
-		"コメントの中は数えない":         strings.Replace(gatesWorkflow, check, "      # - run: make resource-order-check RUNNER_MODE=host\n", 1),
+		"変数を足した make は数えない":   strings.Replace(gatesWorkflow, check, "        run: make resource-order-check RUNNER_MODE=host RO_NS=x\n", 1),
+		"コメントの中は数えない":         strings.Replace(gatesWorkflow, check, "        # run: make resource-order-check RUNNER_MODE=host\n        run: echo\n", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
-			assert.False(t, runsRequiredOrderCheck(src, required))
+			n, f := checkRequiredOrderJobs("g.yaml", src, required)
+			assert.Zero(t, n)
+			assert.Empty(t, f)
+		})
+	}
+
+	t.Run("数えた job の形の違反を返す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, gatesWorkflow, check, check+"        continue-on-error: true\n")
+		n, f := checkRequiredOrderJobs("g.yaml", src, required)
+		assert.Equal(t, 1, n)
+		assert.Contains(t, messages(f), "順序の検査の step に if:・continue-on-error:")
+	})
+}
+
+func Test_checkRequiredOrderJob(t *testing.T) {
+	t.Parallel()
+
+	const (
+		check  = "        run: make resource-order-check RUNNER_MODE=host\n"
+		self   = "        run: make resource-order-check-test RUNNER_MODE=host\n"
+		jobIf  = "    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}\n"
+		header = "  tf-lint:\n    needs: changes\n"
+	)
+	job := func(t *testing.T, src string) (workflow.Job, []workflow.Line) {
+		t.Helper()
+
+		split := workflow.SplitJobs(src)
+
+		return jobOf(t, src, "tf-lint"), split.Preamble
+	}
+
+	t.Run("terraform-gates.yaml の tf-lint の形は違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		j, pre := job(t, gatesWorkflow)
+		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+	})
+
+	t.Run("job の if: が無くても違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, ""))
+		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+	})
+
+	t.Run("ブロックの if: でも同じ式なら違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, "    if: >-\n      !cancelled() &&\n      needs.changes.outputs.relevant != 'false'\n"))
+		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+	})
+
+	for name, c := range map[string]struct{ from, to, want string }{
+		"検査の step の continue-on-error: は違反":    {check, check + "        continue-on-error: true\n", "順序の検査の step に if:・continue-on-error:"},
+		"自己テストの step の continue-on-error: は違反": {self, self + "        continue-on-error: true\n", "順序の検査の step に if:・continue-on-error:"},
+		"検査の step の if: false は違反":             {check, check + "        if: false\n", "順序の検査の step に if:"},
+		"検査の step の shell: は違反":                {check, check + "        shell: sh -c true {0}\n", "shell:"},
+		"検査の step の working-directory: は違反":    {check, check + "        working-directory: /tmp\n", "working-directory:"},
+		"job の if: false は違反":                  {jobIf, "    if: false\n", "if: は ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }} だけ"},
+		"job の if: ${{ false }} は違反":           {jobIf, "    if: ${{ false }}\n", "if: は ${{"},
+		"job の if: always() を足せば違反":            {jobIf, "    if: ${{ always() && !cancelled() && needs.changes.outputs.relevant != 'false' }}\n", "if: は ${{"},
+		"job の if: always() だけは違反":             {jobIf, "    if: ${{ always() }}\n", "if: は ${{"},
+		"job の if: の || は違反":                   {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' || false }}\n", "if: は ${{"},
+		"job の if: の否定の差し替えは違反":                {jobIf, "    if: ${{ !cancelled() && !(needs.changes.outputs.relevant != 'false') }}\n", "if: は ${{"},
+		"job の if: の比較の差し替えは違反":                {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant == 'false' }}\n", "if: は ${{"},
+		"job の continue-on-error: は違反":         {header, header + "    continue-on-error: true\n", "必須検査の job に continue-on-error:"},
+		"job の env: は違反":                       {header, header + "    env:\n      X: y\n", "必須検査の job に env:"},
+		"job の container: は違反":                 {header, header + "    container: alpine\n", "必須検査の job に container:"},
+		"workflow の env: は違反":                  {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  X: y\n", "workflow に defaults: と env:"},
+		"MAKEFLAGS は違反":                        {self, self + "        env:\n          MAKEFLAGS: -n\n", "MAKEFLAGS と MAKEFILES"},
+		"GITHUB_ENV への書き込みは違反":                 {"        run: make tf-lint RUNNER_MODE=host\n", "        run: echo X=y >> \"$GITHUB_ENV\"\n", "GITHUB_PATH と GITHUB_ENV"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			j, pre := job(t, replaced(t, gatesWorkflow, c.from, c.to))
+			assert.Contains(t, messages(checkRequiredOrderJob("g.yaml", j, pre)), c.want)
+		})
+	}
+}
+
+func Test_ifExpression(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct{ in, want string }{
+		"${{ }} を外す":     {"${{ a && b }}", "a && b"},
+		"式だけはそのまま":       {"a && b", "a && b"},
+		"ブロックの記号と改行を詰める": {">-   a &&    b", "a && b"},
+		"定数": {"false", "false"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, ifExpression(c.in))
 		})
 	}
 }
@@ -2677,8 +2750,8 @@ func Test_checkPullRequestOrder(t *testing.T) {
 	apply := []groupRecord{{file: "a.yaml", root: "admin-identity"}}
 	unlock := []groupRecord{{file: "u.yaml", root: "admin-identity", unlock: true}}
 
-	assert.Empty(t, checkPullRequestOrder("wf", apply, true), "Pull Request の側に在れば違反0件")
-	assert.Empty(t, checkPullRequestOrder("wf", unlock, false), "apply の job が無ければ求めない")
-	assert.Empty(t, checkPullRequestOrder("wf", nil, false), "apply の job が無ければ求めない")
-	assert.Contains(t, messages(checkPullRequestOrder("wf", append(unlock, apply...), false)), "make resource-order-check-test と make resource-order-check を走らせるもの")
+	assert.Empty(t, checkPullRequestOrder("wf", apply, 1), "Pull Request の側に在れば違反0件")
+	assert.Empty(t, checkPullRequestOrder("wf", unlock, 0), "apply の job が無ければ求めない")
+	assert.Empty(t, checkPullRequestOrder("wf", nil, 0), "apply の job が無ければ求めない")
+	assert.Contains(t, messages(checkPullRequestOrder("wf", append(unlock, apply...), 0)), "make resource-order-check-test と make resource-order-check を走らせるもの")
 }

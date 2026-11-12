@@ -61,6 +61,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -155,7 +156,6 @@ var (
 	errNoTarget   = xerrors.New("OIDC で role を assume する job が1つもありません")
 	errViolations = xerrors.New("違反があります")
 	errEnvDecl    = xerrors.New("environments.json を読めません")
-	errRuleset    = xerrors.New("保護設定の宣言から required の context を読めません")
 )
 
 func main() {
@@ -174,9 +174,13 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	required, err := readRequiredContexts(rulesetFile)
+	contexts, err := requiredchecks.Read(rulesetFile)
 	if err != nil {
-		return err
+		return xerrors.Wrap(err, "required の context の読み取り")
+	}
+	required := map[string]bool{}
+	for _, c := range contexts {
+		required[c] = true
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -199,7 +203,7 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 		groups   []groupRecord
 	)
 	targets := 0
-	prOrder := false
+	prOrder := 0
 	for _, p := range workflow.SelectFiles(names, dir) {
 		raw, err := root.ReadFile(filepath.Base(p))
 		if err != nil {
@@ -209,7 +213,9 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 		targets += n
 		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
-		prOrder = prOrder || runsRequiredOrderCheck(string(raw), required)
+		n, f = checkRequiredOrderJobs(p, string(raw), required)
+		prOrder += n
+		findings = append(findings, f...)
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
 	findings = append(findings, checkPullRequestOrder(dir, groups, prOrder)...)
@@ -225,60 +231,89 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 	return nil
 }
 
-// readRequiredContexts は、保護設定の宣言が required とする status check の context を返します。0件の宣言は、
-// どの job も必須検査ではないと判定させてしまうので、読めないのと同じに扱います。
-func readRequiredContexts(path string) (map[string]bool, error) {
-	raw, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return nil, xerrors.Wrapf(errRuleset, "%s: %v", path, err)
-	}
-	var decl struct {
-		Rules []struct {
-			Type       string `json:"type"`
-			Parameters struct {
-				Checks []struct {
-					Context string `json:"context"`
-				} `json:"required_status_checks"`
-			} `json:"parameters"`
-		} `json:"rules"`
-	}
-	if err := json.Unmarshal(raw, &decl); err != nil {
-		return nil, xerrors.Wrapf(errRuleset, "%s: %v", path, err)
-	}
-	contexts := map[string]bool{}
-	for _, r := range decl.Rules {
-		if r.Type != "required_status_checks" {
-			continue
-		}
-		for _, c := range r.Parameters.Checks {
-			if c.Context != "" {
-				contexts[c.Context] = true
-			}
-		}
-	}
-	if len(contexts) == 0 {
-		return nil, xerrors.Wrapf(errRuleset, "%s: required の context が1つもありません", path)
-	}
-	return contexts, nil
-}
+// prGateIf は、Pull Request の必須検査の job が置いてよい唯一の if: の式。changes の job が path から決めた
+// 条件で、フィルタが判定に届かなければ空になり、job は走る（.github/workflows/README.md の「必須検査は
+// すべての Pull Request で報告される」の fail open）。
+const prGateIf = "!cancelled() && needs.changes.outputs.relevant != 'false'"
 
-// runsRequiredOrderCheck は、pull_request で起動する workflow に、required の context を報告する job で、
-// make resource-order-check-test と make resource-order-check の両方を走らせるものがあるかを返します。
-func runsRequiredOrderCheck(source string, required map[string]bool) bool {
+// checkRequiredOrderJobs は、pull_request で起動する workflow のうち、required の context を報告し
+// make resource-order-check-test と make resource-order-check の両方を走らせる job の数と、その job が
+// 検査を走らせずに成功を報告しうる形の違反を返します。
+func checkRequiredOrderJobs(file, source string, required map[string]bool) (int, []lintreport.Finding) {
 	split := workflow.SplitJobs(source)
 	on, _ := triggers(split.Preamble)
 	if _, ok := on["pull_request"]; !ok {
-		return false
+		return 0, nil
 	}
-	return slices.ContainsFunc(split.Jobs, func(j workflow.Job) bool {
-		return required[j.ID] && runsGate(j, orderGate) && hasLine(j, orderTestRun)
-	})
+	n := 0
+	var findings []lintreport.Finding
+	for _, j := range split.Jobs {
+		if !required[j.ID] || !runsGate(j, orderGate) || !hasLine(j, orderTestRun) {
+			continue
+		}
+		n++
+		findings = append(findings, checkRequiredOrderJob(file, j, split.Preamble)...)
+	}
+	return n, findings
+}
+
+// checkRequiredOrderJob は、必須検査の job と順序の検査の step が、skip も失敗の無視も別の場所や別の shell
+// での実行もできないことを検査します。skip された必須検査は成功として数えられるので、job の if: は
+// prGateIf の形だけを認める。
+func checkRequiredOrderJob(file string, job workflow.Job, preamble []workflow.Line) []lintreport.Finding {
+	finding := func(line int, format string, args ...any) lintreport.Finding {
+		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job %s: ", job.ID) + fmt.Sprintf(format, args...)}
+	}
+	var findings []lintreport.Finding
+	if cond, at, ok := jobKey(job, "if"); ok && ifExpression(cond) != prGateIf {
+		findings = append(findings, finding(at, "順序の検査を走らせる必須検査の job の if: は ${{ %s }} だけにしてください。定数・status の関数・|| ・! は、検査を走らせずに成功を報告させます", prGateIf))
+	}
+	for _, key := range []string{"continue-on-error", "container", "services", "defaults", "env"} {
+		if _, at, ok := jobKey(job, key); ok {
+			findings = append(findings, finding(at, "順序の検査を走らせる必須検査の job に %s: を置かないでください", key))
+		}
+	}
+	for _, l := range preamble {
+		if defaultsAt.MatchString(l.Text) || envAt.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "順序の検査を走らせる必須検査の workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます"))
+		}
+	}
+	for _, l := range append(slices.Clone(preamble), job.Lines...) {
+		if commentLine.MatchString(l.Text) {
+			continue
+		}
+		if makeFlags.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "MAKEFLAGS と MAKEFILES を渡さないでください。-n や -i は何も検査せずに成功します"))
+		}
+		if pathKey.MatchString(l.Text) {
+			findings = append(findings, finding(l.Number, "PATH を替えないでください。make を別のものに差し替えます"))
+		}
+		findings = append(findings, checkIndirect(l, finding)...)
+	}
+	for _, step := range workflow.SplitSteps(job) {
+		if runs, ok := stepRunLine(step); !ok || !orderRun.MatchString(runs.Text) {
+			continue
+		}
+		for _, l := range step.Lines {
+			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text) {
+				findings = append(findings, finding(l.Number, "順序の検査の step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせます"))
+			}
+		}
+	}
+	return findings
+}
+
+// ifExpression は、if: の値から ${{ }} とブロックの記号を外し、空白を1つに詰めた式を返します。
+func ifExpression(cond string) string {
+	cond = strings.TrimSpace(strings.TrimLeft(cond, ">|-+ "))
+	cond = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(cond, "${{"), "}}"))
+	return strings.Join(strings.Fields(cond), " ")
 }
 
 // checkPullRequestOrder は、apply の job が待つ順序の検査を、Pull Request の必須検査も走らせることを検査します。
 // apply の側だけでは、順序を崩す変更が merge されてから apply が止まる。
-func checkPullRequestOrder(dir string, records []groupRecord, found bool) []lintreport.Finding {
-	if found || !slices.ContainsFunc(records, func(r groupRecord) bool { return !r.unlock }) {
+func checkPullRequestOrder(dir string, records []groupRecord, found int) []lintreport.Finding {
+	if found > 0 || !slices.ContainsFunc(records, func(r groupRecord) bool { return !r.unlock }) {
 		return nil
 	}
 	return []lintreport.Finding{{File: dir, Line: 1, Message: "pull_request で起動し保護設定が required とする job に、make resource-order-check-test と make resource-order-check を走らせるものがありません。apply の job が待つ順序の検査を、merge の前の必須検査にも置いてください"}}
