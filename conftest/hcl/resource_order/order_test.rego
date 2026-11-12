@@ -10,7 +10,7 @@ rule := {
 ok_src := `resource "aws_iam_role_policy" "first" {}
 
 resource "aws_iam_role" "this" {
-  depends_on = [aws_iam_role_policy.first]
+	depends_on = [aws_iam_role_policy.first]
 }
 `
 
