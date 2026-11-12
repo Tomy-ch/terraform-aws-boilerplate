@@ -16,7 +16,7 @@
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
-//	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity> -account <id>
+//	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity|unlock-identity> -account <id>
 //	    CI が assume する role の ARN を1行で出す
 //	tf-local oidc-url
 //	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
@@ -38,10 +38,17 @@
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
 //	tf-local sha256 <file>
 //	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
+//	tf-local lock-key <root>
+//	    <root>/backend.tf の key から、state の lock file の key を1行で出す
+//	tf-local lock-etag -key <k> <list.json>
+//	    `aws s3api list-objects-v2 --no-paginate` の応答から、lock file の ETag を1行で出す。lock が無ければ空行を出す
+//	tf-local lock-stale -etag <e> -meta <meta.json> <lock.json>
+//	    `aws s3api get-object` の応答と lock file から、消してよい lock の説明を1行で出す。lock が apply の job の
+//	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・policy-result・sha256 は
-// ファイルを読み、oidc-url は環境変数を読む。
+// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・policy-result・sha256・
+// lock-key・lock-etag・lock-stale はファイルを読み、oidc-url は環境変数を読み、lock-stale は時刻を読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -90,7 +97,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -107,12 +114,13 @@ type deps struct {
 	readFile func(string) ([]byte, error)
 	environ  []string
 	git      func(args ...string) (string, error)
+	now      func() time.Time
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -126,6 +134,7 @@ var argCounts = map[string]int{
 	"oidc-token":  2,
 	"oidc-sub":    2,
 	"sha256":      2,
+	"lock-key":    2,
 }
 
 func run(args []string, out io.Writer, d deps) error {
@@ -137,6 +146,12 @@ func run(args []string, out io.Writer, d deps) error {
 		return errUsage
 	}
 
+	// arg は、位置引数を1つ取るサブコマンドの引数。数は上の argCounts が確かめている。
+	arg := ""
+	if len(args) > 1 {
+		arg = args[1]
+	}
+
 	var (
 		value string
 		err   error
@@ -144,7 +159,7 @@ func run(args []string, out io.Writer, d deps) error {
 
 	switch args[0] {
 	case "region":
-		value, err = rootRegion(args[1], d.readFile)
+		value, err = rootRegion(arg, d.readFile)
 	case "bucket":
 		value, err = runBucket(args[1:])
 	case "state-key":
@@ -158,9 +173,9 @@ func run(args []string, out io.Writer, d deps) error {
 	case "oidc-url":
 		value, err = oidcURL(d.environ)
 	case "oidc-token":
-		value, err = oidcToken(args[1], d.readFile)
+		value, err = oidcToken(arg, d.readFile)
 	case "oidc-sub":
-		value, err = oidcSub(args[1], d.readFile)
+		value, err = oidcSub(arg, d.readFile)
 	case "plan-summary":
 		value, err = runPlanSummary(args[1:], d.readFile)
 	case "plan-key":
@@ -170,7 +185,13 @@ func run(args []string, out io.Writer, d deps) error {
 	case "account":
 		value, err = runAccount(args[1:])
 	case "sha256":
-		value, err = fileSHA256(args[1], d.readFile)
+		value, err = fileSHA256(arg, d.readFile)
+	case "lock-key":
+		value, err = lockKey(arg, d.readFile)
+	case "lock-etag":
+		value, err = runLockETag(args[1:], d.readFile)
+	case "lock-stale":
+		value, err = runLockStale(args[1:], d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
