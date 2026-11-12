@@ -440,7 +440,8 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 段5 の成功は、次のすべてを満たしたときとする。
 
 - 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
-- state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、それを Pull Request に記録し、CI の再実行の plan の `No changes.` で代える
+- 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した
+- state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
 - 書き込みの拒否が入った後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
 - CI で残った lock を外す経路が在り、lock の無い状態で一度走った
 
@@ -505,6 +506,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] apply の workflow の merge の前に、environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を置いた
 - [ ] 最初の run が緑で、plan の要約が `No changes.`、`OIDC の sub` が `:environment:admin-apply-identity` で終わった
 - [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
+- [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
 - [ ] `head-object` で、state が state の鍵で暗号化されていた
 - [ ] 一時 IAM user の `put-object` が state Bucket で `AccessDenied` を返した
 - [ ] CI で lock を外す経路が、lock の無い状態で一度走った
