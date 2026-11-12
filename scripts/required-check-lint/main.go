@@ -14,7 +14,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -34,25 +34,11 @@ const (
 	defaultWorkflowsDir = ".github/workflows"
 )
 
-// 検査対象を1件も持たないまま成功で終えないための番兵。「ゲートが外れた」と「合格した」を
-// 区別できなくしないため、違反（1）とは別の終了コードで返します。
-var errNoRequiredContext = xerrors.New("保護設定に required status check がありません")
-
-type ruleset struct {
-	Rules []struct {
-		Type       string `json:"type"`
-		Parameters struct {
-			RequiredStatusChecks []struct {
-				Context string `json:"context"`
-			} `json:"required_status_checks"`
-		} `json:"parameters"`
-	} `json:"rules"`
-}
-
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		if xerrors.Is(err, errNoRequiredContext) {
+		// 0件は違反（1）とは別の終了コードで返す（ADR-0702 決定13）。
+		if xerrors.Is(err, requiredchecks.ErrNone) {
 			log.Printf("❌ required-check-lint: %v", err)
 			os.Exit(2)
 		}
@@ -69,12 +55,9 @@ func run(args []string, out io.Writer) error {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 
-	contexts, err := readRequiredContexts(*rulesetPath)
+	contexts, err := requiredchecks.Read(*rulesetPath)
 	if err != nil {
-		return err
-	}
-	if len(contexts) == 0 {
-		return xerrors.Wrapf(errNoRequiredContext, "%s", *rulesetPath)
+		return xerrors.Wrap(err, "required の context の読み取り")
 	}
 
 	sources, err := readWorkflows(*workflowsDir)
@@ -91,29 +74,6 @@ func run(args []string, out io.Writer) error {
 
 	fmt.Fprintf(out, "✅ required-check-lint: required context %d 件の報告 job と起動条件を確認しました\n", len(contexts))
 	return nil
-}
-
-func readRequiredContexts(path string) ([]string, error) {
-	raw, err := os.ReadFile(path) //nolint:gosec // 検査対象のパスは呼び出し側が渡す固定値
-	if err != nil {
-		return nil, xerrors.Wrapf(err, "%s の読み取り", path)
-	}
-
-	var rs ruleset
-	if err := json.Unmarshal(raw, &rs); err != nil {
-		return nil, xerrors.Wrapf(err, "%s の解釈", path)
-	}
-
-	var contexts []string
-	for _, rule := range rs.Rules {
-		if rule.Type != "required_status_checks" {
-			continue
-		}
-		for _, c := range rule.Parameters.RequiredStatusChecks {
-			contexts = append(contexts, c.Context)
-		}
-	}
-	return contexts, nil
 }
 
 // Source は検査対象の workflow 1件です。
@@ -172,6 +132,7 @@ func check(requiredContexts []string, workflows []Source, rulesetPath string) []
 			}
 			declared[job.ID]++
 			findings = append(findings, triggerFindings(job.ID, wf)...)
+			findings = append(findings, nameFindings(job, wf.File)...)
 		}
 	}
 
@@ -188,6 +149,24 @@ func check(requiredContexts []string, workflows []Source, rulesetPath string) []
 	return findings
 }
 
+// jobName は job の直下の name: です。step の name: は桁が深いので当たらない。
+var jobName = regexp.MustCompile(`^ {4}["']?name["']?[ \t]*:`)
+
+// nameFindings は、required context を報告する job が name: を持たないことを検査します。GitHub は job の
+// name: を context として報告するので、job の ID で名指した context は報告されず、待ち続けられる。
+func nameFindings(job workflow.Job, file string) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, l := range job.Lines {
+		if jobName.MatchString(l.Text) {
+			findings = append(findings, lintreport.Finding{
+				File: file, Line: l.Number,
+				Message: fmt.Sprintf("required context `%s` を報告する job に name: を置かないでください。報告される context が job の ID と違う名前になります", job.ID),
+			})
+		}
+	}
+	return findings
+}
+
 // 記法の差で検出が外れると、フィルタが残ったまま検査が沈黙する。GitHub が受け付ける形は
 // すべて読む必要がある。
 var (
@@ -195,8 +174,7 @@ var (
 	onKey = regexp.MustCompile(`^on:[ \t]*(?:#.*)?$`)
 	// 配列記法（`on: [pull_request, push]`）と単一値（`on: pull_request`）。
 	// この形はフィルタを書けないため、検出した時点でフィルタ無しが確定する。
-	onInline = regexp.MustCompile(`^on:[ \t]*(\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:#.*)?$`)
-	// 引用符の有無を問わない pull_request キー。
+	onInline       = regexp.MustCompile(`^on:[ \t]*(\[[^\]]*\]|[A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:#.*)?$`)
 	pullRequestKey = regexp.MustCompile(`^ {2}(?:"pull_request"|'pull_request'|pull_request):[ \t]*(?:#.*)?$`)
 	topLevelKey    = regexp.MustCompile(`^\S`)
 	eventKey       = regexp.MustCompile(`^ {2}(?:"[A-Za-z_]+"|'[A-Za-z_]+'|[A-Za-z_]+):`)
@@ -237,7 +215,6 @@ func findPullRequestTrigger(source string) ([]filterHit, bool) {
 
 	onIndex := -1
 	for i, ln := range lines {
-		// 配列記法・単一値記法はフィルタを書けない。pull_request を含むならフィルタ無しで確定する。
 		if m := onInline.FindStringSubmatch(ln); m != nil {
 			return nil, inlinePullRequest.MatchString(m[1])
 		}
