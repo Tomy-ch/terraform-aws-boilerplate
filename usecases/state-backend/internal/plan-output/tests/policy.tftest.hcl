@@ -5,9 +5,13 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
 }
 
 variables {
+  kms_key_arn    = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   name           = "tabp-admin-tfplan"
   retention_days = 7
 }

@@ -6,6 +6,7 @@
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+data "aws_partition" "current" {}
 
 locals {
   bucket_name = "${var.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
@@ -14,7 +15,6 @@ locals {
 # 版管理は aws_s3_bucket_versioning.this が有効にする。このルールは非推奨の inline の versioning しか認めない。撤回: ルールが分離した resource を認めたとき。
 # nosemgrep: terraform.aws.best-practice.aws-s3-bucket-versioning-not-enabled
 resource "aws_s3_bucket" "this" {
-  #checkov:skip=CKV_AWS_145:段5 まで SSE-S3（usecases/state-backend/docs/adr/0101-sse-s3-until-cmk.md）。撤回: 段5 で SSE-KMS に切り替えたとき
   #checkov:skip=CKV_AWS_18:アクセスログの配送は段5 で足す（README）。撤回: 段5 で足したとき
   #checkov:skip=CKV2_AWS_62:通知はこの module に足さない（README、root の ADR-0102 決定15・18）。撤回: 通知をこの module の責務にしたとき
   #checkov:skip=CKV_AWS_144:リージョン間の複製は state-backend の責務外（usecases/state-backend/README.md）。撤回: 責務に入れたとき

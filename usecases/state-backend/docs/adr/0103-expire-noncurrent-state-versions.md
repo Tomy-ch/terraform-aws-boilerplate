@@ -25,7 +25,7 @@ state Bucket は版管理を持つ（state-backend/ADR-0102 (no-mfa-delete-or-ob
 
 ### 案A: lifecycle を持たない
 
-上書きされた版と lock file の delete marker が際限なく溜まる。bootstrap の段5 で SSE-KMS へ切り替えた後も、切り替えの前に書かれた SSE-S3 の版が消えない。Security Hub の S3.10 を満たさない。
+上書きされた版と lock file の delete marker が際限なく溜まる。bootstrap の段5 で state を SSE-KMS で書き直した後も、切り替えの前に書かれた SSE-S3 の版が消えない。Security Hub の S3.10 を満たさない。
 
 ### 案B: 保持日数に既定値を置く
 

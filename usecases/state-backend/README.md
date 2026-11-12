@@ -33,7 +33,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `bucket_name` | identity root と workload root の backend の `bucket`、段2 の `import` block の id |
 | `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
 | `state_key_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の鍵の権限と、apply の role の鍵の Deny の Resource を、この鍵に絞る |
-| `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` がそれぞれ同じ値を直書きし、テストはこの出力をその直書きで固定する（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
+| `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` と `scripts/tf-local`（`state-key` が alias の一覧からこの名前で鍵の ARN を引く）がそれぞれ同じ値を写し、テストはこの出力を `imports.tftest.hcl` の直書きで固定し、`scripts/tf-local` のテストは自分の写しをその直書きと突き合わせる（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
 | `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 
@@ -44,12 +44,13 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 
 | 段 | 持つもの | 状態 |
 | --- | --- | --- |
-| 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理、SSE-S3 と SSE-C の拒否。`env/admin/identity/` の `import` block | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
+| 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理。`env/admin/identity/` の `import` block。既定の暗号化は取り込まず、段4 の apply までは AWS の既定（SSE-S3 と SSE-C の拒否）が掛かる | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
 | 段3-4 | TLS を要求する Bucket Policy | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
 | 段4 | state Bucket の lifecycle（上書きされた版を保持日数で消す） | `modules/s3`。段1 の CLI では作らず、段2 の plan に追加として現れる |
-| 段4 | state の鍵（CMK、Key Policy、alias） | `modules/kms`。段1 の CLI では作らず、段2 の plan に追加として現れる。state の暗号化にはまだ使わない |
-| 段5 | SSE-KMS への切り替え（2つの Bucket）、root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。ログの分は #108 の後）。CI の apply（`terraform-apply.yaml`）が apply する |
+| 段4 | state の鍵（CMK、Key Policy、alias） | `modules/kms`。段1 の CLI では作らず、段2 の plan に追加として現れる |
+| 段4 | 2つの Bucket の既定の暗号化（state の鍵による SSE-KMS、Bucket Key を使わない、SSE-C の拒否）。backend は init で鍵の ARN を渡す | `modules/s3` と `internal/plan-output`。state Bucket の分は段2 の plan に追加として現れる（[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）。鍵ができる前の段2-4 の init は鍵を渡さず、state は SSE-S3 で書かれる。段5 で state を書き換える最初の CI の apply が SSE-KMS で書き直す |
+| 段5 | root ごとの key と lock file の書き込みの拒否（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9・10）、2つの Bucket の S3 サーバーアクセスログの CloudWatch Logs への配送 | 未実装（#19。ログの分は #108 の後）。CI の apply（`terraform-apply.yaml`）が apply する |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。
 
@@ -64,6 +65,7 @@ unsupported:
 
 - 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
+- 段5 の後のアカウントで、段4 の手順をそのまま回復に使うこと。state と lock file は state の鍵で暗号化され、Key Policy に名指されない主体（一時 IAM user を含む）は state を読めない。回復には Key Policy が名指す主体の資格情報が要り、その発行と管理は責務外とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19、[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 - plan の出力を保持日数より長く残すこと
 - 保持日数を過ぎた state の版へ戻すこと（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
@@ -87,9 +89,9 @@ unsupported:
 
 ## 検証方法
 
-- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `state_noncurrent_version_retention_days`・`plan_output_retention_days`・`ci_role_arns` の検査と配線を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名と alias を確かめる。Bucket の属性の値と lifecycle の規則は `modules/s3/tests/` と `internal/plan-output/tests/` が、鍵の属性と Key Policy の文書は `modules/kms/tests/` が見る
+- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `state_noncurrent_version_retention_days`・`plan_output_retention_days`・`ci_role_arns` の検査と配線を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名と alias を確かめる。Bucket の属性の値（既定の暗号化の鍵と Bucket Key を含む）と lifecycle の規則は `modules/s3/tests/` と `internal/plan-output/tests/` が、鍵の属性と Key Policy の文書は `modules/kms/tests/` が見る。2つの Bucket の既定の暗号化が state の鍵を名指すことは `tests/contract.tftest.hcl` が、backend に渡す鍵の ARN の組み立ては `scripts/tf-local` の `state-key` のテストが見る
 - テストが見ないもの: `ci_role_arns` の2つの role が `modules/kms` の `users` に渡ること、管理アカウントの root で `ci_role_arns` に渡る role が役割どおりであること（テストは子 module の入力を観測できない）。CI の plan が示す `aws_kms_key_policy` の文書の `RolesViaS3` の Principal と、merge の後の `get-key-policy` を、人が確かめる
-- 段2 の突合: 人が実 AWS で `terraform plan` を実行し、取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないものだけであることを確かめる（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定8）。`import` block が `modules/s3` の resource をすべて覆っていること、その id が正しいことを見るのはこの plan だけで、自動の検査は無い
+- 段2 の突合: 人が実 AWS で `terraform plan` を実行し、取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないものだけであることを確かめる（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定8）。`import` block が `modules/s3` の resource のうち段1 の CLI が作るもの（既定の暗号化を除く）をすべて覆っていること、その id が正しいことを見るのはこの plan だけで、自動の検査は無い
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。実行ごとに sandbox へ複製を作り、apply→検証→destroy して、期待残存との照合で余剰0件を確かめる。複製は常駐する Bucket と backend・名前・鍵を共有しない
 
 sandbox のアカウント（`organization-baseline`、フェーズ1）が無い間は、複製のテストを実行しない。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
@@ -103,15 +105,18 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - 2つの Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
 - 作成直後の role を名指す Key Policy の書き込みが、IAM の結果整合で失敗すること（新しいアカウントの段4。Provider は retry する）
 - 鍵の destroy の後も、削除の猶予（30日）のあいだ鍵が残ること
+- 新しいアカウントの段4 の apply の途中で既定の暗号化が SSE-KMS に変わっても、鍵を渡さない backend の state と lock file の書き込みが SSE-S3 で通ること
+- SSE-KMS に切り替えた後も、切り替えの前に SSE-S3 で書かれた object を、CI の role がそのまま読めること（管理アカウントでは、切り替えの apply の後の plan が見る）
+- init が鍵の ARN を渡す backend の書き込みが、Bucket の既定と同じ鍵で暗号化されること（管理アカウントでは、人が `docs/setup/bootstrap.md` 段5 の `head-object` で見る）
 
 Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、2つの Bucket の Bucket Policy の Allow の Action の wildcard の不在と、state の鍵の Key Policy の規則（`plan.kms_key_policy`）を確かめる。CI の plan と apply は、実際の plan に `plan.stateful_protection` を掛け、2つの Bucket と lifecycle の削除と置換、lifecycle が版を消す日数の短縮を、許可の宣言なしには落とす（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md) 決定7）。object lock と `mfa` の不在を見る Policy は無い（#210）。層検査（#74）は未配線である。配線された後に遡って検証する。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-参照日: 2026-10-25（lifecycle と backup の項は 2026-11-08）
+参照日: 2026-10-25（lifecycle と backup の項は 2026-11-08、state の暗号化の項は 2026-11-12）
 
 - AWS / HashiCorp が publisher の state backend の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search` を `q` = `tfstate` / `backend` / `state-backend` / `s3-backend`、`provider=aws` で引いた結果に、namespace `aws-ia`・`hashicorp`・`aws`・`aws-samples` が無い）
-- 参照した一次資料: [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[import block](https://developer.hashicorp.com/terraform/language/block/import)、AWS Provider 6.70.0 の `aws_s3_bucket` 系の文書と schema、AWS CLI 2.36.40 の `s3api` reference、[AWS Prescriptive Guidance の Backend best practices](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/backend.html)、[Security Hub の S3 の control](https://docs.aws.amazon.com/securityhub/latest/userguide/s3-controls.html)（S3.10）、[S3 Lifecycle の設定例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html)
+- 参照した一次資料: [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[import block](https://developer.hashicorp.com/terraform/language/block/import)、AWS Provider 6.70.0 の `aws_s3_bucket` 系の文書と schema、AWS CLI 2.36.40 の `s3api` reference、[AWS Prescriptive Guidance の Backend best practices](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/backend.html)、[Security Hub の S3 の control](https://docs.aws.amazon.com/securityhub/latest/userguide/s3-controls.html)（S3.10）、[S3 Lifecycle の設定例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html)。state の暗号化の項は、Terraform v1.16.6 の S3 backend の source（`internal/backend/remote-state/s3/client.go`・`backend.go`・`validate.go`。`encrypt` と `kms_key_id` の扱い）と、Amazon S3 User Guide（[Using SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html)、[Specifying SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/specifying-kms-encryption.html)、[Setting default encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-encryption.html)、[S3 Bucket Keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html)）、Amazon S3 API Reference の [PutBucketEncryption](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html)
 
 採用した知見:
 
@@ -119,6 +124,7 @@ Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` �
 - `import` block で取り込み、`terraform import` コマンドを使わない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定6）
 - backend の `bucket` を部分構成で渡す。名前にアカウント ID が入るので、派生したリポジトリが backend の block を書き換えずに済む
 - 版管理を持つ Bucket に lifecycle を置き、上書きされた版を保持日数で消す（Security Hub S3.10。[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
+- backend は `encrypt = true` のまま `kms_key_id` に鍵の ARN を部分構成で渡す。`encrypt` が真で `kms_key_id` が無い backend は state と lock file の書き込みに SSE-S3 を明示し、S3 は要求の header を Bucket の既定より優先する。鍵は alias ではなく ARN で名指す（S3 の Setting default encryption）（[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
 
 採用しなかった知見と理由:
 
@@ -127,13 +133,15 @@ Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` �
 - AWS Backup による state Bucket の backup（AWS Prescriptive Guidance の Backend best practices が版管理とあわせて推奨する）: AWS Backup は独立したユースケースにせず、関係するユースケースの内部で扱う（[scope.md 第8節](../../docs/v1.0-plan/scope.md)）。このユースケースの回復点は、版管理と保持日数のあいだ上書きされた版を残す lifecycle（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）が担う。backup を足すかは `backup-restore`（#66）が決める
 - resource identity での import: Terraform 1.12 以上を要し、Bucket 名の id で足りる
 - backend の `allowed_account_ids`: アカウント ID をリポジトリに書くことになる
+- `encrypt = false` で Bucket の既定の暗号化に任せる、`backend.tf` に alias を literal で書く、AWS 管理鍵（`aws/s3`）、S3 Bucket Key: [state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md) の検討した代替案
+- 切り替えの前に SSE-S3 で書かれた state の版を copy-object で書き直す: 実環境への手での変更になる。旧版は lifecycle の日数で消える（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 
 ## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
 
 記録は use-case ADR が持ち、一般 module に由来する逸脱はその module の `README.md` が持つ（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）。一覧は [`docs/adr/README.md`](docs/adr/README.md)。
 
 - 管理アカウント自身の state Bucket を管理アカウントに置く: [state-backend/ADR-0001](docs/adr/0001-management-account-placement.md)
-- 段5 まで SSE-S3: [state-backend/ADR-0101](docs/adr/0101-sse-s3-until-cmk.md)（state Bucket）、[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md)（plan の出力の Bucket）
+- 新しいアカウントの段1 から、段5 で state を書き換える最初の CI の apply まで、state を SSE-S3 で書き、段4 の apply まで既定の暗号化を AWS の既定に頼る: [state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)
 - MFA delete と Object Lock を掛けない: [state-backend/ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
 - state の鍵の Key Policy が、アカウントへの委任から暗号操作を外す: [`modules/kms`](../../modules/kms/README.md) の「公式推奨からの逸脱」
 

@@ -5,6 +5,7 @@
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+data "aws_partition" "current" {}
 
 locals {
   bucket_name = "${var.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
@@ -13,7 +14,6 @@ locals {
 # 版管理は aws_s3_bucket_versioning.this が有効にする。このルールは非推奨の inline の versioning しか認めない。撤回: ルールが分離した resource を認めたとき。
 # nosemgrep: terraform.aws.best-practice.aws-s3-bucket-versioning-not-enabled
 resource "aws_s3_bucket" "this" {
-  #checkov:skip=CKV_AWS_145:段5 まで SSE-S3（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 段5 で SSE-KMS に切り替えたとき
   #checkov:skip=CKV_AWS_18:アクセスログの配送は段5 で足す（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 段5 で足したとき
   #checkov:skip=CKV2_AWS_62:書き込みを知らせる相手が無い。読み手は CI の log が示す key で取りに行く（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 通知を受ける読み手を足したとき
   #checkov:skip=CKV_AWS_144:plan の出力は保持日数で消える一時の記録で、リージョン障害に備えて複製しない（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 保持日数を超えて残す要件ができたとき
@@ -47,7 +47,7 @@ resource "aws_s3_bucket_ownership_controls" "this" {
   }
 }
 
-# plan の role は object を消せないので、上書きされた版は残る。古い出力を消すのは lifecycle だけである。
+# 上書きされた版は plan の role が消せないので、lifecycle が失効させる（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。
 resource "aws_s3_bucket_versioning" "this" {
   bucket = aws_s3_bucket.this.id
 

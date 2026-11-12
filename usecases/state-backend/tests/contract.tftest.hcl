@@ -1,4 +1,3 @@
-# 公開 output の名前と、それが返す値の配線を固定する（ADR-0202 決定4）。
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
@@ -9,6 +8,12 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+}
+
+# 2つの Bucket の kms_key_arn の validation を通すため、鍵の ARN だけ形のある値にする。
+override_resource {
+  target = module.kms.aws_kms_key.this
+  values = { arn = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
 }
 
 variables {
@@ -52,6 +57,16 @@ run "outputs" {
   assert {
     condition     = output.state_key_arn == module.kms.key_arn
     error_message = "state_key_arn が state の鍵の ARN を返していません。"
+  }
+
+  assert {
+    condition     = module.s3.kms_key_arn == output.state_key_arn
+    error_message = "state Bucket の既定の暗号化が state の鍵を名指していません。"
+  }
+
+  assert {
+    condition     = module.plan_output.kms_key_arn == output.state_key_arn
+    error_message = "plan の出力の Bucket の既定の暗号化が state の鍵を名指していません。"
   }
 }
 

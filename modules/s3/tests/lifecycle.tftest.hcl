@@ -5,6 +5,9 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
 
   # prefix・大きさ・days は Optional かつ Computed で、mock の apply は設定しない値を乱数か 0 で埋める。
   # 設定しうる値と重ならない既定を置き、設定した値だけが既定から外れるようにする。
@@ -20,6 +23,7 @@ mock_provider "aws" {
 }
 
 variables {
+  kms_key_arn                       = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   name                              = "tabp-mgmt-tfstate"
   noncurrent_version_retention_days = 90
 }

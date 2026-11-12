@@ -5,9 +5,13 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { region = "ap-northeast-1" }
   }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
 }
 
 variables {
+  kms_key_arn                       = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   noncurrent_version_retention_days = 90
 }
 
@@ -233,8 +237,23 @@ run "bucket_attributes" {
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
-    error_message = "既定の暗号化が AES256 ではありません。"
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "aws:kms"
+    error_message = "既定の暗号化が SSE-KMS ではありません。"
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).kms_master_key_id == "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    error_message = "既定の暗号化が kms_key_arn の鍵を名指していません。"
+  }
+
+  assert {
+    condition     = output.kms_key_arn == var.kms_key_arn
+    error_message = "kms_key_arn が既定の暗号化の鍵を返していません。"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_server_side_encryption_configuration.this.rule).bucket_key_enabled == false
+    error_message = "S3 Bucket Key が無効ではありません。"
   }
 
   assert {

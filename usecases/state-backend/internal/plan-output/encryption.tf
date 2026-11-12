@@ -6,8 +6,18 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = var.kms_key_arn
     }
+    bucket_key_enabled       = false
     blocked_encryption_types = ["SSE-C"]
+  }
+
+  lifecycle {
+    # S3 は PutBucketEncryption で鍵を検証しないので、別の場所の鍵は書き込みまで落ちない。
+    precondition {
+      condition     = startswith(var.kms_key_arn, "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:key/")
+      error_message = "kms_key_arn が、Bucket と同じ partition・リージョン・アカウントの鍵ではありません。"
+    }
   }
 }

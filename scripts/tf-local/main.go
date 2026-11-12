@@ -7,6 +7,10 @@
 //	tf-local bucket -project <p> -env <e> -region <r> -identity <out>
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
 //	    state Bucket の名前を1行で出す
+//	tf-local state-key -project <p> -env <e> -region <r> -identity <out> -aliases <json> -encryption <json> -missing <fail|sse-s3>
+//	    `aws kms list-aliases` と `aws s3api get-bucket-encryption` の JSON から、init に渡す
+//	    `-backend-config=kms_key_id=<state の鍵の ARN>` を1行で出す。Bucket の既定が SSE-KMS で鍵が違えば失敗する。
+//	    alias が無ければ失敗し、-missing sse-s3 で既定が AES256 のときだけ空行を出す
 //	tf-local env-unset
 //	    aws と terraform の振る舞いを呼び出し元の環境変数で変えさせないために外す名前を、
 //	    `env` に渡す `-u <名前>` の並びで出す
@@ -41,8 +45,8 @@
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
-// backend block は式を持てないので、Bucket 名と role 名の規則をここに写す。Bucket 名の正本は modules/s3 と
-// usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
+// backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
+// modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
 // env/admin/identity のテストの期待値と docs/setup/bootstrap.md の段1、deployment-identity の .tf に
 // 突き合わせて見る（ADR-0702 決定17 の但し書き）。
 package main
@@ -86,7 +90,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -113,8 +117,23 @@ func main() {
 	}
 }
 
+// argCounts は、位置引数だけを取るサブコマンドの、サブコマンド名を含む引数の数。
+var argCounts = map[string]int{
+	"region":      2,
+	"env-unset":   1,
+	"plan-header": 1,
+	"oidc-url":    1,
+	"oidc-token":  2,
+	"oidc-sub":    2,
+	"sha256":      2,
+}
+
 func run(args []string, out io.Writer, d deps) error {
 	if len(args) == 0 {
+		return errUsage
+	}
+
+	if n, ok := argCounts[args[0]]; ok && len(args) != n {
 		return errUsage
 	}
 
@@ -125,44 +144,22 @@ func run(args []string, out io.Writer, d deps) error {
 
 	switch args[0] {
 	case "region":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = rootRegion(args[1], d.readFile)
 	case "bucket":
 		value, err = runBucket(args[1:])
+	case "state-key":
+		value, err = runStateKey(args[1:])
 	case "env-unset":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = envUnset(d.environ)
 	case "plan-header":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = planHeader(d.git)
 	case "role-arn":
 		value, err = runRoleARN(args[1:])
 	case "oidc-url":
-		if len(args) != 1 {
-			return errUsage
-		}
-
 		value, err = oidcURL(d.environ)
 	case "oidc-token":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = oidcToken(args[1], d.readFile)
 	case "oidc-sub":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = oidcSub(args[1], d.readFile)
 	case "plan-summary":
 		value, err = runPlanSummary(args[1:], d.readFile)
@@ -173,10 +170,6 @@ func run(args []string, out io.Writer, d deps) error {
 	case "account":
 		value, err = runAccount(args[1:])
 	case "sha256":
-		if len(args) != 2 {
-			return errUsage
-		}
-
 		value, err = fileSHA256(args[1], d.readFile)
 	default:
 		return xerrors.Wrap(errUsage, args[0])

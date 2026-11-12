@@ -8,7 +8,7 @@
 2. 段1-5 —— 内容と順序は [ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定4 が定める。段4 のローカルからの apply は同 決定9・10 の例外であり、実行の記録は Pull Request の本文に残す（同 決定10）
 3. 一時 IAM user の削除 —— 段5 の成功の後に行う
 
-各ユースケースの責務境界と公開契約は、それぞれの README が持つ。本書はそれらを再掲しない。ADR-0602 決定9 の回復の契機でも、同じ手順を踏む。
+各ユースケースの責務境界と公開契約は、それぞれの README が持つ。本書はそれらを再掲しない。ADR-0602 決定9 の回復の契機でも、同じ手順を踏む。ただし、段5 で CI の apply が state を state の鍵で書いた後は、Key Policy に名指されない一時 IAM user は state を読めず、この手順をそのまま回復に使えない（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）。
 
 root でサインインするのは2回だけである。1回目は「root で行う作業」で、root でしか行えない作業と最初の IAM 主体の作成を済ませてサインアウトする。以降は一時 IAM user で作業する。2回目は「一時 IAM user の削除」で行う。
 
@@ -168,7 +168,7 @@ Cost Explorer は API では有効化できず、コンソールで初めて開�
 
 ### 段1. AWS CLI で state Bucket を作る
 
-state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは `modules/s3` が宣言するものと同じ構成に限る —— 版管理、Public Access Block、Object Ownership、既定の暗号化（SSE-S3 と SSE-C の拒否）。Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。
+state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは、`modules/s3` が宣言するもののうち state を保存するために要るものに限る —— 版管理、Public Access Block、Object Ownership。既定の暗号化、Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。既定の暗号化は state の鍵を名指すので、鍵より先には置けない。段4 の apply までは、AWS が新しい Bucket に置く既定（SSE-S3 と SSE-C の拒否）が掛かる（[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) 決定4）。
 
 名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
 
@@ -192,15 +192,13 @@ state backend が無い時点では Terraform が state を保存できないの
      --object-ownership BucketOwnerEnforced
    ```
 
-3. Public Access Block、版管理、既定の暗号化を設定する
+3. Public Access Block と版管理を設定する
 
    ```bash
    aws s3api put-public-access-block --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
      --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
    aws s3api put-bucket-versioning --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
      --versioning-configuration Status=Enabled
-   aws s3api put-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
-     --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BlockedEncryptionTypes":{"EncryptionType":["SSE-C"]}}]}'
    ```
 
 4. 設定を読み戻して確かめる
@@ -212,20 +210,22 @@ state backend が無い時点では Terraform が state を保存できないの
    aws s3api get-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
    ```
 
-   Public Access Block の4項目が `true`、所有権が `BucketOwnerEnforced`、版管理が `Enabled`、暗号化が `AES256` で `SSE-C` を拒否していること。1つでも違えば、手順3 をやり直す。4つがすべて一致するまで段2 へ進まない。
+   Public Access Block の4項目が `true`、所有権が `BucketOwnerEnforced`、版管理が `Enabled` であること。1つでも違えば、手順3 をやり直す。3つがすべて一致するまで段2 へ進まない。暗号化は AWS の既定で、`AES256` で `SSE-C` を拒否していること。拒否していなければ、段2 へ進まずに Pull Request に記録して止まる（AWS が新しい Bucket の既定を変えたことになり、state-backend/ADR-0101 の見直し条件に当たる）。
 
 名前や namespace を誤ったときは、空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消して作り直す。
 
 ### 段2. Terraform で取り込み、plan で突合する
 
-`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` は block に書かず、init の引数で渡す。`make init-admin-identity` がアカウント ID から Bucket 名を組んで渡す。
+`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` と `kms_key_id` は block に書かず、init の引数で渡す。`make init-admin-identity` がアカウント ID から Bucket 名を組み、state の鍵の alias から鍵の ARN を求めて渡す。
+
+段4 の apply までは state の鍵が無い。`make` は既定では鍵が無いと init で失敗するので、段2 から段4 の `make` には `TF_LOCAL_MISSING_STATE_KEY=sse-s3` を付けて、鍵を渡さない init を明示して選ぶ。この指定は、alias が無く、Bucket の既定の暗号化が `AES256` のときだけ効く。その間の state と lock file は SSE-S3 で書かれる。CI はこの指定を受けない。
 
 段2 では apply しない。state を書くのは段4 のローカルの apply であり、ADR-0601 決定5 の例外は段4 だけに掛かる（ADR-0602 決定9）。plan は lock を取らずに実行する（ADR-0604 決定8）。
 
 1. plan する。`make plan-admin-identity` は先に `make init-admin-identity` を実行し、plan の出力を `tmp/plan/admin-identity.log` に残す。log の1行目は plan した commit である
 
    ```bash
-   make plan-admin-identity
+   TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity
    ```
 
    make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
@@ -240,9 +240,9 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 5 to import, 25 to add, 0 to change, 0 to destroy.` であり、追加が次の25件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 4 to import, 26 to add, 0 to change, 0 to destroy.` であり、追加が次の26件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
-   - `module.state_backend.module.s3` の `aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の2件（後者は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
+   - `module.state_backend.module.s3` の `aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の3件（1件目は state の鍵による既定の暗号化。[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md)。3件目は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
    - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
    - `module.state_backend.module.kms` の `aws_kms_key.this`、`aws_kms_key_policy.this`、`aws_kms_alias.this` の3件（state の鍵）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
@@ -284,7 +284,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    gh api repos/<owner>/<repo>/actions/oidc/customization/sub
    ```
 
-3. 値を変えた commit で Pull Request を開き、段2 の plan をやり直す。件数と一覧が段2 の手順2 のとおりであること
+3. 値を変えた commit で Pull Request を開き、段2 の plan（`TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity`）をやり直す。件数と一覧が段2 の手順2 のとおりであること
 
 ### 段4. 一時 IAM user のローカル権限で apply する
 
@@ -303,7 +303,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    1つ目の結果に `token.actions.githubusercontent.com` が無く、3つの `get-role` がすべて `NoSuchEntity` を返すこと
 
-4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）
+4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）。state の鍵はまだ無いので、init は鍵を渡さない
 
    ```bash
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
@@ -331,7 +331,14 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    ```
 
 8. apply の後に確かめる
-   - `make plan-admin-identity` が `No changes.` を示す。示さなければ、その出力を Pull Request に記録して止まる
+   - `make plan-admin-identity` が `No changes.` を示す。示さなければ、その出力を Pull Request に記録して止まる。apply で state の鍵ができ、init が鍵の ARN を渡すようになるので、手順4 の init の backend の設定とは食い違い、そのままの `make` は init で失敗する。先に手元の backend の設定のキャッシュを消す。消すのは backend の設定の控えだけで、state（S3 の object）でも provider でもない。`TF_LOCAL_MISSING_STATE_KEY` は付けない
+
+     ```bash
+     rm -f env/admin/identity/.terraform/terraform.tfstate
+     make plan-admin-identity
+     ```
+
+   - `aws s3api get-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` と、同じことを plan の出力の Bucket（`"${BUCKET/-tfstate-/-tfplan-}"`）に行った結果が、どちらも `SSEAlgorithm` `aws:kms`、`KMSMasterKeyID` が `alias/tabp-admin-tfstate` の指す鍵の ARN、`BucketKeyEnabled` `false`、`SSE-C` の拒否を返す。state そのものは、段5 で state を書き換える最初の CI の apply まで SSE-S3 のままである
    - `aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"` の `ClientIDList` が `sts.amazonaws.com` だけである
    - 3つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity`。role 名と違い、apply-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
    - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
@@ -420,19 +427,27 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 途中で失敗したとき:
 
-- 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ないので、terraform のエラーの詳細は一時 IAM user の `make plan-admin-identity` で見る
+- 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ない。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
-- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で `terraform force-unlock <ID>` で外す。書き込みの拒否が入った後は、人の主体は lock file を消せない。CI で外す経路は未配線であり（#226）、配線されるまでは書き込みの拒否を入れない
+- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で lock file を消す。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+
+  ```bash
+  aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate.tflock
+  ```
+
+  書き込みの拒否が入った後は、人の主体は lock file を消せない。CI で外す経路は未配線であり（#226）、配線されるまでは書き込みの拒否を入れない
 
 段5 の成功は、次のすべてを満たしたときとする。
 
 - 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
+- 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した
+- state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
 - 書き込みの拒否が入った後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
 - CI で残った lock を外す経路が在り、lock の無い状態で一度走った
 
 ## 一時 IAM user の削除
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、段4 をやり直す手段と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
+bootstrap の段5 が成功するまでは削除しない。それまでは、残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
@@ -463,7 +478,8 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `make plan-admin-identity` が `5 to import, 25 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の25件だけだった
+- [ ] `TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity` が `4 to import, 26 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の26件だけだった
+- [ ] 段1 の読み戻しで、既定の暗号化が `AES256` で `SSE-C` を拒否していた
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返し、`alias/tabp-admin-tfstate` が無かった
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
@@ -480,7 +496,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
 - [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
-- [ ] provider の audience、role の policy、Bucket Policy と lifecycle、state の鍵と Key Policy の読み戻しが宣言どおりだった
+- [ ] provider の audience、role の policy、Bucket Policy と lifecycle、2つの Bucket の既定の暗号化、state の鍵と Key Policy の読み戻しが宣言どおりだった
 - [ ] `simulate-principal-policy` の行数と判定が、段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
@@ -490,6 +506,8 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] apply の workflow の merge の前に、environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を置いた
 - [ ] 最初の run が緑で、plan の要約が `No changes.`、`OIDC の sub` が `:environment:admin-apply-identity` で終わった
 - [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
+- [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
+- [ ] `head-object` で、state が state の鍵で暗号化されていた
 - [ ] 一時 IAM user の `put-object` が state Bucket で `AccessDenied` を返した
 - [ ] CI で lock を外す経路が、lock の無い状態で一度走った
 

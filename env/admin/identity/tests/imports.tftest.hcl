@@ -48,10 +48,6 @@ override_resource {
   target = module.state_backend.module.s3.aws_s3_bucket_versioning.this
 }
 
-override_resource {
-  target = module.state_backend.module.s3.aws_s3_bucket_server_side_encryption_configuration.this
-}
-
 run "admin_state_bucket_name" {
   command = plan
 
