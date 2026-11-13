@@ -413,3 +413,40 @@ test_pass_condition_case_insensitive if {
 	])
 	count(messages_with(replace(valid_statements, 1, s))) == 0
 }
+
+test_violation_writer_declared_twice if {
+	fixture.has("[PLAN-SBW-00] root の writer と lock を外す role", messages_on(valid_statements, valid_key_statements, with_state_backend({"unlocker": "apply_identity_role"})))
+}
+
+test_violation_key_policy_mixed_principal if {
+	mixed := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": ai, "Service": "logs.ap-northeast-1.amazonaws.com"}, "Action": "kms:Decrypt", "Resource": "*"}
+	fixture.has("[PLAN-SBW-06] state-backend.json", messages_on(valid_statements, array.concat(valid_key_statements, [mixed]), decl))
+}
+
+test_violation_others_principal_narrowed if {
+	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
+	fixture.has("[PLAN-SBW-01] state Bucket", messages_with(replace(valid_statements, 1, s)))
+}
+
+test_violation_tls_principal_narrowed if {
+	s := json.patch(tls, [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
+	fixture.has("[PLAN-SBW-08]", messages_with(replace(valid_statements, 0, s)))
+}
+
+test_violation_encryption_principal_narrowed if {
+	s := json.patch(other_than_kms, [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
+	fixture.has("[PLAN-SBW-07] state Bucket", messages_with(replace(valid_statements, 8, s)))
+}
+
+test_violation_other_key_value_includes_other_key if {
+	fixture.has("[PLAN-SBW-07] state-backend.json: 別の鍵 ID", messages_with(replace(valid_statements, 9, other_key([key, "arn:aws:kms:ap-northeast-1:123456789012:key/00000000-0000-0000-0000-000000000000"]))))
+}
+
+test_violation_root_without_writer if {
+	d := with_state_backend({"roots": [{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"}, {"state": "workload/terraform.tfstate"}]})
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_key_user_roles_not_array if {
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles が配列", messages_on(valid_statements, valid_key_statements, with_state_backend({"key_user_roles": "plan_role"})))
+}

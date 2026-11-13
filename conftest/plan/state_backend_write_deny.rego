@@ -33,14 +33,47 @@ root_keys(root) := {object_arn(k) | some k in [root.state, sprintf("%s.tflock", 
 
 object_write_actions := {"s3:deleteobject", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}
 
+writer_names := array.concat([root.writer | some root in object.get(cfg, "roots", [])], [object.get(cfg, "unlocker", "")])
+
+# 同じ role を2つの役割に宣言すると writers の key が重なり、評価そのものが落ちる。先に SBW-00 で止める。
+distinct_writers if count({n | some n in writer_names}) == count(writer_names)
+
 # writer ごとに、書ける object と、その object へ拒否する操作。
 writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} if {
+	distinct_writers
 	some root in object.get(cfg, "roots", [])
 	arn := role_arn(root.writer)
 }
 
 writers[arn] := {"keys": {object_arn(lock_key)}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} if {
+	distinct_writers
 	arn := role_arn(object.get(cfg, "unlocker", ""))
+}
+
+well_formed_root(root) if {
+	is_string(root.writer)
+	is_string(root.state)
+}
+
+deny contains msg if {
+	not is_array(object.get(cfg, "roots", []))
+	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.roots が配列ではありません"
+}
+
+deny contains msg if {
+	some root in object.get(cfg, "roots", [])
+	not well_formed_root(root)
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素 %v が writer と state の文字列を持っていません", [root])
+}
+
+deny contains msg if {
+	not is_array(object.get(cfg, "key_user_roles", []))
+	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles が配列ではありません"
+}
+
+deny contains msg if {
+	not distinct_writers
+	msg := sprintf("[PLAN-SBW-00] root の writer と lock を外す role（data.policy_plan.state_backend.roots・unlocker）に同じ role %v が重なっています", [writer_names])
 }
 
 bucket_policies contains r if {
