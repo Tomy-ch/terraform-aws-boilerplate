@@ -31,15 +31,15 @@ lock_key := object.get(object.get(di, "unlock_role", {}), "lock_key", "")
 
 root_keys(root) := {object_arn(k) | some k in [root.state, sprintf("%s.tflock", [root.state])]}
 
-object_write_actions := {"s3:deleteobject", "s3:deleteobjectversion", "s3:putobject"}
+object_write_actions := {"s3:deleteobject", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}
 
 # writer ごとに、書ける object と、その object へ拒否する操作。
-writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion"}} if {
+writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} if {
 	some root in object.get(cfg, "roots", [])
 	arn := role_arn(root.writer)
 }
 
-writers[arn] := {"keys": {object_arn(lock_key)}, "denied": {"s3:deleteobjectversion", "s3:putobject"}} if {
+writers[arn] := {"keys": {object_arn(lock_key)}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} if {
 	arn := role_arn(object.get(cfg, "unlocker", ""))
 }
 
@@ -85,7 +85,9 @@ others(a) if {
 }
 
 confining(a, arn) if {
+	a.statement.Principal == "*"
 	object.keys(conditions(a.statement)) == {"arnequals"}
+	object.keys(conditions(a.statement).arnequals) == {"aws:principalarn"}
 	principal_arn_values(a.statement, "arnequals") == {arn}
 }
 
@@ -102,6 +104,7 @@ encryption(a) if {
 other_than_kms(a) if {
 	encryption(a)
 	c := conditions(a.statement)
+	object.keys(c) == {"null", "stringnotequals"}
 	c.null == {sse: "false"}
 	c.stringnotequals == {sse: "aws:kms"}
 }
@@ -109,6 +112,7 @@ other_than_kms(a) if {
 other_key(a) if {
 	encryption(a)
 	c := conditions(a.statement)
+	object.keys(c) == {"null", "stringnotequals"}
 	c.null == {sse_key: "false"}
 	object.keys(c.stringnotequals) == {sse_key}
 }
@@ -116,6 +120,7 @@ other_key(a) if {
 managed_key(a) if {
 	encryption(a)
 	c := conditions(a.statement)
+	object.keys(c) == {"null", "stringequals"}
 	c.stringequals == {sse: "aws:kms"}
 	c.null == {sse_key: "true"}
 }
@@ -226,7 +231,7 @@ deny contains msg if {
 	some a in denies
 	not tls(a.statement)
 	count(actions(a.statement) - object_write_actions) > 0
-	msg := sprintf("[PLAN-SBW-03] %s: TLS 以外の Deny の Action %v が、s3:PutObject・s3:DeleteObject・s3:DeleteObjectVersion の部分集合ではありません", [a.path, sort(actions(a.statement))])
+	msg := sprintf("[PLAN-SBW-03] %s: TLS 以外の Deny の Action %v が、object の書き込みの5つ（s3:PutObject・s3:DeleteObject・s3:DeleteObjectVersion・s3:ReplicateObject・s3:ReplicateDelete）の部分集合ではありません", [a.path, sort(actions(a.statement))])
 }
 
 deny contains msg if {
@@ -368,4 +373,11 @@ deny contains msg if {
 	count(bucket_policies) > 0
 	count({a | some a in denies; tls_deny(a)}) != 1
 	msg := sprintf("[PLAN-SBW-08] state Bucket の Bucket Policy に、%s と %s/* への s3:* を aws:SecureTransport が false の要求について Principal \"*\" に拒否する文が1つではありません", [bucket_arn, bucket_arn])
+}
+
+# Allow は IAM の側に置く。KICS は Statement を concat で組む文書を読めないので、Allow の検査をここで持つ。
+deny contains msg if {
+	some a in statements
+	a.statement.Effect != "Deny"
+	msg := sprintf("[PLAN-SBW-09] %s: state Bucket の Bucket Policy が Deny でない文（Effect %v）を持っています", [a.path, a.statement.Effect])
 }

@@ -37,7 +37,7 @@ variable "kms_key_arn" {
 }
 
 variable "object_writers" {
-  description = "object の書き込みを許す role。map の key は Bucket Policy の Sid の一部になる。role_arn は role の ARN、keys はその role が書ける object の key、access は write（PutObject と DeleteObject）か delete（DeleteObject だけ）。ほかの主体の書き込み、keys の外への書き込み、access の外の操作、DeleteObjectVersion は Bucket Policy が拒否する。"
+  description = "object の書き込みを許す role。map の key は Bucket Policy の Sid の一部になる。role_arn は role の ARN、keys はその role が書ける object の key、access は write（PutObject と DeleteObject）か delete（DeleteObject だけ）。ほかの主体の書き込み、keys の外への書き込み、access の外の操作、DeleteObjectVersion とレプリケーションによる書き込みは Bucket Policy が拒否する。"
   type = map(object({
     role_arn = string
     keys     = set(string)

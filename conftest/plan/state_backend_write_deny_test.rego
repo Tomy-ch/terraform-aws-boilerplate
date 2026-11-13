@@ -42,7 +42,11 @@ workload_keys := [sprintf("%s/workload/terraform.tfstate", [b]), sprintf("%s/wor
 
 lock_keys := [sprintf("%s/identity/terraform.tfstate.tflock", [b])]
 
-writes := ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+apply_denied := ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
+
+unlock_denied := ["s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
+
+writes := ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
 
 change(address, type, after) := {"address": address, "type": type, "change": {"actions": ["create"], "after": after, "after_unknown": {}}}
 
@@ -70,9 +74,9 @@ managed_key := {"Sid": "E4c", "Effect": "Deny", "Principal": "*", "Action": "s3:
 }}
 
 writer_statements := [
-	outside(ai, identity_keys), actions_of(ai, identity_keys, ["s3:DeleteObjectVersion"]),
-	outside(u, lock_keys), actions_of(u, lock_keys, ["s3:DeleteObjectVersion", "s3:PutObject"]),
-	outside(a, workload_keys), actions_of(a, workload_keys, ["s3:DeleteObjectVersion"]),
+	outside(ai, identity_keys), actions_of(ai, identity_keys, apply_denied),
+	outside(u, lock_keys), actions_of(u, lock_keys, unlock_denied),
+	outside(a, workload_keys), actions_of(a, workload_keys, apply_denied),
 ]
 
 valid_statements := array.concat(array.concat([tls, others([a, ai, u])], writer_statements), [other_than_kms, other_key(key), managed_key])
@@ -192,7 +196,7 @@ test_violation_write_deny_not_action if {
 }
 
 test_violation_unlock_role_may_put if {
-	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 5, actions_of(u, lock_keys, ["s3:DeleteObjectVersion"]))))
+	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 5, actions_of(u, lock_keys, apply_denied))))
 }
 
 test_violation_unlock_role_outside_lock if {
@@ -200,12 +204,12 @@ test_violation_unlock_role_outside_lock if {
 }
 
 test_violation_workload_writer_is_apply_identity if {
-	s := replace(replace(valid_statements, 6, outside(ai, workload_keys)), 7, actions_of(ai, workload_keys, ["s3:DeleteObjectVersion"]))
+	s := replace(replace(valid_statements, 6, outside(ai, workload_keys)), 7, actions_of(ai, workload_keys, apply_denied))
 	fixture.has("[PLAN-SBW-04]", messages_with(s))
 }
 
 test_violation_apply_may_delete_versions if {
-	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 7, actions_of(a, workload_keys, ["s3:PutObject"]))))
+	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 7, actions_of(a, workload_keys, ["s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]))))
 }
 
 test_violation_confines_undeclared_writer if {
@@ -287,4 +291,39 @@ test_violation_tls_allows_true if {
 test_violation_tls_partial_action if {
 	s := json.patch(tls, [{"op": "replace", "path": "/Action", "value": "s3:GetObject"}])
 	fixture.has("[PLAN-SBW-08]", messages_with(replace(valid_statements, 0, s)))
+}
+
+test_violation_others_misses_replication if {
+	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Action", "value": ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]}])
+	fixture.has("[PLAN-SBW-01]", messages_with(replace(valid_statements, 1, s)))
+}
+
+test_violation_confining_extra_condition_key if {
+	s := json.patch(outside(a, workload_keys), [{"op": "add", "path": "/Condition/ArnEquals/aws:SourceArn", "value": "arn:aws:s3:::never"}])
+	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 6, s)))
+}
+
+test_violation_confining_principal_narrowed if {
+	s := json.patch(outside(ai, identity_keys), [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
+	fixture.has("[PLAN-SBW-04]", messages_with(replace(valid_statements, 2, s)))
+}
+
+test_violation_encryption_role_exception if {
+	s := json.patch(other_than_kms, [{"op": "add", "path": "/Condition/ArnNotEquals", "value": {"aws:PrincipalArn": a}}])
+	fixture.has("[PLAN-SBW-07]", messages_with(replace(valid_statements, 8, s)))
+}
+
+test_violation_other_key_extra_condition if {
+	s := json.patch(other_key(key), [{"op": "add", "path": "/Condition/StringEquals", "value": {"s3:x-amz-acl": "public-read"}}])
+	fixture.has("[PLAN-SBW-07]", messages_with(replace(valid_statements, 9, s)))
+}
+
+test_violation_managed_key_role_exception if {
+	s := json.patch(managed_key, [{"op": "add", "path": "/Condition/ArnNotEquals", "value": {"aws:PrincipalArn": ai}}])
+	fixture.has("[PLAN-SBW-07]", messages_with(replace(valid_statements, 10, s)))
+}
+
+test_violation_allow_statement if {
+	allow := {"Sid": "X", "Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": sprintf("%s/*", [b])}
+	fixture.has("[PLAN-SBW-09]", messages_with(array.concat(valid_statements, [allow])))
 }

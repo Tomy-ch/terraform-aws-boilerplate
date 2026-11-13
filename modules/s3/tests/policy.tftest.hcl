@@ -53,7 +53,7 @@ run "statements" {
           Sid       = "DenyObjectWriteByOthers"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
           Condition = { ArnNotEquals = { "aws:PrincipalArn" = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply", "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"] } }
         },
@@ -61,7 +61,7 @@ run "statements" {
           Sid         = "DenyObjectWriteOutsideKeysIdentity"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" } }
         },
@@ -69,7 +69,7 @@ run "statements" {
           Sid       = "DenyObjectActionsOfIdentity"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" } }
         },
@@ -77,7 +77,7 @@ run "statements" {
           Sid         = "DenyObjectWriteOutsideKeysIdentityUnlock"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" } }
         },
@@ -85,7 +85,7 @@ run "statements" {
           Sid       = "DenyObjectActionsOfIdentityUnlock"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion", "s3:PutObject"]
+          Action    = ["s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" } }
         },
@@ -93,7 +93,7 @@ run "statements" {
           Sid         = "DenyObjectWriteOutsideKeysWorkload"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/workload/terraform.tfstate", "${aws_s3_bucket.this.arn}/workload/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
         },
@@ -101,7 +101,7 @@ run "statements" {
           Sid       = "DenyObjectActionsOfWorkload"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/workload/terraform.tfstate", "${aws_s3_bucket.this.arn}/workload/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
         },
@@ -185,7 +185,7 @@ run "statements_with_bootstrap_executor" {
           Sid       = "DenyObjectWriteByOthers"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
           Condition = { ArnNotEquals = { "aws:PrincipalArn" = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply", "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity", "arn:aws:iam::123456789012:user/tabp-bootstrap"] } }
         },
@@ -193,7 +193,7 @@ run "statements_with_bootstrap_executor" {
           Sid         = "DenyObjectWriteOutsideKeysBootstrapExecutor"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:user/tabp-bootstrap" } }
         },
@@ -201,7 +201,7 @@ run "statements_with_bootstrap_executor" {
           Sid       = "DenyObjectActionsOfBootstrapExecutor"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:user/tabp-bootstrap" } }
         },
@@ -209,7 +209,7 @@ run "statements_with_bootstrap_executor" {
           Sid         = "DenyObjectWriteOutsideKeysIdentity"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" } }
         },
@@ -217,7 +217,7 @@ run "statements_with_bootstrap_executor" {
           Sid       = "DenyObjectActionsOfIdentity"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate", "${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" } }
         },
@@ -225,7 +225,7 @@ run "statements_with_bootstrap_executor" {
           Sid         = "DenyObjectWriteOutsideKeysIdentityUnlock"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" } }
         },
@@ -233,7 +233,7 @@ run "statements_with_bootstrap_executor" {
           Sid       = "DenyObjectActionsOfIdentityUnlock"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion", "s3:PutObject"]
+          Action    = ["s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/identity/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity" } }
         },
@@ -241,7 +241,7 @@ run "statements_with_bootstrap_executor" {
           Sid         = "DenyObjectWriteOutsideKeysWorkload"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]
+          Action      = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject", "s3:ReplicateDelete", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/workload/terraform.tfstate", "${aws_s3_bucket.this.arn}/workload/terraform.tfstate.tflock"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
         },
@@ -249,7 +249,7 @@ run "statements_with_bootstrap_executor" {
           Sid       = "DenyObjectActionsOfWorkload"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
           Resource  = ["${aws_s3_bucket.this.arn}/workload/terraform.tfstate", "${aws_s3_bucket.this.arn}/workload/terraform.tfstate.tflock"]
           Condition = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
         },
