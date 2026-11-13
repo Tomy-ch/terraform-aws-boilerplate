@@ -28,6 +28,7 @@ variables {
   state_noncurrent_version_retention_days = 90
   ci_role_arns = {
     plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
     apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
     unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
   }
@@ -83,6 +84,7 @@ run "ci_role_arns_role_with_path" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-unlock-identity"
     }
@@ -100,6 +102,7 @@ run "ci_role_arns_same_role" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
@@ -114,6 +117,7 @@ run "ci_role_arns_same_role_plan_unlock" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
     }
@@ -128,6 +132,7 @@ run "ci_role_arns_same_role_apply_identity_unlock" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
     }
@@ -142,6 +147,7 @@ run "ci_role_arns_unlock_identity_user" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:user/tabp-admin-ci-unlock-identity"
     }
@@ -156,6 +162,7 @@ run "ci_role_arns_plan_user" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:user/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
@@ -170,6 +177,7 @@ run "ci_role_arns_apply_identity_root" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:root"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
@@ -184,6 +192,7 @@ run "ci_role_arns_wildcard" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/*"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
@@ -198,6 +207,7 @@ run "ci_role_arns_apply_identity_no_name" {
   variables {
     ci_role_arns = {
       plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
       apply_identity  = "arn:aws:iam::123456789012:role/"
       unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
@@ -314,4 +324,121 @@ run "state_noncurrent_version_retention_days_fraction" {
   }
 
   expect_failures = [var.state_noncurrent_version_retention_days]
+}
+
+run "ci_role_arns_same_role_apply_apply_identity" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_same_role_apply_unlock" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_apply_user" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:user/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+# 書き込みの例外の割当は ADR-0604 決定9。
+run "object_writers" {
+  command = plan
+
+  assert {
+    condition = module.s3.object_writers == {
+      identity = {
+        principal_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+        keys          = toset(["identity/terraform.tfstate", "identity/terraform.tfstate.tflock"])
+        access        = "write"
+      }
+      identityUnlock = {
+        principal_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+        keys          = toset(["identity/terraform.tfstate.tflock"])
+        access        = "delete"
+      }
+      workload = {
+        principal_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+        keys          = toset(["workload/terraform.tfstate", "workload/terraform.tfstate.tflock"])
+        access        = "write"
+      }
+    }
+    error_message = "ci_role_arns の apply・apply_identity・unlock_identity が、state Bucket の書き込みの例外へ自分の key と操作で届いていません。"
+  }
+}
+
+run "bootstrap_executor" {
+  command = plan
+
+  variables {
+    bootstrap_executor_user_name = "tabp-bootstrap"
+  }
+
+  assert {
+    condition = module.s3.object_writers["bootstrapExecutor"] == {
+      principal_arn = "arn:aws:iam::123456789012:user/tabp-bootstrap"
+      keys          = toset(["identity/terraform.tfstate", "identity/terraform.tfstate.tflock"])
+      access        = "write"
+    }
+    error_message = "bootstrap_executor_user_name の user が、identity root の state と lock file の書き込みの例外に入っていません。"
+  }
+}
+
+run "bootstrap_executor_absent" {
+  command = plan
+
+  assert {
+    condition     = !contains(keys(module.s3.object_writers), "bootstrapExecutor")
+    error_message = "bootstrap_executor_user_name が null なのに、書き込みの例外に user が入っています。"
+  }
+}
+
+run "bootstrap_executor_with_path" {
+  command = plan
+
+  variables {
+    bootstrap_executor_user_name = "bootstrap/tabp-bootstrap"
+  }
+
+  expect_failures = [var.bootstrap_executor_user_name]
+}
+
+run "bootstrap_executor_arn" {
+  command = plan
+
+  variables {
+    bootstrap_executor_user_name = "arn:aws:iam::123456789012:user/tabp-bootstrap"
+  }
+
+  expect_failures = [var.bootstrap_executor_user_name]
 }
