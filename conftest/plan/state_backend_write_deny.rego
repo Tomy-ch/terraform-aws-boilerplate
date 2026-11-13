@@ -38,7 +38,6 @@ writer_names := array.concat([root.writer | some root in object.get(cfg, "roots"
 # 同じ role を2つの役割に宣言すると writers の key が重なり、評価そのものが落ちる。先に SBW-00 で止める。
 distinct_writers if count({n | some n in writer_names}) == count(writer_names)
 
-# writer ごとに、書ける object と、その object へ拒否する操作。
 writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion", "s3:replicatedelete", "s3:replicateobject"}} if {
 	distinct_writers
 	some root in object.get(cfg, "roots", [])
