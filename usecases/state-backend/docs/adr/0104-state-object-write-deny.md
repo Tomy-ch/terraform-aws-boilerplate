@@ -66,7 +66,7 @@ repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 �
 - AWS service principal が state Bucket へ書くこと。`aws:PrincipalArn` を持たない要求は決定1 の Deny に当たる。S3 Lifecycle の失効は Bucket Policy に評価されない
 - apply-identity の role に対する拒否の保証。apply-identity は Bucket Policy を書き換えられる。決定2・5 は apply-identity の誤った書き込みを検出するが、意図した書き換えを止めない
 - alias や鍵 ID で鍵を名指す書き手。決定5 の条件の値は鍵の ARN である
-- 決定1 の5つの Action の外の object の操作。`s3:PutObjectAcl` は Bucket の ACL が無効なので効かない。`s3:PutObjectTagging`・`s3:DeleteObjectTagging` は state の内容を変えない。`s3:AbortMultipartUpload` は writer の進行中の multipart を他の主体が中止できるが、state を書き換えない
+- 決定1 の5つの Action の外の object の操作。`s3:PutObjectAcl` は Bucket の ACL が無効なので効かない。`s3:PutObjectTagging`・`s3:DeleteObjectTagging` は state の内容を変えない。`s3:AbortMultipartUpload` は writer の進行中の multipart を他の主体が中止できるが、state を書き換えない。`s3:UpdateObjectEncryption` は書いた後の object の鍵を差し替えうるが、state の鍵の復号を要るので、できるのは既に state を読める key policy の主体だけである
 
 ## 保証範囲
 
