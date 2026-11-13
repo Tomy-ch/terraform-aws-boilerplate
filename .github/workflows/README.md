@@ -198,8 +198,8 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 - **CI のランナーの plan と apply の lock が、apply の job のものであること。** `Who` と `Operation` は lock の
   書き手が書く値で、`runner@` で始まる利用者が apply の job の外で取った plan と apply の lock も、閾値を超えれば消す
 - **読めない lock file を外すこと。** 中身を Terraform の lock として読めない lock file と、版 ID の無い
-  lock file は、消さずに失敗する。一時 IAM user を削除した後は、
-  それを外す経路がこのリポジトリに無く、外せる人の主体は管理アカウントの root だけになる
+  lock file は、消さずに失敗する。一時 IAM user の書き込みが拒否された後は、
+  それを外す手順がこのリポジトリに無い（ADR-0602 決定9）
 - **起動できる人を絞ること。** write 権限を持つ人なら起動できる。environment の reviewer は置かない ——
   障害のときに人が1人しか居なくても外せるようにする。実行されるのはデフォルトブランチの先頭の workflow と
   コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる

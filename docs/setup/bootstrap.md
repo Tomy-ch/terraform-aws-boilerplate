@@ -483,7 +483,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 ## 一時 IAM user の削除
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
+bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
