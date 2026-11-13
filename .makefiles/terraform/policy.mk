@@ -66,8 +66,7 @@ tf-policy: tf-init
 		echo "$$result"; echo "❌ Policy の違反があります"; exit 1; }; \
 	echo "$$result"; echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
 
-# canary の fixture は provider を持たない構成（terraform_data）で毎回 tmp/ に作り、TF_BASE と
-# POLICY_PLAN_DATA で差し替える。文書の表を terraform_data の input に向け、init がネットワークを要さない。
+# canary の fixture は provider を持たない構成（terraform_data）にする。init がネットワークを要さないため。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 
 define TF_POLICY_FIXTURE
@@ -87,7 +86,7 @@ tf-policy-canary:
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
-	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego; \
+	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
 	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \
