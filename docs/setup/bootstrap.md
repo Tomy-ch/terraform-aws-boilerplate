@@ -75,7 +75,7 @@ Free plan のアカウントは、使えるサービスと機能が限られ、�
 | MFA | 設定する |
 | アクセスキー | 作らない（CLI と Terraform は `aws login`） |
 
-この user は、bootstrap の段1-4 を人の手元から進めるためだけの一時的な主体であり、このリポジトリが Terraform で生成する IAM ではない。そのため、2つの AWS managed policy を付けることは [ADR-0301](../adr/0301-least-privilege-policy.md) 決定8・10（Action wildcard と AWS managed policy を使わない）の対象外とする。段1-4 で作るものが何であるかが事前に確定しない以上、権限を絞った customer managed policy を手で書くと、bootstrap の途中で権限不足に当たる。代わりに、存在する期間を bootstrap の間に限り、終わったら「一時 IAM user の削除」で消す。
+この user は、bootstrap の段1-4 を人の手元から進めるためだけの一時的な主体であり、このリポジトリが Terraform で生成する IAM ではない。そのため、2つの AWS managed policy を付けることは [ADR-0301](../adr/0301-least-privilege-policy.md) 決定8・10（Action wildcard と AWS managed policy を使わない）の対象外とする。段1-4 で作るものが何であるかが事前に確定しない以上、権限を絞った customer managed policy を手で書くと、bootstrap の途中で権限不足に当たる。代わりに、存在する期間を bootstrap の間に限り、終わったら「一時 IAM user の削除」で消す。path は指定しない（既定の `/`）。段3 で state Bucket の書き込みの例外に入れる値は、path を持たない名前である。
 
 1. IAM コンソール →「Users」→「Create user」を押す
 2. ユーザー名を入力する（一時用と分かる名前にする）
@@ -286,7 +286,8 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    gh api repos/<owner>/<repo>/actions/oidc/customization/sub
    ```
 
-3. 値を変えた commit で Pull Request を開き、段2 の plan（`TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity`）をやり直す。件数と一覧が段2 の手順2 のとおりであること
+3. `env/<env>/identity/main.tf` の `module "state_backend"` に、`bootstrap_executor_user_name = "<一時 IAM user の名前>"` を足す。段4 の apply が作る Bucket Policy は、state Bucket の object の書き込みを CI の role に限る。この値が無いと、段4 の apply は Bucket Policy を作った後の state と lock file の書き込みで、自分を締め出す。この値で一時 IAM user は identity root の state と lock file に書き込め、暗号化の方式の header の拒否の例外にも入る。値は段5 の最初の変更で外す（段5 の手順6）（[state-backend/ADR-0104](../../usecases/state-backend/docs/adr/0104-state-object-write-deny.md) 決定7）
+4. 値を変えた commit で Pull Request を開き、段2 の plan（`TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity`）をやり直す。件数と一覧が段2 の手順2 のとおりであること
 
 ### 段4. 一時 IAM user のローカル権限で apply する
 
@@ -441,7 +442,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
 4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。state の鍵の権限を変えたときは、段4 の手順9 の state の鍵の block で確かめる
 5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を merge する前に、管理者が environment `admin-unlock-identity` を作り、secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く。environment は、その Pull Request のブランチを checkout した手元で `make apply-environments` を実行して宣言から作り、secret は `gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity` で置く。merge の前に作るのは、存在しない environment を参照した workflow が走ると、GitHub がその environment を保護なしで作るためである（[`.github/settings/README.md`](../../.github/settings/README.md)）。作った後、管理者はその Pull Request のブランチで `make repo-settings-drift` を実行し、宣言と実態が一致することを確かめてよい
-6. 書き込みの拒否を入れる変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+6. 一時 IAM user の書き込みを拒否する変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。その変更は、段3 で `bootstrap_executor_user_name` を足したアカウントでは、それを外す変更（段5 の最初の変更）であり、足していないアカウントでは、書き込みの拒否を入れる変更である。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
    1. identity root を変更する Pull Request を merge し、その CI の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
    2. 一時 IAM user で lock file が在ることを確かめる
 
@@ -458,29 +459,31 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 途中で失敗したとき:
 
 - 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ない。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる
+- 書き込みの拒否を入れる変更か、一時 IAM user の例外を外す変更の apply が落ちたときは、診断から始める。ログは apply の失敗を1行に畳むので、拒否で落ちたかは読めない。一時 IAM user で `aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` を読んで宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、`aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock` で lock の残存を見る。ランナーの `errored.tfstate` はランナーとともに失われるが、失われるのはその apply の Bucket Policy の更新の分で、次の apply の refresh が読み直す。Bucket Policy の例外が CI の role の ARN か state の鍵の ARN と食い違って自分を拒んでいたら、`Terraform Unlock` も同じ原因で効かないことがある。そのときに限り、一時 IAM user が `put-bucket-policy` で TLS の1文だけの文書に戻し、lock file を消し、Pull Request に記録してから、宣言を直した変更を CI の apply で入れる。書き込みの拒否は Bucket の設定の Action を含まないので、一時 IAM user の `put-bucket-policy` は拒まれない。一時 IAM user を削除した後は、この回復は行えない
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
 - lock が残ったら、Actions の画面から `Terraform Unlock`（`terraform-unlock.yaml`）を起動して外す。規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」が持つ。job は apply の job の `timeout-minutes` に余裕を足した時間より新しい lock を消さずに失敗するので、そのときは時間を置いて起動し直す。外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する
 - 人の手元の apply が残した lock は、`Terraform Unlock` では外れない（CI のランナーが apply の job で取った lock だけを外す）。その apply を実行した人が `terraform force-unlock <ID>` で外す
-- 書き込みの拒否が入る前は、一時 IAM user で lock file を消してもよい。apply の run が走っていないことを Actions の画面で確かめてから行う。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+- 一時 IAM user の書き込みが拒否される前は、一時 IAM user で lock file を消してもよい。apply の run が走っていないことを Actions の画面で確かめてから行う。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
 
   ```bash
   aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate.tflock
   ```
 
-  書き込みの拒否が入った後は、人の主体は lock file を消せず、`Terraform Unlock` だけが外す。`Terraform Unlock` は、Terraform の lock として読めない lock file を消さない
+  一時 IAM user の書き込みが拒否された後は、人の主体は lock file を消せず、`Terraform Unlock` だけが外す。`Terraform Unlock` は、Terraform の lock として読めない lock file を消さない
 
 段5 の成功は、次のすべてを満たしたときとする。
 
 - 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
 - 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した
 - state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
-- 書き込みの拒否が入った後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
-- 書き込みの拒否を入れる前に、手順6 の試行で `Terraform Unlock` が残った lock を外し、取り消した apply の run の再実行が緑になった
-- 書き込みの拒否が入った後、`Terraform Unlock` が lock の無い状態で緑で走り、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わった。この run が、unlock-identity の role が書き込みの拒否の下で lock file の一覧を読めることの確認になる。run の URL を Pull Request に記録する（アカウント ID を載せない）
+- 一時 IAM user の書き込みが拒否された後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
+- 一時 IAM user の書き込みを拒否する前に、手順6 の試行で `Terraform Unlock` が残った lock を外し、取り消した apply の run の再実行が緑になった
+- 段3 で `bootstrap_executor_user_name` を足したアカウントでは、段5 の最初の変更がそれを外し、その apply の後の `get-bucket-policy` の例外に一時 IAM user の ARN が無かった。Policy Test は env の root を入力にしないので、外したことはこの確認だけが見る
+- 一時 IAM user の書き込みが拒否された後、`Terraform Unlock` が lock の無い状態で緑で走り、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わった。この run が、unlock-identity の role が書き込みの拒否の下で lock file の一覧を読めることの確認になる。run の URL を Pull Request に記録する（アカウント ID を載せない）
 
 ## 一時 IAM user の削除
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、書き込みの拒否が入るまで残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
+bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
@@ -520,6 +523,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 
 - [ ] `env/<env>/identity/main.tf` の `github` の4つの値が、自分のリポジトリのものである
 - [ ] `use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` である
+- [ ] `module "state_backend"` の `bootstrap_executor_user_name` が、一時 IAM user の名前である
 - [ ] 値を変えた commit で、段2 の plan が段2 の手順2 の件数と一覧を示した
 
 段4 の終了時:
@@ -543,8 +547,9 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
 - [ ] `head-object` で、state が state の鍵で暗号化されていた
 - [ ] 一時 IAM user の `put-object` が state Bucket で `AccessDenied` を返した
-- [ ] 書き込みの拒否を入れる前に、取り消した apply の残した lock を `Terraform Unlock` が外し、その apply の再実行が緑になった
-- [ ] 書き込みの拒否が入った後、`Terraform Unlock` が lock の無い状態で緑で走った
+- [ ] 一時 IAM user の書き込みを拒否する前に、取り消した apply の残した lock を `Terraform Unlock` が外し、その apply の再実行が緑になった
+- [ ] 段3 で足した `bootstrap_executor_user_name` を段5 の最初の変更で外し、`get-bucket-policy` の例外に一時 IAM user の ARN が無かった
+- [ ] 一時 IAM user の書き込みが拒否された後、`Terraform Unlock` が lock の無い状態で緑で走った
 
 一時 IAM user の削除の終了時:
 

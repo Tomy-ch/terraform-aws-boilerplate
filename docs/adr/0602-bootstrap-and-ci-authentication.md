@@ -101,7 +101,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
     裏打ちの範囲を次に限る。
 
-    - IAM principal に対しては、state backend の resource-based policy（bucket policy、key policy）で拒否する
+    - IAM principal に対しては、state Bucket の bucket policy で、CI の apply 系の role と lock の解除の role 以外による object の書き込みを拒否し、それらの role の書き込みを ADR-0604 決定9 の key と操作に限る。state の鍵の key policy は、鍵の生成と復号を CI の role にだけ許し、拒否の文を持たない。bucket policy は state の鍵以外での `s3:PutObject` を拒否する
     - AWS Organizations の member account では、加えて SCP と root 資格情報の中央管理で、root を含めて拒否する
     - **management account の root は本決定の保証の外とする。** SCP が効かず、resource-based policy を
       削除できるためである。この判断を当該 use-case の unsupported 一覧へ記載する
@@ -234,7 +234,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Policy Test: 信頼条件の `sub` が environment 形式であり、ref 形式と event 形式を含まないこと（決定14）
 - Policy Test: 信頼条件が `aud`、リポジトリ、environment 名、リポジトリと所有者の ID を完全一致で限定していること（決定14）
 - 運用機構（`make repo-settings-check`、ADR-0501 決定5）: environment 名が environment の宣言に存在すること（決定14）
-- Policy Test（未配線。#19）: state backend の bucket policy と key policy が、CI の role 以外の IAM principal による書き込みを拒否すること（決定11）
+- Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、CI の apply 系の role と lock の解除の role 以外の主体による object の書き込みを、role の ARN の完全一致を例外として拒否し、state の鍵以外での `s3:PutObject` を拒否すること。state の鍵の key policy が、鍵の生成と復号を CI の role にだけ許し、拒否の文を持たないこと（決定11）（bootstrap の実行者の例外の除去は `docs/setup/bootstrap.md` 段5 の成功条件が見る。Policy Test は env の root を入力にしない）
 - 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply の environment が保護ブランチのパターンだけを許すこと（決定14、ADR-0603 決定4-7）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
