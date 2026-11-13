@@ -28,6 +28,11 @@ run "accepts_role_with_path" {
       }
     }
   }
+
+  assert {
+    condition     = output.object_writers.identity.principal_arn == "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-apply-identity"
+    error_message = "path を持つ role の ARN が、書き込みの例外へそのまま届いていません。"
+  }
 }
 
 run "rejects_no_writer" {
@@ -385,6 +390,78 @@ run "rejects_bootstrap_executor_wildcard_key" {
     bootstrap_executor = {
       user_name = "tabp-bootstrap"
       keys      = ["identity/*"]
+    }
+  }
+
+  expect_failures = [var.bootstrap_executor]
+}
+
+run "rejects_key_starting_with_uppercase" {
+  command = plan
+
+  variables {
+    object_writers = {
+      Identity = {
+        role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+        keys     = ["identity/terraform.tfstate"]
+        access   = "write"
+      }
+    }
+  }
+
+  expect_failures = [var.object_writers]
+}
+
+run "rejects_empty_key" {
+  command = plan
+
+  variables {
+    object_writers = {
+      identity = {
+        role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+        keys     = [""]
+        access   = "write"
+      }
+    }
+  }
+
+  expect_failures = [var.object_writers]
+}
+
+run "rejects_bootstrap_executor_key_with_leading_slash" {
+  command = plan
+
+  variables {
+    object_writers = {
+      identity = {
+        role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+        keys     = ["identity/terraform.tfstate"]
+        access   = "write"
+      }
+    }
+    bootstrap_executor = {
+      user_name = "tabp-bootstrap"
+      keys      = ["/identity/terraform.tfstate"]
+    }
+  }
+
+  expect_failures = [var.bootstrap_executor]
+}
+
+run "rejects_bootstrap_executor_question_mark_key" {
+  command = plan
+
+  variables {
+    object_writers = {
+      identity = {
+        role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+        keys     = ["identity/terraform.tfstate"]
+        access   = "write"
+      }
+    }
+    bootstrap_executor = {
+      user_name = "tabp-bootstrap"
+      keys      = ["identity/terraform.tfstat?"]
     }
   }
 

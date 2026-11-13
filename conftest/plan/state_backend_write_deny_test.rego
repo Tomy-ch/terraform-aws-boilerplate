@@ -106,11 +106,12 @@ input_with(statements, key_statements) := [
 	]}},
 ]
 
-messages_on(statements, key_statements, d) := msgs if {
-	msgs := p.deny with input as input_with(statements, key_statements)
-		with data.policy_plan.deployment_identity as d.deployment_identity
-		with data.policy_plan.state_backend as object.get(d, "state_backend", {})
+# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+messages_for(inp, d) := msgs if {
+	msgs := p.deny with input as inp with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
 }
+
+messages_on(statements, key_statements, d) := messages_for(input_with(statements, key_statements), d)
 
 messages_with(statements) := messages_on(statements, valid_key_statements, decl)
 
@@ -132,8 +133,10 @@ test_violation_bucket_policy_missing if {
 }
 
 test_violation_declaration_missing if {
-	msgs := messages_on(valid_statements, valid_key_statements, {"deployment_identity": decl.deployment_identity})
-	fixture.has("[PLAN-SBW-00]", msgs)
+	every name in ["bucket", "bucket_policy", "key_policy", "state_key"] {
+		d := {"deployment_identity": decl.deployment_identity, "state_backend": object.remove(decl.state_backend, [name])}
+		fixture.has(sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.%s が宣言にありません", [name]), messages_on(valid_statements, valid_key_statements, d))
+	}
 }
 
 test_violation_role_arn_unreadable if {
@@ -222,7 +225,7 @@ test_violation_roots_share_keys if {
 		{"writer": "apply_role", "state": "identity/terraform.tfstate"},
 	]})})
 	msgs := messages_on(valid_statements, valid_key_statements, d)
-	fixture.has("[PLAN-SBW-05]", msgs)
+	fixture.has("[PLAN-SBW-05] root", msgs)
 }
 
 test_violation_unlock_role_writes_identity_state if {
@@ -271,7 +274,8 @@ test_violation_managed_key_missing if {
 
 test_violation_null_boolean if {
 	s := json.patch(managed_key, [{"op": "replace", "path": "/Condition/Null", "value": {"s3:x-amz-server-side-encryption-aws-kms-key-id": true}}])
-	fixture.has("[PLAN-SBW-07]", messages_with(replace(valid_statements, 10, s)))
+	some m in messages_with(replace(valid_statements, 10, s))
+	contains(m, "[PLAN-SBW-07] state-backend.json: Null の")
 }
 
 test_violation_tls_missing if {
@@ -326,4 +330,86 @@ test_violation_managed_key_role_exception if {
 test_violation_allow_statement if {
 	allow := {"Sid": "X", "Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": sprintf("%s/*", [b])}
 	fixture.has("[PLAN-SBW-09]", messages_with(array.concat(valid_statements, [allow])))
+}
+
+without_after(i) := json.patch(input_with(valid_statements, valid_key_statements), [{"op": "replace", "path": sprintf("/1/contents/resource_changes/%d/change/after", [i]), "value": {}}])
+
+with_state_backend(patch) := {"deployment_identity": decl.deployment_identity, "state_backend": object.union(decl.state_backend, patch)}
+
+test_violation_key_policy_missing if {
+	fixture.has("[PLAN-SBW-00] state の鍵の Key Policy", messages_on(valid_statements, valid_key_statements, with_state_backend({"key_policy": "module.k.aws_kms_key_policy.other"})))
+}
+
+test_violation_bucket_arn_unreadable if {
+	fixture.has("[PLAN-SBW-00] state Bucket \"module.s.aws_s3_bucket.this\" の ARN", messages_for(without_after(0), decl))
+}
+
+test_violation_state_key_arn_unreadable if {
+	fixture.has("[PLAN-SBW-00] state の鍵 \"module.k.aws_kms_key.this\" の ARN", messages_for(without_after(1), decl))
+}
+
+test_violation_state_key_address_stale if {
+	fixture.has("[PLAN-SBW-00] state の鍵 \"module.k.aws_kms_key.other\" の ARN", messages_on(valid_statements, valid_key_statements, with_state_backend({"state_key": "module.k.aws_kms_key.other"})))
+}
+
+test_violation_roots_empty if {
+	fixture.has("[PLAN-SBW-00] root ごと", messages_on(valid_statements, valid_key_statements, with_state_backend({"roots": []})))
+}
+
+test_violation_unlocker_missing if {
+	d := {"deployment_identity": decl.deployment_identity, "state_backend": object.remove(decl.state_backend, ["unlocker"])}
+	fixture.has("[PLAN-SBW-00] lock を外す role（", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_key_user_roles_empty if {
+	fixture.has("[PLAN-SBW-00] state の鍵の暗号操作を許す role", messages_on(valid_statements, [admin], with_state_backend({"key_user_roles": []})))
+}
+
+test_violation_lock_key_empty if {
+	d := {"deployment_identity": object.union(object.remove(decl.deployment_identity, ["unlock_role"]), {"unlock_role": {"role": decl.deployment_identity.unlock_role.role}}), "state_backend": decl.state_backend}
+	fixture.has("[PLAN-SBW-00] lock を外す role が消せる lock file の key", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_lock_key_not_a_root_lock if {
+	other := [sprintf("%s/other/x.tflock", [b])]
+	s := replace(replace(valid_statements, 4, outside(u, other)), 5, actions_of(u, other, unlock_denied))
+	d := {"deployment_identity": object.union(decl.deployment_identity, {"unlock_role": {"role": decl.deployment_identity.unlock_role.role, "lock_key": "other/x.tflock"}}), "state_backend": decl.state_backend}
+	fixture.has("[PLAN-SBW-05] lock を外す role が消せる key", messages_on(s, valid_key_statements, d))
+}
+
+test_violation_key_policy_service_principal if {
+	svc := {"Sid": "X", "Effect": "Allow", "Principal": {"Service": "logs.ap-northeast-1.amazonaws.com"}, "Action": "kms:Decrypt", "Resource": "*"}
+	fixture.has("[PLAN-SBW-06] state-backend.json", messages_on(valid_statements, array.concat(valid_key_statements, [svc]), decl))
+}
+
+test_violation_key_policy_not_action_grants_undeclared_role if {
+	na := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": a}, "NotAction": "kms:PutKeyPolicy", "Resource": "*"}
+	fixture.has("[PLAN-SBW-06] state の鍵の暗号操作を許す principal", messages_on(valid_statements, array.concat(valid_key_statements, [na]), decl))
+}
+
+test_violation_principal_arn_root if {
+	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, others([a, ai, u, "arn:aws:iam::123456789012:root"]))))
+}
+
+test_violation_confining_not_resource_bucket if {
+	s := json.patch(outside(a, workload_keys), [{"op": "replace", "path": "/NotResource", "value": array.concat(workload_keys, [b])}])
+	fixture.has("[PLAN-SBW-03]", messages_with(replace(valid_statements, 6, s)))
+}
+
+# 段4 の実行者の例外を持つ文書は env の root にだけ現れ、Policy Test の入力には来ない。来たら落ちる。
+test_violation_bootstrap_executor_shape if {
+	x := "arn:aws:iam::123456789012:user/tabp-bootstrap"
+	e4a := json.patch(other_than_kms, [{"op": "add", "path": "/Condition/ArnNotEquals", "value": {"aws:PrincipalArn": x}}])
+	s := array.concat(replace(replace(valid_statements, 1, others([a, ai, u, x])), 8, e4a), [outside(x, identity_keys), actions_of(x, identity_keys, apply_denied)])
+	msgs := messages_with(s)
+	fixture.has("[PLAN-SBW-02]", msgs)
+	fixture.has("[PLAN-SBW-07]", msgs)
+}
+
+test_pass_condition_case_insensitive if {
+	s := json.patch(others([a, ai, u]), [
+		{"op": "replace", "path": "/Condition", "value": {"arnnotequals": {"AWS:PRINCIPALARN": [a, ai, u]}}},
+		{"op": "replace", "path": "/Action", "value": ["S3:DELETEOBJECT", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"]},
+	])
+	count(messages_with(replace(valid_statements, 1, s))) == 0
 }

@@ -144,12 +144,12 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	not is_string(bucket_arn)
+	not bucket_known
 	msg := sprintf("[PLAN-SBW-00] state Bucket %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [declared("bucket")])
 }
 
 deny contains msg if {
-	not is_string(state_key_arn)
+	not state_key_known
 	msg := sprintf("[PLAN-SBW-00] state の鍵 %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [declared("state_key")])
 }
 
@@ -158,7 +158,10 @@ role_names contains name if {
 	name := root.writer
 }
 
-role_names contains object.get(cfg, "unlocker", "")
+role_names contains name if {
+	name := object.get(cfg, "unlocker", "")
+	name != ""
+}
 
 role_names contains name if {
 	some name in object.get(cfg, "key_user_roles", [])
@@ -170,8 +173,22 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SBW-00] role %q（data.policy_plan.deployment_identity.%s.role）の ARN を入力から読めません。address を直すか、tests/policy-input.tftest.hcl の override_resource で与えてください", [role_address(name), name])
 }
 
-# 関数の呼び出しを not の中に直接書くと、未定義の結果が not の外へ出て規則ごと黙る。
+# 未定義になりうる値を not の中に直接書くと、未定義が not の外へ出て規則ごと黙る。
 role_known(name) if is_string(role_arn(name))
+
+bucket_known if is_string(bucket_arn)
+
+state_key_known if is_string(state_key_arn)
+
+deny contains msg if {
+	object.get(cfg, "unlocker", "") == ""
+	msg := "[PLAN-SBW-00] lock を外す role（data.policy_plan.state_backend.unlocker）が宣言にありません"
+}
+
+deny contains msg if {
+	count(object.get(cfg, "key_user_roles", [])) == 0
+	msg := "[PLAN-SBW-00] state の鍵の暗号操作を許す role（data.policy_plan.state_backend.key_user_roles）が宣言にありません"
+}
 
 deny contains msg if {
 	count(object.get(cfg, "roots", [])) == 0
@@ -252,7 +269,7 @@ deny contains msg if {
 		count(resources(a.statement)) == 0
 		actions(a.statement) == object_write_actions
 	}) != 1
-	msg := sprintf("[PLAN-SBW-04] %s を、自分の key %v の外への書き込みを拒否する文で閉じ込めていません", [arn, sort(w.keys)])
+	msg := sprintf("[PLAN-SBW-04] %s を、自分の key %v の外への書き込みを Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件で拒否する文で閉じ込めていません", [arn, sort(w.keys)])
 }
 
 deny contains msg if {
@@ -266,7 +283,7 @@ deny contains msg if {
 		count(not_resources(a.statement)) == 0
 		actions(a.statement) == w.denied
 	}) != 1
-	msg := sprintf("[PLAN-SBW-04] %s の key %v への操作を、%v の拒否で閉じ込めていません", [arn, sort(w.keys), sort(w.denied)])
+	msg := sprintf("[PLAN-SBW-04] %s の key %v への操作を、Principal \"*\" と aws:PrincipalArn の ArnEquals だけの条件の %v の拒否で閉じ込めていません", [arn, sort(w.keys), sort(w.denied)])
 }
 
 deny contains msg if {
@@ -293,6 +310,13 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SBW-05] %s: %s が root の state の key %s に書けます", [a.path, arn, object_arn(root.state)])
 }
 
+deny contains msg if {
+	lock_key != ""
+	count(object.get(cfg, "roots", [])) > 0
+	not lock_key in {sprintf("%s.tflock", [root.state]) | some root in object.get(cfg, "roots", [])}
+	msg := sprintf("[PLAN-SBW-05] lock を外す role が消せる key %q が、どの root の lock file（<state>.tflock）でもありません", [lock_key])
+}
+
 crypto(a) if a in kms_key_policy.crypto_actions
 
 crypto(a) if {
@@ -301,14 +325,36 @@ crypto(a) if {
 	glob.match(a, [], c)
 }
 
-key_users contains p if {
+# NotAction の Allow は列挙の外をすべて許すので、暗号操作を許すと読む。
+grants_crypto(s) if {
+	some act in lib.lower_all(object.get(s, "Action", []))
+	crypto(act)
+}
+
+grants_crypto(s) if s.NotAction
+
+key_grants contains {"document": r.document, "statement": s} if {
 	some r in key_policies
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
-	some act in lib.lower_all(s.Action)
-	crypto(act)
-	is_object(s.Principal)
-	some p in lib.as_array(object.get(s.Principal, "AWS", []))
+	grants_crypto(s)
+}
+
+key_users contains p if {
+	some g in key_grants
+	is_object(g.statement.Principal)
+	some p in lib.as_array(object.get(g.statement.Principal, "AWS", []))
+}
+
+deny contains msg if {
+	some g in key_grants
+	not aws_only(g.statement.Principal)
+	msg := sprintf("[PLAN-SBW-06] %s: %s が AWS の role でない principal %v に暗号操作を許しています", [g.document.path, g.document.address, g.statement.Principal])
+}
+
+aws_only(p) if {
+	is_object(p)
+	object.keys(p) == {"AWS"}
 }
 
 declared_key_users := {role_arn(name) | some name in object.get(cfg, "key_user_roles", [])}

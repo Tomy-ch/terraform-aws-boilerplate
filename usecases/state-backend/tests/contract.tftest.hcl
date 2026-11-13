@@ -393,7 +393,7 @@ run "object_writers" {
         access        = "write"
       }
     }
-    error_message = "ci_role_arns の apply・apply_identity・unlock_identity が、state Bucket の書き込みの例外へ自分の key と操作で届いていません。"
+    error_message = "ci_role_arns の apply・apply_identity・unlock_identity が、modules/s3 の object_writers へ自分の key と操作で渡っていません。"
   }
 }
 
@@ -441,4 +441,19 @@ run "bootstrap_executor_arn" {
   }
 
   expect_failures = [var.bootstrap_executor_user_name]
+}
+
+run "ci_role_arns_same_role_plan_apply" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
 }
