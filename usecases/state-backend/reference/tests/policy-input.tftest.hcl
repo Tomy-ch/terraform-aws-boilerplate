@@ -25,6 +25,13 @@ override_resource {
   values          = { arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" }
 }
 
+# state Bucket の Bucket Policy は state の鍵の ARN を条件の値に持つので、鍵の ARN を与えないと文書が plan で決まらない。
+override_resource {
+  target          = module.state_backend.module.kms.aws_kms_key.this
+  override_during = plan
+  values          = { arn = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
+}
+
 run "policy_input" {
   command = plan
 }

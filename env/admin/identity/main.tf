@@ -6,6 +6,7 @@ module "state_backend" {
   state_noncurrent_version_retention_days = 90
   ci_role_arns = {
     plan            = module.deployment_identity.plan_role_arn
+    apply           = module.deployment_identity.apply_role_arn
     apply_identity  = module.deployment_identity.apply_identity_role_arn
     unlock_identity = module.deployment_identity.unlock_identity_role_arn
   }

@@ -101,13 +101,13 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
-- Policy Test（未配線。#19）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
+- Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test: apply の role と lock の解除の role の権限（IAM policy と、課す場合は permissions boundary を合わせた有効な権限）が、決定10 の変更を state Bucket と state の鍵に対して許さないこと（決定10。apply の role の state Bucket の側は未配線。#209）
 - Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響
 
-- state Bucket は、2つの key と lock file ごとの書き込みの拒否と、lock の解除の role に lock file の削除だけを許す拒否を、bucket policy に持つ（#19 で配線）。
+- state Bucket は、2つの key と lock file ごとの書き込みの拒否と、lock の解除の role に lock file の削除だけを許す拒否を、bucket policy に持つ。
 - workload root の plan と apply は、env の workload 全体を対象にする。変更が1つの usecase に閉じていても、env の workload 全体をロックする。
 - plan は lock を取らないので、apply と並行して走ると、apply の途中の state を読むことがある。apply は merge された commit で lock を取って実行するので（ADR-0601 決定6・16）、lock を取らない plan の結果は apply の内容を決めない。
 - stateful な resource を意図して削除するには、許可の宣言に address と理由を足す変更を通す。削除が済んだ後の変更で、その項目を取り除く。

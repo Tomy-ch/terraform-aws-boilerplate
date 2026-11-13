@@ -17,3 +17,8 @@ output "kms_key_arn" {
   description = "既定の暗号化が使う KMS の鍵の ARN。"
   value       = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).kms_master_key_id
 }
+
+output "object_writers" {
+  description = "Bucket Policy が object の書き込みを許す主体。key は object_writers の key と、bootstrap_executor が在るときの bootstrapExecutor。値は主体の ARN、書ける key、access。"
+  value       = local.object_writers
+}

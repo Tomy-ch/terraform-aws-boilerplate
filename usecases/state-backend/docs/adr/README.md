@@ -17,6 +17,7 @@
 | [0101](0101-sse-kms-with-state-key.md) | state Bucket を state の鍵による SSE-KMS で暗号化し、backend が鍵の ARN を名指す | Accepted |
 | [0102](0102-no-mfa-delete-or-object-lock.md) | state Bucket に MFA delete と Object Lock を掛けない | Accepted |
 | [0103](0103-expire-noncurrent-state-versions.md) | state Bucket の上書きされた版を、保持日数で消す | Accepted |
+| [0104](0104-state-object-write-deny.md) | state Bucket の object の書き込みを、Bucket Policy で CI の role と key と操作の組に限る | Accepted |
 
 ### 02 plan の出力
 

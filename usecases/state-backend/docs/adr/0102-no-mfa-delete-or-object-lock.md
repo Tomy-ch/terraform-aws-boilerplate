@@ -15,7 +15,7 @@ MFA delete は Bucket の所有者（root）しか有効にできず、lifecycle
 
 1. state Bucket に MFA delete を有効にしない。
 2. state Bucket に Object Lock を有効にしない。
-3. state の上書きと削除への耐性は、版管理（`Enabled`）と、上書きされた版を保持日数のあいだ残す lifecycle（state-backend/ADR-0103）と、bootstrap の段5 で入る拒否（state と lock file の書き込みを apply の role ごとに限る。repository-wide/ADR-0604 (state-split-by-apply-role) 決定9・10）で担う。
+3. state の上書きと削除への耐性は、版管理（`Enabled`）と、上書きされた版を保持日数のあいだ残す lifecycle（state-backend/ADR-0103）と、bootstrap の段4 で入り、段5 の最初の変更で bootstrap の実行者の例外を外す拒否（state と lock file の書き込みを apply の role ごとに限る。repository-wide/ADR-0604 (state-split-by-apply-role) 決定9・10、state-backend/ADR-0104 (state-object-write-deny)）で担う。
 4. 決定1・2 を公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。決定1 について KICS の c5b31ab9（MFA delete）を `modules/s3/main.tf` に限って抑止する（repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
 
 ## 検討した代替案
@@ -57,7 +57,7 @@ state の版を、書き込みの権限を持つ主体からも守ること。
 
 ## 影響
 
-段5 までの間、state Bucket への書き込みを拒否する宣言は無い。管理アカウントで S3 の書き込み権限を持つ IAM 主体は、誰でも state を上書きできる。
+段4 の apply までの間、state Bucket への書き込みを拒否する宣言は無い。その間、管理アカウントで S3 の書き込み権限を持つ IAM 主体は、誰でも state を上書きできる。段4 から段5 の最初の変更までは、bootstrap の実行者も identity root の state に書ける。
 
 ## 見直し条件
 

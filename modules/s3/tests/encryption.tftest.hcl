@@ -14,6 +14,13 @@ variables {
   name                              = "tabp-admin-tfstate"
   noncurrent_version_retention_days = 90
   kms_key_arn                       = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  object_writers = {
+    identity = {
+      role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      keys     = ["identity/terraform.tfstate"]
+      access   = "write"
+    }
+  }
 }
 
 run "accepts_key_in_same_account_and_region" {
