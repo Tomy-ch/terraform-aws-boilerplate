@@ -21,9 +21,12 @@ const (
 	identityUseCaseDir = "usecases/deployment-identity"
 )
 
+// planSuffix は、Pull Request からも起動する plan の environment の接尾辞。
+const planSuffix = "-plan"
+
 // identitySuffixes は、deployment-identity の role の信頼条件が名指す environment 名の接尾辞。
 // `<env>` に続く形は deployment-identity の公開契約で、tests/contract.tftest.hcl が固定する。
-var identitySuffixes = []string{"-plan", "-apply", "-apply-identity"}
+var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", "-unlock-identity"}
 
 var (
 	errTerraform           = xerrors.New("Terraform のソースから deployment-identity の env を読めません")
@@ -136,7 +139,7 @@ func literalString(body *hclsyntax.Body, name string) (string, error) {
 }
 
 // checkIdentityEnvironments は、各 env について信頼条件が名指す environment がすべて宣言に在り、
-// 宣言の plan / apply / apply-identity の environment がどれもいずれかの env に当たることを見ます。
+// 宣言の identitySuffixes の environment がどれもいずれかの env に当たることを見ます。
 func checkIdentityEnvironments(envs []string, declared []environment) error {
 	names := map[string]bool{}
 	for _, e := range declared {
@@ -164,10 +167,16 @@ func checkIdentityEnvironments(envs []string, declared []environment) error {
 }
 
 func identityBase(name string) (string, bool) {
+	base, _, ok := splitIdentity(name)
+	return base, ok
+}
+
+// splitIdentity は、environment 名を env と identitySuffixes の接尾辞に分けます。
+func splitIdentity(name string) (string, string, bool) {
 	for _, suffix := range identitySuffixes {
 		if base, ok := strings.CutSuffix(name, suffix); ok && base != "" {
-			return base, true
+			return base, suffix, true
 		}
 	}
-	return "", false
+	return "", "", false
 }

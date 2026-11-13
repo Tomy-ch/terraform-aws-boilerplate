@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -51,8 +53,7 @@ func Test_run(t *testing.T) {
 
 	t.Run("pull_request に paths が残っていれば落ちる", func(t *testing.T) {
 		t.Parallel()
-		// 除外された Pull Request では run が1件も起動せず、GitHub は報告の不在を待ち続ける。
-		// その Pull Request は恒久的にマージ可能にならない。
+		// フィルタで除外された Pull Request は context が未報告のまま merge できない（ADR-0603 決定18）。
 		root := writeFixture(t, map[string]string{
 			"ruleset.json": rulesetOneContext,
 			"wf/ci.yaml":   "on:\n  pull_request:\n    paths:\n      - 'src/**'\n\njobs:\n  build:\n    runs-on: x\n",
@@ -135,7 +136,29 @@ func Test_run(t *testing.T) {
 		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
 		require.Error(t, err)
 		// 違反（終了コード1）とは別に扱えるよう、番兵で識別できること。
-		assert.True(t, xerrors.Is(err, errNoRequiredContext))
+		assert.True(t, xerrors.Is(err, requiredchecks.ErrNone))
+	})
+
+	t.Run("context が空の宣言は読めないとして落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": ""}]}}]}`,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &bytes.Buffer{})
+		require.ErrorIs(t, err, requiredchecks.ErrRead)
+	})
+
+	t.Run("required の job が name: を持てば落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  build:\n    name: Build\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "required context `build` を報告する job に name: を置かないでください")
 	})
 
 	t.Run("宣言を読めなければ落ちる", func(t *testing.T) {
@@ -247,37 +270,6 @@ func Test_check(t *testing.T) {
 	})
 }
 
-func Test_readRequiredContexts(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		body string
-		want []string
-		err  bool
-	}{
-		"1件":                        {body: rulesetOneContext, want: []string{"build"}},
-		"複数件":                       {body: `{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"a"},{"context":"b"}]}}]}`, want: []string{"a", "b"}},
-		"別の型の rule は無視":             {body: `{"rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"a"}]}}]}`, want: []string{"a"}},
-		"rules が空":                  {body: `{"rules":[]}`, want: nil},
-		"required_status_checks が空": {body: `{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[]}}]}`, want: nil},
-		"壊れた JSON":                  {body: `{`, err: true},
-	}
-
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			root := writeFixture(t, map[string]string{"r.json": tt.body})
-			got, err := readRequiredContexts(filepath.Join(root, "r.json"))
-			if tt.err {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func Test_readWorkflows(t *testing.T) {
 	t.Parallel()
 
@@ -312,8 +304,7 @@ func Test_check_検査の対象外(t *testing.T) {
 
 	t.Run("push 側のフィルタは残っていてよい", func(t *testing.T) {
 		t.Parallel()
-		// 検査しているのは pull_request の起動条件だけである。push は required check の
-		// 報告契機ではないため、そこにフィルタが在っても Pull Request は止まらない。
+		// push は context を報告しないので絞ってよい（.github/workflows/README.md「必須検査はすべての Pull Request で報告される」）。
 		src := "on:\n  push:\n    paths:\n      - 'src/**'\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n"
 		assert.Empty(t, check([]string{"build"}, []Source{{File: "a.yaml", Source: src}}, "r.json"))
 	})
@@ -398,4 +389,31 @@ func Test_triggerFindings(t *testing.T) {
 			assert.Contains(t, got[1].Message, "`branches`")
 		})
 	})
+}
+
+func Test_nameFindings(t *testing.T) {
+	t.Parallel()
+
+	jobOf := func(t *testing.T, src string) workflow.Job {
+		t.Helper()
+		jobs := workflow.SplitJobs(src).Jobs
+		require.Len(t, jobs, 1)
+		return jobs[0]
+	}
+
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		"name: が無ければ違反0件":       {"jobs:\n  build:\n    runs-on: x\n", 0},
+		"step の name: は数えない":    {"jobs:\n  build:\n    runs-on: x\n    steps:\n      - name: Build\n        run: make\n", 0},
+		"job の name: は違反":       {"jobs:\n  build:\n    name: Build\n    runs-on: x\n", 1},
+		"引用符付きの name: も違反":      {"jobs:\n  build:\n    \"name\": Build\n    runs-on: x\n", 1},
+		"コメントの name: は ID と別の行": {"jobs:\n  build:\n    # name: Build\n    runs-on: x\n", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, nameFindings(jobOf(t, c.src), "ci.yaml"), c.want)
+		})
+	}
 }

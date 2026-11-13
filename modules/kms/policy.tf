@@ -31,7 +31,9 @@ locals {
     "kms:UpdateKeyDescription",
   ]
 
-  s3_roles   = sort(distinct([for r in var.users.roles : r.arn if r.via == "s3"]))
+  s3_roles = sort([for r in var.users.roles : r.arn if r.via == "s3" && r.access == "read-write"])
+  # read の role は文を分けて、暗号化コンテキストの object を role ごとに限る。
+  s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
   log_groups = sort(distinct(var.users.services.logs))
 
   statements = concat(
@@ -43,12 +45,24 @@ locals {
       Resource  = "*"
     }],
     length(local.s3_roles) == 0 ? [] : [{
-      Sid       = "RolesViaS3"
+      Sid       = "RolesViaS3ReadWrite"
       Effect    = "Allow"
       Principal = { AWS = local.s3_roles }
       Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
       Resource  = "*"
       Condition = { StringEquals = { "kms:ViaService" = "s3.${local.region}.amazonaws.com" } }
+    }],
+    # Bucket Key を使わない Bucket では、S3 が渡す暗号化コンテキストは object の ARN になる（Amazon S3 User Guide「SSE-KMS」）。
+    [for i, arn in sort(keys(local.s3_readers)) : {
+      Sid       = "RolesViaS3Read${i}"
+      Effect    = "Allow"
+      Principal = { AWS = [arn] }
+      Action    = "kms:Decrypt"
+      Resource  = "*"
+      Condition = { StringEquals = {
+        "kms:ViaService"                   = "s3.${local.region}.amazonaws.com"
+        "kms:EncryptionContext:aws:s3:arn" = local.s3_readers[arn]
+      } }
     }],
     length(local.log_groups) == 0 ? [] : [{
       Sid       = "LogsService"
@@ -78,6 +92,12 @@ resource "aws_kms_key_policy" "this" {
     precondition {
       condition     = alltrue([for r in var.users.roles : startswith(r.arn, "arn:${local.partition}:iam::${local.account}:role/")])
       error_message = "users.roles[*].arn は、この鍵と同じアカウントと partition の role にしてください。"
+    }
+
+    # S3 の ARN はアカウントを持たないので、別のアカウントの Bucket の object かどうかは見られない。partition だけを見る。
+    precondition {
+      condition     = alltrue(flatten([for r in var.users.roles : [for o in r.objects : startswith(o, "arn:${local.partition}:s3:::")]]))
+      error_message = "users.roles[*].objects は、この鍵と同じ partition の S3 の object にしてください。"
     }
 
     precondition {

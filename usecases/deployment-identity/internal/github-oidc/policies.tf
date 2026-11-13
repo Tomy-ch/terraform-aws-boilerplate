@@ -33,7 +33,7 @@ locals {
   ]
   state_key_arn_prefix = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:key/"
 
-  identity_role_arns = [for k in keys(local.roles) : aws_iam_role.this[k].arn]
+  identity_role_arns = [for k in keys(local.roles) : local.role_arns[k]]
   identity_arns      = concat(local.identity_role_arns, [aws_iam_openid_connect_provider.github.arn])
 
   bucket_read_actions = [
@@ -165,11 +165,41 @@ locals {
       ],
       local.identity_read_statements,
     )
+
+    # ListObjectsV2・GetObject・If-Match の DeleteObject だけ（deployment-identity/ADR-0201 決定9）。If-Match の削除は
+    # s3:GetObject も要る。lock file の復号は state の鍵の Key Policy が与える。
+    unlock_identity = [
+      { Sid = "ListIdentityLock", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn, Condition = { StringEquals = { "s3:prefix" = "identity/terraform.tfstate.tflock" } } },
+      { Sid = "RemoveIdentityLock", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject"], Resource = "${local.identity_state_key}.tflock" },
+    ]
   }
 }
 
+resource "aws_iam_role_policy" "apply_identity" {
+  name = "apply_identity"
+  role = aws_iam_role.apply_identity.name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.statements.apply_identity
+  })
+
+  lifecycle {
+    # 別のアカウントやリージョンの鍵を渡すと、apply-identity は自分の state の鍵を管理できなくなる。他の role は
+    # この policy の後に作るので、ここで落ちれば他の role の policy にも届かない。
+    precondition {
+      condition     = startswith(var.state_key_arn, local.state_key_arn_prefix)
+      error_message = "state_key_arn が、role と同じ partition・リージョン・アカウントの鍵ではありません。"
+    }
+  }
+}
+
+moved {
+  from = aws_iam_role_policy.this["apply_identity"]
+  to   = aws_iam_role_policy.apply_identity
+}
+
 resource "aws_iam_role_policy" "this" {
-  for_each = local.roles
+  for_each = local.ci_roles
 
   name = each.key
   role = aws_iam_role.this[each.key].name
@@ -177,12 +207,4 @@ resource "aws_iam_role_policy" "this" {
     Version   = "2012-10-17"
     Statement = local.statements[each.key]
   })
-
-  lifecycle {
-    # 別のアカウントやリージョンの鍵を渡すと、apply-identity は自分の state の鍵を管理できなくなる。
-    precondition {
-      condition     = startswith(var.state_key_arn, local.state_key_arn_prefix)
-      error_message = "state_key_arn が、role と同じ partition・リージョン・アカウントの鍵ではありません。"
-    }
-  }
 }

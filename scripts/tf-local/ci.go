@@ -30,7 +30,7 @@ const oidcHostSuffix = ".actions.githubusercontent.com"
 const maxTokenSize = 16 << 10
 
 var (
-	roleNames      = []string{"plan", "apply", "apply-identity"}
+	roleNames      = []string{"plan", "apply", "apply-identity", "unlock-identity"}
 	subPattern     = regexp.MustCompile(`^repo:[^\s:]+:environment:[A-Za-z0-9_.-]+$`)
 	counterPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	branchPattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)

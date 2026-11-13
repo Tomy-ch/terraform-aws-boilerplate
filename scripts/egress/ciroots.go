@@ -13,7 +13,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// ciMakefile は CI が Terraform を実行する入口（make ci-plan-* / ci-apply-*）を持つ。
+// ciMakefile は CI が root の AWS に触れる入口（make ci-plan-* / ci-apply-* / ci-unlock-*）を持つ。
 const ciMakefile = ".makefiles/terraform/operation/ci.mk"
 
 var (
@@ -27,17 +27,17 @@ var (
 )
 
 var (
-	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- で始まるトークンを
+	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- / ci-unlock- で始まるトークンを
 	// CI の入口の呼び出しとみなし、make を介さない書き方でも拾う。ci.mk に無いもの（式で組んだ名前、
 	// 名前に使わない字が続くもの）は、切り詰めずにそのまま未知の入口として落とす。
 	ciTokenRe = regexp.MustCompile(`[A-Za-z0-9_-]+`)
 	// stepNameLineRe は step の名前の行。名前に入口の名前が在っても、それを実行しているとは数えない。
 	stepNameLineRe = regexp.MustCompile(`^\s+(?:- )?name:`)
 	// ciRuleRe / ciCallRe は ci.mk の入口の見出しと、その次の行の呼び出し。
-	ciRuleRe = regexp.MustCompile(`^(ci-(plan|apply)-[a-z0-9]+(?:-[a-z0-9]+)*):$`)
-	ciCallRe = regexp.MustCompile(`^\t@\$\(call CI_(PLAN|APPLY),([a-z0-9]+),(identity|workload)\)$`)
+	ciRuleRe = regexp.MustCompile(`^(ci-(plan|apply|unlock)-[a-z0-9]+(?:-[a-z0-9]+)*):$`)
+	ciCallRe = regexp.MustCompile(`^\t@\$\(call CI_(PLAN|APPLY|UNLOCK),([a-z0-9]+),(identity|workload)\)$`)
 	// ciCallAnyRe は呼び出しの字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
-	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY),`)
+	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY|UNLOCK),`)
 )
 
 // checkCIRoots は ci.mk と workflow を読み、ジョブが実行する root と SSOT の root の名指しを突き合わせる。
@@ -141,7 +141,7 @@ func entryTokens(l workflow.Line) []string {
 	}
 	var toks []string
 	for _, tok := range ciTokenRe.FindAllString(l.Text, -1) {
-		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") {
+		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") || strings.HasPrefix(tok, "ci-unlock-") {
 			toks = append(toks, tok)
 		}
 	}

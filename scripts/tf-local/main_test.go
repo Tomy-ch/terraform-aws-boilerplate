@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +69,7 @@ func stubGitWith(revParse, status, failOn string) func(args ...string) (string, 
 }
 
 func testDeps(environ []string) deps {
-	return deps{readFile: os.ReadFile, environ: environ, git: stubGit("", "")}
+	return deps{readFile: os.ReadFile, environ: environ, git: stubGit("", ""), now: time.Now}
 }
 
 func Test_run(t *testing.T) {
@@ -212,6 +214,35 @@ func Test_run(t *testing.T) {
 			require.NoError(t, run([]string{"plan-key", "-pr", "1", "-run", "2", "-attempt", "3", "-root", "admin-identity"}, &out, testDeps(nil)))
 			assert.Equal(t, "pr/1/2-3-admin-identity.txt\n", out.String())
 		})
+
+		t.Run("lock-key は lock file の key を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"lock-key", rootWith(t, backendOK, providersOK)}, &out, testDeps(nil)))
+			assert.Equal(t, "identity/terraform.tfstate.tflock\n", out.String())
+		})
+
+		t.Run("lock-etag は lock が無ければ空行を出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			list := fileWith(t, `{"Prefix":"identity/terraform.tfstate.tflock","KeyCount":0,"IsTruncated":false}`)
+			require.NoError(t, run([]string{"lock-etag", "-key", "identity/terraform.tfstate.tflock", list}, &out, testDeps(nil)))
+			assert.Equal(t, "\n", out.String())
+		})
+
+		t.Run("lock-stale は消してよい lock の説明を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			meta := fileWith(t, `{"ETag":"\"e\"","LastModified":"2000-01-01T00:00:00+00:00","VersionId":"v"}`)
+			body := fileWith(t, `{"ID":"c7f6a1b2-3d4e-4f50-8a9b-0c1d2e3f4a5b","Operation":"OperationTypeApply","Who":"runner@h"}`)
+			d := testDeps(nil)
+			d.now = func() time.Time { return time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC) }
+			require.NoError(t, run([]string{"lock-stale", "-etag", `"e"`, "-meta", meta, body}, &out, d))
+			assert.True(t, strings.HasPrefix(out.String(), "lock: ID=c7f6a1b2-3d4e-4f50-8a9b-0c1d2e3f4a5b "), out.String())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -230,6 +261,10 @@ func Test_run(t *testing.T) {
 			"oidc-url に引数があれば失敗する":      {"oidc-url", "x"},
 			"oidc-token にファイルが無ければ失敗する": {"oidc-token"},
 			"sha256 に余分な引数があれば失敗する":     {"sha256", "a", "b"},
+			"lock-key に root が無ければ失敗する": {"lock-key"},
+			"lock-key に余分な引数があれば失敗する":   {"lock-key", "a", "b"},
+			"lock-etag にファイルが無ければ失敗する":  {"lock-etag", "-key", "k"},
+			"lock-stale にファイルが無ければ失敗する": {"lock-stale", "-etag", "e", "-meta", "m"},
 		}
 		for name, args := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -240,6 +275,18 @@ func Test_run(t *testing.T) {
 				assert.Empty(t, out.String())
 			})
 		}
+
+		t.Run("新しい lock は消してよいと出力しない", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			meta := fileWith(t, `{"ETag":"\"e\"","LastModified":"2026-11-12T11:59:00+00:00","VersionId":"v"}`)
+			body := fileWith(t, `{"ID":"c7f6a1b2-3d4e-4f50-8a9b-0c1d2e3f4a5b","Operation":"OperationTypeApply","Who":"runner@h"}`)
+			d := testDeps(nil)
+			d.now = func() time.Time { return time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC) }
+			require.ErrorIs(t, run([]string{"lock-stale", "-etag", `"e"`, "-meta", meta, body}, &out, d), errLockFresh)
+			assert.Empty(t, out.String())
+		})
 
 		t.Run("state の鍵を決められなければ何も出力しない", func(t *testing.T) {
 			t.Parallel()
@@ -720,7 +767,6 @@ func Test_bucketName(t *testing.T) {
 
 	})
 
-	// 写しと正本のずれを見るので、正本である実物を読む（ADR-0702 決定17 の但し書き）。
 	t.Run("写しと正本のずれ", func(t *testing.T) {
 		t.Parallel()
 
@@ -1116,8 +1162,8 @@ func TestLocalMk(t *testing.T) {
 	})
 }
 
-// TestCiMk は、ci.mk のレシピが CI の profile で plan と apply を行い、terraform の出力を公開されるログに
-// 出さない配線を、make -n の展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
+// TestCiMk は、ci.mk のレシピが CI の profile で plan・apply・lock の解除を行い、terraform の出力を公開される
+// ログに出さない配線を、make -n の展開結果で見る。レシピそのものが対象なので実物の ci.mk を読む。
 func TestCiMk(t *testing.T) {
 	t.Parallel()
 
@@ -1205,6 +1251,29 @@ func TestCiMk(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
 
+	t.Run("unlock は unlock-identity の profile で、terraform を呼ばずに、読んだ版の ETag を条件に消す", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "ci-unlock-admin-identity")
+		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
+		assert.NotContains(t, got, "tabp-bootstrap")
+		assert.NotContains(t, got, " terraform ")
+		assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-plan")
+		assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-apply-identity")
+		assert.Contains(t, got, `trap 'rm -f "$list" "$body" "$meta"' EXIT`)
+		order(t, got,
+			`account -identity "$identity"`,
+			`lock-key "$dir"'`,
+			envPrefix("unlock-identity")+` aws s3api list-objects-v2 --region "$region" --bucket "$bucket" --prefix "$key" --expected-bucket-owner "$account" --no-paginate --output json > "$list"`,
+			`lock-etag -key "$key" "$list"'`,
+			envPrefix("unlock-identity")+` aws s3api get-object --region "$region" --bucket "$bucket" --key "$key" --if-match "$etag" --expected-bucket-owner "$account" --output json "$body" > "$meta"`,
+			`lock-stale -etag "$etag" -meta "$meta" "$body"'`,
+			envPrefix("unlock-identity")+` aws s3api delete-object --region "$region" --bucket "$bucket" --key "$key" --if-match "$etag" --expected-bucket-owner "$account"`,
+		)
+		assert.Equal(t, 1, strings.Count(got, "delete-object"), got)
+		assert.NotContains(t, got, "--version-id")
+	})
+
 	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {
 		t.Parallel()
 
@@ -1233,6 +1302,11 @@ aws)
 	"sts assume-role-with-web-identity") printf 'KEY-SECRET\tSECRET-SECRET\tSESSION-SECRET\n'; exit "$(rc assume-rc)" ;;
 	"kms list-aliases") cat "$k/aliases" 2>/dev/null || echo '{"Aliases":[{"AliasName":"alias/tabp-admin-tfstate","AliasArn":"arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate","TargetKeyId":"1234abcd-12ab-34cd-56ef-1234567890ab"}]}'; exit "$(rc kms-rc)" ;;
 	"s3api get-bucket-encryption") cat "$k/encryption" 2>/dev/null || echo '{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}}'; exit "$(rc encryption-rc)" ;;
+	"s3api list-objects-v2") cat "$k/lock-list" 2>/dev/null || echo '{"Name":"b","Prefix":"identity/terraform.tfstate.tflock","KeyCount":0,"MaxKeys":1000,"IsTruncated":false}'; exit "$(rc list-rc)" ;;
+	"s3api get-object")
+		for a; do last=$a; done
+		cat "$k/lock-body" > "$last"; cat "$k/lock-meta"; exit "$(rc get-rc)" ;;
+	"s3api delete-object") echo marker-1; exit "$(rc delete-rc)" ;;
 	s3api*) echo v-1; exit "$(rc s3api-rc)" ;;
 	esac
 	exit 0 ;;
@@ -1328,10 +1402,8 @@ func applies(calls string) int {
 	return n
 }
 
-// recipeFunc は、ci.mk のレシピを偽物の道具で走らせ、その結果を返す。
 type recipeFunc func(t *testing.T, target string, knobs map[string]string, env ...string) recipeResult
 
-// newRecipe は、build 済みの tf-local を使う recipeFunc を返す。
 func newRecipe(bin string) recipeFunc {
 	// env は既定の環境を上書きする。git と curl は PATH の先頭の偽物が受ける。
 	return func(t *testing.T, target string, knobs map[string]string, env ...string) recipeResult {
@@ -1348,7 +1420,12 @@ func newRecipe(bin string) recipeFunc {
 			require.NoError(t, os.MkdirAll(d, 0o700))
 		}
 
-		require.NoError(t, os.WriteFile(filepath.Join(identity, "backend.tf"), []byte(backendOK), 0o600))
+		backend := backendOK
+		if v, ok := knobs["backend.tf"]; ok {
+			backend = v
+		}
+
+		require.NoError(t, os.WriteFile(filepath.Join(identity, "backend.tf"), []byte(backend), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "providers.tf"), []byte(providersOK), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "stateful_protection.rego"), []byte("deny contains msg if {\n}\n\ndeny contains msg if {\n}\n"), 0o600))
 
@@ -1385,7 +1462,7 @@ func newRecipe(bin string) recipeFunc {
 
 }
 
-// TestCiRecipes は、ci.mk のレシピを偽物の道具で実際に走らせ、判定の失敗が apply と後続を止めることと、
+// TestCiRecipes は、ci.mk のレシピを偽物の道具で実際に走らせ、判定の失敗が apply・lock の削除と後続を止めることと、
 // plan の全文を置いてから失敗することを見る。判定そのものは tf-local のテストが持ち、ここはレシピが
 // その終了コードを握り潰さないことを固定する（ADR-0604 決定11、ADR-0702 決定24）。
 func TestCiRecipes(t *testing.T) {
@@ -1411,6 +1488,11 @@ func TestCiRecipes(t *testing.T) {
 	t.Run("資格情報", func(t *testing.T) {
 		t.Parallel()
 		testCiCredentials(t, recipe)
+	})
+
+	t.Run("lock の解除の入口", func(t *testing.T) {
+		t.Parallel()
+		testCiUnlockEntry(t, recipe)
 	})
 }
 
@@ -1634,6 +1716,112 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 			assert.Zero(t, countCalls(r.calls, "conftest"), r.calls)
 			assert.Empty(t, r.summary)
 			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+	}
+}
+
+func testCiUnlockEntry(t *testing.T, recipe recipeFunc) {
+	t.Helper()
+
+	const (
+		key  = "identity/terraform.tfstate.tflock"
+		etag = `"0123456789abcdef0123456789abcdef"`
+		id   = "c7f6a1b2-3d4e-4f50-8a9b-0c1d2e3f4a5b"
+	)
+	list := `{"Name":"b","Prefix":"` + key + `","KeyCount":1,"MaxKeys":1000,"IsTruncated":false,"Contents":[{"Key":"` + key + `","ETag":"\"0123456789abcdef0123456789abcdef\""}]}`
+	body := `{"ID":"` + id + `","Operation":"OperationTypeApply","Who":"runner@fv-az1-2","Version":"1.16.6","Path":"tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate"}`
+	meta := func(modified string) string {
+		return `{"ETag":"\"0123456789abcdef0123456789abcdef\"","LastModified":"` + modified + `","VersionId":"lock-ver-1"}`
+	}
+	old := map[string]string{"lock-list": list, "lock-body": body, "lock-meta": meta("2000-01-01T00:00:00+00:00")}
+	with := func(over map[string]string) map[string]string {
+		m := maps.Clone(old)
+		maps.Copy(m, over)
+
+		return m
+	}
+	deletes := func(calls string) int { return countCalls(calls, "aws s3api delete-object") }
+
+	t.Run("lock が無ければ何も消さずに成功する", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-unlock-admin-identity", nil)
+		require.NoError(t, r.err, r.out)
+		assert.Contains(t, r.out, "✅ lock はありません")
+		assert.Contains(t, r.calls, "--prefix "+key+" --expected-bucket-owner 123456789012 --no-paginate")
+		assert.Zero(t, countCalls(r.calls, "aws s3api get-object"), r.calls)
+		assert.Zero(t, deletes(r.calls), r.calls)
+		assert.Zero(t, countCalls(r.calls, "terraform"), "terraform を呼ばない")
+		assert.Contains(t, r.summary, "lock はありません")
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
+	t.Run("古い lock は読んだ版の ETag を条件に1回だけ消す", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-unlock-admin-identity", old)
+		require.NoError(t, r.err, r.out)
+		assert.Equal(t, 1, deletes(r.calls), r.calls)
+		assert.Contains(t, r.calls, "aws s3api get-object --region ap-northeast-1 --bucket tabp-admin-tfstate-123456789012-ap-northeast-1-an --key "+key+" --if-match "+etag)
+		assert.Contains(t, r.calls, "aws s3api delete-object --region ap-northeast-1 --bucket tabp-admin-tfstate-123456789012-ap-northeast-1-an --key "+key+" --if-match "+etag)
+		assert.Contains(t, r.out, "lock: ID="+id)
+		assert.Contains(t, r.out, "版 ID=lock-ver-1")
+		assert.Contains(t, r.out, "✅ lock を外しました（delete marker の版 ID: marker-1）")
+		assert.NotContains(t, r.out, "123456789012", "アカウント ID と Bucket 名をログに出さない")
+		assert.Contains(t, r.summary, "```text\nlock: ID="+id, "lock の説明は summary でコードブロックに入れる")
+		assert.Contains(t, r.summary, "lock を外しました")
+		assert.Zero(t, countCalls(r.calls, "terraform"), "terraform を呼ばない")
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
+	fresh := time.Now().UTC().Add(-time.Minute).Format("2006-01-02T15:04:05+00:00")
+	for name, c := range map[string]struct {
+		knobs                map[string]string
+		want                 string
+		lists, gets, deletes int
+	}{
+		"新しい lock は消さずに ID を出して失敗する":   {with(map[string]string{"lock-meta": meta(fresh)}), "ID=" + id, 1, 1, 0},
+		"lock の中身を読めなければ消さない":          {with(map[string]string{"lock-body": "nope"}), "Terraform の lock として読めません", 1, 1, 0},
+		"人の手元の apply の lock は古くても消さない": {with(map[string]string{"lock-body": strings.Replace(body, "runner@fv-az1-2", "alice@laptop.local", 1)}), "CI のランナーが apply の job で取った lock ではない", 1, 1, 0},
+		"一覧の後に置き換わった lock は消さない":       {with(map[string]string{"lock-meta": strings.Replace(meta("2000-01-01T00:00:00+00:00"), "0123", "ffff", 1)}), "置き換わりました", 1, 1, 0},
+		"版 ID の無い lock は消さない":          {with(map[string]string{"lock-meta": `{"ETag":"\"0123456789abcdef0123456789abcdef\"","LastModified":"2000-01-01T00:00:00+00:00"}`}), "版 ID がありません", 1, 1, 0},
+		"一覧の形を読めなければ lock 無しと読まない":     {map[string]string{"lock-list": `{"Contents":[]}`}, "一覧を読めません", 1, 0, 0},
+		"一覧が空の出力なら lock 無しと読まない":       {map[string]string{"lock-list": ""}, "一覧を読めません", 1, 0, 0},
+		"一覧を取れなければ lock を読まない":         {map[string]string{"list-rc": "254"}, "", 1, 0, 0},
+		"lock を読めなければ消さない":             {with(map[string]string{"get-rc": "254"}), "", 1, 1, 0},
+		"消せなければ非ゼロで終わり、外したと出さない":       {with(map[string]string{"delete-rc": "254"}), "", 1, 1, 1},
+		"root の資格情報なら一覧を取らない":          {map[string]string{"identity": "123456789012\tarn:aws:iam::123456789012:root\n"}, "root の資格情報では実行しません", 0, 0, 0},
+		"identity を取れなければ一覧を取らない":      {map[string]string{"sts-rc": "255"}, "", 0, 0, 0},
+		"lock の key を決められなければ一覧を取らない":  {map[string]string{"backend.tf": "terraform {\n  backend \"s3\" {\n    region = \"ap-northeast-1\"\n  }\n}\n"}, "key が1つではないか", 0, 0, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-unlock-admin-identity", c.knobs)
+			require.Error(t, r.err, r.out)
+			if c.want != "" {
+				assert.Contains(t, r.out, c.want)
+			}
+			assert.Equal(t, c.lists, countCalls(r.calls, "aws s3api list-objects-v2"), r.calls)
+			assert.Equal(t, c.gets, countCalls(r.calls, "aws s3api get-object"), r.calls)
+			assert.Equal(t, c.deletes, deletes(r.calls), r.calls)
+			assert.NotContains(t, r.out, "✅")
+			assert.Empty(t, r.summary)
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+	}
+
+	for name, knobs := range map[string]map[string]string{
+		"lock が無ければ job summary が無くても成功する":   nil,
+		"古い lock は job summary が無くても外して成功する": old,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-unlock-admin-identity", knobs, "GITHUB_STEP_SUMMARY=")
+			require.NoError(t, r.err, r.out)
+			assert.Contains(t, r.out, "✅")
+			assert.Empty(t, r.summary)
 		})
 	}
 }

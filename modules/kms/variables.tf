@@ -14,11 +14,13 @@ variable "name" {
 }
 
 variable "users" {
-  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role、services.logs は CloudWatch Logs の Log Group の名前。合わせて1件以上。"
+  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。services.logs は CloudWatch Logs の Log Group の名前。合わせて1件以上。"
   type = object({
     roles = optional(list(object({
-      arn = string
-      via = string
+      arn     = string
+      via     = string
+      access  = string
+      objects = optional(list(string), [])
     })), [])
     services = optional(object({
       logs = optional(list(string), [])
@@ -43,7 +45,31 @@ variable "users" {
   }
 
   validation {
-    condition     = length(distinct(var.users.roles)) == length(var.users.roles)
+    condition     = alltrue([for r in var.users.roles : contains(["read", "read-write"], r.access)])
+    error_message = "users.roles[*].access は read か read-write にしてください。"
+  }
+
+  # read の文は objects の暗号化コンテキストで限る。限る object の無い read は、read-write と同じ範囲の復号になる。
+  validation {
+    condition     = alltrue([for r in var.users.roles : r.access == "read" ? length(r.objects) > 0 : length(r.objects) == 0])
+    error_message = "users.roles[*].objects は、access が read のとき1件以上、read-write のとき空にしてください。"
+  }
+
+  # Key Policy の StringEquals は * と ? をワイルドカードとして読まないが、IAM の Resource と突き合わせる値なので閉じる。
+  validation {
+    condition = alltrue(flatten([for r in var.users.roles : [
+      for o in r.objects : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/[^*?]+$", o))
+    ]]))
+    error_message = "users.roles[*].objects は S3 の object の ARN（arn:<partition>:s3:::<bucket>/<key>）にしてください。* と ? は受けません。"
+  }
+
+  validation {
+    condition     = alltrue([for r in var.users.roles : length(distinct(r.objects)) == length(r.objects)])
+    error_message = "users.roles[*].objects に同じ object を重ねないでください。"
+  }
+
+  validation {
+    condition     = length(distinct([for r in var.users.roles : "${r.via} ${r.arn}"])) == length(var.users.roles)
     error_message = "users.roles に同じ role と via の組を重ねないでください。"
   }
 

@@ -222,10 +222,11 @@ func Test_validateEnvironments(t *testing.T) {
 		in      []environment
 		wantErr error
 	}{
-		{"plan / apply / apply-identity / 任意の名前は通る", []environment{
+		{"plan / apply / apply-identity / unlock-identity / 任意の名前は通る", []environment{
 			env("a-plan", deployFromProtectedPR, off),
 			env("a-apply", deployFromProtected, off),
 			env("a-apply-identity", deployFromProtected, off),
+			env("a-unlock-identity", deployFromProtected, off),
 			env("copilot", deployFromAny, off),
 		}, nil},
 		{"0件は拒む", nil, errEmptyDeclaration},
@@ -236,6 +237,7 @@ func Test_validateEnvironments(t *testing.T) {
 		{"管理者の迂回を許す宣言は拒む", []environment{env("x", deployFromAny, boolPtr(true))}, errDeclaration},
 		{"apply が Pull Request を許す宣言は拒む", []environment{env("a-apply", deployFromProtectedPR, off)}, errDeclaration},
 		{"apply-identity が任意のブランチを許す宣言は拒む", []environment{env("a-apply-identity", deployFromAny, off)}, errDeclaration},
+		{"unlock-identity が Pull Request を許す宣言は拒む", []environment{env("a-unlock-identity", deployFromProtectedPR, off)}, errDeclaration},
 		{"plan が Pull Request を許さない宣言は拒む", []environment{env("a-plan", deployFromProtected, off)}, errDeclaration},
 	}
 	for _, tc := range cases {
@@ -261,7 +263,9 @@ func Test_requiredDeployFrom(t *testing.T) {
 	}{
 		{"admin-apply", deployFromProtected, true},
 		{"admin-apply-identity", deployFromProtected, true},
+		{"admin-unlock-identity", deployFromProtected, true},
 		{"admin-plan", deployFromProtectedPR, true},
+		{"admin-unlock", "", false},
 		{"copilot", "", false},
 		{"admin-planner", "", false},
 	}

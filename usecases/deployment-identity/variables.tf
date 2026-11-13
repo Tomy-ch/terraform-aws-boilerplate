@@ -8,15 +8,15 @@ variable "project" {
     error_message = "project は英小文字と数字だけにしてください。"
   }
 
-  # 最も長い role 名 `<project>-sandbox-ci-apply-identity` を IAM の上限の64文字に収める。
+  # 最も長い role 名 `<project>-sandbox-ci-unlock-identity` を IAM の上限の64文字に収める。
   validation {
-    condition     = length(var.project) <= 38
-    error_message = "project は38文字以内にしてください。"
+    condition     = length(var.project) <= 37
+    error_message = "project は37文字以内にしてください。"
   }
 }
 
 variable "env" {
-  description = "role を置くアカウントの env の token。管理アカウントは `admin`。GitHub の environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` になる。"
+  description = "role を置くアカウントの env の token。管理アカウントは `admin`。GitHub の environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` になる。"
   type        = string
 
   validation {

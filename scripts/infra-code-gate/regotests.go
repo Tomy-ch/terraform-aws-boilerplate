@@ -18,12 +18,12 @@ import (
 
 var (
 	packageLine = regexp.MustCompile(`(?m)^package[ \t]+([A-Za-z0-9_.]+)`)
-	// denyID は deny のメッセージの先頭に置く固定の ID です。
-	denyID = regexp.MustCompile(`"(IC\d{3}) `)
+	// denyID は deny のメッセージの先頭に置く固定の ID です。英大文字2つは検査の木ごとの区分である。
+	denyID = regexp.MustCompile(`"([A-Z]{2}\d{3}) `)
 	// Conftest が規則として評価する名前。`deny[msg]` の書き方も同じ規則である。
 	ruleHead = regexp.MustCompile(`(?m)^(?:deny|warn|violation)(?:_[A-Za-z0-9]+)*\s*(?:contains\b|\[|if\b|:?=|\{)`)
 	testName = regexp.MustCompile(`(?m)^(test_[A-Za-z0-9_]+)\b`)
-	pairName = regexp.MustCompile(`^test_(IC\d{3})_(deny|allow)_`)
+	pairName = regexp.MustCompile(`^test_([A-Z]{2}\d{3})_(deny|allow)_`)
 	// forbiddenBuiltin は、判定を外界に依存させる組み込み関数です。
 	forbiddenBuiltin = regexp.MustCompile(`\bhttp\.send\b|\bnet\.[a-z_]+\b|\bopa\.runtime\b`)
 	reportLine       = regexp.MustCompile(`^(data\.[A-Za-z0-9_.]+): (PASS|FAIL|ERROR)\b`)

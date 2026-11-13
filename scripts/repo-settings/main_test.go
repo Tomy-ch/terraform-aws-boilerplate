@@ -25,6 +25,7 @@ const (
   {"name": "x-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false},
   {"name": "x-apply", "deploy_from": "protected", "can_admins_bypass": false},
   {"name": "x-apply-identity", "deploy_from": "protected", "can_admins_bypass": false},
+  {"name": "x-unlock-identity", "deploy_from": "protected", "can_admins_bypass": false},
   {"name": "copilot", "deploy_from": "any", "can_admins_bypass": false}
 ]`
 	identityRootFixture = `module "deployment_identity" {
@@ -60,23 +61,26 @@ func liveRoutes(t *testing.T) map[string]fakeResponse {
 	return map[string]fakeResponse{
 		rulesetListPath(1):          ok(`[{"id": 7, "name": "branch-protection", "source_type": "Repository"}]`),
 		"GET /repos/o/r/rulesets/7": ok(string(body)),
-		envListPath(1): ok(`{"total_count": 4, "environments": [
+		envListPath(1): ok(`{"total_count": 5, "environments": [
 			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-apply", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
+			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`),
 		policyPath("x-plan", 1): ok(`{"total_count": 3, "branch_policies": [
 			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
-		policyPath("x-apply", 1):          ok(protectedPolicies),
-		policyPath("x-apply-identity", 1): ok(protectedPolicies),
+		policyPath("x-apply", 1):           ok(protectedPolicies),
+		policyPath("x-apply-identity", 1):  ok(protectedPolicies),
+		policyPath("x-unlock-identity", 1): ok(protectedPolicies),
 	}
 }
 
 const protectedPolicies = `{"total_count": 2, "branch_policies": [{"id": 4, "name": "main", "type": "branch"}, {"id": 5, "name": "release/*", "type": "branch"}]}`
 
-// applyEnvsJSON は liveRoutes の x-apply と x-apply-identity。environment の一覧を差し替えるケースが含める。
+// applyEnvsJSON は liveRoutes の x-apply・x-apply-identity・x-unlock-identity。environment の一覧を差し替えるケースが含める。
 const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
-			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
+			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
+			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
 
 func fixedWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
@@ -147,7 +151,7 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
 		require.NotEmpty(t, f.requests)
 		assert.Equal(t, rulesetListPath(1), "GET "+f.requests[0].target)
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 5 件（実在 5 件）が宣言どおりです\n", out.String())
 	})
 
 	t.Run("sync は GITHUB_TOKEN が無ければ何も送らずに失敗する", func(t *testing.T) {
@@ -176,7 +180,7 @@ func Test_readDeclarations(t *testing.T) {
 		decl, err := readDeclarations(writeRepo(t, rulesetFixture))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"main"}, decl.branches.Deploy)
-		assert.Len(t, decl.environments, 4)
+		assert.Len(t, decl.environments, 5)
 		assert.Equal(t, rulesetFixture, string(decl.ruleset))
 		assert.Equal(t, syncedRuleset, string(decl.rendered))
 	})
@@ -231,6 +235,7 @@ func Test_loadDesired(t *testing.T) {
 			{Name: "x-plan", Patterns: []string{"main", "release/*", pullRequestRef}},
 			{Name: "x-apply", Patterns: []string{"main", "release/*"}},
 			{Name: "x-apply-identity", Patterns: []string{"main", "release/*"}},
+			{Name: "x-unlock-identity", Patterns: []string{"main", "release/*"}},
 			{Name: "copilot"},
 		}, want.Envs)
 	})
@@ -261,7 +266,7 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 2 件、environment 4 件")
+		assert.Contains(t, out.String(), "保護対象 2 件、environment 5 件")
 		assert.Contains(t, out.String(), "書き換えました")
 	})
 
@@ -277,7 +282,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 4 件。.github/settings/branch-protection.json は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 5 件。.github/settings/branch-protection.json は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -329,7 +334,7 @@ func Test_drift(t *testing.T) {
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 5 件（実在 5 件）が宣言どおりです\n", out.String())
 		assert.Empty(t, f.writes())
 	})
 
@@ -337,7 +342,7 @@ func Test_drift(t *testing.T) {
 		t.Parallel()
 		root := writeRepo(t, syncedRuleset)
 		routes := liveRoutes(t)
-		routes[envListPath(1)] = ok(`{"total_count": 4, "environments": [
+		routes[envListPath(1)] = ok(`{"total_count": 5, "environments": [
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": true, "deployment_branch_policy": null},
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
@@ -364,7 +369,7 @@ func Test_drift(t *testing.T) {
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 突合の対象外（観測できない）: ruleset の bypass_actors（write 権限の無い読み取りには返らない）",
-			"✅ repo-settings: o/r の ruleset 1 件と environment 4 件（実在 4 件）が宣言どおりです（突合の対象外 1 件を除く）",
+			"✅ repo-settings: o/r の ruleset 1 件と environment 5 件（実在 5 件）が宣言どおりです（突合の対象外 1 件を除く）",
 		}, "\n")+"\n", out.String())
 	})
 
@@ -390,7 +395,7 @@ func Test_syncSettings(t *testing.T) {
 	t.Run("environment の差分を drift と同じ差分から解消し、宣言に無いものは消さない", func(t *testing.T) {
 		t.Parallel()
 		routes := liveRoutes(t)
-		routes[envListPath(1)] = ok(`{"total_count": 4, "environments": [
+		routes[envListPath(1)] = ok(`{"total_count": 5, "environments": [
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": true, "deployment_branch_policy": null},
 			{"name": "other", "protection_rules": [], "can_admins_bypass": false}]}`)
@@ -429,7 +434,7 @@ func Test_syncSettings(t *testing.T) {
 	t.Run("宣言に無い environment だけがずれていれば、何も送らずにそれを報せる", func(t *testing.T) {
 		t.Parallel()
 		routes := liveRoutes(t)
-		routes[envListPath(1)] = ok(`{"total_count": 5, "environments": [
+		routes[envListPath(1)] = ok(`{"total_count": 6, "environments": [
 			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null},
@@ -447,7 +452,7 @@ func Test_syncSettings(t *testing.T) {
 	t.Run("ruleset だけを扱うときは、宣言に無い environment を報せない", func(t *testing.T) {
 		t.Parallel()
 		routes := liveRoutes(t)
-		routes[envListPath(1)] = ok(`{"total_count": 5, "environments": [
+		routes[envListPath(1)] = ok(`{"total_count": 6, "environments": [
 			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null},
@@ -474,7 +479,7 @@ func Test_syncSettings(t *testing.T) {
 		t.Parallel()
 		// x-plan が無いので、PUT の後に POST が3件続く計画になる。PUT は経路が無く 404 で失敗する。
 		routes := liveRoutes(t)
-		routes[envListPath(1)] = ok(`{"total_count": 3, "environments": [
+		routes[envListPath(1)] = ok(`{"total_count": 4, "environments": [
 			` + applyEnvsJSON + `
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`)
 		f, c := newFakeGitHub(t, routes)
@@ -508,8 +513,8 @@ func Test_observe(t *testing.T) {
 		_, c := newFakeGitHub(t, liveRoutes(t))
 		want, got, d, err := observe(context.Background(), writeRepo(t, syncedRuleset), c, repo)
 		require.NoError(t, err)
-		assert.Len(t, want.Envs, 4)
-		assert.Len(t, got.Envs, 4)
+		assert.Len(t, want.Envs, 5)
+		assert.Len(t, got.Envs, 5)
 		assert.Empty(t, d.findings())
 	})
 

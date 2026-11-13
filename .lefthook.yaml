@@ -99,8 +99,9 @@ pre-commit:
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
-    # env/admin/identity と docs/setup/bootstrap.md は scripts/tf-local のテストが写しの正本として読む。
-    # usecases/state-backend と modules/s3 は、その正本が追従する元。
+    # env/admin/identity・docs/setup/bootstrap.md・usecases/deployment-identity・conftest/plan/decl.json・
+    # mise.toml・workflow は scripts/ のテストが写しの正本として読む。usecases/state-backend と modules/s3 は、
+    # その正本が追従する元。
     go-test:
       glob:
         - "scripts/**/*.go"
@@ -110,8 +111,12 @@ pre-commit:
         - ".makefiles/**"
         - "env/**"
         - "usecases/state-backend/**"
+        - "usecases/deployment-identity/**"
         - "modules/s3/**"
         - "docs/setup/bootstrap.md"
+        - "conftest/plan/decl.json"
+        - "mise.toml"
+        - ".github/workflows/*.{yml,yaml}"
       run: make go-test
 
     # 何を見るかと、なぜ go-test と別に要るかは scripts/README.md の test-mapping 行が持つ。
@@ -184,6 +189,19 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make infra-code-gate-test infra-code-gate
+    resource-order-check:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "conftest/hcl/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make resource-order-check-test resource-order-check
 
     secret-gates-test:
       glob:

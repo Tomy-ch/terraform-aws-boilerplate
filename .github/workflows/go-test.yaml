@@ -58,12 +58,13 @@ jobs:
           # large diff outright (`this diff is taking too long to generate`), and a filter
           # that reaches no verdict runs every gated job instead of skipping it.
           token: ''
-          # scripts/tf-local's tests read env/admin/identity/tests and docs/setup/bootstrap.md as the
-          # originals its copies are checked against. usecases/state-backend and modules/s3 are what
-          # those originals follow.
+          # The tests under scripts/ read these files as the originals their copies are checked
+          # against: env/admin/identity, docs/setup/bootstrap.md, usecases/deployment-identity,
+          # conftest/plan/decl.json, mise.toml and the workflows. usecases/state-backend and
+          # modules/s3 are what those originals follow.
           filters: |
             relevant:
-              - '.github/workflows/go-test.yaml'
+              - '.github/workflows/**'
               - '**/*.go'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
@@ -71,8 +72,11 @@ jobs:
               - 'Makefile'
               - 'env/**'
               - 'usecases/state-backend/**'
+              - 'usecases/deployment-identity/**'
               - 'modules/s3/**'
               - 'docs/setup/bootstrap.md'
+              - 'conftest/plan/decl.json'
+              - 'mise.toml'
 
   go-test:
     needs: changes

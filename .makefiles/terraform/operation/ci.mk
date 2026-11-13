@@ -1,4 +1,5 @@
-## CI が Terraform を動かす入口（.github/workflows/terraform-gates.yaml の plan と、terraform-apply.yaml の apply）
+## CI が Terraform を動かす入口（.github/workflows/terraform-gates.yaml の plan と、terraform-apply.yaml の apply）と、
+## state に残った lock を外す入口（terraform-unlock.yaml）
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
@@ -103,6 +104,29 @@ echo "✅ apply が終わりました"; \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n' "$$root" "$$summary" >> "$$GITHUB_STEP_SUMMARY"
 endef
 
+# $(1)=env $(2)=root。apply の job の timeout を超えて残った lock だけを、読んだ版の ETag を条件に消す。
+# terraform は呼ばない。lock の有無と古さの判定は tf-local の lock-etag と lock-stale が持ち、ここは lock-etag が
+# 空を返したときに後続の道具を呼ばずに成功で終えることだけを決める（ADR-0702 決定24 の、空を条件に起動を省く順序）。
+define CI_UNLOCK
+set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; root="$(1)-$(2)"; \
+list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; \
+rm -f "$$list" "$$body" "$$meta"; trap 'rm -f "$$list" "$$body" "$$meta"' EXIT; export dir list body meta; \
+unset_env=$$($(call TF_LOCAL,env-unset)); \
+region=$$($(call TF_LOCAL,region "$$dir")); export region; \
+identity=$$($(TF_LOCAL_ENV) $(AWS_BIN) sts get-caller-identity --region "$$region" --query '[Account,Arn]' --output text); export identity; \
+account=$$($(call TF_LOCAL,account -identity "$$identity")); \
+bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -region "$$region" -identity "$$identity")); \
+key=$$($(call TF_LOCAL,lock-key "$$dir")); export key; \
+$(TF_LOCAL_ENV) $(AWS_BIN) s3api list-objects-v2 --region "$$region" --bucket "$$bucket" --prefix "$$key" --expected-bucket-owner "$$account" --no-paginate --output json > "$$list"; \
+etag=$$($(call TF_LOCAL,lock-etag -key "$$key" "$$list")); export etag; \
+test -n "$$etag" || { echo "✅ lock はありません。何も消しません"; test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\nlock はありません\n' "$$root" >> "$$GITHUB_STEP_SUMMARY"; exit 0; }; \
+$(TF_LOCAL_ENV) $(AWS_BIN) s3api get-object --region "$$region" --bucket "$$bucket" --key "$$key" --if-match "$$etag" --expected-bucket-owner "$$account" --output json "$$body" > "$$meta"; \
+lock=$$($(call TF_LOCAL,lock-stale -etag "$$etag" -meta "$$meta" "$$body")); echo "$$lock"; \
+marker=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api delete-object --region "$$region" --bucket "$$bucket" --key "$$key" --if-match "$$etag" --expected-bucket-owner "$$account" --query VersionId --output text); \
+echo "✅ lock を外しました（delete marker の版 ID: $${marker}）"; \
+test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n```text\n%s\n```\n\nlock を外しました（delete marker の版 ID: `%s`）\n' "$$root" "$$lock" "$$marker" >> "$$GITHUB_STEP_SUMMARY"
+endef
+
 .PHONY: ci-aws-credentials ## [CI] OIDC で CI_ENV の CI_ROLE の role を assume し、profile に資格情報を置く
 ci-aws-credentials: SHELL := /bin/bash
 ci-aws-credentials:
@@ -119,3 +143,9 @@ ci-apply-admin-identity: SHELL := /bin/bash
 ci-apply-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-apply-admin-identity:
 	@$(call CI_APPLY,admin,identity)
+
+.PHONY: ci-unlock-admin-identity ## [CI] 管理アカウントの identity root の state に、apply の job の timeout を超えて残った lock を外す
+ci-unlock-admin-identity: SHELL := /bin/bash
+ci-unlock-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,unlock-identity)
+ci-unlock-admin-identity:
+	@$(call CI_UNLOCK,admin,identity)

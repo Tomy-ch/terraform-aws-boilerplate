@@ -9,9 +9,9 @@
 
 Terraform は、1つの root の中でだけ resource と module の出力をつなぐ。root をまたぐ受け渡しは remote state か SSM Parameter になり、依存の順序も Terraform ではなく apply の手順が持つ。ADR-0102 決定16 は、usecase の間の受け渡しを「env が送り側の output を受け側の `variable` へ渡す」形を主とし、root をまたぐ形をその代わりとして置く。
 
-一方、1回の apply は CI が assume した1つの role で走る（ADR-0602 決定12）。ADR-0602 決定13 は、各アカウントの role を plan / apply / apply-identity の3つに分け、bootstrap の構成物（同 決定1）を apply-identity だけに変更させる。bootstrap の構成物を他の usecase と同じ root に置くと、他の usecase の apply が、IAM と state backend を書き換えられる role で走る。
+一方、1回の apply は CI が assume した1つの role で走る（ADR-0602 決定12）。ADR-0602 決定13 は、各アカウントの role を plan / apply / apply-identity と lock の解除の role に分け、bootstrap の構成物（同 決定1）を apply-identity だけに変更させる。bootstrap の構成物を他の usecase と同じ root に置くと、他の usecase の apply が、IAM と state backend を書き換えられる role で走る。
 
-state を細かく分ける利点は、誤った apply と state の破損の範囲を狭めることである。ただし role が3つで固定である以上、IAM の上での範囲は分割しても狭まらない。plan の role は state をすべて読むので（ADR-0602 決定13）、state に入る秘密値の読み手も狭まらない。分割の費用は、root をまたぐ受け渡しと、apply の順序と、途中で失敗したときの組合せである。
+state を細かく分ける利点は、誤った apply と state の破損の範囲を狭めることである。ただし role の組がアカウントごとに固定である以上、IAM の上での範囲は分割しても狭まらない。plan の role は state をすべて読むので（ADR-0602 決定13）、state に入る秘密値の読み手も狭まらない。分割の費用は、root をまたぐ受け渡しと、apply の順序と、途中で失敗したときの組合せである。
 
 各アカウントは自分の state Bucket を持つ。管理アカウントの Bucket には、管理アカウントの state を置く。
 
@@ -32,12 +32,12 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### state と lock
 
 7. 各 root の state は、そのアカウントの state Bucket に、root ごとに固定した1つの key で置く。identity root は `identity/terraform.tfstate`、workload root は `workload/terraform.tfstate` とする。CLI の workspace を使わない。
-8. lock は、S3 backend が state の key の隣に置く lock file（`<key>.tflock`）で取る。plan の role は state にも lock file にも書き込まない（ADR-0602 決定13）。したがって plan は lock を取らずに実行する。apply は lock を取る（ADR-0601 決定16）。
+8. lock は、S3 backend が state の key の隣に置く lock file（`<key>.tflock`）で取る。plan の role は state にも lock file にも書き込まない（ADR-0602 決定13）。したがって plan は lock を取らずに実行する。apply は lock を取る（ADR-0601 決定16）。apply が途中で止まって残った lock file を CI から消すのは、lock の解除の role（ADR-0602 決定13）だけとする。消してよいのは、apply の job の実行時間の上限を超えて残った lock だけであり、読んだ版と同じ版であることを条件に消す。lock の解除の実行は、apply の実行を待たせず、取り消さない。消すのは、CI のランナーが apply の job で取った lock だけである。
 
 ### 書き込みの分離
 
-9. 各 apply の role は、自分が apply する root の key と lock file だけに書き込める。もう一方の root の key と lock file への書き込みは、state Bucket の bucket policy で拒否する。拒否は role の ARN で書く。
-10. apply の role は、state Bucket と、state の暗号化に使う鍵の設定を変更する有効な権限を持たない。対象は bucket policy、版管理、暗号化、lifecycle、object の版の削除、鍵の key policy である。これらを変更できるのは apply-identity の role だけとする。
+9. 各 apply の role は、自分が apply する root の key と lock file だけに書き込める。lock の解除の role は、対応する root の lock file を消すことだけができる。それ以外の key と lock file への書き込みは、state Bucket の bucket policy で拒否する。拒否は role の ARN で書く。
+10. apply の role と lock の解除の role は、state Bucket と、state の暗号化に使う鍵の設定を変更する有効な権限を持たない。対象は bucket policy、版管理、暗号化、lifecycle、object の版の削除、鍵の key policy である。これらを変更できるのは apply-identity の role だけとする。
 
 ### stateful な resource の保護
 
@@ -98,14 +98,16 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
   - `env/<env>/` の直下がそれらの usecase を呼ばないこと
   - `env/<env>/` の下に他の root が無いこと
 - Static Analysis: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること。plan の job が lock を取らず、apply の job が取ること（決定8）
+- Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
+- Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
-- Policy Test: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否すること（決定9）
-- Policy Test: apply の role の権限（IAM policy と、課す場合は permissions boundary を合わせた有効な権限）が、決定10 の変更を state Bucket と state の鍵に対して許さないこと（決定10）
+- Policy Test（未配線。#19）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
+- Policy Test: apply の role と lock の解除の role の権限（IAM policy と、課す場合は permissions boundary を合わせた有効な権限）が、決定10 の変更を state Bucket と state の鍵に対して許さないこと（決定10。apply の role の state Bucket の側は未配線。#209）
 - Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響
 
-- state Bucket は、2つの key と lock file ごとの書き込みの拒否を、bucket policy に持つ。
+- state Bucket は、2つの key と lock file ごとの書き込みの拒否と、lock の解除の role に lock file の削除だけを許す拒否を、bucket policy に持つ（#19 で配線）。
 - workload root の plan と apply は、env の workload 全体を対象にする。変更が1つの usecase に閉じていても、env の workload 全体をロックする。
 - plan は lock を取らないので、apply と並行して走ると、apply の途中の state を読むことがある。apply は merge された commit で lock を取って実行するので（ADR-0601 決定6・16）、lock を取らない plan の結果は apply の内容を決めない。
 - stateful な resource を意図して削除するには、許可の宣言に address と理由を足す変更を通す。削除が済んだ後の変更で、その項目を取り除く。

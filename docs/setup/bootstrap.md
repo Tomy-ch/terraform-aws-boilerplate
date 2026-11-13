@@ -240,13 +240,15 @@ state backend が無い時点では Terraform が state を保存できないの
 
    この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
 
-2. 結果が `Plan: 4 to import, 26 to add, 0 to change, 0 to destroy.` であり、追加が次の26件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+2. 結果が `Plan: 4 to import, 30 to add, 0 to change, 0 to destroy.` であり、追加が次の30件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
 
    - `module.state_backend.module.s3` の `aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の3件（1件目は state の鍵による既定の暗号化。[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md)。3件目は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
    - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
    - `module.state_backend.module.kms` の `aws_kms_key.this`、`aws_kms_key_policy.this`、`aws_kms_alias.this` の3件（state の鍵）
    - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
-   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this`、`aws_iam_role_policy.this`、`aws_iam_role_policies_exclusive.this`、`aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]` の3件ずつ
+   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.apply_identity` と `aws_iam_role_policy.apply_identity` の2件
+   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this` と `aws_iam_role_policy.this` を、それぞれ `["plan"]`・`["apply"]`・`["unlock_identity"]` の3件ずつ
+   - `module.deployment_identity.module.github_oidc` の `aws_iam_role_policies_exclusive.this` と `aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]`・`["unlock_identity"]` の4件ずつ
 3. Bucket に Policy と lifecycle がまだ無いことを確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換える。段1 の手順1 と同じ bash で実行する。`make plan-admin-identity` は `ACCOUNT_ID` と `BUCKET` をシェルに残さないので、別のシェルなら先に段1 の手順1 のブロックを実行する
 
    ```bash
@@ -270,7 +272,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 ### 段3. deployment-identity の値を用意する
 
-`env/<env>/identity/main.tf` の `module "deployment_identity"` が、OIDC provider と plan / apply / apply-identity の3 role を作る（[`usecases/deployment-identity`](../../usecases/deployment-identity/README.md)）。段3 で人が行うのは、その入力の値を自分のリポジトリに合わせることだけである。
+`env/<env>/identity/main.tf` の `module "deployment_identity"` が、OIDC provider と plan / apply / apply-identity / unlock-identity の4 role を作る（[`usecases/deployment-identity`](../../usecases/deployment-identity/README.md)）。段3 で人が行うのは、その入力の値を自分のリポジトリに合わせることだけである。
 
 1. `github` の4つの値を、role を assume させるリポジトリのものにする。ID は次で得る
 
@@ -298,10 +300,10 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    ```bash
    aws iam list-open-id-connect-providers
-   for r in plan apply apply-identity; do aws iam get-role --role-name "tabp-admin-ci-${r}"; done
+   for r in plan apply apply-identity unlock-identity; do aws iam get-role --role-name "tabp-admin-ci-${r}"; done
    ```
 
-   1つ目の結果に `token.actions.githubusercontent.com` が無く、3つの `get-role` がすべて `NoSuchEntity` を返すこと
+   1つ目の結果に `token.actions.githubusercontent.com` が無く、4つの `get-role` がすべて `NoSuchEntity` を返すこと
 
 4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）。state の鍵はまだ無いので、init は鍵を渡さない
 
@@ -340,12 +342,12 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    - `aws s3api get-bucket-encryption --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` と、同じことを plan の出力の Bucket（`"${BUCKET/-tfstate-/-tfplan-}"`）に行った結果が、どちらも `SSEAlgorithm` `aws:kms`、`KMSMasterKeyID` が `alias/tabp-admin-tfstate` の指す鍵の ARN、`BucketKeyEnabled` `false`、`SSE-C` の拒否を返す。state そのものは、段5 で state を書き換える最初の CI の apply まで SSE-S3 のままである
    - `aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"` の `ClientIDList` が `sts.amazonaws.com` だけである
-   - 3つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity`。role 名と違い、apply-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
+   - 4つの role で、`aws iam list-role-policies` が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity` / `unlock_identity`。role 名と違い、apply-identity と unlock-identity の policy 名は下線でつなぐ）を、`aws iam list-attached-role-policies` が空を返す
    - `aws s3api get-bucket-policy` が、TLS でない要求を拒否する1文を返す
    - `aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` が規則を1つだけ返し、その規則が `Status` `Enabled`、空の `Filter`、`Expiration` の `ExpiredObjectDeleteMarker` `true`（`Days` と `Date` が無い）、`NoncurrentVersionExpiration` の `NoncurrentDays` が `state_noncurrent_version_retention_days` の値、`AbortIncompleteMultipartUpload` の `DaysAfterInitiation` `1` を持つ
    - `aws kms describe-key --key-id alias/tabp-admin-tfstate` が `KeyState` `Enabled`、`KeySpec` `SYMMETRIC_DEFAULT`、`KeyUsage` `ENCRYPT_DECRYPT`、`MultiRegion` `false`、`Origin` `AWS_KMS` を、`aws kms get-key-rotation-status --key-id alias/tabp-admin-tfstate` が `KeyRotationEnabled` `true` と `RotationPeriodInDays` `365` を返す
-   - `aws kms get-key-policy --key-id alias/tabp-admin-tfstate --policy-name default` が、アカウントへの委任の文と、plan と apply-identity の2つの role に S3 経由の `kms:Decrypt`・`kms:GenerateDataKey` を許す文の2つだけを返す
-9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること
+   - `aws kms get-key-policy --key-id alias/tabp-admin-tfstate --policy-name default` が、アカウントへの委任の文と、plan と apply-identity の2つの role に S3 経由の `kms:Decrypt`・`kms:GenerateDataKey` を許す文と、unlock-identity の role に S3 経由の `kms:Decrypt` だけを、暗号化コンテキスト `aws:s3:arn` が identity root の lock file（`identity/terraform.tfstate.tflock`）の object の ARN であるときに許す文の3つだけを返す
+9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること。unlock-identity の role の権限は、state の鍵の block の後で確かめる
 
    ```bash
    arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
@@ -402,6 +404,20 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
    期待は順に、6行・1行・4行・1行がすべて `allowed`、続く6つが1行・8行・2行・3行・1行・2行ですべて `implicitDeny`、最後の2つが21行・1行ですべて `explicitDeny` であること。CI の role は鍵と alias を作れず、鍵の権限は state の鍵の ARN に限られる（別の鍵の行は `implicitDeny`）。apply の role は state の鍵の管理の Action を読み取りも含めて Deny され、暗号操作は Deny されない（`implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す。`simulate-principal-policy` は IAM の評価だけを見るので、KMS が実際の要求で Deny をどう評価するかは確かめない
 
+   unlock-identity の role の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定9）は次で確かめる。`s3:ListBucket` の条件キー `s3:prefix` は `simc` で与える
+
+   ```bash
+   lock="${key}.tflock"
+   simc unlock-identity "arn:aws:s3:::${BUCKET}" "ContextKeyName=s3:prefix,ContextKeyValues=identity/terraform.tfstate.tflock,ContextKeyType=string" s3:ListBucket
+   sim unlock-identity "$lock" s3:GetObject s3:DeleteObject
+   simc unlock-identity "arn:aws:s3:::${BUCKET}" "ContextKeyName=s3:prefix,ContextKeyValues=identity/terraform.tfstate,ContextKeyType=string" s3:ListBucket
+   sim unlock-identity "$lock" s3:PutObject s3:DeleteObjectVersion
+   sim unlock-identity "$key" s3:GetObject s3:PutObject s3:DeleteObject
+   sim unlock-identity "$state_key" kms:Decrypt
+   ```
+
+   期待は順に、1行・2行がすべて `allowed`、続く4つが1行・2行・3行・1行ですべて `implicitDeny` であること。一覧は lock file の key の prefix に限られ、state の key は読めない。`kms:Decrypt` は IAM では許さず、state の鍵の Key Policy が lock file の object に限って許す
+
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 
@@ -418,24 +434,40 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 段4 の後の変更は、release line への merge を契機に、CI の apply の job（`terraform-apply.yaml` の `apply-admin-identity`）が apply-identity の role で apply する（ADR-0602 決定4）。人は apply しない。起動の条件と job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」が持つ。
 
 1. apply の workflow を足す Pull Request を merge する前に、管理者が environment `admin-apply-identity` に secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く（`gh secret set AWS_ACCOUNT_ID --env admin-apply-identity`）。宣言は secret を持たず、突合も見ない
-2. merge の後の最初の run で、`apply-infra-code-gate` と `apply-admin-identity` が緑であること、ログの plan の要約が `No changes.` であること、Policy の違反が無いこと、`OIDC の sub` の行が `:environment:admin-apply-identity` で終わることを確かめる。run の URL を issue に残す（アカウント ID を載せない）。この run は apply の経路の最初の確認であり、段5 の成功ではない
+2. merge の後の最初の run で、`apply-infra-code-gate`・`apply-resource-order-check`・`apply-admin-identity` が緑であること、ログの plan の要約が `No changes.` であること、Policy の違反が無いこと、`OIDC の sub` の行が `:environment:admin-apply-identity` で終わることを確かめる。run の URL を issue に残す（アカウント ID を載せない）。この run は apply の経路の最初の確認であり、段5 の成功ではない
 3. 段5 の変更（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行）は、前の変更の CI の apply が緑で、その後の CI の plan が変更なしを示してから merge する。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge し、その apply が緑になってから次を merge する。待っている run は後から来た run に置き換わるので、続けて merge すると2つが1回の apply に入る
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
 4. 権限を足す変更の apply の後、段4 の手順9 と同じ形で、足した Action を `simulate-principal-policy` で確かめ、Pull Request に記録する。Condition を持つ Action は、条件キーを `--context-entries` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。state の鍵の権限を変えたときは、段4 の手順9 の state の鍵の block で確かめる
+5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を merge する前に、管理者が environment `admin-unlock-identity` を作り、secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く。environment は、その Pull Request のブランチを checkout した手元で `make apply-environments` を実行して宣言から作り、secret は `gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity` で置く。merge の前に作るのは、存在しない environment を参照した workflow が走ると、GitHub がその environment を保護なしで作るためである（[`.github/settings/README.md`](../../.github/settings/README.md)）。作った後、管理者はその Pull Request のブランチで `make repo-settings-drift` を実行し、宣言と実態が一致することを確かめてよい
+6. 書き込みの拒否を入れる変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+   1. identity root を変更する Pull Request を merge し、その CI の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
+   2. 一時 IAM user で lock file が在ることを確かめる
+
+      ```bash
+      aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock
+      ```
+
+      Terraform は取り消しの信号で lock を外して止まりうる。lock file が返らなければ、この試行は lock を残せていない。手順1 からやり直す
+   3. lock file の `LastModified` から、apply の job の `timeout-minutes` に余裕を足した時間（`scripts/tf-local` の定数）を超えるまで待つ
+   4. `Terraform Unlock` を起動し、緑であること、ログに lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出ること、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わること、手順2 の一覧が lock file を返さないことを確かめる
+   5. 取り消した apply の run を「Re-run failed jobs」で再実行し、緑になることを確かめる。release line の先頭の commit のままであること
+   6. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）。手順4 が失敗したら、一時 IAM user で lock file を消してから（「途中で失敗したとき」の `delete-object`）、Pull Request に記録して止まる
 
 途中で失敗したとき:
 
 - 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ない。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
-- lock が残ったら、apply の run が走っていないことを Actions の画面で確かめてから、一時 IAM user で lock file を消す。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+- lock が残ったら、Actions の画面から `Terraform Unlock`（`terraform-unlock.yaml`）を起動して外す。規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」が持つ。job は apply の job の `timeout-minutes` に余裕を足した時間より新しい lock を消さずに失敗するので、そのときは時間を置いて起動し直す。外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する
+- 人の手元の apply が残した lock は、`Terraform Unlock` では外れない（CI のランナーが apply の job で取った lock だけを外す）。その apply を実行した人が `terraform force-unlock <ID>` で外す
+- 書き込みの拒否が入る前は、一時 IAM user で lock file を消してもよい。apply の run が走っていないことを Actions の画面で確かめてから行う。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
 
   ```bash
   aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate.tflock
   ```
 
-  書き込みの拒否が入った後は、人の主体は lock file を消せない。CI で外す経路は未配線であり（#226）、配線されるまでは書き込みの拒否を入れない
+  書き込みの拒否が入った後は、人の主体は lock file を消せず、`Terraform Unlock` だけが外す。`Terraform Unlock` は、Terraform の lock として読めない lock file を消さない
 
 段5 の成功は、次のすべてを満たしたときとする。
 
@@ -443,11 +475,12 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 - 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した
 - state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
 - 書き込みの拒否が入った後、例外に無い IAM の主体（一時 IAM user）による state Bucket への `put-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。key は state の key でも lock file でもないもの（`verify/<日時>`）にする。拒まれなかったら、その object を消し、Pull Request に記録して止まる
-- CI で残った lock を外す経路が在り、lock の無い状態で一度走った
+- 書き込みの拒否を入れる前に、手順6 の試行で `Terraform Unlock` が残った lock を外し、取り消した apply の run の再実行が緑になった
+- 書き込みの拒否が入った後、`Terraform Unlock` が lock の無い状態で緑で走り、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わった。この run が、unlock-identity の role が書き込みの拒否の下で lock file の一覧を読めることの確認になる。run の URL を Pull Request に記録する（アカウント ID を載せない）
 
 ## 一時 IAM user の削除
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
+bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、書き込みの拒否が入るまで残った lock file を消す主体と、書き込みの拒否の設定を誤ったときに Bucket Policy を直す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
@@ -478,7 +511,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 段2 の終了時:
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity` が `4 to import, 26 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の26件だけだった
+- [ ] `TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity` が `4 to import, 30 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の30件だけだった
 - [ ] 段1 の読み戻しで、既定の暗号化が `AES256` で `SSE-C` を拒否していた
 - [ ] `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返し、`alias/tabp-admin-tfstate` が無かった
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
@@ -491,7 +524,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 
 段4 の終了時:
 
-- [ ] OIDC provider と3つの role が、段4 の前に存在しなかった
+- [ ] OIDC provider と4つの role が、段4 の前に存在しなかった
 - [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 - [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
 - [ ] apply の直前に `get-bucket-policy` が `NoSuchBucketPolicy` を、`get-bucket-lifecycle-configuration` が `NoSuchLifecycleConfiguration` を返した
@@ -504,12 +537,14 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 段5 の終了時:
 
 - [ ] apply の workflow の merge の前に、environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を置いた
+- [ ] lock の解除の workflow の merge の前に、environment `admin-unlock-identity` を宣言から作り、その secret `AWS_ACCOUNT_ID` を置いた
 - [ ] 最初の run が緑で、plan の要約が `No changes.`、`OIDC の sub` が `:environment:admin-apply-identity` で終わった
 - [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
 - [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
 - [ ] `head-object` で、state が state の鍵で暗号化されていた
 - [ ] 一時 IAM user の `put-object` が state Bucket で `AccessDenied` を返した
-- [ ] CI で lock を外す経路が、lock の無い状態で一度走った
+- [ ] 書き込みの拒否を入れる前に、取り消した apply の残した lock を `Terraform Unlock` が外し、その apply の再実行が緑になった
+- [ ] 書き込みの拒否が入った後、`Terraform Unlock` が lock の無い状態で緑で走った
 
 一時 IAM user の削除の終了時:
 

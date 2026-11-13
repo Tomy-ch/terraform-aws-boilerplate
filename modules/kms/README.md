@@ -13,14 +13,17 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | 入力 | 意味 |
 | --- | --- |
 | `name` | alias の名前の後半。英数字・`/`・`_`・`-` だけで 1-250 文字、`aws/` で始めない（KMS の `CreateAlias`）。前半 `<project>-<env>-<purpose>` は呼び出す usecase が組み、その形は usecase のテストで固定する |
-| `users.roles` | 鍵を使う IAM role の ARN と、経由するサービス（`via`）の組。同じアカウントと partition の role だけを受ける（ARN が plan で決まれば plan で、決まらなければ apply で落ちる） |
+| `users.roles` | 鍵を使う IAM role の ARN と、経由するサービス（`via`）と、利用の範囲（`access`）の組。同じアカウントと partition の role だけを受ける（ARN が plan で決まれば plan で、決まらなければ apply で落ちる）。同じ role と `via` の組を2回は受けない（`access` だけが違っても受けない） |
+| `users.roles[*].access` | `read-write` は復号と鍵の生成、`read` は `objects` に名指した S3 の object の復号だけ |
+| `users.roles[*].objects` | `access = "read"` のとき1件以上の S3 の object の ARN（`arn:<partition>:s3:::<bucket>/<key>`）。`*`・`?` を受けない。鍵と同じ partition だけを受ける。`read-write` では空にする。S3 の ARN はアカウントを持たないので、別のアカウントの Bucket の object かどうかは見ない |
 | `users.services.logs` | 鍵で暗号化する CloudWatch Logs の Log Group の名前。module が鍵と同じアカウントと region の ARN を組む |
 
 `users` は合わせて1件以上を要る。管理の委任は暗号操作を含まないので、利用者の無い鍵は誰も使えない。
 
 | 出力 | 使う側 |
 | --- | --- |
-| `key_arn` | 鍵を使う resource（S3 の暗号化と Bucket Policy の条件、backend の `kms_key_id`、Log Group の `kms_key_id`）と、鍵を管理する role の IAM の Resource。同じ apply で鍵を作って暗号化を始める消費者が既定の Key Policy の間に鍵を使わないよう、Key Policy の置き換えの後に決まる（`depends_on`） |
+| `key_arn` | 鍵を使う resource（S3 の暗号化と Bucket Policy の条件、backend の `kms_key_id`、Log Group の `kms_key_id`）。同じ apply で鍵を作って暗号化を始める消費者が既定の Key Policy の間に鍵を使わないよう、Key Policy の置き換えの後に決まる（`depends_on`） |
+| `key_arn_for_iam` | `key_arn` と同じ値で、Key Policy の置き換えを待たない。鍵を使わず ARN だけを名指す場所（IAM の policy の Resource）にだけ使う。Key Policy が名指す role の IAM が鍵の ARN を要るとき、`key_arn` を使うと role → Key Policy → `key_arn` → role の IAM の循環になりうる |
 | `alias_name` | 人の手順が鍵を名指す名前（`state-backend` の `state_key_alias_name`）。入力だけから決まるので、鍵より前に参照できる |
 
 消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、人の手順と init の運用機構（`scripts/tf-local` の `state-key`）が鍵の ARN を引くことに使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
@@ -32,7 +35,8 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | Sid | Principal | Action | Condition |
 | --- | --- | --- | --- |
 | `AccountKeyAdministration` | アカウント（`arn:<partition>:iam::<account>:root`） | 鍵の管理の21 Action（`policy.tf` の `administration_actions`）。暗号操作と `kms:CreateGrant` を含まない | 無し |
-| `RolesViaS3` | `users.roles` のうち `via = "s3"` の role | `kms:Decrypt`・`kms:GenerateDataKey` | `kms:ViaService = s3.<region>.amazonaws.com` |
+| `RolesViaS3ReadWrite` | `users.roles` のうち `via = "s3"`・`access = "read-write"` の role | `kms:Decrypt`・`kms:GenerateDataKey` | `kms:ViaService = s3.<region>.amazonaws.com` |
+| `RolesViaS3Read<n>` | `users.roles` のうち `via = "s3"`・`access = "read"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt` | `kms:ViaService = s3.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:s3:arn` にその role の `objects` |
 | `LogsService` | `logs.<region>.amazonaws.com` | `kms:Decrypt`・`kms:Describe*`・`kms:Encrypt`・`kms:GenerateDataKey*`・`kms:ReEncrypt*` | `ArnEquals kms:EncryptionContext:aws:logs:arn` に `users.services.logs` の Log Group の ARN（`:*` を付けない） |
 
 `via` の語彙と、それぞれが許す Action:
@@ -41,7 +45,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | --- | --- | --- |
 | `s3` | `kms:GenerateDataKey`（書き込み）・`kms:Decrypt`（読み出し。multipart の書き込みも要る） | Amazon S3 User Guide「Using server-side encryption with AWS KMS keys」。Terraform の S3 backend の文書は `kms:Encrypt` も挙げるが、S3 の文書を採る（ADR-0207 決定3） |
 
-`kms:ViaService` は IAM の主体が AWS のサービスを経由して呼ぶ要求にだけ当たる条件で、role はこの鍵を直接は使えない。CloudWatch Logs の文はサービス principal に対する許可で、暗号化コンテキストで Log Group を名指して限る。
+`kms:ViaService` は IAM の主体が AWS のサービスを経由して呼ぶ要求にだけ当たる条件で、role はこの鍵を直接は使えない。`access = "read"` の文は、S3 が渡す暗号化コンテキスト `aws:s3:arn` で object を限る。Bucket Key を使う Bucket ではコンテキストが Bucket の ARN になるので、object では限れない（Amazon S3 User Guide「SSE-KMS」）。CloudWatch Logs の文はサービス principal に対する許可で、暗号化コンテキストで Log Group を名指して限る。
 
 Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると落ちる（role の ARN が plan で決まれば plan で、決まらなければ apply で）。
 
@@ -54,7 +58,6 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 | `via = "logs"`・`via = "sns"`、SNS へ publish するサービス（CloudWatch Alarm・EventBridge）の文 | ops-notification（#25） |
 | CloudTrail の文（`kms:DescribeKey` は `aws:SourceArn` で trail を限る形） | account-baseline（#22）・audit-evidence（#23） |
 | 他のアカウントへの許可と `aws_kms_grant` | data-refresh（#59）。方式（Key Policy か grant か）は未決 |
-| S3 の暗号化コンテキストでの Bucket の限定 | 暗号化コンテキストで object を限る要件ができたとき。`state-backend` は Bucket Key を使わないので、コンテキストは object の ARN になる |
 | us-east-1 など別の region の鍵 | その region の鍵を要る消費者。この module は呼ばれた provider の region に1本作る |
 
 ## 保証しないもの
@@ -65,6 +68,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 - Key Policy の文書の security invariant は `conftest/plan` の `plan.kms_key_policy`（`PLAN-KMS-*`）が持ち、`state-backend` の reference の root の plan に掛かる。`aws_kms_key_policy` は `conftest/plan/decl.json` の `required_documents` に在るので、Key Policy が入力から消えると Policy が落ちる
 - アカウントへの委任の文を除く部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い
 - 鍵は作成の時点では既定の Key Policy（アカウントへの `kms:*`）を持ち、alias の作成の後に `aws_kms_key_policy` が置き換える。alias は鍵の ARN を持たない消費者が鍵を名指す識別子（`alias_name`）なので、置き換えが落ちても alias の無い鍵を残さない順にしている。置き換えが落ちたときは、alias の付いた鍵が既定の Key Policy のまま次の apply まで残る。alias の作成が落ちたときは、alias の無い鍵が残る。この順序を見るテストは無い。`key_arn` の `depends_on` が消費者の resource を Key Policy の置き換えの後に作らせることも、mock の plan と apply には順序が現れないので、どのテストも見ていない。`aws_kms_key_policy` を destroy すると、Provider は既定の Key Policy を書き戻す（Provider の `aws_kms_key_policy` の NOTE）。destroy と、`moved` を伴わない address の変更（置換）は、`conftest/plan` の `plan.stateful_protection` が CI の plan と apply で拒む。CI の plan と apply が掛かるのは、CI の入口を持つ root だけである。`removed`（`destroy = false`）は state から外すだけで、鍵の側は変わらない
+- `key_arn_for_iam` を鍵を使う resource に渡すことを拒む検査は無い。渡せば、その resource は既定の Key Policy の間に作られうる
 - `plan.kms_key_policy` の Rego のテストが使う委任の文は、`policy.tf` の列挙を手で写したもので、一致は検査しない。この module の出力が `PLAN-KMS-*` を通ることは、`state-backend` の reference の root の plan が確かめる
 - CloudWatch Logs の文は、CloudWatch Logs の文書の例のとおり `kms:Describe*` を暗号化コンテキストの条件と同じ文に置く。KMS の文書は、`kms:EncryptionContext:*` の条件を受ける操作に `DescribeKey` を挙げておらず、それ以外の操作にこの条件を使うと拒否されるとする。この食い違いの下で CloudWatch Logs への配送と読み出しが通ることは、どのテストも見ていない
 - 実際の AWS に対して、次はどのテストも確かめていない。最初の消費者の CI の apply と、その後の CI の plan が `No changes.` を示すことで確かめる（#19）。sandbox での複製の作成・破棄、残存の検出、期待残存（削除の猶予中の鍵）の照合は、sandbox のアカウント（#21）と掃除の CI（#76）が揃うまで行わない

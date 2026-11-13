@@ -13,7 +13,7 @@ mock_provider "aws" {
 variables {
   name = "tabp-admin-tfstate"
   users = {
-    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3" }]
+    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
   }
 }
 
@@ -79,5 +79,10 @@ run "attachments_and_output" {
   assert {
     condition     = output.key_arn == aws_kms_key.this.arn
     error_message = "key_arn が鍵の ARN を返していません。"
+  }
+
+  assert {
+    condition     = output.key_arn_for_iam == aws_kms_key.this.arn
+    error_message = "key_arn_for_iam が key_arn と同じ鍵の ARN を返していません。"
   }
 }

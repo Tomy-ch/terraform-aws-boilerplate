@@ -10,13 +10,13 @@
 | --- | --- | --- | --- |
 | 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間 | 誰でも |
 | 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
-| 突合 | `repo-settings-drift` | 無し（GET のみ） | CI（毎日と手動）、誰でも |
+| 突合 | `repo-settings-drift` | 無し（GET のみ） | 人が手元で（誰でも） |
 | 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
 
 - 宣言を変える Pull Request は、merge の後に管理者が適用します。CI は保護設定を書き込みません（ADR-0603 決定30）。適用は `make setup-repo` も呼びます。
-- 突合は Pull Request とは独立に毎日走り（`.github/workflows/repo-settings.yaml`）、ずれは失敗として通知されます。管理画面で設定を変えると、ここで赤になります。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
+- 突合は人が手元で実行します。保護設定は人が管理者の資格情報で守るもので、CI の定期実行で重ねて見ることはしません。適用の後と、管理画面で設定が変わったと疑うときに `make repo-settings-drift` を実行し、ずれがあれば失敗します。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
 - 適用は、宣言に無い environment を消しません。消すと secret ごと失われるためで、突合がそれを報告し、人が消すか宣言へ足します。
-- **CI の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返さず、CI の `GITHUB_TOKEN` は読み取りの権限です（ADR-0603 決定6）。突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は管理者が手元で `make repo-settings-drift` を実行したときに見ます。
+- **読み取りの権限の突合は ruleset の `bypass_actors` を見ません。** GitHub はこの値を ruleset への write 権限を持つ呼び出しにしか返しません（ADR-0603 決定6）。その権限が無ければ、突合は「対象外」と出力し、比べたことにはしません。`bypass_actors` が空であることは、宣言の側を `repo-settings-check` が見て、実態の側は管理者が自分の資格情報で `make repo-settings-drift` を実行したときに見ます。
 
 ## branches.json
 
@@ -30,12 +30,13 @@
 
 | キー | 意味 |
 | --- | --- |
-| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに3つが揃い、どの `env` にも当たらない3種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
+| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` / `*-unlock-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに4つが揃い、どの `env` にも当たらない4種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
 | `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`any`（deployment branch policy を持たない） |
 | `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
-- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` / `*-unlock-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 新しい environment を参照する workflow は、その environment を `make apply-environments` で宣言から作り、必要な secret を置いてから merge します。先に merge すると、走った workflow が GitHub に保護なしの environment を作らせます。手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 が持ちます。
 - 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
   - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
 - `copilot` は Copilot coding agent が作る environment です。宣言に含め、管理者の迂回を無効にします。

@@ -89,6 +89,13 @@ func Test_parseCIMake(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"ci-plan-t-identity": "env/t/identity", "ci-apply-t-workload": "env/t"}, got)
 		})
+
+		t.Run("lock の解除の入口も root に結びつける", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseCIMake(testCIMake + "ci-unlock-t-identity:\n\t@$(call CI_UNLOCK,t,identity)\n")
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{"ci-plan-t-identity": "env/t/identity", "ci-unlock-t-identity": "env/t/identity"}, got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -100,6 +107,8 @@ func Test_parseCIMake(t *testing.T) {
 			"見出しの次の行が呼び出しでない":                   {"ci-plan-t-identity:\n\t@echo x\n", "次の行が $(call CI_PLAN,"},
 			"見出しがファイルの最終行":                      {"ci-plan-t-identity:", "次の行が $(call CI_PLAN,"},
 			"plan の入口が CI_APPLY を呼ぶ":            {"ci-plan-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_PLAN,"},
+			"lock の解除の入口が CI_APPLY を呼ぶ":         {"ci-unlock-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_UNLOCK,"},
+			"見出しを経ない CI_UNLOCK の字面がある":          {testCIMake + "x: y\n\t@$(call CI_UNLOCK,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
 			"root の種類が identity / workload でない": {"ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n", "次の行が $(call CI_PLAN,"},
 			"入口が重複している":                         {testCIMake + testCIMake, "ci-plan-t-identity が重複しています"},
 			"見出しを経ない呼び出しの字面がある":                 {testCIMake + "x: y\n\t@$(call CI_PLAN,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
@@ -230,6 +239,7 @@ func Test_entryTokens(t *testing.T) {
 		for text, want := range map[string][]string{
 			"        run: make ci-plan-a-identity ci-apply-a-identity RUNNER_MODE=host": {"ci-plan-a-identity", "ci-apply-a-identity"},
 			"        run: make ci-plan-${{ x }}":                                        {"ci-plan-"},
+			"        run: make ci-unlock-a-identity RUNNER_MODE=host":                   {"ci-unlock-a-identity"},
 			"        run: make tf-ci-plan-a-identity lint":                              nil,
 			"      - name: Plan ci-plan-a-identity":                                     nil,
 			"        # make ci-plan-a-identity":                                         nil,

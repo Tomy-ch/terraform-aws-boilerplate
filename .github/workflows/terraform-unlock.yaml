@@ -1,0 +1,176 @@
+name: Terraform Unlock
+
+# 管理アカウントの identity root の state に、apply の job の timeout を超えて残った lock を外す。人が起動する。
+# 規則は README.md の「lock の解除の job」。手順の定義は .makefiles/terraform/operation/ci.mk だけが持つ。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# apply の group には入らない。同じ group では、この起動が待機中の apply の run を取り消す（apply との排他は README.md の「lock の解除の job」）。
+concurrency:
+  group: terraform-unlock-admin-identity
+  cancel-in-progress: false
+
+jobs:
+  # terraform-apply.yaml の apply-infra-code-gate と同じ検出。資格情報の下でリポジトリのコードを走らせる前に置く。
+  unlock-infra-code-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: infra-code-gate is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the infrastructure-code gate's own tests
+        run: make infra-code-gate-test RUNNER_MODE=host
+
+      - name: Detect infrastructure code
+        run: make infra-code-gate RUNNER_MODE=host
+
+  unlock-admin-identity:
+    needs: unlock-infra-code-gate
+    # ref では絞らない。人が起動する job なので、デフォルトブランチ以外からの起動は skip ではなく refuse-stale で失敗させる。
+    if: ${{ needs.unlock-infra-code-gate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: admin-unlock-identity
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            sts.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+
+      # 起動したブランチの最新の commit だけを対象にする（ADR-0602 決定14）。skip ではなく失敗にする。
+      - name: Refuse stale commits
+        id: refuse-stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          default=$(gh api "repos/$REPO" --jq .default_branch)
+          test "$REF" = "$default" || { echo "❌ $REF はデフォルトブランチ（$default）ではないので lock を外しません"; exit 1; }
+          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので lock を外しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-unlock-identity の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local is built from scripts/. terraform は呼ばない。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the unlock-identity role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=unlock-identity RUNNER_MODE=host
+
+      - name: Remove a stale state lock
+        run: make ci-unlock-admin-identity RUNNER_MODE=host

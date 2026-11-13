@@ -120,6 +120,12 @@ CI の権限については循環の性質が異なる。backend さえあれば
     role と、それ以外を変更する apply の role である。apply の role に bootstrap の構成物を変更する権限を
     与えない。apply-identity の role は、本 ADR が apply の role に課す条件（決定14-16）にすべて従い、
     apply の role とは別の environment を持つ。
+
+    apply が途中で止まって state に残った lock を外すために、lock の解除の role を apply 系の role とは
+    別に置く。lock の解除の role が持つのは、対応する root の lock file の一覧・読み取り・削除と、その
+    lock file の復号だけである。state の key、state backend と鍵の設定、bootstrap の構成物を変更する権限は
+    与えない。lock の解除の role は、本 ADR が apply の role に課す条件（決定14-16）に従い、apply 系の role
+    とは別の environment を持つ。
 14. 各 role の信頼条件を、GitHub Actions の OIDC claim のうち **environment** によって限定する。ref と
     event による限定（`ref:` / `pull_request` 形式の `sub`）を用いない。ref の限定は environment の
     deployment branch policy が、event の限定は workflow の起動条件が担う。
@@ -128,7 +134,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
       限定する。加えて、リポジトリと所有者の変更されない識別子（ID）を表す claim でも限定する。用いる
       claim と AWS の条件キーは、実装の前に一次資料で確かめ、当該 use-case の ADR に記録する（ADR-0501 決定21）
     - role ごとに environment を分ける。plan の role の environment は保護ブランチと Pull Request を許し、
-      apply の role の environment は保護ブランチだけを許す。deployment branch policy が Pull Request の
+      apply の role と lock の解除の role の environment は保護ブランチだけを許す。deployment branch policy が Pull Request の
       ref をどう扱うかは、実装の前に一次資料で確かめ、当該 use-case の ADR に記録する
     - fork からの Pull Request では、plan の job を role の assume の前に失敗させる。skip にしない
       （ADR-0603 決定17 により skip は成功として数えられる）。この限定は deployment branch policy に頼らず、
@@ -139,9 +145,10 @@ CI の権限については循環の性質が異なる。backend さえあれば
       生成する。environment の宣言にパターンを直接書かない（同 決定3）
     - environment の管理者による保護の迂回を無効とする。これは ADR-0603 決定22 が禁じるブランチの保護規則の
       bypass とは別の設定である
-    - apply の role を assume する job の起動条件を、保護ブランチへの push と手動の起動に限る。手動の起動は
-      ref や commit を入力に取らず、起動したブランチの最新の commit だけを対象とする。environment は同じ ref
-      から起動された event を区別しないためである
+    - apply の role を assume する job の起動条件を、保護ブランチへの push と手動の起動に限る。lock の解除の
+      role を assume する job の起動条件は、手動の起動だけとする。どちらの手動の起動も ref や commit を入力に
+      取らず、起動したブランチの最新の commit だけを対象とする。environment は同じ ref から起動された event を
+      区別しないためである
 
 15. 信頼条件にワイルドカードを用いない。この禁止を、当該 use-case の Policy Test の invariant として実装する（ADR-0402 決定6）。
 16. apply の role が持つ権限の与え方（Action の列挙か permissions boundary か）は、当該 use-case の ADR が決定する。ADR-0301 決定8（Action wildcard の禁止）はこの role にも適用されるため、`*` による解決を採らない。
@@ -206,7 +213,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 
 ## 保証範囲
 
-- 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。apply の role が bootstrap の構成物を変更できないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）
+- 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。apply の role が bootstrap の構成物を変更できないこと。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）。lock の解除の role の権限が、対応する root の lock file の一覧・読み取り・削除と、その lock file の復号に限られること
 - 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は plan の出力の置き場への書き込みのほかに変更系を持たないが、state を読める。決定13）。その主体が plan の出力の置き場へ偽の出力を書くこと（版管理により上書き前の版は残り、削除はできない。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）
 
 ## 検証方法
@@ -218,7 +225,9 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Static Analysis: role を assume する job が `environment` を宣言していること（決定14）
 - Static Analysis: plan を行う job と apply を行う job が、異なる `environment` を宣言すること（決定14）
 - Static Analysis: apply-identity の role を assume する job が、apply の role を assume する job と異なる role と `environment` を宣言すること（決定13-14）
-- Policy Test（未配線。#209）: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、plan / apply / apply-identity の role、state backend、plan の出力の置き場）に対する変更系の Action を許さないこと（決定13）
+- Static Analysis（`make oidc-job-lint`）: lock の解除の role を assume する job が、apply 系の job と異なる role と `environment` を宣言し、起動が入力の無い手動の起動だけであること（決定13-14）
+- Policy Test: lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られ、その復号を Key Policy が同じ lock file の object に限って許すこと（決定13）
+- Policy Test（未配線。#209）: apply の role の有効な権限（IAM policy と、課す場合は permissions boundary を合わせたもの）が、bootstrap の構成物（決定1）の resource（OIDC provider、CI の role のすべて、state backend、plan の出力の置き場）に対する変更系の Action を許さないこと（決定13）
 - Static Analysis: apply の role を assume する job の起動条件が、保護ブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
 - Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）

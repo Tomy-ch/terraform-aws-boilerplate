@@ -70,7 +70,7 @@ func Test_runRoleARN(t *testing.T) {
 func Test_roleARN(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range []string{"plan", "apply", "apply-identity"} {
+	for _, role := range []string{"plan", "apply", "apply-identity", "unlock-identity"} {
 		t.Run(role+" の役割の ARN を組む", func(t *testing.T) {
 			t.Parallel()
 
@@ -89,9 +89,12 @@ func Test_roleARN(t *testing.T) {
 
 		roles, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "internal", "github-oidc", "main.tf"))
 		require.NoError(t, err)
-		for _, role := range roleNames {
-			assert.Contains(t, string(roles), `"${var.name_prefix}-ci-`+role+`"`)
+		var declared []string
+		for _, m := range regexp.MustCompile(`"\$\{var\.name_prefix\}-ci-([a-z0-9-]+)"`).FindAllStringSubmatch(string(roles), -1) {
+			declared = append(declared, m[1])
 		}
+		require.NotEmpty(t, declared, "github-oidc の main.tf から role 名を1つも読めません")
+		assert.ElementsMatch(t, roleNames, declared, "tf-local の役割と github-oidc の role は過不足なく一致する")
 	})
 
 	cases := map[string][4]string{

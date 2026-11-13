@@ -19,19 +19,19 @@ locals {
   sub_prefix = "repo:${var.github.owner}@${var.github.owner_id}/${var.github.repository}@${var.github.repository_id}"
 
   roles = {
-    plan           = { name = "${var.name_prefix}-ci-plan", environment = "${var.env}-plan" }
-    apply          = { name = "${var.name_prefix}-ci-apply", environment = "${var.env}-apply" }
-    apply_identity = { name = "${var.name_prefix}-ci-apply-identity", environment = "${var.env}-apply-identity" }
+    plan            = { name = "${var.name_prefix}-ci-plan", environment = "${var.env}-plan" }
+    apply           = { name = "${var.name_prefix}-ci-apply", environment = "${var.env}-apply" }
+    apply_identity  = { name = "${var.name_prefix}-ci-apply-identity", environment = "${var.env}-apply-identity" }
+    unlock_identity = { name = "${var.name_prefix}-ci-unlock-identity", environment = "${var.env}-unlock-identity" }
   }
-}
 
-resource "aws_iam_role" "this" {
-  for_each = local.roles
+  # apply-identity は他の role を管理する権限を持つので、resource を分けて先に書き込む（deployment-identity/ADR-0201 決定4）。
+  ci_roles = { for k, r in local.roles : k => r if k != "apply_identity" }
 
-  name                 = each.value.name
-  max_session_duration = 3600
+  # role の作成を待たずに決まる ARN。apply-identity の policy が、まだ無い role を管理する権限を先に持てる。
+  role_arns = { for k, r in local.roles : k => "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${r.name}" }
 
-  assume_role_policy = jsonencode({
+  trust_policies = { for k, r in local.roles : k => jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -41,26 +41,51 @@ resource "aws_iam_role" "this" {
         Condition = {
           StringEquals = {
             "${local.issuer}:aud"                 = "sts.amazonaws.com"
-            "${local.issuer}:sub"                 = "${local.sub_prefix}:environment:${each.value.environment}"
+            "${local.issuer}:sub"                 = "${local.sub_prefix}:environment:${r.environment}"
             "${local.issuer}:repository_id"       = var.github.repository_id
             "${local.issuer}:repository_owner_id" = var.github.owner_id
           }
         }
       },
     ]
-  })
+  }) }
+
+  all_roles    = merge(aws_iam_role.this, { apply_identity = aws_iam_role.apply_identity })
+  all_policies = merge(aws_iam_role_policy.this, { apply_identity = aws_iam_role_policy.apply_identity })
+}
+
+resource "aws_iam_role" "apply_identity" {
+  name                 = local.roles.apply_identity.name
+  max_session_duration = 3600
+  assume_role_policy   = local.trust_policies.apply_identity
+}
+
+resource "aws_iam_role" "this" {
+  for_each = local.ci_roles
+
+  name                 = each.value.name
+  max_session_duration = 3600
+  assume_role_policy   = local.trust_policies[each.key]
+
+  # 同じ apply で role を足すとき、apply-identity が CreateRole の権限を得てから作る。
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
+moved {
+  from = aws_iam_role.this["apply_identity"]
+  to   = aws_iam_role.apply_identity
 }
 
 resource "aws_iam_role_policies_exclusive" "this" {
   for_each = local.roles
 
-  role_name    = aws_iam_role.this[each.key].name
-  policy_names = [aws_iam_role_policy.this[each.key].name]
+  role_name    = local.all_roles[each.key].name
+  policy_names = [local.all_policies[each.key].name]
 }
 
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
-  role_name   = aws_iam_role.this[each.key].name
+  role_name   = local.all_roles[each.key].name
   policy_arns = []
 }

@@ -1,0 +1,12 @@
+{
+  "resource_order_decl": {
+    "rules": [
+      {
+        "module": "usecases/deployment-identity/internal/github-oidc",
+        "resource": "aws_iam_role.this",
+        "after": "aws_iam_role_policy.apply_identity",
+        "adr": "usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md"
+      }
+    ]
+  }
+}
