@@ -1,6 +1,6 @@
 # kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370,4bc4dd4c-7d8d-405e-a0fb-57fa4c31b4d9
 # e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
-# 4bc4dd4c（HTTP の要求を受ける）: Statement を concat で組むので KICS が TLS の Deny を読めない。Deny の在ることは tests/policy.tftest.hcl が文書の完全一致で見る。撤回: KICS が concat を評価するか、Statement を literal の列で書けるようになったとき。
+# 4bc4dd4c（HTTP の要求を受ける）: Statement を concat で組むので KICS が TLS の Deny を読めない。Deny の在ることは tests/policy.tftest.hcl と Policy Test の PLAN-SBW-08 が見る。撤回: KICS が concat を評価するか、Statement を literal の列で書けるようになったとき。
 
 locals {
   # Resource は object の ARN だけにし、Bucket の設定の Action を含めない。拒否を誤っても Bucket Policy を書き換えられる主体が直せる。

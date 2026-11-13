@@ -355,3 +355,17 @@ deny contains msg if {
 	not v in {"true", "false"}
 	msg := sprintf("[PLAN-SBW-07] %s: Null の %s の値 %v が文字列の \"true\" か \"false\" ではありません", [a.path, k, v])
 }
+
+tls_deny(a) if {
+	tls(a.statement)
+	a.statement.Principal == "*"
+	actions(a.statement) == {"s3:*"}
+	resources(a.statement) == {bucket_arn, sprintf("%s/*", [bucket_arn])}
+}
+
+deny contains msg if {
+	is_string(bucket_arn)
+	count(bucket_policies) > 0
+	count({a | some a in denies; tls_deny(a)}) != 1
+	msg := sprintf("[PLAN-SBW-08] state Bucket の Bucket Policy に、%s と %s/* への s3:* を aws:SecureTransport が false の要求について Principal \"*\" に拒否する文が1つではありません", [bucket_arn, bucket_arn])
+}

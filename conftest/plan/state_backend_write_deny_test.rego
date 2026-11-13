@@ -269,3 +269,22 @@ test_violation_null_boolean if {
 	s := json.patch(managed_key, [{"op": "replace", "path": "/Condition/Null", "value": {"s3:x-amz-server-side-encryption-aws-kms-key-id": true}}])
 	fixture.has("[PLAN-SBW-07]", messages_with(replace(valid_statements, 10, s)))
 }
+
+test_violation_tls_missing if {
+	fixture.has("[PLAN-SBW-08]", messages_with(remove(valid_statements, 0)))
+}
+
+test_violation_tls_object_only if {
+	s := json.patch(tls, [{"op": "replace", "path": "/Resource", "value": sprintf("%s/*", [b])}])
+	fixture.has("[PLAN-SBW-08]", messages_with(replace(valid_statements, 0, s)))
+}
+
+test_violation_tls_allows_true if {
+	s := json.patch(tls, [{"op": "replace", "path": "/Condition", "value": {"Bool": {"aws:SecureTransport": "true"}}}])
+	fixture.has("[PLAN-SBW-08]", messages_with(replace(valid_statements, 0, s)))
+}
+
+test_violation_tls_partial_action if {
+	s := json.patch(tls, [{"op": "replace", "path": "/Action", "value": "s3:GetObject"}])
+	fixture.has("[PLAN-SBW-08]", messages_with(replace(valid_statements, 0, s)))
+}

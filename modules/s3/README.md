@@ -48,7 +48,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 ## 保証しないもの
 
-- Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は、どの道具についても確かめていない
+- Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は、どの道具についても確かめていない。state Bucket の TLS の拒否が在ることは、Policy Test の `PLAN-SBW-08` が reference の plan で見る
 - アクセスログ、通知、リージョン間の複製、MFA delete、IAM Access Analyzer、tag の検査と、Semgrep の版管理の誤検出と、KICS の TLS の検査（Statement を `concat` で組むので KICS が Deny を読めない）は抑止している。理由と撤回条件は各抑止の箇所（`main.tf` / `policy.tf` / `encryption.tf` の先頭と `aws_s3_bucket.this`）が持つ
 - `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。`kms_key_arn` の validation と precondition は `tests/encryption.tftest.hcl` が見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で完全一致で、`object_writers` と `bootstrap_executor` の入力の検査は `tests/writers.tftest.hcl` が見る。lifecycle の規則と入力の検査は `tests/lifecycle.tftest.hcl` が見る。現行版の失効の `days`、filter の `prefix`、付く Bucket は plan では決まらないので、mock の apply で見る。いずれも module の宣言から導いた値の固定であり、Unit Test に属する（ADR-0501 決定9）
 - TLS でない要求と、例外に無い主体の書き込みと、state の鍵以外の暗号化が実際の S3 API で拒否されることは、どのテストも見ていない（E2E。ADR-0401 決定4）

@@ -82,7 +82,7 @@ repository-wide/ADR-0202 決定7 は、targeted apply を前提とする運用�
 ## 検証方法
 
 - Unit Test: `modules/s3/tests/policy.tftest.hcl` が文書の完全一致を、`tests/writers.tftest.hcl` が入力の検査を見る
-- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`07`）
+- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`08`。08 は TLS の拒否が在ること）
 - Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
 - 手順: 段5 の成功条件の、例外に無い主体の `put-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
 
