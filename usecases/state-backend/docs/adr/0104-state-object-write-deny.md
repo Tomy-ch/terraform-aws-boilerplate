@@ -15,10 +15,10 @@ S3 User Guide は、`x-amz-server-side-encryption: aws:kms` を指定して鍵 I
 
 ## Decision
 
-1. state Bucket の bucket policy に、object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`）を、identity root と workload root の apply の role と identity root の lock の解除の role 以外のすべての主体に拒否する Deny を置く。Principal は `"*"`、例外は `aws:PrincipalArn` の `ArnNotEquals` で role の ARN を完全一致で書く。
-2. 決定1 の各 role について、その role が書ける key の外への書き込みを拒否する Deny と、その key への許さない操作を拒否する Deny を置く。apply の role は自分の root の state の key と lock file への `s3:PutObject` と `s3:DeleteObject`、lock の解除の role は identity root の lock file への `s3:DeleteObject` だけを書ける。`s3:DeleteObjectVersion` はどの role にも許さない。bucket policy はこの外側の層であり、各 role の IAM の Allow（deployment-identity）はさらに狭い。たとえば state の key への `s3:DeleteObject` は IAM が与えない。
-3. 書き込みの Deny の Resource は object の ARN だけとし、Action は決定1 の3つに限る。Bucket の ARN と Bucket の設定の Action を含めない。Bucket Policy を書き換えられる主体が、拒否を誤ったときに直せるようにするためである。
-4. 例外の role・key・操作は、`modules/s3` の型付きの入力で受ける。操作は「書き込み」と「削除だけ」の2値で受け、AWS の Action の文字列を受けない。policy の文を受ける入力を作らない（repository-wide/ADR-0204 決定1・2）。
+1. state Bucket の bucket policy に、object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`、およびレプリケーションによる書き込みの `s3:ReplicateObject`・`s3:ReplicateDelete`）を、identity root と workload root の apply の role と identity root の lock の解除の role 以外のすべての主体に拒否する Deny を置く。Principal は `"*"`、例外は `aws:PrincipalArn` の `ArnNotEquals` で role の ARN を完全一致で書く。
+2. 決定1 の各 role について、その role が書ける key の外への書き込みを拒否する Deny と、その key への許さない操作を拒否する Deny を置く。apply の role は自分の root の state の key と lock file への `s3:PutObject` と `s3:DeleteObject`、lock の解除の role は identity root の lock file への `s3:DeleteObject` だけを書ける。`s3:DeleteObjectVersion` とレプリケーションによる書き込みはどの role にも許さない。bucket policy はこの外側の層であり、各 role の IAM の Allow はさらに狭い（deployment-identity/ADR-0201 (enumerated-permissions) 決定5・9）。たとえば state の key への `s3:DeleteObject` は IAM が与えない。
+3. 書き込みの Deny の Resource は object の ARN だけとし、Action は決定1 の5つに限る。Bucket の ARN と Bucket の設定の Action を含めない。Bucket Policy を書き換えられる主体が、拒否を誤ったときに直せるようにするためである。
+4. 例外の role・key・操作は、`modules/s3` の型付きの入力で受ける。操作は「書き込み」と「削除だけ」の2値で受け、AWS の Action の文字列を受けない。policy の文を受ける入力を作らない（repository-wide/ADR-0204 (no-generic-escape-hatch) 決定1・2）。
 5. state Bucket への `s3:PutObject` のうち、次のものを全主体に拒否する。暗号化の方式の header が在って `aws:kms` でないもの。鍵 ID の header が在って state の鍵の ARN でないもの。方式の header が `aws:kms` で鍵 ID の header が無いもの。条件キーを持たない要求は拒否しない。条件キーは `Null` で在ることを確かめてから値を比べる。方式の header が `aws:kms` で鍵 ID の header が無い要求をどの鍵で暗号化するかによらず、この拒否は state の鍵以外で書かれる要求だけに当たる。
 6. plan の出力の Bucket には書き込みの Deny を置かない。plan の出力を書く主体は plan の role だけで、repository-wide/ADR-0602 決定13 が IAM で限る。
 7. 新しいアカウントの bootstrap の段4 の実行者（path を持たない IAM user）は、段5 の最初の変更が外すまで、決定1 の例外と、決定2 の identity root の apply の role と同じ key と操作と、決定5 の方式の header の拒否の例外に入る。例外は user の ARN で書く。`aws login` の session の要求で `aws:PrincipalArn` が user の ARN になることは、この repository の bootstrap の手順が `aws sts get-caller-identity` で観測する事実であり、AWS の文書の記述ではない。期間の終わりは、段5 の最初の変更の apply である。
@@ -47,7 +47,7 @@ plan の出力を書く主体は plan の role だけで、IAM で限られて�
 
 ### 案F: 段4 を `-target` で Bucket Policy の外に絞る
 
-repository-wide/ADR-0202 決定7 は、targeted apply を前提とする運用手順をドキュメント化しない。段4 の PR の plan が変更なしにならず、repository-wide/ADR-0602 決定10 を満たさない。段4 から段5 まで TLS の拒否も無くなる。
+repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 は、targeted apply を前提とする運用手順をドキュメント化しない。段4 の PR の plan が変更なしにならず、repository-wide/ADR-0602 決定10 を満たさない。段4 から段5 まで TLS の拒否も無くなる。
 
 ### 評価
 
@@ -66,7 +66,7 @@ repository-wide/ADR-0202 決定7 は、targeted apply を前提とする運用�
 - AWS service principal が state Bucket へ書くこと。`aws:PrincipalArn` を持たない要求は決定1 の Deny に当たる。S3 Lifecycle の失効は Bucket Policy に評価されない
 - apply-identity の role に対する拒否の保証。apply-identity は Bucket Policy を書き換えられる。決定2・5 は apply-identity の誤った書き込みを検出するが、意図した書き換えを止めない
 - alias や鍵 ID で鍵を名指す書き手。決定5 の条件の値は鍵の ARN である
-- 決定1 の3つの Action の外の object の操作。`s3:PutObjectAcl` は Bucket の ACL が無効なので効かない。`s3:PutObjectTagging`・`s3:DeleteObjectTagging` は state の内容を変えない。`s3:AbortMultipartUpload` は writer の進行中の multipart を他の主体が中止できるが、state を書き換えない
+- 決定1 の5つの Action の外の object の操作。`s3:PutObjectAcl` は Bucket の ACL が無効なので効かない。`s3:PutObjectTagging`・`s3:DeleteObjectTagging` は state の内容を変えない。`s3:AbortMultipartUpload` は writer の進行中の multipart を他の主体が中止できるが、state を書き換えない
 
 ## 保証範囲
 
@@ -82,7 +82,7 @@ repository-wide/ADR-0202 決定7 は、targeted apply を前提とする運用�
 ## 検証方法
 
 - Unit Test: `modules/s3/tests/policy.tftest.hcl` が文書の完全一致を、`tests/writers.tftest.hcl` が入力の検査を見る
-- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`08`。08 は TLS の拒否が在ること）
+- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）
 - Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
 - 手順: 段5 の成功条件の、例外に無い主体の `put-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
 

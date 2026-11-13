@@ -140,7 +140,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 `admin-unlock-identity` の下で unlock-identity の role を assume して、管理アカウントの identity root の
 state に残った lock file（`identity/terraform.tfstate.tflock`）を外す。apply の job が timeout・cancel・
 ランナーの障害で止まると lock file が残り、以後の apply は lock の取得で落ちる。書き込みの拒否
-（ADR-0604 決定9）が入った後は、state Bucket に書ける IAM の主体は CI の role だけなので、人はこの job で外す。
+（ADR-0604 決定9）が入り、bootstrap の一時 IAM user の例外が外れた後は、state Bucket に書ける IAM の主体は CI の role だけなので、人はこの job で外す。
 
 - **unlock-identity の role は、この lock file を外すことしかできない。** 持つのは、prefix を lock file の
   key に限った state Bucket の一覧と、lock file の読み取りと削除だけである。復号は、state の鍵の Key Policy が
@@ -198,8 +198,9 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 - **CI のランナーの plan と apply の lock が、apply の job のものであること。** `Who` と `Operation` は lock の
   書き手が書く値で、`runner@` で始まる利用者が apply の job の外で取った plan と apply の lock も、閾値を超えれば消す
 - **読めない lock file を外すこと。** 中身を Terraform の lock として読めない lock file と、版 ID の無い
-  lock file は、消さずに失敗する。書き込みの拒否の後は、それを外す経路がこのリポジトリに無く、外せる人の
-  主体は管理アカウントの root だけになる
+  lock file は、消さずに失敗する。書き込みの拒否の後は、一時 IAM user を削除するまでは
+  その user が Bucket Policy を戻して消せる（`docs/setup/bootstrap.md` 段5）。削除した後は、外す経路がこのリポジトリに無く、
+  外せる人の主体は管理アカウントの root だけになる
 - **起動できる人を絞ること。** write 権限を持つ人なら起動できる。environment の reviewer は置かない ——
   障害のときに人が1人しか居なくても外せるようにする。実行されるのはデフォルトブランチの先頭の workflow と
   コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる

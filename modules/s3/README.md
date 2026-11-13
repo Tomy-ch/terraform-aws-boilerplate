@@ -12,7 +12,7 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 | `aws_s3_bucket_versioning` | `Enabled` |
 | `aws_s3_bucket_lifecycle_configuration` | Bucket 全体（空の filter）に規則1つ。上書きされた版を `noncurrent_version_retention_days` の日数で消し、失効した delete marker を消し、未完了の multipart upload を1日で中止する。現行版は失効させず、storage class を移さない（`usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md`） |
 | `aws_s3_bucket_server_side_encryption_configuration` | `aws:kms`（SSE-KMS）で `kms_key_arn` の鍵を名指す、`bucket_key_enabled = false`、`blocked_encryption_types = ["SSE-C"]`。鍵が Bucket と同じ partition・region・アカウントでなければ plan で落ちる |
-| `aws_s3_bucket_policy` | Deny だけの文書。(1) TLS でない要求（`aws:SecureTransport` が `false`）を、Bucket とその object のすべての操作について拒否する。(2) object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`）を、`object_writers` と `bootstrap_executor` の主体以外に拒否する。(3) 各主体の `keys` の外への書き込みと、`access` の外の操作と `s3:DeleteObjectVersion` を、その主体に拒否する。(4) 暗号化の方式の header が `aws:kms` でない、鍵 ID の header が `kms_key_arn` でない、方式が `aws:kms` で鍵 ID の header が無い `s3:PutObject` を拒否する。(2)-(4) の Resource は object の ARN だけで、Bucket の設定の Action を含めない。主体は `aws:PrincipalArn` の `ArnNotEquals`・`ArnEquals` で ARN を完全一致で書き、条件キーは `Null` で在ることを確かめてから値を比べる（`usecases/state-backend/docs/adr/0104-state-object-write-deny.md`） |
+| `aws_s3_bucket_policy` | Deny だけの文書。(1) TLS でない要求（`aws:SecureTransport` が `false`）を、Bucket とその object のすべての操作について拒否する。(2) object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`・`s3:ReplicateObject`・`s3:ReplicateDelete`）を、`object_writers` と `bootstrap_executor` の主体以外に拒否する。(3) 各主体の `keys` の外への書き込みと、`access` の外の操作と `s3:DeleteObjectVersion` とレプリケーションによる書き込みを、その主体に拒否する。(4) 暗号化の方式の header が `aws:kms` でない、鍵 ID の header が `kms_key_arn` でない、方式が `aws:kms` で鍵 ID の header が無い `s3:PutObject` を拒否する。(2)-(4) の Resource は object の ARN だけで、Bucket の設定の Action を含めない。主体は `aws:PrincipalArn` の `ArnNotEquals`・`ArnEquals` で ARN を完全一致で書き、条件キーは `Null` で在ることを確かめてから値を比べる（`usecases/state-backend/docs/adr/0104-state-object-write-deny.md`） |
 
 `kms_key_arn` は KMS の鍵の ARN（`key/<key-id>`）だけを受け、alias の ARN と多リージョンの鍵を拒み、既定値を持たない。多リージョンの鍵（`mrk-`）を拒むのは、`modules/kms` が多リージョンの鍵を作らないからである。S3 は Bucket の暗号化の設定で鍵を検証しないので、同じ場所の鍵であることを precondition で見る。Bucket Key を使わない理由は `usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md` が持つ。
 
@@ -48,7 +48,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 ## 保証しないもの
 
-- Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は、どの道具についても確かめていない。state Bucket の TLS の拒否が在ることは、Policy Test の `PLAN-SBW-08` が reference の plan で見る
+- Security の4つの道具（ADR-0501 決定6）のうち、Public Access Block を外した値は Trivy・Checkov・KICS が、ACL を有効にした所有権の値は Checkov（CKV2_AWS_65）だけが落とす。Semgrep の固定した rule には、この module の値に当たるものが無い。TLS の要求を見る検査は KICS の 4bc4dd4c だけを確かめた（Trivy・Checkov・Semgrep は確かめていない）。4bc4dd4c は Statement を `concat` で組むこの module の Bucket Policy を読めないので `policy.tf` で抑止しており、同じ理由で KICS の Bucket Policy の Allow を見る検査も効かない。state Bucket の Bucket Policy が TLS の拒否を持つことは Policy Test の `PLAN-SBW-08` が、Deny 以外の文を持たないことは `PLAN-SBW-09` が、reference の plan で見る
 - アクセスログ、通知、リージョン間の複製、MFA delete、IAM Access Analyzer、tag の検査と、Semgrep の版管理の誤検出と、KICS の TLS の検査（Statement を `concat` で組むので KICS が Deny を読めない）は抑止している。理由と撤回条件は各抑止の箇所（`main.tf` / `policy.tf` / `encryption.tf` の先頭と `aws_s3_bucket.this`）が持つ
 - `bucket_namespace`・`force_destroy`・所有権・版管理・暗号化の値は `tests/naming.tftest.hcl` が mock の plan で見る。`kms_key_arn` の validation と precondition は `tests/encryption.tftest.hcl` が見る。Bucket Policy の文書は `tests/policy.tftest.hcl` が mock の apply で完全一致で、`object_writers` と `bootstrap_executor` の入力の検査は `tests/writers.tftest.hcl` が見る。lifecycle の規則と入力の検査は `tests/lifecycle.tftest.hcl` が見る。現行版の失効の `days`、filter の `prefix`、付く Bucket は plan では決まらないので、mock の apply で見る。いずれも module の宣言から導いた値の固定であり、Unit Test に属する（ADR-0501 決定9）
 - TLS でない要求と、例外に無い主体の書き込みと、state の鍵以外の暗号化が実際の S3 API で拒否されることは、どのテストも見ていない（E2E。ADR-0401 決定4）
@@ -66,7 +66,7 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 
 ## 公式実装の参照（ADR-0206 決定7・8）
 
-参照日: 2026-10-25（lifecycle の項は 2026-11-08、SSE-KMS と Bucket Key の項は 2026-11-12、書き込みの拒否の項は 2026-11-13）
+参照日: 2026-10-25（lifecycle の項は 2026-11-08、SSE-KMS と Bucket Key の項は 2026-11-12、書き込みの拒否の項は 2026-11-13。AWS Provider 6.70.0 の `aws_s3_bucket_policy` の文書）
 
 - AWS / HashiCorp が publisher の S3 の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search?q=s3&provider=aws` の結果に namespace `aws-ia`・`hashicorp`・`aws` が無い）
 - 参照した一次資料: AWS Provider 6.68.0 の schema と文書、Amazon S3 User Guide（[account regional namespace](https://docs.aws.amazon.com/AmazonS3/latest/userguide/gpbucketnamespaces.html)、[SSE-C の既定](https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-s3-c-encryption-setting-faq.html)、[Bucket の命名規則](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html)、[security best practices](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html)、[Bucket Policy の例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-bucket-policies.html)、[条件キーを使う Bucket Policy の例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/amazon-s3-policy-keys.html)）、AWS Security Hub の [S3.5・S3.10](https://docs.aws.amazon.com/securityhub/latest/userguide/s3-controls.html)、[S3 Lifecycle の設定例](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html)、AWS Provider 6.70.0 の `aws_s3_bucket_lifecycle_configuration` の文書。SSE-KMS と Bucket Key の項は、Amazon S3 User Guide（[Using SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html)、[Specifying SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/specifying-kms-encryption.html)、[Setting default encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-encryption.html)、[S3 Bucket Keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html)）、Amazon S3 API Reference の [PutBucketEncryption](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketEncryption.html)、AWS Provider 6.70.0 の `aws_s3_bucket_server_side_encryption_configuration` の文書
@@ -85,6 +85,9 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 - 版管理を持つ Bucket に lifecycle を置く（Security Hub S3.10）。上書きされた版の失効と失効した delete marker の除去を1つの規則に書く（S3 Lifecycle の設定例の Example 7 と同じ形）。lifecycle の resource は版管理の resource の後に作る（Provider の文書の `depends_on` の例）
 
 採用しなかった知見と理由:
+
+- 書き込みの例外を `NotPrincipal` で書く: IAM User Guide が新しい resource-based policy に勧めない（`usecases/state-backend/docs/adr/0104-state-object-write-deny.md` 案B）
+- 鍵 ID の header が無い要求も拒む（`Null` を併記しない）: multipart の部分の upload を拒みうる（同 案D）
 
 - global namespace と推測しにくい名前: 削除した名前を他人が取り直せる問題が残る
 - MFA delete: root しか有効にできず、lifecycle と併用できない（[MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)。記録は `usecases/state-backend/docs/adr/0102-no-mfa-delete-or-object-lock.md`）

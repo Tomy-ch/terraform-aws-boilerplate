@@ -50,7 +50,7 @@ AWS Organizations のベストプラクティスは、resource を管理アカ�
 
 ## 影響
 
-管理アカウントの state Bucket の防御は、bucket policy・key policy・CloudTrail・root の封印に限られる。bucket policy は段3-4（TLS の要求）と段5（書き込みの拒否）、key policy は段4 で入り、既定の暗号化は段4 で入り、state の鍵が state を守り始めるのは段5 で state を書き換える最初の CI の apply からである（`README.md` の「段ごとに持つもの」）。CloudTrail の data events は `audit-evidence` が持つ。
+管理アカウントの state Bucket の防御は、bucket policy・key policy・CloudTrail・root の封印に限られる。bucket policy は段3-4（TLS の要求と書き込みの拒否。段4 の実行者は段5 の最初の変更まで例外に入る）、key policy は段4 で入り、既定の暗号化は段4 で入り、state の鍵が state を守り始めるのは段5 で state を書き換える最初の CI の apply からである（`README.md` の「段ごとに持つもの」）。CloudTrail の data events は `audit-evidence` が持つ。
 
 ## 見直し条件
 
