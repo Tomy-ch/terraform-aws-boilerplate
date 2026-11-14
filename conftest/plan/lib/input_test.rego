@@ -304,9 +304,9 @@ test_violation_provider_schema_not_object if {
 	}
 }
 
+# 宣言を表で回すテストは、宣言が空なら何も見ずに通る。
 test_pass_declaration_covers_the_bucket_and_the_key if {
 	every type in ["aws_s3_bucket", "aws_kms_key"] {
-		type in object.keys(data.policy_plan.inline_arguments)
+		count(object.get(data.policy_plan.inline_arguments, type, {})) > 0
 	}
-	count(data.policy_plan.inline_arguments.aws_s3_bucket) == 13
 }

@@ -226,7 +226,6 @@ baseline(change, _, empty) := empty if "delete" in change.actions
 
 baseline(change, _, empty) := empty if not is_object(change.before)
 
-
 shorten_allowed(root, address) if {
 	some a in object.get(shorten_allow, root, [])
 	a.address == address
