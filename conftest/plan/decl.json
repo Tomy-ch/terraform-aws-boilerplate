@@ -60,26 +60,36 @@
             },
             "aws_iam_role_policies_exclusive": {
               "class": "covered_by",
-              "parent": "aws_iam_role"
+              "parent": "aws_iam_role",
+              "ref": "role_name",
+              "parent_ref": "name"
             },
             "aws_iam_role_policy": {
               "class": "covered_by",
-              "parent": "aws_iam_role"
+              "parent": "aws_iam_role",
+              "ref": "role",
+              "parent_ref": "name"
             },
             "aws_iam_role_policy_attachments_exclusive": {
               "class": "covered_by",
-              "parent": "aws_iam_role"
+              "parent": "aws_iam_role",
+              "ref": "role_name",
+              "parent_ref": "name"
             },
             "aws_kms_alias": {
               "class": "covered_by",
-              "parent": "aws_kms_key"
+              "parent": "aws_kms_key",
+              "ref": "target_key_id",
+              "parent_ref": "key_id"
             },
             "aws_kms_key": {
               "class": "key"
             },
             "aws_kms_key_policy": {
               "class": "covered_by",
-              "parent": "aws_kms_key"
+              "parent": "aws_kms_key",
+              "ref": "key_id",
+              "parent_ref": "id"
             },
             "aws_s3_bucket": {
               "class": "target",
@@ -87,27 +97,39 @@
             },
             "aws_s3_bucket_lifecycle_configuration": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             },
             "aws_s3_bucket_ownership_controls": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             },
             "aws_s3_bucket_policy": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             },
             "aws_s3_bucket_public_access_block": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             },
             "aws_s3_bucket_server_side_encryption_configuration": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             },
             "aws_s3_bucket_versioning": {
               "class": "covered_by",
-              "parent": "aws_s3_bucket"
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
             }
           },
           "children": {

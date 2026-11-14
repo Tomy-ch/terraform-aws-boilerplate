@@ -36,49 +36,61 @@ arn_shaped(x) if {
 
 # --- 宣言 ---
 
-classes := {"target", "key", "covered_by", "exclude"}
-
 modules := object.get(bootstrap, "modules", [])
 
 types := object.get(bootstrap, "types", {})
 
 children := object.get(bootstrap, "children", {})
 
+nonempty_string(x) if {
+	is_string(x)
+	x != ""
+}
+
+# 宣言のキーは閉じた集合にする。綴りを誤ったキーは既定値として読まれ、要求が黙って消える。
 well_formed_type(t) if {
 	is_object(t)
-	t.class in {"target", "key"}
+	t.class == "target"
+	object.keys(t) - {"class", "children"} == set()
+	is_boolean(object.get(t, "children", false))
+}
+
+well_formed_type(t) if {
+	is_object(t)
+	t.class == "key"
+	object.keys(t) == {"class"}
 }
 
 well_formed_type(t) if {
 	is_object(t)
 	t.class == "covered_by"
-	is_string(t.parent)
-	t.parent != ""
-}
-
-well_formed_type(t) if {
-	is_object(t)
-	t.class == "exclude"
-	is_string(t.reason)
-	trim_space(t.reason) != ""
+	object.keys(t) == {"class", "parent", "ref", "parent_ref"}
+	nonempty_string(t.parent)
+	nonempty_string(t.ref)
+	nonempty_string(t.parent_ref)
 }
 
 well_formed_child(c) if {
 	is_object(c)
+	object.keys(c) - {"suffixes", "roots", "version_deletion"} == set()
+	is_array(object.get(c, "suffixes", []))
 	every s in object.get(c, "suffixes", []) {
-		is_string(s)
-		s != ""
+		nonempty_string(s)
 	}
 	is_boolean(object.get(c, "roots", false))
 	is_boolean(object.get(c, "version_deletion", false))
+	yields_child(c)
 }
+
+yields_child(c) if count(object.get(c, "suffixes", [])) > 0
+
+yields_child(c) if c.roots == true
 
 well_formed_bootstrap if {
 	is_array(modules)
 	count(modules) > 0
 	every m in modules {
-		is_string(m)
-		m != ""
+		nonempty_string(m)
 	}
 	is_object(types)
 	count(types) > 0
@@ -118,7 +130,10 @@ writer_roots := [root |
 	is_string(root.state)
 ]
 
-child_arns(address, arn) := {sprintf("%s%s", [arn, s]) | some s in object.get(children[address], "suffixes", [])} | {sprintf("%s/%s", [arn, k]) |
+suffix_arns(address, arn) := {sprintf("%s%s", [arn, s]) | some s in object.get(children[address], "suffixes", [])}
+
+# 書き手が apply の role でない root の state と lock file。apply の role は読み取りも要らないので、* だけを認める。
+root_arns(address, arn) := {sprintf("%s/%s", [arn, k]) |
 	object.get(children[address], "roots", false) == true
 	some root in writer_roots
 	some k in [root.state, sprintf("%s.tflock", [root.state])]
@@ -136,7 +151,15 @@ targets contains arn if {
 	class_of(r.type) == "target"
 	arn_shaped(r.change.after.arn)
 	r.address in object.keys(children)
-	some arn in child_arns(r.address, r.change.after.arn)
+	some arn in suffix_arns(r.address, r.change.after.arn)
+}
+
+strict_targets contains arn if {
+	some r in resources
+	class_of(r.type) == "target"
+	arn_shaped(r.change.after.arn)
+	r.address in object.keys(children)
+	some arn in root_arns(r.address, r.change.after.arn)
 }
 
 version_deletion_targets contains sprintf("%s/*", [r.change.after.arn]) if {
@@ -164,7 +187,12 @@ on(s, arn) if arn in lib.as_array(object.get(s, "Resource", []))
 
 read_name(a) if regex.match(`^[a-z0-9-]+:(get|list|describe|head)[a-z0-9]*$`, a)
 
-denies_all_but_reads(s) if "*" in lib.as_array(object.get(s, "Action", []))
+denies_all(s) if {
+	"*" in lib.as_array(object.get(s, "Action", []))
+	not "NotAction" in object.keys(s)
+}
+
+denies_all_but_reads(s) if denies_all(s)
 
 denies_all_but_reads(s) if {
 	not "Action" in object.keys(s)
@@ -181,6 +209,13 @@ covered(arn) if {
 	denies_all_but_reads(s)
 }
 
+covered_strictly(arn) if {
+	some s in statements
+	unconditional_deny(s)
+	on(s, arn)
+	denies_all(s)
+}
+
 version_deletion_denied(arn) if {
 	some s in statements
 	unconditional_deny(s)
@@ -189,7 +224,7 @@ version_deletion_denied(arn) if {
 	a in {"s3:deleteobjectversion", "*"}
 }
 
-# Key Policy の key_id は plan で決まらないので、鍵と Key Policy は module の path で組にする。
+# 鍵と Key Policy は module の path で組にする。Key Policy がどの鍵を指すかは PLAN-APPLY-02 が key_id で見る。
 account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 keys contains r if {
@@ -228,6 +263,8 @@ denied_on(arn) := {a |
 }
 
 key_covered(_, denied) if "kms:*" in denied
+
+key_covered(_, denied) if "*" in denied
 
 key_covered(a, denied) if a in denied
 
@@ -308,7 +345,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target・key・covered_by（parent が必須）・exclude（reason が必須））/ children の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion だけを持ち、子の ARN を1つ以上生む）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -340,6 +377,19 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s が入力にありません", [address])
 }
 
+# 子を持つと宣言した型の target でない resource に書いた children は、どの ARN も生まず黙って捨てられる。
+deny contains msg if {
+	some r in resources
+	r.address in object.keys(children)
+	not child_holder(r)
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s は、children が true の target の型の resource ではありません", [r.address])
+}
+
+child_holder(r) if {
+	class_of(r.type) == "target"
+	object.get(types[r.type], "children", false) == true
+}
+
 deny contains msg if {
 	count(writer_roots) == 0
 	msg := "[PLAN-APPLY-00] data.policy_plan.state_backend.roots に、apply の role のほかの書き手の root がありません（identity root の state と lock file を組めない）"
@@ -364,12 +414,22 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-02] bootstrap の構成物 %s の型 %s が、data.policy_plan.deployment_identity.apply_role.bootstrap.types で分類されていません", [r.address, r.type])
 }
 
+# 外の resource を指す子は、その親の ARN の Deny に守られない。
 deny contains msg if {
 	some r in resources
 	class_of(r.type) == "covered_by"
-	parent := types[r.type].parent
-	count({p | some p in resources; p.type == parent; module_of(p) == module_of(r); class_of(p.type) in {"target", "key"}}) == 0
-	msg := sprintf("[PLAN-APPLY-02] %s の親として宣言した型 %s の target か key が、同じ module の下にありません", [r.address, parent])
+	t := types[r.type]
+	not points_to_guarded_parent(r, t)
+	msg := sprintf("[PLAN-APPLY-02] %s の %s（%v）が、bootstrap の %s（target か key）の %s のどれとも一致しません", [r.address, t.ref, object.get(r.change.after, t.ref, null), t.parent, t.parent_ref])
+}
+
+points_to_guarded_parent(r, t) if {
+	v := r.change.after[t.ref]
+	nonempty_string(v)
+	some p in resources
+	p.type == t.parent
+	class_of(p.type) in {"target", "key"}
+	p.change.after[t.parent_ref] == v
 }
 
 deny contains msg if {
@@ -386,6 +446,12 @@ deny contains msg if {
 	some arn in targets
 	not covered(arn)
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（* か、読み取りの名前だけを除く NotAction）を条件なしの Deny で拒んでいません", [target, arn])
+}
+
+deny contains msg if {
+	some arn in strict_targets
+	not covered_strictly(arn)
+	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）を条件なしの Deny で拒んでいません", [target, arn])
 }
 
 # --- PLAN-APPLY-04: state の版の削除 ---
@@ -429,4 +495,39 @@ deny contains msg if {
 	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
 	object.get(a.after, "policy_arns", null) != []
 	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arns が空ではありません", [a.path, a.address])
+}
+
+# role の引数で付ける policy は、上の型を通らない。
+deny contains msg if {
+	some c in lib.changes
+	c.rc.address == role
+	some attr in ["inline_policy", "managed_policy_arns"]
+	not empty_known(c.rc.change, attr)
+	msg := sprintf("[PLAN-APPLY-05] %s: apply の role %s の %s が空ではないか、plan で決まっていません", [c.path, role, attr])
+}
+
+empty_known(change, attr) if {
+	not unknown_any(object.get(change.after_unknown, attr, false))
+	object.get(change.after, attr, []) in {[], null}
+}
+
+# after_unknown は、値の一部だけが決まらないとき配列の要素に true を持つ。
+unknown_any(x) if {
+	walk(x, [_, v])
+	v == true
+}
+
+deny contains msg if {
+	role_known
+	some c in lib.changes
+	c.rc.type == "aws_iam_policy_attachment"
+	role_name in lib.as_array(object.get(c.rc.change.after, "roles", []))
+	msg := sprintf("[PLAN-APPLY-05] %s: %s が apply の role %s に managed policy を付けています", [c.path, c.rc.address, role_name])
+}
+
+deny contains msg if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_policy_attachment"
+	unknown_any(object.get(c.rc.change.after_unknown, "roles", false))
+	msg := sprintf("[PLAN-APPLY-05] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
 }
