@@ -193,7 +193,7 @@ default inline_decl := null
 
 inline_decl := data.policy_plan.inline_arguments
 
-# 作成と置換は書かないときの値と、更新は変更の前の値と比べる。更新の前の値は、別の resource が書いた設定を読み戻したもの。
+# 更新の前の値は、別の resource が書いた設定を読み戻したもの。
 inline_writes contains {"path": f.path, "address": rc.address, "arg": arg} if {
 	some f in input
 	some rc in f.contents.resource_changes

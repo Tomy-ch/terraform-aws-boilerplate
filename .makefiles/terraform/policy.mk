@@ -13,8 +13,6 @@ POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
 POLICY_PLAN_DECL = conftest/plan/decl.json
 POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
-# Provider の schema から、型ごとの書ける非推奨の引数（属性と block）を取り出す（ADR-0402 決定18）。
-# reference の root をまたいで和を取り、data.provider_schema として Policy に渡す。宣言は root に依らず1つだからである。
 TF_POLICY_DEPRECATED = [.[] | select(.type == "test_plan") | .test_plan.provider_schemas // {} | to_entries[] | .value.resource_schemas // {} | to_entries[] \
 	| {key: .key, value: ([(.value.block.attributes // {}) | to_entries[] | select(.value.deprecated == true and (.value.optional == true or .value.required == true)) | .key] \
 	+ [(.value.block.block_types // {}) | to_entries[] | select(.value.block.deprecated == true) | .key])}]
