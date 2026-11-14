@@ -20,6 +20,7 @@ import (
 var (
 	errNoRoots         = xerrors.New("SSOT に root が 1 件もありません")
 	errRootNoJobs      = xerrors.New("SSOT の root が実行するジョブを持ちません")
+	errRootNoTerraform = xerrors.New("SSOT の root が名指すジョブのどれも、その root で Terraform を実行しません")
 	errNoTerraform     = xerrors.New("Terraform の設定ファイル（*.tf）が無いディレクトリがあります")
 	errTerraformSyntax = xerrors.New("Terraform の設定を解釈できません")
 	errModuleSource    = xerrors.New("module の source が相対パスのリテラルではありません")
@@ -52,9 +53,10 @@ var (
 )
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
-// その root を実行するジョブの許可リストにあることを確かめる。欠けたときの症状は
+// その root で Terraform を実行するジョブ（ran が plan / apply の入口を呼ぶと言うジョブ）の許可リストに
+// あることを確かめる。lock の解除の入口だけを呼ぶジョブには型の宛先を求めない。欠けたときの症状は
 // .github/workflows/README.md の「ランナーの封じ込め」節が持つ。
-func (s *ssot) checkEndpoints(repo string) error {
+func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {
 	if len(s.rootOrder) == 0 {
 		return errNoRoots
 	}
@@ -63,6 +65,10 @@ func (s *ssot) checkEndpoints(repo string) error {
 		r := s.roots[name]
 		if len(r.jobs) == 0 {
 			return xerrors.Wrap(errRootNoJobs, name)
+		}
+		runners := slices.DeleteFunc(slices.Clone(r.jobs), func(key string) bool { return !ran[key][name] })
+		if len(runners) == 0 {
+			return xerrors.Wrap(errRootNoTerraform, name)
 		}
 		types, dirs, err := collectTypes(repo, name)
 		if err != nil {
@@ -75,7 +81,7 @@ func (s *ssot) checkEndpoints(repo string) error {
 				return xerrors.Wrap(errTypeUnmapped, fmt.Sprintf("root %s: %s（%s へ type を追加してください）", name, t, ssotFile))
 			}
 			used[prefix] = true
-			if err := s.requireHosts(r.jobs, s.types[prefix].hosts); err != nil {
+			if err := s.requireHosts(runners, s.types[prefix].hosts); err != nil {
 				return xerrors.Wrap(err, fmt.Sprintf("root %s: %s", name, t))
 			}
 			hosts = append(hosts, s.types[prefix].hosts...)

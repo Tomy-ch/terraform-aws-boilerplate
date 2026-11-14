@@ -40,33 +40,46 @@ var (
 	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY|UNLOCK),`)
 )
 
-// checkCIRoots は ci.mk と workflow を読み、ジョブが実行する root と SSOT の root の名指しを突き合わせる。
-// names は .github/workflows の下のファイル名。
-func (s *ssot) checkCIRoots(repo string, names []string) error {
+// ciEntry は ci.mk の入口 1 件。terraform は、その入口が root で Terraform を実行するか（CI_PLAN / CI_APPLY）。
+// CI_UNLOCK は state の lock を外すだけで、Terraform を実行しない。
+type ciEntry struct {
+	root      string
+	terraform bool
+}
+
+// rootRuns は 1 ジョブが入口を通して触れる root ごとに、その root で Terraform を実行するかを持つ。
+type rootRuns map[string]bool
+
+// checkCIRoots は ci.mk と workflow を読み、ジョブが実行する root と SSOT の root の名指しを突き合わせ、
+// ジョブごとの rootRuns を返す。names は .github/workflows の下のファイル名。
+func (s *ssot) checkCIRoots(repo string, names []string) (map[string]rootRuns, error) {
 	r, err := os.OpenRoot(repo)
 	if err != nil {
-		return xerrors.Wrap(err, "open "+repo)
+		return nil, xerrors.Wrap(err, "open "+repo)
 	}
 	defer func() { _ = r.Close() }()
 	mk, err := r.ReadFile(ciMakefile)
 	if err != nil {
-		return xerrors.Wrap(err, "read "+ciMakefile)
+		return nil, xerrors.Wrap(err, "read "+ciMakefile)
 	}
 	targets, err := parseCIMake(string(mk))
 	if err != nil {
-		return xerrors.Wrap(err, ciMakefile)
+		return nil, xerrors.Wrap(err, ciMakefile)
 	}
 	ran, err := ranRoots(r, names, targets)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return s.checkBindings(ran)
+	if err := s.checkBindings(ran); err != nil {
+		return nil, err
+	}
+	return ran, nil
 }
 
-// parseCIMake は ci.mk の入口ごとに、それが実行する root のパスを返す。
-func parseCIMake(data string) (map[string]string, error) {
+// parseCIMake は ci.mk の入口ごとに、それが実行する root のパスと Terraform を実行するかを返す。
+func parseCIMake(data string) (map[string]ciEntry, error) {
 	lines := strings.Split(data, "\n")
-	targets := map[string]string{}
+	targets := map[string]ciEntry{}
 	for i, line := range lines {
 		m := ciRuleRe.FindStringSubmatch(line)
 		if m == nil {
@@ -82,7 +95,7 @@ func parseCIMake(data string) (map[string]string, error) {
 		if call == nil || call[1] != strings.ToUpper(m[2]) {
 			return nil, xerrors.Wrap(errCIMake, fmt.Sprintf("%d 行目: %s の次の行が $(call CI_%s,<env>,<identity|workload>) ではありません", i+1, m[1], strings.ToUpper(m[2])))
 		}
-		targets[m[1]] = rootPath(call[2], call[3])
+		targets[m[1]] = ciEntry{root: rootPath(call[2], call[3]), terraform: m[2] != "unlock"}
 	}
 	if len(targets) == 0 {
 		return nil, xerrors.Wrap(errCIMake, "入口が 1 件もありません")
@@ -101,9 +114,10 @@ func rootPath(env, kind string) string {
 	return "env/" + env
 }
 
-// ranRoots は workflow のジョブごとに、そのジョブが CI の入口を通して実行する root を返す。
-func ranRoots(repo *os.Root, names []string, targets map[string]string) (map[string][]string, error) {
-	ran := map[string][]string{}
+// ranRoots は workflow のジョブごとに、そのジョブが CI の入口を通して触れる root を返す。1 つの root を
+// lock の解除と plan / apply の両方の入口で触れるジョブは、その root で Terraform を実行するとみなす。
+func ranRoots(repo *os.Root, names []string, targets map[string]ciEntry) (map[string]rootRuns, error) {
+	ran := map[string]rootRuns{}
 	for _, name := range names {
 		f := path.Join(".github", "workflows", name)
 		data, err := repo.ReadFile(f)
@@ -120,13 +134,14 @@ func ranRoots(repo *os.Root, names []string, targets map[string]string) (map[str
 			key := name + ":" + job.ID
 			for _, l := range job.Lines {
 				for _, tok := range entryTokens(l) {
-					dir, ok := targets[tok]
+					e, ok := targets[tok]
 					if !ok {
 						return nil, xerrors.Wrap(errCITargetUnknown, fmt.Sprintf("%s %d 行目: %s（%s）", key, l.Number, tok, ciMakefile))
 					}
-					if !slices.Contains(ran[key], dir) {
-						ran[key] = append(ran[key], dir)
+					if ran[key] == nil {
+						ran[key] = rootRuns{}
 					}
+					ran[key][e.root] = ran[key][e.root] || e.terraform
 				}
 			}
 		}
@@ -150,14 +165,14 @@ func entryTokens(l workflow.Line) []string {
 
 // checkBindings は、ジョブが実際に実行する root と、SSOT の root が名指すジョブが一致することを見る。
 // 宣言だけを起点にすると、名指したジョブが別の root も実行し始めたとき、その root の型は突き合わせを受けない。
-func (s *ssot) checkBindings(ran map[string][]string) error {
+func (s *ssot) checkBindings(ran map[string]rootRuns) error {
 	keys := make([]string, 0, len(ran))
 	for key := range ran {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		for _, dir := range ran[key] {
+		for _, dir := range sortedKeys(ran[key]) {
 			if r, ok := s.roots[dir]; !ok || !slices.Contains(r.jobs, key) {
 				return xerrors.Wrap(errRootUnbound, fmt.Sprintf("%s は %s を実行します（%s の root の jobs へ追加してください）", key, dir, ssotFile))
 			}
@@ -165,7 +180,7 @@ func (s *ssot) checkBindings(ran map[string][]string) error {
 	}
 	for _, name := range s.rootOrder {
 		for _, key := range s.roots[name].jobs {
-			if !slices.Contains(ran[key], name) {
+			if _, ok := ran[key][name]; !ok {
 				return xerrors.Wrap(errRootJobIdle, fmt.Sprintf("root %s: %s（%s の入口を呼んでいません）", name, key, ciMakefile))
 			}
 		}

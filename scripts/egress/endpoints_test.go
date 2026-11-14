@@ -57,6 +57,19 @@ func parseBody(t *testing.T, src string) *hclsyntax.Body {
 	return body.Blocks[0].Body
 }
 
+func terraformRuns(s *ssot) map[string]rootRuns {
+	ran := map[string]rootRuns{}
+	for name, r := range s.roots {
+		for _, key := range r.jobs {
+			if ran[key] == nil {
+				ran[key] = rootRuns{}
+			}
+			ran[key][name] = true
+		}
+	}
+	return ran
+}
+
 func Test_ssot_checkEndpoints(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +82,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne+"[type.aws_kms_]\nhosts = [\"kms.test\"]\n[type.aws_none]\nhosts = []\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\ndata \"aws_none\" \"n\" {}\n")
-			assert.NoError(t, s.checkEndpoints(repo))
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
 		})
 
 		t.Run("module を辿った root の provider の region と型が呼ぶ宛先の region が一致すれば成功する", func(t *testing.T) {
@@ -78,14 +91,22 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 				"[root.r]\njobs = [\"c.yaml:kms\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n[type.aws_none]\nhosts = []\n")
 			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\ndata \"aws_none\" \"n\" {}\n")
 			writeFile(t, repo, "r/m/main.tf", "resource \"aws_kms_key\" \"k\" {}\n")
-			assert.NoError(t, s.checkEndpoints(repo))
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
+		})
+
+		t.Run("lock の解除だけで root に触れるジョブには、型が呼ぶ宛先を求めない", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
+			ran := map[string]rootRuns{"a.yaml:one": {"r": true}, "b.yaml:two": {"r": false}}
+			assert.NoError(t, s.checkEndpoints(repo, ran))
 		})
 
 		t.Run("base の宛先もジョブの許可リストとして数える", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
 			repo := endpointRepo(t, "data \"aws_sts_x\" \"c\" {}\n")
-			assert.NoError(t, s.checkEndpoints(repo))
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
 		})
 	})
 
@@ -95,34 +116,52 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 		t.Run("root が 1 件も無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "")
-			require.ErrorIs(t, s.checkEndpoints(t.TempDir()), errNoRoots)
+			require.ErrorIs(t, s.checkEndpoints(t.TempDir(), terraformRuns(s)), errNoRoots)
 		})
 
 		t.Run("ジョブを持たない root を弾く", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = []\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
-			require.ErrorIs(t, s.checkEndpoints(repo), errRootNoJobs)
+			require.ErrorIs(t, s.checkEndpoints(repo, terraformRuns(s)), errRootNoJobs)
+		})
+
+		t.Run("名指すジョブのどれもが lock の解除だけで触れる root を弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, rootOne+"[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
+			err := s.checkEndpoints(repo, map[string]rootRuns{"a.yaml:one": {"r": false}})
+			require.ErrorIs(t, err, errRootNoTerraform)
+			assert.Contains(t, err.Error(), "r")
+		})
+
+		t.Run("lock の解除の入口とともに plan / apply の入口も呼ぶジョブに、型が呼ぶ宛先が無ければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
+			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
+			err := s.checkEndpoints(repo, map[string]rootRuns{"a.yaml:one": {"r": true}, "b.yaml:two": {"r": true}})
+			require.ErrorIs(t, err, errEndpointMissing)
+			assert.Contains(t, err.Error(), "kms.test → b.yaml:two")
 		})
 
 		t.Run("型が 1 件も無い root を弾く", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne)
 			repo := endpointRepo(t, "locals {\n  a = 1\n}\n")
-			require.ErrorIs(t, s.checkEndpoints(repo), errNoTypes)
+			require.ErrorIs(t, s.checkEndpoints(repo, terraformRuns(s)), errNoTypes)
 		})
 
 		t.Run("root のディレクトリが無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne)
-			require.ErrorIs(t, s.checkEndpoints(t.TempDir()), errNoTerraform)
+			require.ErrorIs(t, s.checkEndpoints(t.TempDir(), terraformRuns(s)), errNoTerraform)
 		})
 
 		t.Run("どの type にも当たらない型を弾く", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne+"[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\nresource \"aws_dynamodb_table\" \"t\" {}\n")
-			err := s.checkEndpoints(repo)
+			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errTypeUnmapped)
 			assert.Contains(t, err.Error(), "aws_dynamodb_table")
 		})
@@ -131,7 +170,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne+"[type.aws_kms_]\nhosts = [\"kms.test\", \"kms-fips.test\"]\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
-			err := s.checkEndpoints(repo)
+			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errEndpointMissing)
 			assert.Contains(t, err.Error(), "kms-fips.test")
 		})
@@ -140,7 +179,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, rootOne+"[type.aws_kms_]\nhosts = [\"kms.test\"]\n[type.aws_s3_]\nhosts = [\"s3.test\"]\n")
 			repo := endpointRepo(t, "resource \"aws_kms_key\" \"k\" {}\n")
-			err := s.checkEndpoints(repo)
+			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errTypeOrphan)
 			assert.Contains(t, err.Error(), "aws_s3_")
 		})
@@ -149,7 +188,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"b.yaml:two\"]\n[type.aws_sts_]\nhosts = [\"b1.test\"]\n")
 			repo := endpointRepo(t, "data \"aws_sts_x\" \"c\" {}\n")
-			err := s.checkEndpoints(repo)
+			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errJobNoRoot)
 			assert.Contains(t, err.Error(), "a.yaml:one")
 		})
@@ -159,7 +198,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			s := endpointSSOT(t, "[job.\"c.yaml:kms\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
 				"[root.r]\njobs = [\"c.yaml:kms\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n")
 			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"us-east-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
-			err := s.checkEndpoints(repo)
+			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "root r")
 		})

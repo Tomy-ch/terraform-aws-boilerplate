@@ -21,6 +21,17 @@ func bindingSSOT(t *testing.T) *ssot {
 	return mustParse(t, "[job.\"a.yaml:one\"]\nclasses = []\n[job.\"a.yaml:two\"]\nclasses = []\n[root.\"env/t/identity\"]\njobs = [\"a.yaml:one\"]\n")
 }
 
+func makeDryRun(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", filepath.Join("..", ".."), "-n", "--no-print-directory"}, args...)...)
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+	})
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return string(out)
+}
+
 func ciWorkflow(jobID, run string) string {
 	return workflowHead + "  " + jobID + ":\n    steps:\n      - name: Run\n        run: " + run + "\n"
 }
@@ -31,12 +42,14 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ジョブが実行する root と宣言が一致すれば成功する", func(t *testing.T) {
+		t.Run("ジョブが実行する root と宣言が一致すれば、ジョブごとに root で Terraform を実行するかを返す", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, ciMakefile, testCIMake)
 			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-plan-t-identity"))
-			assert.NoError(t, bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"}))
+			got, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
+			require.NoError(t, err)
+			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}}, got)
 		})
 	})
 
@@ -45,26 +58,30 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 
 		t.Run("リポジトリを開けなければ弾く", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(filepath.Join(t.TempDir(), "missing"), nil), os.ErrNotExist)
+			_, err := bindingSSOT(t).checkCIRoots(filepath.Join(t.TempDir(), "missing"), nil)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
 		t.Run("ci.mk が無ければ弾く", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(t.TempDir(), nil), os.ErrNotExist)
+			_, err := bindingSSOT(t).checkCIRoots(t.TempDir(), nil)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
 		t.Run("ci.mk を解釈できなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, ciMakefile, "all:\n")
-			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(repo, nil), errCIMake)
+			_, err := bindingSSOT(t).checkCIRoots(repo, nil)
+			require.ErrorIs(t, err, errCIMake)
 		})
 
 		t.Run("workflow を読めなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, ciMakefile, testCIMake)
-			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(repo, []string{"missing.yaml"}), os.ErrNotExist)
+			_, err := bindingSSOT(t).checkCIRoots(repo, []string{"missing.yaml"})
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
 		t.Run("宣言の名指すジョブが root を実行していなければ弾く", func(t *testing.T) {
@@ -72,7 +89,8 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 			repo := t.TempDir()
 			writeFile(t, repo, ciMakefile, testCIMake)
 			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make lint"))
-			require.ErrorIs(t, bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"}), errRootJobIdle)
+			_, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
+			require.ErrorIs(t, err, errRootJobIdle)
 		})
 	})
 }
@@ -87,14 +105,39 @@ func Test_parseCIMake(t *testing.T) {
 			t.Parallel()
 			got, err := parseCIMake(testCIMake + "ci-apply-t-workload:\n\t@$(call CI_APPLY,t,workload)\n")
 			require.NoError(t, err)
-			assert.Equal(t, map[string]string{"ci-plan-t-identity": "env/t/identity", "ci-apply-t-workload": "env/t"}, got)
+			assert.Equal(t, map[string]ciEntry{
+				"ci-plan-t-identity":  {root: "env/t/identity", terraform: true},
+				"ci-apply-t-workload": {root: "env/t", terraform: true},
+			}, got)
 		})
 
-		t.Run("lock の解除の入口も root に結びつける", func(t *testing.T) {
+		t.Run("lock の解除の入口も root に結びつけ、Terraform を実行しない入口とする", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseCIMake(testCIMake + "ci-unlock-t-identity:\n\t@$(call CI_UNLOCK,t,identity)\n")
 			require.NoError(t, err)
-			assert.Equal(t, map[string]string{"ci-plan-t-identity": "env/t/identity", "ci-unlock-t-identity": "env/t/identity"}, got)
+			assert.Equal(t, map[string]ciEntry{
+				"ci-plan-t-identity":   {root: "env/t/identity", terraform: true},
+				"ci-unlock-t-identity": {root: "env/t/identity"},
+			}, got)
+		})
+
+		// lock の解除の job に型の宛先を求めない根拠は、CI_UNLOCK が terraform を呼ばないことにある。ci.mk の
+		// 外の define も含めて展開した結果を、実物の ci.mk の入口ごとに make -n で突き合わせる。
+		t.Run("実物の ci.mk の入口が terraform を呼ぶかが、Terraform を実行するかの区別と一致する", func(t *testing.T) {
+			t.Parallel()
+			const sentinel = "tf-bin-sentinel"
+			mk, err := openRoot(t, filepath.Join("..", "..")).ReadFile(ciMakefile)
+			require.NoError(t, err)
+			targets, err := parseCIMake(string(mk))
+			require.NoError(t, err)
+			kinds := map[bool]int{}
+			for target, e := range targets {
+				out := makeDryRun(t, target, "TF_BIN="+sentinel)
+				assert.Equal(t, e.terraform, strings.Contains(out, sentinel), target)
+				kinds[e.terraform]++
+			}
+			assert.Positive(t, kinds[true], "Terraform を実行する入口が無い")
+			assert.Positive(t, kinds[false], "Terraform を実行しない入口が無い")
 		})
 	})
 
@@ -148,16 +191,11 @@ func Test_rootPath(t *testing.T) {
 			targets, err := parseCIMake(string(mk))
 			require.NoError(t, err)
 			dirRe := regexp.MustCompile(`dir="\./([^"]+)"`)
-			for target, want := range targets {
-				cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target)
-				cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-					return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-				})
-				out, err := cmd.CombinedOutput()
-				require.NoError(t, err, string(out))
-				m := dirRe.FindStringSubmatch(string(out))
-				require.NotNil(t, m, string(out))
-				assert.Equal(t, want, m[1], target)
+			for target, e := range targets {
+				out := makeDryRun(t, target)
+				m := dirRe.FindStringSubmatch(out)
+				require.NotNil(t, m, out)
+				assert.Equal(t, e.root, m[1], target)
 			}
 		})
 	})
@@ -166,7 +204,12 @@ func Test_rootPath(t *testing.T) {
 func Test_ranRoots(t *testing.T) {
 	t.Parallel()
 
-	targets := map[string]string{"ci-plan-t-identity": "env/t/identity", "ci-apply-t-identity": "env/t/identity", "ci-plan-t-workload": "env/t"}
+	targets := map[string]ciEntry{
+		"ci-plan-t-identity":   {root: "env/t/identity", terraform: true},
+		"ci-apply-t-identity":  {root: "env/t/identity", terraform: true},
+		"ci-plan-t-workload":   {root: "env/t", terraform: true},
+		"ci-unlock-t-identity": {root: "env/t/identity"},
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -179,8 +222,31 @@ func Test_ranRoots(t *testing.T) {
 				"  two:\n    steps:\n      - name: Lint\n        run: make lint\n")
 			got, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
 			require.NoError(t, err)
-			assert.Equal(t, map[string][]string{"a.yaml:one": {"env/t/identity", "env/t"}}, got)
+			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true, "env/t": true}}, got)
 		})
+
+		t.Run("lock の解除の入口だけで触れる root は Terraform を実行しない root とする", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-unlock-t-identity"))
+			got, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": false}}, got)
+		})
+
+		for _, c := range []struct{ name, run string }{
+			{"lock の解除の後に plan", "make ci-unlock-t-identity ci-plan-t-identity"},
+			{"apply の後に lock の解除", "make ci-apply-t-identity ci-unlock-t-identity"},
+		} {
+			t.Run(c.name+"の入口を呼ぶジョブは、その root で Terraform を実行するとみなす", func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", c.run))
+				got, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
+				require.NoError(t, err)
+				assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}}, got)
+			})
+		}
 
 		t.Run("step の名前と、入口の名前を一部に含む別の名前は数えない", func(t *testing.T) {
 			t.Parallel()
@@ -260,7 +326,12 @@ func Test_ssot_checkBindings(t *testing.T) {
 
 		t.Run("実行する root と名指しが一致すれば成功する", func(t *testing.T) {
 			t.Parallel()
-			assert.NoError(t, bindingSSOT(t).checkBindings(map[string][]string{"a.yaml:one": {"env/t/identity"}}))
+			assert.NoError(t, bindingSSOT(t).checkBindings(map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}}))
+		})
+
+		t.Run("lock の解除だけで root に触れるジョブも、名指しが一致すれば成功する", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, bindingSSOT(t).checkBindings(map[string]rootRuns{"a.yaml:one": {"env/t/identity": false}}))
 		})
 	})
 
@@ -269,21 +340,21 @@ func Test_ssot_checkBindings(t *testing.T) {
 
 		t.Run("宣言に無い root を実行するジョブを弾く", func(t *testing.T) {
 			t.Parallel()
-			err := bindingSSOT(t).checkBindings(map[string][]string{"a.yaml:one": {"env/t/identity", "env/t"}})
+			err := bindingSSOT(t).checkBindings(map[string]rootRuns{"a.yaml:one": {"env/t/identity": true, "env/t": true}})
 			require.ErrorIs(t, err, errRootUnbound)
 			assert.Contains(t, err.Error(), "env/t を実行します")
 		})
 
 		t.Run("root を名指されていないジョブが root を実行すれば弾く", func(t *testing.T) {
 			t.Parallel()
-			err := bindingSSOT(t).checkBindings(map[string][]string{"a.yaml:one": {"env/t/identity"}, "a.yaml:two": {"env/t/identity"}})
+			err := bindingSSOT(t).checkBindings(map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}, "a.yaml:two": {"env/t/identity": false}})
 			require.ErrorIs(t, err, errRootUnbound)
 			assert.Contains(t, err.Error(), "a.yaml:two")
 		})
 
 		t.Run("名指されたジョブが root を実行していなければ弾く", func(t *testing.T) {
 			t.Parallel()
-			err := bindingSSOT(t).checkBindings(map[string][]string{})
+			err := bindingSSOT(t).checkBindings(map[string]rootRuns{})
 			require.ErrorIs(t, err, errRootJobIdle)
 			assert.Contains(t, err.Error(), "a.yaml:one")
 		})
