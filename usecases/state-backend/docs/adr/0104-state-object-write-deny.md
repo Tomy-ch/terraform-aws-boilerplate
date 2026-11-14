@@ -73,7 +73,7 @@ repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 �
 - 保証すること: Bucket Policy の文書が決定1-5 の形であること（Unit Test と Policy Test）
 - 保証しないこと:
   - 管理アカウントの root による Bucket Policy の削除（repository-wide/ADR-0602 決定11）。apply-identity による Bucket Policy の書き換え
-  - 実 API での評価のうち、例外の role が通る側は、この決定を入れる apply 自身と、その直後の再実行の plan の変更なしが一度だけ見る。例外に無い主体が拒まれる側は、人が一時 IAM user の `put-object` で一度だけ見る。例外の role が誤った暗号化の header で拒まれる側は、実 API で見ない
+  - 実 API での評価のうち、例外の role が通る側は、この決定を入れる apply 自身と、その直後の再実行の plan の変更なしが一度だけ見る。例外に無い主体が拒まれる側は、人が一時 IAM user の、存在しない key への `delete-object` で一度だけ見る。`put-object` は state の鍵の Key Policy でも拒まれうるので、Bucket Policy の拒否と切り分けられない。例外の role が誤った暗号化の header で拒まれる側は、実 API で見ない
   - 条件キー `s3:x-amz-server-side-encryption-aws-kms-key-id` の値が、ARN 以外で鍵を名指した要求でどう表れるか
   - multipart の部分の upload と完了の要求で、S3 が暗号化の条件キーを埋めるか、埋めるならどの形か。鍵 ID の形で埋めるなら、state が multipart で書かれる大きさになったとき決定5 が書き込みを拒む
   - 方式の header が `aws:kms` で鍵 ID の header が無い要求を、S3 が `aws/s3` と既定の暗号化の鍵のどちらで暗号化するか（S3 User Guide の記述が食い違う）
@@ -84,7 +84,7 @@ repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 �
 - Unit Test: `modules/s3/tests/policy.tftest.hcl` が文書の完全一致を、`tests/writers.tftest.hcl` が入力の検査を見る
 - Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）と、`plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること。宣言した Bucket Policy が state Bucket を指し、state Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであること。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.state_backend_write_deny` が読まない文書が実体になりうる）
 - Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
-- 手順: 段5 の成功条件の、例外に無い主体の `put-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
+- 手順: 段5 の成功条件の、例外に無い主体の、存在しない key への `delete-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
 
 ## 影響
 

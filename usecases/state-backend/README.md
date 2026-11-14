@@ -110,7 +110,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - 作成直後の role を名指す Key Policy の書き込みが、IAM の結果整合で失敗すること（新しいアカウントの段4 と、CI の role を足す apply。Provider は retry する）
 - `unlock_identity` の暗号化コンテキストで限った復号が、実 API の lock file の読み取りで通ること。lock file が在るときしか評価されない（人が `docs/setup/bootstrap.md` 段5 の lock の項で一度試す）
 - 鍵の destroy の後も、削除の猶予（30日）のあいだ鍵が残ること
-- Bucket Policy の書き込みの拒否が、実 API で `aws:PrincipalArn` の例外どおりに評価されること（例外の role が通ることは書き込みの拒否を入れる apply とその後の plan が、例外に無い主体が拒まれることは人が `docs/setup/bootstrap.md` 段5 の `put-object` で一度だけ見る）
+- Bucket Policy の書き込みの拒否が、実 API で `aws:PrincipalArn` の例外どおりに評価されること（例外の role が通ることは書き込みの拒否を入れる apply とその後の plan が、例外に無い主体が拒まれることは人が `docs/setup/bootstrap.md` 段5 の、存在しない key への `delete-object` で一度だけ見る）
 - multipart の部分の upload と完了の要求で、S3 が暗号化の条件キー（`s3:x-amz-server-side-encryption-aws-kms-key-id`）を埋めるか、どの形で埋めるか。鍵 ID の形で埋めるなら、state が multipart で書かれる大きさになったとき書き込みが拒まれる。backend（Terraform v1.16.6）は Uploader の part の大きさを指定せず、SDK の既定に従う
 - 新しいアカウントの段4 の apply の途中で既定の暗号化が SSE-KMS に変わっても、鍵を渡さない backend の state と lock file の書き込みが SSE-S3 で通ること
 - SSE-KMS に切り替えた後も、切り替えの前に SSE-S3 で書かれた object を、CI の role がそのまま読めること（管理アカウントでは、切り替えの apply の後の plan が見る）
