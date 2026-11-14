@@ -117,7 +117,7 @@ CMD []
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段が mise を使わない理由は docker/tools/README.md が持つ。
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS node_tools
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools
 
 # pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
 # alpine の `sh` は busybox で、pipefail を持たない。
@@ -134,7 +134,7 @@ WORKDIR /app
 # `--ignore-scripts` の理由と、in-tree のパッケージが現れたときの移行先は
 # docker/tools/README.md と ADR-0503 決定16-18 が持つ。
 RUN set -eu; \
-    declared_node="24.22.1"; \
+    declared_node="26.13.1"; \
     actual_node="$(node --version | sed 's|^v||')"; \
     [ "$declared_node" = "$actual_node" ] || { \
       echo "Node の版がずれています: 宣言=$declared_node / ベースイメージ=$actual_node" >&2; \
