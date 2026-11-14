@@ -64,7 +64,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
    - 許容箇所と根拠を当該ユースケースのADRまたは設計記録へ記載する
 
 10. AWS managed policyは原則として採用しない。service-linked role、およびAWSが機能上その使用を要求する場合に限り許容し、根拠を記録する。それ以外はcustomer managed policyを生成する。
-11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
+11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。resourceを作るまでの間、そのpatternのresource typeを限る条件キーが無ければ、その旨と、作った後の変更でresource参照へ絞ることを記録して、Conditionを掛けずに使う。
 12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク

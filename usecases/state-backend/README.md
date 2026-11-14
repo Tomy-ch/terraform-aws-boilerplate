@@ -38,8 +38,9 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` と `scripts/tf-local`（`state-key` が alias の一覧からこの名前で鍵の ARN を引く）がそれぞれ同じ値を写し、テストはこの出力を `imports.tftest.hcl` の直書きで固定し、`scripts/tf-local` のテストは自分の写しをその直書きと突き合わせる（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
 | `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
+| `access_log_group_arn`・`access_log_destination_arn`・`access_log_source_arns` | [`deployment-identity`](../deployment-identity/README.md)。段5 の S3 サーバーアクセスログの構成物（Log Group は `<project>-<env>-state-backend-access`、delivery destination は同じ名前、delivery source は2つの Bucket の `<project>-<env>-tfstate`・`<project>-<env>-tfplan`）への CI の role の権限の Resource を絞る。入力と data source だけから決まり、構成物を作る前から参照できる。管理アカウントの値は bootstrap の手順と `env/admin/identity/tests/imports.tftest.hcl` と `usecases/deployment-identity/reference/main.tf` がそれぞれ写し、テストはこの出力を `imports.tftest.hcl` の直書きで固定する（手順との一致は検査しない） |
 
-- ログの所在: まだ無い。S3 サーバーアクセスログの CloudWatch Logs への配送は段5 で足し、その Log Group を出力に加える
+- ログの所在: S3 サーバーアクセスログを受ける Log Group の ARN は `access_log_group_arn`。Log Group と配送は段5 で作る
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `state-backend` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
 
 ## 段ごとに持つもの
@@ -84,10 +85,10 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `deployment-identity` の `plan_role_arn`・`apply_role_arn`・`apply_identity_role_arn`・`unlock_identity_role_arn` を `ci_role_arns` に受ける。`deployment-identity` はこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_arn` を受ける。どちらの向きも resource の ARN を渡すだけで、role と Bucket は互いに依存しない
+- ユースケース: `deployment-identity` の `plan_role_arn`・`apply_role_arn`・`apply_identity_role_arn`・`unlock_identity_role_arn` を `ci_role_arns` に受ける。`deployment-identity` はこのユースケースの `bucket_arn`・`plan_output_bucket_arn`・`state_key_arn` と、`access_log_` で始まる3つの出力を受ける。どちらの向きも resource の ARN を渡すだけで、role と Bucket は互いに依存しない
 - 判断 Issue: #130（管理アカウントの作成前提）、#96（state Bucket のアカウント配置）、#98（常駐層の完了条件）、#93（層検査の入力形式と道具）、#83（state の分割粒度）。いずれも閉じている
 - plan の role は plan の出力を書くのに鍵の `kms:GenerateDataKey` を要り、それを IAM ではなく Key Policy が許すので、Key Policy に名指す。apply の role は workload root の state を暗号化するときに要るので、workload root を足す変更が Key Policy に足す
-- 段5 は log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias の分は足してあり、ログの分は #108 の後に足す。CI の role は鍵と alias を作れないので、鍵の作り直しは CI では行えない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）
+- 段5 は log-group（#108）の一般 module を要る。段5 で要る apply-identity の権限は、段5 の変更が先に `deployment-identity` へ足す。鍵と alias の分と、ログの構成物の分（Log Group に鍵を付けない形の分。Log Group の暗号化の構成は、Log Group を足す変更で決める）は足してある。CI の role は state の鍵と alias を作れないので、state の鍵の作り直しは CI では行えない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3）
 
 ## 検証方法
 

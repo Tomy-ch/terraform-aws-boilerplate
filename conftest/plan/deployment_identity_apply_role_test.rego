@@ -57,7 +57,10 @@ valid_statements := [
 	{"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "Resource": sprintf("%s/*", [st])},
 	full_deny([po, sprintf("%s/*", [po])]),
 	{"Effect": "Deny", "Action": delegated_actions, "Resource": key},
+	wildcard_deny,
 ]
+
+wildcard_deny := {"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "LOGS:PutResourcePolicy"], "Resource": "*"}
 
 apply_policy_address := sprintf("%saws_iam_role_policy.this[\"apply\"]", [g])
 
@@ -114,6 +117,7 @@ decl := {
 		"role": apply_role_address,
 		"policy": apply_policy_address,
 		"bootstrap": bootstrap,
+		"wildcard_denies": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"],
 	}},
 	"state_backend": {
 		"bucket": "module.state_backend.module.s3.aws_s3_bucket.this",
@@ -154,9 +158,9 @@ updated(x, address, _) := x if x.address != address
 
 without(rcs, address) := [x | some x in rcs; x.address != address]
 
-denied_03(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（* か", [apply_policy_address, arn])
+denied_03(arn) := sprintf("[PLAN-APPLY-04] apply の role %q が、%s へのすべての Action（* か", [apply_policy_address, arn])
 
-denied_03_strict(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）", [apply_policy_address, arn])
+denied_03_strict(arn) := sprintf("[PLAN-APPLY-04] apply の role %q が、%s へのすべての Action（*）", [apply_policy_address, arn])
 
 malformed := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が"
 
@@ -356,11 +360,11 @@ test_violation_conditional_key_deny if {
 	fixture.has("[PLAN-APPLY-01]", messages(replace(valid_statements, 6, s)))
 }
 
-# --- PLAN-APPLY-02 ---
+# --- PLAN-APPLY-03 ---
 
 test_violation_unclassified_type if {
 	rcs := array.concat(world(valid_statements), [res("aws_cloudwatch_log_group", "module.state_backend.module.logs.aws_cloudwatch_log_group.this", {"arn": "arn:aws:logs:ap-northeast-1:123456789012:log-group:x"})])
-	fixture.has("[PLAN-APPLY-02] bootstrap の構成物 module.state_backend.module.logs.aws_cloudwatch_log_group.this の型", messages_for(rcs, decl))
+	fixture.has("[PLAN-APPLY-03] bootstrap の構成物 module.state_backend.module.logs.aws_cloudwatch_log_group.this の型", messages_for(rcs, decl))
 }
 
 # 子は、bootstrap の親を値で指さなければ親の ARN の Deny に守られない。
@@ -372,7 +376,7 @@ test_violation_covered_by_points_outside if {
 		["module.state_backend.module.kms.aws_kms_alias.this", {"target_key_id": "other-key"}],
 		[apply_policy_address, {"name": "apply", "role": "external-role", "policy": json.marshal({"Statement": valid_statements})}],
 	] {
-		fixture.has(sprintf("[PLAN-APPLY-02] %s の", [c[0]]), messages_for(with_after(world(valid_statements), c[0], c[1]), decl))
+		fixture.has(sprintf("[PLAN-APPLY-03] %s の", [c[0]]), messages_for(with_after(world(valid_statements), c[0], c[1]), decl))
 	}
 }
 
@@ -380,7 +384,7 @@ test_violation_covered_by_points_outside if {
 test_violation_covered_by_parent_not_guarded if {
 	d := with_type("aws_s3_bucket_versioning", cov("aws_iam_role_policy", "bucket", "role"))
 	rcs := with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "ci-apply"})
-	fixture.has("[PLAN-APPLY-02] module.state_backend.module.s3.aws_s3_bucket_versioning.this の bucket", messages_for(rcs, d))
+	fixture.has("[PLAN-APPLY-03] module.state_backend.module.s3.aws_s3_bucket_versioning.this の bucket", messages_for(rcs, d))
 }
 
 # 3つ目の Bucket は、子の ARN を宣言するまで赤にする。宣言が無いと、その object を守る Deny を誰も求めない。
@@ -388,10 +392,10 @@ test_violation_children_undeclared if {
 	extra := "arn:aws:s3:::third"
 	s := array.concat(valid_statements, [full_deny([extra])])
 	rcs := array.concat(world(s), [res("aws_s3_bucket", "module.state_backend.module.third.aws_s3_bucket.this", {"arn": extra, "id": "third"})])
-	fixture.has("[PLAN-APPLY-02] module.state_backend.module.third.aws_s3_bucket.this の子の ARN", messages_for(rcs, decl))
+	fixture.has("[PLAN-APPLY-03] module.state_backend.module.third.aws_s3_bucket.this の子の ARN", messages_for(rcs, decl))
 }
 
-# --- PLAN-APPLY-03 ---
+# --- PLAN-APPLY-04 ---
 
 # サービスの wildcard は同じ ARN への別のサービスの Action（role の ARN への sts:AssumeRole）を覆わない。
 test_violation_service_wildcard if {
@@ -467,7 +471,7 @@ test_violation_other_instance_deny if {
 	fixture.has(denied_03(po), messages_for(rcs, decl))
 }
 
-# --- PLAN-APPLY-04 ---
+# --- PLAN-APPLY-05 ---
 
 # 版の削除の Deny は Action を名前か * で書く。s3:* と s3:Delete* は IAM では覆うが、wildcard を展開しないので数えない。
 test_violation_version_deletion_not_named if {
@@ -477,20 +481,20 @@ test_violation_version_deletion_not_named if {
 		replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:Delete*", "Resource": sprintf("%s/*", [st])}),
 		replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "Resource": sprintf("%s/*", [st]), "Condition": {"Bool": {"aws:SecureTransport": "true"}}}),
 	] {
-		fixture.has(sprintf("[PLAN-APPLY-04] apply の role %q が、%s/* への", [apply_policy_address, st]), messages(s))
+		fixture.has(sprintf("[PLAN-APPLY-05] apply の role %q が、%s/* への", [apply_policy_address, st]), messages(s))
 	}
 }
 
-# --- PLAN-APPLY-05 ---
+# --- PLAN-APPLY-06 ---
 
 test_violation_extra_inline_policy if {
 	extra := res("aws_iam_role_policy", sprintf("%saws_iam_role_policy.extra", [g]), {"name": "extra", "role": "ci-apply", "policy": json.marshal({"Statement": [{"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"}]})})
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: %saws_iam_role_policy.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 test_violation_managed_policy_attachment if {
 	extra := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.extra", [g]), {"role": "ci-apply", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: %saws_iam_role_policy_attachment.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 # role の引数と aws_iam_policy_attachment は、上の型を通らずに policy を付ける。
@@ -500,23 +504,23 @@ test_violation_role_arguments_attach_policy if {
 		{"inline_policy": [], "managed_policy_arns": ["arn:aws:iam::aws:policy/AdministratorAccess"]},
 	] {
 		rcs := with_after(world(valid_statements), apply_role_address, object.union({"name": "ci-apply", "arn": role_arn("ci-apply")}, v))
-		fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の", [apply_role_address]), messages_for(rcs, decl))
+		fixture.has(sprintf("[PLAN-APPLY-06] p.json: apply の role %s の", [apply_role_address]), messages_for(rcs, decl))
 	}
 }
 
 test_violation_role_arguments_unknown if {
 	unknown := json.patch([r | some r in world(valid_statements); r.address == apply_role_address][0], [{"op": "add", "path": "/change/after_unknown/managed_policy_arns", "value": [true]}])
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の managed_policy_arns", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: apply の role %s の managed_policy_arns", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
 }
 
 test_violation_policy_attachment_roles if {
 	extra := res("aws_iam_policy_attachment", "module.workload.aws_iam_policy_attachment.this", {"roles": ["other", "ci-apply"], "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
-	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.this が apply の role ci-apply に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has("[PLAN-APPLY-06] p.json: module.workload.aws_iam_policy_attachment.this が apply の role ci-apply に", messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 test_violation_policy_attachment_roles_unknown if {
 	extra := {"address": "module.workload.aws_iam_policy_attachment.later", "type": "aws_iam_policy_attachment", "change": {"actions": ["create"], "after": {}, "after_unknown": {"roles": true}}}
-	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.later がどの role に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has("[PLAN-APPLY-06] p.json: module.workload.aws_iam_policy_attachment.later がどの role に", messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 test_violation_attachment_role_unknown if {
@@ -524,23 +528,23 @@ test_violation_attachment_role_unknown if {
 		{"address": sprintf("%saws_iam_role_policy_attachment.later", [g]), "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {}, "after_unknown": {"role": true}}},
 		{"address": sprintf("%saws_iam_role_policies_exclusive.later", [g]), "type": "aws_iam_role_policies_exclusive", "change": {"actions": ["create"], "after": {}, "after_unknown": {"role_name": true}}},
 	] {
-		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s がどの role に", [extra.address]), messages_for(array.concat(world(valid_statements), [extra]), decl))
+		fixture.has(sprintf("[PLAN-APPLY-06] p.json: %s がどの role に", [extra.address]), messages_for(array.concat(world(valid_statements), [extra]), decl))
 	}
 }
 
 test_violation_exclusive_count if {
 	every e in exclusives {
-		fixture.has(sprintf("[PLAN-APPLY-05] apply の role ci-apply の %s が 0 件です", [e.type]), messages_for(without(world(valid_statements), e.address), decl))
+		fixture.has(sprintf("[PLAN-APPLY-06] apply の role ci-apply の %s が 0 件です", [e.type]), messages_for(without(world(valid_statements), e.address), decl))
 		twice := json.patch(e, [{"op": "replace", "path": "/address", "value": sprintf("%s.again", [e.address])}])
-		fixture.has(sprintf("[PLAN-APPLY-05] apply の role ci-apply の %s が 2 件です", [e.type]), messages_for(array.concat(world(valid_statements), [twice]), decl))
+		fixture.has(sprintf("[PLAN-APPLY-06] apply の role ci-apply の %s が 2 件です", [e.type]), messages_for(array.concat(world(valid_statements), [twice]), decl))
 	}
 }
 
 test_violation_exclusive_contents if {
 	rcs := with_after(with_after(world(valid_statements), exclusives[0].address, {"role_name": "ci-apply", "policy_names": ["apply", "extra"]}), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]})
 	msgs := messages_for(rcs, decl)
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_names", [exclusives[0].address]), msgs)
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), msgs)
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: %s の policy_names", [exclusives[0].address]), msgs)
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: %s の policy_arns", [exclusives[1].address]), msgs)
 }
 
 # --- 2本目の鍵 ---
@@ -619,7 +623,7 @@ test_violation_identity_state_conditional_deny if {
 # 子が指す値は、宣言した親の型の、宣言した属性の値でなければならない（別の型の id や ARN では足りない）。
 test_violation_covered_by_points_to_other_type if {
 	every v in [{"bucket": "key-id"}, {"bucket": st}] {
-		fixture.has("[PLAN-APPLY-02] module.state_backend.module.s3.aws_s3_bucket_versioning.this の", messages_for(with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", v), decl))
+		fixture.has("[PLAN-APPLY-03] module.state_backend.module.s3.aws_s3_bucket_versioning.this の", messages_for(with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", v), decl))
 	}
 }
 
@@ -627,22 +631,22 @@ test_violation_key_policy_points_to_other_key if {
 	extra := res("aws_kms_key", "module.state_backend.module.kms_second.aws_kms_key.this", {"arn": other_key, "id": "second-id", "key_id": "second-kid"})
 	extra_policy := res("aws_kms_key_policy", "module.state_backend.module.kms_second.aws_kms_key_policy.this", {"key_id": "key-id", "policy": json.marshal(key_policy_body)})
 	s := array.concat(valid_statements, [{"Effect": "Deny", "Action": delegated_actions, "Resource": other_key}])
-	fixture.has("[PLAN-APPLY-02] p.json: module.state_backend.module.kms_second.aws_kms_key_policy.this の key_id が", messages_for(array.concat(world(s), [extra, extra_policy]), decl))
+	fixture.has("[PLAN-APPLY-03] p.json: module.state_backend.module.kms_second.aws_kms_key_policy.this の key_id が", messages_for(array.concat(world(s), [extra, extra_policy]), decl))
 }
 
 test_violation_action_and_not_action_on_key_and_version if {
 	fixture.has("[PLAN-APPLY-01]", messages(replace(valid_statements, 6, {"Effect": "Deny", "Action": ["*"], "NotAction": ["kms:PutKeyPolicy"], "Resource": key})))
-	fixture.has("[PLAN-APPLY-04]", messages(replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "NotAction": ["s3:DeleteObjectVersion"], "Resource": sprintf("%s/*", [st])})))
+	fixture.has("[PLAN-APPLY-05]", messages(replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "NotAction": ["s3:DeleteObjectVersion"], "Resource": sprintf("%s/*", [st])})))
 }
 
 test_violation_policy_attachment_roles_partially_unknown if {
 	extra := {"address": "module.workload.aws_iam_policy_attachment.later", "type": "aws_iam_policy_attachment", "change": {"actions": ["create"], "after": {"roles": ["other"]}, "after_unknown": {"roles": [false, true]}}}
-	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.later がどの role に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has("[PLAN-APPLY-06] p.json: module.workload.aws_iam_policy_attachment.later がどの role に", messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 test_violation_policy_attachment_single_role if {
 	extra := res("aws_iam_policy_attachment", "module.workload.aws_iam_policy_attachment.this", {"roles": ["ci-apply"], "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
-	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.this が apply の role ci-apply に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+	fixture.has("[PLAN-APPLY-06] p.json: module.workload.aws_iam_policy_attachment.this が apply の role ci-apply に", messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
 test_pass_policy_attachment_other_role if {
@@ -653,10 +657,42 @@ test_pass_policy_attachment_other_role if {
 # inline_policy は block の一部だけが決まらないとき、入れ子の要素に true を持つ。
 test_violation_role_inline_policy_nested_unknown if {
 	unknown := json.patch([r | some r in world(valid_statements); r.address == apply_role_address][0], [{"op": "add", "path": "/change/after_unknown/inline_policy", "value": [{"name": false, "policy": true}]}])
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の inline_policy", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
+	fixture.has(sprintf("[PLAN-APPLY-06] p.json: apply の role %s の inline_policy", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
 }
 
 test_violation_children_on_target_without_children if {
 	address := sprintf("%saws_iam_openid_connect_provider.github", [g])
 	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s は", [address]), messages_for(world(valid_statements), with_child(address, {"suffixes": ["/x"]})))
+}
+
+# --- Resource "*" で拒む Action ---
+
+test_violation_wildcard_deny_missing if {
+	msgs := messages(replace(valid_statements, 7, {"Effect": "Deny", "Action": "logs:PutAccountPolicy", "Resource": "*"}))
+	violations := {m | some m in msgs; startswith(m, "[PLAN-APPLY-02]")}
+	count(violations) == 1
+	some m in violations
+	contains(m, "logs:putresourcepolicy")
+}
+
+# Resource を名指した Deny と Condition の付いた Deny は、アカウント全体の要求を拒まない。
+test_violation_wildcard_deny_not_on_everything if {
+	every s in [
+		{"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "arn:aws:logs:ap-northeast-1:123456789012:log-group:x"},
+		{"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "*", "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-northeast-1"}}},
+		{"Effect": "Allow", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "*"},
+	] {
+		fixture.has("[PLAN-APPLY-02] apply の role", messages(replace(valid_statements, 7, s)))
+	}
+}
+
+# 宣言の大文字小文字を区別しない。別の policy の Deny は apply の role を守らない。
+test_violation_wildcard_deny_in_other_policy if {
+	rcs := array.concat(without(world(remove(valid_statements, 7)), sprintf("%saws_iam_role_policy.this[\"plan\"]", [g])), [role_policy("plan", "ci-plan", [wildcard_deny])])
+	fixture.has("[PLAN-APPLY-02] apply の role", messages_for(rcs, decl))
+}
+
+test_violation_wildcard_denies_empty if {
+	d := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/wildcard_denies", "value": []}])
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.wildcard_denies", messages_for(world(valid_statements), d))
 }

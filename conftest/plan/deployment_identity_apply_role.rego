@@ -226,7 +226,7 @@ version_deletion_denied(arn) if {
 	a in {"s3:deleteobjectversion", "*"}
 }
 
-# 鍵と Key Policy は module の path で組にし、Key Policy の key_id が組の鍵を指すことを PLAN-APPLY-02 で見る。
+# 鍵と Key Policy は module の path で組にし、Key Policy の key_id が組の鍵を指すことを PLAN-APPLY-03 で見る。
 account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 keys contains r if {
@@ -435,12 +435,12 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-01] %s: %s がアカウントへ委任する %v を、apply の role %q が鍵の ARN %v への Deny で拒んでいません", [p.policy.document.path, p.policy.document.address, sort(missing), target, arn])
 }
 
-# --- PLAN-APPLY-02: 分類の網羅 ---
+# --- PLAN-APPLY-03: 分類の網羅 ---
 
 deny contains msg if {
 	some r in resources
 	not r.type in object.keys(types)
-	msg := sprintf("[PLAN-APPLY-02] bootstrap の構成物 %s の型 %s が、data.policy_plan.deployment_identity.apply_role.bootstrap.types で分類されていません", [r.address, r.type])
+	msg := sprintf("[PLAN-APPLY-03] bootstrap の構成物 %s の型 %s が、data.policy_plan.deployment_identity.apply_role.bootstrap.types で分類されていません", [r.address, r.type])
 }
 
 # 外の resource を指す子は、その親の ARN の Deny に守られない。
@@ -449,7 +449,7 @@ deny contains msg if {
 	class_of(r.type) == "covered_by"
 	t := types[r.type]
 	not points_to_guarded_parent(r, t)
-	msg := sprintf("[PLAN-APPLY-02] %s の %s（%v）が、bootstrap の %s（target か key）の %s のどれとも一致しません", [r.address, t.ref, object.get(r.change.after, t.ref, null), t.parent, t.parent_ref])
+	msg := sprintf("[PLAN-APPLY-03] %s の %s（%v）が、bootstrap の %s（target か key）の %s のどれとも一致しません", [r.address, t.ref, object.get(r.change.after, t.ref, null), t.parent, t.parent_ref])
 }
 
 points_to_guarded_parent(r, t) if {
@@ -466,70 +466,70 @@ deny contains msg if {
 	class_of(r.type) == "target"
 	object.get(types[r.type], "children", false) == true
 	not r.address in object.keys(children)
-	msg := sprintf("[PLAN-APPLY-02] %s の子の ARN（object・log stream など）が data.policy_plan.deployment_identity.apply_role.bootstrap.children に宣言されていません", [r.address])
+	msg := sprintf("[PLAN-APPLY-03] %s の子の ARN（object・log stream など）が data.policy_plan.deployment_identity.apply_role.bootstrap.children に宣言されていません", [r.address])
 }
 
 deny contains msg if {
 	some p in pairs
 	object.get(p.policy.document.change.after, "key_id", null) != object.get(p.key.change.after, "id", null)
-	msg := sprintf("[PLAN-APPLY-02] %s: %s の key_id が、同じ module の鍵 %s を指していません", [p.policy.document.path, p.policy.document.address, p.key.address])
+	msg := sprintf("[PLAN-APPLY-03] %s: %s の key_id が、同じ module の鍵 %s を指していません", [p.policy.document.path, p.policy.document.address, p.key.address])
 }
 
-# --- PLAN-APPLY-03: 構成物の ARN ごとの Deny の形 ---
+# --- PLAN-APPLY-04: 構成物の ARN ごとの Deny の形 ---
 
 deny contains msg if {
 	some arn in targets
 	not covered(arn)
-	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（* か、読み取りの名前だけを除く NotAction）を条件なしの Deny で拒んでいません", [target, arn])
+	msg := sprintf("[PLAN-APPLY-04] apply の role %q が、%s へのすべての Action（* か、読み取りの名前だけを除く NotAction）を条件なしの Deny で拒んでいません", [target, arn])
 }
 
 deny contains msg if {
 	some arn in strict_targets
 	not covered_strictly(arn)
-	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）を条件なしの Deny で拒んでいません", [target, arn])
+	msg := sprintf("[PLAN-APPLY-04] apply の role %q が、%s へのすべての Action（*）を条件なしの Deny で拒んでいません", [target, arn])
 }
 
-# --- PLAN-APPLY-04: state の版の削除 ---
+# --- PLAN-APPLY-05: state の版の削除 ---
 
 deny contains msg if {
 	some arn in version_deletion_targets
 	not version_deletion_denied(arn)
-	msg := sprintf("[PLAN-APPLY-04] apply の role %q が、%s への s3:DeleteObjectVersion を条件なしの Deny で拒んでいません", [target, arn])
+	msg := sprintf("[PLAN-APPLY-05] apply の role %q が、%s への s3:DeleteObjectVersion を条件なしの Deny で拒んでいません", [target, arn])
 }
 
-# --- PLAN-APPLY-05: apply の role に付く policy の排他 ---
+# --- PLAN-APPLY-06: apply の role に付く policy の排他 ---
 
 deny contains msg if {
 	some a in attached
 	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
 	on_apply_role(a)
 	a.address != target
-	msg := sprintf("[PLAN-APPLY-05] %s: %s が apply の role に policy を付けています。apply の role の policy は %s だけに置いてください", [a.path, a.address, target])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s が apply の role に policy を付けています。apply の role の policy は %s だけに置いてください", [a.path, a.address, target])
 }
 
 deny contains msg if {
 	some a in attached
 	object.get(a.unknown, role_key(a), false) == true
-	msg := sprintf("[PLAN-APPLY-05] %s: %s がどの role に付くかを plan で読めません", [a.path, a.address])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s がどの role に付くかを plan で読めません", [a.path, a.address])
 }
 
 deny contains msg if {
 	role_known
 	some type in ["aws_iam_role_policies_exclusive", "aws_iam_role_policy_attachments_exclusive"]
 	count(exclusive(type)) != 1
-	msg := sprintf("[PLAN-APPLY-05] apply の role %s の %s が %d 件です（1件を期待）", [role_name, type, count(exclusive(type))])
+	msg := sprintf("[PLAN-APPLY-06] apply の role %s の %s が %d 件です（1件を期待）", [role_name, type, count(exclusive(type))])
 }
 
 deny contains msg if {
 	some a in exclusive("aws_iam_role_policies_exclusive")
 	object.get(a.after, "policy_names", null) != [object.get(after(target), "name", null)]
-	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_names が %v ではありません", [a.path, a.address, [object.get(after(target), "name", null)]])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s の policy_names が %v ではありません", [a.path, a.address, [object.get(after(target), "name", null)]])
 }
 
 deny contains msg if {
 	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
 	object.get(a.after, "policy_arns", null) != []
-	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arns が空ではありません", [a.path, a.address])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s の policy_arns が空ではありません", [a.path, a.address])
 }
 
 # role の引数で付ける policy は、上の型を通らない。
@@ -538,7 +538,7 @@ deny contains msg if {
 	c.rc.address == role
 	some attr in ["inline_policy", "managed_policy_arns"]
 	not empty_known(c.rc.change, attr)
-	msg := sprintf("[PLAN-APPLY-05] %s: apply の role %s の %s が空ではないか、plan で決まっていません", [c.path, role, attr])
+	msg := sprintf("[PLAN-APPLY-06] %s: apply の role %s の %s が空ではないか、plan で決まっていません", [c.path, role, attr])
 }
 
 empty_known(change, attr) if {
@@ -557,12 +557,38 @@ deny contains msg if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_policy_attachment"
 	role_name in lib.as_array(object.get(c.rc.change.after, "roles", []))
-	msg := sprintf("[PLAN-APPLY-05] %s: %s が apply の role %s に managed policy を付けています", [c.path, c.rc.address, role_name])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s が apply の role %s に managed policy を付けています", [c.path, c.rc.address, role_name])
 }
 
 deny contains msg if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_policy_attachment"
 	unknown_any(object.get(c.rc.change.after_unknown, "roles", false))
-	msg := sprintf("[PLAN-APPLY-05] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-APPLY-06] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
+}
+
+# resource type を持たず、resource を名指して拒めない Action（deployment-identity/ADR-0201 決定5）。apply の role は
+# Resource "*" の、Condition の無い Deny で拒む。宣言が無ければ、下の規則が何も見なくなるので落とす。
+wildcard_denies := {lower(a) | some a in object.get(cfg, "wildcard_denies", [])}
+
+denied_everywhere contains a if {
+	some r in lib.readable
+	r.document.type == "aws_iam_role_policy"
+	r.document.address == target
+	some s in lib.statements(r.body)
+	s.Effect == "Deny"
+	count(object.get(s, "Condition", {})) == 0
+	"*" in lib.as_array(object.get(s, "Resource", []))
+	some a in lib.lower_all(s.Action)
+}
+
+deny contains msg if {
+	count(wildcard_denies) == 0
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.wildcard_denies が空です。apply の role が Resource \"*\" で拒む Action を宣言してください"
+}
+
+deny contains msg if {
+	some a in wildcard_denies
+	not a in denied_everywhere
+	msg := sprintf("[PLAN-APPLY-02] apply の role %q が %s を、Resource \"*\" の Condition の無い Deny で拒んでいません", [target, a])
 }
