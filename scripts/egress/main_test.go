@@ -111,6 +111,21 @@ func newTestRepo(t *testing.T, workflows map[string]string) string {
 	return root
 }
 
+// unlockTestRepo は newTestRepo に、b.yaml の two のジョブが run で CI の入口を呼び、testSSOT の root がそのジョブも
+// 名指す宣言を足したリポジトリ。two の許可リストは base だけで、型の宛先 i1.test を持たない。
+func unlockTestRepo(t *testing.T, run string) string {
+	t.Helper()
+	b := syncedWorkflow("two", policyBlock, "b1.test", "b2.test") + "\n      - name: Unlock\n        run: " + run + "\n" +
+		strings.TrimPrefix(syncedWorkflow("audited", policyAudit), workflowHead)
+	root := newTestRepo(t, map[string]string{"a.yaml": syncedWorkflow("one", policyBlock, oneHosts...), "b.yaml": b})
+	writeFile(t, root, ciMakefile, testCIMake+
+		"ci-apply-t-identity:\n\t@$(call CI_APPLY,t,identity)\nci-unlock-t-identity:\n\t@$(call CI_UNLOCK,t,identity)\n")
+	ssot := strings.Replace(testSSOT, `jobs = ["a.yaml:one"]`, `jobs = ["a.yaml:one", "b.yaml:two"]`, 1)
+	require.NotEqual(t, testSSOT, ssot)
+	writeFile(t, root, ssotFile, ssot)
+	return root
+}
+
 // writeFile は root 直下からのスラッシュ区切りのパスへ body を書く。
 func writeFile(t *testing.T, root, rel, body string) {
 	t.Helper()
@@ -1434,10 +1449,27 @@ func Test_applyOrCheck(t *testing.T) {
 			assert.Equal(t, syncedWorkflow("one", policyBlock, oneHosts...), string(got))
 			assert.NoError(t, applyOrCheck(root, true))
 		})
+
+		t.Run("lock の解除だけで root に触れるジョブは、型が呼ぶ宛先を持たなくても通る", func(t *testing.T) {
+			t.Parallel()
+			root := unlockTestRepo(t, "make ci-unlock-t-identity")
+			assert.NoError(t, applyOrCheck(root, true))
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// lock の解除のジョブが plan / apply の入口も呼べば、型が呼ぶ宛先（i1.test）を許可リストに求められる。
+		for _, run := range []string{"make ci-unlock-t-identity ci-plan-t-identity", "make ci-apply-t-identity"} {
+			t.Run("lock の解除のジョブが "+run+" を呼べば弾く", func(t *testing.T) {
+				t.Parallel()
+				root := unlockTestRepo(t, run)
+				err := applyOrCheck(root, true)
+				require.ErrorIs(t, err, errEndpointMissing)
+				assert.Contains(t, err.Error(), "i1.test → b.yaml:two")
+			})
+		}
 
 		t.Run("SSOT が無ければ弾く", func(t *testing.T) {
 			t.Parallel()

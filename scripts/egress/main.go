@@ -674,9 +674,6 @@ func applyOrCheck(root string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	if err := s.checkEndpoints(root); err != nil {
-		return err
-	}
 	var files []string
 	for _, ext := range []string{"*.yaml", "*.yml"} {
 		matched, err := filepath.Glob(filepath.Join(root, ".github", "workflows", ext))
@@ -701,7 +698,11 @@ func applyOrCheck(root string, dryRun bool) error {
 	for _, f := range files {
 		names = append(names, filepath.Base(f))
 	}
-	if err := s.checkCIRoots(root, names); err != nil {
+	ran, err := s.checkCIRoots(root, names)
+	if err != nil {
+		return err
+	}
+	if err := s.checkEndpoints(root, ran); err != nil {
 		return err
 	}
 	return writeChanges(root, changes, dryRun)
