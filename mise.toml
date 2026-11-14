@@ -66,7 +66,7 @@ node = "26.13.1"
 
 # template injection の検出。shellcheck 系には構造的に見えない —— ${{ }} はシェルがパースする
 # 前に置換されるため、補間された式は文字列ではなくコードになる。だから lint に束ねず横に並べる。
-"aqua:zizmorcore/zizmor" = "1.31.1"
+"aqua:zizmorcore/zizmor" = "1.32.0"
 
 # workflow 定義の構文と式、run: のシェルを検査する。走査が及ぶのは .github/workflows だけで、
 # composite action の中は scripts/actions-shellcheck が埋める。
@@ -84,7 +84,7 @@ hadolint = "2.15.1"
 # 供給網の衛生の報告。action ではなく CLI を直接実行する理由は ADR-0501 決定6。
 "aqua:ossf/scorecard" = "5.6.0"
 
-"aqua:crate-ci/typos" = "1.51.1"
+"aqua:crate-ci/typos" = "1.52.2"
 
 "aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"
 
@@ -101,7 +101,7 @@ lefthook = "2.2.2"
 
 # Markdown の体裁。このリポジトリの主要な成果物が Markdown である以上、既製品が在るなら
 # 自前で書かない（ADR-0501 決定3 の第1条件）。
-"npm:markdownlint-cli2" = "0.24.0"
+"npm:markdownlint-cli2" = "0.24.1"
 
 # commit message の検査。規約の正本は commitlint.config.js。
 "npm:@commitlint/cli" = "21.2.4"

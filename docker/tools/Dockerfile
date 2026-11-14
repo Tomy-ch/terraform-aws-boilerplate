@@ -140,7 +140,7 @@ RUN set -eu; \
       echo "Node の版がずれています: 宣言=$declared_node / ベースイメージ=$actual_node" >&2; \
       echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください（make versions-apply）" >&2; exit 1; }; \
     npm install -g --ignore-scripts \
-      "markdownlint-cli2@0.24.0" \
+      "markdownlint-cli2@0.24.1" \
       "@commitlint/cli@21.2.4"; \
     npm cache clean --force; \
     rm -rf /root/.npm
