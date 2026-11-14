@@ -99,7 +99,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （`gh repo edit --default-branch release/vX.Y.Z`）。戻さない限り、release line への merge は apply の
   job を skip し続け、run は skip だけを示す
 - **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
-  （`plan.stateful_protection`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
+  （`plan.stateful_protection` と `plan.kms_key_policy`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
   run を止めない。資格情報を取る前の step（`refuse-stale`）が、デフォルトブランチとその先頭の commit を

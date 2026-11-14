@@ -10,8 +10,7 @@ changes contains {"path": f.path, "rc": rc} if {
 	rc.change.actions != ["delete"]
 }
 
-# 文書として読む属性は data.policy_plan.documents の表が決める。mock provider は表に無い computed な
-# 属性（aws_s3_bucket.policy など）に乱数を入れるので、属性名だけで拾わない。
+# mock provider は表に無い computed な属性（aws_s3_bucket.policy など）に乱数を入れるので、属性名だけで拾わない。
 documents contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "attr": attr, "change": c.rc.change} if {
 	some c in changes
 	some attr in data.policy_plan.documents[c.rc.type]
@@ -26,7 +25,7 @@ parsed(d) := json.unmarshal(d.change.after[d.attr]) if {
 
 readable contains {"document": d, "body": parsed(d)} if some d in documents
 
-# index key（[0]、["plan"]）を除いた address。data の address 一覧はこの形で持つ（ADR-0402 決定15）。
+# data の address 一覧は index key を除いた形で持つ（ADR-0402 決定15）。
 strip_index(address) := regex.replace(address, `\[[^\]]*\]`, "")
 
 as_array(x) := x if is_array(x)
@@ -37,3 +36,11 @@ statements(body) := as_array(body.Statement)
 
 # IAM は Action の大文字小文字を区別しない。
 lower_all(xs) := [lower(x) | some x in as_array(xs)]
+
+# 鍵の暗号操作と grant。Key Policy のアカウントへの委任と IAM の Allow に置かない（ADR-0301 決定12）。
+crypto_actions := {
+	"kms:creategrant", "kms:decapsulate", "kms:decrypt", "kms:derivesharedsecret", "kms:encapsulate", "kms:encrypt", "kms:generatedatakey",
+	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
+	"kms:generatemac", "kms:getpublickey", "kms:reencryptfrom", "kms:reencryptto", "kms:sign", "kms:verify",
+	"kms:verifymac",
+}
