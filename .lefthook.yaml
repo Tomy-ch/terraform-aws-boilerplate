@@ -214,7 +214,7 @@ commit-msg:
     # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
     # commit があるので本体は CI の範囲検査である（.github/workflows/commitlint.yaml）。
     commitlint:
-      run: cat {1} | docker compose run --rm -T node_tool_runner commitlint
+      run: cat {1} | make -s commitlint-msg
 
 pre-push:
   parallel: true
