@@ -80,5 +80,8 @@ deny contains msg if {
 
 created_together(c, p) if {
 	unknown_ref(c, p)
-	count(refs(p)) == 0
+	some t in lib.changes
+	t.rc.address == p.target
+	some a in p.refs
+	object.get(object.get(t.rc.change, "after_unknown", {}), a, false) == true
 }

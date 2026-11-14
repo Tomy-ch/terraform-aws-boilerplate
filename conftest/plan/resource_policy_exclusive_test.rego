@@ -43,11 +43,11 @@ test_pass_declared_policies_on_their_resources if {
 }
 
 test_violation_undeclared_bucket_policy_on_a_declared_bucket if {
-	every ref in ["state-id", "tabp-admin-tfstate"] {
+	every ref in ["state-id", "tabp-admin-tfstate", "arn:aws:s3:::tabp-admin-tfstate"] {
 		evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": ref})
 		fixture.has(sprintf("[PLAN-RPE-01] p.json: module.evil.aws_s3_bucket_policy.x が %s を指します", [state_bucket]), messages([evil]))
 	}
-	every ref in ["plan-id", "tabp-admin-tfplan"] {
+	every ref in ["plan-id", "tabp-admin-tfplan", "arn:aws:s3:::tabp-admin-tfplan"] {
 		evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": ref})
 		fixture.has(sprintf("[PLAN-RPE-01] p.json: module.evil.aws_s3_bucket_policy.x が %s を指します", [output_bucket]), messages([evil]))
 	}
@@ -101,12 +101,20 @@ test_violation_declared_policy_on_another_resource if {
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が %s を指していません", [state_bucket_policy, state_bucket]), msgs)
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が %s を指していません", [output_bucket_policy, output_bucket]), msgs)
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が %s を指していません", [key_policy, state_key]), msgs)
+	not fixture.has("[PLAN-RPE-01]", msgs)
 }
 
 # 宣言した policy が、決まらない値で既存の resource を指すこともある。参照先が決まっていれば落とす。
 test_violation_declared_policy_unknown_on_a_known_target if {
 	msgs := gate.deny with input as fixture.plan(array.concat(targets, [unknown("aws_kms_key_policy", key_policy, "key_id")]))
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が ", [key_policy]), msgs)
+}
+
+# 名前を決めて作る Bucket は、bucket は決まり、id と arn が plan で決まらない。
+test_pass_declared_bucket_policy_created_with_its_bucket if {
+	new_bucket := {"address": state_bucket, "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {"bucket": "tabp-admin-tfstate"}, "after_unknown": {"id": true, "arn": true}}}
+	inp := fixture.plan([new_bucket, unknown("aws_s3_bucket_policy", state_bucket_policy, "bucket")])
+	count(gate.deny) == 0 with input as inp
 }
 
 test_pass_declared_policy_created_with_its_target if {
@@ -118,4 +126,21 @@ test_pass_declared_policy_created_with_its_target if {
 test_pass_declaration_absent if {
 	evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": "state-id"})
 	count(gate.deny) == 0 with input as fixture.plan(array.concat(targets, [evil])) with data.policy_plan as {}
+}
+
+test_violation_declared_policy_without_its_target if {
+	msgs := gate.deny with input as fixture.plan([rc("aws_s3_bucket_policy", state_bucket_policy, {"bucket": "state-id"})])
+	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が %s を指していません", [state_bucket_policy, state_bucket]), msgs)
+}
+
+test_pass_nothing_declared_in_the_plan if {
+	count(gate.deny) == 0 with input as fixture.plan([rc("aws_sqs_queue", "module.x.aws_sqs_queue.this", {})])
+}
+
+test_pass_declared_policy_forgotten if {
+	gone := [
+		{"address": state_bucket_policy, "type": "aws_s3_bucket_policy", "change": {"actions": ["forget"], "before": {"bucket": "state-id"}, "after": null, "after_unknown": {"bucket": true}}},
+		{"address": key_policy, "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "before": {"key_id": "key-id"}, "after": null, "after_unknown": {"key_id": true}}},
+	]
+	count(gate.deny) == 0 with input as fixture.plan(array.concat(targets, gone))
 }
