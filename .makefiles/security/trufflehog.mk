@@ -65,7 +65,11 @@ trufflehog-worktree: trufflehog-canary
 ## AWS の検出器は ID と secret のエントロピーに閾値を持つので、乱数で作る。
 .PHONY: trufflehog-canary ## trufflehog が偽の資格情報を git と filesystem の両経路で検証なしに検出することを検査
 trufflehog-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/trufflehog-canary.XXXXXX); \
+	@set -eu; $(call GIT_OUTER_CHECK,trufflehog-canary-run)
+
+.PHONY: trufflehog-canary-run
+trufflehog-canary-run:
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/trufflehog-canary.XXXXXX); \
 	trap 'rm -rf "$$dir" "$$dir".*' EXIT; \
 	cat $(TRUFFLEHOG_EXCLUDE) $(TRUFFLEHOG_EXCLUDE_HISTORY) > "$$dir.ex"; \
 	id=$$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 16); \

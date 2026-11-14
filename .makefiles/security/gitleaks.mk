@@ -22,11 +22,9 @@ git rev-parse --verify --quiet "$(COMMITLINT_FROM)^{commit}" >/dev/null || { \
 	echo "❌ 走査範囲の起点 $(COMMITLINT_FROM) が解決できません。浅い取得か、ref の取り違えです" >&2; exit 2; }
 endef
 
-## canary が一時のリポジトリを操作するときの git。git の hook の中では GIT_DIR / GIT_INDEX_FILE などが
-## 外側のリポジトリを指しており、`git -C <一時の場所>` でもそちらへ commit・add してしまう。hook も
-## 外側の設定から走るので外す。
-CANARY_GIT := env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
-	-u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_PREFIX git -c core.hooksPath=/dev/null
+## canary が一時のリポジトリを操作するときの git。位置の変数はレシピの先頭の GIT_ISOLATE が外す（git-isolation.mk）。
+## hook は外側の設定から走るので外す。
+CANARY_GIT := git -c core.hooksPath=/dev/null
 
 ## 判定は scripts/gitleaks-count が持つ（ADR-0702 決定15）。
 ## 引数は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、呼び出し側のシェル変数が
@@ -64,7 +62,11 @@ secret-scan-history: gitleaks-canary
 ## 実行時に作る（trufflehog-canary と同じ組み方）。
 .PHONY: gitleaks-canary ## gitleaks が commit された偽の資格情報を範囲と全履歴の両方で検出することを検査
 gitleaks-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/gitleaks-canary.XXXXXX); trap 'rm -rf "$$dir" "$$dir".*' EXIT; \
+	@set -eu; $(call GIT_OUTER_CHECK,gitleaks-canary-run)
+
+.PHONY: gitleaks-canary-run
+gitleaks-canary-run:
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/gitleaks-canary.XXXXXX); trap 'rm -rf "$$dir" "$$dir".*' EXIT; \
 	id=$$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 16); \
 	secret=$$(head -c 512 /dev/urandom | base64 | LC_ALL=C tr -dc 'A-Za-z0-9/+' | head -c 40); \
 	$(CANARY_GIT) -C "$$dir" init -q; \
