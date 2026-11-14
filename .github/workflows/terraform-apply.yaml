@@ -261,7 +261,7 @@ jobs:
     with:
       failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || 'apply-resource-order-check') }}
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
 
   # 理由は README.md の「通知の起動条件」。
   notify-success:
@@ -272,4 +272,4 @@ jobs:
       succeeded-job: apply-admin-identity
       details: ${{ needs.apply-admin-identity.outputs.plan }}
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
