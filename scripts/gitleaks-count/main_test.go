@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +40,6 @@ func (f *fixture) git(args ...string) string {
 		"-C", f.dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
 		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
 	}, args...)...)
-	cmd.Env = gitFreeEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(f.t, err, string(out))
 
@@ -58,6 +59,27 @@ func (f *fixture) commit(msg string, extra ...string) {
 	f.git(append([]string{"commit", "-q", "-m", msg}, extra...)...)
 }
 
+func (f *fixture) snapshot() string {
+	f.t.Helper()
+
+	var b strings.Builder
+	err := filepath.WalkDir(filepath.Join(f.dir, ".git"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(&b, "%s %x\n", path, sha256.Sum256(body))
+
+		return nil
+	})
+	require.NoError(f.t, err)
+
+	return b.String()
+}
+
 func (f *fixture) head() string {
 	f.t.Helper()
 
@@ -70,18 +92,10 @@ func (f *fixture) numstat(rev string) []byte {
 
 	cmd := exec.CommandContext(f.t.Context(), "git", "-C", f.dir, "log", "--no-merges", "-M", "--diff-filter=d",
 		"--format=commit %H", "--numstat", "-z", rev)
-	cmd.Env = gitFreeEnv()
 	out, err := cmd.Output()
 	require.NoError(f.t, err)
 
 	return out
-}
-
-// gitFreeEnv は、git の hook の中で走ったときに外側のリポジトリを指す GIT_* を外した環境を返す。
-func gitFreeEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "GIT_")
-	})
 }
 
 func writeFile(t *testing.T, body string) string {
@@ -345,7 +359,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 if [ -n "$src" ]; then
-	g() { env -u GIT_DIR -u GIT_WORK_TREE git -C "$src" "$@"; }
+	g() { git -C "$src" "$@"; }
 else
 	g() { git "$@"; }
 fi
@@ -380,14 +394,16 @@ func recipe(t *testing.T, f *fixture, target string, vars []string, env ...strin
 
 	args := append([]string{"-C", root, "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=", "SCRIPT_BIN=" + rel}, vars...)
 	cmd := exec.CommandContext(t.Context(), "make", args...)
-	cmd.Env = append(slices.DeleteFunc(gitFreeEnv(), func(kv string) bool {
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
 			strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "FAKE_GITLEAKS_") || strings.HasPrefix(kv, "PATH=")
 	}), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GIT_DIR="+filepath.Join(f.dir, ".git"), "GIT_WORK_TREE="+f.dir)
 	cmd.Env = append(cmd.Env, env...)
 
+	before := f.snapshot()
 	out, err := cmd.CombinedOutput()
+	require.Equal(t, before, f.snapshot(), "レシピが f のリポジトリを書き換えた")
 
 	return string(out), err
 }

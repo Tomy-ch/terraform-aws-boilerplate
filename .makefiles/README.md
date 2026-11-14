@@ -19,7 +19,7 @@
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
 | `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test` / Policy Test、インフラ内コードの検出）と、その検査自体の検査。Policy Test の conftest は `$(GO_TOOL)` を経由する |
 | `terraform/operation/` | Terraform を動かす入口。`local.mk` は人の手元（AWS へのログイン、env の root の init と plan）、`ci.mk` は CI（OIDC で role を assume しての plan と apply） |
-| 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入） |
+| 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）、`git-isolation.mk`（一時のリポジトリで git を使うレシピを外側のリポジトリから切り離す） |
 
 各ツールが何を検査するかは [`scripts/README.md`](../scripts/README.md) が持つ。ここはその起動だけを持つ。
 

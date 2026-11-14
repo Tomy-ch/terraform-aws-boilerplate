@@ -113,7 +113,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/markers/`|`sample-remove` の印の解釈。名前空間ごとの begin / end（入れ子は深さで数える）、line、replace を扱う。対応の取れない印、綴りを誤った印、1行に2つの印、`=` と空白で始まらない戻す行はエラーにし、行番号を付ける。取り除いた跡に並んだ空行だけを1つにまとめ、もとからある空行には触れない。 <!-- sample:line -->|
 |`lib/misetoml/`|`mise.toml` の `[tools]` が宣言する版の読み取り。**この宣言を読む実装はここだけです** —— 同じ表を複数の実装が各々の正規表現で読むと、一方だけが読める宣言が生まれ、もう一方は黙ってその道具を検査の対象から外します。落ちるのは検査ではなく検査の対象の方で、ゲートは緑を返します。解釈できない行とキーの重複はエラーにします（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定14）。複数版の配列は受け付けません —— どれが有効かを黙って選ぶより、呼び手に気づかせる方が安全だからです。|
 |`lib/requiredchecks/`|保護設定の宣言（`.github/settings/branch-protection.json`）が required とする status check の context の読み取り。**この宣言の required の context を読む実装はここだけです** —— 読み手は `required-check-lint` と `oidc-job-lint` で、同じ宣言を各々が読むと、一方だけが読める宣言が生まれ、もう一方は黙って検査の対象を失います。読めない・解釈できない宣言と、context を欠くか空の項目はエラー、required の context が0件のときは別の番兵で返します（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定13-14）。|
-|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。|
+|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。git を起動するテストの `TestMain` が呼ぶ `RunGitIsolated` も持ちます（Test Strategy）。|
 
 ## Test Strategy
 
@@ -159,6 +159,15 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
   ではなく、**エラーの後のファイルの内容**に対して。
 - **出力そのものが契約であるものは、出力を assert する。** drift の一覧、`::warning::` 注釈——人間か
   CI の注釈がそれをそのまま読むので、標準のロガーを捕まえて、出たものに対して assert します。
+- **git を起動するテストは、外側のリポジトリから切り離す。** git は hook に `GIT_DIR` や
+  `GIT_INDEX_FILE` を渡し、それを継いだ `git -C <一時の場所>` は外側のリポジトリを書き換えます。テストが
+  直接起動する git だけでなく、`t.Chdir` した先で本体が起動する git、子の `make`、`go build` の VCS
+  stamping も継ぎます。そのため、git を起動するパッケージは `TestMain` から
+  `os.Exit(testenv.RunGitIsolated(m))` を呼び、`git rev-parse --local-env-vars` が返す変数をプロセスから
+  外します。`make go-test` と `make go-test-cover` は、`GIT_DIR` と `GIT_INDEX_FILE` が壊れた場所を指す
+  環境で走ります。`TestMain` を欠いたパッケージのうち、git の失敗を拾うテストはそこで落ちます。一時の
+  リポジトリを建てる make のレシピは、先頭で `.makefiles/git-isolation.mk` の `$(GIT_ISOLATE)` を実行します。
+  レシピへの付け漏れと、`go-test` の壊した環境は、`lib/testenv` のテストが確かめます。
 - **フィクスチャは `t.TempDir()` に建て、実物のツリーを読まない。** リポジトリ自身の workflow や
   lockfile を入力にしたテストは、今日の内容で通ったり落ちたりするようになり、ツールについての
   テストであることをやめます（ADR-0702 決定17）。

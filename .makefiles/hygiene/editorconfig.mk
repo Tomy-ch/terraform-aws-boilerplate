@@ -20,7 +20,7 @@ editorconfig-check: editorconfig-check-canary editorconfig-directive-canary edit
 ## 本走査と同じ探索経路（git の追跡ファイル）で違反が落ちることを確かめる。
 .PHONY: editorconfig-check-canary ## editorconfig-checker が追跡ファイルの違反で落ちることを検査
 editorconfig-check-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-canary.XXXXXX); \
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
 	printf 'a:\n\tb: c\n' > "$$dir/canary.yaml"; \
@@ -45,7 +45,7 @@ editorconfig-directive-lint:
 ## ここが落ち、lint の分類を見直す合図になる。印の綴りはこのファイルに書けないので連結で組む。
 .PHONY: editorconfig-directive-canary ## editorconfig-checker が閉じない無効化の印の後ろを検査しないことを検査
 editorconfig-directive-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-directive-canary.XXXXXX); \
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-directive-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
 	printf '# %s%s\na:\n\tb: c\n' 'editorconfig-' 'checker-disable' > "$$dir/canary.yaml"; \
