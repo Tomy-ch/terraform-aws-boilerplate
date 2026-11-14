@@ -295,8 +295,9 @@ run "policies" {
       { Sid = "ReadAccessLogDestination", Effect = "Allow", Action = ["logs:GetDeliveryDestination", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access" },
       { Sid = "ReadAccessLogSources", Effect = "Allow", Action = ["logs:GetDeliverySource", "logs:ListTagsForResource"], Resource = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"] },
       { Sid = "ReadAccessLogDeliveries", Effect = "Allow", Action = ["logs:GetDelivery", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery:*" },
+      { Sid = "WriteApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/apply/*" },
     ]
-    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap と段5 の構成物と state の鍵の管理になっていません。"
+    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap と段5 の構成物と state の鍵の管理と、apply の出力の書き込みになっていません。"
   }
 
   assert {
@@ -402,7 +403,6 @@ run "key_arn_follows_input" {
   }
 }
 
-# 別のアカウントの鍵を渡すと、apply-identity が自分の state の鍵を管理できなくなる。
 run "key_in_other_account" {
   command = plan
 
@@ -603,7 +603,6 @@ run "access_log_arns_follow_input" {
   }
 }
 
-# 別のアカウントやリージョンの ARN を渡すと、段5 のログの構成物を作る apply が権限の外で落ちる。
 run "access_log_arn_in_other_account" {
   command = plan
 
@@ -635,4 +634,26 @@ run "access_log_source_arn_in_other_partition" {
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "plan_output_bucket_arn_follows_input" {
+  command = apply
+
+  variables {
+    plan_output_bucket_arn = "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "WriteApplyOutput"] == [
+      "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/apply/*",
+    ]
+    error_message = "apply-identity の role の apply の出力の書き込み先が、入力の plan の出力の Bucket の apply/* になっていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "WritePlanOutput"] == [
+      ["arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/pr/*", "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/branch/*"],
+    ]
+    error_message = "plan の role の plan の出力の書き込み先が、入力の plan の出力の Bucket の pr/* と branch/* になっていません。"
+  }
 }

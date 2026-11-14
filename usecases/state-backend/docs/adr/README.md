@@ -23,4 +23,4 @@
 
 | ID | タイトル | Status |
 | --- | --- | --- |
-| [0201](0201-plan-output-bucket.md) | CI の plan の出力を、保持日数で消える専用の Bucket に置く | Accepted |
+| [0201](0201-plan-output-bucket.md) | CI の plan と apply の出力を、保持日数で消える専用の Bucket に置く | Accepted |

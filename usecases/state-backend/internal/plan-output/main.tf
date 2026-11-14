@@ -16,7 +16,7 @@ locals {
 resource "aws_s3_bucket" "this" {
   #checkov:skip=CKV_AWS_18:アクセスログの配送は段5 で足す（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 段5 で足したとき
   #checkov:skip=CKV2_AWS_62:書き込みを知らせる相手が無い。読み手は CI の log が示す key で取りに行く（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 通知を受ける読み手を足したとき
-  #checkov:skip=CKV_AWS_144:plan の出力は保持日数で消える一時の記録で、リージョン障害に備えて複製しない（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 保持日数を超えて残す要件ができたとき
+  #checkov:skip=CKV_AWS_144:plan と apply の出力は保持日数で消える一時の記録で、リージョン障害に備えて複製しない（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 保持日数を超えて残す要件ができたとき
   bucket           = local.bucket_name
   bucket_namespace = "account-regional"
   force_destroy    = false

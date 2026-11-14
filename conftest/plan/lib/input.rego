@@ -44,7 +44,7 @@ deny contains msg if {
 deny contains msg if {
 	some r in lib.readable
 	not well_formed(r.body)
-	msg := sprintf("[PLAN-INPUT-06] %s: %s の %s が IAM の policy 文書の形（Statement と、その Effect / Action / NotAction / Condition の型）ではありません", [r.document.path, r.document.address, r.document.attr])
+	msg := sprintf("[PLAN-INPUT-06] %s: %s の %s が IAM の policy 文書の形（Statement と、その Effect / Action / NotAction / Resource / NotResource / Condition の型）ではありません", [r.document.path, r.document.address, r.document.attr])
 }
 
 # 表に載せた型が入力のどこにも現れないなら、その型の文書は1つも検査されていない。
@@ -111,6 +111,8 @@ well_formed_statement(s) if {
 	s.Effect in {"Allow", "Deny"}
 	strings_or_absent(s, "Action")
 	strings_or_absent(s, "NotAction")
+	strings_or_absent(s, "Resource")
+	strings_or_absent(s, "NotResource")
 	object_or_absent(s, "Condition")
 }
 
