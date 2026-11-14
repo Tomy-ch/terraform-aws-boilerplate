@@ -5,19 +5,24 @@ package plan.deployment_identity_apply_identity_output
 
 import data.plan.lib
 
-cfg := object.get(object.get(data.policy_plan, "deployment_identity", {}), "apply_identity_role", {})
+raw_cfg := object.get(object.get(data.policy_plan, "deployment_identity", {}), "apply_identity_role", {})
 
-default role := ""
+cfg := raw_cfg if is_object(raw_cfg)
 
-role := object.get(cfg, "role", "")
+cfg := {} if not is_object(raw_cfg)
 
-default target := ""
+declared(k) := v if {
+	v := object.get(cfg, k, "")
+	is_string(v)
+}
 
-target := object.get(cfg, "policy", "")
+declared(k) := "" if not is_string(object.get(cfg, k, ""))
 
-default output_bucket := ""
+role := declared("role")
 
-output_bucket := object.get(cfg, "output_bucket", "")
+target := declared("policy")
+
+output_bucket := declared("output_bucket")
 
 after(address) := c.rc.change.after if {
 	some c in lib.changes
@@ -26,11 +31,11 @@ after(address) := c.rc.change.after if {
 
 role_name := after(role).name
 
+policy_name := after(target).name
+
 bucket_arn := after(output_bucket).arn
 
 apply_key := sprintf("%s/apply/*", [bucket_arn])
-
-probe_keys := ["apply/x", "pr/x", "branch/x", "x"]
 
 statements contains {"path": r.document.path, "statement": s} if {
 	some r in lib.readable
@@ -49,14 +54,19 @@ actions(s) := lib.lower_all(object.get(s, "Action", []))
 
 resources(s) := lib.as_array(object.get(s, "Resource", []))
 
-grants(s, action) if {
-	some a in actions(s)
-	glob.match(a, null, action)
+# service の名前に wildcard を含む Action（"*"、"s?:*" など）も S3 の Action に当たる。
+s3_action(a) if glob.match(split(a, ":")[0], null, "s3")
+
+# Resource の最初の "/" より前が Bucket に当たれば、key の形を問わずその Bucket の object に届く。
+# "/" を含まない Resource は、wildcard が "/" を越えて object に届くかで見る。
+reaches_objects(resource) if {
+	contains(resource, "/")
+	glob.match(split(resource, "/")[0], null, bucket_arn)
 }
 
-on_output_objects(resource) if {
-	some k in probe_keys
-	glob.match(resource, null, sprintf("%s/%s", [bucket_arn, k]))
+reaches_objects(resource) if {
+	not contains(resource, "/")
+	glob.match(resource, null, sprintf("%s/x", [bucket_arn]))
 }
 
 role_known if is_string(role_name)
@@ -64,8 +74,13 @@ role_known if is_string(role_name)
 bucket_known if is_string(bucket_arn)
 
 deny contains msg if {
+	not is_object(raw_cfg)
+	msg := "[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role が object ではありません"
+}
+
+deny contains msg if {
 	some k in ["role", "policy", "output_bucket"]
-	object.get(cfg, k, "") == ""
+	declared(k) == ""
 	msg := sprintf("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.%s が宣言にありません", [k])
 }
 
@@ -87,6 +102,14 @@ deny contains msg if {
 	msg := sprintf("[PLAN-AIO-00] plan の出力の Bucket %q の ARN を入力から読めません。address が変わったなら data.policy_plan.deployment_identity.apply_identity_role を直し、unknown なら tests/policy-input.tftest.hcl の override_resource で与えてください", [output_bucket])
 }
 
+# 宣言した policy が別の role に付いていると、下の規則は apply-identity の role の権限を1つも見ない。
+deny contains msg if {
+	role_known
+	target != ""
+	object.get(after(target), "role", null) != role_name
+	msg := sprintf("[PLAN-AIO-00] apply-identity の role の policy %q が、apply-identity の role %q に付いていません", [target, role_name])
+}
+
 deny contains msg if {
 	some a in allows
 	some k in ["NotAction", "NotResource"]
@@ -98,21 +121,22 @@ deny contains msg if {
 deny contains msg if {
 	bucket_known
 	some a in allows
-	grants(a.statement, "s3:putobject")
+	some action in actions(a.statement)
+	s3_action(action)
+	action != "s3:putobject"
 	some resource in resources(a.statement)
-	on_output_objects(resource)
-	resource != apply_key
-	msg := sprintf("[PLAN-AIO-02] %s: apply-identity の role の s3:PutObject の Resource %s が、plan の出力の Bucket の %s ではありません", [a.path, resource, apply_key])
+	reaches_objects(resource)
+	msg := sprintf("[PLAN-AIO-02] %s: apply-identity の role が plan の出力の Bucket の object %s に %s を許しています。許すのは s3:PutObject だけです（ADR-0602 決定13）", [a.path, resource, action])
 }
 
 deny contains msg if {
 	bucket_known
 	some a in allows
-	some action in ["s3:deleteobject", "s3:deleteobjectversion"]
-	grants(a.statement, action)
+	"s3:putobject" in actions(a.statement)
 	some resource in resources(a.statement)
-	on_output_objects(resource)
-	msg := sprintf("[PLAN-AIO-03] %s: apply-identity の role が plan の出力の Bucket の object %s に %s を許しています（ADR-0602 決定13）", [a.path, resource, action])
+	reaches_objects(resource)
+	resource != apply_key
+	msg := sprintf("[PLAN-AIO-03] %s: apply-identity の role の s3:PutObject の Resource %s が、plan の出力の Bucket の %s ではありません", [a.path, resource, apply_key])
 }
 
 deny contains msg if {
@@ -128,19 +152,82 @@ deny contains msg if {
 # policy の resource は role を名前で指すので、名前が unknown なものはどの role に付くか読めない。
 attached contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "after": c.rc.change.after, "unknown": object.get(c.rc.change, "after_unknown", {})} if {
 	some c in lib.changes
-	c.rc.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
+	c.rc.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment", "aws_iam_role_policies_exclusive", "aws_iam_role_policy_attachments_exclusive"}
 }
 
+role_key(a) := "role_name" if endswith(a.type, "_exclusive")
+
+role_key(a) := "role" if not endswith(a.type, "_exclusive")
+
+on_role(a) if object.get(a.after, role_key(a), null) == role_name
+
+exclusive(type) := {a | some a in attached; a.type == type; on_role(a)}
+
+# exclusive の2つは権限を足さず、宣言の外で付いた policy を外すので、ここでは件数と中身だけを見る。
 deny contains msg if {
 	role_known
 	some a in attached
-	object.get(a.after, "role", null) == role_name
+	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
+	on_role(a)
 	a.address != target
 	msg := sprintf("[PLAN-AIO-05] %s: %s が apply-identity の role に権限を足しています。この role の権限は %s だけに置いてください", [a.path, a.address, target])
 }
 
 deny contains msg if {
 	some a in attached
-	object.get(a.unknown, "role", false) == true
+	object.get(a.unknown, role_key(a), false) == true
 	msg := sprintf("[PLAN-AIO-05] %s: %s がどの role に付くかを plan で読めません", [a.path, a.address])
+}
+
+deny contains msg if {
+	role_known
+	some type in ["aws_iam_role_policies_exclusive", "aws_iam_role_policy_attachments_exclusive"]
+	count(exclusive(type)) != 1
+	msg := sprintf("[PLAN-AIO-05] apply-identity の role %s の %s が %d 件です（1件を期待）", [role_name, type, count(exclusive(type))])
+}
+
+deny contains msg if {
+	some a in exclusive("aws_iam_role_policies_exclusive")
+	object.get(a.after, "policy_names", null) != [policy_name]
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_names が %v ではありません", [a.path, a.address, [policy_name]])
+}
+
+deny contains msg if {
+	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
+	object.get(a.after, "policy_arns", null) != []
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns が空ではありません", [a.path, a.address])
+}
+
+# role の引数で付ける policy は、上の型を通らない。
+deny contains msg if {
+	some c in lib.changes
+	c.rc.address == role
+	some attr in ["inline_policy", "managed_policy_arns"]
+	not empty_known(c.rc.change, attr)
+	msg := sprintf("[PLAN-AIO-05] %s: apply-identity の role %s の %s が空ではないか、plan で決まっていません", [c.path, role, attr])
+}
+
+empty_known(change, attr) if {
+	not unknown_any(object.get(object.get(change, "after_unknown", {}), attr, false))
+	object.get(change.after, attr, []) in {[], null}
+}
+
+unknown_any(x) if {
+	walk(x, [_, v])
+	v == true
+}
+
+deny contains msg if {
+	role_known
+	some c in lib.changes
+	c.rc.type == "aws_iam_policy_attachment"
+	role_name in lib.as_array(object.get(c.rc.change.after, "roles", []))
+	msg := sprintf("[PLAN-AIO-05] %s: %s が apply-identity の role %s に managed policy を付けています", [c.path, c.rc.address, role_name])
+}
+
+deny contains msg if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_policy_attachment"
+	unknown_any(object.get(object.get(c.rc.change, "after_unknown", {}), "roles", false))
+	msg := sprintf("[PLAN-AIO-05] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
 }
