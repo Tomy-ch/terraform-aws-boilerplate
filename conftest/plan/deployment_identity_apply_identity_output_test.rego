@@ -246,6 +246,12 @@ test_violation_exclusive_wrong_contents if {
 	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"] の policy_arns", msgs)
 }
 
+test_violation_policy_name_unknown if {
+	unnamed := json.patch(policy([write_apply]), [{"op": "remove", "path": "/change/after/name"}, {"op": "add", "path": "/change/after_unknown/name", "value": true}])
+	msgs := messages_for(fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, unnamed], state_side)), decl)
+	fixture.has(sprintf("[PLAN-AIO-05] p.json: %s の policy_names が [null] ではありません", [policies_exclusive.address]), msgs)
+}
+
 # IAM の * は "/" を越えるので、Bucket 名の位置の wildcard が key まで届く。[ と { は IAM では文字そのものである。
 test_violation_wildcard_spanning_bucket_and_key if {
 	every s in [

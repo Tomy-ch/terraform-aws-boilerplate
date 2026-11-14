@@ -33,7 +33,7 @@ after(address) := c.rc.change.after if {
 
 role_name := after(role).name
 
-policy_name := after(target).name
+policy_name := object.get(after(target), "name", null)
 
 bucket_arn := after(output_bucket).arn
 
