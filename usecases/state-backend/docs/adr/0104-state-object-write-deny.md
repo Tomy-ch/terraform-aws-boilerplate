@@ -82,7 +82,7 @@ repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 �
 ## 検証方法
 
 - Unit Test: `modules/s3/tests/policy.tftest.hcl` が文書の完全一致を、`tests/writers.tftest.hcl` が入力の検査を見る
-- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）と、`plan.resource_policy_exclusive`（`PLAN-RPE-01`・`02`。宣言した Bucket Policy が state Bucket を指し、state Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであること。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.state_backend_write_deny` が読まない文書が実体になりうる）
+- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）と、`plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること。宣言した Bucket Policy が state Bucket を指し、state Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであること。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.state_backend_write_deny` が読まない文書が実体になりうる）
 - Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
 - 手順: 段5 の成功条件の、例外に無い主体の `put-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
 
