@@ -5,7 +5,8 @@
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
 ## （ADR-0702 決定3・24）。plan と apply には、ADR-0604 決定11-13 の Policy（plan.stateful_protection）と、
-## ADR-0301 決定12・18 の Key Policy の Policy（plan.kms_key_policy）を掛ける。
+## ADR-0301 決定12・18 の Key Policy の Policy（plan.kms_key_policy）と、宣言した Bucket Policy と Key Policy が
+## 宣言した1つだけであることの Policy（plan.resource_policy_exclusive。state-backend/ADR-0101・ADR-0104）を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
@@ -155,14 +156,14 @@ ci-aws-credentials:
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: SHELL := /bin/bash
-ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy
+ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
 ci-plan-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
 
 .PHONY: ci-apply-admin-identity ## [CI] 管理アカウントの identity root を plan し直し、Policy を通った plan を apply する
 ci-apply-admin-identity: SHELL := /bin/bash
-ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy
+ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
 ci-apply-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-apply-admin-identity:
 	@$(call CI_APPLY,admin,identity)
