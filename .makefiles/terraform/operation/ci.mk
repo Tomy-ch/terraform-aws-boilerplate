@@ -98,11 +98,14 @@ endef
 # ADR-0604 決定11）。plan は lock を取る —— ADR-0604 決定8 の plan は plan の job の plan である。
 # 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。plan の出力の Bucket の apply/ に書けるのは
 # identity root の apply の role（apply-identity）だけなので、全文を置くのはこの入口だけである（ADR-0602 決定13）。
-# init の後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。打ち切りは CI_APPLY_TIMEOUT（短くする理由はその注記）。
+# workload root の apply は、この define を使えない。
+# Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。打ち切りは
+# CI_APPLY_TIMEOUT（短くする理由はその注記）。
 define CI_APPLY
 $(call CI_PREPARE,$(1),$(2)); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
 plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
 || { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
+test -n "$$plan_bucket" || { echo "❌ plan の出力の Bucket の名前が空です" >&2; exit 1; }; \
 key=$$($(call TF_LOCAL,apply-key -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
 upload() { sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
 version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
@@ -111,7 +114,7 @@ echo "apply の全文の版 ID: $$version"; }; \
 $(call CI_TERRAFORM_PLAN,); \
 summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { upload; echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
 $(call CI_POLICY,upload; ); \
-arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; \
+arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
 upload; \
 result=$$($(call TF_LOCAL,apply-result -exitcode "$$arc")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$result"; \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"

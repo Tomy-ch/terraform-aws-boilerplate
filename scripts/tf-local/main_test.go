@@ -1361,7 +1361,7 @@ case "$sub" in
 init)
 	for a; do case "$a" in init|-*) ;; *) echo "terraform: positional argument: '$a'" >&2; exit 64 ;; esac; done
 	exit "$(rc init-rc)" ;;
-output) echo plan-output-bucket; exit "$(rc output-rc)" ;;
+output) if test -f "$k/output-value"; then cat "$k/output-value"; else echo plan-output-bucket; fi; exit "$(rc output-rc)" ;;
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
@@ -1555,6 +1555,10 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Equal(t, 1, countCalls(r.calls, "timeout -s INT 20m "), "apply を timeout で包む")
 			assert.Less(t, strings.Index(r.calls, " apply -input=false"), strings.Index(r.calls, "aws s3api put-object"), "apply の後に全文を置く")
 			assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
+			assert.Contains(t, r.out, "apply の終了コード: 0")
+			assert.Contains(t, r.out, "apply の全文: key=apply/8-1-admin-identity.txt sha256=")
+			assert.Contains(t, r.summary, "- key: `apply/8-1-admin-identity.txt`")
+			assert.Regexp(t, "- sha256: `[A-Za-z0-9+/]{43}=`", r.summary)
 			assert.Contains(t, r.summary, "- 版 ID: `v-1`")
 			assert.NotContains(t, r.out, "APPLY-SECRET")
 			assert.Contains(t, initArgs(r.calls), "-backend-config=kms_key_id=arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab", "init に state の鍵を渡す")
@@ -1645,6 +1649,17 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
+	t.Run("plan の出力の Bucket の名前が空なら plan を呼ばない", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"output-value": "", "plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass})
+		require.Error(t, r.err, r.out)
+		assert.Contains(t, r.out, "Bucket の名前が空です")
+		assert.NotContains(t, r.calls, " plan ")
+		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
 	t.Run("run の番号が無ければ plan を呼ばない", func(t *testing.T) {
 		t.Parallel()
 
@@ -1661,7 +1676,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		want  string
 	}{
 		"apply が失敗すれば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1"}, "apply が失敗しました"},
-		"apply を打ち切れば全文を置いてから非ゼロで終わる": {map[string]string{"timeout-rc": "124"}, "apply を打ち切りました"},
+		"apply を打ち切れば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1", "timeout-rc": "124"}, "apply を打ち切りました"},
 		"打ち切りの後に apply が成功を返しても失敗とする": {map[string]string{"apply-rc": "0", "timeout-rc": "124"}, "apply を打ち切りました"},
 	}
 	for name, c := range ended {
@@ -1678,6 +1693,8 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Less(t, strings.Index(r.calls, " apply -input=false"), strings.Index(r.calls, "aws s3api put-object"), "apply の後に全文を置く")
 			assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
 			assert.Contains(t, r.out, "全文は上の key にあります")
+			assert.Contains(t, r.out, "apply の終了コード: ")
+			assert.NotContains(t, r.out, "apply の終了コード: 0")
 			assert.NotContains(t, r.out, "✅ apply")
 			assert.NotContains(t, r.out, "APPLY-SECRET")
 			assert.Empty(t, r.summary)
@@ -1691,6 +1708,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "s3api-rc": "1"})
 		require.Error(t, r.err, r.out)
 		assert.Equal(t, 1, applies(r.calls), r.calls)
+		assert.Contains(t, r.out, "apply の終了コード: 0", "全文を置けなくても apply の成否はログに残す")
 		assert.Contains(t, r.out, "apply の全文: key=")
 		assert.NotContains(t, r.out, "apply の全文の版 ID")
 		assert.NotContains(t, r.out, "✅ apply")
@@ -1715,6 +1733,8 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_STEP_SUMMARY=")
 		require.NoError(t, r.err, r.out)
 		assert.Equal(t, 1, applies(r.calls), r.calls)
+		assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
+		assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
 		assert.Empty(t, r.summary)
 	})
 

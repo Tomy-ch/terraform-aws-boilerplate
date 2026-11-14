@@ -589,7 +589,7 @@ func Test_runApplyResult(t *testing.T) {
 		assert.NotErrorIs(t, err, errApplyFailed)
 	})
 
-	for _, code := range []string{"1", "2", "123", "125", "130", "137"} {
+	for _, code := range []string{"1", "2", "123", "125", "130", "137", "255"} {
 		t.Run("終了コード "+code+" は apply の失敗として失敗する", func(t *testing.T) {
 			t.Parallel()
 
