@@ -7,6 +7,10 @@
 commitlint:
 	@git log -1 --format=%B | $(NODE_TOOL) commitlint
 
+.PHONY: commitlint-msg ## 標準入力の commit message を検査（lefthook の commit-msg が呼ぶ）
+commitlint-msg:
+	@$(NODE_TOOL) commitlint
+
 .PHONY: commitlint-range ## Pull Request がベースの上へ積んだ範囲を検査
 ## 範囲の起点は origin/<base> の**現在の先端**とする。Pull Request のイベントが示すベースの断面を
 ## 使うと、ベースがその後動いた場合に**自分が作成していない古い commit**が範囲へ残り、持っていない
