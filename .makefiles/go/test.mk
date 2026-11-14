@@ -4,13 +4,17 @@
 # ことと見分けがつかない**（ADR-0702 決定16）。したがって下限割れは警告ではなく失敗にする。
 COVERAGE_THRESHOLD ?= 95
 
+# テストは、git の位置の変数が壊れた外側を指す環境で走らせる。TestMain で RunGitIsolated を呼ばずに git を
+# 起動するパッケージは、そこで落ちる（scripts/README.md の Test Strategy）。
+GO_TEST_GIT_POISON := env GIT_DIR=/dev/null/git-isolation-required GIT_INDEX_FILE=/dev/null/git-isolation-required
+
 .PHONY: go-test ## 運用機構のテストを実行
 go-test:
-	@$(GO_TOOL) go -C scripts test ./...
+	@$(GO_TOOL) $(GO_TEST_GIT_POISON) go -C scripts test ./...
 
 .PHONY: go-test-cover ## カバレッジ付きでテストを実行
 go-test-cover:
-	@$(GO_TOOL) go -C scripts test -race -coverprofile=../coverage.out -covermode=atomic -count=1 ./...
+	@$(GO_TOOL) $(GO_TEST_GIT_POISON) go -C scripts test -race -coverprofile=../coverage.out -covermode=atomic -count=1 ./...
 
 .PHONY: cover-gate ## 総カバレッジが下限以上かを検査
 ##
