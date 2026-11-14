@@ -166,7 +166,7 @@ jobs:
       detected: govulncheck found ${{ needs.govulncheck.outputs.count }} reachable vulnerabilities
       details: ${{ needs.govulncheck.outputs.detail }}
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
 
   # 理由は README.md の「通知の起動条件」。
   notify-failure:
@@ -176,4 +176,4 @@ jobs:
     with:
       failed-job: govulncheck
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

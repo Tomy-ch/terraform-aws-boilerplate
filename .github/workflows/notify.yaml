@@ -1,71 +1,72 @@
 name: Notify
 
-# Reusable notification for the security workflows, in two modes.
+# 通知の再利用 workflow。モードは3つで、どれを使うかは呼び出し側が入力で選ぶ。
+# 起動条件の理由は README.md の「通知の起動条件」が持つ。
 #
-#   failure   (`failed-job`) — a scanner that runs on a schedule broke. A PR
-#             failure is already visible to its author; a scheduled failure is not
-#             visible to anyone, so it needs to be pushed somewhere a human reads.
-#   detection (`detected` + `details`) — a scanner that deliberately does NOT fail the
-#             build found something. Its job ends green, so failure mode would never
-#             fire, yet the finding still has to reach the role that owns the decision.
+#   失敗（`failed-job`）—— スケジュールや push で走る job が壊れた。
+#   検出（`detected` + `details`）—— 意図して build を落とさない走査が何かを見つけた。
+#   成功（`succeeded-job` + `details`）—— deploy の job が終わった。
 #
-# This is the repository's only workflow_call; everything else shared between
-# workflows is a composite action under .github/actions/. The difference is
-# deliberate. A composite action would run as a step inside the scanner's own job,
-# which means the Slack webhook would sit on the same runner that just unpacked
-# vulnerable dependencies and container images. workflow_call always gets its own
-# runner, so the only thing sharing a machine with the webhook is this file, whose
-# permissions are contents: read and which never checks out the repository.
+# 宛先の系統は `slack-webhook-url` に渡す secret が選ぶ（secrets の説明を参照）。どの job がどの secret を
+# 渡すかは .github/notify-channels.toml が宣言し、make notify-channel-lint が突き合わせる。
 #
-# The file is split in two on purpose:
+# このリポジトリの workflow_call はこれだけで、ほかの共有は .github/actions/ の composite action
+# である。composite action は走査の job の step として走るので、webhook が、脆弱な依存やコンテナの
+# イメージを展開したばかりのランナーに載る。workflow_call は常に自分のランナーを持つので、webhook と
+# 同じ機械に載るのは、contents: read だけを持ちリポジトリを checkout しないこのファイルだけになる。
 #
-#   1. "Build notification payload" and everything above it are transport-agnostic.
-#      They decide WHAT happened and WHERE to look, and nothing more.
-#   2. "Resolve notification backend" and "Send to Slack" are backend-specific, as is
-#      the `slack-webhook-url` secret name in the workflow_call interface.
+# ファイルは2つに分かれる。
 #
-# Swapping Slack for another mechanism therefore touches those three places plus the
-# `secrets:` line in each calling workflow — but never part 1. Keep that boundary
-# intact when editing this file.
+#   1. "Build notification payload" とそれより上は配送の手段に依らない。何が起きたか、どこを見るか
+#      だけを決める。
+#   2. "Resolve notification backend" と "Send to Slack" は Slack に依る。workflow_call の
+#      `slack-webhook-url` の名前も同じ。
 #
-# Failure mode carries no scan output: the run URL is the only pointer, so a secret or
-# a vulnerability detail can never reach the notification backend. Detection mode has
-# to carry `details`, because a notification that cannot say WHAT was found does not
-# identify the event it reports. What keeps that safe is the caller — it chooses what
-# goes in, and must pass identifiers only (a package name and version, a file path),
-# never a matched secret value.
+# Slack を別の手段に替えるときは、その3箇所と、呼び出し側の `secrets:` の行だけを変え、1 には
+# 触らない。この境界を保つこと。
+#
+# 失敗のモードは走査の出力を運ばない。指すのは run の URL だけなので、secret や脆弱性の詳細が
+# 通知の宛先へ届くことはない。検出と成功のモードは `details` を運ぶ。何を見つけたか、何を適用したかを
+# 言えない通知は、報告している出来事を特定できないからである。何を渡してよいかは
+# `inputs.details` の説明が持つ。
 
 on:
   workflow_call:
     inputs:
       failed-job:
         description: >-
-          Name of the job that failed, as written in the calling workflow. Selects
-          failure mode. Mutually exclusive with `detected`.
+          失敗した job の名前（呼び出し側の workflow に書かれたもの）。失敗のモードを選ぶ。
+          `detected`・`succeeded-job` とは同時に渡さない。
         required: false
         type: string
         default: ''
       detected:
         description: >-
-          One-line description of what was detected, e.g. "DevSkim found 2
-          findings". Selects detection mode. Mutually exclusive with
-          `failed-job`.
+          検出したものの1行の説明（例: "DevSkim found 2 findings"）。検出のモードを選ぶ。
+          `failed-job`・`succeeded-job` とは同時に渡さない。
         required: false
         type: string
         default: ''
       details:
         description: >-
-          Markdown body naming what was detected, one item per line. Detection mode
-          only. Identifiers only — never a matched secret value.
+          検出のモードでは検出したものを1行に1つ名指す Markdown、成功のモードでは適用した件数の行。
+          識別子と件数だけを渡し、一致した secret の値や terraform の出力は渡さない。
+        required: false
+        type: string
+        default: ''
+      succeeded-job:
+        description: >-
+          成功した job の名前（呼び出し側の workflow に書かれたもの）。成功のモードを選ぶ。
+          `failed-job`・`detected` とは同時に渡さない。
         required: false
         type: string
         default: ''
     secrets:
       slack-webhook-url:
         description: >-
-          Slack incoming webhook URL. When it is not configured the notification is
-          skipped and the run is left green: a missing webhook is a setup gap, not a
-          scan result, and must not mask the event it was meant to report.
+          Slack の Incoming Webhook の URL。URL ごとに宛先のチャンネルが決まるので、呼び出し側が
+          渡す secret が系統を選ぶ。未設定なら配信を省き、run を緑のままにする。webhook が無いのは
+          準備の不足であって走査の結果ではなく、報告するはずだった出来事を覆い隠してはならない。
         required: false
 
 permissions:
@@ -100,13 +101,12 @@ jobs:
             productionresultssa32.blob.core.windows.net
             hooks.slack.com
 
-      # Transport-agnostic. In a reusable workflow the github context belongs to the
-      # caller, so the workflow name / trigger / actor / run id below identify the
-      # scanner that reported rather than this file.
+      # 再利用 workflow の github の文脈は呼び出し側のものなので、下の
+      # workflow の名前・起動・実行者・run id は、このファイルではなく呼び出した workflow を指す。
       #
-      # The two modes differ only in the headline and the field list; everything after
-      # this step is shared. Detection mode carries actor and commit as well, because
-      # its whole purpose is attribution — naming who introduced what, on which branch.
+      # モードの違いは見出しと項目の一覧だけで、この step より後は共通である。検出のモードが実行者と
+      # commit も持つのは、誰がどのブランチに何を持ち込んだかを名指すことがその目的だからである。
+      # 成功のモードが commit を持つのは、どの commit が適用されたかが deploy の記録の要点だからである。
       - name: Build notification payload
         id: payload
         env:
@@ -115,6 +115,7 @@ jobs:
           FAILED_JOB: ${{ inputs.failed-job }}
           DETECTED: ${{ inputs.detected }}
           DETAILS: ${{ inputs.details }}
+          SUCCEEDED_JOB: ${{ inputs.succeeded-job }}
           ACTOR: ${{ github.actor }}
           COMMIT: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
@@ -123,19 +124,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Rejected rather than defaulted: silently picking one mode would send a
-          # notification that misdescribes what happened, which is worse than no
-          # notification at all.
-          if [ -n "${FAILED_JOB}" ] && [ -n "${DETECTED}" ]; then
-            echo "::error::notify.yaml takes either failed-job or detected, not both."
-            exit 1
-          fi
-          if [ -z "${FAILED_JOB}" ] && [ -z "${DETECTED}" ]; then
-            echo "::error::notify.yaml needs one of failed-job or detected."
+          # 既定のモードを選ばずに落とす。黙って1つを選ぶと、起きたことを取り違えた通知が送られ、
+          # それは通知が無いより悪い。
+          modes=0
+          for v in "${FAILED_JOB}" "${DETECTED}" "${SUCCEEDED_JOB}"; do
+            if [ -n "${v}" ]; then
+              modes=$((modes + 1))
+            fi
+          done
+          if [ "${modes}" -ne 1 ]; then
+            echo "::error::notify.yaml は failed-job・detected・succeeded-job のうちちょうど1つを受けます（${modes} 個が渡されました）。"
             exit 1
           fi
 
-          # Fields are (label, value) pairs so the renderers below stay mode-agnostic.
           if [ -n "${FAILED_JOB}" ]; then
             headline="🚨 ${WORKFLOW_NAME} failed"
             headline_md="🚨 *${WORKFLOW_NAME}* failed"
@@ -145,6 +146,16 @@ jobs:
               --arg trigger "${TRIGGER}" \
               --arg job "${FAILED_JOB}" \
               '[["Repository", $repo], ["Ref", $ref], ["Trigger", $trigger], ["Failed job", $job]]')
+          elif [ -n "${SUCCEEDED_JOB}" ]; then
+            headline="✅ ${WORKFLOW_NAME} succeeded"
+            headline_md="✅ *${WORKFLOW_NAME}* succeeded"
+            fields=$(jq -n \
+              --arg repo "${REPOSITORY}" \
+              --arg ref "${REF_NAME}" \
+              --arg commit "${COMMIT}" \
+              --arg trigger "${TRIGGER}" \
+              --arg job "${SUCCEEDED_JOB}" \
+              '[["Repository", $repo], ["Ref", $ref], ["Commit", $commit], ["Trigger", $trigger], ["Succeeded job", $job]]')
           else
             headline="⚠️ ${DETECTED}"
             headline_md="⚠️ *${DETECTED}*"
@@ -158,9 +169,8 @@ jobs:
               '[["Repository", $repo], ["Ref", $ref], ["Commit", $commit], ["Actor", $actor], ["Trigger", $trigger], ["Detected at", $at]]')
           fi
 
-          # jq builds the JSON so that a value containing a quote or a newline cannot
-          # break out of the payload. Slack rejects a text object over 3000 characters,
-          # so details are cut well short of it; the run URL carries the full report.
+          # JSON は jq で組み、引用符や改行を含む値が payload を壊せないようにする。Slack は
+          # 3000 文字を超える text object を拒むので、details はそれより十分短く切る。全文は run が持つ。
           jq -n \
             --arg headline "${headline}" \
             --arg headline_md "${headline_md}" \
@@ -206,42 +216,34 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
         shell: bash
 
-      # Kept separate from the send step so that "is the backend configured?" is
-      # answered without the secret ever reaching an `if:` expression.
+      # 送る step と分け、secret を `if:` の式へ渡さずに「宛先は在るか」に答える。
       - name: Resolve notification backend
         id: backend
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.slack-webhook-url }}
+          WORKFLOW_NAME: ${{ github.workflow }}
         run: |
           set -euo pipefail
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
             echo "configured=true" >> "${GITHUB_OUTPUT}"
           else
             echo "configured=false" >> "${GITHUB_OUTPUT}"
-            echo "::notice::No notification backend is configured (secret SLACK_WEBHOOK_URL is unset); skipping delivery."
+            echo "::notice::${WORKFLOW_NAME} が secret slack-webhook-url へ渡した値が空なので、配信を省きます。どの secret を渡すかは .github/workflows/README.md の「通知の起動条件」が持ちます。"
             echo "" >> "${GITHUB_STEP_SUMMARY}"
-            echo "> Notification was not delivered: secret \`SLACK_WEBHOOK_URL\` is unset." >> "${GITHUB_STEP_SUMMARY}"
+            echo "> 通知は配信していません: \`${WORKFLOW_NAME}\` が secret \`slack-webhook-url\` へ渡した値が空です。" >> "${GITHUB_STEP_SUMMARY}"
           fi
         shell: bash
 
-      # ---------------------------------------------------------------------------
-      # Backend-specific: replace this step wholesale to notify somewhere else, and
-      # leave "Build notification payload" untouched.
-      # ---------------------------------------------------------------------------
+      # Slack に依る（冒頭「ファイルは2つに分かれる」の 2）。
       - name: Send to Slack
         if: ${{ steps.backend.outputs.configured == 'true' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.slack-webhook-url }}
         run: |
           set -euo pipefail
-          # --fail-with-body surfaces Slack's rejection reason; -sS keeps the log free
-          # of a progress meter while still printing errors.
-          #
-          # The URL is fed through `--config -` rather than passed as an argument,
-          # because a process argument is world-readable through /proc on the runner
-          # for as long as curl lives. Nothing else should be sharing this runner —
-          # the job checks out no code and runs only pinned actions — but the webhook
-          # is the one secret here, and keeping it out of argv costs a pipe.
+          # --fail-with-body は Slack が拒んだ理由を出す。
+          # URL は引数ではなく `--config -` で渡す。プロセスの引数は curl が生きている間、ランナーの
+          # /proc から読める。webhook はここで唯一の secret なので、argv から外す。
           printf 'url = "%s"\n' "${SLACK_WEBHOOK_URL}" | curl --config - \
             --fail-with-body -sS \
             -X POST \

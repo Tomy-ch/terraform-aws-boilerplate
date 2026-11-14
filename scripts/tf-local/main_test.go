@@ -1422,9 +1422,9 @@ const (
 )
 
 type recipeResult struct {
-	out, calls, summary, plans string
-	err                        error
-	left                       []string
+	out, calls, summary, output, plans string
+	err                                error
+	left                               []string
 }
 
 const applyCall = "terraform -chdir="
@@ -1476,6 +1476,7 @@ func newRecipe(bin string) recipeFunc {
 		policy := filepath.Join(root, "policy")
 		plans := filepath.Join(root, "plans")
 		summary := filepath.Join(root, "summary.md")
+		output := filepath.Join(root, "output")
 
 		for _, d := range []string{k, identity, policy, filepath.Join(root, "bin")} {
 			require.NoError(t, os.MkdirAll(d, 0o700))
@@ -1515,12 +1516,13 @@ func newRecipe(bin string) recipeFunc {
 			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
 				strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "CI_") || strings.HasPrefix(kv, "ACTIONS_ID_TOKEN_REQUEST_") || strings.HasPrefix(kv, "PATH=")
 		}), "PATH="+filepath.Join(root, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"CI_PR=7", "GITHUB_RUN_ID=8", "GITHUB_RUN_ATTEMPT=1", "GITHUB_STEP_SUMMARY="+summary)
+			"CI_PR=7", "GITHUB_RUN_ID=8", "GITHUB_RUN_ATTEMPT=1", "GITHUB_STEP_SUMMARY="+summary, "GITHUB_OUTPUT="+output)
 		cmd.Env = append(cmd.Env, env...)
 
 		combined, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(filepath.Join(k, "calls"))
 		written, _ := os.ReadFile(summary)
+		outputs, _ := os.ReadFile(output)
 		entries, dirErr := os.ReadDir(plans)
 		require.NoError(t, dirErr, "レシピが作業ディレクトリを作っていません: %s", combined)
 
@@ -1529,7 +1531,7 @@ func newRecipe(bin string) recipeFunc {
 			left = append(left, e.Name())
 		}
 
-		return recipeResult{out: string(combined), calls: string(calls), summary: string(written), plans: plans, err: err, left: left}
+		return recipeResult{out: string(combined), calls: string(calls), summary: string(written), output: string(outputs), plans: plans, err: err, left: left}
 	}
 
 }
@@ -1571,9 +1573,10 @@ func TestCiRecipes(t *testing.T) {
 func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 	t.Helper()
 
-	ok := map[string]struct{ planRC, plan string }{
-		"変更が無くても保存した plan を apply する": {"0", recipeNoop},
-		"変更があれば保存した plan を apply する":  {"2", recipeCreate},
+	// output は成功の通知が運ぶ件数の行。変更の有無を通知で見分けられるのは、この行だけである。
+	ok := map[string]struct{ planRC, plan, output string }{
+		"変更が無くても保存した plan を apply する": {"0", recipeNoop, "plan=No changes.\n"},
+		"変更があれば保存した plan を apply する":  {"2", recipeCreate, "plan=Plan: 0 to import, 1 to add,"},
 	}
 	for name, c := range ok {
 		t.Run(name, func(t *testing.T) {
@@ -1587,6 +1590,8 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Contains(t, r.calls, "apply -input=false -no-color "+saved, "plan したファイルを apply する")
 			assert.Contains(t, r.out, "✅ apply が終わりました")
 			assert.Contains(t, r.summary, "apply が終わりました")
+			assert.True(t, strings.HasPrefix(r.output, c.output), r.output)
+			assert.Equal(t, 1, strings.Count(r.output, "\n"), "件数は1行で job の outputs に渡る: %q", r.output)
 			assert.Equal(t, 3, countCalls(r.calls, "conftest test "), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.kms_key_policy"), strings.Index(r.calls, "--namespace plan.resource_policy_exclusive"), r.calls)
@@ -1641,6 +1646,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.NotContains(t, r.out, "✅ apply")
 			assert.NotContains(t, r.out, "PLAN-SECRET")
 			assert.Empty(t, r.summary)
+			assert.Empty(t, r.output, "apply しなかった run は件数を outputs に書かない")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}
@@ -1747,6 +1753,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.NotContains(t, r.out, "✅ apply")
 			assert.NotContains(t, r.out, "APPLY-SECRET")
 			assert.Empty(t, r.summary)
+			assert.Empty(t, r.output, "失敗した apply は件数を outputs に書かない")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}
@@ -1776,15 +1783,45 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.NotContains(t, r.out, "APPLY-SECRET")
 	})
 
-	t.Run("job summary が無くても成功する", func(t *testing.T) {
+	// job summary と outputs は別々に書く。片方が無いことが、もう片方を書かない理由にならない。
+	t.Run("job summary が無くても outputs は書く", func(t *testing.T) {
 		t.Parallel()
 
 		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_STEP_SUMMARY=")
+		require.NoError(t, r.err, r.out)
+		assert.Empty(t, r.summary)
+		assert.True(t, strings.HasPrefix(r.output, "plan=Plan: "), r.output)
+	})
+
+	t.Run("outputs が無くても job summary は書く", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_OUTPUT=")
+		require.NoError(t, r.err, r.out)
+		assert.Contains(t, r.summary, "apply が終わりました")
+		assert.Empty(t, r.output)
+	})
+
+	t.Run("outputs に書けなければ非ゼロで終わる", func(t *testing.T) {
+		t.Parallel()
+
+		// 件数を渡せないまま成功で終わると、成功の通知は変更の有無を言えない。
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass},
+			"GITHUB_OUTPUT="+filepath.Join(t.TempDir(), "none", "output"))
+		require.Error(t, r.err, r.out)
+		assert.Equal(t, 1, applies(r.calls), r.calls)
+	})
+
+	t.Run("job summary と outputs が無くても成功する", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_STEP_SUMMARY=", "GITHUB_OUTPUT=")
 		require.NoError(t, r.err, r.out)
 		assert.Equal(t, 1, applies(r.calls), r.calls)
 		assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
 		assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
 		assert.Empty(t, r.summary)
+		assert.Empty(t, r.output)
 	})
 
 	prepare := map[string]struct {

@@ -8,7 +8,7 @@
 ##   zizmor              zizmor.mk が持つ（lint に束ねない理由もそこにある）
 
 .PHONY: actions-lint ## GitHub Actions の定義を検査（actionlint + composite + シェル）
-actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint tf-job-lint oidc-job-lint
+actions-lint: actionlint actions-shellcheck shell-lint required-check-lint pr-comment-secret-lint actions-cutoff-lint pr-comment-fence-lint actions-mise-pin-lint tf-job-lint oidc-job-lint notify-channel-lint
 
 .PHONY: actionlint ## workflow の構文と run: のシェルを検査
 actionlint:
@@ -33,6 +33,10 @@ tf-job-lint:
 .PHONY: oidc-job-lint ## OIDC で role を assume する job の environment・役割・起動条件を検査
 oidc-job-lint:
 	@$(call RUN_SCRIPT,oidc-job-lint,)
+
+.PHONY: notify-channel-lint ## notify.yaml を呼ぶ job が、宣言した系統の secret を渡しているか検査
+notify-channel-lint:
+	@$(call RUN_SCRIPT,notify-channel-lint,)
 
 .PHONY: pr-comment-secret-lint ## PR へコメントする job に GITHUB_TOKEN 以外の secret を渡していないか検査
 pr-comment-secret-lint:
