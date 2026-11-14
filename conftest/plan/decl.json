@@ -167,7 +167,8 @@
       "apply_identity_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity",
-        "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this"
+        "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this",
+        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this"
       },
       "unlock_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"unlock_identity\"]",

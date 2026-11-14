@@ -24,6 +24,8 @@ target := declared("policy")
 
 output_bucket := declared("output_bucket")
 
+output_bucket_policy := declared("output_bucket_policy")
+
 after(address) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == address
@@ -54,19 +56,17 @@ actions(s) := lib.lower_all(object.get(s, "Action", []))
 
 resources(s) := lib.as_array(object.get(s, "Resource", []))
 
+# IAM の Action と Resource の * と ? は ":" や "/" も越え、ほかの文字は文字そのものである。glob.match は [ と { を
+# 構文として読み、閉じていないと評価が未定義になって規則が黙るので使わない。
+iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()\[\]{}|^$\\]`, `\${0}`))
+
 # service の名前に wildcard を含む Action（"*"、"s?:*" など）も S3 の Action に当たる。
-s3_action(a) if glob.match(split(a, ":")[0], null, "s3")
+s3_action(a) if regex.match(sprintf("^%s$", [iam_regex(split(a, ":")[0])]), "s3")
 
-# Resource の最初の "/" より前が Bucket に当たれば、key の形を問わずその Bucket の object に届く。
-# "/" を含まない Resource は、wildcard が "/" を越えて object に届くかで見る。
+# Resource のある接頭辞が "<Bucket の ARN>/" に一致すれば、その Resource は Bucket のある object に一致する。
 reaches_objects(resource) if {
-	contains(resource, "/")
-	glob.match(split(resource, "/")[0], null, bucket_arn)
-}
-
-reaches_objects(resource) if {
-	not contains(resource, "/")
-	glob.match(resource, null, sprintf("%s/x", [bucket_arn]))
+	some k in numbers.range(1, count(resource))
+	regex.match(sprintf("^%s$", [iam_regex(substring(resource, 0, k))]), sprintf("%s/", [bucket_arn]))
 }
 
 role_known if is_string(role_name)
@@ -79,7 +79,7 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	some k in ["role", "policy", "output_bucket"]
+	some k in ["role", "policy", "output_bucket", "output_bucket_policy"]
 	declared(k) == ""
 	msg := sprintf("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.%s が宣言にありません", [k])
 }
@@ -106,7 +106,7 @@ deny contains msg if {
 deny contains msg if {
 	role_known
 	target != ""
-	object.get(after(target), "role", null) != role_name
+	lower(object.get(after(target), "role", "")) != lower(role_name)
 	msg := sprintf("[PLAN-AIO-00] apply-identity の role の policy %q が、apply-identity の role %q に付いていません", [target, role_name])
 }
 
@@ -159,7 +159,8 @@ role_key(a) := "role_name" if endswith(a.type, "_exclusive")
 
 role_key(a) := "role" if not endswith(a.type, "_exclusive")
 
-on_role(a) if object.get(a.after, role_key(a), null) == role_name
+# IAM の role 名は大文字と小文字を区別しない。
+on_role(a) if lower(object.get(a.after, role_key(a), "")) == lower(role_name)
 
 exclusive(type) := {a | some a in attached; a.type == type; on_role(a)}
 
@@ -221,7 +222,8 @@ deny contains msg if {
 	role_known
 	some c in lib.changes
 	c.rc.type == "aws_iam_policy_attachment"
-	role_name in lib.as_array(object.get(c.rc.change.after, "roles", []))
+	some r in lib.as_array(object.get(c.rc.change.after, "roles", []))
+	lower(r) == lower(role_name)
 	msg := sprintf("[PLAN-AIO-05] %s: %s が apply-identity の role %s に managed policy を付けています", [c.path, c.rc.address, role_name])
 }
 
@@ -230,4 +232,24 @@ deny contains msg if {
 	c.rc.type == "aws_iam_policy_attachment"
 	unknown_any(object.get(object.get(c.rc.change, "after_unknown", {}), "roles", false))
 	msg := sprintf("[PLAN-AIO-05] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
+}
+
+# 同じアカウントの主体には Bucket Policy の Allow だけで権限が付くので、IAM の規則を迂回できる。
+bucket_policies contains r if {
+	some r in lib.readable
+	r.document.type == "aws_s3_bucket_policy"
+	r.document.address == output_bucket_policy
+}
+
+deny contains msg if {
+	output_bucket_policy != ""
+	count({d | some d in lib.documents; d.type == "aws_s3_bucket_policy"; d.address == output_bucket_policy}) == 0
+	msg := sprintf("[PLAN-AIO-00] plan の出力の Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.apply_identity_role を直してください", [output_bucket_policy])
+}
+
+deny contains msg if {
+	some r in bucket_policies
+	some s in lib.statements(r.body)
+	s.Effect != "Deny"
+	msg := sprintf("[PLAN-AIO-06] %s: plan の出力の Bucket の Bucket Policy %s が Deny でない文 %v を持っています", [r.document.path, r.document.address, object.get(s, "Sid", "")])
 }
