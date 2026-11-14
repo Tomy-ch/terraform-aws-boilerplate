@@ -27,7 +27,7 @@ const fixtureLock = `# header
 // fixtureDomains は、テスト用の manifest。scan は自分の workflow でだけ使う pin を、
 // shared は残る workflow も参照する pin を持つ。
 var fixtureDomains = []domain{
-	{name: "scan", paths: []string{".github/workflows/scan.yaml", "scan.properties"}, pins: []string{"acme/scan@v1", "acme/shared@v2"}},
+	{name: "scan", paths: []string{".github/workflows/scan.yaml", "scan.properties"}, actions: []string{"acme/scan", "acme/shared"}},
 	{name: "tool", paths: []string{"tool"}},
 }
 
@@ -107,7 +107,7 @@ func Test_run(t *testing.T) {
 			root, list := fixtureTree(t)
 			var w bytes.Buffer
 			require.NoError(t, run([]string{"check"}, root, fixtureDomains, func(string) ([]string, error) { return list, nil }, &w))
-			assert.Equal(t, "✅ sample-remove check: 印 4 個（2 ファイル）、manifest のパス 3 件、pin 2 件を確認しました\n", w.String())
+			assert.Equal(t, "✅ sample-remove check: 印 4 個（2 ファイル）、manifest のパス 3 件、pin の action 2 件を確認しました\n", w.String())
 			assert.FileExists(t, filepath.Join(root, "scan.properties"))
 		})
 
@@ -158,15 +158,15 @@ func Test_run(t *testing.T) {
 	})
 }
 
-func Test_countPins(t *testing.T) {
+func Test_countActions(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("domain をまたいで pin を数える", func(t *testing.T) {
+		t.Run("domain をまたいで pin の action を数える", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, 2, countPins(fixtureDomains))
+			assert.Equal(t, 2, countActions(fixtureDomains))
 		})
 	})
 }
@@ -276,7 +276,7 @@ func Test_build(t *testing.T) {
 		t.Run("pin の不備を build のエラーとして返す", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
-			ds := append([]domain{{name: "x", pins: []string{"acme/none@v9"}}}, fixtureDomains...)
+			ds := append([]domain{{name: "x", actions: []string{"acme/none"}}}, fixtureDomains...)
 			_, err := build(root, ds, func(string) ([]string, error) { return list, nil })
 			require.ErrorIs(t, err, errMissingPin)
 		})
@@ -315,6 +315,16 @@ func Test_prunePins(t *testing.T) {
 			assert.Equal(t, "# header\n\"actions/checkout@v7.0.1\" = \"aaaa\"\n\"acme/shared@v2\" = \"cccc\"\n", p.writes[pinFile])
 		})
 
+		t.Run("同じ action の pin が複数あれば、すべて外す", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			writeTree(t, root, map[string]string{pinFile: fixtureLock + "\"acme/scan@v2.0.0\" = \"dddd\"\n\"acme/scanner@v1\" = \"eeee\"\n"})
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+			require.NoError(t, prunePins(root, fixtureDomains, list, &p))
+			assert.Equal(t, []string{"acme/scan@v1", "acme/scan@v2.0.0"}, p.droppedPins)
+			assert.Equal(t, "# header\n\"actions/checkout@v7.0.1\" = \"aaaa\"\n\"acme/shared@v2\" = \"cccc\"\n\"acme/scanner@v1\" = \"eeee\"\n", p.writes[pinFile])
+		})
+
 		t.Run("外す pin が無ければ lockfile を書き換えない", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
@@ -328,13 +338,33 @@ func Test_prunePins(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("manifest の pin が lockfile に無ければエラーにする", func(t *testing.T) {
+		t.Run("manifest の action の pin が lockfile に無ければ、何も外さずにエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
-			ds := []domain{{name: "x", pins: []string{"acme/none@v9"}}}
+			ds := []domain{{name: "x", actions: []string{"acme/none"}}}
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+			err := prunePins(root, ds, list, &p)
+			require.ErrorIs(t, err, errMissingPin)
+			assert.Contains(t, err.Error(), "acme/none")
+			assert.Empty(t, p.droppedPins)
+			assert.NotContains(t, p.writes, pinFile)
+		})
+
+		t.Run("名前が前方一致するだけの pin は、manifest の action の pin として数えない", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			ds := []domain{{name: "x", actions: []string{"acme/sca"}}}
 			err := prunePins(root, ds, list, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errMissingPin)
-			assert.Contains(t, err.Error(), "acme/none@v9")
+		})
+
+		t.Run("manifest の action に版が付いていればエラーにする", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			ds := []domain{{name: "x", actions: []string{"acme/scan@v1"}}}
+			err := prunePins(root, ds, list, &plan{writes: map[string]string{}})
+			require.ErrorIs(t, err, errVersionedAction)
+			assert.Contains(t, err.Error(), "acme/scan@v1")
 		})
 
 		t.Run("lockfile を読めなければエラーにする", func(t *testing.T) {
@@ -355,7 +385,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
 			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
-			got, err := pinReferenced(root, "acme/shared@v2", list, &p)
+			got, err := pinReferenced(root, "acme/shared", list, &p)
 			require.NoError(t, err)
 			assert.True(t, got)
 		})
@@ -364,7 +394,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
 			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
-			got, err := pinReferenced(root, "acme/scan@v1", list, &p)
+			got, err := pinReferenced(root, "acme/scan", list, &p)
 			require.NoError(t, err)
 			assert.False(t, got)
 		})
@@ -374,7 +404,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
 			p := plan{writes: map[string]string{".github/workflows/keep.yaml": "steps: []\n"}, deletes: []string{".github/workflows/scan.yaml"}}
-			got, err := pinReferenced(root, "acme/shared@v2", list, &p)
+			got, err := pinReferenced(root, "acme/shared", list, &p)
 			require.NoError(t, err)
 			assert.False(t, got)
 		})
@@ -383,7 +413,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{".github/workflows/w.yaml": "    - uses: acme/scan/sub@bbbb\n"})
-			got, err := pinReferenced(root, "acme/scan@v1", []string{".github/workflows/w.yaml"}, &plan{writes: map[string]string{}})
+			got, err := pinReferenced(root, "acme/scan", []string{".github/workflows/w.yaml"}, &plan{writes: map[string]string{}})
 			require.NoError(t, err)
 			assert.True(t, got)
 		})
@@ -392,7 +422,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{".github/actions/x/action.yaml": "    - uses: \"acme/scan@bbbb\"\n"})
-			got, err := pinReferenced(root, "acme/scan@v1", []string{".github/actions/x/action.yaml"}, &plan{writes: map[string]string{}})
+			got, err := pinReferenced(root, "acme/scan", []string{".github/actions/x/action.yaml"}, &plan{writes: map[string]string{}})
 			require.NoError(t, err)
 			assert.True(t, got)
 		})
@@ -401,7 +431,7 @@ func Test_pinReferenced(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{"README.md": "uses: acme/scan@v1\n"})
-			got, err := pinReferenced(root, "acme/scan@v1", []string{"README.md"}, &plan{writes: map[string]string{}})
+			got, err := pinReferenced(root, "acme/scan", []string{"README.md"}, &plan{writes: map[string]string{}})
 			require.NoError(t, err)
 			assert.False(t, got)
 		})
@@ -410,15 +440,9 @@ func Test_pinReferenced(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("@ の無いキーはエラーにする", func(t *testing.T) {
-			t.Parallel()
-			_, err := pinReferenced(t.TempDir(), "acme/scan", nil, &plan{writes: map[string]string{}})
-			require.ErrorIs(t, err, errMissingPin)
-		})
-
 		t.Run("workflow を読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			_, err := pinReferenced(t.TempDir(), "acme/scan@v1", []string{".github/workflows/gone.yaml"}, &plan{writes: map[string]string{}})
+			_, err := pinReferenced(t.TempDir(), "acme/scan", []string{".github/workflows/gone.yaml"}, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errRead)
 		})
 	})

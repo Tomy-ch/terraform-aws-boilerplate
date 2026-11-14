@@ -45,8 +45,9 @@ type domain struct {
 	name string
 	// paths は、ファイルまたはディレクトリごと消すもの。リポジトリのルートからの相対パス。
 	paths []string
-	// pins は、このサンプルが持ち込んだ pin のキー。消したあとどこからも参照されなければ外す。
-	pins []string
+	// actions は、このサンプルが持ち込んだ pin の action の名前。消したあとどこからも参照されなければ、
+	// その action の pin をすべて外す。
+	actions []string
 	// contexts は、このサンプルが必須検査の宣言へ持ち込んだ context。
 	contexts []string
 }
@@ -54,14 +55,14 @@ type domain struct {
 // manifest は、取り除くサンプルの一覧。最後の domain はこのツール自身を消す。
 var manifest = []domain{
 	{
-		name:  "sonarcloud",
-		paths: []string{".github/workflows/sonarcloud.yaml", "sonar-project.properties"},
-		pins:  []string{"SonarSource/sonarqube-scan-action@v8.5.0"},
+		name:    "sonarcloud",
+		paths:   []string{".github/workflows/sonarcloud.yaml", "sonar-project.properties"},
+		actions: []string{"SonarSource/sonarqube-scan-action"},
 	},
 	{
-		name:  "dependency-review",
-		paths: []string{".github/workflows/dependency-review.yaml"},
-		pins:  []string{"actions/dependency-review-action@v5.0.0"},
+		name:    "dependency-review",
+		paths:   []string{".github/workflows/dependency-review.yaml"},
+		actions: []string{"actions/dependency-review-action"},
 	},
 	{
 		name: "sample-remove",
@@ -84,8 +85,10 @@ var (
 	errNoTargets = xerrors.New("❌ sample: の印が1つも見つかりません")
 	// errMissingPath は、manifest のパスが実在しないことを表す。
 	errMissingPath = xerrors.New("❌ manifest のパスがありません")
-	// errMissingPin は、manifest の pin のキーが lockfile に無いことを表す。
-	errMissingPin = xerrors.New("❌ manifest の pin のキーが " + pinFile + " にありません")
+	// errMissingPin は、manifest の action の pin が lockfile に1つも無いことを表す。
+	errMissingPin = xerrors.New("❌ manifest の action の pin が " + pinFile + " にありません")
+	// errVersionedAction は、manifest の action の名前に版が付いていることを表す。
+	errVersionedAction = xerrors.New("❌ manifest の action に版を書いています（版は " + pinFile + " が持ちます）")
 	// errBadMarker は、印を解釈できないファイルがあることを表す。
 	errBadMarker = xerrors.New("❌ sample: の印を解釈できません")
 	// errMissingContext は、manifest の context が必須検査の宣言に無いことを表す。
@@ -151,8 +154,8 @@ func run(args []string, root string, ds []domain, list func(string) ([]string, e
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "✅ sample-remove check: 印 %d 個（%d ファイル）、manifest のパス %d 件、pin %d 件を確認しました\n",
-			p.markerCount, len(p.markedFiles), len(p.deletes), countPins(ds))
+		fmt.Fprintf(w, "✅ sample-remove check: 印 %d 個（%d ファイル）、manifest のパス %d 件、pin の action %d 件を確認しました\n",
+			p.markerCount, len(p.markedFiles), len(p.deletes), countActions(ds))
 		return nil
 	case args[0] == "apply" && len(args) == 1, args[0] == "apply" && len(args) == 2 && args[1] == "--dry-run":
 		p, err := build(root, ds, list)
@@ -170,11 +173,11 @@ func run(args []string, root string, ds []domain, list func(string) ([]string, e
 	}
 }
 
-// countPins は、manifest が宣言する pin の数を返します。
-func countPins(ds []domain) int {
+// countActions は、manifest が宣言する pin の action の数を返します。
+func countActions(ds []domain) int {
 	n := 0
 	for _, d := range ds {
-		n += len(d.pins)
+		n += len(d.actions)
 	}
 	return n
 }
@@ -234,8 +237,8 @@ func build(root string, ds []domain, list func(string) ([]string, error)) (plan,
 	return p, nil
 }
 
-// prunePins は、manifest の pin のうち、取り除いたあとどの workflow / action からも参照されない
-// ものを lockfile から外す書き換えを p へ加えます。
+// prunePins は、manifest の action のうち、取り除いたあとどの workflow / action からも参照されない
+// ものの pin を lockfile からすべて外す書き換えを p へ加えます。
 func prunePins(root string, ds []domain, files []string, p *plan) error {
 	lockPath := filepath.Join(root, pinFile)
 	b, err := os.ReadFile(filepath.Clean(lockPath))
@@ -248,26 +251,36 @@ func prunePins(root string, ds []domain, files []string, p *plan) error {
 	}
 	lines := strings.Split(lock, "\n")
 	for _, d := range ds {
-		for _, key := range d.pins {
-			idx := -1
-			for i, line := range lines {
-				if strings.HasPrefix(line, `"`+key+`" =`) {
-					idx = i
-					break
+		for _, action := range d.actions {
+			if strings.Contains(action, "@") {
+				return xerrors.Wrapf(errVersionedAction, "%s（%s）", action, d.name)
+			}
+			prefix := `"` + action + `@`
+			var keys []string
+			for _, line := range lines {
+				if strings.HasPrefix(line, prefix) {
+					key, _, _ := strings.Cut(strings.TrimPrefix(line, `"`), `"`)
+					keys = append(keys, key)
 				}
 			}
-			if idx < 0 {
-				return xerrors.Wrapf(errMissingPin, "%s（%s）", key, d.name)
+			if len(keys) == 0 {
+				return xerrors.Wrapf(errMissingPin, "%s（%s）", action, d.name)
 			}
-			referenced, err := pinReferenced(root, key, files, p)
+			referenced, err := pinReferenced(root, action, files, p)
 			if err != nil {
 				return err
 			}
 			if referenced {
 				continue
 			}
-			lines = append(lines[:idx], lines[idx+1:]...)
-			p.droppedPins = append(p.droppedPins, key)
+			kept := lines[:0]
+			for _, line := range lines {
+				if !strings.HasPrefix(line, prefix) {
+					kept = append(kept, line)
+				}
+			}
+			lines = kept
+			p.droppedPins = append(p.droppedPins, keys...)
 		}
 	}
 	if len(p.droppedPins) > 0 {
@@ -276,13 +289,9 @@ func prunePins(root string, ds []domain, files []string, p *plan) error {
 	return nil
 }
 
-// pinReferenced は、pin のキーが指す action を、取り除いたあとに残る workflow / action が
-// `uses:` で参照しているかを返します。
-func pinReferenced(root, key string, files []string, p *plan) (bool, error) {
-	action, _, ok := strings.Cut(key, "@")
-	if !ok {
-		return false, xerrors.Wrap(errMissingPin, key+"（@ で版を区切っていません）")
-	}
+// pinReferenced は、action を、取り除いたあとに残る workflow / action が `uses:` で参照しているかを
+// 返します。
+func pinReferenced(root, action string, files []string, p *plan) (bool, error) {
 	uses := regexp.MustCompile(`uses:\s*["']?` + regexp.QuoteMeta(action) + `(/[^@\s]*)?@`)
 	for _, f := range files {
 		if !strings.HasPrefix(f, ".github/workflows/") && !strings.HasPrefix(f, ".github/actions/") {
