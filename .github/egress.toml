@@ -369,10 +369,9 @@ classes = ["mise"]
 classes = ["mise"]
 
 # Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・パッケージの情報）。publish しないので
-# api.scorecard.dev と sigstore は要らない。action の image（ghcr.io）は job の開始時に取得され、
-# bullfrog より前にある。
+# api.scorecard.dev は要らない。
 [job."scorecard.yaml:scorecard"]
-classes = ["deps-dev"]
+classes = ["mise", "deps-dev"]
 extra = [
   "api.osv.dev",
   "www.bestpractices.dev",
