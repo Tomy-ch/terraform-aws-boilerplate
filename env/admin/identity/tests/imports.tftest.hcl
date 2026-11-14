@@ -77,3 +77,27 @@ run "admin_state_key_alias_name" {
     error_message = "管理アカウントの state の鍵の alias が alias/tabp-admin-tfstate になっていません。"
   }
 }
+
+# bootstrap の手順の simulate が名指す名前。手順とこのテストがそれぞれ同じ値を直書きする。
+run "admin_access_log_names" {
+  command = plan
+
+  assert {
+    condition = [
+      module.state_backend.access_log_group_arn,
+      module.state_backend.access_log_destination_arn,
+      ] == [
+      "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access",
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access",
+    ]
+    error_message = "管理アカウントのアクセスログの Log Group・delivery destination が tabp-admin-state-backend-access になっていません。"
+  }
+
+  assert {
+    condition = module.state_backend.access_log_source_arns == [
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate",
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan",
+    ]
+    error_message = "管理アカウントの delivery source が tabp-admin-tfstate と tabp-admin-tfplan になっていません。"
+  }
+}

@@ -81,3 +81,40 @@ variable "plan_output_bucket_arn" {
     error_message = "plan_output_bucket_arn は S3 Bucket の ARN（arn:<partition>:s3:::<bucket>）にしてください。"
   }
 }
+
+variable "access_log_group_arn" {
+  description = "state Bucket と plan の出力の Bucket の S3 サーバーアクセスログを受ける Log Group の ARN（`state-backend` の `access_log_group_arn`。`:*` を除いた形）。apply-identity の Log Group の Action と、apply の role の Deny をこの Log Group に絞る。"
+  type        = string
+
+  # 名前の形は delivery destination と同じ（modules/vended-log-group の name）。
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:logs:[a-z0-9-]+:[0-9]{12}:log-group:[A-Za-z0-9_-]{1,60}$", var.access_log_group_arn))
+    error_message = "access_log_group_arn は CloudWatch Logs の Log Group の ARN（arn:<partition>:logs:<region>:<account>:log-group:<name>。name は英数字と - _ の60文字以内、末尾の :* を付けない）にしてください。"
+  }
+}
+
+variable "access_log_destination_arn" {
+  description = "S3 サーバーアクセスログの delivery destination の ARN（`state-backend` の `access_log_destination_arn`）。delivery destination の Action と、apply の role の Deny をこれに絞る。"
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:logs:[a-z0-9-]+:[0-9]{12}:delivery-destination:[A-Za-z0-9_-]{1,60}$", var.access_log_destination_arn))
+    error_message = "access_log_destination_arn は CloudWatch Logs の delivery destination の ARN（arn:<partition>:logs:<region>:<account>:delivery-destination:<name>）にしてください。"
+  }
+}
+
+variable "access_log_source_arns" {
+  description = "state Bucket と plan の出力の Bucket の delivery source の ARN（`state-backend` の `access_log_source_arns`）。delivery source の Action と、apply の role の Deny をこれに絞る。"
+  type        = list(string)
+  nullable    = false
+
+  validation {
+    condition     = length(var.access_log_source_arns) > 0 && alltrue([for a in var.access_log_source_arns : can(regex("^arn:aws[a-z-]*:logs:[a-z0-9-]+:[0-9]{12}:delivery-source:[A-Za-z0-9_-]{1,60}$", a))])
+    error_message = "access_log_source_arns は1件以上の、CloudWatch Logs の delivery source の ARN（arn:<partition>:logs:<region>:<account>:delivery-source:<name>）にしてください。"
+  }
+
+  validation {
+    condition     = length(distinct(var.access_log_source_arns)) == length(var.access_log_source_arns)
+    error_message = "access_log_source_arns に同じ ARN を重ねないでください。"
+  }
+}

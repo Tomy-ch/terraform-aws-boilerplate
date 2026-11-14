@@ -26,4 +26,8 @@ module "deployment_identity" {
   state_bucket_arn       = module.state_backend.bucket_arn
   state_key_arn          = module.state_backend.state_key_arn
   plan_output_bucket_arn = module.state_backend.plan_output_bucket_arn
+
+  access_log_group_arn       = module.state_backend.access_log_group_arn
+  access_log_destination_arn = module.state_backend.access_log_destination_arn
+  access_log_source_arns     = module.state_backend.access_log_source_arns
 }

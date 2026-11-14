@@ -17,6 +17,13 @@ variables {
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
   state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+
+  access_log_group_arn       = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access"
+  access_log_destination_arn = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+  access_log_source_arns = [
+    "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate",
+    "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan",
+  ]
 }
 
 # assert に for 式を書かない（tests/trust.tftest.hcl）。provider の ARN は plan では決まらないので、mock の apply で確かめる。
@@ -96,8 +103,14 @@ run "policies" {
         Resource = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply", "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"]
       },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+      { Sid = "ReadAccessLogGroupTags", Effect = "Allow", Action = "logs:ListTagsForResource", Resource = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access" },
+      { Sid = "DescribeLogGroups", Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "*" },
+      { Sid = "DescribeLogResourcePolicies", Effect = "Allow", Action = "logs:DescribeResourcePolicies", Resource = "*" },
+      { Sid = "ReadAccessLogDestination", Effect = "Allow", Action = ["logs:GetDeliveryDestination", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access" },
+      { Sid = "ReadAccessLogSources", Effect = "Allow", Action = ["logs:GetDeliverySource", "logs:ListTagsForResource"], Resource = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"] },
+      { Sid = "ReadAccessLogDeliveries", Effect = "Allow", Action = ["logs:GetDelivery", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery:*" },
     ]
-    error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root の resource と state の鍵の読み取りと、plan の出力の書き込みだけになっていません。"
+    error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root と段5 の resource と state の鍵の読み取りと、plan の出力の書き込みだけになっていません。"
   }
 
   assert {
@@ -158,8 +171,21 @@ run "policies" {
         ]
         Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
+      {
+        Sid      = "DenyAccessLogChange"
+        Effect   = "Deny"
+        Action   = "logs:*"
+        Resource = ["arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access", "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access:*", "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"]
+      },
+      {
+        Sid      = "DenyAccountLogPolicyChange"
+        Effect   = "Deny"
+        Action   = ["logs:DeleteAccountPolicy", "logs:DeleteIndexPolicy", "logs:DeleteResourcePolicy", "logs:PutAccountPolicy", "logs:PutIndexPolicy", "logs:PutResourcePolicy"]
+        Resource = "*"
+      },
+      { Sid = "DenyBucketLogDelivery", Effect = "Deny", Action = "s3:AllowVendedLogDeliveryForResource", Resource = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"] },
     ]
-    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・2つの Bucket・plan の出力・state の鍵の変更の拒否になっていません。"
+    error_message = "apply の role の権限が、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・2つの Bucket・plan の出力・state の鍵・段5 のログの構成物の変更の拒否になっていません。"
   }
 
   assert {
@@ -238,6 +264,23 @@ run "policies" {
       },
       { Sid = "ReadStateKey", Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" },
       { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" },
+      { Sid = "CreateAccessLogGroup", Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:PutRetentionPolicy"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access:*" },
+      { Sid = "PutLogResourcePolicy", Effect = "Allow", Action = "logs:PutResourcePolicy", Resource = "*" },
+      {
+        Sid       = "PutAccessLogDestination"
+        Effect    = "Allow"
+        Action    = "logs:PutDeliveryDestination"
+        Resource  = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+        Condition = { ArnEquals = { "logs:DeliveryDestinationResourceArn" = ["arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access", "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access:*"] } }
+      },
+      { Sid = "PutAccessLogSources", Effect = "Allow", Action = "logs:PutDeliverySource", Resource = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"] },
+      {
+        Sid      = "CreateAccessLogDeliveries"
+        Effect   = "Allow"
+        Action   = "logs:CreateDelivery"
+        Resource = ["arn:aws:logs:ap-northeast-1:123456789012:delivery:*", "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"]
+      },
+      { Sid = "AllowBucketLogDelivery", Effect = "Allow", Action = "s3:AllowVendedLogDeliveryForResource", Resource = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"] },
       { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = "kms:PutKeyPolicy", Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
       { Sid = "ReadGitHubProvider", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviderTags"], Resource = aws_iam_openid_connect_provider.github.arn },
       {
@@ -247,8 +290,14 @@ run "policies" {
         Resource = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply", "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity", "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"]
       },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+      { Sid = "ReadAccessLogGroupTags", Effect = "Allow", Action = "logs:ListTagsForResource", Resource = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access" },
+      { Sid = "DescribeLogGroups", Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "*" },
+      { Sid = "DescribeLogResourcePolicies", Effect = "Allow", Action = "logs:DescribeResourcePolicies", Resource = "*" },
+      { Sid = "ReadAccessLogDestination", Effect = "Allow", Action = ["logs:GetDeliveryDestination", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access" },
+      { Sid = "ReadAccessLogSources", Effect = "Allow", Action = ["logs:GetDeliverySource", "logs:ListTagsForResource"], Resource = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan"] },
+      { Sid = "ReadAccessLogDeliveries", Effect = "Allow", Action = ["logs:GetDelivery", "logs:ListTagsForResource"], Resource = "arn:aws:logs:ap-northeast-1:123456789012:delivery:*" },
     ]
-    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物と state の鍵の管理になっていません。"
+    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap と段5 の構成物と state の鍵の管理になっていません。"
   }
 
   assert {
@@ -316,7 +365,13 @@ run "key_arn_follows_input" {
   command = apply
 
   variables {
-    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    state_key_arn              = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    access_log_group_arn       = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:tabp-admin-state-backend-access"
+    access_log_destination_arn = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:tabp-admin-state-backend-access"
+    access_log_source_arns = [
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:tabp-admin-tfstate",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:tabp-admin-tfplan",
+    ]
   }
 
   override_data {
@@ -369,6 +424,17 @@ run "key_in_other_region" {
   expect_failures = [aws_iam_role_policy.apply_identity]
 }
 
+# 同じアカウントの alias の ARN は鍵ではない。root の validation の内側でも、precondition が鍵の形を見る。
+run "alias_arn_as_state_key" {
+  command = plan
+
+  variables {
+    state_key_arn = "arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate"
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
 run "key_in_other_partition" {
   command = plan
 
@@ -380,16 +446,22 @@ run "key_in_other_partition" {
 }
 
 # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
-# mock の ARN は実物より短いので、入力が許す最も長い値（37文字の project と sandbox、aws-cn の 63文字の Bucket）と、
+# mock の ARN は実物より短いので、入力が許す最も長い値（37文字の project と sandbox、aws-cn の 63文字の Bucket、60文字のログの名前）と、
 # それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、partition と name_prefix から長さが決まる。
 run "policy_length" {
   command = apply
 
   variables {
-    name_prefix            = "abcdefghijklmnopqrstuvwxyz01234567890-sandbox"
-    state_bucket_arn       = format("arn:aws-cn:s3:::%063d", 1)
-    state_key_arn          = "arn:aws-cn:kms:cn-northwest-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn = format("arn:aws-cn:s3:::%063d", 2)
+    name_prefix                = "abcdefghijklmnopqrstuvwxyz01234567890-sandbox"
+    state_bucket_arn           = format("arn:aws-cn:s3:::%063d", 1)
+    state_key_arn              = "arn:aws-cn:kms:cn-northwest-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn     = format("arn:aws-cn:s3:::%063d", 2)
+    access_log_group_arn       = "arn:aws-cn:logs:cn-northwest-1:123456789012:log-group:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    access_log_destination_arn = "arn:aws-cn:logs:cn-northwest-1:123456789012:delivery-destination:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    access_log_source_arns = [
+      "arn:aws-cn:logs:cn-northwest-1:123456789012:delivery-source:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "arn:aws-cn:logs:cn-northwest-1:123456789012:delivery-source:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    ]
   }
 
   override_data {
@@ -441,8 +513,14 @@ run "role_arns_follow_data_sources" {
   command = apply
 
   variables {
-    name_prefix   = "t4bp-dev"
-    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    name_prefix                = "t4bp-dev"
+    state_key_arn              = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    access_log_group_arn       = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:tabp-admin-state-backend-access"
+    access_log_destination_arn = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:tabp-admin-state-backend-access"
+    access_log_source_arns = [
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:tabp-admin-tfstate",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:tabp-admin-tfplan",
+    ]
   }
 
   override_data {
@@ -467,4 +545,95 @@ run "role_arns_follow_data_sources" {
     ]
     error_message = "apply-identity の ManageCiRoles の Resource が、partition・アカウント・role 名から組んだ ARN になっていません。"
   }
+}
+
+# 既定の値と違う partition・リージョン・アカウントの ARN を、data source を合わせて与え、入力を読んだかを区別する。
+run "access_log_arns_follow_input" {
+  command = apply
+
+  variables {
+    state_key_arn              = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    access_log_group_arn       = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access"
+    access_log_destination_arn = "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:t4bp-dev-state-backend-access"
+    access_log_source_arns     = ["arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:t4bp-dev-tfstate"]
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[10].Resource == [
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access:*",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:t4bp-dev-state-backend-access",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:t4bp-dev-tfstate",
+    ]
+    error_message = "apply の role の DenyAccessLogChange の Resource が、入力の Log Group・delivery destination・delivery source の ARN になっていません。"
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.this["plan"].policy).Statement[15].Resource == "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery:*"
+    error_message = "delivery の pattern が、partition・リージョン・アカウントの data source から組まれていません。"
+  }
+
+  assert {
+    condition = [
+      jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[12].Resource,
+      jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[14].Resource,
+      jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[14].Condition.ArnEquals["logs:DeliveryDestinationResourceArn"],
+      jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[15].Resource,
+      jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[16].Resource,
+      ] == [
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access:*",
+      "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:t4bp-dev-state-backend-access",
+      ["arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access", "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access:*"],
+      ["arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:t4bp-dev-tfstate"],
+      ["arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery:*", "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:t4bp-dev-state-backend-access", "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-source:t4bp-dev-tfstate"],
+    ]
+    error_message = "apply-identity の Log Group・delivery destination・delivery source・delivery の Resource と宛先の Condition が、入力と data source から組まれていません。"
+  }
+}
+
+# 別のアカウントやリージョンの ARN を渡すと、段5 のログの構成物を作る apply が権限の外で落ちる。
+run "access_log_arn_in_other_account" {
+  command = plan
+
+  variables {
+    access_log_group_arn = "arn:aws:logs:ap-northeast-1:210987654321:log-group:tabp-admin-state-backend-access"
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "access_log_destination_arn_in_other_region" {
+  command = plan
+
+  variables {
+    access_log_destination_arn = "arn:aws:logs:us-east-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "access_log_source_arn_in_other_partition" {
+  command = plan
+
+  variables {
+    access_log_source_arns = [
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate",
+      "arn:aws-cn:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan",
+    ]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
 }
