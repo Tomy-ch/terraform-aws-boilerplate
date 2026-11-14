@@ -360,3 +360,37 @@ test_pass_forgotten_other_key_policy if {
 	forgotten := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
 	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3]), forgotten])
 }
+
+role_change(name, actions) := {"address": sprintf("module.x.aws_iam_role.this[%q]", [name]), "type": "aws_iam_role", "change": {"actions": actions, "after": {"name": name}, "after_unknown": {}}}
+
+noop_key_policy := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["no-op"]}])
+
+test_violation_named_role_replaced_key_policy_unchanged if {
+	every actions in [["delete", "create"], ["create", "delete"]] {
+		msgs := p.deny with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-plan", actions)])
+		msgs == {sprintf("[PLAN-KMS-10] p.json: role tabp-admin-ci-plan を作り直すのに、それを名指す %s を書き直しません。KMS は作り直す前の role を名指し続けます", [declared])}
+	}
+}
+
+test_pass_named_role_replaced_key_policy_rewritten if {
+	updated := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["update"]}])
+	count(p.deny) == 0 with input as fixture.plan([updated, role_change("tabp-admin-ci-plan", ["delete", "create"])])
+}
+
+test_pass_unnamed_role_replaced if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-other", ["delete", "create"])])
+}
+
+test_pass_named_role_updated_in_place if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-plan", ["update"])])
+}
+
+test_pass_role_name_suffix_only if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("ci-plan", ["delete", "create"])])
+}
+
+test_violation_declared_key_policy_forgotten if {
+	forgotten := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
+	msgs := p.deny with input as fixture.plan([forgotten])
+	msgs == {sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [declared])}
+}

@@ -33,7 +33,7 @@ deny contains msg if {
 
 deny contains msg if {
 	address := declared_key_policy
-	count({d | some d in lib.documents; d.type == "aws_kms_key_policy"; d.address == address}) == 0
+	count({d | some d in lib.documents; d.type == "aws_kms_key_policy"; d.address == address; d.change.actions != ["forget"]}) == 0
 	msg := sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [address])
 }
 
@@ -43,6 +43,26 @@ deny contains msg if {
 	d.change.actions != ["forget"]
 	not lib.parsed(d)
 	msg := sprintf("[PLAN-KMS-09] %s: %s の %s が plan で決まらないか、JSON の文書として読めません", [d.path, d.address, d.attr])
+}
+
+# KMS は Principal の role を一意 ID で持つので、同じ名前で作り直した role は、Key Policy を書き直すまで鍵を使えない。
+# 名前が同じなら ARN の文字列も同じで、Key Policy の変更は no-op として plan される。
+replaced_role_names contains c.rc.change.after.name if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_role"
+	c.rc.change.actions in {["delete", "create"], ["create", "delete"]}
+	is_string(c.rc.change.after.name)
+}
+
+deny contains msg if {
+	some r in key_policies
+	r.document.address == declared_key_policy
+	r.document.change.actions == ["no-op"]
+	some name in replaced_role_names
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	endswith(a, sprintf(":role/%s", [name]))
+	msg := sprintf("[PLAN-KMS-10] %s: role %s を作り直すのに、それを名指す %s を書き直しません。KMS は作り直す前の role を名指し続けます", [r.document.path, name, r.document.address])
 }
 
 # 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とし、05 は限っていないと読み、03 は見ない。
