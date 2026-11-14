@@ -1,9 +1,18 @@
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+data "aws_partition" "current" {}
+
 locals {
-  state_name = "${var.project}-${var.env}-tfstate"
+  state_name       = "${var.project}-${var.env}-tfstate"
+  plan_output_name = "${var.project}-${var.env}-tfplan"
   # identity root の lock file。backend.tf の key と、deployment-identity の unlock-identity の IAM の Resource が同じ key を持つ。
   identity_lock_key = "identity/terraform.tfstate.tflock"
   identity_keys     = ["identity/terraform.tfstate", local.identity_lock_key]
   workload_keys     = ["workload/terraform.tfstate", "workload/terraform.tfstate.tflock"]
+
+  access_log_name         = "${var.project}-${var.env}-state-backend-access"
+  access_log_source_names = [local.state_name, local.plan_output_name]
+  logs_arn_prefix         = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
 }
 
 module "s3" {
@@ -37,7 +46,7 @@ module "kms" {
 module "plan_output" {
   source = "./internal/plan-output"
 
-  name           = "${var.project}-${var.env}-tfplan"
+  name           = local.plan_output_name
   retention_days = var.plan_output_retention_days
   kms_key_arn    = module.kms.key_arn
 }

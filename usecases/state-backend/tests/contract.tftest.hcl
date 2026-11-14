@@ -216,7 +216,6 @@ run "ci_role_arns_apply_identity_no_name" {
   expect_failures = [var.ci_role_arns]
 }
 
-# alias の名前は bootstrap の手順が鍵を名指す名前なので、鍵より前に plan で決まらなければならない。
 run "state_key_alias_name" {
   command = plan
 
@@ -233,6 +232,33 @@ run "state_key_alias_name" {
   assert {
     condition     = output.state_key_alias_name == module.kms.alias_name
     error_message = "state_key_alias_name が、鍵に付く alias の名前を返していません。"
+  }
+}
+
+run "access_log_arns" {
+  command = plan
+
+  variables {
+    project = "t4bp"
+    env     = "dev"
+  }
+
+  assert {
+    condition     = output.access_log_group_arn == "arn:aws:logs:ap-northeast-1:123456789012:log-group:t4bp-dev-state-backend-access"
+    error_message = "access_log_group_arn が <project>-<env>-state-backend-access の Log Group の ARN を返していません。"
+  }
+
+  assert {
+    condition     = output.access_log_destination_arn == "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:t4bp-dev-state-backend-access"
+    error_message = "access_log_destination_arn が Log Group と同じ名前の delivery destination の ARN を返していません。"
+  }
+
+  assert {
+    condition = output.access_log_source_arns == [
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:t4bp-dev-tfstate",
+      "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:t4bp-dev-tfplan",
+    ]
+    error_message = "access_log_source_arns が2つの Bucket の delivery source の ARN を返していません。"
   }
 }
 

@@ -14,7 +14,7 @@ output "state_key_arn" {
 }
 
 output "state_key_alias_name" {
-  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。bootstrap の手順が鍵を名指す名前である。手順と identity root のテストがそれぞれ同じ値を直書きし、テストはこの出力をその直書きで固定する。手順とテストの直書きの一致は検査しない。"
+  description = "state の鍵の alias の名前（`alias/<project>-<env>-tfstate`）。入力だけから決まり、鍵より前に参照できる。bootstrap の手順が鍵を名指す名前である。"
   value       = module.kms.alias_name
 }
 
@@ -26,4 +26,19 @@ output "plan_output_bucket_name" {
 output "plan_output_bucket_arn" {
   description = "CI の plan の出力を置く Bucket の ARN。CI の role の IAM で、plan の出力の書き込みと Bucket の設定の Resource を絞るのに使う。"
   value       = module.plan_output.bucket_arn
+}
+
+output "access_log_group_arn" {
+  description = "S3 サーバーアクセスログを受ける Log Group の ARN（API が付ける `:*` を除いた形）。入力と data source だけから決まり、Log Group より前に参照できる。`deployment-identity` の `access_log_group_arn` に渡す。"
+  value       = "${local.logs_arn_prefix}:log-group:${local.access_log_name}"
+}
+
+output "access_log_destination_arn" {
+  description = "S3 サーバーアクセスログの delivery destination の ARN。入力と data source だけから決まる。`deployment-identity` の `access_log_destination_arn` に渡す。"
+  value       = "${local.logs_arn_prefix}:delivery-destination:${local.access_log_name}"
+}
+
+output "access_log_source_arns" {
+  description = "state Bucket と plan の出力の Bucket の delivery source の ARN（この順）。入力と data source だけから決まる。`deployment-identity` の `access_log_source_arns` に渡す。"
+  value       = [for n in local.access_log_source_names : "${local.logs_arn_prefix}:delivery-source:${n}"]
 }
