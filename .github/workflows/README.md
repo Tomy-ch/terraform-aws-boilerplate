@@ -283,13 +283,37 @@ truthy 側へ置く。
 
 ## 通知の起動条件
 
+通知は受け手ごとに3つの系統に分かれる。
+
+| 系統 | 送るもの |
+| --- | --- |
+| セキュリティ | 走査（`govulncheck.yaml`・`secret-scan.yaml`・`trivy-fs.yaml`・`zizmor.yaml`・`scorecard.yaml`）の失敗と検出 |
+| 本番と管理の deploy | 管理アカウントと本番の apply の成功と失敗 |
+| 非本番の deploy | dev・stg の apply の成功と失敗 |
+
+系統ごとの secret の名前と、`notify.yaml` を呼ぶ job の系統は
+[`.github/notify-channels.toml`](../notify-channels.toml) が宣言する。`make notify-channel-lint`（`make actions-lint`
+に含まれる）が、`notify.yaml` を呼ぶすべての job がその系統の secret を渡していることを確かめ、宣言に無い
+呼び出しと、呼び出しの無い宣言を落とす。
+
+- **系統は、呼び出し側が `notify.yaml` の `slack-webhook-url` へ渡す secret で選ぶ。** Incoming Webhook は
+  URL ごとに宛先のチャンネルが決まるので、`notify.yaml` の secret の入力は1つである。通知の job は
+  environment を持たないので、secret はリポジトリの secret である
+- **secret が未設定の系統は、notice を出して配信を省く。別の系統へ代わりに送らない** —— `notify.yaml` は
+  代わりの宛先を持たず、本番の通知が非本番の宛先へ届く取り違えは起きない
+- **deploy は成功も通知する。走査は成功を通知しない** —— deploy の成功は何がいつ適用されたかの記録であり、
+  走査の成功は何も起きなかったことの報告にすぎない。変更の無い apply も成功として通知し、plan の件数の行
+  （`No changes.` か `Plan: …`）を載せて変更の有無を見分けられるようにする。件数の行は apply の job の
+  outputs で渡り、terraform の出力は含まない
+- 非本番の系統は、workload root の apply の job を足す変更が配線し、その通知の job を宣言に足す
+
 スケジュール（週次）を持つ走査は、job が `failure` または `cancelled` で終わったとき `notify.yaml` を
 呼ぶ。Pull Request の失敗は作者に見えている。**スケジュールの失敗は誰にも見えない** —— それが
 通知の存在理由である。`cancelled` を含めるのは、timeout やランナー障害で殺された job が `failure`
 ではなくそちらを報告するため。
 
 報告のみの走査は所見があっても job が緑のままなので、failure モードは決して発火しない。それらは
-検出モードで `notify.yaml` を呼び、実行者・ref・commit と所見そのものを名指しする。どちらのモードも
+検出モードで `notify.yaml` を呼び、実行者・ref・commit と所見そのものを名指しする。どのモードも
 webhook の secret が未設定なら配信を省いて run を緑のままにする —— 作られたばかりのリポジトリが、
 送れない通知で落とされることはない。
 
@@ -301,12 +325,14 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | --- | --- | --- |
 | `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
 | `govulncheck.yaml` | 運用機構（`scripts/`）の Go のコードの呼び出し経路が届く既知脆弱性 | schedule |
-| `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
+
+`tool-outdated-report.yaml` は `notify.yaml` を呼ばず、宣言より新しい版が上流に在ることを issue へ書く。
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
 失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job か順序の検査の job が落ちると
 apply の job は `skipped` で終わるので、3つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
-job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。`terraform-unlock.yaml` は
+job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。
+apply の job が `success` で終わったときは、`notify-success` が成功のモードで通知する。`terraform-unlock.yaml` は
 通知を持たない —— 人が起動し、結果を画面で見ている。
 
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、
