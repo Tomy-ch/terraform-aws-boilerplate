@@ -19,9 +19,6 @@ variables {
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
-# assert で、for 式に resource の集まり（aws_iam_role.this やその keys）を回させない。その assert が落ちると、
-# Terraform は診断を出す前に panic する（value has marks）。jsondecode した文書を回す for は落ちても診断を出す。
-
 # provider の ARN は plan では決まらないので、mock の apply で確かめる。
 run "trust_per_role" {
   command = apply
