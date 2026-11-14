@@ -6,11 +6,11 @@ COVERAGE_THRESHOLD ?= 95
 
 .PHONY: go-test ## 運用機構のテストを実行
 go-test:
-	@$(GO_TOOL) go -C scripts test ./...
+	@$(GO_TOOL) env GIT_DIR=$(GIT_POISON) GIT_INDEX_FILE=$(GIT_POISON) go -C scripts test ./...
 
 .PHONY: go-test-cover ## カバレッジ付きでテストを実行
 go-test-cover:
-	@$(GO_TOOL) go -C scripts test -race -coverprofile=../coverage.out -covermode=atomic -count=1 ./...
+	@$(GO_TOOL) env GIT_DIR=$(GIT_POISON) GIT_INDEX_FILE=$(GIT_POISON) go -C scripts test -race -coverprofile=../coverage.out -covermode=atomic -count=1 ./...
 
 .PHONY: cover-gate ## 総カバレッジが下限以上かを検査
 ##

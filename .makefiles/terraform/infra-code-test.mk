@@ -16,7 +16,11 @@ endef
 
 .PHONY: infra-code-gate-test ## インフラ内コードの検出が、0件・壊れた入力・未分類・許可リスト外で落ちることを検査
 infra-code-gate-test:
-	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(IC_TEST_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
+	@$(call GIT_OUTER_CHECK,infra-code-gate-test-cases)
+
+.PHONY: infra-code-gate-test-cases
+infra-code-gate-test-cases:
+	@set -u; $(GIT_ISOLATE); mkdir -p tmp; root=$$(mktemp -d "$(IC_TEST_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	ok() { $(IC_FIXTURE_OK); }; \
 	decl() { $(IC_FIXTURE_DECL); }; \
 	expect_make() { \

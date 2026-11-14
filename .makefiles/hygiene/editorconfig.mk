@@ -9,8 +9,9 @@
 ## 引用しただけでそのファイルの残りが検査の外に出る。editorconfig-directive-lint がそれを落とす。
 
 .PHONY: editorconfig-check ## ファイルが .editorconfig の宣言に一致することを検査
-editorconfig-check: editorconfig-check-canary editorconfig-directive-canary editorconfig-directive-lint
-	@set -eu; test "$$(tr -d '[:space:]' < .editorconfig-checker.json)" = '{}' || { \
+editorconfig-check: editorconfig-directive-lint
+	@set -eu; $(call GIT_OUTER_CHECK,editorconfig-check-canary); $(call GIT_OUTER_CHECK,editorconfig-directive-canary); \
+	test "$$(tr -d '[:space:]' < .editorconfig-checker.json)" = '{}' || { \
 		echo "❌ editorconfig-check: .editorconfig-checker.json が空ではありません" >&2; exit 2; }; \
 	n=$$($(GO_TOOL) editorconfig-checker -dry-run | grep -c .) || n=0; \
 	test "$$n" -gt 0 || { echo "❌ editorconfig-check: 走査対象のファイルが0件です" >&2; exit 2; }; \
@@ -20,7 +21,7 @@ editorconfig-check: editorconfig-check-canary editorconfig-directive-canary edit
 ## 本走査と同じ探索経路（git の追跡ファイル）で違反が落ちることを確かめる。
 .PHONY: editorconfig-check-canary ## editorconfig-checker が追跡ファイルの違反で落ちることを検査
 editorconfig-check-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-canary.XXXXXX); \
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
 	printf 'a:\n\tb: c\n' > "$$dir/canary.yaml"; \
@@ -45,7 +46,7 @@ editorconfig-directive-lint:
 ## ここが落ち、lint の分類を見直す合図になる。印の綴りはこのファイルに書けないので連結で組む。
 .PHONY: editorconfig-directive-canary ## editorconfig-checker が閉じない無効化の印の後ろを検査しないことを検査
 editorconfig-directive-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-directive-canary.XXXXXX); \
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-directive-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
 	printf '# %s%s\na:\n\tb: c\n' 'editorconfig-' 'checker-disable' > "$$dir/canary.yaml"; \

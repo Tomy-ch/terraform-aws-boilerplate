@@ -19,7 +19,7 @@
 | `security/` | secret scan、脆弱性・設定の走査、供給網のクールダウン |
 | `terraform/` | Terraform 側の検査（fmt / validate / TFLint / `terraform test` / Policy Test、インフラ内コードの検出）と、その検査自体の検査。Policy Test の conftest は `$(GO_TOOL)` を経由する |
 | `terraform/operation/` | Terraform を動かす入口。`local.mk` は人の手元（AWS へのログイン、env の root の init と plan）、`ci.mk` は CI（OIDC で role を assume しての plan と apply） |
-| 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入） |
+| 直下 | `runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）、`git-isolation.mk`（一時リポジトリを建てるレシピの git の環境変数） |
 
 各ツールが何を検査するかは [`scripts/README.md`](../scripts/README.md) が持つ。ここはその起動だけを持つ。
 
@@ -69,3 +69,6 @@ plan の log の1行目）は `$(call RUN_SCRIPT_HOST,tf-local,...)` で `script
 `.lefthook.yaml` は `make <target>` を呼ぶだけで、検査を定義しない。権威は CI にあり、フックは
 速いフィードバックのために在る（[0501](../docs/adr/0501-development-tooling-composition.md) 決定26）。
 **フックでのみ成立する検査を作らない**（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定19）。
+
+git は hook へ `GIT_DIR` / `GIT_INDEX_FILE` などを渡す。一時リポジトリを建てるレシピの規約は
+`git-isolation.mk` の冒頭が持つ。

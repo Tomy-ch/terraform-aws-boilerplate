@@ -27,14 +27,14 @@ TRUFFLEHOG_EXCLUDE_HISTORY := .trufflehog-exclude-paths-history.txt
 .PHONY: trufflehog-scan ## push 予定の commit 範囲を trufflehog で走査
 trufflehog-scan:
 	@set -eu; $(SECRET_SCAN_FROM_GUARD); \
-	$(MAKE) -s --no-print-directory trufflehog-canary; \
+	$(call GIT_OUTER_CHECK,trufflehog-canary); \
 	from=$$(git rev-parse --verify "$(COMMITLINT_FROM)^{commit}"); \
 	$(GO_TOOL) trufflehog git file://. --since-commit "$$from" --branch HEAD \
 		$(TRUFFLEHOG_FLAGS) --exclude-paths=$(TRUFFLEHOG_EXCLUDE)
 
 .PHONY: trufflehog-history ## 全履歴を trufflehog で走査
-trufflehog-history: trufflehog-canary
-	@set -eu; mkdir -p tmp; ex=$$(mktemp tmp/trufflehog-exclude.XXXXXX); trap 'rm -f "$$ex"' EXIT; \
+trufflehog-history:
+	@set -eu; $(call GIT_OUTER_CHECK,trufflehog-canary); mkdir -p tmp; ex=$$(mktemp tmp/trufflehog-exclude.XXXXXX); trap 'rm -f "$$ex"' EXIT; \
 	cat $(TRUFFLEHOG_EXCLUDE) $(TRUFFLEHOG_EXCLUDE_HISTORY) > "$$ex"; \
 	$(GO_TOOL) trufflehog git file://. $(TRUFFLEHOG_FLAGS) --exclude-paths="$$ex"
 
@@ -53,8 +53,8 @@ $(GO_TOOL) sh -c 'set -f; IFS="$$(printf "\n_")"; IFS="$${IFS%_}"; list=$$1; shi
 endef
 
 .PHONY: trufflehog-worktree ## commit 前の作業ツリーを trufflehog で走査
-trufflehog-worktree: trufflehog-canary
-	@set -eu; mkdir -p tmp; list=$$(mktemp tmp/trufflehog-worktree.XXXXXX); trap 'rm -f "$$list" "$$list".*' EXIT; \
+trufflehog-worktree:
+	@set -eu; $(call GIT_OUTER_CHECK,trufflehog-canary); mkdir -p tmp; list=$$(mktemp tmp/trufflehog-worktree.XXXXXX); trap 'rm -f "$$list" "$$list".*' EXIT; \
 	git -c core.quotepath=false ls-files -co --exclude-standard | while IFS= read -r f; do [ -e "$$f" ] && printf '%s\n' "$$f"; done > "$$list"; \
 	$(call TRUFFLEHOG_FILES,"$$list",trufflehog-worktree,$(TRUFFLEHOG_FLAGS))
 
@@ -65,7 +65,7 @@ trufflehog-worktree: trufflehog-canary
 ## AWS の検出器は ID と secret のエントロピーに閾値を持つので、乱数で作る。
 .PHONY: trufflehog-canary ## trufflehog が偽の資格情報を git と filesystem の両経路で検証なしに検出することを検査
 trufflehog-canary:
-	@set -eu; mkdir -p tmp; dir=$$(mktemp -d tmp/trufflehog-canary.XXXXXX); \
+	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/trufflehog-canary.XXXXXX); \
 	trap 'rm -rf "$$dir" "$$dir".*' EXIT; \
 	cat $(TRUFFLEHOG_EXCLUDE) $(TRUFFLEHOG_EXCLUDE_HISTORY) > "$$dir.ex"; \
 	id=$$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 16); \

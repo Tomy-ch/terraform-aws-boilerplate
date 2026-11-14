@@ -2,6 +2,7 @@
 
 # 実行基盤と道具の版
 include .makefiles/runner.mk
+include .makefiles/git-isolation.mk
 include .makefiles/versions.mk
 include .makefiles/host-tools.mk
 
