@@ -76,14 +76,18 @@ hosts = [
 ]
 
 [class.docker-hub]
-# 上流のイメージで実行する Security の道具（ADR-0503 決定4）の pull。layer の実体は Cloudflare の R2 から
-# 配られる。`*.r2.cloudflarestorage.com` は誰でも作れるバケットへの持ち出し口になるので、Docker Hub の
-# バケットのホストだけを許す。
+# 上流のイメージで実行する Security の道具（ADR-0503 決定4）の pull。layer の実体は Cloudflare の R2 か
+# S3 のどちらかから配られ、どちらになるかは要求ごとに変わる。この2つの Bucket のホストは Docker の許可
+# リストの文書に載っておらず、CI で名前解決に失敗したときの名前である。`*.r2.cloudflarestorage.com` や
+# `*.s3.amazonaws.com` は誰でも作れる Bucket への持ち出し口になるので、Docker Hub の Bucket のホストだけを
+# 許す。ただし bullfrog は名前解決の結果の IP で判定するので（`aws-state` のコメント）、正確な名前を書いても
+# 実効の持ち出し口は狭まらない。
 hosts = [
   "registry-1.docker.io",
   "auth.docker.io",
   "production.cloudfront.docker.com",
   "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
+  "docker-images-prod.s3.dualstack.us-east-1.amazonaws.com",
 ]
 
 [class.deps-dev]
