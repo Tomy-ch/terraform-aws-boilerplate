@@ -594,6 +594,15 @@ test_violation_state_bucket_children_weakened if {
 	}
 }
 
+test_violation_state_bucket_declaration_missing if {
+	every c in [
+		{"op": {"op": "remove", "path": "/state_backend/bucket"}, "bucket": ""},
+		{"op": {"op": "replace", "path": "/state_backend/bucket", "value": plan_bucket}, "bucket": plan_bucket},
+	] {
+		fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の state Bucket %q", [c.bucket]), messages_for(world(valid_statements), json.patch(decl, [c.op])))
+	}
+}
+
 test_violation_roots_element_malformed if {
 	every root in [
 		{"writer": "other_role", "State": "other/terraform.tfstate"},
