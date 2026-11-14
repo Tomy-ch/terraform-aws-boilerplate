@@ -207,7 +207,7 @@ state backend が無い時点では Terraform が state を保存できないの
    docs/setup/scripts/verify.sh stage1
    ```
 
-   Public Access Block の4項目、所有権（`BucketOwnerEnforced`）、版管理（`Enabled`）の行がすべて `ok` であること。1つでも `NG` なら手順3 をやり直し、3つがすべて `ok` になるまで段2 へ進まない。暗号化の行（AWS の既定の `AES256` と `SSE-C` の拒否）が `NG` なら、段2 へ進まずに出力を Pull Request に記録して止まる（AWS が新しい Bucket の既定を変えたことになり、state-backend/ADR-0101 の見直し条件に当たる）
+   Public Access Block の4項目、所有権（`BucketOwnerEnforced`）、版管理（`Enabled`）の行がすべて `ok` で、最後の行が `NG 0 件` を示すこと。3つのどれかが `NG` なら手順3 をやり直し、3つがすべて `ok` になるまで段2 へ進まない。暗号化の行（AWS の既定の `AES256` と `SSE-C` の拒否）が `NG` なら、段2 へ進まずに出力を Pull Request に記録して止まる（AWS が新しい Bucket の既定を変えたことになり、state-backend/ADR-0101 の見直し条件に当たる）
 
 名前や namespace を誤ったときは、空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消して作り直す。
 
@@ -252,7 +252,7 @@ state backend が無い時点では Terraform が state を保存できないの
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   すべての行が `ok` であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）。Policy か lifecycle か alias が在ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
+   最後の行が `NG 0 件` を示し、終了コードが 0 であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）。Policy か lifecycle か alias が在ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
 
 差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
 
@@ -291,7 +291,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   すべての行が `ok` であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）
+   最後の行が `NG 0 件` を示し、終了コードが 0 であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）
 
 4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）。state の鍵はまだ無いので、init は鍵を渡さない
 
@@ -309,7 +309,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   すべての行が `ok` であること
+   最後の行が `NG 0 件` を示し、終了コードが 0 であること
 
 7. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
 
@@ -327,21 +327,21 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
      make plan-admin-identity
      ```
 
-   - `docs/setup/scripts/verify.sh stage4` のすべての行が `ok` であること。段3 で `bootstrap_executor_user_name` を渡したなら、その名前を与えて実行する（`BOOTSTRAP_EXECUTOR=<名前> docs/setup/scripts/verify.sh stage4`）。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは次である
+   - `docs/setup/scripts/verify.sh stage4` の最後の行が `NG 0 件` を示し、終了コードが 0 であること。段3 で `bootstrap_executor_user_name` を渡したなら、その名前を与えて実行する（`BOOTSTRAP_EXECUTOR=<名前> docs/setup/scripts/verify.sh stage4`）。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは次である
      - 2つの Bucket の既定の暗号化が、state の鍵（`alias/tabp-admin-tfstate` の指す鍵）の SSE-KMS で、Bucket Key を使わず、`SSE-C` を拒否する。state そのものは、段5 で state を書き換える最初の CI の apply まで SSE-S3 のままである
      - OIDC provider の `ClientIDList` が `sts.amazonaws.com` だけである
      - 4つの role の inline policy が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity` / `unlock_identity`）で、managed policy が付いていない
-     - state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒否する文が在る。`BOOTSTRAP_EXECUTOR` を与えたなら、書き込みの例外にその user が在る
+     - state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒否する文が在る。`BOOTSTRAP_EXECUTOR` を与えたなら、書き込みの例外（`DenyObjectWriteByOthers`）にその user が在り、与えなければ IAM user が無い
      - lifecycle が規則を1つだけ持ち、版の保持日数が `env/admin/identity` の `state_noncurrent_version_retention_days`、delete marker の掃除、未完了の multipart の中止（1日）を持つ
      - state の鍵が有効な対称鍵（単一リージョン、`AWS_KMS`）で、自動の rotation が365日である
-     - Key Policy が、アカウントへの委任の文と、plan と apply-identity の role に S3 経由の `kms:Decrypt`・`kms:GenerateDataKey` を許す文と、unlock-identity の role に identity root の lock file の object に限って `kms:Decrypt` を許す文の3つだけである
+     - Key Policy が、アカウントへの委任の文と、plan と apply-identity の role に S3 経由（`kms:ViaService`）の `kms:Decrypt`・`kms:GenerateDataKey` を許す文と、unlock-identity の role に S3 経由で identity root の lock file の object に限って `kms:Decrypt` を許す文の3つだけである
 9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更と、plan の出力の置き場の読み取りが拒否されること。unlock-identity の role の権限は、state の鍵の block の後で確かめる
 
    ```bash
    docs/setup/scripts/verify.sh permissions
    ```
 
-   すべての行が `ok` であること。`NG` の行は、期待した判定と、違った Action を示す。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは、S3 と IAM、state の鍵（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）、unlock-identity の role（同 決定9）の権限である
+   最後の行が `NG 0 件` を示し、終了コードが 0 であること。`NG` の行は、期待した判定と、違った Action を示す。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは、S3 と IAM、state の鍵（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）、unlock-identity の role（同 決定9）の権限である
    - CI の role は鍵と alias を作れず、鍵の権限は state の鍵の ARN に限られる。apply の role は state の鍵の管理の Action を読み取りも含めて Deny され、暗号操作は Deny されない（`implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す
    - unlock-identity の role の一覧は lock file の key の prefix に限られ、state の key は読めない。`kms:Decrypt` は IAM では許さず、state の鍵の Key Policy が lock file の object に限って許す
    - `simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。KMS が実際の要求で Deny をどう評価するかも確かめない。plan の role の実効の権限は手順11 の CI の plan が、apply-identity の role の実効の権限は段5 の最初の apply の run が確かめる。ただし `apply/*` への書き込みの実効の権限は、apply の出力を置く CI の job が入るまで確かめる経路が無い。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
@@ -422,7 +422,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更は、足した Action とその期待の判定を `docs/setup/scripts/verify.sh` の `permissions` に同じ変更で足す。apply の後、`docs/setup/scripts/verify.sh permissions` のすべての行が `ok` であることを確かめ、出力を Pull Request に記録する。Condition を持つ Action は、条件キーを `--context` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。ログの構成物の権限を変えたときは、段4 の手順9 のログの構成物の block で確かめる
+4. 権限を足す変更は、足した Action とその期待の判定を `docs/setup/scripts/verify.sh` の `permissions` に同じ変更で足す。apply の後、`docs/setup/scripts/verify.sh permissions` の最後の行が `NG 0 件` を示し、終了コードが 0 であることを確かめ、出力を Pull Request に記録する。Condition を持つ Action は、条件キーを `--context` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。ログの構成物の権限を変えたときは、段4 の手順9 のログの構成物の block で確かめる
 5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を merge する前に、管理者が environment `admin-unlock-identity` を作り、secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く。environment は、その Pull Request のブランチを checkout した手元で `make apply-environments` を実行して宣言から作り、secret は `gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity` で置く。merge の前に作るのは、存在しない environment を参照した workflow が走ると、GitHub がその environment を保護なしで作るためである（[`.github/settings/README.md`](../../.github/settings/README.md)）。作った後、管理者はその Pull Request のブランチで `make repo-settings-drift` を実行し、宣言と実態が一致することを確かめてよい
 6. 一時 IAM user の書き込みを拒否する変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。その変更は、段3 で `bootstrap_executor_user_name` を足したアカウントでは、それを外す変更（段5 の最初の変更）であり、足していないアカウントでは、書き込みの拒否を入れる変更である。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
    1. identity root を変更する Pull Request を merge し、その CI の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
@@ -498,8 +498,8 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 
 - [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
 - [ ] `TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity` が `4 to import, 30 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の30件だけだった
-- [ ] `docs/setup/scripts/verify.sh stage1` のすべての行が `ok` だった
-- [ ] `docs/setup/scripts/verify.sh before-apply` のすべての行が `ok` だった
+- [ ] `docs/setup/scripts/verify.sh stage1` が `NG 0 件` で終わった
+- [ ] `docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
 - [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 
 段3 の終了時:
@@ -511,13 +511,13 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 
 段4 の終了時:
 
-- [ ] 段4 の手順3 で、`docs/setup/scripts/verify.sh before-apply` のすべての行が `ok` だった
+- [ ] 段4 の手順3 で、`docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
 - [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
 - [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
-- [ ] apply の直前に、`docs/setup/scripts/verify.sh before-apply` のすべての行が `ok` だった
+- [ ] apply の直前に、`docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
-- [ ] `docs/setup/scripts/verify.sh stage4` のすべての行が `ok` だった
-- [ ] `docs/setup/scripts/verify.sh permissions` のすべての行が `ok` で、ログの構成物の block の行数と判定が段4 の手順9 の期待どおりだった
+- [ ] `docs/setup/scripts/verify.sh stage4` が `NG 0 件` で終わった
+- [ ] `docs/setup/scripts/verify.sh permissions` が `NG 0 件` で終わり、ログの構成物の block の行数と判定が段4 の手順9 の期待どおりだった
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
 

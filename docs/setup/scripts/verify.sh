@@ -25,7 +25,8 @@ JQ_POLICY_NAMES=$(jq_program <<'JQ'
 JQ
 )
 JQ_EXECUTOR_EXCEPTION=$(jq_program <<'JQ'
-[.. | strings | select(endswith($u))] | length > 0
+def arr: if type == "array" then . else [.] end;
+[.Statement[] | select(.Sid == "DenyObjectWriteByOthers") | .Condition.ArnNotEquals["aws:PrincipalArn"] | arr[] | select(endswith($u))] | length > 0
 JQ
 )
 JQ_LIFECYCLE=$(jq_program <<'JQ'
@@ -40,12 +41,16 @@ JQ_STATE_OBJECT=$(jq_program <<'JQ'
 .ServerSideEncryption == "aws:kms" and .SSEKMSKeyId == $key
 JQ
 )
+JQ_NO_USER=$(jq_program <<'JQ'
+[.. | strings | select(test(":user/"))] | length == 0
+JQ
+)
 JQ_KEY_POLICY=$(jq_program <<'JQ'
 def arr: if type == "array" then . else [.] end;
 .Statement | length == 3
 and any(.Effect == "Allow" and .Principal.AWS == $root)
-and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"])
-and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$unlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$lock]))
+and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"] and .Condition.StringEquals["kms:ViaService"] == $via)
+and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$unlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$lock]) and .Condition.StringEquals["kms:ViaService"] == $via)
 JQ
 )
 
@@ -93,8 +98,12 @@ sim() {
     shift 2
   fi
   local out n=0 bad=()
-  out=$(aws iam simulate-principal-policy --policy-source-arn "$(role_arn "$role")" --resource-arns "$res" \
-    ${ctx[@]+"${ctx[@]}"} --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text)
+  # 代入の失敗は set -e でスクリプトごと止めるので、NG として数えて続ける。下の代入も同じ。
+  if ! out=$(aws iam simulate-principal-policy --policy-source-arn "$(role_arn "$role")" --resource-arns "$res" \
+    ${ctx[@]+"${ctx[@]}"} --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text); then
+    ng "$role $res: simulate-principal-policy が失敗した"
+    return 0
+  fi
   local action decision
   while read -r action decision; do
     [[ -n $action ]] || continue
@@ -115,7 +124,7 @@ state_key_arn() { aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS" 
 # 2つの Bucket の既定の暗号化が、state の鍵の SSE-KMS で、Bucket Key を使わず、SSE-C を拒むこと。
 check_kms_encryption() {
   local key b
-  key=$(state_key_arn)
+  key=$(state_key_arn) || key=""
   for b in "$BUCKET" "$PLAN_BUCKET"; do
     expect_json "$b の既定の暗号化が state の鍵の SSE-KMS（Bucket Key なし、SSE-C を拒否）" "$(s3 get-bucket-encryption "$b")" \
       --arg key "$key" "$JQ_KMS_ENCRYPTION"
@@ -161,12 +170,14 @@ stage4() {
       '.AttachedPolicies == []'
   done
   local policy
-  policy=$(s3 get-bucket-policy "$BUCKET" --query Policy --output text)
+  policy=$(s3 get-bucket-policy "$BUCKET" --query Policy --output text) || policy=""
   expect_json "state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒む文が在る" "$policy" \
     '(.Statement | all(.Effect == "Deny")) and (.Statement | any(.Condition.Bool["aws:SecureTransport"] == "false"))'
   if [[ -n $BOOTSTRAP_EXECUTOR ]]; then
-    expect_json "Bucket Policy の書き込みの例外に、段4 の実行者 $BOOTSTRAP_EXECUTOR が在る" "$policy" \
+    expect_json "Bucket Policy の書き込みの例外（DenyObjectWriteByOthers）に、段4 の実行者 ${BOOTSTRAP_EXECUTOR} が在る" "$policy" \
       --arg u ":user/${BOOTSTRAP_EXECUTOR}" "$JQ_EXECUTOR_EXCEPTION"
+  else
+    expect_json "Bucket Policy に IAM user が無い（段3 で段4 の実行者を例外に入れていない）" "$policy" "$JQ_NO_USER"
   fi
   local days
   days=$(sed -nE 's/^[[:space:]]*state_noncurrent_version_retention_days[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT/env/admin/identity/main.tf")
@@ -180,7 +191,7 @@ stage4() {
   expect_json "Key Policy が、アカウントへの委任・plan と apply-identity の S3 経由の暗号操作・unlock-identity の lock file の復号の3文だけ" \
     "$(aws kms get-key-policy --region "$REGION" --key-id "$KEY_ALIAS" --policy-name default --query Policy --output text)" \
     --arg root "arn:aws:iam::${ACCOUNT_ID}:root" --arg plan "$(role_arn plan)" --arg ai "$(role_arn apply-identity)" \
-    --arg unlock "$(role_arn unlock-identity)" --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" \
+    --arg unlock "$(role_arn unlock-identity)" --arg via "s3.${REGION}.amazonaws.com" --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" \
     "$JQ_KEY_POLICY"
 }
 
@@ -215,7 +226,10 @@ permissions() {
 
   echo "# state の鍵"
   local sk other="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000000"
-  sk=$(state_key_arn)
+  sk=$(state_key_arn) || {
+    ng "state の鍵の ARN（${KEY_ALIAS}）を読めない"
+    sk="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/unknown"
+  }
   sim allowed apply-identity "$sk" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy
   sim allowed apply-identity "*" kms:ListAliases
   sim allowed plan "$sk" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
@@ -263,7 +277,6 @@ main() {
       return 2
     }
   done
-  ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
   if [[ ! $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then
     echo "ACCOUNT_ID が12桁ではありません。make aws-login をやり直してください" >&2
     return 2
@@ -283,5 +296,13 @@ main() {
 }
 
 # 出力をそのまま Pull Request に貼れるように、アカウント ID を伏せる。
-main "$@" 2>&1 | LC_ALL=C sed -E 's/[0-9]{12}/<account>/g'
+ACCOUNT_ID=""
+if command -v aws >/dev/null; then
+  ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text 2>/dev/null) || ACCOUNT_ID=""
+fi
+if [[ $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then
+  main "$@" 2>&1 | LC_ALL=C sed "s/${ACCOUNT_ID}/<account>/g"
+else
+  main "$@"
+fi
 exit "${PIPESTATUS[0]}"
