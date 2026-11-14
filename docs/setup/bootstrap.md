@@ -403,7 +403,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 - 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
 - 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した（`docs/setup/scripts/verify.sh stage5`）
 - state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した（`docs/setup/scripts/verify.sh stage5`）。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
-- 一時 IAM user の書き込みが拒否された後、例外に無い IAM の主体（一時 IAM user）による state Bucket の、存在しない key（`verify/<日時>`）への `delete-object` が `AccessDenied` を返した。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。`put-object` は state の鍵の Key Policy でも拒まれうるので、Bucket Policy の拒否と切り分けられない。`delete-object` は KMS を通らない。拒まれなかったら、残るのは存在しない key の delete marker だけで、lifecycle が消す。Pull Request に記録して止まる
+- 一時 IAM user の書き込みが拒否された後、例外に無い IAM の主体（一時 IAM user）による state Bucket の、存在しない key（`verify/<日時>`）への `delete-object` が `AccessDenied` を返し、そのメッセージが `with an explicit deny in a resource-based policy` で終わった。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。`put-object` は state の鍵の Key Policy でも拒まれうるので、Bucket Policy の拒否と切り分けられない。`delete-object` は KMS を通らない。拒まれなかったら、残るのは存在しない key の delete marker だけで、lifecycle が消す。Pull Request に記録して止まる
 
   ```sh
   aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key "verify/$(date -u +%Y%m%dT%H%M%SZ)"
@@ -478,7 +478,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
 - [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
 - [ ] `head-object` で、state が state の鍵で暗号化されていた
-- [ ] 一時 IAM user の、存在しない key への `delete-object` が state Bucket で `AccessDenied` を返した
+- [ ] 一時 IAM user の、存在しない key への `delete-object` が state Bucket で、resource-based policy の explicit deny による `AccessDenied` を返した
 - [ ] 一時 IAM user の書き込みを拒否する前に、取り消した apply の残した lock を `Terraform Unlock` が外し、その apply の再実行が緑になった
 - [ ] 段3 で足した `bootstrap_executor_user_name` を段5 の最初の変更で外し、`get-bucket-policy` の例外に一時 IAM user の ARN が無かった
 - [ ] 一時 IAM user の書き込みが拒否された後、`Terraform Unlock` が lock の無い状態で緑で走った
