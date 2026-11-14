@@ -16,6 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
+
 const (
 	// missingCommand は、PATH に存在しない実行ファイル名。失敗する手順を組み立てるために使います。
 	missingCommand = "gobp-repo-setup-missing-command"

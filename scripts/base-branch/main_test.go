@@ -9,7 +9,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
 
 // lsRemoteOutput は、`git ls-remote --heads origin 'refs/heads/release/*'` の出力形式を模したものです。
 const lsRemoteOutput = "9ce3aa244390610aafe2c2be564a757126c84e58\trefs/heads/release/v1.0.0\n" +

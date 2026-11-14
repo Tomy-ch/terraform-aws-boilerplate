@@ -23,7 +23,13 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
 
 // miseFixture は実際の mise.toml の形を最小で再現する。`[settings]` と `[env]` を混ぜてあるのは、
 // ツール宣言だけを読めていることを確かめるため。

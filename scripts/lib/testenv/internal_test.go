@@ -1,12 +1,19 @@
 package testenv
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeReporter は判断が呼んだ経路を控えます。実際の *testing.T は Skip も Fatalf も
@@ -56,6 +63,12 @@ func Test_外界の既定値(t *testing.T) { //nolint:paralleltest // パッケ�
 	got, gotErr := lookPath("go")
 	assert.Equal(t, want, got, "lookPath が exec.LookPath を指していない")
 	assert.Equal(t, wantErr == nil, gotErr == nil)
+
+	assert.Equal(t, reflect.ValueOf(gitLocalEnvVars).Pointer(), reflect.ValueOf(localEnvVars).Pointer(),
+		"localEnvVars が gitLocalEnvVars を指していない")
+	assert.Equal(t, reflect.ValueOf(os.Unsetenv).Pointer(), reflect.ValueOf(unsetenv).Pointer(),
+		"unsetenv が os.Unsetenv を指していない")
+	assert.Same(t, os.Stderr, stderr, "stderr が os.Stderr を指していない")
 }
 
 func Test_requireNonRoot(t *testing.T) { //nolint:paralleltest // パッケージ変数を差し替える
@@ -137,5 +150,186 @@ func Test_requireShellcheck(t *testing.T) { //nolint:paralleltest // パッケ�
 			assert.False(t, f.skipped, "失敗させるべき場面で skip した")
 			assert.Contains(t, f.message, RequireShellcheckEnv)
 		})
+	})
+}
+
+func swapIsolation(t *testing.T, names []string, listErr, unsetErr error) *[]string {
+	t.Helper()
+
+	var unset []string
+	oldList, oldUnset := localEnvVars, unsetenv
+	localEnvVars = func() ([]string, error) { return names, listErr }
+	unsetenv = func(name string) error {
+		unset = append(unset, name)
+
+		return unsetErr
+	}
+	t.Cleanup(func() { localEnvVars, unsetenv = oldList, oldUnset })
+
+	return &unset
+}
+
+func Test_isolateGit(t *testing.T) { //nolint:paralleltest // パッケージ変数を差し替える
+	t.Run("正常系", func(t *testing.T) {
+		t.Run("git が返した名前をすべて外す", func(t *testing.T) {
+			unset := swapIsolation(t, []string{"GIT_DIR", "GIT_INDEX_FILE"}, nil, nil)
+
+			require.NoError(t, isolateGit())
+
+			assert.Equal(t, []string{"GIT_DIR", "GIT_INDEX_FILE"}, *unset)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Run("一覧を得られなければ何も外さずエラーを返す", func(t *testing.T) {
+			want := errors.New("git が無い")
+			unset := swapIsolation(t, nil, want, nil)
+
+			require.ErrorIs(t, isolateGit(), want)
+			assert.Empty(t, *unset)
+		})
+
+		// 0件を「外すものが無い」と読むと、防御が働かないまま緑になる。
+		t.Run("一覧が0件ならエラーを返す", func(t *testing.T) {
+			swapIsolation(t, []string{}, nil, nil)
+
+			require.ErrorIs(t, isolateGit(), ErrNoLocalEnvVars)
+		})
+
+		t.Run("外せなければ名前を添えてエラーを返す", func(t *testing.T) {
+			want := errors.New("unsetenv 失敗")
+			swapIsolation(t, []string{"GIT_DIR"}, nil, want)
+
+			err := isolateGit()
+
+			require.ErrorIs(t, err, want)
+			assert.Contains(t, err.Error(), "GIT_DIR")
+		})
+	})
+}
+
+func Test_gitLocalEnvVars(t *testing.T) { //nolint:paralleltest // t.Setenv を使う
+	t.Run("正常系", func(t *testing.T) {
+		t.Run("事故に効いた変数を含む", func(t *testing.T) {
+			names, err := gitLocalEnvVars()
+
+			require.NoError(t, err)
+			assert.Contains(t, names, "GIT_DIR")
+			assert.Contains(t, names, "GIT_INDEX_FILE")
+		})
+
+		// make go-test は GIT_DIR を存在しえない場所へ向けて走る。そこで答えなければ、
+		// 防御そのものが毒で落ちる。
+		t.Run("GIT_DIR が存在しない場所を指していても答える", func(t *testing.T) {
+			t.Setenv("GIT_DIR", "/dev/null/git-isolation-required")
+
+			names, err := gitLocalEnvVars()
+
+			require.NoError(t, err)
+			assert.Contains(t, names, "GIT_DIR")
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Run("git が PATH に無ければエラーを返す", func(t *testing.T) {
+			t.Setenv("PATH", t.TempDir())
+
+			_, err := gitLocalEnvVars()
+
+			require.Error(t, err)
+		})
+	})
+}
+
+// gitRun は、いまのプロセスの環境変数のまま git を起動します。
+func gitRun(t *testing.T, args ...string) {
+	t.Helper()
+
+	out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+	require.NoError(t, err, "git %v: %s", args, out)
+}
+
+func snapshot(t *testing.T, dir string) map[string][32]byte {
+	t.Helper()
+
+	got := map[string][32]byte{}
+	require.NoError(t, filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		got[rel] = sha256.Sum256(body)
+
+		return nil
+	}))
+
+	return got
+}
+
+// hook が渡す GIT_DIR / GIT_INDEX_FILE を外側のリポジトリへ向けたまま、一時リポジトリを建てる
+// テストと同じ操作を走らせる。防御なしで外側が変わることを先に確かめるので、git の挙動が変わって
+// 事故が起きなくなれば、このテストが何も見ていないことが分かる。
+func Test_isolateGit_外側のリポジトリ(t *testing.T) { //nolint:paralleltest // t.Setenv を使う
+	ops := func(t *testing.T) string {
+		t.Helper()
+
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "evil.tf"), []byte("x\n"), 0o600))
+		gitRun(t, "-C", dir, "init", "-q")
+		gitRun(t, "-C", dir, "config", "user.name", "repo-setup-test")
+		gitRun(t, "-C", dir, "add", "-A")
+		gitRun(t, "-C", dir, "-c", "user.email=t@example.com", "-c", "core.hooksPath=/dev/null",
+			"-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
+		gitRun(t, "-C", dir, "branch", "develop")
+		gitRun(t, "-C", dir, "tag", "v0.0.0")
+
+		return dir
+	}
+	outer := func(t *testing.T) string {
+		t.Helper()
+
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "README"), []byte("outer\n"), 0o600))
+		gitRun(t, "-C", dir, "init", "-q")
+		gitRun(t, "-C", dir, "add", "README")
+		gitRun(t, "-C", dir, "-c", "user.name=outer", "-c", "user.email=outer@example.com",
+			"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "outer")
+		t.Setenv("GIT_DIR", filepath.Join(dir, ".git"))
+		t.Setenv("GIT_INDEX_FILE", filepath.Join(dir, ".git", "index"))
+
+		return dir
+	}
+
+	t.Run("防御なしでは外側が書き換わる", func(t *testing.T) {
+		o := outer(t)
+		before := snapshot(t, filepath.Join(o, ".git"))
+
+		ops(t)
+
+		assert.NotEqual(t, before, snapshot(t, filepath.Join(o, ".git")))
+	})
+
+	t.Run("防御ありでは外側が変わらず、一時リポジトリへ書く", func(t *testing.T) {
+		o := outer(t)
+		before := snapshot(t, filepath.Join(o, ".git"))
+
+		require.NoError(t, isolateGit())
+		dir := ops(t)
+
+		assert.Equal(t, before, snapshot(t, filepath.Join(o, ".git")), "外側のリポジトリが書き換わった")
+		config, err := os.ReadFile(filepath.Join(dir, ".git", "config"))
+		require.NoError(t, err)
+		assert.True(t, bytes.Contains(config, []byte("repo-setup-test")), "一時リポジトリへ書いていない")
+		for _, ref := range []string{"refs/heads/develop", "refs/tags/v0.0.0"} {
+			_, err := os.Stat(filepath.Join(dir, ".git", ref))
+			assert.NoError(t, err, "%s が一時リポジトリに無い", ref)
+		}
 	})
 }

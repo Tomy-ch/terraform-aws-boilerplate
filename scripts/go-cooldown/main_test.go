@@ -16,7 +16,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
 
 // goModFixture は require ブロックが 2 つに割れた実際の go.mod の形を最小で再現する。
 const goModFixture = `module terraform-aws-boilerplate

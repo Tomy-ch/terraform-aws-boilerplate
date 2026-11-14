@@ -1,6 +1,8 @@
 package testenv
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"regexp"
 	"testing"
@@ -10,6 +12,10 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/shellcheck"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(RunGitIsolated(m))
+}
 
 // 環境変数の名前は workflow 側にリテラルで書かれています。テスト内のリテラルと突き合わせても
 // 「自分で書いた文字列と一致した」しか言えないので、workflow そのものを読みます。
@@ -26,15 +32,12 @@ func TestEnvNames_workflowと一致する(t *testing.T) {
 	}
 }
 
-// probe は、外界のどれが何回読まれたかを控えます。
 type probe struct {
 	euidCalls int
 	envNames  []string
 	lookNames []string
 }
 
-// installProbe は外界を probe へ差し替えます。uid は Geteuid の戻り、found は
-// shellcheck が PATH に在るかです。
 func installProbe(t *testing.T, uid int, found bool) *probe {
 	t.Helper()
 
@@ -93,6 +96,65 @@ func TestRequireShellcheck(t *testing.T) { //nolint:paralleltest // パッケー
 			// 探す名前がずれると、実物が在っても skip し続けます。
 			assert.Equal(t, []string{shellcheck.Binary}, p.lookNames)
 			assert.Empty(t, p.envNames, "在ると分かった時点で決まるのに環境変数を読んでいる")
+		})
+	})
+}
+
+type fakeM struct {
+	called bool
+	seen   map[string]bool
+	code   int
+}
+
+func (f *fakeM) Run() int {
+	f.called = true
+	f.seen = map[string]bool{}
+	for _, name := range []string{"TESTENV_PROBE_GIT_DIR", "TESTENV_PROBE_KEEP"} {
+		_, ok := os.LookupEnv(name)
+		f.seen[name] = ok
+	}
+
+	return f.code
+}
+
+func TestRunGitIsolated(t *testing.T) { //nolint:paralleltest // パッケージ変数と環境変数を差し替える
+	swapList := func(t *testing.T, names []string, err error) *bytes.Buffer {
+		t.Helper()
+
+		var buf bytes.Buffer
+		oldList, oldErr := localEnvVars, stderr
+		localEnvVars = func() ([]string, error) { return names, err }
+		stderr = &buf
+		t.Cleanup(func() { localEnvVars, stderr = oldList, oldErr })
+
+		return &buf
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Run("一覧の変数を外してから走らせ、その終了コードを返す", func(t *testing.T) {
+			t.Setenv("TESTENV_PROBE_GIT_DIR", "/outer/.git")
+			t.Setenv("TESTENV_PROBE_KEEP", "1")
+			swapList(t, []string{"TESTENV_PROBE_GIT_DIR"}, nil)
+			m := &fakeM{code: 7}
+
+			got := RunGitIsolated(m)
+
+			assert.Equal(t, 7, got)
+			assert.False(t, m.seen["TESTENV_PROBE_GIT_DIR"], "一覧の変数が残ったまま走った")
+			assert.True(t, m.seen["TESTENV_PROBE_KEEP"], "一覧に無い変数まで外した")
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Run("一覧を得られなければ走らせず 2 を返す", func(t *testing.T) {
+			buf := swapList(t, nil, errors.New("git が無い"))
+			m := &fakeM{}
+
+			got := RunGitIsolated(m)
+
+			assert.Equal(t, 2, got)
+			assert.False(t, m.called, "外せないまま走った")
+			assert.Contains(t, buf.String(), "git が無い")
 		})
 	})
 }

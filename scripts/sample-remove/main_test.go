@@ -18,6 +18,10 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
+
 const fixtureLock = `# header
 "actions/checkout@v7.0.1" = "aaaa"
 "acme/scan@v1" = "bbbb"

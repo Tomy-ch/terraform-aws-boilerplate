@@ -112,7 +112,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/markers/`|`sample-remove` の印の解釈。名前空間ごとの begin / end（入れ子は深さで数える）、line、replace を扱う。対応の取れない印、綴りを誤った印、1行に2つの印、`=` と空白で始まらない戻す行はエラーにし、行番号を付ける。取り除いた跡に並んだ空行だけを1つにまとめ、もとからある空行には触れない。 <!-- sample:line -->|
 |`lib/misetoml/`|`mise.toml` の `[tools]` が宣言する版の読み取り。**この宣言を読む実装はここだけです** —— 同じ表を複数の実装が各々の正規表現で読むと、一方だけが読める宣言が生まれ、もう一方は黙ってその道具を検査の対象から外します。落ちるのは検査ではなく検査の対象の方で、ゲートは緑を返します。解釈できない行とキーの重複はエラーにします（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定14）。複数版の配列は受け付けません —— どれが有効かを黙って選ぶより、呼び手に気づかせる方が安全だからです。|
 |`lib/requiredchecks/`|保護設定の宣言（`.github/settings/branch-protection.json`）が required とする status check の context の読み取り。**この宣言の required の context を読む実装はここだけです** —— 読み手は `required-check-lint` と `oidc-job-lint` で、同じ宣言を各々が読むと、一方だけが読める宣言が生まれ、もう一方は黙って検査の対象を失います。読めない・解釈できない宣言と、context を欠くか空の項目はエラー、required の context が0件のときは別の番兵で返します（[0702](../docs/adr/0702-repository-operations-substrate.md) 決定13-14）。|
-|`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。|
+|`lib/testenv/`|実行環境の都合への対処の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。`RunGitIsolated` は、git がリポジトリの位置を決める環境変数（`git rev-parse --local-env-vars`）をテストのプロセスから外してから走らせます。|
 
 ## Test Strategy
 
@@ -158,6 +158,10 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
   ではなく、**エラーの後のファイルの内容**に対して。
 - **出力そのものが契約であるものは、出力を assert する。** drift の一覧、`::warning::` 注釈——人間か
   CI の注釈がそれをそのまま読むので、標準のロガーを捕まえて、出たものに対して assert します。
+- **git を起動するテストのパッケージは `TestMain` で `testenv.RunGitIsolated` を通す。** git の hook の中では
+  `GIT_DIR` / `GIT_INDEX_FILE` が commit しているリポジトリを指し、一時リポジトリへ向けた git も、
+  `t.Chdir` した先で本体が起動する git も、そちらへ書きます。`make go-test` / `go-test-cover` は
+  `GIT_DIR` を存在しえないパスにして走るので、通さないパッケージは最初の git で落ちます。
 - **フィクスチャは `t.TempDir()` に建て、実物のツリーを読まない。** リポジトリ自身の workflow や
   lockfile を入力にしたテストは、今日の内容で通ったり落ちたりするようになり、ツールについての
   テストであることをやめます（ADR-0702 決定17）。

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(testenv.RunGitIsolated(m))
+}
 
 type fixture struct {
 	t   *testing.T
@@ -38,7 +45,6 @@ func (f *fixture) git(args ...string) string {
 		"-C", f.dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
 		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
 	}, args...)...)
-	cmd.Env = gitFreeEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(f.t, err, string(out))
 
@@ -70,18 +76,35 @@ func (f *fixture) numstat(rev string) []byte {
 
 	cmd := exec.CommandContext(f.t.Context(), "git", "-C", f.dir, "log", "--no-merges", "-M", "--diff-filter=d",
 		"--format=commit %H", "--numstat", "-z", rev)
-	cmd.Env = gitFreeEnv()
 	out, err := cmd.Output()
 	require.NoError(f.t, err)
 
 	return out
 }
 
-// gitFreeEnv は、git の hook の中で走ったときに外側のリポジトリを指す GIT_* を外した環境を返す。
-func gitFreeEnv() []string {
-	return slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "GIT_")
-	})
+func (f *fixture) gitState() map[string]string {
+	f.t.Helper()
+
+	root := filepath.Join(f.dir, ".git")
+	got := map[string]string{}
+	require.NoError(f.t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		got[rel] = string(body)
+
+		return nil
+	}))
+
+	return got
 }
 
 func writeFile(t *testing.T, body string) string {
@@ -345,7 +368,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 if [ -n "$src" ]; then
-	g() { env -u GIT_DIR -u GIT_WORK_TREE git -C "$src" "$@"; }
+	g() { git -C "$src" "$@"; }
 else
 	g() { git "$@"; }
 fi
@@ -380,14 +403,17 @@ func recipe(t *testing.T, f *fixture, target string, vars []string, env ...strin
 
 	args := append([]string{"-C", root, "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=", "SCRIPT_BIN=" + rel}, vars...)
 	cmd := exec.CommandContext(t.Context(), "make", args...)
-	cmd.Env = append(slices.DeleteFunc(gitFreeEnv(), func(kv string) bool {
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
 			strings.HasPrefix(kv, "GITHUB_") || strings.HasPrefix(kv, "FAKE_GITLEAKS_") || strings.HasPrefix(kv, "PATH=")
 	}), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GIT_DIR="+filepath.Join(f.dir, ".git"), "GIT_WORK_TREE="+f.dir)
 	cmd.Env = append(cmd.Env, env...)
 
+	// 本走査は GIT_DIR で f を読む。canary が一時リポジトリを建てるときにそれを継げば f へ書く。
+	before := f.gitState()
 	out, err := cmd.CombinedOutput()
+	assert.Equal(t, before, f.gitState(), "レシピが GIT_DIR の指すリポジトリを書き換えた: %s", out)
 
 	return string(out), err
 }
