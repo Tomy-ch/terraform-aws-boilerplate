@@ -40,6 +40,7 @@ deny contains msg if {
 deny contains msg if {
 	some d in lib.documents
 	d.type == "aws_kms_key_policy"
+	d.change.actions != ["forget"]
 	not lib.parsed(d)
 	msg := sprintf("[PLAN-KMS-09] %s: %s の %s が plan で決まらないか、JSON の文書として読めません", [d.path, d.address, d.attr])
 }

@@ -34,6 +34,8 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。`state-backend` の `ci_role_arns.apply_identity`（state の鍵の Key Policy と、state Bucket の Bucket Policy の identity root の state と lock file の書き込み） |
 | `unlock_identity_role_arn` | `terraform-unlock.yaml` の `unlock-admin-identity`（`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む）。`state-backend` の `ci_role_arns.unlock_identity`（state の鍵の Key Policy の、lock file に限った復号と、state Bucket の Bucket Policy の lock file の削除） |
 
+4つの ARN は、role の computed の `arn` ではなく、role の名前とアカウント・partition から組む。role の作成と置換の plan でも値が決まるので、それを名指す state の鍵の Key Policy が CI の `plan.kms_key_policy`（`PLAN-KMS-09`）で落ちない。`internal/github-oidc/tests/trust.tftest.hcl` の `role_arns_do_not_read_computed_arn` が見る。
+
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
 | 役割 | role 名 | GitHub の environment | 使う場面 |

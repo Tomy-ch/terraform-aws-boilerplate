@@ -1244,13 +1244,19 @@ func TestCiMk(t *testing.T) {
 		t.Parallel()
 
 		for _, target := range []string{"ci-plan-admin-identity", "ci-apply-admin-identity"} {
-			cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target, "CI_POLICY_NAMESPACES=")
-			cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-				return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
-			})
-			out, err := cmd.CombinedOutput()
-			require.Error(t, err, target)
-			assert.Contains(t, string(out), "CI_POLICY_NAMESPACES が空です", target)
+			for _, value := range []string{"", " "} {
+				t.Run(target+" "+strconv.Quote(value), func(t *testing.T) {
+					t.Parallel()
+
+					cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target, "CI_POLICY_NAMESPACES="+value)
+					cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+						return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+					})
+					out, err := cmd.CombinedOutput()
+					require.Error(t, err)
+					assert.Contains(t, string(out), "CI_POLICY_NAMESPACES が空です")
+				})
+			}
 		}
 	})
 
@@ -1358,7 +1364,7 @@ aws)
 	exit 0 ;;
 conftest)
 	for a; do test "$prev" = --namespace && ns=$a; prev=$a; done
-	if test -f "$k/policy-$ns.json"; then cat "$k/policy-$ns.json"; else sed "s/plan\.stateful_protection/$ns/g" "$k/policy.json"; fi
+	if test -f "$k/policy-$ns.json"; then cat "$k/policy-$ns.json"; else cat "$k/policy.json"; fi
 	exit 1 ;;
 timeout)
 	shift 3
@@ -1410,6 +1416,7 @@ const (
 	recipeNoop     = `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["no-op"]}}]}`
 	recipeCreate   = `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["create"]}}]}`
 	recipePass     = `[{"namespace":"plan.stateful_protection","successes":2}]`
+	recipeKMSPass  = `[{"namespace":"plan.kms_key_policy","successes":3}]`
 	recipeViolated = `[{"namespace":"plan.stateful_protection","successes":1,"failures":[{"msg":"[PLAN-STATE-01] stub"}]}]`
 )
 
@@ -1480,8 +1487,11 @@ func newRecipe(bin string) recipeFunc {
 
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "backend.tf"), []byte(backend), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "providers.tf"), []byte(providersOK), 0o600))
-		for _, rego := range []string{"stateful_protection.rego", "kms_key_policy.rego"} {
-			require.NoError(t, os.WriteFile(filepath.Join(policy, rego), []byte("deny contains msg if {\n}\n\ndeny contains msg if {\n}\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(policy, "stateful_protection.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 2)), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(policy, "kms_key_policy.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 3)), 0o600))
+
+		if _, ok := knobs["policy-plan.kms_key_policy.json"]; !ok {
+			require.NoError(t, os.WriteFile(filepath.Join(k, "policy-plan.kms_key_policy.json"), []byte(recipeKMSPass), 0o600))
 		}
 
 		for name, v := range knobs {
@@ -1573,7 +1583,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Contains(t, r.summary, "apply が終わりました")
 			assert.Equal(t, 2, countCalls(r.calls, "conftest test "), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
-			assert.Contains(t, r.out, "plan.kms_key_policy")
+			assert.Contains(t, r.out, "plan.kms_key_policy: 規則 3 件")
 			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
 			assert.Contains(t, r.calls, "--bucket plan-output-bucket --key apply/8-1-admin-identity.txt")
 			assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
@@ -1604,6 +1614,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		"conftest が何も出さなければ apply しない":            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": ""}, "Policy を通りません"},
 		"評価の数が規則の数と違えば apply しない":                 {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": `[{"namespace":"plan.stateful_protection","successes":3}]`}, "一致しません"},
 		"Key Policy の Policy に違反すれば apply しない":    {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
+		"Key Policy の評価の数が規則の数と違えば apply しない":     {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":2}]`}, "一致しません"},
 		"Key Policy の Policy が評価されなければ apply しない": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません"},
 	}
 	for name, c := range fail {
@@ -1804,6 +1815,9 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "plan の全文の版 ID: v-1")
 		assert.Contains(t, r.summary, "- 版 ID: `v-1`")
 		assert.NotContains(t, r.out, "PLAN-SECRET")
+		assert.Equal(t, 2, countCalls(r.calls, "conftest test "), r.calls)
+		assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
+		assert.Contains(t, r.out, "plan.kms_key_policy: 規則 3 件")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -1811,11 +1825,12 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		knobs map[string]string
 		want  string
 	}{
-		"plan が失敗しても全文を置いてから失敗する":                {map[string]string{"plan-rc": "1", "plan.json": recipeNoop, "policy.json": recipePass}, "全文は上の key にあります"},
-		"Policy に違反すれば全文を置いてから失敗する":              {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipeViolated}, "[PLAN-STATE-01] stub"},
-		"plan を JSON にできなくても全文を置いてから失敗する":        {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": recipePass}, "plan の JSON を解釈できません"},
-		"Policy が評価されなくても全文を置いてから失敗する":           {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": "[]"}, "Policy を通りません"},
-		"Key Policy の Policy に違反すれば全文を置いてから失敗する": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
+		"plan が失敗しても全文を置いてから失敗する":                   {map[string]string{"plan-rc": "1", "plan.json": recipeNoop, "policy.json": recipePass}, "全文は上の key にあります"},
+		"Policy に違反すれば全文を置いてから失敗する":                 {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipeViolated}, "[PLAN-STATE-01] stub"},
+		"plan を JSON にできなくても全文を置いてから失敗する":           {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": recipePass}, "plan の JSON を解釈できません"},
+		"Policy が評価されなくても全文を置いてから失敗する":              {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": "[]"}, "Policy を通りません"},
+		"Key Policy の Policy が評価されなくても全文を置いてから失敗する": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません"},
+		"Key Policy の Policy に違反すれば全文を置いてから失敗する":    {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
 	}
 	for name, c := range fail {
 		t.Run(name, func(t *testing.T) {

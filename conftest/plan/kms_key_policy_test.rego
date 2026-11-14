@@ -90,7 +90,8 @@ test_violation_key_policy_unknown if {
 test_violation_key_policy_not_json if {
 	every v in ["{", 1] {
 		broken := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {"policy": v}, "after_unknown": {}}}
-		fixture.has("[PLAN-KMS-09]", p.deny) with input as fixture.plan([broken])
+		ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([broken])
+		ids == {"[PLAN-KMS-09]"}
 	}
 }
 
@@ -324,4 +325,38 @@ test_pass_delegation_single_action if {
 test_violation_delegation_with_not_action if {
 	r := json.patch(without(root, "/Action"), [{"op": "add", "path": "/NotAction", "value": "kms:Decrypt"}])
 	"[PLAN-KMS-08]" in ids([r, via_s3])
+}
+
+# T5: 宣言した Key Policy の削除だけは、文書として数えない。
+test_violation_declared_key_policy_deleted if {
+	gone := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
+	msgs := p.deny with input as fixture.plan([gone])
+	msgs == {sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [declared])}
+}
+
+test_pass_declared_key_policy_replaced if {
+	replaced := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["delete", "create"]}])
+	count(p.deny) == 0 with input as fixture.plan([replaced])
+}
+
+# T6
+test_violation_declared_address_other_type if {
+	other := fixture.doc("aws_iam_role_policy", declared, "policy", {"Statement": [fixture.allow("s3:GetObject")]})
+	fixture.has("[PLAN-KMS-00] 宣言した state の鍵の Key Policy", p.deny) with input as fixture.plan([other])
+}
+
+# T8: JSON として読めれば 09 は出ない。文書の形でないものは委任が0件として 02 が落とす。
+test_violation_key_policy_json_not_document if {
+	every v in ["{}", "[]", "\"x\""] {
+		odd := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {"policy": v}, "after_unknown": {}}}
+		ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([odd])
+		"[PLAN-KMS-02]" in ids
+		not "[PLAN-KMS-09]" in ids
+	}
+}
+
+# A2: 管理から外す変更は変更後の文書を持たない。その理由は plan.stateful_protection が持つ。
+test_pass_forgotten_other_key_policy if {
+	forgotten := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
+	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3]), forgotten])
 }
