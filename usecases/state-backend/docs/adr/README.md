@@ -18,6 +18,7 @@
 | [0102](0102-no-mfa-delete-or-object-lock.md) | state Bucket に MFA delete と Object Lock を掛けない | Accepted |
 | [0103](0103-expire-noncurrent-state-versions.md) | state Bucket の上書きされた版を、保持日数で消す | Accepted |
 | [0104](0104-state-object-write-deny.md) | state Bucket の object の書き込みを、Bucket Policy で CI の role と key と操作の組に限る | Accepted |
+| [0105](0105-no-server-access-logs.md) | state Bucket と plan の出力の Bucket に、S3 サーバーアクセスログを持たせない | Accepted |
 
 ### 02 plan の出力
 

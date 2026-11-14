@@ -34,13 +34,7 @@ S3 の Bucket と、その不変条件を持つ一般 module（ADR-0102 決定12
 
 Bucket Policy は、テストが mock の下で文書の中身を確かめられるよう `jsonencode` で組む（`mock_provider` の下では `aws_iam_policy_document` の `json` が意味の無い文字列になる）。Bucket に置ける Policy は1つだけなので、TLS の拒否と書き込みの拒否は同じ文書に置く。
 
-## まだ持たないもの
-
-最初の消費者 `state-backend`（#19）の bootstrap の段に合わせて、同じ module に足していく。段1 の CLI が作る構成は段2 で `import` し、plan がそれらに変更を示さないことを確かめる（ADR-0602 決定8）。段1 で CLI が作らないもの（同 決定5）は、段2 の plan に追加として現れる。
-
-| 足すもの | 段 |
-| --- | --- |
-| S3 サーバーアクセスログの CloudWatch Logs への配送 | #19 の段5 |
+段1 の CLI が作る構成は段2 で `import` し、plan がそれらに変更を示さないことを確かめる（ADR-0602 決定8）。段1 で CLI が作らないもの（同 決定5）は、段2 の plan に追加として現れる。
 
 段1 の CLI は、この module と同じ名前（`-<account_id>-<region>-an`）と同じ namespace で Bucket を作る必要がある。その手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段1 が持つ。
 
@@ -105,4 +99,5 @@ Bucket Policy は、テストが mock の下で文書の中身を確かめられ
 | 対象 | 理由 | この module を使う他の usecase への影響 | 見直し条件 |
 | --- | --- | --- | --- |
 | MFA delete を掛けない（KICS c5b31ab9） | `usecases/state-backend/docs/adr/0102-no-mfa-delete-or-object-lock.md` | この module の Bucket は MFA delete を持たない | 同 ADR が変わったとき。`main.tf` 先頭の `kics-scan disable` も同時に見直す |
+| S3 サーバーアクセスログを持たない（Checkov CKV_AWS_18、KICS f861041c、SonarCloud S6258） | `usecases/state-backend/docs/adr/0105-no-server-access-logs.md` | この module の Bucket は、要求ごとの記録を持たない。要る usecase は、この module に配送を足す変更を先に入れる | 同 ADR が変わったとき。`main.tf` の `kics-scan disable` と `#checkov:skip=CKV_AWS_18`、`sonar-project.properties` の S6258 も同時に見直す |
 | リージョン間の複製を持たない（Checkov CKV_AWS_144） | `usecases/state-backend/README.md` の unsupported | リージョン障害への備えは、この module を使う usecase が持つ | 複製を要る usecase がこの module を使うとき。`main.tf` の `#checkov:skip=CKV_AWS_144` も同時に見直す |
