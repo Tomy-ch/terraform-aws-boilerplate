@@ -1,5 +1,5 @@
 # kics-scan disable=f861041c-8c9f-4156-acfc-5e6e524f5884,e592a0c5-5bdb-414c-9066-5dba7cdea370,e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10
-# f861041c（アクセスログ）: 配送は state Bucket と同じく段5 で足す（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 段5 で足したとき。
+# f861041c（アクセスログ）: 持たない（usecases/state-backend/docs/adr/0105-no-server-access-logs.md）。撤回: 同 ADR が変わったとき。
 # e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
 
@@ -14,7 +14,7 @@ locals {
 # 版管理は aws_s3_bucket_versioning.this が有効にする。このルールは非推奨の inline の versioning しか認めない。撤回: ルールが分離した resource を認めたとき。
 # nosemgrep: terraform.aws.best-practice.aws-s3-bucket-versioning-not-enabled
 resource "aws_s3_bucket" "this" {
-  #checkov:skip=CKV_AWS_18:アクセスログの配送は段5 で足す（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 段5 で足したとき
+  #checkov:skip=CKV_AWS_18:S3 サーバーアクセスログを持たない（usecases/state-backend/docs/adr/0105-no-server-access-logs.md）。撤回: 同 ADR が変わったとき
   #checkov:skip=CKV2_AWS_62:書き込みを知らせる相手が無い。読み手は CI の log が示す key で取りに行く（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 通知を受ける読み手を足したとき
   #checkov:skip=CKV_AWS_144:plan と apply の出力は保持日数で消える一時の記録で、リージョン障害に備えて複製しない（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。撤回: 保持日数を超えて残す要件ができたとき
   bucket           = local.bucket_name
@@ -47,7 +47,7 @@ resource "aws_s3_bucket_ownership_controls" "this" {
   }
 }
 
-# 上書きされた版は plan の role が消せないので、lifecycle が失効させる（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。
+# 上書きされた版は lifecycle が失効させる（usecases/state-backend/docs/adr/0201-plan-output-bucket.md）。
 resource "aws_s3_bucket_versioning" "this" {
   bucket = aws_s3_bucket.this.id
 

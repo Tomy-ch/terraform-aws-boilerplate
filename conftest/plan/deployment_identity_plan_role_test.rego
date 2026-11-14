@@ -2,12 +2,9 @@ package plan.deployment_identity_plan_role_test
 
 import data.plan.deployment_identity_plan_role as p
 import data.plan.fixture
+import data.plan.input as gate
 
-decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]", "logs_actions": []}}
-
-logs_decl(actions) := {"plan_role": object.union(decl.plan_role, {"logs_actions": actions})}
-
-logs_reads := ["logs:DescribeLogGroups", "logs:GetDelivery", "logs:ListTagsForResource"]
+decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]"}}
 
 plan_bucket := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 
@@ -138,120 +135,22 @@ test_violation_exclusive_allows_more if {
 	}
 }
 
-test_pass_declared_logs_actions if {
-	count(p.deny) == 0 with input as with_role([fixture.allow(logs_reads), write_output], []) with data.policy_plan.deployment_identity as logs_decl(logs_reads)
-}
-
-test_pass_declared_logs_action_in_other_case if {
-	count(p.deny) == 0 with input as with_role([fixture.allow("LOGS:describeloggroups"), write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:DescribeLogGroups"])
-}
-
-roles05(msgs, action) := {m | some m in msgs; startswith(m, "[PLAN-ROLE-05]"); contains(m, sprintf(" %s ", [action]))}
-
-# get の動詞を持ち PLAN-ROLE-02 を通るが、ログの event を返す。大文字の service 名と Condition でも同じ。
-test_violation_log_events_read if {
-	every s in [
-		fixture.allow(["logs:GetDelivery", "logs:GetLogEvents"]),
-		fixture.allow(["logs:GetDelivery", "LOGS:GetLogEvents"]),
-		fixture.allow(["logs:GetDelivery", "Logs:getlogevents"]),
-		object.union(fixture.allow(["logs:GetDelivery", "logs:GetLogEvents"]), {"Condition": {"StringEquals": {"aws:RequestedRegion": "ap-northeast-1"}}}),
-	] {
-		msgs := p.deny with input as with_role([s, write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:GetDelivery"])
-		count({m | some m in msgs; startswith(m, "[PLAN-ROLE-05]")}) == 1
-		count(roles05(msgs, "logs:getlogevents")) == 1
-	}
-}
-
-# 宣言に在る Action に当たる部分 wildcard も、宣言に無い文字列なので落ちる。
-test_violation_logs_partial_wildcard if {
-	every a in ["logs:Get*", "logs:GetDeliver?", "logs:*"] {
-		msgs := p.deny with input as with_role([fixture.allow(["logs:GetDelivery", a]), write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:GetDelivery"])
-		count(roles05(msgs, lower(a))) == 1
-	}
-}
-
-test_violation_logs_actions_empty if {
-	msgs := p.deny with input as with_role([fixture.allow("logs:DescribeLogGroups"), write_output], []) with data.policy_plan.deployment_identity as decl
-	count(roles05(msgs, "logs:describeloggroups")) == 1
-}
-
-# with は data.policy_plan の下を decl.json とマージするので、キーの欠落は data.policy_plan ごと渡して作る。
-test_violation_logs_actions_key_missing if {
-	policy_plan := json.remove(object.union(data.policy_plan, {"deployment_identity": decl}), ["/deployment_identity/plan_role/logs_actions"])
-	msgs := p.deny with input as with_role([fixture.allow("logs:DescribeLogGroups"), write_output], []) with data.policy_plan as policy_plan
-	count(roles05(msgs, "logs:describeloggroups")) == 1
-}
-
-# 宣言の形が崩れたら、logs: の Action を許さずに落とす。
-test_violation_logs_actions_not_array if {
-	every bad in ["logs:DescribeLogGroups", {"a": "logs:DescribeLogGroups"}, null, 5] {
-		msgs := p.deny with input as with_role([fixture.allow("logs:DescribeLogGroups"), write_output], []) with data.policy_plan.deployment_identity as logs_decl(bad)
-		fixture.has("[PLAN-ROLE-07] data.policy_plan.deployment_identity.plan_role.logs_actions が配列ではありません", msgs)
-		count(roles05(msgs, "logs:describeloggroups")) == 1
-	}
-}
-
-test_violation_logs_actions_non_string_entry if {
-	msgs := p.deny with input as with_role([fixture.allow("logs:DescribeLogGroups"), write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:DescribeLogGroups", 5])
-	fixture.has("[PLAN-ROLE-07] data.policy_plan.deployment_identity.plan_role.logs_actions に文字列でない要素 5 ", msgs)
-}
-
-# 宣言と policy を同じ向きに動かしても、wildcard と、閉じた集合の外の Action は宣言に置けない。
-test_violation_declared_logs_action_malformed if {
-	every a in ["logs:Get*", "logs:GetLogEvent?", "logs:*", "s3:GetObject", "logs:", "xlogs:getdelivery"] {
-		msgs := p.deny with input as with_role([fixture.allow(a), write_output], []) with data.policy_plan.deployment_identity as logs_decl([a])
-		some m in msgs
-		startswith(m, sprintf("[PLAN-ROLE-07] data.policy_plan.deployment_identity.plan_role.logs_actions の %s は", [lower(a)]))
-	}
-}
-
-test_violation_declared_logs_action_outside_closed_set if {
-	every a in ["logs:GetLogEvents", "logs:GetLogRecord", "logs:GetQueryResults", "logs:ListAnomalies", "logs:FilterLogEvents", "logs:StartQuery", "logs:StartLiveTail", "logs:Unmask", "logs:GetLogObject"] {
-		msgs := p.deny with input as with_role([fixture.allow(a), write_output], []) with data.policy_plan.deployment_identity as logs_decl([a])
-		violations := {m | some m in msgs; startswith(m, "[PLAN-ROLE-08]")}
-		count(violations) == 1
-		some m in violations
-		contains(m, sprintf(" %s ", [lower(a)]))
-	}
-}
-
-# 数字を含む Action も形は通り、閉じた集合の外として落ちる。
-test_violation_declared_logs_action_with_digit if {
-	msgs := p.deny with input as with_role([fixture.allow("logs:ListSourcesForS3TableIntegration"), write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:ListSourcesForS3TableIntegration"])
-	fixture.has("[PLAN-ROLE-08]", msgs)
-	not fixture.has("[PLAN-ROLE-07]", msgs)
-}
-
-# 使われているかは、plan の role の Allow だけで数える。Deny の文と別の role の Allow は数えない。
-test_violation_declared_logs_action_unused if {
-	other := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"apply\"]", "policy", {"Statement": [fixture.allow("logs:GetDelivery")]})
-	other_on_apply := object.union(other, {"change": {"after": object.union(other.change.after, {"role": "ci-apply"})}})
-	every inputs in [
-		with_role([fixture.allow("logs:DescribeLogGroups"), write_output], []),
-		with_role([fixture.allow("logs:DescribeLogGroups"), {"Effect": "Deny", "Action": "logs:GetDelivery", "Resource": "*"}, write_output], []),
-		with_role([fixture.allow("logs:DescribeLogGroups"), write_output], [other_on_apply]),
-	] {
-		msgs := p.deny with input as inputs with data.policy_plan.deployment_identity as logs_decl(["logs:DescribeLogGroups", "logs:GetDelivery"])
-		violations := {m | some m in msgs; startswith(m, "[PLAN-ROLE-06]")}
-		count(violations) == 1
-		some m in violations
-		contains(m, " logs:getdelivery ")
-	}
-}
-
-test_violation_declared_logs_actions_without_any_logs_allow if {
-	fixture.has("[PLAN-ROLE-06]", p.deny) with input as with_role([write_output], []) with data.policy_plan.deployment_identity as logs_decl(["logs:DescribeLogGroups"])
-}
-
 test_pass_service_name_with_hyphen if {
-	count(p.deny) == 0 with input as with_role([fixture.allow(["resource-groups:GetGroup", "s3:GetObject"]), write_output], []) with data.policy_plan.deployment_identity as decl
+	count(p.deny) == 0 with input as with_role([fixture.allow(["resource-groups:GetGroup", "s3:GetObject", "S3:GetBucketPolicy"]), write_output], []) with data.policy_plan.deployment_identity as decl
 }
 
 test_violation_service_name_wildcard if {
-	every a in ["log?:GetLogEvents", "l*:GetLogEvents", "?ogs:GetLogEvents", "LOG?:GetLogEvents", "log?:StartQuery", "?3:GetObject", ":GetLogEvents", "logs"] {
+	every a in ["*:GetSecretValue", "*:Get*", "log?:GetLogEvents", "l*:GetLogEvents", "?ogs:GetLogEvents", "LOG?:GetLogEvents", "log?:StartQuery", "?3:GetObject", ":GetLogEvents", "logs"] {
 		msgs := p.deny with input as with_role([fixture.allow(a), write_output], []) with data.policy_plan.deployment_identity as decl
 		some m in msgs
-		startswith(m, "[PLAN-ROLE-09]")
+		startswith(m, "[PLAN-ROLE-05]")
 		contains(m, sprintf(" %s ", [lower(a)]))
 	}
+}
+
+# 読めない文書の Allow はこの package からは見えない。落とすのは plan.input の PLAN-INPUT-04 である。
+test_violation_unknown_plan_policy_is_left_to_input if {
+	unknown := {"address": "module.x.aws_iam_role_policy.this[\"plan\"]", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"name": "plan", "role": "ci-plan"}, "after_unknown": {"policy": true}}}
+	plan := fixture.plan([role, policies_exclusive, attachments_exclusive, unknown])
+	fixture.has("[PLAN-INPUT-04]", gate.deny) with input as plan with data.policy_plan.deployment_identity as decl
 }

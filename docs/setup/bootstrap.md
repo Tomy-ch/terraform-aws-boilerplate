@@ -168,7 +168,7 @@ Cost Explorer は API では有効化できず、コンソールで初めて開�
 
 ### 段1. AWS CLI で state Bucket を作る
 
-state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは、`modules/s3` が宣言するもののうち state を保存するために要るものに限る —— 版管理、Public Access Block、Object Ownership。既定の暗号化、Bucket Policy、lifecycle、ログの配送、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。既定の暗号化は state の鍵を名指すので、鍵より先には置けない。段4 の apply までは、AWS が新しい Bucket に置く既定（SSE-S3 と SSE-C の拒否）が掛かる（[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) 決定4）。
+state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは、`modules/s3` が宣言するもののうち state を保存するために要るものに限る —— 版管理、Public Access Block、Object Ownership。既定の暗号化、Bucket Policy、lifecycle、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。既定の暗号化は state の鍵を名指すので、鍵より先には置けない。段4 の apply までは、AWS が新しい Bucket に置く既定（SSE-S3 と SSE-C の拒否）が掛かる（[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) 決定4）。
 
 名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
 
@@ -346,61 +346,6 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - unlock-identity の role の一覧は lock file の key の prefix に限られ、state の key は読めない。`kms:Decrypt` は IAM では許さず、state の鍵の Key Policy が lock file の object に限って許す
    - `simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。KMS が実際の要求で Deny をどう評価するかも確かめない。plan の role の実効の権限は手順11 の CI の plan が、apply-identity の role の実効の権限は段5 の最初の apply の run が確かめる。ただし `apply/*` への書き込みの実効の権限は、apply の出力を置く CI の job が入るまで確かめる経路が無い。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
 
-   段5 の S3 サーバーアクセスログの構成物の権限（同 決定3-5）は次で確かめる
-
-   ```bash
-   arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
-   sim() { role=$1 res=$2; shift 2
-     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" \
-       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
-   simc() { role=$1 res=$2 ctx=$3; shift 3
-     aws iam simulate-principal-policy --policy-source-arn "$(arn "$role")" --resource-arns "$res" --context-entries $ctx \
-       --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text; }
-   plan_bucket="arn:aws:s3:::${BUCKET/-tfstate-/-tfplan-}"
-   L="arn:aws:logs:${REGION}:${ACCOUNT_ID}"
-   lg="${L}:log-group:tabp-admin-state-backend-access"
-   dd="${L}:delivery-destination:tabp-admin-state-backend-access"
-   src="${L}:delivery-source:tabp-admin-tfstate"
-   src2="${L}:delivery-source:tabp-admin-tfplan"
-   dl="${L}:delivery:x"
-   dest="ContextKeyName=logs:DeliveryDestinationResourceArn,ContextKeyType=string,ContextKeyValues"
-   sim plan "$lg" logs:ListTagsForResource
-   sim plan "*" logs:DescribeLogGroups logs:DescribeResourcePolicies
-   sim plan "$dd" logs:GetDeliveryDestination logs:ListTagsForResource
-   sim plan "$src" logs:GetDeliverySource logs:ListTagsForResource
-   sim plan "$src2" logs:GetDeliverySource logs:ListTagsForResource
-   sim plan "$dl" logs:GetDelivery logs:ListTagsForResource
-   sim apply-identity "${lg}:*" logs:CreateLogGroup logs:PutRetentionPolicy
-   sim apply-identity "$lg" logs:ListTagsForResource
-   sim apply-identity "*" logs:DescribeLogGroups logs:DescribeResourcePolicies logs:PutResourcePolicy
-   simc apply-identity "$dd" "${dest}=${lg}" logs:PutDeliveryDestination
-   sim apply-identity "$dd" logs:GetDeliveryDestination logs:ListTagsForResource logs:CreateDelivery
-   sim apply-identity "$src" logs:PutDeliverySource logs:GetDeliverySource logs:ListTagsForResource logs:CreateDelivery
-   sim apply-identity "$src2" logs:PutDeliverySource logs:GetDeliverySource logs:ListTagsForResource logs:CreateDelivery
-   sim apply-identity "$dl" logs:CreateDelivery logs:GetDelivery logs:ListTagsForResource
-   sim apply-identity "arn:aws:s3:::${BUCKET}" s3:AllowVendedLogDeliveryForResource
-   sim apply-identity "$plan_bucket" s3:AllowVendedLogDeliveryForResource
-   sim plan "${lg}:log-stream:x" logs:GetLogEvents
-   sim plan "${lg}:*" logs:CreateLogGroup logs:GetLogRecord logs:GetQueryResults
-   sim apply-identity "${lg}:*" logs:DeleteLogGroup logs:DisassociateKmsKey logs:PutLogGroupDeletionProtection
-   sim apply-identity "$lg" logs:TagResource
-   simc apply-identity "$dd" "${dest}=arn:aws:s3:::other" logs:PutDeliveryDestination
-   sim apply-identity "$dl" logs:DeleteDelivery logs:UpdateDeliveryConfiguration
-   sim apply-identity "${L}:delivery-source:other" logs:CreateDelivery logs:PutDeliverySource
-   sim apply-identity "${L}:delivery-destination:other" logs:CreateDelivery logs:PutDeliveryDestination
-   sim apply-identity "${L}:log-group:other:*" logs:CreateLogGroup
-   sim apply "${lg}:*" logs:CreateLogGroup logs:PutRetentionPolicy
-   sim apply "$lg" logs:ListTagsForResource
-   sim apply "$dd" logs:PutDeliveryDestination
-   sim apply "$src" logs:PutDeliverySource
-   sim apply "$src2" logs:PutDeliverySource
-   sim apply "arn:aws:s3:::${BUCKET}" s3:AllowVendedLogDeliveryForResource
-   sim apply "$plan_bucket" s3:AllowVendedLogDeliveryForResource
-   sim apply "*" logs:PutAccountPolicy logs:DeleteAccountPolicy logs:PutIndexPolicy logs:DeleteIndexPolicy logs:PutResourcePolicy logs:DeleteResourcePolicy
-   ```
-
-   期待は順に、1行・2行・2行・2行・2行・2行・2行・1行・3行・1行・3行・4行・4行・3行・1行・1行がすべて `allowed`、続く9つが1行・3行・3行・1行・1行・2行・2行・2行・1行ですべて `implicitDeny`、最後の8つが2行・1行・1行・1行・1行・1行・1行・6行ですべて `explicitDeny` であること。plan の role はログの event を読めない。apply-identity は削除と保護を弱める変更を持たず、名指した外の Log Group・delivery source・delivery destination と、Log Group 以外の宛先への delivery destination を作れない。apply の role は、名前で決まるログの構成物と2つの Bucket の配送の許可と、resource type を持たない Logs のアカウント単位の変更を Deny される。`simulate-principal-policy` は IAM の評価だけを見る。CloudWatch Logs が実際の要求をどの ARN で認可するか、条件キーに何が入るかは、ログの構成物を作る CI の apply が確かめる
-
 10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
 11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
 
@@ -422,7 +367,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
    - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
    - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更は、足した Action とその期待の判定を `docs/setup/scripts/verify.sh` の `permissions` に同じ変更で足す。apply の後、`docs/setup/scripts/verify.sh permissions` の最後の行が `NG 0 件` を示し、終了コードが 0 であることを確かめ、出力を Pull Request に記録する。Condition を持つ Action は、条件キーを `--context` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない。ログの構成物の権限を変えたときは、段4 の手順9 のログの構成物の block で確かめる
+4. 権限を足す変更は、足した Action とその期待の判定を `docs/setup/scripts/verify.sh` の `permissions` に同じ変更で足す。apply の後、`docs/setup/scripts/verify.sh permissions` の最後の行が `NG 0 件` を示し、終了コードが 0 であることを確かめ、出力を Pull Request に記録する。Condition を持つ Action は、条件キーを `--context` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない
 5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を merge する前に、管理者が environment `admin-unlock-identity` を作り、secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く。environment は、その Pull Request のブランチを checkout した手元で `make apply-environments` を実行して宣言から作り、secret は `gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity` で置く。merge の前に作るのは、存在しない environment を参照した workflow が走ると、GitHub がその environment を保護なしで作るためである（[`.github/settings/README.md`](../../.github/settings/README.md)）。作った後、管理者はその Pull Request のブランチで `make repo-settings-drift` を実行し、宣言と実態が一致することを確かめてよい
 6. 一時 IAM user の書き込みを拒否する変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。その変更は、段3 で `bootstrap_executor_user_name` を足したアカウントでは、それを外す変更（段5 の最初の変更）であり、足していないアカウントでは、書き込みの拒否を入れる変更である。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
    1. identity root を変更する Pull Request を merge し、その CI の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
@@ -444,7 +389,6 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 - 書き込みの拒否を入れる変更か、一時 IAM user の例外を外す変更の apply が落ちたときは、診断から始める。ログは apply の失敗を1行に畳むので、拒否で落ちたかは読めない。一時 IAM user で `aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` を読んで宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、`aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock` で lock の残存を見る。ランナーの `errored.tfstate` はランナーとともに失われるが、失われるのはその apply の Bucket Policy の更新の分で、次の apply の refresh が読み直す。Bucket Policy の例外が CI の role の ARN か state の鍵の ARN と食い違って自分を拒んでいたら、`Terraform Unlock` も同じ原因で効かないことがある。その状態から回復する手順は、このリポジトリは提供しない（ADR-0602 決定9）。Pull Request に記録して止まる
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
 - lock が残ったら、Actions の画面から `Terraform Unlock`（`terraform-unlock.yaml`）を起動して外す。規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」が持つ。job は apply の job の `timeout-minutes` に余裕を足した時間より新しい lock を消さずに失敗するので、そのときは時間を置いて起動し直す。外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する
-- 段5 のログの構成物の作成が途中で落ちて taint が残ったときは、CI の role はログの構成物の削除の権限を持たないので、次の apply の置き換えは AccessDenied で落ちる。CI だけで回復する手順は、このリポジトリは提供しない。Pull Request に記録して止まる（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の保証しないこと）
 - 人の手元の apply が残した lock は、`Terraform Unlock` では外れない（CI のランナーが apply の job で取った lock だけを外す）。その apply を実行した人が `terraform force-unlock <ID>` で外す
 - 一時 IAM user の書き込みが拒否される前は、一時 IAM user で lock file を消してもよい。apply の run が走っていないことを Actions の画面で確かめてから行う。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
 
@@ -517,7 +461,7 @@ bootstrap の段5 が成功するまでは削除しない。それまでは、�
 - [ ] apply の直前に、`docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
 - [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
 - [ ] `docs/setup/scripts/verify.sh stage4` が `NG 0 件` で終わった
-- [ ] `docs/setup/scripts/verify.sh permissions` が `NG 0 件` で終わり、ログの構成物の block の行数と判定が段4 の手順9 の期待どおりだった
+- [ ] `docs/setup/scripts/verify.sh permissions` が `NG 0 件` で終わり
 - [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
 - [ ] merge の前に、CI の plan が変更なしを示した
 

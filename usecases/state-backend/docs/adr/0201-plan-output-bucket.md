@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-01
 - Scope: state-backend
-- Related: repository-wide/ADR-0602, repository-wide/ADR-0102, repository-wide/ADR-0207, state-backend/ADR-0101
+- Related: repository-wide/ADR-0602, repository-wide/ADR-0102, repository-wide/ADR-0207, state-backend/ADR-0101, state-backend/ADR-0105
 
 ## Context
 
@@ -20,7 +20,7 @@ plan の出力は、上書きの前の版を残し、日数が過ぎたら消え
 3. この Bucket を `usecases/state-backend/internal/plan-output/` に、Public Access Block・`BucketOwnerEnforced`・版管理・暗号化・TLS を要求する Bucket Policy・lifecycle とともに置く（repository-wide/ADR-0102 決定15 の但し書き）。`modules/s3` は使わない。
 4. lifecycle は、現行版を公開入力 `plan_output_retention_days`（既定7、1以上の整数）の日数で失効させ、上書きされた版と失効した版をさらに同じ日数で消し、未完了の multipart upload を1日で中止し、失効した版の delete marker を消す。7日と1日は、公式推奨の値ではない独自判断である。plan の全文は run の結果を読み直すためのもので、再 plan が新しい key に置くので長く残す理由は無い。apply の全文は失敗の診断のためのもので、何を適用したかは state の版と merge した Pull Request が持つので、plan と同じ日数で足りる。7日は、週をまたいだレビューの間に読める長さとして選んだ。plan と apply の全文は1回の PutObject で置くので、未完了の multipart upload は失敗からしか生じず、1日で中止する。
 5. この Bucket を、state Bucket と同じ state の鍵による SSE-KMS で暗号化し、SSE-C を拒否し、S3 Bucket Key を使わない（state-backend/ADR-0101 (sse-kms-with-state-key)）。plan の role と apply-identity の role は鍵の `kms:GenerateDataKey` を Key Policy で持ち、CI は暗号化の header を送らずに既定の暗号化に任せる。この Bucket は段4 の apply で作るので、段1 の CLI の暗号化は関わらない。
-6. アクセスログ（段5 で state Bucket と同じく足す）、通知（書き込みを知らせる相手が無い）、リージョン間の複製（保持日数で消える一時の記録である）、IAM Access Analyzer、tag の検査を、`internal/plan-output/` の該当箇所で抑止する（repository-wide/ADR-0207 (default-value-policy) 決定11、repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
+6. アクセスログ（持たない。state-backend/ADR-0105 (no-server-access-logs)）、通知（書き込みを知らせる相手が無い）、リージョン間の複製（保持日数で消える一時の記録である）、IAM Access Analyzer、tag の検査を、`internal/plan-output/` の該当箇所で抑止する（repository-wide/ADR-0207 (default-value-policy) 決定11、repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
 
 ## 検討した代替案
 
@@ -38,11 +38,11 @@ plan の role に state Bucket への書き込みを与えることになる。r
 
 ### 案D: deployment-identity が Bucket を持つ
 
-plan の role の所有者が、その書き先の設定も持つ。deployment-identity は主体と権限を持ち、置き場を持たない。段5 で state Bucket と同じ CMK とログへ切り替える変更が、2つのユースケースにまたがる。
+plan の role の所有者が、その書き先の設定も持つ。deployment-identity は主体と権限を持ち、置き場を持たない。state Bucket と同じ鍵による暗号化の設定が、2つのユースケースにまたがる。
 
 ### 案E: plan の出力を独立したユースケースにする
 
-Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割当をもう1組持つことになる。state の Bucket と同じ不変条件と段5 の切り替えを共有する方が、写しが少ない。
+Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割当をもう1組持つことになる。state の Bucket と同じ不変条件と鍵を共有する方が、写しが少ない。
 
 ### 評価
 
@@ -51,7 +51,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 | Security | 中 | 低（段4 の検証ができない） | 低（plan の role が state に書ける） | 中 | 中 | 中 |
 | Testability | 中 | 低 | 中 | 高 | 高 | 高 |
 | Contract Clarity | 低（入力の切り替え） | 中 | 低 | 中（主体と置き場が混ざる） | 低（公開契約が増える） | 高 |
-| Maintainability | 中 | 中 | 中 | 低（段5 の切り替えが2つにまたがる） | 低（不変条件の写しが増える） | 中（`modules/s3` と同じ不変条件の写しを持つ） |
+| Maintainability | 中 | 中 | 中 | 低（暗号化の設定が2つにまたがる） | 低（不変条件の写しが増える） | 中（`modules/s3` と同じ不変条件の写しを持つ） |
 | Scope Control | 低（決定15 に反する） | 中 | 低（決定13 に反する） | 中 | 低（ユースケースが増える） | 高 |
 
 評価軸の定義は repository-wide/ADR-0101 (architecture-principles) を参照する。
