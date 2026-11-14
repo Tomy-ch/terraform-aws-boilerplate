@@ -187,8 +187,8 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 - **AWS のアカウント ID は environment `admin-unlock-identity` の secret `AWS_ACCOUNT_ID` に置く。** 無ければ
   拒否の step で失敗する
 - 通知は持たない。人が起動し、結果を画面で見る
-- egress の `root` の名指しのため、この job も Terraform の job と同じ `aws` クラスの宛先（IAM・KMS・
-  S3 Control を含む）を許す。呼ぶのは STS と S3 だけである
+- 許す AWS の宛先は `aws-state` クラス（STS と S3）だけである。egress の `root` はこの job も名指すが、
+  型の宛先は `ci-unlock-*` だけを呼ぶ job に求めない（「ランナーの封じ込め」節）
 - job の形は `make oidc-job-lint` が、`CI_UNLOCK` が lock の無いとき以外は lock を消すか非ゼロで終わり、
   新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の `TestCiRecipes` が
   偽物の aws でレシピを走らせて見る
@@ -358,7 +358,8 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
 | `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
 | `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
-| `aws` | STS・IAM・KMS・S3（S3 Control を含む）の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、AWS の API を呼ぶ job（Terraform の job と lock の解除の job） |
+| `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
+| `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
@@ -377,7 +378,11 @@ CI の実行する root とそれを実行する job を、`type` が resource /
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
 `type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
 job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` / `ci-unlock-*` を `.makefiles/terraform/operation/ci.mk`
-の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。region を含む
+の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。`type` の宛先を
+求めるのは、その root の `ci-plan-*` か `ci-apply-*` を呼ぶ job だけである —— `ci-unlock-*` は terraform を
+呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
+apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
+を呼ばなければ落ちる。region を含む
 `type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
 それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
