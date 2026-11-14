@@ -186,6 +186,15 @@ classes = ["mise"]
 [job."go-test.yaml:test-mapping"]
 classes = ["mise"]
 
+[job."go-lint.yaml:changes"]
+classes = []
+
+[job."go-lint.yaml:go-lint"]
+classes = ["mise"]
+
+[job."go-lint.yaml:go-fmt-check"]
+classes = ["mise"]
+
 [job."md-lint.yaml:md-lint"]
 classes = ["mise"]
 
@@ -338,6 +347,13 @@ classes = ["trivy"]
 
 [job."trivy-release-gate.yaml:trivy-fs-release"]
 classes = ["trivy"]
+
+# Go の脆弱性 DB。
+[job."govulncheck.yaml:govulncheck"]
+classes = ["mise"]
+extra = [
+  "vuln.go.dev",
+]
 
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]

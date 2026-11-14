@@ -88,6 +88,9 @@ hadolint = "2.15.1"
 # 運用機構（scripts/）の Go を検査する。
 golangci-lint = "2.15.0"
 
+# 運用機構（scripts/）の Go の依存の既知脆弱性を報告する。
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+
 # ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
 lefthook = "2.2.2"
 
