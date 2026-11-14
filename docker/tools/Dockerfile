@@ -9,7 +9,7 @@ ARG MISE_VERSION=v2026.9.9
 # ==============================================================================
 # go_tools_builder: mise.toml の宣言どおりに道具を入れ、バイナリだけを取り出す
 # ==============================================================================
-FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS go_tools_builder
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go_tools_builder
 
 # パイプの左側が失敗しても右側が成功すれば RUN が通ってしまう既定を塞ぐ。
 # 下の版の検査はコマンド置換の中でパイプを使うため、これが無いと**検査が実行されないまま緑になる**。
@@ -43,7 +43,7 @@ RUN mise trust mise.toml
 # 値をここで mise.toml から直接読まない理由は mise.toml 冒頭が持つ。焼き込みは
 # `make versions-apply` が書き `versions-check` が守る。
 RUN set -eu; \
-    declared_go="1.27.3"; \
+    declared_go="1.27.4"; \
     actual="$(go version | sed 's|^go version go\([^ ]*\).*|\1|')"; \
     [ "$declared_go" = "$actual" ] || { \
       echo "Go の版がずれています: 宣言=$declared_go / ベースイメージ=$actual" >&2; \
@@ -86,7 +86,7 @@ RUN mkdir /out \
 # ==============================================================================
 # go_tools: 運用機構（scripts/）を走らせる。mise 本体も install キャッシュもここには無い
 # ==============================================================================
-FROM golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS go_tools
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go_tools
 
 # git: 運用機構の多くが git を呼ぶ（base-branch は ls-remote、release は tag、commitlint の
 #      範囲取得は rev-list）。テストもこれらを実際に起動して引数列を検査する。
