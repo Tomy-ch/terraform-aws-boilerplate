@@ -39,6 +39,7 @@ func (f *fixture) git(args ...string) string {
 	cmd := exec.CommandContext(f.t.Context(), "git", append([]string{
 		"-C", f.dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
 		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+		"-c", "maintenance.auto=false", "-c", "gc.auto=0",
 	}, args...)...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(f.t, err, string(out))

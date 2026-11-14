@@ -320,7 +320,9 @@ func leakInto(env []string, outer string) []string {
 func git(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
 
-	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir, "-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd := exec.CommandContext(t.Context(), "git", append([]string{
+		"-C", dir, "-c", "core.hooksPath=/dev/null", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+	}, args...)...)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
