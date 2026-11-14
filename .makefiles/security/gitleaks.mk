@@ -28,8 +28,7 @@ endef
 CANARY_GIT := env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
 	-u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_PREFIX git -c core.hooksPath=/dev/null
 
-## 走査した commit の数を gitleaks の出力から取り、git が独立に数えた数と突き合わせる
-## （ADR-0702 決定15）。判定は scripts/gitleaks-count が持つ。
+## 判定は scripts/gitleaks-count が持つ（ADR-0702 決定15）。
 ## 引数は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、呼び出し側のシェル変数が
 ## 展開されない。
 GITLEAKS_COUNT = $(call RUN_SCRIPT,gitleaks-count,"$$@") gitleaks-count $(1)
@@ -37,8 +36,7 @@ GITLEAKS_COUNT = $(call RUN_SCRIPT,gitleaks-count,"$$@") gitleaks-count $(1)
 ## $(1) の git で、範囲 $(2) の gitleaks-count -numstat の入力を $(3) へ書く。
 GITLEAKS_NUMSTAT = $(1) log --no-merges -M --diff-filter=d --format='commit %H' --numstat -z $(2) > $(3)
 
-## gitleaks を走らせ、走査した数を突き合わせる。数が合わなければ gitleaks-count の終了コード（2）を、
-## 合えば gitleaks の終了コードを返す。呼び出し側が `|| rc=$$?` で受けると set -e が効かないので、
+## 数が合わなければ gitleaks-count の終了コード（2）を、合えば gitleaks の終了コードを返す。呼び出し側が `|| rc=$$?` で受けると set -e が効かないので、
 ## 突き合わせの失敗は明示で exit する。
 ##   $(1) gitleaks git の追加の引数
 ##   $(2) gitleaks-count の -log 以外の引数
@@ -99,8 +97,7 @@ case "$(1)" in \
 esac
 endef
 
-## 秘密の走査の抑止（.gitleaksignore・.gitleaks.toml・.trufflehog-exclude-paths*.txt・.trivyignore.yaml の
-## secrets 節）の単位と理由の検査（ADR-0302 決定9・10）。対象のファイルはツールが固定で持つ。
+## 対象のファイルはツールが固定で持つ（ADR-0302 決定9・10）。
 .PHONY: secret-suppression-lint ## 秘密の走査の抑止が、理由つきの fingerprint・path 単位であることを検査
 secret-suppression-lint:
 	@set -eu; mkdir -p tmp; trap 'rm -f tmp/secret-suppression-lint.tracked tmp/secret-suppression-lint.commits' EXIT; \
