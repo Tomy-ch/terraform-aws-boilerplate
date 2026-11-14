@@ -254,8 +254,8 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 | `.makefiles/terraform/**` | `make tf-gates-test` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が
-持っていないターゲットを走らせたつもりで報告しない。Terraform 側の Conftest（Policy Test と層検査）は
-まだ `make` に配線されていない —— 無いものを「通った」と書くのが、このスキルが最も避けるべき報告である。
+持っていないターゲットを走らせたつもりで報告しない。何が未配線かは `AGENTS.md` *現在の配線状態* が持つ
+—— 無いものを「通った」と書くのが、このスキルが最も避けるべき報告である。
 
 **結果はそれ自身が報告したとおりに載せる。** 行や件数を落とすフィルタ越しに報告しない。
 ゲートが落ちた場合、その出力はレンズの findings より先に置く。
