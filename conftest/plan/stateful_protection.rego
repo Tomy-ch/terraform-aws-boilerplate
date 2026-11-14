@@ -1,6 +1,9 @@
-# ADR-0604 決定11・12（stateful な resource の保護）。保護の対象として宣言した型の削除・置換・管理からの除外と、
-# 宣言した取り返しのつかない属性の変更を、root ごとの許可の宣言に載っていない限り落とす。入力の path の basename（.json を除く）を root の名前として読む。
+# ADR-0604 決定11-13（stateful な resource の保護）。保護の対象として宣言した型の削除・置換・管理からの除外と、
+# 宣言した取り返しのつかない属性の変更を、root ごとの許可の宣言に載っていない限り落とす。別の resource と同じ設定を
+# 書く引数（ADR-0402 決定17 の宣言）を書く変更は、許可の宣言によらず落とす。入力の path の basename（.json を除く）を root の名前として読む。
 package plan.stateful_protection
+
+import data.plan.lib
 
 # 宣言が無ければ null にして、下の形の検査で落とす。参照のまま未定義にすると、どの規則も黙る。
 default decl := null
@@ -187,24 +190,41 @@ shared_buckets contains {"path": a.f.path, "bucket": a.bucket, "addresses": sort
 	a.address < b.address
 }
 
-# 保護の対象の Bucket の非推奨の inline lifecycle_rule は、lifecycle の resource の外で規則を書き換える。
-inline_lifecycles contains {"path": f.path, "address": rc.address} if {
+# 宣言は policy_plan.inline_arguments（型 → 引数 → 書かないときの値）。無ければ null にして PLAN-STATE-00 で落とす。
+default inline_decl := null
+
+inline_decl := data.policy_plan.inline_arguments
+
+# 更新の前の値は、別の resource が書いた設定を読み戻したもの。
+inline_writes contains {"path": f.path, "address": rc.address, "arg": arg} if {
 	some f in input
 	some rc in f.contents.resource_changes
 	object.get(rc, "mode", "managed") == "managed"
-	rc.type == "aws_s3_bucket"
 	rc.type in decl.protected_types
+	some arg, empty in inline_decl[rc.type]
 	is_object(rc.change.after)
-	rules := object.get(rc.change.after, "lifecycle_rule", [])
-	is_array(rules)
-	count(rules) > 0
-	rules != prior_lifecycle_rules(rc.change)
+	object.get(rc.change.after, arg, empty) != baseline(rc.change, arg, empty)
 }
 
-# 作成には前の値が無い。前の値を持つ更新では、別の lifecycle の resource から読み戻した規則が残るので、変わったときだけ見る。
-default prior_lifecycle_rules(_) := []
+inline_writes contains {"path": f.path, "address": rc.address, "arg": arg} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	object.get(rc, "mode", "managed") == "managed"
+	rc.type in decl.protected_types
+	some arg, _ in inline_decl[rc.type]
+	not "delete" in rc.change.actions
+	is_object(rc.change.before)
+	lib.unknown_value(object.get(object.get(rc.change, "after_unknown", {}), arg, false))
+}
 
-prior_lifecycle_rules(change) := object.get(change.before, "lifecycle_rule", []) if is_object(change.before)
+baseline(change, arg, empty) := object.get(change.before, arg, empty) if {
+	not "delete" in change.actions
+	is_object(change.before)
+}
+
+baseline(change, _, empty) := empty if "delete" in change.actions
+
+baseline(change, _, empty) := empty if not is_object(change.before)
 
 shorten_allowed(root, address) if {
 	some a in object.get(shorten_allow, root, [])
@@ -252,6 +272,11 @@ well_formed(d) if {
 }
 
 deny contains msg if {
+	not lib.inline_arguments_shape(data.policy_plan)
+	msg := "[PLAN-STATE-00] 宣言の policy_plan.inline_arguments が、型ごとに空でない object（引数 → 書かないときの値 null か []）で documents と重ならない形ではありません"
+}
+
+deny contains msg if {
 	not well_formed(decl)
 	msg := "[PLAN-STATE-00] 宣言の policy_plan.stateful_protection が、protected_types（aws_s3_bucket と aws_s3_bucket_lifecycle_configuration を含む）と allow・shorten_allow（root ごとの address と空でない reason の並び）の形を満たしていません"
 }
@@ -296,8 +321,8 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	some i in inline_lifecycles
-	msg := sprintf("[PLAN-STATE-08] %s: %s が非推奨の inline の lifecycle_rule で規則を書き換えます。aws_s3_bucket_lifecycle_configuration で書いてください", [i.path, i.address])
+	some w in inline_writes
+	msg := sprintf("[PLAN-STATE-08] %s: %s の %s を書く変更です。同じ設定は、それを書く別の resource で書いてください", [w.path, w.address, w.arg])
 }
 
 deny contains msg if {
