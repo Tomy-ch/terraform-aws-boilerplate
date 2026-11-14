@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0204, ADR-0301, ADR-0401, ADR-0501
+- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0204, ADR-0301, ADR-0401, ADR-0501, ADR-0604
 
 ## Context
 
@@ -53,7 +53,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 ### Policy が依存してよい入力
 
-11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy が判定に読むのは両者に共通する `resource_changes` だけである（形の版の検査は ADR-0501 決定8）。
+11. Policy の入力を、Terraform の JSON の plan 表現の `resource_changes` とする（ADR-0501 決定8）。資格情報なしの検査では mock provider の下の `terraform test -json -verbose` が出す `test_plan` を、実 provider の plan では `terraform show -json` の出力を用いる。Policy が判定に読む入力は、両者に共通する `resource_changes` だけである（形の版の検査は ADR-0501 決定8）。入力のほかに読むのは、宣言と、決定18 の Provider の schema の一覧である。
 12. Policy は resource の Terraform address（`module.<name>.<type>.<name>`）に依存してよい。ADR-0202 が address を実装詳細としているのは**公開契約に対して**であり、リポジトリ内部の検査には及ばない。
 13. 「インターネット公開点である」等のアーキテクチャ上の役割を、address によって判定する。tag、名前の規約、および利用者が入力できる値を、役割判定の根拠にしない。
 14. 決定13 の理由を次とする。
@@ -64,6 +64,12 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 15. address に依存する Policy は、依存する address を1箇所へ集約する。module の構造を変更したときに、更新すべき Policy を特定できる形とする。module はユースケースから呼ばれるので（ADR-0102 決定11-12）、address は `module.<use-case>.module.<module>.<type>.<name>` の入れ子になる。同じ一般 module が複数のユースケースから呼ばれ、同じ名前の `internal/` の module もユースケースごとに在りうるので、集約はユースケースを含む address で行う。
 16. 役割判定のための専用ツールを実装しない。ADR-0501 決定3 の3条件のうち、第1条件（既存ツールで実現できない）を満たさない。
+
+### Policy が読まない経路で設定を書く引数
+
+17. Policy は、設定を、それを書く resource の宣言した型と属性から読む。親の resource の引数が別の resource と同じ設定を書く場合、その引数は、Policy が読まない経路で同じ設定を書き換える。そのような引数を持つ型を、Policy Test が持つ宣言に載せる。載せる型は、Policy Test が stateful な resource の保護の対象として宣言した型（ADR-0604 決定11）に限る。載せた型については、別の resource と同じ設定を書くかを問わず、Provider の schema が非推奨とする書ける引数（属性と block）をすべて載せる。網羅を機械で確かめるためである。resource の NOTE が別の resource との併用で互いに上書きすると告げる引数も載せる。各引数には、書かないときの値（属性は `null`、block は空の list）を添える。
+18. reference の plan を入力とする Policy Test は、決定17 で宣言した引数が書かないときの値でない変更と、その値が plan で決まらない変更を失敗させる。宣言した型と引数が入力のどこにも現れない場合と、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に無い場合も失敗させる。後者の schema は、mock provider の下の `test_plan` の `provider_schemas` から型ごとの非推奨の引数の一覧として取り出し、宣言と同じく data として Policy に渡す。取り出しは `provider_format_version` を検査し、期待する版でなければ失敗する。
+19. 決定17・18 の検査は、Policy が設定をどの resource から読むかという本リポジトリの入力の設計に依る。外部のルールセットはこの設計を知り得ないので、決定2 により Policy に置く。
 
 ## 検討した代替案
 
@@ -97,15 +103,17 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 ## 保証範囲
 
-- 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと
-- 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足
+- 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと。reference の plan で、宣言した引数が書かないときの値であり、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に在ること（決定17・18）
+- 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足。resource の NOTE だけが告げる引数を宣言に載せたこと。保護の対象でない型の、別の resource と同じ設定を書く引数。保護の対象に足した型を宣言に載せたこと
 
 ## 検証方法
 
 - Static Analysis: Policy のテストが CI の必須検査として存在すること（決定7）
 - Static Analysis: テストを持たない Policy が存在しないこと（決定9）
 - Policy のテスト: 各 Policy が、違反する入力に対して違反を報告すること（決定8）
-- レビュー: 決定2 の基準による配置の判断、および決定3 の重複の不在。いずれも機械判定できないため、Policy を追加・変更する Pull Request のレビュー観点とする
+- Policy のテスト: 決定17 で宣言した引数ごとに、書いた値と plan で決まらない値で違反を報告し、書かないときの値で報告しないこと。宣言した型と引数が入力に無い場合と、Provider の schema が非推奨とする書ける引数が宣言に無い場合に違反を報告すること（決定18）
+- Static Analysis（`make tf-policy-canary`）: mock provider の plan で、書いた文字列の属性の値が override に隠されずに Policy の入力へ現れること。Provider の schema から取り出した非推奨の引数の一覧が Policy に届くこと（決定18）
+- レビュー: 決定2 の基準による配置の判断、決定3 の重複の不在、および決定17 の resource の NOTE に依る引数の選定。いずれも機械判定できないため、Policy を追加・変更する Pull Request のレビュー観点とする
 
 ## 影響
 
@@ -118,3 +126,4 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 - Security の道具のいずれかがカスタムルールの記述において Conftest と同等の表現力を持ち、両レイヤーを統合できると判断できる場合
 - address による役割判定が、module の粒度の変更に追随できなくなった場合
 - Policy の数が、レビューによる重複判定（決定3）では追えない規模に達した場合
+- Provider が、別の resource と同じ設定を書く引数を非推奨としなくなり、決定18 の schema との突き合わせが宣言の網羅を表さなくなった場合

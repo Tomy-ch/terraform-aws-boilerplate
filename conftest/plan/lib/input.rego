@@ -1,5 +1,6 @@
 # 入力そのものが読めないことを、どの Policy よりも先に違反として報告する。読めない文書を飛ばすと、
-# その文書についての Policy が黙って緑になる。
+# その文書についての Policy が黙って緑になる。Policy が読まない経路で設定を書く引数（ADR-0402 決定17・18）も、
+# 入力の欠けとしてここで落とす。
 package plan.input
 
 import data.plan.lib
@@ -7,7 +8,7 @@ import data.plan.lib
 # 宣言そのものが欠けると、それを参照する規則が未定義になって黙る。
 deny contains msg if {
 	not well_formed_declaration(data.policy_plan)
-	msg := "[PLAN-DATA-01] 宣言の policy_plan が、plan_format_version / documents / required_documents / deployment_identity の形を満たしていません"
+	msg := "[PLAN-DATA-01] 宣言の policy_plan が、plan_format_version / documents / required_documents / deployment_identity / inline_arguments の形を満たしていません"
 }
 
 deny contains msg if {
@@ -62,6 +63,78 @@ deny contains msg if {
 	msg := sprintf("[PLAN-INPUT-08] %s: resource_changes の要素が address / type / change.actions の形を満たしていません", [f.path])
 }
 
+# 宣言した引数に、書かないときの値でない値か、plan で決まらない値が在る。
+inline_writes contains {"path": c.path, "address": c.rc.address, "arg": arg} if {
+	some c in lib.changes
+	some arg, empty in data.policy_plan.inline_arguments[c.rc.type]
+	inline_written(c.rc.change, arg, empty)
+}
+
+inline_written(change, arg, _) if unknown_value(object.get(object.get(change, "after_unknown", {}), arg, false))
+
+inline_written(change, arg, empty) if {
+	is_object(change.after)
+	object.get(change.after, arg, empty) != empty
+}
+
+unknown_value(x) if x == true
+
+unknown_value(x) if {
+	walk(x, [_, v])
+	v == true
+}
+
+deny contains msg if {
+	some w in inline_writes
+	msg := sprintf("[PLAN-INPUT-09] %s: %s の %s が書かれています。書かないなら tests/policy-input.tftest.hcl の override_resource で null を与え、書くなら同じ設定を書く別の resource で書いてください", [w.path, w.address, w.arg])
+}
+
+inline_seen(type, arg) if {
+	some c in lib.changes
+	c.rc.type == type
+	arg in object.keys(object.get(c.rc.change, "after", {}))
+}
+
+inline_seen(type, arg) if {
+	some c in lib.changes
+	c.rc.type == type
+	arg in object.keys(object.get(c.rc.change, "after_unknown", {}))
+}
+
+# 宣言が入力に当たらなければ、その引数は1つも検査されていない。
+deny contains msg if {
+	some type, args in data.policy_plan.inline_arguments
+	some arg, _ in args
+	not inline_seen(type, arg)
+	msg := sprintf("[PLAN-INPUT-10] inline_arguments の %s の %s が、入力のどの変更にもありません", [type, arg])
+}
+
+# data.provider_schema は make tf-policy が mock の plan の provider_schemas から取り出す（型 → 書ける非推奨の引数）。
+deprecated_arguments_present if {
+	is_object(data.provider_schema.deprecated_arguments)
+	count(data.provider_schema.deprecated_arguments) > 0
+}
+
+deny contains msg if {
+	not deprecated_arguments_present
+	msg := "[PLAN-INPUT-11] mock の plan の Provider の schema から、非推奨の引数の一覧を得られていません"
+}
+
+deny contains msg if {
+	deprecated_arguments_present
+	some type, _ in data.policy_plan.inline_arguments
+	not type in object.keys(data.provider_schema.deprecated_arguments)
+	msg := sprintf("[PLAN-INPUT-11] %s が mock の plan の Provider の schema にありません", [type])
+}
+
+deny contains msg if {
+	some type, args in data.provider_schema.deprecated_arguments
+	type in object.keys(data.policy_plan.inline_arguments)
+	some arg in args
+	not arg in object.keys(data.policy_plan.inline_arguments[type])
+	msg := sprintf("[PLAN-INPUT-11] %s の非推奨の引数 %s が inline_arguments にありません", [type, arg])
+}
+
 resource_changes_present(f) if {
 	is_array(f.contents.resource_changes)
 	count(f.contents.resource_changes) > 0
@@ -92,6 +165,21 @@ well_formed_declaration(decl) if {
 		is_string(role)
 	}
 	is_string(decl.deployment_identity.oidc_provider)
+	well_formed_inline(decl)
+}
+
+well_formed_inline(decl) if {
+	is_object(decl.inline_arguments)
+	count(decl.inline_arguments) > 0
+	every type, args in decl.inline_arguments {
+		type in decl.stateful_protection.protected_types
+		is_object(args)
+		count(args) > 0
+		every arg, empty in args {
+			empty in [null, []]
+			not arg in object.get(decl.documents, type, [])
+		}
+	}
 }
 
 well_formed(body) if {
