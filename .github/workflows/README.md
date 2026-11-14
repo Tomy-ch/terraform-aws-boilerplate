@@ -74,7 +74,9 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **全文は、ログの版 ID で読み、SHA-256 を確かめる。** plan の role は `pr/*`・`branch/*` のどの key にも
   書けるので、版を指定せずに読んだ最新の版は、別の run が書いたものでありうる（ADR-0602 の保証しないこと）。
   `aws s3api get-object --bucket <Bucket> --key <key> --version-id <版 ID> plan.txt` の後、
-  `openssl dgst -sha256 -binary plan.txt | base64` がログの sha256 と一致することを確かめる
+  `openssl dgst -sha256 -binary plan.txt | base64` がログの sha256 と一致することを確かめる。全文は state の鍵で
+  暗号化されており、読む主体には Key Policy による復号が要る。Key Policy が復号を許すのは CI の role だけなので、
+  人がこの手順を実行できる主体は無い（`usecases/state-backend/README.md` の unsupported）
 - **AWS のアカウント ID は environment `admin-plan` の secret `AWS_ACCOUNT_ID` に置く。** 宣言
   （`environments.json`）は secret を持たないので、管理者が置く。無ければ拒否の step で失敗する
 - **fork・Dependabot の Pull Request では、資格情報を取る前の step で失敗する。** skip にしない
