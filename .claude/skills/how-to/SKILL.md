@@ -45,7 +45,8 @@ question has no index. スキル群、`.makefiles/` の各 `.mk`、`.lefthook.ya
 The failure this skill is shaped around is specific: **a plausible command is indistinguishable from
 a documented one.** make terraform-test / make plan —— どちらも在って当然に見え、書き下せば
 権威に読め、訊いた人はそのまま叩く。**どちらも存在しない** —— test は `make tf-test` であり、
-plan / apply の経路は未配線である（`AGENTS.md` *現在の配線状態*）。
+plan は単一の target を持たない。plan / apply の経路のどこまでが配線済みかは `AGENTS.md`
+*現在の配線状態* が持ち、target の名前は `make help` で確かめる。
 
 正規のコマンドを出すか、何も出さないか。**その2つだけが許される結末である。**
 `make help` に無いものを書かない —— 存在しない target を書くことは、嘘をつくことと区別できない。

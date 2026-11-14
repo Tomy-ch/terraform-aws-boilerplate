@@ -161,8 +161,8 @@ Fill each template section in Japanese:
 - **概要**: 1–3 sentences summarizing the PR's intent. Use commit messages as the primary source.
 - **変更内容**: Bullet list grouped by area (ユースケース / 運用機構 / CI / 宣言 / テスト / ドキュメント など). Reference changed files and commit titles. Group meaningfully — do not paste a raw file list.
 - **動作確認方法**: 実行した検査と、それが何と言ったか。結論したことではなく。
-  **未配線の道具について「実行した」と書かない**（`AGENTS.md` *現在の配線状態*）—— Terraform 側の
-  Conftest と plan / apply の経路は、まだ `make` に無い。
+  **未配線の道具について「実行した」と書かない** —— 何が未配線かは、書くときに `AGENTS.md`
+  *現在の配線状態* を開いて確かめる。
 
 If the branch name encodes an issue number, append `closes #N` at the bottom of the body (or fold it into 概要 if natural).
 
