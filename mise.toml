@@ -81,6 +81,10 @@ hadolint = "2.15.1"
 # mise のレジストリは aqua と asdf の2つの backend を持つ。
 "aqua:open-policy-agent/conftest" = "0.71.1"
 
+# 供給網の衛生の報告（ADR-0501 決定6）。上流の action は docker で動き、runner の通信制限（ADR-0702
+# 決定21）の下では daemon がホストのパスの mount を拒むので、CLI を直接実行する（ADR-0503 決定7）。
+"aqua:ossf/scorecard" = "5.6.0"
+
 "aqua:crate-ci/typos" = "1.51.1"
 
 "aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"
