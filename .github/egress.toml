@@ -368,11 +368,13 @@ classes = ["mise"]
 [job."hygiene.yaml:editorconfig-check"]
 classes = ["mise"]
 
-# Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・パッケージの情報）。publish しないので
-# api.scorecard.dev は要らない。
+# Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・Fuzzing・パッケージの情報）。publish しないので
+# api.scorecard.dev は要らない。Fuzzing は OSS-Fuzz の build log の Bucket を読み、届かないと check が
+# 内部エラーになって job が落ちる。
 [job."scorecard.yaml:scorecard"]
 classes = ["mise", "deps-dev"]
 extra = [
   "api.osv.dev",
   "www.bestpractices.dev",
+  "oss-fuzz-build-logs.storage.googleapis.com",
 ]
