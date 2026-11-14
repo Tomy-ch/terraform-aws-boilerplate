@@ -80,7 +80,7 @@ hosts = [
 # S3 のどちらかから配られ、どちらになるかは要求ごとに変わる。この2つの Bucket のホストは Docker の許可
 # リストの文書に載っておらず、CI で名前解決に失敗したときの名前である。`*.r2.cloudflarestorage.com` や
 # `*.s3.amazonaws.com` は誰でも作れる Bucket への持ち出し口になるので、Docker Hub の Bucket のホストだけを
-# 許す。ただし bullfrog は名前解決の結果の IP で判定するので（`aws-state` のコメント）、正確な名前を書いても
+# 許す。ただし bullfrog は名前解決の結果の IP で判定するので（ADR-0702 の保証範囲）、正確な名前を書いても
 # 実効の持ち出し口は狭まらない。
 hosts = [
   "registry-1.docker.io",
