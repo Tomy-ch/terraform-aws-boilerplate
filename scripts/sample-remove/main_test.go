@@ -408,19 +408,21 @@ func Test_prunePins(t *testing.T) {
 		t.Run("前の action を外したあとで後ろの action が不備なら、lockfile を書き換えずにエラーにする", func(t *testing.T) {
 			t.Parallel()
 			for _, c := range []struct {
+				name  string
 				later string
 				want  error
 			}{
-				{"acme/none", errMissingPin},
-				{"acme/shared@v2", errVersionedAction},
+				{"後ろの action の pin が無い", "acme/none", errMissingPin},
+				{"後ろの action に版が付いている", "acme/shared@v2", errVersionedAction},
 			} {
-				t.Run(c.later, func(t *testing.T) {
+				t.Run(c.name, func(t *testing.T) {
 					t.Parallel()
 					root, list := fixtureTree(t)
 					ds := []domain{{name: "a", actions: []string{"acme/scan"}}, {name: "b", actions: []string{c.later}}}
 					p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
 					err := prunePins(root, ds, list, &p)
 					require.ErrorIs(t, err, c.want)
+					require.Equal(t, []string{"acme/scan@v1"}, p.droppedPins, "前の action の pin を外した状態で失敗していること")
 					assert.NotContains(t, p.writes, pinFile)
 				})
 			}
