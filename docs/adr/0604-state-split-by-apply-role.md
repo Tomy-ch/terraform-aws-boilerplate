@@ -43,6 +43,9 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 
 11. identity root と workload root の plan に、保護の対象として宣言した型の resource の削除、置換、または管理からの除外（`removed` block の `destroy = false`）が含まれる場合、Policy Test で失敗させる。対象の型の宣言は、その Policy Test が持つ（ADR-0402）。state Bucket の型を必ず含める。この Policy Test は、Pull Request の plan と、apply の job が apply する plan の両方に掛ける。apply の job は、失敗したら apply しない。
 12. 意図した削除、置換、管理からの除外は、対象の address と理由を、許可の宣言に足すことで明示する。許可の宣言は root ごとに持つ。許可の宣言のうち、その root の plan のどの削除・置換・管理からの除外にも当たらない項目は、Policy Test で失敗させる。Policy Test は、保護の対象の型ごとに、削除と同じく取り返しのつかない属性の変更（例: 版を消す日数の短縮）を宣言してよい。その変更も、対象の address と理由を root ごとの許可の宣言に足すことで明示し、どの変更にも当たらない項目を Policy Test で失敗させる。どの属性の変更を宣言するかとその理由は、その型を持つユースケースの ADR が持つ。
+13. ADR-0402 決定17 が宣言する引数を書く変更を、許可の宣言によらず、決定11 の Policy Test で失敗させる。書く変更は次のとおりとする。
+    - 作成と置換: plan で決まった値が、書かないときの値でない
+    - 更新: plan で決まった値が変更の前の値と異なる、または値が plan で決まらない
 
 ## 検討した代替案
 
@@ -84,6 +87,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - 保証すること:
   - IAM principal である apply の role のセッションが、identity root の state と lock file と state Bucket の ARN を対象とする要求で読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の ARN を対象とする要求でその Key Policy がアカウントへ委任する Action を、許されないこと（明示の Deny の優先と、apply の role の権限の与え方を持つ use-case の Policy Test が reference の plan で見る拒否から導く。前提と除外は ADR-0602 の保証範囲）
   - 保護の対象として宣言した型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更が、許可の宣言なしに、plan を経る apply へ進まないこと
+  - 決定13 の書く変更が、plan を経る apply へ進まないこと（決定13）
 - 保証しないこと:
   - 管理アカウントの root による state Bucket への書き込みと、bucket policy の削除（ADR-0602 決定11）
   - apply の role が作るか渡す別の主体による、identity root の state の書き換えと、state Bucket と state の鍵の設定の変更。state Bucket の ARN を通らない要求（S3 の access point 等）による変更（ADR-0602 の保証範囲）
@@ -91,6 +95,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
   - workload root が大きくなったときの plan の時間と、apply のロックの待ち
   - 宣言していない型の resource の削除と置換。plan を経ない操作（`terraform destroy` 等）による削除
   - 対象の Bucket が plan で決まらない lifecycle を作るときに、同じ Bucket の既存の lifecycle と突き合わせること
+  - 宣言した引数に、実体から読み戻す値と同じ値を書くこと（差分が出ない）と、作成と置換で plan で決まらない値を書くこと。後者は、書かない引数も作成では plan で決まらないので区別できず、apply の後は前者として残る。module が書く引数は、reference の plan で書かないときの値でなければ ADR-0402 決定18 の Policy Test が落とす
 
 ## 検証方法
 
@@ -101,10 +106,10 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - Static Analysis: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること。plan の job が lock を取らず、apply の job が取ること（決定8）
 - Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
-- Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
+- Static Analysis: apply の job が、apply する plan に決定11-13 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
-- Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
+- Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと。決定13 の書く変更を含まないこと（決定11-13）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響
 
@@ -116,6 +121,6 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 ## 見直し条件
 
 - workload root の plan の時間や apply のロックの待ちが、変更の経路を妨げるようになった場合
-- 決定11-12 で防げない、stateful な resource の事故が起きた場合
+- 決定11-13 で防げない、stateful な resource の事故が起きた場合
 - apply の role を usecase ごとや層ごとに分けると決めた場合
 - 1つのアカウントに複数の env を置く構成を、サポートの対象にすると決めた場合

@@ -4,7 +4,7 @@
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
-## （ADR-0702 決定3・24）。plan と apply には、ADR-0604 決定11・12 の Policy（plan.stateful_protection）と、
+## （ADR-0702 決定3・24）。plan と apply には、ADR-0604 決定11-13 の Policy（plan.stateful_protection）と、
 ## ADR-0301 決定12・18 の Key Policy の Policy（plan.kms_key_policy）を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。

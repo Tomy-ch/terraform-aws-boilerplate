@@ -10,7 +10,7 @@ changes contains {"path": f.path, "rc": rc} if {
 	rc.change.actions != ["delete"]
 }
 
-# mock provider は表に無い computed な属性（aws_s3_bucket.policy など）に乱数を入れるので、属性名だけで拾わない。
+# mock provider は表に無い computed な属性に乱数を入れるので、属性名だけで拾わない。文書でない属性は inline_arguments が見る。
 documents contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "attr": attr, "change": c.rc.change} if {
 	some c in changes
 	some attr in data.policy_plan.documents[c.rc.type]
@@ -43,4 +43,27 @@ crypto_actions := {
 	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
 	"kms:generatemac", "kms:getpublickey", "kms:reencryptfrom", "kms:reencryptto", "kms:sign", "kms:verify",
 	"kms:verifymac",
+}
+
+# plan で決まらない値は、after_unknown の true か、block の中の true で表れる。
+unknown_value(x) if x == true
+
+unknown_value(x) if {
+	walk(x, [_, v])
+	v == true
+}
+
+# ADR-0402 決定17 の宣言 inline_arguments の形。型ごとに空でない object で、値は書かないときの値（null か []）、
+# documents の型と属性と重ならない。CI の実 plan は plan.input を掛けないので、plan.stateful_protection も同じ形を見る。
+inline_arguments_shape(decl) if {
+	is_object(decl.inline_arguments)
+	count(decl.inline_arguments) > 0
+	every type, args in decl.inline_arguments {
+		is_object(args)
+		count(args) > 0
+		every arg, empty in args {
+			empty in [null, []]
+			not arg in object.get(decl.documents, type, [])
+		}
+	}
 }

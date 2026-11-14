@@ -17,3 +17,20 @@ has(prefix, msgs) if {
 	some m in msgs
 	startswith(m, prefix)
 }
+
+# 宣言した型ごとに、宣言した引数を書かないときの値で持つ作成（ADR-0402 決定17）。
+unwritten(type) := {
+	"address": sprintf("module.x.%s.this", [type]),
+	"type": type,
+	"change": {"actions": ["create"], "after": data.policy_plan.inline_arguments[type], "after_unknown": {}},
+}
+
+unwritten_all := [unwritten(type) | some type, _ in data.policy_plan.inline_arguments]
+
+# make tf-policy が Provider の schema から取り出す一覧の代わり。宣言した引数をそのまま非推奨の一覧とする。
+provider_schema := {"deprecated_arguments": {type: [arg | some arg, _ in args] | some type, args in data.policy_plan.inline_arguments}}
+
+clean(rcs) := plan(array.concat(rcs, unwritten_all))
+
+# with で data.policy_plan の下の object を差し替えると、既存の値と合わさる。宣言を丸ごと組み直して置き換える。
+inline_declaration(d) := object.union(object.remove(data.policy_plan, ["inline_arguments"]), {"inline_arguments": d})

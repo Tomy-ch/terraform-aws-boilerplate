@@ -33,18 +33,18 @@ test_violation_missing_document if {
 }
 
 test_pass_valid_input if {
-	count(gate.deny) == 0 with input as fixture.plan([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
+	count(gate.deny) == 0 with input as fixture.clean([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
 }
 
-# mock provider は表に無い computed な属性に乱数を入れる。表に無い属性は読まない。
+# mock provider は表に無い computed な属性に乱数を入れる。表にも inline_arguments にも無い属性は読まない。
 test_pass_untracked_attribute if {
-	rc := {"address": "module.x.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {"policy": "l3mra53t"}, "after_unknown": {}}}
-	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
+	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after": {"bucket_domain_name": "l3mra53t"}}})
+	count(gate.deny) == 0 with input as fixture.clean([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
 }
 
 test_pass_delete_only if {
 	rc := {"address": "module.x.aws_iam_role_policy.old", "type": "aws_iam_role_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
-	count(gate.deny) == 0 with input as fixture.plan([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
+	count(gate.deny) == 0 with input as fixture.clean([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
 }
 
 test_violation_no_statement if {
@@ -83,7 +83,7 @@ test_violation_condition_null if {
 
 test_pass_single_statement_object if {
 	rc := fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.this", "policy", {"Statement": fixture.allow("s3:GetObject")})
-	count(gate.deny) == 0 with input as fixture.plan([rc]) with data.policy_plan.required_documents as ["aws_iam_policy"]
+	count(gate.deny) == 0 with input as fixture.clean([rc]) with data.policy_plan.required_documents as ["aws_iam_policy"] with data.provider_schema as fixture.provider_schema
 }
 
 test_violation_effect_not_allow_or_deny if {
@@ -115,7 +115,7 @@ test_violation_statement_scalar if {
 
 test_pass_condition_object_and_action_array if {
 	s := {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "*", "Condition": {"Bool": {"aws:SecureTransport": "true"}}}
-	count(gate.deny) == 0 with input as fixture.plan([fixture.role_policy([s])]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
+	count(gate.deny) == 0 with input as fixture.clean([fixture.role_policy([s])]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
 }
 
 test_violation_missing_format_version if {
@@ -142,7 +142,7 @@ test_violation_required_type_absent if {
 }
 
 test_violation_declaration_incomplete if {
-	every key in ["plan_format_version", "documents", "required_documents", "deployment_identity"] {
+	every key in ["plan_format_version", "provider_format_version", "documents", "required_documents", "deployment_identity", "inline_arguments"] {
 		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as object.remove(data.policy_plan, [key])
 	}
 }
@@ -156,13 +156,157 @@ test_pass_declaration if {
 }
 
 test_violation_declaration_empty_tables if {
-	every key in ["documents", "required_documents"] {
-		empty := {"documents": {}, "required_documents": []}[key]
+	every key in ["documents", "required_documents", "inline_arguments"] {
+		empty := {"documents": {}, "required_documents": [], "inline_arguments": {}}[key]
 		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as object.union(object.remove(data.policy_plan, [key]), {key: empty})
 	}
 }
 
 test_pass_data_source_not_read if {
 	read := {"address": "data.aws_iam_policy_document.x", "mode": "data", "type": "aws_iam_policy", "change": {"actions": ["read"], "after": {"policy": "not json"}, "after_unknown": {}}}
-	count(gate.deny) == 0 with input as fixture.plan([valid, read]) with data.policy_plan.required_documents as ["aws_iam_role_policy"]
+	count(gate.deny) == 0 with input as fixture.clean([valid, read]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
+}
+
+# ADR-0402 決定17・18。宣言した引数ごとに、書いた値を落とす。
+written_value(empty) := [{"x": "y"}] if empty == []
+
+written_value(empty) := json.marshal({"Statement": [fixture.allow("s3:GetObject")]}) if empty == null
+
+with_arg(type, arg, value) := object.union(fixture.unwritten(type), {"change": {"after": {arg: value}}})
+
+test_violation_inline_argument_written if {
+	every type, args in data.policy_plan.inline_arguments {
+		every arg, empty in args {
+			msgs := gate.deny with input as fixture.clean([valid, with_arg(type, arg, written_value(empty))]) with data.provider_schema as fixture.provider_schema
+			fixture.has(sprintf("[PLAN-INPUT-09] p.json: module.x.%s.this の %s ", [type, arg]), msgs)
+		}
+	}
+}
+
+test_violation_inline_policy_empty_string_or_random if {
+	every value in ["", "l3mra53t"] {
+		msgs := gate.deny with input as fixture.clean([valid, with_arg("aws_s3_bucket", "policy", value)]) with data.provider_schema as fixture.provider_schema
+		fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の policy ", msgs)
+	}
+}
+
+test_violation_inline_argument_unknown if {
+	rc := {"address": "module.x.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": object.remove(data.policy_plan.inline_arguments.aws_s3_bucket, ["policy"]), "after_unknown": {"policy": true}}}
+	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の policy ", msgs)
+}
+
+test_violation_inline_block_partly_unknown if {
+	rc := object.union(with_arg("aws_s3_bucket", "versioning", [{"mfa_delete": false}]), {"change": {"after_unknown": {"versioning": [{"enabled": true}]}}})
+	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の versioning ", msgs)
+}
+
+test_violation_inline_argument_on_replace if {
+	rc := object.union(with_arg("aws_kms_key", "policy", written_value(null)), {"change": {"actions": ["delete", "create"]}})
+	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_kms_key.this の policy ", msgs)
+}
+
+test_pass_inline_block_unknown_list_is_empty if {
+	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after_unknown": {"versioning": [], "website": []}}})
+	count(gate.deny) == 0 with input as fixture.clean([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
+}
+
+test_pass_inline_argument_outside_declared_type if {
+	rcs := [
+		{"address": "module.x.aws_sqs_queue.this", "type": "aws_sqs_queue", "change": {"actions": ["create"], "after": {"policy": written_value(null)}, "after_unknown": {}}},
+		{"address": "data.aws_s3_bucket.x", "mode": "data", "type": "aws_s3_bucket", "change": {"actions": ["read"], "after": {"policy": "x"}, "after_unknown": {}}},
+		{"address": "module.x.aws_s3_bucket.old", "type": "aws_s3_bucket", "change": {"actions": ["delete"], "before": {"policy": "x"}, "after": null, "after_unknown": {}}},
+		{"address": "module.x.aws_s3_bucket.gone", "type": "aws_s3_bucket", "change": {"actions": ["forget"], "before": {"policy": "x"}, "after": null}},
+	]
+	count(gate.deny) == 0 with input as fixture.clean(array.concat([valid], rcs)) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
+}
+
+test_violation_inline_declaration_absent_from_input if {
+	msgs := gate.deny with input as fixture.plan([valid]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_s3_bucket の policy ", msgs)
+	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_kms_key の policy ", msgs)
+}
+
+test_violation_inline_declaration_misspelled_argument if {
+	d := object.union(data.policy_plan.inline_arguments, {"aws_kms_key": {"policy": null, "polic": null}})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.policy_plan as fixture.inline_declaration(d) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_kms_key の polic ", msgs)
+}
+
+test_violation_provider_schema_absent_or_empty if {
+	fixture.has("[PLAN-INPUT-11] mock の plan", gate.deny) with input as fixture.clean([valid])
+	fixture.has("[PLAN-INPUT-11] mock の plan", gate.deny) with input as fixture.clean([valid]) with data.provider_schema as {"deprecated_arguments": {}}
+}
+
+test_violation_declared_type_not_in_provider_schema if {
+	s := {"deprecated_arguments": object.remove(fixture.provider_schema.deprecated_arguments, ["aws_kms_key"])}
+	fixture.has("[PLAN-INPUT-11] aws_kms_key が mock の plan", gate.deny) with input as fixture.clean([valid]) with data.provider_schema as s
+}
+
+test_violation_deprecated_argument_not_declared if {
+	s := {"deprecated_arguments": object.union(fixture.provider_schema.deprecated_arguments, {"aws_s3_bucket": array.concat(fixture.provider_schema.deprecated_arguments.aws_s3_bucket, ["bucket_prefix"])})}
+	fixture.has("[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 bucket_prefix ", gate.deny) with input as fixture.clean([valid]) with data.provider_schema as s
+}
+
+test_pass_provider_schema_wider_than_declaration if {
+	s := {"deprecated_arguments": object.union(fixture.provider_schema.deprecated_arguments, {"aws_iam_role": ["inline_policy"]})}
+	count(gate.deny) == 0 with input as fixture.clean([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as s
+}
+
+# 不正な形ごとに、宣言の残りは decl.json のまま差し替える。aws_kms_key_policy は保護の対象で、documents に policy を持つ。
+test_violation_inline_declaration_malformed if {
+	bad := [
+		{"aws_s3_bucket": {"policy": ""}},
+		{"aws_s3_bucket": {}},
+		{"aws_s3_bucket": ["policy"]},
+		{"aws_sqs_queue": {"policy": null}},
+		{"aws_kms_key_policy": {"policy": null}},
+	]
+	every d in bad {
+		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration(d)
+	}
+}
+
+test_pass_inline_declaration_well_formed if {
+	every d in [{"aws_s3_bucket": {"policy": null}}, {"aws_kms_key": {"policy": null}, "aws_s3_bucket": {"versioning": []}}] {
+		not fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration(d)
+	}
+}
+
+# after は書かないときの値のまま、block の中だけが plan で決まらない。
+test_violation_inline_block_unknown_inside if {
+	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after_unknown": {"versioning": [{"enabled": true}]}}})
+	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の versioning ", msgs)
+}
+
+# 書いた値が plan で決まらない引数は after に現れない。after_unknown だけでも入力に在ると読む。
+test_pass_inline_seen_only_in_after_unknown if {
+	after := object.remove(data.policy_plan.inline_arguments.aws_kms_key, ["policy"])
+	rc := {"address": "module.x.aws_kms_key.this", "type": "aws_kms_key", "change": {"actions": ["create"], "after": after, "after_unknown": {"policy": true}}}
+	rcs := [valid, rc, fixture.unwritten("aws_s3_bucket")]
+	msgs := gate.deny with input as fixture.plan(rcs) with data.provider_schema as fixture.provider_schema
+	not fixture.has("[PLAN-INPUT-10]", msgs)
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_kms_key.this の policy ", msgs)
+}
+
+test_violation_inline_seen_not_by_another_type if {
+	other := {"address": "module.x.aws_sqs_queue.this", "type": "aws_sqs_queue", "change": {"actions": ["create"], "after": {}, "after_unknown": {"policy": true}}}
+	msgs := gate.deny with input as fixture.plan([valid, other, fixture.unwritten("aws_s3_bucket")]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_kms_key の policy ", msgs)
+}
+
+test_violation_provider_schema_not_object if {
+	every v in [["x"], "x"] {
+		fixture.has("[PLAN-INPUT-11] mock の plan", gate.deny) with input as fixture.clean([valid]) with data.provider_schema as {"deprecated_arguments": v}
+	}
+}
+
+# 宣言を表で回すテストは、宣言が空なら何も見ずに通る。
+test_pass_declaration_covers_the_bucket_and_the_key if {
+	every type in ["aws_s3_bucket", "aws_kms_key"] {
+		count(object.get(data.policy_plan.inline_arguments, type, {})) > 0
+	}
 }
