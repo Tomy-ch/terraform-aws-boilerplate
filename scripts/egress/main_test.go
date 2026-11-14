@@ -1460,7 +1460,6 @@ func Test_applyOrCheck(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// lock の解除のジョブが plan / apply の入口も呼べば、型が呼ぶ宛先（i1.test）を許可リストに求められる。
 		for _, run := range []string{"make ci-unlock-t-identity ci-plan-t-identity", "make ci-apply-t-identity"} {
 			t.Run("lock の解除のジョブが "+run+" を呼べば弾く", func(t *testing.T) {
 				t.Parallel()

@@ -57,7 +57,6 @@ func parseBody(t *testing.T, src string) *hclsyntax.Body {
 	return body.Blocks[0].Body
 }
 
-// terraformRuns は、s の root が名指すすべてのジョブがその root で Terraform を実行するとした rootRuns。
 func terraformRuns(s *ssot) map[string]rootRuns {
 	ran := map[string]rootRuns{}
 	for name, r := range s.roots {

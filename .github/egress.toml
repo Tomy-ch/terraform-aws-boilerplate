@@ -105,7 +105,7 @@ hosts = [
 ]
 
 [class.aws]
-# aws-state に加えて、Terraform で AWS の API を呼ぶ job。iam は global の endpoint だけを持つ。
+# iam は global の endpoint だけを持つ。
 # S3 Control の endpoint はアカウント ID を前に付けるので wildcard で許す。aws provider は Bucket の tag を
 # S3 Control の ListTagsForResource で先に読み、権限が無いと返ったときだけ GetBucketTagging へ移る
 # （internal/service/s3/tags.go）。名前解決で落ちると移らず、再試行が job の時間切れまで続く。
@@ -116,8 +116,7 @@ hosts = [
   "*.s3-control.ap-northeast-1.amazonaws.com",
 ]
 
-# CI が Terraform を実行する root と、ci.mk の入口でその root に触れるジョブ。lock の解除のジョブも名指すが、
-# 型の宛先は plan / apply の入口を呼ぶジョブにだけ求める（scripts/README.md の egress/ の行）。
+# CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
 [root."env/admin/identity"]
 jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity"]
 
@@ -293,7 +292,7 @@ classes = ["terraform", "aws"]
 [job."terraform-apply.yaml:apply-infra-code-gate"]
 classes = ["mise"]
 
-# terraform-gates.yaml の tf-lint と同じ順序の検査。conftest は GitHub Release から入る。
+# terraform-gates.yaml の tf-lint と同じ順序の検査。conftest の入手は infra-code-gate と同じ。
 [job."terraform-apply.yaml:apply-resource-order-check"]
 classes = ["mise"]
 

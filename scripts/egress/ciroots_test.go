@@ -21,7 +21,6 @@ func bindingSSOT(t *testing.T) *ssot {
 	return mustParse(t, "[job.\"a.yaml:one\"]\nclasses = []\n[job.\"a.yaml:two\"]\nclasses = []\n[root.\"env/t/identity\"]\njobs = [\"a.yaml:one\"]\n")
 }
 
-// makeDryRun は実物のリポジトリの直下で make -n を走らせ、展開した recipe を返す。
 func makeDryRun(t *testing.T, args ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", filepath.Join("..", ".."), "-n", "--no-print-directory"}, args...)...)
@@ -235,8 +234,6 @@ func Test_ranRoots(t *testing.T) {
 			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": false}}, got)
 		})
 
-		// 区別は宣言ではなく呼ぶ入口から導くので、lock の解除のジョブが plan / apply も呼べば、その root で
-		// Terraform を実行するジョブに戻り、型の宛先を求められる。入口の順に依らない。
 		for _, c := range []struct{ name, run string }{
 			{"lock の解除の後に plan", "make ci-unlock-t-identity ci-plan-t-identity"},
 			{"apply の後に lock の解除", "make ci-apply-t-identity ci-unlock-t-identity"},
