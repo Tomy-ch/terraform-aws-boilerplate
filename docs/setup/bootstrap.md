@@ -380,7 +380,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim apply "${plan_bucket}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
    ```
 
-   期待は順に、15行・17行・1行・2行・15行・1行・16行・1行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが3行・5行・2行・3行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。plan と apply-identity の role の実効の権限は、手順11 の CI の plan が確かめる。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
+   期待は順に、15行・17行・1行・2行・15行・1行・16行・1行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが3行・5行・2行・3行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。plan の role の実効の権限は手順11 の CI の plan が、apply-identity の role の実効の権限は段5 の最初の apply の run が確かめる。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
 
    state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）は次で確かめる。`simc` は条件キーを `--context-entries` で与える `sim` である
 
