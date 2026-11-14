@@ -186,6 +186,15 @@ classes = ["mise"]
 [job."go-test.yaml:test-mapping"]
 classes = ["mise"]
 
+[job."go-lint.yaml:changes"]
+classes = []
+
+[job."go-lint.yaml:go-lint"]
+classes = ["mise"]
+
+[job."go-lint.yaml:go-fmt-check"]
+classes = ["mise"]
+
 [job."md-lint.yaml:md-lint"]
 classes = ["mise"]
 
