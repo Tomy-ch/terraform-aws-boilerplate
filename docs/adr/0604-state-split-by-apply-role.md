@@ -82,10 +82,11 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 ## 保証範囲
 
 - 保証すること:
-  - IAM principal である apply の role が、identity root の state と lock file を書き換えず、state Bucket と state の鍵の設定を変更しないこと
+  - IAM principal である apply の role のセッションが、identity root の state と lock file と state Bucket の ARN を対象とする要求で読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の ARN を対象とする要求でその Key Policy がアカウントへ委任する Action を、許されないこと（明示の Deny の優先と、apply の role の権限の与え方を持つ use-case の Policy Test が reference の plan で見る拒否から導く。前提と除外は ADR-0602 の保証範囲）
   - 保護の対象として宣言した型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更が、許可の宣言なしに、plan を経る apply へ進まないこと
 - 保証しないこと:
   - 管理アカウントの root による state Bucket への書き込みと、bucket policy の削除（ADR-0602 決定11）
+  - apply の role が作るか渡す別の主体による、identity root の state の書き換えと、state Bucket と state の鍵の設定の変更。state Bucket の ARN を通らない要求（S3 の access point 等）による変更（ADR-0602 の保証範囲）
   - workload root の中での、誤った apply の影響の局所化
   - workload root が大きくなったときの plan の時間と、apply のロックの待ち
   - 宣言していない型の resource の削除と置換。plan を経ない操作（`terraform destroy` 等）による削除
@@ -102,7 +103,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
-- Policy Test: apply の role と lock の解除の role の権限（IAM policy と、課す場合は permissions boundary を合わせた有効な権限）が、決定10 の変更を state Bucket と state の鍵に対して許さないこと（決定10。apply の role の state Bucket の側は未配線。#209）
+- Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
 - Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響

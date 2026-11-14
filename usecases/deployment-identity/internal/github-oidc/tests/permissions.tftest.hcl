@@ -121,7 +121,7 @@ run "policies" {
       {
         Sid    = "DenyIdentityChange"
         Effect = "Deny"
-        Action = "iam:*"
+        Action = "*"
         Resource = [
           "arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
           "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity",
@@ -131,18 +131,17 @@ run "policies" {
         ]
       },
       {
-        Sid    = "DenyIdentityStateWrite"
+        Sid    = "DenyIdentityStateChange"
         Effect = "Deny"
-        Action = ["s3:Delete*", "s3:Put*"]
+        Action = "*"
         Resource = [
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
           "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock",
         ]
       },
-      { Sid = "DenyStateBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
+      { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:ListBucket"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/*" },
-      { Sid = "DenyPlanOutputBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" },
-      { Sid = "DenyPlanOutputWrite", Effect = "Deny", Action = ["s3:DeleteObjectVersion", "s3:Put*"], Resource = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/*" },
+      { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/*"] },
       {
         Sid    = "DenyStateKeyChange"
         Effect = "Deny"
@@ -390,7 +389,7 @@ run "key_arn_follows_input" {
   assert {
     condition = [
       jsondecode(aws_iam_role_policy.this["plan"].policy).Statement[6].Resource,
-      jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[9].Resource,
+      jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[8].Resource,
       jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[10].Resource,
       jsondecode(aws_iam_role_policy.apply_identity.policy).Statement[11].Resource,
       ] == [
@@ -572,7 +571,7 @@ run "access_log_arns_follow_input" {
   }
 
   assert {
-    condition = jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[10].Resource == [
+    condition = jsondecode(aws_iam_role_policy.this["apply"].policy).Statement[9].Resource == [
       "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access",
       "arn:aws-us-gov:logs:us-gov-west-1:210987654321:log-group:t4bp-dev-state-backend-access:*",
       "arn:aws-us-gov:logs:us-gov-west-1:210987654321:delivery-destination:t4bp-dev-state-backend-access",

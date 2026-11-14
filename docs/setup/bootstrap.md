@@ -348,7 +348,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    - `aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` が規則を1つだけ返し、その規則が `Status` `Enabled`、空の `Filter`、`Expiration` の `ExpiredObjectDeleteMarker` `true`（`Days` と `Date` が無い）、`NoncurrentVersionExpiration` の `NoncurrentDays` が `state_noncurrent_version_retention_days` の値、`AbortIncompleteMultipartUpload` の `DaysAfterInitiation` `1` を持つ
    - `aws kms describe-key --key-id alias/tabp-admin-tfstate` が `KeyState` `Enabled`、`KeySpec` `SYMMETRIC_DEFAULT`、`KeyUsage` `ENCRYPT_DECRYPT`、`MultiRegion` `false`、`Origin` `AWS_KMS` を、`aws kms get-key-rotation-status --key-id alias/tabp-admin-tfstate` が `KeyRotationEnabled` `true` と `RotationPeriodInDays` `365` を返す
    - `aws kms get-key-policy --key-id alias/tabp-admin-tfstate --policy-name default` が、アカウントへの委任の文と、plan と apply-identity の2つの role に S3 経由の `kms:Decrypt`・`kms:GenerateDataKey` を許す文と、unlock-identity の role に S3 経由の `kms:Decrypt` だけを、暗号化コンテキスト `aws:s3:arn` が identity root の lock file（`identity/terraform.tfstate.tflock`）の object の ARN であるときに許す文の3つだけを返す
-9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更が拒否されること。unlock-identity の role の権限は、state の鍵の block の後で確かめる
+9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更と、plan の出力の置き場の読み取りが拒否されること。unlock-identity の role の権限は、state の鍵の block の後で確かめる
 
    ```bash
    arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
@@ -368,18 +368,19 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    sim plan "$plan_bucket" $reads
    sim plan "${plan_bucket}/pr/1/x" s3:PutObject
    sim apply-identity "$plan_bucket" $reads s3:PutLifecycleConfiguration
+   sim apply "arn:aws:s3:::${BUCKET}" s3:ListBucket
    sim plan "$key" s3:PutObject
    sim plan "$(arn plan)" iam:PutRolePolicy
    sim plan "${plan_bucket}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
    sim plan "${plan_bucket}/x" s3:PutObject
-   sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
-   sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy s3:PutLifecycleConfiguration
+   sim apply "$(arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy sts:AssumeRole
+   sim apply "arn:aws:s3:::${BUCKET}" s3:PutBucketPolicy s3:DeleteBucketPolicy s3:PutLifecycleConfiguration s3:PutBucketTagging s3:TagResource
    sim apply "$key" s3:PutObject s3:DeleteObject
-   sim apply "$plan_bucket" s3:PutBucketPolicy s3:PutLifecycleConfiguration
+   sim apply "$plan_bucket" s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:GetBucketPolicy
    sim apply "${plan_bucket}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
    ```
 
-   期待は順に、15行・17行・1行・2行・15行・1行・16行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが2行・3行・2行・2行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。実効の権限は、手順11 の CI の plan が確かめる
+   期待は順に、15行・17行・1行・2行・15行・1行・16行・1行がすべて `allowed`、続く4つが1行・1行・2行・1行ですべて `implicitDeny`、最後の5つが3行・5行・2行・3行・2行ですべて `explicitDeny` であること。行数か判定が1つでも違えば、Pull Request に記録して止まる。`simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。plan の role の実効の権限は手順11 の CI の plan が、apply-identity の role の実効の権限は段5 の最初の apply の run が確かめる。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
 
    state の鍵の権限（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）は次で確かめる。`simc` は条件キーを `--context-entries` で与える `sim` である
 
