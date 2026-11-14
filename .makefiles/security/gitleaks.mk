@@ -57,7 +57,7 @@ secret-scan:
 	$(call GITLEAKS_NUMSTAT,git,"$(COMMITLINT_FROM)..HEAD","$$ns"); \
 	( $(call GITLEAKS_COUNTED,--log-opts="$(COMMITLINT_FROM)..HEAD",-numstat "$$ns") )
 
-## 全履歴の数は ref の数え方が git log と揃わないので、0件でないことだけを見る。
+## 全履歴の数は ref の数え方が git rev-list と揃わないので、0件でないことだけを見る。
 .PHONY: secret-scan-history ## 全履歴を走査（検出ルールの更新で過去が対象になるため定期実行する）
 secret-scan-history: gitleaks-canary
 	@set -eu; $(call GITLEAKS_COUNTED,,-min 1)
