@@ -42,7 +42,9 @@ logs := {
 	]}},
 }
 
-key_policy(statements) := fixture.doc("aws_kms_key_policy", "module.kms.aws_kms_key_policy.this", "policy", {"Version": "2012-10-17", "Statement": statements})
+declared := "module.state_backend.module.kms.aws_kms_key_policy.this"
+
+key_policy(statements) := fixture.doc("aws_kms_key_policy", declared, "policy", {"Version": "2012-10-17", "Statement": statements})
 
 ids(statements) := found if {
 	found := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy(statements)])
@@ -56,8 +58,57 @@ test_pass_module_shape if {
 	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3, logs])])
 }
 
-test_pass_no_key_policy if {
-	count(p.deny) == 0 with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")])])
+test_violation_declared_key_policy_absent if {
+	msgs := p.deny with input as fixture.plan([fixture.role_policy([fixture.allow("s3:GetObject")])])
+	msgs == {sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [declared])}
+}
+
+test_violation_only_other_key_policy if {
+	other := fixture.doc("aws_kms_key_policy", "module.other.aws_kms_key_policy.this", "policy", {"Statement": [root, logs]})
+	fixture.has("[PLAN-KMS-00]", p.deny) with input as fixture.plan([other])
+}
+
+test_violation_declaration_not_string if {
+	every v in [null, 1, ["x"]] {
+		fixture.has("[PLAN-KMS-00] 宣言 state_backend.key_policy", p.deny) with input as fixture.plan([key_policy([root, via_s3])])
+			with data.policy_plan.state_backend.key_policy as v
+	}
+}
+
+test_violation_declaration_absent if {
+	decl := object.union(object.remove(data.policy_plan, ["state_backend"]), {"state_backend": {}})
+	fixture.has("[PLAN-KMS-00] 宣言 state_backend.key_policy", p.deny) with input as fixture.plan([key_policy([root, via_s3])])
+		with data.policy_plan as decl
+}
+
+test_violation_key_policy_unknown if {
+	unknown := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {}, "after_unknown": {"policy": true}}}
+	ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([unknown])
+	ids == {"[PLAN-KMS-09]"}
+}
+
+test_violation_key_policy_not_json if {
+	every v in ["{", 1] {
+		broken := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {"policy": v}, "after_unknown": {}}}
+		ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([broken])
+		ids == {"[PLAN-KMS-09]"}
+	}
+}
+
+test_violation_other_key_policy_unknown if {
+	unknown := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["create"], "after": {}, "after_unknown": {"policy": true}}}
+	ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy([root, via_s3]), unknown])
+	ids == {"[PLAN-KMS-09]"}
+}
+
+test_pass_declared_key_policy_unchanged if {
+	noop := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["no-op"]}])
+	count(p.deny) == 0 with input as fixture.plan([noop])
+}
+
+test_pass_deleted_other_key_policy if {
+	gone := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
+	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3]), gone])
 }
 
 test_pass_two_key_policies if {
@@ -274,4 +325,113 @@ test_pass_delegation_single_action if {
 test_violation_delegation_with_not_action if {
 	r := json.patch(without(root, "/Action"), [{"op": "add", "path": "/NotAction", "value": "kms:Decrypt"}])
 	"[PLAN-KMS-08]" in ids([r, via_s3])
+}
+
+# T5: 宣言した Key Policy の削除だけは、文書として数えない。
+test_violation_declared_key_policy_deleted if {
+	gone := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
+	msgs := p.deny with input as fixture.plan([gone])
+	msgs == {sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [declared])}
+}
+
+test_pass_declared_key_policy_replaced if {
+	replaced := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["delete", "create"]}])
+	count(p.deny) == 0 with input as fixture.plan([replaced])
+}
+
+# T6
+test_violation_declared_address_other_type if {
+	other := fixture.doc("aws_iam_role_policy", declared, "policy", {"Statement": [fixture.allow("s3:GetObject")]})
+	fixture.has("[PLAN-KMS-00] 宣言した state の鍵の Key Policy", p.deny) with input as fixture.plan([other])
+}
+
+# T8: JSON として読めれば 09 は出ない。文書の形でないものは委任が0件として 02 が落とす。
+test_violation_key_policy_json_not_document if {
+	every v in ["{}", "[]", "\"x\""] {
+		odd := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {"policy": v}, "after_unknown": {}}}
+		ids := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([odd])
+		"[PLAN-KMS-02]" in ids
+		not "[PLAN-KMS-09]" in ids
+	}
+}
+
+# A2: 管理から外す変更は変更後の文書を持たない。その理由は plan.stateful_protection が持つ。
+test_pass_forgotten_other_key_policy if {
+	forgotten := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
+	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3]), forgotten])
+}
+
+role_change(name, actions) := {"address": sprintf("module.x.aws_iam_role.this[%q]", [name]), "type": "aws_iam_role", "change": {"actions": actions, "after": {"name": name}, "after_unknown": {}}}
+
+kms10(name) := sprintf("[PLAN-KMS-10] p.json: role module.x.aws_iam_role.this[%q] を作るのに、それを名指す %s を書き直しません。KMS は作る前の role を名指し続けます", [name, declared])
+
+unchanged(doc) := json.patch(doc, [
+	{"op": "replace", "path": "/change/actions", "value": ["no-op"]},
+	{"op": "add", "path": "/change/before", "value": doc.change.after},
+])
+
+noop_key_policy := unchanged(key_policy([root, via_s3, logs]))
+
+test_violation_named_role_replaced_key_policy_unchanged if {
+	every actions in [["delete", "create"], ["create", "delete"]] {
+		msgs := p.deny with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-plan", actions)])
+		msgs == {kms10("tabp-admin-ci-plan")}
+	}
+}
+
+test_pass_named_role_replaced_key_policy_rewritten if {
+	updated := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["update"]}])
+	count(p.deny) == 0 with input as fixture.plan([updated, role_change("tabp-admin-ci-plan", ["delete", "create"])])
+}
+
+test_pass_unnamed_role_replaced if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-other", ["delete", "create"])])
+}
+
+test_pass_named_role_updated_in_place if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("tabp-admin-ci-plan", ["update"])])
+}
+
+test_pass_role_name_suffix_only if {
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, role_change("ci-plan", ["delete", "create"])])
+}
+
+test_violation_declared_key_policy_forgotten if {
+	forgotten := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
+	msgs := p.deny with input as fixture.plan([forgotten])
+	msgs == {sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [declared])}
+}
+
+test_violation_named_role_moved_without_moved_block if {
+	gone := {"address": "module.x.aws_iam_role.old", "type": "aws_iam_role", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
+	msgs := p.deny with input as fixture.plan([noop_key_policy, gone, role_change("tabp-admin-ci-plan", ["create"])])
+	msgs == {kms10("tabp-admin-ci-plan")}
+}
+
+test_violation_key_policy_updated_without_policy_change if {
+	same := json.patch(noop_key_policy, [{"op": "replace", "path": "/change/actions", "value": ["update"]}])
+	kms10("tabp-admin-ci-plan") in p.deny with input as fixture.plan([same, role_change("tabp-admin-ci-plan", ["delete", "create"])])
+}
+
+test_pass_key_policy_replaced if {
+	replaced := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["delete", "create"]}])
+	count(p.deny) == 0 with input as fixture.plan([replaced, role_change("tabp-admin-ci-plan", ["delete", "create"])])
+}
+
+test_pass_other_key_policy_unchanged if {
+	other := unchanged(fixture.doc("aws_kms_key_policy", "module.other.aws_kms_key_policy.this", "policy", {"Statement": [root, via_s3]}))
+	updated := json.patch(key_policy([root, via_s3, logs]), [{"op": "replace", "path": "/change/actions", "value": ["update"]}])
+	count(p.deny) == 0 with input as fixture.plan([updated, other, role_change("tabp-admin-ci-plan", ["delete", "create"])])
+}
+
+test_violation_created_role_name_unknown if {
+	unknown := {"address": "module.x.aws_iam_role.this[\"x\"]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {}, "after_unknown": {"name": true}}}
+	fixture.has("[PLAN-KMS-10] p.json: 作る role", p.deny) with input as fixture.plan([noop_key_policy, unknown])
+}
+
+test_role_path_is_part_of_the_arn if {
+	pathed := json.patch(role_change("tabp-admin-ci-plan", ["delete", "create"]), [{"op": "add", "path": "/change/after/path", "value": "/ci/"}])
+	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, pathed])
+	s := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-plan"}])
+	kms10("tabp-admin-ci-plan") in p.deny with input as fixture.plan([unchanged(key_policy([root, s])), pathed])
 }

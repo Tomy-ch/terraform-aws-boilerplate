@@ -1,5 +1,5 @@
 # Key Policy が鍵の利用者を名指し、外へ開かないこと（ADR-0301 決定1・12・18）。Security の道具は aws_kms_key_policy の
-# 文書を見ないので、Policy が持つ（ADR-0402 決定4）。規則はすべて文書ごとで、Key Policy が0件なら何も言わない。
+# 文書を見ないので、Policy が持つ（ADR-0402 決定4）。00 のほかの規則は文書ごとに見る。
 package plan.kms_key_policy
 
 import data.plan.lib
@@ -23,6 +23,68 @@ account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 roots(body) := [a | some s in allows(body); some a in aws_principals(s); account_root(a)]
 
+# Key Policy が無いことと読めないことは、ほかの規則が何も見ずに黙る形なのでここで落とす。
+declared_key_policy := data.policy_plan.state_backend.key_policy if is_string(data.policy_plan.state_backend.key_policy)
+
+deny contains msg if {
+	not declared_key_policy
+	msg := "[PLAN-KMS-00] 宣言 state_backend.key_policy が無いか、文字列ではありません"
+}
+
+deny contains msg if {
+	address := declared_key_policy
+	count({d | some d in lib.documents; d.type == "aws_kms_key_policy"; d.address == address; d.change.actions != ["forget"]}) == 0
+	msg := sprintf("[PLAN-KMS-00] 宣言した state の鍵の Key Policy %s が入力にありません", [address])
+}
+
+deny contains msg if {
+	some d in lib.documents
+	d.type == "aws_kms_key_policy"
+	d.change.actions != ["forget"]
+	not lib.parsed(d)
+	msg := sprintf("[PLAN-KMS-09] %s: %s の %s が plan で決まらないか、JSON の文書として読めません", [d.path, d.address, d.attr])
+}
+
+# KMS は Principal の role を一意 ID で持つので、作った role は、それを名指す Key Policy が書き直されるまで鍵を使えない。
+# 同じ名前で作り直すと ARN の文字列も同じで、Key Policy は書き直されない。別の address での作り直しも含めて、作成を見る。
+created_roles contains c.rc if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_role"
+	"create" in c.rc.change.actions
+}
+
+role_suffix(rc) := sprintf(":role%s%s", [role_path(rc), rc.change.after.name]) if is_string(rc.change.after.name)
+
+role_path(rc) := object.get(rc.change.after, "path", "/") if is_string(object.get(rc.change.after, "path", "/"))
+
+role_path(rc) := "/" if not is_string(object.get(rc.change.after, "path", "/"))
+
+# PutKeyPolicy は、Key Policy の作成と置換と、文書の変わる update でだけ呼ばれる。
+rewritten(d) if "create" in d.change.actions
+
+rewritten(d) if not d.change.before.policy == d.change.after.policy
+
+deny contains msg if {
+	some r in key_policies
+	r.document.address == declared_key_policy
+	not rewritten(r.document)
+	some rc in created_roles
+	suffix := role_suffix(rc)
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	endswith(a, suffix)
+	msg := sprintf("[PLAN-KMS-10] %s: role %s を作るのに、それを名指す %s を書き直しません。KMS は作る前の role を名指し続けます", [r.document.path, rc.address, r.document.address])
+}
+
+deny contains msg if {
+	some r in key_policies
+	r.document.address == declared_key_policy
+	not rewritten(r.document)
+	some rc in created_roles
+	not role_suffix(rc)
+	msg := sprintf("[PLAN-KMS-10] %s: 作る role %s の名前が plan で決まらないので、%s が名指すかを確かめられません", [r.document.path, rc.address, r.document.address])
+}
+
 # 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とし、05 は限っていないと読み、03 は見ない。
 account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
 
@@ -32,14 +94,6 @@ limiting_keys(s) := {lower(k) |
 	some op, kv in object.get(s, "Condition", {})
 	lower(op) in lib.limiting_operators
 	some k, _ in kv
-}
-
-# 鍵の暗号操作と grant。アカウントへの委任に置かない（ADR-0301 決定12）。
-crypto_actions := {
-	"kms:creategrant", "kms:decapsulate", "kms:decrypt", "kms:derivesharedsecret", "kms:encapsulate", "kms:encrypt", "kms:generatedatakey",
-	"kms:generatedatakeypair", "kms:generatedatakeypairwithoutplaintext", "kms:generatedatakeywithoutplaintext",
-	"kms:generatemac", "kms:getpublickey", "kms:reencryptfrom", "kms:reencryptto", "kms:sign", "kms:verify",
-	"kms:verifymac",
 }
 
 deny contains msg if {
@@ -95,7 +149,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext の ARN）を限らずに許可しています", [r.document.path, r.document.address, svc])
 }
 
-# 限る条件の値は、1つでも委任のアカウントの外を指せば、ほかの条件が限っていても開く。
 deny contains msg if {
 	some r in key_policies
 	some s in allows(r.body)
@@ -123,8 +176,6 @@ source_limited(s, body) if {
 	own_source(v, s, body)
 }
 
-# アカウント ID か、委任と同じ partition とアカウントの ARN。ARN でない暗号化コンテキストの値は要求元を限らない。
-# アカウントの欄が空の ARN（S3 の Bucket）は、aws:SourceAccount が同じ文で委任のアカウントに限るときだけ認める。
 own_source(v, _, body) if {
 	lib.no_wildcard(v)
 	v == account(body)
@@ -195,7 +246,7 @@ deny contains msg if {
 
 delegated_too_much(s) := {a |
 	some a in lib.lower_all(s.Action)
-	a in crypto_actions
+	a in lib.crypto_actions
 } | {a |
 	some a in lib.lower_all(s.Action)
 	regex.match(`[*?]`, a)

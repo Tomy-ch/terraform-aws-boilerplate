@@ -159,10 +159,10 @@ run "outputs_per_role" {
 
   assert {
     condition = output.role_arns == {
-      plan            = aws_iam_role.this["plan"].arn
-      apply           = aws_iam_role.this["apply"].arn
-      apply_identity  = aws_iam_role.apply_identity.arn
-      unlock_identity = aws_iam_role.this["unlock_identity"].arn
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
     }
     error_message = "role_arns が、役割ごとにその役割の role の ARN を返していません。"
   }
@@ -185,5 +185,26 @@ run "outputs_per_role" {
       unlock_identity = aws_iam_role_policy.this["unlock_identity"].policy
     }
     error_message = "role_policies が、役割ごとにその役割の inline policy を返していません。"
+  }
+}
+
+# role_arns は Key Policy の Principal に渡る。role の置換で computed の arn が決まらない plan でも、Key Policy の
+# 文書が決まるよう、role の名前から組む（plan.kms_key_policy の PLAN-KMS-09）。
+run "role_arns_do_not_read_computed_arn" {
+  command = plan
+
+  override_resource {
+    target = aws_iam_role.this["plan"]
+    values = { arn = "arn:aws:iam::210987654321:role/computed" }
+  }
+
+  override_resource {
+    target = aws_iam_role.apply_identity
+    values = { arn = "arn:aws:iam::210987654321:role/computed" }
+  }
+
+  assert {
+    condition     = output.role_arns["plan"] == "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" && output.role_arns["apply_identity"] == "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+    error_message = "role_arns が、role の名前ではなく computed の arn から組まれています。"
   }
 }

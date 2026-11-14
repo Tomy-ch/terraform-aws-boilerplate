@@ -3,7 +3,6 @@
 # 別の root の plan に在るので、結合した入力で突き合わせる。役割は宣言した address から引き、role の名前で判定しない（ADR-0402 決定13）。
 package plan.state_backend_write_deny
 
-import data.plan.kms_key_policy
 import data.plan.lib
 
 di := object.get(data.policy_plan, "deployment_identity", {})
@@ -349,11 +348,11 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SBW-05] lock を外す role が消せる key %q が、どの root の lock file（<state>.tflock）でもありません", [lock_key])
 }
 
-crypto(a) if a in kms_key_policy.crypto_actions
+crypto(a) if a in lib.crypto_actions
 
 crypto(a) if {
 	contains(a, "*")
-	some c in kms_key_policy.crypto_actions
+	some c in lib.crypto_actions
 	glob.match(a, [], c)
 }
 
@@ -453,7 +452,7 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SBW-08] state Bucket の Bucket Policy に、%s と %s/* への s3:* を aws:SecureTransport が false の要求について Principal \"*\" に拒否する文が1つではありません", [bucket_arn, bucket_arn])
 }
 
-# Allow は IAM の側に置く。KICS は Statement を concat で組む文書を読めないので、Allow の検査をここで持つ。
+# Allow は IAM の側に置く。ここで持つ理由は conftest/plan/README.md の plan.state_backend_write_deny の行にある。
 deny contains msg if {
 	some a in statements
 	a.statement.Effect != "Deny"
