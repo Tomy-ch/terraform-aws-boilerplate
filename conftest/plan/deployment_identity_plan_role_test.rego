@@ -53,8 +53,6 @@ test_violation_plan_role_policy_missing if {
 	fixture.has("[PLAN-ROLE-00]", p.deny) with input as fixture.plan([role, policies_exclusive, attachments_exclusive]) with data.policy_plan.deployment_identity as decl
 }
 
-fixture_only := fixture.plan([plan_policy([write_output])])
-
 test_violation_plan_role_missing if {
 	fixture.has("[PLAN-ROLE-00]", p.deny) with input as fixture.plan([plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
 }
@@ -145,6 +143,27 @@ test_violation_exclusive_allows_more if {
 	arns := rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_arns": ["arn:aws:iam::aws:policy/AdministratorAccess"]})
 	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_names が", [names.address]), p.deny) with input as fixture.plan([role, names, attachments_exclusive, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
 	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arns が空ではありません", [arns.address]), p.deny) with input as fixture.plan([role, policies_exclusive, arns, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_exclusive_contents_absent if {
+	every c in [
+		{"e": policies_exclusive, "attr": "policy_names", "says": "が"},
+		{"e": attachments_exclusive, "attr": "policy_arns", "says": "が空ではありません"},
+	] {
+		absent := json.patch(c.e, [{"op": "remove", "path": sprintf("/change/after/%s", [c.attr])}])
+		others := [r | some r in [role, policies_exclusive, attachments_exclusive, plan_policy([write_output])]; r.address != c.e.address]
+		fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の %s %s", [c.e.address, c.attr, c.says]), p.deny) with input as fixture.plan(array.concat(others, [absent])) with data.policy_plan.deployment_identity as decl
+	}
+}
+
+# 実際の plan には apply の role の排他と attachment も並ぶ。plan の role に付くものだけを数えることを見る。
+test_pass_other_role_exclusive_and_attachment_are_not_checked if {
+	others := [
+		rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_names": ["apply"]}),
+		rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]}),
+		rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.apply", {"role": "ci-apply", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}),
+	]
+	count(p.deny) == 0 with input as with_role([write_output], others) with data.policy_plan.deployment_identity as decl
 }
 
 test_pass_service_name_with_hyphen if {
