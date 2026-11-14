@@ -66,6 +66,16 @@ test_violation_action_not_string if {
 	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy([s])])
 }
 
+# Resource が文字列でないと、Resource を読む規則が型エラーで未定義になって黙る。
+test_violation_resource_not_string if {
+	every s in [
+		{"Effect": "Allow", "Action": "s3:DeleteObject", "Resource": [1, {"x": 1}, null]},
+		{"Effect": "Allow", "Action": "s3:DeleteObject", "NotResource": 5},
+	] {
+		fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy([s])])
+	}
+}
+
 test_violation_condition_null if {
 	s := {"Effect": "Allow", "Action": "sts:AssumeRoleWithWebIdentity", "Condition": null}
 	fixture.has("[PLAN-INPUT-06]", gate.deny) with input as fixture.plan([fixture.role_policy([s])])

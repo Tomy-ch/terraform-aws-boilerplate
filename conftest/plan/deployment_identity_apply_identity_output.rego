@@ -117,6 +117,14 @@ deny contains msg if {
 	msg := sprintf("[PLAN-AIO-01] %s: apply-identity の role の Allow が %s を使っています。Action と Resource を列挙してください", [a.path, k])
 }
 
+# policy 変数（${aws:PrincipalAccount} など）は IAM が評価時に置き換えるので、Resource がどの object に届くかを plan から読めない。
+deny contains msg if {
+	some a in allows
+	some resource in resources(a.statement)
+	contains(resource, "${")
+	msg := sprintf("[PLAN-AIO-01] %s: apply-identity の role の Allow の Resource %s が policy 変数を使っています。値を書いてください", [a.path, resource])
+}
+
 # Bucket の ARN が読めなければ PLAN-AIO-00 が落とす。下の3つは ARN を読めたときだけ評価する。
 deny contains msg if {
 	bucket_known
@@ -245,6 +253,30 @@ deny contains msg if {
 	output_bucket_policy != ""
 	count({d | some d in lib.documents; d.type == "aws_s3_bucket_policy"; d.address == output_bucket_policy}) == 0
 	msg := sprintf("[PLAN-AIO-00] plan の出力の Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.apply_identity_role を直してください", [output_bucket_policy])
+}
+
+# Bucket Policy は Bucket ごとに1つなので、宣言の外の resource が同じ Bucket を指すと、apply の順で実体が決まる。
+bucket_refs := {v | some v in [object.get(after(output_bucket), "id", null), object.get(after(output_bucket), "bucket", null), bucket_arn]; is_string(v)}
+
+on_output_bucket(c) if object.get(c.rc.change.after, "bucket", null) in bucket_refs
+
+on_output_bucket(c) if object.get(object.get(c.rc.change, "after_unknown", {}), "bucket", false) == true
+
+deny contains msg if {
+	bucket_known
+	some c in lib.changes
+	c.rc.type == "aws_s3_bucket_policy"
+	on_output_bucket(c)
+	c.rc.address != output_bucket_policy
+	msg := sprintf("[PLAN-AIO-06] %s: %s が plan の出力の Bucket を指すか、どの Bucket を指すかを plan で読めません。この Bucket の Bucket Policy は %s だけに置いてください", [c.path, c.rc.address, output_bucket_policy])
+}
+
+deny contains msg if {
+	bucket_known
+	some c in lib.changes
+	c.rc.address == output_bucket_policy
+	not on_output_bucket(c)
+	msg := sprintf("[PLAN-AIO-06] %s: %s が plan の出力の Bucket %s を指していません", [c.path, c.rc.address, bucket_arn])
 }
 
 deny contains msg if {

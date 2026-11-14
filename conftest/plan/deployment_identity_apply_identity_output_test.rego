@@ -20,11 +20,11 @@ rc(type, address, after) := {"address": address, "type": type, "change": {"actio
 
 role := rc("aws_iam_role", "module.x.aws_iam_role.apply_identity", {"name": "ci-apply-identity", "inline_policy": [], "managed_policy_arns": []})
 
-bucket := rc("aws_s3_bucket", "module.s.aws_s3_bucket.plan", {"arn": b})
+bucket := rc("aws_s3_bucket", "module.s.aws_s3_bucket.plan", {"arn": b, "id": "bkt-id", "bucket": "tabp-admin-tfplan-123456789012-ap-northeast-1-an"})
 
 tls_deny := {"Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": [b, sprintf("%s/*", [b])], "Condition": {"Bool": {"aws:SecureTransport": "false"}}}
 
-bucket_policy(statements) := fixture.doc("aws_s3_bucket_policy", "module.s.aws_s3_bucket_policy.plan", "policy", {"Statement": statements})
+bucket_policy(statements) := object.union(fixture.doc("aws_s3_bucket_policy", "module.s.aws_s3_bucket_policy.plan", "policy", {"Statement": statements}), {"change": {"after": {"bucket": "bkt-id"}}})
 
 state_side := [bucket, bucket_policy([tls_deny])]
 
@@ -317,4 +317,31 @@ test_violation_policy_role_absent if {
 test_violation_exclusive_duplicated if {
 	second := rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.extra", {"role_name": "ci-apply-identity", "policy_names": ["apply_identity"]})
 	fixture.has("[PLAN-AIO-05] apply-identity の role ci-apply-identity の aws_iam_role_policies_exclusive が 2 件", messages_with([write_apply], [second]))
+}
+
+test_violation_policy_variable_in_resource if {
+	every r in ["arn:aws:s3:::tabp-admin-tfplan-${aws:PrincipalAccount}-ap-northeast-1-an/*", "arn:aws:s3:::${aws:PrincipalTag/bucket}/*"] {
+		fixture.has("[PLAN-AIO-01]", messages([write_apply, {"Effect": "Allow", "Action": "s3:DeleteObject", "Resource": r}]))
+	}
+}
+
+test_violation_other_bucket_policy_on_output_bucket if {
+	allow := {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-apply-identity"}, "Action": "s3:DeleteObject", "Resource": sprintf("%s/*", [b])}
+	every after in [{"bucket": "bkt-id"}, {"bucket": "tabp-admin-tfplan-123456789012-ap-northeast-1-an"}] {
+		evil := object.union(fixture.doc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", "policy", {"Statement": [allow]}), {"change": {"after": after}})
+		fixture.has("[PLAN-AIO-06] p.json: module.evil.aws_s3_bucket_policy.x が plan の出力の Bucket を指す", messages_with([write_apply], [evil]))
+	}
+	unknown := {"address": "module.evil.aws_s3_bucket_policy.x", "type": "aws_s3_bucket_policy", "change": {"actions": ["create"], "after": {"policy": json.marshal({"Statement": [allow]})}, "after_unknown": {"bucket": true}}}
+	fixture.has("[PLAN-AIO-06] p.json: module.evil.aws_s3_bucket_policy.x が plan の出力の Bucket を指す", messages_with([write_apply], [unknown]))
+}
+
+test_pass_other_bucket_policy_on_other_bucket if {
+	other := object.union(fixture.doc("aws_s3_bucket_policy", "module.s3.aws_s3_bucket_policy.this", "policy", {"Statement": [tls_deny]}), {"change": {"after": {"bucket": "state-bkt-id"}}})
+	count(messages_with([write_apply], [other])) == 0
+}
+
+test_violation_declared_bucket_policy_on_other_bucket if {
+	moved := object.union(bucket_policy([tls_deny]), {"change": {"after": {"bucket": "other-id"}}})
+	inp := fixture.plan(array.concat(identity_side([write_apply]), [bucket, moved]))
+	fixture.has("[PLAN-AIO-06] p.json: module.s.aws_s3_bucket_policy.plan が plan の出力の Bucket", messages_for(inp, decl))
 }
