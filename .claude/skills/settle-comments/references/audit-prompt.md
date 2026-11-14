@@ -80,9 +80,8 @@ A compile error, a test case, a `golangci-lint` rule（`errcheck` / `errorlint` 
 `trivy-config`）, or a terraform-docs generated region — any of these means the fact already has a
 guard and the comment is a second copy of it. Verdict **不要**.
 
-**Terraform 側の検査のうち、守り手として名指ししてよいのは `make tf-fmt-check` / `make tf-validate` /
-`make tf-lint` / `make tf-test` だけである。** Policy Test（Conftest）と Contract Test はまだ配線されていない
-（`AGENTS.md` *現在の配線状態*）。存在しないゲートを根拠に 不要 と判定すると、どこにも無い契約を消すことになる。
+**Terraform 側の検査を守り手として名指しするのは、`make help` に在り、`AGENTS.md` *現在の配線状態* が
+未配線としていないものだけである。** 存在しないゲートを根拠に 不要 と判定すると、どこにも無い契約を消すことになる。
 
 **逆向きの注意がひとつある。** ゲートそのものを説明しているコメントは、そのゲートに守られていない。
 `scripts/<tool>/main.go` 先頭の「解いている問題」や、workflow の「なぜこのフィルタを置かないか」は、
