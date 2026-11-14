@@ -56,7 +56,7 @@ var manifest = []domain{
 	{
 		name:  "sonarcloud",
 		paths: []string{".github/workflows/sonarcloud.yaml", "sonar-project.properties"},
-		pins:  []string{"SonarSource/sonarqube-scan-action@v8.2.1"},
+		pins:  []string{"SonarSource/sonarqube-scan-action@v8.4.0"},
 	},
 	{
 		name:  "dependency-review",
