@@ -79,8 +79,6 @@ tf-policy: tf-init
 # terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は state-backend の
 # reference の root の lock を写して init する。plugin cache に無ければ provider を取得する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
-# conftest/plan/decl.json の inline_arguments の aws_s3_bucket の写し。Provider が非推奨の引数を足すと、両方を直すまで落ちる。
-TF_POLICY_CANARY_AWS_INLINE = {"aws_s3_bucket": {"acceleration_status": null, "acl": null, "policy": null, "request_payer": null, "cors_rule": [], "grant": [], "lifecycle_rule": [], "logging": [], "object_lock_configuration": [], "replication_configuration": [], "server_side_encryption_configuration": [], "versioning": [], "website": []}}
 
 define TF_POLICY_FIXTURE
 mkdir -p "$$1/usecases/x/reference/tests"; printf '%s\n' "$$2" > "$$1/usecases/x/reference/main.tf"; \
@@ -149,7 +147,7 @@ tf-policy-canary:
 		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
 		printf 'mock_provider "aws" {\n  override_during = plan\n}\n\noverride_resource {\n  target          = aws_s3_bucket.b\n  override_during = plan\n  values = {\n    acceleration_status = null\n    acl                 = null\n    policy              = null\n    request_payer       = null\n  }\n}\n\nrun "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"; \
 	}; \
-	jq --argjson a '$(TF_POLICY_CANARY_AWS_INLINE)' '.policy_plan.inline_arguments = $$a' "$$root/data.json" > "$$root/aws.json"; \
+	jq --slurpfile d $(POLICY_PLAN_DECL) '.policy_plan.inline_arguments = {aws_s3_bucket: $$d[0].policy_plan.inline_arguments.aws_s3_bucket}' "$$root/data.json" > "$$root/aws.json"; \
 	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.website)' "$$root/aws.json" > "$$root/aws-uncovered.json"; \
 	aws_fixture "$$root/aws-unwritten" ''; \
 	expect pass aws-unwritten "$$root/aws-unwritten" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
