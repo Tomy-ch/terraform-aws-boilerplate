@@ -39,7 +39,6 @@ func (f *fixture) git(args ...string) string {
 	cmd := exec.CommandContext(f.t.Context(), "git", append([]string{
 		"-C", f.dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
 		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
-		// 自動メンテナンスは commit の後に detach して .git を書き、snapshot の比較と競合する。
 		"-c", "maintenance.auto=false", "-c", "gc.auto=0",
 	}, args...)...)
 	out, err := cmd.CombinedOutput()

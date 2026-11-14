@@ -320,7 +320,6 @@ func leakInto(env []string, outer string) []string {
 func git(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
 
-	// 自動メンテナンスは commit の後に detach して .git を書き、snapshot の比較と競合する。
 	cmd := exec.CommandContext(t.Context(), "git", append([]string{
 		"-C", dir, "-c", "core.hooksPath=/dev/null", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
 	}, args...)...)
