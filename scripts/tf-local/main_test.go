@@ -1417,7 +1417,7 @@ const (
 	recipeCreate   = `{"format_version":"1.2","resource_changes":[{"address":"a.b","change":{"actions":["create"]}}]}`
 	recipePass     = `[{"namespace":"plan.stateful_protection","successes":2}]`
 	recipeKMSPass  = `[{"namespace":"plan.kms_key_policy","successes":3}]`
-	recipeRPEPass  = `[{"namespace":"plan.resource_policy_exclusive","successes":3}]`
+	recipeRPEPass  = `[{"namespace":"plan.resource_policy_exclusive","successes":4}]`
 	recipeViolated = `[{"namespace":"plan.stateful_protection","successes":1,"failures":[{"msg":"[PLAN-STATE-01] stub"}]}]`
 )
 
@@ -1490,7 +1490,7 @@ func newRecipe(bin string) recipeFunc {
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "providers.tf"), []byte(providersOK), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "stateful_protection.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 2)), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "kms_key_policy.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 3)), 0o600))
-		require.NoError(t, os.WriteFile(filepath.Join(policy, "resource_policy_exclusive.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 3)), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(policy, "resource_policy_exclusive.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 4)), 0o600))
 
 		if _, ok := knobs["policy-plan.kms_key_policy.json"]; !ok {
 			require.NoError(t, os.WriteFile(filepath.Join(k, "policy-plan.kms_key_policy.json"), []byte(recipeKMSPass), 0o600))
@@ -1591,7 +1591,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.kms_key_policy"), strings.Index(r.calls, "--namespace plan.resource_policy_exclusive"), r.calls)
 			assert.Contains(t, r.out, "plan.kms_key_policy: 規則 3 件")
-			assert.Contains(t, r.out, "plan.resource_policy_exclusive: 規則 3 件")
+			assert.Contains(t, r.out, "plan.resource_policy_exclusive: 規則 4 件")
 			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
 			assert.Contains(t, r.calls, "--bucket plan-output-bucket --key apply/8-1-admin-identity.txt")
 			assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
@@ -1624,8 +1624,8 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		"Key Policy の Policy に違反すれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
 		"Key Policy の評価の数が規則の数と違えば apply しない":                {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":2}]`}, "一致しません"},
 		"Key Policy の Policy が評価されなければ apply しない":            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません"},
-		"宣言の外の resource policy があれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":2,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub"},
-		"宣言の外の resource policy の評価の数が規則の数と違えば apply しない":     {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":2}]`}, "一致しません"},
+		"宣言の外の resource policy があれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub"},
+		"宣言の外の resource policy の評価の数が規則の数と違えば apply しない":     {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3}]`}, "一致しません"},
 		"宣言の外の resource policy の Policy が評価されなければ apply しない": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": "[]"}, "plan.resource_policy_exclusive の Policy を通りません"},
 	}
 	for name, c := range fail {
@@ -1830,7 +1830,7 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
 		assert.Less(t, strings.Index(r.calls, "--namespace plan.kms_key_policy"), strings.Index(r.calls, "--namespace plan.resource_policy_exclusive"), r.calls)
 		assert.Contains(t, r.out, "plan.kms_key_policy: 規則 3 件")
-		assert.Contains(t, r.out, "plan.resource_policy_exclusive: 規則 3 件")
+		assert.Contains(t, r.out, "plan.resource_policy_exclusive: 規則 4 件")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -1844,7 +1844,7 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		"Policy が評価されなくても全文を置いてから失敗する":                         {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": "[]"}, "Policy を通りません"},
 		"Key Policy の Policy が評価されなくても全文を置いてから失敗する":            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません"},
 		"Key Policy の Policy に違反すれば全文を置いてから失敗する":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
-		"宣言の外の resource policy があれば全文を置いてから失敗する":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":2,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub"},
+		"宣言の外の resource policy があれば全文を置いてから失敗する":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub"},
 		"宣言の外の resource policy の Policy が評価されなくても全文を置いてから失敗する": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": "[]"}, "plan.resource_policy_exclusive の Policy を通りません"},
 	}
 	for name, c := range fail {

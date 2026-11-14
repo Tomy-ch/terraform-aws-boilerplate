@@ -8,7 +8,7 @@ state_backend := object.get(data.policy_plan, "state_backend", {})
 
 apply_identity := object.get(object.get(data.policy_plan, "deployment_identity", {}), "apply_identity_role", {})
 
-# 宣言が無ければ組を作らず、何も見ない。宣言の欠けは各 package の PLAN-*-00 が落とす。
+# 宣言が欠けた組は作らず、PLAN-RPE-00 で落とす。CI の実 plan は宣言の欠けを見るほかの package を掛けない。
 pairs contains pair("aws_s3_bucket_policy", "bucket", state_backend.bucket, state_backend.bucket_policy, ["id", "bucket", "arn"]) if {
 	is_string(state_backend.bucket)
 	is_string(state_backend.bucket_policy)
@@ -84,4 +84,39 @@ created_together(c, p) if {
 	t.rc.address == p.target
 	some a in p.refs
 	object.get(object.get(t.rc.change, "after_unknown", {}), a, false) == true
+}
+
+declared_keys := [
+	["state_backend", "bucket"],
+	["state_backend", "bucket_policy"],
+	["state_backend", "state_key"],
+	["state_backend", "key_policy"],
+	["deployment_identity", "apply_identity_role", "output_bucket"],
+	["deployment_identity", "apply_identity_role", "output_bucket_policy"],
+]
+
+declared_string(path) if {
+	v := object.get(data.policy_plan, path, null)
+	is_string(v)
+	v != ""
+}
+
+deny contains msg if {
+	some path in declared_keys
+	not declared_string(path)
+	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s が、空でない文字列ではありません", [concat(".", path)])
+}
+
+in_input(address) if {
+	some f in input
+	some rc in f.contents.resource_changes
+	rc.address == address
+}
+
+deny contains msg if {
+	some path in declared_keys
+	declared_string(path)
+	address := object.get(data.policy_plan, path, null)
+	not in_input(address)
+	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s の %s が入力にありません。address が変わったなら宣言を直してください", [concat(".", path), address])
 }

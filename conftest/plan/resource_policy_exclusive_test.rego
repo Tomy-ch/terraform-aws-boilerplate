@@ -113,19 +113,22 @@ test_violation_declared_policy_unknown_on_a_known_target if {
 # 名前を決めて作る Bucket は、bucket は決まり、id と arn が plan で決まらない。
 test_pass_declared_bucket_policy_created_with_its_bucket if {
 	new_bucket := {"address": state_bucket, "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {"bucket": "tabp-admin-tfstate"}, "after_unknown": {"id": true, "arn": true}}}
-	inp := fixture.plan([new_bucket, unknown("aws_s3_bucket_policy", state_bucket_policy, "bucket")])
+	inp := fixture.plan([new_bucket, unknown("aws_s3_bucket_policy", state_bucket_policy, "bucket"), targets[1], targets[2], declared[1], declared[2]])
 	count(gate.deny) == 0 with input as inp
 }
 
 test_pass_declared_policy_created_with_its_target if {
 	new_key := {"address": state_key, "type": "aws_kms_key", "change": {"actions": ["create"], "after": {}, "after_unknown": {"id": true, "key_id": true, "arn": true}}}
-	inp := fixture.plan([new_key, unknown("aws_kms_key_policy", key_policy, "key_id")])
+	inp := fixture.plan([new_key, unknown("aws_kms_key_policy", key_policy, "key_id"), targets[0], targets[1], declared[0], declared[1]])
 	count(gate.deny) == 0 with input as inp
 }
 
-test_pass_declaration_absent if {
-	evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": "state-id"})
-	count(gate.deny) == 0 with input as fixture.plan(array.concat(targets, [evil])) with data.policy_plan as {}
+test_violation_declaration_absent_or_not_a_string if {
+	every d in [{}, {"state_backend": {"bucket": 5}}] {
+		msgs := gate.deny with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan as d
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.bucket が", msgs)
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.deployment_identity.apply_identity_role.output_bucket_policy が", msgs)
+	}
 }
 
 test_violation_declared_policy_without_its_target if {
@@ -133,8 +136,10 @@ test_violation_declared_policy_without_its_target if {
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が %s を指していません", [state_bucket_policy, state_bucket]), msgs)
 }
 
-test_pass_nothing_declared_in_the_plan if {
-	count(gate.deny) == 0 with input as fixture.plan([rc("aws_sqs_queue", "module.x.aws_sqs_queue.this", {})])
+test_violation_declared_resource_absent_from_the_input if {
+	msgs := gate.deny with input as fixture.plan([rc("aws_sqs_queue", "module.x.aws_sqs_queue.this", {})])
+	fixture.has(sprintf("[PLAN-RPE-00] 宣言の policy_plan.state_backend.key_policy の %s が入力にありません", [key_policy]), msgs)
+	fixture.has(sprintf("[PLAN-RPE-00] 宣言の policy_plan.deployment_identity.apply_identity_role.output_bucket の %s が入力にありません", [output_bucket]), msgs)
 }
 
 test_pass_declared_policy_forgotten if {
@@ -142,5 +147,5 @@ test_pass_declared_policy_forgotten if {
 		{"address": state_bucket_policy, "type": "aws_s3_bucket_policy", "change": {"actions": ["forget"], "before": {"bucket": "state-id"}, "after": null, "after_unknown": {"bucket": true}}},
 		{"address": key_policy, "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "before": {"key_id": "key-id"}, "after": null, "after_unknown": {"key_id": true}}},
 	]
-	count(gate.deny) == 0 with input as fixture.plan(array.concat(targets, gone))
+	count(gate.deny) == 0 with input as fixture.plan(array.concat(array.concat(targets, gone), [declared[1]]))
 }
