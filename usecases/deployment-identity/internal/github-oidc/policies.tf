@@ -7,7 +7,7 @@ locals {
 
   state_key_read_actions = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
   # modules/kms の Key Policy がアカウントへ委任する Action のすべて（modules/kms/policy.tf の administration_actions。
-  # deployment-identity/ADR-0201 決定5）。読み取りも含む。
+  # deployment-identity/ADR-0201 決定5）。
   state_key_administration_actions = [
     "kms:CancelKeyDeletion",
     "kms:CreateAlias",
@@ -108,13 +108,12 @@ locals {
       { Sid = "ListStateBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn },
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.workload_state_key },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.workload_state_key}.tflock" },
-      # Deny の範囲は deployment-identity/ADR-0201 決定5。
-      { Sid = "DenyIdentityChange", Effect = "Deny", Action = "iam:*", Resource = local.identity_arns },
-      { Sid = "DenyIdentityStateWrite", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
-      { Sid = "DenyStateBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = var.state_bucket_arn },
+      # Deny の範囲と形は deployment-identity/ADR-0201 決定5。
+      { Sid = "DenyIdentityChange", Effect = "Deny", Action = "*", Resource = local.identity_arns },
+      { Sid = "DenyIdentityStateChange", Effect = "Deny", Action = "*", Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
+      { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:ListBucket"], Resource = var.state_bucket_arn },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
-      { Sid = "DenyPlanOutputBucketChange", Effect = "Deny", Action = ["s3:Delete*", "s3:Put*"], Resource = var.plan_output_bucket_arn },
-      { Sid = "DenyPlanOutputWrite", Effect = "Deny", Action = ["s3:DeleteObjectVersion", "s3:Put*"], Resource = "${var.plan_output_bucket_arn}/*" },
+      { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = [var.plan_output_bucket_arn, "${var.plan_output_bucket_arn}/*"] },
       # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
       { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
     ]
@@ -167,7 +166,7 @@ locals {
     )
 
     # ListObjectsV2・GetObject・If-Match の DeleteObject だけ（deployment-identity/ADR-0201 決定9）。If-Match の削除は
-    # s3:GetObject も要る。lock file の復号は state の鍵の Key Policy が与える。
+    # s3:GetObject も要る。
     unlock_identity = [
       { Sid = "ListIdentityLock", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn, Condition = { StringEquals = { "s3:prefix" = "identity/terraform.tfstate.tflock" } } },
       { Sid = "RemoveIdentityLock", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject"], Resource = "${local.identity_state_key}.tflock" },
