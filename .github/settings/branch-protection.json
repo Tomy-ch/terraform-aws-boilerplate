@@ -71,6 +71,12 @@
             "context": "egress-check"
           },
           {
+            "context": "go-fmt-check"
+          },
+          {
+            "context": "go-lint"
+          },
+          {
             "context": "go-test"
           },
           {

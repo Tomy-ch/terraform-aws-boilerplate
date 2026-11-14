@@ -37,6 +37,7 @@ include .makefiles/security/semgrep.mk
 include .makefiles/security/gitleaks.mk
 include .makefiles/security/trufflehog.mk
 include .makefiles/security/go-cooldown.mk
+include .makefiles/security/govulncheck.mk
 include .makefiles/security/tool-cooldown.mk
 include .makefiles/security/zizmor.mk
 # Terraform関連

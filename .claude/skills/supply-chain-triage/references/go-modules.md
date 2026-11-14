@@ -118,7 +118,7 @@ the candidate adds a `main` package or a `cmd/` binary the repo would then build
 Finally, ask the reachability question — but read its limit:
 
 ```sh
-make trivy-fs
+make govulncheck
 ```
 
 A clean result means no *known* advisory is reachable. **その代償を明示する** —— Go の脆弱性
@@ -126,5 +126,6 @@ A clean result means no *known* advisory is reachable. **その代償を明示�
 publish されたものについて何も言っていない。triage が置かれているのはまさにその状況である。
 裏付けとして使い、答えとして使わない。
 
-このリポジトリに `govulncheck` は配線されていない（`make help` を見よ）。依存の既知脆弱性は
-`make trivy-fs`（報告のみ）と `make trivy-fs-release`（リリース昇格ゲート）が見る。
+`make govulncheck` は `scripts/` のコードの呼び出し経路が届くものだけを報告し、ゲートしない。
+呼び出し経路に関わらず依存に在る既知脆弱性は `make trivy-fs`（報告のみ）と `make trivy-fs-release`
+（リリース昇格ゲート）が見る。
