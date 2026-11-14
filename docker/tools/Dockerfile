@@ -58,6 +58,7 @@ RUN --mount=type=secret,id=github_token \
     && mise install shellcheck \
     && mise install hadolint \
     && mise install golangci-lint \
+    && mise install "go:golang.org/x/vuln/cmd/govulncheck" \
     && mise install "aqua:terraform-linters/tflint" \
     && mise install "aqua:aquasecurity/trivy" \
     && mise install "aqua:gitleaks/gitleaks" \
@@ -72,6 +73,7 @@ RUN mkdir /out \
     && cp "$(mise which shellcheck)"     /out/ \
     && cp "$(mise which hadolint)"       /out/ \
     && cp "$(mise which golangci-lint)"  /out/ \
+    && cp "$(mise which govulncheck)"    /out/ \
     && cp "$(mise which tflint)"         /out/ \
     && cp "$(mise which trivy)"          /out/ \
     && cp "$(mise which gitleaks)"       /out/ \

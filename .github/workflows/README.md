@@ -292,6 +292,7 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | workflow | 発火条件 | 起動 |
 | --- | --- | --- |
 | `trivy-fs.yaml` | 修正版のある CRITICAL / HIGH / MEDIUM | schedule |
+| `govulncheck.yaml` | 運用機構（`scripts/`）の Go のコードの呼び出し経路が届く既知脆弱性 | schedule |
 | `tool-outdated-report.yaml` | 宣言より新しい版が上流に在る | schedule |
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
@@ -491,3 +492,4 @@ PR の head を checkout する workflow は、特権のある run が読む場�
 - `trivy-fs.yaml` は check を落とさない。所見は修正版の有無にかかわらず code scanning と PR コメントへ
   書かれ、止める判定はリリース昇格のゲートが持つ。**昇格が既知の脆弱性を黙って出荷することも、
   通常の Pull Request が自分の持ち込んでいない脆弱性に人質を取られることも、どちらも起こさない。**
+- `govulncheck.yaml` も check を落とさない。

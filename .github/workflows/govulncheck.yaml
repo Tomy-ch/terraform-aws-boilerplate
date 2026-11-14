@@ -1,0 +1,179 @@
+name: Go Vulnerability Scan
+
+on:
+  push:
+    branches:
+      - 'release/*'
+      - production
+    paths:
+      - '.github/workflows/govulncheck.yaml'
+      - '.makefiles/security/govulncheck.mk'
+      - 'mise.toml'
+      - 'scripts/**/*.go'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
+  pull_request:
+    paths:
+      - '.github/workflows/govulncheck.yaml'
+      - '.makefiles/security/govulncheck.mk'
+      - 'mise.toml'
+      - 'scripts/**/*.go'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
+  schedule:
+    - cron: '15 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      count: ${{ steps.summarize.outputs.count }}
+      detail: ${{ steps.detail.outputs.markdown }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            vuln.go.dev
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # govulncheck は go のパッケージの読み込みを通じて呼び出し経路を解くので、go も要る。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go go:golang.org/x/vuln/cmd/govulncheck
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: govulncheck (JSON)
+        run: make -s govulncheck RUNNER_MODE=host GOVULNCHECK_FORMAT=json > govulncheck.json
+        shell: bash
+
+      # 数えるのは、trace の先頭が関数を持つ所見（symbol の水準）だけである。module と package の
+      # 水準の所見は、依存に在るが呼び出し経路が届かない脆弱性であり、trivy-fs が既に報告している。
+      # 1つの勧告は呼び出し経路ごとに所見を出すので、件数は勧告の ID で数える。
+      - name: Create govulncheck summary (Markdown)
+        id: summarize
+        run: |
+          set -euo pipefail
+
+          jq -s '[.[] | select(.finding != null) | .finding | select(.trace[0].function != null)]' \
+            govulncheck.json > govulncheck-findings.json
+          COUNT=$(jq '[.[].osv] | unique | length' govulncheck-findings.json)
+
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "title=## ✅ govulncheck: PASS (no reachable vulnerabilities)" >> "$GITHUB_OUTPUT"
+            echo "No reachable vulnerabilities found." > govulncheck-summary.md
+            exit 0
+          fi
+
+          echo "title=## 🚨 govulncheck: FOUND (${COUNT})" >> "$GITHUB_OUTPUT"
+
+          jq -r '
+            group_by(.osv)
+            | map(.[0])
+            | .[]
+            | "- \(.osv) `\(.trace[0].module // "unknown")` `\(.trace[0].version // "?")` → `\(.fixed_version // "none")`"
+          ' govulncheck-findings.json > govulncheck-summary.md
+        shell: bash
+
+      - name: Build detection detail
+        id: detail
+        if: ${{ steps.summarize.outputs.count != '0' }}
+        uses: ./.github/actions/notify-detail
+        with:
+          summary-file: govulncheck-summary.md
+
+      - name: Upload govulncheck report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: govulncheck
+          path: |
+            govulncheck.json
+            govulncheck-summary.md
+
+      - name: Comment govulncheck result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- govulncheck-result -->'
+          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          title: "${{ steps.summarize.outputs.title || '## ⚠️ Go Vulnerability Scan: CUT OFF (no result produced)' }}"
+          body-file: govulncheck-summary.md
+          details-summary: '📄 Summary'
+
+  # 報告のみの job なので、検出の通知はスケジュール実行だけが出す。理由は README.md の「通知の起動条件」。
+  notify-detection:
+    needs: govulncheck
+    if: ${{ github.event_name == 'schedule' && needs.govulncheck.outputs.count != '' && needs.govulncheck.outputs.count != '0' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      detected: govulncheck found ${{ needs.govulncheck.outputs.count }} reachable vulnerabilities
+      details: ${{ needs.govulncheck.outputs.detail }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # 理由は README.md の「通知の起動条件」。
+  notify-failure:
+    needs: govulncheck
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.govulncheck.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: govulncheck
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

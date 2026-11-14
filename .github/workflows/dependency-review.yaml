@@ -62,7 +62,8 @@ jobs:
       - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
-          # Trivy (trivy-fs) and govulncheck already report MEDIUM and above.
+          # Trivy (trivy-fs) already reports MEDIUM and above, and govulncheck
+          # reports every vulnerability the scripts/ code can reach.
           # This workflow is a merge blocker, so it is narrowed to HIGH and
           # above to keep the block signal actionable.
           fail-on-severity: high

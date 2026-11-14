@@ -339,6 +339,13 @@ classes = ["trivy"]
 [job."trivy-release-gate.yaml:trivy-fs-release"]
 classes = ["trivy"]
 
+# Go の脆弱性 DB。
+[job."govulncheck.yaml:govulncheck"]
+classes = ["mise"]
+extra = [
+  "vuln.go.dev",
+]
+
 [job."zizmor.yaml:zizmor"]
 classes = ["mise"]
 
