@@ -36,7 +36,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// 数え方を読んだ gitleaks の版。mise.toml の版との一致はテストが見る。
+// 数え方を読んだ gitleaks の版。
 const gitleaksVersion = "8.30.1"
 
 var (
@@ -49,7 +49,6 @@ var (
 
 var scannedPattern = regexp.MustCompile(`(?:^|[^0-9])([0-9]+) commits scanned`)
 
-// commitHeader は -numstat に渡す出力の --format の接頭辞。
 const commitHeader = "commit "
 
 func main() {

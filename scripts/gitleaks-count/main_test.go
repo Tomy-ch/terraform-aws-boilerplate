@@ -15,7 +15,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 )
 
-// fixture は一時のリポジトリに commit を積む。
 type fixture struct {
 	t   *testing.T
 	dir string
