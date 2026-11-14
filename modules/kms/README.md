@@ -51,7 +51,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## まだ持たないもの
 
-最初の消費者 `state-backend`（#19）が使うものだけを持つ。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
+持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）と `users.services.logs`（CloudWatch Logs）である。`users.services.logs` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
 
 | 足すもの | 足す消費者 |
 | --- | --- |
@@ -69,7 +69,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 - アカウントへの委任の文を除く部分 wildcard の Action（`kms:Describe*` など）と、Key Policy の `Resource "*"` を見る検査は無い
 - 鍵は作成の時点では既定の Key Policy（アカウントへの `kms:*`）を持ち、alias の作成の後に `aws_kms_key_policy` が置き換える。alias は鍵の ARN を持たない消費者が鍵を名指す識別子（`alias_name`）なので、置き換えが落ちても alias の無い鍵を残さない順にしている。置き換えが落ちたときは、alias の付いた鍵が既定の Key Policy のまま次の apply まで残る。alias の作成が落ちたときは、alias の無い鍵が残る。この順序を見るテストは無い。`key_arn` の `depends_on` が消費者の resource を Key Policy の置き換えの後に作らせることも、mock の plan と apply には順序が現れないので、どのテストも見ていない。`aws_kms_key_policy` を destroy すると、Provider は既定の Key Policy を書き戻す（Provider の `aws_kms_key_policy` の NOTE）。destroy と、`moved` を伴わない address の変更（置換）は、`conftest/plan` の `plan.stateful_protection` が CI の plan と apply で拒む。CI の plan と apply が掛かるのは、CI の入口を持つ root だけである。`removed`（`destroy = false`）は state から外すだけで、鍵の側は変わらない
 - `key_arn_for_iam` を鍵を使う resource に渡すことを拒む検査は無い。渡せば、その resource は既定の Key Policy の間に作られうる
-- `plan.kms_key_policy` の Rego のテストが使う委任の文は、`policy.tf` の列挙を手で写したもので、一致は検査しない。この module の出力が `PLAN-KMS-*` を通ることは、`state-backend` の reference の root の plan が確かめる
+- `plan.kms_key_policy` の Rego のテストが使う委任の文は、`policy.tf` の列挙を手で写したもので、一致は検査しない。この module の出力が `PLAN-KMS-*` を通ることは、`state-backend` の reference の root の plan が確かめる。その root は `users.services` を渡さないので、CloudWatch Logs の文は reference の plan に現れず、確かめていない
 - CloudWatch Logs の文は、CloudWatch Logs の文書の例のとおり `kms:Describe*` を暗号化コンテキストの条件と同じ文に置く。KMS の文書は、`kms:EncryptionContext:*` の条件を受ける操作に `DescribeKey` を挙げておらず、それ以外の操作にこの条件を使うと拒否されるとする。この食い違いの下で CloudWatch Logs への配送と読み出しが通ることは、どのテストも見ていない
 - 実際の AWS に対して、次はどのテストも確かめていない。最初の消費者の CI の apply と、その後の CI の plan が `No changes.` を示すことで確かめる（#19）。sandbox での複製の作成・破棄、残存の検出、期待残存（削除の猶予中の鍵）の照合は、sandbox のアカウント（#21）と掃除の CI（#76）が揃うまで行わない
   - lockout の安全チェックが、委任の文と、鍵を管理する role の IAM で通ること

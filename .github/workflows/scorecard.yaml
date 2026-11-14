@@ -1,12 +1,12 @@
 name: OpenSSF Scorecard
 
-# 供給網の衛生の週次報告。何も止めない。publish_results は false に保つ（ADR-0501 決定6）。
+# 供給網の衛生の週次報告。何も止めない。結果は code scanning へ送るだけで、外部へ公開しない（ADR-0501 決定6）。
 #
 # Scorecard の push / schedule は既定ブランチだけを評価する。既定ブランチはリリース線
 # （release/*）である前提で、push は release/* に限り、job の if: で既定ブランチに絞る。
 # 既定ブランチが release/* の外へ移ったら、push の branches: も合わせる。
 #
-# private なリポジトリで GitHub Advanced Security が無い場合、Scorecard Action は動かない。
+# private なリポジトリで GitHub Advanced Security が無い場合、SARIF を code scanning へ送れない。
 # その派生リポジトリはこの workflow と、.github/egress.toml の `scorecard.yaml:scorecard` を
 # 同じ変更で削除する（片方だけだと make egress-check が落ちる）。
 
@@ -53,8 +53,28 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
-            api.deps.dev
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
             api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            api.deps.dev
             www.bestpractices.dev
 
       - name: Checkout
@@ -62,12 +82,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run Scorecard
-        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
         with:
-          results_file: scorecard.sarif
-          results_format: sarif
-          publish_results: false
+          tools: aqua:ossf/scorecard
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Scorecard
+        shell: bash
+        env:
+          ENABLE_SARIF: '1'
+          GITHUB_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          scorecard --repo="github.com/${REPO}" --format=sarif --show-details \
+            --policy=.github/scorecard-policy.yml > scorecard.sarif
 
       - name: Upload Scorecard report
         if: always()

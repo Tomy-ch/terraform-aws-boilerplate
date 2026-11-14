@@ -107,7 +107,12 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
-  apply の成否だけを、job summary には件数と apply の成否だけを出す。apply の全文はランナーの外に出さない
+  apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
+  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、plan の全文と同じ Bucket の `apply/` の下へ
+  apply-identity の role が置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
+  どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
+  （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
+  job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
 - **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` に置く。**
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
@@ -360,7 +365,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `mise` | mise 自身の配布元と、`mise.toml` が解決するすべての backend —— aqua / GitHub releases、Go の toolchain と module proxy、npm レジストリ、および Sigstore（mise が artifact attestation を検証する） | 道具を導入するすべての job |
 | `terraform` | Terraform Registry と provider の配布元 | Terraform を実行する job（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md) により外部 module は引かない） |
 | `trivy` | 脆弱性 DB と checks バンドルの OCI の配布元 | Trivy を実行する job |
-| `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 は Docker Hub のバケットのホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
+| `docker-hub` | Docker Hub の registry・認証・layer の配布元（R2 と S3 は Docker Hub の Bucket のホストだけ） | 上流のイメージで道具を実行する job（Checkov / KICS / Semgrep） |
 | `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
 | `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
 | `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
