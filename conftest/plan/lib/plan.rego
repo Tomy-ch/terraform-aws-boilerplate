@@ -10,7 +10,7 @@ changes contains {"path": f.path, "rc": rc} if {
 	rc.change.actions != ["delete"]
 }
 
-# mock provider は表に無い computed な属性（aws_s3_bucket.policy など）に乱数を入れるので、属性名だけで拾わない。
+# mock provider は表に無い computed な属性に乱数を入れるので、属性名だけで拾わない。文書でない属性は inline_arguments が見る。
 documents contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "attr": attr, "change": c.rc.change} if {
 	some c in changes
 	some attr in data.policy_plan.documents[c.rc.type]
