@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# bootstrap.md の読むだけの確認を、期待値と突き合わせて実行する。何も作らず、何も変えない。
+# 使い方: docs/setup/scripts/verify.sh <stage1|before-apply|stage4|permissions|stage5>
+# 前提: make aws-login 済み。aws と jq が PATH に在る。出力のアカウント ID は伏せる。
+set -euo pipefail
+
+REGION=${REGION:-ap-northeast-1}
+export AWS_PROFILE=${AWS_PROFILE:-tabp-bootstrap}
+# 段3 で bootstrap_executor_user_name を渡したときだけ、その user の名前を与える。
+BOOTSTRAP_EXECUTOR=${BOOTSTRAP_EXECUTOR:-}
+
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+KEY_ALIAS=alias/tabp-admin-tfstate
+fails=0
+checks=0
+
+# jq の式。$ を含むので、展開されない heredoc に置く。
+jq_program() { cat; }
+JQ_KMS_ENCRYPTION=$(jq_program <<'JQ'
+.ServerSideEncryptionConfiguration.Rules | length == 1 and (.[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm == "aws:kms") and (.[0].ApplyServerSideEncryptionByDefault.KMSMasterKeyID == $key) and ((.[0].BucketKeyEnabled // false) == false) and ([.[0] | .. | strings] | index("SSE-C") != null)
+JQ
+)
+JQ_POLICY_NAMES=$(jq_program <<'JQ'
+.PolicyNames == [$p]
+JQ
+)
+JQ_EXECUTOR_EXCEPTION=$(jq_program <<'JQ'
+[.. | strings | select(endswith($u))] | length > 0
+JQ
+)
+JQ_LIFECYCLE=$(jq_program <<'JQ'
+.Rules | length == 1 and (.[0] | .Status == "Enabled" and ((.Filter // {}) | . == {} or . == {"Prefix": ""}) and .Expiration == {"ExpiredObjectDeleteMarker": true} and .NoncurrentVersionExpiration.NoncurrentDays == $days and .AbortIncompleteMultipartUpload.DaysAfterInitiation == 1)
+JQ
+)
+JQ_ALIAS_ABSENT=$(jq_program <<'JQ'
+[.Aliases[] | select(.AliasName == $a)] | length == 0
+JQ
+)
+JQ_STATE_OBJECT=$(jq_program <<'JQ'
+.ServerSideEncryption == "aws:kms" and .SSEKMSKeyId == $key
+JQ
+)
+JQ_KEY_POLICY=$(jq_program <<'JQ'
+def arr: if type == "array" then . else [.] end;
+.Statement | length == 3
+and any(.Effect == "Allow" and .Principal.AWS == $root)
+and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"])
+and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$unlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$lock]))
+JQ
+)
+
+ok() {
+  checks=$((checks + 1))
+  printf 'ok  %s\n' "$*"
+}
+
+ng() {
+  checks=$((checks + 1))
+  fails=$((fails + 1))
+  printf 'NG  %s\n' "$*"
+}
+
+# jq の式（最後の引数。その前に --arg などを置ける）が真なら ok。式が偽か、入力が JSON でなければ NG。
+expect_json() {
+  local desc=$1 json=$2
+  shift 2
+  if jq -e "$@" >/dev/null 2>&1 <<<"$json"; then ok "$desc"; else ng "$desc"; fi
+}
+
+# AWS のエラーの code を期待する確認。成功したか、別のエラーなら NG。
+expect_error() {
+  local desc=$1 code=$2
+  shift 2
+  local out
+  if out=$("$@" 2>&1); then
+    ng "${desc}（エラーが返らなかった）"
+  elif grep -q "$code" <<<"$out"; then
+    ok "$desc"
+  else
+    ng "${desc}（$code ではないエラー）"
+  fi
+}
+
+role_arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
+
+# simulate-principal-policy の各 Action の判定が want であること。--context は1つの context entry を渡す。
+sim() {
+  local want=$1 role=$2 res=$3
+  shift 3
+  local ctx=()
+  if [[ $1 == --context ]]; then
+    ctx=(--context-entries "$2")
+    shift 2
+  fi
+  local out n=0 bad=()
+  out=$(aws iam simulate-principal-policy --policy-source-arn "$(role_arn "$role")" --resource-arns "$res" \
+    ${ctx[@]+"${ctx[@]}"} --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text)
+  local action decision
+  while read -r action decision; do
+    [[ -n $action ]] || continue
+    n=$((n + 1))
+    [[ $decision == "$want" ]] || bad+=("${action}=${decision}")
+  done <<<"$out"
+  if ((n == $#)) && ((${#bad[@]} == 0)); then
+    ok "$role $res: $# 件が $want"
+  else
+    ng "$role $res: $want を期待（返った件数 $n / $#、違う判定: ${bad[*]:-なし}）"
+  fi
+}
+
+s3() { aws s3api "$1" --bucket "$2" --expected-bucket-owner "$ACCOUNT_ID" "${@:3}"; }
+
+state_key_arn() { aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS" --query KeyMetadata.Arn --output text; }
+
+# 2つの Bucket の既定の暗号化が、state の鍵の SSE-KMS で、Bucket Key を使わず、SSE-C を拒むこと。
+check_kms_encryption() {
+  local key b
+  key=$(state_key_arn)
+  for b in "$BUCKET" "$PLAN_BUCKET"; do
+    expect_json "$b の既定の暗号化が state の鍵の SSE-KMS（Bucket Key なし、SSE-C を拒否）" "$(s3 get-bucket-encryption "$b")" \
+      --arg key "$key" "$JQ_KMS_ENCRYPTION"
+  done
+}
+
+stage1() {
+  expect_json "Public Access Block の4項目が true" "$(s3 get-public-access-block "$BUCKET")" \
+    '.PublicAccessBlockConfiguration | .BlockPublicAcls and .IgnorePublicAcls and .BlockPublicPolicy and .RestrictPublicBuckets'
+  expect_json "所有権が BucketOwnerEnforced" "$(s3 get-bucket-ownership-controls "$BUCKET")" \
+    '.OwnershipControls.Rules == [{"ObjectOwnership": "BucketOwnerEnforced"}]'
+  expect_json "版管理が Enabled" "$(s3 get-bucket-versioning "$BUCKET")" '.Status == "Enabled"'
+  expect_json "既定の暗号化が AES256 で SSE-C を拒否（違えば段2 へ進まず PR に記録して止まる）" "$(s3 get-bucket-encryption "$BUCKET")" \
+    '.ServerSideEncryptionConfiguration.Rules | length == 1 and (.[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm == "AES256") and ([.[0] | .. | strings] | index("SSE-C") != null)'
+}
+
+before_apply() {
+  expect_json "OIDC provider（token.actions.githubusercontent.com）がまだ無い" "$(aws iam list-open-id-connect-providers)" \
+    '[.OpenIDConnectProviderList[].Arn | select(endswith("/token.actions.githubusercontent.com"))] | length == 0'
+  local r
+  for r in plan apply apply-identity unlock-identity; do
+    expect_error "role tabp-admin-ci-$r がまだ無い" NoSuchEntity aws iam get-role --role-name "tabp-admin-ci-$r"
+  done
+  expect_error "state Bucket に Bucket Policy がまだ無い" NoSuchBucketPolicy s3 get-bucket-policy "$BUCKET"
+  expect_error "state Bucket に lifecycle がまだ無い" NoSuchLifecycleConfiguration s3 get-bucket-lifecycle-configuration "$BUCKET"
+  # 在ると、段4 の apply は鍵を作った後の alias の作成で落ち、alias の無い鍵が残る。
+  expect_json "state の鍵の alias（${KEY_ALIAS}）がまだ無い" "$(aws kms list-aliases --region "$REGION")" \
+    --arg a "$KEY_ALIAS" "$JQ_ALIAS_ABSENT"
+}
+
+stage4() {
+  check_kms_encryption
+  expect_json "OIDC provider の ClientIDList が sts.amazonaws.com だけ" \
+    "$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com")" \
+    '.ClientIDList == ["sts.amazonaws.com"]'
+  local r p
+  for r in plan:plan apply:apply apply-identity:apply_identity unlock-identity:unlock_identity; do
+    p=${r#*:}
+    r=${r%%:*}
+    expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
+      --arg p "$p" "$JQ_POLICY_NAMES"
+    expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+      '.AttachedPolicies == []'
+  done
+  local policy
+  policy=$(s3 get-bucket-policy "$BUCKET" --query Policy --output text)
+  expect_json "state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒む文が在る" "$policy" \
+    '(.Statement | all(.Effect == "Deny")) and (.Statement | any(.Condition.Bool["aws:SecureTransport"] == "false"))'
+  if [[ -n $BOOTSTRAP_EXECUTOR ]]; then
+    expect_json "Bucket Policy の書き込みの例外に、段4 の実行者 $BOOTSTRAP_EXECUTOR が在る" "$policy" \
+      --arg u ":user/${BOOTSTRAP_EXECUTOR}" "$JQ_EXECUTOR_EXCEPTION"
+  fi
+  local days
+  days=$(sed -nE 's/^[[:space:]]*state_noncurrent_version_retention_days[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT/env/admin/identity/main.tf")
+  expect_json "lifecycle が規則1つ（版の保持 ${days:-?} 日、delete marker の掃除、未完了の multipart の中止 1 日）" \
+    "$(s3 get-bucket-lifecycle-configuration "$BUCKET")" --argjson days "${days:-null}" \
+    "$JQ_LIFECYCLE"
+  expect_json "state の鍵が有効な対称鍵（単一リージョン、AWS_KMS）" "$(aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS")" \
+    '.KeyMetadata | .KeyState == "Enabled" and .KeySpec == "SYMMETRIC_DEFAULT" and .KeyUsage == "ENCRYPT_DECRYPT" and .MultiRegion == false and .Origin == "AWS_KMS"'
+  expect_json "state の鍵の自動 rotation が 365 日" "$(aws kms get-key-rotation-status --region "$REGION" --key-id "$KEY_ALIAS")" \
+    '.KeyRotationEnabled == true and .RotationPeriodInDays == 365'
+  expect_json "Key Policy が、アカウントへの委任・plan と apply-identity の S3 経由の暗号操作・unlock-identity の lock file の復号の3文だけ" \
+    "$(aws kms get-key-policy --region "$REGION" --key-id "$KEY_ALIAS" --policy-name default --query Policy --output text)" \
+    --arg root "arn:aws:iam::${ACCOUNT_ID}:root" --arg plan "$(role_arn plan)" --arg ai "$(role_arn apply-identity)" \
+    --arg unlock "$(role_arn unlock-identity)" --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" \
+    "$JQ_KEY_POLICY"
+}
+
+permissions() {
+  local reads=(s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment
+    s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration
+    s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration
+    s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls)
+  local b="arn:aws:s3:::${BUCKET}" key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate" pb="arn:aws:s3:::${PLAN_BUCKET}"
+
+  echo "# S3 と IAM"
+  sim allowed plan "$b" "${reads[@]}"
+  sim allowed apply-identity "$b" "${reads[@]}" s3:PutBucketPolicy s3:PutLifecycleConfiguration
+  sim allowed apply-identity "$key" s3:PutObject
+  sim allowed apply-identity "$(role_arn plan)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy
+  sim allowed plan "$pb" "${reads[@]}"
+  sim allowed plan "${pb}/pr/1/x" s3:PutObject
+  sim allowed apply-identity "$pb" "${reads[@]}" s3:PutLifecycleConfiguration
+  sim allowed apply-identity "${pb}/apply/1/x" s3:PutObject
+  sim allowed apply "$b" s3:ListBucket
+  sim implicitDeny plan "$key" s3:PutObject
+  sim implicitDeny plan "$(role_arn plan)" iam:PutRolePolicy
+  sim implicitDeny plan "${pb}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
+  sim implicitDeny plan "${pb}/x" s3:PutObject
+  sim implicitDeny apply-identity "${pb}/pr/1/x" s3:PutObject s3:DeleteObject
+  sim implicitDeny apply-identity "${pb}/apply/1/x" s3:DeleteObject s3:DeleteObjectVersion
+  sim explicitDeny apply "$(role_arn apply-identity)" iam:PutRolePolicy iam:UpdateAssumeRolePolicy sts:AssumeRole
+  sim explicitDeny apply "$b" s3:PutBucketPolicy s3:DeleteBucketPolicy s3:PutLifecycleConfiguration s3:PutBucketTagging s3:TagResource
+  sim explicitDeny apply "$key" s3:PutObject s3:DeleteObject
+  sim explicitDeny apply "$pb" s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:GetBucketPolicy
+  sim explicitDeny apply "${pb}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
+
+  echo "# state の鍵"
+  local sk other="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000000"
+  sk=$(state_key_arn)
+  sim allowed apply-identity "$sk" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy
+  sim allowed apply-identity "*" kms:ListAliases
+  sim allowed plan "$sk" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
+  sim allowed plan "*" kms:ListAliases
+  sim implicitDeny apply-identity "*" kms:CreateKey
+  sim implicitDeny apply-identity "$sk" kms:CreateAlias kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
+  sim implicitDeny apply-identity "$other" kms:DescribeKey kms:PutKeyPolicy
+  sim implicitDeny plan "$sk" kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey
+  sim implicitDeny plan "$other" kms:DescribeKey
+  sim implicitDeny apply "$sk" kms:Decrypt kms:GenerateDataKey
+  sim explicitDeny apply "$sk" kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription
+  sim explicitDeny apply-identity "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:PutKeyPolicy
+
+  echo "# unlock-identity の role"
+  local lock="${key}.tflock"
+  sim allowed unlock-identity "$b" --context "ContextKeyName=s3:prefix,ContextKeyValues=identity/terraform.tfstate.tflock,ContextKeyType=string" s3:ListBucket
+  sim allowed unlock-identity "$lock" s3:GetObject s3:DeleteObject
+  sim implicitDeny unlock-identity "$b" --context "ContextKeyName=s3:prefix,ContextKeyValues=identity/terraform.tfstate,ContextKeyType=string" s3:ListBucket
+  sim implicitDeny unlock-identity "$lock" s3:PutObject s3:DeleteObjectVersion
+  sim implicitDeny unlock-identity "$key" s3:GetObject s3:PutObject s3:DeleteObject
+  sim implicitDeny unlock-identity "$sk" kms:Decrypt
+}
+
+stage5() {
+  check_kms_encryption
+  expect_json "identity root の state が state の鍵の SSE-KMS で書かれている" \
+    "$(s3 head-object "$BUCKET" --key identity/terraform.tfstate)" --arg key "$(state_key_arn)" "$JQ_STATE_OBJECT"
+  expect_json "Bucket Policy の例外に IAM user（段4 の実行者）が無い" \
+    "$(s3 get-bucket-policy "$BUCKET" --query Policy --output text)" '[.. | strings | select(test(":user/"))] | length == 0'
+}
+
+main() {
+  local stage=${1:-}
+  case $stage in
+  stage1 | before-apply | stage4 | permissions | stage5) ;;
+  *)
+    echo "使い方: $0 <stage1|before-apply|stage4|permissions|stage5>" >&2
+    return 2
+    ;;
+  esac
+  local cmd
+  for cmd in aws jq; do
+    command -v "$cmd" >/dev/null || {
+      echo "$cmd が PATH にありません" >&2
+      return 2
+    }
+  done
+  ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
+  if [[ ! $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then
+    echo "ACCOUNT_ID が12桁ではありません。make aws-login をやり直してください" >&2
+    return 2
+  fi
+  BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"
+  PLAN_BUCKET=${BUCKET/-tfstate-/-tfplan-}
+  echo "# ${stage}（profile: ${AWS_PROFILE}、region: ${REGION}）"
+  case $stage in
+  stage1) stage1 ;;
+  before-apply) before_apply ;;
+  stage4) stage4 ;;
+  permissions) permissions ;;
+  stage5) stage5 ;;
+  esac
+  echo "# 結果: ${checks} 件のうち NG ${fails} 件"
+  ((checks > 0 && fails == 0))
+}
+
+# 出力をそのまま Pull Request に貼れるように、アカウント ID を伏せる。
+main "$@" 2>&1 | LC_ALL=C sed -E 's/[0-9]{12}/<account>/g'
+exit "${PIPESTATUS[0]}"
