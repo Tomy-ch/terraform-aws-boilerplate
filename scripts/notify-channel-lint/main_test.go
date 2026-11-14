@@ -30,14 +30,14 @@ func fixture(t *testing.T, decl string, files map[string]string) (string, string
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const channels = `"channel:security" = "SLACK_WEBHOOK_URL_SECURITY"
-"channel:deploy-prod" = "SLACK_WEBHOOK_URL_DEPLOY_PROD"
+"channel:deploy-critical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"
 `
 
 func caller(job, secretLine string) string {
 	return "jobs:\n  " + job + ":\n    uses: ./.github/workflows/notify.yaml\n    with:\n      failed-job: x\n    secrets:\n" + secretLine
 }
 
-const prodSecret = "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}\n"
+const criticalSecret = "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}\n"
 
 // editorconfig-checker-enable
 
@@ -54,58 +54,58 @@ func Test_run(t *testing.T) {
 
 	t.Run("宣言した系統の secret を渡していれば通る", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
-			map[string]string{"a.yaml": caller("n", prodSecret)})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
+			map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.NoError(t, err)
 		assert.Contains(t, out, "job 1 件の系統を確認しました")
 	})
 
 	t.Run("別の系統の secret を渡していれば落ちる", func(t *testing.T) {
 		t.Parallel()
-		// 本番の通知が別のチャンネルへ届く取り違えを、この検査のほかに止めるものは無い。
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
+		// 通知が別のチャンネルへ届く取り違えを、この検査のほかに止めるものは無い。
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
 			map[string]string{"a.yaml": caller("n", "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}\n")})
 		require.ErrorIs(t, err, errViolations)
-		assert.Contains(t, out, "secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD を渡してください（secrets.SLACK_WEBHOOK_URL_SECURITY を渡しています）")
+		assert.Contains(t, out, "secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL を渡してください（secrets.SLACK_WEBHOOK_URL_SECURITY を渡しています）")
 		assert.Contains(t, out, "1 件の違反")
 		assert.Contains(t, out, "\n    :7  job a.yaml:n", "違反は secret を渡した workflow の行で報告する")
 	})
 
 	t.Run("宣言に無い呼び出しは落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels, map[string]string{"a.yaml": caller("n", prodSecret)})
+		out, err := lint(t, channels, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "job a.yaml:n の系統が")
 	})
 
 	t.Run("実物に無い宣言の job は落ちる", func(t *testing.T) {
 		t.Parallel()
-		decl := channels + `"job:a.yaml:n" = "deploy-prod"` + "\n" + `"job:a.yaml:gone" = "deploy-prod"` + "\n"
-		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", prodSecret)})
+		decl := channels + `"job:a.yaml:n" = "deploy-critical"` + "\n" + `"job:a.yaml:gone" = "deploy-critical"` + "\n"
+		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "job a.yaml:gone は notify.yaml を呼ぶ job として見つかりません")
 	})
 
 	t.Run("宣言に無い系統を名指す job は落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-nonprod"`+"\n",
-			map[string]string{"a.yaml": caller("n", prodSecret)})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-noncritical"`+"\n",
+			map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
-		assert.Contains(t, out, "job a.yaml:n の系統 deploy-nonprod は宣言されていません")
+		assert.Contains(t, out, "job a.yaml:n の系統 deploy-noncritical は宣言されていません")
 	})
 
 	t.Run("2つの系統が同じ secret を持てば落ちる", func(t *testing.T) {
 		t.Parallel()
-		decl := channels + `"channel:deploy-nonprod" = "SLACK_WEBHOOK_URL_DEPLOY_PROD"` + "\n" + `"job:a.yaml:n" = "deploy-prod"` + "\n"
-		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", prodSecret)})
+		decl := channels + `"channel:deploy-noncritical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"` + "\n" + `"job:a.yaml:n" = "deploy-critical"` + "\n"
+		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
-		assert.Contains(t, out, "同じ secret SLACK_WEBHOOK_URL_DEPLOY_PROD を持ちます")
+		assert.Contains(t, out, "同じ secret SLACK_WEBHOOK_URL_DEPLOY_CRITICAL を持ちます")
 	})
 
 	t.Run("接頭辞の無い鍵は落ちる", func(t *testing.T) {
 		t.Parallel()
-		decl := channels + `"job:a.yaml:n" = "deploy-prod"` + "\n" + `"a.yaml:n" = "deploy-prod"` + "\n"
-		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", prodSecret)})
+		decl := channels + `"job:a.yaml:n" = "deploy-critical"` + "\n" + `"a.yaml:n" = "deploy-critical"` + "\n"
+		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, `鍵 "a.yaml:n" は`)
 	})
@@ -113,8 +113,8 @@ func Test_run(t *testing.T) {
 	t.Run("secret を式で組めば落ちる", func(t *testing.T) {
 		t.Parallel()
 		// どの secret が渡るかを字面から決められない形は、取りこぼさずに違反にする。
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
-			map[string]string{"a.yaml": caller("n", "      slack-webhook-url: ${{ secrets.A || secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}\n")})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
+			map[string]string{"a.yaml": caller("n", "      slack-webhook-url: ${{ secrets.A || secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}\n")})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "の形で書いてください")
 	})
@@ -122,14 +122,14 @@ func Test_run(t *testing.T) {
 	t.Run("secrets: inherit は落ちる", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  n:\n    uses: ./.github/workflows/notify.yaml\n    secrets: inherit\n"
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", map[string]string{"a.yaml": src})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", map[string]string{"a.yaml": src})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "secrets: inherit")
 	})
 
 	t.Run("slack-webhook-url を渡していなければ落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
 			map[string]string{"a.yaml": caller("n", "")})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "slack-webhook-url を渡していません")
@@ -137,8 +137,8 @@ func Test_run(t *testing.T) {
 
 	t.Run("notify.yaml を呼ばない job は対象外", func(t *testing.T) {
 		t.Parallel()
-		src := caller("n", prodSecret) + "  other:\n    runs-on: x\n    steps:\n      - run: echo ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}\n"
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", map[string]string{"a.yaml": src})
+		src := caller("n", criticalSecret) + "  other:\n    runs-on: x\n    steps:\n      - run: echo ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}\n"
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", map[string]string{"a.yaml": src})
 		require.NoError(t, err)
 		assert.Contains(t, out, "job 1 件の系統を確認しました")
 	})
@@ -153,8 +153,8 @@ func Test_run(t *testing.T) {
 	for name, extra := range unread {
 		t.Run(name+"の呼び出しは件数が合わず落ちる", func(t *testing.T) {
 			t.Parallel()
-			out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
-				map[string]string{"a.yaml": caller("n", prodSecret) + extra})
+			out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
+				map[string]string{"a.yaml": caller("n", criticalSecret) + extra})
 			require.ErrorIs(t, err, errViolations)
 			assert.Contains(t, out, "notify.yaml を uses: で指す行が 2 行あるのに、job として読めた呼び出しは 1 件です")
 		})
@@ -162,15 +162,15 @@ func Test_run(t *testing.T) {
 
 	t.Run("引用符付きの uses: も呼び出しとして数える", func(t *testing.T) {
 		t.Parallel()
-		src := "jobs:\n  n:\n    uses: \"./.github/workflows/notify.yaml\"\n    secrets:\n" + prodSecret
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", map[string]string{"a.yaml": src})
+		src := "jobs:\n  n:\n    uses: \"./.github/workflows/notify.yaml\"\n    secrets:\n" + criticalSecret
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", map[string]string{"a.yaml": src})
 		require.NoError(t, err, out)
 		assert.Contains(t, out, "job 1 件の系統を確認しました")
 	})
 
 	t.Run("読めない workflow があれば落ちる", func(t *testing.T) {
 		t.Parallel()
-		wf, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", map[string]string{"a.yaml": caller("n", prodSecret)})
+		wf, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "none"), filepath.Join(wf, "b.yaml")))
 		var out bytes.Buffer
 		err := run([]string{"-workflows", wf, "-decl", path}, &out)
@@ -179,7 +179,7 @@ func Test_run(t *testing.T) {
 
 	t.Run(".yaml の名前のディレクトリは読み飛ばす", func(t *testing.T) {
 		t.Parallel()
-		wf, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", map[string]string{"a.yaml": caller("n", prodSecret)})
+		wf, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.NoError(t, os.Mkdir(filepath.Join(wf, "d.yaml"), 0o700))
 		var out bytes.Buffer
 		require.NoError(t, run([]string{"-workflows", wf, "-decl", path}, &out))
@@ -188,24 +188,24 @@ func Test_run(t *testing.T) {
 
 	t.Run("宣言が空でも呼び出しがあれば落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, "", map[string]string{"a.yaml": caller("n", prodSecret)})
+		out, err := lint(t, "", map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "job a.yaml:n の系統が")
 	})
 
 	t.Run("コメントアウトした slack-webhook-url の行は渡し方として読めず落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
-			map[string]string{"a.yaml": caller("n", prodSecret+"      # slack-webhook-url: ${{ secrets.X }}\n")})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
+			map[string]string{"a.yaml": caller("n", criticalSecret+"      # slack-webhook-url: ${{ secrets.X }}\n")})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "の形で書いてください")
 	})
 
 	t.Run("系統ごとに別の secret を渡す job が複数あれば全て通る", func(t *testing.T) {
 		t.Parallel()
-		decl := channels + `"job:a.yaml:n" = "deploy-prod"` + "\n" + `"job:b.yaml:s" = "security"` + "\n"
+		decl := channels + `"job:a.yaml:n" = "deploy-critical"` + "\n" + `"job:b.yaml:s" = "security"` + "\n"
 		out, err := lint(t, decl, map[string]string{
-			"a.yaml": caller("n", prodSecret),
+			"a.yaml": caller("n", criticalSecret),
 			"b.yaml": caller("s", "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}\n"),
 		})
 		require.NoError(t, err, out)
@@ -220,21 +220,21 @@ func Test_run(t *testing.T) {
 
 	t.Run("jobs: の無い workflow は落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n",
-			map[string]string{"a.yaml": caller("n", prodSecret), "b.yaml": "name: b\n"})
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n",
+			map[string]string{"a.yaml": caller("n", criticalSecret), "b.yaml": "name: b\n"})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "jobs: が見つかりません")
 	})
 
 	t.Run("宣言の解釈できない行は落ちる", func(t *testing.T) {
 		t.Parallel()
-		_, err := lint(t, channels+"job:a.yaml:n = deploy-prod\n", map[string]string{"a.yaml": caller("n", prodSecret)})
+		_, err := lint(t, channels+"job:a.yaml:n = deploy-critical\n", map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, lockfile.ErrInvalidLine)
 	})
 
 	t.Run("宣言が無ければ落ちる", func(t *testing.T) {
 		t.Parallel()
-		wf, _ := fixture(t, channels, map[string]string{"a.yaml": caller("n", prodSecret)})
+		wf, _ := fixture(t, channels, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		var out bytes.Buffer
 		err := run([]string{"-workflows", wf, "-decl", filepath.Join(t.TempDir(), "none.toml")}, &out)
 		require.ErrorIs(t, err, os.ErrNotExist)
@@ -260,12 +260,12 @@ func Test_readDecl(t *testing.T) {
 
 	t.Run("系統と job を分けて読む", func(t *testing.T) {
 		t.Parallel()
-		_, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-prod"`+"\n", nil)
+		_, path := fixture(t, channels+`"job:a.yaml:n" = "deploy-critical"`+"\n", nil)
 		d, findings, err := readDecl(path)
 		require.NoError(t, err)
 		assert.Empty(t, findings)
-		assert.Equal(t, map[string]string{"security": "SLACK_WEBHOOK_URL_SECURITY", "deploy-prod": "SLACK_WEBHOOK_URL_DEPLOY_PROD"}, d.channels)
-		assert.Equal(t, map[string]string{"a.yaml:n": "deploy-prod"}, d.jobs)
+		assert.Equal(t, map[string]string{"security": "SLACK_WEBHOOK_URL_SECURITY", "deploy-critical": "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"}, d.channels)
+		assert.Equal(t, map[string]string{"a.yaml:n": "deploy-critical"}, d.jobs)
 	})
 
 	t.Run("鍵の重複は落ちる", func(t *testing.T) {
@@ -295,7 +295,7 @@ func Test_callsNotify(t *testing.T) {
 
 	t.Run("notify.yaml を uses: で呼ぶ job を見分ける", func(t *testing.T) {
 		t.Parallel()
-		split := workflow.SplitJobs(caller("n", prodSecret) + "  other:\n    uses: ./.github/workflows/other.yaml\n")
+		split := workflow.SplitJobs(caller("n", criticalSecret) + "  other:\n    uses: ./.github/workflows/other.yaml\n")
 		require.True(t, split.Found)
 		require.Len(t, split.Jobs, 2)
 		assert.True(t, callsNotify(split.Jobs[0]))
@@ -306,17 +306,17 @@ func Test_callsNotify(t *testing.T) {
 func Test_checkCaller(t *testing.T) {
 	t.Parallel()
 
-	d := decl{channels: map[string]string{"deploy-prod": "SLACK_WEBHOOK_URL_DEPLOY_PROD"}, jobs: map[string]string{"a.yaml:n": "deploy-prod"}}
+	d := decl{channels: map[string]string{"deploy-critical": "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"}, jobs: map[string]string{"a.yaml:n": "deploy-critical"}}
 
 	t.Run("系統の secret を1回渡していれば違反は無い", func(t *testing.T) {
 		t.Parallel()
-		split := workflow.SplitJobs(caller("n", prodSecret))
+		split := workflow.SplitJobs(caller("n", criticalSecret))
 		assert.Empty(t, checkCaller("a.yaml", "a.yaml:n", split.Jobs[0], d))
 	})
 
 	t.Run("slack-webhook-url を2回渡せば落ちる", func(t *testing.T) {
 		t.Parallel()
-		split := workflow.SplitJobs(caller("n", prodSecret+prodSecret))
+		split := workflow.SplitJobs(caller("n", criticalSecret+criticalSecret))
 		findings := checkCaller("a.yaml", "a.yaml:n", split.Jobs[0], d)
 		require.Len(t, findings, 1)
 		assert.Contains(t, findings[0].Message, "2 回渡しています")
@@ -325,13 +325,13 @@ func Test_checkCaller(t *testing.T) {
 	t.Run("宣言に無い系統の job は readDecl に任せて指摘を重ねない", func(t *testing.T) {
 		t.Parallel()
 		typo := decl{channels: d.channels, jobs: map[string]string{"a.yaml:n": "typo"}}
-		split := workflow.SplitJobs(caller("n", prodSecret))
+		split := workflow.SplitJobs(caller("n", criticalSecret))
 		assert.Empty(t, checkCaller("a.yaml", "a.yaml:n", split.Jobs[0], typo))
 	})
 
 	t.Run("行末のコメントは渡し方を変えない", func(t *testing.T) {
 		t.Parallel()
-		split := workflow.SplitJobs(caller("n", "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }} # prod\n"))
+		split := workflow.SplitJobs(caller("n", "      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }} # critical\n"))
 		assert.Empty(t, checkCaller("a.yaml", "a.yaml:n", split.Jobs[0], d))
 	})
 }

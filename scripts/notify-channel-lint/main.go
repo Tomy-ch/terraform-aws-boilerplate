@@ -4,8 +4,8 @@
 //
 // 通知の宛先は、呼び出し側が notify.yaml の `slack-webhook-url` へ渡す secret で決まります。
 // notify.yaml には別の系統へ代わりに送る経路が無いので、取り違えが起きるのは呼び出し側だけです。
-// 本番の apply が非本番の secret を渡しても、actionlint も他の検査も何も言わず、本番の通知が
-// 非本番のチャンネルへ届きます。割当は .github/notify-channels.toml が宣言し、この検査が
+// 本番の apply が dev の secret を渡しても、actionlint も他の検査も何も言わず、本番の通知が
+// dev のチャンネルへ届きます。割当は .github/notify-channels.toml が宣言し、この検査が
 // workflow の実物と突き合わせます。
 //
 // 宣言は2種類の鍵を持ちます。`"channel:<系統>" = "<secret>"` が系統の secret を、

@@ -5,8 +5,8 @@
 # "job:<file>:<job>" = "<系統>"       notify.yaml を呼ぶ job の系統
 
 "channel:security" = "SLACK_WEBHOOK_URL_SECURITY"
-"channel:deploy-prod" = "SLACK_WEBHOOK_URL_DEPLOY_PROD"
-"channel:deploy-nonprod" = "SLACK_WEBHOOK_URL_DEPLOY_NONPROD"
+"channel:deploy-critical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"
+"channel:deploy-noncritical" = "SLACK_WEBHOOK_URL_DEPLOY_NONCRITICAL"
 
 "job:govulncheck.yaml:notify-detection" = "security"
 "job:govulncheck.yaml:notify-failure" = "security"
@@ -18,5 +18,5 @@
 "job:trivy-fs.yaml:notify-failure-license" = "security"
 "job:zizmor.yaml:notify-failure" = "security"
 "job:scorecard.yaml:notify-failure" = "security"
-"job:terraform-apply.yaml:notify-failure" = "deploy-prod"
-"job:terraform-apply.yaml:notify-success" = "deploy-prod"
+"job:terraform-apply.yaml:notify-failure" = "deploy-critical"
+"job:terraform-apply.yaml:notify-success" = "deploy-critical"
