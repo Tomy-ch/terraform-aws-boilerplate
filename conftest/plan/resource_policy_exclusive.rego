@@ -1,7 +1,5 @@
 # 宣言した Bucket と鍵の resource-based policy が、宣言した1つだけであること（state-backend/ADR-0101・ADR-0104）。
-# Bucket Policy と Key Policy は resource に1つで、宣言の外の resource が同じ resource を指すと、宣言した文書を
-# 置き換えうる。置き換えた文書は、宣言した policy を読む Policy（plan.state_backend_write_deny・
-# plan.deployment_identity_apply_identity_output・plan.kms_key_policy）が読まない。
+# 宣言の外の resource が同じ resource を指すと、宣言した文書を読む Policy が読まない文書が実体になりうる。
 package plan.resource_policy_exclusive
 
 import data.plan.lib

@@ -109,14 +109,12 @@ test_violation_declared_policy_unknown_on_a_known_target if {
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が ", [key_policy]), msgs)
 }
 
-# 参照先と宣言した policy を同じ plan で作ると、どちらの値も plan で決まらない。
 test_pass_declared_policy_created_with_its_target if {
 	new_key := {"address": state_key, "type": "aws_kms_key", "change": {"actions": ["create"], "after": {}, "after_unknown": {"id": true, "key_id": true, "arn": true}}}
 	inp := fixture.plan([new_key, unknown("aws_kms_key_policy", key_policy, "key_id")])
 	count(gate.deny) == 0 with input as inp
 }
 
-# 宣言が無ければ何も見ない。宣言の欠けは各 package の PLAN-*-00 が落とす。
 test_pass_declaration_absent if {
 	evil := rc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", {"bucket": "state-id"})
 	count(gate.deny) == 0 with input as fixture.plan(array.concat(targets, [evil])) with data.policy_plan as {}

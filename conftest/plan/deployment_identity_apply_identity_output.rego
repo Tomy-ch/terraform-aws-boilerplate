@@ -255,7 +255,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-AIO-00] plan の出力の Bucket の Bucket Policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.apply_identity_role を直してください", [output_bucket_policy])
 }
 
-# 宣言の外の Bucket Policy と、宣言した Bucket Policy の指す先は plan.resource_policy_exclusive が見る。
 deny contains msg if {
 	some r in bucket_policies
 	some s in lib.statements(r.body)
