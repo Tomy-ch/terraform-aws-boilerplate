@@ -25,7 +25,7 @@ parsed(d) := json.unmarshal(d.change.after[d.attr]) if {
 
 readable contains {"document": d, "body": parsed(d)} if some d in documents
 
-# data の address 一覧は index key を除いた形で持つ（ADR-0402 決定15）。
+# index key（[0]、["plan"]）を除いた address。宣言のうち index key を持たない形の address と突き合わせる。
 strip_index(address) := regex.replace(address, `\[[^\]]*\]`, "")
 
 as_array(x) := x if is_array(x)
