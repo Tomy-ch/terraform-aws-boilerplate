@@ -6,7 +6,8 @@
 
 "channel:security" = "SLACK_WEBHOOK_URL_SECURITY"
 "channel:deploy-critical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"
-"channel:deploy-noncritical" = "SLACK_WEBHOOK_URL_DEPLOY_NONCRITICAL"
+"channel:deploy-promotion" = "SLACK_WEBHOOK_URL_DEPLOY_PROMOTION"
+"channel:deploy-validation" = "SLACK_WEBHOOK_URL_DEPLOY_VALIDATION"
 
 "job:govulncheck.yaml:notify-detection" = "security"
 "job:govulncheck.yaml:notify-failure" = "security"
