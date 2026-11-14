@@ -62,10 +62,6 @@ secret-scan-history: gitleaks-canary
 ## 実行時に作る（trufflehog-canary と同じ組み方）。
 .PHONY: gitleaks-canary ## gitleaks が commit された偽の資格情報を範囲と全履歴の両方で検出することを検査
 gitleaks-canary:
-	@set -eu; $(call GIT_OUTER_CHECK,gitleaks-canary-run)
-
-.PHONY: gitleaks-canary-run
-gitleaks-canary-run:
 	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/gitleaks-canary.XXXXXX); trap 'rm -rf "$$dir" "$$dir".*' EXIT; \
 	id=$$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7' | head -c 16); \
 	secret=$$(head -c 512 /dev/urandom | base64 | LC_ALL=C tr -dc 'A-Za-z0-9/+' | head -c 40); \

@@ -165,8 +165,9 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
   stamping も継ぎます。そのため、git を起動するパッケージは `TestMain` から
   `os.Exit(testenv.RunGitIsolated(m))` を呼び、`git rev-parse --local-env-vars` が返す変数をプロセスから
   外します。`make go-test` と `make go-test-cover` は、`GIT_DIR` と `GIT_INDEX_FILE` が壊れた場所を指す
-  環境で走ります。`TestMain` を欠いたパッケージは、最初の git で落ちます。一時のリポジトリを建てる
-  make のレシピの側は、`.makefiles/git-isolation.mk` の `GIT_ISOLATE` と `GIT_OUTER_CHECK` が持ちます。
+  環境で走ります。`TestMain` を欠いたパッケージのうち、git の失敗を拾うテストはそこで落ちます。一時の
+  リポジトリを建てる make のレシピは、先頭で `.makefiles/git-isolation.mk` の `$(GIT_ISOLATE)` を実行します。
+  レシピへの付け漏れと、`go-test` の壊した環境は、`lib/testenv` のテストが確かめます。
 - **フィクスチャは `t.TempDir()` に建て、実物のツリーを読まない。** リポジトリ自身の workflow や
   lockfile を入力にしたテストは、今日の内容で通ったり落ちたりするようになり、ツールについての
   テストであることをやめます（ADR-0702 決定17）。

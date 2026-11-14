@@ -23,9 +23,14 @@ const RequireNonRootEnv = "REQUIRE_NONROOT"
 
 // 外界。判断はこれを直に読むので、入口が何かを渡し間違える余地がありません。
 var (
-	geteuid  = os.Geteuid
-	getenv   = os.Getenv
-	lookPath = exec.LookPath
+	geteuid                = os.Geteuid
+	getenv                 = os.Getenv
+	lookPath               = exec.LookPath
+	unsetenv               = os.Unsetenv
+	stderr       io.Writer = os.Stderr
+	localEnvVars           = func() ([]byte, error) {
+		return exec.CommandContext(context.Background(), "git", "rev-parse", "--local-env-vars").Output()
+	}
 )
 
 // reporter は requireNonRoot と requireShellcheck が使う *testing.T の部分です。判断の分岐を、
@@ -83,7 +88,10 @@ func requireShellcheck(t reporter) {
 	t.Skip("shellcheck が PATH にありません")
 }
 
-var errGitEnvVars = errors.New("git rev-parse --local-env-vars から、外す環境変数の一覧を得られません")
+var (
+	errGitEnvVars = errors.New("git rev-parse --local-env-vars から、外す環境変数の一覧を得られません")
+	errGitUnset   = errors.New("git の環境変数を外せません")
+)
 
 // runner は *testing.M の部分です。
 type runner interface {
@@ -95,24 +103,10 @@ type runner interface {
 //
 // git は hook に GIT_DIR や GIT_INDEX_FILE を渡します。それを継いだテストの git は、一時
 // リポジトリではなく外側のリポジトリを書き換えます。外す変数の一覧は git 自身の
-// `git rev-parse --local-env-vars` に従います。一覧を得られなければ、m を走らせずに 2 を返します。
+// `git rev-parse --local-env-vars` に従います。外せなければ、m を走らせずに 2 を返します。
 func RunGitIsolated(m runner) int {
-	return runGitIsolated(m, gitEnvVars, os.Unsetenv, os.Stderr)
-}
-
-func runGitIsolated(m runner, list func() ([]string, error), unset func(string) error, stderr io.Writer) int {
-	names, err := list()
-	if err == nil && len(names) == 0 {
-		err = errGitEnvVars
-	}
-	for _, name := range names {
-		if err != nil {
-			break
-		}
-		err = unset(name)
-	}
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "❌ git の環境変数を外せません: %v\n", err)
+	if err := isolateGitEnv(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "❌ %v\n", err)
 
 		return 2
 	}
@@ -120,13 +114,32 @@ func runGitIsolated(m runner, list func() ([]string, error), unset func(string) 
 	return m.Run()
 }
 
+// isolateGitEnv は、gitEnvVars の変数をすべてプロセスから外します。1つでも外せなければ、そこで止めます。
+func isolateGitEnv() error {
+	names, err := gitEnvVars()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := unsetenv(name); err != nil {
+			return fmt.Errorf("%w: %s: %w", errGitUnset, name, err)
+		}
+	}
+
+	return nil
+}
+
 // gitEnvVars は、git がリポジトリの位置を決めるのに読む環境変数の名前を返します。
 // GIT_DIR が壊れていても、この問い合わせはリポジトリを読みません。
 func gitEnvVars() ([]string, error) {
-	out, err := exec.CommandContext(context.Background(), "git", "rev-parse", "--local-env-vars").Output()
+	out, err := localEnvVars()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errGitEnvVars, err)
 	}
+	names := strings.Fields(string(out))
+	if len(names) == 0 {
+		return nil, errGitEnvVars
+	}
 
-	return strings.Fields(string(out)), nil
+	return names, nil
 }

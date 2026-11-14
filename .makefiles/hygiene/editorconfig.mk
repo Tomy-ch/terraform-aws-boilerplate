@@ -20,10 +20,6 @@ editorconfig-check: editorconfig-check-canary editorconfig-directive-canary edit
 ## 本走査と同じ探索経路（git の追跡ファイル）で違反が落ちることを確かめる。
 .PHONY: editorconfig-check-canary ## editorconfig-checker が追跡ファイルの違反で落ちることを検査
 editorconfig-check-canary:
-	@set -eu; $(call GIT_OUTER_CHECK,editorconfig-check-canary-run)
-
-.PHONY: editorconfig-check-canary-run
-editorconfig-check-canary-run:
 	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
@@ -49,10 +45,6 @@ editorconfig-directive-lint:
 ## ここが落ち、lint の分類を見直す合図になる。印の綴りはこのファイルに書けないので連結で組む。
 .PHONY: editorconfig-directive-canary ## editorconfig-checker が閉じない無効化の印の後ろを検査しないことを検査
 editorconfig-directive-canary:
-	@set -eu; $(call GIT_OUTER_CHECK,editorconfig-directive-canary-run)
-
-.PHONY: editorconfig-directive-canary-run
-editorconfig-directive-canary-run:
 	@set -eu; $(GIT_ISOLATE); mkdir -p tmp; dir=$$(mktemp -d tmp/editorconfig-directive-canary.XXXXXX); \
 	trap 'rm -rf "$$dir"' EXIT; \
 	cp .editorconfig .editorconfig-checker.json "$$dir/"; \
