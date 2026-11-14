@@ -1,7 +1,5 @@
 ## 秘密の混入の検査（gitleaks）
 ##
-## 走査対象は commit と履歴であり、作業ツリーのファイルではない。
-##
 ## 行に置く `gitleaks:allow` は効かせない（ADR-0302 決定9）。抑止は .gitleaks.toml と
 ## .gitleaksignore に理由とともに置く。
 ##

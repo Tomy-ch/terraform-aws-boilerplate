@@ -1,10 +1,7 @@
 ## 秘密の混入の検査（trufflehog）
 ##
-## gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。どちらか一方の検出でも通さない
-## （ADR-0302 決定2）。
-##
-## 候補を発行元の API へ送る検証はしない（--no-verification）。検証の成否で合否も分けない
-## （ADR-0302 決定2）。
+## gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。どちらか一方の検出でも通さない。
+## 検証（--no-verification）は行わず、検証の成否で合否も分けない（ADR-0302 決定2）。
 ##
 ## --fail-on-scan-errors を外さない。外すと、範囲の起点が解決できないときも0件の走査として
 ## exit 0 で通る。--no-ignore-tag は行に置く `trufflehog:ignore` を効かせない（同 決定9）。
@@ -18,7 +15,7 @@ TRUFFLEHOG_FORMAT ?= text
 TRUFFLEHOG_FLAGS := --no-verification --no-update --fail --fail-on-scan-errors --no-ignore-tag \
 	--results=verified,unverified,unknown $(if $(filter json,$(TRUFFLEHOG_FORMAT)),--json)
 
-## 抑止は path の正規表現で置く（trufflehog は fingerprint の抑止を持たない）。各エントリの理由は
+## 抑止は path の正規表現で置く。各エントリの理由は
 ## ファイルが持つ。履歴にだけ残る検出の抑止は全履歴の走査にだけ足す（ADR-0302 決定9）。
 ## 抑止のファイルを足すときは、scripts/secret-suppression-lint の対象にも足す。
 TRUFFLEHOG_EXCLUDE := .trufflehog-exclude-paths.txt
@@ -61,7 +58,6 @@ trufflehog-worktree:
 ## 検出器が、本走査と同じ引数・範囲指定・抑止で、検証なしに働くことを確かめる。
 ## 抑止は全履歴の走査が使う和集合を渡す —— 全 path に当たる行が混ざると、ここが落ちる。値はリポジトリに置かず実行時に
 ## 作る（trivy-secret-canary と同じ理由）。
-## 同じファイルを trufflehog-worktree と同じ TRUFFLEHOG_FILES に通す。
 ## AWS の検出器は ID と secret のエントロピーに閾値を持つので、乱数で作る。
 .PHONY: trufflehog-canary ## trufflehog が偽の資格情報を git と filesystem の両経路で検証なしに検出することを検査
 trufflehog-canary:
