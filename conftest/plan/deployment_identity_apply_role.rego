@@ -72,3 +72,29 @@ deny contains msg if {
 	count(missing) > 0
 	msg := sprintf("[PLAN-APPLY-01] %s: %s がアカウントへ委任する %v を、apply の role %q が鍵の ARN への Deny で拒んでいません", [r.document.path, r.document.address, sort(missing), target])
 }
+
+# resource type を持たず、resource を名指して拒めない Action（deployment-identity/ADR-0201 決定5）。apply の role は
+# Resource "*" の、Condition の無い Deny で拒む。宣言が無ければ、下の規則が何も見なくなるので落とす。
+wildcard_denies := {lower(a) | some a in object.get(cfg, "wildcard_denies", [])}
+
+denied_everywhere contains a if {
+	some r in lib.readable
+	r.document.type == "aws_iam_role_policy"
+	r.document.address == target
+	some s in lib.statements(r.body)
+	s.Effect == "Deny"
+	count(object.get(s, "Condition", {})) == 0
+	"*" in lib.as_array(object.get(s, "Resource", []))
+	some a in lib.lower_all(s.Action)
+}
+
+deny contains msg if {
+	count(wildcard_denies) == 0
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.wildcard_denies が空です。apply の role が Resource \"*\" で拒む Action を宣言してください"
+}
+
+deny contains msg if {
+	some a in wildcard_denies
+	not a in denied_everywhere
+	msg := sprintf("[PLAN-APPLY-02] apply の role %q が %s を、Resource \"*\" の Condition の無い Deny で拒んでいません", [target, a])
+}

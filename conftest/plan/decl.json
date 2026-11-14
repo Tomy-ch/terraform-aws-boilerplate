@@ -2,7 +2,10 @@
   "policy_plan": {
     "plan_format_version": "1.2",
     "resource_wildcard_actions": [
-      "kms:ListAliases"
+      "kms:ListAliases",
+      "logs:DescribeLogGroups",
+      "logs:DescribeResourcePolicies",
+      "logs:PutResourcePolicy"
     ],
     "documents": {
       "aws_iam_role": [
@@ -41,11 +44,27 @@
       "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github",
       "plan_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
-        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]",
+        "logs_actions": [
+          "logs:DescribeLogGroups",
+          "logs:DescribeResourcePolicies",
+          "logs:GetDelivery",
+          "logs:GetDeliveryDestination",
+          "logs:GetDeliverySource",
+          "logs:ListTagsForResource"
+        ]
       },
       "apply_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"apply\"]",
-        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]"
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]",
+        "wildcard_denies": [
+          "logs:DeleteAccountPolicy",
+          "logs:DeleteIndexPolicy",
+          "logs:DeleteResourcePolicy",
+          "logs:PutAccountPolicy",
+          "logs:PutIndexPolicy",
+          "logs:PutResourcePolicy"
+        ]
       },
       "apply_identity_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity"

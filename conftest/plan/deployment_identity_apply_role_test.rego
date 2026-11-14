@@ -3,7 +3,9 @@ package plan.deployment_identity_apply_role_test
 import data.plan.deployment_identity_apply_role as p
 import data.plan.fixture
 
-decl := {"apply_role": {"policy": "module.x.aws_iam_role_policy.this[\"apply\"]"}}
+decl := {"apply_role": {"policy": "module.x.aws_iam_role_policy.this[\"apply\"]", "wildcard_denies": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"]}}
+
+wildcard_deny := {"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "LOGS:PutResourcePolicy"], "Resource": "*"}
 
 key := "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
 
@@ -12,7 +14,10 @@ key_policy(actions) := fixture.doc("aws_kms_key_policy", "module.k.aws_kms_key_p
 	{"Sid": "RolesViaS3ReadWrite", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-plan"}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"},
 ]})
 
-apply_policy(statements) := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"apply\"]", "policy", {"Statement": statements})
+# 鍵の規則のテストでは、Resource "*" の Deny（PLAN-APPLY-02）を満たした policy を組む。
+apply_policy(statements) := raw_apply_policy(array.concat(statements, [wildcard_deny]))
+
+raw_apply_policy(statements) := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"apply\"]", "policy", {"Statement": statements})
 
 key_statement(actions, resource) := {"Effect": "Deny", "Action": actions, "Resource": resource}
 
@@ -75,4 +80,34 @@ test_violation_declaration_missing if {
 
 test_violation_key_policy_missing if {
 	fixture.has("[PLAN-APPLY-00]", p.deny) with input as fixture.plan([apply_policy([key_statement("kms:PutKeyPolicy", key)])]) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_wildcard_deny_missing if {
+	msgs := p.deny with input as fixture.plan([key_policy("kms:PutKeyPolicy"), raw_apply_policy([key_statement("kms:PutKeyPolicy", key), {"Effect": "Deny", "Action": "logs:PutAccountPolicy", "Resource": "*"}])]) with data.policy_plan.deployment_identity as decl
+	violations := {m | some m in msgs; startswith(m, "[PLAN-APPLY-02]")}
+	count(violations) == 1
+	some m in violations
+	contains(m, "logs:putresourcepolicy")
+}
+
+# Resource を名指した Deny と Condition の付いた Deny は、アカウント全体の要求を拒まない。
+test_violation_wildcard_deny_not_on_everything if {
+	every s in [
+		{"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "arn:aws:logs:ap-northeast-1:123456789012:log-group:x"},
+		{"Effect": "Deny", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "*", "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-northeast-1"}}},
+		{"Effect": "Allow", "Action": ["logs:PutAccountPolicy", "logs:PutResourcePolicy"], "Resource": "*"},
+	] {
+		fixture.has("[PLAN-APPLY-02]", p.deny) with input as fixture.plan([key_policy("kms:PutKeyPolicy"), raw_apply_policy([key_statement("kms:PutKeyPolicy", key), s])]) with data.policy_plan.deployment_identity as decl
+	}
+}
+
+# 宣言の大文字小文字を区別しない。別の policy の Deny は apply の role を守らない。
+test_violation_wildcard_deny_in_other_policy if {
+	other := fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"plan\"]", "policy", {"Statement": [wildcard_deny]})
+	fixture.has("[PLAN-APPLY-02]", p.deny) with input as fixture.plan([key_policy("kms:PutKeyPolicy"), raw_apply_policy([key_statement("kms:PutKeyPolicy", key)]), other]) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_wildcard_denies_empty if {
+	empty := {"apply_role": {"policy": decl.apply_role.policy, "wildcard_denies": []}}
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.wildcard_denies", p.deny) with input as fixture.plan([key_policy("kms:PutKeyPolicy"), apply_policy([key_statement("kms:PutKeyPolicy", key)])]) with data.policy_plan.deployment_identity as empty
 }
