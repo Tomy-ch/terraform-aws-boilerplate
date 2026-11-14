@@ -96,9 +96,7 @@ case "$$rc:$$out" in \
 esac
 endef
 
-## 秘密の走査の番兵そのものの検査。範囲走査の起点が空・解決不能のとき、走査 commit 数が合わないとき、
-## canary が偽キーを報告しないとき、filesystem 走査の対象が0件のとき、それぞれの番兵で落ちることを
-## 確かめる。道具は起動しない。
+## 秘密の走査の番兵そのものの検査。道具は起動しない。
 ## 子の make は失敗の理由を問わず 2 を返すので、どの番兵で落ちたかは文言で見る。
 .PHONY: secret-gates-test ## 秘密の範囲走査が、起点を解決できないとき通らないことを検査
 secret-gates-test:
@@ -115,16 +113,6 @@ secret-gates-test:
 		done; \
 	done; \
 	mkdir -p tmp; d=$$(mktemp -d tmp/secret-gates-test.XXXXXX); trap 'rm -rf "$$d"' EXIT; \
-	printf 'INF 3 commits scanned.\n' > "$$d/three"; printf 'INF 0 commits scanned.\n' > "$$d/zero"; \
-	printf 'ERR error="stderr is not empty"\n' > "$$d/none"; \
-	printf 'INF 2 commits scanned.\n' > "$$d/two"; printf 'INF 4 commits scanned.\n' > "$$d/four"; \
-	for c in three:3:0 two:3:2 four:3:2 zero:3:2 none:3:2 zero:0:0; do \
-		f=$${c%%:*}; r=$${c#*:}; want=$${r%%:*}; exp=$${r#*:}; \
-		rc=0; ( $(call GITLEAKS_COUNT_CHECK,"$$d/$$f","$$n" -eq "$$want") ) 2>/dev/null || rc=$$?; \
-		[ "$$rc" = "$$exp" ] || failed="$$failed gitleaks-count($$f,want=$$want,rc=$$rc)"; \
-	done; \
-	rc=0; ( $(call GITLEAKS_COUNT_CHECK,"$$d/zero","$$n" -gt 0) ) 2>/dev/null || rc=$$?; \
-	[ "$$rc" = 2 ] || failed="$$failed gitleaks-count(history-zero,rc=$$rc)"; \
 	printf '[{"RuleID": "aws-access-token"}]\n' > "$$d/hit"; printf '[]\n' > "$$d/miss"; : > "$$d/log"; \
 	for c in 1:hit:0 1:miss:1 1:absent:1 0:hit:1 2:hit:1; do \
 		r=$${c%%:*}; rest=$${c#*:}; f=$${rest%%:*}; exp=$${rest#*:}; \
@@ -141,4 +129,4 @@ secret-gates-test:
 	: > "$$d/empty"; got=0; ( $(call TRUFFLEHOG_FILES,"$$d/empty",test,) ) >/dev/null 2>&1 || got=$$?; \
 	[ "$$got" = 2 ] || failed="$$failed trufflehog-files(empty,rc=$$got)"; \
 	if [ -n "$$failed" ]; then echo "❌ secret-gates-test:$$failed" >&2; exit 1; fi; \
-	echo "✅ secret-gates-test: 起点が空・解決不能の範囲走査、走査した commit の数が合わない gitleaks、偽キーを報告しない canary、走査対象が0件の filesystem 走査は、それぞれの番兵で落ちました" >&2
+	echo "✅ secret-gates-test: 起点が空・解決不能の範囲走査、偽キーを報告しない canary、走査対象が0件の filesystem 走査は、それぞれの番兵で落ちました" >&2

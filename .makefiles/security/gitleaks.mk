@@ -28,34 +28,37 @@ endef
 CANARY_GIT := env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
 	-u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_PREFIX git -c core.hooksPath=/dev/null
 
-## gitleaks は git を読めなくても「0 commits scanned」で exit 0 を返す。走査した commit の数を
-## 出力から取り、$(2) の条件で検める（ADR-0702 決定15）。数を読めない出力も通さない。
+## 判定は scripts/gitleaks-count が持つ（ADR-0702 決定15）。
+## 引数は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、呼び出し側のシェル変数が
+## 展開されない。
+GITLEAKS_COUNT = $(call RUN_SCRIPT,gitleaks-count,"$$@") gitleaks-count $(1)
+
+## $(1) の git で、範囲 $(2) の gitleaks-count -numstat の入力を $(3) へ書く。
+GITLEAKS_NUMSTAT = $(1) log --no-merges -M --diff-filter=d --format='commit %H' --numstat -z $(2) > $(3)
+
+## 数が合わなければ gitleaks-count の終了コード（2）を、合えば gitleaks の終了コードを返す。呼び出し側が `|| rc=$$?` で受けると set -e が効かないので、
+## 突き合わせの失敗は明示で exit する。
 ##   $(1) gitleaks git の追加の引数
-##   $(2) 走査した数 $$n に課す test の式
+##   $(2) gitleaks-count の -log 以外の引数
 define GITLEAKS_COUNTED
 mkdir -p tmp; log=$$(mktemp tmp/gitleaks.XXXXXX); trap 'rm -f "$$log"' EXIT; \
 rc=0; $(GO_TOOL) gitleaks git $(GITLEAKS_FLAGS) $(1) >"$$log" 2>&1 || rc=$$?; cat "$$log" >&2; \
-$(call GITLEAKS_COUNT_CHECK,"$$log",$(2)); \
+$(call GITLEAKS_COUNT,-log "$$log" $(2)) || exit $$?; \
 exit $$rc
-endef
-
-define GITLEAKS_COUNT_CHECK
-n=$$(grep -o '[0-9][0-9]* commits scanned' $(1) | head -n 1 | cut -d ' ' -f 1); \
-test -n "$$n" || { echo "❌ gitleaks: 走査した commit の数を出力から読めません" >&2; exit 2; }; \
-test $(2) || { echo "❌ gitleaks: 走査した commit の数が条件（$(2)）を満たしません。git を読めていない可能性があります" >&2; exit 2; }
 endef
 
 .PHONY: secret-scan ## push 予定の commit 範囲に秘密が無いことを検査
 secret-scan:
 	@set -eu; $(SECRET_SCAN_FROM_GUARD); \
 	$(MAKE) -s --no-print-directory gitleaks-canary; \
-	want=$$(git rev-list --count --no-merges "$(COMMITLINT_FROM)..HEAD"); \
-	$(call GITLEAKS_COUNTED,--log-opts="$(COMMITLINT_FROM)..HEAD","$$n" -eq "$$want")
+	mkdir -p tmp; ns=$$(mktemp tmp/gitleaks-numstat.XXXXXX); trap 'rm -f "$$ns"' EXIT; \
+	$(call GITLEAKS_NUMSTAT,git,"$(COMMITLINT_FROM)..HEAD","$$ns"); \
+	( $(call GITLEAKS_COUNTED,--log-opts="$(COMMITLINT_FROM)..HEAD",-numstat "$$ns") )
 
 ## 全履歴の数は ref の数え方が git rev-list と揃わないので、0件でないことだけを見る。
 .PHONY: secret-scan-history ## 全履歴を走査（検出ルールの更新で過去が対象になるため定期実行する）
 secret-scan-history: gitleaks-canary
-	@set -eu; $(call GITLEAKS_COUNTED,,"$$n" -gt 0)
+	@set -eu; $(call GITLEAKS_COUNTED,,-min 1)
 
 ## 検出器が、本走査と同じ引数・設定・抑止で働くことを確かめる。値はリポジトリに置かず
 ## 実行時に作る（trufflehog-canary と同じ組み方）。
@@ -70,10 +73,12 @@ gitleaks-canary:
 	from=$$($(CANARY_GIT) -C "$$dir" rev-parse HEAD); \
 	printf '[default]\naws_access_key_id = AKIA%s\naws_secret_access_key = %s\n' "$$id" "$$secret" > "$$dir/credentials"; \
 	commit add credentials; commit commit -q -m canary; \
-	rc=0; ( $(call GITLEAKS_COUNTED,--log-opts="$$from..HEAD" --report-format json --report-path "$$dir.range.json" "$$dir","$$n" -eq 1) ) \
+	$(call GITLEAKS_NUMSTAT,$(CANARY_GIT) -C "$$dir","$$from..HEAD","$$dir.range.numstat"); \
+	$(call GITLEAKS_NUMSTAT,$(CANARY_GIT) -C "$$dir",HEAD,"$$dir.history.numstat"); \
+	rc=0; ( $(call GITLEAKS_COUNTED,--log-opts="$$from..HEAD" --report-format json --report-path "$$dir.range.json" "$$dir",-numstat "$$dir.range.numstat") ) \
 		2>"$$dir.range.log" || rc=$$?; \
 	$(call GITLEAKS_CANARY_JUDGE,$$rc,"$$dir.range.json",範囲,"$$dir.range.log"); \
-	rc=0; ( $(call GITLEAKS_COUNTED,--report-format json --report-path "$$dir.history.json" "$$dir","$$n" -eq 2) ) \
+	rc=0; ( $(call GITLEAKS_COUNTED,--report-format json --report-path "$$dir.history.json" "$$dir",-numstat "$$dir.history.numstat") ) \
 		2>"$$dir.history.log" || rc=$$?; \
 	$(call GITLEAKS_CANARY_JUDGE,$$rc,"$$dir.history.json",全履歴,"$$dir.history.log"); \
 	echo "✅ gitleaks-canary: 埋めた偽の AWS キーを範囲と全履歴の両方で検出しました" >&2
@@ -92,8 +97,7 @@ case "$(1)" in \
 esac
 endef
 
-## 秘密の走査の抑止（.gitleaksignore・.gitleaks.toml・.trufflehog-exclude-paths*.txt・.trivyignore.yaml の
-## secrets 節）の単位と理由の検査（ADR-0302 決定9・10）。対象のファイルはツールが固定で持つ。
+## 対象のファイルはツールが固定で持つ（ADR-0302 決定9・10）。
 .PHONY: secret-suppression-lint ## 秘密の走査の抑止が、理由つきの fingerprint・path 単位であることを検査
 secret-suppression-lint:
 	@set -eu; mkdir -p tmp; trap 'rm -f tmp/secret-suppression-lint.tracked tmp/secret-suppression-lint.commits' EXIT; \
