@@ -81,7 +81,7 @@ unsupported:
 ## 所有者
 
 - state Bucket はこのユースケースが所有する。同じアカウントの identity root と workload root が、backend として共有する
-- plan の出力の Bucket もこのユースケースが所有する。書くのは `deployment-identity` の plan の role だけである
+- plan の出力の Bucket もこのユースケースが所有する。書くのは `deployment-identity` の plan の role（`pr/*`・`branch/*`）と apply-identity の role（`apply/*`。apply の出力）だけである
 - state の鍵（CMK）も、このユースケースが所有する
 
 ## 依存するユースケースと判断 Issue

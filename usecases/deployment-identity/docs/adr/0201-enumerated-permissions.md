@@ -24,6 +24,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 7. managed policy を付けない。`aws_iam_role_policies_exclusive` と `aws_iam_role_policy_attachments_exclusive` で、帯域外で足された policy を次の apply で剥がす。
 8. plan の role に、plan の出力の Bucket の `pr/*` と `branch/*` の key への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13 の例外）。Pull Request の plan と保護ブランチの plan を key の接頭辞で分ける。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。plan の出力を state の鍵で暗号化するのに要る `kms:GenerateDataKey` は IAM では与えず、Key Policy が plan の role を名指して許す（決定3）。
 9. unlock-identity の role に、state Bucket への `s3:ListBucket`（Condition `s3:prefix` を identity root の lock file の key に `StringEquals` で限る）と、identity root の lock file への `s3:GetObject` と `s3:DeleteObject` だけを与える。列挙は Provider ではなく、lock を外す手順が呼ぶ API から導く。ListObjectsV2 は `s3:ListBucket` を、GetObject は `s3:GetObject` を要する。If-Match の条件付きの DeleteObject は `s3:DeleteObject` と `s3:GetObject` を要する。`s3:PutObject` と `s3:DeleteObjectVersion` を与えない。lock file の復号に要る `kms:Decrypt` は IAM では与えない。state の鍵の Key Policy が、この role を、暗号化コンテキスト `aws:s3:arn` で identity root の lock file の object に限って名指す（決定3）。この role は Deny を持たない。Allow を足すことを Policy Test が拒む。
+10. apply-identity の role に、plan の出力の Bucket の `apply/*` の key への `s3:PutObject` を与える（repository-wide/ADR-0602 決定13）。plan の role の `pr/*`・`branch/*` と接頭辞を分け、Pull Request のコードが apply の出力を偽れないようにする。`s3:DeleteObject` と `s3:DeleteObjectVersion` は与えない。暗号化に要る `kms:GenerateDataKey` は、state の鍵の Key Policy が既に apply-identity の role に許している。
 
 ### Action の導出
 
@@ -32,6 +33,7 @@ AWS Provider は、resource の refresh で、設定していない属性の API
 | S3 backend（state） | ListObjects、GetObject、PutObject | `s3:ListBucket`、`s3:GetObject`、`s3:PutObject` | 3つ（書き込みは apply 系の自分の key だけ） |
 | S3 backend（lock file） | GetObject、PutObject、DeleteObject | `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject` | apply 系の自分の `.tflock` だけ |
 | plan の出力 | PutObject | `s3:PutObject` | plan（plan の出力の Bucket の `pr/*` と `branch/*` の object だけ） |
+| apply の出力 | PutObject | `s3:PutObject` | apply-identity（plan の出力の Bucket の `apply/*` の object だけ。決定10） |
 | `aws_s3_bucket_lifecycle_configuration`（2つの Bucket） | Get / Put / DeleteBucketLifecycle | `s3:GetLifecycleConfiguration`、`s3:PutLifecycleConfiguration` | 読みは plan、apply-identity。書きは apply-identity |
 | `aws_s3_bucket` の Read | HeadBucket（region の解決を含む） | `s3:ListBucket` | plan、apply-identity |
 | 同 | GetBucketPolicy / GetBucketAcl / GetBucketCors / GetBucketWebsite / GetBucketVersioning / GetBucketAccelerateConfiguration / GetBucketRequestPayment / GetBucketLogging / GetBucketLifecycleConfiguration / GetBucketReplication / GetBucketEncryption / GetObjectLockConfiguration / GetBucketTagging | `s3:GetBucketPolicy`、`s3:GetBucketAcl`、`s3:GetBucketCORS`、`s3:GetBucketWebsite`、`s3:GetBucketVersioning`、`s3:GetAccelerateConfiguration`、`s3:GetBucketRequestPayment`、`s3:GetBucketLogging`、`s3:GetLifecycleConfiguration`、`s3:GetReplicationConfiguration`、`s3:GetEncryptionConfiguration`、`s3:GetBucketObjectLockConfiguration`、`s3:GetBucketTagging` | plan、apply-identity |
