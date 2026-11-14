@@ -13,6 +13,11 @@ POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
 POLICY_PLAN_DECL = conftest/plan/decl.json
 POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
+# Provider の schema から、型ごとの書ける非推奨の引数（属性と block）を取り出す（ADR-0402 決定18）。
+# reference の root をまたいで和を取り、data.provider_schema として Policy に渡す。宣言は root に依らず1つだからである。
+TF_POLICY_DEPRECATED = [.[] | select(.type == "test_plan") | .test_plan.provider_schemas // {} | to_entries[] | .value.resource_schemas // {} | to_entries[] \
+	| {key: .key, value: ([(.value.block.attributes // {}) | to_entries[] | select(.value.deprecated == true and (.value.optional == true or .value.required == true)) | .key] \
+	+ [(.value.block.block_types // {}) | to_entries[] | select(.value.block.deprecated == true) | .key])}]
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
 TF_POLICY_INPUT = $(TF_BASE)/tmp/tf-policy
@@ -50,6 +55,7 @@ tf-policy: tf-init
 	if [ "$$passed" -ne "$$want" ]; then echo "❌ 通った Rego のテストが $$passed 件で、宣言された $$want 件と一致しません"; exit 1; fi; \
 	echo "✅ Rego のテスト $$passed 件"; \
 	rm -rf "$(TF_POLICY_INPUT)"; mkdir -p "$(TF_POLICY_INPUT)"; inputs=""; failed=""; \
+	want_pfv=$$(jq -r '.policy_plan.provider_format_version // "（宣言に無い）"' $(POLICY_PLAN_DATA)); \
 	for d in $$roots; do \
 		name=$$(printf '%s' "$${d#$(TF_BASE)/usecases/}" | sed 's|/reference$$||'); out="$(TF_POLICY_INPUT)/$$name"; \
 		if ! TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" test -filter=tests/policy-input.tftest.hcl -json -verbose > "$$out.jsonl"; then \
@@ -57,28 +63,37 @@ tf-policy: tf-init
 		fi; \
 		n=$$(jq -s '[.[] | select(.type == "test_plan")] | length' "$$out.jsonl"); \
 		if [ "$$n" -ne 1 ]; then echo "❌ $$d: test_plan が $$n 件です（1件を期待）"; failed="$$failed $$d"; continue; fi; \
+		pfv=$$(jq -s -r '[.[] | select(.type == "test_plan") | .test_plan.provider_format_version][0] // "（無い）"' "$$out.jsonl"); \
+		if [ "$$pfv" != "$$want_pfv" ]; then echo "❌ $$d: test_plan の provider_format_version が $$pfv で、宣言の $$want_pfv ではありません（Provider の schema の形が変わった可能性があります）"; failed="$$failed $$d"; continue; fi; \
+		jq -s '$(TF_POLICY_DEPRECATED)' "$$out.jsonl" > "$$out.schema"; \
 		jq -s '[.[] | select(.type == "test_plan") | .test_plan | del(.provider_schemas)][0]' "$$out.jsonl" > "$$out.json"; \
 		inputs="$$inputs $$out.json"; \
 	done; \
 	$(TF_REPORT_FAILED); \
 	if [ -z "$$inputs" ]; then echo "❌ Policy の入力が0件です（reference の root から test_plan を1件も得られませんでした）"; exit 1; fi; \
-	result=$$($(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) $$inputs) || { \
+	jq -s 'add | group_by(.key) | map({key: .[0].key, value: (map(.value) | add | unique)}) | from_entries | {provider_schema: {deprecated_arguments: .}}' "$(TF_POLICY_INPUT)"/*.schema > "$(TF_POLICY_INPUT)/provider-schema.json"; \
+	result=$$($(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs) || { \
 		echo "$$result"; echo "❌ Policy の違反があります"; exit 1; }; \
 	echo "$$result"; echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
 
 # canary の fixture は provider を持たない構成（terraform_data）にする。init がネットワークを要さないため。
+# 例外は aws の fixture で、mock provider の override が書いた値を隠さないことを見る（ADR-0402 決定18）。
+# terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は state-backend の
+# reference の root の lock を写し、plugin cache から init する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
+# conftest/plan/decl.json の inline_arguments の aws_s3_bucket の写し。Provider が非推奨の引数を足すと、両方を直すまで落ちる。
+TF_POLICY_CANARY_AWS_INLINE = {"aws_s3_bucket": {"acceleration_status": null, "acl": null, "policy": null, "request_payer": null, "cors_rule": [], "grant": [], "lifecycle_rule": [], "logging": [], "object_lock_configuration": [], "replication_configuration": [], "server_side_encryption_configuration": [], "versioning": [], "website": []}}
 
 define TF_POLICY_FIXTURE
 mkdir -p "$$1/usecases/x/reference/tests"; printf '%s\n' "$$2" > "$$1/usecases/x/reference/main.tf"; \
 printf 'run "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"
 endef
 
-.PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・違反・unknown の文書で落ち、違反の無い入力で通ることを検査
+.PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ち、違反の無い入力で通ることを検査
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
-	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {}}}}' > "$$root/data.json"; \
+	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}' > "$$root/data.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
 		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" "$$@" 2>&1); rc=$$?; \
@@ -124,5 +139,21 @@ tf-policy-canary:
 	expect fail warn-rule "$$root/ok" "deny contains 以外の形" POLICY_PLAN_DIR="$$root/warn-rule"; \
 	cp -R "$$root/rego" "$$root/count"; printf '\nnot_a_test := `\ntest_counted_but_not_run\n`\n' >> "$$root/count/iam_action_wildcard_test.rego"; \
 	expect fail count-mismatch "$$root/ok" "宣言された" POLICY_PLAN_DIR="$$root/count"; \
+	jq '.policy_plan.inline_arguments.terraform_data.nope = null' "$$root/data.json" > "$$root/undeclared.json"; \
+	expect fail undeclared-arg "$$root/ok" "[PLAN-INPUT-10] inline_arguments の terraform_data の nope" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/undeclared.json"; \
+	jq '.policy_plan.provider_format_version = "0.0"' "$$root/data.json" > "$$root/format.json"; \
+	expect fail provider-format "$$root/ok" "宣言の 0.0 ではありません" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/format.json"; \
+	aws_fixture() { \
+		cp -R "$$root/ok" "$$1"; cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
+		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
+		printf 'mock_provider "aws" {\n  override_during = plan\n}\n\noverride_resource {\n  target          = aws_s3_bucket.b\n  override_during = plan\n  values = {\n    acceleration_status = null\n    acl                 = null\n    policy              = null\n    request_payer       = null\n  }\n}\n\nrun "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"; \
+	}; \
+	jq --argjson a '$(TF_POLICY_CANARY_AWS_INLINE)' '.policy_plan.inline_arguments = $$a' "$$root/data.json" > "$$root/aws.json"; \
+	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.website)' "$$root/aws.json" > "$$root/aws-uncovered.json"; \
+	aws_fixture "$$root/aws-unwritten" ''; \
+	expect pass aws-unwritten "$$root/aws-unwritten" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
+	aws_fixture "$$root/aws-written" 'policy = "{}"'; \
+	expect fail aws-written "$$root/aws-written" "aws_s3_bucket.b の policy が書かれています" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
+	expect fail aws-uncovered "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 website" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered.json"; \
 	if [ -n "$$failed" ]; then echo "❌ tf-policy の canary が期待どおりでなかったケース:$$failed"; exit 1; fi; \
-	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・違反・unknown の文書で落ちる"
+	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちる"

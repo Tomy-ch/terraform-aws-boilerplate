@@ -142,7 +142,7 @@ test_violation_required_type_absent if {
 }
 
 test_violation_declaration_incomplete if {
-	every key in ["plan_format_version", "documents", "required_documents", "deployment_identity", "inline_arguments"] {
+	every key in ["plan_format_version", "provider_format_version", "documents", "required_documents", "deployment_identity", "inline_arguments"] {
 		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as object.remove(data.policy_plan, [key])
 	}
 }

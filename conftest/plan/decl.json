@@ -1,6 +1,7 @@
 {
   "policy_plan": {
     "plan_format_version": "1.2",
+    "provider_format_version": "1.0",
     "resource_wildcard_actions": [
       "kms:ListAliases"
     ],
@@ -189,6 +190,26 @@
       ],
       "allow": {},
       "shorten_allow": {}
+    },
+    "inline_arguments": {
+      "aws_s3_bucket": {
+        "acceleration_status": null,
+        "acl": null,
+        "policy": null,
+        "request_payer": null,
+        "cors_rule": [],
+        "grant": [],
+        "lifecycle_rule": [],
+        "logging": [],
+        "object_lock_configuration": [],
+        "replication_configuration": [],
+        "server_side_encryption_configuration": [],
+        "versioning": [],
+        "website": []
+      },
+      "aws_kms_key": {
+        "policy": null
+      }
     }
   }
 }
