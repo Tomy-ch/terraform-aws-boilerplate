@@ -4,6 +4,6 @@
 # 供給網の窓の検査は scripts/README.md の tool-cooldown 行が持つ。
 plugin "aws" {
   enabled = true
-  version = "0.49.0"
+  version = "0.50.0"
   source  = "github.com/terraform-linters/tflint-ruleset-aws"
 }
