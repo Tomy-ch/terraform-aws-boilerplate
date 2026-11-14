@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +215,22 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 			require.NoError(t, run([]string{"plan-key", "-pr", "1", "-run", "2", "-attempt", "3", "-root", "admin-identity"}, &out, testDeps(nil)))
 			assert.Equal(t, "pr/1/2-3-admin-identity.txt\n", out.String())
+		})
+
+		t.Run("apply-key は key を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"apply-key", "-run", "2", "-attempt", "3", "-root", "admin-identity"}, &out, testDeps(nil)))
+			assert.Equal(t, "apply/2-3-admin-identity.txt\n", out.String())
+		})
+
+		t.Run("apply-result は成功の行を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"apply-result", "-exitcode", "0"}, &out, testDeps(nil)))
+			assert.Equal(t, "✅ apply が終わりました\n", out.String())
 		})
 
 		t.Run("lock-key は lock file の key を1行で出す", func(t *testing.T) {
@@ -1047,7 +1065,6 @@ func TestLocalMk(t *testing.T) {
 		assert.Contains(t, got, `-missing sse-s3'`)
 	})
 
-	// run は init-admin-identity を ciFakes の偽物で走らせ、偽物の呼び出しの記録とレシピの出力を返す。
 	run := func(t *testing.T, knobs map[string]string, vars ...string) (string, string, error) {
 		t.Helper()
 
@@ -1237,16 +1254,27 @@ func TestCiMk(t *testing.T) {
 		got := expand(t, "ci-apply-admin-identity")
 		assert.NotContains(t, got, "tabp-bootstrap")
 		assert.NotContains(t, got, "-lock=false")
-		assert.NotContains(t, got, "put-object")
 		assert.Contains(t, got, `trap 'rm -f "$out" "$json" "$tfplan" "$pol"' EXIT`)
 		order(t, got,
 			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly`,
+			`output -raw plan_output_bucket_name 2>> "$out"`,
+			`apply-key -run "$GITHUB_RUN_ID" -attempt "$GITHUB_RUN_ATTEMPT" -root "$root"`,
+			envPrefix("apply-identity")+` aws s3api put-object --region "$region" --bucket "$plan_bucket" --key "$key" --body "$out"`,
+			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
 			`plan -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
 			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
 			`plan-summary -exitcode "$rc" "$json"`,
 			`policy-result -namespace plan.stateful_protection -rego conftest/plan/stateful_protection.rego "$pol"`,
-			envPrefix("apply-identity")+` terraform -chdir="$dir" apply -input=false -no-color "$tfplan" >> "$out" 2>&1`,
+			`timeout -s INT 20m `+envPrefix("apply-identity")+` terraform -chdir="$dir" apply -input=false -no-color "$tfplan" >> "$out" 2>&1 || arc=$?; export arc`,
+			`upload`,
+			`apply-result -exitcode "$arc"`,
 		)
+		assert.Equal(t, 1, strings.Count(got, "put-object"), "全文を置くのは upload の1か所だけ: "+got)
+		m := regexp.MustCompile(`timeout -s INT ([0-9]+)m `).FindStringSubmatch(got)
+		require.Len(t, m, 2, got)
+		limit, err := strconv.Atoi(m[1])
+		require.NoError(t, err)
+		assert.Less(t, time.Duration(limit)*time.Minute, applyJobTimeout, "job の timeout より先に打ち切らなければ全文を置けない")
 		assert.Equal(t, 1, strings.Count(got, " apply -input=false"), got)
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
@@ -1289,8 +1317,8 @@ func TestCiMk(t *testing.T) {
 	})
 }
 
-// ciFakes は、ci.mk のレシピが起動する terraform・aws・conftest・curl・git の偽物です。
-// plan・apply・assume-role は secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
+// ciFakes は、ci.mk のレシピが起動する道具の偽物です。plan・apply・assume-role は secret の文字列を出し、
+// それが公開されるログへ漏れないことを見られるようにする。
 const ciFakes = `#!/bin/sh
 k=%[1]q
 rc() { cat "$k/$1" 2>/dev/null || echo 0; }
@@ -1311,6 +1339,12 @@ aws)
 	esac
 	exit 0 ;;
 conftest) cat "$k/policy.json"; exit 1 ;;
+timeout)
+	shift 3
+	"$@"
+	c=$?
+	test -f "$k/timeout-rc" && exit "$(cat "$k/timeout-rc")"
+	exit "$c" ;;
 curl)
 	for a; do test "$prev" = -o && out=$a; prev=$a; done
 	cat "$k/oidc-response" > "$out"
@@ -1327,7 +1361,7 @@ case "$sub" in
 init)
 	for a; do case "$a" in init|-*) ;; *) echo "terraform: positional argument: '$a'" >&2; exit 64 ;; esac; done
 	exit "$(rc init-rc)" ;;
-output) echo plan-output-bucket; exit "$(rc output-rc)" ;;
+output) if test -f "$k/output-value"; then cat "$k/output-value"; else echo plan-output-bucket; fi; exit "$(rc output-rc)" ;;
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
@@ -1337,7 +1371,6 @@ apply) echo APPLY-SECRET; exit "$(rc apply-rc)" ;;
 esac
 `
 
-// writeFakes は、ciFakes の偽物の道具を dir に置き、結果を knobs のファイルで切り替えるようにする。
 func writeFakes(t *testing.T, dir, knobs string, tools ...string) {
 	t.Helper()
 
@@ -1379,7 +1412,7 @@ func countCalls(calls, prefix string) int {
 	return n
 }
 
-// initArgs は、terraform の init の行を返す。init が呼ばれていなければ空文字。
+// initArgs は、init が呼ばれていなければ空文字を返す。
 func initArgs(calls string) string {
 	for line := range strings.Lines(calls) {
 		if strings.HasPrefix(line, applyCall) && strings.Contains(line, " init ") {
@@ -1433,11 +1466,12 @@ func newRecipe(bin string) recipeFunc {
 			require.NoError(t, os.WriteFile(filepath.Join(k, name), []byte(v), 0o600))
 		}
 
-		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws", "conftest", "curl", "git")
+		writeFakes(t, filepath.Join(root, "bin"), k, "terraform", "aws", "conftest", "curl", "git", "timeout")
 
 		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-s", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=",
 			"TF_LOCAL="+tfLocalShell(bin), "TF_BASE="+filepath.Join(root, "base"), "CI_PLAN_DIR="+plans,
 			"TF_BIN="+filepath.Join(root, "bin", "terraform"), "AWS_BIN="+filepath.Join(root, "bin", "aws"), "CONFTEST_BIN="+filepath.Join(root, "bin", "conftest"),
+			"TIMEOUT_BIN="+filepath.Join(root, "bin", "timeout"),
 			"POLICY_PLAN_DIR="+policy, "POLICY_PLAN_DECL="+filepath.Join(policy, "decl.json"))
 		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
@@ -1463,8 +1497,8 @@ func newRecipe(bin string) recipeFunc {
 }
 
 // TestCiRecipes は、ci.mk のレシピを偽物の道具で実際に走らせ、判定の失敗が apply・lock の削除と後続を止めることと、
-// plan の全文を置いてから失敗することを見る。判定そのものは tf-local のテストが持ち、ここはレシピが
-// その終了コードを握り潰さないことを固定する（ADR-0604 決定11、ADR-0702 決定24）。
+// plan と apply の全文を置いてから失敗することを見る。判定そのものは tf-local のテストが持ち、ここはレシピが
+// その終了コードを握り潰さないことを固定する（ADR-0602 決定13、ADR-0604 決定11、ADR-0702 決定24）。
 func TestCiRecipes(t *testing.T) {
 	t.Parallel()
 
@@ -1515,7 +1549,18 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Contains(t, r.calls, "apply -input=false -no-color "+saved, "plan したファイルを apply する")
 			assert.Contains(t, r.out, "✅ apply が終わりました")
 			assert.Contains(t, r.summary, "apply が終わりました")
-			assert.Zero(t, countCalls(r.calls, "aws s3api put-object"), "apply は全文を Bucket に置かない")
+			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
+			assert.Contains(t, r.calls, "--bucket plan-output-bucket --key apply/8-1-admin-identity.txt")
+			assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
+			assert.Equal(t, 1, countCalls(r.calls, "timeout -s INT 20m "), "apply を timeout で包む")
+			assert.Less(t, strings.Index(r.calls, " apply -input=false"), strings.Index(r.calls, "aws s3api put-object"), "apply の後に全文を置く")
+			assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
+			assert.Contains(t, r.out, "apply の終了コード: 0")
+			assert.Contains(t, r.out, "apply の全文: key=apply/8-1-admin-identity.txt sha256=")
+			assert.Contains(t, r.summary, "- key: `apply/8-1-admin-identity.txt`")
+			assert.Regexp(t, "- sha256: `[A-Za-z0-9+/]{43}=`", r.summary)
+			assert.Contains(t, r.summary, "- 版 ID: `v-1`")
+			assert.NotContains(t, r.out, "APPLY-SECRET")
 			assert.Contains(t, initArgs(r.calls), "-backend-config=kms_key_id=arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab", "init に state の鍵を渡す")
 			assert.NotContains(t, r.calls, "-lock=false")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
@@ -1542,7 +1587,10 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			require.Error(t, r.err, r.out)
 			assert.Contains(t, r.out, c.want)
 			assert.Zero(t, applies(r.calls), r.calls)
+			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), "失敗しても全文を置く: "+r.calls)
+			assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
 			assert.NotContains(t, r.out, "✅ apply")
+			assert.NotContains(t, r.out, "PLAN-SECRET")
 			assert.Empty(t, r.summary)
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
@@ -1586,18 +1634,86 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		require.Error(t, r.err, r.out)
 		assert.Contains(t, r.out, "init が失敗しました")
 		assert.NotContains(t, r.calls, " plan ")
+		assert.Zero(t, countCalls(r.calls, "aws s3api put-object"), "Bucket の名前は init の後でなければ読めない")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
-	t.Run("apply が失敗すれば非ゼロで終わり、成功を出さない", func(t *testing.T) {
+	t.Run("plan の出力の Bucket の名前を読めなければ plan を呼ばない", func(t *testing.T) {
 		t.Parallel()
 
-		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "apply-rc": "1"})
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"output-rc": "1"})
+		require.Error(t, r.err, r.out)
+		assert.Contains(t, r.out, "Bucket の名前を state から読めません")
+		assert.NotContains(t, r.calls, " plan ")
+		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
+	t.Run("plan の出力の Bucket の名前が空なら plan を呼ばない", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"output-value": "", "plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass})
+		require.Error(t, r.err, r.out)
+		assert.Contains(t, r.out, "Bucket の名前が空です")
+		assert.NotContains(t, r.calls, " plan ")
+		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
+	t.Run("run の番号が無ければ plan を呼ばない", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_RUN_ID=")
+		require.Error(t, r.err, r.out)
+		assert.Contains(t, r.out, "apply の出力の key を組めません")
+		assert.NotContains(t, r.calls, " plan ")
+		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+	})
+
+	ended := map[string]struct {
+		knobs map[string]string
+		want  string
+	}{
+		"apply が失敗すれば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1"}, "apply が失敗しました"},
+		"apply を打ち切れば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1", "timeout-rc": "124"}, "apply を打ち切りました"},
+		"打ち切りの後に apply が成功を返しても失敗とする": {map[string]string{"apply-rc": "0", "timeout-rc": "124"}, "apply を打ち切りました"},
+	}
+	for name, c := range ended {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			knobs := map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}
+			maps.Copy(knobs, c.knobs)
+			r := recipe(t, "ci-apply-admin-identity", knobs)
+			require.Error(t, r.err, r.out)
+			assert.Equal(t, 1, applies(r.calls), r.calls)
+			assert.Contains(t, r.out, c.want)
+			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
+			assert.Less(t, strings.Index(r.calls, " apply -input=false"), strings.Index(r.calls, "aws s3api put-object"), "apply の後に全文を置く")
+			assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
+			assert.Contains(t, r.out, "全文は上の key にあります")
+			assert.Contains(t, r.out, "apply の終了コード: ")
+			assert.NotContains(t, r.out, "apply の終了コード: 0")
+			assert.NotContains(t, r.out, "✅ apply")
+			assert.NotContains(t, r.out, "APPLY-SECRET")
+			assert.Empty(t, r.summary)
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+	}
+
+	t.Run("全文を置けなければ apply が成功しても失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "s3api-rc": "1"})
 		require.Error(t, r.err, r.out)
 		assert.Equal(t, 1, applies(r.calls), r.calls)
-		assert.Contains(t, r.out, "apply が失敗しました")
+		assert.Contains(t, r.out, "apply の終了コード: 0", "全文を置けなくても apply の成否はログに残す")
+		assert.Contains(t, r.out, "apply の全文: key=")
+		assert.NotContains(t, r.out, "apply の全文の版 ID")
 		assert.NotContains(t, r.out, "✅ apply")
 		assert.Empty(t, r.summary)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
 	t.Run("terraform の出力を公開されるログに出さない", func(t *testing.T) {
@@ -1617,6 +1733,8 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, "GITHUB_STEP_SUMMARY=")
 		require.NoError(t, r.err, r.out)
 		assert.Equal(t, 1, applies(r.calls), r.calls)
+		assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
+		assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
 		assert.Empty(t, r.summary)
 	})
 

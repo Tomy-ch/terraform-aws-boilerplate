@@ -30,6 +30,11 @@
 //	    JSON を読まずに plan の失敗として落ちる
 //	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
 //	    plan の出力を置く object の key を1行で出す
+//	tf-local apply-key -run <id> -attempt <n> -root <root>
+//	    apply の出力を置く object の key を1行で出す
+//	tf-local apply-result -exitcode <n>
+//	    `timeout` で包んだ apply の終了コードから成否を読む。0 なら成功の行を出し、124 は打ち切り、
+//	    ほかは apply の失敗として落ちる
 //	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
 //	    評価が rego の `deny contains` の数でなければ失敗する
@@ -97,7 +102,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -146,7 +151,7 @@ func run(args []string, out io.Writer, d deps) error {
 		return errUsage
 	}
 
-	// arg は、位置引数を1つ取るサブコマンドの引数。数は上の argCounts が確かめている。
+	// 個数は上の argCounts が確かめている。
 	arg := ""
 	if len(args) > 1 {
 		arg = args[1]
@@ -180,6 +185,10 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runPlanSummary(args[1:], d.readFile)
 	case "plan-key":
 		value, err = runPlanKey(args[1:])
+	case "apply-key":
+		value, err = runApplyKey(args[1:])
+	case "apply-result":
+		value, err = runApplyResult(args[1:])
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
 	case "account":

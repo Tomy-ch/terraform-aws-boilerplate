@@ -47,6 +47,9 @@ var (
 	errPlanExitCode = xerrors.New("❌ plan の終了コードは 0 か 2 です")
 	errPlanMismatch = xerrors.New("❌ plan の終了コードと JSON の変更の有無が食い違います")
 	errPlanKey      = xerrors.New("❌ plan の出力の key を組めません")
+	errApplyKey     = xerrors.New("❌ apply の出力の key を組めません")
+	errApplyFailed  = xerrors.New("❌ apply が失敗しました")
+	errApplyTimeout = xerrors.New("❌ apply を打ち切りました（timeout）")
 	errDigest       = xerrors.New("❌ SHA-256 を計算するファイルを読めません")
 
 	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
@@ -366,6 +369,63 @@ func planKey(pr, branch, runID, attempt, root string) (string, error) {
 		return "branch/" + branch + "/" + name, nil
 	default:
 		return "", xerrors.Wrap(errPlanKey, "-pr と -branch のどちらか1つを渡してください")
+	}
+}
+
+func runApplyKey(args []string) (string, error) {
+	fs := flag.NewFlagSet("apply-key", flag.ContinueOnError)
+	runID := fs.String("run", "", "")
+	attempt := fs.String("attempt", "", "")
+	root := fs.String("root", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() > 0 {
+		return "", errUsage
+	}
+
+	return applyKey(*runID, *attempt, *root)
+}
+
+// applyKey は、apply の出力を置く object の key を返します。apply-identity の role が書けるのは `apply/` の下だけで、
+// plan の role はそこへ書けない（usecases/deployment-identity/internal/github-oidc/policies.tf）。
+func applyKey(runID, attempt, root string) (string, error) {
+	if !counterPattern.MatchString(runID) || !counterPattern.MatchString(attempt) || !rootPattern.MatchString(root) {
+		return "", xerrors.Wrap(errApplyKey, "run・attempt・root のいずれかが不正です")
+	}
+
+	return fmt.Sprintf("apply/%s-%s-%s.txt", runID, attempt, root), nil
+}
+
+// applyTimedOut は、`timeout` が command を打ち切ったときに返す終了コード（GNU coreutils の timeout）。
+const applyTimedOut = 124
+
+func runApplyResult(args []string) (string, error) {
+	fs := flag.NewFlagSet("apply-result", flag.ContinueOnError)
+	exitCode := fs.String("exitcode", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() > 0 {
+		return "", errUsage
+	}
+
+	code, err := strconv.Atoi(*exitCode)
+	if err != nil || code < 0 || code > 255 {
+		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
+	}
+
+	switch code {
+	case 0:
+		return "✅ apply が終わりました", nil
+	case applyTimedOut:
+		return "", errApplyTimeout
+	default:
+		return "", xerrors.Wrapf(errApplyFailed, "終了コード %d", code)
 	}
 }
 

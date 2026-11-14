@@ -505,6 +505,118 @@ func Test_runPlanKey(t *testing.T) {
 	})
 }
 
+func Test_runApplyKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("フラグから key を組む", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runApplyKey([]string{"-run", "345", "-attempt", "1", "-root", "admin-identity"})
+		require.NoError(t, err)
+		assert.Equal(t, "apply/345-1-admin-identity.txt", got)
+	})
+
+	t.Run("知らないフラグは失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runApplyKey([]string{"-pr", "1", "-run", "1", "-attempt", "1", "-root", "a"})
+		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("余分な引数は失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runApplyKey([]string{"-run", "1", "-attempt", "1", "-root", "a", "x"})
+		require.ErrorIs(t, err, errUsage)
+	})
+}
+
+func Test_applyKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("apply の全文は apply/ の下に置く", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := applyKey("99", "2", "admin-identity")
+		require.NoError(t, err)
+		assert.Equal(t, "apply/99-2-admin-identity.txt", got)
+	})
+
+	t.Run("20桁の run は通す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := applyKey("12345678901234567890", "1", "a")
+		require.NoError(t, err)
+		assert.Equal(t, "apply/12345678901234567890-1-a.txt", got)
+	})
+
+	cases := map[string][3]string{
+		"空の run は失敗する":      {"", "1", "a"},
+		"21桁の run は失敗する":    {"123456789012345678901", "1", "a"},
+		"0 の attempt は失敗する": {"1", "0", "a"},
+		"空の attempt は失敗する":  {"1", "", "a"},
+		"空の root は失敗する":     {"1", "1", ""},
+		"大文字を含む root は失敗する": {"1", "1", "Admin"},
+		"/ を含む root は失敗する":  {"1", "1", "admin/identity"},
+		".. を含む run は失敗する":  {"../1", "1", "a"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := applyKey(c[0], c[1], c[2])
+			require.ErrorIs(t, err, errApplyKey)
+		})
+	}
+}
+
+func Test_runApplyResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("終了コード 0 なら成功の行を出す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runApplyResult([]string{"-exitcode", "0"})
+		require.NoError(t, err)
+		assert.Equal(t, "✅ apply が終わりました", got)
+	})
+
+	t.Run("終了コード 124 は打ち切りとして失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runApplyResult([]string{"-exitcode", "124"})
+		require.ErrorIs(t, err, errApplyTimeout)
+		assert.NotErrorIs(t, err, errApplyFailed)
+	})
+
+	for _, code := range []string{"1", "2", "123", "125", "130", "137", "255"} {
+		t.Run("終了コード "+code+" は apply の失敗として失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runApplyResult([]string{"-exitcode", code})
+			require.ErrorIs(t, err, errApplyFailed)
+			assert.NotErrorIs(t, err, errApplyTimeout)
+		})
+	}
+
+	for name, args := range map[string][]string{
+		"終了コードが無ければ失敗する":    {},
+		"空の終了コードは失敗する":      {"-exitcode", ""},
+		"数でない終了コードは失敗する":    {"-exitcode", "x"},
+		"負の終了コードは失敗する":      {"-exitcode", "-1"},
+		"256 以上の終了コードは失敗する": {"-exitcode", "256"},
+		"余分な引数は失敗する":        {"-exitcode", "0", "x"},
+		"知らないフラグは失敗する":      {"-rc", "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runApplyResult(args)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+}
+
 func Test_planKey(t *testing.T) {
 	t.Parallel()
 

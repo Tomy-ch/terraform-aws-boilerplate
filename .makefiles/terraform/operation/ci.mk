@@ -5,9 +5,8 @@
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
 ## （ADR-0702 決定3・24）。plan と apply には ADR-0604 決定11・12 の Policy（plan.stateful_protection）を掛ける。
-## 公開されるログに terraform の出力を出さない。plan の全文は plan の出力の Bucket に置き、ログには終了コード・
-## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。apply の全文は
-## ランナーの外に出さない。
+## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
+## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
 ## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の
@@ -15,6 +14,10 @@
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
 CI_ENV ?= admin
+# apply を SIGINT で打ち切るまでの時間。apply の job の timeout-minutes より、init・plan と、打ち切りの後に terraform が
+# state を書いて lock を外し、全文を置くまでの分だけ短くする。job の timeout が先に来ると全文を置けない。
+CI_APPLY_TIMEOUT ?= 20m
+TIMEOUT_BIN ?= timeout
 CI_ROLE ?= plan
 # $(1)=env $(2)=役割。role 名と同じ形にする（tf-local role-arn）。
 CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
@@ -65,11 +68,12 @@ echo "plan の終了コード: $$rc"; export rc; \
 $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" show -json "$$tfplan" > "$$json" 2>> "$$out" || :
 endef
 
-# $$json の plan に Policy を掛け、違反か評価の欠けがあれば失敗する。
+# $$json の plan に Policy を掛け、違反か評価の欠けがあれば $(1) を実行してから失敗する。
+# $(1)=失敗する前に実行するコマンド（`;` で終える）
 define CI_POLICY
 $(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace plan.stateful_protection --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" > "$$pol" || :; \
 $(call TF_LOCAL,policy-result -namespace plan.stateful_protection -rego $(POLICY_PLAN_DIR)/stateful_protection.rego "$$pol") \
-|| { echo "❌ plan.stateful_protection の Policy を通りません（理由は上の行）" >&2; exit 1; }
+|| { $(1)echo "❌ plan.stateful_protection の Policy を通りません（理由は上の行）" >&2; exit 1; }
 endef
 
 # $(1)=env $(2)=root。plan は lock を取らない（ADR-0604 決定8）。plan が失敗しても、Bucket に書けるなら
@@ -86,22 +90,34 @@ version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --buc
 --checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
 echo "plan の全文の版 ID: $$version"; \
 summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
-$(CI_POLICY); \
+$(call CI_POLICY,); \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
 endef
 
 # $(1)=env $(2)=root。apply する commit で plan し直し、Policy を通った plan だけを apply する（ADR-0601 決定6、
 # ADR-0604 決定11）。plan は lock を取る —— ADR-0604 決定8 の plan は plan の job の plan である。
-# 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。
+# 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。plan の出力の Bucket の apply/ に書けるのは
+# identity root の apply の role（apply-identity）だけなので、全文を置くのはこの入口だけである（ADR-0602 決定13）。
+# workload root の apply は、この define を使えない。
+# Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。打ち切りは
+# CI_APPLY_TIMEOUT（短くする理由はその注記）。
 define CI_APPLY
-$(call CI_PREPARE,$(1),$(2)); \
+$(call CI_PREPARE,$(1),$(2)); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
+plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
+|| { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
+test -n "$$plan_bucket" || { echo "❌ plan の出力の Bucket の名前が空です" >&2; exit 1; }; \
+key=$$($(call TF_LOCAL,apply-key -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
+upload() { sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
+version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
+--checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
+echo "apply の全文の版 ID: $$version"; }; \
 $(call CI_TERRAFORM_PLAN,); \
-summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")); echo "$$summary"; \
-$(CI_POLICY); \
-$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 \
-|| { echo "❌ apply が失敗しました。全文はランナーの外に出しません" >&2; exit 1; }; \
-echo "✅ apply が終わりました"; \
-test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n' "$$root" "$$summary" >> "$$GITHUB_STEP_SUMMARY"
+summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { upload; echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
+$(call CI_POLICY,upload; ); \
+arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
+upload; \
+result=$$($(call TF_LOCAL,apply-result -exitcode "$$arc")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$result"; \
+test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
 endef
 
 # $(1)=env $(2)=root。apply の job の timeout を超えて残った lock だけを、読んだ版の ETag を条件に消す。
