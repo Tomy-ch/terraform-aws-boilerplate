@@ -283,16 +283,17 @@ truthy 側へ置く。
 
 ## 通知の起動条件
 
-通知は受け手ごとに3つの系統に分かれる。
+通知は受け手ごとに4つの系統に分かれる。deploy の3つは、環境の役割（`docs/v1.0-plan/scope.md` 第10節）で分ける。
 
 | 系統 | 送るもの |
 | --- | --- |
 | セキュリティ | 走査（`govulncheck.yaml`・`secret-scan.yaml`・`trivy-fs.yaml`・`zizmor.yaml`・`scorecard.yaml`）の失敗と検出 |
-| critical の deploy | 管理アカウントと本番の apply の成功と失敗 |
-| noncritical の deploy | critical に入らない環境（dev・stg など）の apply の成功と失敗 |
+| critical の deploy | 管理アカウント（admin）と本番（prd）の apply の成功と失敗 |
+| promotion の deploy | 本番へ上がる途中の段（dev・stg）の apply の成功と失敗 |
+| validation の deploy | 検証の器（sandbox）の apply の成功と失敗 |
 
 critical は、壊れると他の環境へ響く環境である。本番は利用者へ、管理アカウントは state backend と CI の
-role を通じてすべての環境へ響く。critical に入らない環境は、名を挙げずにすべて noncritical に入る。
+role を通じてすべての環境へ響く。env を足すときは、その役割に合う系統へ割り当てる。
 
 系統ごとの secret の名前と、`notify.yaml` を呼ぶ job の系統は
 [`.github/notify-channels.toml`](../notify-channels.toml) が宣言する。`make notify-channel-lint`（`make actions-lint`
@@ -303,12 +304,12 @@ role を通じてすべての環境へ響く。critical に入らない環境は
   URL ごとに宛先のチャンネルが決まるので、`notify.yaml` の secret の入力は1つである。通知の job は
   environment を持たないので、secret はリポジトリの secret である
 - **secret が未設定の系統は、notice を出して配信を省く。別の系統へ代わりに送らない** —— `notify.yaml` は
-  代わりの宛先を持たず、critical の通知が noncritical の宛先へ届く取り違えは起きない
+  代わりの宛先を持たず、critical の通知が別の系統の宛先へ届く取り違えは起きない
 - **deploy は成功も通知する。走査は成功を通知しない** —— deploy の成功は何がいつ適用されたかの記録であり、
   走査の成功は何も起きなかったことの報告にすぎない。変更の無い apply も成功として通知し、plan の件数の行
   （`No changes.` か `Plan: …`）を載せて変更の有無を見分けられるようにする。件数の行は apply の job の
   outputs で渡り、terraform の出力は含まない
-- noncritical の系統は、workload root の apply の job を足す変更が配線し、その通知の job を宣言に足す
+- promotion と validation の系統は、dev・stg と sandbox の apply の job を足す変更が配線し、その通知の job を宣言に足す
 
 スケジュール（週次）を持つ走査は、job が `failure` または `cancelled` で終わったとき `notify.yaml` を
 呼ぶ。Pull Request の失敗は作者に見えている。**スケジュールの失敗は誰にも見えない** —— それが

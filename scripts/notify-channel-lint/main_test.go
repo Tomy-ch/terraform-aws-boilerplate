@@ -88,15 +88,15 @@ func Test_run(t *testing.T) {
 
 	t.Run("宣言に無い系統を名指す job は落ちる", func(t *testing.T) {
 		t.Parallel()
-		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-noncritical"`+"\n",
+		out, err := lint(t, channels+`"job:a.yaml:n" = "deploy-promotion"`+"\n",
 			map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
-		assert.Contains(t, out, "job a.yaml:n の系統 deploy-noncritical は宣言されていません")
+		assert.Contains(t, out, "job a.yaml:n の系統 deploy-promotion は宣言されていません")
 	})
 
 	t.Run("2つの系統が同じ secret を持てば落ちる", func(t *testing.T) {
 		t.Parallel()
-		decl := channels + `"channel:deploy-noncritical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"` + "\n" + `"job:a.yaml:n" = "deploy-critical"` + "\n"
+		decl := channels + `"channel:deploy-promotion" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"` + "\n" + `"job:a.yaml:n" = "deploy-critical"` + "\n"
 		out, err := lint(t, decl, map[string]string{"a.yaml": caller("n", criticalSecret)})
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out, "同じ secret SLACK_WEBHOOK_URL_DEPLOY_CRITICAL を持ちます")
