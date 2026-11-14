@@ -116,6 +116,7 @@ workload root の apply の経路（#222）と sandbox のアカウント（#21�
 - apply の role の鍵の Deny が、実際の要求で文書どおりに評価されること。`simulate-principal-policy` は IAM の評価だけを見る。apply の role を assume する job は無い（#222）
 - 同じ apply で role を足すとき、apply-identity の inline policy の書き込みが、role の作成（`iam:CreateRole`）までに IAM の評価へ反映されること。反映が遅れるとその apply は AccessDenied で失敗し、run の「Re-run failed jobs」で再実行する
 - unlock-identity の role の lock file の削除と、暗号化コンテキストで限った復号が、実 API で通ること。lock file が在るときしか評価されないので、人が `docs/setup/bootstrap.md` 段5 の lock の項で一度試す
+- apply の role の state Bucket の Deny が `s3:ListBucket` のほかを塞いでも、workload root の apply の経路が state Bucket のほかの Action を呼ばないこと。CI の init の前の `get-bucket-encryption`（`s3:GetEncryptionConfiguration`）は塞がれるので、#222 で apply の role を使う経路を配線するときに、その Action を決定5 の除外へ足すかを決める
 - apply の role の鍵の Deny が読み取りも塞いでも、workload root の S3 backend が鍵の読み取り（`kms:DescribeKey`）を呼ばないこと。S3 の SSE-KMS の暗号操作は Deny に含まないが、backend の source では確かめていない（段5 の切り替えで見る）
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

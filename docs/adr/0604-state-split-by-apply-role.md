@@ -82,7 +82,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 ## 保証範囲
 
 - 保証すること:
-  - IAM principal である apply の role のセッションが、identity root の state と lock file と state Bucket の ARN を対象とする要求で読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の ARN を対象とする要求でその Key Policy がアカウントへ委任する Action を、許されないこと（明示の Deny の優先と、Deny の形を reference の plan で見る Policy Test から導く。前提と除外は ADR-0602 の保証範囲）
+  - IAM principal である apply の role のセッションが、identity root の state と lock file と state Bucket の ARN を対象とする要求で読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の ARN を対象とする要求でその Key Policy がアカウントへ委任する Action を、許されないこと（明示の Deny の優先と、apply の role の権限の与え方を持つ use-case の Policy Test が reference の plan で見る Deny から導く。前提と除外は ADR-0602 の保証範囲）
   - 保護の対象として宣言した型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更が、許可の宣言なしに、plan を経る apply へ進まないこと
 - 保証しないこと:
   - 管理アカウントの root による state Bucket への書き込みと、bucket policy の削除（ADR-0602 決定11）
@@ -103,7 +103,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis: apply の job が、apply する plan に決定11-12 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
-- Policy Test（`plan.deployment_identity_apply_role`・`plan.deployment_identity_unlock_role`）: reference の plan で、apply の role に付く inline policy が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` を、条件なしの Deny で拒むこと。state の鍵の ARN への条件なしの Deny が、その Key Policy がアカウントへ委任する Action のすべてを覆うこと。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
+- Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしの Deny で拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
 - Policy Test: identity root と workload root の plan が、許可の宣言に無い、対象の型の resource の削除、置換、管理からの除外と、宣言した取り返しのつかない属性の変更を含まないこと。各 root の許可の宣言に、その root の plan のどれにも当たらない項目が無いこと（決定11-12）。違反する入力と違反しない入力の両方で検証する（ADR-0402）
 
 ## 影響
