@@ -66,6 +66,7 @@ S3 は鍵を ARN で名指すことを勧める。alias を付け替えられる
 
 - Unit Test: `modules/s3/tests/` が、暗号化の値（`aws:kms`、鍵の ARN、`bucket_key_enabled = false`）、SSE-C の拒否、`kms_key_arn` の validation と precondition を mock の plan で確かめる
 - Contract Test: `tests/contract.tftest.hcl` が、2つの Bucket の暗号化が `state_key_arn` の鍵を名指すことを確かめる
+- Policy Test: `plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること）が、宣言した Key Policy が state の鍵を指し、state の鍵を指す（または指す先が plan で決まらない）`aws_kms_key_policy` が宣言した1つだけであることを確かめる。Key Policy は名前が `default` の1つだけで、宣言の外の resource が同じ鍵を指すと、宣言した Key Policy を書き換えうるので、`plan.kms_key_policy` が読まない文書が実体になりうる
 - Unit Test（Go）: init に鍵の ARN を渡す運用機構（`scripts/tf-local`）のテストが、alias の有無・Bucket の既定との食い違い・鍵を渡さない明示の有無ごとの出力と失敗を確かめ、alias の名前の写しを identity root のテストの直書きと突き合わせる
 - Security: `make trivy-config` が AWS-0132 を、`make checkov` が CKV_AWS_145 を報告しないこと（抑止は持たない）
 - 実環境: 切り替えの apply の後の CI の plan が `No changes.` を示し、`get-bucket-encryption` が宣言どおりであること（人、`docs/setup/bootstrap.md`）

@@ -72,6 +72,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 - Contract Test: `tests/contract.tftest.hcl` が公開入力 `plan_output_retention_days` と公開出力 `plan_output_bucket_name` / `plan_output_bucket_arn` を確かめる
 - Unit Test: `internal/plan-output/tests/` が、暗号化の値（`aws:kms`、鍵の ARN、`bucket_key_enabled = false`）と `kms_key_arn` の validation と precondition を確かめる
 - Contract Test: `tests/contract.tftest.hcl` が、この Bucket の暗号化が `state_key_arn` の鍵を名指すことを確かめる
+- Policy Test: `plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること）が、宣言した Bucket Policy がこの Bucket を指し、この Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであることを確かめる。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.deployment_identity_apply_identity_output` が読まない文書が実体になりうる
 - Security: `make trivy-config` が AWS-0132 を、`make checkov` が CKV_AWS_145 を報告しないこと（抑止は持たない）
 
 ## 影響
