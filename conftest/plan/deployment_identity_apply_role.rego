@@ -177,10 +177,12 @@ statements contains s if {
 	some s in lib.statements(r.body)
 }
 
+# Action と NotAction を両方持つ文は IAM が受け付けないので、どちらの形としても数えない。
 unconditional_deny(s) if {
 	s.Effect == "Deny"
 	count(object.get(s, "Condition", {})) == 0
 	not "NotResource" in object.keys(s)
+	count({"Action", "NotAction"} & object.keys(s)) == 1
 }
 
 on(s, arn) if arn in lib.as_array(object.get(s, "Resource", []))
@@ -224,7 +226,7 @@ version_deletion_denied(arn) if {
 	a in {"s3:deleteobjectversion", "*"}
 }
 
-# 鍵と Key Policy は module の path で組にする。Key Policy がどの鍵を指すかは PLAN-APPLY-02 が key_id で見る。
+# 鍵と Key Policy は module の path で組にし、Key Policy の key_id が組の鍵を指すことを PLAN-APPLY-02 で見る。
 account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 keys contains r if {
@@ -390,6 +392,33 @@ child_holder(r) if {
 	object.get(types[r.type], "children", false) == true
 }
 
+well_formed_root(root) if {
+	is_object(root)
+	object.keys(root) == {"writer", "state"}
+	nonempty_string(root.writer)
+	nonempty_string(root.state)
+}
+
+deny contains msg if {
+	some root in object.get(sb, "roots", [])
+	not well_formed_root(root)
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素 %v が、writer と state の空でない文字列だけを持っていません", [root])
+}
+
+# identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。宣言が外れると対象が0件のまま通る。
+deny contains msg if {
+	well_formed_bootstrap
+	bucket := object.get(sb, "bucket", "")
+	c := object.get(children, bucket, {})
+	not state_bucket_children(c)
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の state Bucket %q（data.policy_plan.state_backend.bucket）が、roots と version_deletion を true にしていません", [bucket])
+}
+
+state_bucket_children(c) if {
+	c.roots == true
+	c.version_deletion == true
+}
+
 deny contains msg if {
 	count(writer_roots) == 0
 	msg := "[PLAN-APPLY-00] data.policy_plan.state_backend.roots に、apply の role のほかの書き手の root がありません（identity root の state と lock file を組めない）"
@@ -438,6 +467,12 @@ deny contains msg if {
 	object.get(types[r.type], "children", false) == true
 	not r.address in object.keys(children)
 	msg := sprintf("[PLAN-APPLY-02] %s の子の ARN（object・log stream など）が data.policy_plan.deployment_identity.apply_role.bootstrap.children に宣言されていません", [r.address])
+}
+
+deny contains msg if {
+	some p in pairs
+	object.get(p.policy.document.change.after, "key_id", null) != object.get(p.key.change.after, "id", null)
+	msg := sprintf("[PLAN-APPLY-02] %s: %s の key_id が、同じ module の鍵 %s を指していません", [p.policy.document.path, p.policy.document.address, p.key.address])
 }
 
 # --- PLAN-APPLY-03: 構成物の ARN ごとの Deny の形 ---

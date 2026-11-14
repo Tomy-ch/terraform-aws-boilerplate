@@ -115,10 +115,13 @@ decl := {
 		"policy": apply_policy_address,
 		"bootstrap": bootstrap,
 	}},
-	"state_backend": {"roots": [
-		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"},
-		{"writer": "apply_role", "state": "workload/terraform.tfstate"},
-	]},
+	"state_backend": {
+		"bucket": "module.state_backend.module.s3.aws_s3_bucket.this",
+		"roots": [
+			{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"},
+			{"writer": "apply_role", "state": "workload/terraform.tfstate"},
+		],
+	},
 }
 
 # object.union は object を再帰的に重ねるので、差し替えるキーを先に外す。
@@ -271,6 +274,8 @@ test_violation_bootstrap_malformed if {
 		with_child(state_bucket, {"roots": true, "version_deletions": true}),
 		with_child(state_bucket, {"root": true, "version_deletion": true}),
 		with_child(state_bucket, {"version_deletion": true}),
+		with_child(state_bucket, {"roots": false, "version_deletion": true}),
+		with_child(state_bucket, {"roots": "true", "suffixes": ["/*"], "version_deletion": true}),
 		with_child(plan_bucket, {"suffixes": "/*"}),
 		with_child(plan_bucket, {"suffixes": [""]}),
 		with_child(plan_bucket, {"suffixes": [1]}),
@@ -575,4 +580,83 @@ test_violation_two_keys_one_key_policy if {
 	extra := res("aws_kms_key", "module.state_backend.module.kms.aws_kms_key.extra", {"arn": other_key, "id": "extra-id", "key_id": "extra-kid"})
 	s := array.concat(valid_statements, [{"Effect": "Deny", "Action": delegated_actions, "Resource": other_key}])
 	fixture.has(sprintf("[PLAN-APPLY-00] p.json: Key Policy %s と同じ module の下の鍵が 2 件", [key_policy_address]), messages_for(array.concat(world(s), [extra]), decl))
+}
+
+# --- 修正の回のレビューで見つかった、黙る分岐 ---
+
+# identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。
+test_violation_state_bucket_children_weakened if {
+	every c in [
+		{"suffixes": ["/workload/terraform.tfstate"], "version_deletion": true},
+		{"roots": true},
+	] {
+		fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の state Bucket", messages_for(world(valid_statements), with_child(state_bucket, c)))
+	}
+}
+
+test_violation_roots_element_malformed if {
+	every root in [
+		{"writer": "other_role", "State": "other/terraform.tfstate"},
+		{"writer": "other_role", "state": ""},
+		{"writer": "other_role", "state": "other/terraform.tfstate", "lock": true},
+		"identity/terraform.tfstate",
+	] {
+		d := json.patch(decl, [{"op": "add", "path": "/state_backend/roots/-", "value": root}])
+		fixture.has("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素", messages_for(world(valid_statements), d))
+	}
+}
+
+test_violation_identity_state_conditional_deny if {
+	every s in [
+		object.union(full_deny(identity_keys), {"Condition": {"Bool": {"aws:SecureTransport": "true"}}}),
+		object.union(full_deny(identity_keys), {"NotResource": "arn:aws:s3:::other"}),
+		{"Effect": "Allow", "Action": "*", "Resource": identity_keys},
+	] {
+		fixture.has(denied_03_strict(identity_keys[0]), messages(replace(valid_statements, 2, s)))
+	}
+}
+
+# 子が指す値は、宣言した親の型の、宣言した属性の値でなければならない（別の型の id や ARN では足りない）。
+test_violation_covered_by_points_to_other_type if {
+	every v in [{"bucket": "key-id"}, {"bucket": st}] {
+		fixture.has("[PLAN-APPLY-02] module.state_backend.module.s3.aws_s3_bucket_versioning.this の", messages_for(with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", v), decl))
+	}
+}
+
+test_violation_key_policy_points_to_other_key if {
+	extra := res("aws_kms_key", "module.state_backend.module.kms_second.aws_kms_key.this", {"arn": other_key, "id": "second-id", "key_id": "second-kid"})
+	extra_policy := res("aws_kms_key_policy", "module.state_backend.module.kms_second.aws_kms_key_policy.this", {"key_id": "key-id", "policy": json.marshal(key_policy_body)})
+	s := array.concat(valid_statements, [{"Effect": "Deny", "Action": delegated_actions, "Resource": other_key}])
+	fixture.has("[PLAN-APPLY-02] p.json: module.state_backend.module.kms_second.aws_kms_key_policy.this の key_id が", messages_for(array.concat(world(s), [extra, extra_policy]), decl))
+}
+
+test_violation_action_and_not_action_on_key_and_version if {
+	fixture.has("[PLAN-APPLY-01]", messages(replace(valid_statements, 6, {"Effect": "Deny", "Action": ["*"], "NotAction": ["kms:PutKeyPolicy"], "Resource": key})))
+	fixture.has("[PLAN-APPLY-04]", messages(replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "NotAction": ["s3:DeleteObjectVersion"], "Resource": sprintf("%s/*", [st])})))
+}
+
+test_violation_policy_attachment_roles_partially_unknown if {
+	extra := {"address": "module.workload.aws_iam_policy_attachment.later", "type": "aws_iam_policy_attachment", "change": {"actions": ["create"], "after": {"roles": ["other"]}, "after_unknown": {"roles": [false, true]}}}
+	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.later がどの role に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+}
+
+test_violation_policy_attachment_single_role if {
+	extra := res("aws_iam_policy_attachment", "module.workload.aws_iam_policy_attachment.this", {"roles": ["ci-apply"], "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
+	fixture.has("[PLAN-APPLY-05] p.json: module.workload.aws_iam_policy_attachment.this が apply の role ci-apply に", messages_for(array.concat(world(valid_statements), [extra]), decl))
+}
+
+test_pass_policy_attachment_other_role if {
+	extra := res("aws_iam_policy_attachment", "module.workload.aws_iam_policy_attachment.this", {"roles": ["other"], "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
+	count(messages_for(array.concat(world(valid_statements), [extra]), decl)) == 0
+}
+
+# inline_policy は block の一部だけが決まらないとき、入れ子の要素に true を持つ。
+test_violation_role_inline_policy_nested_unknown if {
+	unknown := json.patch([r | some r in world(valid_statements); r.address == apply_role_address][0], [{"op": "add", "path": "/change/after_unknown/inline_policy", "value": [{"name": false, "policy": true}]}])
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の inline_policy", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
+}
+
+test_violation_children_on_target_without_children if {
+	address := sprintf("%saws_iam_openid_connect_provider.github", [g])
+	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s は", [address]), messages_for(world(valid_statements), with_child(address, {"suffixes": ["/x"]})))
 }
