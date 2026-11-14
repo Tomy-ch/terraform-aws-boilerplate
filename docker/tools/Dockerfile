@@ -117,7 +117,7 @@ CMD []
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段が mise を使わない理由は docker/tools/README.md が持つ。
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS node_tools
+FROM node:26.13.0-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS node_tools
 
 # pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
 # alpine の `sh` は busybox で、pipefail を持たない。
