@@ -87,7 +87,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    SonarCloud は、決定4 の表のどの層も持たない保守性の観点（重複・複雑度）を報告するために、権威を持たない補助として併用する。必須検査にせず、quality gate の結果で Pull Request を止めない。所見が Security の道具（決定6）・TFLint と重なる場合、判定は決定4 の表の道具に従う。SonarCloud は外部の資格情報を要するので、派生リポジトリが外せる手段を運用機構として持つ。
    <!-- sample:end -->
 
-   OpenSSF Scorecard は、リポジトリの供給網の衛生（参照の固定、token の権限、危険な workflow など）を定期的に報告するために、権威を持たない補助として併用する。必須検査にせず、スコアで Pull Request を止めない。結果は code scanning へ SARIF で送り、外部へ公開（`publish_results`）しない —— 公開は job の step を特定の action に限る API の条件を要し、runner の封じ込め（ADR-0702 決定20-23）を先頭に置く本リポジトリの job はそれを満たさない。所見が zizmor・Trivy・参照の固定の検査と重なる場合、判定はそれらに従う。
+   OpenSSF Scorecard は、リポジトリの供給網の衛生（参照の固定、token の権限、危険な workflow など）を定期的に報告するために、権威を持たない補助として併用する。必須検査にせず、スコアで Pull Request を止めない。結果は code scanning へ SARIF で送り、OpenSSF の公開 API へ送らない —— 公開は job の step を特定の action に限る API の条件を要し、runner の封じ込め（ADR-0702 決定20-23）を先頭に置く本リポジトリの job はそれを満たさない。上流の action は docker で動き、runner の封じ込めの下では daemon によるホストのパスの mount が拒まれるので、CLI を直接実行する（ADR-0503 決定7）。所見が zizmor・Trivy・参照の固定の検査と重なる場合、判定はそれらに従う。
 7. Static Analysis / Security / Unit / Contract / Policy は AWS credentials なしで完了すること（ADR-0401 決定6）。Unit Test では `mock_provider` / `mock_resource` / `mock_data` を用い、実 AWS API へ依存しない。
 8. Policy Test の入力を、plan の JSON 表現の `resource_changes` とする。資格情報なしでは mock provider の下の `terraform test -json -verbose` の `test_plan`、実 plan では `terraform show -json` の出力から得る。前者は版付きで文書化された形式ではないので、Policy が `plan_format_version` を検査する。これにより ADR-0401 決定19 の要件を満たす。
 9. Unit Test と Policy Test を混同しない。入力から構成を導出するロジックの検証（既定値、条件分岐、`for_each`、ARN 組み立て）は Unit、アーキテクチャ invariant の強制（public access 禁止、wildcard 禁止、暗号化必須）は Policy とする。同一の性質を両方へ書かない。
