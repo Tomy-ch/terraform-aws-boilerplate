@@ -64,7 +64,7 @@ variable "state_noncurrent_version_retention_days" {
 }
 
 variable "plan_output_retention_days" {
-  description = "CI の plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える。"
+  description = "CI の plan と apply の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える。"
   type        = number
   default     = 7
   nullable    = false

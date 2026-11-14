@@ -1,12 +1,12 @@
 # state-backend
 
-Terraform の state を置く S3 Bucket と、CI の plan の出力を置く S3 Bucket を、1つのアカウントに1つずつ持つユースケース。bootstrap の構成物であり（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）、各 env の identity root から呼ばれる（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定3・5）。
+Terraform の state を置く S3 Bucket と、CI の plan と apply の出力を置く S3 Bucket を、1つのアカウントに1つずつ持つユースケース。bootstrap の構成物であり（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）、各 env の identity root から呼ばれる（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定3・5）。
 
 ## 解決する問題
 
 state は、そのアカウントを変更できる主体だけが書ける場所に、版を残して置かなければならない。state backend は Terraform より先に存在する必要があるので、bootstrap の段1 で AWS CLI が作り、段2 で Terraform が取り込む（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定4-8）。このユースケースは、取り込んだ後の Bucket を Terraform の Desired State に置き、以後の変更を CI の apply-identity の role に限る。
 
-CI の plan の全文は公開されるログに出さず、state Bucket と分けた Bucket へ plan の role が書く（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定13）。その Bucket もこのユースケースが持ち、保持日数を過ぎた版を lifecycle で消す（[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md)）。
+CI の plan と apply の全文は公開されるログに出さず、state Bucket と分けた Bucket へ plan の role と apply-identity の role が書く（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定13）。その Bucket もこのユースケースが持ち、保持日数を過ぎた版を lifecycle で消す（[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md)）。
 
 ## 実行形態とネットワーク境界
 
@@ -62,7 +62,7 @@ lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../.
 supported:
 
 - 1つのアカウントに1つの state Bucket を置き、identity root と workload root の state をそれぞれ1つの key で置く構成（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定2・7）
-- 1つのアカウントに1つの plan の出力の Bucket を置き、そのアカウントの root の CI の plan の全文を保持日数のあいだ残す構成
+- 1つのアカウントに1つの plan の出力の Bucket を置き、そのアカウントの root の CI の plan と apply の全文を保持日数のあいだ残す構成
 
 unsupported:
 
@@ -70,7 +70,7 @@ unsupported:
 - bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
 - 段5 の後のアカウントで、段4 の手順をそのまま回復に使うこと。state と lock file は state の鍵で暗号化され、Key Policy に名指されない主体（一時 IAM user を含む）は state を読めない。回復には Key Policy が名指す主体の資格情報が要り、その発行と管理は責務外とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19、[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
-- plan の出力を保持日数より長く残すこと
+- plan と apply の出力を保持日数より長く残すこと
 - 人が plan の出力の全文を読むこと。plan の出力は state の鍵で暗号化され、Key Policy が暗号操作を許すのは CI の role だけである。アカウントへの管理の委任は暗号操作と `kms:CreateGrant` を含まないので、root も Key Policy を書き換えずには復号できない。その書き換えは break-glass であり、このリポジトリは提供しない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）。読む人の主体を Key Policy に足すことは、人の主体を与えるユースケース `organization-baseline`（未実装）が持つ
 - 保持日数を過ぎた state の版へ戻すこと（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 

@@ -1,4 +1,4 @@
-# ADR-0201: CI の plan の出力を、保持日数で消える専用の Bucket に置く
+# ADR-0201: CI の plan と apply の出力を、保持日数で消える専用の Bucket に置く
 
 - Status: Accepted
 - Date: 2026-11-01
@@ -18,7 +18,7 @@ plan の出力は、上書きの前の版を残し、日数が過ぎたら消え
 1. state-backend が、state Bucket と別に、CI の plan と apply の出力を置く Bucket を1つのアカウントに1つ持つ。名前は `<project>-<env>-tfplan-<account_id>-<region>-an` とする。名前の `tfplan` は apply の出力を表さないが、名前を変えると Bucket を作り直すことになるので変えない。
 2. この Bucket は段4 の apply で作る。段1 の CLI では作らない。段2 の plan には追加として現れる（repository-wide/ADR-0602 決定5・8）。
 3. この Bucket を `usecases/state-backend/internal/plan-output/` に、Public Access Block・`BucketOwnerEnforced`・版管理・暗号化・TLS を要求する Bucket Policy・lifecycle とともに置く（repository-wide/ADR-0102 決定15 の但し書き）。`modules/s3` は使わない。
-4. lifecycle は、現行版を公開入力 `plan_output_retention_days`（既定7、1以上の整数）の日数で失効させ、上書きされた版と失効した版をさらに同じ日数で消し、未完了の multipart upload を1日で中止し、失効した版の delete marker を消す。7日と1日は、公式推奨の値ではない独自判断である。plan の全文は run の結果を読み直すためのもので、再 plan が新しい key に置くので長く残す理由は無い。7日は、週をまたいだレビューの間に読める長さとして選んだ。plan の全文は1回の PutObject で置くので、未完了の multipart upload は失敗からしか生じず、1日で中止する。
+4. lifecycle は、現行版を公開入力 `plan_output_retention_days`（既定7、1以上の整数）の日数で失効させ、上書きされた版と失効した版をさらに同じ日数で消し、未完了の multipart upload を1日で中止し、失効した版の delete marker を消す。7日と1日は、公式推奨の値ではない独自判断である。plan の全文は run の結果を読み直すためのもので、再 plan が新しい key に置くので長く残す理由は無い。apply の全文は失敗の診断のためのもので、何を適用したかは state の版と merge した Pull Request が持つので、plan と同じ日数で足りる。7日は、週をまたいだレビューの間に読める長さとして選んだ。plan と apply の全文は1回の PutObject で置くので、未完了の multipart upload は失敗からしか生じず、1日で中止する。
 5. この Bucket を、state Bucket と同じ state の鍵による SSE-KMS で暗号化し、SSE-C を拒否し、S3 Bucket Key を使わない（state-backend/ADR-0101 (sse-kms-with-state-key)）。plan の role と apply-identity の role は鍵の `kms:GenerateDataKey` を Key Policy で持ち、CI は暗号化の header を送らずに既定の暗号化に任せる。この Bucket は段4 の apply で作るので、段1 の CLI の暗号化は関わらない。
 6. アクセスログ（段5 で state Bucket と同じく足す）、通知（書き込みを知らせる相手が無い）、リージョン間の複製（保持日数で消える一時の記録である）、IAM Access Analyzer、tag の検査を、`internal/plan-output/` の該当箇所で抑止する（repository-wide/ADR-0207 (default-value-policy) 決定11、repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
 
@@ -59,7 +59,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 ## 意図的に捨てるもの
 
 - `modules/s3` の不変条件を1箇所だけに書くこと。Bucket の不変条件（Public Access Block、所有権、版管理、暗号化、TLS）は `internal/plan-output/` にも書く
-- 保持日数を超えて plan の全文を残すこと
+- 保持日数を超えて plan と apply の全文を残すこと
 
 ## 保証範囲
 
@@ -76,9 +76,9 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 
 ## 影響
 
-`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みを与える（deployment-identity/ADR-0201 の表）。CI の plan の job は、Bucket の名前を identity root の output `plan_output_bucket_name` から得る。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
+`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みと `apply/*` への `s3:PutObject` を与える（deployment-identity/ADR-0201 の表）。CI の plan の job は、Bucket の名前を identity root の output `plan_output_bucket_name` から得る。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
 
 ## 見直し条件
 
 - `modules/s3` の lifecycle が、入力で resource や block の有無を切り替えずに現行版の失効を持てるようになったとき（決定3 を見直す）
-- plan の全文を保持日数より長く残す要件ができたとき
+- plan か apply の全文を保持日数より長く残す要件ができたとき
