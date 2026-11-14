@@ -4,7 +4,8 @@
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
-## （ADR-0702 決定3・24）。plan と apply には ADR-0604 決定11・12 の Policy（plan.stateful_protection）を掛ける。
+## （ADR-0702 決定3・24）。plan と apply には、ADR-0604 決定11・12 の Policy（plan.stateful_protection）と、
+## ADR-0301 決定12・18 の Key Policy の Policy（plan.kms_key_policy）を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
@@ -68,12 +69,16 @@ echo "plan の終了コード: $$rc"; export rc; \
 $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" show -json "$$tfplan" > "$$json" 2>> "$$out" || :
 endef
 
-# $$json の plan に Policy を掛け、違反か評価の欠けがあれば $(1) を実行してから失敗する。
+# $$json の plan に CI_POLICY_NAMESPACES の Policy を1つずつ掛け、違反か評価の欠けがあれば $(1) を実行してから
+# 失敗する。rego のファイルは名前空間から `plan.` を除いた名前である。
 # $(1)=失敗する前に実行するコマンド（`;` で終える）
 define CI_POLICY
-$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace plan.stateful_protection --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" > "$$pol" || :; \
-$(call TF_LOCAL,policy-result -namespace plan.stateful_protection -rego $(POLICY_PLAN_DIR)/stateful_protection.rego "$$pol") \
-|| { $(1)echo "❌ plan.stateful_protection の Policy を通りません（理由は上の行）" >&2; exit 1; }
+$(if $(strip $(CI_POLICY_NAMESPACES)),,$(error CI_POLICY_NAMESPACES が空です)) \
+for ns in $(strip $(CI_POLICY_NAMESPACES)); do export ns; \
+$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace "$$ns" --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" > "$$pol" || :; \
+$(call TF_LOCAL,policy-result -namespace "$$ns" -rego "$(POLICY_PLAN_DIR)/$${ns#plan.}.rego" "$$pol") \
+|| { $(1)echo "❌ $$ns の Policy を通りません（理由は上の行）" >&2; exit 1; }; \
+done
 endef
 
 # $(1)=env $(2)=root。plan は lock を取らない（ADR-0604 決定8）。plan が失敗しても、Bucket に書けるなら
@@ -150,12 +155,14 @@ ci-aws-credentials:
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: SHELL := /bin/bash
+ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy
 ci-plan-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
 
 .PHONY: ci-apply-admin-identity ## [CI] 管理アカウントの identity root を plan し直し、Policy を通った plan を apply する
 ci-apply-admin-identity: SHELL := /bin/bash
+ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy
 ci-apply-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-apply-admin-identity:
 	@$(call CI_APPLY,admin,identity)
