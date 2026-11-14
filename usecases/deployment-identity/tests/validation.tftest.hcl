@@ -1,5 +1,5 @@
 mock_provider "aws" {
-  # state_key_arn の precondition は、鍵の ARN を data source の partition・region・account と比べる。
+  # state_key_arn と access_log_* の precondition は、ARN を data source の partition・region・account と比べる。
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
   }
@@ -18,6 +18,13 @@ variables {
   state_bucket_arn       = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
   state_key_arn          = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+
+  access_log_group_arn       = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access"
+  access_log_destination_arn = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+  access_log_source_arns = [
+    "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate",
+    "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfplan",
+  ]
 }
 
 run "accepts_boundary_inputs" {
@@ -295,7 +302,13 @@ run "accepts_key_arn_in_other_partition" {
   command = plan
 
   variables {
-    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    state_key_arn              = "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    access_log_group_arn       = "arn:aws-us-gov:logs:us-gov-west-1:123456789012:log-group:tabp-admin-state-backend-access"
+    access_log_destination_arn = "arn:aws-us-gov:logs:us-gov-west-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+    access_log_source_arns = [
+      "arn:aws-us-gov:logs:us-gov-west-1:123456789012:delivery-source:tabp-admin-tfstate",
+      "arn:aws-us-gov:logs:us-gov-west-1:123456789012:delivery-source:tabp-admin-tfplan",
+    ]
   }
 
   override_data {
@@ -366,4 +379,96 @@ run "rejects_empty_key_arn" {
   }
 
   expect_failures = [var.state_key_arn]
+}
+
+# 名前の上限は delivery destination の 60 文字（modules/vended-log-group の name）。
+run "accepts_access_log_name_of_60_chars" {
+  command = plan
+
+  variables {
+    access_log_group_arn       = "arn:aws:logs:ap-northeast-1:123456789012:log-group:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    access_log_destination_arn = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    access_log_source_arns     = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+  }
+}
+
+run "rejects_access_log_name_of_61_chars" {
+  command = plan
+
+  variables {
+    access_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  expect_failures = [var.access_log_group_arn]
+}
+
+# Action ごとの :* の有無は IAM の側が付ける。
+run "rejects_access_log_group_arn_with_stream_wildcard" {
+  command = plan
+
+  variables {
+    access_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access:*"
+  }
+
+  expect_failures = [var.access_log_group_arn]
+}
+
+run "rejects_destination_arn_as_access_log_group" {
+  command = plan
+
+  variables {
+    access_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-state-backend-access"
+  }
+
+  expect_failures = [var.access_log_group_arn]
+}
+
+run "rejects_access_log_group_arn_with_slash" {
+  command = plan
+
+  variables {
+    access_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:/aws/vendedlogs/x"
+  }
+
+  expect_failures = [var.access_log_group_arn]
+}
+
+run "rejects_log_group_arn_as_destination" {
+  command = plan
+
+  variables {
+    access_log_destination_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-admin-state-backend-access"
+  }
+
+  expect_failures = [var.access_log_destination_arn]
+}
+
+run "rejects_empty_access_log_source_arns" {
+  command = plan
+
+  variables {
+    access_log_source_arns = []
+  }
+
+  expect_failures = [var.access_log_source_arns]
+}
+
+run "rejects_destination_arn_as_source" {
+  command = plan
+
+  variables {
+    access_log_source_arns = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-destination:tabp-admin-tfstate"]
+  }
+
+  expect_failures = [var.access_log_source_arns]
+}
+
+run "rejects_duplicate_access_log_source_arns" {
+  command = plan
+
+  variables {
+    access_log_source_arns = ["arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate", "arn:aws:logs:ap-northeast-1:123456789012:delivery-source:tabp-admin-tfstate"]
+  }
+
+  expect_failures = [var.access_log_source_arns]
 }
