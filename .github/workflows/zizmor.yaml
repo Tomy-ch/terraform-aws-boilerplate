@@ -92,7 +92,6 @@ jobs:
           tools: aqua:zizmorcore/zizmor
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # The version is pinned in mise.toml, so it is never duplicated here.
 
       - name: Run zizmor
         id: zizmor
@@ -171,4 +170,4 @@ jobs:
     with:
       failed-job: zizmor
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
