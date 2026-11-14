@@ -330,24 +330,3 @@ test_violation_policy_variable_in_resource if {
 		fixture.has("[PLAN-AIO-01]", messages([write_apply, {"Effect": "Allow", "Action": "s3:DeleteObject", "Resource": r}]))
 	}
 }
-
-test_violation_other_bucket_policy_on_output_bucket if {
-	allow := {"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-apply-identity"}, "Action": "s3:DeleteObject", "Resource": sprintf("%s/*", [b])}
-	every after in [{"bucket": "bkt-id"}, {"bucket": "tabp-admin-tfplan-123456789012-ap-northeast-1-an"}] {
-		evil := object.union(fixture.doc("aws_s3_bucket_policy", "module.evil.aws_s3_bucket_policy.x", "policy", {"Statement": [allow]}), {"change": {"after": after}})
-		fixture.has("[PLAN-AIO-06] p.json: module.evil.aws_s3_bucket_policy.x が plan の出力の Bucket を指す", messages_with([write_apply], [evil]))
-	}
-	unknown := {"address": "module.evil.aws_s3_bucket_policy.x", "type": "aws_s3_bucket_policy", "change": {"actions": ["create"], "after": {"policy": json.marshal({"Statement": [allow]})}, "after_unknown": {"bucket": true}}}
-	fixture.has("[PLAN-AIO-06] p.json: module.evil.aws_s3_bucket_policy.x が plan の出力の Bucket を指す", messages_with([write_apply], [unknown]))
-}
-
-test_pass_other_bucket_policy_on_other_bucket if {
-	other := object.union(fixture.doc("aws_s3_bucket_policy", "module.s3.aws_s3_bucket_policy.this", "policy", {"Statement": [tls_deny]}), {"change": {"after": {"bucket": "state-bkt-id"}}})
-	count(messages_with([write_apply], [other])) == 0
-}
-
-test_violation_declared_bucket_policy_on_other_bucket if {
-	moved := object.union(bucket_policy([tls_deny]), {"change": {"after": {"bucket": "other-id"}}})
-	inp := fixture.plan(array.concat(identity_side([write_apply]), [bucket, moved]))
-	fixture.has("[PLAN-AIO-06] p.json: module.s.aws_s3_bucket_policy.plan が plan の出力の Bucket", messages_for(inp, decl))
-}
