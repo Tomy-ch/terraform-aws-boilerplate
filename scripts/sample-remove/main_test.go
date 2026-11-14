@@ -325,6 +325,38 @@ func Test_prunePins(t *testing.T) {
 			assert.Equal(t, "# header\n\"actions/checkout@v7.0.1\" = \"aaaa\"\n\"acme/shared@v2\" = \"cccc\"\n\"acme/scanner@v1\" = \"eeee\"\n", p.writes[pinFile])
 		})
 
+		t.Run("参照が残る action は、版が複数あっても pin を外さない", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			writeTree(t, root, map[string]string{pinFile: fixtureLock + "\"acme/shared@v3\" = \"ffff\"\n"})
+			ds := []domain{{name: "shared", actions: []string{"acme/shared"}}}
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+			require.NoError(t, prunePins(root, ds, list, &p))
+			assert.Empty(t, p.droppedPins)
+			assert.NotContains(t, p.writes, pinFile)
+		})
+
+		t.Run("domain をまたいで外した pin を順に積み、lockfile から両方消す", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			ds := []domain{{name: "a", actions: []string{"acme/scan"}}, {name: "b", actions: []string{"actions/checkout"}}}
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml", ".github/workflows/keep.yaml"}}
+			require.NoError(t, prunePins(root, ds, list, &p))
+			assert.Equal(t, []string{"acme/scan@v1", "actions/checkout@v7.0.1"}, p.droppedPins)
+			assert.Equal(t, "# header\n\"acme/shared@v2\" = \"cccc\"\n", p.writes[pinFile])
+		})
+
+		t.Run("lockfile の書き換えが既にあれば、それを土台に pin を外す", func(t *testing.T) {
+			t.Parallel()
+			root, list := fixtureTree(t)
+			p := plan{
+				writes:  map[string]string{pinFile: strings.Replace(fixtureLock, "# header", "# 書き換え済み", 1)},
+				deletes: []string{".github/workflows/scan.yaml"},
+			}
+			require.NoError(t, prunePins(root, fixtureDomains, list, &p))
+			assert.Equal(t, "# 書き換え済み\n\"actions/checkout@v7.0.1\" = \"aaaa\"\n\"acme/shared@v2\" = \"cccc\"\n", p.writes[pinFile])
+		})
+
 		t.Run("外す pin が無ければ lockfile を書き換えない", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
@@ -354,17 +386,44 @@ func Test_prunePins(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
 			ds := []domain{{name: "x", actions: []string{"acme/sca"}}}
-			err := prunePins(root, ds, list, &plan{writes: map[string]string{}})
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+			err := prunePins(root, ds, list, &p)
 			require.ErrorIs(t, err, errMissingPin)
+			assert.Empty(t, p.droppedPins)
+			assert.NotContains(t, p.writes, pinFile)
 		})
 
-		t.Run("manifest の action に版が付いていればエラーにする", func(t *testing.T) {
+		t.Run("manifest の action に版が付いていれば、lockfile を書き換えずにエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root, list := fixtureTree(t)
 			ds := []domain{{name: "x", actions: []string{"acme/scan@v1"}}}
-			err := prunePins(root, ds, list, &plan{writes: map[string]string{}})
+			p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+			err := prunePins(root, ds, list, &p)
 			require.ErrorIs(t, err, errVersionedAction)
 			assert.Contains(t, err.Error(), "acme/scan@v1")
+			assert.Empty(t, p.droppedPins)
+			assert.NotContains(t, p.writes, pinFile)
+		})
+
+		t.Run("前の action を外したあとで後ろの action が不備なら、lockfile を書き換えずにエラーにする", func(t *testing.T) {
+			t.Parallel()
+			for _, c := range []struct {
+				later string
+				want  error
+			}{
+				{"acme/none", errMissingPin},
+				{"acme/shared@v2", errVersionedAction},
+			} {
+				t.Run(c.later, func(t *testing.T) {
+					t.Parallel()
+					root, list := fixtureTree(t)
+					ds := []domain{{name: "a", actions: []string{"acme/scan"}}, {name: "b", actions: []string{c.later}}}
+					p := plan{writes: map[string]string{}, deletes: []string{".github/workflows/scan.yaml"}}
+					err := prunePins(root, ds, list, &p)
+					require.ErrorIs(t, err, c.want)
+					assert.NotContains(t, p.writes, pinFile)
+				})
+			}
 		})
 
 		t.Run("lockfile を読めなければエラーにする", func(t *testing.T) {
