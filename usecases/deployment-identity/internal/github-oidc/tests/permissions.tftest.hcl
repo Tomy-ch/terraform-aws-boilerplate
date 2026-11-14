@@ -19,7 +19,7 @@ variables {
   plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 }
 
-# assert で、for 式に resource の集まりを回させない（tests/trust.tftest.hcl）。provider の ARN は plan では決まらないので、mock の apply で確かめる。
+# provider の ARN は plan では決まらないので、mock の apply で確かめる。
 # role の ARN は名前から組むので、mock の role の ARN ではなく literal と比べる。
 run "policies" {
   command = apply

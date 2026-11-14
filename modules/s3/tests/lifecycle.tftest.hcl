@@ -98,7 +98,6 @@ run "whole_bucket_without_current_version_expiration" {
     error_message = "lifecycle の規則の filter が prefix で対象を絞っています。"
   }
 
-  # rule 直下の prefix は非推奨の属性で、偽になると Terraform は assert の診断を出す前に panic する。落ちること自体は変わらない。
   assert {
     condition     = aws_s3_bucket_lifecycle_configuration.this.rule[0].prefix == ""
     error_message = "lifecycle の規則が rule の prefix で対象を絞っています。"

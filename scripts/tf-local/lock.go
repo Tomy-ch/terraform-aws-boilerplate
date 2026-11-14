@@ -21,7 +21,7 @@ const (
 	staleLockMargin = 5 * time.Minute
 
 	// lockFormatTerraform は、lockInfo の形を確かめた Terraform の版。mise.toml の版に合わせる。
-	lockFormatTerraform = "1.16.6"
+	lockFormatTerraform = "1.17.1"
 
 	lockSuffix   = ".tflock"
 	maxLogLength = 200

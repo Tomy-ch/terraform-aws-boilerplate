@@ -38,22 +38,22 @@ node = "24.22.1"
 # 実行エンジン（ADR-0502 決定1）。OpenTofu を採らない理由は同 ADR 決定3。
 # module が宣言する required_version は、使用する機能から導かれる下限であって
 # この pin と同じ値ではない（同 決定2）。
-"aqua:hashicorp/terraform" = "1.16.6"
+"aqua:hashicorp/terraform" = "1.17.1"
 
 # Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
 # AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
-"aqua:terraform-linters/tflint" = "0.64.0"
+"aqua:terraform-linters/tflint" = "0.65.0"
 
 # Security の道具の1つ（ADR-0501 決定4・決定6）。Terraform の IaC 走査もここが担う。secret scanning は
 # 作業ツリーに対する Secret Scan の検出器の1つとして併用する（ADR-0302 決定2）。
-"aqua:aquasecurity/trivy" = "0.76.0"
+"aqua:aquasecurity/trivy" = "0.76.1"
 
 # Secret Scan の検出器（ADR-0302 決定2）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
 "aqua:gitleaks/gitleaks" = "8.30.1"
 
 # Secret Scan の検出器（ADR-0302 決定2）。gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。
 # AGPL-3.0 の利用の前提は ADR-0302「影響」が持つ。
-"aqua:trufflesecurity/trufflehog" = "3.99.2"
+"aqua:trufflesecurity/trufflehog" = "3.99.7"
 
 # bootstrap の段1 が state backend の実体を作る道具（ADR-0602 決定4）。**ホストで実行する理由は
 # ADR-0504 が持つ。**

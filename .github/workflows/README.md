@@ -164,7 +164,7 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
   - **読んだ版の条件**: 読んで判定した版だけを、その ETag を条件にした削除（`delete-object --if-match`）で
     消す。判定の後に lock file が置き換わっていれば、削除は失敗する。レシピがこの形で消すことは
     `TestCiRecipes` が見る
-  - **Terraform の lock の取得**: Terraform v1.16.6（版は `mise.toml`。`scripts/tf-local` の `lockFormatTerraform`
+  - **Terraform の lock の取得**: Terraform v1.17.1（版は `mise.toml`。`scripts/tf-local` の `lockFormatTerraform`
     との一致は tf-local のテストが見る）の S3 backend は、lock file を `If-None-Match: *` の
     条件付きの書き込みで作る（`lockWithFile`）。lock file が在る間は apply の lock の取得が失敗するので、
     2つの apply が同時に lock を持つことは無い。この性質を見る検査はリポジトリに無い
