@@ -45,24 +45,44 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-09] %s: %s の %s が plan で決まらないか、JSON の文書として読めません", [d.path, d.address, d.attr])
 }
 
-# KMS は Principal の role を一意 ID で持つので、同じ名前で作り直した role は、Key Policy を書き直すまで鍵を使えない。
-# 名前が同じなら ARN の文字列も同じで、Key Policy の変更は no-op として plan される。
-replaced_role_names contains c.rc.change.after.name if {
+# KMS は Principal の role を一意 ID で持つので、作った role は、それを名指す Key Policy が書き直されるまで鍵を使えない。
+# 同じ名前で作り直すと ARN の文字列も同じで、Key Policy は書き直されない。別の address での作り直しも含めて、作成を見る。
+created_roles contains c.rc if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_role"
-	c.rc.change.actions in {["delete", "create"], ["create", "delete"]}
-	is_string(c.rc.change.after.name)
+	"create" in c.rc.change.actions
+}
+
+role_suffix(rc) := sprintf(":role%s%s", [role_path(rc), rc.change.after.name]) if is_string(rc.change.after.name)
+
+role_path(rc) := object.get(rc.change.after, "path", "/") if is_string(object.get(rc.change.after, "path", "/"))
+
+role_path(rc) := "/" if not is_string(object.get(rc.change.after, "path", "/"))
+
+# PutKeyPolicy は、Key Policy の作成と置換と、文書の変わる update でだけ呼ばれる。
+rewritten(d) if "create" in d.change.actions
+
+rewritten(d) if not d.change.before.policy == d.change.after.policy
+
+deny contains msg if {
+	some r in key_policies
+	r.document.address == declared_key_policy
+	not rewritten(r.document)
+	some rc in created_roles
+	suffix := role_suffix(rc)
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	endswith(a, suffix)
+	msg := sprintf("[PLAN-KMS-10] %s: role %s を作るのに、それを名指す %s を書き直しません。KMS は作る前の role を名指し続けます", [r.document.path, rc.address, r.document.address])
 }
 
 deny contains msg if {
 	some r in key_policies
 	r.document.address == declared_key_policy
-	r.document.change.actions == ["no-op"]
-	some name in replaced_role_names
-	some s in allows(r.body)
-	some a in aws_principals(s)
-	endswith(a, sprintf(":role/%s", [name]))
-	msg := sprintf("[PLAN-KMS-10] %s: role %s を作り直すのに、それを名指す %s を書き直しません。KMS は作り直す前の role を名指し続けます", [r.document.path, name, r.document.address])
+	not rewritten(r.document)
+	some rc in created_roles
+	not role_suffix(rc)
+	msg := sprintf("[PLAN-KMS-10] %s: 作る role %s の名前が plan で決まらないので、%s が名指すかを確かめられません", [r.document.path, rc.address, r.document.address])
 }
 
 # 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とし、05 は限っていないと読み、03 は見ない。
