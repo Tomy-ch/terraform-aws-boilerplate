@@ -11,7 +11,7 @@ on:
 permissions:
   contents: read
 
-# 待っている run は後から来た run に置き換わる。
+# 実行中の apply は止めない。理由は README.md の「apply の job」。
 concurrency:
   group: terraform-apply-admin-identity
   cancel-in-progress: false
@@ -161,6 +161,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # 成功の通知が運ぶ plan の件数の1行。terraform の出力は含まない（README.md の「通知の起動条件」）。
+    outputs:
+      plan: ${{ steps.apply.outputs.plan }}
     steps:
       - name: Harden the runner
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
@@ -247,9 +250,10 @@ jobs:
         run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host
 
       - name: Apply the identity root
+        id: apply
         run: make ci-apply-admin-identity RUNNER_MODE=host
 
-  # See README.md の「通知の起動条件」.
+  # 理由は README.md の「通知の起動条件」。
   notify-failure:
     needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]
     if: ${{ always() && github.ref_name == github.event.repository.default_branch && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-resource-order-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result)) }}
@@ -257,4 +261,15 @@ jobs:
     with:
       failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || 'apply-resource-order-check') }}
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}
+
+  # 理由は README.md の「通知の起動条件」。
+  notify-success:
+    needs: [apply-admin-identity]
+    if: ${{ needs.apply-admin-identity.result == 'success' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      succeeded-job: apply-admin-identity
+      details: ${{ needs.apply-admin-identity.outputs.plan }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_PROD }}

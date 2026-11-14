@@ -11,7 +11,7 @@
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
-## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY と OIDC の
+## workflow が渡し、GITHUB_RUN_ID・GITHUB_RUN_ATTEMPT・RUNNER_TEMP・GITHUB_STEP_SUMMARY・GITHUB_OUTPUT と OIDC の
 ## 要求先は GitHub Actions が渡す。tf-local に渡す値の export は local.mk 冒頭の注記に従う。
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
@@ -123,7 +123,8 @@ $(call CI_POLICY,upload; ); \
 arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
 upload; \
 result=$$($(call TF_LOCAL,apply-result -exitcode "$$arc")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$result"; \
-test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
+test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"; \
+test -z "$${GITHUB_OUTPUT:-}" || printf 'plan=%s\n' "$$summary" >> "$$GITHUB_OUTPUT"
 endef
 
 # $(1)=env $(2)=root。apply の job の timeout を超えて残った lock だけを、読んだ版の ETag を条件に消す。

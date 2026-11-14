@@ -122,4 +122,4 @@ jobs:
     with:
       failed-job: scorecard
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

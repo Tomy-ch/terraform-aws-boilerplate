@@ -21,10 +21,8 @@ jobs:
   trivy-fs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Job-scoped rather than workflow-scoped: once this file gained a second job,
-    # zizmor's excessive-permissions audit rates a workflow-level pull-requests:
-    # write as overly broad, because it would then also cover jobs that never
-    # comment.
+    # job 単位に置く。workflow 単位の pull-requests: write は、コメントしない job にも及ぶ
+    # （zizmor の excessive-permissions が広すぎると判定する）。
     permissions:
       contents: read
       security-events: write
@@ -98,7 +96,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # total vulnerability count
           COUNT=$(jq '
             .Results
             | map(.Vulnerabilities // [])
@@ -116,7 +113,6 @@ jobs:
 
           echo "title=## 🚨 Trivy FS: FOUND (${COUNT})" >> "$GITHUB_OUTPUT"
 
-          # Build markdown summary
           jq -r '
             .Results
             | map(.Vulnerabilities // [])
@@ -172,8 +168,7 @@ jobs:
   # same files, but it is a separate job so that its exit code, PR comment and
   # artifact never mix with the vulnerability verdict above.
   #
-  # Report-only until a prohibited-license policy exists, and it writes no SARIF for the same
-  # reason — see README.md の「通知の起動条件」.
+  # 報告のみで、SARIF も書かない。理由は README.md の「通知の起動条件」。
   trivy-license:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -314,11 +309,7 @@ jobs:
           body-file: trivy-license-summary.md
           details-summary: '📄 Summary'
 
-  # This job is report-only, so a finding leaves it green and the failure notification
-  # below can never fire for one. On a PR that is fine — the finding is in a comment
-  # addressed to the author, who introduced the dependency. On the weekly run there is
-  # no author and no change: the finding is a newly published advisory against code
-  # that stood still, which is the one case nothing else surfaces. Hence schedule only.
+  # 報告のみの job なので、検出の通知はスケジュール実行だけが出す。理由は README.md の「通知の起動条件」。
   notify-detection:
     needs: trivy-fs
     if: ${{ github.event_name == 'schedule' && needs.trivy-fs.outputs.count != '' && needs.trivy-fs.outputs.count != '0' }}
@@ -327,7 +318,7 @@ jobs:
       detected: Trivy FS found ${{ needs.trivy-fs.outputs.count }} fixable vulnerabilities
       details: ${{ needs.trivy-fs.outputs.detail }}
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
 
   # See README.md の「通知の起動条件」.
   notify-failure:
@@ -337,7 +328,7 @@ jobs:
     with:
       failed-job: trivy-fs
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}
 
   # The license job never fails on a finding, so reaching here means the scanner
   # itself broke — exactly the silent weekly breakage this notification exists for.
@@ -348,4 +339,4 @@ jobs:
     with:
       failed-job: trivy-license
     secrets:
-      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_SECURITY }}

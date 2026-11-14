@@ -13,6 +13,7 @@ pre-commit:
         - ".github/workflows/*.{yml,yaml}"
         - ".github/actions/**/*.{yml,yaml}"
         - ".github/settings/branch-protection.json"
+        - ".github/notify-channels.toml"
         - "scripts/**/*.go"
       run: make actions-lint
 
