@@ -4,28 +4,23 @@ package plan.resource_policy_exclusive
 
 import data.plan.lib
 
-state_backend := object.get(data.policy_plan, "state_backend", {})
-
-apply_identity := object.get(object.get(data.policy_plan, "deployment_identity", {}), "apply_identity_role", {})
+# 宣言した resource と、それを指す policy の組。宣言の位置は data.policy_plan の下の key の並びで持ち、
+# PLAN-RPE-00 も同じ表から宣言の欠けを見る。PutKeyPolicy は鍵の ID と ARN のどちらも受ける。mock の plan では
+# key_id が鍵の id を指す。
+specs := [
+	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["state_backend", "bucket"], "policy": ["state_backend", "bucket_policy"], "refs": ["id", "bucket", "arn"]},
+	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["deployment_identity", "apply_identity_role", "output_bucket"], "policy": ["deployment_identity", "apply_identity_role", "output_bucket_policy"], "refs": ["id", "bucket", "arn"]},
+	{"type": "aws_kms_key_policy", "attr": "key_id", "target": ["state_backend", "state_key"], "policy": ["state_backend", "key_policy"], "refs": ["id", "key_id", "arn"]},
+]
 
 # 宣言が欠けた組は作らず、PLAN-RPE-00 で落とす。CI の実 plan は宣言の欠けを見るほかの package を掛けない。
-pairs contains pair("aws_s3_bucket_policy", "bucket", state_backend.bucket, state_backend.bucket_policy, ["id", "bucket", "arn"]) if {
-	is_string(state_backend.bucket)
-	is_string(state_backend.bucket_policy)
+pairs contains {"type": spec.type, "attr": spec.attr, "target": target, "policy": policy, "refs": spec.refs} if {
+	some spec in specs
+	target := object.get(data.policy_plan, spec.target, null)
+	policy := object.get(data.policy_plan, spec.policy, null)
+	is_string(target)
+	is_string(policy)
 }
-
-pairs contains pair("aws_s3_bucket_policy", "bucket", apply_identity.output_bucket, apply_identity.output_bucket_policy, ["id", "bucket", "arn"]) if {
-	is_string(apply_identity.output_bucket)
-	is_string(apply_identity.output_bucket_policy)
-}
-
-# PutKeyPolicy は鍵の ID と ARN のどちらも受ける。mock の plan では key_id が鍵の id を指す。
-pairs contains pair("aws_kms_key_policy", "key_id", state_backend.state_key, state_backend.key_policy, ["id", "key_id", "arn"]) if {
-	is_string(state_backend.state_key)
-	is_string(state_backend.key_policy)
-}
-
-pair(type, attr, target, policy, refs) := {"type": type, "attr": attr, "target": target, "policy": policy, "refs": refs}
 
 target_after(p) := c.rc.change.after if {
 	some c in lib.changes
@@ -86,14 +81,7 @@ created_together(c, p) if {
 	object.get(object.get(t.rc.change, "after_unknown", {}), a, false) == true
 }
 
-declared_keys := [
-	["state_backend", "bucket"],
-	["state_backend", "bucket_policy"],
-	["state_backend", "state_key"],
-	["state_backend", "key_policy"],
-	["deployment_identity", "apply_identity_role", "output_bucket"],
-	["deployment_identity", "apply_identity_role", "output_bucket_policy"],
-]
+declared_keys := {path | some spec in specs; some path in [spec.target, spec.policy]}
 
 declared_string(path) if {
 	v := object.get(data.policy_plan, path, null)
