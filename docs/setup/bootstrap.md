@@ -506,7 +506,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 途中で失敗したとき:
 
-- 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ない。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる
+- 失敗は通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む。apply の全文はランナーの外に出ない。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる。plan の出力の Bucket の全文も、段4 で state の鍵で暗号化された後は一時 IAM user には読めない（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）
 - 書き込みの拒否を入れる変更か、一時 IAM user の例外を外す変更の apply が落ちたときは、診断から始める。ログは apply の失敗を1行に畳むので、拒否で落ちたかは読めない。一時 IAM user で `aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` を読んで宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、`aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock` で lock の残存を見る。ランナーの `errored.tfstate` はランナーとともに失われるが、失われるのはその apply の Bucket Policy の更新の分で、次の apply の refresh が読み直す。Bucket Policy の例外が CI の role の ARN か state の鍵の ARN と食い違って自分を拒んでいたら、`Terraform Unlock` も同じ原因で効かないことがある。その状態から回復する手順は、このリポジトリは提供しない（ADR-0602 決定9）。Pull Request に記録して止まる
 - 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
 - lock が残ったら、Actions の画面から `Terraform Unlock`（`terraform-unlock.yaml`）を起動して外す。規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」が持つ。job は apply の job の `timeout-minutes` に余裕を足した時間より新しい lock を消さずに失敗するので、そのときは時間を置いて起動し直す。外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する
@@ -532,7 +532,7 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
 
 ## 一時 IAM user の削除
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。
+bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。削除の後、このアカウントに人の IAM の主体は無く、plan の出力の全文を読める人の主体も無い（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）。
 
 削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
 
