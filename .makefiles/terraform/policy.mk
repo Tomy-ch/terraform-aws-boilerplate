@@ -77,7 +77,7 @@ tf-policy: tf-init
 # canary の fixture は provider を持たない構成（terraform_data）にする。init がネットワークを要さないため。
 # 例外は aws の fixture で、mock provider の override が書いた値を隠さないことを見る（ADR-0402 決定18）。
 # terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は state-backend の
-# reference の root の lock を写し、plugin cache から init する。
+# reference の root の lock を写して init する。plugin cache に無ければ provider を取得する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 # conftest/plan/decl.json の inline_arguments の aws_s3_bucket の写し。Provider が非推奨の引数を足すと、両方を直すまで落ちる。
 TF_POLICY_CANARY_AWS_INLINE = {"aws_s3_bucket": {"acceleration_status": null, "acl": null, "policy": null, "request_payer": null, "cors_rule": [], "grant": [], "lifecycle_rule": [], "logging": [], "object_lock_configuration": [], "replication_configuration": [], "server_side_encryption_configuration": [], "versioning": [], "website": []}}
@@ -141,6 +141,9 @@ tf-policy-canary:
 	expect fail undeclared-arg "$$root/ok" "[PLAN-INPUT-10] inline_arguments の terraform_data の nope" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/undeclared.json"; \
 	jq '.policy_plan.provider_format_version = "0.0"' "$$root/data.json" > "$$root/format.json"; \
 	expect fail provider-format "$$root/ok" "宣言の 0.0 ではありません" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/format.json"; \
+	jq 'del(.policy_plan.provider_format_version)' "$$root/data.json" > "$$root/format-undeclared.json"; \
+	expect fail provider-format-undeclared "$$root/ok" "宣言の （宣言に無い） ではありません" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/format-undeclared.json"; \
+	expect fail schema-empty "$$root/ok" "[PLAN-INPUT-11] mock の plan の Provider の schema から" POLICY_PLAN_DIR="$$root/rego" TF_POLICY_DEPRECATED='[]'; \
 	aws_fixture() { \
 		cp -R "$$root/ok" "$$1"; cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
 		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
@@ -153,5 +156,7 @@ tf-policy-canary:
 	aws_fixture "$$root/aws-written" 'policy = "{}"'; \
 	expect fail aws-written "$$root/aws-written" "aws_s3_bucket.b の policy が書かれています" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
 	expect fail aws-uncovered "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 website" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered.json"; \
+	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.acl)' "$$root/aws.json" > "$$root/aws-uncovered-attr.json"; \
+	expect fail aws-uncovered-attr "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 acl" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered-attr.json"; \
 	if [ -n "$$failed" ]; then echo "❌ tf-policy の canary が期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちる"

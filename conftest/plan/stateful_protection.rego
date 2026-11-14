@@ -3,6 +3,8 @@
 # 書く引数（ADR-0402 決定17 の宣言）を書く変更は、許可の宣言によらず落とす。入力の path の basename（.json を除く）を root の名前として読む。
 package plan.stateful_protection
 
+import data.plan.lib
+
 # 宣言が無ければ null にして、下の形の検査で落とす。参照のまま未定義にすると、どの規則も黙る。
 default decl := null
 
@@ -212,7 +214,7 @@ inline_writes contains {"path": f.path, "address": rc.address, "arg": arg} if {
 	some arg, _ in inline_decl[rc.type]
 	not "delete" in rc.change.actions
 	is_object(rc.change.before)
-	unknown_value(object.get(object.get(rc.change, "after_unknown", {}), arg, false))
+	lib.unknown_value(object.get(object.get(rc.change, "after_unknown", {}), arg, false))
 }
 
 baseline(change, arg, empty) := object.get(change.before, arg, empty) if {
@@ -224,12 +226,6 @@ baseline(change, _, empty) := empty if "delete" in change.actions
 
 baseline(change, _, empty) := empty if not is_object(change.before)
 
-unknown_value(x) if x == true
-
-unknown_value(x) if {
-	walk(x, [_, v])
-	v == true
-}
 
 shorten_allowed(root, address) if {
 	some a in object.get(shorten_allow, root, [])
@@ -276,14 +272,9 @@ well_formed(d) if {
 	}
 }
 
-inline_well_formed(d) if {
-	is_object(d)
-	count(d) > 0
-}
-
 deny contains msg if {
-	not inline_well_formed(inline_decl)
-	msg := "[PLAN-STATE-00] 宣言の policy_plan.inline_arguments が、空でない object（型 → 引数 → 書かないときの値）ではありません"
+	not lib.inline_arguments_shape(data.policy_plan)
+	msg := "[PLAN-STATE-00] 宣言の policy_plan.inline_arguments が、型ごとに空でない object（引数 → 書かないときの値 null か []）で documents と重ならない形ではありません"
 }
 
 deny contains msg if {

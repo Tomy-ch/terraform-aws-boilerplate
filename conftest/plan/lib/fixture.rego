@@ -31,3 +31,6 @@ unwritten_all := [unwritten(type) | some type, _ in data.policy_plan.inline_argu
 provider_schema := {"deprecated_arguments": {type: [arg | some arg, _ in args] | some type, args in data.policy_plan.inline_arguments}}
 
 clean(rcs) := plan(array.concat(rcs, unwritten_all))
+
+# with で data.policy_plan の下の object を差し替えると、既存の値と合わさる。宣言を丸ごと組み直して置き換える。
+inline_declaration(d) := object.union(object.remove(data.policy_plan, ["inline_arguments"]), {"inline_arguments": d})

@@ -230,8 +230,8 @@ test_violation_inline_declaration_absent_from_input if {
 }
 
 test_violation_inline_declaration_misspelled_argument if {
-	args := object.union(data.policy_plan.inline_arguments.aws_kms_key, {"polic": null})
-	msgs := gate.deny with input as fixture.clean([valid]) with data.policy_plan.inline_arguments.aws_kms_key as args with data.provider_schema as fixture.provider_schema
+	d := object.union(data.policy_plan.inline_arguments, {"aws_kms_key": {"policy": null, "polic": null}})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.policy_plan as fixture.inline_declaration(d) with data.provider_schema as fixture.provider_schema
 	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_kms_key の polic ", msgs)
 }
 
@@ -255,15 +255,58 @@ test_pass_provider_schema_wider_than_declaration if {
 	count(gate.deny) == 0 with input as fixture.clean([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as s
 }
 
+# 不正な形ごとに、宣言の残りは decl.json のまま差し替える。aws_kms_key_policy は保護の対象で、documents に policy を持つ。
 test_violation_inline_declaration_malformed if {
 	bad := [
 		{"aws_s3_bucket": {"policy": ""}},
 		{"aws_s3_bucket": {}},
 		{"aws_s3_bucket": ["policy"]},
 		{"aws_sqs_queue": {"policy": null}},
-		{"aws_s3_bucket_policy": {"policy": null}},
+		{"aws_kms_key_policy": {"policy": null}},
 	]
 	every d in bad {
-		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan.inline_arguments as d with data.policy_plan.stateful_protection.protected_types as ["aws_s3_bucket", "aws_s3_bucket_policy"]
+		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration(d)
 	}
+}
+
+test_pass_inline_declaration_well_formed if {
+	every d in [{"aws_s3_bucket": {"policy": null}}, {"aws_kms_key": {"policy": null}, "aws_s3_bucket": {"versioning": []}}] {
+		not fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration(d)
+	}
+}
+
+# after は書かないときの値のまま、block の中だけが plan で決まらない。
+test_violation_inline_block_unknown_inside if {
+	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after_unknown": {"versioning": [{"enabled": true}]}}})
+	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の versioning ", msgs)
+}
+
+# 書いた値が plan で決まらない引数は after に現れない。after_unknown だけでも入力に在ると読む。
+test_pass_inline_seen_only_in_after_unknown if {
+	after := object.remove(data.policy_plan.inline_arguments.aws_kms_key, ["policy"])
+	rc := {"address": "module.x.aws_kms_key.this", "type": "aws_kms_key", "change": {"actions": ["create"], "after": after, "after_unknown": {"policy": true}}}
+	rcs := [valid, rc, fixture.unwritten("aws_s3_bucket")]
+	msgs := gate.deny with input as fixture.plan(rcs) with data.provider_schema as fixture.provider_schema
+	not fixture.has("[PLAN-INPUT-10]", msgs)
+	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_kms_key.this の policy ", msgs)
+}
+
+test_violation_inline_seen_not_by_another_type if {
+	other := {"address": "module.x.aws_sqs_queue.this", "type": "aws_sqs_queue", "change": {"actions": ["create"], "after": {}, "after_unknown": {"policy": true}}}
+	msgs := gate.deny with input as fixture.plan([valid, other, fixture.unwritten("aws_s3_bucket")]) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-10] inline_arguments の aws_kms_key の policy ", msgs)
+}
+
+test_violation_provider_schema_not_object if {
+	every v in [["x"], "x"] {
+		fixture.has("[PLAN-INPUT-11] mock の plan", gate.deny) with input as fixture.clean([valid]) with data.provider_schema as {"deprecated_arguments": v}
+	}
+}
+
+test_pass_declaration_covers_the_bucket_and_the_key if {
+	every type in ["aws_s3_bucket", "aws_kms_key"] {
+		type in object.keys(data.policy_plan.inline_arguments)
+	}
+	count(data.policy_plan.inline_arguments.aws_s3_bucket) == 13
 }

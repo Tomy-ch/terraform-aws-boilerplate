@@ -70,18 +70,11 @@ inline_writes contains {"path": c.path, "address": c.rc.address, "arg": arg} if 
 	inline_written(c.rc.change, arg, empty)
 }
 
-inline_written(change, arg, _) if unknown_value(object.get(object.get(change, "after_unknown", {}), arg, false))
+inline_written(change, arg, _) if lib.unknown_value(object.get(object.get(change, "after_unknown", {}), arg, false))
 
 inline_written(change, arg, empty) if {
 	is_object(change.after)
 	object.get(change.after, arg, empty) != empty
-}
-
-unknown_value(x) if x == true
-
-unknown_value(x) if {
-	walk(x, [_, v])
-	v == true
 }
 
 deny contains msg if {
@@ -170,16 +163,9 @@ well_formed_declaration(decl) if {
 }
 
 well_formed_inline(decl) if {
-	is_object(decl.inline_arguments)
-	count(decl.inline_arguments) > 0
-	every type, args in decl.inline_arguments {
+	lib.inline_arguments_shape(decl)
+	every type, _ in decl.inline_arguments {
 		type in decl.stateful_protection.protected_types
-		is_object(args)
-		count(args) > 0
-		every arg, empty in args {
-			empty in [null, []]
-			not arg in object.get(decl.documents, type, [])
-		}
 	}
 }
 

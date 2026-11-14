@@ -518,12 +518,10 @@ test_violation_inline_argument_kept_on_replace if {
 	fixture.has("[PLAN-STATE-08] p.json: module.x.aws_kms_key.this の policy ", msgs)
 }
 
-test_violation_inline_message_names_the_argument_only if {
+test_violation_inline_message_names_the_argument if {
 	after := {"policy": inline_written(null)}
 	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["create"], null, after, {})]) with data.policy_plan.stateful_protection as inline_decl
-	some m in msgs
-	startswith(m, "[PLAN-STATE-08]")
-	not contains(m, "非推奨")
+	msgs == {"[PLAN-STATE-08] p.json: module.x.aws_kms_key.this の policy を書く変更です。同じ設定は、それを書く別の resource で書いてください"}
 }
 
 # 作成で書かない引数は plan で決まらない。書いた値が決まらない場合と区別できないので通す（ADR-0604 保証しないこと）。
@@ -556,10 +554,50 @@ test_pass_inline_on_delete if {
 }
 
 test_violation_inline_arguments_missing_empty_or_not_object if {
-	every d in [null, {}, ["aws_s3_bucket"]] {
-		msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan.stateful_protection as decl with data.policy_plan.inline_arguments as d
+	every d in [null, {}, ["aws_s3_bucket"], {"aws_s3_bucket": {}}, {"aws_s3_bucket": ["policy"]}, {"aws_s3_bucket": "x"}, {"aws_s3_bucket": {"policy": ""}}, {"aws_kms_key_policy": {"policy": null}}] {
+		msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan as object.union(fixture.inline_declaration(d), {"stateful_protection": decl})
 		fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
 	}
 	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan as {"stateful_protection": decl}
 	fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
+}
+
+# 前の値と変更の後の値の既知の部分は同じで、block の中だけが plan で決まらない。
+test_violation_inline_block_unknown_inside_on_update if {
+	v := {"versioning": [{"enabled": true, "mfa_delete": false}]}
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_s3_bucket", ["update"], v, v, {"versioning": [{"enabled": true}]})]) with data.policy_plan.stateful_protection as inline_decl
+	fixture.has("[PLAN-STATE-08] p.json: module.x.aws_s3_bucket.this の versioning ", msgs)
+}
+
+test_violation_inline_argument_cleared_on_update if {
+	every after in [{"policy": null}, {}] {
+		msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["update"], {"policy": "{}"}, after, {})]) with data.policy_plan.stateful_protection as inline_decl
+		fixture.has("[PLAN-STATE-08] p.json: module.x.aws_kms_key.this の policy ", msgs)
+	}
+}
+
+# 置換の作成も、書かない引数が plan で決まらない。作成と同じく通す（ADR-0604 決定13）。
+test_pass_inline_unknown_on_replace if {
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete", "create"], {"policy": "{}"}, {}, {"policy": true})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
+	count(msgs) == 0
+}
+
+test_pass_inline_on_forget if {
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["forget"], {"policy": "{}"}, null, {})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "管理から外す"}]}}
+	count(msgs) == 0
+}
+
+test_pass_inline_declared_but_not_protected if {
+	rcs := [
+		inline_change("aws_kms_key", ["create"], null, {"policy": inline_written(null)}, {}),
+		inline_change("aws_kms_key", ["update"], {"policy": "{}"}, {}, {"policy": true}),
+	]
+	msgs := stateful_protection.deny with input as fixture.plan(rcs) with data.policy_plan.stateful_protection as decl
+	count(msgs) == 0
+}
+
+test_pass_inline_data_source_unknown if {
+	rc := object.union(inline_change("aws_s3_bucket", ["read"], {"policy": "{}"}, {}, {"policy": true}), {"mode": "data"})
+	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as inline_decl
+	count(msgs) == 0
 }
