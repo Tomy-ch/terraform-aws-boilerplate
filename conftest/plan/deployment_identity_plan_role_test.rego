@@ -53,8 +53,6 @@ test_violation_plan_role_policy_missing if {
 	fixture.has("[PLAN-ROLE-00]", p.deny) with input as fixture.plan([role, policies_exclusive, attachments_exclusive]) with data.policy_plan.deployment_identity as decl
 }
 
-fixture_only := fixture.plan([plan_policy([write_output])])
-
 test_violation_plan_role_missing if {
 	fixture.has("[PLAN-ROLE-00]", p.deny) with input as fixture.plan([plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
 }
@@ -112,27 +110,66 @@ test_violation_extra_policy_on_plan_role if {
 	extra := rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.extra", {"role": "ci-plan", "policy": "{}"})
 	attachment := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.admin", {"role": "ci-plan", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
 	every other in [extra, attachment] {
-		fixture.has("[PLAN-ROLE-04]", p.deny) with input as with_role([write_output], [other]) with data.policy_plan.deployment_identity as decl
+		fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に権限を足しています", [other.address]), p.deny) with input as with_role([write_output], [other]) with data.policy_plan.deployment_identity as decl
 	}
 }
 
 test_violation_unknown_role_of_policy if {
 	extra := {"address": "module.x.aws_iam_role_policy.extra", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"policy": "{}"}, "after_unknown": {"role": true}}}
-	fixture.has("[PLAN-ROLE-04]", p.deny) with input as with_role([write_output], [extra]) with data.policy_plan.deployment_identity as decl
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s がどの role に付くかを plan で読めません", [extra.address]), p.deny) with input as with_role([write_output], [extra]) with data.policy_plan.deployment_identity as decl
 }
 
-test_violation_exclusive_missing if {
-	every rcs in [[role, policies_exclusive, plan_policy([write_output])], [role, attachments_exclusive, plan_policy([write_output])]] {
-		fixture.has("[PLAN-ROLE-04]", p.deny) with input as fixture.plan(rcs) with data.policy_plan.deployment_identity as decl
+test_violation_unknown_role_of_attachment_and_exclusive if {
+	every extra in [
+		{"address": "module.x.aws_iam_role_policy_attachment.later", "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {}, "after_unknown": {"role": true}}},
+		{"address": "module.x.aws_iam_role_policies_exclusive.later", "type": "aws_iam_role_policies_exclusive", "change": {"actions": ["create"], "after": {}, "after_unknown": {"role_name": true}}},
+		{"address": "module.x.aws_iam_role_policy_attachments_exclusive.later", "type": "aws_iam_role_policy_attachments_exclusive", "change": {"actions": ["create"], "after": {}, "after_unknown": {"role_name": true}}},
+	] {
+		fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s がどの role に付くかを plan で読めません", [extra.address]), p.deny) with input as with_role([write_output], [extra]) with data.policy_plan.deployment_identity as decl
+	}
+}
+
+test_violation_exclusive_count if {
+	every e in [policies_exclusive, attachments_exclusive] {
+		without := [r | some r in [role, policies_exclusive, attachments_exclusive, plan_policy([write_output])]; r.address != e.address]
+		fixture.has(sprintf("[PLAN-ROLE-04] plan の role ci-plan の %s が 0 件です", [e.type]), p.deny) with input as fixture.plan(without) with data.policy_plan.deployment_identity as decl
+		twice := json.patch(e, [{"op": "replace", "path": "/address", "value": sprintf("%s.again", [e.address])}])
+		fixture.has(sprintf("[PLAN-ROLE-04] plan の role ci-plan の %s が 2 件です", [e.type]), p.deny) with input as with_role([write_output], [twice]) with data.policy_plan.deployment_identity as decl
 	}
 }
 
 test_violation_exclusive_allows_more if {
 	names := rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_names": ["plan", "extra"]})
 	arns := rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_arns": ["arn:aws:iam::aws:policy/AdministratorAccess"]})
-	every rcs in [[role, names, attachments_exclusive, plan_policy([write_output])], [role, policies_exclusive, arns, plan_policy([write_output])]] {
-		fixture.has("[PLAN-ROLE-04]", p.deny) with input as fixture.plan(rcs) with data.policy_plan.deployment_identity as decl
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_names が", [names.address]), p.deny) with input as fixture.plan([role, names, attachments_exclusive, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arns が空ではありません", [arns.address]), p.deny) with input as fixture.plan([role, policies_exclusive, arns, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_exclusive_contents_absent if {
+	every c in [
+		{"e": policies_exclusive, "attr": "policy_names", "says": "が"},
+		{"e": attachments_exclusive, "attr": "policy_arns", "says": "が空ではありません"},
+	] {
+		absent := json.patch(c.e, [{"op": "remove", "path": sprintf("/change/after/%s", [c.attr])}])
+		others := [r | some r in [role, policies_exclusive, attachments_exclusive, plan_policy([write_output])]; r.address != c.e.address]
+		fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の %s %s", [c.e.address, c.attr, c.says]), p.deny) with input as fixture.plan(array.concat(others, [absent])) with data.policy_plan.deployment_identity as decl
 	}
+}
+
+# 実際の plan には apply の role の排他と attachment も並ぶ。plan の role に付くものだけを数えることを見る。
+test_pass_other_role_exclusive_and_attachment_are_not_checked if {
+	others := [
+		rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_names": ["apply"]}),
+		rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]}),
+		rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.apply", {"role": "ci-apply", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"}),
+	]
+	count(p.deny) == 0 with input as with_role([write_output], others) with data.policy_plan.deployment_identity as decl
+}
+
+test_violation_policy_name_unknown if {
+	unnamed := json.patch(plan_policy([write_output]), [{"op": "remove", "path": "/change/after/name"}, {"op": "add", "path": "/change/after_unknown/name", "value": true}])
+	plan := fixture.plan([role, policies_exclusive, attachments_exclusive, unnamed])
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_names が [null] ではありません", [policies_exclusive.address]), p.deny) with input as plan with data.policy_plan.deployment_identity as decl
 }
 
 test_pass_service_name_with_hyphen if {
