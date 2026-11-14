@@ -76,12 +76,23 @@ test_pass_write_to_other_bucket if {
 	count(messages([write_apply, s])) == 0
 }
 
+# 実際の module は、ほかの role にも policy と排他の2つと、引数を持つ role を作る。
 test_pass_other_role_policy_is_not_checked if {
 	other := object.union(
 		fixture.doc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this[\"plan\"]", "policy", {"Statement": [{"Effect": "Allow", "Action": "s3:PutObject", "Resource": sprintf("%s/pr/*", [b])}]}),
 		{"change": {"after": {"role": "ci-plan"}}},
 	)
-	count(messages_with([write_apply], [other])) == 0
+	plan_role := rc("aws_iam_role", "module.x.aws_iam_role.this[\"plan\"]", {"name": "ci-plan", "inline_policy": [{"name": "x"}], "managed_policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]})
+	plan_policies := rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_names": ["plan", "x"]})
+	plan_attachments := rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]})
+	count(messages_with([write_apply], [other, plan_role, plan_policies, plan_attachments])) == 0
+}
+
+test_pass_role_arguments_null_or_absent if {
+	every after in [{"name": "ci-apply-identity", "inline_policy": null, "managed_policy_arns": null}, {"name": "ci-apply-identity"}] {
+		r := rc("aws_iam_role", "module.x.aws_iam_role.apply_identity", after)
+		count(messages_for(fixture.plan(array.concat([r, policies_exclusive, attachments_exclusive, policy([write_apply])], state_side)), decl)) == 0
+	}
 }
 
 test_violation_declaration_not_object if {
@@ -100,7 +111,7 @@ test_violation_declaration_missing if {
 }
 
 test_violation_policy_missing if {
-	fixture.has("[PLAN-AIO-00] apply-identity の role の policy", messages_for(fixture.plan(array.concat([role], state_side)), decl))
+	fixture.has(sprintf("[PLAN-AIO-00] apply-identity の role の policy %q が入力にありません", [decl.apply_identity_role.policy]), messages_for(fixture.plan(array.concat([role], state_side)), decl))
 }
 
 test_violation_role_missing if {
@@ -136,7 +147,7 @@ test_violation_not_action_or_not_resource if {
 
 test_violation_other_s3_action_on_output_objects if {
 	every a in ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:Delete*", "s3:Put*", "s3:*", "*", "s?:DeleteObject", "s3:PutObjectAcl", "s3:PutObjectTagging", "s3:GetObject", "s3:ReplicateObject"] {
-		every r in [apply_key, sprintf("%s/apply/1/*", [b]), sprintf("%s/pr/*", [b]), sprintf("%s/foo/*", [b]), sprintf("%s/out.json", [b]), "arn:aws:s3:::*-tfplan-*/apply/1/*", "arn:aws:s3:::*", "*"] {
+		every r in [apply_key, sprintf("%s/apply/1/*", [b]), sprintf("%s/pr/*", [b]), sprintf("%s/foo/*", [b]), sprintf("%s/out.json", [b]), "arn:aws:s3:::*-tfplan-*/apply/1/*", "arn:aws:s3:::*", "*", "arn:aws:s3:::*pr/*", "arn:aws:s3:::*/apply/*", "*/*"] {
 			fixture.has("[PLAN-AIO-02]", messages([write_apply, {"Effect": "Allow", "Action": a, "Resource": r}]))
 		}
 	}
@@ -159,6 +170,10 @@ test_violation_write_outside_apply_key if {
 		"arn:aws:s3:::*-tfplan-*/apply/*",
 		"arn:aws:s3:::*",
 		"*",
+		"arn:aws:s3:::*pr/*",
+		"arn:aws:s3:::*apply/*",
+		"arn:aws:s3:::*/apply/*",
+		"*/*",
 	] {
 		fixture.has("[PLAN-AIO-03]", messages([write_apply, {"Effect": "Allow", "Action": "s3:PutObject", "Resource": r}]))
 	}
@@ -276,4 +291,30 @@ test_violation_bucket_policy_allow if {
 test_violation_bucket_policy_missing if {
 	inp := fixture.plan(array.concat(identity_side([write_apply]), [bucket]))
 	fixture.has("[PLAN-AIO-00] plan の出力の Bucket の Bucket Policy", messages_for(inp, decl))
+}
+
+# 値が plan で決まらない経路も、決まらないこと自体で落とす。
+unknown_attr(r, attr) := {"address": r.address, "type": r.type, "change": {"actions": ["create"], "after": object.remove(r.change.after, [attr]), "after_unknown": {attr: true}}}
+
+test_violation_unknown_attributes if {
+	every inp in [
+		array.concat([unknown_attr(role, "inline_policy"), policies_exclusive, attachments_exclusive, policy([write_apply])], state_side),
+		array.concat([unknown_attr(role, "managed_policy_arns"), policies_exclusive, attachments_exclusive, policy([write_apply])], state_side),
+		array.concat([role, unknown_attr(policies_exclusive, "policy_names"), attachments_exclusive, policy([write_apply])], state_side),
+		array.concat([role, policies_exclusive, unknown_attr(attachments_exclusive, "policy_arns"), policy([write_apply])], state_side),
+	] {
+		fixture.has("[PLAN-AIO-05]", messages_for(fixture.plan(inp), decl))
+	}
+	unknown_role := unknown_attr(policies_exclusive, "role_name")
+	fixture.has(sprintf("[PLAN-AIO-05] p.json: %s がどの role", [unknown_role.address]), messages_for(fixture.plan(array.concat([role, unknown_role, attachments_exclusive, policy([write_apply])], state_side)), decl))
+}
+
+test_violation_policy_role_absent if {
+	no_role := {"address": "module.x.aws_iam_role_policy.apply_identity", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"name": "apply_identity", "policy": json.marshal({"Statement": [write_apply]})}, "after_unknown": {}}}
+	fixture.has("[PLAN-AIO-00] apply-identity の role の policy \"module.x.aws_iam_role_policy.apply_identity\" が、apply-identity の role", messages_for(fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, no_role], state_side)), decl))
+}
+
+test_violation_exclusive_duplicated if {
+	second := rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.extra", {"role_name": "ci-apply-identity", "policy_names": ["apply_identity"]})
+	fixture.has("[PLAN-AIO-05] apply-identity の role ci-apply-identity の aws_iam_role_policies_exclusive が 2 件", messages_with([write_apply], [second]))
 }

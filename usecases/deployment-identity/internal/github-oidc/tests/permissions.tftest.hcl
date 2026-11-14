@@ -477,13 +477,6 @@ run "policy_length" {
   }
 
   assert {
-    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "WriteApplyOutput"] == [
-      format("arn:aws-cn:s3:::%063d/apply/*", 2),
-    ]
-    error_message = "apply-identity の role の apply の出力の書き込み先が、入力の plan の出力の Bucket の apply/* になっていません。"
-  }
-
-  assert {
     condition     = length(trimprefix(var.state_bucket_arn, "arn:aws-cn:s3:::")) == 63
     error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
   }
@@ -641,4 +634,26 @@ run "access_log_source_arn_in_other_partition" {
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "plan_output_bucket_arn_follows_input" {
+  command = apply
+
+  variables {
+    plan_output_bucket_arn = "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "WriteApplyOutput"] == [
+      "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/apply/*",
+    ]
+    error_message = "apply-identity の role の apply の出力の書き込み先が、入力の plan の出力の Bucket の apply/* になっていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "WritePlanOutput"] == [
+      ["arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/pr/*", "arn:aws:s3:::other-tfplan-210987654321-us-west-2-an/branch/*"],
+    ]
+    error_message = "plan の role の plan の出力の書き込み先が、入力の plan の出力の Bucket の pr/* と branch/* になっていません。"
+  }
 }
