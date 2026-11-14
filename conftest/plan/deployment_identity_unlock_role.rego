@@ -54,7 +54,7 @@ role_name := after(role).name
 
 role_arn := after(role).arn
 
-policy_name := after(target).name
+policy_name := object.get(after(target), "name", null)
 
 bucket_arn := after(state_bucket).arn
 

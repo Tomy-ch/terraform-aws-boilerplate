@@ -142,6 +142,12 @@ test_violation_exclusive_missing if {
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
+test_violation_policy_name_unknown if {
+	unnamed := json.patch(policy([list_lock, remove_lock]), [{"op": "remove", "path": "/change/after/name"}, {"op": "add", "path": "/change/after_unknown/name", "value": true}])
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, unnamed, valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	fixture.has(sprintf("[PLAN-UNLOCK-03] p.json: %s の policy_names が [null] ではありません", [exclusives[0].address]), msgs)
+}
+
 test_violation_exclusive_keeps_other_policy if {
 	e := change("module.x.aws_iam_role_policies_exclusive.this[\"unlock_identity\"]", "aws_iam_role_policies_exclusive", {"role_name": "tabp-admin-ci-unlock-identity", "policy_names": ["unlock_identity", "extra"]})
 	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, e, exclusives[1]]) with data.policy_plan.deployment_identity as decl

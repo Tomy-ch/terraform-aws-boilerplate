@@ -43,7 +43,7 @@ after(address) := c.rc.change.after if {
 
 role_name := after(role).name
 
-policy_name := after(target).name
+policy_name := object.get(after(target), "name", null)
 
 # policy の resource は role を名前で指すので、名前が unknown なものはどの role に付くか読めない。
 attached contains {"path": c.path, "address": c.rc.address, "type": c.rc.type, "after": c.rc.change.after, "unknown": c.rc.change.after_unknown} if {

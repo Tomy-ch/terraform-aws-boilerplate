@@ -166,6 +166,12 @@ test_pass_other_role_exclusive_and_attachment_are_not_checked if {
 	count(p.deny) == 0 with input as with_role([write_output], others) with data.policy_plan.deployment_identity as decl
 }
 
+test_violation_policy_name_unknown if {
+	unnamed := json.patch(plan_policy([write_output]), [{"op": "remove", "path": "/change/after/name"}, {"op": "add", "path": "/change/after_unknown/name", "value": true}])
+	plan := fixture.plan([role, policies_exclusive, attachments_exclusive, unnamed])
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_names が [null] ではありません", [policies_exclusive.address]), p.deny) with input as plan with data.policy_plan.deployment_identity as decl
+}
+
 test_pass_service_name_with_hyphen if {
 	count(p.deny) == 0 with input as with_role([fixture.allow(["resource-groups:GetGroup", "s3:GetObject", "S3:GetBucketPolicy"]), write_output], []) with data.policy_plan.deployment_identity as decl
 }
