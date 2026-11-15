@@ -671,6 +671,14 @@ func Test_resolveExplicit(t *testing.T) {
 			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
 		})
 
+		t.Run("最新のタグより patch が 1 つだけ新しい版を受け付ける", func(t *testing.T) {
+			t.Parallel()
+
+			v, err := resolveExplicit(taggableRunner().runner(), "v1.2.4")
+			require.NoError(t, err)
+			assert.Equal(t, "v1.2.4", v.String())
+		})
+
 		t.Run("最新のタグより新しい版を受け付ける", func(t *testing.T) {
 			t.Parallel()
 
@@ -711,30 +719,48 @@ func Test_resolveExplicit(t *testing.T) {
 
 		t.Run("接頭辞 v を欠く版は拒否する", func(t *testing.T) {
 			t.Parallel()
+			f := taggableRunner()
 
-			_, err := resolveExplicit(taggableRunner().runner(), "1.3.0")
+			_, err := resolveExplicit(f.runner(), "1.3.0")
 			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("プレリリース付きの版は拒否する", func(t *testing.T) {
 			t.Parallel()
+			f := taggableRunner()
 
-			_, err := resolveExplicit(taggableRunner().runner(), "v1.3.0-rc1")
+			_, err := resolveExplicit(f.runner(), "v1.3.0-rc1")
 			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("前後に空白を含む版は拒否する", func(t *testing.T) {
 			t.Parallel()
+			f := taggableRunner()
 
-			_, err := resolveExplicit(taggableRunner().runner(), " v1.3.0")
+			_, err := resolveExplicit(f.runner(), " v1.3.0")
 			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("先頭に 0 を含む版は拒否する", func(t *testing.T) {
 			t.Parallel()
+			f := taggableRunner()
 
-			_, err := resolveExplicit(taggableRunner().runner(), "v1.03.0")
+			_, err := resolveExplicit(f.runner(), "v1.03.0")
 			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
+		})
+
+		// 桁あふれは Atoi が上限へ丸めるので、丸めた版を受け付けると指定と違うタグ名になる。
+		t.Run("int に収まらない桁の版は拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			_, err := resolveExplicit(f.runner(), "v99999999999999999999.0.0")
+			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("既に在るタグは拒否する", func(t *testing.T) {
@@ -742,6 +768,16 @@ func Test_resolveExplicit(t *testing.T) {
 
 			_, err := resolveExplicit(taggableRunner().runner(), "v1.2.3")
 			require.ErrorIs(t, err, errVersionExists)
+			assert.Contains(t, err.Error(), "v1.2.3")
+		})
+
+		// 先頭に 0 を含む既存のタグは文字列では一致しないので、同じ版を止めるのは順序の検査だけになる。
+		t.Run("表記の違う既存のタグと同じ版は最新より新しくないとして拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{outputs: map[string]string{tagListCall: "v1.02.3\n"}}
+
+			_, err := resolveExplicit(f.runner(), "v1.2.3")
+			require.ErrorIs(t, err, errVersionNotNewer)
 		})
 
 		// 最新でないタグと同じ版も、最新より古いことより先に「既に在る」として返す。
@@ -759,6 +795,15 @@ func Test_resolveExplicit(t *testing.T) {
 			_, err := resolveExplicit(taggableRunner().runner(), "v1.2.2")
 			require.ErrorIs(t, err, errVersionNotNewer)
 			assert.Contains(t, err.Error(), "v1.2.3")
+		})
+
+		t.Run("タグを取り直せなければ一覧を見ずにエラーにする", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{failOn: fetchTagsCall}
+
+			_, err := resolveExplicit(f.runner(), "v0.1.0")
+			require.ErrorIs(t, err, errFakeCommand)
+			assert.Equal(t, []string{fetchTagsCall}, f.calls)
 		})
 
 		t.Run("タグ一覧を取得できなければエラーにする", func(t *testing.T) {
@@ -857,7 +902,7 @@ func Test_resolveTagVersion(t *testing.T) {
 
 			_, err := resolveTagVersion((&fakeRunner{}).runner(), map[string]bool{"bump": true}, "patch", "")
 			require.ErrorIs(t, err, errNoTag)
-			assert.Contains(t, err.Error(), "-version")
+			assert.Contains(t, err.Error(), "make tag-version VERSION=vX.Y.Z")
 		})
 
 		t.Run("-version の検証に落ちればそのエラーを返す", func(t *testing.T) {
@@ -1007,6 +1052,44 @@ func Test_runTag(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("最新のタグより古い -version では production へ切り替える前に中止する", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-version", "v1.2.2"}), errVersionNotNewer)
+			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
+		})
+
+		// 空の -bump も指定に数えないと、-version だけが与えられたものとして黙って進む。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("空の -bump と -version の同時指定でも手順を 1 つも実行しない", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "", "-version", "v1.2.4"}), errVersionWithBump)
+			assert.Empty(t, f.calls)
+		})
+
+		// 粒度の既定値を置くと、指定し忘れた tag が意図しない版のタグと Release を作る。
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("-bump も -version も無ければ production へ切り替える前に中止する", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), nil), errUnknownBump)
+			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("空の -bump では production へ切り替える前に中止する", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", ""}), errUnknownBump)
+			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("解釈できないフラグでは手順を 1 つも実行しない", func(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
@@ -1139,6 +1222,7 @@ func Test_runBranch(t *testing.T) {
 			err := runBranch((&fakeRunner{}).runner(), []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errNoTagForBranch)
 			require.NotErrorIs(t, err, errNoTag)
+			assert.Contains(t, err.Error(), "make tag-version VERSION=vX.Y.Z")
 		})
 
 		// 差し替えるのはタグ不在だけ。取得そのものの失敗まで案内へ丸めると原因が消える。
