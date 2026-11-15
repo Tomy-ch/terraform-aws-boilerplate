@@ -58,8 +58,8 @@
 //	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・failure-kind・policy-result・sha256・
-// lock-key・lock-etag・lock-stale はファイルを読み、oidc-url は環境変数を読み、lock-stale は時刻を読む。
+// plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
+// policy-result・sha256・lock-key・lock-etag・lock-stale はファイルを読み、oidc-url は環境変数を読み、lock-stale は時刻を読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
