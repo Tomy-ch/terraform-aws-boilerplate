@@ -1,0 +1,39 @@
+# docs/setup/scripts/check-plan.sh の期待値。段2 から段4 の、管理アカウントの identity root の plan。
+# 1行に「<種類> <resource address>」。種類は import / add / change / destroy。順序は問わない。
+# 書いていない種類は0件を期待する。更新の規則は docs/setup/bootstrap.md の「この文書の保守」。
+
+import module.state_backend.module.s3.aws_s3_bucket.this
+import module.state_backend.module.s3.aws_s3_bucket_public_access_block.this
+import module.state_backend.module.s3.aws_s3_bucket_ownership_controls.this
+import module.state_backend.module.s3.aws_s3_bucket_versioning.this
+
+add module.state_backend.module.s3.aws_s3_bucket_server_side_encryption_configuration.this
+add module.state_backend.module.s3.aws_s3_bucket_policy.this
+add module.state_backend.module.s3.aws_s3_bucket_lifecycle_configuration.this
+add module.state_backend.module.plan_output.aws_s3_bucket.this
+add module.state_backend.module.plan_output.aws_s3_bucket_public_access_block.this
+add module.state_backend.module.plan_output.aws_s3_bucket_ownership_controls.this
+add module.state_backend.module.plan_output.aws_s3_bucket_versioning.this
+add module.state_backend.module.plan_output.aws_s3_bucket_server_side_encryption_configuration.this
+add module.state_backend.module.plan_output.aws_s3_bucket_policy.this
+add module.state_backend.module.plan_output.aws_s3_bucket_lifecycle_configuration.this
+add module.state_backend.module.kms.aws_kms_key.this
+add module.state_backend.module.kms.aws_kms_key_policy.this
+add module.state_backend.module.kms.aws_kms_alias.this
+add module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github
+add module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity
+add module.deployment_identity.module.github_oidc.aws_iam_role.this["plan"]
+add module.deployment_identity.module.github_oidc.aws_iam_role.this["apply"]
+add module.deployment_identity.module.github_oidc.aws_iam_role.this["unlock_identity"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["plan"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["apply"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlock_identity"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["plan"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply_identity"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["unlock_identity"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["plan"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["apply"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["apply_identity"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock_identity"]
