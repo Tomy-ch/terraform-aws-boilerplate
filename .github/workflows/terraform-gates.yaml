@@ -590,7 +590,7 @@ jobs:
       - name: Confirm the apply-family roles refuse this job
         env:
           CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-        run: make ci-assume-denied CI_ENV=admin CI_DENIED_ROLES=plan RUNNER_MODE=host
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
 
       - name: Plan the identity root
         env:
