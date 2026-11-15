@@ -384,8 +384,8 @@ func unset(name string) bool {
 	return slices.Contains(unsetNames, name) || slices.ContainsFunc(unsetPrefixes, func(p string) bool { return strings.HasPrefix(name, p) })
 }
 
-// planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10）。git が答えられなければ、
-// どの commit の plan かを残せないので失敗します。
+// planHeader は、どの commit に対する plan かを返します（ADR-0602 決定10 の、その commit に対する plan の
+// 結果の記録）。git が答えられなければ、どの commit の plan かを残せないので失敗します。
 func planHeader(git func(args ...string) (string, error)) (string, error) {
 	commit, err := git("rev-parse", "HEAD")
 	if err != nil {
