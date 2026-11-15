@@ -1,21 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"os"
-	"path/filepath"
-	"regexp"
-
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// 分岐のパターンの単一宣言（ADR-0603 決定1）。
-type branches struct {
-	Deploy []string `json:"deploy"`
-	Lines  []string `json:"lines"`
-}
+// 分岐のパターンの単一宣言（ADR-0603 決定1）。読み方と検証は branchdecl が持つ。
+type branches = branchdecl.Branches
 
 // environment は、デプロイの environment 1件の宣言（ADR-0603 決定4）。
 // パターンは持たず、deploy_from が種類を名指す。展開は branches から行う（同 決定3）。
@@ -37,121 +28,15 @@ const (
 const pullRequestRef = "refs/pull/*/merge"
 
 var (
-	deployNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
-	linePrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*/$`)
+	errDeclaration      = branchdecl.ErrDeclaration
+	errEmptyDeclaration = branchdecl.ErrEmpty
 )
 
-var (
-	errDeclaration      = xerrors.New("宣言が不正です")
-	errEmptyDeclaration = xerrors.New("宣言が1件もありません")
-)
-
-// declarationKeys は、宣言の object が持ってよいキー。encoding/json はキー名の大文字小文字を
-// 区別せず、重複したキーは後の値を黙って採るので、デコードの前に字面で確かめる。
-var declarationKeys = map[string]bool{"deploy": true, "lines": true, "name": true, "deploy_from": true, "can_admins_bypass": true}
-
-// decodeStrict は path の JSON を out へ読みます。未知のキー、字面の違うキー、重複したキー、
-// 値の後の余分なトークンを拒みます。
-func decodeStrict(path string, out any) error {
-	src, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return xerrors.Wrapf(err, "%s の読み取り", path)
-	}
-	if err := checkKeys(json.NewDecoder(bytes.NewReader(src))); err != nil {
-		return xerrors.Wrapf(err, "%s", path)
-	}
-	dec := json.NewDecoder(bytes.NewReader(src))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(out); err != nil {
-		return xerrors.Wrapf(errDeclaration, "%s: %v", path, err)
-	}
-	if _, err := dec.Token(); !xerrors.Is(err, io.EOF) {
-		return xerrors.Wrapf(errDeclaration, "%s: 値の後に余分な内容があります", path)
-	}
-	return nil
-}
-
-func checkKeys(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return xerrors.Wrapf(errDeclaration, "%v", err)
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil
-	}
-	if delim == '{' {
-		seen := map[string]bool{}
-		for dec.More() {
-			keyTok, err := dec.Token()
-			if err != nil {
-				return xerrors.Wrapf(errDeclaration, "%v", err)
-			}
-			key, _ := keyTok.(string)
-			if !declarationKeys[key] {
-				return xerrors.Wrapf(errDeclaration, "キー %q は宣言のキーではありません", key)
-			}
-			if seen[key] {
-				return xerrors.Wrapf(errDeclaration, "キー %q が重複しています", key)
-			}
-			seen[key] = true
-			if err := checkKeys(dec); err != nil {
-				return err
-			}
-		}
-	} else {
-		for dec.More() {
-			if err := checkKeys(dec); err != nil {
-				return err
-			}
-		}
-	}
-	if _, err := dec.Token(); err != nil {
-		return xerrors.Wrapf(errDeclaration, "%v", err)
-	}
-	return nil
-}
-
-func readBranches(path string) (branches, error) {
-	var b branches
-	if err := decodeStrict(path, &b); err != nil {
-		return branches{}, err
-	}
-	if err := validateBranches(b); err != nil {
-		return branches{}, xerrors.Wrapf(err, "%s", path)
-	}
-	return b, nil
-}
-
-func validateBranches(b branches) error {
-	if len(b.Deploy)+len(b.Lines) == 0 {
-		return errEmptyDeclaration
-	}
-	seen := map[string]bool{}
-	for _, name := range b.Deploy {
-		if !deployNameRe.MatchString(name) {
-			return xerrors.Wrapf(errDeclaration, "deploy の名前 %q", name)
-		}
-		if seen[name] {
-			return xerrors.Wrapf(errDeclaration, "deploy の名前 %q が重複しています", name)
-		}
-		seen[name] = true
-	}
-	for _, prefix := range b.Lines {
-		if !linePrefixRe.MatchString(prefix) {
-			return xerrors.Wrapf(errDeclaration, "lines の接頭辞 %q（`/` で終わる名前）", prefix)
-		}
-		if seen[prefix] {
-			return xerrors.Wrapf(errDeclaration, "lines の接頭辞 %q が重複しています", prefix)
-		}
-		seen[prefix] = true
-	}
-	return nil
-}
+var environmentKeys = map[string]bool{"name": true, "deploy_from": true, "can_admins_bypass": true}
 
 func readEnvironments(path string) ([]environment, error) {
 	var envs []environment
-	if err := decodeStrict(path, &envs); err != nil {
+	if err := branchdecl.DecodeStrict(path, &envs, environmentKeys); err != nil {
 		return nil, err
 	}
 	if err := validateEnvironments(envs); err != nil {

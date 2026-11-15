@@ -68,11 +68,15 @@ done
 endef
 
 # CI_PLAN と CI_APPLY が共有する。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
-# $(1)=env $(2)=root
+# $(3) が空でなければ、失敗して終わるときに、その時点の段（$$stage）を GITHUB_OUTPUT の failure へ書く。段の名前の
+# 意味は scripts/apply-revert の revertKinds と skipKinds が持つ。
+# $(1)=env $(2)=root $(3)=失敗の段を書くか
 define CI_PREPARE
 set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; root="$(1)-$(2)"; \
 out="$$d/$$root.txt"; json="$$d/$$root.json"; tfplan="$$d/$$root.tfplan"; pol="$$d/$$root.policy.json"; \
-rm -f "$$out" "$$json" "$$tfplan" "$$pol"; trap 'rm -f "$$out" "$$json" "$$tfplan" "$$pol"' EXIT; export dir root out json pol; \
+rm -f "$$out" "$$json" "$$tfplan" "$$pol"; stage=prepare; \
+$(if $(3),trap 'rc=$$?; rm -f "$$out" "$$json" "$$tfplan" "$$pol"; test "$$rc" = 0 || test -z "$${GITHUB_OUTPUT:-}" || printf "failure=%s\n" "$$stage" >> "$$GITHUB_OUTPUT"' EXIT,trap 'rm -f "$$out" "$$json" "$$tfplan" "$$pol"' EXIT); \
+export dir root out json pol; \
 unset_env=$$($(call TF_LOCAL,env-unset)); \
 header=$$($(call TF_LOCAL,plan-header)); echo "$$header" | tee "$$out"; \
 region=$$($(call TF_LOCAL,region "$$dir")); export region; \
@@ -129,19 +133,21 @@ endef
 # workload root の apply は、この define を使えない。
 # Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。
 define CI_APPLY
-$(call CI_PREPARE,$(1),$(2)); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
+$(call CI_PREPARE,$(1),$(2),failure); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
 plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
 || { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
 test -n "$$plan_bucket" || { echo "❌ plan の出力の Bucket の名前が空です" >&2; exit 1; }; \
 key=$$($(call TF_LOCAL,apply-key -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
-upload() { sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
+upload() { prev=$$stage; test "$$stage" != applied || stage=upload; sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
 version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
 --checksum-sha256 "$$sha" --expected-bucket-owner "$$account" --query VersionId --output text); \
-echo "apply の全文の版 ID: $$version"; }; \
-$(call CI_TERRAFORM_PLAN,); \
+echo "apply の全文の版 ID: $$version"; stage=$$prev; }; \
+stage=plan; $(call CI_TERRAFORM_PLAN,); \
+stage=$$($(call TF_LOCAL,failure-kind -step plan -exitcode "$$rc" "$$out")) || stage=plan; \
 summary=$$($(call TF_LOCAL,plan-summary -exitcode "$$rc" "$$json")) || { upload; echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$summary"; \
-$(call CI_POLICY,upload; ); \
-arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
+stage=policy; $(call CI_POLICY,upload; ); \
+stage=apply; arc=0; $(TIMEOUT_BIN) -s INT $(CI_APPLY_TIMEOUT) $(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" apply -input=false -no-color "$$tfplan" >> "$$out" 2>&1 || arc=$$?; export arc; echo "apply の終了コード: $$arc"; \
+stage=$$($(call TF_LOCAL,failure-kind -step apply -exitcode "$$arc" "$$out")) || stage=apply; \
 upload; \
 result=$$($(call TF_LOCAL,apply-result -exitcode "$$arc")) || { echo "❌ 全文は上の key にあります" >&2; exit 1; }; echo "$$result"; \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\napply が終わりました\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"; \

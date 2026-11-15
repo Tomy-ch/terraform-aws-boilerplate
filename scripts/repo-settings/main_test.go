@@ -20,7 +20,7 @@ import (
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ JSON の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const (
-	branchesFixture     = `{"deploy": ["main"], "lines": ["release/"]}`
+	branchesFixture     = `{"deploy": ["main"], "lines": ["release/"], "revert": "revert/"}`
 	environmentsFixture = `[
   {"name": "x-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false},
   {"name": "x-apply", "deploy_from": "protected", "can_admins_bypass": false},

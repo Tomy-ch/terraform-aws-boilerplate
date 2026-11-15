@@ -38,6 +38,9 @@
 //	tf-local apply-result -exitcode <n>
 //	    `timeout` で包んだ apply の終了コードから成否を読む。0 なら成功の行を出し、124 は打ち切り、
 //	    ほかは apply の失敗として落ちる
+//	tf-local failure-kind -step <plan|apply> -exitcode <n> <全文>
+//	    apply の入口の段の種類（plan・lock・apply・timeout・applied）を1行で出す。終了コードが 1 のときだけ全文を
+//	    読み、lock の取得の失敗なら lock を出す
 //	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
 //	    評価が rego の `deny contains` の数でなければ失敗する
@@ -55,7 +58,7 @@
 //	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
-// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・policy-result・sha256・
+// plan-header だけは git を起動して作業ツリーを読む。oidc-token・oidc-sub・plan-summary・failure-kind・policy-result・sha256・
 // lock-key・lock-etag・lock-stale はファイルを読み、oidc-url は環境変数を読み、lock-stale は時刻を読む。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
@@ -105,7 +108,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -193,6 +196,8 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runApplyKey(args[1:])
 	case "apply-result":
 		value, err = runApplyResult(args[1:])
+	case "failure-kind":
+		value, err = runFailureKind(args[1:], d.readFile)
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
 	case "account":

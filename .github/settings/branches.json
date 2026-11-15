@@ -1,4 +1,5 @@
 {
   "deploy": ["production", "staging", "develop"],
-  "lines": ["release/", "hotfix/"]
+  "lines": ["release/", "hotfix/"],
+  "revert": "revert/"
 }

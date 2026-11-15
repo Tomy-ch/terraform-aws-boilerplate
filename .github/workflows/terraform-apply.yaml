@@ -162,8 +162,11 @@ jobs:
       contents: read
       id-token: write
     # 成功の通知が運ぶ plan の件数の1行。terraform の出力は含まない（README.md の「通知の起動条件」）。
+    # failure と apply-outcome は revert の判定が読む（README.md の「apply の失敗の revert」）。
     outputs:
       plan: ${{ steps.apply.outputs.plan }}
+      failure: ${{ steps.apply.outputs.failure }}
+      apply-outcome: ${{ steps.apply.outcome }}
     steps:
       - name: Harden the runner
         uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
@@ -253,6 +256,127 @@ jobs:
         id: apply
         run: make ci-apply-admin-identity RUNNER_MODE=host
 
+  # apply の失敗を戻す revert のブランチを用意するかと、その範囲を決める。規則は README.md の「apply の失敗の revert」。
+  revert-plan:
+    needs: [apply-admin-identity]
+    if: ${{ always() && needs.apply-admin-identity.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      decision: ${{ steps.plan.outputs.decision }}
+      headline: ${{ steps.plan.outputs.headline }}
+      summary: ${{ steps.plan.outputs.summary }}
+      commits: ${{ steps.plan.outputs.commits }}
+      branch: ${{ steps.plan.outputs.branch }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # go: apply-revert is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide the revert
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLY_OUTCOME: ${{ needs.apply-admin-identity.outputs.apply-outcome }}
+          APPLY_FAILURE: ${{ needs.apply-admin-identity.outputs.failure }}
+        run: make ci-revert-plan RUNNER_MODE=host
+
+  # revert-plan が決めた範囲を revert して push する。規則は README.md の「apply の失敗の revert」。
+  revert-push:
+    needs: [revert-plan]
+    if: ${{ needs.revert-plan.outputs.decision == 'push' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push the revert branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVERT_HEAD: ${{ github.sha }}
+          REVERT_COMMITS: ${{ needs.revert-plan.outputs.commits }}
+          REVERT_BRANCH: ${{ needs.revert-plan.outputs.branch }}
+        run: make ci-revert-push RUNNER_MODE=host
+
   # 理由は README.md の「通知の起動条件」。
   notify-failure:
     needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]
@@ -260,6 +384,17 @@ jobs:
     uses: ./.github/workflows/notify.yaml
     with:
       failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || 'apply-resource-order-check') }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
+
+  # revert の結果を、失敗の通知とは別に届ける。理由は README.md の「apply の失敗の revert」。
+  notify-revert:
+    needs: [revert-plan, revert-push]
+    if: ${{ always() && needs.revert-plan.result != 'skipped' && needs.revert-plan.outputs.decision != 'skip' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      detected: ${{ needs.revert-plan.outputs.decision == 'push' && needs.revert-push.result != 'success' && 'apply の失敗を戻す revert のブランチを push できませんでした' || needs.revert-plan.outputs.headline || 'apply の失敗を戻す revert の判定が失敗しました' }}
+      details: ${{ (needs.revert-plan.outputs.decision != 'push' || needs.revert-push.result == 'success') && needs.revert-plan.outputs.summary || '' }}
     secrets:
       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
 

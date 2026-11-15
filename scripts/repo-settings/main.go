@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -125,7 +126,7 @@ type declarations struct {
 
 // readDeclarations は3つの宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
 func readDeclarations(root string) (declarations, error) {
-	b, err := readBranches(filepath.Join(root, branchesFile))
+	b, err := branchdecl.Read(filepath.Join(root, branchesFile))
 	if err != nil {
 		return declarations{}, err
 	}

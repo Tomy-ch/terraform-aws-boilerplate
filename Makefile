@@ -9,6 +9,7 @@ include .makefiles/git-isolation.mk
 # GitHub関連
 include .makefiles/github/operation/release-branch.mk
 include .makefiles/github/operation/release-tag.mk
+include .makefiles/github/operation/apply-revert.mk
 include .makefiles/github/setting/github.mk
 include .makefiles/github/setting/repo-settings.mk
 include .makefiles/github/setting/label-setting.mk

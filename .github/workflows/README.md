@@ -15,7 +15,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
-| apply | デフォルトブランチの release line への push | 管理アカウントの identity root を apply する。失敗を通知する |
+| apply | デフォルトブランチの release line への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
 | リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
@@ -215,6 +215,66 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
   障害のときに人が1人しか居なくても外せるようにする。実行されるのはデフォルトブランチの先頭の workflow と
   コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる
 
+### apply の失敗の revert
+
+`terraform-apply.yaml` の apply の job が commit の宣言を AWS に対して評価した後に失敗すると、`revert-plan` が、
+最後に成功した apply の commit へ宣言を戻す revert のブランチを用意するかを決め、`revert-push` がそれを push する。
+Pull Request は人が通知の URL から開き、通常の経路（検査・review・merge・apply）で戻す。CI は Pull Request を
+作らず、merge もしない。前の commit を apply し直すことはしない。決定は ADR-0601 決定17-19 が持ち、ここは
+その運用の細則を持つ。
+
+- **戻すのは、commit の中身が原因でありうる失敗だけである。** `CI_APPLY`（`.makefiles/terraform/operation/ci.mk`）が
+  失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
+  apply の打ち切りは戻す。init までの準備、plan と apply の lock の取得、apply が終わった後（全文の置き場への
+  書き込みを含む）の失敗と、`refuse-stale` の拒否・資格情報の失敗・検出と順序の検査の失敗（どれも apply の step に
+  届かない）は戻さない。先に失敗した段は、その後に全文を置けなくても書き換えない。
+  apply の step の結果か失敗の段を受け取れなければ、対象外と読まずに `revert-plan` が失敗する
+- **戻す範囲は、最後に成功した apply の commit から失敗した commit までの first-parent の merge のすべてである。**
+  待っている run は後から来た run に置き換わるので、1回の apply が複数の merge を含みうる。最後に成功した commit は、
+  同じ release line への push で起動した run のうち、apply の job が成功した最も新しい run の commit で、Actions の
+  run と job の記録から読む（environment の deployment は `deployments: write` を持つ主体が API で作れるので読まない）。
+  直近の 100 件に無い、祖先でない、first-parent の鎖が届かない、merge でない commit を挟む、木が同じ、一時の
+  worktree で範囲を revert すると衝突するか木が一致しない —— いずれも用意せず、理由を通知する。
+  木が同じなら失敗の原因は commit の中身に無く、revert を merge した後の apply が失敗しても次の revert は作られない
+- **判定は `revert-plan` が持ち、書き込みの token を持つのは `revert-push` だけである。** `revert-plan` は
+  `contents: read` と `actions: read` で、範囲を一時の worktree で実際に revert して木の一致を確かめ、同じ名前の
+  ブランチの有無も見る。`revert-push` は `contents: write` だけを持ち、道具を導入せず、決まった commit を同じ順に
+  git で revert して force せずに push する。同じ名前のブランチが違う commit を持てば、push は拒まれる。token は
+  argv に置かず、push の1回に環境変数で渡す。job の形は `make contents-write-lint` が、push の入口の振る舞いは
+  `scripts/apply-revert` の `TestPushRecipes` が一時のリポジトリで見る
+- **ブランチの名前は `branches.json` の `revert` の接頭辞と run の番号から決める**（`revert/apply-<run>`）。
+  同じ run の再実行は同じ名前になり、同じ木のブランチが在れば push せずに通知だけを出す。宣言は `repo-settings` と
+  `apply-revert` が同じ読み手（`scripts/lib/branchdecl`）で読み、接頭辞が無いか `lines` と重なれば、どちらも落ちる
+- **`.github/workflows/` を戻す範囲は CI が push できない。** `GITHUB_TOKEN` は workflows の権限を持てない。
+  通知が載せる `make apply-revert REVERT_HEAD=… REVERT_COMMITS='…' REVERT_BRANCH=…` を手元で
+  そのまま実行すると、手元の資格情報で同じ revert を push する
+- **後続の apply は止めない。** revert が merge される前に別の merge が入っても、その apply は走る。apply は線の
+  先頭の木全体を当てるので、成功すれば Git と実環境は一致し、用意した revert は要らなくなる。失敗すれば次の
+  revert が最後に成功した commit から計算し直され、前の revert を含む。止めたいときは、管理者がデフォルトブランチを
+  release line の外へ移す（`gh repo edit --default-branch <別のブランチ>`）。apply の job はデフォルトブランチ
+  でない線の push を skip する。戻すときは「apply の job」の hotfix の後と同じく release line へ戻す
+- **通知は失敗の通知と別に届く。** `notify-revert` が critical の deploy の系統へ、Pull Request を開く URL か、
+  手元のコマンドか、用意しなかった理由を、検出のモードで送る。失敗の通知（`notify-failure`）は revert の job を
+  待たない。revert の対象でない失敗では送らない
+- **root を足したら、その apply の job を revert の判定へ足す。** `APPLY_REVERT_JOBS`
+  （`.makefiles/github/operation/apply-revert.mk`）に `-job <apply の job>` を足し、`revert-plan` の `needs` に足す。
+  最後に成功した commit は、名指したすべての apply の job が成功した run の commit になる。revert は commit 単位
+  なので、片方の root だけが失敗しても、成功した側の変更も戻す
+- 古い revert のブランチは自動では消えない。後の apply が成功したら、人が消す
+
+保証しないこと:
+
+- **revert の apply が成功すること。** revert が stateful な resource の削除を含めば `plan.stateful_protection` で
+  落ちうる。Bucket Policy が CI の role を拒んだ場合（`docs/setup/bootstrap.md` の診断の節）も同じ理由で落ちる
+- **`GITHUB_TOKEN` が `.github/workflows/` を変える push を拒むこと。** 権限の一覧に workflows が無いことまでは
+  文書で確かめたが、拒否そのものは公式の文書に無い。拒まれなければ、`revert-push` が push するだけである
+- **人が URL から開いた Pull Request で、必須検査が承認待ちにならずに走ること。** `GITHUB_TOKEN` が起こした
+  イベントの run は承認を要するが、Pull Request を開くのは人である。この経路を通した実例はまだ無い
+- **失敗した job の outputs が後続の job へ渡ること。** 渡らなければ apply の step の結果が空になり、`revert-plan`
+  が失敗して通知へ出る。黙って働かなくはならない
+- **`contents: write` の token がタグと保護されていないブランチへ書けないこと。** 書けるのは `revert-push` の間だけで、
+  走るのは release line に merge された木の `make ci-revert-push` だけである
+
 ## 結果コメント
 
 Pull Request のコメントは、**検査が報告すべきことを持っているときにだけ作られる。** 通った検査が
@@ -270,6 +330,7 @@ truthy 側へ置く。
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の2 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
+| `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
 | `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
@@ -340,7 +401,8 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job か順序の検査の job が落ちると
 apply の job は `skipped` で終わるので、3つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
 job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。
-apply の job が `success` で終わったときは、`notify-success` が成功のモードで通知する。`terraform-unlock.yaml` は
+apply の job が `success` で終わったときは、`notify-success` が成功のモードで通知する。revert の結果は
+`notify-revert` が検出のモードで別に送る（「apply の失敗の revert」）。`terraform-unlock.yaml` は
 通知を持たない —— 人が起動し、結果を画面で見ている。
 
 秘密の走査（gitleaks / trufflehog / Trivy secret）と `zizmor`（high）は所見で job を落とすので、

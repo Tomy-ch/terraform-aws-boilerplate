@@ -4,7 +4,8 @@ name: Notify
 # 起動条件の理由は README.md の「通知の起動条件」が持つ。
 #
 #   失敗（`failed-job`）—— スケジュールや push で走る job が壊れた。
-#   検出（`detected` + `details`）—— 意図して build を落とさない走査が何かを見つけた。
+#   検出（`detected` + `details`）—— 意図して build を落とさない走査が何かを見つけたか、apply の失敗に対して
+#     人が手を動かすもの（revert の Pull Request を開く URL など）を用意した。
 #   成功（`succeeded-job` + `details`）—— deploy の job が終わった。
 #
 # 宛先の系統は `slack-webhook-url` に渡す secret が選ぶ（secrets の説明を参照）。どの job がどの secret を

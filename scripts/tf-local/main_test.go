@@ -251,6 +251,16 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "✅ apply が終わりました\n", out.String())
 		})
 
+		t.Run("failure-kind は全文を読んで段の種類を1行で出す", func(t *testing.T) {
+			t.Parallel()
+
+			log := filepath.Join(t.TempDir(), "out.txt")
+			require.NoError(t, os.WriteFile(log, []byte("Error: Error acquiring the state lock\n"), 0o600))
+			var out bytes.Buffer
+			require.NoError(t, run([]string{"failure-kind", "-step", "apply", "-exitcode", "1", log}, &out, testDeps(nil)))
+			assert.Equal(t, "lock\n", out.String())
+		})
+
 		t.Run("lock-key は lock file の key を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1294,20 +1304,27 @@ func TestCiMk(t *testing.T) {
 		got := expand(t, "ci-apply-admin-identity")
 		assert.NotContains(t, got, "tabp-bootstrap")
 		assert.NotContains(t, got, "-lock=false")
-		assert.Contains(t, got, `trap 'rm -f "$out" "$json" "$tfplan" "$pol"' EXIT`)
+		assert.Contains(t, got, `trap 'rc=$?; rm -f "$out" "$json" "$tfplan" "$pol"; test "$rc" = 0 || test -z "${GITHUB_OUTPUT:-}" || printf "failure=%s\n" "$stage" >> "$GITHUB_OUTPUT"' EXIT`,
+			"失敗して終わるときに段を書く")
 		order(t, got,
+			`stage=prepare`,
 			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly`,
 			`output -raw plan_output_bucket_name 2>> "$out"`,
 			`apply-key -run "$GITHUB_RUN_ID" -attempt "$GITHUB_RUN_ATTEMPT" -root "$root"`,
 			envPrefix("apply-identity")+` aws s3api put-object --region "$region" --bucket "$plan_bucket" --key "$key" --body "$out"`,
 			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
+			`stage=plan`,
 			`plan -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
 			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
+			`failure-kind -step plan -exitcode "$rc" "$out"`,
 			`plan-summary -exitcode "$rc" "$json"`,
+			`stage=policy`,
 			`for ns in plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive; do export ns`,
 			`policy-result -namespace "$ns" -rego "conftest/plan/${ns#plan.}.rego" "$pol"`,
 			`done`,
+			`stage=apply`,
 			`timeout -s INT 20m `+envPrefix("apply-identity")+` terraform -chdir="$dir" apply -input=false -no-color "$tfplan" >> "$out" 2>&1 || arc=$?; export arc`,
+			`failure-kind -step apply -exitcode "$arc"`,
 			`upload`,
 			`apply-result -exitcode "$arc"`,
 		)
@@ -1463,9 +1480,10 @@ output) if test -f "$k/output-value"; then cat "$k/output-value"; else echo plan
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
+	cat "$k/plan-out" 2>/dev/null
 	exit "$(rc plan-rc)" ;;
 show) test -s "$last" || exit 1; cat "$k/plan.json" ;;
-apply) echo APPLY-SECRET; exit "$(rc apply-rc)" ;;
+apply) echo APPLY-SECRET; cat "$k/apply-out" 2>/dev/null; exit "$(rc apply-rc)" ;;
 esac
 `
 
@@ -1773,6 +1791,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Contains(t, r.summary, "apply が終わりました")
 			assert.True(t, strings.HasPrefix(r.output, c.output), r.output)
 			assert.Equal(t, 1, strings.Count(r.output, "\n"), "件数は1行で job の outputs に渡る: %q", r.output)
+			assert.NotContains(t, r.output, "failure=", "成功した run は失敗の段を書かない")
 			assert.Equal(t, 3, countCalls(r.calls, "conftest test "), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.stateful_protection"), strings.Index(r.calls, "--namespace plan.kms_key_policy"), r.calls)
 			assert.Less(t, strings.Index(r.calls, "--namespace plan.kms_key_policy"), strings.Index(r.calls, "--namespace plan.resource_policy_exclusive"), r.calls)
@@ -1799,20 +1818,22 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 	fail := map[string]struct {
 		knobs map[string]string
 		want  string
+		kind  string
 	}{
-		"plan が失敗すれば apply しない":                              {map[string]string{"plan-rc": "1", "plan.json": recipeNoop, "policy.json": recipePass}, "plan が失敗しました"},
-		"終了コードと JSON が食い違えば apply しない":                       {map[string]string{"plan-rc": "0", "plan.json": recipeCreate, "policy.json": recipePass}, "食い違います"},
-		"plan を JSON にできなければ apply しない":                      {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": recipePass}, "plan の JSON を解釈できません"},
-		"Policy に違反すれば apply しない":                            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipeViolated}, "[PLAN-STATE-01] stub"},
-		"Policy が評価されなければ apply しない":                         {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": "[]"}, "Policy を通りません"},
-		"conftest が何も出さなければ apply しない":                       {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": ""}, "Policy を通りません"},
-		"評価の数が規則の数と違えば apply しない":                            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": `[{"namespace":"plan.stateful_protection","successes":3}]`}, "一致しません"},
-		"Key Policy の Policy に違反すれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub"},
-		"Key Policy の評価の数が規則の数と違えば apply しない":                {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":2}]`}, "一致しません"},
-		"Key Policy の Policy が評価されなければ apply しない":            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません"},
-		"宣言の外の resource policy があれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub"},
-		"宣言の外の resource policy の評価の数が規則の数と違えば apply しない":     {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3}]`}, "一致しません"},
-		"宣言の外の resource policy の Policy が評価されなければ apply しない": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": "[]"}, "plan.resource_policy_exclusive の Policy を通りません"},
+		"plan が lock の取得で落ちれば、lock として apply しない":            {map[string]string{"plan-rc": "1", "plan.json": recipeNoop, "policy.json": recipePass, "plan-out": "Error: Error acquiring the state lock"}, "plan が失敗しました", "lock"},
+		"plan が失敗すれば apply しない":                              {map[string]string{"plan-rc": "1", "plan.json": recipeNoop, "policy.json": recipePass}, "plan が失敗しました", "plan"},
+		"終了コードと JSON が食い違えば apply しない":                       {map[string]string{"plan-rc": "0", "plan.json": recipeCreate, "policy.json": recipePass}, "食い違います", "plan"},
+		"plan を JSON にできなければ apply しない":                      {map[string]string{"plan-rc": "2", "plan.json": "", "policy.json": recipePass}, "plan の JSON を解釈できません", "plan"},
+		"Policy に違反すれば apply しない":                            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipeViolated}, "[PLAN-STATE-01] stub", "policy"},
+		"Policy が評価されなければ apply しない":                         {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": "[]"}, "Policy を通りません", "policy"},
+		"conftest が何も出さなければ apply しない":                       {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": ""}, "Policy を通りません", "policy"},
+		"評価の数が規則の数と違えば apply しない":                            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": `[{"namespace":"plan.stateful_protection","successes":3}]`}, "一致しません", "policy"},
+		"Key Policy の Policy に違反すれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":1,"failures":[{"msg":"[PLAN-KMS-09] stub"}]}]`}, "[PLAN-KMS-09] stub", "policy"},
+		"Key Policy の評価の数が規則の数と違えば apply しない":                {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": `[{"namespace":"plan.kms_key_policy","successes":2}]`}, "一致しません", "policy"},
+		"Key Policy の Policy が評価されなければ apply しない":            {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.kms_key_policy.json": "[]"}, "plan.kms_key_policy の Policy を通りません", "policy"},
+		"宣言の外の resource policy があれば apply しない":               {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3,"failures":[{"msg":"[PLAN-RPE-01] stub"}]}]`}, "[PLAN-RPE-01] stub", "policy"},
+		"宣言の外の resource policy の評価の数が規則の数と違えば apply しない":     {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": `[{"namespace":"plan.resource_policy_exclusive","successes":3}]`}, "一致しません", "policy"},
+		"宣言の外の resource policy の Policy が評価されなければ apply しない": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "policy-plan.resource_policy_exclusive.json": "[]"}, "plan.resource_policy_exclusive の Policy を通りません", "policy"},
 	}
 	for name, c := range fail {
 		t.Run(name, func(t *testing.T) {
@@ -1827,7 +1848,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.NotContains(t, r.out, "✅ apply")
 			assert.NotContains(t, r.out, "PLAN-SECRET")
 			assert.Empty(t, r.summary)
-			assert.Empty(t, r.output, "apply しなかった run は件数を outputs に書かない")
+			assert.Equal(t, "failure="+c.kind+"\n", r.output, "apply しなかった run は件数を書かず、失敗の段だけを書く")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}
@@ -1859,6 +1880,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 				assert.Contains(t, r.out, c.want)
 			}
 			assert.Empty(t, initArgs(r.calls), r.calls)
+			assert.Equal(t, "failure=prepare\n", r.output, "init より前の失敗は prepare")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}
@@ -1871,6 +1893,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "init が失敗しました")
 		assert.NotContains(t, r.calls, " plan ")
 		assert.Zero(t, countCalls(r.calls, "aws s3api put-object"), "Bucket の名前は init の後でなければ読めない")
+		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -1882,6 +1905,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "Bucket の名前を state から読めません")
 		assert.NotContains(t, r.calls, " plan ")
 		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -1893,6 +1917,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "Bucket の名前が空です")
 		assert.NotContains(t, r.calls, " plan ")
 		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -1904,16 +1929,18 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "apply の出力の key を組めません")
 		assert.NotContains(t, r.calls, " plan ")
 		assert.Zero(t, applies(r.calls), r.calls)
+		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
 	ended := map[string]struct {
 		knobs map[string]string
 		want  string
+		kind  string
 	}{
-		"apply が失敗すれば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1"}, "apply が失敗しました"},
-		"apply を打ち切れば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1", "timeout-rc": "124"}, "apply を打ち切りました"},
-		"打ち切りの後に apply が成功を返しても失敗とする": {map[string]string{"apply-rc": "0", "timeout-rc": "124"}, "apply を打ち切りました"},
+		"apply が失敗すれば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1"}, "apply が失敗しました", "apply"},
+		"apply を打ち切れば全文を置いてから非ゼロで終わる": {map[string]string{"apply-rc": "1", "timeout-rc": "124"}, "apply を打ち切りました", "timeout"},
+		"打ち切りの後に apply が成功を返しても失敗とする": {map[string]string{"apply-rc": "0", "timeout-rc": "124"}, "apply を打ち切りました", "timeout"},
 	}
 	for name, c := range ended {
 		t.Run(name, func(t *testing.T) {
@@ -1934,10 +1961,47 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.NotContains(t, r.out, "✅ apply")
 			assert.NotContains(t, r.out, "APPLY-SECRET")
 			assert.Empty(t, r.summary)
-			assert.Empty(t, r.output, "失敗した apply は件数を outputs に書かない")
+			assert.Equal(t, "failure="+c.kind+"\n", r.output, "失敗した apply は件数を書かず、失敗の段だけを書く")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}
+
+	// 全文を置けない失敗が、先に起きた失敗の段を消すと、revert の対象の失敗が対象外と読まれる。
+	for name, c := range map[string]struct {
+		knobs       map[string]string
+		uploadFails bool
+		kind        string
+	}{
+		"apply が失敗した後に全文を置けなくても apply の段を書く":   {map[string]string{"apply-rc": "1"}, true, "apply"},
+		"Policy に違反した後に全文を置けなくても policy の段を書く": {map[string]string{"policy.json": recipeViolated}, true, "policy"},
+		"apply が lock の取得で落ちれば lock の段を書く":     {map[string]string{"apply-rc": "1", "apply-out": "Error: Error acquiring the state lock"}, false, "lock"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			knobs := map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}
+			if c.uploadFails {
+				knobs["s3api-rc"] = "1"
+			}
+			maps.Copy(knobs, c.knobs)
+			r := recipe(t, "ci-apply-admin-identity", knobs)
+			require.Error(t, r.err, r.out)
+			assert.Equal(t, "failure="+c.kind+"\n", r.output)
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+		})
+	}
+
+	t.Run("apply が終わった後の失敗は applied の段を書く", func(t *testing.T) {
+		t.Parallel()
+
+		// job summary を書けない場所を渡し、apply と全文の保存が終わった後に失敗させる。
+		r := recipe(t, "ci-apply-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass},
+			"GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "missing", "summary.md"))
+		require.Error(t, r.err, r.out)
+		assert.Equal(t, 1, applies(r.calls), r.calls)
+		assert.Contains(t, r.out, "apply の全文の版 ID: v-1")
+		assert.Equal(t, "failure=applied\n", r.output)
+	})
 
 	t.Run("全文を置けなければ apply が成功しても失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -1950,6 +2014,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.NotContains(t, r.out, "apply の全文の版 ID")
 		assert.NotContains(t, r.out, "✅ apply")
 		assert.Empty(t, r.summary)
+		assert.Equal(t, "failure=upload\n", r.output, "全文を置けない失敗は upload")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
 
@@ -2075,6 +2140,7 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
 			assert.NotContains(t, r.out, "PLAN-SECRET")
 			assert.Empty(t, r.summary)
+			assert.NotContains(t, r.output, "failure=", "plan の入口は失敗の段を書かない")
 			assert.Empty(t, r.left, "作業ファイルが残っています")
 		})
 	}

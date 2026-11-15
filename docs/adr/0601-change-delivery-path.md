@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0604
+- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0603, ADR-0604
 
 ## Context
 
@@ -73,6 +73,12 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 15. state backend の選定は本 ADR の対象外とし、別 ADR で決定する。state の分割単位は ADR-0604 が決める。環境（dev / staging / production 等）の表現方法は ADR-0102 決定11-12 が決める。
 16. 本 ADR が前提とするのは、apply が排他制御（lock）のもとで実行されることのみとする。この前提を満たさない backend を採用する場合、決定6 の保証は成立しない。
 
+### apply の失敗
+
+17. merge の後の apply が、commit の宣言を AWS に対して評価した後に失敗した場合も、その状態からの回復は Git の経路で行う。CI は最後に成功した apply の commit を apply し直さない（決定6）。CI が用意するのは、最後に成功した apply の commit へ宣言を戻す revert のブランチまでとし、Pull Request を開いて merge するのは人である（決定10）。
+18. revert のブランチを用意するために CI が持つリポジトリへの書き込みの資格情報は、その run の間だけ有効な `GITHUB_TOKEN` の `contents: write` に限る。それを持つ job は判定を持たず、道具を導入せず、決まった commit の revert と push だけを行う。戻すかどうかと戻す範囲は、読み取りの権限だけを持つ job が決める。
+19. apply の失敗は、revert が merge されるまで後続の apply を止めない。apply は常に保護ブランチの先頭の木全体を適用するので、後続の apply が成功すれば実環境は Git と一致する。止める必要があるときは、管理者が人の操作で止める。
+
 ## 検討した代替案
 
 ### 案A: ローカルからの apply を許容する
@@ -86,6 +92,14 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 ### 案C: drift を検出したら自動的に修復する
 
 Git と実態の乖離が自動的に収束する。ただし drift の原因（意図的な緊急対応か、外部システムの正当な変更か、攻撃か）を判定せずに上書きすることになり、インシデント対応中の変更を巻き戻し得る。検出と適用を分離しないため、Drift Detection が deployment 機構になる。
+
+### 案D: apply の失敗の後、CI が最後に成功した commit を apply し直す
+
+実環境を速く直前の状態へ近づけられる。ただし apply する commit が保護ブランチの先頭と一致しなくなり、決定6 と古い commit の拒否（ADR-0602 決定14）に反する。Terraform は部分的に適用された変更を取り消す手段を持たないので、直前の commit の apply も同じ理由で失敗しうる。
+
+### 案E: CI が revert の Pull Request まで作る
+
+人の手順が1つ減る。ただし GitHub Actions に Pull Request の作成を許す設定は承認も同時に許し、長期の資格情報（fine-grained PAT）は ADR-0602 の「CI が長期の資格情報を保持しない」に反する。どちらも、承認者数の要件を CI が満たしうる状態を作る。
 
 ### 評価
 
@@ -109,6 +123,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 
 - 保証すること: 実環境へ適用された構成が、保護ブランチ上の commit に対応すること。適用が検証を通過した構成であること
 - 保証しないこと: Git 外で行われた変更が発生しないこと（検出のみを保証する）。検出から解消までの間、実態が Git と一致していること
+- 保証しないこと: apply の失敗から revert の merge まで、または後続の apply の成功までの間、実態が Git と一致していること。revert の apply が成功すること
 
 ## 検証方法
 
@@ -116,6 +131,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - Static Analysis: Pull Request 契機の workflow に apply が含まれないこと
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
 - 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
+- Static Analysis: リポジトリへの書き込みの資格情報（`contents: write`）を持つ job が、決定18 の形に限られること（`make contents-write-lint`）
 
 ## 影響
 
@@ -128,3 +144,4 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 検証の所要時間が、インシデント対応で許容できる時間を超えた場合
 - 環境の数が増え、単一の apply 経路では表現できなくなった場合
 - state backend の決定が、決定16 の前提（排他制御）を満たせない方向へ動いた場合
+- GitHub が、Pull Request の作成だけを許し承認を許さない権限を `GITHUB_TOKEN` に与えた場合（決定17 の「人が開く」を見直す）
