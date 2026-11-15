@@ -617,6 +617,78 @@ func Test_runApplyResult(t *testing.T) {
 	}
 }
 
+func Test_runFailureKind(t *testing.T) {
+	t.Parallel()
+
+	files := map[string][]byte{
+		"lock.txt":  []byte("plan\n\nError: Error acquiring the state lock\n\nLock Info:\n"),
+		"plan.txt":  []byte("plan\n\nError: Invalid reference\n"),
+		"empty.txt": {},
+	}
+	readFile := func(path string) ([]byte, error) {
+		if b, ok := files[path]; ok {
+			return b, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"plan が lock の取得で落ちれば lock":        {[]string{"-step", "plan", "-exitcode", "1", "lock.txt"}, "lock"},
+		"plan がほかの理由で落ちれば plan":            {[]string{"-step", "plan", "-exitcode", "1", "plan.txt"}, "plan"},
+		"全文が空でも、読めれば plan":                 {[]string{"-step", "plan", "-exitcode", "1", "empty.txt"}, "plan"},
+		"plan が通った後の失敗は、全文を読まずに plan":      {[]string{"-step", "plan", "-exitcode", "2", "missing.txt"}, "plan"},
+		"終了コード 0 の plan の後の失敗も plan":       {[]string{"-step", "plan", "-exitcode", "0", "lock.txt"}, "plan"},
+		"apply が lock の取得で落ちれば lock":       {[]string{"-step", "apply", "-exitcode", "1", "lock.txt"}, "lock"},
+		"apply がほかの理由で落ちれば apply":          {[]string{"-step", "apply", "-exitcode", "1", "plan.txt"}, "apply"},
+		"apply の打ち切りは、全文を読まずに timeout":     {[]string{"-step", "apply", "-exitcode", "124", "missing.txt"}, "timeout"},
+		"apply の打ち切りの1つ手前は apply":          {[]string{"-step", "apply", "-exitcode", "123", "lock.txt"}, "apply"},
+		"apply の打ち切りの1つ後は apply":           {[]string{"-step", "apply", "-exitcode", "125", "lock.txt"}, "apply"},
+		"apply が終わった後の失敗は、全文を読まずに applied": {[]string{"-step", "apply", "-exitcode", "0", "missing.txt"}, "applied"},
+		"apply の終了コードの上限 255 は apply":      {[]string{"-step", "apply", "-exitcode", "255", "missing.txt"}, "apply"},
+		"plan の 124 は timeout にせず plan":    {[]string{"-step", "plan", "-exitcode", "124", "missing.txt"}, "plan"},
+		"apply の 2 は、全文を読まずに apply":        {[]string{"-step", "apply", "-exitcode", "2", "missing.txt"}, "apply"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runFailureKind(c.args, readFile)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
+	}
+
+	for _, step := range []string{"plan", "apply"} {
+		t.Run(step+" が落ちたのに全文を読めなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runFailureKind([]string{"-step", step, "-exitcode", "1", "missing.txt"}, readFile)
+			require.ErrorIs(t, err, errFailureKind)
+		})
+	}
+
+	for name, args := range map[string][]string{
+		"段が無い":       {"-exitcode", "1", "plan.txt"},
+		"知らない段":      {"-step", "init", "-exitcode", "1", "plan.txt"},
+		"終了コードが無い":   {"-step", "apply", "plan.txt"},
+		"終了コードが範囲の外": {"-step", "apply", "-exitcode", "256", "plan.txt"},
+		"終了コードが負":    {"-step", "apply", "-exitcode", "-1", "plan.txt"},
+		"終了コードが数でない": {"-step", "apply", "-exitcode", "x", "plan.txt"},
+		"全文が無い":      {"-step", "apply", "-exitcode", "1"},
+		"余分な引数がある":   {"-step", "plan", "-exitcode", "1", "plan.txt", "x"},
+		"知らない flag":  {"-x"},
+	} {
+		t.Run(name+"なら失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runFailureKind(args, readFile)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+}
+
 func Test_planKey(t *testing.T) {
 	t.Parallel()
 
