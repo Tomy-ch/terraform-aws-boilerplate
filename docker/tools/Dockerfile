@@ -51,6 +51,8 @@ RUN set -eu; \
 
 # トークンの渡し方と未認証時の制限は docker/tools/README.md が持つ（ADR-0503 決定12）。
 # 未指定でも未認証で成立するため、手元のビルドは従来どおり動く。
+# go: backend は mise.toml の go を mise 管理の Go として要求するが、この段の Go はベースイメージが
+# 提供する（版の一致は上の RUN が守る）。
 RUN --mount=type=secret,id=github_token \
     github_token="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     if [ -n "$github_token" ]; then export GITHUB_TOKEN="$github_token"; fi; \
@@ -58,7 +60,7 @@ RUN --mount=type=secret,id=github_token \
     && mise install shellcheck \
     && mise install hadolint \
     && mise install golangci-lint \
-    && mise install "go:golang.org/x/vuln/cmd/govulncheck" \
+    && MISE_DISABLE_TOOLS=go mise install "go:golang.org/x/vuln/cmd/govulncheck" \
     && mise install "aqua:terraform-linters/tflint" \
     && mise install "aqua:aquasecurity/trivy" \
     && mise install "aqua:gitleaks/gitleaks" \

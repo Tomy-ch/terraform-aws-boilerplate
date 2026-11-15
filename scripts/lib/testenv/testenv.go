@@ -29,9 +29,26 @@ var (
 	unsetenv               = os.Unsetenv
 	stderr       io.Writer = os.Stderr
 	localEnvVars           = func() ([]byte, error) {
-		return exec.CommandContext(context.Background(), "git", "rev-parse", "--local-env-vars").Output()
+		cmd := exec.CommandContext(context.Background(), "git", "rev-parse", "--local-env-vars")
+		cmd.Env = withoutGitEnv(os.Environ())
+
+		return cmd.Output()
 	}
 )
+
+// withoutGitEnv は、env から GIT_ で始まる変数を除いた写しを返します。一覧を問う git が、これから
+// 外す変数に左右されないようにするためです（git 2.39 は GIT_INTERNAL_SUPER_PREFIX が立っていると
+// rev-parse 自体を拒みます）。
+func withoutGitEnv(env []string) []string {
+	kept := make([]string, 0, len(env))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "GIT_") {
+			kept = append(kept, kv)
+		}
+	}
+
+	return kept
+}
 
 // reporter は requireNonRoot と requireShellcheck が使う *testing.T の部分です。判断の分岐を、
 // root でない環境や shellcheck が在る環境からも到達可能にするために切り出しています。
