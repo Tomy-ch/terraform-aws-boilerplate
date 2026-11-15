@@ -26,12 +26,12 @@ else
   | .address as $a | .change.actions as $act
   | (if .change.importing != null then "import \($a)" else empty end),
     (if $act == ["no-op"] then empty
-     elif $act == ["create"] then "add \($a)"
-     elif $act == ["update"] then "change \($a)"
-     elif $act == ["delete"] then "destroy \($a)"
-     elif $act == ["delete", "create"] or $act == ["create", "delete"] then "add \($a)", "destroy \($a)"
-     else "unknown(\($act | join(","))) \($a)"
-     end)
+      elif $act == ["create"] then "add \($a)"
+      elif $act == ["update"] then "change \($a)"
+      elif $act == ["delete"] then "destroy \($a)"
+      elif $act == ["delete", "create"] or $act == ["create", "delete"] then "add \($a)", "destroy \($a)"
+      else "unknown(\($act | join(","))) \($a)"
+      end)
 end
 JQ
 )
