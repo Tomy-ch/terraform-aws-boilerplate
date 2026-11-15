@@ -20,9 +20,9 @@
 
 ## branches.json
 
-分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` は固定名で保護するブランチ、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。
+分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` は固定名で保護するブランチ、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。`revert` は apply の失敗を戻す revert のブランチの接頭辞（`/` で終わる）で、保護しません。無いか `lines` の接頭辞と重なれば `repo-settings-check` が落ちます（[`.github/workflows/README.md`](../workflows/README.md) の「apply の失敗の revert」）。
 
-読み手のうち、`branch-protection.json` の include と environment の deployment branch policy はここから生成します。`scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と workflow の起動条件は、まだパターンを自分で持っています。
+読み手のうち、`branch-protection.json` の include と environment の deployment branch policy はここから生成し、`scripts/apply-revert` は `revert` の接頭辞を読みます。両者は同じ読み手（`scripts/lib/branchdecl`）を通ります。`scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と workflow の起動条件は、まだパターンを自分で持っています。
 
 ## environments.json
 

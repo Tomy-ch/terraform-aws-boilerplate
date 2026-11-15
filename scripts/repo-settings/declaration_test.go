@@ -21,150 +21,6 @@ func writeFile(t *testing.T, dir, name, body string) string {
 
 func boolPtr(v bool) *bool { return &v }
 
-func Test_decodeStrict(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		body    string
-		wantErr error
-	}{
-		{"正しい JSON は読める", `{"deploy": ["a"]}`, nil},
-		{"未知のキーは拒む", `{"deploy": ["a"], "extra": 1}`, errDeclaration},
-		{"値の後の余分なトークンは拒む", `{"deploy": ["a"]} {}`, errDeclaration},
-		{"JSON でないものは拒む", `deploy: a`, errDeclaration},
-		{"空のファイルは拒む", ``, errDeclaration},
-		{"キーの重複は拒む", `{"deploy": ["b"], "deploy": ["a"]}`, errDeclaration},
-		{"字面の違うキーは拒む", `{"Deploy": ["a"]}`, errDeclaration},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			p := writeFile(t, t.TempDir(), "b.json", tc.body)
-			var b branches
-			err := decodeStrict(p, &b)
-			if tc.wantErr == nil {
-				require.NoError(t, err)
-				assert.Equal(t, []string{"a"}, b.Deploy)
-				return
-			}
-			require.ErrorIs(t, err, tc.wantErr)
-		})
-	}
-
-	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
-		t.Parallel()
-		var b branches
-		err := decodeStrict(filepath.Join(t.TempDir(), "none.json"), &b)
-		require.ErrorIs(t, err, os.ErrNotExist)
-	})
-}
-
-func Test_checkKeys(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		src     string
-		wantErr bool
-	}{
-		{"宣言のキーだけなら通る", `[{"name": "x", "deploy_from": "any", "can_admins_bypass": false}]`, false},
-		{"入れ子の配列とスカラーも辿る", `{"deploy": ["a", "b"], "lines": []}`, false},
-		{"宣言のキーでなければ拒む", `{"extra": 1}`, true},
-		{"字面の違うキーは拒む", `{"DEPLOY_FROM": "any"}`, true},
-		{"入れ子の object のキーの重複も拒む", `[{"name": "a", "name": "b"}]`, true},
-		{"配列の中の不正なキーも拒む", `[{"name": "a"}, {"nope": 1}]`, true},
-		{"壊れた JSON は拒む", `{"deploy": [`, true},
-		{"閉じられていない object は拒む", `{"deploy": ["a"]`, true},
-		{"キーの位置の構文エラーは拒む", `{"deploy": ["a"],}`, true},
-		{"空の入力は拒む", ``, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := checkKeys(newDecoder([]byte(tc.src)))
-			if !tc.wantErr {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorIs(t, err, errDeclaration)
-		})
-	}
-}
-
-func Test_readBranches(t *testing.T) {
-	t.Parallel()
-
-	t.Run("宣言を読む", func(t *testing.T) {
-		t.Parallel()
-		p := writeFile(t, t.TempDir(), "b.json", `{"deploy": ["production"], "lines": ["release/"]}`)
-		b, err := readBranches(p)
-		require.NoError(t, err)
-		assert.Equal(t, branches{Deploy: []string{"production"}, Lines: []string{"release/"}}, b)
-	})
-
-	t.Run("解釈できなければ失敗する", func(t *testing.T) {
-		t.Parallel()
-		p := writeFile(t, t.TempDir(), "b.json", `{"deploy": "production"}`)
-		_, err := readBranches(p)
-		require.ErrorIs(t, err, errDeclaration)
-	})
-
-	t.Run("規則に反すれば失敗する", func(t *testing.T) {
-		t.Parallel()
-		p := writeFile(t, t.TempDir(), "b.json", `{"deploy": [], "lines": []}`)
-		_, err := readBranches(p)
-		require.ErrorIs(t, err, errEmptyDeclaration)
-	})
-
-	t.Run("null は0件として拒む", func(t *testing.T) {
-		t.Parallel()
-		p := writeFile(t, t.TempDir(), "b.json", `null`)
-		_, err := readBranches(p)
-		require.ErrorIs(t, err, errEmptyDeclaration)
-	})
-
-	t.Run("配列なら拒む", func(t *testing.T) {
-		t.Parallel()
-		p := writeFile(t, t.TempDir(), "b.json", `["production"]`)
-		_, err := readBranches(p)
-		require.ErrorIs(t, err, errDeclaration)
-	})
-}
-
-func Test_validateBranches(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		in      branches
-		wantErr error
-	}{
-		{"固定名と接頭辞を持つ宣言は通る", branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/"}}, nil},
-		{"接頭辞だけの宣言も通る", branches{Lines: []string{"release/"}}, nil},
-		{"0件は拒む", branches{}, errEmptyDeclaration},
-		{"glob の文字を含む固定名は拒む", branches{Deploy: []string{"release/*"}}, errDeclaration},
-		{"大文字の固定名は拒む", branches{Deploy: []string{"Main"}}, errDeclaration},
-		{"固定名の重複は拒む", branches{Deploy: []string{"develop", "develop"}}, errDeclaration},
-		{"`/` で終わらない接頭辞は拒む", branches{Lines: []string{"release"}}, errDeclaration},
-		{"glob の文字を含む接頭辞は拒む", branches{Lines: []string{"release/*/"}}, errDeclaration},
-		{"接頭辞の重複は拒む", branches{Lines: []string{"release/", "release/"}}, errDeclaration},
-		{"空文字列の固定名は拒む", branches{Deploy: []string{""}}, errDeclaration},
-		{"空文字列の接頭辞は拒む", branches{Lines: []string{""}}, errDeclaration},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			err := validateBranches(tc.in)
-			if tc.wantErr == nil {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorIs(t, err, tc.wantErr)
-		})
-	}
-}
-
 func Test_readEnvironments(t *testing.T) {
 	t.Parallel()
 
@@ -282,7 +138,8 @@ func Test_requiredDeployFrom(t *testing.T) {
 func Test_rulesetIncludes(t *testing.T) {
 	t.Parallel()
 
-	got := rulesetIncludes(branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/", "hotfix/"}})
+	// revert の接頭辞は保護しないので、展開しない。
+	got := rulesetIncludes(branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/", "hotfix/"}, Revert: "revert/"})
 	assert.Equal(t, []string{
 		"refs/heads/production",
 		"refs/heads/develop",
@@ -310,7 +167,8 @@ func rulesetProtects(includes []string, ref string) bool {
 func Test_environmentPatterns(t *testing.T) {
 	t.Parallel()
 
-	b := branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/"}}
+	// revert の接頭辞は保護しないので、どの種類にも展開しない。
+	b := branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/"}, Revert: "revert/"}
 
 	t.Run("protected は固定名と1階層の接頭辞に展開する", func(t *testing.T) {
 		t.Parallel()
