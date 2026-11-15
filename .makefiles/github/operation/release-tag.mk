@@ -7,6 +7,7 @@
 .PHONY: tag-patch ## リリースタグ(vX.Y.Z+1)を作成
 .PHONY: tag-minor ## リリースタグ(vX.Y+1.0)を作成
 .PHONY: tag-major ## リリースタグ(vX+1.0.0)を作成
+.PHONY: tag-version ## 指定の版でリリースタグを作成 (VERSION=vX.Y.Z。タグが無い初回はこちら)
 
 RELEASE_TOOL := go -C scripts run ./release
 
@@ -18,3 +19,7 @@ tag-minor:
 
 tag-major:
 	@$(RELEASE_TOOL) tag -bump major
+
+tag-version:
+	@test -n "$(VERSION)" || { echo "❌ VERSION が要ります: make tag-version VERSION=vX.Y.Z" >&2; exit 1; }
+	@$(RELEASE_TOOL) tag -version "$(VERSION)"
