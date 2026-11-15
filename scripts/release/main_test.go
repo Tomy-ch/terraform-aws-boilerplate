@@ -38,10 +38,10 @@ type fakeRunner struct {
 	// outputs は、output が返す標準出力（キーは calls と同じ表記）。
 	outputs map[string]string
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
-	failOn string
-	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
+	failOn         string
 	remoteBranches map[string]bool
-	lsRemoteFails  bool
+	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
+	lsRemoteFails bool
 }
 
 func (f *fakeRunner) runner() runner {
@@ -85,18 +85,22 @@ func taggableRunner() *fakeRunner {
 	return &fakeRunner{outputs: map[string]string{tagListCall: "v1.2.3\n"}}
 }
 
-// writeNote は、作業ディレクトリを一時ディレクトリへ移し、v1.2.3 の次のパッチ版にあたる
-// リリースノートを置きます。
+// writeNote は、writeNoteFor を v1.2.4（taggableRunner の次のパッチ版）で呼ぶ。
 func writeNote(t *testing.T) {
+	t.Helper()
+	writeNoteFor(t, "v1.2.4")
+}
+
+// writeNoteFor は、作業ディレクトリを一時ディレクトリへ移し、指定の版のリリースノートを置きます。
+func writeNoteFor(t *testing.T, v string) {
 	t.Helper()
 
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, releaseNoteDir), 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, notePath("v1.2.4")), []byte("note\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, notePath(v)), []byte("note\n"), 0o600))
 	t.Chdir(dir)
 }
 
-// commands は、手順を "実行ファイル 引数..." の文字列列へ畳みます。
 func commands(steps []step) []string {
 	got := make([]string, 0, len(steps))
 	for _, s := range steps {
@@ -575,6 +579,296 @@ func Test_remoteBranchExists(t *testing.T) {
 	})
 }
 
+func Test_version_less(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("major が小さければ minor と patch によらず古い", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, version{major: 1, minor: 99, patch: 99}.less(version{major: 2}))
+		})
+
+		t.Run("major が同じなら minor で比べる", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, version{major: 1, minor: 9, patch: 99}.less(version{major: 1, minor: 10}))
+		})
+
+		t.Run("major と minor が同じなら patch で比べる", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, version{major: 1, minor: 2, patch: 3}.less(version{major: 1, minor: 2, patch: 4}))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("同じ版は古くない", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, version{major: 1, minor: 2, patch: 3}.less(version{major: 1, minor: 2, patch: 3}))
+		})
+
+		t.Run("新しい版は古くない", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, version{major: 2}.less(version{major: 1, minor: 99, patch: 99}))
+		})
+	})
+}
+
+func Test_listTags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("タグを取り直してから一覧を返す", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			out, err := listTags(f.runner())
+			require.NoError(t, err)
+			assert.Equal(t, "v1.2.3\n", out)
+			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("タグを取り直せなければ一覧を見ない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{failOn: fetchTagsCall}
+
+			_, err := listTags(f.runner())
+			require.ErrorIs(t, err, errFakeCommand)
+			assert.Equal(t, []string{fetchTagsCall}, f.calls)
+		})
+
+		t.Run("一覧を取得できなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{failOn: tagListCall}
+
+			_, err := listTags(f.runner())
+			require.ErrorIs(t, err, errFakeCommand)
+		})
+	})
+}
+
+func Test_resolveExplicit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("タグが 1 つも無ければ形だけを見て受け付ける", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+
+			v, err := resolveExplicit(f.runner(), "v0.1.0")
+			require.NoError(t, err)
+			assert.Equal(t, "v0.1.0", v.String())
+			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
+		})
+
+		t.Run("最新のタグより新しい版を受け付ける", func(t *testing.T) {
+			t.Parallel()
+
+			v, err := resolveExplicit(taggableRunner().runner(), "v1.3.0")
+			require.NoError(t, err)
+			assert.Equal(t, "v1.3.0", v.String())
+		})
+
+		// 比較を数値で行わないと、v1.10.0 より v1.9.1 を新しいと読む。
+		t.Run("最新のタグとの比較は数値で行う", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{outputs: map[string]string{tagListCall: "v1.9.0\n"}}
+
+			_, err := resolveExplicit(f.runner(), "v1.10.0")
+			require.NoError(t, err)
+		})
+
+		t.Run("リリースタグ以外のタグは比較に使わない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{outputs: map[string]string{tagListCall: "nightly\nv9.0.0-rc1\n"}}
+
+			_, err := resolveExplicit(f.runner(), "v0.1.0")
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("空の版はタグを見ずに拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			_, err := resolveExplicit(f.runner(), "")
+			require.ErrorIs(t, err, errVersionFormat)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("接頭辞 v を欠く版は拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), "1.3.0")
+			require.ErrorIs(t, err, errVersionFormat)
+		})
+
+		t.Run("プレリリース付きの版は拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), "v1.3.0-rc1")
+			require.ErrorIs(t, err, errVersionFormat)
+		})
+
+		t.Run("前後に空白を含む版は拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), " v1.3.0")
+			require.ErrorIs(t, err, errVersionFormat)
+		})
+
+		t.Run("先頭に 0 を含む版は拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), "v1.03.0")
+			require.ErrorIs(t, err, errVersionFormat)
+		})
+
+		t.Run("既に在るタグは拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), "v1.2.3")
+			require.ErrorIs(t, err, errVersionExists)
+		})
+
+		// 最新でないタグと同じ版も、最新より古いことより先に「既に在る」として返す。
+		t.Run("最新でない既存のタグも既に在るとして拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{outputs: map[string]string{tagListCall: "v1.0.0\nv1.2.3\n"}}
+
+			_, err := resolveExplicit(f.runner(), "v1.0.0")
+			require.ErrorIs(t, err, errVersionExists)
+		})
+
+		t.Run("最新のタグより古い版は拒否する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveExplicit(taggableRunner().runner(), "v1.2.2")
+			require.ErrorIs(t, err, errVersionNotNewer)
+			assert.Contains(t, err.Error(), "v1.2.3")
+		})
+
+		t.Run("タグ一覧を取得できなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{failOn: tagListCall}
+
+			_, err := resolveExplicit(f.runner(), "v0.1.0")
+			require.ErrorIs(t, err, errFakeCommand)
+		})
+	})
+}
+
+func Test_flagsSet(t *testing.T) {
+	t.Parallel()
+
+	newFlags := func() *flag.FlagSet {
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		fs.String("bump", "", "")
+		fs.String("version", "", "")
+
+		return fs
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("指定されたフラグだけを返す", func(t *testing.T) {
+			t.Parallel()
+			fs := newFlags()
+			require.NoError(t, fs.Parse([]string{"-version", "v0.1.0"}))
+
+			assert.Equal(t, map[string]bool{"version": true}, flagsSet(fs))
+		})
+
+		// 空の -version を「指定なし」と読むと、-bump の経路へ黙って落ちる。
+		t.Run("空文字の指定も指定ありに数える", func(t *testing.T) {
+			t.Parallel()
+			fs := newFlags()
+			require.NoError(t, fs.Parse([]string{"-version", ""}))
+
+			assert.Equal(t, map[string]bool{"version": true}, flagsSet(fs))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("何も指定されなければ空を返す", func(t *testing.T) {
+			t.Parallel()
+			fs := newFlags()
+			require.NoError(t, fs.Parse(nil))
+
+			assert.Empty(t, flagsSet(fs))
+		})
+	})
+}
+
+func Test_resolveTagVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("-version が無ければ -bump で最新のタグから決める", func(t *testing.T) {
+			t.Parallel()
+
+			v, err := resolveTagVersion(taggableRunner().runner(), map[string]bool{"bump": true}, "minor", "")
+			require.NoError(t, err)
+			assert.Equal(t, "v1.3.0", v.String())
+		})
+
+		t.Run("-version があれば指定の版を返す", func(t *testing.T) {
+			t.Parallel()
+
+			v, err := resolveTagVersion((&fakeRunner{}).runner(), map[string]bool{"version": true}, "", "v0.1.0")
+			require.NoError(t, err)
+			assert.Equal(t, "v0.1.0", v.String())
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("-version と -bump を同時に与えるとタグを見ずに拒否する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			_, err := resolveTagVersion(f.runner(), map[string]bool{"bump": true, "version": true}, "patch", "v1.3.0")
+			require.ErrorIs(t, err, errVersionWithBump)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("タグが無いのに -bump だけを与えると初回の案内を返す", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveTagVersion((&fakeRunner{}).runner(), map[string]bool{"bump": true}, "patch", "")
+			require.ErrorIs(t, err, errNoTag)
+			assert.Contains(t, err.Error(), "-version")
+		})
+
+		t.Run("-version の検証に落ちればそのエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := resolveTagVersion(taggableRunner().runner(), map[string]bool{"version": true}, "", "v1.2.3")
+			require.ErrorIs(t, err, errVersionExists)
+		})
+	})
+}
+
 func Test_resolveNext(t *testing.T) {
 	t.Parallel()
 
@@ -653,10 +947,65 @@ func Test_runTag(t *testing.T) {
 				releaseCreateCall,
 			}, f.calls)
 		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("タグが無くても -version の版で -bump と同じ順に進む", func(t *testing.T) {
+			writeNoteFor(t, "v0.1.0")
+			f := &fakeRunner{}
+
+			require.NoError(t, runTag(f.runner(), []string{"-version", "v0.1.0"}))
+			assert.Equal(t, []string{
+				fetchTagsCall,
+				tagListCall,
+				"git fetch origin production",
+				"git switch production",
+				"git reset --hard origin/production",
+				fetchTagsCall,
+				"git tag -a v0.1.0 -F .github/release/v0.1.0.md",
+				"git push origin v0.1.0",
+				"gh release create v0.1.0 --title v0.1.0 --notes-file .github/release/v0.1.0.md",
+			}, f.calls)
+		})
 	})
 
 	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 	t.Run("異常系", func(t *testing.T) {
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("タグが無いのに -bump だけでは production へ切り替える前に中止する", func(t *testing.T) {
+			writeNote(t)
+			f := &fakeRunner{}
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errNoTag)
+			assert.NotContains(t, f.calls, "git switch production")
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("空の -version では手順を 1 つも実行しない", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-version", ""}), errVersionFormat)
+			assert.Empty(t, f.calls)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("-version と -bump の同時指定では手順を 1 つも実行しない", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch", "-version", "v1.2.4"}), errVersionWithBump)
+			assert.Empty(t, f.calls)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("既に在る版の -version では production へ切り替える前に中止する", func(t *testing.T) {
+			writeNote(t)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-version", "v1.2.3"}), errVersionExists)
+			assert.NotContains(t, f.calls, "git switch production")
+		})
+
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("解釈できないフラグでは手順を 1 つも実行しない", func(t *testing.T) {
 			writeNote(t)
