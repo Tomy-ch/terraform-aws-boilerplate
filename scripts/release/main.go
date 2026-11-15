@@ -46,7 +46,7 @@ var (
 	semverPattern     = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 	errNoTag          = xerrors.New("❌ リリースタグが存在しません。最初のタグは -version vX.Y.Z（make tag-version VERSION=vX.Y.Z）で版を指定して打ってください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
-		"➡️ 先に make tag-patch などで初期タグを作成してから再実行してください")
+		"➡️ 先に make tag-version VERSION=vX.Y.Z で最初のタグを打ってから再実行してください")
 	errUnknownBump       = xerrors.New("unknown -bump (patch / minor / major)")
 	errVersionWithBump   = xerrors.New("❌ -version と -bump は同時に指定できません")
 	errVersionFormat     = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
