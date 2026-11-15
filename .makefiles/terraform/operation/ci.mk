@@ -4,9 +4,7 @@
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
-## （ADR-0702 決定3・24）。plan と apply には、ADR-0604 決定11-13 の Policy（plan.stateful_protection）と、
-## ADR-0301 決定12・18 の Key Policy の Policy（plan.kms_key_policy）と、宣言した Bucket Policy と Key Policy が
-## 宣言した1つだけであることの Policy（plan.resource_policy_exclusive。state-backend/ADR-0101・ADR-0104）を掛ける。
+## （ADR-0702 決定3・24）。plan と apply には、CI_POLICY_NAMESPACES の Policy を掛ける。
 ## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
@@ -24,16 +22,25 @@ CI_ROLE ?= plan
 # $(1)=env $(2)=役割。role 名と同じ形にする（tf-local role-arn）。
 CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
 
-# $(1)=env $(2)=役割
-define CI_AWS_CREDENTIALS
+# 拒否されるべき role。plan のほかの役割をすべて並べる。
+CI_DENIED_ROLES ?= apply apply-identity unlock-identity
+
+# OIDC の token を job の作業ディレクトリに置く。token と応答と $(2) は、呼び出し元の shell が終わるときに消す。
+# $(1)=env $(2)=ほかに消すファイル
+define CI_OIDC_TOKEN
 set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; token="$$d/oidc-token"; resp="$$d/oidc-response"; \
-trap 'rm -f "$$token" "$$resp"' EXIT; export token resp CI_ACCOUNT_ID; \
+trap 'rm -f "$$token" "$$resp"$(if $(2), $(2))' EXIT; export token resp CI_ACCOUNT_ID; \
 url=$$($(call TF_LOCAL,oidc-url)); \
 unset_env=$$($(call TF_LOCAL,env-unset)); \
 region=$$($(call TF_LOCAL,region "$(call TF_LOCAL_DIR,$(1),identity)")); \
 curl -fsS --retry 3 -H "Authorization: bearer $$ACTIONS_ID_TOKEN_REQUEST_TOKEN" -o "$$resp" "$$url"; \
 $(call TF_LOCAL,oidc-token "$$resp") > "$$token"; \
-sub=$$($(call TF_LOCAL,oidc-sub "$$token")); echo "OIDC の sub: $$sub"; \
+sub=$$($(call TF_LOCAL,oidc-sub "$$token")); echo "OIDC の sub: $$sub"
+endef
+
+# $(1)=env $(2)=役割
+define CI_AWS_CREDENTIALS
+$(call CI_OIDC_TOKEN,$(1),); \
 role=$$($(call TF_LOCAL,role-arn -project $(TF_LOCAL_PROJECT) -env $(1) -role $(2) -account "$$CI_ACCOUNT_ID")); \
 creds=$$(env $$unset_env AWS_EC2_METADATA_DISABLED=true $(AWS_BIN) sts assume-role-with-web-identity --region "$$region" \
 --role-arn "$$role" --role-session-name "gha-$$GITHUB_RUN_ID-$$GITHUB_RUN_ATTEMPT" --web-identity-token "file://$$token" \
@@ -43,6 +50,21 @@ for v in "$$key" "$$secret" "$$session"; do echo "::add-mask::$$v"; done; \
 cfg="env $$unset_env $(AWS_BIN) configure set --profile $(call CI_PROFILE,$(1),$(2))"; \
 $$cfg aws_access_key_id "$$key"; $$cfg aws_secret_access_key "$$secret"; $$cfg aws_session_token "$$session"; $$cfg region "$$region"; \
 echo "✅ $(call CI_PROFILE,$(1),$(2)) の profile に資格情報を置きました"
+endef
+
+# 資格情報はどこにも置かない。assume が通れば、その応答（資格情報）を stdout ごと捨てて失敗する。最初の
+# 拒否されなかった役割で終える。
+# $(1)=env $(2)=役割の一覧
+define CI_ASSUME_DENIED
+$(if $(strip $(2)),,$(error CI_DENIED_ROLES が空です)) \
+$(call CI_OIDC_TOKEN,$(1),"$$d/assume-stderr"); err="$$d/assume-stderr"; export err; \
+for r in $(strip $(2)); do export r; \
+role=$$($(call TF_LOCAL,role-arn -project $(TF_LOCAL_PROJECT) -env $(1) -role "$$r" -account "$$CI_ACCOUNT_ID")); \
+rc=0; env $$unset_env AWS_EC2_METADATA_DISABLED=true $(AWS_BIN) sts assume-role-with-web-identity --region "$$region" \
+--role-arn "$$role" --role-session-name "gha-denied-$$GITHUB_RUN_ID-$$GITHUB_RUN_ATTEMPT" --web-identity-token "file://$$token" \
+--output json > /dev/null 2> "$$err" || rc=$$?; export rc; \
+$(call TF_LOCAL,assume-denied -role "$$r" -exitcode "$$rc" "$$err"); \
+done
 endef
 
 # CI_PLAN と CI_APPLY が共有する。root の名前（$(1)-$(2)）は、decl.json の allow の鍵と同じになる。
@@ -109,8 +131,7 @@ endef
 # 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。plan の出力の Bucket の apply/ に書けるのは
 # identity root の apply の role（apply-identity）だけなので、全文を置くのはこの入口だけである（ADR-0602 決定13）。
 # workload root の apply は、この define を使えない。
-# Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。打ち切りは
-# CI_APPLY_TIMEOUT（短くする理由はその注記）。
+# Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。
 define CI_APPLY
 $(call CI_PREPARE,$(1),$(2),failure); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
 plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
@@ -160,6 +181,11 @@ endef
 ci-aws-credentials: SHELL := /bin/bash
 ci-aws-credentials:
 	@$(call CI_AWS_CREDENTIALS,$(CI_ENV),$(CI_ROLE))
+
+.PHONY: ci-assume-denied ## [CI] CI_ENV の plan の job の OIDC token で、CI_DENIED_ROLES の role の assume がすべて拒否されることを確かめる
+ci-assume-denied: SHELL := /bin/bash
+ci-assume-denied:
+	@$(call CI_ASSUME_DENIED,$(CI_ENV),$(CI_DENIED_ROLES))
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: SHELL := /bin/bash

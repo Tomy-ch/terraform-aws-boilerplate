@@ -62,6 +62,10 @@ var planWorkflow = strings.Join([]string{
 	"          tools: aqua:hashicorp/terraform",
 	"      - name: Run terraform plan through make",
 	"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host",
+	"      - name: Confirm the apply-family roles refuse this job",
+	"        env:",
+	"          CI_ACCOUNT_ID: x",
+	"        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host",
 	"      - run: make ci-plan-admin-identity RUNNER_MODE=host",
 	"",
 }, "\n")
@@ -1205,7 +1209,6 @@ func Test_checkOrderGate(t *testing.T) {
 	})
 }
 
-// hiddenOf は、checkJob と同じく job の役割から拒否の id を決めて checkHidden を呼びます。
 func hiddenOf(t *testing.T, job workflow.Job, w workflowInfo, f func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	t.Helper()
 
@@ -1298,6 +1301,28 @@ func Test_checkHidden(t *testing.T) {
 		j, aw := applyWith(t, entry, "      # MAKEFLAGS=-n\n"+entry)
 		assert.Empty(t, hiddenOf(t, j, aw, formatted))
 	})
+
+	t.Run("apply の job の拒否の確認は違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, entry, "      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n"+entry)
+		assert.Contains(t, messages(hiddenOf(t, j, aw, formatted)), "plan の job にだけ")
+	})
+
+	for name, c := range map[string]struct{ to, want string }{
+		"拒否の確認の step の if: は違反":                {"      - if: false\n        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "入口の step"},
+		"拒否の確認の step の continue-on-error: は違反": {"      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n        continue-on-error: true\n", "入口の step"},
+		"拒否の確認の step の shell: は違反":             {"      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n        shell: sh -c true {0}\n", "入口の step"},
+		"拒否の確認の役割を狭める代入は違反":                    {"      - run: make ci-assume-denied CI_ENV=admin CI_DENIED_ROLES=plan RUNNER_MODE=host\n", "run: は、資格情報より前の拒否の step"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			src := replaced(t, planWorkflow, "        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "")
+			src = replaced(t, src, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", c.to+"      - run: make ci-plan-admin-identity RUNNER_MODE=host\n")
+			assert.Contains(t, messages(hiddenOf(t, jobOf(t, src, "plan-admin-identity"), infoOf(src), formatted)), c.want)
+		})
+	}
 
 	t.Run("plan の入口の step の continue-on-error: も違反", func(t *testing.T) {
 		t.Parallel()
@@ -1441,6 +1466,78 @@ func Test_checkTerraform(t *testing.T) {
 
 		job := jobOf(t, strings.Replace(planWorkflow, "make ci-plan-admin-identity", "echo", 1), "plan-admin-identity")
 		assert.Contains(t, messages(checkTerraform(job, ciPlan, "plan", formatted)), "make ci-plan-* がありません")
+	})
+}
+
+func Test_checkDenied(t *testing.T) {
+	t.Parallel()
+
+	const denied = "        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n"
+	planWith := func(t *testing.T, from, to string) workflow.Job {
+		t.Helper()
+
+		return jobOf(t, replaced(t, planWorkflow, from, to), "plan-admin-identity")
+	}
+
+	t.Run("資格情報の後で plan の前に1回あれば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		job := jobOf(t, planWorkflow, "plan-admin-identity")
+		assert.Empty(t, checkDenied(job, credOf(job), formatted))
+	})
+
+	t.Run("checkPlan が呼ぶ", func(t *testing.T) {
+		t.Parallel()
+
+		job := planWith(t, denied, "        run: echo skipped\n")
+		assert.Contains(t, messages(checkPlan(job, credOf(job), infoOf(planWorkflow), formatted)), "1回だけ置いて")
+	})
+
+	cases := map[string]struct{ from, to, want string }{
+		"無ければ違反":              {denied, "        run: echo skipped\n", "1回だけ置いてください（0 回）"},
+		"コメントにあるだけなら違反":       {denied, "        run: echo skipped\n        # make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "1回だけ置いてください（0 回）"},
+		"2回あれば違反":             {denied, denied + "      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "（2 回）"},
+		"役割を狭める代入は違反":         {denied, "        run: make ci-assume-denied CI_ENV=admin CI_DENIED_ROLES=plan RUNNER_MODE=host\n", "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ"},
+		"失敗を隠す後続は違反":          {denied, "        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host || true\n", "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ"},
+		"ブロックスカラーの run: は違反":  {denied, "        run: |\n          make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ"},
+		"step 名にあるだけなら違反":     {denied, "        name: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n        run: echo skipped\n", "1回だけ置いてください（0 回）"},
+		"資格情報の step に連結すれば違反": {"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host\n", "        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host && make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n", "1回だけ置いてください（2 回）"},
+		"資格情報の CI_ENV と違えば違反": {denied, "        run: make ci-assume-denied CI_ENV=sandbox RUNNER_MODE=host\n", "CI_ENV=sandbox が、資格情報の CI_ENV=admin と違います"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			job := planWith(t, c.from, c.to)
+			assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), c.want)
+		})
+	}
+
+	t.Run("フロー形式の step は違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
+		src = replaced(t, src, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - {run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host}\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n")
+		job := jobOf(t, src, "plan-admin-identity")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけ")
+	})
+
+	t.Run("資格情報より前なら違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
+		src = replaced(t, src, "      - name: Run terraform plan through make\n", "      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n      - name: Run terraform plan through make\n")
+		job := jobOf(t, src, "plan-admin-identity")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "資格情報を取る step より後")
+	})
+
+	t.Run("plan の入口より後なら違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, planWorkflow, denied, "        run: echo moved\n")
+		src = replaced(t, src, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n      - run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host\n")
+		job := jobOf(t, src, "plan-admin-identity")
+		assert.Contains(t, messages(checkDenied(job, credOf(job), formatted)), "plan の入口より前")
 	})
 }
 
