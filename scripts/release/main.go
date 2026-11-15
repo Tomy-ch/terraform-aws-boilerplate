@@ -1,9 +1,11 @@
 // Package main は、リリースタグとリリースブランチを作成するツール。
 //
 //	tag    -bump <patch|minor|major>                     production HEAD にタグを打ち、GitHub Release を作る
+//	tag    -version <vX.Y.Z>                             指定の版で同じことをする（タグが無い初回はこちら）
 //	branch -bump <patch|minor|major> -prefix <接頭辞>     次バージョンのブランチを切り、デフォルトブランチに設定する
 //
-// どちらも `git tag` の最新セマンティックバージョンを起点に次バージョンを決める。
+// -bump は `git tag` の最新セマンティックバージョンを起点に次バージョンを決める。-version は
+// 既存のどのタグよりも新しい版だけを受け付け、-bump と同時には指定できない。
 //
 // 取り消しの効かない操作（タグの push / Release の作成 / デフォルトブランチの切り替え）を
 // 含むため、make のレシピではなくここに在る。理由は scripts/README.md の release 行。
@@ -42,28 +44,26 @@ const (
 var (
 	// semverPattern は、リリースタグとして扱う形式。プレリリースやビルドメタデータは対象外。
 	semverPattern     = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
-	errNoTag          = xerrors.New("❌ リリースタグが存在しません。先に初期タグ(v0.0.0)を作成してください")
+	errNoTag          = xerrors.New("❌ リリースタグが存在しません。最初のタグは -version vX.Y.Z（make tag-version VERSION=vX.Y.Z）で版を指定して打ってください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
-		"➡️ 先に make tag-patch などで初期タグを作成してから再実行してください")
-	errUnknownBump = xerrors.New("unknown -bump (patch / minor / major)")
-	// errHelpRequested は、-h でヘルプを求められたことを表す。失敗ではないため 0 で終える。
-	errHelpRequested = xerrors.New("help requested")
-	// errNoReleaseNote は、タグ本文にするリリースノートが production に無いことを表す。
-	errNoReleaseNote = xerrors.New("が存在しません。タグとリリースをスキップしました")
-	// errBranchExists は、作成しようとしたブランチが origin に既に在ることを表す。
-	errBranchExists  = xerrors.New("は既に存在します。処理を中止します")
-	errDirtyWorktree = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
-	// errUsage は、サブコマンドが指定されていないことを表す。
+		"➡️ 先に make tag-version VERSION=vX.Y.Z で最初のタグを打ってから再実行してください")
+	errUnknownBump       = xerrors.New("unknown -bump (patch / minor / major)")
+	errVersionWithBump   = xerrors.New("❌ -version と -bump は同時に指定できません")
+	errVersionFormat     = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
+	errVersionExists     = xerrors.New("は既にタグとして存在します")
+	errVersionNotNewer   = xerrors.New("は最新のタグより新しくありません")
+	errHelpRequested     = xerrors.New("help requested")
+	errNoReleaseNote     = xerrors.New("が存在しません。タグとリリースをスキップしました")
+	errBranchExists      = xerrors.New("は既に存在します。処理を中止します")
+	errDirtyWorktree     = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
 	errUsage             = xerrors.New("❌ usage: release <tag|branch> [flags]")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (tag / branch)")
 )
 
-// version は、リリースタグの意味的なバージョン。
 type version struct {
 	major, minor, patch int
 }
 
-// step は、実行する 1 コマンド。
 type step struct {
 	name string
 	args []string
@@ -72,8 +72,7 @@ type step struct {
 // runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリへ触れずに
 // 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
 type runner struct {
-	run func(s step) error
-	// output は、コマンドの標準出力を取り出す。
+	run    func(s step) error
 	output func(name string, args ...string) (string, error)
 	// remoteBranchExists は、origin に同名ブランチがあるかを返す。照会できなければエラー。
 	remoteBranchExists func(branch string) (bool, error)
@@ -87,7 +86,6 @@ func main() {
 	}
 }
 
-// execute は、サブコマンドを選んで実行します。
 func execute(r runner, args []string) error {
 	if len(args) == 0 {
 		return errUsage
@@ -147,23 +145,23 @@ func latestVersion(tagOutput string) (version, bool) {
 		return version{}, false
 	}
 
-	sort.Slice(versions, func(i, j int) bool {
-		a, b := versions[i], versions[j]
-		if a.major != b.major {
-			return a.major > b.major
-		}
-
-		if a.minor != b.minor {
-			return a.minor > b.minor
-		}
-
-		return a.patch > b.patch
-	})
+	sort.Slice(versions, func(i, j int) bool { return versions[j].less(versions[i]) })
 
 	return versions[0], true
 }
 
-// bump は、指定の粒度で次のバージョンを返します。
+func (v version) less(o version) bool {
+	if v.major != o.major {
+		return v.major < o.major
+	}
+
+	if v.minor != o.minor {
+		return v.minor < o.minor
+	}
+
+	return v.patch < o.patch
+}
+
 func bump(v version, kind string) (version, error) {
 	switch kind {
 	case "patch":
@@ -210,18 +208,22 @@ func branchSteps(base, branch string) []step {
 	}
 }
 
-// notePath は、指定バージョンのリリースノートのパスを返します。
 func notePath(v string) string { return releaseNoteDir + "/" + v + ".md" }
 
 // ---- 実行 -------------------------------------------------------------------
 
-// resolveNext は、最新タグを取得して次バージョン（現在, 次）を決めます。
-func resolveNext(r runner, bumpKind string) (version, version, error) {
+// listTags は、origin のタグを取り直してから `git tag` の出力を返します。
+func listTags(r runner) (string, error) {
 	if err := r.run(step{name: "git", args: []string{"fetch", "--tags", "origin"}}); err != nil {
-		return version{}, version{}, err
+		return "", err
 	}
 
-	out, err := r.output("git", "tag")
+	return r.output("git", "tag")
+}
+
+// resolveNext は、最新タグを取得して次バージョン（現在, 次）を決めます。
+func resolveNext(r runner, bumpKind string) (version, version, error) {
+	out, err := listTags(r)
 	if err != nil {
 		return version{}, version{}, err
 	}
@@ -237,6 +239,41 @@ func resolveNext(r runner, bumpKind string) (version, version, error) {
 	}
 
 	return current, next, nil
+}
+
+// resolveExplicit は、-version で指定された版を検証して返します。形の検査はタグを取得する前に行い、
+// タグが 1 つも無ければ形だけを見ます。
+func resolveExplicit(r runner, s string) (version, error) {
+	v, ok := parseVersion(s)
+	// 前後の空白や先頭の 0 を正規化して受け付けると、打たれるタグ名が指定と食い違う。
+	if !ok || v.String() != s {
+		return version{}, xerrors.Wrap(errVersionFormat, strconv.Quote(s))
+	}
+
+	out, err := listTags(r)
+	if err != nil {
+		return version{}, err
+	}
+
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.TrimSpace(line) == s {
+			return version{}, xerrors.Wrap(errVersionExists, "❌ "+s)
+		}
+	}
+
+	if latest, ok := latestVersion(out); ok && !latest.less(v) {
+		return version{}, xerrors.Wrap(errVersionNotNewer, "❌ "+s+"（最新: "+latest.String()+"）")
+	}
+
+	return v, nil
+}
+
+// flagsSet は、コマンドラインで明示されたフラグの名前を返します。空文字の指定も「指定あり」に数えます。
+func flagsSet(fs *flag.FlagSet) map[string]bool {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	return set
 }
 
 // parseFlags は、サブコマンドのフラグを解釈します。ヘルプ要求は失敗ではないため、通常のエラーと
@@ -256,18 +293,16 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 func runTag(r runner, args []string) error {
 	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
+	explicit := fs.String("version", "", "打つ版 vX.Y.Z（-bump と同時に指定できない）")
 
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
-	current, next, err := resolveNext(r, *bumpKind)
+	next, err := resolveTagVersion(r, flagsSet(fs), *bumpKind, *explicit)
 	if err != nil {
 		return err
 	}
-
-	log.Printf("🔖 タグから最新タグバージョンを取得: %s", current)
-	log.Printf("➡️ 次のリリースバージョンを作成: %s", next)
 
 	// production を最新へ合わせてからリリースノートの有無を見る。順序は入れ替えないこと。
 	// タグは production HEAD に打つので、確かめるべきは「production にノートがあるか」であり、
@@ -292,6 +327,33 @@ func runTag(r runner, args []string) error {
 	log.Printf("✅ タグを打ちました %s on production HEAD", next)
 
 	return nil
+}
+
+func resolveTagVersion(r runner, set map[string]bool, bumpKind, explicit string) (version, error) {
+	if !set["version"] {
+		current, next, err := resolveNext(r, bumpKind)
+		if err != nil {
+			return version{}, err
+		}
+
+		log.Printf("🔖 タグから最新タグバージョンを取得: %s", current)
+		log.Printf("➡️ 次のリリースバージョンを作成: %s", next)
+
+		return next, nil
+	}
+
+	if set["bump"] {
+		return version{}, errVersionWithBump
+	}
+
+	next, err := resolveExplicit(r, explicit)
+	if err != nil {
+		return version{}, err
+	}
+
+	log.Printf("➡️ 指定のリリースバージョンを作成: %s", next)
+
+	return next, nil
 }
 
 func runBranch(r runner, args []string) error {
@@ -351,7 +413,6 @@ func runBranch(r runner, args []string) error {
 	return nil
 }
 
-// hostRunner は、ホストの git / gh を実際に起動する実行器を返します。
 func hostRunner() runner {
 	return runner{run: run, output: output, remoteBranchExists: remoteBranchExists}
 }
