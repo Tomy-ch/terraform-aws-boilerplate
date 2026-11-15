@@ -82,7 +82,11 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **fork・Dependabot の Pull Request では、資格情報を取る前の step で失敗する。** skip にしない
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
-- job の形（environment、取る role、起動条件、拒否の step、terraform の経路、`run:` と `env:` に置けるもの）は
+- **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
+  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity の role を assume し、
+  すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
+  欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
+- job の形（environment、取る role、起動条件、拒否の step、拒否の確認、terraform の経路、`run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が見る。拒否の step の本文はシェルなので字面からは選べず、code owner のレビューが持つ
 
 ### apply の job

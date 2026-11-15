@@ -30,7 +30,10 @@
 //     入口を実行させないか、道具を替えるか、失敗を成功として報告させる
 //   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
 //     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
-//     （lock を取らない経路。ADR-0604 決定8）
+//     （lock を取らない経路。ADR-0604 決定8）。資格情報を取った後で plan の入口より前に
+//     `make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host` だけの run: をちょうど1回持ち、その CI_ENV は資格情報と
+//     同じである —— この job の token で apply 系の role の assume が拒否されることを確かめる。この step は
+//     plan の job のほかに置かない
 //   - apply の job は、workflow の起動が push と入力の無い workflow_dispatch だけで（ADR-0602 決定14）、
 //     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
 //     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で
@@ -92,6 +95,8 @@ var (
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity)(?:\s|$)`)
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
 	ciPlan      = makeRun(`ci-plan-[a-z0-9-]+`)
+	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
+	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
 	ciApply     = makeRun(`ci-apply-[a-z0-9-]+`)
 	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
 	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
@@ -488,7 +493,41 @@ func checkPlan(job workflow.Job, cred workflow.Line, w workflowInfo, finding fun
 		findings = append(findings, finding(w.onLine, "plan の job を持つ workflow の起動は pull_request だけにしてください（%s）", strings.Join(keys, ", ")))
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseUntrusted, finding)...)
+	findings = append(findings, checkDenied(job, cred, finding)...)
 	return append(findings, checkTerraform(job, ciPlan, "plan", finding)...)
+}
+
+// checkDenied は、plan の job が `make ci-assume-denied` をちょうど1回、資格情報を取った後で plan の入口より前に
+// 持ち、その CI_ENV が資格情報の CI_ENV と同じことを検査します。step を消すか別の env へ向ける変更は、
+// AWS の側の検査をすべて緑のまま、拒否されるべき主体の確認だけを止めます。
+func checkDenied(job workflow.Job, cred workflow.Line, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var lines []workflow.Line
+	for _, l := range job.Lines {
+		if !commentLine.MatchString(l.Text) && !nameLine.MatchString(l.Text) && deniedLine.MatchString(l.Text) {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) != 1 {
+		return []lintreport.Finding{finding(job.Number, "plan の job に make ci-assume-denied を1回だけ置いてください（%d 回）。apply 系の role の assume が拒否されることを、Pull Request ごとに確かめます", len(lines))}
+	}
+	denied := lines[0]
+	var findings []lintreport.Finding
+	if !deniedRun.MatchString(denied.Text) {
+		findings = append(findings, finding(denied.Number, "拒否の確認の step は run: make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host だけにしてください。ほかの代入は試す役割を狭めます"))
+	}
+	if denied.Number < cred.Number {
+		findings = append(findings, finding(denied.Number, "make ci-assume-denied は資格情報を取る step より後に置いてください。plan の role の assume が通った後でなければ、拒否が信頼条件によるものか分かりません"))
+	}
+	for _, l := range job.Lines {
+		if !commentLine.MatchString(l.Text) && ciPlan.MatchString(l.Text) && l.Number < denied.Number {
+			findings = append(findings, finding(denied.Number, "make ci-assume-denied は plan の入口より前に置いてください。信頼条件が崩れた run で plan の全文を置きません"))
+			break
+		}
+	}
+	if d, c := ciEnv.FindStringSubmatch(denied.Text), ciEnv.FindStringSubmatch(cred.Text); d != nil && c != nil && d[1] != c[1] {
+		findings = append(findings, finding(denied.Number, "make ci-assume-denied の CI_ENV=%s が、資格情報の CI_ENV=%s と違います", d[1], c[1]))
+	}
+	return findings
 }
 
 func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
@@ -863,10 +902,17 @@ func checkHidden(job workflow.Job, cred workflow.Line, refusal string, w workflo
 			continue
 		}
 		entry, credStep := ciEntry.MatchString(runs.Text), credentials.MatchString(runs.Text)
+		// 拒否の確認は plan の job でだけ入口と同じに扱う。形と位置は checkDenied が見る。
+		if deniedLine.MatchString(runs.Text) {
+			if refusal != refuseUntrusted {
+				findings = append(findings, finding(runs.Number, "make ci-assume-denied は plan の job にだけ置いてください"))
+			}
+			entry = deniedRun.MatchString(runs.Text)
+		}
 		// 拒否の step と認めるのは、役割の id を持ち資格情報より前に在るものだけ。後ろの run: は資格情報を読める。
 		refuses := hasStepID(step, refusal) && step.Number < cred.Number
 		if !entry && !credStep && !refuses {
-			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、資格情報より前の拒否の step・make ci-aws-credentials・CI の入口だけにしてください。ほかの run: は後続の step の PATH と環境を替えるか、資格情報を読みます"))
+			findings = append(findings, finding(runs.Number, "資格情報を取る job の run: は、資格情報より前の拒否の step・make ci-aws-credentials・CI の入口・plan の job の make ci-assume-denied だけにしてください。ほかの run: は後続の step の PATH と環境を替えるか、資格情報を読みます"))
 		}
 		for _, l := range step.Lines {
 			switch {

@@ -124,6 +124,137 @@ func Test_roleARN(t *testing.T) {
 	})
 }
 
+const (
+	deniedStderr = "\naws: [ERROR]: An error occurred (AccessDenied) when calling the AssumeRoleWithWebIdentity operation: Not authorized to perform sts:AssumeRoleWithWebIdentity\n"
+	invalidToken = "\naws: [ERROR]: An error occurred (InvalidIdentityToken) when calling the AssumeRoleWithWebIdentity operation: Incorrect token audience\n"
+)
+
+func Test_runAssumeDenied(t *testing.T) {
+	t.Parallel()
+
+	t.Run("終了コードが非0で AccessDenied なら拒否の行を出す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", fileWith(t, deniedStderr)}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "✅ apply の role の assume は拒否されました（AccessDenied）", got)
+	})
+
+	t.Run("終了コード 0 は stderr が AccessDenied でも assume が通ったとして失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAssumeDenied([]string{"-role", "apply-identity", "-exitcode", "0", fileWith(t, deniedStderr)}, os.ReadFile)
+		require.ErrorIs(t, err, errAssumeSucceeded)
+	})
+
+	t.Run("終了コード 0 は stderr のファイルが無くても失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "0", filepath.Join(t.TempDir(), "none")}, os.ReadFile)
+		require.ErrorIs(t, err, errAssumeSucceeded)
+	})
+
+	t.Run("終了コードが非0で AccessDenied でなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", fileWith(t, invalidToken)}, os.ReadFile)
+		require.ErrorIs(t, err, errAssumeNotDenied)
+	})
+
+	t.Run("STS のエラーを読めなければ aws の終了コードを文に入れて失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "255", fileWith(t, "Could not connect to the endpoint URL\n")}, os.ReadFile)
+		require.ErrorIs(t, err, errAssumeUnreadable)
+		assert.Contains(t, err.Error(), "aws の終了コード 255")
+	})
+
+	t.Run("stderr のファイルを読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runAssumeDenied([]string{"-role", "apply", "-exitcode", "254", filepath.Join(t.TempDir(), "none")}, os.ReadFile)
+		require.ErrorIs(t, err, errAssumeUnreadable)
+	})
+
+	for name, args := range map[string][]string{
+		"知らない役割は失敗する":           {"-role", "admin", "-exitcode", "254", "f"},
+		"役割が無ければ失敗する":           {"-exitcode", "254", "f"},
+		"終了コードが無ければ失敗する":        {"-role", "apply", "f"},
+		"数でない終了コードは失敗する":        {"-role", "apply", "-exitcode", "x", "f"},
+		"負の終了コードは失敗する":          {"-role", "apply", "-exitcode", "-1", "f"},
+		"256 以上の終了コードは失敗する":     {"-role", "apply", "-exitcode", "256", "f"},
+		"stderr のファイルが無ければ失敗する": {"-role", "apply", "-exitcode", "254"},
+		"余分な引数は失敗する":            {"-role", "apply", "-exitcode", "254", "f", "g"},
+		"知らないフラグは失敗する":          {"-rc", "254", "f"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runAssumeDenied(args, os.ReadFile)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+}
+
+func Test_assumeDenied(t *testing.T) {
+	t.Parallel()
+
+	for name, stderr := range map[string]string{
+		"CLI の接頭辞つきの AccessDenied": deniedStderr,
+		"接頭辞の無い AccessDenied":      "An error occurred (AccessDenied) when calling the AssumeRoleWithWebIdentity operation: Not authorized\n",
+	} {
+		t.Run(name+"を拒否として受ける", func(t *testing.T) {
+			t.Parallel()
+
+			got, err := assumeDenied("unlock-identity", []byte(stderr))
+			require.NoError(t, err)
+			assert.Equal(t, "✅ unlock-identity の role の assume は拒否されました（AccessDenied）", got)
+		})
+	}
+
+	for name, code := range map[string]string{
+		"token の不正":                "InvalidIdentityToken",
+		"token の期限切れ":              "ExpiredToken",
+		"IdP との通信の失敗":              "IDPCommunicationError",
+		"throttling":               "Throttling",
+		"AccessDenied で始まる別の Code": "AccessDeniedException",
+	} {
+		t.Run(name+"は拒否ではないとして失敗し、Code を文に入れる", func(t *testing.T) {
+			t.Parallel()
+
+			stderr := "An error occurred (" + code + ") when calling the AssumeRoleWithWebIdentity operation: x"
+			_, err := assumeDenied("apply", []byte(stderr))
+			require.ErrorIs(t, err, errAssumeNotDenied)
+			assert.Contains(t, err.Error(), "（"+code+"）")
+		})
+	}
+
+	for name, stderr := range map[string]string{
+		"空の stderr":    "",
+		"接続の失敗":        "\nCould not connect to the endpoint URL: \"https://sts.ap-northeast-1.amazonaws.com/\"\n",
+		"別の operation": "An error occurred (AccessDenied) when calling the AssumeRole operation: x",
+		"エラーの行が2つ":     deniedStderr + deniedStderr,
+		"Code に記号を含む":  "An error occurred (Access-Denied) when calling the AssumeRoleWithWebIdentity operation: x",
+	} {
+		t.Run(name+"は STS のエラーを読めないとして失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := assumeDenied("apply", []byte(stderr))
+			require.ErrorIs(t, err, errAssumeUnreadable)
+		})
+	}
+
+	t.Run("エラーの文に stderr の本文とアカウント ID を入れない", func(t *testing.T) {
+		t.Parallel()
+
+		stderr := "An error occurred (InvalidIdentityToken) when calling the AssumeRoleWithWebIdentity operation: arn:aws:iam::" + account + ":role/x"
+		_, err := assumeDenied("apply", []byte(stderr))
+		require.ErrorIs(t, err, errAssumeNotDenied)
+		assert.NotContains(t, err.Error(), account)
+		assert.NotContains(t, err.Error(), "arn:aws")
+	})
+}
+
 func Test_oidcSub(t *testing.T) {
 	t.Parallel()
 

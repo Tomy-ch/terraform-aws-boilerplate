@@ -18,6 +18,9 @@
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
 //	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity|unlock-identity> -account <id>
 //	    CI が assume する role の ARN を1行で出す
+//	tf-local assume-denied -role <役割> -exitcode <n> <stderr-file>
+//	    `aws sts assume-role-with-web-identity` の終了コードと stderr から、assume が AccessDenied で拒否されたことを
+//	    確かめて1行で出す。assume が通ったか、拒否が AccessDenied でなければ失敗する
 //	tf-local oidc-url
 //	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
 //	    要求先か要求の token が環境変数に無ければ失敗する
@@ -102,7 +105,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -151,7 +154,6 @@ func run(args []string, out io.Writer, d deps) error {
 		return errUsage
 	}
 
-	// 個数は上の argCounts が確かめている。
 	arg := ""
 	if len(args) > 1 {
 		arg = args[1]
@@ -175,6 +177,8 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = planHeader(d.git)
 	case "role-arn":
 		value, err = runRoleARN(args[1:])
+	case "assume-denied":
+		value, err = runAssumeDenied(args[1:], d.readFile)
 	case "oidc-url":
 		value, err = oidcURL(d.environ)
 	case "oidc-token":

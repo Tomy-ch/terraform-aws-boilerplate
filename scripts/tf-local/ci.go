@@ -35,6 +35,8 @@ var (
 	counterPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	branchPattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
 	rootPattern    = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	// assumeErrorPattern は、aws CLI が API のエラーを stderr に書く行。行頭の接頭辞は CLI の版で変わるので見ない。
+	assumeErrorPattern = regexp.MustCompile(`An error occurred \(([A-Za-z0-9]{1,64})\) when calling the AssumeRoleWithWebIdentity operation`)
 
 	errRole         = xerrors.New("❌ role の ARN を組めません（project・env・役割・アカウント ID のいずれかが不正です）")
 	errOIDCToken    = xerrors.New("❌ OIDC token から sub を読めません")
@@ -51,6 +53,10 @@ var (
 	errApplyFailed  = xerrors.New("❌ apply が失敗しました")
 	errApplyTimeout = xerrors.New("❌ apply を打ち切りました（timeout）")
 	errDigest       = xerrors.New("❌ SHA-256 を計算するファイルを読めません")
+
+	errAssumeSucceeded  = xerrors.New("❌ 拒否されるべき role の assume が通りました")
+	errAssumeNotDenied  = xerrors.New("❌ role の assume が、AccessDenied ではない理由で失敗しました")
+	errAssumeUnreadable = xerrors.New("❌ assume の失敗から、STS のエラーを1つに読めません")
 
 	errPolicyJSON      = xerrors.New("❌ conftest の結果を解釈できません")
 	errPolicyEmpty     = xerrors.New("❌ 名前空間の規則が1つも評価されていません")
@@ -84,6 +90,59 @@ func roleARN(project, env, role, account string) (string, error) {
 	}
 
 	return fmt.Sprintf(roleFormat, account, project, env, role), nil
+}
+
+func runAssumeDenied(args []string, readFile func(string) ([]byte, error)) (string, error) {
+	fs := flag.NewFlagSet("assume-denied", flag.ContinueOnError)
+	role := fs.String("role", "", "")
+	exitCode := fs.String("exitcode", "", "")
+
+	if err := fs.Parse(args); err != nil {
+		return "", xerrors.Wrap(errUsage, err.Error())
+	}
+
+	if fs.NArg() != 1 || !slices.Contains(roleNames, *role) {
+		return "", errUsage
+	}
+
+	code, err := strconv.Atoi(*exitCode)
+	if err != nil || code < 0 || code > 255 {
+		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
+	}
+
+	// assume が成立したことが最も重いので、stderr を読む前に落とす。
+	if code == 0 {
+		return "", xerrors.Wrapf(errAssumeSucceeded, "%s の role", *role)
+	}
+
+	stderr, err := readFile(fs.Arg(0))
+	if err != nil {
+		return "", xerrors.Wrap(errAssumeUnreadable, "stderr のファイルを読めません")
+	}
+
+	value, err := assumeDenied(*role, stderr)
+	// stderr は文に入れられないので、STS に届かなかった失敗の手掛かりは終了コードだけが運ぶ。
+	if xerrors.Is(err, errAssumeUnreadable) {
+		return "", xerrors.Wrapf(err, "aws の終了コード %d", code)
+	}
+
+	return value, err
+}
+
+// assumeDenied は、失敗した `aws sts assume-role-with-web-identity` の stderr から、拒否が AccessDenied で
+// あることを確かめます。接続の失敗や token の不正は拒否ではないので、エラーの行がちょうど1つで、その Code が
+// AccessDenied のときだけ成功します。stderr の全文はアカウント ID を含みうるので、文には Code だけを入れる。
+func assumeDenied(role string, stderr []byte) (string, error) {
+	matches := assumeErrorPattern.FindAllSubmatch(stderr, -1)
+	if len(matches) != 1 {
+		return "", xerrors.Wrapf(errAssumeUnreadable, "%s の role", role)
+	}
+
+	if code := string(matches[0][1]); code != "AccessDenied" {
+		return "", xerrors.Wrapf(errAssumeNotDenied, "%s の role（%s）", role, code)
+	}
+
+	return fmt.Sprintf("✅ %s の role の assume は拒否されました（AccessDenied）", role), nil
 }
 
 // oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。要求の
