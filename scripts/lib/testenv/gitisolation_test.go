@@ -128,6 +128,21 @@ func Test_gitEnvVars(t *testing.T) { //nolint:paralleltest // パッケージ変
 	})
 }
 
+func Test_withoutGitEnv(t *testing.T) {
+	t.Parallel()
+
+	t.Run("GIT_ で始まる変数だけを除き、順序を保つ", func(t *testing.T) {
+		t.Parallel()
+		got := withoutGitEnv([]string{"PATH=/bin", "GIT_DIR=/x", "HOME=/h", "GIT_INTERNAL_SUPER_PREFIX=y", "MYGIT_X=1", "git_dir=z"})
+		assert.Equal(t, []string{"PATH=/bin", "HOME=/h", "MYGIT_X=1", "git_dir=z"}, got)
+	})
+
+	t.Run("空なら空", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, withoutGitEnv(nil))
+	})
+}
+
 // hook が渡す GIT_DIR と GIT_INDEX_FILE を継いだまま一時リポジトリへ git -C を打つと、外側の
 // リポジトリが書き換わる。gitEnvVars の一覧を外すと、外側は変わらない。
 func Test_外側のリポジトリ_事故の再現と防御(t *testing.T) {
