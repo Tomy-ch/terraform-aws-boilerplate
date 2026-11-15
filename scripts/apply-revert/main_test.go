@@ -482,11 +482,19 @@ func Test_touchesWorkflows(t *testing.T) {
 
 	h := newHistory(t)
 	r := (&fake{dir: h.dir}).runner()
+	// 並行する worktree add は、作りかけの他の worktree の commondir を読んで落ちることがある。
+	var worktreeMu sync.Mutex
+	worktree := func(t *testing.T, args ...string) {
+		t.Helper()
+		worktreeMu.Lock()
+		defer worktreeMu.Unlock()
+		git(t, h.dir, append([]string{"worktree"}, args...)...)
+	}
 	commit := func(t *testing.T, from string, change func(dir string)) string {
 		t.Helper()
 		w := t.TempDir()
-		git(t, h.dir, "worktree", "add", "-q", "--detach", w, from)
-		t.Cleanup(func() { git(t, h.dir, "worktree", "remove", "--force", w) })
+		worktree(t, "add", "-q", "--detach", w, from)
+		t.Cleanup(func() { worktree(t, "remove", "--force", w) })
 		change(w)
 		git(t, w, "add", "-A")
 		git(t, w, "commit", "-q", "-m", "change")
