@@ -20,6 +20,8 @@ tag-minor:
 tag-major:
 	@$(RELEASE_TOOL) tag -bump major
 
+# 版はコマンドラインの VERSION だけを渡す。環境に残った VERSION で取り消しの効かないタグを打たないため。
+# 空なら scripts/release が拒否する。値はシェルを経由させず環境変数で渡す。
+tag-version: export RELEASE_TAG_VERSION = $(if $(filter command line,$(origin VERSION)),$(VERSION))
 tag-version:
-	@test -n "$(VERSION)" || { echo "❌ VERSION が要ります: make tag-version VERSION=vX.Y.Z" >&2; exit 1; }
-	@$(RELEASE_TOOL) tag -version "$(VERSION)"
+	@$(RELEASE_TOOL) tag -version "$$RELEASE_TAG_VERSION"
