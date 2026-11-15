@@ -114,7 +114,7 @@
 | Terraform | 1.15.0 以上 |
 
 1. `aws --version` と `terraform version` で上表を満たすことを確かめる
-2. `env | grep AWS_` で `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` が設定されていないことを確かめる
+2. `env | grep AWS_` で `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` が設定されていないことを確かめる（設定されていると `AWS_PROFILE` より優先される）
 3. `make aws-login` を実行し、リージョンに `ap-northeast-1` を入力する
 4. ブラウザで一時 IAM user のセッションを選ぶ。**root のセッションは選ばない**
 
@@ -126,7 +126,7 @@ login_session = arn:aws:iam::<アカウントID>:user/<一時IAMユーザー名>
 region = ap-northeast-1
 ```
 
-Terraform は `make` のターゲットか、本書のコマンドどおりに実行する。AWS CLI を直接打つときは `AWS_PROFILE=tabp-bootstrap` を付ける。
+Terraform は `make` のターゲットか、本書のコマンドどおりに実行する。どちらも、資格情報や terraform の振る舞いを変える環境変数を外し（一覧の正本は `scripts/tf-local` の `env-unset`）、`TF_CLI_CONFIG_FILE=/dev/null` で CLI の設定を読ませない（`dev_overrides` が lock の hash の検証なしに provider を差し替えるのを防ぐ）。AWS CLI を直接打つときは `AWS_PROFILE=tabp-bootstrap` を付ける。
 
 #### 2-0c. 1日の作業の終わりに
 
@@ -153,7 +153,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    docs/setup/scripts/check-account.sh
    ```
 
-   最後の行が `NG 0 件` なら次へ。NG の行は、対応する作業（行頭の番号）をやり直す。2-2 の行だけが NG なら、翌日に再実行する。
+   最後の行が `NG 0 件` なら次へ。`呼び出しが失敗` と添えられた NG は、添えられたエラーを見て資格情報（`make aws-login`）を確かめる。それ以外の NG は、対応する作業（行頭の番号）をやり直す。2-2 の行だけが NG なら、翌日に再実行する。
 
 2. コマンドで見られない次の3点を、コンソールで確かめる
    - root の「Security credentials」の MFA の一覧に2台以上ある（1-1）
@@ -211,16 +211,18 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    make を使えなければ[トラブルシューティング](#make-を使えない)へ。
 
-2. plan を保存し、期待値と照合して、plan のファイルを消す
+2. plan を保存し、期待値と照合して、plan のファイルを消す。[段1 の手順1](#段1-state-bucket-を作る) のブロックを実行したシェルで行う
 
    ```bash
-   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
-   docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
+   : "${unset_env:?段1 の手順1 のブロックを先に実行する}" &&
+     rm -f tmp/plan/admin-identity.tfplan &&
+     (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1 \
+       terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan") &&
+     docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
    rm -f tmp/plan/admin-identity.tfplan
    ```
 
-   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 30 / change 0 / destroy 0` なら次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
+   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 30 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
 
    > **重要**: `check-plan.sh` を実際の plan で初めて使うときは、plan の出力（`terraform plan` が表示したもの）の取り込みと追加の一覧を、`check-plan.expected` とも目で照合する。両者の判定が食い違ったら、止まって Pull Request に記録する。
 
@@ -254,7 +256,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 3. `module "state_backend"` に、`bootstrap_executor_user_name = "<一時 IAM user の名前>"` を足す。段5 の最初の変更で外す（[state-backend/ADR-0104](../../usecases/state-backend/docs/adr/0104-state-object-write-deny.md) 決定7）
 
-4. この変更で Pull Request を開き、その commit で段2 の手順2 をやり直す。`check-plan.sh` が一致すれば完了
+4. この変更を commit して Pull Request を開き、その commit で段2 の手順1・2 をやり直す。`check-plan.sh` が一致し、`# commit:` の行がその commit を示せば完了
 
 ### 段4. ローカルから apply する
 
@@ -285,16 +287,18 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 4. init し、plan を保存して期待値と照合する
 
    ```bash
-   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
-   docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
+   : "${unset_env:?段1 の手順1 のブロックを先に実行する}" &&
+     rm -f tmp/plan/admin-identity.tfplan &&
+     env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1 \
+       terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}" &&
+     (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1 \
+       terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan") &&
+     docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
    ```
 
-   `不足 0 件、余剰 0 件` なら、その出力を Pull Request に載せて次へ（ADR-0602 決定10）。NG があれば apply せず、plan のファイルを消して原因を直す。
+   `不足 0 件、余剰 0 件` で、`# commit:` の行が手順1 で控えた commit を示し `未コミットの変更あり` が無ければ、その出力を Pull Request に載せて次へ（ADR-0602 決定10）。どれかが違えば apply せず、`rm -f tmp/plan/admin-identity.tfplan` で plan のファイルを消して原因を直す。
 
-5. 次をすべて満たすことを確かめる。満たさなければ **apply しない**
+5. 次をすべて満たすことを確かめる。満たさなければ **apply せず**、`rm -f tmp/plan/admin-identity.tfplan` で plan のファイルを消す
    - 手順1 の commit で、plan 以外の required check が成功している
    - 保護設定が承認者を要求しているなら、承認を得ている
 
@@ -308,10 +312,10 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `NG 0 件` で終了コード 0 なら次へ。NG があれば止まる（やり直しの途中なら[トラブルシューティング](#段4-の-apply-が失敗した)へ）。
 
-7. apply し、plan のファイルを消す
+7. apply し、plan のファイルを消す。apply には `-lock=false` を付けない（lock を取る。ADR-0604 決定8）
 
    ```bash
-   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1 \
      terraform -chdir=env/admin/identity apply -input=false "$PWD/tmp/plan/admin-identity.tfplan"
    rm -f "$PWD/tmp/plan/admin-identity.tfplan"
    ```
@@ -445,7 +449,9 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 ### 一時 IAM user の削除
 
-> **注意**: 段5 が成功するまで削除しない。
+> **注意**: 段5 が成功するまで削除しない。削除するまでは、一時 IAM user が Bucket Policy の書き込みの拒否を外せる。この削除で、bootstrap の実行者に書き込みの権限が残らない状態になる（ADR-0602 決定11）。
+
+一時 IAM user に自分自身を削除させない。途中で止まったとき、続きを行える主体が残らない。
 
 1. 手元で `aws logout --all` を実行する
 2. `~/.aws/config` から `[profile tabp-bootstrap]` のブロックを削除する
@@ -460,12 +466,13 @@ Credential report で IAM user が0件、root の行でアクセスキーが無�
 | 症状 | 対処 |
 | --- | --- |
 | `ACCOUNT_ID が12桁ではありません`、`一時 IAM user の資格情報ではありません` | `make aws-login` をやり直す |
-| `check-account.sh` に NG がある | 行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する |
+| `check-account.sh` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する |
 | 段1 の `verify.sh stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
 | Terraform が `aws login` の認証情報を読めない | [aws login の認証情報を読めない](#aws-login-の認証情報を読めない) |
 | `make` が使えない | [make を使えない](#make-を使えない) |
 | `check-plan.sh` に NG がある | [段2 の plan が一致しない](#段2-の-plan-が一致しない) |
-| `check-plan.sh` が `検証できません` で終わる | init が済んでいるか、plan のファイルが今の commit で作ったものかを見て、段2 の手順2 をやり直す |
+| `check-plan.sh` が `検証できません` で終わる | 示された理由を見る。init が済んでいなければ段2 の手順1 から、plan が失敗していれば原因を直して段2 の手順2 をやり直す |
+| 段2・段4 で `unset_env` について「段1 の手順1 のブロックを先に実行する」と出る | 段1 の手順1 のブロックを実行し、同じシェルでやり直す |
 | 段4 の apply が失敗した、lock が残った | [段4 の apply が失敗した](#段4-の-apply-が失敗した) |
 | 段5 の CI の apply が失敗した | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |
 | 段5 で lock が残った | [段5 で lock が残った](#段5-で-lock-が残った) |
@@ -495,8 +502,9 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 3. 次を実行する。続けて段2 の手順2 に進む
 
    ```bash
-   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
+   : "${unset_env:?段1 の手順1 のブロックを先に実行する}" &&
+     env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true CHECKPOINT_DISABLE=1 \
+       terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
    ```
 
 ### 段2 の plan が一致しない
@@ -517,7 +525,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | その他のエラー | 原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も取り直す |
 | やり直しの手順6 で `before-apply` が Policy か lifecycle を返す | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
 
-やり直しの手順4 では、前の apply が作ったものが state に入っているので、`check-plan.sh` は一致しない。plan の出力を目で見て、残りの追加だけが示されていることを確かめる。
+やり直しの手順4 では、前の apply が作ったものが state に入っているので、`check-plan.sh` は不足を示す。手順4 のブロックの `check-plan.sh` を `check-plan.sh --partial` に替えて実行する。apply 済みのものは `済み` として示され、最後の行が `余剰 0 件` なら次へ進んでよい。余剰があれば止まる。
 
 ### 段5 の CI の apply が失敗した
 

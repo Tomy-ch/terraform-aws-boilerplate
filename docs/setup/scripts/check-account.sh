@@ -6,8 +6,14 @@
 set -euo pipefail
 
 export AWS_PROFILE=${AWS_PROFILE:-tabp-bootstrap}
+# 環境変数の静的な資格情報は profile より優先されるので、外して profile の一時 IAM user で読む。
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+# 下の expect を実行する回数。for の繰り返しは 1 回ごとに数える。足し引きしたら合わせる。
+EXPECTED_CHECKS=13
 fails=0
 checks=0
+ERR=$(mktemp)
+trap 'rm -f "$ERR"' EXIT
 
 ok() {
   checks=$((checks + 1))
@@ -20,11 +26,14 @@ ng() {
   printf 'NG  %s\n' "$1"
 }
 
-# aws の呼び出し（第2引数以降）の JSON が jq の式（環境変数 Q）を満たせば ok。呼び出しの失敗も NG。
+# aws の呼び出し（第2引数以降）の JSON が jq の式（環境変数 Q）を満たせば ok。
+# 呼び出しの失敗は、設定の不備と区別できるように、エラーの1行目を添えて NG にする。
 expect() {
   local desc=$1 json
   shift
-  if json=$(aws "$@" --output json 2>/dev/null) && jq -e "$Q" >/dev/null 2>&1 <<<"$json"; then
+  if ! json=$(aws "$@" --output json 2>"$ERR"); then
+    ng "${desc}（呼び出しが失敗: $(grep -m1 . "$ERR" || echo 不明)）"
+  elif jq -e "$Q" >/dev/null 2>&1 <<<"$json"; then
     ok "$desc"
   else
     ng "$desc"
@@ -45,11 +54,12 @@ main() {
   done
   local arn user
   arn=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null) || arn=""
-  if [[ ! $arn =~ ^arn:aws:iam::[0-9]{12}:user/([A-Za-z0-9+=,.@_-]+)$ ]]; then
-    echo "一時 IAM user の資格情報ではありません。make aws-login をやり直してください" >&2
+  # path 付きの user も通し、path の誤りは 1-3 の確認で NG にする。
+  if [[ ! $arn =~ ^arn:aws:iam::[0-9]{12}:user/(.+/)?([A-Za-z0-9+=,.@_-]+)$ ]]; then
+    echo "一時 IAM user の資格情報ではありません（${arn:-取得できず}）。make aws-login をやり直してください" >&2
     return 2
   fi
-  user=${BASH_REMATCH[1]}
+  user=${BASH_REMATCH[2]}
   echo "# アカウントの準備（profile: ${AWS_PROFILE}、user: ${user}）"
 
   Q='.accountPlanType == "PAID"' expect "1-0 アカウントが Paid plan" freetier get-account-plan-state
@@ -59,10 +69,10 @@ main() {
     iam list-attached-user-policies --user-name "$user"
   Q='.User.Path == "/"' expect "1-3 一時 IAM user の path が /" iam get-user --user-name "$user"
   Q='.MFADevices | length >= 1' expect "1-3 一時 IAM user に MFA が在る" iam list-mfa-devices --user-name "$user"
-  Q='.AccessKeyMetadata | length == 0' expect "1-3 一時 IAM user にアクセスキーが無い" iam list-access-keys --user-name "$user"
+  Q='.AccessKeyMetadata == []' expect "1-3 一時 IAM user にアクセスキーが無い" iam list-access-keys --user-name "$user"
   Q='.SummaryMap.AccountAccessKeysPresent == 0' expect "1-4 root にアクセスキーが無い" iam get-account-summary
-  Q='.ContactInformation | (.FullName // "") != "" and (.PhoneNumber // "") != ""' \
-    expect "2-1 連絡先に氏名と電話番号が在る" account get-contact-information
+  Q='.ContactInformation | (.FullName // "") != "" and (.AddressLine1 // "") != "" and (.PhoneNumber // "") != ""' \
+    expect "2-1 連絡先に氏名・住所・電話番号が在る" account get-contact-information
   local type
   for type in BILLING OPERATIONS SECURITY; do
     Q='.AlternateContact.AlternateContactType != null' \
@@ -72,7 +82,11 @@ main() {
   Q='.AnomalySubscriptions | length >= 1' expect "2-2 Cost Anomaly Detection の通知が在る" ce get-anomaly-subscriptions
 
   echo "# 結果: ${checks} 件のうち NG ${fails} 件"
-  ((checks > 0 && fails == 0)) || return 1
+  if ((checks != EXPECTED_CHECKS)); then
+    echo "確認の件数が ${EXPECTED_CHECKS} 件ではありません。スクリプトを確かめてください" >&2
+    return 2
+  fi
+  ((fails == 0)) || return 1
 }
 
 # 出力をそのまま Pull Request に貼れるように、12桁の数字（アカウント ID）を伏せる。
