@@ -1,7 +1,7 @@
 ---
 name: release-notes
 description: >-
-  Generate a Japanese release note Markdown file under `.github/release/` summarizing changes between a specified `origin` git tag and `HEAD`, in the project's canonical sectioned format. Both the FROM tag and the new release version are confirmed with the user. Triggers: 「リリースノートを作成」, "release notes", 「v1.x.y のリリースノート」.
+  Generate a Japanese release note Markdown file under `.github/release/` summarizing changes between a specified `origin` git tag (or `production` for the first release) and `HEAD`, in the project's canonical sectioned format with a list of the issues closed as completed. Both the FROM tag and the new release version are confirmed with the user. Triggers: 「リリースノートを作成」, "release notes", 「v1.x.y のリリースノート」.
 ---
 
 # Release Notes Generation Procedure
@@ -13,7 +13,7 @@ This skill defines the work procedure for generating a Japanese release note tha
 GitHub Release の本文にもする（`scripts/release/main.go` の `notePath` / `tagSteps`）。
 **無ければタグが打てない。**
 
-`.github/release/` にはまだ1件も無い。最初のノートが以後の見本になるので、形を決める回でもある。
+形と文体の見本は `.github/release/` の既存のノートである。1件も無ければ、この回のノートが以後の見本になる。
 
 ## First Step: Confirm the FROM Tag and the New Version
 
@@ -32,6 +32,13 @@ This skill **MUST call `AskUserQuestion` immediately after invocation** to confi
     - Question: "比較元 (FROM) の origin タグを指定してください。"
     - Provide the top 3 most recent tags as options, plus an "Other" fallback for older tags.
 4. Validate that the answer matches `^v[0-9]+\.[0-9]+\.[0-9]+$` and that `git rev-parse <FROM>^{commit}` succeeds. Use it as `<FROM_TAG>`.
+
+**タグが1つも無いとき（初回のリリース）**は、上の 3-4 の代わりに `origin/production` を比較元の
+候補として出す。タグは `production` の先頭に打つので（`scripts/release` の `tagSteps`）、まだ
+一度もリリースしていない `production` の先頭が「前回のリリース」に当たる。選ばれた ref を
+`<FROM_TAG>` として以下を読み替え、概要に「初回のリリースで、比較元は `production` の
+`<短い SHA>`」と書く。`<NEW_VERSION>` は既存のタグからの加算ができないので、ブランチ由来の候補を
+推奨にする。初回のタグの打ち方は、`scripts/README.md` の release の行が持つ。
 
 ### 2. New version (NEW_VERSION)
 
@@ -104,6 +111,20 @@ Optionally, for richer context on individual commits:
 git log --no-merges --pretty=format:'%h%n%s%n%b%n---' <FROM_TAG>..HEAD
 ```
 
+完了として閉じた issue を集める（「対応した issue」の節に使う）。範囲は `<FROM_TAG>` の commit の
+日時より後に閉じたもので、初回のリリースなら閉じたものすべてである。`not planned` で閉じたものは
+入れない。
+
+```sh
+export SINCE=$(git log -1 --format=%ct <FROM_TAG>)
+gh issue list --state closed --limit 500 --json number,title,stateReason,closedAt,labels \
+  --jq '.[] | select(.stateReason=="COMPLETED" and (.closedAt|fromdateiso8601) > (env.SINCE|tonumber))
+        | "\(.number)\t\([.labels[].name]|join(","))\t\(.title)"'
+```
+
+CI などが定期に起票する報告の issue（例: Tool Version Report）は、対応した作業ではないので除き、
+除いたことを節の冒頭に書く。
+
 ### 3. Categorize Commits
 
 Inspect each non-merge commit subject and bucket it. Match both English and Japanese-style prefixes used in this repo (`Feat:`, `Fix:`, `Refactor:`, `Docs:`, `Chore:`, `Test:`, etc.):
@@ -129,8 +150,7 @@ When the bucket is ambiguous, inspect the changed file paths from step 2 to infe
 
 ### 4. Compose the Release Note
 
-Write `.github/release/<NEW_VERSION>.md` in **Japanese**. まだ見本が無いので、**この形がそのまま
-見本になる**。The required top-level structure is:
+Write `.github/release/<NEW_VERSION>.md` in **Japanese**. The required top-level structure is:
 
 ```markdown
 <!-- markdownlint-disable MD041 -->
@@ -152,6 +172,14 @@ Write `.github/release/<NEW_VERSION>.md` in **Japanese**. まだ見本が無い�
 
 - {変更内容を、コミットの羅列ではなく「読んで理解できる粒度」でまとめる}
   - {参照すべきコミット hash や PR があれば付記}
+
+## 対応した issue
+
+{このリリースまでに完了として閉じた issue です（除いたものがあれば、ここで名指す）。}
+
+### {主題（例: フェーズとユースケース / 判断 / 検査とゲート / 開発中に見つけて直した不具合）}
+
+- #{番号} {issue の題を、読める日本語に整えたもの}
 
 ## 動作確認手順
 
@@ -183,6 +211,18 @@ Rules for the content:
 - **Reference concrete file paths or component names** when they help readers locate the change（例: `scripts/versions/`、`.github/settings/branch-protection.json`）。
 - **Be honest about scope.** If a section has no content (e.g., no bug fixes), write `- 該当なし` rather than fabricating items.
 - **既存のノートがあれば、その文体に合わせる。** 無いなら、この回が見本になる。
+- **本文は 100 行程度に収める。「対応した issue」の節はこの行数に数えない。** 読者がリリースの
+  全体像を一度に読める長さに保つためで、issue の一覧は件数に比例して伸びる参照の置き場である。
+  超えるなら、節を増やすより主題をまとめて粒度を上げる。数え方:
+
+  ```sh
+  awk '/^## 対応した issue/{skip=1;next} /^## /{skip=0} !skip' .github/release/<NEW_VERSION>.md | wc -l
+  ```
+
+- **「対応した issue」の一覧は issue ごとに1行**にし、説明を足さない。説明は本文の各節が持つ。
+  主題ごとに見出しで分け、本文の節の分け方と揃える。
+- **「不具合修正」はリリース済みの版に対する修正を書く。** リリースする前の開発中に見つけて直した
+  不具合は「対応した issue」に載せ、「不具合修正」からはそこを指す。
 
 ### 5. Show a Preview Before Writing
 
@@ -231,6 +271,8 @@ Confirm the following before reporting completion:
 - [ ] Diff metadata (commit count / file count / +/- lines) collected from `git`
 - [ ] Commits categorized into the sections above
 - [ ] Release note drafted in Japanese, matching the canonical format
+- [ ] 「対応した issue」を除いた本文が 100 行程度（上の `awk` で数えた行数を報告する）
+- [ ] 完了として閉じた issue を集め、除いたもの（定期の報告など）を節の冒頭に書いた
 - [ ] Preview confirmed by the user
 - [ ] `.github/release/<NEW_VERSION>.md` written
 - [ ] `make md-lint` exits cleanly
