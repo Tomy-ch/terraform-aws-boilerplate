@@ -177,8 +177,7 @@ func oidcURL(environ []string) (string, error) {
 	return u.String(), nil
 }
 
-// oidcToken は、OIDC token の要求の応答 `{"value": "<JWT>"}` から token を返します。JWT の形でなければ
-// 失敗し、token は文に入れない。
+// oidcToken は、OIDC token の要求の応答 `{"value": "<JWT>"}` から token を返します。JWT の形でなければ失敗します。
 func oidcToken(path string, readFile func(string) ([]byte, error)) (string, error) {
 	raw, err := readFile(path)
 	if err != nil {
@@ -202,7 +201,7 @@ func oidcToken(path string, readFile func(string) ([]byte, error)) (string, erro
 }
 
 // oidcSub は、GitHub Actions の OIDC token（JWT）の payload の sub を返します。署名は検証しない
-// —— 値は公開ログへの表示用で、信頼の判断は AWS の STS が行う。token そのものはどこにも出さない。
+// —— 値は公開ログへの表示用で、信頼の判断は AWS の STS が行う。
 func oidcSub(path string, readFile func(string) ([]byte, error)) (string, error) {
 	raw, err := readFile(path)
 	if err != nil {

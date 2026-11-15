@@ -543,7 +543,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 | 区分 | usecase | 条件2・3 の置き換え |
 |---|---|---|
 | 複製を作れる | `state-backend` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する |
-| 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
+| 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認（`deployment-identity` は `make ci-assume-denied`）、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
 | 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
 | 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks` | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
 
