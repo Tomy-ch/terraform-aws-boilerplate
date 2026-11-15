@@ -1,317 +1,314 @@
 # bootstrap 手順書
 
-## 概要
+## 1. 設定の概要
 
-管理アカウントに `state-backend` と `deployment-identity` の2ユースケースを立ち上げ、以後の変更を CI が apply できる状態にするまでの手順である。管理アカウントを作った直後から始め、次の順に進む。
+管理アカウントに、Terraform の state の置き場（`state-backend`）と、CI が AWS に入るための role（`deployment-identity`）を作る。これらは CI 自身では作れないので、最初の一度だけ人が作る。
 
-1. アカウントの準備 —— root と一時 IAM user で、アカウントの設定と bootstrap の実行者を整える
-2. 段1-5 —— 内容と順序は [ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定4 が定める。段4 のローカルからの apply は同 決定9・10 の例外であり、実行の記録は Pull Request の本文に残す（同 決定10）
-3. 一時 IAM user の削除 —— 段5 の成功の後に行う
+| 実施者 | 担当 |
+| --- | --- |
+| root の持ち主 | アカウントの準備の一部と、最後の一時 IAM user の削除 |
+| 一時 IAM user | それ以外の AWS 側の作業（bootstrap の間だけ使い、最後に削除する） |
+| リポジトリの管理者 | GitHub の environment と secret |
 
-各ユースケースの責務境界と公開契約は、それぞれの README が持つ。本書はそれらを再掲しない。ADR-0602 決定9 の回復の契機でも、同じ手順を踏む。ただし、段5 で CI の apply が state を state の鍵で書いた後は、Key Policy に名指されない一時 IAM user は state を読めず、この手順をそのまま回復に使えない（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）。
+管理アカウントを作った直後に行う。段の順序と例外は [ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) が定める。
 
-root でサインインするのは2回だけである。1回目は「root で行う作業」で、root でしか行えない作業と最初の IAM 主体の作成を済ませてサインアウトする。以降は一時 IAM user で作業する。2回目は「一時 IAM user の削除」で行う。
+> **注意**: 段5 の後は、一時 IAM user は state を読めない。この手順を障害からの回復には使えない（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）。
 
-| # | 作業 | 実施主体 | root で行う理由 |
+## 2. 設定完了後の状態
+
+- identity root への変更は、release line への merge で CI が apply する。人は apply しない
+- state は state Bucket（`tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an`）に暗号化して保存され、書き込めるのは CI だけである
+- CI はアクセスキーを持たず、GitHub の OIDC で AWS に入る
+- 残った lock は GitHub Actions の `Terraform Unlock` で外す
+- アカウントは Paid plan で、連絡先・Cost Explorer・Cost Anomaly Detection が設定済みである
+- root は MFA を2台以上持ち、アクセスキーを持たない。人の IAM user は無い
+
+## 3. やること
+
+完了条件は、その作業で実現した状態である。確認のコマンドは `docs/setup/scripts/` に在り、どれも読むだけで何も変えない。
+
+| 作業 | 内容 | 実施者 | 完了条件 |
 | --- | --- | --- | --- |
-| 1-0 | Paid Plan への移行 | root | アカウント作成直後は root 以外の主体が無い |
-| 1-1 | root の MFA 登録（2台以上） | root | root の認証情報は root でしか管理できない |
-| 1-2 | Billing への IAM アクセス有効化 | root | 「Billing Tasks」に root 専用と明記されている |
-| 1-3 | 一時 IAM user の作成 | root | 作業自体は root 専用ではない。IAM 主体が0件のため最初の1つだけ root で作る |
-| 1-4 | root アクセスキーの不在確認 | root | root の認証情報の管理に当たる |
-| 2-1 | 連絡先と代替連絡先3種の登録 | 一時 IAM user | 不要（資料に root 不要と明記されている） |
-| 2-2 | Cost Explorer の有効化 | 一時 IAM user | 不要（1-2 を済ませていれば可） |
-| - | 一時 IAM user の削除 | root | 削除の対象を除くと、他に人の主体が無い |
+| [事前準備](#事前準備) | MFA デバイスなどを揃える | 人 | 5点が揃っている |
+| [アカウントの準備](#アカウントの準備)（1-0 〜 2-2） | アカウントの初期設定、一時 IAM user、`aws login`、連絡先、Cost Explorer | root、一時 IAM user | `check-account.sh` が `NG 0 件`、かつ[目で見る3点](#2-3-アカウントの準備を確かめる)を満たす |
+| [段1](#段1-state-bucket-を作る) | state Bucket を CLI で作る | 一時 IAM user | `verify.sh stage1` が `NG 0 件` |
+| [段2](#段2-plan-で突合する) | Terraform に取り込み、plan を期待値と照合する | 一時 IAM user | `check-plan.sh` が `不足 0 件、余剰 0 件`、`verify.sh before-apply` が `NG 0 件` |
+| [段3](#段3-入力の値を用意する) | 自分のリポジトリの値を入れ、Pull Request を開く | 一時 IAM user | `sub` が immutable 形式、Pull Request の commit で `check-plan.sh` が一致 |
+| [段4](#段4-ローカルから-apply-する) | Pull Request の commit を手元から apply し、merge する | 一時 IAM user、管理者 | plan が `No changes.`、`verify.sh stage4` と `permissions` が `NG 0 件`、CI の plan が変更なし、記録が Pull Request に在る |
+| [段5](#段5-ci-の-apply-に移る) | 以後の変更を CI に apply させる | 管理者、CI | [段5 の成功条件](#段5-の成功条件)をすべて満たす |
+| [削除](#一時-iam-user-の削除) | 一時 IAM user を消す | root | Credential report で IAM user が0件、root はアクセスキー無しで MFA が有効 |
 
-## アカウントの準備
+- 上から順に行う。前の作業の完了条件を満たすまで次へ進まない
+- 2-2 の結果は翌日以降に揃う。待つ間に段1 へ進んでよい
+- 一時 IAM user は段5 の成功まで削除しない
+
+## 4. 手順
+
+コンソールの表記は英語 UI 基準である。
 
 ### 事前準備
 
-作業開始前に次の5点を揃える。root サインイン中に準備物が欠けると、root のセッションを長く開いたままにすることになる。
+- [ ] MFA デバイス2台（例: セキュリティキー2本、またはセキュリティキー1本＋認証アプリ）。root と一時 IAM user で別の MFA を使うなら、その分も
+- [ ] root のメールアドレスとパスワード（パスワードマネージャー）
+- [ ] 一時 IAM user 用に生成した強いパスワード
+- [ ] AWS CLI 2.32.0 以上（`aws --version`）
+- [ ] 今後も受信できる電話番号（primary contact に登録する）
 
-- [ ] MFA デバイスを2台用意する（例: パスキー対応のセキュリティキー2本、またはセキュリティキー1本＋認証アプリ）。root と一時 IAM user で別の MFA を使う場合は、その分も用意する
-- [ ] root のメールアドレスとパスワードを手元で参照できる（パスワードマネージャー）
-- [ ] 一時 IAM user 用の強いパスワードを生成しておく
-- [ ] AWS CLI のバージョンが 2.32.0 以上（`aws --version`）。`aws login` はこれ未満では使えない
-- [ ] primary contact に登録する電話番号が、今後も受信できる番号であることを確認する
+### アカウントの準備
 
-### root で行う作業
+1-0 から 1-5 を root で続けて行い、2-0a 以降を一時 IAM user で行う。設定が正しいかは、最後の 2-3 でまとめて確かめる。
 
-5つの作業を続けて行い、最後にサインアウトする。コンソール上の表記は英語 UI 基準である。
+#### 1-0. Paid Plan に移行する（root）
 
-#### 1-0. Paid Plan に移行する
+作成時に Paid plan を選んでいれば不要。
 
-Free plan のアカウントは、使えるサービスと機能が限られ、期間か credit が尽きると閉鎖される。作成時に Paid plan を選んでいれば不要である。
+1. [AWS コンソール](https://console.aws.amazon.com/) で「Root user」を選び、root でサインインする
+2. [Upgrade plan](https://console.aws.amazon.com/billing/home?#/freetier/upgrade) を開き、「Upgrade account」を押す
 
-1. [AWS コンソール](https://console.aws.amazon.com/) で「Root user」を選び、root のメールアドレスとパスワードでサインインする
-2. [Upgrade plan](https://console.aws.amazon.com/billing/home?#/freetier/upgrade) を開く
-3. 内容を確認し、「Upgrade account」を押す
+#### 1-1. root の MFA を2台以上登録する（root）
 
-#### 1-1. root の MFA を登録する（2台以上）
+1. 右上のアカウント名 →「Security credentials」→「Assign MFA device」で1台目を登録する
+2. 同じ手順で2台目を登録する（再認証を求められたら1台目で認証する）
 
-2台目は、1台を紛失したときの予備である。root には最大8台まで登録できる。
-
-1. 右上のアカウント名 →「Security credentials」を開く
-2. 「Multi-factor authentication (MFA)」→「Assign MFA device」を押す
-3. デバイス名を入力し、種類（Passkey or security key / Authenticator app など）を選んで登録する
-4. 2台目を同じ手順で登録する。追加の前に MFA での再認証を求められたら、1台目で認証する
-5. 一覧に2台以上表示されることを確認する
-
-#### 1-2. Billing and Cost Management への IAM アクセスを有効にする
-
-これをしないと、AdministratorAccess を付けた IAM user でも請求画面が見えず、Cost Explorer も有効化できない。
+#### 1-2. Billing への IAM アクセスを有効にする（root）
 
 1. 右上のアカウント名 →「Account」を開く（[Billing の Account ページ](https://console.aws.amazon.com/billing/home#/account)）
-2. 「IAM user and role access to Billing information」の「Edit」を押す
-3. 「Activate IAM Access」にチェックを入れ、「Update」を押す
-4. 有効化されたことを示す表示を確認する
+2. 「IAM user and role access to Billing information」の「Edit」→「Activate IAM Access」にチェック →「Update」
 
-#### 1-3. 一時 IAM user を作る
+#### 1-3. 一時 IAM user を作る（root）
 
 | 項目 | 設定 |
 | --- | --- |
-| ポリシー（直接アタッチ） | AdministratorAccess, SignInLocalDevelopmentAccess |
-| コンソールアクセス | 有効（カスタムパスワード） |
-| MFA | 設定する |
-| アクセスキー | 作らない（CLI と Terraform は `aws login`） |
+| ユーザー名 | 一時用と分かる名前（段3 で使うので控える） |
+| path | 指定しない |
+| ポリシー（直接アタッチ） | AdministratorAccess と SignInLocalDevelopmentAccess の2つだけ |
+| コンソールアクセス | 有効（Custom password） |
+| MFA | 登録する |
+| アクセスキー | 作らない |
 
-この user は、bootstrap の段1-4 を人の手元から進めるためだけの一時的な主体であり、このリポジトリが Terraform で生成する IAM ではない。そのため、2つの AWS managed policy を付けることは [ADR-0301](../adr/0301-least-privilege-policy.md) 決定8・10（Action wildcard と AWS managed policy を使わない）の対象外とする。段1-4 で作るものが何であるかが事前に確定しない以上、権限を絞った customer managed policy を手で書くと、bootstrap の途中で権限不足に当たる。代わりに、存在する期間を bootstrap の間に限り、終わったら「一時 IAM user の削除」で消す。path は指定しない（既定の `/`）。段3 で state Bucket の書き込みの例外に入れる値は、path を持たない名前である。
+この user に AWS managed policy を付けることは [ADR-0301](../adr/0301-least-privilege-policy.md) 決定8・10 の対象外とし、bootstrap の後に削除する。
 
-1. IAM コンソール →「Users」→「Create user」を押す
-2. ユーザー名を入力する（一時用と分かる名前にする）
-3. 「Provide user access to the AWS Management Console」にチェックし、「I want to create an IAM user」を選ぶ
-4. 「Custom password」を選び、事前に生成したパスワードを入力する
-5. 「Permissions options」で「Attach policies directly」を選び、AdministratorAccess と SignInLocalDevelopmentAccess の2つにチェックする
-6. 内容を確認して「Create user」を押す
-7. 表示されたコンソールのサインイン URL（アカウント ID 入り）を控える
-8. 作成したユーザー →「Security credentials」タブ →「Assign MFA device」で MFA を登録する（初回サインイン時に本人が登録してもよい。その場合は 2-0a で行う）
-9. 同じタブの「Access keys」が空であることを確認する
+1. IAM コンソール →「Users」→「Create user」
+2. ユーザー名を入力し、「Provide user access to the AWS Management Console」→「I want to create an IAM user」→「Custom password」を選んでパスワードを入力する
+3. 「Attach policies directly」で上表の2つにチェックし、「Create user」を押す
+4. 表示されたサインイン URL を控える
+5. ユーザーの「Security credentials」タブで MFA を登録する（2-0a で本人が登録してもよい）
 
-#### 1-4. root のアクセスキーが存在しないことを確かめる
+#### 1-4. root のアクセスキーを消す（root）
 
-1. 右上のアカウント名 →「Security credentials」を開く
-2. 「Access keys」の一覧が空であることを確認する
-3. キーが1つでもあれば、「Actions」→「Deactivate」→「Delete」で削除する
+右上のアカウント名 →「Security credentials」の「Access keys」にキーがあれば、「Actions」→「Deactivate」→「Delete」で削除する。
 
-#### 1-5. root からサインアウトする
+#### 1-5. root からサインアウトする（root）
 
-右上のアカウント名 →「Sign out」。以後は一時 IAM user で作業し、root のパスワードと MFA デバイスは別々の場所に保管する。
-
-### 一時 IAM user で行う作業
-
-以下はすべて root 不要である。1-2 が済んでいることが前提となる。
+右上のアカウント名 →「Sign out」。root のパスワードと MFA デバイスは別々の場所に保管する。
 
 #### 2-0a. 初回サインイン
 
-1. 1-3 で控えたサインイン URL を開き、一時 IAM user でサインインする
-2. 1-3 で MFA を登録していなければ、右上のユーザー名 →「Security credentials」→「Assign MFA device」で登録し、一度サインアウトして MFA 付きで入り直す
+1-3 で控えた URL から一時 IAM user でサインインする。MFA が未登録なら「Security credentials」→「Assign MFA device」で登録し、MFA 付きで入り直す。
 
 #### 2-0b. aws login 用のプロファイルを作る
-
-名前付きプロファイル `tabp-bootstrap`（tabp は terraform-aws-boilerplate の略）を作る。Terraform は make のターゲット（`make init-admin-identity` / `make plan-admin-identity`）から実行し、ターゲットは、資格情報や terraform の振る舞いを変える呼び出し元の環境変数（`AWS_` で始まるもの、`TF_CLI_ARGS*`、`TF_VAR_*`、`TF_LOG*` ほか。一覧の正本は `scripts/tf-local` の `env-unset`）を外したうえで、`AWS_PROFILE=tabp-bootstrap` と `TF_CLI_CONFIG_FILE=/dev/null` を渡す。後者は `~/.terraformrc` と `~/.terraform.d/*.tfrc` を読ませない —— そこにある `dev_overrides` は lock の hash の検証を経ずに provider を差し替える。AWS CLI を直接打つ段1 では `AWS_PROFILE=tabp-bootstrap` を自分で付ける。このプロファイルは一時 user と一緒に削除するもので、`default` を汚さず、強い権限が及ぶ範囲もコマンド単位に限定できる。Terraform は `aws login` の認証情報を直接読めるので、`credential_process` は使わない。リージョンは ap-northeast-1 とする。
 
 | 対象 | 必要バージョン |
 | --- | --- |
 | AWS CLI | 2.32.0 以上 |
-| Terraform 本体（S3 backend を使う場合） | 1.15.0 以上 |
+| Terraform | 1.15.0 以上 |
 
-S3 backend は Provider と別に、Terraform 本体に内蔵の SDK で認証情報を解決する。このため、S3 backend へ移行した後は Terraform 本体の条件も必要になる。
+1. `aws --version` と `terraform version` で上表を満たすことを確かめる
+2. `env | grep AWS_` で `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` が設定されていないことを確かめる
+3. `make aws-login` を実行し、リージョンに `ap-northeast-1` を入力する
+4. ブラウザで一時 IAM user のセッションを選ぶ。**root のセッションは選ばない**
 
-1. `aws --version`、`terraform version` で上表を満たすことを確認する
-2. 環境変数 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY` が設定されていないことを確認する（`env | grep AWS_`）。設定されていると `AWS_PROFILE` より優先される
-3. `make aws-login` を実行し、リージョンを聞かれたら `ap-northeast-1` を入力する
-4. ブラウザで一時 IAM user のセッションを選ぶ。root のセッションが一覧に出ても選ばない
-5. `~/.aws/config` に次のブロックが作られたことを確認する
+`~/.aws/config` に次のブロックが作られていれば完了。認証情報が失効したら（最長12時間）、`make aws-login` を再実行する。
 
-   ```ini
-   [profile tabp-bootstrap]
-   login_session = arn:aws:iam::<アカウントID>:user/<一時IAMユーザー名>
-   region = ap-northeast-1
-   ```
+```ini
+[profile tabp-bootstrap]
+login_session = arn:aws:iam::<アカウントID>:user/<一時IAMユーザー名>
+region = ap-northeast-1
+```
 
-6. Arn が一時 IAM user であることを確認する。Terraform から読めることは、段2 の `make plan-admin-identity` が確かめる
+Terraform は `make` のターゲットか、本書のコマンドどおりに実行する。AWS CLI を直接打つときは `AWS_PROFILE=tabp-bootstrap` を付ける。
 
-   ```bash
-   aws sts get-caller-identity --profile tabp-bootstrap
-   ```
+#### 2-0c. 1日の作業の終わりに
 
-認証情報は `~/.aws/login/cache` にキャッシュされる。15分ごとに自動更新され、最長12時間で失効する。失効したら `make aws-login` を再実行する。
+```bash
+aws logout --profile tabp-bootstrap
+```
 
-AWS Provider または Terraform 本体が `aws login` の認証情報を読めない版である場合は、`credential_process = aws configure export-credentials --profile tabp-bootstrap --format process` を持つ別のプロファイルを作り、`AWS_PROFILE` にはそちらを指定して回避する。make のターゲットは profile を `tabp-bootstrap` に固定しているので、この場合は使えない。
+#### 2-1. 連絡先を登録する
 
-#### 2-0c. 1日の作業の終了時
+右上のアカウント名 →「Account」で、次を登録する。
 
-1日の作業を終えたら `aws logout --profile tabp-bootstrap` を実行し、キャッシュを消す。
-
-#### 2-1. 連絡先と代替連絡先3種を登録する
-
-資料では、contact information と alternate contacts は root の認証情報を要しない作業である。
-
-1. 右上のアカウント名 →「Account」を開く
-2. 「Contact information」の「Edit」を押し、氏名・住所・電話番号を正確に入力して保存する
-3. 「Alternate contacts」の「Edit」を押し、Billing / Operations / Security の3種を登録して保存する
-
-primary contact の電話番号は特に正確にする。root の MFA デバイスを失ったとき、root のサインインはメールアドレスとこの電話番号での本人確認で回復する。
+- 「Contact information」: 氏名・住所・電話番号（root の MFA を失ったときの本人確認に使われるので、電話番号は正確に）
+- 「Alternate contacts」: Billing / Operations / Security の3種
 
 #### 2-2. Cost Explorer を有効にする
 
-Cost Explorer は API では有効化できず、コンソールで初めて開くと有効になる。
+Billing and Cost Management コンソール →「Cost Explorer」→「Launch Cost Explorer」を押す。
 
-1. Billing and Cost Management コンソールを開く
-2. ナビゲーションの「Cost Explorer」を選ぶ
-3. 「Welcome to Cost Explorer」画面が出たら「Launch Cost Explorer」を押す
-4. 当月のデータの準備に約24時間かかるため、翌日以降に表示を確認する
+#### 2-3. アカウントの準備を確かめる
 
-有効化と同時に Cost Anomaly Detection が自動設定され、AWS services monitor と日次サマリーの通知が作られる。翌日以降に Cost Anomaly Detection の「Cost monitors」で monitor が存在すること、通知先メールが意図したアドレスであることを確認する。
+1. 次を実行する
 
-## 段1-5
+   ```bash
+   docs/setup/scripts/check-account.sh
+   ```
 
-### 段1. AWS CLI で state Bucket を作る
+   最後の行が `NG 0 件` なら次へ。NG の行は、対応する作業（行頭の番号）をやり直す。2-2 の行だけが NG なら、翌日に再実行する。
 
-state backend が無い時点では Terraform が state を保存できないので、Bucket だけを AWS CLI で作る（ADR-0602 決定5）。作るのは、`modules/s3` が宣言するもののうち state を保存するために要るものに限る —— 版管理、Public Access Block、Object Ownership。既定の暗号化、Bucket Policy、lifecycle、KMS は CLI で作らない。これらは段2 の plan に追加として現れ、段4 以降で Terraform が作る。既定の暗号化は state の鍵を名指すので、鍵より先には置けない。段4 の apply までは、AWS が新しい Bucket に置く既定（SSE-S3 と SSE-C の拒否）が掛かる（[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) 決定4）。
+2. コマンドで見られない次の3点を、コンソールで確かめる
+   - root の「Security credentials」の MFA の一覧に2台以上ある（1-1）
+   - 一時 IAM user で Billing and Cost Management の画面が開ける（1-2）
+   - 翌日以降、Cost Explorer に当月のデータが表示され、Cost Anomaly Detection の通知先メールが意図したアドレスである（2-2）
 
-名前と設定は `usecases/state-backend` と `modules/s3` の宣言から決まる。名前は `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` で、account regional namespace に作る。タグは付けない（root に `default_tags` が無いので、付けると段2 で差分が出る）。
+### 段1. state Bucket を作る
 
-以下のコマンドは bash で実行する。fish など他のシェルを使っているなら、先に `bash` を起動してから貼り付ける。
+以下は bash で実行する（fish などを使っているなら、先に `bash` を起動する）。
 
-1. 変数を用意する。`ACCOUNT_ID` が12桁の数字でなければ `BUCKET` を設定せずにエラーを出すので、その場合は `make aws-login` をやり直してからこの手順を繰り返す
+> **重要**: タグを付けない。暗号化・Bucket Policy・lifecycle も CLI で設定しない（段4 で Terraform が作る）。
+
+1. 変数を用意する。このブロックは段2 から段5 でも使う。シェルを開き直したら再実行する
 
    ```bash
    export AWS_PROFILE=tabp-bootstrap
    REGION=ap-northeast-1
    ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
    if [[ $ACCOUNT_ID =~ ^[0-9]{12}$ ]]; then BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"; echo "$BUCKET"; else unset BUCKET; echo "ACCOUNT_ID が12桁ではありません: '$ACCOUNT_ID'" >&2; fi
+   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN)=' | sed 's/=$//; s/^/-u /')
    ```
 
-2. Bucket を作る。Object Ownership は作成時に `BucketOwnerEnforced` を指定する
+   Bucket 名が表示されれば次へ。エラーが出たら `make aws-login` をやり直し、このブロックを再実行する。
+
+2. Bucket を作り、Public Access Block と版管理を設定する
 
    ```bash
    aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
      --bucket-namespace account-regional \
      --create-bucket-configuration "LocationConstraint=${REGION}" \
      --object-ownership BucketOwnerEnforced
-   ```
-
-3. Public Access Block と版管理を設定する
-
-   ```bash
    aws s3api put-public-access-block --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
      --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
    aws s3api put-bucket-versioning --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" \
      --versioning-configuration Status=Enabled
    ```
 
-4. 設定を読み戻して確かめる
+3. 確かめる
 
    ```bash
    docs/setup/scripts/verify.sh stage1
    ```
 
-   Public Access Block の4項目、所有権（`BucketOwnerEnforced`）、版管理（`Enabled`）の行がすべて `ok` で、最後の行が `NG 0 件` を示すこと。3つのどれかが `NG` なら手順3 をやり直し、3つがすべて `ok` になるまで段2 へ進まない。暗号化の行（AWS の既定の `AES256` と `SSE-C` の拒否）が `NG` なら、段2 へ進まずに出力を Pull Request に記録して止まる（AWS が新しい Bucket の既定を変えたことになり、state-backend/ADR-0101 の見直し条件に当たる）
+   最後の行が `NG 0 件` なら完了。NG があれば[トラブルシューティング](#段1-で-ng-が出た)へ。
 
-名前や namespace を誤ったときは、空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消して作り直す。
+### 段2. plan で突合する
 
-### 段2. Terraform で取り込み、plan で突合する
+> **重要**: 段2 では apply しない。
 
-`env/admin/identity/` の root が、段1 の Bucket を `import` block で取り込む（ADR-0602 決定6）。backend の `bucket` と `kms_key_id` は block に書かず、init の引数で渡す。`make init-admin-identity` がアカウント ID から Bucket 名を組み、state の鍵の alias から鍵の ARN を求めて渡す。
-
-段4 の apply までは state の鍵が無い。`make` は既定では鍵が無いと init で失敗するので、段2 から段4 の `make` には `TF_LOCAL_MISSING_STATE_KEY=sse-s3` を付けて、鍵を渡さない init を明示して選ぶ。この指定は、alias が無く、Bucket の既定の暗号化が `AES256` のときだけ効く。その間の state と lock file は SSE-S3 で書かれる。CI はこの指定を受けない。
-
-段2 では apply しない。state を書くのは段4 のローカルの apply であり、ADR-0601 決定5 の例外は段4 だけに掛かる（ADR-0602 決定9）。plan は lock を取らずに実行する（ADR-0604 決定8）。
-
-1. plan する。`make plan-admin-identity` は先に `make init-admin-identity` を実行し、plan の出力を `tmp/plan/admin-identity.log` に残す。log の1行目は plan した commit である
+1. init する。段2 から段4 の `make` には `TF_LOCAL_MISSING_STATE_KEY=sse-s3` を付ける
 
    ```bash
-   TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity
+   TF_LOCAL_MISSING_STATE_KEY=sse-s3 make init-admin-identity
    ```
 
-   make を使えない場合（`scripts/tf-local` を build できない等）は、段1 の手順1 と同じ bash で `BUCKET` を組み、terraform を直接実行する。backend の region（`env/admin/identity/backend.tf`）と provider の region（同 `providers.tf`）が同じであることを先に確かめる
+   make を使えなければ[トラブルシューティング](#make-を使えない)へ。
+
+2. plan を保存し、期待値と照合して、plan のファイルを消す
 
    ```bash
-   unset_env=$(env | grep -oE '^((AWS_|TF_CLI_ARGS|TF_VAR_|TF_LOG)[A-Za-z0-9_]*|TF_WORKSPACE|TF_DATA_DIR|TF_CLI_CONFIG_FILE|TF_REATTACH_PROVIDERS|ACTIONS_ID_TOKEN_REQUEST_URL|ACTIONS_ID_TOKEN_REQUEST_TOKEN)=' | sed 's/=$//; s/^/-u /')
-   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
-   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
-     terraform -chdir=env/admin/identity plan -lock=false -input=false
+   (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
+     terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
+   docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
+   rm -f tmp/plan/admin-identity.tfplan
    ```
 
-   この場合、plan の出力は log に残らない。どの commit で plan したかは `git rev-parse HEAD` で控える
+   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 30 / change 0 / destroy 0` なら次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
 
-2. 結果が `Plan: 4 to import, 30 to add, 0 to change, 0 to destroy.` であり、追加が次の30件だけであることを確かめる。取り込んだ resource に変更と破棄が0件で、追加が段1 で作らないもの（ADR-0602 決定5）に限られることをもって、段2 の完了とする（ADR-0602 決定8）。追加の件数と一覧は、identity root に resource を足す変更がこの手順とあわせて更新する。一覧を設定と突き合わせる検査は無い
+   > **重要**: `check-plan.sh` を実際の plan で初めて使うときは、plan の出力（`terraform plan` が表示したもの）の取り込みと追加の一覧を、`check-plan.expected` とも目で照合する。両者の判定が食い違ったら、止まって Pull Request に記録する。
 
-   - `module.state_backend.module.s3` の `aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の3件（1件目は state の鍵による既定の暗号化。[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md)。3件目は state Bucket の lifecycle。[state-backend/ADR-0103](../../usecases/state-backend/docs/adr/0103-expire-noncurrent-state-versions.md)）
-   - `module.state_backend.module.plan_output` の `aws_s3_bucket.this`、`aws_s3_bucket_public_access_block.this`、`aws_s3_bucket_ownership_controls.this`、`aws_s3_bucket_versioning.this`、`aws_s3_bucket_server_side_encryption_configuration.this`、`aws_s3_bucket_policy.this`、`aws_s3_bucket_lifecycle_configuration.this` の7件（CI の plan の出力の Bucket。[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md)）
-   - `module.state_backend.module.kms` の `aws_kms_key.this`、`aws_kms_key_policy.this`、`aws_kms_alias.this` の3件（state の鍵）
-   - `module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github`
-   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.apply_identity` と `aws_iam_role_policy.apply_identity` の2件
-   - `module.deployment_identity.module.github_oidc` の `aws_iam_role.this` と `aws_iam_role_policy.this` を、それぞれ `["plan"]`・`["apply"]`・`["unlock_identity"]` の3件ずつ
-   - `module.deployment_identity.module.github_oidc` の `aws_iam_role_policies_exclusive.this` と `aws_iam_role_policy_attachments_exclusive.this` を、それぞれ `["plan"]`・`["apply"]`・`["apply_identity"]`・`["unlock_identity"]` の4件ずつ
-3. 段4 の apply が作るものがまだ無いことを確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換え、state の鍵の alias が在ると鍵を作った後の alias の作成で落ちて alias の無い鍵が残る
+3. 段4 で作るものがまだ無いことを確かめる
 
    ```bash
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   最後の行が `NG 0 件` を示し、終了コードが 0 であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）。Policy か lifecycle か alias が在ったら、誰がなぜ置いたかを確かめるまで段3 へ進まない
+   最後の行が `NG 0 件` で、終了コードが 0 なら完了。NG があれば、**誰がなぜ置いたかを確かめるまで段3 へ進まない**。
 
-差分が出たら、Terraform の宣言か段1 の Bucket のどちらが誤っているかを見る。宣言を直すときも、安全側の値を弱めて差分を消さない（ADR-0501 決定14）。段1 の誤りなら、Bucket を消して段1 からやり直す。
+4. `check-plan.sh` の出力を Pull Request に載せる（アカウント ID は伏せてある）
 
-plan の出力にはアカウント ID が入る。Pull Request へ載せるときは、アカウント ID を伏せた要約にする。
+### 段3. 入力の値を用意する
 
-### 段3. deployment-identity の値を用意する
+`env/<env>/identity/main.tf` を編集する。
 
-`env/<env>/identity/main.tf` の `module "deployment_identity"` が、OIDC provider と plan / apply / apply-identity / unlock-identity の4 role を作る（[`usecases/deployment-identity`](../../usecases/deployment-identity/README.md)）。段3 で人が行うのは、その入力の値を自分のリポジトリに合わせることだけである。
-
-1. `github` の4つの値を、role を assume させるリポジトリのものにする。ID は次で得る
+1. `github` の4つの値を、自分のリポジトリのものにする。ID は次で得る
 
    ```bash
    gh api repos/<owner>/<repo> --jq '.owner.id, .id'
    ```
 
-2. リポジトリの OIDC の `sub` が immutable 形式であることを確かめる。`use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` であること。`false` なら先へ進まない。旧形式の `sub` は unsupported である（`usecases/deployment-identity/README.md`）
+2. OIDC の `sub` の形式を確かめる
 
    ```bash
    gh api repos/<owner>/<repo>/actions/oidc/customization/sub
    ```
 
-3. `env/<env>/identity/main.tf` の `module "state_backend"` に、`bootstrap_executor_user_name = "<一時 IAM user の名前>"` を足す。段4 の apply が作る Bucket Policy は、state Bucket の object の書き込みを CI の role に限る。この値が無いと、段4 の apply は Bucket Policy を作った後の state と lock file の書き込みで、自分を締め出す。この値で一時 IAM user は identity root の state と lock file に書き込め、暗号化の方式の header の拒否の例外にも入る。値は段5 の最初の変更で外す（段5 の手順6）（[state-backend/ADR-0104](../../usecases/state-backend/docs/adr/0104-state-object-write-deny.md) 決定7）
-4. 値を変えた commit で Pull Request を開き、段2 の plan（`TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity`）をやり直す。件数と一覧が段2 の手順2 のとおりであること
+   `use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` であること。`false` なら**先へ進まない**（[`usecases/deployment-identity/README.md`](../../usecases/deployment-identity/README.md) の unsupported）。
 
-### 段4. 一時 IAM user のローカル権限で apply する
+3. `module "state_backend"` に、`bootstrap_executor_user_name = "<一時 IAM user の名前>"` を足す。段5 の最初の変更で外す（[state-backend/ADR-0104](../../usecases/state-backend/docs/adr/0104-state-object-write-deny.md) 決定7）
 
-段4 は ADR-0602 決定9・10 の例外であり、記録を残さない実行を認めない。段4 の Pull Request は、merge の前に、その head に対する CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す必要がある（同 決定10）。environment は `.github/settings/environments.json` が宣言し、管理者が `make apply-environments` で適用する。plan の job が読む environment `admin-plan` の secret `AWS_ACCOUNT_ID`（管理アカウントの ID）は宣言に無く、管理者が置く（`gh secret set AWS_ACCOUNT_ID --env admin-plan`）。突合は secret を見ない。
+4. この変更で Pull Request を開き、その commit で段2 の手順2 をやり直す。`check-plan.sh` が一致すれば完了
 
-段4 の apply の入口は make に作らない。terraform を直接実行する。以下はすべて段1 の手順1 と同じ bash で実行する。
+### 段4. ローカルから apply する
 
-1. Pull Request の head を checkout し、`git status` が何も示さないことを確かめ、`git rev-parse HEAD` を控える
-2. 段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意し、段2 の手順1 の「make を使えない場合」の1行目で `unset_env` を用意する
-3. 作る対象がまだ無いことを確かめる。どれかが在れば止まり、誰がなぜ作ったかを確かめる。`import` で取り込まない（ADR-0202 決定7）
+段4 は ADR-0602 決定9・10 の例外である。apply は段3 の Pull Request の commit から行い、記録を Pull Request に残す。以下は段1 と同じ bash で実行する。
+
+#### 適用前の準備
+
+**事前に管理者が行うこと**: `make apply-environments` で environment を作り、`admin-plan` に secret を置く（値は管理アカウントの ID）。
+
+```bash
+gh secret set AWS_ACCOUNT_ID --env admin-plan
+```
+
+1. Pull Request の head を checkout する。`git status` が空であることを確かめ、`git rev-parse HEAD` を控える
+
+2. [段1 の手順1](#段1-state-bucket-を作る) のブロックを実行する
+
+3. 作るものがまだ無いことを確かめる
 
    ```bash
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   最後の行が `NG 0 件` を示し、終了コードが 0 であること（OIDC provider と4つの role、state Bucket の Bucket Policy と lifecycle、state の鍵の alias が、どれもまだ無い）
+   `NG 0 件` で終了コード 0 なら次へ。NG があれば**止まり**、誰がなぜ作ったかを確かめる。`import` で取り込まない。
 
-4. plan して、その結果を保存する。件数と一覧が段2 の手順2 のとおりであることを確かめ、アカウント ID を伏せた要約を Pull Request に載せる（ADR-0602 決定10）。state の鍵はまだ無いので、init は鍵を渡さない
+#### plan と承認
+
+4. init し、plan を保存して期待値と照合する
 
    ```bash
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
    (umask 077 && mkdir -p tmp/plan && env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
      terraform -chdir=env/admin/identity plan -lock=false -input=false -out="$PWD/tmp/plan/admin-identity.tfplan")
+   docs/setup/scripts/check-plan.sh tmp/plan/admin-identity.tfplan
    ```
 
-5. apply の前の条件を確かめる（ADR-0602 決定10）。手順1 で控えた commit で、plan 以外の required check が成功していること。保護設定が承認者を要求しているなら、その承認を得ていること。満たさなければ apply しない
-6. apply の直前に、Bucket に Policy と lifecycle がまだ無いことをもう一度確かめる。段4 の apply は、在る Policy と lifecycle を黙って置き換え、plan はそれを示さない
+   `不足 0 件、余剰 0 件` なら、その出力を Pull Request に載せて次へ（ADR-0602 決定10）。NG があれば apply せず、plan のファイルを消して原因を直す。
+
+5. 次をすべて満たすことを確かめる。満たさなければ **apply しない**
+   - 手順1 の commit で、plan 以外の required check が成功している
+   - 保護設定が承認者を要求しているなら、承認を得ている
+
+#### apply と検証
+
+6. apply の直前に、もう一度確かめる
 
    ```bash
    docs/setup/scripts/verify.sh before-apply
    ```
 
-   最後の行が `NG 0 件` を示し、終了コードが 0 であること
+   `NG 0 件` で終了コード 0 なら次へ。NG があれば止まる（やり直しの途中なら[トラブルシューティング](#段4-の-apply-が失敗した)へ）。
 
-7. 保存した plan を apply し、plan のファイルを消す。apply は lock を取る（ADR-0604 決定8。`-lock=false` を付けない）。plan のファイルは state の値とアカウント ID を含む
+7. apply し、plan のファイルを消す
 
    ```bash
    env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
@@ -319,174 +316,250 @@ plan の出力にはアカウント ID が入る。Pull Request へ載せると�
    rm -f "$PWD/tmp/plan/admin-identity.tfplan"
    ```
 
-8. apply の後に確かめる
-   - `make plan-admin-identity` が `No changes.` を示す。示さなければ、その出力を Pull Request に記録して止まる。apply で state の鍵ができ、init が鍵の ARN を渡すようになるので、手順4 の init の backend の設定とは食い違い、そのままの `make` は init で失敗する。先に手元の backend の設定のキャッシュを消す。消すのは backend の設定の控えだけで、state（S3 の object）でも provider でもない。`TF_LOCAL_MISSING_STATE_KEY` は付けない
+   失敗したら[トラブルシューティング](#段4-の-apply-が失敗した)へ。
 
-     ```bash
-     rm -f env/admin/identity/.terraform/terraform.tfstate
-     make plan-admin-identity
-     ```
+8. 作られたものを確かめる。1行目は backend の設定の控えだけを消す（state は消えない）。`TF_LOCAL_MISSING_STATE_KEY` は付けない
 
-   - `docs/setup/scripts/verify.sh stage4` の最後の行が `NG 0 件` を示し、終了コードが 0 であること。段3 で `bootstrap_executor_user_name` を渡したなら、その名前を与えて実行する（`BOOTSTRAP_EXECUTOR=<名前> docs/setup/scripts/verify.sh stage4`）。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは次である
-     - 2つの Bucket の既定の暗号化が、state の鍵（`alias/tabp-admin-tfstate` の指す鍵）の SSE-KMS で、Bucket Key を使わず、`SSE-C` を拒否する。state そのものは、段5 で state を書き換える最初の CI の apply まで SSE-S3 のままである
-     - OIDC provider の `ClientIDList` が `sts.amazonaws.com` だけである
-     - 4つの role の inline policy が役割の policy 名の1つだけ（`plan` / `apply` / `apply_identity` / `unlock_identity`）で、managed policy が付いていない
-     - state Bucket の Bucket Policy の文がすべて Deny で、TLS でない要求を拒否する文が在る。`BOOTSTRAP_EXECUTOR` を与えたなら、書き込みの例外（`DenyObjectWriteByOthers`）にその user が在り、与えなければ IAM user が無い
-     - lifecycle が規則を1つだけ持ち、版の保持日数が `env/admin/identity` の `state_noncurrent_version_retention_days`、delete marker の掃除、未完了の multipart の中止（1日）を持つ
-     - state の鍵が有効な対称鍵（単一リージョン、`AWS_KMS`）で、自動の rotation が365日である
-     - Key Policy が、アカウントへの委任の文と、plan と apply-identity の role に S3 経由（`kms:ViaService`）の `kms:Decrypt`・`kms:GenerateDataKey` を許す文と、unlock-identity の role に S3 経由で identity root の lock file の object に限って `kms:Decrypt` を許す文の3つだけである
-9. 権限を確かめる。[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) の表の Action が plan と apply-identity の role に許され、plan の role に変更系が無く、apply の role の bootstrap の構成物への変更と、plan の出力の置き場の読み取りが拒否されること。unlock-identity の role の権限は、state の鍵の block の後で確かめる
+   ```bash
+   rm -f env/admin/identity/.terraform/terraform.tfstate
+   make plan-admin-identity
+   BOOTSTRAP_EXECUTOR=<一時 IAM user の名前> docs/setup/scripts/verify.sh stage4
+   ```
+
+   段3 で `bootstrap_executor_user_name` を渡さなかったなら、3行目は `BOOTSTRAP_EXECUTOR=` を付けずに実行する。
+
+   plan が `No changes.` を示し、`verify.sh stage4` が `NG 0 件` で終了コード 0 なら次へ。どちらかが違えば、出力を Pull Request に記録して**止まる**。
+
+9. role の権限を確かめる
 
    ```bash
    docs/setup/scripts/verify.sh permissions
    ```
 
-   最後の行が `NG 0 件` を示し、終了コードが 0 であること。`NG` の行は、期待した判定と、違った Action を示す。`NG` があれば、出力を Pull Request に記録して止まる。確かめるのは、S3 と IAM、state の鍵（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定3-5）、unlock-identity の role（同 決定9）の権限である
-   - CI の role は鍵と alias を作れず、鍵の権限は state の鍵の ARN に限られる。apply の role は state の鍵の管理の Action を読み取りも含めて Deny され、暗号操作は Deny されない（`implicitDeny`）。暗号操作は IAM では許さず、state の鍵の Key Policy が CI の role を名指して許す
-   - unlock-identity の role の一覧は lock file の key の prefix に限られ、state の key は読めない。`kms:Decrypt` は IAM では許さず、state の鍵の Key Policy が lock file の object に限って許す
-   - `simulate-principal-policy` が評価するのは role の policy だけで、Bucket Policy は入らない。KMS が実際の要求で Deny をどう評価するかも確かめない。plan の role の実効の権限は手順11 の CI の plan が、apply-identity の role の実効の権限は段5 の最初の apply の run が確かめる。ただし `apply/*` への書き込みの実効の権限は、apply の出力を置く CI の job が入るまで確かめる経路が無い。apply の role を assume する job は無い（#222）ので、apply の role の実効の権限を確かめる経路は無い
+   `NG 0 件` で終了コード 0 なら次へ。NG があれば、出力を Pull Request に記録して**止まる**。確かめる権限は [deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md)、この確認で検出できないものは [`usecases/deployment-identity/README.md`](../../usecases/deployment-identity/README.md) にある。
 
-10. 実行の記録を Pull Request の本文に残す。実行者（一時 IAM user）、日時、対象アカウント（ID は伏せる）、適用した commit（ADR-0602 決定10）。role の ARN を載せるときも、アカウント ID を伏せる
-11. merge の前に、Pull Request の head に対する CI の plan が変更なしを示すことを確かめる（ADR-0602 決定10）。この plan が、immutable 形式の environment の `sub` で role を assume できることの最初の確認になる（[deployment-identity/ADR-0101](../../usecases/deployment-identity/docs/adr/0101-trust-by-immutable-environment-subject.md) 決定7）
+#### 記録と merge
 
-途中で失敗したとき:
+10. 実行の記録を Pull Request の本文に書く: 実行者（一時 IAM user）、日時、対象アカウント、適用した commit、手順8・9 の出力。アカウント ID は伏せる
 
-- lock が残ったら、他に apply が走っていないことを確かめてから `terraform force-unlock <ID>` で外す
-- 作られた resource は state に入っている。原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も新しい commit で取り直す
-- Key Policy の書き込みが `MalformedPolicyDocumentException` で落ちたら、作ったばかりの role が IAM にまだ伝わっていない。commit を変えずに手順4 からやり直す
-- `EntityAlreadyExists` が返ったら、手順3 に戻る
-- やり直しの手順6 で Policy か lifecycle が返ったら、それが前の apply の書いたものとして state に在ることを `terraform state list` で確かめる。state に在るものは手順4 の plan が差分を示すので、手順6 の確認に代える。state に無いものが返ったら、誰がなぜ置いたかを確かめるまで止まる
+11. Pull Request の CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示してから merge する。変更なしでなければ merge しない
 
-### 段5. CI が apply する
+### 段5. CI の apply に移る
 
-段4 の後の変更は、release line への merge を契機に、CI の apply の job（`terraform-apply.yaml` の `apply-admin-identity`）が apply-identity の role で apply する（ADR-0602 決定4）。人は apply しない。起動の条件と job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」が持つ。
+段4 の後の変更は、release line への merge で CI（`terraform-apply.yaml` の `apply-admin-identity`）が apply する。**人は apply しない。** job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」にある。一時 IAM user のコマンドは、[段1 の手順1](#段1-state-bucket-を作る) のブロックを実行してから使う。
 
-1. apply の workflow を足す Pull Request を merge する前に、管理者が environment `admin-apply-identity` に secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く（`gh secret set AWS_ACCOUNT_ID --env admin-apply-identity`）。宣言は secret を持たず、突合も見ない
-2. merge の後の最初の run で、`apply-infra-code-gate`・`apply-resource-order-check`・`apply-admin-identity` が緑であること、ログの plan の要約が `No changes.` であること、Policy の違反が無いこと、`OIDC の sub` の行が `:environment:admin-apply-identity` で終わることを確かめる。run の URL を issue に残す（アカウント ID を載せない）。この run は apply の経路の最初の確認であり、段5 の成功ではない
-3. 段5 の変更（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行）は、前の変更の CI の apply が緑で、その後の CI の plan が変更なしを示してから merge する。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge し、その apply が緑になってから次を merge する。待っている run は後から来た run に置き換わるので、続けて merge すると2つが1回の apply に入る
-   - plan の job は Pull Request でだけ起動する。apply の後の「変更なし」は、緑になった apply の run を Actions の画面から「Re-run all jobs」で再実行し、ログの plan の要約が `No changes.` であることで確かめる。run の URL を Pull Request に記録する
-   - 再実行の apply の job は、plan の要約が `No changes.` でなくても apply まで進む。`No changes.` でなかったときは、その差分は再実行が適用している。要約と run の URL を Pull Request に記録し、次の merge へ進まずに止まる
-   - 再実行は次の merge より前に行う。release line の先頭が動いた後は、apply の job が古い commit を拒んで落ちる。そのときは、次の Pull Request の CI の plan が、その Pull Request の変更だけを示すことで代える
-4. 権限を足す変更は、足した Action とその期待の判定を `docs/setup/scripts/verify.sh` の `permissions` に同じ変更で足す。apply の後、`docs/setup/scripts/verify.sh permissions` の最後の行が `NG 0 件` を示し、終了コードが 0 であることを確かめ、出力を Pull Request に記録する。Condition を持つ Action は、条件キーを `--context` で与えて確かめる。単一の値の演算子（`Bool` など）は条件キーが無いと一致しない
-5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を merge する前に、管理者が environment `admin-unlock-identity` を作り、secret `AWS_ACCOUNT_ID`（管理アカウントの ID）を置く。environment は、その Pull Request のブランチを checkout した手元で `make apply-environments` を実行して宣言から作り、secret は `gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity` で置く。merge の前に作るのは、存在しない environment を参照した workflow が走ると、GitHub がその environment を保護なしで作るためである（[`.github/settings/README.md`](../../.github/settings/README.md)）。作った後、管理者はその Pull Request のブランチで `make repo-settings-drift` を実行し、宣言と実態が一致することを確かめてよい
-6. 一時 IAM user の書き込みを拒否する変更を merge する前に、残った lock を `Terraform Unlock` で外す試行を1回行う。その変更は、段3 で `bootstrap_executor_user_name` を足したアカウントでは、それを外す変更（段5 の最初の変更）であり、足していないアカウントでは、書き込みの拒否を入れる変更である。lock の解除の role の削除と、Key Policy が lock file に限って許す復号は、lock が在るときにしか評価されないので、障害の前に実物で一度評価する。一時 IAM user のコマンドは、段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
-   1. identity root を変更する Pull Request を merge し、その CI の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
-   2. 一時 IAM user で lock file が在ることを確かめる
+段5 は3つの工程から成る。
+
+| 工程 | 手順 | 完了条件 |
+| --- | --- | --- |
+| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | 最初の run が緑で `No changes.` |
+| [段5 の変更を適用する](#段5-の変更を適用する) | 3・4 | 各変更の後の再実行が `No changes.` |
+| [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Unlock` が lock を外し、取り消した run の再実行が緑 |
+
+> **重要**: 一時 IAM user の書き込みを拒否する変更（段3 の `bootstrap_executor_user_name` を外す変更。足していないアカウントでは、書き込みの拒否を入れる変更）は、手順5・6 を済ませてから merge する。
+
+#### CI の apply を有効にする
+
+1. apply の workflow を足す Pull Request を merge する前に、管理者が secret を置く（値は管理アカウントの ID）
+
+   ```bash
+   gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
+   ```
+
+2. merge の後の最初の run で、次をすべて確かめる。run の URL を issue に残す（アカウント ID を載せない）
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-admin-identity` が緑
+   - ログの plan の要約が `No changes.`
+   - Policy の違反が無い
+   - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
+
+#### 段5 の変更を適用する
+
+対象は [`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行の変更である。
+
+3. 変更を1つずつ merge する。1つごとに次を行う
+   1. Pull Request を merge し、CI の apply が緑になるのを待つ
+   2. 次の merge の前に、その apply の run を Actions の画面で「Re-run all jobs」する
+   3. 再実行のログの plan の要約が `No changes.` であることを確かめ、run の URL を Pull Request に記録する
+
+   `No changes.` でなければ、要約と run の URL を Pull Request に記録して**止まる**。
+
+   > **重要**: 再実行を確かめる前に、次を merge しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge する。
+
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `docs/setup/scripts/verify.sh` の `permissions` に足す。Condition を持つ Action は、条件キーを `--context` で与える。apply の後に実行する
+
+   ```bash
+   docs/setup/scripts/verify.sh permissions
+   ```
+
+   `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。
+
+#### lock の解除を用意して試す
+
+5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を **merge する前に**、管理者がそのブランチを checkout した手元で実行する
+
+   ```bash
+   make apply-environments
+   gh secret set AWS_ACCOUNT_ID --env admin-unlock-identity
+   ```
+
+   `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。
+
+6. lock を1つ残し、`Terraform Unlock` で外す
+   1. identity root を変更する Pull Request を merge し、その apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
+   2. 一時 IAM user で lock file が在ることを確かめる。返らなければ 1 からやり直す
 
       ```bash
       aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock
       ```
 
-      Terraform は取り消しの信号で lock を外して止まりうる。lock file が返らなければ、この試行は lock を残せていない。手順1 からやり直す
-   3. lock file の `LastModified` から、apply の job の `timeout-minutes` に余裕を足した時間（`scripts/tf-local` の定数）を超えるまで待つ
-   4. `Terraform Unlock` を起動し、緑であること、ログに lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出ること、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わること、手順2 の一覧が lock file を返さないことを確かめる
-   5. 取り消した apply の run を「Re-run failed jobs」で再実行し、緑になることを確かめる。release line の先頭の commit のままであること
-   6. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）。手順4 が失敗したら、一時 IAM user で lock file を消してから（「途中で失敗したとき」の `delete-object`）、Pull Request に記録して止まる
+   3. lock file の `LastModified` から、待ち時間（`scripts/tf-local` の定数）を超えるまで待つ
+   4. `Terraform Unlock` を起動し、次をすべて確かめる
+      - run が緑
+      - ログに lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
+      - `OIDC の sub` の行が `:environment:admin-unlock-identity` で終わる
+      - 2 のコマンドが lock file を返さない
+   5. 取り消した apply の run を「Re-run failed jobs」で再実行し、緑になることを確かめる
+   6. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）
 
-途中で失敗したとき:
+   4 が失敗したら、[一時 IAM user で lock file を消し](#一時-iam-user-で-lock-file-を消す)、Pull Request に記録して**止まる**。
 
-- 失敗と成功は、critical の deploy の系統の通知（`notify.yaml`）で届く（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「通知の起動条件」）。原因は run の失敗した step のログから読む。plan・Policy・apply で落ちた apply は、全文を plan の出力の Bucket の `apply/` の下に置き、その key・SHA-256・版 ID をログに出す（Bucket の名前を state から読めないときと、置き場への書き込みが失敗したときは置けない）。ただし、その全文を読める人の主体は無い。CI の apply が state を state の鍵で書いた後は、一時 IAM user は Key Policy に名指されないので state を読めず、`make plan-admin-identity` も init が state を読めずに落ちる。terraform のエラーの詳細を見る手段は、失敗した step のログに出る範囲に限られる。plan の出力の Bucket の全文も、段4 で state の鍵で暗号化された後は一時 IAM user には読めない（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）
-- 書き込みの拒否を入れる変更か、一時 IAM user の例外を外す変更の apply が落ちたときは、診断から始める。ログは apply の失敗を1行に畳むので、拒否で落ちたかは読めない。一時 IAM user で `aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"` を読んで宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、`aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock` で lock の残存を見る。ランナーの `errored.tfstate` はランナーとともに失われるが、失われるのはその apply の Bucket Policy の更新の分で、次の apply の refresh が読み直す。Bucket Policy の例外が CI の role の ARN か state の鍵の ARN と食い違って自分を拒んでいたら、`Terraform Unlock` も同じ原因で効かないことがある。その状態から回復する手順は、このリポジトリは提供しない（ADR-0602 決定9）。Pull Request に記録して止まる
-- 拒否の step が secret の不在で落ちたときは、secret を置いてから「Re-run failed jobs」で再実行する。release line の先頭の commit のままなら通り、新しい commit は要らない
-- lock が残ったら、Actions の画面から `Terraform Unlock`（`terraform-unlock.yaml`）を起動して外す。規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」が持つ。job は apply の job の `timeout-minutes` に余裕を足した時間より新しい lock を消さずに失敗するので、そのときは時間を置いて起動し直す。外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する
-- 人の手元の apply が残した lock は、`Terraform Unlock` では外れない（CI のランナーが apply の job で取った lock だけを外す）。その apply を実行した人が `terraform force-unlock <ID>` で外す
-- 一時 IAM user の書き込みが拒否される前は、一時 IAM user で lock file を消してもよい。apply の run が走っていないことを Actions の画面で確かめてから行う。lock file が state の鍵で書かれた後は、`terraform force-unlock` は lock file を読めないので使えない。消すのは版を指定しない削除で、`force-unlock` が行う削除と同じである（版管理の下で delete marker になり、前の版は lifecycle の日数まで残る）。段1 の手順1 のブロックで `ACCOUNT_ID` と `BUCKET` を用意してから実行する
+#### 段5 の成功条件
 
-  ```bash
-  aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate.tflock
-  ```
+次をすべて満たせば段5 は成功である。満たさないものがあれば、出力を Pull Request に記録して**止まる**。
 
-  一時 IAM user の書き込みが拒否された後は、人の主体は lock file を消せず、`Terraform Unlock` だけが外す。`Terraform Unlock` は、Terraform の lock として読めない lock file を消さない
+| # | 実現している状態 | 確かめ方 |
+| --- | --- | --- |
+| 1 | 段5 の変更がすべて適用され、それぞれの後の plan が変更なし | 手順3 |
+| 2 | 書き込みを拒否する前に、`Terraform Unlock` が lock を外せた | 手順6 |
+| 3 | 2つの Bucket と state が state の鍵で暗号化され、Bucket Policy の例外に IAM user が無い | 段5 の変更の apply の後に `docs/setup/scripts/verify.sh stage5` が `NG 0 件` で終了コード 0 |
+| 4 | 一時 IAM user の書き込みが Bucket Policy で拒まれる | 下のコマンド |
+| 5 | 書き込みの拒否の下で、`Terraform Unlock` が lock の無い状態を読める | 下の確認 |
 
-段5 の成功は、次のすべてを満たしたときとする。
+条件4: 書き込みの拒否の後、一時 IAM user で次を実行する（存在しない key なので何も消えない）。`AccessDenied` が返り、メッセージが `with an explicit deny in a resource-based policy` で終わること。`put-object` で代えない。
 
-- 段5 の変更をすべて CI の apply が apply し、それぞれの後の CI の plan が変更なしを示した
-- 段5 の変更の apply の後、2つの Bucket の `get-bucket-encryption` が段4 の手順8 と同じ値を返した（`docs/setup/scripts/verify.sh stage5`）
-- state を書き換える最初の CI の apply の後、`aws s3api head-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate` が `ServerSideEncryption` `aws:kms` と、`alias/tabp-admin-tfstate` の指す鍵の ARN の `SSEKMSKeyId` を返した（`docs/setup/scripts/verify.sh stage5`）。HeadObject の API Reference が `kms:Decrypt` を求めるのは checksum mode のときだけなので、一時 IAM user でも読める見込みである。`AccessDenied` が返ったら、Pull Request に記録して止まる。CI の plan は state を読めたことしか示さず、暗号化の方式を見ないので、代わりにならない
-- 一時 IAM user の書き込みが拒否された後、例外に無い IAM の主体（一時 IAM user）による state Bucket の、存在しない key（`verify/<日時>`）への `delete-object` が `AccessDenied` を返し、そのメッセージが `with an explicit deny in a resource-based policy` で終わった。Bucket Policy は `simulate-principal-policy` に入らないので、実際の要求で確かめる。`put-object` は state の鍵の Key Policy でも拒まれうるので、Bucket Policy の拒否と切り分けられない。`delete-object` は KMS を通らない。拒まれなかったら、残るのは存在しない key の delete marker だけで、lifecycle が消す。Pull Request に記録して止まる
+```sh
+aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key "verify/$(date -u +%Y%m%dT%H%M%SZ)"
+```
 
-  ```sh
-  aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key "verify/$(date -u +%Y%m%dT%H%M%SZ)"
-  ```
+条件5: 書き込みの拒否の後、`Terraform Unlock` を起動する。緑で、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わること。run の URL を Pull Request に記録する（アカウント ID を載せない）。
 
-- 一時 IAM user の書き込みを拒否する前に、手順6 の試行で `Terraform Unlock` が残った lock を外し、取り消した apply の run の再実行が緑になった
-- 段3 で `bootstrap_executor_user_name` を足したアカウントでは、段5 の最初の変更がそれを外し、その apply の後の `get-bucket-policy` の例外に一時 IAM user の ARN が無かった（`docs/setup/scripts/verify.sh stage5`）。Policy Test は env の root を入力にしないので、外したことはこの確認だけが見る
-- 一時 IAM user の書き込みが拒否された後、`Terraform Unlock` が lock の無い状態で緑で走り、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わった。この run が、unlock-identity の role が書き込みの拒否の下で lock file の一覧を読めることの確認になる。run の URL を Pull Request に記録する（アカウント ID を載せない）
+### 一時 IAM user の削除
 
-## 一時 IAM user の削除
+> **注意**: 段5 が成功するまで削除しない。
 
-bootstrap の段5 が成功するまでは削除しない。それまでは、段5 の手順6 で lock file の在否を確かめる主体と、一時 IAM user の書き込みが拒否されるまで残った lock file を消す主体として残しておく。段5 で CI の apply が state を state の鍵で書いた後は、一時 IAM user は state を読めず、段4 をやり直す手段にはならない。この削除が、bootstrap の実行者に書き込みの権限を残さない（ADR-0602 決定11）ことの最後の手順である —— 削除までは、一時 IAM user が Bucket Policy の拒否を外せる。削除の後、このアカウントに人の IAM の主体は無く、plan の出力の全文を読める人の主体も無い（[`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の unsupported）。
-
-削除は root で行う。一時 IAM user に自分自身を削除させると、削除の途中で自分の権限と認証情報を外すことになり、途中で止まったときに続きを行える主体が残らない。
-
-1. 手元の端末で `aws logout --all` を実行し、キャッシュされた認証情報をすべて消す
+1. 手元で `aws logout --all` を実行する
 2. `~/.aws/config` から `[profile tabp-bootstrap]` のブロックを削除する
-3. root でサインインし、IAM コンソール →「Users」で一時 IAM user を選び、「Delete」で削除する（ログインプロファイル、MFA デバイス、policy のアタッチも併せて外れる）
-4. IAM コンソール →「Credential report」でレポートを取得し、次を確認する
-   - IAM user が0件である
-   - root の行で、アクセスキーが無く、MFA が有効である
-5. `~/.aws/credentials` に、このアカウントの静的なアクセスキーが残っていないことを確認する
-6. root からサインアウトする
+3. **root で**サインインし、IAM コンソール →「Users」で一時 IAM user を「Delete」する
+4. IAM コンソール →「Credential report」を取得する
+5. root からサインアウトする
 
-## 完了チェックリスト
+Credential report で IAM user が0件、root の行でアクセスキーが無く MFA が有効で、`~/.aws/credentials` にこのアカウントのアクセスキーが無ければ完了。
 
-アカウントの準備の終了時:
+## トラブルシューティング
 
-- [ ] アカウントが Paid plan である
-- [ ] root に MFA が2台以上登録されている
-- [ ] Billing の「IAM user and role access to Billing information」が有効
-- [ ] 一時 IAM user に AdministratorAccess と SignInLocalDevelopmentAccess の2つだけが付いている
-- [ ] 一時 IAM user に MFA が登録され、アクセスキーが0個
-- [ ] root のアクセスキーが0個
-- [ ] root からサインアウトし、root の認証情報を保管した
-- [ ] `aws sts get-caller-identity --profile tabp-bootstrap` が一時 IAM user を返す
-- [ ] primary contact と代替連絡先3種が登録済み
-- [ ] Cost Explorer が有効で、Cost Anomaly Detection の monitor が存在する
+| 症状 | 対処 |
+| --- | --- |
+| `ACCOUNT_ID が12桁ではありません`、`一時 IAM user の資格情報ではありません` | `make aws-login` をやり直す |
+| `check-account.sh` に NG がある | 行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する |
+| 段1 の `verify.sh stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
+| Terraform が `aws login` の認証情報を読めない | [aws login の認証情報を読めない](#aws-login-の認証情報を読めない) |
+| `make` が使えない | [make を使えない](#make-を使えない) |
+| `check-plan.sh` に NG がある | [段2 の plan が一致しない](#段2-の-plan-が一致しない) |
+| `check-plan.sh` が `検証できません` で終わる | init が済んでいるか、plan のファイルが今の commit で作ったものかを見て、段2 の手順2 をやり直す |
+| 段4 の apply が失敗した、lock が残った | [段4 の apply が失敗した](#段4-の-apply-が失敗した) |
+| 段5 の CI の apply が失敗した | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |
+| 段5 で lock が残った | [段5 で lock が残った](#段5-で-lock-が残った) |
+| 段5 の手順3 で再実行が `No changes.` にならない | 要約と run の URL を Pull Request に記録して止まる。再実行は差分を既に適用している |
+| 段5 の手順3 の再実行が古い commit を理由に落ちた | 次の Pull Request の CI の plan が、その変更だけを示すことで代える |
 
-段2 の終了時:
+### 段1 で NG が出た
 
-- [ ] state Bucket が `tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an` の名前で、account regional namespace に在る
-- [ ] `TF_LOCAL_MISSING_STATE_KEY=sse-s3 make plan-admin-identity` が `4 to import, 30 to add, 0 to change, 0 to destroy` を示し、追加が段2 の手順2 の30件だけだった
-- [ ] `docs/setup/scripts/verify.sh stage1` が `NG 0 件` で終わった
-- [ ] `docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
-- [ ] plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
+- Public Access Block・所有権・版管理の NG: 段1 の手順2 の `put-public-access-block` と `put-bucket-versioning` をやり直す。すべて `ok` になるまで段2 へ進まない
+- 暗号化の行（`AES256` と `SSE-C` の拒否）の NG: **段2 へ進まず、出力を Pull Request に記録して止まる**（[state-backend/ADR-0101](../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) の見直し条件）
+- 名前や namespace の誤り: 空のうちに `aws s3api delete-bucket --bucket "$BUCKET"` で消し、段1 をやり直す
 
-段3 の終了時:
+### aws login の認証情報を読めない
 
-- [ ] `env/<env>/identity/main.tf` の `github` の4つの値が、自分のリポジトリのものである
-- [ ] `use_immutable_subject` が `true` で、`sub_claim_prefix` が `repo:<owner>@<owner_id>/<repo>@<repo_id>` である
-- [ ] `module "state_backend"` の `bootstrap_executor_user_name` が、一時 IAM user の名前である
-- [ ] 値を変えた commit で、段2 の plan が段2 の手順2 の件数と一覧を示した
+次を持つ別のプロファイルを作り、`AWS_PROFILE` にそちらを指定する。この場合 make は使えないので、[make を使えない](#make-を使えない)の手順で実行する。
 
-段4 の終了時:
+```ini
+credential_process = aws configure export-credentials --profile tabp-bootstrap --format process
+```
 
-- [ ] 段4 の手順3 で、`docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
-- [ ] 段4 の plan の要約（アカウント ID を伏せたもの）を Pull Request に載せた
-- [ ] apply の前に、その commit で plan 以外の required check が成功し、承認者が要求される設定ではその承認を得ていた
-- [ ] apply の直前に、`docs/setup/scripts/verify.sh before-apply` が `NG 0 件` で終わった
-- [ ] apply の後の `make plan-admin-identity` が `No changes.` を示した
-- [ ] `docs/setup/scripts/verify.sh stage4` が `NG 0 件` で終わった
-- [ ] `docs/setup/scripts/verify.sh permissions` が `NG 0 件` で終わり
-- [ ] 実行の記録（実行者、日時、対象アカウント、commit）を Pull Request の本文に残した
-- [ ] merge の前に、CI の plan が変更なしを示した
+### make を使えない
 
-段5 の終了時:
+段2 の手順1 の init を terraform で直接実行する。
 
-- [ ] apply の workflow の merge の前に、environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を置いた
-- [ ] lock の解除の workflow の merge の前に、environment `admin-unlock-identity` を宣言から作り、その secret `AWS_ACCOUNT_ID` を置いた
-- [ ] 最初の run が緑で、plan の要約が `No changes.`、`OIDC の sub` が `:environment:admin-apply-identity` で終わった
-- [ ] 段5 の変更の各 apply の後、CI の plan が変更なしを示した
-- [ ] 2つの Bucket の `get-bucket-encryption` が、state の鍵による SSE-KMS と `BucketKeyEnabled` `false` を返した
-- [ ] `head-object` で、state が state の鍵で暗号化されていた
-- [ ] 一時 IAM user の、存在しない key への `delete-object` が state Bucket で、resource-based policy の explicit deny による `AccessDenied` を返した
-- [ ] 一時 IAM user の書き込みを拒否する前に、取り消した apply の残した lock を `Terraform Unlock` が外し、その apply の再実行が緑になった
-- [ ] 段3 で足した `bootstrap_executor_user_name` を段5 の最初の変更で外し、`get-bucket-policy` の例外に一時 IAM user の ARN が無かった
-- [ ] 一時 IAM user の書き込みが拒否された後、`Terraform Unlock` が lock の無い状態で緑で走った
+1. `env/admin/identity/backend.tf` と `providers.tf` の region が同じであることを確かめる
+2. [段1 の手順1](#段1-state-bucket-を作る) のブロックを実行する
+3. 次を実行する。続けて段2 の手順2 に進む
 
-一時 IAM user の削除の終了時:
+   ```bash
+   env $unset_env AWS_PROFILE=tabp-bootstrap TF_CLI_CONFIG_FILE=/dev/null \
+     terraform -chdir=env/admin/identity init -input=false -lockfile=readonly -backend-config="bucket=${BUCKET}"
+   ```
 
-- [ ] 資格情報レポートで IAM user が0件、root のアクセスキーが0個、root の MFA が有効
-- [ ] 手元に `tabp-bootstrap` のプロファイルとキャッシュ、このアカウントの静的なアクセスキーが残っていない
+### 段2 の plan が一致しない
+
+`check-plan.sh` は、期待値に在って plan に無いものを `不足`、plan に在って期待値に無いもの（取り込んだ resource の `change`、`destroy` を含む）を `余剰` として示す。
+
+- Terraform の宣言と段1 の Bucket のどちらが誤っているかを見る
+- 宣言を直すときも、**安全側の値を弱めて差分を消さない**（ADR-0501 決定14）
+- 段1 の誤りなら、Bucket を消して段1 からやり直す
+
+### 段4 の apply が失敗した
+
+| 症状 | 対処 |
+| --- | --- |
+| lock が残った | 他に apply が走っていないことを確かめ、`terraform force-unlock <ID>` で外す |
+| `MalformedPolicyDocumentException` | commit を変えずに手順4 からやり直す |
+| `EntityAlreadyExists` | 手順3 に戻る |
+| その他のエラー | 原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も取り直す |
+| やり直しの手順6 で `before-apply` が Policy か lifecycle を返す | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
+
+やり直しの手順4 では、前の apply が作ったものが state に入っているので、`check-plan.sh` は一致しない。plan の出力を目で見て、残りの追加だけが示されていることを確かめる。
+
+### 段5 の CI の apply が失敗した
+
+失敗は critical の deploy の通知（`notify.yaml`）で届く。原因は run の失敗した step のログから読む（人は state と plan の出力の全文を読めない）。
+
+| 症状 | 対処 |
+| --- | --- |
+| 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する |
+| 書き込みの拒否を入れる変更か、段3 の値を外す変更の apply が落ちた | 下の診断を行う |
+
+診断: 一時 IAM user で次を読む。
+
+```bash
+aws s3api get-bucket-policy --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
+aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock
+```
+
+- 1つ目を宣言（`modules/s3/policy.tf` と `usecases/state-backend/main.tf`）と比べ、2つ目で lock の残存を見る
+- Bucket Policy の例外が CI の role か state の鍵の ARN と食い違っていたら、回復手順は無い（ADR-0602 決定9）。Pull Request に記録して**止まる**
+
+### 段5 で lock が残った
+
+| lock を残したもの | 対処 |
+| --- | --- |
+| CI の apply | Actions の画面で `Terraform Unlock` を起動し、落ちた apply の run を「Re-run failed jobs」で再実行する。新しすぎる lock では失敗するので、時間を置いて起動し直す（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」） |
+| 人の手元の apply | 実行した人が `terraform force-unlock <ID>` で外す |
+| `Terraform Unlock` で外れない | 一時 IAM user の書き込みの拒否の前なら、[一時 IAM user で lock file を消す](#一時-iam-user-で-lock-file-を消す)。拒否の後は、人は消せない |
+
+### 一時 IAM user で lock file を消す
+
+一時 IAM user の書き込みが拒否される前に限る。
+
+> **重要**: apply の run が走っていないことを Actions の画面で確かめてから消す。
+
+```bash
+aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key identity/terraform.tfstate.tflock
+```
+
+## この文書の保守
+
+- identity root に resource を足す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する
+- apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
 
 ## 参考資料
 
