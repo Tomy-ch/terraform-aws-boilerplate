@@ -312,6 +312,14 @@ classes = ["mise"]
 [job."terraform-apply.yaml:apply-admin-identity"]
 classes = ["terraform", "aws"]
 
+# apply-revert は scripts/ から go で建てる。GitHub API は base が許す。
+[job."terraform-apply.yaml:revert-plan"]
+classes = ["mise"]
+
+# git だけを使い、道具を導入しない。github.com への push は base が許す。
+[job."terraform-apply.yaml:revert-push"]
+classes = []
+
 [job."terraform-unlock.yaml:unlock-infra-code-gate"]
 classes = ["mise"]
 
