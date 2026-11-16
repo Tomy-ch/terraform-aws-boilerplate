@@ -40,7 +40,9 @@ path で絞る workflow は [`dorny/paths-filter`](https://github.com/dorny/path
 `github.base_ref` を `if:` で直接読む —— 条件がブランチ名であり、ファイル一覧を要さない。
 
 `repo-settings.yaml` の `deploy-source-check` は、対象かどうかを job の中で決める。デプロイブランチ宛でない
-Pull Request では「対象外」と出力して成功する（ADR-0603 決定31-32）。この job は Pull Request の base の
+Pull Request では「対象外」と出力して成功する（ADR-0603 決定31-32）。判定は base に依るので、`repo-settings.yaml` は
+`pull_request` の `edited`（base の付け替えを含む）でも走り直す。付け替える前の「対象外」の成功が、付け替えた後の
+デプロイブランチ宛の Pull Request を通さない。この job は Pull Request の base の
 commit を checkout し（`ref: github.event.pull_request.base.sha`、`fetch-depth: 0`）、そこにある宣言と
 `scripts/repo-settings` で判定する。Pull Request は検査のコードと宣言を書き換えられない。job の定義そのものは
 Pull Request の側のもので、書き換えうる。`repo-settings.yaml` と `scripts/repo-settings/` は code owner の

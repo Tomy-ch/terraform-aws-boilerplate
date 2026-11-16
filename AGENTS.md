@@ -23,6 +23,9 @@
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
   `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）
+- sandbox の apply の経路（[0601](docs/adr/0601-change-delivery-path.md) 決定3・4、
+  [0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定33）—— job・environment・required context と、
+  それらを見る検査が無い（#222）
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
   宣言は `.github/settings/branches.json` に在り、ruleset と environment と apply の workflow の起動条件はそこから生成するが、
   `scripts/` のブランチ操作とほかの workflow の起動条件はまだパターンを自分で持ち、デプロイブランチを含まない（同 決定2-3）

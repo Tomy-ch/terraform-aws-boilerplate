@@ -149,7 +149,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 整合の検査（required の deploy-source-check）: デプロイブランチへ入る Pull Request について、デフォルトブランチが宣言の線であり、head がデフォルトブランチから到達でき、merge の結果の木が head の木と一致すること（決定4、ADR-0603 決定31）
 - 運用機構（make repo-settings-check）: 宣言で、デプロイブランチを持つ env がそれぞれちょうど1つのデプロイブランチを持ち、デプロイブランチが受け取る線が宣言の線であること（決定4）
 - Static Analysis: sandbox の apply の job が、Pull Request だけで起動し、1つの concurrency の group に属し、ADR-0603 決定31 の検査の成功に依存し、古い head と fork・Dependabot の Pull Request を資格情報の取得の前に拒むこと（決定4）
-- Static Analysis: Pull Request 契機の workflow に apply が含まれないこと
+- Static Analysis: Pull Request 契機の workflow に apply が含まれないこと。決定3 の sandbox の例外を除く
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
 - 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
 - Static Analysis: リポジトリへの書き込みの資格情報（`contents: write`）を持つ job が、決定18 の形に限られること（`make contents-write-lint`）

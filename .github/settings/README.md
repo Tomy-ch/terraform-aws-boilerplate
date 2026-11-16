@@ -73,7 +73,7 @@
 | `non_fast_forward` | 対象ブランチへの force-push を拒否する。 |
 | `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
-| `required_status_checks` | 宣言したチェックがすべて成功してからマージする。 |
+| `required_status_checks` | 宣言したチェックがすべて成功してからマージする。各 context は `integration_id`（GitHub Actions）を持ち、Actions 以外が報告した同じ名前の status では満たせない（ADR-0603 決定34）。`repo-settings-check` が欠けを落とす。 |
 
 ### 単独メンテナのリポジトリに `pull_request` を適用する場合
 

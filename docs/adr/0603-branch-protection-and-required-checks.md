@@ -212,6 +212,13 @@ apply を起動し、リリース線へ merge した commit はそのままそ�
     skip（成功）を報告するので、決定11 の人質はデプロイブランチ宛の Pull Request に限られる。赤の原因が
     変更の外にあるときは required から外さず、原因を直す（決定15・32 と同じ）。
 
+### required check の報告元
+
+34. required とする context は、報告する主体を GitHub Actions に限る（ruleset の `integration_id`）。context の
+    名前だけで照合すると、書き込み権限を持つ主体が commit status の API で同じ名前の status を投稿して
+    required を満たせる。デプロイブランチへの merge が apply を起動する（ADR-0601 決定4）以上、required の
+    偽装はデプロイの迂回である。
+
 ## 検討した代替案
 
 ### 案A: パターンを各所へ直接書く
@@ -284,6 +291,8 @@ install 先を確かめても、鍵を直接使う主体には効かない。
   一致すること（決定31）
 - 整合の検査（make required-check-lint）: sandbox の apply の context を報告する job が実在し、その
   workflow の pull_request にフィルタが無いこと（決定16・33）
+- 整合の検査（make repo-settings-check）: 宣言の required の context が、すべて GitHub Actions の
+  integration_id を持つこと（決定34）
 
 ## 影響
 
