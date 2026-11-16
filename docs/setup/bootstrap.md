@@ -509,6 +509,7 @@ Credential report で IAM user が0件、root の行でアクセスキーが無�
 | 段5 の手順3 で再実行が `No changes.` にならない | 要約と run の URL を Pull Request に記録して止まる。再実行は差分を既に適用している |
 | 段5 の手順3 の再実行が古い commit を理由に落ちた | 次の昇格の Pull Request の CI の plan が、その変更だけを示すことで代える |
 | `admin` への昇格の Pull Request で `deploy-source-check` が落ちた | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |
+| `deploy-source-check` が `No rule to make target 'deploy-source-check'` で落ちた | この job は base の commit のコードで判定するので、base がまだこの検査を持たない。検査を足す変更を取り込む Pull Request でだけ起きる。ruleset の required にこの context が無ければ merge は止まらず、merge してよい。required にこの context が在るか、base に `make deploy-source-check` が在るのに出たなら止まる |
 
 ### 段1 で NG が出た
 
