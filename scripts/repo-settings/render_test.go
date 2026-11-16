@@ -256,7 +256,7 @@ func Test_foreignReporters(t *testing.T) {
 		"integration_id が無ければ報せる":  {[]any{map[string]any{"context": "b"}}, []string{"b の integration_id"}},
 		"別の報告元は報せる":                {[]any{map[string]any{"context": "c", "integration_id": float64(1)}}, []string{"c の integration_id"}},
 		"文字列の integration_id は報せる": {[]any{map[string]any{"context": "d", "integration_id": "15368"}}, []string{"d の integration_id"}},
-		"object でない要素は報せる":         {[]any{"e"}, []string{"の integration_id が GitHub Actions"}},
+		"object でない要素は報せる":         {[]any{map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)}, "e"}, []string{"2 番目の要素が object ではありません"}},
 		"報せるものだけを順に返す": {[]any{
 			map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)},
 			map[string]any{"context": "b"},

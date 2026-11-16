@@ -174,8 +174,12 @@ const githubActionsAppID = 15368
 // integration_id が無い context は、書き込み権限で投稿できる commit status でも満たせる。
 func foreignReporters(checks []any) []string {
 	var out []string
-	for _, item := range checks {
-		check, _ := item.(map[string]any)
+	for i, item := range checks {
+		check, ok := item.(map[string]any)
+		if !ok {
+			out = append(out, fmt.Sprintf("required の %d 番目の要素が object ではありません", i+1))
+			continue
+		}
 		id, _ := check["integration_id"].(float64)
 		if id != githubActionsAppID {
 			out = append(out, fmt.Sprintf("required の context %v の integration_id が GitHub Actions（%d）ではありません", check["context"], githubActionsAppID))
