@@ -119,7 +119,7 @@ func environmentPatterns(b branches, e environment) []string {
 		if d, ok := b.DeployForEnv(env); ok {
 			return []string{d.Branch}
 		}
-		return nil
+		return []string{}
 	}
 	out := make([]string, 0, len(b.Deploy)+len(b.Lines)+1)
 	out = append(out, b.DeployNames()...)

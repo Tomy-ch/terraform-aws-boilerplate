@@ -23,7 +23,7 @@ var (
 	errTrigger      = xerrors.New("apply の workflow の起動条件を生成できません")
 	errTriggerDrift = xerrors.New("apply の workflow の on.push.branches が branches.json からずれています（make repo-settings-apply）")
 
-	anyEnvironment = regexp.MustCompile(`^\s+environment:`)
+	anyEnvironment = regexp.MustCompile(`^ {4}environment:`)
 	jobEnvironment = regexp.MustCompile(`^ {4}environment:[ \t]*(?:"([A-Za-z0-9._-]+)"|'([A-Za-z0-9._-]+)'|([A-Za-z0-9._-]+))[ \t]*(?:#.*)?$`)
 	onKey          = regexp.MustCompile(`^(?:on|"on"|'on'):[ \t]*(?:#.*)?$`)
 	pushKey        = regexp.MustCompile(`^ {2}push:[ \t]*(?:#.*)?$`)
@@ -88,7 +88,7 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 }
 
 // applyEnvs は、workflow の job が使う apply の environment の env を、重複を除いて返します。job の
-// environment: を字下げ4桁のスカラー以外（mapping、式、アンカー、別の字下げ）で書いた行があれば失敗する
+// environment: をスカラー以外（mapping、式、アンカー）で書いた行があれば失敗する
 // —— 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる（ADR-0702 決定14）。
 func applyEnvs(src string) ([]string, error) {
 	var envs []string
