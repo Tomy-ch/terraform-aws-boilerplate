@@ -150,7 +150,7 @@ func Test_StepsSpan(t *testing.T) {
 		"空行とコメント行では終わらない":        {"jobs:\n  a:\n    steps:\n      - run: x\n\n    # c\n      - run: y\n    env: {}\n", 1, 5, true},
 		"steps: と同じ桁の - では終わらない": {"jobs:\n  a:\n    steps:\n    - run: x\n    - run: y\n    env: {}\n", 1, 3, true},
 		"行末コメントの付いた steps: も読む":  {"jobs:\n  a:\n    steps: # c\n      - run: x\n", 1, 3, true},
-		"タブで始まる行で終わる":            {"jobs:\n  a:\n    steps:\n      - run: x\n\tenv: {}\n", 1, 2, true},
+		"タブで始まる行では終わらない":         {"jobs:\n  a:\n    steps:\n      - run: x\n\tenv: {}\n    env: {}\n", 1, 3, true},
 		"ジョブの最後まで続く":             {"jobs:\n  a:\n    steps:\n      - run: x\n", 1, 3, true},
 	}
 	for name, tc := range cases {

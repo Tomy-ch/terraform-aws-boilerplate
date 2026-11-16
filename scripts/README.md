@@ -104,7 +104,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |---|---|
 |`lib/xerrors/`|StackTrace を含むエラーのラップ・判定・結合。失敗モードはすべてパッケージレベルのセンチネルで、テストは `require.ErrorIs` で到達します。|
 |`lib/ghfiles/`|`uses:` を書ける GitHub Actions 定義ファイル（`.github/workflows/**` と `.github/actions/**`）の列挙。列挙が1箇所にあるので、対象範囲が検査ごとにずれません。|
-|`lib/workflow/`|workflow 定義を「桁」で読むための切り出し。ブロックスカラーの本体はキーより深く字下げされるという性質に依存し、YAML パーサでは失われる行位置を保ちます。|
+|`lib/workflow/`|workflow 定義を「桁」で読むための切り出し。job の `steps:` の列の範囲は `StepsSpan` だけが決め、`SplitSteps` と `repo-settings` がそれを読みます。ブロックスカラーの本体はキーより深く字下げされるという性質に依存し、YAML パーサでは失われる行位置を保ちます。|
 |`lib/yamlblock/`|YAML のブロックスカラー（`key: \|` / `key: >-`）の中身の判定。|
 |`lib/shellcheck/`|shellcheck の起動と結果の解釈。`actions-shellcheck` と `shell-lint` が同じ解釈を共有します。|
 |`lib/lintreport/`|workflow に対する lint が見つけた違反の持ち方と、失敗出力の組み立て。|

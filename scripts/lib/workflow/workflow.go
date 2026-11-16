@@ -46,7 +46,7 @@ var (
 	stepsKey  = regexp.MustCompile(`^ {4}steps:[ \t]*(?:#.*)?$`)
 	stepItem  = regexp.MustCompile(`^ {6}- `)
 	topLevel  = regexp.MustCompile(`^\S`)
-	deep      = regexp.MustCompile(`^ {5}`)
+	shallow   = regexp.MustCompile(`^ {0,4}\S`)
 	jobItem   = regexp.MustCompile(`^ {4}- `)
 	comment   = regexp.MustCompile(`^\s*#`)
 )
@@ -127,7 +127,7 @@ func SplitJobs(source string) Split {
 // StepsSpan は、ジョブ本文のうち steps: の列が占める範囲 [from, to) を job.Lines の添字で返します。
 // steps: が無ければ ok は false です。
 //
-// 列は steps: の次の行から、steps: と同じかそれより浅い桁で始まる行の手前までです。空行とコメント行、
+// 列は steps: の次の行から、steps: と同じかそれより浅い桁で始まる行の手前までです。コメント行と、
 // steps: と同じ桁の "- "（YAML が許す列の書き方）では終わりません。
 func StepsSpan(job Job) (from, to int, ok bool) {
 	for i, ln := range job.Lines {
@@ -136,7 +136,7 @@ func StepsSpan(job Job) (from, to int, ok bool) {
 		}
 		for j := i + 1; j < len(job.Lines); j++ {
 			t := job.Lines[j].Text
-			if strings.TrimSpace(t) != "" && !comment.MatchString(t) && !deep.MatchString(t) && !jobItem.MatchString(t) {
+			if shallow.MatchString(t) && !comment.MatchString(t) && !jobItem.MatchString(t) {
 				return i + 1, j, true
 			}
 		}
