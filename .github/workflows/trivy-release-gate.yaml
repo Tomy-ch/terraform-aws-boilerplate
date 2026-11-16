@@ -14,7 +14,10 @@ on:
       - develop
       - staging
       - production
+  # 判定は base_ref に依るので、base の付け替え（edited）でも走り直す。付け替える前の skip が、
+  # 付け替えた後のデプロイブランチ宛の Pull Request に残らないようにする。
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 # workflow レベルは読み取りだけにする。書き込みが要るのは Pull Request へ結果を投稿する
@@ -35,7 +38,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Pull Request へ検査結果を投稿するため。この job だけが要る。
       pull-requests: write
     steps:
       - name: Harden the runner
@@ -102,7 +104,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # total vulnerability count
           COUNT=$(jq '
             .Results
             | map(.Vulnerabilities // [])
@@ -110,7 +111,6 @@ jobs:
             | length
           ' trivy-fs-release.json)
 
-          # unfixed count
           UNFIXED=$(jq '
             .Results
             | map(.Vulnerabilities // [])
@@ -130,7 +130,6 @@ jobs:
 
           echo "title=## 🚨 Release Dependency Scan: FOUND (${COUNT}, unfixed ${UNFIXED})" >> "$GITHUB_OUTPUT"
 
-          # Build markdown summary
           jq -r '
             .Results
             | map(.Vulnerabilities // [])
