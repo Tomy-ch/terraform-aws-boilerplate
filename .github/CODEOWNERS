@@ -25,6 +25,11 @@ mise.toml                             @Tomy-ch
 .github/settings/branches.json        @Tomy-ch
 scripts/lib/branchdecl/               @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
+# デプロイブランチへ入る commit の検査（ADR-0603 決定31）と、宣言から apply の起動条件を生成する道具。
+# 検査は base の commit のコードで走るが、job の定義は Pull Request の側のものである。
+scripts/repo-settings/                @Tomy-ch
+.makefiles/github/setting/repo-settings.mk @Tomy-ch
+.github/workflows/repo-settings.yaml  @Tomy-ch
 
 # CI の plan・apply・lock の解除の経路（ADR-0602 決定13・14）。これを変える主体が、CI の role の資格情報がどこへ
 # 届くかと、terraform の全文が公開のログに出ないかと、何がいつ apply され、どの lock がいつ外されるかを決める。

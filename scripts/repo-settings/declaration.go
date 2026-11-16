@@ -18,9 +18,10 @@ type environment struct {
 }
 
 const (
-	deployFromProtected   = "protected"
-	deployFromProtectedPR = "protected-and-pull-requests"
-	deployFromAny         = "any"
+	deployFromProtected    = "protected"
+	deployFromProtectedPR  = "protected-and-pull-requests"
+	deployFromDeployBranch = "deploy-branch"
+	deployFromAny          = "any"
 )
 
 // pullRequestRef は、plan の environment が Pull Request の job を通すために許す ref。
@@ -61,6 +62,10 @@ func validateEnvironments(envs []environment) error {
 		seen[e.Name] = true
 		switch e.DeployFrom {
 		case deployFromProtected, deployFromProtectedPR, deployFromAny:
+		case deployFromDeployBranch:
+			if _, ok := identityBase(e.Name); !ok {
+				return xerrors.Wrapf(errDeclaration, "environment %q は deployment-identity の env の名前ではないので deploy_from %q を使えません", e.Name, e.DeployFrom)
+			}
 		default:
 			return xerrors.Wrapf(errDeclaration, "environment %q の deploy_from %q", e.Name, e.DeployFrom)
 		}
@@ -75,7 +80,8 @@ func validateEnvironments(envs []environment) error {
 }
 
 // requiredDeployFrom は、deployment-identity の role が名指す environment の deploy_from を返します。
-// plan の environment だけが Pull Request を許し、ほかは保護ブランチだけを許す（ADR-0602 決定14）。
+// plan の environment は保護ブランチと Pull Request を許し、ほかはその env のデプロイブランチだけを許す
+// （ADR-0602 決定14）。
 func requiredDeployFrom(name string) (string, bool) {
 	_, suffix, ok := splitIdentity(name)
 	switch {
@@ -84,7 +90,7 @@ func requiredDeployFrom(name string) (string, bool) {
 	case suffix == planSuffix:
 		return deployFromProtectedPR, true
 	default:
-		return deployFromProtected, true
+		return deployFromDeployBranch, true
 	}
 }
 
@@ -92,7 +98,7 @@ func requiredDeployFrom(name string) (string, bool) {
 // lines は階層をまたいで保護する。
 func rulesetIncludes(b branches) []string {
 	out := make([]string, 0, len(b.Deploy)+len(b.Lines))
-	for _, name := range b.Deploy {
+	for _, name := range b.DeployNames() {
 		out = append(out, "refs/heads/"+name)
 	}
 	for _, prefix := range b.Lines {
@@ -101,18 +107,26 @@ func rulesetIncludes(b branches) []string {
 	return out
 }
 
-// environmentPatterns は、deploy_from を deployment branch policy のパターンへ展開します。
-// any は policy を持たないので nil を返す。
-func environmentPatterns(b branches, deployFrom string) []string {
-	if deployFrom == deployFromAny {
+// environmentPatterns は、environment の deploy_from を deployment branch policy のパターンへ展開します。
+// any は policy を持たないので nil を返す。deploy-branch は、名前の env のデプロイブランチ1つだけを許す。
+// env のデプロイブランチが宣言に在ることは checkDeployEnvs が先に確かめる。
+func environmentPatterns(b branches, e environment) []string {
+	switch e.DeployFrom {
+	case deployFromAny:
+		return nil
+	case deployFromDeployBranch:
+		env, _ := identityBase(e.Name)
+		if d, ok := b.DeployForEnv(env); ok {
+			return []string{d.Branch}
+		}
 		return nil
 	}
 	out := make([]string, 0, len(b.Deploy)+len(b.Lines)+1)
-	out = append(out, b.Deploy...)
+	out = append(out, b.DeployNames()...)
 	for _, prefix := range b.Lines {
 		out = append(out, prefix+"*")
 	}
-	if deployFrom == deployFromProtectedPR {
+	if e.DeployFrom == deployFromProtectedPR {
 		out = append(out, pullRequestRef)
 	}
 	return out
