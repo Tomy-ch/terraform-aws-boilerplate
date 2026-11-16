@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,20 +79,19 @@ func Test_checkSource(t *testing.T) {
 	})
 	t.Run("デプロイブランチでない base は対象外として通り、git を呼ばない", func(t *testing.T) {
 		t.Parallel()
-		called := false
-		git := gitOps{
-			isAncestor: func(string, string, string) error { called = true; return nil },
-			mergeTree:  func(string, string, string) (string, error) { called = true; return "", nil },
-			tree:       func(string, string) (string, error) { called = true; return "", nil },
-		}
+		git, called := recordingGit()
 		var out bytes.Buffer
 		require.NoError(t, checkSource(r.dir, req("release/v1", "", "", ""), git, &out))
 		assert.Contains(t, out.String(), "対象外")
-		assert.False(t, called)
+		assert.False(t, *called)
 	})
 	t.Run("env を持たないデプロイブランチも対象外である", func(t *testing.T) {
 		t.Parallel()
-		require.NoError(t, checkSource(r.dir, req("production", "", "", ""), realGit, &bytes.Buffer{}))
+		git, called := recordingGit()
+		var out bytes.Buffer
+		require.NoError(t, checkSource(r.dir, req("production", "", "", ""), git, &out))
+		assert.Contains(t, out.String(), "対象外")
+		assert.False(t, *called)
 	})
 
 	rejected := map[string]struct {
@@ -100,8 +100,8 @@ func Test_checkSource(t *testing.T) {
 	}{
 		// 書き込み権限で release/x を作っても、その commit はデフォルトブランチから到達できない。
 		"デフォルトブランチから到達できない commit は拒む":         {req("admin", r.base, r.evil, "release/v1"), "から到達できません"},
-		"デフォルトブランチが from の線でなければ拒む（hotfix の間）": {req("admin", r.base, r.base, "hotfix/v1"), "変更を運ぶ線ではありません"},
-		"デフォルトブランチがデプロイブランチなら拒む":               {req("admin", r.base, r.head, "production"), "変更を運ぶ線ではありません"},
+		"デフォルトブランチが from の線でなければ拒む（hotfix の間）": {req("admin", r.base, r.base, "hotfix/v1"), "デフォルトブランチ hotfix/v1 は admin へ変更を運ぶ線ではありません"},
+		"デフォルトブランチがデプロイブランチなら拒む":               {req("admin", r.base, r.head, "production"), "デフォルトブランチ production は admin へ変更を運ぶ線ではありません"},
 		"デプロイブランチが線に無い変更を持てば拒む":                {req("admin", r.ahead, r.head, "release/v1"), "一致しません"},
 		"merge が衝突すれば拒む":                       {req("admin", r.clash, r.head, "release/v1"), "衝突します"},
 	}
@@ -114,11 +114,22 @@ func Test_checkSource(t *testing.T) {
 		})
 	}
 
-	t.Run("SHA の形でなければ使い方の誤りにする", func(t *testing.T) {
-		t.Parallel()
-		require.ErrorIs(t, checkSource(r.dir, req("admin", "main", r.head, "release/v1"), realGit, &bytes.Buffer{}), errUsage)
-		require.ErrorIs(t, checkSource(r.dir, req("admin", r.base, r.head, ""), realGit, &bytes.Buffer{}), errUsage)
-	})
+	usage := map[string]sourceRequest{
+		"base の SHA が名前":    req("admin", "main", r.head, "release/v1"),
+		"base の SHA が空":     req("admin", "", r.head, "release/v1"),
+		"head の SHA が空":     req("admin", r.base, "", "release/v1"),
+		"head の SHA が 39 桁": req("admin", r.base, r.head[:39], "release/v1"),
+		"head の SHA が大文字":   req("admin", r.base, strings.ToUpper(r.head), "release/v1"),
+		"デフォルトブランチが空":       req("admin", r.base, r.head, ""),
+	}
+	for name, rq := range usage {
+		t.Run("使い方の誤りにする（"+name+"）", func(t *testing.T) {
+			t.Parallel()
+			git, called := recordingGit()
+			require.ErrorIs(t, checkSource(r.dir, rq, git, &bytes.Buffer{}), errUsage)
+			assert.False(t, *called)
+		})
+	}
 	t.Run("デフォルトブランチの ref が無ければ、到達できないと読まずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		err := checkSource(r.dir, req("admin", r.base, r.head, "release/v9"), realGit, &bytes.Buffer{})
@@ -140,10 +151,45 @@ func Test_checkSource(t *testing.T) {
 		err := checkSource(r.dir, req("admin", r.base, r.head, "release/v1"), git, &bytes.Buffer{})
 		require.ErrorIs(t, err, errSourceGit)
 	})
+	t.Run("head の木を読めなければ、拒否と読まずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		git := realGit
+		git.tree = func(string, string) (string, error) { return "", xerrors.Wrap(fakeExitErr{code: 128}, "rev-parse") }
+		err := checkSource(r.dir, req("admin", r.base, r.head, "release/v1"), git, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSourceGit)
+		require.NotErrorIs(t, err, errSource)
+	})
+	for name, merged := range map[string]string{"空": "", "衝突の報告だけ": "CONFLICT x\n"} {
+		// merge-tree の出力の先頭行を木と読まずに比べると、読めない出力が一致と不一致のどちらかへ落ちる。
+		t.Run("merge-tree の出力が木の SHA でなければ失敗する（"+name+"）", func(t *testing.T) {
+			t.Parallel()
+			git := realGit
+			git.mergeTree = func(string, string, string) (string, error) { return merged, nil }
+			err := checkSource(r.dir, req("admin", r.base, r.head, "release/v1"), git, &bytes.Buffer{})
+			require.ErrorIs(t, err, errSourceGit)
+		})
+	}
+	t.Run("祖先の判定が終了コードを持たずに失敗すれば、到達できないと読まずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		git := realGit
+		git.isAncestor = func(string, string, string) error { return errors.New("git が見つかりません") }
+		err := checkSource(r.dir, req("admin", r.base, r.head, "release/v1"), git, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSourceGit)
+		require.NotErrorIs(t, err, errSource)
+	})
 	t.Run("宣言を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		require.ErrorIs(t, checkSource(t.TempDir(), req("admin", r.base, r.head, "release/v1"), realGit, &bytes.Buffer{}), os.ErrNotExist)
 	})
+}
+
+func recordingGit() (gitOps, *bool) {
+	called := new(bool)
+	return gitOps{
+		isAncestor: func(string, string, string) error { *called = true; return nil },
+		mergeTree:  func(string, string, string) (string, error) { *called = true; return "", nil },
+		tree:       func(string, string) (string, error) { *called = true; return "", nil },
+	}, called
 }
 
 type fakeExitErr struct{ code int }
@@ -155,44 +201,62 @@ func Test_gitIsAncestor(t *testing.T) {
 	t.Parallel()
 
 	r := newSourceRepo(t)
-	require.NoError(t, gitIsAncestor(r.dir, r.base, "refs/remotes/origin/release/v1"))
-
-	err := gitIsAncestor(r.dir, r.evil, "refs/remotes/origin/release/v1")
-	var code exitCoder
-	require.ErrorAs(t, err, &code, "終了コードを呼び出し側へ渡す")
-	assert.Equal(t, notAncestor, code.ExitCode())
-
-	err = gitIsAncestor(r.dir, r.base, "refs/remotes/origin/none")
-	require.ErrorAs(t, err, &code)
-	assert.NotEqual(t, notAncestor, code.ExitCode(), "ref が無いことを「祖先でない」と区別する")
+	t.Run("祖先なら成功する", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, gitIsAncestor(r.dir, r.base, "refs/remotes/origin/release/v1"))
+	})
+	t.Run("祖先でなければ終了コード 1 を呼び出し側へ渡す", func(t *testing.T) {
+		t.Parallel()
+		err := gitIsAncestor(r.dir, r.evil, "refs/remotes/origin/release/v1")
+		var code exitCoder
+		require.ErrorAs(t, err, &code)
+		assert.Equal(t, notAncestor, code.ExitCode())
+	})
+	t.Run("ref が無いことを「祖先でない」と区別する", func(t *testing.T) {
+		t.Parallel()
+		err := gitIsAncestor(r.dir, r.base, "refs/remotes/origin/none")
+		var code exitCoder
+		require.ErrorAs(t, err, &code)
+		assert.NotEqual(t, notAncestor, code.ExitCode())
+	})
 }
 
 func Test_gitMergeTree(t *testing.T) {
 	t.Parallel()
 
 	r := newSourceRepo(t)
-	out, err := gitMergeTree(r.dir, r.base, r.head)
-	require.NoError(t, err)
-	tree, err := gitTree(r.dir, r.head)
-	require.NoError(t, err)
-	assert.Equal(t, strings.TrimSpace(tree), strings.TrimSpace(out), "fast-forward になる merge の木は head の木")
-
-	_, err = gitMergeTree(r.dir, r.clash, r.head)
-	var code exitCoder
-	require.ErrorAs(t, err, &code)
-	assert.Equal(t, notAncestor, code.ExitCode(), "衝突は終了コード 1")
+	t.Run("fast-forward になる merge の木は head の木", func(t *testing.T) {
+		t.Parallel()
+		out, err := gitMergeTree(r.dir, r.base, r.head)
+		require.NoError(t, err)
+		assert.Equal(t, gitT(t, r.dir, "rev-parse", r.head+"^{tree}"), strings.TrimSpace(out))
+	})
+	t.Run("衝突は終了コード 1", func(t *testing.T) {
+		t.Parallel()
+		_, err := gitMergeTree(r.dir, r.clash, r.head)
+		var code exitCoder
+		require.ErrorAs(t, err, &code)
+		assert.Equal(t, notAncestor, code.ExitCode())
+	})
 }
 
 func Test_gitTree(t *testing.T) {
 	t.Parallel()
 
 	r := newSourceRepo(t)
-	got, err := gitTree(r.dir, r.head)
-	require.NoError(t, err)
-	assert.Equal(t, gitT(t, r.dir, "rev-parse", r.head+"^{tree}")+"\n", got)
-
-	_, err = gitTree(r.dir, strings.Repeat("0", 40))
-	require.Error(t, err)
+	t.Run("commit の木の SHA を返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := gitTree(r.dir, r.head)
+		require.NoError(t, err)
+		assert.Equal(t, gitT(t, r.dir, "rev-parse", r.head+"^{tree}")+"\n", got)
+	})
+	t.Run("無い commit は終了コードを持って失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := gitTree(r.dir, strings.Repeat("0", 40))
+		var code exitCoder
+		require.ErrorAs(t, err, &code)
+		assert.NotZero(t, code.ExitCode())
+	})
 }
 
 func Test_deployBranch(t *testing.T) {
@@ -200,24 +264,37 @@ func Test_deployBranch(t *testing.T) {
 
 	root := t.TempDir()
 	writeFile(t, root, branchesFile, sourceBranches)
-	var out bytes.Buffer
-	require.NoError(t, deployBranch(root, "admin", &out))
-	assert.Equal(t, "admin\n", out.String())
-
-	require.ErrorIs(t, deployBranch(root, "prd", &bytes.Buffer{}), errNoDeployEnv, "env を持たないデプロイブランチは返さない")
-	require.ErrorIs(t, deployBranch(filepath.Join(root, "none"), "admin", &bytes.Buffer{}), os.ErrNotExist)
+	t.Run("env のデプロイブランチの名前を1行で書く", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.NoError(t, deployBranch(root, "admin", &out))
+		assert.Equal(t, "admin\n", out.String())
+	})
+	t.Run("env を持たないデプロイブランチは返さない", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, deployBranch(root, "prd", &bytes.Buffer{}), errNoDeployEnv)
+	})
+	t.Run("宣言を読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, deployBranch(filepath.Join(root, "none"), "admin", &bytes.Buffer{}), os.ErrNotExist)
+	})
 }
 
 func Test_git(t *testing.T) {
 	t.Parallel()
 
 	r := newSourceRepo(t)
-	got, err := git(r.dir, "rev-parse", "admin")
-	require.NoError(t, err)
-	assert.Equal(t, r.base+"\n", got)
-
-	_, err = git(r.dir, "merge-base", "--is-ancestor", r.evil, "refs/remotes/origin/release/v1")
-	var code exitCoder
-	require.ErrorAs(t, err, &code, "終了コードを呼び出し側へ渡す")
-	assert.Equal(t, notAncestor, code.ExitCode())
+	t.Run("標準出力を返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := git(r.dir, "rev-parse", "admin")
+		require.NoError(t, err)
+		assert.Equal(t, r.base+"\n", got)
+	})
+	t.Run("終了コードを呼び出し側へ渡す", func(t *testing.T) {
+		t.Parallel()
+		_, err := git(r.dir, "merge-base", "--is-ancestor", r.evil, "refs/remotes/origin/release/v1")
+		var code exitCoder
+		require.ErrorAs(t, err, &code)
+		assert.Equal(t, notAncestor, code.ExitCode())
+	})
 }

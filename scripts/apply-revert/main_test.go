@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -668,6 +669,54 @@ func Test_sourceHead(t *testing.T) {
 		assert.Empty(t, source)
 		assert.Contains(t, reason, "の木が、運んだ")
 	})
+	t.Run("線から運んだ merge でない octopus merge なら理由を返す", func(t *testing.T) {
+		t.Parallel()
+		d := newHistory(t)
+		for _, b := range []string{"o1", "o2"} {
+			git(t, d.dir, "switch", "-q", "-c", b, d.base)
+			require.NoError(t, os.WriteFile(filepath.Join(d.dir, b+".tf"), []byte(b+"\n"), 0o600))
+			git(t, d.dir, "add", b+".tf")
+			git(t, d.dir, "commit", "-q", "-m", b)
+		}
+		git(t, d.dir, "switch", "-q", "line")
+		git(t, d.dir, "merge", "-q", "--no-ff", "-m", "octopus", "o1", "o2")
+		octopus := git(t, d.dir, "rev-parse", "HEAD")
+		require.Len(t, strings.Fields(git(t, d.dir, "rev-list", "--parents", "-n", "1", octopus)), 4)
+		source, reason, err := sourceHead((&fake{dir: d.dir}).runner(), admin, testDefault, octopus)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "線から運んだ merge ではありません")
+	})
+	t.Run("デフォルトブランチがデプロイブランチ自身なら理由を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, "admin", h.head)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "admin は admin へ変更を運ぶ線ではありません")
+	})
+	revParse := func(out string, err error) runner {
+		delegate := (&fake{dir: h.dir}).runner()
+		return runner{output: func(name string, args ...string) (string, error) {
+			if name == "git" && args[0] == "rev-parse" {
+				return out, err
+			}
+			return delegate.output(name, args...)
+		}}
+	}
+	t.Run("祖先の確認の後に木を読めなければ、理由にせず失敗する", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(revParse("", fakeExit{128}), admin, testDefault, h.head)
+		require.ErrorIs(t, err, errGit)
+		assert.Empty(t, source)
+		assert.Empty(t, reason)
+	})
+	t.Run("木の SHA が1つしか返らなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(revParse(strings.Repeat("a", 40)+"\n", nil), admin, testDefault, h.head)
+		require.ErrorIs(t, err, errGit)
+		assert.Empty(t, source)
+		assert.Empty(t, reason)
+	})
 	t.Run("commit を解決できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, _, err := sourceHead(r, admin, testDefault, strings.Repeat("0", 40))
@@ -716,6 +765,18 @@ func Test_verifyRevert(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, reason, "衝突")
 		assert.Equal(t, 1, strings.Count(git(t, d.dir, "worktree", "list"), "\n")+1, "衝突の後も worktree を残さない")
+	})
+	t.Run("実物の revert が空になれば理由を返す", func(t *testing.T) {
+		t.Parallel()
+		d := newHistory(t)
+		git(t, d.dir, "switch", "-q", "-c", "empty")
+		git(t, d.dir, "commit", "-q", "--allow-empty", "-m", "empty")
+		git(t, d.dir, "switch", "-q", "line")
+		git(t, d.dir, "merge", "-q", "--no-ff", "-m", "Merge empty", "empty")
+		tip := git(t, d.dir, "rev-parse", "HEAD")
+		reason, err := verifyRevert((&fake{dir: d.dir}).runner(), d.base, tip, []string{tip})
+		require.NoError(t, err)
+		assert.Contains(t, reason, "空")
 	})
 	t.Run("revert が衝突以外で失敗すれば理由にせず失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -858,10 +919,29 @@ func Test_decide(t *testing.T) {
 		t.Parallel()
 		o := opts(h.head)
 		o.def = "hotfix/v0.1.1"
-		d, err := decide(o, (&fake{dir: h.dir, gh: success()}).runner())
+		f := &fake{dir: h.dir, gh: success()}
+		d, err := decide(o, f.runner())
 		require.NoError(t, err)
 		assert.Equal(t, "none", get(d, "decision"))
 		assert.Contains(t, get(d, "summary"), "admin へ変更を運ぶ線ではありません")
+		assert.False(t, calledWorktree(f))
+	})
+	t.Run("運んだ commit がデフォルトブランチから到達できなければ用意しない", func(t *testing.T) {
+		t.Parallel()
+		o := opts(h.head)
+		o.def = testWorkflowDefault
+		f := &fake{dir: h.dir, gh: success()}
+		d, err := decide(o, f.runner())
+		require.NoError(t, err)
+		assert.Equal(t, "none", get(d, "decision"))
+		assert.Contains(t, get(d, "summary"), "から到達できません")
+		keys := make([]string, 0, len(d))
+		for _, p := range d {
+			keys = append(keys, p[0])
+		}
+		assert.NotContains(t, keys, "branch")
+		assert.NotContains(t, keys, "head")
+		assert.False(t, calledWorktree(f))
 	})
 	t.Run("-line が env を持つデプロイブランチでなければ API を呼ばずに失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -913,6 +993,12 @@ func Test_decide(t *testing.T) {
 		require.ErrorIs(t, err, errBranches)
 		assert.Empty(t, f.calls)
 	})
+}
+
+func calledWorktree(f *fake) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "git worktree") })
 }
 
 func Test_run(t *testing.T) {

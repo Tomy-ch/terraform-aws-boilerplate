@@ -211,7 +211,9 @@ func Test_environmentPatterns(t *testing.T) {
 
 	t.Run("deploy-branch は env のデプロイブランチが無ければ何も許さない", func(t *testing.T) {
 		t.Parallel()
-		assert.Nil(t, environmentPatterns(b, env("prd-apply", deployFromDeployBranch)))
+		got := environmentPatterns(b, env("prd-apply", deployFromDeployBranch))
+		assert.NotNil(t, got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("environment が許すブランチは ruleset も保護する", func(t *testing.T) {

@@ -248,14 +248,29 @@ func Test_checkRuleset(t *testing.T) {
 func Test_foreignReporters(t *testing.T) {
 	t.Parallel()
 
-	checks := []any{
-		map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)},
-		map[string]any{"context": "b"},
-		map[string]any{"context": "c", "integration_id": float64(1)},
+	cases := map[string]struct {
+		checks []any
+		want   []string
+	}{
+		"GitHub Actions の報告元は報せない": {[]any{map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)}}, nil},
+		"integration_id が無ければ報せる":  {[]any{map[string]any{"context": "b"}}, []string{"b の integration_id"}},
+		"別の報告元は報せる":                {[]any{map[string]any{"context": "c", "integration_id": float64(1)}}, []string{"c の integration_id"}},
+		"文字列の integration_id は報せる": {[]any{map[string]any{"context": "d", "integration_id": "15368"}}, []string{"d の integration_id"}},
+		"object でない要素は報せる":         {[]any{"e"}, []string{"<nil> の integration_id"}},
+		"報せるものだけを順に返す": {[]any{
+			map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)},
+			map[string]any{"context": "b"},
+			map[string]any{"context": "c", "integration_id": float64(1)},
+		}, []string{"b の integration_id", "c の integration_id"}},
 	}
-	got := foreignReporters(checks)
-	require.Len(t, got, 2)
-	assert.Contains(t, got[0], "b の integration_id")
-	assert.Contains(t, got[1], "c の integration_id")
-	assert.Empty(t, foreignReporters(checks[:1]))
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := foreignReporters(tc.checks)
+			require.Len(t, got, len(tc.want))
+			for i, w := range tc.want {
+				assert.Contains(t, got[i], w)
+			}
+		})
+	}
 }

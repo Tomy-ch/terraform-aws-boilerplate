@@ -132,6 +132,31 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"deploy-branch", "-env", "x"}, fixedWD(root), githubClient{}, &out))
 		assert.Equal(t, "main\n", out.String())
 	})
+	t.Run("source は -base-sha と -head-sha と -default を検査へ渡す", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		gitT(t, root, "init", "-q", "-b", "main")
+		gitT(t, root, "add", ".")
+		gitT(t, root, "commit", "-q", "-m", "base")
+		base := gitT(t, root, "rev-parse", "HEAD")
+		gitT(t, root, "switch", "-q", "-c", "rel")
+		writeFile(t, root, "main.tf", "b\n")
+		gitT(t, root, "add", "main.tf")
+		gitT(t, root, "commit", "-q", "-m", "release")
+		head := gitT(t, root, "rev-parse", "HEAD")
+		gitT(t, root, "update-ref", "refs/remotes/origin/release/v1", head)
+		gitT(t, root, "switch", "-q", "-c", "evil", base)
+		writeFile(t, root, "main.tf", "evil\n")
+		gitT(t, root, "add", "main.tf")
+		gitT(t, root, "commit", "-q", "-m", "evil")
+		evil := gitT(t, root, "rev-parse", "HEAD")
+
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", head, "-default", "release/v1"}, fixedWD(root), githubClient{}, &out))
+		assert.Contains(t, out.String(), "release/v1 から到達でき")
+		err := run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", evil, "-default", "release/v1"}, fixedWD(root), githubClient{}, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSource)
+	})
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -241,6 +266,9 @@ func Test_readDeclarations(t *testing.T) {
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
 		}, os.ErrNotExist},
+		{"apply の workflow が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))
+		}, errTrigger},
 		{"include を定められなければ失敗する", func(root string) {
 			writeFile(t, root, rulesetFile, strings.Replace(rulesetFixture, `"include"`, `"included"`, 1))
 		}, errInclude},
@@ -320,10 +348,56 @@ func Test_applyOrCheck(t *testing.T) {
 		root := writeRepo(t, syncedRuleset)
 		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
 		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
-		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errTriggerDrift)
+		err := applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errTriggerDrift)
+		assert.Contains(t, err.Error(), ".github/workflows/apply.yaml")
 		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("include と起動条件が同時にずれていれば、apply は両方を書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, syncedRuleset, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, applyWorkflowFixture, string(wf))
+		assert.Contains(t, out.String(), rulesetFile)
+		assert.Contains(t, out.String(), ".github/workflows/apply.yaml")
+	})
+
+	t.Run("include と起動条件が同時にずれていれば、check は include のずれを報せ、どちらも書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(wf))
+	})
+
+	t.Run("workflow の起動条件を生成できなければ、apply は include のずれも書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		invalid := strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", invalid)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errTrigger)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, invalid, string(wf))
 	})
 
 	t.Run("ずれが無ければ apply は何も書かない", func(t *testing.T) {

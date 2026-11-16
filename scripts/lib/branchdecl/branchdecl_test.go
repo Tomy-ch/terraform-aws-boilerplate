@@ -45,6 +45,9 @@ func TestRead(t *testing.T) {
 		"revert の字面が違えば拒む":   {`{"lines": ["release/"], "Revert": "revert/"}`, ErrDeclaration},
 		"revert が重複すれば拒む":    {`{"lines": ["release/"], "revert": "a/", "revert": "b/"}`, ErrDeclaration},
 		"environment のキーは拒む": {`{"lines": ["release/"], "revert": "revert/", "name": "x"}`, ErrDeclaration},
+		"最上位の env は拒む":       {`{"lines": ["release/"], "revert": "revert/", "env": "x"}`, ErrDeclaration},
+		"最上位の from は拒む":      {`{"lines": ["release/"], "revert": "revert/", "from": ["release/"]}`, ErrDeclaration},
+		"最上位の branch は拒む":    {`{"lines": ["release/"], "revert": "revert/", "branch": "x"}`, ErrDeclaration},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -218,34 +221,58 @@ func Test_checkKeys(t *testing.T) {
 func TestBranches_DeployNames(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, []string{"admin", "production"}, Branches{Deploy: []DeployBranch{admin, {Branch: "production"}}}.DeployNames())
-	assert.Empty(t, Branches{}.DeployNames())
+	t.Run("宣言の順に名前を返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, []string{"admin", "production"}, Branches{Deploy: []DeployBranch{admin, {Branch: "production"}}}.DeployNames())
+	})
+	t.Run("デプロイブランチが無ければ空を返す", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, Branches{}.DeployNames())
+	})
 }
 
 func TestBranches_DeployForEnv(t *testing.T) {
 	t.Parallel()
 
 	b := Branches{Deploy: []DeployBranch{{Branch: "production"}, admin}}
-	got, ok := b.DeployForEnv("admin")
-	require.True(t, ok)
-	assert.Equal(t, admin, got)
-	_, ok = b.DeployForEnv("prd")
-	assert.False(t, ok, "env を持たない entry は返さない")
-	_, ok = b.DeployForEnv("")
-	assert.False(t, ok, "空の env は env を持たない entry に当たらない")
+	t.Run("env を持つ entry を返す", func(t *testing.T) {
+		t.Parallel()
+		got, ok := b.DeployForEnv("admin")
+		require.True(t, ok)
+		assert.Equal(t, admin, got)
+	})
+	t.Run("env を持たない entry は返さない", func(t *testing.T) {
+		t.Parallel()
+		_, ok := b.DeployForEnv("prd")
+		assert.False(t, ok)
+	})
+	t.Run("空の env は env を持たない entry に当たらない", func(t *testing.T) {
+		t.Parallel()
+		_, ok := b.DeployForEnv("")
+		assert.False(t, ok)
+	})
 }
 
 func TestBranches_DeployForBranch(t *testing.T) {
 	t.Parallel()
 
 	b := Branches{Deploy: []DeployBranch{{Branch: "production"}, admin}}
-	got, ok := b.DeployForBranch("admin")
-	require.True(t, ok)
-	assert.Equal(t, admin, got)
-	_, ok = b.DeployForBranch("production")
-	assert.False(t, ok, "env を持たないデプロイブランチは返さない")
-	_, ok = b.DeployForBranch("release/v1.0.0")
-	assert.False(t, ok)
+	t.Run("env を持つデプロイブランチを返す", func(t *testing.T) {
+		t.Parallel()
+		got, ok := b.DeployForBranch("admin")
+		require.True(t, ok)
+		assert.Equal(t, admin, got)
+	})
+	t.Run("env を持たないデプロイブランチは返さない", func(t *testing.T) {
+		t.Parallel()
+		_, ok := b.DeployForBranch("production")
+		assert.False(t, ok)
+	})
+	t.Run("デプロイブランチでない名前は返さない", func(t *testing.T) {
+		t.Parallel()
+		_, ok := b.DeployForBranch("release/v1.0.0")
+		assert.False(t, ok)
+	})
 }
 
 func TestDeployBranch_FromLine(t *testing.T) {
@@ -276,24 +303,25 @@ func Test_validateDeployEnv(t *testing.T) {
 	cases := map[string]struct {
 		d       DeployBranch
 		seen    map[string]bool
-		wantErr bool
+		wantErr string
 	}{
-		"env の無い entry は from が無ければ通る": {DeployBranch{Branch: "develop"}, map[string]bool{}, false},
-		"env と lines の from を持てば通る":    {admin, map[string]bool{}, false},
-		"既に数えた env は拒む":                {admin, map[string]bool{"admin": true}, true},
-		"from の無い env は拒む":             {DeployBranch{Branch: "admin", Env: "admin"}, map[string]bool{}, true},
-		"lines に無い from は拒む":           {DeployBranch{Branch: "admin", Env: "admin", From: []string{"feature/"}}, map[string]bool{}, true},
-		"env の無い entry の from は空でも拒む":  {DeployBranch{Branch: "develop", From: []string{}}, map[string]bool{}, true},
+		"env の無い entry は from が無ければ通る": {DeployBranch{Branch: "develop"}, map[string]bool{}, ""},
+		"env と lines の from を持てば通る":    {admin, map[string]bool{}, ""},
+		"既に数えた env は拒む":                {admin, map[string]bool{"admin": true}, "複数あります"},
+		"from の無い env は拒む":             {DeployBranch{Branch: "admin", Env: "admin"}, map[string]bool{}, "from を1つ以上持たなければなりません"},
+		"lines に無い from は拒む":           {DeployBranch{Branch: "admin", Env: "admin", From: []string{"feature/"}}, map[string]bool{}, "lines の接頭辞ではありません"},
+		"env の無い entry の from は空でも拒む":  {DeployBranch{Branch: "develop", From: []string{}}, map[string]bool{}, "from を持てません"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			err := validateDeployEnv(tc.d, tc.seen, lines)
-			if !tc.wantErr {
+			if tc.wantErr == "" {
 				require.NoError(t, err)
 				return
 			}
 			require.ErrorIs(t, err, ErrDeclaration)
+			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 

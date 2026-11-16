@@ -73,22 +73,50 @@ func Test_renderApplyTriggers(t *testing.T) {
 		assert.Contains(t, edits[0].rendered, "    branches:\n      - main\n\n")
 	})
 
+	t.Run(".yml の apply の workflow も生成する", func(t *testing.T) {
+		t.Parallel()
+		edits, err := renderApplyTriggers(repo(t, map[string]string{"apply.yml": drifted}), deployX)
+		require.NoError(t, err)
+		require.Len(t, edits, 1)
+		assert.Equal(t, filepath.Join(workflowsDir, "apply.yml"), edits[0].path)
+		assert.Equal(t, applyWorkflowFixture, edits[0].rendered)
+	})
+	t.Run("サブディレクトリは workflow として読まない", func(t *testing.T) {
+		t.Parallel()
+		edits, err := renderApplyTriggers(repo(t, map[string]string{"apply.yaml": drifted, "sub.yaml/apply.yaml": drifted}), deployX)
+		require.NoError(t, err)
+		require.Len(t, edits, 1)
+		assert.Equal(t, filepath.Join(workflowsDir, "apply.yaml"), edits[0].path)
+	})
+	// 読めない workflow を飛ばすと、その workflow の起動条件が宣言から外れたまま緑になる。
+	t.Run("読めない workflow があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := repo(t, map[string]string{"apply.yaml": applyWorkflowFixture})
+		require.NoError(t, os.Symlink(filepath.Join(root, "none"), filepath.Join(root, workflowsDir, "x.yaml")))
+		edits, err := renderApplyTriggers(root, deployX)
+		require.ErrorIs(t, err, os.ErrNotExist)
+		assert.Contains(t, err.Error(), "x.yaml")
+		assert.Nil(t, edits)
+	})
+
 	cases := map[string]struct {
 		files map[string]string
 		b     branches
+		file  string
 		want  string
 	}{
-		"apply の workflow が1件も無ければ失敗する":          {map[string]string{"unlock.yaml": unlockWorkflowFixture}, deployX, "apply の environment を使う job がありません"},
-		"1つの workflow が複数の env の apply を持てば失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture + "  other:\n    environment: y-apply\n"}, deployX, "複数の env"},
-		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: []string{"release/"}, Revert: "revert/"}, "env x のデプロイブランチ"},
-		"apply の job の environment: を読めなければ失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture, "other.yaml": "on:\n  push:\n    branches:\n      - 'release/*'\njobs:\n  a:\n    environment:\n      name: x-apply\n"}, deployX, "other.yaml"},
-		"on.push.branches がフロー形式なら失敗する":          {map[string]string{"apply.yaml": strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)}, deployX, "on.push.branches"},
+		"apply の workflow が1件も無ければ失敗する":          {map[string]string{"unlock.yaml": unlockWorkflowFixture}, deployX, workflowsDir, "apply の environment を使う job がありません"},
+		"1つの workflow が複数の env の apply を持てば失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture + "  other:\n    environment: y-apply\n"}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "複数の env"},
+		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: []string{"release/"}, Revert: "revert/"}, filepath.Join(workflowsDir, "apply.yaml"), "env x のデプロイブランチ"},
+		"apply の job の environment: を読めなければ失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture, "other.yaml": "on:\n  push:\n    branches:\n      - 'release/*'\njobs:\n  a:\n    environment:\n      name: x-apply\n"}, deployX, filepath.Join(workflowsDir, "other.yaml"), "environment: を読めません"},
+		"on.push.branches がフロー形式なら失敗する":          {map[string]string{"apply.yaml": strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "on.push.branches"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_, err := renderApplyTriggers(repo(t, tc.files), tc.b)
 			require.ErrorIs(t, err, errTrigger)
+			assert.Contains(t, err.Error(), tc.file)
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
@@ -107,11 +135,13 @@ func Test_applyEnvs(t *testing.T) {
 		src  string
 		want []string
 	}{
-		"apply-identity の env を返す":            {applyWorkflowFixture, []string{"x"}},
-		"lock の解除と plan の env は返さない":          {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
-		"同じ env の apply と apply-identity は1つ": {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
-		"jobs の外の environment は読まない":          {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
-		"接尾辞だけの名前は env を持たない":                 {"jobs:\n  a:\n    environment: -apply\n", nil},
+		"apply-identity の env を返す":                        {applyWorkflowFixture, []string{"x"}},
+		"lock の解除と plan の env は返さない":                      {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
+		"同じ env の apply と apply-identity は1つ":             {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
+		"jobs の外の environment は読まない":                      {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
+		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
+		"一重引用符で囲んだ environment も読む":                       {"jobs:\n  a:\n    environment: 'x-apply'\n", []string{"x"}},
+		"step の入力の environment: は job の environment ではない": {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n  b:\n    steps:\n      with:\n        environment: prod\n", []string{"x"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -127,7 +157,6 @@ func Test_applyEnvs(t *testing.T) {
 		"mapping の形":     "jobs:\n  a:\n    environment:\n      name: x-apply\n",
 		"式":              "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
 		"アンカー":           "jobs:\n  a:\n    environment: &e x-apply\n",
-		"別の字下げ":          "jobs:\n  a:\n      environment: x-apply\n",
 		"plan の mapping": "jobs:\n  a:\n    environment:\n      name: x-plan\n",
 	}
 	for name, src := range unreadable {
@@ -142,12 +171,17 @@ func Test_applyEnvs(t *testing.T) {
 func Test_renderPushBranches(t *testing.T) {
 	t.Parallel()
 
-	got, err := renderPushBranches("on:\n  push:\n    branches:\n      - a\n      - b\n  workflow_dispatch:\n", "admin")
-	require.NoError(t, err)
-	assert.Equal(t, "on:\n  push:\n    branches:\n      - admin\n  workflow_dispatch:\n", got)
-
-	_, err = renderPushBranches("on:\n  workflow_dispatch:\n", "admin")
-	require.ErrorIs(t, err, errTrigger)
+	t.Run("一覧を branch 1つへ置き換える", func(t *testing.T) {
+		t.Parallel()
+		got, err := renderPushBranches("on:\n  push:\n    branches:\n      - a\n      - b\n  workflow_dispatch:\n", "admin")
+		require.NoError(t, err)
+		assert.Equal(t, "on:\n  push:\n    branches:\n      - admin\n  workflow_dispatch:\n", got)
+	})
+	t.Run("on.push が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := renderPushBranches("on:\n  workflow_dispatch:\n", "admin")
+		require.ErrorIs(t, err, errTrigger)
+	})
 }
 
 func Test_pushBranchesItems(t *testing.T) {
@@ -191,16 +225,37 @@ func Test_nextMatch(t *testing.T) {
 	t.Parallel()
 
 	lines := []string{"on:", "  # c", "", "  pull_request:", "  push:", "jobs:", "  push:"}
-	assert.Equal(t, 4, nextMatch(lines, 1, 2, pushKey))
-	assert.Equal(t, -1, nextMatch(lines, 5, 2, pushKey), "浅い行に当たれば打ち切る")
-	assert.Equal(t, -1, nextMatch(lines, len(lines), 2, pushKey))
+	cases := map[string]struct {
+		from int
+		want int
+	}{
+		"コメントと空行と別のキーを越えて当たる": {1, 4},
+		"浅い行に当たれば打ち切る":        {5, -1},
+		"末尾から始めれば見つからない":      {len(lines), -1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, nextMatch(lines, tc.from, 2, pushKey))
+		})
+	}
 }
 
 func Test_isApplySuffix(t *testing.T) {
 	t.Parallel()
 
-	for _, suffix := range identitySuffixes {
-		want := suffix == "-apply" || suffix == "-apply-identity"
-		assert.Equal(t, want, isApplySuffix(suffix), suffix)
+	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false}
+	for suffix, w := range want {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, w, isApplySuffix(suffix))
+		})
 	}
+	t.Run("宣言の接尾辞はどれも期待値を持つ", func(t *testing.T) {
+		t.Parallel()
+		require.NotEmpty(t, identitySuffixes)
+		for _, suffix := range identitySuffixes {
+			assert.Contains(t, want, suffix)
+		}
+	})
 }
