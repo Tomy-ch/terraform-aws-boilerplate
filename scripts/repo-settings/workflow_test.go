@@ -142,6 +142,7 @@ func Test_applyEnvs(t *testing.T) {
 		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
 		"一重引用符で囲んだ environment も読む":                       {"jobs:\n  a:\n    environment: 'x-apply'\n", []string{"x"}},
 		"step の入力の environment: は job の environment ではない": {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n  b:\n    steps:\n      with:\n        environment: prod\n", []string{"x"}},
+		"steps の後に書いた job の environment も読む":              {"jobs:\n  a:\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n\n    environment: x-apply\n", []string{"x"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -154,10 +155,12 @@ func Test_applyEnvs(t *testing.T) {
 
 	// 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる。
 	unreadable := map[string]string{
-		"mapping の形":     "jobs:\n  a:\n    environment:\n      name: x-apply\n",
-		"式":              "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
-		"アンカー":           "jobs:\n  a:\n    environment: &e x-apply\n",
-		"plan の mapping": "jobs:\n  a:\n    environment:\n      name: x-plan\n",
+		"mapping の形":        "jobs:\n  a:\n    environment:\n      name: x-apply\n",
+		"式":                 "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
+		"アンカー":              "jobs:\n  a:\n    environment: &e x-apply\n",
+		"plan の mapping":    "jobs:\n  a:\n    environment:\n      name: x-plan\n",
+		"別の字下げ":             "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
+		"steps の後の job のキー": "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
 	}
 	for name, src := range unreadable {
 		t.Run("読めない environment: は失敗する（"+name+"）", func(t *testing.T) {
