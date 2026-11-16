@@ -15,9 +15,13 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
-| apply | デフォルトブランチの release line への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
+| apply | デプロイブランチ `admin` への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
-| リリース昇格のゲート | deploy ブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
+| リリース昇格のゲート | `develop`・`staging`・`production` 宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
+
+apply の起動条件（`on.push.branches`）は、[`branches.json`](../settings/branches.json) の `deploy` から
+`make repo-settings-apply` が生成する。走査の workflow とリリース昇格のゲートは、ブランチの名前を字面で持ち、
+デプロイブランチ `admin` を含まない。`admin` への push と `admin` 宛の Pull Request の push は走査されない（#204）。
 
 ## 必須検査はすべての Pull Request で報告される
 
@@ -34,6 +38,13 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 path で絞る workflow は [`dorny/paths-filter`](https://github.com/dorny/paths-filter) を使う
 `changes` job で条件を計算し、報告する job をその出力でゲートする。リリース昇格のゲートは
 `github.base_ref` を `if:` で直接読む —— 条件がブランチ名であり、ファイル一覧を要さない。
+
+`repo-settings.yaml` の `deploy-source-check` は、対象かどうかを job の中で決める。デプロイブランチ宛でない
+Pull Request では「対象外」と出力して成功する（ADR-0603 決定31-32）。この job は Pull Request の base の
+commit を checkout し（`ref: github.event.pull_request.base.sha`、`fetch-depth: 0`）、そこにある宣言と
+`scripts/repo-settings` で判定する。Pull Request は検査のコードと宣言を書き換えられない。job の定義そのものは
+Pull Request の側のもので、書き換えうる。`repo-settings.yaml` と `scripts/repo-settings/` は code owner の
+対象に置く（ADR-0603 の保証しないこと）。
 
 ゲートは **fail open** で書く。
 
@@ -86,28 +97,48 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity の role を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
+- **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは
+  デプロイブランチ `admin` の木なので、リリース線へ merge されてまだ `admin` へ昇格していない変更も差分に出る
+  （ADR-0603 決定13）。その差分は、リリース線の Pull Request が足す変更より大きいことがある
 - job の形（environment、取る role、起動条件、拒否の step、拒否の確認、terraform の経路、`run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が見る。拒否の step の本文はシェルなので字面からは選べず、code owner のレビューが持つ
 
 ### apply の job
 
-`terraform-apply.yaml` の `apply-admin-identity` は、release line への push で起動し、environment
-`admin-apply-identity` の下で OIDC により apply-identity の role を assume して（ADR-0602 決定14）、
-管理アカウントの identity root を apply する。path で絞らない。
+`terraform-apply.yaml` の `apply-admin-identity` は、管理アカウント（env `admin`）のデプロイブランチ
+`admin` への push で起動し、environment `admin-apply-identity` の下で OIDC により apply-identity の role を
+assume して（ADR-0602 決定14）、管理アカウントの identity root を apply する。path で絞らない。
+`on.push.branches` は `branches.json` から `make repo-settings-apply` が生成し、`make repo-settings-check` が
+ずれを落とす（[`.github/settings/README.md`](../settings/README.md) の「branches.json」）。
 
-- **apply するのは、release line のうちデフォルトブランチであるものだけである。** 1つの state に複数の
-  ブランチが apply すると、遅れたブランチの push が古い構成を apply し直す。`hotfix/*` と deploy ブランチ
-  （`develop`・`staging`・`production`）の push は起動しない。hotfix の間（`scripts/release` が
-  デフォルトブランチを `hotfix/*` へ移す）は、release line の push も apply しない
-- **hotfix を閉じたら、管理者がデフォルトブランチを release line へ戻す**
-  （`gh repo edit --default-branch release/vX.Y.Z`）。戻さない限り、release line への merge は apply の
-  job を skip し続け、run は skip だけを示す
+- **管理アカウントへ apply するのは `admin` だけである**（ADR-0601 決定4）。リリース線（`release/*`）と
+  hotfix の線（`hotfix/*`）は変更を集める線で、その push は apply を起動しない。1つの state に複数の
+  ブランチが apply すると、遅れたブランチの push が古い構成を apply し直す。environment `admin-apply-identity`
+  の deployment branch policy は `admin` だけを許す
+- **変更は昇格で当てる。** 変更はまずリリース線へ merge し、そのリリース線から `admin` への Pull Request を
+  merge すると apply が走る。`admin` 宛の Pull Request でも必須検査と plan が走る。`admin` は Pull Request の
+  merge でだけ進む（ruleset）
+- **`admin` へ入れてよい commit は、ブランチ名ではなく到達性で決まる。** required の `deploy-source-check` が、
+  次をすべて満たす Pull Request だけを通す（ADR-0603 決定31）。head のブランチ名は見ない —— 保護パターンに
+  当たるブランチは書き込み権限で作れるが、デフォルトブランチを変えられるのは管理者だけである
+  - デフォルトブランチが `admin` の `from` の線（`release/`）のどれかであり、デプロイブランチ自身でない
+  - head の commit が `origin/<デフォルトブランチ>` の祖先である
+  - `git merge-tree --write-tree <base> <head>` が衝突せず、その木が head の木と一致する
+
+  これにより `admin` の木は、常にリリース線でレビューされた commit の木と一致する。feature のブランチと
+  hotfix の線からは `admin` へ入れられない
+- **止めるときは、`admin` 宛の Pull Request を merge しない。** 後続の apply は `admin` への merge でだけ起きる
+  （ADR-0601 決定19）。デフォルトブランチは動かさない
+- **hotfix の間は `admin` へ昇格できない。** `scripts/release` がデフォルトブランチを `hotfix/*` へ移すと、
+  デフォルトブランチが `from` の線でないので `deploy-source-check` が落ちる。hotfix を閉じたら、管理者が
+  デフォルトブランチをリリース線へ戻し（`gh repo edit --default-branch release/vX.Y.Z`）、hotfix の修正を
+  リリース線へ merge してから昇格する
 - **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
   （`plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
-  run を止めない。資格情報を取る前の step（`refuse-stale`）が、デフォルトブランチとその先頭の commit を
-  API から取り直し、どちらかが違えば失敗する
+  run を止めない。資格情報を取る前の step（`refuse-stale`）が、起動したブランチの先頭の commit を API から
+  取り直し、run の commit と違えば失敗する。どのブランチから起動できるかは environment が限る
 - **concurrency は workflow 全体に1つ置き、実行中の apply を止めない。** 待っている run は後から来た
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
@@ -141,9 +172,14 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 - **Pull Request の plan と、apply の plan が同じであること。** 必須検査は base の更新を要求しない
   （`branch-protection.json` の `strict_required_status_checks_policy: false`）ので、merge された木は
   最後に plan された木と違いうる。apply の job の plan と Policy が最後の関門である
-- **新しい release line が、古い線の未リリースの変更を持つこと。** 新しい線は `production` から切るので、
-  古い線をリリースする前に切ってデフォルトブランチを移すと、apply が古い線の変更を巻き戻す。
-  `scripts/release` の手順（タグを打ってから次の線を切る）を外れたときを検出する検査は無い
+- **新しいリリース線を、そのまま `admin` へ昇格できること。** 新しい線は `production` から切る。`admin` が
+  新しい線に無い変更を持つと（古い線をリリースする前に新しい線を切った、など）、merge の結果の木が head の木と
+  一致せず、`deploy-source-check` が落ちる。回復は、古い線を新しい線へ merge する Pull Request（base merge）で
+  その変更の履歴を新しい線へ入れることである。その変更が要らなければ、続けて新しい線の上で revert する。
+  そのうえで昇格する
+- **GitHub の merge の結果が、`deploy-source-check` が `git merge-tree` で求めた木と一致すること。** 必須検査は
+  base の更新を要求しないので、検査の後に `admin` かデフォルトブランチが進むこともある。違えば、apply の失敗の
+  revert の判定が `admin` の先頭とその第2親の木の不一致として検出し、revert を用意しない
 
 ### lock の解除の job
 
@@ -156,8 +192,8 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 - **unlock-identity の role は、この lock file を外すことしかできない。** 持つのは、prefix を lock file の
   key に限った state Bucket の一覧と、lock file の読み取りと削除だけである。復号は、state の鍵の Key Policy が
   同じ lock file の object に限って許す。`s3:PutObject` と `s3:DeleteObjectVersion` は持たない
-  （deployment-identity/ADR-0201 決定9）。environment は apply の environment と分け、保護ブランチだけを
-  許す（ADR-0602 決定13-14）
+  （deployment-identity/ADR-0201 決定9）。environment は apply の environment と分け、デプロイブランチ
+  `admin` だけを許す（ADR-0602 決定13-14）
 - **apply の concurrency の group に入らない。** この workflow は自分の group を `cancel-in-progress: false`
   で持つ。apply の run を待たせも取り消しもせず、lock の解除の run どうしは直列になる。apply に対する安全性は
   次の3つが担う
@@ -190,11 +226,12 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
   公開のログに出さない
 - **自動では起動しない。** 残った lock は apply が途中で止まった信号であり、外す前に人が止まった run の
   ログを見る。push でも起動しない —— merge のたびに lock を消す経路になる
-- **外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する。** release line の先頭の
+- **外した後、lock で落ちた apply の run を「Re-run failed jobs」で再実行する。** `admin` の先頭の
   commit のままなら `refuse-stale` を通る
-- 古い commit の拒否（`refuse-stale`）と検出への依存（`unlock-infra-code-gate`）は、apply の job と同じで
-  ある。job の `if:` は ref で絞らないので、デフォルトブランチ以外から起動した run は skip ではなく
-  `refuse-stale` で失敗する。hotfix の間は、デフォルトブランチ（`hotfix/*`）から起動する
+- **`admin` から起動する**（`gh workflow run terraform-unlock.yaml --ref admin`）。hotfix の間も同じである。
+  古い commit の拒否（`refuse-stale`）と検出への依存（`unlock-infra-code-gate`）は、apply の job と同じで
+  ある。job の `if:` は ref で絞らず、起動できるブランチは environment `admin-unlock-identity` が `admin` だけに
+  限る。`admin` 以外から起動した run を environment が失敗にするか skip にするかを、GitHub の文書は述べていない
 - **AWS のアカウント ID は environment `admin-unlock-identity` の secret `AWS_ACCOUNT_ID` に置く。** 無ければ
   拒否の step で失敗する
 - 通知は持たない。人が起動し、結果を画面で見る
@@ -212,14 +249,15 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
   lock file は、消さずに失敗する。一時 IAM user の書き込みが拒否された後は、
   それを外す手順がこのリポジトリに無い（ADR-0602 決定9）
 - **起動できる人を絞ること。** write 権限を持つ人なら起動できる。environment の reviewer は置かない ——
-  障害のときに人が1人しか居なくても外せるようにする。実行されるのはデフォルトブランチの先頭の workflow と
+  障害のときに人が1人しか居なくても外せるようにする。実行されるのは `admin` の先頭の workflow と
   コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる
 
 ### apply の失敗の revert
 
 `terraform-apply.yaml` の apply の job が commit の宣言を AWS に対して評価した後に失敗すると、`revert-plan` が、
 最後に成功した apply の commit へ宣言を戻す revert のブランチを用意するかを決め、`revert-push` がそれを push する。
-Pull Request は人が通知の URL から開き、通常の経路（検査・review・merge・apply）で戻す。CI は Pull Request を
+Pull Request は人が通知の URL から開き、通常の経路（リリース線への検査・review・merge と、`admin` への昇格と
+apply）で戻す。CI は Pull Request を
 作らず、merge もしない。前の commit を apply し直すことはしない。決定は ADR-0601 決定17-19 が持ち、ここは
 その運用の細則を持つ。
 
@@ -231,11 +269,23 @@ Pull Request は人が通知の URL から開き、通常の経路（検査・re
   apply の step の結果か失敗の段を受け取れなければ、対象外と読まずに `revert-plan` が失敗する
 - **戻す範囲は、最後に成功した apply の commit から失敗した commit までの first-parent の merge のすべてである。**
   待っている run は後から来た run に置き換わるので、1回の apply が複数の merge を含みうる。最後に成功した commit は、
-  同じ release line への push で起動した run のうち、apply の job が成功した最も新しい run の commit で、Actions の
+  同じデプロイブランチ（`admin`）への push で起動した run のうち、apply の job が成功した最も新しい run の commit で、Actions の
   run と job の記録から読む（environment の deployment は `deployments: write` を持つ主体が API で作れるので読まない）。
   直近の 100 件に無い、祖先でない、first-parent の鎖が届かない、merge でない commit を挟む、木が同じ、一時の
   worktree で範囲を revert すると衝突するか木が一致しない —— いずれも用意せず、理由を通知する。
   木が同じなら失敗の原因は commit の中身に無く、revert を merge した後の apply が失敗しても次の revert は作られない
+- **revert は `admin` の上では作らず、失敗した merge が運んだリリース線の commit の上で作り、デフォルトブランチへ
+  向ける**（ADR-0601 決定17）。`admin` の先頭 `H` は昇格の merge で、その第2親 `H^2` が運んだリリース線の
+  commit である。`revert-plan` は、デフォルトブランチが `admin` の `from` の線であること、`H^2` が
+  `origin/<デフォルトブランチ>` の祖先であること、`H^2` の木が `H` の木と一致することを確かめる
+  （`deploy-source-check` と同じ判定）。そのうえで範囲の merge を `H^2` の上で新しい順に `-m 1` で revert し、
+  木が最後に成功した commit の木と一致することを見る。どれかが成り立たなければ用意せず、理由を通知する ——
+  hotfix の間に失敗した apply もこれに当たり、hotfix を閉じた後に人が用意する。通知の URL が開く Pull Request の
+  宛先はデフォルトブランチで、merge した revert は昇格で `admin` へ運ぶ。リリース線の先頭が `H^2` より進んで
+  いれば revert の Pull Request が衝突しうるので、人が Pull Request の上で解く
+- **`admin` の最初の apply が失敗したときは、revert を用意しない。** 成功した apply の run が無いので、
+  `revert-plan` は理由を通知する。人は、リリース線で直して昇格するか、リリース線の先頭の上で
+  `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を開き、merge してから昇格する
 - **判定は `revert-plan` が持ち、書き込みの token を持つのは `revert-push` だけである。** `revert-plan` は
   `contents: read` と `actions: read` で、範囲を一時の worktree で実際に revert して木の一致を確かめ、同じ名前の
   ブランチの有無も見る。`revert-push` は `contents: write` だけを持ち、道具を導入せず、決まった commit を同じ順に
@@ -248,11 +298,10 @@ Pull Request は人が通知の URL から開き、通常の経路（検査・re
 - **`.github/workflows/` を戻す範囲は CI が push できない。** `GITHUB_TOKEN` は workflows の権限を持てない。
   通知が載せる `make apply-revert REVERT_HEAD=… REVERT_COMMITS='…' REVERT_BRANCH=…` を手元で
   そのまま実行すると、手元の資格情報で同じ revert を push する
-- **後続の apply は止めない。** revert が merge される前に別の merge が入っても、その apply は走る。apply は線の
+- **後続の apply は止めない。** revert が merge される前に別の昇格が入っても、その apply は走る。apply は `admin` の
   先頭の木全体を当てるので、成功すれば Git と実環境は一致し、用意した revert は要らなくなる。失敗すれば次の
-  revert が最後に成功した commit から計算し直され、前の revert を含む。止めたいときは、管理者がデフォルトブランチを
-  release line の外へ移す（`gh repo edit --default-branch <別のブランチ>`）。apply の job はデフォルトブランチ
-  でない線の push を skip する。戻すときは「apply の job」の hotfix の後と同じく release line へ戻す
+  revert が最後に成功した commit から計算し直され、前の revert を含む。止めたいときは、`admin` 宛の Pull Request を
+  merge しない
 - **通知は失敗の通知と別に届く。** `notify-revert` が critical の deploy の系統へ、Pull Request を開く URL か、
   手元のコマンドか、用意しなかった理由を、検出のモードで送る。失敗の通知（`notify-failure`）は revert の job を
   待たない。revert の対象でない失敗では送らない
@@ -273,7 +322,7 @@ Pull Request は人が通知の URL から開き、通常の経路（検査・re
 - **失敗した job の outputs が後続の job へ渡ること。** 渡らなければ apply の step の結果が空になり、`revert-plan`
   が失敗して通知へ出る。黙って働かなくはならない
 - **`contents: write` の token がタグと保護されていないブランチへ書けないこと。** 書けるのは `revert-push` の間だけで、
-  走るのは release line に merge された木の `make ci-revert-push` だけである
+  走るのは `admin` に merge された木の `make ci-revert-push` だけである
 
 ## 結果コメント
 
@@ -336,7 +385,7 @@ truthy 側へ置く。
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
-| `repo-settings.yaml:repo-settings-check` | 15 | 同上（新設） |
+| `repo-settings.yaml:repo-settings-check`、`repo-settings.yaml:deploy-source-check` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、

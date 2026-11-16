@@ -8,10 +8,11 @@
 
 | 操作 | make | 書き換えるもの | 誰が |
 | --- | --- | --- | --- |
-| 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間 | 誰でも |
+| 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間と、apply の workflow の `on.push.branches` | 誰でも |
 | 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
 | 突合 | `repo-settings-drift` | 無し（GET のみ） | 人が手元で（誰でも） |
 | 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
+| デプロイブランチの作成 | `create-deploy-branch DEPLOY_ENV=<env>` | GitHub のブランチ（env のデプロイブランチを、デフォルトブランチの先頭から作る。在れば失敗する） | 管理者の資格情報を持つ人（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 で1回） |
 
 - 宣言を変える Pull Request は、merge の後に管理者が適用します。CI は保護設定を書き込みません（ADR-0603 決定30）。適用は `make setup-repo` も呼びます。
 - 突合は人が手元で実行します。保護設定は人が管理者の資格情報で守るもので、CI の定期実行で重ねて見ることはしません。適用の後と、管理画面で設定が変わったと疑うときに `make repo-settings-drift` を実行し、ずれがあれば失敗します。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
@@ -20,9 +21,29 @@
 
 ## branches.json
 
-分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` は固定名で保護するブランチ、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。`revert` は apply の失敗を戻す revert のブランチの接頭辞（`/` で終わる）で、保護しません。無いか `lines` の接頭辞と重なれば `repo-settings-check` が落ちます（[`.github/workflows/README.md`](../workflows/README.md) の「apply の失敗の revert」）。
+分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` はデプロイブランチ（固定名で保護するブランチ）の一覧、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。`revert` は apply の失敗を戻す revert のブランチの接頭辞（`/` で終わる）で、保護しません。無いか `lines` の接頭辞と重なれば `repo-settings-check` が落ちます（[`.github/workflows/README.md`](../workflows/README.md) の「apply の失敗の revert」）。
 
-読み手のうち、`branch-protection.json` の include と environment の deployment branch policy はここから生成し、`scripts/apply-revert` は `revert` の接頭辞を読みます。両者は同じ読み手（`scripts/lib/branchdecl`）を通ります。`scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と workflow の起動条件は、まだパターンを自分で持っています。
+**デプロイブランチ**は、env ごとに1つ置く固定名の保護ブランチで、そこへの merge がその env への apply を起動します（ADR-0601 決定4）。リリース線（`release/*`）と hotfix の線（`hotfix/*`）は変更を集める線で、デプロイブランチを持つ env へ apply しません。`deploy` の各要素は次の形です。
+
+```json
+{ "branch": "admin", "env": "admin", "from": ["release/"] }
+```
+
+| キー | 意味 |
+| --- | --- |
+| `branch` | デプロイブランチの名前。保護対象に入ります |
+| `env` | そのブランチへの merge が apply する env（`env/<env>/` の root）。env をまだ配線していないデプロイブランチは持ちません |
+| `from` | そのデプロイブランチが変更を受け取る線の接頭辞の一覧。各要素は `lines` のどれかで、重複できません。`env` を持つ要素だけが持ち、持つときは1つ以上が必須です |
+
+- デプロイブランチへ入る Pull Request は、デフォルトブランチがその `from` の線のどれかであり、head の commit がデフォルトブランチから到達でき、merge の結果の木が head の木と一致するときだけ merge できます（ADR-0603 決定31）。これを見るのが required の `deploy-source-check` です（[`.github/workflows/README.md`](../workflows/README.md) の「apply の job」）。
+- `env` を持つ要素は、`env/` の root が `deployment-identity` へ渡す `env` とちょうど対応します。`env` ごとにデプロイブランチが1つ在り、`env` を持つ要素がどれも `deployment-identity` の `env` を指すことを `repo-settings-check` が見ます。
+- `branch` の重複、`env` の重複、`lines` に無いか重複する `from`、`env` を持つ要素の空の `from`、`env` を持たない要素の `from` は、`repo-settings-check` が落とします。
+
+読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
+
+- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの）の `on.push.branches`。`on.push.branches` はその env のデプロイブランチ1つで、`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
+- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）
+- まだパターンを自分で持つもの: `scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と、走査の workflow（checkov / kics / semgrep / trivy-config / zizmor / trivy-release-gate / trivy-fs / govulncheck / scorecard）の起動条件です。生成の対象ではなく、デプロイブランチ `admin` を含みません。`admin` への push は走査されません（#204）
 
 ## environments.json
 
@@ -31,11 +52,11 @@
 | キー | 意味 |
 | --- | --- |
 | `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` / `*-unlock-identity` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに4つが揃い、どの `env` にも当たらない4種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
-| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`any`（deployment branch policy を持たない） |
+| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`deploy-branch`（名前の env のデプロイブランチ1つだけ。`deployment-identity` の4種の名前にだけ使えます）、`any`（deployment branch policy を持たない） |
 | `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
-- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` / `*-unlock-identity` は `protected` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。
+- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` / `*-unlock-identity` は `deploy-branch` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。apply 系と lock の解除の environment は、保護パターンに当たる新しいブランチからは使えません。
 - 新しい environment を参照する workflow は、その environment を `make apply-environments` で宣言から作り、必要な secret を置いてから merge します。先に merge すると、走った workflow が GitHub に保護なしの environment を作らせます。手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 が持ちます。
 - 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
   - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
@@ -76,6 +97,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
+| デプロイブランチへの経路（ADR-0603 決定32 の例外） | `deploy-source-check`。デフォルトブランチの名前と到達性、デプロイブランチの今の木に依り、変更に誤りが無くても赤になりうる。デプロイブランチ宛でない Pull Request では対象外として成功する。検査のコードと宣言は Pull Request の base の commit のものを使う |
 | plan（ADR-0603 決定12-14 の例外） | `plan-admin-identity`。AWS の状態と資格情報の取得に依存し、変更に誤りが無くても赤になりうる。fork と Dependabot の Pull Request では拒否の step で失敗するので、それらは merge できない |
 
 **ここへ context を足したら、それを報告する job が `pull_request` を絞っていないことを確かめること。**
