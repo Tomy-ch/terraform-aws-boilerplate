@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -20,12 +22,15 @@ import (
 )
 
 const (
-	testRepo     = "owner/name"
-	testLine     = "release/v0.1.0"
-	testWorkflow = "terraform-apply.yaml"
-	testJob      = "apply-admin-identity"
-	testServer   = "https://github.com"
-	testRun      = int64(42)
+	testRepo    = "owner/name"
+	testLine    = "admin"
+	testDefault = "release/v0.1.0"
+	// testWorkflowDefault は、.github/workflows/ を変える線。workflowHead はこの線の commit を運ぶ。
+	testWorkflowDefault = "release/v0.2.0"
+	testWorkflow        = "terraform-apply.yaml"
+	testJob             = "apply-admin-identity"
+	testServer          = "https://github.com"
+	testRun             = int64(42)
 )
 
 var errFake = xerrors.New("fake command failed")
@@ -78,15 +83,16 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// history は、一時のリポジトリに建てた線の commit。
 type history struct {
 	dir                  string
 	base, first, head    string
 	direct, workflowHead string
 }
 
-// newHistory は、base の上に2つの merge を積んだ線を建てる。direct は base の上の merge でない commit、
-// workflowHead は base の上に .github/workflows/ を変える merge を積んだ commit である。
+// newHistory は、デプロイブランチ line の base の上に、線（refs/remotes/origin/<testDefault>）の commit を運ぶ
+// merge を2つ積む。各 merge の木は、運んだ線の commit の木と一致する。
+// direct は base の上の merge でない commit、workflowHead は .github/workflows/ を変える線
+// （refs/remotes/origin/<testWorkflowDefault>）の commit を運ぶ merge である。
 func newHistory(t *testing.T) history {
 	t.Helper()
 	dir := t.TempDir()
@@ -96,39 +102,42 @@ func newHistory(t *testing.T) history {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, path), []byte(body), 0o600))
 		git(t, dir, "add", path)
 	}
-	merge := func(branch, path, body string) string {
+	// feature を線 into へ merge し、その線の先頭を deploy へ運ぶ merge を作る。
+	carry := func(into, deploy, branch, path, body string) string {
+		git(t, dir, "switch", "-q", into)
 		git(t, dir, "switch", "-q", "-c", branch)
 		write(path, body)
 		git(t, dir, "commit", "-q", "-m", branch)
-		git(t, dir, "switch", "-q", "line")
+		git(t, dir, "switch", "-q", into)
 		git(t, dir, "merge", "-q", "--no-ff", "-m", "Merge "+branch, branch)
+		git(t, dir, "switch", "-q", deploy)
+		git(t, dir, "merge", "-q", "--no-ff", "-m", "Merge "+branch, into)
 		return git(t, dir, "rev-parse", "HEAD")
 	}
 
 	write("main.tf", "a\n")
 	git(t, dir, "commit", "-q", "-m", "base")
 	h := history{dir: dir, base: git(t, dir, "rev-parse", "HEAD")}
-	h.first = merge("one", "one.tf", "1\n")
-	h.head = merge("two", "main.tf", "b\n")
+	git(t, dir, "branch", "rel")
+	h.first = carry("rel", "line", "one", "one.tf", "1\n")
+	h.head = carry("rel", "line", "two", "main.tf", "b\n")
+	git(t, dir, "update-ref", "refs/remotes/origin/"+testDefault, "rel")
 
 	git(t, dir, "switch", "-q", "-c", "direct", h.base)
 	write("main.tf", "c\n")
 	git(t, dir, "commit", "-q", "-m", "direct")
 	h.direct = git(t, dir, "rev-parse", "HEAD")
 
-	git(t, dir, "switch", "-q", "-c", "wf-line", h.base)
-	git(t, dir, "switch", "-q", "-c", "wf")
-	write(".github/workflows/x.yaml", "on: push\n")
-	git(t, dir, "commit", "-q", "-m", "wf")
-	git(t, dir, "switch", "-q", "wf-line")
-	git(t, dir, "merge", "-q", "--no-ff", "-m", "Merge wf", "wf")
-	h.workflowHead = git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "branch", "wf-line", h.base)
+	git(t, dir, "branch", "wf-rel", h.base)
+	h.workflowHead = carry("wf-rel", "wf-line", "wf", ".github/workflows/x.yaml", "on: push\n")
+	git(t, dir, "update-ref", "refs/remotes/origin/"+testWorkflowDefault, "wf-rel")
 	git(t, dir, "switch", "-q", "line")
 	return h
 }
 
 func runsKey() string {
-	return "api repos/" + testRepo + "/actions/workflows/" + testWorkflow + "/runs?branch=release%2Fv0.1.0&event=push&per_page=100&status=completed"
+	return "api repos/" + testRepo + "/actions/workflows/" + testWorkflow + "/runs?branch=admin&event=push&per_page=100&status=completed"
 }
 
 func jobsKey(id int64) string {
@@ -158,13 +167,13 @@ func writeBranches(t *testing.T, body string) string {
 	return p
 }
 
-const branchesBody = `{"deploy":["production"],"lines":["release/"],"revert":"revert/"}`
+const branchesBody = `{"deploy":[{"branch":"admin","env":"admin","from":["release/"]}],"lines":["release/"],"revert":"revert/"}`
 
 func planArgs(t *testing.T, head, outcome, failure string) ([]string, string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "github_output")
 	return []string{
-		"-repo", testRepo, "-line", testLine, "-head", head, "-run", strconv.FormatInt(testRun, 10),
+		"-repo", testRepo, "-line", testLine, "-default", testDefault, "-head", head, "-run", strconv.FormatInt(testRun, 10),
 		"-outcome", outcome, "-failure", failure, "-workflow", testWorkflow, "-job", testJob,
 		"-branches", writeBranches(t, branchesBody), "-server", testServer, "-output", out,
 	}, out
@@ -221,6 +230,7 @@ func Test_parseOptions(t *testing.T) {
 		"run が0":         func(a []string) []string { return replace(a, "-run", "0") },
 		"repo の形が違う":     func(a []string) []string { return replace(a, "-repo", "name") },
 		"line が空":        func(a []string) []string { return replace(a, "-line", "") },
+		"default が空":     func(a []string) []string { return replace(a, "-default", "") },
 		"output が空":      func(a []string) []string { return replace(a, "-output", "") },
 		"余分な引数がある":       func(a []string) []string { return append(a, "extra") },
 		"知らない flag がある":  func(a []string) []string { return append([]string{"-x"}, a...) },
@@ -588,7 +598,7 @@ func Test_compareURL(t *testing.T) {
 	t.Parallel()
 
 	base, c1 := strings.Repeat("a", 40), strings.Repeat("b", 40)
-	got := compareURL(testServer, testRepo, testLine, "revert/apply-42", testRun, base, []string{c1})
+	got := compareURL(testServer, testRepo, testDefault, "revert/apply-42", testRun, base, []string{c1})
 	u, err := url.Parse(got)
 	require.NoError(t, err)
 	assert.Equal(t, "/owner/name/compare/release/v0.1.0...revert/apply-42", u.Path)
@@ -603,10 +613,119 @@ func Test_compareURL(t *testing.T) {
 	t.Run("複数の commit を渡された順に並べる", func(t *testing.T) {
 		t.Parallel()
 		c2 := strings.Repeat("c", 40)
-		u, err := url.Parse(compareURL(testServer, testRepo, testLine, "revert/apply-42", testRun, base, []string{c1, c2}))
+		u, err := url.Parse(compareURL(testServer, testRepo, testDefault, "revert/apply-42", testRun, base, []string{c1, c2}))
 		require.NoError(t, err)
 		body := u.Query().Get("body")
 		assert.Less(t, strings.Index(body, c1), strings.Index(body, c2))
+	})
+}
+
+func Test_sourceHead(t *testing.T) {
+	t.Parallel()
+
+	h := newHistory(t)
+	r := (&fake{dir: h.dir}).runner()
+	admin := branchdecl.DeployBranch{Branch: "admin", Env: "admin", From: []string{"release/"}}
+
+	t.Run("merge が運んだ線の commit を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, testDefault, h.head)
+		require.NoError(t, err)
+		assert.Empty(t, reason)
+		assert.Equal(t, git(t, h.dir, "rev-parse", h.head+"^2"), source)
+	})
+	t.Run("デフォルトブランチが from の線でなければ理由を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, "hotfix/v0.1.1", h.head)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "hotfix/v0.1.1 は admin へ変更を運ぶ線ではありません")
+	})
+	t.Run("merge でなければ理由を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, testDefault, h.direct)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "線から運んだ merge ではありません")
+	})
+	t.Run("運んだ commit がデフォルトブランチから到達できなければ理由を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, testWorkflowDefault, h.head)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "デフォルトブランチ release/v0.2.0 から到達できません")
+	})
+	t.Run("merge の木が運んだ commit の木と違えば理由を返す", func(t *testing.T) {
+		t.Parallel()
+		d := newHistory(t)
+		git(t, d.dir, "switch", "-q", "-c", "skew", d.base)
+		require.NoError(t, os.WriteFile(filepath.Join(d.dir, "skew.tf"), []byte("s\n"), 0o600))
+		git(t, d.dir, "add", "skew.tf")
+		git(t, d.dir, "commit", "-q", "-m", "skew")
+		git(t, d.dir, "merge", "-q", "--no-ff", "-m", "Merge rel", "rel")
+		skewed := git(t, d.dir, "rev-parse", "HEAD")
+		source, reason, err := sourceHead((&fake{dir: d.dir}).runner(), admin, testDefault, skewed)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "の木が、運んだ")
+	})
+	t.Run("線から運んだ merge でない octopus merge なら理由を返す", func(t *testing.T) {
+		t.Parallel()
+		d := newHistory(t)
+		for _, b := range []string{"o1", "o2"} {
+			git(t, d.dir, "switch", "-q", "-c", b, d.base)
+			require.NoError(t, os.WriteFile(filepath.Join(d.dir, b+".tf"), []byte(b+"\n"), 0o600))
+			git(t, d.dir, "add", b+".tf")
+			git(t, d.dir, "commit", "-q", "-m", b)
+		}
+		git(t, d.dir, "switch", "-q", "line")
+		git(t, d.dir, "merge", "-q", "--no-ff", "-m", "octopus", "o1", "o2")
+		octopus := git(t, d.dir, "rev-parse", "HEAD")
+		require.Len(t, strings.Fields(git(t, d.dir, "rev-list", "--parents", "-n", "1", octopus)), 4)
+		source, reason, err := sourceHead((&fake{dir: d.dir}).runner(), admin, testDefault, octopus)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "線から運んだ merge ではありません")
+	})
+	t.Run("デフォルトブランチがデプロイブランチ自身なら理由を返す", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(r, admin, "admin", h.head)
+		require.NoError(t, err)
+		assert.Empty(t, source)
+		assert.Contains(t, reason, "admin は admin へ変更を運ぶ線ではありません")
+	})
+	revParse := func(out string, err error) runner {
+		delegate := (&fake{dir: h.dir}).runner()
+		return runner{output: func(name string, args ...string) (string, error) {
+			if name == "git" && args[0] == "rev-parse" {
+				return out, err
+			}
+			return delegate.output(name, args...)
+		}}
+	}
+	t.Run("祖先の確認の後に木を読めなければ、理由にせず失敗する", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(revParse("", fakeExit{128}), admin, testDefault, h.head)
+		require.ErrorIs(t, err, errGit)
+		assert.Empty(t, source)
+		assert.Empty(t, reason)
+	})
+	t.Run("木の SHA が1つしか返らなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		source, reason, err := sourceHead(revParse(strings.Repeat("a", 40)+"\n", nil), admin, testDefault, h.head)
+		require.ErrorIs(t, err, errGit)
+		assert.Empty(t, source)
+		assert.Empty(t, reason)
+	})
+	t.Run("commit を解決できなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := sourceHead(r, admin, testDefault, strings.Repeat("0", 40))
+		require.ErrorIs(t, err, errGit)
+	})
+	t.Run("デフォルトブランチの ref が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := sourceHead(r, admin, "release/v9.9.9", h.head)
+		require.ErrorIs(t, err, errGit, "到達できないと読まず、失敗する")
 	})
 }
 
@@ -620,6 +739,12 @@ func Test_verifyRevert(t *testing.T) {
 	t.Run("範囲をすべて戻せば木が一致する", func(t *testing.T) {
 		t.Parallel()
 		reason, err := verifyRevert(r, h.base, h.head, []string{h.head, h.first})
+		require.NoError(t, err)
+		assert.Empty(t, reason)
+	})
+	t.Run("運んだ線の commit の上で範囲を戻しても木が一致する", func(t *testing.T) {
+		t.Parallel()
+		reason, err := verifyRevert(r, h.base, git(t, h.dir, "rev-parse", h.head+"^2"), []string{h.head, h.first})
 		require.NoError(t, err)
 		assert.Empty(t, reason)
 	})
@@ -640,6 +765,18 @@ func Test_verifyRevert(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, reason, "衝突")
 		assert.Equal(t, 1, strings.Count(git(t, d.dir, "worktree", "list"), "\n")+1, "衝突の後も worktree を残さない")
+	})
+	t.Run("実物の revert が空になれば理由を返す", func(t *testing.T) {
+		t.Parallel()
+		d := newHistory(t)
+		git(t, d.dir, "switch", "-q", "-c", "empty")
+		git(t, d.dir, "commit", "-q", "--allow-empty", "-m", "empty")
+		git(t, d.dir, "switch", "-q", "line")
+		git(t, d.dir, "merge", "-q", "--no-ff", "-m", "Merge empty", "empty")
+		tip := git(t, d.dir, "rev-parse", "HEAD")
+		reason, err := verifyRevert((&fake{dir: d.dir}).runner(), d.base, tip, []string{tip})
+		require.NoError(t, err)
+		assert.Contains(t, reason, "空")
 	})
 	t.Run("revert が衝突以外で失敗すれば理由にせず失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -741,7 +878,7 @@ func Test_decide(t *testing.T) {
 	baseTree := git(t, h.dir, "rev-parse", h.base+"^{tree}")
 	other := strings.Repeat("e", 40)
 	opts := func(head string) options {
-		return options{repo: testRepo, line: testLine, head: head, runID: testRun, workflow: testWorkflow, jobs: []string{testJob},
+		return options{repo: testRepo, line: testLine, def: testDefault, head: head, runID: testRun, workflow: testWorkflow, jobs: []string{testJob},
 			branches: writeBranches(t, branchesBody), server: testServer}
 	}
 	success := func() map[string]string {
@@ -763,15 +900,57 @@ func Test_decide(t *testing.T) {
 		assert.Equal(t, "push", get(d, "decision"))
 		assert.Equal(t, h.head+" "+h.first, get(d, "commits"))
 		assert.Equal(t, "revert/apply-42", get(d, "branch"))
-		assert.Contains(t, get(d, "summary"), "compare/release/v0.1.0...revert/apply-42")
+		assert.Equal(t, git(t, h.dir, "rev-parse", h.head+"^2"), get(d, "head"), "revert は運んだ線の commit の上で作る")
+		assert.Contains(t, get(d, "summary"), "compare/release/v0.1.0...revert/apply-42", "宛先はデフォルトブランチ")
 	})
 	t.Run(".github/workflows/ を戻すなら手元のコマンドを出す", func(t *testing.T) {
 		t.Parallel()
-		d, err := decide(opts(h.workflowHead), (&fake{dir: h.dir, gh: success()}).runner())
+		o := opts(h.workflowHead)
+		o.def = testWorkflowDefault
+		d, err := decide(o, (&fake{dir: h.dir, gh: success()}).runner())
 		require.NoError(t, err)
 		assert.Equal(t, "local", get(d, "decision"))
-		assert.Contains(t, get(d, "summary"), "make apply-revert REVERT_HEAD="+h.workflowHead+" REVERT_COMMITS='"+h.workflowHead+"' REVERT_BRANCH=revert/apply-42")
+		source := git(t, h.dir, "rev-parse", h.workflowHead+"^2")
+		assert.Contains(t, get(d, "summary"), "make apply-revert REVERT_HEAD="+source+" REVERT_COMMITS='"+h.workflowHead+"' REVERT_BRANCH=revert/apply-42",
+			"revert は運んだ線の commit の上で作る")
 		assert.Empty(t, get(d, "branch"), "push の job を起動しない")
+	})
+	t.Run("hotfix の間は用意しない", func(t *testing.T) {
+		t.Parallel()
+		o := opts(h.head)
+		o.def = "hotfix/v0.1.1"
+		f := &fake{dir: h.dir, gh: success()}
+		d, err := decide(o, f.runner())
+		require.NoError(t, err)
+		assert.Equal(t, "none", get(d, "decision"))
+		assert.Contains(t, get(d, "summary"), "admin へ変更を運ぶ線ではありません")
+		assert.False(t, calledWorktree(f))
+	})
+	t.Run("運んだ commit がデフォルトブランチから到達できなければ用意しない", func(t *testing.T) {
+		t.Parallel()
+		o := opts(h.head)
+		o.def = testWorkflowDefault
+		f := &fake{dir: h.dir, gh: success()}
+		d, err := decide(o, f.runner())
+		require.NoError(t, err)
+		assert.Equal(t, "none", get(d, "decision"))
+		assert.Contains(t, get(d, "summary"), "から到達できません")
+		keys := make([]string, 0, len(d))
+		for _, p := range d {
+			keys = append(keys, p[0])
+		}
+		assert.NotContains(t, keys, "branch")
+		assert.NotContains(t, keys, "head")
+		assert.False(t, calledWorktree(f))
+	})
+	t.Run("-line が env を持つデプロイブランチでなければ API を呼ばずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		o := opts(h.head)
+		o.line = "release/v0.1.0"
+		f := &fake{dir: h.dir, gh: success()}
+		_, err := decide(o, f.runner())
+		require.ErrorIs(t, err, errNotDeploy)
+		assert.Empty(t, f.calls)
 	})
 	t.Run("最後に成功した run が無ければ用意しない", func(t *testing.T) {
 		t.Parallel()
@@ -816,6 +995,12 @@ func Test_decide(t *testing.T) {
 	})
 }
 
+func calledWorktree(f *fake) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "git worktree") })
+}
+
 func Test_run(t *testing.T) {
 	t.Parallel()
 
@@ -829,7 +1014,7 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run(args, &out, (&fake{dir: h.dir, gh: gh}).runner()))
 		m := outputs(t, path)
 		// 鍵の名前は terraform-apply.yaml の revert-plan の outputs が読む名前である。
-		assert.ElementsMatch(t, []string{"decision", "headline", "summary", "commits", "branch"}, keys(m))
+		assert.ElementsMatch(t, []string{"decision", "headline", "summary", "commits", "branch", "head"}, keys(m))
 		assert.Equal(t, "push", m["decision"])
 		assert.Equal(t, "revert/apply-42", m["branch"])
 		assert.Equal(t, h.head+" "+h.first, m["commits"])
@@ -849,6 +1034,7 @@ func Test_run(t *testing.T) {
 	t.Run(".github/workflows/ を戻すなら手元のコマンドを outputs に書く", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.workflowHead, "failure", "apply")
+		args = replace(args, "-default", testWorkflowDefault)
 		require.NoError(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()))
 		m := outputs(t, path)
 		assert.ElementsMatch(t, []string{"decision", "headline", "summary"}, keys(m))

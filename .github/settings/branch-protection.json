@@ -7,6 +7,7 @@
     "ref_name": {
       "exclude": [],
       "include": [
+        "refs/heads/admin",
         "refs/heads/production",
         "refs/heads/staging",
         "refs/heads/develop",
@@ -50,106 +51,144 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "actions-lint"
+            "context": "actions-lint",
+            "integration_id": 15368
           },
           {
-            "context": "adr-lint"
+            "context": "adr-lint",
+            "integration_id": 15368
           },
           {
-            "context": "checkov"
+            "context": "checkov",
+            "integration_id": 15368
           },
           {
-            "context": "commitlint"
+            "context": "commitlint",
+            "integration_id": 15368
           },
           {
-            "context": "docker-lint"
+            "context": "docker-lint",
+            "integration_id": 15368
           },
           {
-            "context": "editorconfig-check"
+            "context": "editorconfig-check",
+            "integration_id": 15368
           },
           {
-            "context": "egress-check"
+            "context": "egress-check",
+            "integration_id": 15368
           },
           {
-            "context": "go-fmt-check"
+            "context": "go-fmt-check",
+            "integration_id": 15368
           },
           {
-            "context": "go-lint"
+            "context": "go-lint",
+            "integration_id": 15368
           },
           {
-            "context": "go-test"
+            "context": "go-test",
+            "integration_id": 15368
           },
           {
-            "context": "infra-code-gate"
+            "context": "infra-code-gate",
+            "integration_id": 15368
           },
           {
-            "context": "kics"
+            "context": "kics",
+            "integration_id": 15368
           },
           {
-            "context": "md-lint"
+            "context": "md-lint",
+            "integration_id": 15368
           },
           {
-            "context": "mod-tidy-check"
+            "context": "mod-tidy-check",
+            "integration_id": 15368
           },
           {
-            "context": "pin-actions-check"
+            "context": "pin-actions-check",
+            "integration_id": 15368
           },
           {
-            "context": "pin-images-check"
+            "context": "pin-images-check",
+            "integration_id": 15368
           },
           {
-            "context": "pin-runners-check"
+            "context": "pin-runners-check",
+            "integration_id": 15368
           },
           {
-            "context": "plan-admin-identity"
+            "context": "plan-admin-identity",
+            "integration_id": 15368
           },
           {
-            "context": "repo-settings-check"
+            "context": "repo-settings-check",
+            "integration_id": 15368
           },
           {
-            "context": "sample-remove-check"
+            "context": "deploy-source-check",
+            "integration_id": 15368
           },
           {
-            "context": "secret-scan"
+            "context": "sample-remove-check",
+            "integration_id": 15368
           },
           {
-            "context": "semgrep"
+            "context": "secret-scan",
+            "integration_id": 15368
           },
           {
-            "context": "skill-lint"
+            "context": "semgrep",
+            "integration_id": 15368
           },
           {
-            "context": "test-mapping"
+            "context": "skill-lint",
+            "integration_id": 15368
           },
           {
-            "context": "tf-fmt-check"
+            "context": "test-mapping",
+            "integration_id": 15368
           },
           {
-            "context": "tf-gates-test"
+            "context": "tf-fmt-check",
+            "integration_id": 15368
           },
           {
-            "context": "tf-lint"
+            "context": "tf-gates-test",
+            "integration_id": 15368
           },
           {
-            "context": "tf-validate-test"
+            "context": "tf-lint",
+            "integration_id": 15368
           },
           {
-            "context": "tf-policy"
+            "context": "tf-validate-test",
+            "integration_id": 15368
           },
           {
-            "context": "trivy-config"
+            "context": "tf-policy",
+            "integration_id": 15368
           },
           {
-            "context": "trufflehog"
+            "context": "trivy-config",
+            "integration_id": 15368
           },
           {
-            "context": "typos"
+            "context": "trufflehog",
+            "integration_id": 15368
           },
           {
-            "context": "versions-check"
+            "context": "typos",
+            "integration_id": 15368
           },
           {
-            "context": "zizmor"
+            "context": "versions-check",
+            "integration_id": 15368
+          },
+          {
+            "context": "zizmor",
+            "integration_id": 15368
           }
         ]
       }

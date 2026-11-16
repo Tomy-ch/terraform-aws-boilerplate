@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 )
 
 func identityModule(source, env string) string {
@@ -278,4 +280,33 @@ func Test_splitIdentity(t *testing.T) {
 		require.NotEmpty(t, declared, "github-oidc の main.tf から role の environment を1つも読めません")
 		assert.ElementsMatch(t, identitySuffixes, declared, "identitySuffixes は github-oidc の role の environment の接尾辞と過不足なく一致する")
 	})
+}
+
+func Test_checkDeployEnvs(t *testing.T) {
+	t.Parallel()
+
+	admin := branchdecl.DeployBranch{Branch: "admin", Env: "admin", From: []string{"release/"}}
+	cases := []struct {
+		name    string
+		envs    []string
+		deploy  []branchdecl.DeployBranch
+		wantErr string
+	}{
+		{"各 env にデプロイブランチが在れば通る", []string{"admin"}, []branchdecl.DeployBranch{admin, {Branch: "production"}}, ""},
+		{"env にデプロイブランチが無ければ拒む", []string{"admin", "dev"}, []branchdecl.DeployBranch{admin}, "env dev のデプロイブランチがありません"},
+		{"env を持たないデプロイブランチは env に数えない", []string{"admin"}, []branchdecl.DeployBranch{{Branch: "admin"}}, "env admin のデプロイブランチがありません"},
+		{"deployment-identity に無い env を指すデプロイブランチは拒む", []string{"admin"}, []branchdecl.DeployBranch{admin, {Branch: "develop", Env: "dev", From: []string{"release/"}}}, "デプロイブランチ develop の env dev を deployment-identity が持ちません"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := checkDeployEnvs(tc.envs, branches{Deploy: tc.deploy, Lines: []string{"release/"}, Revert: "revert/"})
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, errDeployMismatch)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
 }

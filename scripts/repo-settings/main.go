@@ -7,14 +7,17 @@
 //	.github/settings/environments.json  environment の名前と、どのブランチから使えるか
 //
 // ruleset の宣言 .github/settings/branch-protection.json は、include の区間だけを branches.json から
+// 生成します。apply の environment を使う workflow は、on.push.branches をその env のデプロイブランチへ
 // 生成します。environment のパターンはファイルへ書き出さず、適用と突合のたびに展開します。
 //
 // サブコマンド:
 //
-//	apply  include の区間を書き換える（ネットワークを使わない）
+//	apply  include の区間と apply の workflow の起動条件を書き換える（ネットワークを使わない）
 //	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis も見る
 //	drift  実態を GET で読み、宣言との差分を報せる
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
+//	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
+//	deploy-branch  env のデプロイブランチの名前を出す
 package main
 
 import (
@@ -46,7 +49,7 @@ const (
 )
 
 var (
-	errUsage        = xerrors.New("usage: repo-settings <apply|check|drift|sync> [-repo owner/name] [-only ruleset|environments]")
+	errUsage        = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch> [-repo owner/name] [-only ruleset|environments] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
 	errIncludeDrift = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
 	errDrift        = xerrors.New("宣言と実態がずれています")
 	errNoToken      = xerrors.New("GITHUB_TOKEN がありません")
@@ -70,11 +73,18 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "", "対象のリポジトリ（owner/name）")
 	only := fs.String("only", "", "sync の対象（ruleset か environments）")
+	base := fs.String("base", "", "Pull Request の base のブランチ")
+	baseSHA := fs.String("base-sha", "", "Pull Request の base の commit")
+	headSHA := fs.String("head-sha", "", "Pull Request の head の commit")
+	def := fs.String("default", "", "デフォルトブランチ")
+	env := fs.String("env", "", "env の token")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return errUsage
 	}
 	allowed := map[string]map[string]bool{
 		"apply": {}, "check": {}, "drift": {"repo": true}, "sync": {"repo": true, "only": true},
+		"source":        {"base": true, "base-sha": true, "head-sha": true, "default": true},
+		"deploy-branch": {"env": true},
 	}
 	unused := false
 	fs.Visit(func(f *flag.Flag) {
@@ -111,17 +121,29 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 			return errNoToken
 		}
 		return syncSettings(ctx, root, c, *repo, *only, out)
+	case "source":
+		if *base == "" {
+			return errUsage
+		}
+		return checkSource(root, sourceRequest{base: *base, baseSHA: *baseSHA, headSHA: *headSHA, def: *def}, realGit, out)
+	case "deploy-branch":
+		if *env == "" {
+			return errUsage
+		}
+		return deployBranch(root, *env, out)
 	default:
 		return errUsage
 	}
 }
 
-// declarations は、検証を通った3つの宣言と、include の区間を生成し直した保護設定の宣言。
+// declarations は、検証を通った3つの宣言と、include の区間を生成し直した保護設定の宣言と、起動条件を
+// 生成し直した apply の workflow。
 type declarations struct {
 	branches     branches
 	environments []environment
 	ruleset      []byte
 	rendered     []byte
+	workflows    []workflowEdit
 }
 
 // readDeclarations は3つの宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -141,6 +163,13 @@ func readDeclarations(root string) (declarations, error) {
 	if err := checkIdentityEnvironments(identity, envs); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", environmentsFile)
 	}
+	if err := checkDeployEnvs(identity, b); err != nil {
+		return declarations{}, xerrors.Wrapf(err, "%s", branchesFile)
+	}
+	workflows, err := renderApplyTriggers(root, b)
+	if err != nil {
+		return declarations{}, err
+	}
 	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
 	if err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
@@ -156,7 +185,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered}, nil
+	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -175,31 +204,46 @@ func loadDesired(root string) (desired, error) {
 	}
 	want := desired{Ruleset: ruleset}
 	for _, e := range decl.environments {
-		want.Envs = append(want.Envs, desiredEnv{Name: e.Name, Patterns: environmentPatterns(decl.branches, e.DeployFrom)})
+		want.Envs = append(want.Envs, desiredEnv{Name: e.Name, Patterns: environmentPatterns(decl.branches, e)})
 	}
 	return want, nil
 }
 
-// applyOrCheck は include の区間を branches.json から生成します。dryRun が真なら書かず、ずれを報せます。
-// 書き込みは、3つの宣言の検証がすべて通った後です。
+// applyOrCheck は include の区間と apply の workflow の起動条件を branches.json から生成します。dryRun が
+// 真なら書かず、ずれを報せます。書き込みは、3つの宣言の検証がすべて通った後に、まとめて行います。
 func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	decl, err := readDeclarations(root)
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件", len(rulesetIncludes(decl.branches)), len(decl.environments))
-	if string(decl.rendered) == string(decl.ruleset) {
-		fmt.Fprintf(out, "✅ %s: %s。%s は宣言どおりです\n", toolName, summary, rulesetFile)
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件",
+		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows))
+	changed := map[string]string{}
+	var names []string
+	if string(decl.rendered) != string(decl.ruleset) {
+		changed[filepath.Join(root, rulesetFile)] = string(decl.rendered)
+		names = append(names, rulesetFile)
+	}
+	for _, w := range decl.workflows {
+		if w.rendered != w.current {
+			changed[filepath.Join(root, w.path)] = w.rendered
+			names = append(names, w.path)
+		}
+	}
+	if len(changed) == 0 {
+		fmt.Fprintf(out, "✅ %s: %s。生成する区間は宣言どおりです\n", toolName, summary)
 		return nil
 	}
 	if dryRun {
-		return errIncludeDrift
+		if _, ok := changed[filepath.Join(root, rulesetFile)]; ok {
+			return errIncludeDrift
+		}
+		return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(names, ", "))
 	}
-	path := filepath.Join(root, rulesetFile)
-	if err := atomicwrite.Apply(map[string]string{path: string(decl.rendered)}, filePerm); err != nil {
-		return xerrors.Wrapf(err, "%s の書き込み", rulesetFile)
+	if err := atomicwrite.Apply(changed, filePerm); err != nil {
+		return xerrors.Wrapf(err, "%s の書き込み", strings.Join(names, ", "))
 	}
-	fmt.Fprintf(out, "✅ %s: %s。%s の include を書き換えました\n", toolName, summary, rulesetFile)
+	fmt.Fprintf(out, "✅ %s: %s。%s を書き換えました\n", toolName, summary, strings.Join(names, ", "))
 	return nil
 }
 

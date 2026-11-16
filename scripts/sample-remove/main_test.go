@@ -514,13 +514,16 @@ func Test_pinReferenced(t *testing.T) {
 const fixtureProtection = `{
   "required_status_checks": [
     {
-      "context": "a"
+      "context": "a",
+      "integration_id": 15368
     },
     {
-      "context": "scan"
+      "context": "scan",
+      "integration_id": 15368
     },
     {
-      "context": "z"
+      "context": "z",
+      "integration_id": 15368
     }
   ]
 }
@@ -528,20 +531,36 @@ const fixtureProtection = `{
 
 // editorconfig-checker-enable
 
+// contextNames は、必須検査の宣言の本文を JSON として読み、context の名前を順に返します。
+func contextNames(t *testing.T, s string) []string {
+	t.Helper()
+	var v struct {
+		Checks []struct {
+			Context string `json:"context"`
+		} `json:"required_status_checks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(s), &v))
+	names := []string{}
+	for _, c := range v.Checks {
+		names = append(names, c.Context)
+	}
+	return names
+}
+
 func Test_dropContexts(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("途中の context を3行ごと外す", func(t *testing.T) {
+		t.Run("途中の context を4行ごと外す", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
 			p := plan{writes: map[string]string{}}
 			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p))
 			assert.Equal(t, []string{"scan"}, p.droppedContexts)
-			assert.Equal(t, "{\n  \"required_status_checks\": [\n    {\n      \"context\": \"a\"\n    },\n    {\n      \"context\": \"z\"\n    }\n  ]\n}\n", p.writes[protectionFile])
+			assert.Equal(t, "{\n  \"required_status_checks\": [\n    {\n      \"context\": \"a\",\n      \"integration_id\": 15368\n    },\n    {\n      \"context\": \"z\",\n      \"integration_id\": 15368\n    }\n  ]\n}\n", p.writes[protectionFile])
 		})
 
 		// 末尾の要素を外したときに1つ前の `},` を残すと、JSON として読めなくなる。
@@ -551,9 +570,46 @@ func Test_dropContexts(t *testing.T) {
 			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
 			p := plan{writes: map[string]string{}}
 			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"z"}}}, &p))
-			var v map[string]any
-			require.NoError(t, json.Unmarshal([]byte(p.writes[protectionFile]), &v))
-			assert.Len(t, v["required_status_checks"], 2)
+			assert.Equal(t, []string{"a", "scan"}, contextNames(t, p.writes[protectionFile]))
+		})
+
+		t.Run("先頭の context を外す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
+			p := plan{writes: map[string]string{}}
+			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"a"}}}, &p))
+			assert.Equal(t, []string{"scan", "z"}, contextNames(t, p.writes[protectionFile]))
+		})
+
+		t.Run("唯一の context を外しても JSON として読める", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: "{\n  \"required_status_checks\": [\n    {\n      \"context\": \"scan\",\n      \"integration_id\": 15368\n    }\n  ]\n}\n"})
+			p := plan{writes: map[string]string{}}
+			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p))
+			assert.Empty(t, contextNames(t, p.writes[protectionFile]))
+		})
+
+		t.Run("2行目にある context を外す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: "{\n\"context\": \"scan\",\n\"integration_id\": 15368\n}\n"})
+			p := plan{writes: map[string]string{}}
+			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p))
+			assert.Equal(t, []string{"scan"}, p.droppedContexts)
+			assert.Empty(t, p.writes[protectionFile])
+		})
+
+		// 1つ目を外した後の行の位置で2つ目を探すので、続けて外すと位置のずれが表に出る。
+		t.Run("複数の context を続けて外す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
+			p := plan{writes: map[string]string{}}
+			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"z", "a"}}}, &p))
+			assert.Equal(t, []string{"z", "a"}, p.droppedContexts)
+			assert.Equal(t, []string{"scan"}, contextNames(t, p.writes[protectionFile]))
 		})
 
 		t.Run("context が無ければ宣言を読まない", func(t *testing.T) {
@@ -571,24 +627,70 @@ func Test_dropContexts(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
-			err := dropContexts(root, []domain{{name: "x", contexts: []string{"none"}}}, &plan{writes: map[string]string{}})
+			p := plan{writes: map[string]string{}}
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"none"}}}, &p)
 			require.ErrorIs(t, err, errMissingContext)
+			assert.NotContains(t, err.Error(), "2回以上")
+			assert.Empty(t, p.writes)
 		})
 
 		t.Run("宣言に2回ある context はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			writeTree(t, root, map[string]string{protectionFile: strings.Replace(fixtureProtection, `"context": "a"`, `"context": "scan"`, 1)})
+			writeTree(t, root, map[string]string{protectionFile: strings.Replace(fixtureProtection, `"context": "a",`, `"context": "scan",`, 1)})
+			p := plan{writes: map[string]string{}}
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p)
+			require.ErrorIs(t, err, errMissingContext)
+			assert.Contains(t, err.Error(), "2回以上")
+			assert.Empty(t, p.writes)
+		})
+
+		t.Run("1行に畳んだ context はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: `[{"context": "scan", "integration_id": 15368}]`})
 			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errMissingContext)
 		})
 
-		t.Run("3行の形でない context はエラーにする", func(t *testing.T) {
+		// integration_id の行を残して消すと、宣言が JSON として読めなくなる。
+		t.Run("integration_id の無い context はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			writeTree(t, root, map[string]string{protectionFile: `[{"context": "scan"}]`})
+			writeTree(t, root, map[string]string{protectionFile: "[\n  {\n    \"context\": \"scan\",\n    \"other\": 1\n  }\n]\n"})
 			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errMissingContext)
+		})
+
+		// 4行の形の外にあるものを4行ごと消すと、別のキーを落とすか JSON を壊す。
+		shapes := map[string]string{
+			"integration_id の後に別のキーがある":  "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368,\n    \"other\": 1\n  }\n]\n",
+			"直前の行が { でない":                "[\n  {\"x\": 1,\n    \"context\": \"scan\",\n    \"integration_id\": 15368\n  }\n]\n",
+			"integration_id の次の行が } でない": "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368\n    \"other\": 1\n  }\n]\n",
+			"context が先頭の行にある":           "\"context\": \"scan\",\n\"integration_id\": 15368\n}\n",
+			"ファイルが途中で切れている":              "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368",
+		}
+		for name, src := range shapes {
+			t.Run("形の違う context はエラーにする（"+name+"）", func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				writeTree(t, root, map[string]string{protectionFile: src})
+				p := plan{writes: map[string]string{}}
+				err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p)
+				require.ErrorIs(t, err, errMissingContext)
+				assert.Empty(t, p.writes)
+			})
+		}
+
+		// 1つ目を外した後で2つ目が見つからなくても、1つ目を外した宣言を書いてはならない。
+		t.Run("途中の context で失敗したら何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
+			p := plan{writes: map[string]string{}}
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"a", "none"}}}, &p)
+			require.ErrorIs(t, err, errMissingContext)
+			assert.Empty(t, p.writes)
 		})
 
 		t.Run("宣言を読めなければエラーにする", func(t *testing.T) {

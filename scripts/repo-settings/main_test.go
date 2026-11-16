@@ -20,14 +20,28 @@ import (
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ JSON の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const (
-	branchesFixture     = `{"deploy": ["main"], "lines": ["release/"], "revert": "revert/"}`
+	branchesFixture     = `{"deploy": [{"branch": "main", "env": "x", "from": ["release/"]}], "lines": ["release/"], "revert": "revert/"}`
 	environmentsFixture = `[
   {"name": "x-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false},
-  {"name": "x-apply", "deploy_from": "protected", "can_admins_bypass": false},
-  {"name": "x-apply-identity", "deploy_from": "protected", "can_admins_bypass": false},
-  {"name": "x-unlock-identity", "deploy_from": "protected", "can_admins_bypass": false},
+  {"name": "x-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false},
+  {"name": "x-apply-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false},
+  {"name": "x-unlock-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false},
   {"name": "copilot", "deploy_from": "any", "can_admins_bypass": false}
 ]`
+	applyWorkflowFixture = `name: Apply
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    environment: x-apply-identity
+    steps:
+      - run: make ci-apply
+`
 	identityRootFixture = `module "deployment_identity" {
   source = "../../../usecases/deployment-identity"
   env    = "x"
@@ -48,6 +62,7 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, environmentsFile, environmentsFixture)
 	writeFile(t, root, rulesetFile, ruleset)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
+	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
 	return root
 }
 
@@ -69,13 +84,13 @@ func liveRoutes(t *testing.T) map[string]fakeResponse {
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`),
 		policyPath("x-plan", 1): ok(`{"total_count": 3, "branch_policies": [
 			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
-		policyPath("x-apply", 1):           ok(protectedPolicies),
-		policyPath("x-apply-identity", 1):  ok(protectedPolicies),
-		policyPath("x-unlock-identity", 1): ok(protectedPolicies),
+		policyPath("x-apply", 1):           ok(deployPolicies),
+		policyPath("x-apply-identity", 1):  ok(deployPolicies),
+		policyPath("x-unlock-identity", 1): ok(deployPolicies),
 	}
 }
 
-const protectedPolicies = `{"total_count": 2, "branch_policies": [{"id": 4, "name": "main", "type": "branch"}, {"id": 5, "name": "release/*", "type": "branch"}]}`
+const deployPolicies = `{"total_count": 1, "branch_policies": [{"id": 4, "name": "main", "type": "branch"}]}`
 
 // applyEnvsJSON は liveRoutes の x-apply・x-apply-identity・x-unlock-identity。environment の一覧を差し替えるケースが含める。
 const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
@@ -101,7 +116,47 @@ func Test_run(t *testing.T) {
 		{"sync の -only が未知なら usage で失敗する", []string{"sync", "-repo=o/r", "-only", "labels"}},
 		{"使わないフラグは usage で失敗する", []string{"apply", "-repo=o/r"}},
 		{"drift に -only を渡せば usage で失敗する", []string{"drift", "-repo=o/r", "-only", "ruleset"}},
+		{"source に -base が無ければ usage で失敗する", []string{"source", "-default", "release/v1"}},
+		{"source に -env を渡せば usage で失敗する", []string{"source", "-base", "main", "-env", "x"}},
+		{"deploy-branch に -env が無ければ usage で失敗する", []string{"deploy-branch"}},
+		{"deploy-branch に -base を渡せば usage で失敗する", []string{"deploy-branch", "-env", "x", "-base", "main"}},
 	}
+
+	t.Run("source と deploy-branch を呼ぶ", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"source", "-base", "release/v1"}, fixedWD(root), githubClient{}, &out))
+		assert.Contains(t, out.String(), "対象外")
+		out.Reset()
+		require.NoError(t, run([]string{"deploy-branch", "-env", "x"}, fixedWD(root), githubClient{}, &out))
+		assert.Equal(t, "main\n", out.String())
+	})
+	t.Run("source は -base-sha と -head-sha と -default を検査へ渡す", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		gitT(t, root, "init", "-q", "-b", "main")
+		gitT(t, root, "add", ".")
+		gitT(t, root, "commit", "-q", "-m", "base")
+		base := gitT(t, root, "rev-parse", "HEAD")
+		gitT(t, root, "switch", "-q", "-c", "rel")
+		writeFile(t, root, "main.tf", "b\n")
+		gitT(t, root, "add", "main.tf")
+		gitT(t, root, "commit", "-q", "-m", "release")
+		head := gitT(t, root, "rev-parse", "HEAD")
+		gitT(t, root, "update-ref", "refs/remotes/origin/release/v1", head)
+		gitT(t, root, "switch", "-q", "-c", "evil", base)
+		writeFile(t, root, "main.tf", "evil\n")
+		gitT(t, root, "add", "main.tf")
+		gitT(t, root, "commit", "-q", "-m", "evil")
+		evil := gitT(t, root, "rev-parse", "HEAD")
+
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", head, "-default", "release/v1"}, fixedWD(root), githubClient{}, &out))
+		assert.Contains(t, out.String(), "release/v1 から到達でき")
+		err := run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", evil, "-default", "release/v1"}, fixedWD(root), githubClient{}, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSource)
+	})
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -140,7 +195,7 @@ func Test_run(t *testing.T) {
 		require.ErrorIs(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}), errIncludeDrift)
 		var out bytes.Buffer
 		require.NoError(t, run([]string{"apply"}, fixedWD(root), githubClient{}, &out))
-		assert.Contains(t, out.String(), "include を書き換えました")
+		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
 		require.NoError(t, run([]string{"check"}, fixedWD(root), githubClient{}, &bytes.Buffer{}))
 	})
 
@@ -179,7 +234,7 @@ func Test_readDeclarations(t *testing.T) {
 		t.Parallel()
 		decl, err := readDeclarations(writeRepo(t, rulesetFixture))
 		require.NoError(t, err)
-		assert.Equal(t, []string{"main"}, decl.branches.Deploy)
+		assert.Equal(t, []string{"main"}, decl.branches.DeployNames())
 		assert.Len(t, decl.environments, 5)
 		assert.Equal(t, rulesetFixture, string(decl.ruleset))
 		assert.Equal(t, syncedRuleset, string(decl.rendered))
@@ -205,9 +260,15 @@ func Test_readDeclarations(t *testing.T) {
 		{"信頼条件の environment が宣言に揃っていなければ失敗する", func(root string) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
 		}, errEnvironmentMismatch},
+		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
+			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main"}], "lines": ["release/"], "revert": "revert/"}`)
+		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
 		}, os.ErrNotExist},
+		{"apply の workflow が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))
+		}, errTrigger},
 		{"include を定められなければ失敗する", func(root string) {
 			writeFile(t, root, rulesetFile, strings.Replace(rulesetFixture, `"include"`, `"included"`, 1))
 		}, errInclude},
@@ -233,9 +294,9 @@ func Test_loadDesired(t *testing.T) {
 		assert.Equal(t, "branch-protection", want.Ruleset["name"])
 		assert.Equal(t, []desiredEnv{
 			{Name: "x-plan", Patterns: []string{"main", "release/*", pullRequestRef}},
-			{Name: "x-apply", Patterns: []string{"main", "release/*"}},
-			{Name: "x-apply-identity", Patterns: []string{"main", "release/*"}},
-			{Name: "x-unlock-identity", Patterns: []string{"main", "release/*"}},
+			{Name: "x-apply", Patterns: []string{"main"}},
+			{Name: "x-apply-identity", Patterns: []string{"main"}},
+			{Name: "x-unlock-identity", Patterns: []string{"main"}},
 			{Name: "copilot"},
 		}, want.Envs)
 	})
@@ -266,8 +327,77 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 2 件、environment 5 件")
-		assert.Contains(t, out.String(), "書き換えました")
+		assert.Contains(t, out.String(), "保護対象 2 件、environment 5 件、apply の workflow 1 件")
+		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
+	})
+
+	t.Run("apply は apply の workflow の起動条件を書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, applyWorkflowFixture, string(got))
+		assert.Contains(t, out.String(), ".github/workflows/apply.yaml を書き換えました")
+	})
+
+	t.Run("check は起動条件のずれを報せ、書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
+		err := applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errTriggerDrift)
+		assert.Contains(t, err.Error(), ".github/workflows/apply.yaml")
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("include と起動条件が同時にずれていれば、apply は両方を書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, syncedRuleset, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, applyWorkflowFixture, string(wf))
+		assert.Contains(t, out.String(), rulesetFile)
+		assert.Contains(t, out.String(), ".github/workflows/apply.yaml")
+	})
+
+	t.Run("include と起動条件が同時にずれていれば、check は include のずれを報せ、どちらも書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(wf))
+	})
+
+	t.Run("workflow の起動条件を生成できなければ、apply は include のずれも書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		invalid := strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", invalid)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errTrigger)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, invalid, string(wf))
 	})
 
 	t.Run("ずれが無ければ apply は何も書かない", func(t *testing.T) {
@@ -282,7 +412,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 5 件。.github/settings/branch-protection.json は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 5 件、apply の workflow 1 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {

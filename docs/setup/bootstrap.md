@@ -16,7 +16,7 @@
 
 ## 2. 設定完了後の状態
 
-- identity root への変更は、release line への merge で CI が apply する。人は apply しない
+- identity root への変更は、リリース線へ merge し、デプロイブランチ `admin` へ昇格したときに CI が apply する。人は apply しない
 - state は state Bucket（`tabp-admin-tfstate-<アカウントID>-ap-northeast-1-an`）に暗号化して保存され、書き込めるのは CI だけである
 - CI はアクセスキーを持たず、GitHub の OIDC で AWS に入る
 - 残った lock は GitHub Actions の `Terraform Unlock` で外す
@@ -350,27 +350,46 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
 ### 段5. CI の apply に移る
 
-段4 の後の変更は、release line への merge で CI（`terraform-apply.yaml` の `apply-admin-identity`）が apply する。**人は apply しない。** job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」にある。一時 IAM user のコマンドは、[段1 の手順1](#段1-state-bucket-を作る) のブロックを実行してから使う。
+段4 の後の変更は、リリース線へ merge し、リリース線からデプロイブランチ `admin` への Pull Request（昇格）を merge すると、CI（`terraform-apply.yaml` の `apply-admin-identity`）が apply する。リリース線への merge だけでは apply しない。**人は apply しない。** job の規則は [`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」にある。一時 IAM user のコマンドは、[段1 の手順1](#段1-state-bucket-を作る) のブロックを実行してから使う。
 
 段5 は3つの工程から成る。
 
 | 工程 | 手順 | 完了条件 |
 | --- | --- | --- |
-| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | 最初の run が緑で `No changes.` |
+| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | `admin` の最初の run が緑で `No changes.` |
 | [段5 の変更を適用する](#段5-の変更を適用する) | 3・4 | 各変更の後の再実行が `No changes.` |
 | [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Unlock` が lock を外し、取り消した run の再実行が緑 |
 
-> **重要**: 一時 IAM user の書き込みを拒否する変更（段3 の `bootstrap_executor_user_name` を外す変更。足していないアカウントでは、書き込みの拒否を入れる変更）は、手順5・6 を済ませてから merge する。
+> **重要**: 一時 IAM user の書き込みを拒否する変更（段3 の `bootstrap_executor_user_name` を外す変更。足していないアカウントでは、書き込みの拒否を入れる変更）は、手順5・6 を済ませてから `admin` へ昇格する。
 
 #### CI の apply を有効にする
 
-1. apply の workflow を足す Pull Request を merge する前に、管理者が secret を置く（値は管理アカウントの ID）
+1. 管理者が、デフォルトブランチを checkout した手元で、次を順に行う
+   1. デフォルトブランチがリリース線（`release/` で始まる）であることを確かめる。`production` のままなら、最初のリリース線を切ってから進む。デフォルトブランチがリリース線でない間は、`admin` へ昇格できない
 
-   ```bash
-   gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
-   ```
+      ```bash
+      gh repo view --json defaultBranchRef --jq .defaultBranchRef.name
+      ```
 
-2. merge の後の最初の run で、次をすべて確かめる。run の URL を issue に残す（アカウント ID を載せない）
+   2. environment を宣言から適用する。apply 系と lock の解除の environment は、デプロイブランチ `admin` だけを許す
+
+      ```bash
+      make apply-environments
+      ```
+
+   3. secret を置く（値は管理アカウントの ID）
+
+      ```bash
+      gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
+      ```
+
+   4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
+
+      ```bash
+      make create-deploy-branch DEPLOY_ENV=admin
+      ```
+
+2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
    - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-admin-identity` が緑
    - ログの plan の要約が `No changes.`
    - Policy の違反が無い
@@ -380,14 +399,20 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
 対象は [`usecases/state-backend/README.md`](../../usecases/state-backend/README.md) の段5 の行の変更である。
 
-3. 変更を1つずつ merge する。1つごとに次を行う
-   1. Pull Request を merge し、CI の apply が緑になるのを待つ
-   2. 次の merge の前に、その apply の run を Actions の画面で「Re-run all jobs」する
-   3. 再実行のログの plan の要約が `No changes.` であることを確かめ、run の URL を Pull Request に記録する
+3. 変更を1つずつ当てる。1つごとに次を行う
+   1. 変更の Pull Request をリリース線へ merge する
+   2. リリース線から `admin` への Pull Request を開く。`deploy-source-check` を含む必須検査が緑になってから merge し、`admin` の CI の apply が緑になるのを待つ
+
+      ```bash
+      gh pr create --base admin --head release/vX.Y.Z --fill
+      ```
+
+   3. 次の昇格の前に、その `admin` の apply の run を Actions の画面で「Re-run all jobs」する
+   4. 再実行のログの plan の要約が `No changes.` であることを確かめ、run の URL を Pull Request に記録する
 
    `No changes.` でなければ、要約と run の URL を Pull Request に記録して**止まる**。
 
-   > **重要**: 再実行を確かめる前に、次を merge しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に merge する。
+   > **重要**: 再実行を確かめる前に、次を昇格しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に昇格して apply する。
 
 4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `docs/setup/scripts/verify.sh` の `permissions` に足す。Condition を持つ Action は、条件キーを `--context` で与える。apply の後に実行する
 
@@ -409,7 +434,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。
 
 6. lock を1つ残し、`Terraform Unlock` で外す
-   1. identity root を変更する Pull Request を merge し、その apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
+   1. identity root を変更する Pull Request をリリース線へ merge して `admin` へ昇格し、その `admin` の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
    2. 一時 IAM user で lock file が在ることを確かめる。返らなければ 1 からやり直す
 
       ```bash
@@ -417,7 +442,12 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
    3. lock file の `LastModified` から、待ち時間（`scripts/tf-local` の定数）を超えるまで待つ
-   4. `Terraform Unlock` を起動し、次をすべて確かめる
+   4. `Terraform Unlock` を `admin` から起動し、次をすべて確かめる
+
+      ```bash
+      gh workflow run terraform-unlock.yaml --ref admin
+      ```
+
       - run が緑
       - ログに lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
       - `OIDC の sub` の行が `:environment:admin-unlock-identity` で終わる
@@ -445,7 +475,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --key "verify/$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-条件5: 書き込みの拒否の後、`Terraform Unlock` を起動する。緑で、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わること。run の URL を Pull Request に記録する（アカウント ID を載せない）。
+条件5: 書き込みの拒否の後、`Terraform Unlock` を `admin` から起動する（`gh workflow run terraform-unlock.yaml --ref admin`）。緑で、ログが `✅ lock はありません` を示し、`OIDC の sub` の行が `:environment:admin-unlock-identity` で終わること。run の URL を Pull Request に記録する（アカウント ID を載せない）。
 
 ### 一時 IAM user の削除
 
@@ -477,7 +507,8 @@ Credential report で IAM user が0件、root の行でアクセスキーが無�
 | 段5 の CI の apply が失敗した | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |
 | 段5 で lock が残った | [段5 で lock が残った](#段5-で-lock-が残った) |
 | 段5 の手順3 で再実行が `No changes.` にならない | 要約と run の URL を Pull Request に記録して止まる。再実行は差分を既に適用している |
-| 段5 の手順3 の再実行が古い commit を理由に落ちた | 次の Pull Request の CI の plan が、その変更だけを示すことで代える |
+| 段5 の手順3 の再実行が古い commit を理由に落ちた | 次の昇格の Pull Request の CI の plan が、その変更だけを示すことで代える |
+| `admin` への昇格の Pull Request で `deploy-source-check` が落ちた | [段5 の CI の apply が失敗した](#段5-の-ci-の-apply-が失敗した) |
 
 ### 段1 で NG が出た
 
@@ -534,6 +565,8 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | 症状 | 対処 |
 | --- | --- |
 | 拒否の step が secret の不在で落ちた | secret を置き、「Re-run failed jobs」で再実行する |
+| `admin` の最初の apply が落ちた | 成功した apply が無いので、revert のブランチは用意されない。原因を直す変更をリリース線へ merge して昇格する。戻すなら、リリース線の先頭の上で `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を merge してから昇格する |
+| 昇格の Pull Request で `deploy-source-check` が落ちた | ログの理由を見る。デフォルトブランチがリリース線でない（hotfix の間、最初のリリース線を切る前）なら、デフォルトブランチがリリース線に戻ってから昇格する。到達できない・木が一致しないなら、[`.github/workflows/README.md`](../../.github/workflows/README.md) の「apply の job」に従う |
 | 書き込みの拒否を入れる変更か、段3 の値を外す変更の apply が落ちた | 下の診断を行う |
 
 診断: 一時 IAM user で次を読む。
@@ -550,7 +583,7 @@ aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_I
 
 | lock を残したもの | 対処 |
 | --- | --- |
-| CI の apply | Actions の画面で `Terraform Unlock` を起動し、落ちた apply の run を「Re-run failed jobs」で再実行する。新しすぎる lock では失敗するので、時間を置いて起動し直す（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」） |
+| CI の apply | `Terraform Unlock` を `admin` から起動し（`gh workflow run terraform-unlock.yaml --ref admin`）、落ちた apply の run を「Re-run failed jobs」で再実行する。新しすぎる lock では失敗するので、時間を置いて起動し直す（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」） |
 | 人の手元の apply | 実行した人が `terraform force-unlock <ID>` で外す |
 | `Terraform Unlock` で外れない | 一時 IAM user の書き込みの拒否の前なら、[一時 IAM user で lock file を消す](#一時-iam-user-で-lock-file-を消す)。拒否の後は、人は消せない |
 

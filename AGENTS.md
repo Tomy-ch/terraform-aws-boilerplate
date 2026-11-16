@@ -23,9 +23,12 @@
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
   `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）
+- sandbox の apply の経路（[0601](docs/adr/0601-change-delivery-path.md) 決定3・4、
+  [0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定33）—— job・environment・required context と、
+  それらを見る検査が無い（#222）
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
-  宣言は `.github/settings/branches.json` に在り、ruleset と environment はそこから生成するが、
-  `scripts/` のブランチ操作と workflow の起動条件はまだパターンを自分で持つ（同 決定2-3）
+  宣言は `.github/settings/branches.json` に在り、ruleset と environment と apply の workflow の起動条件はそこから生成するが、
+  `scripts/` のブランチ操作とほかの workflow の起動条件はまだパターンを自分で持ち、デプロイブランチを含まない（同 決定2-3）
 
 **未配線の道具について「実行した」と報告しない。** 配線され次第この節から外し、この節が空になったとき節ごと削除する。
 
@@ -204,7 +207,7 @@ v1.0.0 より前では次を解除する。
 - **commit message に課す検査は `commitlint.config.js` が持ち、そこに「なぜその3つだけか」も書いてある。** ここへ再掲しない。**形式を細かく規定しない** —— 守られなくても何も壊れない規定は置かない。
 - **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。同じパターンを2箇所へ書かない。宣言は `.github/settings/branches.json` であり、まだ読まない読み手が残る（*現在の配線状態*）。
 - **Pull Request の title と body は日本語**（[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定9）。body には *手を止めてよい場所* の「それ以外」で下した決定を書く。
-- **merge の可否は、実環境への適用の可否と同義である**（[0601](docs/adr/0601-change-delivery-path.md) 決定10）。検証が失敗している Pull Request を merge しない。
+- **デプロイブランチへの merge の可否は、実環境への適用の可否と同義である。リリース線へ merge した commit も、昇格でそのまま適用される**（[0601](docs/adr/0601-change-delivery-path.md) 決定10）。検証が失敗している Pull Request を merge しない。
 
 ## 言語
 

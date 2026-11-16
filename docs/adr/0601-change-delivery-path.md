@@ -26,7 +26,7 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 2. 基本の流れを次とする。
 
    ```text
-   Pull Request
+   Pull Request（リリース線へ）
        ↓
    Static Analysis / Security / Unit / Contract / Policy
        ↓
@@ -34,25 +34,31 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
        ↓
    Review
        ↓
-   Merge
+   Merge（リリース線）
+       ↓
+   Pull Request（リリース線からデプロイブランチへ）
+       ↓
+   同じ検証と terraform plan、Review
+       ↓
+   Merge（デプロイブランチ）
        ↓
    terraform apply
    ```
 
-3. Pull Request で実行するのは `terraform plan` までとする。Pull Request の時点で apply しない。
+3. Pull Request で実行するのは `terraform plan` までとする。Pull Request の時点で apply しない。例外は決定4 の sandbox への apply だけとする。その apply が当てる木は、リリース線か hotfix の線へ merge され、レビューを経た commit の木であり、そのことを ADR-0603 決定31 の検査（デフォルトブランチからの到達性と木の一致）が保証する。レビューを経ていない構成を Pull Request の時点で当てないという本決定の理由は、この例外でも保たれる。
 
 ### 実行の主体
 
-4. 保護ブランチへの merge 後、CI/CD が apply を行う。
+4. env ごとに、固定名の保護ブランチを1つ、その env のデプロイブランチとして置く。デプロイブランチへの merge の後、CI/CD がその env へ apply する。リリース線と hotfix の線は変更を集める線であり、デプロイブランチを持つ env へ apply しない。デプロイブランチは、宣言がそのブランチに名指す線のどれかがデフォルトブランチである間に、デフォルトブランチから到達できる commit を運ぶ Pull Request の merge だけで変更を受け取る（ADR-0603 決定31）。どの env にどのデプロイブランチを置くかは、分岐のパターンの単一宣言（ADR-0603 決定1）が持つ。例外として、検証の器（sandbox）はデプロイブランチを置かない。リリース線か hotfix の線からデプロイブランチへの Pull Request で、CI がその head の木を sandbox へ apply し、その成功をその Pull Request の merge の条件とする（ADR-0603 決定33）。sandbox は、リリースされていない変更を、デプロイブランチへ入る前に実際に apply して確かめる場所だからである。sandbox への apply は次に従う。sandbox の apply を1つの concurrency の group で直列にする。apply する head が、その Pull Request の head の線の先頭でなくなった run は、資格情報を取る前に失敗させる。ADR-0603 決定31 の検査の成功に依存させる。fork と Dependabot の Pull Request では、資格情報を取る前に失敗させる。
 5. 人がローカル環境から本番環境へ直接 apply しない。
-6. apply 対象の Terraform コードは、merge された commit と一致しなければならない。plan を取得した commit と apply する commit が異なる経路を作らない。
+6. apply 対象の Terraform コードは、merge された commit と一致しなければならない。決定4 の sandbox への apply では、線へ merge された Pull Request の head の commit がそれに当たる。plan を取得した commit と apply する commit が異なる経路を作らない。
 7. 本番相当の環境への適用に、承認を要する機構（environment protection 等）を用いてよい。
 
 ### 検証との関係
 
 8. Pull Request 契機で実行するレイヤーは ADR-0401 決定8 に従う。本 ADR はそこへ `terraform plan` と Infracost（ADR-0501 決定24）を加える。
 9. AWS credentials を要する検証を、要さない検証より先に実行しない。credentials の取得失敗によって ADR-0401 決定6 のレイヤーが巻き添えで失敗する順序を採らない。`terraform` を AWS credentials 付きで実行する job（`terraform plan` を含む）は、ADR-0103 のコード実行の検出の成功に依存させる。
-10. 検証が失敗した Pull Request を merge しない。merge 後に apply が起動する以上、merge の可否が実環境への適用の可否と同義になる。
+10. 検証が失敗した Pull Request を merge しない。デプロイブランチへの merge は apply を起動するので、その merge の可否は実環境への適用の可否と同義である。リリース線へ merge した commit は、昇格でそのままデプロイブランチへ入る（決定4）ので、リリース線への merge にも同じ検証を課す。
 
 ### Drift
 
@@ -70,14 +76,14 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 
 ### 本 ADR で決定しない事項
 
-15. state backend の選定は本 ADR の対象外とし、別 ADR で決定する。state の分割単位は ADR-0604 が決める。環境（dev / staging / production 等）の表現方法は ADR-0102 決定11-12 が決める。
+15. state backend の選定は本 ADR の対象外とし、別 ADR で決定する。state の分割単位は ADR-0604 が決める。環境（dev / stg / prd 等）の表現方法は ADR-0102 決定11-12 が決める。
 16. 本 ADR が前提とするのは、apply が排他制御（lock）のもとで実行されることのみとする。この前提を満たさない backend を採用する場合、決定6 の保証は成立しない。
 
 ### apply の失敗
 
-17. merge の後の apply が、commit の宣言を AWS に対して評価した後に失敗した場合も、その状態からの回復は Git の経路で行う。CI は最後に成功した apply の commit を apply し直さない（決定6）。CI が用意するのは、最後に成功した apply の commit へ宣言を戻す revert のブランチまでとし、Pull Request を開いて merge するのは人である（決定10）。
+17. merge の後の apply が、commit の宣言を AWS に対して評価した後に失敗した場合も、その状態からの回復は Git の経路で行う。CI は最後に成功した apply の commit を apply し直さない（決定6）。CI が用意するのは、最後に成功した apply の commit へ宣言を戻す revert のブランチまでとし、Pull Request を開いて merge するのは人である（決定10）。revert のブランチは、失敗した apply の merge が運んだリリース線の commit から切り、リリース線へ向ける。デプロイブランチの上では revert しない。そこでだけ戻すと、次にリリース線から運ぶ merge が戻した変更を運び直さず、2本の木が分かれる。リリース線へ merge した revert は、決定4 の経路でデプロイブランチへ運ぶ。
 18. revert のブランチを用意するために CI が持つリポジトリへの書き込みの資格情報は、その run の間だけ有効な `GITHUB_TOKEN` の `contents: write` に限る。それを持つ job は判定を持たず、道具を導入せず、決まった commit の revert と push だけを行う。戻すかどうかと戻す範囲は、読み取りの権限だけを持つ job が決める。
-19. apply の失敗は、revert が merge されるまで後続の apply を止めない。apply は常に保護ブランチの先頭の木全体を適用するので、後続の apply が成功すれば実環境は Git と一致する。止める必要があるときは、管理者が人の操作で止める。
+19. apply の失敗は、revert が merge されるまで後続の apply を止めない。apply は常にデプロイブランチの先頭の木全体を適用するので、後続の apply が成功すれば実環境は Git と一致する。後続の apply はそのブランチへの merge でだけ起きるので、止める必要があるときは、人がそこへの merge を止める。
 
 ## 検討した代替案
 
@@ -95,11 +101,19 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 
 ### 案D: apply の失敗の後、CI が最後に成功した commit を apply し直す
 
-実環境を速く直前の状態へ近づけられる。ただし apply する commit が保護ブランチの先頭と一致しなくなり、決定6 と古い commit の拒否（ADR-0602 決定14）に反する。Terraform は部分的に適用された変更を取り消す手段を持たないので、直前の commit の apply も同じ理由で失敗しうる。
+実環境を速く直前の状態へ近づけられる。ただし apply する commit がデプロイブランチの先頭と一致しなくなり、決定6 と古い commit の拒否（ADR-0602 決定14）に反する。Terraform は部分的に適用された変更を取り消す手段を持たないので、直前の commit の apply も同じ理由で失敗しうる。
 
 ### 案E: CI が revert の Pull Request まで作る
 
 人の手順が1つ減る。ただし GitHub Actions に Pull Request の作成を許す設定は承認も同時に許し、長期の資格情報（fine-grained PAT）は ADR-0602 の「CI が長期の資格情報を保持しない」に反する。どちらも、承認者数の要件を CI が満たしうる状態を作る。
+
+### 案F: リリース線への merge で apply する
+
+デプロイブランチを置かずに済む。ただし変更を集めることと実環境へ当てることを分けられず、止めるにはデフォルトブランチを動かすしかない。リリース線は版ごとに名前が変わるので、apply の environment を固定名へ狭められず、保護パターンに当たる新しいブランチから apply 系の environment に届く。
+
+### 案G: feature のブランチをデプロイブランチへ直接 merge する
+
+リリース線を待たずに当てられる。ただし同じ変更がリリース線とデプロイブランチへ別々に merge され、2本の木が分かれる。どちらの木が Desired State か（決定1）が決まらなくなる。hotfix の線から直接入れる形も同じである。
 
 ### 評価
 
@@ -118,17 +132,24 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - merge 前に実環境での適用結果を確認できること
 - AWS 側で行われた手動変更がそのまま維持されること
 - drift の自動的な収束
+- リリース線への merge が、そのまま実環境へ届くこと。当てるのは、リリース線からデプロイブランチへの Pull Request の merge である
+- hotfix の修正を、リリース線を経ずに当てること。hotfix の間（デフォルトブランチがリリース線でない間）は、デプロイブランチへ昇格できない
+- 1つの env へ、複数のブランチから apply すること
 
 ## 保証範囲
 
-- 保証すること: 実環境へ適用された構成が、保護ブランチ上の commit に対応すること。適用が検証を通過した構成であること
+- 保証すること: 実環境へ適用された構成が、デプロイブランチ上の commit に対応し、その木がリリース線でレビューされた commit の木と一致すること（ADR-0603 決定31 の検査が通った merge に限る）。適用が検証を通過した構成であること
 - 保証しないこと: Git 外で行われた変更が発生しないこと（検出のみを保証する）。検出から解消までの間、実態が Git と一致していること
 - 保証しないこと: apply の失敗から revert の merge まで、または後続の apply の成功までの間、実態が Git と一致していること。revert の apply が成功すること
+- 保証しないこと: sandbox への apply の成功が、merge の時点でその Pull Request の構成が sandbox に当たっていること。sandbox の state は1つで、別の線の Pull Request の apply が後から上書きしうる。成功が示すのは、その head の木が、その時点の sandbox の状態に対して apply できたことである（決定4）
 
 ## 検証方法
 
-- Static Analysis: apply を行う workflow の契機が、保護ブランチへの push と、ref や commit を入力に取らない手動の起動に限定されていること（ADR-0602 決定14）
-- Static Analysis: Pull Request 契機の workflow に apply が含まれないこと
+- Static Analysis: apply を行う workflow の契機が、デプロイブランチへの push と、ref や commit を入力に取らない手動の起動に限定されていること（ADR-0602 決定14）。push のブランチが宣言から生成されたものと一致すること（make repo-settings-check）
+- 整合の検査（required の deploy-source-check）: デプロイブランチへ入る Pull Request について、デフォルトブランチが宣言の線であり、head がデフォルトブランチから到達でき、merge の結果の木が head の木と一致すること（決定4、ADR-0603 決定31）
+- 運用機構（make repo-settings-check）: 宣言で、デプロイブランチを持つ env がそれぞれちょうど1つのデプロイブランチを持ち、デプロイブランチが受け取る線が宣言の線であること（決定4）
+- Static Analysis: sandbox の apply の job が、Pull Request だけで起動し、1つの concurrency の group に属し、ADR-0603 決定31 の検査の成功に依存し、古い head と fork・Dependabot の Pull Request を資格情報の取得の前に拒むこと（決定4）
+- Static Analysis: Pull Request 契機の workflow に apply が含まれないこと。決定3 の sandbox の例外を除く
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
 - 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
 - Static Analysis: リポジトリへの書き込みの資格情報（`contents: write`）を持つ job が、決定18 の形に限られること（`make contents-write-lint`）
@@ -138,6 +159,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 反映の最短時間は、レビューと merge を含む時間になる。
 - 実環境で先に手を入れて後から Git へ写す運用は、drift として検出され、Pull Request として処理される。
 - state backend を決める ADR が別途必要になる（決定15）。
+- 実環境へ当てるたびに、リリース線からデプロイブランチへの Pull Request が要る。apply の失敗の回復は、リリース線への revert とその昇格の2つの merge になる。
 
 ## 見直し条件
 
@@ -145,3 +167,5 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 環境の数が増え、単一の apply 経路では表現できなくなった場合
 - state backend の決定が、決定16 の前提（排他制御）を満たせない方向へ動いた場合
 - GitHub が、Pull Request の作成だけを許し承認を許さない権限を `GITHUB_TOKEN` に与えた場合（決定17 の「人が開く」を見直す）
+- sandbox の例外（決定3・4・6）を、ほかの env へ広げる必要が生じたとき。または、リリースされていない変更を sandbox で確かめる必要が無くなったとき
+- hotfix の間に、デプロイブランチへ当てる必要が生じたとき（決定4。hotfix の間はデフォルトブランチがリリース線でない）
