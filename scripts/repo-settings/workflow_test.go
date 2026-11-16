@@ -81,6 +81,7 @@ func Test_renderApplyTriggers(t *testing.T) {
 		"apply の workflow が1件も無ければ失敗する":          {map[string]string{"unlock.yaml": unlockWorkflowFixture}, deployX, "apply の environment を使う job がありません"},
 		"1つの workflow が複数の env の apply を持てば失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture + "  other:\n    environment: y-apply\n"}, deployX, "複数の env"},
 		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: []string{"release/"}, Revert: "revert/"}, "env x のデプロイブランチ"},
+		"apply の job の environment: を読めなければ失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture, "other.yaml": "on:\n  push:\n    branches:\n      - 'release/*'\njobs:\n  a:\n    environment:\n      name: x-apply\n"}, deployX, "other.yaml"},
 		"on.push.branches がフロー形式なら失敗する":          {map[string]string{"apply.yaml": strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)}, deployX, "on.push.branches"},
 	}
 	for name, tc := range cases {
@@ -115,7 +116,25 @@ func Test_applyEnvs(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, applyEnvs(tc.src))
+			got, err := applyEnvs(tc.src)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	// 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる。
+	unreadable := map[string]string{
+		"mapping の形":     "jobs:\n  a:\n    environment:\n      name: x-apply\n",
+		"式":              "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
+		"アンカー":           "jobs:\n  a:\n    environment: &e x-apply\n",
+		"別の字下げ":          "jobs:\n  a:\n      environment: x-apply\n",
+		"plan の mapping": "jobs:\n  a:\n    environment:\n      name: x-plan\n",
+	}
+	for name, src := range unreadable {
+		t.Run("読めない environment: は失敗する（"+name+"）", func(t *testing.T) {
+			t.Parallel()
+			_, err := applyEnvs(src)
+			require.ErrorIs(t, err, errTrigger)
 		})
 	}
 }
@@ -147,6 +166,11 @@ func Test_pushBranchesItems(t *testing.T) {
 		"push の外の branches は読まない": {"on:\n  push:\n  pull_request:\n    branches:\n      - a\n", 0, 0, "on.push.branches が"},
 		"要素が無ければ失敗する":             {"on:\n  push:\n    branches:\n    paths:\n      - x\n", 0, 0, "要素がありません"},
 		"フロー形式の on は読まない":         {"on: [push]\n", 0, 0, "on: が"},
+		// 要素の間の空行とコメントで打ち切ると、その後ろの要素が生成からも検査からも漏れる。
+		"要素の間のコメントを越えて最後の要素まで返す": {"on:\n  push:\n    branches:\n      - a\n      # c\n      - b\n", 3, 6, ""},
+		"要素の間の空行を越えて最後の要素まで返す":   {"on:\n  push:\n    branches:\n      - a\n\n      - b\n", 3, 6, ""},
+		"一覧の後ろの空行は範囲に含めない":       {"on:\n  push:\n    branches:\n      - a\n\njobs:\n", 3, 4, ""},
+		"一覧の中の要素でない行は失敗する":       {"on:\n  push:\n    branches:\n      - a\n      b: c\n", 0, 0, "要素ではありません"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -170,4 +194,13 @@ func Test_nextMatch(t *testing.T) {
 	assert.Equal(t, 4, nextMatch(lines, 1, 2, pushKey))
 	assert.Equal(t, -1, nextMatch(lines, 5, 2, pushKey), "浅い行に当たれば打ち切る")
 	assert.Equal(t, -1, nextMatch(lines, len(lines), 2, pushKey))
+}
+
+func Test_isApplySuffix(t *testing.T) {
+	t.Parallel()
+
+	for _, suffix := range identitySuffixes {
+		want := suffix == "-apply" || suffix == "-apply-identity"
+		assert.Equal(t, want, isApplySuffix(suffix), suffix)
+	}
 }

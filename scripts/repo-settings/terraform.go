@@ -23,9 +23,12 @@ const (
 // planSuffix は、Pull Request からも起動する plan の environment の接尾辞。
 const planSuffix = "-plan"
 
+// unlockIdentitySuffix は、人が workflow_dispatch で起動する lock の解除の environment の接尾辞。
+const unlockIdentitySuffix = "-unlock-identity"
+
 // identitySuffixes は、deployment-identity の role の信頼条件が名指す environment 名の接尾辞。
 // `<env>` に続く形は deployment-identity の公開契約で、tests/contract.tftest.hcl が固定する。
-var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", "-unlock-identity"}
+var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", unlockIdentitySuffix}
 
 var (
 	errTerraform           = xerrors.New("Terraform のソースから deployment-identity の env を読めません")

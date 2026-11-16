@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"reflect"
 	"strconv"
@@ -166,6 +167,23 @@ type rulesetRule struct {
 
 // checkRuleset は保護設定の宣言が ADR-0603 決定22・23 の Static Analysis の項目を満たすかを見ます。
 // enforcement・target・exclude も見る —— どれを緩めても、決定22 の bypass と同じく全ルールが外れる。
+// githubActionsAppID は、GitHub Actions の app の ID（`gh api /apps/github-actions`）。
+const githubActionsAppID = 15368
+
+// foreignReporters は、報告元を GitHub Actions に限っていない required の context を返します（ADR-0603 決定34）。
+// integration_id が無い context は、書き込み権限で投稿できる commit status でも満たせる。
+func foreignReporters(checks []any) []string {
+	var out []string
+	for _, item := range checks {
+		check, _ := item.(map[string]any)
+		id, _ := check["integration_id"].(float64)
+		if id != githubActionsAppID {
+			out = append(out, fmt.Sprintf("required の context %v の integration_id が GitHub Actions（%d）ではありません", check["context"], githubActionsAppID))
+		}
+	}
+	return out
+}
+
 func checkRuleset(src []byte) error {
 	var decl struct {
 		Name        string `json:"name"`
@@ -206,9 +224,11 @@ func checkRuleset(src []byte) error {
 		rules[r.Type] = r.Parameters
 	}
 	if rsc, ok := rules["required_status_checks"]; ok {
-		if checks, _ := rsc["required_status_checks"].([]any); len(checks) == 0 {
+		checks, _ := rsc["required_status_checks"].([]any)
+		if len(checks) == 0 {
 			problems = append(problems, "required_status_checks の context が1件もありません")
 		}
+		problems = append(problems, foreignReporters(checks)...)
 	}
 	for _, t := range []string{"deletion", "non_fast_forward", "pull_request", "required_status_checks"} {
 		if _, ok := rules[t]; !ok {

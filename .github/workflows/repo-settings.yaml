@@ -8,7 +8,9 @@ name: Repo Settings
 # —— on: pull_request を絞らない理由は README.md の「必須検査はすべての Pull Request で報告される」。
 
 on:
+  # edited は base の付け替えを含む。deploy-source-check の判定は base に依るので、付け替えで走り直す。
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read

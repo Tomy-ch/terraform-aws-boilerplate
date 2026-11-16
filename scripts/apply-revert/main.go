@@ -447,7 +447,7 @@ func verifyRevert(r runner, base, start string, commits []string) (string, error
 			"revert", "-m", "1", "--no-edit", c); err != nil {
 			var code exitCoder
 			if xerrors.As(err, &code) && code.ExitCode() == 1 {
-				return fmt.Sprintf("merge %s の revert が衝突します", c[:7]), nil
+				return fmt.Sprintf("merge %s の revert が衝突するか、空になります", c[:7]), nil
 			}
 			return "", xerrors.Wrap(errGit, err.Error())
 		}

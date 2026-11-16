@@ -13,14 +13,17 @@ import (
 
 const workflowsDir = ".github/workflows"
 
-// applySuffixes は、push で起動する apply の job が使う environment の接尾辞。lock の解除の job は
-// workflow_dispatch だけで起動するので、push の起動条件を持たない。
-var applySuffixes = []string{"-apply", "-apply-identity"}
+// isApplySuffix は、push で起動する apply の job が使う environment の接尾辞かを返します。plan は
+// Pull Request で、lock の解除は workflow_dispatch だけで起動するので、push の起動条件を持たない。
+func isApplySuffix(suffix string) bool {
+	return suffix != planSuffix && suffix != unlockIdentitySuffix
+}
 
 var (
 	errTrigger      = xerrors.New("apply の workflow の起動条件を生成できません")
 	errTriggerDrift = xerrors.New("apply の workflow の on.push.branches が branches.json からずれています（make repo-settings-apply）")
 
+	anyEnvironment = regexp.MustCompile(`^\s+environment:`)
 	jobEnvironment = regexp.MustCompile(`^ {4}environment:[ \t]*(?:"([A-Za-z0-9._-]+)"|'([A-Za-z0-9._-]+)'|([A-Za-z0-9._-]+))[ \t]*(?:#.*)?$`)
 	onKey          = regexp.MustCompile(`^(?:on|"on"|'on'):[ \t]*(?:#.*)?$`)
 	pushKey        = regexp.MustCompile(`^ {2}push:[ \t]*(?:#.*)?$`)
@@ -58,7 +61,10 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 			return nil, xerrors.Wrapf(err, "%s の読み取り", path)
 		}
 		rel, _ := filepath.Rel(root, path)
-		envs := applyEnvs(string(src))
+		envs, err := applyEnvs(string(src))
+		if err != nil {
+			return nil, xerrors.Wrapf(err, "%s", rel)
+		}
 		switch {
 		case len(envs) == 0:
 			continue
@@ -81,24 +87,27 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 	return edits, nil
 }
 
-// applyEnvs は、workflow の job が使う apply の environment の env を、重複を除いて返します。
-func applyEnvs(src string) []string {
+// applyEnvs は、workflow の job が使う apply の environment の env を、重複を除いて返します。job の
+// environment: を字下げ4桁のスカラー以外（mapping、式、アンカー、別の字下げ）で書いた行があれば失敗する
+// —— 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる（ADR-0702 決定14）。
+func applyEnvs(src string) ([]string, error) {
 	var envs []string
 	for _, job := range workflow.SplitJobs(src).Jobs {
 		for _, l := range job.Lines {
-			m := jobEnvironment.FindStringSubmatch(l.Text)
-			if m == nil {
+			if !anyEnvironment.MatchString(l.Text) {
 				continue
 			}
-			name := m[1] + m[2] + m[3]
-			for _, suffix := range applySuffixes {
-				if env, ok := strings.CutSuffix(name, suffix); ok && env != "" && !slices.Contains(envs, env) {
-					envs = append(envs, env)
-				}
+			m := jobEnvironment.FindStringSubmatch(l.Text)
+			if m == nil {
+				return nil, xerrors.Wrapf(errTrigger, "%d 行目の environment: を読めません。job の直下に名前1つで書いてください", l.Number)
+			}
+			env, suffix, ok := splitIdentity(m[1] + m[2] + m[3])
+			if ok && isApplySuffix(suffix) && !slices.Contains(envs, env) {
+				envs = append(envs, env)
 			}
 		}
 	}
-	return envs
+	return envs, nil
 }
 
 // renderPushBranches は、on.push.branches のブロック形式の一覧を branch 1つへ置き換えた本文を返します。
@@ -112,7 +121,8 @@ func renderPushBranches(src, branch string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
-// pushBranchesItems は、on.push.branches の一覧の要素の行の範囲 [start, end) を返します。
+// pushBranchesItems は、on.push.branches の一覧の行の範囲 [start, end) を返します。範囲は最後の要素までで、
+// 要素の間の空行とコメントを含む。一覧の中に要素でもコメントでもない行があれば失敗する。
 func pushBranchesItems(lines []string) (int, int, error) {
 	i := slices.IndexFunc(lines, onKey.MatchString)
 	if i < 0 {
@@ -128,8 +138,18 @@ func pushBranchesItems(lines []string) (int, int, error) {
 	}
 	start := i + 1
 	end := start
-	for end < len(lines) && branchItem.MatchString(lines[end]) {
-		end++
+scan:
+	for j := start; j < len(lines); j++ {
+		l := lines[j]
+		switch {
+		case branchItem.MatchString(l):
+			end = j + 1
+		case blankOrComment.MatchString(l):
+		case len(l)-len(strings.TrimLeft(l, " ")) < 6:
+			break scan
+		default:
+			return 0, 0, xerrors.Wrapf(errTrigger, "on.push.branches の %d 行目が要素ではありません", j+1)
+		}
 	}
 	if end == start {
 		return 0, 0, xerrors.Wrap(errTrigger, "on.push.branches に要素がありません")

@@ -31,7 +31,7 @@ const rulesetFixture = `{
       "required_review_thread_resolution": true,
       "allowed_merge_methods": ["merge"]
     }},
-    {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go-test"}]}}
+    {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go-test", "integration_id": 15368}]}}
   ],
   "bypass_actors": []
 }
@@ -215,8 +215,11 @@ func Test_checkRuleset(t *testing.T) {
 		{"enforcement が active でなければ拒む", `"enforcement": "active"`, `"enforcement": "disabled"`, "enforcement"},
 		{"exclude に値があれば拒む", `"exclude": []`, `"exclude": ["refs/heads/production"]`, "exclude"},
 		{"同じ type のルールが2件あれば拒む", `{"type": "deletion"},`, `{"type": "deletion"}, {"type": "deletion"},`, "deletion が2件以上"},
-		{"required status check の context が0件なら拒む", `[{"context": "go-test"}]`, `[]`, "context が1件も"},
-		{"required status check の parameters が無ければ拒む", `{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go-test"}]}}`, `{"type": "required_status_checks"}`, "context が1件も"},
+		{"required status check の context が0件なら拒む", `[{"context": "go-test", "integration_id": 15368}]`, `[]`, "context が1件も"},
+		{"required status check の parameters が無ければ拒む", `{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go-test", "integration_id": 15368}]}}`, `{"type": "required_status_checks"}`, "context が1件も"},
+		// 報告元を限らない context は、書き込み権限で投稿できる commit status でも満たせる（ADR-0603 決定34）。
+		{"required status check の報告元が無ければ拒む", `{"context": "go-test", "integration_id": 15368}`, `{"context": "go-test"}`, "go-test の integration_id"},
+		{"required status check の報告元が GitHub Actions でなければ拒む", `"integration_id": 15368`, `"integration_id": 1`, "go-test の integration_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,4 +243,19 @@ func Test_checkRuleset(t *testing.T) {
 		t.Parallel()
 		require.ErrorIs(t, checkRuleset([]byte(`x`)), errRulesetPolicy)
 	})
+}
+
+func Test_foreignReporters(t *testing.T) {
+	t.Parallel()
+
+	checks := []any{
+		map[string]any{"context": "a", "integration_id": float64(githubActionsAppID)},
+		map[string]any{"context": "b"},
+		map[string]any{"context": "c", "integration_id": float64(1)},
+	}
+	got := foreignReporters(checks)
+	require.Len(t, got, 2)
+	assert.Contains(t, got[0], "b の integration_id")
+	assert.Contains(t, got[1], "c の integration_id")
+	assert.Empty(t, foreignReporters(checks[:1]))
 }
