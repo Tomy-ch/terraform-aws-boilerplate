@@ -514,13 +514,16 @@ func Test_pinReferenced(t *testing.T) {
 const fixtureProtection = `{
   "required_status_checks": [
     {
-      "context": "a"
+      "context": "a",
+      "integration_id": 15368
     },
     {
-      "context": "scan"
+      "context": "scan",
+      "integration_id": 15368
     },
     {
-      "context": "z"
+      "context": "z",
+      "integration_id": 15368
     }
   ]
 }
@@ -534,14 +537,14 @@ func Test_dropContexts(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("途中の context を3行ごと外す", func(t *testing.T) {
+		t.Run("途中の context を4行ごと外す", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
 			p := plan{writes: map[string]string{}}
 			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p))
 			assert.Equal(t, []string{"scan"}, p.droppedContexts)
-			assert.Equal(t, "{\n  \"required_status_checks\": [\n    {\n      \"context\": \"a\"\n    },\n    {\n      \"context\": \"z\"\n    }\n  ]\n}\n", p.writes[protectionFile])
+			assert.Equal(t, "{\n  \"required_status_checks\": [\n    {\n      \"context\": \"a\",\n      \"integration_id\": 15368\n    },\n    {\n      \"context\": \"z\",\n      \"integration_id\": 15368\n    }\n  ]\n}\n", p.writes[protectionFile])
 		})
 
 		// 末尾の要素を外したときに1つ前の `},` を残すと、JSON として読めなくなる。
@@ -578,15 +581,24 @@ func Test_dropContexts(t *testing.T) {
 		t.Run("宣言に2回ある context はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			writeTree(t, root, map[string]string{protectionFile: strings.Replace(fixtureProtection, `"context": "a"`, `"context": "scan"`, 1)})
+			writeTree(t, root, map[string]string{protectionFile: strings.Replace(fixtureProtection, `"context": "a",`, `"context": "scan",`, 1)})
 			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errMissingContext)
 		})
 
-		t.Run("3行の形でない context はエラーにする", func(t *testing.T) {
+		t.Run("1行に畳んだ context はエラーにする", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			writeTree(t, root, map[string]string{protectionFile: `[{"context": "scan"}]`})
+			writeTree(t, root, map[string]string{protectionFile: `[{"context": "scan", "integration_id": 15368}]`})
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
+			require.ErrorIs(t, err, errMissingContext)
+		})
+
+		// integration_id の行を残して消すと、宣言が JSON として読めなくなる。
+		t.Run("integration_id の無い context はエラーにする", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: "[\n  {\n    \"context\": \"scan\",\n    \"other\": 1\n  }\n]\n"})
 			err := dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &plan{writes: map[string]string{}})
 			require.ErrorIs(t, err, errMissingContext)
 		})
