@@ -591,6 +591,16 @@ func Test_dropContexts(t *testing.T) {
 			assert.Empty(t, contextNames(t, p.writes[protectionFile]))
 		})
 
+		t.Run("2行目にある context を外す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: "{\n\"context\": \"scan\",\n\"integration_id\": 15368\n}\n"})
+			p := plan{writes: map[string]string{}}
+			require.NoError(t, dropContexts(root, []domain{{name: "x", contexts: []string{"scan"}}}, &p))
+			assert.Equal(t, []string{"scan"}, p.droppedContexts)
+			assert.Empty(t, p.writes[protectionFile])
+		})
+
 		// 1つ目を外した後の行の位置で2つ目を探すので、続けて外すと位置のずれが表に出る。
 		t.Run("複数の context を続けて外す", func(t *testing.T) {
 			t.Parallel()
@@ -654,9 +664,11 @@ func Test_dropContexts(t *testing.T) {
 
 		// 4行の形の外にあるものを4行ごと消すと、別のキーを落とすか JSON を壊す。
 		shapes := map[string]string{
-			"integration_id の後に別のキーがある": "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368,\n    \"other\": 1\n  }\n]\n",
-			"直前の行が { でない":               "[\n  {\"x\": 1,\n    \"context\": \"scan\",\n    \"integration_id\": 15368\n  }\n]\n",
-			"ファイルが途中で切れている":             "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368",
+			"integration_id の後に別のキーがある":  "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368,\n    \"other\": 1\n  }\n]\n",
+			"直前の行が { でない":                "[\n  {\"x\": 1,\n    \"context\": \"scan\",\n    \"integration_id\": 15368\n  }\n]\n",
+			"integration_id の次の行が } でない": "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368\n    \"other\": 1\n  }\n]\n",
+			"context が先頭の行にある":           "\"context\": \"scan\",\n\"integration_id\": 15368\n}\n",
+			"ファイルが途中で切れている":              "[\n  {\n    \"context\": \"scan\",\n    \"integration_id\": 15368",
 		}
 		for name, src := range shapes {
 			t.Run("形の違う context はエラーにする（"+name+"）", func(t *testing.T) {
@@ -669,6 +681,17 @@ func Test_dropContexts(t *testing.T) {
 				assert.Empty(t, p.writes)
 			})
 		}
+
+		// 1つ目を外した後で2つ目が見つからなくても、1つ目を外した宣言を書いてはならない。
+		t.Run("途中の context で失敗したら何も書かない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{protectionFile: fixtureProtection})
+			p := plan{writes: map[string]string{}}
+			err := dropContexts(root, []domain{{name: "x", contexts: []string{"a", "none"}}}, &p)
+			require.ErrorIs(t, err, errMissingContext)
+			assert.Empty(t, p.writes)
+		})
 
 		t.Run("宣言を読めなければエラーにする", func(t *testing.T) {
 			t.Parallel()
