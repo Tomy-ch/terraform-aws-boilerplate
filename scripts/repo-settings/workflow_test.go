@@ -142,6 +142,8 @@ func Test_applyEnvs(t *testing.T) {
 		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
 		"一重引用符で囲んだ environment も読む":                       {"jobs:\n  a:\n    environment: 'x-apply'\n", []string{"x"}},
 		"step の入力の environment: は job の environment ではない": {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n  b:\n    steps:\n      with:\n        environment: prod\n", []string{"x"}},
+		"steps と同じ字下げの要素の中の environment: は読まない":           {"jobs:\n  a:\n    steps:\n    - uses: a/b@v1\n      with:\n        environment: prod\n    environment: x-apply\n", []string{"x"}},
+		"steps の中の空行の後の step の入力の environment: は読まない":     {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n\n        # 入力\n        with:\n          environment: prod\n", []string{"x"}},
 		"steps の後に書いた job の environment も読む":              {"jobs:\n  a:\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n\n    environment: x-apply\n", []string{"x"}},
 	}
 	for name, tc := range cases {
@@ -160,6 +162,8 @@ func Test_applyEnvs(t *testing.T) {
 		"アンカー":              "jobs:\n  a:\n    environment: &e x-apply\n",
 		"plan の mapping":    "jobs:\n  a:\n    environment:\n      name: x-plan\n",
 		"別の字下げ":             "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
+		"引用符付きのキー":          "jobs:\n  a:\n    \"environment\": x-apply\n",
+		"コロンの前の空白":          "jobs:\n  a:\n    environment : x-apply\n",
 		"steps の後の job のキー": "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
 	}
 	for name, src := range unreadable {
