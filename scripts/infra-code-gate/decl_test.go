@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 )
 
 func ptr[T any](v T) *T { return &v }
 
-// testDeclPath は、テストの写しで宣言を置くパスです。
 const testDeclPath = "conftest/hcl/infra_code/decl.json"
 
 func writeFile(t *testing.T, p, content string) {
@@ -93,7 +93,13 @@ func Test_runDecl(t *testing.T) {
 				mutate: func(t *testing.T, repo string) {
 					require.NoError(t, os.Remove(filepath.Join(repo, defaultRulesetPath)))
 				},
-				want: os.ErrNotExist,
+				want: requiredchecks.ErrRead,
+			},
+			"保護設定に context の無い required があればエラー": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, defaultRulesetPath), `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"integration_id": 15368}]}}]}`)
+				},
+				want: requiredchecks.ErrRead,
 			},
 			"code owner の宣言が無ければエラー": {
 				mutate: func(t *testing.T, repo string) {
@@ -211,35 +217,6 @@ func Test_checkDuplicateKeys(t *testing.T) {
 			require.ErrorIs(t, err, tt.want)
 		})
 	}
-}
-
-func Test_readRequiredContexts(t *testing.T) {
-	t.Parallel()
-
-	t.Run("required_status_checks の context だけを集める", func(t *testing.T) {
-		t.Parallel()
-		p := filepath.Join(t.TempDir(), "r.json")
-		writeFile(t, p, `{"rules": [{"type": "pull_request"}, {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "a"}, {"context": "b"}]}}]}`)
-		got, err := readRequiredContexts(p)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"a", "b"}, got)
-	})
-
-	t.Run("0件はエラー", func(t *testing.T) {
-		t.Parallel()
-		p := filepath.Join(t.TempDir(), "r.json")
-		writeFile(t, p, `{"rules": [{"type": "pull_request"}]}`)
-		_, err := readRequiredContexts(p)
-		require.ErrorIs(t, err, errNoInput)
-	})
-
-	t.Run("壊れた JSON はエラー", func(t *testing.T) {
-		t.Parallel()
-		p := filepath.Join(t.TempDir(), "r.json")
-		writeFile(t, p, `{`)
-		_, err := readRequiredContexts(p)
-		require.Error(t, err)
-	})
 }
 
 func Test_checkDeclaration(t *testing.T) {

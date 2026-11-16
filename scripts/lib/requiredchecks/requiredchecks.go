@@ -1,7 +1,7 @@
 // Package requiredchecks は、保護設定の宣言（`.github/settings/branch-protection.json`）が required とする
 // status check の context を読む。
 //
-// 読み手は required-check-lint と oidc-job-lint の2つである。同じ宣言を各々が読むと、一方だけが読める宣言が
+// 読み手は required-check-lint、oidc-job-lint、infra-code-gate の3つである。同じ宣言を各々が読むと、一方だけが読める宣言が
 // 生まれ、もう一方は黙って検査の対象を失う。
 package requiredchecks
 
@@ -33,7 +33,7 @@ type ruleset struct {
 }
 
 // Read は、required_status_checks の規則が名指す context を宣言の順に返します。context を欠くか空の項目は
-// ErrRead にする —— 報告する job を名指せない項目を、黙って読み飛ばさない。
+// ErrRead にします。
 func Read(path string) ([]string, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
