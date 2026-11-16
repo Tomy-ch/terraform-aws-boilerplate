@@ -137,6 +137,33 @@ func Test_SplitSteps(t *testing.T) {
 	})
 }
 
+func Test_StepsSpan(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		src      string
+		from, to int
+		ok       bool
+	}{
+		"steps: が無ければ範囲を持たない":    {"jobs:\n  a:\n    runs-on: x\n", 0, 0, false},
+		"steps: と同じ桁のキーの手前で終わる":  {"jobs:\n  a:\n    steps:\n      - run: x\n    outputs:\n      x: 1\n", 1, 2, true},
+		"空行とコメント行では終わらない":        {"jobs:\n  a:\n    steps:\n      - run: x\n\n    # c\n      - run: y\n    env: {}\n", 1, 5, true},
+		"steps: と同じ桁の - では終わらない": {"jobs:\n  a:\n    steps:\n    - run: x\n    - run: y\n    env: {}\n", 1, 3, true},
+		"行末コメントの付いた steps: も読む":  {"jobs:\n  a:\n    steps: # c\n      - run: x\n", 1, 3, true},
+		"タブで始まる行で終わる":            {"jobs:\n  a:\n    steps:\n      - run: x\n\tenv: {}\n", 1, 2, true},
+		"ジョブの最後まで続く":             {"jobs:\n  a:\n    steps:\n      - run: x\n", 1, 3, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			job := workflow.SplitJobs(tc.src).Jobs[0]
+			from, to, ok := workflow.StepsSpan(job)
+			require.Equal(t, tc.ok, ok)
+			assert.Equal(t, []int{tc.from, tc.to}, []int{from, to})
+		})
+	}
+}
+
 func Test_UsesActionPattern(t *testing.T) {
 	t.Parallel()
 

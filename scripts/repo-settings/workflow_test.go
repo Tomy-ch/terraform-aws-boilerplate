@@ -157,14 +157,15 @@ func Test_applyEnvs(t *testing.T) {
 
 	// 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる。
 	unreadable := map[string]string{
-		"mapping の形":        "jobs:\n  a:\n    environment:\n      name: x-apply\n",
-		"式":                 "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
-		"アンカー":              "jobs:\n  a:\n    environment: &e x-apply\n",
-		"plan の mapping":    "jobs:\n  a:\n    environment:\n      name: x-plan\n",
-		"別の字下げ":             "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
-		"引用符付きのキー":          "jobs:\n  a:\n    \"environment\": x-apply\n",
-		"コロンの前の空白":          "jobs:\n  a:\n    environment : x-apply\n",
-		"steps の後の job のキー": "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
+		"mapping の形":           "jobs:\n  a:\n    environment:\n      name: x-apply\n",
+		"式":                    "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
+		"アンカー":                 "jobs:\n  a:\n    environment: &e x-apply\n",
+		"plan の mapping":       "jobs:\n  a:\n    environment:\n      name: x-plan\n",
+		"別の字下げ":                "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
+		"引用符付きのキー":             "jobs:\n  a:\n    \"environment\": x-apply\n",
+		"コロンの前の空白":             "jobs:\n  a:\n    environment : x-apply\n",
+		"タブで字下げした environment": "jobs:\n  a:\n\tenvironment: x-apply\n",
+		"steps の後の job のキー":    "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
 	}
 	for name, src := range unreadable {
 		t.Run("読めない environment: は失敗する（"+name+"）", func(t *testing.T) {

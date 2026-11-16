@@ -46,7 +46,8 @@ var (
 	stepsKey  = regexp.MustCompile(`^ {4}steps:[ \t]*(?:#.*)?$`)
 	stepItem  = regexp.MustCompile(`^ {6}- `)
 	topLevel  = regexp.MustCompile(`^\S`)
-	shallow   = regexp.MustCompile(`^ {0,4}\S`)
+	deep      = regexp.MustCompile(`^ {5}`)
+	jobItem   = regexp.MustCompile(`^ {4}- `)
 	comment   = regexp.MustCompile(`^\s*#`)
 )
 
@@ -123,34 +124,45 @@ func SplitJobs(source string) Split {
 	return Split{Found: true, Jobs: jobs, Preamble: preamble}
 }
 
-// SplitSteps はジョブ本文をステップ単位に切り出します。
+// StepsSpan は、ジョブ本文のうち steps: の列が占める範囲 [from, to) を job.Lines の添字で返します。
+// steps: が無ければ ok は false です。
 //
-// if: や name: は「そのステップのもの」だけを見る必要があるため、"- " で区切ります。
-func SplitSteps(job Job) []Step {
-	start := -1
+// 列は steps: の次の行から、steps: と同じかそれより浅い桁で始まる行の手前までです。空行とコメント行、
+// steps: と同じ桁の "- "（YAML が許す列の書き方）では終わりません。
+func StepsSpan(job Job) (from, to int, ok bool) {
 	for i, ln := range job.Lines {
-		if stepsKey.MatchString(ln.Text) {
-			start = i
-			break
+		if !stepsKey.MatchString(ln.Text) {
+			continue
 		}
+		for j := i + 1; j < len(job.Lines); j++ {
+			t := job.Lines[j].Text
+			if strings.TrimSpace(t) != "" && !comment.MatchString(t) && !deep.MatchString(t) && !jobItem.MatchString(t) {
+				return i + 1, j, true
+			}
+		}
+		return i + 1, len(job.Lines), true
 	}
-	if start == -1 {
+	return 0, 0, false
+}
+
+// SplitSteps はジョブ本文の steps: の列（[StepsSpan]）をステップ単位に切り出します。
+//
+// if: や name: は「そのステップのもの」だけを見る必要があるため、"- " で区切ります。ステップは
+// 6桁の "- " で始まるものだけを数えます。
+func SplitSteps(job Job) []Step {
+	from, to, ok := StepsSpan(job)
+	if !ok {
 		return nil
 	}
 
 	var steps []Step
 	current := -1
 
-	for _, line := range job.Lines[start+1:] {
-		switch {
-		case stepItem.MatchString(line.Text):
+	for _, line := range job.Lines[from:to] {
+		if stepItem.MatchString(line.Text) {
 			steps = append(steps, Step{Number: line.Number})
 			current = len(steps) - 1
-		case shallow.MatchString(line.Text) && !comment.MatchString(line.Text):
-			// steps: と同じかそれより浅い桁のキーが来たらステップ列の終わり。
-			return steps
 		}
-
 		if current >= 0 {
 			steps[current].Lines = append(steps[current].Lines, line)
 		}
