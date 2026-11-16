@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/adrdoc"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -125,7 +126,10 @@ func runDecl(args []string, repo string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	contexts, err := readRequiredContexts(filepath.Join(repo, *rulesetPath))
+	contexts, err := requiredchecks.Read(filepath.Join(repo, *rulesetPath))
+	if xerrors.Is(err, requiredchecks.ErrNone) {
+		return xerrors.Wrapf(errNoInput, "%v", err)
+	}
 	if err != nil {
 		return err
 	}
@@ -231,39 +235,6 @@ func checkDuplicateKeys(raw []byte) error {
 		return nil
 	}
 	return walk()
-}
-
-func readRequiredContexts(p string) ([]string, error) {
-	raw, err := os.ReadFile(filepath.Clean(p))
-	if err != nil {
-		return nil, xerrors.Wrapf(err, "%s の読み取り", p)
-	}
-	var rs struct {
-		Rules []struct {
-			Type       string `json:"type"`
-			Parameters struct {
-				RequiredStatusChecks []struct {
-					Context string `json:"context"`
-				} `json:"required_status_checks"`
-			} `json:"parameters"`
-		} `json:"rules"`
-	}
-	if err := json.Unmarshal(raw, &rs); err != nil {
-		return nil, xerrors.Wrapf(err, "%s の解釈", p)
-	}
-	var contexts []string
-	for _, r := range rs.Rules {
-		if r.Type != "required_status_checks" {
-			continue
-		}
-		for _, c := range r.Parameters.RequiredStatusChecks {
-			contexts = append(contexts, c.Context)
-		}
-	}
-	if len(contexts) == 0 {
-		return nil, xerrors.Wrapf(errNoInput, "%s: required status check がありません", p)
-	}
-	return contexts, nil
 }
 
 // checkDeclaration は、宣言を ADR・ファイルシステム・保護設定と突き合わせます（ADR-0103 決定12-15・18）。
