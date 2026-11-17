@@ -90,6 +90,8 @@ manifest が版を固定できる範囲には限りがある。
 17. npm 側は、in-tree のパッケージの有無に関わらず、道具とその推移的な依存を lockfile で固定して frozen で install し、依存のライフサイクルスクリプトの実行可否を宣言する。宣言に無い依存が script を持ち込んだ時点で install を失敗させる。
 18. 決定17 の宣言の既定は空とし、install 時の script を一律で実行しない。
 
+   推移的な依存へは、manifest の道具と同じ供給網の窓を lockfile の解決時に掛ける。直接の依存の窓は manifest に対して掛け、二重に掛けない。
+
 ### 導入の範囲
 
 19. ADR-0501 決定33 に従い、走らせる道具が存在しない runner を置かない。PyPI 側の runner は、対象の道具を導入する変更で同時に置く。
@@ -139,6 +141,7 @@ manifest が版を固定できる範囲には限りがある。
 - **イメージのビルド**: 配布物の照合値と lockfile の integrity が一致しない場合にビルドが失敗すること（決定2・17、`make node-tools-image-check` を CI が走らせる）
 - Static Analysis: PyPI の lockfile の全エントリが版とハッシュを持つこと（決定15）
 - Static Analysis: npm 側の lockfile が manifest の宣言を満たすこと（決定17・18、`make node-tools-lock-check`）
+- Static Analysis: lockfile の解決に掛ける供給網の窓と、窓から外す直接の依存が、manifest 側の窓と道具に一致すること（決定18、`make versions-check`）
 - Static Analysis: イメージが取るパッケージマネージャの版が manifest の宣言と一致し、配布物の照合値が揃っていること（決定2、`make pin-pnpm-check`）
 - Static Analysis: 走らせる道具を持たない runner が存在しないこと（決定19）
 
