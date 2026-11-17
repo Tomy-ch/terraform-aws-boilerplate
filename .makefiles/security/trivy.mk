@@ -46,7 +46,7 @@ trivy-fs:
 
 .PHONY: trivy-fs-release ## 修正版のない脆弱性も含めて依存を検査（リリース昇格ゲート）
 trivy-fs-release:
-	@$(GO_TOOL) trivy fs $(TRIVY_VULN_FLAGS) --exit-code 1 $(TRIVY_SKIP_FLAGS) --format $(TRIVY_FORMAT) .
+	@$(GO_TOOL) trivy fs $(TRIVY_VULN_FLAGS) --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --format $(TRIVY_FORMAT) .
 
 .PHONY: trivy-license ## 依存のライセンスを列挙（報告のみ）
 ##
