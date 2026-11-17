@@ -106,7 +106,6 @@ func npmDepRe(pkg string) *regexp.Regexp {
 
 const excludeKey = "minimumReleaseAgeExclude"
 
-// npmPkgs は、package.json へ版を書く npm の道具の名前を、名前順に返します。
 func npmPkgs() []string {
 	pkgs := []string{markdownlintPkg, commitlintPkg}
 	sort.Strings(pkgs)
@@ -322,10 +321,8 @@ func rules(v declared) []rule {
 		{label: "node の照合値", file: toolsDockerfile, re: shellVarRe("declared_node"), version: v.Node, count: 1},
 		{label: "markdownlint の導入", file: nodeToolsPkg, re: npmDepRe(markdownlintPkg), version: v.Markdownlint, count: 1},
 		{label: "commitlint の導入", file: nodeToolsPkg, re: npmDepRe(commitlintPkg), version: v.Commitlint, count: 1},
-		// 推移的な依存へ掛ける pnpm の窓は、tool-cooldown の gate と同じ日数を分で書く。
 		{label: "pnpm の供給網の窓", file: pnpmWorkspace, re: bakedRe("minimumReleaseAge: ", "\n"),
 			version: strconv.Itoa(cooldown.RegistryWindowDays * minutesPerDay), count: 1},
-		// 直接の依存は窓から外す。その窓は mise.toml の宣言に対して tool-cooldown の gate が掛ける。
 		{label: "pnpm の窓の除外", file: pnpmWorkspace, blockKey: excludeKey, block: excludeBlock(), count: 1},
 	}
 }

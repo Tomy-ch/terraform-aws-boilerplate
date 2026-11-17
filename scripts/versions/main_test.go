@@ -65,7 +65,6 @@ const soundPackageJSON = `{
 }
 `
 
-// soundWorkspace は、窓と除外の一覧を持つ pnpm-workspace.yaml。
 const soundWorkspace = `minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
   - '@commitlint/cli'
@@ -351,7 +350,6 @@ func Test_run(t *testing.T) {
 			})
 		}
 
-		// 写し先の行が消えた・形が変わった入力を「一致」と報告しない。
 		type broken struct {
 			file    []string
 			replace [2]string
@@ -566,7 +564,6 @@ func Test_applyRule(t *testing.T) {
 			assert.Equal(t, "FROM golang:1.27.1-bookworm AS a\nFROM golang:1.27.1-alpine AS b\n", got)
 		})
 
-		// 除外の一覧は版ではなく範囲ごと置き換える。要素が増えても減っても、宣言どおりの一覧へ戻す。
 		t.Run("block は一致した範囲を丸ごと置き換える", func(t *testing.T) {
 			t.Parallel()
 			br := rule{label: "除外", file: "w", blockKey: excludeKey, block: excludeBlock(), count: 1}
@@ -592,7 +589,6 @@ func Test_applyRule(t *testing.T) {
 			})
 		}
 
-		// 一覧の見出しが消えた入力を「一致」と報告しない。
 		t.Run("block の範囲が見つからなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			br := rule{label: "除外", file: "w", blockKey: excludeKey, block: excludeBlock(), count: 1}
@@ -868,7 +864,6 @@ func Test_yamlValueSpans(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 要素の形で終わりを決めると、間に挟まった空行やコメントの後ろの要素が範囲の外に残る。
 		tests := map[string]struct{ src, want string }{
 			"字下げした要素":         {"k:\n  - a\n  - b\nnext: 1\n", "k:\n  - a\n  - b\n"},
 			"要素の間のコメントと空行":    {"k:\n  - a\n# c\n\n  # d\n  - evil\nnext: 1\n", "k:\n  - a\n# c\n\n  # d\n  - evil\n"},
@@ -938,7 +933,6 @@ func Test_checkNodeToolsDeps(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// 宣言に無い依存は、mise.toml の版の宣言も tool-cooldown の gate も経ずにイメージへ入る。
 		for name, body := range map[string]string{
 			"宣言に無い依存がある":          `{"dependencies": {"@commitlint/cli": "1", "markdownlint-cli2": "1", "evil": "1"}}`,
 			"宣言した依存が欠けている":        `{"dependencies": {"@commitlint/cli": "1"}}`,
@@ -965,7 +959,6 @@ func Test_excludeBlock(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// package.json へ版を書く道具と同じ名前を、並びを決めて引用符付きで並べる。
 		t.Run("npm の道具を名前順に並べる", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t,

@@ -175,7 +175,7 @@ func check(version string, current map[string]string, out io.Writer) error {
 	return nil
 }
 
-// githubAPI は GitHub API の宛先・トークン・クライアント。トークンは base の宛先にだけ送る。
+// githubAPI のトークンは base の宛先にだけ送る。
 type githubAPI struct {
 	base   string
 	token  string

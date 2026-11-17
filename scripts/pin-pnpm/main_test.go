@@ -63,7 +63,6 @@ func readDockerfile(t *testing.T, root string) string {
 	return string(got)
 }
 
-// requests は、テスト用の API が受けた要求の path と Authorization を記録する。
 type requests struct {
 	mu    sync.Mutex
 	paths []string
@@ -325,7 +324,6 @@ func Test_readPins(t *testing.T) {
 			require.ErrorIs(t, err, errShape)
 		})
 
-		// 写しが ARG になると `--build-arg` で差し替えられる。シェル変数の形でなければ数えない。
 		for name, src := range map[string]string{
 			"単引用符の写し":     strings.Replace(soundDockerfile, `pnpm_version="12.17.0"`, `pnpm_version='12.17.0'`, 1),
 			"ARG の写し":     strings.Replace(soundDockerfile, `    pnpm_version="12.17.0"; \`, `ARG pnpm_version=12.17.0`, 1),
