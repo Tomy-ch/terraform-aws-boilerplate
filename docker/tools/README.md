@@ -12,7 +12,8 @@
 | --- | --- | --- |
 | `go_tools_builder` | `golang:*-bookworm` | mise を導入し、`mise.toml` が宣言する道具をビルドする段 |
 | `go_tools` | `golang:*-bookworm` | ビルド済みの道具だけを持つ提供段。mise 本体と install のキャッシュを残さない |
-| `node_tools` | `node:*-alpine` | npm エコシステムの道具 |
+| `node_tools_builder` | `node:*-alpine` | pnpm を照合して導入し、道具を lockfile どおりに入れる段 |
+| `node_tools` | `node:*-alpine` | 入れた道具だけを持つ提供段。pnpm と curl を残さない |
 
 段を分けるのは、提供段に version manager 本体と install のキャッシュを残さないためである
 （ADR-0503 決定11）。ベースイメージは digest で固定する（同 決定10）—— tag だけの参照は、

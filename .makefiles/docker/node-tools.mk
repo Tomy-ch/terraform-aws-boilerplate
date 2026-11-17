@@ -28,6 +28,7 @@ pin-pnpm-check:
 	@$(call RUN_SCRIPT,pin-pnpm,check)
 
 ## pin-pnpm-check と node-tools-lock-check は通信や照合の手前までしか見ない。配布物の sha256 と
-## lockfile の integrity の照合は、イメージを組んだときにだけ走る。
+## lockfile の integrity の照合は、イメージを組んだときにだけ走る。キャッシュした層では照合が
+## 走らないので --no-cache で組む。
 node-tools-image-check:
-	@docker build --target node_tools -f docker/tools/Dockerfile -t node-tools-image-check .
+	@docker build --no-cache --target node_tools -f docker/tools/Dockerfile -t node-tools-image-check .
