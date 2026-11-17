@@ -24,6 +24,7 @@ go = "1.27.1"
 node = "24.21.0"
 "aqua:hashicorp/terraform" = "1.16.2"
 "aqua:aws/aws-cli" = "2.36.40"
+"aqua:pnpm/pnpm" = "12.17.0"
 "npm:markdownlint-cli2" = "0.23.2"
 "npm:@commitlint/cli" = "21.2.2"
 `
@@ -34,6 +35,7 @@ const soundHostTools = `host-tools-install:
 	@command -v mise >/dev/null 2>&1 || exit 1
 	@mise install "aqua:hashicorp/terraform@1.16.2"
 	@mise install "aqua:aws/aws-cli@2.36.40"
+	@mise install "aqua:pnpm/pnpm@12.17.0"
 	@mise reshim
 `
 
@@ -50,9 +52,16 @@ FROM golang:1.27.1-bookworm@sha256:aaa AS tools
 FROM node:24.21.0-alpine@sha256:bbb AS node_tools
 RUN set -eu; \
     declared_node="24.21.0"; \
-    npm install -g --ignore-scripts \
-      "markdownlint-cli2@0.23.2" \
-      "@commitlint/cli@21.2.2"
+    true
+`
+
+const soundPackageJSON = `{
+  "private": true,
+  "dependencies": {
+    "@commitlint/cli": "21.2.2",
+    "markdownlint-cli2": "0.23.2"
+  }
+}
 `
 
 // editorconfig-checker-enable
@@ -91,6 +100,8 @@ func newRepo(t *testing.T, mise, dockerfile, gomod string, hostTools ...string) 
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "go.mod"), []byte(gomod), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".makefiles"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".makefiles", "host-tools.mk"), []byte(mk), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docker", "tools", "node"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docker", "tools", "node", "package.json"), []byte(soundPackageJSON), 0o600))
 
 	return root
 }
@@ -185,13 +196,11 @@ func Test_run(t *testing.T) {
 
 		// 起点にする理由は driftedHostTools の宣言と同じ —— この写し先からずれた入力が無いと、
 		// **Dockerfile の焼き込み側へ apply が書き込む経路が一度も実行されない。**
-		t.Run("apply は Dockerfile の照合値と npm の版も揃える", func(t *testing.T) {
+		t.Run("apply は Dockerfile の照合値も揃える", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.NewReplacer(
 				`declared_go="1.27.1"`, `declared_go="1.0.0"`,
 				`declared_node="24.21.0"`, `declared_node="1.0.0"`,
-				`"markdownlint-cli2@0.23.2"`, `"markdownlint-cli2@1.0.0"`,
-				`"@commitlint/cli@21.2.2"`, `"@commitlint/cli@1.0.0"`,
 			).Replace(soundDockerfile)
 			require.NotEqual(t, soundDockerfile, drifted, "ずらせていない")
 			root := newRepo(t, soundMise, drifted, soundGoMod)
@@ -200,6 +209,27 @@ func Test_run(t *testing.T) {
 			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
 			require.NoError(t, run([]string{"apply"}, root, &out))
 			assert.Equal(t, soundDockerfile, readAt(t, root, "docker", "tools", "Dockerfile"))
+		})
+
+		// 起点にする理由は driftedHostTools の宣言と同じ —— **package.json へ apply が書き込む
+		// 経路と、check がその名前を報告する経路を実行する。**
+		t.Run("apply は package.json の npm の版も揃える", func(t *testing.T) {
+			t.Parallel()
+			drifted := strings.NewReplacer(
+				`"markdownlint-cli2": "0.23.2"`, `"markdownlint-cli2": "1.0.0"`,
+				`"@commitlint/cli": "21.2.2"`, `"@commitlint/cli": "1.0.0"`,
+			).Replace(soundPackageJSON)
+			require.NotEqual(t, soundPackageJSON, drifted, "ずらせていない")
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+			pkg := filepath.Join(root, "docker", "tools", "node", "package.json")
+			require.NoError(t, os.WriteFile(pkg, []byte(drifted), 0o600))
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "package.json"))
+			assert.Contains(t, out.String(), "package.json")
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundPackageJSON, readAt(t, root, "docker", "tools", "node", "package.json"))
 		})
 
 		t.Run("apply は複数のファイルを同時に揃える", func(t *testing.T) {
@@ -252,7 +282,7 @@ func Test_run(t *testing.T) {
 		t.Run("写しの1つが壊れていれば他も書き換えない", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
-			// go ディレクティブを失った go.mod。3つ目の rule で落ちる。
+			// go ディレクティブを失った go.mod。
 			root := newRepo(t, soundMise, drifted, "module example\n")
 			var out bytes.Buffer
 
@@ -335,7 +365,7 @@ func Test_parseMise(t *testing.T) {
 			got, err := parseMise(filepath.Join(root, miseFile))
 			require.NoError(t, err)
 			assert.Equal(t, declared{
-				Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40",
+				Go: "1.27.1", Node: "24.21.0", Terraform: "1.16.2", AWSCLI: "2.36.40", Pnpm: "12.17.0",
 				Markdownlint: "0.23.2", Commitlint: "21.2.2",
 			}, got)
 		})
@@ -378,7 +408,7 @@ func Test_parseMise(t *testing.T) {
 
 		// 空のまま進むとどうなるかは parseMise の当該チェックが持つ。1つだけ落とす方針は
 		// miseWithout の宣言が持つ。
-		for _, key := range []string{"go", "node", terraformTool, awsCLITool} {
+		for _, key := range []string{"go", "node", terraformTool, awsCLITool, pnpmTool} {
 			t.Run(key+" が無ければエラーにする", func(t *testing.T) {
 				t.Parallel()
 				root := newRepo(t, miseWithout(t, key), soundDockerfile, soundGoMod)
@@ -524,7 +554,6 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Empty(t, dockerFromRe("node").FindAllString("FROM golang:1.0.0-a\n", -1))
 		})
 
-		// レジストリを明示した FROM は、宣言の写しとしては別物である。
 		t.Run("前置されたレジストリを掴まない", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM docker.io/library/golang:1.0.0-a\n", -1))
@@ -538,7 +567,6 @@ func Test_dockerFromRe(t *testing.T) {
 			assert.Len(t, dockerFromRe("golang").FindAllString(src, -1), 2)
 		})
 
-		// suffix は必須である（`-bookworm` 等）。無い FROM は写しとして扱わない。
 		t.Run("suffix の無い FROM を掴まない", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, dockerFromRe("golang").FindAllString("FROM golang:1.27.1\n", -1))
@@ -582,7 +610,7 @@ func Test_miseInstallRe(t *testing.T) {
 			assert.Len(t, re.FindAllString(src, -1), 2)
 		})
 
-		// 閉じ引用符が錨である。無い行を掴むと、版の終わりを決められないまま置換する。
+		// 閉じを錨にする理由は Test_bakedRe の「閉じの無い行を掴まない」ケースが持つ。
 		t.Run("閉じ引用符の無い行を掴まない", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, re.FindAllString("\t@mise install aqua:hashicorp/terraform@1.16.2\n", -1))
@@ -678,8 +706,7 @@ func Test_shellVarRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// レシピの継続行は空白で始まり、行末に `; \` を持つ。前置きを群の外で消費すると
-		// 置換でその空白ごと消え、シェルの継続が壊れる。
+		// 前置きを群の外で消費したときに何が起きるかは bakedRe の宣言が持つ。
 		t.Run("継続行の前置きと行末を保ったまま版だけ差し替える", func(t *testing.T) {
 			t.Parallel()
 			r := rule{label: "go の照合値", file: "Dockerfile", re: re, version: "1.27.1", count: 1}
@@ -706,29 +733,28 @@ func Test_shellVarRe(t *testing.T) {
 	})
 }
 
-func Test_npmPkgRe(t *testing.T) {
+func Test_npmDepRe(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("scope 付きのパッケージ名を掴む", func(t *testing.T) {
+		t.Run("scope 付きのパッケージ名を掴み、行末のカンマを残す", func(t *testing.T) {
 			t.Parallel()
-			// `@` がパッケージ名の中にも区切りにも現れる。錨を引用符から始めないと、
-			// scope の `@` を版の区切りと取り違える。
 			r := rule{
-				label: "commitlint", file: "Dockerfile",
-				re: npmPkgRe(commitlintPkg), version: "21.2.2", count: 1,
+				label: "commitlint", file: "package.json",
+				re: npmDepRe(commitlintPkg), version: "21.2.2", count: 1,
 			}
-			got, err := applyRule(r, "      \"@commitlint/cli@1.0.0\" \\\n")
+			got, err := applyRule(r, "    \"@commitlint/cli\": \"1.0.0\",\n")
 			require.NoError(t, err)
-			assert.Equal(t, "      \"@commitlint/cli@21.2.2\" \\\n", got)
+			assert.Equal(t, "    \"@commitlint/cli\": \"21.2.2\",\n", got)
 		})
 
-		t.Run("同じ行に並ぶ別パッケージを巻き込まない", func(t *testing.T) {
+		// 名前が後方一致で掴めると、`@scope/markdownlint-cli2` のような別のパッケージを書き換える。
+		t.Run("名前を末尾に含む別パッケージを掴まない", func(t *testing.T) {
 			t.Parallel()
-			src := "      \"markdownlint-cli2@0.23.2\" \"@commitlint/cli@21.2.2\"\n"
-			assert.Len(t, npmPkgRe(markdownlintPkg).FindAllString(src, -1), 1)
+			src := "    \"@x/markdownlint-cli2-extra\": \"0.1.0\",\n    \"markdownlint-cli2\": \"0.23.2\"\n"
+			assert.Len(t, npmDepRe(markdownlintPkg).FindAllString(src, -1), 1)
 		})
 	})
 }
@@ -761,7 +787,7 @@ func Test_rules(t *testing.T) {
 
 			got := map[string]target{}
 			for _, r := range rules(declared{
-				Go: "1", Node: "2", Terraform: "3", AWSCLI: "4", Markdownlint: "5", Commitlint: "6",
+				Go: "1", Node: "2", Terraform: "3", AWSCLI: "4", Markdownlint: "5", Commitlint: "6", Pnpm: "7",
 			}) {
 				got[r.label] = target{file: r.file, version: r.version, count: r.count}
 			}
@@ -771,10 +797,11 @@ func Test_rules(t *testing.T) {
 				"go ディレクティブ":       {file: "scripts/go.mod", version: "1", count: 1},
 				"terraform の導入":    {file: ".makefiles/host-tools.mk", version: "3", count: 1},
 				"AWS CLI の導入":      {file: ".makefiles/host-tools.mk", version: "4", count: 1},
+				"pnpm の導入":         {file: ".makefiles/host-tools.mk", version: "7", count: 1},
 				"go の照合値":          {file: "docker/tools/Dockerfile", version: "1", count: 1},
 				"node の照合値":        {file: "docker/tools/Dockerfile", version: "2", count: 1},
-				"markdownlint の導入": {file: "docker/tools/Dockerfile", version: "5", count: 1},
-				"commitlint の導入":   {file: "docker/tools/Dockerfile", version: "6", count: 1},
+				"markdownlint の導入": {file: "docker/tools/node/package.json", version: "5", count: 1},
+				"commitlint の導入":   {file: "docker/tools/node/package.json", version: "6", count: 1},
 			}, got)
 		})
 	})
@@ -868,8 +895,7 @@ func Test_bakedRe(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		// applyRule は置換に ${1} と ${2} を要する。群が欠けると、Go は参照をエラーにせず
-		// 空文字へ落とすので、前置きや閉じを失った内容が err == nil のまま書き出される。
+		// 群が欠けたときに何が起きるかは applyRule の当該チェックが持つ。
 		t.Run("前置きと閉じの2つの捕獲群を持つ", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, 2, re.NumSubexp())

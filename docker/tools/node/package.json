@@ -1,0 +1,9 @@
+{
+  "name": "node-tools",
+  "private": true,
+  "description": "node_tools 段が入れる道具。版は make versions-apply が mise.toml から書く。",
+  "dependencies": {
+    "@commitlint/cli": "21.2.4",
+    "markdownlint-cli2": "0.24.1"
+  }
+}

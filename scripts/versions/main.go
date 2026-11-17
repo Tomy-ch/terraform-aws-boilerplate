@@ -32,10 +32,11 @@ const (
 	miseFile = "mise.toml"
 	filePerm = 0o644
 
-	// terraformTool / awsCLITool は mise.toml の [tools] のキーであり、`.makefiles/host-tools.mk`
-	// が焼き込む名前でもある。同じ文字列が宣言側と写し側の両方の錨になる。
+	// terraformTool / awsCLITool / pnpmTool は mise.toml の [tools] のキーであり、
+	// `.makefiles/host-tools.mk` が焼き込む名前でもある。
 	terraformTool = "aqua:hashicorp/terraform"
 	awsCLITool    = "aqua:aws/aws-cli"
+	pnpmTool      = "aqua:pnpm/pnpm"
 
 	// npm の道具は、宣言側のキーと写し側の名前が `npm:` の有無だけ違う。**片方から導く** ——
 	// 2つ並べて書くと、パッケージ名を直した側だけが動く。
@@ -87,30 +88,26 @@ func bakedRe(anchor, closing string) *regexp.Regexp {
 		`(?m)^([^#\n]*?` + regexp.QuoteMeta(anchor) + `)` + versionPattern + `(` + regexp.QuoteMeta(closing) + `)`)
 }
 
-// miseInstallRe は `.makefiles/` が焼き込んだ `mise install "<名前>@<版>"` を捉えます。
 func miseInstallRe(tool string) *regexp.Regexp {
 	return bakedRe(`mise install "`+tool+`@`, `"`)
 }
 
-// npmPkgRe は Dockerfile が `npm install -g` へ渡す `"<パッケージ>@<版>"` を捉えます。
-func npmPkgRe(pkg string) *regexp.Regexp {
-	return bakedRe(`"`+pkg+`@`, `"`)
+func npmDepRe(pkg string) *regexp.Regexp {
+	return bakedRe(`"`+pkg+`": "`, `"`)
 }
 
-// shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。**ARG ではなく
-// シェル変数にするのは、`--build-arg` で外から差し替えられないようにするためである** ——
-// 差し替えられる値で照合する検査は、照合しているふりをしているだけになる。
+// shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。ARG ではなく
+// シェル変数なのは、`--build-arg` で差し替えられる値では照合にならないため。
 func shellVarRe(name string) *regexp.Regexp {
 	return bakedRe(name+`="`, `"`)
 }
 
 type declared struct {
-	Go        string
-	Node      string
-	Terraform string
-	AWSCLI    string
-	// Markdownlint / Commitlint は npm エコシステムの道具で、Dockerfile の node 段が
-	// `npm install -g` へ版付きで渡す。
+	Go           string
+	Node         string
+	Terraform    string
+	AWSCLI       string
+	Pnpm         string
 	Markdownlint string
 	Commitlint   string
 }
@@ -119,9 +116,8 @@ type declared struct {
 type rule struct {
 	label string
 	// file は root からの相対パス。
-	file string
-	re   *regexp.Regexp
-	// version は宣言側の値。
+	file    string
+	re      *regexp.Regexp
 	version string
 	// count は期待する一致件数。**下限ではなく厳密な件数である** —— 写しが増えたことも
 	// 減ったことも、どちらも宣言との対応が崩れた合図なので落とす。
@@ -174,8 +170,8 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 		// **照合した宣言をすべて名乗る。** 一部しか挙げないと、表から落ちた宣言があっても
 		// 報告は同じ形で緑を返す。
 		fmt.Fprintf(out,
-			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / markdownlint %s / commitlint %s の写しが宣言と一致しています\n",
-			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Markdownlint, v.Commitlint)
+			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / pnpm %s / markdownlint %s / commitlint %s の写しが宣言と一致しています\n",
+			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Pnpm, v.Markdownlint, v.Commitlint)
 
 		return nil
 	}
@@ -197,11 +193,12 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 
 // rules は、宣言から写しへの対応を返します。**写し先の対応表はここが唯一の在処である。**
 // ただし mise.toml 側で何を読むかは parseMise が別に持つ —— 道具を足すときは、declared の
-// フィールド・parseMise の分岐・欠落の検査・この表の4つを揃える必要がある。
+// フィールド・parseMise の表の行・applyAll の成功報告・この表を揃える必要がある。
 func rules(v declared) []rule {
 	const (
 		toolsDockerfile = "docker/tools/Dockerfile"
 		hostToolsMk     = ".makefiles/host-tools.mk"
+		nodeToolsPkg    = "docker/tools/node/package.json"
 	)
 
 	return []rule{
@@ -210,12 +207,13 @@ func rules(v declared) []rule {
 		{label: "go ディレクティブ", file: "scripts/go.mod", re: goDirectiveRe, version: v.Go, count: 1},
 		{label: "terraform の導入", file: hostToolsMk, re: miseInstallRe(terraformTool), version: v.Terraform, count: 1},
 		{label: "AWS CLI の導入", file: hostToolsMk, re: miseInstallRe(awsCLITool), version: v.AWSCLI, count: 1},
+		{label: "pnpm の導入", file: hostToolsMk, re: miseInstallRe(pnpmTool), version: v.Pnpm, count: 1},
 		// ベースイメージの実ランタイムと突き合わせる側の値（ADR-0503 決定3）。イメージの
-		// タグ（上の2行）が合っていても、tag が指す中身がずれていればこちらが落とす。
+		// タグ（golang / node イメージの行）が合っていても、tag が指す中身がずれていればこちらが落とす。
 		{label: "go の照合値", file: toolsDockerfile, re: shellVarRe("declared_go"), version: v.Go, count: 1},
 		{label: "node の照合値", file: toolsDockerfile, re: shellVarRe("declared_node"), version: v.Node, count: 1},
-		{label: "markdownlint の導入", file: toolsDockerfile, re: npmPkgRe(markdownlintPkg), version: v.Markdownlint, count: 1},
-		{label: "commitlint の導入", file: toolsDockerfile, re: npmPkgRe(commitlintPkg), version: v.Commitlint, count: 1},
+		{label: "markdownlint の導入", file: nodeToolsPkg, re: npmDepRe(markdownlintPkg), version: v.Markdownlint, count: 1},
+		{label: "commitlint の導入", file: nodeToolsPkg, re: npmDepRe(commitlintPkg), version: v.Commitlint, count: 1},
 	}
 }
 
@@ -313,6 +311,7 @@ func parseMise(path string) (declared, error) {
 		{"node", &v.Node},
 		{terraformTool, &v.Terraform},
 		{awsCLITool, &v.AWSCLI},
+		{pnpmTool, &v.Pnpm},
 		{markdownlintTool, &v.Markdownlint},
 		{commitlintTool, &v.Commitlint},
 	} {
