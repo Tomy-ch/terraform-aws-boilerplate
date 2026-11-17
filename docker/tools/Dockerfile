@@ -2,7 +2,6 @@
 # ここに含めない理由は docker/tools/README.md が持つ（ADR-0503 決定1・2・5・10・11）。
 # **terraform をここへ足さない。**
 
-# mise 本体の版。全ステージ共通。
 ARG MISE_VERSION=v2026.9.9
 
 
@@ -38,7 +37,6 @@ COPY mise.toml ./
 RUN mise trust mise.toml
 
 # ベースイメージの Go が mise.toml の宣言と一致することを強制する（ADR-0503 決定3）。
-# ずれたまま進むと、ホストとコンテナで別の Go がツールをビルドする。
 #
 # 値をここで mise.toml から直接読まない理由は mise.toml 冒頭が持つ。焼き込みは
 # `make versions-apply` が書き `versions-check` が守る。
@@ -50,7 +48,6 @@ RUN set -eu; \
       echo "docker/tools/Dockerfile の FROM と mise.toml の go を揃えてください（make versions-apply）" >&2; exit 1; }
 
 # トークンの渡し方と未認証時の制限は docker/tools/README.md が持つ（ADR-0503 決定12）。
-# 未指定でも未認証で成立するため、手元のビルドは従来どおり動く。
 # go: backend は mise.toml の go を mise 管理の Go として要求するが、この段の Go はベースイメージが
 # 提供する（版の一致は上の RUN が守る）。
 RUN --mount=type=secret,id=github_token \
@@ -90,8 +87,7 @@ RUN mkdir /out \
 # ==============================================================================
 FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go_tools
 
-# git: 運用機構の多くが git を呼ぶ（base-branch は ls-remote、release は tag、commitlint の
-#      範囲取得は rev-list）。テストもこれらを実際に起動して引数列を検査する。
+# git: 運用機構とそのテストが git を実際に起動する（ADR-0503 決定6）。
 # make: レシピをコンテナ側で実行する経路のため。
 RUN apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git make && rm -rf /var/lib/apt/lists/*
 
@@ -113,39 +109,68 @@ ENTRYPOINT []
 CMD []
 
 # ==============================================================================
-# node_tools: npm エコシステムの道具。markdownlint-cli2 / commitlint
+# node_tools_builder: pnpm で道具を lockfile どおりに入れる
 # ==============================================================================
 # Node ランタイムは公式の alpine イメージを使う。mise の Node は alpine 上でソースからの
 # ビルドを要求するため、ここはベースイメージに頼る。
 #
 # この段が mise を使わない理由は docker/tools/README.md が持つ。
-FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools_builder
 
 # pipefail 付きのシェルへ切り替える理由は go_tools_builder 段の SHELL 直上が持つ。
 # alpine の `sh` は busybox で、pipefail を持たない。
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
+RUN apk add --no-cache ca-certificates curl
+
+# 版と照合値は make pin-pnpm-resolve が mise.toml の宣言から書く写しで、make pin-pnpm-check が守る。
+ARG TARGETARCH
+RUN set -eu; \
+    pnpm_version="12.17.0"; \
+    pnpm_sha256_amd64="0a3f8f12f4d894ba5013c7d445136eec5260dcffb63477247ca9b1c23d4fe27f"; \
+    pnpm_sha256_arm64="57f5f13647270dd55f4c463b5ad8e6e9157fc0463bb1ac62216da7c18531cb5b"; \
+    case "${TARGETARCH:-}" in \
+      amd64) asset=x64; sum="$pnpm_sha256_amd64" ;; \
+      arm64) asset=arm64; sum="$pnpm_sha256_arm64" ;; \
+      *) echo "pnpm の配布物が無いアーキテクチャです: '${TARGETARCH:-}'（BuildKit でビルドする）" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+      "https://github.com/pnpm/pnpm/releases/download/v${pnpm_version}/pnpm-linux-${asset}-musl.tar.gz" -o /tmp/pnpm.tar.gz; \
+    echo "${sum}  /tmp/pnpm.tar.gz" | sha256sum -c -; \
+    mkdir -p /opt/pnpm; \
+    tar -xzf /tmp/pnpm.tar.gz -C /opt/pnpm; \
+    rm /tmp/pnpm.tar.gz; \
+    ln -s /opt/pnpm/pnpm /usr/local/bin/pnpm; \
+    [ "$(pnpm --version)" = "$pnpm_version" ]
+
+# frozen で入れる根拠は ADR-0503 決定17・18。package.json の版は make versions-apply が mise.toml から書く写しである。
+WORKDIR /opt/node-tools
+COPY docker/tools/node/package.json docker/tools/node/pnpm-lock.yaml docker/tools/node/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod --store-dir /tmp/pnpm-store
+
+# ==============================================================================
+# node_tools: npm エコシステムの道具。markdownlint-cli2 / commitlint
+# ==============================================================================
+# pnpm と curl はこの段へ持ち込まない（ADR-0503 決定11）。
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS node_tools
+
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+
 # git: commitlint が commit の範囲を読む。
 RUN apk add --no-cache bash ca-certificates git make
 
-WORKDIR /app
-
-# 版の出所は mise.toml だけである（ADR-0503 決定1）。この段が mise.toml を読まない理由は
-# mise.toml 冒頭が持つ。
-#
-# `--ignore-scripts` の理由と、in-tree のパッケージが現れたときの移行先は
-# docker/tools/README.md と ADR-0503 決定16-18 が持つ。
+# Node の版をベースイメージと照らす（ADR-0503 決定3）。
 RUN set -eu; \
     declared_node="26.13.1"; \
     actual_node="$(node --version | sed 's|^v||')"; \
     [ "$declared_node" = "$actual_node" ] || { \
       echo "Node の版がずれています: 宣言=$declared_node / ベースイメージ=$actual_node" >&2; \
-      echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください（make versions-apply）" >&2; exit 1; }; \
-    npm install -g --ignore-scripts \
-      "markdownlint-cli2@0.24.1" \
-      "@commitlint/cli@21.2.4"; \
-    npm cache clean --force; \
-    rm -rf /root/.npm
+      echo "docker/tools/Dockerfile の FROM と mise.toml の node を揃えてください（make versions-apply）" >&2; exit 1; }
+
+COPY --from=node_tools_builder /opt/node-tools /opt/node-tools
+ENV PATH="/opt/node-tools/node_modules/.bin:$PATH"
+
+WORKDIR /app
 
 # root で動かさない理由は go_tools 段の USER 直上が持つ。
 USER 65534:65534

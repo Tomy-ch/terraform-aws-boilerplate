@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -36,7 +37,7 @@ const (
 	proxyBase  = "https://proxy.golang.org/"
 	bypassFile = ".github/go-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
-	defaultWindowDays = 7
+	defaultWindowDays = cooldown.RegistryWindowDays
 	maxBypassMonths   = 3
 
 	fetchTimeout = 30 * time.Second

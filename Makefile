@@ -55,6 +55,7 @@ include .makefiles/terraform/operation/ci.mk
 # Docker関連
 include .makefiles/docker/lint.mk
 include .makefiles/docker/pin.mk
+include .makefiles/docker/node-tools.mk
 
 # GitHub関連
 include .makefiles/github/operation/setup-repository.mk

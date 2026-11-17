@@ -12,7 +12,8 @@
 | --- | --- | --- |
 | `go_tools_builder` | `golang:*-bookworm` | mise を導入し、`mise.toml` が宣言する道具をビルドする段 |
 | `go_tools` | `golang:*-bookworm` | ビルド済みの道具だけを持つ提供段。mise 本体と install のキャッシュを残さない |
-| `node_tools` | `node:*-alpine` | npm エコシステムの道具 |
+| `node_tools_builder` | `node:*-alpine` | pnpm を照合して導入し、道具を lockfile どおりに入れる段 |
+| `node_tools` | `node:*-alpine` | 入れた道具だけを持つ提供段。pnpm と curl を残さない |
 
 段を分けるのは、提供段に version manager 本体と install のキャッシュを残さないためである
 （ADR-0503 決定11）。ベースイメージは digest で固定する（同 決定10）—— tag だけの参照は、
@@ -38,12 +39,26 @@
 実行する。版は `docker-compose.yaml` の `image:` の tag が、digest は `docker/images-pin.toml` が持つ
 （ADR-0503 決定4・10、ADR-0501 決定19）。
 
-`node_tools` は mise を持たず、install は npm が行う —— mise は宣言された node が mise 経由で
+`node_tools` は mise を持たず、install は pnpm が行う —— mise は宣言された node が mise 経由で
 入っていることを要求し、ベースイメージの node を認めないためである。**この段は `mise.toml` を
-読まない。** 版は `make versions-apply` が書き `make versions-check` が守る写しとして Dockerfile に
-在り、宣言を読む実装は [`scripts/lib/misetoml`](../../scripts/README.md) だけに置く。
-`--ignore-scripts` を付けるのは、ハッシュが一致した配布物であっても script は install 時に走る
-ためで、実行させないことでその余地を無くす（同 決定16）。
+読まない。** 宣言を読む実装は [`scripts/lib/misetoml`](../../scripts/README.md) だけに置き、
+この段が使う値はすべて写しとして置く。
+
+| 写し | 書く入口 | 守る入口 |
+| --- | --- | --- |
+| [`node/package.json`](node/package.json) の道具の版 | `make versions-apply` | `make versions-check` |
+| [`node/pnpm-workspace.yaml`](node/pnpm-workspace.yaml) の供給網の窓と、窓から外す直接の依存の一覧 | `make versions-apply` | `make versions-check` |
+| [`node/pnpm-lock.yaml`](node/pnpm-lock.yaml)（推移的な依存の版と integrity） | `make node-tools-lock` | `make node-tools-lock-check`（宣言との整合）、`make node-tools-image-check`（integrity の照合） |
+| Dockerfile の pnpm の版と配布物の sha256 | `make pin-pnpm-resolve` | `make pin-pnpm-check`（版と形）、`make node-tools-image-check`（照合） |
+
+pnpm は単体のバイナリを GitHub Release から取り、sha256 を照合してから置く。道具は lockfile を
+frozen で入れる（ADR-0503 決定17・18）。install 時の script の実行は
+[`node/pnpm-workspace.yaml`](node/pnpm-workspace.yaml) が宣言し、宣言は空である ——
+script を持つ依存が現れた時点で install が落ちる。
+
+lockfile の生成と照合はホストの pnpm で行う。このイメージは lockfile から組まれるので、
+lockfile がずれた時点でイメージ自体が組めなくなるためである。pnpm は `make host-tools-install`
+が入れる。
 
 ## docker-compose サービス
 

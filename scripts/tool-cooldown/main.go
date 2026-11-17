@@ -36,6 +36,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdfence"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -45,8 +46,8 @@ const (
 	miseFile   = "mise.toml"
 	bypassFile = ".github/tool-cooldown-bypass.toml" //nolint:gosec // 資格情報ではなくバイパス lockfile のパス
 
-	releaseWindowDays  = 14
-	registryWindowDays = 7
+	releaseWindowDays  = cooldown.ReleaseWindowDays
+	registryWindowDays = cooldown.RegistryWindowDays
 
 	maxBypassMonths = 3
 

@@ -224,7 +224,9 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."versions-check.yaml:versions-check"]
-classes = ["mise"]
+classes = ["mise", "docker-hub"]
+# node_tools のイメージを組むとき、alpine の apk が取るパッケージの配布元。
+extra = ["dl-cdn.alpinelinux.org"]
 
 [job."secret-scan.yaml:secret-scan"]
 classes = ["mise"]
