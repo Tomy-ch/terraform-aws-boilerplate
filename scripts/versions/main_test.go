@@ -49,6 +49,7 @@ RUN set -eu; \
     declared_go="1.27.1"; \
     true
 FROM golang:1.27.1-bookworm@sha256:aaa AS tools
+FROM node:24.21.0-alpine@sha256:bbb AS node_tools_builder
 FROM node:24.21.0-alpine@sha256:bbb AS node_tools
 RUN set -eu; \
     declared_node="24.21.0"; \
@@ -62,6 +63,15 @@ const soundPackageJSON = `{
     "markdownlint-cli2": "0.23.2"
   }
 }
+`
+
+// soundWorkspace は、窓と除外の一覧を持つ pnpm-workspace.yaml。
+const soundWorkspace = `minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - '@commitlint/cli'
+  - 'markdownlint-cli2'
+
+strictDepBuilds: true
 `
 
 // editorconfig-checker-enable
@@ -102,6 +112,7 @@ func newRepo(t *testing.T, mise, dockerfile, gomod string, hostTools ...string) 
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".makefiles", "host-tools.mk"), []byte(mk), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "docker", "tools", "node"), 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "docker", "tools", "node", "package.json"), []byte(soundPackageJSON), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "docker", "tools", "node", "pnpm-workspace.yaml"), []byte(soundWorkspace), 0o600))
 
 	return root
 }
@@ -213,6 +224,24 @@ func Test_run(t *testing.T) {
 
 		// 起点にする理由は driftedHostTools の宣言と同じ —— **package.json へ apply が書き込む
 		// 経路と、check がその名前を報告する経路を実行する。**
+		t.Run("apply は pnpm-workspace.yaml の窓と除外の一覧も揃える", func(t *testing.T) {
+			t.Parallel()
+			drifted := strings.NewReplacer(
+				"minimumReleaseAge: 10080", "minimumReleaseAge: 1",
+				"  - 'markdownlint-cli2'\n", "",
+			).Replace(soundWorkspace)
+			require.NotEqual(t, soundWorkspace, drifted, "ずらせていない")
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+			ws := filepath.Join(root, "docker", "tools", "node", "pnpm-workspace.yaml")
+			require.NoError(t, os.WriteFile(ws, []byte(drifted), 0o600))
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			assert.Contains(t, out.String(), "pnpm-workspace.yaml")
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundWorkspace, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
+		})
+
 		t.Run("apply は package.json の npm の版も揃える", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.NewReplacer(
@@ -477,10 +506,28 @@ func Test_applyRule(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "FROM golang:1.27.1-bookworm AS a\nFROM golang:1.27.1-alpine AS b\n", got)
 		})
+
+		// 除外の一覧は版ではなく範囲ごと置き換える。要素が増えても減っても、宣言どおりの一覧へ戻す。
+		t.Run("block は一致した範囲を丸ごと置き換える", func(t *testing.T) {
+			t.Parallel()
+			br := rule{label: "除外", file: "w", re: excludeBlockRe, block: excludeBlock(), count: 1}
+			src := "minimumReleaseAge: 1\nminimumReleaseAgeExclude:\n  - stale\n  - '@commitlint/cli'\n  - other\n\nstrictDepBuilds: true\n"
+			got, err := applyRule(br, src)
+			require.NoError(t, err)
+			assert.Equal(t, "minimumReleaseAge: 1\n"+excludeBlock()+"\nstrictDepBuilds: true\n", got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		// 一覧の見出しが消えた入力を「一致」と報告しない。
+		t.Run("block の範囲が見つからなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			br := rule{label: "除外", file: "w", re: excludeBlockRe, block: excludeBlock(), count: 1}
+			_, err := applyRule(br, "minimumReleaseAge: 1\nstrictDepBuilds: true\n")
+			require.ErrorIs(t, err, errShape)
+		})
 
 		// 下限ではなく厳密な件数である理由は rule.count の宣言が持つ。
 		for name, src := range map[string]string{
@@ -733,6 +780,22 @@ func Test_shellVarRe(t *testing.T) {
 	})
 }
 
+func Test_excludeBlock(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// package.json へ版を書く道具と同じ名前を、並びを決めて引用符付きで並べる。
+		t.Run("npm の道具を名前順に並べる", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t,
+				"minimumReleaseAgeExclude:\n  - '@commitlint/cli'\n  - 'markdownlint-cli2'\n",
+				excludeBlock())
+		})
+	})
+}
+
 func Test_npmDepRe(t *testing.T) {
 	t.Parallel()
 
@@ -793,7 +856,7 @@ func Test_rules(t *testing.T) {
 			}
 			assert.Equal(t, map[string]target{
 				"golang イメージ":      {file: "docker/tools/Dockerfile", version: "1", count: 2},
-				"node イメージ":        {file: "docker/tools/Dockerfile", version: "2", count: 1},
+				"node イメージ":        {file: "docker/tools/Dockerfile", version: "2", count: 2},
 				"go ディレクティブ":       {file: "scripts/go.mod", version: "1", count: 1},
 				"terraform の導入":    {file: ".makefiles/host-tools.mk", version: "3", count: 1},
 				"AWS CLI の導入":      {file: ".makefiles/host-tools.mk", version: "4", count: 1},
@@ -802,6 +865,8 @@ func Test_rules(t *testing.T) {
 				"node の照合値":        {file: "docker/tools/Dockerfile", version: "2", count: 1},
 				"markdownlint の導入": {file: "docker/tools/node/package.json", version: "5", count: 1},
 				"commitlint の導入":   {file: "docker/tools/node/package.json", version: "6", count: 1},
+				"pnpm の供給網の窓":      {file: "docker/tools/node/pnpm-workspace.yaml", version: "10080", count: 1},
+				"pnpm の窓の除外":       {file: "docker/tools/node/pnpm-workspace.yaml", count: 1},
 			}, got)
 		})
 	})

@@ -46,13 +46,14 @@
 | 写し | 書く入口 | 守る入口 |
 | --- | --- | --- |
 | [`node/package.json`](node/package.json) の道具の版 | `make versions-apply` | `make versions-check` |
-| [`node/pnpm-lock.yaml`](node/pnpm-lock.yaml)（推移的な依存の版と integrity） | `make node-tools-lock` | `make node-tools-lock-check` |
-| Dockerfile の pnpm の版と配布物の sha256 | `make pin-pnpm-resolve` | `make pin-pnpm-check` |
+| [`node/pnpm-workspace.yaml`](node/pnpm-workspace.yaml) の供給網の窓と、窓から外す直接の依存の一覧 | `make versions-apply` | `make versions-check` |
+| [`node/pnpm-lock.yaml`](node/pnpm-lock.yaml)（推移的な依存の版と integrity） | `make node-tools-lock` | `make node-tools-lock-check`（宣言との整合）、`make node-tools-image-check`（integrity の照合） |
+| Dockerfile の pnpm の版と配布物の sha256 | `make pin-pnpm-resolve` | `make pin-pnpm-check`（版と形）、`make node-tools-image-check`（照合） |
 
 pnpm は単体のバイナリを GitHub Release から取り、sha256 を照合してから置く。道具は lockfile を
 frozen で入れる（ADR-0503 決定17・18）。install 時の script の実行は
 [`node/pnpm-workspace.yaml`](node/pnpm-workspace.yaml) が宣言し、宣言は空である ——
-script を持つ依存が現れた時点で install が落ちる。推移的な依存への供給網の窓も同じファイルが持つ。
+script を持つ依存が現れた時点で install が落ちる。
 
 lockfile の生成と照合はホストの pnpm で行う。このイメージは lockfile から組まれるので、
 lockfile がずれた時点でイメージ自体が組めなくなるためである。pnpm は `make host-tools-install`

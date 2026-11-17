@@ -21,9 +21,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -31,6 +33,8 @@ import (
 const (
 	miseFile = "mise.toml"
 	filePerm = 0o644
+
+	minutesPerDay = 24 * 60
 
 	// terraformTool / awsCLITool / pnpmTool は mise.toml の [tools] のキーであり、
 	// `.makefiles/host-tools.mk` が焼き込む名前でもある。
@@ -96,6 +100,23 @@ func npmDepRe(pkg string) *regexp.Regexp {
 	return bakedRe(`"`+pkg+`": "`, `"`)
 }
 
+var excludeBlockRe = regexp.MustCompile(`(?m)^minimumReleaseAgeExclude:\n(?:[ \t]+- .*\n)*`)
+
+// excludeBlock は、package.json へ版を書く npm の道具を窓から外す一覧を返します。名前を
+// package.json の写しと同じ定数から作るので、依存を足し外ししたとき一覧だけが取り残されない。
+func excludeBlock() string {
+	pkgs := []string{markdownlintPkg, commitlintPkg}
+	sort.Strings(pkgs)
+
+	var b strings.Builder
+	b.WriteString("minimumReleaseAgeExclude:\n")
+	for _, p := range pkgs {
+		fmt.Fprintf(&b, "  - '%s'\n", p)
+	}
+
+	return b.String()
+}
+
 // shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。ARG ではなく
 // シェル変数なのは、`--build-arg` で差し替えられる値では照合にならないため。
 func shellVarRe(name string) *regexp.Regexp {
@@ -122,6 +143,8 @@ type rule struct {
 	// count は期待する一致件数。**下限ではなく厳密な件数である** —— 写しが増えたことも
 	// 減ったことも、どちらも宣言との対応が崩れた合図なので落とす。
 	count int
+	// block が空でなければ、一致した範囲をこの内容で丸ごと置き換える。version は使わない。
+	block string
 }
 
 // main は判断を持ちません。分岐は run に置きます（scripts/README.md の Test Strategy）。
@@ -170,8 +193,8 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 		// **照合した宣言をすべて名乗る。** 一部しか挙げないと、表から落ちた宣言があっても
 		// 報告は同じ形で緑を返す。
 		fmt.Fprintf(out,
-			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / pnpm %s / markdownlint %s / commitlint %s の写しが宣言と一致しています\n",
-			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Pnpm, v.Markdownlint, v.Commitlint)
+			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / pnpm %s（host-tools.mk） / markdownlint %s / commitlint %s / pnpm の窓 %d 日 の写しが宣言と一致しています\n",
+			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Pnpm, v.Markdownlint, v.Commitlint, cooldown.RegistryWindowDays)
 
 		return nil
 	}
@@ -199,11 +222,12 @@ func rules(v declared) []rule {
 		toolsDockerfile = "docker/tools/Dockerfile"
 		hostToolsMk     = ".makefiles/host-tools.mk"
 		nodeToolsPkg    = "docker/tools/node/package.json"
+		pnpmWorkspace   = "docker/tools/node/pnpm-workspace.yaml"
 	)
 
 	return []rule{
 		{label: "golang イメージ", file: toolsDockerfile, re: dockerFromRe("golang"), version: v.Go, count: 2},
-		{label: "node イメージ", file: toolsDockerfile, re: dockerFromRe("node"), version: v.Node, count: 1},
+		{label: "node イメージ", file: toolsDockerfile, re: dockerFromRe("node"), version: v.Node, count: 2},
 		{label: "go ディレクティブ", file: "scripts/go.mod", re: goDirectiveRe, version: v.Go, count: 1},
 		{label: "terraform の導入", file: hostToolsMk, re: miseInstallRe(terraformTool), version: v.Terraform, count: 1},
 		{label: "AWS CLI の導入", file: hostToolsMk, re: miseInstallRe(awsCLITool), version: v.AWSCLI, count: 1},
@@ -214,6 +238,11 @@ func rules(v declared) []rule {
 		{label: "node の照合値", file: toolsDockerfile, re: shellVarRe("declared_node"), version: v.Node, count: 1},
 		{label: "markdownlint の導入", file: nodeToolsPkg, re: npmDepRe(markdownlintPkg), version: v.Markdownlint, count: 1},
 		{label: "commitlint の導入", file: nodeToolsPkg, re: npmDepRe(commitlintPkg), version: v.Commitlint, count: 1},
+		// 推移的な依存へ掛ける pnpm の窓は、tool-cooldown の gate と同じ日数を分で書く。
+		{label: "pnpm の供給網の窓", file: pnpmWorkspace, re: bakedRe("minimumReleaseAge: ", "\n"),
+			version: strconv.Itoa(cooldown.RegistryWindowDays * minutesPerDay), count: 1},
+		// 直接の依存は窓から外す。その窓は mise.toml の宣言に対して tool-cooldown の gate が掛ける。
+		{label: "pnpm の窓の除外", file: pnpmWorkspace, re: excludeBlockRe, block: excludeBlock(), count: 1},
 	}
 }
 
@@ -261,6 +290,16 @@ func plan(rs []rule, root string) (map[string]string, error) {
 
 // applyRule は1つの rule を内容へ当てます。一致件数が期待と違えばエラーにします。
 func applyRule(r rule, content string) (string, error) {
+	if r.block != "" {
+		found := len(r.re.FindAllString(content, -1))
+		if found != r.count {
+			return "", xerrors.Wrap(errShape,
+				fmt.Sprintf("%s (%s): 一致が %d 件、期待は %d 件", r.label, r.file, found, r.count))
+		}
+
+		return r.re.ReplaceAllLiteralString(content, r.block), nil
+	}
+
 	// **宣言が空なら書き換えない。** 空の版で書き換えると `FROM golang:-bookworm` のような
 	// 壊れた行を作り、しかも件数のガードは通る。
 	if r.version == "" {
