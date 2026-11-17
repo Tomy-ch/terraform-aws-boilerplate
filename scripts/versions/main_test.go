@@ -224,23 +224,26 @@ func Test_run(t *testing.T) {
 
 		// 起点にする理由は driftedHostTools の宣言と同じ —— **package.json へ apply が書き込む
 		// 経路と、check がその名前を報告する経路を実行する。**
-		t.Run("apply は pnpm-workspace.yaml の窓と除外の一覧も揃える", func(t *testing.T) {
-			t.Parallel()
-			drifted := strings.NewReplacer(
-				"minimumReleaseAge: 10080", "minimumReleaseAge: 1",
-				"  - 'markdownlint-cli2'\n", "",
-			).Replace(soundWorkspace)
-			require.NotEqual(t, soundWorkspace, drifted, "ずらせていない")
-			root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
-			ws := filepath.Join(root, "docker", "tools", "node", "pnpm-workspace.yaml")
-			require.NoError(t, os.WriteFile(ws, []byte(drifted), 0o600))
-			var out bytes.Buffer
+		// 窓と除外は別の rule が持つ。1つの入力で両方をずらすと、片方の rule が死んでも他方が落とす。
+		for name, drifted := range map[string]string{
+			"窓":     strings.Replace(soundWorkspace, "minimumReleaseAge: 10080", "minimumReleaseAge: 1", 1),
+			"除外の一覧": strings.Replace(soundWorkspace, "  - 'markdownlint-cli2'\n", "", 1),
+		} {
+			t.Run("apply は pnpm-workspace.yaml の"+name+"を揃え、check は書き換えない", func(t *testing.T) {
+				t.Parallel()
+				require.NotEqual(t, soundWorkspace, drifted, "ずらせていない")
+				root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+				ws := filepath.Join(root, "docker", "tools", "node", "pnpm-workspace.yaml")
+				require.NoError(t, os.WriteFile(ws, []byte(drifted), 0o600))
+				var out bytes.Buffer
 
-			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
-			assert.Contains(t, out.String(), "pnpm-workspace.yaml")
-			require.NoError(t, run([]string{"apply"}, root, &out))
-			assert.Equal(t, soundWorkspace, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
-		})
+				require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+				assert.Contains(t, out.String(), "pnpm-workspace.yaml")
+				assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
+				require.NoError(t, run([]string{"apply"}, root, &out))
+				assert.Equal(t, soundWorkspace, readAt(t, root, "docker", "tools", "node", "pnpm-workspace.yaml"))
+			})
+		}
 
 		t.Run("apply は package.json の npm の版も揃える", func(t *testing.T) {
 			t.Parallel()
@@ -289,6 +292,22 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out.String(), "1.16.2")
 			assert.Contains(t, out.String(), "2.36.40")
 			assert.Contains(t, out.String(), "24.21.0")
+			assert.Contains(t, out.String(), "pnpm 12.17.0")
+			assert.Contains(t, out.String(), "markdownlint 0.23.2")
+			assert.Contains(t, out.String(), "commitlint 21.2.2")
+			assert.Contains(t, out.String(), "窓 7 日")
+		})
+
+		// 起点にする理由は driftedHostTools の宣言と同じ。
+		t.Run("apply は host-tools.mk の pnpm の版も揃える", func(t *testing.T) {
+			t.Parallel()
+			drifted := strings.ReplaceAll(soundHostTools, "pnpm@12.17.0", "pnpm@1.0.0")
+			root := newRepo(t, soundMise, soundDockerfile, soundGoMod, drifted)
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errDrift)
+			require.NoError(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, soundHostTools, readAt(t, root, ".makefiles", "host-tools.mk"))
 		})
 	})
 
@@ -318,6 +337,46 @@ func Test_run(t *testing.T) {
 			require.Error(t, run([]string{"apply"}, root, &out))
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
+
+		for _, name := range []string{"package.json", "pnpm-workspace.yaml"} {
+			t.Run(name+" が無ければ名指しでエラーにする", func(t *testing.T) {
+				t.Parallel()
+				root := newRepo(t, soundMise, soundDockerfile, soundGoMod)
+				require.NoError(t, os.Remove(filepath.Join(root, "docker", "tools", "node", name)))
+				var out bytes.Buffer
+
+				err := run([]string{"check"}, root, &out)
+				require.ErrorIs(t, err, os.ErrNotExist)
+				assert.Contains(t, err.Error(), name)
+			})
+		}
+
+		// 写し先の行が消えた・形が変わった入力を「一致」と報告しない。
+		type broken struct {
+			file    []string
+			replace [2]string
+		}
+		for name, b := range map[string]broken{
+			"pnpm の窓の行が無い":                {[]string{"docker", "tools", "node", "pnpm-workspace.yaml"}, [2]string{"minimumReleaseAge: 10080\n", ""}},
+			"除外の一覧の見出しが無い":                {[]string{"docker", "tools", "node", "pnpm-workspace.yaml"}, [2]string{"minimumReleaseAgeExclude:\n", ""}},
+			"package.json の依存の書式が違う":      {[]string{"docker", "tools", "node", "package.json"}, [2]string{`"markdownlint-cli2": "`, `"markdownlint-cli2" : "`}},
+			"host-tools.mk の pnpm の導入が無い": {[]string{".makefiles", "host-tools.mk"}, [2]string{"\t@mise install \"aqua:pnpm/pnpm@12.17.0\"\n", ""}},
+			"node イメージの FROM が1件しか無い":     {[]string{"docker", "tools", "Dockerfile"}, [2]string{"FROM node:24.21.0-alpine@sha256:bbb AS node_tools_builder\n", ""}},
+		} {
+			t.Run(name+"なら errShape で落とし、何も書かない", func(t *testing.T) {
+				t.Parallel()
+				root := newRepo(t, soundMise, strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0"), soundGoMod)
+				path := filepath.Join(append([]string{root}, b.file...)...)
+				before := readAt(t, root, b.file...)
+				after := strings.Replace(before, b.replace[0], b.replace[1], 1)
+				require.NotEqual(t, before, after, "壊せていない")
+				require.NoError(t, os.WriteFile(path, []byte(after), 0o600))
+				var out bytes.Buffer
+
+				require.ErrorIs(t, run([]string{"apply"}, root, &out), errShape)
+				assert.Contains(t, readAt(t, root, "docker", "tools", "Dockerfile"), "golang:1.26.0")
+			})
+		}
 	})
 }
 
@@ -510,7 +569,7 @@ func Test_applyRule(t *testing.T) {
 		// 除外の一覧は版ではなく範囲ごと置き換える。要素が増えても減っても、宣言どおりの一覧へ戻す。
 		t.Run("block は一致した範囲を丸ごと置き換える", func(t *testing.T) {
 			t.Parallel()
-			br := rule{label: "除外", file: "w", re: excludeBlockRe, block: excludeBlock(), count: 1}
+			br := rule{label: "除外", file: "w", blockKey: excludeKey, block: excludeBlock(), count: 1}
 			src := "minimumReleaseAge: 1\nminimumReleaseAgeExclude:\n  - stale\n  - '@commitlint/cli'\n  - other\n\nstrictDepBuilds: true\n"
 			got, err := applyRule(br, src)
 			require.NoError(t, err)
@@ -521,10 +580,22 @@ func Test_applyRule(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		for name, src := range map[string]string{
+			"見出しが2件ある": "minimumReleaseAgeExclude:\n  - a\nminimumReleaseAgeExclude:\n  - b\n",
+			"キーが引用符付き": "\"minimumReleaseAgeExclude\":\n  - a\n",
+		} {
+			t.Run("block の"+name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				br := rule{label: "除外", file: "w", blockKey: excludeKey, block: excludeBlock(), count: 1}
+				_, err := applyRule(br, src)
+				require.ErrorIs(t, err, errShape)
+			})
+		}
+
 		// 一覧の見出しが消えた入力を「一致」と報告しない。
 		t.Run("block の範囲が見つからなければエラーにする", func(t *testing.T) {
 			t.Parallel()
-			br := rule{label: "除外", file: "w", re: excludeBlockRe, block: excludeBlock(), count: 1}
+			br := rule{label: "除外", file: "w", blockKey: excludeKey, block: excludeBlock(), count: 1}
 			_, err := applyRule(br, "minimumReleaseAge: 1\nstrictDepBuilds: true\n")
 			require.ErrorIs(t, err, errShape)
 		})
@@ -776,6 +847,114 @@ func Test_shellVarRe(t *testing.T) {
 		t.Run("別の名前の変数を掴まない", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, re.FindAllString("    declared_node=\"24.21.0\"; \\\n", -1))
+		})
+	})
+}
+
+func Test_yamlValueSpans(t *testing.T) {
+	t.Parallel()
+
+	const key = "k"
+	value := func(t *testing.T, src string) []string {
+		t.Helper()
+		var got []string
+		for _, sp := range yamlValueSpans(src, key) {
+			got = append(got, src[sp[0]:sp[1]])
+		}
+
+		return got
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 要素の形で終わりを決めると、間に挟まった空行やコメントの後ろの要素が範囲の外に残る。
+		tests := map[string]struct{ src, want string }{
+			"字下げした要素":         {"k:\n  - a\n  - b\nnext: 1\n", "k:\n  - a\n  - b\n"},
+			"要素の間のコメントと空行":    {"k:\n  - a\n# c\n\n  # d\n  - evil\nnext: 1\n", "k:\n  - a\n# c\n\n  # d\n  - evil\n"},
+			"字下げの無い要素":        {"k:\n- a\n- stale\nnext: 1\n", "k:\n- a\n- stale\n"},
+			"末尾の空行とコメントは残す":   {"k:\n  - a\n\n# next の説明\nnext: 1\n", "k:\n  - a\n"},
+			"末尾に改行が無い":        {"k:\n  - a\n  - b", "k:\n  - a\n  - b"},
+			"フロースタイルは見出しの行だけ": {"k: [a, b]\nnext: 1\n", "k: [a, b]\n"},
+		}
+		for name, tc := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, []string{tc.want}, value(t, tc.src))
+			})
+		}
+
+		t.Run("出現ごとに返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, yamlValueSpans("k:\n  - a\nk:\n  - b\n", key), 2)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, src := range map[string]string{
+			"キーが無い":     "other:\n  - a\n",
+			"字下げされたキー":  "  k:\n  - a\n",
+			"名前の前方だけ一致": "kk:\n  - a\n",
+		} {
+			t.Run(name+"なら返さない", func(t *testing.T) {
+				t.Parallel()
+				assert.Empty(t, yamlValueSpans(src, key))
+			})
+		}
+	})
+}
+
+func Test_npmPkgs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("package.json へ版を書く道具を名前順に返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, []string{commitlintPkg, markdownlintPkg}, npmPkgs())
+		})
+	})
+}
+
+func Test_checkNodeToolsDeps(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "package.json")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		return path
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, checkNodeToolsDeps(write(t, soundPackageJSON)))
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// 宣言に無い依存は、mise.toml の版の宣言も tool-cooldown の gate も経ずにイメージへ入る。
+		for name, body := range map[string]string{
+			"宣言に無い依存がある":          `{"dependencies": {"@commitlint/cli": "1", "markdownlint-cli2": "1", "evil": "1"}}`,
+			"宣言した依存が欠けている":        `{"dependencies": {"@commitlint/cli": "1"}}`,
+			"dependencies が無い":    `{"private": true}`,
+			"devDependencies がある": `{"dependencies": {"@commitlint/cli": "1", "markdownlint-cli2": "1"}, "devDependencies": {"x": "1"}}`,
+			"JSON でない":            `not json`,
+		} {
+			t.Run(name+"なら errShape", func(t *testing.T) {
+				t.Parallel()
+				require.ErrorIs(t, checkNodeToolsDeps(write(t, body)), errShape)
+			})
+		}
+
+		t.Run("読めなければエラー", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkNodeToolsDeps(filepath.Join(t.TempDir(), "package.json")), os.ErrNotExist)
 		})
 	})
 }

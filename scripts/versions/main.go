@@ -14,6 +14,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -35,6 +36,9 @@ const (
 	filePerm = 0o644
 
 	minutesPerDay = 24 * 60
+
+	nodeToolsPkg  = "docker/tools/node/package.json"
+	pnpmWorkspace = "docker/tools/node/pnpm-workspace.yaml"
 
 	// terraformTool / awsCLITool / pnpmTool は mise.toml の [tools] のキーであり、
 	// `.makefiles/host-tools.mk` が焼き込む名前でもある。
@@ -100,21 +104,98 @@ func npmDepRe(pkg string) *regexp.Regexp {
 	return bakedRe(`"`+pkg+`": "`, `"`)
 }
 
-var excludeBlockRe = regexp.MustCompile(`(?m)^minimumReleaseAgeExclude:\n(?:[ \t]+- .*\n)*`)
+const excludeKey = "minimumReleaseAgeExclude"
+
+// npmPkgs は、package.json へ版を書く npm の道具の名前を、名前順に返します。
+func npmPkgs() []string {
+	pkgs := []string{markdownlintPkg, commitlintPkg}
+	sort.Strings(pkgs)
+
+	return pkgs
+}
+
+// checkNodeToolsDeps は、package.json の dependencies が npmPkgs とちょうど同じ名前の集合で
+// あることを検めます。**宣言に無い依存を package.json へ足すと、mise.toml の版の宣言も
+// tool-cooldown の gate も経ずにイメージへ入る** —— 版の写しの rule は知っている名前しか見ない。
+func checkNodeToolsDeps(path string) error {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return xerrors.Wrap(err, nodeToolsPkg)
+	}
+	var pkg struct {
+		Dependencies map[string]string `json:"dependencies"`
+		DevDeps      map[string]string `json:"devDependencies"`
+		OptDeps      map[string]string `json:"optionalDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return xerrors.Wrap(errShape, nodeToolsPkg+": "+err.Error())
+	}
+	if len(pkg.DevDeps)+len(pkg.OptDeps) > 0 {
+		return xerrors.Wrap(errShape, nodeToolsPkg+": dependencies 以外の依存は置かない")
+	}
+	got := make([]string, 0, len(pkg.Dependencies))
+	for name := range pkg.Dependencies {
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	if want := npmPkgs(); strings.Join(got, ",") != strings.Join(want, ",") {
+		return xerrors.Wrap(errShape, fmt.Sprintf("%s: dependencies が %v、宣言は %v", nodeToolsPkg, got, want))
+	}
+
+	return nil
+}
 
 // excludeBlock は、package.json へ版を書く npm の道具を窓から外す一覧を返します。名前を
 // package.json の写しと同じ定数から作るので、依存を足し外ししたとき一覧だけが取り残されない。
 func excludeBlock() string {
-	pkgs := []string{markdownlintPkg, commitlintPkg}
-	sort.Strings(pkgs)
+	pkgs := npmPkgs()
 
 	var b strings.Builder
-	b.WriteString("minimumReleaseAgeExclude:\n")
+	b.WriteString(excludeKey + ":\n")
 	for _, p := range pkgs {
 		fmt.Fprintf(&b, "  - '%s'\n", p)
 	}
 
 	return b.String()
+}
+
+// yamlValueSpans は、行頭に `<key>:` を持つ行から、その値の最後の字下げされた行までを、
+// 出現ごとに返します。
+//
+// **値の終わりは字下げされた行（と、字下げの無い要素の行）で決める。** 要素の形（`- x`）で終わりを決めると、間に空行や
+// コメントを挟んだ要素が範囲の外に残り、宣言に無い名前が窓から外れたまま一致と報告される。
+// 空行と行頭のコメントは、後ろに字下げされた行が続くときだけ範囲に入れる —— 次のキーの前に
+// 置いた区切りとコメントは残す。
+func yamlValueSpans(content, key string) [][2]int {
+	lines := strings.SplitAfter(content, "\n")
+	var spans [][2]int
+	pos := 0
+	for i := 0; i < len(lines); {
+		start := pos
+		pos += len(lines[i])
+		i++
+		if !strings.HasPrefix(lines[i-1], key+":") {
+			continue
+		}
+		end := pos
+		for i < len(lines) && lines[i] != "" {
+			line := lines[i]
+			trimmed := strings.TrimSpace(line)
+			// 字下げの無い `- x` も、YAML ではキーの値の要素である。
+			indented := line[0] == ' ' || line[0] == '\t' || line[0] == '-'
+			if !indented && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				break
+			}
+			pos += len(line)
+			i++
+			if indented && trimmed != "" {
+				end = pos
+			}
+		}
+		spans = append(spans, [2]int{start, end})
+	}
+
+	return spans
 }
 
 // shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。ARG ではなく
@@ -143,8 +224,10 @@ type rule struct {
 	// count は期待する一致件数。**下限ではなく厳密な件数である** —— 写しが増えたことも
 	// 減ったことも、どちらも宣言との対応が崩れた合図なので落とす。
 	count int
-	// block が空でなければ、一致した範囲をこの内容で丸ごと置き換える。version は使わない。
-	block string
+	// blockKey が空でなければ、行頭のそのキーの値の範囲（yamlValueSpans）を block で丸ごと
+	// 置き換える。re と version は使わない。
+	blockKey string
+	block    string
 }
 
 // main は判断を持ちません。分岐は run に置きます（scripts/README.md の Test Strategy）。
@@ -180,6 +263,9 @@ func run(args []string, root string, out io.Writer) error {
 func applyAll(root string, dryRun bool, out io.Writer) error {
 	v, err := parseMise(filepath.Join(root, miseFile))
 	if err != nil {
+		return err
+	}
+	if err := checkNodeToolsDeps(filepath.Join(root, nodeToolsPkg)); err != nil {
 		return err
 	}
 
@@ -221,8 +307,6 @@ func rules(v declared) []rule {
 	const (
 		toolsDockerfile = "docker/tools/Dockerfile"
 		hostToolsMk     = ".makefiles/host-tools.mk"
-		nodeToolsPkg    = "docker/tools/node/package.json"
-		pnpmWorkspace   = "docker/tools/node/pnpm-workspace.yaml"
 	)
 
 	return []rule{
@@ -242,7 +326,7 @@ func rules(v declared) []rule {
 		{label: "pnpm の供給網の窓", file: pnpmWorkspace, re: bakedRe("minimumReleaseAge: ", "\n"),
 			version: strconv.Itoa(cooldown.RegistryWindowDays * minutesPerDay), count: 1},
 		// 直接の依存は窓から外す。その窓は mise.toml の宣言に対して tool-cooldown の gate が掛ける。
-		{label: "pnpm の窓の除外", file: pnpmWorkspace, re: excludeBlockRe, block: excludeBlock(), count: 1},
+		{label: "pnpm の窓の除外", file: pnpmWorkspace, blockKey: excludeKey, block: excludeBlock(), count: 1},
 	}
 }
 
@@ -290,14 +374,18 @@ func plan(rs []rule, root string) (map[string]string, error) {
 
 // applyRule は1つの rule を内容へ当てます。一致件数が期待と違えばエラーにします。
 func applyRule(r rule, content string) (string, error) {
-	if r.block != "" {
-		found := len(r.re.FindAllString(content, -1))
-		if found != r.count {
+	if r.blockKey != "" {
+		spans := yamlValueSpans(content, r.blockKey)
+		if len(spans) != r.count {
 			return "", xerrors.Wrap(errShape,
-				fmt.Sprintf("%s (%s): 一致が %d 件、期待は %d 件", r.label, r.file, found, r.count))
+				fmt.Sprintf("%s (%s): 一致が %d 件、期待は %d 件", r.label, r.file, len(spans), r.count))
+		}
+		// 後ろから置き換え、前の範囲の位置をずらさない。
+		for i := len(spans) - 1; i >= 0; i-- {
+			content = content[:spans[i][0]] + r.block + content[spans[i][1]:]
 		}
 
-		return r.re.ReplaceAllLiteralString(content, r.block), nil
+		return content, nil
 	}
 
 	// **宣言が空なら書き換えない。** 空の版で書き換えると `FROM golang:-bookworm` のような
