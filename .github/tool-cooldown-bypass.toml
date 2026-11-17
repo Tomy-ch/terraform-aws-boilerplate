@@ -9,5 +9,4 @@
 # expires は必ず置く。期限切れ・上限（今日から 3 ヶ月）超過・mise.toml に無いエントリは、
 # gate / audit のどちらでも失敗する（理由: ADR-0702 決定18）。解決したらエントリを消す。
 "aqua:crate-ci/typos@1.52.2" = { expires = 2026-11-25, issue = 286, reason = "supply-chain-triage LOW 2/12: 発行元は継続、tag は main 上、diff は辞書の再生成と誤検知修正で署名なし" }
-"aqua:zizmorcore/zizmor@1.32.0" = { expires = 2026-11-17, issue = 286, reason = "supply-chain-triage LOW 2/12: SLSA provenance が tag の commit と release.yml を指す、diff に署名なし" }
 "npm:markdownlint-cli2@0.24.1" = { expires = 2026-11-19, issue = 286, reason = "supply-chain-triage LOW 2/12: 発行者は継続、tarball は gitHead の commit と一致、install hook なし" }
