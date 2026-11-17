@@ -67,4 +67,10 @@ jobs:
           # This workflow is a merge blocker, so it is narrowed to HIGH and
           # above to keep the block signal actionable.
           fail-on-severity: high
+          # GHSA-fc5q-39xc-vjpf: picomatch（markdownlint-cli2 が globby を通して使う、docker/tools/node の
+          # lockfile の推移的な依存）の ReDoS。攻撃には glob のパターンを渡せることが要るが、glob は
+          # リポジトリの Makefile と設定が持ち、それを書き換えられる者は既に CI でコードを実行できる。
+          # 修正版はまだ無い（4.0.7 以下がすべて該当）。
+          # 撤回: 修正版が出たら pnpm -C docker/tools/node update --lockfile-only picomatch で上げ、この行を外す。
+          allow-ghsas: GHSA-fc5q-39xc-vjpf
           comment-summary-in-pr: always
