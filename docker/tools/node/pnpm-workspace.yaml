@@ -1,0 +1,13 @@
+# node_tools 段の install の方針（ADR-0503 決定17・18）。lockfile は make node-tools-lock が作る。
+
+# 推移的な依存へ掛ける供給網の窓（分）。値と下の除外の一覧は make versions-apply が書く。
+minimumReleaseAge: 10080
+# 直接の依存の窓は mise.toml の宣言に対して make tool-cooldown-gate が掛ける。ここで二重に
+# 掛けると、gate の bypass で採った版を pnpm だけが拒む。
+minimumReleaseAgeExclude:
+  - '@commitlint/cli'
+  - 'markdownlint-cli2'
+
+# install 時の script の実行を宣言する。宣言は空とし、script を持つ依存が現れた時点で
+# install を落とす。
+strictDepBuilds: true

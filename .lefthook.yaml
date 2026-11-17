@@ -1,0 +1,242 @@
+# ローカルの git hook（ADR-0501 決定26 / ADR-0702 決定19）。CI の代替にしない ——
+# hook でのみ成立する検査を作らない。
+#
+# コマンドは素で書く（ADR-0503 決定8。検査の定義は `.makefiles/` が1箇所で持つ）。
+#
+# 導入: `lefthook install` で .git/hooks に配置する。
+
+pre-commit:
+  parallel: true
+  commands:
+    actions-lint:
+      glob:
+        - ".github/workflows/*.{yml,yaml}"
+        - ".github/actions/**/*.{yml,yaml}"
+        - ".github/settings/branch-protection.json"
+        - ".github/notify-channels.toml"
+        - "scripts/**/*.go"
+      run: make actions-lint
+
+    md-lint:
+      glob: "**/*.md"
+      run: make md-lint
+
+    # 対象を絞らない。.typos.toml / .editorconfig の変更は、全ファイルの判定を変える。
+    typos:
+      run: make typos
+
+    editorconfig-check:
+      run: make editorconfig-check
+
+    # 対象を絞らない。抑止が名指すファイルの改名・削除でも、抑止は対象を失う。
+    secret-suppression-lint:
+      run: make secret-suppression-lint
+
+    # 何を見るかと、なぜ要るかは scripts/README.md の adr-lint 行が持つ。
+    adr-lint:
+      glob: "**/*.md"
+      run: make adr-lint
+
+    # 何を見るかと、なぜ要るかは scripts/README.md の skill-lint 行が持つ。
+    skill-lint:
+      glob:
+        - ".claude/skills/**/*.md"
+        - "Makefile"
+        - ".makefiles/**/*.mk"
+      run: make skill-lint
+
+    docker-lint:
+      glob: "docker/**/Dockerfile"
+      run: make docker-lint
+
+    pin-runners-check:
+      glob:
+        - ".github/runners-pin.toml"
+        - ".github/workflows/*.{yml,yaml}"
+      run: make pin-runners-check
+
+    repo-settings-check:
+      glob:
+        - ".github/settings/*.json"
+        - "env/**/*.tf"
+        - "scripts/repo-settings/*.go"
+        - "scripts/lib/**"
+      run: make repo-settings-check
+
+    egress-check:
+      glob:
+        - ".github/egress.toml"
+        - ".github/workflows/*.{yml,yaml}"
+        - "{env,usecases,modules}/**/*.tf"
+        - ".makefiles/terraform/operation/ci.mk"
+        - "scripts/egress/*.go"
+        - "scripts/lib/**"
+      run: make egress-check
+
+    # 何を見るかと、なぜ要るかは scripts/README.md の versions 行が持つ。
+    versions-check:
+      glob:
+        - "mise.toml"
+        - "docker/**/Dockerfile"
+        - "scripts/go.mod"
+        - "scripts/versions/*.go"
+        - "docker/tools/node/package.json"
+        - ".makefiles/host-tools.mk"
+      run: make versions-check
+
+    # 何を見るかは scripts/README.md の pin-pnpm 行と .makefiles/docker/node-tools.mk が持つ。
+    pin-pnpm-check:
+      glob:
+        - "mise.toml"
+        - "docker/tools/Dockerfile"
+        - "scripts/pin-pnpm/*.go"
+      run: make pin-pnpm-check
+    node-tools-lock-check:
+      glob:
+        - "docker/tools/node/*"
+      run: make node-tools-lock-check
+
+    # uses: / image: が lockfile 通りか。orphan を落とすのは pin-actions-check だけである。
+    pin-actions-check:
+      glob:
+        - ".github/workflows/*.{yml,yaml}"
+        - ".github/actions/**/*.{yml,yaml}"
+        - ".github/actions-pin.toml"
+      run: make pin-actions-check
+    pin-images-check:
+      glob:
+        - "docker/**/Dockerfile"
+        - "docker-compose.yaml"
+        - "docker/images-pin.toml"
+      run: make pin-images-check
+
+    # テストを hook から外さない（ADR-0702 決定16）。
+    go-fmt-check:
+      glob: "scripts/**/*.go"
+      run: make go-fmt-check
+    # env/admin/identity・docs/setup/bootstrap.md・usecases/deployment-identity・conftest/plan/decl.json・
+    # mise.toml・workflow は scripts/ のテストが写しの正本として読む。usecases/state-backend と modules/s3 は、
+    # その正本が追従する元。
+    go-test:
+      glob:
+        - "scripts/**/*.go"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
+        - "Makefile"
+        - ".makefiles/**"
+        - "env/**"
+        - "usecases/state-backend/**"
+        - "usecases/deployment-identity/**"
+        - "modules/s3/**"
+        - "docs/setup/bootstrap.md"
+        - "conftest/plan/decl.json"
+        - "mise.toml"
+        - ".github/workflows/*.{yml,yaml}"
+      run: make go-test
+
+    # 何を見るかと、なぜ go-test と別に要るかは scripts/README.md の test-mapping 行が持つ。
+    test-mapping:
+      glob: "scripts/**/*.go"
+      run: make test-mapping
+
+    # Terraform 側の検査（.makefiles/terraform/gates.mk）。make は対象が0件なら落ちるので、
+    # Terraform コードが無いツリーでは tf-no-targets で skip を明示する。`--force` でも skip に
+    # なり、summary に条件による skip として出る。
+    tf-fmt-check:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+      skip:
+        - run: make -s tf-no-targets
+      run: make tf-fmt-check
+    tf-lint:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - ".tflint.hcl"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+        - "scripts/tool-cooldown/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
+      skip:
+        - run: make -s tf-no-targets
+      run: make tf-lint
+    # validate と test と policy は init を共有するので1つの make で呼ぶ（並行させると init が競合する）。
+    tf-validate-test:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "**/.terraform.lock.hcl"
+        - "conftest/plan/**"
+      skip:
+        - run: make -s tf-no-targets
+      run: make -k tf-validate tf-test tf-policy
+    tf-gates-test:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+      run: make tf-gates-test
+    tf-policy-canary:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - "conftest/plan/**"
+      run: make tf-policy-canary
+    # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
+    infra-code-gate:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "conftest/**"
+        - "docs/adr/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/lib/**"
+        - ".github/CODEOWNERS"
+        - ".github/settings/branch-protection.json"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make infra-code-gate-test infra-code-gate
+    resource-order-check:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "conftest/hcl/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make resource-order-check-test resource-order-check
+
+    secret-gates-test:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+      run: make secret-gates-test
+
+commit-msg:
+  commands:
+    # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
+    # commit があるので本体は CI の範囲検査である（.github/workflows/commitlint.yaml）。
+    commitlint:
+      run: cat {1} | make -s commitlint-msg
+
+pre-push:
+  parallel: true
+  commands:
+    # 範囲は ADR-0302 決定6 の表が持つ。
+    secret-scan:
+      run: make secret-scan
+
+    trufflehog-scan:
+      run: make trufflehog-scan

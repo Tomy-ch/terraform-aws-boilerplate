@@ -1,0 +1,169 @@
+name: Release Dependency Scan
+
+# Blocking half of the Trivy double gate: trivy-fs.yaml reports on every PR without failing, this one runs at the promotion
+# boundary and fails on a finding.
+#
+# The `push` trigger covers that boundary crossed without a promotion PR. A commit
+# landing on a deploy branch directly is the one promotion this gate would otherwise
+# never see. It cannot block what has already landed, so on push the failing job is a
+# record rather than a gate.
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - production
+  # 判定は base_ref に依るので、base の付け替え（edited）でも走り直す。付け替える前の skip が、
+  # 付け替えた後のデプロイブランチ宛の Pull Request に残らないようにする。
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+# workflow レベルは読み取りだけにする。書き込みが要るのは Pull Request へ結果を投稿する
+# job だけであり、そこへ降ろす。workflow レベルに置くと、後から足した job が要らない
+# 書き込み権限を黙って継承する。
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-fs-release:
+    # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["develop", "staging", "production"]'), github.base_ref) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            mirror.gcr.io
+            ghcr.io
+            pkg-containers.githubusercontent.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:aquasecurity/trivy
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy FS scan (JSON, include unfixed)
+        run: make -s trivy-fs-release RUNNER_MODE=host TRIVY_FORMAT=json > trivy-fs-release.json
+        shell: bash
+
+      - name: Create Trivy summary (Markdown)
+        id: summarize
+        run: |
+          set -euo pipefail
+
+          COUNT=$(jq '
+            .Results
+            | map(.Vulnerabilities // [])
+            | flatten
+            | length
+          ' trivy-fs-release.json)
+
+          UNFIXED=$(jq '
+            .Results
+            | map(.Vulnerabilities // [])
+            | flatten
+            | map(select((.FixedVersion // "") == ""))
+            | length
+          ' trivy-fs-release.json)
+
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "unfixed=${UNFIXED}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "title=## ✅ Release Dependency Scan: PASS (no vulnerabilities)" >> "$GITHUB_OUTPUT"
+            echo "No vulnerabilities found." > trivy-fs-release-summary.md
+            exit 0
+          fi
+
+          echo "title=## 🚨 Release Dependency Scan: FOUND (${COUNT}, unfixed ${UNFIXED})" >> "$GITHUB_OUTPUT"
+
+          jq -r '
+            .Results
+            | map(.Vulnerabilities // [])
+            | flatten
+            | sort_by(.Severity) | reverse
+            | .[]
+            | "- [\(.Severity)] \(.PkgName // "unknown") `\(.InstalledVersion // "?")` → `\(.FixedVersion // "none")` (\(.VulnerabilityID))"
+          ' trivy-fs-release.json > trivy-fs-release-summary.md
+
+        shell: bash
+
+      - name: Upload Trivy FS release report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-fs-release
+          path: |
+            trivy-fs-release.json
+            trivy-fs-release-summary.md
+
+      - name: Comment Trivy FS release result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- trivy-fs-release-result -->'
+          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          title: "${{ steps.summarize.outputs.title || '## ⚠️ Release Dependency Scan: CUT OFF (no result produced)' }}"
+          body-file: trivy-fs-release-summary.md
+          details-summary: '📄 Summary'
+
+      # release-gate is the strict gate for PRs targeting a deploy branch. It fails on every finding,
+      # including unfixed ones. It also fails when summarize did not run and count is empty, so a
+      # failed scan / aggregation is never mistaken for a pass.
+      - name: Fail if any vulnerability was found
+        if: always() && steps.summarize.outputs.count != '0'
+        run: exit 1

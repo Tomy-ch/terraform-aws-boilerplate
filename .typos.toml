@@ -1,0 +1,20 @@
+# typos の設定。日本語は辞書を持たないので訂正候補にならず、設定を要さない。
+#
+# 誤検知はまず文字を直す。直せないもの（固有名詞・外部の識別子・意図した誤綴りの fixture）だけを
+# 語の単位で extend-words / extend-identifiers に置き、各行に理由と撤回条件を書く。広い正規表現と
+# ファイルごとの除外は使わない。
+
+[files]
+# 既定は隠しディレクトリを飛ばす。.github/ と .makefiles/ が対象から落ちる。
+ignore-hidden = false
+# 生成物のハッシュ列。
+extend-exclude = [".git/", "**/.terraform.lock.hcl", "scripts/go.sum"]
+
+[default.extend-words]
+# 社名 HashiCorp の前半。typos は大文字の境目で語を分け、`Hashi` を `Hash` の誤綴りとみなす。
+# 撤回: typos が HashiCorp を既知の語として扱う版が出たとき。
+Hashi = "Hashi"
+# 英語の接頭辞（`mis-triggered` など、ハイフンでつないだ語）。撤回: その書き方が無くなったとき。
+mis = "mis"
+# adr-lint のテストが、Status の誤綴りを不正な値として与える fixture。撤回: そのケースが無くなったとき。
+Acceptd = "Acceptd"

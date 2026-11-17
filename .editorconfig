@@ -1,0 +1,31 @@
+# エディタへの宣言であり、editorconfig-checker が実物との一致を検査する（make editorconfig-check）。
+#
+# 字下げは、整形器を持つ形式では整形器の出力に一致する値を宣言する —— terraform fmt は space 2、
+# gofmt と conftest fmt（opa fmt）は tab。整形器と食い違う宣言を置くと、整形した結果が違反になる。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.go]
+indent_style = tab
+indent_size = 4
+
+[*.rego]
+indent_style = tab
+indent_size = 4
+
+[{Makefile,makefile,*.mk}]
+indent_style = tab
+indent_size = 2
+
+# 行末の2空白は改行である。リストの続き行はマーカーの幅に揃うので、幅を固定しない
+# （リストの字下げは markdownlint が持つ）。
+[*.md]
+trim_trailing_whitespace = false
+indent_size = unset

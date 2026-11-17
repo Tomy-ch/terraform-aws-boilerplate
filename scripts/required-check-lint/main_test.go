@@ -1,0 +1,419 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+)
+
+func writeFixture(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	}
+	return root
+}
+
+// editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML / シェルの字下げを持つ。撤回: fixture を外部ファイルへ移したとき
+
+const rulesetOneContext = `{
+  "rules": [
+    {"type": "required_status_checks",
+     "parameters": {"required_status_checks": [{"context": "build"}]}}
+  ]
+}`
+
+// editorconfig-checker-enable
+
+func Test_run(t *testing.T) {
+	t.Parallel()
+
+	t.Run("required context を報告する job が在り、フィルタが無ければ通る", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n  workflow_dispatch:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.NoError(t, err)
+		assert.Contains(t, out.String(), "required context 1 件")
+	})
+
+	t.Run("pull_request に paths が残っていれば落ちる", func(t *testing.T) {
+		t.Parallel()
+		// フィルタで除外された Pull Request は context が未報告のまま merge できない（ADR-0603 決定18）。
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n    paths:\n      - 'src/**'\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "`paths` が残っています")
+		assert.Contains(t, out.String(), ":3")
+	})
+
+	t.Run("branches フィルタも同じく落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "`branches` が残っています")
+	})
+
+	t.Run("報告する job が存在しなければ落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  other:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "実際: 0")
+	})
+
+	t.Run("同じ context を2つの job が報告すれば落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/a.yaml":    "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n",
+			"wf/b.yaml":    "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "実際: 2")
+	})
+
+	t.Run("pull_request トリガーが無ければ落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  push:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "pull_request トリガーがありません")
+	})
+
+	t.Run("jobs: を読めない workflow は取り違えとして報告する", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "jobs: が見つかりません")
+	})
+
+	t.Run("required status check が0件なら成功で返さない", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": `{"rules": [{"type": "deletion"}]}`,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		// 違反（終了コード1）とは別に扱えるよう、番兵で識別できること。
+		assert.True(t, xerrors.Is(err, requiredchecks.ErrNone))
+	})
+
+	t.Run("context が空の宣言は読めないとして落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": ""}]}}]}`,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n",
+		})
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &bytes.Buffer{})
+		require.ErrorIs(t, err, requiredchecks.ErrRead)
+	})
+
+	t.Run("required の job が name: を持てば落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"ruleset.json": rulesetOneContext,
+			"wf/ci.yaml":   "on:\n  pull_request:\n\njobs:\n  build:\n    name: Build\n    runs-on: x\n",
+		})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "ruleset.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+		assert.Contains(t, out.String(), "required context `build` を報告する job に name: を置かないでください")
+	})
+
+	t.Run("宣言を読めなければ落ちる", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{"wf/ci.yaml": "jobs:\n  build:\n    runs-on: x\n"})
+		var out bytes.Buffer
+		err := run([]string{"-ruleset", filepath.Join(root, "missing.json"), "-workflows", filepath.Join(root, "wf")}, &out)
+		require.Error(t, err)
+	})
+}
+
+func Test_findPullRequestTrigger(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source    string
+		wantOK    bool
+		wantHits  int
+		wantFirst string
+	}{
+		"フィルタ無し":           {source: "on:\n  pull_request:\n  push:\n", wantOK: true},
+		"paths":            {source: "on:\n  pull_request:\n    paths:\n      - x\n", wantOK: true, wantHits: 1, wantFirst: "paths"},
+		"paths-ignore":     {source: "on:\n  pull_request:\n    paths-ignore:\n      - x\n", wantOK: true, wantHits: 1, wantFirst: "paths-ignore"},
+		"branches-ignore":  {source: "on:\n  pull_request:\n    branches-ignore:\n      - x\n", wantOK: true, wantHits: 1, wantFirst: "branches-ignore"},
+		"次のイベントで打ち切る":      {source: "on:\n  pull_request:\n  push:\n    paths:\n      - x\n", wantOK: true},
+		"pull_request が無い": {source: "on:\n  push:\n", wantOK: false},
+		"on: が無い":          {source: "jobs:\n  a:\n", wantOK: false},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hits, ok := findPullRequestTrigger(tt.source)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Len(t, hits, tt.wantHits)
+			if tt.wantFirst != "" {
+				assert.Equal(t, tt.wantFirst, hits[0].key)
+			}
+		})
+	}
+}
+
+// 記法の差で検出が外れると、フィルタが残ったまま検査が沈黙する。GitHub が受け付ける形をすべて固定する。
+func Test_findPullRequestTrigger_記法の差(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		source   string
+		wantOK   bool
+		wantHits int
+	}{
+		"配列記法":                   {source: "on: [pull_request]\njobs:\n", wantOK: true},
+		"配列記法に複数のイベント":           {source: "on: [push, pull_request]\njobs:\n", wantOK: true},
+		"配列記法に pull_request が無い": {source: "on: [push]\njobs:\n", wantOK: false},
+		"単一値記法":                  {source: "on: pull_request\njobs:\n", wantOK: true},
+		"単一値記法の別イベント":            {source: "on: push\njobs:\n", wantOK: false},
+		"二重引用符のキー":               {source: "on:\n  \"pull_request\":\njobs:\n", wantOK: true},
+		"単引用符のキー":                {source: "on:\n  'pull_request':\njobs:\n", wantOK: true},
+		"キーに行末コメント":              {source: "on:\n  pull_request: # なぜ\njobs:\n", wantOK: true},
+		"引用符付きのフィルタキー":           {source: "on:\n  pull_request:\n    \"paths\":\n      - x\njobs:\n", wantOK: true, wantHits: 1},
+		"引用符付きの後続イベントで打ち切る":      {source: "on:\n  pull_request:\n  \"push\":\n    paths:\n      - x\njobs:\n", wantOK: true},
+		"桁の違うキーはフィルタとみなさない":      {source: "on:\n  pull_request:\n      paths:\n        - x\njobs:\n", wantOK: true},
+		"フィルタが2つ":                {source: "on:\n  pull_request:\n    paths:\n      - x\n    branches:\n      - main\njobs:\n", wantOK: true, wantHits: 2},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hits, ok := findPullRequestTrigger(tt.source)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Len(t, hits, tt.wantHits)
+		})
+	}
+}
+
+func Test_check(t *testing.T) {
+	t.Parallel()
+
+	const ok = "on:\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n"
+
+	t.Run("複数の context をそれぞれ数える", func(t *testing.T) {
+		t.Parallel()
+		wfs := []Source{
+			{File: "a.yaml", Source: ok},
+			{File: "b.yaml", Source: "on:\n  pull_request:\n\njobs:\n  test:\n    runs-on: x\n"},
+		}
+		got := check([]string{"build", "test"}, wfs, "r.json")
+		assert.Empty(t, got)
+	})
+
+	t.Run("required でない job は数えない", func(t *testing.T) {
+		t.Parallel()
+		wfs := []Source{{File: "a.yaml", Source: ok + "  other:\n    runs-on: x\n"}}
+		got := check([]string{"build"}, wfs, "r.json")
+		assert.Empty(t, got)
+	})
+
+	t.Run("context が0件なら違反も0件", func(t *testing.T) {
+		t.Parallel()
+		// 0件であること自体は run() が番兵で弾く。check は「与えられた分だけ見る」に徹する。
+		assert.Empty(t, check(nil, []Source{{File: "a.yaml", Source: ok}}, "r.json"))
+	})
+
+	t.Run("違反の報告先は宣言側のパスにする", func(t *testing.T) {
+		t.Parallel()
+		got := check([]string{"missing"}, []Source{{File: "a.yaml", Source: ok}}, "custom/path.json")
+		require.Len(t, got, 1)
+		assert.Equal(t, "custom/path.json", got[0].File)
+	})
+}
+
+func Test_readWorkflows(t *testing.T) {
+	t.Parallel()
+
+	t.Run("yaml と yml を拾い、それ以外を落とす", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{
+			"wf/a.yaml": "x", "wf/b.yml": "y", "wf/README.md": "z",
+		})
+		got, err := readWorkflows(filepath.Join(root, "wf"))
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Contains(t, got[0].File, "a.yaml")
+	})
+
+	t.Run("サブディレクトリは対象にしない", func(t *testing.T) {
+		t.Parallel()
+		root := writeFixture(t, map[string]string{"wf/a.yaml": "x", "wf/sub/b.yaml": "y"})
+		got, err := readWorkflows(filepath.Join(root, "wf"))
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("ディレクトリが無ければエラー", func(t *testing.T) {
+		t.Parallel()
+		_, err := readWorkflows(filepath.Join(t.TempDir(), "missing"))
+		require.Error(t, err)
+	})
+}
+
+func Test_check_検査の対象外(t *testing.T) {
+	t.Parallel()
+
+	t.Run("push 側のフィルタは残っていてよい", func(t *testing.T) {
+		t.Parallel()
+		// push は context を報告しないので絞ってよい（.github/workflows/README.md「必須検査はすべての Pull Request で報告される」）。
+		src := "on:\n  push:\n    paths:\n      - 'src/**'\n  pull_request:\n\njobs:\n  build:\n    runs-on: x\n"
+		assert.Empty(t, check([]string{"build"}, []Source{{File: "a.yaml", Source: src}}, "r.json"))
+	})
+
+	t.Run("required でない job は起動条件を問わない", func(t *testing.T) {
+		t.Parallel()
+		// required でない check は、報告されなくてもマージを止めない。
+		src := "on:\n  pull_request:\n    paths:\n      - x\n\njobs:\n  other:\n    runs-on: x\n  build:\n    runs-on: x\n"
+		got := check([]string{"other"}, []Source{{File: "a.yaml", Source: src}}, "r.json")
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "`other`")
+	})
+
+	t.Run("pull_request の後続イベントに付いたフィルタは拾わない", func(t *testing.T) {
+		t.Parallel()
+		src := "on:\n  pull_request:\n  push:\n    paths:\n      - x\n\njobs:\n  build:\n    runs-on: x\n"
+		assert.Empty(t, check([]string{"build"}, []Source{{File: "a.yaml", Source: src}}, "r.json"))
+	})
+}
+
+func Test_triggerFindings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("pull_request にフィルタが無ければ違反を返さない", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  pull_request:\n  push:\n\njobs:\n  build:\n    runs-on: x\n"
+			assert.Empty(t, triggerFindings("build", Source{File: "a.yaml", Source: src}))
+		})
+
+		t.Run("配列記法の pull_request はフィルタを書けないので違反を返さない", func(t *testing.T) {
+			t.Parallel()
+			src := "on: [push, pull_request]\njobs:\n  build:\n    runs-on: x\n"
+			assert.Empty(t, triggerFindings("build", Source{File: "a.yaml", Source: src}))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("pull_request トリガーが無ければ workflow の先頭を指して1件返す", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  push:\n\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 1)
+			assert.Equal(t, "a.yaml", got[0].File)
+			assert.Equal(t, 1, got[0].Line)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+			assert.Contains(t, got[0].Message, "`build`")
+		})
+
+		t.Run("配列記法に pull_request が無ければ違反にする", func(t *testing.T) {
+			t.Parallel()
+			// 配列記法の肯定側だけを見ていると、含まれているかの判定を外しても緑のまま残る。
+			src := "on: [push]\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 1)
+			assert.Equal(t, 1, got[0].Line)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+		})
+
+		t.Run("空の source もトリガー無しとして違反にする", func(t *testing.T) {
+			t.Parallel()
+			// 読めなかった workflow を「フィルタが無い」側へ倒すと、検査は何も見ずに緑を返す。
+			got := triggerFindings("build", Source{File: "a.yaml"})
+			require.Len(t, got, 1)
+			assert.Contains(t, got[0].Message, "pull_request トリガーがありません")
+		})
+
+		t.Run("残ったフィルタをその行番号とともに1つずつ返す", func(t *testing.T) {
+			t.Parallel()
+			src := "on:\n  pull_request:\n    paths:\n      - x\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: x\n"
+			got := triggerFindings("build", Source{File: "a.yaml", Source: src})
+			require.Len(t, got, 2)
+			assert.Equal(t, "a.yaml", got[0].File)
+			assert.Equal(t, 3, got[0].Line)
+			assert.Contains(t, got[0].Message, "`paths`")
+			assert.Contains(t, got[0].Message, "`build`")
+			assert.Equal(t, 5, got[1].Line)
+			assert.Contains(t, got[1].Message, "`branches`")
+		})
+	})
+}
+
+func Test_nameFindings(t *testing.T) {
+	t.Parallel()
+
+	jobOf := func(t *testing.T, src string) workflow.Job {
+		t.Helper()
+		jobs := workflow.SplitJobs(src).Jobs
+		require.Len(t, jobs, 1)
+		return jobs[0]
+	}
+
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		"name: が無ければ違反0件":       {"jobs:\n  build:\n    runs-on: x\n", 0},
+		"step の name: は数えない":    {"jobs:\n  build:\n    runs-on: x\n    steps:\n      - name: Build\n        run: make\n", 0},
+		"job の name: は違反":       {"jobs:\n  build:\n    name: Build\n    runs-on: x\n", 1},
+		"引用符付きの name: も違反":      {"jobs:\n  build:\n    \"name\": Build\n    runs-on: x\n", 1},
+		"コメントの name: は ID と別の行": {"jobs:\n  build:\n    # name: Build\n    runs-on: x\n", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, nameFindings(jobOf(t, c.src), "ci.yaml"), c.want)
+		})
+	}
+}

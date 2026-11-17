@@ -1,0 +1,46 @@
+# zizmor configuration — static analysis for GitHub Actions definitions.
+# Consumed by .github/workflows/zizmor.yaml.
+#
+# Policy for this file:
+#   - No audit is disabled, except one that fundamentally conflicts with another
+#     required check so no line can satisfy both (ADR-0501 決定13). Such an entry
+#     states the conflict and its withdrawal condition. Every other entry is either
+#     a documented false positive or an explicitly accepted baseline for a
+#     pre-existing finding.
+#   - `ignore` is file-scoped, so a NEW workflow hitting the same audit still
+#     fails CI. Remove an entry once its finding is actually fixed.
+#   - `remap` is used where the finding class is repository-wide and inherent to
+#     the toolchain: the audit keeps running and every finding stays in the SARIF
+#     uploaded to code scanning, it just no longer trips the CI gate (which fires
+#     on high severity only).
+
+rules:
+  # ローカルアクションの参照に `$/...` 記法を使えという規則。規則ごと無効にする（ADR-0501 決定13 の但し書き）。
+  # actionlint が `$/` を「ref が無い不正な形式」として落とすため、2つの必須検査が同じ行について
+  # 反対のことを言い、どの行も両方を満たせない。`./` は runner が受け付ける記法で、動作に差は無い。
+  # 撤回条件: actionlint が `$/` 記法へ対応したとき（rhysd/actionlint#711）。
+  self-repository:
+    disable: true
+
+  # 資格情報を作業ツリーに残す checkout。ADR-0103 決定11 が、検出に依存せず terraform を走らせる job に
+  # 禁じている。既定の severity はゲートの閾値（high）に届かないので、上げてゲートにする。
+  artipacked:
+    remap:
+      severity: high
+
+  # Fires on any workflow that combines a caching setup action (mise / setup-go)
+  # with a trigger set zizmor associates with publishing, which is nearly every
+  # workflow here — a file list would rot on every addition. Detection is "low
+  # confidence" and the caches are branch-scoped, so it is kept as an alert
+  # rather than a gate.
+  cache-poisoning:
+    remap:
+      severity: medium
+
+  # The cooldown windows in .github/dependabot.yml are a deliberate, documented
+  # supply-chain policy (Go modules: patch 5 / minor 7 / major 30 days; Docker and
+  # GitHub Actions: a flat 5 days; security updates bypass the cooldown by design),
+  # not an oversight.
+  dependabot-cooldown:
+    ignore:
+      - dependabot.yml

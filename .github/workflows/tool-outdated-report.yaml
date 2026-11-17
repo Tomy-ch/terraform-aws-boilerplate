@@ -1,0 +1,175 @@
+name: Tool Version Report
+
+# `tool-cooldown` gates a declared version against the window; neither it nor anything else notices
+# that upstream has published a newer one. Without this, the pins in `mise.toml` sit still until
+# somebody remembers to check by hand. This reports so that remembering is not a person's job;
+# it never applies an update.
+#
+# The report goes to an issue rather than a pull request because a notification carries no diff to
+# maintain: it cannot conflict while it waits, and it closes itself once nothing is actionable.
+
+on:
+  schedule:
+    - cron: '15 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      # `mise registry` is what resolves a short name to its backend, so mise has to be present
+      # even though no tool is installed here.
+      - name: Setup mise
+        uses: ./.github/actions/setup-mise
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The unauthenticated GitHub API allows 60 requests an hour per IP, which one run of this
+      # survey does not fit into.
+      - name: Survey upstream versions
+        id: survey
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # The report lists what could not be confirmed, so it reaches the summary even when the
+          # survey fails on it.
+          rc=0
+          make tool-cooldown-outdated RUNNER_MODE=host OUT=tool-outdated.md || rc=$?
+          if [ -f tool-outdated.md ]; then
+            cat tool-outdated.md >> "${GITHUB_STEP_SUMMARY}"
+          elif [ "${rc}" -eq 0 ]; then
+            echo "::error::the survey succeeded without writing tool-outdated.md"
+            exit 1
+          fi
+          exit "${rc}"
+
+      # The issue is the notification, so it is created only while something is actionable and is
+      # closed again once nothing is. Reusing one title as the identity key keeps a weekly schedule
+      # from filing a new issue every Monday. It also runs after a survey that failed on some tools,
+      # so one unconfirmable tool does not stop the notice for the others.
+      - name: Create or update the report issue
+        if: ${{ !cancelled() && steps.survey.outputs.actionable != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          ACTIONABLE: ${{ steps.survey.outputs.actionable }}
+          FAILED: ${{ steps.survey.outputs.failed }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const title = 'Tool Version Report: 窓を満たす更新があります';
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const existing = issues.find(issue => issue.title === title);
+
+            // An empty count means the survey never wrote its output; closing the issue on it would
+            // report "nothing to update" without having looked.
+            const actionable = process.env.ACTIONABLE ?? '';
+            const failed = process.env.FAILED ?? '';
+            if (!/^[0-9]+$/.test(actionable) || !/^[0-9]+$/.test(failed)) {
+              core.setFailed(`survey did not report its counts (actionable=${JSON.stringify(actionable)}, failed=${JSON.stringify(failed)})`);
+              return;
+            }
+
+            // Nothing actionable is only "nothing to update" when every tool was confirmed.
+            if (Number(actionable) === 0 && Number(failed) > 0) {
+              return;
+            }
+
+            if (Number(actionable) === 0) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `窓を満たす更新が無くなったので閉じます。[実行](${runUrl})`,
+                });
+                await github.rest.issues.update({
+                  owner, repo, issue_number: existing.number, state: 'closed',
+                });
+              }
+              return;
+            }
+
+            const body = [
+              '<!-- tool-outdated-report -->',
+              fs.readFileSync('tool-outdated.md', 'utf8'),
+              `実行: [${context.workflow}](${runUrl})`,
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title, body });
+            }

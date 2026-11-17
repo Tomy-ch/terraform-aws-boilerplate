@@ -1,0 +1,271 @@
+name: Config Scan
+
+# Trivy misconfiguration scanning for Terraform and Dockerfiles, kept out of
+# trivy-fs.yaml on purpose. The two share a tool and nothing else: this one has a
+# different target (Terraform and Dockerfiles, not dependency manifests), a
+# different path filter, and a different gate (a misconfiguration blocks here: it is
+# introduced by the change under review, whereas a dependency finding is inherited
+# from an upstream advisory and is reported, then gated at release time). Folding it
+# into the dependency scan would also break that workflow's summary, which counts
+# .Results[].Vulnerabilities and would have to start distinguishing .Misconfigurations
+# from it.
+#
+# docker-compose files are NOT covered: Trivy ships no compose checks. hadolint
+# (docker-lint.yaml) lints the Dockerfiles for style and correctness; this workflow
+# is the security-policy layer over them.
+
+on:
+  push:
+    branches:
+      - 'release/*'
+      - develop
+      - staging
+      - production
+    paths:
+      - '.github/workflows/trivy-config.yaml'
+      - '.makefiles/security/trivy.mk'
+      - '.trivyignore.yaml'
+      - '.github/actions/setup-mise/**'
+      - 'mise.toml'
+      - 'Makefile'
+      - 'docker/**/Dockerfile'
+      - 'usecases/**'
+      - 'modules/**'
+      - 'env/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+
+      # fetch-depth: 0 so the PR's base and head commits are present locally for the filter's
+      # `git diff`.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Filter the changed paths
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
+        with:
+          # An empty token selects `git diff` over the compare API, which refuses a large diff.
+          token: ''
+          filters: |
+            relevant:
+              - '.github/workflows/trivy-config.yaml'
+              - '.makefiles/security/trivy.mk'
+              - '.trivyignore.yaml'
+              - '.github/actions/setup-mise/**'
+              - 'mise.toml'
+              - 'Makefile'
+              - 'docker/**/Dockerfile'
+              - 'usecases/**'
+              - 'modules/**'
+              - 'env/**'
+
+  trivy-config:
+    needs: changes
+    # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+      pull-requests: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            api.npmjs.org
+            api.osv.dev
+            npm.jsr.io
+            awscli.amazonaws.com
+            mirror.gcr.io
+            ghcr.io
+            pkg-containers.githubusercontent.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:aquasecurity/trivy
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The gate exits non-zero on a finding, which would skip the summary below; the exit
+      # code is recorded instead and judged by the last step.
+      - name: Trivy config scan (JSON)
+        id: scan
+        run: |
+          set +e
+          make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=json > trivy-config.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+        shell: bash
+
+      - name: Create Trivy config summary (Markdown)
+        id: summarize
+        run: |
+          set -euo pipefail
+
+          # trivy config emits one Result per detected config file; files with no
+          # finding carry no Misconfigurations key at all, hence the // [] default.
+          # Results itself is absent — not empty — when nothing was detected at all,
+          # which a PR that deletes every Dockerfile would produce, so it needs the
+          # same defaulting before being iterated.
+          COUNT=$(jq '
+            [(.Results // [])[] | .Misconfigurations // []]
+            | flatten
+            | length
+          ' trivy-config.json)
+
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "title=## ✅ Config Scan: PASS (no misconfiguration at or above the gate)" >> "$GITHUB_OUTPUT"
+            echo "No misconfiguration at or above the gate's severity was found." > trivy-config-summary.md
+            exit 0
+          fi
+
+          echo "title=## 🚨 Config Scan: FOUND (${COUNT})" >> "$GITHUB_OUTPUT"
+
+          jq -r '
+            (.Results // [])[]
+            | .Target as $target
+            | (.Misconfigurations // [])[]
+            | "- [\(.Severity)] `\($target)` \(.ID) — \(.Title)\n  - \(.Resolution)"
+          ' trivy-config.json > trivy-config-summary.md
+        shell: bash
+
+      - name: Upload Trivy config report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-config
+          path: |
+            trivy-config.json
+            trivy-config-summary.md
+
+      - name: Comment Trivy config result on PR
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/upsert-pr-comment
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          marker: '<!-- trivy-config-result -->'
+          status: "${{ steps.summarize.outputs.count == '0' && 'success' || 'findings' }}"
+          title: "${{ steps.summarize.outputs.title || '## ⚠️ Config Scan: CUT OFF (no result produced)' }}"
+          body-file: trivy-config-summary.md
+          details-summary: '📄 Summary'
+
+      # Report only: the verdict comes from the JSON scan.
+      - name: Trivy config scan (SARIF)
+        if: always()
+        run: |
+          set +e
+          make -s trivy-config RUNNER_MODE=host TRIVY_FORMAT=sarif > trivy-config.sarif
+          exit 0
+        shell: bash
+
+      # Its own category so misconfiguration alerts stay separable from the
+      # dependency findings uploaded under trivy-fs.
+      - name: Upload Trivy config SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-misconfig
+
+      # Accepted exceptions live in .trivyignore.yaml, pinned per path.
+      # A non-zero exit with no finding counted is the canary or trivy itself failing.
+      - name: Fail if a misconfiguration at or above the gate was found
+        if: always()
+        shell: bash
+        env:
+          SCAN_CODE: ${{ steps.scan.outputs.exit_code }}
+          COUNT: ${{ steps.summarize.outputs.count }}
+        run: |
+          if [ "${COUNT-}" != "0" ]; then
+            echo "misconfigurations at or above the gate: ${COUNT:-not counted}"
+            exit 1
+          fi
+          if [ "${SCAN_CODE-}" != "0" ]; then
+            echo "make trivy-config exited with ${SCAN_CODE:-no exit code} without a counted finding"
+            exit 1
+          fi

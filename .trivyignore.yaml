@@ -1,0 +1,21 @@
+# https://trivy.dev/latest/docs/configuration/filtering/
+#
+# 抑止の条件は ADR-0501 決定13 に従う（.gitleaks.toml / .hadolint.yaml と共通）。
+
+vulnerabilities:
+  - id: CVE-2026-112366
+    paths:
+      - "docker/tools/node/pnpm-lock.yaml"
+    expired_at: 2026-12-18
+    statement: |
+      picomatch の ReDoS（GHSA-fc5q-39xc-vjpf）。理由と撤回条件の正本は
+      docker/tools/README.md の「抑止している脆弱性」。
+
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - "docker/tools/Dockerfile"
+    statement: |
+      HEALTHCHECK を置かない。このイメージは make から `docker compose run --rm` で起動して
+      終了する使い捨てであり、常駐しない。観測すべき健全性の状態が存在しない。
+      撤回条件: このイメージを常駐させる用途が生じたとき。

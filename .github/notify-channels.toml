@@ -1,0 +1,24 @@
+# 通知の系統と、notify.yaml を呼ぶ job の割当。規則は .github/workflows/README.md の「通知の起動条件」。
+# 検査は make notify-channel-lint。
+#
+# "channel:<系統>" = "<secret>"       系統ごとの Incoming Webhook の secret
+# "job:<file>:<job>" = "<系統>"       notify.yaml を呼ぶ job の系統
+
+"channel:security" = "SLACK_WEBHOOK_URL_SECURITY"
+"channel:deploy-critical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"
+"channel:deploy-promotion" = "SLACK_WEBHOOK_URL_DEPLOY_PROMOTION"
+"channel:deploy-validation" = "SLACK_WEBHOOK_URL_DEPLOY_VALIDATION"
+
+"job:govulncheck.yaml:notify-detection" = "security"
+"job:govulncheck.yaml:notify-failure" = "security"
+"job:secret-scan.yaml:notify-failure" = "security"
+"job:secret-scan.yaml:notify-failure-trivy-secret" = "security"
+"job:secret-scan.yaml:notify-failure-trufflehog" = "security"
+"job:trivy-fs.yaml:notify-detection" = "security"
+"job:trivy-fs.yaml:notify-failure" = "security"
+"job:trivy-fs.yaml:notify-failure-license" = "security"
+"job:zizmor.yaml:notify-failure" = "security"
+"job:scorecard.yaml:notify-failure" = "security"
+"job:terraform-apply.yaml:notify-failure" = "deploy-critical"
+"job:terraform-apply.yaml:notify-revert" = "deploy-critical"
+"job:terraform-apply.yaml:notify-success" = "deploy-critical"

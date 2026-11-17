@@ -1,0 +1,67 @@
+# 道具の実行形態。ここが持つのは起動の仕方と、上流のイメージで実行する道具
+# （checkov / kics / semgrep）の tag だけである。それ以外の版の出所は mise.toml。
+#
+# **これは配送物ではない。** このリポジトリが配送するのは Terraform の構成であって、
+# コンテナではない。ここに在るのは、検査の道具を利用者の環境に依らず同じ依存で走らせる
+# ための入れ物だけである。
+#
+# terraform 本体はここに居ない（ADR-0503 決定5、docker/tools/README.md）。
+
+services:
+  # 運用機構（scripts/）と、workflow・シェル・Terraform・コンテナ定義の検査（ADR-0503 決定6）。
+  go_tool_runner:
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+      target: go_tools
+      secrets:
+        - github_token
+    # 生成物をホストの所有者で書き出す。root で書くと、道具が直した行を直した本人が
+    # 消せない状態がリポジトリに残る。
+    user: "${RUNNER_UID:-1000}:${RUNNER_GID:-1000}"
+    volumes:
+      - .:/app
+      # git worktree の .git は、ホストの絶対パスにある共通の git ディレクトリを指す。同じパスに
+      # 読み取り専用で置かないと、コンテナの中の git が履歴にも追跡ファイルにも届かない。
+      - ${RUNNER_GIT_COMMON_DIR:-./.git}:${RUNNER_GIT_COMMON_DIR:-/tmp/git-common}:ro
+    working_dir: /app
+    environment:
+      # 非 root で走るため、道具が書ける HOME を与える。
+      HOME: /tmp
+    entrypoint: ""
+    init: true
+
+  # npm エコシステムの道具: markdownlint-cli2 / commitlint
+  node_tool_runner:
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+      target: node_tools
+    user: "${RUNNER_UID:-1000}:${RUNNER_GID:-1000}"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      HOME: /tmp
+    entrypoint: ""
+    init: true
+
+  # 上流がイメージとして配布する Security の道具（ADR-0503 決定4・7・10）。digest は
+  # make pin-images-apply が docker/images-pin.toml から書く。起動は .makefiles/runner.mk の
+  # IMAGE_RUN が `docker compose config --images` で読み、mount を使わずに docker create / cp / start
+  # で行う。`docker compose run` では起動しない。
+  checkov_runner:
+    image: bridgecrew/checkov:3.4.0@sha256:ece5efac4443084ca273072909985dce988a81e8cc94faa305aeda0df27c68f9
+
+  kics_runner:
+    image: checkmarx/kics:v2.2.0@sha256:ef29dbac14b046b1ef65f3280646112e927a61781c5f01bca1aeb723e0b96003
+
+  semgrep_runner:
+    image: semgrep/semgrep:1.183.0@sha256:2e45517a85e13a9cca14a2a00df6bb48affd66b8ebfae1b0991cd57578362fb0
+
+secrets:
+  # mise のツール解決を認証付きにするビルド時トークン。未認証の GitHub API は
+  # 60 req/hour・IP 単位で、イメージの install 群を賄えず 403 になる。
+  # build 引数と違い、イメージの履歴に残らない。
+  github_token:
+    environment: GITHUB_TOKEN

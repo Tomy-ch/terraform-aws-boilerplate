@@ -1,0 +1,393 @@
+# 各 job の先頭にある bullfrog の allowed-domains / allowed-ips の SSOT。
+# クラスの意味・書式・追加手順・反映と検査のコマンドは .github/workflows/README.md の「ランナーの封じ込め」節。
+
+[class.base]
+# hosted runner の一部では、egress proxy が /etc/resolv.conf の先頭の nameserver を
+# 127.0.0.100 のローカル転送役へ書き換える（actions/runner-images#14925）。bullfrog は既定でこれを
+# DNS サーバとして信用しないので、許さないと名前解決が止まる。転送先の問い合わせも bullfrog の
+# DNS 判定を通るため、許すドメインは広がらない。外す条件は、runner の resolv.conf が 127.0.0.53
+# だけを指すようになること。
+ips = ["127.0.0.100"]
+hosts = [
+  "api.github.com",
+  "github.com",
+  "codeload.github.com",
+  "objects.githubusercontent.com",
+  "raw.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "*.actions.githubusercontent.com",
+  # 結果と cache の置き場（productionresultssa<N>.blob.core.windows.net）のうち、bullfrog の agent が
+  # 既定で許すのは sa0〜sa19 だけである（bullfrogsec/agent の pkg/agent/types.go）。それより後の番号は、
+  # GitHub が実際に割り当てたものだけを1つずつ足す。`*.blob.core.windows.net` や番号の範囲は、誰でも
+  # 作れる Azure Storage のアカウントへの持ち出し口になる。
+  "productionresultssa30.blob.core.windows.net",
+  "productionresultssa31.blob.core.windows.net",
+  "productionresultssa32.blob.core.windows.net",
+]
+
+[class.mise]
+hosts = [
+  "mise.jdx.dev",
+  "mise-versions.jdx.dev",
+  "mise.run",
+  "mise.en.dev",
+  "aquaproj.github.io",
+  "proxy.golang.org",
+  "sum.golang.org",
+  "index.golang.org",
+  "storage.googleapis.com",
+  "dl.google.com",
+  "go.dev",
+  "golang.org",
+  "nodejs.org",
+  "registry.npmjs.org",
+  "tuf-repo-cdn.sigstore.dev",
+  "rekor.sigstore.dev",
+  "fulcio.sigstore.dev",
+  # aube（mise 内蔵の npm インストーラ）が依存解決時に問い合わせる supply-chain 情報源。遮断すると解決自体が失敗する
+  "api.npmjs.org",
+  "api.osv.dev",
+  "npm.jsr.io",
+  # GitHub Release を持たない aqua パッケージ（`type: http`）の配布元。cooldown は公開時刻を
+  # ここが配布物へ付けた Last-Modified から取り、遮断されると窓を満たさないのではなく
+  # **確認できない**として落ちる。
+  "awscli.amazonaws.com",
+]
+
+[class.terraform]
+includes = ["mise"]
+hosts = [
+  # provider と module の解決。ADR-0205 により module は取りに行かないが、
+  # registry の discovery は provider の解決経路と同じ入口を通る。
+  "registry.terraform.io",
+  "releases.hashicorp.com",
+  # provider のバイナリの実体。registry が指す先。
+  "github-releases.githubusercontent.com",
+]
+
+[class.trivy]
+includes = ["mise"]
+hosts = [
+  # 脆弱性 DB と checks バンドルは OCI artifact として配布される。取れないと trivy は
+  # 「所見なし」ではなく FATAL で落ちる —— 検査が働かなかったことが緑に化けない。
+  "mirror.gcr.io",
+  "ghcr.io",
+  "pkg-containers.githubusercontent.com",
+]
+
+[class.docker-hub]
+# 上流のイメージで実行する Security の道具（ADR-0503 決定4）の pull。layer の実体は Cloudflare の R2 か
+# S3 のどちらかから配られ、どちらになるかは要求ごとに変わる。この2つの Bucket のホストは Docker の許可
+# リストの文書に載っておらず、CI で名前解決に失敗したときの名前である。`*.r2.cloudflarestorage.com` や
+# `*.s3.amazonaws.com` は誰でも作れる Bucket への持ち出し口になるので、Docker Hub の Bucket のホストだけを
+# 許す。ただし bullfrog は名前解決の結果の IP で判定するので（ADR-0702 の保証範囲）、正確な名前を書いても
+# 実効の持ち出し口は狭まらない。
+hosts = [
+  "registry-1.docker.io",
+  "auth.docker.io",
+  "production.cloudfront.docker.com",
+  "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
+  "docker-images-prod.s3.dualstack.us-east-1.amazonaws.com",
+]
+
+[class.deps-dev]
+hosts = [
+  "api.deps.dev",
+]
+
+[class.aws-state]
+# OIDC で role を assume し、state の Bucket に触れる job（ADR-0602 決定12）。region は env/*/providers.tf の
+# region に合わせる。
+# S3 の Bucket の名前はアカウント ID を含み、公開の宣言に置けないので、virtual-hosted-style の endpoint を
+# wildcard で許す。blob / R2 の wildcard を退けた理由（誰でも作れる置き場への持ち出し口）はここにも
+# 当たるが、bullfrog は名前解決の結果の IP で判定するので、正確な名前を書いても持ち出し口は狭まらない。
+# 外す条件は、Bucket を path-style で呼ぶか、bullfrog が名前そのもので判定するようになること。
+hosts = [
+  "sts.ap-northeast-1.amazonaws.com",
+  "s3.ap-northeast-1.amazonaws.com",
+  "*.s3.ap-northeast-1.amazonaws.com",
+]
+
+[class.aws]
+# iam は global の endpoint だけを持つ。
+# S3 Control の endpoint はアカウント ID を前に付けるので wildcard で許す。aws provider は Bucket の tag を
+# S3 Control の ListTagsForResource で先に読み、権限が無いと返ったときだけ GetBucketTagging へ移る
+# （internal/service/s3/tags.go）。名前解決で落ちると移らず、再試行が job の時間切れまで続く。
+includes = ["aws-state"]
+hosts = [
+  "iam.amazonaws.com",
+  "kms.ap-northeast-1.amazonaws.com",
+  "*.s3-control.ap-northeast-1.amazonaws.com",
+]
+
+# CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
+[root."env/admin/identity"]
+jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity"]
+
+# resource / data source の型が呼ぶ宛先。名前の形と当たり方は scripts/README.md の egress/ の行（make egress-check が拒む）。
+# API を呼ばない型は、型名そのもので hosts を空にする。
+[type.aws_caller_identity]
+hosts = ["sts.ap-northeast-1.amazonaws.com"]
+
+[type.aws_iam_]
+hosts = ["iam.amazonaws.com"]
+
+[type.aws_kms_]
+hosts = ["kms.ap-northeast-1.amazonaws.com"]
+
+[type.aws_partition]
+hosts = []
+
+[type.aws_region]
+hosts = []
+
+[type.aws_s3_]
+hosts = [
+  "s3.ap-northeast-1.amazonaws.com",
+  "*.s3.ap-northeast-1.amazonaws.com",
+  "*.s3-control.ap-northeast-1.amazonaws.com",
+]
+
+[job."actions-lint.yaml:actions-lint"]
+classes = ["mise"]
+
+[job."commitlint.yaml:commitlint"]
+classes = ["mise"]
+
+# sample:begin
+[job."dependency-review.yaml:dependency-review"]
+classes = ["deps-dev"]
+# OpenSSF Scorecard の要約（show-openssf-scorecard は既定で有効）が引くデータ源。
+# 呼ぶのは「その PR が新しく足した依存」がある時だけなので、依存を増やさない PR では
+# 一度も出ていかない。そのため、この宛先と deps-dev が欠けていても依存を足す PR が現れるまで
+# 誰も気づかず、現れた瞬間にその PR だけが fetch failed で落ちる。
+extra = [
+  "api.securityscorecards.dev",
+]
+# sample:end
+
+[job."docker-lint.yaml:docker-lint"]
+classes = ["mise"]
+
+[job."egress-check.yaml:egress-check"]
+classes = ["mise"]
+
+[job."pin-runners-check.yaml:pin-runners-check"]
+classes = ["mise"]
+
+[job."repo-settings.yaml:repo-settings-check"]
+classes = ["mise"]
+
+[job."repo-settings.yaml:deploy-source-check"]
+classes = ["mise"]
+
+[job."go-cooldown.yaml:go-cooldown"]
+classes = ["mise"]
+
+[job."go-test.yaml:changes"]
+classes = []
+
+[job."go-test.yaml:go-test"]
+classes = ["mise"]
+
+[job."go-test.yaml:test-mapping"]
+classes = ["mise"]
+
+[job."go-lint.yaml:changes"]
+classes = []
+
+[job."go-lint.yaml:go-lint"]
+classes = ["mise"]
+
+[job."go-lint.yaml:go-fmt-check"]
+classes = ["mise"]
+
+[job."md-lint.yaml:md-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:adr-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:skill-lint"]
+classes = ["mise"]
+
+[job."notify.yaml:notify"]
+classes = []
+extra = [
+  "hooks.slack.com",
+]
+
+[job."pin-actions-check.yaml:pin-actions-check"]
+classes = ["mise"]
+
+[job."pin-images-check.yaml:pin-images-check"]
+classes = ["mise"]
+
+[job."versions-check.yaml:versions-check"]
+classes = ["mise", "docker-hub"]
+# node_tools のイメージを組むとき、alpine の apk が取るパッケージの配布元。
+extra = ["dl-cdn.alpinelinux.org"]
+
+[job."secret-scan.yaml:secret-scan"]
+classes = ["mise"]
+
+[job."secret-scan.yaml:trivy-secret"]
+classes = ["mise"]
+
+# --no-verification と --no-update で、走査そのものは外へ出ない。
+[job."secret-scan.yaml:trufflehog"]
+classes = ["mise"]
+
+[job."tidy-check.yaml:changes"]
+classes = []
+
+[job."tidy-check.yaml:mod-tidy-check"]
+classes = ["mise"]
+
+[job."tool-cooldown.yaml:tool-cooldown"]
+classes = ["mise"]
+
+[job."tool-outdated-report.yaml:report"]
+classes = ["mise"]
+
+# sample:begin
+[job."sonarcloud.yaml:preflight"]
+classes = []
+
+# 走査器の本体は binaries.sonarsource.com から、JRE と解析エンジンは scanner.sonarcloud.io から、
+# 解析の送り先は api.sonarcloud.io と sonarcloud.io。署名の検証鍵は keyserver.ubuntu.com から取り、
+# gpg がその SRV レコードを引くので配下も要る。keys.openpgp.org は scan-action の鍵の取得の代替先
+# （src/main/gpg-verification.js）。
+# 解析のキャッシュと architecture の報告が向かう S3（analysis-sensorcache-*、dna-visualization-*）は
+# 許可しない。遮断されても解析は完了し、quality gate を読める。
+[job."sonarcloud.yaml:sonarcloud"]
+classes = []
+extra = [
+  "sonarcloud.io",
+  "api.sonarcloud.io",
+  "scanner.sonarcloud.io",
+  "binaries.sonarsource.com",
+  "keyserver.ubuntu.com",
+  "*.keyserver.ubuntu.com",
+  "keys.openpgp.org",
+]
+
+[job."sonarcloud.yaml:report"]
+classes = []
+
+[job."sample-remove-check.yaml:sample-remove-check"]
+classes = ["mise"]
+# sample:end
+
+[job."terraform-gates.yaml:changes"]
+classes = []
+
+# terraform 本体は releases.hashicorp.com から入る（aqua registry の hashicorp/terraform）。
+[job."terraform-gates.yaml:tf-fmt-check"]
+classes = ["terraform"]
+
+# terraform を呼ばない。ruleset は GitHub Release から取る。
+[job."terraform-gates.yaml:tf-lint"]
+classes = ["mise"]
+
+[job."terraform-gates.yaml:tf-validate-test"]
+classes = ["terraform"]
+
+[job."terraform-gates.yaml:tf-policy"]
+classes = ["terraform"]
+
+[job."terraform-gates.yaml:tf-gates-test"]
+classes = ["terraform"]
+
+# conftest は GitHub Release から入る。Rego と宣言はリポジトリ内に在り、実行時に取りに行かない。
+[job."terraform-gates.yaml:infra-code-gate"]
+classes = ["mise"]
+
+[job."terraform-gates.yaml:plan-admin-identity"]
+classes = ["terraform", "aws"]
+
+# terraform-gates.yaml の infra-code-gate と同じ検出。
+[job."terraform-apply.yaml:apply-infra-code-gate"]
+classes = ["mise"]
+
+# terraform-gates.yaml の tf-lint と同じ順序の検査。conftest の入手は infra-code-gate と同じ。
+[job."terraform-apply.yaml:apply-resource-order-check"]
+classes = ["mise"]
+
+[job."terraform-apply.yaml:apply-admin-identity"]
+classes = ["terraform", "aws"]
+
+# apply-revert は scripts/ から go で建てる。GitHub API は base が許す。
+[job."terraform-apply.yaml:revert-plan"]
+classes = ["mise"]
+
+# git だけを使い、道具を導入しない。github.com への push は base が許す。
+[job."terraform-apply.yaml:revert-push"]
+classes = []
+
+[job."terraform-unlock.yaml:unlock-infra-code-gate"]
+classes = ["mise"]
+
+[job."terraform-unlock.yaml:unlock-admin-identity"]
+classes = ["mise", "aws-state"]
+
+[job."trivy-config.yaml:changes"]
+classes = []
+
+[job."trivy-config.yaml:trivy-config"]
+classes = ["trivy"]
+
+[job."checkov.yaml:changes"]
+classes = []
+
+[job."checkov.yaml:checkov"]
+classes = ["docker-hub"]
+
+[job."kics.yaml:changes"]
+classes = []
+
+[job."kics.yaml:kics"]
+classes = ["docker-hub"]
+
+[job."semgrep.yaml:changes"]
+classes = []
+
+# rule は codeload.github.com（base）から commit を固定して取る。走査そのものは network を持たない。
+[job."semgrep.yaml:semgrep"]
+classes = ["docker-hub"]
+
+[job."trivy-fs.yaml:trivy-fs"]
+classes = ["trivy"]
+
+[job."trivy-fs.yaml:trivy-license"]
+classes = ["trivy"]
+
+[job."trivy-release-gate.yaml:trivy-fs-release"]
+classes = ["trivy"]
+
+# Go の脆弱性 DB。
+[job."govulncheck.yaml:govulncheck"]
+classes = ["mise"]
+extra = [
+  "vuln.go.dev",
+]
+
+[job."zizmor.yaml:zizmor"]
+classes = ["mise"]
+
+[job."hygiene.yaml:typos"]
+classes = ["mise"]
+
+[job."hygiene.yaml:editorconfig-check"]
+classes = ["mise"]
+
+# Scorecard のデータ源（Vulnerabilities・CII-Best-Practices・Fuzzing・パッケージの情報）。publish しないので
+# api.scorecard.dev は要らない。Fuzzing は OSS-Fuzz の build log の Bucket を読み、届かないと check が
+# 内部エラーになって job が落ちる。
+[job."scorecard.yaml:scorecard"]
+classes = ["mise", "deps-dev"]
+extra = [
+  "api.osv.dev",
+  "www.bestpractices.dev",
+  "oss-fuzz-build-logs.storage.googleapis.com",
+]

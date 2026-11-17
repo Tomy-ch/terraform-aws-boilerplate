@@ -1,0 +1,109 @@
+# ツールチェーンの pin（ADR-0501 決定19）。**ここが持つのは版の宣言だけ**である。
+#
+# **版の出所はここだけである。** 版を並べ直した設定を、イメージ側にも workflow 側にも置かない。
+#
+# 実行経路ごとの分担は ADR-0503 決定1、コンテナ内の Go / npm の分担は docker/tools/README.md。
+#
+# **宣言を読む実装は scripts/lib/misetoml だけである**（理由は同パッケージの doc）。写しを持つ側は
+# 読み手ではなく、`make versions-apply` がここから書き `make versions-check` が守る —— 写し先の
+# 一覧は scripts/README.md の versions/ が持つ。
+#
+# ベースイメージの版が宣言とずれるとイメージのビルドが落ちる（ADR-0503 決定3）。
+#
+# backend（`aqua:` / `npm:` 等）は、短い名前で一意に解決できないものだけ明示する。レジストリ上で
+# 複数 backend を持つツールは、既定 backend が差し替わると取得元が黙って変わる。
+#
+# **未使用の道具を pin だけ置かない**（ADR-0501 決定33）。ここに在るものは、`.makefiles/` か
+# `.github/workflows/` か `docker/tools/Dockerfile` が呼ぶ。
+min_version = "2026.6.0"
+
+[tools]
+
+# ==============================================================================
+# 言語ランタイム
+# ==============================================================================
+
+# 運用機構の実装言語（ADR-0702 決定6）。go.mod の go ディレクティブと揃える。
+go = "1.27.4"
+
+# npm エコシステムの道具のためのランタイム。
+node = "26.13.1"
+
+
+# ==============================================================================
+# 実行エンジンと、ローカルの git hook
+# ==============================================================================
+
+# 実行エンジン（ADR-0502 決定1）。OpenTofu を採らない理由は同 ADR 決定3。
+# module が宣言する required_version は、使用する機能から導かれる下限であって
+# この pin と同じ値ではない（同 決定2）。
+"aqua:hashicorp/terraform" = "1.17.1"
+
+# Static Analysis の権威（ADR-0501 決定4）。`terraform validate` の代替ではなく補完（同 決定5）。
+# AWS ルールセットは tflint 自身のプラグイン機構が取るため、版の固定は .tflint.hcl が持つ。
+"aqua:terraform-linters/tflint" = "0.65.0"
+
+# Security の道具の1つ（ADR-0501 決定4・決定6）。Terraform の IaC 走査もここが担う。secret scanning は
+# 作業ツリーに対する Secret Scan の検出器の1つとして併用する（ADR-0302 決定2）。
+"aqua:aquasecurity/trivy" = "0.76.1"
+
+# Secret Scan の検出器（ADR-0302 決定2）。走査対象は commit と履歴であり、作業ツリーのファイルではない。
+"aqua:gitleaks/gitleaks" = "8.30.1"
+
+# Secret Scan の検出器（ADR-0302 決定2）。gitleaks と同じ範囲を、発行元ごとの検出器の集合で走査する。
+# AGPL-3.0 の利用の前提は ADR-0302「影響」が持つ。
+"aqua:trufflesecurity/trufflehog" = "3.99.7"
+
+# bootstrap の段1 が state backend の実体を作る道具（ADR-0602 決定4）。**ホストで実行する理由は
+# ADR-0504 が持つ。**
+# 配布物は GitHub ではなく awscli.amazonaws.com から来る（aqua の定義が `type: http`）。
+"aqua:aws/aws-cli" = "2.36.40"
+
+# ==============================================================================
+# 検査の道具
+# ==============================================================================
+
+# template injection の検出。shellcheck 系には構造的に見えない —— ${{ }} はシェルがパースする
+# 前に置換されるため、補間された式は文字列ではなくコードになる。だから lint に束ねず横に並べる。
+"aqua:zizmorcore/zizmor" = "1.32.0"
+
+# workflow 定義の構文と式、run: のシェルを検査する。走査が及ぶのは .github/workflows だけで、
+# composite action の中は scripts/actions-shellcheck が埋める。
+actionlint = "1.7.12"
+# actionlint が run: を検査するために PATH 上で参照する（同梱ではなく別バイナリ）。
+shellcheck = "0.11.0"
+
+# ツールランナーの Dockerfile を検査する。
+hadolint = "2.15.1"
+
+# 役割は ADR-0501 決定4・5・8。OPA を内蔵するため、OPA を別に pin しない。
+# mise のレジストリは aqua と asdf の2つの backend を持つ。
+"aqua:open-policy-agent/conftest" = "0.71.1"
+
+# 供給網の衛生の報告。action ではなく CLI を直接実行する理由は ADR-0501 決定6。
+"aqua:ossf/scorecard" = "5.6.0"
+
+"aqua:crate-ci/typos" = "1.52.2"
+
+"aqua:editorconfig-checker/editorconfig-checker" = "4.0.2"
+
+# 運用機構（scripts/）の Go を検査する。
+golangci-lint = "2.15.0"
+
+# 運用機構（scripts/）の Go の依存の既知脆弱性を報告する。
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+
+# ローカルの git hook。速いフィードバックのために置き、CI の代替としない（ADR-0501 決定26）。
+lefthook = "2.2.2"
+
+# --- npm エコシステム（ADR-0503 決定14） ---
+
+# npm エコシステムのパッケージ管理（ADR-0503 決定14）。版を変えたら make pin-pnpm-resolve で Dockerfile の写しと照合値を書き直す。
+"aqua:pnpm/pnpm" = "12.17.0"
+
+# Markdown の体裁。このリポジトリの主要な成果物が Markdown である以上、既製品が在るなら
+# 自前で書かない（ADR-0501 決定3 の第1条件）。
+"npm:markdownlint-cli2" = "0.24.1"
+
+# commit message の検査。規約の正本は commitlint.config.js。
+"npm:@commitlint/cli" = "21.2.4"

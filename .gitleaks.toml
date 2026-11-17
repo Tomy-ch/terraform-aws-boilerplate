@@ -1,0 +1,25 @@
+# https://github.com/gitleaks/gitleaks#configuration
+#
+# 抑止の条件は ADR-0501 決定13 に従う。
+[extend]
+useDefault = true
+
+# actions-mise-pin-lint のフィクスチャが持つキャッシュキー（`mise-<版>-<digest の先頭8桁>`）。
+#
+# このツールが検査しているのは「キャッシュキーが版と digest の両方を含むこと」そのものなので、
+# フィクスチャは実物と同じ形でなければならない。形を崩せば、検査していた対象が消える。
+# `key:` という語と16進8桁の並びが generic-api-key の keyword + entropy 条件に当たる誤検知で、
+# 値は実在しない。
+#
+# **外すのは、このファイルの中でこの形に当たる検出だけである。** `condition = "AND"` を外さない
+# —— 既定の OR では `paths` が当たった時点でそのファイルの検出がすべて落ち、同じファイルへ後から
+# 入った本物の秘密も一緒に見逃す。
+#
+# 撤回条件: キャッシュキーの形式が digest を含まなくなったとき、または actions-mise-pin-lint が
+# 無くなったとき。
+[allowlist]
+description = "actions-mise-pin-lint のフィクスチャ内のキャッシュキー（実在しない合成値）"
+condition = "AND"
+paths = ['''^scripts/actions-mise-pin-lint/main_test\.go$''']
+regexTarget = "match"
+regexes = ['mise-\d+\.\d+\.\d+-[0-9a-f]{8}']

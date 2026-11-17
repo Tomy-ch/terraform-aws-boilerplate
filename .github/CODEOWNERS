@@ -1,0 +1,68 @@
+# 特定の役割にだけ review を委ねるパス。
+#
+# GitHub がこの宣言を強制するのは、保護設定の「Require review from Code Owners」が有効なときだけである。
+# 無効なら、reviewer を自動で指名するだけになる。
+#
+# 以下のパスは同じ形をしている。周りの自動化が検査するのは宣言どうしが合っていることであって、
+# その宣言をそもそも置くべきだったかではない。どれを弱めても検査はすべて緑のまま通り、残るのは review である。
+
+# サプライチェーンの統制 —— pin の lockfile と、2つの bypass の台帳。
+.github/actions-pin.toml              @Tomy-ch
+.github/runners-pin.toml              @Tomy-ch
+.github/go-cooldown-bypass.toml       @Tomy-ch
+.github/tool-cooldown-bypass.toml     @Tomy-ch
+docker/images-pin.toml                @Tomy-ch
+
+# Go の cooldown gate は `go.mod` の差分を読み、直接の依存だけを覆う。間接の module は review に残る。
+scripts/go.mod                        @Tomy-ch
+scripts/go.sum                        @Tomy-ch
+
+# 版の SSOT。`tool-cooldown.yaml` はここで宣言する CLI の道具を覆い、言語の runtime はそのファイル自身の宣言で対象外になる。
+mise.toml                             @Tomy-ch
+
+# 分岐のパターンの SSOT と、デプロイ先の environment（ADR-0603 決定1・4）。許す分岐が多い environment も、
+# 保護するものが少ないパターンも、検査はすべて通る。
+.github/settings/branches.json        @Tomy-ch
+scripts/lib/branchdecl/               @Tomy-ch
+.github/settings/environments.json    @Tomy-ch
+# デプロイブランチへ入る commit の検査（ADR-0603 決定31）と、宣言から apply の起動条件を生成する道具。
+# 検査は base の commit のコードで走るが、job の定義は Pull Request の側のものである。
+scripts/repo-settings/                @Tomy-ch
+.makefiles/github/setting/repo-settings.mk @Tomy-ch
+.github/workflows/repo-settings.yaml  @Tomy-ch
+
+# CI の plan・apply・lock の解除の経路（ADR-0602 決定13・14）。これを変える主体が、CI の role の資格情報がどこへ
+# 届くかと、terraform の全文が公開のログに出ないかと、何がいつ apply され、どの lock がいつ外されるかを決める。
+.makefiles/terraform/operation/ci.mk  @Tomy-ch
+scripts/tf-local/                     @Tomy-ch
+scripts/oidc-job-lint/                @Tomy-ch
+
+# apply の失敗を戻す revert のブランチの経路。リポジトリへ書き込める token がどの job に届き、何を push するかを決める。
+.makefiles/github/operation/apply-revert.mk @Tomy-ch
+scripts/apply-revert/                       @Tomy-ch
+scripts/contents-write-lint/                @Tomy-ch
+
+# runner の egress の許可リストの SSOT（bullfrog）。`make egress-apply` が、その job を持つすべての workflow へ書き出す。
+.github/egress.toml                   @Tomy-ch
+
+# Policy Test とその宣言 conftest/plan/decl.json（ADR-0402 決定15）。宣言から文書の型や role の address を
+# 落としても、reference root の policy input から override を落としても、Policy が読む範囲が縮んだまま検査は緑で通る。
+conftest/plan/                        @Tomy-ch
+usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
+
+# インフラ内コードの検出（ADR-0103 決定14）。
+# 許可リストに本リポジトリ所有の項目を足す変更は、その項目のソースの所在の行をここに足す
+# （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。
+conftest/hcl/                              @Tomy-ch
+scripts/infra-code-gate/                   @Tomy-ch
+scripts/lib/adrdoc/                        @Tomy-ch
+scripts/tf-job-lint/                       @Tomy-ch
+.makefiles/terraform/infra-code.mk         @Tomy-ch
+.makefiles/terraform/infra-code-test.mk    @Tomy-ch
+.makefiles/terraform/resource-order.mk     @Tomy-ch
+.makefiles/terraform/resource-order-test.mk @Tomy-ch
+.github/workflows/terraform-gates.yaml     @Tomy-ch
+.github/workflows/terraform-apply.yaml     @Tomy-ch
+.github/workflows/terraform-unlock.yaml    @Tomy-ch
+.github/settings/branch-protection.json    @Tomy-ch
+.github/CODEOWNERS                         @Tomy-ch

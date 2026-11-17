@@ -1,0 +1,215 @@
+{
+  "policy_plan": {
+    "plan_format_version": "1.2",
+    "provider_format_version": "1.0",
+    "resource_wildcard_actions": [
+      "kms:ListAliases"
+    ],
+    "documents": {
+      "aws_iam_role": [
+        "assume_role_policy"
+      ],
+      "aws_iam_role_policy": [
+        "policy"
+      ],
+      "aws_iam_user_policy": [
+        "policy"
+      ],
+      "aws_iam_group_policy": [
+        "policy"
+      ],
+      "aws_iam_policy": [
+        "policy"
+      ],
+      "aws_s3_bucket_policy": [
+        "policy"
+      ],
+      "aws_kms_key_policy": [
+        "policy"
+      ]
+    },
+    "required_documents": [
+      "aws_iam_role",
+      "aws_iam_role_policy",
+      "aws_kms_key_policy",
+      "aws_s3_bucket_policy"
+    ],
+    "deployment_identity": {
+      "roles": [
+        "module.deployment_identity.module.github_oidc.aws_iam_role.this",
+        "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity"
+      ],
+      "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github",
+      "plan_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+      },
+      "apply_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"apply\"]",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]",
+        "bootstrap": {
+          "modules": [
+            "module.state_backend.",
+            "module.deployment_identity."
+          ],
+          "types": {
+            "aws_iam_openid_connect_provider": {
+              "class": "target"
+            },
+            "aws_iam_role": {
+              "class": "target"
+            },
+            "aws_iam_role_policies_exclusive": {
+              "class": "covered_by",
+              "parent": "aws_iam_role",
+              "ref": "role_name",
+              "parent_ref": "name"
+            },
+            "aws_iam_role_policy": {
+              "class": "covered_by",
+              "parent": "aws_iam_role",
+              "ref": "role",
+              "parent_ref": "name"
+            },
+            "aws_iam_role_policy_attachments_exclusive": {
+              "class": "covered_by",
+              "parent": "aws_iam_role",
+              "ref": "role_name",
+              "parent_ref": "name"
+            },
+            "aws_kms_alias": {
+              "class": "covered_by",
+              "parent": "aws_kms_key",
+              "ref": "target_key_id",
+              "parent_ref": "key_id"
+            },
+            "aws_kms_key": {
+              "class": "key"
+            },
+            "aws_kms_key_policy": {
+              "class": "covered_by",
+              "parent": "aws_kms_key",
+              "ref": "key_id",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket": {
+              "class": "target",
+              "children": true
+            },
+            "aws_s3_bucket_lifecycle_configuration": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket_ownership_controls": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket_policy": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket_public_access_block": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket_server_side_encryption_configuration": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            },
+            "aws_s3_bucket_versioning": {
+              "class": "covered_by",
+              "parent": "aws_s3_bucket",
+              "ref": "bucket",
+              "parent_ref": "id"
+            }
+          },
+          "children": {
+            "module.state_backend.module.s3.aws_s3_bucket.this": {
+              "roots": true,
+              "version_deletion": true
+            },
+            "module.state_backend.module.plan_output.aws_s3_bucket.this": {
+              "suffixes": [
+                "/*"
+              ]
+            }
+          }
+        }
+      },
+      "apply_identity_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity",
+        "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this",
+        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this"
+      },
+      "unlock_role": {
+        "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"unlock_identity\"]",
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"unlock_identity\"]",
+        "lock_key": "identity/terraform.tfstate.tflock",
+        "state_bucket": "module.state_backend.module.s3.aws_s3_bucket.this"
+      }
+    },
+    "state_backend": {
+      "bucket": "module.state_backend.module.s3.aws_s3_bucket.this",
+      "bucket_policy": "module.state_backend.module.s3.aws_s3_bucket_policy.this",
+      "state_key": "module.state_backend.module.kms.aws_kms_key.this",
+      "key_policy": "module.state_backend.module.kms.aws_kms_key_policy.this",
+      "roots": [
+        {
+          "writer": "apply_identity_role",
+          "state": "identity/terraform.tfstate"
+        },
+        {
+          "writer": "apply_role",
+          "state": "workload/terraform.tfstate"
+        }
+      ],
+      "unlocker": "unlock_role",
+      "key_user_roles": [
+        "plan_role",
+        "apply_identity_role",
+        "unlock_role"
+      ]
+    },
+    "stateful_protection": {
+      "protected_types": [
+        "aws_s3_bucket",
+        "aws_s3_bucket_lifecycle_configuration",
+        "aws_kms_key",
+        "aws_kms_key_policy"
+      ],
+      "allow": {},
+      "shorten_allow": {}
+    },
+    "inline_arguments": {
+      "aws_s3_bucket": {
+        "acceleration_status": null,
+        "acl": null,
+        "policy": null,
+        "request_payer": null,
+        "cors_rule": [],
+        "grant": [],
+        "lifecycle_rule": [],
+        "logging": [],
+        "object_lock_configuration": [],
+        "replication_configuration": [],
+        "server_side_encryption_configuration": [],
+        "versioning": [],
+        "website": []
+      },
+      "aws_kms_key": {
+        "policy": null
+      }
+    }
+  }
+}
