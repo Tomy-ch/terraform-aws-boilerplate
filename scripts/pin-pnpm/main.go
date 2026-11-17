@@ -74,13 +74,13 @@ func shellVarRe(name string) *regexp.Regexp {
 func main() {
 	log.SetFlags(0)
 
-	client := &http.Client{Timeout: requestTimeout}
-	if err := run(context.Background(), os.Args[1:], ".", defaultAPIBase, client, os.Stdout); err != nil {
+	gh := githubAPI{base: defaultAPIBase, token: os.Getenv("GITHUB_TOKEN"), client: &http.Client{Timeout: requestTimeout}}
+	if err := run(context.Background(), os.Args[1:], ".", gh, os.Stdout); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
-func run(ctx context.Context, args []string, root, apiBase string, client *http.Client, out io.Writer) error {
+func run(ctx context.Context, args []string, root string, gh githubAPI, out io.Writer) error {
 	if len(args) != 1 {
 		return errUsage
 	}
@@ -103,7 +103,7 @@ func run(ctx context.Context, args []string, root, apiBase string, client *http.
 	case "check":
 		return check(version, current, out)
 	case "resolve":
-		want, err := fetchDigests(ctx, client, apiBase, version)
+		want, err := fetchDigests(ctx, gh, version)
 		if err != nil {
 			return err
 		}
@@ -175,6 +175,13 @@ func check(version string, current map[string]string, out io.Writer) error {
 	return nil
 }
 
+// githubAPI は GitHub API の宛先・トークン・クライアント。トークンは base の宛先にだけ送る。
+type githubAPI struct {
+	base   string
+	token  string
+	client *http.Client
+}
+
 type release struct {
 	Assets []struct {
 		Name   string `json:"name"`
@@ -183,18 +190,18 @@ type release struct {
 }
 
 // fetchDigests は Release `v<version>` の配布物の sha256 を、pins の変数名をキーにして返します。
-func fetchDigests(ctx context.Context, client *http.Client, apiBase, version string) (map[string]string, error) {
-	url := fmt.Sprintf("%s/repos/%s/releases/tags/v%s", strings.TrimRight(apiBase, "/"), pnpmRepo, version)
+func fetchDigests(ctx context.Context, gh githubAPI, version string) (map[string]string, error) {
+	url := fmt.Sprintf("%s/repos/%s/releases/tags/v%s", strings.TrimRight(gh.base, "/"), pnpmRepo, version)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
+	if gh.token != "" {
+		req.Header.Set("Authorization", "Bearer "+gh.token)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := gh.client.Do(req)
 	if err != nil {
 		return nil, xerrors.Wrap(errRelease, err.Error())
 	}

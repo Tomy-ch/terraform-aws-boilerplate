@@ -9,10 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 const (
@@ -59,12 +63,29 @@ func readDockerfile(t *testing.T, root string) string {
 	return string(got)
 }
 
-// releaseServer は、要求された path を記録して返す。
-func releaseServer(t *testing.T, tag string, assets map[string]string) (*httptest.Server, *[]string) {
+// requests は、テスト用の API が受けた要求の path と Authorization を記録する。
+type requests struct {
+	mu    sync.Mutex
+	paths []string
+	auths []string
+}
+
+func (r *requests) snapshot() ([]string, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]string(nil), r.paths...), append([]string(nil), r.auths...)
+}
+
+// releaseServer は、tag の Release だけに assets を返し、受けた要求を記録する。
+func releaseServer(t *testing.T, tag string, assets map[string]string) (*httptest.Server, *requests) {
 	t.Helper()
-	var paths []string
+	rec := &requests{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
+		rec.mu.Lock()
+		rec.paths = append(rec.paths, r.URL.Path)
+		rec.auths = append(rec.auths, r.Header.Get("Authorization"))
+		rec.mu.Unlock()
 		if r.URL.Path != "/repos/pnpm/pnpm/releases/tags/"+tag {
 			http.NotFound(w, r)
 
@@ -78,7 +99,11 @@ func releaseServer(t *testing.T, tag string, assets map[string]string) (*httptes
 	}))
 	t.Cleanup(srv.Close)
 
-	return srv, &paths
+	return srv, rec
+}
+
+func ghFor(srv *httptest.Server) githubAPI {
+	return githubAPI{base: srv.URL, client: srv.Client()}
 }
 
 func bothAssets(amd, arm string) map[string]string {
@@ -129,7 +154,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, soundMise, soundDockerfile)
 			var out bytes.Buffer
-			require.NoError(t, run(context.Background(), []string{"check"}, root, "http://unused.invalid", http.DefaultClient, &out))
+			require.NoError(t, run(context.Background(), []string{"check"}, root, githubAPI{base: "http://unused.invalid", client: http.DefaultClient}, &out))
 			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
 			assert.Contains(t, out.String(), "12.17.0")
 		})
@@ -137,13 +162,28 @@ func Test_run(t *testing.T) {
 		t.Run("resolve は宣言の版の Release から版と照合値を書く", func(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, strings.Replace(soundMise, "12.17.0", "12.18.0", 1), soundDockerfile)
-			srv, paths := releaseServer(t, "v12.18.0", bothAssets(shaC, shaD))
+			srv, rec := releaseServer(t, "v12.18.0", bothAssets(shaC, shaD))
 			var out bytes.Buffer
 
-			require.NoError(t, run(context.Background(), []string{"resolve"}, root, srv.URL, srv.Client(), &out))
+			require.NoError(t, run(context.Background(), []string{"resolve"}, root, ghFor(srv), &out))
 			want := strings.NewReplacer(`"12.17.0"`, `"12.18.0"`, shaA, shaC, shaB, shaD).Replace(soundDockerfile)
 			assert.Equal(t, want, readDockerfile(t, root))
-			assert.Equal(t, []string{"/repos/pnpm/pnpm/releases/tags/v12.18.0"}, *paths)
+			paths, _ := rec.snapshot()
+			assert.Equal(t, []string{"/repos/pnpm/pnpm/releases/tags/v12.18.0"}, paths)
+		})
+	})
+
+	t.Run("正常系（照合値が未記入）", func(t *testing.T) {
+		t.Parallel()
+
+		// 照合値がまだ形を成していない Dockerfile は、比べる相手が無い（detectReplaced）。
+		t.Run("resolve は同じ版のまま空の照合値を埋める", func(t *testing.T) {
+			t.Parallel()
+			empty := strings.NewReplacer(shaA, "", shaB, "").Replace(soundDockerfile)
+			root := newRepo(t, soundMise, empty)
+			srv, _ := releaseServer(t, "v12.17.0", bothAssets(shaA, shaB))
+			require.NoError(t, run(context.Background(), []string{"resolve"}, root, ghFor(srv), &bytes.Buffer{}))
+			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
 		})
 	})
 
@@ -152,14 +192,14 @@ func Test_run(t *testing.T) {
 
 		t.Run("引数が無ければ usage", func(t *testing.T) {
 			t.Parallel()
-			err := run(context.Background(), nil, t.TempDir(), "", http.DefaultClient, &bytes.Buffer{})
+			err := run(context.Background(), nil, t.TempDir(), githubAPI{client: http.DefaultClient}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errUsage)
 		})
 
 		t.Run("未知のサブコマンドは usage", func(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, soundMise, soundDockerfile)
-			err := run(context.Background(), []string{"apply"}, root, "", http.DefaultClient, &bytes.Buffer{})
+			err := run(context.Background(), []string{"apply"}, root, githubAPI{client: http.DefaultClient}, &bytes.Buffer{})
 			require.ErrorIs(t, err, errUsage)
 		})
 
@@ -167,7 +207,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, strings.Replace(soundMise, "12.17.0", "12.18.0", 1), soundDockerfile)
 			var out bytes.Buffer
-			err := run(context.Background(), []string{"check"}, root, "", http.DefaultClient, &out)
+			err := run(context.Background(), []string{"check"}, root, githubAPI{client: http.DefaultClient}, &out)
 			require.ErrorIs(t, err, errDrift)
 			assert.Contains(t, out.String(), "pnpm_version")
 			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
@@ -177,7 +217,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(root, miseFile), []byte(soundMise), 0o600))
-			err := run(context.Background(), []string{"check"}, root, "", http.DefaultClient, &bytes.Buffer{})
+			err := run(context.Background(), []string{"check"}, root, githubAPI{client: http.DefaultClient}, &bytes.Buffer{})
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
@@ -185,7 +225,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, strings.Replace(soundMise, "12.17.0", "12.18.0", 1), soundDockerfile)
 			srv, _ := releaseServer(t, "v99.0.0", nil)
-			err := run(context.Background(), []string{"resolve"}, root, srv.URL, srv.Client(), &bytes.Buffer{})
+			err := run(context.Background(), []string{"resolve"}, root, ghFor(srv), &bytes.Buffer{})
 			require.ErrorIs(t, err, errRelease)
 			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
 		})
@@ -194,7 +234,7 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 			root := newRepo(t, soundMise, soundDockerfile)
 			srv, _ := releaseServer(t, "v12.17.0", bothAssets(shaC, shaB))
-			err := run(context.Background(), []string{"resolve"}, root, srv.URL, srv.Client(), &bytes.Buffer{})
+			err := run(context.Background(), []string{"resolve"}, root, ghFor(srv), &bytes.Buffer{})
 			require.ErrorIs(t, err, errReplaced)
 			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
 		})
@@ -240,7 +280,19 @@ func Test_declaredVersion(t *testing.T) {
 		t.Run("mise.toml が読めなければエラー", func(t *testing.T) {
 			t.Parallel()
 			_, err := declaredVersion(filepath.Join(t.TempDir(), miseFile))
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		t.Run("宣言が重複していれば先頭を採らずに落とす", func(t *testing.T) {
+			t.Parallel()
+			_, err := declaredVersion(write(t, soundMise+"\"aqua:pnpm/pnpm\" = \"12.18.0\"\n"))
+			require.ErrorIs(t, err, misetoml.ErrDuplicateKey)
+		})
+
+		t.Run("解釈できない行があれば落とす", func(t *testing.T) {
+			t.Parallel()
+			_, err := declaredVersion(write(t, soundMise+"pnpm 12.17.0\n"))
+			require.ErrorIs(t, err, misetoml.ErrInvalidLine)
 		})
 	})
 }
@@ -272,6 +324,20 @@ func Test_readPins(t *testing.T) {
 			_, err := readPins(soundDockerfile + "    pnpm_version=\"1.0.0\"; \\\n")
 			require.ErrorIs(t, err, errShape)
 		})
+
+		// 写しが ARG になると `--build-arg` で差し替えられる。シェル変数の形でなければ数えない。
+		for name, src := range map[string]string{
+			"単引用符の写し":     strings.Replace(soundDockerfile, `pnpm_version="12.17.0"`, `pnpm_version='12.17.0'`, 1),
+			"ARG の写し":     strings.Replace(soundDockerfile, `    pnpm_version="12.17.0"; \`, `ARG pnpm_version=12.17.0`, 1),
+			"コメントの中にしか無い": strings.Replace(soundDockerfile, `    pnpm_version="12.17.0"; \`, `#   pnpm_version="12.17.0"; \`, 1),
+		} {
+			t.Run(name+"は数えず errShape", func(t *testing.T) {
+				t.Parallel()
+				require.NotEqual(t, soundDockerfile, src, "書き換えられていない")
+				_, err := readPins(src)
+				require.ErrorIs(t, err, errShape)
+			})
+		}
 
 		t.Run("空の Dockerfile は errShape", func(t *testing.T) {
 			t.Parallel()
@@ -305,21 +371,36 @@ func Test_check(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		tests := map[string]map[string]string{
-			"版が宣言と違う":    with("pnpm_version", "12.16.0"),
-			"照合値が空":      with("pnpm_sha256_amd64", ""),
-			"照合値が63桁":    with("pnpm_sha256_arm64", shaB[:63]),
-			"照合値が大文字":    with("pnpm_sha256_arm64", strings.ToUpper(shaB)),
-			"照合値に接頭辞が残る": with("pnpm_sha256_amd64", "sha256:"+shaA),
+		// 出力はずれた変数を名指す。arm64 と amd64 の取り違えも、ここで見える。
+		tests := map[string]struct {
+			key, value string
+		}{
+			"版が宣言と違う":    {"pnpm_version", "12.16.0"},
+			"照合値が空":      {"pnpm_sha256_amd64", ""},
+			"照合値が63桁":    {"pnpm_sha256_arm64", shaB[:63]},
+			"照合値が65桁":    {"pnpm_sha256_arm64", shaB + "0"},
+			"照合値が大文字":    {"pnpm_sha256_arm64", strings.ToUpper(shaB)},
+			"照合値に接頭辞が残る": {"pnpm_sha256_amd64", "sha256:" + shaA},
 		}
-		for name, pins := range tests {
+		for name, tc := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
-				require.ErrorIs(t, check("12.17.0", pins, &out), errDrift)
-				assert.Contains(t, out.String(), "❌")
+				require.ErrorIs(t, check("12.17.0", with(tc.key, tc.value), &out), errDrift)
+				assert.Contains(t, out.String(), tc.key)
 			})
 		}
+
+		t.Run("複数のずれをすべて名指す", func(t *testing.T) {
+			t.Parallel()
+			current := with("pnpm_version", "12.16.0")
+			current["pnpm_sha256_arm64"] = ""
+			var out bytes.Buffer
+			require.ErrorIs(t, check("12.17.0", current, &out), errDrift)
+			assert.Contains(t, out.String(), "pnpm_version")
+			assert.Contains(t, out.String(), "pnpm_sha256_arm64")
+			assert.NotContains(t, out.String(), "pnpm_sha256_amd64")
+		})
 	})
 }
 
@@ -332,15 +413,35 @@ func Test_fetchDigests(t *testing.T) {
 		t.Run("musl の配布物の digest を変数名で返す", func(t *testing.T) {
 			t.Parallel()
 			srv, _ := releaseServer(t, "v12.17.0", bothAssets(shaA, shaB))
-			got, err := fetchDigests(context.Background(), srv.Client(), srv.URL, "12.17.0")
+			got, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"pnpm_sha256_amd64": shaA, "pnpm_sha256_arm64": shaB}, got)
+		})
+
+		t.Run("トークンがあれば Bearer で送る", func(t *testing.T) {
+			t.Parallel()
+			srv, rec := releaseServer(t, "v12.17.0", bothAssets(shaA, shaB))
+			gh := ghFor(srv)
+			gh.token = "tkn"
+			_, err := fetchDigests(context.Background(), gh, "12.17.0")
+			require.NoError(t, err)
+			_, auths := rec.snapshot()
+			assert.Equal(t, []string{"Bearer tkn"}, auths)
+		})
+
+		t.Run("トークンが空なら Authorization を送らない", func(t *testing.T) {
+			t.Parallel()
+			srv, rec := releaseServer(t, "v12.17.0", bothAssets(shaA, shaB))
+			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
+			require.NoError(t, err)
+			_, auths := rec.snapshot()
+			assert.Equal(t, []string{""}, auths)
 		})
 
 		t.Run("API の base の末尾の / を許す", func(t *testing.T) {
 			t.Parallel()
 			srv, _ := releaseServer(t, "v12.17.0", bothAssets(shaA, shaB))
-			_, err := fetchDigests(context.Background(), srv.Client(), srv.URL+"/", "12.17.0")
+			_, err := fetchDigests(context.Background(), githubAPI{base: srv.URL + "/", client: srv.Client()}, "12.17.0")
 			require.NoError(t, err)
 		})
 	})
@@ -351,12 +452,13 @@ func Test_fetchDigests(t *testing.T) {
 		t.Run("Release が無ければ errRelease", func(t *testing.T) {
 			t.Parallel()
 			srv, _ := releaseServer(t, "v1.0.0", nil)
-			_, err := fetchDigests(context.Background(), srv.Client(), srv.URL, "12.17.0")
+			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.ErrorIs(t, err, errRelease)
 		})
 
 		assets := map[string]map[string]string{
 			"配布物が欠けている":  {"pnpm-linux-x64-musl.tar.gz": "sha256:" + shaA},
+			"配布物が1件も無い":  {},
 			"digest が無い": {"pnpm-linux-x64-musl.tar.gz": "", "pnpm-linux-arm64-musl.tar.gz": "sha256:" + shaB},
 			"digest が別の算法": {
 				"pnpm-linux-x64-musl.tar.gz": "sha512:" + shaA, "pnpm-linux-arm64-musl.tar.gz": "sha256:" + shaB,
@@ -369,10 +471,21 @@ func Test_fetchDigests(t *testing.T) {
 			t.Run(name+"なら errRelease", func(t *testing.T) {
 				t.Parallel()
 				srv, _ := releaseServer(t, "v12.17.0", a)
-				_, err := fetchDigests(context.Background(), srv.Client(), srv.URL, "12.17.0")
+				_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 				require.ErrorIs(t, err, errRelease)
 			})
 		}
+
+		t.Run("200 以外なら errRelease", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"assets":[]}`))
+			}))
+			t.Cleanup(srv.Close)
+			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
+			require.ErrorIs(t, err, errRelease)
+		})
 
 		t.Run("JSON でなければ errRelease", func(t *testing.T) {
 			t.Parallel()
@@ -380,7 +493,7 @@ func Test_fetchDigests(t *testing.T) {
 				_, _ = w.Write([]byte("not json"))
 			}))
 			t.Cleanup(srv.Close)
-			_, err := fetchDigests(context.Background(), srv.Client(), srv.URL, "12.17.0")
+			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.ErrorIs(t, err, errRelease)
 		})
 
@@ -389,7 +502,7 @@ func Test_fetchDigests(t *testing.T) {
 			srv := httptest.NewServer(http.NotFoundHandler())
 			url := srv.URL
 			srv.Close()
-			_, err := fetchDigests(context.Background(), http.DefaultClient, url, "12.17.0")
+			_, err := fetchDigests(context.Background(), githubAPI{base: url, client: http.DefaultClient}, "12.17.0")
 			require.ErrorIs(t, err, errRelease)
 		})
 	})
@@ -483,11 +596,17 @@ func Test_write(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("書き込めなければエラー", func(t *testing.T) {
+		// rename はファイルの権限を見ないので、親ディレクトリを読み取り専用にする（Test Strategy）。
+		t.Run("書き込めなければエラーにし、元の内容を残す", func(t *testing.T) {
 			t.Parallel()
-			path := filepath.Join(t.TempDir(), "missing", "Dockerfile")
+			testenv.RequireNonRoot(t, "root は読み取り専用のディレクトリにも書ける")
+			root := newRepo(t, soundMise, soundDockerfile)
+			dir := filepath.Join(root, "docker", "tools")
+			require.NoError(t, os.Chmod(dir, 0o500))
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 			want := map[string]string{"pnpm_version": "12.18.0", "pnpm_sha256_amd64": shaC, "pnpm_sha256_arm64": shaD}
-			require.Error(t, write(path, soundDockerfile, current, want, &bytes.Buffer{}))
+			require.Error(t, write(filepath.Join(root, dockerfile), soundDockerfile, current, want, &bytes.Buffer{}))
+			assert.Equal(t, soundDockerfile, readDockerfile(t, root))
 		})
 	})
 }
