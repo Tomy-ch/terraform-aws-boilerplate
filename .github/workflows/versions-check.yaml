@@ -61,6 +61,12 @@ jobs:
             api.osv.dev
             npm.jsr.io
             awscli.amazonaws.com
+            registry-1.docker.io
+            auth.docker.io
+            production.cloudfront.docker.com
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com
+            dl-cdn.alpinelinux.org
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,7 +93,7 @@ jobs:
         run: |
           set +e
 
-          make -k versions-check pin-pnpm-check node-tools-lock-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
+          make -k versions-check pin-pnpm-check node-tools-lock-check node-tools-image-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
 
           code=${PIPESTATUS[0]}
 
