@@ -60,6 +60,22 @@ lockfile の生成と照合はホストの pnpm で行う。このイメージ�
 lockfile がずれた時点でイメージ自体が組めなくなるためである。pnpm は `make host-tools-install`
 が入れる。
 
+### 抑止している脆弱性
+
+lockfile の推移的な依存の脆弱性のうち、修正版が無く許容しているものの理由の正本である
+（ADR-0501 決定13）。抑止は報告した道具ごとに置き、各抑止はここを指す。
+
+| ID | 対象 | 抑止の箇所 |
+| --- | --- | --- |
+| CVE-2026-112366（GHSA-fc5q-39xc-vjpf） | picomatch（`markdownlint-cli2` → `micromatch` → `picomatch`） | `.trivyignore.yaml`、`.github/workflows/dependency-review.yaml` の `allow-ghsas` |
+
+- **なぜ許容できるか:** picomatch の ReDoS は、glob のパターンを攻撃者が渡せることを要する。
+  `markdownlint-cli2` が受け取る glob はリポジトリの Makefile と設定が持ち、それを書き換えられる者は
+  既に CI でコードを実行できる。
+- **撤回条件:** 修正版が公開されたら `pnpm -C docker/tools/node update --lockfile-only picomatch` で
+  上げ、両方の抑止を外す。`.trivyignore.yaml` の `expired_at` が過ぎると `make trivy-fs-release` が
+  再び落ち、見直しを強いる。
+
 ## docker-compose サービス
 
 | サービス | 段 | 用途 |
