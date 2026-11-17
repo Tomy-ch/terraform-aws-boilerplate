@@ -78,10 +78,10 @@ unsupported:
 保証しないこと:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
-- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。release line への merge がそのまま apply になるので、止めるのは Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限り、unlock-identity の role は `plan.deployment_identity_unlock_role` が lock file の一覧・読み取り・削除に限る。apply の role は `plan.deployment_identity_apply_role` が、bootstrap の構成物の ARN への Deny の形と、ほかの policy が付かないことを見る。Allow の拡大は見ないが、Allow は Deny に勝たない）
+- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。リリース線からデプロイブランチへの merge が apply になるので、止めるのはリリース線と昇格の Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限り、unlock-identity の role は `plan.deployment_identity_unlock_role` が lock file の一覧・読み取り・削除に限る。apply の role は `plan.deployment_identity_apply_role` が、bootstrap の構成物の ARN への Deny の形と、ほかの policy が付かないことを見る。Allow の拡大は見ないが、Allow は Deny に勝たない）
 - apply の role が作るか渡す別の主体、bootstrap の構成物の ARN を通らない要求（S3 の access point 等）、Resource `"*"` でしか与えられない Action を経た、bootstrap の構成物の変更（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲。別の主体は #254）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
-- write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から apply 系の environment の job を走らせること。apply の job のデフォルトブランチの条件はその workflow の中に在り、ruleset は `creation` の規則を持たない。`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない（#223）
+- write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から plan の environment の job を走らせること。apply 系と lock の解除の environment はデプロイブランチだけを許すので、そこからは届かない。ruleset は `creation` の規則を持たず、`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない。デプロイブランチが無い間（作る前）は、その名前のブランチを作った主体が apply 系の environment に届く（#223）
 
 ## 所有者
 

@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 )
 
 func writeFile(t *testing.T, dir, name, body string) string {
@@ -20,6 +22,14 @@ func writeFile(t *testing.T, dir, name, body string) string {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+func deployBranches(names ...string) []branchdecl.DeployBranch {
+	out := make([]branchdecl.DeployBranch, 0, len(names))
+	for _, n := range names {
+		out = append(out, branchdecl.DeployBranch{Branch: n})
+	}
+	return out
+}
 
 func Test_readEnvironments(t *testing.T) {
 	t.Parallel()
@@ -80,9 +90,9 @@ func Test_validateEnvironments(t *testing.T) {
 	}{
 		{"plan / apply / apply-identity / unlock-identity / 任意の名前は通る", []environment{
 			env("a-plan", deployFromProtectedPR, off),
-			env("a-apply", deployFromProtected, off),
-			env("a-apply-identity", deployFromProtected, off),
-			env("a-unlock-identity", deployFromProtected, off),
+			env("a-apply", deployFromDeployBranch, off),
+			env("a-apply-identity", deployFromDeployBranch, off),
+			env("a-unlock-identity", deployFromDeployBranch, off),
 			env("copilot", deployFromAny, off),
 		}, nil},
 		{"0件は拒む", nil, errEmptyDeclaration},
@@ -95,6 +105,10 @@ func Test_validateEnvironments(t *testing.T) {
 		{"apply-identity が任意のブランチを許す宣言は拒む", []environment{env("a-apply-identity", deployFromAny, off)}, errDeclaration},
 		{"unlock-identity が Pull Request を許す宣言は拒む", []environment{env("a-unlock-identity", deployFromProtectedPR, off)}, errDeclaration},
 		{"plan が Pull Request を許さない宣言は拒む", []environment{env("a-plan", deployFromProtected, off)}, errDeclaration},
+		{"apply が保護ブランチ全体を許す宣言は拒む", []environment{env("a-apply", deployFromProtected, off)}, errDeclaration},
+		{"unlock-identity が保護ブランチ全体を許す宣言は拒む", []environment{env("a-unlock-identity", deployFromProtected, off)}, errDeclaration},
+		{"plan がデプロイブランチだけを許す宣言は拒む", []environment{env("a-plan", deployFromDeployBranch, off)}, errDeclaration},
+		{"deployment-identity の名前でない environment は deploy-branch を使えない", []environment{env("copilot", deployFromDeployBranch, off)}, errDeclaration},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,9 +131,9 @@ func Test_requiredDeployFrom(t *testing.T) {
 		want   string
 		wantOK bool
 	}{
-		{"admin-apply", deployFromProtected, true},
-		{"admin-apply-identity", deployFromProtected, true},
-		{"admin-unlock-identity", deployFromProtected, true},
+		{"admin-apply", deployFromDeployBranch, true},
+		{"admin-apply-identity", deployFromDeployBranch, true},
+		{"admin-unlock-identity", deployFromDeployBranch, true},
 		{"admin-plan", deployFromProtectedPR, true},
 		{"admin-unlock", "", false},
 		{"copilot", "", false},
@@ -138,8 +152,7 @@ func Test_requiredDeployFrom(t *testing.T) {
 func Test_rulesetIncludes(t *testing.T) {
 	t.Parallel()
 
-	// revert の接頭辞は保護しないので、展開しない。
-	got := rulesetIncludes(branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/", "hotfix/"}, Revert: "revert/"})
+	got := rulesetIncludes(branches{Deploy: deployBranches("production", "develop"), Lines: []string{"release/", "hotfix/"}, Revert: "revert/"})
 	assert.Equal(t, []string{
 		"refs/heads/production",
 		"refs/heads/develop",
@@ -167,28 +180,46 @@ func rulesetProtects(includes []string, ref string) bool {
 func Test_environmentPatterns(t *testing.T) {
 	t.Parallel()
 
-	// revert の接頭辞は保護しないので、どの種類にも展開しない。
-	b := branches{Deploy: []string{"production", "develop"}, Lines: []string{"release/"}, Revert: "revert/"}
+	b := branches{
+		Deploy: []branchdecl.DeployBranch{{Branch: "admin", Env: "admin", From: []string{"release/"}}, {Branch: "production"}, {Branch: "develop"}},
+		Lines:  []string{"release/"},
+		Revert: "revert/",
+	}
+	env := func(name, from string) environment { return environment{Name: name, DeployFrom: from} }
 
 	t.Run("protected は固定名と1階層の接頭辞に展開する", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, []string{"production", "develop", "release/*"}, environmentPatterns(b, deployFromProtected))
+		assert.Equal(t, []string{"admin", "production", "develop", "release/*"}, environmentPatterns(b, env("x", deployFromProtected)))
 	})
 
 	t.Run("protected-and-pull-requests は Pull Request の ref を足す", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, []string{"production", "develop", "release/*", pullRequestRef}, environmentPatterns(b, deployFromProtectedPR))
+		assert.Equal(t, []string{"admin", "production", "develop", "release/*", pullRequestRef}, environmentPatterns(b, env("admin-plan", deployFromProtectedPR)))
 	})
 
 	t.Run("any は policy を持たない", func(t *testing.T) {
 		t.Parallel()
-		assert.Nil(t, environmentPatterns(b, deployFromAny))
+		assert.Nil(t, environmentPatterns(b, env("copilot", deployFromAny)))
+	})
+
+	t.Run("deploy-branch は名前の env のデプロイブランチだけに展開する", func(t *testing.T) {
+		t.Parallel()
+		for _, name := range []string{"admin-apply", "admin-apply-identity", "admin-unlock-identity"} {
+			assert.Equal(t, []string{"admin"}, environmentPatterns(b, env(name, deployFromDeployBranch)), name)
+		}
+	})
+
+	t.Run("deploy-branch は env のデプロイブランチが無ければ何も許さない", func(t *testing.T) {
+		t.Parallel()
+		got := environmentPatterns(b, env("prd-apply", deployFromDeployBranch))
+		assert.NotNil(t, got)
+		assert.Empty(t, got)
 	})
 
 	t.Run("environment が許すブランチは ruleset も保護する", func(t *testing.T) {
 		t.Parallel()
 		// environment のパターンの `*` は `/` に当たらない（path.Match と同じ意味）。
-		patterns := environmentPatterns(b, deployFromProtected)
+		patterns := environmentPatterns(b, env("x", deployFromProtected))
 		includes := rulesetIncludes(b)
 		for _, branch := range []string{"production", "develop", "release/v0.1.0", "release/a/b", "feature/x", "staging"} {
 			allowed := false

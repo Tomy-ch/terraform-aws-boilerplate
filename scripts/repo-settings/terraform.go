@@ -15,7 +15,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// Terraform のソースから読むのは、deployment-identity を呼ぶ module を見分ける source と、env のリテラル値だけである（ADR-0501 決定5 の但し書き）。
 const (
 	envDir             = "env"
 	identityUseCaseDir = "usecases/deployment-identity"
@@ -24,14 +23,18 @@ const (
 // planSuffix は、Pull Request からも起動する plan の environment の接尾辞。
 const planSuffix = "-plan"
 
+// unlockIdentitySuffix は、人が workflow_dispatch で起動する lock の解除の environment の接尾辞。
+const unlockIdentitySuffix = "-unlock-identity"
+
 // identitySuffixes は、deployment-identity の role の信頼条件が名指す environment 名の接尾辞。
 // `<env>` に続く形は deployment-identity の公開契約で、tests/contract.tftest.hcl が固定する。
-var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", "-unlock-identity"}
+var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", unlockIdentitySuffix}
 
 var (
 	errTerraform           = xerrors.New("Terraform のソースから deployment-identity の env を読めません")
 	errNoIdentityRoot      = xerrors.New("deployment-identity を呼ぶ root が1件もありません")
 	errEnvironmentMismatch = xerrors.New("environment の宣言が deployment-identity の信頼条件と一致しません")
+	errDeployMismatch      = xerrors.New("branches.json のデプロイブランチが deployment-identity の env と一致しません")
 )
 
 // identityEnvs は env/ の下の .tf を読み、source が deployment-identity を指す module の env の値を返します。
@@ -162,6 +165,29 @@ func checkIdentityEnvironments(envs []string, declared []environment) error {
 	}
 	if len(problems) > 0 {
 		return xerrors.Wrapf(errEnvironmentMismatch, "%s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// checkDeployEnvs は、deployment-identity の各 env にデプロイブランチが1つ在り、env を持つデプロイブランチが
+// どれも deployment-identity の env を指すことを見ます。apply の environment は env のデプロイブランチだけを許す
+// （ADR-0602 決定14）ので、それが無い env の apply はどこからも起動できない。
+func checkDeployEnvs(envs []string, b branches) error {
+	known := map[string]bool{}
+	var problems []string
+	for _, env := range envs {
+		known[env] = true
+		if _, ok := b.DeployForEnv(env); !ok {
+			problems = append(problems, "env "+env+" のデプロイブランチがありません")
+		}
+	}
+	for _, d := range b.Deploy {
+		if d.Env != "" && !known[d.Env] {
+			problems = append(problems, "デプロイブランチ "+d.Branch+" の env "+d.Env+" を deployment-identity が持ちません")
+		}
+	}
+	if len(problems) > 0 {
+		return xerrors.Wrapf(errDeployMismatch, "%s", strings.Join(problems, "; "))
 	}
 	return nil
 }

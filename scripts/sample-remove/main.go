@@ -97,6 +97,9 @@ var (
 	errRead = xerrors.New("❌ ファイルを読めません")
 )
 
+// integrationID は、必須検査の宣言で context の次に置く integration_id の行。
+var integrationID = regexp.MustCompile(`^"integration_id": [0-9]+$`)
+
 // plan は、apply が書き換えるものを書く前にすべて決めたもの。
 type plan struct {
 	// writes は、パス→新しい内容。
@@ -317,8 +320,8 @@ func pinReferenced(root, action string, files []string, p *plan) (bool, error) {
 
 // dropContexts は、manifest の context を必須検査の宣言から外す書き換えを p へ加えます。
 //
-// 宣言は1つの context を `{` / `"context": "<名前>"` / `}` の3行で書く。この形に当たらない
-// context は、外したつもりで残ることになるのでエラーにする。
+// 宣言は1つの context を `{` / `"context": "<名前>",` / `"integration_id": <数>` / `}` の4行で書く
+// （ADR-0603 決定34）。この形に当たらない context は、外したつもりで残ることになるのでエラーにする。
 func dropContexts(root string, ds []domain, p *plan) error {
 	var targets []string
 	for _, d := range ds {
@@ -333,23 +336,25 @@ func dropContexts(root string, ds []domain, p *plan) error {
 	}
 	lines := strings.Split(string(b), "\n")
 	for _, ctx := range targets {
+		key := `"context": "` + ctx + `",`
 		idx := -1
 		for i, line := range lines {
-			if strings.TrimSpace(line) == `"context": "`+ctx+`"` {
+			if strings.TrimSpace(line) == key {
 				idx = i
 				break
 			}
 		}
-		if idx < 1 || idx+1 >= len(lines) || strings.TrimSpace(lines[idx-1]) != "{" || !strings.HasPrefix(strings.TrimSpace(lines[idx+1]), "}") {
+		if idx < 1 || idx+2 >= len(lines) || strings.TrimSpace(lines[idx-1]) != "{" ||
+			!integrationID.MatchString(strings.TrimSpace(lines[idx+1])) || !strings.HasPrefix(strings.TrimSpace(lines[idx+2]), "}") {
 			return xerrors.Wrap(errMissingContext, ctx)
 		}
-		last := strings.TrimSpace(lines[idx+1]) == "}"
-		lines = append(lines[:idx-1], lines[idx+2:]...)
+		last := strings.TrimSpace(lines[idx+2]) == "}"
+		lines = append(lines[:idx-1], lines[idx+3:]...)
 		if last && idx-2 >= 0 && strings.TrimSpace(lines[idx-2]) == "}," {
 			lines[idx-2] = strings.TrimSuffix(lines[idx-2], ",")
 		}
 		for _, line := range lines {
-			if strings.TrimSpace(line) == `"context": "`+ctx+`"` {
+			if strings.TrimSpace(line) == key {
 				return xerrors.Wrap(errMissingContext, ctx+"（宣言に2回以上あります）")
 			}
 		}

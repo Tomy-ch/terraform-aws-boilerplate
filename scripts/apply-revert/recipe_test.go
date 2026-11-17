@@ -55,7 +55,7 @@ func TestPushRecipes(t *testing.T) {
 		return out, remote, err
 	}
 	inputs := func(h history) []string {
-		return []string{"REVERT_HEAD=" + h.head, "REVERT_COMMITS=" + h.head + " " + h.first, "REVERT_BRANCH=revert/apply-42"}
+		return []string{"REVERT_HEAD=" + git(t, h.dir, "rev-parse", h.head+"^2"), "REVERT_COMMITS=" + h.head + " " + h.first, "REVERT_BRANCH=revert/apply-42"}
 	}
 	branchTree := func(t *testing.T, remote string) string {
 		t.Helper()
@@ -152,7 +152,7 @@ func TestPlanRecipe(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	out := filepath.Join(t.TempDir(), "out")
 	sh := exec.CommandContext(t.Context(), "sh", "-c", `eval "set -- $ARGV"; printf '%s\n' "$@"`)
-	sh.Env = append(os.Environ(), "ARGV="+argv, "GITHUB_REPOSITORY=owner/name", "GITHUB_REF_NAME=release/v0.1.0", "GITHUB_SHA="+head,
+	sh.Env = append(os.Environ(), "ARGV="+argv, "GITHUB_REPOSITORY=owner/name", "GITHUB_REF_NAME=admin", "DEFAULT_BRANCH=release/v0.1.0", "GITHUB_SHA="+head,
 		"GITHUB_RUN_ID=42", "APPLY_OUTCOME=failure", "APPLY_FAILURE=policy", "GITHUB_SERVER_URL=https://github.com", "GITHUB_OUTPUT="+out)
 	split, err := sh.Output()
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestPlanRecipe(t *testing.T) {
 
 	o, err := parseOptions(args[1:])
 	require.NoError(t, err, args)
-	assert.Equal(t, options{repo: "owner/name", line: "release/v0.1.0", head: head, outcome: "failure", failure: "policy",
+	assert.Equal(t, options{repo: "owner/name", line: "admin", def: "release/v0.1.0", head: head, outcome: "failure", failure: "policy",
 		workflow: "terraform-apply.yaml", branches: ".github/settings/branches.json", server: "https://github.com", output: out,
 		jobs: []string{"apply-admin-identity"}, runID: 42}, o)
 }

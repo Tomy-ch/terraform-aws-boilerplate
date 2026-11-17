@@ -42,8 +42,9 @@ git rev-parse --verify CHERRY_PICK_HEAD 2>/dev/null  # detect ongoing cherry-pic
 git rev-parse --verify REBASE_HEAD 2>/dev/null       # detect ongoing rebase
 ```
 
-**保護対象のパターンを写さない**（ADR-0603 決定3、`AGENTS.md` *Git 規約*）。単一の宣言はまだ
-作成されておらず（`AGENTS.md` *現在の配線状態*）、今日それを持っているのは保護設定の宣言側である:
+**保護対象のパターンを写さない**（ADR-0603 決定1-3、`AGENTS.md` *Git 規約*）。単一の宣言は
+`.github/settings/branches.json` で、保護設定の宣言の include はそこから生成され、`make repo-settings-check`
+が一致を見る。glob を組み直さずに済む生成側を読む:
 
 ```sh
 git rev-parse --abbrev-ref HEAD

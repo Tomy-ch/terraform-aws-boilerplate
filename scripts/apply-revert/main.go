@@ -1,8 +1,11 @@
-// Package main は、release line への merge の後の apply が失敗したとき、最後に成功した apply の commit へ
+// Package main は、デプロイブランチへの merge の後の apply が失敗したとき、最後に成功した apply の commit へ
 // 宣言を戻す revert のブランチを用意するかを決めるツール。
 //
-//	apply-revert plan -repo <owner/name> -line <branch> -head <sha> -run <id> -outcome <o> -failure <k>
-//	    -workflow <file> -job <job> [-job <job>...] -branches <branches.json> -server <url> -output <file>
+//	apply-revert plan -repo <owner/name> -line <branch> -default <branch> -head <sha> -run <id> -outcome <o>
+//	    -failure <k> -workflow <file> -job <job> [-job <job>...] -branches <branches.json> -server <url> -output <file>
+//
+// -line はデプロイブランチ、-default はデフォルトブランチの名前である。revert はデプロイブランチの上では作らず、
+// 失敗した merge が運んだ線の commit（head の第2親）の上で作り、デフォルトブランチへ向ける（ADR-0601 決定17）。
 //
 // -job は apply の job の名前で、root ごとに1つ渡す。最後に成功した apply の commit は、名指したすべての job が
 // 成功した最も新しい run の commit である。
@@ -70,7 +73,7 @@ var (
 	shaPattern  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -head <sha> -run <id> -outcome <o> -failure <k> -workflow <f> -job <j> -branches <file> -server <url> -output <file>")
+	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -default <b> -head <sha> -run <id> -outcome <o> -failure <k> -workflow <f> -job <j> -branches <file> -server <url> -output <file>")
 	errNoOutcome      = xerrors.New("❌ apply の step の結果を受け取れません。apply の job の outputs が渡っていません")
 	errNoKind         = xerrors.New("❌ apply の step が失敗したのに、失敗の種類を受け取れません")
 	errUnknownKind    = xerrors.New("❌ 失敗の種類を知りません")
@@ -78,6 +81,7 @@ var (
 	errAPI            = xerrors.New("❌ GitHub API の応答を読めません")
 	errGit            = xerrors.New("❌ git の出力を読めません")
 	errBranches       = xerrors.New("❌ branches.json の revert の接頭辞を読めません")
+	errNotDeploy      = xerrors.New("❌ -line は env を持つデプロイブランチではありません")
 	errBranchTaken    = xerrors.New("❌ revert のブランチが既に在り、木が最後に成功した commit と違います")
 )
 
@@ -102,9 +106,9 @@ func main() {
 }
 
 type options struct {
-	repo, line, head, outcome, failure, workflow, branches, server, output string
-	jobs                                                                   []string
-	runID                                                                  int64
+	repo, line, def, head, outcome, failure, workflow, branches, server, output string
+	jobs                                                                        []string
+	runID                                                                       int64
 }
 
 type jobFlags []string
@@ -125,6 +129,7 @@ func parseOptions(args []string) (options, error) {
 	var o options
 	fs.StringVar(&o.repo, "repo", "", "")
 	fs.StringVar(&o.line, "line", "", "")
+	fs.StringVar(&o.def, "default", "", "")
 	fs.StringVar(&o.head, "head", "", "")
 	fs.Int64Var(&o.runID, "run", 0, "")
 	fs.StringVar(&o.outcome, "outcome", "", "")
@@ -138,7 +143,7 @@ func parseOptions(args []string) (options, error) {
 	if err := fs.Parse(args); err != nil {
 		return options{}, xerrors.Wrap(errUsage, err.Error())
 	}
-	if fs.NArg() > 0 || !repoPattern.MatchString(o.repo) || o.line == "" || !shaPattern.MatchString(o.head) || o.runID <= 0 ||
+	if fs.NArg() > 0 || !repoPattern.MatchString(o.repo) || o.line == "" || o.def == "" || !shaPattern.MatchString(o.head) || o.runID <= 0 ||
 		o.workflow == "" || len(jobs) == 0 || o.branches == "" || o.server == "" || o.output == "" {
 		return options{}, errUsage
 	}
@@ -146,7 +151,6 @@ func parseOptions(args []string) (options, error) {
 	return o, nil
 }
 
-// run は、revert のブランチを用意するかを決め、決めたことを -output へ書きます。
 func run(args []string, out io.Writer, r runner) error {
 	o, err := parseOptions(args)
 	if err != nil {
@@ -169,14 +173,17 @@ func run(args []string, out io.Writer, r runner) error {
 	return writeOutputs(o.output, d)
 }
 
-// decide は、対象の失敗について、revert のブランチをどう用意するかを決めます。返す組の先頭3つは
-// decision・headline・summary の順である。
+// decide が返す組の先頭3つは decision・headline・summary の順である（run が headline と summary を読む）。
 func decide(o options, r runner) ([][2]string, error) {
 	decl, err := branchdecl.Read(o.branches)
 	if err != nil {
 		return nil, xerrors.Wrap(errBranches, err.Error())
 	}
 	prefix := decl.Revert
+	deploy, ok := decl.DeployForBranch(o.line)
+	if !ok {
+		return nil, xerrors.Wrapf(errNotDeploy, "%s", o.line)
+	}
 	none := func(reason string) [][2]string {
 		return [][2]string{{"decision", "none"}, {"headline", "apply の失敗を戻す revert を用意できませんでした"}, {"summary", reason}}
 	}
@@ -193,8 +200,15 @@ func decide(o options, r runner) ([][2]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	source := ""
 	if reason == "" {
-		reason, err = verifyRevert(r, base, o.head, commits)
+		source, reason, err = sourceHead(r, deploy, o.def, o.head)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if reason == "" {
+		reason, err = verifyRevert(r, base, source, commits)
 		if err != nil {
 			return nil, err
 		}
@@ -204,7 +218,7 @@ func decide(o options, r runner) ([][2]string, error) {
 	}
 
 	branch := prefix + fmt.Sprintf(branchSuffix, o.runID)
-	link := compareURL(o.server, o.repo, o.line, branch, o.runID, base, commits)
+	link := compareURL(o.server, o.repo, o.def, branch, o.runID, base, commits)
 
 	local, err := touchesWorkflows(r, base, o.head)
 	if err != nil {
@@ -212,7 +226,7 @@ func decide(o options, r runner) ([][2]string, error) {
 	}
 	if local {
 		command := fmt.Sprintf("make apply-revert REVERT_HEAD=%s REVERT_COMMITS='%s' REVERT_BRANCH=%s",
-			o.head, strings.Join(commits, " "), branch)
+			source, strings.Join(commits, " "), branch)
 		return [][2]string{
 			{"decision", "local"},
 			{"headline", "apply の失敗を戻す revert は、手元で作る必要があります"},
@@ -245,6 +259,7 @@ func decide(o options, r runner) ([][2]string, error) {
 		{"summary", fmt.Sprintf("<%s|Pull Request を開いてください>（%s。%d 件の merge を戻し、%s の木に揃えます）", link, branch, len(commits), base[:7])},
 		{"commits", strings.Join(commits, " ")},
 		{"branch", branch},
+		{"head", source},
 	}, nil
 }
 
@@ -378,14 +393,50 @@ func revertRange(r runner, base, head string) ([]string, string, error) {
 	return commits, "", nil
 }
 
-// verifyRevert は、head を一時の worktree へ取り出して commits を順に revert し、木が base の木と一致するかを
+// sourceHead は、デプロイブランチの merge head が運んだ線の commit（第2親）を返します。判定は
+// deploy-source-check（ADR-0603 決定31）と同じで、成り立たなければ commit の代わりに用意しない理由を返す。
+func sourceHead(r runner, d branchdecl.DeployBranch, def, head string) (string, string, error) {
+	if !d.FromLine(def) {
+		return "", fmt.Sprintf("デフォルトブランチ %s は %s へ変更を運ぶ線ではありません（hotfix の間など）", def, d.Branch), nil
+	}
+	parents, err := r.output("git", "rev-list", "--parents", "-n", "1", head)
+	if err != nil {
+		return "", "", xerrors.Wrap(errGit, err.Error())
+	}
+	f := strings.Fields(parents)
+	if len(f) != 3 || !shaPattern.MatchString(f[2]) {
+		return "", head[:7] + " は線から運んだ merge ではありません", nil
+	}
+	source := f[2]
+	if _, err := r.output("git", "merge-base", "--is-ancestor", source, "refs/remotes/origin/"+def); err != nil {
+		var code exitCoder
+		if xerrors.As(err, &code) && code.ExitCode() == notAncestor {
+			return "", fmt.Sprintf("%s が運んだ %s は、デフォルトブランチ %s から到達できません", head[:7], source[:7], def), nil
+		}
+		return "", "", xerrors.Wrap(errGit, err.Error())
+	}
+	trees, err := r.output("git", "rev-parse", source+"^{tree}", head+"^{tree}")
+	if err != nil {
+		return "", "", xerrors.Wrap(errGit, err.Error())
+	}
+	t := strings.Fields(trees)
+	if len(t) != 2 {
+		return "", "", xerrors.Wrapf(errGit, "木の SHA が2つではありません: %q", trees)
+	}
+	if t[0] != t[1] {
+		return "", fmt.Sprintf("%s の木が、運んだ %s の木と一致しません", head[:7], source[:7]), nil
+	}
+	return source, "", nil
+}
+
+// verifyRevert は、start を一時の worktree へ取り出して commits を順に revert し、木が base の木と一致するかを
 // 確かめます。revert が衝突するか木が一致しなければ、用意しない理由を返す。worktree は戻る前に外す。
-func verifyRevert(r runner, base, head string, commits []string) (string, error) {
+func verifyRevert(r runner, base, start string, commits []string) (string, error) {
 	dir, err := os.MkdirTemp("", "apply-revert-")
 	if err != nil {
 		return "", xerrors.Wrap(err, "一時の worktree の場所を作れません")
 	}
-	if _, err := r.output("git", "worktree", "add", "--quiet", "--detach", dir, head); err != nil {
+	if _, err := r.output("git", "worktree", "add", "--quiet", "--detach", dir, start); err != nil {
 		_ = os.Remove(dir)
 		return "", xerrors.Wrap(errGit, err.Error())
 	}
@@ -396,7 +447,7 @@ func verifyRevert(r runner, base, head string, commits []string) (string, error)
 			"revert", "-m", "1", "--no-edit", c); err != nil {
 			var code exitCoder
 			if xerrors.As(err, &code) && code.ExitCode() == 1 {
-				return fmt.Sprintf("merge %s の revert が衝突します", c[:7]), nil
+				return fmt.Sprintf("merge %s の revert が衝突するか、空になります", c[:7]), nil
 			}
 			return "", xerrors.Wrap(errGit, err.Error())
 		}
@@ -460,18 +511,18 @@ func existingBranch(r runner, repo, branch string) (string, bool, error) {
 	return "", false, nil
 }
 
-// compareURL は、人が1回押して Pull Request を開く URL を返します。題と本文は URL に埋める。
+// compareURL は、人が1回押して Pull Request を開く URL を返します。宛先 target はデフォルトブランチである。
 // 本文は commit の SHA と run の URL だけを持ち、commit の題は持たない —— 通知へ届く文字を、ここで
 // 組み立てた値に限る。
-func compareURL(server, repo, line, branch string, runID int64, base string, commits []string) string {
+func compareURL(server, repo, target, branch string, runID int64, base string, commits []string) string {
 	run := fmt.Sprintf("%s/%s/actions/runs/%d", server, repo, runID)
 	var b strings.Builder
-	fmt.Fprintf(&b, "apply の失敗（%s）を受けて、最後に成功した apply の commit `%s` へ宣言を戻します。\n\n戻す merge（新しい順）:\n\n", run, base)
+	fmt.Fprintf(&b, "apply の失敗（%s）を受けて、最後に成功した apply の commit `%s` へ宣言を戻します。merge の後、デプロイブランチへ運びます。\n\n戻す merge（新しい順）:\n\n", run, base)
 	for _, c := range commits {
 		fmt.Fprintf(&b, "- %s\n", c)
 	}
 	q := url.Values{"quick_pull": {"1"}, "title": {fmt.Sprintf("Revert: run %d の apply の失敗を戻す", runID)}, "body": {b.String()}}
-	return fmt.Sprintf("%s/%s/compare/%s...%s?%s", server, repo, line, branch, q.Encode())
+	return fmt.Sprintf("%s/%s/compare/%s...%s?%s", server, repo, target, branch, q.Encode())
 }
 
 // writeOutputs は、鍵と値の組を GITHUB_OUTPUT の形で追記します。値は1行に限る。

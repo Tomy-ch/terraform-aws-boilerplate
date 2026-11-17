@@ -26,7 +26,7 @@ GitHub は、2026-07-15 より後に作られたリポジトリの `sub` を、�
 3. environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` に固定し、入力にしない。role ごとに environment を分けることを、利用者が崩せないようにする。
 4. OIDC provider の audience は `sts.amazonaws.com` の1つに限り、`thumbprint_list` を設定しない。
 5. 旧形式の `sub` と GitHub Enterprise Server を扱わない（`README.md` の unsupported）。
-6. deployment branch policy は `GITHUB_REF` に対して照合され、Pull Request を契機とする job の ref は `refs/pull/<番号>/merge` である（GitHub の文書）。plan の environment は保護ブランチに加えてこの ref を許し、apply・apply-identity・unlock-identity の environment は許さない。environment の宣言は、保護設定の宣言（repository-wide/ADR-0603 (branch-protection-and-required-checks) 決定4）が持つ。
+6. deployment branch policy は `GITHUB_REF` に対して照合され、Pull Request を契機とする job の ref は `refs/pull/<番号>/merge` である（GitHub の文書）。plan の environment は保護ブランチに加えてこの ref を許し、apply・apply-identity・unlock-identity の environment は許さない。ただし sandbox の apply の environment は、この ref を許す（repository-wide/ADR-0601 決定4 の例外）。environment の宣言は、保護設定の宣言（repository-wide/ADR-0603 (branch-protection-and-required-checks) 決定4）が持つ。
 7. 実 token の `sub` は決定2 の environment 形式をとる。信頼条件は `StringEquals` で完全一致を見るため、形が異なれば CI の assume が失敗し、その role を使う job は失敗する。この形の検査は、その assume の成否が持つ。
 
 ## 検討した代替案

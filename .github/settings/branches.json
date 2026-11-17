@@ -1,5 +1,10 @@
 {
-  "deploy": ["production", "staging", "develop"],
+  "deploy": [
+    { "branch": "admin", "env": "admin", "from": ["release/"] },
+    { "branch": "production" },
+    { "branch": "staging" },
+    { "branch": "develop" }
+  ],
   "lines": ["release/", "hotfix/"],
   "revert": "revert/"
 }
