@@ -16,7 +16,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-const sourceBranches = `{"deploy": [{"branch": "admin", "env": "admin", "from": ["release/"]}, {"branch": "production"}], "lines": ["release/", "hotfix/"], "revert": "revert/"}`
+const sourceBranches = `{"deploy": [{"branch": "admin", "env": "admin", "from": ["release/"]}, {"branch": "production", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
 
 func gitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()

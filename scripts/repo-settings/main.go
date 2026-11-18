@@ -40,7 +40,7 @@ import (
 
 const (
 	toolName         = "repo-settings"
-	branchesFile     = ".github/settings/branches.json"
+	branchesFile     = branchdecl.File
 	environmentsFile = ".github/settings/environments.json"
 	rulesetFile      = ".github/settings/branch-protection.json"
 	defaultAPI       = "https://api.github.com"

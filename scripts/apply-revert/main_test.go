@@ -167,7 +167,7 @@ func writeBranches(t *testing.T, body string) string {
 	return p
 }
 
-const branchesBody = `{"deploy":[{"branch":"admin","env":"admin","from":["release/"]}],"lines":["release/"],"revert":"revert/"}`
+const branchesBody = `{"deploy":[{"branch":"admin","env":"admin","from":["release/"]},{"branch":"production","release_base":true}],"lines":{"release":"release/","hotfix":"hotfix/"},"line_version":"v<major>.<minor>.<patch>","revert":"revert/"}`
 
 func planArgs(t *testing.T, head, outcome, failure string) ([]string, string) {
 	t.Helper()

@@ -97,11 +97,11 @@ func requiredDeployFrom(name string) (string, bool) {
 // rulesetIncludes は、保護設定の宣言の conditions.ref_name.include に置く値を返します。
 // lines は階層をまたいで保護する。
 func rulesetIncludes(b branches) []string {
-	out := make([]string, 0, len(b.Deploy)+len(b.Lines))
+	out := make([]string, 0, len(b.Deploy)+len(b.Lines.Prefixes()))
 	for _, name := range b.DeployNames() {
 		out = append(out, "refs/heads/"+name)
 	}
-	for _, prefix := range b.Lines {
+	for _, prefix := range b.Lines.Prefixes() {
 		out = append(out, "refs/heads/"+prefix+"**/*")
 	}
 	return out
@@ -121,9 +121,9 @@ func environmentPatterns(b branches, e environment) []string {
 		}
 		return []string{}
 	}
-	out := make([]string, 0, len(b.Deploy)+len(b.Lines)+1)
+	out := make([]string, 0, len(b.Deploy)+len(b.Lines.Prefixes())+1)
 	out = append(out, b.DeployNames()...)
-	for _, prefix := range b.Lines {
+	for _, prefix := range b.Lines.Prefixes() {
 		out = append(out, prefix+"*")
 	}
 	if e.DeployFrom == deployFromProtectedPR {

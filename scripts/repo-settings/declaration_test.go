@@ -152,7 +152,7 @@ func Test_requiredDeployFrom(t *testing.T) {
 func Test_rulesetIncludes(t *testing.T) {
 	t.Parallel()
 
-	got := rulesetIncludes(branches{Deploy: deployBranches("production", "develop"), Lines: []string{"release/", "hotfix/"}, Revert: "revert/"})
+	got := rulesetIncludes(branches{Deploy: deployBranches("production", "develop"), Lines: branchdecl.Lines{Release: "release/", Hotfix: "hotfix/"}, Revert: "revert/"})
 	assert.Equal(t, []string{
 		"refs/heads/production",
 		"refs/heads/develop",
@@ -182,7 +182,7 @@ func Test_environmentPatterns(t *testing.T) {
 
 	b := branches{
 		Deploy: []branchdecl.DeployBranch{{Branch: "admin", Env: "admin", From: []string{"release/"}}, {Branch: "production"}, {Branch: "develop"}},
-		Lines:  []string{"release/"},
+		Lines:  branchdecl.Lines{Release: "release/"},
 		Revert: "revert/",
 	}
 	env := func(name, from string) environment { return environment{Name: name, DeployFrom: from} }

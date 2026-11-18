@@ -20,7 +20,7 @@ import (
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ JSON の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const (
-	branchesFixture     = `{"deploy": [{"branch": "main", "env": "x", "from": ["release/"]}], "lines": ["release/"], "revert": "revert/"}`
+	branchesFixture     = `{"deploy": [{"branch": "main", "env": "x", "from": ["release/"], "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
 	environmentsFixture = `[
   {"name": "x-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false},
   {"name": "x-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false},
@@ -53,7 +53,7 @@ jobs:
 
 var syncedRuleset = strings.Replace(rulesetFixture,
 	"[\n        \"refs/heads/old\"\n      ]",
-	"[\n        \"refs/heads/main\",\n        \"refs/heads/release/**/*\"\n      ]", 1)
+	"[\n        \"refs/heads/main\",\n        \"refs/heads/release/**/*\",\n        \"refs/heads/hotfix/**/*\"\n      ]", 1)
 
 func writeRepo(t *testing.T, ruleset string) string {
 	t.Helper()
@@ -82,8 +82,8 @@ func liveRoutes(t *testing.T) map[string]fakeResponse {
 			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`),
-		policyPath("x-plan", 1): ok(`{"total_count": 3, "branch_policies": [
-			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
+		policyPath("x-plan", 1): ok(`{"total_count": 4, "branch_policies": [
+			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 5, "name": "hotfix/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
 		policyPath("x-apply", 1):           ok(deployPolicies),
 		policyPath("x-apply-identity", 1):  ok(deployPolicies),
 		policyPath("x-unlock-identity", 1): ok(deployPolicies),
@@ -261,7 +261,7 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
 		}, errEnvironmentMismatch},
 		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
-			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main"}], "lines": ["release/"], "revert": "revert/"}`)
+			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
@@ -293,7 +293,7 @@ func Test_loadDesired(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "branch-protection", want.Ruleset["name"])
 		assert.Equal(t, []desiredEnv{
-			{Name: "x-plan", Patterns: []string{"main", "release/*", pullRequestRef}},
+			{Name: "x-plan", Patterns: []string{"main", "release/*", "hotfix/*", pullRequestRef}},
 			{Name: "x-apply", Patterns: []string{"main"}},
 			{Name: "x-apply-identity", Patterns: []string{"main"}},
 			{Name: "x-unlock-identity", Patterns: []string{"main"}},
@@ -327,7 +327,7 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 2 件、environment 5 件、apply の workflow 1 件")
+		assert.Contains(t, out.String(), "保護対象 3 件、environment 5 件、apply の workflow 1 件")
 		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
 	})
 
@@ -412,7 +412,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 5 件、apply の workflow 1 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 5 件、apply の workflow 1 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -545,19 +545,21 @@ func Test_syncSettings(t *testing.T) {
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
+			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"PUT /repos/o/r/environments/copilot",
 		}, targets)
 		assert.JSONEq(t, `{"can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true},
 			"prevent_self_review": false, "reviewers": null, "wait_timer": 0}`, writes[0].body)
-		assert.JSONEq(t, `{"name": "refs/pull/*/merge", "type": "branch"}`, writes[3].body)
+		assert.JSONEq(t, `{"name": "refs/pull/*/merge", "type": "branch"}`, writes[4].body)
 		assert.Equal(t, strings.Join([]string{
 			"🔧 PUT /repos/o/r/environments/x-plan",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
+			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 PUT /repos/o/r/environments/copilot",
 			"⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: other",
-			"✅ repo-settings: o/r へ 5 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
+			"✅ repo-settings: o/r へ 6 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
 		}, "\n")+"\n", out.String())
 	})
 
