@@ -72,6 +72,7 @@ supported:
 
 unsupported:
 
+- 1つのアカウントに複数の env を置く構成と、Organizations に属さない単独のアカウントで使うこと（`docs/v1.0-plan/scope.md` 第10.1節、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定1）
 - 旧形式の `sub`（`repo:<owner>/<repo>:...`）のリポジトリと、GitHub Enterprise Server（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定5）。旧形式のリポジトリは、opt-in で immutable 形式にしてから使う
 - Enterprise Managed User の個人アカウントが所有するリポジトリ。login が `_` を含み、`github.owner` の検査が受け付けない。その login が `sub` にどう現れるかを確かめていない
 - fork からの Pull Request で plan を成立させること。plan の job は fork の Pull Request で assume の前に失敗する（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14）
