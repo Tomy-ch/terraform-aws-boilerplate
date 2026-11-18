@@ -138,9 +138,12 @@ git diff <base>...HEAD --shortstat                          # diff summary
 git diff <base>...HEAD --name-only                          # changed files
 ```
 
-Read `.github/pull_request_template.md` and use its `#` / `##` headers as the body's sections, in its order. **Do not keep a copy of the section list here** —— 写しはテンプレートが変わった日に黙ってずれ、それを見る検査は無い。Each section's HTML comment says what goes in it; read it, then strip it.
+Read `.github/pull_request_template.md` and use its `#` / `##` headers as the body's sections, in its order. Each section's HTML comment says what goes in it; read it, then strip it.
 
-If the template is absent, stop and report it. Do not invent a substitute structure.
+If the template is absent, stop and report it. Do not invent a substitute structure. Step 4 names some
+sections to say where their content comes from —— **if a section Step 4 names is not in the template, stop
+and report the mismatch** rather than writing it or dropping it. この照合だけが、テンプレートの節名が変わった
+ことを知らせる。
 
 ## Step 4. Compose Title and Body
 
@@ -160,8 +163,8 @@ Fill every template section in Japanese, following its HTML comment. Where a sec
 - **下した決定**: commit の本文と、`impl-issue` から委譲されたなら その run record。何を選び、何を選ばなかったか。
 - **ADR が記録を求める判断**: diff（`git diff <base>...HEAD`）の中の記録先。判断を含みそうな変更が
   diff に在るのに、その記録先が diff に見当たらないときは、**訊かずに**その事実 —— どのファイルの
-  変更が当たりそうか、記録先が diff に無いこと —— をこの節へ書く。空にも「含まれる判断は無い」にも
-  しない。判断を含む変更が無ければ、テンプレートの文言どおり「この変更に含まれる判断は無い」と書く。
+  変更が当たりそうか、記録先が diff に無いこと —— をこの節へ書く。空にも、判断を含まないという
+  書き方にもしない。判断を含む変更が無ければ、節のコメントが指示する文言で書く。
 - **検証**: 実行した検査と、それが何と言ったか。結論したことではなく。
   **未配線の道具について「実行した」と書かない** —— 何が未配線かは、書くときに `AGENTS.md`
   *現在の配線状態* を開いて確かめる。
