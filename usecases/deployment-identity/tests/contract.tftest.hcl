@@ -39,6 +39,11 @@ run "outputs" {
     condition     = length(toset([output.plan_role_arn, output.apply_role_arn, output.apply_identity_role_arn, output.unlock_identity_role_arn, output.unlock_role_arn])) == 5
     error_message = "5つの role の ARN が互いに異なっていません。"
   }
+
+  assert {
+    condition     = output.github_oidc_provider_arn == module.github_oidc.oidc_provider_arn
+    error_message = "github_oidc_provider_arn が OIDC provider の ARN を返していません。"
+  }
 }
 
 # 取り違えが見えるよう、上の admin とは別の値を渡す。

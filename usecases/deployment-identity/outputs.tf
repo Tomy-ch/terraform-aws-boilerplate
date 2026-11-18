@@ -22,3 +22,8 @@ output "unlock_role_arn" {
   description = "unlock の role の ARN。workload root の state に残った lock を外す job が assume する。"
   value       = module.github_oidc.role_arns["unlock"]
 }
+
+output "github_oidc_provider_arn" {
+  description = "GitHub Actions の OIDC provider の ARN。このアカウントで、本リポジトリの外の CI を信頼する role（ADR-0602 決定19）が信頼条件の Principal に使う。"
+  value       = module.github_oidc.oidc_provider_arn
+}

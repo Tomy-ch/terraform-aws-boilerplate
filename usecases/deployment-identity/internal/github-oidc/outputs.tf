@@ -14,3 +14,8 @@ output "role_policies" {
   description = "役割ごとの inline policy の文書（JSON）。"
   value       = { for k, p in local.all_policies : k => p.policy }
 }
+
+output "oidc_provider_arn" {
+  description = "GitHub Actions の OIDC provider の ARN。"
+  value       = aws_iam_openid_connect_provider.github.arn
+}
