@@ -85,7 +85,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # cache: false — this job holds security-events: write. See README.md の「キャッシュの安全性」.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
