@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-21
 - Scope: repository-wide
-- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0301, ADR-0401, ADR-0501, ADR-0603, ADR-0604
+- Related: ADR-0102, ADR-0103, ADR-0202, ADR-0301, ADR-0401, ADR-0402, ADR-0501, ADR-0602, ADR-0603, ADR-0604
 
 ## Context
 
@@ -18,11 +18,13 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 
 また、AWS Console や外部システムによる Git 外の変更は、リポジトリ側の設計では防止できない。検出できるかどうかだけが設計の対象になる。
 
+アプリケーションの成果物（コンテナイメージ）の版は、インフラの構成とは別の主体が、別の頻度で変える。利用側のリポジトリの CI（発火側）が成果物を作り、マイグレーション等の単発のタスクを実行し、その成功を確かめてから Service を更新する。ECS では、新しいイメージで単発のタスクを実行するには、そのイメージを指す Task 定義の revision が要る。RunTask の override はコンテナのイメージを変えられない（AWS API Reference の `ContainerOverride`）。版の選択まで Git の経路に載せると、発火側は単発のタスクと Service の更新を1つの発火で続けて行えない。
+
 ## Decision
 
 ### Desired State
 
-1. インフラの正となる状態を、Git リポジトリ上の Terraform コードとする。
+1. インフラの正となる状態を、Git リポジトリ上の Terraform コードが宣言する資源とその属性とする。ただし、実行中のアプリケーションの成果物の版の選択は、発火側が所有する外部の状態として除く。除く属性は決定20 の一覧に限る。
 2. 基本の流れを次とする。
 
    ```text
@@ -62,7 +64,7 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 
 ### Drift
 
-11. Drift Detection を deployment 機構の代替として使用しない。通常の変更反映は Git → CI/CD → AWS の経路のみで行う。
+11. Drift Detection を deployment 機構の代替として使用しない。通常の変更反映は Git → CI/CD → AWS の経路のみで行う。例外は、決定20 の一覧の属性を発火側が変えることだけとする。
 12. Drift Detection を次の検出に用いる。
 
     - AWS Console からの手動変更
@@ -70,6 +72,8 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
     - import 漏れ
     - 外部システムによる変更
     - AWS 側で変更された属性
+
+    決定20 の一覧の属性の変化は発火側の正規の変更であり、検出の対象としない。その属性が指す先の中身は除かない。中身の検出は決定23 による。
 
 13. drift の解消も Git を経由する。Git 側を実態へ合わせるか、実態を Git の宣言へ戻すかのいずれかを Pull Request として提出する。検出箇所へ直接 apply して差分を黙らせない。
 14. drift の自動修復を行わない。検出は通知であり、適用の起動条件としない。
@@ -84,6 +88,18 @@ ADR-0401 は検証レイヤーを定義したが、検証がどの時点で実�
 17. merge の後の apply が、commit の宣言を AWS に対して評価した後に失敗した場合も、その状態からの回復は Git の経路で行う。CI は最後に成功した apply の commit を apply し直さない（決定6）。CI が用意するのは、最後に成功した apply の commit へ宣言を戻す revert のブランチまでとし、Pull Request を開いて merge するのは人である（決定10）。revert のブランチは、失敗した apply の merge が運んだリリース線の commit から切り、リリース線へ向ける。デプロイブランチの上では revert しない。そこでだけ戻すと、次にリリース線から運ぶ merge が戻した変更を運び直さず、2本の木が分かれる。リリース線へ merge した revert は、決定4 の経路でデプロイブランチへ運ぶ。
 18. revert のブランチを用意するために CI が持つリポジトリへの書き込みの資格情報は、その run の間だけ有効な `GITHUB_TOKEN` の `contents: write` に限る。それを持つ job は判定を持たず、道具を導入せず、決まった commit の revert と push だけを行う。戻すかどうかと戻す範囲は、読み取りの権限だけを持つ job が決める。
 19. apply の失敗は、revert が merge されるまで後続の apply を止めない。apply は常にデプロイブランチの先頭の木全体を適用するので、後続の apply が成功すれば実環境は Git と一致する。後続の apply はそのブランチへの merge でだけ起きるので、止める必要があるときは、人がそこへの merge を止める。
+
+### 発火側が所有する状態
+
+20. Desired State から除く属性を、次の一覧に限る。一覧に無い属性を `lifecycle.ignore_changes` に入れない。属性の全体を表す `all` を用いない。一覧への追加と変更は、本 ADR の変更とする。
+
+    | resource type | 属性 | 発火側が行う操作 |
+    | --- | --- | --- |
+    | `aws_ecs_service` | `task_definition` | 成果物の版を差し替えた Task 定義の revision の登録と、Service の更新 |
+
+21. 除いた属性が指す先の中身は、Terraform が宣言する。発火側が登録する revision は、Terraform が最後に登録した revision から、成果物の版（コンテナイメージの digest）だけを差し替えたものとする。決定20 の一覧を使う use-case は、元にする revision の識別子を出力として発火側へ渡し、Terraform の宣言の変更が実行中の Service へ届く経路（発火側の次の更新）を、公開契約として README に持つ。
+22. 発火側の資格情報は、決定20 の操作と成果物の push に要るものに限る。Task 定義へ渡せる Role を当該 use-case の Task Role と Execution Role に限り、渡し先を ECS のタスクに限る。Service の更新を当該 use-case の Service に限る。
+23. 発火側が登録した revision の中身と Terraform の宣言との差は、plan に現れない。これを、当該 use-case の `check` block と、AWS Config の評価による Security Hub の ECS のコントロールで、事後に検出する。Config を常駐させない環境では `check` block だけが残る。
 
 ## 検討した代替案
 
@@ -115,6 +131,14 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 
 リリース線を待たずに当てられる。ただし同じ変更がリリース線とデプロイブランチへ別々に merge され、2本の木が分かれる。どちらの木が Desired State か（決定1）が決まらなくなる。hotfix の線から直接入れる形も同じである。
 
+### 案H: 成果物の版を env の値として Git に置き、CI の apply が反映する
+
+決定1・11 を例外なしに保てる。実行中の版に対応する commit が常に1つあり、plan と Policy Test が実際にデプロイされる Task 定義に掛かる。ただし、マイグレーション等の単発のタスクを Service の更新より先に実行するには、単発のタスクの版と Service の版を別の値にし、env ごとに2回の変更の経路（リリース線とデプロイブランチへの merge と apply）を通す必要がある。発火側は単発のタスクと Service の更新を1つの発火で続けて行えない。
+
+### 案I: 発火側が版を SSM Parameter へ書き、Terraform が読んで CI が apply する
+
+`ignore_changes` が要らず、Service を変えるのは常に Terraform である。ただし Git は版を持たず（決定1）、plan の時点で読む値が apply までに変わりうる（決定6）。単発のタスクの順序のために案H と同じく2回の apply が要り、発火側が apply の workflow を起動する資格情報も要る。案H と本決定の欠点を併せ持つ。
+
 ### 評価
 
 | 評価軸 | 案A: ローカル apply | 案B: merge 前 apply | 案C: 自動修復 | 採用案: merge 後 apply |
@@ -135,13 +159,17 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - リリース線への merge が、そのまま実環境へ届くこと。当てるのは、リリース線からデプロイブランチへの Pull Request の merge である
 - hotfix の修正を、リリース線を経ずに当てること。hotfix の間（デフォルトブランチがリリース線でない間）は、デプロイブランチへ昇格できない
 - 1つの env へ、複数のブランチから apply すること
+- 実行中のアプリケーションの成果物の版を Git が知っていること。版の記録は、発火側のパイプラインと ECS の Service の履歴が持つ
+- Terraform の apply の時点で、Task 定義の変更が実行中の Service へ届くこと。届くのは発火側の次の更新の時点である（決定21）
 
 ## 保証範囲
 
-- 保証すること: 実環境へ適用された構成が、デプロイブランチ上の commit に対応し、その木がリリース線でレビューされた commit の木と一致すること（ADR-0603 決定31 の検査が通った merge に限る）。適用が検証を通過した構成であること
+- 保証すること: 決定20 の一覧の属性を除き、実環境へ適用された構成が、デプロイブランチ上の commit に対応し、その木がリリース線でレビューされた commit の木と一致すること（ADR-0603 決定31 の検査が通った merge に限る）。適用が検証を通過した構成であること
 - 保証しないこと: Git 外で行われた変更が発生しないこと（検出のみを保証する）。検出から解消までの間、実態が Git と一致していること
 - 保証しないこと: apply の失敗から revert の merge まで、または後続の apply の成功までの間、実態が Git と一致していること。revert の apply が成功すること
 - 保証しないこと: sandbox への apply の成功が、merge の時点でその Pull Request の構成が sandbox に当たっていること。sandbox の state は1つで、別の線の Pull Request の apply が後から上書きしうる。成功が示すのは、その head の木が、その時点の sandbox の状態に対して apply できたことである（決定4）
+- 保証しないこと: 実行中の Task 定義の revision が、Terraform が登録した revision であること。発火側が登録した revision の中身が Terraform の宣言と一致すること（事後の検出のみ。決定23）
+- 保証しないこと: Terraform の宣言の変更が、発火側の次の更新より前に、実行中の Service へ届くこと（決定21）
 
 ## 検証方法
 
@@ -153,6 +181,11 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - Static Analysis: 検証ジョブの実行順序が決定9 を満たすこと
 - 定期実行: drift 検出ジョブが存在し、結果が観測可能な形で残ること
 - Static Analysis: リポジトリへの書き込みの資格情報（`contents: write`）を持つ job が、決定18 の形に限られること（`make contents-write-lint`）
+- Static Analysis（HCL）: `lifecycle.ignore_changes` が、決定20 の一覧の resource type と属性の組にだけ現れ、`all` を含まないこと
+- Policy Test: 発火側の role の `iam:PassRole` の Resource が当該 use-case の Task Role と Execution Role に限られ、`iam:PassedToService` の条件で ECS のタスクに限られること。`ecs:UpdateService` の Resource が当該 Service に限られること（決定22）
+- Contract Test: 決定20 の一覧を使う use-case が、発火側が元にする revision の識別子を出力すること（決定21）
+- 実環境（sandbox）: 決定20 の一覧を使う use-case で、Terraform が Task 定義を変えた後、発火側の更新を経て、その変更が実行中のタスクへ届くこと（決定21）
+- 定期実行: drift 検出ジョブが決定20 の一覧の属性を検出から外す場合、外す規則が一覧から導かれ、一覧の外の属性を外さないこと
 
 ## 影響
 
@@ -160,6 +193,7 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - 実環境で先に手を入れて後から Git へ写す運用は、drift として検出され、Pull Request として処理される。
 - state backend を決める ADR が別途必要になる（決定15）。
 - 実環境へ当てるたびに、リリース線からデプロイブランチへの Pull Request が要る。apply の失敗の回復は、リリース線への revert とその昇格の2つの merge になる。
+- アプリケーションの成果物の版の更新は、Pull Request を要さない。その代わり、発火側の資格情報が本番で動くコードを決める資格情報になる。その範囲を決定22 が限る。
 
 ## 見直し条件
 
@@ -169,3 +203,5 @@ Git と実態の乖離が自動的に収束する。ただし drift の原因（
 - GitHub が、Pull Request の作成だけを許し承認を許さない権限を `GITHUB_TOKEN` に与えた場合（決定17 の「人が開く」を見直す）
 - sandbox の例外（決定3・4・6）を、ほかの env へ広げる必要が生じたとき。または、リリースされていない変更を sandbox で確かめる必要が無くなったとき
 - hotfix の間に、デプロイブランチへ当てる必要が生じたとき（決定4。hotfix の間はデフォルトブランチがリリース線でない）
+- 決定21 の経路（Terraform の宣言の変更が、発火側の次の更新で実行中の Service へ届くこと）が成り立たないと分かったとき。案H を再検討する
+- RunTask がコンテナのイメージを override できるようになったとき（Context。発火側が revision を登録する理由が消える）
