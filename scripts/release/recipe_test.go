@@ -102,7 +102,7 @@ func realDir(t *testing.T, dir string) string {
 func TestTagVersionRecipe(t *testing.T) {
 	t.Parallel()
 
-	tagCreate := func(v string) string { return "git tag -a " + v + " -F " + notePath(v) }
+	tagCreate := func(v string) string { return "git tag -a " + v + " --cleanup=verbatim -F " + notePath(v) }
 	recipe := func(t *testing.T, root string, args []string, env ...string) (string, []call, error) {
 		t.Helper()
 		path, calls := fakeTools(t)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -18,7 +19,7 @@ const (
 	tagListCall   = "git tag"
 	fetchTagsCall = "git fetch --tags origin"
 	// annotateTagCall / tagPushCall / releaseCreateCall は、取り消しの効かない 3 手順の記録表記。
-	annotateTagCall   = "git tag -a v1.2.4 -F .github/release/v1.2.4.md"
+	annotateTagCall   = "git tag -a v1.2.4 --cleanup=verbatim -F .github/release/v1.2.4.md"
 	tagPushCall       = "git push origin v1.2.4"
 	releaseCreateCall = "gh release create v1.2.4 --title v1.2.4 --notes-file .github/release/v1.2.4.md"
 	// branchCreateCall / branchPushCall / defaultBranchCall は、ブランチ作成側の後戻りできない手順の記録表記。
@@ -323,7 +324,7 @@ func Test_tagSteps(t *testing.T) {
 		t.Run("タグ作成 → push → GitHub Release の順に並べる", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, []string{
-				"git tag -a v1.2.4 -F .github/release/v1.2.4.md",
+				"git tag -a v1.2.4 --cleanup=verbatim -F .github/release/v1.2.4.md",
 				"git push origin v1.2.4",
 				"gh release create v1.2.4 --title v1.2.4 --notes-file .github/release/v1.2.4.md",
 			}, commands(tagSteps("v1.2.4", notePath("v1.2.4"))))
@@ -334,6 +335,20 @@ func Test_tagSteps(t *testing.T) {
 			steps := tagSteps("v9.9.9", notePath("v9.9.9"))
 			assert.Equal(t, ".github/release/v9.9.9.md", steps[0].args[len(steps[0].args)-1])
 			assert.Equal(t, ".github/release/v9.9.9.md", steps[2].args[len(steps[2].args)-1])
+		})
+
+		t.Run("タグ本文はリリースノートを見出しまでそのまま持つ", func(t *testing.T) {
+			t.Parallel()
+			dir := newRepo(t)
+			note := "# v1.2.4\n\n## 変更\n\n- 本文\n"
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, releaseNoteDir), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, notePath("v1.2.4")), []byte(note), 0o600))
+
+			gitIn(t, dir, append([]string{"-c", "tag.gpgsign=false"}, tagSteps("v1.2.4", notePath("v1.2.4"))[0].args...)...)
+			//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
+			got, err := exec.CommandContext(t.Context(), "git", "-C", dir, "tag", "-l", "--format=%(contents)", "v1.2.4").Output()
+			require.NoError(t, err)
+			assert.Equal(t, note, strings.TrimSuffix(string(got), "\n"))
 		})
 	})
 }
@@ -1006,7 +1021,7 @@ func Test_runTag(t *testing.T) {
 				"git switch production",
 				"git reset --hard origin/production",
 				fetchTagsCall,
-				"git tag -a v0.1.0 -F .github/release/v0.1.0.md",
+				"git tag -a v0.1.0 --cleanup=verbatim -F .github/release/v0.1.0.md",
 				"git push origin v0.1.0",
 				"gh release create v0.1.0 --title v0.1.0 --notes-file .github/release/v0.1.0.md",
 			}, f.calls)

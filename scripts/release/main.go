@@ -196,9 +196,10 @@ func syncProductionSteps() []step {
 }
 
 // tagSteps は、リリースノートを本文にタグを打ち、GitHub Release を作る手順を返します。
+// タグ本文は既定の cleanup だと `#` で始まる行を落とすので、ノートの見出しを残すよう verbatim で打つ。
 func tagSteps(next, notePath string) []step {
 	return []step{
-		{name: "git", args: []string{"tag", "-a", next, "-F", notePath}},
+		{name: "git", args: []string{"tag", "-a", next, "--cleanup=verbatim", "-F", notePath}},
 		{name: "git", args: []string{"push", "origin", next}},
 		{name: "gh", args: []string{"release", "create", next, "--title", next, "--notes-file", notePath}},
 	}
