@@ -335,13 +335,14 @@ func TestDisableTools(t *testing.T) {
 			content string
 			where   string
 		}{
-			"複数行の配列の場合、エラーになる":             {content: "[settings]\ndisable_tools = [\n  \"npm:a\",\n]\n", where: "2行目"},
-			"要素が文字列でない場合、エラーになる":           {content: "[settings]\ndisable_tools = [npm]\n", where: "2行目"},
-			"要素が空の文字列の場合、エラーになる":           {content: "[settings]\ndisable_tools = [\"\"]\n", where: "2行目"},
-			"配列でない場合、エラーになる":               {content: "[settings]\ndisable_tools = \"npm:a\"\n", where: "2行目"},
-			"キーが単引用符の場合、エラーになる":            {content: "[settings]\n'disable_tools' = [\"npm:a\"]\n", where: "2行目"},
-			"節の外の dotted key の場合、エラーになる":   {content: "settings.disable_tools = [\"npm:a\"]\n", where: "1行目"},
-			"節の外の inline table の場合、エラーになる": {content: "settings = { disable_tools = [\"npm:a\"] }\n", where: "1行目"},
+			"複数行の配列の場合、エラーになる":                    {content: "[settings]\ndisable_tools = [\n  \"npm:a\",\n]\n", where: "2行目"},
+			"要素が文字列でない場合、エラーになる":                  {content: "[settings]\ndisable_tools = [npm]\n", where: "2行目"},
+			"要素が空の文字列の場合、エラーになる":                  {content: "[settings]\ndisable_tools = [\"\"]\n", where: "2行目"},
+			"配列でない場合、エラーになる":                      {content: "[settings]\ndisable_tools = \"npm:a\"\n", where: "2行目"},
+			"キーが単引用符の場合、エラーになる":                   {content: "[settings]\n'disable_tools' = [\"npm:a\"]\n", where: "2行目"},
+			"節の外の dotted key の場合、エラーになる":          {content: "settings.disable_tools = [\"npm:a\"]\n", where: "1行目"},
+			"節の外の inline table の場合、エラーになる":        {content: "settings = { disable_tools = [\"npm:a\"] }\n", where: "1行目"},
+			"節の外の inline table が行内で閉じない場合、エラーになる": {content: "settings = {\n  disable_tools = [\"npm:a\"],\n}\n", where: "1行目"},
 		}
 
 		for name, tt := range tests {

@@ -47,7 +47,9 @@ var (
 	// 単引用符のキーも当てる —— 読めないキーを素通しすると「宣言が無い」と区別できない。
 	disableKeyRe = regexp.MustCompile(`^(?:"disable_tools"|'disable_tools'|disable_tools)\s*=`)
 	// disableOutsideRe は節の外から [settings] の disable_tools を書く形（dotted key と inline table）。
-	disableOutsideRe = regexp.MustCompile(`^(?:settings|"settings"|'settings')\s*(?:\.|=\s*\{).*\bdisable_tools\b`)
+	// 行内で閉じない inline table は中身を1行では読めないので、disable_tools の有無を問わず当てる。
+	disableOutsideRe = regexp.MustCompile(
+		`^(?:settings|"settings"|'settings')\s*(?:(?:\.|=\s*\{).*\bdisable_tools\b|=\s*\{[^}]*$)`)
 	// disableListRe は1行の配列 `disable_tools = ["a", "b"]`。
 	disableListRe = regexp.MustCompile(`^(?:"disable_tools"|disable_tools)\s*=\s*\[([^\]#]*)\]\s*(?:#.*)?$`)
 	disableItemRe = regexp.MustCompile(`^"([^"]+)"$`)
