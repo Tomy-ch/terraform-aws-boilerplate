@@ -9,6 +9,7 @@ body:
       value: |
         - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
         - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+        - アカウント ID、実際の ARN、内部の CIDR は書かず、`<ACCOUNT_ID>` のような置き換えにします。
   - type: textarea
     id: summary
     attributes:
@@ -19,7 +20,7 @@ body:
     id: premises
     attributes:
       label: 前提（確かめた事実と出典）
-      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。
+      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。出力は該当する行の抜粋にとどめます。
     validations:
       required: true
   - type: textarea

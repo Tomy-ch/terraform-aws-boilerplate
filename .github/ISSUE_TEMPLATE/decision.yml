@@ -9,6 +9,7 @@ body:
       value: |
         - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
         - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+        - アカウント ID、実際の ARN、内部の CIDR は書かず、`<ACCOUNT_ID>` のような置き換えにします。
   - type: textarea
     id: question
     attributes:
@@ -26,7 +27,7 @@ body:
     id: premises
     attributes:
       label: 前提（確かめた事実と出典）
-      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。
+      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。出力は該当する行の抜粋にとどめます。
     validations:
       required: true
   - type: textarea
@@ -49,7 +50,7 @@ body:
     id: done
     attributes:
       label: 完成の定義
-      description: 記録先は root か use-case の ADR（`docs/adr/0001-adr-process-and-placement.md` 決定12-13）、責務外ならユースケースの unsupported 一覧（`docs/adr/0102-use-case-centric-scope.md` 決定7）です。ADR の変更は人の承認を要します（`docs/adr/0001-adr-process-and-placement.md` 決定2-3）。
+      description: 記録先は root か use-case の ADR（`docs/adr/0001-adr-process-and-placement.md` 決定12-13）、責務外ならユースケースの unsupported 一覧（`docs/adr/0102-use-case-centric-scope.md` 決定7）です。ADR の変更は人の承認を要します（`docs/adr/0001-adr-process-and-placement.md` 決定2-3）。チェックの印は自動では検証されません。
       value: |
         - [ ] 決定と選ばなかった案が、所有する文書に記録されている
     validations:

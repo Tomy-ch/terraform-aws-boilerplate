@@ -9,6 +9,7 @@ body:
       value: |
         - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
         - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+        - アカウント ID、実際の ARN、内部の CIDR は書かず、`<ACCOUNT_ID>` のような置き換えにします。
   - type: textarea
     id: problem
     attributes:
@@ -27,7 +28,7 @@ body:
     id: contract
     attributes:
       label: 公開契約（入力、出力。ログの所在と、基盤系アラームの通知先Topic ARNを含む）
-      description: 意味論的な入力と出力で書きます（`docs/adr/0201-public-interface-policy.md`、`docs/adr/0102-use-case-centric-scope.md` 決定8）。権限の語彙は `docs/adr/0301-least-privilege-policy.md` 決定7。ARN の例はアカウント ID を `<ACCOUNT_ID>` にします。
+      description: 意味論的な入力と出力で書きます（`docs/adr/0201-public-interface-policy.md`、`docs/adr/0102-use-case-centric-scope.md` 決定8）。権限の語彙は `docs/adr/0301-least-privilege-policy.md` 決定7。通知先の Topic を受けない、ログを持たないユースケースは、その旨を書きます。
     validations:
       required: true
   - type: textarea
@@ -62,7 +63,7 @@ body:
     id: done
     attributes:
       label: 完了条件
-      description: sandbox で破棄できないユースケースは、`docs/adr/0401-testing-policy.md` 決定14 の区分に従って2・3項目めを置き換えます。
+      description: sandbox で破棄できないユースケースは、`docs/adr/0401-testing-policy.md` 決定14 の区分に従って2・3項目めを置き換えます。チェックの印は自動では検証されません。
       value: |
         - [ ] mock のユニット（`terraform test` と `mock_provider`）が通る
         - [ ] sandbox で apply → 検証 → destroy が通る
