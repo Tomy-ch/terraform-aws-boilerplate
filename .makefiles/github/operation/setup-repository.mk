@@ -34,4 +34,4 @@ setup-repo:
 	@echo "✅ ルールセットと environment の適用を終了します。"
 
 	@git remote remove upstream || true
-	@echo "✅ Initialization complete. Default branch: production"
+	@echo "✅ Initialization complete. Default branch: release_base in .github/settings/branches.json"

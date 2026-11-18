@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,9 @@ func mirrorRoot(t *testing.T) string {
 		require.NoError(t, os.Symlink(filepath.Join(repo, e.Name()), filepath.Join(root, e.Name())))
 	}
 	git(t, root, "init", "-q")
+	decl := filepath.Join(root, branchdecl.File)
+	require.NoError(t, os.MkdirAll(filepath.Dir(decl), 0o750))
+	require.NoError(t, os.Symlink(filepath.Join(repo, branchdecl.File), decl))
 
 	return root
 }
