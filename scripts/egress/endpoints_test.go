@@ -32,7 +32,6 @@ egress_policy = "audit"
 `+tail)
 }
 
-// endpointRepo は root "r" に body を置いたリポジトリ。
 func endpointRepo(t *testing.T, body string) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -91,6 +90,16 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 				"[root.r]\njobs = [\"c.yaml:kms\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n[type.aws_none]\nhosts = []\n")
 			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\ndata \"aws_none\" \"n\" {}\n")
 			writeFile(t, repo, "r/m/main.tf", "resource \"aws_kms_key\" \"k\" {}\n")
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
+		})
+
+		t.Run("ブロックの region 引数の region の宛先を、その型の宛先として認める", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"chatbot.us-west-2.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
+				"[type.aws_chatbot_]\nhosts = [\"chatbot.us-west-2.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n"+
+				"resource \"aws_chatbot_slack_channel_configuration\" \"c\" {\n  region = \"us-west-2\"\n}\n")
 			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
 		})
 
@@ -201,6 +210,24 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "root r")
+		})
+
+		t.Run("ブロックの region 引数の region に宛先が無ければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"chatbot.ap-northeast-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_chatbot_]\nhosts = [\"chatbot.ap-northeast-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\n"+
+				"resource \"aws_chatbot_slack_channel_configuration\" \"c\" {\n  region = \"us-west-2\"\n}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "chatbot.ap-northeast-1.amazonaws.com")
+		})
+
+		t.Run("ブロックの region 引数がリテラルでなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, rootOne+"[type.aws_chatbot_]\nhosts = [\"kms.test\"]\n")
+			repo := endpointRepo(t, "resource \"aws_chatbot_slack_channel_configuration\" \"c\" {\n  region = var.region\n}\n")
+			require.ErrorIs(t, s.checkEndpoints(repo, terraformRuns(s)), errBlockRegion)
 		})
 	})
 }
@@ -353,10 +380,10 @@ func Test_collectTypes(t *testing.T) {
 			repo := t.TempDir()
 			writeFile(t, repo, "env/r/main.tf", "module \"a\" {\n  source = \"../../m/a\"\n}\nresource \"aws_z\" \"z\" {}\n")
 			writeFile(t, repo, "m/a/main.tf", "module \"b\" {\n  source = \"./internal/b\"\n}\nresource \"aws_y\" \"y\" {}\n")
-			writeFile(t, repo, "m/a/internal/b/main.tf", "ephemeral \"aws_x\" \"x\" {}\nresource \"aws_z\" \"z2\" {}\n")
+			writeFile(t, repo, "m/a/internal/b/main.tf", "ephemeral \"aws_x\" \"x\" {}\nresource \"aws_z\" \"z2\" {\n  region = \"us-west-2\"\n}\n")
 			got, dirs, err := collectTypes(repo, "env/r")
 			require.NoError(t, err)
-			assert.Equal(t, []string{"aws_x", "aws_y", "aws_z"}, got)
+			assert.Equal(t, typeRegions{"aws_x": {"": true}, "aws_y": {"": true}, "aws_z": {"": true, "us-west-2": true}}, got)
 			assert.Equal(t, []string{"env/r", "m/a", "m/a/internal/b"}, dirs)
 		})
 	})
@@ -397,9 +424,9 @@ func Test_walkModule(t *testing.T) {
 			repo := t.TempDir()
 			writeFile(t, repo, "r/main.tf", "module \"a\" {\n  source = \"./m\"\n}\nmodule \"b\" {\n  source = \"./m\"\n}\n")
 			writeFile(t, repo, "r/m/main.tf", "module \"back\" {\n  source = \"../\"\n}\nresource \"aws_x\" \"x\" {}\n")
-			found, visited := map[string]bool{}, map[string]bool{}
+			found, visited := typeRegions{}, map[string]bool{}
 			require.NoError(t, walkModule(openRoot(t, repo), "r", found, visited))
-			assert.Equal(t, map[string]bool{"aws_x": true}, found)
+			assert.Equal(t, typeRegions{"aws_x": {"": true}}, found)
 			assert.Equal(t, map[string]bool{"r": true, "r/m": true}, visited)
 		})
 
@@ -407,9 +434,9 @@ func Test_walkModule(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
 			writeFile(t, repo, "r/tests/main.tf", "resource \"aws_unrelated\" \"u\" {}\n")
-			found := map[string]bool{}
+			found := typeRegions{}
 			require.NoError(t, walkModule(openRoot(t, repo), "r", found, map[string]bool{}))
-			assert.Equal(t, map[string]bool{"aws_x": true}, found)
+			assert.Equal(t, typeRegions{"aws_x": {"": true}}, found)
 		})
 	})
 
@@ -420,26 +447,26 @@ func Test_walkModule(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
 			writeFile(t, repo, "r/README.md", "x")
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errNoTerraform)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errNoTerraform)
 		})
 
 		t.Run("*.tf.json を持つディレクトリを弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
 			writeFile(t, repo, "r/extra.tf.json", `{"resource": {"aws_hidden": {"h": {}}}}`)
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errTerraformSyntax)
 		})
 
 		t.Run("リポジトリの外を指す module を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "module \"a\" {\n  source = \"../../outside\"\n}\n")
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errModuleSource)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errModuleSource)
 		})
 
 		t.Run("ファイルの解釈の失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" {\n")
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errTerraformSyntax)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errTerraformSyntax)
 		})
 
 		t.Run("symlink の *.tf を弾く", func(t *testing.T) {
@@ -448,7 +475,7 @@ func Test_walkModule(t *testing.T) {
 			outside := t.TempDir()
 			writeFile(t, outside, "o.tf", "resource \"aws_hidden\" \"h\" {}\n")
 			require.NoError(t, os.Symlink(filepath.Join(outside, "o.tf"), filepath.Join(repo, "r", "link.tf")))
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errSymlink)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errSymlink)
 		})
 
 		t.Run("symlink の module ディレクトリを弾く", func(t *testing.T) {
@@ -457,7 +484,7 @@ func Test_walkModule(t *testing.T) {
 			outside := t.TempDir()
 			writeFile(t, outside, "main.tf", "resource \"aws_hidden\" \"h\" {}\n")
 			require.NoError(t, os.Symlink(outside, filepath.Join(repo, "r", "m")))
-			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", map[string]bool{}, map[string]bool{}), errSymlink)
+			require.ErrorIs(t, walkModule(openRoot(t, repo), "r", typeRegions{}, map[string]bool{}), errSymlink)
 		})
 	})
 }
@@ -552,11 +579,18 @@ func Test_addType(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ラベルの先頭を型として足す", func(t *testing.T) {
+		t.Run("ラベルの先頭を、region 引数を持たない型として足す", func(t *testing.T) {
 			t.Parallel()
-			found := map[string]bool{}
+			found := typeRegions{}
 			require.NoError(t, addType(block(t, "data \"aws_a\" \"x\" {}\n"), found))
-			assert.Equal(t, map[string]bool{"aws_a": true}, found)
+			assert.Equal(t, typeRegions{"aws_a": {"": true}}, found)
+		})
+
+		t.Run("region 引数のリテラルを、その型を置く region として足す", func(t *testing.T) {
+			t.Parallel()
+			found := typeRegions{"aws_a": {"": true}}
+			require.NoError(t, addType(block(t, "resource \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n}\n"), found))
+			assert.Equal(t, typeRegions{"aws_a": {"": true, "us-west-2": true}}, found)
 		})
 	})
 
@@ -565,7 +599,14 @@ func Test_addType(t *testing.T) {
 
 		t.Run("ラベルが 2 つでなければ弾く", func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, addType(block(t, "data \"aws_a\" {}\n"), map[string]bool{}), errTerraformSyntax)
+			require.ErrorIs(t, addType(block(t, "data \"aws_a\" {}\n"), typeRegions{}), errTerraformSyntax)
+		})
+
+		t.Run("region 引数が region の形のリテラルでなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			err := addType(block(t, "resource \"aws_a\" \"x\" {\n  region = var.region\n}\n"), typeRegions{})
+			require.ErrorIs(t, err, errBlockRegion)
+			assert.Contains(t, err.Error(), "aws_a.x")
 		})
 	})
 }
@@ -580,10 +621,10 @@ func Test_scanTerraformFile(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_a\" \"a\" {}\ndata \"aws_b\" \"b\" {}\nephemeral \"aws_c\" \"c\" {}\n"+
 				"import {\n  to = aws_a.a\n  id = \"x\"\n}\nmodule \"m\" {\n  source = \"./m\"\n}\n")
-			found := map[string]bool{}
+			found := typeRegions{}
 			sources, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
 			require.NoError(t, err)
-			assert.Equal(t, map[string]bool{"aws_a": true, "aws_b": true, "aws_c": true}, found)
+			assert.Equal(t, typeRegions{"aws_a": {"": true}, "aws_b": {"": true}, "aws_c": {"": true}}, found)
 			assert.Equal(t, []string{"./m"}, sources)
 		})
 
@@ -591,19 +632,19 @@ func Test_scanTerraformFile(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "check \"c\" {\n  data \"aws_d\" \"d\" {}\n  assert {\n    condition     = true\n    error_message = \"x\"\n  }\n}\n"+
 				"action \"aws_e\" \"e\" {}\n")
-			found := map[string]bool{}
+			found := typeRegions{}
 			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
 			require.NoError(t, err)
-			assert.Equal(t, map[string]bool{"aws_d": true, "aws_e": true}, found)
+			assert.Equal(t, typeRegions{"aws_d": {"": true}, "aws_e": {"": true}}, found)
 		})
 
 		t.Run("コメントの中のブロックの字面は数えない", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "# resource \"aws_z\" \"z\" {}\nresource \"aws_a\" \"a\" {}\n")
-			found := map[string]bool{}
+			found := typeRegions{}
 			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", found)
 			require.NoError(t, err)
-			assert.Equal(t, map[string]bool{"aws_a": true}, found)
+			assert.Equal(t, typeRegions{"aws_a": {"": true}}, found)
 		})
 	})
 
@@ -612,35 +653,35 @@ func Test_scanTerraformFile(t *testing.T) {
 
 		t.Run("読めないファイルを弾く", func(t *testing.T) {
 			t.Parallel()
-			_, err := scanTerraformFile(openRoot(t, t.TempDir()), "missing.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, t.TempDir()), "missing.tf", typeRegions{})
 			require.Error(t, err)
 		})
 
 		t.Run("解釈できない構文を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_a\" {\n")
-			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", typeRegions{})
 			require.ErrorIs(t, err, errTerraformSyntax)
 		})
 
 		t.Run("ラベルが 2 つでない resource を弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_a\" {}\n")
-			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", typeRegions{})
 			require.ErrorIs(t, err, errTerraformSyntax)
 		})
 
 		t.Run("module の source の失敗を伝播する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "module \"m\" {\n  source = \"hashicorp/consul/aws\"\n}\n")
-			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", typeRegions{})
 			require.ErrorIs(t, err, errModuleSource)
 		})
 
 		t.Run("check の中の data のラベルの不正を伝播する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "check \"c\" {\n  data \"aws_d\" {}\n}\n")
-			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+			_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", typeRegions{})
 			require.ErrorIs(t, err, errTerraformSyntax)
 		})
 
@@ -652,7 +693,7 @@ func Test_scanTerraformFile(t *testing.T) {
 			t.Run(name+"で件数が食い違えば弾く", func(t *testing.T) {
 				t.Parallel()
 				repo := endpointRepo(t, body)
-				_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", map[string]bool{})
+				_, err := scanTerraformFile(openRoot(t, repo), "r/main.tf", typeRegions{})
 				require.ErrorIs(t, err, errBlockCount)
 			})
 		}
@@ -714,6 +755,10 @@ func Test_checkRegions(t *testing.T) {
 	t.Parallel()
 
 	const provider = "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\n"
+	// atProvider は region 引数を持たないブロックだけの type。
+	atProvider := func(hosts ...string) typeUse {
+		return typeUse{hosts: hosts, regions: map[string]bool{"": true}}
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -721,12 +766,42 @@ func Test_checkRegions(t *testing.T) {
 		t.Run("宛先の region が provider の region にあれば成功する", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			assert.NoError(t, checkRegions(repo, []string{"r"}, []string{"iam.amazonaws.com", "*.s3.ap-northeast-1.amazonaws.com"}))
+			uses := map[string]typeUse{"aws_s3_": atProvider("iam.amazonaws.com", "*.s3.ap-northeast-1.amazonaws.com")}
+			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
 		})
 
 		t.Run("region を含む宛先が無ければ provider を読まない", func(t *testing.T) {
 			t.Parallel()
-			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, []string{"iam.amazonaws.com"}))
+			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, map[string]typeUse{"aws_iam_": atProvider("iam.amazonaws.com")}))
+		})
+
+		t.Run("ブロックの region 引数の region と宛先の region が一致すれば、provider を読まずに成功する", func(t *testing.T) {
+			t.Parallel()
+			uses := map[string]typeUse{"aws_chatbot_": {hosts: []string{"chatbot.us-west-2.amazonaws.com"}, regions: map[string]bool{"us-west-2": true}}}
+			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, uses))
+		})
+
+		t.Run("provider の region と region 引数の region の両方に置く type は、両方の宛先を持てば成功する", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{"aws_kms_": {
+				hosts:   []string{"kms.ap-northeast-1.amazonaws.com", "kms.us-west-2.amazonaws.com"},
+				regions: map[string]bool{"": true, "us-west-2": true},
+			}}
+			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
+		})
+
+		t.Run("AWS が region を固定した global の宛先は provider の region と突き合わせない", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com")}
+			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
+		})
+
+		t.Run("global の宛先だけなら provider を読まない", func(t *testing.T) {
+			t.Parallel()
+			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com")}
+			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, uses))
 		})
 	})
 
@@ -736,23 +811,41 @@ func Test_checkRegions(t *testing.T) {
 		t.Run("宛先の region が provider の region に無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, []string{"kms.us-east-1.amazonaws.com"})
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.us-east-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
 		})
 
 		t.Run("2 つ目の宛先の region が合わなくても弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, []string{"kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com"})
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
+		})
+
+		t.Run("type を置く region のうち宛先の無いものがあれば弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{"aws_kms_": {hosts: []string{"kms.ap-northeast-1.amazonaws.com"}, regions: map[string]bool{"": true, "us-west-2": true}}}
+			err := checkRegions(repo, []string{"r"}, uses)
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "aws_kms_: us-west-2")
+		})
+
+		t.Run("region 引数の region に宛先が無ければ、provider の region の宛先があっても弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{"aws_chatbot_": {hosts: []string{"chatbot.ap-northeast-1.amazonaws.com"}, regions: map[string]bool{"us-west-2": true}}}
+			err := checkRegions(repo, []string{"r"}, uses)
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "chatbot.ap-northeast-1.amazonaws.com")
 		})
 
 		t.Run("provider の region が 2 つ以上なら、宛先の region が片方に当たっても弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider+"provider \"aws\" {\n  alias  = \"us\"\n  region = \"us-east-1\"\n}\n")
-			err := checkRegions(repo, []string{"r"}, []string{"kms.ap-northeast-1.amazonaws.com"})
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionNotOne)
 			assert.Contains(t, err.Error(), "ap-northeast-1, us-east-1")
 		})
@@ -760,7 +853,29 @@ func Test_checkRegions(t *testing.T) {
 		t.Run("provider を読めなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
-			require.ErrorIs(t, checkRegions(repo, []string{"r"}, []string{"kms.ap-northeast-1.amazonaws.com"}), errRegionUnknown)
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
+			require.ErrorIs(t, err, errRegionUnknown)
+		})
+
+		t.Run("wildcard の付いた global の宛先は突き合わせから外さない", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("*.organizations.us-east-1.amazonaws.com")})
+			require.ErrorIs(t, err, errRegionMismatch)
+		})
+
+		t.Run("global の宛先が混ざっていても、provider を読めなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com")}
+			require.ErrorIs(t, checkRegions(t.TempDir(), []string{"missing"}, uses), errRegionUnknown)
+		})
+
+		t.Run("global の宛先と同じサービスでも、別の region の宛先は弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("organizations.us-west-2.amazonaws.com")})
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "organizations.us-west-2.amazonaws.com")
 		})
 	})
 }
@@ -825,6 +940,43 @@ func Test_providerRegions(t *testing.T) {
 			_, err := providerRegions(filepath.Join(t.TempDir(), "missing"), []string{"r"})
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
+	})
+}
+
+func Test_regionLiteral(t *testing.T) {
+	t.Parallel()
+
+	attr := func(t *testing.T, value string) *hclsyntax.Attribute {
+		t.Helper()
+		return parseBody(t, "x {\n  region = "+value+"\n}\n").Attributes["region"]
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("region の形のリテラルを返す", func(t *testing.T) {
+			t.Parallel()
+			got, ok := regionLiteral(attr(t, "\"us-west-2\""))
+			assert.True(t, ok)
+			assert.Equal(t, "us-west-2", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, value := range map[string]string{
+			"変数":              "var.region",
+			"region の形でない文字列": "\"tokyo\"",
+			"文字列でない値":         "1",
+			"null":            "null",
+		} {
+			t.Run(name+"なら読めない", func(t *testing.T) {
+				t.Parallel()
+				_, ok := regionLiteral(attr(t, value))
+				assert.False(t, ok)
+			})
+		}
 	})
 }
 
