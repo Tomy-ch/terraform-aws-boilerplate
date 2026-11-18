@@ -68,7 +68,7 @@ var (
 const versionPattern = `\d+(?:\.\d+){0,2}`
 
 var (
-	// goDirectiveRe は go.mod の `go` ディレクティブ。行全体に錨を打つ。
+	// goDirectiveRe は go.mod の `go` ディレクティブ。
 	goDirectiveRe = regexp.MustCompile(`(?m)^(go )` + versionPattern + `$`)
 	// versionRe は、宣言側から読んだ版がその形をしているかを見る。検める理由は applyRule の
 	// 当該チェックが持つ。
@@ -144,6 +144,32 @@ func checkNodeToolsDeps(path string) error {
 	return nil
 }
 
+// checkDisableTools は、mise.toml の [settings] の disable_tools が npm の道具とちょうど同じ集合で
+// あることを検めます。**npm の道具が外れていないと、mise がリポジトリの lockfile を読まずに
+// 推移的な依存を解決し直して入れる**（ADR-0503 決定1）。余りは、宣言した道具を mise の外へ
+// 黙って落とす。
+func checkDisableTools(path string) error {
+	tools, found, err := misetoml.DisableToolsFile(path)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return xerrors.Wrap(errShape, miseFile+" の [settings] に disable_tools がありません")
+	}
+	got := append([]string(nil), tools...)
+	sort.Strings(got)
+	want := make([]string, 0, len(npmPkgs()))
+	for _, p := range npmPkgs() {
+		want = append(want, "npm:"+p)
+	}
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		return xerrors.Wrap(errShape, fmt.Sprintf("%s: disable_tools が %v、npm の道具は %v", miseFile, got, want))
+	}
+
+	return nil
+}
+
 // excludeBlock は、package.json へ版を書く npm の道具を窓から外す一覧を返します。名前を
 // package.json の写しと同じ定数から作るので、依存を足し外ししたとき一覧だけが取り残されない。
 func excludeBlock() string {
@@ -197,8 +223,8 @@ func yamlValueSpans(content, key string) [][2]int {
 	return spans
 }
 
-// shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。ARG ではなく
-// シェル変数なのは、`--build-arg` で差し替えられる値では照合にならないため。
+// shellVarRe は Dockerfile のレシピが焼き込んだ `<名前>="<版>"` を捉えます。ARG でなくシェル変数で
+// ある理由は scripts/README.md の versions/ の行が持つ。
 func shellVarRe(name string) *regexp.Regexp {
 	return bakedRe(name+`="`, `"`)
 }
@@ -267,6 +293,9 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 	if err := checkNodeToolsDeps(filepath.Join(root, nodeToolsPkg)); err != nil {
 		return err
 	}
+	if err := checkDisableTools(filepath.Join(root, miseFile)); err != nil {
+		return err
+	}
 
 	changes, err := plan(rules(v), root)
 	if err != nil {
@@ -278,8 +307,8 @@ func applyAll(root string, dryRun bool, out io.Writer) error {
 		// **照合した宣言をすべて名乗る。** 一部しか挙げないと、表から落ちた宣言があっても
 		// 報告は同じ形で緑を返す。
 		fmt.Fprintf(out,
-			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / pnpm %s（host-tools.mk） / markdownlint %s / commitlint %s / pnpm の窓 %d 日 の写しが宣言と一致しています\n",
-			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Pnpm, v.Markdownlint, v.Commitlint, cooldown.RegistryWindowDays)
+			"✅ versions: go %s / node %s / terraform %s / aws-cli %s / pnpm %s（host-tools.mk） / markdownlint %s / commitlint %s / pnpm の窓 %d 日 の写しが宣言と一致し、npm の道具 %d 件を mise の install から外しています\n",
+			v.Go, v.Node, v.Terraform, v.AWSCLI, v.Pnpm, v.Markdownlint, v.Commitlint, cooldown.RegistryWindowDays, len(npmPkgs()))
 
 		return nil
 	}
@@ -455,7 +484,6 @@ func parseMise(path string) (declared, error) {
 	return v, nil
 }
 
-// planNames は書き換え先の名前を、並びを決めて返します。
 func planNames(changes map[string]string) []string {
 	names := make([]string, 0, len(changes))
 	for path := range changes {

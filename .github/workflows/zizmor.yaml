@@ -72,9 +72,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       # persist-credentials: false — nothing after checkout talks to git, and this

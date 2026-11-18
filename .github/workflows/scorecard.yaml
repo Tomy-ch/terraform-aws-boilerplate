@@ -70,11 +70,9 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             api.deps.dev
+            api.osv.dev
             www.bestpractices.dev
             oss-fuzz-build-logs.storage.googleapis.com
 
