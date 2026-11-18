@@ -612,6 +612,8 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 - identity root に resource を足す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する
 - apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
+- state の鍵の Key Policy の `users` を変える変更は、`docs/setup/scripts/verify.sh` の `JQ_KEY_POLICY` と、その文の数を同じ変更で更新する
+- 出力の2つの Bucket の Bucket Policy を変える変更は、`docs/setup/scripts/verify.sh` の `output-policy` の期待を同じ変更で更新する
 
 ## 参考資料
 
