@@ -15,6 +15,10 @@ st := "arn:aws:s3:::st"
 
 po := "arn:aws:s3:::po"
 
+ao := "arn:aws:s3:::ao"
+
+ao_objects := sprintf("%s/*", [ao])
+
 key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/1234abcd-12ab-34cd-56ef-1234567890ab", [account])
 
 other_key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/ffffffff-12ab-34cd-56ef-1234567890ab", [account])
@@ -57,6 +61,8 @@ valid_statements := [
 	{"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "Resource": sprintf("%s/*", [st])},
 	full_deny([po, sprintf("%s/*", [po])]),
 	{"Effect": "Deny", "Action": delegated_actions, "Resource": key},
+	full_deny([ao]),
+	{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects},
 ]
 
 apply_policy_address := sprintf("%saws_iam_role_policy.this[\"apply\"]", [g])
@@ -80,6 +86,7 @@ others := [
 	res("aws_s3_bucket", "module.state_backend.module.s3.aws_s3_bucket.this", {"arn": st, "id": "st-id"}),
 	res("aws_s3_bucket_versioning", "module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "st-id"}),
 	res("aws_s3_bucket", "module.state_backend.module.plan_output.aws_s3_bucket.this", {"arn": po, "id": "po-id"}),
+	res("aws_s3_bucket", "module.state_backend.module.apply_output.aws_s3_bucket.this", {"arn": ao, "id": "ao-id"}),
 	res("aws_kms_key", "module.state_backend.module.kms.aws_kms_key.this", {"arn": key, "id": "key-id", "key_id": "key-kid"}),
 	res("aws_kms_alias", "module.state_backend.module.kms.aws_kms_alias.this", {"target_key_id": "key-kid"}),
 	key_policy,
@@ -106,6 +113,7 @@ bootstrap := {
 	"children": {
 		"module.state_backend.module.s3.aws_s3_bucket.this": {"roots": true, "version_deletion": true},
 		"module.state_backend.module.plan_output.aws_s3_bucket.this": {"suffixes": ["/*"]},
+		"module.state_backend.module.apply_output.aws_s3_bucket.this": {"suffixes": ["/*"], "writes": ["s3:PutObject"]},
 	},
 }
 
@@ -135,6 +143,8 @@ state_bucket := "module.state_backend.module.s3.aws_s3_bucket.this"
 
 plan_bucket := "module.state_backend.module.plan_output.aws_s3_bucket.this"
 
+apply_bucket := "module.state_backend.module.apply_output.aws_s3_bucket.this"
+
 # 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
 messages_for(rcs, d) := msgs if {
 	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
@@ -155,6 +165,10 @@ updated(x, address, _) := x if x.address != address
 without(rcs, address) := [x | some x in rcs; x.address != address]
 
 denied_03(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（* か", [apply_policy_address, arn])
+
+denied_03_writes(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への [\"s3:putobject\"] のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [apply_policy_address, arn])
+
+denied_03_full_on_writes(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s（[\"s3:putobject\"]）を、* の Deny で拒んでいます", [apply_policy_address, arn])
 
 denied_03_strict(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）", [apply_policy_address, arn])
 
@@ -281,6 +295,14 @@ test_violation_bootstrap_malformed if {
 		with_child(plan_bucket, {"suffixes": [1]}),
 		with_child(plan_bucket, {"suffixes": []}),
 		with_child(plan_bucket, {"suffix": ["/*"]}),
+		with_child(apply_bucket, {"writes": ["s3:PutObject"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": []}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": "s3:PutObject"}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [""]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [1]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:GetObject"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject", "S3:ListBucket"]}),
+		with_child(state_bucket, {"roots": true, "version_deletion": true, "writes": ["s3:PutObject"]}),
 	] {
 		fixture.has(malformed, messages_for(world(valid_statements), d))
 	}
@@ -668,4 +690,44 @@ test_violation_role_inline_policy_nested_unknown if {
 test_violation_children_on_target_without_children if {
 	address := sprintf("%saws_iam_openid_connect_provider.github", [g])
 	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s は", [address]), messages_for(world(valid_statements), with_child(address, {"suffixes": ["/x"]})))
+}
+
+# --- PLAN-APPLY-03: 書き込み先として宣言した子 ---
+
+test_pass_writes_case_insensitive if {
+	count(messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": "S3:PutObject", "Resource": ao_objects}))) == 0
+}
+
+test_violation_writes_not_action_opens_more if {
+	every names in [["s3:PutObject", "s3:GetObject"], ["s3:PutObject", "s3:DeleteObject"], ["s3:GetObject"], ["s3:DeleteObject"]] {
+		fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": names, "Resource": ao_objects})))
+	}
+}
+
+test_violation_writes_conditional_deny if {
+	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects, "Condition": {"Bool": {"aws:SecureTransport": "false"}}})
+	fixture.has(denied_03_writes(ao_objects), messages(s))
+}
+
+test_violation_writes_full_deny if {
+	msgs := messages(replace(valid_statements, 8, full_deny([ao_objects])))
+	fixture.has(denied_03_writes(ao_objects), msgs)
+	fixture.has(denied_03_full_on_writes(ao_objects), msgs)
+}
+
+test_violation_writes_full_deny_alongside if {
+	fixture.has(denied_03_full_on_writes(ao_objects), messages(array.concat(valid_statements, [full_deny([ao_objects])])))
+}
+
+test_violation_writes_deny_missing if {
+	fixture.has(denied_03_writes(ao_objects), messages(remove(valid_statements, 8)))
+}
+
+test_violation_writes_action_list if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "Action": ["s3:GetObject", "s3:DeleteObject"], "Resource": ao_objects})))
+}
+
+# Bucket の ARN そのものは writes の対象ではなく、これまでの規則（* か読み取りだけを除く NotAction）で見る。
+test_violation_apply_output_bucket_uncovered if {
+	fixture.has(denied_03(ao), messages(remove(valid_statements, 7)))
 }

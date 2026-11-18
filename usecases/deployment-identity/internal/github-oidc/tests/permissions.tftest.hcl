@@ -131,6 +131,7 @@ run "policies" {
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate" },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock" },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+      { Sid = "WriteWorkloadApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/*" },
       {
         Sid    = "DenyIdentityChange"
         Effect = "Deny"
@@ -156,6 +157,8 @@ run "policies" {
       { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:GetEncryptionConfiguration", "s3:ListBucket"], Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/*" },
       { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/*"] },
+      { Sid = "DenyApplyOutputBucketChange", Effect = "Deny", Action = "*", Resource = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an" },
+      { Sid = "DenyApplyOutputChange", Effect = "Deny", NotAction = ["s3:PutObject"], Resource = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/*" },
       {
         Sid    = "DenyStateKeyChange"
         Effect = "Deny"
@@ -185,7 +188,7 @@ run "policies" {
         Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
     ]
-    error_message = "apply の role の権限が、init の前の暗号化の設定と alias の一覧と、workload の state と lock の読み書きと、bootstrap の構成物・identity の state・2つの Bucket・plan の出力・state の鍵の変更の拒否になっていません。"
+    error_message = "apply の role の権限が、init の前の暗号化の設定と alias の一覧と、workload の state と lock の読み書きと、apply の出力の書き込みと、bootstrap の構成物・identity の state・3つの Bucket・plan の出力・apply の出力の書き込みのほか・state の鍵の変更の拒否になっていません。"
   }
 
   assert {
@@ -614,5 +617,17 @@ run "apply_output_bucket_arn_follows_input" {
       "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
     ]
     error_message = "plan の role の apply の出力の Bucket の読み取りの Resource が、入力の ARN になっていません。"
+  }
+
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource
+      if contains(["WriteWorkloadApplyOutput", "DenyApplyOutputBucketChange", "DenyApplyOutputChange"], s.Sid)
+      ] == [
+      "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an/*",
+      "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an/*",
+    ]
+    error_message = "apply の role の apply の出力の書き込みと Deny の Resource が、入力の ARN になっていません。"
   }
 }

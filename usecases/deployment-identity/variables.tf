@@ -83,7 +83,7 @@ variable "plan_output_bucket_arn" {
 }
 
 variable "apply_output_bucket_arn" {
-  description = "このアカウントの workload root の apply の出力の Bucket の ARN（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定の Action と、plan の role の読み取りをこの Bucket に絞る。"
+  description = "このアカウントの workload root の apply の出力の Bucket の ARN（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定の Action と、plan の role の読み取りと、apply の role の書き込みをこの Bucket に絞る。"
   type        = string
 
   validation {

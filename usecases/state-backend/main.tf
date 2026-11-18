@@ -8,8 +8,6 @@ locals {
   identity_lock_key = "identity/terraform.tfstate.tflock"
   identity_keys     = ["identity/terraform.tfstate", local.identity_lock_key]
   workload_keys     = ["workload/terraform.tfstate", "workload/terraform.tfstate.tflock"]
-  # 名前の規則は internal/plan-output の bucket_name と同じ。
-  apply_output_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::${var.project}-${var.env}-tfapply-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
 }
 
 module "s3" {
@@ -44,6 +42,14 @@ module "plan_output" {
   source = "./internal/plan-output"
 
   name           = "${var.project}-${var.env}-tfplan"
+  retention_days = var.plan_output_retention_days
+  kms_key_arn    = module.kms.key_arn
+}
+
+module "apply_output" {
+  source = "./internal/plan-output"
+
+  name           = "${var.project}-${var.env}-tfapply"
   retention_days = var.plan_output_retention_days
   kms_key_arn    = module.kms.key_arn
 }
