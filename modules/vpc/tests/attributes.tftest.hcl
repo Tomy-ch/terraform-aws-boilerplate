@@ -95,3 +95,25 @@ run "outputs_vpc_identifiers" {
     error_message = "vpc_cidr が入力と違います。"
   }
 }
+
+run "passes_non_default_inputs_through" {
+  command = plan
+
+  variables {
+    name = "x-y"
+    cidr = "192.168.4.0/24"
+  }
+
+  assert {
+    condition     = aws_vpc.this.cidr_block == "192.168.4.0/24"
+    error_message = "cidr_block が入力に追随していません。"
+  }
+  assert {
+    condition     = output.vpc_cidr == "192.168.4.0/24"
+    error_message = "vpc_cidr が入力に追随していません。"
+  }
+  assert {
+    condition     = aws_iam_role.flow_logs.name == "x-y-vpc-flow-logs"
+    error_message = "配送 role の名前が入力の name に追随していません。"
+  }
+}

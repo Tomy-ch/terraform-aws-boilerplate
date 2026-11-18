@@ -92,6 +92,7 @@ ECS の項目（v7）は Flow Logs を作る主体に `ecs:ListClusters` を要�
 - 既定の Security Group の規則が空であることを見るのは `tests/` だけである。既定の Security Group に `0.0.0.0/0` への egress を足した変異に、Checkov と Trivy は所見を出さなかった。KICS の 9a4ef195 は規則の宣言を咎めるが抑止している。Flow Logs の存在は、`aws_flow_log` を消した変異で Checkov の CKV2_AWS_11 と Trivy の AWS-0178 が落とすことを確かめた。どちらも Policy で見る検査は無く、この module を含む最初の reference の root と同じ変更で足す
 - 配送 role の trust policy の Condition を Policy で見る検査は無い。同上
 - `logs:CreateLogGroup` と、Resource を Log Group に絞った `DescribeLogStreams` で配送が成り立つことは、どのテストも確かめていない。最初の消費者の apply の後に、Log Group へ Flow Logs の record が届くことで確かめる
+- Flow Logs を配送の policy の後に作り、先に消す順序は `depends_on` が持つ。mock の plan と apply には順序が現れないので、どのテストも見ていない
 - 帯域外で既定の Security Group に規則を足すか、main Route Table に経路を足したとき、次の plan が差分を出すこと。Provider のソース（attribute-as-blocks の空の list）から導いたもので、実際の AWS では確かめていない
 - VPC の destroy が、GuardDuty が作る VPC Endpoint で止まらないこと（Provider の `aws_vpc` の文書は、削除に任意の権限が要る場合を挙げる）
 - `flow_logs_log_group_arn` に resource 参照を渡すことは、呼ぶ usecase のテストが見る

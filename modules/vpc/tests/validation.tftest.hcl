@@ -245,3 +245,171 @@ run "rejects_log_group_in_another_partition" {
 
   expect_failures = [aws_flow_log.this]
 }
+
+run "accepts_single_character_name" {
+  command = plan
+
+  variables {
+    name = "a"
+  }
+}
+
+run "accepts_name_starting_with_digit" {
+  command = plan
+
+  variables {
+    name = "0a"
+  }
+}
+
+run "rejects_name_with_inner_upper_case" {
+  command = plan
+
+  variables {
+    name = "aBc"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "rejects_name_with_underscore" {
+  command = plan
+
+  variables {
+    name = "a_b"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "accepts_cidr_at_start_of_172_16" {
+  command = plan
+
+  variables {
+    cidr = "172.16.0.0/16"
+  }
+}
+
+run "accepts_cidr_just_above_172_17" {
+  command = plan
+
+  variables {
+    cidr = "172.18.0.0/16"
+  }
+}
+
+run "rejects_cidr_just_below_10" {
+  command = plan
+
+  variables {
+    cidr = "9.255.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_10" {
+  command = plan
+
+  variables {
+    cidr = "11.0.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_below_172_16" {
+  command = plan
+
+  variables {
+    cidr = "172.15.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_172_31" {
+  command = plan
+
+  variables {
+    cidr = "172.32.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_below_192_168" {
+  command = plan
+
+  variables {
+    cidr = "192.167.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_192_168" {
+  command = plan
+
+  variables {
+    cidr = "192.169.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "accepts_log_group_name_with_every_allowed_character" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:a#b.c_d-e/f"
+  }
+}
+
+run "accepts_log_group_name_of_512_characters" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:${join("", [for i in range(512) : "a"])}"
+  }
+}
+
+run "rejects_log_group_name_of_513_characters" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:${join("", [for i in range(513) : "a"])}"
+  }
+
+  expect_failures = [var.flow_logs_log_group_arn]
+}
+
+run "rejects_log_group_arn_with_empty_name" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-1:123456789012:log-group:"
+  }
+
+  expect_failures = [var.flow_logs_log_group_arn]
+}
+
+run "rejects_log_group_arn_with_11_digit_account" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-1:12345678901:log-group:/tabp/dev/network-foundation/flow-logs"
+  }
+
+  expect_failures = [var.flow_logs_log_group_arn]
+}
+
+run "rejects_log_group_in_region_sharing_a_prefix" {
+  command = plan
+
+  variables {
+    flow_logs_log_group_arn = "arn:aws:logs:ap-northeast-12:123456789012:log-group:/tabp/dev/network-foundation/flow-logs"
+  }
+
+  expect_failures = [aws_flow_log.this]
+}

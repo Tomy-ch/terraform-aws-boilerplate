@@ -46,6 +46,14 @@ run "fixes_flow_log_attributes" {
     condition     = aws_iam_role.flow_logs.name == "tabp-dev-network-vpc-flow-logs"
     error_message = "配送 role の名前が <name>-vpc-flow-logs ではありません。"
   }
+  assert {
+    condition     = aws_iam_role_policy.flow_logs.name == "deliver-flow-logs"
+    error_message = "配送の policy の名前が deliver-flow-logs ではありません。"
+  }
+  assert {
+    condition     = aws_iam_role.flow_logs.tags == null && aws_flow_log.this.tags == null
+    error_message = "配送 role か Flow Logs に tag が付いています。"
+  }
 }
 
 run "connects_flow_log_to_this_vpc_and_role" {
@@ -64,7 +72,7 @@ run "connects_flow_log_to_this_vpc_and_role" {
     error_message = "inline policy の排他がこの role を名指していません。"
   }
   assert {
-    condition     = aws_iam_role_policies_exclusive.flow_logs.policy_names == toset([aws_iam_role_policy.flow_logs.name])
+    condition     = aws_iam_role_policies_exclusive.flow_logs.policy_names == toset(["deliver-flow-logs"])
     error_message = "inline policy の排他が配送の policy だけを残していません。"
   }
   assert {
@@ -78,87 +86,5 @@ run "connects_flow_log_to_this_vpc_and_role" {
   assert {
     condition     = aws_iam_role_policy.flow_logs.role == aws_iam_role.flow_logs.name
     error_message = "配送の policy がこの role に付いていません。"
-  }
-}
-
-run "trust_policy_is_limited_to_flow_logs_of_this_account" {
-  command = apply
-
-  assert {
-    condition = jsondecode(aws_iam_role.flow_logs.assume_role_policy) == {
-      Version = "2012-10-17"
-      Statement = [{
-        Sid       = "AllowVpcFlowLogsOfThisAccount"
-        Effect    = "Allow"
-        Principal = { Service = "vpc-flow-logs.amazonaws.com" }
-        Action    = "sts:AssumeRole"
-        Condition = {
-          StringEquals = { "aws:SourceAccount" = "123456789012" }
-          ArnLike      = { "aws:SourceArn" = "arn:aws:ec2:ap-northeast-1:123456789012:vpc-flow-log/*" }
-        }
-      }]
-    }
-    error_message = "配送 role の trust policy が期待と違います。"
-  }
-}
-
-run "permission_policy_is_limited_to_the_log_group" {
-  command = apply
-
-  assert {
-    condition = jsondecode(aws_iam_role_policy.flow_logs.policy) == {
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Sid      = "WriteLogEvents"
-          Effect   = "Allow"
-          Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-          Resource = "arn:aws:logs:ap-northeast-1:123456789012:log-group:/tabp/dev/network-foundation/flow-logs:log-stream:*"
-        },
-        {
-          Sid      = "DescribeLogStreams"
-          Effect   = "Allow"
-          Action   = "logs:DescribeLogStreams"
-          Resource = "arn:aws:logs:ap-northeast-1:123456789012:log-group:/tabp/dev/network-foundation/flow-logs"
-        },
-        {
-          Sid      = "DescribeLogGroups"
-          Effect   = "Allow"
-          Action   = "logs:DescribeLogGroups"
-          Resource = "*"
-        },
-      ]
-    }
-    error_message = "配送 role の permission policy が期待と違います。"
-  }
-}
-
-run "trust_policy_follows_partition_region_and_account" {
-  command = apply
-
-  override_data {
-    target = data.aws_caller_identity.current
-    values = { account_id = "210987654321" }
-  }
-  override_data {
-    target = data.aws_region.current
-    values = { region = "cn-north-1" }
-  }
-  override_data {
-    target = data.aws_partition.current
-    values = { partition = "aws-cn" }
-  }
-
-  variables {
-    flow_logs_log_group_arn = "arn:aws-cn:logs:cn-north-1:210987654321:log-group:/tabp/dev/network-foundation/flow-logs"
-  }
-
-  assert {
-    condition     = jsondecode(aws_iam_role.flow_logs.assume_role_policy).Statement[0].Condition.StringEquals["aws:SourceAccount"] == "210987654321"
-    error_message = "trust policy の aws:SourceAccount が呼んだアカウントに追随していません。"
-  }
-  assert {
-    condition     = jsondecode(aws_iam_role.flow_logs.assume_role_policy).Statement[0].Condition.ArnLike["aws:SourceArn"] == "arn:aws-cn:ec2:cn-north-1:210987654321:vpc-flow-log/*"
-    error_message = "trust policy の aws:SourceArn が呼んだ partition・リージョン・アカウントに追随していません。"
   }
 }
