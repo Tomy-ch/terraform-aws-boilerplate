@@ -482,6 +482,34 @@ func Test_diffEnv(t *testing.T) {
 	})
 }
 
+func Test_diffVulnerabilityReporting(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		want bool
+		got  liveVulnerabilityReporting
+		diff vulnerabilityReportingDiff
+	}{
+		{"公開で有効の宣言どおりなら差分は無い", true, liveVulnerabilityReporting{Public: true, Enabled: true}, vulnerabilityReportingDiff{}},
+		{"公開で無効の宣言どおりなら差分は無い", false, liveVulnerabilityReporting{Public: true, Enabled: false}, vulnerabilityReportingDiff{}},
+		{"宣言が有効で実態が無効なら PUT で有効にする", true, liveVulnerabilityReporting{Public: true, Enabled: false},
+			vulnerabilityReportingDiff{Findings: []string{"enabled が宣言の true と異なります"}, Method: "PUT"}},
+		{"宣言が無効で実態が有効なら DELETE で無効にする", false, liveVulnerabilityReporting{Public: true, Enabled: true},
+			vulnerabilityReportingDiff{Findings: []string{"enabled が宣言の false と異なります"}, Method: "DELETE"}},
+		{"公開でないのに宣言が有効なら、使えないことを差分にして要求を出さない", true, liveVulnerabilityReporting{},
+			vulnerabilityReportingDiff{Findings: []string{"公開でないリポジトリでは使えません"}, Unavailable: true}},
+		{"公開でなく宣言が無効なら、突合の対象外にする", false, liveVulnerabilityReporting{},
+			vulnerabilityReportingDiff{Unobserved: "Private Vulnerability Reporting（公開でないリポジトリには提供されない）"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.diff, diffVulnerabilityReporting(tc.want, tc.got))
+		})
+	}
+}
+
 func Test_planRequests(t *testing.T) {
 	t.Parallel()
 
@@ -494,6 +522,22 @@ func Test_planRequests(t *testing.T) {
 		t.Parallel()
 		assert.Empty(t, planRequests(diff{}, want, "o/r", onlyRuleset))
 		assert.Empty(t, planRequests(diff{}, want, "o/r", onlyEnvironments))
+	})
+
+	t.Run("ruleset と environments のどちらでもなければ、どちらの差分も送らない", func(t *testing.T) {
+		t.Parallel()
+		d := diff{
+			Ruleset: rulesetDiff{Missing: true, Findings: []string{"x"}},
+			Envs:    []envDiff{{Name: "copilot", Put: true, Findings: []string{"x"}}},
+		}
+		assert.Empty(t, planRequests(d, want, "o/r", onlyVulnerabilityReporting))
+		assert.Empty(t, planRequests(d, want, "o/r", "labels"))
+	})
+
+	t.Run("environments だけを対象にすると ruleset の差分を送らない", func(t *testing.T) {
+		t.Parallel()
+		d := diff{Ruleset: rulesetDiff{Missing: true, Findings: []string{"x"}}}
+		assert.Empty(t, planRequests(d, want, "o/r", onlyEnvironments))
 	})
 
 	t.Run("ruleset が無ければ POST で作る", func(t *testing.T) {

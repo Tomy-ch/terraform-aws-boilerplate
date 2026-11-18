@@ -86,6 +86,26 @@ func TestSetupRepoRecipe(t *testing.T) {
 			}
 		})
 
+		t.Run("連鎖は upstream の remote を外した後に Private Vulnerability Reporting を適用する", func(t *testing.T) {
+			t.Parallel()
+
+			out, err := makeIn(t, mirrorRoot(t), "-n", "setup-repo")
+			require.NoError(t, err, out)
+			removed := strings.Index(out, "git remote remove upstream")
+			applied := strings.Index(out, "apply-vulnerability-reporting")
+			require.NotEqual(t, -1, removed, out)
+			require.NotEqual(t, -1, applied, out)
+			assert.Less(t, removed, applied)
+		})
+
+		t.Run("apply-vulnerability-reporting は repo-settings の sync を vulnerability-reporting だけに絞って起動する", func(t *testing.T) {
+			t.Parallel()
+
+			out, err := makeIn(t, mirrorRoot(t), "-n", "apply-vulnerability-reporting")
+			require.NoError(t, err, out)
+			assert.Contains(t, out, `exec "./tmp/bin/repo-settings" sync -only vulnerability-reporting -repo=`)
+		})
+
 		t.Run("REPO_SETUP の prune-release-notes は直下のノートを整理する", func(t *testing.T) {
 			t.Parallel()
 			root := mirrorRoot(t)
