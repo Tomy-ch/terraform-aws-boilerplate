@@ -1419,6 +1419,17 @@ func TestCiMk(t *testing.T) {
 		}
 	})
 
+	t.Run("plan と apply は env と root から出力の Bucket を組み、workload root の apply は apply の出力の Bucket に置く", func(t *testing.T) {
+		t.Parallel()
+
+		extra := filepath.Join(t.TempDir(), "roots.mk")
+		require.NoError(t, os.WriteFile(extra, []byte("ci-x-plan: SHELL := /bin/bash\nci-x-plan: CI_POLICY_NAMESPACES := plan.x\nci-x-plan:\n\t@$(call CI_PLAN,security,identity)\nci-x-apply: SHELL := /bin/bash\nci-x-apply: CI_POLICY_NAMESPACES := plan.x\nci-x-apply:\n\t@$(call CI_APPLY,security,workload)\n"), 0o600))
+		plan := expand(t, "ci-x-plan", "-f", "Makefile", "-f", extra)
+		assert.Contains(t, plan, `bucket -project tabp -env security -kind tfplan -region "$region" -identity "$identity"`)
+		apply := expand(t, "ci-x-apply", "-f", "Makefile", "-f", extra)
+		assert.Contains(t, apply, `bucket -project tabp -env security -kind tfapply -region "$region" -identity "$identity"`)
+	})
+
 	t.Run("apply の全文の置き場は、identity でも workload でもない root では展開で落ちる", func(t *testing.T) {
 		t.Parallel()
 

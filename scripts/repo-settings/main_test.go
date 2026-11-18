@@ -283,6 +283,9 @@ func Test_readDeclarations(t *testing.T) {
 		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
+		{"root の backend の key が配置の値でなければ失敗する", func(root string) {
+			writeFile(t, root, "env/x/identity/backend.tf", backendFixture("workload"))
+		}, errBackendKey},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
 		}, os.ErrNotExist},

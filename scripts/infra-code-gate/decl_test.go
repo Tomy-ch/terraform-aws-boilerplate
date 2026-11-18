@@ -132,6 +132,13 @@ func Test_runDecl(t *testing.T) {
 				want: errViolations,
 				msg:  "usecases/x/internal/fn/src に当たる行がありません",
 			},
+			"code owner の対象の workflow が欠ければ違反": {
+				mutate: func(t *testing.T, repo string) {
+					writeFile(t, filepath.Join(repo, defaultCodeownersPath), strings.Replace(codeownersFor("usecases/x/internal/fn/src"), ".github/workflows/terraform-unlock.yaml @owner\n", "", 1))
+				},
+				want: errViolations,
+				msg:  ".github/workflows/terraform-unlock.yaml に当たる行がありません",
+			},
 			"ADR が Accepted でなければ違反": {
 				mutate: func(t *testing.T, repo string) {
 					writeFile(t, filepath.Join(repo, "usecases/x/docs/adr/0001-fn-runtime.md"), strings.Replace(acceptedADR, "Accepted", "Proposed", 1))
@@ -494,13 +501,24 @@ func Test_gateWorkflows(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 
-	t.Run("実物の apply と lock の解除の workflow を対象にする", func(t *testing.T) {
+	t.Run(".yml も読み、.yaml・.yml でないファイルとディレクトリは読まない", func(t *testing.T) {
 		t.Parallel()
-		got, err := gateWorkflows(filepath.Join("..", ".."))
+		repo := t.TempDir()
+		run := "jobs:\n  a:\n    steps:\n      - run: make ci-apply-admin-identity\n"
+		writeFile(t, filepath.Join(repo, ".github/workflows/apply.yml"), run)
+		writeFile(t, filepath.Join(repo, ".github/workflows/README.md"), run)
+		writeFile(t, filepath.Join(repo, ".github/workflows/dir.yaml/x.yaml"), run)
+		got, err := gateWorkflows(repo)
 		require.NoError(t, err)
-		for _, w := range []string{"terraform-gates.yaml", "terraform-apply.yaml", "terraform-unlock.yaml"} {
-			assert.Contains(t, got, ".github/workflows/"+w)
-		}
+		assert.Equal(t, []string{".github/workflows/apply.yml"}, got)
+	})
+
+	t.Run("読めない workflow があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		repo := buildRepo(t)
+		require.NoError(t, os.Symlink(filepath.Join(repo, "missing"), filepath.Join(repo, ".github/workflows/broken.yaml")))
+		_, err := gateWorkflows(repo)
+		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
 

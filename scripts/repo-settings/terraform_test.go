@@ -358,6 +358,24 @@ func Test_checkBackendKeys(t *testing.T) {
 		assert.Contains(t, err.Error(), "symlink は読みません")
 	})
 
+	t.Run("配置の外のディレクトリは backend を読まず、root に数えない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/admin/identity/backend.tf", backendFixture("identity"))
+		writeFile(t, root, "env/main.tf", "# x\n")
+		writeFile(t, root, "env/admin/foo/bar/main.tf", "# x\n")
+		writeFile(t, root, "env/admin/identity/sub/main.tf", "# x\n")
+		n, err := checkBackendKeys(root)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+	})
+
+	t.Run("env/ が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkBackendKeys(t.TempDir())
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
 	t.Run(".terraform と tests の下は読まない", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -410,15 +428,17 @@ func Test_backendKey(t *testing.T) {
 		assert.Equal(t, "identity/terraform.tfstate", got)
 	})
 
-	for name, body := range map[string]string{
-		"s3 でない backend は読まない": "terraform {\n  backend \"local\" {\n    path = \"x\"\n  }\n}\n",
-		"HCL として読めなければ失敗する":    "terraform {\n",
-		"key が無ければ失敗する":        "terraform {\n  backend \"s3\" {\n  }\n}\n",
+	for name, c := range map[string]struct{ body, want string }{
+		"s3 でない backend は読まない": {"terraform {\n  backend \"local\" {\n    path = \"x\"\n  }\n}\n", "s3 の backend がありません"},
+		"HCL として読めなければ失敗する":    {"terraform {\n", "Unclosed configuration block"},
+		"key が無ければ失敗する":        {"terraform {\n  backend \"s3\" {\n  }\n}\n", "key がありません"},
+		"key が空なら失敗する":         {"terraform {\n  backend \"s3\" {\n    key = \"\"\n  }\n}\n", "key が空です"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := backendKey(writeFile(t, t.TempDir(), "backend.tf", body))
+			_, err := backendKey(writeFile(t, t.TempDir(), "backend.tf", c.body))
 			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
 		})
 	}
 
@@ -426,5 +446,6 @@ func Test_backendKey(t *testing.T) {
 		t.Parallel()
 		_, err := backendKey(filepath.Join(t.TempDir(), "backend.tf"))
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "backend.tf がありません")
 	})
 }

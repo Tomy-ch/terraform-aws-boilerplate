@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -326,10 +327,10 @@ func Test_resultsEligibility(t *testing.T) {
 		results []jobResult
 		want    []string
 	}{
-		"両方が成功なら戻さない":                                        {[]jobResult{{job: "a", result: "success", outcome: "success"}, {job: "b", result: "success", outcome: "success"}}, []string{"a", "b", "success"}},
-		"refuse-stale で落ちた job（apply の step が skipped）は戻さない": {[]jobResult{{job: "a", result: "failure", outcome: "skipped"}}, []string{"a", "skipped"}},
-		"取り消された job は戻さない":                                   {[]jobResult{{job: "a", result: "cancelled"}}, []string{"a", "cancelled"}},
-		"戻す対象でない段の失敗と skipped なら戻さない":                        {[]jobResult{{job: "a", result: "failure", outcome: "failure", failure: "lock"}, {job: "b", result: "skipped"}}, []string{"a", "lock", "b", "skipped"}},
+		"両方が成功なら戻さない":                                        {[]jobResult{{job: "a", result: "success", outcome: "success"}, {job: "b", result: "success", outcome: "success"}}, []string{"a の結果が success です", "b の結果が success です"}},
+		"refuse-stale で落ちた job（apply の step が skipped）は戻さない": {[]jobResult{{job: "a", result: "failure", outcome: "skipped"}}, []string{"a: ", "skipped"}},
+		"取り消された job は戻さない":                                   {[]jobResult{{job: "a", result: "cancelled"}}, []string{"a の結果が cancelled です"}},
+		"戻す対象でない段の失敗と skipped なら戻さない":                        {[]jobResult{{job: "a", result: "failure", outcome: "failure", failure: "lock"}, {job: "b", result: "skipped"}}, []string{"a: ", "lock", "b の結果が skipped です"}},
 	}
 	for name, c := range skip {
 		t.Run(name, func(t *testing.T) {
@@ -1153,9 +1154,11 @@ func Test_run(t *testing.T) {
 	t.Run("skipped の job は戻す対象なしに数え、ほかの job の失敗で戻す", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgsWith(t, h.head, testJob+"=failure:failure:apply apply-admin-workload=skipped::")
-		f := &fake{dir: h.dir, gh: gh}
+		both := maps.Clone(gh)
+		both[jobsKey(10)] = fmt.Sprintf(`{"total_count":2,"jobs":[{"name":%q,"conclusion":"success","head_sha":%q},{"name":"apply-admin-workload","conclusion":"success","head_sha":%q}]}`, testJob, h.base, h.base)
+		f := &fake{dir: h.dir, gh: both}
 		require.NoError(t, run(args, &bytes.Buffer{}, f.runner()))
-		assert.NotEqual(t, "skip", outputs(t, path)["decision"])
+		assert.Equal(t, "push", outputs(t, path)["decision"])
 		assert.NotEmpty(t, f.calls, "戻す対象と判定して、最後に成功した run を読みに行く")
 	})
 	t.Run("結果を受け取れなければ何も書かずに失敗する", func(t *testing.T) {

@@ -295,6 +295,15 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "job 2 件")
 	})
 
+	t.Run("apply の失敗を戻す配線が欠ければ違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": replaced(t, applyWorkflow, "  revert-plan:\n", "  revert-gone:\n")}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "revert-plan の job がありません")
+	})
+
 	t.Run("対象の job が無ければ errNoTarget", func(t *testing.T) {
 		t.Parallel()
 
@@ -3021,19 +3030,23 @@ func Test_checkRevertWiring(t *testing.T) {
 	for name, c := range map[string]struct {
 		from, to, want string
 	}{
-		"revert-plan が無ければ違反":             {"  revert-plan:\n", "  revert-gone:\n", "revert-plan の job がありません"},
-		"revert-plan の needs から外せば違反":     {"needs: [apply-admin-identity, apply-admin-workload]\n    if: ${{ always()", "needs: [apply-admin-identity]\n    if: ${{ always()", "revert-plan の needs が apply の job"},
-		"revert-plan の if: に失敗の条件が無ければ違反": {" || needs.apply-admin-workload.result == 'failure'", "", "revert-plan の if: に needs.apply-admin-workload.result == 'failure'"},
-		"結果を渡す一覧から外せば違反":                  {"            apply-admin-workload=${{ needs.apply-admin-workload.result }}:${{ needs.apply-admin-workload.outputs.apply-outcome }}:${{ needs.apply-admin-workload.outputs.failure }}\n", "", "APPLY_REVERT_RESULTS が渡す job"},
-		"結果の一覧の名前と needs の参照が食い違えば違反":     {"apply-admin-workload=${{ needs.apply-admin-workload.result }}", "apply-admin-workload=${{ needs.apply-admin-identity.result }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
-		"別の workflow の job を名指せば違反":       {"            apply-admin-workload=", "            apply-security-identity=${{ needs.apply-security-identity.result }}:${{ needs.apply-security-identity.outputs.apply-outcome }}:${{ needs.apply-security-identity.outputs.failure }}\n            apply-admin-workload=", "APPLY_REVERT_RESULTS が渡す job"},
-		"workflow の名前が自分のファイル名でなければ違反":    {"APPLY_REVERT_WORKFLOW: apply.yml", "APPLY_REVERT_WORKFLOW: terraform-apply.yaml", "APPLY_REVERT_WORKFLOW"},
-		"notify-failure の needs から外せば違反":  {"apply-admin-identity, apply-admin-workload]\n    if: ${{ always() && contains", "apply-admin-identity]\n    if: ${{ always() && contains", "notify-failure の needs に apply-admin-workload"},
-		"成功の通知の job が無ければ違反":              {"  notify-success-workload:\n    needs: [apply-admin-workload]\n", "  notify-success-workload:\n    needs: [apply-admin-identity]\n", "apply-admin-workload の成功を通知する job"},
+		"revert-plan が無ければ違反":                   {"  revert-plan:\n", "  revert-gone:\n", "revert-plan の job がありません"},
+		"revert-plan の needs から外せば違反":           {"needs: [apply-admin-identity, apply-admin-workload]\n    if: ${{ always()", "needs: [apply-admin-identity]\n    if: ${{ always()", "revert-plan の needs が apply の job"},
+		"revert-plan の if: に失敗の条件が無ければ違反":       {" || needs.apply-admin-workload.result == 'failure'", "", "revert-plan の if: に needs.apply-admin-workload.result == 'failure'"},
+		"結果を渡す一覧から外せば違反":                        {"            apply-admin-workload=${{ needs.apply-admin-workload.result }}:${{ needs.apply-admin-workload.outputs.apply-outcome }}:${{ needs.apply-admin-workload.outputs.failure }}\n", "", "APPLY_REVERT_RESULTS が渡す job"},
+		"結果の一覧の名前と needs の参照が食い違えば違反":           {"apply-admin-workload=${{ needs.apply-admin-workload.result }}", "apply-admin-workload=${{ needs.apply-admin-identity.result }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"結果の一覧の apply の step の結果が別の job を指せば違反": {"${{ needs.apply-admin-workload.outputs.apply-outcome }}", "${{ needs.apply-admin-identity.outputs.apply-outcome }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"結果の一覧の失敗の段が別の job を指せば違反":              {"${{ needs.apply-admin-workload.outputs.failure }}", "${{ needs.apply-admin-identity.outputs.failure }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"notify-failure が無ければ違反":                {"  notify-failure:\n", "  notify-gone:\n", "notify-failure の job がありません"},
+		"別の workflow の job を名指せば違反":             {"            apply-admin-workload=", "            apply-security-identity=${{ needs.apply-security-identity.result }}:${{ needs.apply-security-identity.outputs.apply-outcome }}:${{ needs.apply-security-identity.outputs.failure }}\n            apply-admin-workload=", "APPLY_REVERT_RESULTS が渡す job"},
+		"workflow の名前が自分のファイル名でなければ違反":          {"APPLY_REVERT_WORKFLOW: apply.yml", "APPLY_REVERT_WORKFLOW: terraform-apply.yaml", "APPLY_REVERT_WORKFLOW"},
+		"notify-failure の needs から外せば違反":        {"apply-admin-identity, apply-admin-workload]\n    if: ${{ always() && contains", "apply-admin-identity]\n    if: ${{ always() && contains", "notify-failure の needs に apply-admin-workload"},
+		"成功の通知の job が無ければ違反":                    {"  notify-success-workload:\n    needs: [apply-admin-workload]\n", "  notify-success-workload:\n    needs: [apply-admin-identity]\n", "apply-admin-workload の成功を通知する job"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ok, findings := checkRevertWiring("apply.yml", replaced(t, both(t), c.from, c.to))
+			assert.Len(t, findings, 1, messages(findings))
 			assert.True(t, ok)
 			assert.Contains(t, messages(findings), c.want)
 		})
@@ -3147,29 +3160,32 @@ func Test_checkRootCoverage(t *testing.T) {
 		dirs []string
 		jobs func() map[string]string
 		want string
+		n    int
 	}{
-		"配置の外の root は違反": {append(slices.Clone(dirs), "admin/extra"), func() map[string]string { return rootJobs(four...) }, "admin/extra"},
+		"配置の外の root は違反":               {append(slices.Clone(dirs), "admin/extra"), func() map[string]string { return rootJobs(four...) }, "admin/extra", 1},
+		"名前が前方一致する別の root の job は数えない": {[]string{"admin/identity"}, func() map[string]string { return rootJobs("admin-identity-x") }, "root admin-identity を apply する job が 0 件", 3},
 		"apply の job が無い root は違反": {dirs, func() map[string]string {
 			j := rootJobs(four...)
 			j["apply.yaml"] = strings.Replace(j["apply.yaml"], "make ci-apply-security-workload", "echo", 1)
 			return j
-		}, "security-workload を apply する job が 0 件"},
+		}, "security-workload を apply する job が 0 件", 1},
 		"lock の解除の job が2つの root は違反": {dirs, func() map[string]string {
 			j := rootJobs(four...)
 			j["unlock2.yaml"] = j["unlock.yaml"]
 			return j
-		}, "lock を外す job が 2 件"},
+		}, "lock を外す job が 2 件", 4},
 		"plan が Pull Request で起動しない root は違反": {dirs, func() map[string]string {
 			j := rootJobs(four...)
 			j["plan.yaml"] = strings.Replace(j["plan.yaml"], "  pull_request:", "  push:", 1)
 			return j
-		}, "Pull Request で plan する job がありません"},
+		}, "Pull Request で plan する job がありません", 4},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			_, findings, err := checkRootCoverage(rootsWith(t, c.dirs...), c.jobs())
 			require.NoError(t, err)
 			assert.Contains(t, messages(findings), c.want)
+			assert.Len(t, findings, c.n, messages(findings))
 		})
 	}
 }
@@ -3186,7 +3202,9 @@ func Test_checkRevertPlan(t *testing.T) {
 
 	t.Run("workflow の名前が違えば違反", func(t *testing.T) {
 		t.Parallel()
-		assert.Contains(t, messages(checkRevertPlan(rp, []string{"apply-admin-identity"}, "terraform-apply.yaml", formatted)), "APPLY_REVERT_WORKFLOW")
+		got := checkRevertPlan(rp, []string{"apply-admin-identity"}, "terraform-apply.yaml", formatted)
+		require.Len(t, got, 1)
+		assert.Equal(t, `APPLY_REVERT_WORKFLOW が "apply.yml" で、この workflow のファイル名 "terraform-apply.yaml" ではありません`, got[0].Message)
 	})
 
 	t.Run("apply の job が増えれば、needs・if:・渡す job のそれぞれで違反", func(t *testing.T) {
