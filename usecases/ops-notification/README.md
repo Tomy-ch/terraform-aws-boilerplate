@@ -1,0 +1,185 @@
+# ops-notification
+
+1つのアカウントに、基盤系の通知を受ける暗号化した SNS の Topic を1つ、その Topic を購読する Amazon Q Developer in chat applications（旧 AWS Chatbot。以下 Chatbot）の Slack の channel の構成を1つ、通知経路の死活を見る毎日の心拍（EventBridge Scheduler）を1つ持つユースケース。各アカウントの workload root から呼ばれる常駐層である（[ops-notification/ADR-0001](docs/adr/0001-topic-per-account-in-workload-root.md)、[scope.md 第9.3節・第10.2節](../../docs/v1.0-plan/scope.md)）。
+
+## 解決する問題
+
+基盤系のアラームと検知（CloudWatch の alarm、EventBridge の rule、Budgets、Cost Anomaly Detection）は、同じアカウントの通知先へ送られ、人が読める場所へ届かなければ意味を持たない。通知先はアカウントを越えない（#97）。基盤系のアラームは平常時に1通も来ないので、経路が壊れても気づけない。このユースケースは、通知先の Topic と宛先を持ち、毎日の心拍で経路が働いていることを人に見せる。
+
+## 実行形態とネットワーク境界
+
+- AWS の上で動く処理は、Scheduler の schedule（Topic への publish）と、Chatbot（Topic の購読と Slack への配送）だけである。コードを持たない
+- Topic は provider の region に置き、TLS でない publish を Topic Policy の Deny で拒む。鍵は customer managed key（`modules/kms`）
+- Chatbot の構成は us-west-2 に置く（Chatbot の API の region。[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定6）。通知は AWS の外（Slack）へ出るので、心拍の本文にアカウント ID と ARN を載せない
+- Topic へ publish できるのは、同じアカウントの4つのサービスと心拍の role だけである
+
+## 公開契約
+
+| 入力 | 型 | 意味 |
+| --- | --- | --- |
+| `project` | `string`（英小文字と数字、37文字以内） | 名前の先頭の token。最も長い名前は role 名 `<project>-log-archive-ops-heartbeat`（63文字） |
+| `env` | `admin` / `security` / `log-archive` / `sandbox` / `dev` / `stg` / `prd` | Topic を置くアカウントの env の token（`state-backend`・`deployment-identity` と同じ token） |
+| `chat` | `object({ slack = object({ team_id = string, channel_id = string }) })` | 通知を届ける Slack の workspace（Chatbot で認可済み）の ID と channel の ID。名前ではなく ID を受ける（Chatbot API Reference の `SlackTeamId`・`SlackChannelId` の形） |
+| `permissions_boundary_arn` | `string`（同じアカウントの customer managed policy の ARN） | このユースケースが作る IAM role（心拍・channel）のすべてに付ける permissions boundary。policy は `deployment-identity` が持つ |
+
+4つはどれも既定値を持たない必須入力である。
+
+| 出力 | 使う側 |
+| --- | --- |
+| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`account-baseline` の GuardDuty の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
+
+- ログの所在: このユースケースはログを持たない。Chatbot の `logging_level` は `NONE`、SNS の配送状況のログ（delivery status logging）も持たない。API の呼び出しの記録は CloudTrail が持つ
+- 基盤系アラームの通知先 Topic ARN: 受けない。このユースケース自身がその Topic を持つ（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
+
+## 持つもの
+
+| 構成物 | 置き場 | 値 |
+| --- | --- | --- |
+| 鍵（CMK・Key Policy・alias `alias/<project>-<env>-ops-notification`） | `modules/kms` | 心拍の role（`via = "sns"`）と、4つの送り手のサービス principal に暗号操作を許す |
+| Topic `<project>-<env>-ops-notification` と Topic Policy | `modules/sns` | 送り手は `budgets`・`cloudwatch`・`costalerts`・`events` に固定（[ops-notification/ADR-0101](docs/adr/0101-fixed-publishers.md)） |
+| 心拍（schedule group・schedule・role `<project>-<env>-ops-heartbeat`） | `internal/heartbeat` | 毎日 09:00（`Asia/Tokyo`）。role は Topic への `sns:Publish` だけ（[ops-notification/ADR-0102](docs/adr/0102-daily-heartbeat.md)） |
+| Chatbot の Slack の channel の構成・channel role `<project>-<env>-ops-chat`・読み取りの policy `<project>-<env>-ops-chat-read` | `internal/chat-slack` | guardrail と channel role に同じ読み取りの policy（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md)） |
+
+`modules/sns` の `name`・`publishers` と、`modules/kms` の `users.services.sns` の `topic`・`publishers` には同じ値を渡す（`main.tf` の `local.publishers`）。両者の一致は Policy Test（`PLAN-NOTIFY-01`）が見る。
+
+## 人が先に行うこと
+
+- Slack の workspace を、そのアカウントの Chatbot のコンソールで認可し、team ID と channel ID を env の値に書く。認可は OAuth で、コマンドにできない。7つのアカウントそれぞれで要る。workspace の持ち主と、通知を見る channel は利用者が決める
+- 認可の前に apply すると、Chatbot の構成の作成が失敗する見込みである（確かめていない）
+
+## supported / unsupported
+
+supported:
+
+- 1つのアカウントに Topic 1つ・Slack の channel の構成1つ・心拍1つを置き、同じアカウントの4つの送り手の通知を Slack へ届ける構成
+
+unsupported:
+
+- email の subscription。確認待ちの間は届かず、Terraform は確認待ちの subscription を destroy できず AWS に残し（AWS Provider の `aws_sns_topic_subscription` の NOTE）、メールのリンクから認証なしで解除されて黙って止まり、宛先が PII として state と plan に残る。どれも届くことを検査する手段が無い（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定3）。見直し条件: SNS が email の購読の認証つきの解除を API で設定できるようになったとき
+- アカウントを越えて通知を送ること・集約すること（[ops-notification/ADR-0001](docs/adr/0001-topic-per-account-in-workload-root.md)）
+- 乗っ取られたアカウントで通知が止められたことに、外から気づくこと（#97 が受け入れた弱点）
+- 心拍の不在の自動検知。見直し条件: アカウントの外の仕組み（obp）が稼働したとき
+- アプリ系のアラートの経路（Grafana Alerting）の死活。obp が持つ（[scope.md 第9.3節](../../docs/v1.0-plan/scope.md)）
+- チャットからの書き込みの操作（[ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md)）
+- provider の region の外の alarm を Chatbot が読むこと
+- metric alarm と composite alarm。alarm は metric を出す resource を持つ module が持つ（[scope.md 第9.3節](../../docs/v1.0-plan/scope.md)「アラームの置き場」）
+
+まだ持たないもの（契約への一般化の候補）:
+
+| 足すもの | 理由 |
+| --- | --- |
+| Microsoft Teams の channel（`chat.teams`） | 別の resource 型で、届くことを確かめる tenant が無い。`chat` は optional の属性として足せる形にしてある |
+| 送り手の追加 | 4つのほかに同じアカウントの送り手が要るとき（[ops-notification/ADR-0101](docs/adr/0101-fixed-publishers.md)） |
+
+## 所有者
+
+- Topic・鍵・心拍・Chatbot の構成はこのユースケースが所有する
+- Slack の workspace の認可は Terraform の管理の外で、利用者が持つ
+- permissions boundary の policy は `deployment-identity` が持つ
+
+## 依存するユースケースと判断 Issue
+
+- ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role が、このユースケースの resource と role を作る権限を持つ必要がある（#25 PR-2）
+- 判断 Issue: #97（アカウントごとの Topic と心拍）、#109（alarm を持たない）、#110（`modules/sns`・`modules/kms` の SNS の文）、#256（宛先を Chatbot にする）、#254（作る role の範囲。permissions boundary）
+- env の配線（管理アカウントの workload root）は #222 が持つ
+
+## 検証方法
+
+- Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`internal/heartbeat/tests/` が schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role を、`reference/tests/plan.tftest.hcl` が reference の値を見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、Topic Policy の形（`plan.sns_topic_policy`。TLS の Deny、Allow がサービス principal の `sns:Publish` だけで条件が自アカウントの `aws:SourceAccount` だけ、Topic ごとに Topic Policy が1つ）、合成の不変条件（`plan.ops_notification`。Topic Policy と Key Policy の送り手の一致、EventBridge の文が Topic を名指すこと、IAM で publish する role と Key Policy の SNS 経由の role の一致、2つの role の信頼、心拍の権限と target、guardrail と channel role の policy の一致、`read` の Action 集合、作る role が permissions boundary を持つこと）、Key Policy の形（`plan.kms_key_policy`。SNS の文を plan から導いた入力で見る）、Resource `"*"` の Action（`plan.iam_action_wildcard`）を確かめる。Topic と鍵の削除と置換、`aws_sns_topic` と `aws_kms_key` の inline の `policy` は、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection` が見る（CI の経路は env の配線の後）
+- Static Analysis: `make layer-check`・`make infra-code-gate`・`make resource-order-check`
+- 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。`tests/integration/sandbox.tftest.hcl` が、実行の識別子を含む `project` で sandbox に複製を作り、確かめてから破棄する。実行は人が行い、CI と `make tf-test` は走らせない。複製が在る間に、人が次を確かめる: 心拍の role・CloudWatch の alarm（`set-alarm-state`）・EventBridge の rule・Budgets・Cost Anomaly Detection からの publish が Topic Policy と Key Policy で拒まれずに Slack まで届くこと、TLS でない publish が拒まれること、心拍の本文の予定時刻が置換されること、Chatbot の描画が `read` の8つの Action で欠けないこと、Security Hub の SNS.4 の判定。期待残存（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）は、削除の猶予に入った鍵（鍵の ID・`PendingDeletion`・削除の日付）と、Slack の workspace の認可（team ID。Terraform の管理の外）である
+
+sandbox のアカウント（#21）が無い間は、複製のテストを実行しない。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+
+- 4つのサービスと心拍の role からの publish が、Topic Policy か Key Policy で拒まれること。とくに EventBridge は Key Policy を暗号化コンテキストで、Topic Policy を `aws:SourceAccount` で限っており、どちらも一次資料に例が無い
+- Chatbot が別の region の暗号化した Topic を購読できないこと、描画に `read` の外の Action を要ること
+- `<aws.scheduler.scheduled-time>` が SNS の templated target で置換されないこと
+- Chatbot の構成の削除で SNS の購読が残ること
+- 作成直後の role を名指す `PutKeyPolicy` が IAM の結果整合で落ちること
+
+### 心拍が見る故障（設計の意図）
+
+次の故障では心拍が Slack に届かなくなる、という設計の意図である。故障を注入して確かめてはいない。
+
+| 故障 | 心拍への現れ |
+| --- | --- |
+| Topic の削除、鍵の無効化・削除の予約、Key Policy から心拍の role の文が欠けること | publish が失敗し、届かない |
+| Chatbot の構成の削除、購読の解除、Slack の認可の解除、channel の削除 | 配送されず、届かない |
+| schedule の停止、心拍の role の権限の欠落 | publish されず、届かない |
+
+心拍が見ない故障: 4つのサービスの経路（Topic Policy と Key Policy の各送り手の文）だけが壊れること、Chatbot が alarm や GuardDuty の event を描けないこと、Topic Policy の TLS の Deny の欠落。これらは Policy Test が宣言を、sandbox の Integration Test が作った時点を見る。実行時の変化は、定期の plan（未配線）まで見えない。
+
+### 心拍が来なかったときに見るもの
+
+AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a process per alert」に当たる手順。通知の channel を見る人が、次の順に確かめる。
+
+1. Scheduler の schedule `<project>-<env>-ops-heartbeat` が `ENABLED` で、CloudWatch の `AWS/Scheduler` の `TargetErrorCount`・`InvocationDroppedCount` が増えていないか
+2. Topic の `NumberOfMessagesPublished` と `NumberOfNotificationsFailed`
+3. Chatbot の構成と、Slack の workspace の認可
+4. 鍵の状態と Key Policy の `RolesViaSns0`
+
+## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
+
+参照日: 2026-11-19、AWS Provider v6.70.0 の文書
+
+- AWS / HashiCorp が publisher の Chatbot・Scheduler の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search?q=chatbot&provider=aws&limit=50`・`q=scheduler` の結果に namespace `aws-ia`・`hashicorp`・`aws`・`aws-samples` が無い）。SNS・KMS は `modules/sns`・`modules/kms` の README
+- 参照した一次資料:
+  - AWS Provider v6.70.0 の `aws_scheduler_schedule`・`aws_scheduler_schedule_group`・`aws_chatbot_slack_channel_configuration`・`aws_iam_role`・`aws_iam_policy`・`aws_iam_role_policy`・`aws_iam_role_policies_exclusive`・`aws_iam_role_policy_attachments_exclusive` の文書と、`internal/service/chatbot/service_package.go`・`internal/service/iam/role_policy_attachments_exclusive.go`
+  - EventBridge Scheduler User Guide（[Confused deputy prevention](https://docs.aws.amazon.com/scheduler/latest/UserGuide/cross-service-confused-deputy-prevention.html)、[Templated targets](https://docs.aws.amazon.com/scheduler/latest/UserGuide/managing-targets-templated.html)、[Context attributes](https://docs.aws.amazon.com/scheduler/latest/UserGuide/managing-schedule-context-attributes.html)）
+  - Amazon Q Developer in chat applications Administrator Guide（[IAM policies](https://docs.aws.amazon.com/chatbot/latest/adminguide/chatbot-iam-policies.html)、[Understanding permissions](https://docs.aws.amazon.com/chatbot/latest/adminguide/understanding-permissions.html)、[Custom notifications](https://docs.aws.amazon.com/chatbot/latest/adminguide/custom-notifs.html)、[Getting started](https://docs.aws.amazon.com/chatbot/latest/adminguide/getting-started.html)）と API Reference（[CreateSlackChannelConfiguration](https://docs.aws.amazon.com/chatbot/latest/APIReference/API_CreateSlackChannelConfiguration.html)）
+  - AWS Cost Management User Guide（[Creating an Amazon SNS topic for anomaly notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/ad-SNS.html)）。Topic Policy の `costalerts.amazonaws.com` の `SNS:Publish` と、Key Policy の `kms:GenerateDataKey*`・`kms:Decrypt`。`aws:SourceAccount` は任意の変形として示される
+  - Service Authorization Reference（[Amazon CloudWatch](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoncloudwatch.html)、[Amazon EventBridge Scheduler](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazoneventbridgescheduler.html)）
+  - AWS Well-Architected Framework（最新版の [SEC08-BP02](https://docs.aws.amazon.com/wellarchitected/latest/framework/sec08-bp02.html)「Enforce encryption at rest」。[2024-06-27 版](https://docs.aws.amazon.com/wellarchitected/2024-06-27/framework/)の OPS08-BP04「Create actionable alerts」・OPS10-BP02「Have a process per alert」・SEC10-BP07「Run simulations」。2026-11-16 更新の最新版は番号を振り直しており、警報は OPS06-BP01、シミュレーションは SEC10-BP04 である）
+  - AWS Security Hub の[コントロールの一覧](https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-controls-reference.html)
+
+照らした Security Hub のコントロール:
+
+| コントロール | 扱い |
+| --- | --- |
+| SNS.1（KMS での保存時の暗号化） | 従う（`modules/sns`） |
+| SNS.4（Topic Policy が公開アクセスを許さない） | 従う（`modules/sns`）。実際の判定は sandbox で確かめる |
+| SNS.3（tag） | 従わない。`modules/sns` の記録を引き継ぐ |
+| KMS.3・KMS.4・KMS.5 | 従う（`modules/kms`） |
+| KMS.1・KMS.2（IAM の policy で全鍵の復号を許さない） | 従う。IAM で KMS を与えない |
+| IAM.1・IAM.21（full admin を許さない、customer managed policy のサービスの wildcard） | 従う。Chatbot の policy は Action を列挙し、guardrail を省かない |
+| Scheduler・Chatbot | コントロールの一覧に無い |
+
+採用した知見:
+
+- Scheduler の実行 role の信頼に `aws:SourceAccount` と、schedule group の ARN の `aws:SourceArn` を `StringEquals` で置く（Confused deputy prevention の例）
+- 心拍の本文を Chatbot の custom notification の形にし、警報でないことを title で示す（Well-Architected 2024-06-27 版 OPS08-BP04）
+- Chatbot の guardrail を必ず置く
+- 心拍が試さない経路（4つのサービス）は、sandbox の Integration Test を模擬の事象として試す位置づけにする（Well-Architected 2024-06-27 版 SEC10-BP07）
+
+採用しなかった知見と理由:
+
+- Scheduler の文書の権限の例（`sns:Publish` を Resource `"*"`）: Topic の ARN に限る（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定9）
+- Scheduler の DLQ: 読み手が無く、失敗は心拍の不在で気づく
+- Checkov CKV_AWS_297（Scheduler の customer managed key）: 本文は機微な値を持たない固定の文で、Well-Architected（最新版）SEC08-BP02 に照らし CMK は守りを足さない。`internal/heartbeat/main.tf` で抑止し、理由の正本は [ops-notification/ADR-0102](docs/adr/0102-daily-heartbeat.md) 決定7
+- Chatbot の `AWS-Chatbot-NotificationsOnly-Policy` の部分 wildcard・`CloudWatchReadOnlyAccess`・`ReadOnlyAccess`: [ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md)
+- Chatbot のログ（`logging_level` の `ERROR`・`INFO`）: 管理の外の Log Group を作る
+- SNS の配送状況のログ: ログの role と Log Group が増え、経路の死活は心拍が見る（`modules/sns` の「まだ持たないもの」と同じ判断）
+
+## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
+
+| 逸脱 | 記録 |
+| --- | --- |
+| Chatbot の読み取りの policy を、公式の Notifications only の部分 wildcard ではなく8つの Action に限る | [ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定4 |
+| CloudWatch・Budgets の Allow に `aws:SourceArn` のワイルドカードを置かない、EventBridge の Allow に `aws:SourceAccount` を置く | [`modules/sns/README.md`](../../modules/sns/README.md) の「公式推奨からの逸脱」を引き継ぐ |
+| 鍵の管理の委任を21 Action にする、CloudWatch・Budgets の文の `aws:SourceArn` を置かない、EventBridge の文に暗号化コンテキストを置く | [`modules/kms/README.md`](../../modules/kms/README.md) の「公式推奨からの逸脱」を引き継ぐ |
+
+## 保証しないもの
+
+- Chatbot が通知を描くのに要る操作が、`read` の8つの Action で足りること。sandbox で確かめる
+- Chatbot の channel role の信頼の principal `chatbot.amazonaws.com` は、Chatbot の文書のどこにも書かれていない（confused deputy の頁も無い）。Chatbot の慣行に依り、一次資料で確かめていない
+- 心拍の role を同じ名前で作り直したとき、Topic の鍵の Key Policy が書き直されず、KMS が古い role を名指し続けること。`plan.kms_key_policy` の `PLAN-KMS-10` は、宣言した state の鍵の Key Policy だけを見る
+- Topic ごとに Topic Policy が1つであること（`PLAN-SNS-05`）は、Topic の ARN が plan で決まる mock の入力でだけ見る。CI の実 plan に掛けるかは、workload root の配線（#222）で決める
+- `env` の値と、Topic が実際に在るアカウントの対応。env の root が決める
+- 層検査・コード実行の検出・作成の順序の検査は HCL のソースの形だけを見る
+- Security の道具の抑止: KICS の e592a0c5（IAM Access Analyzer）・e38a8e0a（tag）を `internal/heartbeat/main.tf`・`internal/chat-slack/main.tf` の先頭で、Checkov の CKV_AWS_297 を `aws_scheduler_schedule.this` で抑止している。理由と撤回条件は各行が持つ
+
+## 版
+
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書で確かめた。`reference/.terraform.lock.hcl` は `terraform init` が選んだ v6.73.0 で、テストを実行したのもこの版である
+- Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求である
