@@ -26,27 +26,27 @@ func Test_parseFile(t *testing.T) {
 	t.Run("全種類の block を、ソースの順に属性を並べて出す", func(t *testing.T) {
 		t.Parallel()
 		src := `terraform {
-  required_version = ">= 1.0"
+	required_version = ">= 1.0"
 }
 
 resource "aws_s3_bucket_policy" "this" {
-  bucket = aws_s3_bucket.this.id
-  provisioner "local-exec" {
-    command = "echo ${var.x}"
-  }
-  policy = data.aws_iam_policy_document.p.json
-  lifecycle {
-    ignore_changes = [tags]
-  }
+	bucket = aws_s3_bucket.this.id
+	provisioner "local-exec" {
+		command = "echo ${var.x}"
+	}
+	policy = data.aws_iam_policy_document.p.json
+	lifecycle {
+		ignore_changes = [tags]
+	}
 }
 
 locals {
-  all = []
-  b   = local.all
+	all = []
+	b   = local.all
 }
 
 module "m" {
-  source = "../m"
+	source = "../m"
 }
 
 data "aws_iam_policy_document" "p" {}
@@ -72,27 +72,27 @@ data "aws_iam_policy_document" "p" {}
 	t.Run("dynamic を fold_dynamic と同じ並びに畳み、for_each は畳まない", func(t *testing.T) {
 		t.Parallel()
 		src := `resource "aws_s3_bucket_lifecycle_configuration" "this" {
-  dynamic "rule" {
-    for_each = var.rules
-    content {
-      dynamic "filter" {
-        for_each = rule.value.filters
-        content {
-          dynamic "and" {
-            for_each = filter.value
-            content {
-              prefix = and.value
-            }
-          }
-        }
-      }
-    }
-  }
-  dynamic "a.b" {
-    content {
-      x = 1
-    }
-  }
+	dynamic "rule" {
+		for_each = var.rules
+		content {
+			dynamic "filter" {
+				for_each = rule.value.filters
+				content {
+					dynamic "and" {
+						for_each = filter.value
+						content {
+							prefix = and.value
+						}
+					}
+				}
+			}
+		}
+	}
+	dynamic "a.b" {
+		content {
+			x = 1
+		}
+	}
 }
 `
 		want := `[{"file":"modules/a/main.tf","kind":"resource","labels":["aws_s3_bucket_lifecycle_configuration","this"],"attributes":[
