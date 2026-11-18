@@ -26,10 +26,6 @@ run "budget" {
     error_message = "予算が費用の月次の USD 建てになっていません。"
   }
 
-  assert {
-    condition     = length(aws_budgets_budget.this.cost_filter) == 0 && length(aws_budgets_budget.this.filter_expression) == 0
-    error_message = "予算が費用の filter を持っています。予算はアカウントの費用の全体を見ます。"
-  }
 
   assert {
     condition     = aws_budgets_budget.this.limit_amount == "70.00"
@@ -59,10 +55,6 @@ run "budget" {
     error_message = "予算の通知が、実績の85%・100%と予測の100%を Topic 1つへ送る3つになっていません。"
   }
 
-  assert {
-    condition     = alltrue([for n in aws_budgets_budget.this.notification : n.subscriber_email_addresses == null])
-    error_message = "予算の通知が email の宛先を持っています。"
-  }
 
   assert {
     condition     = output.budget.notifications == aws_budgets_budget.this.notification

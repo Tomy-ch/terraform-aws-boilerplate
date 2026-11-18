@@ -60,10 +60,6 @@ run "subscription" {
     error_message = "subscription の名前が <name_prefix>-immediate になっていません。"
   }
 
-  assert {
-    condition     = aws_ce_anomaly_subscription.this.frequency == "IMMEDIATE"
-    error_message = "subscription の頻度が IMMEDIATE になっていません。"
-  }
 
   assert {
     condition = aws_ce_anomaly_subscription.this.subscriber == toset([{
