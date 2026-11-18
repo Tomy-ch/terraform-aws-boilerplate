@@ -466,7 +466,7 @@ func addType(b *hclsyntax.Block, found typeRegions) error {
 		return xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
 	}
 	region := ""
-	if attr, ok := b.Body.Attributes["region"]; ok {
+	if attr, ok := regionAttribute(b); ok {
 		if region, ok = regionLiteral(attr); !ok {
 			return xerrors.Wrap(errBlockRegion, fmt.Sprintf("%d 行目: %s.%s", b.TypeRange.Start.Line, b.Labels[0], b.Labels[1]))
 		}
@@ -476,6 +476,21 @@ func addType(b *hclsyntax.Block, found typeRegions) error {
 	}
 	found[b.Labels[0]][region] = true
 	return nil
+}
+
+// regionAttribute はブロックの region 引数を返す。action は引数を config ブロックの中に持つ。
+func regionAttribute(b *hclsyntax.Block) (*hclsyntax.Attribute, bool) {
+	if b.Type != "action" {
+		attr, ok := b.Body.Attributes["region"]
+		return attr, ok
+	}
+	for _, nested := range b.Body.Blocks {
+		if nested.Type == "config" {
+			attr, ok := nested.Body.Attributes["region"]
+			return attr, ok
+		}
+	}
+	return nil, false
 }
 
 // moduleSource は module の source を、`./` か `../` で始まるリテラルの文字列として読む。

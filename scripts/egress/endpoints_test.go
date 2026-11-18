@@ -586,6 +586,13 @@ func Test_addType(t *testing.T) {
 			assert.Equal(t, typeRegions{"aws_a": {"": true}}, found)
 		})
 
+		t.Run("action の config の region 引数を、その型を置く region として足す", func(t *testing.T) {
+			t.Parallel()
+			found := typeRegions{}
+			require.NoError(t, addType(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n"), found))
+			assert.Equal(t, typeRegions{"aws_a": {"us-east-1": true}}, found)
+		})
+
 		t.Run("region 引数のリテラルを、その型を置く region として足す", func(t *testing.T) {
 			t.Parallel()
 			found := typeRegions{"aws_a": {"": true}}
@@ -600,6 +607,12 @@ func Test_addType(t *testing.T) {
 		t.Run("ラベルが 2 つでなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, addType(block(t, "data \"aws_a\" {}\n"), typeRegions{}), errTerraformSyntax)
+		})
+
+		t.Run("action の config の region 引数がリテラルでなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			err := addType(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = var.region\n  }\n}\n"), typeRegions{})
+			require.ErrorIs(t, err, errBlockRegion)
 		})
 
 		t.Run("region 引数が region の形のリテラルでなければ弾く", func(t *testing.T) {
@@ -940,6 +953,50 @@ func Test_providerRegions(t *testing.T) {
 			_, err := providerRegions(filepath.Join(t.TempDir(), "missing"), []string{"r"})
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
+	})
+}
+
+func Test_regionAttribute(t *testing.T) {
+	t.Parallel()
+
+	block := func(t *testing.T, src string) *hclsyntax.Block {
+		t.Helper()
+		f, diags := hclsyntax.ParseConfig([]byte(src), "t.tf", hcl.InitialPos)
+		require.False(t, diags.HasErrors(), diags.Error())
+		body, ok := f.Body.(*hclsyntax.Body)
+		require.True(t, ok)
+		return body.Blocks[0]
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("resource の直下の region 引数を返す", func(t *testing.T) {
+			t.Parallel()
+			attr, ok := regionAttribute(block(t, "resource \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n}\n"))
+			require.True(t, ok)
+			assert.Equal(t, "region", attr.Name)
+		})
+
+		t.Run("action の config の中の region 引数を返す", func(t *testing.T) {
+			t.Parallel()
+			attr, ok := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
+			require.True(t, ok)
+			assert.Equal(t, "region", attr.Name)
+		})
+
+		for name, src := range map[string]string{
+			"region 引数を持たない resource":        "resource \"aws_a\" \"x\" {}\n",
+			"config を持たない action":            "action \"aws_a\" \"x\" {}\n",
+			"config に region 引数を持たない action": "action \"aws_a\" \"x\" {\n  config {}\n}\n",
+			"config の外にだけ region を持つ action": "action \"aws_a\" \"x\" {\n  region = \"us-east-1\"\n}\n",
+		} {
+			t.Run(name+"は region 引数を持たない", func(t *testing.T) {
+				t.Parallel()
+				_, ok := regionAttribute(block(t, src))
+				assert.False(t, ok)
+			})
+		}
 	})
 }
 
