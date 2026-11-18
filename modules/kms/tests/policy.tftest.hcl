@@ -246,3 +246,215 @@ run "read_role_only" {
     error_message = "read の role だけを渡したときの Key Policy が、管理の委任と read の1文になっていません。"
   }
 }
+
+run "sns_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/tabp-dev-heartbeat", via = "sns", access = "read-write", topics = ["tabp-dev-ops-notification", "tabp-dev-alerts"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-dev-ci-apply", via = "sns", access = "read-write", topics = ["tabp-dev-alerts"] },
+      ]
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [
+        var.administration,
+        {
+          Sid       = "RolesViaSns0"
+          Effect    = "Allow"
+          Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-dev-ci-apply"] }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = {
+            "kms:ViaService"                         = "sns.ap-northeast-1.amazonaws.com"
+            "kms:EncryptionContext:aws:sns:topicArn" = ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-alerts"]
+          } }
+        },
+        {
+          Sid       = "RolesViaSns1"
+          Effect    = "Allow"
+          Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-dev-heartbeat"] }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = {
+            "kms:ViaService" = "sns.ap-northeast-1.amazonaws.com"
+            "kms:EncryptionContext:aws:sns:topicArn" = [
+              "arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-alerts",
+              "arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification",
+            ]
+          } }
+        },
+      ]
+    }
+    error_message = "via が sns の role の文が、ARN の昇順の Sid で、SNS を経由し名指した Topic の暗号化コンテキストに限って許していません。"
+  }
+}
+
+run "sns_services" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [
+        { topic = "tabp-dev-ops-notification", publishers = ["events", "costalerts", "cloudwatch", "budgets"] },
+        { topic = "tabp-dev-alerts", publishers = ["events"] },
+      ] }
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [
+        var.administration,
+        {
+          Sid       = "SnsPublisherBudgets"
+          Effect    = "Allow"
+          Principal = { Service = "budgets.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
+        },
+        {
+          Sid       = "SnsPublisherCloudWatch"
+          Effect    = "Allow"
+          Principal = { Service = "cloudwatch.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
+        },
+        {
+          Sid       = "SnsPublisherCostAlerts"
+          Effect    = "Allow"
+          Principal = { Service = "costalerts.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
+        },
+        {
+          Sid       = "SnsPublisherEvents"
+          Effect    = "Allow"
+          Principal = { Service = "events.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = { "kms:EncryptionContext:aws:sns:topicArn" = [
+            "arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-alerts",
+            "arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification",
+          ] } }
+        },
+      ]
+    }
+    error_message = "SNS へ publish するサービスの文が、Budgets・CloudWatch・Cost Anomaly Detection はアカウント、EventBridge は Topic の暗号化コンテキストに限った4文になっていません。"
+  }
+}
+
+run "sns_services_only_named_publishers" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["cloudwatch"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherCloudWatch"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
+run "sns_events_only_for_topics_that_name_it" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [
+        { topic = "tabp-dev-a", publishers = ["events"] },
+        { topic = "tabp-dev-b", publishers = ["cloudwatch"] },
+      ] }
+    }
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Condition if s.Sid == "SnsPublisherEvents"] == [
+      { StringEquals = { "kms:EncryptionContext:aws:sns:topicArn" = ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-a"] } },
+    ]
+    error_message = "EventBridge の文が、events を名指さない Topic の ARN を含んでいます。"
+  }
+}
+
+run "sns_services_budgets_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["budgets"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherBudgets"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
+run "sns_services_events_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["events"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherEvents"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
+run "sns_services_costalerts_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["costalerts"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherCostAlerts"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
+run "all_users" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "sns", access = "read-write", topics = ["t"] },
+      ]
+      services = {
+        logs = ["/tabp/admin/s3-access/plan"]
+        sns  = [{ topic = "t", publishers = ["budgets", "cloudwatch", "costalerts", "events"] }]
+      }
+    }
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == [
+      "AccountKeyAdministration", "RolesViaS3ReadWrite", "RolesViaS3Read0", "LogsService",
+      "RolesViaSns0", "SnsPublisherBudgets", "SnsPublisherCloudWatch", "SnsPublisherCostAlerts", "SnsPublisherEvents",
+    ]
+    error_message = "利用者の種類をすべて渡したときの文の並びが変わっています。"
+  }
+}

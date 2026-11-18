@@ -8,4 +8,5 @@ module "github_oidc" {
   state_key_arn           = var.state_key_arn
   plan_output_bucket_arn  = var.plan_output_bucket_arn
   apply_output_bucket_arn = var.apply_output_bucket_arn
+  break_glass_arns        = var.break_glass_arns
 }
