@@ -72,7 +72,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 **確定:** envのtokenは`dev` / `stg` / `prd`とする。これはディレクトリ名であると同時に、AWS資源の命名（`<project>-<env>-...`）に入る値でもある。envを増やす場合も同じ長さの短縮形を使う。
 
-`sandbox`と`admin`は例外のtokenであり、**開発者が使うための環境ではない**。`sandbox`は検証の器（第10.2節）、`admin`は管理アカウント（第10.1節）で、どちらもアプリケーションを継続的に載せる場所ではない。ブランチ名（`develop` / `staging` / `release/*`）はenvのtokenとは別の軸であり、混同しない。
+`sandbox`・`admin`・`security`・`log-archive`は例外のtokenであり、**開発者が使うための環境ではない**。`sandbox`は検証の器（第10.2節）、`admin`は管理アカウント（第10.1節）、`security`と`log-archive`は統制のメンバーアカウント（第10.1節）で、どちらもアプリケーションを継続的に載せる場所ではない。ブランチ名（`develop` / `staging` / `release/*`）はenvのtokenとは別の軸であり、混同しない。
 
 | 層 | 責務 | 規約 |
 |---|---|---|
@@ -316,7 +316,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 - `serverless-api`は業務APIをLambdaに置くため採用しない。
 - `lambda-kicker`は一般提供しない。直接統合できない具体的な連携が現れた場合だけ`aws-bridge-lambda`として第2.2節のゲートを通す。
 - `s3-event-kicker`と`webhook-kicker`の標準経路からLambdaを外す。
-- v0.2の議論で検討した`log-archive`は採用しない。ログの集約専用のusecaseは置かず、第9.3節のpull / pushの2経路で足りる。
+- v0.2の議論で検討した`log-archive`のusecaseは採用しない（アカウントのenvの`log-archive`とは別である）。ログの集約専用のusecaseは置かず、第9.3節のpull / pushの2経路で足りる。
 - SQS FIFOによる順序保証の変種は採用しない。
 - DR（クロスリージョンのバックアップ複製、マルチリージョン構成）はv1.0の対象外とする。`backup-restore`は同一リージョン内の保持・復元を対象とする。
 - 業務フローを持つStep Functions、API GatewayのVTLによる業務変換は、業務ロジックをインフラが所有する形になるため採用しない（第2節）。
