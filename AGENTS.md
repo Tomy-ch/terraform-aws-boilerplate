@@ -12,10 +12,10 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/image-registry/`（env へ配線されていない）と、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
+- `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`image-registry` と管理アカウントの identity root のほかに、ユースケースと環境が無い。`image-registry` を呼ぶ環境の root は無い
 - HCL のソースの検査のうち root の構成と backend 設定の不変条件 —— 未作成で、`make` にも配線されていない
   （[0604](docs/adr/0604-state-split-by-apply-role.md) の検証方法の Static Analysis。#347）。HCL のソースの検査のうち
   コード実行の検出は `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に、
