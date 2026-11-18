@@ -12,7 +12,7 @@
 
 ## 現在の状態
 
-**Terraform の実装は、bootstrap のユースケースの `state-backend` と `deployment-identity`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/` だけである。** ユースケースはどちらも bootstrap の段1-4 の分だけを持ち、`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/` を呼ぶユースケースは無い。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
+**Terraform の実装は、bootstrap のユースケースの `state-backend` と `deployment-identity`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/` だけである。** ユースケースはどちらも bootstrap の段1-4 の分だけを持ち、`modules/s3/`・`modules/kms/` は `state-backend` が呼び、`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/` を呼ぶユースケースは無い。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
 
 | 区分 | 状態 |
 | --- | --- |
@@ -22,7 +22,7 @@
 | `scripts/` | リポジトリ運用機構（Go）。ゲートそのものをテストで固定する |
 | `docker/` | 道具を提供するイメージ。版の出所は `mise.toml` だけ |
 | `conftest/` | Conftest の Rego と宣言。`plan/` が Policy Test（[`conftest/plan/README.md`](conftest/plan/README.md)） |
-| `modules/` | 一般 module の `s3/`・`kms/`・`log-group/`・`vended-log-group/` だけ |
+| `modules/` | 一般 module の `s3/`・`kms/`・`log-group/`・`vended-log-group/`・`sns/` だけ |
 | `usecases/` | `state-backend/` と `deployment-identity/` だけ（bootstrap の段1-4 の分） |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
 | Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査・root の構成と backend 設定の不変条件の検査（入力は HCL のソース）は `make`・pre-commit・CI に配線済み |

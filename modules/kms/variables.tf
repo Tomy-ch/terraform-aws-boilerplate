@@ -14,24 +14,29 @@ variable "name" {
 }
 
 variable "users" {
-  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。services.logs は CloudWatch Logs の Log Group の名前。合わせて1件以上。"
+  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。via が sns の role は topics に名指した SNS の Topic へ publish するときだけ鍵を使える。services.logs は CloudWatch Logs の Log Group の名前。services.sns は SNS の Topic の名前と、その Topic へ publish する AWS のサービス（budgets・cloudwatch・costalerts・events）。合わせて1件以上。"
   type = object({
     roles = optional(list(object({
       arn     = string
       via     = string
       access  = string
       objects = optional(list(string), [])
+      topics  = optional(list(string), [])
     })), [])
     services = optional(object({
       logs = optional(list(string), [])
+      sns = optional(list(object({
+        topic      = string
+        publishers = set(string)
+      })), [])
     }), {})
   })
   nullable = false
 
   # 誰も暗号操作できない鍵は作る意味が無い。管理の委任は暗号操作を含まない。
   validation {
-    condition     = length(var.users.roles) + length(var.users.services.logs) > 0
-    error_message = "users に roles か services.logs を1件以上渡してください。"
+    condition     = length(var.users.roles) + length(var.users.services.logs) + length(var.users.services.sns) > 0
+    error_message = "users に roles・services.logs・services.sns のいずれかを1件以上渡してください。"
   }
 
   validation {
@@ -40,8 +45,8 @@ variable "users" {
   }
 
   validation {
-    condition     = alltrue([for r in var.users.roles : contains(["s3"], r.via)])
-    error_message = "users.roles[*].via は s3 にしてください。"
+    condition     = alltrue([for r in var.users.roles : contains(["s3", "sns"], r.via)])
+    error_message = "users.roles[*].via は s3 か sns にしてください。"
   }
 
   validation {
@@ -68,6 +73,22 @@ variable "users" {
     error_message = "users.roles[*].objects に同じ object を重ねないでください。"
   }
 
+  # SNS の文は publish に要る復号と鍵の生成を、topics の Topic の暗号化コンテキストに限って許す。
+  validation {
+    condition     = alltrue([for r in var.users.roles : r.via == "sns" ? r.access == "read-write" && length(r.objects) == 0 && length(r.topics) > 0 : length(r.topics) == 0])
+    error_message = "users.roles[*] は、via が sns なら access を read-write・objects を空・topics を1件以上に、via が s3 なら topics を空にしてください。"
+  }
+
+  validation {
+    condition     = alltrue(flatten([for r in var.users.roles : [for t in r.topics : can(regex("^[A-Za-z0-9_-]{1,256}$", t))]]))
+    error_message = "users.roles[*].topics は SNS の Topic の名前（ARN ではない。英数字・_・- の 1-256 文字。FIFO の Topic は受けません）にしてください。"
+  }
+
+  validation {
+    condition     = alltrue([for r in var.users.roles : length(distinct(r.topics)) == length(r.topics)])
+    error_message = "users.roles[*].topics に同じ Topic を重ねないでください。"
+  }
+
   validation {
     condition     = length(distinct([for r in var.users.roles : "${r.via} ${r.arn}"])) == length(var.users.roles)
     error_message = "users.roles に同じ role と via の組を重ねないでください。"
@@ -82,5 +103,20 @@ variable "users" {
   validation {
     condition     = length(distinct(var.users.services.logs)) == length(var.users.services.logs)
     error_message = "users.services.logs に同じ Log Group を重ねないでください。"
+  }
+
+  validation {
+    condition     = alltrue([for t in var.users.services.sns : can(regex("^[A-Za-z0-9_-]{1,256}$", t.topic))])
+    error_message = "users.services.sns[*].topic は SNS の Topic の名前（ARN ではない。英数字・_・- の 1-256 文字。FIFO の Topic は受けません）にしてください。"
+  }
+
+  validation {
+    condition     = length(distinct([for t in var.users.services.sns : t.topic])) == length(var.users.services.sns)
+    error_message = "users.services.sns に同じ Topic を重ねないでください。"
+  }
+
+  validation {
+    condition     = alltrue([for t in var.users.services.sns : t.publishers != null && length(t.publishers) > 0 && length(setsubtract(t.publishers, ["budgets", "cloudwatch", "costalerts", "events"])) == 0])
+    error_message = "users.services.sns[*].publishers は budgets・cloudwatch・costalerts・events から1つ以上にしてください。"
   }
 }
