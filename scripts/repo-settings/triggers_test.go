@@ -43,8 +43,8 @@ const scanWorkflowRendered = `name: Scan
 on:
   push:
     branches: # branch-set: ruleset
-      - admin
-      - prod
+      - 'admin'
+      - 'prod'
       - 'rel/**'
       - 'hot/**'
     paths:
@@ -127,6 +127,8 @@ func Test_renderSetLines(t *testing.T) {
 		"読めない書き方の branches は数の食い違いで拒む": {"on:\n  push: {branches: [main]}\n", false, "字面では 1 件"},
 		"要素の無い branches は拒む":           {"on:\n  push:\n    branches: # branch-set: deploy\n  pull_request:\n", false, "要素がありません"},
 		"要素でない行を持つ branches は拒む":       {"on:\n  push:\n    branches: # branch-set: deploy\n      - a\n      b\n", false, "要素ではありません"},
+		"印の付いた一覧の中のコメント行は拒む":           {"on:\n  push:\n    branches: # branch-set: deploy\n      - a\n      # c\n      - b\n", false, "コメントを置けません"},
+		"印の付いた一覧の要素の行末コメントは拒む":         {"on:\n  push:\n    branches: # branch-set: deploy\n      - a # why\n", false, "コメントを置けません"},
 		"未知の集合は拒む":                     {"on:\n  push:\n    branches: # branch-set: all\n      - a\n", false, "未知の集合"},
 		"branches と if: 以外の印は拒む":       {"jobs:\n  a:\n    runs-on: x # branch-set: deploy\n", false, "branches か if: の行にだけ"},
 		"apply の workflow の印は拒む":       {applyWorkflowFixture + "    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) }} # branch-set: deploy\n", true, "apply の workflow には印を置けません"},
@@ -149,14 +151,15 @@ func Test_renderSetLines(t *testing.T) {
 		assert.Zero(t, marks)
 		assert.Equal(t, src, got)
 	})
-	t.Run("要素の間の空行とコメントは要素と一緒に置き換える", func(t *testing.T) {
+	t.Run("要素の間の空行は要素と一緒に置き換える", func(t *testing.T) {
 		t.Parallel()
-		src := "on:\n  push:\n    branches: # branch-set: deploy\n      - a\n\n      # c\n      - b\n    paths:\n      - x\n"
+		src := "on:\n  push:\n    branches: # branch-set: deploy\n      - a\n\n      - b\n    paths:\n      - x\n"
 		got, marks, err := renderSetLines(src, setDecl, false)
 		require.NoError(t, err)
 		assert.Equal(t, 1, marks)
-		assert.Equal(t, "on:\n  push:\n    branches: # branch-set: deploy\n      - admin\n      - prod\n    paths:\n      - x\n", got)
+		assert.Equal(t, "on:\n  push:\n    branches: # branch-set: deploy\n      - 'admin'\n      - 'prod'\n    paths:\n      - x\n", got)
 	})
+
 }
 
 func Test_renderBranchesItems(t *testing.T) {
@@ -167,6 +170,16 @@ func Test_renderBranchesItems(t *testing.T) {
 	items, next, err := renderBranchesItems(lines, 0, code, setDecl, setLines)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"      - 'rel/**'", "      - 'hot/**'"}, items)
+
+	t.Run("名前は YAML の文字列として引用する", func(t *testing.T) {
+		t.Parallel()
+		b := branches{Deploy: []branchdecl.DeployBranch{{Branch: "null"}, {Branch: "123"}}}
+		lines := strings.Split("    branches: # branch-set: deploy\n      - a", "\n")
+		code, _ := splitComment(lines[0])
+		items, _, err := renderBranchesItems(lines, 0, code, b, setDeploy)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"      - 'null'", "      - '123'"}, items)
+	})
 	assert.Equal(t, 2, next)
 }
 
@@ -196,6 +209,7 @@ func Test_renderIfLine(t *testing.T) {
 		"lines の群が無ければ拒む":       {`    if: ${{ startsWith(github.head_ref, 'release/') }}`, setLines, "", "ちょうど1つ"},
 		"群の中で context が違えば拒む":   {`    if: ${{ (startsWith(github.head_ref, 'a/') || startsWith(github.base_ref, 'b/')) }}`, setLines, "", "別の context"},
 		"if: に ruleset の印は置けない": {`    if: ${{ contains(fromJSON('["a"]'), github.base_ref) }}`, setRuleset, "", "if: の行に置ける印"},
+		"引用符の値の if: は拒む":        {`    if: "${{ contains(fromJSON('[\\"x\\"]'), github.base_ref) }}"`, setDeploy, "", "引用符で囲めません"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -356,6 +370,24 @@ func Test_checkRefLiterals(t *testing.T) {
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errRefLiteral)
 	})
+	t.Run("大文字小文字の違う context の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ GitHub.Base_Ref == 'main' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("折り返した if: の続きの行の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: github.event_name == 'push' &&\n      github.ref_name == 'main'\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("github を添字で引く式は読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ github['ref_name'] == 'main' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+	})
 	t.Run("対象のファイルが無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -415,11 +447,15 @@ func Test_expressions(t *testing.T) {
 		want    []expression
 		wantErr string
 	}{
-		"行の中の式を取り出す":        {"a: ${{ x }}-${{ y }}\n", []expression{{1, "${{ x }}"}, {1, "${{ y }}"}}, ""},
-		"if: の値は1つの式":       {"    if: github.ref == 'a' && ${{ b }}\n", []expression{{1, "github.ref == 'a' && ${{ b }}"}}, ""},
-		"step の if: も読む":    {"      - if: x\n", []expression{{1, "x"}}, ""},
-		"ブロックスカラーの if: を読む": {"    if: >-\n      a &&\n      ${{ b }}\n    run: x\n", []expression{{1, "      a &&\n      ${{ b }}"}}, ""},
-		"コメントは読まない":         {"# if: ${{ github.ref == 'a' }}\na: x # ${{ y }}\n", nil, ""},
+		"行の中の式を取り出す":                   {"a: ${{ x }}-${{ y }}\n", []expression{{1, "${{ x }}"}, {1, "${{ y }}"}}, ""},
+		"if: の値は1つの式":                  {"    if: github.ref == 'a' && ${{ b }}\n", []expression{{1, "github.ref == 'a' && ${{ b }}"}}, ""},
+		"step の if: も読む":               {"      - if: x\n", []expression{{1, "x"}}, ""},
+		"ブロックスカラーの if: を読む":            {"    if: >-\n      a &&\n      ${{ b }}\n    run: x\n", []expression{{1, "      a &&\n      ${{ b }}"}}, ""},
+		"折り返した plain の if: を1つの式として読む": {"    if: a &&\n      github.ref_name == 'main'\n    run: x\n", []expression{{1, "a && github.ref_name == 'main'"}}, ""},
+		"折り返した二重引用符の if: を1つの式として読む":   {"    if: \"a &&\n      b\"\n    run: x\n", []expression{{1, "\"a && b\""}}, ""},
+		"閉じていない引用符の if: は拒む":           {"    if: \"a &&\n      b\n    run: x\n", nil, "閉じていません"},
+		"run のブロックスカラーの中の # の後ろの式も読む":  {"      - run: |\n          echo x # ${{ y }}\n          # ${{ z }}\n      - run: w\n", []expression{{2, "${{ y }}"}, {3, "${{ z }}"}}, ""},
+		"コメントは読まない":                    {"# if: ${{ github.ref == 'a' }}\na: x # ${{ y }}\n", nil, ""},
 		"印の if: は生成した項を除く": {
 			"    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) || x }} # branch-set: deploy\n",
 			[]expression{{1, "${{ true || x }}"}}, "",
@@ -473,6 +509,71 @@ func Test_refLiteralTerms(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Len(t, refLiteralTerms(tc.expr), tc.want)
+		})
+	}
+}
+
+func Test_keyColumn(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		code string
+		want int
+	}{
+		"字下げしたキー":        {"    if: x", 4},
+		"列の要素のキーは - を含む": {"      - if: x", 8},
+		"入れ子の列の要素":       {"  - - run: x", 6},
+		"字下げの無いキー":       {"on:", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, keyColumn(tc.code))
+		})
+	}
+}
+
+func Test_blockBody(t *testing.T) {
+	t.Parallel()
+
+	lines := strings.Split("    run: |\n      a\n\n      b\n\n    if: x", "\n")
+	body, next := blockBody(lines, 1, 4)
+	assert.Equal(t, []string{"      a", "", "      b"}, body)
+	assert.Equal(t, 4, next)
+
+	t.Run("本文が無ければ空を返す", func(t *testing.T) {
+		t.Parallel()
+		body, next := blockBody([]string{"    run: |", "    if: x"}, 1, 4)
+		assert.Empty(t, body)
+		assert.Equal(t, 1, next)
+	})
+}
+
+func Test_foldedScalar(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		src     string
+		want    string
+		wantErr bool
+	}{
+		"続きの行を空白でつなぐ":      {"    if: a &&\n      b\n    run: x", "a && b", false},
+		"続きの行のコメントは読まない":   {"    if: a &&\n      b # c\n    run: x", "a && b", false},
+		"続きが無ければ1行目だけ":     {"    if: a\n    run: x", "a", false},
+		"二重引用符の値は閉じるまでつなぐ": {"    if: \"a &&\n      b\"\n    run: x", "\"a && b\"", false},
+		"閉じていない引用符は失敗する":   {"    if: 'a &&\n      b\n    run: x", "", true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lines := strings.Split(tc.src, "\n")
+			m := ifLine.FindStringSubmatch(lines[0])
+			got, _, err := foldedScalar(lines, 0, strings.TrimSpace(m[2]), 4)
+			if tc.wantErr {
+				require.ErrorIs(t, err, errExpression)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

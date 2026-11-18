@@ -184,6 +184,9 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
+	if marks == 0 {
+		return declarations{}, xerrors.Wrapf(errBranchSet, "%s に印 `# branch-set:` の行が1つもありません", workflowsDir)
+	}
 	exprs, err := checkRefLiterals(root)
 	if err != nil {
 		return declarations{}, err

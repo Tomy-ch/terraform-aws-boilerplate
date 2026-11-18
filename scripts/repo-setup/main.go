@@ -353,7 +353,7 @@ func moveDefaultBranch(r runner, s setup) error {
 		return err
 	}
 
-	log.Printf("✅ デフォルトブランチの設定を終了します。")
+	log.Printf("✅ デフォルトブランチを %s に設定しました。", s.base)
 
 	return nil
 }

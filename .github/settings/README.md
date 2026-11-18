@@ -46,7 +46,7 @@
 
 - デプロイブランチへ入る Pull Request は、デフォルトブランチがその `from` の線のどれかであり、head の commit がデフォルトブランチから到達でき、merge の結果の木が head の木と一致するときだけ merge できます（ADR-0603 決定31）。これを見るのが required の `deploy-source-check` です（[`.github/workflows/README.md`](../workflows/README.md) の「apply の job」）。
 - `env` を持つ要素は、`env/` の root が `deployment-identity` へ渡す `env` とちょうど対応します。`env` ごとにデプロイブランチが1つ在り、`env` を持つ要素がどれも `deployment-identity` の `env` を指すことを `repo-settings-check` が見ます。
-- `branch` の重複、`env` の重複、`lines` に無いか重複する `from`、`env` を持つ要素の空の `from`、`env` を持たない要素の `from` は、`repo-settings-check` が落とします。
+- `branch` の重複、`env` の重複、`lines` に無いか重複する `from`、`env` を持つ要素の空の `from`、`env` を持たない要素の `from`、`lines` の役割の欠けと役割どうしの接頭辞の重複、`v<major>.<minor>.<patch>` でない `line_version`、`release_base` が0件か2件以上であることは、`repo-settings-check` が落とします。
 
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 

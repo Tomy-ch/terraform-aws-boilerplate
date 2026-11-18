@@ -26,8 +26,9 @@ var (
 	// branchesLoose は、branchesLine が読めない書き方も拾う。数が食い違えば、読めない形がある。
 	branchesLoose = regexp.MustCompile(`branches(?:-ignore)?["']?\s*:`)
 	ifLine        = regexp.MustCompile(`^(\s*)(?:-\s+)?(?:"if"|'if'|if)[ \t]*:(.*)$`)
-	// refContext は、ブランチの名前か ref を値に持つ context の閉じた一覧。
-	refContext = regexp.MustCompile(`github\.(?:ref_name|ref|base_ref|head_ref|event\.ref|event\.pull_request\.base\.ref|event\.pull_request\.head\.ref|event\.workflow_run\.head_branch)\b`)
+	// refContext は、ブランチの名前か ref を値に持つ context の閉じた一覧。Actions の式は context と property の
+	// 名前の大文字小文字を区別しないので、ここも区別しない。
+	refContext = regexp.MustCompile(`(?i:github\.(?:ref_name|ref|base_ref|head_ref|event\.ref|event\.pull_request\.base\.ref|event\.pull_request\.head\.ref|event\.workflow_run\.head_branch))\b`)
 	// containsSet は、完全一致の集合を名指す項 contains(fromJSON('[...]'), <ref>)。
 	containsSet = regexp.MustCompile(`contains\(fromJSON\('(\[[^']*\])'\),\s*(` + refContext.String() + `)\)`)
 	// prefixGroup は、前方一致の集合を名指す項 (startsWith(<ref>, '<prefix>') || ...)。
@@ -171,12 +172,16 @@ func renderBranchesItems(lines []string, at int, code string, b branches, set st
 	if end == at+1 {
 		return nil, 0, xerrors.Wrapf(errBranchSet, "%d 行目: branches に要素がありません", at+1)
 	}
+	// 一覧は丸ごと生成し直すので、中のコメントは残せない。黙って消さずに止める。
+	for j := at + 1; j < end; j++ {
+		if _, comment := splitComment(lines[j]); comment != "" {
+			return nil, 0, xerrors.Wrapf(errBranchSet, "%d 行目: 印の付いた branches の一覧の中にはコメントを置けません", j+1)
+		}
+	}
+	// 名前は YAML の文字列として読ませる。素のままだと null や数に読まれる名前がある。
 	out := make([]string, 0, len(patterns))
 	for _, p := range patterns {
-		if strings.ContainsAny(p, "*") {
-			p = "'" + p + "'"
-		}
-		out = append(out, pad+"- "+p)
+		out = append(out, pad+"- '"+strings.ReplaceAll(p, "'", "''")+"'")
 	}
 	return out, end, nil
 }
@@ -184,6 +189,12 @@ func renderBranchesItems(lines []string, at int, code string, b branches, set st
 // renderIfLine は、if: の行の式のうち、集合 set を名指す項1つを宣言から生成し直します。deploy は
 // contains(fromJSON('[...]'), <ref>) の配列を、lines は (startsWith(<ref>, '<prefix>') || ...) の群を書き換える。
 func renderIfLine(code string, b branches, set string) (string, error) {
+	// 生成する項は `"` と `'` を含むので、引用符のスカラーの中へは置けない。
+	if m := ifLine.FindStringSubmatch(code); m != nil {
+		if v := strings.TrimSpace(m[2]); strings.HasPrefix(v, `"`) || strings.HasPrefix(v, "'") {
+			return "", xerrors.Wrap(errBranchSet, "印の付いた if: の値は引用符で囲めません")
+		}
+	}
 	switch set {
 	case setDeploy:
 		found := containsSet.FindAllStringSubmatchIndex(code, -1)
@@ -205,7 +216,7 @@ func renderIfLine(code string, b branches, set string) (string, error) {
 		group := code[f[0]:f[1]]
 		var ctx string
 		for _, m := range startsCtx.FindAllStringSubmatch(group, -1) {
-			if ctx != "" && m[1] != ctx {
+			if ctx != "" && !strings.EqualFold(m[1], ctx) {
 				return "", xerrors.Wrapf(errBranchSet, "startsWith の群が別の context（%s と %s）を比べています", ctx, m[1])
 			}
 			ctx = m[1]
@@ -265,12 +276,17 @@ var (
 	refLiteral = []*regexp.Regexp{
 		regexp.MustCompile(`(` + refContext.String() + `)\s*(?:==|!=)\s*'`),
 		regexp.MustCompile(`'[^']*'\s*(?:==|!=)\s*(` + refContext.String() + `)`),
-		regexp.MustCompile(`(?:startsWith|endsWith|contains)\(\s*(` + refContext.String() + `)\s*,\s*'`),
-		regexp.MustCompile(`contains\(\s*(?:fromJSON\(\s*)?'[^']*'\s*\)?\s*,\s*(` + refContext.String() + `)`),
+		regexp.MustCompile(`(?i:startsWith|endsWith|contains)\(\s*(` + refContext.String() + `)\s*,\s*'`),
+		regexp.MustCompile(`(?i:contains)\(\s*(?:(?i:fromJSON)\(\s*)?'[^']*'\s*\)?\s*,\s*(` + refContext.String() + `)`),
 	}
-	exprOpen  = regexp.MustCompile(`\$\{\{`)
-	exprWhole = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	ifLoose   = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
+	// indexedGithub は、github の context を添字で引く書き方。添字の先が ref かを字面では決められないので、
+	// 読めない式として扱う。
+	indexedGithub = regexp.MustCompile(`(?i)\bgithub\s*\[`)
+	exprOpen      = regexp.MustCompile(`\$\{\{`)
+	exprWhole     = regexp.MustCompile(`\$\{\{.*?\}\}`)
+	ifLoose       = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
+	// blockScalar は、値がブロックスカラーで始まるキーの行（コメントを除いた字面）。
+	blockScalar = regexp.MustCompile(`:[ \t]*[|>][-+0-9]*[ \t]*$`)
 )
 
 // checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ref の context
@@ -299,6 +315,9 @@ func checkRefLiterals(root string) (int, error) {
 		}
 		total += len(exprs)
 		for _, e := range exprs {
+			if indexedGithub.MatchString(e.text) {
+				return 0, xerrors.Wrapf(errExpression, "%s:%d: github の context を添字で引く書き方は読めません。ドット記法で書いてください", rel, e.line)
+			}
 			for _, term := range refLiteralTerms(e.text) {
 				findings = append(findings, fmt.Sprintf("%s:%d: %s", rel, e.line, term))
 			}
@@ -347,8 +366,10 @@ type expression struct {
 	text string
 }
 
-// expressions は、YAML の本文から式を取り出します。if: の値（ブロックスカラーを含む）は1つの式で、ほかの行は
-// その中の `${{ }}` が式である。コメントは読まない。印 `# branch-set:` の if: の行は、生成した項を除く。
+// expressions は、YAML の本文から式を取り出します。if: の値は1つの式で、折り返した plain・引用符のスカラーと
+// ブロックスカラーを含む。ほかの行は、その中の `${{ }}` が式である。ブロックスカラーの本文は Actions が評価する
+// 文字列なので、`#` を含めて生のまま読む。それ以外のコメントは読まない。印 `# branch-set:` の if: の行は、生成した
+// 項を除く。
 func expressions(src string) ([]expression, error) {
 	lines := strings.Split(src, "\n")
 	var (
@@ -366,32 +387,49 @@ func expressions(src string) ([]expression, error) {
 		if ifLoose.MatchString(code) {
 			ifs++
 		}
+		col := keyColumn(code)
 		m := ifLine.FindStringSubmatch(code)
 		if m == nil {
 			for _, e := range exprWhole.FindAllString(code, -1) {
 				out = append(out, expression{line: i + 1, text: e})
 				readOpens++
 			}
+			if blockScalar.MatchString(code) {
+				body, next := blockBody(lines, i+1, col)
+				for j, l := range body {
+					opens += len(exprOpen.FindAllString(l, -1))
+					for _, e := range exprWhole.FindAllString(l, -1) {
+						out = append(out, expression{line: i + 2 + j, text: e})
+						readOpens++
+					}
+				}
+				i = next - 1
+			}
 			continue
 		}
 		readIfs++
 		at := i + 1
 		value := strings.TrimSpace(m[2])
-		if strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">") {
-			var body []string
-			for j := i + 1; j < len(lines); j++ {
-				l := lines[j]
-				if strings.TrimSpace(l) != "" && len(l)-len(strings.TrimLeft(l, " ")) <= len(m[1]) {
-					break
-				}
-				body = append(body, l)
-				opens += len(exprOpen.FindAllString(l, -1))
-				readOpens += len(exprOpen.FindAllString(l, -1))
-				i = j
+		if blockScalar.MatchString(code) {
+			body, next := blockBody(lines, i+1, col)
+			for _, l := range body {
+				n := len(exprOpen.FindAllString(l, -1))
+				opens += n
+				readOpens += n
 			}
 			value = strings.Join(body, "\n")
+			i = next - 1
 		} else {
+			folded, next, err := foldedScalar(lines, i, value, col)
+			if err != nil {
+				return nil, xerrors.Wrapf(err, "%d 行目", at)
+			}
+			for _, l := range lines[i+1 : next] {
+				opens += len(exprOpen.FindAllString(l, -1))
+			}
+			value = folded
 			readOpens += len(exprWhole.FindAllString(value, -1))
+			i = next - 1
 		}
 		if mark := setMarker.FindStringSubmatch(comment); mark != nil {
 			value = withoutGenerated(value, mark[1])
@@ -405,6 +443,66 @@ func expressions(src string) ([]expression, error) {
 		return nil, xerrors.Wrapf(errExpression, "if: を %d 件読みましたが、字面では %d 件あります。読めない書き方があります", readIfs, ifs)
 	}
 	return out, nil
+}
+
+// keyColumn は、行のキーが始まる桁を返します。列の要素の `- ` はキーの桁に含める。
+func keyColumn(code string) int {
+	rest := strings.TrimLeft(code, " ")
+	col := len(code) - len(rest)
+	for strings.HasPrefix(rest, "- ") {
+		trimmed := strings.TrimLeft(rest[2:], " ")
+		col += len(rest) - len(trimmed)
+		rest = trimmed
+	}
+	return col
+}
+
+// blockBody は、from 行からの、字下げが col より深い行と空行（ブロックスカラーの本文）と、その次の行の位置を
+// 返します。本文の末尾の空行は含めない。
+func blockBody(lines []string, from, col int) ([]string, int) {
+	end := from
+	for j := from; j < len(lines); j++ {
+		l := lines[j]
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if len(l)-len(strings.TrimLeft(l, " ")) <= col {
+			break
+		}
+		end = j + 1
+	}
+	return lines[from:end], end
+}
+
+// foldedScalar は、at 行のキーの値 first を、字下げが col より深い続きの行と合わせて1つの値にし、その次の行の
+// 位置を返します。plain スカラーの続きの行のコメントは読まない。引用符で始まる値が、続きの行を合わせても
+// 同じ引用符で閉じていなければ失敗する。
+func foldedScalar(lines []string, at int, first string, col int) (string, int, error) {
+	quote := ""
+	if strings.HasPrefix(first, `"`) || strings.HasPrefix(first, "'") {
+		quote = first[:1]
+	}
+	parts := []string{first}
+	next := at + 1
+	for j := at + 1; j < len(lines); j++ {
+		l := lines[j]
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if len(l)-len(strings.TrimLeft(l, " ")) <= col {
+			break
+		}
+		if quote == "" {
+			l, _ = splitComment(l)
+		}
+		parts = append(parts, strings.TrimSpace(l))
+		next = j + 1
+	}
+	value := strings.Join(parts, " ")
+	if quote != "" && (len(value) < 2 || !strings.HasSuffix(value, quote)) {
+		return "", 0, xerrors.Wrap(errExpression, "引用符の if: の値が閉じていません")
+	}
+	return value, next, nil
 }
 
 // withoutGenerated は、印 set の if: の値から、[renderIfLine] が生成した項を除きます。

@@ -5,10 +5,10 @@ on:
   pull_request:
   push:
     branches: # branch-set: ruleset
-      - admin
-      - production
-      - staging
-      - develop
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
       - 'release/**'
       - 'hotfix/**'
     paths:
