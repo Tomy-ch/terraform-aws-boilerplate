@@ -301,7 +301,7 @@ run "sns_services" {
   variables {
     users = {
       services = { sns = [
-        { topic = "tabp-dev-ops-notification", publishers = ["events", "cloudwatch", "budgets"] },
+        { topic = "tabp-dev-ops-notification", publishers = ["events", "costalerts", "cloudwatch", "budgets"] },
         { topic = "tabp-dev-alerts", publishers = ["events"] },
       ] }
     }
@@ -329,6 +329,14 @@ run "sns_services" {
           Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
         },
         {
+          Sid       = "SnsPublisherCostAlerts"
+          Effect    = "Allow"
+          Principal = { Service = "costalerts.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
+        },
+        {
           Sid       = "SnsPublisherEvents"
           Effect    = "Allow"
           Principal = { Service = "events.amazonaws.com" }
@@ -341,7 +349,7 @@ run "sns_services" {
         },
       ]
     }
-    error_message = "SNS へ publish するサービスの文が、Budgets・CloudWatch はアカウント、EventBridge は Topic の暗号化コンテキストに限った3文になっていません。"
+    error_message = "SNS へ publish するサービスの文が、Budgets・CloudWatch・Cost Anomaly Detection はアカウント、EventBridge は Topic の暗号化コンテキストに限った4文になっていません。"
   }
 }
 
@@ -410,6 +418,21 @@ run "sns_services_events_only" {
   }
 }
 
+run "sns_services_costalerts_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["costalerts"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherCostAlerts"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
 run "all_users" {
   command = plan
 
@@ -422,7 +445,7 @@ run "all_users" {
       ]
       services = {
         logs = ["/tabp/admin/s3-access/plan"]
-        sns  = [{ topic = "t", publishers = ["budgets", "cloudwatch", "events"] }]
+        sns  = [{ topic = "t", publishers = ["budgets", "cloudwatch", "costalerts", "events"] }]
       }
     }
   }
@@ -430,7 +453,7 @@ run "all_users" {
   assert {
     condition = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == [
       "AccountKeyAdministration", "RolesViaS3ReadWrite", "RolesViaS3Read0", "LogsService",
-      "RolesViaSns0", "SnsPublisherBudgets", "SnsPublisherCloudWatch", "SnsPublisherEvents",
+      "RolesViaSns0", "SnsPublisherBudgets", "SnsPublisherCloudWatch", "SnsPublisherCostAlerts", "SnsPublisherEvents",
     ]
     error_message = "利用者の種類をすべて渡したときの文の並びが変わっています。"
   }

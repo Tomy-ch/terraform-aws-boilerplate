@@ -470,6 +470,7 @@ test_pass_sns_shape if {
 		root, via_sns,
 		sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"),
 		sns_publisher("SnsPublisherCloudWatch", "cloudwatch.amazonaws.com"),
+		sns_publisher("SnsPublisherCostAlerts", "costalerts.amazonaws.com"),
 		sns_events,
 	])) == 0
 }
@@ -483,6 +484,7 @@ test_violation_sns_publisher_without_source if {
 		without(sns_events, "/Condition"),
 		without(sns_publisher("SnsPublisherCloudWatch", "cloudwatch.amazonaws.com"), "/Condition"),
 		without(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), "/Condition"),
+		without(sns_publisher("SnsPublisherCostAlerts", "costalerts.amazonaws.com"), "/Condition"),
 		with_condition(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), {"StringEquals": {"aws:SourceAccount": "210987654321"}}),
 		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:210987654321:tabp-dev-ops-notification"]}}),
 		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:*:123456789012:*"]}}),

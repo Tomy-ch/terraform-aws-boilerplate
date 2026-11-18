@@ -24,7 +24,7 @@ variables {
     Condition = { Bool = { "aws:SecureTransport" = "false" } }
   }
   allow = {
-    for k, v in { budgets = "AllowBudgetsPublish", cloudwatch = "AllowCloudWatchPublish", events = "AllowEventsPublish" } : k => {
+    for k, v in { budgets = "AllowBudgetsPublish", cloudwatch = "AllowCloudWatchPublish", costalerts = "AllowCostAlertsPublish", events = "AllowEventsPublish" } : k => {
       Sid                 = v
       Effect              = "Allow"
       Principal           = { Service = "${k}.amazonaws.com" }
@@ -74,14 +74,14 @@ run "all_publishers" {
   command = plan
 
   variables {
-    publishers = ["events", "cloudwatch", "budgets"]
+    publishers = ["events", "costalerts", "cloudwatch", "budgets"]
   }
 
   assert {
     condition = jsondecode(aws_sns_topic_policy.this.policy) == {
       Version   = "2012-10-17"
-      Statement = [var.deny_insecure_transport, var.allow.budgets, var.allow.cloudwatch, var.allow.events]
+      Statement = [var.deny_insecure_transport, var.allow.budgets, var.allow.cloudwatch, var.allow.costalerts, var.allow.events]
     }
-    error_message = "3つの publisher のときの Topic Policy が、Deny と名前順の3つの Allow になっていません。"
+    error_message = "4つの publisher のときの Topic Policy が、Deny と名前順の4つの Allow になっていません。"
   }
 }

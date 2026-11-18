@@ -7,7 +7,7 @@ locals {
 
   # CloudWatch と Budgets の公式の例の aws:SourceArn のワイルドカードを置かず、アカウントの固定値だけで限る（README「公式推奨からの逸脱」）。
   publish_statements = [for p in sort(tolist(var.publishers)) : {
-    Sid       = { budgets = "AllowBudgetsPublish", cloudwatch = "AllowCloudWatchPublish", events = "AllowEventsPublish" }[p]
+    Sid       = { budgets = "AllowBudgetsPublish", cloudwatch = "AllowCloudWatchPublish", costalerts = "AllowCostAlertsPublish", events = "AllowEventsPublish" }[p]
     Effect    = "Allow"
     Principal = { Service = "${p}.amazonaws.com" }
     Action    = "sns:Publish"

@@ -18,7 +18,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `users.roles[*].objects` | `access = "read"` のとき1件以上の S3 の object の ARN（`arn:<partition>:s3:::<bucket>/<key>`）。`*`・`?` を受けない。鍵と同じ partition だけを受ける。`read-write` では空にする。S3 の ARN はアカウントを持たないので、別のアカウントの Bucket の object かどうかは見ない |
 | `users.roles[*].topics` | `via = "sns"` のとき1件以上の SNS の Topic の名前（ARN ではない。英数字・`_`・`-` の 1-256 文字で、FIFO の Topic を受けない）。module が鍵と同じアカウントと region の ARN を組む。`via = "s3"` では空にする |
 | `users.services.logs` | 鍵で暗号化する CloudWatch Logs の Log Group の名前。module が鍵と同じアカウントと region の ARN を組む |
-| `users.services.sns` | 鍵で暗号化する SNS の Topic の名前（`topic`）と、その Topic へ publish する同じアカウントの AWS のサービス（`publishers`。`budgets`・`cloudwatch`・`events` から1つ以上）。同じ Topic を2回は受けない。`modules/sns` の `name`・`publishers` と同じ値を渡す |
+| `users.services.sns` | 鍵で暗号化する SNS の Topic の名前（`topic`）と、その Topic へ publish する同じアカウントの AWS のサービス（`publishers`。`budgets`・`cloudwatch`・`costalerts`・`events` から1つ以上）。同じ Topic を2回は受けない。`modules/sns` の `name`・`publishers` と同じ値を渡す |
 
 `users` は合わせて1件以上を要る。管理の委任は暗号操作を含まないので、利用者の無い鍵は誰も使えない。
 
@@ -43,6 +43,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `RolesViaSns<n>` | `users.roles` のうち `via = "sns"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt`・`kms:GenerateDataKey*` | `kms:ViaService = sns.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:sns:topicArn` にその role の `topics` の Topic の ARN |
 | `SnsPublisherBudgets` | `budgets.amazonaws.com`。`users.services.sns` のいずれかの `publishers` が `budgets` を含むとき | `kms:Decrypt`・`kms:GenerateDataKey*` | `StringEquals aws:SourceAccount` に鍵のアカウント |
 | `SnsPublisherCloudWatch` | `cloudwatch.amazonaws.com`。同じく `cloudwatch` を含むとき | 同上 | 同上 |
+| `SnsPublisherCostAlerts` | `costalerts.amazonaws.com`（Cost Anomaly Detection）。同じく `costalerts` を含むとき | 同上 | 同上 |
 | `SnsPublisherEvents` | `events.amazonaws.com`。同じく `events` を含むとき | 同上 | `StringEquals kms:EncryptionContext:aws:sns:topicArn` に `events` を含む Topic の ARN |
 
 `via` の語彙と、それぞれが許す Action:
@@ -90,6 +91,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
   - `SnsPublisherEvents` の暗号化コンテキストの条件で、EventBridge から暗号化した Topic への送信が通ること。一次資料の Key Policy の例は `sns.amazonaws.com` の文にこの条件を使うもので、EventBridge の送信に同じ暗号化コンテキストが載ることを述べる文書は見つかっていない
   - `RolesViaSns<n>` の `kms:ViaService` と暗号化コンテキストの条件で、role（EventBridge Scheduler の心拍など）からの publish が通ること
   - `SnsPublisherBudgets` の形で Budgets から暗号化した Topic への通知が通ること（AWS Cost Management の Key Policy の例は、文書の表示が欠けていて読めていない）
+  - `SnsPublisherCostAlerts` の形で Cost Anomaly Detection から暗号化した Topic への通知が通ること
 - `aws` 以外の partition でのサービス principal と `kms:ViaService` の値は確かめていない
 - Security の4つの道具のうち KICS の3件（鍵の inline の policy、IAM Access Analyzer、tag）は抑止している。理由と撤回条件は `main.tf` と `policy.tf` の先頭が持つ
 
@@ -103,7 +105,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 参照日: 2026-11-07（SNS の文は 2026-11-19、AWS Provider v6.70.0 の文書。テストの実行は v6.73.0）
 
 - AWS / HashiCorp が publisher の KMS の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search?q=kms&provider=aws` の結果に namespace `aws-ia`・`hashicorp`・`aws`・`aws-samples` が無い）
-- 参照した一次資料: AWS Provider v6.68.0 の `aws_kms_key`・`aws_kms_key_policy`・`aws_kms_alias`・`aws_partition`・`aws_region` の文書、AWS KMS Developer Guide（[Default key policy](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)、[Least-privilege permissions](https://docs.aws.amazon.com/kms/latest/developerguide/least-privilege.html)、[AWS KMS condition keys](https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html)）、AWS KMS API Reference（[CreateAlias](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html)、[PutKeyPolicy](https://docs.aws.amazon.com/kms/latest/APIReference/API_PutKeyPolicy.html)）、Amazon S3 User Guide（[SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html)、[S3 Bucket Keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html)）、Amazon CloudWatch Logs（[Encrypt log data using AWS KMS](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html)、[CreateLogGroup](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogGroup.html)）、Amazon SNS Developer Guide（[Managing Amazon SNS encryption keys and costs](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)、[Setting up Amazon SNS topic encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-enable-encryption-for-topic.html)）、Amazon CloudWatch User Guide（[Notifying users on alarm changes](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html)）、AWS Cost Management（[Creating an Amazon SNS topic for budget notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-sns-policy.html)。暗号化した Topic の Key Policy の例は表示が欠けていて読めていない）、Terraform の [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[AWS KMS の料金](https://aws.amazon.com/kms/pricing/)
+- 参照した一次資料: AWS Provider v6.68.0 の `aws_kms_key`・`aws_kms_key_policy`・`aws_kms_alias`・`aws_partition`・`aws_region` の文書、AWS KMS Developer Guide（[Default key policy](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html)、[Least-privilege permissions](https://docs.aws.amazon.com/kms/latest/developerguide/least-privilege.html)、[AWS KMS condition keys](https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html)）、AWS KMS API Reference（[CreateAlias](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html)、[PutKeyPolicy](https://docs.aws.amazon.com/kms/latest/APIReference/API_PutKeyPolicy.html)）、Amazon S3 User Guide（[SSE-KMS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html)、[S3 Bucket Keys](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-key.html)）、Amazon CloudWatch Logs（[Encrypt log data using AWS KMS](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html)、[CreateLogGroup](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogGroup.html)）、Amazon SNS Developer Guide（[Managing Amazon SNS encryption keys and costs](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)、[Setting up Amazon SNS topic encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-enable-encryption-for-topic.html)）、Amazon CloudWatch User Guide（[Notifying users on alarm changes](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html)）、AWS Cost Management（[Creating an Amazon SNS topic for budget notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-sns-policy.html)。暗号化した Topic の Key Policy の例は表示が欠けていて読めていない。[Creating an Amazon SNS topic for anomaly notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/ad-SNS.html)）、Terraform の [S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)、[AWS KMS の料金](https://aws.amazon.com/kms/pricing/)
 
 採用した知見:
 
@@ -113,6 +115,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 - 経由するサービスでの利用は `kms:ViaService` で限る
 - `kms:EncryptionContext:*` を `ForAllValues` で条件にしない（暗号化コンテキストの無い要求も通る）
 - alias の名前に `alias/aws/` を使わない（AWS 管理鍵に予約）
+- Cost Anomaly Detection（`costalerts.amazonaws.com`）の文は、AWS Cost Management User Guide「Creating an Amazon SNS topic for anomaly notifications」の Key Policy の例のとおり `aws:SourceAccount` だけで限る。例は `aws:SourceArn` を特定の subscription に限るときの任意の手段として挙げるだけで、送り手の subscription を鍵の側は知らないので置かない
 - 暗号化した SNS の Topic へ publish する AWS のサービスには、そのサービス principal に `kms:GenerateDataKey*`・`kms:Decrypt` を許す。サービス principal の許可は `aws:SourceAccount` で限る。EventBridge はこの条件を受けないので、SNS が渡す暗号化コンテキストで Topic を限る
 
 採用しなかった知見と理由:

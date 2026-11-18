@@ -21,12 +21,12 @@ variable "kms_key_arn" {
 }
 
 variable "publishers" {
-  description = "Topic へ publish する同じアカウントの AWS のサービス（budgets・cloudwatch・events）。鍵の Key Policy（modules/kms の users.services.sns）へ同じ値を渡す。IAM の role は Topic Policy ではなく、role の IAM policy と鍵の Key Policy で許す。"
+  description = "Topic へ publish する同じアカウントの AWS のサービス（budgets・cloudwatch・costalerts・events）。鍵の Key Policy（modules/kms の users.services.sns）へ同じ値を渡す。IAM の role は Topic Policy ではなく、role の IAM policy と鍵の Key Policy で許す。"
   type        = set(string)
   nullable    = false
 
   validation {
-    condition     = length(setsubtract(var.publishers, ["budgets", "cloudwatch", "events"])) == 0
-    error_message = "publishers は budgets・cloudwatch・events から選んでください。"
+    condition     = length(setsubtract(var.publishers, ["budgets", "cloudwatch", "costalerts", "events"])) == 0
+    error_message = "publishers は budgets・cloudwatch・costalerts・events から選んでください。"
   }
 }

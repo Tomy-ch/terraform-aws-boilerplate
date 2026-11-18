@@ -13,11 +13,11 @@
 | --- | --- |
 | `name` | Topic の名前。英数字・`_`・`-` だけで 1-256 文字（FIFO の `.fifo` を受けない）。前半 `<project>-<env>-<purpose>` は呼び出す usecase が組み、その形は usecase のテストで固定する |
 | `kms_key_arn` | 暗号化に使う鍵の ARN。鍵の ARN だけを受け、alias の ARN・`alias/aws/sns`・多リージョンの鍵を受けない。Topic と同じ partition・リージョン・アカウントの鍵だけを受ける（鍵の ARN が plan で決まれば plan で、決まらなければ apply で落ちる） |
-| `publishers` | Topic へ publish する同じアカウントの AWS のサービス。`budgets`・`cloudwatch`・`events` から選ぶ。空を受ける（role だけが publish する Topic） |
+| `publishers` | Topic へ publish する同じアカウントの AWS のサービス。`budgets`・`cloudwatch`・`costalerts`・`events` から選ぶ。空を受ける（role だけが publish する Topic） |
 
 | 出力 | 使う側 |
 | --- | --- |
-| `topic_arn` | 送り手（alarm の通知先、EventBridge の rule と Scheduler の target、Budgets の通知先）、購読する側、role の IAM の `sns:Publish` の Resource。送り手が既定の Topic Policy の間に Topic を使わないよう、Topic Policy の置き換えの後に決まる（`depends_on`） |
+| `topic_arn` | 送り手（alarm の通知先、EventBridge の rule と Scheduler の target、Budgets と Cost Anomaly Detection の通知先）、購読する側、role の IAM の `sns:Publish` の Resource。送り手が既定の Topic Policy の間に Topic を使わないよう、Topic Policy の置き換えの後に決まる（`depends_on`） |
 
 鍵の Key Policy は `modules/kms` が持つ。呼び出す usecase は、同じ `name` と `publishers` を `modules/kms` の `users.services.sns` へ、publish する role を `users.roles[*]`（`via = "sns"`、`topics` に `name`）へ渡す。Topic の暗号化に要る鍵の許可は、Topic を暗号化する SNS ではなく、publish する側（サービス principal と role）に要る（Amazon SNS Developer Guide「Managing Amazon SNS encryption keys and costs」）。
 
@@ -30,6 +30,7 @@
 | `DenyInsecureTransport` | Deny | `"*"` | `sns:Publish` | `Bool aws:SecureTransport = "false"` |
 | `AllowBudgetsPublish` | Allow | `budgets.amazonaws.com` | `sns:Publish` | `StringEquals aws:SourceAccount` に Topic のアカウント |
 | `AllowCloudWatchPublish` | Allow | `cloudwatch.amazonaws.com` | 同上 | 同上 |
+| `AllowCostAlertsPublish` | Allow | `costalerts.amazonaws.com`（Cost Anomaly Detection） | 同上 | 同上 |
 | `AllowEventsPublish` | Allow | `events.amazonaws.com` | 同上 | 同上 |
 
 IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカウントの IAM の主体は、identity policy の許可だけで publish できる。Topic Policy の Allow は、サービス principal だけになる。
@@ -59,7 +60,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 - Topic Policy と鍵の Key Policy が同じ送り手を名指すことは、module の境界の外（呼び出す usecase が同じ値を両方へ渡す）で、検査は無い
 - `aws_sns_topic_policy` を destroy すると、Provider は既定の Topic Policy（`Principal {"AWS":"*"}` と `AWS:SourceOwner` で `SNS:Publish`・`SNS:Subscribe`・`SNS:SetTopicAttributes` などを許す文書）を書き戻す（AWS Provider の `internal/service/sns/topic_policy.go`）。Topic の作成から Topic Policy の置き換えまでの間も、Topic は既定の Topic Policy を持つ。`topic_arn` の `depends_on` が送り手を置き換えの後に作らせることは、mock の plan と apply には順序が現れないので、どのテストも見ていない
 - 次は実際の AWS で確かめていない。最初の消費者（ops-notification）の sandbox での検証で確かめる
-  - CloudWatch・EventBridge・Budgets と、EventBridge Scheduler の role からの publish が、Topic Policy と鍵の Key Policy で拒まれないこと
+  - CloudWatch・EventBridge・Budgets・Cost Anomaly Detection と、EventBridge Scheduler の role からの publish が、Topic Policy と鍵の Key Policy で拒まれないこと
   - TLS でない publish が拒まれること
   - Security Hub の SNS.4 が、この Topic Policy を公開アクセスを許さないと判定すること。固定値だけの条件は非公開とみなされる（AWS Config `sns-topic-no-public-access`）が、Deny の `Principal "*"` の扱いは文書から読み切れていない
 - `aws` 以外の partition でのサービス principal の値は確かめていない
@@ -75,7 +76,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 参照日: 2026-11-19、AWS Provider v6.70.0
 
 - AWS / HashiCorp が publisher の SNS の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search?q=sns&provider=aws&limit=50` の結果に namespace `aws-ia`・`hashicorp`・`aws`・`aws-samples` が無い）
-- 参照した一次資料: AWS Provider v6.70.0 の `aws_sns_topic`・`aws_sns_topic_policy`・`aws_sns_topic_subscription` の文書と `internal/service/sns/topic_policy.go`、Amazon SNS Developer Guide（[Managing Amazon SNS encryption keys and costs](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)、[Setting up Amazon SNS topic encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-enable-encryption-for-topic.html)、[Amazon SNS security best practices](https://docs.aws.amazon.com/sns/latest/dg/sns-security-best-practices.html)、[Verifying the signatures of Amazon SNS messages](https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html)、[Amazon SNS message data protection availability change](https://docs.aws.amazon.com/sns/latest/dg/sns-message-data-protection-availability-change.html)）、Amazon CloudWatch User Guide（[Notifying users on alarm changes](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html)）、Amazon EventBridge User Guide（[Using resource-based policies](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-use-resource-based.html)）、AWS Cost Management（[Creating an Amazon SNS topic for budget notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-sns-policy.html)）、AWS Security Hub（[controls for Amazon SNS](https://docs.aws.amazon.com/securityhub/latest/userguide/sns-controls.html)）、AWS Config（[sns-topic-no-public-access](https://docs.aws.amazon.com/config/latest/developerguide/sns-topic-no-public-access.html)）
+- 参照した一次資料: AWS Provider v6.70.0 の `aws_sns_topic`・`aws_sns_topic_policy`・`aws_sns_topic_subscription` の文書と `internal/service/sns/topic_policy.go`、Amazon SNS Developer Guide（[Managing Amazon SNS encryption keys and costs](https://docs.aws.amazon.com/sns/latest/dg/sns-key-management.html)、[Setting up Amazon SNS topic encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-enable-encryption-for-topic.html)、[Amazon SNS security best practices](https://docs.aws.amazon.com/sns/latest/dg/sns-security-best-practices.html)、[Verifying the signatures of Amazon SNS messages](https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html)、[Amazon SNS message data protection availability change](https://docs.aws.amazon.com/sns/latest/dg/sns-message-data-protection-availability-change.html)）、Amazon CloudWatch User Guide（[Notifying users on alarm changes](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Notify_Users_Alarm_Changes.html)）、Amazon EventBridge User Guide（[Using resource-based policies](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-use-resource-based.html)）、AWS Cost Management（[Creating an Amazon SNS topic for budget notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-sns-policy.html)、[Creating an Amazon SNS topic for anomaly notifications](https://docs.aws.amazon.com/cost-management/latest/userguide/ad-SNS.html)）、AWS Security Hub（[controls for Amazon SNS](https://docs.aws.amazon.com/securityhub/latest/userguide/sns-controls.html)）、AWS Config（[sns-topic-no-public-access](https://docs.aws.amazon.com/config/latest/developerguide/sns-topic-no-public-access.html)）
 
 照らした Security Hub のコントロール:
 
@@ -92,6 +93,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 - 署名 v2（SHA256）。API の既定は v1（SHA1）
 - `Principal "*"` の Allow を置かない。サービス principal の許可は `aws:SourceAccount` で限る（`aws:SourceOwner` は使わない）
 - Topic Policy は `aws_sns_topic_policy` で持ち、inline の `policy` と併用しない
+- Cost Anomaly Detection（`costalerts.amazonaws.com`）は、AWS Cost Management User Guide の例のとおり `aws:SourceAccount` だけで限る。特定の subscription に限る `aws:SourceArn` は、送り手の subscription を Topic の側が知らないので置かない
 
 採用しなかった知見と理由:
 

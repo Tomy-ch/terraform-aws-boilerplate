@@ -171,3 +171,11 @@ run "publishers_rejects_wrong_case" {
 
   expect_failures = [var.publishers]
 }
+
+run "publishers_accepts_costalerts" {
+  command = plan
+
+  variables {
+    publishers = ["costalerts"]
+  }
+}
