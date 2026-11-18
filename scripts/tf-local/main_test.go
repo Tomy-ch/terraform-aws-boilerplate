@@ -194,6 +194,16 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
 		})
 
+		t.Run("policy-result -policy は名前空間ごとの件数を1行ずつ出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			dir := policyDirWith(t, map[string]string{"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"})
+			path := fileWith(t, `[{"namespace":"plan.p","successes":1}]`)
+			require.NoError(t, run([]string{"policy-result", "-policy", dir, path}, &out, testDeps(nil)))
+			assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません\n", out.String())
+		})
+
 		t.Run("account は資格情報からアカウント ID を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
