@@ -6,13 +6,6 @@ import data.plan.lib
 
 cfg := data.policy_plan.deployment_identity
 
-issuer := "token.actions.githubusercontent.com"
-
-required_keys := {sprintf("%s:%s", [issuer, k]) | some k in ["aud", "sub", "repository_id", "repository_owner_id"]}
-
-# 不変形式の sub: repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<name>
-sub_pattern := `^repo:[^/@:*?]+@([0-9]+)/[^/@:*?]+@([0-9]+):environment:[^:*?]+$`
-
 trusts contains r if {
 	some r in lib.readable
 	r.document.type == "aws_iam_role"
@@ -35,7 +28,7 @@ deny contains msg if {
 deny contains msg if {
 	some r in trusts
 	some s in lib.statements(r.body)
-	not allow_web_identity(s)
+	not lib.github_allow_web_identity(s)
 	msg := sprintf("[PLAN-TRUST-02] %s: %s の信頼条件が Allow の sts:AssumeRoleWithWebIdentity だけではありません", [r.document.path, r.document.address])
 }
 
@@ -56,42 +49,30 @@ deny contains msg if {
 deny contains msg if {
 	some r in trusts
 	some s in lib.statements(r.body)
-	object.keys(string_equals(s)) != required_keys
-	msg := sprintf("[PLAN-TRUST-05] %s: %s の StringEquals のキーが %v と一致しません", [r.document.path, r.document.address, required_keys])
+	object.keys(lib.github_string_equals(s)) != lib.github_required_keys
+	msg := sprintf("[PLAN-TRUST-05] %s: %s の StringEquals のキーが %v と一致しません", [r.document.path, r.document.address, lib.github_required_keys])
 }
 
 deny contains msg if {
 	some r in trusts
 	some s in lib.statements(r.body)
-	some k, v in string_equals(s)
-	not single_literal(v)
+	some k, v in lib.github_string_equals(s)
+	not lib.github_single_literal(v)
 	msg := sprintf("[PLAN-TRUST-06] %s: %s の %s が1つの値ではないか、ワイルドカード（* ?）を含みます", [r.document.path, r.document.address, k])
 }
 
 deny contains msg if {
 	some r in trusts
 	some s in lib.statements(r.body)
-	not aud_is_sts(string_equals(s))
+	not lib.github_aud_is_sts(lib.github_string_equals(s))
 	msg := sprintf("[PLAN-TRUST-07] %s: %s の aud が sts.amazonaws.com ではありません", [r.document.path, r.document.address])
 }
 
 deny contains msg if {
 	some r in trusts
 	some s in lib.statements(r.body)
-	not sub_consistent(string_equals(s))
+	not lib.github_sub_consistent(lib.github_string_equals(s))
 	msg := sprintf("[PLAN-TRUST-08] %s: %s の sub が environment の不変形式でないか、repository_id / repository_owner_id と一致しません", [r.document.path, r.document.address])
-}
-
-# Condition か StringEquals が無い文書でも、これを使う規則が未定義で黙らないよう空の object を返す。
-string_equals(s) := object.get(object.get(s, "Condition", {}), "StringEquals", {})
-
-aud_is_sts(eq) if eq[sprintf("%s:aud", [issuer])] == "sts.amazonaws.com"
-
-allow_web_identity(s) if {
-	s.Effect == "Allow"
-	lib.lower_all(s.Action) == ["sts:assumerolewithwebidentity"]
-	not s.NotAction
-	not s.NotPrincipal
 }
 
 federated_by_provider(path, s) if {
@@ -100,16 +81,4 @@ federated_by_provider(path, s) if {
 	lib.strip_index(c.rc.address) == cfg.oidc_provider
 	is_string(c.rc.change.after.arn)
 	s.Principal == {"Federated": c.rc.change.after.arn}
-}
-
-single_literal(v) if {
-	is_string(v)
-	not contains(v, "*")
-	not contains(v, "?")
-}
-
-sub_consistent(eq) if {
-	m := regex.find_all_string_submatch_n(sub_pattern, eq[sprintf("%s:sub", [issuer])], 1)
-	m[0][1] == eq[sprintf("%s:repository_owner_id", [issuer])]
-	m[0][2] == eq[sprintf("%s:repository_id", [issuer])]
 }
