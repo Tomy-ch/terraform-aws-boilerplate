@@ -381,6 +381,7 @@ the operator prefers). It must contain:
 | Per-step deliverables | Lets a partially-finished run be resumed or handed over |
 | Chosen options **and rejected ones, with reasons** | Trip-wire 2 fires when a rejected option is later adopted |
 | Gate table | Fixes at plan time whether runtime verification is required, so it cannot be quietly dropped |
+| 公式の確認（AWS resource を作るか変える計画に限る） | 照らした情報源（[ADR-0206](../../../docs/adr/0206-official-implementations-as-reference.md) 決定3）、Security Hub のコントロールに照らした所見、採ったものと採らなかったものとその理由（同 決定5・7・8）。従わないコントロールは [ADR-0207](../../../docs/adr/0207-default-value-policy.md) 決定11 の停止点として計画の承認で示す。`AGENTS.md` はこの確認をゲートを持たない規則として挙げており、計画に欄が無ければ確認は黙って落ちる |
 
 ### 3c — Plan review
 
