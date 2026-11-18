@@ -1,0 +1,54 @@
+name: scenario
+description: 複数のユースケースをつなぐ接続例を定義する
+title: "[scenario] "
+labels:
+  - type:scenario
+body:
+  - type: markdown
+    attributes:
+      value: |
+        - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
+        - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+        - アカウント ID、実際の ARN、内部の CIDR は書かず、`<ACCOUNT_ID>` のような置き換えにします。
+  - type: textarea
+    id: flow
+    attributes:
+      label: 成立させる処理（経路）
+      description: ユースケース間の接続点は意味論的な入出力だけです（`docs/adr/0102-use-case-centric-scope.md` 決定8）。
+    validations:
+      required: true
+  - type: textarea
+    id: usecases
+    attributes:
+      label: 登場する usecase
+      description: Issue 番号で書きます。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 保証する範囲と保証しない範囲
+      description: ユースケースの組み合わせ方そのものは保証の対象にしません（`docs/adr/0102-use-case-centric-scope.md` 決定10）。
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: 失敗の検知と復旧
+  - type: textarea
+    id: verification
+    attributes:
+      label: 検証方法
+      description: "`docs/adr/0401-testing-policy.md` 決定4・14。"
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: チェックの印は自動では検証されません。
+      value: |
+        - [ ] 経路が sandbox で成立する
+        - [ ] 失敗の検知と復旧を確かめる
+    validations:
+      required: true
