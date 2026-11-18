@@ -474,15 +474,18 @@ func Test_fetchDigests(t *testing.T) {
 			})
 		}
 
-		t.Run("200 以外なら errRelease", func(t *testing.T) {
+		t.Run("200 以外なら、本文に digest が揃っていても errRelease", func(t *testing.T) {
 			t.Parallel()
+			body := fmt.Sprintf(`{"assets":[{"name":"pnpm-linux-x64-musl.tar.gz","digest":"sha256:%s"},`+
+				`{"name":"pnpm-linux-arm64-musl.tar.gz","digest":"sha256:%s"}]}`, shaA, shaB)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"assets":[]}`))
+				_, _ = w.Write([]byte(body))
 			}))
 			t.Cleanup(srv.Close)
 			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.ErrorIs(t, err, errRelease)
+			assert.Contains(t, err.Error(), "HTTP 500")
 		})
 
 		t.Run("JSON でなければ errRelease", func(t *testing.T) {
@@ -493,15 +496,20 @@ func Test_fetchDigests(t *testing.T) {
 			t.Cleanup(srv.Close)
 			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.ErrorIs(t, err, errRelease)
+			assert.Contains(t, err.Error(), "invalid character")
 		})
 
 		t.Run("接続できなければ errRelease", func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.NotFoundHandler())
-			url := srv.URL
-			srv.Close()
-			_, err := fetchDigests(context.Background(), githubAPI{base: url, client: http.DefaultClient}, "12.17.0")
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			}))
+			t.Cleanup(srv.Close)
+			_, err := fetchDigests(context.Background(), ghFor(srv), "12.17.0")
 			require.ErrorIs(t, err, errRelease)
+			assert.Contains(t, err.Error(), `Get "`+srv.URL)
 		})
 	})
 }
