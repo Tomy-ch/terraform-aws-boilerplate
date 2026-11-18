@@ -516,6 +516,10 @@ test_violation_sns_role_without_topic if {
 			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
 			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:logs:ap-northeast-1:123456789012:log-group:x"],
 		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:"],
+		}}),
 	] {
 		ids([root, s]) == {"[PLAN-KMS-11]"}
 	}

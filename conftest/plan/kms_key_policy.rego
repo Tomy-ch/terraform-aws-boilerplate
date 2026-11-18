@@ -229,6 +229,7 @@ own_topic_arn(v, body) if {
 	count(parts) == 6
 	parts[2] == "sns"
 	parts[4] == account(body)
+	parts[5] != ""
 }
 
 # ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。
