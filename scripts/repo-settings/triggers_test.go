@@ -11,7 +11,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 )
 
-// setDecl は、デプロイブランチ2本と線2本を持つ宣言です。
 var setDecl = branches{
 	Deploy: []branchdecl.DeployBranch{{Branch: "admin", Env: "admin", From: []string{"rel/"}}, {Branch: "prod", ReleaseBase: true}},
 	Lines:  branchdecl.Lines{Release: "rel/", Hotfix: "hot/"},

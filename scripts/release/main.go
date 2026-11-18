@@ -36,7 +36,6 @@ import (
 )
 
 const (
-	// releaseNoteDir は、タグ作成時に読むリリースノートの置き場所。
 	releaseNoteDir = ".github/release"
 	// commandTimeout は、git / gh 1 コマンドあたりの上限。push や Release 作成は
 	// ネットワーク越しのため、対話が無い前提で余裕を持たせる。

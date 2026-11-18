@@ -25,8 +25,7 @@ var (
 	branchesLine = regexp.MustCompile(`^(\s*)(?:"branches(?:-ignore)?"|'branches(?:-ignore)?'|branches(?:-ignore)?)[ \t]*:(.*)$`)
 	// branchesLoose は、branchesLine が読めない書き方も拾う。数が食い違えば、読めない形がある。
 	branchesLoose = regexp.MustCompile(`branches(?:-ignore)?["']?\s*:`)
-	// ifLine は、job か step の if: の行。
-	ifLine = regexp.MustCompile(`^(\s*)(?:-\s+)?(?:"if"|'if'|if)[ \t]*:(.*)$`)
+	ifLine        = regexp.MustCompile(`^(\s*)(?:-\s+)?(?:"if"|'if'|if)[ \t]*:(.*)$`)
 	// refContext は、ブランチの名前か ref を値に持つ context の閉じた一覧。
 	refContext = regexp.MustCompile(`github\.(?:ref_name|ref|base_ref|head_ref|event\.ref|event\.pull_request\.base\.ref|event\.pull_request\.head\.ref|event\.workflow_run\.head_branch)\b`)
 	// containsSet は、完全一致の集合を名指す項 contains(fromJSON('[...]'), <ref>)。
@@ -216,7 +215,6 @@ func renderIfLine(code string, b branches, set string) (string, error) {
 	return "", xerrors.Wrapf(errBranchSet, "if: の行に置ける印は %s と %s です（%q）", setDeploy, setLines, set)
 }
 
-// prefixExpression は、ctx が prefixes のどれかで始まることを表す式を返します。
 func prefixExpression(ctx string, prefixes []string) string {
 	terms := make([]string, 0, len(prefixes))
 	for _, p := range prefixes {
@@ -260,7 +258,6 @@ func splitComment(line string) (code, comment string) {
 	return line, ""
 }
 
-// actionsDir は、composite action の置き場。
 const actionsDir = ".github/actions"
 
 var (
@@ -316,7 +313,6 @@ func checkRefLiterals(root string) (int, error) {
 	return total, nil
 }
 
-// expressionFiles は、.github/workflows の workflow と .github/actions の下の action.{yml,yaml} を返します。
 func expressionFiles(root string) ([]string, error) {
 	dir := filepath.Join(root, workflowsDir)
 	entries, err := os.ReadDir(dir)
@@ -422,7 +418,6 @@ func withoutGenerated(value, set string) string {
 	return value
 }
 
-// refLiteralTerms は、式の中の ref の context と文字列リテラルを比べる項を返します。
 func refLiteralTerms(expr string) []string {
 	out := make([]string, 0, len(refLiteral))
 	for _, re := range refLiteral {

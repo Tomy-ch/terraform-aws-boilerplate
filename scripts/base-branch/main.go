@@ -40,7 +40,6 @@ import (
 )
 
 const (
-	// remoteName は、実状態を問い合わせるリモート。
 	remoteName = "origin"
 	// refPrefix は、`git ls-remote --heads` が返す参照の接頭辞。
 	refPrefix = "refs/heads/"
@@ -53,7 +52,6 @@ var (
 	errUnexpectedArgs  = xerrors.New("❌ usage: base-branch（引数は取りません）")
 )
 
-// releaseLine は、1 本のリリースライン。
 type releaseLine struct {
 	name    string
 	version branchdecl.Version

@@ -35,14 +35,11 @@ const (
 	// initialTag は、初期化後に唯一残るタグ。
 	initialTag     = "v0.0.0"
 	releaseNoteDir = ".github/release"
-	// stepsPerTag は、タグ 1 件あたりの削除手順数（ローカル + リモート）。
-	stepsPerTag = 2
-	// commandTimeout は、git / gh 1 コマンドあたりの上限。
+	stepsPerTag    = 2
 	commandTimeout = 120 * time.Second
 )
 
 var (
-	// errInitialTagExists は、初期タグが既に在り初期化してはいけないことを表す。
 	errInitialTagExists  = xerrors.New("があります。初期化を停止します")
 	errUsage             = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
@@ -150,7 +147,6 @@ func execute(r runner, s setup, args []string) error {
 
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// parseLines は、コマンド出力を空行を除いた行の並びへ変換します。
 func parseLines(out string) []string {
 	lines := make([]string, 0)
 
@@ -163,7 +159,6 @@ func parseLines(out string) []string {
 	return lines
 }
 
-// tagDeletionSteps は、既存タグをローカルとリモートの両方から消す手順を返します。
 // リモートに存在しないタグの削除は失敗しても続行します（ローカルにだけ在るタグは正常な状態）。
 func tagDeletionSteps(tags []string) []step {
 	steps := make([]step, 0, len(tags)*stepsPerTag)
@@ -230,7 +225,6 @@ func originalBranchCleanupSteps(decl branchdecl.Branches, original string) []ste
 	}
 }
 
-// releaseNotesToDelete は、リリースノートのうち削除すべきものを返します。
 func releaseNotesToDelete(entries []string) []string {
 	keep := initialTag + ".md"
 	targets := make([]string, 0, len(entries))

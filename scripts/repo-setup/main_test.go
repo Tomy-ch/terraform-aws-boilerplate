@@ -32,8 +32,6 @@ const (
 var errFakeCommand = xerrors.New("fake command failed")
 
 // fakeRunner は、git / gh を一切起動せず呼び出しの並びだけを控える実行器。
-// bootstrap の手順はタグの一括削除と origin への push を含むため、
-// 実リポジトリと GitHub へ触れずに骨格を検証する目的で実行層をここへ差し替えます。
 type fakeRunner struct {
 	// calls は、run / output が呼ばれた順の「実行ファイル 引数...」表記。
 	calls []string
@@ -86,7 +84,6 @@ func captureLog(t *testing.T) func() string {
 	return buf.String
 }
 
-// commands は、手順を "実行ファイル 引数..." の文字列列へ畳みます。
 func commands(steps []step) []string {
 	got := make([]string, 0, len(steps))
 	for _, s := range steps {
@@ -96,8 +93,7 @@ func commands(steps []step) []string {
 	return got
 }
 
-// mkdirStep は、指定パスにディレクトリを作る手順を返します。手順が実行されたかを
-// ファイルシステム側から観測するために使います。
+// mkdirStep は、手順が実行されたかをファイルシステム側から観測するための手順を返します。
 func mkdirStep(path string) step {
 	return step{name: "mkdir", args: []string{path}}
 }
@@ -128,7 +124,6 @@ func initRepo(t *testing.T) string {
 	return dir
 }
 
-// testDecl は、env を持たないデプロイブランチ3本と env を持つ admin、線 release/ と hotfix/ の宣言です。
 var testDecl = branchdecl.Branches{
 	Deploy: []branchdecl.DeployBranch{
 		{Branch: "admin", Env: "admin", From: []string{"release/"}},
@@ -139,7 +134,6 @@ var testDecl = branchdecl.Branches{
 	Revert:      "revert/",
 }
 
-// testSetup は、testDecl から決めた初期化の対象です。
 var testSetup = setup{branches: []string{"develop", "staging", "production"}, base: "production", decl: testDecl}
 
 func Test_setupFromDecl(t *testing.T) {

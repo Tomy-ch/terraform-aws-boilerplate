@@ -79,7 +79,6 @@ func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
 	return f.remoteBranches[branch], nil
 }
 
-// testDecl は、基点を production、線を release/ と hotfix/ とする宣言です。
 var testDecl = branchdecl.Branches{
 	Deploy:      []branchdecl.DeployBranch{{Branch: "production", ReleaseBase: true}, {Branch: "develop"}},
 	Lines:       branchdecl.Lines{Release: "release/", Hotfix: "hotfix/"},
@@ -1143,8 +1142,6 @@ func Test_runBranch(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		// **「無い」と「確認できなかった」を畳むと、ここが通ってしまう。** 照会に失敗した
-		// だけで「衝突なし」と読み、取り消しの効かない手順へ進む。
 		t.Run("未知の線の役割では origin へ触れる前に中止する", func(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
@@ -1171,6 +1168,8 @@ func Test_runBranch(t *testing.T) {
 			assert.Empty(t, f.calls)
 		})
 
+		// **「無い」と「確認できなかった」を畳むと、ここが通ってしまう。** 照会に失敗した
+		// だけで「衝突なし」と読み、取り消しの効かない手順へ進む。
 		t.Run("origin へ照会できなければ手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()

@@ -39,10 +39,8 @@ type Branches struct {
 
 // Lines は、線の役割ごとの接頭辞である。役割は [Roles] に閉じ、どれも欠かせない。
 type Lines struct {
-	// Release は、リリース線の接頭辞。
 	Release string `json:"release"`
-	// Hotfix は、hotfix の線の接頭辞。
-	Hotfix string `json:"hotfix"`
+	Hotfix  string `json:"hotfix"`
 }
 
 // 線の役割の名前。

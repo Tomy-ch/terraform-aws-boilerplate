@@ -146,9 +146,8 @@ type declarations struct {
 	ruleset      []byte
 	rendered     []byte
 	workflows    []workflowEdit
-	// sets は、印 `# branch-set:` を持つ workflow。marks はその印の数。
-	sets  []workflowEdit
-	marks int
+	sets         []workflowEdit
+	marks        int
 	// exprs は、ref と文字列リテラルの比較が無いことを確かめた式の数。
 	exprs int
 }

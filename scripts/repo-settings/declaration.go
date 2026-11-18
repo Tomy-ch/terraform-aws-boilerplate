@@ -111,10 +111,8 @@ func rulesetIncludes(b branches) []string {
 const (
 	// setRuleset は、ruleset が保護する集合（デプロイブランチと各線）。
 	setRuleset = "ruleset"
-	// setDeploy は、デプロイブランチの集合。
-	setDeploy = "deploy"
-	// setLines は、線の集合。
-	setLines = "lines"
+	setDeploy  = "deploy"
+	setLines   = "lines"
 )
 
 // triggerPatterns は、workflow の on.<event>.branches に置く集合 set の値を返します。線は ruleset と同じく

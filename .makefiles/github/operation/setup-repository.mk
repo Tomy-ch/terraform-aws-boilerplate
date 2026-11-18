@@ -1,10 +1,9 @@
 ## リポジトリの初期化
 .PHONY: setup-repo ## リポジトリの初期化
 
-# git / gh の手順は scripts/repo-setup が持つ。取り消しの効かない操作ばかりで、分岐を実地で確かめようと
-# するとリポジトリを本当に壊すしかないため、手順をシェルに置かない。
+# git / gh の手順は scripts/repo-setup が持つ（なぜシェルに置かないかは scripts/README.md の repo-setup 行）。
 # ラベル・ルールセット・environment・ワークフローの初期化は個別の make ターゲットなので、連鎖はここに残す。
-# ホストの認証情報を使うためツールランナーは経由しない。
+# ホストの認証情報を使うため、ツールランナーは経由しない。
 REPO_SETUP = $(call RUN_SCRIPT_HOST,repo-setup,$(1))
 
 setup-repo:

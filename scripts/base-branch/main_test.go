@@ -17,18 +17,15 @@ const lsRemoteOutput = "9ce3aa244390610aafe2c2be564a757126c84e58\trefs/heads/rel
 	"88f39914c09eee7330c854f49b7b5d053d692f2d\trefs/heads/release/v2.1.0\n" +
 	"5741f714caa221bac8c3f4a315922934ed069864\trefs/heads/release/v2.2.0\n"
 
-// stubList は、参照一覧の取得を固定の出力へ差し替えます。
 func stubList(out string) func() (string, error) {
 	return func() (string, error) { return out, nil }
 }
 
-// declBody は、リリースラインの接頭辞を release、hotfix の線の接頭辞を hotfix とする宣言を返します。
 func declBody(release, hotfix string) string {
 	return `{"deploy": [{"branch": "production", "release_base": true}], "lines": {"release": "` + release +
 		`", "hotfix": "` + hotfix + `"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
 }
 
-// repoRoot は、宣言 body を置いたリポジトリ直下を返す wd を作ります。
 func repoRoot(t *testing.T, body string) func() (string, error) {
 	t.Helper()
 
@@ -40,12 +37,10 @@ func repoRoot(t *testing.T, body string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
 
-// decl は、接頭辞を release/ と hotfix/ とする宣言です。
 var decl = branchdecl.Branches{Lines: branchdecl.Lines{Release: "release/", Hotfix: "hotfix/"}, LineVersion: branchdecl.VersionForm}
 
-// gitEnv は、コミット者と日時を固定した git 実行用の環境変数を返します。
-// 日時を引数で決められるようにしているのは、コミット日時とバージョン番号の
-// 新旧が食い違う状態をフィクスチャとして作るためです。
+// gitEnv の日時を引数にしているのは、コミット日時とバージョン番号の新旧が食い違う状態を
+// フィクスチャとして作るためです。
 func gitEnv(date string) []string {
 	return append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_AUTHOR_DATE="+date,
@@ -53,7 +48,6 @@ func gitEnv(date string) []string {
 	)
 }
 
-// runGit は、dir で git を実行します。失敗は出力ごとテストの失敗にします。
 func runGit(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
 
