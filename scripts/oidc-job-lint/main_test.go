@@ -1233,6 +1233,13 @@ func Test_checkDetection(t *testing.T) {
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-layer-check.result == 'success' を含めて")
 	})
 
+	t.Run("if: が root の検査の成功を見なければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "needs.apply-root-check.result == 'success' && ", "")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-root-check.result == 'success' を含めて")
+	})
+
 	t.Run("層の検査の job も検出の job と同じ規則で見る", func(t *testing.T) {
 		t.Parallel()
 
@@ -2987,13 +2994,33 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 		assert.Empty(t, f)
 	})
 
-	t.Run("root の検査そのものが無ければ数えない", func(t *testing.T) {
+	const (
+		rootCheckStep = "        run: make root-check RUNNER_MODE=host\n"
+		rootSelfStep  = "        run: make root-check-test RUNNER_MODE=host\n"
+	)
+	for name, src := range map[string]string{
+		"root の検査そのものが無い":             strings.Replace(gatesWorkflow, rootCheckStep, "        run: echo\n", 1),
+		"root の検査の自己テストが無い":           strings.Replace(gatesWorkflow, rootSelfStep, "        run: echo\n", 1),
+		"root の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
+		"root の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, rootCheckStep, "        run: make root-check RUNNER_MODE=host RT_NS=x\n", 1),
+		"root の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, rootCheckStep, "        # run: make root-check RUNNER_MODE=host\n        run: echo\n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
+			n, f := checkRequiredGateJobs("g.yaml", src, required, rootGate)
+			assert.Zero(t, n)
+			assert.Empty(t, f)
+		})
+	}
+
+	t.Run("root の検査の step の形の違反を返す", func(t *testing.T) {
 		t.Parallel()
 
-		src := replaced(t, gatesWorkflow, "        run: make root-check RUNNER_MODE=host\n", "        run: echo\n")
-		n, f := checkRequiredGateJobs("g.yaml", src, required, rootGate)
-		assert.Zero(t, n)
-		assert.Empty(t, f)
+		src := replaced(t, gatesWorkflow, rootCheckStep, rootCheckStep+"        if: false\n")
+		_, f := checkRequiredGateJobs("g.yaml", src, required, rootGate)
+		assert.Contains(t, messages(f), "root の検査の step に if:")
 	})
 
 	const (

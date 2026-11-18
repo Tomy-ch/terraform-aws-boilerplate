@@ -1329,21 +1329,30 @@ func TestCiMk(t *testing.T) {
 
 		raw, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
 		require.NoError(t, err)
-		entries := regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1)
-		kinds := map[string]int{}
-		for _, m := range entries {
-			kinds[m[2]]++
+		phony := map[string]string{}
+		for _, m := range regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1) {
+			phony[m[1]] = m[2]
 		}
-		require.Positive(t, kinds["plan"], "ci.mk に plan の入口がありません")
-		require.Positive(t, kinds["apply"], "ci.mk に apply の入口がありません")
-		for _, m := range entries {
-			got := expand(t, m[1])
-			if m[2] == "plan" {
-				assert.Contains(t, got, "plan -lock=false -input=false", m[1])
-				continue
-			}
-			assert.NotContains(t, got, "-lock=false", m[1])
-			assert.Contains(t, got, "plan -input=false", m[1])
+		var rules []string
+		for _, m := range regexp.MustCompile(`(?m)^(ci-(?:plan|apply)-[A-Za-z0-9_-]+):\s*$`).FindAllStringSubmatch(string(raw), -1) {
+			rules = append(rules, m[1])
+		}
+		require.ElementsMatch(t, slices.Collect(maps.Keys(phony)), rules, "入口の .PHONY とレシピの行が食い違います")
+		require.Contains(t, slices.Collect(maps.Values(phony)), "plan", "ci.mk に plan の入口がありません")
+		require.Contains(t, slices.Collect(maps.Values(phony)), "apply", "ci.mk に apply の入口がありません")
+		for target, kind := range phony {
+			t.Run(target, func(t *testing.T) {
+				t.Parallel()
+
+				got := expand(t, target)
+				if kind == "plan" {
+					assert.Contains(t, got, "plan -lock=false -input=false")
+
+					return
+				}
+				assert.NotContains(t, got, "-lock=false")
+				assert.Contains(t, got, "plan -input=false")
+			})
 		}
 	})
 
