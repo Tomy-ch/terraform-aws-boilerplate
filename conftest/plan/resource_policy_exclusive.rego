@@ -6,7 +6,7 @@ import data.plan.lib
 
 # 宣言した resource と、それを指す policy の組。宣言の位置は data.policy_plan の下の key の並びで持ち、
 # PLAN-RPE-00 も同じ表から宣言の欠けを見る。PutKeyPolicy は鍵の ID と ARN のどちらも受ける。mock の plan では
-# key_id が鍵の id を指す。statements は policy の文の数の宣言の位置（state-backend/ADR-0201 決定8）。
+# key_id が鍵の id を指す。statements は policy の文の数の宣言の位置。
 specs := [
 	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["state_backend", "bucket"], "policy": ["state_backend", "bucket_policy"], "refs": ["id", "bucket", "arn"]},
 	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["deployment_identity", "apply_identity_role", "output_bucket"], "policy": ["deployment_identity", "apply_identity_role", "output_bucket_policy"], "refs": ["id", "bucket", "arn"], "statements": ["deployment_identity", "apply_identity_role", "output_bucket_policy_statements"]},

@@ -117,7 +117,7 @@ input_with(statements, key_statements) := [
 	]}},
 ]
 
-# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+# 宣言は丸ごと差し替える（理由は lib/fixture.rego の inline_declaration）。
 messages_for(inp, d) := msgs if {
 	msgs := p.deny with input as inp with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
 }

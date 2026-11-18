@@ -345,7 +345,7 @@ test_violation_same_lock_key if {
 	fixture.has("[PLAN-UNLOCK-00] unlock_role と workload_unlock_role が同じ lock file \"identity/terraform.tfstate.tflock\" を受け持っています", msgs)
 }
 
-# with で上書きした object は decl.json の宣言と重ねて読まれるので、キーを外す代わりに値を null にする。
+# キーを外す代わりに値を null にする（with の差し替えは既存の値と重なる。lib/fixture.rego の inline_declaration）。
 test_violation_unlock_roles_null if {
 	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.deployment_identity.unlock_roles as null with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が配列ではありません", msgs)

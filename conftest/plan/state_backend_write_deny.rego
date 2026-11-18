@@ -26,7 +26,6 @@ state_key_arn := after(declared("state_key")).arn
 
 object_arn(key) := sprintf("%s/%s", [bucket_arn, key])
 
-# root の lock を外す role が消せる lock file の key。deployment_identity の宣言から引く。
 lock_key(name) := object.get(object.get(di, name, {}), "lock_key", "")
 
 root_keys(root) := {object_arn(k) | some k in [root.state, sprintf("%s.tflock", [root.state])]}

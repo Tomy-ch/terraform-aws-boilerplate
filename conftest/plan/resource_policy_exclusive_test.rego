@@ -116,7 +116,6 @@ test_violation_declared_policy_on_another_resource if {
 	not fixture.has("[PLAN-RPE-01]", msgs)
 }
 
-# 宣言した policy が、決まらない値で既存の resource を指すこともある。参照先が決まっていれば落とす。
 test_violation_declared_policy_unknown_on_a_known_target if {
 	msgs := gate.deny with input as fixture.plan(array.concat(targets, [unknown("aws_kms_key_policy", key_policy, "key_id")]))
 	fixture.has(sprintf("[PLAN-RPE-02] p.json: 宣言した %s が ", [key_policy]), msgs)
@@ -164,8 +163,7 @@ test_pass_declared_policy_forgotten if {
 	count(gate.deny) == 0 with input as fixture.plan(array.concat(array.concat(targets, gone), [declared[1], declared[3]]))
 }
 
-# 既存の root に apply の出力の Bucket と Bucket Policy を足す plan（CI の plan-admin-identity の形）。Bucket は名前が
-# 決まり、id と arn が決まらない。Bucket Policy は bucket も policy も決まらない。
+# 既存の root に apply の出力の Bucket と Bucket Policy を足す plan（CI の plan-admin-identity の形）。
 ci_new_apply_bucket := {"address": apply_bucket, "type": "aws_s3_bucket", "change": {
 	"actions": ["create"],
 	"after": {"bucket": "tabp-admin-tfapply-123456789012-ap-northeast-1-an", "bucket_namespace": "account-regional", "force_destroy": false, "tags": null},
@@ -183,7 +181,6 @@ test_pass_apply_output_policy_created_with_its_bucket if {
 	count(gate.deny) == 0 with input as inp
 }
 
-# 宣言の外に置くと、同じ形の plan は 01 で落ちる。
 test_violation_undeclared_apply_output_policy_created_with_its_bucket if {
 	inp := fixture.plan(array.concat(array.slice(targets, 0, 3), array.concat(array.slice(declared, 0, 3), [ci_new_apply_bucket, ci_new_apply_bucket_policy])))
 	d := json.patch(data.policy_plan, [{"op": "remove", "path": "/state_backend/apply_output_bucket"}, {"op": "remove", "path": "/state_backend/apply_output_bucket_policy"}])
@@ -212,7 +209,6 @@ test_violation_output_bucket_policy_statement_counts if {
 	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 5 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 4 件と一致しません", [apply_bucket_policy]), statement_messages(5, 5))
 }
 
-# 文書が plan で決まらない Bucket Policy は数えない（CI の plan で Bucket と同時に作るとき）。
 test_pass_unknown_document_not_counted if {
 	msgs := gate.deny with input as fixture.plan(array.concat(array.slice(targets, 0, 3), array.concat(array.slice(declared, 0, 3), [ci_new_apply_bucket, ci_new_apply_bucket_policy])))
 	not fixture.has("[PLAN-RPE-03]", msgs)

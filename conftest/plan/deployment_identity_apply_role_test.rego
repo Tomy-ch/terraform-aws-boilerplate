@@ -145,7 +145,7 @@ plan_bucket := "module.state_backend.module.plan_output.aws_s3_bucket.this"
 
 apply_bucket := "module.state_backend.module.apply_output.aws_s3_bucket.this"
 
-# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+# 宣言は丸ごと差し替える（理由は lib/fixture.rego の inline_declaration）。
 messages_for(rcs, d) := msgs if {
 	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
 }
@@ -728,14 +728,12 @@ test_violation_apply_output_bucket_uncovered if {
 	fixture.has(denied_03(ao), messages(remove(valid_statements, 7)))
 }
 
-# 宣言した書き込みを、その名前か、それに当たる wildcard の Action で拒む Deny は、NotAction の Deny と並んでいても落とす。
 test_violation_writes_denied_by_action if {
 	every a in ["s3:PutObject", "S3:PUTOBJECT", "*", "s3:*", "s3:Put*", "s3:*Object", "s3:PutObj?ct"] {
 		fixture.has(denied_03_writes_denied(ao_objects, lower(a)), messages(array.concat(valid_statements, [{"Effect": "Deny", "Action": ["s3:GetObject", a], "Resource": ao_objects}])))
 	}
 }
 
-# 書き込みに当たらない Action の Deny、条件付きの Deny、Bucket の ARN への Deny は、宣言した書き込みを塞がない。
 test_pass_writes_other_action_denied if {
 	every s in [
 		{"Effect": "Deny", "Action": ["s3:GetObject", "s3:Put*Acl", "s3:DeleteObject*", "s3:PutObj"], "Resource": ao_objects},
@@ -792,7 +790,6 @@ test_pass_two_writes if {
 	count(messages_for(world(s), d)) == 0
 }
 
-# 書き込みを拒む Deny は、Resource の pattern か NotResource の外で書き込み先に掛かっても落とす。
 test_violation_writes_denied_by_resource_pattern if {
 	every s in [
 		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "*"},
