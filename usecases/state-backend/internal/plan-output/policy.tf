@@ -11,7 +11,7 @@ locals {
       Sid         = "DenyObjectWriteOutsidePrefixes${i}"
       Effect      = "Deny"
       Principal   = "*"
-      Action      = "s3:PutObject"
+      Action      = ["s3:PutObject", "s3:ReplicateObject"]
       NotResource = sort([for w in var.writers : "${aws_s3_bucket.this.arn}/${w.key_prefix}*" if w.role_arn == arn])
       Condition   = { ArnEquals = { "aws:PrincipalArn" = arn } }
     }
@@ -37,7 +37,7 @@ resource "aws_s3_bucket_policy" "this" {
           Sid       = "DenyObjectWriteByOthers"
           Effect    = "Deny"
           Principal = "*"
-          Action    = "s3:PutObject"
+          Action    = ["s3:PutObject", "s3:ReplicateObject"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
           Condition = { ArnNotEquals = { "aws:PrincipalArn" = local.writer_roles } }
         },
@@ -45,7 +45,7 @@ resource "aws_s3_bucket_policy" "this" {
           Sid       = "DenyObjectDeletion"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:ReplicateDelete"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
         },
       ],

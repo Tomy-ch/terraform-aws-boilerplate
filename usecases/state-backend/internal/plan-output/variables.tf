@@ -37,7 +37,7 @@ variable "kms_key_arn" {
 }
 
 variable "writers" {
-  description = "object を書ける role と key の接頭辞の組の集合。key_prefix は / で終わる接頭辞で、空なら Bucket のすべての key。組の外の主体と接頭辞への s3:PutObject と、すべての主体の s3:DeleteObject・s3:DeleteObjectVersion を Bucket Policy が拒否する。"
+  description = "object を書ける role と key の接頭辞の組の集合。key_prefix は / で終わる接頭辞で、空なら Bucket のすべての key。組の外の主体と接頭辞への s3:PutObject・s3:ReplicateObject と、すべての主体の s3:DeleteObject・s3:DeleteObjectVersion・s3:ReplicateDelete を Bucket Policy が拒否する。"
   type = set(object({
     role_arn   = string
     key_prefix = string

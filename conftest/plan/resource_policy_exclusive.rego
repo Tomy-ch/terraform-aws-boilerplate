@@ -125,13 +125,32 @@ deny contains msg if {
 	msg := sprintf("[PLAN-RPE-00] 宣言の policy_plan.%s が、1以上の整数ではありません", [concat(".", path)])
 }
 
-# 文書が plan で決まらなければ数えない。宣言の文を足すか外す変更は、宣言の数も変える。
+counted_documents(p) := {d |
+	some d in lib.documents
+	d.address == p.policy
+	is_object(d.change.after)
+}
+
+# Statement の無い文書は 0 件と数える。
+document_statements(d) := lib.as_array(object.get(lib.parsed(d), "Statement", [])) if is_object(lib.parsed(d))
+
+# 文書が読めなくても、宣言した Bucket を同じ plan で作るときは数えない（RPE-02 と同じ条件）。
+deny contains msg if {
+	some p in pairs
+	count(p.statements) > 0
+	statement_count(p.statements)
+	some d in counted_documents(p)
+	not document_statements(d)
+	not created_together({"rc": {"address": d.address, "change": d.change}}, p)
+	msg := sprintf("[PLAN-RPE-03] %s: %s の文書が plan で決まらないか、JSON の object として読めないので、文の数を数えられません", [d.path, p.policy])
+}
+
 deny contains msg if {
 	some p in pairs
 	count(p.statements) > 0
 	n := statement_count(p.statements)
-	some r in lib.readable
-	r.document.address == p.policy
-	count(lib.statements(r.body)) != n
-	msg := sprintf("[PLAN-RPE-03] %s: %s の文が %d 件で、宣言（policy_plan.%s）の %d 件と一致しません", [r.document.path, p.policy, count(lib.statements(r.body)), concat(".", p.statements), n])
+	some d in counted_documents(p)
+	xs := document_statements(d)
+	count(xs) != n
+	msg := sprintf("[PLAN-RPE-03] %s: %s の文が %d 件で、宣言（policy_plan.%s）の %d 件と一致しません", [d.path, p.policy, count(xs), concat(".", p.statements), n])
 }

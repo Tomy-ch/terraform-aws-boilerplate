@@ -249,8 +249,6 @@ run "ci_role_arns_apply_identity_no_name" {
 # alias の名前は bootstrap の手順が鍵を名指す名前なので、鍵より前に plan で決まらなければならない。
 run "state_key_alias_name" {
   command = plan
-  # outputs の run が apply した Bucket の ARN が state に残り、別の名前の precondition と比べられるため。
-  state_key = "t4bp_dev"
 
   variables {
     project = "t4bp"

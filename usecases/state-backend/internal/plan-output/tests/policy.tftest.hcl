@@ -41,7 +41,7 @@ run "bucket_policy" {
           Sid       = "DenyObjectWriteByOthers"
           Effect    = "Deny"
           Principal = "*"
-          Action    = "s3:PutObject"
+          Action    = ["s3:PutObject", "s3:ReplicateObject"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
           Condition = { ArnNotEquals = { "aws:PrincipalArn" = [
             "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity",
@@ -52,14 +52,14 @@ run "bucket_policy" {
           Sid       = "DenyObjectDeletion"
           Effect    = "Deny"
           Principal = "*"
-          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+          Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:ReplicateDelete"]
           Resource  = "${aws_s3_bucket.this.arn}/*"
         },
         {
           Sid         = "DenyObjectWriteOutsidePrefixes0"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = "s3:PutObject"
+          Action      = ["s3:PutObject", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/apply/*"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" } }
         },
@@ -67,7 +67,7 @@ run "bucket_policy" {
           Sid         = "DenyObjectWriteOutsidePrefixes1"
           Effect      = "Deny"
           Principal   = "*"
-          Action      = "s3:PutObject"
+          Action      = ["s3:PutObject", "s3:ReplicateObject"]
           NotResource = ["${aws_s3_bucket.this.arn}/branch/*", "${aws_s3_bucket.this.arn}/pr/*"]
           Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" } }
         },
@@ -102,7 +102,7 @@ run "bucket_policy_whole_bucket_writer" {
         Sid       = "DenyObjectWriteByOthers"
         Effect    = "Deny"
         Principal = "*"
-        Action    = "s3:PutObject"
+        Action    = ["s3:PutObject", "s3:ReplicateObject"]
         Resource  = "${aws_s3_bucket.this.arn}/*"
         Condition = { ArnNotEquals = { "aws:PrincipalArn" = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply"] } }
       },
@@ -110,14 +110,14 @@ run "bucket_policy_whole_bucket_writer" {
         Sid       = "DenyObjectDeletion"
         Effect    = "Deny"
         Principal = "*"
-        Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+        Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:ReplicateDelete"]
         Resource  = "${aws_s3_bucket.this.arn}/*"
       },
       {
         Sid         = "DenyObjectWriteOutsidePrefixes0"
         Effect      = "Deny"
         Principal   = "*"
-        Action      = "s3:PutObject"
+        Action      = ["s3:PutObject", "s3:ReplicateObject"]
         NotResource = ["${aws_s3_bucket.this.arn}/*"]
         Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
       },

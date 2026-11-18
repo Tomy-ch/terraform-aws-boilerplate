@@ -33,9 +33,9 @@ targets := [
 
 declared := [
 	rc("aws_s3_bucket_policy", state_bucket_policy, {"bucket": "state-id"}),
-	rc("aws_s3_bucket_policy", output_bucket_policy, {"bucket": "plan-id"}),
+	rc("aws_s3_bucket_policy", output_bucket_policy, {"bucket": "plan-id", "policy": json.marshal({"Statement": statements(5)})}),
 	rc("aws_kms_key_policy", key_policy, {"key_id": "key-id"}),
-	rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id"}),
+	rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": json.marshal({"Statement": statements(4)})}),
 ]
 
 messages(extra) := msgs if {
@@ -209,9 +209,31 @@ test_violation_output_bucket_policy_statement_counts if {
 	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 5 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 4 件と一致しません", [apply_bucket_policy]), statement_messages(5, 5))
 }
 
-test_pass_unknown_document_not_counted if {
+# CI の plan で Bucket と同時に作るときは、文書が plan で決まらなくても落とさない。
+test_pass_unknown_document_created_with_its_bucket if {
 	msgs := gate.deny with input as fixture.plan(array.concat(array.slice(targets, 0, 3), array.concat(array.slice(declared, 0, 3), [ci_new_apply_bucket, ci_new_apply_bucket_policy])))
 	not fixture.has("[PLAN-RPE-03]", msgs)
+}
+
+# 既存の Bucket の Bucket Policy の文書が決まらなければ、数えられないので落とす。
+test_violation_unknown_document_on_existing_bucket if {
+	u := {"address": apply_bucket_policy, "type": "aws_s3_bucket_policy", "change": {"actions": ["update"], "after": {"bucket": "apply-id"}, "after_unknown": {"policy": true}}}
+	msgs := gate.deny with input as fixture.plan(array.concat(targets, [declared[0], declared[1], declared[2], u]))
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文書が plan で決まらないか、JSON の object として読めないので", [apply_bucket_policy]), msgs)
+}
+
+test_violation_document_not_json_object if {
+	every v in ["{", "[]"] {
+		x := rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": v})
+		msgs := gate.deny with input as fixture.plan(array.concat(targets, [declared[0], declared[1], declared[2], x]))
+		fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文書が plan で決まらないか、JSON の object として読めないので", [apply_bucket_policy]), msgs)
+	}
+}
+
+test_violation_document_without_statement if {
+	x := rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": json.marshal({"Version": "2012-10-17"})})
+	msgs := gate.deny with input as fixture.plan(array.concat(targets, [declared[0], declared[1], declared[2], x]))
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 0 件で", [apply_bucket_policy]), msgs)
 }
 
 test_violation_statement_count_declaration if {
