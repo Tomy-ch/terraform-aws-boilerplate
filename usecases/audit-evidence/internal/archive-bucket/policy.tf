@@ -155,4 +155,7 @@ resource "aws_s3_bucket_policy" "this" {
     Version   = "2012-10-17"
     Statement = concat(local.deny_statements, local.cloudtrail_statements, local.config_statements)
   })
+
+  # 同じ Bucket への PutBucketPolicy と PutPublicAccessBlock の並行は OperationAborted で落ちうる。
+  depends_on = [aws_s3_bucket_public_access_block.this, aws_s3_bucket_ownership_controls.this]
 }

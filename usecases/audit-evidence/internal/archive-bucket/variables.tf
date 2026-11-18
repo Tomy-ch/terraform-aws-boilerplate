@@ -64,8 +64,8 @@ variable "writers" {
   nullable = false
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$", var.writers.cloudtrail_organization_trail.trail_name)) && !can(regex("[._-][._-]", var.writers.cloudtrail_organization_trail.trail_name))
-    error_message = "writers.cloudtrail_organization_trail.trail_name は CloudTrail の trail の名前（英数字で始まる 3-128 文字の英数字・.・_・-。記号を連ねない）にしてください。"
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{1,126}[A-Za-z0-9]$", var.writers.cloudtrail_organization_trail.trail_name)) && !can(regex("[._-][._-]", var.writers.cloudtrail_organization_trail.trail_name)) && !can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$", var.writers.cloudtrail_organization_trail.trail_name))
+    error_message = "writers.cloudtrail_organization_trail.trail_name は CloudTrail の trail の名前（英数字で始まり英数字で終わる 3-128 文字の英数字・.・_・-。記号を連ねず、IP アドレスの形にしない）にしてください。"
   }
 
   validation {

@@ -166,3 +166,19 @@ run "rejects_fifo_topic" {
   }
   expect_failures = [var.notify_topic_arn]
 }
+
+run "rejects_trail_name_ending_with_symbol" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-org-", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_trail_name_as_ip_address" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "192.168.5.4", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}

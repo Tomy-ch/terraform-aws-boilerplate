@@ -133,3 +133,26 @@ run "rejects_bad_trail_owner" {
   }
   expect_failures = [var.writers]
 }
+
+run "rejects_trail_name_ending_with_symbol" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-org.", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_trail_name_as_ip_address" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "10.0.0.1", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "accepts_three_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "org", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+}

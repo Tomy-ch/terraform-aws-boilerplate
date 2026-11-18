@@ -17,4 +17,7 @@ resource "aws_s3_bucket_policy" "this" {
       },
     ]
   })
+
+  # 同じ Bucket への PutBucketPolicy と PutPublicAccessBlock の並行は OperationAborted で落ちうる。
+  depends_on = [aws_s3_bucket_public_access_block.this, aws_s3_bucket_ownership_controls.this]
 }
