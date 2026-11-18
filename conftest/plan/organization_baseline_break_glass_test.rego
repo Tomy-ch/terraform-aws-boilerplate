@@ -24,11 +24,11 @@ self_manage := {"Effect": "Allow", "Action": ["iam:ChangePassword", "iam:EnableM
 
 password_policy := {"Effect": "Allow", "Action": "iam:GetAccountPasswordPolicy", "Resource": "*"}
 
-deny_keys := {"Effect": "Deny", "Action": ["iam:CreateAccessKey"], "Resource": "*"}
+long_term_credentials_deny := {"Effect": "Deny", "Action": ["iam:CreateAccessKey"], "Resource": "*"}
 
 deactivate := {"Effect": "Allow", "Action": "iam:DeactivateMFADevice", "Resource": "arn:aws:iam::111111111111:user/break-glass/${aws:username}", "Condition": mfa}
 
-valid_group := [assume, self_manage, deactivate, password_policy, deny_keys]
+valid_group := [assume, self_manage, deactivate, password_policy, long_term_credentials_deny]
 
 trust(principals) := [{"Effect": "Allow", "Principal": {"AWS": principals}, "Action": "sts:AssumeRole", "Condition": mfa}]
 
@@ -73,13 +73,13 @@ test_violation_group_allows_more if {
 
 test_violation_assume_without_mfa if {
 	no_mfa := object.remove(assume, ["Condition"])
-	inp := fixture.plan(rcs([no_mfa, self_manage, password_policy, deny_keys], trust(user_arns), [admin]))
+	inp := fixture.plan(rcs([no_mfa, self_manage, password_policy, long_term_credentials_deny], trust(user_arns), [admin]))
 	fixture.has("[PLAN-BG-02]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_deactivate_mfa_without_mfa if {
 	no_mfa := object.remove(deactivate, ["Condition"])
-	inp := fixture.plan(rcs([assume, self_manage, no_mfa, password_policy, deny_keys], trust(user_arns), [admin]))
+	inp := fixture.plan(rcs([assume, self_manage, no_mfa, password_policy, long_term_credentials_deny], trust(user_arns), [admin]))
 	fixture.has("[PLAN-BG-02]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
@@ -123,19 +123,19 @@ test_violation_group_allow_not_action if {
 
 test_violation_self_manage_other_users if {
 	other := {"Effect": "Allow", "Action": ["iam:ChangePassword"], "Resource": "*"}
-	inp := fixture.plan(rcs([assume, other, deactivate, password_policy, deny_keys], trust(user_arns), [admin]))
+	inp := fixture.plan(rcs([assume, other, deactivate, password_policy, long_term_credentials_deny], trust(user_arns), [admin]))
 	fixture.has("[PLAN-BG-02] break-glass の group の Allow ", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_deactivate_other_users_mfa if {
 	other := object.union(deactivate, {"Resource": "*"})
-	inp := fixture.plan(rcs([assume, self_manage, other, password_policy, deny_keys], trust(user_arns), [admin]))
+	inp := fixture.plan(rcs([assume, self_manage, other, password_policy, long_term_credentials_deny], trust(user_arns), [admin]))
 	fixture.has("[PLAN-BG-02] break-glass の group の Allow ", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_assume_any_role if {
 	any_role := object.union(assume, {"Resource": "*"})
-	inp := fixture.plan(rcs([any_role, self_manage, deactivate, password_policy, deny_keys], trust(user_arns), [admin]))
+	inp := fixture.plan(rcs([any_role, self_manage, deactivate, password_policy, long_term_credentials_deny], trust(user_arns), [admin]))
 	fixture.has("[PLAN-BG-02] break-glass の group の Allow AssumeBreakGlassRole", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
