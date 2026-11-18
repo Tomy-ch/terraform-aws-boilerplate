@@ -66,7 +66,7 @@ run "subscription" {
       type    = "SNS"
       address = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
     }])
-    error_message = "subscription の宛先が Topic 1つになっていません。"
+    error_message = "subscription の宛先が notification_topic_arn の SNS になっていません。"
   }
 
   assert {

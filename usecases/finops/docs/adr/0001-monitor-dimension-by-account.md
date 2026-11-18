@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-19
 - Scope: finops
-- Related: repository-wide/ADR-0102, repository-wide/ADR-0202, repository-wide/ADR-0206, repository-wide/ADR-0207, finops/ADR-0101
+- Related: repository-wide/ADR-0102, repository-wide/ADR-0202, repository-wide/ADR-0204, repository-wide/ADR-0206, repository-wide/ADR-0207, finops/ADR-0101
 
 ## Context
 
@@ -59,7 +59,7 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 
 ## 検証方法
 
-- Unit Test: `tests/wiring.tftest.hcl` が `env` ごとの monitor の次元と名前を、`internal/cost-anomaly/tests/anomaly.tftest.hcl` が `scope` ごとの次元と、AWS managed monitor であることを mock の plan で確かめる
+- Unit Test: `tests/contract.tftest.hcl` が `env` ごとの monitor の次元と名前を、`internal/cost-anomaly/tests/anomaly.tftest.hcl` が `scope` ごとの次元と、AWS managed monitor であることを mock の plan で確かめる
 - Policy Test（`make tf-policy`）: `PLAN-FINOPS-04` が、予算の `cost_filter`・`filter_expression` が空でないか plan で決まらない入力を落とす
 
 ## 影響

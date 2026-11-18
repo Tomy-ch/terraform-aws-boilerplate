@@ -24,7 +24,7 @@ Budgets の課金データの反映には数時間から1日の遅れがある�
    - 実績の85%: 超過の前に1度知らせ、月の残りの日数で手を打てる段を置く
    - 実績の100%: 超過そのもの
    - 予測の100%: 月末を待たずに、超過の見込みを知らせる。予測には約5週間の利用データが要るので、新しいアカウントでは実績の2つだけが働く
-   - 異常の40%: 金額の閾値だけでは、費用の大きいアカウントで期待値に比べて小さな揺れも通知になる。期待値の半分に満たない上振れを日々の揺れとして落とすために、割合を AND で重ねる
+   - 異常の40%: 金額の閾値だけでは、費用の大きいアカウントで期待値に比べて小さな揺れも通知になる。期待値の40%に満たない上振れを日々の揺れとして落とすために、割合を AND で重ねる
 
 ## 検討した代替案
 
@@ -34,7 +34,7 @@ Budgets の課金データの反映には数時間から1日の遅れがある�
 
 ### 案B: 通知の閾値と式を入力で受ける
 
-予算の通知の並びと、異常の閾値の式（`threshold_expression`）は、Provider と API の表現である（repository-wide/ADR-0204 (no-generic-escape-hatch)）。利用者に設定の方法を選ばせることになる（repository-wide/ADR-0207 決定7・9）。
+予算の通知の並びと、異常の閾値の式（`threshold_expression`）は、Provider と API の表現である（repository-wide/ADR-0204 (no-generic-escape-hatch)）。利用者に設定の方法を選ばせることになる（repository-wide/ADR-0207 (default-value-policy) 決定7・9）。
 
 ### 案C: 予算の action で止める
 
@@ -66,7 +66,7 @@ Budgets の課金データの反映には数時間から1日の遅れがある�
 ## 検証方法
 
 - Unit Test: `internal/budget/tests/budget.tftest.hcl` が予算の通知の3つの閾値と宛先の導出を、`internal/cost-anomaly/tests/anomaly.tftest.hcl` が subscription の宛先と閾値の導出を mock の plan で完全一致で確かめる。両方の `tests/` が、別の partition・アカウントの Topic を precondition が落とすことを確かめる
-- Policy Test（`make tf-policy`）: `PLAN-FINOPS-01` が予算の action の作成と更新を、`PLAN-FINOPS-02` が通知を持たない予算と、通知の email の宛先と Topic の数を、`PLAN-FINOPS-03` が subscription の宛先と頻度を、`PLAN-FINOPS-05` が予算と subscription の Topic の食い違いを落とす。どれも plan で決まらない値を落とす。`PLAN-FINOPS-00` は予算と subscription が入力に無ければ落ちる
+- Policy Test（`make tf-policy`）: `PLAN-FINOPS-01` が予算の action の作成と更新を、`PLAN-FINOPS-02` が通知を持たない予算と、通知の email の宛先と Topic の数を、`PLAN-FINOPS-03` が subscription の宛先と頻度を、`PLAN-FINOPS-05` が予算と subscription の Topic の食い違いと、usecase の instance ごとに予算と subscription が1つずつ揃わない入力を落とす。02・03 は plan で決まらない値も落とす。`PLAN-FINOPS-00` は予算と subscription が入力に無ければ落ちる
 
 ## 影響
 

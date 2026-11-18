@@ -52,7 +52,7 @@ run "budget" {
         subscriber_sns_topic_arns = toset(["arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"])
       }
     ])
-    error_message = "予算の通知が、実績の85%・100%と予測の100%を Topic 1つへ送る3つになっていません。"
+    error_message = "予算の通知が、実績の85%・100%と予測の100%の3つで、notification_topic_arn を宛先にしていません。"
   }
 
 
