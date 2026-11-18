@@ -424,6 +424,14 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。
 
+   出力の2つの Bucket の Bucket Policy（[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md) 決定8）を変える変更では、`admin` への Pull Request を merge する**前に**、その commit で `make tf-policy` を実行してから、reference の plan の文書を実アカウントの role で評価する。誤った文書を apply すると、plan の job が全文を置けず、それを直す昇格も merge できない。apply の後は `POLICY_SOURCE` を渡さずに実行し、Bucket に付いた文書を評価する
+
+   ```bash
+   POLICY_SOURCE=reference docs/setup/scripts/verify.sh output-policy
+   ```
+
+   `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
+
 #### lock の解除を用意して試す
 
 5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を **merge する前に**、管理者がそのブランチを checkout した手元で実行する
