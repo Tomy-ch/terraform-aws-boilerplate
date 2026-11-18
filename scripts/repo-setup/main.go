@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -66,6 +67,11 @@ type runner struct {
 
 func main() {
 	log.SetFlags(0)
+
+	// 手順はリリースノートを直下からの相対パスで読む。
+	if err := reporoot.Require(os.Getwd, reporoot.Toplevel); err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	if err := execute(hostRunner(), os.Args[1:]); err != nil {
 		log.Fatalf("%v", err)

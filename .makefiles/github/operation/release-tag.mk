@@ -9,19 +9,19 @@
 .PHONY: tag-major ## リリースタグ(vX+1.0.0)を作成
 .PHONY: tag-version ## 指定の版でリリースタグを作成 (VERSION=vX.Y.Z。タグが無い初回はこちら)
 
-RELEASE_TOOL := go -C scripts run ./release
+RELEASE_TOOL = $(call RUN_SCRIPT_HOST,release,$(1))
 
 tag-patch:
-	@$(RELEASE_TOOL) tag -bump patch
+	@$(call RELEASE_TOOL,tag -bump patch)
 
 tag-minor:
-	@$(RELEASE_TOOL) tag -bump minor
+	@$(call RELEASE_TOOL,tag -bump minor)
 
 tag-major:
-	@$(RELEASE_TOOL) tag -bump major
+	@$(call RELEASE_TOOL,tag -bump major)
 
 # 版はコマンドラインの VERSION だけを渡す。環境に残った VERSION で取り消しの効かないタグを打たないため。
 # 空なら scripts/release が拒否する。値はシェルを経由させず環境変数で渡す。
 tag-version: export RELEASE_TAG_VERSION = $(if $(filter command line,$(origin VERSION)),$(VERSION))
 tag-version:
-	@$(RELEASE_TOOL) tag -version "$$RELEASE_TAG_VERSION"
+	@$(call RELEASE_TOOL,tag -version "$$RELEASE_TAG_VERSION")
