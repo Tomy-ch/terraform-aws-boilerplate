@@ -110,6 +110,9 @@ func Test_readVulnerabilityReporting(t *testing.T) {
 		{"enabled の重複は拒む", `{"enabled": false, "enabled": true}`},
 		{"値の後の余分な内容は拒む", `{"enabled": true} {}`},
 		{"配列なら拒む", `[{"enabled": true}]`},
+		{"空のファイルは拒む", ``},
+		{"ファイル全体が null なら拒む", `null`},
+		{"ファイル全体が真偽値なら拒む", `true`},
 	}
 	for _, tc := range rejectCases {
 		t.Run(tc.name, func(t *testing.T) {

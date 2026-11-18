@@ -562,6 +562,16 @@ func Test_applyOrCheck(t *testing.T) {
 		assert.Equal(t, rulesetFixture, string(got))
 	})
 
+	t.Run("Private Vulnerability Reporting の宣言が不正なら apply は include の区間も書き換えない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": null}`)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDeclaration)
+		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(got))
+	})
+
 	t.Run("書き込めなければ失敗し、ファイルは元のまま", func(t *testing.T) {
 		t.Parallel()
 		testenv.RequireNonRoot(t, "読み取り専用のディレクトリへの書き込みの失敗を作る")
@@ -658,7 +668,10 @@ func Test_drift(t *testing.T) {
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
 		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
-		assert.Contains(t, out.String(), "  - Private Vulnerability Reporting: 公開でないリポジトリでは使えません\n")
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  - Private Vulnerability Reporting: 公開でないリポジトリでは使えません",
+		}, "\n")+"\n", out.String())
 	})
 
 	t.Run("公開でないリポジトリが無効を宣言していれば、突合の対象外として数え、一致に含めない", func(t *testing.T) {
@@ -684,7 +697,8 @@ func Test_drift(t *testing.T) {
 		var out bytes.Buffer
 		err := drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out)
 		require.ErrorIs(t, err, errHTTP)
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです\n", out.String())
+		assert.Equal(t, "❌ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）は宣言どおりですが、Private Vulnerability Reporting の実態を読めませんでした\n", out.String())
+		assert.ErrorContains(t, err, "Private Vulnerability Reporting の実態の読み取り")
 	})
 
 	t.Run("ほかにずれがあり Private Vulnerability Reporting を読めなければ、両方を出力する", func(t *testing.T) {

@@ -339,11 +339,13 @@ func drift(ctx context.Context, root string, c githubClient, repo string, out io
 	if pvrCompared {
 		compared = "と " + vulnerabilityReportingName + " "
 	}
-	fmt.Fprintf(out, "✅ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）%sが宣言どおりです%s\n",
-		toolName, repo, len(want.Envs), len(got.Envs), compared, excluded)
 	if pvrErr != nil {
+		fmt.Fprintf(out, "❌ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）は宣言どおりですが、%s の実態を読めませんでした%s\n",
+			toolName, repo, len(want.Envs), len(got.Envs), vulnerabilityReportingName, excluded)
 		return xerrors.Wrapf(pvrErr, "%s の実態の読み取り", vulnerabilityReportingName)
 	}
+	fmt.Fprintf(out, "✅ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）%sが宣言どおりです%s\n",
+		toolName, repo, len(want.Envs), len(got.Envs), compared, excluded)
 	return nil
 }
 
@@ -375,8 +377,8 @@ func syncSettings(ctx context.Context, root string, c githubClient, repo, only s
 	return nil
 }
 
-// syncVulnerabilityReporting は Private Vulnerability Reporting の差分を解消します。ruleset と environment は
-// 読みません —— それらの適用を、PVR を読めないことで止めないため。
+// syncVulnerabilityReporting は Private Vulnerability Reporting の差分を解消します。ruleset と environment の
+// 実態は読みません —— それらの適用を、PVR を読めないことで止めないため。
 func syncVulnerabilityReporting(ctx context.Context, root string, c githubClient, repo string, out io.Writer) error {
 	want, err := loadDesired(root)
 	if err != nil {
