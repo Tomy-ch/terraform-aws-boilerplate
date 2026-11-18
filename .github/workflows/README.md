@@ -106,7 +106,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
-  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity の role を assume し、
+  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity・unlock の role を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
 - **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは
@@ -170,9 +170,18 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   `tf-lint` が同じ検査を走らせ、その配線が外れれば `make oidc-job-lint` が落ちる。ただし必須検査は base の
   更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの順序の検査の job だけで、どちらも
   決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）
-- workload root（`env/<env>/*.tf`）の apply の job と lock の解除の job、`make ci-apply-<env>` と
-  `make ci-unlock-<env>`、environment `admin-apply` の secret、workload root の lock を外す role と
-  その environment は、workload root を足す変更が足す
+- **root ごとに、plan・apply・lock の解除の job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
+  `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
+  apply の job と lock の解除の job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
+  `ci-unlock-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
+  配置と job の過不足は `make oidc-job-lint` が、backend の key が ADR-0604 決定7 の値であることは
+  `make repo-settings-check` が落とす
+- **env ごとに、apply の workflow と lock の解除の workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
+  持つと、`on.push.branches` を1つのデプロイブランチに決められない（`make repo-settings-check`）。同じ env の
+  identity root と workload root の apply の job は同じ workflow に置く。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
+  ファイル名で引くので、改名はその履歴を断つ
+- **workload root の apply の全文は、apply の出力の Bucket に置く。** identity root の全文は plan の出力の
+  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`ci.mk` の `CI_APPLY_OUTPUT_KIND` が選ぶ）
 - job の形（environment、取る role、起動条件、検出と順序の検査への依存、拒否の step、terraform の経路、concurrency、
   `run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
@@ -324,10 +333,13 @@ apply）で戻す。CI は Pull Request を
 - **通知は失敗の通知と別に届く。** `notify-revert` が critical の deploy の系統へ、Pull Request を開く URL か、
   手元のコマンドか、用意しなかった理由を、検出のモードで送る。失敗の通知（`notify-failure`）は revert の job を
   待たない。revert の対象でない失敗では送らない
-- **root を足したら、その apply の job を revert の判定へ足す。** `APPLY_REVERT_JOBS`
-  （`.makefiles/github/operation/apply-revert.mk`）に `-job <apply の job>` を足し、`revert-plan` の `needs` に足す。
-  最後に成功した commit は、名指したすべての apply の job が成功した run の commit になる。revert は commit 単位
-  なので、片方の root だけが失敗しても、成功した側の変更も戻す
+- **root を足したら、その apply の job を revert の判定へ足す。** `revert-plan` の `needs`・`if:` の
+  `needs.<job>.result == 'failure'`・step の `APPLY_REVERT_RESULTS`（job ごとの result・apply の step の結果・失敗の段）に
+  足し、`notify-failure` の `needs` と、その job の成功を通知する job を足す。`APPLY_REVERT_WORKFLOW` は
+  その workflow 自身のファイル名である。過不足は `make oidc-job-lint` が workflow ごとに落とす。最後に成功した
+  commit は、名指したすべての apply の job が成功した run の commit になる。skipped の job（identity root の
+  apply が失敗して待っていた workload root の job など）は戻す対象なしに数え、ほかの job の失敗で判定する。
+  revert は commit 単位なので、片方の root だけが失敗しても、成功した側の変更も戻す
 - 古い revert のブランチは自動では消えない。後の apply が成功したら、人が消す
 
 保証しないこと:

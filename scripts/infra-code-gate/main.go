@@ -23,9 +23,10 @@ import (
 )
 
 var (
-	errUsage      = xerrors.New("使い方: infra-code-gate {decl|count|rego-tests} [flags]")
-	errNoInput    = xerrors.New("検査の対象が0件です")
-	errViolations = xerrors.New("違反があります")
+	errUsage          = xerrors.New("使い方: infra-code-gate {decl|count|rego-tests} [flags]")
+	errNoInput        = xerrors.New("検査の対象が0件です")
+	errNoGateWorkflow = xerrors.New("検出の job か CI の入口を走らせる workflow が1つもありません")
+	errViolations     = xerrors.New("違反があります")
 )
 
 func main() {

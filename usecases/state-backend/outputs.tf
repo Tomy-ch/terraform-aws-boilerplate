@@ -19,7 +19,7 @@ output "state_key_alias_name" {
 }
 
 output "plan_output_bucket_name" {
-  description = "CI の plan と apply の出力を置く Bucket の完全な名前。CI の plan の job が、出力の保存先に使う。"
+  description = "CI の plan と apply の出力を置く Bucket の完全な名前。人が確かめるときの参照で、CI は読まない。"
   value       = module.plan_output.bucket_name
 }
 

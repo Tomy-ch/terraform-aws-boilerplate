@@ -5,7 +5,7 @@
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
 ## ここは道具を起動する順序と、その間で値を運ぶことだけを持ち、値の算出と判定は tf-local が持つ
 ## （ADR-0702 決定3・24）。plan と apply には、CI_POLICY_NAMESPACES の Policy を掛ける。
-## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket に置き、ログには終了コード・
+## 公開されるログに terraform の出力を出さない。plan と apply の全文は plan の出力の Bucket か apply の出力の Bucket に置き、ログには終了コード・
 ## 件数・object の key・SHA-256・版 ID と Policy の違反の文だけを出す（ADR-0602 決定13）。
 ##
 ## 入力は環境変数で受ける。CI_ACCOUNT_ID（environment の secret）と CI_PR（Pull Request の番号）は
@@ -13,7 +13,6 @@
 ## 要求先は GitHub Actions が渡す。tf-local に渡す値の export は local.mk 冒頭の注記に従う。
 
 CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
-CI_ENV ?= admin
 # apply を SIGINT で打ち切るまでの時間。apply の job の timeout-minutes より、init・plan と、打ち切りの後に terraform が
 # state を書いて lock を外し、全文を置くまでの分だけ短くする。job の timeout が先に来ると全文を置けない。
 CI_APPLY_TIMEOUT ?= 20m
@@ -112,8 +111,7 @@ endef
 # 全文を置いてから失敗する。
 define CI_PLAN
 $(call CI_PREPARE,$(1),$(2)); export CI_PR GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
-plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
-|| { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
+plan_bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -kind tfplan -region "$$region" -identity "$$identity")); \
 $(call CI_TERRAFORM_PLAN,-lock=false ); \
 key=$$($(call TF_LOCAL,plan-key -pr "$$CI_PR" -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
 sha=$$($(call TF_LOCAL,sha256 "$$out")); \
@@ -126,17 +124,16 @@ $(call CI_POLICY,); \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sha256: `%s`\n- 版 ID: `%s`\n' "$$root" "$$summary" "$$key" "$$sha" "$$version" >> "$$GITHUB_STEP_SUMMARY"
 endef
 
+# apply の全文を置く Bucket の種類（tfplan か tfapply）。割当は .github/workflows/README.md の「apply の job」。$(1)=root
+CI_APPLY_OUTPUT_KIND = $(if $(filter identity,$(1)),tfplan,$(if $(filter workload,$(1)),tfapply,$(error root が identity か workload ではありません: $(1))))
+
 # $(1)=env $(2)=root。apply する commit で plan し直し、Policy を通った plan だけを apply する（ADR-0601 決定6、
 # ADR-0604 決定11）。plan は lock を取る —— ADR-0604 決定8 の plan は plan の job の plan である。
-# 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。plan の出力の Bucket の apply/ に書けるのは
-# identity root の apply の role（apply-identity）だけなので、全文を置くのはこの入口だけである（ADR-0602 決定13）。
-# workload root の apply は、この define を使えない。
+# 変更の無い plan も apply し、経路と lock の取得を毎回同じにする。
 # Bucket の名前と key を得た後は、plan・Policy・apply のどこで失敗しても全文を置いてから失敗する。
 define CI_APPLY
 $(call CI_PREPARE,$(1),$(2),failure); export GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; \
-plan_bucket=$$($(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" output -raw plan_output_bucket_name 2>> "$$out") \
-|| { echo "❌ plan の出力の Bucket の名前を state から読めません" >&2; exit 1; }; \
-test -n "$$plan_bucket" || { echo "❌ plan の出力の Bucket の名前が空です" >&2; exit 1; }; \
+plan_bucket=$$($(call TF_LOCAL,bucket -project $(TF_LOCAL_PROJECT) -env $(1) -kind $(call CI_APPLY_OUTPUT_KIND,$(2)) -region "$$region" -identity "$$identity")); \
 key=$$($(call TF_LOCAL,apply-key -run "$$GITHUB_RUN_ID" -attempt "$$GITHUB_RUN_ATTEMPT" -root "$$root")); \
 upload() { prev=$$stage; test "$$stage" != applied || stage=upload; sha=$$($(call TF_LOCAL,sha256 "$$out")); echo "apply の全文: key=$$key sha256=$$sha"; \
 version=$$($(TF_LOCAL_ENV) $(AWS_BIN) s3api put-object --region "$$region" --bucket "$$plan_bucket" --key "$$key" --body "$$out" \
@@ -180,12 +177,12 @@ endef
 .PHONY: ci-aws-credentials ## [CI] OIDC で CI_ENV の CI_ROLE の role を assume し、profile に資格情報を置く
 ci-aws-credentials: SHELL := /bin/bash
 ci-aws-credentials:
-	@$(call CI_AWS_CREDENTIALS,$(CI_ENV),$(CI_ROLE))
+	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call CI_AWS_CREDENTIALS,$(CI_ENV),$(CI_ROLE))
 
 .PHONY: ci-assume-denied ## [CI] CI_ENV の plan の job の OIDC token で、CI_DENIED_ROLES の role の assume がすべて拒否されることを確かめる
 ci-assume-denied: SHELL := /bin/bash
 ci-assume-denied:
-	@$(call CI_ASSUME_DENIED,$(CI_ENV),$(CI_DENIED_ROLES))
+	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call CI_ASSUME_DENIED,$(CI_ENV),$(CI_DENIED_ROLES))
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
 ci-plan-admin-identity: SHELL := /bin/bash

@@ -317,8 +317,9 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          APPLY_OUTCOME: ${{ needs.apply-admin-identity.outputs.apply-outcome }}
-          APPLY_FAILURE: ${{ needs.apply-admin-identity.outputs.failure }}
+          APPLY_REVERT_WORKFLOW: terraform-apply.yaml
+          APPLY_REVERT_RESULTS: >-
+            apply-admin-identity=${{ needs.apply-admin-identity.result }}:${{ needs.apply-admin-identity.outputs.apply-outcome }}:${{ needs.apply-admin-identity.outputs.failure }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: make ci-revert-plan RUNNER_MODE=host
 

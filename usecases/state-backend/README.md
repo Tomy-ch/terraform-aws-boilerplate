@@ -36,7 +36,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の IAM で、S3 の Action の Resource を state Bucket とその key に絞る |
 | `state_key_arn` | [`deployment-identity`](../deployment-identity/README.md)。CI の role の鍵の権限と、apply の role の鍵の Deny の Resource を、この鍵に絞る。`modules/kms` の `key_arn_for_iam` を返し、Key Policy の置き換えを待たない。Key Policy が名指す role の作成が、この ARN を Resource に持つ apply-identity の inline policy の書き込みの後に来るため（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定4）。鍵を使う resource には渡さない |
 | `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` と `scripts/tf-local`（`state-key` が alias の一覧からこの名前で鍵の ARN を引く）がそれぞれ同じ値を写し、テストはこの出力を `imports.tftest.hcl` の直書きで固定し、`scripts/tf-local` のテストは自分の写しをその直書きと突き合わせる（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
-| `plan_output_bucket_name` | CI の plan の job。plan の出力の保存先 |
+| `plan_output_bucket_name` | 人が確かめるときの参照。CI の plan と apply の job は、同じ名前を `scripts/tf-local` の `bucket -kind tfplan` で組む（規則の一致は `tf-local` のテストが見る） |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 | `apply_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。workload root の apply の出力の Bucket の作成と設定の Resource を絞る。Bucket の resource を参照せず、名前の規則から組む値である |
 
