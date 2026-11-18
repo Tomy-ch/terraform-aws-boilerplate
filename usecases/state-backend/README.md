@@ -40,7 +40,7 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
 | `apply_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。workload root の apply の出力の Bucket の作成と設定と、apply の role の書き込みの Resource を絞る。Bucket の resource の属性を返し、名前の規則から組んだ ARN と一致しなければ落ちる |
 
-- ログの所在: 3つの Bucket は S3 サーバーアクセスログを持たない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）。API の呼び出しの記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
+- ログの所在: 3つの Bucket は S3 サーバーアクセスログを持たない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）。API の呼び出しと object の読み書き（data events）は組織の trail（`security-tooling`）が記録し、`audit-evidence` が保管する
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `state-backend` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
 
 ## 段ごとに持つもの
