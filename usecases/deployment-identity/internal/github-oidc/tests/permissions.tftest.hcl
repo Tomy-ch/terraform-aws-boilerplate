@@ -324,8 +324,10 @@ run "policies" {
           "organizations:Terminate*",
           "organizations:Untag*",
           "organizations:Update*",
+          "iam:DeleteAccountPasswordPolicy",
           "iam:DisableOrganizationsRoot*",
           "iam:EnableOrganizationsRoot*",
+          "iam:UpdateAccountPasswordPolicy",
           "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
           "sso:AttachManagedPolicyToPermissionSet",
           "sso:CreateAccountAssignment",
@@ -693,6 +695,12 @@ run "key_arn_follows_input" {
 
   variables {
     state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-2",
+      "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::210987654321:role/break-glass/tabp-break-glass",
+    ]
   }
 
   override_data {
@@ -842,6 +850,12 @@ run "role_arns_follow_data_sources" {
   variables {
     name_prefix   = "t4bp-dev"
     state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-2",
+      "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::210987654321:role/break-glass/tabp-break-glass",
+    ]
   }
 
   override_data {
@@ -967,5 +981,56 @@ run "governance_only_in_admin" {
       if contains(["DenyGovernanceChange", "DenyBreakGlassChange"], s.Sid)
     ] == ["DenyGovernanceChange", "DenyBreakGlassChange"]
     error_message = "admin でない env の apply の role に、統制の構成物と break-glass の変更の Deny がありません。"
+  }
+}
+
+run "break_glass_in_other_account" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::210987654321:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "break_glass_in_other_partition" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws-cn:iam::123456789012:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "admin_break_glass_without_user_and_group" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "admin_break_glass_without_role" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+# 管理アカウントの外では break-glass は role だけを持つ（organization-baseline が StackSets で配る）。
+run "member_break_glass_role_only" {
+  command = plan
+
+  variables {
+    name_prefix      = "tabp-dev"
+    env              = "dev"
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   }
 }

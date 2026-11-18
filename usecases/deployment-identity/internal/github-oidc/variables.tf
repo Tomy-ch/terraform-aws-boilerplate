@@ -39,6 +39,6 @@ variable "apply_output_bucket_arn" {
 }
 
 variable "break_glass_arns" {
-  description = "break-glass の IAM user・group・role の ARN。apply の role の Deny と、管理アカウントの apply-identity の作成と設定の Resource に使う。"
+  description = "break-glass の IAM user・group・role の ARN。apply の role の Deny と、管理アカウントの plan と apply-identity の role の読み取りの Resource に使う。"
   type        = list(string)
 }

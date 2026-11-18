@@ -434,6 +434,11 @@ run "accepts_key_arn_in_other_partition" {
   command = plan
 
   variables {
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::123456789012:role/break-glass/tabp-break-glass",
+    ]
     state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   }
 
