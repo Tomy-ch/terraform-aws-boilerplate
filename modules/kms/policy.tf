@@ -71,11 +71,23 @@ locals {
     }],
     # ECR は repository の作成者の権限で grant を作り、削除で廃止する（Amazon ECR User Guide「Encryption at rest」）。
     # 管理の委任は CreateGrant を含まないので、作成者の role を名指す。
+    # kms:GrantIsForAWSResource は CreateGrant にだけ効く条件キーなので、grant の作成を別の文にする（ADR-0301 案D）。
+    length(local.ecr_roles) == 0 ? [] : [{
+      Sid       = "RolesViaEcrGrant"
+      Effect    = "Allow"
+      Principal = { AWS = local.ecr_roles }
+      Action    = "kms:CreateGrant"
+      Resource  = "*"
+      Condition = {
+        StringEquals = { "kms:ViaService" = "ecr.${local.region}.amazonaws.com" }
+        Bool         = { "kms:GrantIsForAWSResource" = "true" }
+      }
+    }],
     length(local.ecr_roles) == 0 ? [] : [{
       Sid       = "RolesViaEcr"
       Effect    = "Allow"
       Principal = { AWS = local.ecr_roles }
-      Action    = ["kms:CreateGrant", "kms:DescribeKey", "kms:RetireGrant"]
+      Action    = ["kms:DescribeKey", "kms:RetireGrant"]
       Resource  = "*"
       Condition = { StringEquals = { "kms:ViaService" = "ecr.${local.region}.amazonaws.com" } }
     }],

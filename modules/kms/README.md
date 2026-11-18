@@ -39,7 +39,8 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `AccountKeyAdministration` | アカウント（`arn:<partition>:iam::<account>:root`） | 鍵の管理の21 Action（`policy.tf` の `administration_actions`）。暗号操作と `kms:CreateGrant` を含まない | 無し |
 | `RolesViaS3ReadWrite` | `users.roles` のうち `via = "s3"`・`access = "read-write"` の role | `kms:Decrypt`・`kms:GenerateDataKey` | `kms:ViaService = s3.<region>.amazonaws.com` |
 | `RolesViaS3Read<n>` | `users.roles` のうち `via = "s3"`・`access = "read"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt` | `kms:ViaService = s3.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:s3:arn` にその role の `objects` |
-| `RolesViaEcr` | `users.roles` のうち `via = "ecr"`（`access = "grant"`）の role | `kms:CreateGrant`・`kms:DescribeKey`・`kms:RetireGrant` | `kms:ViaService = ecr.<region>.amazonaws.com` |
+| `RolesViaEcrGrant` | `users.roles` のうち `via = "ecr"`（`access = "grant"`）の role | `kms:CreateGrant` | `kms:ViaService = ecr.<region>.amazonaws.com` と `Bool kms:GrantIsForAWSResource = true`（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 案D） |
+| `RolesViaEcr` | 同上 | `kms:DescribeKey`・`kms:RetireGrant` | `kms:ViaService = ecr.<region>.amazonaws.com`（`kms:GrantIsForAWSResource` はこの2つの Action に効かない） |
 | `LogsService` | `logs.<region>.amazonaws.com` | `kms:Decrypt`・`kms:Describe*`・`kms:Encrypt`・`kms:GenerateDataKey*`・`kms:ReEncrypt*` | `ArnEquals kms:EncryptionContext:aws:logs:arn` に `users.services.logs` の Log Group の ARN（`:*` を付けない） |
 | `RolesViaSns<n>` | `users.roles` のうち `via = "sns"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt`・`kms:GenerateDataKey*` | `kms:ViaService = sns.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:sns:topicArn` にその role の `topics` の Topic の ARN |
 | `SnsPublisherBudgets` | `budgets.amazonaws.com`。`users.services.sns` のいずれかの `publishers` が `budgets` を含むとき | `kms:Decrypt`・`kms:GenerateDataKey*` | `StringEquals aws:SourceAccount` に鍵のアカウント |

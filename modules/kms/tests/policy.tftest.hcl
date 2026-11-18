@@ -472,14 +472,24 @@ run "roles_via_ecr" {
     condition = jsondecode(aws_kms_key_policy.this.policy) == {
       Version = "2012-10-17"
       Statement = [var.administration, {
+        Sid       = "RolesViaEcrGrant"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-dev-ci-apply"] }
+        Action    = "kms:CreateGrant"
+        Resource  = "*"
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ecr.ap-northeast-1.amazonaws.com" }
+          Bool         = { "kms:GrantIsForAWSResource" = "true" }
+        }
+        }, {
         Sid       = "RolesViaEcr"
         Effect    = "Allow"
         Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-dev-ci-apply"] }
-        Action    = ["kms:CreateGrant", "kms:DescribeKey", "kms:RetireGrant"]
+        Action    = ["kms:DescribeKey", "kms:RetireGrant"]
         Resource  = "*"
         Condition = { StringEquals = { "kms:ViaService" = "ecr.ap-northeast-1.amazonaws.com" } }
       }]
     }
-    error_message = "via = ecr の role の Key Policy が、管理の委任と、ECR 経由の grant の作成・廃止の2文になっていません。"
+    error_message = "via = ecr の role の Key Policy が、管理の委任と、ECR 経由の grant の作成（AWS の resource 向けに限る）と、鍵の参照・grant の廃止の3文になっていません。"
   }
 }
