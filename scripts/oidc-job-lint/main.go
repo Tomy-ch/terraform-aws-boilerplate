@@ -40,13 +40,14 @@
 //     if: と continue-on-error: を持たない step を資格情報の取得より前に置き
 //     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
-//   - lock の解除の job（`make ci-unlock-*` を持つ job）は、unlock-identity の role を取り、workflow の起動が
+//   - lock の解除の job（`make ci-unlock-*` を持つ job）は、外す root の lock の解除の role（identity root は
+//     unlock-identity、ほかの root は unlock）を取り、workflow の起動が
 //     入力の無い workflow_dispatch だけで、cancel-in-progress: false の concurrency と refuse-stale の step を持ち、
 //     terraform も他の CI の入口も走らせず、同じ workflow に plan と apply の job を置かない。concurrency の group は
 //     字面で書き、`make ci-unlock-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の、
 //     字面の group と一致しない —— group はリポジトリの中で workflow をまたいで共有され、同じ group では lock の解除の
 //     起動が待機中の apply の run を取り消す
-//   - plan と apply の job は unlock-identity の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
+//   - plan と apply の job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
@@ -75,7 +76,8 @@ const (
 	defaultRulesetFile      = ".github/settings/branch-protection.json"
 	refuseUntrusted         = "refuse-untrusted"
 	refuseStale             = "refuse-stale"
-	unlockRole              = "unlock-identity"
+	unlockIdentityRole      = "unlock-identity"
+	unlockWorkloadRole      = "unlock"
 )
 
 var (
@@ -92,7 +94,7 @@ var (
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
 	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=[a-z0-9]+\s+CI_ROLE=[a-z-]+`)
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
-	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity)(?:\s|$)`)
+	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity|unlock)(?:\s|$)`)
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
 	ciPlan      = makeRun(`ci-plan-[a-z0-9-]+`)
 	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
@@ -469,9 +471,9 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	findings = append(findings, checkRole(job, cred, role, finding)...)
 	findings = append(findings, checkSteps(job, cred, finding)...)
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
-	// plan の入口の job が unlock-identity の role を取った違反は checkRole が出すので、plan の規則で見る。
+	// plan の入口の job が lock の解除の role を取った違反は checkRole が出すので、plan の規則で見る。
 	// ほかの role を取った plan の入口の job は、apply の規則が落とす。
-	plan := !isUnlock(job) && (role == "plan" || (role == unlockRole && hasLine(job, planEntry)))
+	plan := !isUnlock(job) && (role == "plan" || (isUnlockRole(role) && hasLine(job, planEntry)))
 	refusal := refuseStale
 	if plan {
 		refusal = refuseUntrusted
@@ -577,16 +579,35 @@ func checkNoCancel(job workflow.Job, w workflowInfo, kind string, finding func(i
 	return nil
 }
 
-// checkRole は、lock の解除の job が unlock-identity の role を取り、ほかの job がそれを取らないことを検査します。
+// checkRole は、lock の解除の job が外す root の lock の解除の role（unlockRoleFor）を取り、ほかの job が
+// lock の解除の role を取らないことを検査します。
 func checkRole(job workflow.Job, cred workflow.Line, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	unlock := isUnlock(job)
 	switch {
-	case unlock && role != unlockRole:
-		return []lintreport.Finding{finding(cred.Number, "lock の解除の job は unlock-identity の role を取ってください（%s）。lock file を消す権限だけを持つ role です", role)}
-	case !unlock && role == unlockRole:
-		return []lintreport.Finding{finding(cred.Number, "unlock-identity の role は lock の解除の job（make ci-unlock-*）だけが取ってください")}
+	case unlock && role != unlockRoleFor(job):
+		return []lintreport.Finding{finding(cred.Number, "lock の解除の job は %s の role を取ってください（%s）。その root の lock file を消す権限だけを持つ role です", unlockRoleFor(job), role)}
+	case !unlock && isUnlockRole(role):
+		return []lintreport.Finding{finding(cred.Number, "%s の role は lock の解除の job（make ci-unlock-*）だけが取ってください", role)}
 	}
 	return nil
+}
+
+func isUnlockRole(role string) bool {
+	return role == unlockIdentityRole || role == unlockWorkloadRole
+}
+
+// unlockRoleFor は、lock の解除の job の make ci-unlock-<env>-<root> の root から、取るべき role を返します。
+// identity root は unlock-identity、ほかの root は unlock。
+func unlockRoleFor(job workflow.Job) string {
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) {
+			continue
+		}
+		if m := unlockEntry.FindStringSubmatch(l.Text); m != nil && !strings.HasSuffix(m[1], "-identity") {
+			return unlockWorkloadRole
+		}
+	}
+	return unlockIdentityRole
 }
 
 // checkUnlock は、state に残った lock を外す job を検査します。人が起動したときだけ走り、実行中の lock の解除を

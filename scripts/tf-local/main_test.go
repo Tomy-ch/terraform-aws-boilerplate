@@ -1382,7 +1382,7 @@ func TestCiMk(t *testing.T) {
 		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
 		assert.Contains(t, got, `trap 'rm -f "$token" "$resp" "$d/assume-stderr"' EXIT`)
 		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`,
-			`for r in apply apply-identity unlock-identity; do export r`,
+			`for r in apply apply-identity unlock-identity unlock; do export r`,
 			`role-arn -project tabp -env admin -role "$r" -account "$CI_ACCOUNT_ID"`,
 			`--role-session-name "gha-denied-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"`,
 			`--output json > /dev/null 2> "$err" || rc=$?`,
@@ -1690,13 +1690,13 @@ func testCiAssumeDenied(t *testing.T, recipe recipeFunc) {
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	}
 
-	t.Run("既定の3つの役割がすべて拒否されれば成功し、資格情報をどこにも置かない", func(t *testing.T) {
+	t.Run("既定の4つの役割がすべて拒否されれば成功し、資格情報をどこにも置かない", func(t *testing.T) {
 		t.Parallel()
 
 		r := recipe(t, "ci-assume-denied", denied(nil), env...)
 		require.NoError(t, r.err, r.out)
-		assert.Equal(t, 3, countCalls(r.calls, assume), r.calls)
-		for _, role := range []string{"apply", "apply-identity", "unlock-identity"} {
+		assert.Equal(t, 4, countCalls(r.calls, assume), r.calls)
+		for _, role := range []string{"apply", "apply-identity", "unlock-identity", "unlock"} {
 			assert.Contains(t, r.calls, "--role-arn arn:aws:iam::123456789012:role/tabp-admin-ci-"+role+" ")
 			assert.Contains(t, r.out, "✅ "+role+" の role の assume は拒否されました（AccessDenied）")
 		}

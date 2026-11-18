@@ -145,7 +145,7 @@ before_apply() {
   expect_json "OIDC provider（token.actions.githubusercontent.com）がまだ無い" "$(aws iam list-open-id-connect-providers)" \
     '[.OpenIDConnectProviderList[].Arn | select(endswith("/token.actions.githubusercontent.com"))] | length == 0'
   local r
-  for r in plan apply apply-identity unlock-identity; do
+  for r in plan apply apply-identity unlock-identity unlock; do
     expect_error "role tabp-admin-ci-$r がまだ無い" NoSuchEntity aws iam get-role --role-name "tabp-admin-ci-$r"
   done
   expect_error "state Bucket に Bucket Policy がまだ無い" NoSuchBucketPolicy s3 get-bucket-policy "$BUCKET"
@@ -161,7 +161,7 @@ stage4() {
     "$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com")" \
     '.ClientIDList == ["sts.amazonaws.com"]'
   local r p
-  for r in plan:plan apply:apply apply-identity:apply_identity unlock-identity:unlock_identity; do
+  for r in plan:plan apply:apply apply-identity:apply_identity unlock-identity:unlock_identity unlock:unlock; do
     p=${r#*:}
     r=${r%%:*}
     expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
@@ -200,7 +200,7 @@ permissions() {
     s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration
     s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration
     s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls)
-  local b="arn:aws:s3:::${BUCKET}" key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate" pb="arn:aws:s3:::${PLAN_BUCKET}"
+  local b="arn:aws:s3:::${BUCKET}" key="arn:aws:s3:::${BUCKET}/identity/terraform.tfstate" pb="arn:aws:s3:::${PLAN_BUCKET}" ab="arn:aws:s3:::${APPLY_BUCKET}"
 
   echo "# S3 と IAM"
   sim allowed plan "$b" "${reads[@]}"
@@ -211,7 +211,11 @@ permissions() {
   sim allowed plan "${pb}/pr/1/x" s3:PutObject
   sim allowed apply-identity "$pb" "${reads[@]}" s3:PutLifecycleConfiguration
   sim allowed apply-identity "${pb}/apply/1/x" s3:PutObject
-  sim allowed apply "$b" s3:ListBucket
+  sim allowed plan "$ab" s3:ListBucket "${reads[@]}"
+  sim allowed apply-identity "$ab" s3:CreateBucket s3:ListBucket "${reads[@]}" s3:PutBucketPolicy s3:PutLifecycleConfiguration
+  sim implicitDeny apply-identity "$ab" s3:DeleteBucket
+  sim implicitDeny plan "$ab" s3:CreateBucket s3:PutBucketPolicy
+  sim allowed apply "$b" s3:ListBucket s3:GetEncryptionConfiguration
   sim implicitDeny plan "$key" s3:PutObject
   sim implicitDeny plan "$(role_arn plan)" iam:PutRolePolicy
   sim implicitDeny plan "${pb}/pr/1/x" s3:DeleteObject s3:DeleteObjectVersion
@@ -234,6 +238,7 @@ permissions() {
   sim allowed apply-identity "*" kms:ListAliases
   sim allowed plan "$sk" kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags
   sim allowed plan "*" kms:ListAliases
+  sim allowed apply "*" kms:ListAliases
   sim implicitDeny apply-identity "*" kms:CreateKey
   sim implicitDeny apply-identity "$sk" kms:CreateAlias kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt
   sim implicitDeny apply-identity "$other" kms:DescribeKey kms:PutKeyPolicy
@@ -251,6 +256,17 @@ permissions() {
   sim implicitDeny unlock-identity "$lock" s3:PutObject s3:DeleteObjectVersion
   sim implicitDeny unlock-identity "$key" s3:GetObject s3:PutObject s3:DeleteObject
   sim implicitDeny unlock-identity "$sk" kms:Decrypt
+
+  echo "# unlock の role"
+  local wkey="arn:aws:s3:::${BUCKET}/workload/terraform.tfstate"
+  local wlock="${wkey}.tflock"
+  sim allowed unlock "$b" --context "ContextKeyName=s3:prefix,ContextKeyValues=workload/terraform.tfstate.tflock,ContextKeyType=string" s3:ListBucket
+  sim allowed unlock "$wlock" s3:GetObject s3:DeleteObject
+  sim implicitDeny unlock "$b" --context "ContextKeyName=s3:prefix,ContextKeyValues=identity/terraform.tfstate.tflock,ContextKeyType=string" s3:ListBucket
+  sim implicitDeny unlock "$wlock" s3:PutObject s3:DeleteObjectVersion
+  sim implicitDeny unlock "$lock" s3:GetObject s3:DeleteObject
+  sim implicitDeny unlock "$wkey" s3:GetObject s3:PutObject s3:DeleteObject
+  sim implicitDeny unlock "$sk" kms:Decrypt
 }
 
 stage5() {
@@ -283,6 +299,7 @@ main() {
   fi
   BUCKET="tabp-admin-tfstate-${ACCOUNT_ID}-${REGION}-an"
   PLAN_BUCKET=${BUCKET/-tfstate-/-tfplan-}
+  APPLY_BUCKET=${BUCKET/-tfstate-/-tfapply-}
   echo "# ${stage}（profile: ${AWS_PROFILE}、region: ${REGION}）"
   case $stage in
   stage1) stage1 ;;

@@ -137,6 +137,7 @@ func Test_applyEnvs(t *testing.T) {
 	}{
 		"apply-identity の env を返す":                        {applyWorkflowFixture, []string{"x"}},
 		"lock の解除と plan の env は返さない":                      {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
+		"workload root の lock の解除の env は返さない":             {"jobs:\n  a:\n    environment: x-unlock\n", nil},
 		"同じ env の apply と apply-identity は1つ":             {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
 		"jobs の外の environment は読まない":                      {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
 		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
@@ -252,7 +253,7 @@ func Test_nextMatch(t *testing.T) {
 func Test_isApplySuffix(t *testing.T) {
 	t.Parallel()
 
-	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false}
+	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false, unlockSuffix: false}
 	for suffix, w := range want {
 		t.Run(suffix, func(t *testing.T) {
 			t.Parallel()

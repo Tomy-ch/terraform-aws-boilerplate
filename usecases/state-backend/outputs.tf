@@ -27,3 +27,8 @@ output "plan_output_bucket_arn" {
   description = "CI の plan と apply の出力を置く Bucket の ARN。CI の role の IAM で、plan と apply の出力の書き込みと Bucket の設定の Resource を絞るのに使う。"
   value       = module.plan_output.bucket_arn
 }
+
+output "apply_output_bucket_arn" {
+  description = "workload root の apply の出力を置く Bucket の ARN。CI の role の IAM で、その Bucket の作成と設定と書き込みの Resource を絞るのに使う。"
+  value       = local.apply_output_bucket_arn
+}

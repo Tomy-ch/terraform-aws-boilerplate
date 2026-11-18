@@ -16,7 +16,7 @@ const workflowsDir = ".github/workflows"
 // isApplySuffix は、push で起動する apply の job が使う environment の接尾辞かを返します。plan は
 // Pull Request で、lock の解除は workflow_dispatch だけで起動するので、push の起動条件を持たない。
 func isApplySuffix(suffix string) bool {
-	return suffix != planSuffix && suffix != unlockIdentitySuffix
+	return suffix != planSuffix && suffix != unlockIdentitySuffix && suffix != unlockSuffix
 }
 
 var (

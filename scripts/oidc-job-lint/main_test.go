@@ -20,9 +20,9 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
 
-const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-apply-identity"},{"name":"admin-unlock-identity"}]`
+const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-apply-identity"},{"name":"admin-unlock-identity"},{"name":"admin-unlock"}]`
 
-var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity"}
+var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"}
 
 var planPerms = []string{"contents: read", "id-token: write"}
 
@@ -610,6 +610,15 @@ func Test_checkJob(t *testing.T) {
 		findings := checkJob("p.yaml", jobOf(t, src, "plan-admin-identity"), planPerms, envs, infoOf(src))
 		require.Len(t, findings, 1, "役割の違反だけを1件出す: "+messages(findings))
 		assert.Contains(t, findings[0].Message, "unlock-identity の role は lock の解除の job（make ci-unlock-*）だけが取って")
+	})
+
+	t.Run("plan の job が unlock の role を取れば、役割の違反だけを出す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, replaced(t, planWorkflow, "CI_ROLE=plan", "CI_ROLE=unlock"), "environment: admin-plan", "environment: admin-unlock")
+		findings := checkJob("p.yaml", jobOf(t, src, "plan-admin-identity"), planPerms, envs, infoOf(src))
+		require.Len(t, findings, 1, "役割の違反だけを1件出す: "+messages(findings))
+		assert.Contains(t, findings[0].Message, "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って")
 	})
 
 	t.Run("apply の job が unlock-identity の role を取れば違反", func(t *testing.T) {
@@ -2259,6 +2268,13 @@ func Test_checkJobUnlock(t *testing.T) {
 		assert.Empty(t, checkJob("u.yaml", job, planPerms, envs, infoOf(unlockWorkflow)))
 	})
 
+	t.Run("workload root の lock の解除の job は unlock の role で通る", func(t *testing.T) {
+		t.Parallel()
+
+		src := workloadUnlockWorkflow(t)
+		assert.Empty(t, checkJob("u.yaml", jobOf(t, src, "unlock-admin-identity"), planPerms, envs, infoOf(src)))
+	})
+
 	t.Run("apply の入口と併せ持つ job は lock の解除の job として落とす", func(t *testing.T) {
 		t.Parallel()
 
@@ -2282,25 +2298,41 @@ func Test_checkJobUnlock(t *testing.T) {
 	}
 }
 
+// workloadUnlockWorkflow は、unlockWorkflow の lock の解除の job を workload root へ向けたもの。job の id は変えない。
+func workloadUnlockWorkflow(t *testing.T) string {
+	t.Helper()
+
+	src := replaced(t, unlockWorkflow, "make ci-unlock-admin-identity", "make ci-unlock-admin-workload")
+	src = replaced(t, src, "CI_ROLE=unlock-identity", "CI_ROLE=unlock")
+
+	return replaced(t, src, "environment: admin-unlock-identity", "environment: admin-unlock")
+}
+
 func Test_checkRole(t *testing.T) {
 	t.Parallel()
 
 	unlockJob := jobOf(t, unlockWorkflow, "unlock-admin-identity")
 	applyJob := jobOf(t, applyWorkflow, "apply-admin-identity")
 	planJob := jobOf(t, planWorkflow, "plan-admin-identity")
+	workloadUnlockJob := jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")
 	for name, c := range map[string]struct {
 		job  workflow.Job
 		role string
 		want string
 	}{
-		"lock の解除の job の unlock-identity は違反0件": {unlockJob, "unlock-identity", ""},
-		"lock の解除の job の apply-identity は違反":    {unlockJob, "apply-identity", "lock の解除の job は unlock-identity の role を取って"},
-		"lock の解除の job の apply は違反":             {unlockJob, "apply", "lock の解除の job は unlock-identity の role を取って"},
-		"lock の解除の job の plan は違反":              {unlockJob, "plan", "lock の解除の job は unlock-identity の role を取って"},
-		"apply の job の apply-identity は違反0件":    {applyJob, "apply-identity", ""},
-		"apply の job の unlock-identity は違反":     {applyJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
-		"plan の job の plan は違反0件":               {planJob, "plan", ""},
-		"plan の job の unlock-identity は違反":      {planJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"lock の解除の job の unlock-identity は違反0件":          {unlockJob, "unlock-identity", ""},
+		"lock の解除の job の apply-identity は違反":             {unlockJob, "apply-identity", "lock の解除の job は unlock-identity の role を取って"},
+		"lock の解除の job の apply は違反":                      {unlockJob, "apply", "lock の解除の job は unlock-identity の role を取って"},
+		"lock の解除の job の plan は違反":                       {unlockJob, "plan", "lock の解除の job は unlock-identity の role を取って"},
+		"apply の job の apply-identity は違反0件":             {applyJob, "apply-identity", ""},
+		"apply の job の unlock-identity は違反":              {applyJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"plan の job の plan は違反0件":                        {planJob, "plan", ""},
+		"plan の job の unlock-identity は違反":               {planJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"identity の lock の解除の job の unlock は違反":          {unlockJob, "unlock", "lock の解除の job は unlock-identity の role を取って"},
+		"workload の lock の解除の job の unlock は違反0件":        {workloadUnlockJob, "unlock", ""},
+		"workload の lock の解除の job の unlock-identity は違反": {workloadUnlockJob, "unlock-identity", "lock の解除の job は unlock の role を取って"},
+		"apply の job の unlock は違反":                       {applyJob, "unlock", "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って"},
+		"plan の job の unlock は違反":                        {planJob, "unlock", "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -2851,4 +2883,54 @@ func Test_checkPullRequestOrder(t *testing.T) {
 	assert.Empty(t, checkPullRequestOrder("wf", unlock, 0), "apply の job が無ければ求めない")
 	assert.Empty(t, checkPullRequestOrder("wf", nil, 0), "apply の job が無ければ求めない")
 	assert.Contains(t, messages(checkPullRequestOrder("wf", append(unlock, apply...), 0)), "make resource-order-check-test と make resource-order-check を走らせるもの")
+}
+
+func Test_isUnlockRole(t *testing.T) {
+	t.Parallel()
+
+	for role, want := range map[string]bool{
+		"unlock-identity": true,
+		"unlock":          true,
+		"apply":           false,
+		"apply-identity":  false,
+		"plan":            false,
+		"":                false,
+	} {
+		t.Run(role, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, isUnlockRole(role))
+		})
+	}
+}
+
+func Test_unlockRoleFor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identity root の lock の解除は unlock-identity", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, unlockWorkflow, "unlock-admin-identity")))
+	})
+
+	t.Run("identity root でない root の lock の解除は unlock", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")))
+	})
+
+	t.Run("name の中の make ci-unlock-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-unlock-admin-workload\n")
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+
+	t.Run("identity と別の root の入口を併せ持てば unlock を返す", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n")
+		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+
+	t.Run("コメントの中の make ci-unlock-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      # make ci-unlock-admin-workload\n")
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
 }

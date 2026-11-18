@@ -32,3 +32,8 @@ variable "plan_output_bucket_arn" {
   description = "plan の出力の Bucket の ARN。plan の role の書き込みと、Bucket の設定の Resource をこの Bucket に絞る。"
   type        = string
 }
+
+variable "apply_output_bucket_arn" {
+  description = "workload root の apply の出力の Bucket の ARN。apply-identity の作成と設定、plan の読み取りの Resource をこの Bucket に絞る。"
+  type        = string
+}

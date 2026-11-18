@@ -21,7 +21,8 @@ run "reference_roles" {
       module.deployment_identity.apply_role_arn,
       module.deployment_identity.apply_identity_role_arn,
       module.deployment_identity.unlock_identity_role_arn,
-    ])) == 4
-    error_message = "reference の値から4つの role が組まれていません。"
+      module.deployment_identity.unlock_role_arn,
+    ])) == 5
+    error_message = "reference の値から5つの role が組まれていません。"
   }
 }

@@ -88,11 +88,12 @@ func Test_validateEnvironments(t *testing.T) {
 		in      []environment
 		wantErr error
 	}{
-		{"plan / apply / apply-identity / unlock-identity / 任意の名前は通る", []environment{
+		{"plan / apply / apply-identity / unlock-identity / unlock / 任意の名前は通る", []environment{
 			env("a-plan", deployFromProtectedPR, off),
 			env("a-apply", deployFromDeployBranch, off),
 			env("a-apply-identity", deployFromDeployBranch, off),
 			env("a-unlock-identity", deployFromDeployBranch, off),
+			env("a-unlock", deployFromDeployBranch, off),
 			env("copilot", deployFromAny, off),
 		}, nil},
 		{"0件は拒む", nil, errEmptyDeclaration},
@@ -107,6 +108,8 @@ func Test_validateEnvironments(t *testing.T) {
 		{"plan が Pull Request を許さない宣言は拒む", []environment{env("a-plan", deployFromProtected, off)}, errDeclaration},
 		{"apply が保護ブランチ全体を許す宣言は拒む", []environment{env("a-apply", deployFromProtected, off)}, errDeclaration},
 		{"unlock-identity が保護ブランチ全体を許す宣言は拒む", []environment{env("a-unlock-identity", deployFromProtected, off)}, errDeclaration},
+		{"unlock が Pull Request を許す宣言は拒む", []environment{env("a-unlock", deployFromProtectedPR, off)}, errDeclaration},
+		{"unlock が保護ブランチ全体を許す宣言は拒む", []environment{env("a-unlock", deployFromProtected, off)}, errDeclaration},
 		{"plan がデプロイブランチだけを許す宣言は拒む", []environment{env("a-plan", deployFromDeployBranch, off)}, errDeclaration},
 		{"deployment-identity の名前でない environment は deploy-branch を使えない", []environment{env("copilot", deployFromDeployBranch, off)}, errDeclaration},
 	}
@@ -135,7 +138,8 @@ func Test_requiredDeployFrom(t *testing.T) {
 		{"admin-apply-identity", deployFromDeployBranch, true},
 		{"admin-unlock-identity", deployFromDeployBranch, true},
 		{"admin-plan", deployFromProtectedPR, true},
-		{"admin-unlock", "", false},
+		{"admin-unlock", deployFromDeployBranch, true},
+		{"admin-unlocker", "", false},
 		{"copilot", "", false},
 		{"admin-planner", "", false},
 	}
@@ -204,7 +208,7 @@ func Test_environmentPatterns(t *testing.T) {
 
 	t.Run("deploy-branch は名前の env のデプロイブランチだけに展開する", func(t *testing.T) {
 		t.Parallel()
-		for _, name := range []string{"admin-apply", "admin-apply-identity", "admin-unlock-identity"} {
+		for _, name := range []string{"admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"} {
 			assert.Equal(t, []string{"admin"}, environmentPatterns(b, env(name, deployFromDeployBranch)), name)
 		}
 	})

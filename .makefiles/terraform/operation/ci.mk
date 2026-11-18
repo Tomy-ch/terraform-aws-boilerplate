@@ -23,7 +23,7 @@ CI_ROLE ?= plan
 CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
 
 # 拒否されるべき role。plan のほかの役割をすべて並べる。
-CI_DENIED_ROLES ?= apply apply-identity unlock-identity
+CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock
 
 # OIDC の token を job の作業ディレクトリに置く。token と応答と $(2) は、呼び出し元の shell が終わるときに消す。
 # $(1)=env $(2)=ほかに消すファイル
