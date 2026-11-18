@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -37,7 +39,7 @@ const (
 	commandTimeout = 120 * time.Second
 
 	// lsRemoteNotFound は `git ls-remote --exit-code` が「一致が無い」ときに返す終了コード。
-	// それ以外の非ゼロは照会そのものの失敗であり、区別しないと「無い」と読んでしまう。
+	// それ以外の非ゼロの扱いは remoteBranchExists を参照。
 	lsRemoteNotFound = 2
 )
 
@@ -47,17 +49,19 @@ var (
 	errNoTag          = xerrors.New("❌ リリースタグが存在しません。最初のタグは -version vX.Y.Z（make tag-version VERSION=vX.Y.Z）で版を指定して打ってください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
 		"➡️ 先に make tag-version VERSION=vX.Y.Z で最初のタグを打ってから再実行してください")
-	errUnknownBump       = xerrors.New("unknown -bump (patch / minor / major)")
-	errVersionWithBump   = xerrors.New("❌ -version と -bump は同時に指定できません")
-	errVersionFormat     = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
-	errVersionExists     = xerrors.New("は既にタグとして存在します")
-	errVersionNotNewer   = xerrors.New("は最新のタグより新しくありません")
-	errHelpRequested     = xerrors.New("help requested")
-	errNoReleaseNote     = xerrors.New("が存在しません。タグとリリースをスキップしました")
-	errBranchExists      = xerrors.New("は既に存在します。処理を中止します")
-	errDirtyWorktree     = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
-	errUsage             = xerrors.New("❌ usage: release <tag|branch> [flags]")
-	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (tag / branch)")
+	errUnknownBump        = xerrors.New("unknown -bump (patch / minor / major)")
+	errVersionWithBump    = xerrors.New("❌ -version と -bump は同時に指定できません")
+	errVersionFormat      = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
+	errVersionExists      = xerrors.New("は既にタグとして存在します")
+	errVersionNotNewer    = xerrors.New("は最新のタグより新しくありません")
+	errHelpRequested      = xerrors.New("help requested")
+	errNoReleaseNote      = xerrors.New("が存在しません。タグとリリースをスキップしました")
+	errReleaseNoteNotFile = xerrors.New("はファイルではありません。タグとリリースをスキップしました")
+	errEmptyReleaseNote   = xerrors.New("が空です。タグとリリースをスキップしました")
+	errBranchExists       = xerrors.New("は既に存在します。処理を中止します")
+	errDirtyWorktree      = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
+	errUsage              = xerrors.New("❌ usage: release <tag|branch> [flags]")
+	errUnknownSubcommand  = xerrors.New("❌ unknown subcommand (tag / branch)")
 )
 
 type version struct {
@@ -69,21 +73,29 @@ type step struct {
 	args []string
 }
 
-// runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリへ触れずに
-// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
+// runner は、手順を実際に走らせる実行層。テストが差し替える継ぎ目（scripts/README.md の Test Strategy）。
 type runner struct {
-	run    func(s step) error
-	output func(name string, args ...string) (string, error)
-	// remoteBranchExists は、origin に同名ブランチがあるかを返す。照会できなければエラー。
+	run                func(s step) error
+	output             func(name string, args ...string) (string, error)
 	remoteBranchExists func(branch string) (bool, error)
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := execute(hostRunner(), os.Args[1:]); err != nil {
+	if err := start(hostRunner(), os.Args[1:], os.Getwd, reporoot.Toplevel); err != nil {
 		log.Fatalf("%v", err)
 	}
+}
+
+// start は、作業ディレクトリがリポジトリの直下であることを確かめてから execute を呼びます。
+// 手順はリリースノートを直下からの相対パスで読む。
+func start(r runner, args []string, getwd, toplevel func() (string, error)) error {
+	if err := reporoot.Require(getwd, toplevel); err != nil {
+		return err
+	}
+
+	return execute(r, args)
 }
 
 func execute(r runner, args []string) error {
@@ -110,13 +122,10 @@ func execute(r runner, args []string) error {
 	return err
 }
 
-// ---- バージョン解決（純粋） -------------------------------------------------
-
 func (v version) String() string {
 	return "v" + strconv.Itoa(v.major) + "." + strconv.Itoa(v.minor) + "." + strconv.Itoa(v.patch)
 }
 
-// parseVersion は、`vX.Y.Z` 形式の文字列を version へ変換します。
 func parseVersion(s string) (version, bool) {
 	m := semverPattern.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
@@ -175,11 +184,8 @@ func bump(v version, kind string) (version, error) {
 	}
 }
 
-// ---- 手順の組み立て（純粋） -------------------------------------------------
-
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// syncProductionSteps は、production を origin の最新へ合わせる手順を返します。
 func syncProductionSteps() []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", "production"}},
@@ -189,16 +195,15 @@ func syncProductionSteps() []step {
 	}
 }
 
-// tagSteps は、リリースノートを本文にタグを打ち、GitHub Release を作る手順を返します。
+// タグ本文は既定の cleanup だと `#` で始まる行を落とすので、ノートの見出しを残すよう verbatim で打つ。
 func tagSteps(next, notePath string) []step {
 	return []step{
-		{name: "git", args: []string{"tag", "-a", next, "-F", notePath}},
+		{name: "git", args: []string{"tag", "-a", next, "--cleanup=verbatim", "-F", notePath}},
 		{name: "git", args: []string{"push", "origin", next}},
 		{name: "gh", args: []string{"release", "create", next, "--title", next, "--notes-file", notePath}},
 	}
 }
 
-// branchSteps は、base からブランチを切って push し、デフォルトブランチに設定する手順を返します。
 func branchSteps(base, branch string) []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", base}},
@@ -209,8 +214,6 @@ func branchSteps(base, branch string) []step {
 }
 
 func notePath(v string) string { return releaseNoteDir + "/" + v + ".md" }
-
-// ---- 実行 -------------------------------------------------------------------
 
 // listTags は、origin のタグを取り直してから `git tag` の出力を返します。
 func listTags(r runner) (string, error) {
@@ -316,8 +319,8 @@ func runTag(r runner, args []string) error {
 	log.Printf("✅ 最新のproductionを取得完了")
 
 	note := notePath(next.String())
-	if _, err := os.Stat(note); err != nil {
-		return xerrors.Wrap(errNoReleaseNote, "❌ "+note)
+	if err := checkReleaseNote(note); err != nil {
+		return err
 	}
 
 	if err := r.runAll(tagSteps(next.String(), note)); err != nil {
@@ -325,6 +328,26 @@ func runTag(r runner, args []string) error {
 	}
 
 	log.Printf("✅ タグを打ちました %s on production HEAD", next)
+
+	return nil
+}
+
+// checkReleaseNote は、path がタグと Release の本文にできるリリースノートかを確かめます。
+// 無い・ディレクトリ・空白だけのときはそれぞれのセンチネルを、読めないときはその理由を返します。
+func checkReleaseNote(path string) error {
+	body, err := os.ReadFile(path) //nolint:gosec // path は版から組み立てた .github/release 配下のノート
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return xerrors.Wrap(errNoReleaseNote, "❌ "+path)
+	case err != nil:
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return xerrors.Wrap(errReleaseNoteNotFile, "❌ "+path)
+		}
+
+		return xerrors.Wrap(err, "❌ リリースノート "+path+" を読めません")
+	case strings.TrimSpace(string(body)) == "":
+		return xerrors.Wrap(errEmptyReleaseNote, "❌ "+path)
+	}
 
 	return nil
 }
@@ -456,7 +479,7 @@ func run(s step) error {
 	return nil
 }
 
-// runAll は、手順を並び順に実行します。失敗した時点で残りは実行しません。
+// runAll は、失敗した時点で残りの手順を実行しません。
 func (r runner) runAll(steps []step) error {
 	for _, s := range steps {
 		if err := r.run(s); err != nil {

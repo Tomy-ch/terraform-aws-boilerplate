@@ -9,13 +9,13 @@
 .PHONY: branch-major ## releaseブランチ(vX+1.0.0)を作成して、デフォルトブランチに設定(現在のタグ基準)
 
 hotfix-patch:
-	@$(RELEASE_TOOL) branch -bump patch -prefix hotfix
+	@$(call RELEASE_TOOL,branch -bump patch -prefix hotfix)
 
 branch-patch:
-	@$(RELEASE_TOOL) branch -bump patch -prefix release
+	@$(call RELEASE_TOOL,branch -bump patch -prefix release)
 
 branch-minor:
-	@$(RELEASE_TOOL) branch -bump minor -prefix release
+	@$(call RELEASE_TOOL,branch -bump minor -prefix release)
 
 branch-major:
-	@$(RELEASE_TOOL) branch -bump major -prefix release
+	@$(call RELEASE_TOOL,branch -bump major -prefix release)

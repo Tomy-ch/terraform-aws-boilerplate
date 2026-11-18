@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -15,13 +18,11 @@ import (
 )
 
 const (
-	tagListCall   = "git tag"
-	fetchTagsCall = "git fetch --tags origin"
-	// annotateTagCall / tagPushCall / releaseCreateCall は、取り消しの効かない 3 手順の記録表記。
-	annotateTagCall   = "git tag -a v1.2.4 -F .github/release/v1.2.4.md"
+	tagListCall       = "git tag"
+	fetchTagsCall     = "git fetch --tags origin"
+	annotateTagCall   = "git tag -a v1.2.4 --cleanup=verbatim -F .github/release/v1.2.4.md"
 	tagPushCall       = "git push origin v1.2.4"
 	releaseCreateCall = "gh release create v1.2.4 --title v1.2.4 --notes-file .github/release/v1.2.4.md"
-	// branchCreateCall / branchPushCall / defaultBranchCall は、ブランチ作成側の後戻りできない手順の記録表記。
 	branchCreateCall  = "git switch -c release/v1.3.0 origin/production"
 	branchPushCall    = "git push origin release/v1.3.0"
 	defaultBranchCall = "gh repo edit --default-branch release/v1.3.0"
@@ -30,8 +31,6 @@ const (
 var errFakeCommand = xerrors.New("fake command failed")
 
 // fakeRunner は、git / gh を一切起動せず呼び出しの並びだけを控える実行器。
-// tag / branch の手順はタグの push と GitHub Release の作成を含み、走らせてしまうと
-// 取り消せないため、中止条件と手順の順序はここへ差し替えた実行層の上で検証します。
 type fakeRunner struct {
 	// calls は、run / output が呼ばれた順の「実行ファイル 引数...」表記。
 	calls []string
@@ -40,8 +39,7 @@ type fakeRunner struct {
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	failOn         string
 	remoteBranches map[string]bool
-	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
-	lsRemoteFails bool
+	lsRemoteFails  bool
 }
 
 func (f *fakeRunner) runner() runner {
@@ -80,7 +78,6 @@ func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
 	return f.remoteBranches[branch], nil
 }
 
-// taggableRunner は、v1.2.3 を最新タグとして返す実行器を用意します。
 func taggableRunner() *fakeRunner {
 	return &fakeRunner{outputs: map[string]string{tagListCall: "v1.2.3\n"}}
 }
@@ -323,7 +320,7 @@ func Test_tagSteps(t *testing.T) {
 		t.Run("タグ作成 → push → GitHub Release の順に並べる", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, []string{
-				"git tag -a v1.2.4 -F .github/release/v1.2.4.md",
+				"git tag -a v1.2.4 --cleanup=verbatim -F .github/release/v1.2.4.md",
 				"git push origin v1.2.4",
 				"gh release create v1.2.4 --title v1.2.4 --notes-file .github/release/v1.2.4.md",
 			}, commands(tagSteps("v1.2.4", notePath("v1.2.4"))))
@@ -334,6 +331,20 @@ func Test_tagSteps(t *testing.T) {
 			steps := tagSteps("v9.9.9", notePath("v9.9.9"))
 			assert.Equal(t, ".github/release/v9.9.9.md", steps[0].args[len(steps[0].args)-1])
 			assert.Equal(t, ".github/release/v9.9.9.md", steps[2].args[len(steps[2].args)-1])
+		})
+
+		t.Run("タグ本文はリリースノートを見出しまでそのまま持つ", func(t *testing.T) {
+			t.Parallel()
+			dir := newRepo(t)
+			note := "# v1.2.4\n\n## 変更\n\n- 本文\n"
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, releaseNoteDir), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, notePath("v1.2.4")), []byte(note), 0o600))
+
+			gitIn(t, dir, append([]string{"-c", "tag.gpgsign=false"}, tagSteps("v1.2.4", notePath("v1.2.4"))[0].args...)...)
+			//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
+			got, err := exec.CommandContext(t.Context(), "git", "-C", dir, "tag", "-l", "--format=%(contents)", "v1.2.4").Output()
+			require.NoError(t, err)
+			assert.Equal(t, note, strings.TrimSuffix(string(got), "\n"))
 		})
 	})
 }
@@ -1006,7 +1017,7 @@ func Test_runTag(t *testing.T) {
 				"git switch production",
 				"git reset --hard origin/production",
 				fetchTagsCall,
-				"git tag -a v0.1.0 -F .github/release/v0.1.0.md",
+				"git tag -a v0.1.0 --cleanup=verbatim -F .github/release/v0.1.0.md",
 				"git push origin v0.1.0",
 				"gh release create v0.1.0 --title v0.1.0 --notes-file .github/release/v0.1.0.md",
 			}, f.calls)
@@ -1127,6 +1138,20 @@ func Test_runTag(t *testing.T) {
 
 			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errNoReleaseNote)
 			assert.Contains(t, f.calls, "git switch production")
+			assert.NotContains(t, f.calls, annotateTagCall)
+			assert.NotContains(t, f.calls, tagPushCall)
+			assert.NotContains(t, f.calls, releaseCreateCall)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("production のノートが空ならタグも push も Release も作らない", func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, releaseNoteDir), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, notePath("v1.2.4")), nil, 0o600))
+			t.Chdir(dir)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errEmptyReleaseNote)
 			assert.NotContains(t, f.calls, annotateTagCall)
 			assert.NotContains(t, f.calls, tagPushCall)
 			assert.NotContains(t, f.calls, releaseCreateCall)
@@ -1389,6 +1414,110 @@ func Test_execute(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("branch の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
 			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"branch", "-bump", "patch"}), errNoTagForBranch)
+		})
+	})
+}
+
+func Test_start(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	same := func() (string, error) { return dir, nil }
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下なら execute へ進む", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+
+			require.ErrorIs(t, start(f.runner(), nil, same, same), errUsage)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下でなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			other := t.TempDir()
+			sub := func() (string, error) { return other, nil }
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下を解決できなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			unresolved := func() (string, error) { return "", reporoot.ErrNoToplevel }
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag"}, same, unresolved), reporoot.ErrNoToplevel)
+			assert.Empty(t, f.calls)
+		})
+	})
+}
+
+func Test_checkReleaseNote(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "v1.2.4.md")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("本文のあるノートを受け付ける", func(t *testing.T) {
+			t.Parallel()
+
+			require.NoError(t, checkReleaseNote(write(t, "# v1.2.4\n")))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("無ければ errNoReleaseNote を返す", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "v1.2.4.md")
+
+			err := checkReleaseNote(path)
+			require.ErrorIs(t, err, errNoReleaseNote)
+			assert.Contains(t, err.Error(), path)
+		})
+
+		// git tag -F にディレクトリを渡すと、production へ合わせた後でタグの作成が失敗する。
+		t.Run("ディレクトリなら errReleaseNoteNotFile を返す", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "v1.2.4.md")
+			require.NoError(t, os.Mkdir(path, 0o750))
+
+			require.ErrorIs(t, checkReleaseNote(path), errReleaseNoteNotFile)
+		})
+
+		// 空のノートでも git tag -F は成功し、本文の無いタグと Release が push される。
+		for name, body := range map[string]string{"空": "", "空白だけ": " \n\t\n"} {
+			t.Run(name+"なら errEmptyReleaseNote を返す", func(t *testing.T) {
+				t.Parallel()
+
+				require.ErrorIs(t, checkReleaseNote(write(t, body)), errEmptyReleaseNote)
+			})
+		}
+
+		t.Run("読めなければ「無い」と言わずに読めない理由を返す", func(t *testing.T) {
+			t.Parallel()
+			testenv.RequireNonRoot(t, "特権実行では権限を落としても読めてしまい、読めないノートを作れない")
+			path := write(t, "# v1.2.4\n")
+			require.NoError(t, os.Chmod(path, 0o000))
+
+			err := checkReleaseNote(path)
+			require.ErrorIs(t, err, os.ErrPermission)
+			require.NotErrorIs(t, err, errNoReleaseNote)
 		})
 	})
 }

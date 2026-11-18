@@ -54,7 +54,7 @@
 呼び出し元の `.mk` のコメントが持つ。**
 
 **この表は検査の起動を尽くす。操作系はここに入らない** —— `github/operation/` の
-`RELEASE_TOOL` / `REPO_SETUP` は `go -C scripts run` を直接呼び、`RUNNER_MODE` を経由しない。
+`RELEASE_TOOL` / `REPO_SETUP` は `RUN_SCRIPT_HOST` で起動し、`RUNNER_MODE` を経由しない。
 取り消しの効かない操作をホストの資格情報で行うためで、理由は各 `.mk` のコメントが持つ。
 `terraform/operation/` も同じ理由で表の外にあり、ホストの terraform と AWS CLI を人か CI の role の資格情報で起動する。
 `TF_ENV`（資格情報を外す）を経由しない。aws と terraform に渡す値（region、Bucket 名、外す環境変数、
