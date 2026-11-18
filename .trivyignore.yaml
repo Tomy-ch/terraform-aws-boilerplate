@@ -2,7 +2,14 @@
 #
 # 抑止の条件は ADR-0501 決定13 に従う（.gitleaks.toml / .hadolint.yaml と共通）。
 
-vulnerabilities: []
+vulnerabilities:
+  - id: CVE-2026-112366
+    paths:
+      - "docker/tools/node/pnpm-lock.yaml"
+    expired_at: 2026-12-18
+    statement: |
+      picomatch の ReDoS（GHSA-fc5q-39xc-vjpf）。理由と撤回条件の正本は
+      docker/tools/README.md の「抑止している脆弱性」。
 
 misconfigurations:
   - id: DS-0026

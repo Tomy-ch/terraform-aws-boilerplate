@@ -72,9 +72,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       # persist-credentials: false — nothing after checkout talks to git, and this
@@ -85,7 +82,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # cache: false — this job holds security-events: write. See README.md の「キャッシュの安全性」.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:

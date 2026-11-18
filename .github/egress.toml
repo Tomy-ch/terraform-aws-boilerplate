@@ -44,10 +44,6 @@ hosts = [
   "tuf-repo-cdn.sigstore.dev",
   "rekor.sigstore.dev",
   "fulcio.sigstore.dev",
-  # aube（mise 内蔵の npm インストーラ）が依存解決時に問い合わせる supply-chain 情報源。遮断すると解決自体が失敗する
-  "api.npmjs.org",
-  "api.osv.dev",
-  "npm.jsr.io",
   # GitHub Release を持たない aqua パッケージ（`type: http`）の配布元。cooldown は公開時刻を
   # ここが配布物へ付けた Last-Modified から取り、遮断されると窓を満たさないのではなく
   # **確認できない**として落ちる。
@@ -99,8 +95,7 @@ hosts = [
 # OIDC で role を assume し、state の Bucket に触れる job（ADR-0602 決定12）。region は env/*/providers.tf の
 # region に合わせる。
 # S3 の Bucket の名前はアカウント ID を含み、公開の宣言に置けないので、virtual-hosted-style の endpoint を
-# wildcard で許す。blob / R2 の wildcard を退けた理由（誰でも作れる置き場への持ち出し口）はここにも
-# 当たるが、bullfrog は名前解決の結果の IP で判定するので、正確な名前を書いても持ち出し口は狭まらない。
+# wildcard で許す。IP 判定のため正確な名前を書いても狭まらない点は docker-hub と同じ（ADR-0702 の保証範囲）。
 # 外す条件は、Bucket を path-style で呼ぶか、bullfrog が名前そのもので判定するようになること。
 hosts = [
   "sts.ap-northeast-1.amazonaws.com",
@@ -224,7 +219,9 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."versions-check.yaml:versions-check"]
-classes = ["mise"]
+classes = ["mise", "docker-hub"]
+# node_tools のイメージを組むとき、alpine の apk が取るパッケージの配布元。
+extra = ["dl-cdn.alpinelinux.org"]
 
 [job."secret-scan.yaml:secret-scan"]
 classes = ["mise"]

@@ -74,9 +74,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       # fetch-depth: 0 is required. The default shallow checkout has neither the base branch tip
@@ -90,8 +87,8 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          # node は npm: backend の解決に要る。省くと mise が commitlint を入れられない。
-          tools: node npm:@commitlint/cli
+          # node は lockfile から入れた commitlint を動かす（ADR-0503 決定17）。
+          tools: node aqua:pnpm/pnpm
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run commitlint on the PR commit range

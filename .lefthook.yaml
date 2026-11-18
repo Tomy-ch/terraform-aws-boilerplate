@@ -80,7 +80,21 @@ pre-commit:
         - "docker/**/Dockerfile"
         - "scripts/go.mod"
         - "scripts/versions/*.go"
+        - "docker/tools/node/package.json"
+        - ".makefiles/host-tools.mk"
       run: make versions-check
+
+    # 何を見るかは scripts/README.md の pin-pnpm 行と .makefiles/docker/node-tools.mk が持つ。
+    pin-pnpm-check:
+      glob:
+        - "mise.toml"
+        - "docker/tools/Dockerfile"
+        - "scripts/pin-pnpm/*.go"
+      run: make pin-pnpm-check
+    node-tools-lock-check:
+      glob:
+        - "docker/tools/node/*"
+      run: make node-tools-lock-check
 
     # uses: / image: が lockfile 通りか。orphan を落とすのは pin-actions-check だけである。
     pin-actions-check:

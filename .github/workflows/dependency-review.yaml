@@ -67,4 +67,7 @@ jobs:
           # This workflow is a merge blocker, so it is narrowed to HIGH and
           # above to keep the block signal actionable.
           fail-on-severity: high
+          # GHSA-fc5q-39xc-vjpf: picomatch の ReDoS。理由と撤回条件の正本は
+          # docker/tools/README.md の「抑止している脆弱性」。
+          allow-ghsas: GHSA-fc5q-39xc-vjpf
           comment-summary-in-pr: always
