@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,8 +18,12 @@ import (
 
 const commandTimeout = 30 * time.Second
 
-// repoEnvVars は、git が見るリポジトリと作業ツリーを作業ディレクトリから切り離す環境変数。
-// 立っていると show-toplevel は作業ディレクトリの位置を答えず、呼び出し側が続けて起動する git も同じ値を継ぐ。
+// repoEnvVars は、git が見るリポジトリを作業ディレクトリから切り離しうる環境変数。
+// GIT_DIR と GIT_WORK_TREE が立っていると show-toplevel は作業ディレクトリの位置を答えない。GIT_DIR だけでは
+// 作業ディレクトリそのものが直下として答えられ、直下の下からの起動が通る。呼び出し側が続けて起動する git は、
+// GIT_COMMON_DIR と GIT_INDEX_FILE を含む 4 つとも同じ値を継ぐ。
+// 空文字でも git は立っているものとして扱うので、値を見ずに止める。`git rev-parse --local-env-vars` の残り
+// （GIT_CONFIG_PARAMETERS など）は場所を変えず、`git -c` や hook が立てるので、止める対象に入れない。
 var repoEnvVars = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
 
 var (
@@ -61,7 +66,8 @@ func Require(getwd, toplevel func() (string, error)) error {
 }
 
 // Toplevel は、`git rev-parse --show-toplevel` が返すリポジトリの直下を返します。
-// git の外、作業ツリーを持たない場所では ErrNoToplevel を、repoEnvVars が立っていれば ErrRepoEnv を返します。
+// git の外、作業ツリーを持たない場所、`.git` を持たない場所（core.worktree で作業ツリーを付け替えたとき）では
+// ErrNoToplevel を、repoEnvVars が立っていれば ErrRepoEnv を返します。
 func Toplevel() (string, error) {
 	for _, name := range repoEnvVars {
 		if _, ok := os.LookupEnv(name); ok {
@@ -85,6 +91,10 @@ func Toplevel() (string, error) {
 	root := strings.TrimSpace(string(out))
 	if root == "" {
 		return "", ErrNoToplevel
+	}
+
+	if _, err := os.Lstat(filepath.Join(root, ".git")); err != nil {
+		return "", xerrors.Wrap(ErrNoToplevel, root+" に .git がありません")
 	}
 
 	return root, nil

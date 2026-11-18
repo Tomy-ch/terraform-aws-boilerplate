@@ -20,14 +20,38 @@ func fixed(path string) func() (string, error) {
 
 func failing() (string, error) { return "", errFake }
 
+func git(t *testing.T, args ...string) {
+	t.Helper()
+
+	out, err := exec.CommandContext(t.Context(), "git", args...).CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	out, err := exec.CommandContext(t.Context(), "git", "init", "-q", dir).CombinedOutput()
-	require.NoError(t, err, string(out))
+	git(t, "init", "-q", dir)
 
 	return dir
+}
+
+// fakeGit は、PATH を script だけを置いた git の偽物に差し替える。
+func fakeGit(t *testing.T, script string) {
+	t.Helper()
+
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\n"+script), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+	t.Setenv("PATH", bin)
+}
+
+func realPath(t *testing.T, path string) string {
+	t.Helper()
+
+	got, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+
+	return got
 }
 
 func TestRequire(t *testing.T) {
@@ -81,23 +105,31 @@ func TestRequire(t *testing.T) {
 			require.ErrorIs(t, Require(failing, fixed(t.TempDir())), errFake)
 		})
 
-		t.Run("作業ディレクトリが無ければエラーにする", func(t *testing.T) {
+		t.Run("作業ディレクトリが無ければ別のディレクトリとは扱わずに stat の失敗を返す", func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
+			missing := filepath.Join(root, "missing")
 
-			require.Error(t, Require(fixed(filepath.Join(root, "missing")), fixed(root)))
+			err := Require(fixed(missing), fixed(root))
+			require.ErrorIs(t, err, os.ErrNotExist)
+			require.NotErrorIs(t, err, ErrNotRoot)
+			assert.Contains(t, err.Error(), missing)
 		})
 
-		t.Run("直下が無ければエラーにする", func(t *testing.T) {
+		t.Run("直下が無ければ別のディレクトリとは扱わずに stat の失敗を返す", func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			missing := filepath.Join(dir, "missing")
 
-			require.Error(t, Require(fixed(dir), fixed(filepath.Join(dir, "missing"))))
+			err := Require(fixed(dir), fixed(missing))
+			require.ErrorIs(t, err, os.ErrNotExist)
+			require.NotErrorIs(t, err, ErrNotRoot)
+			assert.Contains(t, err.Error(), missing)
 		})
 	})
 }
 
-//nolint:paralleltest // t.Chdir はプロセス全体の作業ディレクトリを変えるため並列化できない
+//nolint:paralleltest // t.Chdir と t.Setenv はプロセス全体を変えるため並列化できない
 func TestToplevel(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Run("直下の下からでも直下を返す", func(t *testing.T) {
@@ -108,7 +140,21 @@ func TestToplevel(t *testing.T) {
 
 			got, err := Toplevel()
 			require.NoError(t, err)
-			require.NoError(t, Require(fixed(got), fixed(root)))
+			assert.Equal(t, realPath(t, root), realPath(t, got))
+		})
+
+		// worktree と submodule の直下では .git がファイルになる。
+		t.Run(".git がファイルの直下も直下として返す", func(t *testing.T) {
+			root := initRepo(t)
+			git(t, "-C", root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+				"commit", "-q", "--allow-empty", "-m", "init")
+			wt := filepath.Join(t.TempDir(), "wt")
+			git(t, "-C", root, "worktree", "add", "-q", wt)
+			t.Chdir(wt)
+
+			got, err := Toplevel()
+			require.NoError(t, err)
+			assert.Equal(t, realPath(t, wt), realPath(t, got))
 		})
 	})
 
@@ -127,27 +173,81 @@ func TestToplevel(t *testing.T) {
 			require.ErrorIs(t, err, ErrNoToplevel)
 		})
 
+		t.Run("bare リポジトリでは ErrNoToplevel を返す", func(t *testing.T) {
+			dir := t.TempDir()
+			git(t, "init", "-q", "--bare", dir)
+			t.Chdir(dir)
+
+			_, err := Toplevel()
+			require.ErrorIs(t, err, ErrNoToplevel)
+		})
+
+		// core.worktree が直下の下を指すと、git はそこを直下として答え、本来の直下の下からの起動が通る。
+		t.Run("core.worktree で付け替えた作業ツリーは .git が無いので ErrNoToplevel を返す", func(t *testing.T) {
+			root := initRepo(t)
+			sub := filepath.Join(root, "scripts")
+			require.NoError(t, os.Mkdir(sub, 0o750))
+			git(t, "-C", root, "config", "core.worktree", sub)
+			t.Chdir(sub)
+
+			_, err := Toplevel()
+			require.ErrorIs(t, err, ErrNoToplevel)
+			assert.Contains(t, err.Error(), ".git がありません")
+		})
+
 		t.Run("解決できない理由として git の stderr を添える", func(t *testing.T) {
 			t.Chdir(t.TempDir())
+			t.Setenv("LC_ALL", "C")
 
 			_, err := Toplevel()
 			require.ErrorIs(t, err, ErrNoToplevel)
 			assert.Contains(t, err.Error(), "not a git repository")
 		})
 
-		// GIT_DIR だけが立っていると、git は作業ディレクトリそのものを直下として返し、直下の下からの起動が通る。
-		for _, name := range repoEnvVars {
-			t.Run(name+" が立っていれば git に訊かずに止まる", func(t *testing.T) {
-				root := initRepo(t)
-				sub := filepath.Join(root, "scripts")
-				require.NoError(t, os.Mkdir(sub, 0o750))
-				t.Chdir(sub)
-				t.Setenv(name, filepath.Join(root, ".git"))
+		t.Run("stderr の無い失敗でも ErrNoToplevel を返す", func(t *testing.T) {
+			fakeGit(t, "exit 1\n")
 
-				_, err := Toplevel()
-				require.ErrorIs(t, err, ErrRepoEnv)
-				assert.Contains(t, err.Error(), name)
-			})
+			_, err := Toplevel()
+			require.ErrorIs(t, err, ErrNoToplevel)
+			assert.Contains(t, err.Error(), "exit status 1")
+		})
+
+		t.Run("git を起動できなければ ErrNoToplevel を返す", func(t *testing.T) {
+			t.Setenv("PATH", t.TempDir())
+
+			_, err := Toplevel()
+			require.ErrorIs(t, err, ErrNoToplevel)
+		})
+
+		t.Run("git が空を返せば ErrNoToplevel を返す", func(t *testing.T) {
+			fakeGit(t, "exit 0\n")
+
+			_, err := Toplevel()
+			require.ErrorIs(t, err, ErrNoToplevel)
+		})
+
+		for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"} {
+			for _, empty := range []bool{false, true} {
+				label := "パス"
+				if empty {
+					label = "空文字"
+				}
+				t.Run(name+" が"+label+"で立っていれば git に訊かずに止まる", func(t *testing.T) {
+					root := initRepo(t)
+					sub := filepath.Join(root, "scripts")
+					require.NoError(t, os.Mkdir(sub, 0o750))
+					t.Chdir(sub)
+					value := filepath.Join(root, ".git")
+					if empty {
+						value = ""
+					}
+					t.Setenv(name, value)
+
+					_, err := Toplevel()
+					require.ErrorIs(t, err, ErrRepoEnv)
+					assert.Contains(t, err.Error(), name)
+				})
+			}
 		}
 	})
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -48,17 +49,19 @@ var (
 	errNoTag          = xerrors.New("❌ リリースタグが存在しません。最初のタグは -version vX.Y.Z（make tag-version VERSION=vX.Y.Z）で版を指定して打ってください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
 		"➡️ 先に make tag-version VERSION=vX.Y.Z で最初のタグを打ってから再実行してください")
-	errUnknownBump       = xerrors.New("unknown -bump (patch / minor / major)")
-	errVersionWithBump   = xerrors.New("❌ -version と -bump は同時に指定できません")
-	errVersionFormat     = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
-	errVersionExists     = xerrors.New("は既にタグとして存在します")
-	errVersionNotNewer   = xerrors.New("は最新のタグより新しくありません")
-	errHelpRequested     = xerrors.New("help requested")
-	errNoReleaseNote     = xerrors.New("が存在しません。タグとリリースをスキップしました")
-	errBranchExists      = xerrors.New("は既に存在します。処理を中止します")
-	errDirtyWorktree     = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
-	errUsage             = xerrors.New("❌ usage: release <tag|branch> [flags]")
-	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (tag / branch)")
+	errUnknownBump        = xerrors.New("unknown -bump (patch / minor / major)")
+	errVersionWithBump    = xerrors.New("❌ -version と -bump は同時に指定できません")
+	errVersionFormat      = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
+	errVersionExists      = xerrors.New("は既にタグとして存在します")
+	errVersionNotNewer    = xerrors.New("は最新のタグより新しくありません")
+	errHelpRequested      = xerrors.New("help requested")
+	errNoReleaseNote      = xerrors.New("が存在しません。タグとリリースをスキップしました")
+	errReleaseNoteNotFile = xerrors.New("はファイルではありません。タグとリリースをスキップしました")
+	errEmptyReleaseNote   = xerrors.New("が空です。タグとリリースをスキップしました")
+	errBranchExists       = xerrors.New("は既に存在します。処理を中止します")
+	errDirtyWorktree      = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
+	errUsage              = xerrors.New("❌ usage: release <tag|branch> [flags]")
+	errUnknownSubcommand  = xerrors.New("❌ unknown subcommand (tag / branch)")
 )
 
 type version struct {
@@ -316,8 +319,8 @@ func runTag(r runner, args []string) error {
 	log.Printf("✅ 最新のproductionを取得完了")
 
 	note := notePath(next.String())
-	if _, err := os.Stat(note); err != nil {
-		return xerrors.Wrap(errNoReleaseNote, "❌ "+note)
+	if err := checkReleaseNote(note); err != nil {
+		return err
 	}
 
 	if err := r.runAll(tagSteps(next.String(), note)); err != nil {
@@ -325,6 +328,26 @@ func runTag(r runner, args []string) error {
 	}
 
 	log.Printf("✅ タグを打ちました %s on production HEAD", next)
+
+	return nil
+}
+
+// checkReleaseNote は、path がタグと Release の本文にできるリリースノートかを確かめます。
+// 無い・ディレクトリ・空白だけのときはそれぞれのセンチネルを、読めないときはその理由を返します。
+func checkReleaseNote(path string) error {
+	body, err := os.ReadFile(path) //nolint:gosec // path は版から組み立てた .github/release 配下のノート
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return xerrors.Wrap(errNoReleaseNote, "❌ "+path)
+	case err != nil:
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return xerrors.Wrap(errReleaseNoteNotFile, "❌ "+path)
+		}
+
+		return xerrors.Wrap(err, "❌ リリースノート "+path+" を読めません")
+	case strings.TrimSpace(string(body)) == "":
+		return xerrors.Wrap(errEmptyReleaseNote, "❌ "+path)
+	}
 
 	return nil
 }

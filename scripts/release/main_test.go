@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -1143,6 +1144,20 @@ func Test_runTag(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
+		t.Run("production のノートが空ならタグも push も Release も作らない", func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, releaseNoteDir), 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, notePath("v1.2.4")), nil, 0o600))
+			t.Chdir(dir)
+			f := taggableRunner()
+
+			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errEmptyReleaseNote)
+			assert.NotContains(t, f.calls, annotateTagCall)
+			assert.NotContains(t, f.calls, tagPushCall)
+			assert.NotContains(t, f.calls, releaseCreateCall)
+		})
+
+		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("タグを作れなければ push も Release 作成も行わない", func(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
@@ -1406,7 +1421,8 @@ func Test_execute(t *testing.T) {
 func Test_start(t *testing.T) {
 	t.Parallel()
 
-	same := func() (string, error) { return "/", nil }
+	dir := t.TempDir()
+	same := func() (string, error) { return dir, nil }
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -1425,7 +1441,8 @@ func Test_start(t *testing.T) {
 		t.Run("直下でなければ手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{}
-			sub := func() (string, error) { return os.TempDir(), nil }
+			other := t.TempDir()
+			sub := func() (string, error) { return other, nil }
 
 			require.ErrorIs(t, start(f.runner(), []string{"tag"}, sub, same), reporoot.ErrNotRoot)
 			assert.Empty(t, f.calls)
@@ -1438,6 +1455,69 @@ func Test_start(t *testing.T) {
 
 			require.ErrorIs(t, start(f.runner(), []string{"tag"}, same, unresolved), reporoot.ErrNoToplevel)
 			assert.Empty(t, f.calls)
+		})
+	})
+}
+
+func Test_checkReleaseNote(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "v1.2.4.md")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+		return path
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("本文のあるノートを受け付ける", func(t *testing.T) {
+			t.Parallel()
+
+			require.NoError(t, checkReleaseNote(write(t, "# v1.2.4\n")))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("無ければ errNoReleaseNote を返す", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "v1.2.4.md")
+
+			err := checkReleaseNote(path)
+			require.ErrorIs(t, err, errNoReleaseNote)
+			assert.Contains(t, err.Error(), path)
+		})
+
+		// git tag -F にディレクトリを渡すと、production へ合わせた後でタグの作成が失敗する。
+		t.Run("ディレクトリなら errReleaseNoteNotFile を返す", func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "v1.2.4.md")
+			require.NoError(t, os.Mkdir(path, 0o750))
+
+			require.ErrorIs(t, checkReleaseNote(path), errReleaseNoteNotFile)
+		})
+
+		// 空のノートでも git tag -F は成功し、本文の無いタグと Release が push される。
+		for name, body := range map[string]string{"空": "", "空白だけ": " \n\t\n"} {
+			t.Run(name+"なら errEmptyReleaseNote を返す", func(t *testing.T) {
+				t.Parallel()
+
+				require.ErrorIs(t, checkReleaseNote(write(t, body)), errEmptyReleaseNote)
+			})
+		}
+
+		t.Run("読めなければ「無い」と言わずに読めない理由を返す", func(t *testing.T) {
+			t.Parallel()
+			testenv.RequireNonRoot(t, "特権実行では権限を落としても読めてしまい、読めないノートを作れない")
+			path := write(t, "# v1.2.4\n")
+			require.NoError(t, os.Chmod(path, 0o000))
+
+			err := checkReleaseNote(path)
+			require.ErrorIs(t, err, os.ErrPermission)
+			require.NotErrorIs(t, err, errNoReleaseNote)
 		})
 	})
 }
