@@ -409,6 +409,11 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
+**アラームの置き場:** CloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが正しく鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まり、その知識はresourceと同じmoduleのテストに置く。dimensionもresourceへの参照で渡せるので、存在しないresourceを指したまま鳴らないalarmにならない。
+
+- alarmを持つmoduleは、通知先のTopicのARNを入力で受ける。`alarm_actions`・`ok_actions`・`insufficient_data_actions`のすべてにそのTopicだけを入れ、`actions_enabled`と`treat_missing_data`を明示する。`treat_missing_data`の値はmetricごとにそのmoduleが決め、Unit Testで固定する。メトリクス途絶の検知（第7節）は、これと`insufficient_data_actions`の通知で各moduleが持つ。
+- `actions_enabled`はCheckovの既定のルール（CKV_AWS_319）が見る。3つのactionが同じTopicだけを指すことはPolicy Testが見るが、対象のalarmが1つも無い間はPolicyを置けない（検査の対象が0件なら成功させない。ADR-0702 決定13）。最初にalarmを置く変更が、そのPolicyと層検査の型の分類を同じ変更で足す。それまで、この規則を見る検査は無い。
+
 **outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**awslogsドライバをモードに関係なく残す場合に限り、stdoutログのmetric filterが3モード共通で成立する**。ログ文言への依存になり、ログをOTLP側へ寄せると成立しない。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
 **Grafanaからの参照（pull経路）:** GrafanaはCloudWatch datasourceで照会する。tabpは読み取り専用のIAM Roleと、IAM Roles Anywhereのtrust anchor/profileを出力する。trust anchorには自前のCAを使う（AWS Private CAは予算超過のため）。長期アクセスキーは使わない。GetMetricDataの課金に対し、ダッシュボードの自動更新間隔を管理する。
