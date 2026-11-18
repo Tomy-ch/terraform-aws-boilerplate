@@ -172,9 +172,6 @@ func readDeclarations(root string) (declarations, error) {
 	if err := checkDeployEnvs(identity, b); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", branchesFile)
 	}
-	if _, err := checkBackendKeys(root); err != nil {
-		return declarations{}, err
-	}
 	workflows, err := renderApplyTriggers(root, b)
 	if err != nil {
 		return declarations{}, err

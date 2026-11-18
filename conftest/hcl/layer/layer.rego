@@ -1,9 +1,6 @@
 # 層の規則の検査（ADR-0102 決定14・17・18。検証方法の3つ）。
 #
-# 走査の root の下の全ファイルを1つの入力として掛ける（--combine）。make が Conftest とは別の経路で数えた
-# 構成ファイルの一覧（data.layer_files）と、Conftest が読んだファイルを突き合わせる（ADR-0702 決定15）。
-# deny contains はすべてこのファイルに置く。tf-local policy-result はこのファイルの行頭の deny contains を数え、
-# 評価した規則の数と突き合わせる。
+# deny contains は行頭に置く。tf-local policy-result が行頭の deny contains を数える（README の「検査」）。
 package layer
 
 import data.lib.hcl
@@ -20,7 +17,6 @@ default listed := set()
 
 listed := {p | some p in data.layer_files} if is_array(data.layer_files)
 
-# JSON の構成は検査が解釈しないので、数えたうえで落とす（ADR-0501 決定5、ADR-0103 決定11）。
 is_tf_json(path) if endswith(path, ".tf.json")
 
 is_config(path) if hcl.is_tf(path)
@@ -175,19 +171,9 @@ calls contains c if {
 	c := {"path": f.path, "dir": hcl.dir(f.path), "name": name, "source": object.get(body, "source", null)}
 }
 
-relative(s) if {
-	is_string(s)
-	not contains(s, "${")
-	startswith(s, "./")
-}
+relative(s) if hcl.relative_source(s)
 
-relative(s) if {
-	is_string(s)
-	not contains(s, "${")
-	startswith(s, "../")
-}
-
-target(c) := hcl.clean(sprintf("%s/%s", [c.dir, c.source])) if relative(c.source)
+target(c) := hcl.module_target(c.dir, c.source)
 
 deny contains msg if {
 	some c in calls

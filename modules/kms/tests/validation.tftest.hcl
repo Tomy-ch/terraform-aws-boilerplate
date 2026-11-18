@@ -80,7 +80,7 @@ run "users_rejects_unknown_via" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "sns", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "sqs", access = "read-write" }]
     }
   }
 
@@ -281,7 +281,6 @@ run "users_rejects_other_partition_role" {
   expect_failures = [aws_kms_key_policy.this]
 }
 
-# 57 個の 501 文字の名前と 196 文字の名前で、文書がちょうど 32768 文字になる。
 run "policy_accepts_32768_characters" {
   command = plan
 
@@ -442,4 +441,275 @@ run "users_rejects_object_in_other_partition" {
   }
 
   expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_accepts_sns_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["tabp-dev-ops-notification"] }]
+    }
+  }
+}
+
+run "users_rejects_sns_role_read" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read", topics = ["t"], objects = ["arn:aws:s3:::bkt/k"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_role_without_topics" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_topics_on_s3_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "s3", access = "read-write", topics = ["t"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_fifo_topic" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["t.fifo"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_topic_arn" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["arn:aws:sns:ap-northeast-1:123456789012:t"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_topic_with_asterisk" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["t*"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_256_character_topic" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = [format("%0256d", 0)] }]
+    }
+  }
+}
+
+run "users_rejects_257_character_topic" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = [format("%0257d", 0)] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_topic" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["t", "t"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_only_sns_service" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["cloudwatch"] }] }
+    }
+  }
+}
+
+run "users_rejects_sns_service_without_publishers" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = [] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_unknown_sns_publisher" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = ["ses"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_sns_service_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = ["events"] }, { topic = "t", publishers = ["budgets"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_service_fifo_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t.fifo", publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_service_topic_arn" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "arn:aws:sns:ap-northeast-1:123456789012:t", publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_sns_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["a"] },
+        { arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["b"] },
+      ]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_empty_sns_services_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_service_null_publishers" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = null }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_publisher_wrong_case" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = ["Events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_topic_trailing_newline" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t\n", publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_256_character_sns_service_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = format("%0256d", 0), publishers = ["events"] }] }
+    }
+  }
+}
+
+run "users_rejects_257_character_sns_service_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = format("%0257d", 0), publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
 }
