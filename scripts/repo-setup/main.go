@@ -46,7 +46,7 @@ var (
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 	errNoReleaseBase     = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
 	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
-	errTargetOverridden  = xerrors.New("が環境にあると、gh と make の宛先が origin に固定されません。外してから実行してください（例: env -u GH_REPO -u GITHUB_REPOSITORY make setup-repo）")
+	errTargetOverridden  = xerrors.New("が環境にあると、gh と make の宛先が origin に固定されません。外してから実行してください（例: env -u GH_REPO -u REPO_SETTINGS_REPO -u GITHUB_REPOSITORY make setup-repo）")
 )
 
 type setup struct {
@@ -240,9 +240,10 @@ func releaseNotesToDelete(entries []string) []string {
 	return targets
 }
 
-// targetOverrides は、gh repo set-default による宛先の固定より優先される環境変数。GH_REPO は gh が、
-// GITHUB_REPOSITORY は repo-settings.mk の REPO_SETTINGS_REPO が読む。
-var targetOverrides = []string{"GH_REPO", "GITHUB_REPOSITORY"}
+// targetOverrides は、gh repo set-default による宛先の固定を迂回する変数。GH_REPO は gh が読み、
+// REPO_SETTINGS_REPO と GITHUB_REPOSITORY は repo-settings.mk が gh より先に読む（make の引数で渡した値も
+// レシピの環境に入る）。
+var targetOverrides = []string{"GH_REPO", "REPO_SETTINGS_REPO", "GITHUB_REPOSITORY"}
 
 func runPreflight(getenv func(string) string) error {
 	log.Printf("🔧 設定を確認中...")
