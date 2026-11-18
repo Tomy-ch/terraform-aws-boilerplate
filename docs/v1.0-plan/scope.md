@@ -282,7 +282,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Compute | `container-platform` | 環境ごとのECS Cluster。ECS Execの監査（ログと暗号化）、Container Insights、capacity providerを不変条件として持つ。Compute系のusecaseはCluster ARNを入力で受ける（#94） |
 | Compute | `image-registry` | 環境ごとのECR。repositoryとregistry単位の設定（不変タグ、push時スキャン、lifecycle、repository policy）を1つの書き手で持つ。常駐層（#94、#72） |
 | Observability | `analytics` | AWSネイティブログの集計。Athena WorkGroup、Glueスキーマ、結果用S3。Log Groupの購読とS3ログの受け口（第9.3節） |
-| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicとsubscription、メトリクス途絶の検知、通知経路自体の死活。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
+| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicとsubscription、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
 | Governance | `finops` | AWS Budgets、Cost Anomaly Detection、通知先との接続。常駐層 |
 | Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに plan / apply / apply-identity / unlock-identity の4 role を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
 | Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は `audit-evidence`）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
@@ -409,10 +409,12 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
-**アラームの置き場:** CloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが正しく鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まり、その知識はresourceと同じmoduleのテストに置く。dimensionもresourceへの参照で渡せるので、存在しないresourceを指したまま鳴らないalarmにならない。
+**アラームの置き場:** 通知のためのCloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まるので、その知識をresourceと同じmoduleに置く。dimensionはresourceへの参照で渡すので、存在しないresourceを指すdimensionはplanで失敗する。scalingなど、Topic以外へactionを送るalarmはこの節の対象外とする。
 
-- alarmを持つmoduleは、通知先のTopicのARNを入力で受ける。`alarm_actions`・`ok_actions`・`insufficient_data_actions`のすべてにそのTopicだけを入れ、`actions_enabled`と`treat_missing_data`を明示する。`treat_missing_data`の値はmetricごとにそのmoduleが決め、Unit Testで固定する。メトリクス途絶の検知（第7節）は、これと`insufficient_data_actions`の通知で各moduleが持つ。
-- `actions_enabled`はCheckovの既定のルール（CKV_AWS_319）が見る。3つのactionが同じTopicだけを指すことはPolicy Testが見るが、対象のalarmが1つも無い間はPolicyを置けない（検査の対象が0件なら成功させない。ADR-0702 決定13）。最初にalarmを置く変更が、そのPolicyと層検査の型の分類を同じ変更で足す。それまで、この規則を見る検査は無い。
+- alarmを持つmoduleは、同じアカウントの通知先のTopicのARNを入力で受ける。`alarm_actions`・`ok_actions`・`insufficient_data_actions`のすべてにそのTopicだけを入れ、`actions_enabled`と`treat_missing_data`を明示する。
+- `treat_missing_data`の値はmetricごとにそのmoduleが決め、Unit Testで固定する。途絶が異常なmetricは`breaching`か`missing`にして、途絶を通知に変える。途絶が平常なmetric（異常のときだけ出るmetric、inactiveで送信が止まるqueue）は`notBreaching`か`ignore`にし、途絶を検知しない。`AWS/DynamoDB`のmetricは、何を指定しても`ignore`として扱われる。
+- CloudWatchからのpublishをTopicと鍵が受けることは、`ops-notification`が持つ。
+- 検査の担い手は次のとおり。`actions_enabled`はCheckovの既定のルール（CKV_AWS_319）が見る。最初にalarmを置く変更は、`conftest/hcl/infra_code/decl.json`に`aws_cloudwatch_metric_alarm`の分類が無いので`make infra-code-gate`で落ちる。その変更が、分類と、3つのactionが同じTopicだけを指すことを見るPolicyを足す。対象のalarmが1つも無い間はPolicyを置けない（検査の対象が0件なら成功させない。ADR-0702 決定13）ので、それまで、この節のほかの規則を見る検査は無い。
 
 **outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**awslogsドライバをモードに関係なく残す場合に限り、stdoutログのmetric filterが3モード共通で成立する**。ログ文言への依存になり、ログをOTLP側へ寄せると成立しない。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
