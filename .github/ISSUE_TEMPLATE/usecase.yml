@@ -1,0 +1,74 @@
+name: usecase
+description: ユースケースを追加する、または既存のユースケースの契約を変える
+title: "[usecase] "
+labels:
+  - type:usecase
+body:
+  - type: markdown
+    attributes:
+      value: |
+        - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
+        - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+        - アカウント ID、実際の ARN、内部の CIDR は書かず、`<ACCOUNT_ID>` のような置き換えにします。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決する問題
+      description: システム上の役割として書きます（`docs/adr/0102-use-case-centric-scope.md` 決定1-2）。
+    validations:
+      required: true
+  - type: textarea
+    id: runtime-network
+    attributes:
+      label: 実行形態とネットワーク境界
+      description: 公開範囲と通信範囲の規則は `docs/adr/0301-least-privilege-policy.md` 決定1・13-17 が持ちます。
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: 公開契約（入力、出力。ログの所在と、基盤系アラームの通知先Topic ARNを含む）
+      description: 意味論的な入力と出力で書きます（`docs/adr/0201-public-interface-policy.md`、`docs/adr/0102-use-case-centric-scope.md` 決定8）。権限の語彙は `docs/adr/0301-least-privilege-policy.md` 決定7。通知先の Topic を受けない、ログを持たないユースケースは、その旨を書きます。
+    validations:
+      required: true
+  - type: textarea
+    id: support
+    attributes:
+      label: supported / unsupported
+      description: 記録先は `usecases/<use-case>/README.md` です（`docs/adr/0102-use-case-centric-scope.md` 決定2・7）。
+    validations:
+      required: true
+  - type: textarea
+    id: owner
+    attributes:
+      label: 所有者（usecase間で共有するリソースを含む）
+      description: "`docs/adr/0102-use-case-centric-scope.md` 決定16。"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依存するusecaseと判断Issue
+      description: Issue 番号で書きます。接続点は意味論的な入出力だけです（`docs/adr/0102-use-case-centric-scope.md` 決定8）。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 検証方法
+      description: どのテスト層で何を確かめるか（`docs/adr/0401-testing-policy.md` 決定4・14-16）。
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: sandbox で破棄できないユースケースは、`docs/adr/0401-testing-policy.md` 決定14 の区分に従って2・3項目めを置き換えます。チェックの印は自動では検証されません。
+      value: |
+        - [ ] mock のユニット（`terraform test` と `mock_provider`）が通る
+        - [ ] sandbox で apply → 検証 → destroy が通る
+        - [ ] destroy 後の残存の検出が0件（期待残存を宣言したものは、その照合で余剰0件。`docs/adr/0401-testing-policy.md` 決定16）
+        - [ ] `docs/adr/0103-infrastructure-code-gate.md` のゲートと層の検査を通る
+        - [ ] 公開契約と関連する ADR・文書が更新されている
+    validations:
+      required: true
