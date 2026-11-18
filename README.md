@@ -34,7 +34,7 @@
 
 ```sh
 mise install                 # ホストへ道具を導入する（mise.toml の全エントリ。npm: の道具は除く）
-make host-tools-install      # うち、手元での実行がホストのものだけ（terraform / AWS CLI）
+make host-tools-install      # うち、手元での実行がホストのものだけ（terraform / AWS CLI / pnpm）
 make help                    # 検査とターゲットの一覧
 make md-lint                 # 既定は RUNNER_MODE=container（docker compose 経由）
 make md-lint RUNNER_MODE=host  # ホストで実行する（npm の道具は起動のたびに lockfile から入れる）
