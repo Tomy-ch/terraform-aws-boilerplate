@@ -136,7 +136,8 @@ jobs:
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
 
-      # 起動したブランチの最新の commit だけを対象にする（ADR-0602 決定14）。skip ではなく失敗にする。
+      # 起動したブランチの最新の commit だけを対象にする。skip は成功として数えられるので失敗にする
+      # （ADR-0603 決定17）。
       - name: Refuse stale commits
         id: refuse-stale
         env:
