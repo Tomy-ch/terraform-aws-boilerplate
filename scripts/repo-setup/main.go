@@ -2,7 +2,8 @@
 // git / gh 操作を担うツール。
 //
 //	preflight           初期化してよい状態かを確かめる（v0.0.0 タグがあれば中止）
-//	bootstrap           タグを作り直し、env を持たないデプロイブランチを用意してデフォルトブランチを移す
+//	bootstrap           gh の宛先を origin に固定し、タグを作り直し、env を持たないデプロイブランチを用意して
+//	                    デフォルトブランチを移す
 //
 // 作るブランチ（branches.json の deploy のうち env を持たないもの）と初期のデフォルトブランチ（release_base）、
 // 初期化前に居たら消す線は、分岐のパターンの宣言（`.github/settings/branches.json`、ADR-0603 決定1）を直下から読む。
@@ -47,7 +48,6 @@ var (
 	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
 )
 
-// setup は、宣言から決めた初期化の対象である。
 type setup struct {
 	// branches は、初期化で作るブランチ（env を持たないデプロイブランチ。宣言の順）。
 	branches []string
@@ -56,8 +56,8 @@ type setup struct {
 	decl branchdecl.Branches
 }
 
-// setupFromDecl は、宣言から初期化の対象を決めます。release_base が env を持てば失敗する —— 初期化はそれを
-// 作らないので、デフォルトブランチを無いブランチへ移すことになる。
+// setupFromDecl は、release_base が env を持てば失敗する —— 初期化はそれを作らないので、
+// デフォルトブランチを無いブランチへ移すことになる。
 func setupFromDecl(decl branchdecl.Branches) (setup, error) {
 	base, ok := decl.ReleaseBase()
 	if !ok {
@@ -251,6 +251,12 @@ func runPreflight() error {
 }
 
 func runBootstrap(r runner, s setup) error {
+	// 書き込みの前に、この後のすべての gh（make の連鎖の後段を含む）の宛先を origin に固定する。
+	// 理由は scripts/README.md の repo-setup 行。
+	if err := r.run(pinTargetStep()); err != nil {
+		return err
+	}
+
 	if err := resetTags(r); err != nil {
 		return err
 	}
@@ -260,6 +266,10 @@ func runBootstrap(r runner, s setup) error {
 	}
 
 	return moveDefaultBranch(r, s)
+}
+
+func pinTargetStep() step {
+	return step{name: "gh", args: []string{"repo", "set-default", "origin"}}
 }
 
 func resetTags(r runner) error {
