@@ -52,8 +52,10 @@ TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `ap
 - 補間の中の、補間を持たない引用符の文字列と、`for` 式の反復変数は参照として読まない
 - `local.<名前>` は、同じディレクトリの `locals` の値の全体へ辿る。定義の無い `local` は辿れない参照として違反にする
 - `each.key` と `each.value` は、その resource の `for_each` の値の全体へ辿る
-- 参照の直後の添字（`x[...]` の `[...]`）の中は親を選ぶだけなので辿らない。`count.index` は参照に数えない
-- 補間の対応を読めない式（入れ子の `{}` が4段以上のもの）は、読めない式として違反にする
+- resource か `local` の参照（`<名前>.<名前>`）の直後の1つ目の添字の中は、親を選ぶだけなので辿らない。属性の後の添字と
+  2つ目以降の添字は辿る。`count.index` は参照に数えない
+- 次の式は、読めない式として違反にする: 補間の対応を読めないもの（入れ子の `{}` が4段以上）、テンプレートの指示子
+  （`%{ if }` `%{ for }`）を持つもの、予約された根（`var` `module` `data` `local` 等）と同じ名前の `for` の反復変数を持つもの
 
 辿った先の参照が無いか、1つでも、同じディレクトリに宣言された、宣言した親の型の resource でなければ違反とする。
 `*` を親の型に持つ引数（親の型が多態のもの）は、同じディレクトリのどの型の resource でもよい。
@@ -84,7 +86,7 @@ resource である。親と引数の組で同一性が決まり、自前の名�
 - 宣言の正しさ。分類、親の引数、親の型、`optional` を誤った型は、その誤りの分だけ検査から外れる。`optional` を
   誤って `true` にした型は `LY302` が働かない
 - 親の resource の inline の引数と attachment 型の resource の共存、同じ親への文書全体の attachment の重複（#348）
-- 添字の中の参照で選ぶ親。`aws_s3_bucket.this[module.x.key]` は `aws_s3_bucket.this` を親として通す
+- 参照の直後の添字の中の参照で選ぶ親。`aws_s3_bucket.this[module.x.key]` は `aws_s3_bucket.this` を親として通す
 - module の呼び出しが無い、層の置き場でないディレクトリの resource は `LY101` に当たらない。attachment 型であれば
   `LY301` が見る
 - `.tftest.hcl` の `run` の `module` の `source`

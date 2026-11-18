@@ -278,19 +278,36 @@ strings_in(v) := {s | walk(v, [_, s]); is_string(s)} if not is_string(v)
 # `$${` はリテラルのエスケープで、補間を始めない。
 unescaped(s) := replace(s, "$${", "")
 
-# 入れ子の `{}` は3段まで読む。それより深い補間は外に `${` が残るので unreadable になる。
-interpolation := `\$\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}`
+# 式の中の引用符の文字列。中の `{` `}` `$` は文字列の一部で、補間の対応にも参照にも数えない。
+quoted := `"(?:[^"\\]|\\.)*"`
 
-string_tokens(s) := {unreadable} if contains(regex.replace(unescaped(s), interpolation, ""), "${")
+# 入れ子の `{}` は3段まで読む。それより深い補間は外に `${` が残るので unreadable になる。
+interpolation := sprintf(`\$\{((?:[^{}"]|%s|\{(?:[^{}"]|%s|\{(?:[^{}"]|%s)*\})*\})*)\}`, [quoted, quoted, quoted])
+
+interpolations(s) := [m[1] | some m in regex.find_all_string_submatch_n(interpolation, unescaped(s), -1)]
+
+string_tokens(s) := {unreadable} if unreadable_string(s)
 
 string_tokens(s) := {tok |
-	some m in regex.find_all_string_submatch_n(interpolation, unescaped(s), -1)
-	some tok in expression_tokens(m[1])
-} if not contains(regex.replace(unescaped(s), interpolation, ""), "${")
+	some expr in interpolations(s)
+	some tok in expression_tokens(expr)
+} if not unreadable_string(s)
+
+unreadable_string(s) if contains(regex.replace(unescaped(s), interpolation, ""), "${")
+
+# テンプレートの指示子（`%{ if }` `%{ for }`）の式は読まない。`%%{` はリテラルのエスケープ。
+unreadable_string(s) if contains(replace(s, "%%{", ""), "%{")
+
+# 予約された根（`var` `module` 等）と同じ名前の反復変数は、同じ式の外部参照を隠しうる。
+unreadable_string(s) if {
+	some expr in interpolations(s)
+	some name in for_iterators(expr)
+	name in keywords
+}
 
 # 式の中の、補間を持たない引用符の文字列は参照ではない。`for` の反復変数は参照の根でない。
 expression_tokens(expr) := {tok |
-	body := strip_index(regex.replace(expr, `"(?:[^"\\$]|\\.|\$[^{])*"`, `""`))
+	body := strip_index(literal_free(expr))
 	iterators := for_iterators(expr)
 	some m in regex.find_all_string_submatch_n(`(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_*][A-Za-z0-9_-]*)+)`, body, -1)
 	parts := split(m[2], ".")
@@ -304,10 +321,24 @@ for_iterators(expr) := {name |
 	name != ""
 }
 
-# 添字（参照の直後の `[...]`）の中は親を選ぶだけなので辿らない。
+# 引用符の文字列を字句として左から切り出し、補間を持たないものを除く。補間を持つ文字列は中の参照を読むので残す。
+literal_free(expr) := concat(" ", [t |
+	some t in regex.find_n(sprintf(`%s|[^"]+`, [quoted]), expr, -1)
+	keep_token(t)
+])
+
+keep_token(t) if not startswith(t, `"`)
+
+keep_token(t) if {
+	startswith(t, `"`)
+	contains(t, "${")
+}
+
+# resource か local の参照（`<名前>.<名前>`）の直後の添字は親を選ぶだけなので、中を辿らない。属性の後の添字と、
+# 2つ目以降の添字は辿る。剥がした跡の `#` は、続く添字を参照の直後と読ませない。
 strip_index(s) := r if {
-	pattern := `([A-Za-z0-9_\])])\[[^\[\]]*\]`
-	r := regex.replace(regex.replace(regex.replace(s, pattern, "$1"), pattern, "$1"), pattern, "$1")
+	pattern := `(^|[^A-Za-z0-9_.\]#])([A-Za-z_][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_-]*)\[[^\[\]]*\]`
+	r := regex.replace(regex.replace(regex.replace(s, pattern, "$1$2#"), pattern, "$1$2#"), pattern, "$1$2#")
 }
 
 token_node(d, _, tok) := sprintf("local|%s|%s", [d, substring(tok, 6, -1)]) if startswith(tok, "local.")

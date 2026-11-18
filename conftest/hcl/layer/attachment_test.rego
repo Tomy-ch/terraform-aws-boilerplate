@@ -62,6 +62,43 @@ test_LY301_allow_quoted_literal_in_expression if {
 	count(attachment_denies(policy(`try(aws_s3_bucket.this.id, "a.b")`))) == 0
 }
 
+test_LY301_deny_string_ending_with_dollar if {
+	msgs := attachment_denies(policy(`coalesce(aws_s3_bucket.this.id, "a$", var.z, module.m.x, "b")`))
+	some m in msgs
+	contains(m, "module.m")
+	contains(m, "var.z")
+}
+
+test_LY301_deny_brace_in_string_inside_interpolation if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id != "}" ? var.x : var.y}"`))
+	contains(m, "var.x")
+}
+
+test_LY301_deny_template_directive if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}%{ if var.a }y%{ endif }"`))
+	contains(m, unreadable)
+}
+
+test_LY301_deny_iterator_named_like_root if {
+	some m in attachment_denies(policy("concat([for var in aws_s3_bucket.this : var.id], [var.y])[0]"))
+	contains(m, unreadable)
+}
+
+test_LY301_deny_index_after_attribute if {
+	some m in attachment_denies(policy(`aws_s3_bucket.this.tags["a"][module.m.x]`))
+	contains(m, "module.m")
+}
+
+test_LY301_deny_second_index_after_reference if {
+	some m in attachment_denies(policy("aws_s3_bucket.this[0][module.m.x]"))
+	contains(m, "module.m")
+}
+
+test_LY301_allow_splat_and_key_index if {
+	count(attachment_denies(policy(`one(aws_s3_bucket.this[*].id)`))) == 0
+	count(attachment_denies(policy(`aws_s3_bucket.this["x"].id`))) == 0
+}
+
 test_LY301_deny_interpolation_after_literal_bracket if {
 	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}-x[${module.x.id}]"`))
 	contains(m, "module.x")
