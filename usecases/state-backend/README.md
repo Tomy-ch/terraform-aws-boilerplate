@@ -1,17 +1,17 @@
 # state-backend
 
-Terraform の state を置く S3 Bucket と、CI の plan と apply の出力を置く S3 Bucket を、1つのアカウントに1つずつ持つユースケース。bootstrap の構成物であり（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）、各 env の identity root から呼ばれる（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定3・5）。
+Terraform の state を置く S3 Bucket と、CI の plan と apply の出力を置く S3 Bucket と、workload root の apply の出力を置く S3 Bucket を、1つのアカウントに1つずつ持つユースケース。bootstrap の構成物であり（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）、各 env の identity root から呼ばれる（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定3・5）。
 
 ## 解決する問題
 
 state は、そのアカウントを変更できる主体だけが書ける場所に、版を残して置かなければならない。state backend は Terraform より先に存在する必要があるので、bootstrap の段1 で AWS CLI が作り、段2 で Terraform が取り込む（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定4-8）。このユースケースは、取り込んだ後の Bucket を Terraform の Desired State に置き、以後の変更を CI の apply-identity の role に限る。
 
-CI の plan と apply の全文は公開されるログに出さず、state Bucket と分けた Bucket へ plan の role と apply-identity の role が書く（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定13）。その Bucket もこのユースケースが持ち、保持日数を過ぎた版を lifecycle で消す（[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md)）。
+CI の plan と apply の全文は公開されるログに出さず、state Bucket と分けた Bucket へ plan の role と apply-identity の role が書く（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定13）。その Bucket もこのユースケースが持ち、保持日数を過ぎた版を lifecycle で消す（[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md)）。workload root の apply の全文は、apply の role が plan の出力の Bucket と分けた apply の出力の Bucket へ書く。この Bucket も同じ形で持つ（[state-backend/ADR-0201](docs/adr/0201-plan-output-bucket.md) 決定7）。
 
 ## 実行形態とネットワーク境界
 
 - Terraform の S3 backend が、CI のランナーと bootstrap の実行者の手元から、AWS の公開 API の endpoint で読み書きする。AWS の上で動く処理は無い
-- 外への egress は無い。2つの Bucket は、どちらも Public Access Block の4項目をすべて有効にし、ACL を無効にする（`BucketOwnerEnforced`）
+- 外への egress は無い。3つの Bucket は、どれも Public Access Block の4項目をすべて有効にし、ACL を無効にする（`BucketOwnerEnforced`）
 - TLS でない要求は、Bucket Policy の Deny で拒否する
 - state Bucket の object の書き込みは、Bucket Policy の Deny で CI の apply の2つの role と lock の解除の role に限り、各 role を自分の key と操作に閉じ込める。state の鍵以外で暗号化する書き込みも拒否する（[state-backend/ADR-0104](docs/adr/0104-state-object-write-deny.md)）
 
@@ -28,7 +28,7 @@ CI の plan と apply の全文は公開されるログに出さず、state Buck
 
 `state_noncurrent_version_retention_days` と `ci_role_arns` は既定値を持たない必須入力で、足したことは利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
-state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an`、plan の出力の Bucket は `<project>-<env>-tfplan-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` と `internal/plan-output` が内部の入力 `name` の誤りとして plan で落とす。
+state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an`、plan の出力の Bucket は `<project>-<env>-tfplan-<account_id>-<region>-an`、apply の出力の Bucket は `<project>-<env>-tfapply-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` と `internal/plan-output` が内部の入力 `name` の誤りとして plan で落とす。
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -38,9 +38,9 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | `state_key_alias_name` | bootstrap の手順が鍵を名指す名前（`alias/<project>-<env>-tfstate`）。手順と `env/admin/identity/tests/imports.tftest.hcl` と `scripts/tf-local`（`state-key` が alias の一覧からこの名前で鍵の ARN を引く）がそれぞれ同じ値を写し、テストはこの出力を `imports.tftest.hcl` の直書きで固定し、`scripts/tf-local` のテストは自分の写しをその直書きと突き合わせる（手順との一致は検査しない）。`modules/kms` の `alias_name` を返し、入力だけから決まるので、鍵を作る前から参照できる |
 | `plan_output_bucket_name` | 人が確かめるときの参照。CI の plan と apply の job は、同じ名前を `scripts/tf-local` の `bucket -kind tfplan` で組む（規則の一致は `tf-local` のテストが見る） |
 | `plan_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。plan の role の書き込みと、Bucket の設定の Resource を絞る |
-| `apply_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。workload root の apply の出力の Bucket の作成と設定の Resource を絞る。Bucket の resource を参照せず、名前の規則から組む値である |
+| `apply_output_bucket_arn` | [`deployment-identity`](../deployment-identity/README.md)。workload root の apply の出力の Bucket の作成と設定と、apply の role の書き込みの Resource を絞る。Bucket の resource の属性を返し、名前の規則から組んだ ARN と一致しなければ落ちる |
 
-- ログの所在: 2つの Bucket は S3 サーバーアクセスログを持たない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）。API の呼び出しの記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
+- ログの所在: 3つの Bucket は S3 サーバーアクセスログを持たない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）。API の呼び出しの記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `state-backend` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
 
 ## 段ごとに持つもの
@@ -50,9 +50,10 @@ state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region
 | 段1・段2 | Bucket、Public Access Block、`BucketOwnerEnforced`、版管理。`env/admin/identity/` の `import` block。既定の暗号化は取り込まず、段4 の apply までは AWS の既定（SSE-S3 と SSE-C の拒否）が掛かる | 本ディレクトリと [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) |
 | 段3-4 | TLS を要求し、object の書き込みを CI の role と key と操作の組に限り、state の鍵以外の暗号化を拒否する Bucket Policy（[state-backend/ADR-0104](docs/adr/0104-state-object-write-deny.md)）。新しいアカウントでは段4 の実行者を `bootstrap_executor_user_name` で例外に入れる | `modules/s3`。state Bucket に入るのは段4 の apply で、その Pull Request の merge の前に、CI の plan（`terraform-gates.yaml` の `plan-admin-identity`）が変更なしを示す |
 | 段4 | plan の出力の Bucket（state Bucket と同じ不変条件と、lifecycle） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる |
+| 段4 | apply の出力の Bucket（plan の出力の Bucket と同じ module） | `internal/plan-output`。段1 の CLI では作らず、段2 の plan に追加として現れる。既存のアカウントでは CI の apply-identity が作る |
 | 段4 | state Bucket の lifecycle（上書きされた版を保持日数で消す） | `modules/s3`。段1 の CLI では作らず、段2 の plan に追加として現れる |
 | 段4 | state の鍵（CMK、Key Policy、alias） | `modules/kms`。段1 の CLI では作らず、段2 の plan に追加として現れる |
-| 段4 | 2つの Bucket の既定の暗号化（state の鍵による SSE-KMS、Bucket Key を使わない、SSE-C の拒否）。backend は init で鍵の ARN を渡す | `modules/s3` と `internal/plan-output`。state Bucket の分は段2 の plan に追加として現れる（[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）。鍵ができる前の段2-4 の init は鍵を渡さず、state は SSE-S3 で書かれる。段5 で state を書き換える最初の CI の apply が SSE-KMS で書き直す |
+| 段4 | 3つの Bucket の既定の暗号化（state の鍵による SSE-KMS、Bucket Key を使わない、SSE-C の拒否）。backend は init で鍵の ARN を渡す | `modules/s3` と `internal/plan-output`。state Bucket の分は段2 の plan に追加として現れる（[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）。鍵ができる前の段2-4 の init は鍵を渡さず、state は SSE-S3 で書かれる。段5 で state を書き換える最初の CI の apply が SSE-KMS で書き直す |
 | 段5 | 段4 の実行者の書き込みの例外を外す（`bootstrap_executor_user_name` を `null` に戻す） | CI の apply（`terraform-apply.yaml`）が apply する |
 
 lock は S3 backend の lock file（`<key>.tflock`）で取る（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定8）。DynamoDB の table を持たない。CI の apply が途中で止まって残った lock は、CI の lock の解除の job が外す（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」）。書き込みの拒否が入った後は、lock file を消せる主体は CI の apply の role と lock の解除の role だけである。
@@ -63,6 +64,7 @@ supported:
 
 - 1つのアカウントに1つの state Bucket を置き、identity root と workload root の state をそれぞれ1つの key で置く構成（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定2・7）
 - 1つのアカウントに1つの plan の出力の Bucket を置き、そのアカウントの root の CI の plan と apply の全文を保持日数のあいだ残す構成
+- 1つのアカウントに1つの apply の出力の Bucket を置き、そのアカウントの workload root の CI の apply の全文を保持日数のあいだ残す構成
 
 unsupported:
 
@@ -73,7 +75,7 @@ unsupported:
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 - plan と apply の出力を保持日数より長く残すこと
 - 人が plan の出力の全文を読むこと。plan の出力は state の鍵で暗号化され、Key Policy が暗号操作を許すのは CI の role だけである。アカウントへの管理の委任は暗号操作と `kms:CreateGrant` を含まないので、root も Key Policy を書き換えずには復号できない。その書き換えは break-glass の role で行えるが、平時の読み手の経路にしない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）。読む人の主体を Key Policy に足すことは、人の主体を与えるユースケース `organization-baseline`（未実装）が持つ
-- 2つの Bucket への要求ごとの記録（S3 サーバーアクセスログ）と、改変を即座に知らせること。改変の検知はこのユースケースの外（GuardDuty、フェーズ1、#256）に委ね、どの改変を検知するかは保証しない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）
+- 3つの Bucket への要求ごとの記録（S3 サーバーアクセスログ）と、改変を即座に知らせること。改変の検知はこのユースケースの外（GuardDuty、フェーズ1、#256）に委ね、どの改変を検知するかは保証しない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）
 - 保持日数を過ぎた state の版へ戻すこと（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 
 未決:
@@ -84,6 +86,7 @@ unsupported:
 
 - state Bucket はこのユースケースが所有する。同じアカウントの identity root と workload root が、backend として共有する
 - plan の出力の Bucket もこのユースケースが所有する。書くのは `deployment-identity` の plan の role（`pr/*`・`branch/*`）と apply-identity の role（`apply/*`。apply の出力）だけである
+- apply の出力の Bucket もこのユースケースが所有する。書くのは `deployment-identity` の apply の role（workload root の apply の出力）だけである
 - state の鍵（CMK）も、このユースケースが所有する
 
 ## 依存するユースケースと判断 Issue
@@ -95,7 +98,7 @@ unsupported:
 
 ## 検証方法
 
-- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `state_noncurrent_version_retention_days`・`plan_output_retention_days`・`ci_role_arns`・`bootstrap_executor_user_name` の検査と配線（`modules/s3` の `object_writers` へ渡る role と key と操作を含む。Bucket Policy の文書は `modules/s3/tests/policy.tftest.hcl` と Policy Test が見る）を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名と alias を確かめる。Bucket の属性の値（既定の暗号化の鍵と Bucket Key を含む）と lifecycle の規則は `modules/s3/tests/` と `internal/plan-output/tests/` が、鍵の属性と Key Policy の文書は `modules/kms/tests/` が見る。2つの Bucket の既定の暗号化が state の鍵を名指すことは `tests/contract.tftest.hcl` が、backend に渡す鍵の ARN の組み立ては `scripts/tf-local` の `state-key` のテストが見る
+- Unit Test（mock の plan）: `tests/naming.tftest.hcl` が名前の組み立てと入力の検査を、`tests/contract.tftest.hcl` が公開 output と `state_noncurrent_version_retention_days`・`plan_output_retention_days`・`ci_role_arns`・`bootstrap_executor_user_name` の検査と配線（`modules/s3` の `object_writers` へ渡る role と key と操作を含む。Bucket Policy の文書は `modules/s3/tests/policy.tftest.hcl` と Policy Test が見る）を、`reference/tests/plan.tftest.hcl` と `env/admin/identity/tests/imports.tftest.hcl` が reference と管理アカウントの root の Bucket 名と alias を確かめる。Bucket の属性の値（既定の暗号化の鍵と Bucket Key を含む）と lifecycle の規則は `modules/s3/tests/` と `internal/plan-output/tests/` が、鍵の属性と Key Policy の文書は `modules/kms/tests/` が見る。3つの Bucket の既定の暗号化が state の鍵を名指すことと、`apply_output_bucket_arn` が名前の規則から組んだ ARN と一致しなければ落ちることは `tests/contract.tftest.hcl` が、backend に渡す鍵の ARN の組み立ては `scripts/tf-local` の `state-key` のテストが見る
 - テストが見ないもの: `ci_role_arns` の `plan` と `apply_identity` が `modules/kms` の `users` に渡ること、管理アカウントの root で `ci_role_arns` に渡る role が役割どおりであること（テストは子 module の入力を観測できない）。CI の plan が示す `aws_kms_key_policy` の文書の `RolesViaS3ReadWrite` の Principal が役割どおりの role であることと、merge の後の `get-key-policy` を、人が確かめる（CI の `plan.kms_key_policy` は文書の形を見るが、どの role かは見ない）。`unlock_identity` の文の Principal と、復号を限る lock file の object が IAM の削除の Resource と一致することは、Policy Test（`plan.deployment_identity_unlock_role`）が reference の plan で見る。lock file の key は、このユースケースの `main.tf`（Key Policy と Bucket Policy）、`deployment-identity` の IAM、`conftest/plan/decl.json`（`unlock_role.lock_key`）、`env/admin/identity/backend.tf` がそれぞれ写す。2つの root の state の key は、このユースケースの `main.tf`（Bucket Policy）、`deployment-identity` の IAM、`conftest/plan/decl.json`（`state_backend.roots`）、各 root の `backend.tf` がそれぞれ写す。IAM の object が state の Bucket の ARN と宣言の key から成ることと、Key Policy の復号の object が IAM の object と同じことは、同じ Policy Test が見る。`backend.tf` の key と宣言の key の一致は、`scripts/tf-local` のテスト（`Test_lockKey`）が見る
 - Static Analysis（`make layer-check`）: [ADR-0102](../../docs/adr/0102-use-case-centric-scope.md) 決定14・17・18 の層の規則を、HCL のソースで確かめる。規則と宣言は [`conftest/hcl/layer/`](../../conftest/hcl/layer/README.md)
 - Static Analysis（`make root-check`）: [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定2-4 の root が呼ぶ usecase の構成と、決定7・8 の backend 設定を、HCL のソースで確かめる。このユースケースを bootstrap の構成物を持つ usecase として宣言するのは [`conftest/hcl/root/decl.json`](../../conftest/hcl/root/decl.json)
@@ -110,7 +113,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - TLS でない要求が、実 API で Bucket Policy に拒否されること
 - 新しく作るときに、Bucket Policy の作成が Public Access Block の設定と競合して失敗すること
 - 実 API が読み戻した Bucket Policy が宣言と違い、plan が毎回差分を出すこと（管理アカウントでは、段4 の apply の後の plan が見る）
-- 2つの Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
+- 3つの Bucket の lifecycle が、実 API で日数どおりに版と delete marker を消すこと（S3 は失効を非同期に行う）
 - 作成直後の role を名指す Key Policy の書き込みが、IAM の結果整合で失敗すること（新しいアカウントの段4 と、CI の role を足す apply。Provider は retry する）
 - 鍵の destroy の後も、削除の猶予（30日）のあいだ鍵が残ること
 - Bucket Policy の書き込みの拒否が、実 API で `aws:PrincipalArn` の例外どおりに評価されること（例外の role が通ることは書き込みの拒否を入れる apply とその後の plan が、例外に無い主体が拒まれることは人が `docs/setup/bootstrap.md` 段5 の、存在しない key への `delete-object` で一度だけ見る）
@@ -119,7 +122,7 @@ sandbox のアカウント（`organization-baseline`、フェーズ1）が無い
 - SSE-KMS に切り替えた後も、切り替えの前に SSE-S3 で書かれた object を、CI の role がそのまま読めること（管理アカウントでは、切り替えの apply の後の plan が見る）
 - init が鍵の ARN を渡す backend の書き込みが、Bucket の既定と同じ鍵で暗号化されること（管理アカウントでは、人が `docs/setup/bootstrap.md` 段5 の成功条件の `docs/setup/scripts/verify.sh stage5` で、`head-object` を使って見る）
 
-Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、2つの Bucket の Bucket Policy の Allow の Action の wildcard の不在と、state の鍵の Key Policy の規則（`plan.kms_key_policy`）と、`unlock_identity` への復号が lock file の object に限られること（`plan.deployment_identity_unlock_role`。`deployment-identity` の reference の plan と結合して読む）と、state Bucket の書き込みの拒否と暗号化の拒否の形と、state の鍵の暗号操作を許す role の集合（`plan.state_backend_write_deny`。同じく結合して読む）を確かめる。CI の plan と apply は、実際の plan に `plan.stateful_protection` を掛け、2つの Bucket と lifecycle の削除と置換、lifecycle が版を消す日数の短縮を、許可の宣言なしには落とす（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md) 決定7）。2つの Bucket と state の鍵が、別の resource と同じ設定を書く引数（`aws_s3_bucket` の非推奨の inline 引数と `aws_kms_key` の `policy`）を書かないことは、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection`（`PLAN-STATE-08`）が見る（[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) 決定17・18、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定13）。同じ plan に、2つの Bucket Policy と Key Policy が宣言した1つだけであることを見る `plan.resource_policy_exclusive`（reference の plan にも掛かる）と、`plan.kms_key_policy` も掛け、state の鍵の Key Policy の形（委任・`kms:ViaService`・アカウント）を見て、Key Policy が無いか plan で決まらなければ落とす。object lock と `mfa` の不在を見る Policy は無い（#210）。
+Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` の plan に対して、3つの Bucket の Bucket Policy の Allow の Action の wildcard の不在と、state の鍵の Key Policy の規則（`plan.kms_key_policy`）と、`unlock_identity` への復号が lock file の object に限られること（`plan.deployment_identity_unlock_role`。`deployment-identity` の reference の plan と結合して読む）と、state Bucket の書き込みの拒否と暗号化の拒否の形と、state の鍵の暗号操作を許す role の集合（`plan.state_backend_write_deny`。同じく結合して読む）を確かめる。CI の plan と apply は、実際の plan に `plan.stateful_protection` を掛け、3つの Bucket と lifecycle の削除と置換、lifecycle が版を消す日数の短縮を、許可の宣言なしには落とす（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md) 決定7）。3つの Bucket と state の鍵が、別の resource と同じ設定を書く引数（`aws_s3_bucket` の非推奨の inline 引数と `aws_kms_key` の `policy`）を書かないことは、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection`（`PLAN-STATE-08`）が見る（[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) 決定17・18、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定13）。同じ plan に、3つの Bucket の Bucket Policy と Key Policy が宣言した1つだけであることを見る `plan.resource_policy_exclusive`（reference の plan にも掛かる）と、`plan.kms_key_policy` も掛け、state の鍵の Key Policy の形（委任・`kms:ViaService`・アカウント）を見て、Key Policy が無いか plan で決まらなければ落とす。object lock と `mfa` の不在を見る Policy は無い（#210）。
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
@@ -154,7 +157,7 @@ Policy Test（`make tf-policy`）は `reference/tests/policy-input.tftest.hcl` �
 - 管理アカウント自身の state Bucket を管理アカウントに置く: [state-backend/ADR-0001](docs/adr/0001-management-account-placement.md)
 - 新しいアカウントの段1 から、段5 で state を書き換える最初の CI の apply まで、state を SSE-S3 で書き、段4 の apply まで既定の暗号化を AWS の既定に頼る: [state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)
 - MFA delete と Object Lock を掛けない: [state-backend/ADR-0102](docs/adr/0102-no-mfa-delete-or-object-lock.md)
-- 2つの Bucket に S3 サーバーアクセスログを持たせない: [state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)
+- 3つの Bucket に S3 サーバーアクセスログを持たせない: [state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)
 - state の鍵の Key Policy が、アカウントへの委任から暗号操作を外す: [`modules/kms`](../../modules/kms/README.md) の「公式推奨からの逸脱」
 
 ## 版

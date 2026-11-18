@@ -84,4 +84,9 @@ run "wiring" {
     condition     = one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ListApplyOutputBucket"]) == "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an"
     error_message = "apply_output_bucket_arn が内部の module の権限へ渡っていません。"
   }
+
+  assert {
+    condition     = one([for s in jsondecode(module.github_oidc.role_policies["apply"]).Statement : s.Resource if s.Sid == "WriteWorkloadApplyOutput"]) == "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an/*"
+    error_message = "apply の role が、apply_output_bucket_arn の Bucket の object に apply の出力を書けません。"
+  }
 }
