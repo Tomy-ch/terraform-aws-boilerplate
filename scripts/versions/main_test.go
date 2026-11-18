@@ -27,6 +27,9 @@ node = "24.21.0"
 "aqua:pnpm/pnpm" = "12.17.0"
 "npm:markdownlint-cli2" = "0.23.2"
 "npm:@commitlint/cli" = "21.2.2"
+
+[settings]
+disable_tools = ["npm:@commitlint/cli", "npm:markdownlint-cli2"]
 `
 
 // soundHostTools は、焼き込んだ版を両方持つレシピ。**行頭の `\t@` を含める** —— 置換で前置きが
@@ -329,7 +332,6 @@ func Test_run(t *testing.T) {
 		t.Run("写しの1つが壊れていれば他も書き換えない", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
-			// go ディレクティブを失った go.mod。
 			root := newRepo(t, soundMise, drifted, "module example\n")
 			var out bytes.Buffer
 
@@ -949,6 +951,55 @@ func Test_checkNodeToolsDeps(t *testing.T) {
 		t.Run("読めなければエラー", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, checkNodeToolsDeps(filepath.Join(t.TempDir(), "package.json")), os.ErrNotExist)
+		})
+	})
+}
+
+func Test_checkDisableTools(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "mise.toml")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		return path
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("npm の道具とちょうど同じ集合なら、並びに依らず通す", func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, checkDisableTools(write(t,
+				"[settings]\ndisable_tools = [\"npm:markdownlint-cli2\", \"npm:@commitlint/cli\"]\n")))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, body := range map[string]string{
+			"npm の道具が欠けている":     "[settings]\ndisable_tools = [\"npm:@commitlint/cli\"]\n",
+			"npm の道具でないものが余る":   "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:markdownlint-cli2\", \"go\"]\n",
+			"disable_tools が無い": "[settings]\nexperimental = true\n",
+			"空の配列":              "[settings]\ndisable_tools = []\n",
+		} {
+			t.Run(name+"なら errShape", func(t *testing.T) {
+				t.Parallel()
+				require.ErrorIs(t, checkDisableTools(write(t, body)), errShape)
+			})
+		}
+
+		t.Run("解釈できなければ misetoml のエラー", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkDisableTools(write(t, "[settings]\ndisable_tools = npm\n")),
+				misetoml.ErrInvalidDisableTools)
+		})
+
+		t.Run("読めなければエラー", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkDisableTools(filepath.Join(t.TempDir(), "mise.toml")), os.ErrNotExist)
 		})
 	})
 }
