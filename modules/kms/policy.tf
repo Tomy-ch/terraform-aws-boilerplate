@@ -36,6 +36,10 @@ locals {
   s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
   log_groups = sort(distinct(var.users.services.logs))
 
+  sns_roles      = { for r in var.users.roles : r.arn => sort(r.topics) if r.via == "sns" }
+  sns_publishers = { for p in ["budgets", "cloudwatch", "events"] : p => sort([for t in var.users.services.sns : t.topic if contains(t.publishers, p)]) }
+  topic_arn      = "arn:${local.partition}:sns:${local.region}:${local.account}"
+
   statements = concat(
     [{
       Sid       = "AccountKeyAdministration"
@@ -73,6 +77,38 @@ locals {
       Condition = { ArnEquals = { "kms:EncryptionContext:aws:logs:arn" = [
         for n in local.log_groups : "arn:${local.partition}:logs:${local.region}:${local.account}:log-group:${n}"
       ] } }
+    }],
+    # SNS は Topic の ARN を暗号化コンテキスト aws:sns:topicArn に渡す（Amazon SNS Developer Guide「Setting up Amazon SNS topic encryption」）。
+    [for i, arn in sort(keys(local.sns_roles)) : {
+      Sid       = "RolesViaSns${i}"
+      Effect    = "Allow"
+      Principal = { AWS = [arn] }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+      Resource  = "*"
+      Condition = { StringEquals = {
+        "kms:ViaService"                         = "sns.${local.region}.amazonaws.com"
+        "kms:EncryptionContext:aws:sns:topicArn" = [for t in local.sns_roles[arn] : "${local.topic_arn}:${t}"]
+      } }
+    }],
+    # CloudWatch と Budgets は公式の例の aws:SourceArn のワイルドカードを置かず、アカウントの固定値だけで限る（README「公式推奨からの逸脱」）。
+    [for p in ["budgets", "cloudwatch"] : {
+      Sid       = p == "budgets" ? "SnsPublisherBudgets" : "SnsPublisherCloudWatch"
+      Effect    = "Allow"
+      Principal = { Service = "${p}.amazonaws.com" }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+      Resource  = "*"
+      Condition = { StringEquals = { "aws:SourceAccount" = local.account } }
+    } if length(local.sns_publishers[p]) > 0],
+    # EventBridge から暗号化した Topic へ送る経路は aws:Source* の条件を受けない（Amazon SNS Developer Guide「Managing Amazon SNS encryption keys and costs」）。
+    length(local.sns_publishers.events) == 0 ? [] : [{
+      Sid       = "SnsPublisherEvents"
+      Effect    = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+      Resource  = "*"
+      Condition = { StringEquals = {
+        "kms:EncryptionContext:aws:sns:topicArn" = [for t in local.sns_publishers.events : "${local.topic_arn}:${t}"]
+      } }
     }],
   )
 
