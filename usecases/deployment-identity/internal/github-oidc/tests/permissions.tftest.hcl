@@ -324,6 +324,7 @@ run "policies" {
           "organizations:Terminate*",
           "organizations:Untag*",
           "organizations:Update*",
+          "account:CloseAccount",
           "iam:DeleteAccountPasswordPolicy",
           "iam:DisableOrganizationsRoot*",
           "iam:EnableOrganizationsRoot*",
@@ -786,11 +787,12 @@ run "policy_length" {
     state_key_arn           = "arn:aws-cn:kms:cn-northwest-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn  = format("arn:aws-cn:s3:::%063d", 2)
     apply_output_bucket_arn = format("arn:aws-cn:s3:::%063d", 3)
+    # root の入力が許す最も長い break-glass（4つ。名前は IAM の上限の user・role 64文字、group 128文字）。
     break_glass_arns = [
-      "arn:aws-cn:iam::123456789012:user/break-glass/break-glass-1",
-      "arn:aws-cn:iam::123456789012:user/break-glass/break-glass-2",
-      "arn:aws-cn:iam::123456789012:group/break-glass/break-glass",
-      "arn:aws-cn:iam::123456789012:role/break-glass/abcdefghijklmnopqrstuvwxyz0123456-break-glass",
+      format("arn:aws-cn:iam::123456789012:user/break-glass/%064d", 1),
+      format("arn:aws-cn:iam::123456789012:user/break-glass/%064d", 2),
+      format("arn:aws-cn:iam::123456789012:group/break-glass/%0128d", 3),
+      format("arn:aws-cn:iam::123456789012:role/break-glass/%064d", 4),
     ]
   }
 
@@ -917,24 +919,42 @@ run "apply_output_bucket_arn_follows_input" {
       for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource
       if contains(["CreateApplyOutputBucket", "ListBuckets", "ReadBucketConfiguration", "ConfigureBuckets"], s.Sid)
       ] == [
-      local.bucket_arns,
-      local.bucket_arns,
-      local.bucket_arns,
+      [
+        "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      ],
+      [
+        "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      ],
+      [
+        "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      ],
       "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
     ]
     error_message = "apply-identity の role の apply の出力の Bucket の作成・読み取り・設定の Resource が、入力の ARN になっていません。"
   }
 
   assert {
-    condition     = local.bucket_arns[2] == "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an"
-    error_message = "3つの Bucket の文の Resource に、入力の apply の出力の Bucket の ARN が入っていません。"
-  }
-
-  assert {
     condition = [
       for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource
       if contains(["ListBuckets", "ReadBucketConfiguration"], s.Sid)
-    ] == [local.bucket_arns, local.bucket_arns]
+      ] == [
+      [
+        "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      ],
+      [
+        "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+        "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
+      ],
+    ]
     error_message = "plan の role の apply の出力の Bucket の読み取りの Resource が、入力の ARN になっていません。"
   }
 
@@ -952,35 +972,208 @@ run "apply_output_bucket_arn_follows_input" {
 }
 
 # 統制の構成物は管理アカウントの identity root だけが持つ（deployment-identity/ADR-0201 決定3）。apply の role の Deny は env を問わない。
-run "governance_only_in_admin" {
+# 管理アカウントの外では break-glass は role だけを持つ。
+run "no_governance_in_dev" {
   command = apply
 
   variables {
-    name_prefix = "tabp-dev"
-    env         = "dev"
+    name_prefix      = "tabp-dev"
+    env              = "dev"
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   }
 
   assert {
-    condition = [
-      for k in ["plan", "apply_identity"] : [
-        for s in jsondecode(local.all_policies[k].policy).Statement : s.Sid
-        if startswith(s.Sid, "Iam") || strcontains(s.Sid, "Organization") || strcontains(s.Sid, "BreakGlass") || strcontains(s.Sid, "Governance")
-      ]
-    ] == [[], []]
-    error_message = "admin でない env の plan か apply-identity の role に、統制の構成物の権限が入っています。"
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases"]
+    error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
   assert {
-    condition     = !anytrue([for r in one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyIdentityChange"]) : strcontains(r, ":policy/")])
-    error_message = "admin でない env の apply の role の Deny が、統制の customer managed policy を名指しています。"
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Sid] == [
+      "ListBuckets",
+      "ReadBucketConfiguration",
+      "WriteIdentityState",
+      "LockIdentityState",
+      "ConfigureBuckets",
+      "CreateApplyOutputBucket",
+      "ManageGitHubProvider",
+      "ManageCiRoles",
+      "ReadStateKey",
+      "ManageStateKey",
+      "DenyLockoutSafetyBypass",
+      "ReadGitHubProvider",
+      "ReadCiRoles",
+      "ListKeyAliases",
+      "WriteApplyOutput",
+    ]
+    error_message = "dev の apply-identity の role に、統制の構成物の権限が入っています。"
   }
 
   assert {
-    condition = [
-      for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Sid
-      if contains(["DenyGovernanceChange", "DenyBreakGlassChange"], s.Sid)
-    ] == ["DenyGovernanceChange", "DenyBreakGlassChange"]
-    error_message = "admin でない env の apply の role に、統制の構成物と break-glass の変更の Deny がありません。"
+    condition = [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Sid] == [
+      "ListStateBucket",
+      "ReadStateBucketEncryption",
+      "WriteWorkloadState",
+      "LockWorkloadState",
+      "ListKeyAliases",
+      "WriteWorkloadApplyOutput",
+      "DenyIdentityChange",
+      "DenyIdentityStateChange",
+      "DenyStateBucketChange",
+      "DenyStateVersionDeletion",
+      "DenyPlanOutputChange",
+      "DenyApplyOutputBucketChange",
+      "DenyApplyOutputChange",
+      "DenyStateKeyChange",
+      "DenyGovernanceChange",
+      "DenyBreakGlassChange",
+    ]
+    error_message = "dev の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
+  }
+
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.this["apply"].policy, ":policy/")
+    error_message = "dev の apply の role の Deny が、統制の customer managed policy を名指しています。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    error_message = "dev の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+  }
+}
+
+run "no_governance_in_security" {
+  command = apply
+
+  variables {
+    name_prefix      = "tabp-security"
+    env              = "security"
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases"]
+    error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Sid] == [
+      "ListBuckets",
+      "ReadBucketConfiguration",
+      "WriteIdentityState",
+      "LockIdentityState",
+      "ConfigureBuckets",
+      "CreateApplyOutputBucket",
+      "ManageGitHubProvider",
+      "ManageCiRoles",
+      "ReadStateKey",
+      "ManageStateKey",
+      "DenyLockoutSafetyBypass",
+      "ReadGitHubProvider",
+      "ReadCiRoles",
+      "ListKeyAliases",
+      "WriteApplyOutput",
+    ]
+    error_message = "security の apply-identity の role に、統制の構成物の権限が入っています。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Sid] == [
+      "ListStateBucket",
+      "ReadStateBucketEncryption",
+      "WriteWorkloadState",
+      "LockWorkloadState",
+      "ListKeyAliases",
+      "WriteWorkloadApplyOutput",
+      "DenyIdentityChange",
+      "DenyIdentityStateChange",
+      "DenyStateBucketChange",
+      "DenyStateVersionDeletion",
+      "DenyPlanOutputChange",
+      "DenyApplyOutputBucketChange",
+      "DenyApplyOutputChange",
+      "DenyStateKeyChange",
+      "DenyGovernanceChange",
+      "DenyBreakGlassChange",
+    ]
+    error_message = "security の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
+  }
+
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.this["apply"].policy, ":policy/")
+    error_message = "security の apply の role の Deny が、統制の customer managed policy を名指しています。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    error_message = "security の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+  }
+}
+
+run "no_governance_in_log_archive" {
+  command = apply
+
+  variables {
+    name_prefix      = "tabp-log-archive"
+    env              = "log-archive"
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases"]
+    error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Sid] == [
+      "ListBuckets",
+      "ReadBucketConfiguration",
+      "WriteIdentityState",
+      "LockIdentityState",
+      "ConfigureBuckets",
+      "CreateApplyOutputBucket",
+      "ManageGitHubProvider",
+      "ManageCiRoles",
+      "ReadStateKey",
+      "ManageStateKey",
+      "DenyLockoutSafetyBypass",
+      "ReadGitHubProvider",
+      "ReadCiRoles",
+      "ListKeyAliases",
+      "WriteApplyOutput",
+    ]
+    error_message = "log-archive の apply-identity の role に、統制の構成物の権限が入っています。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Sid] == [
+      "ListStateBucket",
+      "ReadStateBucketEncryption",
+      "WriteWorkloadState",
+      "LockWorkloadState",
+      "ListKeyAliases",
+      "WriteWorkloadApplyOutput",
+      "DenyIdentityChange",
+      "DenyIdentityStateChange",
+      "DenyStateBucketChange",
+      "DenyStateVersionDeletion",
+      "DenyPlanOutputChange",
+      "DenyApplyOutputBucketChange",
+      "DenyApplyOutputChange",
+      "DenyStateKeyChange",
+      "DenyGovernanceChange",
+      "DenyBreakGlassChange",
+    ]
+    error_message = "log-archive の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
+  }
+
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.this["apply"].policy, ":policy/")
+    error_message = "log-archive の apply の role の Deny が、統制の customer managed policy を名指しています。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    error_message = "log-archive の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
   }
 }
 
@@ -1024,13 +1217,45 @@ run "admin_break_glass_without_role" {
   expect_failures = [aws_iam_role_policy.apply_identity]
 }
 
-# 管理アカウントの外では break-glass は role だけを持つ（organization-baseline が StackSets で配る）。
-run "member_break_glass_role_only" {
+run "admin_break_glass_without_user" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "admin_break_glass_without_group" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+# 空の一覧では DenyBreakGlassChange の Resource が空になる。root の validation の内側でも、precondition が拒む。
+run "member_break_glass_empty" {
   command = plan
 
   variables {
     name_prefix      = "tabp-dev"
     env              = "dev"
-    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+    break_glass_arns = []
   }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "admin_break_glass_empty" {
+  command = plan
+
+  variables {
+    break_glass_arns = []
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
 }

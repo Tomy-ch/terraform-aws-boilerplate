@@ -897,3 +897,36 @@ test_violation_governance_declaration_empty_string if {
 	some m in messages_for(world(valid_statements), with_governance({"actions": [""]}))
 	startswith(m, malformed_governance)
 }
+
+test_violation_governance_by_wildcard_action if {
+	every action in ["*", "organizations:*", ["*"]] {
+		s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": action, "Resource": "*"})
+		some m in messages(s)
+		startswith(m, denied_06("organizations:Create*"))
+	}
+}
+
+test_violation_governance_action_and_not_action if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"NotAction": ["s3:GetObject"]}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_with_not_resource if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"NotResource": "arn:aws:s3:::x"}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_deny_on_other_role if {
+	rcs := array.concat(world(remove(valid_statements, governance_index)), [role_policy("plan_extra", "ci-plan", [governance_deny])])
+	some m in messages_for(rcs, decl)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_declaration_actions_not_array if {
+	every g in [{"actions": "sts:AssumeRoot"}, {"actions": null}, {"actions": {"a": "sts:AssumeRoot"}}, "sts:AssumeRoot", null] {
+		some m in messages_for(world(valid_statements), with_governance(g))
+		startswith(m, malformed_governance)
+	}
+}

@@ -76,6 +76,7 @@
             "organizations:Terminate*",
             "organizations:Untag*",
             "organizations:Update*",
+            "account:CloseAccount",
             "iam:DeleteAccountPasswordPolicy",
             "iam:DisableOrganizationsRoot*",
             "iam:EnableOrganizationsRoot*",

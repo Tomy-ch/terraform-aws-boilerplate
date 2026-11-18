@@ -97,7 +97,7 @@ variable "break_glass_arns" {
   type        = list(string)
 
   validation {
-    condition     = length(var.break_glass_arns) > 0 && alltrue([for a in var.break_glass_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:(user|group|role)/break-glass/[A-Za-z0-9+=,.@_-]+$", a))])
-    error_message = "break_glass_arns は、path が /break-glass/ の IAM user・group・role の ARN の、空でない一覧にしてください。"
+    condition     = length(var.break_glass_arns) > 0 && length(var.break_glass_arns) <= 4 && alltrue([for a in var.break_glass_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:((user|role)/break-glass/[A-Za-z0-9+=,.@_-]{1,64}|group/break-glass/[A-Za-z0-9+=,.@_-]{1,128})$", a))])
+    error_message = "break_glass_arns は、path が /break-glass/ の IAM user・group・role の ARN（名前は IAM の上限の長さまで）の、1つ以上4つ以下の一覧にしてください。"
   }
 }

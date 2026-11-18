@@ -315,6 +315,8 @@ well_formed_governance if {
 	}
 }
 
+# 宣言した名前そのものを Deny の Action に求める。決定5 は読み取りを拒まないので、`*` や `organizations:*` の
+# 広い Deny を覆いと数えない（鍵の Deny の `kms:*` とは違う）。
 governance_denied(a) if {
 	some s in statements
 	unconditional_deny(s)

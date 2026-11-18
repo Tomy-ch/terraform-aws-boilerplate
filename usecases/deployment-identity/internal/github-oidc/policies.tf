@@ -172,6 +172,7 @@ locals {
   # apply の role の統制の Deny（deployment-identity/ADR-0201 決定5）。Resource "*" で、条件を付けない。
   governance_change_actions = concat(
     [for v in ["Accept", "Attach", "Cancel", "Close", "Create", "Decline", "Delete", "Deregister", "Detach", "Disable", "Enable", "Invite", "Leave", "Move", "Put", "Register", "Remove", "Tag", "Terminate", "Untag", "Update"] : "organizations:${v}*"],
+    ["account:CloseAccount"],
     ["iam:DeleteAccountPasswordPolicy", "iam:DisableOrganizationsRoot*", "iam:EnableOrganizationsRoot*", "iam:UpdateAccountPasswordPolicy"],
     [for a in [
       "AttachCustomerManagedPolicyReferenceToPermissionSet",
@@ -301,10 +302,10 @@ resource "aws_iam_role_policy" "apply_identity" {
       error_message = "state_key_arn が、role と同じ partition・リージョン・アカウントの鍵ではありません。"
     }
 
-    # 別のアカウントの ARN では、apply の role の Deny が自分の break-glass に効かない。
+    # 空か別のアカウントの ARN では、apply の role の Deny が自分の break-glass に効かない。
     precondition {
-      condition     = alltrue([for a in var.break_glass_arns : startswith(a, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:")])
-      error_message = "break_glass_arns が、role と同じ partition・アカウントの ARN ではありません。"
+      condition     = length(var.break_glass_arns) > 0 && alltrue([for a in var.break_glass_arns : startswith(a, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:")])
+      error_message = "break_glass_arns が空か、role と同じ partition・アカウントの ARN ではありません。"
     }
 
     # 管理アカウントでは種類ごとの文の Resource になる。空の Resource は IAM が拒む。

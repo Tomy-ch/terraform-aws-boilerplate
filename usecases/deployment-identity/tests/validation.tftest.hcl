@@ -360,6 +360,11 @@ run "accepts_security" {
   variables {
     env = "security"
   }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-security-ci-apply-identity", environment = "security-apply-identity" }
+    error_message = "env が security の role と environment の名前になっていません。"
+  }
 }
 
 run "accepts_log_archive" {
@@ -368,6 +373,107 @@ run "accepts_log_archive" {
   variables {
     env = "log-archive"
   }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-log-archive-ci-apply-identity", environment = "log-archive-apply-identity" }
+    error_message = "env が log-archive の role と environment の名前になっていません。"
+  }
+}
+
+run "accepts_sandbox" {
+  command = plan
+
+  variables {
+    env = "sandbox"
+  }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-sandbox-ci-apply-identity", environment = "sandbox-apply-identity" }
+    error_message = "env が sandbox の role と environment の名前になっていません。"
+  }
+}
+
+run "accepts_break_glass_names_at_iam_limit" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      format("arn:aws:iam::123456789012:user/break-glass/%064d", 1),
+      format("arn:aws:iam::123456789012:user/break-glass/%064d", 2),
+      format("arn:aws:iam::123456789012:group/break-glass/%0128d", 3),
+      format("arn:aws:iam::123456789012:role/break-glass/%064d", 4),
+    ]
+  }
+}
+
+run "rejects_break_glass_user_name_over_64" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:user/break-glass/%065d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_break_glass_role_name_over_64" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:role/break-glass/%065d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_break_glass_group_name_over_128" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:group/break-glass/%0129d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_five_break_glass_arns" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-3",
+      "arn:aws:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
+    ]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_valid_and_invalid_break_glass_arns_mixed" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws:iam::123456789012:role/tabp-break-glass",
+    ]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_iam_policy_arn_as_break_glass" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:policy/break-glass/break-glass"]
+  }
+
+  expect_failures = [var.break_glass_arns]
 }
 
 run "rejects_empty_break_glass_arns" {
