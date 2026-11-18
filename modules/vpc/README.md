@@ -39,7 +39,7 @@ trust policy:
 | --- | --- | --- | --- |
 | `AllowVpcFlowLogsOfThisAccount` | `vpc-flow-logs.amazonaws.com` | `sts:AssumeRole` | `aws:SourceAccount` が同じアカウント、`aws:SourceArn` が同じ partition・リージョン・アカウントの `vpc-flow-log/*` |
 
-`aws:SourceArn` を flow log の ID まで絞らないのは、ID が role より後に決まり、role と flow log が循環するからである（ADR-0301 決定11）。Amazon VPC User Guide の IAM role for publishing flow logs は、ID が未知のときに `*` を使うことを認めている。
+`aws:SourceArn` を flow log の ID まで絞らないのは、ID が role より後に決まり、role と flow log が循環するからである（ADR-0301 決定11）。Amazon VPC User Guide の IAM role for publishing flow logs は、ID が未知のときに `*` を使うことを認めている。このため同じアカウントとリージョンの別の flow log もこの role を引き受けられ、書ける先は入力の Log Group に限られる。
 
 permission policy:
 
@@ -53,7 +53,7 @@ permission policy:
 
 ### `log_format`
 
-AWS の既定（v2）の14項目に、次を足した固定の項目集合である。順序は Amazon VPC User Guide の Flow log records の表の順。
+AWS の既定（v2）の14項目に、次を足した固定の項目集合である。順序は Amazon VPC User Guide の Flow log records の表の順。項目集合を定める公式の推奨は無く、ADR-0207 決定3 の優先順位6（独自判断）に当たる。決定4 の理由の記録は、この module を呼ぶ最初の usecase の設計記録が持つ。
 
 | 項目 | 用途 |
 | --- | --- |
@@ -72,17 +72,17 @@ ECS の項目（v7）は Flow Logs を作る主体に `ecs:ListClusters` を要�
 | 持たないもの | 行き先 |
 | --- | --- |
 | subnet・Route Table・経路・Route Table の関連付け | VPC を持つ usecase の `internal/`。tier の集合と外部 egress の有無は環境で変わり、入力で resource の有無を変える切り替えになる（ADR-0102 決定15）。経路は Route Table と同じ module に置く（同 決定18） |
-| Internet Gateway・NAT Gateway・Elastic IP | 同上。既定は外部 egress を持たない（`docs/v1.0-plan/scope.md` 第9.2節） |
+| Internet Gateway・NAT Gateway・Elastic IP | 同上。既定は外部 egress を持たず、usecase ごとに必要な範囲だけを持つ（ADR-0301 決定16） |
 | `aws_main_route_table_association` | main Route Table を差し替えない。Provider は `aws_default_route_table` との併用を禁じている。subnet は custom の Route Table へ明示的に関連付ける |
 | Network ACL（既定の NACL の管理を含む） | 既定の NACL を規則なしで管理下に置くと全通信が止まり、規則を書くと AWS の既定と同じになる。subnet 層の遮断が要る tier の NACL は、VPC を持つ usecase の `internal/` |
 | IPv6（`aws_vpc_ipv6_cidr_block_association`・`aws_egress_only_internet_gateway` など） | 責務外（ADR-0102 決定5・7）。IPv6 アドレスは既定で公開され、egress の不変条件を IPv6 に広げる検査が要る |
 | IPAM からの CIDR の割り当て | 入力が AWS の表現になる。要る usecase の着手時に見直す |
 | 追加の IPv4 CIDR | 同上 |
 | DNS Firewall・Resolver のクエリログ・VPC Block Public Access の除外 | VPC を親に取る関連付けで、所有者が決まっていない |
-| `aws_security_group` と規則 | 守られる側の module（`docs/v1.0-plan/scope.md` 第3.1節） |
+| `aws_security_group` と規則 | 守られる側の module の入力（ADR-0102 決定18） |
 | VPC Endpoint | `private-aws-access` |
 | Log Group と鍵 | 呼ぶ usecase が `modules/kms` と `modules/log-group` で作り、ARN を渡す。鍵の単位は呼ぶ usecase が決める |
-| 別のアカウントの宛先（`deliver_cross_account_role`）と S3・Firehose の宛先 | 責務外（ADR-0301 決定18）。宛先は CloudWatch Logs（`docs/v1.0-plan/scope.md` 第9.3節） |
+| 別のアカウントの宛先（`deliver_cross_account_role`）と S3・Firehose の宛先 | 別のアカウントは責務外（ADR-0301 決定18）。宛先は CloudWatch Logs に限る |
 | tag | 共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない |
 
 ## 保証しないもの
@@ -119,7 +119,7 @@ ECS の項目（v7）は Flow Logs を作る主体に `ecs:ListClusters` を要�
 
 採用しなかった知見と理由:
 
-- `aws-ia/vpc` の Flow Logs の既定の無効: EC2.6 と `docs/v1.0-plan/scope.md` 第9.2節に反する
+- `aws-ia/vpc` の Flow Logs の既定の無効: EC2.6 に反する
 - `aws-ia/vpc` の配送 role の Condition の無い trust policy と、Resource `*` の permission: 最小権限に反する（ADR-0301 決定8・9・11）
 - `aws-ia/vpc` が既定の Security Group と main Route Table を管理しないこと: 上の EC2.2 と Subnet route tables
 - `aws-ia/vpc` の public subnet の公開 IP の自動割り当て: EC2.15。この module は subnet を持たない
