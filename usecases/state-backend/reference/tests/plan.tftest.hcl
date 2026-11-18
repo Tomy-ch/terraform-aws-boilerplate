@@ -41,6 +41,6 @@ run "reference_apply_output_bucket" {
 
   assert {
     condition     = module.state_backend.apply_output_bucket_arn == "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
-    error_message = "reference の値から apply の出力の Bucket が組まれていません。"
+    error_message = "reference の apply_output_bucket_arn が、apply の出力の Bucket の ARN を返していません。"
   }
 }

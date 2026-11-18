@@ -37,6 +37,12 @@ statements(body) := as_array(body.Statement)
 # IAM は Action の大文字小文字を区別しない。
 lower_all(xs) := [lower(x) | some x in as_array(xs)]
 
+# IAM の Action と Resource の * と ? は ":" や "/" も越え、ほかの文字は文字そのものである。glob.match は [ と { を
+# 構文として読み、閉じていないと評価が未定義になって規則が黙るので使わない。
+iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()\[\]{}|^$\\]`, `\${0}`))
+
+iam_match(pattern, value) if regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
+
 # 鍵の暗号操作と grant。Key Policy のアカウントへの委任と IAM の Allow に置かない（ADR-0301 決定12）。
 crypto_actions := {
 	"kms:creategrant", "kms:decapsulate", "kms:decrypt", "kms:derivesharedsecret", "kms:encapsulate", "kms:encrypt", "kms:generatedatakey",

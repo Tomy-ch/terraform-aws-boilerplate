@@ -527,20 +527,34 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への %v のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [target, arn, sort(writes)])
 }
 
-# 宣言した書き込みを Action で拒む Deny は、その書き込みを塞ぐ。宣言と実物の食い違いとして落とす。
+# 宣言した書き込みを Action で拒む Deny は、その書き込みを塞ぐ。宣言と実物の食い違いとして落とす。Resource は
+# 完全一致ではなく、IAM がその ARN に当てるか（Resource の pattern、NotResource の外）で読む。
 deny contains msg if {
 	some arn, writes in write_targets
 	some s in statements
-	unconditional_deny(s)
-	on(s, arn)
+	s.Effect == "Deny"
+	count(object.get(s, "Condition", {})) == 0
+	applies_to(s, arn)
 	some a in lib.lower_all(object.get(s, "Action", []))
 	some w in writes
-	iam_glob_match(a, w)
+	lib.iam_match(a, w)
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s の %s を、Deny の Action %q で拒んでいます", [target, arn, w, a])
 }
 
-# IAM の Action の * は任意の文字列に、? は任意の1文字に当たる。Action の名前は . を含まないので、glob の既定の区切りは効かない。
-iam_glob_match(pattern, name) if glob.match(pattern, [], name)
+applies_to(s, arn) if {
+	some r in lib.as_array(object.get(s, "Resource", []))
+	lib.iam_match(r, arn)
+}
+
+applies_to(s, arn) if {
+	"NotResource" in object.keys(s)
+	not resource_listed(s.NotResource, arn)
+}
+
+resource_listed(rs, arn) if {
+	some r in lib.as_array(rs)
+	lib.iam_match(r, arn)
+}
 
 # --- PLAN-APPLY-04: state の版の削除 ---
 

@@ -253,7 +253,6 @@ run "state_key_alias_name" {
     env     = "dev"
   }
 
-
   assert {
     condition     = output.state_key_alias_name == "alias/t4bp-dev-tfstate"
     error_message = "state_key_alias_name が alias/<project>-<env>-tfstate を返していません。"

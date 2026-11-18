@@ -304,7 +304,9 @@ test_violation_bootstrap_malformed if {
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["*"]}),
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:Pu?Object"]}),
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject "]}),
-		with_child(state_bucket, {"roots": true, "version_deletion": true, "writes": ["s3:PutObject"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": null}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": {"s3:PutObject": true}}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [["s3:PutObject"]]}),
 	] {
 		fixture.has(malformed, messages_for(world(valid_statements), d))
 	}
@@ -705,6 +707,7 @@ test_violation_writes_full_deny if {
 	msgs := messages(replace(valid_statements, 8, full_deny([ao_objects])))
 	fixture.has(denied_03_writes(ao_objects), msgs)
 	fixture.has(denied_03_writes_denied(ao_objects, "*"), msgs)
+	not fixture.has(denied_03(ao_objects), msgs)
 }
 
 test_violation_writes_full_deny_alongside if {
@@ -736,6 +739,75 @@ test_pass_writes_other_action_denied if {
 		{"Effect": "Deny", "Action": ["s3:GetObject", "s3:Put*Acl", "s3:DeleteObject*", "s3:PutObj"], "Resource": ao_objects},
 		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": ao_objects, "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
 		{"Effect": "Deny", "Action": "*", "Resource": ao},
+	] {
+		count(messages(array.concat(valid_statements, [s]))) == 0
+	}
+}
+
+# 書き込み先を宣言した子も、入力に無いか ARN が読めなければ PLAN-APPLY-00 で落ちる。03 が対象0件のまま通らないため。
+test_violation_writes_child_absent if {
+	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s が入力にありません", [apply_bucket]), messages_for(without(world(valid_statements), apply_bucket), decl))
+}
+
+test_violation_writes_child_arn_not_arn if {
+	every v in [{"id": "ao-id"}, {"arn": "", "id": "ao-id"}, {"arn": "Zq8x1", "id": "ao-id"}] {
+		rcs := with_after(world(valid_statements), apply_bucket, v)
+		fixture.has(sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN", [apply_bucket]), messages_for(rcs, decl))
+	}
+}
+
+test_violation_writes_child_arn_unknown if {
+	rcs := [unknown_arn(x) | some x in world(valid_statements)]
+	fixture.has(sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN", [apply_bucket]), messages_for(rcs, decl))
+}
+
+unknown_arn(x) := json.patch(x, [{"op": "replace", "path": "/change", "value": {"actions": ["create"], "after": {"id": "ao-id"}, "after_unknown": {"arn": true}}}]) if x.address == apply_bucket
+
+unknown_arn(x) := x if x.address != apply_bucket
+
+test_violation_writes_not_action_empty if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": [], "Resource": ao_objects})))
+}
+
+# NotAction の Deny が書き込み先に IAM で掛かっていても、Resource が ARN と文字列で一致しなければ数えない。
+test_violation_writes_not_action_other_resource_forms if {
+	every s in [
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "*"},
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "arn:aws:s3:::a*"},
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "NotResource": "arn:aws:s3:::other/*"},
+	] {
+		fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, s)))
+	}
+}
+
+test_violation_writes_action_and_not_action if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "Action": "s3:GetObject", "NotAction": ["s3:PutObject"], "Resource": ao_objects})))
+}
+
+test_pass_two_writes if {
+	d := with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject", "s3:PutObjectTagging"]})
+	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObjectTagging", "s3:PutObject"], "Resource": ao_objects})
+	count(messages_for(world(s), d)) == 0
+}
+
+# 書き込みを拒む Deny は、Resource の pattern か NotResource の外で書き込み先に掛かっても落とす。
+test_violation_writes_denied_by_resource_pattern if {
+	every s in [
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::a*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::a?/?"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": "arn:aws:s3:::other/*"},
+	] {
+		fixture.has(denied_03_writes_denied(ao_objects, "s3:putobject"), messages(array.concat(valid_statements, [s])))
+	}
+}
+
+test_pass_writes_denied_elsewhere if {
+	every s in [
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::p*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::ao"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": "arn:aws:s3:::ao/*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": ["arn:aws:s3:::other", "arn:aws:s3:::a*"]},
 	] {
 		count(messages(array.concat(valid_statements, [s]))) == 0
 	}
