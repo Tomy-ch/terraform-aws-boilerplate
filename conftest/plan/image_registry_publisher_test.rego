@@ -98,3 +98,24 @@ test_violation_declaration_key_absent if {
 	d := object.union(object.remove(data.policy_plan, ["image_registry"]), {"image_registry": ir})
 	fixture.has("[PLAN-PUB-00]", p.deny) with input as with_policy([publish, login]) with data.policy_plan as d
 }
+
+test_violation_role_name_unknown if {
+	rcs := array.concat([rc("aws_ecr_repository", "this", {"name": "tabp-dev/api"}), rc("aws_iam_role", "publisher", {})], array.slice(base, 2, 4))
+	fixture.has("[PLAN-PUB-04]", p.deny) with input as fixture.plan(array.concat(rcs, [policy([publish, login])]))
+}
+
+test_violation_exclusive_names_other_role if {
+	rcs := [
+		rc("aws_ecr_repository", "this", {"name": "tabp-dev/api"}),
+		rc("aws_iam_role", "publisher", {"name": "tabp-dev-ecr-publish-api"}),
+		rc("aws_iam_role_policies_exclusive", "publisher", {"role_name": "tabp-dev-ecr-publish-web", "policy_names": ["publish"]}),
+		rc("aws_iam_role_policy_attachments_exclusive", "publisher", {"role_name": "tabp-dev-ecr-publish-api", "policy_arns": []}),
+		policy([publish, login]),
+	]
+	fixture.has("[PLAN-PUB-04]", p.deny) with input as fixture.plan(rcs)
+}
+
+test_violation_publish_on_two_resources if {
+	s := object.union(publish, {"Resource": [repo_arn, "arn:aws:ecr:ap-northeast-1:123456789012:repository/tabp-dev/other"]})
+	fixture.has("[PLAN-PUB-02]", p.deny) with input as with_policy([s, login])
+}

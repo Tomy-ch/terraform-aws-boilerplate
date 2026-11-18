@@ -76,3 +76,17 @@ test_violation_subject_ids_disagree if {
 test_violation_declaration_empty if {
 	fixture.has("[PLAN-PUBTRUST-00]", p.deny) with input as trust([statement({"StringEquals": eq})]) with data.policy_plan as object.union(object.remove(data.policy_plan, ["publisher_trust"]), {"publisher_trust": {"roles": []}})
 }
+
+test_violation_principal_with_extra_key if {
+	s := object.union(statement({"StringEquals": eq}), {"Principal": {"Federated": provider_arn, "AWS": "*"}})
+	fixture.has("[PLAN-PUBTRUST-03]", p.deny) with input as trust([s])
+}
+
+test_violation_string_like_alongside_string_equals if {
+	fixture.has("[PLAN-PUBTRUST-04]", p.deny) with input as trust([statement({"StringEquals": eq, "StringLike": {"token.actions.githubusercontent.com:sub": "repo:*"}})])
+}
+
+test_violation_owner_id_disagrees if {
+	e := object.union(eq, {"token.actions.githubusercontent.com:repository_owner_id": "1000002"})
+	fixture.has("[PLAN-PUBTRUST-08]", p.deny) with input as trust([statement({"StringEquals": e})])
+}

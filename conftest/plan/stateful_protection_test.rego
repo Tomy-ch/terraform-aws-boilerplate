@@ -666,7 +666,18 @@ test_violation_unreadable_retained_images if {
 	fixture.has("[PLAN-STATE-10]", msgs)
 }
 
-test_pass_readable_retained_images if {
+test_pass_same_retained_images if {
 	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 30)]) with data.policy_plan.stateful_protection as image_decl
-	not fixture.has("[PLAN-STATE-10]", msgs)
+	count(msgs) == 0
+}
+
+test_violation_created_lifecycle_repository_unknown if {
+	made := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["create"],
+		"before": null,
+		"after": {"policy": image_policy(5)},
+		"after_unknown": {"repository": true},
+	}}
+	msgs := stateful_protection.deny with input as fixture.plan([made]) with data.policy_plan.stateful_protection as image_decl
+	fixture.has("[PLAN-STATE-10]", msgs)
 }

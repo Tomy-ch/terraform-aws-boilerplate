@@ -72,7 +72,7 @@ deny contains msg if {
 deny contains msg if {
 	some m in scannings
 	lib.strip_index(m.rc.address) == cfg.registry_scanning
-	m.rc.change.after.scan_type != "ENHANCED"
+	object.get(m.rc.change.after, "scan_type", null) != "ENHANCED"
 	msg := sprintf("[PLAN-ECR-02] %s: %s の scan_type が ENHANCED ではありません", [m.path, m.rc.address])
 }
 
@@ -93,7 +93,7 @@ deny contains msg if {
 	some m in managed
 	m.rc.type == "aws_ecr_lifecycle_policy"
 	lib.strip_index(m.rc.address) == cfg.lifecycle_policy
-	not count_based(m.rc.change.after.policy)
+	not count_based(object.get(m.rc.change.after, "policy", null))
 	msg := sprintf("[PLAN-ECR-05] %s: %s の規則が、タグ付きのイメージを2件以上残す imageCountMoreThan の expire の1つではありません", [m.path, m.rc.address])
 }
 

@@ -85,7 +85,7 @@ deny contains msg if {
 	some c in lib.changes
 	lib.strip_index(c.rc.address) == cfg.publisher.role
 	inst := instance(c.rc.address)
-	not exclusive(c.path, inst, c.rc.change.after.name)
+	not exclusive(c.path, inst, object.get(c.rc.change.after, "name", null))
 	msg := sprintf("[PLAN-PUB-04] %s: %s の role に、inline の policy を push の policy だけに、管理 policy を空に保つ排他の resource がありません", [c.path, c.rc.address])
 }
 

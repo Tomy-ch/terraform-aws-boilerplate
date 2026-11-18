@@ -144,3 +144,72 @@ test_violation_declaration_key_absent if {
 test_violation_repository_name_unknown if {
 	fixture.has("[PLAN-ECR-00]", p.deny) with input as registry(replace(0, repository({"force_delete": false})))
 }
+
+test_pass_two_retained_images if {
+	count(p.deny) == 0 with input as registry(replace(1, lifecycle(lifecycle_doc([count_rule(2)]))))
+}
+
+test_violation_lifecycle_policy_unknown if {
+	fixture.has("[PLAN-ECR-05]", p.deny) with input as registry(replace(1, rc(sprintf("%s.aws_ecr_lifecycle_policy.this", [prefix]), "aws_ecr_lifecycle_policy", {"repository": "tabp-dev/api"})))
+}
+
+test_violation_single_untagged_rule if {
+	r := object.union(count_rule(30), {"selection": {"tagStatus": "untagged"}})
+	fixture.has("[PLAN-ECR-05]", p.deny) with input as registry(replace(1, lifecycle(lifecycle_doc([r]))))
+}
+
+test_violation_age_based_rule if {
+	r := object.union(count_rule(30), {"selection": {"countType": "sinceImagePushed", "countUnit": "days"}})
+	fixture.has("[PLAN-ECR-05]", p.deny) with input as registry(replace(1, lifecycle(lifecycle_doc([r]))))
+}
+
+test_violation_archive_action if {
+	r := object.union(count_rule(30), {"action": {"type": "transition", "targetStorageClass": "archive"}})
+	fixture.has("[PLAN-ECR-05]", p.deny) with input as registry(replace(1, lifecycle(lifecycle_doc([r]))))
+}
+
+test_violation_scan_type_unknown if {
+	fixture.has("[PLAN-ECR-02]", p.deny) with input as registry(replace(4, scanning(object.remove(continuous("tabp-dev/*"), ["scan_type"]))))
+}
+
+test_violation_write_deny_on_other_repository if {
+	s := object.union(writes_denial, {"Resource": "arn:aws:ecr:ap-northeast-1:123456789012:repository/tabp-dev/other"})
+	fixture.has("[PLAN-ECR-08]", p.deny) with input as registry(replace(2, repository_policy([s, deletion_denial])))
+}
+
+test_violation_write_deny_principal_wildcard if {
+	s := object.union(writes_denial, {"Principal": "*"})
+	fixture.has("[PLAN-ECR-08]", p.deny) with input as registry(replace(2, repository_policy([s, deletion_denial])))
+}
+
+test_violation_write_deny_by_not_action if {
+	s := object.union(object.remove(writes_denial, ["Action"]), {"NotAction": "ecr:BatchGetImage"})
+	fixture.has("[PLAN-ECR-08]", p.deny) with input as registry(replace(2, repository_policy([s, deletion_denial])))
+}
+
+test_violation_delete_deny_on_other_repository if {
+	s := object.union(deletion_denial, {"Resource": "arn:aws:ecr:ap-northeast-1:123456789012:repository/tabp-dev/other"})
+	fixture.has("[PLAN-ECR-09]", p.deny) with input as registry(replace(2, repository_policy([writes_denial, s])))
+}
+
+web := "module.image_registry.module.repository[\"web\"]"
+
+web_arn := "arn:aws:ecr:ap-northeast-1:123456789012:repository/tabp-dev/web"
+
+web_rcs(policy_role) := [
+	rc(sprintf("%s.aws_ecr_repository.this", [web]), "aws_ecr_repository", {"name": "tabp-dev/web", "force_delete": false}),
+	rc(sprintf("%s.aws_ecr_lifecycle_policy.this", [web]), "aws_ecr_lifecycle_policy", {"repository": "tabp-dev/web", "policy": lifecycle_doc([count_rule(30)])}),
+	rc(sprintf("%s.aws_ecr_repository_policy.this", [web]), "aws_ecr_repository_policy", {"repository": "tabp-dev/web", "policy": json.marshal({"Statement": [
+		object.union(writes_denial, {"Resource": web_arn, "Condition": {"ArnNotEquals": {"aws:PrincipalArn": sprintf("arn:aws:iam::123456789012:role/%s", [policy_role])}}}),
+		object.union(deletion_denial, {"Resource": web_arn}),
+	]})}),
+	rc(sprintf("%s.aws_iam_role.publisher", [web]), "aws_iam_role", {"name": "tabp-dev-ecr-publish-web"}),
+]
+
+test_pass_two_instances if {
+	count(p.deny) == 0 with input as registry(array.concat(valid, web_rcs("tabp-dev-ecr-publish-web")))
+}
+
+test_violation_write_deny_names_role_of_other_instance if {
+	fixture.has("[PLAN-ECR-08]", p.deny) with input as registry(array.concat(valid, web_rcs("tabp-dev-ecr-publish-api")))
+}

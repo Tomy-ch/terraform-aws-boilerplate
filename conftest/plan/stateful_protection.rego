@@ -298,6 +298,16 @@ unknown_image_lifecycles contains {"path": p.f.path, "address": p.rc.address} if
 	not retained(p.rc.change.after)
 }
 
+# 作る lifecycle の repository が決まらなければ、同じ plan で外す lifecycle と組にできない。
+unknown_image_lifecycles contains {"path": f.path, "address": rc.address} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	protected_image_lifecycle(rc)
+	rc.change.actions == ["create"]
+	is_object(rc.change.after)
+	not is_string(object.get(rc.change.after, "repository", null))
+}
+
 verb(actions) := "置換" if count(actions) > 1
 
 verb(actions) := "削除" if actions == ["delete"]
