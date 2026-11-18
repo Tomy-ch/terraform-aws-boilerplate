@@ -41,11 +41,19 @@ var (
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		if xerrors.Is(err, errNoInput) {
-			log.Printf("❌ hcl-input: %v", err)
-			os.Exit(2)
-		}
-		log.Fatalf("❌ hcl-input: %v", err)
+		log.Printf("❌ hcl-input: %v", err)
+		os.Exit(exitCode(err))
+	}
+}
+
+func exitCode(err error) int {
+	switch {
+	case err == nil:
+		return 0
+	case xerrors.Is(err, errNoInput):
+		return 2
+	default:
+		return 1
 	}
 }
 
@@ -54,7 +62,7 @@ func main() {
 func run(args []string, out io.Writer) error {
 	fset := flag.NewFlagSet("hcl-input", flag.ContinueOnError)
 	fset.SetOutput(out)
-	base := fset.String("base", "", "走査の root と出力のパスの起点のディレクトリ")
+	base := fset.String("base", "", "走査の root と、JSON と -listed の一覧に書くパスの起点のディレクトリ（-listed と -out のパスそのものは作業ディレクトリから解決する）")
 	listedPath := fset.String("listed", "", "独立の走査（find）が列挙した構成ファイルの一覧")
 	outPath := fset.String("out", "", "書き出す JSON のパス")
 	if err := fset.Parse(args); err != nil {

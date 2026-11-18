@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const (
@@ -206,4 +207,25 @@ func Test_run(t *testing.T) {
 		require.ErrorIs(t, err, fs.ErrPermission)
 		assert.NoFileExists(t, out)
 	})
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		err  error
+		want int
+	}{
+		"エラーが無い":        {want: 0},
+		"構成ファイルが0件":     {err: xerrors.Wrapf(errNoInput, "x"), want: 2},
+		"一覧と読んだファイルが違う": {err: xerrors.Wrapf(errFileSetMismatch, "x"), want: 1},
+		"構文の誤り":         {err: xerrors.Wrapf(errSyntax, "x"), want: 1},
+		"引数の解釈の失敗":      {err: xerrors.New("x"), want: 1},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, exitCode(tt.err))
+		})
+	}
 }

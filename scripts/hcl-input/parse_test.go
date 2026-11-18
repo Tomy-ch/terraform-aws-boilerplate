@@ -202,7 +202,8 @@ func Test_bodyAttributes(t *testing.T) {
 func Test_foldDynamic(t *testing.T) {
 	t.Parallel()
 
-	t.Run("conftest/hcl/lib/hcl.rego の fold_dynamic と同じ並びを返す", func(t *testing.T) {
+	// Rego の fold_dynamic と同じ並びであることは、layer-test.mk の dynamic-parent-* のケースが固定する。
+	t.Run("期待の並びを返す", func(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]struct {
