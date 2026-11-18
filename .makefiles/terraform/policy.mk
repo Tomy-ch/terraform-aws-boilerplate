@@ -8,6 +8,9 @@
 ##
 ## conftest は名前が deny / warn / violation で始まる規則をすべて評価する（deny_list のような名前も含む）。
 ## 規則は deny contains の形だけを認め、それ以外を落とす。
+##
+## conftest は名前空間に当たる package が無くても、規則が減っても、評価できた分だけで成功を返す。
+## 適用の段の件数は tf-local policy-result が突き合わせる（conftest/plan/README.md の「Policy を足すとき」）。
 
 POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
@@ -70,14 +73,14 @@ tf-policy: tf-init
 	$(TF_REPORT_FAILED); \
 	if [ -z "$$inputs" ]; then echo "❌ Policy の入力が0件です（reference の root から test_plan を1件も得られませんでした）"; exit 1; fi; \
 	jq -s 'add | group_by(.key) | map({key: .[0].key, value: (map(.value) | add | unique)}) | from_entries | {provider_schema: {deprecated_arguments: .}}' "$(TF_POLICY_INPUT)"/*.schema > "$(TF_POLICY_INPUT)/provider-schema.json"; \
-	result=$$($(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs) || { \
-		echo "$$result"; echo "❌ Policy の違反があります"; exit 1; }; \
-	echo "$$result"; echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
+	$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs > "$(TF_POLICY_INPUT)/result.json" || :; \
+	$(call RUN_SCRIPT,tf-local,policy-result -policy $(POLICY_PLAN_DIR) $(TF_POLICY_INPUT)/result.json) || { \
+		echo "❌ Policy の違反か、評価の欠けがあります（理由は上の行）"; exit 1; }; \
+	echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
 
 # canary の fixture は provider を持たない構成（terraform_data）にする。init がネットワークを要さないため。
 # 例外は aws の fixture で、mock provider の override が書いた値を隠さないことを見る（ADR-0402 決定18）。
-# terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は state-backend の
-# reference の root の lock を写して init する。plugin cache に無ければ provider を取得する。
+# terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。plugin cache に無ければ provider を取得する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 
 define TF_POLICY_FIXTURE
@@ -85,7 +88,7 @@ mkdir -p "$$1/usecases/x/reference/tests"; printf '%s\n' "$$2" > "$$1/usecases/x
 printf 'run "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"
 endef
 
-.PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ち、違反の無い入力で通ることを検査
+.PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・評価されない規則・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ち、違反の無い入力で通ることを検査
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
@@ -133,6 +136,15 @@ tf-policy-canary:
 	expect fail untested-id "$$root/ok" "[PLAN-IAM-99]" POLICY_PLAN_DIR="$$root/untested-id"; \
 	cp -R "$$root/rego" "$$root/warn-rule"; printf '\nwarn contains "w" if false\n' >> "$$root/warn-rule/iam_action_wildcard.rego"; \
 	expect fail warn-rule "$$root/ok" "deny contains 以外の形" POLICY_PLAN_DIR="$$root/warn-rule"; \
+	mkdir -p "$$root/no-deny"; printf 'package plan.extra\n\nnote := true\n' > "$$root/no-deny/extra.rego"; \
+	printf 'package plan.extra_test\n\ntest_pass_note if true\n\ntest_violation_note if true\n' > "$$root/no-deny/extra_test.rego"; \
+	expect fail no-deny "$$root/ok" "deny contains を持たない rego は lib/ の下にだけ置けます" POLICY_PLAN_DIR="$$root/no-deny"; \
+	cp -R "$$root/rego" "$$root/unevaluated"; printf 'package plan.extra\n\nnote := `\ndeny contains "[PLAN-IAM-01] x" if false\n`\n' > "$$root/unevaluated/extra.rego"; \
+	printf 'package plan.extra_test\n\ntest_pass_note if true\n\ntest_violation_note if true\n' > "$$root/unevaluated/extra_test.rego"; \
+	expect fail unevaluated-package "$$root/ok" "plan.extra: ❌ 名前空間の規則が1つも評価されていません" POLICY_PLAN_DIR="$$root/unevaluated"; \
+	cp -R "$$root/rego" "$$root/indented"; n=$$(grep -c '^deny contains' "$$root/indented/iam_action_wildcard.rego"); \
+	printf '\n  deny contains "[PLAN-IAM-01] y" if false\n' >> "$$root/indented/iam_action_wildcard.rego"; \
+	expect fail indented-rule "$$root/ok" "plan.iam_action_wildcard: 評価 $$((n + 1)) 件、宣言 $$n 件" POLICY_PLAN_DIR="$$root/indented"; \
 	cp -R "$$root/rego" "$$root/count"; printf '\nnot_a_test := `\ntest_counted_but_not_run\n`\n' >> "$$root/count/iam_action_wildcard_test.rego"; \
 	expect fail count-mismatch "$$root/ok" "宣言された" POLICY_PLAN_DIR="$$root/count"; \
 	jq '.policy_plan.inline_arguments.terraform_data.nope = null' "$$root/data.json" > "$$root/undeclared.json"; \
@@ -157,4 +169,4 @@ tf-policy-canary:
 	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.acl)' "$$root/aws.json" > "$$root/aws-uncovered-attr.json"; \
 	expect fail aws-uncovered-attr "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 acl" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered-attr.json"; \
 	if [ -n "$$failed" ]; then echo "❌ tf-policy の canary が期待どおりでなかったケース:$$failed"; exit 1; fi; \
-	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちる"
+	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・評価されない規則・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちる"
