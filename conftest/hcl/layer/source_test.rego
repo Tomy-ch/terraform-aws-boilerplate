@@ -142,11 +142,74 @@ test_LY206_allow_chain if {
 }
 
 test_LY206_deny_module_cycle if {
-	msgs := source_denies("modules/b/main.tf", call("a", "../a"))
-	count(with_id(msgs, "LY206")) == 2
+	msgs := with_id(source_denies("modules/b/main.tf", call("a", "../a")), "LY206")
+	count(msgs) == 2
+	some ma in msgs
+	contains(ma, "LY206 [循環] modules/a の")
+	some mb in msgs
+	contains(mb, "LY206 [循環] modules/b の")
 }
 
 test_LY206_deny_internal_cycle if {
-	msgs := source_denies("usecases/u/internal/j/main.tf", call("i", "../i"))
-	count(with_id(msgs, "LY206")) == 2
+	msgs := with_id(source_denies("usecases/u/internal/j/main.tf", call("i", "../i")), "LY206")
+	count(msgs) == 2
+	some mi in msgs
+	contains(mi, "usecases/u/internal/i の")
+	some mj in msgs
+	contains(mj, "usecases/u/internal/j の")
 }
+
+test_LY206_deny_self_call if {
+	msgs := with_id(source_denies("modules/b/main.tf", call("b", "./")), "LY206")
+	count(msgs) == 1
+	some m in msgs
+	contains(m, "modules/b の")
+}
+
+test_LY206_deny_three_node_cycle if {
+	files := array.concat([f | some f in tree; f.path != "modules/b/main.tf"], [
+		tf("modules/b/main.tf", call("c", "../c")),
+		tf("modules/c/main.tf", call("a", "../a")),
+	])
+	count(with_id(denies(files), "LY206")) == 3
+}
+
+test_LY201_deny_interpolated_relative_source if {
+	count(with_id(source_denies("modules/a/main.tf", call("b", "./${var.x}")), "LY201")) == 1
+	count(with_id(source_denies("modules/a/main.tf", call("b", "../${var.x}")), "LY201")) == 1
+}
+
+test_LY201_deny_non_string_source if {
+	count(with_id(source_denies("modules/a/main.tf", "module \"b\" {\n\tsource = 1\n}\n"), "LY201")) == 1
+	count(with_id(source_denies("modules/a/main.tf", "module \"b\" {\n\tsource = [\"../b\"]\n}\n"), "LY201")) == 1
+}
+
+test_LY203_deny_module_to_unplaced_dir if {
+	files := array.concat(tree, [tf("modules/a/sub/main.tf", "")])
+	msgs := with_id(source_denies_in(files, "modules/a/main.tf", call("s", "./sub")), "LY203")
+	some m in msgs
+	contains(m, "modules/a/sub")
+}
+
+test_LY203_deny_env_to_env if {
+	files := array.concat(tree, [tf("env/prd/main.tf", "")])
+	count(with_id(source_denies_in(files, "env/dev/main.tf", call("p", "../prd")), "LY203")) == 1
+}
+
+test_LY203_deny_env_to_reference if {
+	count(with_id(source_denies("env/dev/main.tf", call("r", "../../usecases/u/reference")), "LY203")) == 1
+}
+
+test_LY203_deny_internal_to_usecase if {
+	count(with_id(source_denies("usecases/u/internal/j/main.tf", call("u", "../../")), "LY203")) == 1
+}
+
+test_LY203_deny_usecase_to_reference if {
+	count(with_id(source_denies("usecases/u/main.tf", call("r", "./reference")), "LY203")) == 1
+}
+
+test_LY203_deny_reference_to_own_internal if {
+	count(with_id(source_denies("usecases/u/reference/main.tf", call("i", "../internal/i")), "LY203")) == 1
+}
+
+source_denies_in(files, path, src) := denies(array.concat([f | some f in files; f.path != path], [tf(path, src)]))

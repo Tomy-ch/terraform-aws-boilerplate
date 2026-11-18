@@ -50,6 +50,7 @@ test_LY102_allow_provider_in_tests_and_reference if {
 		ok_module,
 		tf("usecases/u/main.tf", usecase_ok),
 		tf("usecases/u/tests/a.tftest.hcl", `provider "aws" {}`),
+		tf("usecases/u/main.tftest.hcl", `provider "aws" {}`),
 		tf("usecases/u/reference/providers.tf", `provider "aws" {}`),
 	]
 	count(with_id(denies(files), "LY102")) == 0
@@ -66,29 +67,29 @@ test_LY103_allow_required_providers_moved_removed if {
 }
 
 test_LY103_deny_import if {
-	msgs := denies(usecase_files_with("usecases/u/import.tf", `import {
+	msgs := denies(usecase_files_with("usecases/u/extra.tf", `import {
 	to = module.m.aws_s3_bucket.this
 	id = "x"
 }
 `))
 	some m in with_id(msgs, "LY103")
-	contains(m, "import")
+	contains(m, "が import を持ちます")
 }
 
 test_LY103_deny_backend if {
-	msgs := denies(usecase_files_with("usecases/u/backend.tf", `terraform {
+	msgs := denies(usecase_files_with("usecases/u/extra.tf", `terraform {
 	backend "s3" {}
 }
 `))
 	some m in with_id(msgs, "LY103")
-	contains(m, "backend")
+	contains(m, "が backend を持ちます")
 }
 
 test_LY103_deny_cloud if {
-	msgs := denies(usecase_files_with("usecases/u/backend.tf", `terraform {
+	msgs := denies(usecase_files_with("usecases/u/extra.tf", `terraform {
 	cloud {}
 }
 `))
 	some m in with_id(msgs, "LY103")
-	contains(m, "cloud")
+	contains(m, "が cloud を持ちます")
 }

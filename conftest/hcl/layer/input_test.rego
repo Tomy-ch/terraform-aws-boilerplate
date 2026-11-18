@@ -8,12 +8,18 @@ fixture_decl := {
 		"aws_flow_log": {"parents": {"vpc_id": ["aws_vpc"], "subnet_id": ["aws_subnet"]}, "optional": true},
 		"aws_ec2_tag": {"parents": {"resource_id": ["*"]}, "optional": false},
 		"aws_guardduty_malware_protection_plan": {"parents": {"protected_resource.s3_bucket.bucket_name": ["aws_s3_bucket"]}, "optional": false},
+		"aws_api_gateway_method_settings": {"parents": {"rest_api_id": ["aws_api_gateway_rest_api"], "stage_name": ["aws_api_gateway_stage"]}, "optional": false},
+		"aws_kms_alias": {"parents": {"target_key_id": ["aws_kms_key", "aws_kms_replica_key"]}, "optional": false},
 	},
 	"not_attachments": {
 		"aws_lb_listener": "子 resource",
 		"aws_s3_bucket": "親になる resource",
 		"aws_vpc": "親になる resource",
 		"aws_subnet": "子 resource",
+		"aws_api_gateway_rest_api": "親になる resource",
+		"aws_api_gateway_stage": "子 resource",
+		"aws_kms_key": "親になる resource",
+		"aws_kms_replica_key": "親になる resource",
 	},
 }
 
@@ -103,6 +109,48 @@ test_LY001_deny_type_in_both if {
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
 	some m in with_id(msgs, "LY001")
 	contains(m, "両方")
+}
+
+test_LY001_deny_decl_not_object if {
+	msgs := denies_with([ok_module], ["modules/m/main.tf"], "x")
+	some m in with_id(msgs, "LY001")
+	contains(m, "attachments がオブジェクトではありません")
+}
+
+test_LY001_deny_entry_not_object if {
+	d := object.union(fixture_decl, {"attachments": {"aws_x": "bucket"}})
+	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
+	contains(m, "attachments.aws_x")
+}
+
+test_LY001_deny_empty_argument_name if {
+	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"": ["aws_y"]}, "optional": false}}})
+	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
+	contains(m, "attachments.aws_x")
+}
+
+test_LY001_deny_empty_parent_type if {
+	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": [""]}, "optional": false}}})
+	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
+	contains(m, "attachments.aws_x")
+}
+
+test_LY001_deny_parent_types_as_string if {
+	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": "aws_y"}, "optional": false}}})
+	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
+	contains(m, "attachments.aws_x")
+}
+
+test_LY002_deny_files_list_missing if {
+	msgs := deny with input as [ok_module] with data.layer_decl as fixture_decl
+	some m in with_id(msgs, "LY002")
+	contains(m, "modules/m/main.tf は独立の走査の一覧にありません")
+}
+
+test_LY002_deny_files_list_not_array if {
+	msgs := deny with input as [] with data.layer_decl as fixture_decl with data.layer_files as "x"
+	some m in with_id(msgs, "LY002")
+	contains(m, "1件もありません")
 }
 
 test_LY002_allow_tftest_not_listed if {

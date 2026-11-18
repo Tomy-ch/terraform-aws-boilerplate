@@ -31,7 +31,9 @@ layer-check-test:
 	}; \
 	expect() { want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; expect_make "$$want" "$$case_name" layer-detect "$$base" "$$pattern" "$$@"; }; \
 	case_dir() { rm -rf "$$root/$$1"; mkdir -p "$$root/$$1"; tree "$$root/$$1" 'aws_s3_bucket.this.id'; decl "$$root/$$1"; printf '%s' "$$root/$$1"; }; \
-	printf '#!/bin/sh\nexit 1\n' > "$$root/conftest-fails"; printf '#!/bin/sh\nexit 0\n' > "$$root/conftest-silent"; chmod +x "$$root/conftest-fails" "$$root/conftest-silent"; \
+	printf '#!/bin/sh\nexit 1\n' > "$$root/conftest-fails"; printf '#!/bin/sh\nexit 0\n' > "$$root/conftest-silent"; \
+	printf '#!/bin/sh\nconftest "$$@"\nexit 1\n' > "$$root/conftest-passes-then-fails"; \
+	chmod +x "$$root/conftest-fails" "$$root/conftest-silent" "$$root/conftest-passes-then-fails"; \
 	d=$$(case_dir ok); \
 	expect pass ok "$$d" "違反はありません"; \
 	mkdir -p "$$root/no-roots"; decl "$$root/no-roots"; \
@@ -41,7 +43,13 @@ layer-check-test:
 	d=$$(case_dir no-tf); rm "$$d/modules/a/main.tf" "$$d/usecases/u/main.tf" "$$d/env/dev/main.tf"; \
 	expect fail no-tf "$$d" "LY002 [対象が0件]"; \
 	d=$$(case_dir broken); printf 'resource "aws_s3_bucket" {\n' > "$$d/modules/a/broken.tf"; \
-	expect fail broken-hcl "$$d" "broken.tf"; \
+	expect fail broken-hcl "$$d" "Unclosed configuration block"; \
+	d=$$(case_dir decl-missing); \
+	expect fail decl-missing "$$d" "missing.json" LY_DECL="$$d/missing.json"; \
+	d=$$(case_dir decl-malformed); printf '{"layer_decl": x}\n' > "$$d/decl.json"; \
+	expect fail decl-malformed "$$d" "invalid character"; \
+	d=$$(case_dir dangling-symlink); ln -s ../../nowhere.tf "$$d/modules/a/dangling.tf"; \
+	expect fail dangling-symlink "$$d" "nowhere.tf: no such file or directory"; \
 	d=$$(case_dir quoted-name); printf '# x\n' > "$$d/modules/a/q\"b\\c.tf"; \
 	expect pass quoted-name "$$d" "違反はありません"; \
 	d=$$(case_dir tf-json); printf '{"resource": {}}\n' > "$$d/modules/a/override.tf.json"; \
@@ -70,7 +78,10 @@ layer-check-test:
 	expect_make pass verify-ok layer-verify "$$d" "走って通りました"; \
 	expect_make fail verify-fails layer-verify "$$d" "テストが1件も走っていません" CONFTEST_BIN="$$root/conftest-fails"; \
 	expect_make fail verify-runs-nothing layer-verify "$$d" "テストが1件も走っていません" CONFTEST_BIN="$$root/conftest-silent"; \
+	expect_make fail verify-propagates-exit layer-verify "$$d" ": PASS" CONFTEST_BIN="$$root/conftest-passes-then-fails"; \
 	expect_make fail check-aggregates layer-check "$$d" "❌ layer-check が落ちた検査: layer-verify layer-detect" \
 		CONFTEST_BIN="$$root/conftest-fails"; \
+	d=$$(case_dir check-detect-only); printf 'resource "aws_s3_bucket" "x" {}\n' > "$$d/usecases/u/extra.tf"; \
+	expect_make fail check-detect-only layer-check "$$d" "落ちた検査: layer-detect"; \
 	if [ -n "$$failed" ]; then echo "❌ layer-check-test が期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ layer-check-test: 全ケースが期待どおりでした"

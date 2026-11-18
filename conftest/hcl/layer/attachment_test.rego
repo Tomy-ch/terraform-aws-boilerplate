@@ -200,7 +200,86 @@ test_LY301_deny_parent_in_dynamic if {
 	}
 }
 `
-	count(attachment_denies(src)) == 1
+	msgs := attachment_denies(src)
+	count(msgs) == 1
+	some m in msgs
+	contains(m, "protected_resource.s3_bucket.bucket_name")
+	contains(m, "module.b")
+}
+
+test_LY301_allow_parent_in_dynamic if {
+	src := concat("\n", [
+		`resource "aws_guardduty_malware_protection_plan" "this" {`,
+		"\tdynamic \"protected_resource\" {",
+		"\t\tfor_each = [1]",
+		"\t\tcontent {",
+		"\t\t\ts3_bucket {",
+		"\t\t\t\tbucket_name = aws_s3_bucket.this.bucket",
+		"\t\t\t}",
+		"\t\t}",
+		"\t}",
+		"}",
+	])
+	count(attachment_denies(src)) == 0
+}
+
+test_LY301_allow_count_index_outside_subscript if {
+	count(attachment_denies(policy("element([aws_s3_bucket.this], count.index).id"))) == 0
+}
+
+test_LY301_deny_local_resolving_to_literal if {
+	src := concat("\n", ["locals {", "\tx = \"my-bucket\"", "}", "", policy("local.x")])
+	some m in attachment_denies(src)
+	contains(m, "参照がありません")
+}
+
+test_LY301_deny_local_of_other_module if {
+	files := [
+		tf("modules/m/main.tf", concat("", [bucket, policy("local.x")])),
+		tf("modules/n/main.tf", concat("\n", [bucket, "locals {", "\tx = aws_s3_bucket.this.id", "}"])),
+	]
+	some m in with_id(denies(files), "LY301")
+	contains(m, "local.x")
+}
+
+test_LY301_allow_local_in_sibling_file if {
+	files := [
+		tf("modules/m/main.tf", concat("", [bucket, policy("local.x")])),
+		tf("modules/m/locals.tf", concat("\n", ["locals {", "\tx = aws_s3_bucket.this.id", "}"])),
+	]
+	count(with_id(denies(files), "LY301")) == 0
+}
+
+test_LY301_deny_each_inside_local if {
+	src := concat("\n", ["locals {", "\tx = each.value", "}", "", policy("local.x")])
+	some m in attachment_denies(src)
+	contains(m, "each.value")
+}
+
+test_LY301_allow_for_expression_two_iterators if {
+	count(attachment_denies(policy("one([for k, v in { a = aws_s3_bucket.this } : v.id])"))) == 0
+}
+
+test_LY301_deny_for_expression_over_module if {
+	some m in attachment_denies(policy("one([for b in [module.x.id] : b])"))
+	contains(m, "module.x")
+}
+
+test_LY301_allow_second_parent_type if {
+	src := concat("\n", [
+		`resource "aws_kms_replica_key" "this" {}`,
+		"",
+		`resource "aws_kms_alias" "this" {`,
+		"\ttarget_key_id = aws_kms_replica_key.this.id",
+		"}",
+	])
+	count(attachment_denies(src)) == 0
+}
+
+test_LY301_deny_any_type_without_resource_in_module if {
+	files := [tf("modules/m/main.tf", "resource \"aws_ec2_tag\" \"this\" {\n\tresource_id = aws_vpc.missing.id\n}\n")]
+	some m in with_id(denies(files), "LY301")
+	contains(m, "aws_vpc.missing")
 }
 
 test_LY301_deny_one_of_several_parent_arguments if {
@@ -229,7 +308,23 @@ test_LY302_allow_optional_without_parent if {
 
 test_LY302_deny_required_parent_missing if {
 	some m in with_id(denies(module_with(`resource "aws_s3_bucket_policy" "this" {}`)), "LY302")
-	contains(m, "bucket")
+	contains(m, "（bucket）")
+}
+
+test_LY302_allow_one_of_several_required_parents if {
+	src := concat("\n", [
+		`resource "aws_api_gateway_rest_api" "this" {}`,
+		"",
+		`resource "aws_api_gateway_method_settings" "this" {`,
+		"\trest_api_id = aws_api_gateway_rest_api.this.id",
+		"}",
+	])
+	count(with_id(denies([tf("modules/m/main.tf", src)]), "LY302")) == 0
+}
+
+test_LY302_deny_none_of_several_required_parents if {
+	some m in with_id(denies([tf("modules/m/main.tf", `resource "aws_api_gateway_method_settings" "this" {}`)]), "LY302")
+	contains(m, "（rest_api_id, stage_name）")
 }
 
 test_LY303_allow_classified_types if {
