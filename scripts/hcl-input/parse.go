@@ -102,7 +102,6 @@ func bodyAttributes(body *hclsyntax.Body, prefix []string) ([]attribute, error) 
 	return attrs, nil
 }
 
-// attributesOf は、map の Body.Attributes を、ソースの位置の順の配列で返します。
 func attributesOf(body *hclsyntax.Body) []*hclsyntax.Attribute {
 	attrs := make([]*hclsyntax.Attribute, 0, len(body.Attributes))
 	for _, a := range body.Attributes {

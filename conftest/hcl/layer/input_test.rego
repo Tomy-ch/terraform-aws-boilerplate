@@ -342,7 +342,6 @@ test_LY004_deny_within_unknown_ref if {
 	contains(m, "hcl_input.blocks[0].attributes[0]")
 }
 
-# 形の崩れた入力の上では、入力を読む規則（LY002 の hcl-input の向き・LY005・LY301・LY302）を評価しない。
 test_LY004_deny_alone_on_broken_input if {
 	files := module_with(policy("aws_s3_bucket.this.id"))
 	msgs := denies_input(files, listed_of(files), fixture_decl, {"files": "x", "blocks": []})

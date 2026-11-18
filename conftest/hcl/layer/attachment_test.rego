@@ -86,7 +86,6 @@ test_LY301_allow_reference_in_first_index if {
 	count(policy_denies("aws_s3_bucket.this[module.x.key].id", [ref("aws_s3_bucket.this[].id"), ref_in("module.x.key", [[0, 1]])])) == 0
 }
 
-# 1つ目の添字の中の参照の添字の中も辿らない（within は祖先をすべて持つ）。
 test_LY301_allow_reference_nested_in_first_index if {
 	refs := [ref("aws_s3_bucket.this[]"), ref_in("module.m.list[]", [[0, 1]]), ref_in("var.i", [[0, 1], [1, 2]])]
 	count(policy_denies("aws_s3_bucket.this[module.m.list[var.i]]", refs)) == 0

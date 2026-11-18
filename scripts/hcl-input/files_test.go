@@ -12,7 +12,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
-// writeTree は base の下に files（`/` 区切りの相対パス → 内容）を置き、base を返す。
 func writeTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	base := t.TempDir()

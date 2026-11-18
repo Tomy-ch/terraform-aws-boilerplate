@@ -66,7 +66,7 @@ func walkExpr(e hclsyntax.Expression) ([]ref, error) {
 // walk は e を歩き、e が参照の鎖（参照と、それに続く属性・添字・splat）なら、その参照の位置を返します。
 // 鎖でなければ -1 です。関数の呼び出し・括弧・タプルの後の段は参照に付かず、その添字の中の参照は
 // 外側の within のままです。splat の後の段は Each が持つので、splat は鎖を終えます。
-// 19 型の外の式（ExprSyntaxError を含む）は errUnknownExpression です。
+// 歩く型の外の式と ExprSyntaxError は errUnknownExpression です。
 func (w *walker) walk(e hclsyntax.Expression, sc scope) (int, error) {
 	switch e := e.(type) {
 	case *hclsyntax.ScopeTraversalExpr:

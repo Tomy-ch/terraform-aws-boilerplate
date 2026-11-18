@@ -250,7 +250,6 @@ resource_ids := {c.id | some c in resources}
 
 name_of(c) := substring(address(c), count(type_of(c)) + 1, -1)
 
-# resource_attrs は、hcl-input が c の block について出した、path の属性をすべて返す。
 resource_attrs(c, path) := [a |
 	some b in go_blocks
 	b.kind == "resource"
@@ -260,7 +259,6 @@ resource_attrs(c, path) := [a |
 	a.path == path
 ]
 
-# 参照のトークンは、根と最初の段の名前（`aws_s3_bucket.this`、`local.x`）。最初の段が名前でなければ根だけ。
 ref_token(r) := concat(".", [r.root, r.steps[0].name]) if first_step_named(r)
 
 ref_token(r) := r.root if not first_step_named(r)
@@ -268,7 +266,7 @@ ref_token(r) := r.root if not first_step_named(r)
 first_step_named(r) if r.steps[0].kind == "attr"
 
 # 参照の根と最初の名前の直後の添字（段1）は親を選ぶだけなので、その中の参照を辿らない。within は祖先を
-# すべて持つので、その添字の中の、さらに入れ子の添字の参照も外れる。属性の後の添字と2つ目以降の添字は辿る。
+# すべて持つので、その添字の中の、さらに入れ子の添字の参照も外れる。
 skipped(refs, r) if {
 	some w in r.within
 	w.step == 1
@@ -376,7 +374,7 @@ deny contains msg if {
 }
 
 # 宣言のどの区分にも無い型は、親を外から書き換える経路かどうかを判定できないので落とす。親の型に
-# 現れるだけでは分類に数えない。親になる型も、それ自身が attachment かどうかの判断を宣言に残す。
+# 現れるだけでは分類に数えない。
 classified contains t if some t, _ in attachments
 
 classified contains t if some t, _ in not_attachments
@@ -391,8 +389,8 @@ deny contains msg if {
 
 # --- HCL の入力（hcl-input の出力。ADR-0501 決定5） ---
 #
-# 検査(3) は参照を data.hcl_input から読む。形の崩れた入力は LY004 だけで落とし、それを読む規則は評価しない。
-# 欠けを空として先へ進めると、親の引数が無いものとして LY301 が黙って通るため。
+# 形の崩れた入力は LY004 だけで落とし、それを読む規則は評価しない。欠けを空として先へ進めると、
+# 親の引数が無いものとして LY301 が黙って通るため。
 
 default hcl_input := null
 
@@ -472,7 +470,6 @@ well_formed_step(s) if {
 	non_empty_string(s.name)
 }
 
-# within は、同じ属性の参照（配列の位置）の、添字の段を指す。
 well_formed_within(refs, w) if {
 	is_object(w)
 	{k | some k, _ in w} == {"ref", "step"}
@@ -544,8 +541,7 @@ deny contains msg if {
 	msg := sprintf("LY005 [HCL の入力の突き合わせ] hcl-input が出した %s の resource %s を Conftest が読んでいません", [path, concat(".", labels)])
 }
 
-# 検査(3) が hcl-input から読む引数は、Conftest の側と数を合わせる。片方のパーサだけが読んだ引数を、
-# 「親の引数が無い」として通さないため。
+# 片方のパーサだけが読んだ引数を、「親の引数が無い」として通さないため。
 deny contains msg if {
 	go_ok
 	is_object(attachments)
