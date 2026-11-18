@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// endpointSSOT は class と job だけを持つ宣言に tail（root と type）を続ける。a.yaml:one の許可リストは b1.test / kms.test / s3.test。
+// a.yaml:one の許可リストは b1.test / kms.test / s3.test。
 func endpointSSOT(t *testing.T, tail string) *ssot {
 	t.Helper()
 	return mustParse(t, `[class.base]
@@ -32,7 +32,6 @@ egress_policy = "audit"
 `+tail)
 }
 
-// endpointRepo は root "r" に body を置いたリポジトリ。
 func endpointRepo(t *testing.T, body string) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -728,6 +727,17 @@ func Test_checkRegions(t *testing.T) {
 			t.Parallel()
 			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, []string{"iam.amazonaws.com"}))
 		})
+
+		t.Run("AWS が region を固定した global の宛先は provider の region と突き合わせない", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			assert.NoError(t, checkRegions(repo, []string{"r"}, []string{"organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com"}))
+		})
+
+		t.Run("global の宛先だけなら provider を読まない", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, []string{"organizations.us-east-1.amazonaws.com"}))
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -739,6 +749,27 @@ func Test_checkRegions(t *testing.T) {
 			err := checkRegions(repo, []string{"r"}, []string{"kms.us-east-1.amazonaws.com"})
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
+		})
+
+		t.Run("wildcard の付いた global の宛先は突き合わせから外さない", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			err := checkRegions(repo, []string{"r"}, []string{"*.organizations.us-east-1.amazonaws.com"})
+			require.ErrorIs(t, err, errRegionMismatch)
+		})
+
+		t.Run("global の宛先が混ざっていても、provider を読めなければ弾く", func(t *testing.T) {
+			t.Parallel()
+			err := checkRegions(t.TempDir(), []string{"missing"}, []string{"organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com"})
+			require.ErrorIs(t, err, errRegionUnknown)
+		})
+
+		t.Run("global の宛先と同じサービスでも、別の region の宛先は弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			err := checkRegions(repo, []string{"r"}, []string{"organizations.us-west-2.amazonaws.com"})
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "organizations.us-west-2.amazonaws.com")
 		})
 
 		t.Run("2 つ目の宛先の region が合わなくても弾く", func(t *testing.T) {
