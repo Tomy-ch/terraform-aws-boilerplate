@@ -44,7 +44,10 @@ var (
 		`^(?:"([^"]+)"|(` + BareKeyPattern + `))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*(?:#.*)?$`,
 	)
 	// disableKeyRe は disable_tools の代入の左辺。右辺の形を問わずに当て、読めない右辺をエラーにする。
-	disableKeyRe = regexp.MustCompile(`^(?:"disable_tools"|disable_tools)\s*=`)
+	// 単引用符のキーも当てる —— 読めないキーを素通しすると「宣言が無い」と区別できない。
+	disableKeyRe = regexp.MustCompile(`^(?:"disable_tools"|'disable_tools'|disable_tools)\s*=`)
+	// disableOutsideRe は節の外から [settings] の disable_tools を書く形（dotted key と inline table）。
+	disableOutsideRe = regexp.MustCompile(`^(?:settings|"settings"|'settings')\s*(?:\.|=\s*\{).*\bdisable_tools\b`)
 	// disableListRe は1行の配列 `disable_tools = ["a", "b"]`。
 	disableListRe = regexp.MustCompile(`^(?:"disable_tools"|disable_tools)\s*=\s*\[([^\]#]*)\]\s*(?:#.*)?$`)
 	disableItemRe = regexp.MustCompile(`^"([^"]+)"$`)
@@ -132,8 +135,9 @@ func Lookup(entries []Entry, key string) (string, bool) {
 // DisableTools は `[settings]` の disable_tools が並べる道具を、書かれた順で返します。2つ目の
 // 戻り値は宣言が在ったかどうかです。
 //
-// 受け付けるのは1行の文字列の配列だけです。複数行の配列や重複した宣言はエラーにします ——
-// 読めない宣言を「無い」と返すと、呼び手は外し忘れと区別できません。
+// 受け付けるのは `[settings]` の中の1行の文字列の配列だけです。複数行の配列、重複した宣言、
+// 節の外の dotted key や inline table はエラーにします —— 読めない宣言を「無い」と返すと、
+// 呼び手は外し忘れと区別できません。
 func DisableTools(content []byte) ([]string, bool, error) {
 	var tools []string
 	found := false
@@ -147,10 +151,13 @@ func DisableTools(content []byte) ([]string, bool, error) {
 
 			continue
 		}
+		where := strconv.Itoa(lineNo) + "行目: " + line
+		if section == "" && disableOutsideRe.MatchString(line) {
+			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "[settings] の外の宣言 "+where)
+		}
 		if section != "settings" || !disableKeyRe.MatchString(line) {
 			continue
 		}
-		where := strconv.Itoa(lineNo) + "行目: " + line
 		if found {
 			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "重複した宣言 "+where)
 		}
