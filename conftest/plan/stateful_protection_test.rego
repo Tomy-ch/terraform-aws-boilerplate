@@ -474,7 +474,7 @@ test_violation_removal_of_protected_lifecycle if {
 }
 
 # ADR-0604 決定13。宣言した引数を書く変更は、許可の宣言によらず落とす。
-inline_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {}}
+inline_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key", "aws_sns_topic"], "allow": {}}
 
 inline_written(empty) := [{"x": "y"}] if empty == []
 

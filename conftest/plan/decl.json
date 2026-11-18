@@ -3,6 +3,11 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "cloudwatch:DescribeAlarmsForMetric",
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetMetricStatistics",
+      "cloudwatch:GetMetricWidgetImage",
+      "cloudwatch:ListMetrics",
       "kms:ListAliases"
     ],
     "documents": {
@@ -26,13 +31,17 @@
       ],
       "aws_kms_key_policy": [
         "policy"
+      ],
+      "aws_sns_topic_policy": [
+        "policy"
       ]
     },
     "required_documents": [
       "aws_iam_role",
       "aws_iam_role_policy",
       "aws_kms_key_policy",
-      "aws_s3_bucket_policy"
+      "aws_s3_bucket_policy",
+      "aws_sns_topic_policy"
     ],
     "deployment_identity": {
       "roles": [
@@ -206,7 +215,8 @@
         "aws_s3_bucket",
         "aws_s3_bucket_lifecycle_configuration",
         "aws_kms_key",
-        "aws_kms_key_policy"
+        "aws_kms_key_policy",
+        "aws_sns_topic"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -229,6 +239,43 @@
       },
       "aws_kms_key": {
         "policy": null
+      },
+      "aws_sns_topic": {
+        "policy": null
+      }
+    },
+    "ops_notification": {
+      "module": "module.ops_notification.",
+      "topic": "module.ops_notification.module.sns.aws_sns_topic.this",
+      "topic_policy": "module.ops_notification.module.sns.aws_sns_topic_policy.this",
+      "key_policy": "module.ops_notification.module.kms.aws_kms_key_policy.this",
+      "publishers": [
+        "budgets.amazonaws.com",
+        "cloudwatch.amazonaws.com",
+        "costalerts.amazonaws.com",
+        "events.amazonaws.com"
+      ],
+      "heartbeat": {
+        "role": "module.ops_notification.module.heartbeat.aws_iam_role.this",
+        "policy": "module.ops_notification.module.heartbeat.aws_iam_role_policy.this",
+        "schedule_group": "module.ops_notification.module.heartbeat.aws_scheduler_schedule_group.this",
+        "schedule": "module.ops_notification.module.heartbeat.aws_scheduler_schedule.this"
+      },
+      "chat": {
+        "role": "module.ops_notification.module.chat.aws_iam_role.this",
+        "policy": "module.ops_notification.module.chat.aws_iam_policy.read",
+        "attachments": "module.ops_notification.module.chat.aws_iam_role_policy_attachments_exclusive.this",
+        "configuration": "module.ops_notification.module.chat.aws_chatbot_slack_channel_configuration.this",
+        "read_actions": [
+          "cloudwatch:DescribeAlarmHistory",
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:DescribeAlarmsForMetric",
+          "cloudwatch:GetMetricData",
+          "cloudwatch:GetMetricStatistics",
+          "cloudwatch:GetMetricWidgetImage",
+          "cloudwatch:ListMetrics",
+          "cloudwatch:ListTagsForResource"
+        ]
       }
     }
   }
