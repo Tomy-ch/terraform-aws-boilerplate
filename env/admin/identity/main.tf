@@ -28,3 +28,9 @@ module "deployment_identity" {
   plan_output_bucket_arn  = module.state_backend.plan_output_bucket_arn
   apply_output_bucket_arn = module.state_backend.apply_output_bucket_arn
 }
+
+module "organization_baseline" {
+  source = "../../../usecases/organization-baseline"
+
+  project = "tabp"
+}

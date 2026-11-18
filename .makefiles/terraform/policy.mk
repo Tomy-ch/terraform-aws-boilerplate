@@ -76,8 +76,8 @@ tf-policy: tf-init
 
 # canary の fixture は provider を持たない構成（terraform_data）にする。init がネットワークを要さないため。
 # 例外は aws の fixture で、mock provider の override が書いた値を隠さないことを見る（ADR-0402 決定18）。
-# terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は state-backend の
-# reference の root の lock を写して init する。plugin cache に無ければ provider を取得する。
+# terraform_data は optional かつ computed の属性を持たず、この挙動を作れない。aws の fixture は、plugin cache に
+# 無ければ provider を取得する。
 TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
 
 define TF_POLICY_FIXTURE
@@ -97,7 +97,7 @@ tf-policy-canary:
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
-	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego; \
+	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego "$$root/rego"/organization_baseline_*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
 	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \

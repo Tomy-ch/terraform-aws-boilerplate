@@ -10,6 +10,17 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  # 子の OU の parent_id の検査を通す形にする。
+  mock_resource "aws_organizations_organization" {
+    defaults = {
+      id                = "o-exampleorg1"
+      master_account_id = "123456789012"
+      roots             = [{ id = "r-exam", arn = "arn:aws:organizations::123456789012:root/o-exampleorg1/r-exam", name = "Root", policy_types = [] }]
+    }
+  }
+  mock_resource "aws_organizations_organizational_unit" {
+    defaults = { id = "ou-exam-abcdefgh" }
+  }
 }
 
 # state の鍵の Key Policy の precondition（同じアカウントの role）を plan で評価させるため、role の ARN を既知の値にする。

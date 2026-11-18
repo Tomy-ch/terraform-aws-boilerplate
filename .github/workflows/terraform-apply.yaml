@@ -207,6 +207,7 @@ jobs:
             *.s3.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
             *.s3-control.ap-northeast-1.amazonaws.com
 
       # 再実行は元の run の commit と payload を使うので、古い run を止める。skip は成功として数えられる

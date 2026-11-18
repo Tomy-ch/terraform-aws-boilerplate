@@ -474,7 +474,7 @@ test_violation_removal_of_protected_lifecycle if {
 }
 
 # ADR-0604 決定13。宣言した引数を書く変更は、許可の宣言によらず落とす。
-inline_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {}}
+inline_decl := {"protected_types": data.policy_plan.stateful_protection.protected_types, "allow": {}}
 
 inline_written(empty) := [{"x": "y"}] if empty == []
 
@@ -562,7 +562,6 @@ test_violation_inline_arguments_missing_empty_or_not_object if {
 	fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
 }
 
-# 前の値と変更の後の値の既知の部分は同じで、block の中だけが plan で決まらない。
 test_violation_inline_block_unknown_inside_on_update if {
 	v := {"versioning": [{"enabled": true, "mfa_delete": false}]}
 	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_s3_bucket", ["update"], v, v, {"versioning": [{"enabled": true}]})]) with data.policy_plan.stateful_protection as inline_decl
