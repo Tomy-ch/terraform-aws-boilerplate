@@ -206,7 +206,8 @@
         "aws_s3_bucket",
         "aws_s3_bucket_lifecycle_configuration",
         "aws_kms_key",
-        "aws_kms_key_policy"
+        "aws_kms_key_policy",
+        "aws_s3_bucket_object_lock_configuration"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -229,7 +230,25 @@
       },
       "aws_kms_key": {
         "policy": null
+      },
+      "aws_s3_bucket_object_lock_configuration": {
+        "expected_bucket_owner": null
       }
+    },
+    "kms_key_policy": {
+      "cross_account_sources": {
+        "module.audit_evidence.module.archive_key.aws_kms_key_policy.this": [
+          "cloudtrail.amazonaws.com",
+          "config.amazonaws.com"
+        ]
+      }
+    },
+    "audit_evidence": {
+      "bucket": "module.audit_evidence.module.archive.aws_s3_bucket.this",
+      "bucket_policy": "module.audit_evidence.module.archive.aws_s3_bucket_policy.this",
+      "object_lock_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_object_lock_configuration.this",
+      "lifecycle_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_lifecycle_configuration.this",
+      "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this"
     }
   }
 }

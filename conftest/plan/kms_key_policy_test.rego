@@ -3,7 +3,7 @@ package plan.kms_key_policy_test
 import data.plan.fixture
 import data.plan.kms_key_policy as p
 
-# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend の reference の plan への適用が見る。CloudWatch Logs の文は reference の plan に現れないので見ない。
+# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend と audit-evidence の reference の plan への適用が見る。
 root := {
 	"Sid": "AccountKeyAdministration",
 	"Effect": "Allow",
@@ -327,7 +327,7 @@ test_violation_delegation_with_not_action if {
 	"[PLAN-KMS-08]" in ids([r, via_s3])
 }
 
-# T5: 宣言した Key Policy の削除だけは、文書として数えない。
+# 宣言した Key Policy の削除だけは、文書として数えない。
 test_violation_declared_key_policy_deleted if {
 	gone := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
 	msgs := p.deny with input as fixture.plan([gone])
@@ -339,13 +339,12 @@ test_pass_declared_key_policy_replaced if {
 	count(p.deny) == 0 with input as fixture.plan([replaced])
 }
 
-# T6
 test_violation_declared_address_other_type if {
 	other := fixture.doc("aws_iam_role_policy", declared, "policy", {"Statement": [fixture.allow("s3:GetObject")]})
 	fixture.has("[PLAN-KMS-00] 宣言した state の鍵の Key Policy", p.deny) with input as fixture.plan([other])
 }
 
-# T8: JSON として読めれば 09 は出ない。文書の形でないものは委任が0件として 02 が落とす。
+# JSON として読めれば 09 は出ない。文書の形でないものは委任が0件として 02 が落とす。
 test_violation_key_policy_json_not_document if {
 	every v in ["{}", "[]", "\"x\""] {
 		odd := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["update"], "after": {"policy": v}, "after_unknown": {}}}
@@ -355,7 +354,7 @@ test_violation_key_policy_json_not_document if {
 	}
 }
 
-# A2: 管理から外す変更は変更後の文書を持たない。その理由は plan.stateful_protection が持つ。
+# 管理から外す変更は変更後の文書を持たない。その理由は plan.stateful_protection が持つ。
 test_pass_forgotten_other_key_policy if {
 	forgotten := {"address": "module.other.aws_kms_key_policy.this", "type": "aws_kms_key_policy", "change": {"actions": ["forget"], "after": null, "after_unknown": {}}}
 	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3]), forgotten])
@@ -434,4 +433,68 @@ test_role_path_is_part_of_the_arn if {
 	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, pathed])
 	s := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-plan"}])
 	kms10("tabp-admin-ci-plan") in p.deny with input as fixture.plan([unchanged(key_policy([root, s])), pathed])
+}
+
+trail_encrypt := {
+	"Sid": "CloudTrailEncrypt",
+	"Effect": "Allow",
+	"Principal": {"Service": "cloudtrail.amazonaws.com"},
+	"Action": "kms:GenerateDataKey*",
+	"Resource": "*",
+	"Condition": {"StringEquals": {
+		"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+	}},
+}
+
+config_service := {
+	"Sid": "ConfigService",
+	"Effect": "Allow",
+	"Principal": {"Service": "config.amazonaws.com"},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"aws:SourceAccount": ["111111111111", "222222222222"]}},
+}
+
+cross := {"cross_account_sources": {declared: ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}}
+
+cross_ids(statements, decl) := found if {
+	found := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy(statements)])
+		with data.policy_plan.kms_key_policy as decl
+}
+
+test_pass_declared_cross_account_sources if {
+	count(cross_ids([root, trail_encrypt, config_service], cross)) == 0
+}
+
+test_violation_cross_account_sources_not_declared if {
+	every decl in [
+		{},
+		{"cross_account_sources": {}},
+		{"cross_account_sources": {"module.other.aws_kms_key_policy.this": ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: ["config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: "cloudtrail.amazonaws.com"}},
+		{"cross_account_sources": []},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], decl)
+	}
+}
+
+test_violation_declared_cross_account_sources_not_typed if {
+	every c in [
+		{"StringEquals": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:*:trail/tabp-org"}},
+		{"StringLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/*"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws-cn:cloudtrail:cn-north-1:111111111111:trail/tabp-org"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws:s3:::bucket"}},
+		{"StringEquals": {"aws:SourceAccount": "*"}},
+		{"StringEquals": {"aws:SourceAccount": "1111"}},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, with_condition(trail_encrypt, c)], cross)
+	}
+}
+
+# 宣言したサービスと宣言の外のサービスを1つの文に並べても、外のアカウントは受けない。
+test_violation_declared_cross_account_mixed_principal if {
+	s := json.patch(trail_encrypt, [{"op": "replace", "path": "/Principal/Service", "value": ["cloudtrail.amazonaws.com", "logs.ap-northeast-1.amazonaws.com"]}])
+	"[PLAN-KMS-05]" in cross_ids([root, s], cross)
 }

@@ -145,7 +145,7 @@ deny contains msg if {
 	some r in key_policies
 	some s in allows(r.body)
 	some svc in service_principals(s)
-	not source_limited(s, r.body)
+	not source_limited(s, r)
 	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext の ARN）を限らずに許可しています", [r.document.path, r.document.address, svc])
 }
 
@@ -154,7 +154,7 @@ deny contains msg if {
 	some s in allows(r.body)
 	some svc in service_principals(s)
 	some v in source_values(s)
-	not own_source(v, s, r.body)
+	not allowed_source(v, s, r)
 	msg := sprintf("[PLAN-KMS-05] %s: %s が %s の要求元に、委任のアカウントの外の値 %v を置いています", [r.document.path, r.document.address, svc, v])
 }
 
@@ -171,9 +171,36 @@ source_key(k) if startswith(k, "kms:encryptioncontext:")
 
 source_values(s) := [v | some k in source_keys(s); some v in lib.limiting_values(s, k)]
 
-source_limited(s, body) if {
+source_limited(s, r) if {
 	some v in source_values(s)
-	own_source(v, s, body)
+	allowed_source(v, s, r)
+}
+
+allowed_source(v, s, r) if own_source(v, s, r.body)
+
+allowed_source(v, s, r) if {
+	cross_account_statement(s, r.document.address)
+	foreign_source(v, r.body)
+}
+
+# 鍵の外のアカウントの要求元は、宣言した Key Policy の、宣言したサービスだけの文に限って受ける（ADR-0301 決定18）。
+cross_account_sources := object.get(object.get(data.policy_plan, "kms_key_policy", {}), "cross_account_sources", {})
+
+cross_account_statement(s, address) if {
+	services := object.get(cross_account_sources, address, [])
+	is_array(services)
+	count(service_principals(s)) > 0
+	every svc in service_principals(s) { svc in services }
+}
+
+foreign_source(v, _) if {
+	lib.no_wildcard(v)
+	regex.match(`^[0-9]{12}$`, v)
+}
+
+foreign_source(v, body) if {
+	own_partition_arn(v, body)
+	regex.match(`^[0-9]{12}$`, split(v, ":")[4])
 }
 
 own_source(v, _, body) if {
