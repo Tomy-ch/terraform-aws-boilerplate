@@ -1,7 +1,7 @@
 // Package main は、boilerplate を自分のリポジトリとして初期化する際の
 // git / gh 操作を担うツール。
 //
-//	preflight           初期化してよい状態かを確かめる（v0.0.0 タグがあれば中止）
+//	preflight           初期化してよい状態かを確かめる（v0.0.0 タグか、宛先を上書きする環境変数があれば中止）
 //	bootstrap           gh の宛先を origin に固定し、タグを作り直し、env を持たないデプロイブランチを用意して
 //	                    デフォルトブランチを移す
 //
@@ -46,6 +46,7 @@ var (
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 	errNoReleaseBase     = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
 	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
+	errTargetOverridden  = xerrors.New("が環境にあると、gh と make の宛先が origin に固定されません。外してから実行してください（例: env -u GH_REPO -u GITHUB_REPOSITORY make setup-repo）")
 )
 
 type setup struct {
@@ -92,6 +93,7 @@ type runner struct {
 	run          func(s step) error
 	output       func(name string, args ...string) (string, error)
 	branchExists func(branch string) bool
+	getenv       func(key string) string
 }
 
 func main() {
@@ -135,7 +137,7 @@ func execute(r runner, s setup, args []string) error {
 
 	switch args[0] {
 	case "preflight":
-		return runPreflight()
+		return runPreflight(r.getenv)
 	case "bootstrap":
 		return runBootstrap(r, s)
 	case "prune-release-notes":
@@ -238,8 +240,18 @@ func releaseNotesToDelete(entries []string) []string {
 	return targets
 }
 
-func runPreflight() error {
+// targetOverrides は、gh repo set-default による宛先の固定より優先される環境変数。GH_REPO は gh が、
+// GITHUB_REPOSITORY は repo-settings.mk の REPO_SETTINGS_REPO が読む。
+var targetOverrides = []string{"GH_REPO", "GITHUB_REPOSITORY"}
+
+func runPreflight(getenv func(string) string) error {
 	log.Printf("🔧 設定を確認中...")
+
+	for _, key := range targetOverrides {
+		if getenv(key) != "" {
+			return xerrors.Wrap(errTargetOverridden, "❌ "+key)
+		}
+	}
 
 	if tagExists(initialTag) {
 		return xerrors.Wrap(errInitialTagExists, "❌ タグ 【"+initialTag+"】")
@@ -403,7 +415,7 @@ func runPruneReleaseNotes() error {
 }
 
 func hostRunner() runner {
-	return runner{run: run, output: output, branchExists: branchExists}
+	return runner{run: run, output: output, branchExists: branchExists, getenv: os.Getenv}
 }
 
 // runAll は、失敗した時点で残りの手順を実行しません。

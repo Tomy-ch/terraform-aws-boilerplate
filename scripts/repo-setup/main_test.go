@@ -39,10 +39,12 @@ type fakeRunner struct {
 	// allowFail は実行層の責務なのでここでは解釈しません。
 	failOn   string
 	branches map[string]bool
+	// env は、getenv が返す環境変数。無いキーは空を返す。
+	env map[string]string
 }
 
 func (f *fakeRunner) runner() runner {
-	return runner{run: f.run, output: f.output, branchExists: f.branchExists}
+	return runner{run: f.run, output: f.output, branchExists: f.branchExists, getenv: func(k string) string { return f.env[k] }}
 }
 
 func (f *fakeRunner) run(s step) error {
@@ -620,7 +622,7 @@ func Test_runPreflight(t *testing.T) {
 		t.Run("初期タグが無ければ初期化を許可する", func(t *testing.T) {
 			t.Chdir(initRepo(t))
 
-			require.NoError(t, runPreflight())
+			require.NoError(t, runPreflight(func(string) string { return "" }))
 		})
 	})
 
@@ -630,9 +632,24 @@ func Test_runPreflight(t *testing.T) {
 			git(t, dir, "tag", initialTag)
 			t.Chdir(dir)
 
-			err := runPreflight()
+			err := runPreflight(func(string) string { return "" })
 			require.ErrorIs(t, err, errInitialTagExists)
 		})
+
+		for _, key := range targetOverrides {
+			t.Run(key+" が環境にあれば、宛先が origin に固定されないので止める", func(t *testing.T) {
+				t.Chdir(initRepo(t))
+
+				err := runPreflight(func(k string) string {
+					if k == key {
+						return "someone/else"
+					}
+					return ""
+				})
+				require.ErrorIs(t, err, errTargetOverridden)
+				assert.ErrorContains(t, err, key)
+			})
+		}
 	})
 }
 
@@ -1014,7 +1031,7 @@ func writeReleaseNotes(t *testing.T) string {
 //nolint:paralleltest // t.Chdir はプロセス全体の作業ディレクトリを変えるため並列化できない
 func Test_execute(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
-		t.Run("preflight は実行層を使わず初期タグの有無だけを見る", func(t *testing.T) {
+		t.Run("preflight は手順を1つも実行しない", func(t *testing.T) {
 			t.Chdir(initRepo(t))
 			f := bootstrappableRunner()
 
@@ -1062,6 +1079,15 @@ func Test_execute(t *testing.T) {
 			t.Chdir(dir)
 
 			require.ErrorIs(t, execute(bootstrappableRunner().runner(), testSetup, []string{"preflight"}), errInitialTagExists)
+		})
+
+		t.Run("preflight は実行層の環境変数で宛先の上書きを見る", func(t *testing.T) {
+			t.Chdir(initRepo(t))
+			f := bootstrappableRunner()
+			f.env = map[string]string{"GH_REPO": "someone/else"}
+
+			require.ErrorIs(t, execute(f.runner(), testSetup, []string{"preflight"}), errTargetOverridden)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("bootstrap の失敗をそのまま返す", func(t *testing.T) {
