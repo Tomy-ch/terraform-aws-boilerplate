@@ -48,6 +48,7 @@ Do NOT use it for:
 - `mise.toml` の `[tools]` —— **ユーザーが明示的に承認したエントリだけ**
 - `.github/tool-cooldown-bypass.toml` —— 理由と失効期限を書けるときだけ（ADR-0702 決定18）
 - `scripts/go.mod` / `docker/tools/Dockerfile` —— `make versions-apply` の出力としてのみ
+- `docker/tools/node/package.json` / `docker/tools/node/pnpm-workspace.yaml` / `docker/tools/node/pnpm-lock.yaml` —— `make versions-apply` と `make node-tools-lock` の出力としてのみ
 
 **解除されないもの**: `AGENTS.md` / `LICENSE` / Accepted ADR の本文、生成物（*トリップワイヤ* 4）。
 
@@ -117,6 +118,17 @@ make versions-apply
 ただし**ランタイムの版上げはこのスキルの仕事ではない** —— `go` は `/go-upgrade` が、そこに付随する
 digest の貼り直しまで含めて持っている。
 
+`npm:` の道具（`npm:markdownlint-cli2` / `npm:@commitlint/cli`）を上げたなら、版を
+`docker/tools/node/package.json` へ写し、lockfile を作り直す。mise.toml の `npm:` のキーは版の宣言
+だけで、道具はその lockfile から入る（ADR-0503 決定1・17）。lockfile を作り直さないと、CI と
+`RUNNER_MODE=host` の起動が frozen の不一致で落ちる。
+
+```sh
+make versions-apply
+make node-tools-lock
+make node-tools-lock-check
+```
+
 ### 6. 検証
 
 ```sh
@@ -156,6 +168,7 @@ make go-test
 - [ ] 窓待ちに**明ける日付**を添え、「待つ」を選べる形にした
 - [ ] `AskUserQuestion` で上げる集合を確定させ、承認されたものだけ書き換えた
 - [ ] ランタイムを上げたなら `make versions-apply` を走らせた（`go` は `/go-upgrade` へ回した）
+- [ ] `npm:` の道具を上げたなら `make versions-apply` と `make node-tools-lock` を走らせ、`make node-tools-lock-check` が通った
 - [ ] `tool-cooldown-audit` / `gate` / `versions-check` / `go-lint` / `go-test` を走らせ、出力を
       そのまま報告した
 - [ ] バイパスを書いたなら、理由と失効期限を書いた

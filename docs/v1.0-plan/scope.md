@@ -403,7 +403,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **analytics:** AWSネイティブのログ（ALB、CloudFront、S3アクセスログ、VPC Flow Logs）の集計に限定する。アプリログの分析は送り先backend（obp）の責務とする。CloudWatch LogsをAthenaから直接引くconnectorは、実体がLambdaのため採用しない。LokiはS3に独自形式で保存するため、analyticsとobpで保存先は共有しない。
 
-**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。
+**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
 **outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**awslogsドライバをモードに関係なく残す場合に限り、stdoutログのmetric filterが3モード共通で成立する**。ログ文言への依存になり、ログをOTLP側へ寄せると成立しない。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
@@ -471,7 +471,7 @@ Workerのack・再試行・DLQ・drainの検証には、意図的に失敗する
 
 ### 10.1 アカウント構成
 
-管理（admin）、sandbox、各環境（dev / stg / prd）の5アカウントに分ける。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用のAWSアカウントは設けない。
+管理（admin）、セキュリティ（security）、ログ保管（log-archive）、sandbox、各環境（dev / stg / prd）の7アカウントに分ける（#21）。セキュリティのアカウントは検知（GuardDuty等）の委任管理者で、メンバーアカウントを乗っ取った者がそのアカウントの検知を止められないように、検知の設定をメンバーの外から握る。検知を調べる日常の作業はここで行い、管理アカウントには入れない。ログ保管のアカウントは組織の監査ログを改ざんできない形で保管し（`audit-evidence`）、書き込み以外の出入りを持たない。記録される側（管理アカウントを含む）が、鍵を止めるなどして自分の記録を読めなくできないようにするためである。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用（Observability）のAWSアカウントは設けない。obpをAWSに載せるときは、セキュリティのアカウントではなく監視用のアカウントを別に立てる。
 
 SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevへ残り、devは掃除CIの対象ではない（第10.2節）。同一アカウント構成は縮退ケースとしてサポートする。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。各アカウントは自分のstate Bucket・CMK・OIDC Provider・CI Roleを持ち、管理アカウントのstate Bucketには管理アカウント自身のstateだけを置く（#96）。例外は、メンバーアカウントを立ち上げる間のそのアカウントのbootstrapの構成物で、立ち上げの後にメンバー側へ移す（#142、ADR-0604 決定6）。
 
@@ -517,7 +517,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. Realtime構成で、SSE配信、インスタンス別Queueの生成・回収、孤立資源回収、prefixで制限したIAMを確認する。永続Table/TopicがTerraform所有であり、AWSで`realtime-init`を実行しない。
 1. 第2.2節のゲートがCIで機能している。tabp内のコード実行resourceは許可リストとADRを持ち、採用した各言語のlint・testがCIで必ず走る。
 1. 観測の三モードがexporter設定の切り替えと`controlled-external-egress`の有効化だけで成立する。AWS基盤系アラームがモードに関係なく発報し、`ops-notification`の通知先へ届く。メトリクス途絶を検知できる。egress制御が第9.2節のとおり機能し、`controlled-external-egress`を有効にしていない環境から外部へ到達できない。
-1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。フェーズ0のbootstrap実行者だけが例外で、一時IAM user（長期のアクセスキーを持たない）を使い、完了後に削除されている（第10.3節、ADR-0602 決定9-11）。
+1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。SSOが使えないときのbreak-glass（管理アカウントのIAM user 2つ。アクセスキーを持たない。ADR-0301 決定19）だけがSSOの例外である。フェーズ0のbootstrap実行者だけが例外で、一時IAM user（長期のアクセスキーを持たない）を使い、完了後に削除されている（第10.3節、ADR-0602 決定9-11）。
 1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、devとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
 1. `media-ingest`で、スキャン結果が脅威なしでないオブジェクトを読めないことを確認する。
 1. Security Default、Stateful Resourceの保護、復元可能性、主要Computeのデプロイ方式が文書と検査で確認される。
@@ -581,13 +581,14 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | 逆流拒否のPolicy invariant | `data-refresh`の実装前 | 第9.6節と受入条件11が「SCPとIAMの宣言をPolicy Testで見る」としたが、何を判定するかが無い。下位環境のOUに付くSCPがprdのどのActionをDenyするか、`data-refresh`のIAMが本番側にread系しか持たないこと。SCPは`organization-baseline`のplanに、IAMは`data-refresh`のplanに現れるため、1つのinvariantが2つのusecaseのplanをまたぐ（ADR-0402 決定11） |
 | 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
-| 通知Topicのアカウント配置 | フェーズ1 | 所有者は`ops-notification`で確定。残るは、Topicをどのアカウントに置くか（第10.1節は監視アカウントを設けない）と、他アカウントからpublishする場合の越境契約。メトリクス途絶時の扱いを含む |
 | 同一アカウント構成の扱い | フェーズ1 | 第10.1節は縮退ケースとしてサポートするとするが、第9.6節は検証に使わないとし、受入条件にもない。検証手段を与えるかunsupportedとするか（ADR-0401 決定3）。サポートするなら、stateのrootとkeyをADR-0604 決定1に従ってあわせて決める |
 | コード実行許可リストの人間レビューの成立条件 | フェーズ1 | ADR-0103 は許可リストをcode ownerのレビューの対象とするが、メンテナ1人の間は承認者が存在せず発火しない。代替のゲート（ADRの存在検査等）と、人間レビューを有効化する時点 |
 
 各論点は、決める時点に合わせて判断Issueとして起票し、該当usecaseのIssueと依存関係を張る。
 
 起票の規約とIssueの構成は、統括Issueに置く。
+
+**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。
 
 **フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 

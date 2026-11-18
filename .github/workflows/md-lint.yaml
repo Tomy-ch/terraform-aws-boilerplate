@@ -4,11 +4,10 @@ name: Markdown Lint
 # pre-commit だけなので、`--no-verify` と GitHub の Web UI 経由の編集は検査を通らずに
 # merge へ届く。**すべての段をここで走らせる。**
 #
-# 3つを1つの workflow に置くのは、どれも主題が Markdown だからである。体裁（md-lint）、
-# ADR の構造と参照（adr-lint）、スキルが名指しした先の実在（skill-lint）。
+# 3つを1つの workflow に置くのは、どれも主題が Markdown だからである。
 #
-# CI ではコンテナを起こさない。markdownlint-cli2 は mise が npm backend で解決する道具であり、
-# CI の実行環境へ直接用意して `RUNNER_MODE=host` で呼ぶ。道具の版は手元と同じ mise.toml が決める。
+# CI ではコンテナを起こさない。markdownlint-cli2 は `RUNNER_MODE=host` の前置きが
+# docker/tools/node の lockfile から frozen で入れて直接呼ぶ（ADR-0503 決定7・17）。
 #
 # `paths` フィルタは置かない。Markdown の検査はリポジトリ中の `.md` をすべて読むため、
 # フィルタが名指しできる対象が無い。
@@ -69,9 +68,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       - name: Checkout
@@ -82,7 +78,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: node npm:markdownlint-cli2
+          tools: node aqua:pnpm/pnpm
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
 
@@ -107,7 +103,7 @@ jobs:
           exit 0
 
       # The checkout must be as clean as it was before the lint, or a later reader cannot tell a
-      # real drift from this job's own leftovers. `scripts/node_modules` is ignored, so anything
+      # real drift from this job's own leftovers. `docker/tools/node/node_modules` is ignored, so anything
       # reported here is something this job put in a tracked path.
       - name: Verify the working tree is clean
         run: git status --porcelain --untracked-files=all | tee /tmp/md-lint-dirty.log && test ! -s /tmp/md-lint-dirty.log
@@ -172,9 +168,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       - name: Checkout
@@ -235,9 +228,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
 
       - name: Checkout

@@ -27,6 +27,9 @@ node = "24.21.0"
 "aqua:pnpm/pnpm" = "12.17.0"
 "npm:markdownlint-cli2" = "0.23.2"
 "npm:@commitlint/cli" = "21.2.2"
+
+[settings]
+disable_tools = ["npm:@commitlint/cli", "npm:markdownlint-cli2"]
 `
 
 // soundHostTools は、焼き込んだ版を両方持つレシピ。**行頭の `\t@` を含める** —— 置換で前置きが
@@ -295,6 +298,7 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out.String(), "markdownlint 0.23.2")
 			assert.Contains(t, out.String(), "commitlint 21.2.2")
 			assert.Contains(t, out.String(), "窓 7 日")
+			assert.Contains(t, out.String(), "npm の道具 2 件を mise の install から外しています")
 		})
 
 		// 起点にする理由は driftedHostTools の宣言と同じ。
@@ -329,11 +333,23 @@ func Test_run(t *testing.T) {
 		t.Run("写しの1つが壊れていれば他も書き換えない", func(t *testing.T) {
 			t.Parallel()
 			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
-			// go ディレクティブを失った go.mod。
 			root := newRepo(t, soundMise, drifted, "module example\n")
 			var out bytes.Buffer
 
 			require.Error(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
+		})
+
+		// 外す宣言が npm の道具と食い違うと、mise が lockfile を読まずに入れる（ADR-0503 決定1）。
+		t.Run("disable_tools が npm の道具と食い違えば errShape を返し、写しを書き換えない", func(t *testing.T) {
+			t.Parallel()
+			mise := strings.ReplaceAll(soundMise, `"npm:@commitlint/cli", `, "")
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			root := newRepo(t, mise, drifted, soundGoMod)
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errShape)
+			require.ErrorIs(t, run([]string{"apply"}, root, &out), errShape)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -949,6 +965,76 @@ func Test_checkNodeToolsDeps(t *testing.T) {
 		t.Run("読めなければエラー", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, checkNodeToolsDeps(filepath.Join(t.TempDir(), "package.json")), os.ErrNotExist)
+		})
+	})
+}
+
+func Test_checkDisableTools(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "mise.toml")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		return path
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("npm の道具とちょうど同じ集合なら、並びに依らず通す", func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, checkDisableTools(write(t,
+				"[settings]\ndisable_tools = [\"npm:markdownlint-cli2\", \"npm:@commitlint/cli\"]\n")))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tt := range map[string]struct {
+			body string
+			want string
+		}{
+			"npm の道具が欠けている": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\"]\n",
+				want: "disable_tools が [npm:@commitlint/cli]",
+			},
+			"npm の道具でないものが余る": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:markdownlint-cli2\", \"go\"]\n",
+				want: "disable_tools が [go npm:@commitlint/cli npm:markdownlint-cli2]",
+			},
+			"同じ道具が重複している": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:@commitlint/cli\"]\n",
+				want: "disable_tools が [npm:@commitlint/cli npm:@commitlint/cli]",
+			},
+			"空の配列": {
+				body: "[settings]\ndisable_tools = []\n",
+				want: "disable_tools が []",
+			},
+			"disable_tools が無い": {
+				body: "[settings]\nexperimental = true\n",
+				want: "disable_tools がありません",
+			},
+		} {
+			t.Run(name+"なら errShape", func(t *testing.T) {
+				t.Parallel()
+				err := checkDisableTools(write(t, tt.body))
+				require.ErrorIs(t, err, errShape)
+				assert.Contains(t, err.Error(), tt.want)
+			})
+		}
+
+		t.Run("解釈できなければ misetoml のエラー", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkDisableTools(write(t, "[settings]\ndisable_tools = npm\n")),
+				misetoml.ErrInvalidDisableTools)
+		})
+
+		t.Run("読めなければエラー", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, checkDisableTools(filepath.Join(t.TempDir(), "mise.toml")), os.ErrNotExist)
 		})
 	})
 }

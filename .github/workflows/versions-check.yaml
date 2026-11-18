@@ -57,9 +57,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             registry-1.docker.io
             auth.docker.io
@@ -93,7 +90,7 @@ jobs:
         run: |
           set +e
 
-          make -k versions-check pin-pnpm-check node-tools-lock-check node-tools-image-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
+          make -k versions-check mise-npm-disabled-check pin-pnpm-check node-tools-lock-check node-tools-host-canary node-tools-image-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
 
           code=${PIPESTATUS[0]}
 

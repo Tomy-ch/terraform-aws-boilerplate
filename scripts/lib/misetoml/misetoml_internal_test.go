@@ -18,8 +18,7 @@ func Test_sectionName(t *testing.T) {
 		}{
 			"装飾が無い場合、そのまま返す": {raw: "tools", want: "tools"},
 
-			// 正規化を落とすと、これらが「[tools] ではない節」になり、中身が丸ごと
-			// 読み飛ばされたうえでエラーも出ません。
+			// 正規化を落とすと下の表記が別の節になる（理由は sectionName の宣言）。
 			"前後に空白がある場合、空白を落とす":        {raw: " tools ", want: "tools"},
 			"二重引用符付きの場合、引用符を外す":        {raw: `"tools"`, want: "tools"},
 			"単引用符付きの場合、引用符を外す":         {raw: `'tools'`, want: "tools"},
@@ -119,6 +118,63 @@ func Test_parseLine(t *testing.T) {
 				assert.False(t, ok)
 				assert.Empty(t, key)
 				assert.Empty(t, version)
+			})
+		}
+	})
+}
+
+func Test_parseDisableList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			line string
+			want []string
+		}{
+			"要素を並べた場合、書かれた順で返す":     {line: `disable_tools = ["npm:a", "npm:b"]`, want: []string{"npm:a", "npm:b"}},
+			"末尾にカンマがある場合、要素だけを返す":   {line: `disable_tools = ["npm:a",]`, want: []string{"npm:a"}},
+			"空の配列の場合、空を返す":          {line: `disable_tools = []`, want: []string{}},
+			"引用符付きキーの場合、裸のキーと同じに読む": {line: `"disable_tools" = ["npm:a"]`, want: []string{"npm:a"}},
+			"空白だけの配列の場合、空を返す":       {line: `disable_tools = [ ]`, want: []string{}},
+			"行末コメントがある場合、コメントを無視する": {line: `disable_tools = ["npm:a"] # 理由`, want: []string{"npm:a"}},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				got, ok := parseDisableList(tt.line)
+
+				assert.True(t, ok)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]string{
+			"配列が閉じていない場合、ok が false になる":      `disable_tools = [`,
+			"要素が引用符で囲まれていない場合、ok が false になる": `disable_tools = [npm:a]`,
+			"空の要素を挟む場合、ok が false になる":        `disable_tools = [, "npm:a"]`,
+			"単引用符の要素の場合、ok が false になる":       `disable_tools = ['npm:a']`,
+			"要素の間が空の場合、ok が false になる":        `disable_tools = ["npm:a",,"npm:b"]`,
+			"カンマだけの場合、ok が false になる":         `disable_tools = [,]`,
+			"空の文字列の要素の場合、ok が false になる":      `disable_tools = [""]`,
+			"配列の後に余りがある場合、ok が false になる":     `disable_tools = ["npm:a"] x`,
+		}
+
+		for name, line := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				got, ok := parseDisableList(line)
+
+				assert.False(t, ok)
+				assert.Nil(t, got)
 			})
 		}
 	})

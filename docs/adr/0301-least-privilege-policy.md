@@ -13,6 +13,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 さらに、権限拡張の入力を任意のpolicy JSONとして受け取ると、拡張の内容がboilerplateの検証対象外になる。最小権限であるかどうかを機械的に判定できなくなる。
 
+人の到達経路を IAM Identity Center の1本に限ると、その障害（リージョンの障害、外部 IdP や MFA の設定の誤り、permission set の割当の削除）で、誰もアカウントへ入れなくなる。AWS は、Identity Center を複数のリージョンへ複製していても、Identity Center から独立した緊急の到達経路（break-glass）を持つことを勧めている。本リポジトリは `organization-baseline` で組織と Identity Center の permission set を作るので、その経路を組織の外の運用へ委ねられない。
+
 ## Decision
 
 ### 適用範囲
@@ -78,7 +80,15 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 ### 越境
 
 18. cross-account accessを既定で許容しない。必要な場合は、明示的なユースケースとして設計し、信頼関係の条件（account、Condition、外部ID等）を型付き契約として受け取る。
-19. 緊急時の権限昇格（break-glass）の経路をboilerplateとして提供しない。これは本リポジトリの責務外とし、組織のIAM運用側で扱う。この判断はユースケースのunsupported一覧へ記載する。
+19. 人の通常の到達経路（IAM Identity Center）が使えないときの緊急の到達経路（break-glass）を、組織を作るユースケース（`organization-baseline`）が提供する。形を次に限る。
+
+    - 置き場は管理アカウントとする。管理アカウントは組織のすべてのアカウントへ届く権限をもともと持つので、そこへ置いても到達できる範囲は増えない。ほかのアカウントへ置くと、そのアカウントが全アカウントへ届く経路を新たに持つ
+    - 管理アカウントに break-glass の IAM user を2つ置く（1つが使えなくなったときの予備）。コンソールへのサインインだけを持ち、アクセスキーを持たず、自身にアクセスキーを作ることを拒否する。MFA はハードウェアの MFA とする。パスワードと MFA は Terraform で作らず、人が設定して保管する。名前は個人を表さない
+    - IAM user が自身に持つ権限は、各アカウントの break-glass の role を引き受けることと、自身の MFA とパスワードの管理だけとする。管理アカウントの中の作業も、管理アカウントの break-glass の role を経由する
+    - すべてのアカウント（管理アカウントを含む）に break-glass の role を置く。信頼条件は、管理アカウントの break-glass の IAM user に限り、MFA で認証したことを要求する。権限は AWS managed policy の `AdministratorAccess` とする。これは決定8・10 の例外である。緊急時に要る作業を前もって列挙できないためであり、例外は break-glass の role に限る
+    - メンバーアカウントの break-glass の role を SCP の拒否から外すのは、回復を妨げる拒否（state の書き込みの拒否。ADR-0602 決定11）に限り、外すのは break-glass の role の ARN に限る。検知を止めることの拒否と、監査ログとその鍵を守る拒否からは外さない。緊急の作業にそれらは要らず、外すと管理アカウントの側が自分の記録を読めなくする経路になる
+    - break-glass の IAM user のサインインと、break-glass の role の引き受けを、平時には起きない事象として必ず通知する（`ops-notification` の Topic）。管理アカウントの root の使用と `sts:AssumeRoot` の呼び出しも同じく通知する
+    - 管理アカウントの root と、メンバーアカウントの root の集中管理（`sts:AssumeRoot`）は、break-glass が使えないときの最後の手段として残す。管理アカウントで `sts:AssumeRoot` を許す主体は、break-glass の role に限る（管理アカウントには SCP が効かないので、IAM で限る）
 
 ### 検証
 
@@ -109,6 +119,18 @@ AWS の既定の Key Policy と、console が作る key users の文（`kms:Crea
 - 代替案: 本案D
 - 見直し条件: 下の「見直し条件」
 
+### 案E: break-glass を提供せず、責務外とする（決定19 に対して）
+
+長期の資格情報を増やさない。ただし本リポジトリが組織と Identity Center を作るので、組織の外の運用へ委ねる先が無い。残るのは管理アカウントの root と `sts:AssumeRoot` だけで、`sts:AssumeRoot` で行えるのは5つの task policy（root の資格情報の監査・削除、root のパスワードの作成、S3 の Bucket Policy と SQS の Queue Policy の解除）に限られ、アカウントを運用する権限にならない。AWS は root を root でしか行えない作業以外に使わないよう勧めている。
+
+### 案F: break-glass の IAM user をセキュリティのアカウントに置く（決定19 に対して）
+
+AWS Well-Architected（SEC10-BP05）の形である。ただし本リポジトリのセキュリティのアカウントは、検知を調べる日常の作業を受け持つ（`docs/v1.0-plan/scope.md` 第10.1節）。そこへ全アカウントへ届く経路を置くと、日常の出入りがあるアカウントを抜かれた被害が組織全体へ広がる。
+
+### 案G: 専用の非常用アカウントへ、外部 IdP から SAML で直接入る（決定19 に対して）
+
+IAM Identity Center の文書の手順である。外部 IdP を前提とし、Identity Center の directory を使う構成では成り立たない。外部 IdP の障害には効かない。アカウントが1つ増える。
+
 ### 評価
 
 | 評価軸 | 案A: opt-in | 案B: IAM限定 | 案C: JSON拡張可 | 採用案: 全面default |
@@ -124,13 +146,15 @@ AWS の既定の Key Policy と、console が作る key users の文（`kms:Crea
 
 - 任意のIAM policyおよびネットワークルールを追加できること
 - 既定でcross-account accessを利用できること
-- break-glass経路の提供
+- 人の到達経路を SSO の1本に限ること（break-glass の2つの IAM user が例外として残る）
 - 権限拡張の即時対応
 
 ## 保証範囲
 
 - 保証すること: boilerplateが生成する権限・通信経路が、意味論的な入力から導出された集合に一致すること
+- 保証すること: break-glass の経路の形（IAM user の数と資格情報の種類、role の信頼条件、決定8・10 の例外の範囲、SCP からの除外の範囲、通知の経路）が宣言どおりであること
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
+- 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
 
 ## 検証方法
 
@@ -141,7 +165,13 @@ AWS の既定の Key Policy と、console が作る key users の文（`kms:Crea
   - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
+  - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、`iam:CreateAccessKey` を Deny していること
+  - break-glass の role の信頼条件が、break-glass の IAM user の ARN と `aws:MultiFactorAuthPresent` を要求すること
+  - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
+  - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること
+  - 管理アカウントで `sts:AssumeRoot` を許す主体が break-glass の role に限られること
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
+- 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
 
@@ -156,4 +186,5 @@ AWS の既定の Key Policy と、console が作る key users の文（`kms:Crea
 - AWS側にresource-level権限が追加され、Resource wildcardの許容箇所が解消できるようになった場合
 - cross-accountを必要とするユースケースが複数発生した場合
 - 意味論的な権限語彙では表現できない権限要求が反復した場合
+- メンテナが2人以上になった場合（パスワードと MFA を分けて持つ形、IAM user を人ごとに名付ける形）。外部 IdP を identity source にした場合（案G の再評価）。AWS が Identity Center から独立した緊急の到達の仕組みを提供した場合
 - IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合。1つの鍵の Key Policy が名指す主体と文で 32,768 文字の上限に近づいた場合。grant を要るサービスの消費者が、Key Policy の文の追加では成り立たなかった場合
