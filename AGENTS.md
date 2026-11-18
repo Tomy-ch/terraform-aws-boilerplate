@@ -16,10 +16,6 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
-- HCL のソースの検査のうち root の構成と backend 設定の不変条件 —— 未作成で、`make` にも配線されていない
-  （[0604](docs/adr/0604-state-split-by-apply-role.md) の検証方法の Static Analysis。#347）。HCL のソースの検査のうち
-  コード実行の検出は `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に、
-  層の規則の検査は `make layer-check` に配線済み
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
   `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）。管理アカウントの workload root は
