@@ -392,7 +392,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
 2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
-   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-admin-identity` が緑
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity` が緑
    - ログの plan の要約が `No changes.`
    - Policy の違反が無い
    - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる

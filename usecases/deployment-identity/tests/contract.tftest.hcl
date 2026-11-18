@@ -19,6 +19,7 @@ variables {
   state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
   apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+  break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
 }
 
 run "outputs" {
@@ -52,6 +53,7 @@ run "wiring" {
     state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/abcdef01-2345-6789-abcd-ef0123456789"
     plan_output_bucket_arn  = "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an"
     apply_output_bucket_arn = "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an"
+    break_glass_arns        = ["arn:aws:iam::123456789012:role/break-glass/t4bp-break-glass"]
   }
 
   assert {
@@ -66,13 +68,12 @@ run "wiring" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ListStateBucket"]) == "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an"
-    error_message = "state_bucket_arn が内部の module の権限へ渡っていません。"
-  }
-
-  assert {
-    condition     = one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ListPlanOutputBucket"]) == "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an"
-    error_message = "plan_output_bucket_arn が内部の module の権限へ渡っていません。"
+    condition = one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ListBuckets"]) == [
+      "arn:aws:s3:::t4bp-dev-tfstate-123456789012-ap-northeast-1-an",
+      "arn:aws:s3:::t4bp-dev-tfplan-123456789012-ap-northeast-1-an",
+      "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an",
+    ]
+    error_message = "state_bucket_arn・plan_output_bucket_arn・apply_output_bucket_arn が内部の module の権限へ渡っていません。"
   }
 
   assert {
@@ -81,8 +82,8 @@ run "wiring" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == "ListApplyOutputBucket"]) == "arn:aws:s3:::t4bp-dev-tfapply-123456789012-ap-northeast-1-an"
-    error_message = "apply_output_bucket_arn が内部の module の権限へ渡っていません。"
+    condition     = one([for s in jsondecode(module.github_oidc.role_policies["apply"]).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/t4bp-break-glass"]
+    error_message = "break_glass_arns が apply の role の Deny へ渡っていません。"
   }
 
   assert {
