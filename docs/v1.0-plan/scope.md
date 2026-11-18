@@ -590,13 +590,12 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | GBpへ渡す環境変数の契約 | Compute usecaseの実装前 | `OBS_*_EXPORTER` / `ENDPOINT_OTLP` / `SERVER_HOST` / `REALTIME_*` / `OUTBOX_*` / `CONSUMER_QUEUE_*` / `AUTH_*` / DB系のうち、どれをmoduleの入力契約として型付きで持ち、どれをenvの値とするか。焼き込み値（`SERVER_HOST`、`OBJECT_STORAGE_BUCKET`、`REALTIME_QUEUE_PREFIX`等）との優先関係を含む |
 | 逆流拒否のPolicy invariant | `data-refresh`の実装前 | 第9.6節と受入条件11が「SCPとIAMの宣言をPolicy Testで見る」としたが、何を判定するかが無い。下位環境のOUに付くSCPがprdのどのActionをDenyするか、`data-refresh`のIAMが本番側にread系しか持たないこと。SCPは`organization-baseline`のplanに、IAMは`data-refresh`のplanに現れるため、1つのinvariantが2つのusecaseのplanをまたぐ（ADR-0402 決定11） |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
-| コード実行許可リストの人間レビューの成立条件 | フェーズ1 | ADR-0103 は許可リストをcode ownerのレビューの対象とするが、メンテナ1人の間は承認者が存在せず発火しない。代替のゲート（ADRの存在検査等）と、人間レビューを有効化する時点 |
 
 各論点は、決める時点に合わせて判断Issueとして起票し、該当usecaseのIssueと依存関係を張る。
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。`account-baseline`の常駐（#86、第10.2節。sandboxはGuardDutyだけ常駐させ、Configは常駐させない）。共有基盤の所有者（#94、第3節・第7節。資源ごとの専用usecaseを各環境のアカウントに置き、共有基盤用のアカウントは設けない）。
+**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。`account-baseline`の常駐（#86、第10.2節。sandboxはGuardDutyだけ常駐させ、Configは常駐させない）。共有基盤の所有者（#94、第3節・第7節。資源ごとの専用usecaseを各環境のアカウントに置き、共有基盤用のアカウントは設けない）。コード実行許可リストの人間レビューの成立条件（#100。ADR-0103 の機械のゲートを保証とし、人のレビューは2人目のメンテナが加わるまで運用にとどめる）。
 
 **フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 
