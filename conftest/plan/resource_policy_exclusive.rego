@@ -10,6 +10,7 @@ import data.plan.lib
 specs := [
 	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["state_backend", "bucket"], "policy": ["state_backend", "bucket_policy"], "refs": ["id", "bucket", "arn"]},
 	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["deployment_identity", "apply_identity_role", "output_bucket"], "policy": ["deployment_identity", "apply_identity_role", "output_bucket_policy"], "refs": ["id", "bucket", "arn"]},
+	{"type": "aws_s3_bucket_policy", "attr": "bucket", "target": ["state_backend", "apply_output_bucket"], "policy": ["state_backend", "apply_output_bucket_policy"], "refs": ["id", "bucket", "arn"]},
 	{"type": "aws_kms_key_policy", "attr": "key_id", "target": ["state_backend", "state_key"], "policy": ["state_backend", "key_policy"], "refs": ["id", "key_id", "arn"]},
 ]
 

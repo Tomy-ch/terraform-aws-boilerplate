@@ -155,8 +155,9 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
   apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
-  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、plan の全文と同じ Bucket の `apply/` の下へ
-  apply-identity の role が置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
+  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、identity root なら plan の全文と同じ Bucket の
+  `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
+  置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
   （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない

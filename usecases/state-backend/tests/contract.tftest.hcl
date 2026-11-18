@@ -22,6 +22,12 @@ override_resource {
   values = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
 }
 
+# apply_output_bucket_arn の precondition は、属性を名前の規則から組んだ ARN と比べる。
+override_resource {
+  target = module.apply_output.aws_s3_bucket.this
+  values = { arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an" }
+}
+
 variables {
   project                                 = "tabp"
   env                                     = "admin"
@@ -63,8 +69,18 @@ run "outputs" {
   }
 
   assert {
-    condition     = output.apply_output_bucket_arn == "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+    condition     = output.apply_output_bucket_arn == module.apply_output.bucket_arn
     error_message = "apply_output_bucket_arn が apply の出力の Bucket の ARN を返していません。"
+  }
+
+  assert {
+    condition     = module.apply_output.bucket_name == "tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+    error_message = "apply の出力の Bucket の名前が <project>-<env>-tfapply-<account_id>-<region>-an になっていません。"
+  }
+
+  assert {
+    condition     = length(toset([output.bucket_arn, output.plan_output_bucket_arn, output.apply_output_bucket_arn])) == 3
+    error_message = "apply の出力の Bucket が state Bucket と plan の出力の Bucket と分かれていません。"
   }
 
   assert {
@@ -80,6 +96,11 @@ run "outputs" {
   assert {
     condition     = module.plan_output.kms_key_arn == output.state_key_arn
     error_message = "plan の出力の Bucket の既定の暗号化が state の鍵を名指していません。"
+  }
+
+  assert {
+    condition     = module.apply_output.kms_key_arn == output.state_key_arn
+    error_message = "apply の出力の Bucket の既定の暗号化が state の鍵を名指していません。"
   }
 }
 
@@ -224,6 +245,8 @@ run "ci_role_arns_apply_identity_no_name" {
 # alias の名前は bootstrap の手順が鍵を名指す名前なので、鍵より前に plan で決まらなければならない。
 run "state_key_alias_name" {
   command = plan
+  # outputs の run が apply した Bucket の ARN が state に残り、別の名前の precondition と比べられるため。
+  state_key = "t4bp_dev"
 
   variables {
     project = "t4bp"
@@ -281,6 +304,11 @@ run "plan_output_retention_days_wiring" {
   assert {
     condition     = module.plan_output.retention_days == { current = 3, noncurrent = 3 }
     error_message = "plan_output_retention_days が plan の出力の lifecycle の日数に届いていません。"
+  }
+
+  assert {
+    condition     = module.apply_output.retention_days == { current = 3, noncurrent = 3 }
+    error_message = "plan_output_retention_days が apply の出力の lifecycle の日数に届いていません。"
   }
 }
 
@@ -463,8 +491,11 @@ run "ci_role_arns_same_role_plan_apply" {
   expect_failures = [var.ci_role_arns]
 }
 
-run "apply_output_bucket_arn_follows_inputs" {
+# precondition の名前の規則が、project・env・partition・アカウント・リージョンのそれぞれから組まれることを、すべて既定と違う値で見る。
+run "apply_output_bucket_arn_name_rule" {
   command = plan
+  # 既存の state の Bucket には override の ARN が当たらないので、新しい state で plan する。
+  state_key = "gov"
 
   variables {
     project = "t4bp"
@@ -483,9 +514,28 @@ run "apply_output_bucket_arn_follows_inputs" {
     target = data.aws_caller_identity.current
     values = { account_id = "210987654321" }
   }
+  override_resource {
+    target          = module.apply_output.aws_s3_bucket.this
+    override_during = plan
+    values          = { arn = "arn:aws-us-gov:s3:::t4bp-dev-tfapply-210987654321-us-gov-west-1-an" }
+  }
 
   assert {
     condition     = output.apply_output_bucket_arn == "arn:aws-us-gov:s3:::t4bp-dev-tfapply-210987654321-us-gov-west-1-an"
-    error_message = "apply_output_bucket_arn が project・env・partition・アカウント・リージョンから組まれていません。"
+    error_message = "apply_output_bucket_arn が apply の出力の Bucket の ARN を返していません。"
   }
+}
+
+run "apply_output_bucket_arn_name_mismatch" {
+  command = plan
+  # 既存の state の Bucket には override の ARN が当たらないので、新しい state で plan する。
+  state_key = "mismatch"
+
+  override_resource {
+    target          = module.apply_output.aws_s3_bucket.this
+    override_during = plan
+    values          = { arn = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an" }
+  }
+
+  expect_failures = [output.apply_output_bucket_arn]
 }
