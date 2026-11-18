@@ -190,7 +190,7 @@ shared_buckets contains {"path": a.f.path, "bucket": a.bucket, "addresses": sort
 	a.address < b.address
 }
 
-# 宣言は policy_plan.inline_arguments（型 → 引数 → 書かないときの値）。無ければ null にして PLAN-STATE-00 で落とす。
+# 宣言が無ければ null にして、PLAN-STATE-00 で落とす。
 default inline_decl := null
 
 inline_decl := data.policy_plan.inline_arguments
