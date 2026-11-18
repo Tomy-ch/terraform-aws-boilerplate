@@ -42,6 +42,37 @@ logs := {
 	]}},
 }
 
+# modules/kms/tests/policy.tftest.hcl の sns_role の期待値と同じ文。
+via_sns := {
+	"Sid": "RolesViaSns0",
+	"Effect": "Allow",
+	"Principal": {"AWS": ["arn:aws:iam::123456789012:role/tabp-dev-heartbeat"]},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {
+		"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+		"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification"],
+	}},
+}
+
+sns_publisher(sid, svc) := {
+	"Sid": sid,
+	"Effect": "Allow",
+	"Principal": {"Service": svc},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}},
+}
+
+sns_events := {
+	"Sid": "SnsPublisherEvents",
+	"Effect": "Allow",
+	"Principal": {"Service": "events.amazonaws.com"},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification"]}},
+}
+
 declared := "module.state_backend.module.kms.aws_kms_key_policy.this"
 
 key_policy(statements) := fixture.doc("aws_kms_key_policy", declared, "policy", {"Version": "2012-10-17", "Statement": statements})
@@ -327,7 +358,6 @@ test_violation_delegation_with_not_action if {
 	"[PLAN-KMS-08]" in ids([r, via_s3])
 }
 
-# 宣言した Key Policy の削除だけは、文書として数えない。
 test_violation_declared_key_policy_deleted if {
 	gone := {"address": declared, "type": "aws_kms_key_policy", "change": {"actions": ["delete"], "after": null, "after_unknown": {}}}
 	msgs := p.deny with input as fixture.plan([gone])
@@ -433,6 +463,70 @@ test_role_path_is_part_of_the_arn if {
 	count(p.deny) == 0 with input as fixture.plan([noop_key_policy, pathed])
 	s := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:role/ci/tabp-admin-ci-plan"}])
 	kms10("tabp-admin-ci-plan") in p.deny with input as fixture.plan([unchanged(key_policy([root, s])), pathed])
+}
+
+test_pass_sns_shape if {
+	count(ids([
+		root, via_sns,
+		sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"),
+		sns_publisher("SnsPublisherCloudWatch", "cloudwatch.amazonaws.com"),
+		sns_publisher("SnsPublisherCostAlerts", "costalerts.amazonaws.com"),
+		sns_events,
+	])) == 0
+}
+
+test_violation_sns_role_without_via_service if {
+	"[PLAN-KMS-04]" in ids([root, with_condition(via_sns, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification"]}})])
+}
+
+test_violation_sns_publisher_without_source if {
+	every s in [
+		without(sns_events, "/Condition"),
+		without(sns_publisher("SnsPublisherCloudWatch", "cloudwatch.amazonaws.com"), "/Condition"),
+		without(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), "/Condition"),
+		without(sns_publisher("SnsPublisherCostAlerts", "costalerts.amazonaws.com"), "/Condition"),
+		with_condition(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), {"StringEquals": {"aws:SourceAccount": "210987654321"}}),
+		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:210987654321:tabp-dev-ops-notification"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:*:123456789012:*"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws-cn:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-05]"}
+	}
+}
+
+test_pass_sns_parts if {
+	every statements in [[root, via_sns], [root, sns_events]] {
+		count(ids(statements)) == 0
+	}
+}
+
+test_violation_sns_role_without_topic if {
+	every s in [
+		with_condition(via_sns, {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:210987654321:tabp-dev-ops-notification"],
+		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:*"],
+		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:logs:ap-northeast-1:123456789012:log-group:x"],
+		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:"],
+		}}),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-11]"}
+	}
+}
+
+test_pass_s3_role_is_not_sns if {
+	count(ids([root, via_s3])) == 0
 }
 
 trail_encrypt := {

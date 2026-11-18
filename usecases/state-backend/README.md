@@ -20,7 +20,7 @@ CI の plan と apply の全文は公開されるログに出さず、state Buck
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
 | `project` | `string`（英小文字と数字） | 名前の先頭に置くプロジェクトの token |
-| `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` | Bucket を置くアカウントの env の token（[scope.md 第3節](../../docs/v1.0-plan/scope.md)） |
+| `env` | `dev` / `stg` / `prd` / `sandbox` / `admin` / `security` / `log-archive` | Bucket を置くアカウントの env の token（[scope.md 第3節](../../docs/v1.0-plan/scope.md)） |
 | `state_noncurrent_version_retention_days` | `number`（1以上の整数、既定値なし） | 上書きされた state の版を残す日数。この日数を過ぎた版は消え、その版へは戻せない。現行版は失効させない（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)） |
 | `plan_output_retention_days` | `number`（1以上の整数、既定7） | plan の出力を残す日数。現行版はこの日数で失効し、上書きされた版と失効した版はさらにこの日数で消える |
 | `ci_role_arns` | `object({ plan, apply, apply_identity, unlock_identity })`（IAM role の ARN、4つは互いに別の role、既定値なし） | CI の role。state の鍵の Key Policy は、`plan`（CI の plan）と `apply_identity`（identity root の apply）に S3 経由の復号と鍵の生成を、`unlock_identity`（identity root の lock を外す role）に identity root の lock file（`<state Bucket の ARN>/identity/terraform.tfstate.tflock`）の復号だけを、暗号化コンテキスト `aws:s3:arn` で限って許す。state Bucket の Bucket Policy は、`apply`（workload root の apply）に workload root の state と lock file の書き込みを、`apply_identity` に identity root の state と lock file の書き込みを、`unlock_identity` に identity root の lock file の削除だけを許し、ほかの主体の object の書き込みを拒否する。鍵と同じアカウントの role でなければ、`modules/kms` の precondition が落とす。ARN が plan で決まるときは plan で、同じ apply で作る role を渡すときは apply で落ちる |
@@ -28,7 +28,7 @@ CI の plan と apply の全文は公開されるログに出さず、state Buck
 
 `state_noncurrent_version_retention_days` と `ci_role_arns` は既定値を持たない必須入力で、足したことは利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
-state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an`、plan の出力の Bucket は `<project>-<env>-tfplan-<account_id>-<region>-an`、apply の出力の Bucket は `<project>-<env>-tfapply-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。`env = sandbox`・region が `ap-northeast-1` のとき、`project` は16文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` と `internal/plan-output` が内部の入力 `name` の誤りとして plan で落とす。
+state Bucket の完全な名前は `<project>-<env>-tfstate-<account_id>-<region>-an`、plan の出力の Bucket は `<project>-<env>-tfplan-<account_id>-<region>-an`、apply の出力の Bucket は `<project>-<env>-tfapply-<account_id>-<region>-an` で、63文字を超えると plan で落ちる。region が `ap-northeast-1` のとき、`project` は `env = sandbox` で16文字、`env = log-archive` で12文字までになる。長さの超過と、S3 が予約している接頭辞（`project = "sthree"` のとき `sthree-`）は、`modules/s3` と `internal/plan-output` が内部の入力 `name` の誤りとして plan で落とす。
 
 | 出力 | 使う側 |
 | --- | --- |
