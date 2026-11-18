@@ -82,6 +82,15 @@ deny contains msg if {
 	msg := "[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が空です"
 }
 
+# state_backend.unlocker を宣言から外すと、その role のどの検査も走らない。
+deny contains msg if {
+	unlocker := object.get(object.get(data.policy_plan, "state_backend", {}), "unlocker", "")
+	is_string(unlocker)
+	unlocker != ""
+	not unlocker in names
+	msg := sprintf("[PLAN-UNLOCK-00] state_backend.unlocker の %s が data.policy_plan.deployment_identity.unlock_roles にありません", [unlocker])
+}
+
 deny contains msg if {
 	some n in names
 	not is_object(object.get(di, n, null))

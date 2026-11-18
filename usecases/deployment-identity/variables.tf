@@ -77,8 +77,8 @@ variable "plan_output_bucket_arn" {
   type        = string
 
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.plan_output_bucket_arn))
-    error_message = "plan_output_bucket_arn は S3 Bucket の ARN（arn:<partition>:s3:::<bucket>）にしてください。"
+    condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*-an$", var.plan_output_bucket_arn))
+    error_message = "plan_output_bucket_arn は account-regional の S3 Bucket の ARN（arn:<partition>:s3:::<bucket>-<account>-<region>-an）にしてください。"
   }
 }
 
@@ -87,7 +87,7 @@ variable "apply_output_bucket_arn" {
   type        = string
 
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.apply_output_bucket_arn))
-    error_message = "apply_output_bucket_arn は S3 Bucket の ARN（arn:<partition>:s3:::<bucket>）にしてください。"
+    condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*-an$", var.apply_output_bucket_arn))
+    error_message = "apply_output_bucket_arn は account-regional の S3 Bucket の ARN（arn:<partition>:s3:::<bucket>-<account>-<region>-an）にしてください。"
   }
 }

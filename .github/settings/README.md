@@ -52,7 +52,7 @@
 | キー | 意味 |
 | --- | --- |
 | `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` / `*-unlock-identity` / `*-unlock` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに5つが揃い、どの `env` にも当たらない5種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
-| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`deploy-branch`（名前の env のデプロイブランチ1つだけ。`deployment-identity` の4種の名前にだけ使えます）、`any`（deployment branch policy を持たない） |
+| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`deploy-branch`（名前の env のデプロイブランチ1つだけ。`deployment-identity` の5種の名前にだけ使えます）、`any`（deployment branch policy を持たない） |
 | `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。

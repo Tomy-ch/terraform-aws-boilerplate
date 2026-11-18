@@ -10,7 +10,7 @@ decl := {"unlock_roles": ["unlock_role"], "unlock_role": {
 	"state_bucket": "module.s.aws_s3_bucket.this",
 }}
 
-sb := {"key_user_roles": ["unlock_role"]}
+sb := {"unlocker": "unlock_role", "key_user_roles": ["unlock_role"]}
 
 bucket := "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
 
@@ -300,7 +300,7 @@ test_pass_two_roles_before_key_policy if {
 
 test_pass_two_roles_with_key_policy if {
 	key := key_policy([read_grant(role_arn, "kms:Decrypt", [lock]), object.union(read_grant(wrole_arn, "kms:Decrypt", [wlock]), {"Sid": "RolesViaS3Read1"})])
-	count(p.deny) == 0 with input as input2([wlist, wremove], key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"key_user_roles": ["unlock_role", "workload_unlock_role"]}
+	count(p.deny) == 0 with input as input2([wlist, wremove], key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"unlocker": "unlock_role", "key_user_roles": ["unlock_role", "workload_unlock_role"]}
 }
 
 test_violation_second_role_other_lock if {
@@ -322,7 +322,7 @@ test_violation_second_role_policy_missing if {
 }
 
 test_violation_second_role_declared_key_user_without_grant if {
-	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"key_user_roles": ["unlock_role", "workload_unlock_role"]}
+	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"unlocker": "unlock_role", "key_user_roles": ["unlock_role", "workload_unlock_role"]}
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
@@ -353,4 +353,10 @@ test_violation_unlock_role_entry_missing if {
 	d := object.union(decl, {"unlock_roles": ["unlock_role", "nothing"]})
 	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00] data.policy_plan.deployment_identity.nothing が宣言にありません", msgs)
+}
+
+test_violation_unlocker_not_in_unlock_roles if {
+	d := object.union(decl2, {"unlock_roles": ["workload_unlock_role"]})
+	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00] state_backend.unlocker の unlock_role が data.policy_plan.deployment_identity.unlock_roles にありません", msgs)
 }

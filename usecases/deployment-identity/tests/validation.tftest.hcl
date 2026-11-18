@@ -222,6 +222,27 @@ run "rejects_object_arn_as_apply_output_bucket" {
   expect_failures = [var.apply_output_bucket_arn]
 }
 
+# 名前を他のアカウントが先に作れる global の namespace の Bucket に、書き込みと作成の権限を与えない。
+run "rejects_global_namespace_plan_output_bucket" {
+  command = plan
+
+  variables {
+    plan_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfplan"
+  }
+
+  expect_failures = [var.plan_output_bucket_arn]
+}
+
+run "rejects_global_namespace_apply_output_bucket" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
 run "rejects_wildcard_in_owner" {
   command = plan
 
