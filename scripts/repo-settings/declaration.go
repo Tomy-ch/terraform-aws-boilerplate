@@ -107,6 +107,46 @@ func rulesetIncludes(b branches) []string {
 	return out
 }
 
+// workflow の印 `# branch-set: <集合>` が名指す集合。
+const (
+	// setRuleset は、ruleset が保護する集合（デプロイブランチと各線）。
+	setRuleset = "ruleset"
+	// setDeploy は、デプロイブランチの集合。
+	setDeploy = "deploy"
+	// setLines は、線の集合。
+	setLines = "lines"
+)
+
+// triggerPatterns は、workflow の on.<event>.branches に置く集合 set の値を返します。線は ruleset と同じく
+// 階層をまたぐ（<prefix>**）。
+func triggerPatterns(b branches, set string) ([]string, error) {
+	var out []string
+	switch set {
+	case setRuleset:
+		out = append(out, b.DeployNames()...)
+		out = append(out, lineGlobs(b)...)
+	case setDeploy:
+		out = append(out, b.DeployNames()...)
+	case setLines:
+		out = append(out, lineGlobs(b)...)
+	default:
+		return nil, xerrors.Wrapf(errBranchSet, "未知の集合 %q（%s / %s / %s）", set, setRuleset, setDeploy, setLines)
+	}
+	if len(out) == 0 {
+		return nil, xerrors.Wrapf(errBranchSet, "集合 %s の展開が0件です", set)
+	}
+	return out, nil
+}
+
+func lineGlobs(b branches) []string {
+	prefixes := b.Lines.Prefixes()
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		out = append(out, p+"**")
+	}
+	return out
+}
+
 // environmentPatterns は、environment の deploy_from を deployment branch policy のパターンへ展開します。
 // any は policy を持たないので nil を返す。deploy-branch は、名前の env のデプロイブランチ1つだけを許す。
 // env のデプロイブランチが宣言に在ることは checkDeployEnvs が先に確かめる。

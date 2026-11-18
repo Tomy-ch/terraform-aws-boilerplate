@@ -58,6 +58,7 @@ pre-commit:
     repo-settings-check:
       glob:
         - ".github/settings/*.json"
+        - ".github/workflows/*.{yml,yaml}"
         - "env/**/*.tf"
         - "scripts/repo-settings/*.go"
         - "scripts/lib/**"

@@ -7,11 +7,13 @@ name: KICS
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - develop
-      - staging
+    branches: # branch-set: ruleset
+      - admin
       - production
+      - staging
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/kics.yaml'
       - '.makefiles/security/kics.mk'

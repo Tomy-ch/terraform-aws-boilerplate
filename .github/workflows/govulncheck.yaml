@@ -2,9 +2,13 @@ name: Go Vulnerability Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
+    branches: # branch-set: ruleset
+      - admin
       - production
+      - staging
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/govulncheck.yaml'
       - '.makefiles/security/govulncheck.mk'

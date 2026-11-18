@@ -8,11 +8,13 @@ name: Semgrep
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - develop
-      - staging
+    branches: # branch-set: ruleset
+      - admin
       - production
+      - staging
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/semgrep.yaml'
       - '.makefiles/security/semgrep.mk'

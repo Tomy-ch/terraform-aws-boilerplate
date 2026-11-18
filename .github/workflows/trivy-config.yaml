@@ -16,11 +16,13 @@ name: Config Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - develop
-      - staging
+    branches: # branch-set: ruleset
+      - admin
       - production
+      - staging
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'

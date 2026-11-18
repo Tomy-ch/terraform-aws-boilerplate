@@ -144,6 +144,9 @@ type declarations struct {
 	ruleset      []byte
 	rendered     []byte
 	workflows    []workflowEdit
+	// sets は、印 `# branch-set:` を持つ workflow。marks はその印の数。
+	sets  []workflowEdit
+	marks int
 }
 
 // readDeclarations は3つの宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -170,6 +173,14 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
+	applyPaths := make([]string, 0, len(workflows))
+	for _, w := range workflows {
+		applyPaths = append(applyPaths, w.path)
+	}
+	sets, marks, err := renderBranchSets(root, b, applyPaths)
+	if err != nil {
+		return declarations{}, err
+	}
 	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
 	if err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
@@ -185,7 +196,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows}, nil
+	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -216,18 +227,27 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件",
-		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows))
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）",
+		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows), decl.marks, len(decl.sets))
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {
 		changed[filepath.Join(root, rulesetFile)] = string(decl.rendered)
 		names = append(names, rulesetFile)
 	}
+	var applyDrift, setDrift []string
 	for _, w := range decl.workflows {
 		if w.rendered != w.current {
 			changed[filepath.Join(root, w.path)] = w.rendered
 			names = append(names, w.path)
+			applyDrift = append(applyDrift, w.path)
+		}
+	}
+	for _, w := range decl.sets {
+		if w.rendered != w.current {
+			changed[filepath.Join(root, w.path)] = w.rendered
+			names = append(names, w.path)
+			setDrift = append(setDrift, w.path)
 		}
 	}
 	if len(changed) == 0 {
@@ -238,7 +258,10 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 		if _, ok := changed[filepath.Join(root, rulesetFile)]; ok {
 			return errIncludeDrift
 		}
-		return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(names, ", "))
+		if len(applyDrift) > 0 {
+			return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(applyDrift, ", "))
+		}
+		return xerrors.Wrapf(errSetDrift, "%s", strings.Join(setDrift, ", "))
 	}
 	if err := atomicwrite.Apply(changed, filePerm); err != nil {
 		return xerrors.Wrapf(err, "%s の書き込み", strings.Join(names, ", "))
