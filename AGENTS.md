@@ -22,10 +22,11 @@
   `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に配線済み
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
-  `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）
+  `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）。管理アカウントの workload root は
+  #222、security・log-archive は #21、dev・stg・prd は #330 が配線する
 - sandbox の apply の経路（[0601](docs/adr/0601-change-delivery-path.md) 決定3・4、
   [0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定33）—— job・environment・required context と、
-  それらを見る検査が無い（#222）
+  それらを見る検査が無い（#331）
 
 **未配線の道具について「実行した」と報告しない。** 配線され次第この節から外し、この節が空になったとき節ごと削除する。
 
