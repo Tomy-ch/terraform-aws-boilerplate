@@ -10,9 +10,9 @@ COOLDOWN_REPORT = $(if $(GITHUB_ACTIONS),--github,) $(if $(SUMMARY_OUT),--summar
 
 # -----ホスト上で実行するコマンド群-----
 # gate が検知器ではなく防御の本体である理由、direct だけを落とす理由は
-# .github/workflows/README.md の Go Cooldown 節。CI はワークフローが base ref から解決して渡す。
+# .github/workflows/README.md の「Go のクールダウン」節。CI はワークフローが base ref から解決して渡す。
 go-cooldown-gate:
-	@test -n "$(BASE)" || { echo "❌ BASE が要ります: make go-cooldown-gate BASE=origin/release/vX.Y.0"; exit 1; }
+	@test -n "$(BASE)" || { echo "❌ BASE が要ります: make go-cooldown-gate BASE=origin/<make -s base-branch の出力>"; exit 1; }
 	@$(call RUN_SCRIPT,go-cooldown,gate --base=$(BASE) $(COOLDOWN_REPORT))
 
 # 棚卸しのみ。バイパスの期限切れだけ失敗させる（期限は go.mod が変わらなくても訪れる）。

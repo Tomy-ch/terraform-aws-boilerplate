@@ -2,9 +2,13 @@ name: Dependency Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - production
+    branches: # branch-set: ruleset
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
   pull_request:
   schedule:
     - cron: '0 0 * * 1'
@@ -68,9 +72,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             mirror.gcr.io
             ghcr.io
@@ -213,9 +214,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             mirror.gcr.io
             ghcr.io

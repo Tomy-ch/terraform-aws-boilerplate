@@ -66,12 +66,12 @@ supported:
 
 unsupported:
 
-- 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
-- bucket policy で締め出したときに回復する資格情報の発行と管理（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9）
-- 段5 の後のアカウントで、段4 の手順をそのまま回復に使うこと。state と lock file は state の鍵で暗号化され、Key Policy に名指されない主体（一時 IAM user を含む）は state を読めない。回復には Key Policy が名指す主体の資格情報が要り、その発行と管理は責務外とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19、[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
+- 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
+- bucket policy で締め出したときに回復する手順。回復を行う人の経路は `organization-baseline`（未実装）の break-glass である（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
+- 段5 の後のアカウントで、段4 の手順をそのまま回復に使うこと。state と lock file は state の鍵で暗号化され、Key Policy に名指されない主体（一時 IAM user を含む）は state を読めない。回復には Key Policy を書き換える必要があり、その手順は提供しない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19、[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
 - state Bucket のリージョン間の複製（リージョン障害への state の備え）。Checkov の CKV_AWS_144 は、この判断を理由に `modules/s3/main.tf` で抑止している
 - plan と apply の出力を保持日数より長く残すこと
-- 人が plan の出力の全文を読むこと。plan の出力は state の鍵で暗号化され、Key Policy が暗号操作を許すのは CI の role だけである。アカウントへの管理の委任は暗号操作と `kms:CreateGrant` を含まないので、root も Key Policy を書き換えずには復号できない。その書き換えは break-glass であり、このリポジトリは提供しない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）。読む人の主体を Key Policy に足すことは、人の主体を与えるユースケース `organization-baseline`（未実装）が持つ
+- 人が plan の出力の全文を読むこと。plan の出力は state の鍵で暗号化され、Key Policy が暗号操作を許すのは CI の role だけである。アカウントへの管理の委任は暗号操作と `kms:CreateGrant` を含まないので、root も Key Policy を書き換えずには復号できない。その書き換えは break-glass の role で行えるが、平時の読み手の経路にしない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）。読む人の主体を Key Policy に足すことは、人の主体を与えるユースケース `organization-baseline`（未実装）が持つ
 - 2つの Bucket への要求ごとの記録（S3 サーバーアクセスログ）と、改変を即座に知らせること。改変の検知はこのユースケースの外（GuardDuty、フェーズ1、#256）に委ね、どの改変を検知するかは保証しない（[state-backend/ADR-0105](docs/adr/0105-no-server-access-logs.md)）
 - 保持日数を過ぎた state の版へ戻すこと（[state-backend/ADR-0103](docs/adr/0103-expire-noncurrent-state-versions.md)）
 

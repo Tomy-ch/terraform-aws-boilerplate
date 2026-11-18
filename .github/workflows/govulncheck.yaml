@@ -2,9 +2,13 @@ name: Go Vulnerability Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - production
+    branches: # branch-set: ruleset
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/govulncheck.yaml'
       - '.makefiles/security/govulncheck.mk'
@@ -78,9 +82,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             vuln.go.dev
 

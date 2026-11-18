@@ -20,7 +20,7 @@ import (
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ JSON の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
 
 const (
-	branchesFixture     = `{"deploy": [{"branch": "main", "env": "x", "from": ["release/"]}], "lines": ["release/"], "revert": "revert/"}`
+	branchesFixture     = `{"deploy": [{"branch": "main", "env": "x", "from": ["release/"], "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
 	environmentsFixture = `[
   {"name": "x-plan", "deploy_from": "protected-and-pull-requests", "can_admins_bypass": false},
   {"name": "x-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false},
@@ -54,7 +54,7 @@ jobs:
 
 var syncedRuleset = strings.Replace(rulesetFixture,
 	"[\n        \"refs/heads/old\"\n      ]",
-	"[\n        \"refs/heads/main\",\n        \"refs/heads/release/**/*\"\n      ]", 1)
+	"[\n        \"refs/heads/main\",\n        \"refs/heads/release/**/*\",\n        \"refs/heads/hotfix/**/*\"\n      ]", 1)
 
 func writeRepo(t *testing.T, ruleset string) string {
 	t.Helper()
@@ -64,6 +64,7 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, rulesetFile, ruleset)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
 	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
+	writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  push:\n    branches: # branch-set: deploy\n      - 'main'\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 	return root
 }
 
@@ -84,8 +85,8 @@ func liveRoutes(t *testing.T) map[string]fakeResponse {
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "copilot", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": null}]}`),
-		policyPath("x-plan", 1): ok(`{"total_count": 3, "branch_policies": [
-			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
+		policyPath("x-plan", 1): ok(`{"total_count": 4, "branch_policies": [
+			{"id": 1, "name": "main", "type": "branch"}, {"id": 2, "name": "release/*", "type": "branch"}, {"id": 5, "name": "hotfix/*", "type": "branch"}, {"id": 3, "name": "refs/pull/*/merge", "type": "branch"}]}`),
 		policyPath("x-apply", 1):           ok(deployPolicies),
 		policyPath("x-apply-identity", 1):  ok(deployPolicies),
 		policyPath("x-unlock-identity", 1): ok(deployPolicies),
@@ -100,6 +101,15 @@ const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_b
 			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
+
+// appendFile は、dir の下の name の末尾へ body を足します。
+func appendFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	src, err := os.ReadFile(p)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, append(src, []byte(body)...), 0o600))
+}
 
 func fixedWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
@@ -242,6 +252,10 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Len(t, decl.environments, 6)
 		assert.Equal(t, rulesetFixture, string(decl.ruleset))
 		assert.Equal(t, syncedRuleset, string(decl.rendered))
+		assert.Len(t, decl.workflows, 1)
+		assert.Len(t, decl.sets, 1)
+		assert.Equal(t, 1, decl.marks)
+		assert.Equal(t, 1, decl.exprs)
 	})
 
 	cases := []struct {
@@ -265,7 +279,7 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
 		}, errEnvironmentMismatch},
 		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
-			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main"}], "lines": ["release/"], "revert": "revert/"}`)
+			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
@@ -273,6 +287,21 @@ func Test_readDeclarations(t *testing.T) {
 		{"apply の workflow が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))
 		}, errTrigger},
+		{"ref を宣言の外の文字列と比べる式があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "jobs:\n  a:\n    if: github.ref_name == 'main'\n")
+		}, errRefLiteral},
+		{"読めない式があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "jobs:\n  a:\n    steps:\n      - run: echo ${{ github.ref\n")
+		}, errExpression},
+		{"印の無い branches の一覧があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "  workflow_run:\n    branches:\n      - main\n")
+		}, errBranchSet},
+		{"apply の workflow に印があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/apply.yaml", "    if: ${{ contains(fromJSON('[\"main\"]'), github.base_ref) }} # branch-set: deploy\n")
+		}, errBranchSet},
+		{"印 branch-set の行が1つも無ければ失敗する", func(root string) {
+			writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
+		}, errBranchSet},
 		{"include を定められなければ失敗する", func(root string) {
 			writeFile(t, root, rulesetFile, strings.Replace(rulesetFixture, `"include"`, `"included"`, 1))
 		}, errInclude},
@@ -286,6 +315,23 @@ func Test_readDeclarations(t *testing.T) {
 			require.ErrorIs(t, err, tc.wantErr)
 		})
 	}
+
+	// 印の生成の失敗は、印が0件のときと同じ errBranchSet なので、どちらの失敗かを文言で分ける。
+	for name, c := range map[string]struct {
+		file, body, want string
+	}{
+		"印の無い branches の一覧は、その一覧の失敗として返す":  {".github/workflows/lint.yaml", "  workflow_run:\n    branches:\n      - main\n", "印 `# branch-set: <集合>` の無い branches"},
+		"apply の workflow の印は、その印の失敗として返す": {".github/workflows/apply.yaml", "    if: ${{ contains(fromJSON('[\"main\"]'), github.base_ref) }} # branch-set: deploy\n", "apply の workflow には印を置けません"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := writeRepo(t, rulesetFixture)
+			appendFile(t, root, c.file, c.body)
+			_, err := readDeclarations(root)
+			require.ErrorIs(t, err, errBranchSet)
+			assert.ErrorContains(t, err, c.want)
+		})
+	}
 }
 
 func Test_loadDesired(t *testing.T) {
@@ -297,7 +343,7 @@ func Test_loadDesired(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "branch-protection", want.Ruleset["name"])
 		assert.Equal(t, []desiredEnv{
-			{Name: "x-plan", Patterns: []string{"main", "release/*", pullRequestRef}},
+			{Name: "x-plan", Patterns: []string{"main", "release/*", "hotfix/*", pullRequestRef}},
 			{Name: "x-apply", Patterns: []string{"main"}},
 			{Name: "x-apply-identity", Patterns: []string{"main"}},
 			{Name: "x-unlock-identity", Patterns: []string{"main"}},
@@ -332,7 +378,7 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 2 件、environment 6 件、apply の workflow 1 件")
+		assert.Contains(t, out.String(), "保護対象 3 件、environment 6 件、apply の workflow 1 件")
 		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
 	})
 
@@ -359,6 +405,51 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("apply は印 branch-set の行を生成し直して書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, string(synced), string(got))
+		assert.Contains(t, out.String(), "分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件")
+		assert.Contains(t, out.String(), ".github/workflows/lint.yaml を書き換えました")
+	})
+
+	t.Run("check は印 branch-set の行のずれを報せ、書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		drifted := strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1)
+		writeFile(t, root, ".github/workflows/lint.yaml", drifted)
+		err = applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSetDrift)
+		assert.ErrorContains(t, err, ".github/workflows/lint.yaml")
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("include と起動条件と印が同時にずれていれば、check は include を先に報せ、次に起動条件を報せる", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
+
+		writeFile(t, root, rulesetFile, syncedRuleset)
+		err = applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errTriggerDrift)
+		assert.NotErrorIs(t, err, errSetDrift)
 	})
 
 	t.Run("include と起動条件が同時にずれていれば、apply は両方を書き換える", func(t *testing.T) {
@@ -417,7 +508,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 2 件、environment 6 件、apply の workflow 1 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -550,19 +641,21 @@ func Test_syncSettings(t *testing.T) {
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
+			"POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"PUT /repos/o/r/environments/copilot",
 		}, targets)
 		assert.JSONEq(t, `{"can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true},
 			"prevent_self_review": false, "reviewers": null, "wait_timer": 0}`, writes[0].body)
-		assert.JSONEq(t, `{"name": "refs/pull/*/merge", "type": "branch"}`, writes[3].body)
+		assert.JSONEq(t, `{"name": "refs/pull/*/merge", "type": "branch"}`, writes[4].body)
 		assert.Equal(t, strings.Join([]string{
 			"🔧 PUT /repos/o/r/environments/x-plan",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
+			"🔧 POST /repos/o/r/environments/x-plan/deployment-branch-policies",
 			"🔧 PUT /repos/o/r/environments/copilot",
 			"⚠️ 宣言に無い environment は消していません（make repo-settings-drift はこれをずれとして報せます）: other",
-			"✅ repo-settings: o/r へ 5 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
+			"✅ repo-settings: o/r へ 6 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
 		}, "\n")+"\n", out.String())
 	})
 

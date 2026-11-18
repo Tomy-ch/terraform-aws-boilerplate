@@ -90,7 +90,7 @@ lockfile の推移的な依存の脆弱性のうち、修正版が無く許容�
 
 ```sh
 make md-lint                    # RUNNER_MODE=container（既定）—— コンテナで実行
-make md-lint RUNNER_MODE=host   # ホストの mise が入れたもので実行
+make md-lint RUNNER_MODE=host   # ホストで実行。npm の道具はこの lockfile から docker/tools/node へ入れる
 ```
 
 検査の定義は `.makefiles/` が1箇所で持ち、実行環境の差は前置きだけで表す。**同じ検査に対して

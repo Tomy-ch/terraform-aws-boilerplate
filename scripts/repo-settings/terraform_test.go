@@ -318,7 +318,7 @@ func Test_checkDeployEnvs(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := checkDeployEnvs(tc.envs, branches{Deploy: tc.deploy, Lines: []string{"release/"}, Revert: "revert/"})
+			err := checkDeployEnvs(tc.envs, branches{Deploy: tc.deploy, Lines: branchdecl.Lines{Release: "release/"}, Revert: "revert/"})
 			if tc.wantErr == "" {
 				require.NoError(t, err)
 				return

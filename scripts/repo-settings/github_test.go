@@ -166,10 +166,30 @@ func Test_githubClient_do(t *testing.T) {
 
 	t.Run("接続できなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		srv := httptest.NewServer(http.NotFoundHandler())
-		srv.Close()
-		c := githubClient{base: srv.URL, http: http.DefaultClient}
-		require.ErrorIs(t, c.do(context.Background(), http.MethodGet, "/x", nil, nil), errRequest)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		}))
+		t.Cleanup(srv.Close)
+		c := githubClient{base: srv.URL, http: srv.Client()}
+		err := c.do(context.Background(), http.MethodGet, "/x", nil, nil)
+		require.ErrorIs(t, err, errRequest)
+		assert.Contains(t, err.Error(), `Get "`+srv.URL)
+	})
+
+	t.Run("2xx 以外でも本文を読み切れなければ、状態ではなく読み取りの失敗にする", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "100")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, "short")
+		}))
+		t.Cleanup(srv.Close)
+		c := githubClient{base: srv.URL, http: srv.Client()}
+		err := c.do(context.Background(), http.MethodGet, "/x", nil, nil)
+		require.ErrorIs(t, err, errRequest)
+		assert.NotErrorIs(t, err, errHTTP)
 	})
 
 	t.Run("応答の本文を読み切れなければ失敗する", func(t *testing.T) {

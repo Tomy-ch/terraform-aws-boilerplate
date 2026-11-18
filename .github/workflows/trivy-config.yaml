@@ -16,11 +16,13 @@ name: Config Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - develop
-      - staging
-      - production
+    branches: # branch-set: ruleset
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'
@@ -149,9 +151,6 @@ jobs:
             tuf-repo-cdn.sigstore.dev
             rekor.sigstore.dev
             fulcio.sigstore.dev
-            api.npmjs.org
-            api.osv.dev
-            npm.jsr.io
             awscli.amazonaws.com
             mirror.gcr.io
             ghcr.io

@@ -1,10 +1,13 @@
 // Package main は、リリースタグとリリースブランチを作成するツール。
 //
-//	tag    -bump <patch|minor|major>                     production HEAD にタグを打ち、GitHub Release を作る
+//	tag    -bump <patch|minor|major>                     基点のブランチの HEAD にタグを打ち、GitHub Release を作る
 //	tag    -version <vX.Y.Z>                             指定の版で同じことをする（タグが無い初回はこちら）
-//	branch -bump <patch|minor|major> -prefix <接頭辞>     次バージョンのブランチを切り、デフォルトブランチに設定する
+//	branch -bump <patch|minor|major> -line <役割>        次バージョンの線を切り、デフォルトブランチに設定する
 //
-// -bump は `git tag` の最新セマンティックバージョンを起点に次バージョンを決める。-version は
+// 基点のブランチ（release_base）、線の役割（release / hotfix）の接頭辞、版の形は、分岐のパターンの宣言
+// （`.github/settings/branches.json`、ADR-0603 決定1）を直下から読む。
+//
+// -bump は `git tag` の最新の版を起点に次バージョンを決める。-version は
 // 既存のどのタグよりも新しい版だけを受け付け、-bump と同時には指定できない。
 //
 // 取り消しの効かない操作（タグの push / Release の作成 / デフォルトブランチの切り替え）を
@@ -17,76 +20,97 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const (
-	// releaseNoteDir は、タグ作成時に読むリリースノートの置き場所。
 	releaseNoteDir = ".github/release"
 	// commandTimeout は、git / gh 1 コマンドあたりの上限。push や Release 作成は
 	// ネットワーク越しのため、対話が無い前提で余裕を持たせる。
 	commandTimeout = 120 * time.Second
 
 	// lsRemoteNotFound は `git ls-remote --exit-code` が「一致が無い」ときに返す終了コード。
-	// それ以外の非ゼロは照会そのものの失敗であり、区別しないと「無い」と読んでしまう。
+	// それ以外の非ゼロの扱いは remoteBranchExists を参照。
 	lsRemoteNotFound = 2
 )
 
 var (
-	// semverPattern は、リリースタグとして扱う形式。プレリリースやビルドメタデータは対象外。
-	semverPattern     = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
 	errNoTag          = xerrors.New("❌ リリースタグが存在しません。最初のタグは -version vX.Y.Z（make tag-version VERSION=vX.Y.Z）で版を指定して打ってください")
 	errNoTagForBranch = xerrors.New("❌ 最新のリリースタグを取得できませんでした。初期タグ作成が必要です\n" +
 		"➡️ 先に make tag-version VERSION=vX.Y.Z で最初のタグを打ってから再実行してください")
-	errUnknownBump       = xerrors.New("unknown -bump (patch / minor / major)")
-	errVersionWithBump   = xerrors.New("❌ -version と -bump は同時に指定できません")
-	errVersionFormat     = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
-	errVersionExists     = xerrors.New("は既にタグとして存在します")
-	errVersionNotNewer   = xerrors.New("は最新のタグより新しくありません")
-	errHelpRequested     = xerrors.New("help requested")
-	errNoReleaseNote     = xerrors.New("が存在しません。タグとリリースをスキップしました")
-	errBranchExists      = xerrors.New("は既に存在します。処理を中止します")
-	errDirtyWorktree     = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
-	errUsage             = xerrors.New("❌ usage: release <tag|branch> [flags]")
-	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (tag / branch)")
+	errUnknownBump        = xerrors.New("unknown -bump (patch / minor / major)")
+	errVersionWithBump    = xerrors.New("❌ -version と -bump は同時に指定できません")
+	errVersionFormat      = xerrors.New("❌ -version は vX.Y.Z の形で指定してください")
+	errVersionExists      = xerrors.New("は既にタグとして存在します")
+	errVersionNotNewer    = xerrors.New("は最新のタグより新しくありません")
+	errHelpRequested      = xerrors.New("help requested")
+	errNoReleaseNote      = xerrors.New("が存在しません。タグとリリースをスキップしました")
+	errReleaseNoteNotFile = xerrors.New("はファイルではありません。タグとリリースをスキップしました")
+	errEmptyReleaseNote   = xerrors.New("が空です。タグとリリースをスキップしました")
+	errBranchExists       = xerrors.New("は既に存在します。処理を中止します")
+	errDirtyWorktree      = xerrors.New("❌ 作業ツリーに未コミットの変更があります。変更をコミットまたは退避してから再実行してください")
+	errUsage              = xerrors.New("❌ usage: release <tag|branch> [flags]")
+	errUnknownSubcommand  = xerrors.New("❌ unknown subcommand (tag / branch)")
+	errUnknownLine        = xerrors.New("❌ -line は線の役割を指定してください")
+	errNoReleaseBase      = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
 )
 
-type version struct {
-	major, minor, patch int
-}
+// version は、タグと線の名前の版。読み書きと比較は宣言の読み手が持つ。
+type version = branchdecl.Version
 
 type step struct {
 	name string
 	args []string
 }
 
-// runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリへ触れずに
-// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
+// runner は、手順を実際に走らせる実行層。テストが差し替える継ぎ目（scripts/README.md の Test Strategy）。
 type runner struct {
-	run    func(s step) error
-	output func(name string, args ...string) (string, error)
-	// remoteBranchExists は、origin に同名ブランチがあるかを返す。照会できなければエラー。
+	run                func(s step) error
+	output             func(name string, args ...string) (string, error)
 	remoteBranchExists func(branch string) (bool, error)
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := execute(hostRunner(), os.Args[1:]); err != nil {
+	if err := start(hostRunner(), os.Args[1:], os.Getwd, reporoot.Toplevel); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
 
-func execute(r runner, args []string) error {
+// start は、作業ディレクトリがリポジトリの直下であることを確かめ、分岐のパターンの宣言を直下から読んでから
+// execute を呼びます。手順はリリースノートを直下からの相対パスで読む。宣言を読めなければ、手順を1つも実行しない。
+func start(r runner, args []string, getwd, toplevel func() (string, error)) error {
+	if err := reporoot.Require(getwd, toplevel); err != nil {
+		return err
+	}
+
+	root, err := getwd()
+	if err != nil {
+		return xerrors.Wrap(err, "作業ディレクトリの取得")
+	}
+
+	decl, err := branchdecl.Read(filepath.Join(root, branchdecl.File))
+	if err != nil {
+		return err
+	}
+
+	return execute(r, decl, args)
+}
+
+func execute(r runner, decl branchdecl.Branches, args []string) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -95,9 +119,9 @@ func execute(r runner, args []string) error {
 
 	switch args[0] {
 	case "tag":
-		err = runTag(r, args[1:])
+		err = runTag(r, decl, args[1:])
 	case "branch":
-		err = runBranch(r, args[1:])
+		err = runBranch(r, decl, args[1:])
 	default:
 		return errUnknownSubcommand
 	}
@@ -110,33 +134,13 @@ func execute(r runner, args []string) error {
 	return err
 }
 
-// ---- バージョン解決（純粋） -------------------------------------------------
-
-func (v version) String() string {
-	return "v" + strconv.Itoa(v.major) + "." + strconv.Itoa(v.minor) + "." + strconv.Itoa(v.patch)
-}
-
-// parseVersion は、`vX.Y.Z` 形式の文字列を version へ変換します。
-func parseVersion(s string) (version, bool) {
-	m := semverPattern.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
-		return version{}, false
-	}
-
-	major, _ := strconv.Atoi(m[1])
-	minor, _ := strconv.Atoi(m[2])
-	patch, _ := strconv.Atoi(m[3])
-
-	return version{major: major, minor: minor, patch: patch}, true
-}
-
 // latestVersion は、`git tag` の出力から最新のリリースバージョンを選びます。
 // 比較は数値ごとに行うため、v1.9.0 より v1.10.0 が新しいと判定されます。
 func latestVersion(tagOutput string) (version, bool) {
 	versions := make([]version, 0)
 
 	for line := range strings.SplitSeq(tagOutput, "\n") {
-		if v, ok := parseVersion(line); ok {
+		if v, ok := branchdecl.ParseVersion(strings.TrimSpace(line)); ok {
 			versions = append(versions, v)
 		}
 	}
@@ -145,60 +149,45 @@ func latestVersion(tagOutput string) (version, bool) {
 		return version{}, false
 	}
 
-	sort.Slice(versions, func(i, j int) bool { return versions[j].less(versions[i]) })
+	sort.Slice(versions, func(i, j int) bool { return versions[j].Less(versions[i]) })
 
 	return versions[0], true
-}
-
-func (v version) less(o version) bool {
-	if v.major != o.major {
-		return v.major < o.major
-	}
-
-	if v.minor != o.minor {
-		return v.minor < o.minor
-	}
-
-	return v.patch < o.patch
 }
 
 func bump(v version, kind string) (version, error) {
 	switch kind {
 	case "patch":
-		return version{major: v.major, minor: v.minor, patch: v.patch + 1}, nil
+		return version{Major: v.Major, Minor: v.Minor, Patch: v.Patch + 1}, nil
 	case "minor":
-		return version{major: v.major, minor: v.minor + 1}, nil
+		return version{Major: v.Major, Minor: v.Minor + 1}, nil
 	case "major":
-		return version{major: v.major + 1}, nil
+		return version{Major: v.Major + 1}, nil
 	default:
 		return version{}, xerrors.Wrap(errUnknownBump, kind)
 	}
 }
 
-// ---- 手順の組み立て（純粋） -------------------------------------------------
-
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// syncProductionSteps は、production を origin の最新へ合わせる手順を返します。
-func syncProductionSteps() []step {
+// syncReleaseBaseSteps は、基点のブランチ base を origin の最新へ合わせてからタグを取り直す手順を返します。
+func syncReleaseBaseSteps(base string) []step {
 	return []step{
-		{name: "git", args: []string{"fetch", "origin", "production"}},
-		{name: "git", args: []string{"switch", "production"}},
-		{name: "git", args: []string{"reset", "--hard", "origin/production"}},
+		{name: "git", args: []string{"fetch", "origin", base}},
+		{name: "git", args: []string{"switch", base}},
+		{name: "git", args: []string{"reset", "--hard", "origin/" + base}},
 		{name: "git", args: []string{"fetch", "--tags", "origin"}},
 	}
 }
 
-// tagSteps は、リリースノートを本文にタグを打ち、GitHub Release を作る手順を返します。
+// タグ本文は既定の cleanup だと `#` で始まる行を落とすので、ノートの見出しを残すよう verbatim で打つ。
 func tagSteps(next, notePath string) []step {
 	return []step{
-		{name: "git", args: []string{"tag", "-a", next, "-F", notePath}},
+		{name: "git", args: []string{"tag", "-a", next, "--cleanup=verbatim", "-F", notePath}},
 		{name: "git", args: []string{"push", "origin", next}},
 		{name: "gh", args: []string{"release", "create", next, "--title", next, "--notes-file", notePath}},
 	}
 }
 
-// branchSteps は、base からブランチを切って push し、デフォルトブランチに設定する手順を返します。
 func branchSteps(base, branch string) []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", base}},
@@ -209,8 +198,6 @@ func branchSteps(base, branch string) []step {
 }
 
 func notePath(v string) string { return releaseNoteDir + "/" + v + ".md" }
-
-// ---- 実行 -------------------------------------------------------------------
 
 // listTags は、origin のタグを取り直してから `git tag` の出力を返します。
 func listTags(r runner) (string, error) {
@@ -244,8 +231,8 @@ func resolveNext(r runner, bumpKind string) (version, version, error) {
 // resolveExplicit は、-version で指定された版を検証して返します。形の検査はタグを取得する前に行い、
 // タグが 1 つも無ければ形だけを見ます。
 func resolveExplicit(r runner, s string) (version, error) {
-	v, ok := parseVersion(s)
-	// 前後の空白や先頭の 0 を正規化して受け付けると、打たれるタグ名が指定と食い違う。
+	v, ok := branchdecl.ParseVersion(s)
+	// 先頭の 0 を正規化して受け付けると、打たれるタグ名が指定と食い違う。
 	if !ok || v.String() != s {
 		return version{}, xerrors.Wrap(errVersionFormat, strconv.Quote(s))
 	}
@@ -261,7 +248,7 @@ func resolveExplicit(r runner, s string) (version, error) {
 		}
 	}
 
-	if latest, ok := latestVersion(out); ok && !latest.less(v) {
+	if latest, ok := latestVersion(out); ok && !latest.Less(v) {
 		return version{}, xerrors.Wrap(errVersionNotNewer, "❌ "+s+"（最新: "+latest.String()+"）")
 	}
 
@@ -290,7 +277,7 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	}
 }
 
-func runTag(r runner, args []string) error {
+func runTag(r runner, decl branchdecl.Branches, args []string) error {
 	fs := flag.NewFlagSet("tag", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
 	explicit := fs.String("version", "", "打つ版 vX.Y.Z（-bump と同時に指定できない）")
@@ -299,32 +286,57 @@ func runTag(r runner, args []string) error {
 		return err
 	}
 
+	base, ok := decl.ReleaseBase()
+	if !ok {
+		return errNoReleaseBase
+	}
+
 	next, err := resolveTagVersion(r, flagsSet(fs), *bumpKind, *explicit)
 	if err != nil {
 		return err
 	}
 
-	// production を最新へ合わせてからリリースノートの有無を見る。順序は入れ替えないこと。
-	// タグは production HEAD に打つので、確かめるべきは「production にノートがあるか」であり、
+	// 基点のブランチを最新へ合わせてからリリースノートの有無を見る。順序は入れ替えないこと。
+	// タグは基点の HEAD に打つので、確かめるべきは「基点にノートがあるか」であり、
 	// switch 前の作業ツリー（別ブランチ）にノートがあるかではない。
-	log.Printf("🔄 productionブランチの最新を取得中...")
+	log.Printf("🔄 %s ブランチの最新を取得中...", base.Branch)
 
-	if err := r.runAll(syncProductionSteps()); err != nil {
+	if err := r.runAll(syncReleaseBaseSteps(base.Branch)); err != nil {
 		return err
 	}
 
-	log.Printf("✅ 最新のproductionを取得完了")
+	log.Printf("✅ 最新の %s を取得完了", base.Branch)
 
 	note := notePath(next.String())
-	if _, err := os.Stat(note); err != nil {
-		return xerrors.Wrap(errNoReleaseNote, "❌ "+note)
+	if err := checkReleaseNote(note); err != nil {
+		return err
 	}
 
 	if err := r.runAll(tagSteps(next.String(), note)); err != nil {
 		return err
 	}
 
-	log.Printf("✅ タグを打ちました %s on production HEAD", next)
+	log.Printf("✅ タグを打ちました %s on %s HEAD", next, base.Branch)
+
+	return nil
+}
+
+// checkReleaseNote は、path がタグと Release の本文にできるリリースノートかを確かめます。
+// 無い・ディレクトリ・空白だけのときはそれぞれのセンチネルを、読めないときはその理由を返します。
+func checkReleaseNote(path string) error {
+	body, err := os.ReadFile(path) //nolint:gosec // path は版から組み立てた .github/release 配下のノート
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return xerrors.Wrap(errNoReleaseNote, "❌ "+path)
+	case err != nil:
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return xerrors.Wrap(errReleaseNoteNotFile, "❌ "+path)
+		}
+
+		return xerrors.Wrap(err, "❌ リリースノート "+path+" を読めません")
+	case strings.TrimSpace(string(body)) == "":
+		return xerrors.Wrap(errEmptyReleaseNote, "❌ "+path)
+	}
 
 	return nil
 }
@@ -356,14 +368,25 @@ func resolveTagVersion(r runner, set map[string]bool, bumpKind, explicit string)
 	return next, nil
 }
 
-func runBranch(r runner, args []string) error {
+func runBranch(r runner, decl branchdecl.Branches, args []string) error {
+	releaseBase, ok := decl.ReleaseBase()
+	if !ok {
+		return errNoReleaseBase
+	}
+
+	roles := strings.Join(branchdecl.Roles(), " / ")
 	fs := flag.NewFlagSet("branch", flag.ContinueOnError)
 	bumpKind := fs.String("bump", "", "patch / minor / major")
-	prefix := fs.String("prefix", "release", "ブランチ名の接頭辞 (release / hotfix)")
-	base := fs.String("base", "production", "分岐元ブランチ")
+	line := fs.String("line", branchdecl.RoleRelease, "切る線の役割 ("+roles+")")
+	base := fs.String("base", releaseBase.Branch, "分岐元ブランチ")
 
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+
+	// 線の役割は、origin へ触れる前に確かめる。接頭辞の無い役割では線の名前を組めない。
+	if prefix, ok := decl.Lines.Prefix(*line); !ok || prefix == "" {
+		return xerrors.Wrapf(errUnknownLine, "%q（%s）", *line, roles)
 	}
 
 	log.Printf("🔄 最新のタグを取得中...")
@@ -379,7 +402,8 @@ func runBranch(r runner, args []string) error {
 
 	log.Printf("✅ 最新のタグを取得完了")
 
-	branch := *prefix + "/" + next.String()
+	// 役割と接頭辞は上で確かめたので、LineName は必ず名前を返す。
+	branch, _ := decl.LineName(*line, next)
 
 	log.Printf("🔖 タグから最新リリースバージョンを取得: 【 %s 】", current)
 	log.Printf("➡️ 次のリリースバージョンを作成: 【 %s 】", next)
@@ -456,7 +480,7 @@ func run(s step) error {
 	return nil
 }
 
-// runAll は、手順を並び順に実行します。失敗した時点で残りは実行しません。
+// runAll は、失敗した時点で残りの手順を実行しません。
 func (r runner) runAll(steps []step) error {
 	for _, s := range steps {
 		if err := r.run(s); err != nil {

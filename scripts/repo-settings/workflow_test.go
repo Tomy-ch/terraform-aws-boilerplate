@@ -30,7 +30,7 @@ jobs:
 
 var deployX = branches{
 	Deploy: []branchdecl.DeployBranch{{Branch: "main", Env: "x", From: []string{"release/"}}},
-	Lines:  []string{"release/"},
+	Lines:  branchdecl.Lines{Release: "release/"},
 	Revert: "revert/",
 }
 
@@ -107,7 +107,7 @@ func Test_renderApplyTriggers(t *testing.T) {
 	}{
 		"apply の workflow が1件も無ければ失敗する":          {map[string]string{"unlock.yaml": unlockWorkflowFixture}, deployX, workflowsDir, "apply の environment を使う job がありません"},
 		"1つの workflow が複数の env の apply を持てば失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture + "  other:\n    environment: y-apply\n"}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "複数の env"},
-		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: []string{"release/"}, Revert: "revert/"}, filepath.Join(workflowsDir, "apply.yaml"), "env x のデプロイブランチ"},
+		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: branchdecl.Lines{Release: "release/"}, Revert: "revert/"}, filepath.Join(workflowsDir, "apply.yaml"), "env x のデプロイブランチ"},
 		"apply の job の environment: を読めなければ失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture, "other.yaml": "on:\n  push:\n    branches:\n      - 'release/*'\njobs:\n  a:\n    environment:\n      name: x-apply\n"}, deployX, filepath.Join(workflowsDir, "other.yaml"), "environment: を読めません"},
 		"on.push.branches がフロー形式なら失敗する":          {map[string]string{"apply.yaml": strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "on.push.branches"},
 	}

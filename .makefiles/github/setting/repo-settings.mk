@@ -2,7 +2,7 @@
 ##
 ## 判定は scripts/repo-settings が持つ。apply-* は GitHub の実態を書き換えるので、管理者の資格情報を
 ## 持つ人が実行する（ADR-0603 決定30）。突合（drift）は読み取りの権限だけで動く（ADR-0603 決定6）。
-.PHONY: repo-settings-apply ## branches.json から branch-protection.json の include と apply の workflow の起動条件を生成
+.PHONY: repo-settings-apply ## branches.json から branch-protection.json の include と workflow の起動条件（apply の workflow と印 branch-set の行）を生成
 .PHONY: repo-settings-check ## 保護設定の宣言が整合しているか検証（書き換えなし・CI/hook用）
 .PHONY: repo-settings-drift ## 保護設定の宣言と GitHub の実態を突き合わせる（読み取りのみ）
 .PHONY: apply-branch-protection ## branch-protection.json を対象リポジトリの ruleset へ適用

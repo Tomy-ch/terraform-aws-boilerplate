@@ -1,4 +1,4 @@
-// Package misetoml は mise.toml の `[tools]` が宣言する版を読みます。
+// Package misetoml は mise.toml の `[tools]` が宣言する版と、`[settings]` の `disable_tools` を読みます。
 //
 // **この宣言を読む実装をここ1つに保ちます。** 同じ表を複数の実装が各々の正規表現で読むと、
 // 一方だけが読める宣言が生まれ、もう一方は黙ってその道具を検査の対象から外します。落ちるのは
@@ -30,6 +30,8 @@ var (
 	ErrInvalidLine = xerrors.New("mise.toml の [tools] に解釈できない行があります")
 	// ErrDuplicateKey は `[tools]` で同一キーが複数回現れた場合のエラー。
 	ErrDuplicateKey = xerrors.New("mise.toml の [tools] にキーの重複があります")
+	// ErrInvalidDisableTools は `[settings]` の disable_tools を読めない場合のエラー。
+	ErrInvalidDisableTools = xerrors.New("mise.toml の [settings] の disable_tools を解釈できません")
 )
 
 var (
@@ -41,6 +43,16 @@ var (
 	tableRe = regexp.MustCompile(
 		`^(?:"([^"]+)"|(` + BareKeyPattern + `))\s*=\s*\{.*\bversion\s*=\s*"([^"]+)".*\}\s*(?:#.*)?$`,
 	)
+	// disableKeyRe は disable_tools の代入の左辺。右辺の形を問わずに当て、読めない右辺をエラーにする。
+	// 単引用符のキーも当てる —— 読めないキーを素通しすると「宣言が無い」と区別できない。
+	disableKeyRe = regexp.MustCompile(`^(?:"disable_tools"|'disable_tools'|disable_tools)\s*=`)
+	// disableOutsideRe は節の外から [settings] の disable_tools を書く形（dotted key と inline table）。
+	// 行内で閉じない inline table は中身を1行では読めないので、disable_tools の有無を問わず当てる。
+	disableOutsideRe = regexp.MustCompile(
+		`^(?:settings|"settings"|'settings')\s*(?:(?:\.|=\s*\{).*\bdisable_tools\b|=\s*\{[^}]*$)`)
+	// disableListRe は1行の配列 `disable_tools = ["a", "b"]`。
+	disableListRe = regexp.MustCompile(`^(?:"disable_tools"|disable_tools)\s*=\s*\[([^\]#]*)\]\s*(?:#.*)?$`)
+	disableItemRe = regexp.MustCompile(`^"([^"]+)"$`)
 )
 
 // Entry は `[tools]` の宣言1件です。
@@ -122,14 +134,92 @@ func Lookup(entries []Entry, key string) (string, bool) {
 	return "", false
 }
 
+// DisableTools は `[settings]` の disable_tools が並べる道具を、書かれた順で返します。2つ目の
+// 戻り値は宣言が在ったかどうかです。
+//
+// 受け付けるのは `[settings]` の中の1行の文字列の配列だけです。複数行の配列、重複した宣言、
+// 節の外の dotted key や inline table はエラーにします —— 読めない宣言を「無い」と返すと、
+// 呼び手は外し忘れと区別できません。
+func DisableTools(content []byte) ([]string, bool, error) {
+	var tools []string
+	found := false
+	section := ""
+
+	sc := bufio.NewScanner(bytes.NewReader(content))
+	for lineNo := 1; sc.Scan(); lineNo++ {
+		line := strings.TrimSpace(sc.Text())
+		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			section = sectionName(m[1])
+
+			continue
+		}
+		where := strconv.Itoa(lineNo) + "行目: " + line
+		if section == "" && disableOutsideRe.MatchString(line) {
+			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "[settings] の外の宣言 "+where)
+		}
+		if section != "settings" || !disableKeyRe.MatchString(line) {
+			continue
+		}
+		if found {
+			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, "重複した宣言 "+where)
+		}
+		items, ok := parseDisableList(line)
+		if !ok {
+			return nil, false, xerrors.Wrap(ErrInvalidDisableTools, where)
+		}
+		tools, found = items, true
+	}
+	if err := sc.Err(); err != nil {
+		return nil, false, xerrors.Wrap(err, "mise.toml の走査")
+	}
+
+	return tools, found, nil
+}
+
+// DisableToolsFile は path を読んで DisableTools します。
+func DisableToolsFile(path string) ([]string, bool, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, false, xerrors.Wrap(err, path)
+	}
+
+	tools, found, err := DisableTools(data)
+	if err != nil {
+		return nil, false, xerrors.Wrap(err, path)
+	}
+
+	return tools, found, nil
+}
+
+// parseDisableList は disable_tools の1行を要素へ割ります。末尾のカンマは許します。
+func parseDisableList(line string) ([]string, bool) {
+	m := disableListRe.FindStringSubmatch(line)
+	if m == nil {
+		return nil, false
+	}
+	items := []string{}
+	parts := strings.Split(m[1], ",")
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" && i == len(parts)-1 {
+			break
+		}
+		im := disableItemRe.FindStringSubmatch(part)
+		if im == nil {
+			return nil, false
+		}
+		items = append(items, im[1])
+	}
+
+	return items, true
+}
+
 // sectionName は table 見出しの名前を正規化します。
 //
 // **TOML は角括弧の内側の空白を許し、引用符付きの table 名も許す。** `[ tools ]` も `["tools"]`
 // も `[tools]` と同じ table である。正規化しないと、有効な別表記が「`[tools]` ではない節」に
 // なり、**その中身が丸ごと読み飛ばされたうえでエラーも出ない** —— 解釈できない行をエラーに
 // する本パッケージの規律が、節見出しの表記ゆれには及ばないまま抜ける。
-//
-// `[tools.foo]` のような dotted key は正規化しても `tools` にはならず、別の節のままである。
 func sectionName(raw string) string {
 	name := strings.TrimSpace(raw)
 	for _, quote := range []string{`"`, `'`} {
