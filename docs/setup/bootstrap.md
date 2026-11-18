@@ -377,10 +377,12 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       make apply-environments
       ```
 
-   3. secret を置く（値は管理アカウントの ID）
+   3. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
 
       ```bash
       gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
+      gh secret set AWS_ACCOUNT_ID --env admin-apply
+      gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
    4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する

@@ -288,6 +288,13 @@ apply）で戻す。CI は Pull Request を
 - **`admin` の最初の apply が失敗したときは、revert を用意しない。** 成功した apply の run が無いので、
   `revert-plan` は理由を通知する。人は、リリース線で直して昇格するか、リリース線の先頭の上で
   `git revert -m 1 <失敗した admin の merge>` を行う Pull Request を開き、merge してから昇格する
+- **identity root の apply が、同じ apply で足した権限の反映の遅れで落ちたときは、revert を使わずに再実行する。**
+  role や Bucket を足す変更は、apply-identity の inline policy を書いてから作るが、その書き込みが IAM の評価へ
+  反映される前に作成が評価されると `AccessDenied` で落ちる（usecases/deployment-identity/README.md の検証方法）。
+  失敗の段は `apply` なので revert のブランチが用意されて通知が来るが、その Pull Request は開かない。run の画面の
+  「Re-run failed jobs」で再実行し（`admin` の先頭が同じ commit なら `refuse-stale` を通る）、緑になったら
+  用意された `revert/apply-<run>` のブランチを消す。再実行も同じ `AccessDenied` で落ちるなら反映の遅れではないので、
+  止まって通知の revert を使うかを判断する
 - **判定は `revert-plan` が持ち、書き込みの token を持つのは `revert-push` だけである。** `revert-plan` は
   `contents: read` と `actions: read` で、範囲を一時の worktree で実際に revert して木の一致を確かめ、同じ名前の
   ブランチの有無も見る。`revert-push` は `contents: write` だけを持ち、道具を導入せず、決まった commit を同じ順に

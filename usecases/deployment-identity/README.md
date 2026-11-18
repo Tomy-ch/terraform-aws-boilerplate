@@ -4,7 +4,7 @@ GitHub Actions が長期のアクセスキーを持たずに AWS を操作する
 
 ## 解決する問題
 
-CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定12）。role は plan / apply / apply-identity と、lock の解除の unlock-identity の4つに分かれ（同 決定13）、信頼条件は当該リポジトリの environment に限られる（同 決定14）。このユースケースは、その provider と4つの role、それぞれの権限を Terraform の Desired State に置く。
+CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定12）。role は plan / apply / apply-identity と、lock の解除の unlock-identity（identity root）と unlock（workload root）の5つに分かれ（同 決定13）、信頼条件は当該リポジトリの environment に限られる（同 決定14）。このユースケースは、その provider と5つの role、それぞれの権限を Terraform の Desired State に置く。
 
 ## 実行形態とネットワーク境界
 
@@ -21,8 +21,9 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
 | `state_key_arn` | `string`（KMS の鍵の ARN。alias の ARN と多リージョンの鍵は受けない） | このアカウントの state の鍵（`state-backend` の `state_key_arn`）。plan と apply-identity の role の鍵の権限と、apply の role の鍵の Deny をこの鍵に絞る。role と同じ partition・リージョン・アカウントの鍵でなければ、plan で（ARN が plan で決まらなければ apply で）落ちる。Key Policy の置き換えを待つ値を渡すと、identity root で依存が循環する（Key Policy が名指す role の作成が、この ARN を持つ apply-identity の inline policy の後に来るため） |
 | `plan_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
+| `apply_output_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る |
 
-`state_key_arn` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
+`state_key_arn` と `apply_output_bucket_arn` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
 | 出力 | 使う側 |
 | --- | --- |
@@ -30,8 +31,9 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `apply_role_arn` | workload root の apply の job（未配線。#222）。`state-backend` の `ci_role_arns.apply`（state Bucket の Bucket Policy の、workload root の state と lock file の書き込み。[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9） |
 | `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。`state-backend` の `ci_role_arns.apply_identity`（state の鍵の Key Policy と、state Bucket の Bucket Policy の identity root の state と lock file の書き込み） |
 | `unlock_identity_role_arn` | `terraform-unlock.yaml` の `unlock-admin-identity`（`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む）。`state-backend` の `ci_role_arns.unlock_identity`（state の鍵の Key Policy の、lock file に限った復号と、state Bucket の Bucket Policy の lock file の削除） |
+| `unlock_role_arn` | workload root の lock の解除の job（未配線。#222） |
 
-4つの ARN は、role の computed の `arn` ではなく、role の名前とアカウント・partition から組む。role の作成と置換の plan でも値が決まるので、それを名指す state の鍵の Key Policy が CI の `plan.kms_key_policy`（`PLAN-KMS-09`）で落ちない。`internal/github-oidc/tests/trust.tftest.hcl` の `role_arns_do_not_read_computed_arn` が見る。同じ名前のまま role を作り直す plan（taint、`-replace`、`moved` の無い address の変更）では ARN が変わらず、Key Policy が書き直されないので、作り直した role は鍵を使えない。CI はその plan を `PLAN-KMS-10` で落とす。Key Policy を同じ apply で作り直すには、`conftest/plan/decl.json` の `stateful_protection.allow` に Key Policy の置換を宣言する（`plan.stateful_protection` が Key Policy の置換を守るため）。名前を resource から読むことで role の作成を Key Policy の更新より先に走らせる順序は、テストが見ない
+5つの ARN は、role の computed の `arn` ではなく、role の名前とアカウント・partition から組む。role の作成と置換の plan でも値が決まるので、それを名指す state の鍵の Key Policy が CI の `plan.kms_key_policy`（`PLAN-KMS-09`）で落ちない。`internal/github-oidc/tests/trust.tftest.hcl` の `role_arns_do_not_read_computed_arn` が見る。同じ名前のまま role を作り直す plan（taint、`-replace`、`moved` の無い address の変更）では ARN が変わらず、Key Policy が書き直されないので、作り直した role は鍵を使えない。CI はその plan を `PLAN-KMS-10` で落とす。Key Policy を同じ apply で作り直すには、`conftest/plan/decl.json` の `stateful_protection.allow` に Key Policy の置換を宣言する（`plan.stateful_protection` が Key Policy の置換を守るため）。名前を resource から読むことで role の作成を Key Policy の更新より先に走らせる順序は、テストが見ない
 
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
@@ -41,6 +43,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 | apply | `<project>-<env>-ci-apply` | `<env>-apply` | workload root の apply |
 | apply-identity | `<project>-<env>-ci-apply-identity` | `<env>-apply-identity` | identity root の apply |
 | unlock-identity | `<project>-<env>-ci-unlock-identity` | `<env>-unlock-identity` | identity root の state に残った lock の解除（`terraform-unlock.yaml`） |
+| unlock | `<project>-<env>-ci-unlock` | `<env>-unlock` | workload root の state に残った lock の解除 |
 
 - ログの所在: 無い。`AssumeRoleWithWebIdentity` の記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `deployment-identity` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
@@ -48,11 +51,12 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 ## 持つもの
 
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
-- 4つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
+- 5つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
   - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の鍵の設定の読み取りと、alias の一覧
-  - apply: workload root の key と lock file の読み書き。4つの role と OIDC provider、identity root の key と lock file、plan の出力の Bucket とその object は読み取りを含めて Deny する。state Bucket は `s3:ListBucket` のほかを、state Bucket の object は版の削除を、state の鍵は管理（読み取りを含む）を Deny する
-  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む4つの role の信頼条件と権限を変更できる。state の鍵の Key Policy と rotation を設定できる。鍵と alias の作成、鍵の削除・無効化、alias の削除・付け替えはできない。plan の出力の Bucket の `apply/*` へ apply の出力を書ける。その Bucket の object の削除の権限は IAM で与えない
+  - apply: workload root の key と lock file の読み書きと、init の前の state Bucket の暗号化の設定の読み取りと alias の一覧。5つの role と OIDC provider、identity root の key と lock file、plan の出力の Bucket とその object は読み取りを含めて Deny する。state Bucket は `s3:ListBucket` と `s3:GetEncryptionConfiguration` のほかを、state Bucket の object は版の削除を、state の鍵は管理（読み取りを含む）を Deny する
+  - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む5つの role の信頼条件と権限を変更できる。state の鍵の Key Policy と rotation を設定できる。鍵と alias の作成、鍵の削除・無効化、alias の削除・付け替えはできない。plan の出力の Bucket の `apply/*` へ apply の出力を書ける。その Bucket の object の削除の権限は IAM で与えない。workload root の apply の出力の Bucket を作り、設定できる。その Bucket の削除の権限は与えない
   - unlock-identity: identity root の lock file の一覧（`s3:ListBucket` を `s3:prefix` で限る）・読み取り・削除だけ。`s3:PutObject` と `s3:DeleteObjectVersion` を持たず、偽の lock を置けず、版も消せない。lock file の復号は、state の鍵の Key Policy がその object に限って許す
+  - unlock: workload root の lock file の一覧・読み取り・削除だけ。unlock-identity と同じ形で、受け持つ lock file だけが違う
   - 暗号操作（`kms:Decrypt` など）は IAM では与えない。state の鍵の Key Policy が CI の role を名指して許す
 - role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす）
 - role の ARN を、role の resource ではなく partition・アカウント・role 名から組む。apply-identity の role と inline policy は他の role と別の resource で、他の role はその inline policy の書き込みの後に作る。role を足す変更は、1回の apply で、その role を管理する権限を apply-identity に足してから role を作る（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
@@ -78,31 +82,31 @@ unsupported:
 保証しないこと:
 
 - 同じリポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume し、state を読むこと（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲）
-- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。リリース線からデプロイブランチへの merge が apply になるので、止めるのはリリース線と昇格の Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限り、unlock-identity の role は `plan.deployment_identity_unlock_role` が lock file の一覧・読み取り・削除に限る。apply の role は `plan.deployment_identity_apply_role` が、bootstrap の構成物の ARN への Deny の形と、ほかの policy が付かないことを見る。Allow の拡大は見ないが、Allow は Deny に勝たない）
+- apply-identity の role が、自分と他の CI の role の権限を広げる変更を apply すること。リリース線からデプロイブランチへの merge が apply になるので、止めるのはリリース線と昇格の Pull Request のレビューである。このユースケースの `.tf` と identity root（`env/<env>/identity/`）は `.github/CODEOWNERS` の対象ではなく（対象は `reference/tests/policy-input.tftest.hcl` だけ）、レビューを要求するかは ruleset の承認者数に依る。apply-identity の role の権限の拡大を見る Policy Test も無い（plan の role は `plan.deployment_identity_plan_role` が読み取りに限り、unlock-identity と unlock の role は `plan.deployment_identity_unlock_role` が lock file の一覧・読み取り・削除に限る。apply の role は `plan.deployment_identity_apply_role` が、bootstrap の構成物の ARN への Deny の形と、ほかの policy が付かないことを見る。Allow の拡大は見ないが、Allow は Deny に勝たない）
 - apply の role が作るか渡す別の主体、bootstrap の構成物の ARN を通らない要求（S3 の access point 等）、Resource `"*"` でしか与えられない Action を経た、bootstrap の構成物の変更（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) の保証範囲。別の主体は #254）
 - 帯域外で足された policy が、次の apply までの間に有効であること。検出は定期 plan（#77）、剥がすのは apply
 - write 権限を持つ主体が、保護対象のパターンに当たるブランチを新しく作り、その上で書き換えた workflow から plan の environment の job を走らせること。apply 系と lock の解除の environment はデプロイブランチだけを許すので、そこからは届かない。ruleset は `creation` の規則を持たず、`pull_request` と required status checks の規則が push によるブランチの作成を止めるかを、GitHub の文書は述べていない。デプロイブランチが無い間（作る前）は、その名前のブランチを作った主体が apply 系の environment に届く（#223）
 
 ## 所有者
 
-- OIDC provider と4つの role は、このユースケースが所有する。sandbox の掃除用 Role（#76）が provider を使うときは、そのときに provider の ARN を出力に足す
+- OIDC provider と5つの role は、このユースケースが所有する。sandbox の掃除用 Role（#76）が provider を使うときは、そのときに provider の ARN を出力に足す
 - state Bucket と state の鍵は `state-backend` が所有する。このユースケースは Bucket と鍵の ARN を受け、role の権限の Resource に使う
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `state-backend`（`bucket_arn`、`state_key_arn`、`plan_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn`・`apply_role_arn`・`apply_identity_role_arn`・`unlock_identity_role_arn` を `ci_role_arns` に受ける
+- ユースケース: `state-backend`（`bucket_arn`、`state_key_arn`、`plan_output_bucket_arn`、`apply_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn`・`apply_role_arn`・`apply_identity_role_arn`・`unlock_identity_role_arn` を `ci_role_arns` に受ける
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
-- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` の写しで、`env/` の root が渡す `env` ごとに4つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が、unlock-identity の role は `terraform-unlock.yaml` の `unlock-admin-identity` が assume する。apply の role を assume する workflow はまだ無い（#222）
+- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` / `<env>-unlock` の写しで、`env/` の root が渡す `env` ごとに5つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が、unlock-identity の role は `terraform-unlock.yaml` の `unlock-admin-identity` が assume する。apply の role と unlock の role を assume する workflow はまだ無い（#222）
 
 identity root に構成物を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 
 ## 検証方法
 
-- Unit Test（mock）: `internal/github-oidc/tests/` が、4つの role の信頼条件と policy の文書、名前、セッションの上限、OIDC provider の URL と audience、inline policy と managed policy の排他を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction`・`NotResource` の不在と、Allow の Resource `"*"` が `resource_wildcard_actions` の宣言（`kms:ListAliases`）に限られること（同 決定9）と、KMS の暗号操作の Allow の不在（同 決定12）と、plan の role の Action の service の名前に wildcard を使わないこと（`PLAN-ROLE-05`）を確かめる。`state-backend` の reference の plan と結合した入力で、apply の role の inline policy が apply の role に付き、bootstrap の構成物の S3・IAM の ARN ごとに読み取り以外を条件なしの Deny で拒み、鍵ごとに鍵の ARN への Deny が同じ module の Key Policy の委任の Action のすべてを覆い、ほかの policy が apply の role に付かないことと（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定5）、unlock-identity の role の Allow が state の Bucket の identity root の lock file の一覧・読み取り・削除に限られ、Key Policy がその復号を IAM と同じ lock file の object に限ることと（同 決定9）、apply-identity の role の plan の出力の Bucket の object への書き込みが `apply/*` への `s3:PutObject` だけで、ほかの policy が apply-identity の role に付かないことも確かめる（同 決定10）。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
+- Unit Test（mock）: `internal/github-oidc/tests/` が、5つの role の信頼条件と policy の文書、名前、セッションの上限、OIDC provider の URL と audience、inline policy と managed policy の排他を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、CI の role の address の全 instance の信頼条件の形（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定14・15）と、plan の role の Allow が読み取りと plan の出力の `pr/*`・`branch/*` への `s3:PutObject` だけであること（同 決定13）と、Allow の Action の wildcard（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定8）と `NotAction`・`NotResource` の不在と、Allow の Resource `"*"` が `resource_wildcard_actions` の宣言（`kms:ListAliases`）に限られること（同 決定9）と、KMS の暗号操作の Allow の不在（同 決定12）と、plan の role の Action の service の名前に wildcard を使わないこと（`PLAN-ROLE-05`）を確かめる。`state-backend` の reference の plan と結合した入力で、apply の role の inline policy が apply の role に付き、bootstrap の構成物の S3・IAM の ARN ごとに読み取り以外を条件なしの Deny で拒み、鍵ごとに鍵の ARN への Deny が同じ module の Key Policy の委任の Action のすべてを覆い、ほかの policy が apply の role に付かないことと（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定5）、unlock-identity の role の Allow が state の Bucket の identity root の lock file の一覧・読み取り・削除に限られ、Key Policy がその復号を IAM と同じ lock file の object に限ることと（同 決定9）、unlock の role の Allow が workload root の lock file の一覧・読み取り・削除に限られることと（同 決定11）、apply-identity の role の plan の出力の Bucket の object への書き込みが `apply/*` への `s3:PutObject` だけで、ほかの policy が apply-identity の role に付かないことも確かめる（同 決定10）。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
 - Static Analysis（`make resource-order-check`）: `internal/github-oidc` の `aws_iam_role.this` が `depends_on` に apply-identity の inline policy を持つことを、HCL のソースで確かめる（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）。宣言は [`conftest/hcl/resource_order/`](../../conftest/hcl/resource_order/README.md)
 - 段2 の突合と段4 の確認: 人が実 AWS で行う（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md)）
-- 拒否の確認（`make ci-assume-denied`）: `terraform-gates.yaml` の `plan-admin-identity` が、Pull Request ごとに、plan の role を assume した後で、同じ job の OIDC token（`sub` は environment `admin-plan`）による apply・apply-identity・unlock-identity の role の assume が、STS の `AccessDenied` で拒否されることを実 AWS で確かめる。assume が通るか、拒否が `AccessDenied` でなければ（token の不正・接続の失敗を含む）job が落ちる。step の存在と位置は `make oidc-job-lint` が見る
+- 拒否の確認（`make ci-assume-denied`）: `terraform-gates.yaml` の `plan-admin-identity` が、Pull Request ごとに、plan の role を assume した後で、同じ job の OIDC token（`sub` は environment `admin-plan`）による apply・apply-identity・unlock-identity・unlock の role の assume が、STS の `AccessDenied` で拒否されることを実 AWS で確かめる。assume が通るか、拒否が `AccessDenied` でなければ（token の不正・接続の失敗を含む）job が落ちる。step の存在と位置は `make oidc-job-lint` が見る
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄すると認証や組織の構造を失う」に当たる。destroy しない。Policy Test、拒否されるべき主体の assume が拒否されることの確認（`make ci-assume-denied`）、drift 0 で代える（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)）
 
 workload root の apply の経路（#222）と sandbox のアカウント（#21）は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
@@ -114,13 +118,13 @@ workload root の apply の経路（#222）と sandbox のアカウント（#21�
 - fork からの Pull Request で OIDC token が得られるかどうか
 - 他のリポジトリの job からの assume が拒否されること。この repository の job は、他のリポジトリの `sub` を持つ token を作れない
 - `<env>-plan` 以外の environment の job の token で、ほかの役割の role の assume が拒否されること（例: `admin-apply-identity` の token で unlock-identity の role）。`make ci-assume-denied` が試すのは plan の job の token だけで、ほかの組み合わせは信頼条件の形を Policy Test が見るだけである
-- `make ci-assume-denied` の拒否が、信頼条件によるものであること。STS は role が無いときも `AccessDenied` を返すので、`.tf` に足してまだ apply していない role と、assume する job の無い apply の role（#222）では、拒否と不在を区別しない。apply-identity と unlock-identity の role の実在は、`terraform-apply.yaml` と `terraform-unlock.yaml` の assume が示す
+- `make ci-assume-denied` の拒否が、信頼条件によるものであること。STS は role が無いときも `AccessDenied` を返すので、`.tf` に足してまだ apply していない role と、assume する job の無い apply と unlock の role（#222）では、拒否と不在を区別しない。apply-identity と unlock-identity の role の実在は、`terraform-apply.yaml` と `terraform-unlock.yaml` の assume が示す
 - 権限の Resource に書いた state の key（`identity/terraform.tfstate`・`workload/terraform.tfstate`）が、identity root の `backend.tf` の `key` と一致すること。どちらも [ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定7 の固定値を写しており、突き合わせる検査は無い。workload root はまだ無く、それを作る変更が同じ値を写す。片方だけを変えると、CI の role が state を読み書きできなくなる
 - identity root が `deployment-identity` に渡す値（`github` の ID、`state_bucket_arn`・`state_key_arn`・`plan_output_bucket_arn` の配線）が正しいこと。identity root のテストは role の ARN と `state-backend` の出力しか観測できず、`deployment-identity` への配線を見るのは CI の plan だけである。鍵の ARN は precondition が partition・リージョン・アカウントまでを見るが、同じアカウントの別の鍵との取り違えは見ない
 - apply の role の Bucket・object・IAM の側の Deny が、実際の要求で文書どおりに評価されること。Policy Test は reference の plan で Deny の形を見るだけで、`simulate-principal-policy` は IAM の評価だけを見る。apply の role を assume する job は無い（#222）。apply の role が作るか渡す別の主体、構成物の ARN を通らない要求、Resource `"*"` でしか与えられない Action を経た変更も、どの検査も見ない
 - apply の role の鍵の Deny が、実際の要求で文書どおりに評価されること。`simulate-principal-policy` は IAM の評価だけを見る。apply の role を assume する job は無い（#222）
-- 同じ apply で role を足すとき、apply-identity の inline policy の書き込みが、role の作成（`iam:CreateRole`）までに IAM の評価へ反映されること。反映が遅れるとその apply は AccessDenied で失敗し、run の「Re-run failed jobs」で再実行する
-- apply の role の state Bucket の Deny が `s3:ListBucket` のほかを塞いでも、workload root の apply の経路が state Bucket のほかの Action を呼ばないこと。CI の init の前の `get-bucket-encryption`（`s3:GetEncryptionConfiguration`）は塞がれるので、#222 で apply の role を使う経路を配線するときに、その Action を決定5 の除外へ足すかを決める
+- 同じ apply で role を足すとき、apply-identity の inline policy の書き込みが、role の作成（`iam:CreateRole`）までに IAM の評価へ反映されること。反映が遅れるとその apply は AccessDenied で失敗する。失敗の段は apply なので、`revert-plan` が revert のブランチを用意して通知するが、その revert の Pull Request は開かない。run の「Re-run failed jobs」で再実行し、緑になったら用意された revert のブランチを消す。再実行も同じ AccessDenied で落ちるなら反映の遅れではないので、止まって通知の revert を使うかを判断する
+- apply の role の state Bucket の Deny が `s3:ListBucket` と `s3:GetEncryptionConfiguration` のほかを塞いでも、workload root の apply の経路が state Bucket のほかの Action を呼ばないこと
 - apply の role の鍵の Deny が読み取りも塞いでも、workload root の S3 backend が鍵の読み取り（`kms:DescribeKey`）を呼ばないこと。S3 の SSE-KMS の暗号操作は Deny に含まないが、backend の source では確かめていない（段5 の切り替えで見る）
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
