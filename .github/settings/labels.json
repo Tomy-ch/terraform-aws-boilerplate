@@ -111,12 +111,12 @@
   },
   {
     "name": "type:usecase",
-    "description": "定義書 第7節のユースケース",
+    "description": "ユースケース（usecases/<use-case>/）の追加と契約の変更",
     "color": "1d76db"
   },
   {
     "name": "type:scenario",
-    "description": "定義書 第7.1節の接続シナリオ",
+    "description": "複数のユースケースをつなぐ接続例",
     "color": "0e8a16"
   },
   {
@@ -131,7 +131,7 @@
   },
   {
     "name": "type:decision",
-    "description": "定義書 第12節の未決事項",
+    "description": "実装の前に決める設計判断",
     "color": "b60205"
   }
 ]

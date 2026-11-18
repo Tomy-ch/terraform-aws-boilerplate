@@ -1,0 +1,7 @@
+blank_issues_enabled: false
+# sample:begin
+contact_links:
+  - name: 脆弱性の報告
+    url: https://github.com/Tomy-ch/terraform-aws-boilerplate/security/policy
+    about: 公開の issue で報告しないでください。報告の経路は Security policy（SECURITY.md）が案内します。
+# sample:end
