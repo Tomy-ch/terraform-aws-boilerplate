@@ -83,9 +83,10 @@ CI の権限については循環の性質が異なる。backend さえあれば
    - 以後: 同じ構成の変更は ADR-0601 の経路で行う
 
    回復には、決定11 の拒否を解除できる主体の資格情報が要る。state の鍵が state を暗号化した後は、その鍵の
-   Key Policy が名指す主体の資格情報も要る。それらの資格情報の発行と管理は、本リポジトリの
-   責務外とする（ADR-0301 決定19）。本リポジトリはその手順を提供せず、当該 use-case の unsupported
-   一覧へ記載する。
+   Key Policy が名指す主体の資格情報も要る。回復を行う人の到達経路は、ADR-0301 決定19 の break-glass
+   とする。break-glass の role は、鍵の管理の委任を通じて Key Policy を、IAM を通じて bucket policy を
+   書き換えられる。決定11 の拒否と state の鍵の Key Policy を解く手順は本リポジトリが提供せず、
+   当該 use-case の unsupported 一覧へ記載する。
 
 10. 例外の apply は、Pull Request のブランチ上の commit から行い、その Pull Request を apply の後に merge する。
     いずれの契機でも、apply の前は CI が role を assume できず、plan が required check を満たさないため
