@@ -635,6 +635,13 @@ func Test_addType(t *testing.T) {
 			require.ErrorIs(t, err, errBlockRegion)
 		})
 
+		t.Run("action の region を読めない形なら、どのブロックかを添えて弾く", func(t *testing.T) {
+			t.Parallel()
+			err := addType(block(t, "action \"aws_a\" \"x\" {\n  region = \"us-east-1\"\n}\n"), typeRegions{})
+			require.ErrorIs(t, err, errBlockRegion)
+			assert.Contains(t, err.Error(), "aws_a.x")
+		})
+
 		t.Run("action の config の region 引数がリテラルでなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			err := addType(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = var.region\n  }\n}\n"), typeRegions{})
@@ -1006,43 +1013,61 @@ func Test_regionAttribute(t *testing.T) {
 		return body.Blocks[0]
 	}
 
+	// literal は返った region 引数がリテラルとして読めることを確かめ、その値を返す。
+	literal := func(t *testing.T, attr *hclsyntax.Attribute) string {
+		t.Helper()
+		got, ok := regionLiteral(attr)
+		require.True(t, ok)
+		return got
+	}
+
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("resource の直下の region 引数を返す", func(t *testing.T) {
 			t.Parallel()
-			attr, ok := regionAttribute(block(t, "resource \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n}\n"))
+			attr, ok, err := regionAttribute(block(t, "resource \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n}\n"))
+			require.NoError(t, err)
 			require.True(t, ok)
-			got, _ := regionLiteral(attr)
-			assert.Equal(t, "us-west-2", got)
+			assert.Equal(t, "us-west-2", literal(t, attr))
 		})
 
 		t.Run("action の config の中の region 引数を返す", func(t *testing.T) {
 			t.Parallel()
-			attr, ok := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
+			attr, ok, err := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
+			require.NoError(t, err)
 			require.True(t, ok)
-			got, _ := regionLiteral(attr)
-			assert.Equal(t, "us-east-1", got)
-		})
-
-		t.Run("action が config の外と中の両方に region を持てば、config の中のものを返す", func(t *testing.T) {
-			t.Parallel()
-			attr, ok := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
-			require.True(t, ok)
-			got, _ := regionLiteral(attr)
-			assert.Equal(t, "us-east-1", got)
+			assert.Equal(t, "us-east-1", literal(t, attr))
 		})
 
 		for name, src := range map[string]string{
 			"region 引数を持たない resource":        "resource \"aws_a\" \"x\" {}\n",
+			"config の中の region を持つ resource": "resource \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n",
 			"config を持たない action":            "action \"aws_a\" \"x\" {}\n",
 			"config に region 引数を持たない action": "action \"aws_a\" \"x\" {\n  config {}\n}\n",
-			"config の外にだけ region を持つ action": "action \"aws_a\" \"x\" {\n  region = \"us-east-1\"\n}\n",
 		} {
 			t.Run(name+"は region 引数を持たない", func(t *testing.T) {
 				t.Parallel()
-				_, ok := regionAttribute(block(t, src))
+				_, ok, err := regionAttribute(block(t, src))
+				require.NoError(t, err)
 				assert.False(t, ok)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, src := range map[string]string{
+			"config の外に region を持つ action":   "action \"aws_a\" \"x\" {\n  region = \"us-east-1\"\n}\n",
+			"config の外と中に region を持つ action": "action \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n  config {\n    region = \"us-east-1\"\n  }\n}\n",
+			"config が 2 つの action":           "action \"aws_a\" \"x\" {\n  config {}\n  config {\n    region = \"us-east-1\"\n  }\n}\n",
+			"dynamic の config を持つ action":    "action \"aws_a\" \"x\" {\n  dynamic \"config\" {\n    for_each = []\n    content {}\n  }\n}\n",
+		} {
+			t.Run(name+"を弾く", func(t *testing.T) {
+				t.Parallel()
+				_, _, err := regionAttribute(block(t, src))
+				require.ErrorIs(t, err, errBlockRegion)
 			})
 		}
 	})

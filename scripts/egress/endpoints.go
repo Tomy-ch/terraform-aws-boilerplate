@@ -465,10 +465,15 @@ func addType(b *hclsyntax.Block, found typeRegions) error {
 	if len(b.Labels) != 2 {
 		return xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
 	}
+	at := fmt.Sprintf("%d 行目: %s.%s", b.TypeRange.Start.Line, b.Labels[0], b.Labels[1])
+	attr, ok, err := regionAttribute(b)
+	if err != nil {
+		return xerrors.Wrap(err, at)
+	}
 	region := ""
-	if attr, ok := regionAttribute(b); ok {
+	if ok {
 		if region, ok = regionLiteral(attr); !ok {
-			return xerrors.Wrap(errBlockRegion, fmt.Sprintf("%d 行目: %s.%s", b.TypeRange.Start.Line, b.Labels[0], b.Labels[1]))
+			return xerrors.Wrap(errBlockRegion, at)
 		}
 	}
 	if found[b.Labels[0]] == nil {
@@ -478,19 +483,32 @@ func addType(b *hclsyntax.Block, found typeRegions) error {
 	return nil
 }
 
-// regionAttribute はブロックの region 引数を返す。action は引数を config ブロックの中に持つ。
-func regionAttribute(b *hclsyntax.Block) (*hclsyntax.Attribute, bool) {
+// regionAttribute はブロックの region 引数を返す。action は引数を config ブロックの中に持つので、config の外の
+// region、2 つ以上の config、dynamic の config は、置く region を読めない形として拒む。
+func regionAttribute(b *hclsyntax.Block) (*hclsyntax.Attribute, bool, error) {
 	if b.Type != "action" {
 		attr, ok := b.Body.Attributes["region"]
-		return attr, ok
+		return attr, ok, nil
 	}
+	if _, ok := b.Body.Attributes["region"]; ok {
+		return nil, false, xerrors.Wrap(errBlockRegion, "action の region が config の外にあります")
+	}
+	var config *hclsyntax.Block
 	for _, nested := range b.Body.Blocks {
-		if nested.Type == "config" {
-			attr, ok := nested.Body.Attributes["region"]
-			return attr, ok
+		switch {
+		case nested.Type == "dynamic" && len(nested.Labels) == 1 && nested.Labels[0] == "config":
+			return nil, false, xerrors.Wrap(errBlockRegion, "action の config が dynamic です")
+		case nested.Type == "config" && config != nil:
+			return nil, false, xerrors.Wrap(errBlockRegion, "action の config が 2 つ以上あります")
+		case nested.Type == "config":
+			config = nested
 		}
 	}
-	return nil, false
+	if config == nil {
+		return nil, false, nil
+	}
+	attr, ok := config.Body.Attributes["region"]
+	return attr, ok, nil
 }
 
 // moduleSource は module の source を、`./` か `../` で始まるリテラルの文字列として読む。
