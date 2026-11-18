@@ -29,7 +29,7 @@ const (
 )
 
 // codeownerTargets は、code owner の宣言が持たなければならない対象です（ADR-0103 決定14）。
-// 本リポジトリ所有の項目が指すソースの所在は、宣言から足します。
+// 検出の job を実行する workflow は gateWorkflows が、本リポジトリ所有の項目が指すソースの所在は宣言が足します。
 var codeownerTargets = []string{
 	"conftest/hcl/",
 	"scripts/infra-code-gate/",
@@ -37,8 +37,6 @@ var codeownerTargets = []string{
 	"scripts/tf-job-lint/",
 	".makefiles/terraform/infra-code.mk",
 	".makefiles/terraform/infra-code-test.mk",
-	".github/workflows/terraform-gates.yaml",
-	".github/workflows/terraform-apply.yaml",
 	".github/settings/branch-protection.json",
 	".github/CODEOWNERS",
 }
@@ -142,13 +140,18 @@ func runDecl(args []string, repo string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	findings = append(findings, checkCodeowners(*codeownersPath, rules, ownedTargets(d))...)
+	workflows, err := gateWorkflows(repo)
+	if err != nil {
+		return err
+	}
+	targets := ownedTargets(d, workflows)
+	findings = append(findings, checkCodeowners(*codeownersPath, rules, targets)...)
 	if err := report(out, "decl", findings); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(out, "✅ infra-code-gate decl: 型の分類 %d 行、許可リスト %d 項目、言語 %d 件、code owner の対象 %d 件を確認しました\n",
-		len(d.Types), len(d.Allowlist), len(d.Languages), len(ownedTargets(d)))
+		len(d.Types), len(d.Allowlist), len(d.Languages), len(targets))
 	return nil
 }
 
@@ -417,8 +420,8 @@ func checkADR(repo, id string) ([]string, error) {
 	return msgs, nil
 }
 
-func ownedTargets(d *declaration) []string {
-	targets := slices.Clone(codeownerTargets)
+func ownedTargets(d *declaration, workflows []string) []string {
+	targets := append(slices.Clone(codeownerTargets), workflows...)
 	for _, it := range d.Allowlist {
 		if it.Owner == "repository" && it.Source != "" {
 			targets = append(targets, it.Source)
@@ -556,4 +559,40 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+const gateWorkflowDir = ".github/workflows"
+
+// gateRun は、検出の job か、資格情報で Terraform を動かす CI の入口を走らせる行です。
+var gateRun = regexp.MustCompile(`^\s*(?:-\s+)?run:.*\bmake\b.*\b(?:infra-code-gate|ci-[a-z0-9-]+)\b`)
+
+// gateWorkflows は、検出の job か CI の入口を走らせる workflow を返します（ADR-0103 決定14、ADR-0601 決定9）。
+// workflow を足しても code owner の対象から漏れないよう、直書きせず workflow から導く。1つも無ければエラーにする。
+func gateWorkflows(repo string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(repo, gateWorkflowDir))
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s の読み取り", gateWorkflowDir)
+	}
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml")) {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Clean(filepath.Join(repo, gateWorkflowDir, name)))
+		if err != nil {
+			return nil, xerrors.Wrapf(err, "%s の読み取り", name)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if gateRun.MatchString(line) {
+				out = append(out, gateWorkflowDir+"/"+name)
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, xerrors.Wrapf(errNoGateWorkflow, "%s", gateWorkflowDir)
+	}
+	slices.Sort(out)
+	return out, nil
 }

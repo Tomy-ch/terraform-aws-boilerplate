@@ -58,6 +58,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -74,6 +75,7 @@ const (
 	defaultWorkflowsDir     = ".github/workflows"
 	defaultEnvironmentsFile = ".github/settings/environments.json"
 	defaultRulesetFile      = ".github/settings/branch-protection.json"
+	defaultRootsDir         = "env"
 	refuseUntrusted         = "refuse-untrusted"
 	refuseStale             = "refuse-stale"
 	unlockIdentityRole      = "unlock-identity"
@@ -167,7 +169,7 @@ var (
 
 func main() {
 	log.SetFlags(0)
-	if err := run(defaultWorkflowsDir, defaultEnvironmentsFile, defaultRulesetFile, os.Stdout); err != nil {
+	if err := run(defaultWorkflowsDir, defaultEnvironmentsFile, defaultRulesetFile, defaultRootsDir, os.Stdout); err != nil {
 		if xerrors.Is(err, errNoTarget) {
 			log.Printf("❌ oidc-job-lint: %v", err)
 			os.Exit(2)
@@ -176,7 +178,8 @@ func main() {
 	}
 }
 
-func run(dir, envFile, rulesetFile string, out io.Writer) error {
+// run は dir の workflow を検査します。rootsDir が空でなければ、その下の root ごとに CI の経路があることも見る。
+func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 	envs, err := readEnvironments(envFile)
 	if err != nil {
 		return err
@@ -209,6 +212,7 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 		findings []lintreport.Finding
 		groups   []groupRecord
 	)
+	sources := map[string]string{}
 	targets := 0
 	prOrder := 0
 	for _, p := range workflow.SelectFiles(names, dir) {
@@ -216,8 +220,11 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 		if err != nil {
 			return xerrors.Wrapf(err, "%s の読み取り", p)
 		}
+		sources[p] = string(raw)
 		n, f := check(p, string(raw), envs)
 		targets += n
+		findings = append(findings, f...)
+		_, f = checkRevertWiring(p, string(raw))
 		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
 		n, f = checkRequiredOrderJobs(p, string(raw), required)
@@ -226,6 +233,15 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
 	findings = append(findings, checkPullRequestOrder(dir, groups, prOrder)...)
+	roots := 0
+	if rootsDir != "" {
+		n, f, err := checkRootCoverage(rootsDir, sources)
+		roots = n
+		if err != nil {
+			return err
+		}
+		findings = append(findings, f...)
+	}
 	if len(findings) > 0 {
 		fmt.Fprintf(out, "❌ oidc-job-lint: %d 件の違反\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
@@ -234,7 +250,7 @@ func run(dir, envFile, rulesetFile string, out io.Writer) error {
 	if targets == 0 {
 		return xerrors.Wrapf(errNoTarget, "%s", dir)
 	}
-	fmt.Fprintf(out, "✅ oidc-job-lint: OIDC で role を assume する job %d 件の environment・役割・起動条件を確認しました\n", targets)
+	fmt.Fprintf(out, "✅ oidc-job-lint: OIDC で role を assume する job %d 件の environment・役割・起動条件と、root %d 件の CI の経路を確認しました\n", targets, roots)
 	return nil
 }
 
@@ -1304,4 +1320,196 @@ func jobKey(job workflow.Job, key string) (string, int, bool) {
 		return strings.TrimSpace(strings.Join(parts, " ")), l.Number, true
 	}
 	return "", 0, false
+}
+
+var (
+	revertResults    = regexp.MustCompile(`([a-z0-9-]+)=\$\{\{ needs\.([a-z0-9-]+)\.result \}\}:\$\{\{ needs\.([a-z0-9-]+)\.outputs\.apply-outcome \}\}:\$\{\{ needs\.([a-z0-9-]+)\.outputs\.failure \}\}`)
+	revertWorkflow   = regexp.MustCompile(`^\s+APPLY_REVERT_WORKFLOW:[ \t]*(\S+)[ \t]*(?:#.*)?$`)
+	revertResultsKey = regexp.MustCompile(`^(\s+)APPLY_REVERT_RESULTS:`)
+	jobIf            = regexp.MustCompile(`^ {4}if:(.*)$`)
+)
+
+// checkRevertWiring は、make ci-apply-* を走らせる job を持つ workflow で、revert-plan と通知が、その
+// workflow の apply の job のすべてを過不足なく名指していることを検査します（README.md の「apply の失敗の
+// revert」）。apply の job を持つかを返す。
+func checkRevertWiring(file, source string) (bool, []lintreport.Finding) {
+	split := workflow.SplitJobs(source)
+	byID := map[string]workflow.Job{}
+	var apply []string
+	for _, job := range split.Jobs {
+		byID[job.ID] = job
+		if hasLine(job, ciApply) {
+			apply = append(apply, job.ID)
+		}
+	}
+	if len(apply) == 0 {
+		return false, nil
+	}
+	finding := func(line int, format string, args ...any) lintreport.Finding {
+		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf(format, args...)}
+	}
+	var findings []lintreport.Finding
+	slices.Sort(apply)
+
+	rp, ok := byID["revert-plan"]
+	if !ok {
+		findings = append(findings, finding(1, "apply の job（%s）を持つ workflow に revert-plan の job がありません", strings.Join(apply, ", ")))
+	} else {
+		findings = append(findings, checkRevertPlan(rp, apply, filepath.Base(file), finding)...)
+	}
+
+	if nf, ok := byID["notify-failure"]; !ok {
+		findings = append(findings, finding(1, "apply の job を持つ workflow に notify-failure の job がありません"))
+	} else {
+		for _, a := range apply {
+			if !slices.Contains(needs(nf), a) {
+				findings = append(findings, finding(nf.Number, "notify-failure の needs に %s がありません", a))
+			}
+		}
+	}
+	for _, a := range apply {
+		if !slices.ContainsFunc(split.Jobs, func(j workflow.Job) bool { return notifiesSuccess(j, a) }) {
+			findings = append(findings, finding(byID[a].Number, "%s の成功を通知する job（needs に置き、if: が needs.%s.result == 'success' を含む）がありません", a, a))
+		}
+	}
+	return true, findings
+}
+
+func checkRevertPlan(rp workflow.Job, apply []string, base string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	got := slices.Clone(needs(rp))
+	slices.Sort(got)
+	if !slices.Equal(got, apply) {
+		findings = append(findings, finding(rp.Number, "revert-plan の needs が apply の job（%s）と一致しません（%s）", strings.Join(apply, ", "), strings.Join(got, ", ")))
+	}
+	cond := ""
+	for _, l := range rp.Lines {
+		if m := jobIf.FindStringSubmatch(l.Text); m != nil {
+			cond = m[1]
+		}
+	}
+	for _, a := range apply {
+		if !strings.Contains(cond, "needs."+a+".result == 'failure'") {
+			findings = append(findings, finding(rp.Number, "revert-plan の if: に needs.%s.result == 'failure' がありません", a))
+		}
+	}
+
+	var passed []string
+	workflowName := ""
+	for i, l := range rp.Lines {
+		if m := revertWorkflow.FindStringSubmatch(l.Text); m != nil {
+			workflowName = strings.Trim(m[1], `"'`)
+		}
+		m := revertResultsKey.FindStringSubmatch(l.Text)
+		if m == nil {
+			continue
+		}
+		value := []string{l.Text}
+		for _, next := range rp.Lines[i+1:] {
+			if strings.TrimSpace(next.Text) != "" && !strings.HasPrefix(next.Text, m[1]+" ") {
+				break
+			}
+			value = append(value, next.Text)
+		}
+		for _, r := range revertResults.FindAllStringSubmatch(strings.Join(value, "\n"), -1) {
+			if r[1] != r[2] || r[1] != r[3] || r[1] != r[4] {
+				findings = append(findings, finding(l.Number, "APPLY_REVERT_RESULTS の %s が、別の job の結果を参照しています", r[1]))
+			}
+			passed = append(passed, r[1])
+		}
+	}
+	slices.Sort(passed)
+	if !slices.Equal(passed, apply) {
+		findings = append(findings, finding(rp.Number, "APPLY_REVERT_RESULTS が渡す job（%s）が apply の job（%s）と一致しません", strings.Join(passed, ", "), strings.Join(apply, ", ")))
+	}
+	if workflowName != base {
+		findings = append(findings, finding(rp.Number, "APPLY_REVERT_WORKFLOW が %q で、この workflow のファイル名 %q ではありません", workflowName, base))
+	}
+	return findings
+}
+
+func notifiesSuccess(j workflow.Job, apply string) bool {
+	if !slices.Contains(needs(j), apply) {
+		return false
+	}
+	return slices.ContainsFunc(j.Lines, func(l workflow.Line) bool {
+		m := jobIf.FindStringSubmatch(l.Text)
+		return m != nil && strings.Contains(m[1], "needs."+apply+".result == 'success'")
+	})
+}
+
+// checkRootCoverage は、rootsDir の下で *.tf を持つディレクトリが ADR-0604 決定5 の配置（<env>/ と <env>/identity/）
+// にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job が
+// ちょうど1つずつあることを検査します。見た root の数を返し、0件なら errNoTarget にする。
+func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintreport.Finding, error) {
+	var findings []lintreport.Finding
+	var roots []string
+	err := filepath.WalkDir(rootsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != rootsDir && (strings.HasPrefix(d.Name(), ".") || d.Name() == "tests") {
+			return filepath.SkipDir
+		}
+		tf, err := filepath.Glob(filepath.Join(path, "*.tf"))
+		if err != nil || len(tf) == 0 {
+			return err
+		}
+		rel, err := filepath.Rel(rootsDir, path)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		switch {
+		case len(parts) == 1 && parts[0] != ".":
+			roots = append(roots, parts[0]+"-workload")
+		case len(parts) == 2 && parts[1] == "identity":
+			roots = append(roots, parts[0]+"-identity")
+		default:
+			findings = append(findings, lintreport.Finding{File: path, Line: 1,
+				Message: fmt.Sprintf("root %s が ADR-0604 決定5 の配置（<env>/ と <env>/identity/）の外にあります", filepath.ToSlash(rel))})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, nil, xerrors.Wrapf(err, "%s の読み取り", rootsDir)
+	}
+	if len(roots) == 0 && len(findings) == 0 {
+		return 0, nil, xerrors.Wrapf(errNoTarget, "%s に root がありません", rootsDir)
+	}
+
+	files := slices.Sorted(maps.Keys(sources))
+	for _, root := range roots {
+		count := func(kind string, pullRequestOnly bool) int {
+			re := regexp.MustCompile(`\bmake\b.*\bci-` + kind + `-` + regexp.QuoteMeta(root) + `(?:\s|$)`)
+			n := 0
+			for _, f := range files {
+				split := workflow.SplitJobs(sources[f])
+				if pullRequestOnly {
+					if on, _ := triggers(split.Preamble); !slices.Contains(triggerNames(on), "pull_request") {
+						continue
+					}
+				}
+				for _, job := range split.Jobs {
+					if hasLine(job, re) {
+						n++
+					}
+				}
+			}
+			return n
+		}
+		if count("plan", true) == 0 {
+			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を Pull Request で plan する job がありません", root)})
+		}
+		if n := count("apply", false); n != 1 {
+			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を apply する job が %d 件です（1件を期待）", root, n)})
+		}
+		if n := count("unlock", false); n != 1 {
+			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を外す job が %d 件です（1件を期待）", root, n)})
+		}
+	}
+	return len(roots), findings, nil
 }

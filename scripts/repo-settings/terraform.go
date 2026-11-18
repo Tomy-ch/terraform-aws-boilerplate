@@ -38,7 +38,12 @@ var (
 	errNoIdentityRoot      = xerrors.New("deployment-identity を呼ぶ root が1件もありません")
 	errEnvironmentMismatch = xerrors.New("environment の宣言が deployment-identity の信頼条件と一致しません")
 	errDeployMismatch      = xerrors.New("branches.json のデプロイブランチが deployment-identity の env と一致しません")
+	errBackendKey          = xerrors.New("root の backend の key が ADR-0604 決定7 の値ではありません")
 )
+
+// backendKeys は、root の配置（env/<env>/identity/ と env/<env>/）ごとの state の key（ADR-0604 決定7）。
+// CI の role の権限の Resource にも同じ値が写っている（usecases/deployment-identity/README.md）。
+var backendKeys = map[bool]string{true: "identity/terraform.tfstate", false: "workload/terraform.tfstate"}
 
 // identityEnvs は env/ の下の .tf を読み、source が deployment-identity を指す module の env の値を返します。
 // source と env はリテラルの文字列に限る。それ以外は読めないものとしてエラーにする（ADR-0702 決定14）。
@@ -208,4 +213,78 @@ func splitIdentity(name string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// checkBackendKeys は、env/ の下で *.tf を持つ root ごとに backend.tf の s3 の backend の key を読み、配置から決まる
+// key（backendKeys）と一致することを見ます。見た root の数を返す。配置の外の root は oidc-job-lint が見る。
+func checkBackendKeys(root string) (int, error) {
+	base := filepath.Join(root, envDir)
+	n := 0
+	err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != base && (strings.HasPrefix(d.Name(), ".") || d.Name() == "tests") {
+			return filepath.SkipDir
+		}
+		tf, err := filepath.Glob(filepath.Join(path, "*.tf"))
+		if err != nil || len(tf) == 0 {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		identity := len(parts) == 3 && parts[2] == "identity"
+		if len(parts) != 2 && !identity {
+			return nil
+		}
+		key, err := backendKey(filepath.Join(path, "backend.tf"))
+		if err != nil {
+			return xerrors.Wrapf(errBackendKey, "%s: %v", filepath.ToSlash(rel), err)
+		}
+		if key != backendKeys[identity] {
+			return xerrors.Wrapf(errBackendKey, "%s の backend の key が %s で、%s ではありません", filepath.ToSlash(rel), key, backendKeys[identity])
+		}
+		n++
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, xerrors.Wrapf(errBackendKey, "%s に root がありません", envDir)
+	}
+	return n, nil
+}
+
+// backendKey は、backend.tf の terraform ブロックの s3 の backend の key を、リテラルの文字列として読みます。
+func backendKey(path string) (string, error) {
+	src, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", xerrors.New("backend.tf がありません")
+	}
+	file, diags := hclsyntax.ParseConfig(src, path, hcl.InitialPos)
+	if diags.HasErrors() {
+		return "", xerrors.New(diags.Error())
+	}
+	body, ok := file.Body.(*hclsyntax.Body)
+	if !ok {
+		return "", xerrors.New("本体を読めません")
+	}
+	for _, tf := range body.Blocks {
+		if tf.Type != "terraform" {
+			continue
+		}
+		for _, b := range tf.Body.Blocks {
+			if b.Type == "backend" && len(b.Labels) == 1 && b.Labels[0] == "s3" {
+				return literalString(b.Body, "key")
+			}
+		}
+	}
+	return "", xerrors.New("s3 の backend がありません")
 }

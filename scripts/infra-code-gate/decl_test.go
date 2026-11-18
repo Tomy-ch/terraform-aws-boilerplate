@@ -37,9 +37,17 @@ const declOK = `{"infra_code_decl": {` +
 
 const rulesetOK = `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "infra-code-gate"}, {"context": "python-test"}]}}]}`
 
+var gateWorkflowFixtures = map[string]string{
+	"terraform-gates.yaml":  "jobs:\n  g:\n    steps:\n      - run: make infra-code-gate RUNNER_MODE=host\n",
+	"terraform-unlock.yaml": "jobs:\n  u:\n    steps:\n      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n",
+	"lint.yaml":             "jobs:\n  l:\n    steps:\n      # make infra-code-gate は走らせない\n      - run: make md-lint\n",
+}
+
+var gateWorkflowTargets = []string{".github/workflows/terraform-gates.yaml", ".github/workflows/terraform-unlock.yaml"}
+
 func codeownersFor(extra ...string) string {
 	var b strings.Builder
-	for _, t := range append(append([]string{}, codeownerTargets...), extra...) {
+	for _, t := range append(append(append([]string{}, codeownerTargets...), gateWorkflowTargets...), extra...) {
 		b.WriteString(t + " @owner\n")
 	}
 	return b.String()
@@ -53,6 +61,9 @@ func buildRepo(t *testing.T) string {
 	writeFile(t, filepath.Join(repo, defaultCodeownersPath), codeownersFor("usecases/x/internal/fn/src"))
 	writeFile(t, filepath.Join(repo, "usecases/x/internal/fn/src/handler.py"), "x")
 	writeFile(t, filepath.Join(repo, "usecases/x/docs/adr/0001-fn-runtime.md"), acceptedADR)
+	for name, body := range gateWorkflowFixtures {
+		writeFile(t, filepath.Join(repo, ".github/workflows", name), body)
+	}
 	return repo
 }
 
@@ -452,10 +463,44 @@ func Test_ownedTargets(t *testing.T) {
 		{Owner: "repository", Source: "usecases/x/src"},
 		{Owner: "external", Repository: "github.com/o/r"},
 	}}
-	got := ownedTargets(d)
-	assert.Equal(t, append(append([]string{}, codeownerTargets...), "usecases/x/src"), got)
-	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
-	assert.Contains(t, codeownerTargets, ".github/workflows/terraform-apply.yaml", "検出の job を持つ apply の workflow も対象にする")
+	got := ownedTargets(d, gateWorkflowTargets)
+	assert.Equal(t, append(append(append([]string{}, codeownerTargets...), gateWorkflowTargets...), "usecases/x/src"), got)
+	assert.Len(t, codeownerTargets, 8, "固定の対象を書き換えていない")
+	assert.NotContains(t, codeownerTargets, ".github/workflows/terraform-apply.yaml", "workflow は直書きせず導く")
+}
+
+func Test_gateWorkflows(t *testing.T) {
+	t.Parallel()
+
+	t.Run("検出の job か CI の入口を走らせる workflow だけを返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := gateWorkflows(buildRepo(t))
+		require.NoError(t, err)
+		assert.Equal(t, gateWorkflowTargets, got)
+	})
+
+	t.Run("対象の workflow が1つも無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		repo := t.TempDir()
+		writeFile(t, filepath.Join(repo, ".github/workflows/lint.yaml"), gateWorkflowFixtures["lint.yaml"])
+		_, err := gateWorkflows(repo)
+		require.ErrorIs(t, err, errNoGateWorkflow)
+	})
+
+	t.Run("workflow のディレクトリが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := gateWorkflows(t.TempDir())
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("実物の apply と lock の解除の workflow を対象にする", func(t *testing.T) {
+		t.Parallel()
+		got, err := gateWorkflows(filepath.Join("..", ".."))
+		require.NoError(t, err)
+		for _, w := range []string{"terraform-gates.yaml", "terraform-apply.yaml", "terraform-unlock.yaml"} {
+			assert.Contains(t, got, ".github/workflows/"+w)
+		}
+	})
 }
 
 func Test_readCodeowners(t *testing.T) {
