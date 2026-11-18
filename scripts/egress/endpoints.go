@@ -35,7 +35,8 @@ var (
 	// errRegionNotOne は aws の provider の region が 2 つ以上の root のエラー。resource がどの provider を
 	// 使うかを読まないので、region ごとの宛先の過不足を判定できない。
 	errRegionNotOne = xerrors.New("root の aws の provider の region が 1 つではありません")
-	errBlockCount   = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
+	// errBlockCount は、解析で数えたブロックと字面で数えたブロックの件数が食い違う場合のエラー（ADR-0702 決定15）。
+	errBlockCount = xerrors.New("Terraform のブロックの件数が字面と解析で一致しません")
 )
 
 // typeBlocks は provider の型をラベルの先頭に持つブロック。
@@ -50,12 +51,6 @@ var (
 	regionLabelRe  = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-[0-9]+$`)
 	regionSuffixRe = regexp.MustCompile(`(?:^|-)([a-z]{2}(?:-[a-z]+)+-[0-9]+)$`)
 )
-
-// globalEndpoints は、名前に region を含むが、AWS がその region に固定した global のサービスの宛先。
-// provider の region に依らずこの宛先を呼ぶので、region の突き合わせから外す。
-var globalEndpoints = map[string]bool{
-	"organizations.us-east-1.amazonaws.com": true,
-}
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
 // その root で Terraform を実行するジョブ（ran が plan / apply の入口を呼ぶと言うジョブ）の許可リストに
@@ -204,12 +199,12 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
-// checkRegions は hosts のうち region を含む宛先（globalEndpoints を除く）の region が、dirs の aws の provider の
-// ただ 1 つの region と一致することを見る。region を含む宛先が無ければ provider を読まない。
+// checkRegions は hosts のうち region を含む宛先の region が、dirs の aws の provider のただ 1 つの region と
+// 一致することを見る。region を含む宛先が無ければ provider を読まない。
 func checkRegions(repo string, dirs, hosts []string) error {
 	var regional []string
 	for _, h := range hosts {
-		if hostRegion(h) != "" && !globalEndpoints[h] {
+		if hostRegion(h) != "" {
 			regional = append(regional, h)
 		}
 	}
@@ -267,6 +262,7 @@ func providerRegions(repo string, dirs []string) ([]string, error) {
 	return sortedKeys(found), nil
 }
 
+// fileRegions は 1 ファイルの aws の provider の region を found へ足す。
 func fileRegions(repo *os.Root, file string, found map[string]bool) error {
 	src, err := repo.ReadFile(file)
 	if err != nil {
@@ -413,6 +409,7 @@ func scanTerraformFile(repo *os.Root, file string, found map[string]bool) ([]str
 	return sources, nil
 }
 
+// addType は型を持つブロックのラベルの先頭を found へ足す。
 func addType(b *hclsyntax.Block, found map[string]bool) error {
 	if len(b.Labels) != 2 {
 		return xerrors.Wrap(errTerraformSyntax, fmt.Sprintf("%d 行目: %s のラベルが 2 つではありません", b.TypeRange.Start.Line, b.Type))
