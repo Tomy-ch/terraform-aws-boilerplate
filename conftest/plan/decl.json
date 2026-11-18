@@ -158,7 +158,8 @@
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity",
         "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this",
-        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this"
+        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this",
+        "output_bucket_policy_statements": 5
       },
       "unlock_roles": [
         "unlock_role",
@@ -187,19 +188,23 @@
       "roots": [
         {
           "writer": "apply_identity_role",
-          "state": "identity/terraform.tfstate"
+          "state": "identity/terraform.tfstate",
+          "unlocker": "unlock_role"
         },
         {
           "writer": "apply_role",
-          "state": "workload/terraform.tfstate"
+          "state": "workload/terraform.tfstate",
+          "unlocker": "workload_unlock_role"
         }
       ],
-      "unlocker": "unlock_role",
       "key_user_roles": [
         "plan_role",
         "apply_identity_role",
-        "unlock_role"
-      ]
+        "unlock_role",
+        "apply_role",
+        "workload_unlock_role"
+      ],
+      "apply_output_bucket_policy_statements": 4
     },
     "stateful_protection": {
       "protected_types": [

@@ -9,6 +9,7 @@ module "state_backend" {
     apply           = module.deployment_identity.apply_role_arn
     apply_identity  = module.deployment_identity.apply_identity_role_arn
     unlock_identity = module.deployment_identity.unlock_identity_role_arn
+    unlock          = module.deployment_identity.unlock_role_arn
   }
 }
 

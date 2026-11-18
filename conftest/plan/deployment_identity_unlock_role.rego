@@ -7,7 +7,7 @@ import data.plan.lib
 
 di := object.get(data.policy_plan, "deployment_identity", {})
 
-# state_backend の unlocker・key_user_roles と同じ名前で指す。
+# state_backend.roots の unlocker と key_user_roles と同じ名前で指す。
 default names := []
 
 names := object.get(di, "unlock_roles", [])
@@ -82,13 +82,14 @@ deny contains msg if {
 	msg := "[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が空です"
 }
 
-# state_backend.unlocker を宣言から外すと、その role のどの検査も走らない。
+# state_backend.roots の unlocker を unlock_roles から外すと、その role のどの検査も走らない。
 deny contains msg if {
-	unlocker := object.get(object.get(data.policy_plan, "state_backend", {}), "unlocker", "")
+	some root in object.get(object.get(data.policy_plan, "state_backend", {}), "roots", [])
+	unlocker := object.get(root, "unlocker", "")
 	is_string(unlocker)
 	unlocker != ""
 	not unlocker in names
-	msg := sprintf("[PLAN-UNLOCK-00] state_backend.unlocker の %s が data.policy_plan.deployment_identity.unlock_roles にありません", [unlocker])
+	msg := sprintf("[PLAN-UNLOCK-00] state_backend.roots の unlocker の %s が data.policy_plan.deployment_identity.unlock_roles にありません", [unlocker])
 }
 
 deny contains msg if {

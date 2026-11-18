@@ -190,3 +190,38 @@ test_violation_undeclared_apply_output_policy_created_with_its_bucket if {
 	msgs := gate.deny with input as inp with data.policy_plan as d
 	fixture.has(sprintf("[PLAN-RPE-01] p.json: %s がどの resource を指すかを plan で読めません", [apply_bucket_policy]), msgs)
 }
+
+statements(n) := [{"Sid": sprintf("S%d", [i]), "Effect": "Deny", "Principal": "*", "Action": "s3:PutObject", "Resource": "*"} | some i in numbers.range(1, n)]
+
+with_documents(plan_n, apply_n) := array.concat(targets, [
+	declared[0],
+	fixture.doc("aws_s3_bucket_policy", output_bucket_policy, "policy", {"Statement": statements(plan_n)}),
+	declared[2],
+	fixture.doc("aws_s3_bucket_policy", apply_bucket_policy, "policy", {"Statement": statements(apply_n)}),
+])
+
+# 文書の bucket は fixture.doc が持たないので、02 は数えない。
+statement_messages(plan_n, apply_n) := {m | some m in gate.deny with input as fixture.plan(with_documents(plan_n, apply_n)); startswith(m, "[PLAN-RPE-03]")}
+
+test_pass_output_bucket_policy_statement_counts if {
+	count(statement_messages(5, 4)) == 0
+}
+
+test_violation_output_bucket_policy_statement_counts if {
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 4 件で、宣言（policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements）の 5 件と一致しません", [output_bucket_policy]), statement_messages(4, 4))
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 5 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 4 件と一致しません", [apply_bucket_policy]), statement_messages(5, 5))
+}
+
+# 文書が plan で決まらない Bucket Policy は数えない（CI の plan で Bucket と同時に作るとき）。
+test_pass_unknown_document_not_counted if {
+	msgs := gate.deny with input as fixture.plan(array.concat(array.slice(targets, 0, 3), array.concat(array.slice(declared, 0, 3), [ci_new_apply_bucket, ci_new_apply_bucket_policy])))
+	not fixture.has("[PLAN-RPE-03]", msgs)
+}
+
+test_violation_statement_count_declaration if {
+	every v in [null, 0, 1.5, "4"] {
+		d := json.patch(data.policy_plan, [{"op": "add", "path": "/state_backend/apply_output_bucket_policy_statements", "value": v}])
+		msgs := gate.deny with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan as d
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.apply_output_bucket_policy_statements が、1以上の整数ではありません", msgs)
+	}
+}

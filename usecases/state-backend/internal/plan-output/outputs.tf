@@ -20,3 +20,8 @@ output "kms_key_arn" {
   description = "既定の暗号化が使う KMS の鍵の ARN。"
   value       = one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).kms_master_key_id
 }
+
+output "writers" {
+  description = "Bucket Policy が object の書き込みを許す role と key の接頭辞の組。"
+  value       = var.writers
+}
