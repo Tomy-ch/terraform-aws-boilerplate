@@ -178,3 +178,23 @@ test_values_at_folds_dynamic_blocks if {
 }`)
 	values_at(body, "launch_specification.user_data") == ["d"]
 }
+
+test_module_target_resolves_relative_literals if {
+	module_target("env/dev", "../../usecases/u") == "usecases/u"
+	module_target("usecases/u", "./internal/x") == "usecases/u/internal/x"
+}
+
+test_module_target_rejects_non_relative_and_escaping_sources if {
+	not module_target("env/dev", "git::https://example.com/m.git")
+	not module_target("env/dev", "${var.src}/m")
+	not module_target("env/dev", "../${var.x}")
+	not module_target("env/dev", "../../../outside")
+	not module_target("env/dev", null)
+}
+
+test_module_target_rejects_sources_that_are_not_relative_paths if {
+	not module_target("env/dev", ".")
+	not module_target("env/dev", "..")
+	not module_target("env/dev", "/abs/path")
+	not module_target("env/dev", 1)
+}

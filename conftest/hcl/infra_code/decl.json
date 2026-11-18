@@ -13,6 +13,9 @@
       "resource.aws_cloudwatch_log_group": {"executes_code": false},
       "resource.aws_cloudwatch_log_resource_policy": {"executes_code": false},
       "resource.aws_cloudwatch_metric_alarm": {"executes_code": false},
+      "resource.aws_default_route_table": {"executes_code": false},
+      "resource.aws_default_security_group": {"executes_code": false},
+      "resource.aws_flow_log": {"executes_code": false},
       "resource.aws_iam_openid_connect_provider": {"executes_code": false},
       "resource.aws_iam_role": {"executes_code": false},
       "resource.aws_iam_role_policies_exclusive": {"executes_code": false},
@@ -38,7 +41,8 @@
       "resource.aws_sns_topic": {"executes_code": false},
       "resource.aws_sns_topic_policy": {"executes_code": false},
       "resource.aws_spot_fleet_request": {"executes_code": true, "body_args": ["launch_specification.user_data"]},
-      "resource.aws_spot_instance_request": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]}
+      "resource.aws_spot_instance_request": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
+      "resource.aws_vpc": {"executes_code": false}
     },
     "providers": {
       "registry.terraform.io/hashicorp/aws": {"command_blocks": []}

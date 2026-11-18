@@ -406,6 +406,22 @@
         },
         "optional": false
       },
+      "aws_default_route_table": {
+        "parents": {
+          "default_route_table_id": [
+            "aws_vpc"
+          ]
+        },
+        "optional": false
+      },
+      "aws_default_security_group": {
+        "parents": {
+          "vpc_id": [
+            "aws_vpc"
+          ]
+        },
+        "optional": true
+      },
       "aws_dynamodb_contributor_insights": {
         "parents": {
           "table_name": [
