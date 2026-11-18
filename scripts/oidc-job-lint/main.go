@@ -1499,7 +1499,8 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 		if !d.IsDir() {
 			return nil
 		}
-		if path != rootsDir && (strings.HasPrefix(d.Name(), ".") || d.Name() == "tests") {
+		// .terraform は init が作る module と provider の写しで、root ではない。
+		if path != rootsDir && d.Name() == ".terraform" {
 			return filepath.SkipDir
 		}
 		tf, err := filepath.Glob(filepath.Join(path, "*.tf"))

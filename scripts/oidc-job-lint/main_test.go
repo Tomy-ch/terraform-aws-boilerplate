@@ -3391,14 +3391,38 @@ func Test_checkRootCoverage(t *testing.T) {
 		assert.Empty(t, messages(findings))
 	})
 
-	t.Run(".terraform と tests は root として数えない", func(t *testing.T) {
+	t.Run(".terraform は root として数えない", func(t *testing.T) {
 		t.Parallel()
-		root := rootsWith(t, "admin/identity", "admin/identity/.terraform/modules/x", "admin/identity/tests")
+		root := rootsWith(t, "admin/identity", "admin/identity/.terraform/modules/x")
 		n, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
 		require.NoError(t, err)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, messages(findings))
 	})
+
+	t.Run(".tftest.hcl だけの tests は root として数えない", func(t *testing.T) {
+		t.Parallel()
+		root := rootsWith(t, "admin/identity")
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "admin/identity/tests"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "admin/identity/tests/x.tftest.hcl"), []byte("run \"x\" {}\n"), 0o600))
+		n, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, messages(findings))
+	})
+
+	for name, dir := range map[string]string{
+		"tests の下の *.tf は配置の外の root":     "admin/identity/tests",
+		". で始まるディレクトリの *.tf は配置の外の root": "admin/.alt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := rootsWith(t, "admin/identity", dir)
+			_, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
+			require.NoError(t, err)
+			assert.Contains(t, messages(findings), "root "+dir+" が ADR-0604 決定5 の配置（<env>/ と <env>/identity/）の外にあります")
+		})
+	}
 
 	t.Run("root を置くディレクトリの symlink は違反", func(t *testing.T) {
 		t.Parallel()

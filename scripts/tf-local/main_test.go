@@ -1341,7 +1341,7 @@ func TestCiMk(t *testing.T) {
 		require.Contains(t, slices.Collect(maps.Values(phony)), "plan", "ci.mk に plan の入口がありません")
 		require.Contains(t, slices.Collect(maps.Values(phony)), "apply", "ci.mk に apply の入口がありません")
 		for target, kind := range phony {
-			t.Run(target, func(t *testing.T) {
+			t.Run("入口 "+target, func(t *testing.T) {
 				t.Parallel()
 
 				got := expand(t, target)
