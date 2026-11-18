@@ -161,9 +161,9 @@
 - 各ユースケースは最低1つの reference を持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
 - 次の3つを、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
-  - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block が無いこと（決定14）
+  - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block と、root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
-  - attachment 型の resource の親を指す引数が `module.` 参照を持たないこと、すなわち親と同じ module に在ること（決定18）。attachment だけを持つ module が親の識別子を `variable` で受ける形はこの検査を通るので、レビューで見る
+  - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。`local.` は同じ module の `locals` へ、`each.` はその resource の `for_each` へ辿る。`var.`・`data.`・`module.` の参照とリテラルは、親が同じ module に在ることを示さないので違反とする
 
 決定15（一般 module がユースケースごとの差異を抱えないこと）は機械判定できない。一般 module の入力に用途の種別や `enable_*` が現れる、特定のユースケースだけが使う引数が増える、は崩れ始めた徴候であり、レビューで見る。徴候が出た機構は `internal/` へ移す。
 
