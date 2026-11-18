@@ -56,8 +56,8 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 ## 保証しないもの
 
 - 入力から導いた値（Topic の固定値、Topic Policy の文書、validation と precondition、出力）は `tests/` が mock の plan と apply で見る。Unit Test に属する（ADR-0501 決定9）。`aws_sns_topic` の inline の `policy` を書かないことは、mock の plan で値が決まらないのでテストが見ていない
-- Topic Policy の文書の security invariant（TLS の Deny、Allow の Principal がサービス principal であること、Allow の Action が `sns:Publish` だけであること、条件が固定値であること）を見る Policy Test は無い。Topic Policy が唯一の policy であること、inline の `policy` を書かないこと、Topic の削除と置換を拒むことも同じである。いずれも、SNS の Topic を持つ最初の reference の root（ops-notification）と同じ変更で `conftest/plan` に足す。いまの入力には Topic が無く、宣言だけを足すと Policy が落ちる
-- Topic Policy と鍵の Key Policy が同じ送り手を名指すことは、module の境界の外（呼び出す usecase が同じ値を両方へ渡す）で、検査は無い
+- Topic Policy の文書の security invariant（TLS の Deny、Allow の Principal がサービス principal であること、Allow の Action が `sns:Publish` だけであること、条件が自アカウントの固定値であること、Topic ごとに Topic Policy が1つであること）は、`conftest/plan` の `plan.sns_topic_policy`（`PLAN-SNS-*`）が `ops-notification` の reference の root の plan で見る。inline の `policy` を書かないことは `plan.input`（`PLAN-INPUT-09`）が、Topic の削除と置換を拒むことは `plan.stateful_protection` が見る
+- Topic Policy と鍵の Key Policy が同じ送り手を名指すことは、module の境界の外（呼び出す usecase が同じ値を両方へ渡す）である。`ops-notification` の分は `plan.ops_notification`（`PLAN-NOTIFY-01`）が見る
 - `aws_sns_topic_policy` を destroy すると、Provider は既定の Topic Policy（`Principal {"AWS":"*"}` と `AWS:SourceOwner` で `SNS:Publish`・`SNS:Subscribe`・`SNS:SetTopicAttributes` などを許す文書）を書き戻す（AWS Provider の `internal/service/sns/topic_policy.go`）。Topic の作成から Topic Policy の置き換えまでの間も、Topic は既定の Topic Policy を持つ。`topic_arn` の `depends_on` が送り手を置き換えの後に作らせることは、mock の plan と apply には順序が現れないので、どのテストも見ていない
 - 次は実際の AWS で確かめていない。最初の消費者（ops-notification）の sandbox での検証で確かめる
   - CloudWatch・EventBridge・Budgets・Cost Anomaly Detection と、EventBridge Scheduler の role からの publish が、Topic Policy と鍵の Key Policy で拒まれないこと

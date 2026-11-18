@@ -59,11 +59,11 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## まだ持たないもの
 
-持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）である。`via = "sns"`・`users.services.logs`・`users.services.sns` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
+持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）である。`via = "sns"` と `users.services.sns` は `ops-notification` が渡す。`users.services.logs` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
 
 | 足すもの | 足す消費者 |
 | --- | --- |
-| `via = "logs"` | ops-notification（#25） |
+| `via = "logs"` | それを要る消費者 |
 | CloudTrail の文（`kms:DescribeKey` は `aws:SourceArn` で trail を限る形） | account-baseline（#22）・audit-evidence（#23） |
 | 他のアカウントへの許可と `aws_kms_grant` | data-refresh（#59）。方式（Key Policy か grant か）は未決 |
 | us-east-1 など別の region の鍵 | その region の鍵を要る消費者。この module は呼ばれた provider の region に1本作る |
@@ -86,7 +86,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
   - 作成直後の role を Principal に置く `PutKeyPolicy` が、IAM の結果整合で落ちないこと
   - `via = "s3"` の2つの Action で、S3 backend が state と lock file を読み書きできること
   - 鍵を管理する role が、Provider が鍵・Key Policy・alias の作成・読み取りで呼ぶ API を、委任の21 Action と IAM で持てること。削除で呼ぶ API は、最初の消費者の管理 role が持たないので（deployment-identity/ADR-0201 の「与えないもの」）、その経路では確かめない
-- SNS の文は、SNS の Topic を持つ reference の root が無いので reference の plan に現れない。`PLAN-KMS-*` を通ることは、`policy.tf` と同じ形を手で写した Rego のテストでだけ見ていて、一致は検査しない
+- SNS の文（`RolesViaSns<n>`・`SnsPublisher*`）が `PLAN-KMS-*` を通ることは、`ops-notification` の reference の root の plan が確かめる。Rego のテストの SNS の文は `policy.tf` を手で写したもので、一致は検査しない
 - 次は実際の AWS で確かめていない。確かめるのは、最初の消費者（ops-notification）の sandbox での検証である
   - `SnsPublisherEvents` の暗号化コンテキストの条件で、EventBridge から暗号化した Topic への送信が通ること。一次資料の Key Policy の例は `sns.amazonaws.com` の文にこの条件を使うもので、EventBridge の送信に同じ暗号化コンテキストが載ることを述べる文書は見つかっていない
   - `RolesViaSns<n>` の `kms:ViaService` と暗号化コンテキストの条件で、role（EventBridge Scheduler の心拍など）からの publish が通ること
