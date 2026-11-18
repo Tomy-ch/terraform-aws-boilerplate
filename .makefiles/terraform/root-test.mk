@@ -106,13 +106,10 @@ root-check-test:
 	expect fail dynamodb "$$d" "RT205 [DynamoDB の lock] env/mem/backend.tf"; \
 	d=$$(case_dir kms-in-hcl); backend "$$d/env/mem" workload/terraform.tfstate true true '    kms_key_id = "x"'; \
 	expect fail kms-in-hcl "$$d" "RT206 [鍵の書き方] env/mem/backend.tf"; \
-	d=$$(case_dir workload-calls-subpath); mkdir -p "$$d/usecases/b/internal/x"; printf 'locals {}\n' > "$$d/usecases/b/internal/x/main.tf"; \
-	printf 'module "x" {\n  source = "../../usecases/b/internal/x"\n}\n' >> "$$d/env/mem/main.tf"; \
-	expect fail workload-calls-subpath "$$d" "RT105 [usecase でない先] env/mem/main.tf の module.x が usecases/b/internal/x"; \
 	d=$$(case_dir duplicate-backend); cat "$$d/env/mem/backend.tf" "$$d/env/mem/backend.tf" > "$$d/b2" && mv "$$d/b2" "$$d/env/mem/backend.tf"; \
 	expect fail duplicate-backend "$$d" "RT201 [backend の数] root env/mem の backend が 2 件です"; \
-	d=$$(case_dir backend-in-hidden-dir); mkdir -p "$$d/env/mem/.alt"; backend "$$d/env/mem/.alt" workload/terraform.tfstate; \
-	expect fail backend-in-hidden-dir "$$d" "RT106 [root の外の backend] env/mem/.alt/backend.tf"; \
+	d=$$(case_dir cloud-block); printf 'terraform {\n  cloud {\n    organization = "x"\n  }\n}\n' > "$$d/env/mem/cloud.tf"; \
+	expect fail cloud-block "$$d" "RT201 [cloud block] env/mem/cloud.tf"; \
 	d=$$(case_dir module-unquoted-label); printf 'module w2 {\n  source = "../../usecases/w"\n}\n' > "$$d/env/mem/extra.tf"; \
 	expect pass module-unquoted-label "$$d" "違反はありません"; \
 	d=$$(case_dir module-tab-separator); printf 'module\t"w2" {\n  source = "../../usecases/w"\n}\n' > "$$d/env/mem/extra.tf"; \

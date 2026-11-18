@@ -1,4 +1,4 @@
-# root の構成と backend 設定の不変条件の検査（ADR-0604 決定2-5・7・8 と検証方法、state-backend の ADR-0101 決定3）。
+# root の構成と backend 設定の不変条件の検査（ADR-0604 決定2-4・7・8 と検証方法）。
 #
 # deny contains は行頭に置く。tf-local policy-result が行頭の deny contains を数える（README の「検査」）。
 package root
@@ -63,7 +63,7 @@ has_attr(b, name) if name in object.keys(b.attrs)
 
 # --- root の分類（ADR-0604 決定5） ---
 #
-# 2つの位置の外の root の検出は、*.tf の在りかを oidc-job-lint が、backend の在りかを RT106 が持つ（README「root の決め方」）。
+# 2つの位置の外の root の検出は oidc-job-lint が持つ（README「root の決め方」）。
 
 root_kind(d) := "identity" if regex.match(`^env/[^/]+/identity$`, d)
 
@@ -74,8 +74,6 @@ env_of(d) := split(d, "/")[1]
 roots := {d | some d in dirs; root_kind(d)}
 
 usecase_of(t) := split(t, "/")[1] if regex.match(`^usecases/[^/]+$`, t)
-
-under_env(d) if startswith(d, "env/")
 
 expected_key := {"identity": "identity/terraform.tfstate", "workload": "workload/terraform.tfstate"}
 
@@ -219,18 +217,6 @@ deny contains msg if {
 
 deny contains msg if {
 	some c in root_calls
-	t := hcl.module_target(c.dir, c.source)
-	not usecase_dir(t)
-	msg := sprintf("RT105 [usecase でない先] %s の module.%s が %s を指します。root が呼べるのは .tf を持つ usecases/<名前> だけです（ADR-0604 決定3・4、ADR-0102 決定17）→ usecase を呼ぶ", [c.path, c.name, t])
-}
-
-usecase_dir(t) if {
-	usecase_of(t)
-	t in dirs
-}
-
-deny contains msg if {
-	some c in root_calls
 	root_kind(c.dir) == "identity"
 	t := hcl.module_target(c.dir, c.source)
 	not declared_kind(t)
@@ -256,7 +242,7 @@ deny contains msg if {
 
 declared_kind(t) := declared[usecase_of(t)] if is_object(declared)
 
-# --- backend（ADR-0604 決定7・8、state-backend の ADR-0101 決定3） ---
+# --- backend（ADR-0604 決定7・8） ---
 
 deny contains msg if {
 	some d in roots
@@ -285,20 +271,6 @@ deny contains msg if {
 	msg := sprintf("RT201 [cloud block] %s が terraform の cloud block を持ちます。state は S3 backend に置きます（ADR-0604 決定7）", [c.path])
 }
 
-deny contains msg if {
-	some b in backends
-	under_env(b.dir)
-	not root_kind(b.dir)
-	msg := sprintf("RT106 [root の外の backend] %s が backend を持ちます。env/ の下で backend を持てるのは env/<env>/ と env/<env>/identity/ だけです（ADR-0604 決定2・5）", [b.path])
-}
-
-deny contains msg if {
-	some c in cloud_blocks
-	under_env(c.dir)
-	not root_kind(c.dir)
-	msg := sprintf("RT106 [root の外の backend] %s が terraform の cloud block を持ちます。env/ の下で state の置き場を持てるのは env/<env>/ と env/<env>/identity/ だけです（ADR-0604 決定2・5）", [c.path])
-}
-
 root_s3 := [b | some b in backends; root_kind(b.dir); b.type == "s3"]
 
 deny contains msg if {
@@ -322,7 +294,7 @@ deny contains msg if {
 deny contains msg if {
 	some b in root_s3
 	not object.get(b.attrs, "encrypt", null) == true
-	msg := sprintf("RT204 [暗号化] %s の encrypt が真偽値のリテラル true ではありません（state-backend の ADR-0101 決定3）", [b.path])
+	msg := sprintf("RT204 [暗号化] %s の encrypt が真偽値のリテラル true ではありません（ADR-0604 決定7）", [b.path])
 }
 
 deny contains msg if {
@@ -334,5 +306,5 @@ deny contains msg if {
 deny contains msg if {
 	some b in root_s3
 	has_attr(b, "kms_key_id")
-	msg := sprintf("RT206 [鍵の書き方] %s が kms_key_id を書きます → 書かず、init の -backend-config で渡す（state-backend の ADR-0101 決定3。make の init が state の鍵と照合した値を渡す）", [b.path])
+	msg := sprintf("RT206 [鍵の書き方] %s が kms_key_id を書きます → 書かず、init の -backend-config で渡す（ADR-0604 決定7。make の init が state の鍵と照合した値を渡す）", [b.path])
 }

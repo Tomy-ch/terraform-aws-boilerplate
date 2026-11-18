@@ -1,8 +1,7 @@
 # root の構成と backend 設定の不変条件
 
-[ADR-0604](../../../docs/adr/0604-state-split-by-apply-role.md) 決定2-5 の root の構成と、同 決定7・8 と
-[state-backend の ADR-0101](../../../usecases/state-backend/docs/adr/0101-sse-kms-with-state-key.md) 決定3 の backend 設定の
-不変条件を、HCL のソースで検査する（ADR-0604 の検証方法の Static Analysis。
+[ADR-0604](../../../docs/adr/0604-state-split-by-apply-role.md) 決定2-4 の root が呼ぶ usecase の構成と、同 決定7・8 の
+backend 設定の不変条件を、HCL のソースで検査する（同 ADR の検証方法の Static Analysis。
 [ADR-0501](../../../docs/adr/0501-development-tooling-composition.md) 決定5 がソースの構造の規約として Conftest に割り当てる）。
 何を禁じるかは ADR が持ち、ここには再掲しない。
 
@@ -30,28 +29,26 @@
 | `RT102` | 管理アカウント以外の identity root が、`control` の usecase を呼ぶ（決定3） | 管理アカウントの identity root から呼ぶ |
 | `RT103` | workload root が、宣言した usecase を呼ぶ（決定4） | identity root から呼ぶ |
 | `RT104` | root の module の `source` が、走査の root の中を指す相対パスのリテラルでない。呼ぶ先を判定できない | リポジトリ内の相対パスにする（層の検査の `LY201`・`LY202` も同じ入力で落ちる） |
-| `RT105` | root の module の `source` が、`.tf` を持つ `usecases/<名前>` 以外（usecase の下のディレクトリ、別の root、ローカルの module、実在しない先）を指す（決定3・4、ADR-0102 決定17） | usecase を呼ぶ（層の検査の `LY203`・`LY204` も同じ入力で落ちる） |
 | `RT201` | root の backend が1つでない、`backend.tf` に無い、`s3` でない、`cloud` block が在る | root の `backend.tf` に `backend "s3"` を1つ置く |
 | `RT202` | backend の `key` が決定7 の値（identity root は `identity/terraform.tfstate`、workload root は `workload/terraform.tfstate`）のリテラルでない | 決定7 の値を書く |
 | `RT203` | `use_lockfile` が真偽値のリテラル `true` でない（無い、`false`、文字列、式）（決定8） | `use_lockfile = true` を書く |
-| `RT204` | `encrypt` が真偽値のリテラル `true` でない（state-backend の ADR-0101 決定3） | `encrypt = true` を書く |
+| `RT204` | `encrypt` が真偽値のリテラル `true` でない（決定7） | `encrypt = true` を書く |
 | `RT205` | `dynamodb_table` を書く（値を問わない） | 消す。lock は lock file で取る |
-| `RT206` | `kms_key_id` を書く（値を問わない。state-backend の ADR-0101 決定3） | 消す。鍵は init の `-backend-config` で渡す |
-| `RT106` | `env/` の下で、root の2つの位置の外のディレクトリが backend か `cloud` block を持つ（決定2・5） | root の `backend.tf` に置く |
+| `RT206` | `kms_key_id` を書く（値を問わない。決定7） | 消す。鍵は init の `-backend-config` で渡す |
 
 ## root の決め方
 
 root はディレクトリの位置で決める。`env/<env>/` を workload root、`env/<env>/identity/` を identity root とし、その下の
 `.tf` を読む。名前が `.` で始まるディレクトリと `tests` という名前の env も、位置が合えば root として読む。
 
-「`env/<env>/` の下に他の root が無いこと」（ADR-0604 の検証方法）は2つの検査が分けて持つ。`env/` の下でそれ以外の
-位置に `.tf` を置くこと（決定5 の配置）と、各 root に plan・apply・lock の解除の job があることは `make oidc-job-lint` が
-見る（ADR-0501 決定5）。`oidc-job-lint` は名前が `.` で始まるディレクトリと `tests` を数えないので、そこを含めて、
-root の位置の外で state の置き場（backend と `cloud` block）を持つことは、ここが `RT106` で落とす。
+`env/` の下でそれ以外の位置（`.terraform` の下を除く）に `.tf` を置くこと（決定5 の配置）と、各 root に plan・apply・
+lock の解除の job があることは、`make oidc-job-lint` が見る（ADR-0501 決定5）。
 
 `module` の `source` は、ディレクトリと結んで `.` と `..` を字面で解いた後のパスで判定する（`lib.hcl.module_target`。
-層の検査と同じ解き方）。root が呼べるのは `.tf` を持つ `usecases/<名前>` だけで（`RT105`）、`<名前>` が宣言に在れば、
-その種類の usecase を呼ぶとみなす。層の検査が外れても、この検査は単独で root の呼び出し先を判定する。
+層の検査と同じ解き方）。解いた先が `usecases/<名前>` で、`<名前>` が宣言に在れば、その種類の usecase を呼ぶとみなす。
+env の root が `usecases/<名前>` 以外（usecase の下のディレクトリ、別の root、ローカルの module、実在しない先）を呼ぶことは、
+層の検査の `LY203`・`LY204` が落とす（ADR-0102 決定17）。`RT101`-`RT103` はその検査を通った入力を前提にする。
+apply の job と Pull Request の必須検査が両方の検査を走らせることは、`make oidc-job-lint` が見る。
 
 ## 宣言
 

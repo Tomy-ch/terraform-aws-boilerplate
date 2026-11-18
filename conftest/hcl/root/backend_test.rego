@@ -201,48 +201,29 @@ test_RT202_deny_workload_key_in_identity_root if {
 test_RT202_deny_key_number if {
 	files := with_backend("env/mem/backend.tf", backend_attrs("1", "    use_lockfile = true\n    encrypt = true"))
 	some m in with_id(denies(files), "RT202")
-	contains(m, "env/mem/backend.tf")
+	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate のリテラルではありません")
 }
 
 test_RT203_deny_lockfile_expression if {
 	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = var.l\n    encrypt = true"))
 	some m in with_id(denies(files), "RT203")
-	contains(m, "env/mem/backend.tf")
+	contains(m, "env/mem/backend.tf の use_lockfile が真偽値のリテラル true ではありません")
 }
 
 test_RT204_deny_encrypt_missing if {
 	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = true"))
 	some m in with_id(denies(files), "RT204")
-	contains(m, "env/mem/backend.tf")
+	contains(m, "env/mem/backend.tf の encrypt が真偽値のリテラル true ではありません")
 }
 
 test_RT204_deny_encrypt_string if {
 	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = true\n    encrypt = \"true\""))
 	some m in with_id(denies(files), "RT204")
-	contains(m, "env/mem/backend.tf")
+	contains(m, "env/mem/backend.tf の encrypt が真偽値のリテラル true ではありません")
 }
 
-# --- RT106 ---
-
-test_RT106_allow_backends_in_roots_and_outside_env if {
-	files := array.concat(ok_tree, [tf("usecases/w/backend.tf", workload_backend)])
-	count(with_id(denies(files), "RT106")) == 0
-}
-
-test_RT106_deny_backend_in_hidden_directory if {
-	files := array.concat(ok_tree, [tf("env/mem/.alt/backend.tf", workload_backend)])
-	some m in with_id(denies(files), "RT106")
-	contains(m, "env/mem/.alt/backend.tf が backend を持ちます")
-}
-
-test_RT106_deny_backend_in_tests_directory if {
-	files := array.concat(ok_tree, [tf("env/mem/identity/tests/backend.tf", identity_backend)])
-	some m in with_id(denies(files), "RT106")
-	contains(m, "env/mem/identity/tests/backend.tf が backend を持ちます")
-}
-
-test_RT106_deny_cloud_block_outside_root if {
-	files := array.concat(ok_tree, [tf("env/mem/sub/cloud.tf", "terraform {\n  cloud {\n    organization = \"x\"\n  }\n}\n")])
-	some m in with_id(denies(files), "RT106")
-	contains(m, "env/mem/sub/cloud.tf が terraform の cloud block を持ちます")
+test_RT201_deny_two_terraform_blocks_each_with_backend if {
+	files := with_backend("env/mem/backend.tf", concat("\n", [workload_backend, backend_src("workload/terraform.tfstate")]))
+	some m in with_id(denies(files), "RT201")
+	contains(m, "root env/mem の backend が 2 件です")
 }

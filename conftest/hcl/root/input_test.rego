@@ -229,6 +229,7 @@ test_RT002_allow_reads_every_module_and_backend if {
 	count(module_calls) == 4 with input as ok_tree
 	count(backends) == 3 with input as ok_tree
 	count(roots) == 3 with input as ok_tree
+	count(cloud_blocks) == 1 with input as array.concat(ok_tree, [tf("env/mem/cloud.tf", "terraform {\n  cloud {\n    organization = \"x\"\n  }\n}\n")])
 }
 
 test_RT002_deny_root_files_not_array if {

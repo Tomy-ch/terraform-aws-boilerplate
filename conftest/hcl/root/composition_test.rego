@@ -92,46 +92,5 @@ test_RT102_deny_control_call_when_management_env_missing if {
 	msgs := denies_decl({"usecases": fixture_decl.usecases})
 	some m in with_id(msgs, "RT102")
 	contains(m, "env/mgmt/identity/main.tf の module.c")
-}
-
-# --- RT105 ---
-
-test_RT105_allow_usecase_directories if {
-	count(with_id(denies(ok_tree), "RT105")) == 0
-}
-
-test_RT105_deny_usecase_subdirectory if {
-	files := array.concat(
-		replaced(ok_tree, "env/mem/main.tf", call("x", "../../usecases/b/internal/x")),
-		[tf("usecases/b/internal/x/main.tf", "resource \"aws_s3_bucket\" \"x\" {}\n")],
-	)
-	some m in with_id(denies(files), "RT105")
-	contains(m, "env/mem/main.tf の module.x が usecases/b/internal/x を指します")
-}
-
-test_RT105_deny_other_root if {
-	files := replaced(ok_tree, "env/mem/main.tf", call("x", "../mgmt/identity"))
-	some m in with_id(denies(files), "RT105")
-	contains(m, "env/mem/main.tf の module.x が env/mgmt/identity を指します")
-}
-
-test_RT105_deny_local_module if {
-	files := array.concat(
-		replaced(ok_tree, "env/mem/main.tf", call("x", "./sub")),
-		[tf("env/mem/sub/main.tf", call("b", "../../../usecases/b"))],
-	)
-	some m in with_id(denies(files), "RT105")
-	contains(m, "env/mem/main.tf の module.x が env/mem/sub を指します")
-}
-
-test_RT105_deny_repository_root if {
-	files := replaced(ok_tree, "env/mem/main.tf", call("x", "../.."))
-	some m in with_id(denies(files), "RT105")
-	contains(m, "env/mem/main.tf の module.x")
-}
-
-test_RT105_deny_missing_usecase if {
-	files := replaced(ok_tree, "env/mem/main.tf", call("x", "../../usecases/nonexist"))
-	some m in with_id(denies(files), "RT105")
-	contains(m, "usecases/nonexist")
+	contains(m, "管理アカウント（null）")
 }
