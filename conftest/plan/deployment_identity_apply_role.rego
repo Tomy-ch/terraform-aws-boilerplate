@@ -15,7 +15,6 @@ sb := object.get(data.policy_plan, "state_backend", {})
 
 bootstrap := object.get(cfg, "bootstrap", {})
 
-# index key 付きの address（["apply"]）で宣言する。同じ resource のほかの instance と分けるため。
 default target := ""
 
 target := object.get(cfg, "policy", "")
@@ -169,7 +168,6 @@ targets contains arn if {
 	some arn in suffix_arns(r.address, r.change.after.arn)
 }
 
-# apply の role の書き込み先として宣言した子。宣言した書き込みのほかを拒む。
 write_targets[arn] := {lower(w) | some w in children[r.address].writes} if {
 	some r in resources
 	class_of(r.type) == "target"
@@ -259,7 +257,6 @@ version_deletion_denied(arn) if {
 	a in {"s3:deleteobjectversion", "*"}
 }
 
-# 鍵と Key Policy は module の path で組にし、Key Policy の key_id が組の鍵を指すことを PLAN-APPLY-02 で見る。
 account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 keys contains r if {
@@ -528,7 +525,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への %v のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [target, arn, sort(writes)])
 }
 
-# * の Deny は、宣言した書き込みも塞ぐ。宣言と実物の食い違いとして落とす。
 deny contains msg if {
 	some arn, writes in write_targets
 	some s in statements

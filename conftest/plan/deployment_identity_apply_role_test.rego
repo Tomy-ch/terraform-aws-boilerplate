@@ -180,7 +180,6 @@ test_pass_valid if {
 	count(messages(valid_statements)) == 0
 }
 
-# NotAction の名前は大文字小文字を区別しない。Action を配列で書いても * は * である。
 test_pass_case_and_array_forms if {
 	s := replace(replace(valid_statements, 3, {"Effect": "Deny", "NotAction": ["S3:ListBucket", "s3:GetBucketPolicy"], "Resource": st}), 2, {"Effect": "Deny", "Action": ["*"], "Resource": identity_keys})
 	count(messages(s)) == 0
@@ -262,7 +261,6 @@ test_violation_key_arn_unknown if {
 	fixture.has("[PLAN-APPLY-00] 鍵 module.state_backend.module.kms.aws_kms_key.this の ARN", messages_for(rcs, decl))
 }
 
-# 宣言の形が崩れると、規則は既定値を読んで要求を黙って落とす。どの崩れも PLAN-APPLY-00 で止める。
 test_violation_bootstrap_malformed if {
 	every d in [
 		with_bootstrap({"modules": []}),
@@ -366,7 +364,6 @@ test_violation_delegated_action_not_denied if {
 	fixture.has(sprintf("[PLAN-APPLY-01] p.json: %s がアカウントへ委任する [\"kms:describekey\"]", [key_policy_address]), msgs)
 }
 
-# 鍵の ARN でない Resource（別の鍵、"*"、alias）への Deny は、その鍵を守る Deny として数えない。
 test_violation_deny_not_on_key if {
 	every resource in [other_key, "*", sprintf("arn:aws:kms:ap-northeast-1:%s:alias/x", [account])] {
 		fixture.has("[PLAN-APPLY-01]", messages(replace(valid_statements, 6, {"Effect": "Deny", "Action": delegated_actions, "Resource": resource})))
@@ -385,7 +382,6 @@ test_violation_unclassified_type if {
 	fixture.has("[PLAN-APPLY-02] bootstrap の構成物 module.state_backend.module.logs.aws_cloudwatch_log_group.this の型", messages_for(rcs, decl))
 }
 
-# 子は、bootstrap の親を値で指さなければ親の ARN の Deny に守られない。
 test_violation_covered_by_points_outside if {
 	every c in [
 		["module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "other-bucket"}],
@@ -398,7 +394,6 @@ test_violation_covered_by_points_outside if {
 	}
 }
 
-# 親として宣言した型が target でも key でもなければ、Deny は親を守らない。
 test_violation_covered_by_parent_not_guarded if {
 	d := with_type("aws_s3_bucket_versioning", cov("aws_iam_role_policy", "bucket", "role"))
 	rcs := with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "ci-apply"})
@@ -437,7 +432,6 @@ test_violation_not_resource if {
 	fixture.has(denied_03(po), messages(s))
 }
 
-# Resource は文字列の完全一致で見る。pattern は評価しない。
 test_violation_resource_pattern if {
 	fixture.has(denied_03(po), messages(replace(valid_statements, 5, full_deny(["arn:aws:s3:::p*"]))))
 }
@@ -448,7 +442,6 @@ test_violation_not_action_names_non_read if {
 	}
 }
 
-# Action と NotAction を両方持つ文は IAM が受け付けない。どちらの形としても数えない。
 test_violation_action_and_not_action if {
 	every s in [
 		{"Effect": "Deny", "Action": "*", "NotAction": ["s3:ListBucket"], "Resource": st},
@@ -483,7 +476,6 @@ test_violation_new_role_uncovered if {
 	fixture.has(denied_03(role_arn("ci-extra")), messages_for(rcs, decl))
 }
 
-# 別の instance（plan の role）の Deny は、apply の role の Deny として数えない。
 test_violation_other_instance_deny if {
 	rcs := array.concat(without(world(remove(valid_statements, 5)), sprintf("%saws_iam_role_policy.this[\"plan\"]", [g])), [role_policy("plan", "ci-plan", valid_statements)])
 	fixture.has(denied_03(po), messages_for(rcs, decl))
@@ -515,7 +507,6 @@ test_violation_managed_policy_attachment if {
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
-# role の引数と aws_iam_policy_attachment は、上の型を通らずに policy を付ける。
 test_violation_role_arguments_attach_policy if {
 	every v in [
 		{"inline_policy": [{"name": "x", "policy": "{}"}], "managed_policy_arns": []},
@@ -606,7 +597,6 @@ test_violation_two_keys_one_key_policy if {
 
 # --- 黙る分岐 ---
 
-# identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。
 test_violation_state_bucket_children_weakened if {
 	every c in [
 		{"suffixes": ["/workload/terraform.tfstate"], "version_deletion": true},
@@ -647,7 +637,6 @@ test_violation_identity_state_conditional_deny if {
 	}
 }
 
-# 子が指す値は、宣言した親の型の、宣言した属性の値でなければならない（別の型の id や ARN では足りない）。
 test_violation_covered_by_points_to_other_type if {
 	every v in [{"bucket": "key-id"}, {"bucket": st}] {
 		fixture.has("[PLAN-APPLY-02] module.state_backend.module.s3.aws_s3_bucket_versioning.this の", messages_for(with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", v), decl))
@@ -681,7 +670,6 @@ test_pass_policy_attachment_other_role if {
 	count(messages_for(array.concat(world(valid_statements), [extra]), decl)) == 0
 }
 
-# inline_policy は block の一部だけが決まらないとき、入れ子の要素に true を持つ。
 test_violation_role_inline_policy_nested_unknown if {
 	unknown := json.patch([r | some r in world(valid_statements); r.address == apply_role_address][0], [{"op": "add", "path": "/change/after_unknown/inline_policy", "value": [{"name": false, "policy": true}]}])
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の inline_policy", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
@@ -727,7 +715,6 @@ test_violation_writes_action_list if {
 	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "Action": ["s3:GetObject", "s3:DeleteObject"], "Resource": ao_objects})))
 }
 
-# Bucket の ARN そのものは writes の対象ではなく、これまでの規則（* か読み取りだけを除く NotAction）で見る。
 test_violation_apply_output_bucket_uncovered if {
 	fixture.has(denied_03(ao), messages(remove(valid_statements, 7)))
 }

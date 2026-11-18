@@ -121,7 +121,6 @@ s3() { aws s3api "$1" --bucket "$2" --expected-bucket-owner "$ACCOUNT_ID" "${@:3
 
 state_key_arn() { aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS" --query KeyMetadata.Arn --output text; }
 
-# 3つの Bucket の既定の暗号化が、state の鍵の SSE-KMS で、Bucket Key を使わず、SSE-C を拒むこと。
 check_kms_encryption() {
   local key b
   key=$(state_key_arn) || key=""
