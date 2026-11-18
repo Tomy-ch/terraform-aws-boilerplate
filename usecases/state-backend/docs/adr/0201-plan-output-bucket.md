@@ -64,21 +64,21 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 
 ## 保証範囲
 
-- 保証すること: plan の出力の Bucket が、公開されず、ACL を持たず、版を残し、TLS でない要求を拒否し、state の鍵による SSE-KMS で暗号化され、Bucket Key を使わず、SSE-C を拒否し、保持日数を過ぎた版を消す設定を持つこと（いずれも宣言として。実 API での振る舞いは保証しない）
-- 保証しないこと: lifecycle が実際に日数どおりに版を消すこと（S3 は失効を非同期に行う）。切り替えの前に書かれた出力が、保持日数の2倍を過ぎるまで SSE-S3 で残ること
+- 保証すること: plan の出力の Bucket が、公開されず、ACL を持たず、版を残し、TLS でない要求を拒否し、state の鍵による SSE-KMS で暗号化され、Bucket Key を使わず、SSE-C を拒否し、保持日数を過ぎた版を消す設定を持つこと（いずれも宣言として。実 API での振る舞いは保証しない）。apply の出力の Bucket（決定7）は同じ module で作り、同じ設定を持つこと
+- 保証しないこと: lifecycle が実際に日数どおりに版を消すこと（S3 は失効を非同期に行う）。切り替えの前に書かれた出力が、保持日数の2倍を過ぎるまで SSE-S3 で残ること。apply の出力の Bucket を指す `aws_s3_bucket_policy` が宣言した1つだけであること（`plan.resource_policy_exclusive` はこの Bucket に掛けない）
 
 ## 検証方法
 
 - Unit Test: `internal/plan-output/tests/` が、名前の組み立て、入力の検査、Bucket の属性、lifecycle の規則、Bucket Policy の文書を mock の plan と apply で確かめる
-- Contract Test: `tests/contract.tftest.hcl` が公開入力 `plan_output_retention_days` と公開出力 `plan_output_bucket_name` / `plan_output_bucket_arn` を確かめる
+- Contract Test: `tests/contract.tftest.hcl` が公開入力 `plan_output_retention_days` と公開出力 `plan_output_bucket_name` / `plan_output_bucket_arn` / `apply_output_bucket_arn` を確かめる。`apply_output_bucket_arn` は apply の出力の Bucket の属性で、名前の規則から組んだ ARN と一致しなければ落ちること、その Bucket の名前・lifecycle の日数・暗号化の鍵が決定7 のとおりであることを含む
 - Unit Test: `internal/plan-output/tests/` が、暗号化の値（`aws:kms`、鍵の ARN、`bucket_key_enabled = false`）と `kms_key_arn` の validation と precondition を確かめる
-- Contract Test: `tests/contract.tftest.hcl` が、この Bucket の暗号化が `state_key_arn` の鍵を名指すことを確かめる
+- Contract Test: `tests/contract.tftest.hcl` が、この Bucket と apply の出力の Bucket の暗号化が `state_key_arn` の鍵を名指すことを確かめる
 - Policy Test: `plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること）が、宣言した Bucket Policy がこの Bucket を指し、この Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであることを確かめる。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.deployment_identity_apply_identity_output` が読まない文書が実体になりうる
 - Security: `make trivy-config` が AWS-0132 を、`make checkov` が CKV_AWS_145 を報告しないこと（抑止は持たない）
 
 ## 影響
 
-`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みと `apply/*` への `s3:PutObject` を与える（deployment-identity/ADR-0201 の表）。CI の plan と apply の job は、Bucket の名前を名前の規則から `scripts/tf-local` の `bucket -kind tfplan` で組む（規則の一致は `tf-local` のテストが見る）。identity root の output `plan_output_bucket_name` は、人が確かめるときの参照である。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
+`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みと `apply/*` への `s3:PutObject` を与える（deployment-identity/ADR-0201 の表）。CI の plan と apply の job は、Bucket の名前を名前の規則から `scripts/tf-local` の `bucket -kind tfplan` で組む（規則の一致は `tf-local` のテストが見る）。identity root の output `plan_output_bucket_name` は、人が確かめるときの参照である。`apply_output_bucket_arn` を受ける deployment-identity は、apply の role に apply の出力の Bucket の object への `s3:PutObject` を、apply-identity の role に Bucket の作成と設定の書き込みを、plan の role に Bucket の設定の読み取りを与える（deployment-identity/ADR-0201 決定12 と表）。workload root の apply の job は、apply の出力の Bucket の名前を `scripts/tf-local` の `bucket -kind tfapply` で組む。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
 
 ## 見直し条件
 

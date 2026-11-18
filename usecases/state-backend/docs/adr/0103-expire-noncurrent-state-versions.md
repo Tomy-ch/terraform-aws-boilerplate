@@ -69,7 +69,7 @@ state の key の配置（repository-wide/ADR-0604 (state-split-by-apply-role)�
 
 ## 影響
 
-保持日数を短くする変更は、同じ変更に短縮の許可の宣言を含めたときだけ、merge と CI の apply（apply-identity の role）を経て、日数を過ぎた版を消す。plan の出力の Bucket の lifecycle も同じ型なので、`plan_output_retention_days` を短くする変更にも許可が要る。apply の role は state Bucket の設定を変えられない（repository-wide/ADR-0604 決定10）。lifecycle による失効は S3 が行い、Bucket Policy の object への Deny では止まらない。lifecycle を変えられる主体を限ることで統制する。
+保持日数を短くする変更は、同じ変更に短縮の許可の宣言を含めたときだけ、merge と CI の apply（apply-identity の role）を経て、日数を過ぎた版を消す。2つの出力の Bucket の lifecycle も同じ型なので、`plan_output_retention_days` を短くする変更にも許可が要る。apply の role は state Bucket の設定を変えられない（repository-wide/ADR-0604 決定10）。lifecycle による失効は S3 が行い、Bucket Policy の object への Deny では止まらない。lifecycle を変えられる主体を限ることで統制する。
 
 ## 見直し条件
 
