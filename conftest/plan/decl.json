@@ -201,6 +201,11 @@
         "unlock_role"
       ]
     },
+    "finops": {
+      "budget": "aws_budgets_budget",
+      "budget_action": "aws_budgets_budget_action",
+      "anomaly_subscription": "aws_ce_anomaly_subscription"
+    },
     "stateful_protection": {
       "protected_types": [
         "aws_s3_bucket",
