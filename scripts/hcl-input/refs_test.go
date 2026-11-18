@@ -185,6 +185,11 @@ func Test_walkExpr(t *testing.T) {
 				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
 			},
+			"テンプレートのリテラルの [ は添字にならない": {
+				src: `"${aws_s3_bucket.this.id}-x[${module.x.id}]"`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+			},
 			"祖先2段の入れ子の添字": {
 				src: `aws_s3_bucket.this[module.m.list[var.i]]`,
 				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
@@ -254,6 +259,32 @@ func Test_walkExpr(t *testing.T) {
 			"括弧つきの1語":        {src: `{ (local.k) = 1 }`, want: `[{"root":"local","steps":[{"kind":"attr","name":"k"}],"within":[]}]`},
 			"括弧の無い複数段":       {src: `{ b.c = 2 }`, want: `[{"root":"b","steps":[{"kind":"attr","name":"c"}],"within":[]}]`},
 			"文字列のキー":         {src: `{ "s" = var.v }`, want: `[{"root":"var","steps":[{"kind":"attr","name":"v"}],"within":[]}]`},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.JSONEq(t, tt.want, refsJSON(t, tt.src))
+			})
+		}
+	})
+
+	t.Run("入れ子の式の中の参照を出す", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			src  string
+			want string
+		}{
+			"深い入れ子のオブジェクト": {
+				src: `"${aws_s3_bucket.this.id}${ {a = {b = {c = {d = module.x.id}}}} }"`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+			},
+			"テンプレートの中のテンプレート": {
+				src: `"${aws_s3_bucket.this.id}${"${module.x.id}"}"`,
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]},
+					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"id"}],"within":[]}]`,
+			},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
