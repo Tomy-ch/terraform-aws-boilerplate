@@ -3411,16 +3411,27 @@ func Test_checkRootCoverage(t *testing.T) {
 		assert.Empty(t, messages(findings))
 	})
 
+	t.Run("workload root の下の .terraform も root として数えない", func(t *testing.T) {
+		t.Parallel()
+		root := rootsWith(t, "admin/identity", "admin/.terraform")
+		n, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, messages(findings))
+	})
+
 	for name, dir := range map[string]string{
 		"tests の下の *.tf は配置の外の root":     "admin/identity/tests",
 		". で始まるディレクトリの *.tf は配置の外の root": "admin/.alt",
+		".terraform で始まるだけの名前は除外しない":     "admin/.terraformx",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			root := rootsWith(t, "admin/identity", dir)
-			_, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
+			n, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
 			require.NoError(t, err)
-			assert.Contains(t, messages(findings), "root "+dir+" が ADR-0604 決定5 の配置（<env>/ と <env>/identity/）の外にあります")
+			assert.Equal(t, 1, n)
+			assert.Equal(t, "root "+dir+" が ADR-0604 決定5 の配置（<env>/ と <env>/identity/）の外にあります\n", messages(findings))
 		})
 	}
 
