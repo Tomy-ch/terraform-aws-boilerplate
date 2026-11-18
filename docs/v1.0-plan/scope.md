@@ -289,7 +289,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。
 
-基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
+基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。**`image-registry`も除く** —— 基盤系アラームの対象となるmetricを持たず、スキャンの所見はInspectorとSecurity Hubの経路（`account-baseline`）が持つためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
 
 ### 7.1 接続シナリオ
 
