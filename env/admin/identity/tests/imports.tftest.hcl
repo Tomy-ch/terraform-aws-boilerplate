@@ -77,3 +77,18 @@ run "admin_state_key_alias_name" {
     error_message = "管理アカウントの state の鍵の alias が alias/tabp-admin-tfstate になっていません。"
   }
 }
+
+# organization-baseline の break_glass_arns と同じ規則（path /break-glass/ と名前）で組んだ ARN が、apply の role の Deny に渡る。
+run "admin_break_glass_arns" {
+  command = plan
+
+  assert {
+    condition = local.break_glass_arns == [
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
+      "arn:aws:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
+    ]
+    error_message = "管理アカウントの break-glass の ARN が、path と名前から組んだ値になっていません。"
+  }
+}

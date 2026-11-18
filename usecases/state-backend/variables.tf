@@ -10,12 +10,12 @@ variable "project" {
 }
 
 variable "env" {
-  description = "state Bucket を置くアカウントの env の token。管理アカウントは `admin`。"
+  description = "state Bucket を置くアカウントの env の token。管理アカウントは `admin`、統制のメンバーアカウントは `security` と `log-archive`。"
   type        = string
 
   validation {
-    condition     = contains(["dev", "stg", "prd", "sandbox", "admin"], var.env)
-    error_message = "env は dev / stg / prd / sandbox / admin のいずれかにしてください。"
+    condition     = contains(["dev", "stg", "prd", "sandbox", "admin", "security", "log-archive"], var.env)
+    error_message = "env は dev / stg / prd / sandbox / admin / security / log-archive のいずれかにしてください。"
   }
 }
 

@@ -50,6 +50,34 @@ run "project_at_limit_with_sandbox" {
   }
 }
 
+run "project_at_limit_with_log_archive" {
+  command = plan
+
+  variables {
+    project = "abcdefghijkl"
+    env     = "log-archive"
+  }
+
+  assert {
+    condition     = length(output.bucket_name) == 63
+    error_message = "project が12文字で env が log-archive のとき、plan が通っていません。"
+  }
+}
+
+run "env_security" {
+  command = plan
+
+  variables {
+    project = "tabp"
+    env     = "security"
+  }
+
+  assert {
+    condition     = startswith(output.bucket_name, "tabp-security-tfstate-")
+    error_message = "env が security の Bucket 名になっていません。"
+  }
+}
+
 run "env_dev" {
   command = plan
 

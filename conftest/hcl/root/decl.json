@@ -1,0 +1,9 @@
+{
+  "root_decl": {
+    "management_env": "admin",
+    "usecases": {
+      "deployment-identity": "bootstrap",
+      "state-backend": "bootstrap"
+    }
+  }
+}

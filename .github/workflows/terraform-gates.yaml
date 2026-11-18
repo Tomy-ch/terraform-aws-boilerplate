@@ -223,6 +223,12 @@ jobs:
       - name: Check the layer rules
         run: make layer-check RUNNER_MODE=host
 
+      - name: Run the root check's own tests
+        run: make root-check-test RUNNER_MODE=host
+
+      - name: Check the root composition and backend settings
+        run: make root-check RUNNER_MODE=host
+
   tf-validate-test:
     needs: changes
     # Fail open — README.md の「必須検査はすべての Pull Request で報告される」.

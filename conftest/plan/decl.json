@@ -3,7 +3,13 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
-      "kms:ListAliases"
+      "iam:GetAccountPasswordPolicy",
+      "iam:ListOrganizationsFeatures",
+      "kms:ListAliases",
+      "organizations:DescribeOrganization",
+      "organizations:ListAWSServiceAccessForOrganization",
+      "organizations:ListAccounts",
+      "organizations:ListRoots"
     ],
     "documents": {
       "aws_iam_role": [
@@ -47,6 +53,51 @@
       "apply_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"apply\"]",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]",
+        "governance": {
+          "actions": [
+            "organizations:Accept*",
+            "organizations:Attach*",
+            "organizations:Cancel*",
+            "organizations:Close*",
+            "organizations:Create*",
+            "organizations:Decline*",
+            "organizations:Delete*",
+            "organizations:Deregister*",
+            "organizations:Detach*",
+            "organizations:Disable*",
+            "organizations:Enable*",
+            "organizations:Invite*",
+            "organizations:Leave*",
+            "organizations:Move*",
+            "organizations:Put*",
+            "organizations:Register*",
+            "organizations:Remove*",
+            "organizations:Tag*",
+            "organizations:Terminate*",
+            "organizations:Untag*",
+            "organizations:Update*",
+            "account:CloseAccount",
+            "iam:DeleteAccountPasswordPolicy",
+            "iam:DisableOrganizationsRoot*",
+            "iam:EnableOrganizationsRoot*",
+            "iam:UpdateAccountPasswordPolicy",
+            "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
+            "sso:AttachManagedPolicyToPermissionSet",
+            "sso:CreateAccountAssignment",
+            "sso:CreatePermissionSet",
+            "sso:DeleteAccountAssignment",
+            "sso:DeleteInlinePolicyFromPermissionSet",
+            "sso:DeletePermissionSet",
+            "sso:DeletePermissionsBoundaryFromPermissionSet",
+            "sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
+            "sso:DetachManagedPolicyFromPermissionSet",
+            "sso:ProvisionPermissionSet",
+            "sso:PutInlinePolicyToPermissionSet",
+            "sso:PutPermissionsBoundaryToPermissionSet",
+            "sso:UpdatePermissionSet",
+            "sts:AssumeRoot"
+          ]
+        },
         "bootstrap": {
           "modules": [
             "module.state_backend.",
