@@ -403,7 +403,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **analytics:** AWSネイティブのログ（ALB、CloudFront、S3アクセスログ、VPC Flow Logs）の集計に限定する。アプリログの分析は送り先backend（obp）の責務とする。CloudWatch LogsをAthenaから直接引くconnectorは、実体がLambdaのため採用しない。LokiはS3に独自形式で保存するため、analyticsとobpで保存先は共有しない。
 
-**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、5つのアカウントすべてでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
+**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
 **outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**awslogsドライバをモードに関係なく残す場合に限り、stdoutログのmetric filterが3モード共通で成立する**。ログ文言への依存になり、ログをOTLP側へ寄せると成立しない。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
