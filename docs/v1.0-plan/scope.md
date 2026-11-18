@@ -89,7 +89,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 ### 3.1 usecaseは合成層である
 
-**確定:** usecaseディレクトリ直下の `*.tf` に `resource` と `provider` を1つも置かない（ADR-0102 決定14）。usecaseは子moduleなので、root moduleにしか置けない `import` も置かない。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（同 決定18）。
+**確定:** usecaseディレクトリ直下の `*.tf` に `resource` と `provider` と、root moduleにしか置けないblockを置かない（ADR-0102 決定14）。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（同 決定18）。
 
 | 配線したいもの | 表し方 |
 |---|---|
@@ -100,8 +100,8 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | 出力用のSSM Parameter | 契約を書き出すmodule |
 | resource-level policy（S3/SQS/SNS/KMS） | 親resourceを所有するmoduleが1文書だけ生成する。不変条件は無条件に出し、用途別の許可はgrantee種別をキーにした型付き入力で受ける |
 
-- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下の `*.tf` に `resource` と `provider` が無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
-- moduleは1つの機構をまとめる。一般module（`modules/`）は、どのusecaseでも同じ形で成立する機構だけを持ち、usecaseごとの差異を入力の切り替えで抱えない。一般moduleで表せない機構は、それを使うusecaseの`internal/`に置く。attachment型を親と同じmoduleに置く制約（検査(3)）により、一般moduleのresourceに固有のattachmentが要るなら、親のresourceごと`internal/`に置く（ADR-0102 決定15-16、ADR-0205 決定12）。
+- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。何を検査するかは ADR-0102 の検証方法が持つ。
+- moduleは1つの機構をまとめる。一般module（`modules/`）は、どのusecaseでも同じ形で成立する機構だけを持ち、usecaseごとの差異を入力の切り替えで抱えない。一般moduleで表せない機構は、それを使うusecaseの`internal/`に置く。attachment型を親と同じmoduleに置く制約（ADR-0102 決定18）により、一般moduleのresourceに固有のattachmentが要るなら、親のresourceごと`internal/`に置く（ADR-0102 決定15-16、ADR-0205 決定12）。
 - IAM Policyはセキュリティに直結するため、`"*"`のaction・resourceの禁止などの最小権限検査をpolicy testで別途担保する。
 - 入力を持たず引数を公式推奨に固定した1-resourceのmoduleは、薄いラップに当たらない。ADR-0101 決定9 が警戒するのはProviderの引数と`variable`の1:1対応であって、resourceの数ではない。
 - usecaseをまたぐgranteeをConditionで限定するときは、同一のenv rootの中でusecaseの出力を参照できる場合に限り、その参照による依存順序の解決を試みる。rootをまたぐ受け渡しはremote stateまたはSSM Parameterであり、resource参照にはならない。受け側のpolicyが送り側のARNを要し、送り側が受け側のARNを要して循環する場合に限り、名前規約から導いたprefixベースのARN patternをConditionに用い、根拠を当該usecaseのADRへ記録する（ADR-0301 決定11）。送り側を先にapplyする2段の手順を規約にしない。

@@ -145,10 +145,74 @@ jobs:
       - name: Check the resource order
         run: make resource-order-check RUNNER_MODE=host
 
+  # terraform-gates.yaml の tf-lint が Pull Request で走らせる層の検査を、apply する木にも掛ける。
+  # 規則は README.md の「apply の job」.
+  apply-layer-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: infra-code-gate and tf-local are built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the layer check's own tests
+        run: make layer-check-test RUNNER_MODE=host
+
+      - name: Check the layer rules
+        run: make layer-check RUNNER_MODE=host
+
   # 管理アカウントの identity root の apply。規則は README.md の「apply の job」.
   apply-admin-identity:
-    needs: [apply-infra-code-gate, apply-resource-order-check]
-    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' }}
+    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]
+    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: admin-apply-identity
@@ -368,11 +432,11 @@ jobs:
 
   # 理由は README.md の「通知の起動条件」。
   notify-failure:
-    needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]
-    if: ${{ always() && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-resource-order-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result)) }}
+    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-admin-identity]
+    if: ${{ always() && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-resource-order-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-layer-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result)) }}
     uses: ./.github/workflows/notify.yaml
     with:
-      failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || 'apply-resource-order-check') }}
+      failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || (needs.apply-resource-order-check.result != 'success' && 'apply-resource-order-check' || 'apply-layer-check')) }}
     secrets:
       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
 
