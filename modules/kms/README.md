@@ -37,6 +37,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `AccountKeyAdministration` | アカウント（`arn:<partition>:iam::<account>:root`） | 鍵の管理の21 Action（`policy.tf` の `administration_actions`）。暗号操作と `kms:CreateGrant` を含まない | 無し |
 | `RolesViaS3ReadWrite` | `users.roles` のうち `via = "s3"`・`access = "read-write"` の role | `kms:Decrypt`・`kms:GenerateDataKey` | `kms:ViaService = s3.<region>.amazonaws.com` |
 | `RolesViaS3Read<n>` | `users.roles` のうち `via = "s3"`・`access = "read"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt` | `kms:ViaService = s3.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:s3:arn` にその role の `objects` |
+| `RolesViaEcr` | `users.roles` のうち `via = "ecr"`（`access = "grant"`）の role | `kms:CreateGrant`・`kms:DescribeKey`・`kms:RetireGrant` | `kms:ViaService = ecr.<region>.amazonaws.com` |
 | `LogsService` | `logs.<region>.amazonaws.com` | `kms:Decrypt`・`kms:Describe*`・`kms:Encrypt`・`kms:GenerateDataKey*`・`kms:ReEncrypt*` | `ArnEquals kms:EncryptionContext:aws:logs:arn` に `users.services.logs` の Log Group の ARN（`:*` を付けない） |
 
 `via` の語彙と、それぞれが許す Action:
@@ -44,6 +45,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `via` | Action | 根拠 |
 | --- | --- | --- |
 | `s3` | `kms:GenerateDataKey`（書き込み）・`kms:Decrypt`（読み出し。multipart の書き込みも要る） | Amazon S3 User Guide「Using server-side encryption with AWS KMS keys」。Terraform の S3 backend の文書は `kms:Encrypt` も挙げるが、S3 の文書を採る（ADR-0207 決定3） |
+| `ecr` | `kms:CreateGrant`・`kms:DescribeKey`（repository の作成）・`kms:RetireGrant`（repository の削除）。`access` は `grant` だけを受ける。push と pull の暗号操作は ECR が作る grant が持つ | Amazon ECR User Guide「Encryption at rest」 |
 
 `kms:ViaService` は IAM の主体が AWS のサービスを経由して呼ぶ要求にだけ当たる条件で、role はこの鍵を直接は使えない。`access = "read"` の文は、S3 が渡す暗号化コンテキスト `aws:s3:arn` で object を限る。Bucket Key を使う Bucket ではコンテキストが Bucket の ARN になるので、object では限れない（Amazon S3 User Guide「SSE-KMS」）。CloudWatch Logs の文はサービス principal に対する許可で、暗号化コンテキストで Log Group を名指して限る。
 
@@ -51,7 +53,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## まだ持たないもの
 
-持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）と `users.services.logs`（CloudWatch Logs）である。`users.services.logs` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
+持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）と `via = "ecr"`（`image-registry` の repository の鍵）と `users.services.logs`（CloudWatch Logs）である。`users.services.logs` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
 
 | 足すもの | 足す消費者 |
 | --- | --- |
@@ -76,6 +78,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
   - Key Policy の読み戻しが宣言と一致し、差分が出続けないこと（要素1つの Principal の正規化、role の作り直しで principal が一意 ID に置き換わること）
   - 作成直後の role を Principal に置く `PutKeyPolicy` が、IAM の結果整合で落ちないこと
   - `via = "s3"` の2つの Action で、S3 backend が state と lock file を読み書きできること
+  - `via = "ecr"` の3つの Action で、ECR が repository の作成で grant を作り、削除で廃止できること（`image-registry` の Integration）
   - 鍵を管理する role が、Provider が鍵・Key Policy・alias の作成・読み取りで呼ぶ API を、委任の21 Action と IAM で持てること。削除で呼ぶ API は、最初の消費者の管理 role が持たないので（deployment-identity/ADR-0201 の「与えないもの」）、その経路では確かめない
 - `aws` 以外の partition でのサービス principal と `kms:ViaService` の値は確かめていない
 - Security の4つの道具のうち KICS の3件（鍵の inline の policy、IAM Access Analyzer、tag）は抑止している。理由と撤回条件は `main.tf` と `policy.tf` の先頭が持つ

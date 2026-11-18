@@ -14,7 +14,7 @@ variable "name" {
 }
 
 variable "users" {
-  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。services.logs は CloudWatch Logs の Log Group の名前。合わせて1件以上。"
+  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（via が s3 のとき、access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ。via が ecr のとき、access は grant で、ECR が repository の暗号化に使う grant の作成と廃止だけ）。services.logs は CloudWatch Logs の Log Group の名前。合わせて1件以上。"
   type = object({
     roles = optional(list(object({
       arn     = string
@@ -40,13 +40,13 @@ variable "users" {
   }
 
   validation {
-    condition     = alltrue([for r in var.users.roles : contains(["s3"], r.via)])
-    error_message = "users.roles[*].via は s3 にしてください。"
+    condition     = alltrue([for r in var.users.roles : contains(["s3", "ecr"], r.via)])
+    error_message = "users.roles[*].via は s3 か ecr にしてください。"
   }
 
   validation {
-    condition     = alltrue([for r in var.users.roles : contains(["read", "read-write"], r.access)])
-    error_message = "users.roles[*].access は read か read-write にしてください。"
+    condition     = alltrue([for r in var.users.roles : contains(r.via == "ecr" ? ["grant"] : ["read", "read-write"], r.access)])
+    error_message = "users.roles[*].access は、via が s3 のとき read か read-write、ecr のとき grant にしてください。"
   }
 
   # read の文は objects の暗号化コンテキストで限る。限る object の無い read は、read-write と同じ範囲の復号になる。

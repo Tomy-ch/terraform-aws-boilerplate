@@ -246,3 +246,28 @@ run "read_role_only" {
     error_message = "read の role だけを渡したときの Key Policy が、管理の委任と read の1文になっていません。"
   }
 }
+
+run "roles_via_ecr" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-dev-ci-apply", via = "ecr", access = "grant" }]
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [var.administration, {
+        Sid       = "RolesViaEcr"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-dev-ci-apply"] }
+        Action    = ["kms:CreateGrant", "kms:DescribeKey", "kms:RetireGrant"]
+        Resource  = "*"
+        Condition = { StringEquals = { "kms:ViaService" = "ecr.ap-northeast-1.amazonaws.com" } }
+      }]
+    }
+    error_message = "via = ecr の role の Key Policy が、管理の委任と、ECR 経由の grant の作成・廃止の2文になっていません。"
+  }
+}

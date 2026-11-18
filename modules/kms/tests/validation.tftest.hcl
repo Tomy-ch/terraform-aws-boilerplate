@@ -443,3 +443,27 @@ run "users_rejects_object_in_other_partition" {
 
   expect_failures = [aws_kms_key_policy.this]
 }
+
+run "users_rejects_grant_via_s3" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "grant" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_write_via_ecr" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "ecr", access = "read-write" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}

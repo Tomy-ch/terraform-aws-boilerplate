@@ -34,6 +34,7 @@ locals {
   s3_roles = sort([for r in var.users.roles : r.arn if r.via == "s3" && r.access == "read-write"])
   # read の role は文を分けて、暗号化コンテキストの object を role ごとに限る。
   s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
+  ecr_roles  = sort([for r in var.users.roles : r.arn if r.via == "ecr"])
   log_groups = sort(distinct(var.users.services.logs))
 
   statements = concat(
@@ -63,6 +64,16 @@ locals {
         "kms:ViaService"                   = "s3.${local.region}.amazonaws.com"
         "kms:EncryptionContext:aws:s3:arn" = local.s3_readers[arn]
       } }
+    }],
+    # ECR は repository の作成者の権限で grant を作り、削除で廃止する（Amazon ECR User Guide「Encryption at rest」）。
+    # 管理の委任は CreateGrant を含まないので、作成者の role を名指す。
+    length(local.ecr_roles) == 0 ? [] : [{
+      Sid       = "RolesViaEcr"
+      Effect    = "Allow"
+      Principal = { AWS = local.ecr_roles }
+      Action    = ["kms:CreateGrant", "kms:DescribeKey", "kms:RetireGrant"]
+      Resource  = "*"
+      Condition = { StringEquals = { "kms:ViaService" = "ecr.${local.region}.amazonaws.com" } }
     }],
     length(local.log_groups) == 0 ? [] : [{
       Sid       = "LogsService"
