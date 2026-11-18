@@ -275,16 +275,16 @@ install 先を確かめても、鍵を直接使う主体には効かない。
   検査した木と違うこと（決定31。required check は base の更新を要求しない）。Pull Request が検査の job の
   定義を書き換えること（決定31。検査のコードと宣言は base の commit のものだが、job の定義は Pull Request
   の側のものである）。`env:` へ移した ref の値や、シェルの中の変数を、宣言の外の文字列と比べること。
-  説明の文書と例示がブランチの名前を持つこと
+  規範と説明の文書がブランチの名前を持つこと（決定2 の4つ目の読み手は検査しない）
 
 ## 検証方法
 
 - Static Analysis（make repo-settings-check）: workflow と composite action の起動条件の `branches` /
   `branches-ignore` の一覧が、決定1 の宣言から生成されていること。式（`${{ }}` と `if:` の値）が、ブランチの
-  名前か ref を値に持つ context（`github.ref`、`github.ref_name`、`github.base_ref`、`github.head_ref`、
-  `github.event.ref`、`github.event.pull_request.base.ref`、`github.event.pull_request.head.ref`、
-  `github.event.workflow_run.head_branch`）を、宣言から生成していない文字列と比べていないこと
-- Unit Test: 宣言を実行時に読むツールが、宣言のブランチの名前を変えた入力に追随すること
+  名前か ref を値に持つ context（閉じた一覧は make repo-settings-check の検査が持つ）を、宣言から生成して
+  いない文字列と比べていないこと
+- Unit Test: 宣言を実行時に読むツール（base-branch / release / repo-setup）が、宣言のブランチの名前を
+  変えた入力に追随すること
 - 突合の検査: 宣言と実態の差分が存在しないこと（決定4）
 - 整合の検査: requiredとされた全 context に、それを報告するjobが存在すること（決定19）
 - 整合の検査: 該当workflowの `pull_request` トリガーにフィルタが存在しないこと（決定16・19）
