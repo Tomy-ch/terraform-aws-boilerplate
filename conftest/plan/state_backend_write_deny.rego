@@ -72,6 +72,15 @@ deny contains msg if {
 	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles が配列ではありません"
 }
 
+# lock file の復号を Key Policy が許さなければ、lock を外す role は lock file を読めない。
+deny contains msg if {
+	some root in object.get(cfg, "roots", [])
+	well_formed_root(root)
+	is_array(object.get(cfg, "key_user_roles", []))
+	not root.unlocker in object.get(cfg, "key_user_roles", [])
+	msg := sprintf("[PLAN-SBW-00] root の lock を外す role %s が data.policy_plan.state_backend.key_user_roles にありません", [root.unlocker])
+}
+
 deny contains msg if {
 	not distinct_writers
 	msg := sprintf("[PLAN-SBW-00] root の writer と lock を外す role（data.policy_plan.state_backend.roots の writer・unlocker）に同じ role %v が重なっています", [writer_names])

@@ -131,6 +131,15 @@ counted_documents(p) := {d |
 	is_object(d.change.after)
 }
 
+# 文書の型の宣言（data.policy_plan.documents）から外れると、文書が1つも読まれず数えずに通る。
+deny contains msg if {
+	some p in pairs
+	count(p.statements) > 0
+	in_input(p.policy)
+	count({d | some d in lib.documents; d.address == p.policy}) == 0
+	msg := sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません（data.policy_plan.documents の %s）", [p.policy, p.type])
+}
+
 # Statement の無い文書は 0 件と数える。
 document_statements(d) := lib.as_array(object.get(lib.parsed(d), "Statement", [])) if is_object(lib.parsed(d))
 

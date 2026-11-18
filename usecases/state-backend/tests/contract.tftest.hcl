@@ -568,3 +568,109 @@ run "ci_role_arns_unlock_user" {
 
   expect_failures = [var.ci_role_arns]
 }
+
+# Key Policy の割当は state-backend/ADR-0201 決定9。state Bucket の ARN が plan で決まらないと文書も決まらない。
+run "key_policy_apply_and_unlock" {
+  command = plan
+
+  override_resource {
+    target          = module.s3.aws_s3_bucket.this
+    override_during = plan
+    values          = { arn = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an" }
+  }
+
+  assert {
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if s.Sid == "RolesViaS3ReadWrite"] == [{
+      Sid    = "RolesViaS3ReadWrite"
+      Effect = "Allow"
+      Principal = { AWS = [
+        "arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
+        "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity",
+        "arn:aws:iam::123456789012:role/tabp-admin-ci-plan",
+      ] }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+      Resource  = "*"
+      Condition = { StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" } }
+    }]
+    error_message = "Key Policy の read-write の文が、plan と apply_identity と apply の role に S3 経由の暗号化と復号を許していません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if try(s.Principal.AWS, null) == ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"]] == [{
+      Sid       = "RolesViaS3Read0"
+      Effect    = "Allow"
+      Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"] }
+      Action    = "kms:Decrypt"
+      Resource  = "*"
+      Condition = { StringEquals = {
+        "kms:ViaService"                   = "s3.ap-northeast-1.amazonaws.com"
+        "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock"]
+      } }
+    }]
+    error_message = "Key Policy が unlock の role に、workload root の lock file の object に限った復号だけを許していません。"
+  }
+}
+
+run "ci_role_arns_unlock_empty" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+      unlock          = ""
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_unlock_wildcard" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+      unlock          = "arn:aws:iam::123456789012:role/tabp-admin-ci-*"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_unlock_no_name" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+      unlock          = "arn:aws:iam::123456789012:role/"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}
+
+run "ci_role_arns_same_role_plan_unlock_workload" {
+  command = plan
+
+  variables {
+    ci_role_arns = {
+      plan            = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+      apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
+      apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
+      unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+      unlock          = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+    }
+  }
+
+  expect_failures = [var.ci_role_arns]
+}

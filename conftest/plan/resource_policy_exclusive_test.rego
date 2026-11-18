@@ -140,6 +140,8 @@ test_violation_declaration_absent_or_not_a_string if {
 		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.bucket が", msgs)
 		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.deployment_identity.apply_identity_role.output_bucket_policy が", msgs)
 		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.apply_output_bucket_policy が", msgs)
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.apply_output_bucket_policy_statements が、1以上の整数ではありません", msgs)
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements が、1以上の整数ではありません", msgs)
 	}
 }
 
@@ -242,4 +244,41 @@ test_violation_statement_count_declaration if {
 		msgs := gate.deny with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan as d
 		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.state_backend.apply_output_bucket_policy_statements が、1以上の整数ではありません", msgs)
 	}
+}
+
+apply_doc(body) := rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": json.marshal(body)})
+
+apply_messages(x) := {m | some m in gate.deny with input as fixture.plan(array.concat(targets, [declared[0], declared[1], declared[2], x])); startswith(m, "[PLAN-RPE-03]")}
+
+test_violation_single_statement_object_counts_one if {
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 1 件で", [apply_bucket_policy]), apply_messages(apply_doc({"Statement": {"Sid": "S1", "Effect": "Deny", "Principal": "*", "Action": "s3:PutObject", "Resource": "*"}})))
+}
+
+test_violation_empty_statement_array if {
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 0 件で", [apply_bucket_policy]), apply_messages(apply_doc({"Statement": []})))
+}
+
+test_pass_forgotten_counted_policy if {
+	gone := {"address": apply_bucket_policy, "type": "aws_s3_bucket_policy", "change": {"actions": ["forget"], "before": {"bucket": "apply-id"}, "after": null, "after_unknown": {}}}
+	count(apply_messages(gone)) == 0
+}
+
+test_violation_output_bucket_policy_statements_invalid if {
+	every v in [null, 0, 2.5, "5"] {
+		d := json.patch(data.policy_plan, [{"op": "add", "path": "/deployment_identity/apply_identity_role/output_bucket_policy_statements", "value": v}])
+		msgs := gate.deny with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan as d
+		fixture.has("[PLAN-RPE-00] 宣言の policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements が、1以上の整数ではありません", msgs)
+	}
+}
+
+# Bucket は既に在り、policy の bucket と文書だけが決まらない。同時の作成ではないので数えられないことを落とす。
+test_violation_unknown_document_and_ref_on_existing_bucket if {
+	u := {"address": apply_bucket_policy, "type": "aws_s3_bucket_policy", "change": {"actions": ["update"], "after": {}, "after_unknown": {"bucket": true, "policy": true}}}
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文書が plan で決まらないか", [apply_bucket_policy]), apply_messages(u))
+}
+
+test_violation_counted_policy_not_read_as_document if {
+	msgs := gate.deny with input as fixture.plan(array.concat(targets, declared)) with data.policy_plan.documents as {}
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [apply_bucket_policy]), msgs)
+	fixture.has(sprintf("[PLAN-RPE-03] 文の数を宣言した %s が入力に在るのに、policy の文書として読まれていません", [output_bucket_policy]), msgs)
 }

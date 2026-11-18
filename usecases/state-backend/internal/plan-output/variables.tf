@@ -55,7 +55,7 @@ variable "writers" {
   }
 
   validation {
-    condition     = alltrue([for w in var.writers : can(regex("^([^/*?]+/)*$", w.key_prefix))])
-    error_message = "writers の key_prefix は空か、/ で終わる接頭辞にしてください。/ で始めず、ワイルドカード（* と ?）を含めないでください。"
+    condition     = alltrue([for w in var.writers : can(regex("^([^/*?\\$\\{\\}]+/)*$", w.key_prefix))])
+    error_message = "writers の key_prefix は空か、/ で終わる接頭辞にしてください。/ で始めず、ワイルドカード（* と ?）と IAM の policy 変数の文字（$ と { と }）を含めず、空の区切り（//）を作らないでください。"
   }
 }

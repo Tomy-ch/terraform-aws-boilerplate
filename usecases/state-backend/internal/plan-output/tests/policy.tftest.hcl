@@ -80,11 +80,6 @@ run "bucket_policy" {
     condition     = aws_s3_bucket_policy.this.bucket == aws_s3_bucket.this.id
     error_message = "Bucket Policy が、この module の Bucket に付いていません。"
   }
-
-  assert {
-    condition     = output.writers == var.writers
-    error_message = "writers の出力が、Bucket Policy に渡した書き手を返していません。"
-  }
 }
 
 # 接頭辞の空は、その role が Bucket のすべての key に書けることを表す。
@@ -186,10 +181,65 @@ run "writers_prefix_leading_slash" {
   expect_failures = [var.writers]
 }
 
-run "writers_nested_prefix" {
-  command = plan
+run "writers_nested_prefix_accepted" {
+  command = apply
 
   variables {
     writers = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "apply/identity/" }]
   }
+
+  assert {
+    condition     = [for st in jsondecode(aws_s3_bucket_policy.this.policy).Statement : st.NotResource if st.Sid == "DenyObjectWriteOutsidePrefixes0"] == [["${aws_s3_bucket.this.arn}/apply/identity/*"]]
+    error_message = "入れ子の接頭辞の書き手の NotResource が <Bucket の ARN>/apply/identity/* になっていません。"
+  }
+}
+
+run "writers_prefix_policy_variable" {
+  command = plan
+
+  variables {
+    writers = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "$${aws:username}/" }]
+  }
+
+  expect_failures = [var.writers]
+}
+
+run "writers_prefix_question_mark" {
+  command = plan
+
+  variables {
+    writers = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "p?/" }]
+  }
+
+  expect_failures = [var.writers]
+}
+
+run "writers_prefix_empty_segment" {
+  command = plan
+
+  variables {
+    writers = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "a//" }]
+  }
+
+  expect_failures = [var.writers]
+}
+
+run "writers_role_arn_empty" {
+  command = plan
+
+  variables {
+    writers = [{ role_arn = "", key_prefix = "pr/" }]
+  }
+
+  expect_failures = [var.writers]
+}
+
+run "writers_role_arn_no_name" {
+  command = plan
+
+  variables {
+    writers = [{ role_arn = "arn:aws:iam::123456789012:role/", key_prefix = "pr/" }]
+  }
+
+  expect_failures = [var.writers]
 }

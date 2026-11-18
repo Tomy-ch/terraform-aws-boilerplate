@@ -628,6 +628,7 @@ test_violation_roots_element_malformed if {
 		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": "other_unlock_role", "lock": true},
 		{"writer": "other_role", "state": "other/terraform.tfstate"},
 		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": ""},
+		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": 5},
 		"identity/terraform.tfstate",
 	] {
 		d := json.patch(decl, [{"op": "add", "path": "/state_backend/roots/-", "value": root}])

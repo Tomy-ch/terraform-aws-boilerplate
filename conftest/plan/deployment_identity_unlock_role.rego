@@ -24,9 +24,6 @@ lock_key(n) := object.get(cfg(n), "lock_key", "")
 # lock file を置く state の Bucket。state-backend の plan に在る。
 state_bucket(n) := object.get(cfg(n), "state_bucket", "")
 
-# Key Policy に復号を許される role。宣言に無い role に Key Policy が何も許さないことは PLAN-SBW-06 が見る。
-key_users := {u | some u in object.get(object.get(data.policy_plan, "state_backend", {}), "key_user_roles", [])}
-
 allowed_actions := {"s3:listbucket", "s3:getobject", "s3:deleteobject"}
 
 object_actions := {"s3:getobject", "s3:deleteobject"}
@@ -80,6 +77,28 @@ deny contains msg if {
 	is_array(object.get(di, "unlock_roles", null))
 	count(names) == 0
 	msg := "[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が空です"
+}
+
+sb_roots := object.get(object.get(data.policy_plan, "state_backend", {}), "roots", null)
+
+# lock を外す role を宣言したのに、どの root の lock を外すかを読めなければ、下の突き合わせが黙る。
+deny contains msg if {
+	count(names) > 0
+	not is_array(sb_roots)
+	msg := "[PLAN-UNLOCK-00] lock を外す role を宣言したのに、data.policy_plan.state_backend.roots が配列ではありません"
+}
+
+deny contains msg if {
+	count(names) > 0
+	is_array(sb_roots)
+	some root in sb_roots
+	not unlocker_string(root)
+	msg := sprintf("[PLAN-UNLOCK-00] data.policy_plan.state_backend.roots の要素 %v が、unlocker の文字列を持つ object ではありません", [root])
+}
+
+unlocker_string(root) if {
+	is_object(root)
+	is_string(root.unlocker)
 }
 
 # state_backend.roots の unlocker を unlock_roles から外すと、その role のどの検査も走らない。
@@ -263,7 +282,6 @@ key_grants(n) := {{"document": r.document, "statement": s} |
 
 deny contains msg if {
 	some n in names
-	n in key_users
 	arn_known(n)
 	count(key_policies) > 0
 	count(key_grants(n)) == 0

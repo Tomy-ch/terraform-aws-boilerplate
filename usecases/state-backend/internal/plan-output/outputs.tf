@@ -22,6 +22,6 @@ output "kms_key_arn" {
 }
 
 output "writers" {
-  description = "Bucket Policy が object の書き込みを許す role と key の接頭辞の組。"
+  description = "Bucket Policy が object の書き込みを許す role と key の接頭辞の組。呼び出し側のテストが、書き手の宣言を確かめるための出力。"
   value       = var.writers
 }
