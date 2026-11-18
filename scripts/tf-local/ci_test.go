@@ -944,6 +944,26 @@ func Test_runPolicyResult(t *testing.T) {
 		require.ErrorIs(t, err, errPolicyCount)
 	})
 
+	t.Run("-namespace の結果が他の名前空間だけなら、評価されていないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runPolicyResult([]string{"-namespace", "plan.p", "-rego", regoWith(t, 1), fileWith(t, `[{"namespace":"plan.q","successes":1}]`)}, os.ReadFile)
+		require.ErrorIs(t, err, errPolicyEmpty)
+		assert.Contains(t, err.Error(), "plan.p")
+	})
+
+	t.Run("-policy のとき、走査した名前空間が結果に無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{
+			"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n",
+			"q.rego": "package plan.q\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n",
+		})
+		_, err := runPolicyResult([]string{"-policy", dir, fileWith(t, `[{"namespace":"plan.p","successes":1}]`)}, os.ReadFile)
+		require.ErrorIs(t, err, errPolicyEmpty)
+		assert.Contains(t, err.Error(), "plan.q")
+	})
+
 	t.Run("-policy の下に規則が1つも無ければ、結果を読まずに失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -1172,9 +1192,11 @@ func Test_policyResult(t *testing.T) {
 	t.Run("違反があれば、その文を持って失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":2,"failures":[{"msg":"[PLAN-STATE-01] x"}]}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3, "plan.q": 1}, entries(t, `[{"namespace":"plan.p","successes":1,"failures":[{"msg":"[PLAN-STATE-01] x"}]}]`))
 		require.ErrorIs(t, err, errPolicyViolation)
 		assert.Contains(t, err.Error(), "[PLAN-STATE-01] x")
+		assert.NotErrorIs(t, err, errPolicyCount, "違反があるときは件数を突き合わせない")
+		assert.NotErrorIs(t, err, errPolicyEmpty, "違反があるときは評価の欠けを報告しない")
 	})
 
 	t.Run("複数の名前空間の違反は、すべての文を持って失敗する", func(t *testing.T) {
@@ -1245,6 +1267,13 @@ func Test_policyResult(t *testing.T) {
 		require.ErrorIs(t, err, errPolicyEmpty)
 	})
 
+	t.Run("結果が null なら、評価されていないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult(map[string]int{"plan.p": 1}, entries(t, `null`))
+		require.ErrorIs(t, err, errPolicyEmpty)
+	})
+
 	t.Run("宣言が空なら、結果を見ずに失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -1270,6 +1299,8 @@ func Test_parsePolicyResult(t *testing.T) {
 	cases := map[string]string{
 		"空の入力":     "",
 		"JSON でない": "FAIL - x",
+		"配列でない":    `{"namespace":"plan.p"}`,
+		"件数が数でない":  `[{"namespace":"plan.p","successes":"3"}]`,
 	}
 	for name, data := range cases {
 		t.Run(name+"なら失敗する", func(t *testing.T) {
@@ -1312,21 +1343,29 @@ func Test_policyRules(t *testing.T) {
 		assert.Equal(t, map[string]int{"plan.a": 1}, got)
 	})
 
-	failures := map[string]map[string]string{
-		"規則が全体で0件":                    {"lib/plan.rego": "package plan.lib\n"},
-		"rego が1つも無い":                 {"README.md": "x\n"},
-		"package の行を持たない rego":        {"a.rego": rule},
-		"lib の外で規則を持たない rego":         {"a.rego": "package plan.a\n\n" + rule, "b.rego": "package plan.b\n"},
-		"テストの対象の package が無い":         {"a.rego": "package plan.a\n\n" + rule, "b_test.rego": "package plan.b_test\n"},
-		"テストの対象の package が規則を持たない":    {"a.rego": "package plan.a\n\n" + rule, "lib/b.rego": "package plan.b\n", "lib/b_test.rego": "package plan.b_test\n"},
-		"テストの package が _test で終わらない": {"a.rego": "package plan.a\n\n" + rule, "a_test.rego": "package plan.a\n"},
+	valid := "package plan.a\n\n" + rule
+	failures := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"規則が全体で0件":    {map[string]string{"lib/plan.rego": "package plan.lib\n"}, "deny contains が1つもありません"},
+		"rego が1つも無い": {map[string]string{"README.md": "x\n"}, "deny contains が1つもありません"},
+		"他の rego が有効でも、package の行を持たない rego": {map[string]string{"a.rego": valid, "b.rego": rule}, "b.rego: package の行がありません"},
+		"lib の外で規則を持たない rego":                {map[string]string{"a.rego": valid, "b.rego": "package plan.b\n"}, "b.rego: deny contains を持たない rego は lib/ の下にだけ置けます"},
+		"lib の下の lib で規則を持たない rego":          {map[string]string{"a.rego": valid, "sub/lib/b.rego": "package plan.b\n"}, "lib/b.rego: deny contains を持たない"},
+		"lib で始まる別のディレクトリで規則を持たない rego":      {map[string]string{"a.rego": valid, "libx/b.rego": "package plan.b\n"}, "libx/b.rego: deny contains を持たない"},
+		"直下の lib.rego で規則を持たない":              {map[string]string{"a.rego": valid, "lib.rego": "package plan.lib\n"}, "lib.rego: deny contains を持たない"},
+		"テストの対象の package が無い":                {map[string]string{"a.rego": valid, "b_test.rego": "package plan.b_test\n"}, "テストの対象の plan.b に deny contains がありません"},
+		"テストの対象の package が規則を持たない":           {map[string]string{"a.rego": valid, "lib/b.rego": "package plan.b\n", "lib/b_test.rego": "package plan.b_test\n"}, "テストの対象の plan.b に deny contains がありません"},
+		"テストの package が _test で終わらない":        {map[string]string{"a.rego": valid, "a_test.rego": "package plan.a\n"}, "a_test.rego: テストの package が _test で終わりません"},
 	}
-	for name, files := range failures {
+	for name, c := range failures {
 		t.Run(name+"なら失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			_, err := policyRules(policyDirWith(t, files), os.ReadFile)
+			_, err := policyRules(policyDirWith(t, c.files), os.ReadFile)
 			require.ErrorIs(t, err, errPolicyRules)
+			assert.Contains(t, err.Error(), c.want)
 		})
 	}
 
@@ -1335,14 +1374,22 @@ func Test_policyRules(t *testing.T) {
 
 		_, err := policyRules(filepath.Join(t.TempDir(), "missing"), os.ReadFile)
 		require.ErrorIs(t, err, errPolicyRules)
+		assert.Contains(t, err.Error(), "missing")
 	})
 
-	t.Run("rego を読めなければ失敗する", func(t *testing.T) {
+	t.Run("他の rego が有効でも、読めない rego があれば失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		dir := policyDirWith(t, map[string]string{"a.rego": "package plan.a\n\n" + rule})
-		_, err := policyRules(dir, func(string) ([]byte, error) { return nil, os.ErrPermission })
+		dir := policyDirWith(t, map[string]string{"a.rego": valid, "b.rego": valid})
+		_, err := policyRules(dir, func(path string) ([]byte, error) {
+			if filepath.Base(path) == "b.rego" {
+				return nil, os.ErrPermission
+			}
+
+			return os.ReadFile(path)
+		})
 		require.ErrorIs(t, err, errPolicyRules)
+		assert.Contains(t, err.Error(), "b.rego: ファイルを読めません")
 	})
 }
 

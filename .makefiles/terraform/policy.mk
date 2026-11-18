@@ -142,8 +142,9 @@ tf-policy-canary:
 	cp -R "$$root/rego" "$$root/unevaluated"; printf 'package plan.extra\n\nnote := `\ndeny contains "[PLAN-IAM-01] x" if false\n`\n' > "$$root/unevaluated/extra.rego"; \
 	printf 'package plan.extra_test\n\ntest_pass_note if true\n\ntest_violation_note if true\n' > "$$root/unevaluated/extra_test.rego"; \
 	expect fail unevaluated-package "$$root/ok" "plan.extra: ❌ 名前空間の規則が1つも評価されていません" POLICY_PLAN_DIR="$$root/unevaluated"; \
-	cp -R "$$root/rego" "$$root/indented"; printf '\n  deny contains "[PLAN-IAM-01] y" if false\n' >> "$$root/indented/iam_action_wildcard.rego"; \
-	expect fail indented-rule "$$root/ok" "plan.iam_action_wildcard: 評価 8 件、宣言 7 件" POLICY_PLAN_DIR="$$root/indented"; \
+	cp -R "$$root/rego" "$$root/indented"; n=$$(grep -c '^deny contains' "$$root/indented/iam_action_wildcard.rego"); \
+	printf '\n  deny contains "[PLAN-IAM-01] y" if false\n' >> "$$root/indented/iam_action_wildcard.rego"; \
+	expect fail indented-rule "$$root/ok" "plan.iam_action_wildcard: 評価 $$((n + 1)) 件、宣言 $$n 件" POLICY_PLAN_DIR="$$root/indented"; \
 	cp -R "$$root/rego" "$$root/count"; printf '\nnot_a_test := `\ntest_counted_but_not_run\n`\n' >> "$$root/count/iam_action_wildcard_test.rego"; \
 	expect fail count-mismatch "$$root/ok" "宣言された" POLICY_PLAN_DIR="$$root/count"; \
 	jq '.policy_plan.inline_arguments.terraform_data.nope = null' "$$root/data.json" > "$$root/undeclared.json"; \
