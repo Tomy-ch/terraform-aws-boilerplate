@@ -16,7 +16,7 @@
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
-//	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity|unlock-identity> -account <id>
+//	tf-local role-arn -project <p> -env <e> -role <plan|apply|apply-identity|unlock-identity|unlock> -account <id>
 //	    CI が assume する role の ARN を1行で出す
 //	tf-local assume-denied -role <役割> -exitcode <n> <stderr-file>
 //	    `aws sts assume-role-with-web-identity` の終了コードと stderr から、assume が AccessDenied で拒否されたことを

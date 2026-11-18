@@ -3,5 +3,6 @@
   { "name": "admin-apply", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "admin-apply-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "admin-unlock-identity", "deploy_from": "deploy-branch", "can_admins_bypass": false },
+  { "name": "admin-unlock", "deploy_from": "deploy-branch", "can_admins_bypass": false },
   { "name": "copilot", "deploy_from": "any", "can_admins_bypass": false }
 ]

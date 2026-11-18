@@ -81,3 +81,13 @@ variable "plan_output_bucket_arn" {
     error_message = "plan_output_bucket_arn は S3 Bucket の ARN（arn:<partition>:s3:::<bucket>）にしてください。"
   }
 }
+
+variable "apply_output_bucket_arn" {
+  description = "このアカウントの workload root の apply の出力の Bucket の ARN（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定の Action と、plan の role の読み取りをこの Bucket に絞る。"
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]$", var.apply_output_bucket_arn))
+    error_message = "apply_output_bucket_arn は S3 Bucket の ARN（arn:<partition>:s3:::<bucket>）にしてください。"
+  }
+}

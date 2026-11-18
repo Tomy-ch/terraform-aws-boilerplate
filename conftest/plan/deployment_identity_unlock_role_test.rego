@@ -3,12 +3,14 @@ package plan.deployment_identity_unlock_role_test
 import data.plan.deployment_identity_unlock_role as p
 import data.plan.fixture
 
-decl := {"unlock_role": {
+decl := {"unlock_roles": ["unlock_role"], "unlock_role": {
 	"role": "module.x.aws_iam_role.this[\"unlock_identity\"]",
 	"policy": "module.x.aws_iam_role_policy.this[\"unlock_identity\"]",
 	"lock_key": "identity/terraform.tfstate.tflock",
 	"state_bucket": "module.s.aws_s3_bucket.this",
 }}
+
+sb := {"key_user_roles": ["unlock_role"]}
 
 bucket := "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"
 
@@ -51,7 +53,7 @@ valid_key := key_policy([read_grant(role_arn, "kms:Decrypt", [lock])])
 input_with(statements, key) := fixture.plan(array.concat([state_bucket, role, policy(statements), key], exclusives))
 
 test_pass_reference_shape if {
-	count(p.deny) == 0 with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	count(p.deny) == 0 with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 }
 
 test_pass_key_policy_in_other_file if {
@@ -59,159 +61,159 @@ test_pass_key_policy_in_other_file if {
 		{"path": "deployment-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": array.concat([role, policy([list_lock, remove_lock])], exclusives)}},
 		{"path": "state-backend.json", "contents": {"plan_format_version": "1.2", "resource_changes": [state_bucket, valid_key]}},
 	]
-	count(p.deny) == 0 with input as inp with data.policy_plan.deployment_identity as decl
+	count(p.deny) == 0 with input as inp with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 }
 
 test_violation_policy_missing if {
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, valid_key], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_role_arn_unreadable if {
 	r := change("module.x.aws_iam_role.this[\"unlock_identity\"]", "aws_iam_role", {"name": "tabp-admin-ci-unlock-identity"})
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, r, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, r, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_key_policy_missing if {
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock])], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock])], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_lock_key_undeclared if {
-	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.deployment_identity.unlock_role.lock_key as ""
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb with data.policy_plan.deployment_identity.unlock_role.lock_key as ""
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_extra_action if {
 	extra := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": lock}
-	msgs := p.deny with input as input_with([list_lock, remove_lock, extra], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock, extra], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-01]", msgs)
 }
 
 test_violation_delete_object_version if {
 	s := object.union(remove_lock, {"Action": ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:GetObject"]})
-	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-01]", msgs)
 }
 
 test_violation_not_action if {
 	s := {"Effect": "Allow", "NotAction": "iam:*", "Resource": lock}
-	msgs := p.deny with input as input_with([list_lock, remove_lock, s], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock, s], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-01]", msgs)
 }
 
 test_violation_state_key_object if {
 	s := object.union(remove_lock, {"Resource": [lock, concat("", [bucket, "/identity/terraform.tfstate"])]})
-	msgs := p.deny with input as input_with([list_lock, s], key_policy([read_grant(role_arn, "kms:Decrypt", [lock])])) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, s], key_policy([read_grant(role_arn, "kms:Decrypt", [lock])])) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_wildcard_object if {
 	s := object.union(remove_lock, {"Resource": concat("", [bucket, "/*/terraform.tfstate.tflock"])})
-	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_other_lock if {
 	s := object.union(remove_lock, {"Resource": concat("", [bucket, "/workload/terraform.tfstate.tflock"])})
-	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, s], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_list_without_prefix if {
 	s := object.remove(list_lock, ["Condition"])
-	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_list_prefix_like if {
 	s := object.union(object.remove(list_lock, ["Condition"]), {"Condition": {"StringLike": {"s3:prefix": "identity/*"}}})
-	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_extra_policy_on_role if {
 	extra := change("module.y.aws_iam_role_policy.extra", "aws_iam_role_policy", {"name": "extra", "role": "tabp-admin-ci-unlock-identity", "policy": json.marshal({"Statement": [list_lock]})})
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_exclusive_missing if {
-	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, exclusives[1]]) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, exclusives[1]]) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_policy_name_unknown if {
 	unnamed := json.patch(policy([list_lock, remove_lock]), [{"op": "remove", "path": "/change/after/name"}, {"op": "add", "path": "/change/after_unknown/name", "value": true}])
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, unnamed, valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, unnamed, valid_key], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has(sprintf("[PLAN-UNLOCK-03] p.json: %s の policy_names が [null] ではありません", [exclusives[0].address]), msgs)
 }
 
 test_violation_exclusive_keeps_other_policy if {
 	e := change("module.x.aws_iam_role_policies_exclusive.this[\"unlock_identity\"]", "aws_iam_role_policies_exclusive", {"role_name": "tabp-admin-ci-unlock-identity", "policy_names": ["unlock_identity", "extra"]})
-	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, e, exclusives[1]]) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, e, exclusives[1]]) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_managed_policy_kept if {
 	e := change("module.x.aws_iam_role_policy_attachments_exclusive.this[\"unlock_identity\"]", "aws_iam_role_policy_attachments_exclusive", {"role_name": "tabp-admin-ci-unlock-identity", "policy_arns": ["arn:aws:iam::aws:policy/AdministratorAccess"]})
-	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, exclusives[0], e]) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan([state_bucket, role, policy([list_lock, remove_lock]), valid_key, exclusives[0], e]) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_role_not_in_key_policy if {
 	key := key_policy([read_grant("arn:aws:iam::123456789012:role/other", "kms:Decrypt", [lock])])
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 test_violation_generate_data_key if {
 	key := key_policy([read_grant(role_arn, ["kms:Decrypt", "kms:GenerateDataKey"], [lock])])
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 # role が read-write の文に入ると、どの object でも復号できる。
 test_violation_unlimited_decrypt if {
 	s := {"Effect": "Allow", "Principal": {"AWS": [role_arn]}, "Action": "kms:Decrypt", "Resource": "*", "Condition": {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}}
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key_policy([read_grant(role_arn, "kms:Decrypt", [lock]), s])) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key_policy([read_grant(role_arn, "kms:Decrypt", [lock]), s])) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 test_violation_wildcard_context if {
 	key := key_policy([read_grant(role_arn, "kms:Decrypt", [concat("", [bucket, "/identity/*"])])])
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 test_violation_context_other_object if {
 	key := key_policy([read_grant(role_arn, "kms:Decrypt", [concat("", [bucket, "/identity/terraform.tfstate"])])])
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 test_violation_context_extra_object if {
 	key := key_policy([read_grant(role_arn, "kms:Decrypt", [lock, concat("", [bucket, "/identity/terraform.tfstate"])])])
-	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock], key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-04]", msgs)
 }
 
 test_violation_role_name_unknown if {
 	r := {"address": "module.x.aws_iam_role.this[\"unlock_identity\"]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"arn": role_arn}, "after_unknown": {"name": true}}}
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, r, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, r, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_state_bucket_unknown if {
 	b := {"address": "module.s.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {}, "after_unknown": {"arn": true}}}
-	msgs := p.deny with input as fixture.plan(array.concat([b, role, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([b, role, policy([list_lock, remove_lock]), valid_key], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00]", msgs)
 }
 
 test_violation_not_resource if {
 	s := {"Effect": "Allow", "Action": "s3:GetObject", "NotResource": lock}
-	msgs := p.deny with input as input_with([list_lock, remove_lock, s], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([list_lock, remove_lock, s], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-01]", msgs)
 }
 
@@ -219,45 +221,136 @@ test_violation_lock_in_other_bucket if {
 	other := "arn:aws:s3:::other-bucket"
 	l := object.union(list_lock, {"Resource": other})
 	r := object.union(remove_lock, {"Resource": concat("", [other, "/identity/terraform.tfstate.tflock"])})
-	msgs := p.deny with input as input_with([l, r], key_policy([read_grant(role_arn, "kms:Decrypt", [r.Resource])])) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([l, r], key_policy([read_grant(role_arn, "kms:Decrypt", [r.Resource])])) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_list_any_bucket if {
 	s := object.union(list_lock, {"Resource": "*"})
-	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 # ListBucket と object が別々の Bucket を指せば、少なくとも片方は state の Bucket ではない。
 test_violation_list_and_object_buckets_differ if {
 	s := object.union(list_lock, {"Resource": "arn:aws:s3:::other-bucket"})
-	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_list_prefix_extra_value if {
 	s := object.union(object.remove(list_lock, ["Condition"]), {"Condition": {"StringEquals": {"s3:prefix": ["identity/terraform.tfstate.tflock", "identity/"]}}})
-	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as input_with([s, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-02]", msgs)
 }
 
 test_violation_managed_policy_attached if {
 	extra := change("module.y.aws_iam_role_policy_attachment.extra", "aws_iam_role_policy_attachment", {"role": "tabp-admin-ci-unlock-identity", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_unknown_role_of_policy if {
 	extra := {"address": "module.y.aws_iam_role_policy.extra", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"policy": "{}"}, "after_unknown": {"role": true}}}
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, extra], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-03]", msgs)
 }
 
 test_violation_unknown_role_of_exclusive if {
 	e := {"address": "module.y.aws_iam_role_policies_exclusive.extra", "type": "aws_iam_role_policies_exclusive", "change": {"actions": ["create"], "after": {"policy_names": []}, "after_unknown": {"role_name": true}}}
-	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, e], exclusives)) with data.policy_plan.deployment_identity as decl
+	msgs := p.deny with input as fixture.plan(array.concat([state_bucket, role, policy([list_lock, remove_lock]), valid_key, e], exclusives)) with data.policy_plan.deployment_identity as decl with data.policy_plan.state_backend as sb
 	some m in msgs
 	startswith(m, "[PLAN-UNLOCK-03]")
 	contains(m, "module.y.aws_iam_role_policies_exclusive.extra がどの role に付くかを plan で読めません")
+}
+
+# key_user_roles に入るまでは、Key Policy に復号の Allow が無いことを咎めない。
+decl2 := object.union(decl, {
+	"unlock_roles": ["unlock_role", "workload_unlock_role"],
+	"workload_unlock_role": {
+		"role": "module.x.aws_iam_role.this[\"unlock\"]",
+		"policy": "module.x.aws_iam_role_policy.this[\"unlock\"]",
+		"lock_key": "workload/terraform.tfstate.tflock",
+		"state_bucket": "module.s.aws_s3_bucket.this",
+	},
+})
+
+wlock := "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock"
+
+wrole_arn := "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"
+
+wlist := {"Sid": "ListWorkloadLock", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": bucket, "Condition": {"StringEquals": {"s3:prefix": "workload/terraform.tfstate.tflock"}}}
+
+wremove := {"Sid": "RemoveWorkloadLock", "Effect": "Allow", "Action": ["s3:DeleteObject", "s3:GetObject"], "Resource": wlock}
+
+wrole := change("module.x.aws_iam_role.this[\"unlock\"]", "aws_iam_role", {"name": "tabp-admin-ci-unlock", "arn": wrole_arn})
+
+wpolicy(statements) := change("module.x.aws_iam_role_policy.this[\"unlock\"]", "aws_iam_role_policy", {"name": "unlock", "role": "tabp-admin-ci-unlock", "policy": json.marshal({"Statement": statements})})
+
+wexclusives := [
+	change("module.x.aws_iam_role_policies_exclusive.this[\"unlock\"]", "aws_iam_role_policies_exclusive", {"role_name": "tabp-admin-ci-unlock", "policy_names": ["unlock"]}),
+	change("module.x.aws_iam_role_policy_attachments_exclusive.this[\"unlock\"]", "aws_iam_role_policy_attachments_exclusive", {"role_name": "tabp-admin-ci-unlock", "policy_arns": []}),
+]
+
+input2(wstatements, key) := fixture.plan(array.concat(array.concat([state_bucket, role, policy([list_lock, remove_lock]), wrole, wpolicy(wstatements), key], exclusives), wexclusives))
+
+test_pass_two_roles_before_key_policy if {
+	count(p.deny) == 0 with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+}
+
+test_pass_two_roles_with_key_policy if {
+	key := key_policy([read_grant(role_arn, "kms:Decrypt", [lock]), object.union(read_grant(wrole_arn, "kms:Decrypt", [wlock]), {"Sid": "RolesViaS3Read1"})])
+	count(p.deny) == 0 with input as input2([wlist, wremove], key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"key_user_roles": ["unlock_role", "workload_unlock_role"]}
+}
+
+test_violation_second_role_other_lock if {
+	s := object.union(wremove, {"Resource": lock})
+	msgs := p.deny with input as input2([wlist, s], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-02]", msgs)
+}
+
+test_violation_second_role_extra_action if {
+	extra := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": wlock}
+	msgs := p.deny with input as input2([wlist, wremove, extra], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-01]", msgs)
+}
+
+test_violation_second_role_policy_missing if {
+	inp := fixture.plan(array.concat(array.concat([state_bucket, role, policy([list_lock, remove_lock]), wrole, valid_key], exclusives), wexclusives))
+	msgs := p.deny with input as inp with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00]", msgs)
+}
+
+test_violation_second_role_declared_key_user_without_grant if {
+	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"key_user_roles": ["unlock_role", "workload_unlock_role"]}
+	fixture.has("[PLAN-UNLOCK-04]", msgs)
+}
+
+# Key Policy の宣言に入る前でも、Key Policy が許す復号は IAM の lock file に限る。
+test_violation_second_role_unlimited_grant if {
+	key := key_policy([read_grant(role_arn, "kms:Decrypt", [lock]), object.union(read_grant(wrole_arn, "kms:Decrypt", [lock]), {"Sid": "RolesViaS3Read1"})])
+	msgs := p.deny with input as input2([wlist, wremove], key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-04]", msgs)
+}
+
+test_violation_same_lock_key if {
+	d := json.patch(decl2, [{"op": "replace", "path": "/workload_unlock_role/lock_key", "value": "identity/terraform.tfstate.tflock"}])
+	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00]", msgs)
+}
+
+test_violation_unlock_roles_undeclared if {
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as object.remove(decl, ["unlock_roles"]) with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00]", msgs)
+}
+
+test_violation_unlock_roles_empty if {
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as object.union(decl, {"unlock_roles": []}) with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00]", msgs)
+}
+
+test_violation_unlock_role_entry_missing if {
+	d := object.union(decl, {"unlock_roles": ["unlock_role", "nothing"]})
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00] data.policy_plan.deployment_identity.nothing が宣言にありません", msgs)
 }

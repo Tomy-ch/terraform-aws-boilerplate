@@ -194,25 +194,41 @@ func Test_checkIdentityEnvironments(t *testing.T) {
 		return out
 	}
 
-	t.Run("各 env の4つが宣言に在り、宣言の4つがどれも env に当たれば通る", func(t *testing.T) {
+	t.Run("各 env の5つが宣言に在り、宣言の5つがどれも env に当たれば通る", func(t *testing.T) {
 		t.Parallel()
 		require.NoError(t, checkIdentityEnvironments([]string{"admin"},
-			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "copilot")))
+			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock", "copilot")))
+	})
+
+	t.Run("2つの env がそれぞれ5つを持てば通る", func(t *testing.T) {
+		t.Parallel()
+		require.NoError(t, checkIdentityEnvironments([]string{"admin", "security"},
+			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock",
+				"security-plan", "security-apply", "security-apply-identity", "security-unlock-identity", "security-unlock")))
+	})
+
+	t.Run("2つ目の env の unlock が宣言に無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		err := checkIdentityEnvironments([]string{"admin", "security"},
+			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock",
+				"security-plan", "security-apply", "security-apply-identity", "security-unlock-identity"))
+		require.ErrorIs(t, err, errEnvironmentMismatch)
+		assert.Contains(t, err.Error(), "environment security-unlock が宣言にありません")
 	})
 
 	t.Run("信頼条件が名指す environment が宣言に無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		// 宣言に無い名前を workflow が参照すると、GitHub は保護なしの environment を作る。
 		err := checkIdentityEnvironments([]string{"admin", "dev"},
-			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity"))
+			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"))
 		require.ErrorIs(t, err, errEnvironmentMismatch)
-		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-unlock-identity が宣言にありません")
+		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-unlock-identity が宣言にありません; environment dev-unlock が宣言にありません")
 	})
 
 	t.Run("どの env にも当たらない宣言は失敗する", func(t *testing.T) {
 		t.Parallel()
 		err := checkIdentityEnvironments([]string{"admin"},
-			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "old-apply"))
+			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock", "old-apply"))
 		require.ErrorIs(t, err, errEnvironmentMismatch)
 		assert.Contains(t, err.Error(), "environment old-apply に当たる deployment-identity の env がありません")
 	})
@@ -230,6 +246,7 @@ func Test_identityBase(t *testing.T) {
 		{"admin-apply", "admin", true},
 		{"admin-apply-identity", "admin", true},
 		{"admin-unlock-identity", "admin", true},
+		{"admin-unlock", "admin", true},
 		{"x-identity-apply", "x-identity", true},
 		{"copilot", "", false},
 		{"-plan", "", false},
@@ -255,7 +272,8 @@ func Test_splitIdentity(t *testing.T) {
 		{"admin-apply", "admin", "-apply", true},
 		{"admin-apply-identity", "admin", "-apply-identity", true},
 		{"admin-unlock-identity", "admin", "-unlock-identity", true},
-		{"admin-unlock", "", "", false},
+		{"admin-unlock", "admin", "-unlock", true},
+		{"admin-unlocker", "", "", false},
 		{"-plan", "", "", false},
 	}
 	for _, tc := range cases {

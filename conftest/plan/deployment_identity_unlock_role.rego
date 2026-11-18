@@ -1,47 +1,45 @@
-# deployment-identity の unlock-identity の role の権限（ADR-0602 決定13、deployment-identity/ADR-0201 決定9）。
-# IAM の Allow が state の Bucket の identity root の lock file の一覧・読み取り・削除だけであることと、state の鍵の Key Policy がこの role に
-# 復号だけを、IAM が許す lock file の object に限って許すこと。IAM（deployment-identity）と Key Policy（state-backend）は
-# 別の root の plan に在るので、結合した入力で突き合わせる。
+# deployment-identity の lock を外す role（unlock_roles の各 role）の権限（ADR-0602 決定13、deployment-identity/ADR-0201 決定9・11。
+# conftest/plan/README.md の plan.deployment_identity_unlock_role）。
+# IAM（deployment-identity）と Key Policy（state-backend）は別の root の plan に在るので、結合した入力で突き合わせる。
 package plan.deployment_identity_unlock_role
 
 import data.plan.lib
 
-cfg := object.get(object.get(data.policy_plan, "deployment_identity", {}), "unlock_role", {})
+di := object.get(data.policy_plan, "deployment_identity", {})
+
+# state_backend の unlocker・key_user_roles と同じ名前で指す。
+default names := []
+
+names := object.get(di, "unlock_roles", [])
+
+cfg(n) := object.get(di, n, {})
 
 # index key 付きの address（["unlock_identity"]）で宣言する。同じ resource の plan と apply の instance と分けるため。
-default target := ""
+target(n) := object.get(cfg(n), "policy", "")
 
-target := object.get(cfg, "policy", "")
+role(n) := object.get(cfg(n), "role", "")
 
-default role := ""
-
-role := object.get(cfg, "role", "")
-
-default lock_key := ""
-
-lock_key := object.get(cfg, "lock_key", "")
+lock_key(n) := object.get(cfg(n), "lock_key", "")
 
 # lock file を置く state の Bucket。state-backend の plan に在る。
-default state_bucket := ""
+state_bucket(n) := object.get(cfg(n), "state_bucket", "")
 
-state_bucket := object.get(cfg, "state_bucket", "")
+# Key Policy に復号を許される role。宣言に無い role に Key Policy が何も許さないことは PLAN-SBW-06 が見る。
+key_users := {u | some u in object.get(object.get(data.policy_plan, "state_backend", {}), "key_user_roles", [])}
 
 allowed_actions := {"s3:listbucket", "s3:getobject", "s3:deleteobject"}
 
 object_actions := {"s3:getobject", "s3:deleteobject"}
 
-statements contains {"path": r.document.path, "statement": s} if {
+statements(n) := {{"path": r.document.path, "statement": s} |
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
 	r.document.attr == "policy"
-	r.document.address == target
+	r.document.address == target(n)
 	some s in lib.statements(r.body)
 }
 
-allows contains a if {
-	some a in statements
-	a.statement.Effect == "Allow"
-}
+allows(n) := {a | some a in statements(n); a.statement.Effect == "Allow"}
 
 actions(s) := lib.lower_all(object.get(s, "Action", []))
 
@@ -50,19 +48,19 @@ after(address) := c.rc.change.after if {
 	c.rc.address == address
 }
 
-role_name := after(role).name
+role_name(n) := after(role(n)).name
 
-role_arn := after(role).arn
+role_arn(n) := after(role(n)).arn
 
-policy_name := object.get(after(target), "name", null)
+policy_name(n) := object.get(after(target(n)), "name", null)
 
-bucket_arn := after(state_bucket).arn
+bucket_arn(n) := after(state_bucket(n)).arn
 
-lock_arn := sprintf("%s/%s", [bucket_arn, lock_key])
+lock_arn(n) := sprintf("%s/%s", [bucket_arn(n), lock_key(n)])
 
 # IAM が削除を許す lock file の object。Key Policy の復号の条件と同じでなければならない。
-lock_objects := {res |
-	some a in allows
+lock_objects(n) := {res |
+	some a in allows(n)
 	some act in actions(a.statement)
 	act in object_actions
 	some res in lib.as_array(object.get(a.statement, "Resource", []))
@@ -74,29 +72,50 @@ key_policies contains r if {
 }
 
 deny contains msg if {
-	count({d | some d in lib.documents; d.type == "aws_iam_role_policy"; d.address == target}) == 0
-	msg := sprintf("[PLAN-UNLOCK-00] unlock-identity の role の policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.unlock_role を直してください", [target])
-}
-
-role_known if is_string(role_name)
-
-arn_known if is_string(role_arn)
-
-bucket_known if is_string(bucket_arn)
-
-deny contains msg if {
-	not role_known
-	msg := sprintf("[PLAN-UNLOCK-00] unlock-identity の role %q の名前が入力にありません。address が変わったなら data.policy_plan.deployment_identity.unlock_role を直してください", [role])
+	not is_array(object.get(di, "unlock_roles", null))
+	msg := "[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が配列ではありません"
 }
 
 deny contains msg if {
-	not arn_known
-	msg := sprintf("[PLAN-UNLOCK-00] unlock-identity の role %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [role])
+	is_array(object.get(di, "unlock_roles", null))
+	count(names) == 0
+	msg := "[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が空です"
 }
 
 deny contains msg if {
-	not bucket_known
-	msg := sprintf("[PLAN-UNLOCK-00] state の Bucket %q の ARN を入力から読めません。address が変わったなら data.policy_plan.deployment_identity.unlock_role を直し、unknown なら tests/policy-input.tftest.hcl の override_resource で与えてください", [state_bucket])
+	some n in names
+	not is_object(object.get(di, n, null))
+	msg := sprintf("[PLAN-UNLOCK-00] data.policy_plan.deployment_identity.%s が宣言にありません", [n])
+}
+
+deny contains msg if {
+	some n in names
+	count({d | some d in lib.documents; d.type == "aws_iam_role_policy"; d.address == target(n)}) == 0
+	msg := sprintf("[PLAN-UNLOCK-00] %s の policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.%s を直してください", [n, target(n), n])
+}
+
+role_known(n) if is_string(role_name(n))
+
+arn_known(n) if is_string(role_arn(n))
+
+bucket_known(n) if is_string(bucket_arn(n))
+
+deny contains msg if {
+	some n in names
+	not role_known(n)
+	msg := sprintf("[PLAN-UNLOCK-00] %s の role %q の名前が入力にありません。address が変わったなら data.policy_plan.deployment_identity.%s を直してください", [n, role(n), n])
+}
+
+deny contains msg if {
+	some n in names
+	not arn_known(n)
+	msg := sprintf("[PLAN-UNLOCK-00] %s の role %q の ARN を入力から読めません。tests/policy-input.tftest.hcl の override_resource で与えてください", [n, role(n)])
+}
+
+deny contains msg if {
+	some n in names
+	not bucket_known(n)
+	msg := sprintf("[PLAN-UNLOCK-00] state の Bucket %q の ARN を入力から読めません。address が変わったなら data.policy_plan.deployment_identity.%s を直し、unknown なら tests/policy-input.tftest.hcl の override_resource で与えてください", [state_bucket(n), n])
 }
 
 deny contains msg if {
@@ -105,60 +124,71 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	lock_key == ""
-	msg := "[PLAN-UNLOCK-00] lock file の key（data.policy_plan.deployment_identity.unlock_role.lock_key）が宣言にありません"
+	some n in names
+	lock_key(n) == ""
+	msg := sprintf("[PLAN-UNLOCK-00] lock file の key（data.policy_plan.deployment_identity.%s.lock_key）が宣言にありません", [n])
+}
+
+# 理由は deployment-identity/ADR-0201 決定11。
+deny contains msg if {
+	some n in names
+	some m in names
+	n < m
+	lock_key(n) == lock_key(m)
+	msg := sprintf("[PLAN-UNLOCK-00] %s と %s が同じ lock file %q を受け持っています", [n, m, lock_key(n)])
 }
 
 deny contains msg if {
-	some a in statements
+	some n in names
+	some a in statements(n)
 	some k in ["NotAction", "NotResource"]
 	a.statement[k]
-	msg := sprintf("[PLAN-UNLOCK-01] %s: unlock-identity の role の文が %s を使っています。Action と Resource を列挙してください", [a.path, k])
+	msg := sprintf("[PLAN-UNLOCK-01] %s: %s の role の文が %s を使っています。Action と Resource を列挙してください", [a.path, n, k])
 }
 
 deny contains msg if {
-	some a in allows
+	some n in names
+	some a in allows(n)
 	some act in actions(a.statement)
 	not act in allowed_actions
-	msg := sprintf("[PLAN-UNLOCK-01] %s: unlock-identity の role の Allow に %s があります。許すのは s3:ListBucket・s3:GetObject・s3:DeleteObject だけです", [a.path, act])
+	msg := sprintf("[PLAN-UNLOCK-01] %s: %s の role の Allow に %s があります。許すのは s3:ListBucket・s3:GetObject・s3:DeleteObject だけです", [a.path, n, act])
 }
 
 # Bucket の ARN が読めなければ PLAN-UNLOCK-00 が落とす。下の2つは ARN を読めたときだけ評価する。
 deny contains msg if {
-	bucket_known
-	some a in allows
+	some n in names
+	bucket_known(n)
+	some a in allows(n)
 	some act in actions(a.statement)
 	act in object_actions
-	not single_lock_object(a.statement)
-	msg := sprintf("[PLAN-UNLOCK-02] %s: unlock-identity の role の %s の Resource が、state の Bucket の lock file %s の1つではありません", [a.path, act, lock_arn])
+	lib.as_array(object.get(a.statement, "Resource", [])) != [lock_arn(n)]
+	msg := sprintf("[PLAN-UNLOCK-02] %s: %s の role の %s の Resource が、state の Bucket の lock file %s の1つではありません", [a.path, n, act, lock_arn(n)])
 }
 
 deny contains msg if {
-	bucket_known
-	some a in allows
+	some n in names
+	bucket_known(n)
+	some a in allows(n)
 	"s3:listbucket" in actions(a.statement)
-	lib.as_array(object.get(a.statement, "Resource", [])) != [bucket_arn]
-	msg := sprintf("[PLAN-UNLOCK-02] %s: unlock-identity の role の s3:ListBucket の Resource が、state の Bucket %s の1つではありません", [a.path, bucket_arn])
+	lib.as_array(object.get(a.statement, "Resource", [])) != [bucket_arn(n)]
+	msg := sprintf("[PLAN-UNLOCK-02] %s: %s の role の s3:ListBucket の Resource が、state の Bucket %s の1つではありません", [a.path, n, bucket_arn(n)])
 }
 
 deny contains msg if {
-	some a in allows
+	some n in names
+	some a in allows(n)
 	"s3:listbucket" in actions(a.statement)
-	not prefix_limited(a.statement)
-	msg := sprintf("[PLAN-UNLOCK-02] %s: unlock-identity の role の s3:ListBucket が、s3:prefix を StringEquals で %s だけに限っていません", [a.path, lock_key])
-}
-
-single_lock_object(s) if {
-	lib.as_array(object.get(s, "Resource", [])) == [lock_arn]
+	not prefix_limited(a.statement, lock_key(n))
+	msg := sprintf("[PLAN-UNLOCK-02] %s: %s の role の s3:ListBucket が、s3:prefix を StringEquals で %s だけに限っていません", [a.path, n, lock_key(n)])
 }
 
 # StringLike や IfExists では限らない。
-prefix_limited(s) if {
+prefix_limited(s, key) if {
 	some op, kv in object.get(s, "Condition", {})
 	lower(op) == "stringequals"
 	some k, v in kv
 	lower(k) == "s3:prefix"
-	lib.as_array(v) == [lock_key]
+	lib.as_array(v) == [key]
 }
 
 # policy の resource は role を名前で指すので、名前が unknown なものはどの role に付くか読めない。
@@ -171,17 +201,18 @@ role_key(a) := "role_name" if endswith(a.type, "_exclusive")
 
 role_key(a) := "role" if not endswith(a.type, "_exclusive")
 
-on_unlock_role(a) if object.get(a.after, role_key(a), null) == role_name
+on_role(a, n) if object.get(a.after, role_key(a), null) == role_name(n)
 
-exclusive(type) := {a | some a in attached; a.type == type; on_unlock_role(a)}
+exclusive(type, n) := {a | some a in attached; a.type == type; on_role(a, n)}
 
 # exclusive の2つは権限を足さず、宣言の外で付いた policy を外すので、ここでは見ない。
 deny contains msg if {
+	some n in names
 	some a in attached
 	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
-	on_unlock_role(a)
-	a.address != target
-	msg := sprintf("[PLAN-UNLOCK-03] %s: %s が unlock-identity の role に権限を足しています。この role の権限は %s だけに置いてください", [a.path, a.address, target])
+	on_role(a, n)
+	a.address != target(n)
+	msg := sprintf("[PLAN-UNLOCK-03] %s: %s が %s の role に権限を足しています。この role の権限は %s だけに置いてください", [a.path, a.address, n, target(n)])
 }
 
 deny contains msg if {
@@ -191,56 +222,63 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	is_string(role_name)
+	some n in names
+	role_known(n)
 	some type in ["aws_iam_role_policies_exclusive", "aws_iam_role_policy_attachments_exclusive"]
-	count(exclusive(type)) != 1
-	msg := sprintf("[PLAN-UNLOCK-03] unlock-identity の role %s の %s が %d 件です（1件を期待）", [role_name, type, count(exclusive(type))])
+	count(exclusive(type, n)) != 1
+	msg := sprintf("[PLAN-UNLOCK-03] %s の role %s の %s が %d 件です（1件を期待）", [n, role_name(n), type, count(exclusive(type, n))])
 }
 
 deny contains msg if {
-	some a in exclusive("aws_iam_role_policies_exclusive")
-	object.get(a.after, "policy_names", null) != [policy_name]
-	msg := sprintf("[PLAN-UNLOCK-03] %s: %s の policy_names が %v ではありません", [a.path, a.address, [policy_name]])
+	some n in names
+	some a in exclusive("aws_iam_role_policies_exclusive", n)
+	object.get(a.after, "policy_names", null) != [policy_name(n)]
+	msg := sprintf("[PLAN-UNLOCK-03] %s: %s の policy_names が %v ではありません", [a.path, a.address, [policy_name(n)]])
 }
 
 deny contains msg if {
-	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
+	some n in names
+	some a in exclusive("aws_iam_role_policy_attachments_exclusive", n)
 	object.get(a.after, "policy_arns", null) != []
 	msg := sprintf("[PLAN-UNLOCK-03] %s: %s の policy_arns が空ではありません", [a.path, a.address])
 }
 
-key_grants contains {"document": r.document, "statement": s} if {
+key_grants(n) := {{"document": r.document, "statement": s} |
 	some r in key_policies
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 	is_object(s.Principal)
-	role_arn in lib.as_array(object.get(s.Principal, "AWS", []))
+	role_arn(n) in lib.as_array(object.get(s.Principal, "AWS", []))
 }
 
 deny contains msg if {
-	is_string(role_arn)
+	some n in names
+	n in key_users
+	arn_known(n)
 	count(key_policies) > 0
-	count(key_grants) == 0
-	msg := sprintf("[PLAN-UNLOCK-04] どの Key Policy も unlock-identity の role %s に lock file の復号を許していません", [role_arn])
+	count(key_grants(n)) == 0
+	msg := sprintf("[PLAN-UNLOCK-04] どの Key Policy も %s の role %s に lock file の復号を許していません", [n, role_arn(n)])
 }
 
 deny contains msg if {
-	some g in key_grants
+	some n in names
+	some g in key_grants(n)
 	lib.lower_all(g.statement.Action) != ["kms:decrypt"]
-	msg := sprintf("[PLAN-UNLOCK-04] %s: %s が unlock-identity の role に kms:Decrypt 以外を許しています", [g.document.path, g.document.address])
+	msg := sprintf("[PLAN-UNLOCK-04] %s: %s が %s の role に kms:Decrypt 以外を許しています", [g.document.path, g.document.address, n])
 }
 
 deny contains msg if {
-	some g in key_grants
-	not decrypt_limited_to_lock(g.statement)
-	msg := sprintf("[PLAN-UNLOCK-04] %s: %s の unlock-identity の role への復号が、kms:EncryptionContext:aws:s3:arn で IAM の lock file の object %v に限られていません", [g.document.path, g.document.address, sort(lock_objects)])
+	some n in names
+	some g in key_grants(n)
+	not decrypt_limited_to_lock(g.statement, n)
+	msg := sprintf("[PLAN-UNLOCK-04] %s: %s の %s の role への復号が、kms:EncryptionContext:aws:s3:arn で IAM の lock file の object %v に限られていません", [g.document.path, g.document.address, n, sort(lock_objects(n))])
 }
 
-decrypt_limited_to_lock(s) if {
+decrypt_limited_to_lock(s, n) if {
 	vs := lib.limiting_values(s, "kms:encryptioncontext:aws:s3:arn")
 	count(vs) > 0
 	every v in vs {
 		lib.no_wildcard(v)
 	}
-	{v | some v in vs} == lock_objects
+	{v | some v in vs} == lock_objects(n)
 }

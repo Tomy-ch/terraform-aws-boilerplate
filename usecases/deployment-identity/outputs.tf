@@ -17,3 +17,8 @@ output "unlock_identity_role_arn" {
   description = "unlock-identity の role の ARN。identity root の state に残った lock を外す job が assume する。"
   value       = module.github_oidc.role_arns["unlock_identity"]
 }
+
+output "unlock_role_arn" {
+  description = "unlock の role の ARN。workload root の state に残った lock を外す job が assume する。"
+  value       = module.github_oidc.role_arns["unlock"]
+}

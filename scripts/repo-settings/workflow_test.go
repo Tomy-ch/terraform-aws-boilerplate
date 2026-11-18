@@ -252,7 +252,7 @@ func Test_nextMatch(t *testing.T) {
 func Test_isApplySuffix(t *testing.T) {
 	t.Parallel()
 
-	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false}
+	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false, unlockSuffix: false}
 	for suffix, w := range want {
 		t.Run(suffix, func(t *testing.T) {
 			t.Parallel()
