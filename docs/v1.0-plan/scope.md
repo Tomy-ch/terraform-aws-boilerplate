@@ -517,7 +517,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 1. Realtime構成で、SSE配信、インスタンス別Queueの生成・回収、孤立資源回収、prefixで制限したIAMを確認する。永続Table/TopicがTerraform所有であり、AWSで`realtime-init`を実行しない。
 1. 第2.2節のゲートがCIで機能している。tabp内のコード実行resourceは許可リストとADRを持ち、採用した各言語のlint・testがCIで必ず走る。
 1. 観測の三モードがexporter設定の切り替えと`controlled-external-egress`の有効化だけで成立する。AWS基盤系アラームがモードに関係なく発報し、`ops-notification`の通知先へ届く。メトリクス途絶を検知できる。egress制御が第9.2節のとおり機能し、`controlled-external-egress`を有効にしていない環境から外部へ到達できない。
-1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。フェーズ0のbootstrap実行者だけが例外で、一時IAM user（長期のアクセスキーを持たない）を使い、完了後に削除されている（第10.3節、ADR-0602 決定9-11）。
+1. 人間はSSOで各アカウントへ到達し、人間とCIのいずれも長期アクセスキーを使わない。SSOが使えないときのbreak-glass（管理アカウントのIAM user 2つ。アクセスキーを持たない。ADR-0301 決定19）だけがSSOの例外である。フェーズ0のbootstrap実行者だけが例外で、一時IAM user（長期のアクセスキーを持たない）を使い、完了後に削除されている（第10.3節、ADR-0602 決定9-11）。
 1. `data-refresh`で、マスキングJobの成功前に下位環境の接続先が切り替わらないことを、devとsandboxの間で確認する。下位環境から本番へ書き込めないことは、SCPとIAMの宣言をPolicy Testで確認する（ライブで逆流を試さない）。
 1. `media-ingest`で、スキャン結果が脅威なしでないオブジェクトを読めないことを確認する。
 1. Security Default、Stateful Resourceの保護、復元可能性、主要Computeのデプロイ方式が文書と検査で確認される。
