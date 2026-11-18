@@ -30,7 +30,7 @@ jobs:
 
 var deployX = branches{
 	Deploy: []branchdecl.DeployBranch{{Branch: "main", Env: "x", From: []string{"release/"}}},
-	Lines:  []string{"release/"},
+	Lines:  branchdecl.Lines{Release: "release/"},
 	Revert: "revert/",
 }
 
@@ -107,7 +107,7 @@ func Test_renderApplyTriggers(t *testing.T) {
 	}{
 		"apply の workflow が1件も無ければ失敗する":          {map[string]string{"unlock.yaml": unlockWorkflowFixture}, deployX, workflowsDir, "apply の environment を使う job がありません"},
 		"1つの workflow が複数の env の apply を持てば失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture + "  other:\n    environment: y-apply\n"}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "複数の env"},
-		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: []string{"release/"}, Revert: "revert/"}, filepath.Join(workflowsDir, "apply.yaml"), "env x のデプロイブランチ"},
+		"env のデプロイブランチが無ければ失敗する":                 {map[string]string{"apply.yaml": applyWorkflowFixture}, branches{Deploy: deployBranches("main"), Lines: branchdecl.Lines{Release: "release/"}, Revert: "revert/"}, filepath.Join(workflowsDir, "apply.yaml"), "env x のデプロイブランチ"},
 		"apply の job の environment: を読めなければ失敗する": {map[string]string{"apply.yaml": applyWorkflowFixture, "other.yaml": "on:\n  push:\n    branches:\n      - 'release/*'\njobs:\n  a:\n    environment:\n      name: x-apply\n"}, deployX, filepath.Join(workflowsDir, "other.yaml"), "environment: を読めません"},
 		"on.push.branches がフロー形式なら失敗する":          {map[string]string{"apply.yaml": strings.Replace(applyWorkflowFixture, "    branches:\n      - main", "    branches: [main]", 1)}, deployX, filepath.Join(workflowsDir, "apply.yaml"), "on.push.branches"},
 	}
@@ -137,6 +137,7 @@ func Test_applyEnvs(t *testing.T) {
 	}{
 		"apply-identity の env を返す":                        {applyWorkflowFixture, []string{"x"}},
 		"lock の解除と plan の env は返さない":                      {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
+		"workload root の lock の解除の env は返さない":             {"jobs:\n  a:\n    environment: x-unlock\n", nil},
 		"同じ env の apply と apply-identity は1つ":             {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
 		"jobs の外の environment は読まない":                      {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
 		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
@@ -252,7 +253,7 @@ func Test_nextMatch(t *testing.T) {
 func Test_isApplySuffix(t *testing.T) {
 	t.Parallel()
 
-	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false}
+	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false, unlockSuffix: false}
 	for suffix, w := range want {
 		t.Run(suffix, func(t *testing.T) {
 			t.Parallel()

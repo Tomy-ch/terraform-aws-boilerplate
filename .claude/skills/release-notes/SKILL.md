@@ -59,7 +59,7 @@ Do NOT read git history, run diffs, or write any file until both values are conf
 
 - `<FROM_TAG>` exists on `origin` and is reachable from `HEAD`.
 - The working tree may be dirty, but only changes that are committed (i.e., between `<FROM_TAG>` and `HEAD`) will appear in the release notes. If `git status --porcelain` is non-empty, mention this to the user once before writing.
-- Do NOT work directly on the `production` / `develop` / `staging` / `release/*` branches when committing the generated file (see Git rules in AGENTS.md). Use the current branch as-is for *reading* git state, but instruct the user to commit on an appropriate feature branch if they are currently on a protected branch.
+- Do NOT work directly on a protected branch when committing the generated file (see Git rules in AGENTS.md). The protected set is `conditions.ref_name.include` in `.github/settings/branch-protection.json`, generated from `.github/settings/branches.json`. Use the current branch as-is for *reading* git state, but instruct the user to commit on an appropriate feature branch if they are currently on a protected branch.
 
 ## 変更してよい範囲
 

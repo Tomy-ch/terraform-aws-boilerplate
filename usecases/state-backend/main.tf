@@ -1,9 +1,15 @@
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+data "aws_partition" "current" {}
+
 locals {
   state_name = "${var.project}-${var.env}-tfstate"
   # identity root の lock file。backend.tf の key と、deployment-identity の unlock-identity の IAM の Resource が同じ key を持つ。
   identity_lock_key = "identity/terraform.tfstate.tflock"
   identity_keys     = ["identity/terraform.tfstate", local.identity_lock_key]
   workload_keys     = ["workload/terraform.tfstate", "workload/terraform.tfstate.tflock"]
+  # 名前の規則は internal/plan-output の bucket_name と同じ。
+  apply_output_bucket_arn = "arn:${data.aws_partition.current.partition}:s3:::${var.project}-${var.env}-tfapply-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
 }
 
 module "s3" {

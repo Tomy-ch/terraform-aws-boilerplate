@@ -377,10 +377,12 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       make apply-environments
       ```
 
-   3. secret を置く（値は管理アカウントの ID）
+   3. secret を置く（値は管理アカウントの ID）。`admin-apply` と `admin-unlock` は workload root の apply と lock の解除の job が読む
 
       ```bash
       gh secret set AWS_ACCOUNT_ID --env admin-apply-identity
+      gh secret set AWS_ACCOUNT_ID --env admin-apply
+      gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
    4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
@@ -390,7 +392,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
 2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
-   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-admin-identity` が緑
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-admin-identity` が緑
    - ログの plan の要約が `No changes.`
    - Policy の違反が無い
    - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる

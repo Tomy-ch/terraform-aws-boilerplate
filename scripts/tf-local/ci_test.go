@@ -70,7 +70,7 @@ func Test_runRoleARN(t *testing.T) {
 func Test_roleARN(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range []string{"plan", "apply", "apply-identity", "unlock-identity"} {
+	for _, role := range []string{"plan", "apply", "apply-identity", "unlock-identity", "unlock"} {
 		t.Run(role+" の役割の ARN を組む", func(t *testing.T) {
 			t.Parallel()
 

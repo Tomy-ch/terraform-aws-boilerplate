@@ -23,6 +23,7 @@ locals {
     apply           = { name = "${var.name_prefix}-ci-apply", environment = "${var.env}-apply" }
     apply_identity  = { name = "${var.name_prefix}-ci-apply-identity", environment = "${var.env}-apply-identity" }
     unlock_identity = { name = "${var.name_prefix}-ci-unlock-identity", environment = "${var.env}-unlock-identity" }
+    unlock          = { name = "${var.name_prefix}-ci-unlock", environment = "${var.env}-unlock" }
   }
 
   # apply-identity は他の role を管理する権限を持つので、resource を分けて先に書き込む（deployment-identity/ADR-0201 決定4）。

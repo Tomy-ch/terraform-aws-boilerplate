@@ -4,11 +4,13 @@ name: Actions Static Analysis
 on:
   pull_request:
   push:
-    branches:
-      - develop
-      - staging
-      - production
-      - 'release/*'
+    branches: # branch-set: ruleset
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'

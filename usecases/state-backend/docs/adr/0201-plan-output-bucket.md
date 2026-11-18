@@ -77,7 +77,7 @@ Bucket 1つと lifecycle のために、公開契約と bootstrap の段の割�
 
 ## 影響
 
-`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みと `apply/*` への `s3:PutObject` を与える（deployment-identity/ADR-0201 の表）。CI の plan の job は、Bucket の名前を identity root の output `plan_output_bucket_name` から得る。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
+`plan_output_bucket_arn` を受ける deployment-identity は、plan の role に `s3:PutObject` と Bucket の設定の読み取りを、apply-identity の role に Bucket の設定の書き込みと `apply/*` への `s3:PutObject` を与える（deployment-identity/ADR-0201 の表）。CI の plan と apply の job は、Bucket の名前を名前の規則から `scripts/tf-local` の `bucket -kind tfplan` で組む（規則の一致は `tf-local` のテストが見る）。identity root の output `plan_output_bucket_name` は、人が確かめるときの参照である。`plan_output_retention_days` を短くする変更には、state-backend/ADR-0103 (expire-noncurrent-state-versions) 決定7 の短縮の許可が要る（Policy Test）。
 
 ## 見直し条件
 

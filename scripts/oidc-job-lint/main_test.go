@@ -20,9 +20,9 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
 
-const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-apply-identity"},{"name":"admin-unlock-identity"}]`
+const envDecl = `[{"name":"admin-plan"},{"name":"admin-apply"},{"name":"admin-apply-identity"},{"name":"admin-unlock-identity"},{"name":"admin-unlock"}]`
 
-var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity"}
+var envs = []string{"admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"}
 
 var planPerms = []string{"contents: read", "id-token: write"}
 
@@ -101,9 +101,17 @@ var applyWorkflow = strings.Join([]string{
 	"      - run: make resource-order-check-test RUNNER_MODE=host",
 	"      - run: make resource-order-check RUNNER_MODE=host",
 	"",
+	"  apply-layer-check:",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - run: make layer-check-test RUNNER_MODE=host",
+	"      - run: make layer-check RUNNER_MODE=host",
+	"",
 	"  apply-admin-identity:",
-	"    needs: [apply-infra-code-gate, apply-resource-order-check]",
-	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
+	"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]",
+	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
 	"    runs-on: ubuntu-24.04",
 	"    environment:",
 	"      name: admin-apply-identity",
@@ -119,6 +127,37 @@ var applyWorkflow = strings.Join([]string{
 	"          persist-credentials: false",
 	"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host",
 	"      - run: make ci-apply-admin-identity RUNNER_MODE=host",
+	"",
+	revertJobs,
+}, "\n")
+
+// revertJobs は、applyWorkflow の apply の job の失敗を戻す判定と、通知の job。apply.yml に置く前提で
+// workflow の名前を書く。
+var revertJobs = strings.Join([]string{
+	"  revert-plan:",
+	"    needs: [apply-admin-identity]",
+	"    if: ${{ always() && needs.apply-admin-identity.result == 'failure' }}",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"      actions: read",
+	"    steps:",
+	"      - name: Decide the revert",
+	"        env:",
+	"          APPLY_REVERT_WORKFLOW: apply.yml",
+	"          APPLY_REVERT_RESULTS: >-",
+	"            apply-admin-identity=${{ needs.apply-admin-identity.result }}:${{ needs.apply-admin-identity.outputs.apply-outcome }}:${{ needs.apply-admin-identity.outputs.failure }}",
+	"        run: make ci-revert-plan RUNNER_MODE=host",
+	"",
+	"  notify-failure:",
+	"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]",
+	"    if: ${{ always() && contains(fromJSON('[\"failure\", \"cancelled\"]'), needs.apply-admin-identity.result) }}",
+	"    uses: ./.github/workflows/notify.yaml",
+	"",
+	"  notify-success:",
+	"    needs: [apply-admin-identity]",
+	"    if: ${{ needs.apply-admin-identity.result == 'success' }}",
+	"    uses: ./.github/workflows/notify.yaml",
 	"",
 }, "\n")
 
@@ -188,7 +227,7 @@ func rulesetOf(envFile string) string {
 
 const rulesetDecl = `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "tf-lint"}]}}]}`
 
-// gatesWorkflow は、Pull Request の必須検査として順序の検査を走らせる workflow。repoWith が既定で置く。
+// gatesWorkflow は、Pull Request の必須検査として順序の検査と層の検査を走らせる workflow。repoWith が既定で置く。
 var gatesWorkflow = strings.Join([]string{
 	"name: Terraform Gates",
 	"on:",
@@ -218,6 +257,10 @@ var gatesWorkflow = strings.Join([]string{
 	"        run: make resource-order-check-test RUNNER_MODE=host",
 	"      - name: Check the resource order",
 	"        run: make resource-order-check RUNNER_MODE=host",
+	"      - name: Run the layer check's own tests",
+	"        run: make layer-check-test RUNNER_MODE=host",
+	"      - name: Check the layer rules",
+	"        run: make layer-check RUNNER_MODE=host",
 	"",
 }, "\n")
 
@@ -260,15 +303,24 @@ func Test_run(t *testing.T) {
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow}, envDecl)
 		var out bytes.Buffer
-		require.NoError(t, run(wf, env, rulesetOf(env), &out))
+		require.NoError(t, run(wf, env, rulesetOf(env), "", &out))
 		assert.Contains(t, out.String(), "job 2 件")
+	})
+
+	t.Run("apply の失敗を戻す配線が欠ければ違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": replaced(t, applyWorkflow, "  revert-plan:\n", "  revert-gone:\n")}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "revert-plan の job がありません")
 	})
 
 	t.Run("対象の job が無ければ errNoTarget", func(t *testing.T) {
 		t.Parallel()
 
 		wf, env := repoWith(t, map[string]string{"x.yaml": "on: push\njobs:\n  a:\n    steps:\n      - run: echo\n"}, envDecl)
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &bytes.Buffer{}), errNoTarget)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &bytes.Buffer{}), errNoTarget)
 	})
 
 	t.Run("workflow を読めなければ失敗する", func(t *testing.T) {
@@ -277,7 +329,7 @@ func Test_run(t *testing.T) {
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow}, envDecl)
 		require.NoError(t, os.Chmod(filepath.Join(wf, "apply.yml"), 0))
-		err := run(wf, env, rulesetOf(env), &bytes.Buffer{})
+		err := run(wf, env, rulesetOf(env), "", &bytes.Buffer{})
 		require.ErrorIs(t, err, fs.ErrPermission)
 		assert.Contains(t, err.Error(), "apply.yml の読み取り")
 	})
@@ -286,7 +338,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		wf, env := repoWith(t, nil, envDecl)
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &bytes.Buffer{}), errNoTarget)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &bytes.Buffer{}), errNoTarget)
 	})
 
 	t.Run("対象が無くても違反があれば違反を報告する", func(t *testing.T) {
@@ -294,7 +346,7 @@ func Test_run(t *testing.T) {
 
 		wf, env := repoWith(t, map[string]string{"x.yaml": "on: push\npermissions:\n  id-token: write\njobs:\n  a:\n    steps:\n      - run: echo\n"}, envDecl)
 		var out bytes.Buffer
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "workflow 全体の permissions に id-token")
 	})
 
@@ -304,7 +356,7 @@ func Test_run(t *testing.T) {
 		bad := strings.Replace(planWorkflow, "    needs: infra-code-gate\n", "", 1)
 		wf, env := repoWith(t, map[string]string{"plan.yaml": bad}, envDecl)
 		var out bytes.Buffer
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make infra-code-gate を走らせる job")
 	})
 
@@ -312,7 +364,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		_, env := repoWith(t, nil, envDecl)
-		err := run(filepath.Join(t.TempDir(), "missing"), env, rulesetOf(env), &bytes.Buffer{})
+		err := run(filepath.Join(t.TempDir(), "missing"), env, rulesetOf(env), "", &bytes.Buffer{})
 		require.Error(t, err)
 		require.NotErrorIs(t, err, errNoTarget)
 	})
@@ -321,7 +373,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow}, envDecl)
-		require.ErrorIs(t, run(wf, filepath.Join(t.TempDir(), "missing.json"), rulesetOf(env), &bytes.Buffer{}), errEnvDecl)
+		require.ErrorIs(t, run(wf, filepath.Join(t.TempDir(), "missing.json"), rulesetOf(env), "", &bytes.Buffer{}), errEnvDecl)
 	})
 
 	t.Run("Pull Request の必須検査が順序の検査を走らせなければ失敗する", func(t *testing.T) {
@@ -329,24 +381,55 @@ func Test_run(t *testing.T) {
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make resource-order-check-test と make resource-order-check を走らせるものがありません")
+	})
+
+	t.Run("2つの検査を走らせる必須検査の job の job 単位の違反は1件だけ報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "  tf-lint:\n    needs: changes\n", "  tf-lint:\n    needs: changes\n    env:\n      X: y\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Equal(t, 1, strings.Count(out.String(), "必須検査の job に env: を置かないでください"))
+	})
+
+	t.Run("検査ごとに違う step の違反は両方とも報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: make resource-order-check RUNNER_MODE=host\n        if: false\n")
+		gates = replaced(t, gates, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "順序の検査の step に if:")
+		assert.Contains(t, out.String(), "層の検査の step に if:")
+	})
+
+	t.Run("Pull Request の必須検査が層の検査を走らせなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "make layer-check-test と make layer-check を走らせるものがありません")
 	})
 
 	t.Run("保護設定を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow}, envDecl)
-		require.ErrorIs(t, run(wf, env, filepath.Join(t.TempDir(), "missing.json"), &bytes.Buffer{}), requiredchecks.ErrRead)
+		require.ErrorIs(t, run(wf, env, filepath.Join(t.TempDir(), "missing.json"), "", &bytes.Buffer{}), requiredchecks.ErrRead)
 	})
 
 	t.Run("別の workflow の検出の job は needs に数えない", func(t *testing.T) {
 		t.Parallel()
 
-		apply := replaced(t, applyWorkflow, "    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: [infra-code-gate, apply-resource-order-check]\n")
+		apply := replaced(t, applyWorkflow, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n", "    needs: [infra-code-gate, apply-resource-order-check, apply-layer-check]\n")
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": apply}, envDecl)
 		var out bytes.Buffer
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 		assert.Contains(t, out.String(), "make infra-code-gate を走らせる job")
 	})
 }
@@ -610,6 +693,15 @@ func Test_checkJob(t *testing.T) {
 		findings := checkJob("p.yaml", jobOf(t, src, "plan-admin-identity"), planPerms, envs, infoOf(src))
 		require.Len(t, findings, 1, "役割の違反だけを1件出す: "+messages(findings))
 		assert.Contains(t, findings[0].Message, "unlock-identity の role は lock の解除の job（make ci-unlock-*）だけが取って")
+	})
+
+	t.Run("plan の job が unlock の role を取れば、役割の違反だけを出す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, replaced(t, planWorkflow, "CI_ROLE=plan", "CI_ROLE=unlock"), "environment: admin-plan", "environment: admin-unlock")
+		findings := checkJob("p.yaml", jobOf(t, src, "plan-admin-identity"), planPerms, envs, infoOf(src))
+		require.Len(t, findings, 1, "役割の違反だけを1件出す: "+messages(findings))
+		assert.Contains(t, findings[0].Message, "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って")
 	})
 
 	t.Run("apply の job が unlock-identity の role を取れば違反", func(t *testing.T) {
@@ -914,7 +1006,7 @@ func Test_checkDetection(t *testing.T) {
 	t.Run("if: が無ければ既定の成功の条件で足りる", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n", "")
+		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n", "")
 		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
 	})
 
@@ -1068,8 +1160,8 @@ func Test_checkDetection(t *testing.T) {
 	t.Run("ブロックの if: も読む", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n",
-			"    if: >-\n      needs.apply-infra-code-gate.result == 'success' &&\n      needs.apply-resource-order-check.result == 'success' &&\n      github.ref_name == github.event.repository.default_branch\n")
+		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n",
+			"    if: >-\n      needs.apply-infra-code-gate.result == 'success' &&\n      needs.apply-resource-order-check.result == 'success' &&\n      needs.apply-layer-check.result == 'success' &&\n      github.ref_name == github.event.repository.default_branch\n")
 		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
 	})
 
@@ -1100,12 +1192,12 @@ func Test_checkDetection(t *testing.T) {
 		})
 	}
 
-	t.Run("needs に検出でも順序の検査でもない job があれば違反", func(t *testing.T) {
+	t.Run("needs に検出でも検査の job でもない job があれば違反", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check]\n",
-			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, other]\n")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）でも順序の検査の job（make resource-order-check）でもありません")
+		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n",
+			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, other]\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check） ではありません")
 	})
 
 	t.Run("if: が順序の検査の成功を見なければ違反", func(t *testing.T) {
@@ -1120,6 +1212,28 @@ func Test_checkDetection(t *testing.T) {
 
 		j, aw := applyWith(t, "  apply-resource-order-check:\n    runs-on: ubuntu-24.04\n", "  apply-resource-order-check:\n    continue-on-error: true\n    runs-on: ubuntu-24.04\n")
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check に if:・continue-on-error:")
+	})
+
+	t.Run("if: が層の検査の成功を見なければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "needs.apply-layer-check.result == 'success' && ", "")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-layer-check.result == 'success' を含めて")
+	})
+
+	t.Run("層の検査の job も検出の job と同じ規則で見る", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "  apply-layer-check:\n    runs-on: ubuntu-24.04\n", "  apply-layer-check:\n    continue-on-error: true\n    runs-on: ubuntu-24.04\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "層の検査の job apply-layer-check に if:・continue-on-error:")
+	})
+
+	t.Run("2つの検査を1つの job で走らせれば違反", func(t *testing.T) {
+		t.Parallel()
+
+		const orderStep = "      - run: make resource-order-check RUNNER_MODE=host\n"
+		j, aw := applyWith(t, orderStep, orderStep+"      - run: make layer-check RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check の run: は make resource-order-check-test と make resource-order-check だけ")
 	})
 
 	t.Run("検出の job のコメントの if: は読まない", func(t *testing.T) {
@@ -1137,6 +1251,12 @@ func Test_checkDetection(t *testing.T) {
 	})
 }
 
+func Test_allowedNeeds(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）", allowedNeeds())
+}
+
 func Test_checkGateJob(t *testing.T) {
 	t.Parallel()
 
@@ -1151,6 +1271,20 @@ func Test_checkGateJob(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
+	})
+
+	t.Run("層の検査の2つの make だけなら違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-layer-check"), layerGate, formatted))
+	})
+
+	t.Run("層の検査の job のほかの run: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
+		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check RUNNER_MODE=host LY_NS=x\n"), "apply-layer-check")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check-test と make layer-check だけ")
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
@@ -1170,10 +1304,9 @@ func Test_checkGateJob(t *testing.T) {
 	}
 }
 
-func Test_checkOrderGate(t *testing.T) {
+func Test_checkApplyGate(t *testing.T) {
 	t.Parallel()
 
-	const want = "apply の job の needs に、make resource-order-check を走らせる job を同じ workflow の中に置いてください"
 	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
 		t.Helper()
 
@@ -1181,32 +1314,49 @@ func Test_checkOrderGate(t *testing.T) {
 
 		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
 	}
+	const fullNeeds = "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n"
 
-	t.Run("順序の検査の job を needs に持てば違反0件", func(t *testing.T) {
-		t.Parallel()
+	for _, g := range applyGates {
+		want := fmt.Sprintf("apply の job の needs に、%s を走らせる job を同じ workflow の中に置いてください", g.check)
 
-		assert.Empty(t, checkOrderGate(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow).jobs, formatted))
-	})
+		t.Run(g.noun+"の job を needs に持てば違反0件", func(t *testing.T) {
+			t.Parallel()
 
-	for name, c := range map[string]struct{ from, to string }{
-		"needs に無ければ違反":           {"    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: apply-infra-code-gate\n"},
-		"自己テストだけの job は数えない":      {"      - run: make resource-order-check RUNNER_MODE=host\n", ""},
-		"検出も走らせる job は順序の検査と数えない": {"      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+			assert.Empty(t, checkApplyGate(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow).jobs, g, formatted))
+		})
+
+		t.Run(g.noun+": needs に無ければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, fullNeeds, "    needs: apply-infra-code-gate\n")
+			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, g, formatted)), want)
+		})
+
+		t.Run(g.noun+": apply の job の検査に含まれる", func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, fullNeeds, "    needs: apply-infra-code-gate\n")
+			assert.Contains(t, messages(checkJob("a.yaml", j, planPerms, envs, aw)), want)
+		})
+	}
+
+	for name, c := range map[string]struct {
+		g        gate
+		from, to string
+	}{
+		"順序の検査: 自己テストだけの job は数えない":   {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", ""},
+		"順序の検査: 検出も走らせる job は数えない":    {orderGate, "      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"層の検査: 自己テストだけの job は数えない":    {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", ""},
+		"層の検査: 検出も走らせる job は数えない":     {layerGate, "      - run: make layer-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"層の検査: 順序の検査の job は層の検査と数えない": {layerGate, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n", "    needs: [apply-infra-code-gate, apply-resource-order-check]\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			j, aw := applyWith(t, c.from, c.to)
-			assert.Contains(t, messages(checkOrderGate(j, aw.jobs, formatted)), want)
+			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, c.g, formatted)), c.g.check+" を走らせる job")
 		})
 	}
-
-	t.Run("apply の job の検査に含まれる", func(t *testing.T) {
-		t.Parallel()
-
-		j, aw := applyWith(t, "    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: apply-infra-code-gate\n")
-		assert.Contains(t, messages(checkJob("a.yaml", j, planPerms, envs, aw)), want)
-	})
 }
 
 func hiddenOf(t *testing.T, job workflow.Job, w workflowInfo, f func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
@@ -1592,6 +1742,27 @@ func Test_runsGate(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), orderGate))
+		})
+	}
+
+	layer := map[string]struct {
+		step string
+		want bool
+	}{
+		"make layer-check を走らせる": {"      - run: make layer-check RUNNER_MODE=host\n", true},
+		"自己テストだけは偽":              {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
+		"検出は層の検査ではない":            {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
+		"順序の検査は層の検査ではない":         {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
+		"-n（実行しない）は偽":            {"      - run: make -n layer-check\n", false},
+		"後置の -n は偽":              {"      - run: make layer-check -n\n", false},
+		"|| true で失敗を隠すのは偽":      {"      - run: make layer-check || true\n", false},
+		"ほかの変数の代入は偽":             {"      - run: make layer-check RUNNER_MODE=host LY_NS=x\n", false},
+	}
+	for name, c := range layer {
+		t.Run("層の検査/"+name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), layerGate))
 		})
 	}
 }
@@ -2214,7 +2385,7 @@ func Test_runUnlock(t *testing.T) {
 
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow}, envDecl)
 		var out bytes.Buffer
-		require.NoError(t, run(wf, env, rulesetOf(env), &out), out.String())
+		require.NoError(t, run(wf, env, rulesetOf(env), "", &out), out.String())
 		assert.Contains(t, out.String(), "job 3 件")
 	})
 
@@ -2243,7 +2414,7 @@ func Test_runUnlock(t *testing.T) {
 
 			wf, env := repoWith(t, c.files, envDecl)
 			var out bytes.Buffer
-			require.ErrorIs(t, run(wf, env, rulesetOf(env), &out), errViolations)
+			require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
 			assert.Contains(t, out.String(), c.want)
 		})
 	}
@@ -2257,6 +2428,13 @@ func Test_checkJobUnlock(t *testing.T) {
 
 		job := jobOf(t, unlockWorkflow, "unlock-admin-identity")
 		assert.Empty(t, checkJob("u.yaml", job, planPerms, envs, infoOf(unlockWorkflow)))
+	})
+
+	t.Run("workload root の lock の解除の job は unlock の role で通る", func(t *testing.T) {
+		t.Parallel()
+
+		src := workloadUnlockWorkflow(t)
+		assert.Empty(t, checkJob("u.yaml", jobOf(t, src, "unlock-admin-identity"), planPerms, envs, infoOf(src)))
 	})
 
 	t.Run("apply の入口と併せ持つ job は lock の解除の job として落とす", func(t *testing.T) {
@@ -2282,25 +2460,41 @@ func Test_checkJobUnlock(t *testing.T) {
 	}
 }
 
+// workloadUnlockWorkflow は、unlockWorkflow の lock の解除の job を workload root へ向けたもの。job の id は変えない。
+func workloadUnlockWorkflow(t *testing.T) string {
+	t.Helper()
+
+	src := replaced(t, unlockWorkflow, "make ci-unlock-admin-identity", "make ci-unlock-admin-workload")
+	src = replaced(t, src, "CI_ROLE=unlock-identity", "CI_ROLE=unlock")
+
+	return replaced(t, src, "environment: admin-unlock-identity", "environment: admin-unlock")
+}
+
 func Test_checkRole(t *testing.T) {
 	t.Parallel()
 
 	unlockJob := jobOf(t, unlockWorkflow, "unlock-admin-identity")
 	applyJob := jobOf(t, applyWorkflow, "apply-admin-identity")
 	planJob := jobOf(t, planWorkflow, "plan-admin-identity")
+	workloadUnlockJob := jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")
 	for name, c := range map[string]struct {
 		job  workflow.Job
 		role string
 		want string
 	}{
-		"lock の解除の job の unlock-identity は違反0件": {unlockJob, "unlock-identity", ""},
-		"lock の解除の job の apply-identity は違反":    {unlockJob, "apply-identity", "lock の解除の job は unlock-identity の role を取って"},
-		"lock の解除の job の apply は違反":             {unlockJob, "apply", "lock の解除の job は unlock-identity の role を取って"},
-		"lock の解除の job の plan は違反":              {unlockJob, "plan", "lock の解除の job は unlock-identity の role を取って"},
-		"apply の job の apply-identity は違反0件":    {applyJob, "apply-identity", ""},
-		"apply の job の unlock-identity は違反":     {applyJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
-		"plan の job の plan は違反0件":               {planJob, "plan", ""},
-		"plan の job の unlock-identity は違反":      {planJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"lock の解除の job の unlock-identity は違反0件":          {unlockJob, "unlock-identity", ""},
+		"lock の解除の job の apply-identity は違反":             {unlockJob, "apply-identity", "lock の解除の job は unlock-identity の role を取って"},
+		"lock の解除の job の apply は違反":                      {unlockJob, "apply", "lock の解除の job は unlock-identity の role を取って"},
+		"lock の解除の job の plan は違反":                       {unlockJob, "plan", "lock の解除の job は unlock-identity の role を取って"},
+		"apply の job の apply-identity は違反0件":             {applyJob, "apply-identity", ""},
+		"apply の job の unlock-identity は違反":              {applyJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"plan の job の plan は違反0件":                        {planJob, "plan", ""},
+		"plan の job の unlock-identity は違反":               {planJob, "unlock-identity", "lock の解除の job（make ci-unlock-*）だけが取って"},
+		"identity の lock の解除の job の unlock は違反":          {unlockJob, "unlock", "lock の解除の job は unlock-identity の role を取って"},
+		"workload の lock の解除の job の unlock は違反0件":        {workloadUnlockJob, "unlock", ""},
+		"workload の lock の解除の job の unlock-identity は違反": {workloadUnlockJob, "unlock-identity", "lock の解除の job は unlock の role を取って"},
+		"apply の job の unlock は違反":                       {applyJob, "unlock", "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って"},
+		"plan の job の unlock は違反":                        {planJob, "unlock", "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -2712,7 +2906,7 @@ func Test_literalGroup(t *testing.T) {
 	}
 }
 
-func Test_checkRequiredOrderJobs(t *testing.T) {
+func Test_checkRequiredGateJobs(t *testing.T) {
 	t.Parallel()
 
 	required := map[string]bool{"tf-lint": true}
@@ -2724,9 +2918,46 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 	t.Run("必須検査の job が両方を走らせれば1件で違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := checkRequiredOrderJobs("g.yaml", gatesWorkflow, required)
+		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, orderGate)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, f)
+	})
+
+	t.Run("層の検査も同じ job で数える", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, layerGate)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, f)
+	})
+
+	const (
+		layerCheck = "        run: make layer-check RUNNER_MODE=host\n"
+		layerSelf  = "        run: make layer-check-test RUNNER_MODE=host\n"
+	)
+	for name, src := range map[string]string{
+		"層の検査そのものが無い":             strings.Replace(gatesWorkflow, layerCheck, "        run: echo\n", 1),
+		"層の検査の自己テストが無い":           strings.Replace(gatesWorkflow, layerSelf, "        run: echo\n", 1),
+		"層の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
+		"層の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, layerCheck, "        run: make layer-check RUNNER_MODE=host LY_NS=x\n", 1),
+		"層の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, layerCheck, "        # run: make layer-check RUNNER_MODE=host\n        run: echo\n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
+			n, f := checkRequiredGateJobs("g.yaml", src, required, layerGate)
+			assert.Zero(t, n)
+			assert.Empty(t, f)
+		})
+	}
+
+	t.Run("層の検査の step の形の違反を返す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
+		_, f := checkRequiredGateJobs("g.yaml", src, required, layerGate)
+		assert.Contains(t, messages(f), "層の検査の step に if:")
 	})
 
 	for name, src := range map[string]string{
@@ -2741,7 +2972,7 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 			t.Parallel()
 
 			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
-			n, f := checkRequiredOrderJobs("g.yaml", src, required)
+			n, f := checkRequiredGateJobs("g.yaml", src, required, orderGate)
 			assert.Zero(t, n)
 			assert.Empty(t, f)
 		})
@@ -2751,13 +2982,13 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 		t.Parallel()
 
 		src := replaced(t, gatesWorkflow, check, check+"        continue-on-error: true\n")
-		n, f := checkRequiredOrderJobs("g.yaml", src, required)
+		n, f := checkRequiredGateJobs("g.yaml", src, required, orderGate)
 		assert.Equal(t, 1, n)
 		assert.Contains(t, messages(f), "順序の検査の step に if:・continue-on-error:")
 	})
 }
 
-func Test_checkRequiredOrderJob(t *testing.T) {
+func Test_checkRequiredGateJob(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -2778,21 +3009,21 @@ func Test_checkRequiredOrderJob(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, gatesWorkflow)
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	t.Run("job の if: が無くても違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, ""))
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	t.Run("ブロックの if: でも同じ式なら違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, "    if: >-\n      !cancelled() &&\n      needs.changes.outputs.relevant != 'false'\n"))
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
@@ -2819,7 +3050,7 @@ func Test_checkRequiredOrderJob(t *testing.T) {
 			t.Parallel()
 
 			j, pre := job(t, replaced(t, gatesWorkflow, c.from, c.to))
-			assert.Contains(t, messages(checkRequiredOrderJob("g.yaml", j, pre)), c.want)
+			assert.Contains(t, messages(checkRequiredGateJob("g.yaml", j, pre, orderGate)), c.want)
 		})
 	}
 }
@@ -2841,14 +3072,343 @@ func Test_ifExpression(t *testing.T) {
 	}
 }
 
-func Test_checkPullRequestOrder(t *testing.T) {
+func Test_checkPullRequestGate(t *testing.T) {
 	t.Parallel()
 
 	apply := []groupRecord{{file: "a.yaml", root: "admin-identity"}}
 	unlock := []groupRecord{{file: "u.yaml", root: "admin-identity", unlock: true}}
 
-	assert.Empty(t, checkPullRequestOrder("wf", apply, 1), "Pull Request の側に在れば違反0件")
-	assert.Empty(t, checkPullRequestOrder("wf", unlock, 0), "apply の job が無ければ求めない")
-	assert.Empty(t, checkPullRequestOrder("wf", nil, 0), "apply の job が無ければ求めない")
-	assert.Contains(t, messages(checkPullRequestOrder("wf", append(unlock, apply...), 0)), "make resource-order-check-test と make resource-order-check を走らせるもの")
+	for _, g := range applyGates {
+		t.Run(g.noun+": Pull Request の側に在れば違反0件", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", apply, 1, g))
+		})
+
+		t.Run(g.noun+": apply の job が無ければ求めない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", unlock, 0, g))
+			assert.Empty(t, checkPullRequestGate("wf", nil, 0, g))
+		})
+
+		t.Run(g.noun+": apply の job が在って Pull Request の側に無ければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, g)), g.targets+" を走らせるもの")
+		})
+	}
+}
+
+func Test_isUnlockRole(t *testing.T) {
+	t.Parallel()
+
+	for role, want := range map[string]bool{
+		"unlock-identity": true,
+		"unlock":          true,
+		"apply":           false,
+		"apply-identity":  false,
+		"plan":            false,
+		"":                false,
+	} {
+		t.Run(role, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, isUnlockRole(role))
+		})
+	}
+}
+
+func Test_unlockRoleFor(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identity root の lock の解除は unlock-identity", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, unlockWorkflow, "unlock-admin-identity")))
+	})
+
+	t.Run("identity root でない root の lock の解除は unlock", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")))
+	})
+
+	t.Run("name の中の make ci-unlock-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-unlock-admin-workload\n")
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+
+	t.Run("identity と別の root の入口を併せ持てば unlock を返す", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n")
+		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+
+	t.Run("コメントの中の make ci-unlock-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      # make ci-unlock-admin-workload\n")
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+}
+
+var workloadApplyJob = strings.Join([]string{
+	"  apply-admin-workload:",
+	"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]",
+	"    runs-on: ubuntu-24.04",
+	"    steps:",
+	"      - run: make ci-apply-admin-workload RUNNER_MODE=host",
+	"",
+	"",
+}, "\n")
+
+func Test_checkRevertWiring(t *testing.T) {
+	t.Parallel()
+
+	t.Run("apply の job と revert と通知が揃えば違反0件", func(t *testing.T) {
+		t.Parallel()
+		ok, findings := checkRevertWiring("apply.yml", applyWorkflow)
+		assert.True(t, ok)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("apply の job に name: があれば違反", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, applyWorkflow, "  apply-admin-identity:\n", "  apply-admin-identity:\n    name: Apply\n")
+		ok, findings := checkRevertWiring("apply.yml", src)
+		assert.True(t, ok)
+		assert.Equal(t, "apply の job apply-admin-identity に name: があります（apply-revert は job を表示名で引く）\n", messages(findings))
+	})
+
+	t.Run("apply の job の無い workflow は対象にしない", func(t *testing.T) {
+		t.Parallel()
+		ok, findings := checkRevertWiring("p.yaml", planWorkflow)
+		assert.False(t, ok)
+		assert.Empty(t, findings)
+	})
+
+	both := func(t *testing.T) string {
+		t.Helper()
+		src := replaced(t, applyWorkflow, "  revert-plan:\n", workloadApplyJob+"  revert-plan:\n")
+		src = replaced(t, src, "  revert-plan:\n    needs: [apply-admin-identity]", "  revert-plan:\n    needs: [apply-admin-identity, apply-admin-workload]")
+		src = replaced(t, src, "needs.apply-admin-identity.result == 'failure' }}", "(needs.apply-admin-identity.result == 'failure' || needs.apply-admin-workload.result == 'failure') }}")
+		src = replaced(t, src, ":${{ needs.apply-admin-identity.outputs.failure }}\n", ":${{ needs.apply-admin-identity.outputs.failure }}\n            apply-admin-workload=${{ needs.apply-admin-workload.result }}:${{ needs.apply-admin-workload.outputs.apply-outcome }}:${{ needs.apply-admin-workload.outputs.failure }}\n")
+		src = replaced(t, src, "  notify-failure:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity]", "  notify-failure:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-admin-identity, apply-admin-workload]")
+		return src + "  notify-success-workload:\n    needs: [apply-admin-workload]\n    if: ${{ needs.apply-admin-workload.result == 'success' }}\n    uses: ./.github/workflows/notify.yaml\n"
+	}
+
+	t.Run("2つの root の apply の job がそれぞれ揃えば違反0件", func(t *testing.T) {
+		t.Parallel()
+		ok, findings := checkRevertWiring("apply.yml", both(t))
+		assert.True(t, ok)
+		assert.Empty(t, messages(findings))
+	})
+
+	for name, c := range map[string]struct {
+		from, to, want string
+	}{
+		"revert-plan が無ければ違反":                   {"  revert-plan:\n", "  revert-gone:\n", "revert-plan の job がありません"},
+		"revert-plan の needs から外せば違反":           {"needs: [apply-admin-identity, apply-admin-workload]\n    if: ${{ always()", "needs: [apply-admin-identity]\n    if: ${{ always()", "revert-plan の needs が apply の job"},
+		"revert-plan の if: に失敗の条件が無ければ違反":       {" || needs.apply-admin-workload.result == 'failure'", "", "revert-plan の if: に needs.apply-admin-workload.result == 'failure'"},
+		"結果を渡す一覧から外せば違反":                        {"            apply-admin-workload=${{ needs.apply-admin-workload.result }}:${{ needs.apply-admin-workload.outputs.apply-outcome }}:${{ needs.apply-admin-workload.outputs.failure }}\n", "", "APPLY_REVERT_RESULTS が渡す job"},
+		"結果の一覧の名前と needs の参照が食い違えば違反":           {"apply-admin-workload=${{ needs.apply-admin-workload.result }}", "apply-admin-workload=${{ needs.apply-admin-identity.result }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"結果の一覧の apply の step の結果が別の job を指せば違反": {"${{ needs.apply-admin-workload.outputs.apply-outcome }}", "${{ needs.apply-admin-identity.outputs.apply-outcome }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"結果の一覧の失敗の段が別の job を指せば違反":              {"${{ needs.apply-admin-workload.outputs.failure }}", "${{ needs.apply-admin-identity.outputs.failure }}", "APPLY_REVERT_RESULTS の apply-admin-workload"},
+		"notify-failure が無ければ違反":                {"  notify-failure:\n", "  notify-gone:\n", "notify-failure の job がありません"},
+		"別の workflow の job を名指せば違反":             {"            apply-admin-workload=", "            apply-security-identity=${{ needs.apply-security-identity.result }}:${{ needs.apply-security-identity.outputs.apply-outcome }}:${{ needs.apply-security-identity.outputs.failure }}\n            apply-admin-workload=", "APPLY_REVERT_RESULTS が渡す job"},
+		"workflow の名前が自分のファイル名でなければ違反":          {"APPLY_REVERT_WORKFLOW: apply.yml", "APPLY_REVERT_WORKFLOW: terraform-apply.yaml", "APPLY_REVERT_WORKFLOW"},
+		"notify-failure の needs から外せば違反":        {"apply-admin-identity, apply-admin-workload]\n    if: ${{ always() && contains", "apply-admin-identity]\n    if: ${{ always() && contains", "notify-failure の needs に apply-admin-workload"},
+		"成功の通知の job が無ければ違反":                    {"  notify-success-workload:\n    needs: [apply-admin-workload]\n", "  notify-success-workload:\n    needs: [apply-admin-identity]\n", "apply-admin-workload の成功を通知する job"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ok, findings := checkRevertWiring("apply.yml", replaced(t, both(t), c.from, c.to))
+			assert.Len(t, findings, 1, messages(findings))
+			assert.True(t, ok)
+			assert.Contains(t, messages(findings), c.want)
+		})
+	}
+}
+
+func rootsWith(t *testing.T, roots ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, r := range roots {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, r), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, r, "main.tf"), []byte("# x\n"), 0o600))
+	}
+	return dir
+}
+
+func rootJobs(roots ...string) map[string]string {
+	var plan, apply, unlock strings.Builder
+	plan.WriteString("on:\n  pull_request:\njobs:\n")
+	apply.WriteString("on:\n  push:\njobs:\n")
+	unlock.WriteString("on:\n  workflow_dispatch:\njobs:\n")
+	for _, r := range roots {
+		plan.WriteString("  plan-" + r + ":\n    steps:\n      - run: make ci-plan-" + r + " RUNNER_MODE=host\n")
+		apply.WriteString("  apply-" + r + ":\n    steps:\n      - run: make ci-apply-" + r + " RUNNER_MODE=host\n")
+		unlock.WriteString("  unlock-" + r + ":\n    steps:\n      - run: make ci-unlock-" + r + " RUNNER_MODE=host\n")
+	}
+	return map[string]string{"plan.yaml": plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String()}
+}
+
+func Test_runRoots(t *testing.T) {
+	t.Parallel()
+
+	wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "unlock.yaml": unlockWorkflow}, envDecl)
+
+	t.Run("root ごとの CI の経路を数えて報せる", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.NoError(t, run(wf, env, rulesetOf(env), rootsWith(t, "admin/identity"), &out), out.String())
+		assert.Contains(t, out.String(), "root 1 件の CI の経路")
+	})
+
+	t.Run("経路の無い root があれば違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), rootsWith(t, "admin/identity", "admin"), &out), errViolations)
+		assert.Contains(t, out.String(), "root admin-workload を apply する job が 0 件")
+	})
+
+	t.Run("root が1つも無ければ対象なしで失敗する", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), t.TempDir(), &bytes.Buffer{}), errNoTarget)
+	})
+}
+
+func Test_checkRootCoverage(t *testing.T) {
+	t.Parallel()
+
+	four := []string{"admin-identity", "admin-workload", "security-identity", "security-workload"}
+	dirs := []string{"admin/identity", "admin", "security/identity", "security"}
+
+	t.Run("2つの env の4つの root がそれぞれ plan・apply・lock の解除の job を持てば違反0件", func(t *testing.T) {
+		t.Parallel()
+		n, findings, err := checkRootCoverage(rootsWith(t, dirs...), rootJobs(four...))
+		require.NoError(t, err)
+		assert.Equal(t, 4, n)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("同じ root の plan が2つあっても違反にしない（定期 plan）", func(t *testing.T) {
+		t.Parallel()
+		jobs := rootJobs(four...)
+		jobs["drift.yaml"] = "on:\n  pull_request:\n  schedule:\njobs:\n  drift:\n    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"
+		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+		require.NoError(t, err)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run(".terraform と tests は root として数えない", func(t *testing.T) {
+		t.Parallel()
+		root := rootsWith(t, "admin/identity", "admin/identity/.terraform/modules/x", "admin/identity/tests")
+		n, findings, err := checkRootCoverage(root, rootJobs("admin-identity"))
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("root を置くディレクトリの symlink は違反", func(t *testing.T) {
+		t.Parallel()
+		root := rootsWith(t, dirs...)
+		require.NoError(t, os.Symlink(filepath.Join(root, "admin"), filepath.Join(root, "linked")))
+		_, findings, err := checkRootCoverage(root, rootJobs(four...))
+		require.NoError(t, err)
+		require.Len(t, findings, 1)
+		assert.Contains(t, findings[0].Message, "symlink")
+		assert.Equal(t, filepath.Join(root, "linked"), findings[0].File)
+	})
+
+	t.Run("root が1つも無ければ対象なしで失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := checkRootCoverage(t.TempDir(), rootJobs())
+		require.ErrorIs(t, err, errNoTarget)
+	})
+
+	t.Run("root を置くディレクトリが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := checkRootCoverage(filepath.Join(t.TempDir(), "missing"), rootJobs())
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	for name, c := range map[string]struct {
+		dirs []string
+		jobs func() map[string]string
+		want string
+		n    int
+	}{
+		"配置の外の root は違反":               {append(slices.Clone(dirs), "admin/extra"), func() map[string]string { return rootJobs(four...) }, "admin/extra", 1},
+		"名前が前方一致する別の root の job は数えない": {[]string{"admin/identity"}, func() map[string]string { return rootJobs("admin-identity-x") }, "root admin-identity を apply する job が 0 件", 3},
+		"apply の job が無い root は違反": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["apply.yaml"] = strings.Replace(j["apply.yaml"], "make ci-apply-security-workload", "echo", 1)
+			return j
+		}, "security-workload を apply する job が 0 件", 1},
+		"lock の解除の job が2つの root は違反": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["unlock2.yaml"] = j["unlock.yaml"]
+			return j
+		}, "lock を外す job が 2 件", 4},
+		"plan が Pull Request で起動しない root は違反": {dirs, func() map[string]string {
+			j := rootJobs(four...)
+			j["plan.yaml"] = strings.Replace(j["plan.yaml"], "  pull_request:", "  push:", 1)
+			return j
+		}, "Pull Request で plan する job がありません", 4},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, findings, err := checkRootCoverage(rootsWith(t, c.dirs...), c.jobs())
+			require.NoError(t, err)
+			assert.Contains(t, messages(findings), c.want)
+			assert.Len(t, findings, c.n, messages(findings))
+		})
+	}
+}
+
+func Test_checkRevertPlan(t *testing.T) {
+	t.Parallel()
+
+	rp := jobOf(t, applyWorkflow, "revert-plan")
+
+	t.Run("needs・if:・渡す job・workflow の名前が揃えば違反0件", func(t *testing.T) {
+		t.Parallel()
+		assert.Empty(t, checkRevertPlan(rp, []string{"apply-admin-identity"}, "apply.yml", formatted))
+	})
+
+	t.Run("workflow の名前が違えば違反", func(t *testing.T) {
+		t.Parallel()
+		got := checkRevertPlan(rp, []string{"apply-admin-identity"}, "terraform-apply.yaml", formatted)
+		require.Len(t, got, 1)
+		assert.Equal(t, `APPLY_REVERT_WORKFLOW が "apply.yml" で、この workflow のファイル名 "terraform-apply.yaml" ではありません`, got[0].Message)
+	})
+
+	t.Run("apply の job が増えれば、needs・if:・渡す job のそれぞれで違反", func(t *testing.T) {
+		t.Parallel()
+		got := messages(checkRevertPlan(rp, []string{"apply-admin-identity", "apply-admin-workload"}, "apply.yml", formatted))
+		assert.Contains(t, got, "revert-plan の needs が apply の job")
+		assert.Contains(t, got, "needs.apply-admin-workload.result == 'failure'")
+		assert.Contains(t, got, "APPLY_REVERT_RESULTS が渡す job")
+	})
+}
+
+func Test_notifiesSuccess(t *testing.T) {
+	t.Parallel()
+
+	ns := jobOf(t, applyWorkflow, "notify-success")
+	nf := jobOf(t, applyWorkflow, "notify-failure")
+
+	t.Run("needs に置き、成功の条件を持つ job は通知する", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, notifiesSuccess(ns, "apply-admin-identity"))
+	})
+
+	t.Run("needs に無い job の成功は通知しない", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, notifiesSuccess(ns, "apply-admin-workload"))
+	})
+
+	t.Run("needs に置いても成功の条件が無ければ通知しない", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, notifiesSuccess(nf, "apply-admin-identity"))
+	})
 }

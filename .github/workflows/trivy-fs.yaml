@@ -2,9 +2,13 @@ name: Dependency Scan
 
 on:
   push:
-    branches:
-      - 'release/*'
-      - production
+    branches: # branch-set: ruleset
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
+      - 'release/**'
+      - 'hotfix/**'
   pull_request:
   schedule:
     - cron: '0 0 * * 1'

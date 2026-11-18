@@ -16,19 +16,17 @@
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity` と管理アカウントの identity root のほかに、ユースケースと環境が無い
-- HCL のソースの検査のうち層検査 —— 未作成で、`make` にも配線されていない
-  （[0501](docs/adr/0501-development-tooling-composition.md) 決定4 が割り当てた道具のうち、
-  Terraform に掛かるものが揃っていない）。HCL のソースの検査のうちコード実行の検出は
-  `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に配線済み
+- HCL のソースの検査のうち root の構成と backend 設定の不変条件 —— 未作成で、`make` にも配線されていない
+  （[0604](docs/adr/0604-state-split-by-apply-role.md) の検証方法の Static Analysis。#347）。HCL のソースの検査のうち
+  コード実行の検出は `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に、
+  層の規則の検査は `make layer-check` に配線済み
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
-  `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）
+  `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）。管理アカウントの workload root は
+  #222、security・log-archive は #21、dev・stg・prd は #330 が配線する
 - sandbox の apply の経路（[0601](docs/adr/0601-change-delivery-path.md) 決定3・4、
   [0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定33）—— job・environment・required context と、
-  それらを見る検査が無い（#222）
-- 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
-  宣言は `.github/settings/branches.json` に在り、ruleset と environment と apply の workflow の起動条件はそこから生成するが、
-  `scripts/` のブランチ操作とほかの workflow の起動条件はまだパターンを自分で持ち、デプロイブランチを含まない（同 決定2-3）
+  それらを見る検査が無い（#331）
 
 **未配線の道具について「実行した」と報告しない。** 配線され次第この節から外し、この節が空になったとき節ごと削除する。
 
@@ -205,7 +203,7 @@ v1.0.0 より前では次を解除する。
 - **force push、rebase、amend、保護ブランチの checkout を行わない。** 修正は**新しい commit** として積む。同じ禁止はサーバ側の宣言としても置かれるが（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定26）、片方が在ることを理由にもう片方を省かない。
 - amend したうえで既存の Pull Request ブランチへ push する場合、**push の前に確認する**。文言はこれを使う: 「変更はローカルにコミット済みです。これらの変更をプルリクエストにプッシュしますか？」
 - **commit message に課す検査は `commitlint.config.js` が持ち、そこに「なぜその3つだけか」も書いてある。** ここへ再掲しない。**形式を細かく規定しない** —— 守られなくても何も壊れない規定は置かない。
-- **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。同じパターンを2箇所へ書かない。宣言は `.github/settings/branches.json` であり、まだ読まない読み手が残る（*現在の配線状態*）。
+- **ブランチ名と保護対象のパターンは単一の宣言が持つ**（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1-3）。同じパターンを2箇所へ書かない。宣言は `.github/settings/branches.json` である。
 - **Pull Request の title と body は日本語**（[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定9）。body には *手を止めてよい場所* の「それ以外」で下した決定を書く。
 - **デプロイブランチへの merge の可否は、実環境への適用の可否と同義である。リリース線へ merge した commit も、昇格でそのまま適用される**（[0601](docs/adr/0601-change-delivery-path.md) 決定10）。検証が失敗している Pull Request を merge しない。
 

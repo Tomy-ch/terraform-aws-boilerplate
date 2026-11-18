@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -78,6 +79,21 @@ func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
 	return f.remoteBranches[branch], nil
 }
 
+var testDecl = branchdecl.Branches{
+	Deploy:      []branchdecl.DeployBranch{{Branch: "production", ReleaseBase: true}, {Branch: "develop"}},
+	Lines:       branchdecl.Lines{Release: "release/", Hotfix: "hotfix/"},
+	LineVersion: branchdecl.VersionForm,
+	Revert:      "revert/",
+}
+
+// otherDecl は、基点と線の接頭辞を testDecl と違う名前にした宣言です。手順が名前を宣言から読むことを見る。
+var otherDecl = branchdecl.Branches{
+	Deploy:      []branchdecl.DeployBranch{{Branch: "main", ReleaseBase: true}},
+	Lines:       branchdecl.Lines{Release: "rel/", Hotfix: "fix/"},
+	LineVersion: branchdecl.VersionForm,
+	Revert:      "revert/",
+}
+
 func taggableRunner() *fakeRunner {
 	return &fakeRunner{outputs: map[string]string{tagListCall: "v1.2.3\n"}}
 }
@@ -133,68 +149,6 @@ func newRepo(t *testing.T) string {
 	gitIn(t, dir, "fetch", "-q", "--tags", "origin")
 
 	return dir
-}
-
-func Test_parseVersion(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("vX.Y.Z を各要素へ分解する", func(t *testing.T) {
-			t.Parallel()
-			v, ok := parseVersion("v1.2.3")
-			require.True(t, ok)
-			assert.Equal(t, version{major: 1, minor: 2, patch: 3}, v)
-		})
-
-		t.Run("前後の空白を無視する", func(t *testing.T) {
-			t.Parallel()
-			v, ok := parseVersion("  v0.0.0\r")
-			require.True(t, ok)
-			assert.Equal(t, "v0.0.0", v.String())
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("接頭辞 v を欠く 1.2.3 は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("1.2.3")
-			assert.False(t, ok)
-		})
-
-		t.Run("patch を欠く v1.2 は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("v1.2")
-			assert.False(t, ok)
-		})
-
-		t.Run("要素が多い v1.2.3.4 は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("v1.2.3.4")
-			assert.False(t, ok)
-		})
-
-		t.Run("プレリリース付きの v1.2.3-rc1 は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("v1.2.3-rc1")
-			assert.False(t, ok)
-		})
-
-		t.Run("リリースブランチ名 release/v1.2.3 は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("release/v1.2.3")
-			assert.False(t, ok)
-		})
-
-		t.Run("空文字は受け付けない", func(t *testing.T) {
-			t.Parallel()
-			_, ok := parseVersion("")
-			assert.False(t, ok)
-		})
-	})
 }
 
 func Test_latestVersion(t *testing.T) {
@@ -254,7 +208,7 @@ func Test_latestVersion(t *testing.T) {
 func Test_bump(t *testing.T) {
 	t.Parallel()
 
-	base := version{major: 1, minor: 2, patch: 3}
+	base := version{Major: 1, Minor: 2, Patch: 3}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -293,20 +247,20 @@ func Test_bump(t *testing.T) {
 	})
 }
 
-func Test_syncProductionSteps(t *testing.T) {
+func Test_syncReleaseBaseSteps(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("production を origin の最新へ揃えてからタグを取り直す", func(t *testing.T) {
+		t.Run("基点のブランチを origin の最新へ揃えてからタグを取り直す", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, []string{
 				"git fetch origin production",
 				"git switch production",
 				"git reset --hard origin/production",
 				"git fetch --tags origin",
-			}, commands(syncProductionSteps()))
+			}, commands(syncReleaseBaseSteps("production")))
 		})
 	})
 }
@@ -383,25 +337,6 @@ func Test_notePath(t *testing.T) {
 		t.Run("リリースノートは .github/release 配下の <version>.md", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, ".github/release/v1.0.0.md", notePath("v1.0.0"))
-		})
-	})
-}
-
-func Test_version_String(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("各要素をドットで繋いだ vX.Y.Z を返す", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "v1.10.2", version{major: 1, minor: 10, patch: 2}.String())
-		})
-
-		// タグ名は Release とリリースノートのパスの両方に使われるため、ゼロ値も省略しない。
-		t.Run("ゼロの要素も省略しない", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, "v0.0.0", version{}.String())
 		})
 	})
 }
@@ -586,43 +521,6 @@ func Test_remoteBranchExists(t *testing.T) {
 			got, err := remoteBranchExists("production")
 			require.Error(t, err)
 			assert.False(t, got)
-		})
-	})
-}
-
-func Test_version_less(t *testing.T) {
-	t.Parallel()
-
-	t.Run("正常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("major が小さければ minor と patch によらず古い", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, version{major: 1, minor: 99, patch: 99}.less(version{major: 2}))
-		})
-
-		t.Run("major が同じなら minor で比べる", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, version{major: 1, minor: 9, patch: 99}.less(version{major: 1, minor: 10}))
-		})
-
-		t.Run("major と minor が同じなら patch で比べる", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, version{major: 1, minor: 2, patch: 3}.less(version{major: 1, minor: 2, patch: 4}))
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("同じ版は古くない", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, version{major: 1, minor: 2, patch: 3}.less(version{major: 1, minor: 2, patch: 3}))
-		})
-
-		t.Run("新しい版は古くない", func(t *testing.T) {
-			t.Parallel()
-			assert.False(t, version{major: 2}.less(version{major: 1, minor: 99, patch: 99}))
 		})
 	})
 }
@@ -983,6 +881,25 @@ func Test_resolveNext(t *testing.T) {
 
 //nolint:paralleltest // t.Chdir でプロセスの作業ディレクトリを変えるため並列化不可
 func Test_runTag(t *testing.T) {
+	// 作業ディレクトリを移さないので、t.Chdir を使う兄弟が終わった後で並列に走る。
+	t.Run("基点のブランチは宣言から読み、そこへ合わせてからノートを見る", func(t *testing.T) {
+		t.Parallel()
+		f := taggableRunner()
+
+		require.ErrorIs(t, runTag(f.runner(), otherDecl, []string{"-bump", "patch"}), errNoReleaseNote)
+		assert.Contains(t, f.calls, "git switch main")
+		assert.Contains(t, f.calls, "git reset --hard origin/main")
+		assert.NotContains(t, f.calls, "git switch production")
+	})
+
+	t.Run("宣言に基点が無ければ手順を 1 つも実行しない", func(t *testing.T) {
+		t.Parallel()
+		f := taggableRunner()
+
+		require.ErrorIs(t, runTag(f.runner(), branchdecl.Branches{Lines: testDecl.Lines}, []string{"-bump", "patch"}), errNoReleaseBase)
+		assert.Empty(t, f.calls)
+	})
+
 	//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 	t.Run("正常系", func(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
@@ -990,7 +907,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.NoError(t, runTag(f.runner(), []string{"-bump", "patch"}))
+			require.NoError(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}))
 			assert.Equal(t, []string{
 				fetchTagsCall,
 				tagListCall,
@@ -1009,7 +926,7 @@ func Test_runTag(t *testing.T) {
 			writeNoteFor(t, "v0.1.0")
 			f := &fakeRunner{}
 
-			require.NoError(t, runTag(f.runner(), []string{"-version", "v0.1.0"}))
+			require.NoError(t, runTag(f.runner(), testDecl, []string{"-version", "v0.1.0"}))
 			assert.Equal(t, []string{
 				fetchTagsCall,
 				tagListCall,
@@ -1031,7 +948,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := &fakeRunner{}
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errNoTag)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errNoTag)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -1040,7 +957,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-version", ""}), errVersionFormat)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-version", ""}), errVersionFormat)
 			assert.Empty(t, f.calls)
 		})
 
@@ -1049,7 +966,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch", "-version", "v1.2.4"}), errVersionWithBump)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch", "-version", "v1.2.4"}), errVersionWithBump)
 			assert.Empty(t, f.calls)
 		})
 
@@ -1058,7 +975,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-version", "v1.2.3"}), errVersionExists)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-version", "v1.2.3"}), errVersionExists)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -1067,7 +984,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-version", "v1.2.2"}), errVersionNotNewer)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-version", "v1.2.2"}), errVersionNotNewer)
 			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
 		})
 
@@ -1077,7 +994,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "", "-version", "v1.2.4"}), errVersionWithBump)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "", "-version", "v1.2.4"}), errVersionWithBump)
 			assert.Empty(t, f.calls)
 		})
 
@@ -1087,7 +1004,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), nil), errUnknownBump)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, nil), errUnknownBump)
 			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
 		})
 
@@ -1096,7 +1013,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", ""}), errUnknownBump)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", ""}), errUnknownBump)
 			assert.Equal(t, []string{fetchTagsCall, tagListCall}, f.calls)
 		})
 
@@ -1105,7 +1022,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			err := runTag(f.runner(), []string{"-no-such-flag"})
+			err := runTag(f.runner(), testDecl, []string{"-no-such-flag"})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "failed to parse flags")
 			assert.Empty(t, f.calls)
@@ -1116,7 +1033,7 @@ func Test_runTag(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "bogus"}), errUnknownBump)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "bogus"}), errUnknownBump)
 			assert.NotContains(t, f.calls, "git switch production")
 		})
 
@@ -1126,7 +1043,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = "git reset --hard origin/production"
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, annotateTagCall)
 		})
 
@@ -1136,7 +1053,7 @@ func Test_runTag(t *testing.T) {
 			t.Chdir(t.TempDir())
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errNoReleaseNote)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errNoReleaseNote)
 			assert.Contains(t, f.calls, "git switch production")
 			assert.NotContains(t, f.calls, annotateTagCall)
 			assert.NotContains(t, f.calls, tagPushCall)
@@ -1151,7 +1068,7 @@ func Test_runTag(t *testing.T) {
 			t.Chdir(dir)
 			f := taggableRunner()
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errEmptyReleaseNote)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errEmptyReleaseNote)
 			assert.NotContains(t, f.calls, annotateTagCall)
 			assert.NotContains(t, f.calls, tagPushCall)
 			assert.NotContains(t, f.calls, releaseCreateCall)
@@ -1163,7 +1080,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = annotateTagCall
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, tagPushCall)
 			assert.NotContains(t, f.calls, releaseCreateCall)
 		})
@@ -1175,7 +1092,7 @@ func Test_runTag(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = tagPushCall
 
-			require.ErrorIs(t, runTag(f.runner(), []string{"-bump", "patch"}), errFakeCommand)
+			require.ErrorIs(t, runTag(f.runner(), testDecl, []string{"-bump", "patch"}), errFakeCommand)
 			assert.NotContains(t, f.calls, releaseCreateCall)
 		})
 	})
@@ -1191,7 +1108,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			require.NoError(t, runBranch(f.runner(), []string{"-bump", "minor"}))
+			require.NoError(t, runBranch(f.runner(), testDecl, []string{"-bump", "minor"}))
 			assert.Equal(t, []string{
 				fetchTagsCall,
 				tagListCall,
@@ -1203,18 +1120,63 @@ func Test_runBranch(t *testing.T) {
 			}, f.calls)
 		})
 
-		t.Run("接頭辞と分岐元はフラグで差し替えられる", func(t *testing.T) {
+		t.Run("線の役割と分岐元はフラグで差し替えられる", func(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			require.NoError(t, runBranch(f.runner(), []string{"-bump", "patch", "-prefix", "hotfix", "-base", "staging"}))
+			require.NoError(t, runBranch(f.runner(), testDecl, []string{"-bump", "patch", "-line", "hotfix", "-base", "staging"}))
 			assert.Contains(t, f.calls, "git switch -c hotfix/v1.2.4 origin/staging")
 			assert.Contains(t, f.calls, "gh repo edit --default-branch hotfix/v1.2.4")
+		})
+
+		t.Run("線の接頭辞と既定の分岐元は宣言から読む", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			require.NoError(t, runBranch(f.runner(), otherDecl, []string{"-bump", "patch", "-line", "hotfix"}))
+			assert.Contains(t, f.calls, "git switch -c fix/v1.2.4 origin/main")
+			assert.Contains(t, f.calls, "gh repo edit --default-branch fix/v1.2.4")
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("未知の線の役割では origin へ触れる前に中止する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			err := runBranch(f.runner(), testDecl, []string{"-bump", "patch", "-line", "release/"})
+			require.ErrorIs(t, err, errUnknownLine)
+			assert.ErrorContains(t, err, "release / hotfix")
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("接頭辞を受ける -prefix は無い", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			require.ErrorContains(t, runBranch(f.runner(), testDecl, []string{"-bump", "patch", "-prefix", "hotfix"}), "failed to parse flags")
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("接頭辞の無い線の役割では origin へ触れる前に中止する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			decl := testDecl
+			decl.Lines = branchdecl.Lines{Release: "release/"}
+
+			require.ErrorIs(t, runBranch(f.runner(), decl, []string{"-bump", "patch", "-line", "hotfix"}), errUnknownLine)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("宣言に基点が無ければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+
+			require.ErrorIs(t, runBranch(f.runner(), branchdecl.Branches{Lines: testDecl.Lines}, []string{"-bump", "patch"}), errNoReleaseBase)
+			assert.Empty(t, f.calls)
+		})
 
 		// **「無い」と「確認できなかった」を畳むと、ここが通ってしまう。** 照会に失敗した
 		// だけで「衝突なし」と読み、取り消しの効かない手順へ進む。
@@ -1223,7 +1185,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.lsRemoteFails = true
 
-			err := runBranch(f.runner(), []string{"-bump", "patch"})
+			err := runBranch(f.runner(), testDecl, []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errLsRemote)
 			assert.NotContains(t, f.calls, branchCreateCall)
 			assert.NotContains(t, f.calls, branchPushCall)
@@ -1234,7 +1196,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
 
-			err := runBranch(f.runner(), []string{"-no-such-flag"})
+			err := runBranch(f.runner(), testDecl, []string{"-no-such-flag"})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "failed to parse flags")
 			assert.Empty(t, f.calls)
@@ -1244,7 +1206,7 @@ func Test_runBranch(t *testing.T) {
 		t.Run("起点となるタグが無ければ初期タグ作成の案内へ差し替える", func(t *testing.T) {
 			t.Parallel()
 
-			err := runBranch((&fakeRunner{}).runner(), []string{"-bump", "patch"})
+			err := runBranch((&fakeRunner{}).runner(), testDecl, []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errNoTagForBranch)
 			require.NotErrorIs(t, err, errNoTag)
 			assert.Contains(t, err.Error(), "make tag-version VERSION=vX.Y.Z")
@@ -1255,7 +1217,7 @@ func Test_runBranch(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{failOn: tagListCall}
 
-			err := runBranch(f.runner(), []string{"-bump", "patch"})
+			err := runBranch(f.runner(), testDecl, []string{"-bump", "patch"})
 			require.ErrorIs(t, err, errFakeCommand)
 			require.NotErrorIs(t, err, errNoTagForBranch)
 		})
@@ -1265,7 +1227,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.remoteBranches = map[string]bool{"release/v1.3.0": true}
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errBranchExists)
+			require.ErrorIs(t, runBranch(f.runner(), testDecl, []string{"-bump", "minor"}), errBranchExists)
 			assert.NotContains(t, f.calls, "git status --porcelain")
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
@@ -1275,7 +1237,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = "git status --porcelain"
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errFakeCommand)
+			require.ErrorIs(t, runBranch(f.runner(), testDecl, []string{"-bump", "minor"}), errFakeCommand)
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
 
@@ -1285,7 +1247,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.outputs["git status --porcelain"] = " M main.go\n"
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errDirtyWorktree)
+			require.ErrorIs(t, runBranch(f.runner(), testDecl, []string{"-bump", "minor"}), errDirtyWorktree)
 			assert.Contains(t, f.calls, "git status --short")
 			assert.NotContains(t, f.calls, branchCreateCall)
 		})
@@ -1295,7 +1257,7 @@ func Test_runBranch(t *testing.T) {
 			f := taggableRunner()
 			f.failOn = branchPushCall
 
-			require.ErrorIs(t, runBranch(f.runner(), []string{"-bump", "minor"}), errFakeCommand)
+			require.ErrorIs(t, runBranch(f.runner(), testDecl, []string{"-bump", "minor"}), errFakeCommand)
 			assert.NotContains(t, f.calls, defaultBranchCall)
 		})
 	})
@@ -1353,7 +1315,7 @@ func Test_execute(t *testing.T) {
 			writeNote(t)
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"tag", "-bump", "patch"}))
+			require.NoError(t, execute(f.runner(), testDecl, []string{"tag", "-bump", "patch"}))
 			assert.Contains(t, f.calls, annotateTagCall)
 			assert.Contains(t, f.calls, tagPushCall)
 			assert.Contains(t, f.calls, releaseCreateCall)
@@ -1363,7 +1325,7 @@ func Test_execute(t *testing.T) {
 		t.Run("branch はブランチ作成の手順へ振り分ける", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"branch", "-bump", "minor"}))
+			require.NoError(t, execute(f.runner(), testDecl, []string{"branch", "-bump", "minor"}))
 			assert.Contains(t, f.calls, branchCreateCall)
 			assert.Contains(t, f.calls, branchPushCall)
 			assert.Contains(t, f.calls, defaultBranchCall)
@@ -1374,7 +1336,7 @@ func Test_execute(t *testing.T) {
 		t.Run("tag のヘルプ要求は失敗にせず手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"tag", "-h"}))
+			require.NoError(t, execute(f.runner(), testDecl, []string{"tag", "-h"}))
 			assert.Empty(t, f.calls)
 		})
 
@@ -1382,7 +1344,7 @@ func Test_execute(t *testing.T) {
 		t.Run("branch のヘルプ要求は失敗にせず手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.NoError(t, execute(f.runner(), []string{"branch", "-h"}))
+			require.NoError(t, execute(f.runner(), testDecl, []string{"branch", "-h"}))
 			assert.Empty(t, f.calls)
 		})
 	})
@@ -1393,7 +1355,7 @@ func Test_execute(t *testing.T) {
 		t.Run("サブコマンドが無ければ使い方を示して手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), nil), errUsage)
+			require.ErrorIs(t, execute(f.runner(), testDecl, nil), errUsage)
 			assert.Empty(t, f.calls)
 		})
 
@@ -1401,19 +1363,19 @@ func Test_execute(t *testing.T) {
 		t.Run("未知のサブコマンドでは手順を 1 つも実行しない", func(t *testing.T) {
 			f := taggableRunner()
 
-			require.ErrorIs(t, execute(f.runner(), []string{"bogus"}), errUnknownSubcommand)
+			require.ErrorIs(t, execute(f.runner(), testDecl, []string{"bogus"}), errUnknownSubcommand)
 			assert.Empty(t, f.calls)
 		})
 
 		// ヘルプ要求だけを飲み込む。失敗まで飲み込むと、タグを打てていないのに 0 で終わる。
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("tag の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
-			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"tag", "-bump", "patch"}), errNoTag)
+			require.ErrorIs(t, execute((&fakeRunner{}).runner(), testDecl, []string{"tag", "-bump", "patch"}), errNoTag)
 		})
 
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("branch の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
-			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"branch", "-bump", "patch"}), errNoTagForBranch)
+			require.ErrorIs(t, execute((&fakeRunner{}).runner(), testDecl, []string{"branch", "-bump", "patch"}), errNoTagForBranch)
 		})
 	})
 }
@@ -1421,13 +1383,19 @@ func Test_execute(t *testing.T) {
 func Test_start(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	same := func() (string, error) { return dir, nil }
+	withDecl := func(t *testing.T, body string) func() (string, error) {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(branchdecl.File)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, branchdecl.File), []byte(body), 0o600))
+		return func() (string, error) { return dir, nil }
+	}
+	same := withDecl(t, `{"deploy": [{"branch": "production", "release_base": true}, {"branch": "staging"}, {"branch": "develop"}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("直下なら execute へ進む", func(t *testing.T) {
+		t.Run("直下で宣言を読めれば execute へ進む", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{}
 
@@ -1445,6 +1413,25 @@ func Test_start(t *testing.T) {
 			sub := func() (string, error) { return other, nil }
 
 			require.ErrorIs(t, start(f.runner(), []string{"tag"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下の宣言が壊れていれば手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			broken := withDecl(t, `{"lines": ["release/"]}`)
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag", "-bump", "patch"}, broken, broken), branchdecl.ErrDeclaration)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下に宣言が無ければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			empty := t.TempDir()
+			bare := func() (string, error) { return empty, nil }
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag", "-bump", "patch"}, bare, bare), os.ErrNotExist)
 			assert.Empty(t, f.calls)
 		})
 

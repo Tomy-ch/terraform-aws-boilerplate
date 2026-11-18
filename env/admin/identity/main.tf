@@ -23,7 +23,8 @@ module "deployment_identity" {
     repository    = "terraform-aws-boilerplate"
     repository_id = "1370808564"
   }
-  state_bucket_arn       = module.state_backend.bucket_arn
-  state_key_arn          = module.state_backend.state_key_arn
-  plan_output_bucket_arn = module.state_backend.plan_output_bucket_arn
+  state_bucket_arn        = module.state_backend.bucket_arn
+  state_key_arn           = module.state_backend.state_key_arn
+  plan_output_bucket_arn  = module.state_backend.plan_output_bucket_arn
+  apply_output_bucket_arn = module.state_backend.apply_output_bucket_arn
 }

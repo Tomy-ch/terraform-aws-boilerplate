@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -167,14 +168,19 @@ func writeBranches(t *testing.T, body string) string {
 	return p
 }
 
-const branchesBody = `{"deploy":[{"branch":"admin","env":"admin","from":["release/"]}],"lines":["release/"],"revert":"revert/"}`
+const branchesBody = `{"deploy":[{"branch":"admin","env":"admin","from":["release/"]},{"branch":"production","release_base":true}],"lines":{"release":"release/","hotfix":"hotfix/"},"line_version":"v<major>.<minor>.<patch>","revert":"revert/"}`
 
 func planArgs(t *testing.T, head, outcome, failure string) ([]string, string) {
+	t.Helper()
+	return planArgsWith(t, head, testJob+"=failure:"+outcome+":"+failure)
+}
+
+func planArgsWith(t *testing.T, head, results string) ([]string, string) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "github_output")
 	return []string{
 		"-repo", testRepo, "-line", testLine, "-default", testDefault, "-head", head, "-run", strconv.FormatInt(testRun, 10),
-		"-outcome", outcome, "-failure", failure, "-workflow", testWorkflow, "-job", testJob,
+		"-results", results, "-workflow", testWorkflow,
 		"-branches", writeBranches(t, branchesBody), "-server", testServer, "-output", out,
 	}, out
 }
@@ -203,26 +209,15 @@ func Test_parseOptions(t *testing.T) {
 		o, err := parseOptions(args)
 		require.NoError(t, err)
 		assert.Equal(t, testRun, o.runID)
-		assert.Equal(t, "apply", o.failure)
+		assert.Equal(t, []jobResult{{job: testJob, result: "failure", outcome: "failure", failure: "apply"}}, o.results)
 		assert.Equal(t, []string{testJob}, o.jobs)
 	})
-	t.Run("outcome と failure は空でも受ける（判定は eligibility）", func(t *testing.T) {
+	t.Run("複数の job の結果を、渡した順に受ける", func(t *testing.T) {
 		t.Parallel()
-		o, err := parseOptions(replace(replace(args, "-outcome", ""), "-failure", ""))
+		o, err := parseOptions(replace(args, "-results", "apply-admin-identity=failure:failure:policy apply-admin-workload=skipped::"))
 		require.NoError(t, err)
-		assert.Empty(t, o.outcome)
-		assert.Empty(t, o.failure)
-	})
-	t.Run("-job を繰り返し受ける", func(t *testing.T) {
-		t.Parallel()
-		o, err := parseOptions(append(slicesClone(args), "-job", "apply-admin"))
-		require.NoError(t, err)
-		assert.Equal(t, []string{testJob, "apply-admin"}, o.jobs)
-	})
-	t.Run("同じ -job を2回渡せば失敗する", func(t *testing.T) {
-		t.Parallel()
-		_, err := parseOptions(append(slicesClone(args), "-job", testJob))
-		require.ErrorIs(t, err, errUsage)
+		assert.Equal(t, []string{"apply-admin-identity", "apply-admin-workload"}, o.jobs)
+		assert.Equal(t, jobResult{job: "apply-admin-workload", result: "skipped"}, o.results[1])
 	})
 
 	broken := map[string]func([]string) []string{
@@ -234,7 +229,8 @@ func Test_parseOptions(t *testing.T) {
 		"output が空":      func(a []string) []string { return replace(a, "-output", "") },
 		"余分な引数がある":       func(a []string) []string { return append(a, "extra") },
 		"知らない flag がある":  func(a []string) []string { return append([]string{"-x"}, a...) },
-		"-job が無い":       func(a []string) []string { return dropFlag(a, "-job") },
+		"-results が無い":   func(a []string) []string { return dropFlag(a, "-results") },
+		"-results が空":    func(a []string) []string { return replace(a, "-results", "") },
 		"workflow が空":    func(a []string) []string { return replace(a, "-workflow", "") },
 		"branches が空":    func(a []string) []string { return replace(a, "-branches", "") },
 		"server が空":      func(a []string) []string { return replace(a, "-server", "") },
@@ -273,6 +269,96 @@ func replace(a []string, flag, value string) []string {
 		}
 	}
 	return out
+}
+
+func Test_parseResults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job ごとに result・step の結果・段を受ける", func(t *testing.T) {
+		t.Parallel()
+		got, err := parseResults(" a=failure:failure:apply  b=success:success: ")
+		require.NoError(t, err)
+		assert.Equal(t, []jobResult{{job: "a", result: "failure", outcome: "failure", failure: "apply"}, {job: "b", result: "success", outcome: "success"}}, got)
+	})
+
+	for name, value := range map[string]string{
+		"空":                    "",
+		"空白だけ":                 "   ",
+		"= が無い":                "a",
+		"コロンが足りない":             "a=failure:failure",
+		"コロンが多い":               "a=failure:failure:apply:x",
+		"job の名前が空":            "=failure::",
+		"job の名前に大文字":          "A=failure::",
+		"知らない result":          "a=neutral::",
+		"同じ job が2回":           "a=failure:failure:apply a=success::",
+		"result が空（needs が無い）": "a=::",
+	} {
+		t.Run(name+"なら失敗する", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseResults(value)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+}
+
+func Test_resultsEligibility(t *testing.T) {
+	t.Parallel()
+
+	revert := map[string][]jobResult{
+		"identity が戻す対象の失敗で workload が skipped なら戻す": {
+			{job: "apply-admin-identity", result: "failure", outcome: "failure", failure: "apply"},
+			{job: "apply-admin-workload", result: "skipped"},
+		},
+		"identity が成功で workload が戻す対象の失敗なら戻す": {
+			{job: "apply-admin-identity", result: "success", outcome: "success"},
+			{job: "apply-admin-workload", result: "failure", outcome: "failure", failure: "policy"},
+		},
+	}
+	for name, results := range revert {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reason, err := resultsEligibility(results)
+			require.NoError(t, err)
+			assert.Empty(t, reason)
+		})
+	}
+
+	skip := map[string]struct {
+		results []jobResult
+		want    []string
+	}{
+		"両方が成功なら戻さない":                                        {[]jobResult{{job: "a", result: "success", outcome: "success"}, {job: "b", result: "success", outcome: "success"}}, []string{"a の結果が success です", "b の結果が success です"}},
+		"refuse-stale で落ちた job（apply の step が skipped）は戻さない": {[]jobResult{{job: "a", result: "failure", outcome: "skipped"}}, []string{"a: ", "skipped"}},
+		"取り消された job は戻さない":                                   {[]jobResult{{job: "a", result: "cancelled"}}, []string{"a の結果が cancelled です"}},
+		"戻す対象でない段の失敗と skipped なら戻さない":                        {[]jobResult{{job: "a", result: "failure", outcome: "failure", failure: "lock"}, {job: "b", result: "skipped"}}, []string{"a: ", "lock", "b の結果が skipped です"}},
+	}
+	for name, c := range skip {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reason, err := resultsEligibility(c.results)
+			require.NoError(t, err)
+			for _, w := range c.want {
+				assert.Contains(t, reason, w)
+			}
+		})
+	}
+
+	errs := map[string]struct {
+		results []jobResult
+		want    error
+	}{
+		"result が failure で step の結果を受け取れなければ失敗する": {[]jobResult{{job: "a", result: "failure"}}, errNoOutcome},
+		"ほかの job が戻す対象でも、受け取れない job があれば失敗する":      {[]jobResult{{job: "a", result: "failure", outcome: "failure", failure: "apply"}, {job: "b", result: "failure"}}, errNoOutcome},
+		"知らない段は失敗する":  {[]jobResult{{job: "a", result: "failure", outcome: "failure", failure: "init"}}, errUnknownKind},
+		"結果が0件なら失敗する": {nil, errUsage},
+	}
+	for name, c := range errs {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := resultsEligibility(c.results)
+			require.ErrorIs(t, err, c.want)
+		})
+	}
 }
 
 func Test_eligibility(t *testing.T) {
@@ -1057,6 +1143,24 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, m["reason"], "lock")
 		assert.Empty(t, f.calls)
 	})
+	t.Run("security のデプロイブランチの run は、その entry の from で判定する", func(t *testing.T) {
+		t.Parallel()
+		args, path := planArgsWith(t, h.head, testJob+"=failure:failure:apply")
+		args = replace(replace(args, "-line", "security"), "-branches", writeBranches(t, strings.Replace(branchesBody, `{"branch":"admin","env":"admin","from":["release/"]}`, `{"branch":"security","env":"security","from":["release/"]}`, 1)))
+		ghs := map[string]string{"api repos/" + testRepo + "/actions/workflows/" + testWorkflow + "/runs?branch=security&event=push&per_page=100&status=completed": runsJSON(10, h.base), jobsKey(10): jobsJSON(testJob, "success", h.base), refsKey("revert/apply-42"): "[]"}
+		require.NoError(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: ghs}).runner()))
+		assert.Equal(t, "push", outputs(t, path)["decision"])
+	})
+	t.Run("skipped の job は戻す対象なしに数え、ほかの job の失敗で戻す", func(t *testing.T) {
+		t.Parallel()
+		args, path := planArgsWith(t, h.head, testJob+"=failure:failure:apply apply-admin-workload=skipped::")
+		both := maps.Clone(gh)
+		both[jobsKey(10)] = fmt.Sprintf(`{"total_count":2,"jobs":[{"name":%q,"conclusion":"success","head_sha":%q},{"name":"apply-admin-workload","conclusion":"success","head_sha":%q}]}`, testJob, h.base, h.base)
+		f := &fake{dir: h.dir, gh: both}
+		require.NoError(t, run(args, &bytes.Buffer{}, f.runner()))
+		assert.Equal(t, "push", outputs(t, path)["decision"])
+		assert.NotEmpty(t, f.calls, "戻す対象と判定して、最後に成功した run を読みに行く")
+	})
 	t.Run("結果を受け取れなければ何も書かずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "", "")
@@ -1075,26 +1179,6 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		require.ErrorIs(t, run(nil, &bytes.Buffer{}, (&fake{}).runner()), errUsage)
 	})
-}
-
-func Test_jobFlags_String(t *testing.T) {
-	t.Parallel()
-
-	j := jobFlags{"a", "b"}
-	assert.Equal(t, "a,b", j.String())
-	assert.Empty(t, (&jobFlags{}).String())
-}
-
-func Test_jobFlags_Set(t *testing.T) {
-	t.Parallel()
-
-	var j jobFlags
-	require.NoError(t, j.Set("a"))
-	require.NoError(t, j.Set("b"))
-	assert.Equal(t, jobFlags{"a", "b"}, j)
-	require.ErrorIs(t, j.Set("a"), errUsage, "重複を拒む")
-	require.ErrorIs(t, j.Set(""), errUsage, "空を拒む")
-	assert.Equal(t, jobFlags{"a", "b"}, j, "拒んだ値を足さない")
 }
 
 func keys(m map[string]string) []string {

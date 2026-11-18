@@ -22,7 +22,8 @@ description: >-
 
 ## 前提
 
-- 保護ブランチ（`production` / `develop` / `staging` / `release/*`）で作業しない。
+- 保護ブランチで作業しない。保護対象は `.github/settings/branch-protection.json` の
+  `conditions.ref_name.include`（`.github/settings/branches.json` から生成される）が持つ。
 - 最新のリリース線から作業ブランチを切る。`make base-branch` が `origin` の実状態から解決する
   —— `gh repo view --json defaultBranchRef` は古い答えを返す。
 

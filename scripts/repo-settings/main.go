@@ -8,12 +8,14 @@
 //
 // ruleset の宣言 .github/settings/branch-protection.json は、include の区間だけを branches.json から
 // 生成します。apply の environment を使う workflow は、on.push.branches をその env のデプロイブランチへ
-// 生成します。environment のパターンはファイルへ書き出さず、適用と突合のたびに展開します。
+// 生成します。ほかの workflow は、印 `# branch-set: <集合>` を持つ行を生成します。environment のパターンは
+// ファイルへ書き出さず、適用と突合のたびに展開します。
 //
 // サブコマンド:
 //
-//	apply  include の区間と apply の workflow の起動条件を書き換える（ネットワークを使わない）
-//	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis も見る
+//	apply  include の区間と workflow の起動条件を書き換える（ネットワークを使わない）
+//	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis と、workflow の式が ref を
+//	       宣言の外の文字列と比べていないことも見る
 //	drift  実態を GET で読み、宣言との差分を報せる
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
@@ -40,7 +42,7 @@ import (
 
 const (
 	toolName         = "repo-settings"
-	branchesFile     = ".github/settings/branches.json"
+	branchesFile     = branchdecl.File
 	environmentsFile = ".github/settings/environments.json"
 	rulesetFile      = ".github/settings/branch-protection.json"
 	defaultAPI       = "https://api.github.com"
@@ -144,6 +146,10 @@ type declarations struct {
 	ruleset      []byte
 	rendered     []byte
 	workflows    []workflowEdit
+	sets         []workflowEdit
+	marks        int
+	// exprs は、ref と文字列リテラルの比較が無いことを確かめた式の数。
+	exprs int
 }
 
 // readDeclarations は3つの宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -166,7 +172,25 @@ func readDeclarations(root string) (declarations, error) {
 	if err := checkDeployEnvs(identity, b); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", branchesFile)
 	}
+	if _, err := checkBackendKeys(root); err != nil {
+		return declarations{}, err
+	}
 	workflows, err := renderApplyTriggers(root, b)
+	if err != nil {
+		return declarations{}, err
+	}
+	applyPaths := make([]string, 0, len(workflows))
+	for _, w := range workflows {
+		applyPaths = append(applyPaths, w.path)
+	}
+	sets, marks, err := renderBranchSets(root, b, applyPaths)
+	if err != nil {
+		return declarations{}, err
+	}
+	if marks == 0 {
+		return declarations{}, xerrors.Wrapf(errBranchSet, "%s に印 `# branch-set:` の行が1つもありません", workflowsDir)
+	}
+	exprs, err := checkRefLiterals(root)
 	if err != nil {
 		return declarations{}, err
 	}
@@ -185,7 +209,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows}, nil
+	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -216,18 +240,27 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件",
-		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows))
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件",
+		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows), decl.marks, len(decl.sets), decl.exprs)
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {
 		changed[filepath.Join(root, rulesetFile)] = string(decl.rendered)
 		names = append(names, rulesetFile)
 	}
+	var applyDrift, setDrift []string
 	for _, w := range decl.workflows {
 		if w.rendered != w.current {
 			changed[filepath.Join(root, w.path)] = w.rendered
 			names = append(names, w.path)
+			applyDrift = append(applyDrift, w.path)
+		}
+	}
+	for _, w := range decl.sets {
+		if w.rendered != w.current {
+			changed[filepath.Join(root, w.path)] = w.rendered
+			names = append(names, w.path)
+			setDrift = append(setDrift, w.path)
 		}
 	}
 	if len(changed) == 0 {
@@ -238,7 +271,10 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 		if _, ok := changed[filepath.Join(root, rulesetFile)]; ok {
 			return errIncludeDrift
 		}
-		return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(names, ", "))
+		if len(applyDrift) > 0 {
+			return xerrors.Wrapf(errTriggerDrift, "%s", strings.Join(applyDrift, ", "))
+		}
+		return xerrors.Wrapf(errSetDrift, "%s", strings.Join(setDrift, ", "))
 	}
 	if err := atomicwrite.Apply(changed, filePerm); err != nil {
 		return xerrors.Wrapf(err, "%s の書き込み", strings.Join(names, ", "))

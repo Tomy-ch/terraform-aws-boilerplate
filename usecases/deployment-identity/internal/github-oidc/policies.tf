@@ -62,6 +62,11 @@ locals {
     "s3:PutEncryptionConfiguration",
   ]
 
+  apply_output_bucket_read_statements = [
+    { Sid = "ListApplyOutputBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.apply_output_bucket_arn },
+    { Sid = "ReadApplyOutputBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.apply_output_bucket_arn },
+  ]
+
   identity_read_statements = [
     {
       Sid    = "ReadGitHubProvider"
@@ -95,6 +100,9 @@ locals {
         { Sid = "ReadStateBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.state_bucket_arn },
         { Sid = "ListPlanOutputBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.plan_output_bucket_arn },
         { Sid = "ReadPlanOutputBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.plan_output_bucket_arn },
+      ],
+      local.apply_output_bucket_read_statements,
+      [
         { Sid = "WritePlanOutput", Effect = "Allow", Action = "s3:PutObject", Resource = local.plan_output_keys },
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
       ],
@@ -103,12 +111,14 @@ locals {
 
     apply = [
       { Sid = "ListStateBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn },
+      { Sid = "ReadStateBucketEncryption", Effect = "Allow", Action = "s3:GetEncryptionConfiguration", Resource = var.state_bucket_arn },
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.workload_state_key },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.workload_state_key}.tflock" },
+      { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
       # Deny の範囲と形は deployment-identity/ADR-0201 決定5。
       { Sid = "DenyIdentityChange", Effect = "Deny", Action = "*", Resource = local.identity_arns },
       { Sid = "DenyIdentityStateChange", Effect = "Deny", Action = "*", Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
-      { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:ListBucket"], Resource = var.state_bucket_arn },
+      { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:GetEncryptionConfiguration", "s3:ListBucket"], Resource = var.state_bucket_arn },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
       { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = [var.plan_output_bucket_arn, "${var.plan_output_bucket_arn}/*"] },
       # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
@@ -126,6 +136,11 @@ locals {
         { Sid = "ReadPlanOutputBucketConfiguration", Effect = "Allow", Action = local.bucket_read_actions, Resource = var.plan_output_bucket_arn },
         # s3:PutLifecycleConfiguration は DeleteBucketLifecycle の権限も兼ねる。
         { Sid = "ConfigurePlanOutputBucket", Effect = "Allow", Action = concat(local.bucket_configure_actions, ["s3:PutLifecycleConfiguration"]), Resource = var.plan_output_bucket_arn },
+        { Sid = "CreateApplyOutputBucket", Effect = "Allow", Action = "s3:CreateBucket", Resource = var.apply_output_bucket_arn },
+      ],
+      local.apply_output_bucket_read_statements,
+      [
+        { Sid = "ConfigureApplyOutputBucket", Effect = "Allow", Action = concat(local.bucket_configure_actions, ["s3:PutLifecycleConfiguration"]), Resource = var.apply_output_bucket_arn },
         {
           Sid    = "ManageGitHubProvider"
           Effect = "Allow"
@@ -168,6 +183,11 @@ locals {
     unlock_identity = [
       { Sid = "ListIdentityLock", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn, Condition = { StringEquals = { "s3:prefix" = "identity/terraform.tfstate.tflock" } } },
       { Sid = "RemoveIdentityLock", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject"], Resource = "${local.identity_state_key}.tflock" },
+    ]
+
+    unlock = [
+      { Sid = "ListWorkloadLock", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn, Condition = { StringEquals = { "s3:prefix" = "workload/terraform.tfstate.tflock" } } },
+      { Sid = "RemoveWorkloadLock", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject"], Resource = "${local.workload_state_key}.tflock" },
     ]
   }
 }

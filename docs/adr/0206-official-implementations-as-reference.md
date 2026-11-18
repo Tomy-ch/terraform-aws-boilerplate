@@ -37,9 +37,10 @@
 
    1. AWS または HashiCorp が publisher である Terraform Registry module
    2. AWS公式ドキュメント（サービスのUser Guide、API Reference、Security Guide、Best Practices）
-   3. AWS Well-Architected Framework を含む公式設計指針
+   3. AWS Well-Architected Framework、AWS Security Reference Architecture（AWS Prescriptive Guidance）を含む公式設計指針
    4. Terraform AWS Provider の公式ドキュメントおよびソース
    5. AWSまたはHashiCorpが公開するsecurity advisory / bulletin
+   6. AWS Security Hub が提供するセキュリティ標準（AWS Foundational Security Best Practices、CIS AWS Foundations Benchmark）と、そのコントロールの文書。CIS の Benchmark の本文は第三者の文書だが、Security Hub が標準として実装し AWS が文書にしているので、その経路で公式として扱う
 
 4. 上記以外（community module、ブログ、第三者の解説）は参照してもよいが、決定の根拠として単独で採用しない。
 
@@ -58,6 +59,7 @@
    - AWS API上の制約
    - version差分への対応
    - security関連設定
+   - AWS Well-Architected の Security Pillar と、Security Hub の標準（AWS Foundational Security Best Practices、CIS AWS Foundations Benchmark）のコントロールに照らしたときの所見
 
 ### 取り込み手順
 
@@ -79,6 +81,7 @@
    - 参照時点の AWS Provider version
    - 採用した設定とその根拠
    - 採用しなかった設定と、その理由
+   - 照らした Security Hub のコントロールのうち、従わないものと、その理由（従わないことは ADR-0207 決定11 の逸脱として記録する）
 
 9. 参照元をコードコメントとして残すことを原則としない。コードコメントは、値が非自明である理由の説明に限って記述する。参照元の一覧はコードから分離し、陳腐化を局所化する。
 10. 参照した公式実装のversionを、利用者への公開契約として露出しない（ADR-0207 決定7と同様）。これはboilerplate内部の実装判断の根拠として扱う。
@@ -146,3 +149,4 @@
 
 - 定期レビューの周期では追従できないほど、公式推奨の変化が速いサービスを扱う場合
 - security advisory の発生頻度が、契機ベースのレビューでは処理しきれなくなった場合
+- Security Hub が CIS AWS Foundations Benchmark の新しい版を標準として提供した場合、または標準を廃止した場合（照らす版を改める）

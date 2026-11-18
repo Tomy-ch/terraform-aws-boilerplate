@@ -66,6 +66,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
    - 許容箇所と根拠を当該ユースケースのADRまたは設計記録へ記載する
 
 10. AWS managed policyは原則として採用しない。service-linked role、およびAWSが機能上その使用を要求する場合に限り許容し、根拠を記録する。それ以外はcustomer managed policyを生成する。
+
+    ただし、人が IAM Identity Center から到達するときの permission set には、AWS managed の職務別 policy を付ける。付けてよい policy と、それを付ける permission set は、`organization-baseline` の設計記録が閉じた一覧として持つ。人の作業は CI の role と違って前もって列挙できず、読み取りの Action を本リポジトリで列挙すると数千に及び、AWS のサービスが増えるたびに追随できないためである。AWS も、職務別の managed policy から始め、使われ方を見て絞ることを勧めている。これらの policy の中の Action wildcard は、本リポジトリが生成する policy document ではないので決定8 の対象外とする。break-glass の role（決定19）も同じ扱いである。
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
 12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
@@ -131,6 +133,10 @@ AWS Well-Architected（SEC10-BP05）の形である。ただし本リポジト�
 
 IAM Identity Center の文書の手順である。外部 IdP を前提とし、Identity Center の directory を使う構成では成り立たない。外部 IdP の障害には効かない。アカウントが1つ増える。
 
+### 案H: 人の permission set も customer managed policy で列挙する（決定10 の例外に対して）
+
+決定10 の原則どおりで、許す Action が本リポジトリの宣言に揃う。ただし、調べる作業に要る読み取りは AWS の全サービスに及び、列挙は数千の Action になる。サービスが増えるたびに追随の変更が要り、漏れは「見えない」故障として現れる。組織の管理者の権限は列挙しても実質 `*` になり、決定8 と正面から当たる。
+
 ### 評価
 
 | 評価軸 | 案A: opt-in | 案B: IAM限定 | 案C: JSON拡張可 | 採用案: 全面default |
@@ -153,7 +159,9 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 
 - 保証すること: boilerplateが生成する権限・通信経路が、意味論的な入力から導出された集合に一致すること
 - 保証すること: break-glass の経路の形（IAM user の数と資格情報の種類、role の信頼条件、決定8・10 の例外の範囲、SCP からの除外の範囲、通知の経路）が宣言どおりであること
+- 保証すること: 人の permission set に付く AWS managed policy が、設計記録の一覧に載ったものだけであること。組織の管理者の permission set が管理アカウントにだけ、ユーザーへ直接割り当てられていること
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
+- 保証しないこと: 人の permission set に付く AWS managed policy の中身。AWS が改訂すると、宣言を変えずに人の権限が変わる
 - 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
 
 ## 検証方法
@@ -170,6 +178,8 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
   - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること
   - 管理アカウントで `sts:AssumeRoot` を許す主体が break-glass の role に限られること
+  - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
+  - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
@@ -186,5 +196,6 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - AWS側にresource-level権限が追加され、Resource wildcardの許容箇所が解消できるようになった場合
 - cross-accountを必要とするユースケースが複数発生した場合
 - 意味論的な権限語彙では表現できない権限要求が反復した場合
+- IAM Access Analyzer で、人の permission set が実際に使う Action が十分に集まった場合（customer managed policy へ絞る）。AWS managed policy の改訂で、人の権限が意図せず広がった場合
 - メンテナが2人以上になった場合（パスワードと MFA を分けて持つ形、IAM user を人ごとに名付ける形）。外部 IdP を identity source にした場合（案G の再評価）。AWS が Identity Center から独立した緊急の到達の仕組みを提供した場合
 - IAM で暗号操作を与えないと成り立たない利用者（Key Policy で名指せない主体）が現れた場合。1つの鍵の Key Policy が名指す主体と文で 32,768 文字の上限に近づいた場合。grant を要るサービスの消費者が、Key Policy の文の追加では成り立たなかった場合

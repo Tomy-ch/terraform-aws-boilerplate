@@ -19,12 +19,12 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 
 ### env とアカウント
 
-1. 本 ADR は、1つの env が1つのアカウントに対応する構成を対象とする。1つのアカウントに複数の env を置く構成の root と key は、その構成をサポートするかを決めるときに、あわせて決める。
+1. 本 ADR は、1つの env が1つのアカウントに対応する構成を対象とする。1つのアカウントに複数の env を置く構成はサポートしない（`docs/v1.0-plan/scope.md` 第10.1節）ので、その root と key を定めない。
 
 ### root の単位
 
 2. 1つの env の root を、identity root と workload root の2つとする。これ以外の root を env に置かない。
-3. identity root は、bootstrap の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。
+3. identity root は、bootstrap の構成物と統制の構成物（ADR-0602 決定1）を持つ usecase だけを呼び、apply-identity の role で apply する。統制の構成物を持つ usecase（`organization-baseline`）を呼ぶのは、管理アカウントの identity root だけである。
 4. workload root は、identity root が呼ぶもの以外のすべての usecase を呼び、apply の role で apply する。identity root と workload root の間の受け渡しは、root をまたぐ受け渡し（ADR-0102 決定16）である。
 5. workload root は `env/<env>/` の直下の `*.tf` とし、identity root は `env/<env>/identity/` の直下の `*.tf` とする。provider の依存の lock（`.terraform.lock.hcl`）は root ごとに持つ（ADR-0205 決定9）。
 6. 管理アカウントの identity root は、メンバーアカウントを立ち上げる間に限り、そのメンバーアカウントの bootstrap の構成物も呼ぶ。その state は管理アカウントの Bucket に置く。立ち上げの後、メンバーアカウントの identity root が `import` block で取り込み、管理アカウントの identity root は `removed` block（`destroy = false`）で手放す。取り込みは、state を書く前に plan で突合する（ADR-0602 決定6・8）。管理アカウントの identity root の `removed` block は、メンバーアカウントの identity root の plan が変更なしを示した後に apply する。この経路は ADR-0602 決定9 の cross-account access であり、ADR-0301 決定18 に従う。
@@ -37,7 +37,7 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### 書き込みの分離
 
 9. 各 apply の role は、自分が apply する root の key と lock file だけに書き込める。lock の解除の role は、対応する root の lock file を消すことだけができる。それ以外の key と lock file への書き込みは、state Bucket の bucket policy で拒否する。拒否は role の ARN で書く。
-10. apply の role と lock の解除の role は、state Bucket と、state の暗号化に使う鍵の設定を変更する有効な権限を持たない。対象は bucket policy、版管理、暗号化、lifecycle、object の版の削除、鍵の key policy である。これらを変更できるのは apply-identity の role だけとする。
+10. apply の role と lock の解除の role は、state Bucket と、state の暗号化に使う鍵の設定を変更する有効な権限を持たない。対象は bucket policy、版管理、暗号化、lifecycle、object の版の削除、鍵の key policy である。これらを変更できるのは apply-identity の role だけとする。apply の role は、統制の構成物（ADR-0602 決定1）を変更する有効な権限も持たない。
 
 ### stateful な resource の保護
 
@@ -65,6 +65,10 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 
 受け渡しも順序も最も単純になる。ただし bootstrap の構成物を、apply の role で apply することになる。apply の role に IAM と state backend を書き換える権限を与えるか、apply-identity の role で workload を apply するかのどちらかになり、ADR-0602 決定13 が role を分けた意味が消える。
 
+### 案E: 管理アカウントに、統制の構成物だけを持つ3つ目の root を置く
+
+identity root を bootstrap の構成物に限ったまま、統制を workload からも切り離せる。ただし root と、それを当てる role と environment が1組増える。apply-identity の role はもともと CI の role を作り変えられるので、統制を別の role に分けても、到達できる範囲の分離はほとんど得られない。
+
 ### 評価
 
 | 評価軸 | 案A: ライフサイクル | 案B: usecase | 案C: 機構 | 案D: env で1つ | 採用案: identity と workload |
@@ -80,6 +84,7 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 ## 意図的に捨てるもの
 
 - 誤った apply と state の破損を、env の workload より狭い範囲に閉じること
+- 管理アカウントの identity root の plan と apply を、bootstrap の構成物に限ること
 - workload の中の変更を、並行して apply すること
 
 ## 保証範囲
@@ -100,12 +105,13 @@ DNS / CDN / Server などの root に分ける。1つの usecase は複数の機
 ## 検証方法
 
 - Static Analysis: 次の3つを検査する（決定2-5）
-  - `env/<env>/identity/` が bootstrap の構成物を持つ usecase 以外を呼ばないこと
+  - `env/<env>/identity/` が bootstrap の構成物か統制の構成物を持つ usecase 以外を呼ばないこと。統制の構成物を持つ usecase を、管理アカウント以外の identity root が呼ばないこと
   - `env/<env>/` の直下がそれらの usecase を呼ばないこと
   - `env/<env>/` の下に他の root が無いこと
 - Static Analysis: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること。plan の job が lock を取らず、apply の job が取ること（決定8）
 - Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
+- Static Analysis（`make oidc-job-lint`）: `env/` の下で `*.tf` を持つディレクトリが決定5 の配置にだけ在り、その各 root に、その root を plan する job が1つ以上、apply する job と lock の解除の job が1つずつあること（決定2-5・8）
 - Static Analysis: apply の job が、apply する plan に決定11-13 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）

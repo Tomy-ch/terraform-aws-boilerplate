@@ -63,6 +63,11 @@ run "outputs" {
   }
 
   assert {
+    condition     = output.apply_output_bucket_arn == "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+    error_message = "apply_output_bucket_arn が apply の出力の Bucket の ARN を返していません。"
+  }
+
+  assert {
     condition     = output.state_key_arn == module.kms.key_arn_for_iam
     error_message = "state_key_arn が、Key Policy の置き換えを待たない state の鍵の ARN を返していません。"
   }
@@ -456,4 +461,31 @@ run "ci_role_arns_same_role_plan_apply" {
   }
 
   expect_failures = [var.ci_role_arns]
+}
+
+run "apply_output_bucket_arn_follows_inputs" {
+  command = plan
+
+  variables {
+    project = "t4bp"
+    env     = "dev"
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  assert {
+    condition     = output.apply_output_bucket_arn == "arn:aws-us-gov:s3:::t4bp-dev-tfapply-210987654321-us-gov-west-1-an"
+    error_message = "apply_output_bucket_arn が project・env・partition・アカウント・リージョンから組まれていません。"
+  }
 }

@@ -1,10 +1,11 @@
 {
   "deploy": [
     { "branch": "admin", "env": "admin", "from": ["release/"] },
-    { "branch": "production" },
+    { "branch": "production", "release_base": true },
     { "branch": "staging" },
     { "branch": "develop" }
   ],
-  "lines": ["release/", "hotfix/"],
+  "lines": { "release": "release/", "hotfix": "hotfix/" },
+  "line_version": "v<major>.<minor>.<patch>",
   "revert": "revert/"
 }
