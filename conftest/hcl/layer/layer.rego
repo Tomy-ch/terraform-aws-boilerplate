@@ -262,20 +262,49 @@ address(c) := trim_prefix(split(c.id, "#")[1], "resource.")
 
 resource_ids := {c.id | some c in resources}
 
-# 値の文字列から参照を取り出す。添字（`x[...]`）の中は親を選ぶだけなので辿らない。辿り方は README の「親を指す引数の辿り方」。
+# 値の文字列から、補間（`${...}`）の内側の参照を取り出す。辿り方は README の「親を指す引数の辿り方」。
 ref_tokens(v) := {tok |
 	some s in strings_in(v)
-	contains(s, "${")
-	expr := strip_index(substring(s, indexof(s, "${"), -1))
-	some m in regex.find_all_string_submatch_n(`(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_*][A-Za-z0-9_-]*)+)`, expr, -1)
-	parts := split(m[2], ".")
-	tok := concat(".", array.slice(parts, 0, 2))
+	some tok in string_tokens(s)
 }
+
+# 補間の対応を読めない文字列は、参照を取りこぼさないよう、許されない葉として返す。
+unreadable := "（読めない式）"
 
 strings_in(v) := {v} if is_string(v)
 
 strings_in(v) := {s | walk(v, [_, s]); is_string(s)} if not is_string(v)
 
+# `$${` はリテラルのエスケープで、補間を始めない。
+unescaped(s) := replace(s, "$${", "")
+
+# 入れ子の `{}` は3段まで読む。それより深い補間は外に `${` が残るので unreadable になる。
+interpolation := `\$\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}`
+
+string_tokens(s) := {unreadable} if contains(regex.replace(unescaped(s), interpolation, ""), "${")
+
+string_tokens(s) := {tok |
+	some m in regex.find_all_string_submatch_n(interpolation, unescaped(s), -1)
+	some tok in expression_tokens(m[1])
+} if not contains(regex.replace(unescaped(s), interpolation, ""), "${")
+
+# 式の中の、補間を持たない引用符の文字列は参照ではない。`for` の反復変数は参照の根でない。
+expression_tokens(expr) := {tok |
+	body := strip_index(regex.replace(expr, `"(?:[^"\\$]|\\.|\$[^{])*"`, `""`))
+	iterators := for_iterators(expr)
+	some m in regex.find_all_string_submatch_n(`(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_*][A-Za-z0-9_-]*)+)`, body, -1)
+	parts := split(m[2], ".")
+	not parts[0] in iterators
+	tok := concat(".", array.slice(parts, 0, 2))
+}
+
+for_iterators(expr) := {name |
+	some m in regex.find_all_string_submatch_n(`\bfor\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s*,\s*([A-Za-z_][A-Za-z0-9_-]*))?\s+in\b`, expr, -1)
+	some name in array.slice(m, 1, 3)
+	name != ""
+}
+
+# 添字（参照の直後の `[...]`）の中は親を選ぶだけなので辿らない。
 strip_index(s) := r if {
 	pattern := `([A-Za-z0-9_\])])\[[^\[\]]*\]`
 	r := regex.replace(regex.replace(regex.replace(s, pattern, "$1"), pattern, "$1"), pattern, "$1")
@@ -313,11 +342,19 @@ ref_graph := object.union(
 )
 
 # graph.reachable は graph のキーに無い節（葉）を返さないので、辿った節の辺の先から葉を集める。
-leaves(c, v) := {trim_prefix(n, "leaf|") |
+# 定義の無い local も、辿れない参照として葉に残す。
+leaves(c, v) := {l |
 	start := nodes_of(hcl.dir(c.path), c.id, v)
 	reached := graph.reachable(ref_graph, start)
 	some n in start | {m | some r in reached; some m in ref_graph[r]}
-	startswith(n, "leaf|")
+	l := leaf_of(n)
+}
+
+leaf_of(n) := trim_prefix(n, "leaf|") if startswith(n, "leaf|")
+
+leaf_of(n) := concat("", ["local.", split(n, "|")[2]]) if {
+	startswith(n, "local|")
+	not ref_graph[n]
 }
 
 keywords := {"var", "data", "module", "path", "terraform", "self", "each", "local", "count"}
@@ -367,18 +404,11 @@ deny contains msg if {
 	msg := sprintf("LY302 [親の引数が無い] %s の %s が、宣言した親の引数（%s）をどれも持ちません。Provider が引数の名前を変えたなら宣言を直す", [c.path, address(c), concat(", ", sort(object.keys(a.parents)))])
 }
 
-# 宣言のどの区分にも無い型は、親を外から書き換える経路かどうかを判定できないので落とす。
+# 宣言のどの区分にも無い型は、親を外から書き換える経路かどうかを判定できないので落とす。親の型に
+# 現れるだけでは分類に数えない。親になる型も、それ自身が attachment かどうかの判断を宣言に残す。
 classified contains t if some t, _ in attachments
 
 classified contains t if some t, _ in not_attachments
-
-classified contains t if {
-	some _, a in attachments
-	some _, types in object.get(a, "parents", {})
-	is_array(types)
-	some t in types
-	t != "*"
-}
 
 deny contains msg if {
 	is_object(attachments)

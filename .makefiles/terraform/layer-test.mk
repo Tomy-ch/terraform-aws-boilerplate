@@ -4,7 +4,7 @@ LY_TEST_DIR = tmp/layer-check-test
 
 # fixture の宣言。リポジトリの decl.json は読まない（ADR-0702 決定17）。
 define LY_FIXTURE_DECL
-printf '{"layer_decl": {"attachments": {"aws_s3_bucket_policy": {"parents": {"bucket": ["aws_s3_bucket"]}, "optional": false}}, "not_attachments": {"aws_lb_listener": "子 resource"}}}\n' > "$$1/decl.json"
+printf '{"layer_decl": {"attachments": {"aws_s3_bucket_policy": {"parents": {"bucket": ["aws_s3_bucket"]}, "optional": false}}, "not_attachments": {"aws_lb_listener": "子 resource", "aws_s3_bucket": "親になる resource"}}}\n' > "$$1/decl.json"
 endef
 
 # env -> usecase -> 一般 module の最小の木。$$2 は aws_s3_bucket_policy の bucket の式。

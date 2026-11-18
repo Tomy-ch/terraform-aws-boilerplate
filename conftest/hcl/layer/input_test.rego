@@ -9,7 +9,12 @@ fixture_decl := {
 		"aws_ec2_tag": {"parents": {"resource_id": ["*"]}, "optional": false},
 		"aws_guardduty_malware_protection_plan": {"parents": {"protected_resource.s3_bucket.bucket_name": ["aws_s3_bucket"]}, "optional": false},
 	},
-	"not_attachments": {"aws_lb_listener": "子 resource"},
+	"not_attachments": {
+		"aws_lb_listener": "子 resource",
+		"aws_s3_bucket": "親になる resource",
+		"aws_vpc": "親になる resource",
+		"aws_subnet": "子 resource",
+	},
 }
 
 denies_with(files, listed, d) := result if {

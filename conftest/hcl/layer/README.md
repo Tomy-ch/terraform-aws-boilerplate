@@ -2,7 +2,8 @@
 
 [ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定14・17・18 の層の規則を、HCL のソースで検査する
 （同 ADR の検証方法。[ADR-0501](../../../docs/adr/0501-development-tooling-composition.md) 決定5 がソースの構造の規約として
-Conftest に割り当てる）。規則そのものは ADR が持ち、ここには再掲しない。
+Conftest に割り当てる）。何を禁じるかは ADR が持ち、ここには再掲しない。検査(3)でどの参照を辿り、何を違反とするかは
+ここが持つ（同 検証方法）。
 
 起動は `make layer-check` で、CI では Pull Request の Static Analysis の層の job（`terraform-gates.yaml` の `tf-lint`）が
 TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `apply-layer-check` が走らせる。apply の job はその成功を
@@ -34,7 +35,7 @@ TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `ap
 | `LY206` | module の呼び出しが循環する | 循環を断つ |
 | `LY301` | attachment 型の resource の親を指す引数が、同じ module の、宣言した親の型の resource だけを参照していない（決定18） | 親の resource と同じ module に置き、親を参照する |
 | `LY302` | `optional` でない attachment 型の resource が、宣言したどの親の引数も持たない | Provider が引数の名前を変えたなら宣言を直す |
-| `LY303` | 使われている resource の型が、宣言のどの区分（attachment、親の型、`not_attachments`）にも無い | 下の基準で分類し、宣言に足す |
+| `LY303` | 使われている resource の型が、宣言の `attachments` にも `not_attachments` にも無い。親の型に現れるだけでは分類に数えない | 下の基準で分類し、宣言に足す |
 
 ## 層の決め方
 
@@ -45,11 +46,14 @@ TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `ap
 
 ## 親を指す引数の辿り方
 
-親を指す引数の値の `${...}` から参照（`<名前>.<名前>`）を取り出し、次のように辿った先の参照を判定する。
+親を指す引数の値の補間（`${...}`）の内側から参照（`<名前>.<名前>`）を取り出し、次のように辿った先の参照を判定する。
 
-- `local.<名前>` は、同じディレクトリの `locals` の値の全体へ辿る
+- 補間の外の文字列と、`$${` で書いたリテラルは参照として読まない
+- 補間の中の、補間を持たない引用符の文字列と、`for` 式の反復変数は参照として読まない
+- `local.<名前>` は、同じディレクトリの `locals` の値の全体へ辿る。定義の無い `local` は辿れない参照として違反にする
 - `each.key` と `each.value` は、その resource の `for_each` の値の全体へ辿る
-- 添字（`x[...]` の `[...]`）の中は親を選ぶだけなので辿らない。`count.index` は参照に数えない
+- 参照の直後の添字（`x[...]` の `[...]`）の中は親を選ぶだけなので辿らない。`count.index` は参照に数えない
+- 補間の対応を読めない式（入れ子の `{}` が4段以上のもの）は、読めない式として違反にする
 
 辿った先の参照が無いか、1つでも、同じディレクトリに宣言された、宣言した親の型の resource でなければ違反とする。
 `*` を親の型に持つ引数（親の型が多態のもの）は、同じディレクトリのどの型の resource でもよい。
@@ -61,8 +65,7 @@ TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `ap
 - `attachments`: attachment 型の resource の型ごとに、`parents`（親を指す引数から、親として認める型の配列へ）と
   `optional`（宣言したどの親の引数も書かなくてよいか）を持つ。引数は `protected_resource.s3_bucket.bucket_name` の
   ように block をまたいだ dotted な並びで書き、`dynamic` で書いた block も同じ引数として読む（`lib.hcl.values_at`）
-- `not_attachments`: attachment 型でない型と、その理由
-- `attachments` の親の型に現れる型（`*` を除く）は、親として分類済みと数える
+- `not_attachments`: attachment 型でない型と、その理由。親になる型も、それ自身が attachment 型でないことをここに置く
 
 ### 分類の基準
 
@@ -79,11 +82,10 @@ resource である。親と引数の組で同一性が決まり、自前の名�
 ## 保証しないこと
 
 - 宣言の正しさ。分類、親の引数、親の型、`optional` を誤った型は、その誤りの分だけ検査から外れる。`optional` を
-  誤って `true` にした型は `LY302` が働かない。入れ子の block が必須かどうかは schema に現れないので、親の引数が
-  入れ子に在る型の `optional` は schema の `required` だけでは決まらない
+  誤って `true` にした型は `LY302` が働かない
 - 親の resource の inline の引数と attachment 型の resource の共存、同じ親への文書全体の attachment の重複（#348）
 - 添字の中の参照で選ぶ親。`aws_s3_bucket.this[module.x.key]` は `aws_s3_bucket.this` を親として通す
 - module の呼び出しが無い、層の置き場でないディレクトリの resource は `LY101` に当たらない。attachment 型であれば
   `LY301` が見る
 - `.tftest.hcl` の `run` の `module` の `source`
-- 文字列の中の `${...}` の外に書いた名前。`"${...}"` の形でない式は参照として読まない
+- 走査の root の外の `.tf`。root の外に構成ファイルを置くことは `make infra-code-gate` が落とす

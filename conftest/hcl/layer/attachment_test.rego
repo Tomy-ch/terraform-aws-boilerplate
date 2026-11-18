@@ -50,6 +50,43 @@ test_LY301_allow_any_parent_type_in_same_module if {
 	count(attachment_denies(src)) == 0
 }
 
+test_LY301_allow_for_expression_iterator if {
+	count(attachment_denies(policy("one([for b in [aws_s3_bucket.this] : b.id])"))) == 0
+}
+
+test_LY301_allow_literal_after_interpolation if {
+	count(attachment_denies(policy(`"${aws_s3_bucket.this.id}-foo.bar"`))) == 0
+}
+
+test_LY301_allow_quoted_literal_in_expression if {
+	count(attachment_denies(policy(`try(aws_s3_bucket.this.id, "a.b")`))) == 0
+}
+
+test_LY301_deny_interpolation_after_literal_bracket if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}-x[${module.x.id}]"`))
+	contains(m, "module.x")
+}
+
+test_LY301_deny_escaped_interpolation if {
+	some m in attachment_denies(policy(`"$${aws_s3_bucket.this.id}"`))
+	contains(m, "参照がありません")
+}
+
+test_LY301_deny_undefined_local if {
+	some m in attachment_denies(policy(`"${local.nope}${aws_s3_bucket.this.id}"`))
+	contains(m, "local.nope")
+}
+
+test_LY301_deny_unreadable_nesting if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}${ {a = {b = {c = {d = module.x.id}}}} }"`))
+	contains(m, unreadable)
+}
+
+test_LY301_deny_module_inside_quoted_template if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}${"${module.x.id}"}"`))
+	contains(m, "module.x")
+}
+
 test_LY301_deny_module_reference if {
 	some m in attachment_denies(policy("module.b.id"))
 	contains(m, "module.b")
@@ -201,6 +238,14 @@ test_LY303_allow_classified_types if {
 resource "aws_vpc" "this" {}
 `
 	count(with_id(denies(module_with(src)), "LY303")) == 0
+}
+
+test_LY303_deny_parent_type_not_classified if {
+	d := {"attachments": fixture_decl.attachments, "not_attachments": object.remove(fixture_decl.not_attachments, ["aws_s3_bucket"])}
+	files := module_with(policy("aws_s3_bucket.this.id"))
+	msgs := denies_with(files, [f.path | some f in files], d)
+	some m in with_id(msgs, "LY303")
+	contains(m, "aws_s3_bucket")
 }
 
 test_LY303_deny_unclassified_type if {
