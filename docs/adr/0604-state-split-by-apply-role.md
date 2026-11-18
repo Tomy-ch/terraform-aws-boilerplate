@@ -104,11 +104,11 @@ identity root を bootstrap の構成物に限ったまま、統制を workload 
 
 ## 検証方法
 
-- Static Analysis: 次の3つを検査する（決定2-5）
+- Static Analysis（`make root-check`）: 次の2つを検査する（決定3・4）
   - `env/<env>/identity/` が bootstrap の構成物か統制の構成物を持つ usecase 以外を呼ばないこと。統制の構成物を持つ usecase を、管理アカウント以外の identity root が呼ばないこと
   - `env/<env>/` の直下がそれらの usecase を呼ばないこと
-  - `env/<env>/` の下に他の root が無いこと
-- Static Analysis: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること。plan の job が lock を取らず、apply の job が取ること（決定8）
+- Static Analysis（`make root-check`）: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること。`env/` の下で、決定5 の配置の外のディレクトリが backend を持たないこと（決定2・5・7・8）
+- Unit Test（`scripts/tf-local`）: plan の入口が lock を取らず、apply の入口が取ること（決定8）
 - Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: `env/` の下で `*.tf` を持つディレクトリが決定5 の配置にだけ在り、その各 root に、その root を plan する job が1つ以上、apply する job と lock の解除の job が1つずつあること（決定2-5・8）
