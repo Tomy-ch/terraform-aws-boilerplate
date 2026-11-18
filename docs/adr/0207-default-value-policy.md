@@ -40,7 +40,7 @@
 3. 設定値は以下の順で決定する。
 
    1. AWS公式の明示的な推奨値・ベストプラクティス
-   2. AWS Well-Architected等の公式設計指針
+   2. AWS Well-Architected Framework、AWS Security Reference Architecture 等の公式設計指針と、AWS Security Hub のセキュリティ標準（AWS Foundational Security Best Practices、CIS AWS Foundations Benchmark）。1 と食い違う場合は 1 に従う
    3. AWS公式Terraform moduleの最新実装
    4. HashiCorp / Terraform AWS Provider の公式ドキュメント
    5. AWSサービス固有の公式セキュリティガイド
