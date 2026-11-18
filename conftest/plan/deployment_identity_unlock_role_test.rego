@@ -294,7 +294,7 @@ wexclusives := [
 
 input2(wstatements, key) := fixture.plan(array.concat(array.concat([state_bucket, role, policy([list_lock, remove_lock]), wrole, wpolicy(wstatements), key], exclusives), wexclusives))
 
-test_pass_two_roles_before_key_policy if {
+test_pass_second_role_without_key_grant_until_declared if {
 	count(p.deny) == 0 with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
 }
 
@@ -323,7 +323,7 @@ test_violation_second_role_policy_missing if {
 
 test_violation_second_role_declared_key_user_without_grant if {
 	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"unlocker": "unlock_role", "key_user_roles": ["unlock_role", "workload_unlock_role"]}
-	fixture.has("[PLAN-UNLOCK-04]", msgs)
+	fixture.has(sprintf("[PLAN-UNLOCK-04] どの Key Policy も workload_unlock_role の role %s に lock file の復号を許していません", [wrole_arn]), msgs)
 }
 
 # Key Policy の宣言に入る前でも、Key Policy が許す復号は IAM の lock file に限る。
@@ -336,17 +336,23 @@ test_violation_second_role_unlimited_grant if {
 test_violation_same_lock_key if {
 	d := json.patch(decl2, [{"op": "replace", "path": "/workload_unlock_role/lock_key", "value": "identity/terraform.tfstate.tflock"}])
 	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
-	fixture.has("[PLAN-UNLOCK-00]", msgs)
+	fixture.has("[PLAN-UNLOCK-00] unlock_role と workload_unlock_role が同じ lock file \"identity/terraform.tfstate.tflock\" を受け持っています", msgs)
 }
 
-test_violation_unlock_roles_undeclared if {
-	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as object.remove(decl, ["unlock_roles"]) with data.policy_plan.state_backend as sb
-	fixture.has("[PLAN-UNLOCK-00]", msgs)
+# with で上書きした object は decl.json の宣言と重ねて読まれるので、キーを外す代わりに値を null にする。
+test_violation_unlock_roles_null if {
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as decl with data.policy_plan.deployment_identity.unlock_roles as null with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が配列ではありません", msgs)
+}
+
+test_violation_unlock_roles_not_array if {
+	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as object.union(decl, {"unlock_roles": "unlock_role"}) with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が配列ではありません", msgs)
 }
 
 test_violation_unlock_roles_empty if {
 	msgs := p.deny with input as input_with([list_lock, remove_lock], valid_key) with data.policy_plan.deployment_identity as object.union(decl, {"unlock_roles": []}) with data.policy_plan.state_backend as sb
-	fixture.has("[PLAN-UNLOCK-00]", msgs)
+	fixture.has("[PLAN-UNLOCK-00] lock を外す role の宣言（data.policy_plan.deployment_identity.unlock_roles）が空です", msgs)
 }
 
 test_violation_unlock_role_entry_missing if {
@@ -359,4 +365,29 @@ test_violation_unlocker_not_in_unlock_roles if {
 	d := object.union(decl2, {"unlock_roles": ["workload_unlock_role"]})
 	msgs := p.deny with input as input2([wlist, wremove], valid_key) with data.policy_plan.deployment_identity as d with data.policy_plan.state_backend as sb
 	fixture.has("[PLAN-UNLOCK-00] state_backend.unlocker の unlock_role が data.policy_plan.deployment_identity.unlock_roles にありません", msgs)
+}
+
+test_violation_second_role_exclusive_missing if {
+	inp := fixture.plan(array.concat(array.concat([state_bucket, role, policy([list_lock, remove_lock]), wrole, wpolicy([wlist, wremove]), valid_key], exclusives), [wexclusives[0]]))
+	msgs := p.deny with input as inp with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-03] workload_unlock_role の role tabp-admin-ci-unlock の aws_iam_role_policy_attachments_exclusive が 0 件です（1件を期待）", msgs)
+}
+
+test_violation_second_role_extra_policy if {
+	extra := change("module.y.aws_iam_role_policy.extra", "aws_iam_role_policy", {"name": "extra", "role": "tabp-admin-ci-unlock", "policy": json.marshal({"Statement": [wlist]})})
+	inp := fixture.plan(array.concat(array.concat([state_bucket, role, policy([list_lock, remove_lock]), wrole, wpolicy([wlist, wremove]), valid_key, extra], exclusives), wexclusives))
+	msgs := p.deny with input as inp with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-03] p.json: module.y.aws_iam_role_policy.extra が workload_unlock_role の role に権限を足しています", msgs)
+}
+
+test_violation_second_role_list_prefix_other_lock if {
+	s := json.patch(wlist, [{"op": "replace", "path": "/Condition/StringEquals/s3:prefix", "value": "identity/terraform.tfstate.tflock"}])
+	msgs := p.deny with input as input2([s, wremove], valid_key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as sb
+	fixture.has("[PLAN-UNLOCK-02] p.json: workload_unlock_role の role の s3:ListBucket が、s3:prefix を StringEquals で workload/terraform.tfstate.tflock だけに限っていません", msgs)
+}
+
+test_violation_first_role_key_user_without_grant if {
+	key := key_policy([object.union(read_grant(wrole_arn, "kms:Decrypt", [wlock]), {"Sid": "RolesViaS3Read1"})])
+	msgs := p.deny with input as input2([wlist, wremove], key) with data.policy_plan.deployment_identity as decl2 with data.policy_plan.state_backend as {"unlocker": "unlock_role", "key_user_roles": ["unlock_role", "workload_unlock_role"]}
+	fixture.has(sprintf("[PLAN-UNLOCK-04] どの Key Policy も unlock_role の role %s に lock file の復号を許していません", [role_arn]), msgs)
 }

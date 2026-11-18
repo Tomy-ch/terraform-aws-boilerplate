@@ -243,6 +243,16 @@ run "rejects_global_namespace_apply_output_bucket" {
   expect_failures = [var.apply_output_bucket_arn]
 }
 
+run "rejects_an_suffix_without_account_and_region" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-an"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
 run "rejects_wildcard_in_owner" {
   command = plan
 

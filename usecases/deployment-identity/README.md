@@ -20,8 +20,8 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `github` | `object({ owner, owner_id, repository, repository_id })`（すべて `string`） | role を assume してよいリポジトリの所有者とリポジトリの名前、変わらない数値の ID |
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
 | `state_key_arn` | `string`（KMS の鍵の ARN。alias の ARN と多リージョンの鍵は受けない） | このアカウントの state の鍵（`state-backend` の `state_key_arn`）。plan と apply-identity の role の鍵の権限と、apply の role の鍵の Deny をこの鍵に絞る。role と同じ partition・リージョン・アカウントの鍵でなければ、plan で（ARN が plan で決まらなければ apply で）落ちる。Key Policy の置き換えを待つ値を渡すと、identity root で依存が循環する（Key Policy が名指す role の作成が、この ARN を持つ apply-identity の inline policy の後に来るため） |
-| `plan_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-an` で終わる） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
-| `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る |
+| `plan_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
+| `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る |
 
 `state_key_arn` と `apply_output_bucket_arn` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 

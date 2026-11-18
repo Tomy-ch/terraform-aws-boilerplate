@@ -612,6 +612,15 @@ func Test_checkJob(t *testing.T) {
 		assert.Contains(t, findings[0].Message, "unlock-identity の role は lock の解除の job（make ci-unlock-*）だけが取って")
 	})
 
+	t.Run("plan の job が unlock の role を取れば、役割の違反だけを出す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, replaced(t, planWorkflow, "CI_ROLE=plan", "CI_ROLE=unlock"), "environment: admin-plan", "environment: admin-unlock")
+		findings := checkJob("p.yaml", jobOf(t, src, "plan-admin-identity"), planPerms, envs, infoOf(src))
+		require.Len(t, findings, 1, "役割の違反だけを1件出す: "+messages(findings))
+		assert.Contains(t, findings[0].Message, "unlock の role は lock の解除の job（make ci-unlock-*）だけが取って")
+	})
+
 	t.Run("apply の job が unlock-identity の role を取れば違反", func(t *testing.T) {
 		t.Parallel()
 
@@ -2905,6 +2914,18 @@ func Test_unlockRoleFor(t *testing.T) {
 	t.Run("identity root でない root の lock の解除は unlock", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")))
+	})
+
+	t.Run("name の中の make ci-unlock-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-unlock-admin-workload\n")
+		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+	})
+
+	t.Run("identity と別の root の入口を併せ持てば unlock を返す", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n")
+		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
 	})
 
 	t.Run("コメントの中の make ci-unlock-* は数えない", func(t *testing.T) {
