@@ -395,6 +395,18 @@ func Test_run(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(out.String(), "必須検査の job に env: を置かないでください"))
 	})
 
+	t.Run("検査ごとに違う step の違反は両方とも報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: make resource-order-check RUNNER_MODE=host\n        if: false\n")
+		gates = replaced(t, gates, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "順序の検査の step に if:")
+		assert.Contains(t, out.String(), "層の検査の step に if:")
+	})
+
 	t.Run("Pull Request の必須検査が層の検査を走らせなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -1216,6 +1228,14 @@ func Test_checkDetection(t *testing.T) {
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "層の検査の job apply-layer-check に if:・continue-on-error:")
 	})
 
+	t.Run("2つの検査を1つの job で走らせれば違反", func(t *testing.T) {
+		t.Parallel()
+
+		const orderStep = "      - run: make resource-order-check RUNNER_MODE=host\n"
+		j, aw := applyWith(t, orderStep, orderStep+"      - run: make layer-check RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check の run: は make resource-order-check-test と make resource-order-check だけ")
+	})
+
 	t.Run("検出の job のコメントの if: は読まない", func(t *testing.T) {
 		t.Parallel()
 
@@ -1234,11 +1254,7 @@ func Test_checkDetection(t *testing.T) {
 func Test_allowedNeeds(t *testing.T) {
 	t.Parallel()
 
-	got := allowedNeeds()
-	assert.True(t, strings.HasPrefix(got, "検出の job（make infra-code-gate）"), "検出の job を先頭に置く")
-	for _, g := range applyGates {
-		assert.Contains(t, got, fmt.Sprintf("%s（%s）", g.label, g.check), "applyGates のすべての検査の job を並べる")
-	}
+	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）", allowedNeeds())
 }
 
 func Test_checkGateJob(t *testing.T) {
@@ -1726,6 +1742,27 @@ func Test_runsGate(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), orderGate))
+		})
+	}
+
+	layer := map[string]struct {
+		step string
+		want bool
+	}{
+		"make layer-check を走らせる": {"      - run: make layer-check RUNNER_MODE=host\n", true},
+		"自己テストだけは偽":              {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
+		"検出は層の検査ではない":            {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
+		"順序の検査は層の検査ではない":         {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
+		"-n（実行しない）は偽":            {"      - run: make -n layer-check\n", false},
+		"後置の -n は偽":              {"      - run: make layer-check -n\n", false},
+		"|| true で失敗を隠すのは偽":      {"      - run: make layer-check || true\n", false},
+		"ほかの変数の代入は偽":             {"      - run: make layer-check RUNNER_MODE=host LY_NS=x\n", false},
+	}
+	for name, c := range layer {
+		t.Run("層の検査/"+name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), layerGate))
 		})
 	}
 }
@@ -2894,13 +2931,26 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 		assert.Empty(t, f)
 	})
 
-	t.Run("層の検査の自己テストが無ければ数えない", func(t *testing.T) {
-		t.Parallel()
+	const (
+		layerCheck = "        run: make layer-check RUNNER_MODE=host\n"
+		layerSelf  = "        run: make layer-check-test RUNNER_MODE=host\n"
+	)
+	for name, src := range map[string]string{
+		"層の検査そのものが無い":             strings.Replace(gatesWorkflow, layerCheck, "        run: echo\n", 1),
+		"層の検査の自己テストが無い":           strings.Replace(gatesWorkflow, layerSelf, "        run: echo\n", 1),
+		"層の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
+		"層の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, layerCheck, "        run: make layer-check RUNNER_MODE=host LY_NS=x\n", 1),
+		"層の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, layerCheck, "        # run: make layer-check RUNNER_MODE=host\n        run: echo\n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-		src := replaced(t, gatesWorkflow, "        run: make layer-check-test RUNNER_MODE=host\n", "        run: echo\n")
-		n, _ := checkRequiredGateJobs("g.yaml", src, required, layerGate)
-		assert.Zero(t, n)
-	})
+			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
+			n, f := checkRequiredGateJobs("g.yaml", src, required, layerGate)
+			assert.Zero(t, n)
+			assert.Empty(t, f)
+		})
+	}
 
 	t.Run("層の検査の step の形の違反を返す", func(t *testing.T) {
 		t.Parallel()
@@ -3028,11 +3078,26 @@ func Test_checkPullRequestGate(t *testing.T) {
 	apply := []groupRecord{{file: "a.yaml", root: "admin-identity"}}
 	unlock := []groupRecord{{file: "u.yaml", root: "admin-identity", unlock: true}}
 
-	assert.Empty(t, checkPullRequestGate("wf", apply, 1, orderGate), "Pull Request の側に在れば違反0件")
-	assert.Empty(t, checkPullRequestGate("wf", unlock, 0, orderGate), "apply の job が無ければ求めない")
-	assert.Empty(t, checkPullRequestGate("wf", nil, 0, orderGate), "apply の job が無ければ求めない")
-	assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, orderGate)), "make resource-order-check-test と make resource-order-check を走らせるもの")
-	assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, layerGate)), "make layer-check-test と make layer-check を走らせるもの")
+	for _, g := range applyGates {
+		t.Run(g.noun+": Pull Request の側に在れば違反0件", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", apply, 1, g))
+		})
+
+		t.Run(g.noun+": apply の job が無ければ求めない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", unlock, 0, g))
+			assert.Empty(t, checkPullRequestGate("wf", nil, 0, g))
+		})
+
+		t.Run(g.noun+": apply の job が在って Pull Request の側に無ければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, g)), g.targets+" を走らせるもの")
+		})
+	}
 }
 
 func Test_isUnlockRole(t *testing.T) {
