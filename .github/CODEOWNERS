@@ -61,6 +61,8 @@ scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/infra-code-test.mk    @Tomy-ch
 .makefiles/terraform/resource-order.mk     @Tomy-ch
 .makefiles/terraform/resource-order-test.mk @Tomy-ch
+.makefiles/terraform/layer.mk              @Tomy-ch
+.makefiles/terraform/layer-test.mk         @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/workflows/terraform-unlock.yaml    @Tomy-ch

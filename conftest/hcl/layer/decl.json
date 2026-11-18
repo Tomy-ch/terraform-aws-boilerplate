@@ -1,0 +1,1650 @@
+{
+  "layer_decl": {
+    "attachments": {
+      "aws_accessanalyzer_archive_rule": {
+        "parents": {
+          "analyzer_name": [
+            "aws_accessanalyzer_analyzer"
+          ]
+        },
+        "optional": false
+      },
+      "aws_acm_certificate_validation": {
+        "parents": {
+          "certificate_arn": [
+            "aws_acm_certificate"
+          ]
+        },
+        "optional": false
+      },
+      "aws_amplify_domain_association": {
+        "parents": {
+          "app_id": [
+            "aws_amplify_app"
+          ]
+        },
+        "optional": false
+      },
+      "aws_api_gateway_base_path_mapping": {
+        "parents": {
+          "domain_name": [
+            "aws_api_gateway_domain_name"
+          ]
+        },
+        "optional": false
+      },
+      "aws_api_gateway_method_settings": {
+        "parents": {
+          "rest_api_id": [
+            "aws_api_gateway_rest_api"
+          ],
+          "stage_name": [
+            "aws_api_gateway_stage"
+          ]
+        },
+        "optional": false
+      },
+      "aws_api_gateway_rest_api_policy": {
+        "parents": {
+          "rest_api_id": [
+            "aws_api_gateway_rest_api"
+          ]
+        },
+        "optional": false
+      },
+      "aws_api_gateway_usage_plan_key": {
+        "parents": {
+          "usage_plan_id": [
+            "aws_api_gateway_usage_plan"
+          ]
+        },
+        "optional": false
+      },
+      "aws_apigatewayv2_api_mapping": {
+        "parents": {
+          "domain_name": [
+            "aws_apigatewayv2_domain_name"
+          ]
+        },
+        "optional": false
+      },
+      "aws_appconfig_deployment": {
+        "parents": {
+          "environment_id": [
+            "aws_appconfig_environment"
+          ]
+        },
+        "optional": false
+      },
+      "aws_appconfig_extension_association": {
+        "parents": {
+          "resource_arn": [
+            "aws_appconfig_application",
+            "aws_appconfig_configuration_profile",
+            "aws_appconfig_environment"
+          ]
+        },
+        "optional": false
+      },
+      "aws_athena_named_query": {
+        "parents": {
+          "workgroup": [
+            "aws_athena_workgroup"
+          ]
+        },
+        "optional": true
+      },
+      "aws_athena_prepared_statement": {
+        "parents": {
+          "workgroup": [
+            "aws_athena_workgroup"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_attachment": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_group_tag": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_lifecycle_hook": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_notification": {
+        "parents": {
+          "group_names": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_policy": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_schedule": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_autoscaling_traffic_source_attachment": {
+        "parents": {
+          "autoscaling_group_name": [
+            "aws_autoscaling_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_backup_selection": {
+        "parents": {
+          "plan_id": [
+            "aws_backup_plan"
+          ]
+        },
+        "optional": false
+      },
+      "aws_backup_vault_lock_configuration": {
+        "parents": {
+          "backup_vault_name": [
+            "aws_backup_vault"
+          ]
+        },
+        "optional": false
+      },
+      "aws_backup_vault_notifications": {
+        "parents": {
+          "backup_vault_name": [
+            "aws_backup_vault"
+          ]
+        },
+        "optional": false
+      },
+      "aws_backup_vault_policy": {
+        "parents": {
+          "backup_vault_name": [
+            "aws_backup_vault"
+          ]
+        },
+        "optional": false
+      },
+      "aws_budgets_budget_action": {
+        "parents": {
+          "budget_name": [
+            "aws_budgets_budget"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ce_anomaly_subscription": {
+        "parents": {
+          "monitor_arn_list": [
+            "aws_ce_anomaly_monitor"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudfront_monitoring_subscription": {
+        "parents": {
+          "distribution_id": [
+            "aws_cloudfront_distribution"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_event_archive": {
+        "parents": {
+          "event_source_arn": [
+            "aws_cloudwatch_event_bus"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_event_bus_policy": {
+        "parents": {
+          "event_bus_name": [
+            "aws_cloudwatch_event_bus"
+          ]
+        },
+        "optional": true
+      },
+      "aws_cloudwatch_event_permission": {
+        "parents": {
+          "event_bus_name": [
+            "aws_cloudwatch_event_bus"
+          ]
+        },
+        "optional": true
+      },
+      "aws_cloudwatch_event_target": {
+        "parents": {
+          "rule": [
+            "aws_cloudwatch_event_rule"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_data_protection_policy": {
+        "parents": {
+          "log_group_name": [
+            "aws_cloudwatch_log_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_delivery": {
+        "parents": {
+          "delivery_source_name": [
+            "aws_cloudwatch_log_delivery_source"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_delivery_destination_policy": {
+        "parents": {
+          "delivery_destination_name": [
+            "aws_cloudwatch_log_delivery_destination"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_delivery_source": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_index_policy": {
+        "parents": {
+          "log_group_name": [
+            "aws_cloudwatch_log_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_metric_filter": {
+        "parents": {
+          "log_group_name": [
+            "aws_cloudwatch_log_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_resource_policy": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": true
+      },
+      "aws_cloudwatch_log_stream": {
+        "parents": {
+          "log_group_name": [
+            "aws_cloudwatch_log_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cloudwatch_log_subscription_filter": {
+        "parents": {
+          "log_group_name": [
+            "aws_cloudwatch_log_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_identity_pool_provider_principal_tag": {
+        "parents": {
+          "identity_pool_id": [
+            "aws_cognito_identity_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_identity_pool_roles_attachment": {
+        "parents": {
+          "identity_pool_id": [
+            "aws_cognito_identity_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_log_delivery_configuration": {
+        "parents": {
+          "user_pool_id": [
+            "aws_cognito_user_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_managed_user_pool_client": {
+        "parents": {
+          "user_pool_id": [
+            "aws_cognito_user_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_risk_configuration": {
+        "parents": {
+          "user_pool_id": [
+            "aws_cognito_user_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_user_pool_domain": {
+        "parents": {
+          "user_pool_id": [
+            "aws_cognito_user_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_cognito_user_pool_ui_customization": {
+        "parents": {
+          "user_pool_id": [
+            "aws_cognito_user_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_config_configuration_recorder_status": {
+        "parents": {
+          "name": [
+            "aws_config_configuration_recorder"
+          ]
+        },
+        "optional": false
+      },
+      "aws_db_instance_role_association": {
+        "parents": {
+          "db_instance_identifier": [
+            "aws_db_instance"
+          ]
+        },
+        "optional": false
+      },
+      "aws_db_proxy_default_target_group": {
+        "parents": {
+          "db_proxy_name": [
+            "aws_db_proxy"
+          ]
+        },
+        "optional": false
+      },
+      "aws_db_proxy_target": {
+        "parents": {
+          "db_proxy_name": [
+            "aws_db_proxy"
+          ]
+        },
+        "optional": false
+      },
+      "aws_dynamodb_contributor_insights": {
+        "parents": {
+          "table_name": [
+            "aws_dynamodb_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_dynamodb_kinesis_streaming_destination": {
+        "parents": {
+          "table_name": [
+            "aws_dynamodb_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_dynamodb_resource_policy": {
+        "parents": {
+          "resource_arn": [
+            "aws_dynamodb_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_dynamodb_table_replica": {
+        "parents": {
+          "global_table_arn": [
+            "aws_dynamodb_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_dynamodb_tag": {
+        "parents": {
+          "resource_arn": [
+            "aws_dynamodb_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ec2_tag": {
+        "parents": {
+          "resource_id": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ecr_lifecycle_policy": {
+        "parents": {
+          "repository": [
+            "aws_ecr_repository"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ecr_repository_policy": {
+        "parents": {
+          "repository": [
+            "aws_ecr_repository"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ecs_cluster_capacity_providers": {
+        "parents": {
+          "cluster_name": [
+            "aws_ecs_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ecs_tag": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_efs_backup_policy": {
+        "parents": {
+          "file_system_id": [
+            "aws_efs_file_system"
+          ]
+        },
+        "optional": false
+      },
+      "aws_efs_file_system_policy": {
+        "parents": {
+          "file_system_id": [
+            "aws_efs_file_system"
+          ]
+        },
+        "optional": false
+      },
+      "aws_efs_replication_configuration": {
+        "parents": {
+          "source_file_system_id": [
+            "aws_efs_file_system"
+          ]
+        },
+        "optional": false
+      },
+      "aws_eip_association": {
+        "parents": {
+          "allocation_id": [
+            "aws_eip"
+          ]
+        },
+        "optional": true
+      },
+      "aws_eks_access_entry": {
+        "parents": {
+          "cluster_name": [
+            "aws_eks_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_eks_access_policy_association": {
+        "parents": {
+          "cluster_name": [
+            "aws_eks_access_entry",
+            "aws_eks_cluster"
+          ],
+          "principal_arn": [
+            "aws_eks_access_entry"
+          ]
+        },
+        "optional": false
+      },
+      "aws_eks_addon": {
+        "parents": {
+          "cluster_name": [
+            "aws_eks_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_eks_identity_provider_config": {
+        "parents": {
+          "cluster_name": [
+            "aws_eks_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_eks_pod_identity_association": {
+        "parents": {
+          "cluster_name": [
+            "aws_eks_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_elasticache_user_group_association": {
+        "parents": {
+          "user_group_id": [
+            "aws_elasticache_user_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_flow_log": {
+        "parents": {
+          "vpc_id": [
+            "aws_vpc"
+          ],
+          "subnet_id": [
+            "aws_subnet"
+          ],
+          "eni_id": [
+            "aws_network_interface"
+          ],
+          "transit_gateway_id": [
+            "aws_ec2_transit_gateway"
+          ],
+          "transit_gateway_attachment_id": [
+            "aws_ec2_transit_gateway_vpc_attachment"
+          ],
+          "regional_nat_gateway_id": [
+            "aws_nat_gateway"
+          ]
+        },
+        "optional": true
+      },
+      "aws_glue_partition_index": {
+        "parents": {
+          "database_name": [
+            "aws_glue_catalog_database",
+            "aws_glue_catalog_table"
+          ],
+          "table_name": [
+            "aws_glue_catalog_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_guardduty_detector_feature": {
+        "parents": {
+          "detector_id": [
+            "aws_guardduty_detector"
+          ]
+        },
+        "optional": false
+      },
+      "aws_guardduty_filter": {
+        "parents": {
+          "detector_id": [
+            "aws_guardduty_detector"
+          ]
+        },
+        "optional": false
+      },
+      "aws_guardduty_malware_protection_plan": {
+        "parents": {
+          "protected_resource.s3_bucket.bucket_name": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": true
+      },
+      "aws_guardduty_publishing_destination": {
+        "parents": {
+          "detector_id": [
+            "aws_guardduty_detector"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_group_membership": {
+        "parents": {
+          "group": [
+            "aws_iam_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_group_policy": {
+        "parents": {
+          "group": [
+            "aws_iam_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_group_policy_attachment": {
+        "parents": {
+          "group": [
+            "aws_iam_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_instance_profile": {
+        "parents": {
+          "role": [
+            "aws_iam_role"
+          ]
+        },
+        "optional": true
+      },
+      "aws_iam_policy_attachment": {
+        "parents": {
+          "roles": [
+            "aws_iam_role"
+          ],
+          "users": [
+            "aws_iam_user"
+          ],
+          "groups": [
+            "aws_iam_group"
+          ]
+        },
+        "optional": true
+      },
+      "aws_iam_role_policies_exclusive": {
+        "parents": {
+          "role_name": [
+            "aws_iam_role"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_role_policy": {
+        "parents": {
+          "role": [
+            "aws_iam_role"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_role_policy_attachment": {
+        "parents": {
+          "role": [
+            "aws_iam_role"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_role_policy_attachments_exclusive": {
+        "parents": {
+          "role_name": [
+            "aws_iam_role"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_user_policy": {
+        "parents": {
+          "user": [
+            "aws_iam_user"
+          ]
+        },
+        "optional": false
+      },
+      "aws_iam_user_policy_attachment": {
+        "parents": {
+          "user": [
+            "aws_iam_user"
+          ]
+        },
+        "optional": false
+      },
+      "aws_kms_alias": {
+        "parents": {
+          "target_key_id": [
+            "aws_kms_key"
+          ]
+        },
+        "optional": false
+      },
+      "aws_kms_grant": {
+        "parents": {
+          "key_id": [
+            "aws_kms_key"
+          ]
+        },
+        "optional": false
+      },
+      "aws_kms_key_policy": {
+        "parents": {
+          "key_id": [
+            "aws_kms_key"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_event_source_mapping": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_function_event_invoke_config": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_function_recursion_config": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_function_url": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_layer_version_permission": {
+        "parents": {
+          "layer_name": [
+            "aws_lambda_layer_version"
+          ],
+          "version_number": [
+            "aws_lambda_layer_version"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_permission": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_provisioned_concurrency_config": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lambda_runtime_management_config": {
+        "parents": {
+          "function_name": [
+            "aws_lambda_function"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lb_listener_certificate": {
+        "parents": {
+          "listener_arn": [
+            "aws_lb_listener"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lb_target_group_attachment": {
+        "parents": {
+          "target_group_arn": [
+            "aws_lb_target_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_bucket_access_key": {
+        "parents": {
+          "bucket_name": [
+            "aws_lightsail_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_bucket_resource_access": {
+        "parents": {
+          "bucket_name": [
+            "aws_lightsail_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_container_service_deployment_version": {
+        "parents": {
+          "service_name": [
+            "aws_lightsail_container_service"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_disk_attachment": {
+        "parents": {
+          "instance_name": [
+            "aws_lightsail_instance"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_instance_public_ports": {
+        "parents": {
+          "instance_name": [
+            "aws_lightsail_instance"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_lb_attachment": {
+        "parents": {
+          "lb_name": [
+            "aws_lightsail_lb"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_lb_certificate_attachment": {
+        "parents": {
+          "lb_name": [
+            "aws_lightsail_lb"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_lb_https_redirection_policy": {
+        "parents": {
+          "lb_name": [
+            "aws_lightsail_lb"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_lb_stickiness_policy": {
+        "parents": {
+          "lb_name": [
+            "aws_lightsail_lb"
+          ]
+        },
+        "optional": false
+      },
+      "aws_lightsail_static_ip_attachment": {
+        "parents": {
+          "instance_name": [
+            "aws_lightsail_instance"
+          ]
+        },
+        "optional": false
+      },
+      "aws_main_route_table_association": {
+        "parents": {
+          "vpc_id": [
+            "aws_vpc"
+          ]
+        },
+        "optional": false
+      },
+      "aws_network_acl_association": {
+        "parents": {
+          "network_acl_id": [
+            "aws_network_acl"
+          ]
+        },
+        "optional": false
+      },
+      "aws_network_acl_rule": {
+        "parents": {
+          "network_acl_id": [
+            "aws_network_acl"
+          ]
+        },
+        "optional": false
+      },
+      "aws_network_interface_sg_attachment": {
+        "parents": {
+          "network_interface_id": [
+            "aws_network_interface"
+          ]
+        },
+        "optional": false
+      },
+      "aws_networkfirewall_logging_configuration": {
+        "parents": {
+          "firewall_arn": [
+            "aws_networkfirewall_firewall"
+          ]
+        },
+        "optional": false
+      },
+      "aws_networkfirewall_resource_policy": {
+        "parents": {
+          "resource_arn": [
+            "aws_networkfirewall_firewall_policy",
+            "aws_networkfirewall_rule_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_opensearch_authorize_vpc_endpoint_access": {
+        "parents": {
+          "domain_name": [
+            "aws_opensearch_domain"
+          ]
+        },
+        "optional": false
+      },
+      "aws_opensearch_domain_policy": {
+        "parents": {
+          "domain_name": [
+            "aws_opensearch_domain"
+          ]
+        },
+        "optional": false
+      },
+      "aws_opensearch_domain_saml_options": {
+        "parents": {
+          "domain_name": [
+            "aws_opensearch_domain"
+          ]
+        },
+        "optional": false
+      },
+      "aws_organizations_delegated_administrator": {
+        "parents": {
+          "account_id": [
+            "aws_organizations_account"
+          ]
+        },
+        "optional": false
+      },
+      "aws_organizations_policy_attachment": {
+        "parents": {
+          "target_id": [
+            "aws_organizations_account",
+            "aws_organizations_organization",
+            "aws_organizations_organizational_unit"
+          ]
+        },
+        "optional": false
+      },
+      "aws_pinpointsmsvoicev2_event_destination": {
+        "parents": {
+          "configuration_set_name": [
+            "aws_pinpointsmsvoicev2_configuration_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_pinpointsmsvoicev2_keyword": {
+        "parents": {
+          "origination_identity_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_pinpointsmsvoicev2_resource_policy": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_rds_cluster_activity_stream": {
+        "parents": {
+          "resource_arn": [
+            "aws_rds_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_rds_cluster_role_association": {
+        "parents": {
+          "db_cluster_identifier": [
+            "aws_rds_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_rds_integration": {
+        "parents": {
+          "source_arn": [
+            "aws_rds_cluster"
+          ]
+        },
+        "optional": false
+      },
+      "aws_redshiftserverless_resource_policy": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route": {
+        "parents": {
+          "route_table_id": [
+            "aws_route_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route53_hosted_zone_dnssec": {
+        "parents": {
+          "hosted_zone_id": [
+            "aws_route53_zone"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route53_key_signing_key": {
+        "parents": {
+          "hosted_zone_id": [
+            "aws_route53_zone"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route53_query_log": {
+        "parents": {
+          "zone_id": [
+            "aws_route53_zone"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route53_vpc_association_authorization": {
+        "parents": {
+          "zone_id": [
+            "aws_route53_zone"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route53_zone_association": {
+        "parents": {
+          "zone_id": [
+            "aws_route53_zone"
+          ]
+        },
+        "optional": false
+      },
+      "aws_route_table_association": {
+        "parents": {
+          "route_table_id": [
+            "aws_route_table"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_accelerate_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_acl": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_analytics_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_cors_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_intelligent_tiering_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_inventory": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_lifecycle_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_logging": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_metric": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_notification": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_object_lock_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_ownership_controls": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_policy": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_public_access_block": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_replication_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_request_payment_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_server_side_encryption_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_versioning": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_s3_bucket_website_configuration": {
+        "parents": {
+          "bucket": [
+            "aws_s3_bucket"
+          ]
+        },
+        "optional": false
+      },
+      "aws_secretsmanager_secret_policy": {
+        "parents": {
+          "secret_arn": [
+            "aws_secretsmanager_secret"
+          ]
+        },
+        "optional": false
+      },
+      "aws_secretsmanager_secret_rotation": {
+        "parents": {
+          "secret_id": [
+            "aws_secretsmanager_secret"
+          ]
+        },
+        "optional": false
+      },
+      "aws_secretsmanager_secret_version": {
+        "parents": {
+          "secret_id": [
+            "aws_secretsmanager_secret"
+          ]
+        },
+        "optional": false
+      },
+      "aws_security_group_rule": {
+        "parents": {
+          "security_group_id": [
+            "aws_security_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_active_receipt_rule_set": {
+        "parents": {
+          "rule_set_name": [
+            "aws_ses_receipt_rule_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_domain_dkim": {
+        "parents": {
+          "domain": [
+            "aws_ses_domain_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_domain_identity_verification": {
+        "parents": {
+          "domain": [
+            "aws_ses_domain_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_domain_mail_from": {
+        "parents": {
+          "domain": [
+            "aws_ses_domain_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_event_destination": {
+        "parents": {
+          "configuration_set_name": [
+            "aws_ses_configuration_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_identity_notification_topic": {
+        "parents": {
+          "identity": [
+            "aws_ses_domain_identity",
+            "aws_ses_email_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ses_identity_policy": {
+        "parents": {
+          "identity": [
+            "aws_ses_domain_identity",
+            "aws_ses_email_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sesv2_configuration_set_event_destination": {
+        "parents": {
+          "configuration_set_name": [
+            "aws_sesv2_configuration_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sesv2_dedicated_ip_assignment": {
+        "parents": {
+          "destination_pool_name": [
+            "aws_sesv2_dedicated_ip_pool"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sesv2_email_identity_feedback_attributes": {
+        "parents": {
+          "email_identity": [
+            "aws_sesv2_email_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sesv2_email_identity_mail_from_attributes": {
+        "parents": {
+          "email_identity": [
+            "aws_sesv2_email_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sesv2_email_identity_policy": {
+        "parents": {
+          "email_identity": [
+            "aws_sesv2_email_identity"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sns_topic_data_protection_policy": {
+        "parents": {
+          "arn": [
+            "aws_sns_topic"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sns_topic_policy": {
+        "parents": {
+          "arn": [
+            "aws_sns_topic"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sns_topic_subscription": {
+        "parents": {
+          "topic_arn": [
+            "aws_sns_topic"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sqs_queue_policy": {
+        "parents": {
+          "queue_url": [
+            "aws_sqs_queue"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sqs_queue_redrive_allow_policy": {
+        "parents": {
+          "queue_url": [
+            "aws_sqs_queue"
+          ]
+        },
+        "optional": false
+      },
+      "aws_sqs_queue_redrive_policy": {
+        "parents": {
+          "queue_url": [
+            "aws_sqs_queue"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_account_assignment": {
+        "parents": {
+          "permission_set_arn": [
+            "aws_ssoadmin_permission_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_application_access_scope": {
+        "parents": {
+          "application_arn": [
+            "aws_ssoadmin_application"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_application_assignment": {
+        "parents": {
+          "application_arn": [
+            "aws_ssoadmin_application"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_customer_managed_policy_attachment": {
+        "parents": {
+          "permission_set_arn": [
+            "aws_ssoadmin_permission_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_managed_policy_attachment": {
+        "parents": {
+          "permission_set_arn": [
+            "aws_ssoadmin_permission_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_permission_set_inline_policy": {
+        "parents": {
+          "permission_set_arn": [
+            "aws_ssoadmin_permission_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_ssoadmin_permissions_boundary_attachment": {
+        "parents": {
+          "permission_set_arn": [
+            "aws_ssoadmin_permission_set"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_endpoint_policy": {
+        "parents": {
+          "vpc_endpoint_id": [
+            "aws_vpc_endpoint"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_endpoint_route_table_association": {
+        "parents": {
+          "vpc_endpoint_id": [
+            "aws_vpc_endpoint"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_endpoint_security_group_association": {
+        "parents": {
+          "vpc_endpoint_id": [
+            "aws_vpc_endpoint"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_endpoint_subnet_association": {
+        "parents": {
+          "vpc_endpoint_id": [
+            "aws_vpc_endpoint"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_security_group_egress_rule": {
+        "parents": {
+          "security_group_id": [
+            "aws_security_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_security_group_ingress_rule": {
+        "parents": {
+          "security_group_id": [
+            "aws_security_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_vpc_security_group_vpc_association": {
+        "parents": {
+          "security_group_id": [
+            "aws_security_group"
+          ]
+        },
+        "optional": false
+      },
+      "aws_wafv2_web_acl_association": {
+        "parents": {
+          "resource_arn": [
+            "*"
+          ]
+        },
+        "optional": false
+      },
+      "aws_wafv2_web_acl_logging_configuration": {
+        "parents": {
+          "resource_arn": [
+            "aws_wafv2_web_acl"
+          ]
+        },
+        "optional": false
+      }
+    },
+    "not_attachments": {
+      "aws_amplify_backend_environment": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_amplify_branch": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_amplify_webhook": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_account": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_api_gateway_authorizer": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_deployment": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_gateway_response": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_integration": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_method": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_resource": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_api_gateway_stage": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_apigatewayv2_authorizer": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_apigatewayv2_deployment": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_apigatewayv2_integration": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_apigatewayv2_route": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_apigatewayv2_stage": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_appconfig_configuration_profile": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_appconfig_environment": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_appconfig_hosted_configuration_version": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cloudwatch_event_rule": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cloudwatch_log_account_policy": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_cognito_identity_provider": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cognito_resource_server": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cognito_user": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cognito_user_group": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cognito_user_in_group": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cognito_user_pool_client": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_config_delivery_channel": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_db_instance_automated_backups_replication": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_dynamodb_table_export": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_dynamodb_table_item": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_ebs_encryption_by_default": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_ecr_registry_policy": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_ecr_registry_scanning_configuration": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_ecs_account_setting_default": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_ecs_service": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_efs_access_point": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_efs_mount_target": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_eks_fargate_profile": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_eks_node_group": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_glue_catalog_table": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_glue_data_catalog_encryption_settings": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_glue_partition": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_glue_resource_policy": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_iam_openid_connect_provider": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_lambda_alias": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_lb_listener": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_lb_listener_rule": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_lightsail_domain_entry": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_lightsail_lb_certificate": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_opensearch_vpc_endpoint": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_organizations_account": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_organizations_organizational_unit": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_organizations_resource_policy": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_rds_cluster_instance": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_redshiftserverless_endpoint_access": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_redshiftserverless_workgroup": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_route53_record": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_s3_account_public_access_block": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_scheduler_schedule": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_service_discovery_service": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_sesv2_account_suppression_attributes": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_sesv2_account_vdm_attributes": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_ssoadmin_instance_access_control_attributes": "親の IAM Identity Center の instance を Terraform が作らない"
+    }
+  }
+}

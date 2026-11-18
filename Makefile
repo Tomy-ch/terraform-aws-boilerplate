@@ -49,6 +49,8 @@ include .makefiles/terraform/infra-code.mk
 include .makefiles/terraform/infra-code-test.mk
 include .makefiles/terraform/resource-order.mk
 include .makefiles/terraform/resource-order-test.mk
+include .makefiles/terraform/layer.mk
+include .makefiles/terraform/layer-test.mk
 include .makefiles/terraform/policy.mk
 include .makefiles/terraform/operation/local.mk
 include .makefiles/terraform/operation/ci.mk

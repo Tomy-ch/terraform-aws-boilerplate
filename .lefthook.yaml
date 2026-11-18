@@ -219,6 +219,19 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make resource-order-check-test resource-order-check
+    layer-check:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+        - "env/**"
+        - "conftest/hcl/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make layer-check-test layer-check
 
     secret-gates-test:
       glob:
