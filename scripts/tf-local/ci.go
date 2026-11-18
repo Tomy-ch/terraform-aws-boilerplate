@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
+	"maps"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -553,22 +556,36 @@ func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (stri
 	fs := flag.NewFlagSet("policy-result", flag.ContinueOnError)
 	namespace := fs.String("namespace", "", "")
 	rego := fs.String("rego", "", "")
+	policy := fs.String("policy", "", "")
 
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
 
-	if fs.NArg() != 1 || *namespace == "" || *rego == "" {
+	single := *namespace != "" || *rego != ""
+	if fs.NArg() != 1 || single == (*policy != "") || single && (*namespace == "" || *rego == "") {
 		return "", errUsage
 	}
 
-	src, err := readFile(*rego)
-	if err != nil {
-		return "", xerrors.Wrap(errPolicyRules, "ファイルを読めません")
+	var rules map[string]int
+
+	if single {
+		src, err := readFile(*rego)
+		if err != nil {
+			return "", xerrors.Wrap(errPolicyRules, "ファイルを読めません")
+		}
+
+		if n := countRules(src); n > 0 {
+			rules = map[string]int{*namespace: n}
+		}
+	} else {
+		var err error
+		if rules, err = policyRules(*policy, readFile); err != nil {
+			return "", err
+		}
 	}
 
-	rules := countRules(src)
-	if rules == 0 {
+	if len(rules) == 0 {
 		return "", xerrors.Wrap(errPolicyRules, "deny contains が1つもありません")
 	}
 
@@ -577,7 +594,16 @@ func runPolicyResult(args []string, readFile func(string) ([]byte, error)) (stri
 		return "", xerrors.Wrap(errPolicyJSON, "ファイルを読めません")
 	}
 
-	return policyResult(*namespace, rules, data)
+	entries, err := parsePolicyResult(data)
+	if err != nil {
+		return "", err
+	}
+
+	if single {
+		entries = slices.DeleteFunc(entries, func(e policyEntry) bool { return e.Namespace != *namespace })
+	}
+
+	return policyResult(rules, entries)
 }
 
 // countRules は、rego の行頭の `deny contains` を数えます。conftest が評価した規則の数と独立に得る宣言の側である。
@@ -593,46 +619,143 @@ func countRules(rego []byte) int {
 	return n
 }
 
-// policyResult は、`conftest test -o json --namespace <namespace>` の結果を読み、違反が無いのに
-// 評価された規則が rules 件でなければ失敗します。conftest は名前空間に当たる package が無くても、
-// 規則が減っても、評価できた分だけを成功として返すためです。conftest は違反の無い規則を successes に、
-// 違反の文を failures に数えるので、違反があるときは件数を突き合わせられない。
-func policyResult(namespace string, rules int, data []byte) (string, error) {
-	var entries []policyEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return "", xerrors.Wrap(errPolicyJSON, err.Error())
-	}
+var regoPackageRe = regexp.MustCompile(`(?m)^package[ \t]+([A-Za-z0-9_.]+)`)
 
-	var (
-		evaluated int
-		messages  []string
-	)
+// policyRules は、dir の下のすべての rego（conftest -p が読むのと同じ集合）を歩き、package ごとに行頭の
+// `deny contains` の数を返します。規則の数の宣言を別に持たないので、規則を足すだけで突き合わせの対象に入る。
+// 消えた規則に気づくために、テストの package（<名前>_test）は対象の package が規則を持つことを要求する。
+// 規則を持たない package は lib/ の下にだけ置ける。
+func policyRules(dir string, readFile func(string) ([]byte, error)) (map[string]int, error) {
+	rules := map[string]int{}
+	tested := map[string]string{}
 
-	for _, e := range entries {
-		if e.Namespace != namespace {
-			continue
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
 
-		evaluated += e.Successes + len(e.Failures) + len(e.Warnings) + len(e.Exceptions)
+		if d.IsDir() || filepath.Ext(path) != ".rego" {
+			return nil
+		}
+
+		src, err := readFile(path)
+		if err != nil {
+			return xerrors.Wrap(errPolicyRules, path+": ファイルを読めません")
+		}
+
+		m := regoPackageRe.FindSubmatch(src)
+		if m == nil {
+			return xerrors.Wrap(errPolicyRules, path+": package の行がありません")
+		}
+
+		pkg, n := string(m[1]), countRules(src)
+		rel, _ := filepath.Rel(dir, path)
+
+		switch {
+		case strings.HasSuffix(path, "_test.rego"):
+			subject, ok := strings.CutSuffix(pkg, "_test")
+			if !ok {
+				return xerrors.Wrap(errPolicyRules, path+": テストの package が _test で終わりません")
+			}
+
+			tested[subject] = path
+		case n == 0 && strings.Split(filepath.ToSlash(rel), "/")[0] != "lib":
+			return xerrors.Wrap(errPolicyRules, path+": deny contains を持たない rego は lib/ の下にだけ置けます")
+		}
+
+		if n > 0 {
+			rules[pkg] += n
+		}
+
+		return nil
+	})
+	if err != nil {
+		if xerrors.Is(err, errPolicyRules) {
+			return nil, err
+		}
+
+		return nil, xerrors.Wrap(errPolicyRules, err.Error())
+	}
+
+	if len(rules) == 0 {
+		return nil, xerrors.Wrap(errPolicyRules, dir+": deny contains が1つもありません")
+	}
+
+	for _, subject := range slices.Sorted(maps.Keys(tested)) {
+		if rules[subject] == 0 {
+			return nil, xerrors.Wrap(errPolicyRules, tested[subject]+": テストの対象の "+subject+" に deny contains がありません")
+		}
+	}
+
+	return rules, nil
+}
+
+func parsePolicyResult(data []byte) ([]policyEntry, error) {
+	var entries []policyEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, xerrors.Wrap(errPolicyJSON, err.Error())
+	}
+
+	return entries, nil
+}
+
+// policyResult は、conftest の結果を名前空間ごとに rules と突き合わせ、違反が無いのに評価された規則が宣言の数で
+// なければ失敗します。conftest は名前空間に当たる package が無くても、規則が減っても、評価できた分だけを成功
+// として返すためです。conftest は違反の無い規則を successes に、違反の文を failures に数えるので、違反がある
+// ときは件数を突き合わせられない。
+func policyResult(rules map[string]int, entries []policyEntry) (string, error) {
+	if len(rules) == 0 {
+		return "", xerrors.Wrap(errPolicyRules, "deny contains が1つもありません")
+	}
+
+	evaluated := map[string]int{}
+
+	var messages []string
+
+	for _, e := range entries {
+		evaluated[e.Namespace] += e.Successes + len(e.Failures) + len(e.Warnings) + len(e.Exceptions)
 
 		for _, f := range e.Failures {
 			messages = append(messages, f.Msg)
 		}
 	}
 
-	if evaluated == 0 {
-		return "", xerrors.Wrap(errPolicyEmpty, namespace)
-	}
-
 	if len(messages) > 0 {
 		return "", xerrors.Wrap(errPolicyViolation, strings.Join(messages, "\n"))
 	}
 
-	if evaluated != rules {
-		return "", xerrors.Wrapf(errPolicyCount, "%s: 評価 %d 件、宣言 %d 件", namespace, evaluated, rules)
+	namespaces := map[string]bool{}
+	for ns := range rules {
+		namespaces[ns] = true
 	}
 
-	return fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", namespace, evaluated), nil
+	for ns, n := range evaluated {
+		if n > 0 {
+			namespaces[ns] = true
+		}
+	}
+
+	var (
+		errs  []error
+		lines []string
+	)
+
+	for _, ns := range slices.Sorted(maps.Keys(namespaces)) {
+		switch {
+		case evaluated[ns] == 0:
+			errs = append(errs, xerrors.Wrap(errPolicyEmpty, ns))
+		case evaluated[ns] != rules[ns]:
+			errs = append(errs, xerrors.Wrapf(errPolicyCount, "%s: 評価 %d 件、宣言 %d 件", ns, evaluated[ns], rules[ns]))
+		default:
+			lines = append(lines, fmt.Sprintf("✅ %s: 規則 %d 件を評価し、違反はありません", ns, evaluated[ns]))
+		}
+	}
+
+	if len(errs) > 0 {
+		return "", xerrors.Join(errs...)
+	}
+
+	return strings.Join(lines, "\n"), nil
 }
 
 // fileSHA256 は、ファイルの SHA-256 を base64 で返します。S3 は受け取った本文をこの値と突き合わせ、違えば

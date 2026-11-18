@@ -18,23 +18,24 @@ variables {
   state_key_arn           = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
   apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+  break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
 }
 
 run "accepts_boundary_inputs" {
   command = plan
 
   variables {
-    project                 = "abcdefghijklmnopqrstuvwxyz01234567890"
-    env                     = "sandbox"
+    project                 = "abcdefghijklmnopqrstuvwxyz0123456"
+    env                     = "log-archive"
     github                  = { owner = "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc", owner_id = "1", repository = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr", repository_id = "1" }
-    state_bucket_arn        = "arn:aws-cn:s3:::tabp-sandbox-tfstate-123456789012-cn-north-1-an"
-    plan_output_bucket_arn  = "arn:aws-cn:s3:::tabp-sandbox-tfplan-123456789012-cn-north-1-an"
-    apply_output_bucket_arn = "arn:aws-cn:s3:::tabp-sandbox-tfapply-123456789012-cn-north-1-an"
+    state_bucket_arn        = "arn:aws-cn:s3:::tabp-log-archive-tfstate-123456789012-cn-north-1-an"
+    plan_output_bucket_arn  = "arn:aws-cn:s3:::tabp-log-archive-tfplan-123456789012-cn-north-1-an"
+    apply_output_bucket_arn = "arn:aws-cn:s3:::tabp-log-archive-tfapply-123456789012-cn-north-1-an"
   }
 
   assert {
-    condition     = module.github_oidc.roles.unlock_identity.name == "abcdefghijklmnopqrstuvwxyz01234567890-sandbox-ci-unlock-identity"
-    error_message = "project が37文字・env が sandbox・owner が39文字・repository が100文字の入力で、64文字の role 名が組まれていません。"
+    condition     = module.github_oidc.roles.unlock_identity.name == "abcdefghijklmnopqrstuvwxyz0123456-log-archive-ci-unlock-identity"
+    error_message = "project が33文字・env が log-archive・owner が39文字・repository が100文字の入力で、64文字の role 名が組まれていません。"
   }
 }
 
@@ -62,11 +63,11 @@ run "accepts_prd" {
   }
 }
 
-run "rejects_project_over_37_chars" {
+run "rejects_project_over_33_chars" {
   command = plan
 
   variables {
-    project = "abcdefghijklmnopqrstuvwxyz012345678901"
+    project = "abcdefghijklmnopqrstuvwxyz01234567"
   }
 
   expect_failures = [var.project]
@@ -243,6 +244,36 @@ run "rejects_global_namespace_apply_output_bucket" {
   expect_failures = [var.apply_output_bucket_arn]
 }
 
+run "rejects_empty_apply_output_bucket_arn" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = ""
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
+run "rejects_apply_output_bucket_account_11_digits" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-12345678901-ap-northeast-1-an"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
+run "rejects_apply_output_bucket_account_13_digits" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-1234567890123-ap-northeast-1-an"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
 run "rejects_an_suffix_without_account_and_region" {
   command = plan
 
@@ -323,6 +354,168 @@ run "rejects_bucket_object_arn" {
   expect_failures = [var.state_bucket_arn]
 }
 
+run "accepts_security" {
+  command = plan
+
+  variables {
+    env = "security"
+  }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-security-ci-apply-identity", environment = "security-apply-identity" }
+    error_message = "env が security の role と environment の名前になっていません。"
+  }
+}
+
+run "accepts_log_archive" {
+  command = plan
+
+  variables {
+    env = "log-archive"
+  }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-log-archive-ci-apply-identity", environment = "log-archive-apply-identity" }
+    error_message = "env が log-archive の role と environment の名前になっていません。"
+  }
+}
+
+run "accepts_sandbox" {
+  command = plan
+
+  variables {
+    env = "sandbox"
+  }
+
+  assert {
+    condition     = module.github_oidc.roles.apply_identity == { name = "tabp-sandbox-ci-apply-identity", environment = "sandbox-apply-identity" }
+    error_message = "env が sandbox の role と environment の名前になっていません。"
+  }
+}
+
+run "accepts_break_glass_names_at_iam_limit" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      format("arn:aws:iam::123456789012:user/break-glass/%064d", 1),
+      format("arn:aws:iam::123456789012:user/break-glass/%064d", 2),
+      format("arn:aws:iam::123456789012:group/break-glass/%0128d", 3),
+      format("arn:aws:iam::123456789012:role/break-glass/%064d", 4),
+    ]
+  }
+}
+
+run "rejects_break_glass_user_name_over_64" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:user/break-glass/%065d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_break_glass_role_name_over_64" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:role/break-glass/%065d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_break_glass_group_name_over_128" {
+  command = plan
+
+  variables {
+    break_glass_arns = [format("arn:aws:iam::123456789012:group/break-glass/%0129d", 1)]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_five_break_glass_arns" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-3",
+      "arn:aws:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
+    ]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_valid_and_invalid_break_glass_arns_mixed" {
+  command = plan
+
+  variables {
+    break_glass_arns = [
+      "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws:iam::123456789012:role/tabp-break-glass",
+    ]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_iam_policy_arn_as_break_glass" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:policy/break-glass/break-glass"]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_empty_break_glass_arns" {
+  command = plan
+
+  variables {
+    break_glass_arns = []
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_break_glass_arn_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/tabp-break-glass"]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_non_iam_break_glass_arn" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:s3:::break-glass/break-glass"]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
+run "rejects_wildcard_in_break_glass_arn" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/*"]
+  }
+
+  expect_failures = [var.break_glass_arns]
+}
+
 run "rejects_unknown_env" {
   command = plan
 
@@ -347,6 +540,11 @@ run "accepts_key_arn_in_other_partition" {
   command = plan
 
   variables {
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::123456789012:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::123456789012:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::123456789012:role/break-glass/tabp-break-glass",
+    ]
     state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   }
 

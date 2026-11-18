@@ -8,20 +8,20 @@ variable "project" {
     error_message = "project は英小文字と数字だけにしてください。"
   }
 
-  # 最も長い role 名 `<project>-sandbox-ci-unlock-identity` を IAM の上限の64文字に収める。
+  # 最も長い role 名 `<project>-log-archive-ci-unlock-identity` を IAM の上限の64文字に収める。
   validation {
-    condition     = length(var.project) <= 37
-    error_message = "project は37文字以内にしてください。"
+    condition     = length(var.project) <= 33
+    error_message = "project は33文字以内にしてください。"
   }
 }
 
 variable "env" {
-  description = "role を置くアカウントの env の token。管理アカウントは `admin`。GitHub の environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` になる。"
+  description = "role を置くアカウントの env の token。管理アカウントは `admin`、統制のメンバーアカウントは `security` と `log-archive`。GitHub の environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` になる。"
   type        = string
 
   validation {
-    condition     = contains(["dev", "stg", "prd", "sandbox", "admin"], var.env)
-    error_message = "env は dev / stg / prd / sandbox / admin のいずれかにしてください。"
+    condition     = contains(["dev", "stg", "prd", "sandbox", "admin", "security", "log-archive"], var.env)
+    error_message = "env は dev / stg / prd / sandbox / admin / security / log-archive のいずれかにしてください。"
   }
 }
 
@@ -83,11 +83,21 @@ variable "plan_output_bucket_arn" {
 }
 
 variable "apply_output_bucket_arn" {
-  description = "このアカウントの workload root の apply の出力の Bucket の ARN（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定の Action と、plan の role の読み取りをこの Bucket に絞る。"
+  description = "このアカウントの workload root の apply の出力の Bucket の ARN（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定の Action と、plan の role の読み取りと、apply の role の書き込みをこの Bucket に絞る。"
   type        = string
 
   validation {
     condition     = can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*-[0-9]{12}-[a-z0-9-]+-an$", var.apply_output_bucket_arn))
     error_message = "apply_output_bucket_arn は account-regional の S3 Bucket の ARN（arn:<partition>:s3:::<bucket>-<account>-<region>-an）にしてください。"
+  }
+}
+
+variable "break_glass_arns" {
+  description = "このアカウントの break-glass の IAM user・group・role の ARN（`organization-baseline` の `break_glass_arns`）。apply の role はこれらへのすべての Action を拒む。管理アカウント（`admin`）では、apply-identity の role の break-glass の作成と設定、plan の role の読み取りの Resource にもなる。"
+  type        = list(string)
+
+  validation {
+    condition     = length(var.break_glass_arns) > 0 && length(var.break_glass_arns) <= 4 && alltrue([for a in var.break_glass_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:((user|role)/break-glass/[A-Za-z0-9+=,.@_-]{1,64}|group/break-glass/[A-Za-z0-9+=,.@_-]{1,128})$", a))])
+    error_message = "break_glass_arns は、path が /break-glass/ の IAM user・group・role の ARN（名前は IAM の上限の長さまで）の、1つ以上4つ以下の一覧にしてください。"
   }
 }

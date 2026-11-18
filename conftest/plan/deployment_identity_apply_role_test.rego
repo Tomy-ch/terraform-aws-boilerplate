@@ -15,6 +15,10 @@ st := "arn:aws:s3:::st"
 
 po := "arn:aws:s3:::po"
 
+ao := "arn:aws:s3:::ao"
+
+ao_objects := sprintf("%s/*", [ao])
+
 key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/1234abcd-12ab-34cd-56ef-1234567890ab", [account])
 
 other_key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/ffffffff-12ab-34cd-56ef-1234567890ab", [account])
@@ -57,7 +61,16 @@ valid_statements := [
 	{"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "Resource": sprintf("%s/*", [st])},
 	full_deny([po, sprintf("%s/*", [po])]),
 	{"Effect": "Deny", "Action": delegated_actions, "Resource": key},
+	full_deny([ao]),
+	{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects},
+	governance_deny,
 ]
+
+governance_actions := ["organizations:Create*", "sts:AssumeRoot"]
+
+governance_deny := {"Effect": "Deny", "Action": governance_actions, "Resource": "*"}
+
+governance_index := 9
 
 apply_policy_address := sprintf("%saws_iam_role_policy.this[\"apply\"]", [g])
 
@@ -80,6 +93,7 @@ others := [
 	res("aws_s3_bucket", "module.state_backend.module.s3.aws_s3_bucket.this", {"arn": st, "id": "st-id"}),
 	res("aws_s3_bucket_versioning", "module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "st-id"}),
 	res("aws_s3_bucket", "module.state_backend.module.plan_output.aws_s3_bucket.this", {"arn": po, "id": "po-id"}),
+	res("aws_s3_bucket", "module.state_backend.module.apply_output.aws_s3_bucket.this", {"arn": ao, "id": "ao-id"}),
 	res("aws_kms_key", "module.state_backend.module.kms.aws_kms_key.this", {"arn": key, "id": "key-id", "key_id": "key-kid"}),
 	res("aws_kms_alias", "module.state_backend.module.kms.aws_kms_alias.this", {"target_key_id": "key-kid"}),
 	key_policy,
@@ -106,6 +120,7 @@ bootstrap := {
 	"children": {
 		"module.state_backend.module.s3.aws_s3_bucket.this": {"roots": true, "version_deletion": true},
 		"module.state_backend.module.plan_output.aws_s3_bucket.this": {"suffixes": ["/*"]},
+		"module.state_backend.module.apply_output.aws_s3_bucket.this": {"suffixes": ["/*"], "writes": ["s3:PutObject"]},
 	},
 }
 
@@ -113,6 +128,7 @@ decl := {
 	"deployment_identity": {"apply_role": {
 		"role": apply_role_address,
 		"policy": apply_policy_address,
+		"governance": {"actions": governance_actions},
 		"bootstrap": bootstrap,
 	}},
 	"state_backend": {
@@ -135,6 +151,8 @@ state_bucket := "module.state_backend.module.s3.aws_s3_bucket.this"
 
 plan_bucket := "module.state_backend.module.plan_output.aws_s3_bucket.this"
 
+apply_bucket := "module.state_backend.module.apply_output.aws_s3_bucket.this"
+
 # 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
 messages_for(rcs, d) := msgs if {
 	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
@@ -156,6 +174,10 @@ without(rcs, address) := [x | some x in rcs; x.address != address]
 
 denied_03(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（* か", [apply_policy_address, arn])
 
+denied_03_writes(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への [\"s3:putobject\"] のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [apply_policy_address, arn])
+
+denied_03_writes_denied(arn, a) := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s の s3:putobject を、Deny の Action %q で拒んでいます", [apply_policy_address, arn, a])
+
 denied_03_strict(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）", [apply_policy_address, arn])
 
 malformed := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が"
@@ -166,7 +188,6 @@ test_pass_valid if {
 	count(messages(valid_statements)) == 0
 }
 
-# NotAction の名前は大文字小文字を区別しない。Action を配列で書いても * は * である。
 test_pass_case_and_array_forms if {
 	s := replace(replace(valid_statements, 3, {"Effect": "Deny", "NotAction": ["S3:ListBucket", "s3:GetBucketPolicy"], "Resource": st}), 2, {"Effect": "Deny", "Action": ["*"], "Resource": identity_keys})
 	count(messages(s)) == 0
@@ -248,7 +269,6 @@ test_violation_key_arn_unknown if {
 	fixture.has("[PLAN-APPLY-00] 鍵 module.state_backend.module.kms.aws_kms_key.this の ARN", messages_for(rcs, decl))
 }
 
-# 宣言の形が崩れると、規則は既定値を読んで要求を黙って落とす。どの崩れも PLAN-APPLY-00 で止める。
 test_violation_bootstrap_malformed if {
 	every d in [
 		with_bootstrap({"modules": []}),
@@ -281,6 +301,20 @@ test_violation_bootstrap_malformed if {
 		with_child(plan_bucket, {"suffixes": [1]}),
 		with_child(plan_bucket, {"suffixes": []}),
 		with_child(plan_bucket, {"suffix": ["/*"]}),
+		with_child(apply_bucket, {"writes": ["s3:PutObject"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": []}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": "s3:PutObject"}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [""]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [1]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:GetObject"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject", "S3:ListBucket"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:*"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["*"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:Pu?Object"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject "]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": null}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": {"s3:PutObject": true}}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [["s3:PutObject"]]}),
 	] {
 		fixture.has(malformed, messages_for(world(valid_statements), d))
 	}
@@ -344,7 +378,6 @@ test_violation_delegated_action_not_denied if {
 	fixture.has(sprintf("[PLAN-APPLY-01] p.json: %s がアカウントへ委任する [\"kms:describekey\"]", [key_policy_address]), msgs)
 }
 
-# 鍵の ARN でない Resource（別の鍵、"*"、alias）への Deny は、その鍵を守る Deny として数えない。
 test_violation_deny_not_on_key if {
 	every resource in [other_key, "*", sprintf("arn:aws:kms:ap-northeast-1:%s:alias/x", [account])] {
 		fixture.has("[PLAN-APPLY-01]", messages(replace(valid_statements, 6, {"Effect": "Deny", "Action": delegated_actions, "Resource": resource})))
@@ -363,7 +396,6 @@ test_violation_unclassified_type if {
 	fixture.has("[PLAN-APPLY-02] bootstrap の構成物 module.state_backend.module.logs.aws_cloudwatch_log_group.this の型", messages_for(rcs, decl))
 }
 
-# 子は、bootstrap の親を値で指さなければ親の ARN の Deny に守られない。
 test_violation_covered_by_points_outside if {
 	every c in [
 		["module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "other-bucket"}],
@@ -376,7 +408,6 @@ test_violation_covered_by_points_outside if {
 	}
 }
 
-# 親として宣言した型が target でも key でもなければ、Deny は親を守らない。
 test_violation_covered_by_parent_not_guarded if {
 	d := with_type("aws_s3_bucket_versioning", cov("aws_iam_role_policy", "bucket", "role"))
 	rcs := with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", {"bucket": "ci-apply"})
@@ -415,7 +446,6 @@ test_violation_not_resource if {
 	fixture.has(denied_03(po), messages(s))
 }
 
-# Resource は文字列の完全一致で見る。pattern は評価しない。
 test_violation_resource_pattern if {
 	fixture.has(denied_03(po), messages(replace(valid_statements, 5, full_deny(["arn:aws:s3:::p*"]))))
 }
@@ -426,7 +456,6 @@ test_violation_not_action_names_non_read if {
 	}
 }
 
-# Action と NotAction を両方持つ文は IAM が受け付けない。どちらの形としても数えない。
 test_violation_action_and_not_action if {
 	every s in [
 		{"Effect": "Deny", "Action": "*", "NotAction": ["s3:ListBucket"], "Resource": st},
@@ -461,7 +490,6 @@ test_violation_new_role_uncovered if {
 	fixture.has(denied_03(role_arn("ci-extra")), messages_for(rcs, decl))
 }
 
-# 別の instance（plan の role）の Deny は、apply の role の Deny として数えない。
 test_violation_other_instance_deny if {
 	rcs := array.concat(without(world(remove(valid_statements, 5)), sprintf("%saws_iam_role_policy.this[\"plan\"]", [g])), [role_policy("plan", "ci-plan", valid_statements)])
 	fixture.has(denied_03(po), messages_for(rcs, decl))
@@ -493,7 +521,6 @@ test_violation_managed_policy_attachment if {
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.extra が apply の role に", [g]), messages_for(array.concat(world(valid_statements), [extra]), decl))
 }
 
-# role の引数と aws_iam_policy_attachment は、上の型を通らずに policy を付ける。
 test_violation_role_arguments_attach_policy if {
 	every v in [
 		{"inline_policy": [{"name": "x", "policy": "{}"}], "managed_policy_arns": []},
@@ -584,7 +611,6 @@ test_violation_two_keys_one_key_policy if {
 
 # --- 黙る分岐 ---
 
-# identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。
 test_violation_state_bucket_children_weakened if {
 	every c in [
 		{"suffixes": ["/workload/terraform.tfstate"], "version_deletion": true},
@@ -625,7 +651,6 @@ test_violation_identity_state_conditional_deny if {
 	}
 }
 
-# 子が指す値は、宣言した親の型の、宣言した属性の値でなければならない（別の型の id や ARN では足りない）。
 test_violation_covered_by_points_to_other_type if {
 	every v in [{"bucket": "key-id"}, {"bucket": st}] {
 		fixture.has("[PLAN-APPLY-02] module.state_backend.module.s3.aws_s3_bucket_versioning.this の", messages_for(with_after(world(valid_statements), "module.state_backend.module.s3.aws_s3_bucket_versioning.this", v), decl))
@@ -659,7 +684,6 @@ test_pass_policy_attachment_other_role if {
 	count(messages_for(array.concat(world(valid_statements), [extra]), decl)) == 0
 }
 
-# inline_policy は block の一部だけが決まらないとき、入れ子の要素に true を持つ。
 test_violation_role_inline_policy_nested_unknown if {
 	unknown := json.patch([r | some r in world(valid_statements); r.address == apply_role_address][0], [{"op": "add", "path": "/change/after_unknown/inline_policy", "value": [{"name": false, "policy": true}]}])
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: apply の role %s の inline_policy", [apply_role_address]), messages_for(array.concat(without(world(valid_statements), apply_role_address), [unknown]), decl))
@@ -668,4 +692,241 @@ test_violation_role_inline_policy_nested_unknown if {
 test_violation_children_on_target_without_children if {
 	address := sprintf("%saws_iam_openid_connect_provider.github", [g])
 	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s は", [address]), messages_for(world(valid_statements), with_child(address, {"suffixes": ["/x"]})))
+}
+
+# --- PLAN-APPLY-03: 書き込み先として宣言した子 ---
+
+test_pass_writes_case_insensitive if {
+	count(messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": "S3:PutObject", "Resource": ao_objects}))) == 0
+}
+
+test_violation_writes_not_action_opens_more if {
+	every names in [["s3:PutObject", "s3:GetObject"], ["s3:PutObject", "s3:DeleteObject"], ["s3:GetObject"], ["s3:DeleteObject"]] {
+		fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": names, "Resource": ao_objects})))
+	}
+}
+
+test_violation_writes_conditional_deny if {
+	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects, "Condition": {"Bool": {"aws:SecureTransport": "false"}}})
+	fixture.has(denied_03_writes(ao_objects), messages(s))
+}
+
+test_violation_writes_full_deny if {
+	msgs := messages(replace(valid_statements, 8, full_deny([ao_objects])))
+	fixture.has(denied_03_writes(ao_objects), msgs)
+	fixture.has(denied_03_writes_denied(ao_objects, "*"), msgs)
+	not fixture.has(denied_03(ao_objects), msgs)
+}
+
+test_violation_writes_full_deny_alongside if {
+	fixture.has(denied_03_writes_denied(ao_objects, "*"), messages(array.concat(valid_statements, [full_deny([ao_objects])])))
+}
+
+test_violation_writes_deny_missing if {
+	fixture.has(denied_03_writes(ao_objects), messages(remove(valid_statements, 8)))
+}
+
+test_violation_writes_action_list if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "Action": ["s3:GetObject", "s3:DeleteObject"], "Resource": ao_objects})))
+}
+
+test_violation_apply_output_bucket_uncovered if {
+	fixture.has(denied_03(ao), messages(remove(valid_statements, 7)))
+}
+
+test_violation_writes_denied_by_action if {
+	every a in ["s3:PutObject", "S3:PUTOBJECT", "*", "s3:*", "s3:Put*", "s3:*Object", "s3:PutObj?ct"] {
+		fixture.has(denied_03_writes_denied(ao_objects, lower(a)), messages(array.concat(valid_statements, [{"Effect": "Deny", "Action": ["s3:GetObject", a], "Resource": ao_objects}])))
+	}
+}
+
+test_pass_writes_other_action_denied if {
+	every s in [
+		{"Effect": "Deny", "Action": ["s3:GetObject", "s3:Put*Acl", "s3:DeleteObject*", "s3:PutObj"], "Resource": ao_objects},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": ao_objects, "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+		{"Effect": "Deny", "Action": "*", "Resource": ao},
+	] {
+		count(messages(array.concat(valid_statements, [s]))) == 0
+	}
+}
+
+# 書き込み先を宣言した子も、入力に無いか ARN が読めなければ PLAN-APPLY-00 で落ちる。03 が対象0件のまま通らないため。
+test_violation_writes_child_absent if {
+	fixture.has(sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap.children の %s が入力にありません", [apply_bucket]), messages_for(without(world(valid_statements), apply_bucket), decl))
+}
+
+test_violation_writes_child_arn_not_arn if {
+	every v in [{"id": "ao-id"}, {"arn": "", "id": "ao-id"}, {"arn": "Zq8x1", "id": "ao-id"}] {
+		rcs := with_after(world(valid_statements), apply_bucket, v)
+		fixture.has(sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN", [apply_bucket]), messages_for(rcs, decl))
+	}
+}
+
+test_violation_writes_child_arn_unknown if {
+	rcs := [unknown_arn(x) | some x in world(valid_statements)]
+	fixture.has(sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN", [apply_bucket]), messages_for(rcs, decl))
+}
+
+unknown_arn(x) := json.patch(x, [{"op": "replace", "path": "/change", "value": {"actions": ["create"], "after": {"id": "ao-id"}, "after_unknown": {"arn": true}}}]) if x.address == apply_bucket
+
+unknown_arn(x) := x if x.address != apply_bucket
+
+test_violation_writes_not_action_empty if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "NotAction": [], "Resource": ao_objects})))
+}
+
+# NotAction の Deny が書き込み先に IAM で掛かっていても、Resource が ARN と文字列で一致しなければ数えない。
+test_violation_writes_not_action_other_resource_forms if {
+	every s in [
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "*"},
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "arn:aws:s3:::a*"},
+		{"Effect": "Deny", "NotAction": ["s3:PutObject"], "NotResource": "arn:aws:s3:::other/*"},
+	] {
+		fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, s)))
+	}
+}
+
+test_violation_writes_action_and_not_action if {
+	fixture.has(denied_03_writes(ao_objects), messages(replace(valid_statements, 8, {"Effect": "Deny", "Action": "s3:GetObject", "NotAction": ["s3:PutObject"], "Resource": ao_objects})))
+}
+
+test_pass_two_writes if {
+	d := with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject", "s3:PutObjectTagging"]})
+	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObjectTagging", "s3:PutObject"], "Resource": ao_objects})
+	count(messages_for(world(s), d)) == 0
+}
+
+test_violation_writes_denied_by_resource_pattern if {
+	every s in [
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::a*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::a?/?"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": "arn:aws:s3:::other/*"},
+	] {
+		fixture.has(denied_03_writes_denied(ao_objects, "s3:putobject"), messages(array.concat(valid_statements, [s])))
+	}
+}
+
+test_pass_writes_denied_elsewhere if {
+	every s in [
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::p*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::ao"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": "arn:aws:s3:::ao/*"},
+		{"Effect": "Deny", "Action": "s3:PutObject", "NotResource": ["arn:aws:s3:::other", "arn:aws:s3:::a*"]},
+	] {
+		count(messages(array.concat(valid_statements, [s]))) == 0
+	}
+}
+
+# --- PLAN-APPLY-06: 統制の構成物の変更の拒否 ---
+
+with_governance(g) := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance", "value": g}])
+
+denied_06(a) := sprintf("[PLAN-APPLY-06] apply の role %q が、%s を Resource", [apply_policy_address, a])
+
+malformed_governance := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.actions が"
+
+test_pass_governance_case_and_array_resource if {
+	s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": ["Organizations:Create*", "STS:AssumeRoot"], "Resource": ["*"]})
+	count(messages(s)) == 0
+}
+
+test_pass_governance_split_statements if {
+	s := array.concat(remove(valid_statements, governance_index), [
+		{"Effect": "Deny", "Action": "organizations:Create*", "Resource": "*"},
+		{"Effect": "Deny", "Action": "sts:AssumeRoot", "Resource": "*"},
+	])
+	count(messages(s)) == 0
+}
+
+test_violation_governance_action_missing if {
+	s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": ["organizations:Create*"], "Resource": "*"})
+	some m in messages(s)
+	startswith(m, denied_06("sts:AssumeRoot"))
+}
+
+test_violation_governance_deny_removed if {
+	msgs := messages(remove(valid_statements, governance_index))
+	some m in msgs
+	startswith(m, denied_06("organizations:Create*"))
+	some n in msgs
+	startswith(n, denied_06("sts:AssumeRoot"))
+}
+
+test_violation_governance_with_condition if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"Condition": {"StringEquals": {"aws:PrincipalAccount": account}}}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_on_specific_resource if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"Resource": "arn:aws:organizations::123456789012:ou/o-*/ou-*"}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_allow_not_deny if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"Effect": "Allow"}))
+	some m in messages(s)
+	startswith(m, denied_06("sts:AssumeRoot"))
+}
+
+test_violation_governance_by_not_action if {
+	s := replace(valid_statements, governance_index, {"Effect": "Deny", "NotAction": ["s3:GetObject"], "Resource": "*"})
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_declaration_missing if {
+	d := json.patch(decl, [{"op": "remove", "path": "/deployment_identity/apply_role/governance"}])
+	some m in messages_for(world(valid_statements), d)
+	startswith(m, malformed_governance)
+}
+
+test_violation_governance_declaration_empty if {
+	some m in messages_for(world(valid_statements), with_governance({"actions": []}))
+	startswith(m, malformed_governance)
+}
+
+test_violation_governance_declaration_not_string if {
+	some m in messages_for(world(valid_statements), with_governance({"actions": ["sts:AssumeRoot", 1]}))
+	startswith(m, malformed_governance)
+}
+
+test_violation_governance_declaration_empty_string if {
+	some m in messages_for(world(valid_statements), with_governance({"actions": [""]}))
+	startswith(m, malformed_governance)
+}
+
+test_violation_governance_by_wildcard_action if {
+	every action in ["*", "organizations:*", ["*"]] {
+		s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": action, "Resource": "*"})
+		some m in messages(s)
+		startswith(m, denied_06("organizations:Create*"))
+	}
+}
+
+test_violation_governance_action_and_not_action if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"NotAction": ["s3:GetObject"]}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_with_not_resource if {
+	s := replace(valid_statements, governance_index, object.union(governance_deny, {"NotResource": "arn:aws:s3:::x"}))
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_deny_on_other_role if {
+	rcs := array.concat(world(remove(valid_statements, governance_index)), [role_policy("plan_extra", "ci-plan", [governance_deny])])
+	some m in messages_for(rcs, decl)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
+test_violation_governance_declaration_actions_not_array if {
+	every g in [{"actions": "sts:AssumeRoot"}, {"actions": null}, {"actions": {"a": "sts:AssumeRoot"}}, "sts:AssumeRoot", null] {
+		some m in messages_for(world(valid_statements), with_governance(g))
+		startswith(m, malformed_governance)
+	}
 }

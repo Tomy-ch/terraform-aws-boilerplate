@@ -222,7 +222,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    rm -f tmp/plan/admin-identity.tfplan
    ```
 
-   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 30 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
+   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 41 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
 
    > **重要**: `check-plan.sh` を実際の plan で初めて使うときは、plan の出力（`terraform plan` が表示したもの）の取り込みと追加の一覧を、`check-plan.expected` とも目で照合する。両者の判定が食い違ったら、止まって Pull Request に記録する。
 
@@ -392,7 +392,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
 2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
-   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-admin-identity` が緑
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity` が緑
    - ログの plan の要約が `No changes.`
    - Policy の違反が無い
    - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
@@ -467,7 +467,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 | --- | --- | --- |
 | 1 | 段5 の変更がすべて適用され、それぞれの後の plan が変更なし | 手順3 |
 | 2 | 書き込みを拒否する前に、`Terraform Unlock` が lock を外せた | 手順6 |
-| 3 | 2つの Bucket と state が state の鍵で暗号化され、Bucket Policy の例外に IAM user が無い | 段5 の変更の apply の後に `docs/setup/scripts/verify.sh stage5` が `NG 0 件` で終了コード 0 |
+| 3 | 3つの Bucket と state が state の鍵で暗号化され、Bucket Policy の例外に IAM user が無い | 段5 の変更の apply の後に `docs/setup/scripts/verify.sh stage5` が `NG 0 件` で終了コード 0 |
 | 4 | 一時 IAM user の書き込みが Bucket Policy で拒まれる | 下のコマンド |
 | 5 | 書き込みの拒否の下で、`Terraform Unlock` が lock の無い状態を読める | 下の確認 |
 

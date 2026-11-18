@@ -57,7 +57,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 5. TFLint は `terraform validate` の代替ではなく補完として置く。
 
    Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
-   ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、backend 設定の不変条件、resource の作成の順序（`depends_on`。当該ユースケースの ADR が決めるもの）、ADR-0103 決定9-11 のコード実行の検出。同じ規約を両方に
+   ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、ADR-0604 決定2-4 の root が呼ぶ usecase の構成、backend 設定の不変条件（ADR-0604 決定7・8 の key と lock file を含む）、resource の作成の順序（`depends_on`。当該ユースケースの ADR が決めるもの）、ADR-0103 決定9-11 のコード実行の検出。root の配置（ADR-0604 決定5 の、`env/` の下で `*.tf` を持つディレクトリの位置）は、root ごとの CI の job の網羅とあわせてリポジトリ運用機構（ADR-0702 決定1）が持つ。同じ規約を両方に
    書かない。この用途の Conftest の入力は HCL のソース（パーサは拡張子で選び、JSON の構成は ADR-0103 決定11 のとおり未対応として落とす）とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定、resource の作成の順序）、plan した root から
    届く module に検査が限られるためである。コード実行の検出をこの入力に置くのは、plan の中で実行される構成要素が

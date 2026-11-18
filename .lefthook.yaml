@@ -176,6 +176,10 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy
@@ -189,6 +193,10 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - "conftest/plan/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       run: make tf-policy-canary
     # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
     infra-code-gate:
@@ -232,6 +240,18 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make layer-check-test layer-check
+    root-check:
+      glob:
+        - "usecases/**"
+        - "env/**"
+        - "conftest/hcl/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make root-check-test root-check
 
     secret-gates-test:
       glob:

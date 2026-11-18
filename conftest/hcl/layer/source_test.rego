@@ -213,3 +213,22 @@ test_LY203_deny_reference_to_own_internal if {
 }
 
 source_denies_in(files, path, src) := denies(array.concat([f | some f in files; f.path != path], [tf(path, src)]))
+
+# root の検査（conftest/hcl/root）は、env の root が usecases/<名前> だけを呼ぶことをこの規則に任せる。
+test_LY203_deny_env_to_local_module if {
+	files := array.concat(tree, [tf("env/dev/sub/main.tf", "")])
+	msgs := with_id(source_denies_in(files, "env/dev/main.tf", call("s", "./sub")), "LY203")
+	some m in msgs
+	contains(m, "env/dev/sub")
+}
+
+test_LY203_deny_env_to_identity_root if {
+	files := array.concat(tree, [tf("env/dev/identity/main.tf", "")])
+	msgs := with_id(source_denies_in(files, "env/dev/main.tf", call("i", "./identity")), "LY203")
+	some m in msgs
+	contains(m, "env/dev/identity")
+}
+
+test_LY203_deny_env_to_repository_root if {
+	count(with_id(source_denies("env/dev/main.tf", call("r", "../..")), "LY203")) == 1
+}

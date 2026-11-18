@@ -56,17 +56,13 @@ actions(s) := lib.lower_all(object.get(s, "Action", []))
 
 resources(s) := lib.as_array(object.get(s, "Resource", []))
 
-# IAM の Action と Resource の * と ? は ":" や "/" も越え、ほかの文字は文字そのものである。glob.match は [ と { を
-# 構文として読み、閉じていないと評価が未定義になって規則が黙るので使わない。
-iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()\[\]{}|^$\\]`, `\${0}`))
-
 # service の名前に wildcard を含む Action（"*"、"s?:*" など）も S3 の Action に当たる。
-s3_action(a) if regex.match(sprintf("^%s$", [iam_regex(split(a, ":")[0])]), "s3")
+s3_action(a) if lib.iam_match(split(a, ":")[0], "s3")
 
 # Resource のある接頭辞が "<Bucket の ARN>/" に一致すれば、その Resource は Bucket のある object に一致する。
 reaches_objects(resource) if {
 	some k in numbers.range(1, count(resource))
-	regex.match(sprintf("^%s$", [iam_regex(substring(resource, 0, k))]), sprintf("%s/", [bucket_arn]))
+	lib.iam_match(substring(resource, 0, k), sprintf("%s/", [bucket_arn]))
 }
 
 role_known if is_string(role_name)

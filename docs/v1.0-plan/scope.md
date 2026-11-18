@@ -72,7 +72,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 **確定:** envのtokenは`dev` / `stg` / `prd`とする。これはディレクトリ名であると同時に、AWS資源の命名（`<project>-<env>-...`）に入る値でもある。envを増やす場合も同じ長さの短縮形を使う。
 
-`sandbox`と`admin`は例外のtokenであり、**開発者が使うための環境ではない**。`sandbox`は検証の器（第10.2節）、`admin`は管理アカウント（第10.1節）で、どちらもアプリケーションを継続的に載せる場所ではない。ブランチ名（`develop` / `staging` / `release/*`）はenvのtokenとは別の軸であり、混同しない。
+`sandbox`・`admin`・`security`・`log-archive`は例外のtokenであり、**開発者が使うための環境ではない**。`sandbox`は検証の器（第10.2節）、`admin`は管理アカウント（第10.1節）、`security`と`log-archive`は統制のメンバーアカウント（第10.1節）で、どちらもアプリケーションを継続的に載せる場所ではない。ブランチ名（`develop` / `staging` / `release/*`）はenvのtokenとは別の軸であり、混同しない。
 
 | 層 | 責務 | 規約 |
 |---|---|---|
@@ -316,7 +316,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 - `serverless-api`は業務APIをLambdaに置くため採用しない。
 - `lambda-kicker`は一般提供しない。直接統合できない具体的な連携が現れた場合だけ`aws-bridge-lambda`として第2.2節のゲートを通す。
 - `s3-event-kicker`と`webhook-kicker`の標準経路からLambdaを外す。
-- v0.2の議論で検討した`log-archive`は採用しない。ログの集約専用のusecaseは置かず、第9.3節のpull / pushの2経路で足りる。
+- v0.2の議論で検討した`log-archive`のusecaseは採用しない（アカウントのenvの`log-archive`とは別である）。ログの集約専用のusecaseは置かず、第9.3節のpull / pushの2経路で足りる。
 - SQS FIFOによる順序保証の変種は採用しない。
 - DR（クロスリージョンのバックアップ複製、マルチリージョン構成）はv1.0の対象外とする。`backup-restore`は同一リージョン内の保持・復元を対象とする。
 - 業務フローを持つStep Functions、API GatewayのVTLによる業務変換は、業務ロジックをインフラが所有する形になるため採用しない（第2節）。
@@ -506,7 +506,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
-| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを管理アカウントに立ち上げる（ADR-0602 決定4-11）。人が手で作るのは管理アカウント1つだけである。rootで行うのは、rootでしかできない作業（rootのMFAの2台以上の登録、Paid Planへの移行、BillingへのIAMアクセスの有効化）と、最初のIAM主体である一時IAM userの作成に限る。以後の実行者は一時IAM user（コンソールパスワード、MFA、`aws login`。アクセスキーを作らない）とし、連絡先の登録とCost Explorerの有効化もこのuserで行う（#130）。アカウントの準備、段1-5、一時IAM userの削除の手順は[`docs/setup/bootstrap.md`](../setup/bootstrap.md)が持つ。各段の手順は、その段のusecaseを実装する変更が書き足す。段1: AWS CLIでstate Bucketを作る（版管理、Public Access Block、Object Ownershipだけ。既定の暗号化は段4でstate の鍵によるSSE-KMSを置く）。段2: 同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が取り込んだresourceに変更を示さなくなるまで突合する。段3-4: OIDC Providerと plan / apply / apply-identity / unlock-identity のrole、objectの書き込みをCIのroleと段4の実行者に限るbucket policy、state Bucketのlifecycle、plan の出力の Bucket、state の鍵（CMK・Key Policy・alias）を、一時IAM userのローカル権限でapplyする（ADR-0602 決定9・10 の例外）。段5: stateのSSE-KMSでの書き直しと、段4の実行者の書き込みの例外の除去を、CI（apply-identity）でapplyする。2つのBucketはS3サーバーアクセスログを持たない（state-backend/ADR-0105）。段5 の完了後に、rootで一時IAM userを削除する。実行の記録はADR-0602 決定10に従う。Organizations、メンバーアカウント6つ（security / log-archive / sandbox / dev / stg / prd）、Identity Centerの権限は`organization-baseline`がフェーズ1で作る | 管理アカウントが存在し、Paid Planであること（手順は`docs/setup/bootstrap.md`が持つ） |
+| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを管理アカウントに立ち上げる（ADR-0602 決定4-11）。人が手で作るのは管理アカウント1つだけである。rootで行うのは、rootでしかできない作業（rootのMFAの2台以上の登録、Paid Planへの移行、BillingへのIAMアクセスの有効化）と、最初のIAM主体である一時IAM userの作成に限る。以後の実行者は一時IAM user（コンソールパスワード、MFA、`aws login`。アクセスキーを作らない）とし、連絡先の登録とCost Explorerの有効化もこのuserで行う（#130）。アカウントの準備、段1-5、一時IAM userの削除の手順は[`docs/setup/bootstrap.md`](../setup/bootstrap.md)が持つ。各段の手順は、その段のusecaseを実装する変更が書き足す。段1: AWS CLIでstate Bucketを作る（版管理、Public Access Block、Object Ownershipだけ。既定の暗号化は段4でstate の鍵によるSSE-KMSを置く）。段2: 同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が取り込んだresourceに変更を示さなくなるまで突合する。段3-4: OIDC Providerと plan / apply / apply-identity / unlock-identity のrole、objectの書き込みをCIのroleと段4の実行者に限るbucket policy、state Bucketのlifecycle、plan の出力の Bucket、state の鍵（CMK・Key Policy・alias）を、一時IAM userのローカル権限でapplyする（ADR-0602 決定9・10 の例外）。段5: stateのSSE-KMSでの書き直しと、段4の実行者の書き込みの例外の除去を、CI（apply-identity）でapplyする。state Bucketと2つの出力のBucketはS3サーバーアクセスログを持たない（state-backend/ADR-0105）。段5 の完了後に、rootで一時IAM userを削除する。実行の記録はADR-0602 決定10に従う。Organizations、メンバーアカウント6つ（security / log-archive / sandbox / dev / stg / prd）、Identity Centerの権限は`organization-baseline`がフェーズ1で作る | 管理アカウントが存在し、Paid Planであること（手順は`docs/setup/bootstrap.md`が持つ） |
 | 1. 基盤 | `organization-baseline`、その直後に`account-baseline`と`ops-notification`、続いて`audit-evidence`、`finops`、`image-registry`。メンバーアカウントの`state-backend`と`deployment-identity`は、管理アカウントのapply-identity roleがメンバー作成時の既定Roleを経由してTerraformで作り、その後所有を各アカウントへ移す（#142）。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
 | 2. ネットワーク | `vpc`（module）、`network-foundation`、`dns-zone`、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
 | 3. Compute・データ | `ecs`（module）、`container-platform`、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |

@@ -194,6 +194,16 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
 		})
 
+		t.Run("policy-result -policy は名前空間ごとの件数を1行ずつ出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			dir := policyDirWith(t, map[string]string{"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"})
+			path := fileWith(t, `[{"namespace":"plan.p","successes":1}]`)
+			require.NoError(t, run([]string{"policy-result", "-policy", dir, path}, &out, testDeps(nil)))
+			assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません\n", out.String())
+		})
+
 		t.Run("account は資格情報からアカウント ID を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -1312,6 +1322,38 @@ func TestCiMk(t *testing.T) {
 		assert.NotContains(t, got, " apply ")
 		assert.NotContains(t, got, "output -raw", "Bucket の名前は state から読まない")
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
+	})
+
+	t.Run("ci.mk のすべての plan の入口は lock を取らず、apply の入口は lock を取る", func(t *testing.T) {
+		t.Parallel()
+
+		raw, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
+		require.NoError(t, err)
+		phony := map[string]string{}
+		for _, m := range regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1) {
+			phony[m[1]] = m[2]
+		}
+		var rules []string
+		for _, m := range regexp.MustCompile(`(?m)^(ci-(?:plan|apply)-[A-Za-z0-9_-]+):\s*$`).FindAllStringSubmatch(string(raw), -1) {
+			rules = append(rules, m[1])
+		}
+		require.ElementsMatch(t, slices.Collect(maps.Keys(phony)), rules, "入口の .PHONY とレシピの行が食い違います")
+		require.Contains(t, slices.Collect(maps.Values(phony)), "plan", "ci.mk に plan の入口がありません")
+		require.Contains(t, slices.Collect(maps.Values(phony)), "apply", "ci.mk に apply の入口がありません")
+		for target, kind := range phony {
+			t.Run("入口 "+target, func(t *testing.T) {
+				t.Parallel()
+
+				got := expand(t, target)
+				if kind == "plan" {
+					assert.Contains(t, got, "plan -lock=false -input=false")
+
+					return
+				}
+				assert.NotContains(t, got, "-lock=false")
+				assert.Contains(t, got, "plan -input=false")
+			})
+		}
 	})
 
 	t.Run("Policy の名前空間が空なら展開で落ちる", func(t *testing.T) {

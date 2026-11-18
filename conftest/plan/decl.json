@@ -3,8 +3,13 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "iam:GetAccountPasswordPolicy",
+      "iam:ListOrganizationsFeatures",
       "kms:ListAliases",
-      "iam:GetAccountPasswordPolicy"
+      "organizations:DescribeOrganization",
+      "organizations:ListAWSServiceAccessForOrganization",
+      "organizations:ListAccounts",
+      "organizations:ListRoots"
     ],
     "documents": {
       "aws_iam_role": [
@@ -48,6 +53,51 @@
       "apply_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"apply\"]",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"apply\"]",
+        "governance": {
+          "actions": [
+            "organizations:Accept*",
+            "organizations:Attach*",
+            "organizations:Cancel*",
+            "organizations:Close*",
+            "organizations:Create*",
+            "organizations:Decline*",
+            "organizations:Delete*",
+            "organizations:Deregister*",
+            "organizations:Detach*",
+            "organizations:Disable*",
+            "organizations:Enable*",
+            "organizations:Invite*",
+            "organizations:Leave*",
+            "organizations:Move*",
+            "organizations:Put*",
+            "organizations:Register*",
+            "organizations:Remove*",
+            "organizations:Tag*",
+            "organizations:Terminate*",
+            "organizations:Untag*",
+            "organizations:Update*",
+            "account:CloseAccount",
+            "iam:DeleteAccountPasswordPolicy",
+            "iam:DisableOrganizationsRoot*",
+            "iam:EnableOrganizationsRoot*",
+            "iam:UpdateAccountPasswordPolicy",
+            "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
+            "sso:AttachManagedPolicyToPermissionSet",
+            "sso:CreateAccountAssignment",
+            "sso:CreatePermissionSet",
+            "sso:DeleteAccountAssignment",
+            "sso:DeleteInlinePolicyFromPermissionSet",
+            "sso:DeletePermissionSet",
+            "sso:DeletePermissionsBoundaryFromPermissionSet",
+            "sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
+            "sso:DetachManagedPolicyFromPermissionSet",
+            "sso:ProvisionPermissionSet",
+            "sso:PutInlinePolicyToPermissionSet",
+            "sso:PutPermissionsBoundaryToPermissionSet",
+            "sso:UpdatePermissionSet",
+            "sts:AssumeRoot"
+          ]
+        },
         "bootstrap": {
           "modules": [
             "module.state_backend.",
@@ -143,6 +193,14 @@
               "suffixes": [
                 "/*"
               ]
+            },
+            "module.state_backend.module.apply_output.aws_s3_bucket.this": {
+              "suffixes": [
+                "/*"
+              ],
+              "writes": [
+                "s3:PutObject"
+              ]
             }
           }
         }
@@ -175,6 +233,8 @@
       "bucket_policy": "module.state_backend.module.s3.aws_s3_bucket_policy.this",
       "state_key": "module.state_backend.module.kms.aws_kms_key.this",
       "key_policy": "module.state_backend.module.kms.aws_kms_key_policy.this",
+      "apply_output_bucket": "module.state_backend.module.apply_output.aws_s3_bucket.this",
+      "apply_output_bucket_policy": "module.state_backend.module.apply_output.aws_s3_bucket_policy.this",
       "roots": [
         {
           "writer": "apply_identity_role",
