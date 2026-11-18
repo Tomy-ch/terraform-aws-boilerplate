@@ -273,10 +273,8 @@ unreadable := "（読めない式）"
 
 strings_in(v) := {v} if is_string(v)
 
-strings_in(v) := {s | walk(v, [_, s]); is_string(s)} if not is_string(v)
-
-# `$${` はリテラルのエスケープで、補間を始めない。
-unescaped(s) := replace(s, "$${", "")
+# オブジェクトのキーも式を持ちうる（`{ (var.x) = ... }`）ので、値と並べて読む。
+strings_in(v) := {s | walk(v, [_, s]); is_string(s)} | {k | walk(v, [p, _]); some k in p; is_string(k)} if not is_string(v)
 
 # 式の中の引用符の文字列。中の `{` `}` `$` は文字列の一部で、補間の対応にも参照にも数えない。
 quoted := `"(?:[^"\\]|\\.)*"`
@@ -284,7 +282,7 @@ quoted := `"(?:[^"\\]|\\.)*"`
 # 入れ子の `{}` は3段まで読む。それより深い補間は外に `${` が残るので unreadable になる。
 interpolation := sprintf(`\$\{((?:[^{}"]|%s|\{(?:[^{}"]|%s|\{(?:[^{}"]|%s)*\})*\})*)\}`, [quoted, quoted, quoted])
 
-interpolations(s) := [m[1] | some m in regex.find_all_string_submatch_n(interpolation, unescaped(s), -1)]
+interpolations(s) := [m[1] | some m in regex.find_all_string_submatch_n(interpolation, s, -1)]
 
 string_tokens(s) := {unreadable} if unreadable_string(s)
 
@@ -293,22 +291,33 @@ string_tokens(s) := {tok |
 	some tok in expression_tokens(expr)
 } if not unreadable_string(s)
 
-unreadable_string(s) if contains(regex.replace(unescaped(s), interpolation, ""), "${")
+# パーサは隣り合う文字列を連結して返す。次の形は、本物のエスケープや文字列と、連結の結果とを区別できない。
+unreadable_string(s) if contains(regex.replace(s, interpolation, ""), "${")
+
+unreadable_string(s) if contains(s, "$${")
 
 # テンプレートの指示子（`%{ if }` `%{ for }`）の式は読まない。`%%{` はリテラルのエスケープ。
 unreadable_string(s) if contains(replace(s, "%%{", ""), "%{")
 
-# 予約された根（`var` `module` 等）と同じ名前の反復変数は、同じ式の外部参照を隠しうる。
+# 式の中のコメントは、引用符を含めば文字列の対をずらす。
 unreadable_string(s) if {
 	some expr in interpolations(s)
-	some name in for_iterators(expr)
-	name in keywords
+	regex.match(`/\*|//|#`, literal_free(expr))
 }
+
+# 予約された根や resource の型と同じ名前の反復変数は、同じ式の外部参照を隠しうる。
+unreadable_string(s) if {
+	some expr in interpolations(s)
+	some name in for_iterators(literal_free(expr))
+	name in keywords | resource_types
+}
+
+resource_types := {type_of(c) | some c in resources}
 
 # 式の中の、補間を持たない引用符の文字列は参照ではない。`for` の反復変数は参照の根でない。
 expression_tokens(expr) := {tok |
 	body := strip_index(literal_free(expr))
-	iterators := for_iterators(expr)
+	iterators := for_iterators(literal_free(expr))
 	some m in regex.find_all_string_submatch_n(`(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_*][A-Za-z0-9_-]*)+)`, body, -1)
 	parts := split(m[2], ".")
 	not parts[0] in iterators

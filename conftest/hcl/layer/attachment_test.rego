@@ -106,7 +106,50 @@ test_LY301_deny_interpolation_after_literal_bracket if {
 
 test_LY301_deny_escaped_interpolation if {
 	some m in attachment_denies(policy(`"$${aws_s3_bucket.this.id}"`))
-	contains(m, "参照がありません")
+	contains(m, unreadable)
+}
+
+test_LY301_deny_concatenated_dollar_before_interpolation if {
+	some m in attachment_denies(policy(`"${aws_s3_bucket.this.id}${"$"}${var.x}"`))
+	contains(m, unreadable)
+}
+
+test_LY301_deny_comment_with_quotes if {
+	some m in attachment_denies(policy(`(aws_s3_bucket.this.id /* " */ == var.x ? aws_s3_bucket.this.id : aws_s3_bucket.this.id /* " */)`))
+	contains(m, unreadable)
+}
+
+test_LY301_deny_line_comments_with_quotes if {
+	src := concat("\n", [
+		`resource "aws_s3_bucket_policy" "this" {`,
+		"\tbucket = [aws_s3_bucket.this.id # \"",
+		"\t\t, var.x # \"",
+		"\t][1]",
+		"}",
+	])
+	count(attachment_denies(src)) == 1
+}
+
+test_LY301_deny_iterator_named_like_resource_type if {
+	src := concat("\n", [
+		`resource "aws_iam_role" "r" {}`,
+		"",
+		policy("concat([for aws_iam_role in [aws_s3_bucket.this.id] : aws_iam_role], [aws_iam_role.r.arn])[0]"),
+	])
+	some m in attachment_denies(src)
+	contains(m, unreadable)
+}
+
+test_LY301_deny_module_in_object_key if {
+	src := concat("\n", [
+		"locals {",
+		"\tm = { (module.m.x) = aws_s3_bucket.this.id }",
+		"}",
+		"",
+		policy("one(keys(local.m))"),
+	])
+	some m in attachment_denies(src)
+	contains(m, "module.m")
 }
 
 test_LY301_deny_undefined_local if {
