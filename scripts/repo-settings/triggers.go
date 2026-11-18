@@ -219,7 +219,9 @@ func renderIfLine(code string, b branches, set string) (string, error) {
 			if ctx != "" && !strings.EqualFold(m[1], ctx) {
 				return "", xerrors.Wrapf(errBranchSet, "startsWith の群が別の context（%s と %s）を比べています", ctx, m[1])
 			}
-			ctx = m[1]
+			if ctx == "" {
+				ctx = m[1]
+			}
 		}
 		prefixes := b.Lines.Prefixes()
 		if len(prefixes) == 0 {
@@ -296,8 +298,9 @@ var (
 	exprOpen      = regexp.MustCompile(`\$\{\{`)
 	exprWhole     = regexp.MustCompile(`\$\{\{.*?\}\}`)
 	ifLoose       = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
-	// blockScalar は、値がブロックスカラーで始まるキーの行（コメントを除いた字面）。
-	blockScalar = regexp.MustCompile(`:[ \t]*[|>][-+0-9]*[ \t]*$`)
+	// blockScalar は、値がブロックスカラーで始まる行（コメントを除いた字面）。キーの値か列の要素で、アンカーと
+	// タグが前に付いてもよい。
+	blockScalar = regexp.MustCompile(`(?:^|[:\s-])[ \t]*(?:[&!]\S*[ \t]+)*[|>][-+0-9]*[ \t]*$`)
 )
 
 // checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ref の context
@@ -406,7 +409,7 @@ func expressions(src string) ([]expression, error) {
 				readOpens++
 			}
 			if blockScalar.MatchString(code) {
-				body, next := blockBody(lines, i+1, col)
+				body, next := blockBody(lines, i+1, blockColumn(code, col))
 				for j, l := range body {
 					opens += len(exprOpen.FindAllString(l, -1))
 					for _, e := range exprWhole.FindAllString(l, -1) {
@@ -466,6 +469,15 @@ func keyColumn(code string) int {
 		rest = trimmed
 	}
 	return col
+}
+
+// blockColumn は、ブロックスカラーの本文がそれより深く字下げされる桁を返します。キーの値ならキーの桁、キーの無い
+// 列の要素なら最後の `- ` の桁である。
+func blockColumn(code string, col int) int {
+	if strings.Contains(code[col:], ":") {
+		return col
+	}
+	return strings.LastIndex(code[:col], "-")
 }
 
 // blockBody は、from 行からの、字下げが col より深い行と空行（ブロックスカラーの本文）と、その次の行の位置を

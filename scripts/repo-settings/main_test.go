@@ -311,6 +311,23 @@ func Test_readDeclarations(t *testing.T) {
 			require.ErrorIs(t, err, tc.wantErr)
 		})
 	}
+
+	// 印の生成の失敗は、印が0件のときと同じ errBranchSet なので、どちらの失敗かを文言で分ける。
+	for name, c := range map[string]struct {
+		file, body, want string
+	}{
+		"印の無い branches の一覧は、その一覧の失敗として返す":  {".github/workflows/lint.yaml", "  workflow_run:\n    branches:\n      - main\n", "印 `# branch-set: <集合>` の無い branches"},
+		"apply の workflow の印は、その印の失敗として返す": {".github/workflows/apply.yaml", "    if: ${{ contains(fromJSON('[\"main\"]'), github.base_ref) }} # branch-set: deploy\n", "apply の workflow には印を置けません"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := writeRepo(t, rulesetFixture)
+			appendFile(t, root, c.file, c.body)
+			_, err := readDeclarations(root)
+			require.ErrorIs(t, err, errBranchSet)
+			assert.ErrorContains(t, err, c.want)
+		})
+	}
 }
 
 func Test_loadDesired(t *testing.T) {

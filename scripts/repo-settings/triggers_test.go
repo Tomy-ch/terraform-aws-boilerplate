@@ -212,6 +212,11 @@ func Test_renderIfLine(t *testing.T) {
 		"群の中で context が違えば拒む":   {`    if: ${{ (startsWith(github.head_ref, 'a/') || startsWith(github.base_ref, 'b/')) }}`, setLines, "", "別の context"},
 		"if: に ruleset の印は置けない": {`    if: ${{ contains(fromJSON('["a"]'), github.base_ref) }}`, setRuleset, "", "if: の行に置ける印"},
 		"引用符の値の if: は拒む":        {`    if: "${{ contains(fromJSON('[\\"x\\"]'), github.base_ref) }}"`, setDeploy, "", "引用符で囲めません"},
+		"二重引用符の値の if: は拒む":      {`    if: "${{ contains(fromJSON('[x]'), github.base_ref) }}"`, setDeploy, "", "引用符で囲めません"},
+		"群の中で大文字小文字だけ違う同じ context は同じとみなす": {
+			`    if: ${{ (startsWith(github.head_ref, 'a/') || startsWith(GITHUB.HEAD_REF, 'b/')) }}`, setLines,
+			`    if: ${{ (startsWith(github.head_ref, 'rel/') || startsWith(github.head_ref, 'hot/')) }}`, "",
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -391,6 +396,24 @@ func Test_checkRefLiterals(t *testing.T) {
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errRefLiteral)
 	})
+	t.Run("大文字小文字の違う関数名の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		for _, expr := range []string{
+			"STARTSWITH(github.ref, 'x')",
+			"CONTAINS('a,b', github.ref)",
+			"contains(FROMJSON('[\\\"a\\\"]'), github.ref)",
+		} {
+			src := "jobs:\n  a:\n    if: ${{ " + expr + " }}\n"
+			_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+			require.ErrorIs(t, err, errRefLiteral, expr)
+		}
+	})
+	t.Run("大文字の GITHUB を添字で引く式も読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ GITHUB['ref'] == 'main' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+	})
 	t.Run("github を添字で引く式は読めないとして失敗する", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  a:\n    if: ${{ github['ref_name'] == 'main' }}\n"
@@ -481,6 +504,8 @@ func Test_expressions(t *testing.T) {
 		"折り返した二重引用符の if: を1つの式として読む":   {"    if: \"a &&\n      b\"\n    run: x\n", []expression{{1, "\"a && b\""}}, ""},
 		"閉じていない引用符の if: は拒む":           {"    if: \"a &&\n      b\n    run: x\n", nil, "閉じていません"},
 		"run のブロックスカラーの中の # の後ろの式も読む":  {"      - run: |\n          echo x # ${{ y }}\n          # ${{ z }}\n      - run: w\n", []expression{{2, "${{ y }}"}, {3, "${{ z }}"}}, ""},
+		"アンカーの付いたブロックスカラーの本文も生のまま読む":   {"      - run: &a |\n          echo x # ${{ y }}\n      - run: w\n", []expression{{2, "${{ y }}"}}, ""},
+		"キーの無い列の要素のブロックスカラーも生のまま読む":    {"    - |\n      echo # ${{ y }}\n", []expression{{2, "${{ y }}"}}, ""},
 		"コメントは読まない":                    {"# if: ${{ github.ref == 'a' }}\na: x # ${{ y }}\n", nil, ""},
 		"印の if: は生成した項を除く": {
 			"    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) || x }} # branch-set: deploy\n",
@@ -548,14 +573,33 @@ func Test_keyColumn(t *testing.T) {
 		code string
 		want int
 	}{
-		"字下げしたキー":        {"    if: x", 4},
-		"列の要素のキーは - を含む": {"      - if: x", 8},
-		"入れ子の列の要素":       {"  - - run: x", 6},
-		"字下げの無いキー":       {"on:", 0},
+		"字下げしたキー":               {"    if: x", 4},
+		"列の要素のキーは - を含む":        {"      - if: x", 8},
+		"入れ子の列の要素":              {"  - - run: x", 6},
+		"- の後ろの空白が複数でもキーの桁を数える": {"  -   if: x", 6},
+		"字下げの無いキー":              {"on:", 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, keyColumn(tc.code))
+		})
+	}
+}
+
+func Test_blockColumn(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		code string
+		want int
+	}{
+		"キーの値はキーの桁":          {"      - run: |", 8},
+		"キーの無い列の要素は - の桁":    {"    - |", 4},
+		"- の後ろに空白が続いても - の桁": {"    -   |", 4},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, blockColumn(tc.code, keyColumn(tc.code)))
 		})
 	}
 }
@@ -584,11 +628,12 @@ func Test_foldedScalar(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		"続きの行を空白でつなぐ":      {"    if: a &&\n      b\n    run: x", "a && b", false},
-		"続きの行のコメントは読まない":   {"    if: a &&\n      b # c\n    run: x", "a && b", false},
-		"続きが無ければ1行目だけ":     {"    if: a\n    run: x", "a", false},
-		"二重引用符の値は閉じるまでつなぐ": {"    if: \"a &&\n      b\"\n    run: x", "\"a && b\"", false},
-		"閉じていない引用符は失敗する":   {"    if: 'a &&\n      b\n    run: x", "", true},
+		"続きの行を空白でつなぐ":              {"    if: a &&\n      b\n    run: x", "a && b", false},
+		"続きの行のコメントは読まない":           {"    if: a &&\n      b # c\n    run: x", "a && b", false},
+		"続きが無ければ1行目だけ":             {"    if: a\n    run: x", "a", false},
+		"二重引用符の値は閉じるまでつなぐ":         {"    if: \"a &&\n      b\"\n    run: x", "\"a && b\"", false},
+		"閉じていない引用符は失敗する":           {"    if: 'a &&\n      b\n    run: x", "", true},
+		"引用符1文字だけの値は閉じていないとして失敗する": {"    if: \"\n    run: x", "", true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
