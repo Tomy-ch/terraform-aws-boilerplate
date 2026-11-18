@@ -84,13 +84,15 @@ well_formed_child(c) if {
 
 well_formed_writes(c) if not "writes" in object.keys(c)
 
-# 読み取りの名前を書き込みとして宣言すると、NotAction がその読み取りを除くことを認めてしまう。
+# 読み取りの名前を書き込みとして宣言すると、NotAction がその読み取りを除くことを認めてしまう。wildcard は
+# 宣言した名前の外まで除くことを認めるので、1つの Action の名前に限る。
 well_formed_writes(c) if {
 	count(object.get(c, "suffixes", [])) > 0
 	is_array(c.writes)
 	count(c.writes) > 0
 	every w in c.writes {
-		nonempty_string(w)
+		is_string(w)
+		regex.match(`^[a-z0-9-]+:[A-Za-z0-9]+$`, w)
 		not read_name(lower(w))
 	}
 }
@@ -377,7 +379,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない空でない文字列の空でない配列）の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -525,14 +527,20 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への %v のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [target, arn, sort(writes)])
 }
 
+# 宣言した書き込みを Action で拒む Deny は、その書き込みを塞ぐ。宣言と実物の食い違いとして落とす。
 deny contains msg if {
 	some arn, writes in write_targets
 	some s in statements
 	unconditional_deny(s)
 	on(s, arn)
-	denies_all(s)
-	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s（%v）を、* の Deny で拒んでいます", [target, arn, sort(writes)])
+	some a in lib.lower_all(object.get(s, "Action", []))
+	some w in writes
+	iam_glob_match(a, w)
+	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s の %s を、Deny の Action %q で拒んでいます", [target, arn, w, a])
 }
+
+# IAM の Action の * は任意の文字列に、? は任意の1文字に当たる。Action の名前は . を含まないので、glob の既定の区切りは効かない。
+iam_glob_match(pattern, name) if glob.match(pattern, [], name)
 
 # --- PLAN-APPLY-04: state の版の削除 ---
 

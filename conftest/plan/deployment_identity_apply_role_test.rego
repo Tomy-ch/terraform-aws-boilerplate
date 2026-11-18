@@ -168,7 +168,7 @@ denied_03(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのす�
 
 denied_03_writes(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への [\"s3:putobject\"] のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [apply_policy_address, arn])
 
-denied_03_full_on_writes(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s（[\"s3:putobject\"]）を、* の Deny で拒んでいます", [apply_policy_address, arn])
+denied_03_writes_denied(arn, a) := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s の s3:putobject を、Deny の Action %q で拒んでいます", [apply_policy_address, arn, a])
 
 denied_03_strict(arn) := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）", [apply_policy_address, arn])
 
@@ -300,6 +300,10 @@ test_violation_bootstrap_malformed if {
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": [1]}),
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:GetObject"]}),
 		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject", "S3:ListBucket"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:*"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["*"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:Pu?Object"]}),
+		with_child(apply_bucket, {"suffixes": ["/*"], "writes": ["s3:PutObject "]}),
 		with_child(state_bucket, {"roots": true, "version_deletion": true, "writes": ["s3:PutObject"]}),
 	] {
 		fixture.has(malformed, messages_for(world(valid_statements), d))
@@ -700,11 +704,11 @@ test_violation_writes_conditional_deny if {
 test_violation_writes_full_deny if {
 	msgs := messages(replace(valid_statements, 8, full_deny([ao_objects])))
 	fixture.has(denied_03_writes(ao_objects), msgs)
-	fixture.has(denied_03_full_on_writes(ao_objects), msgs)
+	fixture.has(denied_03_writes_denied(ao_objects, "*"), msgs)
 }
 
 test_violation_writes_full_deny_alongside if {
-	fixture.has(denied_03_full_on_writes(ao_objects), messages(array.concat(valid_statements, [full_deny([ao_objects])])))
+	fixture.has(denied_03_writes_denied(ao_objects, "*"), messages(array.concat(valid_statements, [full_deny([ao_objects])])))
 }
 
 test_violation_writes_deny_missing if {
@@ -717,4 +721,22 @@ test_violation_writes_action_list if {
 
 test_violation_apply_output_bucket_uncovered if {
 	fixture.has(denied_03(ao), messages(remove(valid_statements, 7)))
+}
+
+# 宣言した書き込みを、その名前か、それに当たる wildcard の Action で拒む Deny は、NotAction の Deny と並んでいても落とす。
+test_violation_writes_denied_by_action if {
+	every a in ["s3:PutObject", "S3:PUTOBJECT", "*", "s3:*", "s3:Put*", "s3:*Object", "s3:PutObj?ct"] {
+		fixture.has(denied_03_writes_denied(ao_objects, lower(a)), messages(array.concat(valid_statements, [{"Effect": "Deny", "Action": ["s3:GetObject", a], "Resource": ao_objects}])))
+	}
+}
+
+# 書き込みに当たらない Action の Deny、条件付きの Deny、Bucket の ARN への Deny は、宣言した書き込みを塞がない。
+test_pass_writes_other_action_denied if {
+	every s in [
+		{"Effect": "Deny", "Action": ["s3:GetObject", "s3:Put*Acl", "s3:DeleteObject*", "s3:PutObj"], "Resource": ao_objects},
+		{"Effect": "Deny", "Action": "s3:PutObject", "Resource": ao_objects, "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+		{"Effect": "Deny", "Action": "*", "Resource": ao},
+	] {
+		count(messages(array.concat(valid_statements, [s]))) == 0
+	}
 }
