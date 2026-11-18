@@ -101,9 +101,17 @@ var applyWorkflow = strings.Join([]string{
 	"      - run: make resource-order-check-test RUNNER_MODE=host",
 	"      - run: make resource-order-check RUNNER_MODE=host",
 	"",
+	"  apply-layer-check:",
+	"    runs-on: ubuntu-24.04",
+	"    permissions:",
+	"      contents: read",
+	"    steps:",
+	"      - run: make layer-check-test RUNNER_MODE=host",
+	"      - run: make layer-check RUNNER_MODE=host",
+	"",
 	"  apply-admin-identity:",
-	"    needs: [apply-infra-code-gate, apply-resource-order-check]",
-	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
+	"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]",
+	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
 	"    runs-on: ubuntu-24.04",
 	"    environment:",
 	"      name: admin-apply-identity",
@@ -219,7 +227,7 @@ func rulesetOf(envFile string) string {
 
 const rulesetDecl = `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "tf-lint"}]}}]}`
 
-// gatesWorkflow は、Pull Request の必須検査として順序の検査を走らせる workflow。repoWith が既定で置く。
+// gatesWorkflow は、Pull Request の必須検査として順序の検査と層の検査を走らせる workflow。repoWith が既定で置く。
 var gatesWorkflow = strings.Join([]string{
 	"name: Terraform Gates",
 	"on:",
@@ -249,6 +257,10 @@ var gatesWorkflow = strings.Join([]string{
 	"        run: make resource-order-check-test RUNNER_MODE=host",
 	"      - name: Check the resource order",
 	"        run: make resource-order-check RUNNER_MODE=host",
+	"      - name: Run the layer check's own tests",
+	"        run: make layer-check-test RUNNER_MODE=host",
+	"      - name: Check the layer rules",
+	"        run: make layer-check RUNNER_MODE=host",
 	"",
 }, "\n")
 
@@ -373,6 +385,37 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "make resource-order-check-test と make resource-order-check を走らせるものがありません")
 	})
 
+	t.Run("2つの検査を走らせる必須検査の job の job 単位の違反は1件だけ報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "  tf-lint:\n    needs: changes\n", "  tf-lint:\n    needs: changes\n    env:\n      X: y\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Equal(t, 1, strings.Count(out.String(), "必須検査の job に env: を置かないでください"))
+	})
+
+	t.Run("検査ごとに違う step の違反は両方とも報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: make resource-order-check RUNNER_MODE=host\n        if: false\n")
+		gates = replaced(t, gates, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "順序の検査の step に if:")
+		assert.Contains(t, out.String(), "層の検査の step に if:")
+	})
+
+	t.Run("Pull Request の必須検査が層の検査を走らせなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "make layer-check-test と make layer-check を走らせるものがありません")
+	})
+
 	t.Run("保護設定を読めなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -383,7 +426,7 @@ func Test_run(t *testing.T) {
 	t.Run("別の workflow の検出の job は needs に数えない", func(t *testing.T) {
 		t.Parallel()
 
-		apply := replaced(t, applyWorkflow, "    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: [infra-code-gate, apply-resource-order-check]\n")
+		apply := replaced(t, applyWorkflow, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n", "    needs: [infra-code-gate, apply-resource-order-check, apply-layer-check]\n")
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": apply}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
@@ -963,7 +1006,7 @@ func Test_checkDetection(t *testing.T) {
 	t.Run("if: が無ければ既定の成功の条件で足りる", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n", "")
+		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n", "")
 		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
 	})
 
@@ -1117,8 +1160,8 @@ func Test_checkDetection(t *testing.T) {
 	t.Run("ブロックの if: も読む", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n",
-			"    if: >-\n      needs.apply-infra-code-gate.result == 'success' &&\n      needs.apply-resource-order-check.result == 'success' &&\n      github.ref_name == github.event.repository.default_branch\n")
+		j, aw := applyWith(t, "    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && github.ref_name == github.event.repository.default_branch }}\n",
+			"    if: >-\n      needs.apply-infra-code-gate.result == 'success' &&\n      needs.apply-resource-order-check.result == 'success' &&\n      needs.apply-layer-check.result == 'success' &&\n      github.ref_name == github.event.repository.default_branch\n")
 		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
 	})
 
@@ -1149,12 +1192,12 @@ func Test_checkDetection(t *testing.T) {
 		})
 	}
 
-	t.Run("needs に検出でも順序の検査でもない job があれば違反", func(t *testing.T) {
+	t.Run("needs に検出でも検査の job でもない job があれば違反", func(t *testing.T) {
 		t.Parallel()
 
-		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check]\n",
-			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, other]\n")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）でも順序の検査の job（make resource-order-check）でもありません")
+		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n",
+			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, other]\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check） ではありません")
 	})
 
 	t.Run("if: が順序の検査の成功を見なければ違反", func(t *testing.T) {
@@ -1169,6 +1212,28 @@ func Test_checkDetection(t *testing.T) {
 
 		j, aw := applyWith(t, "  apply-resource-order-check:\n    runs-on: ubuntu-24.04\n", "  apply-resource-order-check:\n    continue-on-error: true\n    runs-on: ubuntu-24.04\n")
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check に if:・continue-on-error:")
+	})
+
+	t.Run("if: が層の検査の成功を見なければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "needs.apply-layer-check.result == 'success' && ", "")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-layer-check.result == 'success' を含めて")
+	})
+
+	t.Run("層の検査の job も検出の job と同じ規則で見る", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := applyWith(t, "  apply-layer-check:\n    runs-on: ubuntu-24.04\n", "  apply-layer-check:\n    continue-on-error: true\n    runs-on: ubuntu-24.04\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "層の検査の job apply-layer-check に if:・continue-on-error:")
+	})
+
+	t.Run("2つの検査を1つの job で走らせれば違反", func(t *testing.T) {
+		t.Parallel()
+
+		const orderStep = "      - run: make resource-order-check RUNNER_MODE=host\n"
+		j, aw := applyWith(t, orderStep, orderStep+"      - run: make layer-check RUNNER_MODE=host\n")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check の run: は make resource-order-check-test と make resource-order-check だけ")
 	})
 
 	t.Run("検出の job のコメントの if: は読まない", func(t *testing.T) {
@@ -1186,6 +1251,12 @@ func Test_checkDetection(t *testing.T) {
 	})
 }
 
+func Test_allowedNeeds(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）", allowedNeeds())
+}
+
 func Test_checkGateJob(t *testing.T) {
 	t.Parallel()
 
@@ -1200,6 +1271,20 @@ func Test_checkGateJob(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
+	})
+
+	t.Run("層の検査の2つの make だけなら違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-layer-check"), layerGate, formatted))
+	})
+
+	t.Run("層の検査の job のほかの run: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
+		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check RUNNER_MODE=host LY_NS=x\n"), "apply-layer-check")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check-test と make layer-check だけ")
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
@@ -1219,10 +1304,9 @@ func Test_checkGateJob(t *testing.T) {
 	}
 }
 
-func Test_checkOrderGate(t *testing.T) {
+func Test_checkApplyGate(t *testing.T) {
 	t.Parallel()
 
-	const want = "apply の job の needs に、make resource-order-check を走らせる job を同じ workflow の中に置いてください"
 	applyWith := func(t *testing.T, from, to string) (workflow.Job, workflowInfo) {
 		t.Helper()
 
@@ -1230,32 +1314,49 @@ func Test_checkOrderGate(t *testing.T) {
 
 		return jobOf(t, src, "apply-admin-identity"), infoOf(src)
 	}
+	const fullNeeds = "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n"
 
-	t.Run("順序の検査の job を needs に持てば違反0件", func(t *testing.T) {
-		t.Parallel()
+	for _, g := range applyGates {
+		want := fmt.Sprintf("apply の job の needs に、%s を走らせる job を同じ workflow の中に置いてください", g.check)
 
-		assert.Empty(t, checkOrderGate(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow).jobs, formatted))
-	})
+		t.Run(g.noun+"の job を needs に持てば違反0件", func(t *testing.T) {
+			t.Parallel()
 
-	for name, c := range map[string]struct{ from, to string }{
-		"needs に無ければ違反":           {"    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: apply-infra-code-gate\n"},
-		"自己テストだけの job は数えない":      {"      - run: make resource-order-check RUNNER_MODE=host\n", ""},
-		"検出も走らせる job は順序の検査と数えない": {"      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+			assert.Empty(t, checkApplyGate(jobOf(t, applyWorkflow, "apply-admin-identity"), infoOf(applyWorkflow).jobs, g, formatted))
+		})
+
+		t.Run(g.noun+": needs に無ければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, fullNeeds, "    needs: apply-infra-code-gate\n")
+			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, g, formatted)), want)
+		})
+
+		t.Run(g.noun+": apply の job の検査に含まれる", func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := applyWith(t, fullNeeds, "    needs: apply-infra-code-gate\n")
+			assert.Contains(t, messages(checkJob("a.yaml", j, planPerms, envs, aw)), want)
+		})
+	}
+
+	for name, c := range map[string]struct {
+		g        gate
+		from, to string
+	}{
+		"順序の検査: 自己テストだけの job は数えない":   {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", ""},
+		"順序の検査: 検出も走らせる job は数えない":    {orderGate, "      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"層の検査: 自己テストだけの job は数えない":    {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", ""},
+		"層の検査: 検出も走らせる job は数えない":     {layerGate, "      - run: make layer-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"層の検査: 順序の検査の job は層の検査と数えない": {layerGate, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n", "    needs: [apply-infra-code-gate, apply-resource-order-check]\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			j, aw := applyWith(t, c.from, c.to)
-			assert.Contains(t, messages(checkOrderGate(j, aw.jobs, formatted)), want)
+			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, c.g, formatted)), c.g.check+" を走らせる job")
 		})
 	}
-
-	t.Run("apply の job の検査に含まれる", func(t *testing.T) {
-		t.Parallel()
-
-		j, aw := applyWith(t, "    needs: [apply-infra-code-gate, apply-resource-order-check]\n", "    needs: apply-infra-code-gate\n")
-		assert.Contains(t, messages(checkJob("a.yaml", j, planPerms, envs, aw)), want)
-	})
 }
 
 func hiddenOf(t *testing.T, job workflow.Job, w workflowInfo, f func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
@@ -1641,6 +1742,27 @@ func Test_runsGate(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), orderGate))
+		})
+	}
+
+	layer := map[string]struct {
+		step string
+		want bool
+	}{
+		"make layer-check を走らせる": {"      - run: make layer-check RUNNER_MODE=host\n", true},
+		"自己テストだけは偽":              {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
+		"検出は層の検査ではない":            {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
+		"順序の検査は層の検査ではない":         {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
+		"-n（実行しない）は偽":            {"      - run: make -n layer-check\n", false},
+		"後置の -n は偽":              {"      - run: make layer-check -n\n", false},
+		"|| true で失敗を隠すのは偽":      {"      - run: make layer-check || true\n", false},
+		"ほかの変数の代入は偽":             {"      - run: make layer-check RUNNER_MODE=host LY_NS=x\n", false},
+	}
+	for name, c := range layer {
+		t.Run("層の検査/"+name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, runsGate(jobOf(t, "jobs:\n  a:\n    steps:\n"+c.step, "a"), layerGate))
 		})
 	}
 }
@@ -2784,7 +2906,7 @@ func Test_literalGroup(t *testing.T) {
 	}
 }
 
-func Test_checkRequiredOrderJobs(t *testing.T) {
+func Test_checkRequiredGateJobs(t *testing.T) {
 	t.Parallel()
 
 	required := map[string]bool{"tf-lint": true}
@@ -2796,9 +2918,46 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 	t.Run("必須検査の job が両方を走らせれば1件で違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := checkRequiredOrderJobs("g.yaml", gatesWorkflow, required)
+		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, orderGate)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, f)
+	})
+
+	t.Run("層の検査も同じ job で数える", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, layerGate)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, f)
+	})
+
+	const (
+		layerCheck = "        run: make layer-check RUNNER_MODE=host\n"
+		layerSelf  = "        run: make layer-check-test RUNNER_MODE=host\n"
+	)
+	for name, src := range map[string]string{
+		"層の検査そのものが無い":             strings.Replace(gatesWorkflow, layerCheck, "        run: echo\n", 1),
+		"層の検査の自己テストが無い":           strings.Replace(gatesWorkflow, layerSelf, "        run: echo\n", 1),
+		"層の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
+		"層の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, layerCheck, "        run: make layer-check RUNNER_MODE=host LY_NS=x\n", 1),
+		"層の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, layerCheck, "        # run: make layer-check RUNNER_MODE=host\n        run: echo\n", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
+			n, f := checkRequiredGateJobs("g.yaml", src, required, layerGate)
+			assert.Zero(t, n)
+			assert.Empty(t, f)
+		})
+	}
+
+	t.Run("層の検査の step の形の違反を返す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: make layer-check RUNNER_MODE=host\n        if: false\n")
+		_, f := checkRequiredGateJobs("g.yaml", src, required, layerGate)
+		assert.Contains(t, messages(f), "層の検査の step に if:")
 	})
 
 	for name, src := range map[string]string{
@@ -2813,7 +2972,7 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 			t.Parallel()
 
 			require.NotEqual(t, gatesWorkflow, src, "置き換え元が見つからない")
-			n, f := checkRequiredOrderJobs("g.yaml", src, required)
+			n, f := checkRequiredGateJobs("g.yaml", src, required, orderGate)
 			assert.Zero(t, n)
 			assert.Empty(t, f)
 		})
@@ -2823,13 +2982,13 @@ func Test_checkRequiredOrderJobs(t *testing.T) {
 		t.Parallel()
 
 		src := replaced(t, gatesWorkflow, check, check+"        continue-on-error: true\n")
-		n, f := checkRequiredOrderJobs("g.yaml", src, required)
+		n, f := checkRequiredGateJobs("g.yaml", src, required, orderGate)
 		assert.Equal(t, 1, n)
 		assert.Contains(t, messages(f), "順序の検査の step に if:・continue-on-error:")
 	})
 }
 
-func Test_checkRequiredOrderJob(t *testing.T) {
+func Test_checkRequiredGateJob(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -2850,21 +3009,21 @@ func Test_checkRequiredOrderJob(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, gatesWorkflow)
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	t.Run("job の if: が無くても違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, ""))
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	t.Run("ブロックの if: でも同じ式なら違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		j, pre := job(t, replaced(t, gatesWorkflow, jobIf, "    if: >-\n      !cancelled() &&\n      needs.changes.outputs.relevant != 'false'\n"))
-		assert.Empty(t, checkRequiredOrderJob("g.yaml", j, pre))
+		assert.Empty(t, checkRequiredGateJob("g.yaml", j, pre, orderGate))
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
@@ -2891,7 +3050,7 @@ func Test_checkRequiredOrderJob(t *testing.T) {
 			t.Parallel()
 
 			j, pre := job(t, replaced(t, gatesWorkflow, c.from, c.to))
-			assert.Contains(t, messages(checkRequiredOrderJob("g.yaml", j, pre)), c.want)
+			assert.Contains(t, messages(checkRequiredGateJob("g.yaml", j, pre, orderGate)), c.want)
 		})
 	}
 }
@@ -2913,16 +3072,32 @@ func Test_ifExpression(t *testing.T) {
 	}
 }
 
-func Test_checkPullRequestOrder(t *testing.T) {
+func Test_checkPullRequestGate(t *testing.T) {
 	t.Parallel()
 
 	apply := []groupRecord{{file: "a.yaml", root: "admin-identity"}}
 	unlock := []groupRecord{{file: "u.yaml", root: "admin-identity", unlock: true}}
 
-	assert.Empty(t, checkPullRequestOrder("wf", apply, 1), "Pull Request の側に在れば違反0件")
-	assert.Empty(t, checkPullRequestOrder("wf", unlock, 0), "apply の job が無ければ求めない")
-	assert.Empty(t, checkPullRequestOrder("wf", nil, 0), "apply の job が無ければ求めない")
-	assert.Contains(t, messages(checkPullRequestOrder("wf", append(unlock, apply...), 0)), "make resource-order-check-test と make resource-order-check を走らせるもの")
+	for _, g := range applyGates {
+		t.Run(g.noun+": Pull Request の側に在れば違反0件", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", apply, 1, g))
+		})
+
+		t.Run(g.noun+": apply の job が無ければ求めない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Empty(t, checkPullRequestGate("wf", unlock, 0, g))
+			assert.Empty(t, checkPullRequestGate("wf", nil, 0, g))
+		})
+
+		t.Run(g.noun+": apply の job が在って Pull Request の側に無ければ違反", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, g)), g.targets+" を走らせるもの")
+		})
+	}
 }
 
 func Test_isUnlockRole(t *testing.T) {

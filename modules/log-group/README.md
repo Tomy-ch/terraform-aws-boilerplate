@@ -29,7 +29,7 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 | 持たないもの | 行き先 |
 | --- | --- |
 | 365 日より短い保持 | 責務外（ADR-0102 決定5・7）。要る usecase は、逸脱として Log Group ごと `internal/` に置き、ADR-0207 決定11 の記録を持つ |
-| `aws_cloudwatch_log_subscription_filter` | 置き場は未決。`docs/v1.0-plan/scope.md` 第9.3節（消費者が購読する）と第3.1節の検査(3)（attachment は親と同じ module）が食い違い、決める側に返している（#108） |
+| `aws_cloudwatch_log_subscription_filter` | 置き場は未決。`docs/v1.0-plan/scope.md` 第9.3節（消費者が購読する）と ADR-0102 決定18（attachment は親と同じ module）が食い違い、決める側に返している（#108） |
 | `aws_cloudwatch_log_metric_filter`・`aws_cloudwatch_log_index_policy`・`aws_cloudwatch_log_stream` | 要る usecase が Log Group ごと `internal/` に置く（ADR-0102 決定15・18） |
 | `aws_cloudwatch_log_data_protection_policy` | 何を機微とみなすかは usecase ごとに違い、一般 module が持つと入力の切り替えか、識別子を AWS の表現で受ける入力になる（ADR-0102 決定15、ADR-0204 決定2）。要る usecase が Log Group ごと `internal/` に置く |
 | `aws_cloudwatch_log_resource_policy` | AWS のサービスが書く Log Group は `modules/vended-log-group`。アカウント単位の policy（`policy_name`）は置かない（リージョンに10個までの共有の資源で、親を持たない） |
@@ -47,7 +47,6 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 - 入力から導いた値（class、`skip_destroy`、保持日数、鍵、削除の保護、validation と precondition）は `tests/` が mock の plan と apply で見る。Unit Test に属する（ADR-0501 決定9）
 - 保持日数の `0` を拒むのは validation と `tests/` だけである。Security の道具は、KICS の ef0b316a を抑止したので `0` を見ない（Checkov の CKV_AWS_66・CKV_AWS_338 は `0` を通す）。Policy は、Log Group を含む最初の reference の root と同じ変更で足す
 - `null` を渡す run は `expect_failures` で受けられないので、`nullable = false` を外してもテストは落ちない
-- 層検査（attachment の同居、`source` の方向）は未配線である。配線した後に、この module も検査の対象として確かめる
 - 実際の AWS での作成・読み戻し・破棄は、どのテストも確かめていない。最初の消費者の CI の apply と、その後の CI の plan が `No changes.` を示すことで確かめる
 - Security の4つの道具のうち KICS の3件（保持日数、IAM Access Analyzer、tag）は抑止している。理由と撤回条件は `main.tf` の先頭が持つ
 

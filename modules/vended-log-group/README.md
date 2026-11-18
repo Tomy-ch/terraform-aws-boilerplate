@@ -52,7 +52,7 @@ Log Group に resource policy が無いと、配送を作る主体が権限を�
 
 ## 保証しないもの
 
-- `modules/log-group` の「保証しないもの」の各項（鍵の Key Policy、対称鍵、`kms:DescribeKey`、鍵の無効化、保持日数の短縮、`0` の拒否、`null`、層検査）
+- `modules/log-group` の「保証しないもの」の各項（鍵の Key Policy、対称鍵、`kms:DescribeKey`、鍵の無効化、保持日数の短縮、`0` の拒否、`null`）
 - resource policy の文書と delivery destination の宛先は `tests/` が mock の apply で見る。Unit Test に属する（ADR-0501 決定9）
 - delivery destination が resource policy の後に作られる順序は `depends_on` が持つ。mock の plan と apply には順序が現れないので、どのテストも見ていない
 - AWS が resource policy を自動で作らないこと、Terraform の policy に AWS が文を足さないこと、`output_format` を置かないことで読み戻しに差分が出続けないことは、どのテストも確かめていない。最初の消費者の CI の apply の後の plan が `No changes.` を示すこと、`aws logs describe-resource-policies --resource-arn <Log Group の ARN> --policy-scope RESOURCE` が1件を返すことで確かめる

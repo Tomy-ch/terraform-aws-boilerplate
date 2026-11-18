@@ -72,7 +72,7 @@
     `internal/` は必要なときにだけ置く。ユースケースの推奨構成は `usecases/<use-case>/reference/` に置く（ADR-0401 決定11-13）。リポジトリ直下に置かない。
 
 13. 公開契約と semver の保証の対象は usecase だけとする。env は利用者が値を持つ層であり、module は決定9 のとおり内部実装である。
-14. `usecases/<use-case>/` 直下の `*.tf` に、`resource` block と `provider` block を置かない。対象は直下に限り、`internal/` と `reference/` は含まない。ユースケースごとの差異は module の合成と入出力で表し、不変条件の強制は module が持つ。usecase は env から呼ばれる子 module なので、root module にしか置けない block（`import` 等）もここには置かない。
+14. `usecases/<use-case>/` 直下の `*.tf` に、`resource` block と `provider` block を置かない。対象は直下に限り、`internal/` と `reference/` は含まない。ユースケースごとの差異は module の合成と入出力で表し、不変条件の強制は module が持つ。usecase は env から呼ばれる子 module なので、root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）もここには置かない。
 15. 1つの module は1つの機構をまとめる。一般 module は、どのユースケースでも同じ形で成立する機構だけを持ち、ユースケースごとの差異を入力の切り替え（用途の種別、`enable_*` 等）で抱えない。値が変わるだけで構造が変わらない入力（grantee の集合、保持日数等）は切り替えに当たらない。入力によって resource の有無や種類が変わるなら切り替えに当たる。一般 module で表せない機構は、それを必要とするユースケースの `internal/` に置く。attachment 型の resource は親と同じ module に置くので（決定18）、一般 module の resource に固有の attachment が要るなら、親の resource ごと `internal/` に置く。
 16. ユースケースの間で共有するのは、module のコードと resource の実体の2つであり、扱いを分ける。
 
@@ -161,9 +161,9 @@
 - 各ユースケースは最低1つの reference を持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
 - 次の3つを、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
-  - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block が無いこと（決定14）
+  - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block と、決定14 の root module にしか置けない block が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
-  - attachment 型の resource の親を指す引数が `module.` 参照を持たないこと、すなわち親と同じ module に在ること（決定18）。attachment だけを持つ module が親の識別子を `variable` で受ける形はこの検査を通るので、レビューで見る
+  - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。どの参照を辿り、何を違反とするかは `conftest/hcl/layer/` が持つ
 
 決定15（一般 module がユースケースごとの差異を抱えないこと）は機械判定できない。一般 module の入力に用途の種別や `enable_*` が現れる、特定のユースケースだけが使う引数が増える、は崩れ始めた徴候であり、レビューで見る。徴候が出た機構は `internal/` へ移す。
 
