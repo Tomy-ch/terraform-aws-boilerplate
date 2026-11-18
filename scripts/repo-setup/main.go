@@ -62,14 +62,19 @@ type runner struct {
 func main() {
 	log.SetFlags(0)
 
-	// 手順はリリースノートを直下からの相対パスで読む。
-	if err := reporoot.Require(os.Getwd, reporoot.Toplevel); err != nil {
+	if err := start(hostRunner(), os.Args[1:], os.Getwd, reporoot.Toplevel); err != nil {
 		log.Fatalf("%v", err)
+	}
+}
+
+// start は、作業ディレクトリがリポジトリの直下であることを確かめてから execute を呼びます。
+// 手順はリリースノートを直下からの相対パスで読む。
+func start(r runner, args []string, getwd, toplevel func() (string, error)) error {
+	if err := reporoot.Require(getwd, toplevel); err != nil {
+		return err
 	}
 
-	if err := execute(hostRunner(), os.Args[1:]); err != nil {
-		log.Fatalf("%v", err)
-	}
+	return execute(r, args)
 }
 
 func execute(r runner, args []string) error {

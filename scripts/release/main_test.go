@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -1398,6 +1399,45 @@ func Test_execute(t *testing.T) {
 		//nolint:paralleltest // 親が t.Chdir を使うため並列化不可
 		t.Run("branch の失敗はヘルプ要求と区別してそのまま返す", func(t *testing.T) {
 			require.ErrorIs(t, execute((&fakeRunner{}).runner(), []string{"branch", "-bump", "patch"}), errNoTagForBranch)
+		})
+	})
+}
+
+func Test_start(t *testing.T) {
+	t.Parallel()
+
+	same := func() (string, error) { return "/", nil }
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下なら execute へ進む", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+
+			require.ErrorIs(t, start(f.runner(), nil, same, same), errUsage)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下でなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			sub := func() (string, error) { return os.TempDir(), nil }
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下を解決できなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			unresolved := func() (string, error) { return "", reporoot.ErrNoToplevel }
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag"}, same, unresolved), reporoot.ErrNoToplevel)
+			assert.Empty(t, f.calls)
 		})
 	})
 }
