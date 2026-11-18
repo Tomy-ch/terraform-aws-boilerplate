@@ -164,20 +164,21 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
   `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
-- **apply する木で、resource の作成の順序と層の規則を確かめる。** `apply-resource-order-check` が
+- **apply する木で、resource の作成の順序と層の規則と root の構成を確かめる。** `apply-resource-order-check` が
   `make resource-order-check`（[`conftest/hcl/resource_order/`](../../conftest/hcl/resource_order/README.md)）を、
-  `apply-layer-check` が `make layer-check`（[`conftest/hcl/layer/`](../../conftest/hcl/layer/README.md)）を
+  `apply-layer-check` が `make layer-check`（[`conftest/hcl/layer/`](../../conftest/hcl/layer/README.md)）を、
+  `apply-root-check` が `make root-check`（[`conftest/hcl/root/`](../../conftest/hcl/root/README.md)）を
   走らせ、apply の job はその成功を `needs` と `if:` で待つ。Pull Request では必須検査の `terraform-gates.yaml` の
   `tf-lint` が同じ検査を走らせ、その配線が外れれば `make oidc-job-lint` が落ちる。ただし必須検査は base の
-  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの2つの検査の job だけで、どれも
+  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの3つの検査の job だけで、どれも
   決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）。`revert-plan` の `needs` には
   置かない —— revert は apply の job の結果だけで決まり、検査が落ちた apply の job は `skipped` で終わる
 - **root ごとに、plan・apply・lock の解除の job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
   `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
   apply の job と lock の解除の job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
   `ci-unlock-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
-  配置と job の過不足は `make oidc-job-lint` が、backend の key が ADR-0604 決定7 の値であることは
-  `make repo-settings-check` が落とす
+  配置と job の過不足は `make oidc-job-lint` が、root が呼ぶ usecase と backend の設定（key が ADR-0604 決定7 の値で、
+  lock file を使う）は `make root-check` が落とす
 - **env ごとに、apply の workflow と lock の解除の workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
   持つと、`on.push.branches` を1つのデプロイブランチに決められない（`make repo-settings-check`）。同じ env の
   identity root と workload root の apply の job は同じ workflow に置く。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
@@ -410,7 +411,7 @@ truthy 側へ置く。
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check` | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の2 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
 | `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |

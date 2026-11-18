@@ -111,6 +111,7 @@ var (
 	detection   = makeRun(`infra-code-gate`)
 	orderCheck  = makeRun(`resource-order-check`)
 	layerCheck  = makeRun(`layer-check`)
+	rootCheck   = makeRun(`root-check`)
 	// status の関数・論理和・否定は、検出の失敗を越えて job を走らせうる。!= は比較なので除く。
 	statusEscape = regexp.MustCompile(`\b(?:always|cancelled|failure)\(\)|\|\||!(?:[^=]|$)`)
 	pushPaths    = regexp.MustCompile(`^\s+["']?paths(?:-ignore)?["']?[ \t]*:`)
@@ -142,6 +143,8 @@ var (
 	orderTestRun  = makeRun(`resource-order-check-test`)
 	layerRun      = makeRun(`layer-check(?:-test)?`)
 	layerTestRun  = makeRun(`layer-check-test`)
+	rootRun       = makeRun(`root-check(?:-test)?`)
+	rootTestRun   = makeRun(`root-check-test`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
 	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
@@ -230,7 +233,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		_, f = checkRevertWiring(p, string(raw))
 		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
-		// 2つの検査を走らせる job では、job 単位の違反が検査ごとに同じ文で出るので、1件にする。
+		// 複数の検査を走らせる job では、job 単位の違反が検査ごとに同じ文で出るので、1件にする。
 		seen := map[lintreport.Finding]bool{}
 		for _, g := range applyGates {
 			n, f = checkRequiredGateJobs(p, string(raw), required, g)
@@ -448,7 +451,6 @@ func unreadable(values []string) bool {
 	return len(values) == 1 && (strings.Trim(values[0], `"'`) == "write-all" || (strings.HasPrefix(values[0], "{") && values[0] != "{}"))
 }
 
-// workflowInfo は、job の検査が読む workflow 全体の部分です。
 type workflowInfo struct {
 	on       map[string][]workflow.Line
 	onLine   int
@@ -839,8 +841,9 @@ var (
 	detectionGate = gate{noun: "検出", label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", check: "make infra-code-gate", marks: detection, runs: detectionRun}
 	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", check: "make resource-order-check", marks: orderCheck, runs: orderRun, testRun: orderTestRun}
 	layerGate     = gate{noun: "層の検査", label: "層の検査の job", targets: "make layer-check-test と make layer-check", check: "make layer-check", marks: layerCheck, runs: layerRun, testRun: layerTestRun}
+	rootGate      = gate{noun: "root の検査", label: "root の検査の job", targets: "make root-check-test と make root-check", check: "make root-check", marks: rootCheck, runs: rootRun, testRun: rootTestRun}
 	// applyGates は、apply の job が検出に加えて必ず待ち、Pull Request の必須検査も走らせる検査である。
-	applyGates = []gate{orderGate, layerGate}
+	applyGates = []gate{orderGate, layerGate, rootGate}
 )
 
 // checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
