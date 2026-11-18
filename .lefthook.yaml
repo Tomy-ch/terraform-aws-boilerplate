@@ -235,6 +235,7 @@ pre-commit:
         - "conftest/hcl/**"
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
+        - "scripts/hcl-input/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
