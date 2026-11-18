@@ -56,4 +56,5 @@ policy の文書が参照する ARN は、`override_resource`（`override_during
 
 - `<name>.rego` と `<name>_test.rego` を同じディレクトリに置く。規則は `deny contains` で書き、違反の ID（`[PLAN-<区分>-<番号>]`）を持たせる。テストは `test_violation_` と `test_pass_` で始まる名前の両方を持ち、各 ID をどこかのテストが名指しする（名指しの有無までを見る。違反側のテストが名指すかは見ない）。どれかが欠けると `make tf-policy` が落ちる（同 決定8・9）
 - 見る resource の型と address は `decl.json` に足す
+- 名前空間の一覧は宣言しない。`make tf-policy` は、このディレクトリのすべての `.rego` の package ごとの行頭の `deny contains` の数を、conftest が名前空間ごとに評価した規則の数と突き合わせる（`tf-local policy-result -policy`）。規則を足せば突き合わせの対象に入る。字下げした規則や文字列の中の規則の行は、件数が合わずに落ちる。`deny contains` を持たない `.rego` は `lib/` の下にだけ置ける
 - Security の道具（[ADR-0501](../../docs/adr/0501-development-tooling-composition.md) 決定6）の既定のルールと重ならないことを、本リポジトリの書き方の文書で確かめる（ADR-0402 決定3）。確かめた結果は Pull Request に書く
