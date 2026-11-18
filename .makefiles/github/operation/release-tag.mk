@@ -1,6 +1,5 @@
 ## リリースタグの設定とリリースノートの設定コマンド
-# 最新タグの解決・次バージョンの算出・production の同期・タグと GitHub Release の作成は
-# scripts/release（テスト付き）が持つ。取り消しの効かない操作を含み、分岐を実地で確かめるには
+# 手順の実体は scripts/release。取り消しの効かない操作を含み、分岐を実地で確かめるには
 # 本当にリリースするしかないため、手順と中止条件をシェルに置かない。
 # git / gh はホストの認証情報を使うのでツールランナーは経由しない。
 
@@ -20,8 +19,7 @@ tag-minor:
 tag-major:
 	@$(call RELEASE_TOOL,tag -bump major)
 
-# 版はコマンドラインの VERSION だけを渡す。環境に残った VERSION で取り消しの効かないタグを打たないため。
-# 空なら scripts/release が拒否する。値はシェルを経由させず環境変数で渡す。
+# 環境に残った VERSION で取り消しの効かないタグを打たないため、コマンドラインの VERSION だけを渡す。
 tag-version: export RELEASE_TAG_VERSION = $(if $(filter command line,$(origin VERSION)),$(VERSION))
 tag-version:
 	@$(call RELEASE_TOOL,tag -version "$$RELEASE_TAG_VERSION")

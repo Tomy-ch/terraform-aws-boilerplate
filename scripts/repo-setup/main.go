@@ -27,10 +27,8 @@ import (
 
 const (
 	// initialTag は、初期化後に唯一残るタグ。
-	initialTag = "v0.0.0"
-	// defaultBranch は、初期化後のデフォルトブランチ。
-	defaultBranch = "production"
-	// releaseNoteDir は、リリースノートの置き場所。
+	initialTag     = "v0.0.0"
+	defaultBranch  = "production"
 	releaseNoteDir = ".github/release"
 	// stepsPerTag は、タグ 1 件あたりの削除手順数（ローカル + リモート）。
 	stepsPerTag = 2
@@ -41,8 +39,7 @@ const (
 var (
 	managedBranches = []string{"develop", "staging", defaultBranch}
 	// errInitialTagExists は、初期タグが既に在り初期化してはいけないことを表す。
-	errInitialTagExists = xerrors.New("があります。初期化を停止します")
-	// errUsage は、サブコマンドが指定されていないことを表す。
+	errInitialTagExists  = xerrors.New("があります。初期化を停止します")
 	errUsage             = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 )
@@ -55,13 +52,10 @@ type step struct {
 	allowFail bool
 }
 
-// runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリを壊さずに
-// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
+// runner は、手順を実際に走らせる実行層。テストが差し替える継ぎ目（scripts/README.md の Test Strategy）。
 type runner struct {
-	run func(s step) error
-	// output は、コマンドの標準出力を取り出す。
-	output func(name string, args ...string) (string, error)
-	// branchExists は、ローカルブランチの有無を返す。
+	run          func(s step) error
+	output       func(name string, args ...string) (string, error)
 	branchExists func(branch string) bool
 }
 
@@ -78,7 +72,6 @@ func main() {
 	}
 }
 
-// execute は、サブコマンドを選んで実行します。
 func execute(r runner, args []string) error {
 	if len(args) == 0 {
 		return errUsage
@@ -95,8 +88,6 @@ func execute(r runner, args []string) error {
 		return errUnknownSubcommand
 	}
 }
-
-// ---- 手順の組み立て（純粋） -------------------------------------------------
 
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
@@ -128,7 +119,6 @@ func tagDeletionSteps(tags []string) []step {
 	return steps
 }
 
-// initialTagSteps は、初期タグを作って push する手順を返します。
 func initialTagSteps() []step {
 	return []step{
 		{name: "git", args: []string{"tag", "-a", initialTag, "-m", "Initial boilerplate tag"}},
@@ -159,12 +149,10 @@ func branchCreationSteps(existing []string) ([]step, []string) {
 	return steps, skipped
 }
 
-// branchPushStep は、用意したブランチをまとめて push する手順を返します。
 func branchPushStep() step {
 	return step{name: "git", args: append([]string{"push", "origin"}, managedBranches...)}
 }
 
-// defaultBranchStep は、GitHub 上のデフォルトブランチを移す手順を返します。
 func defaultBranchStep(repo string) step {
 	return step{name: "gh", args: []string{"api", "-X", "PATCH", "repos/" + repo, "-f", "default_branch=" + defaultBranch}}
 }
@@ -202,8 +190,6 @@ func releaseNotesToDelete(entries []string) []string {
 
 	return targets
 }
-
-// ---- 実行 -------------------------------------------------------------------
 
 func runPreflight() error {
 	log.Printf("🔧 設定を確認中...")
@@ -359,14 +345,11 @@ func runPruneReleaseNotes() error {
 	return nil
 }
 
-// ---- コマンド実行 -----------------------------------------------------------
-
-// hostRunner は、ホストの git / gh を実際に起動する実行器を返します。
 func hostRunner() runner {
 	return runner{run: run, output: output, branchExists: branchExists}
 }
 
-// runAll は、手順を並び順に実行します。失敗した時点で残りは実行しません。
+// runAll は、失敗した時点で残りの手順を実行しません。
 func (r runner) runAll(steps []step) error {
 	for _, s := range steps {
 		if err := r.run(s); err != nil {

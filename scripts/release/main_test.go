@@ -16,13 +16,11 @@ import (
 )
 
 const (
-	tagListCall   = "git tag"
-	fetchTagsCall = "git fetch --tags origin"
-	// annotateTagCall / tagPushCall / releaseCreateCall は、取り消しの効かない 3 手順の記録表記。
+	tagListCall       = "git tag"
+	fetchTagsCall     = "git fetch --tags origin"
 	annotateTagCall   = "git tag -a v1.2.4 --cleanup=verbatim -F .github/release/v1.2.4.md"
 	tagPushCall       = "git push origin v1.2.4"
 	releaseCreateCall = "gh release create v1.2.4 --title v1.2.4 --notes-file .github/release/v1.2.4.md"
-	// branchCreateCall / branchPushCall / defaultBranchCall は、ブランチ作成側の後戻りできない手順の記録表記。
 	branchCreateCall  = "git switch -c release/v1.3.0 origin/production"
 	branchPushCall    = "git push origin release/v1.3.0"
 	defaultBranchCall = "gh repo edit --default-branch release/v1.3.0"
@@ -31,8 +29,6 @@ const (
 var errFakeCommand = xerrors.New("fake command failed")
 
 // fakeRunner は、git / gh を一切起動せず呼び出しの並びだけを控える実行器。
-// tag / branch の手順はタグの push と GitHub Release の作成を含み、走らせてしまうと
-// 取り消せないため、中止条件と手順の順序はここへ差し替えた実行層の上で検証します。
 type fakeRunner struct {
 	// calls は、run / output が呼ばれた順の「実行ファイル 引数...」表記。
 	calls []string
@@ -41,8 +37,7 @@ type fakeRunner struct {
 	// failOn は、この表記の呼び出しだけを失敗させます（空なら常に成功）。
 	failOn         string
 	remoteBranches map[string]bool
-	// lsRemoteFails は、origin への照会そのものが失敗する状況を模す。
-	lsRemoteFails bool
+	lsRemoteFails  bool
 }
 
 func (f *fakeRunner) runner() runner {
@@ -81,7 +76,6 @@ func (f *fakeRunner) remoteBranchExists(branch string) (bool, error) {
 	return f.remoteBranches[branch], nil
 }
 
-// taggableRunner は、v1.2.3 を最新タグとして返す実行器を用意します。
 func taggableRunner() *fakeRunner {
 	return &fakeRunner{outputs: map[string]string{tagListCall: "v1.2.3\n"}}
 }

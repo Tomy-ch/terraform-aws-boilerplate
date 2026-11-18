@@ -38,7 +38,7 @@ const (
 	commandTimeout = 120 * time.Second
 
 	// lsRemoteNotFound は `git ls-remote --exit-code` が「一致が無い」ときに返す終了コード。
-	// それ以外の非ゼロは照会そのものの失敗であり、区別しないと「無い」と読んでしまう。
+	// それ以外の非ゼロの扱いは remoteBranchExists を参照。
 	lsRemoteNotFound = 2
 )
 
@@ -70,12 +70,10 @@ type step struct {
 	args []string
 }
 
-// runner は、手順を実際に走らせる実行層。中止条件と手順の順序を実リポジトリへ触れずに
-// 検証するための seam（scripts/README.md の Test Strategy「取り返しのつかない手順は、計画として検証し、実行しない」）。
+// runner は、手順を実際に走らせる実行層。テストが差し替える継ぎ目（scripts/README.md の Test Strategy）。
 type runner struct {
-	run    func(s step) error
-	output func(name string, args ...string) (string, error)
-	// remoteBranchExists は、origin に同名ブランチがあるかを返す。照会できなければエラー。
+	run                func(s step) error
+	output             func(name string, args ...string) (string, error)
 	remoteBranchExists func(branch string) (bool, error)
 }
 
@@ -116,13 +114,10 @@ func execute(r runner, args []string) error {
 	return err
 }
 
-// ---- バージョン解決（純粋） -------------------------------------------------
-
 func (v version) String() string {
 	return "v" + strconv.Itoa(v.major) + "." + strconv.Itoa(v.minor) + "." + strconv.Itoa(v.patch)
 }
 
-// parseVersion は、`vX.Y.Z` 形式の文字列を version へ変換します。
 func parseVersion(s string) (version, bool) {
 	m := semverPattern.FindStringSubmatch(strings.TrimSpace(s))
 	if m == nil {
@@ -181,11 +176,8 @@ func bump(v version, kind string) (version, error) {
 	}
 }
 
-// ---- 手順の組み立て（純粋） -------------------------------------------------
-
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// syncProductionSteps は、production を origin の最新へ合わせる手順を返します。
 func syncProductionSteps() []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", "production"}},
@@ -195,7 +187,6 @@ func syncProductionSteps() []step {
 	}
 }
 
-// tagSteps は、リリースノートを本文にタグを打ち、GitHub Release を作る手順を返します。
 // タグ本文は既定の cleanup だと `#` で始まる行を落とすので、ノートの見出しを残すよう verbatim で打つ。
 func tagSteps(next, notePath string) []step {
 	return []step{
@@ -205,7 +196,6 @@ func tagSteps(next, notePath string) []step {
 	}
 }
 
-// branchSteps は、base からブランチを切って push し、デフォルトブランチに設定する手順を返します。
 func branchSteps(base, branch string) []step {
 	return []step{
 		{name: "git", args: []string{"fetch", "origin", base}},
@@ -216,8 +206,6 @@ func branchSteps(base, branch string) []step {
 }
 
 func notePath(v string) string { return releaseNoteDir + "/" + v + ".md" }
-
-// ---- 実行 -------------------------------------------------------------------
 
 // listTags は、origin のタグを取り直してから `git tag` の出力を返します。
 func listTags(r runner) (string, error) {
@@ -463,7 +451,7 @@ func run(s step) error {
 	return nil
 }
 
-// runAll は、手順を並び順に実行します。失敗した時点で残りは実行しません。
+// runAll は、失敗した時点で残りの手順を実行しません。
 func (r runner) runAll(steps []step) error {
 	for _, s := range steps {
 		if err := r.run(s); err != nil {
