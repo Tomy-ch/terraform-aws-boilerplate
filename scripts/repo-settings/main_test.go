@@ -98,6 +98,15 @@ const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_b
 			{"name": "x-apply-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
 
+// appendFile は、dir の下の name の末尾へ body を足します。
+func appendFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	src, err := os.ReadFile(p)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, append(src, []byte(body)...), 0o600))
+}
+
 func fixedWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
@@ -239,6 +248,10 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Len(t, decl.environments, 5)
 		assert.Equal(t, rulesetFixture, string(decl.ruleset))
 		assert.Equal(t, syncedRuleset, string(decl.rendered))
+		assert.Len(t, decl.workflows, 1)
+		assert.Len(t, decl.sets, 1)
+		assert.Equal(t, 1, decl.marks)
+		assert.Equal(t, 1, decl.exprs)
 	})
 
 	cases := []struct {
@@ -270,6 +283,18 @@ func Test_readDeclarations(t *testing.T) {
 		{"apply の workflow が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))
 		}, errTrigger},
+		{"ref を宣言の外の文字列と比べる式があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "jobs:\n  a:\n    if: github.ref_name == 'main'\n")
+		}, errRefLiteral},
+		{"読めない式があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "jobs:\n  a:\n    steps:\n      - run: echo ${{ github.ref\n")
+		}, errExpression},
+		{"印の無い branches の一覧があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/lint.yaml", "  workflow_run:\n    branches:\n      - main\n")
+		}, errBranchSet},
+		{"apply の workflow に印があれば失敗する", func(root string) {
+			appendFile(t, root, ".github/workflows/apply.yaml", "    if: ${{ contains(fromJSON('[\"main\"]'), github.base_ref) }} # branch-set: deploy\n")
+		}, errBranchSet},
 		{"印 branch-set の行が1つも無ければ失敗する", func(root string) {
 			writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 		}, errBranchSet},
@@ -358,6 +383,51 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("apply は印 branch-set の行を生成し直して書き換える", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
+		var out bytes.Buffer
+		require.NoError(t, applyOrCheck(root, false, &out))
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, string(synced), string(got))
+		assert.Contains(t, out.String(), "分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件")
+		assert.Contains(t, out.String(), ".github/workflows/lint.yaml を書き換えました")
+	})
+
+	t.Run("check は印 branch-set の行のずれを報せ、書かない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		drifted := strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1)
+		writeFile(t, root, ".github/workflows/lint.yaml", drifted)
+		err = applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errSetDrift)
+		assert.ErrorContains(t, err, ".github/workflows/lint.yaml")
+		got, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(got))
+	})
+
+	t.Run("include と起動条件と印が同時にずれていれば、check は include を先に報せ、次に起動条件を報せる", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, ".github/workflows/apply.yaml", strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1))
+		synced, err := os.ReadFile(filepath.Join(root, ".github/workflows/lint.yaml"))
+		require.NoError(t, err)
+		writeFile(t, root, ".github/workflows/lint.yaml", strings.Replace(string(synced), "      - 'main'", "      - 'old'", 1))
+		require.ErrorIs(t, applyOrCheck(root, true, &bytes.Buffer{}), errIncludeDrift)
+
+		writeFile(t, root, rulesetFile, syncedRuleset)
+		err = applyOrCheck(root, true, &bytes.Buffer{})
+		require.ErrorIs(t, err, errTriggerDrift)
+		assert.NotErrorIs(t, err, errSetDrift)
 	})
 
 	t.Run("include と起動条件が同時にずれていれば、apply は両方を書き換える", func(t *testing.T) {

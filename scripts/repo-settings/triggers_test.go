@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func Test_renderBranchSets(t *testing.T) {
 	t.Run("workflow の置き場が無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, _, err := renderBranchSets(t.TempDir(), setDecl, nil)
-		require.Error(t, err)
+		require.ErrorIs(t, err, fs.ErrNotExist)
 	})
 }
 
@@ -126,6 +127,7 @@ func Test_renderSetLines(t *testing.T) {
 		"引用符のキーも branches として読む":       {"on:\n  push:\n    \"branches\":\n      - main\n", false, "印 `# branch-set: <集合>` の無い branches"},
 		"読めない書き方の branches は数の食い違いで拒む": {"on:\n  push: {branches: [main]}\n", false, "字面では 1 件"},
 		"要素の無い branches は拒む":           {"on:\n  push:\n    branches: # branch-set: deploy\n  pull_request:\n", false, "要素がありません"},
+		"branches と同じ字下げの列は要素として読まない":  {"on:\n  push:\n    branches: # branch-set: deploy\n    - a\n", false, "要素がありません"},
 		"要素でない行を持つ branches は拒む":       {"on:\n  push:\n    branches: # branch-set: deploy\n      - a\n      b\n", false, "要素ではありません"},
 		"印の付いた一覧の中のコメント行は拒む":           {"on:\n  push:\n    branches: # branch-set: deploy\n      - a\n      # c\n      - b\n", false, "コメントを置けません"},
 		"印の付いた一覧の要素の行末コメントは拒む":         {"on:\n  push:\n    branches: # branch-set: deploy\n      - a # why\n", false, "コメントを置けません"},
@@ -233,6 +235,12 @@ func Test_renderIfLine(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, `if: ${{ contains(fromJSON('["security", "admin", "prod"]'), github.base_ref) }}`, got)
 	})
+	t.Run("線が無ければ lines の群を生成せずに拒む", func(t *testing.T) {
+		t.Parallel()
+		_, err := renderIfLine(`if: ${{ (startsWith(github.head_ref, 'a/')) }}`, branches{Deploy: setDecl.Deploy}, setLines)
+		require.ErrorIs(t, err, errBranchSet)
+	})
+
 	t.Run("デプロイブランチが無ければ拒む", func(t *testing.T) {
 		t.Parallel()
 		_, err := renderIfLine(`if: ${{ contains(fromJSON('["a"]'), github.base_ref) }}`, branches{Lines: setDecl.Lines}, setDeploy)
@@ -262,13 +270,14 @@ func Test_splitComment(t *testing.T) {
 	cases := map[string]struct {
 		line, code, comment string
 	}{
-		"行末のコメントを分ける":         {"    branches: # branch-set: deploy", "    branches:", " # branch-set: deploy"},
-		"行全体のコメント":            {"# c", "", "# c"},
-		"字下げしたコメント":           {"  # c", "", "  # c"},
-		"コメントが無ければ全体がコード":     {"    - main", "    - main", ""},
-		"単引用符の中の # はコメントでない":  {"run: echo '# x' # c", "run: echo '# x'", " # c"},
-		"二重引用符の中の # はコメントでない": {`name: "a # b"`, `name: "a # b"`, ""},
-		"空白の前置の無い # はコメントでない": {"url: a#b", "url: a#b", ""},
+		"行末のコメントを分ける":             {"    branches: # branch-set: deploy", "    branches:", " # branch-set: deploy"},
+		"行全体のコメント":                {"# c", "", "# c"},
+		"字下げしたコメント":               {"  # c", "", "  # c"},
+		"コメントが無ければ全体がコード":         {"    - main", "    - main", ""},
+		"単引用符の中の # はコメントでない":      {"run: echo '# x' # c", "run: echo '# x'", " # c"},
+		"二重引用符の中の # はコメントでない":     {`name: "a # b"`, `name: "a # b"`, ""},
+		"二重引用符の中の \\\" は引用符を閉じない": {`name: "a \" # b" # c`, `name: "a \" # b"`, " # c"},
+		"空白の前置の無い # はコメントでない":     {"url: a#b", "url: a#b", ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -403,7 +412,24 @@ func Test_checkRefLiterals(t *testing.T) {
 	t.Run("workflow の置き場が無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, err := checkRefLiterals(t.TempDir())
-		require.Error(t, err)
+		require.ErrorIs(t, err, fs.ErrNotExist)
+	})
+	t.Run("二重引用符の中の \\\" の後ろの式も読み、落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: \"a \\\" # ${{ github.ref_name == 'x' }}\"\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("複数のファイルの比較をすべて報せる", func(t *testing.T) {
+		t.Parallel()
+		root := repo(t, map[string]string{
+			wf("a.yaml"): "jobs:\n  a:\n    if: github.ref_name == 'a'\n",
+			wf("b.yaml"): "jobs:\n  b:\n    if: github.base_ref == 'b'\n",
+		})
+		_, err := checkRefLiterals(root)
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, wf("a.yaml")+":3")
+		assert.ErrorContains(t, err, wf("b.yaml")+":3")
 	})
 }
 
@@ -500,6 +526,8 @@ func Test_refLiteralTerms(t *testing.T) {
 		"contains の文字列":             {"contains(github.event.ref, 'hotfix')", 1},
 		"contains の fromJSON":       {"contains(fromJSON('[\"a\"]'), github.event.workflow_run.head_branch)", 1},
 		"pull_request の head の ref": {"github.event.pull_request.head.ref == 'x'", 1},
+		"pull_request の base の ref": {"github.event.pull_request.base.ref == 'x'", 1},
+		"空白の無い ==":                  {"github.ref_name=='x'", 1},
 		"context 同士の比較は通す":          {"github.ref_name == github.event.repository.default_branch", 0},
 		"ref でない context は通す":       {"github.event_name == 'push' || github.ref_type == 'tag'", 0},
 		"ref と無関係な fromJSON は通す":    {"contains(fromJSON('[\"failure\"]'), needs.a.result)", 0},

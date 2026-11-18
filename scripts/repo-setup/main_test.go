@@ -362,6 +362,15 @@ func Test_originalBranchCleanupSteps(t *testing.T) {
 			assert.Empty(t, originalBranchCleanupSteps(testSetup.decl, "production"))
 		})
 
+		t.Run("線の接頭辞は宣言から読む", func(t *testing.T) {
+			t.Parallel()
+			decl := branchdecl.Branches{Lines: branchdecl.Lines{Release: "rel/", Hotfix: "fix/"}}
+			assert.Equal(t, []string{"git branch -D rel/v1.0.0", "git push origin --delete rel/v1.0.0"},
+				commands(originalBranchCleanupSteps(decl, "rel/v1.0.0")))
+			assert.NotEmpty(t, originalBranchCleanupSteps(decl, "fix/v1.0.1"))
+			assert.Empty(t, originalBranchCleanupSteps(decl, "release/v1.0.0"))
+		})
+
 		t.Run("途中に線の接頭辞を持つだけの名前は消さない", func(t *testing.T) {
 			t.Parallel()
 			assert.Empty(t, originalBranchCleanupSteps(testSetup.decl, "feature/release/x"))
@@ -785,6 +794,20 @@ func Test_moveDefaultBranch(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("移す先と片付ける線は宣言から読む", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{outputs: map[string]string{
+				ghRepoViewCall:              "example-org/example-api\n",
+				"git branch --show-current": "rel/v1.0.0\n",
+			}}
+			s := setup{base: "main", decl: branchdecl.Branches{Lines: branchdecl.Lines{Release: "rel/", Hotfix: "fix/"}}}
+
+			require.NoError(t, moveDefaultBranch(f.runner(), s))
+			assert.Contains(t, f.calls, "gh api -X PATCH repos/example-org/example-api -f default_branch=main")
+			assert.Contains(t, f.calls, "git switch main")
+			assert.Contains(t, f.calls, "git branch -D rel/v1.0.0")
+		})
+
 		t.Run("リポジトリ名を引いてデフォルトブランチを移し、元のリリースブランチを片付ける", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{outputs: map[string]string{
@@ -1075,6 +1098,15 @@ func Test_start(t *testing.T) {
 			sub := func() (string, error) { return other, nil }
 
 			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下の宣言が壊れていればタグを消す前に止まる", func(t *testing.T) {
+			t.Parallel()
+			f := bootstrappableRunner()
+			broken := withDecl(t, `{"lines": ["release/"]}`)
+
+			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, broken, broken), branchdecl.ErrDeclaration)
 			assert.Empty(t, f.calls)
 		})
 

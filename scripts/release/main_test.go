@@ -1160,6 +1160,16 @@ func Test_runBranch(t *testing.T) {
 			assert.Empty(t, f.calls)
 		})
 
+		t.Run("接頭辞の無い線の役割では origin へ触れる前に中止する", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			decl := testDecl
+			decl.Lines = branchdecl.Lines{Release: "release/"}
+
+			require.ErrorIs(t, runBranch(f.runner(), decl, []string{"-bump", "patch", "-line", "hotfix"}), errUnknownLine)
+			assert.Empty(t, f.calls)
+		})
+
 		t.Run("宣言に基点が無ければ手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()
 			f := taggableRunner()
@@ -1373,14 +1383,14 @@ func Test_execute(t *testing.T) {
 func Test_start(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	same := func() (string, error) { return dir, nil }
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	require.NoError(t, err)
-	decl, err := os.ReadFile(filepath.Join(repo, branchdecl.File))
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(branchdecl.File)), 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, branchdecl.File), decl, 0o600))
+	withDecl := func(t *testing.T, body string) func() (string, error) {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, filepath.Dir(branchdecl.File)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, branchdecl.File), []byte(body), 0o600))
+		return func() (string, error) { return dir, nil }
+	}
+	same := withDecl(t, `{"deploy": [{"branch": "production", "release_base": true}, {"branch": "staging"}, {"branch": "develop"}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -1403,6 +1413,15 @@ func Test_start(t *testing.T) {
 			sub := func() (string, error) { return other, nil }
 
 			require.ErrorIs(t, start(f.runner(), []string{"tag"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下の宣言が壊れていれば手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := taggableRunner()
+			broken := withDecl(t, `{"lines": ["release/"]}`)
+
+			require.ErrorIs(t, start(f.runner(), []string{"tag", "-bump", "patch"}, broken, broken), branchdecl.ErrDeclaration)
 			assert.Empty(t, f.calls)
 		})
 

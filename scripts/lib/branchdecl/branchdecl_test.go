@@ -49,14 +49,14 @@ func TestRead(t *testing.T) {
 		"lines が配列なら拒む":         {`{"deploy": [{"branch": "production", "release_base": true}], "lines": ["release/"]` + tail, ErrDeclaration},
 		"lines の未知の役割は拒む":       {`{"deploy": [{"branch": "production", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/", "feature": "feature/"}` + tail, ErrDeclaration},
 		"revert が無ければ拒む":        {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "line_version": "v<major>.<minor>.<patch>"}`, ErrDeclaration},
-		"revert の字面が違えば拒む":      {`{` + lines + `, "line_version": "v<major>.<minor>.<patch>", "Revert": "revert/"}`, ErrDeclaration},
-		"revert が重複すれば拒む":       {`{` + lines + `, "line_version": "v<major>.<minor>.<patch>", "revert": "a/", "revert": "b/"}`, ErrDeclaration},
+		"revert の字面が違えば拒む":      {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "line_version": "v<major>.<minor>.<patch>", "Revert": "revert/"}`, ErrDeclaration},
+		"revert が重複すれば拒む":       {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "line_version": "v<major>.<minor>.<patch>", "revert": "a/", "revert": "b/"}`, ErrDeclaration},
 		"line_version が無ければ拒む":  {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "revert": "revert/"}`, ErrDeclaration},
 		"environment のキーは拒む":    {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "name": "x"` + tail, ErrDeclaration},
 		"最上位の env は拒む":          {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "env": "x"` + tail, ErrDeclaration},
 		"最上位の from は拒む":         {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "from": ["release/"]` + tail, ErrDeclaration},
 		"最上位の branch は拒む":       {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "branch": "x"` + tail, ErrDeclaration},
-		"最上位の release_base は拒む": {`{"deploy": [{"branch": "production"}], ` + lines + `, "release_base": true` + tail, ErrDeclaration},
+		"最上位の release_base は拒む": {`{"deploy": [{"branch": "production", "release_base": true}], ` + lines + `, "release_base": true` + tail, ErrDeclaration},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -64,6 +64,25 @@ func TestRead(t *testing.T) {
 			require.ErrorIs(t, err, c.want)
 		})
 	}
+	t.Run("拒む理由は確かめたい規則のもの", func(t *testing.T) {
+		t.Parallel()
+		tail := `, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
+		lines := `"lines": {"release": "release/", "hotfix": "hotfix/"}`
+		deploy := `{"deploy": [{"branch": "production", "release_base": true}], `
+		for name, c := range map[string]struct {
+			body, want string
+		}{
+			"字面の違うキーはキーの検査で拒む": {deploy + lines + `, "Revert": "revert/", "line_version": "v<major>.<minor>.<patch>"}`, "宣言のキーではありません"},
+			"重複したキーはキーの検査で拒む":  {deploy + lines + `, "revert": "a/"` + tail, "重複しています"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				_, err := Read(writeFile(t, c.body))
+				require.ErrorIs(t, err, ErrDeclaration)
+				assert.ErrorContains(t, err, c.want)
+			})
+		}
+	})
 }
 
 func deploys(names ...string) []DeployBranch {
@@ -101,10 +120,11 @@ func TestValidate(t *testing.T) {
 	}{
 		{"固定名と接頭辞を持つ宣言は通る", valid(deploys("develop")...), nil},
 		{"0件は拒む", Branches{Revert: "revert/", LineVersion: VersionForm}, ErrEmpty},
+		{"デプロイブランチが無く線だけなら release_base が無いとして拒む", Branches{Lines: bothLines, LineVersion: VersionForm, Revert: "revert/"}, ErrDeclaration},
 		{"glob の文字を含む固定名は拒む", valid(deploys("release/*")...), ErrDeclaration},
 		{"大文字の固定名は拒む", valid(deploys("Main")...), ErrDeclaration},
 		{"固定名の重複は拒む", valid(deploys("develop", "develop")...), ErrDeclaration},
-		{"固定名が接頭辞と同じなら拒む", valid(deploys("release/")...), ErrDeclaration},
+		{"/ を含む固定名は拒む", valid(deploys("release/")...), ErrDeclaration},
 		{"空文字列の固定名は拒む", valid(deploys("")...), ErrDeclaration},
 		{"env と from を持つデプロイブランチは通る", valid(admin), nil},
 		{"env を持つデプロイブランチが複数でも通る", valid(admin, DeployBranch{Branch: "security", Env: "security", From: []string{"release/"}}, DeployBranch{Branch: "log-archive", Env: "log-archive", From: []string{"release/"}}), nil},

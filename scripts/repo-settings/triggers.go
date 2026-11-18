@@ -221,7 +221,11 @@ func renderIfLine(code string, b branches, set string) (string, error) {
 			}
 			ctx = m[1]
 		}
-		return code[:f[0]] + prefixExpression(ctx, b.Lines.Prefixes()) + code[f[1]:], nil
+		prefixes := b.Lines.Prefixes()
+		if len(prefixes) == 0 {
+			return "", xerrors.Wrap(errBranchSet, "集合 lines の展開が0件です")
+		}
+		return code[:f[0]] + prefixExpression(ctx, prefixes) + code[f[1]:], nil
 	}
 	return "", xerrors.Wrapf(errBranchSet, "if: の行に置ける印は %s と %s です（%q）", setDeploy, setLines, set)
 }
@@ -247,11 +251,18 @@ func jsonArray(names []string) (string, error) {
 }
 
 // splitComment は、YAML の1行をコードと行末のコメント（空白と `#` から始まる部分）へ分けます。引用符の中の
-// `#` はコメントにしない。
+// `#` はコメントにしない。二重引用符の中の `\` は次の1文字をエスケープする。
 func splitComment(line string) (code, comment string) {
-	var quote rune
+	var (
+		quote   rune
+		escaped bool
+	)
 	for i, r := range line {
 		switch {
+		case escaped:
+			escaped = false
+		case quote == '"' && r == '\\':
+			escaped = true
 		case quote != 0:
 			if r == quote {
 				quote = 0

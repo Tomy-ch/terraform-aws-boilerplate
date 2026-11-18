@@ -384,8 +384,8 @@ func runBranch(r runner, decl branchdecl.Branches, args []string) error {
 		return err
 	}
 
-	// 線の役割は、origin へ触れる前に確かめる。
-	if _, ok := decl.Lines.Prefix(*line); !ok {
+	// 線の役割は、origin へ触れる前に確かめる。接頭辞の無い役割では線の名前を組めない。
+	if prefix, ok := decl.Lines.Prefix(*line); !ok || prefix == "" {
 		return xerrors.Wrapf(errUnknownLine, "%q（%s）", *line, roles)
 	}
 
@@ -402,6 +402,7 @@ func runBranch(r runner, decl branchdecl.Branches, args []string) error {
 
 	log.Printf("✅ 最新のタグを取得完了")
 
+	// 役割と接頭辞は上で確かめたので、LineName は必ず名前を返す。
 	branch, _ := decl.LineName(*line, next)
 
 	log.Printf("🔖 タグから最新リリースバージョンを取得: 【 %s 】", current)

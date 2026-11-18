@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// recipeDecl は、mirrorRoot が置く分岐のパターンの宣言。実物の宣言は読まない（ADR-0702 決定17）。
+const recipeDecl = `{"deploy": [{"branch": "production", "release_base": true}, {"branch": "staging"}, {"branch": "develop"}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`
+
 // mirrorRoot は、リポジトリ直下を写して git init した一時ディレクトリを返す。
 // make の入口とツールのソースは本物を読み、リリースノートと git の作業ツリーはこのディレクトリのものになる。
 func mirrorRoot(t *testing.T) string {
@@ -32,7 +35,7 @@ func mirrorRoot(t *testing.T) string {
 	git(t, root, "init", "-q")
 	decl := filepath.Join(root, branchdecl.File)
 	require.NoError(t, os.MkdirAll(filepath.Dir(decl), 0o750))
-	require.NoError(t, os.Symlink(filepath.Join(repo, branchdecl.File), decl))
+	require.NoError(t, os.WriteFile(decl, []byte(recipeDecl), 0o600))
 
 	return root
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,9 +159,12 @@ func Test_run(t *testing.T) {
 			t.Parallel()
 
 			var out bytes.Buffer
-			failing := func() (string, error) { return "", errNoReleaseBranch }
+			errList := errors.New("ls-remote failed")
+			failing := func() (string, error) { return "", errList }
 
-			require.ErrorIs(t, run(nil, repoRoot(t, declBody("release/", "hotfix/")), failing, &out), errNoReleaseBranch)
+			err := run(nil, repoRoot(t, declBody("release/", "hotfix/")), failing, &out)
+			require.ErrorIs(t, err, errList)
+			assert.NotErrorIs(t, err, errNoReleaseBranch)
 			assert.Empty(t, out.String())
 		})
 
