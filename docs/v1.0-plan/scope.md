@@ -478,14 +478,14 @@ SCPによる方向の強制は、ライブで逆流を試して確かめない�
 ### 10.2 sandbox運用
 
 - **予算:** 月1万円程度。検証リソースは常駐させず、検証後に即座に破棄する。
-- **常駐層:** `state-backend`、`deployment-identity`、Route53 Hosted Zone、ECR、`organization-baseline`（管理アカウント側）、`finops`、`ops-notification`。
+- **常駐層:** `state-backend`、`deployment-identity`、Route53 Hosted Zone、ECR、`organization-baseline`（管理アカウント側）、`finops`、`ops-notification`、GuardDuty（組織の委任管理者が全アカウントで有効にする。sandboxも含む）。
 - **定期plan:** 常駐層のdrift検知として`-detailed-exitcode`で実行する（終了コード2がdrift）。
 - **掃除CI:** aws-nuke（ekristen版）等を常駐層を除外して定期実行する。テストジョブの最後に常に実行するステップとして、残存検出も置く。
 - **越境検証でdev側に作る資源:** スナップショットの共有設定、KMSのkey grant等はテストのteardownで消し、残存検出をdev側にも掛ける。devはaws-nukeの対象にしない —— リリース経路の最初の段であり、丸ごと消してよい場所ではない。
 - **掃除用Role:** OIDCのtrust policyで`sub`をリポジトリ、ブランチ、workflowまで絞る。
 - **Budgetsの位置づけ:** 課金データの反映に数時間〜最大1日程度の遅延があるため、消し残しの検知用であり、停止機構としては扱わない。
 - **消し残しやすいもの:** RDS/Auroraのfinal snapshot、中身のあるS3、Terraform管理外のLog Group、EKSのcontrollerが作ったENI/LB、Realtimeのインスタンス別Queue、CloudFrontの無効化待ち。
-- EKSのコントロールプレーン（月70ドル強）等、常駐させると予算を超える構成は検証時のみ起動する。Network Firewall、OpenSearch、ElastiCache、Redshiftも同様とする。QuickSightはアカウント単位の購読でユーザー課金が発生するため、検証の方法を別に決める。account-baselineのGuardDutyとAWS Configは継続課金のため、常駐層に入れるかを予算と合わせて判断する。
+- EKSのコントロールプレーン（月70ドル強）等、常駐させると予算を超える構成は検証時のみ起動する。Network Firewall、OpenSearch、ElastiCache、Redshiftも同様とする。QuickSightはアカウント単位の購読でユーザー課金が発生するため、検証の方法を別に決める。GuardDutyはsandboxにも常駐させる（#86）。テストとテストの間の脅威検知、finding、異常検知の学習を保つためで、sandboxのOUにはGuardDutyの停止と削除だけを拒否するSCPを付け、掃除CIの対象から外す。AWS Configはsandboxに常駐させない（#86）。テストで作る資源は掃除で残らず、誰が変えたかは組織のCloudTrail、常駐層の変化は定期plan、不審な変更はGuardDutyが見るためである。Security Hub（Config.1）とCIS AWS Foundations Benchmarkの「全リージョンでConfigを有効にする」からsandboxだけ外れるので、ADR-0207 決定11の記録を`account-baseline`の設計記録に置く。dev / stg / prdと管理・セキュリティ・ログ保管のアカウントではConfigを有効にする。
 
 `audit-evidence`をsandboxで検証する際は、S3 Object Lockをgovernanceモードかつ短い保持期間で使う。complianceモードのオブジェクトは保持期間が切れるまでrootでも削除できず、掃除CIで消せない常駐コストになる。
 
@@ -566,7 +566,6 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | usecase間の所有権 | 各usecase実装時 | ECS Target Group、VPC Link、S3/CloudFront/OAC/Key Group、DB/Secrets、EventBridge Bus/Rule/Schedulerの所有者と入出力 |
 | `event-job`の入力契約 | EventBridge/S3イベント処理の実装前 | 参照（bucket/key、event ID）を渡す案。理由はECS overridesのサイズ上限。検証、再実行を含む |
 | `service-to-service`の方式 | 実装前 | 内部ALB（`private-api`の流用）かECS Service Connect/Cloud Mapか |
-| `account-baseline`の常駐 | 実装時 | GuardDuty、AWS Configをsandboxの常駐層に入れるか（予算） |
 | QuickSightの検証方法 | `business-analytics`の実装前 | アカウント単位の購読とユーザー課金を、検証後に破棄する運用とどう両立させるか |
 | プラットフォーム×役割対応表 | 代替プラットフォームの実装前 | 第4.1節の各セル |
 | Lightsailの適用除外と移行経路 | `lightsail-service`の実装前 | 第4.2節の中身 |
@@ -587,7 +586,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。
+**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。`account-baseline`の常駐（#86、第10.2節。sandboxはGuardDutyだけ常駐させ、Configは常駐させない）。
 
 **フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 
