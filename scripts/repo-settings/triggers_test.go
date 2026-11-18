@@ -212,6 +212,14 @@ func Test_renderIfLine(t *testing.T) {
 		})
 	}
 
+	t.Run("env を持つデプロイブランチが複数でも、宣言の順にすべて並べる", func(t *testing.T) {
+		t.Parallel()
+		b := setDecl
+		b.Deploy = append([]branchdecl.DeployBranch{{Branch: "security", Env: "security", From: []string{"rel/"}}}, setDecl.Deploy...)
+		got, err := renderIfLine(`if: ${{ contains(fromJSON('["x"]'), github.base_ref) }}`, b, setDeploy)
+		require.NoError(t, err)
+		assert.Equal(t, `if: ${{ contains(fromJSON('["security", "admin", "prod"]'), github.base_ref) }}`, got)
+	})
 	t.Run("デプロイブランチが無ければ拒む", func(t *testing.T) {
 		t.Parallel()
 		_, err := renderIfLine(`if: ${{ contains(fromJSON('["a"]'), github.base_ref) }}`, branches{Lines: setDecl.Lines}, setDeploy)

@@ -107,6 +107,7 @@ func TestValidate(t *testing.T) {
 		{"固定名が接頭辞と同じなら拒む", valid(deploys("release/")...), ErrDeclaration},
 		{"空文字列の固定名は拒む", valid(deploys("")...), ErrDeclaration},
 		{"env と from を持つデプロイブランチは通る", valid(admin), nil},
+		{"env を持つデプロイブランチが複数でも通る", valid(admin, DeployBranch{Branch: "security", Env: "security", From: []string{"release/"}}, DeployBranch{Branch: "log-archive", Env: "log-archive", From: []string{"release/"}}), nil},
 		{"from を複数持つデプロイブランチは通る", valid(DeployBranch{Branch: "staging", Env: "stg", From: lines}), nil},
 		{"release_base が env を持っても通る", with(func(b *Branches) { b.Deploy[0].Env, b.Deploy[0].From = "prd", lines }), nil},
 		{"env が同じデプロイブランチが2つなら拒む", valid(admin, DeployBranch{Branch: "admin2", Env: "admin", From: []string{"release/"}}), ErrDeclaration},
