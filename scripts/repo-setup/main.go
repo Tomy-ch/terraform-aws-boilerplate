@@ -2,7 +2,12 @@
 // git / gh 操作を担うツール。
 //
 //	preflight           初期化してよい状態かを確かめる（v0.0.0 タグがあれば中止）
-//	bootstrap           タグを作り直し、develop / staging / production を用意してデフォルトブランチを移す
+//	bootstrap           タグを作り直し、env を持たないデプロイブランチを用意してデフォルトブランチを移す
+//
+// 作るブランチ（branches.json の deploy のうち env を持たないもの）と初期のデフォルトブランチ（release_base）、
+// 初期化前に居たら消す線は、分岐のパターンの宣言（`.github/settings/branches.json`、ADR-0603 決定1）を直下から読む。
+// env を持つデプロイブランチは、そこへの merge が apply を起動するので作らない（make create-deploy-branch が作る）。
+//
 //	prune-release-notes v0.0.0.md 以外のリリースノートを削除する
 //
 // ラベル・ルールセット・ワークフローの初期化と全体の連鎖は setup-repository.mk が持ち、
@@ -21,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -28,21 +34,50 @@ import (
 const (
 	// initialTag は、初期化後に唯一残るタグ。
 	initialTag     = "v0.0.0"
-	defaultBranch  = "production"
 	releaseNoteDir = ".github/release"
-	// stepsPerTag は、タグ 1 件あたりの削除手順数（ローカル + リモート）。
-	stepsPerTag = 2
-	// commandTimeout は、git / gh 1 コマンドあたりの上限。
+	stepsPerTag    = 2
 	commandTimeout = 120 * time.Second
 )
 
 var (
-	managedBranches = []string{"develop", "staging", defaultBranch}
-	// errInitialTagExists は、初期タグが既に在り初期化してはいけないことを表す。
 	errInitialTagExists  = xerrors.New("があります。初期化を停止します")
 	errUsage             = xerrors.New("❌ usage: repo-setup <preflight|bootstrap|prune-release-notes>")
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
+	errNoReleaseBase     = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
+	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
 )
+
+// setup は、宣言から決めた初期化の対象である。
+type setup struct {
+	// branches は、初期化で作るブランチ（env を持たないデプロイブランチ。宣言の順）。
+	branches []string
+	// base は、初期化後のデフォルトブランチ（release_base）。
+	base string
+	decl branchdecl.Branches
+}
+
+// setupFromDecl は、宣言から初期化の対象を決めます。release_base が env を持てば失敗する —— 初期化はそれを
+// 作らないので、デフォルトブランチを無いブランチへ移すことになる。
+func setupFromDecl(decl branchdecl.Branches) (setup, error) {
+	base, ok := decl.ReleaseBase()
+	if !ok {
+		return setup{}, errNoReleaseBase
+	}
+
+	if base.Env != "" {
+		return setup{}, xerrors.Wrap(errBaseHasEnv, "❌ release_base の "+base.Branch)
+	}
+
+	branches := make([]string, 0, len(decl.Deploy))
+
+	for _, d := range decl.Deploy {
+		if d.Env == "" {
+			branches = append(branches, d.Branch)
+		}
+	}
+
+	return setup{branches: branches, base: base.Branch, decl: decl}, nil
+}
 
 // step は、実行する 1 コマンド。allowFail はリモートに対象が無い場合など、
 // 失敗しても続行してよい操作に付ける。
@@ -67,17 +102,33 @@ func main() {
 	}
 }
 
-// start は、作業ディレクトリがリポジトリの直下であることを確かめてから execute を呼びます。
-// 手順はリリースノートを直下からの相対パスで読む。
+// start は、作業ディレクトリがリポジトリの直下であることを確かめ、分岐のパターンの宣言を直下から読んでから
+// execute を呼びます。手順はリリースノートを直下からの相対パスで読む。宣言を読めないか初期化の対象を
+// 決められなければ、手順を1つも実行しない。
 func start(r runner, args []string, getwd, toplevel func() (string, error)) error {
 	if err := reporoot.Require(getwd, toplevel); err != nil {
 		return err
 	}
 
-	return execute(r, args)
+	root, err := getwd()
+	if err != nil {
+		return xerrors.Wrap(err, "作業ディレクトリの取得")
+	}
+
+	decl, err := branchdecl.Read(filepath.Join(root, branchdecl.File))
+	if err != nil {
+		return err
+	}
+
+	s, err := setupFromDecl(decl)
+	if err != nil {
+		return err
+	}
+
+	return execute(r, s, args)
 }
 
-func execute(r runner, args []string) error {
+func execute(r runner, s setup, args []string) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -86,7 +137,7 @@ func execute(r runner, args []string) error {
 	case "preflight":
 		return runPreflight()
 	case "bootstrap":
-		return runBootstrap(r)
+		return runBootstrap(r, s)
 	case "prune-release-notes":
 		return runPruneReleaseNotes()
 	default:
@@ -96,7 +147,6 @@ func execute(r runner, args []string) error {
 
 func (s step) String() string { return s.name + " " + strings.Join(s.args, " ") }
 
-// parseLines は、コマンド出力を空行を除いた行の並びへ変換します。
 func parseLines(out string) []string {
 	lines := make([]string, 0)
 
@@ -109,7 +159,6 @@ func parseLines(out string) []string {
 	return lines
 }
 
-// tagDeletionSteps は、既存タグをローカルとリモートの両方から消す手順を返します。
 // リモートに存在しないタグの削除は失敗しても続行します（ローカルにだけ在るタグは正常な状態）。
 func tagDeletionSteps(tags []string) []step {
 	steps := make([]step, 0, len(tags)*stepsPerTag)
@@ -132,16 +181,16 @@ func initialTagSteps() []step {
 }
 
 // branchCreationSteps は、まだ無いブランチだけを作る手順と、既存のためスキップした名前を返します。
-func branchCreationSteps(existing []string) ([]step, []string) {
+func branchCreationSteps(managed, existing []string) ([]step, []string) {
 	have := make(map[string]bool, len(existing))
 	for _, b := range existing {
 		have[b] = true
 	}
 
-	steps := make([]step, 0, len(managedBranches))
+	steps := make([]step, 0, len(managed))
 	skipped := make([]string, 0)
 
-	for _, b := range managedBranches {
+	for _, b := range managed {
 		if have[b] {
 			skipped = append(skipped, b)
 
@@ -154,25 +203,19 @@ func branchCreationSteps(existing []string) ([]step, []string) {
 	return steps, skipped
 }
 
-func branchPushStep() step {
-	return step{name: "git", args: append([]string{"push", "origin"}, managedBranches...)}
+func branchPushStep(managed []string) step {
+	return step{name: "git", args: append([]string{"push", "origin"}, managed...)}
 }
 
-func defaultBranchStep(repo string) step {
-	return step{name: "gh", args: []string{"api", "-X", "PATCH", "repos/" + repo, "-f", "default_branch=" + defaultBranch}}
+func defaultBranchStep(repo, base string) step {
+	return step{name: "gh", args: []string{"api", "-X", "PATCH", "repos/" + repo, "-f", "default_branch=" + base}}
 }
 
-// isReleaseBranch は、初期化時に破棄してよいリリースブランチかを返します。
-// 判定は前方一致ではなく部分一致（hotfix/release/... のような名前も対象に含める）。
-func isReleaseBranch(name string) bool {
-	return strings.Contains(name, "release/")
-}
-
-// originalBranchCleanupSteps は、初期化前に居たブランチがリリースブランチだった場合に
-// それを削除する手順を返します。リリースブランチでなければ何もしません。
+// originalBranchCleanupSteps は、初期化前に居たブランチが宣言の線（リリース線か hotfix の線）だった場合に
+// それを削除する手順を返します。線でなければ何もしません。
 // リモートに未 push のブランチもあり得るため、リモート削除の失敗は許容します。
-func originalBranchCleanupSteps(original string) []step {
-	if !isReleaseBranch(original) {
+func originalBranchCleanupSteps(decl branchdecl.Branches, original string) []step {
+	if !decl.IsLine(original) {
 		return nil
 	}
 
@@ -182,7 +225,6 @@ func originalBranchCleanupSteps(original string) []step {
 	}
 }
 
-// releaseNotesToDelete は、リリースノートのうち削除すべきものを返します。
 func releaseNotesToDelete(entries []string) []string {
 	keep := initialTag + ".md"
 	targets := make([]string, 0, len(entries))
@@ -208,16 +250,16 @@ func runPreflight() error {
 	return nil
 }
 
-func runBootstrap(r runner) error {
+func runBootstrap(r runner, s setup) error {
 	if err := resetTags(r); err != nil {
 		return err
 	}
 
-	if err := createBranches(r); err != nil {
+	if err := createBranches(r, s.branches); err != nil {
 		return err
 	}
 
-	return moveDefaultBranch(r)
+	return moveDefaultBranch(r, s)
 }
 
 func resetTags(r runner) error {
@@ -251,18 +293,18 @@ func resetTags(r runner) error {
 	return nil
 }
 
-func createBranches(r runner) error {
+func createBranches(r runner, managed []string) error {
 	log.Printf("🔧 ブランチ作成を開始します...")
 
-	existing := make([]string, 0, len(managedBranches))
+	existing := make([]string, 0, len(managed))
 
-	for _, b := range managedBranches {
+	for _, b := range managed {
 		if r.branchExists(b) {
 			existing = append(existing, b)
 		}
 	}
 
-	steps, skipped := branchCreationSteps(existing)
+	steps, skipped := branchCreationSteps(managed, existing)
 
 	for _, b := range skipped {
 		log.Printf("🟡 ブランチ 【%s】 は既に存在します。作成処理をスキップします。", b)
@@ -272,7 +314,7 @@ func createBranches(r runner) error {
 		return err
 	}
 
-	if err := r.run(branchPushStep()); err != nil {
+	if err := r.run(branchPushStep(managed)); err != nil {
 		return err
 	}
 
@@ -281,7 +323,7 @@ func createBranches(r runner) error {
 	return nil
 }
 
-func moveDefaultBranch(r runner) error {
+func moveDefaultBranch(r runner, s setup) error {
 	log.Printf("🔧 デフォルトブランチの設定を開始します...")
 
 	repo, err := r.output("gh", "repo", "view", "--json", "name,owner", "-q", `.owner.login + "/" + .name`)
@@ -289,7 +331,7 @@ func moveDefaultBranch(r runner) error {
 		return err
 	}
 
-	if err := r.run(defaultBranchStep(strings.TrimSpace(repo))); err != nil {
+	if err := r.run(defaultBranchStep(strings.TrimSpace(repo), s.base)); err != nil {
 		return err
 	}
 
@@ -303,15 +345,15 @@ func moveDefaultBranch(r runner) error {
 		return err
 	}
 
-	if err := r.run(step{name: "git", args: []string{"switch", defaultBranch}}); err != nil {
+	if err := r.run(step{name: "git", args: []string{"switch", s.base}}); err != nil {
 		return err
 	}
 
-	if err := r.runAll(originalBranchCleanupSteps(strings.TrimSpace(original))); err != nil {
+	if err := r.runAll(originalBranchCleanupSteps(s.decl, strings.TrimSpace(original))); err != nil {
 		return err
 	}
 
-	log.Printf("✅ デフォルトブランチの設定を終了します。")
+	log.Printf("✅ デフォルトブランチを %s に設定しました。", s.base)
 
 	return nil
 }
@@ -377,7 +419,7 @@ func branchExists(branch string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
-	//nolint:gosec // branch は managedBranches の要素
+	//nolint:gosec // branch は宣言の deploy の名前（branchdecl の検証が形を限る）
 	return exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
 }
 

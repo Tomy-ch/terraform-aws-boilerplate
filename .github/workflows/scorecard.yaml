@@ -2,9 +2,8 @@ name: OpenSSF Scorecard
 
 # 供給網の衛生の週次報告。何も止めない。結果は code scanning へ送るだけで、外部へ公開しない（ADR-0501 決定6）。
 #
-# Scorecard の push / schedule は既定ブランチだけを評価する。既定ブランチはリリース線
-# （release/*）である前提で、push は release/* に限り、job の if: で既定ブランチに絞る。
-# 既定ブランチが release/* の外へ移ったら、push の branches: も合わせる。
+# Scorecard の push / schedule は既定ブランチだけを評価する。既定ブランチは線のどれかである
+# 前提で、push は線（branches.json の lines）に限り、job の if: で既定ブランチに絞る。
 #
 # private なリポジトリで GitHub Advanced Security が無い場合、SARIF を code scanning へ送れない。
 # その派生リポジトリはこの workflow と、.github/egress.toml の `scorecard.yaml:scorecard` を
@@ -12,8 +11,9 @@ name: OpenSSF Scorecard
 
 on:
   push:
-    branches:
+    branches: # branch-set: lines
       - 'release/**'
+      - 'hotfix/**'
   schedule:
     - cron: '30 2 * * 1'
 

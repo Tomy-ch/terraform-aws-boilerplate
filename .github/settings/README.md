@@ -21,7 +21,15 @@
 
 ## branches.json
 
-分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` はデプロイブランチ（固定名で保護するブランチ）の一覧、`lines` は接頭辞で表すブランチの線（`/` で終わる）です。保護対象は両者の和です。`revert` は apply の失敗を戻す revert のブランチの接頭辞（`/` で終わる）で、保護しません。無いか `lines` の接頭辞と重なれば `repo-settings-check` が落ちます（[`.github/workflows/README.md`](../workflows/README.md) の「apply の失敗の revert」）。
+分岐のパターンの単一宣言です（ADR-0603 決定1）。`deploy` はデプロイブランチ（固定名で保護するブランチ）の一覧、`lines` は接頭辞で表すブランチの線（`/` で終わる）を役割ごとに持ちます。保護対象は両者の和です。`revert` は apply の失敗を戻す revert のブランチの接頭辞（`/` で終わる）で、保護しません。無いか `lines` の接頭辞と重なれば `repo-settings-check` が落ちます（[`.github/workflows/README.md`](../workflows/README.md) の「apply の失敗の revert」）。
+
+| キー | 意味 |
+| --- | --- |
+| `lines.release` | リリース線の接頭辞。`make base-branch` が最新を選び、`make branch-*` が切る線です |
+| `lines.hotfix` | hotfix の線の接頭辞。`make hotfix-patch` が切る線です |
+| `line_version` | 線の名前のうち接頭辞に続く版の形。受け付けるのは `v<major>.<minor>.<patch>` だけで、タグの版も同じ形です |
+
+役割は `release` と `hotfix` の2つで、どちらも欠かせず、同じ接頭辞を持てません。
 
 **デプロイブランチ**は、env ごとに1つ置く固定名の保護ブランチで、そこへの merge がその env への apply を起動します（ADR-0601 決定4）。リリース線（`release/*`）と hotfix の線（`hotfix/*`）は変更を集める線で、デプロイブランチを持つ env へ apply しません。`deploy` の各要素は次の形です。
 
@@ -34,16 +42,16 @@
 | `branch` | デプロイブランチの名前。保護対象に入ります |
 | `env` | そのブランチへの merge が apply する env（`env/<env>/` の root）。env をまだ配線していないデプロイブランチは持ちません |
 | `from` | そのデプロイブランチが変更を受け取る線の接頭辞の一覧。各要素は `lines` のどれかで、重複できません。`env` を持つ要素だけが持ち、持つときは1つ以上が必須です |
+| `release_base` | タグを打ち、新しい線を切る基点のブランチの印。宣言にちょうど1つ置きます |
 
 - デプロイブランチへ入る Pull Request は、デフォルトブランチがその `from` の線のどれかであり、head の commit がデフォルトブランチから到達でき、merge の結果の木が head の木と一致するときだけ merge できます（ADR-0603 決定31）。これを見るのが required の `deploy-source-check` です（[`.github/workflows/README.md`](../workflows/README.md) の「apply の job」）。
 - `env` を持つ要素は、`env/` の root が `deployment-identity` へ渡す `env` とちょうど対応します。`env` ごとにデプロイブランチが1つ在り、`env` を持つ要素がどれも `deployment-identity` の `env` を指すことを `repo-settings-check` が見ます。
-- `branch` の重複、`env` の重複、`lines` に無いか重複する `from`、`env` を持つ要素の空の `from`、`env` を持たない要素の `from` は、`repo-settings-check` が落とします。
+- `branch` の重複、`env` の重複、`lines` に無いか重複する `from`、`env` を持つ要素の空の `from`、`env` を持たない要素の `from`、`lines` の役割の欠けと役割どうしの接頭辞の重複、`v<major>.<minor>.<patch>` でない `line_version`、`release_base` が0件か2件以上であることは、`repo-settings-check` が落とします。
 
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
-- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの）の `on.push.branches`。`on.push.branches` はその env のデプロイブランチ1つで、`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
-- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）
-- まだパターンを自分で持つもの: `scripts/` のブランチ操作（`base-branch` / `release` / `repo-setup`）と、走査の workflow（checkov / kics / semgrep / trivy-config / zizmor / trivy-release-gate / trivy-fs / govulncheck / scorecard）の起動条件です。生成の対象ではなく、デプロイブランチ `admin` を含みません。`admin` への push は走査されません（#204）
+- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
+- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
 

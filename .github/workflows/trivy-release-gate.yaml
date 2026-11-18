@@ -10,10 +10,11 @@ name: Release Dependency Scan
 
 on:
   push:
-    branches:
-      - develop
-      - staging
-      - production
+    branches: # branch-set: deploy
+      - 'admin'
+      - 'production'
+      - 'staging'
+      - 'develop'
   # 判定は base_ref に依るので、base の付け替え（edited）でも走り直す。付け替える前の skip が、
   # 付け替えた後のデプロイブランチ宛の Pull Request に残らないようにする。
   pull_request:
@@ -33,7 +34,7 @@ concurrency:
 jobs:
   trivy-fs-release:
     # Why the trigger condition lives in a job: README.md の「必須検査はすべての Pull Request で報告される」.
-    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["develop", "staging", "production"]'), github.base_ref) }}
+    if: ${{ github.event_name != 'pull_request' || contains(fromJSON('["admin", "production", "staging", "develop"]'), github.base_ref) }} # branch-set: deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
