@@ -49,8 +49,9 @@ func writeRootNote(t *testing.T, root, v string) {
 }
 
 // fakeTools は、呼び出しごとに作業ディレクトリと引数を1行ずつ記録する git / gh の偽物を PATH の先頭へ置く環境変数と、
-// 記録を読む関数を返す。git の rev-parse だけは本物へ渡し、ほかは何もせず成功する。
-func fakeTools(t *testing.T) (string, func() []call) {
+// 記録を読む関数を返す。git の rev-parse だけは本物へ渡す。引数なしの `git tag` は tags を出力し、`git ls-remote` は
+// 一致が無いときの終了コード 2 で終わる。ほかは何もせず成功する。
+func fakeTools(t *testing.T, tags string) (string, func() []call) {
 	t.Helper()
 
 	realGit, err := exec.LookPath("git")
@@ -58,7 +59,9 @@ func fakeTools(t *testing.T) (string, func() []call) {
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
 	record := fmt.Sprintf("printf '%%s\\t%%s %%s\\n' \"$(pwd -P)\" \"$(basename \"$0\")\" \"$*\" >> %q\n", log)
-	git := "#!/bin/sh\n" + record + fmt.Sprintf("if [ \"$1\" = rev-parse ]; then exec %q \"$@\"; fi\n", realGit)
+	git := "#!/bin/sh\n" + record + fmt.Sprintf("if [ \"$1\" = rev-parse ]; then exec %q \"$@\"; fi\n", realGit) +
+		fmt.Sprintf("if [ \"$*\" = tag ]; then printf '%%s\\n' %q; fi\n", tags) +
+		"if [ \"$1\" = ls-remote ]; then exit 2; fi\n"
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(git), 0o700))                 //nolint:gosec // 偽物の道具は実行できなければならない
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\n"+record), 0o700)) //nolint:gosec // 同上
 
@@ -97,25 +100,32 @@ func realDir(t *testing.T, dir string) string {
 	return got
 }
 
+// runRecipe は、root で make target を走らせ、出力と偽物の git / gh の記録を返す。tags は fakeTools へ渡す。
+func runRecipe(t *testing.T, root, tags, target string, args []string, env ...string) (string, []call, error) {
+	t.Helper()
+	path, calls := fakeTools(t, tags)
+	cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", root, "-s", "--no-print-directory", target}, args...)...)
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
+			strings.HasPrefix(kv, "VERSION=") || strings.HasPrefix(kv, "RELEASE_TAG_VERSION=") || strings.HasPrefix(kv, "PATH=") ||
+			strings.HasPrefix(kv, "GOFLAGS=")
+	})
+	// go build の VCS の刻印は git を呼ぶ。偽物の記録を手順の呼び出しだけにする。
+	cmd.Env = append(cmd.Env, append(env, path, "GOFLAGS=-buildvcs=false")...)
+	out, err := cmd.CombinedOutput()
+	return string(out), calls(), err
+}
+
+func tagCreate(v string) string { return "git tag -a " + v + " --cleanup=verbatim -F " + notePath(v) }
+
 // TestTagVersionRecipe は、.makefiles/github/operation/release-tag.mk の tag-version を、直下を写した一時ディレクトリで
 // 実際に走らせる。ツールは本物をビルドし、git / gh だけを偽物にする。版の検証は Test_resolveExplicit が持つ。
 func TestTagVersionRecipe(t *testing.T) {
 	t.Parallel()
 
-	tagCreate := func(v string) string { return "git tag -a " + v + " --cleanup=verbatim -F " + notePath(v) }
 	recipe := func(t *testing.T, root string, args []string, env ...string) (string, []call, error) {
 		t.Helper()
-		path, calls := fakeTools(t)
-		cmd := exec.CommandContext(t.Context(), "make", append([]string{"-C", root, "-s", "--no-print-directory", "tag-version"}, args...)...)
-		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") ||
-				strings.HasPrefix(kv, "VERSION=") || strings.HasPrefix(kv, "RELEASE_TAG_VERSION=") || strings.HasPrefix(kv, "PATH=") ||
-				strings.HasPrefix(kv, "GOFLAGS=")
-		})
-		// go build の VCS の刻印は git を呼ぶ。偽物の記録を手順の呼び出しだけにする。
-		cmd.Env = append(cmd.Env, append(env, path, "GOFLAGS=-buildvcs=false")...)
-		out, err := cmd.CombinedOutput()
-		return string(out), calls(), err
+		return runRecipe(t, root, "", "tag-version", args, env...)
 	}
 
 	t.Run("正常系", func(t *testing.T) {
@@ -199,12 +209,12 @@ func TestEntryRequiresRepoRoot(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "release")
 	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".").CombinedOutput()
 	require.NoError(t, err, string(out))
-	start := func(t *testing.T, dir string) (string, []call, error) {
+	start := func(t *testing.T, dir string, env ...string) (string, []call, error) {
 		t.Helper()
-		path, calls := fakeTools(t)
+		path, calls := fakeTools(t, "")
 		cmd := exec.CommandContext(t.Context(), bin, "tag", "-version", "v0.1.0")
 		cmd.Dir = dir
-		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }), path)
+		cmd.Env = append(append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }), path), env...)
 		out, err := cmd.CombinedOutput()
 		return string(out), calls(), err
 	}
@@ -233,4 +243,56 @@ func TestEntryRequiresRepoRoot(t *testing.T) {
 		assert.Contains(t, got, "リポジトリの直下を解決できません")
 		assert.Empty(t, lines(calls))
 	})
+
+	t.Run("GIT_DIR が立っていれば直下の下からでも手順に入らない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		out, err := exec.CommandContext(t.Context(), "git", "init", "-q", root).CombinedOutput()
+		require.NoError(t, err, string(out))
+		sub := filepath.Join(root, "scripts")
+		writeRootNote(t, sub, "v0.1.0")
+
+		got, calls, err := start(t, sub, "GIT_DIR="+filepath.Join(root, ".git"))
+		require.Error(t, err, got)
+		assert.Contains(t, got, "GIT_DIR: が環境に立っています")
+		assert.Empty(t, lines(calls))
+	})
+}
+
+// TestBumpRecipes は、make の bump 系の入口が、最新のタグ v1.2.3 から打つタグと切るブランチの名前へ進むことを見る。
+// 版の計算は Test_bump が持つ。
+func TestBumpRecipes(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		target string
+		note   string
+		want   []string
+	}{
+		{target: "tag-patch", note: "v1.2.4", want: []string{tagCreate("v1.2.4"), "git push origin v1.2.4"}},
+		{target: "tag-minor", note: "v1.3.0", want: []string{tagCreate("v1.3.0"), "git push origin v1.3.0"}},
+		{target: "tag-major", note: "v2.0.0", want: []string{tagCreate("v2.0.0"), "git push origin v2.0.0"}},
+		{target: "branch-patch", want: []string{"git switch -c release/v1.2.4 origin/production", "gh repo edit --default-branch release/v1.2.4"}},
+		{target: "branch-minor", want: []string{"git switch -c release/v1.3.0 origin/production", "gh repo edit --default-branch release/v1.3.0"}},
+		{target: "branch-major", want: []string{"git switch -c release/v2.0.0 origin/production", "gh repo edit --default-branch release/v2.0.0"}},
+		{target: "hotfix-patch", want: []string{"git switch -c hotfix/v1.2.4 origin/production", "gh repo edit --default-branch hotfix/v1.2.4"}},
+	} {
+		t.Run(tc.target+" は直下で "+tc.want[0]+" へ進む", func(t *testing.T) {
+			t.Parallel()
+			root := mirrorRoot(t)
+			if tc.note != "" {
+				writeRootNote(t, root, tc.note)
+			}
+
+			out, calls, err := runRecipe(t, root, "v1.2.3", tc.target, nil)
+			require.NoError(t, err, out)
+			got := lines(calls)
+			for _, want := range tc.want {
+				assert.Contains(t, got, want)
+			}
+			for _, c := range calls {
+				assert.Equal(t, realDir(t, root), c.dir, "手順は直下で走る: %s", c.line)
+			}
+		})
+	}
 }

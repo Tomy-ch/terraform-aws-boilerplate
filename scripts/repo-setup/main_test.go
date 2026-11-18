@@ -1014,7 +1014,8 @@ func Test_execute(t *testing.T) {
 func Test_start(t *testing.T) {
 	t.Parallel()
 
-	same := func() (string, error) { return "/", nil }
+	dir := t.TempDir()
+	same := func() (string, error) { return dir, nil }
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -1033,7 +1034,8 @@ func Test_start(t *testing.T) {
 		t.Run("直下でなければ手順を 1 つも実行しない", func(t *testing.T) {
 			t.Parallel()
 			f := &fakeRunner{}
-			sub := func() (string, error) { return os.TempDir(), nil }
+			other := t.TempDir()
+			sub := func() (string, error) { return other, nil }
 
 			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, sub, same), reporoot.ErrNotRoot)
 			assert.Empty(t, f.calls)
