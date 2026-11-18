@@ -1134,14 +1134,17 @@ func Test_githubGet(t *testing.T) {
 
 		//nolint:paralleltest // 親が t.Setenv を使用するため並列化できない
 		t.Run("接続できなければエラーを返す", func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-			url := srv.URL
-			srv.Close()
+			url := githubAPIStub(t, func(w http.ResponseWriter, _ *http.Request) {
+				if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			})
 
 			var out payload
-			_, err := githubGet(t.Context(), url, &out)
+			st, err := githubGet(t.Context(), url, &out)
 
-			require.Error(t, err)
+			require.ErrorContains(t, err, url)
+			assert.Zero(t, st)
 		})
 
 		//nolint:paralleltest // 親が t.Setenv を使用するため並列化できない
@@ -1241,6 +1244,36 @@ func Test_refAgeDays(t *testing.T) {
 			require.ErrorContains(t, err, "commits/"+shaCheckout)
 		})
 
+		t.Run("Release が 200 で本文が JSON でなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			base := githubAPIStub(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/commits/") {
+					writeCommitDate(w, 30)
+					return
+				}
+				_, _ = w.Write([]byte("not json"))
+			})
+
+			_, err := refAgeDays(t.Context(), base, repo, tag, shaCheckout)
+
+			require.ErrorContains(t, err, "invalid character")
+		})
+
+		t.Run("commit が 200 で本文が JSON でなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			base := githubAPIStub(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/commits/") {
+					_, _ = w.Write([]byte("not json"))
+					return
+				}
+				writePublishedAt(w, 30)
+			})
+
+			_, err := refAgeDays(t.Context(), base, repo, tag, shaCheckout)
+
+			require.ErrorContains(t, err, "invalid character")
+		})
+
 		t.Run("Release も commit も日時を持たなければ日時不明エラーを返す", func(t *testing.T) {
 			t.Parallel()
 			base := githubAPIStub(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1258,13 +1291,16 @@ func Test_refAgeDays(t *testing.T) {
 
 		t.Run("Release の取得で通信に失敗したらエラーを返す", func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-			base := srv.URL
-			srv.Close()
+			base := githubAPIStub(t, func(w http.ResponseWriter, _ *http.Request) {
+				if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			})
 
 			_, err := refAgeDays(t.Context(), base, repo, tag, shaCheckout)
 
 			require.ErrorContains(t, err, "/releases/tags/"+tag)
+			assert.NotErrorIs(t, err, errGitHubAPIStatus)
 		})
 
 		t.Run("commit の取得で通信に失敗したらエラーを返す", func(t *testing.T) {
