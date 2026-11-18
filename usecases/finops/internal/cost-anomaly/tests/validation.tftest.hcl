@@ -71,3 +71,41 @@ run "rejects_name_prefix_with_upper_case" {
 
   expect_failures = [var.name_prefix]
 }
+
+run "accepts_smallest_threshold" {
+  command = plan
+
+  variables {
+    threshold_usd = 0.01
+  }
+}
+
+run "rejects_name_prefix_with_trailing_hyphen" {
+  command = plan
+
+  variables {
+    name_prefix = "tabp-"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_name_prefix_with_leading_hyphen" {
+  command = plan
+
+  variables {
+    name_prefix = "-tabp"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_non_topic_arn" {
+  command = plan
+
+  variables {
+    notification_topic_arn = "arn:aws:sqs:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  }
+
+  expect_failures = [var.notification_topic_arn]
+}

@@ -78,13 +78,14 @@ run "subscription" {
   }
 }
 
-# monitor の ARN は plan では決まらないので、形のある値を与えて apply で配線を見る。
+# monitor の ARN は plan では決まらないので、plan の時点で形のある値を与えて配線を見る。
 run "subscription_points_to_monitor" {
-  command = apply
+  command = plan
 
   override_resource {
-    target = aws_ce_anomaly_monitor.this
-    values = { arn = "arn:aws:ce::123456789012:anomalymonitor/1234abcd-12ab-34cd-56ef-1234567890ab" }
+    target          = aws_ce_anomaly_monitor.this
+    override_during = plan
+    values          = { arn = "arn:aws:ce::123456789012:anomalymonitor/1234abcd-12ab-34cd-56ef-1234567890ab" }
   }
 
   assert {

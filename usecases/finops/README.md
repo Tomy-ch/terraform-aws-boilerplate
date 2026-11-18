@@ -66,7 +66,7 @@ unsupported:
 
 ## 検証方法
 
-- Unit Test（mock）: `internal/budget/tests/` が予算の種類・期間・単位・額の文字列・通知の3つの閾値と宛先の導出を完全一致で、Topic の partition とアカウントの precondition を、`internal/cost-anomaly/tests/` が monitor の種類と次元、subscription の宛先・閾値・monitor への配線と precondition を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が入力から内部の module への配線と、`env` からの monitor の次元の導出を、`reference/tests/plan.tftest.hcl` が reference の値で plan が通ることを確かめる
+- Unit Test（mock）: `internal/budget/tests/` が予算の種類・期間・単位・額の文字列・通知の3つの閾値と宛先の導出を完全一致で、Topic の partition とアカウントの precondition を、`internal/cost-anomaly/tests/` が monitor の種類と次元、subscription の宛先・閾値・monitor への配線と precondition を確かめる。`tests/validation.tftest.hcl` が公開 variable の型と検査を、`tests/wiring.tftest.hcl` が入力から内部の module への配線と、`env` からの monitor の次元の導出を確かめる。公開 output を持たないので、Contract Test は公開 variable の検査（`tests/validation.tftest.hcl`）が担う
 - Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、予算の action の作成と更新が無いこと、予算が通知を持ち、予算の通知と異常の subscription の宛先が同じ Topic 1つで email を持たないこと、頻度が `IMMEDIATE` であること、予算が費用を filter で絞らないことを確かめる。plan で決まらない値は落とす（`PLAN-FINOPS-*`。一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)）
 - Static Analysis（`make layer-check`・`make infra-code-gate`）: 層の規則と、resource の型の分類を、HCL のソースで確かめる
 - 実環境テストの形: scope.md 第11.1節の区分「破棄できるが、仕様で残るものがある」に当たる。sandbox では常駐の実体と AWS managed monitor の枠を共有して複製を作れないので、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の既定（作成して破棄する）を常駐の実体で行い、destroy して作り直す。残存は決定16 の期待残存と照合する

@@ -15,11 +15,35 @@ variables {
   anomaly_threshold_usd  = 20
 }
 
-run "accepts_every_env" {
+run "accepts_security_env" {
   command = plan
 
   variables {
     env = "security"
+  }
+}
+
+run "accepts_dev_env" {
+  command = plan
+
+  variables {
+    env = "dev"
+  }
+}
+
+run "accepts_stg_env" {
+  command = plan
+
+  variables {
+    env = "stg"
+  }
+}
+
+run "accepts_prd_env" {
+  command = plan
+
+  variables {
+    env = "prd"
   }
 }
 
@@ -125,4 +149,40 @@ run "rejects_anomaly_threshold_over_api_maximum" {
   }
 
   expect_failures = [var.anomaly_threshold_usd]
+}
+
+run "accepts_smallest_budget" {
+  command = plan
+
+  variables {
+    monthly_budget_usd = 0.01
+  }
+}
+
+run "accepts_api_maximum_anomaly_threshold" {
+  command = plan
+
+  variables {
+    anomaly_threshold_usd = 10000000000
+  }
+}
+
+run "rejects_empty_project" {
+  command = plan
+
+  variables {
+    project = ""
+  }
+
+  expect_failures = [var.project]
+}
+
+run "rejects_project_with_upper_case" {
+  command = plan
+
+  variables {
+    project = "Tabp"
+  }
+
+  expect_failures = [var.project]
 }

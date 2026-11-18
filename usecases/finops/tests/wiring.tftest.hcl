@@ -29,7 +29,7 @@ run "member_account_wiring" {
   }
 
   assert {
-    condition     = alltrue([for n in module.budget.budget.notifications : n.subscriber_sns_topic_arns == toset([var.notification_topic_arn])])
+    condition     = length(module.budget.budget.notifications) == 3 && alltrue([for n in module.budget.budget.notifications : n.subscriber_sns_topic_arns == toset([var.notification_topic_arn])])
     error_message = "notification_topic_arn が予算の通知の宛先に渡っていません。"
   }
 
@@ -60,6 +60,28 @@ run "management_account_wiring" {
   variables {
     env                    = "admin"
     notification_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-ops-notification"
+    monthly_budget_usd     = 300
+    anomaly_threshold_usd  = 50
+  }
+
+  assert {
+    condition     = module.budget.budget.limit_amount == "300.00"
+    error_message = "管理アカウントの monthly_budget_usd が予算の額に渡っていません。"
+  }
+
+  assert {
+    condition     = alltrue([for n in module.budget.budget.notifications : n.subscriber_sns_topic_arns == toset(["arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-ops-notification"])])
+    error_message = "管理アカウントの notification_topic_arn が予算の通知の宛先に渡っていません。"
+  }
+
+  assert {
+    condition     = module.cost_anomaly.subscription.subscriber == toset([{ type = "SNS", address = "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-ops-notification" }])
+    error_message = "管理アカウントの notification_topic_arn が異常の通知の宛先に渡っていません。"
+  }
+
+  assert {
+    condition     = contains([for e in module.cost_anomaly.subscription.threshold_expression[0].and : e.dimension[0].values], toset(["50"]))
+    error_message = "管理アカウントの anomaly_threshold_usd が異常の影響額の閾値に渡っていません。"
   }
 
   assert {

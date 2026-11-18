@@ -93,3 +93,41 @@ run "rejects_name_prefix_with_trailing_hyphen" {
 
   expect_failures = [var.name_prefix]
 }
+
+run "rejects_name_prefix_with_upper_case" {
+  command = plan
+
+  variables {
+    name_prefix = "Tabp-sandbox"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_name_prefix_with_leading_hyphen" {
+  command = plan
+
+  variables {
+    name_prefix = "-tabp"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "accepts_longest_topic_name" {
+  command = plan
+
+  variables {
+    notification_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:${join("", [for i in range(256) : "a"])}"
+  }
+}
+
+run "rejects_topic_name_over_256_chars" {
+  command = plan
+
+  variables {
+    notification_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:${join("", [for i in range(257) : "a"])}"
+  }
+
+  expect_failures = [var.notification_topic_arn]
+}
