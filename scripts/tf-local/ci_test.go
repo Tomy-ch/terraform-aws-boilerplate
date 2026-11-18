@@ -919,11 +919,47 @@ func Test_runPolicyResult(t *testing.T) {
 		require.ErrorIs(t, err, errPolicyCount)
 	})
 
+	t.Run("-namespace のときは、ほかの名前空間の評価を見ない", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runPolicyResult([]string{"-namespace", "plan.p", "-rego", regoWith(t, 1), fileWith(t, `[{"namespace":"plan.p","successes":1},{"namespace":"plan.q","successes":5}]`)}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません", got)
+	})
+
+	t.Run("-policy のときは、走査した全名前空間の件数と突き合わせる", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"})
+		got, err := runPolicyResult([]string{"-policy", dir, fileWith(t, `[{"namespace":"plan.p","successes":1}]`)}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません", got)
+	})
+
+	t.Run("-policy のときに宣言の無い名前空間の評価があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"})
+		_, err := runPolicyResult([]string{"-policy", dir, fileWith(t, `[{"namespace":"plan.p","successes":1},{"namespace":"plan.q","successes":1}]`)}, os.ReadFile)
+		require.ErrorIs(t, err, errPolicyCount)
+	})
+
+	t.Run("-policy の下に規則が1つも無ければ、結果を読まずに失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{"lib/plan.rego": "package plan.lib\n"})
+		_, err := runPolicyResult([]string{"-policy", dir, filepath.Join(t.TempDir(), "missing")}, os.ReadFile)
+		require.ErrorIs(t, err, errPolicyRules)
+	})
+
 	cases := map[string][]string{
-		"名前空間が無ければ失敗する":    {"-rego", "r", "f"},
-		"rego が無ければ使い方の誤り": {"-namespace", "plan.p", "f"},
-		"ファイルが1つでなければ失敗する": {"-namespace", "plan.p", "-rego", "r"},
-		"知らないフラグは失敗する":     {"-x", "plan.p", "f"},
+		"名前空間が無ければ失敗する":                {"-rego", "r", "f"},
+		"rego が無ければ使い方の誤り":             {"-namespace", "plan.p", "f"},
+		"ファイルが1つでなければ失敗する":             {"-namespace", "plan.p", "-rego", "r"},
+		"知らないフラグは失敗する":                 {"-x", "plan.p", "f"},
+		"-policy と -rego は併用できない":      {"-policy", "d", "-rego", "r", "f"},
+		"-policy と -namespace は併用できない": {"-policy", "d", "-namespace", "plan.p", "f"},
+		"-policy も -rego も無ければ失敗する":    {"f"},
 	}
 	for name, args := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1084,10 +1120,19 @@ func Test_oidcToken(t *testing.T) {
 func Test_policyResult(t *testing.T) {
 	t.Parallel()
 
+	entries := func(t *testing.T, data string) []policyEntry {
+		t.Helper()
+
+		got, err := parsePolicyResult([]byte(data))
+		require.NoError(t, err)
+
+		return got
+	}
+
 	t.Run("宣言した数の規則が評価され違反が無ければ件数を出す", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := policyResult("plan.p", 3, []byte(`[{"filename":"Combined","namespace":"plan.p","successes":2,"warnings":[{"msg":"w"}]}]`))
+		got, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"filename":"Combined","namespace":"plan.p","successes":2,"warnings":[{"msg":"w"}]}]`))
 		require.NoError(t, err)
 		assert.Equal(t, "✅ plan.p: 規則 3 件を評価し、違反はありません", got)
 	})
@@ -1095,7 +1140,7 @@ func Test_policyResult(t *testing.T) {
 	t.Run("同じ名前空間の複数の結果を合算する", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":1},{"namespace":"plan.p","successes":2}]`))
+		got, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":1},{"namespace":"plan.p","successes":2}]`))
 		require.NoError(t, err)
 		assert.Equal(t, "✅ plan.p: 規則 3 件を評価し、違反はありません", got)
 	})
@@ -1103,74 +1148,215 @@ func Test_policyResult(t *testing.T) {
 	t.Run("例外も評価として数える", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := policyResult("plan.p", 2, []byte(`[{"namespace":"plan.p","successes":1,"exceptions":[{"msg":"e"}]}]`))
+		got, err := policyResult(map[string]int{"plan.p": 2}, entries(t, `[{"namespace":"plan.p","successes":1,"exceptions":[{"msg":"e"}]}]`))
 		require.NoError(t, err)
 		assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません", got)
+	})
+
+	t.Run("複数の名前空間がすべて一致すれば、名前空間ごとに1行を名前の順で出す", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := policyResult(map[string]int{"plan.q": 1, "plan.p": 2}, entries(t, `[{"namespace":"plan.q","successes":1},{"namespace":"plan.p","successes":2}]`))
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n✅ plan.q: 規則 1 件を評価し、違反はありません", got)
+	})
+
+	t.Run("宣言も評価も0件の名前空間（テストの package）は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := policyResult(map[string]int{"plan.p": 1}, entries(t, `[{"namespace":"plan.p","successes":1},{"namespace":"plan.p_test","successes":0}]`))
+		require.NoError(t, err)
+		assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません", got)
 	})
 
 	t.Run("違反があれば、その文を持って失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":2,"failures":[{"msg":"[PLAN-STATE-01] x"}]}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":2,"failures":[{"msg":"[PLAN-STATE-01] x"}]}]`))
 		require.ErrorIs(t, err, errPolicyViolation)
 		assert.Contains(t, err.Error(), "[PLAN-STATE-01] x")
+	})
+
+	t.Run("複数の名前空間の違反は、すべての文を持って失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult(map[string]int{"plan.p": 1, "plan.q": 1}, entries(t, `[{"namespace":"plan.p","failures":[{"msg":"a"}]},{"namespace":"plan.q","failures":[{"msg":"b"}]}]`))
+		require.ErrorIs(t, err, errPolicyViolation)
+		assert.Contains(t, err.Error(), "a\nb")
 	})
 
 	t.Run("違反だけの結果は、0件の評価ではなく違反として失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":0,"failures":[{"msg":"a"}]}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"a"}]}]`))
 		require.ErrorIs(t, err, errPolicyViolation)
 	})
 
 	t.Run("評価された規則が宣言より少なければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":1}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":1}]`))
 		require.ErrorIs(t, err, errPolicyCount)
+		assert.Contains(t, err.Error(), "plan.p: 評価 1 件、宣言 3 件")
 	})
 
 	t.Run("評価された規則が宣言より多ければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":4}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":4}]`))
 		require.ErrorIs(t, err, errPolicyCount)
+	})
+
+	t.Run("宣言の無い名前空間を評価していれば失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult(map[string]int{"plan.p": 1}, entries(t, `[{"namespace":"plan.p","successes":1},{"namespace":"plan.q","successes":2}]`))
+		require.ErrorIs(t, err, errPolicyCount)
+		assert.Contains(t, err.Error(), "plan.q: 評価 2 件、宣言 0 件")
 	})
 
 	t.Run("名前空間の規則が0件の評価なら失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.p","successes":0}]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[{"namespace":"plan.p","successes":0}]`))
 		require.ErrorIs(t, err, errPolicyEmpty)
 	})
 
-	t.Run("別の名前空間の評価は数えない", func(t *testing.T) {
+	t.Run("宣言した名前空間が結果に無ければ（package が無い）失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[{"namespace":"plan.q","successes":3}]`))
+		_, err := policyResult(map[string]int{"plan.p": 1, "plan.q": 2}, entries(t, `[{"namespace":"plan.p","successes":1}]`))
 		require.ErrorIs(t, err, errPolicyEmpty)
+		assert.Contains(t, err.Error(), "plan.q")
+	})
+
+	t.Run("評価されない名前空間と件数の食い違いが混ざれば、両方を返す", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyResult(map[string]int{"plan.p": 1, "plan.q": 2}, entries(t, `[{"namespace":"plan.p","successes":3}]`))
+		require.ErrorIs(t, err, errPolicyEmpty)
+		require.ErrorIs(t, err, errPolicyCount)
 	})
 
 	t.Run("結果が空の配列なら失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(`[]`))
+		_, err := policyResult(map[string]int{"plan.p": 3}, entries(t, `[]`))
 		require.ErrorIs(t, err, errPolicyEmpty)
 	})
 
-	t.Run("空の入力なら失敗する", func(t *testing.T) {
+	t.Run("宣言が空なら、結果を見ずに失敗する", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte(""))
-		require.ErrorIs(t, err, errPolicyJSON)
+		_, err := policyResult(map[string]int{}, entries(t, `[]`))
+		require.ErrorIs(t, err, errPolicyRules)
 	})
+}
 
-	t.Run("JSON でなければ失敗する", func(t *testing.T) {
+func Test_parsePolicyResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("conftest の JSON の項目を読む", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := policyResult("plan.p", 3, []byte("FAIL - x"))
-		require.ErrorIs(t, err, errPolicyJSON)
+		got, err := parsePolicyResult([]byte(`[{"namespace":"plan.p","successes":2,"failures":[{"msg":"a"}]}]`))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "plan.p", got[0].Namespace)
+		assert.Equal(t, 2, got[0].Successes)
+		assert.Equal(t, "a", got[0].Failures[0].Msg)
 	})
+
+	cases := map[string]string{
+		"空の入力":     "",
+		"JSON でない": "FAIL - x",
+	}
+	for name, data := range cases {
+		t.Run(name+"なら失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parsePolicyResult([]byte(data))
+			require.ErrorIs(t, err, errPolicyJSON)
+		})
+	}
+}
+
+func Test_policyRules(t *testing.T) {
+	t.Parallel()
+
+	rule := "deny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n\n"
+
+	t.Run("package ごとに行頭の deny contains を数え、ファイルをまたいで合算する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{
+			"a.rego":              "package plan.a\n\n" + rule + rule,
+			"a_more.rego":         "package plan.a\n\n" + rule,
+			"a_test.rego":         "package plan.a_test\n",
+			"lib/input.rego":      "package plan.input\n\n" + rule,
+			"lib/plan.rego":       "package plan.lib\n",
+			"lib/README.md":       "deny contains x\n",
+			"lib/input_test.rego": "package plan.input_test\n",
+		})
+		got, err := policyRules(dir, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]int{"plan.a": 3, "plan.input": 1}, got)
+	})
+
+	t.Run("字下げした deny contains は規則として数えない", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{"a.rego": "package plan.a\n\n" + rule + "  " + rule})
+		got, err := policyRules(dir, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]int{"plan.a": 1}, got)
+	})
+
+	failures := map[string]map[string]string{
+		"規則が全体で0件":                    {"lib/plan.rego": "package plan.lib\n"},
+		"rego が1つも無い":                 {"README.md": "x\n"},
+		"package の行を持たない rego":        {"a.rego": rule},
+		"lib の外で規則を持たない rego":         {"a.rego": "package plan.a\n\n" + rule, "b.rego": "package plan.b\n"},
+		"テストの対象の package が無い":         {"a.rego": "package plan.a\n\n" + rule, "b_test.rego": "package plan.b_test\n"},
+		"テストの対象の package が規則を持たない":    {"a.rego": "package plan.a\n\n" + rule, "lib/b.rego": "package plan.b\n", "lib/b_test.rego": "package plan.b_test\n"},
+		"テストの package が _test で終わらない": {"a.rego": "package plan.a\n\n" + rule, "a_test.rego": "package plan.a\n"},
+	}
+	for name, files := range failures {
+		t.Run(name+"なら失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := policyRules(policyDirWith(t, files), os.ReadFile)
+			require.ErrorIs(t, err, errPolicyRules)
+		})
+	}
+
+	t.Run("ディレクトリが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := policyRules(filepath.Join(t.TempDir(), "missing"), os.ReadFile)
+		require.ErrorIs(t, err, errPolicyRules)
+	})
+
+	t.Run("rego を読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		dir := policyDirWith(t, map[string]string{"a.rego": "package plan.a\n\n" + rule})
+		_, err := policyRules(dir, func(string) ([]byte, error) { return nil, os.ErrPermission })
+		require.ErrorIs(t, err, errPolicyRules)
+	})
+}
+
+func policyDirWith(t *testing.T, files map[string]string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	}
+
+	return dir
 }
 
 func Test_fileSHA256(t *testing.T) {
