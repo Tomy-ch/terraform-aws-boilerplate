@@ -72,3 +72,7 @@ test_violation_subject_ids_disagree if {
 	e := object.union(eq, {"token.actions.githubusercontent.com:repository_id": "2000002"})
 	fixture.has("[PLAN-PUBTRUST-08]", p.deny) with input as trust([statement({"StringEquals": e})])
 }
+
+test_violation_declaration_empty if {
+	fixture.has("[PLAN-PUBTRUST-00]", p.deny) with input as trust([statement({"StringEquals": eq})]) with data.policy_plan as object.union(object.remove(data.policy_plan, ["publisher_trust"]), {"publisher_trust": {"roles": []}})
+}

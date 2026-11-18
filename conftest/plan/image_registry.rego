@@ -10,7 +10,9 @@ cfg := data.policy_plan.image_registry
 
 write_actions := {"ecr:completelayerupload", "ecr:initiatelayerupload", "ecr:putimage", "ecr:uploadlayerpart"}
 
-declared := [a | some k in ["repository", "lifecycle_policy", "repository_policy", "registry_scanning"]; a := cfg[k]]
+declared_keys := ["repository", "lifecycle_policy", "repository_policy", "registry_scanning"]
+
+declared := [a | some k in declared_keys; a := cfg[k]]
 
 instance(address) := regex.replace(address, `\.[a-z0-9_]+\.[a-z0-9_]+$`, "")
 
@@ -35,6 +37,22 @@ declared_repositories contains r if {
 scannings contains m if {
 	some m in managed
 	m.rc.type == "aws_ecr_registry_scanning_configuration"
+}
+
+# 宣言が欠けると、それを読む規則が未定義になって黙る。
+deny contains msg if {
+	some k in declared_keys
+	not is_string(object.get(object.get(data.policy_plan, "image_registry", {}), k, null))
+	msg := sprintf("[PLAN-ECR-00] 宣言 data.policy_plan.image_registry.%s が無いか、文字列ではありません", [k])
+}
+
+# 名前が plan で決まらない repository は下の規則のどれにも入らない。
+deny contains msg if {
+	some m in managed
+	m.rc.type == "aws_ecr_repository"
+	lib.strip_index(m.rc.address) == cfg.repository
+	not is_string(object.get(m.rc.change.after, "name", null))
+	msg := sprintf("[PLAN-ECR-00] %s: %s の name が plan で決まっていません。名前を入力から組んでください", [m.path, m.rc.address])
 }
 
 deny contains msg if {

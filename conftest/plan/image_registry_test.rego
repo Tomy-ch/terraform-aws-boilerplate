@@ -135,3 +135,12 @@ test_violation_second_repository_policy if {
 	other := rc("module.extra.aws_ecr_repository_policy.this", "aws_ecr_repository_policy", {"repository": "tabp-dev/api", "policy": json.marshal({"Statement": [deletion_denial]})})
 	fixture.has("[PLAN-ECR-10]", p.deny) with input as registry(array.concat(valid, [other]))
 }
+
+test_violation_declaration_key_absent if {
+	d := object.union(object.remove(data.policy_plan, ["image_registry"]), {"image_registry": object.remove(data.policy_plan.image_registry, ["repository_policy"])})
+	fixture.has("[PLAN-ECR-00]", p.deny) with input as registry(valid) with data.policy_plan as d
+}
+
+test_violation_repository_name_unknown if {
+	fixture.has("[PLAN-ECR-00]", p.deny) with input as registry(replace(0, repository({"force_delete": false})))
+}

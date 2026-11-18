@@ -6,7 +6,15 @@ import data.plan.lib
 
 default roles := []
 
-roles := data.policy_plan.publisher_trust.roles
+roles := data.policy_plan.publisher_trust.roles if well_formed_roles(data.policy_plan.publisher_trust.roles)
+
+well_formed_roles(rs) if {
+	is_array(rs)
+	count(rs) > 0
+	every r in rs {
+		is_string(r)
+	}
+}
 
 provider_pattern := `^arn:aws[a-z-]*:iam::[0-9]{12}:oidc-provider/token\.actions\.githubusercontent\.com$`
 
@@ -15,6 +23,12 @@ trusts contains r if {
 	r.document.type == "aws_iam_role"
 	r.document.attr == "assume_role_policy"
 	lib.strip_index(r.document.address) in roles
+}
+
+# 宣言が欠けると、どの role も見ずに黙る。
+deny contains msg if {
+	not well_formed_roles(object.get(object.get(data.policy_plan, "publisher_trust", {}), "roles", null))
+	msg := "[PLAN-PUBTRUST-00] 宣言 data.policy_plan.publisher_trust.roles が無いか、1件以上の文字列の配列ではありません"
 }
 
 deny contains msg if {

@@ -92,3 +92,9 @@ test_violation_managed_policy_attached if {
 	]
 	fixture.has("[PLAN-PUB-04]", p.deny) with input as fixture.plan(rcs)
 }
+
+test_violation_declaration_key_absent if {
+	ir := object.union(object.remove(data.policy_plan.image_registry, ["publisher"]), {"publisher": object.remove(data.policy_plan.image_registry.publisher, ["attachments_exclusive"])})
+	d := object.union(object.remove(data.policy_plan, ["image_registry"]), {"image_registry": ir})
+	fixture.has("[PLAN-PUB-00]", p.deny) with input as with_policy([publish, login]) with data.policy_plan as d
+}

@@ -18,7 +18,9 @@ login_actions := {"ecr:getauthorizationtoken"}
 # 同じ module の instance（module.image_registry.module.repository["api"]）。
 instance(address) := regex.replace(address, `\.[a-z0-9_]+\.[a-z0-9_]+$`, "")
 
-declared := [a | some k in ["role", "policy", "policies_exclusive", "attachments_exclusive"]; a := cfg.publisher[k]]
+declared_keys := ["role", "policy", "policies_exclusive", "attachments_exclusive"]
+
+declared := [a | some k in declared_keys; a := cfg.publisher[k]]
 
 of(path, inst, address) := [c.rc | some c in lib.changes; c.path == path; lib.strip_index(c.rc.address) == address; instance(c.rc.address) == inst]
 
@@ -33,6 +35,13 @@ allows(body) := [s | some s in lib.statements(body); s.Effect == "Allow"]
 repository_name(path, inst) := rc.change.after.name if {
 	some rc in of(path, inst, cfg.repository)
 	is_string(rc.change.after.name)
+}
+
+# 宣言が欠けると、それを読む規則が未定義になって黙る。
+deny contains msg if {
+	some k in declared_keys
+	not is_string(object.get(object.get(object.get(data.policy_plan, "image_registry", {}), "publisher", {}), k, null))
+	msg := sprintf("[PLAN-PUB-00] 宣言 data.policy_plan.image_registry.publisher.%s が無いか、文字列ではありません", [k])
 }
 
 deny contains msg if {

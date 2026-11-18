@@ -291,6 +291,13 @@ image_reductions contains {"root": root_of(p.f.path), "path": p.f.path, "address
 	retained(p.rc.change.after) < retained(p.before)
 }
 
+# 変更の後の件数を読めなければ、減るかを plan で読めない。
+unknown_image_lifecycles contains {"path": p.f.path, "address": p.rc.address} if {
+	some p in image_priors
+	retained(p.before)
+	not retained(p.rc.change.after)
+}
+
 verb(actions) := "置換" if count(actions) > 1
 
 verb(actions) := "削除" if actions == ["delete"]
@@ -302,6 +309,7 @@ well_formed(d) if {
 	is_array(d.protected_types)
 	"aws_s3_bucket" in d.protected_types
 	lifecycle_type in d.protected_types
+	image_lifecycle_type in d.protected_types
 	every t in d.protected_types {
 		is_string(t)
 	}
@@ -332,7 +340,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed(decl)
-	msg := "[PLAN-STATE-00] 宣言の policy_plan.stateful_protection が、protected_types（aws_s3_bucket と aws_s3_bucket_lifecycle_configuration を含む）と allow・shorten_allow（root ごとの address と空でない reason の並び）の形を満たしていません"
+	msg := "[PLAN-STATE-00] 宣言の policy_plan.stateful_protection が、protected_types（aws_s3_bucket と aws_s3_bucket_lifecycle_configuration と aws_ecr_lifecycle_policy を含む）と allow・shorten_allow（root ごとの address と空でない reason の並び）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -354,6 +362,11 @@ deny contains msg if {
 	some r in reductions
 	not shorten_allowed(r.root, r.address)
 	msg := sprintf("[PLAN-STATE-04] %s: %s が版を消す日数か日付を早めます。日数を過ぎた版はすぐに消えます。意図した変更なら、root %s の短縮の許可の宣言に address と理由を足してください", [r.path, r.address, r.root])
+}
+
+deny contains msg if {
+	some u in unknown_image_lifecycles
+	msg := sprintf("[PLAN-STATE-10] %s: %s がタグ付きのイメージを残す件数（imageCountMoreThan の countNumber）を plan で決めないか、読めない形にします。減るかを読めません。plan で決まる件数の規則にしてください", [u.path, u.address])
 }
 
 deny contains msg if {
