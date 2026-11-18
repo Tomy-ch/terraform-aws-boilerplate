@@ -136,7 +136,8 @@ func Test_parseDisableList(t *testing.T) {
 			"要素を並べた場合、書かれた順で返す":     {line: `disable_tools = ["npm:a", "npm:b"]`, want: []string{"npm:a", "npm:b"}},
 			"末尾にカンマがある場合、要素だけを返す":   {line: `disable_tools = ["npm:a",]`, want: []string{"npm:a"}},
 			"空の配列の場合、空を返す":          {line: `disable_tools = []`, want: []string{}},
-			"引用符付きキーの場合も読む":         {line: `"disable_tools" = ["npm:a"]`, want: []string{"npm:a"}},
+			"引用符付きキーの場合、裸のキーと同じに読む": {line: `"disable_tools" = ["npm:a"]`, want: []string{"npm:a"}},
+			"空白だけの配列の場合、空を返す":       {line: `disable_tools = [ ]`, want: []string{}},
 			"行末コメントがある場合、コメントを無視する": {line: `disable_tools = ["npm:a"] # 理由`, want: []string{"npm:a"}},
 		}
 
@@ -160,6 +161,10 @@ func Test_parseDisableList(t *testing.T) {
 			"要素が引用符で囲まれていない場合、ok が false になる": `disable_tools = [npm:a]`,
 			"空の要素を挟む場合、ok が false になる":        `disable_tools = [, "npm:a"]`,
 			"単引用符の要素の場合、ok が false になる":       `disable_tools = ['npm:a']`,
+			"要素の間が空の場合、ok が false になる":        `disable_tools = ["npm:a",,"npm:b"]`,
+			"カンマだけの場合、ok が false になる":         `disable_tools = [,]`,
+			"空の文字列の要素の場合、ok が false になる":      `disable_tools = [""]`,
+			"配列の後に余りがある場合、ok が false になる":     `disable_tools = ["npm:a"] x`,
 		}
 
 		for name, line := range tests {

@@ -1,9 +1,11 @@
 package misetoml_test
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -276,6 +278,22 @@ func TestDisableTools(t *testing.T) {
 			assert.Equal(t, []string{"npm:b", "npm:a"}, got)
 		})
 
+		// 見出しの別表記を読み飛ばすと、宣言が在るのに「無い」と返る（理由は sectionName の宣言）。
+		for name, heading := range map[string]string{
+			"見出しが二重引用符付きの場合も読む":    `["settings"]`,
+			"見出しの括弧の内側に空白がある場合も読む": `[ settings ]`,
+			"見出しの後ろにコメントがある場合も読む":  `[settings] # 理由`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				got, found, err := misetoml.DisableTools([]byte(heading + "\ndisable_tools = [\"npm:a\"]\n"))
+				require.NoError(t, err)
+				assert.True(t, found)
+				assert.Equal(t, []string{"npm:a"}, got)
+			})
+		}
+
 		t.Run("宣言が無ければ found が false になる", func(t *testing.T) {
 			t.Parallel()
 
@@ -294,34 +312,72 @@ func TestDisableTools(t *testing.T) {
 			assert.Empty(t, got)
 		})
 
-		t.Run("[settings] の外の disable_tools は読まない", func(t *testing.T) {
-			t.Parallel()
+		for name, content := range map[string]string{
+			"[settings] の前の別の節の disable_tools は読まない": "[env]\ndisable_tools = [\"npm:a\"]\n",
+			"[settings] の後の別の節の disable_tools は読まない": "[settings]\nexperimental = true\n[env]\ndisable_tools = [\"npm:a\"]\n",
+			"[settings] の下位の節の disable_tools は読まない":  "[settings.npm]\ndisable_tools = [\"npm:a\"]\n",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 
-			_, found, err := misetoml.DisableTools([]byte("[env]\ndisable_tools = [\"npm:a\"]\n"))
-			require.NoError(t, err)
-			assert.False(t, found)
-		})
+				got, found, err := misetoml.DisableTools([]byte(content))
+				require.NoError(t, err)
+				assert.False(t, found)
+				assert.Empty(t, got)
+			})
+		}
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		tests := map[string]string{
-			"複数行の配列の場合、エラーになる":   "[settings]\ndisable_tools = [\n  \"npm:a\",\n]\n",
-			"宣言が重複する場合、エラーになる":   "[settings]\ndisable_tools = [\"npm:a\"]\ndisable_tools = [\"npm:b\"]\n",
-			"要素が文字列でない場合、エラーになる": "[settings]\ndisable_tools = [npm]\n",
-			"配列でない場合、エラーになる":     "[settings]\ndisable_tools = \"npm:a\"\n",
+		tests := map[string]struct {
+			content string
+			where   string
+		}{
+			"複数行の配列の場合、エラーになる":             {content: "[settings]\ndisable_tools = [\n  \"npm:a\",\n]\n", where: "2行目"},
+			"要素が文字列でない場合、エラーになる":           {content: "[settings]\ndisable_tools = [npm]\n", where: "2行目"},
+			"要素が空の文字列の場合、エラーになる":           {content: "[settings]\ndisable_tools = [\"\"]\n", where: "2行目"},
+			"配列でない場合、エラーになる":               {content: "[settings]\ndisable_tools = \"npm:a\"\n", where: "2行目"},
+			"キーが単引用符の場合、エラーになる":            {content: "[settings]\n'disable_tools' = [\"npm:a\"]\n", where: "2行目"},
+			"節の外の dotted key の場合、エラーになる":   {content: "settings.disable_tools = [\"npm:a\"]\n", where: "1行目"},
+			"節の外の inline table の場合、エラーになる": {content: "settings = { disable_tools = [\"npm:a\"] }\n", where: "1行目"},
 		}
 
-		for name, content := range tests {
+		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				_, _, err := misetoml.DisableTools([]byte(content))
-				require.Error(t, err)
-				assert.True(t, xerrors.Is(err, misetoml.ErrInvalidDisableTools))
+				got, found, err := misetoml.DisableTools([]byte(tt.content))
+				require.ErrorIs(t, err, misetoml.ErrInvalidDisableTools)
+				assert.Contains(t, err.Error(), tt.where)
+				assert.False(t, found)
+				assert.Nil(t, got)
 			})
 		}
+
+		// 1つ目を読んだ後で落ちる経路なので、途中まで読んだ値が漏れないことも見る。
+		t.Run("宣言が重複する場合、2つ目の行を名指しでエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			got, found, err := misetoml.DisableTools([]byte(
+				"[settings]\ndisable_tools = [\"npm:a\"]\ndisable_tools = [\"npm:b\"]\n"))
+			require.ErrorIs(t, err, misetoml.ErrInvalidDisableTools)
+			assert.Contains(t, err.Error(), "重複")
+			assert.Contains(t, err.Error(), "3行目")
+			assert.False(t, found)
+			assert.Nil(t, got)
+		})
+
+		t.Run("走査できない長さの行がある場合、走査のエラーを返す", func(t *testing.T) {
+			t.Parallel()
+
+			long := "[settings]\n# " + strings.Repeat("x", bufio.MaxScanTokenSize) + "\n"
+			got, found, err := misetoml.DisableTools([]byte(long))
+			require.ErrorIs(t, err, bufio.ErrTooLong)
+			assert.False(t, found)
+			assert.Nil(t, got)
+		})
 	})
 }
 
@@ -342,16 +398,28 @@ func TestDisableToolsFile(t *testing.T) {
 			assert.True(t, found)
 			assert.Equal(t, []string{"npm:a"}, got)
 		})
+
+		t.Run("宣言が無ければ found が false になる", func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "mise.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[tools]\ngo = \"1.27.1\"\n"), 0o600))
+
+			got, found, err := misetoml.DisableToolsFile(path)
+			require.NoError(t, err)
+			assert.False(t, found)
+			assert.Empty(t, got)
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("読めないパスはエラーにする", func(t *testing.T) {
+		t.Run("読めないパスは os.ErrNotExist を返す", func(t *testing.T) {
 			t.Parallel()
 
 			_, _, err := misetoml.DisableToolsFile(filepath.Join(t.TempDir(), "居ない.toml"))
-			require.Error(t, err)
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
 		t.Run("解釈できない宣言はパスを添えてエラーにする", func(t *testing.T) {
@@ -361,8 +429,7 @@ func TestDisableToolsFile(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte("[settings]\ndisable_tools = npm\n"), 0o600))
 
 			_, _, err := misetoml.DisableToolsFile(path)
-			require.Error(t, err)
-			assert.True(t, xerrors.Is(err, misetoml.ErrInvalidDisableTools))
+			require.ErrorIs(t, err, misetoml.ErrInvalidDisableTools)
 			assert.Contains(t, err.Error(), path)
 		})
 	})

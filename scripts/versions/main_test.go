@@ -298,6 +298,7 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, out.String(), "markdownlint 0.23.2")
 			assert.Contains(t, out.String(), "commitlint 21.2.2")
 			assert.Contains(t, out.String(), "窓 7 日")
+			assert.Contains(t, out.String(), "npm の道具 2 件を mise の install から外しています")
 		})
 
 		// 起点にする理由は driftedHostTools の宣言と同じ。
@@ -336,6 +337,19 @@ func Test_run(t *testing.T) {
 			var out bytes.Buffer
 
 			require.Error(t, run([]string{"apply"}, root, &out))
+			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
+		})
+
+		// 外す宣言が npm の道具と食い違うと、mise が lockfile を読まずに入れる（ADR-0503 決定1）。
+		t.Run("disable_tools が npm の道具と食い違えば errShape を返し、写しを書き換えない", func(t *testing.T) {
+			t.Parallel()
+			mise := strings.ReplaceAll(soundMise, `"npm:@commitlint/cli", `, "")
+			drifted := strings.ReplaceAll(soundDockerfile, "golang:1.27.1", "golang:1.26.0")
+			root := newRepo(t, mise, drifted, soundGoMod)
+			var out bytes.Buffer
+
+			require.ErrorIs(t, run([]string{"check"}, root, &out), errShape)
+			require.ErrorIs(t, run([]string{"apply"}, root, &out), errShape)
 			assert.Equal(t, drifted, readAt(t, root, "docker", "tools", "Dockerfile"))
 		})
 
@@ -979,15 +993,36 @@ func Test_checkDisableTools(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, body := range map[string]string{
-			"npm の道具が欠けている":     "[settings]\ndisable_tools = [\"npm:@commitlint/cli\"]\n",
-			"npm の道具でないものが余る":   "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:markdownlint-cli2\", \"go\"]\n",
-			"disable_tools が無い": "[settings]\nexperimental = true\n",
-			"空の配列":              "[settings]\ndisable_tools = []\n",
+		for name, tt := range map[string]struct {
+			body string
+			want string
+		}{
+			"npm の道具が欠けている": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\"]\n",
+				want: "disable_tools が [npm:@commitlint/cli]",
+			},
+			"npm の道具でないものが余る": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:markdownlint-cli2\", \"go\"]\n",
+				want: "disable_tools が [go npm:@commitlint/cli npm:markdownlint-cli2]",
+			},
+			"同じ道具が重複している": {
+				body: "[settings]\ndisable_tools = [\"npm:@commitlint/cli\", \"npm:@commitlint/cli\"]\n",
+				want: "disable_tools が [npm:@commitlint/cli npm:@commitlint/cli]",
+			},
+			"空の配列": {
+				body: "[settings]\ndisable_tools = []\n",
+				want: "disable_tools が []",
+			},
+			"disable_tools が無い": {
+				body: "[settings]\nexperimental = true\n",
+				want: "disable_tools がありません",
+			},
 		} {
 			t.Run(name+"なら errShape", func(t *testing.T) {
 				t.Parallel()
-				require.ErrorIs(t, checkDisableTools(write(t, body)), errShape)
+				err := checkDisableTools(write(t, tt.body))
+				require.ErrorIs(t, err, errShape)
+				assert.Contains(t, err.Error(), tt.want)
 			})
 		}
 
