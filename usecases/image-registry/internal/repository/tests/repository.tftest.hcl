@@ -101,3 +101,16 @@ run "publisher_policy_targets_this_repository" {
     error_message = "push の role の Publish の文の Resource が、この repository の ARN ではありません。"
   }
 }
+
+run "lifecycle_follows_retained_images" {
+  command = plan
+
+  variables {
+    retained_images = 2
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecr_lifecycle_policy.this.policy).rules[0].selection.countNumber == 2
+    error_message = "lifecycle の countNumber が retained_images に従っていません。"
+  }
+}

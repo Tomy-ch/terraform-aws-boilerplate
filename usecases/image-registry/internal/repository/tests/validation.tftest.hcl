@@ -122,3 +122,74 @@ run "rejects_long_role_name" {
 
   expect_failures = [var.publisher_role_name]
 }
+
+run "rejects_owner_with_at_sign" {
+  command = plan
+
+  variables {
+    publisher = {
+      owner         = "ex@mple"
+      owner_id      = "1000001"
+      repository    = "go-boilerplate"
+      repository_id = "2000001"
+      environment   = "dev-publish"
+    }
+  }
+
+  expect_failures = [var.publisher]
+}
+
+run "rejects_environment_with_colon" {
+  command = plan
+
+  variables {
+    publisher = {
+      owner         = "example"
+      owner_id      = "1000001"
+      repository    = "go-boilerplate"
+      repository_id = "2000001"
+      environment   = "dev:ref"
+    }
+  }
+
+  expect_failures = [var.publisher]
+}
+
+run "rejects_zero_prefixed_repository_id" {
+  command = plan
+
+  variables {
+    publisher = {
+      owner         = "example"
+      owner_id      = "1000001"
+      repository    = "go-boilerplate"
+      repository_id = "02000001"
+      environment   = "dev-publish"
+    }
+  }
+
+  expect_failures = [var.publisher]
+}
+
+run "rejects_retained_images_above_limit" {
+  command = plan
+
+  variables {
+    retained_images = 10001
+  }
+
+  expect_failures = [var.retained_images]
+}
+
+run "accepts_role_name_at_limit" {
+  command = plan
+
+  variables {
+    publisher_role_name = "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcd"
+  }
+
+  assert {
+    condition     = length(var.publisher_role_name) == 64
+    error_message = "64 文字の role 名が通りません。"
+  }
+}
