@@ -13,6 +13,7 @@ decl := {
 	"object_lock_configuration": "module.a.module.archive.aws_s3_bucket_object_lock_configuration.this",
 	"lifecycle_configuration": "module.a.module.archive.aws_s3_bucket_lifecycle_configuration.this",
 	"key_policy": "module.a.module.archive_key.aws_kms_key_policy.this",
+	"metric_alarm": "module.a.module.archive.aws_cloudwatch_metric_alarm.this",
 }
 
 blocking(sid, actions, condition) := object.union(
@@ -21,7 +22,7 @@ blocking(sid, actions, condition) := object.union(
 )
 
 denies := [
-	blocking("DenyInsecureTransport", "s3:*", {"Bool": {"aws:SecureTransport": "false"}}),
+	{"Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*", "Action": "s3:*", "Resource": [bucket_arn, sprintf("%s/*", [bucket_arn])], "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
 	blocking("DenyObjectWriteByNonService", "s3:PutObject", {"Bool": {"aws:PrincipalIsAWSService": "false"}}),
 	{"Sid": "DenyObjectDeletion", "Effect": "Deny", "Principal": "*", "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"], "Resource": sprintf("%s/*", [bucket_arn])},
 	blocking("DenyRetentionBeyondDefault", ["s3:PutObject", "s3:PutObjectRetention"], {"NumericGreaterThan": {"s3:object-lock-remaining-retention-days": "731"}}),
@@ -58,16 +59,25 @@ key_trail := {
 	"Condition": {"StringEquals": {"aws:SourceArn": [trail], "kms:EncryptionContext:aws:cloudtrail:arn": [trail]}},
 }
 
+key_config := {
+	"Sid": "ConfigService",
+	"Effect": "Allow",
+	"Principal": {"Service": "config.amazonaws.com"},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"aws:SourceAccount": ["222222222222"]}},
+}
+
 change(address, after) := {"address": address, "type": "t", "change": {"actions": ["create"], "after": after, "after_unknown": {}}}
 
 lock(mode, days) := change(decl.object_lock_configuration, {"rule": [{"default_retention": [{"mode": mode, "days": days, "years": null}]}]})
 
 lifecycle(days) := change(decl.lifecycle_configuration, {"rule": [
-	{"id": "expire-after-retention", "status": "Enabled", "expiration": [{"days": days, "expired_object_delete_marker": false}]},
+	{"id": "expire-after-retention", "status": "Enabled", "filter": [{"and": [], "tag": []}], "expiration": [{"days": days, "expired_object_delete_marker": false}]},
 	{"id": "expire-delete-markers", "status": "Enabled", "expiration": [{"days": 0, "expired_object_delete_marker": true}]},
 ]})
 
-bucket(enabled) := change(decl.bucket, {"object_lock_enabled": enabled})
+bucket(enabled) := change(decl.bucket, {"object_lock_enabled": enabled, "arn": bucket_arn})
 
 bucket_policy(statements) := change(decl.bucket_policy, {"policy": json.marshal({"Version": "2012-10-17", "Statement": statements})})
 
@@ -78,7 +88,8 @@ valid := [
 	lock("COMPLIANCE", 731),
 	lifecycle(731),
 	bucket_policy(array.concat(denies, [trail_write, config_write])),
-	key_policy([key_trail]),
+	key_policy([key_trail, key_config]),
+	change(decl.metric_alarm, {"alarm_name": "a"}),
 ]
 
 replace(rcs, rc) := array.concat([x | some x in rcs; x.address != rc.address], [rc])
@@ -177,7 +188,7 @@ test_violation_deny_values_differ_from_retention if {
 
 test_violation_trail_mismatch if {
 	other := json.patch(key_trail, [{"op": "replace", "path": "/Condition/StringEquals/aws:SourceArn", "value": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/other"]}])
-	"[PLAN-AUDIT-05] " in ids(replace(valid, key_policy([other])))
+	"[PLAN-AUDIT-05] " in ids(replace(valid, key_policy([other, key_config])))
 }
 
 test_pass_trail_match_across_statements if {
@@ -189,5 +200,51 @@ test_pass_trail_match_across_statements if {
 		"Resource": "*",
 		"Condition": {"StringEquals": {"aws:SourceArn": [trail]}},
 	}
-	count(msgs(replace(valid, key_policy([key_trail, describe])))) == 0
+	count(msgs(replace(valid, key_policy([key_trail, describe, key_config])))) == 0
+}
+
+test_violation_expiration_not_whole_bucket if {
+	rc := change(decl.lifecycle_configuration, {"rule": [{"id": "x", "status": "Enabled", "filter": [{"and": [], "prefix": "AWSLogs/", "tag": []}], "expiration": [{"days": 731}]}]})
+	"[PLAN-AUDIT-01] " in ids(replace(valid, rc))
+}
+
+test_violation_metric_alarm_absent if {
+	"[PLAN-AUDIT-00] " in ids([x | some x in valid; x.address != decl.metric_alarm])
+}
+
+# 条件の演算子やキーが欠けた Deny、Action・Resource・Condition をすり替えた Deny は、Sid が在っても落ちる。
+test_violation_deny_shape_altered if {
+	every pair in [
+		[0, [{"op": "replace", "path": "/Condition/Bool/aws:SecureTransport", "value": "true"}]],
+		[0, [{"op": "replace", "path": "/Condition", "value": {}}]],
+		[0, [{"op": "replace", "path": "/Resource", "value": sprintf("%s/*", [bucket_arn])}]],
+		[2, [{"op": "replace", "path": "/Action", "value": "s3:GetObject"}]],
+		[3, [{"op": "replace", "path": "/Condition", "value": {"NumericLessThan": {"s3:object-lock-remaining-retention-days": "731"}}}]],
+		[3, [{"op": "remove", "path": "/Condition"}]],
+		[4, [{"op": "replace", "path": "/Condition", "value": {"Null": {"s3:object-lock-mode": "false"}}}]],
+		[6, [{"op": "replace", "path": "/Condition/Null/s3:object-lock-legal-hold", "value": "true"}]],
+	] {
+		i := pair[0]
+		altered := json.patch(denies[i], pair[1])
+		rest := [d | some j, d in denies; j != i]
+		"[PLAN-AUDIT-03] " in ids(replace(valid, bucket_policy(array.concat(rest, [altered, trail_write, config_write]))))
+	}
+}
+
+test_violation_policy_unreadable if {
+	"[PLAN-AUDIT-03] " in ids(replace(valid, change(decl.bucket_policy, {"policy": "not json"})))
+	"[PLAN-AUDIT-05] " in ids(replace(valid, change(decl.key_policy, {"policy": "not json"})))
+}
+
+test_violation_bucket_arn_unknown if {
+	"[PLAN-AUDIT-03] " in ids(replace(valid, change(decl.bucket, {"object_lock_enabled": true})))
+}
+
+test_violation_no_trail_on_either_side if {
+	"[PLAN-AUDIT-05] " in ids(replace(replace(valid, bucket_policy(array.concat(denies, [config_write]))), key_policy([key_config])))
+}
+
+test_violation_config_accounts_differ if {
+	other := json.patch(key_config, [{"op": "replace", "path": "/Condition/StringEquals/aws:SourceAccount", "value": ["333333333333"]}])
+	"[PLAN-AUDIT-05] " in ids(replace(valid, key_policy([key_trail, other])))
 }

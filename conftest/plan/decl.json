@@ -299,7 +299,8 @@
       "bucket_policy": "module.audit_evidence.module.archive.aws_s3_bucket_policy.this",
       "object_lock_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_object_lock_configuration.this",
       "lifecycle_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_lifecycle_configuration.this",
-      "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this"
+      "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this",
+      "metric_alarm": "module.audit_evidence.module.archive.aws_cloudwatch_metric_alarm.delivery_stalled"
     }
   }
 }

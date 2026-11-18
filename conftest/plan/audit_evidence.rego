@@ -6,7 +6,7 @@ import data.plan.lib
 
 decl := object.get(data.policy_plan, "audit_evidence", {})
 
-declared_keys := ["bucket", "bucket_policy", "object_lock_configuration", "lifecycle_configuration", "key_policy"]
+declared_keys := ["bucket", "bucket_policy", "object_lock_configuration", "lifecycle_configuration", "key_policy", "metric_alarm"]
 
 address(key) := decl[key] if is_string(object.get(decl, key, null))
 
@@ -55,6 +55,30 @@ expiration_days contains e.days if {
 	e.days > 0
 }
 
+# 一部の prefix や tag にだけ掛かる失効は、Bucket の残りを保持の後も残す。
+whole_bucket(rule) if {
+	filters := object.get(rule, "filter", [])
+	count(filters) == 1
+	every _, v in filters[0] { empty_value(v) }
+}
+
+empty_value(v) if v == null
+
+empty_value(v) if v == []
+
+empty_value(v) if v == ""
+
+deny contains msg if {
+	retention
+	some rule in object.get(after("lifecycle_configuration"), "rule", [])
+	rule.status == "Enabled"
+	some e in object.get(rule, "expiration", [])
+	is_number(object.get(e, "days", null))
+	e.days > 0
+	not whole_bucket(rule)
+	msg := sprintf("[PLAN-AUDIT-01] %s の規則 %v の失効が、Bucket 全体に掛かりません（filter が空でない）", [address("lifecycle_configuration"), object.get(rule, "id", "")])
+}
+
 # 失効が保持より早いと、保持の終わる前に現行版が delete marker で隠れる。遅いと保管の費用が際限なく残る。
 deny contains msg if {
 	retention
@@ -71,6 +95,23 @@ deny contains msg if {
 bucket_policy := json.unmarshal(after("bucket_policy").policy) if {
 	is_string(object.get(after("bucket_policy"), "policy", null))
 	json.is_valid(after("bucket_policy").policy)
+}
+
+key_policy := json.unmarshal(after("key_policy").policy) if {
+	is_string(object.get(after("key_policy"), "policy", null))
+	json.is_valid(after("key_policy").policy)
+}
+
+deny contains msg if {
+	after("bucket_policy")
+	not bucket_policy
+	msg := sprintf("[PLAN-AUDIT-03] %s の policy が plan で決まらないか、JSON として読めません", [address("bucket_policy")])
+}
+
+deny contains msg if {
+	after("key_policy")
+	not key_policy
+	msg := sprintf("[PLAN-AUDIT-05] %s の policy が plan で決まらないか、JSON として読めません", [address("key_policy")])
 }
 
 statements := lib.statements(bucket_policy)
@@ -106,19 +147,28 @@ deny contains msg if {
 	msg := sprintf("[PLAN-AUDIT-02] %s の Allow %v が、aws:SourceArn か aws:SourceAccount で要求元を wildcard の無い値に限っていません", [address("bucket_policy"), object.get(s, "Sid", "")])
 }
 
-# Deny は principal の例外を持たない。
-required_denies := {
-	"DenyInsecureTransport",
-	"DenyObjectWriteByNonService",
-	"DenyObjectDeletion",
-	"DenyRetentionBeyondDefault",
-	"DenyOtherLockMode",
-	"DenyLegalHold",
-	"DenyLegalHoldOnWrite",
-	"DenyEventHold",
+# Deny は principal の例外を持たない。8文の形は Bucket の ARN と既定の保持から決まる（audit-evidence/ADR-0102 決定1）。
+bucket_arn := after("bucket").arn if is_string(object.get(after("bucket"), "arn", null))
+
+objects := sprintf("%s/*", [bucket_arn])
+
+expected_denies := {
+	"DenyInsecureTransport": {"actions": {"s3:*"}, "resources": {bucket_arn, objects}, "condition": {"Bool": {"aws:SecureTransport": "false"}}},
+	"DenyObjectWriteByNonService": {"actions": {"s3:PutObject"}, "resources": {objects}, "condition": {"Bool": {"aws:PrincipalIsAWSService": "false"}}},
+	"DenyObjectDeletion": {"actions": {"s3:DeleteObject", "s3:DeleteObjectVersion"}, "resources": {objects}, "condition": {}},
+	"DenyRetentionBeyondDefault": {"actions": {"s3:PutObject", "s3:PutObjectRetention"}, "resources": {objects}, "condition": {"NumericGreaterThan": {"s3:object-lock-remaining-retention-days": sprintf("%d", [retention.days])}}},
+	"DenyOtherLockMode": {"actions": {"s3:PutObject", "s3:PutObjectRetention"}, "resources": {objects}, "condition": {"Null": {"s3:object-lock-mode": "false"}, "StringNotEquals": {"s3:object-lock-mode": retention.mode}}},
+	"DenyLegalHold": {"actions": {"s3:PutObjectLegalHold"}, "resources": {objects}, "condition": {}},
+	"DenyLegalHoldOnWrite": {"actions": {"s3:PutObject"}, "resources": {objects}, "condition": {"Null": {"s3:object-lock-legal-hold": "false"}}},
+	"DenyEventHold": {"actions": {"s3:PutObject", "s3:PutObjectRetention"}, "resources": {objects}, "condition": {"Null": {"s3:object-lock-event-hold": "false"}}},
 }
 
-unconditional_deny(sid) := s if {
+required_denies := {"DenyInsecureTransport", "DenyObjectWriteByNonService", "DenyObjectDeletion", "DenyRetentionBeyondDefault", "DenyOtherLockMode", "DenyLegalHold", "DenyLegalHoldOnWrite", "DenyEventHold"}
+
+as_set(x) := {v | some v in lib.as_array(x)}
+
+matches_expected(sid) if {
+	e := expected_denies[sid]
 	some s in statements
 	s.Sid == sid
 	s.Effect == "Deny"
@@ -126,54 +176,68 @@ unconditional_deny(sid) := s if {
 	not s.NotPrincipal
 	not s.NotAction
 	not s.NotResource
+	as_set(s.Action) == e.actions
+	as_set(s.Resource) == e.resources
+	object.get(s, "Condition", {}) == e.condition
 }
 
 deny contains msg if {
 	bucket_policy
+	not bucket_arn
+	msg := sprintf("[PLAN-AUDIT-03] %s の ARN が plan で決まらないので、Deny の Resource を確かめられません", [address("bucket")])
+}
+
+deny contains msg if {
+	bucket_policy
+	bucket_arn
+	retention
 	some sid in required_denies
-	not unconditional_deny(sid)
-	msg := sprintf("[PLAN-AUDIT-03] %s に、Principal \"*\" の Deny %s がありません", [address("bucket_policy"), sid])
+	not matches_expected(sid)
+	msg := sprintf("[PLAN-AUDIT-03] %s の Deny %s が、Principal \"*\" と期待の Action・Resource・Condition を持ちません", [address("bucket_policy"), sid])
 }
 
 deny contains msg if {
 	bucket_policy
 	some s in statements
 	s.Effect == "Deny"
-	some op, kv in object.get(s, "Condition", {})
+	some _, kv in object.get(s, "Condition", {})
 	some k, _ in kv
 	lower(k) in {"aws:principalarn", "aws:userid", "aws:principalaccount", "aws:principalorgid"}
 	msg := sprintf("[PLAN-AUDIT-03] %s の Deny %v が、主体による例外（%s）を持ちます", [address("bucket_policy"), object.get(s, "Sid", ""), k])
 }
 
-deny contains msg if {
-	retention
-	s := unconditional_deny("DenyRetentionBeyondDefault")
-	object.get(object.get(s, "Condition", {}), "NumericGreaterThan", {})["s3:object-lock-remaining-retention-days"] != sprintf("%d", [retention.days])
-	msg := sprintf("[PLAN-AUDIT-03] %s の DenyRetentionBeyondDefault が、既定の保持の日数 %d を上限にしていません", [address("bucket_policy"), retention.days])
-}
-
-deny contains msg if {
-	retention
-	s := unconditional_deny("DenyOtherLockMode")
-	object.get(object.get(s, "Condition", {}), "StringNotEquals", {})["s3:object-lock-mode"] != retention.mode
-	msg := sprintf("[PLAN-AUDIT-03] %s の DenyOtherLockMode が、既定の保持の mode %s 以外を拒んでいません", [address("bucket_policy"), retention.mode])
-}
-
-# Bucket Policy が書き込みを許す trail と、鍵が暗号化を許す trail が食い違うと、配信が落ちるか、別の trail に鍵を開く。
-trail_sources(body, sids) := {v |
+# 書き込みを許す要求元と、暗号化を許す要求元が食い違うと、配信が落ちるか、別の書き手に鍵を開く。文は principal のサービスで拾う。
+service_sources(body, service, key) := {v |
 	some s in lib.statements(body)
-	s.Sid in sids
-	some v in lib.limiting_values(s, "aws:sourcearn")
+	s.Effect == "Allow"
+	is_object(s.Principal)
+	service in lib.as_array(object.get(s.Principal, "Service", []))
+	some v in lib.limiting_values(s, key)
 }
 
-key_policy := json.unmarshal(after("key_policy").policy) if {
-	is_string(object.get(after("key_policy"), "policy", null))
-	json.is_valid(after("key_policy").policy)
+bucket_trails := service_sources(bucket_policy, "cloudtrail.amazonaws.com", "aws:sourcearn")
+
+key_trails := service_sources(key_policy, "cloudtrail.amazonaws.com", "aws:sourcearn")
+
+deny contains msg if {
+	bucket_policy
+	key_policy
+	count(bucket_trails) == 0
+	msg := sprintf("[PLAN-AUDIT-05] %s が、組織の trail に書き込みを許していません", [address("bucket_policy")])
 }
 
 deny contains msg if {
-	bucket_trails := trail_sources(bucket_policy, {"AWSCloudTrailAclCheck", "AWSCloudTrailWrite", "AWSCloudTrailOrganizationWrite"})
-	key_trails := trail_sources(key_policy, {"CloudTrailEncrypt", "CloudTrailDescribeKey"})
+	bucket_policy
+	key_policy
 	bucket_trails != key_trails
 	msg := sprintf("[PLAN-AUDIT-05] %s が書き込みを許す trail %v と、%s が暗号化を許す trail %v が一致しません", [address("bucket_policy"), bucket_trails, address("key_policy"), key_trails])
+}
+
+deny contains msg if {
+	bucket_policy
+	key_policy
+	bucket_config := service_sources(bucket_policy, "config.amazonaws.com", "aws:sourceaccount")
+	key_config := service_sources(key_policy, "config.amazonaws.com", "aws:sourceaccount")
+	bucket_config != key_config
+	msg := sprintf("[PLAN-AUDIT-05] %s が書き込みを許す Config のアカウント %v と、%s が暗号化を許すアカウント %v が一致しません", [address("bucket_policy"), bucket_config, address("key_policy"), key_config])
 }
