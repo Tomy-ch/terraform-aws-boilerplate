@@ -121,11 +121,10 @@ s3() { aws s3api "$1" --bucket "$2" --expected-bucket-owner "$ACCOUNT_ID" "${@:3
 
 state_key_arn() { aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS" --query KeyMetadata.Arn --output text; }
 
-# 2つの Bucket の既定の暗号化が、state の鍵の SSE-KMS で、Bucket Key を使わず、SSE-C を拒むこと。
 check_kms_encryption() {
   local key b
   key=$(state_key_arn) || key=""
-  for b in "$BUCKET" "$PLAN_BUCKET"; do
+  for b in "$BUCKET" "$PLAN_BUCKET" "$APPLY_BUCKET"; do
     expect_json "$b の既定の暗号化が state の鍵の SSE-KMS（Bucket Key なし、SSE-C を拒否）" "$(s3 get-bucket-encryption "$b")" \
       --arg key "$key" "$JQ_KMS_ENCRYPTION"
   done
@@ -227,6 +226,9 @@ permissions() {
   sim explicitDeny apply "$key" s3:PutObject s3:DeleteObject
   sim explicitDeny apply "$pb" s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:GetBucketPolicy
   sim explicitDeny apply "${pb}/pr/1/x" s3:PutObject s3:DeleteObjectVersion
+  sim allowed apply "${ab}/x" s3:PutObject
+  sim explicitDeny apply "${ab}/x" s3:GetObject s3:DeleteObject s3:DeleteObjectVersion s3:PutObjectAcl
+  sim explicitDeny apply "$ab" s3:ListBucket s3:GetBucketPolicy s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:DeleteBucket
 
   echo "# state の鍵"
   local sk other="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000000"

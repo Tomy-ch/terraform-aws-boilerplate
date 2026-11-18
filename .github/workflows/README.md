@@ -155,8 +155,9 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
   apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
-  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、plan の全文と同じ Bucket の `apply/` の下へ
-  apply-identity の role が置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
+  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、identity root なら plan の全文と同じ Bucket の
+  `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
+  置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
   （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
@@ -570,8 +571,11 @@ job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-app
 呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
 apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
 を呼ばなければ落ちる。region を含む
-`type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
-それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
+`type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
+引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
+ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
+読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。AWS が region を固定した global のサービスの宛先は、
+`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型
