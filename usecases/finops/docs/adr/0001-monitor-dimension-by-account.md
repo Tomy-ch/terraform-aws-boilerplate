@@ -18,7 +18,8 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 1. 7つのアカウントのすべてに `finops` を置く。予算と異常の通知は、そのアカウントの Topic へ送る。
 2. 予算はそのアカウントの費用の全体を見る。管理アカウントの予算は組織の費用の全体を見る。予算を費用の filter で絞らない。
 3. monitor は AWS managed monitor を1つ置く。次元は、管理アカウント（`env = "admin"`）ではメンバーアカウントごと（`LINKED_ACCOUNT`）、ほかのアカウントでは AWS のサービスごと（`SERVICE`）とする。次元は `env` から導き、入力にしない。
-4. 管理アカウントの AWS services monitor と、その email の subscription は、bootstrap の構成物として残す。`finops` は取り込まず、作り直さない。
+4. 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を、`finops` は扱わない。取り込まず、作り直さない。
+5. 予算をタグで切ったワークロードの単位に持つこと（COST01-BP05 の後半）を採らない。公式推奨から外れるので、下の「公式推奨からの逸脱」に記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。
 
 ## 検討した代替案
 
@@ -32,7 +33,7 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 
 ### 案C: 管理アカウントの AWS services monitor を `finops` が持つ
 
-自動で作られた monitor を人が消してから `finops` が作るか、import で取り込む。消してから apply までの間は検知が止まり、bootstrap の手順と `check-account.sh` の書き換えが要る。import は repository-wide/ADR-0202 決定7 の範囲の外である。
+自動で作られた monitor を人が消してから `finops` が作るか、import で取り込む。消してから apply までの間は検知が止まり、bootstrap の手順と `check-account.sh` の書き換えが要る。import は repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 の範囲の外である。
 
 ### 評価
 
@@ -49,7 +50,7 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 ## 意図的に捨てるもの
 
 - 管理アカウント自身のサービスごとの異常を、Topic で受けること。管理アカウントの AWS services monitor は email の subscription だけを持つ
-- 予算を、タグで切ったワークロードの単位で持つこと（COST01-BP05 の後半）。予算の filter の入力は Provider と API の表現をそのまま受けることになる（repository-wide/ADR-0204）
+- 予算を、タグで切ったワークロードの単位で持つこと（決定5）
 
 ## 保証範囲
 
@@ -59,11 +60,20 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 ## 検証方法
 
 - Unit Test: `tests/contract.tftest.hcl` が `env` ごとの monitor の次元と名前を、`internal/cost-anomaly/tests/anomaly.tftest.hcl` が `scope` ごとの次元と、AWS managed monitor であることを mock の plan で確かめる
-- 予算が filter を持たないことを見る検査は無い
+- Policy Test（`make tf-policy`）: `PLAN-FINOPS-04` が、予算の `cost_filter`・`filter_expression` が空でないか plan で決まらない入力を落とす
 
 ## 影響
 
 管理アカウントの workload root と CI の role に、Budgets と Cost Explorer の権限が要る。管理アカウントの managed monitor の枠は2つとも埋まる。
+
+## 公式推奨からの逸脱
+
+- 外れる推奨: AWS Well-Architected COST01-BP05 の「Set a budget for the overall account spend, and a budget for the workload by using tags」の後半（ワークロードの単位の予算）
+- 外れる理由: ワークロードの単位で予算を切るには、予算の filter（`cost_filter`・`filter_expression`）に、タグの名前と値を Provider と API の表現のまま渡すことになる（repository-wide/ADR-0204 (no-generic-escape-hatch)）。タグを cost allocation tag として有効にする操作も、このユースケースの外にある
+- ユースケース上の制約: 1つのアカウントに1つの env だけを置く（`docs/v1.0-plan/scope.md` 第10.1節）。アカウントの費用の全体の予算が、その env の予算になる
+- 影響: cost では、1つのアカウントの中の部分ごとの超過を予算では検知しない。サービスごとの異常は `SERVICE` の monitor が見る。security と availability への影響は無い
+- 代替案: タグの名前と値を型付きの入力で受けて filter を組む案。cost allocation tag の有効化を前提に置くことになり、採らない
+- 見直し条件: 1つのアカウントに複数のワークロードを置く構成を supported にしたとき。タグの規約が型付きの入力として決まったとき
 
 ## 見直し条件
 

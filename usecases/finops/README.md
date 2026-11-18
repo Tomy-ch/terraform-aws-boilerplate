@@ -49,7 +49,7 @@ unsupported:
 - 予算と閾値の通知の並びを選ぶこと。閾値の割合（85%・100%・予測100%、異常の40%）は固定する
 - 別のアカウントの Topic への通知
 - 不正利用の即時の検知。遅れが大きいので、侵害の検知の代わりにならない（GuardDuty は `account-baseline` の責務）
-- 管理アカウントの AWS services monitor と、その email の subscription を Terraform で持つこと。bootstrap の構成物である（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）
+- 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を Terraform で持つこと（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）
 - 1つのアカウントに複数の env を置く構成（scope.md 第10.1節）
 
 ## 所有者
@@ -66,10 +66,10 @@ unsupported:
 
 ## 検証方法
 
-- Unit Test（mock）: `internal/budget/tests/` が予算の種類・期間・単位・額の文字列・filter の不在・通知の3つと宛先を完全一致で、Topic の partition とアカウントの precondition を、`internal/cost-anomaly/tests/` が monitor の種類と次元、subscription の頻度・宛先・閾値・monitor への配線と precondition を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が入力から内部の module への配線と、`env` からの monitor の次元の導出を、`reference/tests/plan.tftest.hcl` が reference の値で plan が通ることを確かめる
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、予算の action の作成と更新が無いこと、予算の通知と異常の subscription の宛先が Topic 1つで email を持たないこと、頻度が `IMMEDIATE` であることを確かめる（`PLAN-FINOPS-*`。一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)）
+- Unit Test（mock）: `internal/budget/tests/` が予算の種類・期間・単位・額の文字列・通知の3つの閾値と宛先の導出を完全一致で、Topic の partition とアカウントの precondition を、`internal/cost-anomaly/tests/` が monitor の種類と次元、subscription の宛先・閾値・monitor への配線と precondition を確かめる。`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が入力から内部の module への配線と、`env` からの monitor の次元の導出を、`reference/tests/plan.tftest.hcl` が reference の値で plan が通ることを確かめる
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、予算の action の作成と更新が無いこと、予算が通知を持ち、予算の通知と異常の subscription の宛先が同じ Topic 1つで email を持たないこと、頻度が `IMMEDIATE` であること、予算が費用を filter で絞らないことを確かめる。plan で決まらない値は落とす（`PLAN-FINOPS-*`。一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)）
 - Static Analysis（`make layer-check`・`make infra-code-gate`）: 層の規則と、resource の型の分類を、HCL のソースで確かめる
-- 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「破棄できるが、仕様で残るものがある」に当たる。sandbox では常駐の実体と AWS managed monitor の枠を共有して複製を作れないので、常駐の実体を destroy して作り直すことで条件2・3を満たす（scope.md 第11.1節）
+- 実環境テストの形: scope.md 第11.1節の区分「破棄できるが、仕様で残るものがある」に当たる。sandbox では常駐の実体と AWS managed monitor の枠を共有して複製を作れないので、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の既定（作成して破棄する）を常駐の実体で行い、destroy して作り直す。残存は決定16 の期待残存と照合する
 
 env の root、CI の apply の経路、`ops-notification`、CI の role の権限、sandbox の掃除 CI は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
@@ -106,9 +106,11 @@ Security Hub の FSBP と CIS AWS Foundations Benchmark に、Budgets・Cost Exp
 
 ## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
 
-無い。予算の通知の閾値（85%・100%・予測100%）と異常の通知の割合（40%）は、明確な公式推奨が無いので独自判断とした（[finops/ADR-0101](docs/adr/0101-notify-through-ops-notification.md) 決定6）。
+- 予算をタグで切ったワークロードの単位に持たない（AWS Well-Architected COST01-BP05 の後半）: [finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)
+
+予算の通知の閾値（85%・100%・予測100%）と異常の通知の割合（40%）は、明確な公式推奨が無いので独自判断とした（[finops/ADR-0101](docs/adr/0101-notify-through-ops-notification.md) 決定6）。
 
 ## 版
 
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.17.1（`mise.toml`）だけである
-- AWS Provider は `>= 6.68.0, < 7.0.0`。reference の lock は 6.70.0 を固定する。6.68.0 で確かめてはいない
+- AWS Provider は `>= 6.68.0, < 7.0.0`。6.68.0 に固定した複製で `terraform validate` と `terraform test` が通ることを確かめた。reference の lock は 6.70.0 を固定する
