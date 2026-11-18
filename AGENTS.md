@@ -27,8 +27,8 @@
   [0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定33）—— job・environment・required context と、
   それらを見る検査が無い（#222）
 - 分岐のパターンの単一宣言（[0603](docs/adr/0603-branch-protection-and-required-checks.md) 決定1）の読み手 ——
-  宣言は `.github/settings/branches.json` に在り、ruleset と environment と apply の workflow の起動条件はそこから生成するが、
-  `scripts/` のブランチ操作とほかの workflow の起動条件はまだパターンを自分で持ち、デプロイブランチを含まない（同 決定2-3）
+  宣言は `.github/settings/branches.json` に在り、ruleset と environment と workflow の起動条件はそこから生成し、
+  `base-branch` は実行時に読むが、`scripts/release` と `scripts/repo-setup` はまだパターンを自分で持つ（同 決定2-3）
 
 **未配線の道具について「実行した」と報告しない。** 配線され次第この節から外し、この節が空になったとき節ごと削除する。
 

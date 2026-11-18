@@ -1,8 +1,9 @@
 // Package branchdecl は、分岐のパターンの単一宣言（`.github/settings/branches.json`、ADR-0603 決定1）を読み、
 // 検証する。
 //
-// 読み手は repo-settings（ruleset・environment・apply の workflow の起動条件の生成と、デプロイブランチへ入る
-// Pull Request の検査）と apply-revert（revert のブランチの名前と、revert を置く commit の判定）である。
+// 読み手は repo-settings（ruleset・environment・workflow の起動条件の生成と、デプロイブランチへ入る
+// Pull Request の検査）、apply-revert（revert のブランチの名前と、revert を置く commit の判定）、base-branch
+// （最新のリリースライン）である。
 // 同じ宣言を各々が別の規則で読むと、一方の検査を通る宣言がもう一方で壊れる（ADR-0702 決定11）。
 package branchdecl
 

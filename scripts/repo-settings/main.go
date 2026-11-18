@@ -8,12 +8,14 @@
 //
 // ruleset の宣言 .github/settings/branch-protection.json は、include の区間だけを branches.json から
 // 生成します。apply の environment を使う workflow は、on.push.branches をその env のデプロイブランチへ
-// 生成します。environment のパターンはファイルへ書き出さず、適用と突合のたびに展開します。
+// 生成します。ほかの workflow は、印 `# branch-set: <集合>` を持つ行を生成します。environment のパターンは
+// ファイルへ書き出さず、適用と突合のたびに展開します。
 //
 // サブコマンド:
 //
-//	apply  include の区間と apply の workflow の起動条件を書き換える（ネットワークを使わない）
-//	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis も見る
+//	apply  include の区間と workflow の起動条件を書き換える（ネットワークを使わない）
+//	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis と、workflow の式が ref を
+//	       宣言の外の文字列と比べていないことも見る
 //	drift  実態を GET で読み、宣言との差分を報せる
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）

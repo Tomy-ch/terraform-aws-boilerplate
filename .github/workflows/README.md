@@ -14,14 +14,24 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
-| 供給網の衛生の報告 | 週次と既定ブランチへの push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
+| 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
-| リリース昇格のゲート | `develop`・`staging`・`production` 宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
+| リリース昇格のゲート | デプロイブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
-apply の起動条件（`on.push.branches`）は、[`branches.json`](../settings/branches.json) の `deploy` から
-`make repo-settings-apply` が生成する。走査の workflow とリリース昇格のゲートは、ブランチの名前を字面で持ち、
-デプロイブランチ `admin` を含まない。`admin` への push と `admin` 宛の Pull Request の push は走査されない（#204）。
+ブランチの名前は [`branches.json`](../settings/branches.json) から `make repo-settings-apply` が生成し、
+`repo-settings-check` がずれを落とす。apply の起動条件（`on.push.branches`）は、job の `environment:` の env の
+デプロイブランチ1つになる。ほかの workflow は、生成する行の末尾に印 `# branch-set: <集合>` を置く。
+
+| 集合 | 展開 | 置ける行 |
+| --- | --- | --- |
+| `ruleset` | デプロイブランチと各線（`<接頭辞>**`）。ruleset が保護する集合と同じ | `branches:` |
+| `deploy` | デプロイブランチ | `branches:`、`contains(fromJSON('[...]'), <ref>)` を持つ `if:` |
+| `lines` | 各線（`<接頭辞>**`） | `branches:`、`(startsWith(<ref>, '<接頭辞>') \|\| ...)` を持つ `if:` |
+
+印の無い `branches:` / `branches-ignore:` の一覧（apply の workflow のものを除く）と、ブランチの名前か ref を値に持つ
+context（`github.ref` など）を文字列と比べる式（印の行で生成した項を除く）は、`repo-settings-check` が落とす。
+`env:` へ移した値の比較と、シェルの中の比較は見ない。
 
 ## 必須検査はすべての Pull Request で報告される
 
