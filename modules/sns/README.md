@@ -67,7 +67,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書と schema で確かめた
+- AWS Provider は `>= 6.68.0, < 7.0.0`。引数は v6.70.0 の Provider の文書と schema で確かめた。テストを実行して確かめたのは v6.73.0（`.terraform.lock.hcl`）だけである
 - Terraform は `>= 1.7.0, < 2.0.0`。下限はテストが使う `mock_provider` の要求であり、実行して確かめたのは 1.17.1（`mise.toml`）だけである
 
 ## 公式実装の参照（ADR-0206 決定7・8）
@@ -96,7 +96,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 採用しなかった知見と理由:
 
 - CloudWatch と Budgets の例の `ArnLike aws:SourceArn` のワイルドカード: 下の「公式推奨からの逸脱」
-- EventBridge の例の、条件の無い Allow: サービス principal の要求元を限らない。`aws:SourceAccount` で限る
+- EventBridge の例の、条件の無い Allow: 下の「公式推奨からの逸脱」
 - `alias/aws/sns`（AWS 管理鍵）: Key Policy を変えられず、AWS のサービスの publisher に鍵の許可を与えられない
 - `aws_iam_policy_document`: mock の下で文書を確かめられない
 - TLS の Deny を `sns:*` に広げる: 公式の例は `sns:Publish` で、広げる根拠を一次資料で持てない
@@ -108,3 +108,4 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 | 対象 | 理由 | 由来 | 影響（security / availability / cost） | 代替案 | 見直し条件 |
 | --- | --- | --- | --- | --- | --- |
 | CloudWatch・Budgets の Allow に、例の `ArnLike aws:SourceArn`（`arn:<partition>:cloudwatch:<region>:<account>:alarm:*`・`arn:<partition>:budgets::<account>:*`）を置かず、`aws:SourceAccount` の固定値だけで限る | ワイルドカードの ARN は `aws:SourceAccount` と同じ範囲（アカウントのすべての alarm・budget）しか限らない。Security Hub SNS.4 の規則（AWS Config `sns-topic-no-public-access`）は、固定値だけで許す policy を非公開とみなし、ワイルドカードを含む条件をそうみなさない。送り手の alarm と budget は Topic を持たない usecase が作り、Topic の側は名前を知らない（ADR-0102 決定16） | ユースケースの制約ではなく、この module の判断。鍵の側の同じ判断は `modules/kms/README.md` が持つ | security は、例と同じ範囲で変わらない。availability と cost は変わらない | 例のとおり `ArnLike aws:SourceArn` を足す。個々の alarm・budget の ARN を受ける | 送り手の alarm・budget を ARN で名指せる配線ができたとき。AWS が例か SNS.4 の規則を改めたとき。AWS Provider の major 更新時（ADR-0206 決定12） |
+| EventBridge の Allow に、例に無い `aws:SourceAccount` の固定値の条件を置く | 例の条件の無い Allow は、サービス principal の要求元を限らない。Security Hub SNS.4 の規則（AWS Config `sns-topic-no-public-access`）は、条件の無いサービス principal の Allow を公開とみなしうる | ユースケースの制約ではなく、この module の判断 | security は、要求元を自分のアカウントに限る側へ強まる。availability は、EventBridge の送信が `aws:SourceAccount` を載せないなら拒まれる（未確認。上の「保証しないもの」）。cost は変わらない | 例のとおり条件の無い Allow にする | ops-notification の sandbox で EventBridge の送信が拒まれたとき。AWS が例を改めたとき。AWS Provider の major 更新時（ADR-0206 決定12） |
