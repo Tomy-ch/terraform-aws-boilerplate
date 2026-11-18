@@ -123,12 +123,16 @@ topics(path, instance) := {t |
 	instance_of(c.rc.address) == instance
 	some n in after(c, "notification")
 	some t in object.get(n, "subscriber_sns_topic_arns", [])
+	is_string(t)
 } | {s.address |
 	some c in changes_of(decl.anomaly_subscription)
 	c.path == path
 	instance_of(c.rc.address) == instance
 	some s in after(c, "subscriber")
+	is_string(s.address)
 }
+
+parsed(address) if instance_of(address) != address
 
 instances contains {"path": c.path, "instance": instance_of(c.rc.address)} if {
 	some type in [decl.budget, decl.anomaly_subscription]
@@ -139,4 +143,18 @@ deny contains msg if {
 	some i in instances
 	count(topics(i.path, i.instance)) > 1
 	msg := sprintf("[PLAN-FINOPS-05] %s: %s の予算と異常の通知が、別々の Topic（%v）へ送っています", [i.path, i.instance, topics(i.path, i.instance)])
+}
+
+deny contains msg if {
+	some type in [decl.budget, decl.anomaly_subscription]
+	some c in changes_of(type)
+	not parsed(c.rc.address)
+	msg := sprintf("[PLAN-FINOPS-05] %s: %s の address から usecase の instance を読めません", [c.path, c.rc.address])
+}
+
+deny contains msg if {
+	some i in instances
+	some type in [decl.budget, decl.anomaly_subscription]
+	count([c | some c in changes_of(type); c.path == i.path; instance_of(c.rc.address) == i.instance]) != 1
+	msg := sprintf("[PLAN-FINOPS-05] %s: %s が %s をちょうど1つ持ちません", [i.path, i.instance, type])
 }

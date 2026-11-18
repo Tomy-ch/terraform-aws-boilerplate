@@ -169,8 +169,9 @@ test_violation_unknown_cost_filter if {
 }
 
 test_violation_unknown_frequency if {
-	s := object.union(ok_subscription, {"change": {"after_unknown": {"frequency": true}}})
-	msgs := p.deny with input as fixture.plan([ok_budget, s])
+	s := subscription({"subscriber": [{"type": "SNS", "address": topic}]})
+	unknown_frequency := object.union(s, {"change": {"after_unknown": {"frequency": true}}})
+	msgs := p.deny with input as fixture.plan([ok_budget, unknown_frequency])
 	some m in msgs
 	contains(m, "frequency が plan で決まりません")
 	not any_frequency_mismatch(msgs)
@@ -226,4 +227,21 @@ test_pass_same_instance_in_different_plans_to_their_own_topics if {
 	s := subscription({"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": other}]})
 	second := [{"path": "q.json", "contents": {"plan_format_version": "1.2", "resource_changes": [budget([n]), s]}}]
 	count(p.deny) == 0 with input as array.concat(fixture.plan([ok_budget, ok_subscription]), second)
+}
+
+test_violation_address_outside_usecase_module if {
+	b := change("aws_budgets_budget", "aws_budgets_budget.this", {"notification": [notification("ACTUAL", 100)]})
+	s := change("aws_ce_anomaly_subscription", "aws_ce_anomaly_subscription.this", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": "arn:aws:sns:ap-northeast-1:123456789012:other"}]})
+	fixture.has("[PLAN-FINOPS-05]", p.deny) with input as fixture.plan([b, s])
+}
+
+test_violation_instance_without_subscription if {
+	b2 := change("aws_budgets_budget", "module.finops_admin.module.budget.aws_budgets_budget.this", {"notification": [notification("ACTUAL", 100)]})
+	fixture.has("[PLAN-FINOPS-05]", p.deny) with input as fixture.plan([ok_budget, ok_subscription, b2])
+}
+
+test_pass_usecase_as_root if {
+	b := change("aws_budgets_budget", "module.budget.aws_budgets_budget.this", {"notification": [notification("ACTUAL", 100)]})
+	s := change("aws_ce_anomaly_subscription", "module.cost_anomaly.aws_ce_anomaly_subscription.this", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": topic}]})
+	count(p.deny) == 0 with input as fixture.plan([b, s])
 }
