@@ -201,6 +201,36 @@ own_partition_arn(v, body) if {
 	parts[1] == split(roots(body)[0], ":")[1]
 }
 
+# kms:ViaService は SNS 経由であることしか限らないので、SNS 経由の role は、SNS が渡す暗号化コンテキストで Topic を名指す。
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	not account_root(a)
+	via_sns(s)
+	not topic_limited(s, r.body)
+	msg := sprintf("[PLAN-KMS-11] %s: %s が SNS 経由の %s に、委任のアカウントの Topic の ARN（kms:EncryptionContext:aws:sns:topicArn）を限らずに許可しています", [r.document.path, r.document.address, a])
+}
+
+via_sns(s) if {
+	some v in lib.limiting_values(s, "kms:viaservice")
+	startswith(v, "sns.")
+}
+
+topic_limited(s, body) if {
+	vs := lib.limiting_values(s, "kms:encryptioncontext:aws:sns:topicarn")
+	count(vs) > 0
+	every v in vs { own_topic_arn(v, body) }
+}
+
+own_topic_arn(v, body) if {
+	own_partition_arn(v, body)
+	parts := split(v, ":")
+	count(parts) == 6
+	parts[2] == "sns"
+	parts[4] == account(body)
+}
+
 # ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。
 deny contains msg if {
 	some r in key_policies

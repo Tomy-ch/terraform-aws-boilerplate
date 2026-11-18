@@ -482,8 +482,43 @@ test_violation_sns_publisher_without_source if {
 	every s in [
 		without(sns_events, "/Condition"),
 		without(sns_publisher("SnsPublisherCloudWatch", "cloudwatch.amazonaws.com"), "/Condition"),
+		without(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), "/Condition"),
+		with_condition(sns_publisher("SnsPublisherBudgets", "budgets.amazonaws.com"), {"StringEquals": {"aws:SourceAccount": "210987654321"}}),
 		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:210987654321:tabp-dev-ops-notification"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:*:123456789012:*"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws-cn:sns:ap-northeast-1:123456789012:tabp-dev-ops-notification"]}}),
+		with_condition(sns_events, {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}),
 	] {
-		"[PLAN-KMS-05]" in ids([root, s])
+		ids([root, s]) == {"[PLAN-KMS-05]"}
 	}
+}
+
+test_pass_sns_parts if {
+	every statements in [[root, via_sns], [root, sns_events]] {
+		count(ids(statements)) == 0
+	}
+}
+
+test_violation_sns_role_without_topic if {
+	every s in [
+		with_condition(via_sns, {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:210987654321:tabp-dev-ops-notification"],
+		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:*"],
+		}}),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:logs:ap-northeast-1:123456789012:log-group:x"],
+		}}),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-11]"}
+	}
+}
+
+test_pass_s3_role_is_not_sns if {
+	count(ids([root, via_s3])) == 0
 }
