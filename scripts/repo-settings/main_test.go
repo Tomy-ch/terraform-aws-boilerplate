@@ -63,6 +63,7 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, rulesetFile, ruleset)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
 	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
+	writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 	return root
 }
 
@@ -412,7 +413,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 5 件、apply の workflow 1 件、分岐の集合の印 0 件（workflow 0 件）。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 5 件、apply の workflow 1 件、分岐の集合の印 0 件（workflow 0 件）、ref を比べる式の検査 1 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {

@@ -296,3 +296,176 @@ func Test_lineGlobs(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, []string{"rel/**", "hot/**"}, lineGlobs(setDecl))
 }
+
+func Test_checkRefLiterals(t *testing.T) {
+	t.Parallel()
+
+	repo := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		root := t.TempDir()
+		for name, body := range files {
+			writeFile(t, root, name, body)
+		}
+		return root
+	}
+	wf := func(name string) string { return filepath.Join(workflowsDir, name) }
+
+	t.Run("生成した項と ref でない比較は通し、読んだ式を数える", func(t *testing.T) {
+		t.Parallel()
+		root := repo(t, map[string]string{
+			wf("scan.yaml"): scanWorkflowRendered,
+			filepath.Join(actionsDir, "a", "action.yml"): "runs:\n  steps:\n    - run: echo ${{ inputs.x }}\n",
+		})
+		n, err := checkRefLiterals(root)
+		require.NoError(t, err)
+		assert.Equal(t, 2, n)
+	})
+	t.Run("composite action の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		root := repo(t, map[string]string{
+			wf("scan.yaml"): scanWorkflowRendered,
+			filepath.Join(actionsDir, "a", "action.yaml"): "runs:\n  steps:\n    - if: github.ref_name == 'production'\n      run: x\n",
+		})
+		_, err := checkRefLiterals(root)
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, filepath.Join(actionsDir, "a", "action.yaml")+":3")
+	})
+	t.Run("印の行でも生成した項の外の比較は落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) && github.head_ref != 'release/x' }} # branch-set: deploy\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "github.head_ref != '")
+	})
+	t.Run("印の無い行の fromJSON の集合は落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("run の中の式も落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    steps:\n      - run: |\n          echo ${{ github.event.pull_request.base.ref == 'production' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("対象のファイルが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, filepath.Join(workflowsDir, "notes.txt"), "x")
+		_, err := checkRefLiterals(root)
+		require.ErrorIs(t, err, errExpression)
+	})
+	t.Run("式が1件も無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): "on:\n  pull_request:\n"}))
+		require.ErrorIs(t, err, errExpression)
+	})
+	t.Run("workflow の置き場が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkRefLiterals(t.TempDir())
+		require.Error(t, err)
+	})
+}
+
+func Test_expressionFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for _, name := range []string{
+		filepath.Join(workflowsDir, "a.yaml"), filepath.Join(workflowsDir, "b.yml"), filepath.Join(workflowsDir, "README.md"),
+		filepath.Join(actionsDir, "x", "action.yml"), filepath.Join(actionsDir, "y", "z", "action.yaml"), filepath.Join(actionsDir, "x", "other.yaml"),
+	} {
+		writeFile(t, root, name, "x")
+	}
+	got, err := expressionFiles(root)
+	require.NoError(t, err)
+	rels := make([]string, 0, len(got))
+	for _, p := range got {
+		rel, _ := filepath.Rel(root, p)
+		rels = append(rels, rel)
+	}
+	assert.ElementsMatch(t, []string{
+		filepath.Join(workflowsDir, "a.yaml"), filepath.Join(workflowsDir, "b.yml"),
+		filepath.Join(actionsDir, "x", "action.yml"), filepath.Join(actionsDir, "y", "z", "action.yaml"),
+	}, rels)
+
+	t.Run("actions の置き場が無くても workflow を返す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, filepath.Join(workflowsDir, "a.yaml"), "x")
+		got, err := expressionFiles(root)
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+}
+
+func Test_expressions(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		src     string
+		want    []expression
+		wantErr string
+	}{
+		"行の中の式を取り出す":        {"a: ${{ x }}-${{ y }}\n", []expression{{1, "${{ x }}"}, {1, "${{ y }}"}}, ""},
+		"if: の値は1つの式":       {"    if: github.ref == 'a' && ${{ b }}\n", []expression{{1, "github.ref == 'a' && ${{ b }}"}}, ""},
+		"step の if: も読む":    {"      - if: x\n", []expression{{1, "x"}}, ""},
+		"ブロックスカラーの if: を読む": {"    if: >-\n      a &&\n      ${{ b }}\n    run: x\n", []expression{{1, "      a &&\n      ${{ b }}"}}, ""},
+		"コメントは読まない":         {"# if: ${{ github.ref == 'a' }}\na: x # ${{ y }}\n", nil, ""},
+		"印の if: は生成した項を除く": {
+			"    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) || x }} # branch-set: deploy\n",
+			[]expression{{1, "${{ true || x }}"}}, "",
+		},
+		"閉じていない式は拒む":       {"a: ${{ x\n", nil, "閉じていない式"},
+		"読めない書き方の if: は拒む": {"    steps: [{if: x}]\n", nil, "読めない書き方"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := expressions(tc.src)
+			if tc.wantErr != "" {
+				require.ErrorIs(t, err, errExpression)
+				assert.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func Test_withoutGenerated(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "true && x", withoutGenerated("contains(fromJSON('[\"a\"]'), github.base_ref) && x", setDeploy))
+	assert.Equal(t, "true && x", withoutGenerated("(startsWith(github.head_ref, 'a/')) && x", setLines))
+	assert.Equal(t, "y", withoutGenerated("y", setRuleset))
+}
+
+func Test_refLiteralTerms(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		expr string
+		want int
+	}{
+		"== の右のリテラル":                {"github.ref_name == 'production'", 1},
+		"!= の左のリテラル":                {"'main' != github.base_ref", 1},
+		"startsWith":                {"startsWith(github.head_ref, 'release/')", 1},
+		"endsWith":                  {"endsWith(github.ref, '/main')", 1},
+		"contains の文字列":             {"contains(github.event.ref, 'hotfix')", 1},
+		"contains の fromJSON":       {"contains(fromJSON('[\"a\"]'), github.event.workflow_run.head_branch)", 1},
+		"pull_request の head の ref": {"github.event.pull_request.head.ref == 'x'", 1},
+		"context 同士の比較は通す":          {"github.ref_name == github.event.repository.default_branch", 0},
+		"ref でない context は通す":       {"github.event_name == 'push' || github.ref_type == 'tag'", 0},
+		"ref と無関係な fromJSON は通す":    {"contains(fromJSON('[\"failure\"]'), needs.a.result)", 0},
+		"ref を値として渡すだけなら通す":         {"${{ github.ref }}", 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Len(t, refLiteralTerms(tc.expr), tc.want)
+		})
+	}
+}

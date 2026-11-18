@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,8 +14,10 @@ import (
 )
 
 var (
-	errBranchSet = xerrors.New("workflow の分岐の集合を生成できません")
-	errSetDrift  = xerrors.New("workflow の印 `# branch-set:` の行が branches.json からずれています（make repo-settings-apply）")
+	errBranchSet  = xerrors.New("workflow の分岐の集合を生成できません")
+	errRefLiteral = xerrors.New("workflow の式が ref を宣言から生成していない文字列と比べています（印 `# branch-set:` で生成してください）")
+	errExpression = xerrors.New("workflow の式を読めません")
+	errSetDrift   = xerrors.New("workflow の印 `# branch-set:` の行が branches.json からずれています（make repo-settings-apply）")
 
 	// setMarker は、生成する行の印。行末のコメントとして置く。
 	setMarker = regexp.MustCompile(`#\s*branch-set:\s*(\S+)\s*$`)
@@ -254,4 +258,175 @@ func splitComment(line string) (code, comment string) {
 		}
 	}
 	return line, ""
+}
+
+// actionsDir は、composite action の置き場。
+const actionsDir = ".github/actions"
+
+var (
+	// refLiteral は、ref の context と文字列リテラルを比べる項。
+	refLiteral = []*regexp.Regexp{
+		regexp.MustCompile(`(` + refContext.String() + `)\s*(?:==|!=)\s*'`),
+		regexp.MustCompile(`'[^']*'\s*(?:==|!=)\s*(` + refContext.String() + `)`),
+		regexp.MustCompile(`(?:startsWith|endsWith|contains)\(\s*(` + refContext.String() + `)\s*,\s*'`),
+		regexp.MustCompile(`contains\(\s*(?:fromJSON\(\s*)?'[^']*'\s*\)?\s*,\s*(` + refContext.String() + `)`),
+	}
+	exprOpen  = regexp.MustCompile(`\$\{\{`)
+	exprWhole = regexp.MustCompile(`\$\{\{.*?\}\}`)
+	ifLoose   = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
+)
+
+// checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ref の context
+// （[refContext]）を文字列リテラルと比べていないことを確かめます（ADR-0603 検証方法）。印 `# branch-set:` の
+// 行では、生成した項（[renderIfLine] が書き換える部分）だけを除いて見る。読んだ式の数を返す。対象のファイルか
+// 式が1件も無いとき、`${{` と if: のキーの字面の数が読めた数と食い違うときは失敗する。
+func checkRefLiterals(root string) (int, error) {
+	files, err := expressionFiles(root)
+	if err != nil {
+		return 0, err
+	}
+	if len(files) == 0 {
+		return 0, xerrors.Wrapf(errExpression, "%s と %s に対象のファイルがありません", workflowsDir, actionsDir)
+	}
+	total := 0
+	var findings []string
+	for _, path := range files {
+		src, err := os.ReadFile(filepath.Clean(path))
+		if err != nil {
+			return 0, xerrors.Wrapf(err, "%s の読み取り", path)
+		}
+		rel, _ := filepath.Rel(root, path)
+		exprs, err := expressions(string(src))
+		if err != nil {
+			return 0, xerrors.Wrapf(err, "%s", rel)
+		}
+		total += len(exprs)
+		for _, e := range exprs {
+			for _, term := range refLiteralTerms(e.text) {
+				findings = append(findings, fmt.Sprintf("%s:%d: %s", rel, e.line, term))
+			}
+		}
+	}
+	if total == 0 {
+		return 0, xerrors.Wrap(errExpression, "式を1件も読めませんでした")
+	}
+	if len(findings) > 0 {
+		return 0, xerrors.Wrapf(errRefLiteral, "%s", strings.Join(findings, "; "))
+	}
+	return total, nil
+}
+
+// expressionFiles は、.github/workflows の workflow と .github/actions の下の action.{yml,yaml} を返します。
+func expressionFiles(root string) ([]string, error) {
+	dir := filepath.Join(root, workflowsDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s の読み取り", workflowsDir)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	files := workflow.SelectFiles(names, dir)
+	actions := filepath.Join(root, actionsDir)
+	err = filepath.WalkDir(actions, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && (d.Name() == "action.yml" || d.Name() == "action.yaml") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil && !xerrors.Is(err, fs.ErrNotExist) {
+		return nil, xerrors.Wrapf(err, "%s の読み取り", actionsDir)
+	}
+	return files, nil
+}
+
+type expression struct {
+	line int
+	text string
+}
+
+// expressions は、YAML の本文から式を取り出します。if: の値（ブロックスカラーを含む）は1つの式で、ほかの行は
+// その中の `${{ }}` が式である。コメントは読まない。印 `# branch-set:` の if: の行は、生成した項を除く。
+func expressions(src string) ([]expression, error) {
+	lines := strings.Split(src, "\n")
+	var (
+		out        []expression
+		opens, ifs int
+		readOpens  int
+		readIfs    int
+	)
+	for i := 0; i < len(lines); i++ {
+		code, comment := splitComment(lines[i])
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		opens += len(exprOpen.FindAllString(code, -1))
+		if ifLoose.MatchString(code) {
+			ifs++
+		}
+		m := ifLine.FindStringSubmatch(code)
+		if m == nil {
+			for _, e := range exprWhole.FindAllString(code, -1) {
+				out = append(out, expression{line: i + 1, text: e})
+				readOpens++
+			}
+			continue
+		}
+		readIfs++
+		at := i + 1
+		value := strings.TrimSpace(m[2])
+		if strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">") {
+			var body []string
+			for j := i + 1; j < len(lines); j++ {
+				l := lines[j]
+				if strings.TrimSpace(l) != "" && len(l)-len(strings.TrimLeft(l, " ")) <= len(m[1]) {
+					break
+				}
+				body = append(body, l)
+				opens += len(exprOpen.FindAllString(l, -1))
+				readOpens += len(exprOpen.FindAllString(l, -1))
+				i = j
+			}
+			value = strings.Join(body, "\n")
+		} else {
+			readOpens += len(exprWhole.FindAllString(value, -1))
+		}
+		if mark := setMarker.FindStringSubmatch(comment); mark != nil {
+			value = withoutGenerated(value, mark[1])
+		}
+		out = append(out, expression{line: at, text: value})
+	}
+	if opens != readOpens {
+		return nil, xerrors.Wrapf(errExpression, "`${{` を %d 件読みましたが、字面では %d 件あります。閉じていない式があります", readOpens, opens)
+	}
+	if ifs != readIfs {
+		return nil, xerrors.Wrapf(errExpression, "if: を %d 件読みましたが、字面では %d 件あります。読めない書き方があります", readIfs, ifs)
+	}
+	return out, nil
+}
+
+// withoutGenerated は、印 set の if: の値から、[renderIfLine] が生成した項を除きます。
+func withoutGenerated(value, set string) string {
+	switch set {
+	case setDeploy:
+		return containsSet.ReplaceAllString(value, "true")
+	case setLines:
+		return prefixGroup.ReplaceAllString(value, "true")
+	}
+	return value
+}
+
+// refLiteralTerms は、式の中の ref の context と文字列リテラルを比べる項を返します。
+func refLiteralTerms(expr string) []string {
+	out := make([]string, 0, len(refLiteral))
+	for _, re := range refLiteral {
+		out = append(out, re.FindAllString(expr, -1)...)
+	}
+	return out
 }
