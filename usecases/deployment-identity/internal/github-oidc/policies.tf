@@ -100,14 +100,12 @@ locals {
 
   # 組織の ID は作る前に決まらないので、Organizations の ARN は pattern で書く（deployment-identity/ADR-0201 決定4）。
   org_arn_prefix = "arn:${data.aws_partition.current.partition}:organizations::${data.aws_caller_identity.current.account_id}"
-  org_root_arns  = ["${local.org_arn_prefix}:root/o-*/r-*"]
   org_ou_arns    = ["${local.org_arn_prefix}:ou/o-*/ou-*"]
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
-  administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
   # 統制の作成と設定の権限を持つ customer managed policy（deployment-identity/ADR-0201 決定7）。
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-ci-apply-identity-governance"
