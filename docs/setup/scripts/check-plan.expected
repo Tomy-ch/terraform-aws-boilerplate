@@ -17,6 +17,13 @@ add module.state_backend.module.plan_output.aws_s3_bucket_versioning.this
 add module.state_backend.module.plan_output.aws_s3_bucket_server_side_encryption_configuration.this
 add module.state_backend.module.plan_output.aws_s3_bucket_policy.this
 add module.state_backend.module.plan_output.aws_s3_bucket_lifecycle_configuration.this
+add module.state_backend.module.apply_output.aws_s3_bucket.this
+add module.state_backend.module.apply_output.aws_s3_bucket_public_access_block.this
+add module.state_backend.module.apply_output.aws_s3_bucket_ownership_controls.this
+add module.state_backend.module.apply_output.aws_s3_bucket_versioning.this
+add module.state_backend.module.apply_output.aws_s3_bucket_server_side_encryption_configuration.this
+add module.state_backend.module.apply_output.aws_s3_bucket_policy.this
+add module.state_backend.module.apply_output.aws_s3_bucket_lifecycle_configuration.this
 add module.state_backend.module.kms.aws_kms_key.this
 add module.state_backend.module.kms.aws_kms_key_policy.this
 add module.state_backend.module.kms.aws_kms_alias.this

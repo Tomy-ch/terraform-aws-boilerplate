@@ -115,12 +115,15 @@ locals {
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.workload_state_key },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.workload_state_key}.tflock" },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+      { Sid = "WriteWorkloadApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.apply_output_bucket_arn}/*" },
       # Deny の範囲と形は deployment-identity/ADR-0201 決定5。
       { Sid = "DenyIdentityChange", Effect = "Deny", Action = "*", Resource = local.identity_arns },
       { Sid = "DenyIdentityStateChange", Effect = "Deny", Action = "*", Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
       { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:GetEncryptionConfiguration", "s3:ListBucket"], Resource = var.state_bucket_arn },
       { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
       { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = [var.plan_output_bucket_arn, "${var.plan_output_bucket_arn}/*"] },
+      { Sid = "DenyApplyOutputBucketChange", Effect = "Deny", Action = "*", Resource = var.apply_output_bucket_arn },
+      { Sid = "DenyApplyOutputChange", Effect = "Deny", NotAction = ["s3:PutObject"], Resource = "${var.apply_output_bucket_arn}/*" },
       # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
       { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
     ]
@@ -178,8 +181,7 @@ locals {
       [{ Sid = "WriteApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.plan_output_bucket_arn}/apply/*" }],
     )
 
-    # ListObjectsV2・GetObject・If-Match の DeleteObject だけ（deployment-identity/ADR-0201 決定9）。If-Match の削除は
-    # s3:GetObject も要る。
+    # 範囲と、各 Action が要る理由は deployment-identity/ADR-0201 決定9（unlock は決定11）。
     unlock_identity = [
       { Sid = "ListIdentityLock", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn, Condition = { StringEquals = { "s3:prefix" = "identity/terraform.tfstate.tflock" } } },
       { Sid = "RemoveIdentityLock", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject"], Resource = "${local.identity_state_key}.tflock" },
