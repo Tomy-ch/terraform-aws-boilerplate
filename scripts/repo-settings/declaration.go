@@ -35,6 +35,25 @@ var (
 
 var environmentKeys = map[string]bool{"name": true, "deploy_from": true, "can_admins_bypass": true}
 
+// vulnerabilityReporting は、Private Vulnerability Reporting の宣言（ADR-0603 決定4）。
+type vulnerabilityReporting struct {
+	// Enabled は省略と null を許さないためにポインタで受ける。
+	Enabled *bool `json:"enabled"`
+}
+
+var vulnerabilityReportingKeys = map[string]bool{"enabled": true}
+
+func readVulnerabilityReporting(path string) (bool, error) {
+	var v vulnerabilityReporting
+	if err := branchdecl.DecodeStrict(path, &v, vulnerabilityReportingKeys); err != nil {
+		return false, err
+	}
+	if v.Enabled == nil {
+		return false, xerrors.Wrapf(errDeclaration, "%s: enabled がありません", path)
+	}
+	return *v.Enabled, nil
+}
+
 func readEnvironments(path string) ([]environment, error) {
 	var envs []environment
 	if err := branchdecl.DecodeStrict(path, &envs, environmentKeys); err != nil {
@@ -79,8 +98,7 @@ func validateEnvironments(envs []environment) error {
 	return nil
 }
 
-// requiredDeployFrom は、deployment-identity の role が名指す environment の deploy_from を返します。
-// plan の environment は保護ブランチと Pull Request を許し、ほかはその env のデプロイブランチだけを許す
+// requiredDeployFrom は、deployment-identity の role が名指す environment の deploy_from を返します
 // （ADR-0602 決定14）。
 func requiredDeployFrom(name string) (string, bool) {
 	_, suffix, ok := splitIdentity(name)
