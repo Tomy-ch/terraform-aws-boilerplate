@@ -30,7 +30,7 @@ SCP と RCP は管理アカウントに効かない。SCP はメンバーの roo
    | `deny-guardduty-stop` | GuardDuty の停止と削除 | Sandbox |
    | `data-perimeter-prod-resources` | Prod の OU に在る resource への操作（role の引き受けを含む） | NonProd・Sandbox |
 
-   検知の停止の拒否（Workloads・Security）と、監査ログの保管庫と鍵を守る拒否（Security）の中身は、それを持つ usecase が決め、この usecase が付ける。
+   検知の停止の拒否（Workloads・Security）と組織の trail を守る拒否（Security）の中身は `account-baseline` が、監査ログの保管庫と鍵を守る拒否（Security）の中身は `audit-evidence` が決め、この usecase が付ける。
 
 6. RCP の一覧と最終の付け先を次とする。どちらも S3・KMS・Secrets Manager の resource と role の引き受け（`sts:AssumeRole`）を対象とし、AWS のサービスの主体（`aws:PrincipalIsAWSService`）を外す。Web Identity と SAML の引き受けは対象にしない。GitHub の OIDC と Identity Center の到達がそれを使う。
 

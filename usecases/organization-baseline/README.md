@@ -55,8 +55,8 @@ unsupported:
 ## 所有者
 
 - この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy
-- `account-baseline`: 検知の停止の拒否（Workloads・Security）と、監査ログの保管庫と鍵を守る拒否（Security）の中身。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy は持たない（メンバーは IAM user の作成を SCP で拒む）
-- `audit-evidence`: 監査ログの保管庫の拒否の中身
+- `account-baseline`: 検知の停止の拒否（Workloads・Security）と、組織の trail を守る拒否（Security）の中身。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy は持たない（メンバーは IAM user の作成を SCP で拒む）
+- `audit-evidence`: 監査ログの保管庫と鍵を守る拒否（Security。`protect-log-vault`）の中身
 
 ## 依存するユースケースと判断 Issue
 
