@@ -9,6 +9,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/reporoot"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -1006,6 +1007,47 @@ func Test_execute(t *testing.T) {
 			t.Chdir(dir)
 
 			require.Error(t, execute(bootstrappableRunner().runner(), []string{"prune-release-notes"}))
+		})
+	})
+}
+
+func Test_start(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	same := func() (string, error) { return dir, nil }
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下なら execute へ進む", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+
+			require.ErrorIs(t, start(f.runner(), nil, same, same), errUsage)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("直下でなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			other := t.TempDir()
+			sub := func() (string, error) { return other, nil }
+
+			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, sub, same), reporoot.ErrNotRoot)
+			assert.Empty(t, f.calls)
+		})
+
+		t.Run("直下を解決できなければ手順を 1 つも実行しない", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{}
+			unresolved := func() (string, error) { return "", reporoot.ErrNoToplevel }
+
+			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, same, unresolved), reporoot.ErrNoToplevel)
+			assert.Empty(t, f.calls)
 		})
 	})
 }

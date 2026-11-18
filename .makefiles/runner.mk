@@ -78,10 +78,9 @@ RUN_SCRIPT = $(GO_TOOL) sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" $(2)'
 
-## version manager 自身を入力とする道具の起動。
+## 提供段のコンテナに無い前提を要する道具の起動。RUN_SCRIPT と同じく直下で実行する。
 ##
-## 検査の入力が version manager であるため、提供段に version manager を持たないツールランナーでは
-## 成立しない（ADR-0503 決定11）。ホストで実行する。
+## どの前提に当たるかは呼び出し元の .mk のコメントが持つ（.makefiles/README.md）。
 RUN_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" $(2)'
