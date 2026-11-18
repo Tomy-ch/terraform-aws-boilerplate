@@ -89,6 +89,10 @@ Then establish, for each thing you intend to assert:
 `AGENTS.md` の *正典となる文書* と `scripts/README.md` を読んで該当箇所を特定する。
 **パスを推測しない。**
 
+AWS の構成を扱う問いでは、AWS の外の事実（推奨値、制約、Security Hub のコントロール）を
+[ADR-0206](../../../docs/adr/0206-official-implementations-as-reference.md) 決定3 の情報源から確かめ、
+前提の各行に出典を添える。どの情報源が優先するかは [ADR-0207](../../../docs/adr/0207-default-value-policy.md) 決定3 が持つ。
+
 ## Step 3 — Five blockers
 
 A draft does not proceed to Step 4 while any of these is true. They are deliberately mechanical: an

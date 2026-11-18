@@ -230,6 +230,10 @@ Every external claim carries publisher, title, URL, and access date. Prefer prim
 material — the project's own documentation, a specification, a release note — over secondary
 summaries.
 
+AWS の構成を比べる問いでは、[ADR-0206](../../../docs/adr/0206-official-implementations-as-reference.md) 決定3 が「公式」と定める情報源から当たり、
+評価軸の根拠もそこへ置く。情報源の間の優先順位は [ADR-0207](../../../docs/adr/0207-default-value-policy.md) 決定3 が持つ。
+それ以外の解説は、決定の根拠として単独で使わない（ADR-0206 決定4）。
+
 When lookup is unavailable, or a claim cannot be confirmed, **say it is unverified and lower the
 confidence of anything resting on it**. Never produce a benchmark figure, a version number, a
 deprecation date, or a citation you did not read. A fabricated source is not a small error here: it
