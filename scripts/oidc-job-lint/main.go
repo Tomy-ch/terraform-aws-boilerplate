@@ -110,6 +110,7 @@ var (
 	runEntry    = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
 	detection   = makeRun(`infra-code-gate`)
 	orderCheck  = makeRun(`resource-order-check`)
+	layerCheck  = makeRun(`layer-check`)
 	// status の関数・論理和・否定は、検出の失敗を越えて job を走らせうる。!= は比較なので除く。
 	statusEscape = regexp.MustCompile(`\b(?:always|cancelled|failure)\(\)|\|\||!(?:[^=]|$)`)
 	pushPaths    = regexp.MustCompile(`^\s+["']?paths(?:-ignore)?["']?[ \t]*:`)
@@ -139,6 +140,8 @@ var (
 	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
 	orderRun      = makeRun(`resource-order-check(?:-test)?`)
 	orderTestRun  = makeRun(`resource-order-check-test`)
+	layerRun      = makeRun(`layer-check(?:-test)?`)
+	layerTestRun  = makeRun(`layer-check-test`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
 	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
@@ -214,7 +217,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 	)
 	sources := map[string]string{}
 	targets := 0
-	prOrder := 0
+	prGates := map[string]int{}
 	for _, p := range workflow.SelectFiles(names, dir) {
 		raw, err := root.ReadFile(filepath.Base(p))
 		if err != nil {
@@ -227,12 +230,16 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		_, f = checkRevertWiring(p, string(raw))
 		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
-		n, f = checkRequiredOrderJobs(p, string(raw), required)
-		prOrder += n
-		findings = append(findings, f...)
+		for _, g := range applyGates {
+			n, f = checkRequiredGateJobs(p, string(raw), required, g)
+			prGates[g.noun] += n
+			findings = append(findings, f...)
+		}
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
-	findings = append(findings, checkPullRequestOrder(dir, groups, prOrder)...)
+	for _, g := range applyGates {
+		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
+	}
 	roots := 0
 	if rootsDir != "" {
 		n, f, err := checkRootCoverage(rootsDir, sources)
@@ -259,10 +266,9 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 // すべての Pull Request で報告される」の fail open）。
 const prGateIf = "!cancelled() && needs.changes.outputs.relevant != 'false'"
 
-// checkRequiredOrderJobs は、pull_request で起動する workflow のうち、required の context を報告し
-// make resource-order-check-test と make resource-order-check の両方を走らせる job の数と、その job が
-// 検査を走らせずに成功を報告しうる形の違反を返します。
-func checkRequiredOrderJobs(file, source string, required map[string]bool) (int, []lintreport.Finding) {
+// checkRequiredGateJobs は、pull_request で起動する workflow のうち、required の context を報告し
+// g の自己テストと検査の両方を走らせる job の数と、その job が検査を走らせずに成功を報告しうる形の違反を返します。
+func checkRequiredGateJobs(file, source string, required map[string]bool, g gate) (int, []lintreport.Finding) {
 	split := workflow.SplitJobs(source)
 	on, _ := triggers(split.Preamble)
 	if _, ok := on["pull_request"]; !ok {
@@ -271,34 +277,34 @@ func checkRequiredOrderJobs(file, source string, required map[string]bool) (int,
 	n := 0
 	var findings []lintreport.Finding
 	for _, j := range split.Jobs {
-		if !required[j.ID] || !runsGate(j, orderGate) || !hasLine(j, orderTestRun) {
+		if !required[j.ID] || !runsGate(j, g) || !hasLine(j, g.testRun) {
 			continue
 		}
 		n++
-		findings = append(findings, checkRequiredOrderJob(file, j, split.Preamble)...)
+		findings = append(findings, checkRequiredGateJob(file, j, split.Preamble, g)...)
 	}
 	return n, findings
 }
 
-// checkRequiredOrderJob は、必須検査の job と順序の検査の step が、skip も失敗の無視も別の場所や別の shell
+// checkRequiredGateJob は、必須検査の job と g の検査の step が、skip も失敗の無視も別の場所や別の shell
 // での実行もできないことを検査します。skip された必須検査は成功として数えられるので、job の if: は
 // prGateIf の形だけを認める。
-func checkRequiredOrderJob(file string, job workflow.Job, preamble []workflow.Line) []lintreport.Finding {
+func checkRequiredGateJob(file string, job workflow.Job, preamble []workflow.Line, g gate) []lintreport.Finding {
 	finding := func(line int, format string, args ...any) lintreport.Finding {
 		return lintreport.Finding{File: file, Line: line, Message: fmt.Sprintf("job %s: ", job.ID) + fmt.Sprintf(format, args...)}
 	}
 	var findings []lintreport.Finding
 	if cond, at, ok := jobKey(job, "if"); ok && ifExpression(cond) != prGateIf {
-		findings = append(findings, finding(at, "順序の検査を走らせる必須検査の job の if: は ${{ %s }} だけにしてください。定数・status の関数・|| ・! は、検査を走らせずに成功を報告させます", prGateIf))
+		findings = append(findings, finding(at, "%sを走らせる必須検査の job の if: は ${{ %s }} だけにしてください。定数・status の関数・|| ・! は、検査を走らせずに成功を報告させます", g.noun, prGateIf))
 	}
 	for _, key := range []string{"continue-on-error", "container", "services", "defaults", "env"} {
 		if _, at, ok := jobKey(job, key); ok {
-			findings = append(findings, finding(at, "順序の検査を走らせる必須検査の job に %s: を置かないでください", key))
+			findings = append(findings, finding(at, "%sを走らせる必須検査の job に %s: を置かないでください", g.noun, key))
 		}
 	}
 	for _, l := range preamble {
 		if defaultsAt.MatchString(l.Text) || envAt.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "順序の検査を走らせる必須検査の workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます"))
+			findings = append(findings, finding(l.Number, "%sを走らせる必須検査の workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます", g.noun))
 		}
 	}
 	for _, l := range append(slices.Clone(preamble), job.Lines...) {
@@ -314,12 +320,12 @@ func checkRequiredOrderJob(file string, job workflow.Job, preamble []workflow.Li
 		findings = append(findings, checkIndirect(l, finding)...)
 	}
 	for _, step := range workflow.SplitSteps(job) {
-		if runs, ok := stepRunLine(step); !ok || !orderRun.MatchString(runs.Text) {
+		if runs, ok := stepRunLine(step); !ok || !g.runs.MatchString(runs.Text) {
 			continue
 		}
 		for _, l := range step.Lines {
 			if stepIf.MatchString(l.Text) || stepContinue.MatchString(l.Text) || stepShell.MatchString(l.Text) || stepWorkDir.MatchString(l.Text) {
-				findings = append(findings, finding(l.Number, "順序の検査の step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせます"))
+				findings = append(findings, finding(l.Number, "%sの step に if:・continue-on-error:・shell:・working-directory: を置かないでください。skip も失敗も成功として報告され、別の Makefile を走らせます", g.noun))
 			}
 		}
 	}
@@ -333,13 +339,13 @@ func ifExpression(cond string) string {
 	return strings.Join(strings.Fields(cond), " ")
 }
 
-// checkPullRequestOrder は、apply の job が待つ順序の検査を、Pull Request の必須検査も走らせることを検査します。
-// apply の側だけでは、順序を崩す変更が merge されてから apply が止まる。
-func checkPullRequestOrder(dir string, records []groupRecord, found int) []lintreport.Finding {
+// checkPullRequestGate は、apply の job が待つ g の検査を、Pull Request の必須検査も走らせることを検査します。
+// apply の側だけでは、規則を崩す変更が merge されてから apply が止まる。
+func checkPullRequestGate(dir string, records []groupRecord, found int, g gate) []lintreport.Finding {
 	if found > 0 || !slices.ContainsFunc(records, func(r groupRecord) bool { return !r.unlock }) {
 		return nil
 	}
-	return []lintreport.Finding{{File: dir, Line: 1, Message: "pull_request で起動し保護設定が required とする job に、make resource-order-check-test と make resource-order-check を走らせるものがありません。apply の job が待つ順序の検査を、merge の前の必須検査にも置いてください"}}
+	return []lintreport.Finding{{File: dir, Line: 1, Message: fmt.Sprintf("pull_request で起動し保護設定が required とする job に、%s を走らせるものがありません。apply の job が待つ%sを、merge の前の必須検査にも置いてください", g.targets, g.noun)}}
 }
 
 // readEnvironments は、宣言された environment の名前を返します。0件の宣言は、どの job の environment も
@@ -561,7 +567,9 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 		}
 	}
 	findings = append(findings, checkNoCancel(job, w, "apply", finding)...)
-	findings = append(findings, checkOrderGate(job, w.jobs, finding)...)
+	for _, g := range applyGates {
+		findings = append(findings, checkApplyGate(job, w.jobs, g, finding)...)
+	}
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
 	return append(findings, checkTerraform(job, ciApply, "apply", finding)...)
 }
@@ -813,33 +821,44 @@ func hasLine(job workflow.Job, re *regexp.Regexp) bool {
 }
 
 // gate は、資格情報を取る job が needs に置ける、資格情報を持たない検査の job の種類です。job は名前ではなく、
-// 走らせる make のターゲット（marks）で見分けます。runs はその job に置ける run: の閉じた集合です。
+// 走らせる make のターゲット（marks）で見分けます。runs はその job に置ける run: の閉じた集合、testRun は
+// 自己テストの run: で、check は違反の文に出す検査の make です。
 type gate struct {
-	label, targets string
-	marks, runs    *regexp.Regexp
+	noun, label, targets, check string
+	marks, runs, testRun        *regexp.Regexp
 }
 
 var (
-	detectionGate = gate{label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", marks: detection, runs: detectionRun}
-	orderGate     = gate{label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", marks: orderCheck, runs: orderRun}
+	detectionGate = gate{noun: "検出", label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", check: "make infra-code-gate", marks: detection, runs: detectionRun}
+	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", check: "make resource-order-check", marks: orderCheck, runs: orderRun, testRun: orderTestRun}
+	layerGate     = gate{noun: "層の検査", label: "層の検査の job", targets: "make layer-check-test と make layer-check", check: "make layer-check", marks: layerCheck, runs: layerRun, testRun: layerTestRun}
+	// applyGates は、apply の job が検出に加えて必ず待ち、Pull Request の必須検査も走らせる検査である。
+	applyGates = []gate{orderGate, layerGate}
 )
 
 // checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
-// needs に置けるのは検出の job と順序の検査の job だけで、どちらも同じ形の規則で見ます。job の if: は、
-// status の関数で失敗を越えないよう、検出の成功と、needs のすべての順序の検査の成功を含むときだけ認めます。
+// needs に置けるのは検出の job と applyGates の検査の job だけで、どれも同じ形の規則で見ます。job の if: は、
+// status の関数で失敗を越えないよう、検出の成功と、needs のすべての検査の成功を含むときだけ認めます。
 func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
-	var detectors, orders []workflow.Job
+	type gated struct {
+		job  workflow.Job
+		gate gate
+	}
+	var detectors []workflow.Job
+	var checks []gated
 	var findings []lintreport.Finding
 	for _, n := range needs(job) {
 		i := slices.IndexFunc(jobs, func(j workflow.Job) bool { return j.ID == n })
-		switch {
-		case i >= 0 && runsGate(jobs[i], detectionGate):
+		if i >= 0 && runsGate(jobs[i], detectionGate) {
 			detectors = append(detectors, jobs[i])
-		case i >= 0 && runsGate(jobs[i], orderGate):
-			orders = append(orders, jobs[i])
-		default:
-			findings = append(findings, finding(job.Number, "needs の %s は、検出の job（make infra-code-gate）でも順序の検査の job（make resource-order-check）でもありません。資格情報を取る job が待つ job は、この2つの形に限ります", n))
+			continue
 		}
+		k := slices.IndexFunc(applyGates, func(g gate) bool { return i >= 0 && runsGate(jobs[i], g) })
+		if k < 0 {
+			findings = append(findings, finding(job.Number, "needs の %s は、%s ではありません。資格情報を取る job が待つ job は、これらの形に限ります", n, allowedNeeds()))
+			continue
+		}
+		checks = append(checks, gated{jobs[i], applyGates[k]})
 	}
 	if len(detectors) == 0 {
 		return append(findings, finding(job.Number, "needs に、make infra-code-gate を走らせる job を同じ workflow の中に置いてください。資格情報を取る job は検出より先にコードを実行しません（ADR-0601 決定9）"))
@@ -847,8 +866,8 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	for _, d := range detectors {
 		findings = append(findings, checkGateJob(d, detectionGate, finding)...)
 	}
-	for _, o := range orders {
-		findings = append(findings, checkGateJob(o, orderGate, finding)...)
+	for _, c := range checks {
+		findings = append(findings, checkGateJob(c.job, c.gate, finding)...)
 	}
 	cond, at, ok := jobKey(job, "if")
 	if !ok {
@@ -860,12 +879,21 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 	if !slices.ContainsFunc(detectors, func(d workflow.Job) bool { return requiresSuccess(cond, d.ID) }) {
 		findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", detectors[0].ID))
 	}
-	for _, o := range orders {
-		if !requiresSuccess(cond, o.ID) {
-			findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", o.ID))
+	for _, c := range checks {
+		if !requiresSuccess(cond, c.job.ID) {
+			findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", c.job.ID))
 		}
 	}
 	return findings
+}
+
+// allowedNeeds は、資格情報を取る job の needs に置ける job の形を、違反の文のために並べます。
+func allowedNeeds() string {
+	parts := []string{fmt.Sprintf("%s（%s）", detectionGate.label, detectionGate.check)}
+	for _, g := range applyGates {
+		parts = append(parts, fmt.Sprintf("%s（%s）", g.label, g.check))
+	}
+	return strings.Join(parts, "・")
 }
 
 // checkGateJob は、needs の先の検査の job が skip も失敗の無視もできず、決めたターゲットだけを走らせることを検査します。
@@ -895,14 +923,14 @@ func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lint
 	return findings
 }
 
-// checkOrderGate は、apply の job が順序の検査の job を needs に持つことを検査します。
-func checkOrderGate(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+// checkApplyGate は、apply の job が g の検査の job を needs に持つことを検査します。
+func checkApplyGate(job workflow.Job, jobs []workflow.Job, g gate, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	for _, n := range needs(job) {
-		if slices.ContainsFunc(jobs, func(j workflow.Job) bool { return j.ID == n && !runsGate(j, detectionGate) && runsGate(j, orderGate) }) {
+		if slices.ContainsFunc(jobs, func(j workflow.Job) bool { return j.ID == n && !runsGate(j, detectionGate) && runsGate(j, g) }) {
 			return nil
 		}
 	}
-	return []lintreport.Finding{finding(job.Number, "apply の job の needs に、make resource-order-check を走らせる job を同じ workflow の中に置いてください。Pull Request の検査は merge された木を見ません")}
+	return []lintreport.Finding{finding(job.Number, "apply の job の needs に、%s を走らせる job を同じ workflow の中に置いてください。Pull Request の検査は merge された木を見ません", g.check)}
 }
 
 // checkHidden は、入口の make を実行しないか、失敗を成功として報告させる形を検査します（plan の job は
