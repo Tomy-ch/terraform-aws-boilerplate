@@ -243,6 +243,36 @@ run "rejects_global_namespace_apply_output_bucket" {
   expect_failures = [var.apply_output_bucket_arn]
 }
 
+run "rejects_empty_apply_output_bucket_arn" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = ""
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
+run "rejects_apply_output_bucket_account_11_digits" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-12345678901-ap-northeast-1-an"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
+run "rejects_apply_output_bucket_account_13_digits" {
+  command = plan
+
+  variables {
+    apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-1234567890123-ap-northeast-1-an"
+  }
+
+  expect_failures = [var.apply_output_bucket_arn]
+}
+
 run "rejects_an_suffix_without_account_and_region" {
   command = plan
 

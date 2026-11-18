@@ -15,7 +15,6 @@ sb := object.get(data.policy_plan, "state_backend", {})
 
 bootstrap := object.get(cfg, "bootstrap", {})
 
-# index key 付きの address（["apply"]）で宣言する。同じ resource のほかの instance と分けるため。
 default target := ""
 
 target := object.get(cfg, "policy", "")
@@ -72,14 +71,30 @@ well_formed_type(t) if {
 
 well_formed_child(c) if {
 	is_object(c)
-	object.keys(c) - {"suffixes", "roots", "version_deletion"} == set()
+	object.keys(c) - {"suffixes", "roots", "version_deletion", "writes"} == set()
 	is_array(object.get(c, "suffixes", []))
 	every s in object.get(c, "suffixes", []) {
 		nonempty_string(s)
 	}
 	is_boolean(object.get(c, "roots", false))
 	is_boolean(object.get(c, "version_deletion", false))
+	well_formed_writes(c)
 	yields_child(c)
+}
+
+well_formed_writes(c) if not "writes" in object.keys(c)
+
+# 読み取りの名前を書き込みとして宣言すると、NotAction がその読み取りを除くことを認めてしまう。wildcard は
+# 宣言した名前の外まで除くことを認めるので、1つの Action の名前に限る。
+well_formed_writes(c) if {
+	count(object.get(c, "suffixes", [])) > 0
+	is_array(c.writes)
+	count(c.writes) > 0
+	every w in c.writes {
+		is_string(w)
+		regex.match(`^[a-z0-9-]+:[A-Za-z0-9]+$`, w)
+		not read_name(lower(w))
+	}
 }
 
 yields_child(c) if count(object.get(c, "suffixes", [])) > 0
@@ -151,6 +166,16 @@ targets contains arn if {
 	class_of(r.type) == "target"
 	arn_shaped(r.change.after.arn)
 	r.address in object.keys(children)
+	not "writes" in object.keys(children[r.address])
+	some arn in suffix_arns(r.address, r.change.after.arn)
+}
+
+write_targets[arn] := {lower(w) | some w in children[r.address].writes} if {
+	some r in resources
+	class_of(r.type) == "target"
+	arn_shaped(r.change.after.arn)
+	r.address in object.keys(children)
+	"writes" in object.keys(children[r.address])
 	some arn in suffix_arns(r.address, r.change.after.arn)
 }
 
@@ -211,6 +236,14 @@ covered(arn) if {
 	denies_all_but_reads(s)
 }
 
+covered_except(arn, writes) if {
+	some s in statements
+	unconditional_deny(s)
+	on(s, arn)
+	not "Action" in object.keys(s)
+	{a | some a in lib.lower_all(s.NotAction)} == writes
+}
+
 covered_strictly(arn) if {
 	some s in statements
 	unconditional_deny(s)
@@ -226,7 +259,6 @@ version_deletion_denied(arn) if {
 	a in {"s3:deleteobjectversion", "*"}
 }
 
-# 鍵と Key Policy は module の path で組にし、Key Policy の key_id が組の鍵を指すことを PLAN-APPLY-02 で見る。
 account_root(arn) if regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:root$`, arn)
 
 keys contains r if {
@@ -347,7 +379,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion だけを持ち、子の ARN を1つ以上生む）の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -487,6 +519,41 @@ deny contains msg if {
 	some arn in strict_targets
 	not covered_strictly(arn)
 	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s へのすべての Action（*）を条件なしの Deny で拒んでいません", [target, arn])
+}
+
+deny contains msg if {
+	some arn, writes in write_targets
+	not covered_except(arn, writes)
+	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、%s への %v のほかのすべての Action を、条件なしの Deny（NotAction）で拒んでいません", [target, arn, sort(writes)])
+}
+
+# 宣言した書き込みを Action で拒む Deny は、その書き込みを塞ぐ。宣言と実物の食い違いとして落とす。Resource は
+# 完全一致ではなく、IAM がその ARN に当てるか（Resource の pattern、NotResource の外）で読む。
+deny contains msg if {
+	some arn, writes in write_targets
+	some s in statements
+	s.Effect == "Deny"
+	count(object.get(s, "Condition", {})) == 0
+	applies_to(s, arn)
+	some a in lib.lower_all(object.get(s, "Action", []))
+	some w in writes
+	lib.iam_match(a, w)
+	msg := sprintf("[PLAN-APPLY-03] apply の role %q が、書き込み先として宣言した %s の %s を、Deny の Action %q で拒んでいます", [target, arn, w, a])
+}
+
+applies_to(s, arn) if {
+	some r in lib.as_array(object.get(s, "Resource", []))
+	lib.iam_match(r, arn)
+}
+
+applies_to(s, arn) if {
+	"NotResource" in object.keys(s)
+	not resource_listed(s.NotResource, arn)
+}
+
+resource_listed(rs, arn) if {
+	some r in lib.as_array(rs)
+	lib.iam_match(r, arn)
 }
 
 # --- PLAN-APPLY-04: state の版の削除 ---

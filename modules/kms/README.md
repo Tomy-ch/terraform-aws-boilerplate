@@ -84,7 +84,6 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
   - 作成直後の role を Principal に置く `PutKeyPolicy` が、IAM の結果整合で落ちないこと
   - `via = "s3"` の2つの Action で、S3 backend が state と lock file を読み書きできること
   - 鍵を管理する role が、Provider が鍵・Key Policy・alias の作成・読み取りで呼ぶ API を、委任の21 Action と IAM で持てること。削除で呼ぶ API は、最初の消費者の管理 role が持たないので（deployment-identity/ADR-0201 の「与えないもの」）、その経路では確かめない
-- 層検査（attachment の同居、`source` の方向）は未配線である（AGENTS.md「現在の配線状態」）。配線した後に、この module も検査の対象として確かめる
 - SNS の文は、SNS の Topic を持つ reference の root が無いので reference の plan に現れない。`PLAN-KMS-*` を通ることは、`policy.tf` と同じ形を手で写した Rego のテストでだけ見ていて、一致は検査しない
 - 次は実際の AWS で確かめていない。確かめるのは、最初の消費者（ops-notification）の sandbox での検証である
   - `SnsPublisherEvents` の暗号化コンテキストの条件で、EventBridge から暗号化した Topic への送信が通ること。一次資料の Key Policy の例は `sns.amazonaws.com` の文にこの条件を使うもので、EventBridge の送信に同じ暗号化コンテキストが載ることを述べる文書は見つかっていない

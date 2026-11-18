@@ -328,3 +328,124 @@ func Test_checkDeployEnvs(t *testing.T) {
 		})
 	}
 }
+
+func backendFixture(kind string) string {
+	return "terraform {\n  backend \"s3\" {\n    key          = \"" + kind + "/terraform.tfstate\"\n    use_lockfile = true\n  }\n}\n"
+}
+
+func Test_checkBackendKeys(t *testing.T) {
+	t.Parallel()
+
+	t.Run("2つの env の identity root と workload root が決まった key を持てば通る", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, env := range []string{"admin", "security"} {
+			writeFile(t, root, "env/"+env+"/identity/backend.tf", backendFixture("identity"))
+			writeFile(t, root, "env/"+env+"/backend.tf", backendFixture("workload"))
+		}
+		n, err := checkBackendKeys(root)
+		require.NoError(t, err)
+		assert.Equal(t, 4, n)
+	})
+
+	t.Run("env/ の下に symlink があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/admin/identity/backend.tf", backendFixture("identity"))
+		require.NoError(t, os.Symlink(filepath.Join(root, "env/admin"), filepath.Join(root, "env/linked")))
+		_, err := checkBackendKeys(root)
+		require.ErrorIs(t, err, errBackendKey)
+		assert.Contains(t, err.Error(), "symlink は読みません")
+	})
+
+	t.Run("配置の外のディレクトリは backend を読まず、root に数えない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/admin/identity/backend.tf", backendFixture("identity"))
+		writeFile(t, root, "env/main.tf", "# x\n")
+		writeFile(t, root, "env/admin/foo/bar/main.tf", "# x\n")
+		writeFile(t, root, "env/admin/identity/sub/main.tf", "# x\n")
+		n, err := checkBackendKeys(root)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+	})
+
+	t.Run("env/ が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkBackendKeys(t.TempDir())
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run(".terraform と tests の下は読まない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/admin/identity/backend.tf", backendFixture("identity"))
+		writeFile(t, root, "env/admin/identity/.terraform/modules/x/backend.tf", backendFixture("other"))
+		writeFile(t, root, "env/admin/identity/tests/x.tf", "# x\n")
+		n, err := checkBackendKeys(root)
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+	})
+
+	for name, c := range map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"identity root の key が workload なら失敗する": {map[string]string{"env/admin/identity/backend.tf": backendFixture("workload")}, "env/admin/identity の backend の key が workload/terraform.tfstate で、identity/terraform.tfstate ではありません"},
+		"workload root の key が identity なら失敗する": {map[string]string{"env/admin/backend.tf": backendFixture("identity")}, "env/admin の backend の key が identity/terraform.tfstate で、workload/terraform.tfstate ではありません"},
+		"root に backend.tf が無ければ失敗する":           {map[string]string{"env/admin/main.tf": "# x\n"}, "env/admin: backend.tf がありません"},
+		"key がリテラルでなければ失敗する":                    {map[string]string{"env/admin/backend.tf": "terraform {\n  backend \"s3\" {\n    key = var.key\n  }\n}\n"}, "key がリテラルの文字列ではありません"},
+		"s3 の backend が無ければ失敗する":                {map[string]string{"env/admin/backend.tf": "terraform {\n}\n"}, "s3 の backend がありません"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for f, body := range c.files {
+				writeFile(t, root, f, body)
+			}
+			_, err := checkBackendKeys(root)
+			require.ErrorIs(t, err, errBackendKey)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+
+	t.Run("root が1つも無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/README.md", "x")
+		_, err := checkBackendKeys(root)
+		require.ErrorIs(t, err, errBackendKey)
+	})
+}
+
+func Test_backendKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("s3 の backend の key を読む", func(t *testing.T) {
+		t.Parallel()
+		got, err := backendKey(writeFile(t, t.TempDir(), "backend.tf", backendFixture("identity")))
+		require.NoError(t, err)
+		assert.Equal(t, "identity/terraform.tfstate", got)
+	})
+
+	for name, c := range map[string]struct{ body, want string }{
+		"s3 でない backend は読まない": {"terraform {\n  backend \"local\" {\n    path = \"x\"\n  }\n}\n", "s3 の backend がありません"},
+		"HCL として読めなければ失敗する":    {"terraform {\n", "Unclosed configuration block"},
+		"key が無ければ失敗する":        {"terraform {\n  backend \"s3\" {\n  }\n}\n", "key がありません"},
+		"key が空なら失敗する":         {"terraform {\n  backend \"s3\" {\n    key = \"\"\n  }\n}\n", "key が空です"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := backendKey(writeFile(t, t.TempDir(), "backend.tf", c.body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+
+	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := backendKey(filepath.Join(t.TempDir(), "backend.tf"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "backend.tf がありません")
+	})
+}

@@ -1,13 +1,13 @@
 // Package main は、デプロイブランチへの merge の後の apply が失敗したとき、最後に成功した apply の commit へ
 // 宣言を戻す revert のブランチを用意するかを決めるツール。
 //
-//	apply-revert plan -repo <owner/name> -line <branch> -default <branch> -head <sha> -run <id> -outcome <o>
-//	    -failure <k> -workflow <file> -job <job> [-job <job>...] -branches <branches.json> -server <url> -output <file>
+//	apply-revert plan -repo <owner/name> -line <branch> -default <branch> -head <sha> -run <id>
+//	    -results "<job>=<result>:<outcome>:<failure> ..." -workflow <file> -branches <branches.json> -server <url> -output <file>
 //
 // -line はデプロイブランチ、-default はデフォルトブランチの名前である。revert はデプロイブランチの上では作らず、
 // 失敗した merge が運んだ線の commit（head の第2親）の上で作り、デフォルトブランチへ向ける（ADR-0601 決定17）。
 //
-// -job は apply の job の名前で、root ごとに1つ渡す。最後に成功した apply の commit は、名指したすべての job が
+// -results は apply の job ごとの結果で、root ごとに1つ渡す。最後に成功した apply の commit は、名指したすべての job が
 // 成功した最も新しい run の commit である。
 //
 // 決めたことは -output のファイル（GITHUB_OUTPUT）へ `<鍵>=<値>` の行で書く。`decision` は次のどれか。
@@ -69,11 +69,15 @@ var skipOutcomes = []string{"success", "cancelled", "skipped"}
 // skipKinds は、対象にしない失敗の種類。原因が commit の中身に無い。applied は apply が終わった後の失敗である。
 var skipKinds = []string{"prepare", "lock", "upload", "applied"}
 
+// jobResults は、apply の job の結果（needs.<job>.result）。
+var jobResults = []string{"success", "failure", "cancelled", "skipped"}
+
 var (
 	shaPattern  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	jobPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -default <b> -head <sha> -run <id> -outcome <o> -failure <k> -workflow <f> -job <j> -branches <file> -server <url> -output <file>")
+	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -default <b> -head <sha> -run <id> -results \"<job>=<result>:<outcome>:<failure> ...\" -workflow <f> -branches <file> -server <url> -output <file>")
 	errNoOutcome      = xerrors.New("❌ apply の step の結果を受け取れません。apply の job の outputs が渡っていません")
 	errNoKind         = xerrors.New("❌ apply の step が失敗したのに、失敗の種類を受け取れません")
 	errUnknownKind    = xerrors.New("❌ 失敗の種類を知りません")
@@ -106,21 +110,37 @@ func main() {
 }
 
 type options struct {
-	repo, line, def, head, outcome, failure, workflow, branches, server, output string
-	jobs                                                                        []string
-	runID                                                                       int64
+	repo, line, def, head, workflow, branches, server, output string
+	results                                                   []jobResult
+	jobs                                                      []string
+	runID                                                     int64
 }
 
-type jobFlags []string
+// jobResult は、1つの apply の job の結果と、その apply の step の結果と、失敗の段。
+type jobResult struct {
+	job, result, outcome, failure string
+}
 
-func (j *jobFlags) String() string { return strings.Join(*j, ",") }
-
-func (j *jobFlags) Set(v string) error {
-	if v == "" || slices.Contains(*j, v) {
-		return xerrors.Wrapf(errUsage, "-job %q", v)
+// parseResults は、`<job>=<result>:<outcome>:<failure>` を空白で区切った並びを読みます。outcome と failure は
+// 空でよく、その判定は eligibility が持つ。
+func parseResults(value string) ([]jobResult, error) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return nil, xerrors.Wrap(errUsage, "-results が空です")
 	}
-	*j = append(*j, v)
-	return nil
+	out := make([]jobResult, 0, len(fields))
+	for _, f := range fields {
+		job, rest, ok := strings.Cut(f, "=")
+		parts := strings.Split(rest, ":")
+		if !ok || !jobPattern.MatchString(job) || len(parts) != 3 || !slices.Contains(jobResults, parts[0]) {
+			return nil, xerrors.Wrapf(errUsage, "-results の %q", f)
+		}
+		if slices.ContainsFunc(out, func(r jobResult) bool { return r.job == job }) {
+			return nil, xerrors.Wrapf(errUsage, "-results の job %q が2回あります", job)
+		}
+		out = append(out, jobResult{job: job, result: parts[0], outcome: parts[1], failure: parts[2]})
+	}
+	return out, nil
 }
 
 func parseOptions(args []string) (options, error) {
@@ -132,11 +152,8 @@ func parseOptions(args []string) (options, error) {
 	fs.StringVar(&o.def, "default", "", "")
 	fs.StringVar(&o.head, "head", "", "")
 	fs.Int64Var(&o.runID, "run", 0, "")
-	fs.StringVar(&o.outcome, "outcome", "", "")
-	fs.StringVar(&o.failure, "failure", "", "")
+	results := fs.String("results", "", "")
 	fs.StringVar(&o.workflow, "workflow", "", "")
-	var jobs jobFlags
-	fs.Var(&jobs, "job", "")
 	fs.StringVar(&o.branches, "branches", "", "")
 	fs.StringVar(&o.server, "server", "", "")
 	fs.StringVar(&o.output, "output", "", "")
@@ -144,10 +161,17 @@ func parseOptions(args []string) (options, error) {
 		return options{}, xerrors.Wrap(errUsage, err.Error())
 	}
 	if fs.NArg() > 0 || !repoPattern.MatchString(o.repo) || o.line == "" || o.def == "" || !shaPattern.MatchString(o.head) || o.runID <= 0 ||
-		o.workflow == "" || len(jobs) == 0 || o.branches == "" || o.server == "" || o.output == "" {
+		o.workflow == "" || o.branches == "" || o.server == "" || o.output == "" {
 		return options{}, errUsage
 	}
-	o.jobs = jobs
+	parsed, err := parseResults(*results)
+	if err != nil {
+		return options{}, err
+	}
+	o.results = parsed
+	for _, r := range parsed {
+		o.jobs = append(o.jobs, r.job)
+	}
 	return o, nil
 }
 
@@ -156,7 +180,7 @@ func run(args []string, out io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	reason, err := eligibility(o.outcome, o.failure)
+	reason, err := resultsEligibility(o.results)
 	if err != nil {
 		return err
 	}
@@ -261,6 +285,36 @@ func decide(o options, r runner) ([][2]string, error) {
 		{"branch", branch},
 		{"head", source},
 	}, nil
+}
+
+// resultsEligibility は、apply の job ごとの結果から、revert の対象かを返します。どれか1つの job が対象なら
+// 空の理由を返す。failure でない job は戻すものを持たない —— identity root の apply が失敗すれば、それを
+// needs で待つ job は skipped になる。どれか1つでも判定できない job があれば、ほかが対象でもエラーにする。
+func resultsEligibility(results []jobResult) (string, error) {
+	if len(results) == 0 {
+		return "", xerrors.Wrap(errUsage, "apply の job の結果がありません")
+	}
+	target := false
+	var reasons []string
+	for _, r := range results {
+		if r.result != "failure" {
+			reasons = append(reasons, fmt.Sprintf("%s の結果が %s です", r.job, r.result))
+			continue
+		}
+		reason, err := eligibility(r.outcome, r.failure)
+		if err != nil {
+			return "", xerrors.Wrapf(err, "%s", r.job)
+		}
+		if reason == "" {
+			target = true
+			continue
+		}
+		reasons = append(reasons, r.job+": "+reason)
+	}
+	if target {
+		return "", nil
+	}
+	return strings.Join(reasons, "。"), nil
 }
 
 // eligibility は、apply の step の結果と失敗の種類から、revert の対象かを返します。対象なら空の理由を、

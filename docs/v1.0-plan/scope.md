@@ -76,7 +76,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 | 層 | 責務 | 規約 |
 |---|---|---|
-| env | 環境ごとの差異。最上段のapply単位 | 値と組み合わせのみを持つ。アカウント固有の識別子（Route53 Zone、ACM、KMS、既存VPC等）は入力で受ける |
+| env | 環境ごとの差異。最上段のapply単位 | 値と組み合わせのみを持つ。アカウント固有の識別子（ACM、KMS等）は入力で受ける。VPC、ECS Cluster、ECR、Route53 Hosted Zoneは共有基盤のusecase（`network-foundation`、`container-platform`、`image-registry`、`dns-zone`）が作り、他のusecaseはそのIDとARNを入力で受ける（#94） |
 | usecase | ユースケースごとの構成 | 公開契約を持つ。supported/unsupported、入出力、所有者、検証方法を記録する。resourceを宣言せず、moduleの合成と入出力だけを持つ |
 | module | resourceの所有と不変条件の強制。関心事の単位で束ねる | 公開面をベストプラクティスで絞る。属性を素通しするだけの薄いラップは作らない |
 
@@ -89,7 +89,7 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 
 ### 3.1 usecaseは合成層である
 
-**確定:** usecaseディレクトリ直下の `*.tf` に `resource` と `provider` を1つも置かない（ADR-0102 決定14）。usecaseは子moduleなので、root moduleにしか置けない `import` も置かない。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（同 決定18）。
+**確定:** usecaseディレクトリ直下の `*.tf` に `resource` と `provider` と、root moduleにしか置けないblockを置かない（ADR-0102 決定14）。配線は独立したresourceではなく、受け側moduleの意味論的な入力として表す（同 決定18）。
 
 | 配線したいもの | 表し方 |
 |---|---|
@@ -100,8 +100,8 @@ envはusecaseだけを呼ぶ。usecaseはmoduleの合成だけを行い、resour
 | 出力用のSSM Parameter | 契約を書き出すmodule |
 | resource-level policy（S3/SQS/SNS/KMS） | 親resourceを所有するmoduleが1文書だけ生成する。不変条件は無条件に出し、用途別の許可はgrantee種別をキーにした型付き入力で受ける |
 
-- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。(1) usecase直下の `*.tf` に `resource` と `provider` が無いこと。(2) moduleの`source`が層ごとの許可された方向だけを指すこと。(3) attachment型のresource（bucket policy、queue policy、Security Groupのルール、role policy等）が親を指す引数に`module.`参照を持たないこと、すなわち親と同じmoduleに在ること。
-- moduleは1つの機構をまとめる。一般module（`modules/`）は、どのusecaseでも同じ形で成立する機構だけを持ち、usecaseごとの差異を入力の切り替えで抱えない。一般moduleで表せない機構は、それを使うusecaseの`internal/`に置く。attachment型を親と同じmoduleに置く制約（検査(3)）により、一般moduleのresourceに固有のattachmentが要るなら、親のresourceごと`internal/`に置く（ADR-0102 決定15-16、ADR-0205 決定12）。
+- 検査は3本とし、Static Analysis 層で Conftest が HCL のソースを読んで行う（ADR-0501 決定5、#93）。何を検査するかは ADR-0102 の検証方法が持つ。
+- moduleは1つの機構をまとめる。一般module（`modules/`）は、どのusecaseでも同じ形で成立する機構だけを持ち、usecaseごとの差異を入力の切り替えで抱えない。一般moduleで表せない機構は、それを使うusecaseの`internal/`に置く。attachment型を親と同じmoduleに置く制約（ADR-0102 決定18）により、一般moduleのresourceに固有のattachmentが要るなら、親のresourceごと`internal/`に置く（ADR-0102 決定15-16、ADR-0205 決定12）。
 - IAM Policyはセキュリティに直結するため、`"*"`のaction・resourceの禁止などの最小権限検査をpolicy testで別途担保する。
 - 入力を持たず引数を公式推奨に固定した1-resourceのmoduleは、薄いラップに当たらない。ADR-0101 決定9 が警戒するのはProviderの引数と`variable`の1:1対応であって、resourceの数ではない。
 - usecaseをまたぐgranteeをConditionで限定するときは、同一のenv rootの中でusecaseの出力を参照できる場合に限り、その参照による依存順序の解決を試みる。rootをまたぐ受け渡しはremote stateまたはSSM Parameterであり、resource参照にはならない。受け側のpolicyが送り側のARNを要し、送り側が受け側のARNを要して循環する場合に限り、名前規約から導いたprefixベースのARN patternをConditionに用い、根拠を当該usecaseのADRへ記録する（ADR-0301 決定11）。送り側を先にapplyする2段の手順を規約にしない。
@@ -235,7 +235,7 @@ CSVエクスポート等の非公開ファイルも、画像と同じ機構で�
 
 ## 7. v1.0採用ユースケースと接続シナリオ
 
-v1.0は41のユースケースと9の接続シナリオを対象とする（採用案）。各行は、解決する問題、実行形態、ネットワーク境界、公開契約、supported/unsupported、検証方法を実装前に定義する。複数行を1つの巨大な選択式usecaseへ統合しない。
+v1.0は45のユースケースと9の接続シナリオを対象とする（採用案）。各行は、解決する問題、実行形態、ネットワーク境界、公開契約、supported/unsupported、検証方法を実装前に定義する。複数行を1つの巨大な選択式usecaseへ統合しない。
 
 | 分野 | ユースケース | 成立させる経路・役割 |
 |---|---|---|
@@ -268,6 +268,8 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Media | `media-ingest` | 署名付きアップロード→受入S3→GuardDuty Malware Protection for S3→スキャン結果タグで読み取りを制御（第6.3節） |
 | Network | `private-aws-access` | VPC Endpoint等によるAWSサービスへの私設到達 |
 | Network | `controlled-external-egress` | private subnetから明示した外部HTTPS宛先へ到達（第9.2節）。既定は無効で、有効にした環境だけがNATを持つ。制御手段の既定はNetwork Firewall。送信元IPの固定としてNAT GatewayのEIPを出力する |
+| Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
+| Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
 | Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
 | Security | `audit-evidence` | 監査証跡（CloudTrail等）の改ざん防止保管。S3 Object Lock、長期保持、アクセス記録 |
@@ -277,8 +279,10 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Compute | `eks` | サービス全体向けの代替プラットフォーム。Cluster、複数NodeGroup、Pod Identity/IRSA、Add-ons。workloadはk8s-boilerplate（第4.3節） |
 | Compute | `amplify-app` | FE・BFF向けの代替プラットフォーム。App、Branch、Build設定、IAM。SSR関数はFE所有 |
 | Compute | `lightsail-service` | PoC・小規模向けの自己完結構成。ECS移行経路を伴う（第4.2節） |
+| Compute | `container-platform` | 環境ごとのECS Cluster。ECS Execの監査（ログと暗号化）、Container Insights、capacity providerを不変条件として持つ。Compute系のusecaseはCluster ARNを入力で受ける（#94） |
+| Compute | `image-registry` | 環境ごとのECR。repositoryとregistry単位の設定（不変タグ、push時スキャン、lifecycle、repository policy）を1つの書き手で持つ。常駐層（#94、#72） |
 | Observability | `analytics` | AWSネイティブログの集計。Athena WorkGroup、Glueスキーマ、結果用S3。Log Groupの購読とS3ログの受け口（第9.3節） |
-| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicとsubscription、メトリクス途絶の検知、通知経路自体の死活。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
+| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicとsubscription、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
 | Governance | `finops` | AWS Budgets、Cost Anomaly Detection、通知先との接続。常駐層 |
 | Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに plan / apply / apply-identity / unlock-identity の4 role を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
 | Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は `audit-evidence`）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
@@ -405,6 +409,13 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgetsだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
+**アラームの置き場:** 通知のためのCloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まるので、その知識をresourceと同じmoduleに置く。dimensionはresourceへの参照で渡すので、存在しないresourceを指すdimensionはplanで失敗する。scalingなど、Topic以外へactionを送るalarmはこの節の対象外とする。
+
+- alarmを持つmoduleは、同じアカウントの通知先のTopicのARNを入力で受ける。`alarm_actions`・`ok_actions`・`insufficient_data_actions`のすべてにそのTopicだけを入れ、`actions_enabled`と`treat_missing_data`を明示する。
+- `treat_missing_data`の値はmetricごとにそのmoduleが決め、Unit Testで固定する。途絶が異常なmetricは`breaching`か`missing`にして、途絶を通知に変える。途絶が平常なmetric（異常のときだけ出るmetric、inactiveで送信が止まるqueue）は`notBreaching`か`ignore`にし、途絶を検知しない。`AWS/DynamoDB`のmetricは、何を指定しても`ignore`として扱われる。
+- CloudWatchからのpublishをTopicと鍵が受けることは、`ops-notification`が持つ。
+- 検査の担い手は次のとおり。`actions_enabled`はCheckovの既定のルール（CKV_AWS_319）が見る。最初にalarmを置く変更は、`conftest/hcl/infra_code/decl.json`に`aws_cloudwatch_metric_alarm`の分類が無いので`make infra-code-gate`で落ちる。その変更が、分類と、3つのactionが同じTopicだけを指すことを見るPolicyを足す。対象のalarmが1つも無い間はPolicyを置けない（検査の対象が0件なら成功させない。ADR-0702 決定13）ので、それまで、この節のほかの規則を見る検査は無い。
+
 **outbox dead行はAWSネイティブのシグナルではない。** GBpでの表現は、Postgresの`status='dead'`行、OTel counter `outbox.dead`、Warnログの3つだけで、いずれもAWSサービス側のイベントを生まない。counter経由はCollectorを通るため`otel`モードではCloudWatchに届かない。**awslogsドライバをモードに関係なく残す場合に限り、stdoutログのmetric filterが3モード共通で成立する**。ログ文言への依存になり、ログをOTLP側へ寄せると成立しない。どちらを採るかは実装前に決める（第12節）。tabpの失敗通知要件を任意の外部システム（obp）に依存させないためである。Grafana Alertingはアプリ系アラートの正本と統合ビューを担い、通知先を共通化する。
 
 **Grafanaからの参照（pull経路）:** GrafanaはCloudWatch datasourceで照会する。tabpは読み取り専用のIAM Roleと、IAM Roles Anywhereのtrust anchor/profileを出力する。trust anchorには自前のCAを使う（AWS Private CAは予算超過のため）。長期アクセスキーは使わない。GetMetricDataの課金に対し、ダッシュボードの自動更新間隔を管理する。
@@ -478,14 +489,14 @@ SCPによる方向の強制は、ライブで逆流を試して確かめない�
 ### 10.2 sandbox運用
 
 - **予算:** 月1万円程度。検証リソースは常駐させず、検証後に即座に破棄する。
-- **常駐層:** `state-backend`、`deployment-identity`、Route53 Hosted Zone、ECR、`organization-baseline`（管理アカウント側）、`finops`、`ops-notification`。
+- **常駐層:** `state-backend`、`deployment-identity`、`dns-zone`、`image-registry`、`organization-baseline`（管理アカウント側）、`finops`、`ops-notification`、GuardDuty（組織の委任管理者が全アカウントで有効にする。sandboxも含む）。
 - **定期plan:** 常駐層のdrift検知として`-detailed-exitcode`で実行する（終了コード2がdrift）。
 - **掃除CI:** aws-nuke（ekristen版）等を常駐層を除外して定期実行する。テストジョブの最後に常に実行するステップとして、残存検出も置く。
 - **越境検証でdev側に作る資源:** スナップショットの共有設定、KMSのkey grant等はテストのteardownで消し、残存検出をdev側にも掛ける。devはaws-nukeの対象にしない —— リリース経路の最初の段であり、丸ごと消してよい場所ではない。
 - **掃除用Role:** OIDCのtrust policyで`sub`をリポジトリ、ブランチ、workflowまで絞る。
 - **Budgetsの位置づけ:** 課金データの反映に数時間〜最大1日程度の遅延があるため、消し残しの検知用であり、停止機構としては扱わない。
 - **消し残しやすいもの:** RDS/Auroraのfinal snapshot、中身のあるS3、Terraform管理外のLog Group、EKSのcontrollerが作ったENI/LB、Realtimeのインスタンス別Queue、CloudFrontの無効化待ち。
-- EKSのコントロールプレーン（月70ドル強）等、常駐させると予算を超える構成は検証時のみ起動する。Network Firewall、OpenSearch、ElastiCache、Redshiftも同様とする。QuickSightはアカウント単位の購読でユーザー課金が発生するため、検証の方法を別に決める。account-baselineのGuardDutyとAWS Configは継続課金のため、常駐層に入れるかを予算と合わせて判断する。
+- EKSのコントロールプレーン（月70ドル強）等、常駐させると予算を超える構成は検証時のみ起動する。Network Firewall、OpenSearch、ElastiCache、Redshiftも同様とする。QuickSightはアカウント単位の購読でユーザー課金が発生するため、検証の方法を別に決める。GuardDutyはsandboxにも常駐させる（#86）。テストとテストの間の脅威検知、finding、異常検知の学習を保つためで、sandboxのOUにはGuardDutyの停止と削除だけを拒否するSCPを付け、掃除CIの対象から外す。AWS Configはsandboxに常駐させない（#86）。テストで作る資源は掃除で残らず、誰が変えたかは組織のCloudTrail、常駐層の変化は定期plan、不審な変更はGuardDutyが見るためである。Security Hub（Config.1）とCIS AWS Foundations Benchmarkの「全リージョンでConfigを有効にする」からsandboxだけ外れるので、ADR-0207 決定11の記録を`account-baseline`の設計記録に置く。dev / stg / prdと管理・セキュリティ・ログ保管のアカウントではConfigを有効にする。
 
 `audit-evidence`をsandboxで検証する際は、S3 Object Lockをgovernanceモードかつ短い保持期間で使う。complianceモードのオブジェクトは保持期間が切れるまでrootでも削除できず、掃除CIで消せない常駐コストになる。
 
@@ -495,10 +506,10 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
-| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを管理アカウントに立ち上げる（ADR-0602 決定4-11）。人が手で作るのは管理アカウント1つだけである。rootで行うのは、rootでしかできない作業（rootのMFAの2台以上の登録、Paid Planへの移行、BillingへのIAMアクセスの有効化）と、最初のIAM主体である一時IAM userの作成に限る。以後の実行者は一時IAM user（コンソールパスワード、MFA、`aws login`。アクセスキーを作らない）とし、連絡先の登録とCost Explorerの有効化もこのuserで行う（#130）。アカウントの準備、段1-5、一時IAM userの削除の手順は[`docs/setup/bootstrap.md`](../setup/bootstrap.md)が持つ。各段の手順は、その段のusecaseを実装する変更が書き足す。段1: AWS CLIでstate Bucketを作る（版管理、Public Access Block、Object Ownershipだけ。既定の暗号化は段4でstate の鍵によるSSE-KMSを置く）。段2: 同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が取り込んだresourceに変更を示さなくなるまで突合する。段3-4: OIDC Providerと plan / apply / apply-identity / unlock-identity のrole、objectの書き込みをCIのroleと段4の実行者に限るbucket policy、state Bucketのlifecycle、plan の出力の Bucket、state の鍵（CMK・Key Policy・alias）を、一時IAM userのローカル権限でapplyする（ADR-0602 決定9・10 の例外）。段5: stateのSSE-KMSでの書き直しと、段4の実行者の書き込みの例外の除去を、CI（apply-identity）でapplyする。2つのBucketはS3サーバーアクセスログを持たない（state-backend/ADR-0105）。段5 の完了後に、rootで一時IAM userを削除する。実行の記録はADR-0602 決定10に従う。Organizations、メンバーアカウント4つ（dev / stg / prd / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る | 管理アカウントが存在し、Paid Planであること（手順は`docs/setup/bootstrap.md`が持つ） |
-| 1. 基盤 | `organization-baseline`、その直後に`account-baseline`と`ops-notification`、続いて`audit-evidence`、`finops`、ECR。メンバーアカウントの`state-backend`と`deployment-identity`は、管理アカウントのapply-identity roleがメンバー作成時の既定Roleを経由してTerraformで作り、その後所有を各アカウントへ移す（#142）。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
-| 2. ネットワーク | `vpc`（module）、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
-| 3. Compute・データ | `ecs`（module）、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
+| 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを管理アカウントに立ち上げる（ADR-0602 決定4-11）。人が手で作るのは管理アカウント1つだけである。rootで行うのは、rootでしかできない作業（rootのMFAの2台以上の登録、Paid Planへの移行、BillingへのIAMアクセスの有効化）と、最初のIAM主体である一時IAM userの作成に限る。以後の実行者は一時IAM user（コンソールパスワード、MFA、`aws login`。アクセスキーを作らない）とし、連絡先の登録とCost Explorerの有効化もこのuserで行う（#130）。アカウントの準備、段1-5、一時IAM userの削除の手順は[`docs/setup/bootstrap.md`](../setup/bootstrap.md)が持つ。各段の手順は、その段のusecaseを実装する変更が書き足す。段1: AWS CLIでstate Bucketを作る（版管理、Public Access Block、Object Ownershipだけ。既定の暗号化は段4でstate の鍵によるSSE-KMSを置く）。段2: 同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が取り込んだresourceに変更を示さなくなるまで突合する。段3-4: OIDC Providerと plan / apply / apply-identity / unlock-identity のrole、objectの書き込みをCIのroleと段4の実行者に限るbucket policy、state Bucketのlifecycle、plan の出力の Bucket、state の鍵（CMK・Key Policy・alias）を、一時IAM userのローカル権限でapplyする（ADR-0602 決定9・10 の例外）。段5: stateのSSE-KMSでの書き直しと、段4の実行者の書き込みの例外の除去を、CI（apply-identity）でapplyする。state Bucketと2つの出力のBucketはS3サーバーアクセスログを持たない（state-backend/ADR-0105）。段5 の完了後に、rootで一時IAM userを削除する。実行の記録はADR-0602 決定10に従う。Organizations、メンバーアカウント4つ（dev / stg / prd / sandbox）、Identity Centerは`organization-baseline`がフェーズ1で作る | 管理アカウントが存在し、Paid Planであること（手順は`docs/setup/bootstrap.md`が持つ） |
+| 1. 基盤 | `organization-baseline`、その直後に`account-baseline`と`ops-notification`、続いて`audit-evidence`、`finops`、`image-registry`。メンバーアカウントの`state-backend`と`deployment-identity`は、管理アカウントのapply-identity roleがメンバー作成時の既定Roleを経由してTerraformで作り、その後所有を各アカウントへ移す（#142）。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
+| 2. ネットワーク | `vpc`（module）、`network-foundation`、`dns-zone`、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
+| 3. Compute・データ | `ecs`（module）、`container-platform`、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
 | 4. 非同期・配信 | `queue-worker`、`on-demand-job`、`scheduled-job`、`event-job`、`event-queue-worker`、`outbox-delivery`、`realtime-delivery`、`email-delivery`、`email-inbound`、`sms-push-delivery` | フェーズ3 |
 | 5. エッジ・メディア・アプリ横断 | `static-web`、`public-api-gateway`、`identity-integration`、`public-media`、`private-media`、`media-ingest`、`runtime-config`、`service-to-service` | フェーズ3 |
 | 6. 代替・分析・同期 | `ec2-service`、`eks`、`amplify-app`、`lightsail-service`、`analytics`、`business-analytics`、`data-refresh` | フェーズ3〜5 |
@@ -508,7 +519,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 ## 11. v1.0受入条件
 
-1. 第7節の41ユースケースと9接続シナリオ、第8節の原案候補カバレッジが成立している。各々のsupported/unsupported、意味論的な入出力、所有者、検証方法が記録されている。
+1. 第7節の45ユースケースと9接続シナリオ、第8節の原案候補カバレッジが成立している。各々のsupported/unsupported、意味論的な入出力、所有者、検証方法が記録されている。
 1. 第4.1節の対応表が埋まり、Lightsailの適用除外リストとECS移行経路が文書化されている。
 1. 各usecaseがmockユニットとsandboxでの実apply/destroyで確認されている（第10節）。複数Service・NodeGroup等の代表的な1:N構成を検証する。第3.1節の3つの層検査がCIで機能している。
 1. 参照利用者であるGBpのイメージを、役割別のService/Taskとして起動できる。GBpのイメージは環境ごとに1つで（環境別設定を焼き込む）、役割はコマンドで切り替える。Workerのack・再試行・DLQ・drain、Jobの起動失敗とコンテナ失敗、Outbox配送と再処理をそれぞれ確認できる。
@@ -566,7 +577,6 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | usecase間の所有権 | 各usecase実装時 | ECS Target Group、VPC Link、S3/CloudFront/OAC/Key Group、DB/Secrets、EventBridge Bus/Rule/Schedulerの所有者と入出力 |
 | `event-job`の入力契約 | EventBridge/S3イベント処理の実装前 | 参照（bucket/key、event ID）を渡す案。理由はECS overridesのサイズ上限。検証、再実行を含む |
 | `service-to-service`の方式 | 実装前 | 内部ALB（`private-api`の流用）かECS Service Connect/Cloud Mapか |
-| `account-baseline`の常駐 | 実装時 | GuardDuty、AWS Configをsandboxの常駐層に入れるか（予算） |
 | QuickSightの検証方法 | `business-analytics`の実装前 | アカウント単位の購読とユーザー課金を、検証後に破棄する運用とどう両立させるか |
 | プラットフォーム×役割対応表 | 代替プラットフォームの実装前 | 第4.1節の各セル |
 | Lightsailの適用除外と移行経路 | `lightsail-service`の実装前 | 第4.2節の中身 |
@@ -579,15 +589,13 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 | outbox dead行の検知経路 | `outbox-delivery`の実装前 | GBpでのdeadの表現はDB行・OTel counter・Warnログの3つで、AWSネイティブのシグナルは無い。counter経由は`otel`モードでCloudWatchに届かず、3モード共通で成立するのはstdoutログのmetric filterだけ（ログ文言への依存）。どちらを採るか、または`otel`モードでのアプリ系アラートをGrafana Alertingへ寄せるか |
 | GBpへ渡す環境変数の契約 | Compute usecaseの実装前 | `OBS_*_EXPORTER` / `ENDPOINT_OTLP` / `SERVER_HOST` / `REALTIME_*` / `OUTBOX_*` / `CONSUMER_QUEUE_*` / `AUTH_*` / DB系のうち、どれをmoduleの入力契約として型付きで持ち、どれをenvの値とするか。焼き込み値（`SERVER_HOST`、`OBJECT_STORAGE_BUCKET`、`REALTIME_QUEUE_PREFIX`等）との優先関係を含む |
 | 逆流拒否のPolicy invariant | `data-refresh`の実装前 | 第9.6節と受入条件11が「SCPとIAMの宣言をPolicy Testで見る」としたが、何を判定するかが無い。下位環境のOUに付くSCPがprdのどのActionをDenyするか、`data-refresh`のIAMが本番側にread系しか持たないこと。SCPは`organization-baseline`のplanに、IAMは`data-refresh`のplanに現れるため、1つのinvariantが2つのusecaseのplanをまたぐ（ADR-0402 決定11） |
-| 共有基盤の所有者 | フェーズ1・2の着手前 | VPC、ECS Cluster、ECR、Route53 Hosted Zone、IAM Roles Anywhereのtrust anchor/profileを所有するusecase。envはusecaseだけを呼ぶため、moduleのままでは適用経路がない。Hosted Zoneは第3節（envの入力）と第10.2節（常駐層）で扱いが異なる |
 | コンテナイメージdigestの供給経路 | Compute usecaseの実装前 | 第9.4節のdigest指定を、envの値とするか、発火側が更新してTerraformが変更を無視するか。後者ならdriftの扱いと定期planの除外を決める |
-| コード実行許可リストの人間レビューの成立条件 | フェーズ1 | ADR-0103 は許可リストをcode ownerのレビューの対象とするが、メンテナ1人の間は承認者が存在せず発火しない。代替のゲート（ADRの存在検査等）と、人間レビューを有効化する時点 |
 
 各論点は、決める時点に合わせて判断Issueとして起票し、該当usecaseのIssueと依存関係を張る。
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。
+**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。`account-baseline`の常駐（#86、第10.2節。sandboxはGuardDutyだけ常駐させ、Configは常駐させない）。共有基盤の所有者（#94、第3節・第7節。資源ごとの専用usecaseを各環境のアカウントに置き、共有基盤用のアカウントは設けない）。コード実行許可リストの人間レビューの成立条件（#100。ADR-0103 の機械のゲートを保証とし、人のレビューは2人目のメンテナが加わるまで運用にとどめる）。
 
 **フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 

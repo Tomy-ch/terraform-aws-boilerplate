@@ -47,7 +47,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
    - Terraform の state backend
    - GitHub Actions から AWS を操作するための OIDC provider と IAM role
-   - plan の出力の置き場（決定13）
+   - plan と apply の出力の置き場（決定13）
 
    bootstrap とは別に、**統制の構成物**を「CI と人の到達と権限を、組織として縛る仕組み」と定義し、対象を次に限る。統制の構成物は管理アカウントにだけ在る。
 
@@ -125,7 +125,9 @@ CI の権限については循環の性質が異なる。backend さえあれば
     object の削除の権限を与えず、版管理を有効にする。plan の出力の全文は、公開されるログ・Pull Request の
     コメント・artifact に出さない。apply の出力の全文も同じ扱いとし、同じ Bucket の、plan の role が書けない
     key へ apply-identity の role が書く。apply-identity の role に、その Bucket の object の削除の権限を
-    与えない。plan の role は state の読み取りと復号を持つ。plan に必要だからである。
+    与えない。workload root の apply の出力の全文は、apply の role が、plan の出力の Bucket と分けた apply の
+    出力の Bucket へ書く。apply の role は plan の出力の Bucket に書けない。plan の role は state の読み取りと
+    復号を持つ。plan に必要だからである。
     したがって plan の role を assume できる主体は state を読める。state に置く秘密の扱いは、当該 use-case
     の ADR が決定する。
 
@@ -243,7 +245,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 信頼条件を AWS 側の宣言だけで読めること。契機の限定は GitHub の environment の宣言と合わせて読む
 - plan の role が書き込みを一切持たないこと。plan の出力の置き場への `s3:PutObject` だけを持つ
 - plan と apply の全文を Pull Request の画面や run のログで読めること。全文は AWS の認証を経て読む
-- apply の role が行う apply の全文を残すこと。plan の出力の Bucket は bootstrap の構成物であり（決定1）、apply の role はそこへ書けない
+- plan と apply の全文を1つの Bucket にまとめること。plan の出力の Bucket は bootstrap の構成物であり（決定1）、apply の role はそこへ書けないので、workload root の apply の全文は apply の出力の Bucket に分けて置く（決定13）
 
 ## 保証範囲
 

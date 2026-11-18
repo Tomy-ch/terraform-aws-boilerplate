@@ -56,8 +56,8 @@ jobs:
         with:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
-          # scripts/: tf-lint が tool-cooldown-check を、順序の検査が infra-code-gate と tf-local を走らせ、
-          # どれもこのソースからビルドする。
+          # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を
+          # 走らせ、どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -195,8 +195,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint が先に tool-cooldown-check を、順序の検査が infra-code-gate と tf-local を走らせ、
-      # 3つとも scripts/ からビルドする。conftest: 順序の検査が使う。
+      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を走らせ、
+      # 3つとも scripts/ からビルドする。conftest: 順序の検査と層の検査が使う。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -216,6 +216,12 @@ jobs:
 
       - name: Check the resource order
         run: make resource-order-check RUNNER_MODE=host
+
+      - name: Run the layer check's own tests
+        run: make layer-check-test RUNNER_MODE=host
+
+      - name: Check the layer rules
+        run: make layer-check RUNNER_MODE=host
 
   tf-validate-test:
     needs: changes
@@ -341,7 +347,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # canary を先に走らせる: 落ちえないゲートは reference の root について何も言わない。

@@ -4,7 +4,7 @@
 //	tf-local region <root>
 //	    <root>/backend.tf の backend の region を1行で出す。<root>/providers.tf の provider の
 //	    region と違えば失敗する（Bucket 名の region は provider の region から決まる）
-//	tf-local bucket -project <p> -env <e> -region <r> -identity <out>
+//	tf-local bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out>
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、
 //	    state Bucket の名前を1行で出す
 //	tf-local state-key -project <p> -env <e> -region <r> -identity <out> -aliases <json> -encryption <json> -missing <fail|sse-s3>
@@ -42,8 +42,10 @@
 //	    apply の入口の段の種類（plan・lock・apply・timeout・applied）を1行で出す。終了コードが 1 のときだけ全文を
 //	    読み、lock の取得の失敗なら lock を出す
 //	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
+//	tf-local policy-result -policy <dir> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
-//	    評価が rego の `deny contains` の数でなければ失敗する
+//	    評価が rego の `deny contains` の数でなければ失敗する。-policy は dir の下の rego を走査して、
+//	    package ごとに突き合わせる
 //
 //	tf-local account -identity <out>
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
@@ -87,9 +89,12 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// bucketFormat は、modules/s3 の `<name>-<account_id>-<region>-an` に、usecases/state-backend の
-// name（`<project>-<env>-tfstate`）を入れた形。
-const bucketFormat = "%s-%s-tfstate-%s-%s-an"
+// bucketFormat は、`<name>-<account_id>-<region>-an` に、usecases/state-backend の Bucket の name
+// （`<project>-<env>-<種類>`）を入れた形。
+const bucketFormat = "%s-%s-%s-%s-%s-an"
+
+// bucketKinds は、usecases/state-backend の Bucket の name の末尾。state・plan の出力・apply の出力の順。
+var bucketKinds = []string{"tfstate", "tfplan", "tfapply"}
 
 const gitTimeout = 30 * time.Second
 
@@ -108,7 +113,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -117,6 +122,7 @@ var (
 	errIdentity         = xerrors.New("❌ アカウント ID を取得できません（make aws-login を実行してください）")
 	errRootCredentials  = xerrors.New("❌ root の資格情報では実行しません")
 	errToken            = xerrors.New("❌ project と env は英小文字と数字だけです")
+	errBucketKind       = xerrors.New("❌ Bucket の種類は tfstate・tfplan・tfapply のどれかです")
 	errGit              = xerrors.New("❌ plan した commit を git から決められません")
 	errEnvName          = xerrors.New("❌ 外す環境変数の名前が不正です")
 )
@@ -227,6 +233,7 @@ func runBucket(args []string) (string, error) {
 	fs := flag.NewFlagSet("bucket", flag.ContinueOnError)
 	project := fs.String("project", "", "")
 	env := fs.String("env", "", "")
+	kind := fs.String("kind", "tfstate", "")
 	region := fs.String("region", "", "")
 	identity := fs.String("identity", "", "")
 
@@ -243,7 +250,7 @@ func runBucket(args []string) (string, error) {
 		return "", err
 	}
 
-	return bucketName(*project, *env, account, *region)
+	return bucketName(*project, *env, *kind, account, *region)
 }
 
 func runAccount(args []string) (string, error) {
@@ -344,16 +351,20 @@ func callerAccount(identity string) (string, error) {
 	return fields[0], nil
 }
 
-func bucketName(project, env, account, region string) (string, error) {
+func bucketName(project, env, kind, account, region string) (string, error) {
 	if !tokenPattern.MatchString(project) || !tokenPattern.MatchString(env) {
 		return "", xerrors.Wrap(errToken, fmt.Sprintf("project=%q env=%q", project, env))
+	}
+
+	if !slices.Contains(bucketKinds, kind) {
+		return "", xerrors.Wrap(errBucketKind, fmt.Sprintf("%q", kind))
 	}
 
 	if !regionPattern.MatchString(region) {
 		return "", xerrors.Wrap(errRegionMalformed, region)
 	}
 
-	return fmt.Sprintf(bucketFormat, project, env, account, region), nil
+	return fmt.Sprintf(bucketFormat, project, env, kind, account, region), nil
 }
 
 // envUnset は、environ のうち外す変数を `-u <名前>` の並びで返します。外す変数が無ければ空文字を返す。

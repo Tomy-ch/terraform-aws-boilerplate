@@ -4,17 +4,14 @@
 ## その範囲を revert した木が最後に成功した commit の木と一致することも確かめる（ci-revert-plan）。
 ## ここの push の入口は判定を持たず、決めた commit を同じ順に revert して push する。
 
-APPLY_REVERT_WORKFLOW ?= terraform-apply.yaml
 # revert する commit を持つリポジトリ。テストが一時のリポジトリを渡す。
 APPLY_REVERT_REPO ?= .
-# apply の job の名前。root を足したら -job を足す（README.md の「apply の失敗の revert」）。
-APPLY_REVERT_JOBS ?= -job apply-admin-identity
 APPLY_REVERT_BOT := GIT_AUTHOR_NAME='github-actions[bot]' GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
 	GIT_COMMITTER_NAME='github-actions[bot]' GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
-# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。
+# 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。環境変数は revert-plan の job が渡す（README.md の「apply の失敗の revert」）。
 APPLY_REVERT_PLAN_ARGS = plan -repo "$$GITHUB_REPOSITORY" -line "$$GITHUB_REF_NAME" -default "$$DEFAULT_BRANCH" -head "$$GITHUB_SHA" \
-	-run "$$GITHUB_RUN_ID" -outcome "$$APPLY_OUTCOME" -failure "$$APPLY_FAILURE" -workflow $(APPLY_REVERT_WORKFLOW) \
-	$(APPLY_REVERT_JOBS) -branches .github/settings/branches.json -server "$$GITHUB_SERVER_URL" -output "$$GITHUB_OUTPUT"
+	-run "$$GITHUB_RUN_ID" -results "$$APPLY_REVERT_RESULTS" -workflow "$$APPLY_REVERT_WORKFLOW" \
+	-branches .github/settings/branches.json -server "$$GITHUB_SERVER_URL" -output "$$GITHUB_OUTPUT"
 
 # REVERT_HEAD・REVERT_COMMITS・REVERT_BRANCH を環境変数で受ける。push は force しない（README.md の「apply の失敗の revert」）。
 # $(1)=revert の前に置く代入（作者） $(2)=push の前に置く代入（資格情報）

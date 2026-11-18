@@ -106,7 +106,7 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
-  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity の role を assume し、
+  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity・unlock の role を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
 - **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは
@@ -155,8 +155,9 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   run に置き換わるので、線の途中の commit は apply されず、最新の commit だけが apply される
 - **公開されるログに terraform の出力を出さない。** ログには plan の終了コード・件数・Policy の違反の文と
   apply の終了コード、全文を置いた object の key・SHA-256・版 ID だけを出し、job summary には件数と apply の
-  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、plan の全文と同じ Bucket の `apply/` の下へ
-  apply-identity の role が置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
+  成否と同じ key・SHA-256・版 ID だけを出す。apply の全文は、identity root なら plan の全文と同じ Bucket の
+  `apply/` の下へ apply-identity の role が置き、workload root なら apply の出力の Bucket へ apply の role が
+  置く（ADR-0602 決定13）。Bucket の名前と key を得た後は、plan・Policy・apply の
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
   （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
@@ -164,16 +165,27 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
   `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
-- **apply する木で、resource の作成の順序を確かめる。** `apply-resource-order-check` が
-  `make resource-order-check`（[`conftest/hcl/resource_order/`](../../conftest/hcl/resource_order/README.md)）を
+- **apply する木で、resource の作成の順序と層の規則を確かめる。** `apply-resource-order-check` が
+  `make resource-order-check`（[`conftest/hcl/resource_order/`](../../conftest/hcl/resource_order/README.md)）を、
+  `apply-layer-check` が `make layer-check`（[`conftest/hcl/layer/`](../../conftest/hcl/layer/README.md)）を
   走らせ、apply の job はその成功を `needs` と `if:` で待つ。Pull Request では必須検査の `terraform-gates.yaml` の
   `tf-lint` が同じ検査を走らせ、その配線が外れれば `make oidc-job-lint` が落ちる。ただし必須検査は base の
-  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの順序の検査の job だけで、どちらも
-  決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）
-- workload root（`env/<env>/*.tf`）の apply の job と lock の解除の job、`make ci-apply-<env>` と
-  `make ci-unlock-<env>`、environment `admin-apply` の secret、workload root の lock を外す role と
-  その environment は、workload root を足す変更が足す
-- job の形（environment、取る role、起動条件、検出と順序の検査への依存、拒否の step、terraform の経路、concurrency、
+  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの2つの検査の job だけで、どれも
+  決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）。`revert-plan` の `needs` には
+  置かない —— revert は apply の job の結果だけで決まり、検査が落ちた apply の job は `skipped` で終わる
+- **root ごとに、plan・apply・lock の解除の job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
+  `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
+  apply の job と lock の解除の job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
+  `ci-unlock-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
+  配置と job の過不足は `make oidc-job-lint` が、backend の key が ADR-0604 決定7 の値であることは
+  `make repo-settings-check` が落とす
+- **env ごとに、apply の workflow と lock の解除の workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
+  持つと、`on.push.branches` を1つのデプロイブランチに決められない（`make repo-settings-check`）。同じ env の
+  identity root と workload root の apply の job は同じ workflow に置く。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
+  ファイル名で引くので、改名はその履歴を断つ
+- **workload root の apply の全文は、apply の出力の Bucket に置く。** identity root の全文は plan の出力の
+  Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`ci.mk` の `CI_APPLY_OUTPUT_KIND` が選ぶ）
+- job の形（environment、取る role、起動条件、検出・順序の検査・層の検査への依存、拒否の step、terraform の経路、concurrency、
   `run:` と `env:` に置けるもの）は
   `make oidc-job-lint` が、`CI_APPLY` が plan の失敗・終了コードと JSON の食い違い・Policy の違反と評価の欠け
   のどれでも apply を呼ばずに非ゼロで終わることは、`scripts/tf-local` の `TestCiRecipes` が偽物の
@@ -276,7 +288,7 @@ apply）で戻す。CI は Pull Request を
 - **戻すのは、commit の中身が原因でありうる失敗だけである。** `CI_APPLY`（`.makefiles/terraform/operation/ci.mk`）が
   失敗した段を apply の job の outputs の `failure` に書き、`scripts/apply-revert` が読む。plan・Policy・apply・
   apply の打ち切りは戻す。init までの準備、plan と apply の lock の取得、apply が終わった後（全文の置き場への
-  書き込みを含む）の失敗と、`refuse-stale` の拒否・資格情報の失敗・検出と順序の検査の失敗（どれも apply の step に
+  書き込みを含む）の失敗と、`refuse-stale` の拒否・資格情報の失敗・検出・順序の検査・層の検査の失敗（どれも apply の step に
   届かない）は戻さない。先に失敗した段は、その後に全文を置けなくても書き換えない。
   apply の step の結果か失敗の段を受け取れなければ、対象外と読まずに `revert-plan` が失敗する
 - **戻す範囲は、最後に成功した apply の commit から失敗した commit までの first-parent の merge のすべてである。**
@@ -324,10 +336,13 @@ apply）で戻す。CI は Pull Request を
 - **通知は失敗の通知と別に届く。** `notify-revert` が critical の deploy の系統へ、Pull Request を開く URL か、
   手元のコマンドか、用意しなかった理由を、検出のモードで送る。失敗の通知（`notify-failure`）は revert の job を
   待たない。revert の対象でない失敗では送らない
-- **root を足したら、その apply の job を revert の判定へ足す。** `APPLY_REVERT_JOBS`
-  （`.makefiles/github/operation/apply-revert.mk`）に `-job <apply の job>` を足し、`revert-plan` の `needs` に足す。
-  最後に成功した commit は、名指したすべての apply の job が成功した run の commit になる。revert は commit 単位
-  なので、片方の root だけが失敗しても、成功した側の変更も戻す
+- **root を足したら、その apply の job を revert の判定へ足す。** `revert-plan` の `needs`・`if:` の
+  `needs.<job>.result == 'failure'`・step の `APPLY_REVERT_RESULTS`（job ごとの result・apply の step の結果・失敗の段）に
+  足し、`notify-failure` の `needs` と、その job の成功を通知する job を足す。`APPLY_REVERT_WORKFLOW` は
+  その workflow 自身のファイル名である。過不足は `make oidc-job-lint` が workflow ごとに落とす。最後に成功した
+  commit は、名指したすべての apply の job が成功した run の commit になる。skipped の job（identity root の
+  apply が失敗して待っていた workload root の job など）は戻す対象なしに数え、ほかの job の失敗で判定する。
+  revert は commit 単位なので、片方の root だけが失敗しても、成功した側の変更も戻す
 - 古い revert のブランチは自動では消えない。後の apply が成功したら、人が消す
 
 保証しないこと:
@@ -396,7 +411,7 @@ truthy 側へ置く。
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check` | 15 | 同上（新設） |
+| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check` | 15 | 同上（新設） |
 | `terraform-unlock.yaml` の2 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
 | `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
@@ -466,8 +481,8 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 `tool-outdated-report.yaml` は `notify.yaml` を呼ばず、宣言より新しい版が上流に在ることを issue へ書く。
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
-失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出の job か順序の検査の job が落ちると
-apply の job は `skipped` で終わるので、3つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
+失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出・順序の検査・層の検査の job が落ちると
+apply の job は `skipped` で終わるので、4つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
 job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。
 apply の job が `success` で終わったときは、`notify-success` が成功のモードで通知する。revert の結果は
 `notify-revert` が検出のモードで別に送る（「apply の失敗の revert」）。`terraform-unlock.yaml` は
@@ -556,8 +571,11 @@ job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-app
 呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
 apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
 を呼ばなければ落ちる。region を含む
-`type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
-それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
+`type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
+引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
+ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
+読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。AWS が region を固定した global のサービスの宛先は、
+`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型

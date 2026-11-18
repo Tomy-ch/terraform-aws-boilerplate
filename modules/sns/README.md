@@ -62,7 +62,6 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
   - CloudWatch・EventBridge・Budgets と、EventBridge Scheduler の role からの publish が、Topic Policy と鍵の Key Policy で拒まれないこと
   - TLS でない publish が拒まれること
   - Security Hub の SNS.4 が、この Topic Policy を公開アクセスを許さないと判定すること。固定値だけの条件は非公開とみなされる（AWS Config `sns-topic-no-public-access`）が、Deny の `Principal "*"` の扱いは文書から読み切れていない
-- 層検査（attachment の同居、`source` の方向）は未配線である（AGENTS.md「現在の配線状態」）。配線した後に、この module も検査の対象として確かめる
 - `aws` 以外の partition でのサービス principal の値は確かめていない
 - Security の4つの道具の所見と、その抑止の理由と撤回条件は、`main.tf` と `policy.tf` の先頭が持つ
 

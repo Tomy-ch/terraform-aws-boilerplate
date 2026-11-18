@@ -194,6 +194,16 @@ func Test_run(t *testing.T) {
 			assert.Equal(t, "✅ plan.p: 規則 2 件を評価し、違反はありません\n", out.String())
 		})
 
+		t.Run("policy-result -policy は名前空間ごとの件数を1行ずつ出す", func(t *testing.T) {
+			t.Parallel()
+
+			var out bytes.Buffer
+			dir := policyDirWith(t, map[string]string{"p.rego": "package plan.p\n\ndeny contains msg if {\n\tfalse\n\tmsg := \"x\"\n}\n"})
+			path := fileWith(t, `[{"namespace":"plan.p","successes":1}]`)
+			require.NoError(t, run([]string{"policy-result", "-policy", dir, path}, &out, testDeps(nil)))
+			assert.Equal(t, "✅ plan.p: 規則 1 件を評価し、違反はありません\n", out.String())
+		})
+
 		t.Run("account は資格情報からアカウント ID を1行で出す", func(t *testing.T) {
 			t.Parallel()
 
@@ -409,6 +419,20 @@ func Test_runBucket(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "tabp-dev-tfstate-123456789012-us-east-1-an", got)
 		})
+
+		for kind, want := range map[string]string{
+			"tfstate": "tabp-security-tfstate-123456789012-ap-northeast-1-an",
+			"tfplan":  "tabp-security-tfplan-123456789012-ap-northeast-1-an",
+			"tfapply": "tabp-security-tfapply-123456789012-ap-northeast-1-an",
+		} {
+			t.Run("-kind "+kind+" の Bucket 名を env に従って組む", func(t *testing.T) {
+				t.Parallel()
+
+				got, err := runBucket([]string{"-project", "tabp", "-env", "security", "-kind", kind, "-region", "ap-northeast-1", "-identity", identityUser})
+				require.NoError(t, err)
+				assert.Equal(t, want, got)
+			})
+		}
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -424,6 +448,19 @@ func Test_runBucket(t *testing.T) {
 
 				_, err := runBucket(args)
 				require.ErrorIs(t, err, errUsage)
+			})
+		}
+
+		for name, kind := range map[string]string{
+			"知らない種類は失敗する": "tflog",
+			"種類が空なら失敗する":  "",
+			"種類の大文字は受けない": "TFSTATE",
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := runBucket([]string{"-project", "tabp", "-env", "admin", "-kind", kind, "-region", "ap-northeast-1", "-identity", identityUser})
+				require.ErrorIs(t, err, errBucketKind)
 			})
 		}
 
@@ -806,11 +843,18 @@ func Test_bucketName(t *testing.T) {
 		t.Run("modules/s3 と usecases/state-backend の規則で組む", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := bucketName("tabp", "admin", "123456789012", "ap-northeast-1")
+			got, err := bucketName("tabp", "admin", "tfstate", "123456789012", "ap-northeast-1")
 			require.NoError(t, err)
 			assert.Equal(t, "tabp-admin-tfstate-123456789012-ap-northeast-1-an", got)
 		})
 
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := bucketName("tabp", "admin", "tflog", "123456789012", "ap-northeast-1")
+		require.ErrorIs(t, err, errBucketKind)
 	})
 
 	t.Run("写しと正本のずれ", func(t *testing.T) {
@@ -819,12 +863,23 @@ func Test_bucketName(t *testing.T) {
 		t.Run("env/admin/identity のテストが期待する名前と一致する", func(t *testing.T) {
 			t.Parallel()
 
-			got, err := bucketName("tabp", "admin", "123456789012", "ap-northeast-1")
+			got, err := bucketName("tabp", "admin", "tfstate", "123456789012", "ap-northeast-1")
 			require.NoError(t, err)
 
 			tftest, err := os.ReadFile(filepath.Join("..", "..", "env", "admin", "identity", "tests", "imports.tftest.hcl"))
 			require.NoError(t, err)
 			assert.Contains(t, string(tftest), `== "`+got+`"`)
+		})
+
+		t.Run("Bucket の種類はどれも usecases/state-backend の名前の規則に在る", func(t *testing.T) {
+			t.Parallel()
+
+			src, err := os.ReadFile(filepath.Join("..", "..", "usecases", "state-backend", "main.tf"))
+			require.NoError(t, err)
+			require.NotEmpty(t, bucketKinds)
+			for _, kind := range bucketKinds {
+				assert.Contains(t, string(src), "${var.project}-${var.env}-"+kind, kind)
+			}
 		})
 
 		t.Run("docs/setup/bootstrap.md の make を使わない手順が同じ変数を外す", func(t *testing.T) {
@@ -851,7 +906,7 @@ func Test_bucketName(t *testing.T) {
 
 			doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "setup", "bootstrap.md"))
 			require.NoError(t, err)
-			assert.Contains(t, string(doc), `BUCKET="`+fmt.Sprintf(bucketFormat, "tabp", "admin", "${ACCOUNT_ID}", "${REGION}")+`"`)
+			assert.Contains(t, string(doc), `BUCKET="`+fmt.Sprintf(bucketFormat, "tabp", "admin", "tfstate", "${ACCOUNT_ID}", "${REGION}")+`"`)
 		})
 	})
 
@@ -869,7 +924,7 @@ func Test_bucketName(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 
-				_, err := bucketName(args[0], args[1], "123456789012", "ap-northeast-1")
+				_, err := bucketName(args[0], args[1], "tfstate", "123456789012", "ap-northeast-1")
 				require.ErrorIs(t, err, errToken)
 			})
 		}
@@ -878,7 +933,7 @@ func Test_bucketName(t *testing.T) {
 			t.Run("region の形が誤っていれば失敗する "+region, func(t *testing.T) {
 				t.Parallel()
 
-				_, err := bucketName("tabp", "admin", "123456789012", region)
+				_, err := bucketName("tabp", "admin", "tfstate", "123456789012", region)
 				require.ErrorIs(t, err, errRegionMalformed)
 			})
 		}
@@ -1252,7 +1307,7 @@ func TestCiMk(t *testing.T) {
 			`account -identity "$identity"`,
 			`state-key -project tabp -env admin -region "$region" -identity "$identity" -aliases "$aliases" -encryption "$encryption" -missing fail'`,
 			envPrefix("plan")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly -backend-config="bucket=$bucket" $kms >> "$out" 2>&1`,
-			`output -raw plan_output_bucket_name 2>> "$out"`,
+			`bucket -project tabp -env admin -kind tfplan -region "$region" -identity "$identity"`,
 			`plan -lock=false -input=false -no-color -detailed-exitcode -out="$tfplan" >> "$out" 2>&1 || rc=$?`,
 			`show -json "$tfplan" > "$json" 2>> "$out" || :`,
 			`sha256 "$out"`,
@@ -1265,6 +1320,7 @@ func TestCiMk(t *testing.T) {
 			`done`,
 		)
 		assert.NotContains(t, got, " apply ")
+		assert.NotContains(t, got, "output -raw", "Bucket の名前は state から読まない")
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
 
@@ -1309,7 +1365,7 @@ func TestCiMk(t *testing.T) {
 		order(t, got,
 			`stage=prepare`,
 			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false -no-color -lockfile=readonly`,
-			`output -raw plan_output_bucket_name 2>> "$out"`,
+			`bucket -project tabp -env admin -kind tfplan -region "$region" -identity "$identity"`,
 			`apply-key -run "$GITHUB_RUN_ID" -attempt "$GITHUB_RUN_ATTEMPT" -root "$root"`,
 			envPrefix("apply-identity")+` aws s3api put-object --region "$region" --bucket "$plan_bucket" --key "$key" --body "$out"`,
 			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
@@ -1329,6 +1385,7 @@ func TestCiMk(t *testing.T) {
 			`apply-result -exitcode "$arc"`,
 		)
 		assert.Equal(t, 1, strings.Count(got, "put-object"), "全文を置くのは upload の1か所だけ: "+got)
+		assert.NotContains(t, got, "output -raw", "Bucket の名前は state から読まない")
 		m := regexp.MustCompile(`timeout -s INT ([0-9]+)m `).FindStringSubmatch(got)
 		require.Len(t, m, 2, got)
 		limit, err := strconv.Atoi(m[1])
@@ -1361,10 +1418,60 @@ func TestCiMk(t *testing.T) {
 		assert.NotContains(t, got, "--version-id")
 	})
 
+	t.Run("apply の全文の置き場は、identity root なら plan の出力の Bucket、ほかの root なら apply の出力の Bucket", func(t *testing.T) {
+		t.Parallel()
+
+		extra := filepath.Join(t.TempDir(), "kind.mk")
+		require.NoError(t, os.WriteFile(extra, []byte("ci-apply-output-kind-%: ; @echo $(call CI_APPLY_OUTPUT_KIND,$*)\n"), 0o600))
+		for root, want := range map[string]string{"identity": "tfplan", "workload": "tfapply"} {
+			got := expand(t, "ci-apply-output-kind-"+root, "-f", "Makefile", "-f", extra)
+			assert.Equal(t, "echo "+want, strings.TrimSpace(got), root)
+		}
+	})
+
+	t.Run("plan と apply は env と root から出力の Bucket を組み、workload root の apply は apply の出力の Bucket に置く", func(t *testing.T) {
+		t.Parallel()
+
+		extra := filepath.Join(t.TempDir(), "roots.mk")
+		require.NoError(t, os.WriteFile(extra, []byte("ci-x-plan: SHELL := /bin/bash\nci-x-plan: CI_POLICY_NAMESPACES := plan.x\nci-x-plan:\n\t@$(call CI_PLAN,security,identity)\nci-x-apply: SHELL := /bin/bash\nci-x-apply: CI_POLICY_NAMESPACES := plan.x\nci-x-apply:\n\t@$(call CI_APPLY,security,workload)\n"), 0o600))
+		plan := expand(t, "ci-x-plan", "-f", "Makefile", "-f", extra)
+		assert.Contains(t, plan, `bucket -project tabp -env security -kind tfplan -region "$region" -identity "$identity"`)
+		apply := expand(t, "ci-x-apply", "-f", "Makefile", "-f", extra)
+		assert.Contains(t, apply, `bucket -project tabp -env security -kind tfapply -region "$region" -identity "$identity"`)
+	})
+
+	t.Run("apply の全文の置き場は、identity でも workload でもない root では展開で落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		extra := filepath.Join(t.TempDir(), "kind.mk")
+		require.NoError(t, os.WriteFile(extra, []byte("ci-apply-output-kind-%: ; @echo $(call CI_APPLY_OUTPUT_KIND,$*)\n"), 0o600))
+		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", "-f", "Makefile", "-f", extra, "ci-apply-output-kind-security-identity")
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+		})
+		out, err := cmd.CombinedOutput()
+		require.Error(t, err)
+		assert.Contains(t, string(out), "root が identity か workload ではありません: security-identity")
+	})
+
+	t.Run("CI_ENV を渡さなければ資格情報と拒否の確認の入口は展開で落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		for _, target := range []string{"ci-aws-credentials", "ci-assume-denied"} {
+			cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", target)
+			cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+				return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=") || strings.HasPrefix(kv, "CI_ENV=")
+			})
+			out, err := cmd.CombinedOutput()
+			require.Error(t, err, target)
+			assert.Contains(t, string(out), "CI_ENV が空です", target)
+		}
+	})
+
 	t.Run("資格情報は OIDC の token で1回だけ assume し、token を消す", func(t *testing.T) {
 		t.Parallel()
 
-		got := expand(t, "ci-aws-credentials")
+		got := expand(t, "ci-aws-credentials", "CI_ENV=admin")
 		assert.Equal(t, 1, strings.Count(got, "assume-role-with-web-identity"), got)
 		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`, "assume-role-with-web-identity")
 		assert.Contains(t, got, `trap 'rm -f "$token" "$resp"' EXIT`)
@@ -1378,7 +1485,7 @@ func TestCiMk(t *testing.T) {
 	t.Run("拒否の確認は token を取ってから役割ごとに assume を試み、応答を捨てて判定する", func(t *testing.T) {
 		t.Parallel()
 
-		got := expand(t, "ci-assume-denied")
+		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
 		assert.True(t, strings.HasPrefix(strings.TrimSpace(got), "set -eu -o pipefail; umask 077;"), got)
 		assert.Contains(t, got, `trap 'rm -f "$token" "$resp" "$d/assume-stderr"' EXIT`)
 		order(t, got, `oidc-url`, `-o "$resp" "$url"`, `oidc-token "$resp"' > "$token"`, `oidc-sub "$token"`,
@@ -1398,7 +1505,7 @@ func TestCiMk(t *testing.T) {
 	t.Run("既定の拒否の役割は plan のほかの役割すべてである", func(t *testing.T) {
 		t.Parallel()
 
-		got := expand(t, "ci-assume-denied")
+		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
 		m := regexp.MustCompile(`for r in ([a-z -]+); do export r`).FindStringSubmatch(got)
 		require.Len(t, m, 2, got)
 		want := slices.DeleteFunc(slices.Clone(roleNames), func(r string) bool { return r == "plan" })
@@ -1412,7 +1519,7 @@ func TestCiMk(t *testing.T) {
 			t.Run(strconv.Quote(value), func(t *testing.T) {
 				t.Parallel()
 
-				cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", "ci-assume-denied", "CI_DENIED_ROLES="+value)
+				cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", "ci-assume-denied", "CI_ENV=admin", "CI_DENIED_ROLES="+value)
 				cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
 					return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
 				})
@@ -1476,7 +1583,7 @@ case "$sub" in
 init)
 	for a; do case "$a" in init|-*) ;; *) echo "terraform: positional argument: '$a'" >&2; exit 64 ;; esac; done
 	exit "$(rc init-rc)" ;;
-output) if test -f "$k/output-value"; then cat "$k/output-value"; else echo plan-output-bucket; fi; exit "$(rc output-rc)" ;;
+output) echo "terraform output を呼びました" >&2; exit 1 ;;
 plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
@@ -1670,7 +1777,7 @@ func testCiAssumeDenied(t *testing.T, recipe recipeFunc) {
 	jwt := jwtWith(`{"sub":"repo:o/r:environment:admin-plan"}`)
 	env := []string{
 		"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=bearer",
-		"CI_ACCOUNT_ID=123456789012",
+		"CI_ACCOUNT_ID=123456789012", "CI_ENV=admin",
 	}
 	denied := func(extra map[string]string) map[string]string {
 		knobs := map[string]string{"oidc-response": `{"value":"` + jwt + `"}`, "assume-rc": "254", "assume-stderr": deniedStderr}
@@ -1798,7 +1905,7 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 			assert.Contains(t, r.out, "plan.kms_key_policy: 規則 3 件")
 			assert.Contains(t, r.out, "plan.resource_policy_exclusive: 規則 4 件")
 			assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
-			assert.Contains(t, r.calls, "--bucket plan-output-bucket --key apply/8-1-admin-identity.txt")
+			assert.Contains(t, r.calls, "--bucket tabp-admin-tfplan-123456789012-ap-northeast-1-an --key apply/8-1-admin-identity.txt")
 			assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
 			assert.Equal(t, 1, countCalls(r.calls, "timeout -s INT 20m "), "apply を timeout で包む")
 			assert.Less(t, strings.Index(r.calls, " apply -input=false"), strings.Index(r.calls, "aws s3api put-object"), "apply の後に全文を置く")
@@ -1893,30 +2000,6 @@ func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 		assert.Contains(t, r.out, "init が失敗しました")
 		assert.NotContains(t, r.calls, " plan ")
 		assert.Zero(t, countCalls(r.calls, "aws s3api put-object"), "Bucket の名前は init の後でなければ読めない")
-		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
-		assert.Empty(t, r.left, "作業ファイルが残っています")
-	})
-
-	t.Run("plan の出力の Bucket の名前を読めなければ plan を呼ばない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-apply-admin-identity", map[string]string{"output-rc": "1"})
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "Bucket の名前を state から読めません")
-		assert.NotContains(t, r.calls, " plan ")
-		assert.Zero(t, applies(r.calls), r.calls)
-		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
-		assert.Empty(t, r.left, "作業ファイルが残っています")
-	})
-
-	t.Run("plan の出力の Bucket の名前が空なら plan を呼ばない", func(t *testing.T) {
-		t.Parallel()
-
-		r := recipe(t, "ci-apply-admin-identity", map[string]string{"output-value": "", "plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass})
-		require.Error(t, r.err, r.out)
-		assert.Contains(t, r.out, "Bucket の名前が空です")
-		assert.NotContains(t, r.calls, " plan ")
-		assert.Zero(t, applies(r.calls), r.calls)
 		assert.Equal(t, "failure=prepare\n", r.output, "plan より前の失敗は prepare")
 		assert.Empty(t, r.left, "作業ファイルが残っています")
 	})
@@ -2101,7 +2184,7 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		r := recipe(t, "ci-plan-admin-identity", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass})
 		require.NoError(t, r.err, r.out)
 		assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
-		assert.Contains(t, r.calls, "--bucket plan-output-bucket --key pr/7/8-1-admin-identity.txt")
+		assert.Contains(t, r.calls, "--bucket tabp-admin-tfplan-123456789012-ap-northeast-1-an --key pr/7/8-1-admin-identity.txt")
 		assert.Contains(t, r.calls, "--expected-bucket-owner 123456789012")
 		assert.Contains(t, r.calls, "plan -lock=false")
 		assert.Contains(t, initArgs(r.calls), "-backend-config=kms_key_id=arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab", "init に state の鍵を渡す")
@@ -2160,9 +2243,8 @@ func testCiPlanEntry(t *testing.T, recipe recipeFunc) {
 		want  string
 		plans bool
 	}{
-		"plan の出力の Bucket の名前を読めなければ plan を呼ばない": {map[string]string{"output-rc": "1"}, nil, "Bucket の名前を state から読めません", false},
-		"全文を置けなければ判定へ進まない":                       {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "s3api-rc": "1"}, nil, "plan の全文: key=", true},
-		"Pull Request の番号が無ければ全文を置かない":           {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, []string{"CI_PR="}, "plan の出力の key を組めません", true},
+		"全文を置けなければ判定へ進まない":             {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "s3api-rc": "1"}, nil, "plan の全文: key=", true},
+		"Pull Request の番号が無ければ全文を置かない": {map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass}, []string{"CI_PR="}, "plan の出力の key を組めません", true},
 	}
 	for name, c := range early {
 		t.Run(name, func(t *testing.T) {
@@ -2293,7 +2375,7 @@ func testCiCredentials(t *testing.T, recipe recipeFunc) {
 	response := map[string]string{"oidc-response": `{"value":"` + jwt + `"}`}
 	env := []string{
 		"ACTIONS_ID_TOKEN_REQUEST_URL=https://t.actions.githubusercontent.com/x", "ACTIONS_ID_TOKEN_REQUEST_TOKEN=bearer",
-		"CI_ACCOUNT_ID=123456789012",
+		"CI_ACCOUNT_ID=123456789012", "CI_ENV=admin",
 	}
 	const assume = "aws sts assume-role-with-web-identity"
 
