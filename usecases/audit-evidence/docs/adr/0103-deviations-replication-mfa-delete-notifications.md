@@ -63,7 +63,7 @@ Terraform の経路に乗らず、lifecycle と併用できない。
 
 ## 影響
 
-Security Hub を有効にしたとき、S3.7 と S3.11 の所見が残る。
+Security Hub を有効にしたとき、S3.7 と S3.11 の所見が残る。MFA delete を持たないことは、Security Hub の S3.20 では lifecycle を持つ Bucket として判定の外になるが、CIS 2.1.2 からは外れたまま残る。
 
 ## 見直し条件
 

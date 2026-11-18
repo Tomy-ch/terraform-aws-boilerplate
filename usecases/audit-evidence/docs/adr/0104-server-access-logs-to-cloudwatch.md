@@ -15,7 +15,7 @@ Security Hub の S3.9 と CloudTrail.7（CIS v3.0.0 3.4）は、S3 宛てのサ�
 
 1. 保管の Bucket のサーバーアクセスログを、`modules/vended-log-group` の Log Group へ配送する。delivery source と delivery は Bucket と同じ `internal/archive-bucket` に置く。
 2. Log Group の保持日数は入力 `access_log_retention_days` で受け、Log Group は専用の鍵で暗号化する（audit-evidence/ADR-0201）。log-archive では Log Group に削除の保護を掛ける。
-3. S3 宛てのログを持たないことを公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。Checkov の CKV_AWS_18 と KICS の f861041c を `internal/archive-bucket/main.tf` に限って抑止する。
+3. S3 宛てのログを持たないことを公式推奨からの逸脱として記録する（repository-wide/ADR-0207 (default-value-policy) 決定11）。Checkov の CKV_AWS_18 と KICS の f861041c を `internal/archive-bucket/main.tf` に限って、SonarCloud の S6258 を `sonar-project.properties` で `internal/archive-bucket/**` に限って抑止する。
 
 ## 検討した代替案
 
@@ -51,7 +51,7 @@ Security Hub の S3.9 と CloudTrail.7 の判定を PASSED にすること。
 ## 検証方法
 
 - Unit Test: `internal/archive-bucket/tests/access-log.tftest.hcl` が delivery source と delivery の値を mock の apply で確かめる
-- Security: `make checkov kics` が CKV_AWS_18・f861041c を `internal/archive-bucket/main.tf` 以外の path で報告しないこと
+- Security: `make checkov kics` が CKV_AWS_18・f861041c を `internal/archive-bucket/main.tf` 以外の path で報告しないこと。SonarCloud の S6258 の抑止は `sonar-project.properties` の `s6258auditevidence` が持つ
 - ログの到着は実環境で確かめる。どのテストも見ない
 
 ## 影響

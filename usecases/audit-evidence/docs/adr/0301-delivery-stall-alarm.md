@@ -51,7 +51,7 @@ trail だけの途絶の検知。Config が書き込んでいる間は、trail �
 ## 検証方法
 
 - Unit Test: `internal/archive-bucket/tests/alarm.tftest.hcl` が alarm の値を mock の apply で確かめる
-- Policy Test: `PLAN-ALARM-01`（3つの action が同じ SNS の Topic 1つだけを指す）
+- Policy Test: `PLAN-ALARM-01`（3つの action が同じ SNS の Topic 1つだけを指す。根拠は `docs/v1.0-plan/scope.md` 第9.3節で、すべての metric alarm に掛かる）、`PLAN-AUDIT-00`（alarm が入力に在る）
 - Security: `actions_enabled` は Checkov の CKV_AWS_319 が見る
 
 ## 影響

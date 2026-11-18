@@ -32,8 +32,8 @@ Bucket の完全な名前は `<project>-<env>-audit-<account_id>-<region>-an` �
 | --- | --- |
 | `bucket_name` | 組織の trail の `s3_bucket_name`、Config の delivery channel の `s3_bucket_name`。Bucket Policy の後に決まり、配信の設定が Bucket Policy の前に作られない |
 | `bucket_arn` | 組織の trail の S3 data events の対象から、この Bucket を除く（記録のループを避ける） |
-| `kms_key_arn` | 組織の trail の `kms_key_id`、Config の delivery channel の `s3_kms_key_arn`。Key Policy の後に決まる |
-| `access_log_group_arn` | Bucket の S3 サーバーアクセスログの所在 |
+| `kms_key_arn` | 組織の trail の `kms_key_id`、Config の delivery channel の `s3_kms_key_arn`。Key Policy の後に決まる。trail は `kms_key_id` にこの鍵を必ず設定する。設定しないと、Bucket の既定の暗号化が S3 の暗号化コンテキストで鍵を使い、CloudTrail の文（trail の ARN の暗号化コンテキスト）に当たらず配信が落ちる |
+| `access_log_group_arn` | Bucket の S3 サーバーアクセスログの所在（`docs/v1.0-plan/scope.md` 第9.3節の、出力契約に含めるログの所在）。購読する消費者はまだ無い |
 
 - ログの所在: Bucket の S3 サーバーアクセスログは `access_log_group_arn` の Log Group が持つ。Bucket への API の呼び出しの記録は組織の trail が持つ
 - 基盤系アラームの通知先 Topic ARN: `notify_topic_arn` で受ける
@@ -90,7 +90,7 @@ unsupported:
 | --- | --- | --- |
 | Unit | env からの mode・日数・`force_destroy` の導出、Bucket の不変条件、Bucket Policy と lifecycle の文書の完全一致、delivery と alarm の値、入力の検査 | `make tf-test`（`tests/`、`internal/archive-bucket/tests/`、`modules/kms/tests/`） |
 | Contract | 4つの output の値と配線 | `tests/contract.tftest.hcl` |
-| Policy | `PLAN-AUDIT-00`-`05`（宣言した address、既定の保持と失効の一致、Allow の形、Deny の存在と例外の不在、Object Lock、trail の一致）、`PLAN-ALARM-01`、`PLAN-KMS-*`（宣言した鍵の外のアカウントの要求元を含む）、`PLAN-STATE-*`（Bucket・lifecycle・Object Lock の設定・鍵の削除と置換、保持の短縮） | `make tf-policy`（reference の root の plan）。CI の plan への適用は、log-archive の root を配線するときに足す |
+| Policy | `PLAN-AUDIT-00`-`05`（宣言した address と alarm、既定の保持と Bucket 全体に掛かる失効の一致、Allow の形、Deny の8文の Action・Resource・Condition と例外の不在、Object Lock、trail と Config のアカウントの一致）、`PLAN-ALARM-01`、`PLAN-KMS-*`（宣言した鍵の外のアカウントの要求元を含む）、`PLAN-STATE-*`（Bucket・lifecycle・Object Lock の設定・鍵の削除と置換、lifecycle の失効の日数の短縮。保持の日数は失効と同じ入力から決まるので、保持の短縮はこの短縮として現れる。Object Lock の既定の保持だけを縮める変更は見ない） | `make tf-policy`（reference の root の plan）。CI の plan への適用は、log-archive の root を配線するときに足す |
 | Static | 層の規則、型の分類 | `make layer-check`、`make infra-code-gate` |
 | Integration（sandbox） | 下の故障モード | 未実施。sandbox の apply の経路と掃除の CI と apply の role の権限が揃った後に行う。破棄の後の期待残存は2つの鍵（識別子 = 鍵の ARN、状態 `PendingDeletion`、期限 = 削除の予定日） |
 

@@ -7,7 +7,7 @@
 
 ## Context
 
-組織の trail は管理アカウントが所有し、Config は各アカウントで動く。どちらも log-archive のアカウントの鍵で証跡を暗号化する（Security Hub の CloudTrail.2・S3.17、AWS SRA「All security log S3 buckets SHOULD use SSE-KMS with customer managed keys」）。鍵を記録される側が持つと、鍵を止めて記録を読めなくできる。
+組織の trail は管理アカウントが所有し、Config は各アカウントで動く。どちらも log-archive のアカウントの鍵で証跡を暗号化する（Security Hub の CloudTrail.2・S3.17、AWS SRA「All security log S3 buckets SHOULD use SSE-KMS with customer managed keys」）。鍵を記録される側が持つと、鍵を止めて記録を読めなくできる。決定3 は repository-wide/ADR-0301 (least-privilege-policy) 決定18（アカウントをまたぐ許可は、明示的なユースケースとして型付きの契約で受ける）をこのユースケースに当てたもので、宣言の様式を共有する二つ目のユースケースが現れたときに root への昇格を見直す（repository-wide/ADR-0001 (adr-process-and-placement) 決定20）。
 
 CloudTrail の鍵の文は `kms:GenerateDataKey*` を `aws:SourceArn` と `kms:EncryptionContext:aws:cloudtrail:arn` で、`kms:DescribeKey` を `aws:SourceArn` で限る。組織の trail では `aws:SourceAccount` は管理アカウントを指し、trail を限らない（CloudTrail User Guide「Configure AWS KMS key policies for CloudTrail」）。Config の鍵の文は `aws:SourceAccount` で限る（AWS Config Developer Guide「Permissions for the KMS Key」）。
 
@@ -60,7 +60,7 @@ Policy で、どの外のアカウントを受けてよいかを限ること。�
 ## 検証方法
 
 - Unit Test: `modules/kms/tests/policy.tftest.hcl` の `cloudtrail_service`・`config_service` が文書の完全一致を、`validation.tftest.hcl` が値の形を確かめる
-- Policy Test: `PLAN-KMS-05` の `test_pass_declared_cross_account_sources` と `test_violation_cross_account_*`、`PLAN-AUDIT-05`
+- Policy Test: `PLAN-KMS-05` の `test_pass_declared_cross_account_sources`・`test_violation_cross_account_sources_not_declared`・`test_violation_declared_cross_account_sources_not_typed`・`test_violation_declared_cross_account_mixed_principal`、`PLAN-AUDIT-05`（trail と Config のアカウントの一致）
 - 配信が通ることは実環境で確かめる。どのテストも見ない
 
 ## 影響
