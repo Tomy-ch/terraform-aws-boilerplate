@@ -215,7 +215,7 @@ gh issue create --title "<title>" --label <label> --body-file <file>
 ```
 
 **`gh issue create --body-file` は `.github/ISSUE_TEMPLATE/` の issue form を通らない。**
-上の節構成がそのまま本文になる。**title と body は日本語**（ADR-0701 決定9）。
+上の節構成がそのまま本文になる。`type:usecase` / `type:scenario` / `type:decision` の節は、その種別の form（`.github/ISSUE_TEMPLATE/<種別>.yml`）が正本である。**title と body は日本語**（ADR-0701 決定9）。
 
 Report the URL, and say which premises were verified at runtime and which only statically.
 
