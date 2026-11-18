@@ -33,7 +33,7 @@ archive のイメージは pull できず、rollback を壊す。最低の保持
 ## 保証範囲
 
 - 保証すること: lifecycle がタグ付きのイメージを新しい順に `retained_images` 件残すこと（規則の形として）
-- 保証しないこと: 稼働中の Task が参照するイメージが消えないこと。referrer が件数に数えられないこと
+- 保証しないこと: 稼働中の Task が参照するイメージが消えないこと。push の role を持つ者は、新しいタグを `retained_images` 件 push すれば、`ecr:BatchDeleteImage` の拒否（image-registry/ADR-0202）を経ずに稼働中の版と戻し先の版を消せる。referrer が件数に数えられないこと
 
 ## 検証方法
 

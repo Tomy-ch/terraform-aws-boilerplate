@@ -42,7 +42,7 @@ Checkov は通るが、KICS は CMK の ID を要求する。鍵を使う主体�
 
 ## 影響
 
-鍵の費用と、push・pull ごとの KMS の要求が掛かる。workload root の apply の role は、IAM の側にも `kms:RetireGrant` を要る（#222）。
+鍵の費用と、push・pull ごとの KMS の要求が掛かる。Amazon ECR User Guide は、repository の作成者の IAM policy に `kms:RetireGrant` を要るとする。Key Policy が名指しで許すので IAM の側の Allow が要るかは確かめていない。要るなら workload root の apply の role の権限の列挙（#222）に入れる。
 
 ## 見直し条件
 

@@ -13,7 +13,7 @@ Security Hub の ECR.1 は push 時か継続のスキャンを、Inspector.2（F
 
 1. registry のスキャンの設定を `scan_type = "ENHANCED"` とし、規則を1つ置く: `scan_frequency = "CONTINUOUS_SCAN"`、filter は `<project>-<env>/*`（WILDCARD）。
 2. repository 単位の `scan_on_push = true` を併記する。道具の要求を値で満たすもので、抑止ではない。
-3. このアカウントの registry のスキャンの設定は、このユースケースだけが持つ。repository を作るのもこのユースケースだけとし、create on push・pull through cache・replication を使わない。
+3. このユースケースは、自分が作る repository をすべて覆う registry のスキャンの設定を持つ。この設定はアカウント×リージョンに1つなので、同じアカウントで別の書き手を置く構成を supported にしない（`README.md` の unsupported）。このユースケースは create on push・pull through cache・replication を使わない。
 4. registry のスキャンの設定の削除と置換を、許可の宣言なしに通さない（repository-wide/ADR-0604 決定11）。
 5. Inspector の有効化はこのユースケースが持たない（`account-baseline`、#22）。
 

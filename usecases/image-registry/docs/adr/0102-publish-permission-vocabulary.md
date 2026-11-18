@@ -7,7 +7,7 @@
 
 ## Context
 
-push の role は、本番で動くイメージを置ける資格情報である。push 以外の Action があれば、不変タグの効果を外せる（`ecr:BatchDeleteImage` でタグを消してから同じタグで push する）か、設定を緩められる（`ecr:PutImageTagMutability`・`ecr:SetRepositoryPolicy`）か、このユースケースの外で repository を作れる（`ecr:CreateRepository`）。repository-wide/ADR-0601 (change-delivery-path) 決定22 は、発火側の資格情報を決定20 の操作と成果物の push に要るものに限る。
+push の role は、本番で動くイメージを置ける資格情報である。push 以外の Action があれば、不変タグの効果を外せる（`ecr:BatchDeleteImage` でタグを消してから同じタグで push する）か、設定を緩められる（`ecr:PutImageTagMutability`・`ecr:SetRepositoryPolicy`）か、このユースケースの外で repository を作れる（`ecr:CreateRepository`）。repository-wide/ADR-0601 (change-delivery-path) 決定22 は、発火側の資格情報を決定20 の操作と、成果物の push と、デプロイの前のスキャン結果の読み取りに要るものに限る。
 
 ## Decision
 

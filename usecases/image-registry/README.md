@@ -37,6 +37,7 @@ AWS のマネージドサービス（ECR）だけで、コードを実行しな�
 - タグは `<version>-<sha>` とする。同じタグを再 push しない。ECR はタグの形を検査しないので、形は発火側が守る。このユースケースが保証するのは、同じタグが別の digest を指さないことだけである
 - 署名と attestation は、OCI 1.1 の referrer として同じ repository に置く。タグ方式（`sha256-<digest>.sig`）は使わない
 - デプロイしてよいかの判定（スキャン結果、署名の検証）は発火側が行う。push の role はそのためにスキャン結果を読める
+- `publisher.environment` に渡す GitHub の environment は、発火側のリポジトリで保護する。required reviewers を置き、deployment branch policy を保護ブランチかタグに限る。push の role の信頼条件は environment の名前までしか見ないので、保護の無い environment は、そのリポジトリに書ける誰でも push できる状態になる
 
 ## 持つもの
 
@@ -71,7 +72,8 @@ unsupported:
 ## 保証しないこと
 
 - タグの形が `<version>-<sha>` であること（供給契約）
-- 稼働中の Task が参照するイメージが消えないこと。`retained_images` 件を超えて新しい版を push すると、Service がまだ参照している版でも消える
+- 稼働中の Task が参照するイメージが消えないこと。`retained_images` 件を超えて新しい版を push すると、Service がまだ参照している版でも消える。push の role を持つ者は、新しいタグを続けて push することで、`ecr:BatchDeleteImage` の拒否を経ずに稼働中の版と戻し先の版を消せる
+- 発火側の role の信頼条件の形を、宣言した role の外で確かめること。`plan.publisher_trust` は `conftest/plan/decl.json` の `publisher_trust.roles` の role だけを見る。env の root で足された role も見ない
 - 発火側の environment が保護されていること。GitHub の environment の deployment branch policy と承認は、発火側のリポジトリが持つ（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定19）
 - 同じアカウントで、このユースケースの外の主体が registry のスキャンの設定を変えること。宣言の外の書き手は Policy Test が reference の plan で見るが、env の root で足された書き手と帯域外の変更は見ない
 - Inspector が有効であること（#22）
@@ -86,12 +88,12 @@ unsupported:
 - 外部: GitHub Actions の OIDC（発火側のリポジトリと environment）
 - 判断 Issue: #94（ECR を各環境アカウントに置く）、#95（digest の供給経路。[ADR-0601](../../docs/adr/0601-change-delivery-path.md) 決定20-23）
 - 掃除 CI（#76）は、このユースケースの鍵・repository・push の role・registry のスキャンの設定を除外する。除外の宣言は掃除 CI が持つ
-- workload root の apply の role（`deployment-identity`）が、ECR・IAM・KMS の作成と設定と、鍵の grant の廃止（`kms:RetireGrant`）の権限を持つ必要がある。その列挙は workload root の apply の経路（#222）が持つ
+- workload root の apply の role（`deployment-identity`）が、ECR・IAM・KMS の作成と設定の権限を持つ必要がある。鍵の grant の作成と廃止は Key Policy が許す。IAM の側にも `kms:RetireGrant` が要るか（Amazon ECR User Guide は作成者の IAM policy に要るとする）は確かめていない。その列挙は workload root の apply の経路（#222）が持つ
 
 ## 検証方法
 
 - Unit Test（mock）: `internal/repository/tests/` が lifecycle の文書・repository policy・push の role の信頼条件と権限の Resource・入力の検査を、`internal/registry-scanning/tests/` がスキャンの規則を、`tests/naming.tftest.hcl` が名前を、`tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が公開 output を、`reference/tests/plan.tftest.hcl` が reference の値を確かめる。鍵の Key Policy の `RolesViaEcr` の文は `modules/kms` のテストが見る
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、`plan.image_registry`（`PLAN-ECR-*`）が registry のスキャンの書き手と ENHANCED と全 repository への継続スキャン、repository ごとに1つの lifecycle policy と repository policy、件数だけで消す lifecycle、`force_delete = false`、Allow の無い repository policy の Deny の形を、`plan.image_registry_publisher`（`PLAN-PUB-*`）が push の role の Action の完全一致と Resource と排他を、`plan.publisher_trust`（`PLAN-PUBTRUST-*`）が信頼条件の形を、`plan.stateful_protection` が repository・lifecycle policy・registry のスキャンの設定の削除と置換と、保持件数の短縮（`PLAN-STATE-09`）を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、`plan.image_registry`（`PLAN-ECR-*`）が registry のスキャンの書き手と ENHANCED と全 repository への継続スキャン、repository ごとに1つの lifecycle policy と repository policy、件数だけで消す lifecycle、`force_delete = false`、Allow の無い repository policy の Deny の形を、`plan.image_registry_publisher`（`PLAN-PUB-*`）が push の role の Action の完全一致と Resource と排他を、`plan.publisher_trust`（`PLAN-PUBTRUST-*`）が信頼条件の形を、`plan.stateful_protection` が repository・lifecycle policy・registry のスキャンの設定の削除と置換と、保持件数の短縮（`PLAN-STATE-09`）と読めない件数（`PLAN-STATE-10`）を確かめる。Policy の一覧は [`conftest/plan/README.md`](../../conftest/plan/README.md)
 - Security（`make trivy-config` / `checkov` / `kics` / `semgrep`）: 不変タグ（Trivy AVD-AWS-0031、Checkov CKV_AWS_51、KICS d1846b12）、repository 単位の scan on push（Trivy AVD-AWS-0030、Checkov CKV_AWS_163）、CMK（Checkov CKV_AWS_136、KICS 0e32d561）、public の repository policy（Trivy AVD-AWS-0032、Checkov CKV_AWS_32）、repository policy の存在（KICS 69e7c320）
 - Integration（sandbox の実 apply）: 未実施。workload root の apply の経路（#222）と sandbox のアカウント（#21）を待つ。repository・push の role・鍵は、別の `project` の token で複製を作って破棄する（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「複製を作れる」）。registry のスキャンの設定はアカウントに1つで、複製は常駐の設定を上書きするので作らない
 
@@ -100,7 +102,7 @@ unsupported:
 - push の Action の過不足。docker・buildx・cosign（referrer 方式）の実 push が、語彙の外の Action を要るかどうか
 - ENHANCED の registry の下で、repository 単位の `scan_on_push` がどう扱われるか。plan に差分が出続けないか
 - repository policy の Deny（Principal にアカウント）が、アカウントの全 IAM 主体に効くこと。`ecr:BatchDeleteImage` の Deny が lifecycle による削除を止めないこと
-- 鍵の Key Policy で、ECR が repository の作成時に grant を作れること
+- 鍵の Key Policy で、ECR が repository の作成時に grant を作れること。repository の削除で ECR が grant を廃止するのに、apply の role の IAM の側にも `kms:RetireGrant` が要るか
 - OCI 1.1 の referrer が、lifecycle の `tagged` の件数に数えられないこと
 - 複製の repository が ENHANCED の filter に当たらず、継続スキャンされないこと（Integration の複製は別の `project` の token を持つ）
 - 定期 plan（#77）と掃除 CI（#76）は未配線で、常駐の drift と除外の漏れを見る手段はまだ無い

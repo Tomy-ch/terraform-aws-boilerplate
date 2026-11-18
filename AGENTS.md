@@ -20,6 +20,9 @@
   （[0604](docs/adr/0604-state-split-by-apply-role.md) の検証方法の Static Analysis。#347）。HCL のソースの検査のうち
   コード実行の検出は `make infra-code-gate` に、resource の作成の順序の検査は `make resource-order-check` に、
   層の規則の検査は `make layer-check` に配線済み
+- 発火側が所有する状態の検査（[0601](docs/adr/0601-change-delivery-path.md) 決定20-23 の検証方法）—— `lifecycle.ignore_changes`
+  を決定20 の一覧に限る HCL の検査、発火側の role の PassRole と Service の更新の Policy Test、元にする revision の
+  Contract Test は未作成である。決定20 の一覧を使う最初のユースケースを足す変更が作る
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
   `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）。管理アカウントの workload root は
