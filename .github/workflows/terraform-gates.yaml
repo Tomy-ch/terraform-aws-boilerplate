@@ -56,8 +56,8 @@ jobs:
         with:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
-          # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を走らせ、
-          # どれもこのソースからビルドする。
+          # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を
+          # 走らせ、どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -347,7 +347,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # canary を先に走らせる: 落ちえないゲートは reference の root について何も言わない。

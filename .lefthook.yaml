@@ -176,6 +176,8 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy
@@ -189,6 +191,8 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - "conftest/plan/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
       run: make tf-policy-canary
     # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
     infra-code-gate:
