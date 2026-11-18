@@ -240,6 +240,18 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
       run: make layer-check-test layer-check
+    root-check:
+      glob:
+        - "usecases/**"
+        - "env/**"
+        - "conftest/hcl/**"
+        - "scripts/infra-code-gate/**"
+        - "scripts/tf-local/**"
+        - "scripts/lib/**"
+        - "mise.toml"
+        - "Makefile"
+        - ".makefiles/**"
+      run: make root-check-test root-check
 
     secret-gates-test:
       glob:

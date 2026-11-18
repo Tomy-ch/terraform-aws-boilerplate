@@ -63,7 +63,6 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, environmentsFile, environmentsFixture)
 	writeFile(t, root, rulesetFile, ruleset)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
-	writeFile(t, root, "env/x/identity/backend.tf", backendFixture("identity"))
 	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
 	writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  push:\n    branches: # branch-set: deploy\n      - 'main'\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 	return root
@@ -103,7 +102,6 @@ const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_b
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
 
-// appendFile は、dir の下の name の末尾へ body を足します。
 func appendFile(t *testing.T, dir, name, body string) {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -278,14 +276,10 @@ func Test_readDeclarations(t *testing.T) {
 		}, errRulesetPolicy},
 		{"信頼条件の environment が宣言に揃っていなければ失敗する", func(root string) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
-			writeFile(t, root, "env/y/identity/backend.tf", backendFixture("identity"))
 		}, errEnvironmentMismatch},
 		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
-		{"root の backend の key が配置の値でなければ失敗する", func(root string) {
-			writeFile(t, root, "env/x/identity/backend.tf", backendFixture("workload"))
-		}, errBackendKey},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
 		}, os.ErrNotExist},
