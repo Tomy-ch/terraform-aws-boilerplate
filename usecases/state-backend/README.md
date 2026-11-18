@@ -66,6 +66,7 @@ supported:
 
 unsupported:
 
+- 1つのアカウントに複数の env を置く構成と、Organizations に属さない単独のアカウントで使うこと（`docs/v1.0-plan/scope.md` 第10.1節、[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定1）
 - 管理アカウントの root による bucket policy の削除を防ぐこと。root の封印は組織の運用とする（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
 - bucket policy で締め出したときに回復する手順。回復を行う人の経路は `organization-baseline`（未実装）の break-glass である（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19）
 - 段5 の後のアカウントで、段4 の手順をそのまま回復に使うこと。state と lock file は state の鍵で暗号化され、Key Policy に名指されない主体（一時 IAM user を含む）は state を読めない。回復には Key Policy を書き換える必要があり、その手順は提供しない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定19、[state-backend/ADR-0101](docs/adr/0101-sse-kms-with-state-key.md)）
