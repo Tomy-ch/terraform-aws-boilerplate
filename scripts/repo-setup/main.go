@@ -1,8 +1,9 @@
 // Package main は、boilerplate を自分のリポジトリとして初期化する際の
 // git / gh 操作を担うツール。
 //
-//	preflight           初期化してよい状態かを確かめる（v0.0.0 タグがあれば中止）
-//	bootstrap           タグを作り直し、env を持たないデプロイブランチを用意してデフォルトブランチを移す
+//	preflight           初期化してよい状態かを確かめる（v0.0.0 タグか、宛先を上書きする環境変数があれば中止）
+//	bootstrap           gh の宛先を origin に固定し、タグを作り直し、env を持たないデプロイブランチを用意して
+//	                    デフォルトブランチを移す
 //
 // 作るブランチ（branches.json の deploy のうち env を持たないもの）と初期のデフォルトブランチ（release_base）、
 // 初期化前に居たら消す線は、分岐のパターンの宣言（`.github/settings/branches.json`、ADR-0603 決定1）を直下から読む。
@@ -45,9 +46,9 @@ var (
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 	errNoReleaseBase     = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
 	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
+	errTargetOverridden  = xerrors.New("が環境にあると、gh と make の宛先が origin に固定されません。外してから実行してください（例: env -u GH_REPO -u REPO_SETTINGS_REPO -u GITHUB_REPOSITORY make setup-repo）")
 )
 
-// setup は、宣言から決めた初期化の対象である。
 type setup struct {
 	// branches は、初期化で作るブランチ（env を持たないデプロイブランチ。宣言の順）。
 	branches []string
@@ -56,8 +57,8 @@ type setup struct {
 	decl branchdecl.Branches
 }
 
-// setupFromDecl は、宣言から初期化の対象を決めます。release_base が env を持てば失敗する —— 初期化はそれを
-// 作らないので、デフォルトブランチを無いブランチへ移すことになる。
+// setupFromDecl は、release_base が env を持てば失敗する —— 初期化はそれを作らないので、
+// デフォルトブランチを無いブランチへ移すことになる。
 func setupFromDecl(decl branchdecl.Branches) (setup, error) {
 	base, ok := decl.ReleaseBase()
 	if !ok {
@@ -92,6 +93,7 @@ type runner struct {
 	run          func(s step) error
 	output       func(name string, args ...string) (string, error)
 	branchExists func(branch string) bool
+	getenv       func(key string) string
 }
 
 func main() {
@@ -135,7 +137,7 @@ func execute(r runner, s setup, args []string) error {
 
 	switch args[0] {
 	case "preflight":
-		return runPreflight()
+		return runPreflight(r.getenv)
 	case "bootstrap":
 		return runBootstrap(r, s)
 	case "prune-release-notes":
@@ -238,8 +240,19 @@ func releaseNotesToDelete(entries []string) []string {
 	return targets
 }
 
-func runPreflight() error {
+// targetOverrides は、gh repo set-default による宛先の固定を迂回する変数。GH_REPO は gh が読み、
+// REPO_SETTINGS_REPO と GITHUB_REPOSITORY は repo-settings.mk が gh より先に読む（make の引数で渡した値も
+// レシピの環境に入る）。
+var targetOverrides = []string{"GH_REPO", "REPO_SETTINGS_REPO", "GITHUB_REPOSITORY"}
+
+func runPreflight(getenv func(string) string) error {
 	log.Printf("🔧 設定を確認中...")
+
+	for _, key := range targetOverrides {
+		if getenv(key) != "" {
+			return xerrors.Wrap(errTargetOverridden, "❌ "+key)
+		}
+	}
 
 	if tagExists(initialTag) {
 		return xerrors.Wrap(errInitialTagExists, "❌ タグ 【"+initialTag+"】")
@@ -251,6 +264,12 @@ func runPreflight() error {
 }
 
 func runBootstrap(r runner, s setup) error {
+	// 書き込みの前に、この後のすべての gh（make の連鎖の後段を含む）の宛先を origin に固定する。
+	// 理由は scripts/README.md の repo-setup 行。
+	if err := r.run(pinTargetStep()); err != nil {
+		return err
+	}
+
 	if err := resetTags(r); err != nil {
 		return err
 	}
@@ -260,6 +279,10 @@ func runBootstrap(r runner, s setup) error {
 	}
 
 	return moveDefaultBranch(r, s)
+}
+
+func pinTargetStep() step {
+	return step{name: "gh", args: []string{"repo", "set-default", "origin"}}
 }
 
 func resetTags(r runner) error {
@@ -393,7 +416,7 @@ func runPruneReleaseNotes() error {
 }
 
 func hostRunner() runner {
-	return runner{run: run, output: output, branchExists: branchExists}
+	return runner{run: run, output: output, branchExists: branchExists, getenv: os.Getenv}
 }
 
 // runAll は、失敗した時点で残りの手順を実行しません。

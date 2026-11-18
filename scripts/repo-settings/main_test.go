@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,8 +63,8 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, branchesFile, branchesFixture)
 	writeFile(t, root, environmentsFile, environmentsFixture)
 	writeFile(t, root, rulesetFile, ruleset)
+	writeFile(t, root, vulnerabilityReportingFile, `{"enabled": true}`)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
-	writeFile(t, root, "env/x/identity/backend.tf", backendFixture("identity"))
 	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
 	writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  push:\n    branches: # branch-set: deploy\n      - 'main'\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
 	return root
@@ -77,8 +78,10 @@ func liveRoutes(t *testing.T) map[string]fakeResponse {
 	body, err := json.Marshal(ruleset)
 	require.NoError(t, err)
 	return map[string]fakeResponse{
-		rulesetListPath(1):          ok(`[{"id": 7, "name": "branch-protection", "source_type": "Repository"}]`),
-		"GET /repos/o/r/rulesets/7": ok(string(body)),
+		rulesetListPath(1):                         ok(`[{"id": 7, "name": "branch-protection", "source_type": "Repository"}]`),
+		"GET /repos/o/r/rulesets/7":                ok(string(body)),
+		"GET /repos/o/r":                           ok(`{"visibility": "public"}`),
+		"GET " + vulnerabilityReportingPath("o/r"): ok(`{"enabled": true}`),
 		envListPath(1): ok(`{"total_count": 6, "environments": [
 			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-apply", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
@@ -103,7 +106,6 @@ const applyEnvsJSON = `{"name": "x-apply", "protection_rules": [], "can_admins_b
 			{"name": "x-unlock-identity", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},
 			{"name": "x-unlock", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}},`
 
-// appendFile は、dir の下の name の末尾へ body を足します。
 func appendFile(t *testing.T, dir, name, body string) {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -221,7 +223,7 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run([]string{"drift", "-repo=o/r"}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
 		require.NotEmpty(t, f.requests)
 		assert.Equal(t, rulesetListPath(1), "GET "+f.requests[0].target)
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
 	})
 
 	t.Run("sync は GITHUB_TOKEN が無ければ何も送らずに失敗する", func(t *testing.T) {
@@ -231,6 +233,14 @@ func Test_run(t *testing.T) {
 		err := run([]string{"sync", "-repo=o/r", "-only", onlyRuleset}, fixedWD(writeRepo(t, syncedRuleset)), c, &bytes.Buffer{})
 		require.ErrorIs(t, err, errNoToken)
 		assert.Empty(t, f.requests)
+	})
+
+	t.Run("sync は -only vulnerability-reporting を受ける", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, liveRoutes(t))
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"sync", "-repo=o/r", "-only", onlyVulnerabilityReporting}, fixedWD(writeRepo(t, syncedRuleset)), c, &out))
+		assert.Equal(t, "✅ repo-settings: o/r の vulnerability-reporting へ送る要求はありません\n", out.String())
 	})
 
 	t.Run("sync は -only の側だけを扱う", func(t *testing.T) {
@@ -245,12 +255,13 @@ func Test_run(t *testing.T) {
 func Test_readDeclarations(t *testing.T) {
 	t.Parallel()
 
-	t.Run("3つの宣言を読み、include を生成し直す", func(t *testing.T) {
+	t.Run("宣言を読み、include を生成し直す", func(t *testing.T) {
 		t.Parallel()
 		decl, err := readDeclarations(writeRepo(t, rulesetFixture))
 		require.NoError(t, err)
 		assert.Equal(t, []string{"main"}, decl.branches.DeployNames())
 		assert.Len(t, decl.environments, 6)
+		assert.True(t, decl.vulnerabilityReporting)
 		assert.Equal(t, rulesetFixture, string(decl.ruleset))
 		assert.Equal(t, syncedRuleset, string(decl.rendered))
 		assert.Len(t, decl.workflows, 1)
@@ -270,6 +281,12 @@ func Test_readDeclarations(t *testing.T) {
 		{"environments.json が壊れていれば失敗する", func(root string) {
 			writeFile(t, root, environmentsFile, `[{"name": "x", "deploy_from": "any", "can_admins_bypass": true}]`)
 		}, errDeclaration},
+		{"private-vulnerability-reporting.json が壊れていれば失敗する", func(root string) {
+			writeFile(t, root, vulnerabilityReportingFile, `{"enabled": null}`)
+		}, errDeclaration},
+		{"private-vulnerability-reporting.json が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, vulnerabilityReportingFile)))
+		}, os.ErrNotExist},
 		{"branch-protection.json が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, rulesetFile)))
 		}, os.ErrNotExist},
@@ -278,14 +295,10 @@ func Test_readDeclarations(t *testing.T) {
 		}, errRulesetPolicy},
 		{"信頼条件の environment が宣言に揃っていなければ失敗する", func(root string) {
 			writeFile(t, root, "env/y/identity/main.tf", strings.Replace(identityRootFixture, `"x"`, `"y"`, 1))
-			writeFile(t, root, "env/y/identity/backend.tf", backendFixture("identity"))
 		}, errEnvironmentMismatch},
 		{"deployment-identity の env にデプロイブランチが無ければ失敗する", func(root string) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
-		{"root の backend の key が配置の値でなければ失敗する", func(root string) {
-			writeFile(t, root, "env/x/identity/backend.tf", backendFixture("workload"))
-		}, errBackendKey},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
 			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
 		}, os.ErrNotExist},
@@ -357,6 +370,15 @@ func Test_loadDesired(t *testing.T) {
 		}, want.Envs)
 	})
 
+	t.Run("Private Vulnerability Reporting の宣言を渡す", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
+		want, err := loadDesired(root)
+		require.NoError(t, err)
+		assert.False(t, want.VulnerabilityReporting)
+	})
+
 	t.Run("include がずれていれば失敗する", func(t *testing.T) {
 		t.Parallel()
 		_, err := loadDesired(writeRepo(t, rulesetFixture))
@@ -383,7 +405,7 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, syncedRuleset, string(got))
-		assert.Contains(t, out.String(), "保護対象 3 件、environment 6 件、apply の workflow 1 件")
+		assert.Contains(t, out.String(), "保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件")
 		assert.Contains(t, out.String(), rulesetFile+" を書き換えました")
 	})
 
@@ -513,7 +535,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -530,6 +552,16 @@ func Test_applyOrCheck(t *testing.T) {
 		root := writeRepo(t, rulesetFixture)
 		writeFile(t, root, environmentsFile, `[]`)
 		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errEmptyDeclaration)
+		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(got))
+	})
+
+	t.Run("Private Vulnerability Reporting の宣言が不正なら apply は include の区間も書き換えない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": null}`)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDeclaration)
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, rulesetFixture, string(got))
@@ -552,7 +584,7 @@ func Test_applyOrCheck(t *testing.T) {
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		assert.ElementsMatch(t, []string{"branches.json", "environments.json", "branch-protection.json"}, names)
+		assert.ElementsMatch(t, []string{"branches.json", "environments.json", "branch-protection.json", "private-vulnerability-reporting.json"}, names)
 	})
 }
 
@@ -565,7 +597,7 @@ func Test_drift(t *testing.T) {
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		var out bytes.Buffer
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
-		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです\n", out.String())
 		assert.Empty(t, f.writes())
 	})
 
@@ -600,7 +632,7 @@ func Test_drift(t *testing.T) {
 		require.NoError(t, drift(context.Background(), root, c, repo, &out))
 		assert.Equal(t, strings.Join([]string{
 			"⚠️ 突合の対象外（観測できない）: ruleset の bypass_actors（write 権限の無い読み取りには返らない）",
-			"✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです（突合の対象外 1 件を除く）",
+			"✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）と Private Vulnerability Reporting が宣言どおりです（突合の対象外 1 件を除く）",
 		}, "\n")+"\n", out.String())
 	})
 
@@ -608,6 +640,75 @@ func Test_drift(t *testing.T) {
 		t.Parallel()
 		_, c := newFakeGitHub(t, map[string]fakeResponse{})
 		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+	})
+
+	t.Run("Private Vulnerability Reporting のずれを出力して失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+vulnerabilityReportingPath(repo)] = ok(`{"enabled": false}`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  - Private Vulnerability Reporting: enabled が宣言の true と異なります",
+		}, "\n")+"\n", out.String())
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("公開でないリポジトリが有効を宣言していれば、ずれとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  - Private Vulnerability Reporting: 公開でないリポジトリでは使えません",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("公開でないリポジトリが無効を宣言していれば、突合の対象外として数え、一致に含めない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, drift(context.Background(), root, c, repo, &out))
+		assert.Equal(t, strings.Join([]string{
+			"⚠️ 突合の対象外（観測できない）: Private Vulnerability Reporting（公開でないリポジトリには提供されない）",
+			"✅ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）が宣言どおりです（突合の対象外 1 件を除く）",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("Private Vulnerability Reporting を読めなくても ruleset と environment の結果を出し、読めなかったことで失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusForbidden, body: `{"message": "Resource not accessible"}`}
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		err := drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out)
+		require.ErrorIs(t, err, errHTTP)
+		assert.Equal(t, "❌ repo-settings: o/r の ruleset 1 件と environment 6 件（実在 6 件）は宣言どおりですが、Private Vulnerability Reporting の実態を読めませんでした\n", out.String())
+		assert.ErrorContains(t, err, "Private Vulnerability Reporting の実態の読み取り")
+	})
+
+	t.Run("ほかにずれがあり Private Vulnerability Reporting を読めなければ、両方を出力する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusForbidden, body: `{}`}
+		routes[envListPath(1)] = ok(`{"total_count": 6, "environments": [
+			` + applyEnvsJSON + `
+			{"name": "copilot", "protection_rules": [], "can_admins_bypass": true, "deployment_branch_policy": null},
+			{"name": "x-plan", "protection_rules": [], "can_admins_bypass": false, "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}]}`)
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Contains(t, out.String(), "  - environment copilot: 管理者による保護の迂回が有効です\n")
+		assert.Contains(t, out.String(), "❌ repo-settings: Private Vulnerability Reporting の実態を読めませんでした: ")
 	})
 }
 
@@ -727,6 +828,134 @@ func Test_syncSettings(t *testing.T) {
 		t.Parallel()
 		f, c := newFakeGitHub(t, liveRoutes(t))
 		require.ErrorIs(t, syncSettings(context.Background(), writeRepo(t, rulesetFixture), c, repo, onlyRuleset, &bytes.Buffer{}), errIncludeDrift)
+		assert.Empty(t, f.requests)
+	})
+
+	for _, only := range []string{onlyRuleset, onlyEnvironments} {
+		t.Run(only+" の適用は Private Vulnerability Reporting を問わない", func(t *testing.T) {
+			t.Parallel()
+			routes := liveRoutes(t)
+			routes["GET /repos/o/r"] = fakeResponse{status: http.StatusForbidden, body: `{}`}
+			routes["GET "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusForbidden, body: `{}`}
+			f, c := newFakeGitHub(t, routes)
+			require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, only, &bytes.Buffer{}))
+			for _, r := range f.requests {
+				assert.NotEqual(t, "/repos/o/r", r.target)
+				assert.NotEqual(t, vulnerabilityReportingPath(repo), r.target)
+			}
+		})
+	}
+
+	t.Run("vulnerability-reporting の適用は ruleset と environment を問わない", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+vulnerabilityReportingPath(repo)] = ok(`{"enabled": false}`)
+		routes["PUT "+vulnerabilityReportingPath(repo)] = fakeResponse{status: http.StatusNoContent}
+		f, c := newFakeGitHub(t, routes)
+		require.NoError(t, syncSettings(context.Background(), writeRepo(t, syncedRuleset), c, repo, onlyVulnerabilityReporting, &bytes.Buffer{}))
+		targets := make([]string, 0, len(f.requests))
+		for _, r := range f.requests {
+			targets = append(targets, r.method+" "+r.target)
+		}
+		assert.Equal(t, []string{"GET /repos/o/r", "GET " + vulnerabilityReportingPath(repo), "PUT " + vulnerabilityReportingPath(repo)}, targets)
+	})
+}
+
+func Test_syncVulnerabilityReporting(t *testing.T) {
+	t.Parallel()
+
+	pvr := vulnerabilityReportingPath(repo)
+
+	t.Run("宣言どおりなら何も送らない", func(t *testing.T) {
+		t.Parallel()
+		f, c := newFakeGitHub(t, liveRoutes(t))
+		var out bytes.Buffer
+		require.NoError(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out))
+		assert.Empty(t, f.writes())
+		assert.Equal(t, "✅ repo-settings: o/r の vulnerability-reporting へ送る要求はありません\n", out.String())
+	})
+
+	writeCases := []struct {
+		name     string
+		declared string
+		live     string
+		method   string
+	}{
+		{"宣言が有効で実態が無効なら PUT で有効にする", `{"enabled": true}`, `{"enabled": false}`, http.MethodPut},
+		{"宣言が無効で実態が有効なら DELETE で無効にする", `{"enabled": false}`, `{"enabled": true}`, http.MethodDelete},
+	}
+	for _, tc := range writeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := writeRepo(t, syncedRuleset)
+			writeFile(t, root, vulnerabilityReportingFile, tc.declared)
+			routes := liveRoutes(t)
+			routes["GET "+pvr] = ok(tc.live)
+			routes[tc.method+" "+pvr] = fakeResponse{status: http.StatusNoContent}
+			f, c := newFakeGitHub(t, routes)
+			var out bytes.Buffer
+			require.NoError(t, syncVulnerabilityReporting(context.Background(), root, c, repo, &out))
+			writes := f.writes()
+			require.Len(t, writes, 1)
+			assert.Equal(t, tc.method+" "+pvr, writes[0].method+" "+writes[0].target)
+			assert.Empty(t, writes[0].body)
+			assert.Equal(t, strings.Join([]string{
+				"🔧 " + tc.method + " " + pvr,
+				"✅ repo-settings: o/r へ 1 件の要求を送りました。make repo-settings-drift で結果を確かめてください",
+			}, "\n")+"\n", out.String())
+		})
+	}
+
+	t.Run("公開でないリポジトリが有効を宣言していれば、何も送らずに直し方を返す", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r"] = ok(`{"visibility": "private"}`)
+		f, c := newFakeGitHub(t, routes)
+		err := syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{})
+		require.ErrorIs(t, err, errVulnerabilityReportingUnavailable)
+		assert.Contains(t, err.Error(), vulnerabilityReportingFile+" の enabled を false にして commit")
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("公開でないリポジトリが無効を宣言していれば、何も送らずに対象外と報せる", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		writeFile(t, root, vulnerabilityReportingFile, `{"enabled": false}`)
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r"] = ok(`{"visibility": "internal"}`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.NoError(t, syncVulnerabilityReporting(context.Background(), root, c, repo, &out))
+		assert.Empty(t, f.writes())
+		assert.Equal(t, strings.Join([]string{
+			"⚠️ 突合の対象外（観測できない）: Private Vulnerability Reporting（公開でないリポジトリには提供されない）",
+			"✅ repo-settings: o/r の vulnerability-reporting へ送る要求はありません",
+		}, "\n")+"\n", out.String())
+	})
+
+	t.Run("実態を読めなければ何も送らずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+pvr] = fakeResponse{status: http.StatusForbidden, body: `{}`}
+		f, c := newFakeGitHub(t, routes)
+		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("書き込みが失敗すれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := liveRoutes(t)
+		routes["GET "+pvr] = ok(`{"enabled": false}`)
+		_, c := newFakeGitHub(t, routes)
+		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), writeRepo(t, syncedRuleset), c, repo, &bytes.Buffer{}), errHTTP)
+	})
+
+	t.Run("宣言を読めなければ GitHub へ問わない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, syncedRuleset)
+		writeFile(t, root, vulnerabilityReportingFile, `{}`)
+		f, c := newFakeGitHub(t, liveRoutes(t))
+		require.ErrorIs(t, syncVulnerabilityReporting(context.Background(), root, c, repo, &bytes.Buffer{}), errDeclaration)
 		assert.Empty(t, f.requests)
 	})
 }

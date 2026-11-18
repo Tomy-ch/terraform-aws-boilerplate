@@ -25,7 +25,7 @@
 | `modules/` | 一般 module の `s3/`・`kms/`・`log-group/`・`vended-log-group/`・`sns/`・`vpc/` だけ |
 | `usecases/` | `state-backend/` と `deployment-identity/`（bootstrap の段1-4 の分）と `image-registry/`（環境の root から呼ばれていない） |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
-| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査（入力は HCL のソース）は `make`・pre-commit・CI に配線済み。HCL のソースの検査のうち root の構成と backend 設定の不変条件は未配線 |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査・root の構成と backend 設定の不変条件の検査（入力は HCL のソース）は `make`・pre-commit・CI に配線済み |
 
 ## 使い方
 
@@ -56,7 +56,7 @@ make md-lint RUNNER_MODE=host  # ホストで実行する（npm の道具は起�
 ## このリポジトリから派生する
 
 ```sh
-make setup-repo    # タグ・ブランチ・ラベル・ルールセット・environment を初期化する
+make setup-repo    # タグ・ブランチ・ラベル・ルールセット・environment・Private Vulnerability Reporting を初期化する
 ```
 
 **取り消しの効かない操作を含む**（タグの一括削除、デフォルトブランチの移動）。実行前に

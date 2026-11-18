@@ -156,6 +156,22 @@ has_key_anywhere(body, key) if {
 	p[count(p) - 1] == key
 }
 
+relative_source(s) if {
+	is_string(s)
+	not contains(s, "${")
+	startswith(s, "./")
+}
+
+relative_source(s) if {
+	is_string(s)
+	not contains(s, "${")
+	startswith(s, "../")
+}
+
+# module_target は、ディレクトリ dir の module の source が指すディレクトリを返す。相対パスでないか、
+# 走査の root より上へ出るなら undefined。
+module_target(dir, source) := clean(sprintf("%s/%s", [dir, source])) if relative_source(source)
+
 # clean は `/` 区切りのパスの `.` と `..` を字面で解く。root より上へ出るパスは undefined。
 clean(path) := concat("/", kept) if {
 	segs := split(path, "/")
