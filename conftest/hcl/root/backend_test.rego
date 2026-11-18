@@ -60,7 +60,7 @@ test_RT202_deny_wrong_key if {
 	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate")
 }
 
-test_RT202_deny_key_missing if {
+test_RT202_deny_key_null if {
 	files := with_backend("env/mem/identity/backend.tf", backend_attrs("null", "    use_lockfile = true\n    encrypt = true"))
 	some m in with_id(denies(files), "RT202")
 	contains(m, "env/mem/identity/backend.tf")
@@ -155,4 +155,94 @@ test_RT206_allow_backend_outside_root if {
 	files := array.concat(ok_tree, [tf("usecases/w/backend.tf", "terraform {\n  backend \"s3\" {\n    kms_key_id = \"x\"\n  }\n}\n")])
 	count(with_id(denies(files), "RT206")) == 0
 	count(with_id(denies(files), "RT201")) == 0
+}
+
+backend_without_key := `terraform {
+	backend "s3" {
+		region       = "ap-northeast-1"
+		use_lockfile = true
+		encrypt      = true
+	}
+}
+`
+
+test_RT201_deny_two_identical_backends_in_one_file if {
+	files := with_backend("env/mem/backend.tf", concat("\n", [workload_backend, workload_backend]))
+	some m in with_id(denies(files), "RT201")
+	contains(m, "root env/mem の backend が 2 件です")
+}
+
+test_RT201_deny_non_s3_backend_in_identity_root if {
+	files := with_backend("env/mem/identity/backend.tf", "terraform {\n  backend \"local\" {\n    path = \"x\"\n  }\n}\n")
+	msgs := denies(files)
+	some m in with_id(msgs, "RT201")
+	contains(m, "env/mem/identity/backend.tf の backend が local です")
+	count(with_id(msgs, "RT202")) == 0
+	count(with_id(msgs, "RT203")) == 0
+}
+
+test_RT201_allow_terraform_block_without_backend if {
+	files := array.concat(ok_tree, [tf("env/mem/versions.tf", "terraform {\n  required_version = \">= 1.0\"\n}\n")])
+	count(with_id(denies(files), "RT201")) == 0
+}
+
+test_RT202_deny_key_omitted if {
+	files := with_backend("env/mem/backend.tf", backend_without_key)
+	some m in with_id(denies(files), "RT202")
+	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate")
+}
+
+test_RT202_deny_workload_key_in_identity_root if {
+	files := with_backend("env/mem/identity/backend.tf", workload_backend)
+	some m in with_id(denies(files), "RT202")
+	contains(m, "env/mem/identity/backend.tf の key が identity/terraform.tfstate")
+}
+
+test_RT202_deny_key_number if {
+	files := with_backend("env/mem/backend.tf", backend_attrs("1", "    use_lockfile = true\n    encrypt = true"))
+	some m in with_id(denies(files), "RT202")
+	contains(m, "env/mem/backend.tf")
+}
+
+test_RT203_deny_lockfile_expression if {
+	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = var.l\n    encrypt = true"))
+	some m in with_id(denies(files), "RT203")
+	contains(m, "env/mem/backend.tf")
+}
+
+test_RT204_deny_encrypt_missing if {
+	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = true"))
+	some m in with_id(denies(files), "RT204")
+	contains(m, "env/mem/backend.tf")
+}
+
+test_RT204_deny_encrypt_string if {
+	files := with_backend("env/mem/backend.tf", backend_attrs(`"workload/terraform.tfstate"`, "    use_lockfile = true\n    encrypt = \"true\""))
+	some m in with_id(denies(files), "RT204")
+	contains(m, "env/mem/backend.tf")
+}
+
+# --- RT106 ---
+
+test_RT106_allow_backends_in_roots_and_outside_env if {
+	files := array.concat(ok_tree, [tf("usecases/w/backend.tf", workload_backend)])
+	count(with_id(denies(files), "RT106")) == 0
+}
+
+test_RT106_deny_backend_in_hidden_directory if {
+	files := array.concat(ok_tree, [tf("env/mem/.alt/backend.tf", workload_backend)])
+	some m in with_id(denies(files), "RT106")
+	contains(m, "env/mem/.alt/backend.tf が backend を持ちます")
+}
+
+test_RT106_deny_backend_in_tests_directory if {
+	files := array.concat(ok_tree, [tf("env/mem/identity/tests/backend.tf", identity_backend)])
+	some m in with_id(denies(files), "RT106")
+	contains(m, "env/mem/identity/tests/backend.tf が backend を持ちます")
+}
+
+test_RT106_deny_cloud_block_outside_root if {
+	files := array.concat(ok_tree, [tf("env/mem/sub/cloud.tf", "terraform {\n  cloud {\n    organization = \"x\"\n  }\n}\n")])
+	some m in with_id(denies(files), "RT106")
+	contains(m, "env/mem/sub/cloud.tf が terraform の cloud block を持ちます")
 }

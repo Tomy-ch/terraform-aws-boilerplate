@@ -72,7 +72,7 @@ root-check-test:
 	d=$$(case_dir quoted-name); printf '# x\n' > "$$d/env/mem/q\"b\\c.tf"; \
 	expect pass quoted-name "$$d" "違反はありません"; \
 	d=$$(case_dir symlink); mkdir -p "$$d/outside"; printf 'locals {}\n' > "$$d/outside/real.tf"; ln -s ../../outside/real.tf "$$d/env/mem/link.tf"; \
-	expect fail symlinked-config "$$d" "RT002 [件数の不一致]"; \
+	expect fail symlinked-config "$$d" "RT002 [件数の不一致] env/mem/link.tf"; \
 	d=$$(case_dir module-one-line); printf 'module "w2" { source = "../../usecases/w" }\n' > "$$d/env/mem/extra.tf"; \
 	expect pass module-one-line "$$d" "違反はありません"; \
 	d=$$(case_dir module-count); printf 'locals {\n  doc = <<EOT\nmodule "fake" {\nEOT\n}\n' > "$$d/env/mem/doc.tf"; \
@@ -106,6 +106,28 @@ root-check-test:
 	expect fail dynamodb "$$d" "RT205 [DynamoDB の lock] env/mem/backend.tf"; \
 	d=$$(case_dir kms-in-hcl); backend "$$d/env/mem" workload/terraform.tfstate true true '    kms_key_id = "x"'; \
 	expect fail kms-in-hcl "$$d" "RT206 [鍵の書き方] env/mem/backend.tf"; \
+	d=$$(case_dir workload-calls-subpath); mkdir -p "$$d/usecases/b/internal/x"; printf 'locals {}\n' > "$$d/usecases/b/internal/x/main.tf"; \
+	printf 'module "x" {\n  source = "../../usecases/b/internal/x"\n}\n' >> "$$d/env/mem/main.tf"; \
+	expect fail workload-calls-subpath "$$d" "RT105 [usecase でない先] env/mem/main.tf の module.x が usecases/b/internal/x"; \
+	d=$$(case_dir duplicate-backend); cat "$$d/env/mem/backend.tf" "$$d/env/mem/backend.tf" > "$$d/b2" && mv "$$d/b2" "$$d/env/mem/backend.tf"; \
+	expect fail duplicate-backend "$$d" "RT201 [backend の数] root env/mem の backend が 2 件です"; \
+	d=$$(case_dir backend-in-hidden-dir); mkdir -p "$$d/env/mem/.alt"; backend "$$d/env/mem/.alt" workload/terraform.tfstate; \
+	expect fail backend-in-hidden-dir "$$d" "RT106 [root の外の backend] env/mem/.alt/backend.tf"; \
+	d=$$(case_dir module-unquoted-label); printf 'module w2 {\n  source = "../../usecases/w"\n}\n' > "$$d/env/mem/extra.tf"; \
+	expect pass module-unquoted-label "$$d" "違反はありません"; \
+	d=$$(case_dir module-tab-separator); printf 'module\t"w2" {\n  source = "../../usecases/w"\n}\n' > "$$d/env/mem/extra.tf"; \
+	expect pass module-tab-separator "$$d" "違反はありません"; \
+	d=$$(case_dir dir-named-tf); mkdir -p "$$d/env/mem/x.tf"; \
+	expect fail dir-named-tf "$$d" "env/mem/x.tf の module block を数えられません"; \
+	d=$$(case_dir broken-tf-json); printf '{' > "$$d/env/mem/extra.tf.json"; \
+	expect fail broken-tf-json "$$d" "extra.tf.json"; \
+	d=$$(case_dir decl-no-root-key); printf '{}\n' > "$$d/decl.json"; \
+	expect fail decl-no-root-key "$$d" "RT001 [宣言の形] data.root_decl がオブジェクトではありません"; \
+	d=$$(case_dir no-usecases-dir); find "$$d/usecases" -name '*.tf' -exec rm {} +; \
+	expect fail no-usecases-tf "$$d" "RT004 [宣言が実体を指さない] usecases.b"; \
+	d=$$(case_dir detect-conftest-silent); \
+	expect fail detect-conftest-silent "$$d" "結果を解釈できません" CONFTEST_BIN="$$root/conftest-silent"; \
+	expect fail detect-conftest-fails "$$d" "結果を解釈できません" CONFTEST_BIN="$$root/conftest-fails"; \
 	d=$$(case_dir no-rules); \
 	expect fail no-rules "$$d" "名前空間の規則が1つも評価されていません" RT_NS=no_such_namespace; \
 	d=$$(case_dir no-conftest); \

@@ -67,7 +67,8 @@ test_RT001_allow_declared if {
 
 test_RT001_deny_decl_not_object if {
 	msgs := denies_with(ok_tree, listed_of(ok_tree), counts_of(ok_tree), [])
-	count(with_id(msgs, "RT001")) >= 1
+	some m in with_id(msgs, "RT001")
+	contains(m, "data.root_decl がオブジェクトではありません")
 }
 
 test_RT001_deny_unknown_key if {
@@ -79,13 +80,13 @@ test_RT001_deny_unknown_key if {
 test_RT001_deny_management_env_missing if {
 	msgs := denies_decl({"usecases": fixture_decl.usecases})
 	some m in with_id(msgs, "RT001")
-	contains(m, "management_env")
+	contains(m, "management_env が env の名前")
 }
 
 test_RT001_deny_management_env_not_token if {
 	msgs := denies_decl(object.union(fixture_decl, {"management_env": "Mgmt/x"}))
 	some m in with_id(msgs, "RT001")
-	contains(m, "management_env")
+	contains(m, "management_env が env の名前")
 }
 
 test_RT001_deny_usecases_not_object if {
@@ -157,6 +158,7 @@ test_RT002_deny_module_count_missing if {
 	counts := object.remove(counts_of(ok_tree), ["env/mem/main.tf"])
 	msgs := denies_with(ok_tree, listed_of(ok_tree), counts, fixture_decl)
 	some m in with_id(msgs, "RT002")
+	contains(m, "env/mem/main.tf の module block")
 	contains(m, "数えていない")
 }
 
@@ -201,4 +203,48 @@ test_RT004_deny_management_identity_missing if {
 	msgs := denies_decl(object.union(fixture_decl, {"management_env": "other"}))
 	some m in with_id(msgs, "RT004")
 	contains(m, "env/other/identity")
+}
+
+# conftest verify は木の中の decl.json も data に読むので、未定義ではなく null で宣言の欠落を表す。
+test_RT001_deny_decl_null if {
+	msgs := denies_with(ok_tree, listed_of(ok_tree), counts_of(ok_tree), null)
+	some m in with_id(msgs, "RT001")
+	contains(m, "data.root_decl がオブジェクトではありません")
+}
+
+test_RT001_deny_management_env_number if {
+	msgs := denies_decl(object.union(fixture_decl, {"management_env": 1}))
+	some m in with_id(msgs, "RT001")
+	contains(m, "management_env が env の名前")
+}
+
+test_RT001_deny_kind_not_string if {
+	msgs := denies_decl({"management_env": "mgmt", "usecases": {"b": "bootstrap", "c": 1}})
+	some m in with_id(msgs, "RT001")
+	contains(m, "usecases.c")
+}
+
+# 取り出しが空になっても allow のテストは通るので、ok_tree から読む数をここで固定する。
+test_RT002_allow_reads_every_module_and_backend if {
+	count(module_calls) == 4 with input as ok_tree
+	count(backends) == 3 with input as ok_tree
+	count(roots) == 3 with input as ok_tree
+}
+
+test_RT002_deny_root_files_not_array if {
+	msgs := denies_with(ok_tree, {"x": 1}, counts_of(ok_tree), fixture_decl)
+	some m in with_id(msgs, "RT002")
+	contains(m, "対象が0件")
+}
+
+test_RT002_deny_module_counts_not_object if {
+	msgs := denies_with(ok_tree, listed_of(ok_tree), [], fixture_decl)
+	some m in with_id(msgs, "RT002")
+	contains(m, "env/mgmt/identity/main.tf の module block")
+}
+
+test_RT003_deny_tf_json_outside_root if {
+	files := array.concat(ok_tree, [{"path": "usecases/w/extra.tf.json", "contents": {}}])
+	some m in with_id(denies(files), "RT003")
+	contains(m, "usecases/w/extra.tf.json")
 }
