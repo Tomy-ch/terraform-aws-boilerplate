@@ -360,6 +360,56 @@ run "sns_services_only_named_publishers" {
   }
 }
 
+run "sns_events_only_for_topics_that_name_it" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [
+        { topic = "tabp-dev-a", publishers = ["events"] },
+        { topic = "tabp-dev-b", publishers = ["cloudwatch"] },
+      ] }
+    }
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Condition if s.Sid == "SnsPublisherEvents"] == [
+      { StringEquals = { "kms:EncryptionContext:aws:sns:topicArn" = ["arn:aws:sns:ap-northeast-1:123456789012:tabp-dev-a"] } },
+    ]
+    error_message = "EventBridge の文が、events を名指さない Topic の ARN を含んでいます。"
+  }
+}
+
+run "sns_services_budgets_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["budgets"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherBudgets"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
+run "sns_services_events_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "tabp-dev-ops-notification", publishers = ["events"] }] }
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == ["AccountKeyAdministration", "SnsPublisherEvents"]
+    error_message = "publishers に無いサービスの文が出ています。"
+  }
+}
+
 run "all_users" {
   command = plan
 

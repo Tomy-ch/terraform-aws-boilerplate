@@ -628,3 +628,88 @@ run "users_rejects_sns_service_topic_arn" {
 
   expect_failures = [var.users]
 }
+
+run "users_rejects_duplicate_sns_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["a"] },
+        { arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["b"] },
+      ]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_empty_sns_services_only" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_service_null_publishers" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = null }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_publisher_wrong_case" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t", publishers = ["Events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_sns_topic_trailing_newline" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = "t\n", publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_256_character_sns_service_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = format("%0256d", 0), publishers = ["events"] }] }
+    }
+  }
+}
+
+run "users_rejects_257_character_sns_service_topic" {
+  command = plan
+
+  variables {
+    users = {
+      services = { sns = [{ topic = format("%0257d", 0), publishers = ["events"] }] }
+    }
+  }
+
+  expect_failures = [var.users]
+}

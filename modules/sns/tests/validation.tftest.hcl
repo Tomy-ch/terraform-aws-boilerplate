@@ -131,3 +131,43 @@ run "publishers_accepts_empty" {
     publishers = []
   }
 }
+
+run "name_rejects_arn" {
+  command = plan
+
+  variables {
+    name = "arn:aws:sns:ap-northeast-1:123456789012:t"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "name_rejects_trailing_newline" {
+  command = plan
+
+  variables {
+    name = "t\n"
+  }
+
+  expect_failures = [var.name]
+}
+
+run "kms_key_arn_rejects_other_partition" {
+  command = plan
+
+  variables {
+    kms_key_arn = "arn:aws-cn:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_sns_topic.this]
+}
+
+run "publishers_rejects_wrong_case" {
+  command = plan
+
+  variables {
+    publishers = ["CloudWatch"]
+  }
+
+  expect_failures = [var.publishers]
+}
