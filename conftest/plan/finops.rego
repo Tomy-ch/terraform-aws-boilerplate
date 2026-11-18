@@ -88,6 +88,7 @@ deny contains msg if {
 
 deny contains msg if {
 	some c in changes_of(decl.anomaly_subscription)
+	not unknown(c, "frequency")
 	after(c, "frequency") != "IMMEDIATE"
 	msg := sprintf("[PLAN-FINOPS-03] %s: %s の頻度が IMMEDIATE ではありません", [c.path, c.rc.address])
 }

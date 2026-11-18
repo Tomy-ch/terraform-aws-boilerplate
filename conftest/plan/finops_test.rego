@@ -128,3 +128,102 @@ test_pass_each_instance_to_its_own_topic if {
 	s2 := change("aws_ce_anomaly_subscription", "module.finops_admin.module.cost_anomaly.aws_ce_anomaly_subscription.this", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": other}]})
 	count(p.deny) == 0 with input as fixture.plan([ok_budget, ok_subscription, b2, s2])
 }
+
+decl_without(key) := object.remove(data.policy_plan.finops, [key])
+
+test_violation_declaration_without_budget_action if {
+	fixture.has("[PLAN-FINOPS-00]", p.deny) with input as fixture.plan([ok_budget, ok_subscription])
+		with data.policy_plan.finops as decl_without("budget_action")
+}
+
+test_violation_declaration_without_budget if {
+	fixture.has("[PLAN-FINOPS-00]", p.deny) with input as fixture.plan([ok_budget, ok_subscription])
+		with data.policy_plan.finops as decl_without("budget")
+}
+
+test_violation_declaration_without_anomaly_subscription if {
+	fixture.has("[PLAN-FINOPS-00]", p.deny) with input as fixture.plan([ok_budget, ok_subscription])
+		with data.policy_plan.finops as decl_without("anomaly_subscription")
+}
+
+test_violation_declaration_with_non_string_budget_action if {
+	fixture.has("[PLAN-FINOPS-00]", p.deny) with input as fixture.plan([ok_budget, ok_subscription])
+		with data.policy_plan.finops as object.union(data.policy_plan.finops, {"budget_action": 1})
+}
+
+test_pass_empty_lists_as_plan_writes_them if {
+	n := object.union(notification("ACTUAL", 100), {"subscriber_email_addresses": []})
+	b := budget([n])
+	empty := object.union(b, {"change": {"after": {"cost_filter": [], "filter_expression": []}}})
+	count(p.deny) == 0 with input as fixture.plan([empty, ok_subscription])
+}
+
+test_violation_filter_expression if {
+	b := object.union(ok_budget, {"change": {"after": {"filter_expression": [{"dimensions": [{"key": "SERVICE", "values": ["Amazon Elastic Compute Cloud - Compute"]}]}]}}})
+	fixture.has("[PLAN-FINOPS-04]", p.deny) with input as fixture.plan([b, ok_subscription])
+}
+
+test_violation_unknown_cost_filter if {
+	b := object.union(ok_budget, {"change": {"after_unknown": {"cost_filter": true}}})
+	fixture.has("[PLAN-FINOPS-04]", p.deny) with input as fixture.plan([b, ok_subscription])
+}
+
+test_violation_unknown_frequency if {
+	s := object.union(ok_subscription, {"change": {"after_unknown": {"frequency": true}}})
+	msgs := p.deny with input as fixture.plan([ok_budget, s])
+	some m in msgs
+	contains(m, "frequency が plan で決まりません")
+	not any_frequency_mismatch(msgs)
+}
+
+any_frequency_mismatch(msgs) if {
+	some m in msgs
+	contains(m, "頻度が IMMEDIATE ではありません")
+}
+
+test_violation_unknown_topic_in_notification if {
+	b := object.union(ok_budget, {"change": {"after_unknown": {"notification": [{"subscriber_sns_topic_arns": true}]}}})
+	fixture.has("[PLAN-FINOPS-02]", p.deny) with input as fixture.plan([b, ok_subscription])
+}
+
+test_violation_unknown_address_in_subscriber if {
+	s := object.union(ok_subscription, {"change": {"after_unknown": {"subscriber": [{"address": true}]}}})
+	fixture.has("[PLAN-FINOPS-03]", p.deny) with input as fixture.plan([ok_budget, s])
+}
+
+test_violation_notifications_to_different_topics if {
+	other := object.union(notification("FORECASTED", 100), {"subscriber_sns_topic_arns": ["arn:aws:sns:ap-northeast-1:123456789012:other"]})
+	fixture.has("[PLAN-FINOPS-05]", p.deny) with input as fixture.plan([budget([notification("ACTUAL", 100), other]), ok_subscription])
+}
+
+keyed(type, key, name, after) := change(type, sprintf("module.finops[%q].module.%s.%s.this", [key, name, type]), after)
+
+test_pass_for_each_instances_to_their_own_topics if {
+	a := "arn:aws:sns:ap-northeast-1:123456789012:a"
+	b := "arn:aws:sns:ap-northeast-1:123456789012:b"
+	na := object.union(notification("ACTUAL", 100), {"subscriber_sns_topic_arns": [a]})
+	nb := object.union(notification("ACTUAL", 100), {"subscriber_sns_topic_arns": [b]})
+	rcs := [
+		keyed("aws_budgets_budget", "a.b", "budget", {"notification": [na]}),
+		keyed("aws_ce_anomaly_subscription", "a.b", "cost_anomaly", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": a}]}),
+		keyed("aws_budgets_budget", "c", "budget", {"notification": [nb]}),
+		keyed("aws_ce_anomaly_subscription", "c", "cost_anomaly", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": b}]}),
+	]
+	count(p.deny) == 0 with input as fixture.plan(rcs)
+}
+
+test_violation_for_each_instance_to_different_topics if {
+	rcs := [
+		keyed("aws_budgets_budget", "a", "budget", {"notification": [notification("ACTUAL", 100)]}),
+		keyed("aws_ce_anomaly_subscription", "a", "cost_anomaly", {"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": "arn:aws:sns:ap-northeast-1:123456789012:other"}]}),
+	]
+	fixture.has("[PLAN-FINOPS-05]", p.deny) with input as fixture.plan(rcs)
+}
+
+test_pass_same_instance_in_different_plans_to_their_own_topics if {
+	other := "arn:aws:sns:ap-northeast-1:123456789012:other"
+	n := object.union(notification("ACTUAL", 100), {"subscriber_sns_topic_arns": [other]})
+	s := subscription({"frequency": "IMMEDIATE", "subscriber": [{"type": "SNS", "address": other}]})
+	second := [{"path": "q.json", "contents": {"plan_format_version": "1.2", "resource_changes": [budget([n]), s]}}]
+	count(p.deny) == 0 with input as array.concat(fixture.plan([ok_budget, ok_subscription]), second)
+}
