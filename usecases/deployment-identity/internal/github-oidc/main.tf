@@ -88,5 +88,7 @@ resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = []
+  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : []
+
+  depends_on = [aws_iam_policy.governance]
 }

@@ -3,10 +3,19 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "iam:DeleteAccountPasswordPolicy",
+      "iam:DisableOrganizationsRootCredentialsManagement",
+      "iam:DisableOrganizationsRootSessions",
+      "iam:EnableOrganizationsRootCredentialsManagement",
+      "iam:EnableOrganizationsRootSessions",
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
+      "iam:UpdateAccountPasswordPolicy",
       "kms:ListAliases",
+      "organizations:CreateOrganization",
       "organizations:DescribeOrganization",
+      "organizations:DisableAWSServiceAccess",
+      "organizations:EnableAWSServiceAccess",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
       "organizations:ListRoots"
@@ -105,6 +114,9 @@
           ],
           "types": {
             "aws_iam_openid_connect_provider": {
+              "class": "target"
+            },
+            "aws_iam_policy": {
               "class": "target"
             },
             "aws_iam_role": {
@@ -209,7 +221,10 @@
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity",
         "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this",
-        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this"
+        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this",
+        "managed_policies": [
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
+        ]
       },
       "unlock_roles": [
         "unlock_role",

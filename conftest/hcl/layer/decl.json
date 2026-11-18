@@ -1677,6 +1677,7 @@
       "aws_guardduty_detector": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_group": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_openid_connect_provider": "親を持たない（アカウントかリージョンの単位で設定する）",
+      "aws_iam_policy": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_role": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_user": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_kms_key": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",

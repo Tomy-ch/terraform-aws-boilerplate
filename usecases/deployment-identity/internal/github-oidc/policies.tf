@@ -100,14 +100,15 @@ locals {
 
   # 組織の ID は作る前に決まらないので、Organizations の ARN は pattern で書く（deployment-identity/ADR-0201 決定4）。
   org_arn_prefix = "arn:${data.aws_partition.current.partition}:organizations::${data.aws_caller_identity.current.account_id}"
+  org_root_arns  = ["${local.org_arn_prefix}:root/o-*/r-*"]
   org_ou_arns    = ["${local.org_arn_prefix}:ou/o-*/ou-*"]
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
+  administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
-  # 統制の作成と設定の権限を持つ customer managed policy（deployment-identity/ADR-0201 決定7）。
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
 
@@ -152,7 +153,82 @@ locals {
     ],
   ) : s if local.management]
 
-  # 統制の customer managed policy の管理と、apply-identity の role への付与（deployment-identity/ADR-0201 決定7）。
+  governance_wildcard_write_actions = [
+    "iam:DeleteAccountPasswordPolicy",
+    "iam:DisableOrganizationsRootCredentialsManagement",
+    "iam:DisableOrganizationsRootSessions",
+    "iam:EnableOrganizationsRootCredentialsManagement",
+    "iam:EnableOrganizationsRootSessions",
+    "iam:UpdateAccountPasswordPolicy",
+    "organizations:CreateOrganization",
+  ]
+
+  # 組織の削除・メンバーの閉鎖・組織からの除外と、prevent_destroy を持つ構成物の削除は与えない（deployment-identity/ADR-0201 決定3）。
+  governance_manage_statements = concat(
+    [for a in local.governance_wildcard_write_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+    [for a in ["organizations:DisableAWSServiceAccess", "organizations:EnableAWSServiceAccess"] : {
+      Sid       = replace(title(replace(a, ":", " ")), " ", "")
+      Effect    = "Allow"
+      Action    = a
+      Resource  = "*"
+      Condition = { StringEquals = { "organizations:ServicePrincipal" = "iam.amazonaws.com" } }
+    }],
+    [
+      {
+        Sid       = "CreateOrganizationsServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/organizations.amazonaws.com/AWSServiceRoleForOrganizations"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "organizations.amazonaws.com" } }
+      },
+      { Sid = "ManagePolicyTypes", Effect = "Allow", Action = ["organizations:DisablePolicyType", "organizations:EnablePolicyType"], Resource = local.org_root_arns },
+      { Sid = "CreateOrganizationalUnits", Effect = "Allow", Action = "organizations:CreateOrganizationalUnit", Resource = concat(local.org_root_arns, local.org_ou_arns) },
+      { Sid = "UpdateOrganizationalUnits", Effect = "Allow", Action = "organizations:UpdateOrganizationalUnit", Resource = local.org_ou_arns },
+      {
+        Sid      = "ManageOrganizationPolicies"
+        Effect   = "Allow"
+        Action   = ["organizations:CreatePolicy", "organizations:DeletePolicy", "organizations:UpdatePolicy"]
+        Resource = local.org_policy_arn
+      },
+      {
+        Sid      = "AttachOrganizationPolicies"
+        Effect   = "Allow"
+        Action   = ["organizations:AttachPolicy", "organizations:DetachPolicy"]
+        Resource = concat(local.org_root_arns, local.org_ou_arns, [local.org_policy_arn])
+      },
+      { Sid = "ManageBreakGlassUsers", Effect = "Allow", Action = ["iam:CreateUser", "iam:UpdateUser"], Resource = local.break_glass_user_arns },
+      {
+        Sid    = "ManageBreakGlassGroup"
+        Effect = "Allow"
+        Action = [
+          "iam:AddUserToGroup",
+          "iam:CreateGroup",
+          "iam:DeleteGroup",
+          "iam:DeleteGroupPolicy",
+          "iam:ListAttachedGroupPolicies",
+          "iam:ListGroupPolicies",
+          "iam:PutGroupPolicy",
+          "iam:RemoveUserFromGroup",
+          "iam:UpdateGroup",
+        ]
+        Resource = local.break_glass_group_arns
+      },
+      {
+        Sid      = "ManageBreakGlassRole"
+        Effect   = "Allow"
+        Action   = ["iam:CreateRole", "iam:UpdateAssumeRolePolicy", "iam:UpdateRole", "iam:UpdateRoleDescription"]
+        Resource = local.break_glass_role_arns
+      },
+      {
+        Sid       = "AttachBreakGlassAdministratorAccess"
+        Effect    = "Allow"
+        Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        Resource  = local.break_glass_role_arns
+        Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
+      },
+    ],
+  )
+
   governance_policy_management_statements = [for s in [
     {
       Sid      = "ManageGovernancePolicy"
@@ -330,4 +406,18 @@ resource "aws_iam_role_policy" "this" {
     Version   = "2012-10-17"
     Statement = local.statements[each.key]
   })
+}
+
+# 管理アカウントの apply-identity の role にだけ付ける（deployment-identity/ADR-0201 決定7）。
+resource "aws_iam_policy" "governance" {
+  count = local.management ? 1 : 0
+
+  name = "${var.name_prefix}-ci-apply-identity-governance"
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.governance_manage_statements
+  })
+
+  # 同じ apply で、apply-identity が CreatePolicy の権限を得てから作る（決定4 と同じ順序）。
+  depends_on = [aws_iam_role_policy.apply_identity]
 }

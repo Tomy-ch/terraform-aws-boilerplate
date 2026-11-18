@@ -26,6 +26,22 @@ output_bucket := declared("output_bucket")
 
 output_bucket_policy := declared("output_bucket_policy")
 
+# apply-identity の role に付けてよい customer managed policy の address（deployment-identity/ADR-0201 決定7）。
+raw_managed := object.get(cfg, "managed_policies", null)
+
+managed_declared := {m | some m in raw_managed} if is_array(raw_managed)
+
+managed_declared := set() if not is_array(raw_managed)
+
+managed_present contains m if {
+	some m in managed_declared
+	some c in lib.changes
+	c.rc.address == m
+	c.rc.type == "aws_iam_policy"
+}
+
+managed_arns contains after(m).arn if some m in managed_present
+
 after(address) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == address
@@ -44,6 +60,14 @@ statements contains {"path": r.document.path, "statement": s} if {
 	r.document.type == "aws_iam_role_policy"
 	r.document.attr == "policy"
 	r.document.address == target
+	some s in lib.statements(r.body)
+}
+
+statements contains {"path": r.document.path, "statement": s} if {
+	some r in lib.readable
+	r.document.type == "aws_iam_policy"
+	r.document.attr == "policy"
+	r.document.address in managed_present
 	some s in lib.statements(r.body)
 }
 
@@ -78,6 +102,27 @@ deny contains msg if {
 	some k in ["role", "policy", "output_bucket", "output_bucket_policy"]
 	declared(k) == ""
 	msg := sprintf("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.%s が宣言にありません", [k])
+}
+
+deny contains msg if {
+	not well_formed_managed
+	msg := "[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies が、空でない文字列の配列ではありません"
+}
+
+well_formed_managed if {
+	is_array(raw_managed)
+	every m in raw_managed {
+		is_string(m)
+		m != ""
+	}
+}
+
+managed_arn_known(m) if is_string(after(m).arn)
+
+deny contains msg if {
+	some m in managed_present
+	not managed_arn_known(m)
+	msg := sprintf("[PLAN-AIO-00] customer managed policy %s の ARN が plan で決まっていません。tests/policy-input.tftest.hcl の override_resource で与えてください", [m])
 }
 
 deny contains msg if {
@@ -199,8 +244,15 @@ deny contains msg if {
 
 deny contains msg if {
 	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
-	object.get(a.after, "policy_arns", null) != []
-	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns が空ではありません", [a.path, a.address])
+	{p | some p in object.get(a.after, "policy_arns", [])} != managed_arns
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns が、宣言した customer managed policy の ARN %v ではありません", [a.path, a.address, sort([p | some p in managed_arns])])
+}
+
+deny contains msg if {
+	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
+	not is_array(object.get(a.after, "policy_arns", null))
+	not is_set(object.get(a.after, "policy_arns", null))
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns を plan で読めません", [a.path, a.address])
 }
 
 # role の引数で付ける policy は、上の型を通らない。

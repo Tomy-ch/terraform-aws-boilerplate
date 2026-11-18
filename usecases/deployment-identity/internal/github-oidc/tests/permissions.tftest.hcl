@@ -673,20 +673,144 @@ run "policies" {
   }
 
   assert {
-    condition = [
-      [aws_iam_role_policy_attachments_exclusive.this["plan"].role_name, length(aws_iam_role_policy_attachments_exclusive.this["plan"].policy_arns)],
-      [aws_iam_role_policy_attachments_exclusive.this["apply"].role_name, length(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)],
-      [aws_iam_role_policy_attachments_exclusive.this["apply_identity"].role_name, length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)],
-      [aws_iam_role_policy_attachments_exclusive.this["unlock"].role_name, length(aws_iam_role_policy_attachments_exclusive.this["unlock"].policy_arns)],
-      [aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].role_name, length(aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].policy_arns)],
-      ] == [
-      [aws_iam_role.this["plan"].name, 0],
-      [aws_iam_role.this["apply"].name, 0],
-      [aws_iam_role.apply_identity.name, 0],
-      [aws_iam_role.this["unlock"].name, 0],
-      [aws_iam_role.this["unlock_identity"].name, 0],
+    condition = jsonencode([
+      [aws_iam_role_policy_attachments_exclusive.this["plan"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["plan"].policy_arns))],
+      [aws_iam_role_policy_attachments_exclusive.this["apply"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns))],
+      [aws_iam_role_policy_attachments_exclusive.this["apply_identity"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))],
+      [aws_iam_role_policy_attachments_exclusive.this["unlock"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["unlock"].policy_arns))],
+      [aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].policy_arns))],
+      ]) == jsonencode([
+      [aws_iam_role.this["plan"].name, []],
+      [aws_iam_role.this["apply"].name, []],
+      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"]],
+      [aws_iam_role.this["unlock"].name, []],
+      [aws_iam_role.this["unlock_identity"].name, []],
+    ])
+    error_message = "managed policy が、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
+  }
+
+  assert {
+    condition     = aws_iam_policy.governance[0].name == "tabp-admin-ci-apply-identity-governance"
+    error_message = "統制の customer managed policy の名前が <name_prefix>-ci-apply-identity-governance になっていません。"
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_policy.governance[0].policy).Statement == [
+      { Sid = "IamDeleteAccountPasswordPolicy", Effect = "Allow", Action = "iam:DeleteAccountPasswordPolicy", Resource = "*" },
+      {
+        Sid      = "IamDisableOrganizationsRootCredentialsManagement"
+        Effect   = "Allow"
+        Action   = "iam:DisableOrganizationsRootCredentialsManagement"
+        Resource = "*"
+      },
+      { Sid = "IamDisableOrganizationsRootSessions", Effect = "Allow", Action = "iam:DisableOrganizationsRootSessions", Resource = "*" },
+      {
+        Sid      = "IamEnableOrganizationsRootCredentialsManagement"
+        Effect   = "Allow"
+        Action   = "iam:EnableOrganizationsRootCredentialsManagement"
+        Resource = "*"
+      },
+      { Sid = "IamEnableOrganizationsRootSessions", Effect = "Allow", Action = "iam:EnableOrganizationsRootSessions", Resource = "*" },
+      { Sid = "IamUpdateAccountPasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
+      { Sid = "OrganizationsCreateOrganization", Effect = "Allow", Action = "organizations:CreateOrganization", Resource = "*" },
+      {
+        Sid       = "OrganizationsDisableAWSServiceAccess"
+        Effect    = "Allow"
+        Action    = "organizations:DisableAWSServiceAccess"
+        Resource  = "*"
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = "iam.amazonaws.com" } }
+      },
+      {
+        Sid       = "OrganizationsEnableAWSServiceAccess"
+        Effect    = "Allow"
+        Action    = "organizations:EnableAWSServiceAccess"
+        Resource  = "*"
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = "iam.amazonaws.com" } }
+      },
+      {
+        Sid       = "CreateOrganizationsServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/organizations.amazonaws.com/AWSServiceRoleForOrganizations"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "organizations.amazonaws.com" } }
+      },
+      {
+        Sid      = "ManagePolicyTypes"
+        Effect   = "Allow"
+        Action   = ["organizations:DisablePolicyType", "organizations:EnablePolicyType"]
+        Resource = ["arn:aws:organizations::123456789012:root/o-*/r-*"]
+      },
+      {
+        Sid    = "CreateOrganizationalUnits"
+        Effect = "Allow"
+        Action = "organizations:CreateOrganizationalUnit"
+        Resource = [
+          "arn:aws:organizations::123456789012:root/o-*/r-*",
+          "arn:aws:organizations::123456789012:ou/o-*/ou-*",
+        ]
+      },
+      {
+        Sid      = "UpdateOrganizationalUnits"
+        Effect   = "Allow"
+        Action   = "organizations:UpdateOrganizationalUnit"
+        Resource = ["arn:aws:organizations::123456789012:ou/o-*/ou-*"]
+      },
+      {
+        Sid      = "ManageOrganizationPolicies"
+        Effect   = "Allow"
+        Action   = ["organizations:CreatePolicy", "organizations:DeletePolicy", "organizations:UpdatePolicy"]
+        Resource = "arn:aws:organizations::123456789012:policy/o-*/*/p-*"
+      },
+      {
+        Sid    = "AttachOrganizationPolicies"
+        Effect = "Allow"
+        Action = ["organizations:AttachPolicy", "organizations:DetachPolicy"]
+        Resource = [
+          "arn:aws:organizations::123456789012:root/o-*/r-*",
+          "arn:aws:organizations::123456789012:ou/o-*/ou-*",
+          "arn:aws:organizations::123456789012:policy/o-*/*/p-*",
+        ]
+      },
+      {
+        Sid    = "ManageBreakGlassUsers"
+        Effect = "Allow"
+        Action = ["iam:CreateUser", "iam:UpdateUser"]
+        Resource = [
+          "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
+          "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
+        ]
+      },
+      {
+        Sid    = "ManageBreakGlassGroup"
+        Effect = "Allow"
+        Action = [
+          "iam:AddUserToGroup",
+          "iam:CreateGroup",
+          "iam:DeleteGroup",
+          "iam:DeleteGroupPolicy",
+          "iam:ListAttachedGroupPolicies",
+          "iam:ListGroupPolicies",
+          "iam:PutGroupPolicy",
+          "iam:RemoveUserFromGroup",
+          "iam:UpdateGroup",
+        ]
+        Resource = ["arn:aws:iam::123456789012:group/break-glass/break-glass"]
+      },
+      {
+        Sid      = "ManageBreakGlassRole"
+        Effect   = "Allow"
+        Action   = ["iam:CreateRole", "iam:UpdateAssumeRolePolicy", "iam:UpdateRole", "iam:UpdateRoleDescription"]
+        Resource = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+      },
+      {
+        Sid       = "AttachBreakGlassAdministratorAccess"
+        Effect    = "Allow"
+        Action    = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        Resource  = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+        Condition = { ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::aws:policy/AdministratorAccess" } }
+      },
     ]
-    error_message = "role に managed policy を付けない設定になっていません。"
+    error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
   }
 }
 
@@ -832,6 +956,11 @@ run "policy_length" {
   assert {
     condition     = length(aws_iam_role_policy.apply_identity.policy) <= 10240
     error_message = "apply-identity の role の inline policy が 10,240 文字を超えています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_policy.governance[0].policy) <= 6144
+    error_message = "統制の customer managed policy が 6,144 文字を超えています。"
   }
 
   assert {
@@ -1039,6 +1168,11 @@ run "no_governance_in_dev" {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
     error_message = "dev の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
   }
+
+  assert {
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "dev に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
+  }
 }
 
 run "no_governance_in_security" {
@@ -1107,6 +1241,11 @@ run "no_governance_in_security" {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
     error_message = "security の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
   }
+
+  assert {
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "security に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
+  }
 }
 
 run "no_governance_in_log_archive" {
@@ -1174,6 +1313,11 @@ run "no_governance_in_log_archive" {
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
     error_message = "log-archive の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+  }
+
+  assert {
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "log-archive に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
   }
 }
 
