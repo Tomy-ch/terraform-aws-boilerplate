@@ -1,0 +1,50 @@
+name: cross-cutting
+description: ユースケースに属さない横断の作業（CI、道具、文書、運用の機構）
+title: "[cross-cutting] "
+labels:
+  - type:cross-cutting
+body:
+  - type: markdown
+    attributes:
+      value: |
+        - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
+        - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+    validations:
+      required: true
+  - type: textarea
+    id: premises
+    attributes:
+      label: 前提（確かめた事実と出典）
+      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+  - type: textarea
+    id: tasks
+    attributes:
+      label: やることリスト
+  - type: textarea
+    id: options
+    attributes:
+      label: 論点
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: やらないことリスト
+  - type: textarea
+    id: done
+    attributes:
+      label: 完成の定義
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: 関連

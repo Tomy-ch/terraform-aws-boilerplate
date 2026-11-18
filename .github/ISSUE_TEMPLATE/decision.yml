@@ -1,0 +1,56 @@
+name: decision
+description: 実装の前に決める必要のある設計判断を起票する
+title: "[decision] "
+labels:
+  - type:decision
+body:
+  - type: markdown
+    attributes:
+      value: |
+        - 脆弱性は公開の issue で報告しないでください。報告の経路は Security タブの Security policy（`SECURITY.md`）が案内します。
+        - 資格情報、state、`terraform.tfvars` の値、plan とログの全文を貼らないでください。必要なら resource address と差分の要約を書きます。
+  - type: textarea
+    id: question
+    attributes:
+      label: 決めること
+    validations:
+      required: true
+  - type: textarea
+    id: deadline
+    attributes:
+      label: 決める時点
+      description: 何の実装の前までに決めるか。
+    validations:
+      required: true
+  - type: textarea
+    id: premises
+    attributes:
+      label: 前提（確かめた事実と出典）
+      description: 各行に出典（`file:line`、コマンドの出力、文書）と、確かめたかどうかを添えます。
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: 選択肢（費用と帰結）と推奨
+      description: 推奨の根拠は、公式の定義かアーキテクチャが導く形です（`docs/adr/0206-official-implementations-as-reference.md` 決定3、`docs/adr/0207-default-value-policy.md` 決定3）。
+  - type: textarea
+    id: blocks
+    attributes:
+      label: この判断が block するもの
+      description: Issue 番号で書きます。
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: やらないこと
+  - type: textarea
+    id: done
+    attributes:
+      label: 完成の定義
+      description: 記録先は root か use-case の ADR（`docs/adr/0001-adr-process-and-placement.md` 決定12-13）、責務外ならユースケースの unsupported 一覧（`docs/adr/0102-use-case-centric-scope.md` 決定7）です。ADR の変更は人の承認を要します（`docs/adr/0001-adr-process-and-placement.md` 決定2-3）。
+      value: |
+        - [ ] 決定と選ばなかった案が、所有する文書に記録されている
+    validations:
+      required: true
