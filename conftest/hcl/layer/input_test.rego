@@ -192,10 +192,15 @@ test_LY002_deny_files_list_missing if {
 	contains(m, "modules/m/main.tf は独立の走査の一覧にありません")
 }
 
+# 配列でない一覧は0件の一覧と同じ文言で落ちる。読んだファイルが一覧に無いことの LY002 も並ぶので、
+# 0件の一覧（test_LY002_deny_zero_files）とは件数で区別する。
 test_LY002_deny_files_list_not_array if {
-	msgs := deny with input as [] with data.layer_decl as fixture_decl with data.layer_files as "x"
-	some m in with_id(msgs, "LY002")
-	contains(m, "1件もありません")
+	msgs := deny with input as [ok_module] with data.layer_decl as fixture_decl with data.layer_files as "x"
+		with data.hcl_input as go_input([ok_module], [])
+	with_id(msgs, "LY002") == {
+		"LY002 [対象が0件] 走査の root に Terraform の構成ファイル（.tf と .tf.json）が1件もありません",
+		"LY002 [件数の不一致] modules/m/main.tf は独立の走査の一覧にありません",
+	}
 }
 
 test_LY002_allow_tftest_not_listed if {
@@ -345,6 +350,20 @@ test_LY004_deny_within_unknown_ref if {
 test_LY004_deny_alone_on_broken_input if {
 	files := module_with(policy("aws_s3_bucket.this.id"))
 	msgs := denies_input(files, listed_of(files), fixture_decl, {"files": "x", "blocks": []})
+	count(with_id(msgs, "LY004")) == 1
+	count(msgs) == 1
+}
+
+test_LY004_deny_alone_on_broken_within if {
+	files := module_with(policy("module.m.id"))
+	msgs := denies_go(files, [policy_blk([ref("aws_s3_bucket.this[]"), ref_in("module.m.id", [[0, 0]])])])
+	count(with_id(msgs, "LY004")) == 1
+	count(msgs) == 1
+}
+
+test_LY004_deny_alone_on_attribute_without_refs if {
+	files := module_with(policy("module.m.id"))
+	msgs := denies_go(files, [policy_blk_with([{"path": "bucket"}])])
 	count(with_id(msgs, "LY004")) == 1
 	count(msgs) == 1
 }

@@ -21,6 +21,11 @@ define LY_FIXTURE_NESTED
 printf 'resource "aws_guardduty_malware_protection_plan" "this" {\n  protected_resource {\n    s3_bucket {\n      bucket_name = %s\n    }\n  }\n}\n' "$$2" > "$$1/modules/a/plan.tf"
 endef
 
+# aws_s3_bucket_policy の bucket を each.value にする。$$2 は for_each の式。
+define LY_FIXTURE_FOR_EACH
+printf 'resource "aws_s3_bucket" "this" {}\n\nresource "aws_s3_bucket_policy" "this" {\n  for_each = %s\n  bucket   = each.value\n}\n' "$$2" > "$$1/modules/a/main.tf"
+endef
+
 define LY_FIXTURE_DYNAMIC
 printf 'resource "aws_guardduty_malware_protection_plan" "this" {\n  dynamic "protected_resource" {\n    for_each = [1]\n    content {\n      s3_bucket {\n        bucket_name = %s\n      }\n    }\n  }\n}\n' "$$2" > "$$1/modules/a/plan.tf"
 endef
@@ -37,6 +42,7 @@ layer-check-test:
 	tree() { $(LY_FIXTURE_TREE); }; \
 	nested() { $(LY_FIXTURE_NESTED); }; \
 	dyn() { $(LY_FIXTURE_DYNAMIC); }; \
+	foreach() { $(LY_FIXTURE_FOR_EACH); }; \
 	ly301() { $(LY_EXPECT_LY301); }; \
 	stub() { printf 'LY_HCL_INPUT_CMD=cp %s $(LY_OUT)/hcl-input.json' "$$1"; }; \
 	attachment() { d=$$(case_dir "$$2"); tree "$$d" "$$3"; if [ "$$1" = pass ]; then expect pass "$$2" "$$d" "違反はありません"; else expect fail "$$2" "$$d" "$$(ly301 "$$4")"; fi; }; \
@@ -74,21 +80,21 @@ layer-check-test:
 	d=$$(case_dir decl-malformed); printf '{"layer_decl": x}\n' > "$$d/decl.json"; \
 	expect fail decl-malformed "$$d" "invalid character"; \
 	d=$$(case_dir dangling-symlink); ln -s ../../nowhere.tf "$$d/modules/a/dangling.tf"; \
-	expect fail dangling-symlink "$$d" "走査の root の下に symlink があります"; \
+	expect fail dangling-symlink "$$d" "modules/a/dangling.tf: 走査の root の下に symlink があります"; \
 	d=$$(case_dir quoted-name); printf '# x\n' > "$$d/modules/a/q\"b\\c.tf"; \
 	expect pass quoted-name "$$d" "違反はありません"; \
 	d=$$(case_dir tf-json); printf '{"resource": {}}\n' > "$$d/modules/a/override.tf.json"; \
-	expect fail tf-json "$$d" "読まない形の入力があります"; \
+	expect fail tf-json "$$d" "modules/a/override.tf.json: .tf.json は読みません: 読まない形の入力があります"; \
 	expect fail tf-json-rego "$$d" "LY003 [未対応の入力] modules/a/override.tf.json" "$$(stub "$$root/ok.json")"; \
 	d=$$(case_dir terraform-cache); mkdir -p "$$d/modules/a/.terraform/modules/x"; \
 	printf 'resource "aws_sqs_queue" "x" {}\n' > "$$d/modules/a/.terraform/modules/x/main.tf"; \
 	expect pass terraform-cache "$$d" "違反はありません"; \
 	d=$$(case_dir symlink); mkdir -p "$$d/outside"; printf 'resource "aws_s3_bucket" "x" {}\n' > "$$d/outside/real.tf"; ln -s ../../outside/real.tf "$$d/modules/a/link.tf"; \
-	expect fail symlinked-config "$$d" "走査の root の下に symlink があります"; \
+	expect fail symlinked-config "$$d" "modules/a/link.tf: 走査の root の下に symlink があります"; \
 	expect fail symlinked-config-rego "$$d" "LY002 [件数の不一致]" "$$(stub "$$root/ok.json")"; \
 	d=$$(case_dir hcl-input-fails); \
 	expect fail hcl-input-fails "$$d" "hcl-input が失敗したので、Conftest を起動しません" LY_HCL_INPUT_CMD="$$root/conftest-fails"; \
-	expect fail hcl-input-stale "$$d" "hcl-input.json" LY_HCL_INPUT_CMD=:; \
+	expect fail hcl-input-stale "$$d" "hcl-input が成功を返しましたが、$(LY_OUT)/hcl-input.json を書いていません" LY_HCL_INPUT_CMD=:; \
 	expect fail hcl-input-empty "$$d" "LY005 [HCL の入力の突き合わせ] modules/a/main.tf の resource aws_s3_bucket.this を hcl-input が出していません" "$$(stub "$$root/empty.json")"; \
 	expect fail hcl-input-missing-file "$$d" "LY002 [件数の不一致] env/dev/main.tf を hcl-input が読んでいません" "$$(stub "$$root/missing-file.json")"; \
 	expect fail hcl-input-not-object "$$d" "LY004 [HCL の入力の形]" "$$(stub "$$root/not-object.json")"; \
@@ -123,6 +129,11 @@ layer-check-test:
 	attachment pass index-after-reference 'aws_s3_bucket.this[module.x.key].id'; \
 	attachment fail index-after-attribute 'aws_s3_bucket.this.tags["a"][module.m.x]' 'module.m'; \
 	attachment fail second-index-after-reference 'aws_s3_bucket.this[0][module.m.x]' 'module.m'; \
+	attachment pass splat-parent 'aws_s3_bucket.this[*].id[0]'; \
+	d=$$(case_dir for-each-module); foreach "$$d" '{ k = module.m.x }'; \
+	expect fail for-each-module "$$d" "$$(ly301 'module.m')"; \
+	d=$$(case_dir for-each-parent); foreach "$$d" '{ k = aws_s3_bucket.this.id }'; \
+	expect pass for-each-parent "$$d" "違反はありません"; \
 	d=$$(case_dir nested-parent-ok); nested "$$d" 'aws_s3_bucket.this.bucket'; \
 	expect pass nested-parent-ok "$$d" "違反はありません"; \
 	d=$$(case_dir nested-parent-module); nested "$$d" 'module.b.name'; \

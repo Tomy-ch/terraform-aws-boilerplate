@@ -48,6 +48,7 @@ layer-detect:
 	files=$$(sort $(LY_OUT)/found.txt | sed 's/[\\"]/\\&/g; s/.*/"&"/' | paste -sd, -); \
 	printf '{"layer_files": [%s]}\n' "$$files" > $(LY_OUT)/files.json; \
 	$(LY_HCL_INPUT_CMD) || { echo "❌ hcl-input が失敗したので、Conftest を起動しません" >&2; exit 1; }; \
+	[ -f $(LY_OUT)/hcl-input.json ] || { echo "❌ hcl-input が成功を返しましたが、$(LY_OUT)/hcl-input.json を書いていません" >&2; exit 1; }; \
 	$(GO_TOOL) sh -c 'set -u; root=$$PWD; cd "$(LY_BASE)"; \
 		exec $(CONFTEST_BIN) test --combine $(foreach p,$(LY_POLICY),-p "$$root/$(p)") --data "$$root/$(LY_DECL)" --data "$$root/$(LY_OUT)/files.json" \
 		--data "$$root/$(LY_OUT)/hcl-input.json" \

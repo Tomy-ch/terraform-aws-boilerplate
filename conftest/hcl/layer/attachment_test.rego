@@ -207,8 +207,11 @@ test_LY301_deny_nested_parent if {
 }
 `
 	blocks := [blk(main_tf, "resource", ["aws_guardduty_malware_protection_plan", "this"], [attr("protected_resource.s3_bucket.bucket_name", [ref("module.b.name")])])]
-	some m in attachment_denies(src, blocks)
+	msgs := attachment_denies(src, blocks)
+	count(msgs) == 1
+	some m in msgs
 	contains(m, "protected_resource.s3_bucket.bucket_name")
+	contains(m, "module.b")
 }
 
 dynamic_plan(expr) := concat("\n", [
