@@ -103,6 +103,15 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
 		})
 
+		t.Run("同じ type に当たる型を置く region を合わせて、type の宛先と突き合わせる", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-west-2.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-west-2.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n"+
+				"resource \"aws_kms_alias\" \"a\" {\n  region = \"us-west-2\"\n}\n")
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
+		})
+
 		t.Run("lock の解除だけで root に触れるジョブには、型が呼ぶ宛先を求めない", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
@@ -221,6 +230,17 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "chatbot.ap-northeast-1.amazonaws.com")
+		})
+
+		t.Run("同じ type に当たる別の型を置く region に宛先が無ければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n"+
+				"resource \"aws_kms_alias\" \"a\" {\n  region = \"us-west-2\"\n}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "aws_kms_: us-west-2 の宛先がありません")
 		})
 
 		t.Run("ブロックの region 引数がリテラルでなければ弾く", func(t *testing.T) {
@@ -609,6 +629,12 @@ func Test_addType(t *testing.T) {
 			require.ErrorIs(t, addType(block(t, "data \"aws_a\" {}\n"), typeRegions{}), errTerraformSyntax)
 		})
 
+		t.Run("region 引数が空文字列なら、region 引数を持たないブロックと取り違えずに弾く", func(t *testing.T) {
+			t.Parallel()
+			err := addType(block(t, "resource \"aws_a\" \"x\" {\n  region = \"\"\n}\n"), typeRegions{})
+			require.ErrorIs(t, err, errBlockRegion)
+		})
+
 		t.Run("action の config の region 引数がリテラルでなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			err := addType(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = var.region\n  }\n}\n"), typeRegions{})
@@ -837,6 +863,18 @@ func Test_checkRegions(t *testing.T) {
 			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
 		})
 
+		t.Run("region を含む宛先を持たない type の後の type も突き合わせる", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{
+				"aws_iam_": atProvider("iam.amazonaws.com"),
+				"aws_kms_": atProvider("kms.us-east-1.amazonaws.com"),
+			}
+			err := checkRegions(repo, []string{"r"}, uses)
+			require.ErrorIs(t, err, errRegionMismatch)
+			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
+		})
+
 		t.Run("type を置く region のうち宛先の無いものがあれば弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
@@ -975,14 +1013,24 @@ func Test_regionAttribute(t *testing.T) {
 			t.Parallel()
 			attr, ok := regionAttribute(block(t, "resource \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n}\n"))
 			require.True(t, ok)
-			assert.Equal(t, "region", attr.Name)
+			got, _ := regionLiteral(attr)
+			assert.Equal(t, "us-west-2", got)
 		})
 
 		t.Run("action の config の中の region 引数を返す", func(t *testing.T) {
 			t.Parallel()
 			attr, ok := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
 			require.True(t, ok)
-			assert.Equal(t, "region", attr.Name)
+			got, _ := regionLiteral(attr)
+			assert.Equal(t, "us-east-1", got)
+		})
+
+		t.Run("action が config の外と中の両方に region を持てば、config の中のものを返す", func(t *testing.T) {
+			t.Parallel()
+			attr, ok := regionAttribute(block(t, "action \"aws_a\" \"x\" {\n  region = \"us-west-2\"\n  config {\n    region = \"us-east-1\"\n  }\n}\n"))
+			require.True(t, ok)
+			got, _ := regionLiteral(attr)
+			assert.Equal(t, "us-east-1", got)
 		})
 
 		for name, src := range map[string]string{
@@ -1027,6 +1075,8 @@ func Test_regionLiteral(t *testing.T) {
 			"region の形でない文字列": "\"tokyo\"",
 			"文字列でない値":         "1",
 			"null":            "null",
+			"空文字列":            "\"\"",
+			"補間を含む文字列":        "\"${var.r}\"",
 		} {
 			t.Run(name+"なら読めない", func(t *testing.T) {
 				t.Parallel()
