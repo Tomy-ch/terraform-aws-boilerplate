@@ -237,6 +237,60 @@ shorten_matched(root, address) if {
 	r.address == address
 }
 
+shorten_matched(root, address) if {
+	some r in image_reductions
+	r.root == root
+	r.address == address
+}
+
+# image-registry/ADR-0203（保持件数の短縮）。保護の対象に宣言した ECR の lifecycle で、タグ付きのイメージを残す件数が
+# 変更の前より少なくなる変更を落とす。消えたイメージは戻らない。変更の前は同じ address の値か、同じ plan で外す
+# 同じ repository の lifecycle の値である。
+image_lifecycle_type := "aws_ecr_lifecycle_policy"
+
+retained(state) := n if {
+	is_object(state)
+	is_string(state.policy)
+	body := json.unmarshal(state.policy)
+	ns := [r.selection.countNumber | some r in body.rules; r.selection.countType == "imageCountMoreThan"; is_number(r.selection.countNumber)]
+	count(ns) > 0
+	n := min(ns)
+}
+
+protected_image_lifecycle(rc) if {
+	object.get(rc, "mode", "managed") == "managed"
+	rc.type == image_lifecycle_type
+	rc.type in decl.protected_types
+}
+
+image_priors contains {"f": f, "rc": rc, "before": rc.change.before} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	protected_image_lifecycle(rc)
+	is_object(rc.change.before)
+	is_object(rc.change.after)
+}
+
+image_priors contains {"f": f, "rc": rc, "before": gone.change.before} if {
+	some f in input
+	some rc in f.contents.resource_changes
+	protected_image_lifecycle(rc)
+	rc.change.actions == ["create"]
+	is_object(rc.change.after)
+	some gone in f.contents.resource_changes
+	protected_image_lifecycle(gone)
+	gone.address != rc.address
+	some a in gone.change.actions
+	a in {"delete", "forget"}
+	is_object(gone.change.before)
+	gone.change.before.repository == rc.change.after.repository
+}
+
+image_reductions contains {"root": root_of(p.f.path), "path": p.f.path, "address": p.rc.address} if {
+	some p in image_priors
+	retained(p.rc.change.after) < retained(p.before)
+}
+
 verb(actions) := "置換" if count(actions) > 1
 
 verb(actions) := "削除" if actions == ["delete"]
@@ -300,6 +354,12 @@ deny contains msg if {
 	some r in reductions
 	not shorten_allowed(r.root, r.address)
 	msg := sprintf("[PLAN-STATE-04] %s: %s が版を消す日数か日付を早めます。日数を過ぎた版はすぐに消えます。意図した変更なら、root %s の短縮の許可の宣言に address と理由を足してください", [r.path, r.address, r.root])
+}
+
+deny contains msg if {
+	some r in image_reductions
+	not shorten_allowed(r.root, r.address)
+	msg := sprintf("[PLAN-STATE-09] %s: %s がタグ付きのイメージを残す件数を減らします。超えた分のイメージはすぐに消えます。意図した変更なら、root %s の短縮の許可の宣言に address と理由を足してください", [r.path, r.address, r.root])
 }
 
 deny contains msg if {

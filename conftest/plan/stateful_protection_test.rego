@@ -601,3 +601,51 @@ test_pass_inline_data_source_unknown if {
 	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as inline_decl
 	count(msgs) == 0
 }
+
+image_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {}}
+
+image_lifecycle := "module.image_registry.module.repository[\"api\"].aws_ecr_lifecycle_policy.this"
+
+image_policy(n) := json.marshal({"rules": [{
+	"rulePriority": 1,
+	"selection": {"tagStatus": "tagged", "tagPatternList": ["*"], "countType": "imageCountMoreThan", "countNumber": n},
+	"action": {"type": "expire"},
+}]})
+
+image_update(before, after) := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+	"actions": ["update"],
+	"before": {"repository": "tabp-dev/api", "policy": image_policy(before)},
+	"after": {"repository": "tabp-dev/api", "policy": image_policy(after)},
+}}
+
+test_violation_fewer_retained_images if {
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 10)]) with data.policy_plan.stateful_protection as image_decl
+	fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_violation_fewer_retained_images_by_renamed_address if {
+	gone := {"address": "module.image_registry.module.repository[\"old\"].aws_ecr_lifecycle_policy.this", "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["delete"],
+		"before": {"repository": "tabp-dev/api", "policy": image_policy(30)},
+		"after": null,
+	}}
+	made := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["create"],
+		"before": null,
+		"after": {"repository": "tabp-dev/api", "policy": image_policy(5)},
+	}}
+	d := object.union(image_decl, {"allow": {"p": [{"address": gone.address, "reason": "論理名を替える"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([gone, made]) with data.policy_plan.stateful_protection as d
+	fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_pass_more_retained_images if {
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(10, 30)]) with data.policy_plan.stateful_protection as image_decl
+	not fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_pass_fewer_retained_images_allowed if {
+	d := object.union(image_decl, {"shorten_allow": {"p": [{"address": image_lifecycle, "reason": "保持件数を見直す"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 10)]) with data.policy_plan.stateful_protection as d
+	count(msgs) == 0
+}
