@@ -125,7 +125,7 @@ test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n%s\n\n- key: `%s`\n- sh
 endef
 
 # apply の全文を置く Bucket の種類（tfplan か tfapply）。割当は .github/workflows/README.md の「apply の job」。$(1)=root
-CI_APPLY_OUTPUT_KIND = $(if $(filter identity,$(1)),tfplan,tfapply)
+CI_APPLY_OUTPUT_KIND = $(if $(filter identity,$(1)),tfplan,$(if $(filter workload,$(1)),tfapply,$(error root が identity か workload ではありません: $(1))))
 
 # $(1)=env $(2)=root。apply する commit で plan し直し、Policy を通った plan だけを apply する（ADR-0601 決定6、
 # ADR-0604 決定11）。plan は lock を取る —— ADR-0604 決定8 の plan は plan の job の plan である。

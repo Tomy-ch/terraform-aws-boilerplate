@@ -224,6 +224,9 @@ func checkBackendKeys(root string) (int, error) {
 		if err != nil {
 			return err
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return xerrors.Wrapf(errBackendKey, "%s: symlink は読みません", path)
+		}
 		if !d.IsDir() {
 			return nil
 		}

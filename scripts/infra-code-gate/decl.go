@@ -563,8 +563,12 @@ func sortedKeys[V any](m map[string]V) []string {
 
 const gateWorkflowDir = ".github/workflows"
 
-// gateRun は、検出の job か、資格情報で Terraform を動かす CI の入口を走らせる行です。
-var gateRun = regexp.MustCompile(`^\s*(?:-\s+)?run:.*\bmake\b.*\b(?:infra-code-gate|ci-[a-z0-9-]+)\b`)
+// gateRun は、検出の job か、資格情報で Terraform を動かす CI の入口を走らせる行です。`run: |` の本文の行も
+// 当たるよう、run: の有無を問わない。gateSkip の行（コメントと name:）は数えない。
+var (
+	gateRun  = regexp.MustCompile(`\bmake\b.*\b(?:infra-code-gate|ci-[a-z0-9-]+)\b`)
+	gateSkip = regexp.MustCompile(`^\s*(?:#|(?:-\s+)?name:)`)
+)
 
 // gateWorkflows は、検出の job か CI の入口を走らせる workflow を返します（ADR-0103 決定14、ADR-0601 決定9）。
 // workflow を足しても code owner の対象から漏れないよう、直書きせず workflow から導く。1つも無ければエラーにする。
@@ -584,7 +588,7 @@ func gateWorkflows(repo string) ([]string, error) {
 			return nil, xerrors.Wrapf(err, "%s の読み取り", name)
 		}
 		for _, line := range strings.Split(string(raw), "\n") {
-			if gateRun.MatchString(line) {
+			if !gateSkip.MatchString(line) && gateRun.MatchString(line) {
 				out = append(out, gateWorkflowDir+"/"+name)
 				break
 			}

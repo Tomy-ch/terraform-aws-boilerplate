@@ -40,10 +40,11 @@ const rulesetOK = `{"rules": [{"type": "required_status_checks", "parameters": {
 var gateWorkflowFixtures = map[string]string{
 	"terraform-gates.yaml":  "jobs:\n  g:\n    steps:\n      - run: make infra-code-gate RUNNER_MODE=host\n",
 	"terraform-unlock.yaml": "jobs:\n  u:\n    steps:\n      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n",
-	"lint.yaml":             "jobs:\n  l:\n    steps:\n      # make infra-code-gate は走らせない\n      - run: make md-lint\n",
+	"terraform-apply.yaml":  "jobs:\n  a:\n    steps:\n      - run: |\n          make ci-apply-admin-identity RUNNER_MODE=host\n",
+	"lint.yaml":             "jobs:\n  l:\n    steps:\n      # make infra-code-gate は走らせない\n      - name: make ci-apply-admin-identity の説明\n        run: make md-lint\n",
 }
 
-var gateWorkflowTargets = []string{".github/workflows/terraform-gates.yaml", ".github/workflows/terraform-unlock.yaml"}
+var gateWorkflowTargets = []string{".github/workflows/terraform-apply.yaml", ".github/workflows/terraform-gates.yaml", ".github/workflows/terraform-unlock.yaml"}
 
 func codeownersFor(extra ...string) string {
 	var b strings.Builder
@@ -472,7 +473,7 @@ func Test_ownedTargets(t *testing.T) {
 func Test_gateWorkflows(t *testing.T) {
 	t.Parallel()
 
-	t.Run("検出の job か CI の入口を走らせる workflow だけを返す", func(t *testing.T) {
+	t.Run("検出の job か CI の入口を走らせる workflow だけを返し、run: | の本文の make も拾い、コメントと name: は数えない", func(t *testing.T) {
 		t.Parallel()
 		got, err := gateWorkflows(buildRepo(t))
 		require.NoError(t, err)

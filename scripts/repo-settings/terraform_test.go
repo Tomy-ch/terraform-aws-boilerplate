@@ -348,6 +348,16 @@ func Test_checkBackendKeys(t *testing.T) {
 		assert.Equal(t, 4, n)
 	})
 
+	t.Run("env/ の下に symlink があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "env/admin/identity/backend.tf", backendFixture("identity"))
+		require.NoError(t, os.Symlink(filepath.Join(root, "env/admin"), filepath.Join(root, "env/linked")))
+		_, err := checkBackendKeys(root)
+		require.ErrorIs(t, err, errBackendKey)
+		assert.Contains(t, err.Error(), "symlink は読みません")
+	})
+
 	t.Run(".terraform と tests の下は読まない", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()

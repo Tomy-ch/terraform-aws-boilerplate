@@ -2986,6 +2986,14 @@ func Test_checkRevertWiring(t *testing.T) {
 		assert.Empty(t, messages(findings))
 	})
 
+	t.Run("apply の job に name: があれば違反", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, applyWorkflow, "  apply-admin-identity:\n", "  apply-admin-identity:\n    name: Apply\n")
+		ok, findings := checkRevertWiring("apply.yml", src)
+		assert.True(t, ok)
+		assert.Equal(t, "apply の job apply-admin-identity に name: があります（apply-revert は job を表示名で引く）\n", messages(findings))
+	})
+
 	t.Run("apply の job の無い workflow は対象にしない", func(t *testing.T) {
 		t.Parallel()
 		ok, findings := checkRevertWiring("p.yaml", planWorkflow)
@@ -3110,6 +3118,17 @@ func Test_checkRootCoverage(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("root を置くディレクトリの symlink は違反", func(t *testing.T) {
+		t.Parallel()
+		root := rootsWith(t, dirs...)
+		require.NoError(t, os.Symlink(filepath.Join(root, "admin"), filepath.Join(root, "linked")))
+		_, findings, err := checkRootCoverage(root, rootJobs(four...))
+		require.NoError(t, err)
+		require.Len(t, findings, 1)
+		assert.Contains(t, findings[0].Message, "symlink")
+		assert.Equal(t, filepath.Join(root, "linked"), findings[0].File)
 	})
 
 	t.Run("root が1つも無ければ対象なしで失敗する", func(t *testing.T) {

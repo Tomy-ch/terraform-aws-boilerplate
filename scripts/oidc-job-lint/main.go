@@ -1327,6 +1327,7 @@ var (
 	revertWorkflow   = regexp.MustCompile(`^\s+APPLY_REVERT_WORKFLOW:[ \t]*(\S+)[ \t]*(?:#.*)?$`)
 	revertResultsKey = regexp.MustCompile(`^(\s+)APPLY_REVERT_RESULTS:`)
 	jobIf            = regexp.MustCompile(`^ {4}if:(.*)$`)
+	jobName          = regexp.MustCompile(`^ {4}name:`)
 )
 
 // checkRevertWiring は、make ci-apply-* を走らせる job を持つ workflow で、revert-plan と通知が、その
@@ -1368,6 +1369,10 @@ func checkRevertWiring(file, source string) (bool, []lintreport.Finding) {
 		}
 	}
 	for _, a := range apply {
+		// apply-revert は最後に成功した run の job を表示名で引くので、表示名を id と同じにしておく。
+		if slices.ContainsFunc(byID[a].Lines, func(l workflow.Line) bool { return jobName.MatchString(l.Text) }) {
+			findings = append(findings, finding(byID[a].Number, "apply の job %s に name: があります（apply-revert は job を表示名で引く）", a))
+		}
 		if !slices.ContainsFunc(split.Jobs, func(j workflow.Job) bool { return notifiesSuccess(j, a) }) {
 			findings = append(findings, finding(byID[a].Number, "%s の成功を通知する job（needs に置き、if: が needs.%s.result == 'success' を含む）がありません", a, a))
 		}
@@ -1447,6 +1452,10 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 	err := filepath.WalkDir(rootsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			findings = append(findings, lintreport.Finding{File: path, Line: 1, Message: "root を置くディレクトリの symlink は読みません"})
+			return nil
 		}
 		if !d.IsDir() {
 			return nil

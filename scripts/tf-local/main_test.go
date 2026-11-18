@@ -1413,10 +1413,24 @@ func TestCiMk(t *testing.T) {
 
 		extra := filepath.Join(t.TempDir(), "kind.mk")
 		require.NoError(t, os.WriteFile(extra, []byte("ci-apply-output-kind-%: ; @echo $(call CI_APPLY_OUTPUT_KIND,$*)\n"), 0o600))
-		for root, want := range map[string]string{"identity": "tfplan", "workload": "tfapply", "security-identity": "tfapply"} {
+		for root, want := range map[string]string{"identity": "tfplan", "workload": "tfapply"} {
 			got := expand(t, "ci-apply-output-kind-"+root, "-f", "Makefile", "-f", extra)
 			assert.Equal(t, "echo "+want, strings.TrimSpace(got), root)
 		}
+	})
+
+	t.Run("apply の全文の置き場は、identity でも workload でもない root では展開で落ちる", func(t *testing.T) {
+		t.Parallel()
+
+		extra := filepath.Join(t.TempDir(), "kind.mk")
+		require.NoError(t, os.WriteFile(extra, []byte("ci-apply-output-kind-%: ; @echo $(call CI_APPLY_OUTPUT_KIND,$*)\n"), 0o600))
+		cmd := exec.CommandContext(t.Context(), "make", "-C", filepath.Join("..", ".."), "-n", "--no-print-directory", "-f", "Makefile", "-f", extra, "ci-apply-output-kind-security-identity")
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+			return strings.HasPrefix(kv, "MAKEFLAGS=") || strings.HasPrefix(kv, "MFLAGS=") || strings.HasPrefix(kv, "MAKELEVEL=")
+		})
+		out, err := cmd.CombinedOutput()
+		require.Error(t, err)
+		assert.Contains(t, string(out), "root が identity か workload ではありません: security-identity")
 	})
 
 	t.Run("CI_ENV を渡さなければ資格情報と拒否の確認の入口は展開で落ちる", func(t *testing.T) {
