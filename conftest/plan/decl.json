@@ -182,6 +182,8 @@
       "bucket_policy": "module.state_backend.module.s3.aws_s3_bucket_policy.this",
       "state_key": "module.state_backend.module.kms.aws_kms_key.this",
       "key_policy": "module.state_backend.module.kms.aws_kms_key_policy.this",
+      "apply_output_bucket": "module.state_backend.module.apply_output.aws_s3_bucket.this",
+      "apply_output_bucket_policy": "module.state_backend.module.apply_output.aws_s3_bucket_policy.this",
       "roots": [
         {
           "writer": "apply_identity_role",
