@@ -230,10 +230,17 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		_, f = checkRevertWiring(p, string(raw))
 		findings = append(findings, f...)
 		groups = append(groups, groupRecords(p, string(raw))...)
+		// 2つの検査を走らせる job では、job 単位の違反が検査ごとに同じ文で出るので、1件にする。
+		seen := map[lintreport.Finding]bool{}
 		for _, g := range applyGates {
 			n, f = checkRequiredGateJobs(p, string(raw), required, g)
 			prGates[g.noun] += n
-			findings = append(findings, f...)
+			for _, x := range f {
+				if !seen[x] {
+					seen[x] = true
+					findings = append(findings, x)
+				}
+			}
 		}
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
@@ -295,16 +302,16 @@ func checkRequiredGateJob(file string, job workflow.Job, preamble []workflow.Lin
 	}
 	var findings []lintreport.Finding
 	if cond, at, ok := jobKey(job, "if"); ok && ifExpression(cond) != prGateIf {
-		findings = append(findings, finding(at, "%sを走らせる必須検査の job の if: は ${{ %s }} だけにしてください。定数・status の関数・|| ・! は、検査を走らせずに成功を報告させます", g.noun, prGateIf))
+		findings = append(findings, finding(at, "検査を走らせる必須検査の job の if: は ${{ %s }} だけにしてください。定数・status の関数・|| ・! は、検査を走らせずに成功を報告させます", prGateIf))
 	}
 	for _, key := range []string{"continue-on-error", "container", "services", "defaults", "env"} {
 		if _, at, ok := jobKey(job, key); ok {
-			findings = append(findings, finding(at, "%sを走らせる必須検査の job に %s: を置かないでください", g.noun, key))
+			findings = append(findings, finding(at, "検査を走らせる必須検査の job に %s: を置かないでください", key))
 		}
 	}
 	for _, l := range preamble {
 		if defaultsAt.MatchString(l.Text) || envAt.MatchString(l.Text) {
-			findings = append(findings, finding(l.Number, "%sを走らせる必須検査の workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます", g.noun))
+			findings = append(findings, finding(l.Number, "検査を走らせる必須検査の workflow に defaults: と env: を置かないでください。run: の shell・場所・道具を替えます"))
 		}
 	}
 	for _, l := range append(slices.Clone(preamble), job.Lines...) {
@@ -889,7 +896,8 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 
 // allowedNeeds は、資格情報を取る job の needs に置ける job の形を、違反の文のために並べます。
 func allowedNeeds() string {
-	parts := []string{fmt.Sprintf("%s（%s）", detectionGate.label, detectionGate.check)}
+	parts := make([]string, 0, 1+len(applyGates))
+	parts = append(parts, fmt.Sprintf("%s（%s）", detectionGate.label, detectionGate.check))
 	for _, g := range applyGates {
 		parts = append(parts, fmt.Sprintf("%s（%s）", g.label, g.check))
 	}

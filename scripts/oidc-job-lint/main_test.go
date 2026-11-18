@@ -385,6 +385,16 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "make resource-order-check-test と make resource-order-check を走らせるものがありません")
 	})
 
+	t.Run("2つの検査を走らせる必須検査の job の job 単位の違反は1件だけ報告する", func(t *testing.T) {
+		t.Parallel()
+
+		gates := replaced(t, gatesWorkflow, "  tf-lint:\n    needs: changes\n", "  tf-lint:\n    needs: changes\n    env:\n      X: y\n")
+		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": gates}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Equal(t, 1, strings.Count(out.String(), "必須検査の job に env: を置かないでください"))
+	})
+
 	t.Run("Pull Request の必須検査が層の検査を走らせなければ失敗する", func(t *testing.T) {
 		t.Parallel()
 
@@ -1328,7 +1338,7 @@ func Test_checkApplyGate(t *testing.T) {
 			t.Parallel()
 
 			j, aw := applyWith(t, c.from, c.to)
-			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, c.g, formatted)), fmt.Sprintf("%s を走らせる job", c.g.check))
+			assert.Contains(t, messages(checkApplyGate(j, aw.jobs, c.g, formatted)), c.g.check+" を走らせる job")
 		})
 	}
 }
