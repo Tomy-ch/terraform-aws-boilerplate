@@ -571,8 +571,11 @@ job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-app
 呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
 apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
 を呼ばなければ落ちる。region を含む
-`type` の宛先を使う root では、辿る aws の provider の `region` がただ 1 つでなければならず、宛先の region が
-それに一致しなければ落ちる。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
+`type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
+引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
+ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
+読めない形（`config` の外の `region`、2 つ以上の `config`、dynamic の `config`）でも落ちる。AWS が region を固定した global のサービスの宛先は、
+`scripts/egress` の閉じた一覧が突き合わせから外す。job の外（`jobs:` より前の `env:` など）に入口の名前が在っても落ちる。
 新しい AWS のサービスの型を足す変更は、その `type` と、クラスへの宛先の追加を同じ変更に含める。
 Terraform を実行する job を足す変更は、その root の `root` の宣言を同じ変更に含める。接頭辞の `type` は、
 当たる型がすべて同じ宛先を呼ぶと言える範囲に限る —— 同じサービス名の下で別の endpoint を呼ぶ型
