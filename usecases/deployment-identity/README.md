@@ -21,7 +21,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `state_bucket_arn` | `string`（S3 Bucket の ARN） | このアカウントの state Bucket（`state-backend` の `bucket_arn`） |
 | `state_key_arn` | `string`（KMS の鍵の ARN。alias の ARN と多リージョンの鍵は受けない） | このアカウントの state の鍵（`state-backend` の `state_key_arn`）。plan と apply-identity の role の鍵の権限と、apply の role の鍵の Deny をこの鍵に絞る。role と同じ partition・リージョン・アカウントの鍵でなければ、plan で（ARN が plan で決まらなければ apply で）落ちる。Key Policy の置き換えを待つ値を渡すと、identity root で依存が循環する（Key Policy が名指す role の作成が、この ARN を持つ apply-identity の inline policy の後に来るため） |
 | `plan_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
-| `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る |
+| `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る。apply の role はその object にだけ書ける |
 
 `state_key_arn` と `apply_output_bucket_arn` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
@@ -53,7 +53,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 - OIDC provider（`https://token.actions.githubusercontent.com`、audience は `sts.amazonaws.com` だけ）
 - 5つの role。信頼条件は [deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md)、権限は [deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) が決める
   - plan: state Bucket の両方の key の読み取りと、identity root の resource の読み取り。state の鍵の設定の読み取りと、alias の一覧
-  - apply: workload root の key と lock file の読み書きと、init の前の state Bucket の暗号化の設定の読み取りと alias の一覧。5つの role と OIDC provider、identity root の key と lock file、plan の出力の Bucket とその object は読み取りを含めて Deny する。state Bucket は `s3:ListBucket` と `s3:GetEncryptionConfiguration` のほかを、state Bucket の object は版の削除を、state の鍵は管理（読み取りを含む）を Deny する
+  - apply: workload root の key と lock file の読み書きと、init の前の state Bucket の暗号化の設定の読み取りと alias の一覧と、apply の出力の Bucket の object への書き込み。5つの role と OIDC provider、identity root の key と lock file、plan の出力の Bucket とその object は読み取りを含めて Deny する。state Bucket は `s3:ListBucket` と `s3:GetEncryptionConfiguration` のほかを、state Bucket の object は版の削除を、state の鍵は管理（読み取りを含む）を Deny する。apply の出力の Bucket はすべてを、その object は `s3:PutObject` のほかを Deny する
   - apply-identity: identity root の key と lock file の読み書きと、identity root の resource の管理。自分を含む5つの role の信頼条件と権限を変更できる。state の鍵の Key Policy と rotation を設定できる。鍵と alias の作成、鍵の削除・無効化、alias の削除・付け替えはできない。plan の出力の Bucket の `apply/*` へ apply の出力を書ける。その Bucket の object の削除の権限は IAM で与えない。workload root の apply の出力の Bucket を作り、設定できる。その Bucket の削除の権限は与えない
   - unlock-identity: identity root の lock file の一覧（`s3:ListBucket` を `s3:prefix` で限る）・読み取り・削除だけ。`s3:PutObject` と `s3:DeleteObjectVersion` を持たず、偽の lock を置けず、版も消せない。lock file の復号は、state の鍵の Key Policy がその object に限って許す
   - unlock: workload root の lock file の一覧・読み取り・削除だけ。unlock-identity と同じ形で、受け持つ lock file だけが違う

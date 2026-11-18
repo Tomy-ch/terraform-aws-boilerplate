@@ -47,7 +47,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
 
    - Terraform の state backend
    - GitHub Actions から AWS を操作するための OIDC provider と IAM role
-   - plan の出力の置き場（決定13）
+   - plan と apply の出力の置き場（決定13）
 
    bootstrap とは別に、**統制の構成物**を「CI と人の到達と権限を、組織として縛る仕組み」と定義し、対象を次に限る。統制の構成物は管理アカウントにだけ在る。
 
@@ -125,7 +125,9 @@ CI の権限については循環の性質が異なる。backend さえあれば
     object の削除の権限を与えず、版管理を有効にする。plan の出力の全文は、公開されるログ・Pull Request の
     コメント・artifact に出さない。apply の出力の全文も同じ扱いとし、同じ Bucket の、plan の role が書けない
     key へ apply-identity の role が書く。apply-identity の role に、その Bucket の object の削除の権限を
-    与えない。plan の role は state の読み取りと復号を持つ。plan に必要だからである。
+    与えない。workload root の apply の出力の全文は、apply の role が、plan の出力の Bucket と分けた apply の
+    出力の Bucket へ書く。apply の role は plan の出力の Bucket に書けない。apply の出力の Bucket の object は、
+    どの主体も削除できない。plan の role は state の読み取りと復号を持つ。plan に必要だからである。
     したがって plan の role を assume できる主体は state を読める。state に置く秘密の扱いは、当該 use-case
     の ADR が決定する。
 

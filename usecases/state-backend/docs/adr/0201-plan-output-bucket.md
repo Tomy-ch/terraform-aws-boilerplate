@@ -21,6 +21,7 @@ plan の出力は、上書きの前の版を残し、日数が過ぎたら消え
 4. lifecycle は、現行版を公開入力 `plan_output_retention_days`（既定7、1以上の整数）の日数で失効させ、上書きされた版と失効した版をさらに同じ日数で消し、未完了の multipart upload を1日で中止し、失効した版の delete marker を消す。7日と1日は、公式推奨の値ではない独自判断である。plan の全文は run の結果を読み直すためのもので、再 plan が新しい key に置くので長く残す理由は無い。apply の全文は失敗の診断のためのもので、何を適用したかは state の版と merge した Pull Request が持つので、plan と同じ日数で足りる。7日は、週をまたいだレビューの間に読める長さとして選んだ。plan と apply の全文は1回の PutObject で置くので、未完了の multipart upload は失敗からしか生じず、1日で中止する。
 5. この Bucket を、state Bucket と同じ state の鍵による SSE-KMS で暗号化し、SSE-C を拒否し、S3 Bucket Key を使わない（state-backend/ADR-0101 (sse-kms-with-state-key)）。plan の role と apply-identity の role は鍵の `kms:GenerateDataKey` を Key Policy で持ち、CI は暗号化の header を送らずに既定の暗号化に任せる。この Bucket は段4 の apply で作るので、段1 の CLI の暗号化は関わらない。
 6. アクセスログ（持たない。state-backend/ADR-0105 (no-server-access-logs)）、通知（書き込みを知らせる相手が無い）、リージョン間の複製（保持日数で消える一時の記録である）、IAM Access Analyzer、tag の検査を、`internal/plan-output/` の該当箇所で抑止する（repository-wide/ADR-0207 (default-value-policy) 決定11、repository-wide/ADR-0501 (development-tooling-composition) 決定13）。
+7. workload root の apply の出力を、plan の出力の Bucket と分けた Bucket に置く。名前は `<project>-<env>-tfapply-<account_id>-<region>-an` とする。保持日数（`plan_output_retention_days`）、lifecycle、暗号化、版管理、Public Access Block、Object Ownership は決定1-5 の Bucket と同じ module で同じにする。新しいアカウントでは段4 の apply で作り、既存のアカウントでは CI の apply-identity が作る（段1 の CLI では作らない）。apply の role は plan の出力の Bucket に書けず（deployment-identity/ADR-0201 決定5）、key の接頭辞で分けると、その Deny を接頭辞の列挙に緩めることになるためである。
 
 ## 検討した代替案
 
