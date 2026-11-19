@@ -114,7 +114,7 @@ func rootPath(env, kind string) string {
 }
 
 // ranRoots は workflow のジョブごとに、そのジョブが CI の入口を通して触れる root を返す。1 つの root を
-// lock の解除と plan / apply の両方の入口で触れるジョブは、その root で Terraform を実行するとみなす。
+// lock の解除と plan / apply / lock を残す入口の両方で触れるジョブは、その root で Terraform を実行するとみなす。
 func ranRoots(repo *os.Root, names []string, targets map[string]ciEntry) (map[string]rootRuns, error) {
 	ran := map[string]rootRuns{}
 	for _, name := range names {

@@ -162,6 +162,8 @@ func Test_parseCIMake(t *testing.T) {
 			"lock の解除の入口が CI_APPLY を呼ぶ":         {"ci-unlock-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_UNLOCK,"},
 			"見出しを経ない CI_UNLOCK の字面がある":          {testCIMake + "x: y\n\t@$(call CI_UNLOCK,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
 			"lock を残す入口が CI_APPLY を呼ぶ":          {"ci-hold-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_HOLD,"},
+			"plan の入口が CI_HOLD を呼ぶ":             {"ci-plan-t-identity:\n\t@$(call CI_HOLD,t,identity)\n", "次の行が $(call CI_PLAN,"},
+			"apply の入口が CI_HOLD を呼ぶ":            {"ci-apply-t-identity:\n\t@$(call CI_HOLD,t,identity)\n", "次の行が $(call CI_APPLY,"},
 			"見出しを経ない CI_HOLD の字面がある":            {testCIMake + "x: y\n\t@$(call CI_HOLD,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
 			"root の種類が identity / workload でない": {"ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n", "次の行が $(call CI_PLAN,"},
 			"入口が重複している":                         {testCIMake + testCIMake, "ci-plan-t-identity が重複しています"},

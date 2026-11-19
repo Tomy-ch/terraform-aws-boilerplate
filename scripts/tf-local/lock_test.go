@@ -132,25 +132,31 @@ func Test_runLockETag(t *testing.T) {
 		assert.Equal(t, lockETagA, got)
 	})
 
-	t.Run("-want は lock の有無を確かめる", func(t *testing.T) {
+	t.Run("-want は lock の有無を wantLock へ渡す", func(t *testing.T) {
 		t.Parallel()
 
-		held := write(t, lockList(lockKeyOK, false, 1, lockObject(lockKeyOK, lockETagA)))
-		empty := write(t, lockList(lockKeyOK, false, 0))
+		held := lockList(lockKeyOK, false, 1, lockObject(lockKeyOK, lockETagA))
+		for name, c := range map[string]struct {
+			want, list, etag string
+			err              error
+		}{
+			"present で lock が在れば ETag": {"present", held, lockETagA, nil},
+			"absent で lock が在れば失敗":     {"absent", held, "", errLockExists},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 
-		got, err := runLockETag([]string{"-key", lockKeyOK, "-want", "present", held}, os.ReadFile)
-		require.NoError(t, err)
-		assert.Equal(t, lockETagA, got)
+				got, err := runLockETag([]string{"-key", lockKeyOK, "-want", c.want, write(t, c.list)}, os.ReadFile)
+				if c.err != nil {
+					require.ErrorIs(t, err, c.err)
 
-		got, err = runLockETag([]string{"-key", lockKeyOK, "-want", "absent", empty}, os.ReadFile)
-		require.NoError(t, err)
-		assert.Empty(t, got)
+					return
+				}
 
-		_, err = runLockETag([]string{"-key", lockKeyOK, "-want", "absent", held}, os.ReadFile)
-		require.ErrorIs(t, err, errLockExists)
-
-		_, err = runLockETag([]string{"-key", lockKeyOK, "-want", "present", empty}, os.ReadFile)
-		require.ErrorIs(t, err, errLockMissing)
+				require.NoError(t, err)
+				assert.Equal(t, c.etag, got)
+			})
+		}
 	})
 
 	t.Run("-want の一覧が読めなければ有無を判定せず errLockList", func(t *testing.T) {
@@ -846,18 +852,30 @@ func Test_runLockHeld(t *testing.T) {
 
 // waitDeps は、alive の値を使い切った後は最後の値を返す。
 func waitDeps(alive []bool, sleeps *int) deps {
+	d, _, _ := recordingDeps(alive)
+	n := 0
+	sleep := d.sleep
+	d.sleep = func(v time.Duration) { sleep(v); n++; *sleeps = n }
+
+	return d
+}
+
+// recordingDeps は、waitDeps と同じ alive を返し、alive が受けた pid と sleep が受けた時間を記録する。
+func recordingDeps(alive []bool) (deps, *[]int, *[]time.Duration) {
 	i := 0
+	pids, slept := &[]int{}, &[]time.Duration{}
 
 	return deps{
 		readFile: os.ReadFile,
-		alive: func(int) bool {
+		alive: func(pid int) bool {
+			*pids = append(*pids, pid)
 			v := alive[min(i, len(alive)-1)]
 			i++
 
 			return v
 		},
-		sleep: func(time.Duration) { *sleeps++ },
-	}
+		sleep: func(v time.Duration) { *slept = append(*slept, v) },
+	}, pids, slept
 }
 
 func Test_lockWait(t *testing.T) {
@@ -926,6 +944,63 @@ func Test_lockWait(t *testing.T) {
 		assert.Equal(t, 3, sleeps, "limit ちょうどの回まで読む")
 	})
 
+	t.Run("plan が終わったかを全文を読む前に確かめ、その間に書かれた行を取りこぼさない", func(t *testing.T) {
+		t.Parallel()
+
+		path := write(t, header)
+		d, _, _ := recordingDeps([]bool{false})
+		alive := d.alive
+		d.alive = func(pid int) bool {
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+			require.NoError(t, err)
+			_, err = f.WriteString("aws_iam_role.apply: Refreshing state... [id=apply]\n")
+			require.NoError(t, err)
+			require.NoError(t, f.Close())
+
+			return alive(pid)
+		}
+
+		got, err := lockWait(path, 1, time.Second, time.Minute, d)
+		require.NoError(t, err)
+		assert.Equal(t, "held", got, "plan が終わる直前に書いた行は、終わったと知った後の読み取りで見える")
+	})
+
+	for name, c := range map[string]struct {
+		appearAt int
+		want     string
+		err      error
+	}{
+		"limit ちょうどの読み取りで行が現れれば held": {4, "held", nil},
+		"limit を過ぎた後の読み取りでは間に合わない":    {5, "", errLockWait},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			reads := 0
+			d, _, slept := recordingDeps([]bool{true})
+			d.readFile = func(string) ([]byte, error) {
+				reads++
+				if reads >= c.appearAt {
+					return []byte(header + "a.b: Reading...\n"), nil
+				}
+
+				return []byte(header), nil
+			}
+
+			got, err := lockWait("out.txt", 1, time.Second, 3*time.Second, d)
+			if c.err != nil {
+				require.ErrorIs(t, err, c.err)
+				assert.Equal(t, 4, reads)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+			assert.Len(t, *slept, 3)
+		})
+	}
+
 	t.Run("全文を読めなければ errLockWait", func(t *testing.T) {
 		t.Parallel()
 
@@ -950,8 +1025,41 @@ func Test_runLockWait(t *testing.T) {
 		assert.Equal(t, "held", got)
 	})
 
+	t.Run("pid と周期と上限をフラグから渡す", func(t *testing.T) {
+		t.Parallel()
+
+		empty := filepath.Join(t.TempDir(), "empty.txt")
+		require.NoError(t, os.WriteFile(empty, nil, 0o600))
+		d, pids, slept := recordingDeps([]bool{true})
+		_, err := runLockWait([]string{"-pid", "42", "-interval", "500ms", "-limit", "1s", empty}, d)
+		require.ErrorIs(t, err, errLockWait)
+		assert.Equal(t, []int{42, 42, 42}, *pids)
+		assert.Equal(t, []time.Duration{500 * time.Millisecond, 500 * time.Millisecond}, *slept)
+	})
+
+	t.Run("周期と上限を省けば1秒と10分", func(t *testing.T) {
+		t.Parallel()
+
+		empty := filepath.Join(t.TempDir(), "empty.txt")
+		require.NoError(t, os.WriteFile(empty, nil, 0o600))
+		d, _, slept := recordingDeps([]bool{true, false})
+		got, err := runLockWait([]string{"-pid", "1", empty}, d)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+		assert.Equal(t, []time.Duration{time.Second}, *slept)
+
+		reads := 0
+		d, _, slept = recordingDeps([]bool{true})
+		d.readFile = func(string) ([]byte, error) { reads++; return nil, nil }
+		_, err = runLockWait([]string{"-pid", "1", empty}, d)
+		require.ErrorIs(t, err, errLockWait)
+		assert.Len(t, *slept, 600, "10分を1秒ずつ待つ")
+	})
+
 	for name, args := range map[string][]string{
 		"位置引数が無い":       {"-pid", "1"},
+		"位置引数が2つ":       {"-pid", "1", path, path},
+		"pid が負":        {"-pid", "-1", path},
 		"pid が無い":       {path},
 		"pid が0以下":      {"-pid", "0", path},
 		"interval が0以下": {"-pid", "1", "-interval", "0s", path},

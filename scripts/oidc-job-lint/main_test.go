@@ -2735,6 +2735,15 @@ func Test_groupRecords(t *testing.T) {
 		assert.Equal(t, groupRecord{file: "u.yaml", job: jobOf(t, unlockWorkflow, "unlock-admin-identity"), root: "admin-identity", group: "terraform-unlock-admin-identity", kind: kindUnlock, environment: "admin-unlock-identity"}, got["u.yaml"])
 	})
 
+	t.Run("lock の解除と lock を残す入口を併せ持つ job は lock の解除の job として取り出す", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, holdWorkflow, holdEntryLine, holdEntryLine+"      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n")
+		got := groupRecords("h.yaml", src)
+		require.Len(t, got, 1)
+		assert.Equal(t, kindUnlock, got[0].kind)
+	})
+
 	t.Run("id-token を持たない job は取り出さない", func(t *testing.T) {
 		t.Parallel()
 
@@ -3657,15 +3666,6 @@ func Test_runHold(t *testing.T) {
 		assert.Contains(t, out.String(), "job 4 件")
 	})
 
-	t.Run("lock を残す job は lock の解除の job の比べる相手の apply に数えない", func(t *testing.T) {
-		t.Parallel()
-
-		wf, env := repoWith(t, all(nil), envDecl)
-		var out bytes.Buffer
-		require.NoError(t, run(wf, env, rulesetOf(env), "", &out), out.String())
-		assert.NotContains(t, out.String(), "（2 件）")
-	})
-
 	for name, c := range map[string]struct {
 		files map[string]string
 		want  string
@@ -3779,6 +3779,12 @@ func Test_holdRoleFor(t *testing.T) {
 	t.Run("name の中の make ci-hold-* は数えない", func(t *testing.T) {
 		t.Parallel()
 		src := replaced(t, holdWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-hold-admin-workload\n")
+		assert.Equal(t, "apply-identity", holdRoleFor(jobOf(t, src, "hold-admin-identity")))
+	})
+
+	t.Run("コメントの make ci-hold-* は数えない", func(t *testing.T) {
+		t.Parallel()
+		src := replaced(t, holdWorkflow, "      - name: Refuse stale commits\n", "      # make ci-hold-admin-workload\n      - name: Refuse stale commits\n")
 		assert.Equal(t, "apply-identity", holdRoleFor(jobOf(t, src, "hold-admin-identity")))
 	})
 }
@@ -3920,7 +3926,7 @@ func Test_holdProblem(t *testing.T) {
 		"group と environment が同じなら空":    {[]groupRecord{holdRecord("a", root, "g", kindApply, env)}, ""},
 		"group が違えば違反":                  {[]groupRecord{holdRecord("a", root, "x", kindApply, env)}, `group "g" が、apply の job j（a）の group "x" と違います`},
 		"environment が違えば違反":            {[]groupRecord{holdRecord("a", root, "g", kindApply, "admin-apply")}, `environment "admin-apply-identity" が、apply の job j（a）の environment "admin-apply" と違います`},
-		"apply の environment が読めなければ違反": {[]groupRecord{holdRecord("a", root, "g", kindApply, "")}, "environment"},
+		"apply の environment が読めなければ違反": {[]groupRecord{holdRecord("a", root, "g", kindApply, "")}, `environment "admin-apply-identity" が、apply の job j（a）の environment "" と違います`},
 		"apply の job が無ければ違反":           {nil, "make ci-apply-admin-identity を走らせる apply の job が、ちょうど1つではありません（0 件）"},
 		"別の root の apply は数えない":         {[]groupRecord{holdRecord("a", "admin-workload", "g", kindApply, env)}, "（0 件）"},
 		"lock の解除の job は相手に数えない":        {[]groupRecord{holdRecord("u", root, "g", kindUnlock, env)}, "（0 件）"},
@@ -3941,6 +3947,13 @@ func Test_holdProblem(t *testing.T) {
 			assert.Contains(t, got, c.want)
 		})
 	}
+
+	t.Run("lock を残す job と apply の job の environment がどちらも読めなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := holdProblem(holdRecord("h", root, "g", kindHold, ""), []groupRecord{holdRecord("a", root, "g", kindApply, "")})
+		assert.Contains(t, got, `environment "" が、apply の job j（a）の environment "" と違います`)
+	})
 
 	for name, group := range map[string]string{"式の group は違反": "${{ github.workflow }}", "group が無ければ違反": ""} {
 		t.Run(name, func(t *testing.T) {
