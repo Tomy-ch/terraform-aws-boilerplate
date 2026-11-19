@@ -20,7 +20,7 @@ variables {
   apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
   break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
   # policy_length の境界が選ぶ partition と region の候補。provider が partition を解決する一覧（aws-sdk-go-base の
-  # endpoints）から手で写した。provider の一覧との一致を見る検査は無い（#397）。module は宣言しない。
+  # endpoints）の写しである。module は宣言しない。
   aws_partitions = {
     "aws" = [
       "af-south-1", "ap-east-1", "ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
@@ -796,25 +796,23 @@ run "key_in_other_partition" {
 # mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
 # 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
 # partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
-# 合わせる。この組は AWS に無い。今の policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
-# 文書はどちらの長さにも伸びる。そうでない使い方が入ったら、この組が最長である前提は崩れ、それを見る検査は無い。
-# 統制の文が入る admin では plan と apply-identity が最も長くなり、組成の制約が無い admin 以外では、
-# break-glass をすべて group にした apply が最も長くなる。2つの run でそれぞれを測る。
+# 合わせる。この組は AWS に無い。policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
+# 文書はどちらの長さにも伸びる。そうでない使い方を入れたら、この組が最長である前提は崩れる。
+# admin は統制の文が入り、break-glass が user・group・role を1つ以上含む。名前は IAM の上限（user・role 64文字、
+# group 128文字）なので、長い group を2つにする。admin 以外は統制の文が無く組成の制約も無いので、group を4つにする。
+# 長さを決める入力が違うので、2つの run で測る。どちらも role 名が最も長くなる log-archive の name_prefix を使う。
 run "policy_length" {
   command = apply
   # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
   state_key = "policy_length"
 
   variables {
-    # 統制の文が入る admin で、role 名が最も長くなる log-archive の name_prefix を使う。
     env                     = "admin"
     name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
     state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
     state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
     apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
-    # admin は user・group・role を1つ以上含め、名前は IAM の上限の user・role 64文字、group 128文字なので、
-    # 長い group を2つにする。
     break_glass_arns = [
       format("arn:aws-us-gov:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 2),
@@ -884,8 +882,13 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy.this) == 4 && alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
-    error_message = "role の inline policy のどれかが 10,240 文字を超えているか、測る policy の数が変わりました。"
+    condition     = length(aws_iam_role_policy.this) == 4
+    error_message = "apply-identity 以外の role の inline policy の数が4つではありません。測る policy を見直してください。"
+  }
+
+  assert {
+    condition     = alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
+    error_message = "inline policy が 10,240 文字を超えている role があります: ${join(", ", [for k, p in aws_iam_role_policy.this : k if length(p.policy) > 10240])}"
   }
 
   assert {
@@ -896,19 +899,17 @@ run "policy_length" {
 
 run "policy_length_outside_admin" {
   command = apply
-  # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
+  # state_key を分ける理由は policy_length と同じ。
   state_key = "policy_length_outside_admin"
 
   variables {
-    # 統制の文は入らないが、break-glass の組成の制約も無い。name_prefix は role 名が最も長くなる log-archive。
     env                     = "log-archive"
     name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
     state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
     state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
     apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
-    # admin でなければ組成の制約が無いので、名前が最も長い group を4つにする。
-    break_glass_arns = [for i in range(4) : format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", i)]
+    break_glass_arns        = [for i in range(4) : format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", i)]
   }
 
   override_data {
@@ -970,8 +971,13 @@ run "policy_length_outside_admin" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy.this) == 4 && alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
-    error_message = "role の inline policy のどれかが 10,240 文字を超えているか、測る policy の数が変わりました。"
+    condition     = length(aws_iam_role_policy.this) == 4
+    error_message = "apply-identity 以外の role の inline policy の数が4つではありません。測る policy を見直してください。"
+  }
+
+  assert {
+    condition     = alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
+    error_message = "inline policy が 10,240 文字を超えている role があります: ${join(", ", [for k, p in aws_iam_role_policy.this : k if length(p.policy) > 10240])}"
   }
 
   assert {
