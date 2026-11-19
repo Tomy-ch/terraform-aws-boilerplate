@@ -458,3 +458,26 @@ run "all_users" {
     error_message = "利用者の種類をすべて渡したときの文の並びが変わっています。"
   }
 }
+
+run "key_policy_output" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate/workload/terraform.tfstate.tflock"] },
+      ]
+    }
+  }
+
+  assert {
+    condition     = output.key_policy == aws_kms_key_policy.this.policy
+    error_message = "key_policy が、Key Policy の resource の文書を返していません。"
+  }
+
+  assert {
+    condition     = length(jsondecode(output.key_policy).Statement) == 3
+    error_message = "key_policy が、委任・read-write・read の3文の文書になっていません。"
+  }
+}
