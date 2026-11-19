@@ -6,6 +6,7 @@
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
       "kms:ListAliases",
+    "logs:DescribeLogGroups",
       "organizations:DescribeOrganization",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
@@ -251,6 +252,18 @@
         "apply_identity_role",
         "unlock_role"
       ]
+    },
+    "network_foundation": {
+      "vpc": "module.network_foundation.module.vpc.aws_vpc.this",
+      "default_security_group": "module.network_foundation.module.vpc.aws_default_security_group.this",
+      "default_route_table": "module.network_foundation.module.vpc.aws_default_route_table.this",
+      "flow_log": "module.network_foundation.module.vpc.aws_flow_log.this",
+      "flow_logs_role": "module.network_foundation.module.vpc.aws_iam_role.flow_logs",
+      "route_tables": {
+        "address": "module.network_foundation.module.subnet_tiers.aws_route_table.this",
+        "count": 6
+      },
+      "module_prefix": "module.network_foundation."
     },
     "stateful_protection": {
       "protected_types": [

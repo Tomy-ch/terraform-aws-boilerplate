@@ -2,6 +2,7 @@
   "infra_code_decl": {
     "types": {
       "action.aws_lambda_invoke": {"executes_code": true},
+      "data.aws_availability_zones": {"executes_code": false},
       "data.aws_caller_identity": {"executes_code": false},
       "data.aws_lambda_invocation": {"executes_code": true},
       "data.aws_partition": {"executes_code": false},
@@ -26,6 +27,8 @@
       "resource.aws_launch_configuration": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
       "resource.aws_launch_template": {"executes_code": true, "body_args": ["user_data"]},
       "resource.aws_lightsail_instance": {"executes_code": true, "body_args": ["user_data"]},
+      "resource.aws_route_table": {"executes_code": false},
+      "resource.aws_route_table_association": {"executes_code": false},
       "resource.aws_s3_bucket": {"executes_code": false},
       "resource.aws_s3_bucket_lifecycle_configuration": {"executes_code": false},
       "resource.aws_s3_bucket_ownership_controls": {"executes_code": false},
@@ -37,6 +40,7 @@
       "resource.aws_sns_topic_policy": {"executes_code": false},
       "resource.aws_spot_fleet_request": {"executes_code": true, "body_args": ["launch_specification.user_data"]},
       "resource.aws_spot_instance_request": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
+      "resource.aws_subnet": {"executes_code": false},
       "resource.aws_vpc": {"executes_code": false}
     },
     "providers": {
