@@ -19,6 +19,24 @@ variables {
   plan_output_bucket_arn  = "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
   apply_output_bucket_arn = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
   break_glass_arns        = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+  # policy_length の境界が選ぶ partition と region の候補。provider が partition を解決する一覧（aws-sdk-go-base の
+  # endpoints）から手で写した。provider の一覧との一致を見る検査は無い（#397）。module は宣言しない。
+  aws_partitions = {
+    "aws" = [
+      "af-south-1", "ap-east-1", "ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
+      "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4", "ap-southeast-5",
+      "ap-southeast-6", "ap-southeast-7", "ca-central-1", "ca-west-1", "eu-central-1", "eu-central-2", "eu-north-1",
+      "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-central-1", "me-south-1",
+      "mx-central-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+    ]
+    "aws-cn"     = ["cn-north-1", "cn-northwest-1"]
+    "aws-eusc"   = ["eusc-de-east-1"]
+    "aws-iso"    = ["us-iso-east-1", "us-iso-west-1"]
+    "aws-iso-b"  = ["us-isob-east-1", "us-isob-west-1"]
+    "aws-iso-e"  = ["eu-isoe-west-1"]
+    "aws-iso-f"  = ["us-isof-east-1", "us-isof-south-1"]
+    "aws-us-gov" = ["us-gov-east-1", "us-gov-west-1"]
+  }
 }
 
 # provider の ARN は plan では決まらないので、mock の apply で確かめる。
@@ -778,44 +796,31 @@ run "key_in_other_partition" {
 # mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
 # 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
 # partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
-# 合わせる。この組は AWS に無いが、文書はどちらの長さにも単調に伸びるので、実在するどの組より短くならない。
-# aws_partitions は、provider が partition を解決する一覧（aws-sdk-go-base の endpoints）の写しである。
+# 合わせる。この組は AWS に無い。今の policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
+# 文書はどちらの長さにも伸びる。そうでない使い方が入ったら、この組が最長である前提は崩れ、それを見る検査は無い。
+# 統制の文が入る admin では plan と apply-identity が最も長くなり、組成の制約が無い admin 以外では、
+# break-glass をすべて group にした apply が最も長くなる。2つの run でそれぞれを測る。
 run "policy_length" {
   command = apply
   # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
   state_key = "policy_length"
 
   variables {
-    # env は admin（統制の文が入る）のまま、role 名が最も長くなる log-archive の name_prefix を使う。
+    # 統制の文が入る admin で、role 名が最も長くなる log-archive の name_prefix を使う。
+    env                     = "admin"
     name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
     state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
     state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
     plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
     apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
-    # root の入力が許す最も長い break-glass（4つ。admin は user・group・role を1つ以上含め、名前は IAM の上限の
-    # user・role 64文字、group 128文字なので、長い group を2つにする）。
+    # admin は user・group・role を1つ以上含め、名前は IAM の上限の user・role 64文字、group 128文字なので、
+    # 長い group を2つにする。
     break_glass_arns = [
       format("arn:aws-us-gov:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 2),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 3),
       format("arn:aws-us-gov:iam::123456789012:role/break-glass/%064d", 4),
     ]
-    aws_partitions = {
-      "aws" = [
-        "af-south-1", "ap-east-1", "ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
-        "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4", "ap-southeast-5",
-        "ap-southeast-6", "ap-southeast-7", "ca-central-1", "ca-west-1", "eu-central-1", "eu-central-2", "eu-north-1",
-        "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-central-1", "me-south-1",
-        "mx-central-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2",
-      ]
-      "aws-cn"     = ["cn-north-1", "cn-northwest-1"]
-      "aws-eusc"   = ["eusc-de-east-1"]
-      "aws-iso"    = ["us-iso-east-1", "us-iso-west-1"]
-      "aws-iso-b"  = ["us-isob-east-1", "us-isob-west-1"]
-      "aws-iso-e"  = ["eu-isoe-west-1"]
-      "aws-iso-f"  = ["us-isof-east-1", "us-isof-south-1"]
-      "aws-us-gov" = ["us-gov-east-1", "us-gov-west-1"]
-    }
   }
 
   override_data {
@@ -856,17 +861,21 @@ run "policy_length" {
   }
 
   assert {
-    condition = (
-      length([for a in var.break_glass_arns : a if strcontains(a, ":group/")]) == 2 &&
-      length([for a in var.break_glass_arns : a if strcontains(a, ":user/")]) == 1 &&
-      length([for a in var.break_glass_arns : a if strcontains(a, ":role/")]) == 1
-    )
-    error_message = "境界の入力の break-glass が、最も長い組成（group 2つと user・role）になっていません。"
+    condition = alltrue([
+      for a in [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn] :
+      length(trimprefix(a, "arn:${data.aws_partition.current.partition}:s3:::")) == 63
+    ])
+    error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
   }
 
   assert {
-    condition     = length(trimprefix(var.state_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")) == 63
-    error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
+    condition = (
+      length([for a in var.break_glass_arns : a if strcontains(a, ":group/")]) == 2 &&
+      length([for a in var.break_glass_arns : a if strcontains(a, ":user/")]) == 1 &&
+      length([for a in var.break_glass_arns : a if strcontains(a, ":role/")]) == 1 &&
+      alltrue([for a in var.break_glass_arns : length(element(split("/", a), 2)) == (strcontains(a, ":group/") ? 128 : 64)])
+    )
+    error_message = "境界の入力の break-glass が、admin で最も長い組成（名前が上限の group 2つと user・role）になっていません。"
   }
 
   assert {
@@ -875,28 +884,99 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy.this["plan"].policy) <= 10240
-    error_message = "plan の role の inline policy が 10,240 文字を超えています。"
-  }
-
-  assert {
-    condition     = length(aws_iam_role_policy.this["apply"].policy) <= 10240
-    error_message = "apply の role の inline policy が 10,240 文字を超えています。"
+    condition     = length(aws_iam_role_policy.this) == 4 && alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
+    error_message = "role の inline policy のどれかが 10,240 文字を超えているか、測る policy の数が変わりました。"
   }
 
   assert {
     condition     = length(aws_iam_role_policy.apply_identity.policy) <= 10240
     error_message = "apply-identity の role の inline policy が 10,240 文字を超えています。"
   }
+}
 
-  assert {
-    condition     = length(aws_iam_role_policy.this["unlock"].policy) <= 10240
-    error_message = "unlock の role の inline policy が 10,240 文字を超えています。"
+run "policy_length_outside_admin" {
+  command = apply
+  # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
+  state_key = "policy_length_outside_admin"
+
+  variables {
+    # 統制の文は入らないが、break-glass の組成の制約も無い。name_prefix は role 名が最も長くなる log-archive。
+    env                     = "log-archive"
+    name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
+    state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
+    state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
+    apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
+    # admin でなければ組成の制約が無いので、名前が最も長い group を4つにする。
+    break_glass_arns = [for i in range(4) : format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", i)]
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-isof-south-1" }
+  }
+  override_resource {
+    target = aws_iam_openid_connect_provider.github
+    values = { arn = "arn:aws-us-gov:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
   }
 
   assert {
-    condition     = length(aws_iam_role_policy.this["unlock_identity"].policy) <= 10240
-    error_message = "unlock-identity の role の inline policy が 10,240 文字を超えています。"
+    condition = (
+      contains(keys(var.aws_partitions), data.aws_partition.current.partition) &&
+      length(data.aws_partition.current.partition) == max([for p in keys(var.aws_partitions) : length(p)]...)
+    )
+    error_message = "境界の入力の partition が、aws_partitions の中で最も長いものになっていません。"
+  }
+
+  assert {
+    condition = (
+      contains(flatten(values(var.aws_partitions)), data.aws_region.current.region) &&
+      length(data.aws_region.current.region) == max([for r in flatten(values(var.aws_partitions)) : length(r)]...)
+    )
+    error_message = "境界の入力の region が、aws_partitions の中で最も長いものになっていません。"
+  }
+
+  assert {
+    condition = alltrue([
+      for a in [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn, aws_iam_openid_connect_provider.github.arn] :
+      startswith(a, "arn:${data.aws_partition.current.partition}:")
+    ])
+    error_message = "境界の入力の Bucket か OIDC provider の ARN が、境界の partition のものになっていません。"
+  }
+
+  assert {
+    condition = alltrue([
+      for a in [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn] :
+      length(trimprefix(a, "arn:${data.aws_partition.current.partition}:s3:::")) == 63
+    ])
+    error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
+  }
+
+  assert {
+    condition = (
+      length(var.break_glass_arns) == 4 &&
+      alltrue([for a in var.break_glass_arns : strcontains(a, ":group/") && length(element(split("/", a), 2)) == 128])
+    )
+    error_message = "境界の入力の break-glass が、名前が上限の group 4つになっていません。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role.this["unlock_identity"].name) == 64
+    error_message = "境界の入力で、最も長い role 名が IAM の上限の 64 文字になっていません。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.this) == 4 && alltrue([for p in values(aws_iam_role_policy.this) : length(p.policy) <= 10240])
+    error_message = "role の inline policy のどれかが 10,240 文字を超えているか、測る policy の数が変わりました。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.apply_identity.policy) <= 10240
+    error_message = "apply-identity の role の inline policy が 10,240 文字を超えています。"
   }
 }
 

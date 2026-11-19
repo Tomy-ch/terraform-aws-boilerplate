@@ -23,7 +23,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `plan_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
 | `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る。apply の role はその object にだけ書ける |
 
-| `break_glass_arns` | `list(string)`（path が `/break-glass/` の IAM user・group・role の ARN。1つ以上4つ以下。4つは管理アカウントの user 2つ・group・role で、inline policy の長さの上限をこの数で見積もる） | このアカウントの break-glass の ARN（`organization-baseline` の `break_glass_arns`）。apply の role はこれらへのすべての Action を拒む。`admin` では、plan と apply-identity の role の読み取りの Resource にもなり、user・group・role をそれぞれ1つ以上含める。role と同じ partition・アカウントの ARN でなければ plan で落ちる。ARN は作る前に決まる値（path と名前から組んだもの）を渡す |
+| `break_glass_arns` | `list(string)`（path が `/break-glass/` の IAM user・group・role の ARN。1つ以上4つ以下。inline policy の長さの上限は、4つのうち名前が最も長くなる組成で見積もる） | このアカウントの break-glass の ARN（`organization-baseline` の `break_glass_arns`）。apply の role はこれらへのすべての Action を拒む。`admin` では、plan と apply-identity の role の読み取りの Resource にもなり、user・group・role をそれぞれ1つ以上含める。role と同じ partition・アカウントの ARN でなければ plan で落ちる。ARN は作る前に決まる値（path と名前から組んだもの）を渡す |
 
 `state_key_arn`・`apply_output_bucket_arn`・`break_glass_arns` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
