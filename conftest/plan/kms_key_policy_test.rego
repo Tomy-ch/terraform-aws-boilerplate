@@ -666,7 +666,6 @@ test_violation_s3_read_rule_messages if {
 	count({m | some m in foreign; contains(m, "で限らずに許可しています")}) == 0
 }
 
-# kms:ViaService から region を読めない文は、自分の object の ARN を置いても落ちる。
 test_violation_s3_read_region_unreadable if {
 	every v in ["s3.amazonaws.com", "s3.ap-northeast-1.amazonaws.com.evil"] {
 		s := with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": v, "kms:EncryptionContext:aws:s3:arn": own_object}})
