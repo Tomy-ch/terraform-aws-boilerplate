@@ -12,7 +12,7 @@
 
 ## 現在の状態
 
-**Terraform の実装は、bootstrap のユースケースの `state-backend` と `deployment-identity`、ユースケースの `network-foundation`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** ユースケースはどちらも bootstrap の段1-4 の分だけを持ち、`modules/s3/`・`modules/kms/` は `state-backend` が呼び、`modules/kms/`・`modules/log-group/`・`modules/vpc/` は `network-foundation` が呼び、`modules/vended-log-group/`・`modules/sns/` を呼ぶユースケースは無い。`network-foundation` を呼ぶ env は無い。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
+**Terraform の実装は、bootstrap のユースケースの `state-backend` と `deployment-identity`、ユースケースの `network-foundation`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** bootstrap のユースケースはどちらも段1-4 の分だけを持ち、`modules/s3/`・`modules/kms/` は `state-backend` が呼び、`modules/kms/`・`modules/log-group/`・`modules/vpc/` は `network-foundation` が呼び、`modules/vended-log-group/`・`modules/sns/` を呼ぶユースケースは無い。`network-foundation` を呼ぶ env は無い。そのほかに存在するのは、決定（`docs/adr/`）と、それを守るための機構である。
 
 | 区分 | 状態 |
 | --- | --- |

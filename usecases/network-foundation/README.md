@@ -21,7 +21,7 @@ VPC の中に資源を置くユースケース（VPC Endpoint、ECS、RDS など
 | `env` | `string` | `dev` / `stg` / `prd` / `sandbox` |
 | `cidr` | `string` | VPC の IPv4 の CIDR。RFC 1918 の範囲の `/16` から `/24` で、ホスト部が 0、172.17.0.0/16 と重ならない |
 | `availability_zone_ids` | `list(string)` | subnet を置く AZ の ID（例: `apne1-az1`）。2 個から 4 個、重ねない。位置が subnet の CIDR を決めるので、足すときは末尾に足し、途中を消さない |
-| `flow_logs_retention_days` | `number` | Flow Logs を残す日数。365 以上の、CloudWatch Logs が受ける値 |
+| `flow_logs_retention_days` | `number` | Flow Logs を残す日数。365 以上の、CloudWatch Logs が受ける値。下限は `modules/log-group` と同じ（AWS Security Hub の CloudWatch.16 の既定の parameter） |
 | `flow_logs_deletion_protection` | `bool` | Flow Logs の Log Group の削除を拒むか。destroy する環境では `false` |
 
 どの入力も既定値を持たない。どれも環境の値か、利用者の要件である。
@@ -63,7 +63,7 @@ subnet の CIDR は、VPC を 16 に分けた4つずつの slot から、tier �
 | supported | 各環境のアカウントに VPC を1つ、AZ を 2 個から 4 個、IPv4 だけ |
 | unsupported | IPv6（`modules/vpc`） |
 | unsupported | Transit Gateway・Site-to-Site VPN・Direct Connect、組織の外のアカウントとの接続 |
-| unsupported | VPC peering（同じアカウントの中を含む）。環境ごとに VPC は1つで、越境を設計しない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18） |
+| unsupported | VPC peering（同じアカウントの中を含む）。環境ごとに VPC は1つで、つなぐ相手の VPC が無い（[network-foundation/ADR-0001](docs/adr/0001-one-vpc-per-environment-account.md)）。アカウントをまたぐ接続は既定で許さない（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18） |
 | unsupported | IPAM からの CIDR の割り当てと、追加の IPv4 CIDR。入力が AWS の表現になる |
 | unsupported | AZ が1つの構成と5つ以上の構成 |
 | unsupported | tier の自由な追加と subnet の CIDR の指定、custom の Network ACL（[network-foundation/ADR-0101](docs/adr/0101-two-tiers-and-fixed-cidr-slots.md)） |
@@ -90,7 +90,7 @@ subnet の CIDR は、VPC を 16 に分けた4つずつの slot から、tier �
 | --- | --- | --- |
 | Unit | `internal/subnet-tiers/tests/`、`tests/composition.tftest.hcl` | CIDR の割り付け、AZ を末尾に足しても既存の CIDR が動かないこと、subnet の属性、Route Table の経路の空、関連付け、名前 |
 | Contract | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` | 出力の配線と型、入力の許容値 |
-| Policy | `conftest/plan/network_foundation.rego`（入力は `reference/tests/policy-input.tftest.hcl` の plan） | 既定の Security Group の規則の空、Flow Logs の `ALL`、配送 role の trust、外部への経路の不在 |
+| Policy | `conftest/plan/network_foundation.rego`（入力は `reference/tests/policy-input.tftest.hcl` の plan） | 既定の Security Group の規則の空、Flow Logs の `ALL`、配送 role の trust、Route Table の経路と経路の伝播の空、ユースケースの下に宣言の外の型が無いこと、Flow Logs の Log Group がこのユースケースの鍵で暗号化されること |
 | Integration / E2E | sandbox の apply の経路（#331）で行う | 下の「保証しないもの」の各項 |
 
 sandbox の destroy の後の期待残存: Flow Logs の鍵（alias `<project>-sandbox-network-flow-logs`、状態は削除待ち、期限は 30 日）。
@@ -103,7 +103,8 @@ sandbox の destroy の後の期待残存: Flow Logs の鍵（alias `<project>-s
 - AZ の ID が実際の API で受け付けられること（Provider の `aws_subnet` の文書は、`availability_zone_id` が一部のリージョンで使えないとする）
 - destroy が止まらないこと。GuardDuty の Runtime Monitoring が作る VPC Endpoint と、消費者の ENI が VPC の destroy を止めうる
 - Route 53 Resolver を経由した DNS による外部への到達を塞ぐこと（#27）
-- `flow_logs_retention_days` と `flow_logs_deletion_protection` が Log Group に届くこと、Flow Logs の宛先がこのユースケースの Log Group であること。`terraform test` は子の module の resource を assert から参照できないので、このユースケースのテストは子の module の出力だけを見る。宛先は reference の plan を入力にした Policy が `modules/vpc` の Flow Logs を見るが、Log Group の ARN との一致は見ない
+- `flow_logs_retention_days` と `flow_logs_deletion_protection` が Log Group に届くこと、Flow Logs の宛先がこのユースケースの Log Group であること。`terraform test` は子の module の resource を assert から参照できないので、このユースケースのテストは子の module の出力だけを見る。Log Group がこのユースケースの鍵で暗号化されることは Policy（PLAN-NET-05）が見る
+- Policy が掛かるのは reference の plan だけである。env の plan に掛けるかは env への配線（#330）で決める
 - `availability_zone_ids` の途中の削除と並べ替えで subnet が置換になること。止める検査は無い（#330）
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

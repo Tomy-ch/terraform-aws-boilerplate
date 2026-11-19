@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-19
 - Scope: network-foundation
-- Related: repository-wide/ADR-0101, repository-wide/ADR-0201
+- Related: repository-wide/ADR-0101
 
 ## Context
 
@@ -12,7 +12,7 @@
 ## Decision
 
 1. 基盤系アラームの通知先の Topic の ARN を入力に取らない。alarm を持たない。
-2. 使われない入力は置かない（repository-wide/ADR-0101 (architecture-principles) 決定8、repository-wide/ADR-0201 (public-interface-policy) 決定9）。
+2. 使われない入力は置かない。「念のため」という理由だけで設定項目を足さない（repository-wide/ADR-0101 (architecture-principles) 決定8 の17）。
 3. 通知先の規則の除外に、このユースケースを足す。理由は「通知に値する metric を出す resource を持たない」である。
 
 ## 検討した代替案
