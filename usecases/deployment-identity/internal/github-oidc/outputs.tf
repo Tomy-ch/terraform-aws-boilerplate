@@ -19,3 +19,9 @@ output "oidc_provider_arn" {
   description = "GitHub Actions の OIDC provider の ARN。"
   value       = aws_iam_openid_connect_provider.github.arn
 }
+
+output "permissions_boundary_arns" {
+  description = "IAM の role を作る workload root の usecase ごとの permissions boundary の ARN（usecase の名前を key にした map）。"
+  # 名前から組み、policy の作成を待つ。
+  value = { for k, p in aws_iam_policy.boundary : k => local.boundary_policy_arns[k] if p.name == local.boundary_policy_names[k] }
+}

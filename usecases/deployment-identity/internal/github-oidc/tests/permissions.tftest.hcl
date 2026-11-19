@@ -760,12 +760,12 @@ run "policies" {
       [aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].policy_arns))],
       ]) == jsonencode([
       [aws_iam_role.this["plan"].name, []],
-      [aws_iam_role.this["apply"].name, []],
+      [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"]],
       [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"]],
       [aws_iam_role.this["unlock"].name, []],
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
-    error_message = "managed policy が、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
+    error_message = "managed policy が、apply の role の workload の policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
   }
 
   assert {
@@ -774,6 +774,164 @@ run "policies" {
       [for a in one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]) : startswith(a, "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-")],
     ))
     error_message = "CI の role か customer managed policy の名前が `<name_prefix>-ci-` で始まらず、apply の role の DenyIdentityChange の pattern に入りません。"
+  }
+
+  # deployment-identity/ADR-0201 決定13・14・17。
+  assert {
+    condition = jsondecode(aws_iam_policy.workload.policy).Statement == concat(
+      [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies"], s.Sid)],
+      [
+        {
+          Sid      = "CreateWorkloadKeys"
+          Effect   = "Allow"
+          Action   = "kms:CreateKey"
+          Resource = "*"
+          Condition = {
+            StringEquals         = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" }
+            StringEqualsIfExists = { "kms:KeyOrigin" = "AWS_KMS" }
+            BoolIfExists         = { "kms:MultiRegion" = "false" }
+          }
+        },
+        {
+          Sid      = "ManageWorkloadKeys"
+          Effect   = "Allow"
+          Action   = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
+          Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+          Condition = {
+            Bool         = { "kms:MultiRegion" = "false" }
+            StringEquals = { "kms:KeyOrigin" = "AWS_KMS", "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" }
+          }
+        },
+        {
+          Sid      = "ManageWorkloadKeyAliases"
+          Effect   = "Allow"
+          Action   = ["kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias"]
+          Resource = ["arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-*", "arn:aws:kms:ap-northeast-1:123456789012:key/*"]
+        },
+        {
+          Sid      = "ManageWorkloadTopics"
+          Effect   = "Allow"
+          Action   = ["sns:CreateTopic", "sns:SetTopicAttributes"]
+          Resource = "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*"
+        },
+        {
+          Sid    = "ManageWorkloadSchedules"
+          Effect = "Allow"
+          Action = ["scheduler:CreateSchedule", "scheduler:CreateScheduleGroup", "scheduler:DeleteSchedule", "scheduler:DeleteScheduleGroup", "scheduler:UpdateSchedule"]
+          Resource = [
+            "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-admin-*",
+            "arn:aws:scheduler:ap-northeast-1:123456789012:schedule/tabp-admin-*/*",
+          ]
+        },
+        { Sid = "CreateChatConfigurations", Effect = "Allow", Action = "chatbot:CreateSlackChannelConfiguration", Resource = "*" },
+        {
+          Sid      = "ManageChatConfigurations"
+          Effect   = "Allow"
+          Action   = ["chatbot:DeleteSlackChannelConfiguration", "chatbot:UpdateSlackChannelConfiguration"]
+          Resource = "arn:aws:chatbot::123456789012:chat-configuration/slack-channel/tabp-admin-*"
+        },
+        {
+          Sid    = "ManageBoundedRoles"
+          Effect = "Allow"
+          Action = [
+            "iam:CreateRole",
+            "iam:DeleteRole",
+            "iam:DeleteRolePolicy",
+            "iam:DetachRolePolicy",
+            "iam:PutRolePermissionsBoundary",
+            "iam:PutRolePolicy",
+            "iam:UpdateAssumeRolePolicy",
+            "iam:UpdateRole",
+            "iam:UpdateRoleDescription",
+          ]
+          Resource  = ["arn:aws:iam::123456789012:role/tabp-admin-ops-*"]
+          Condition = { StringEquals = { "iam:PermissionsBoundary" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification"] } }
+        },
+        {
+          Sid      = "AttachWorkloadPolicies"
+          Effect   = "Allow"
+          Action   = "iam:AttachRolePolicy"
+          Resource = ["arn:aws:iam::123456789012:role/tabp-admin-ops-*"]
+          Condition = {
+            StringEquals = { "iam:PermissionsBoundary" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification"] }
+            ArnLike      = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ops-*"] }
+          }
+        },
+        {
+          Sid      = "ListWorkloadRoleInstanceProfiles"
+          Effect   = "Allow"
+          Action   = "iam:ListInstanceProfilesForRole"
+          Resource = "arn:aws:iam::123456789012:role/tabp-admin-*"
+        },
+        {
+          Sid    = "ManageWorkloadPolicies"
+          Effect = "Allow"
+          Action = [
+            "iam:CreatePolicy",
+            "iam:CreatePolicyVersion",
+            "iam:DeletePolicy",
+            "iam:DeletePolicyVersion",
+            "iam:ListPolicyVersions",
+            "iam:SetDefaultPolicyVersion",
+          ]
+          Resource = ["arn:aws:iam::123456789012:policy/tabp-admin-ops-*"]
+        },
+        {
+          Sid       = "PassWorkloadRoles"
+          Effect    = "Allow"
+          Action    = "iam:PassRole"
+          Resource  = ["arn:aws:iam::123456789012:role/tabp-admin-ops-*"]
+          Condition = { StringEquals = { "iam:PassedToService" = ["chatbot.amazonaws.com", "scheduler.amazonaws.com"] } }
+        },
+        {
+          Sid       = "CreateChatbotServiceLinkedRole"
+          Effect    = "Allow"
+          Action    = "iam:CreateServiceLinkedRole"
+          Resource  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+          Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+        },
+      ],
+    )
+    error_message = "apply の role の workload の policy の文書が、決定13・14 の読み取りと管理になっていません。"
+  }
+
+  assert {
+    condition     = aws_iam_policy.workload.name == "tabp-admin-ci-apply-workload" && [for k, p in aws_iam_policy.boundary : [k, p.name]] == [["ops-notification", "tabp-admin-ci-boundary-ops-notification"]]
+    error_message = "apply の role の workload の policy と boundary の名前が、<name_prefix>-ci-apply-workload と <name_prefix>-ci-boundary-<usecase> になっていません。"
+  }
+
+  # deployment-identity/ADR-0201 決定5・15・16。
+  assert {
+    condition = jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement == concat(
+      [
+        { Sid = "PublishTopics", Effect = "Allow", Action = "sns:Publish", Resource = "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-ops-*" },
+        {
+          Sid       = "UseKeysViaSns"
+          Effect    = "Allow"
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+          Resource  = "arn:aws:kms:ap-northeast-1:123456789012:key/*"
+          Condition = { StringEquals = { "kms:ViaService" = "sns.ap-northeast-1.amazonaws.com" } }
+        },
+        {
+          Sid      = "ReadAlarms"
+          Effect   = "Allow"
+          Action   = ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"]
+          Resource = "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*"
+        },
+        { Sid = "CloudwatchDescribeAlarmsForMetric", Effect = "Allow", Action = "cloudwatch:DescribeAlarmsForMetric", Resource = "*" },
+        { Sid = "CloudwatchGetMetricData", Effect = "Allow", Action = "cloudwatch:GetMetricData", Resource = "*" },
+        { Sid = "CloudwatchGetMetricStatistics", Effect = "Allow", Action = "cloudwatch:GetMetricStatistics", Resource = "*" },
+        { Sid = "CloudwatchGetMetricWidgetImage", Effect = "Allow", Action = "cloudwatch:GetMetricWidgetImage", Resource = "*" },
+        { Sid = "CloudwatchListMetrics", Effect = "Allow", Action = "cloudwatch:ListMetrics", Resource = "*" },
+      ],
+      [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s if s.Effect == "Deny" && !contains(["DenyBoundaryRemoval", "DenyLockoutSafetyBypass"], s.Sid)],
+    )
+    error_message = "ops-notification の boundary の文書が、心拍と Chatbot の role の要る Allow と、apply の role の bootstrap の Deny になっていません。"
+  }
+
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : s if s.Effect == "Deny"]) == 10
+    error_message = "boundary の Deny の文が、apply の role の bootstrap の Deny の10文になっていません。"
   }
 
   assert {
@@ -1095,6 +1253,16 @@ run "policy_length" {
   }
 
   assert {
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144
+    error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
+  }
+
+  assert {
+    condition     = alltrue([for p in values(aws_iam_policy.boundary) : length(p.policy) <= 6144])
+    error_message = "boundary が 6,144 文字を超えています: ${join(", ", [for k, p in aws_iam_policy.boundary : k if length(p.policy) > 6144])}"
+  }
+
+  assert {
     condition     = length(aws_iam_policy.governance) == 1
     error_message = "admin の統制の customer managed policy の数が1つではありません。測る policy を見直してください。"
   }
@@ -1197,6 +1365,16 @@ run "policy_length_outside_admin" {
     condition     = length(aws_iam_role_policy.apply_identity.policy) <= 10240
     error_message = "apply-identity の role の inline policy が 10,240 文字を超えています。"
   }
+
+  assert {
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144
+    error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
+  }
+
+  assert {
+    condition     = alltrue([for p in values(aws_iam_policy.boundary) : length(p.policy) <= 6144])
+    error_message = "boundary が 6,144 文字を超えています: ${join(", ", [for k, p in aws_iam_policy.boundary : k if length(p.policy) > 6144])}"
+  }
 }
 
 # 既定と違う partition とアカウントを与え、入力を読んだかを区別する。
@@ -1275,6 +1453,33 @@ run "role_arns_follow_data_sources" {
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyWorkloadPolicy"]) == { ArnEquals = { "iam:PolicyARN" = "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload" } }
     error_message = "apply-identity が apply の role に付けてよい policy が、apply の role の workload の policy に限られていません。"
+  }
+  assert {
+    condition = { for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Sid => s.Resource if contains(["ManageWorkloadKeys", "ManageWorkloadKeyAliases", "ManageWorkloadTopics", "ManageChatConfigurations", "ManageBoundedRoles", "ManageWorkloadPolicies", "PassWorkloadRoles", "CreateChatbotServiceLinkedRole"], s.Sid) } == {
+      ManageWorkloadKeys             = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"
+      ManageWorkloadKeyAliases       = ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:alias/t4bp-dev-*", "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"]
+      ManageWorkloadTopics           = "arn:aws-us-gov:sns:us-gov-west-1:210987654321:t4bp-dev-*"
+      ManageChatConfigurations       = "arn:aws-us-gov:chatbot::210987654321:chat-configuration/slack-channel/t4bp-dev-*"
+      ManageBoundedRoles             = ["arn:aws-us-gov:iam::210987654321:role/t4bp-dev-ops-*"]
+      ManageWorkloadPolicies         = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ops-*"]
+      PassWorkloadRoles              = ["arn:aws-us-gov:iam::210987654321:role/t4bp-dev-ops-*"]
+      CreateChatbotServiceLinkedRole = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+    error_message = "apply の role の workload の policy の Resource が、partition・リージョン・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Condition if s.Sid == "ManageBoundedRoles"] == [{ StringEquals = { "iam:PermissionsBoundary" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-boundary-ops-notification"] } }]
+    error_message = "role の書き込みの boundary の条件が、partition・アカウント・name_prefix から組んだ boundary の ARN になっていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["PublishTopics", "UseKeysViaSns", "ReadAlarms"], s.Sid)] == [
+      ["arn:aws-us-gov:sns:us-gov-west-1:210987654321:t4bp-dev-ops-*", null],
+      ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*", { StringEquals = { "kms:ViaService" = "sns.us-gov-west-1.amazonaws.com" } }],
+      ["arn:aws-us-gov:cloudwatch:us-gov-west-1:210987654321:alarm:*", null],
+    ]
+    error_message = "boundary の Allow の Resource と kms:ViaService が、partition・リージョン・アカウント・name_prefix から組まれていません。"
   }
 }
 
@@ -1460,8 +1665,8 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "dev の apply-identity の role に、managed policy が付いています。"
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload"])
+    error_message = "dev の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の policy だけになっていません。"
   }
 }
 
@@ -1560,8 +1765,8 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "security の apply-identity の role に、managed policy が付いています。"
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload"])
+    error_message = "security の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の policy だけになっていません。"
   }
 }
 
@@ -1660,8 +1865,8 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "log-archive の apply-identity の role に、managed policy が付いています。"
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload"])
+    error_message = "log-archive の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の policy だけになっていません。"
   }
 }
 
