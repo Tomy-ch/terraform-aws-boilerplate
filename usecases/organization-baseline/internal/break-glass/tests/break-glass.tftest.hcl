@@ -13,13 +13,15 @@ variables {
 }
 
 override_resource {
-  target = aws_iam_user.this["break-glass-1"]
-  values = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-1" }
+  target          = aws_iam_user.this["break-glass-1"]
+  override_during = apply
+  values          = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-1" }
 }
 
 override_resource {
-  target = aws_iam_user.this["break-glass-2"]
-  values = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-2" }
+  target          = aws_iam_user.this["break-glass-2"]
+  override_during = apply
+  values          = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-2" }
 }
 
 run "users" {
@@ -140,6 +142,8 @@ run "password_policy" {
 
 run "arns_known_at_plan" {
   command = plan
+  # 前の apply の run の state を引き継ぐと、作成済みの user の ARN が既知になり、resource の属性への退行を見逃す。
+  state_key = "arns_known_at_plan"
 
   assert {
     condition = output.arns == [
@@ -165,4 +169,39 @@ run "arns_match_resources" {
     )
     error_message = "break-glass の ARN が、作った user・group・role の path と名前を指していません。"
   }
+
+  assert {
+    condition     = length(output.arns) == length(aws_iam_user.this) + 2
+    error_message = "break-glass の ARN は、作った user のすべてと group・role の分だけを含めてください。"
+  }
+}
+
+run "path_without_leading_slash" {
+  command = plan
+
+  variables {
+    path = "break-glass/"
+  }
+
+  expect_failures = [var.path]
+}
+
+run "path_without_trailing_slash" {
+  command = plan
+
+  variables {
+    path = "/break-glass"
+  }
+
+  expect_failures = [var.path]
+}
+
+run "path_empty" {
+  command = plan
+
+  variables {
+    path = ""
+  }
+
+  expect_failures = [var.path]
 }
