@@ -84,7 +84,7 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-10] %s: 作る role %s の名前が plan で決まらないので、%s が名指すかを確かめられません", [r.document.path, rc.address, r.document.address])
 }
 
-# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とす。アカウントと比べる規則のうち、03 は見ず、05・11・12 は限っていないと読んで落とす。
+# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とす。アカウントと比べる規則のうち、03 は見ず、11・12 と、05 の宣言した外のアカウントの文でないものは、限っていないと読んで落とす。
 account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
 
 same_account(arn, acct) if regex.match(sprintf(`^arn:aws[a-z-]*:(iam|sts)::%s:`, [acct]), arn)
