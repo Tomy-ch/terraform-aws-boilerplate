@@ -1,0 +1,5 @@
+# `make tf-validate` の警告の抑止（ADR-0501 決定13）。読むのは scripts/tf-validate-result。
+# 欄の意味と照合の規則は scripts/README.md の `tf-validate-result/` の行。block は警告の snippet.context。
+#
+# 抑止を足すことは停止点である（AGENTS.md）。値を直せるなら、抑止せずに直す。
+warnings: []
