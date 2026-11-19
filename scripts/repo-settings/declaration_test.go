@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -74,6 +75,58 @@ func Test_readEnvironments(t *testing.T) {
 			require.ErrorIs(t, err, errDeclaration)
 		})
 	}
+}
+
+func Test_readVulnerabilityReporting(t *testing.T) {
+	t.Parallel()
+
+	readCases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"true を読む", `{"enabled": true}`, true},
+		{"false を読む", `{"enabled": false}`, false},
+	}
+	for _, tc := range readCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := readVulnerabilityReporting(writeFile(t, t.TempDir(), "v.json", tc.body))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+
+	rejectCases := []struct {
+		name string
+		body string
+	}{
+		{"enabled が無ければ拒む", `{}`},
+		{"enabled が null なら拒む", `{"enabled": null}`},
+		{"enabled が文字列なら拒む", `{"enabled": "true"}`},
+		{"宣言に無いキーは拒む", `{"enabled": true, "visibility": "public"}`},
+		{"字面の違うキーは拒む", `{"Enabled": true}`},
+		// 後の値が前の値を黙って上書きすれば、どちらを宣言したのかが読めない。
+		{"enabled の重複は拒む", `{"enabled": false, "enabled": true}`},
+		{"値の後の余分な内容は拒む", `{"enabled": true} {}`},
+		{"配列なら拒む", `[{"enabled": true}]`},
+		{"空のファイルは拒む", ``},
+		{"ファイル全体が null なら拒む", `null`},
+		{"ファイル全体が真偽値なら拒む", `true`},
+	}
+	for _, tc := range rejectCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := readVulnerabilityReporting(writeFile(t, t.TempDir(), "v.json", tc.body))
+			require.ErrorIs(t, err, errDeclaration)
+		})
+	}
+
+	t.Run("ファイルが無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := readVulnerabilityReporting(filepath.Join(t.TempDir(), "missing.json"))
+		require.ErrorIs(t, err, fs.ErrNotExist)
+	})
 }
 
 func Test_validateEnvironments(t *testing.T) {

@@ -302,6 +302,29 @@ key_covered(_, denied) if "*" in denied
 
 key_covered(a, denied) if a in denied
 
+# --- 統制の構成物の変更の拒否（deployment-identity/ADR-0201 決定5）---
+
+# 統制の構成物は組織の ID が作る前に決まらず、Resource "*" の Action も持つので、ARN ではなく Action で拒む。
+governance_actions := object.get(object.get(cfg, "governance", {}), "actions", null)
+
+well_formed_governance if {
+	is_array(governance_actions)
+	count(governance_actions) > 0
+	every a in governance_actions {
+		nonempty_string(a)
+	}
+}
+
+# 宣言した名前そのものを Deny の Action に求める。決定5 は読み取りを拒まないので、`*` や `organizations:*` の
+# 広い Deny を覆いと数えない（鍵の Deny の `kms:*` とは違う）。
+governance_denied(a) if {
+	some s in statements
+	unconditional_deny(s)
+	"Action" in object.keys(s)
+	on(s, "*")
+	lower(a) in lib.lower_all(s.Action)
+}
+
 # --- apply の role に付く policy ---
 
 role_name := after(role).name
@@ -426,15 +449,16 @@ child_holder(r) if {
 
 well_formed_root(root) if {
 	is_object(root)
-	object.keys(root) == {"writer", "state"}
+	object.keys(root) == {"writer", "state", "unlocker"}
 	nonempty_string(root.writer)
 	nonempty_string(root.state)
+	nonempty_string(root.unlocker)
 }
 
 deny contains msg if {
 	some root in object.get(sb, "roots", [])
 	not well_formed_root(root)
-	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素 %v が、writer と state の空でない文字列だけを持っていません", [root])
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素 %v が、writer と state と unlocker の空でない文字列だけを持っていません", [root])
 }
 
 # identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。宣言が外れると対象が0件のまま通る。
@@ -454,6 +478,11 @@ state_bucket_children(c) if {
 deny contains msg if {
 	count(writer_roots) == 0
 	msg := "[PLAN-APPLY-00] data.policy_plan.state_backend.roots に、apply の role のほかの書き手の root がありません（identity root の state と lock file を組めない）"
+}
+
+deny contains msg if {
+	not well_formed_governance
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.actions が、空でない文字列の空でない配列ではありません"
 }
 
 # --- PLAN-APPLY-01: 鍵 ---
@@ -632,4 +661,13 @@ deny contains msg if {
 	c.rc.type == "aws_iam_policy_attachment"
 	unknown_any(object.get(c.rc.change.after_unknown, "roles", false))
 	msg := sprintf("[PLAN-APPLY-05] %s: %s がどの role に付くかを plan で読めません", [c.path, c.rc.address])
+}
+
+# --- PLAN-APPLY-06: 統制の構成物の変更の拒否 ---
+
+deny contains msg if {
+	well_formed_governance
+	some a in governance_actions
+	not governance_denied(a)
+	msg := sprintf("[PLAN-APPLY-06] apply の role %q が、%s を Resource \"*\" の条件なしの Deny で拒んでいません（deployment-identity/ADR-0201 決定5）", [target, a])
 }

@@ -1,10 +1,11 @@
-// repo-settings は、リポジトリの保護設定 —— ブランチの ruleset とデプロイの environment —— を、
-// 宣言から生成・適用し、実態と突き合わせます（ADR-0603 決定1-7、ADR-0702 決定10-12）。
+// repo-settings は、リポジトリの保護設定 —— ブランチの ruleset、デプロイの environment、Private Vulnerability
+// Reporting —— を、宣言から生成・適用し、実態と突き合わせます（ADR-0603 決定1-7、ADR-0702 決定10-12）。
 //
-// 宣言は2つです。
+// 人が書く宣言は3つです。
 //
-//	.github/settings/branches.json      分岐のパターンの単一宣言
-//	.github/settings/environments.json  environment の名前と、どのブランチから使えるか
+//	.github/settings/branches.json                        分岐のパターンの単一宣言
+//	.github/settings/environments.json                    environment の名前と、どのブランチから使えるか
+//	.github/settings/private-vulnerability-reporting.json Private Vulnerability Reporting を有効にするか
 //
 // ruleset の宣言 .github/settings/branch-protection.json は、include の区間だけを branches.json から
 // 生成します。apply の environment を使う workflow は、on.push.branches をその env のデプロイブランチへ
@@ -41,21 +42,24 @@ import (
 )
 
 const (
-	toolName         = "repo-settings"
-	branchesFile     = branchdecl.File
-	environmentsFile = ".github/settings/environments.json"
-	rulesetFile      = ".github/settings/branch-protection.json"
-	defaultAPI       = "https://api.github.com"
-	filePerm         = 0o644
-	requestTimeout   = 2 * time.Minute
+	toolName                   = "repo-settings"
+	branchesFile               = branchdecl.File
+	environmentsFile           = ".github/settings/environments.json"
+	rulesetFile                = ".github/settings/branch-protection.json"
+	vulnerabilityReportingFile = ".github/settings/private-vulnerability-reporting.json"
+	defaultAPI                 = "https://api.github.com"
+	filePerm                   = 0o644
+	requestTimeout             = 2 * time.Minute
 )
 
 var (
-	errUsage        = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch> [-repo owner/name] [-only ruleset|environments] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
-	errIncludeDrift = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
-	errDrift        = xerrors.New("宣言と実態がずれています")
-	errNoToken      = xerrors.New("GITHUB_TOKEN がありません")
-	errNoRepo       = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
+	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
+	errIncludeDrift                      = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
+	errDrift                             = xerrors.New("宣言と実態がずれています")
+	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません")
+	errNoRepo                            = xerrors.New("対象のリポジトリを解決できません（-repo、GITHUB_REPOSITORY、gh repo view のいずれも空です）")
+	errVulnerabilityReportingUnavailable = xerrors.New("公開でないリポジトリでは Private Vulnerability Reporting を使えません。" +
+		vulnerabilityReportingFile + " の enabled を false にして commit し、SECURITY.md の報告先を差し替えてください")
 )
 
 func main() {
@@ -74,7 +78,7 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 	fs := flag.NewFlagSet(toolName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "", "対象のリポジトリ（owner/name）")
-	only := fs.String("only", "", "sync の対象（ruleset か environments）")
+	only := fs.String("only", "", "sync の対象（ruleset、environments、vulnerability-reporting のどれか）")
 	base := fs.String("base", "", "Pull Request の base のブランチ")
 	baseSHA := fs.String("base-sha", "", "Pull Request の base の commit")
 	headSHA := fs.String("head-sha", "", "Pull Request の head の commit")
@@ -113,7 +117,9 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		}
 		return drift(ctx, root, c, *repo, out)
 	case "sync":
-		if *only != onlyRuleset && *only != onlyEnvironments {
+		switch *only {
+		case onlyRuleset, onlyEnvironments, onlyVulnerabilityReporting:
+		default:
 			return errUsage
 		}
 		if *repo == "" {
@@ -138,27 +144,32 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 	}
 }
 
-// declarations は、検証を通った3つの宣言と、include の区間を生成し直した保護設定の宣言と、起動条件を
+// declarations は、検証を通った人の書く宣言と、include の区間を生成し直した保護設定の宣言と、起動条件を
 // 生成し直した apply の workflow。
 type declarations struct {
-	branches     branches
-	environments []environment
-	ruleset      []byte
-	rendered     []byte
-	workflows    []workflowEdit
-	sets         []workflowEdit
-	marks        int
+	branches               branches
+	environments           []environment
+	vulnerabilityReporting bool
+	ruleset                []byte
+	rendered               []byte
+	workflows              []workflowEdit
+	sets                   []workflowEdit
+	marks                  int
 	// exprs は、ref と文字列リテラルの比較が無いことを確かめた式の数。
 	exprs int
 }
 
-// readDeclarations は3つの宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
+// readDeclarations は宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
 func readDeclarations(root string) (declarations, error) {
 	b, err := branchdecl.Read(filepath.Join(root, branchesFile))
 	if err != nil {
 		return declarations{}, err
 	}
 	envs, err := readEnvironments(filepath.Join(root, environmentsFile))
+	if err != nil {
+		return declarations{}, err
+	}
+	pvr, err := readVulnerabilityReporting(filepath.Join(root, vulnerabilityReportingFile))
 	if err != nil {
 		return declarations{}, err
 	}
@@ -171,9 +182,6 @@ func readDeclarations(root string) (declarations, error) {
 	}
 	if err := checkDeployEnvs(identity, b); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", branchesFile)
-	}
-	if _, err := checkBackendKeys(root); err != nil {
-		return declarations{}, err
 	}
 	workflows, err := renderApplyTriggers(root, b)
 	if err != nil {
@@ -209,7 +217,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs}, nil
+	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -226,7 +234,7 @@ func loadDesired(root string) (desired, error) {
 	if err := json.Unmarshal(decl.ruleset, &ruleset); err != nil {
 		return desired{}, xerrors.Wrapf(err, "%s の解釈", rulesetFile)
 	}
-	want := desired{Ruleset: ruleset}
+	want := desired{Ruleset: ruleset, VulnerabilityReporting: decl.vulnerabilityReporting}
 	for _, e := range decl.environments {
 		want.Envs = append(want.Envs, desiredEnv{Name: e.Name, Patterns: environmentPatterns(decl.branches, e)})
 	}
@@ -234,14 +242,15 @@ func loadDesired(root string) (desired, error) {
 }
 
 // applyOrCheck は include の区間と apply の workflow の起動条件を branches.json から生成します。dryRun が
-// 真なら書かず、ずれを報せます。書き込みは、3つの宣言の検証がすべて通った後に、まとめて行います。
+// 真なら書かず、ずれを報せます。書き込みは、宣言の検証がすべて通った後に、まとめて行います。
 func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	decl, err := readDeclarations(root)
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件",
-		len(rulesetIncludes(decl.branches)), len(decl.environments), len(decl.workflows), decl.marks, len(decl.sets), decl.exprs)
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件",
+		len(rulesetIncludes(decl.branches)), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
+		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs)
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {
@@ -284,34 +293,65 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 }
 
 // drift は実態を読み、宣言との差分を報せます。書き込みはしません。
+// Private Vulnerability Reporting を読めなくても ruleset と environment の突合は報せ、読めなかったことを
+// エラーで返します。読めなかったものを突合の対象外に数えない。
 func drift(ctx context.Context, root string, c githubClient, repo string, out io.Writer) error {
 	want, got, d, err := observe(ctx, root, c, repo)
 	if err != nil {
 		return err
 	}
-	for _, u := range d.Unobserved {
+	findings := d.findings()
+	unobserved := d.Unobserved
+	pvrCompared := false
+	pvr, pvrErr := fetchVulnerabilityReporting(ctx, c, repo)
+	if pvrErr == nil {
+		pd := diffVulnerabilityReporting(want.VulnerabilityReporting, pvr)
+		for _, f := range pd.Findings {
+			findings = append(findings, vulnerabilityReportingName+": "+f)
+		}
+		if pd.Unobserved != "" {
+			unobserved = append(unobserved, pd.Unobserved)
+		} else {
+			pvrCompared = true
+		}
+	}
+	for _, u := range unobserved {
 		fmt.Fprintf(out, "⚠️ 突合の対象外（観測できない）: %s\n", u)
 	}
-	findings := d.findings()
 	if len(findings) > 0 {
 		fmt.Fprintf(out, "❌ %s: %s で宣言と実態のずれが %d 件あります\n", toolName, repo, len(findings))
 		for _, f := range findings {
 			fmt.Fprintf(out, "  - %s\n", f)
 		}
+		if pvrErr != nil {
+			fmt.Fprintf(out, "❌ %s: %s の実態を読めませんでした: %v\n", toolName, vulnerabilityReportingName, pvrErr)
+		}
 		return xerrors.Wrapf(errDrift, "%d 件", len(findings))
 	}
 	excluded := ""
-	if len(d.Unobserved) > 0 {
-		excluded = fmt.Sprintf("（突合の対象外 %d 件を除く）", len(d.Unobserved))
+	if len(unobserved) > 0 {
+		excluded = fmt.Sprintf("（突合の対象外 %d 件を除く）", len(unobserved))
 	}
-	fmt.Fprintf(out, "✅ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）が宣言どおりです%s\n",
-		toolName, repo, len(want.Envs), len(got.Envs), excluded)
+	compared := ""
+	if pvrCompared {
+		compared = "と " + vulnerabilityReportingName + " "
+	}
+	if pvrErr != nil {
+		fmt.Fprintf(out, "❌ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）は宣言どおりですが、%s の実態を読めませんでした%s\n",
+			toolName, repo, len(want.Envs), len(got.Envs), vulnerabilityReportingName, excluded)
+		return xerrors.Wrapf(pvrErr, "%s の実態の読み取り", vulnerabilityReportingName)
+	}
+	fmt.Fprintf(out, "✅ %s: %s の ruleset 1 件と environment %d 件（実在 %d 件）%sが宣言どおりです%s\n",
+		toolName, repo, len(want.Envs), len(got.Envs), compared, excluded)
 	return nil
 }
 
 // syncSettings は drift と同じ差分を、only が指す側について GitHub への書き込みで解消します。
 // 要求はすべて組んでから送ります。宣言に無い environment は消しません。
 func syncSettings(ctx context.Context, root string, c githubClient, repo, only string, out io.Writer) error {
+	if only == onlyVulnerabilityReporting {
+		return syncVulnerabilityReporting(ctx, root, c, repo, out)
+	}
 	want, _, d, err := observe(ctx, root, c, repo)
 	if err != nil {
 		return err
@@ -331,6 +371,37 @@ func syncSettings(ctx context.Context, root string, c githubClient, repo, only s
 		return nil
 	}
 	fmt.Fprintf(out, "✅ %s: %s へ %d 件の要求を送りました。make repo-settings-drift で結果を確かめてください\n", toolName, repo, len(reqs))
+	return nil
+}
+
+// syncVulnerabilityReporting は Private Vulnerability Reporting の差分を解消します。ruleset と environment の
+// 実態は読みません —— それらの適用を、PVR を読めないことで止めないため。
+func syncVulnerabilityReporting(ctx context.Context, root string, c githubClient, repo string, out io.Writer) error {
+	want, err := loadDesired(root)
+	if err != nil {
+		return err
+	}
+	got, err := fetchVulnerabilityReporting(ctx, c, repo)
+	if err != nil {
+		return err
+	}
+	pd := diffVulnerabilityReporting(want.VulnerabilityReporting, got)
+	if pd.Unavailable {
+		return xerrors.Wrapf(errVulnerabilityReportingUnavailable, "%s", repo)
+	}
+	if pd.Unobserved != "" {
+		fmt.Fprintf(out, "⚠️ 突合の対象外（観測できない）: %s\n", pd.Unobserved)
+	}
+	if pd.Method == "" {
+		fmt.Fprintf(out, "✅ %s: %s の %s へ送る要求はありません\n", toolName, repo, onlyVulnerabilityReporting)
+		return nil
+	}
+	path := vulnerabilityReportingPath(repo)
+	if err := c.do(ctx, pd.Method, path, nil, nil); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "🔧 %s %s\n", pd.Method, path)
+	fmt.Fprintf(out, "✅ %s: %s へ 1 件の要求を送りました。make repo-settings-drift で結果を確かめてください\n", toolName, repo)
 	return nil
 }
 

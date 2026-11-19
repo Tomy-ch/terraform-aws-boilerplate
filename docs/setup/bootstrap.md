@@ -392,7 +392,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
 2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
-   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-admin-identity` が緑
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity` が緑
    - ログの plan の要約が `No changes.`
    - Policy の違反が無い
    - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
@@ -423,6 +423,14 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    ```
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。
+
+   出力の2つの Bucket の Bucket Policy（[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md) 決定8）を変える変更では、`admin` への Pull Request を merge する**前に**、その commit で `make tf-policy` を実行してから、reference の plan の文書を実アカウントの role で評価する。誤った文書を apply すると、plan の job が全文を置けず、それを直す昇格も merge できない。apply の後は `POLICY_SOURCE` を渡さずに実行し、Bucket に付いた文書を評価する
+
+   ```bash
+   POLICY_SOURCE=reference docs/setup/scripts/verify.sh output-policy
+   ```
+
+   `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
 
 #### lock の解除を用意して試す
 
@@ -604,6 +612,8 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 - identity root に resource を足す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する
 - apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
+- state の鍵の Key Policy の `users` を変える変更は、`docs/setup/scripts/verify.sh` の `JQ_KEY_POLICY` と、その文の数を同じ変更で更新する
+- 出力の2つの Bucket の Bucket Policy を変える変更は、`docs/setup/scripts/verify.sh` の `output-policy` の期待を同じ変更で更新する
 
 ## 参考資料
 

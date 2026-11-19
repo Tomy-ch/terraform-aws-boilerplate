@@ -35,3 +35,27 @@ variable "kms_key_arn" {
     error_message = "kms_key_arn は KMS の鍵の ARN（arn:<partition>:kms:<region>:<account>:key/<key-id>）にしてください。alias の ARN と多リージョンの鍵は受けません。"
   }
 }
+
+variable "writers" {
+  description = "object を書ける role と key の接頭辞の組の集合。key_prefix は / で終わる接頭辞で、空なら Bucket のすべての key。組の外の主体と接頭辞への s3:PutObject・s3:ReplicateObject と、すべての主体の s3:DeleteObject・s3:DeleteObjectVersion・s3:ReplicateDelete を Bucket Policy が拒否する。"
+  type = set(object({
+    role_arn   = string
+    key_prefix = string
+  }))
+  nullable = false
+
+  validation {
+    condition     = length(var.writers) >= 1
+    error_message = "writers に1つ以上の組を渡してください。"
+  }
+
+  validation {
+    condition     = alltrue([for w in var.writers : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", w.role_arn))])
+    error_message = "writers の role_arn は IAM role の ARN にしてください。user・assumed-role・root・ワイルドカードは受けません。"
+  }
+
+  validation {
+    condition     = alltrue([for w in var.writers : can(regex("^([^/*?\\$\\{\\}]+/)*$", w.key_prefix))])
+    error_message = "writers の key_prefix は空か、/ で終わる接頭辞にしてください。/ で始めず、ワイルドカード（* と ?）と IAM の policy 変数の文字（$ と { と }）を含めず、空の区切り（//）を作らないでください。"
+  }
+}

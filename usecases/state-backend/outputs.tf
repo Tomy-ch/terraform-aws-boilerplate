@@ -31,10 +31,4 @@ output "plan_output_bucket_arn" {
 output "apply_output_bucket_arn" {
   description = "workload root の apply の出力を置く Bucket の ARN。CI の role の IAM で、その Bucket の作成と設定と書き込みの Resource を絞るのに使う。"
   value       = module.apply_output.bucket_arn
-
-  # この output は Bucket の属性を返す。IAM の側には名前の規則から組んだ ARN で権限を与え済みなので、属性がその規則とずれたらここで落とす。
-  precondition {
-    condition     = module.apply_output.bucket_arn == "arn:${data.aws_partition.current.partition}:s3:::${var.project}-${var.env}-tfapply-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
-    error_message = "apply の出力の Bucket の ARN（${module.apply_output.bucket_arn}）が、名前の規則から組んだ ARN と一致しません。"
-  }
 }

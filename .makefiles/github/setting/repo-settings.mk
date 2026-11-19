@@ -1,4 +1,4 @@
-## リポジトリの保護設定（ruleset と environment）の宣言・適用・突合
+## リポジトリの保護設定（ruleset、environment、Private Vulnerability Reporting）の宣言・適用・突合
 ##
 ## 判定は scripts/repo-settings が持つ。apply-* は GitHub の実態を書き換えるので、管理者の資格情報を
 ## 持つ人が実行する（ADR-0603 決定30）。突合（drift）は読み取りの権限だけで動く（ADR-0603 決定6）。
@@ -7,6 +7,7 @@
 .PHONY: repo-settings-drift ## 保護設定の宣言と GitHub の実態を突き合わせる（読み取りのみ）
 .PHONY: apply-branch-protection ## branch-protection.json を対象リポジトリの ruleset へ適用
 .PHONY: apply-environments ## environments.json を対象リポジトリの environment へ適用
+.PHONY: apply-vulnerability-reporting ## private-vulnerability-reporting.json を対象リポジトリの Private Vulnerability Reporting へ適用
 .PHONY: deploy-source-check ## [CI] デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31）
 .PHONY: create-deploy-branch ## DEPLOY_ENV のデプロイブランチを、デフォルトブランチの先頭から作る（管理者が bootstrap で1回）
 
@@ -30,6 +31,9 @@ apply-branch-protection:
 
 apply-environments:
 	@$(call REPO_SETTINGS_REMOTE,sync -only environments)
+
+apply-vulnerability-reporting:
+	@$(call REPO_SETTINGS_REMOTE,sync -only vulnerability-reporting)
 
 # 引数は RUN_SCRIPT_HOST の sh が環境変数から展開する。宣言とツールは base の commit を取り出した木のものを使う。
 deploy-source-check:
