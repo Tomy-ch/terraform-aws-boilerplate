@@ -23,7 +23,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `plan_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの plan の出力の Bucket（`state-backend` の `plan_output_bucket_arn`）。plan の role はその `pr/*` と `branch/*` の key に、apply-identity の role は `apply/*` の key にだけ書ける |
 | `apply_output_bucket_arn` | `string`（account-regional の S3 Bucket の ARN。名前は `-<account>-<region>-an` で終わる） | このアカウントの workload root の apply の出力の Bucket（`state-backend` の `apply_output_bucket_arn`）。apply-identity の role の作成と設定と、plan の role の読み取りをこの Bucket に絞る。apply の role はその object にだけ書ける |
 
-| `break_glass_arns` | `list(string)`（path が `/break-glass/` の IAM user・group・role の ARN。1つ以上4つ以下。4つは管理アカウントの user 2つ・group・role で、inline policy の長さの上限をこの数で見積もる） | このアカウントの break-glass の ARN（`organization-baseline` の `break_glass_arns`）。apply の role はこれらへのすべての Action を拒む。`admin` では、plan と apply-identity の role の読み取りの Resource にもなり、user・group・role をそれぞれ1つ以上含める。role と同じ partition・アカウントの ARN でなければ plan で落ちる。ARN は作る前に決まる値（path と名前から組んだもの）を渡す |
+| `break_glass_arns` | `list(string)`（path が `/break-glass/` の IAM user・group・role の ARN。1つ以上4つ以下。inline policy の長さが上限に収まることは、入力が許す最も長い名前の組成 —— `admin` は user・group・role を各1つ以上含むので group 2つと user・role、それ以外は group 4つ —— でテストが測る） | このアカウントの break-glass の ARN（`organization-baseline` の `break_glass_arns`）。apply の role はこれらへのすべての Action を拒む。`admin` では、plan と apply-identity の role の読み取りの Resource にもなり、user・group・role をそれぞれ1つ以上含める。role と同じ partition・アカウントの ARN でなければ plan で落ちる。ARN は作る前に決まる値（path と名前から組んだもの）を渡す |
 
 `state_key_arn`・`apply_output_bucket_arn`・`break_glass_arns` は既定値を持たない必須入力で、`state_key_alias_name` の入力は無い。どちらも利用者の入力の変更を要する破壊的変更である（[ADR-0202](../../docs/adr/0202-internal-topology-as-implementation-detail.md) 決定4）。
 
@@ -31,7 +31,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | --- | --- |
 | `plan_role_arn` | 人が確かめるときの参照。CI の plan の job は assume の前に state を読めないので、この output を読まず、`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む（規則の一致は `tf-local` のテストが見る）。`state-backend` の `ci_role_arns.plan`（state の鍵の Key Policy） |
 | `apply_role_arn` | workload root の apply の job（未配線。#222）。`state-backend` の `ci_role_arns.apply`（state Bucket の Bucket Policy の、workload root の state と lock file の書き込み。[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定9。state の鍵の Key Policy の、S3 経由の暗号化と復号。apply の出力の Bucket の Bucket Policy の書き手） |
-| `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity`。`state-backend` の `ci_role_arns.apply_identity`（state の鍵の Key Policy と、state Bucket の Bucket Policy の identity root の state と lock file の書き込み） |
+| `apply_identity_role_arn` | `terraform-apply.yaml` の `apply-admin-identity` と `terraform-lock-hold.yaml` の `hold-admin-identity`。`state-backend` の `ci_role_arns.apply_identity`（state の鍵の Key Policy と、state Bucket の Bucket Policy の identity root の state と lock file の書き込み） |
 | `unlock_identity_role_arn` | `terraform-unlock.yaml` の `unlock-admin-identity`（`scripts/tf-local` の `role-arn` が同じ名前の規則で ARN を組む）。`state-backend` の `ci_role_arns.unlock_identity`（state の鍵の Key Policy の、lock file に限った復号と、state Bucket の Bucket Policy の lock file の削除） |
 | `unlock_role_arn` | workload root の lock の解除の job（未配線。#222）。`state-backend` の `ci_role_arns.unlock`（state Bucket の Bucket Policy の、workload root の lock file の削除と、state の鍵の Key Policy の、その object に限った復号） |
 
@@ -42,8 +42,8 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 | 役割 | role 名 | GitHub の environment | 使う場面 |
 | --- | --- | --- | --- |
 | plan | `<project>-<env>-ci-plan` | `<env>-plan` | identity root と workload root の plan（lock を取らない） |
-| apply | `<project>-<env>-ci-apply` | `<env>-apply` | workload root の apply |
-| apply-identity | `<project>-<env>-ci-apply-identity` | `<env>-apply-identity` | identity root の apply |
+| apply | `<project>-<env>-ci-apply` | `<env>-apply` | workload root の apply と、その lock を残す job（ADR-0604 決定8） |
+| apply-identity | `<project>-<env>-ci-apply-identity` | `<env>-apply-identity` | identity root の apply と、その lock を残す job（`terraform-lock-hold.yaml`。ADR-0604 決定8） |
 | unlock-identity | `<project>-<env>-ci-unlock-identity` | `<env>-unlock-identity` | identity root の state に残った lock の解除（`terraform-unlock.yaml`） |
 | unlock | `<project>-<env>-ci-unlock` | `<env>-unlock` | workload root の state に残った lock の解除 |
 

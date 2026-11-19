@@ -47,7 +47,13 @@
 //     字面で書き、`make ci-unlock-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の、
 //     字面の group と一致しない —— group はリポジトリの中で workflow をまたいで共有され、同じ group では lock の解除の
 //     起動が待機中の apply の run を取り消す
-//   - plan と apply の job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
+//   - lock を残す job（`make ci-hold-*` を持つ job）は、残す root の apply の job と同じ role（identity root は
+//     apply-identity、ほかの root は apply）を取り、workflow の起動が入力の無い workflow_dispatch だけで、
+//     cancel-in-progress: false の concurrency と refuse-stale の step を持ち、terraform を `make ci-hold-*` でだけ
+//     1回走らせ、同じ workflow に他の CI の入口を持つ job を置かない。environment と concurrency の group は
+//     字面で書き、`make ci-hold-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の
+//     environment と、字面の group に一致する —— 同じ group なので apply と並んで lock を奪い合わない（ADR-0604 決定8）
+//   - plan と apply と lock を残す job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
@@ -80,6 +86,8 @@ const (
 	refuseStale             = "refuse-stale"
 	unlockIdentityRole      = "unlock-identity"
 	unlockWorkloadRole      = "unlock"
+	applyIdentityRole       = "apply-identity"
+	applyWorkloadRole       = "apply"
 )
 
 var (
@@ -103,8 +111,11 @@ var (
 	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
 	ciApply     = makeRun(`ci-apply-[a-z0-9-]+`)
 	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
-	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
+	ciHold      = makeRun(`ci-hold-[a-z0-9-]+`)
+	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`)
 	unlockEntry = regexp.MustCompile(`\bmake\b.*\bci-unlock-([a-z0-9-]+)`)
+	holdEntry   = regexp.MustCompile(`\bmake\b.*\bci-hold-([a-z0-9-]+)`)
+	otherEntry  = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
 	applyEntry  = regexp.MustCompile(`\bmake\b.*\bci-apply-([a-z0-9-]+)`)
 	planEntry   = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
 	runEntry    = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
@@ -247,6 +258,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		}
 	}
 	findings = append(findings, checkUnlockIsolation(groups)...)
+	findings = append(findings, checkHoldPairing(groups)...)
 	for _, g := range applyGates {
 		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
 	}
@@ -352,7 +364,7 @@ func ifExpression(cond string) string {
 // checkPullRequestGate は、apply の job が待つ g の検査を、Pull Request の必須検査も走らせることを検査します。
 // apply の側だけでは、規則を崩す変更が merge されてから apply が止まる。
 func checkPullRequestGate(dir string, records []groupRecord, found int, g gate) []lintreport.Finding {
-	if found > 0 || !slices.ContainsFunc(records, func(r groupRecord) bool { return !r.unlock }) {
+	if found > 0 || !slices.ContainsFunc(records, func(r groupRecord) bool { return r.kind == kindApply }) {
 		return nil
 	}
 	return []lintreport.Finding{{File: dir, Line: 1, Message: fmt.Sprintf("pull_request で起動し保護設定が required とする job に、%s を走らせるものがありません。apply の job が待つ%sを、merge の前の必須検査にも置いてください", g.targets, g.noun)}}
@@ -504,7 +516,7 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	findings = append(findings, checkDetection(job, w.jobs, finding)...)
 	// plan の入口の job が lock の解除の role を取った違反は checkRole が出すので、plan の規則で見る。
 	// ほかの role を取った plan の入口の job は、apply の規則が落とす。
-	plan := !isUnlock(job) && (role == "plan" || (isUnlockRole(role) && hasLine(job, planEntry)))
+	plan := !isUnlock(job) && !isHold(job) && (role == "plan" || (isUnlockRole(role) && hasLine(job, planEntry)))
 	refusal := refuseStale
 	if plan {
 		refusal = refuseUntrusted
@@ -514,6 +526,8 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	switch {
 	case isUnlock(job):
 		return append(findings, checkUnlock(job, cred, w, finding)...)
+	case isHold(job):
+		return append(findings, checkHold(job, cred, w, finding)...)
 	case plan:
 		return append(findings, checkPlan(job, cred, w, finding)...)
 	}
@@ -612,13 +626,15 @@ func checkNoCancel(job workflow.Job, w workflowInfo, kind string, finding func(i
 	return nil
 }
 
-// checkRole は、lock の解除の job が外す root の lock の解除の role（unlockRoleFor）を取り、ほかの job が
-// lock の解除の role を取らないことを検査します。
+// checkRole は、lock の解除の job が外す root の lock の解除の role（unlockRoleFor）を、lock を残す job が残す root の
+// apply の role（holdRoleFor）を取り、ほかの job が lock の解除の role を取らないことを検査します。
 func checkRole(job workflow.Job, cred workflow.Line, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	unlock := isUnlock(job)
 	switch {
 	case unlock && role != unlockRoleFor(job):
 		return []lintreport.Finding{finding(cred.Number, "lock の解除の job は %s の role を取ってください（%s）。その root の lock file を消す権限だけを持つ role です", unlockRoleFor(job), role)}
+	case !unlock && isHold(job) && role != holdRoleFor(job):
+		return []lintreport.Finding{finding(cred.Number, "lock を残す job は %s の role を取ってください（%s）。その root の apply の job と同じ role で lock を取ります（ADR-0604 決定8）", holdRoleFor(job), role)}
 	case !unlock && isUnlockRole(role):
 		return []lintreport.Finding{finding(cred.Number, "%s の role は lock の解除の job（make ci-unlock-*）だけが取ってください", role)}
 	}
@@ -643,6 +659,61 @@ func unlockRoleFor(job workflow.Job) string {
 	return unlockIdentityRole
 }
 
+// holdRoleFor は、lock を残す job の make ci-hold-<env>-<root> の root から、取るべき role を返します。
+// identity root は apply-identity、ほかの root は apply。
+func holdRoleFor(job workflow.Job) string {
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) {
+			continue
+		}
+		if m := holdEntry.FindStringSubmatch(l.Text); m != nil && !strings.HasSuffix(m[1], "-identity") {
+			return applyWorkloadRole
+		}
+	}
+	return applyIdentityRole
+}
+
+// checkHold は、lock の解除を障害の前に試すために lock を外さずに残す job を検査します。入口の本数と terraform の
+// 直接の実行は checkHoldEntry が、apply の job との group と environment の一致は checkHoldPairing が見る。
+func checkHold(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	if keys := triggerNames(w.on); !slices.Equal(keys, []string{"workflow_dispatch"}) {
+		findings = append(findings, finding(w.onLine, "lock を残す job を持つ workflow の起動は workflow_dispatch だけにしてください。push で起動すると、merge のたびに apply を止める lock を残します（%s）", strings.Join(keys, ", ")))
+	}
+	findings = append(findings, checkTriggerForm(w, "lock を残す", finding)...)
+	findings = append(findings, checkNoCancel(job, w, "lock を残す", finding)...)
+	for _, j := range w.jobs {
+		if j.ID != job.ID && hasLine(j, otherEntry) {
+			findings = append(findings, finding(j.Number, "lock を残す job と同じ workflow に、ほかの CI の入口を持つ job（%s）を置かないでください。同じ run の中で lock を残す処理と並んで走ります", j.ID))
+		}
+	}
+	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
+	return append(findings, checkHoldEntry(job, finding)...)
+}
+
+// checkHoldEntry は、lock を残す job が make ci-hold-* をちょうど1回だけ走らせ、terraform を直に走らせず、他の CI の
+// 入口も走らせないことを検査します。
+func checkHoldEntry(job workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	entries := 0
+	for _, l := range job.Lines {
+		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
+			continue
+		}
+		matched := ciHold.MatchString(l.Text)
+		if matched {
+			entries++
+		}
+		if runsTerraform.MatchString(l.Text) || (!matched && ciEntry.MatchString(l.Text)) {
+			findings = append(findings, finding(l.Number, "lock を残す job は terraform を直に走らせず、他の CI の入口も走らせず、make ci-hold-* だけを走らせてください"))
+		}
+	}
+	if entries != 1 {
+		findings = append(findings, finding(job.Number, "lock を残す job は make ci-hold-* を1回だけ走らせてください（%d 回）", entries))
+	}
+	return findings
+}
+
 // checkUnlock は、state に残った lock を外す job を検査します。人が起動したときだけ走り、実行中の lock の解除を
 // 取り消さず、terraform も他の入口も走らせないことを見ます。apply の group との不一致は checkUnlockIsolation が見る。
 func checkUnlock(job workflow.Job, cred workflow.Line, w workflowInfo, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
@@ -653,8 +724,8 @@ func checkUnlock(job workflow.Job, cred workflow.Line, w workflowInfo, finding f
 	findings = append(findings, checkTriggerForm(w, "lock の解除", finding)...)
 	findings = append(findings, checkNoCancel(job, w, "lock の解除", finding)...)
 	for _, j := range w.jobs {
-		if j.ID != job.ID && hasLine(j, runEntry) {
-			findings = append(findings, finding(j.Number, "lock の解除の job と同じ workflow に plan と apply の job（%s）を置かないでください。同じ run の中で lock の解除と並んで走ります", j.ID))
+		if j.ID != job.ID && (hasLine(j, runEntry) || hasLine(j, holdEntry)) {
+			findings = append(findings, finding(j.Number, "lock の解除の job と同じ workflow に plan と apply と lock を残す job（%s）を置かないでください。同じ run の中で lock の解除と並んで走ります", j.ID))
 		}
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
@@ -684,17 +755,26 @@ func checkUnlockEntry(job workflow.Job, finding func(int, string, ...any) lintre
 	return findings
 }
 
-// groupRecord は、資格情報を取る job のうち lock の解除の job と apply の job の、入口の `<env>-<root>` と
-// 実効の concurrency の group です。
+// job の種類。分類は checkJob と同じく入口で決め、lock の解除の入口を先に、lock を残す入口を次に見る。
+const (
+	kindApply  = "apply"
+	kindUnlock = "unlock"
+	kindHold   = "hold"
+)
+
+// groupRecord は、資格情報を取る job のうち apply の job と lock の解除の job と lock を残す job の、入口の
+// `<env>-<root>` と実効の concurrency の group と environment です。
 type groupRecord struct {
-	file   string
-	job    workflow.Job
-	root   string
-	group  string
-	unlock bool
+	file        string
+	job         workflow.Job
+	root        string
+	group       string
+	kind        string
+	environment string
 }
 
-// groupRecords は、workflow の lock の解除の job と apply の job を、workflow をまたぐ照合のために取り出します。
+// groupRecords は、workflow の apply の job と lock の解除の job と lock を残す job を、workflow をまたぐ照合のために
+// 取り出します。
 func groupRecords(file, source string) []groupRecord {
 	split := workflow.SplitJobs(source)
 	var records []groupRecord
@@ -703,16 +783,19 @@ func groupRecords(file, source string) []groupRecord {
 		if !ok || !hasIDToken(values) {
 			continue
 		}
-		unlock := isUnlock(job)
-		entry := applyEntry
-		if unlock {
-			entry = unlockEntry
+		kind, entry := kindApply, applyEntry
+		switch {
+		case isUnlock(job):
+			kind, entry = kindUnlock, unlockEntry
+		case isHold(job):
+			kind, entry = kindHold, holdEntry
 		}
 		root := entryRoot(job, entry)
 		if root == "" {
 			continue
 		}
-		records = append(records, groupRecord{file: file, job: job, root: root, group: effectiveGroup(job, split.Preamble), unlock: unlock})
+		env, _ := environment(job)
+		records = append(records, groupRecord{file: file, job: job, root: root, group: effectiveGroup(job, split.Preamble), kind: kind, environment: env})
 	}
 	return records
 }
@@ -736,7 +819,7 @@ func entryRoot(job workflow.Job, re *regexp.Regexp) string {
 func checkUnlockIsolation(records []groupRecord) []lintreport.Finding {
 	var findings []lintreport.Finding
 	for _, u := range records {
-		if !u.unlock {
+		if u.kind != kindUnlock {
 			continue
 		}
 		if problem := isolationProblem(u, records); problem != "" {
@@ -755,7 +838,7 @@ func isolationProblem(u groupRecord, records []groupRecord) string {
 	}
 	var applies []groupRecord
 	for _, a := range records {
-		if !a.unlock && a.root == u.root {
+		if a.kind == kindApply && a.root == u.root {
 			applies = append(applies, a)
 		}
 	}
@@ -768,6 +851,51 @@ func isolationProblem(u groupRecord, records []groupRecord) string {
 	}
 	if a.group == u.group {
 		return fmt.Sprintf("concurrency の group %q が、apply の job %s（%s）の group と同じです。lock の解除の起動が、待機中の apply の run を取り消します", u.group, a.job.ID, a.file)
+	}
+	return ""
+}
+
+// checkHoldPairing は、lock を残す job の concurrency の group と environment が、同じ root の apply の job のものと
+// 字面で一致することを検査します。group が違えば apply と並んで走って lock を奪い合い、environment が違えば apply と
+// 違う role の信頼条件で lock を取る。
+func checkHoldPairing(records []groupRecord) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, h := range records {
+		if h.kind != kindHold {
+			continue
+		}
+		if problem := holdProblem(h, records); problem != "" {
+			findings = append(findings, lintreport.Finding{File: h.file, Line: h.job.Number, Message: fmt.Sprintf("job %s: %s", h.job.ID, problem)})
+		}
+	}
+	return findings
+}
+
+// holdProblem は、lock を残す job h の group と environment が apply の job のものと一致すると確かめられない理由を
+// 返します。確かめられれば空文字を返す。比べる相手は、h の入口と同じ `<env>-<root>` の apply の入口を走らせる job に
+// 限り、ちょうど1つを要る。
+func holdProblem(h groupRecord, records []groupRecord) string {
+	if !isLiteral(h.group) {
+		return "lock を残す job の concurrency の group を字面で書いてください。apply の job の group と同じことを確かめられません"
+	}
+	var applies []groupRecord
+	for _, a := range records {
+		if a.kind == kindApply && a.root == h.root {
+			applies = append(applies, a)
+		}
+	}
+	if len(applies) != 1 {
+		return fmt.Sprintf("make ci-apply-%s を走らせる apply の job が、ちょうど1つではありません（%d 件）。concurrency の group と environment を比べる相手が決まりません", h.root, len(applies))
+	}
+	a := applies[0]
+	if !isLiteral(a.group) {
+		return fmt.Sprintf("apply の job %s（%s）の concurrency の group を字面で読めません。lock を残す job の group と同じことを確かめられません", a.job.ID, a.file)
+	}
+	if a.group != h.group {
+		return fmt.Sprintf("concurrency の group %q が、apply の job %s（%s）の group %q と違います。apply と並んで走り、lock を奪い合います", h.group, a.job.ID, a.file, a.group)
+	}
+	if a.environment == "" || a.environment != h.environment {
+		return fmt.Sprintf("environment %q が、apply の job %s（%s）の environment %q と違います。lock は apply と同じ role で取ります", h.environment, a.job.ID, a.file, a.environment)
 	}
 	return ""
 }
@@ -821,6 +949,10 @@ func literalGroup(value string) string {
 
 func isUnlock(job workflow.Job) bool {
 	return hasLine(job, unlockEntry)
+}
+
+func isHold(job workflow.Job) bool {
+	return hasLine(job, holdEntry)
 }
 
 func hasLine(job workflow.Job, re *regexp.Regexp) bool {
@@ -1483,8 +1615,8 @@ func notifiesSuccess(j workflow.Job, apply string) bool {
 }
 
 // checkRootCoverage は、rootsDir の下で *.tf を持つディレクトリが ADR-0604 決定5 の配置（<env>/ と <env>/identity/）
-// にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job が
-// ちょうど1つずつあることを検査します。見た root の数を返し、0件なら errNoTarget にする。
+// にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job と
+// lock を残す job がちょうど1つずつあることを検査します。見た root の数を返し、0件なら errNoTarget にする。
 func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintreport.Finding, error) {
 	var findings []lintreport.Finding
 	var roots []string
@@ -1558,6 +1690,9 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 		}
 		if n := count("unlock", false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を外す job が %d 件です（1件を期待）", root, n)})
+		}
+		if n := count("hold", false); n != 1 {
+			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を残す job が %d 件です（1件を期待）", root, n)})
 		}
 	}
 	return len(roots), findings, nil
