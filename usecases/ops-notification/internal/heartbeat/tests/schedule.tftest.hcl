@@ -92,6 +92,21 @@ run "schedule" {
   }
 }
 
+# Scheduler は生の input の中のトークンを置換する。jsonencode が < > を \u003c \u003e に変えると置換されない。
+run "raw_input_keeps_context_attribute" {
+  command = plan
+
+  assert {
+    condition     = strcontains(aws_scheduler_schedule.this.target[0].input, "<aws.scheduler.scheduled-time>")
+    error_message = "生の input に <aws.scheduler.scheduled-time> がそのまま入っていません。"
+  }
+
+  assert {
+    condition     = !strcontains(aws_scheduler_schedule.this.target[0].input, "\\u003c") && !strcontains(aws_scheduler_schedule.this.target[0].input, "\\u003e")
+    error_message = "生の input に < > のエスケープが残っています。"
+  }
+}
+
 run "message_names_env" {
   command = plan
 

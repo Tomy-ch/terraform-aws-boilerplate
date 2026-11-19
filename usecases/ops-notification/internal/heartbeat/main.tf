@@ -12,7 +12,8 @@ locals {
   partition = data.aws_partition.current.partition
 
   # Amazon Q Developer in chat applications の custom notification の形（ops-notification/ADR-0102）。
-  message = jsonencode({
+  # jsonencode は < > を \u003c \u003e に変え、Scheduler は生の input のトークンしか置換しないので戻す。
+  message = replace(replace(jsonencode({
     version = "1.0"
     source  = "custom"
     content = {
@@ -20,7 +21,7 @@ locals {
       title       = "ops-notification の心拍（警報ではありません）"
       description = "通知経路が働いていることを示す毎日の心拍です。対応は要りません。\nenv: ${var.env} / region: ${local.region} / 予定時刻: <aws.scheduler.scheduled-time>"
     }
-  })
+  }), "\\u003c", "<"), "\\u003e", ">")
 }
 
 # 信頼の aws:SourceArn は schedule group の ARN だけを受ける。default の group は同じアカウントの別の schedule と共有になる。
