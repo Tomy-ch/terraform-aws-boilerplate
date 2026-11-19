@@ -206,6 +206,10 @@ stage4() {
       # 統制の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定7）。
       expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-identity-governance"])'
+    elif [[ $r == apply ]]; then
+      # workload の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定17）。
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-workload"])'
     else
       expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies == []'
@@ -335,6 +339,19 @@ permissions() {
   sim explicitDeny apply "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-other" iam:CreateRole iam:PassRole
   sim explicitDeny apply "*" iam:DeleteRolePermissionsBoundary
   sim explicitDeny apply "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
+  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply --query 'AttachedPolicies[].PolicyName' --output text) == tabp-admin-ci-apply-workload ]]; then
+    local or="arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ops-heartbeat" pbctx="ContextKeyName=iam:PermissionsBoundary,ContextKeyValues=${bp},ContextKeyType=arn"
+    sim allowed apply "$or" --context "$pbctx" iam:CreateRole iam:PutRolePolicy iam:DeleteRole
+    sim implicitDeny apply "$or" iam:CreateRole iam:PutRolePolicy
+    sim implicitDeny apply "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-OPS-heartbeat" --context "$pbctx" iam:CreateRole
+    sim allowed apply "$or" --context "ContextKeyName=iam:PassedToService,ContextKeyValues=scheduler.amazonaws.com,ContextKeyType=string" iam:PassRole
+    sim implicitDeny apply "$or" --context "ContextKeyName=iam:PassedToService,ContextKeyValues=lambda.amazonaws.com,ContextKeyType=string" iam:PassRole
+    sim allowed apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:CreateTopic sns:SetTopicAttributes
+    sim implicitDeny apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:DeleteTopic sns:Subscribe
+    sim implicitDeny apply "$wk" kms:ScheduleKeyDeletion
+  else
+    echo "  workload の policy がまだ付いていないので、apply の role の workload の権限は確かめない（workload の policy を作って付ける apply の後にもう一度走らせる）"
+  fi
 
   echo "# unlock-identity の role"
   local lock="${key}.tflock"
