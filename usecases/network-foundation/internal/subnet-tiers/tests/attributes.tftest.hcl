@@ -14,6 +14,11 @@ run "fixes_subnet_attributes" {
   command = plan
 
   assert {
+    condition     = length(aws_subnet.this) == 4
+    error_message = "subnet が tier と AZ ごとに1つではありません。"
+  }
+
+  assert {
     condition     = alltrue([for s in aws_subnet.this : s.map_public_ip_on_launch == false && s.assign_ipv6_address_on_creation == false])
     error_message = "subnet が公開 IP か IPv6 を自動で割り当てます。"
   }

@@ -61,9 +61,28 @@ run "places_every_subnet_in_the_given_vpc" {
   command = plan
 
   assert {
-    condition     = alltrue([for s in aws_subnet.this : s.vpc_id == "vpc-0123456789abcdef0"]) && alltrue([for r in aws_route_table.this : r.vpc_id == "vpc-0123456789abcdef0"])
+    condition     = length(aws_subnet.this) == 6 && alltrue([for s in aws_subnet.this : s.vpc_id == "vpc-0123456789abcdef0"]) && alltrue([for r in aws_route_table.this : r.vpc_id == "vpc-0123456789abcdef0"])
     error_message = "subnet か Route Table が入力の VPC に置かれていません。"
   }
+}
+
+run "asks_only_for_the_given_availability_zones" {
+  command = plan
+
+  assert {
+    condition     = data.aws_availability_zones.available.state == "available" && [for f in data.aws_availability_zones.available.filter : f.name] == ["zone-id"] && toset(one(data.aws_availability_zones.available.filter).values) == toset(["apne1-az4", "apne1-az1", "apne1-az2"])
+    error_message = "AZ の data source が、入力の AZ の ID で使える AZ だけを問い合わせていません。"
+  }
+}
+
+run "rejects_an_unavailable_availability_zone_at_the_head" {
+  command = plan
+
+  variables {
+    availability_zone_ids = ["apne1-az3", "apne1-az4"]
+  }
+
+  expect_failures = [aws_subnet.this]
 }
 
 run "rejects_an_unavailable_availability_zone" {

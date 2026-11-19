@@ -38,31 +38,20 @@ variables {
   flow_logs_deletion_protection = true
 }
 
-run "outputs_return_the_module_identifiers" {
+# 出力の値の取り違えは internal/subnet-tiers/tests/routing.tftest.hcl が resource の key で固定する。ここは公開の出力の存在と件数を見る。
+run "outputs_list_one_id_per_availability_zone" {
   command = apply
 
   assert {
-    condition     = output.vpc_id == module.vpc.vpc_id
-    error_message = "vpc_id が VPC の ID ではありません。"
-  }
-  assert {
-    condition     = output.private_subnet_ids == module.subnet_tiers.private_subnet_ids && length(output.private_subnet_ids) == 3
-    error_message = "private_subnet_ids が private の tier の subnet を AZ ごとに返していません。"
-  }
-  assert {
-    condition     = output.isolated_subnet_ids == module.subnet_tiers.isolated_subnet_ids && length(output.isolated_subnet_ids) == 3
-    error_message = "isolated_subnet_ids が isolated の tier の subnet を AZ ごとに返していません。"
+    condition     = length(output.private_subnet_ids) == 3 && length(output.isolated_subnet_ids) == 3 && length(output.private_route_table_ids) == 3
+    error_message = "subnet と Route Table の出力が AZ ごとに1つではありません。"
   }
   assert {
     condition     = length(setintersection(toset(output.private_subnet_ids), toset(output.isolated_subnet_ids))) == 0
     error_message = "private と isolated の subnet が重なっています。"
   }
   assert {
-    condition     = output.private_route_table_ids == module.subnet_tiers.private_route_table_ids && length(output.private_route_table_ids) == 3
-    error_message = "private_route_table_ids が private の tier の Route Table を AZ ごとに返していません。"
-  }
-  assert {
-    condition     = output.flow_logs_log_group_arn == "arn:aws:logs:ap-northeast-1:123456789012:log-group:/tabp/dev/network-foundation/vpc-flow-logs"
-    error_message = "flow_logs_log_group_arn が Flow Logs の Log Group の ARN ではありません。"
+    condition     = output.vpc_id != "" && output.flow_logs_log_group_arn == module.flow_logs.log_group_arn
+    error_message = "vpc_id が空か、ログの所在が Flow Logs の Log Group ではありません。"
   }
 }

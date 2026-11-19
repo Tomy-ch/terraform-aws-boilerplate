@@ -263,3 +263,139 @@ run "rejects_unlimited_retention" {
 
   expect_failures = [var.flow_logs_retention_days]
 }
+
+run "accepts_project_of_42_characters_with_sandbox" {
+  command = plan
+
+  variables {
+    project = join("", [for i in range(42) : "a"])
+    env     = "sandbox"
+  }
+}
+
+run "accepts_project_with_digits" {
+  command = plan
+
+  variables {
+    project = "tabp2"
+  }
+}
+
+run "rejects_project_with_upper_case" {
+  command = plan
+
+  variables {
+    project = "Tabp"
+  }
+
+  expect_failures = [var.project]
+}
+
+run "rejects_cidr_just_below_10" {
+  command = plan
+
+  variables {
+    cidr = "9.255.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_10" {
+  command = plan
+
+  variables {
+    cidr = "11.0.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_below_172_16" {
+  command = plan
+
+  variables {
+    cidr = "172.15.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_172_31" {
+  command = plan
+
+  variables {
+    cidr = "172.32.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_below_192_168" {
+  command = plan
+
+  variables {
+    cidr = "192.167.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "rejects_cidr_just_above_192_168" {
+  command = plan
+
+  variables {
+    cidr = "192.169.0.0/16"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "accepts_cidr_at_start_of_172_16" {
+  command = plan
+
+  variables {
+    cidr = "172.16.0.0/16"
+  }
+}
+
+run "accepts_cidr_just_above_172_17" {
+  command = plan
+
+  variables {
+    cidr = "172.18.0.0/16"
+  }
+}
+
+run "rejects_cidr_inside_172_17" {
+  command = plan
+
+  variables {
+    cidr = "172.17.5.0/24"
+  }
+
+  expect_failures = [var.cidr]
+}
+
+run "accepts_four_availability_zones" {
+  command = plan
+
+  variables {
+    availability_zone_ids = ["apne1-az1", "apne1-az2", "apne1-az3", "apne1-az4"]
+  }
+
+  override_data {
+    target = module.subnet_tiers.data.aws_availability_zones.available
+    values = { zone_ids = ["apne1-az1", "apne1-az2", "apne1-az3", "apne1-az4"] }
+  }
+}
+
+run "rejects_retention_between_allowed_values" {
+  command = plan
+
+  variables {
+    flow_logs_retention_days = 366
+  }
+
+  expect_failures = [var.flow_logs_retention_days]
+}

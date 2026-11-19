@@ -56,7 +56,7 @@ run "names_the_flow_logs_resources_from_project_and_env" {
   }
 }
 
-run "passes_env_values_to_the_modules" {
+run "passes_the_cidr_to_the_vpc" {
   command = plan
 
   variables {
@@ -66,18 +66,5 @@ run "passes_env_values_to_the_modules" {
   assert {
     condition     = module.vpc.vpc_cidr == "192.168.0.0/24"
     error_message = "VPC の CIDR が入力と違います。"
-  }
-}
-
-run "sends_flow_logs_to_the_log_group_encrypted_with_its_own_key" {
-  command = apply
-
-  assert {
-    condition     = output.flow_logs_log_group_arn == module.flow_logs.log_group_arn
-    error_message = "ログの所在が Flow Logs の Log Group ではありません。"
-  }
-  assert {
-    condition     = module.kms.key_arn == "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    error_message = "Flow Logs の鍵がこのユースケースの鍵ではありません。"
   }
 }

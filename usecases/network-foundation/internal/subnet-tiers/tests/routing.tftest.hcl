@@ -32,7 +32,7 @@ run "associates_each_subnet_with_its_own_route_table" {
   command = apply
 
   assert {
-    condition     = length(aws_route_table_association.this) == length(aws_subnet.this)
+    condition     = length(aws_route_table_association.this) == 4 && length(aws_subnet.this) == 4
     error_message = "関連付けの数が subnet の数と違います。"
   }
   assert {
