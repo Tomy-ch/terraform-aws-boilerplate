@@ -3,7 +3,7 @@ package plan.stateful_protection_test
 import data.plan.fixture
 import data.plan.stateful_protection
 
-decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {}}
+decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {}}
 
 bucket := "module.state_backend.module.s3.aws_s3_bucket.this"
 
@@ -54,25 +54,25 @@ test_violation_delete_of_state_key_under_declaration if {
 }
 
 test_pass_allowed_removal_in_its_root if {
-	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d
 	count(msgs) == 0
 }
 
 test_violation_allow_of_another_root_does_not_apply if {
-	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-01] tmp/ci-plan/admin-identity.json", msgs)
 }
 
 test_violation_unmatched_allow_entry if {
-	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["no-op"])]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-02]", msgs)
 }
 
 test_pass_allow_entry_of_absent_root_is_not_checked if {
-	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"workload": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["no-op"])]) with data.policy_plan.stateful_protection as d
 	count(msgs) == 0
 }
@@ -83,7 +83,7 @@ test_violation_declaration_without_state_bucket_type if {
 }
 
 test_violation_declaration_with_empty_reason if {
-	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {"p": [{"address": bucket, "reason": ""}]}}
+	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"p": [{"address": bucket, "reason": ""}]}}
 	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan.stateful_protection as d
 	fixture.has("[PLAN-STATE-00]", msgs)
 }
@@ -130,7 +130,7 @@ test_pass_root_of_nested_path if {
 
 lifecycle := "module.state_backend.module.s3.aws_s3_bucket_lifecycle_configuration.this"
 
-lifecycle_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {}}
+lifecycle_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {}}
 
 rule(noncurrent, current) := {
 	"id": "r",
@@ -474,7 +474,7 @@ test_violation_removal_of_protected_lifecycle if {
 }
 
 # ADR-0604 決定13。宣言した引数を書く変更は、許可の宣言によらず落とす。
-inline_decl := {"protected_types": array.concat(["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], [t | some t, _ in data.policy_plan.inline_arguments]), "allow": {}}
+inline_decl := {"protected_types": array.concat(["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], [t | some t, _ in data.policy_plan.inline_arguments]), "allow": {}}
 
 inline_written(empty) := [{"x": "y"}] if empty == []
 
@@ -550,7 +550,7 @@ test_pass_inline_outside_protected_types if {
 }
 
 test_pass_inline_on_delete if {
-	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete"], {"policy": "{}"}, null, {})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete"], {"policy": "{}"}, null, {})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
 	count(msgs) == 0
 }
 
@@ -579,12 +579,12 @@ test_violation_inline_argument_cleared_on_update if {
 
 # 置換の作成も、書かない引数が plan で決まらない。作成と同じく通す（ADR-0604 決定13）。
 test_pass_inline_unknown_on_replace if {
-	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete", "create"], {"policy": "{}"}, {}, {"policy": true})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete", "create"], {"policy": "{}"}, {}, {"policy": true})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
 	count(msgs) == 0
 }
 
 test_pass_inline_on_forget if {
-	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["forget"], {"policy": "{}"}, null, {})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "管理から外す"}]}}
+	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["forget"], {"policy": "{}"}, null, {})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "管理から外す"}]}}
 	count(msgs) == 0
 }
 
@@ -601,6 +601,86 @@ test_pass_inline_data_source_unknown if {
 	rc := object.union(inline_change("aws_s3_bucket", ["read"], {"policy": "{}"}, {}, {"policy": true}), {"mode": "data"})
 	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as inline_decl
 	count(msgs) == 0
+}
+
+image_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {}}
+
+image_lifecycle := "module.image_registry.module.repository[\"api\"].aws_ecr_lifecycle_policy.this"
+
+image_policy(n) := json.marshal({"rules": [{
+	"rulePriority": 1,
+	"selection": {"tagStatus": "tagged", "tagPatternList": ["*"], "countType": "imageCountMoreThan", "countNumber": n},
+	"action": {"type": "expire"},
+}]})
+
+image_update(before, after) := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+	"actions": ["update"],
+	"before": {"repository": "tabp-dev/api", "policy": image_policy(before)},
+	"after": {"repository": "tabp-dev/api", "policy": image_policy(after)},
+}}
+
+test_violation_fewer_retained_images if {
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 10)]) with data.policy_plan.stateful_protection as image_decl
+	fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_violation_fewer_retained_images_by_renamed_address if {
+	gone := {"address": "module.image_registry.module.repository[\"old\"].aws_ecr_lifecycle_policy.this", "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["delete"],
+		"before": {"repository": "tabp-dev/api", "policy": image_policy(30)},
+		"after": null,
+	}}
+	made := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["create"],
+		"before": null,
+		"after": {"repository": "tabp-dev/api", "policy": image_policy(5)},
+	}}
+	d := object.union(image_decl, {"allow": {"p": [{"address": gone.address, "reason": "論理名を替える"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([gone, made]) with data.policy_plan.stateful_protection as d
+	fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_pass_more_retained_images if {
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(10, 30)]) with data.policy_plan.stateful_protection as image_decl
+	not fixture.has("[PLAN-STATE-09]", msgs)
+}
+
+test_pass_fewer_retained_images_allowed if {
+	d := object.union(image_decl, {"shorten_allow": {"p": [{"address": image_lifecycle, "reason": "保持件数を見直す"}]}})
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 10)]) with data.policy_plan.stateful_protection as d
+	count(msgs) == 0
+}
+
+test_violation_declaration_without_image_lifecycle if {
+	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration"], "allow": {}}
+	fixture.has("[PLAN-STATE-00]", msgs)
+}
+
+test_violation_unreadable_retained_images if {
+	unknown := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["update"],
+		"before": {"repository": "tabp-dev/api", "policy": image_policy(30)},
+		"after": {"repository": "tabp-dev/api"},
+		"after_unknown": {"policy": true},
+	}}
+	msgs := stateful_protection.deny with input as fixture.plan([unknown]) with data.policy_plan.stateful_protection as image_decl
+	fixture.has("[PLAN-STATE-10]", msgs)
+}
+
+test_pass_same_retained_images if {
+	msgs := stateful_protection.deny with input as fixture.plan([image_update(30, 30)]) with data.policy_plan.stateful_protection as image_decl
+	count(msgs) == 0
+}
+
+test_violation_created_lifecycle_repository_unknown if {
+	made := {"address": image_lifecycle, "type": "aws_ecr_lifecycle_policy", "change": {
+		"actions": ["create"],
+		"before": null,
+		"after": {"policy": image_policy(5)},
+		"after_unknown": {"repository": true},
+	}}
+	msgs := stateful_protection.deny with input as fixture.plan([made]) with data.policy_plan.stateful_protection as image_decl
+	fixture.has("[PLAN-STATE-10]", msgs)
 }
 
 # 宣言（decl.json）を差し替えずに読む。

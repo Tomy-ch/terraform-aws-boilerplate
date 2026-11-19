@@ -186,6 +186,10 @@ CI の権限については循環の性質が異なる。backend さえあれば
 17. state のロック方式は本 ADR の対象外とし、ADR-0604 が決める。ADR-0601 決定16 が要求するのは排他制御が成立することのみである。
 18. state の分割単位は本 ADR の対象外とし、ADR-0604 が決める。環境の表現方法は ADR-0102 決定11-12 が決める。
 
+### 発火側の認証
+
+19. 本リポジトリの外のリポジトリの CI（発火側）が AWS を操作するための role にも、決定12 と決定15 を適用し、信頼条件を決定14 の第1項の形（`aud`、`sub` が含むリポジトリと environment 名、リポジトリと所有者の変わらない ID の完全一致）で限定する。限定に使うリポジトリ・所有者・ID・environment 名は、その role を持つ use-case が型付きの入力として受け、ワイルドカードを含む値を受けない。発火側の role は bootstrap の構成物ではなく（決定1）、workload root の use-case が持つ。発火側の environment の宣言と保護は発火側のリポジトリが持ち、本リポジトリは宣言せず突合しない（決定14 の第2項以降を適用しない）。
+
 ## 検討した代替案
 
 ### 案A: bootstrap の構成物を Terraform 管理外に置く
@@ -256,7 +260,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 
 - 保証すること: bootstrap の構成物が Terraform の管理下にあり、以後の変更が ADR-0601 の経路に乗ること。CI が長期の資格情報を保持しないこと。apply の role のセッションが、bootstrap の構成物（決定1）のうち state の鍵と alias を除く resource の ARN を対象とする要求で読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の ARN を対象とする要求でその Key Policy がアカウントへ委任する Action を、許されないこと。これは、明示の Deny がほかのどの policy の Allow にも勝つという AWS の評価の規則と、apply の role の権限の与え方を持つ use-case（決定16）の Policy Test が見る拒否から導く。Policy Test が見るのは use-case の reference の plan であって、env の root が作る role ではない。CI role を assume できるのが当該リポジトリの、宣言された environment の job に限られること。その environment の deployment branch policy が宣言と一致すること（突合の検査が通っている限り）。lock の解除の role の権限が、対応する root の lock file の一覧・読み取り・削除と、その lock file の復号に限られること
 - 保証すること: apply の role のセッションが、統制の構成物（決定1）を変更する Action を許されないこと。apply の role の権限の与え方を持つ use-case の Policy Test が、reference の plan で見る
-- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は plan の出力の置き場への書き込みのほかに変更系を持たないが、state を読める。決定13）。その主体が plan の出力の置き場へ偽の出力を書くこと（版管理により上書き前の版は残り、削除はできない。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）と、そのほかの bootstrap の構成物の変更。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）。apply の role が作るか渡す別の主体（作った role、サービスへ渡す role、S3 Batch Operations の job 等）による bootstrap の構成物の変更。bootstrap の構成物の ARN を通らない要求（S3 の access point 等）による変更。Resource "*" でしか与えられない Action（アカウントの Public Access Block の設定等）による変更。apply の role の policy が帯域外で外されるか足されている間の権限。AWS が読み取りの動詞の名前で変更系の Action を足すこと。env の root が reference と違う値を渡すこと。Policy Test の宣言（bootstrap の構成物を持つ use-case の一覧と、その resource の型の分類）が正しいこと（宣言の変更のレビューに依る。alias の作成・削除・付け替えが鍵の ARN への権限を要することを含む）。apply の job が打ち切られたときに、apply の全文を置き終えること（決定13）。apply-identity の role が、plan の出力の Bucket の設定（lifecycle・版管理・Bucket Policy）か自分の権限を変えて、apply の全文を消すこと（決定13。その変更は Pull Request のレビューを経る）。書き込み権限を持つ主体が、同じリポジトリに線の名前（release/・hotfix/）のブランチを作って Pull Request を開き、その Pull Request の workflow を書き換えて sandbox の apply の role を assume し、sandbox を変更すること（決定14。environment は Pull Request の ref を許し、job の条件と ADR-0603 決定31 の検査の配線は Pull Request の側の workflow の定義で書き換えられる。sandbox の apply の role の権限は sandbox のアカウントに閉じる）
+- 保証しないこと: 段1 の CLI 実行そのものの再現性。これは段2 の plan による突合で事後的に確認される。同一リポジトリへ Pull Request を開ける主体が、workflow を書き換えて plan の role を assume すること（その role は plan の出力の置き場への書き込みのほかに変更系を持たないが、state を読める。決定13）。その主体が plan の出力の置き場へ偽の出力を書くこと（版管理により上書き前の版は残り、削除はできない。決定13）。management account の root による state backend への書き込みと resource-based policy の削除（決定11）と、そのほかの bootstrap の構成物の変更。member account での SCP と root 資格情報の中央管理による拒否が、それを持つ use-case の外で機能すること（決定11）。回復の契機に用いる人の資格情報の発行と管理（決定9）。発火側の environment が保護されていること。発火側のリポジトリで environment の deployment branch policy と承認を誰が設定するかは、本リポジトリの外にある（決定19）。apply の role が作るか渡す別の主体（作った role、サービスへ渡す role、S3 Batch Operations の job 等）による bootstrap の構成物の変更。bootstrap の構成物の ARN を通らない要求（S3 の access point 等）による変更。Resource "*" でしか与えられない Action（アカウントの Public Access Block の設定等）による変更。apply の role の policy が帯域外で外されるか足されている間の権限。AWS が読み取りの動詞の名前で変更系の Action を足すこと。env の root が reference と違う値を渡すこと。Policy Test の宣言（bootstrap の構成物を持つ use-case の一覧と、その resource の型の分類）が正しいこと（宣言の変更のレビューに依る。alias の作成・削除・付け替えが鍵の ARN への権限を要することを含む）。apply の job が打ち切られたときに、apply の全文を置き終えること（決定13）。apply-identity の role が、plan の出力の Bucket の設定（lifecycle・版管理・Bucket Policy）か自分の権限を変えて、apply の全文を消すこと（決定13。その変更は Pull Request のレビューを経る）。書き込み権限を持つ主体が、同じリポジトリに線の名前（release/・hotfix/）のブランチを作って Pull Request を開き、その Pull Request の workflow を書き換えて sandbox の apply の role を assume し、sandbox を変更すること（決定14。environment は Pull Request の ref を許し、job の条件と ADR-0603 決定31 の検査の配線は Pull Request の側の workflow の定義で書き換えられる。sandbox の apply の role の権限は sandbox のアカウントに閉じる）
 
 ## 検証方法
 
@@ -281,6 +285,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 突合: environment の宣言と GitHub 上の実態が一致すること、deployment branch policy のパターンが分岐のパターンの単一宣言から生成されたものと一致すること、apply 系と lock の解除の environment が、その env のデプロイブランチだけを許すこと。sandbox の apply の environment が Pull Request の ref だけを許すこと（決定14、ADR-0603 決定4-7）
 - Policy Test（apply の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、統制の構成物の変更（Organizations の組織・OU・アカウント・policy とその付け先、root の資格情報の中央管理、break-glass の IAM user と role、Identity Center の permission set と割当）を、条件なしで拒まれること（決定13）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
+- Policy Test（発火側の role を持つ use-case の Policy Test）: 発火側の role の信頼条件が、決定14 の第1項の形を完全一致で持ち、ワイルドカードを含まないこと（決定19）
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
 
 決定9 の契機の判定と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
@@ -294,6 +299,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 管理アカウントの identity root が、組織全体（OU、アカウント、SCP、Identity Center）を持つ。その plan と apply は、bootstrap の構成物に加えて組織の統制を対象にする。
 - apply-identity の role に、統制の構成物の変更の権限が加わる。その与え方は `deployment-identity` の ADR が持つ。
 - apply の role の権限設計（決定16）が、当該 use-case の最大の設計課題になる。ADR-0301 決定8 のもとでは wildcard による解決が採れない。
+- workload root の use-case が、本リポジトリの外のリポジトリを信頼する role を持つ。その role は apply の role が作る（決定19）。
 
 ## 見直し条件
 
