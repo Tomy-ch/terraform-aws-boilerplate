@@ -812,3 +812,29 @@ run "users_rejects_duplicate_config" {
 
   expect_failures = [var.users]
 }
+
+run "users_accepts_three_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/abc"] } }
+  }
+}
+
+run "users_accepts_128_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz"] } }
+  }
+}
+
+run "users_rejects_129_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazx"] } }
+  }
+
+  expect_failures = [var.users]
+}

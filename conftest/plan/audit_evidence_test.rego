@@ -95,18 +95,25 @@ valid := [
 replace(rcs, rc) := array.concat([x | some x in rcs; x.address != rc.address], [rc])
 
 msgs(rcs) := found if {
-	found := p.deny with input as fixture.plan(rcs) with data.policy_plan.audit_evidence as decl
+	found := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"audit_evidence": decl}
 }
 
 ids(rcs) := {substring(m, 0, 16) | some m in msgs(rcs)}
+
+# 同じ ID を持つ別の規則で通らないよう、規則に固有の文言で見る。
+said(rcs, fragment) if {
+	some m in msgs(rcs)
+	contains(m, fragment)
+}
 
 test_pass_valid if {
 	count(msgs(valid)) == 0
 }
 
 test_violation_declaration_missing if {
-	found := p.deny with input as fixture.plan(valid) with data.policy_plan.audit_evidence as object.remove(decl, ["key_policy"])
-	"[PLAN-AUDIT-00] " in {substring(m, 0, 16) | some m in found}
+	found := p.deny with input as fixture.plan(valid) with data.policy_plan as {"audit_evidence": object.remove(decl, ["key_policy"])}
+	some m in found
+	contains(m, "宣言 audit_evidence.key_policy が無いか")
 }
 
 test_violation_declared_address_absent if {
@@ -164,9 +171,10 @@ test_violation_required_deny_missing if {
 }
 
 test_violation_deny_with_principal_exception if {
-	s := json.patch(denies[2], [{"op": "add", "path": "/Condition", "value": {"ArnNotEquals": {"aws:PrincipalArn": "arn:aws:iam::123456789012:role/r"}}}])
-	rest := [d | some j, d in denies; j != 2]
-	"[PLAN-AUDIT-03] " in ids(replace(valid, bucket_policy(array.concat(rest, [s, trail_write]))))
+	every k in ["aws:PrincipalArn", "aws:userid", "AWS:PrincipalAccount", "aws:PrincipalOrgID"] {
+		extra := {"Sid": "DenyExtra", "Effect": "Deny", "Principal": "*", "Action": "s3:GetObject", "Resource": sprintf("%s/*", [bucket_arn]), "Condition": {"StringNotEquals": {k: "x"}}}
+		said(replace(valid, bucket_policy(array.concat(denies, [extra, trail_write, config_write]))), "主体による例外")
+	}
 }
 
 test_violation_deny_not_unconditional_shape if {
@@ -247,4 +255,135 @@ test_violation_no_trail_on_either_side if {
 test_violation_config_accounts_differ if {
 	other := json.patch(key_config, [{"op": "replace", "path": "/Condition/StringEquals/aws:SourceAccount", "value": ["333333333333"]}])
 	"[PLAN-AUDIT-05] " in ids(replace(valid, key_policy([key_trail, other])))
+}
+
+test_violation_each_declaration_missing_or_not_string if {
+	every key, _ in decl {
+		every bad in [null, 1, "", ["x"]] {
+			found := p.deny with input as fixture.plan(valid) with data.policy_plan as {"audit_evidence": object.union(decl, {key: bad})}
+			some m in found
+			contains(m, sprintf("宣言 audit_evidence.%s が無いか", [key]))
+		}
+		found_missing := p.deny with input as fixture.plan(valid) with data.policy_plan as {"audit_evidence": object.remove(decl, [key])}
+		some m2 in found_missing
+		contains(m2, sprintf("宣言 audit_evidence.%s が無いか", [key]))
+	}
+}
+
+test_violation_whole_declaration_absent if {
+	found := p.deny with input as fixture.plan(valid) with data.policy_plan as {}
+	count({m | some m in found; startswith(m, "[PLAN-AUDIT-00] 宣言 audit_evidence.")}) == count(decl)
+}
+
+test_violation_each_declared_address_absent if {
+	every _, address in decl {
+		said([x | some x in valid; x.address != address], sprintf("宣言した %s が入力にありません", [address]))
+	}
+}
+
+test_violation_declared_address_without_after if {
+	gone := {"address": decl.bucket_policy, "type": "t", "change": {"actions": ["create"], "after": null, "after_unknown": {}}}
+	said(replace(valid, gone), sprintf("宣言した %s が入力にありません", [decl.bucket_policy]))
+}
+
+test_violation_retention_degenerate_shapes if {
+	every rule in [
+		[{"default_retention": [{"mode": "COMPLIANCE", "days": 731}]}, {"default_retention": [{"mode": "COMPLIANCE", "days": 731}]}],
+		[{"default_retention": [{"mode": "COMPLIANCE", "days": 731}, {"mode": "COMPLIANCE", "days": 731}]}],
+		[{"default_retention": [{"mode": "COMPLIANCE", "days": null, "years": 2}]}],
+		[{"default_retention": [{"mode": "COMPLIANCE", "days": "731"}]}],
+	] {
+		said(replace(valid, change(decl.object_lock_configuration, {"rule": rule})), "既定の保持を1つ持ちません")
+	}
+}
+
+test_pass_governance_one_day if {
+	rcs := replace(replace(valid, lock("GOVERNANCE", 1)), lifecycle(1))
+	altered := [d | some d in denies; not d.Sid in {"DenyRetentionBeyondDefault", "DenyOtherLockMode"}]
+	retention := json.patch(denies[3], [{"op": "replace", "path": "/Condition/NumericGreaterThan/s3:object-lock-remaining-retention-days", "value": "1"}])
+	mode := json.patch(denies[4], [{"op": "replace", "path": "/Condition/StringNotEquals/s3:object-lock-mode", "value": "GOVERNANCE"}])
+	count(msgs(replace(rcs, bucket_policy(array.concat(altered, [retention, mode, trail_write, config_write]))))) == 0
+}
+
+test_violation_no_effective_expiration if {
+	disabled := change(decl.lifecycle_configuration, {"rule": [{"id": "x", "status": "Disabled", "filter": [{"and": [], "tag": []}], "expiration": [{"days": 731}]}]})
+	two := change(decl.lifecycle_configuration, {"rule": [
+		{"id": "a", "status": "Enabled", "filter": [{"and": [], "tag": []}], "expiration": [{"days": 731}]},
+		{"id": "b", "status": "Enabled", "filter": [{"and": [], "tag": []}], "expiration": [{"days": 800}]},
+	]})
+	none := change(decl.lifecycle_configuration, {"rule": []})
+	every rc in [disabled, two, none] {
+		said(replace(valid, rc), "現行版の失効の日数")
+	}
+}
+
+test_violation_expiration_filter_shapes if {
+	every f in [
+		[{"and": [], "prefix": "AWSLogs/", "tag": []}],
+		[{"and": [], "tag": [{"key": "k", "value": "v"}]}],
+		[{"and": [{"prefix": "x"}], "tag": []}],
+		[],
+		[{"and": [], "tag": []}, {"and": [], "tag": []}],
+	] {
+		rc := change(decl.lifecycle_configuration, {"rule": [{"id": "x", "status": "Enabled", "filter": f, "expiration": [{"days": 731}]}]})
+		said(replace(valid, rc), "Bucket 全体に掛かりません")
+	}
+}
+
+test_pass_expiration_filter_empty_values if {
+	rc := change(decl.lifecycle_configuration, {"rule": [{"id": "x", "status": "Enabled", "filter": [{"and": [], "prefix": "", "object_size_greater_than": null, "tag": []}], "expiration": [{"days": 731}]}]})
+	count(msgs(replace(valid, rc))) == 0
+}
+
+test_violation_object_lock_flag_missing if {
+	every after in [{"arn": bucket_arn}, {"arn": bucket_arn, "object_lock_enabled": null}] {
+		said(replace(valid, change(decl.bucket, after)), "Object Lock を有効にしていません")
+	}
+}
+
+test_violation_source_partly_wildcard if {
+	c := {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": [trail, "*"]}}
+	s := json.patch(trail_write, [{"op": "replace", "path": "/Condition", "value": c}])
+	said(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), "wildcard の無い値に限っていません")
+}
+
+test_violation_allow_with_not_principal if {
+	s := json.patch(trail_write, [{"op": "add", "path": "/NotPrincipal", "value": {"AWS": "arn:aws:iam::123456789012:root"}}])
+	said(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), "サービス principal だけを名指していません")
+}
+
+test_violation_each_deny_altered if {
+	every i, d in denies {
+		every patch in [
+			[{"op": "replace", "path": "/Action", "value": "s3:GetObject"}],
+			[{"op": "replace", "path": "/Resource", "value": bucket_arn}],
+			[{"op": "add", "path": "/Condition", "value": {"Bool": {"aws:SecureTransport": "true"}}}],
+			[{"op": "add", "path": "/NotAction", "value": "s3:GetObject"}],
+			[{"op": "add", "path": "/NotResource", "value": bucket_arn}],
+		] {
+			altered := json.patch(d, patch)
+			rest := [x | some j, x in denies; j != i]
+			said(replace(valid, bucket_policy(array.concat(rest, [altered, trail_write, config_write]))), sprintf("の Deny %s が、Principal", [d.Sid]))
+		}
+	}
+}
+
+test_violation_policy_missing if {
+	said(replace(valid, change(decl.bucket_policy, {})), "policy が plan で決まらないか")
+	said(replace(valid, change(decl.bucket_policy, {"policy": 1})), "policy が plan で決まらないか")
+	said(replace(valid, change(decl.key_policy, {})), "policy が plan で決まらないか")
+}
+
+test_violation_trail_only_on_bucket_side if {
+	said(replace(valid, key_policy([key_config])), "trail")
+	said(replace(valid, key_policy([key_config])), "一致しません")
+}
+
+test_violation_config_only_on_one_side if {
+	said(replace(valid, key_policy([key_trail])), "Config のアカウント")
+	said(replace(valid, bucket_policy(array.concat(denies, [trail_write]))), "Config のアカウント")
+}
+
+test_pass_no_config_on_either_side if {
+	count(msgs(replace(replace(valid, key_policy([key_trail])), bucket_policy(array.concat(denies, [trail_write]))))) == 0
 }

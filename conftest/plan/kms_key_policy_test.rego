@@ -554,7 +554,7 @@ cross := {"cross_account_sources": {declared: ["cloudtrail.amazonaws.com", "conf
 
 cross_ids(statements, decl) := found if {
 	found := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy(statements)])
-		with data.policy_plan.kms_key_policy as decl
+		with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": decl})
 }
 
 test_pass_declared_cross_account_sources if {
@@ -591,4 +591,22 @@ test_violation_declared_cross_account_sources_not_typed if {
 test_violation_declared_cross_account_mixed_principal if {
 	s := json.patch(trail_encrypt, [{"op": "replace", "path": "/Principal/Service", "value": ["cloudtrail.amazonaws.com", "logs.ap-northeast-1.amazonaws.com"]}])
 	"[PLAN-KMS-05]" in cross_ids([root, s], cross)
+}
+
+# 宣言した文でも、許す値と外の値が混ざれば外の値の規則だけが落とす。
+test_violation_declared_cross_account_mixed_values if {
+	every v in ["arn:aws:s3:::bucket", "arn:aws:cloudtrail:ap-northeast-1::trail/x", "1111"] {
+		c := {"StringEquals": {
+			"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org", v],
+			"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		}}
+		found := p.deny with input as fixture.plan([key_policy([root, with_condition(trail_encrypt, c)])])
+			with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": cross})
+		some m in found
+		contains(m, "委任のアカウントの外の値")
+	}
+}
+
+test_violation_cross_account_sources_empty_service_list if {
+	"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], {"cross_account_sources": {declared: []}})
 }

@@ -44,3 +44,21 @@ test_violation_action_missing_or_extra if {
 test_violation_action_unknown if {
 	"[PLAN-ALARM-01]" in ids([alarm(actions([topic], [topic], []), {"insufficient_data_actions": true})])
 }
+
+test_violation_each_action_unknown if {
+	every attr in ["alarm_actions", "ok_actions", "insufficient_data_actions"] {
+		every unknown in [true, [true]] {
+			found := p.deny with input as fixture.plan([alarm(object.union(actions([topic], [topic], [topic]), {attr: []}), {attr: unknown})])
+			some m in found
+			contains(m, sprintf("の %s が plan で決まらない", [attr]))
+		}
+	}
+}
+
+test_violation_action_not_sns_arn if {
+	every bad in ["", "arn:aws:sns:ap-northeast-1:1234:t", "arn:aws-cn:sns:cn-north-1:123456789012:t.fifo"] {
+		found := p.deny with input as fixture.plan([alarm(actions([bad], [bad], [bad]), {})])
+		some m in found
+		contains(m, "SNS の Topic の ARN ではありません")
+	}
+}

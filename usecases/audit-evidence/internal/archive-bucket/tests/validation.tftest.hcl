@@ -182,3 +182,33 @@ run "rejects_trail_name_as_ip_address" {
   }
   expect_failures = [var.writers]
 }
+
+run "accepts_days_at_100_years" {
+  command = plan
+  variables {
+    retention = { mode = "COMPLIANCE", days = 36500 }
+  }
+}
+
+run "rejects_two_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "ab", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "accepts_128_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+}
+
+run "rejects_129_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}

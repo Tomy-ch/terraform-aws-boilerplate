@@ -89,3 +89,34 @@ run "sandbox" {
   }
 
 }
+
+run "key_policy_wiring" {
+  command = plan
+
+  variables {
+    writers = {
+      cloudtrail_organization_trail = {
+        trail_name       = "tabp-org"
+        owner_account_id = "111111111111"
+        organization_id  = "o-abcdefghij"
+        region           = "us-west-2"
+      }
+      config_source_accounts = ["333333333333", "222222222222"]
+    }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(module.archive_key.key_policy).Statement : s.Condition.StringEquals["aws:SourceArn"] if s.Sid == "CloudTrailEncrypt"] == [["arn:aws:cloudtrail:us-west-2:111111111111:trail/tabp-org"]]
+    error_message = "証跡の鍵の CloudTrail の文が、trail の名前・所有するアカウント・リージョンから組んだ ARN を要求元にしていません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(module.archive_key.key_policy).Statement : s.Condition.StringEquals["aws:SourceAccount"] if s.Sid == "ConfigService"] == [["222222222222", "333333333333"]]
+    error_message = "証跡の鍵の Config の文が、Config のアカウントを昇順で要求元にしていません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(module.access_log_key.key_policy).Statement : s.Sid] == ["AccountKeyAdministration", "LogsService"]
+    error_message = "アクセスログの鍵が、CloudWatch Logs の文だけを持っていません。"
+  }
+}

@@ -128,3 +128,46 @@ run "rejects_key_in_other_account" {
 
   expect_failures = [aws_s3_bucket_server_side_encryption_configuration.this]
 }
+
+run "accepts_63_character_name" {
+  command = plan
+
+  variables {
+    name = "tabp-log-archive-audit-abcdefghi"
+  }
+
+  assert {
+    condition     = length(aws_s3_bucket.this.bucket) == 63
+    error_message = "境界の Bucket 名が 63 文字になっていません。名前の組み立てが変わったなら、name の長さを直してください。"
+  }
+}
+
+run "rejects_64_character_name" {
+  command = plan
+
+  variables {
+    name = "tabp-log-archive-audit-abcdefghij"
+  }
+
+  expect_failures = [aws_s3_bucket.this]
+}
+
+run "rejects_key_in_other_region" {
+  command = plan
+
+  variables {
+    kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_s3_bucket_server_side_encryption_configuration.this]
+}
+
+run "rejects_key_in_other_partition" {
+  command = plan
+
+  variables {
+    kms_key_arn = "arn:aws-cn:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [aws_s3_bucket_server_side_encryption_configuration.this]
+}

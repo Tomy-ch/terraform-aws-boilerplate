@@ -156,3 +156,74 @@ run "accepts_three_character_trail_name" {
     writers = { cloudtrail_organization_trail = { trail_name = "org", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
   }
 }
+
+run "rejects_bad_organization_id" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-org", owner_account_id = "111111111111", organization_id = "o-ABC", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_bad_region" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-org", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "*" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_bad_config_account" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-org", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" }, config_source_accounts = ["*"] }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_trail_name_with_consecutive_symbols" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "tabp-.org", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_two_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "ab", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "accepts_128_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+}
+
+run "rejects_129_character_trail_name" {
+  command = plan
+  variables {
+    writers = { cloudtrail_organization_trail = { trail_name = "taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz", owner_account_id = "111111111111", organization_id = "o-abcdefghij", region = "ap-northeast-1" } }
+  }
+  expect_failures = [var.writers]
+}
+
+run "rejects_fifo_topic" {
+  command = plan
+  variables {
+    notify_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:tabp-ops.fifo"
+  }
+  expect_failures = [var.notify_topic_arn]
+}
+
+run "rejects_access_log_retention_off_list" {
+  command = plan
+  variables {
+    access_log_retention_days = 366
+  }
+  expect_failures = [var.access_log_retention_days]
+}

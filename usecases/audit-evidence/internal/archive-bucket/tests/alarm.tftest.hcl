@@ -96,3 +96,13 @@ run "rejects_topic_in_other_account" {
 
   expect_failures = [aws_cloudwatch_metric_alarm.delivery_stalled]
 }
+
+run "rejects_topic_in_other_region" {
+  command = plan
+
+  variables {
+    notify_topic_arn = "arn:aws:sns:us-east-1:123456789012:tabp-log-archive-ops-notification"
+  }
+
+  expect_failures = [aws_cloudwatch_metric_alarm.delivery_stalled]
+}

@@ -79,13 +79,3 @@ run "outputs" {
     error_message = "access_log_group_arn がアクセスログの Log Group の ARN を返していません。"
   }
 }
-
-# Bucket Policy を経由することは internal/archive-bucket/outputs.tf の値が持ち、ここでは内部の出力をそのまま返すことを見る。
-run "bucket_name_from_archive" {
-  command = apply
-
-  assert {
-    condition     = output.bucket_name == module.archive.bucket_name && module.archive.bucket_name == "tabp-log-archive-audit-123456789012-ap-northeast-1-an"
-    error_message = "bucket_name が内部の module の bucket_name を返していません。"
-  }
-}

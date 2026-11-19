@@ -39,11 +39,22 @@ override_resource {
   }
 }
 
+# 出力は Bucket Policy と Key Policy の後に決まるので、mock の apply で見る。
 run "reference_values" {
   command = apply
 
   assert {
     condition     = module.audit_evidence.bucket_name == "tabp-log-archive-audit-123456789012-ap-northeast-1-an"
     error_message = "reference の値から保管の Bucket の名前が組まれていません。"
+  }
+
+  assert {
+    condition     = module.audit_evidence.kms_key_arn == "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    error_message = "reference の kms_key_arn が証跡の鍵を指していません。"
+  }
+
+  assert {
+    condition     = module.audit_evidence.access_log_group_arn == "arn:aws:logs:ap-northeast-1:123456789012:log-group:tabp-log-archive-audit-access-log"
+    error_message = "reference の access_log_group_arn がアクセスログの Log Group を指していません。"
   }
 }
