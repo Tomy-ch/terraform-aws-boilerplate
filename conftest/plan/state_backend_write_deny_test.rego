@@ -9,6 +9,7 @@ decl := {
 		"apply_role": {"role": "module.d.aws_iam_role.this[\"apply\"]"},
 		"apply_identity_role": {"role": "module.d.aws_iam_role.apply_identity"},
 		"unlock_role": {"role": "module.d.aws_iam_role.this[\"unlock_identity\"]", "lock_key": "identity/terraform.tfstate.tflock"},
+		"workload_unlock_role": {"role": "module.d.aws_iam_role.this[\"unlock\"]", "lock_key": "workload/terraform.tfstate.tflock"},
 	},
 	"state_backend": {
 		"bucket": "module.s.aws_s3_bucket.this",
@@ -16,11 +17,10 @@ decl := {
 		"state_key": "module.k.aws_kms_key.this",
 		"key_policy": "module.k.aws_kms_key_policy.this",
 		"roots": [
-			{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"},
-			{"writer": "apply_role", "state": "workload/terraform.tfstate"},
+			{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"},
+			{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"},
 		],
-		"unlocker": "unlock_role",
-		"key_user_roles": ["plan_role", "apply_identity_role", "unlock_role"],
+		"key_user_roles": ["plan_role", "apply_identity_role", "unlock_role", "apply_role", "workload_unlock_role"],
 	},
 }
 
@@ -36,11 +36,15 @@ a := "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
 
 u := "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
 
+wu := "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"
+
 identity_keys := [sprintf("%s/identity/terraform.tfstate", [b]), sprintf("%s/identity/terraform.tfstate.tflock", [b])]
 
 workload_keys := [sprintf("%s/workload/terraform.tfstate", [b]), sprintf("%s/workload/terraform.tfstate.tflock", [b])]
 
 lock_keys := [sprintf("%s/identity/terraform.tfstate.tflock", [b])]
+
+workload_lock_keys := [sprintf("%s/workload/terraform.tfstate.tflock", [b])]
 
 apply_denied := ["s3:DeleteObjectVersion", "s3:ReplicateDelete", "s3:ReplicateObject"]
 
@@ -79,21 +83,28 @@ writer_statements := [
 	outside(a, workload_keys), actions_of(a, workload_keys, apply_denied),
 ]
 
-valid_statements := array.concat(array.concat([tls, others([a, ai, u])], writer_statements), [other_than_kms, other_key(key), managed_key])
+# 位置で差し替えるテストがあるので、後から足した書き手の文は末尾に置く。
+valid_statements := array.concat(
+	array.concat(array.concat([tls, others([a, ai, u, wu])], writer_statements), [other_than_kms, other_key(key), managed_key]),
+	[outside(wu, workload_lock_keys), actions_of(wu, workload_lock_keys, unlock_denied)],
+)
 
 admin := {"Sid": "AccountKeyAdministration", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": ["kms:PutKeyPolicy"], "Resource": "*"}
 
-read_write := {"Sid": "RolesViaS3ReadWrite", "Effect": "Allow", "Principal": {"AWS": [ai, plan_arn]}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"}
+read_write := {"Sid": "RolesViaS3ReadWrite", "Effect": "Allow", "Principal": {"AWS": [a, ai, plan_arn]}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"}
 
 read_lock := {"Sid": "RolesViaS3Read0", "Effect": "Allow", "Principal": {"AWS": [u]}, "Action": "kms:Decrypt", "Resource": "*"}
 
-valid_key_statements := [admin, read_write, read_lock]
+read_workload_lock := {"Sid": "RolesViaS3Read1", "Effect": "Allow", "Principal": {"AWS": [wu]}, "Action": "kms:Decrypt", "Resource": "*"}
+
+valid_key_statements := [admin, read_write, read_lock, read_workload_lock]
 
 roles := [
 	change("module.d.aws_iam_role.this[\"plan\"]", "aws_iam_role", {"arn": plan_arn}),
 	change("module.d.aws_iam_role.this[\"apply\"]", "aws_iam_role", {"arn": a}),
 	change("module.d.aws_iam_role.apply_identity", "aws_iam_role", {"arn": ai}),
 	change("module.d.aws_iam_role.this[\"unlock_identity\"]", "aws_iam_role", {"arn": u}),
+	change("module.d.aws_iam_role.this[\"unlock\"]", "aws_iam_role", {"arn": wu}),
 ]
 
 input_with(statements, key_statements) := [
@@ -106,7 +117,7 @@ input_with(statements, key_statements) := [
 	]}},
 ]
 
-# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+# 宣言は丸ごと差し替える（理由は lib/fixture.rego の inline_declaration）。
 messages_for(inp, d) := msgs if {
 	msgs := p.deny with input as inp with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
 }
@@ -157,12 +168,12 @@ test_violation_others_misses_unlock_role if {
 }
 
 test_violation_principal_arn_like if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Condition", "value": {"ArnNotLike": {"aws:PrincipalArn": [a, ai, u]}}}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Condition", "value": {"ArnNotLike": {"aws:PrincipalArn": [a, ai, u, wu]}}}])
 	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, s)))
 }
 
 test_violation_principal_arn_if_exists if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Condition", "value": {"ArnNotEqualsIfExists": {"aws:PrincipalArn": [a, ai, u]}}}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Condition", "value": {"ArnNotEqualsIfExists": {"aws:PrincipalArn": [a, ai, u, wu]}}}])
 	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, s)))
 }
 
@@ -171,7 +182,7 @@ test_violation_principal_arn_wildcard if {
 }
 
 test_violation_principal_arn_user if {
-	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, others([a, ai, u, "arn:aws:iam::123456789012:user/tabp-bootstrap"]))))
+	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, others([a, ai, u, wu, "arn:aws:iam::123456789012:user/tabp-bootstrap"]))))
 }
 
 test_violation_principal_arn_assumed_role if {
@@ -179,7 +190,7 @@ test_violation_principal_arn_assumed_role if {
 }
 
 test_violation_write_deny_on_bucket if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Resource", "value": [b, sprintf("%s/*", [b])]}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Resource", "value": [b, sprintf("%s/*", [b])]}])
 	fixture.has("[PLAN-SBW-03]", messages_with(replace(valid_statements, 1, s)))
 }
 
@@ -189,12 +200,12 @@ test_violation_encryption_deny_on_bucket if {
 }
 
 test_violation_write_deny_bucket_configuration if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Action", "value": ["s3:Put*", "s3:DeleteObject"]}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Action", "value": ["s3:Put*", "s3:DeleteObject"]}])
 	fixture.has("[PLAN-SBW-03]", messages_with(replace(valid_statements, 1, s)))
 }
 
 test_violation_write_deny_not_action if {
-	s := json.patch(others([a, ai, u]), [{"op": "add", "path": "/NotAction", "value": "s3:GetObject"}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "add", "path": "/NotAction", "value": "s3:GetObject"}])
 	fixture.has("[PLAN-SBW-03]", messages_with(replace(valid_statements, 1, s)))
 }
 
@@ -221,8 +232,8 @@ test_violation_confines_undeclared_writer if {
 
 test_violation_roots_share_keys if {
 	d := object.union(decl, {"state_backend": object.union(decl.state_backend, {"roots": [
-		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"},
-		{"writer": "apply_role", "state": "identity/terraform.tfstate"},
+		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"},
+		{"writer": "apply_role", "state": "identity/terraform.tfstate", "unlocker": "workload_unlock_role"},
 	]})})
 	msgs := messages_on(valid_statements, valid_key_statements, d)
 	fixture.has("[PLAN-SBW-05] root", msgs)
@@ -234,18 +245,18 @@ test_violation_unlock_role_writes_identity_state if {
 }
 
 test_violation_key_policy_grants_undeclared_role if {
-	extra := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [ai, a, plan_arn]}])
-	msgs := messages_on(valid_statements, [admin, extra, read_lock], decl)
+	extra := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [ai, a, plan_arn, "arn:aws:iam::123456789012:role/other"]}])
+	msgs := messages_on(valid_statements, [admin, extra, read_lock, read_workload_lock], decl)
 	fixture.has("[PLAN-SBW-06]", msgs)
 }
 
 test_violation_key_policy_misses_declared_role if {
-	msgs := messages_on(valid_statements, [admin, read_write], decl)
+	msgs := messages_on(valid_statements, [admin, read_write, read_lock], decl)
 	fixture.has("[PLAN-SBW-06]", msgs)
 }
 
 test_violation_key_policy_wildcard_action_grants_undeclared_role if {
-	extra := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": a}, "Action": "kms:*", "Resource": "*"}
+	extra := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/other"}, "Action": "kms:*", "Resource": "*"}
 	msgs := messages_on(valid_statements, array.concat(valid_key_statements, [extra]), decl)
 	fixture.has("[PLAN-SBW-06]", msgs)
 }
@@ -298,7 +309,7 @@ test_violation_tls_partial_action if {
 }
 
 test_violation_others_misses_replication if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Action", "value": ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Action", "value": ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObject"]}])
 	fixture.has("[PLAN-SBW-01]", messages_with(replace(valid_statements, 1, s)))
 }
 
@@ -357,8 +368,46 @@ test_violation_roots_empty if {
 }
 
 test_violation_unlocker_missing if {
-	d := {"deployment_identity": decl.deployment_identity, "state_backend": object.remove(decl.state_backend, ["unlocker"])}
-	fixture.has("[PLAN-SBW-00] lock を外す role（", messages_on(valid_statements, valid_key_statements, d))
+	d := with_state_backend({"roots": [
+		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"},
+		{"writer": "apply_role", "state": "workload/terraform.tfstate"},
+	]})
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素 {\"state\": \"workload/terraform.tfstate\", \"writer\": \"apply_role\"} が writer と state と unlocker の文字列を持っていません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_unlocker_empty if {
+	d := with_state_backend({"roots": [
+		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"},
+		{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": ""},
+	]})
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_workload_unlock_role_outside_lock if {
+	fixture.has(sprintf("[PLAN-SBW-04] %s を、自分の key", [wu]), messages_with(replace(valid_statements, 11, outside(wu, workload_keys))))
+}
+
+test_violation_workload_unlock_role_may_put if {
+	fixture.has(sprintf("[PLAN-SBW-04] %s の key", [wu]), messages_with(replace(valid_statements, 12, actions_of(wu, workload_lock_keys, apply_denied))))
+}
+
+test_violation_others_misses_workload_unlock_role if {
+	fixture.has("[PLAN-SBW-01] state-backend.json: writer 以外の書き込みを拒否する文の例外", messages_with(replace(valid_statements, 1, others([a, ai, u]))))
+}
+
+test_violation_unlockers_swapped if {
+	d := with_state_backend({"roots": [
+		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "workload_unlock_role"},
+		{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "unlock_role"},
+	]})
+	msgs := messages_on(valid_statements, valid_key_statements, d)
+	fixture.has("[PLAN-SBW-05] lock を外す role workload_unlock_role が消せる key \"workload/terraform.tfstate.tflock\" が、その root の lock file \"identity/terraform.tfstate.tflock\" ではありません", msgs)
+	fixture.has("[PLAN-SBW-05] lock を外す role unlock_role が消せる key \"identity/terraform.tfstate.tflock\" が、その root の lock file \"workload/terraform.tfstate.tflock\" ではありません", msgs)
+}
+
+test_violation_key_policy_misses_apply_role if {
+	rw := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [ai, plan_arn]}])
+	fixture.has("[PLAN-SBW-06] state の鍵の暗号操作を許す principal", messages_on(valid_statements, [admin, rw, read_lock, read_workload_lock], decl))
 }
 
 test_violation_key_user_roles_empty if {
@@ -367,14 +416,14 @@ test_violation_key_user_roles_empty if {
 
 test_violation_lock_key_empty if {
 	d := {"deployment_identity": object.union(object.remove(decl.deployment_identity, ["unlock_role"]), {"unlock_role": {"role": decl.deployment_identity.unlock_role.role}}), "state_backend": decl.state_backend}
-	fixture.has("[PLAN-SBW-00] lock を外す role が消せる lock file の key", messages_on(valid_statements, valid_key_statements, d))
+	fixture.has("[PLAN-SBW-00] lock を外す role が消せる lock file の key（data.policy_plan.deployment_identity.unlock_role.lock_key）", messages_on(valid_statements, valid_key_statements, d))
 }
 
 test_violation_lock_key_not_a_root_lock if {
 	other := [sprintf("%s/other/x.tflock", [b])]
 	s := replace(replace(valid_statements, 4, outside(u, other)), 5, actions_of(u, other, unlock_denied))
 	d := {"deployment_identity": object.union(decl.deployment_identity, {"unlock_role": {"role": decl.deployment_identity.unlock_role.role, "lock_key": "other/x.tflock"}}), "state_backend": decl.state_backend}
-	fixture.has("[PLAN-SBW-05] lock を外す role が消せる key", messages_on(s, valid_key_statements, d))
+	fixture.has("[PLAN-SBW-05] lock を外す role unlock_role が消せる key \"other/x.tflock\"", messages_on(s, valid_key_statements, d))
 }
 
 test_violation_key_policy_service_principal if {
@@ -383,12 +432,12 @@ test_violation_key_policy_service_principal if {
 }
 
 test_violation_key_policy_not_action_grants_undeclared_role if {
-	na := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": a}, "NotAction": "kms:PutKeyPolicy", "Resource": "*"}
+	na := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/other"}, "NotAction": "kms:PutKeyPolicy", "Resource": "*"}
 	fixture.has("[PLAN-SBW-06] state の鍵の暗号操作を許す principal", messages_on(valid_statements, array.concat(valid_key_statements, [na]), decl))
 }
 
 test_violation_principal_arn_root if {
-	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, others([a, ai, u, "arn:aws:iam::123456789012:root"]))))
+	fixture.has("[PLAN-SBW-02]", messages_with(replace(valid_statements, 1, others([a, ai, u, wu, "arn:aws:iam::123456789012:root"]))))
 }
 
 test_violation_confining_not_resource_bucket if {
@@ -400,22 +449,26 @@ test_violation_confining_not_resource_bucket if {
 test_violation_bootstrap_executor_shape if {
 	x := "arn:aws:iam::123456789012:user/tabp-bootstrap"
 	e4a := json.patch(other_than_kms, [{"op": "add", "path": "/Condition/ArnNotEquals", "value": {"aws:PrincipalArn": x}}])
-	s := array.concat(replace(replace(valid_statements, 1, others([a, ai, u, x])), 8, e4a), [outside(x, identity_keys), actions_of(x, identity_keys, apply_denied)])
+	s := array.concat(replace(replace(valid_statements, 1, others([a, ai, u, wu, x])), 8, e4a), [outside(x, identity_keys), actions_of(x, identity_keys, apply_denied)])
 	msgs := messages_with(s)
 	fixture.has("[PLAN-SBW-02]", msgs)
 	fixture.has("[PLAN-SBW-07]", msgs)
 }
 
 test_pass_condition_case_insensitive if {
-	s := json.patch(others([a, ai, u]), [
-		{"op": "replace", "path": "/Condition", "value": {"arnnotequals": {"AWS:PRINCIPALARN": [a, ai, u]}}},
+	s := json.patch(others([a, ai, u, wu]), [
+		{"op": "replace", "path": "/Condition", "value": {"arnnotequals": {"AWS:PRINCIPALARN": [a, ai, u, wu]}}},
 		{"op": "replace", "path": "/Action", "value": ["S3:DELETEOBJECT", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"]},
 	])
 	count(messages_with(replace(valid_statements, 1, s))) == 0
 }
 
 test_violation_writer_declared_twice if {
-	fixture.has("[PLAN-SBW-00] root の writer と lock を外す role", messages_on(valid_statements, valid_key_statements, with_state_backend({"unlocker": "apply_identity_role"})))
+	d := with_state_backend({"roots": [
+		{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "apply_identity_role"},
+		{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"},
+	]})
+	fixture.has("[PLAN-SBW-00] root の writer と lock を外す role", messages_on(valid_statements, valid_key_statements, d))
 }
 
 test_violation_key_policy_mixed_principal if {
@@ -424,7 +477,7 @@ test_violation_key_policy_mixed_principal if {
 }
 
 test_violation_others_principal_narrowed if {
-	s := json.patch(others([a, ai, u]), [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
+	s := json.patch(others([a, ai, u, wu]), [{"op": "replace", "path": "/Principal", "value": {"AWS": plan_arn}}])
 	fixture.has("[PLAN-SBW-01] state Bucket", messages_with(replace(valid_statements, 1, s)))
 }
 
@@ -443,10 +496,79 @@ test_violation_other_key_value_includes_other_key if {
 }
 
 test_violation_root_without_writer if {
-	d := with_state_backend({"roots": [{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"}, {"state": "workload/terraform.tfstate"}]})
+	d := with_state_backend({"roots": [{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"}, {"state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"}]})
 	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素", messages_on(valid_statements, valid_key_statements, d))
 }
 
 test_violation_key_user_roles_not_array if {
 	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles が配列", messages_on(valid_statements, valid_key_statements, with_state_backend({"key_user_roles": "plan_role"})))
+}
+
+roots_with(rs) := with_state_backend({"roots": rs})
+
+identity_root := {"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"}
+
+workload_root := {"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"}
+
+test_violation_roots_not_array if {
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.roots が配列ではありません", messages_on(valid_statements, valid_key_statements, roots_with(identity_root)))
+}
+
+test_violation_root_malformed_shapes if {
+	every root in [
+		"apply_role",
+		object.union(workload_root, {"unlocker": 5}),
+		object.remove(workload_root, ["state"]),
+	] {
+		fixture.has(sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素 %v が writer と state と unlocker の文字列を持っていません", [root]), messages_on(valid_statements, valid_key_statements, roots_with([identity_root, root])))
+	}
+}
+
+test_violation_unlocker_undeclared_in_deployment_identity if {
+	d := roots_with([identity_root, object.union(workload_root, {"unlocker": "nothing_role"})])
+	d2 := json.patch(d, [{"op": "add", "path": "/state_backend/key_user_roles/-", "value": "nothing_role"}])
+	msgs := messages_on(valid_statements, valid_key_statements, d2)
+	fixture.has("[PLAN-SBW-00] role \"\"（data.policy_plan.deployment_identity.nothing_role.role）の ARN を入力から読めません", msgs)
+	fixture.has("[PLAN-SBW-00] lock を外す role が消せる lock file の key（data.policy_plan.deployment_identity.nothing_role.lock_key）が宣言にありません", msgs)
+}
+
+test_violation_unlocker_shared_by_two_roots if {
+	d := roots_with([identity_root, object.union(workload_root, {"unlocker": "unlock_role"})])
+	fixture.has("[PLAN-SBW-00] root の writer と lock を外す role", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_unlocker_not_a_key_user if {
+	d := with_state_backend({"key_user_roles": ["plan_role", "apply_identity_role", "unlock_role", "apply_role"]})
+	fixture.has("[PLAN-SBW-00] root の lock を外す role workload_unlock_role が data.policy_plan.state_backend.key_user_roles にありません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_key_user_role_undeclared if {
+	d := with_state_backend({"key_user_roles": ["plan_role", "apply_identity_role", "unlock_role", "apply_role", "workload_unlock_role", "nothing_role"]})
+	fixture.has("[PLAN-SBW-00] role \"\"（data.policy_plan.deployment_identity.nothing_role.role）の ARN を入力から読めません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_workload_lock_key_empty if {
+	d := {"deployment_identity": json.patch(decl.deployment_identity, [{"op": "replace", "path": "/workload_unlock_role/lock_key", "value": ""}]), "state_backend": decl.state_backend}
+	fixture.has("[PLAN-SBW-00] lock を外す role が消せる lock file の key（data.policy_plan.deployment_identity.workload_unlock_role.lock_key）が宣言にありません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_bucket_policy_document_unknown if {
+	inp := json.patch(input_with(valid_statements, valid_key_statements), [
+		{"op": "replace", "path": "/1/contents/resource_changes/2/change/after", "value": {}},
+		{"op": "replace", "path": "/1/contents/resource_changes/2/change/after_unknown", "value": {"policy": true}},
+	])
+	fixture.has("[PLAN-SBW-00] state Bucket の Bucket Policy \"module.s.aws_s3_bucket_policy.this\" が入力にありません", messages_for(inp, decl))
+}
+
+test_violation_bucket_policy_without_statement if {
+	inp := json.patch(input_with(valid_statements, valid_key_statements), [{"op": "replace", "path": "/1/contents/resource_changes/2/change/after/policy", "value": json.marshal({"Version": "2012-10-17"})}])
+	msgs := messages_for(inp, decl)
+	fixture.has("[PLAN-SBW-01] state Bucket の Bucket Policy に", msgs)
+	fixture.has("[PLAN-SBW-08] state Bucket の Bucket Policy に", msgs)
+}
+
+test_violation_key_policy_misses_roles_full_message if {
+	rw := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [plan_arn]}])
+	msgs := messages_on(valid_statements, [admin, rw, read_lock, read_workload_lock], decl)
+	fixture.has(sprintf("[PLAN-SBW-06] state の鍵の暗号操作を許す principal %v が、宣言（data.policy_plan.state_backend.key_user_roles）の role %v と一致しません", [sort([plan_arn, u, wu]), sort([plan_arn, ai, u, a, wu])]), msgs)
 }
