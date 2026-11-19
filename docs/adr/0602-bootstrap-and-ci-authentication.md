@@ -173,7 +173,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
     - environment の管理者による保護の迂回を無効とする。これは ADR-0603 決定22 が禁じるブランチの保護規則の
       bypass とは別の設定である
     - apply の role を assume する job の起動条件を、デプロイブランチへの push と手動の起動に限る。lock の
-      解除の role を assume する job の起動条件は、手動の起動だけとする。lock を残す job（ADR-0604 決定8）の起動条件は、手動の起動だけとする。どちらの手動の起動も ref や commit を
+      解除の role を assume する job の起動条件は、手動の起動だけとする。lock を残す job（ADR-0604 決定8）の起動条件は、手動の起動だけとする。いずれの手動の起動も ref や commit を
       入力に取らず、起動したブランチの最新の commit だけを対象とする。environment は同じ ref から起動された
       event を区別しないためである。sandbox の apply の role を assume する job の起動条件は、Pull Request
       だけとする。手動の起動を持たない。
