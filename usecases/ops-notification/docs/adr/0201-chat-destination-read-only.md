@@ -28,8 +28,8 @@ Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ
    Resource `"*"` の5つは `conftest/plan/decl.json` の `resource_wildcard_actions` に置き、別の statement に分ける（repository-wide/ADR-0301 決定9）。
 3. この集合を1つの customer managed policy にし、guardrail と channel role の両方に置く。channel role に付く policy と guardrail は同じ1つだけとする。`user_authorization_required = true` にする。AWS managed policy を使わない（repository-wide/ADR-0301 決定10）。
 4. 決定2 は公式推奨からの逸脱である（下の表。repository-wide/ADR-0207 決定11）。
-5. channel role の信頼は `chatbot.amazonaws.com` の `sts:AssumeRole` だけとする。Chatbot の文書は信頼の principal も confused deputy の条件も示さず（confused deputy の頁は無い）、principal は Chatbot の慣行に依る。
-6. 構成の `region` は `us-west-2` を明示する。Provider が寄せる region と宣言を一致させ、egress の宣言と合わせるためで、AWS の文書の推奨ではない。Topic は provider の region（ap-northeast-1）に置き、構成は別の region から購読する。
+5. channel role の信頼は、`chatbot.amazonaws.com` の `sts:AssumeRole` を `aws:SourceAccount`（`StringEquals`、自アカウントの固定値）で限る1文とする。Chatbot の文書は信頼の例を持たず、principal も confused deputy の条件も示さない（confused deputy の頁は無い）。principal は Chatbot の慣行に依り、条件は IAM の一般の指針（cross-service confused deputy prevention）に従う。`aws:SourceArn` は、Chatbot が渡す ARN の形を示す一次資料が無いので置かない。この信頼で Chatbot が role を引き受けられることは、sandbox で心拍が Slack に届くことで確かめる。
+6. 構成の `region` は `us-west-2` を明示する。Provider が寄せる region と宣言を一致させるためで、AWS の文書の推奨ではない。この宛先は、env の配線（#222 PR-B）で egress の宣言に足す。Topic は provider の region（ap-northeast-1）に置き、構成は別の region から購読する。
 7. `logging_level = "NONE"` にする。ログは Terraform の管理の外の Log Group に出る。
 8. Teams はまだ持たない。別の resource 型（`aws_chatbot_teams_channel_configuration`）で、届くことを確かめる tenant が無い（repository-wide/ADR-0401 (testing-policy) 決定3）。入力 `chat` は `teams` を後から足せる形にする。
 
@@ -37,7 +37,7 @@ Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ
 
 | 対象 | 理由 | 影響（security / availability / cost） | 代替案 | 見直し条件 |
 | --- | --- | --- | --- | --- |
-| 公式の `AWS-Chatbot-NotificationsOnly-Policy` の `cloudwatch:Describe*`・`Get*`・`List*` を使わず、決定2 の8つに限る | 部分 wildcard は、alarm と metric の読み取りのほかに、ログ・トレース・space の資格情報などデータへ届く読み取りに当たる。通知を描く経路にデータの読み取りを混ぜない | security は、Slack の利用者と Chatbot が読める範囲が alarm と metric に狭まる。availability は、Chatbot が描画に8つの外の Action を要るなら、その部分が描かれない（sandbox で確かめる）。cost は変わらない | 公式の policy を Service Authorization Reference で列挙に開いた全集合（約60）を使う | sandbox で通知の描画が欠けたとき。公式の policy が変わったとき。AWS Provider の major 更新時（repository-wide/ADR-0206 (official-implementations-as-reference) 決定12） |
+| 公式の `AWS-Chatbot-NotificationsOnly-Policy` の `cloudwatch:Describe*`・`Get*`・`List*` を使わず、決定2 の8つに限る | 部分 wildcard は、alarm と metric の読み取りのほかに、ログ・トレース・space の資格情報などデータへ届く読み取りに当たる。通知を描く経路にデータの読み取りを混ぜない。このユースケースの制約は、channel role と guardrail が AWS の外（Slack）の利用者の操作に掛かり、Chatbot が描くのは基盤系の alarm と metric の通知だけであることにある | security は、Slack の利用者と Chatbot が読める範囲が alarm と metric に狭まる。availability は、Chatbot が描画に8つの外の Action を要るなら、その部分が描かれない（sandbox で確かめる）。cost は変わらない | 公式の policy を Service Authorization Reference で列挙に開いた全集合（約60）を使う | sandbox で通知の描画が欠けたとき。公式の policy が変わったとき。AWS Provider の major 更新時（repository-wide/ADR-0206 (official-implementations-as-reference) 決定12） |
 
 ## 検討した代替案
 

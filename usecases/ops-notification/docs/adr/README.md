@@ -12,6 +12,8 @@
 
 ### 01 送り手と死活
 
+Topic へ何が届くか（送り手）と、届く経路が働いているか（心拍）を、Topic の入口の判断として1つの群に置く。
+
 | ID | タイトル | Status |
 | --- | --- | --- |
 | [0101](0101-fixed-publishers.md) | Topic の送り手を budgets・cloudwatch・costalerts・events に固定し、入力にしない | Accepted |

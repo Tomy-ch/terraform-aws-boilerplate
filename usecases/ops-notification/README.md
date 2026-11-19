@@ -20,7 +20,7 @@
 | `project` | `string`（英小文字と数字、37文字以内） | 名前の先頭の token。最も長い名前は role 名 `<project>-log-archive-ops-heartbeat`（63文字） |
 | `env` | `admin` / `security` / `log-archive` / `sandbox` / `dev` / `stg` / `prd` | Topic を置くアカウントの env の token（`state-backend`・`deployment-identity` と同じ token） |
 | `chat` | `object({ slack = object({ team_id = string, channel_id = string }) })` | 通知を届ける Slack の workspace（Chatbot で認可済み）の ID と channel の ID。名前ではなく ID を受ける（Chatbot API Reference の `SlackTeamId`・`SlackChannelId` の形） |
-| `permissions_boundary_arn` | `string`（同じアカウントの customer managed policy の ARN） | このユースケースが作る IAM role（心拍・channel）のすべてに付ける permissions boundary。policy は `deployment-identity` が持つ |
+| `permissions_boundary_arn` | `string`（同じアカウントの customer managed policy の ARN） | このユースケースが作る IAM role（心拍・channel）のすべてに付ける permissions boundary。policy は `deployment-identity` が持つ。この入力は IAM の表現を素通しする設定口ではなく、「作る role の権限の上限」を名指す識別子である。値は同じアカウントの customer managed policy の ARN に検証で限り、policy の内容は受けない（[ADR-0204](../../docs/adr/0204-no-generic-escape-hatch.md) 決定2 の Generic Escape Hatch に当たらない） |
 
 4つはどれも既定値を持たない必須入力である。
 
@@ -88,14 +88,14 @@ unsupported:
 - Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`internal/heartbeat/tests/` が schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role を、`reference/tests/plan.tftest.hcl` が reference の値を見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
 - Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、Topic Policy の形（`plan.sns_topic_policy`。TLS の Deny、Allow がサービス principal の `sns:Publish` だけで条件が自アカウントの `aws:SourceAccount` だけ、Topic ごとに Topic Policy が1つ）、合成の不変条件（`plan.ops_notification`。Topic Policy と Key Policy の送り手の一致、EventBridge の文が Topic を名指すこと、IAM で publish する role と Key Policy の SNS 経由の role の一致、2つの role の信頼、心拍の権限と target、guardrail と channel role の policy の一致、`read` の Action 集合、作る role が permissions boundary を持つこと）、Key Policy の形（`plan.kms_key_policy`。SNS の文を plan から導いた入力で見る）、Resource `"*"` の Action（`plan.iam_action_wildcard`）を確かめる。Topic と鍵の削除と置換、`aws_sns_topic` と `aws_kms_key` の inline の `policy` は、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection` が見る（CI の経路は env の配線の後）
 - Static Analysis: `make layer-check`・`make infra-code-gate`・`make resource-order-check`
-- 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。`tests/integration/sandbox.tftest.hcl` が、実行の識別子を含む `project` で sandbox に複製を作り、確かめてから破棄する。実行は人が行い、CI と `make tf-test` は走らせない。複製が在る間に、人が次を確かめる: 心拍の role・CloudWatch の alarm（`set-alarm-state`）・EventBridge の rule・Budgets・Cost Anomaly Detection からの publish が Topic Policy と Key Policy で拒まれずに Slack まで届くこと、TLS でない publish が拒まれること、心拍の本文の予定時刻が置換されること、Chatbot の描画が `read` の8つの Action で欠けないこと、Security Hub の SNS.4 の判定。期待残存（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）は、削除の猶予に入った鍵（鍵の ID・`PendingDeletion`・削除の日付）と、Slack の workspace の認可（team ID。Terraform の管理の外）である
+- 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。`tests/integration/sandbox.tftest.hcl` が、実行の識別子の接頭辞 `it` を持つ `project`（`tests/integration/guard` が検証し、外れたら複製を作る前に止まる）で sandbox に複製を作り、確かめてから破棄する。実行は人が行い、CI と `make tf-test` は走らせない。複製が在る間に、人が次を確かめる: 心拍の role・CloudWatch の alarm（`set-alarm-state`）・EventBridge の rule・Budgets・Cost Anomaly Detection からの publish が Topic Policy と Key Policy で拒まれずに Slack まで届くこと、TLS でない publish が拒まれること、心拍の本文の予定時刻が置換されること、Chatbot の描画が `read` の8つの Action で欠けないこと、Security Hub の SNS.4 の判定。期待残存（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）は、削除の猶予に入った鍵（鍵の ID・`PendingDeletion`・削除の日付）と、Slack の workspace の認可（team ID。Terraform の管理の外）である
 
-sandbox のアカウント（#21）が無い間は、複製のテストを実行しない。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+destroy の失敗と残存（Chatbot の構成の削除で外れない SNS の購読を含む）を検出する手段が無い（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）。手段ができるまで（#76）と、sandbox のアカウント（#21）が無い間は、sandbox の Integration Test を実行しない。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
+- destroy の失敗と、期待残存の外の残存（Chatbot の購読を含む）
 - 4つのサービスと心拍の role からの publish が、Topic Policy か Key Policy で拒まれること。とくに EventBridge は Key Policy を暗号化コンテキストで、Topic Policy を `aws:SourceAccount` で限っており、どちらも一次資料に例が無い
 - Chatbot が別の region の暗号化した Topic を購読できないこと、描画に `read` の外の Action を要ること
 - `<aws.scheduler.scheduled-time>` が SNS の templated target で置換されないこと
-- Chatbot の構成の削除で SNS の購読が残ること
 - 作成直後の role を名指す `PutKeyPolicy` が IAM の結果整合で落ちること
 
 ### 心拍が見る故障（設計の意図）
@@ -172,7 +172,8 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 ## 保証しないもの
 
 - Chatbot が通知を描くのに要る操作が、`read` の8つの Action で足りること。sandbox で確かめる
-- Chatbot の channel role の信頼の principal `chatbot.amazonaws.com` は、Chatbot の文書のどこにも書かれていない（confused deputy の頁も無い）。Chatbot の慣行に依り、一次資料で確かめていない
+- Chatbot の channel role の信頼（`chatbot.amazonaws.com` を `aws:SourceAccount` で限る）は、Chatbot の文書に例が無い（confused deputy の頁も無い）。principal は Chatbot の慣行に、条件は IAM の一般の指針に従う。この信頼で Chatbot が role を引き受けられることは、sandbox で心拍が Slack に届くことで確かめる
+- IAM で Topic へ publish できる role と Key Policy の SNS 経由の role の一致（`PLAN-NOTIFY-03`）は、inline policy（`aws_iam_role_policy`）だけを数える。attach した managed policy の `sns:Publish` は数えない
 - 心拍の role を同じ名前で作り直したとき、Topic の鍵の Key Policy が書き直されず、KMS が古い role を名指し続けること。`plan.kms_key_policy` の `PLAN-KMS-10` は、宣言した state の鍵の Key Policy だけを見る
 - Topic ごとに Topic Policy が1つであること（`PLAN-SNS-05`）は、Topic の ARN が plan で決まる mock の入力でだけ見る。CI の実 plan に掛けるかは、workload root の配線（#222）で決める
 - `env` の値と、Topic が実際に在るアカウントの対応。env の root が決める

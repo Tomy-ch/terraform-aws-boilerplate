@@ -13,8 +13,8 @@ EventBridge Scheduler は SNS の Publish を templated target として呼べ�
 
 ## Decision
 
-1. 専用の schedule group に、毎日 09:00（`Asia/Tokyo`）、`flexible_time_window` を OFF にした schedule を1つ置く。target は Topic で、本文は custom notification の JSON（title で警報でないことを示し、description に env・region・予定時刻を載せる。アカウント ID と ARN は載せない）。
-2. 実行 role の信頼は `scheduler.amazonaws.com` を `aws:SourceAccount` と schedule group の ARN の `aws:SourceArn`（`StringEquals`）で限る。権限は Topic への `sns:Publish` だけとし、鍵の暗号操作は Topic の鍵の Key Policy が SNS 経由に限って許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。
+1. 専用の schedule group に、毎日 09:00（`Asia/Tokyo`）、`flexible_time_window` を OFF にした schedule を1つ置く。target は Topic で、本文は custom notification の JSON（title で警報でないことを示し、description に env・region・予定時刻を載せる。アカウント ID と ARN は載せない）。Scheduler は生の input の中の `<aws.scheduler.scheduled-time>` を置換するので、`jsonencode` が `<` `>` に変えたエスケープを戻し、トークンを生の input にそのまま置く。
+2. 実行 role の信頼は `scheduler.amazonaws.com` を `aws:SourceAccount` と schedule group の ARN の `aws:SourceArn`（`StringEquals`）で限る。権限は Topic への `sns:Publish` だけとし、鍵の暗号操作は Topic の鍵の Key Policy が SNS 経由に限って許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。Key Policy が名指す role の ARN は、role の resource の属性ではなく名前から組む。属性は作成まで plan で決まらず、決まらない Principal を持つ Key Policy は Policy Test で読めない。ARN を名前から組めるので、resource 参照による依存の解決で足り、prefix の pattern は要らない（repository-wide/ADR-0301 決定11）。作成の順序は出力の `depends_on` で role の後に置く。
 3. retry は 185 回・3600 秒を明示する。1日遅れの心拍は次の日の心拍と区別できない。DLQ を置かない。
 4. 人が気づく形とする。channel を見る人が、毎朝の心拍が来ていないことに気づき、README の手順で原因を確かめる。自動の検知を置かない。
 5. 時刻と timezone は独自の判断である（repository-wide/ADR-0207 (default-value-policy) 決定3・4。公式の推奨値は無い）。09:00 `Asia/Tokyo` は、始業の時刻に揃えて「来ていない」に気づける時刻として採る。入力にしない。
