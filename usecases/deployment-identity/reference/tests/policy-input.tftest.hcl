@@ -55,6 +55,18 @@ override_resource {
   values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
 }
 
+override_resource {
+  target          = module.deployment_identity.module.github_oidc.aws_iam_policy.workload
+  override_during = plan
+  values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload" }
+}
+
+override_resource {
+  target          = module.deployment_identity.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
+  override_during = plan
+  values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification" }
+}
+
 run "policy_input" {
   command = plan
 }

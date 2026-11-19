@@ -79,7 +79,31 @@ deny contains msg if {
 	some a in lib.lower_all(s.Action)
 	some c in lib.crypto_actions
 	glob.match(a, null, c)
+	not boundary_via_service(r, s)
 	msg := sprintf("[PLAN-IAM-04] %s: %s の %s が KMS の暗号操作 %s を IAM で許可しています。鍵の Key Policy で principal を名指してください", [r.document.path, r.document.address, r.document.attr, c])
+}
+
+# 宣言した permissions boundary の文書で、SNS を経た暗号化と復号だけを上限に置く文は外す。boundary は上限を置くだけで権限を
+# 与えず、暗号操作は Key Policy が名指す主体に限られる（deployment-identity/ADR-0201 決定16）。Action は kms:Decrypt と
+# kms:GenerateDataKey だけ、条件 StringEquals の kms:ViaService はすべて sns.<region>.amazonaws.com、Resource は鍵の ARN だけ。
+boundary_addresses := {a | some _, a in object.get(object.get(object.get(data.policy_plan, "deployment_identity", {}), "workload", {}), "boundaries", {})}
+
+boundary_via_service(r, s) if {
+	r.document.type == "aws_iam_policy"
+	r.document.address in boundary_addresses
+	every a in lib.lower_all(s.Action) {
+		a in {"kms:decrypt", "kms:generatedatakey"}
+	}
+	values := lib.as_array(object.get(object.get(object.get(s, "Condition", {}), "StringEquals", {}), "kms:ViaService", []))
+	count(values) > 0
+	every v in values {
+		regex.match(`^sns\.[a-z0-9-]+\.amazonaws\.com$`, v)
+	}
+	resources := lib.as_array(object.get(s, "Resource", []))
+	count(resources) > 0
+	every x in resources {
+		regex.match(`^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/`, x)
+	}
 }
 
 # IAM の照合では * は任意の列、? は任意の1文字である。名前の部分が * と ? だけで * を含めば、

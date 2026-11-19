@@ -658,6 +658,27 @@ test_violation_exclusive_contents if {
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), msgs)
 }
 
+workload_policy_address := sprintf("%saws_iam_policy.workload", [g])
+
+workload_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload", [account])
+
+with_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address}}])
+
+workload_world(arns) := array.concat(
+	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
+	[res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})})],
+)
+
+test_pass_declared_workload_policy_attached if {
+	count(messages_for(workload_world([workload_policy_arn]), with_workload_decl)) == 0
+}
+
+test_violation_workload_policy_not_attached if {
+	every arns in [[], [workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"], ["arn:aws:iam::aws:policy/ReadOnlyAccess"]] {
+		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(workload_world(arns), with_workload_decl))
+	}
+}
+
 # --- 2本目の鍵 ---
 
 second_key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/22222222-12ab-34cd-56ef-1234567890ab", [account])

@@ -45,6 +45,19 @@ run "outputs" {
     condition     = output.github_oidc_provider_arn == module.github_oidc.oidc_provider_arn
     error_message = "github_oidc_provider_arn が OIDC provider の ARN を返していません。"
   }
+
+  assert {
+    condition     = output.permissions_boundary_arns == module.github_oidc.permissions_boundary_arns && output.permissions_boundary_arns == { "ops-notification" = "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification" }
+    error_message = "permissions_boundary_arns が、role を作る usecase ごとの boundary の ARN（usecase の名前を key にした map）を返していません。"
+  }
+
+  # env の root が名前から組む ARN と比べるので、key（usecase の名前）と ARN の形を固定する。
+  assert {
+    condition = keys(output.permissions_boundary_arns) == ["ops-notification"] && alltrue([
+      for k, v in output.permissions_boundary_arns : can(regex("^arn:aws:iam::123456789012:policy/${var.project}-${var.env}-ci-boundary-${k}$", v))
+    ])
+    error_message = "permissions_boundary_arns の key が usecase の名前（ops-notification）でないか、値が arn:<partition>:iam::<account>:policy/<project>-<env>-ci-boundary-<usecase> の形ではありません。"
+  }
 }
 
 # 取り違えが見えるよう、上の admin とは別の値を渡す。
@@ -70,6 +83,19 @@ run "wiring" {
       unlock          = { name = "t4bp-dev-ci-unlock", environment = "dev-unlock" }
     }
     error_message = "role と environment の名前が、project と env から組まれていません。"
+  }
+
+  assert {
+    condition     = output.permissions_boundary_arns == { "ops-notification" = "arn:aws:iam::123456789012:policy/t4bp-dev-ci-boundary-ops-notification" }
+    error_message = "permissions_boundary_arns の boundary の名前が、project と env から組まれていません。"
+  }
+
+  # env の root が名前から組む ARN と比べるので、key（usecase の名前）と ARN の形を固定する。
+  assert {
+    condition = keys(output.permissions_boundary_arns) == ["ops-notification"] && alltrue([
+      for k, v in output.permissions_boundary_arns : can(regex("^arn:aws:iam::123456789012:policy/${var.project}-${var.env}-ci-boundary-${k}$", v))
+    ])
+    error_message = "permissions_boundary_arns の key が usecase の名前（ops-notification）でないか、値が arn:<partition>:iam::<account>:policy/<project>-<env>-ci-boundary-<usecase> の形ではありません。"
   }
 
   assert {

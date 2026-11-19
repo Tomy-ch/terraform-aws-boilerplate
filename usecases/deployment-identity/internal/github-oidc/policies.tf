@@ -41,8 +41,10 @@ locals {
   # apply の role の workload の権限（決定17）と、role を作る usecase ごとの permissions boundary（決定15）。
   workload_policy_name  = "${var.name_prefix}-ci-apply-workload"
   workload_policy_arn   = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
-  boundary_policy_names = { ops_notification = "${var.name_prefix}-ci-boundary-ops-notification" }
-  boundary_policy_arns  = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
+  boundary_policy_names = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
+  # 決定13。IAM の role と policy を書き込む Allow は、usecase が IAM の名前の先頭に置く小文字の接頭辞に限る。
+  usecase_iam_prefixes = { "ops-notification" = "${var.name_prefix}-ops-" }
+  boundary_policy_arns = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
 
   bucket_read_actions = [
     "s3:GetAccelerateConfiguration",
@@ -185,6 +187,136 @@ locals {
       Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-*"
     },
   ]
+
+  workload_role_write_arns   = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:role/${p}*"]
+  workload_policy_write_arns = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:policy/${p}*"]
+  boundary_condition         = { StringEquals = { "iam:PermissionsBoundary" = values(local.boundary_policy_arns) } }
+
+  # apply の role の workload の管理（決定13・14・18）。鍵と Topic の削除は与えない。
+  workload_manage_statements = [
+    {
+      Sid      = "CreateWorkloadKeys"
+      Effect   = "Allow"
+      Action   = "kms:CreateKey"
+      Resource = "*"
+      Condition = {
+        StringEquals         = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" }
+        StringEqualsIfExists = { "kms:KeyOrigin" = "AWS_KMS" }
+        BoolIfExists         = { "kms:MultiRegion" = "false" }
+      }
+    },
+    {
+      Sid       = "ManageWorkloadKeys"
+      Effect    = "Allow"
+      Action    = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
+      Resource  = local.workload_key_arns
+      Condition = local.workload_key_conditions
+    },
+    {
+      Sid      = "ManageWorkloadKeyAliases"
+      Effect   = "Allow"
+      Action   = ["kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias"]
+      Resource = ["arn:${data.aws_partition.current.partition}:kms:${local.regional_arn_suffix}:alias/${var.name_prefix}-*", local.workload_key_arns]
+    },
+    {
+      Sid      = "ManageWorkloadTopics"
+      Effect   = "Allow"
+      Action   = ["sns:CreateTopic", "sns:SetTopicAttributes"]
+      Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${var.name_prefix}-*"
+    },
+    {
+      Sid    = "ManageWorkloadSchedules"
+      Effect = "Allow"
+      Action = ["scheduler:CreateSchedule", "scheduler:CreateScheduleGroup", "scheduler:DeleteSchedule", "scheduler:DeleteScheduleGroup", "scheduler:UpdateSchedule"]
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule-group/${var.name_prefix}-*",
+        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule/${var.name_prefix}-*/*",
+      ]
+    },
+    { Sid = "CreateChatConfigurations", Effect = "Allow", Action = "chatbot:CreateSlackChannelConfiguration", Resource = "*" },
+    {
+      Sid      = "ManageChatConfigurations"
+      Effect   = "Allow"
+      Action   = ["chatbot:DeleteSlackChannelConfiguration", "chatbot:UpdateSlackChannelConfiguration"]
+      Resource = "arn:${data.aws_partition.current.partition}:chatbot::${data.aws_caller_identity.current.account_id}:chat-configuration/slack-channel/${var.name_prefix}-*"
+    },
+    {
+      Sid    = "ManageBoundedRoles"
+      Effect = "Allow"
+      Action = [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePermissionsBoundary",
+        "iam:PutRolePolicy",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription",
+      ]
+      Resource  = local.workload_role_write_arns
+      Condition = local.boundary_condition
+    },
+    {
+      Sid       = "AttachWorkloadPolicies"
+      Effect    = "Allow"
+      Action    = "iam:AttachRolePolicy"
+      Resource  = local.workload_role_write_arns
+      Condition = merge(local.boundary_condition, { ArnLike = { "iam:PolicyARN" = local.workload_policy_write_arns } })
+    },
+    # iam:PermissionsBoundary を受けないので、条件つきの文に入れない。
+    { Sid = "ListWorkloadRoleInstanceProfiles", Effect = "Allow", Action = "iam:ListInstanceProfilesForRole", Resource = "${local.iam_arn_prefix}:role/${var.name_prefix}-*" },
+    {
+      Sid    = "ManageWorkloadPolicies"
+      Effect = "Allow"
+      Action = [
+        "iam:CreatePolicy",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:SetDefaultPolicyVersion",
+      ]
+      Resource = local.workload_policy_write_arns
+    },
+    {
+      Sid       = "PassWorkloadRoles"
+      Effect    = "Allow"
+      Action    = "iam:PassRole"
+      Resource  = local.workload_role_write_arns
+      Condition = { StringEquals = { "iam:PassedToService" = ["chatbot.amazonaws.com", "scheduler.amazonaws.com"] } }
+    },
+    {
+      Sid       = "CreateChatbotServiceLinkedRole"
+      Effect    = "Allow"
+      Action    = "iam:CreateServiceLinkedRole"
+      Resource  = "${local.iam_arn_prefix}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+    },
+  ]
+
+  # role を作る usecase ごとの boundary の Allow（決定15・16）。Deny は bootstrap_deny_statements を足す。
+  boundary_allow_statements = {
+    "ops-notification" = concat(
+      [
+        { Sid = "PublishTopics", Effect = "Allow", Action = "sns:Publish", Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${local.usecase_iam_prefixes["ops-notification"]}*" },
+        {
+          Sid       = "UseKeysViaSns"
+          Effect    = "Allow"
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+          Resource  = local.workload_key_arns
+          Condition = { StringEquals = { "kms:ViaService" = "sns.${data.aws_region.current.region}.amazonaws.com" } }
+        },
+        {
+          Sid      = "ReadAlarms"
+          Effect   = "Allow"
+          Action   = ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"]
+          Resource = "arn:${data.aws_partition.current.partition}:cloudwatch:${local.regional_arn_suffix}:alarm:*"
+        },
+      ],
+      [for a in ["cloudwatch:DescribeAlarmsForMetric", "cloudwatch:GetMetricData", "cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricWidgetImage", "cloudwatch:ListMetrics"] : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+    )
+  }
 
   # Resource "*" でしか与えられない Action は、Action ごとの別の文にする（deployment-identity/ADR-0201 決定1）。
   governance_wildcard_read_actions = [
