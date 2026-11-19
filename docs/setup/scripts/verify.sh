@@ -165,8 +165,14 @@ stage4() {
     r=${r%%:*}
     expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
       --arg p "$p" "$JQ_POLICY_NAMES"
-    expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-      '.AttachedPolicies == []'
+    if [[ $r == apply-identity ]]; then
+      # 統制の customer managed policy は、PR-A2 の apply の後に付く（deployment-identity/ADR-0201 決定7）。
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-identity-governance"])'
+    else
+      expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies == []'
+    fi
   done
   local policy
   policy=$(s3 get-bucket-policy "$BUCKET" --query Policy --output text) || policy=""
@@ -249,6 +255,28 @@ permissions() {
   sim implicitDeny apply "$sk" kms:Decrypt kms:GenerateDataKey
   sim explicitDeny apply "$sk" kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription
   sim explicitDeny apply-identity "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:PutKeyPolicy
+
+  echo "# 統制の構成物（deployment-identity/ADR-0201 決定3・5・7）"
+  local gp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-governance"
+  local bg="arn:aws:iam::${ACCOUNT_ID}:role/break-glass/tabp-break-glass"
+  sim allowed apply-identity "$gp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim implicitDeny apply-identity "arn:aws:iam::${ACCOUNT_ID}:policy/other" iam:CreatePolicy iam:CreatePolicyVersion
+  sim allowed apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${gp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
+  sim allowed plan "*" organizations:DescribeOrganization organizations:ListRoots organizations:ListAccounts iam:ListOrganizationsFeatures iam:GetAccountPasswordPolicy
+  sim allowed plan "$gp" iam:GetPolicy iam:GetPolicyVersion
+  sim implicitDeny plan "*" organizations:CreateOrganization iam:UpdateAccountPasswordPolicy
+  sim explicitDeny apply "*" organizations:CreateOrganization organizations:AttachPolicy organizations:LeaveOrganization account:CloseAccount iam:EnableOrganizationsRootSessions iam:UpdateAccountPasswordPolicy sso:CreatePermissionSet sts:AssumeRoot
+  sim explicitDeny apply "$bg" iam:UpdateAssumeRolePolicy iam:AttachRolePolicy
+  sim explicitDeny apply "$gp" iam:CreatePolicyVersion
+  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query 'AttachedPolicies[].PolicyName' --output text) == tabp-admin-ci-apply-identity-governance ]]; then
+    sim allowed apply-identity "*" organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy
+    sim allowed apply-identity "$bg" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
+    sim implicitDeny apply-identity "*" organizations:DeleteOrganization
+    sim implicitDeny apply-identity "$bg" iam:DeleteRole
+  else
+    echo "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（PR-A2 の apply の後にもう一度走らせる）"
+  fi
 
   echo "# unlock-identity の role"
   local lock="${key}.tflock"

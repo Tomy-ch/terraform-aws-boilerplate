@@ -119,6 +119,13 @@ well_formed_managed if {
 
 managed_arn_known(m) if is_string(after(m).arn)
 
+# 宣言の address が入力に無いと、その policy の文書を下の規則が読まない。
+deny contains msg if {
+	some m in managed_declared
+	not m in managed_present
+	msg := sprintf("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies の %q が、aws_iam_policy として入力にありません。address が変わったなら宣言を直してください", [m])
+}
+
 deny contains msg if {
 	some m in managed_present
 	not managed_arn_known(m)
@@ -253,6 +260,13 @@ deny contains msg if {
 	not is_array(object.get(a.after, "policy_arns", null))
 	not is_set(object.get(a.after, "policy_arns", null))
 	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns を plan で読めません", [a.path, a.address])
+}
+
+# 要素の一部が unknown なら、after は読めた要素だけを持ち、上の比較は残りを見ない。
+deny contains msg if {
+	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
+	unknown_any(object.get(a.unknown, "policy_arns", false))
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arns に plan で決まらない ARN があります", [a.path, a.address])
 }
 
 # role の引数で付ける policy は、上の型を通らない。

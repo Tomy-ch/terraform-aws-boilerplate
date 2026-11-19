@@ -1170,8 +1170,13 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "dev に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
+    condition     = length(aws_iam_policy.governance) == 0
+    error_message = "dev に、統制の customer managed policy が作られています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "dev の apply-identity の role に、managed policy が付いています。"
   }
 }
 
@@ -1243,8 +1248,13 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "security に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
+    condition     = length(aws_iam_policy.governance) == 0
+    error_message = "security に、統制の customer managed policy が作られています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "security の apply-identity の role に、managed policy が付いています。"
   }
 }
 
@@ -1316,8 +1326,13 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
-    error_message = "log-archive に、統制の customer managed policy が作られるか、apply-identity の role に付いています。"
+    condition     = length(aws_iam_policy.governance) == 0
+    error_message = "log-archive に、統制の customer managed policy が作られています。"
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0
+    error_message = "log-archive の apply-identity の role に、managed policy が付いています。"
   }
 }
 
@@ -1402,4 +1417,59 @@ run "admin_break_glass_empty" {
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+# 管理アカウントでも、partition・アカウント・name_prefix を既定と変え、統制の ARN が data source と入力から組まれることを見る。
+run "governance_follows_data_sources" {
+  command = apply
+
+  variables {
+    name_prefix = "t4bp-admin"
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::210987654321:role/break-glass/t4bp-break-glass",
+    ]
+    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  assert {
+    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance"])
+    error_message = "apply-identity の role に付く統制の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyIdentityChange"]), "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance")
+    error_message = "apply の role の DenyIdentityChange が、統制の policy の ARN を partition・アカウントから組んでいません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["CreateOrganizationsServiceLinkedRole", "ManagePolicyTypes", "AttachBreakGlassAdministratorAccess"], s.Sid)] == [
+      ["arn:aws-us-gov:iam::210987654321:role/aws-service-role/organizations.amazonaws.com/AWSServiceRoleForOrganizations", { StringEquals = { "iam:AWSServiceName" = "organizations.amazonaws.com" } }],
+      [["arn:aws-us-gov:organizations::210987654321:root/o-*/r-*"], null],
+      [["arn:aws-us-gov:iam::210987654321:role/break-glass/t4bp-break-glass"], { ArnEquals = { "iam:PolicyARN" = "arn:aws-us-gov:iam::aws:policy/AdministratorAccess" } }],
+    ]
+    error_message = "統制の policy の Resource と条件が、partition・アカウントから組まれていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if contains(["ReadGovernancePolicy", "ManageGovernancePolicy"], s.Sid)] == [
+      "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance",
+      "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance",
+    ]
+    error_message = "apply-identity の統制の policy の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
+  }
 }

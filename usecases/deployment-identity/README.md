@@ -60,7 +60,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
   - unlock-identity: identity root の lock file の一覧（`s3:ListBucket` を `s3:prefix` で限る）・読み取り・削除だけ。`s3:PutObject` と `s3:DeleteObjectVersion` を持たず、偽の lock を置けず、版も消せない。lock file の復号は、state の鍵の Key Policy がその object に限って許す
   - unlock: workload root の lock file の一覧・読み取り・削除だけ。unlock-identity と同じ形で、受け持つ lock file だけが違う
   - 暗号操作（`kms:Decrypt` など）は IAM では与えない。state の鍵の Key Policy が CI の role を名指して許す
-- role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす）
+- role ごとの inline policy と、inline policy と managed policy の排他（帯域外で足された policy を次の apply で剥がす。managed policy は、`admin` の apply-identity の role の統制の customer managed policy だけを残す）
 - role の ARN を、role の resource ではなく partition・アカウント・role 名から組む。apply-identity の role と inline policy は他の role と別の resource で、他の role はその inline policy の書き込みの後に作る。role を足す変更は、1回の apply で、その role を管理する権限を apply-identity に足してから role を作る（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定4）
 
 これらは usecase に固有の module `internal/github-oidc/` が持つ（[ADR-0102](../../docs/adr/0102-use-case-centric-scope.md) 決定15）。信頼条件が GitHub の claim に、権限が bootstrap の構成物と state の key に固有で、どの usecase でも同じ形で成立する機構ではないためである。
