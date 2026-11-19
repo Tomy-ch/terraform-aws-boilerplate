@@ -3,7 +3,7 @@ package plan.kms_key_policy_test
 import data.plan.fixture
 import data.plan.kms_key_policy as p
 
-# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend の reference の plan への適用が見る。CloudWatch Logs の文は reference の plan に現れないので見ない。
+# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend と audit-evidence の reference の plan への適用が見る。
 root := {
 	"Sid": "AccountKeyAdministration",
 	"Effect": "Allow",
@@ -55,6 +55,26 @@ via_sns := {
 	}},
 }
 
+# modules/kms/tests/policy.tftest.hcl の RolesViaS3Read の期待値と同じ形の文。
+via_s3_read := {
+	"Sid": "RolesViaS3Read0",
+	"Effect": "Allow",
+	"Principal": {"AWS": ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"]},
+	"Action": "kms:Decrypt",
+	"Resource": "*",
+	"Condition": {"StringEquals": {
+		"kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
+		"kms:EncryptionContext:aws:s3:arn": ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock"],
+	}},
+}
+
+own_object := "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock"
+
+s3_read_with(op, values) := with_condition(via_s3_read, object.union(
+	{"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}},
+	{op: {"kms:EncryptionContext:aws:s3:arn": values}},
+))
+
 sns_publisher(sid, svc) := {
 	"Sid": sid,
 	"Effect": "Allow",
@@ -86,7 +106,7 @@ with_condition(s, c) := json.patch(s, [{"op": "replace", "path": "/Condition", "
 without(s, path) := json.patch(s, [{"op": "remove", "path": path}])
 
 test_pass_module_shape if {
-	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3, logs])])
+	count(p.deny) == 0 with input as fixture.plan([key_policy([root, via_s3, via_s3_read, logs])])
 }
 
 test_violation_declared_key_policy_absent if {
@@ -527,4 +547,232 @@ test_violation_sns_role_without_topic if {
 
 test_pass_s3_role_is_not_sns if {
 	count(ids([root, via_s3])) == 0
+}
+
+test_pass_s3_read_shapes if {
+	every s in [
+		s3_read_with("StringEquals", [own_object, "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock"]),
+		s3_read_with("ArnEquals", [own_object]),
+		s3_read_with("StringLike", [own_object]),
+		s3_read_with("ArnLike", own_object),
+		with_condition(via_s3_read, {"STRINGEQUALS": {
+			"KMS:VIASERVICE": "s3.ap-northeast-1.amazonaws.com",
+			"KMS:ENCRYPTIONCONTEXT:AWS:S3:ARN": own_object,
+		}}),
+		json.patch(via_s3_read, [{"op": "replace", "path": "/Action", "value": ["kms:Decrypt", "kms:DescribeKey"]}]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a/b:c"]),
+		with_condition(via_s3_read, {"StringEquals": {
+			"kms:ViaService": ["s3.ap-northeast-1.amazonaws.com", "s3.us-east-1.amazonaws.com"],
+			"kms:EncryptionContext:aws:s3:arn": ["arn:aws:s3:::a.b-c-123456789012-us-east-1-an/k"],
+		}}),
+	] {
+		count(ids([root, s])) == 0
+	}
+}
+
+# ViaService と region は実在の形ではない。見るのは partition（aws-cn）の置換だけ。
+test_pass_s3_read_other_partition if {
+	cn_root := json.patch(root, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws-cn:iam::123456789012:root"}])
+	s := json.patch(with_condition(via_s3_read, {"StringEquals": {
+		"kms:ViaService": "s3.cn-north-1.amazonaws.com",
+		"kms:EncryptionContext:aws:s3:arn": ["arn:aws-cn:s3:::x-123456789012-cn-north-1-an/k"],
+	}}), [{"op": "replace", "path": "/Principal/AWS", "value": ["arn:aws-cn:iam::123456789012:role/r"]}])
+	count(ids([cn_root, s])) == 0
+}
+
+test_pass_s3_read_write if {
+	every s in [
+		json.patch(with_condition(via_s3, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": "kms:*"}]),
+		with_condition(via_s3, {"StringEquals": {
+			"kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:s3:arn": [own_object],
+		}}),
+		json.patch(via_s3, [{"op": "replace", "path": "/Action", "value": ["kms:Decrypt", "kms:GenerateDataKey*"]}]),
+		json.patch(via_s3, [{"op": "remove", "path": "/Action"}, {"op": "add", "path": "/NotAction", "value": ["kms:Encrypt"]}]),
+	] {
+		count({i | some i in ids([root, s]); i == "[PLAN-KMS-12]"}) == 0
+	}
+}
+
+test_violation_s3_read_without_object if {
+	every s in [
+		with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}),
+		s3_read_with("StringEqualsIfExists", [own_object]),
+		s3_read_with("StringEqualsIgnoreCase", [own_object]),
+		s3_read_with("ForAnyValue:StringEquals", [own_object]),
+		s3_read_with("StringNotEquals", [own_object]),
+		with_condition(via_s3_read, {"StringEquals": {
+			"kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:s3:bucket": "tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+		}}),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "remove", "path": "/Action"}, {"op": "add", "path": "/NotAction", "value": ["kms:GenerateDataKey*", "kms:Encrypt"]}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": [1]}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "remove", "path": "/Action"}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": []}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "remove", "path": "/Action"}, {"op": "add", "path": "/NotAction", "value": [1]}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": "kms:Dec*"}]),
+		s3_read_with("StringEquals", []),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-12]"}
+	}
+}
+
+test_violation_s3_read_foreign_object if {
+	every s in [
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-210987654321-ap-northeast-1-an/k"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::bkt/k"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-us-east-1-an/k"]),
+		s3_read_with("StringEquals", ["arn:aws-cn:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"]),
+		s3_read_with("StringLike", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/*"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/${aws:PrincipalTag/k}"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp123456789012-ap-northeast-1-an/k"]),
+		s3_read_with("StringEquals", ["*"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k?"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/"]),
+		s3_read_with("StringEquals", ["arn:aws:sns:ap-northeast-1:123456789012:t"]),
+		s3_read_with("StringEquals", [1]),
+		s3_read_with("StringEquals", [own_object, "arn:aws:s3:::bkt/k"]),
+		with_condition(via_s3, {"StringEquals": {
+			"kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:s3:arn": ["arn:aws:s3:::bkt/k"],
+		}}),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-12]"}
+	}
+}
+
+test_violation_s3_read_bucket_arn if {
+	msgs := p.deny with input as fixture.plan([key_policy([root, s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an"])])])
+	fixture.has("[PLAN-KMS-12] p.json: module.state_backend.module.kms.aws_kms_key_policy.this が S3 経由の role の文の object に Bucket の ARN", msgs)
+	count({m | some m in msgs; contains(m, "account regional namespace の Bucket の object の ARN でない")}) == 0
+}
+
+test_violation_s3_read_account_undefined if {
+	r2 := json.patch(root, [{"op": "replace", "path": "/Sid", "value": "Root2"}])
+	every statements in [[via_s3_read], [root, r2, via_s3_read]] {
+		some m in p.deny with input as fixture.plan([key_policy(statements)])
+		contains(m, "account regional namespace の Bucket の object の ARN でない")
+	}
+}
+
+# 規則ごとの文言で、限定の欠落と object の誤りを取り違えないことを見る。
+test_violation_s3_read_rule_messages if {
+	missing := p.deny with input as fixture.plan([key_policy([root, with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}})])])
+	some m1 in missing
+	contains(m1, "復号を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています")
+	foreign := p.deny with input as fixture.plan([key_policy([root, s3_read_with("StringEquals", ["arn:aws:s3:::bkt/k"])])])
+	some m2 in foreign
+	contains(m2, "account regional namespace の Bucket の object の ARN でない")
+	count({m | some m in foreign; contains(m, "で限らずに許可しています")}) == 0
+}
+
+test_violation_s3_read_region_unreadable if {
+	every v in ["s3.amazonaws.com", "s3.ap-northeast-1.amazonaws.com.evil"] {
+		s := with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": v, "kms:EncryptionContext:aws:s3:arn": own_object}})
+		some m in p.deny with input as fixture.plan([key_policy([root, s])])
+		contains(m, "account regional namespace の Bucket の object の ARN でない")
+	}
+}
+
+test_pass_s3_read_out_of_scope if {
+	every s in [
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:root"}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": ["kms:DescribeKey"]}]),
+		json.patch(with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com", "kms:EncryptionContext:aws:s3:arn": ["arn:aws:s3:::bkt/k"]}}), [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::123456789012:root"}, {"op": "replace", "path": "/Action", "value": ["kms:DescribeKey"]}]),
+		json.patch(via_sns, [{"op": "replace", "path": "/Action", "value": [1]}]),
+		with_condition(via_sns, {"StringEquals": {
+			"kms:ViaService": "sns.ap-northeast-1.amazonaws.com",
+			"kms:EncryptionContext:aws:sns:topicArn": ["arn:aws:sns:ap-northeast-1:123456789012:t"],
+			"kms:EncryptionContext:aws:s3:arn": ["arn:aws:s3:::bkt/k"],
+		}}),
+	] {
+		count({i | some i in ids([root, s]); i == "[PLAN-KMS-12]"}) == 0
+	}
+}
+
+test_violation_s3_read_mixed_via_service if {
+	s := with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": ["sns.ap-northeast-1.amazonaws.com", "s3.ap-northeast-1.amazonaws.com"]}})
+	{"[PLAN-KMS-11]", "[PLAN-KMS-12]"} == {i | some i in ids([root, s]); i in {"[PLAN-KMS-11]", "[PLAN-KMS-12]"}}
+}
+
+trail_encrypt := {
+	"Sid": "CloudTrailEncrypt",
+	"Effect": "Allow",
+	"Principal": {"Service": "cloudtrail.amazonaws.com"},
+	"Action": "kms:GenerateDataKey*",
+	"Resource": "*",
+	"Condition": {"StringEquals": {
+		"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+	}},
+}
+
+config_service := {
+	"Sid": "ConfigService",
+	"Effect": "Allow",
+	"Principal": {"Service": "config.amazonaws.com"},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"aws:SourceAccount": ["111111111111", "222222222222"]}},
+}
+
+cross := {"cross_account_sources": {declared: ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}}
+
+cross_ids(statements, decl) := found if {
+	found := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy(statements)])
+		with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": decl})
+}
+
+test_pass_declared_cross_account_sources if {
+	count(cross_ids([root, trail_encrypt, config_service], cross)) == 0
+}
+
+test_violation_cross_account_sources_not_declared if {
+	every decl in [
+		{},
+		{"cross_account_sources": {}},
+		{"cross_account_sources": {"module.other.aws_kms_key_policy.this": ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: ["config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: "cloudtrail.amazonaws.com"}},
+		{"cross_account_sources": []},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], decl)
+	}
+}
+
+test_violation_declared_cross_account_sources_not_typed if {
+	every c in [
+		{"StringEquals": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:*:trail/tabp-org"}},
+		{"StringLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/*"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws-cn:cloudtrail:cn-north-1:111111111111:trail/tabp-org"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws:s3:::bucket"}},
+		{"StringEquals": {"aws:SourceAccount": "*"}},
+		{"StringEquals": {"aws:SourceAccount": "1111"}},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, with_condition(trail_encrypt, c)], cross)
+	}
+}
+
+# 宣言したサービスと宣言の外のサービスを1つの文に並べても、外のアカウントは受けない。
+test_violation_declared_cross_account_mixed_principal if {
+	s := json.patch(trail_encrypt, [{"op": "replace", "path": "/Principal/Service", "value": ["cloudtrail.amazonaws.com", "logs.ap-northeast-1.amazonaws.com"]}])
+	"[PLAN-KMS-05]" in cross_ids([root, s], cross)
+}
+
+# 宣言した文でも、許す値と外の値が混ざれば外の値の規則だけが落とす。
+test_violation_declared_cross_account_mixed_values if {
+	every v in ["arn:aws:s3:::bucket", "arn:aws:cloudtrail:ap-northeast-1::trail/x", "1111"] {
+		c := {"StringEquals": {
+			"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org", v],
+			"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		}}
+		found := p.deny with input as fixture.plan([key_policy([root, with_condition(trail_encrypt, c)])])
+			with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": cross})
+		some m in found
+		contains(m, "委任のアカウントの外の値")
+	}
+}
+
+test_violation_cross_account_sources_empty_service_list if {
+	"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], {"cross_account_sources": {declared: []}})
 }

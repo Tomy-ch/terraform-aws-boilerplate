@@ -45,7 +45,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-09] %s: %s の %s が plan で決まらないか、JSON の文書として読めません", [d.path, d.address, d.attr])
 }
 
-# KMS は Principal の role を一意 ID で持つので、作った role は、それを名指す Key Policy が書き直されるまで鍵を使えない。
 # 同じ名前で作り直すと ARN の文字列も同じで、Key Policy は書き直されない。別の address での作り直しも含めて、作成を見る。
 created_roles contains c.rc if {
 	some c in lib.changes
@@ -85,7 +84,7 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-10] %s: 作る role %s の名前が plan で決まらないので、%s が名指すかを確かめられません", [r.document.path, rc.address, r.document.address])
 }
 
-# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とし、05 は限っていないと読み、03 は見ない。
+# 文書のアカウント。委任の Allow がちょうど1つのときだけ決まる。決まらない文書は 02 が落とす。アカウントと比べる規則のうち、03 は見ず、11・12 と、05 の宣言した外のアカウントの文でないものは、限っていないと読んで落とす。
 account(body) := split(roots(body)[0], ":")[4] if count(roots(body)) == 1
 
 same_account(arn, acct) if regex.match(sprintf(`^arn:aws[a-z-]*:(iam|sts)::%s:`, [acct]), arn)
@@ -145,7 +144,7 @@ deny contains msg if {
 	some r in key_policies
 	some s in allows(r.body)
 	some svc in service_principals(s)
-	not source_limited(s, r.body)
+	not source_limited(s, r)
 	msg := sprintf("[PLAN-KMS-05] %s: %s が %s に、要求元（委任のアカウントの aws:SourceArn・aws:SourceAccount・kms:EncryptionContext の ARN）を限らずに許可しています", [r.document.path, r.document.address, svc])
 }
 
@@ -154,7 +153,7 @@ deny contains msg if {
 	some s in allows(r.body)
 	some svc in service_principals(s)
 	some v in source_values(s)
-	not own_source(v, s, r.body)
+	not allowed_source(v, s, r)
 	msg := sprintf("[PLAN-KMS-05] %s: %s が %s の要求元に、委任のアカウントの外の値 %v を置いています", [r.document.path, r.document.address, svc, v])
 }
 
@@ -171,9 +170,36 @@ source_key(k) if startswith(k, "kms:encryptioncontext:")
 
 source_values(s) := [v | some k in source_keys(s); some v in lib.limiting_values(s, k)]
 
-source_limited(s, body) if {
+source_limited(s, r) if {
 	some v in source_values(s)
-	own_source(v, s, body)
+	allowed_source(v, s, r)
+}
+
+allowed_source(v, s, r) if own_source(v, s, r.body)
+
+allowed_source(v, s, r) if {
+	cross_account_statement(s, r.document.address)
+	foreign_source(v, r.body)
+}
+
+# 鍵の外のアカウントの要求元は、宣言した Key Policy の、宣言したサービスだけの文に限って受ける（ADR-0301 決定18）。
+cross_account_sources := object.get(object.get(data.policy_plan, "kms_key_policy", {}), "cross_account_sources", {})
+
+cross_account_statement(s, address) if {
+	services := object.get(cross_account_sources, address, [])
+	is_array(services)
+	count(service_principals(s)) > 0
+	every svc in service_principals(s) { svc in services }
+}
+
+foreign_source(v, _) if {
+	lib.no_wildcard(v)
+	regex.match(`^[0-9]{12}$`, v)
+}
+
+foreign_source(v, body) if {
+	own_partition_arn(v, body)
+	regex.match(`^[0-9]{12}$`, split(v, ":")[4])
 }
 
 own_source(v, _, body) if {
@@ -230,6 +256,101 @@ own_topic_arn(v, body) if {
 	parts[2] == "sns"
 	parts[4] == account(body)
 	parts[5] != ""
+}
+
+# kms:ViaService は S3 経由であることしか限らないので、S3 経由で復号だけを許す文は、S3 が渡す暗号化コンテキストで object を名指す。
+# account regional namespace の Bucket（名前が -<account>-<region>-an で終わる）は、そのアカウントにしか作れない（Amazon S3 User Guide
+# 「Namespaces for general purpose buckets」）。object の ARN はアカウントの欄が空なので、所有はこの接尾辞で読む。
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	some a in aws_principals(s)
+	not account_root(a)
+	s3_read(s)
+	count(lib.limiting_values(s, s3_arn_key)) == 0
+	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の %s に、復号を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています", [r.document.path, r.document.address, a])
+}
+
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	s3_role_statement(s)
+	some v in lib.limiting_values(s, s3_arn_key)
+	not bucket_arn_value(v)
+	not own_object_arn(v, s, r.body)
+	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に、委任のアカウントの account regional namespace の Bucket の object の ARN でない %v を置いています（Bucket の名前の region は、文の kms:ViaService の S3 の region と比べます）", [r.document.path, r.document.address, v])
+}
+
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	s3_role_statement(s)
+	some v in lib.limiting_values(s, s3_arn_key)
+	bucket_arn_value(v)
+	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に Bucket の ARN %v を置いています。Bucket Key を使う Bucket の暗号化コンテキストは受けません", [r.document.path, r.document.address, v])
+}
+
+s3_arn_key := "kms:encryptioncontext:aws:s3:arn"
+
+s3_role_statement(s) if {
+	some a in aws_principals(s)
+	not account_root(a)
+	via_s3(s)
+}
+
+via_s3(s) if {
+	some v in lib.limiting_values(s, "kms:viaservice")
+	is_string(v)
+	startswith(v, "s3.")
+}
+
+s3_regions(s) := {m[1] |
+	some v in lib.limiting_values(s, "kms:viaservice")
+	is_string(v)
+	some m in regex.find_all_string_submatch_n(`^s3\.([a-z0-9-]+)\.amazonaws\.com$`, v, 1)
+}
+
+grants(s, name) if {
+	some x in lib.lower_all(object.get(s, "Action", []))
+	lib.iam_match(x, name)
+}
+
+grants(s, name) if {
+	s.NotAction
+	not excludes(s, name)
+}
+
+excludes(s, name) if {
+	some x in lib.lower_all(s.NotAction)
+	lib.iam_match(x, name)
+}
+
+actions_readable(s) if {
+	count(lib.as_array(object.get(s, "Action", []))) + count(lib.as_array(object.get(s, "NotAction", []))) > 0
+	every x in lib.as_array(object.get(s, "Action", [])) { is_string(x) }
+	every x in lib.as_array(object.get(s, "NotAction", [])) { is_string(x) }
+}
+
+# Action を読めない文（Action も NotAction も無い文を含む）も read と読み、object の限定を求める側に倒す。
+s3_read(s) if {
+	via_s3(s)
+	grants(s, "kms:decrypt")
+	not grants(s, "kms:generatedatakey")
+}
+
+s3_read(s) if {
+	via_s3(s)
+	not actions_readable(s)
+}
+
+bucket_arn_value(v) if regex.match(`^arn:[^:]+:s3:::[^/]+$`, v)
+
+# IAM の policy 変数（${...}）は要求の時点で置き換わり、object を固定しない。
+own_object_arn(v, s, body) if {
+	lib.no_wildcard(v)
+	not contains(v, "${")
+	some region in s3_regions(s)
+	regex.match(sprintf(`^arn:%s:s3:::[a-z0-9][a-z0-9.-]*-%s-%s-an/.+$`, [split(roots(body)[0], ":")[1], account(body), region]), v)
 }
 
 # ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。

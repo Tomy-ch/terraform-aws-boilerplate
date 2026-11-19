@@ -13,19 +13,35 @@ mkdir -p "$$1/tests"; \
 printf 'run "ok" {\n  command = plan\n\n  assert {\n    condition     = output.name == "a"\n    error_message = "name"\n  }\n}\n' > "$$1/tests/ok.tftest.hcl"
 endef
 
+# 警告を出す構成。provider を持たずに警告を出せるのは、非推奨の variable に値を渡す呼び出しである。
+define TF_FIXTURE_WARN
+mkdir -p "$$1/modules/inner" "$$1/modules/a"; \
+printf 'variable "old" {\n  type       = string\n  default    = null\n  deprecated = "use new"\n}\n' > "$$1/modules/inner/main.tf"; \
+printf 'module "i" {\n  source = "../inner"\n  old    = "x"\n}\n' > "$$1/modules/a/main.tf"
+endef
+
+# TF_FIXTURE_WARN の警告に当たる抑止の宣言。
+define TF_FIXTURE_WARN_IGNORE
+printf 'warnings:\n  - summary: Deprecated variable got a value\n    path: modules/a/main.tf\n    block: module "i"\n    detail: use new\n    occurrences: %s\n    reason: r\n    withdrawal: w\n' "$$2" > "$$1"
+endef
+
 # 要らない provider を載せた lock。`-lockfile=readonly` の init だけが、これをネットワーク無しで落とす。
 define TF_FIXTURE_STALE_LOCK
 printf 'provider "registry.terraform.io/hashicorp/null" {\n  version = "3.2.4"\n  hashes = [\n    "h1:stale",\n  ]\n}\n' > "$$1/.terraform.lock.hcl"
 endef
 
-.PHONY: tf-gates-test ## Terraform 側の検査が0件と壊れた入力で落ちることを検査
+.PHONY: tf-gates-test ## Terraform 側の検査が0件・壊れた入力・validate の警告と読めない出力で落ちることを検査
 tf-gates-test:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_GATES_TEST_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	ok() { mkdir -p "$$1"; $(TF_FIXTURE_OK); }; \
 	stale_lock() { $(TF_FIXTURE_STALE_LOCK); }; \
+	warn() { $(TF_FIXTURE_WARN); }; \
+	warn_ignore() { $(TF_FIXTURE_WARN_IGNORE); }; \
+	printf 'warnings: []\n' > "$$root/ignore-empty.yaml"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; target="$$4"; pattern="$${5:-}"; \
-		out=$$($(MAKE) -s --no-print-directory "$$target" TF_BASE="$$base" 2>&1); rc=$$?; \
+		if [ $$# -ge 5 ]; then shift 5; else set --; fi; \
+		out=$$($(MAKE) -s --no-print-directory "$$target" TF_BASE="$$base" TF_VALIDATE_IGNORE="$$root/ignore-empty.yaml" "$$@" 2>&1); rc=$$?; \
 		if [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ -n "$$pattern" ] && ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then failed="$$failed $$case_name"; echo "$$out"; \
@@ -90,12 +106,44 @@ tf-gates-test:
 		rm -rf "$$root/nonroot"; ok "$$root/nonroot/$$d"; stale_lock "$$root/nonroot/$$d"; \
 		expect pass "non-root-writable:$$d" "$$root/nonroot" tf-validate; \
 	done; \
+	warn "$$root/warn"; \
+	expect fail "warn:tf-validate" "$$root/warn" tf-validate "modules/a/main.tf:3:12: [warning] Deprecated variable got a value"; \
+	warn "$$root/dup"; mkdir -p "$$root/dup/usecases/b"; \
+	printf 'module "a" {\n  source = "../../modules/a"\n}\n' > "$$root/dup/usecases/b/main.tf"; \
+	expect fail "dup:tf-validate" "$$root/dup" tf-validate "抑止されない警告が 1 件"; \
+	expect fail "dup-dirs:tf-validate" "$$root/dup" tf-validate "現れたディレクトリ: $$root/dup/modules/a $$root/dup/usecases/b"; \
+	warn "$$root/setup"; ok "$$root/setup/modules/s"; mkdir -p "$$root/setup/modules/s/tests/setup"; \
+	printf 'module "i" {\n  source = "../../../inner"\n  old    = "x"\n}\n' > "$$root/setup/modules/s/tests/setup/main.tf"; \
+	printf 'run "setup" {\n  module {\n    source = "./tests/setup"\n  }\n}\n' > "$$root/setup/modules/s/tests/setup.tftest.hcl"; \
+	expect fail "setup-warn:tf-validate" "$$root/setup" tf-validate "modules/s/tests/setup/main.tf:3:12: [warning] Deprecated variable got a value"; \
+	warn_ignore "$$root/ignore-one.yaml" 1; \
+	expect pass "ignored:tf-validate" "$$root/warn" tf-validate "抑止 1 件" TF_VALIDATE_IGNORE="$$root/ignore-one.yaml"; \
+	expect fail "ignore-unmatched:tf-validate" "$$root/ok" tf-validate "当たった警告 0 件、宣言 1 件" TF_VALIDATE_IGNORE="$$root/ignore-one.yaml"; \
+	warn_ignore "$$root/ignore-two.yaml" 2; \
+	expect fail "ignore-occurrences:tf-validate" "$$root/warn" tf-validate "当たった警告 1 件、宣言 2 件" TF_VALIDATE_IGNORE="$$root/ignore-two.yaml"; \
+	warn "$$root/partial"; printf 'module "j" {\n  source = "../inner"\n  old    = "y"\n}\n' > "$$root/partial/modules/a/more.tf"; \
+	expect fail "ignore-partial:tf-validate" "$$root/partial" tf-validate "modules/a/more.tf:3:12: [warning] Deprecated variable got a value" TF_VALIDATE_IGNORE="$$root/ignore-one.yaml"; \
+	expect fail "ignore-partial-count:tf-validate" "$$root/partial" tf-validate "抑止されない警告が 1 件" TF_VALIDATE_IGNORE="$$root/ignore-one.yaml"; \
+	expect fail "ignore-missing:tf-validate" "$$root/ok" tf-validate "を読めません" TF_VALIDATE_IGNORE="$$root/no-such.yaml"; \
+	: > "$$root/ignore-blank.yaml"; \
+	expect fail "ignore-blank:tf-validate" "$$root/ok" tf-validate "が空です" TF_VALIDATE_IGNORE="$$root/ignore-blank.yaml"; \
+	warn "$$root/warn-error"; ok "$$root/warn-error/usecases/b"; \
+	printf 'output "missing" {\n  value = var.missing\n}\n' >> "$$root/warn-error/usecases/b/main.tf"; \
+	expect fail "warn-and-error:tf-validate" "$$root/warn-error" tf-validate "$$(failed_line tf-validate "$$root/warn-error/usecases/b")"; \
+	expect fail "warn-and-error-warning:tf-validate" "$$root/warn-error" tf-validate "抑止されない警告が 1 件"; \
 	mkdir -p "$$root/bin"; \
-	printf '#!/bin/sh\nleft=$$(env | grep "^AWS_" | grep -vE "^AWS_(SHARED_CREDENTIALS_FILE|CONFIG_FILE|EC2_METADATA_DISABLED)=")\nif [ -n "$$left" ]; then echo "AWS の環境変数が残っています: $$left"; exit 1; fi\n' > "$$root/bin/terraform"; \
+	printf '#!/bin/sh\nleft=$$(env | grep "^AWS_" | grep -vE "^AWS_(SHARED_CREDENTIALS_FILE|CONFIG_FILE|EC2_METADATA_DISABLED)=")\nif [ -n "$$left" ]; then echo "AWS の環境変数が残っています: $$left"; exit 1; fi\nfor a in "$$@"; do if [ "$$a" = validate ]; then cat "$$(dirname "$$0")/validate.out"; fi; done\n' > "$$root/bin/terraform"; \
 	chmod +x "$$root/bin/terraform"; \
+	printf '%s\n' '{"format_version":"1.0","valid":true,"error_count":0,"warning_count":0,"diagnostics":[]}' > "$$root/bin/validate.out"; \
 	out=$$(AWS_ACCESS_KEY_ID=x AWS_CONTAINER_CREDENTIALS_FULL_URI=http://127.0.0.1/ AWS_PROFILE=p \
-		$(MAKE) -s --no-print-directory tf-validate TF_BASE="$$root/ok" TF_BIN="$$PWD/$$root/bin/terraform" 2>&1) \
+		$(MAKE) -s --no-print-directory tf-validate TF_BASE="$$root/ok" TF_BIN="$$PWD/$$root/bin/terraform" TF_VALIDATE_IGNORE="$$root/ignore-empty.yaml" 2>&1) \
 		|| { failed="$$failed aws-env-stripped"; echo "$$out"; }; \
+	: > "$$root/bin/validate.out"; \
+	expect fail "validate-empty-stdout:tf-validate" "$$root/ok" tf-validate "JSON として読めません" TF_BIN="$$PWD/$$root/bin/terraform"; \
+	printf '{"format_version":"1.0","valid":true\n' > "$$root/bin/validate.out"; \
+	expect fail "validate-broken-json:tf-validate" "$$root/ok" tf-validate "JSON として読めません" TF_BIN="$$PWD/$$root/bin/terraform"; \
+	printf '%s\n' '{"format_version":"1.0","valid":true,"error_count":0,"warning_count":1,"diagnostics":[]}' > "$$root/bin/validate.out"; \
+	expect fail "validate-count-mismatch:tf-validate" "$$root/ok" tf-validate "diagnostic の数と食い違います" TF_BIN="$$PWD/$$root/bin/terraform"; \
 	printf '#!/bin/sh\nfor a in "$$@"; do case "$$a" in --chdir=*) d="$${a#--chdir=}";; --init) [ -e "$$(dirname "$$0")/init-fail" ] && exit 1;; esac; done\nif [ -n "$${d:-}" ] && [ -e "$$d/lint-bad" ]; then echo "lint-bad: $$d"; exit 2; fi\nif [ -n "$${d:-}" ] && [ -e "$$d/lint-error" ]; then echo "lint-error: $$d"; exit 1; fi\n' > "$$root/bin/tflint"; \
 	chmod +x "$$root/bin/tflint"; \
 	lint() { \

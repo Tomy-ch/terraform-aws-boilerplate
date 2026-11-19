@@ -14,7 +14,7 @@ variable "name" {
 }
 
 variable "users" {
-  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。via が sns の role は topics に名指した SNS の Topic へ publish するときだけ鍵を使える。services.logs は CloudWatch Logs の Log Group の名前。services.sns は SNS の Topic の名前と、その Topic へ publish する AWS のサービス（budgets・cloudwatch・costalerts・events）。合わせて1件以上。"
+  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。via が sns の role は topics に名指した SNS の Topic へ publish するときだけ鍵を使える。services.logs は CloudWatch Logs の Log Group の名前。services.sns は SNS の Topic の名前と、その Topic へ publish する AWS のサービス（budgets・cloudwatch・costalerts・events）。services.cloudtrail は鍵で暗号化して配信する CloudTrail の trail の ARN、services.config は鍵で暗号化して配信する AWS Config のアカウントの ID。trail と Config のアカウントは鍵の外のアカウントでもよい。合わせて1件以上。"
   type = object({
     roles = optional(list(object({
       arn     = string
@@ -29,14 +29,16 @@ variable "users" {
         topic      = string
         publishers = set(string)
       })), [])
+      cloudtrail = optional(list(string), [])
+      config     = optional(list(string), [])
     }), {})
   })
   nullable = false
 
   # 誰も暗号操作できない鍵は作る意味が無い。管理の委任は暗号操作を含まない。
   validation {
-    condition     = length(var.users.roles) + length(var.users.services.logs) + length(var.users.services.sns) > 0
-    error_message = "users に roles・services.logs・services.sns のいずれかを1件以上渡してください。"
+    condition     = length(var.users.roles) + length(var.users.services.logs) + length(var.users.services.sns) + length(var.users.services.cloudtrail) + length(var.users.services.config) > 0
+    error_message = "users に roles・services.logs・services.sns・services.cloudtrail・services.config のいずれかを1件以上渡してください。"
   }
 
   validation {
@@ -118,5 +120,26 @@ variable "users" {
   validation {
     condition     = alltrue([for t in var.users.services.sns : t.publishers != null && length(t.publishers) > 0 && length(setsubtract(t.publishers, ["budgets", "cloudwatch", "costalerts", "events"])) == 0])
     error_message = "users.services.sns[*].publishers は budgets・cloudwatch・costalerts・events から1つ以上にしてください。"
+  }
+
+  # Key Policy の StringEquals は * と ? をワイルドカードとして読まないが、要求元を名指す値なので閉じる。
+  validation {
+    condition     = alltrue([for a in var.users.services.cloudtrail : can(regex("^arn:aws[a-z-]*:cloudtrail:[a-z0-9-]+:[0-9]{12}:trail/[A-Za-z0-9][A-Za-z0-9._-]{2,127}$", a))])
+    error_message = "users.services.cloudtrail は CloudTrail の trail の ARN（arn:<partition>:cloudtrail:<region>:<account>:trail/<name>）にしてください。"
+  }
+
+  validation {
+    condition     = length(distinct(var.users.services.cloudtrail)) == length(var.users.services.cloudtrail)
+    error_message = "users.services.cloudtrail に同じ trail を重ねないでください。"
+  }
+
+  validation {
+    condition     = alltrue([for a in var.users.services.config : can(regex("^[0-9]{12}$", a))])
+    error_message = "users.services.config は12桁のアカウントの ID にしてください。"
+  }
+
+  validation {
+    condition     = length(distinct(var.users.services.config)) == length(var.users.services.config)
+    error_message = "users.services.config に同じアカウントを重ねないでください。"
   }
 }

@@ -4,10 +4,13 @@
 
 locals {
   writer_roles = sort(distinct([for w in var.writers : w.role_arn]))
+  # 空の接頭辞を持つ role は Bucket のすべての key に書けるので、接頭辞の外への書き込みを拒む文を持たない。その文の
+  # NotResource は Bucket のすべての object に一致し、文は何も拒まない。
+  prefixed_roles = [for arn in local.writer_roles : arn if !contains([for w in var.writers : w.key_prefix if w.role_arn == arn], "")]
 
   # 決定は usecases/state-backend/docs/adr/0201-plan-output-bucket.md 決定8。
   writer_statements = [
-    for i, arn in local.writer_roles : {
+    for i, arn in local.prefixed_roles : {
       Sid         = "DenyObjectWriteOutsidePrefixes${i}"
       Effect      = "Deny"
       Principal   = "*"
@@ -52,4 +55,7 @@ resource "aws_s3_bucket_policy" "this" {
       local.writer_statements,
     )
   })
+
+  # 同じ Bucket への PutBucketPolicy と PutPublicAccessBlock の並行は OperationAborted で落ちうる。
+  depends_on = [aws_s3_bucket_public_access_block.this, aws_s3_bucket_ownership_controls.this]
 }

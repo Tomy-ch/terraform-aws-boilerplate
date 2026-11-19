@@ -1,0 +1,172 @@
+name: Terraform Lock Hold
+
+# 管理アカウントの identity root の state に lock を取り、外さずに残す。lock の解除（terraform-unlock.yaml）を
+# 障害の前に一度試すためのもの。規則は README.md の「lock を残す job」。手順の定義は
+# .makefiles/terraform/operation/ci.mk だけが持つ。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# apply と同じ group に入る。apply と並んで lock を奪い合わず、実行中の apply の後ろで待つ（README.md の「lock を残す job」）。
+concurrency:
+  group: terraform-apply-admin-identity
+  cancel-in-progress: false
+
+jobs:
+  # terraform-apply.yaml の apply-infra-code-gate と同じ検出。資格情報の下でリポジトリのコードを走らせる前に置く。
+  hold-infra-code-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: infra-code-gate is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:open-policy-agent/conftest go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run the infrastructure-code gate's own tests
+        run: make infra-code-gate-test RUNNER_MODE=host
+
+      - name: Detect infrastructure code
+        run: make infra-code-gate RUNNER_MODE=host
+
+  hold-admin-identity:
+    needs: hold-infra-code-gate
+    # ref では絞らない。どのブランチから起動できるかは environment が限る（デプロイブランチだけ）。
+    if: ${{ needs.hold-infra-code-gate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-apply-identity
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+
+      # terraform-apply.yaml の apply-admin-identity の Refuse stale commits と同じ。
+      - name: Refuse stale commits
+        id: refuse-stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので lock を残しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-apply-identity の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the apply-identity role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host
+
+      - name: Hold the state lock
+        run: make ci-hold-admin-identity RUNNER_MODE=host

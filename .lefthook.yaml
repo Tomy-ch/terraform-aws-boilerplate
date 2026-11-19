@@ -176,7 +176,9 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
+        - ".tf-validate-ignore.yaml"
         - "scripts/tf-local/**"
+        - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
@@ -187,7 +189,22 @@ pre-commit:
       glob:
         - "Makefile"
         - ".makefiles/**"
+        - "scripts/tf-validate-result/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
       run: make tf-gates-test
+    tf-validate-canary:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - "usecases/state-backend/reference/versions.tf"
+        - "usecases/state-backend/reference/.terraform.lock.hcl"
+        - "scripts/tf-validate-result/**"
+        - "scripts/lib/**"
+        - "scripts/go.mod"
+        - "scripts/go.sum"
+      run: make tf-validate-canary
     tf-policy-canary:
       glob:
         - "Makefile"
@@ -235,6 +252,7 @@ pre-commit:
         - "conftest/hcl/**"
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
+        - "scripts/hcl-input/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"

@@ -50,7 +50,7 @@
 
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
-- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
+- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
 - 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
