@@ -25,6 +25,8 @@ mise.toml                             @Tomy-ch
 .github/settings/branches.json        @Tomy-ch
 scripts/lib/branchdecl/               @Tomy-ch
 .github/settings/environments.json    @Tomy-ch
+# 脆弱性の報告の経路（SECURITY.md）。false にしても検査はすべて通る。
+.github/settings/private-vulnerability-reporting.json @Tomy-ch
 # デプロイブランチへ入る commit の検査（ADR-0603 決定31）と、宣言から apply の起動条件を生成する道具。
 # 検査は base の commit のコードで走るが、job の定義は Pull Request の側のものである。
 scripts/repo-settings/                @Tomy-ch
@@ -67,5 +69,6 @@ scripts/tf-job-lint/                       @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/workflows/terraform-unlock.yaml    @Tomy-ch
+.github/workflows/terraform-lock-hold.yaml @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch

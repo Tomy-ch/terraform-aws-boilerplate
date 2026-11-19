@@ -13,7 +13,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// ciMakefile は CI が root の AWS に触れる入口（make ci-plan-* / ci-apply-* / ci-unlock-*）を持つ。
+// ciMakefile は CI が root の AWS に触れる入口（make ci-plan-* / ci-apply-* / ci-unlock-* / ci-hold-*）を持つ。
 const ciMakefile = ".makefiles/terraform/operation/ci.mk"
 
 var (
@@ -27,20 +27,19 @@ var (
 )
 
 var (
-	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- / ci-unlock- で始まるトークンを
+	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- / ci-unlock- / ci-hold- で始まるトークンを
 	// CI の入口の呼び出しとみなし、make を介さない書き方でも拾う。ci.mk に無いもの（式で組んだ名前、
 	// 名前に使わない字が続くもの）は、切り詰めずにそのまま未知の入口として落とす。
 	ciTokenRe = regexp.MustCompile(`[A-Za-z0-9_-]+`)
 	// stepNameLineRe は step の名前の行。名前に入口の名前が在っても、それを実行しているとは数えない。
 	stepNameLineRe = regexp.MustCompile(`^\s+(?:- )?name:`)
-	// ciRuleRe / ciCallRe は ci.mk の入口の見出しと、その次の行の呼び出し。
-	ciRuleRe = regexp.MustCompile(`^(ci-(plan|apply|unlock)-[a-z0-9]+(?:-[a-z0-9]+)*):$`)
-	ciCallRe = regexp.MustCompile(`^\t@\$\(call CI_(PLAN|APPLY|UNLOCK),([a-z0-9]+),(identity|workload)\)$`)
+	ciRuleRe       = regexp.MustCompile(`^(ci-(plan|apply|unlock|hold)-[a-z0-9]+(?:-[a-z0-9]+)*):$`)
+	ciCallRe       = regexp.MustCompile(`^\t@\$\(call CI_(PLAN|APPLY|UNLOCK|HOLD),([a-z0-9]+),(identity|workload)\)$`)
 	// ciCallAnyRe は呼び出しの字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
-	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY|UNLOCK),`)
+	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY|UNLOCK|HOLD),`)
 )
 
-// ciEntry は ci.mk の入口 1 件。terraform は、その入口が root で Terraform を実行するか（CI_PLAN / CI_APPLY）。
+// ciEntry は ci.mk の入口 1 件。terraform は、その入口が root で Terraform を実行するか（CI_PLAN / CI_APPLY / CI_HOLD）。
 // CI_UNLOCK は state の lock を外すだけで、Terraform を実行しない。
 type ciEntry struct {
 	root      string
@@ -115,7 +114,7 @@ func rootPath(env, kind string) string {
 }
 
 // ranRoots は workflow のジョブごとに、そのジョブが CI の入口を通して触れる root を返す。1 つの root を
-// lock の解除と plan / apply の両方の入口で触れるジョブは、その root で Terraform を実行するとみなす。
+// lock の解除と plan / apply / lock を残す入口の両方で触れるジョブは、その root で Terraform を実行するとみなす。
 func ranRoots(repo *os.Root, names []string, targets map[string]ciEntry) (map[string]rootRuns, error) {
 	ran := map[string]rootRuns{}
 	for _, name := range names {
@@ -156,7 +155,7 @@ func entryTokens(l workflow.Line) []string {
 	}
 	var toks []string
 	for _, tok := range ciTokenRe.FindAllString(l.Text, -1) {
-		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") || strings.HasPrefix(tok, "ci-unlock-") {
+		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") || strings.HasPrefix(tok, "ci-unlock-") || strings.HasPrefix(tok, "ci-hold-") {
 			toks = append(toks, tok)
 		}
 	}

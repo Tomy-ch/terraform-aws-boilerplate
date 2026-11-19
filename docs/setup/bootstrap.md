@@ -358,7 +358,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 | --- | --- | --- |
 | [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | `admin` の最初の run が緑で `No changes.` |
 | [段5 の変更を適用する](#段5-の変更を適用する) | 3・4 | 各変更の後の再実行が `No changes.` |
-| [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Unlock` が lock を外し、取り消した run の再実行が緑 |
+| [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Lock Hold` が残した lock を `Terraform Unlock` が外し、その後の apply の run が緑で `No changes.` |
 
 > **重要**: 一時 IAM user の書き込みを拒否する変更（段3 の `bootstrap_executor_user_name` を外す変更。足していないアカウントでは、書き込みの拒否を入れる変更）は、手順5・6 を済ませてから `admin` へ昇格する。
 
@@ -424,6 +424,14 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。
 
+   出力の2つの Bucket の Bucket Policy（[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md) 決定8）を変える変更では、`admin` への Pull Request を merge する**前に**、その commit で `make tf-policy` を実行してから、reference の plan の文書を実アカウントの role で評価する。誤った文書を apply すると、plan の job が全文を置けず、それを直す昇格も merge できない。apply の後は `POLICY_SOURCE` を渡さずに実行し、Bucket に付いた文書を評価する
+
+   ```bash
+   POLICY_SOURCE=reference docs/setup/scripts/verify.sh output-policy
+   ```
+
+   `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
+
 #### lock の解除を用意して試す
 
 5. lock の解除の workflow（`terraform-unlock.yaml`）を足す Pull Request を **merge する前に**、管理者がそのブランチを checkout した手元で実行する
@@ -435,29 +443,43 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。
 
-6. lock を1つ残し、`Terraform Unlock` で外す
-   1. identity root を変更する Pull Request をリリース線へ merge して `admin` へ昇格し、その `admin` の apply の run を、`apply` の step が lock を取った後に Actions の画面で取り消す
-   2. 一時 IAM user で lock file が在ることを確かめる。返らなければ 1 からやり直す
+6. `Terraform Lock Hold` で lock を1つ残し、`Terraform Unlock` で外す。Actions の画面で apply の run を取り消しても lock は残らない（terraform は取り消しの信号で lock を外してから止まる）
+   1. `admin` で走っている `Terraform Apply` の run と、待っている run が無いことを確かめる。待っている apply の run は、次の起動に置き換えられて走らず、通知も出ない
+
+      ```bash
+      gh run list --workflow terraform-apply.yaml --branch admin --limit 5
+      ```
+
+   2. `Terraform Lock Hold` を `admin` から起動し、次をすべて確かめる
+
+      ```bash
+      gh workflow run terraform-lock-hold.yaml --ref admin
+      ```
+
+      - run が緑
+      - ログに lock の ID・`Operation=OperationTypePlan`・版 ID と、`Terraform Unlock が消せるのは <時刻> より後` の行が出る
+      - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
+   3. 一時 IAM user で lock file が在ることを確かめる
 
       ```bash
       aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock
       ```
 
-   3. lock file の `LastModified` から、待ち時間（`scripts/tf-local` の定数）を超えるまで待つ
-   4. `Terraform Unlock` を `admin` から起動し、次をすべて確かめる
+   4. 2 のログの時刻を過ぎるまで待つ。その間に `admin` の apply が起動すると、lock の取得で落ちて通知が届く
+   5. `Terraform Unlock` を `admin` から起動し、次をすべて確かめる
 
       ```bash
       gh workflow run terraform-unlock.yaml --ref admin
       ```
 
       - run が緑
-      - ログに lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
+      - ログに 2 と同じ lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
       - `OIDC の sub` の行が `:environment:admin-unlock-identity` で終わる
-      - 2 のコマンドが lock file を返さない
-   5. 取り消した apply の run を「Re-run failed jobs」で再実行し、緑になることを確かめる
-   6. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）
+      - 3 のコマンドが lock file を返さない
+   6. `admin` の最新の apply の run を「Re-run all jobs」で再実行し、緑で plan の要約が `No changes.` であることを確かめる。4 の間に lock で落ちた run があれば、それも再実行する。`admin` の先頭の commit の apply が緑であることを確かめる
+   7. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）
 
-   4 が失敗したら、[一時 IAM user で lock file を消し](#一時-iam-user-で-lock-file-を消す)、Pull Request に記録して**止まる**。
+   2 が `lock が残りませんでした` か `lock を取った後の行を出さずに終わりました` で落ちたら、3 で lock が無いことを確かめてから 2 を起動し直す。2 が lock を取った後の段で落ちたら、3 で lock の有無を確かめ、在れば 4 へ進む。5 が失敗したら、[一時 IAM user で lock file を消し](#一時-iam-user-で-lock-file-を消す)、Pull Request に記録して**止まる**。
 
 #### 段5 の成功条件
 
@@ -587,6 +609,7 @@ aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_I
 | lock を残したもの | 対処 |
 | --- | --- |
 | CI の apply | `Terraform Unlock` を `admin` から起動し（`gh workflow run terraform-unlock.yaml --ref admin`）、落ちた apply の run を「Re-run failed jobs」で再実行する。新しすぎる lock では失敗するので、時間を置いて起動し直す（[`.github/workflows/README.md`](../../.github/workflows/README.md) の「lock の解除の job」） |
+| `Terraform Lock Hold` | run のログの `Terraform Unlock が消せるのは <時刻> より後` の時刻を過ぎてから、`Terraform Unlock` を `admin` から起動する（`gh workflow run terraform-unlock.yaml --ref admin`） |
 | 人の手元の apply | 実行した人が `terraform force-unlock <ID>` で外す |
 | `Terraform Unlock` で外れない | 一時 IAM user の書き込みの拒否の前なら、[一時 IAM user で lock file を消す](#一時-iam-user-で-lock-file-を消す)。拒否の後は、人は消せない |
 
@@ -604,6 +627,8 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 - identity root に resource を足す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する
 - apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
+- state の鍵の Key Policy の `users` を変える変更は、`docs/setup/scripts/verify.sh` の `JQ_KEY_POLICY` と、その文の数を同じ変更で更新する
+- 出力の2つの Bucket の Bucket Policy を変える変更は、`docs/setup/scripts/verify.sh` の `output-policy` の期待を同じ変更で更新する
 
 ## 参考資料
 

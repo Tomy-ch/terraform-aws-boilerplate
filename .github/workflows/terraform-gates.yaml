@@ -57,7 +57,7 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 層の検査が hcl-input を走らせ、どれもこのソースからビルドする。
+          # 層の検査が hcl-input を、tf-validate が tf-validate-result を走らせ、どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -67,6 +67,7 @@ jobs:
               - 'env/**'
               - '**/.terraform.lock.hcl'
               - '.tflint.hcl'
+              - '.tf-validate-ignore.yaml'
               - 'mise.toml'
               - '.makefiles/**'
               - 'Makefile'
@@ -74,6 +75,7 @@ jobs:
               - 'scripts/infra-code-gate/**'
               - 'scripts/tf-local/**'
               - 'scripts/hcl-input/**'
+              - 'scripts/tf-validate-result/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
@@ -285,16 +287,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # go: tf-validate の判定（scripts/tf-validate-result）をビルドする。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform
+          tools: aqua:hashicorp/terraform go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # -k: validate が落ちても test の結果を出す。どちらが落ちても step は落ちる。
+      # -k: validate が落ちても test の結果を出す。どれが落ちても step は落ちる。
       # この step に secret を渡さない: init は PR の構成が解決した provider をそのまま走らせる。
       - name: Run terraform validate and terraform test
-        run: make -k tf-validate tf-test RUNNER_MODE=host
+        run: make -k tf-validate-canary tf-validate tf-test RUNNER_MODE=host
 
   tf-policy:
     needs: changes

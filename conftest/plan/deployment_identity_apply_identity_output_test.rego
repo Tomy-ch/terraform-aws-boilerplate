@@ -8,7 +8,10 @@ decl := {"apply_identity_role": {
 	"policy": "module.x.aws_iam_role_policy.apply_identity",
 	"output_bucket": "module.s.aws_s3_bucket.plan",
 	"output_bucket_policy": "module.s.aws_s3_bucket_policy.plan",
+	"managed_policies": [],
 }}
+
+gdecl := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": ["module.x.aws_iam_policy.governance[0]"]})}
 
 b := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 
@@ -41,7 +44,7 @@ identity_side(statements) := [role, policies_exclusive, attachments_exclusive, p
 
 with_policy(statements, others) := fixture.plan(array.concat(array.concat(identity_side(statements), state_side), others))
 
-# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+# 宣言は丸ごと差し替える（理由は lib/fixture.rego の inline_declaration）。
 messages_for(inp, d) := msgs if {
 	msgs := p.deny with input as inp with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity"]), {"deployment_identity": d})
 }
@@ -329,4 +332,135 @@ test_violation_policy_variable_in_resource if {
 	every r in ["arn:aws:s3:::tabp-admin-tfplan-${aws:PrincipalAccount}-ap-northeast-1-an/*", "arn:aws:s3:::${aws:PrincipalTag/bucket}/*"] {
 		fixture.has("[PLAN-AIO-01]", messages([write_apply, {"Effect": "Allow", "Action": "s3:DeleteObject", "Resource": r}]))
 	}
+}
+
+# --- 宣言した customer managed policy（deployment-identity/ADR-0201 決定7） ---
+
+governance_arn := "arn:aws:iam::123456789012:policy/ci-apply-identity-governance"
+
+governance(statements) := object.union(
+	fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.governance[0]", "policy", {"Statement": statements}),
+	{"change": {"after": {"arn": governance_arn}}},
+)
+
+attached_governance := object.union(attachments_exclusive, {"change": {"after": {"policy_arns": [governance_arn]}}})
+
+with_governance(statements, attachments) := fixture.plan(array.concat([role, policies_exclusive, attachments, policy([write_apply]), governance(statements)], state_side))
+
+create_org := {"Effect": "Allow", "Action": "organizations:CreateOrganization", "Resource": "*"}
+
+test_pass_governance_policy_attached if {
+	count(messages_for(with_governance([create_org], attached_governance), gdecl)) == 0
+}
+
+test_pass_no_managed_policies_declared if {
+	count(messages_for(with_policy([write_apply], []), decl)) == 0
+}
+
+test_violation_governance_policy_not_attached if {
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"] の policy_arns が、宣言した customer managed policy の ARN", messages_for(with_governance([create_org], attachments_exclusive), gdecl))
+}
+
+test_violation_undeclared_managed_policy_attached if {
+	d := decl
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"] の policy_arns が", messages_for(with_governance([create_org], attached_governance), d))
+}
+
+test_violation_governance_policy_reads_output if {
+	read := {"Effect": "Allow", "Action": "s3:GetObject", "Resource": sprintf("%s/*", [b])}
+	fixture.has("[PLAN-AIO-02]", messages_for(with_governance([create_org, read], attached_governance), gdecl))
+}
+
+test_violation_governance_policy_writes_outside_apply if {
+	write := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": sprintf("%s/pr/*", [b])}
+	fixture.has("[PLAN-AIO-03]", messages_for(with_governance([create_org, write], attached_governance), gdecl))
+}
+
+test_violation_governance_policy_arn_unknown if {
+	unknown := json.patch(governance([create_org]), [
+		{"op": "remove", "path": "/change/after/arn"},
+		{"op": "add", "path": "/change/after_unknown/arn", "value": true},
+	])
+	inp := fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, policy([write_apply]), unknown], state_side))
+	fixture.has("[PLAN-AIO-00] customer managed policy module.x.aws_iam_policy.governance[0] の ARN が plan で決まっていません", messages_for(inp, gdecl))
+}
+
+test_violation_managed_policies_malformed if {
+	every v in ["module.x.aws_iam_policy.governance[0]", [""], [1], null] {
+		d := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": v})}
+		fixture.has("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies", messages_for(with_policy([write_apply], []), d))
+	}
+}
+
+test_violation_declared_managed_policy_absent if {
+	fixture.has("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies の \"module.x.aws_iam_policy.governance[0]\" が、aws_iam_policy として入力にありません", messages_for(with_policy([write_apply], []), gdecl))
+}
+
+test_violation_declared_managed_policy_wrong_type if {
+	wrong := rc("aws_iam_role_policy", "module.x.aws_iam_policy.governance[0]", {"name": "x", "role": "other"})
+	inp := fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, policy([write_apply]), wrong], state_side))
+	fixture.has("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies の \"module.x.aws_iam_policy.governance[0]\" が、aws_iam_policy として入力にありません", messages_for(inp, gdecl))
+}
+
+test_violation_managed_policies_key_missing if {
+	d := {"apply_identity_role": object.remove(decl.apply_identity_role, ["managed_policies"])}
+	fixture.has("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies", messages_for(with_policy([write_apply], []), d))
+}
+
+test_violation_managed_policies_mixed if {
+	every v in [["module.x.aws_iam_policy.governance[0]", 1], {}, [["x"]]] {
+		d := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": v})}
+		fixture.has("[PLAN-AIO-00] data.policy_plan.deployment_identity.apply_identity_role.managed_policies が", messages_for(with_policy([write_apply], []), d))
+	}
+}
+
+test_violation_governance_policy_arns_element_unknown if {
+	partial := json.patch(attached_governance, [{"op": "add", "path": "/change/after_unknown/policy_arns", "value": [false, true]}])
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"] の policy_arns に plan で決まらない ARN があります", messages_for(with_governance([create_org], partial), gdecl))
+}
+
+test_violation_governance_policy_not_action if {
+	fixture.has("[PLAN-AIO-01]", messages_for(with_governance([{"Effect": "Allow", "NotAction": "s3:*", "Resource": "*"}], attached_governance), gdecl))
+}
+
+test_violation_governance_policy_variable_in_resource if {
+	fixture.has("[PLAN-AIO-01]", messages_for(with_governance([{"Effect": "Allow", "Action": "s3:PutObject", "Resource": "${aws:username}/*"}], attached_governance), gdecl))
+}
+
+# 決定10 の apply/* への書き込みは、apply-identity の role のどの policy に在ってもよい。
+test_pass_apply_write_in_governance_policy if {
+	inp := fixture.plan(array.concat([role, policies_exclusive, attached_governance, policy([]), governance([create_org, write_apply])], state_side))
+	count(messages_for(inp, gdecl)) == 0
+}
+
+test_pass_two_managed_policies if {
+	second_arn := "arn:aws:iam::123456789012:policy/ci-apply-identity-governance-2"
+	second := object.union(fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.governance[1]", "policy", {"Statement": [create_org]}), {"change": {"after": {"arn": second_arn}}})
+	both := object.union(attachments_exclusive, {"change": {"after": {"policy_arns": [governance_arn, second_arn]}}})
+	d := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": ["module.x.aws_iam_policy.governance[0]", "module.x.aws_iam_policy.governance[1]"]})}
+	inp := fixture.plan(array.concat([role, policies_exclusive, both, policy([write_apply]), governance([create_org]), second], state_side))
+	count(messages_for(inp, d)) == 0
+}
+
+test_violation_two_managed_policies_one_unattached if {
+	second_arn := "arn:aws:iam::123456789012:policy/ci-apply-identity-governance-2"
+	second := object.union(fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.governance[1]", "policy", {"Statement": [create_org]}), {"change": {"after": {"arn": second_arn}}})
+	d := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": ["module.x.aws_iam_policy.governance[0]", "module.x.aws_iam_policy.governance[1]"]})}
+	inp := fixture.plan(array.concat([role, policies_exclusive, attached_governance, policy([write_apply]), governance([create_org]), second], state_side))
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"] の policy_arns が、宣言した customer managed policy の ARN", messages_for(inp, d))
+}
+
+test_violation_second_managed_policy_reads_output if {
+	second_arn := "arn:aws:iam::123456789012:policy/ci-apply-identity-governance-2"
+	read := {"Effect": "Allow", "Action": "s3:GetObject", "Resource": sprintf("%s/*", [b])}
+	second := object.union(fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.governance[1]", "policy", {"Statement": [read]}), {"change": {"after": {"arn": second_arn}}})
+	both := object.union(attachments_exclusive, {"change": {"after": {"policy_arns": [governance_arn, second_arn]}}})
+	d := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": ["module.x.aws_iam_policy.governance[0]", "module.x.aws_iam_policy.governance[1]"]})}
+	inp := fixture.plan(array.concat([role, policies_exclusive, both, policy([write_apply]), governance([create_org]), second], state_side))
+	fixture.has("[PLAN-AIO-02]", messages_for(inp, d))
+}
+
+test_violation_attachments_exclusive_duplicated if {
+	dup := object.union(attachments_exclusive, {"address": "module.x.aws_iam_role_policy_attachments_exclusive.other"})
+	fixture.has("[PLAN-AIO-05] apply-identity の role ci-apply-identity の aws_iam_role_policy_attachments_exclusive が 2 件", messages_for(with_policy([write_apply], [dup]), decl))
 }
