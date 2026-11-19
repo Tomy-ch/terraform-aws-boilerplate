@@ -7,11 +7,11 @@
 
 ## Context
 
-組織の trail は管理アカウントが所有し、Config は各アカウントで動く。どちらも log-archive のアカウントの鍵で証跡を暗号化する（Security Hub の CloudTrail.2・S3.17、AWS SRA「All security log S3 buckets SHOULD use SSE-KMS with customer managed keys」）。鍵を記録される側が持つと、鍵を止めて記録を読めなくできる。決定3 は repository-wide/ADR-0301 (least-privilege-policy) 決定18（アカウントをまたぐ許可は、明示的なユースケースとして型付きの契約で受ける）をこのユースケースに当てたもので、宣言の様式を共有する二つ目のユースケースが現れたときに root への昇格を見直す（repository-wide/ADR-0001 (adr-process-and-placement) 決定20）。
+組織の trail は管理アカウントが所有し、Config は各アカウントで動く。どちらも log-archive のアカウントの鍵で証跡を暗号化する（Security Hub の CloudTrail.2・S3.17、AWS SRA「All security log S3 buckets SHOULD use SSE-KMS with customer managed keys」）。鍵を記録される側が持つと、鍵を止めて記録を読めなくできる。
 
 CloudTrail の鍵の文は `kms:GenerateDataKey*` を `aws:SourceArn` と `kms:EncryptionContext:aws:cloudtrail:arn` で、`kms:DescribeKey` を `aws:SourceArn` で限る。組織の trail では `aws:SourceAccount` は管理アカウントを指し、trail を限らない（CloudTrail User Guide「Configure AWS KMS key policies for CloudTrail」）。Config の鍵の文は `aws:SourceAccount` で限る（AWS Config Developer Guide「Permissions for the KMS Key」）。
 
-`conftest/plan` の `PLAN-KMS-05` は、サービス principal の要求元が鍵のアカウントの外を指すことを拒む。repository-wide/ADR-0301 (least-privilege-policy) 決定18 は、アカウントをまたぐ許可を、明示的なユースケースとして設計し、条件を型付きの契約で受けるときに許す。
+`conftest/plan` の `PLAN-KMS-05` は、サービス principal の要求元が鍵のアカウントの外を指すことを拒む。repository-wide/ADR-0301 (least-privilege-policy) 決定18 は、アカウントをまたぐ許可を、明示的なユースケースとして設計し、条件を型付きの契約で受けるときに許す。決定3 は、これをこのユースケースに当てたものである。
 
 CloudWatch Logs は Log Group ごとに別の鍵を勧める（CloudWatch Logs User Guide「Encrypt log data using AWS KMS」）。
 
@@ -71,3 +71,4 @@ log-archive のアカウントで鍵の管理の権限を持つ主体は、組�
 
 - 完全一致の暗号化コンテキストで配信が落ちたとき（文書の例の形へ戻し、`PLAN-KMS-05` の値の形を見直す）
 - GuardDuty の finding の書き出しを足すとき（宣言のサービスに足す）
+- 決定3 の宣言の様式を共有する二つ目のユースケースが現れたとき（root への昇格を見直す。repository-wide/ADR-0001 (adr-process-and-placement) 決定20）
