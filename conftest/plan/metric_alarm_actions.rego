@@ -1,4 +1,4 @@
-# metric alarm の通知は、同じアカウントの通知の Topic 1つだけへ送る（docs/v1.0-plan/scope.md 第9.3節「アラームの置き場」）。
+# metric alarm の通知は、同じアカウントの通知の Topic 1つだけへ送る（docs/v1.0-plan/scope.md 第9.3節「アラームの置き場」）。ここで見るのは SNS の Topic 1つであることまでで、同じアカウントであることは alarm を持つ module の precondition が見る。
 # 3つの action のどれかが空か別の宛先なら、状態の変化のどれかが通知されないか、Topic の外へ出る。
 package plan.metric_alarm_actions
 

@@ -8,12 +8,15 @@ decl := object.get(data.policy_plan, "audit_evidence", {})
 
 declared_keys := ["bucket", "bucket_policy", "object_lock_configuration", "lifecycle_configuration", "key_policy", "metric_alarm"]
 
-address(key) := decl[key] if is_string(object.get(decl, key, null))
+address(key) := decl[key] if {
+	is_string(object.get(decl, key, null))
+	decl[key] != ""
+}
 
 deny contains msg if {
 	some key in declared_keys
 	not address(key)
-	msg := sprintf("[PLAN-AUDIT-00] 宣言 audit_evidence.%s が無いか、文字列ではありません", [key])
+	msg := sprintf("[PLAN-AUDIT-00] 宣言 audit_evidence.%s が無いか、空でない文字列ではありません", [key])
 }
 
 after(key) := c.rc.change.after if {
