@@ -627,7 +627,7 @@ job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-app
 の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。`type` の宛先を
 求めるのは、その root の `ci-plan-*` か `ci-apply-*` か `ci-hold-*` を呼ぶ job だけである —— `ci-unlock-*` は terraform を
 呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
-apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
+apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*` / `ci-hold-*`
 を呼ばなければ落ちる。region を含む
 `type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
 引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
