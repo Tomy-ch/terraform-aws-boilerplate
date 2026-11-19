@@ -65,7 +65,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## まだ持たないもの
 
-持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）・`users.services.cloudtrail`・`users.services.config`（`audit-evidence` の証跡の鍵）である。`via = "sns"`・`users.services.sns` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
+持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）・`users.services.cloudtrail`・`users.services.config`（`audit-evidence` の証跡の鍵）である。`users.services.logs` は `network-foundation` と `audit-evidence` が渡す。`via = "sns"`・`users.services.sns` を渡す消費者は無い。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
 
 | 足すもの | 足す消費者 |
 | --- | --- |
