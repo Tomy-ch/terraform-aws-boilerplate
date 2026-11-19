@@ -238,6 +238,18 @@ run "policies" {
         ]
         Resource = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
       },
+      {
+        Sid    = "ReadBreakGlassStackSet"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:DescribeStackInstance",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:DescribeStackSetOperation",
+          "cloudformation:ListStackInstances",
+          "cloudformation:ListStackSetOperationResults",
+        ]
+        Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
+      },
     ]
     error_message = "plan の role の権限が、state と2つの Bucket の設定と identity root の resource と state の鍵の読み取りと、plan の出力の書き込みだけになっていません。"
   }
@@ -399,6 +411,16 @@ run "policies" {
           "sso:PutInlinePolicyToPermissionSet",
           "sso:PutPermissionsBoundaryToPermissionSet",
           "sso:UpdatePermissionSet",
+          "cloudformation:ActivateOrganizationsAccess",
+          "cloudformation:CreateStackInstances",
+          "cloudformation:CreateStackSet",
+          "cloudformation:DeactivateOrganizationsAccess",
+          "cloudformation:DeleteStackInstances",
+          "cloudformation:DeleteStackSet",
+          "cloudformation:ImportStacksToStackSet",
+          "cloudformation:StopStackSetOperation",
+          "cloudformation:UpdateStackInstances",
+          "cloudformation:UpdateStackSet",
           "sts:AssumeRoot",
         ]
         Resource = "*"
@@ -652,6 +674,18 @@ run "policies" {
           "iam:ListRoleTags",
         ]
         Resource = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
+      },
+      {
+        Sid    = "ReadBreakGlassStackSet"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:DescribeStackInstance",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:DescribeStackSetOperation",
+          "cloudformation:ListStackInstances",
+          "cloudformation:ListStackSetOperationResults",
+        ]
+        Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
       },
       {
         Sid    = "ManageCiPolicies"
@@ -959,6 +993,13 @@ run "policies" {
       { Sid = "IamUpdateAccountPasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
       { Sid = "OrganizationsCreateOrganization", Effect = "Allow", Action = "organizations:CreateOrganization", Resource = "*" },
       {
+        Sid       = "CloudformationCreateStackSet"
+        Effect    = "Allow"
+        Action    = "cloudformation:CreateStackSet"
+        Resource  = "*"
+        Condition = { Null = { "aws:TagKeys" = "true" } }
+      },
+      {
         Sid       = "OrganizationsDisableAWSServiceAccess"
         Effect    = "Allow"
         Action    = "organizations:DisableAWSServiceAccess"
@@ -1054,6 +1095,27 @@ run "policies" {
         Resource  = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
         Condition = { ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::aws:policy/AdministratorAccess" } }
       },
+      {
+        Sid    = "UpdateBreakGlassStackSet"
+        Effect = "Allow"
+        Action = "cloudformation:UpdateStackSet"
+        Resource = [
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:*:type/resource/AWS-IAM-Role",
+        ]
+      },
+      {
+        Sid    = "ManageBreakGlassStackInstances"
+        Effect = "Allow"
+        Action = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+        Resource = [
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation:ap-northeast-1:*:type/resource/AWS-IAM-Role",
+        ]
+        Condition = { StringEquals = { "cloudformation:TargetRegion" = "ap-northeast-1" } }
+      },
     ]
     error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
   }
@@ -1143,15 +1205,53 @@ run "key_in_other_partition" {
   expect_failures = [aws_iam_role_policy.apply_identity]
 }
 
+run "rejects_break_glass_role_name_with_underscore_in_admin" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/tabp_break_glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "rejects_break_glass_role_name_with_leading_digit_in_admin" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/1tabp-break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+# StackSet を持たない env では、role の名前を StackSet の名前として読まない。
+run "accepts_break_glass_role_name_with_underscore_outside_admin" {
+  command = plan
+
+  variables {
+    env              = "dev"
+    name_prefix      = "tabp-dev"
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp_break_glass"]
+  }
+}
+
+run "accepts_single_letter_break_glass_role_name_in_admin" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:role/break-glass/a"]
+  }
+}
+
 # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
 # mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
 # 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
 # partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
 # 合わせる。この組は AWS に無い。policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
 # 文書はどちらの長さにも伸びる。そうでない使い方を入れたら、この組が最長である前提は崩れる。
-# admin は統制の文が入り、break-glass が user・group・role を1つ以上含む。名前は IAM の上限（user・role 64文字、
-# group 128文字）なので、長い group を2つにする。admin 以外は統制の文が無く組成の制約も無いので、group を4つにする。
-# 長さを決める入力が違うので、2つの run で測る。どちらも role 名が最も長くなる log-archive の name_prefix を使う。
+# 名前は IAM の上限（user・role 64文字、group 128文字）。組成は README の break_glass_arns の行が持つ。
+# 長さを決める入力が違うので2つの run で測り、どちらも role 名が最も長くなる log-archive の name_prefix を使う。
 run "policy_length" {
   command = apply
   # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
@@ -1168,7 +1268,7 @@ run "policy_length" {
       format("arn:aws-us-gov:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 2),
       format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 3),
-      format("arn:aws-us-gov:iam::123456789012:role/break-glass/%064d", 4),
+      format("arn:aws-us-gov:iam::123456789012:role/break-glass/r%063d", 4),
     ]
   }
 
@@ -1225,6 +1325,14 @@ run "policy_length" {
       alltrue([for a in var.break_glass_arns : length(element(split("/", a), 2)) == (strcontains(a, ":group/") ? 128 : 64)])
     )
     error_message = "境界の入力の break-glass が、admin で最も長い組成（名前が上限の group 2つと user・role）になっていません。"
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_iam_policy.governance[0].policy, format("stackset-target/r%063d:*", 4)) &&
+      strcontains(aws_iam_role_policy.apply_identity.policy, format("stackset/r%063d:*", 4))
+    )
+    error_message = "長さを測る文書に、break-glass の StackSet の文が入っていません。"
   }
 
   assert {
@@ -2024,5 +2132,21 @@ run "governance_follows_data_sources" {
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : contains(s.Resource, "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance") if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) && length([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) == 2
     error_message = "apply-identity の統制の policy の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances"], s.Sid)] == [
+      for c in [null, { StringEquals = { "cloudformation:TargetRegion" = "us-gov-west-1" } }] : [[
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset-target/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation:us-gov-west-1:*:type/resource/AWS-IAM-Role",
+      ], c]
+    ]
+    error_message = "break-glass の StackSet の書き込みの Resource と条件が、partition・region・アカウントと role の名前から組まれていません。"
+  }
+
+  assert {
+    condition     = alltrue([for p in [aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.apply_identity.policy] : one([for s in jsondecode(p).Statement : s.Resource if s.Sid == "ReadBreakGlassStackSet"]) == ["arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*"]])
+    error_message = "plan と apply-identity の break-glass の StackSet の読み取りの Resource が、partition・region・アカウントと role の名前から組まれていません。"
   }
 }
