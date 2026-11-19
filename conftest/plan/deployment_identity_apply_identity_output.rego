@@ -169,7 +169,7 @@ deny contains msg if {
 deny contains msg if {
 	some a in allows
 	some resource in resources(a.statement)
-	contains(resource, "${")
+	lib.policy_variable(resource)
 	msg := sprintf("[PLAN-AIO-01] %s: apply-identity の role の Allow の Resource %s が policy 変数を使っています。値を書いてください", [a.path, resource])
 }
 

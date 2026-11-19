@@ -132,10 +132,10 @@ service_only(s) if {
 
 source_limited(s) if {
 	count(source_values(s)) > 0
-	every v in source_values(s) { lib.no_wildcard(v) }
+	every v in source_values(s) { lib.fixed_value(v) }
 }
 
-# 書き手はサービスだけで、各 Allow は要求元を wildcard の無い値で限る（confused deputy。ADR-0301 決定18）。
+# 書き手はサービスだけで、各 Allow は要求元を wildcard と policy 変数の無い値で限る（confused deputy。ADR-0301 決定18）。
 deny contains msg if {
 	some s in statements
 	s.Effect == "Allow"
@@ -147,7 +147,7 @@ deny contains msg if {
 	some s in statements
 	s.Effect == "Allow"
 	not source_limited(s)
-	msg := sprintf("[PLAN-AUDIT-02] %s の Allow %v が、aws:SourceArn か aws:SourceAccount で要求元を wildcard の無い値に限っていません", [address("bucket_policy"), object.get(s, "Sid", "")])
+	msg := sprintf("[PLAN-AUDIT-02] %s の Allow %v が、aws:SourceArn か aws:SourceAccount で要求元を wildcard と policy 変数の無い値に限っていません", [address("bucket_policy"), object.get(s, "Sid", "")])
 }
 
 # Deny は principal の例外を持たない。8文の形は Bucket の ARN と既定の保持から決まる（audit-evidence/ADR-0102 決定1）。

@@ -13,8 +13,10 @@ limiting_values(s, key) := [v |
 	some v in as_array(vs)
 ]
 
-no_wildcard(v) if {
+# 値を1つに固定する文字列。wildcard と policy 変数のどちらも、要求の時点で何に当たるかが決まる。
+fixed_value(v) if {
 	is_string(v)
 	not contains(v, "*")
 	not contains(v, "?")
+	not policy_variable(v)
 }

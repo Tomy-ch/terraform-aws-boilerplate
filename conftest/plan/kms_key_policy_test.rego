@@ -776,3 +776,43 @@ test_violation_declared_cross_account_mixed_values if {
 test_violation_cross_account_sources_empty_service_list if {
 	"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], {"cross_account_sources": {declared: []}})
 }
+
+# エスケープと閉じない ${ も、policy 変数と同じく落とす側に倒す。
+test_violation_source_policy_variable if {
+	every c in [
+		{"ArnEquals": {"kms:EncryptionContext:aws:logs:arn": ["arn:aws:logs:ap-northeast-1:123456789012:log-group:${aws:PrincipalTag/t}"]}},
+		{"ArnEquals": {"kms:EncryptionContext:aws:logs:arn": [
+			"arn:aws:logs:ap-northeast-1:123456789012:log-group:/tabp/admin/s3-access/plan",
+			"arn:aws:logs:ap-northeast-1:123456789012:log-group:${aws:PrincipalTag/t}",
+		]}},
+		{"ArnEquals": {"aws:SourceArn": ["arn:aws:sns:ap-northeast-1:123456789012:${aws:PrincipalTag/t}"]}},
+		{"ArnEquals": {"aws:SourceArn": ["arn:aws:sns:ap-northeast-1:123456789012:${aws:PrincipalTag/t, 'x'}"]}},
+		{"ArnEquals": {"aws:SourceArn": ["arn:aws:sns:ap-northeast-1:123456789012:t${$}"]}},
+		{"ArnEquals": {"aws:SourceArn": ["arn:aws:sns:ap-northeast-1:123456789012:t${"]}},
+		{"StringEquals": {"aws:SourceArn": ["arn:aws:s3:::${aws:PrincipalTag/b}"], "aws:SourceAccount": "123456789012"}},
+	] {
+		ids([root, with_condition(logs, c)]) == {"[PLAN-KMS-05]"}
+		some m in p.deny with input as fixture.plan([key_policy([root, with_condition(logs, c)])])
+		contains(m, "wildcard か policy 変数を含む値")
+	}
+}
+
+test_violation_source_not_string if {
+	"[PLAN-KMS-05]" in ids([root, with_condition(logs, {"StringEquals": {"aws:SourceAccount": [123456789012]}})])
+}
+
+test_violation_cross_account_source_policy_variable if {
+	c := {"StringEquals": {
+		"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/${aws:PrincipalTag/t}"],
+		"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+	}}
+	cross_ids([root, with_condition(trail_encrypt, c)], cross) == {"[PLAN-KMS-05]"}
+}
+
+# 名前に : を含む変数は ARN の区切りの数で落ち、: を含まない形は変数の判定で落ちる。
+test_violation_topic_policy_variable if {
+	every t in ["${aws:PrincipalTag/t}", "t${$}", "${x}"] {
+		c := {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com", "kms:EncryptionContext:aws:sns:topicArn": [concat("", ["arn:aws:sns:ap-northeast-1:123456789012:", t])]}}
+		ids([root, with_condition(via_sns, c)]) == {"[PLAN-KMS-11]"}
+	}
+}

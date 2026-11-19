@@ -191,3 +191,13 @@ test_violation_unknown_plan_policy_is_left_to_input if {
 	plan := fixture.plan([role, policies_exclusive, attachments_exclusive, unknown])
 	fixture.has("[PLAN-INPUT-04]", gate.deny) with input as plan with data.policy_plan.deployment_identity as decl
 }
+
+test_violation_put_object_policy_variable if {
+	every r in ["arn:aws:s3:::${aws:username}-tfplan-x/pr/*", "arn:aws:s3:::tabp-admin-tfplan-${aws:PrincipalAccount}-ap-northeast-1-an/pr/*"] {
+		s := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": r}
+		msgs := p.deny with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
+		{substring(m, 0, 14) | some m in msgs} == {"[PLAN-ROLE-03]"}
+		some m in msgs
+		contains(m, "policy 変数を含みます")
+	}
+}

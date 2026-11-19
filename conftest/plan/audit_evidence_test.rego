@@ -344,7 +344,7 @@ test_violation_object_lock_flag_missing if {
 test_violation_source_partly_wildcard if {
 	c := {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": [trail, "*"]}}
 	s := json.patch(trail_write, [{"op": "replace", "path": "/Condition", "value": c}])
-	said(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), "wildcard の無い値に限っていません")
+	said(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), "wildcard と policy 変数の無い値に限っていません")
 }
 
 test_violation_allow_with_not_principal if {
@@ -393,4 +393,24 @@ test_pass_expected_denies_match_required_sids if {
 	sids := {sid | some sid, _ in p.expected_denies} with input as fixture.plan(valid) with data.policy_plan as {"audit_evidence": decl}
 	sids == p.required_denies
 	count(sids) == 8
+}
+
+# 同じ変数を Bucket Policy と Key Policy の両方に置くと 05 は一致と読むので、02 だけが落とす。
+test_violation_source_policy_variable if {
+	v := "arn:aws:cloudtrail:ap-northeast-1:${aws:SourceAccount}:trail/tabp-org"
+	s := json.patch(trail_write, [{"op": "replace", "path": "/Condition", "value": {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": v}}}])
+	k := json.patch(key_trail, [{"op": "replace", "path": "/Condition", "value": {"StringEquals": {"aws:SourceArn": [v], "kms:EncryptionContext:aws:cloudtrail:arn": [v]}}}])
+	both := replace(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), key_policy([k, key_config]))
+	ids(both) == {"[PLAN-AUDIT-02] "}
+	said(both, "wildcard と policy 変数の無い値に限っていません")
+
+	c := json.patch(config_write, [{"op": "replace", "path": "/Condition", "value": {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceAccount": ["222222222222", "${aws:PrincipalAccount}"]}}}])
+	mixed := replace(valid, bucket_policy(array.concat(denies, [trail_write, c])))
+	"[PLAN-AUDIT-02] " in ids(mixed)
+	said(mixed, "wildcard と policy 変数の無い値に限っていません")
+}
+
+test_violation_source_not_string if {
+	c := json.patch(config_write, [{"op": "replace", "path": "/Condition", "value": {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceAccount": 222222222222}}}])
+	said(replace(valid, bucket_policy(array.concat(denies, [trail_write, c]))), "wildcard と policy 変数の無い値に限っていません")
 }
