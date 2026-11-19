@@ -275,7 +275,6 @@ test_pass_inline_declaration_well_formed if {
 	}
 }
 
-# after は書かないときの値のまま、block の中だけが plan で決まらない。
 test_violation_inline_block_unknown_inside if {
 	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after_unknown": {"versioning": [{"enabled": true}]}}})
 	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema

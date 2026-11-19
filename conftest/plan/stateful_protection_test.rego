@@ -563,7 +563,6 @@ test_violation_inline_arguments_missing_empty_or_not_object if {
 	fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
 }
 
-# 前の値と変更の後の値の既知の部分は同じで、block の中だけが plan で決まらない。
 test_violation_inline_block_unknown_inside_on_update if {
 	v := {"versioning": [{"enabled": true, "mfa_delete": false}]}
 	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_s3_bucket", ["update"], v, v, {"versioning": [{"enabled": true}]})]) with data.policy_plan.stateful_protection as inline_decl

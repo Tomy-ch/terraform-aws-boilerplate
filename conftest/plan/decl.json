@@ -346,6 +346,9 @@
         "aws_s3_bucket_lifecycle_configuration",
         "aws_kms_key",
         "aws_kms_key_policy",
+        "aws_organizations_organization",
+        "aws_organizations_organizational_unit",
+        "aws_iam_user",
         "aws_ecr_repository",
         "aws_ecr_lifecycle_policy",
         "aws_ecr_registry_scanning_configuration",
@@ -379,6 +382,85 @@
       },
       "aws_sns_topic": {
         "policy": null
+      },
+      "aws_organizations_organization": {
+        "aws_service_access_principals": null
+      }
+    },
+    "organization_baseline": {
+      "organization": "module.organization_baseline.module.organization.aws_organizations_organization.this",
+      "organizational_units": {
+        "Security": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.top[\"Security\"]",
+        "Workloads": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.top[\"Workloads\"]",
+        "Sandbox": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.top[\"Sandbox\"]",
+        "PolicyStaging": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.top[\"PolicyStaging\"]",
+        "Prod": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads[\"Prod\"]",
+        "NonProd": "module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads[\"NonProd\"]"
+      },
+      "policies": {
+        "deny-leave-and-close": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-leave-and-close\"]",
+        "deny-bootstrap-role": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-bootstrap-role\"]",
+        "deny-state-write": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-state-write\"]",
+        "protect-governance-roles": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"protect-governance-roles\"]",
+        "deny-guardduty-stop": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-guardduty-stop\"]",
+        "deny-root-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-root-user\"]",
+        "deny-iam-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-iam-user\"]",
+        "data-perimeter-prod-resources": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-resources\"]",
+        "data-perimeter-org-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-org-principals\"]",
+        "data-perimeter-prod-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-principals\"]",
+        "ec2-defaults": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"ec2-defaults\"]"
+      },
+      "attachments": {
+        "deny-leave-and-close": [
+          "Root"
+        ],
+        "deny-bootstrap-role": [],
+        "deny-state-write": [
+          "PolicyStaging"
+        ],
+        "protect-governance-roles": [
+          "PolicyStaging"
+        ],
+        "deny-guardduty-stop": [
+          "PolicyStaging"
+        ],
+        "deny-root-user": [
+          "PolicyStaging"
+        ],
+        "deny-iam-user": [
+          "PolicyStaging"
+        ],
+        "data-perimeter-prod-resources": [
+          "PolicyStaging"
+        ],
+        "data-perimeter-org-principals": [
+          "PolicyStaging"
+        ],
+        "data-perimeter-prod-principals": [
+          "PolicyStaging"
+        ],
+        "ec2-defaults": [
+          "PolicyStaging"
+        ]
+      },
+      "assume_root_task_actions": [
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketPolicy",
+        "s3:ListAllMyBuckets",
+        "s3:PutBucketPolicy",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueues",
+        "sqs:SetQueueAttributes"
+      ],
+      "break_glass": {
+        "users": [
+          "module.organization_baseline.module.break_glass.aws_iam_user.this[\"break-glass-1\"]",
+          "module.organization_baseline.module.break_glass.aws_iam_user.this[\"break-glass-2\"]"
+        ],
+        "group_policy": "module.organization_baseline.module.break_glass.aws_iam_group_policy.this",
+        "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
+        "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
       }
     },
     "ops_notification": {

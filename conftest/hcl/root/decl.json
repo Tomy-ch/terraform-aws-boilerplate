@@ -3,6 +3,7 @@
     "management_env": "admin",
     "usecases": {
       "deployment-identity": "bootstrap",
+      "organization-baseline": "control",
       "state-backend": "bootstrap"
     }
   }
