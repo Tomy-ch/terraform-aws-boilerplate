@@ -4,10 +4,13 @@
 
 locals {
   writer_roles = sort(distinct([for w in var.writers : w.role_arn]))
+  # 空の接頭辞を持つ role は Bucket のすべての key に書けるので、接頭辞の外への書き込みを拒む文を持たない。その文の
+  # NotResource は Bucket のすべての object を覆い、PutObject が当たる resource を残さない。
+  prefixed_roles = [for arn in local.writer_roles : arn if !contains([for w in var.writers : w.key_prefix if w.role_arn == arn], "")]
 
   # 決定は usecases/state-backend/docs/adr/0201-plan-output-bucket.md 決定8。
   writer_statements = [
-    for i, arn in local.writer_roles : {
+    for i, arn in local.prefixed_roles : {
       Sid         = "DenyObjectWriteOutsidePrefixes${i}"
       Effect      = "Deny"
       Principal   = "*"
