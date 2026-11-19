@@ -13,7 +13,7 @@ limiting_values(s, key) := [v |
 	some v in as_array(vs)
 ]
 
-# 値を1つに固定する文字列。wildcard と policy 変数のどちらも、要求の時点で何に当たるかが決まる。
+# 値を1つに固定する文字列（ADR-0402 決定20）。wildcard と policy 変数のどちらも、要求の時点で何に当たるかが決まる。
 fixed_value(v) if {
 	is_string(v)
 	not contains(v, "*")

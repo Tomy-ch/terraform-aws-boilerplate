@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-19
 - Scope: audit-evidence
-- Related: repository-wide/ADR-0204, repository-wide/ADR-0301, audit-evidence/ADR-0101, audit-evidence/ADR-0201
+- Related: repository-wide/ADR-0204, repository-wide/ADR-0301, repository-wide/ADR-0402, audit-evidence/ADR-0101, audit-evidence/ADR-0201
 
 ## Context
 
@@ -14,7 +14,7 @@
 ## Decision
 
 1. Bucket Policy の Deny は Principal `"*"` で、主体による例外（`aws:PrincipalArn` など）を持たない: TLS でない要求、サービスでない主体の `s3:PutObject`、`s3:DeleteObject`・`s3:DeleteObjectVersion`、既定の保持の日数を超える保持の指定、既定の mode 以外の mode の指定、legal hold と event hold。
-2. Allow はサービス principal にだけ置き、要求元を wildcard と policy 変数（`${...}`）の無い値で限る。組織の trail は `aws:SourceArn` を trail の ARN の完全一致で、Config は `aws:SourceAccount` をアカウントの ID で限る。
+2. Allow はサービス principal にだけ置き、要求元を固定の値（repository-wide/ADR-0402 決定20）で限る。組織の trail は `aws:SourceArn` を trail の ARN の完全一致で、Config は `aws:SourceAccount` をアカウントの ID で限る。
 3. 書き手は種類ごとの固定のキーを持つ型付きの入力 `writers` で受ける（`cloudtrail_organization_trail` は trail の名前・所有するアカウント・組織の ID・リージョン、`config_source_accounts` はアカウントの ID）。ARN と object の prefix は module が組む。新しい種類は、その書き手の要求を契約へ一般化するときに足す（repository-wide/ADR-0102 (use-case-centric-scope) 決定5）。
 4. Config の書き込みの文はアカウントごとに分け、あるアカウントの Config が他のアカウントの prefix に書けないようにする。
 5. SSE-KMS 以外の書き込みを拒む Deny を置かない。CloudTrail の log file validation の digest の配信が壊れる（CloudTrail User Guide「Security best practices」）。
@@ -52,7 +52,7 @@ role の ARN を root をまたいで受ける口が増え、その role を奪�
 
 ## 保証範囲
 
-- 保証すること: Bucket Policy の文書が、入力から決まる Deny の8文と書き手の Allow の集合に一致すること。Allow がサービス principal だけで、要求元を wildcard と policy 変数の無い値で限ること。Deny が主体の例外を持たないこと。Bucket Policy と鍵の Key Policy が名指す trail が一致すること
+- 保証すること: Bucket Policy の文書が、入力から決まる Deny の8文と書き手の Allow の集合に一致すること。Allow がサービス principal だけで、要求元を固定の値で限ること。Deny が主体の例外を持たないこと。Bucket Policy と鍵の Key Policy が名指す trail が一致すること
 - 保証しないこと: `protect-log-vault` が入るまで、log-archive のアカウントで S3 の管理の権限を持つ主体が Bucket Policy を書き換えること・消すことを防ぐこと。Deny が実際の API で拒むこと
 
 ## 検証方法
