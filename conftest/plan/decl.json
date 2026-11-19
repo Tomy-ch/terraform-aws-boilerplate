@@ -127,6 +127,8 @@
             "cloudformation:DeactivateOrganizationsAccess",
             "cloudformation:DeleteStackInstances",
             "cloudformation:DeleteStackSet",
+            "cloudformation:ImportStacksToStackSet",
+            "cloudformation:StopStackSetOperation",
             "cloudformation:UpdateStackInstances",
             "cloudformation:UpdateStackSet",
             "sts:AssumeRoot"
