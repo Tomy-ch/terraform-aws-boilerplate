@@ -446,8 +446,79 @@ test_violation_not_resource if {
 	fixture.has(denied_03(po), messages(s))
 }
 
+test_pass_resource_pattern if {
+	count(messages(replace(valid_statements, 5, full_deny(["arn:aws:s3:::p*", sprintf("%s/*", [po])])))) == 0
+}
+
+test_pass_ci_role_pattern if {
+	s := replace(valid_statements, 1, full_deny([sprintf("arn:aws:iam::%s:role/ci-*", [account]), provider_arn]))
+	count(messages(s)) == 0
+}
+
 test_violation_resource_pattern if {
-	fixture.has(denied_03(po), messages(replace(valid_statements, 5, full_deny(["arn:aws:s3:::p*"]))))
+	fixture.has(denied_03(po), messages(replace(valid_statements, 5, full_deny(["arn:aws:s3:::q*"]))))
+}
+
+test_violation_ci_role_pattern_misses_role if {
+	s := replace(valid_statements, 1, full_deny([sprintf("arn:aws:iam::%s:role/ci-plan*", [account]), provider_arn]))
+	fixture.has(denied_03(role_arn("ci-apply")), messages(s))
+}
+
+# 完全一致だけを数える ARN（identity root の key と lock file）は、pattern の Deny を数えない。
+test_violation_resource_pattern_strict_target if {
+	msgs := messages(replace(valid_statements, 2, full_deny([sprintf("%s/identity/*", [st])])))
+	fixture.has(denied_03_strict(identity_keys[0]), msgs)
+	fixture.has(denied_03_strict(identity_keys[1]), msgs)
+}
+
+test_violation_resource_pattern_strict_lock_file if {
+	msgs := messages(replace(valid_statements, 2, full_deny([identity_keys[0], sprintf("%s/identity/terraform.tfstate.tfloc?", [st])])))
+	fixture.has(denied_03_strict(identity_keys[1]), msgs)
+}
+
+# 子の ARN が literal の * を持つとき（object のすべて）、pattern はその文字列に当たっても子のすべては覆わない。
+test_violation_resource_pattern_on_literal_wildcard_target if {
+	every r in ["arn:aws:s3:::po/?", "arn:aws:s3:::po/x*"] {
+		msgs := messages(replace(valid_statements, 5, full_deny([po, r])))
+		fixture.has(denied_03(sprintf("%s/*", [po])), msgs)
+	}
+}
+
+test_violation_resource_wildcard_alone if {
+	msgs := messages(replace(valid_statements, 5, full_deny(["*"])))
+	fixture.has(denied_03(po), msgs)
+	fixture.has(denied_03(sprintf("%s/*", [po])), msgs)
+}
+
+test_violation_resource_wildcard_mixed if {
+	msgs := messages(replace(valid_statements, 5, full_deny(["*", po])))
+	fixture.has(denied_03(sprintf("%s/*", [po])), msgs)
+	not fixture.has(denied_03(po), msgs)
+}
+
+test_pass_role_wildcard_pattern if {
+	count(messages(replace(valid_statements, 1, full_deny([sprintf("arn:aws:iam::%s:role/*", [account]), provider_arn])))) == 0
+}
+
+test_pass_single_char_pattern if {
+	s := replace(valid_statements, 1, full_deny(array.concat([role_arn(n) | some n in ["ci-apply", "ci-unlock", "ci-apply-identity"]], [role_arn("ci-pla?"), provider_arn])))
+	count(messages(s)) == 0
+}
+
+test_violation_role_pattern_other_account if {
+	msgs := messages(replace(valid_statements, 1, full_deny(["arn:aws:iam::999999999999:role/ci-*", provider_arn])))
+	fixture.has(denied_03(role_arn("ci-plan")), msgs)
+	fixture.has(denied_03(role_arn("ci-apply")), msgs)
+}
+
+test_violation_version_deletion_pattern if {
+	s := replace(valid_statements, 4, {"Effect": "Deny", "Action": "s3:DeleteObjectVersion", "Resource": "arn:aws:s3:::s*/*"})
+	fixture.has(sprintf("[PLAN-APPLY-04] apply の role %q が、%s/* への", [apply_policy_address, st]), messages(s))
+}
+
+test_violation_key_deny_pattern if {
+	s := replace(valid_statements, 6, {"Effect": "Deny", "Action": delegated_actions, "Resource": sprintf("arn:aws:kms:*:%s:key/*", [account])})
+	fixture.has("[PLAN-APPLY-01]", messages(s))
 }
 
 test_violation_not_action_names_non_read if {

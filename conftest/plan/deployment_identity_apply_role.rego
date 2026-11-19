@@ -212,6 +212,20 @@ unconditional_deny(s) if {
 
 on(s, arn) if arn in lib.as_array(object.get(s, "Resource", []))
 
+# 構成物の ARN への Deny（covered）だけは、Resource の pattern を IAM がその ARN に当てる限りで数える。CI の role と
+# policy の Deny を名前の pattern で書くため（deployment-identity/ADR-0201 決定5）。"*" 単独は数えない。子の ARN が
+# literal の * か ? を持つ（object のすべてを表す）ときは、pattern がその文字列に当たっても子のすべては覆わないので、
+# 完全一致だけを数える。鍵・書き込み先の子・identity root の key と lock file・版の削除も完全一致のままにする。
+on_or_pattern(s, arn) if on(s, arn)
+
+on_or_pattern(s, arn) if {
+	not regex.match(`[*?]`, arn)
+	some r in lib.as_array(object.get(s, "Resource", []))
+	r != "*"
+	regex.match(`[*?]`, r)
+	lib.iam_match(r, arn)
+}
+
 read_name(a) if regex.match(`^[a-z0-9-]+:(get|list|describe|head)[a-z0-9]*$`, a)
 
 denies_all(s) if {
@@ -232,7 +246,7 @@ denies_all_but_reads(s) if {
 covered(arn) if {
 	some s in statements
 	unconditional_deny(s)
-	on(s, arn)
+	on_or_pattern(s, arn)
 	denies_all_but_reads(s)
 }
 

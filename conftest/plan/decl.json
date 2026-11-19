@@ -3,6 +3,7 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "chatbot:DescribeSlackChannelConfigurations",
       "cloudwatch:DescribeAlarmsForMetric",
       "cloudwatch:GetMetricData",
       "cloudwatch:GetMetricStatistics",
