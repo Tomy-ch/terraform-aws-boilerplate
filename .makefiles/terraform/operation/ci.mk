@@ -1,5 +1,5 @@
 ## CI が Terraform を動かす入口（.github/workflows/terraform-gates.yaml の plan と、terraform-apply.yaml の apply）と、
-## state に残った lock を外す入口（terraform-unlock.yaml）
+## state に残った lock を外す入口（terraform-unlock.yaml）と、lock を外さずに残す入口（terraform-lock-hold.yaml）
 ##
 ## 資格情報は OIDC の token で role を1回だけ assume し、使い捨てのランナーの ~/.aws の profile に置く。
 ## profile を置いた後の terraform と aws は local.mk と同じ TF_LOCAL_ENV で起動し、AWS_* を外した環境で profile だけを使う。
@@ -17,6 +17,9 @@ CI_PLAN_DIR ?= $(if $(RUNNER_TEMP),$(RUNNER_TEMP),tmp)/ci-plan
 # state を書いて lock を外し、全文を置くまでの分だけ短くする。job の timeout が先に来ると全文を置けない。
 CI_APPLY_TIMEOUT ?= 20m
 TIMEOUT_BIN ?= timeout
+# lock を残す入口が、plan の全文に lock を取った後の行が現れるのを待つ周期と上限（tf-local lock-wait）。
+CI_HOLD_INTERVAL ?= 200ms
+CI_HOLD_LIMIT ?= 10m
 CI_ROLE ?= plan
 # $(1)=env $(2)=役割。role 名と同じ形にする（tf-local role-arn）。
 CI_PROFILE = $(TF_LOCAL_PROJECT)-$(1)-ci-$(2)
@@ -174,6 +177,31 @@ echo "✅ lock を外しました（delete marker の版 ID: $${marker}）"; \
 test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n```text\n%s\n```\n\nlock を外しました（delete marker の版 ID: `%s`）\n' "$$root" "$$lock" "$$marker" >> "$$GITHUB_STEP_SUMMARY"
 endef
 
+# $(1)=env $(2)=root。lock の解除を障害の前に試すために、apply の role で root の lock を取り、外さずに残す
+# （ADR-0604 決定8）。lock は terraform 自身に取らせる —— lock の解除が相手にする lock と同じ形にするためである。
+# plan を裏で起動し、lock を取った後の行が全文に現れたら SIGKILL で止める。SIGINT と SIGTERM では terraform が
+# lock を外してから止まる。lock の有無と形の判定は tf-local が持ち、ここは lock-wait が空を返したときに
+# 後続を省いて失敗することだけを決める（ADR-0702 決定24）。
+define CI_HOLD
+$(call CI_PREPARE,$(1),$(2)); \
+list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; hold="$$d/$$root.hold.txt"; pid=; started=; \
+rm -f "$$list" "$$body" "$$meta" "$$hold"; \
+trap 'rc=$$?; test -z "$$pid" || kill -KILL "$$pid" 2>/dev/null || :; rm -f "$$out" "$$json" "$$tfplan" "$$pol" "$$list" "$$body" "$$meta" "$$hold"; test "$$rc" = 0 || test -z "$$started" || echo "❌ plan を起動した後に失敗しました。lock が残っていれば、lock の解除の閾値を過ぎてから Terraform Unlock で外してください" >&2' EXIT; \
+export list body meta hold; key=$$($(call TF_LOCAL,lock-key "$$dir")); export key; \
+$(TF_LOCAL_ENV) $(AWS_BIN) s3api list-objects-v2 --region "$$region" --bucket "$$bucket" --prefix "$$key" --expected-bucket-owner "$$account" --no-paginate --output json > "$$list"; \
+$(call TF_LOCAL,lock-etag -key "$$key" -want absent "$$list") > /dev/null; \
+$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan -input=false -no-color -parallelism=1 > "$$hold" 2>&1 & pid=$$!; started=1; export pid; \
+held=$$($(call TF_LOCAL,lock-wait -pid "$$pid" -interval $(CI_HOLD_INTERVAL) -limit $(CI_HOLD_LIMIT) "$$hold")); \
+kill -KILL "$$pid" 2>/dev/null || :; wait "$$pid" 2>/dev/null || :; pid=; \
+test -n "$$held" || { echo "❌ plan が lock を取った後の行を出さずに終わりました。全文はランナーの外に出しません" >&2; exit 1; }; \
+$(TF_LOCAL_ENV) $(AWS_BIN) s3api list-objects-v2 --region "$$region" --bucket "$$bucket" --prefix "$$key" --expected-bucket-owner "$$account" --no-paginate --output json > "$$list"; \
+etag=$$($(call TF_LOCAL,lock-etag -key "$$key" -want present "$$list")); export etag; \
+$(TF_LOCAL_ENV) $(AWS_BIN) s3api get-object --region "$$region" --bucket "$$bucket" --key "$$key" --if-match "$$etag" --expected-bucket-owner "$$account" --output json "$$body" > "$$meta"; \
+lock=$$($(call TF_LOCAL,lock-held -etag "$$etag" -meta "$$meta" "$$body")); echo "$$lock"; \
+echo "✅ lock を残しました。外すのは Terraform Unlock です"; \
+test -z "$${GITHUB_STEP_SUMMARY:-}" || printf '### %s\n\n```text\n%s\n```\n\nlock を残しました。外すのは Terraform Unlock です\n' "$$root" "$$lock" >> "$$GITHUB_STEP_SUMMARY"
+endef
+
 .PHONY: ci-aws-credentials ## [CI] OIDC で CI_ENV の CI_ROLE の role を assume し、profile に資格情報を置く
 ci-aws-credentials: SHELL := /bin/bash
 ci-aws-credentials:
@@ -203,3 +231,9 @@ ci-unlock-admin-identity: SHELL := /bin/bash
 ci-unlock-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,unlock-identity)
 ci-unlock-admin-identity:
 	@$(call CI_UNLOCK,admin,identity)
+
+.PHONY: ci-hold-admin-identity ## [CI] 管理アカウントの identity root の state に lock を取り、外さずに残す（bootstrap 段5 の lock の解除の試行）
+ci-hold-admin-identity: SHELL := /bin/bash
+ci-hold-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
+ci-hold-admin-identity:
+	@$(call CI_HOLD,admin,identity)

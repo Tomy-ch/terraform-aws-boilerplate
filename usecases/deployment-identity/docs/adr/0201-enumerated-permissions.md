@@ -135,7 +135,7 @@ plan の role は Pull Request の作者が任意のコードで使える資格�
 ## 影響
 
 - identity root に構成物を足す変更と、管理アカウントに workload の usecase を足す変更は、まずこの policy を広げる変更を apply してから、その権限を使う変更を apply する。CI の role を足す変更は、決定4 の順序により1回の apply に収まる。権限の変更と、その権限で作る resource を同じ apply に入れると、両者の間に依存が無く失敗しうる
-- inline policy は role あたり 10,240 文字、customer managed policy は1つ 6,144 文字（どちらも空白を除く）が上限である。入力の境界での長さは、`permissions.tftest.hcl` の `policy_length` が上限以下であることを固定する
+- inline policy は role あたり 10,240 文字、customer managed policy は1つ 6,144 文字（どちらも空白を除く）が上限である。入力の境界での長さは、`permissions.tftest.hcl` の `policy_length`（`admin`）と `policy_length_outside_admin`（`admin` 以外）が上限以下であることを固定する
 
 ## 見直し条件
 

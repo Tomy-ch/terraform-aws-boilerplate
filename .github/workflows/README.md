@@ -17,6 +17,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
+| lock を残す | 人が手動で起動する | lock の解除を障害の前に試すために、apply と同じ role で state の lock を取り、外さずに残す |
 | リリース昇格のゲート | デプロイブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
 
 ブランチの名前は [`branches.json`](../settings/branches.json) から `make repo-settings-apply` が生成し、
@@ -174,15 +175,16 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの3つの検査の job だけで、どれも
   決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）。`revert-plan` の `needs` には
   置かない —— revert は apply の job の結果だけで決まり、検査が落ちた apply の job は `skipped` で終わる
-- **root ごとに、plan・apply・lock の解除の job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
+- **root ごとに、plan・apply・lock の解除・lock を残す job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
   `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
-  apply の job と lock の解除の job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
-  `ci-unlock-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
+  apply の job と lock の解除の job と lock を残す job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
+  `ci-unlock-<env>-<root>`・`ci-hold-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
   配置と job の過不足は `make oidc-job-lint` が、root が呼ぶ usecase と backend の設定（key が ADR-0604 決定7 の値で、
   lock file を使う）は `make root-check` が落とす
-- **env ごとに、apply の workflow と lock の解除の workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
+- **env ごとに、apply の workflow と lock の解除の workflow と lock を残す workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
   持つと、`on.push.branches` を1つのデプロイブランチに決められない（`make repo-settings-check`）。同じ env の
-  identity root と workload root の apply の job は同じ workflow に置く。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
+  identity root と workload root の apply の job は同じ workflow に置く。lock の解除の job と lock を残す job も、それぞれ env ごとの
+  workflow にまとめる。workflow のファイル名は変えない —— `apply-revert` は最後に成功した run を workflow の
   ファイル名で引くので、改名はその履歴を断つ
 - **workload root の apply の全文は、apply の出力の Bucket に置く。** identity root の全文は plan の出力の
   Bucket の `apply/` に置く。apply の role は plan の出力の Bucket に書けない（`ci.mk` の `CI_APPLY_OUTPUT_KIND` が選ぶ）
@@ -236,8 +238,8 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 
   group が同じ root の apply の job の group と違うことは、`make oidc-job-lint` が workflow をまたいで照合する
 - **新しい lock は消さない。** ID などを出して失敗する。lock が無ければ何も消さずに成功する
-- **CI のランナーが apply の job で取った lock だけを消す。** apply の job は plan で lock を取ってから apply
-  するので、`Operation` が `OperationTypePlan` と `OperationTypeApply` の lock を消す。`Who` が `runner@` で
+- **CI のランナーが apply の job か lock を残す job で取った lock だけを消す。** apply の job は plan で lock を取ってから apply
+  し、lock を残す job は plan で lock を取って止まるので、`Operation` が `OperationTypePlan` と `OperationTypeApply` の lock を消す。`Who` が `runner@` で
   始まらない lock と、`Operation` がそのどちらでもない lock は、古くても ID などを出して失敗する（ADR-0604 決定8）。人の手元の apply の
   lock は、その apply を実行した人が `terraform force-unlock` で外す
 - **版を指定せずに消す。** 版管理の下で delete marker になり、消した lock の版は lifecycle の日数
@@ -268,14 +270,69 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 
 保証しないこと:
 
-- **CI のランナーの plan と apply の lock が、apply の job のものであること。** `Who` と `Operation` は lock の
-  書き手が書く値で、`runner@` で始まる利用者が apply の job の外で取った plan と apply の lock も、閾値を超えれば消す
+- **CI のランナーの plan と apply の lock が、apply の job か lock を残す job のものであること。** `Who` と `Operation` は lock の
+  書き手が書く値で、`runner@` で始まる利用者がそれらの job の外で取った plan と apply の lock も、閾値を超えれば消す
 - **読めない lock file を外すこと。** 中身を Terraform の lock として読めない lock file と、版 ID の無い
   lock file は、消さずに失敗する。一時 IAM user の書き込みが拒否された後は、
   それを外す手順がこのリポジトリに無い（ADR-0602 決定9）
 - **起動できる人を絞ること。** write 権限を持つ人なら起動できる。environment の reviewer は置かない ——
   障害のときに人が1人しか居なくても外せるようにする。実行されるのは `admin` の先頭の workflow と
   コードだけで、できることは閾値を超えた lock file 1つを消すことに限られる
+
+### lock を残す job
+
+`terraform-lock-hold.yaml` の `hold-admin-identity` は、人が `workflow_dispatch` で起動し、apply の job と同じ
+environment `admin-apply-identity` の下で apply-identity の role を assume して、管理アカウントの identity root の
+state に lock を取り、外さずに残す。lock の解除の role の権限（lock file の一覧・読み取り・削除と、その復号）は
+lock が残る障害が起きるまで使われないので、bootstrap の段5 でこの job が残した lock を `Terraform Unlock` で外し、
+障害の前に一度実物で評価する（ADR-0604 決定8）。Actions の画面で apply の run を取り消しても lock は残らない ——
+terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してから止まる。
+
+- **lock は terraform 自身に取らせる。** `CI_HOLD`（`.makefiles/terraform/operation/ci.mk`）は init の後、lock が
+  無いことを確かめてから、lock を取る `terraform plan`（`-parallelism=1`）を裏で起動する。plan の全文に lock を
+  取った後の行（resource の `Refreshing state...` か data source の `Reading...`）が現れたら SIGKILL で止める。
+  lock file は Terraform の S3 backend が書くので、`Terraform Unlock` が相手にするのは障害で残る lock と同じ形の
+  lock である。待つ判定は `scripts/tf-local` の `lock-wait` が持つ
+- **残った lock を確かめてから成功する。** 止めた後に lock file の一覧を取り直し、lock が残っていて、`Who` が
+  `runner@`・`Operation` が `OperationTypePlan` の、lock の解除が消す形であることを `tf-local lock-held` で確かめる。
+  ログに lock の説明と、`Terraform Unlock` が消せるようになる時刻（`LastModified` に閾値を足した時刻）を出す。
+  plan が行を出す前に終わった、止めた後に lock が無い、消せない形の lock が残った、のどれでも失敗する。どの段で
+  終わっても、裏の terraform は trap が止める
+- **起動の前に lock が無いことを確かめる。** 前の apply が残した lock を、この job が残した lock と取り違えない。
+  lock が在れば plan を起動せずに失敗する
+- **apply しない。** state と AWS の resource を変えず、plan の出力も保存しない。plan の全文はランナーの外に出さない
+- **apply の concurrency の group に入る。** workflow 全体の group を、apply の job と字面で同じ
+  `terraform-apply-admin-identity` にし、`cancel-in-progress: false` で持つ。apply と並んで走って lock を奪い合わず、
+  実行中の apply の後ろで待つ。ただし GitHub は、同じ group で待っている run を後から来た run で置き換える。
+  apply の run が待っている間にこの job を起動すると、その apply の run は走らずに取り消され、通知も出ない。
+  起動の前に、`admin` で走っている apply の run と待っている run が無いことを確かめる（`docs/setup/bootstrap.md` 段5 手順6）
+- **lock を残している間、その root の apply は lock の取得で落ちる。** 落ちた apply は通知され、lock の失敗は
+  revert しない（「apply の失敗の revert」）。`Terraform Unlock` が消せるのは閾値を超えた後なので、それまでは
+  apply が止まる。外した後、`admin` の先頭の commit の apply の run を再実行する
+- **`timeout-minutes` は閾値の apply の job の時間を超えない。** この job が閾値より長く生きると、生きている
+  plan が持つ lock を lock の解除が消しうる。`make ci-hold-*` を走らせる job の `timeout-minutes` が
+  `scripts/tf-local` の閾値以下であることは、tf-local のテストが見る
+- **lock を残す workflow に、ほかの CI の入口を持つ job を置かない。** lock の解除の workflow にも lock を残す job を
+  置かない。同じ run の中で、lock を残す処理と apply か lock の解除が並んで走る（`make oidc-job-lint`）
+- **`admin` から起動する**（`gh workflow run terraform-lock-hold.yaml --ref admin`）。古い commit の拒否
+  （`refuse-stale`）と検出への依存（`hold-infra-code-gate`）は apply の job と同じである。順序・層・root の
+  検査には依存しない —— apply しないからである
+- **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を読む。** apply の job と
+  同じ secret である
+- 通知は持たない。人が起動し、結果を画面で見る
+- 許す AWS の宛先は apply の job と同じ（`terraform` と `aws` のクラス）である。`ci-hold-*` は terraform を
+  呼ぶ入口なので、egress の `root` に名指され、型の宛先を求められる（「ランナーの封じ込め」節）
+- job の形（role・environment・concurrency の group の apply の job との一致、起動条件、拒否の step、入口）は
+  `make oidc-job-lint` が、`CI_HOLD` が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
+  `scripts/tf-local` の `TestCiMk` と `TestCiRecipes` が偽物の terraform と aws でレシピを走らせて見る
+
+保証しないこと:
+
+- **plan が lock を持つ時間が、待つ判定と SIGKILL に間に合うこと。** plan が lock を取った後の行を出してから
+  終わるまでの間に止められなければ、lock は残らず job は失敗する。起動し直せば足りるが、繰り返し失敗するなら
+  root の plan が速すぎる
+- **SIGKILL で止めた terraform の provider のプロセスが、すぐに止まること。** 片付けはランナーの job の終わりに
+  任せる
 
 ### apply の失敗の revert
 
@@ -566,11 +623,11 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 CI の実行する root とそれを実行する job を、`type` が resource / data source の型の呼ぶ宛先を持つ。
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
 `type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
-job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` / `ci-unlock-*` を `.makefiles/terraform/operation/ci.mk`
+job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` / `ci-unlock-*` / `ci-hold-*` を `.makefiles/terraform/operation/ci.mk`
 の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。`type` の宛先を
-求めるのは、その root の `ci-plan-*` か `ci-apply-*` を呼ぶ job だけである —— `ci-unlock-*` は terraform を
+求めるのは、その root の `ci-plan-*` か `ci-apply-*` か `ci-hold-*` を呼ぶ job だけである —— `ci-unlock-*` は terraform を
 呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
-apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*`
+apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*` / `ci-hold-*`
 を呼ばなければ落ちる。region を含む
 `type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
 引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、

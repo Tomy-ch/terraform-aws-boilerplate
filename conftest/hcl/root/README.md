@@ -42,7 +42,7 @@ root はディレクトリの位置で決める。`env/<env>/` を workload root
 `.tf` を読む。名前が `.` で始まるディレクトリと `tests` という名前の env も、位置が合えば root として読む。
 
 `env/` の下でそれ以外の位置（`.terraform` の下を除く）に `.tf` を置くこと（決定5 の配置）と、各 root に plan・apply・
-lock の解除の job があることは、`make oidc-job-lint` が見る（ADR-0501 決定5）。
+lock の解除・lock を残す job があることは、`make oidc-job-lint` が見る（ADR-0501 決定5）。
 
 `module` の `source` は、ディレクトリと結んで `.` と `..` を字面で解いた後のパスで判定する（`lib.hcl.module_target`。
 層の検査と同じ解き方）。解いた先が `usecases/<名前>` で、`<名前>` が宣言に在れば、その種類の usecase を呼ぶとみなす。
