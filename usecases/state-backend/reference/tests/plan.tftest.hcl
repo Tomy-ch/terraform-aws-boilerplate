@@ -29,7 +29,7 @@ run "reference_bucket_name" {
   }
 }
 
-# ARN は plan では決まらないので、名前の規則どおりの値を与え、配線と precondition を通す。
+# ARN は plan では決まらないので、名前の規則どおりの値を与えて配線を見る。
 run "reference_apply_output_bucket" {
   command = plan
 

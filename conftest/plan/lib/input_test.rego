@@ -285,6 +285,7 @@ test_violation_inline_block_unknown_inside if {
 test_pass_inline_seen_only_in_after_unknown if {
 	after := object.remove(data.policy_plan.inline_arguments.aws_kms_key, ["policy"])
 	rc := {"address": "module.x.aws_kms_key.this", "type": "aws_kms_key", "change": {"actions": ["create"], "after": after, "after_unknown": {"policy": true}}}
+	count(data.policy_plan.inline_arguments) > 1
 	rcs := array.concat([valid, rc], [fixture.unwritten(t) | some t, _ in data.policy_plan.inline_arguments; t != "aws_kms_key"])
 	msgs := gate.deny with input as fixture.plan(rcs) with data.provider_schema as fixture.provider_schema
 	not fixture.has("[PLAN-INPUT-10]", msgs)

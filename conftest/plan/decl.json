@@ -3,10 +3,20 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "iam:DeleteAccountPasswordPolicy",
+      "iam:DisableOrganizationsRootCredentialsManagement",
+      "iam:DisableOrganizationsRootSessions",
+      "iam:EnableOrganizationsRootCredentialsManagement",
+      "iam:EnableOrganizationsRootSessions",
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
+      "iam:UpdateAccountPasswordPolicy",
       "kms:ListAliases",
+      "logs:DescribeLogGroups",
+      "organizations:CreateOrganization",
       "organizations:DescribeOrganization",
+      "organizations:DisableAWSServiceAccess",
+      "organizations:EnableAWSServiceAccess",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
       "organizations:ListRoots"
@@ -105,6 +115,9 @@
           ],
           "types": {
             "aws_iam_openid_connect_provider": {
+              "class": "target"
+            },
+            "aws_iam_policy": {
               "class": "target"
             },
             "aws_iam_role": {
@@ -209,7 +222,11 @@
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.apply_identity",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.apply_identity",
         "output_bucket": "module.state_backend.module.plan_output.aws_s3_bucket.this",
-        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this"
+        "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this",
+        "output_bucket_policy_statements": 5,
+        "managed_policies": [
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
+        ]
       },
       "unlock_roles": [
         "unlock_role",
@@ -238,18 +255,58 @@
       "roots": [
         {
           "writer": "apply_identity_role",
-          "state": "identity/terraform.tfstate"
+          "state": "identity/terraform.tfstate",
+          "unlocker": "unlock_role"
         },
         {
           "writer": "apply_role",
-          "state": "workload/terraform.tfstate"
+          "state": "workload/terraform.tfstate",
+          "unlocker": "workload_unlock_role"
         }
       ],
-      "unlocker": "unlock_role",
       "key_user_roles": [
         "plan_role",
         "apply_identity_role",
-        "unlock_role"
+        "unlock_role",
+        "apply_role",
+        "workload_unlock_role"
+      ],
+      "apply_output_bucket_policy_statements": 4
+    },
+    "finops": {
+      "budget": "aws_budgets_budget",
+      "budget_action": "aws_budgets_budget_action",
+      "anomaly_subscription": "aws_ce_anomaly_subscription"
+    },
+    "network_foundation": {
+      "vpc": "module.network_foundation.module.vpc.aws_vpc.this",
+      "default_security_group": "module.network_foundation.module.vpc.aws_default_security_group.this",
+      "default_route_table": "module.network_foundation.module.vpc.aws_default_route_table.this",
+      "flow_log": "module.network_foundation.module.vpc.aws_flow_log.this",
+      "flow_logs_role": "module.network_foundation.module.vpc.aws_iam_role.flow_logs",
+      "flow_logs_log_group": "module.network_foundation.module.flow_logs.aws_cloudwatch_log_group.this",
+      "flow_logs_key": "module.network_foundation.module.kms.aws_kms_key.this",
+      "route_tables": {
+        "address": "module.network_foundation.module.subnet_tiers.aws_route_table.this",
+        "count": 6
+      },
+      "module_prefix": "module.network_foundation.",
+      "allowed_types": [
+        "aws_cloudwatch_log_group",
+        "aws_default_route_table",
+        "aws_default_security_group",
+        "aws_flow_log",
+        "aws_iam_role",
+        "aws_iam_role_policies_exclusive",
+        "aws_iam_role_policy",
+        "aws_iam_role_policy_attachments_exclusive",
+        "aws_kms_alias",
+        "aws_kms_key",
+        "aws_kms_key_policy",
+        "aws_route_table",
+        "aws_route_table_association",
+        "aws_subnet",
+        "aws_vpc"
       ]
     },
     "stateful_protection": {
@@ -260,7 +317,8 @@
         "aws_kms_key_policy",
         "aws_organizations_organization",
         "aws_organizations_organizational_unit",
-        "aws_iam_user"
+        "aws_iam_user",
+        "aws_s3_bucket_object_lock_configuration"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -283,6 +341,9 @@
       },
       "aws_kms_key": {
         "policy": null
+      },
+      "aws_s3_bucket_object_lock_configuration": {
+        "expected_bucket_owner": null
       },
       "aws_organizations_organization": {
         "aws_service_access_principals": null
@@ -363,6 +424,22 @@
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
         "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
       }
+    },
+    "kms_key_policy": {
+      "cross_account_sources": {
+        "module.audit_evidence.module.archive_key.aws_kms_key_policy.this": [
+          "cloudtrail.amazonaws.com",
+          "config.amazonaws.com"
+        ]
+      }
+    },
+    "audit_evidence": {
+      "bucket": "module.audit_evidence.module.archive.aws_s3_bucket.this",
+      "bucket_policy": "module.audit_evidence.module.archive.aws_s3_bucket_policy.this",
+      "object_lock_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_object_lock_configuration.this",
+      "lifecycle_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_lifecycle_configuration.this",
+      "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this",
+      "metric_alarm": "module.audit_evidence.module.archive.aws_cloudwatch_metric_alarm.delivery_stalled"
     }
   }
 }

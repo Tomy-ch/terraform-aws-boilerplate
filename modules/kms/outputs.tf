@@ -15,3 +15,8 @@ output "key_arn_for_iam" {
   description = "鍵の ARN。key_arn と同じ値だが、Key Policy の置き換えを待たない。鍵を使わず ARN だけを名指す場所（IAM の policy の Resource）にだけ使う。鍵を使う resource に渡すと、既定の Key Policy の間に鍵を使いうる。"
   value       = aws_kms_key.this.arn
 }
+
+output "key_policy" {
+  description = "Key Policy の文書（JSON の文字列）。呼び出し側のテストが、渡した users から組まれた文を確かめるための出力。"
+  value       = aws_kms_key_policy.this.policy
+}

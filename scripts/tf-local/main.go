@@ -53,15 +53,23 @@
 //	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
 //	tf-local lock-key <root>
 //	    <root>/backend.tf の key から、state の lock file の key を1行で出す
-//	tf-local lock-etag -key <k> <list.json>
-//	    `aws s3api list-objects-v2 --no-paginate` の応答から、lock file の ETag を1行で出す。lock が無ければ空行を出す
+//	tf-local lock-etag -key <k> [-want absent|present] <list.json>
+//	    `aws s3api list-objects-v2 --no-paginate` の応答から、lock file の ETag を1行で出す。lock が無ければ空行を出す。
+//	    -want absent は lock があれば、-want present は lock が無ければ失敗する
 //	tf-local lock-stale -etag <e> -meta <meta.json> <lock.json>
 //	    `aws s3api get-object` の応答と lock file から、消してよい lock の説明を1行で出す。lock が apply の job の
 //	    timeout と余裕を超えて古くなければ、説明を添えて失敗する
+//	tf-local lock-held -etag <e> -meta <meta.json> <lock.json>
+//	    lock を残す job が残した lock の説明と、lock の解除が消せるようになる時刻を出す。lock の解除が消す形の
+//	    lock でなければ失敗する
+//	tf-local lock-wait -pid <pid> [-interval <d>] [-limit <d>] <全文>
+//	    裏で走る plan の全文に、lock を取った後の行が現れたら held を出す。現れる前に plan が終われば空行を出す。
+//	    どちらも起きずに limit を過ぎたら失敗する
 //
 // aws も terraform も起動しない。起動は make が行い、ここは値だけを返す（ADR-0702 決定3）。
 // plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
-// policy-result・sha256・lock-key・lock-etag・lock-stale はファイルを読み、oidc-url は環境変数を読み、lock-stale は時刻を読む。
+// policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait はファイルを読み、oidc-url は環境変数を読み、
+// lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -84,6 +92,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -113,7 +122,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> <file> | lock-stale -etag <e> -meta <file> <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -132,12 +141,14 @@ type deps struct {
 	environ  []string
 	git      func(args ...string) (string, error)
 	now      func() time.Time
+	alive    func(pid int) bool
+	sleep    func(time.Duration)
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -216,6 +227,10 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = runLockETag(args[1:], d.readFile)
 	case "lock-stale":
 		value, err = runLockStale(args[1:], d)
+	case "lock-held":
+		value, err = runLockHeld(args[1:], d)
+	case "lock-wait":
+		value, err = runLockWait(args[1:], d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
@@ -424,6 +439,11 @@ func planHeader(git func(args ...string) (string, error)) (string, error) {
 	}
 
 	return header, nil
+}
+
+// processAlive は、pid のプロセスが在るかを返します。signal 0 は届くかを確かめるだけで、何も送らない。
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }
 
 func gitOutput(args ...string) (string, error) {

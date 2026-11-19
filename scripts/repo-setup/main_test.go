@@ -19,14 +19,12 @@ import (
 )
 
 const (
-	// missingCommand は、PATH に存在しない実行ファイル名。失敗する手順を組み立てるために使います。
-	missingCommand = "gobp-repo-setup-missing-command"
-	ghRepoViewCall = `gh repo view --json name,owner -q .owner.login + "/" + .name`
-	// initialTagCall / initialTagPushCall は、初期タグを打つ 2 手順の記録表記。
+	// missingCommand は、PATH に存在しない実行ファイル名。
+	missingCommand     = "gobp-repo-setup-missing-command"
+	ghRepoViewCall     = `gh repo view --json name,owner -q .owner.login + "/" + .name`
 	initialTagCall     = "git tag -a v0.0.0 -m Initial boilerplate tag"
 	initialTagPushCall = "git push origin v0.0.0"
-	// branchPushCall は、用意したブランチをまとめて push する手順の記録表記。
-	branchPushCall = "git push origin develop staging production"
+	branchPushCall     = "git push origin develop staging production"
 )
 
 var errFakeCommand = xerrors.New("fake command failed")
@@ -41,10 +39,12 @@ type fakeRunner struct {
 	// allowFail は実行層の責務なのでここでは解釈しません。
 	failOn   string
 	branches map[string]bool
+	// env は、getenv が返す環境変数。無いキーは空を返す。
+	env map[string]string
 }
 
 func (f *fakeRunner) runner() runner {
-	return runner{run: f.run, output: f.output, branchExists: f.branchExists}
+	return runner{run: f.run, output: f.output, branchExists: f.branchExists, getenv: func(k string) string { return f.env[k] }}
 }
 
 func (f *fakeRunner) run(s step) error {
@@ -71,8 +71,7 @@ func (f *fakeRunner) output(name string, args ...string) (string, error) {
 
 func (f *fakeRunner) branchExists(branch string) bool { return f.branches[branch] }
 
-// captureLog は、標準ロガーの出力先をバッファへ差し替え、その内容を読む関数を返します。
-// 出力先はプロセス共通のため、使うテストは並列化できません。
+// captureLog の出力先はプロセス共通のため、使うテストは並列化できない。
 func captureLog(t *testing.T) func() string {
 	t.Helper()
 
@@ -98,8 +97,7 @@ func mkdirStep(path string) step {
 	return step{name: "mkdir", args: []string{path}}
 }
 
-// git は、dir のリポジトリに対して git を実行します。作業中のリポジトリへ触れないよう、
-// 対象は常に -C で明示します。
+// git は、作業中のリポジトリへ触れないよう、対象を常に -C で明示する。
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
 
@@ -308,6 +306,19 @@ func Test_branchPushStep(t *testing.T) {
 		t.Run("既存かどうかに関わらず 3 本まとめて push する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "git push origin develop staging production", branchPushStep(testSetup.branches).String())
+		})
+	})
+}
+
+func Test_pinTargetStep(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("gh の宛先を remote 名 origin で固定する", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "gh repo set-default origin", pinTargetStep().String())
 		})
 	})
 }
@@ -611,7 +622,7 @@ func Test_runPreflight(t *testing.T) {
 		t.Run("初期タグが無ければ初期化を許可する", func(t *testing.T) {
 			t.Chdir(initRepo(t))
 
-			require.NoError(t, runPreflight())
+			require.NoError(t, runPreflight(func(string) string { return "" }))
 		})
 	})
 
@@ -621,9 +632,24 @@ func Test_runPreflight(t *testing.T) {
 			git(t, dir, "tag", initialTag)
 			t.Chdir(dir)
 
-			err := runPreflight()
+			err := runPreflight(func(string) string { return "" })
 			require.ErrorIs(t, err, errInitialTagExists)
 		})
+
+		for _, key := range targetOverrides {
+			t.Run(key+" が環境にあれば、宛先が origin に固定されないので止める", func(t *testing.T) {
+				t.Chdir(initRepo(t))
+
+				err := runPreflight(func(k string) string {
+					if k == key {
+						return "someone/else"
+					}
+					return ""
+				})
+				require.ErrorIs(t, err, errTargetOverridden)
+				assert.ErrorContains(t, err, key)
+			})
+		}
 	})
 }
 
@@ -642,12 +668,15 @@ func Test_runBootstrap(t *testing.T) {
 
 			require.NoError(t, runBootstrap(f.runner(), testSetup))
 
+			pinned := slices.Index(f.calls, pinTargetStep().String())
 			tags := slices.Index(f.calls, "git tag")
 			branches := slices.Index(f.calls, "git branch develop")
 			moved := slices.Index(f.calls, ghRepoViewCall)
+			require.NotEqual(t, -1, pinned)
 			require.NotEqual(t, -1, tags)
 			require.NotEqual(t, -1, branches)
 			require.NotEqual(t, -1, moved)
+			assert.Equal(t, 0, pinned, "宛先の固定は最初の呼び出しである")
 			assert.Less(t, tags, branches)
 			assert.Less(t, branches, moved)
 		})
@@ -655,6 +684,14 @@ func Test_runBootstrap(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("宛先を固定できなければ、何も書き換えずに止まる", func(t *testing.T) {
+			t.Parallel()
+			f := &fakeRunner{failOn: pinTargetStep().String()}
+
+			require.ErrorIs(t, runBootstrap(f.runner(), testSetup), errFakeCommand)
+			assert.Equal(t, []string{pinTargetStep().String()}, f.calls)
+		})
 
 		t.Run("タグの初期化に失敗したらブランチ作成へ進まない", func(t *testing.T) {
 			t.Parallel()
@@ -994,7 +1031,7 @@ func writeReleaseNotes(t *testing.T) string {
 //nolint:paralleltest // t.Chdir はプロセス全体の作業ディレクトリを変えるため並列化できない
 func Test_execute(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
-		t.Run("preflight は実行層を使わず初期タグの有無だけを見る", func(t *testing.T) {
+		t.Run("preflight は手順を1つも実行しない", func(t *testing.T) {
 			t.Chdir(initRepo(t))
 			f := bootstrappableRunner()
 
@@ -1042,6 +1079,15 @@ func Test_execute(t *testing.T) {
 			t.Chdir(dir)
 
 			require.ErrorIs(t, execute(bootstrappableRunner().runner(), testSetup, []string{"preflight"}), errInitialTagExists)
+		})
+
+		t.Run("preflight は実行層の環境変数で宛先の上書きを見る", func(t *testing.T) {
+			t.Chdir(initRepo(t))
+			f := bootstrappableRunner()
+			f.env = map[string]string{"GH_REPO": "someone/else"}
+
+			require.ErrorIs(t, execute(f.runner(), testSetup, []string{"preflight"}), errTargetOverridden)
+			assert.Empty(t, f.calls)
 		})
 
 		t.Run("bootstrap の失敗をそのまま返す", func(t *testing.T) {

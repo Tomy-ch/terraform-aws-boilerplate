@@ -13,5 +13,6 @@ module "state_backend" {
     apply           = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
     apply_identity  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
     unlock_identity = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
+    unlock          = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"
   }
 }

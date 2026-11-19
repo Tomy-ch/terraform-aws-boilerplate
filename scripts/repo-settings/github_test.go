@@ -252,6 +252,98 @@ func Test_fetchLive(t *testing.T) {
 	})
 }
 
+func Test_vulnerabilityReportingPath(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "/repos/o/r/private-vulnerability-reporting", vulnerabilityReportingPath("o/r"))
+}
+
+func Test_fetchVulnerabilityReporting(t *testing.T) {
+	t.Parallel()
+
+	pvrGet := "GET /repos/o/r/private-vulnerability-reporting"
+
+	readCases := []struct {
+		name    string
+		enabled string
+		want    liveVulnerabilityReporting
+	}{
+		{"公開のリポジトリで有効なら、それを返す", `{"enabled": true}`, liveVulnerabilityReporting{Public: true, Enabled: true}},
+		{"公開のリポジトリで無効なら、それを返す", `{"enabled": false}`, liveVulnerabilityReporting{Public: true, Enabled: false}},
+	}
+	for _, tc := range readCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f, c := newFakeGitHub(t, map[string]fakeResponse{
+				"GET /repos/o/r": ok(`{"visibility": "public"}`),
+				pvrGet:           ok(tc.enabled),
+			})
+			got, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+			assert.Empty(t, f.writes())
+		})
+	}
+
+	for _, visibility := range []string{"private", "internal"} {
+		t.Run(visibility+" のリポジトリでは PVR を問わない", func(t *testing.T) {
+			t.Parallel()
+			f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r": ok(`{"visibility": "` + visibility + `"}`)})
+			got, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+			require.NoError(t, err)
+			assert.Equal(t, liveVulnerabilityReporting{}, got)
+			require.Len(t, f.requests, 1)
+			assert.Equal(t, "/repos/o/r", f.requests[0].target)
+		})
+	}
+
+	visibilityCases := []struct {
+		name string
+		body string
+	}{
+		{"visibility が無ければ失敗する", `{}`},
+		{"visibility が未知の値なら失敗する", `{"visibility": "secret"}`},
+	}
+	for _, tc := range visibilityCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r": ok(tc.body)})
+			_, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+			require.ErrorIs(t, err, errUnexpectedResponse)
+			assert.Len(t, f.requests, 1)
+		})
+	}
+
+	t.Run("リポジトリを読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{})
+		_, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+		require.ErrorIs(t, err, errHTTP)
+	})
+
+	// 403 は権限の不足のほかに rate limit や SAML でも返る。どれも突合の対象外に丸めない。
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity} {
+		t.Run(fmt.Sprintf("PVR の GET が %d なら失敗する", status), func(t *testing.T) {
+			t.Parallel()
+			_, c := newFakeGitHub(t, map[string]fakeResponse{
+				"GET /repos/o/r": ok(`{"visibility": "public"}`),
+				pvrGet:           {status: status, body: `{"message": "x"}`},
+			})
+			_, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+			require.ErrorIs(t, err, errHTTP)
+		})
+	}
+
+	t.Run("PVR の応答に enabled が無ければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, c := newFakeGitHub(t, map[string]fakeResponse{
+			"GET /repos/o/r": ok(`{"visibility": "public"}`),
+			pvrGet:           ok(`{}`),
+		})
+		_, err := fetchVulnerabilityReporting(context.Background(), c, repo)
+		require.ErrorIs(t, err, errUnexpectedResponse)
+	})
+}
+
 func Test_fetchRuleset(t *testing.T) {
 	t.Parallel()
 

@@ -1,17 +1,17 @@
 # リポジトリ設定
 
-このディレクトリには、リポジトリ単位の GitHub 設定を JSON で格納しています（分岐のパターン、ブランチルールセット、デプロイの environment、ラベル定義）。このボイラープレートから派生したリポジトリを、Web UI をクリックして回るのではなく再現可能な形で構成するためのものです。
+このディレクトリには、リポジトリ単位の GitHub 設定を JSON で格納しています（分岐のパターン、ブランチルールセット、デプロイの environment、Private Vulnerability Reporting、ラベル定義）。このボイラープレートから派生したリポジトリを、Web UI をクリックして回るのではなく再現可能な形で構成するためのものです。
 
 ## 宣言と実態の突合
 
-保護設定 —— `branch-protection.json` と `environments.json` —— は、宣言から適用し、実態と突き合わせます（ADR-0603 決定4-6）。判定は `scripts/repo-settings` が持ちます。
+保護設定 —— `branch-protection.json`、`environments.json`、`private-vulnerability-reporting.json` —— は、宣言から適用し、実態と突き合わせます（ADR-0603 決定4-6）。判定は `scripts/repo-settings` が持ちます。
 
 | 操作 | make | 書き換えるもの | 誰が |
 | --- | --- | --- | --- |
 | 生成 | `repo-settings-apply` | `branch-protection.json` の include の区間と、apply の workflow の `on.push.branches` | 誰でも |
 | 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
 | 突合 | `repo-settings-drift` | 無し（GET のみ） | 人が手元で（誰でも） |
-| 適用 | `apply-branch-protection` / `apply-environments` | GitHub の ruleset / environment | 管理者の資格情報を持つ人 |
+| 適用 | `apply-branch-protection` / `apply-environments` / `apply-vulnerability-reporting` | GitHub の ruleset / environment / Private Vulnerability Reporting | 管理者の資格情報を持つ人 |
 | デプロイブランチの作成 | `create-deploy-branch DEPLOY_ENV=<env>` | GitHub のブランチ（env のデプロイブランチを、デフォルトブランチの先頭から作る。在れば失敗する） | 管理者の資格情報を持つ人（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 で1回） |
 
 - 宣言を変える Pull Request は、merge の後に管理者が適用します。CI は保護設定を書き込みません（ADR-0603 決定30）。適用は `make setup-repo` も呼びます。
@@ -50,7 +50,7 @@
 
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
-- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
+- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
 - 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
@@ -113,6 +113,18 @@ GitHub は報告の無い check を「該当しない」とは読まず待ち続
 マージ可能にならない。`make required-check-lint` がその不変条件を見ます —— 詳細は
 [`.github/workflows/README.md`](../workflows/README.md) の「必須検査はすべての Pull Request で
 報告される」。
+
+## private-vulnerability-reporting.json
+
+Private Vulnerability Reporting を有効にするかの宣言です。[`SECURITY.md`](../../SECURITY.md) が脆弱性の報告の経路として案内する機能で、保護設定の1つとして宣言から適用し、突き合わせます。
+
+| キー | 意味 |
+| --- | --- |
+| `enabled` | 有効にするなら `true`。`true` か `false` のどちらかで、省略と `null` は `repo-settings-check` が落とします |
+
+- GitHub はこの機能を公開のリポジトリにだけ提供します。公開でないリポジトリは `false` を宣言し、`SECURITY.md` の報告先を差し替えます。`true` のままなら、適用は何も送らずに失敗し、突合はずれとして報告します。
+- `false` を宣言した公開でないリポジトリでは、突合はこの機能の実態を読まず、「対象外」と出力します。
+- 突合がこの機能の実態を読めなかったときは、ruleset と environment の結果を出したうえで失敗します。読めなかったものを対象外に数えません。
 
 ## labels.json
 
