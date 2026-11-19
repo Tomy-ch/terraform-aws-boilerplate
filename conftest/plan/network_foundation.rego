@@ -28,7 +28,7 @@ route_table_instances contains c.rc if {
 # VPC Endpoint・peering など）を、型を列挙せずに拾う。
 use_case_changes contains c.rc if {
 	some c in lib.changes
-	startswith(c.rc.address, cfg.module_prefix)
+	startswith(lib.strip_index(c.rc.address), cfg.module_prefix)
 }
 
 prefix_ok if {
@@ -139,9 +139,17 @@ deny contains msg if {
 	msg := sprintf("[PLAN-NET-04] network-foundation の下に宣言の外の型の resource（%s）があります", [rc.address])
 }
 
+encrypted_with_declared_key if {
+	k := object.get(after(cfg.flow_logs_log_group), "kms_key_id", null)
+	arn := object.get(after(cfg.flow_logs_key), "arn", null)
+	is_string(k)
+	is_string(arn)
+	k == arn
+}
+
 deny contains msg if {
 	well_formed
 	present(cfg.flow_logs_log_group)
-	not object.get(after(cfg.flow_logs_log_group), "kms_key_id", "") == object.get(after(cfg.flow_logs_key), "arn", null)
+	not encrypted_with_declared_key
 	msg := sprintf("[PLAN-NET-05] Flow Logs の Log Group（%s）が、宣言した鍵（%s）で暗号化されていません", [cfg.flow_logs_log_group, cfg.flow_logs_key])
 }

@@ -211,3 +211,13 @@ test_violation_log_group_with_other_key if {
 test_violation_log_group_without_key if {
 	fixture.has("[PLAN-NET-05]", denies(put(base, "lg", rc("aws_cloudwatch_log_group", nf.flow_logs_log_group, {}))))
 }
+
+test_violation_log_group_and_key_both_unknown if {
+	lg := rc("aws_cloudwatch_log_group", nf.flow_logs_log_group, {"kms_key_id": null})
+	key := rc("aws_kms_key", nf.flow_logs_key, {})
+	fixture.has("[PLAN-NET-05]", denies(put(put(base, "lg", lg), "key", key)))
+}
+
+test_violation_type_outside_the_declaration_under_indexed_module if {
+	fixture.has("[PLAN-NET-04]", denies(put(base, "x", rc("aws_internet_gateway", "module.n[0].module.subnet_tiers.aws_internet_gateway.this", {}))))
+}
