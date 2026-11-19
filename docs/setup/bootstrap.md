@@ -385,7 +385,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
-   4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
+   4. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
+   5. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
 
       ```bash
       make create-deploy-branch DEPLOY_ENV=admin
