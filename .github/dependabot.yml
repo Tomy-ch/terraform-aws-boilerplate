@@ -1,8 +1,11 @@
-# Dependabot configuration.
-#
 # `cooldown` withholds an update PR until the stated number of days has passed since the version
 # was published. A security update skips it and opens immediately, which is Dependabot's own
 # behaviour and not configurable here.
+#
+# docker / docker-compose / github-actions は、更新を取り込むときに digest / SHA の固定を解決し直す
+# （make pin-images-resolve / make pin-actions-resolve）。その解決は既定 14 日未満の公開物を採用しない
+# （.makefiles/docker/pin.mk の PIN_IMAGES_MIN_AGE_DAYS、.makefiles/github/pin.mk の PIN_ACTIONS_MIN_AGE_DAYS）。
+# cooldown がそれより短いと、取り込めない PR が先に開く。
 version: 2
 updates:
   # ---- Go modules ----
@@ -28,21 +31,20 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 5
+      default-days: 14
     groups:
       docker:
         patterns:
           - "*"
 
-  # 上流のイメージで実行する Security の道具（docker-compose.yaml の image:）。tag を上げる PR では
-  # make pin-images-resolve / pin-images-apply で digest を付け直す。
+  # 上流のイメージで実行する Security の道具（docker-compose.yaml の image:）。
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 5
+      default-days: 14
     groups:
       docker-compose:
         patterns:
@@ -55,7 +57,7 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 5
+      default-days: 14
     groups:
       github-actions:
         patterns:
