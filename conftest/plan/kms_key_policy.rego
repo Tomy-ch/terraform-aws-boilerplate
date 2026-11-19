@@ -326,11 +326,12 @@ excludes(s, name) if {
 }
 
 actions_readable(s) if {
+	count(lib.as_array(object.get(s, "Action", []))) + count(lib.as_array(object.get(s, "NotAction", []))) > 0
 	every x in lib.as_array(object.get(s, "Action", [])) { is_string(x) }
 	every x in lib.as_array(object.get(s, "NotAction", [])) { is_string(x) }
 }
 
-# Action を読めない文も read と読み、object の限定を求める側に倒す。
+# Action を読めない文（Action も NotAction も無い文を含む）も read と読み、object の限定を求める側に倒す。
 s3_read(s) if {
 	via_s3(s)
 	grants(s, "kms:decrypt")
