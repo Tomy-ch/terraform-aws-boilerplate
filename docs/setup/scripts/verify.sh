@@ -94,7 +94,8 @@ expect_error() {
 
 role_arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
 
-# simulate-principal-policy の各 Action の判定が want であること。--context は1つの context entry を渡す。
+# simulate-principal-policy の各 Action の判定が want であること。--context は context entry を1つ渡し、繰り返せる。
+# 繰り返した分は1つの --context-entries にまとめて渡す。
 sim() {
   local want=$1 role=$2 res=$3
   shift 3
