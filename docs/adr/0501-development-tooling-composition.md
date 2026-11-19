@@ -44,7 +44,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | レイヤー | 道具 | 実 AWS |
    | --- | --- | --- |
    | Syntax | `terraform fmt` / `terraform validate` | 不要 |
-   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース） | 不要 |
+   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース。決定5） | 不要 |
    | Security | Trivy / Checkov / KICS / Semgrep CE（決定6） | 不要 |
    | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
@@ -58,11 +58,21 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
    Static Analysis の権威を範囲で分ける。TFLint は一般的な誤設定と書式外の規約を持つ。Conftest は、本リポジトリの
    ソースの構造の規約を持つ —— ADR-0102 決定14・17・18 の層の規則、ADR-0604 決定2-4 の root が呼ぶ usecase の構成、backend 設定の不変条件（ADR-0604 決定7・8 の key と lock file を含む）、resource の作成の順序（`depends_on`。当該ユースケースの ADR が決めるもの）、ADR-0103 決定9-11 のコード実行の検出。root の配置（ADR-0604 決定5 の、`env/` の下で `*.tf` を持つディレクトリの位置）は、root ごとの CI の job の網羅とあわせてリポジトリ運用機構（ADR-0702 決定1）が持つ。同じ規約を両方に
-   書かない。この用途の Conftest の入力は HCL のソース（パーサは拡張子で選び、JSON の構成は ADR-0103 決定11 のとおり未対応として落とす）とし、Policy 層の入力（決定8、ADR-0402
+   書かない。この用途の Conftest の入力は、HCL のソースから作る JSON とし、Policy 層の入力（決定8、ADR-0402
    決定11）とは分ける。これらの規約は `terraform show -json` の出力に現れないか（backend 設定、resource の作成の順序）、plan した root から
    届く module に検査が限られるためである。コード実行の検出をこの入力に置くのは、plan の中で実行される構成要素が
-   あり、`terraform show -json` を入力とすると判定より先に実行を許すためである（ADR-0103 決定11）。Conftest は
-   Policy 層で既に用いており、道具は増えない。
+   あり、`terraform show -json` を入力とすると判定より先に実行を許すためである（ADR-0103 決定11）。
+
+   その JSON は、運用機構（ADR-0702 決定1）が HCL のソースを構文の木として読んで作る。block の構造に加え、属性の式
+   ごとに、リテラルの値か、参照の列か、関数の呼び出しかを持つ。運用機構は規則の知識（宣言、層、親の型）を持たず、
+   規則の判定は Rego が持つ。Conftest の HCL のパーサは式を文字列として返し、その文字列からは、参照と、引用符の中の
+   文字・コメント・テンプレートの指示子とを区別できない形が残るためである。運用機構は、読んだファイルの集合を
+   独立の走査と突き合わせ、入力が0件のとき、構文として解析できないファイルがあるときにエラーとする（ADR-0702
+   決定13-15）。JSON の構成（`.tf.json` 等）は、ADR-0103 決定11 のとおり未対応の入力として落とす。この運用機構は
+   決定3 の3条件を満たす —— 既存の道具（Conftest の HCL のパーサ）は式を構文の木として渡さない、規則が本リポジトリ
+   固有である、Static Analysis の毎回の検査で使う。Conftest と HCL の構文の木を読むライブラリは既に用いており、
+   道具は増えない。移行が済むまで、層の検査の block の構造と、コード実行の検出・resource の作成の順序の検査・
+   root の構成の検査は、Conftest の HCL のパーサの入力を読み、JSON が持つのは参照の列だけである（#367）。
 
    ただし、保護設定の宣言（ADR-0603 決定4）が Terraform のソースの**値**と一致することを見る検査は、リポジトリ
    運用機構（ADR-0702 決定1）が持つ。対象は、environment の宣言と、`deployment-identity` の role の信頼条件が名指す
@@ -240,6 +250,8 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 
 - Static Analysis: 決定4 の各レイヤーに対応する CI ジョブが存在すること
 - Static Analysis: 決定5 の構造の規約の Rego が、違反する入力と違反しない入力の両方のテストを持つこと（ADR-0402 決定8 と同じ規律）
+- Static Analysis: 決定5 の入力を作る運用機構のテストが、入力が0件のとき、構文として解析できないファイルがあるとき、
+  読んだファイルの集合が独立の走査と食い違うときに、エラーとなることを固定すること（ADR-0702 決定13-15）
 - Static Analysis: 抑止エントリが、検出 ID と対象の組かつ理由付きであること（決定13）
 - Static Analysis: CI の必須検査で用いる道具が、すべて manifest に pin されているか、イメージの digest が lockfile に固定されていること（決定19）
 - Static Analysis: 決定6 の各道具に、本走査と同じ条件で落ちることを示す canary があること

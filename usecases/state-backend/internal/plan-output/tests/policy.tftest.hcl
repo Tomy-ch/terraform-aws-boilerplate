@@ -108,16 +108,41 @@ run "bucket_policy_whole_bucket_writer" {
         Action    = ["s3:DeleteObject", "s3:DeleteObjectVersion", "s3:ReplicateDelete"]
         Resource  = "${aws_s3_bucket.this.arn}/*"
       },
+    ]
+    error_message = "接頭辞が空の書き手の Bucket Policy が、書き手の外の PutObject の拒否と削除の拒否の文だけになっていません。接頭辞の外への書き込みを拒む文は、NotResource が Bucket のすべての object に一致して何も拒まないので作りません。"
+  }
+}
+
+# 空の接頭辞とほかの接頭辞を併せ持つ role は、Bucket のすべての key に書ける。接頭辞の外への書き込みを拒む文は、
+# 接頭辞だけを持つ role にだけ作る。
+run "bucket_policy_mixed_whole_bucket_writer" {
+  command = apply
+
+  variables {
+    writers = [
+      { role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", key_prefix = "" },
+      { role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", key_prefix = "apply/" },
+      { role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "pr/" },
+    ]
+  }
+
+  assert {
+    condition = [for st in jsondecode(aws_s3_bucket_policy.this.policy).Statement : st if startswith(st.Sid, "DenyObjectWriteOutsidePrefixes")] == [
       {
         Sid         = "DenyObjectWriteOutsidePrefixes0"
         Effect      = "Deny"
         Principal   = "*"
         Action      = ["s3:PutObject", "s3:ReplicateObject"]
-        NotResource = ["${aws_s3_bucket.this.arn}/*"]
-        Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" } }
+        NotResource = ["${aws_s3_bucket.this.arn}/pr/*"]
+        Condition   = { ArnEquals = { "aws:PrincipalArn" = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" } }
       },
     ]
-    error_message = "接頭辞が空の書き手の Bucket Policy が、Bucket のすべての key への PutObject をその role に残していません。"
+    error_message = "接頭辞の外への書き込みを拒む文が、接頭辞だけを持つ role の1文になっていません。"
+  }
+
+  assert {
+    condition     = length([for st in jsondecode(aws_s3_bucket_policy.this.policy).Statement : st if contains(try(st.NotResource, []), "${aws_s3_bucket.this.arn}/*")]) == 0
+    error_message = "NotResource が Bucket のすべての object を覆う文があります。"
   }
 }
 
