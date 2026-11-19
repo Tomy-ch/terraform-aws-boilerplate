@@ -79,7 +79,7 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role が、このユースケースの resource と role を作る権限を持つ必要がある（#25 PR-2）
+- ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role がこのユースケースの resource と role を作る権限は、`deployment-identity` が持つ（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13-17）
 - 判断 Issue: #97（アカウントごとの Topic と心拍）、#109（alarm を持たない）、#110（`modules/sns`・`modules/kms` の SNS の文）、#256（宛先を Chatbot にする）、#254（作る role の範囲。permissions boundary）
 - env の配線: 管理アカウントは workload root（`env/admin/`）が呼ぶ。security・log-archive は #21、dev・stg・prd は #330 が配線する
 
