@@ -79,7 +79,7 @@ deny contains msg if {
 	is_number(object.get(e, "days", null))
 	e.days > 0
 	not whole_bucket(rule)
-	msg := sprintf("[PLAN-AUDIT-01] %s の規則 %v の失効が、Bucket 全体に掛かりません（filter が空でない）", [address("lifecycle_configuration"), object.get(rule, "id", "")])
+	msg := sprintf("[PLAN-AUDIT-01] %s の規則 %v の失効が、Bucket 全体に掛かりません（filter が無いか、空でない）", [address("lifecycle_configuration"), object.get(rule, "id", "")])
 }
 
 # 失効が保持より早いと、保持の終わる前に現行版が delete marker で隠れる。遅いと保管の費用が際限なく残る。
