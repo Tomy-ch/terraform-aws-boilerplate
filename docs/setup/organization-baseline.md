@@ -90,12 +90,17 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 
 AWS CLI を使える管理アカウントの資格情報が在るなら、`aws cloudformation activate-organizations-access` と `aws cloudformation describe-organizations-access`（`Status` が `ENABLED`）でもよい。
 
+メンバーアカウントを作る変更が昇格した後に、次を確かめる。
+
+1. CloudFormation の「StackSets」で `<project>-break-glass` を開き、「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
+2. 3.6 の試験で、メンバーアカウントの break-glass の role へも切り替えられることを確かめ、結果を Pull Request に書く
+
 ### 3.6 break-glass を試す（毎月）
 
 45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。
 
 1. break-glass の user でコンソールにサインインし、MFA を使う
-2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる
+2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる。メンバーアカウントが在れば、そのうち1つの同じ名前の role へも切り替える
 3. サインインと role の引き受けの通知が届くことを確かめる
 4. 試した日と結果を記録する
 
