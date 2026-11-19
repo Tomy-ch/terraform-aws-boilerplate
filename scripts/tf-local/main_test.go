@@ -1516,6 +1516,41 @@ func TestCiMk(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(got, " plan -input=false"), got)
 	})
 
+	t.Run("workload root の入口は apply・unlock の profile で workload root を扱い、apply の全文を apply の出力の Bucket に置く", func(t *testing.T) {
+		t.Parallel()
+
+		cases := map[string]struct {
+			role    string
+			want    []string
+			notWant []string
+		}{
+			"ci-plan-admin-workload":   {"plan", []string{`for ns in plan.stateful_protection; do export ns`, `bucket -project tabp -env admin -kind tfplan`}, nil},
+			"ci-apply-admin-workload":  {"apply", []string{`for ns in plan.stateful_protection; do export ns`, `bucket -project tabp -env admin -kind tfapply`}, []string{"-kind tfplan"}},
+			"ci-unlock-admin-workload": {"unlock", []string{`lock-key "$dir"'`}, []string{" terraform "}},
+			"ci-hold-admin-workload":   {"apply", []string{`lock-wait -pid "$pid"`}, []string{" apply -input=false", "put-object"}},
+		}
+		for target, c := range cases {
+			t.Run(target, func(t *testing.T) {
+				t.Parallel()
+
+				got := expand(t, target)
+				assert.Contains(t, got, `dir="./env/admin"; root="admin-workload"`)
+				assert.Contains(t, got, "AWS_PROFILE=tabp-admin-ci-"+c.role+" ")
+				for _, other := range []string{"plan", "apply", "apply-identity", "unlock", "unlock-identity"} {
+					if other != c.role {
+						assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-"+other+" ", target)
+					}
+				}
+				for _, w := range c.want {
+					assert.Contains(t, got, w)
+				}
+				for _, w := range c.notWant {
+					assert.NotContains(t, got, w)
+				}
+			})
+		}
+	})
+
 	t.Run("apply の全文の置き場は、identity root なら plan の出力の Bucket、ほかの root なら apply の出力の Bucket", func(t *testing.T) {
 		t.Parallel()
 
@@ -2605,7 +2640,6 @@ func testCiHoldEntry(t *testing.T, recipe recipeFunc) {
 
 		return n
 	}
-	// planGone は、knobs が plan-hold を持ち plan を起動していれば、偽物の plan が書いた pid のプロセスが止まっていることを確かめる。
 	planGone := func(t *testing.T, r recipeResult, knobs map[string]string) {
 		t.Helper()
 

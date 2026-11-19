@@ -15,7 +15,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
-| apply | デプロイブランチ `admin` への push | 管理アカウントの identity root を apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
+| apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
 | lock を残す | 人が手動で起動する | lock の解除を障害の前に試すために、apply と同じ role で state の lock を取り、外さずに残す |
 | リリース昇格のゲート | デプロイブランチ宛の Pull Request | 修正版の無い脆弱性も含めて落とす |
@@ -88,8 +88,8 @@ ADR、code owner の宣言）が広く、skip された required check は成功
 
 ### plan の job
 
-`terraform-gates.yaml` の `plan-admin-identity` は、environment `admin-plan` の下で OIDC により plan の
-role を assume し（ADR-0602 決定14）、管理アカウントの identity root を plan する。path で絞らない
+`terraform-gates.yaml` の `plan-admin-identity` と `plan-admin-workload` は、environment `admin-plan` の下で OIDC により plan の
+role を assume し（ADR-0602 決定14）、管理アカウントの identity root と workload root を plan する。path で絞らない
 —— AWS の側の状態は、どのファイルを変えたかと無関係に plan を変える。
 
 - **公開されるログに plan の全文を出さない。** 全文は plan の出力の Bucket へ置き、ログと job summary
@@ -118,16 +118,17 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
 
 ### apply の job
 
-`terraform-apply.yaml` の `apply-admin-identity` は、管理アカウント（env `admin`）のデプロイブランチ
-`admin` への push で起動し、environment `admin-apply-identity` の下で OIDC により apply-identity の role を
-assume して（ADR-0602 決定14）、管理アカウントの identity root を apply する。path で絞らない。
+`terraform-apply.yaml` の `apply-admin-identity` と `apply-admin-workload` は、管理アカウント（env `admin`）のデプロイブランチ
+`admin` への push で起動し、OIDC により role を assume して（ADR-0602 決定14）、管理アカウントの root を apply する。
+`apply-admin-identity` は environment `admin-apply-identity` の下で apply-identity の role を取って identity root を、
+`apply-admin-workload` は environment `admin-apply` の下で apply の role を取って workload root を apply する。path で絞らない。
 `on.push.branches` は `branches.json` から `make repo-settings-apply` が生成し、`make repo-settings-check` が
 ずれを落とす（[`.github/settings/README.md`](../settings/README.md) の「branches.json」）。
 
 - **管理アカウントへ apply するのは `admin` だけである**（ADR-0601 決定4）。リリース線（`release/*`）と
   hotfix の線（`hotfix/*`）は変更を集める線で、その push は apply を起動しない。1つの state に複数の
   ブランチが apply すると、遅れたブランチの push が古い構成を apply し直す。environment `admin-apply-identity`
-  の deployment branch policy は `admin` だけを許す
+  と `admin-apply` の deployment branch policy は `admin` だけを許す
 - **変更は昇格で当てる。** 変更はまずリリース線へ merge し、そのリリース線から `admin` への Pull Request を
   merge すると apply が走る。`admin` 宛の Pull Request でも必須検査と plan が走る。`admin` は Pull Request の
   merge でだけ進む（ruleset）
@@ -147,7 +148,9 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   デフォルトブランチをリリース線へ戻し（`gh repo edit --default-branch release/vX.Y.Z`）、hotfix の修正を
   リリース線へ merge してから昇格する
 - **Pull Request の plan を持ち越さない。** job が push の commit で plan し直し、その plan に Policy
-  （`plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
+  （identity root は `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive`、workload root は
+  `plan.stateful_protection`。ほかの Policy が workload root の実 plan に掛からない理由は `usecases/ops-notification/README.md` の
+  保証しないもの）を掛け、通った plan だけを apply する（ADR-0601 決定6、ADR-0604 決定11、
   `.makefiles/terraform/operation/ci.mk` の `CI_APPLY`）。plan は lock を取る。変更の無い plan も apply する
 - **古い commit を apply しない。** 再実行は元の run の commit と payload を使うので、job の `if:` は古い
   run を止めない。資格情報を取る前の step（`refuse-stale`）が、起動したブランチの先頭の commit を API から
@@ -162,7 +165,7 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   どこで失敗しても全文を置いてから失敗する。apply には job の `timeout-minutes` より短い時間
   （`ci.mk` の `CI_APPLY_TIMEOUT`）で SIGINT を送り、terraform がそれで止まれば全文を置いてから失敗する。
   job の cancel か `timeout-minutes` の到達で止まったときと、置き場への書き込みが失敗したときは、全文を置けない
-- **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` に置く。**
+- **AWS のアカウント ID は environment `admin-apply-identity` と `admin-apply` の secret `AWS_ACCOUNT_ID` に置く。**
   無ければ拒否の step で失敗する。置いてから「Re-run failed jobs」で再実行する（先頭の commit のままなら通る）
 - 検出の job は `apply-infra-code-gate` として、この workflow に置く。`terraform-gates.yaml` の
   `infra-code-gate` と同名にすると、必須 context を報告する job が2つになる（`make required-check-lint`）
@@ -172,9 +175,12 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
   `apply-root-check` が `make root-check`（[`conftest/hcl/root/`](../../conftest/hcl/root/README.md)）を
   走らせ、apply の job はその成功を `needs` と `if:` で待つ。Pull Request では必須検査の `terraform-gates.yaml` の
   `tf-lint` が同じ検査を走らせ、その配線が外れれば `make oidc-job-lint` が落ちる。ただし必須検査は base の
-  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、検出の job とこの3つの検査の job だけで、どれも
-  決めた make だけを走らせ、skip も失敗の無視もできない形に限る（`make oidc-job-lint`）。`revert-plan` の `needs` には
-  置かない —— revert は apply の job の結果だけで決まり、検査が落ちた apply の job は `skipped` で終わる
+  更新を要求しないので、merge された木は検査されていないことがある。資格情報を取る job が `needs` に置ける job は、次に限る（`make oidc-job-lint`）。`revert-plan` の `needs` には
+  検査の job を置かない —— revert は apply の job の結果だけで決まり、検査が落ちた apply の job は `skipped` で終わる
+  - 検出の job と、この3つの検査の job。どれも決めた make だけを走らせ、skip も失敗の無視もできない形に限る
+  - workload root の apply の job に限り、同じ workflow で同じ env の identity root の apply の job。待つ側の `if:` は、
+    その `result == 'success'` を含む。identity root の apply が apply の role の権限と permissions boundary を書き、
+    workload root の apply がそれを使うので、同じ run の中で順に当てる
 - **root ごとに、plan・apply・lock の解除・lock を残す job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
   `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
   apply の job と lock の解除の job と lock を残す job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
@@ -210,16 +216,18 @@ assume して（ADR-0602 決定14）、管理アカウントの identity root �
 
 ### lock の解除の job
 
-`terraform-unlock.yaml` の `unlock-admin-identity` は、人が `workflow_dispatch` で起動し、environment
-`admin-unlock-identity` の下で unlock-identity の role を assume して、管理アカウントの identity root の
-state に残った lock file（`identity/terraform.tfstate.tflock`）を外す。apply の job が timeout・cancel・
+`terraform-unlock.yaml` の `unlock-admin-identity` と `unlock-admin-workload` は、人が `workflow_dispatch` で起動する。
+`unlock-admin-identity` は environment `admin-unlock-identity` の下で unlock-identity の role を assume して、管理アカウントの
+identity root の state に残った lock file（`identity/terraform.tfstate.tflock`）を外す。`unlock-admin-workload` は
+environment `admin-unlock` の下で unlock の role を assume して、workload root の lock file（`workload/terraform.tfstate.tflock`）を
+外す。1回の起動で両方の root を見て、lock の無い root では何もしない。apply の job が timeout・cancel・
 ランナーの障害で止まると lock file が残り、以後の apply は lock の取得で落ちる。書き込みの拒否
 （ADR-0604 決定9）が入り、bootstrap の一時 IAM user の例外が外れた後は、state Bucket に書ける IAM の主体は CI の role だけなので、人はこの job で外す。
 
-- **unlock-identity の role は、この lock file を外すことしかできない。** 持つのは、prefix を lock file の
+- **unlock-identity と unlock の role は、それぞれの root の lock file を外すことしかできない。** 持つのは、prefix を lock file の
   key に限った state Bucket の一覧と、lock file の読み取りと削除だけである。復号は、state の鍵の Key Policy が
   同じ lock file の object に限って許す。`s3:PutObject` と `s3:DeleteObjectVersion` は持たない
-  （deployment-identity/ADR-0201 決定9）。environment は apply の environment と分け、デプロイブランチ
+  （deployment-identity/ADR-0201 決定9・11）。environment は apply の environment と分け、デプロイブランチ
   `admin` だけを許す（ADR-0602 決定13-14）
 - **apply の concurrency の group に入らない。** この workflow は自分の group を `cancel-in-progress: false`
   で持つ。apply の run を待たせも取り消しもせず、lock の解除の run どうしは直列になる。apply に対する安全性は
@@ -257,9 +265,9 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
   commit のままなら `refuse-stale` を通る
 - **`admin` から起動する**（`gh workflow run terraform-unlock.yaml --ref admin`）。hotfix の間も同じである。
   古い commit の拒否（`refuse-stale`）と検出への依存（`unlock-infra-code-gate`）は、apply の job と同じで
-  ある。job の `if:` は ref で絞らず、起動できるブランチは environment `admin-unlock-identity` が `admin` だけに
+  ある。job の `if:` は ref で絞らず、起動できるブランチは environment `admin-unlock-identity` と `admin-unlock` が `admin` だけに
   限る。`admin` 以外から起動した run を environment が失敗にするか skip にするかを、GitHub の文書は述べていない
-- **AWS のアカウント ID は environment `admin-unlock-identity` の secret `AWS_ACCOUNT_ID` に置く。** 無ければ
+- **AWS のアカウント ID は environment `admin-unlock-identity` と `admin-unlock` の secret `AWS_ACCOUNT_ID` に置く。** 無ければ
   拒否の step で失敗する
 - 通知は持たない。人が起動し、結果を画面で見る
 - 許す AWS の宛先は `aws-state` クラス（STS と S3）だけである。egress の `root` はこの job も名指すが、
@@ -281,9 +289,10 @@ state に残った lock file（`identity/terraform.tfstate.tflock`）を外す�
 
 ### lock を残す job
 
-`terraform-lock-hold.yaml` の `hold-admin-identity` は、人が `workflow_dispatch` で起動し、apply の job と同じ
-environment `admin-apply-identity` の下で apply-identity の role を assume して、管理アカウントの identity root の
-state に lock を取り、外さずに残す。lock の解除の role の権限（lock file の一覧・読み取り・削除と、その復号）は
+`terraform-lock-hold.yaml` の `hold-admin-identity` と `hold-admin-workload` は、人が `workflow_dispatch` で起動し、
+それぞれの root の apply の job と同じ environment と role（identity root は `admin-apply-identity` と apply-identity、workload root は
+`admin-apply` と apply）を取って、管理アカウントの root の state に lock を取り、外さずに残す。1回の起動で両方の root に lock を
+残すので、閾値を過ぎて外すまで、両方の root の apply が止まる。lock の解除の role の権限（lock file の一覧・読み取り・削除と、その復号）は
 lock が残る障害が起きるまで使われないので、bootstrap の段5 でこの job が残した lock を `Terraform Unlock` で外し、
 障害の前に一度実物で評価する（ADR-0604 決定8）。Actions の画面で apply の run を取り消しても lock は残らない ——
 terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してから止まる。
@@ -302,7 +311,7 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
   lock が在れば plan を起動せずに失敗する
 - **apply しない。** state と AWS の resource を変えず、plan の出力も保存しない。plan の全文はランナーの外に出さない
 - **apply の concurrency の group に入る。** workflow 全体の group を、apply の job と字面で同じ
-  `terraform-apply-admin-identity` にし、`cancel-in-progress: false` で持つ。apply と並んで走って lock を奪い合わず、
+  `terraform-apply-admin` にし、`cancel-in-progress: false` で持つ。apply と並んで走って lock を奪い合わず、
   実行中の apply の後ろで待つ。ただし GitHub は、同じ group で待っている run を後から来た run で置き換える。
   apply の run が待っている間にこの job を起動すると、その apply の run は走らずに取り消され、通知も出ない。
   起動の前に、`admin` で走っている apply の run と待っている run が無いことを確かめる（`docs/setup/bootstrap.md` 段5 手順6）
@@ -317,7 +326,7 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
 - **`admin` から起動する**（`gh workflow run terraform-lock-hold.yaml --ref admin`）。古い commit の拒否
   （`refuse-stale`）と検出への依存（`hold-infra-code-gate`）は apply の job と同じである。順序・層・root の
   検査には依存しない —— apply しないからである
-- **AWS のアカウント ID は environment `admin-apply-identity` の secret `AWS_ACCOUNT_ID` を読む。** apply の job と
+- **AWS のアカウント ID は environment `admin-apply-identity` と `admin-apply` の secret `AWS_ACCOUNT_ID` を読む。** apply の job と
   同じ secret である
 - 通知は持たない。人が起動し、結果を画面で見る
 - 許す AWS の宛先は apply の job と同じ（`terraform` と `aws` のクラス）である。`ci-hold-*` は terraform を
@@ -413,6 +422,9 @@ apply）で戻す。CI は Pull Request を
   イベントの run は承認を要するが、Pull Request を開くのは人である。この経路を通した実例はまだ無い
 - **失敗した job の outputs が後続の job へ渡ること。** 渡らなければ apply の step の結果が空になり、`revert-plan`
   が失敗して通知へ出る。黙って働かなくはならない
+- **apply の job を足した後の最初の run が失敗したときに、revert のブランチを用意すること。** 最後に成功した commit は、
+  名指したすべての apply の job が成功した run から探すので、足した job が一度も成功していなければ戻す先が無く、
+  用意しなかった理由を通知する。その run の失敗は、通知の後に人が直す
 - **`contents: write` の token がタグと保護されていないブランチへ書けないこと。** 書けるのは `revert-push` の間だけで、
   走るのは `admin` に merge された木の `make ci-revert-push` だけである
 
@@ -469,10 +481,10 @@ truthy 側へ置く。
 | `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
-| `terraform-gates.yaml` の `changes` と `plan-admin-identity` を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
-| `terraform-unlock.yaml` の2 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
+| `terraform-gates.yaml` の `changes` と plan の2 job を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
+| `terraform-unlock.yaml` の3 job | 15 | 同上（新設）。apply の job と違い terraform を呼ばない |
 | `terraform-apply.yaml:revert-plan`、`terraform-apply.yaml:revert-push` | 15 | 同上（新設）。terraform を呼ばない |
-| `terraform-gates.yaml:plan-admin-identity`、`terraform-apply.yaml:apply-admin-identity` | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
+| `terraform-gates.yaml` の plan の2 job、`terraform-apply.yaml` の apply の2 job | 30 | AWS の API を呼ぶ。role の session（3600 秒）より短く置く |
 | `sonarcloud.yaml` の3 job、`sample-remove-check.yaml:sample-remove-check` | 15 | 同上（新設） <!-- sample:line --> |
 | `checkov.yaml:checkov`、`kics.yaml:kics`、`semgrep.yaml:semgrep` | 15 | 実測できる完了 run が無い（新設） |
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
@@ -540,9 +552,10 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
 失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出・順序の検査・層の検査の job が落ちると
-apply の job は `skipped` で終わるので、4つの job のどれの `failure` / `cancelled` でも通知する。通知が名指す
-job は、apply の job が走ったならそれ、走らなければ成功しなかった検査の job（検出の job を先に見る）である。
-apply の job が `success` で終わったときは、`notify-success` が成功のモードで通知する。revert の結果は
+apply の job は `skipped` で終わるので、検査と apply のどの job の `failure` / `cancelled` でも通知する。通知が名指す
+job は、workload root の apply が失敗か取り消しならそれ、次に identity root の apply が走ったならそれ、どちらも走らなければ
+成功しなかった検査の job（検出の job を先に見る）である。
+apply の job が `success` で終わったときは、apply の job ごとの `notify-success-<env>-<root>` が成功のモードで通知する。revert の結果は
 `notify-revert` が検出のモードで別に送る（「apply の失敗の revert」）。`terraform-unlock.yaml` は
 通知を持たない —— 人が起動し、結果を画面で見ている。
 

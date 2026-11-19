@@ -114,14 +114,23 @@ hosts = [
   "kms.ap-northeast-1.amazonaws.com",
   "organizations.us-east-1.amazonaws.com",
   "*.s3-control.ap-northeast-1.amazonaws.com",
+  "sns.ap-northeast-1.amazonaws.com",
+  "scheduler.ap-northeast-1.amazonaws.com",
+  "chatbot.us-west-2.amazonaws.com",
 ]
 
 # CI が Terraform を実行する root と、その root に触れるジョブ（scripts/README.md の egress/ の行）。
 [root."env/admin/identity"]
 jobs = ["terraform-gates.yaml:plan-admin-identity", "terraform-apply.yaml:apply-admin-identity", "terraform-unlock.yaml:unlock-admin-identity", "terraform-lock-hold.yaml:hold-admin-identity"]
 
+[root."env/admin"]
+jobs = ["terraform-gates.yaml:plan-admin-workload", "terraform-apply.yaml:apply-admin-workload", "terraform-unlock.yaml:unlock-admin-workload", "terraform-lock-hold.yaml:hold-admin-workload"]
+
 # resource / data source の型が呼ぶ宛先。名前の形と当たり方は scripts/README.md の egress/ の行（make egress-check が拒む）。
 # API を呼ばない型は、型名そのもので hosts を空にする。
+[type.aws_chatbot_]
+hosts = ["chatbot.us-west-2.amazonaws.com"]
+
 [type.aws_caller_identity]
 hosts = ["sts.ap-northeast-1.amazonaws.com"]
 
@@ -147,6 +156,12 @@ hosts = [
   "*.s3.ap-northeast-1.amazonaws.com",
   "*.s3-control.ap-northeast-1.amazonaws.com",
 ]
+
+[type.aws_scheduler_]
+hosts = ["scheduler.ap-northeast-1.amazonaws.com"]
+
+[type.aws_sns_]
+hosts = ["sns.ap-northeast-1.amazonaws.com"]
 
 [job."actions-lint.yaml:actions-lint"]
 classes = ["mise"]
@@ -306,23 +321,28 @@ classes = ["mise"]
 [job."terraform-gates.yaml:plan-admin-identity"]
 classes = ["terraform", "aws"]
 
-# terraform-gates.yaml の infra-code-gate と同じ検出。
+[job."terraform-gates.yaml:plan-admin-workload"]
+classes = ["terraform", "aws"]
+
 [job."terraform-apply.yaml:apply-infra-code-gate"]
 classes = ["mise"]
 
-# terraform-gates.yaml の tf-lint と同じ順序の検査。conftest の入手は infra-code-gate と同じ。
+# conftest の入手は apply-infra-code-gate と同じ。
 [job."terraform-apply.yaml:apply-resource-order-check"]
 classes = ["mise"]
 
-# terraform-gates.yaml の tf-lint と同じ層の検査。conftest の入手は infra-code-gate と同じ。
+# conftest の入手は apply-infra-code-gate と同じ。
 [job."terraform-apply.yaml:apply-layer-check"]
 classes = ["mise"]
 
-# terraform-gates.yaml の tf-lint と同じ root の構成と backend 設定の検査。conftest の入手は infra-code-gate と同じ。
+# conftest の入手は apply-infra-code-gate と同じ。
 [job."terraform-apply.yaml:apply-root-check"]
 classes = ["mise"]
 
 [job."terraform-apply.yaml:apply-admin-identity"]
+classes = ["terraform", "aws"]
+
+[job."terraform-apply.yaml:apply-admin-workload"]
 classes = ["terraform", "aws"]
 
 # apply-revert は scripts/ から go で建てる。GitHub API は base が許す。
@@ -336,14 +356,20 @@ classes = []
 [job."terraform-lock-hold.yaml:hold-infra-code-gate"]
 classes = ["mise"]
 
-# lock を残す job は apply の job と同じく init と plan の refresh を走らせる。
+# 2つの lock を残す job は、apply の job と同じく init と plan の refresh を走らせる。
 [job."terraform-lock-hold.yaml:hold-admin-identity"]
+classes = ["terraform", "aws"]
+
+[job."terraform-lock-hold.yaml:hold-admin-workload"]
 classes = ["terraform", "aws"]
 
 [job."terraform-unlock.yaml:unlock-infra-code-gate"]
 classes = ["mise"]
 
 [job."terraform-unlock.yaml:unlock-admin-identity"]
+classes = ["mise", "aws-state"]
+
+[job."terraform-unlock.yaml:unlock-admin-workload"]
 classes = ["mise", "aws-state"]
 
 [job."trivy-config.yaml:changes"]
