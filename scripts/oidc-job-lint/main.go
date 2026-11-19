@@ -110,6 +110,7 @@ var (
 	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
 	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
 	ciApply     = makeRun(`ci-apply-[a-z0-9-]+`)
+	ciApplyRoot = makeRun(`ci-apply-([a-z0-9-]+)`)
 	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
 	ciHold      = makeRun(`ci-hold-[a-z0-9-]+`)
 	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`)
@@ -593,6 +594,7 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 	for _, g := range applyGates {
 		findings = append(findings, checkApplyGate(job, w.jobs, g, finding)...)
 	}
+	findings = append(findings, checkUpstream(job, w.jobs, finding)...)
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
 	return append(findings, checkTerraform(job, ciApply, "apply", finding)...)
 }
@@ -1040,12 +1042,25 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 }
 
 // upstreamApply は、job が workload root の apply の job で、dep が同じ env の identity root の apply の job かを返します。
+// 待たれる側は資格情報を取り、入口を run: の値そのものとして持つ job に限る。字面に入口を含むだけの job は待てない。
 func upstreamApply(job, dep workflow.Job) bool {
-	if isUnlock(job) || isHold(job) || isUnlock(dep) || isHold(dep) {
+	if isUnlock(job) || isHold(job) || isUnlock(dep) || isHold(dep) || !hasLine(dep, credentials) {
 		return false
 	}
-	env, ok := strings.CutSuffix(entryRoot(job, applyEntry), "-workload")
-	return ok && env != "" && entryRoot(dep, applyEntry) == env+"-identity"
+	env, ok := strings.CutSuffix(entryRoot(job, ciApplyRoot), "-workload")
+	return ok && env != "" && entryRoot(dep, ciApplyRoot) == env+"-identity"
+}
+
+// checkUpstream は、workload root の apply の job が、同じ workflow の同じ env の identity root の apply の job を
+// needs に持つことを検査します。待たないと、identity root の apply が書く権限を使う前に走る。
+func checkUpstream(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, dep := range jobs {
+		if dep.ID != job.ID && upstreamApply(job, dep) && !slices.Contains(needs(job), dep.ID) {
+			findings = append(findings, finding(job.Number, "workload root の apply の job の needs に、同じ env の identity root の apply の job %s を置いてください。identity root の apply が書く権限を使う前に走ります", dep.ID))
+		}
+	}
+	return findings
 }
 
 // allowedNeeds は、資格情報を取る job の needs に置ける job の形を、違反の文のために並べます。

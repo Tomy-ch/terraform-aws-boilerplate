@@ -82,7 +82,7 @@ var applyWorkflow = strings.Join([]string{
 	"  contents: read",
 	"",
 	"concurrency:",
-	"  group: terraform-apply-admin-identity",
+	"  group: terraform-apply-admin",
 	"  cancel-in-progress: false",
 	"",
 	"jobs:",
@@ -181,7 +181,7 @@ func replaced(t *testing.T, src, from, to string) string {
 }
 
 const (
-	wfConcurrency = "concurrency:\n  group: terraform-apply-admin-identity\n  cancel-in-progress: false\n"
+	wfConcurrency = "concurrency:\n  group: terraform-apply-admin\n  cancel-in-progress: false\n"
 	applyEnv      = "    environment:\n      name: admin-apply-identity\n"
 )
 
@@ -1296,11 +1296,19 @@ func Test_checkDetection(t *testing.T) {
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-admin-identity.result == 'success' を含めて")
 	})
 
+	refused := func(id string) string {
+		return "needs の " + id + " は、" + allowedNeeds() + " ではありません。資格情報を取る job が待つ job は、これらの形に限ります\n"
+	}
+	// 待てない形は、needs の違反をちょうど1件だけ出す。待てる形と取り違えると、if: の欠落の違反も重なる。
 	upstreamRefused := map[string][]string{
 		"別の env の identity root の apply は待てない":                 {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-apply-stg-identity RUNNER_MODE=host\n"},
 		"identity root の plan の job は待てない":                     {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"},
-		"lock を残す job は apply の job を待てない":                     {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"},
-		"lock の解除の job は apply の job を待てない":                    {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"},
+		"identity root の lock の解除の job は待てない":                  {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n" + "      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n"},
+		"identity root の lock を残す job は待てない":                   {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n" + "      - run: make ci-hold-admin-identity RUNNER_MODE=host\n"},
+		"入口を run: の値として持たない job は待てない":                         {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: echo make ci-apply-admin-identity\n"},
+		"資格情報を取らない job は待てない":                                  {"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply-identity RUNNER_MODE=host\n", ""},
+		"lock を残す job は apply の job を待てない":                     {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n" + "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"},
+		"lock の解除の job は apply の job を待てない":                    {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n" + "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"},
 		"plan の job は apply の job を待てない":                       {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"},
 		"identity root の apply を待つのは workload root の apply だけ": {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-apply-stg-identity RUNNER_MODE=host\n"},
 	}
@@ -1309,7 +1317,7 @@ func Test_checkDetection(t *testing.T) {
 			t.Parallel()
 
 			j, aw := waiting(t, edit...)
-			assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の apply-admin-identity は、")
+			assert.Equal(t, refused("apply-admin-identity"), messages(checkDetection(j, aw.jobs, formatted)))
 		})
 	}
 
@@ -1319,7 +1327,7 @@ func Test_checkDetection(t *testing.T) {
 		src := replaced(t, applyWorkflow, "  revert-plan:\n", fullWorkloadApplyJob+"  revert-plan:\n")
 		src = replaced(t, src, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && github",
 			"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-workload]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && needs.apply-admin-workload.result == 'success' && github")
-		assert.Contains(t, messages(checkDetection(jobOf(t, src, "apply-admin-identity"), infoOf(src).jobs, formatted)), "needs の apply-admin-workload は、")
+		assert.Equal(t, refused("apply-admin-workload"), messages(checkDetection(jobOf(t, src, "apply-admin-identity"), infoOf(src).jobs, formatted)))
 	})
 
 	t.Run("identity root の apply を待っても検出を欠けば違反", func(t *testing.T) {
@@ -1327,7 +1335,9 @@ func Test_checkDetection(t *testing.T) {
 
 		j, aw := waiting(t, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && ",
 			"    needs: [apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]\n    if: ${{ ")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
+		f := checkDetection(j, aw.jobs, formatted)
+		assert.Len(t, f, 1, messages(f))
+		assert.Contains(t, messages(f), "make infra-code-gate を走らせる job")
 	})
 }
 
@@ -1383,6 +1393,67 @@ func Test_upstreamApply(t *testing.T) {
 
 		j := jobOf(t, replaced(t, src, "make ci-apply-admin-workload", "make ci-apply-workload"), "apply-admin-workload")
 		assert.False(t, upstreamApply(j, identity))
+	})
+
+	t.Run("env にハイフンを含んでも同じ env の identity root の apply は true", func(t *testing.T) {
+		t.Parallel()
+
+		la := replaced(t, replaced(t, src, "make ci-apply-admin-workload", "make ci-apply-log-archive-workload"), "make ci-apply-admin-identity", "make ci-apply-log-archive-identity")
+		assert.True(t, upstreamApply(jobOf(t, la, "apply-admin-workload"), jobOf(t, la, "apply-admin-identity")))
+	})
+
+	t.Run("env の末尾だけが一致する identity root の apply は false", func(t *testing.T) {
+		t.Parallel()
+
+		la := replaced(t, replaced(t, src, "make ci-apply-admin-workload", "make ci-apply-log-archive-workload"), "make ci-apply-admin-identity", "make ci-apply-archive-identity")
+		assert.False(t, upstreamApply(jobOf(t, la, "apply-admin-workload"), jobOf(t, la, "apply-admin-identity")))
+	})
+
+	t.Run("入口の無い dep は false", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, upstreamApply(workload, jobOf(t, src, "apply-infra-code-gate")))
+	})
+
+	t.Run("apply の入口を持っていても lock を残す job なら false", func(t *testing.T) {
+		t.Parallel()
+
+		h := replaced(t, src, "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n      - run: make ci-hold-admin-workload RUNNER_MODE=host\n")
+		assert.False(t, upstreamApply(jobOf(t, h, "apply-admin-workload"), identity))
+	})
+}
+
+func Test_checkUpstream(t *testing.T) {
+	t.Parallel()
+
+	src := replaced(t, applyWorkflow, "  revert-plan:\n", fullWorkloadApplyJob+"  revert-plan:\n")
+
+	t.Run("同じ env の identity root の apply を needs に持てば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkUpstream(jobOf(t, src, "apply-admin-workload"), infoOf(src).jobs, formatted))
+	})
+
+	t.Run("同じ workflow の同じ env の identity root の apply を needs に持たなければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		m := replaced(t, src, "apply-root-check, apply-admin-identity]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && needs.apply-admin-identity.result == 'success'",
+			"apply-root-check]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success'")
+		assert.Equal(t, "workload root の apply の job の needs に、同じ env の identity root の apply の job apply-admin-identity を置いてください。identity root の apply が書く権限を使う前に走ります\n",
+			messages(checkUpstream(jobOf(t, m, "apply-admin-workload"), infoOf(m).jobs, formatted)))
+	})
+
+	t.Run("同じ env の identity root の apply が無い workflow では求めない", func(t *testing.T) {
+		t.Parallel()
+
+		m := replaced(t, src, "make ci-apply-admin-identity", "make ci-apply-stg-identity")
+		assert.Empty(t, checkUpstream(jobOf(t, m, "apply-admin-workload"), infoOf(m).jobs, formatted))
+	})
+
+	t.Run("identity root の apply の job には求めない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkUpstream(jobOf(t, src, "apply-admin-identity"), infoOf(src).jobs, formatted))
 	})
 }
 
@@ -2501,7 +2572,7 @@ var unlockWorkflow = strings.Join([]string{
 	"  contents: read",
 	"",
 	"concurrency:",
-	"  group: terraform-unlock-admin-identity",
+	"  group: terraform-unlock-admin",
 	"  cancel-in-progress: false",
 	"",
 	"jobs:",
@@ -2535,7 +2606,7 @@ var unlockWorkflow = strings.Join([]string{
 
 const (
 	unlockEntryLine     = "      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n"
-	unlockGroup         = "  group: terraform-unlock-admin-identity\n"
+	unlockGroup         = "  group: terraform-unlock-admin\n"
 	unlockEnv           = "    environment: admin-unlock-identity\n"
 	unlockWfConcurrency = "concurrency:\n" + unlockGroup + "  cancel-in-progress: false\n"
 )
@@ -2560,7 +2631,7 @@ func Test_runUnlock(t *testing.T) {
 		assert.Contains(t, out.String(), "job 3 件")
 	})
 
-	sameGroup := strings.Replace(unlockWorkflow, unlockGroup, "  group: terraform-apply-admin-identity\n", 1)
+	sameGroup := strings.Replace(unlockWorkflow, unlockGroup, "  group: terraform-apply-admin\n", 1)
 	for name, c := range map[string]struct {
 		files map[string]string
 		want  string
@@ -2569,14 +2640,14 @@ func Test_runUnlock(t *testing.T) {
 		"group が apply と同じなら違反":        {map[string]string{"apply.yml": applyWorkflow, "unlock.yaml": sameGroup}, "group と同じです"},
 		"同じ root の apply が2つなら違反":      {map[string]string{"apply.yml": applyWorkflow, "apply2.yml": applyWorkflow, "unlock.yaml": unlockWorkflow}, "（2 件）"},
 		"別の root の apply は相手に数えない":     {map[string]string{"apply.yml": strings.Replace(applyWorkflow, "ci-apply-admin-identity", "ci-apply-admin-workload", 1), "unlock.yaml": unlockWorkflow}, "make ci-apply-admin-identity を走らせる apply の job が、ちょうど1つではありません（0 件）"},
-		"apply の group が式なら比べられないので違反": {map[string]string{"apply.yml": strings.Replace(applyWorkflow, "  group: terraform-apply-admin-identity\n", "  group: ${{ github.workflow }}\n", 1), "unlock.yaml": unlockWorkflow}, "字面で読めません"},
+		"apply の group が式なら比べられないので違反": {map[string]string{"apply.yml": strings.Replace(applyWorkflow, "  group: terraform-apply-admin\n", "  group: ${{ github.workflow }}\n", 1), "unlock.yaml": unlockWorkflow}, "字面で読めません"},
 		"lock の解除の group が式なら違反":       {map[string]string{"apply.yml": applyWorkflow, "unlock.yaml": strings.Replace(unlockWorkflow, unlockGroup, "  group: ${{ github.workflow }}\n", 1)}, "字面で書いて"},
 		"両方がブロックスカラーの group なら、本文が違っても違うと読まない": {map[string]string{
-			"apply.yml":   strings.Replace(applyWorkflow, "  group: terraform-apply-admin-identity\n", "  group: >-\n    terraform-apply-admin-identity\n", 1),
+			"apply.yml":   strings.Replace(applyWorkflow, "  group: terraform-apply-admin\n", "  group: >-\n    terraform-apply-admin\n", 1),
 			"unlock.yaml": strings.Replace(unlockWorkflow, unlockGroup, "  group: >-\n    terraform-unlock\n", 1),
 		}, "字面で書いて"},
 		"apply だけがブロックスカラーの group なら違反": {map[string]string{
-			"apply.yml":   strings.Replace(applyWorkflow, "  group: terraform-apply-admin-identity\n", "  group: >-\n    terraform-apply-admin-identity\n", 1),
+			"apply.yml":   strings.Replace(applyWorkflow, "  group: terraform-apply-admin\n", "  group: >-\n    terraform-apply-admin\n", 1),
 			"unlock.yaml": unlockWorkflow,
 		}, "字面で読めません"},
 	} {
@@ -2827,7 +2898,7 @@ func Test_checkNoCancel(t *testing.T) {
 	t.Run("フロー形式の concurrency は読めないとして違反", func(t *testing.T) {
 		t.Parallel()
 
-		j, w := unlockWith(t, unlockWfConcurrency, "concurrency: {group: terraform-unlock-admin-identity, cancel-in-progress: false}\n")
+		j, w := unlockWith(t, unlockWfConcurrency, "concurrency: {group: terraform-unlock-admin, cancel-in-progress: false}\n")
 		assert.Contains(t, messages(checkNoCancel(j, w, "lock の解除", formatted)), "cancel-in-progress: false の concurrency")
 	})
 }
@@ -2845,9 +2916,9 @@ func Test_groupRecords(t *testing.T) {
 			}
 		}
 		require.Len(t, got, 3)
-		assert.Equal(t, groupRecord{file: "h.yaml", job: jobOf(t, holdWorkflow, "hold-admin-identity"), root: "admin-identity", group: "terraform-apply-admin-identity", kind: kindHold, environment: "admin-apply-identity"}, got["h.yaml"])
-		assert.Equal(t, groupRecord{file: "a.yml", job: jobOf(t, applyWorkflow, "apply-admin-identity"), root: "admin-identity", group: "terraform-apply-admin-identity", kind: kindApply, environment: "admin-apply-identity"}, got["a.yml"])
-		assert.Equal(t, groupRecord{file: "u.yaml", job: jobOf(t, unlockWorkflow, "unlock-admin-identity"), root: "admin-identity", group: "terraform-unlock-admin-identity", kind: kindUnlock, environment: "admin-unlock-identity"}, got["u.yaml"])
+		assert.Equal(t, groupRecord{file: "h.yaml", job: jobOf(t, holdWorkflow, "hold-admin-identity"), root: "admin-identity", group: "terraform-apply-admin", kind: kindHold, environment: "admin-apply-identity"}, got["h.yaml"])
+		assert.Equal(t, groupRecord{file: "a.yml", job: jobOf(t, applyWorkflow, "apply-admin-identity"), root: "admin-identity", group: "terraform-apply-admin", kind: kindApply, environment: "admin-apply-identity"}, got["a.yml"])
+		assert.Equal(t, groupRecord{file: "u.yaml", job: jobOf(t, unlockWorkflow, "unlock-admin-identity"), root: "admin-identity", group: "terraform-unlock-admin", kind: kindUnlock, environment: "admin-unlock-identity"}, got["u.yaml"])
 	})
 
 	t.Run("lock の解除と lock を残す入口を併せ持つ job は lock の解除の job として取り出す", func(t *testing.T) {
@@ -2985,7 +3056,7 @@ func Test_isLiteral(t *testing.T) {
 		in   string
 		want bool
 	}{
-		"字面の値":      {"terraform-unlock-admin-identity", true},
+		"字面の値":      {"terraform-unlock-admin", true},
 		"空は読めなかった値": {"", false},
 		"式":         {"${{ github.workflow }}", false},
 		"式を含む値":     {"terraform-${{ github.ref }}", false},
@@ -3011,7 +3082,7 @@ func Test_effectiveGroup(t *testing.T) {
 	t.Run("job に無ければ workflow 全体の group", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Equal(t, "terraform-unlock-admin-identity", effectiveGroup(jobOf(t, unlockWorkflow, "unlock-admin-identity"), workflow.SplitJobs(unlockWorkflow).Preamble))
+		assert.Equal(t, "terraform-unlock-admin", effectiveGroup(jobOf(t, unlockWorkflow, "unlock-admin-identity"), workflow.SplitJobs(unlockWorkflow).Preamble))
 	})
 }
 
@@ -3035,7 +3106,7 @@ func Test_concurrencyGroup(t *testing.T) {
 		"引用符付きの1行の値":                  {[]string{`concurrency: "g"`}, "", "g"},
 		"行末コメントの見出し":                  {[]string{"concurrency: # c", "  group: g"}, "", "g"},
 		"引用符付きのキー":                    {[]string{`"concurrency":`, `  'group': g`}, "", "g"},
-		"ブロックスカラーの group は読めない":       {[]string{"concurrency:", "  group: >-", "    terraform-apply-admin-identity"}, "", ""},
+		"ブロックスカラーの group は読めない":       {[]string{"concurrency:", "  group: >-", "    terraform-apply-admin"}, "", ""},
 		"1行のブロックスカラーも読めない":            {[]string{"concurrency: >-", "  g"}, "", ""},
 		"フロー形式は group として読まない":        {[]string{"concurrency: {group: g, cancel-in-progress: false}"}, "", ""},
 	} {
@@ -3088,7 +3159,7 @@ func Test_literalGroup(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct{ in, want string }{
-		"字面の値":   {"terraform-apply-admin-identity", "terraform-apply-admin-identity"},
+		"字面の値":   {"terraform-apply-admin", "terraform-apply-admin"},
 		"引用符を外す": {`"g"`, "g"},
 		"ブロックスカラーの > は読めない": {">-", ""},
 		"ブロックスカラーの | は読めない": {"|", ""},
@@ -3705,7 +3776,7 @@ var holdWorkflow = strings.Join([]string{
 	"  contents: read",
 	"",
 	"concurrency:",
-	"  group: terraform-apply-admin-identity",
+	"  group: terraform-apply-admin",
 	"  cancel-in-progress: false",
 	"",
 	"jobs:",
@@ -3739,7 +3810,7 @@ var holdWorkflow = strings.Join([]string{
 
 const (
 	holdEntryLine     = "      - run: make ci-hold-admin-identity RUNNER_MODE=host\n"
-	holdGroup         = "  group: terraform-apply-admin-identity\n"
+	holdGroup         = "  group: terraform-apply-admin\n"
 	holdEnv           = "    environment: admin-apply-identity\n"
 	holdWfConcurrency = "concurrency:\n" + holdGroup + "  cancel-in-progress: false\n"
 )
@@ -3790,7 +3861,7 @@ func Test_runHold(t *testing.T) {
 		"apply の workflow が無ければ違反":                 {map[string]string{"hold.yaml": holdWorkflow}, "ちょうど1つではありません（0 件）"},
 		"同じ root の apply が2つなら違反":                  {all(map[string]string{"apply2.yml": applyWorkflow}), "（2 件）"},
 		"lock を残す job の group が式なら違反":              {all(map[string]string{"hold.yaml": strings.Replace(holdWorkflow, holdGroup, "  group: ${{ github.workflow }}\n", 1)}), "lock を残す job の concurrency の group を字面で書いて"},
-		"apply の group が式なら比べられないので違反":             {all(map[string]string{"apply.yml": strings.Replace(applyWorkflow, "  group: terraform-apply-admin-identity\n", "  group: ${{ github.workflow }}\n", 1)}), "lock を残す job の group と同じことを確かめられません"},
+		"apply の group が式なら比べられないので違反":             {all(map[string]string{"apply.yml": strings.Replace(applyWorkflow, "  group: terraform-apply-admin\n", "  group: ${{ github.workflow }}\n", 1)}), "lock を残す job の group と同じことを確かめられません"},
 		"lock を残す job を lock の解除の workflow に置けば違反": {all(map[string]string{"hold.yaml": "", "unlock.yaml": unlockWorkflow + strings.SplitN(holdWorkflow, "jobs:\n", 2)[1]}), "lock を残す job（hold-admin-identity）を置かないで"},
 	} {
 		t.Run(name, func(t *testing.T) {
