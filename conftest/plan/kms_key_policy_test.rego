@@ -311,6 +311,7 @@ test_pass_service_limited_by_source if {
 		{"ArnLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:123456789012:trail/x"}},
 		{"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": "arn:aws:sns:ap-northeast-1:123456789012:t"}},
 		{"StringEquals": {"aws:SourceAccount": "123456789012"}, "ArnLike": {"aws:SourceArn": "arn:aws:s3:::bucket"}},
+		{"ArnEquals": {"aws:SourceArn": "arn:aws:sns:ap-northeast-1:123456789012:t$x{y}"}},
 	] {
 		count(ids([root, with_condition(logs, c)])) == 0
 	}

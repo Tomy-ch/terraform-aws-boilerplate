@@ -410,6 +410,12 @@ test_violation_source_policy_variable if {
 	said(mixed, "wildcard と policy 変数の無い値に限っていません")
 }
 
+test_violation_source_question_wildcard if {
+	c := {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceArn": [trail, "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-or?"]}}
+	s := json.patch(trail_write, [{"op": "replace", "path": "/Condition", "value": c}])
+	said(replace(valid, bucket_policy(array.concat(denies, [s, config_write]))), "wildcard と policy 変数の無い値に限っていません")
+}
+
 test_violation_source_not_string if {
 	c := json.patch(config_write, [{"op": "replace", "path": "/Condition", "value": {"StringEquals": {"s3:x-amz-acl": "bucket-owner-full-control", "aws:SourceAccount": 222222222222}}}])
 	said(replace(valid, bucket_policy(array.concat(denies, [trail_write, c]))), "wildcard と policy 変数の無い値に限っていません")
