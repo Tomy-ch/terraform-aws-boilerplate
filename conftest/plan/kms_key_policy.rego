@@ -278,7 +278,7 @@ deny contains msg if {
 	some v in lib.limiting_values(s, s3_arn_key)
 	not bucket_arn_value(v)
 	not own_object_arn(v, s, r.body)
-	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に、委任のアカウントの account regional namespace の Bucket の object の ARN でない %v を置いています", [r.document.path, r.document.address, v])
+	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に、委任のアカウントの account regional namespace の Bucket の object の ARN でない %v を置いています（Bucket の名前の region は、文の kms:ViaService の S3 の region と比べます）", [r.document.path, r.document.address, v])
 }
 
 deny contains msg if {
@@ -344,8 +344,10 @@ s3_read(s) if {
 
 bucket_arn_value(v) if regex.match(`^arn:[^:]+:s3:::[^/]+$`, v)
 
+# IAM の policy 変数（${...}）は要求の時点で置き換わり、object を固定しない。
 own_object_arn(v, s, body) if {
 	lib.no_wildcard(v)
+	not contains(v, "${")
 	some region in s3_regions(s)
 	regex.match(sprintf(`^arn:%s:s3:::[a-z0-9][a-z0-9.-]*-%s-%s-an/.+$`, [split(roots(body)[0], ":")[1], account(body), region]), v)
 }

@@ -618,6 +618,7 @@ test_violation_s3_read_foreign_object if {
 		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-us-east-1-an/k"]),
 		s3_read_with("StringEquals", ["arn:aws-cn:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"]),
 		s3_read_with("StringLike", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/*"]),
+		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/${aws:PrincipalTag/k}"]),
 		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k?"]),
 		s3_read_with("StringEquals", ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/"]),
 		s3_read_with("StringEquals", ["arn:aws:sns:ap-northeast-1:123456789012:t"]),
