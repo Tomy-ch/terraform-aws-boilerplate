@@ -44,7 +44,7 @@
 
 ## 人が先に行うこと
 
-- Slack の workspace を、そのアカウントの Chatbot のコンソールで認可し、team ID と channel ID を env の値に書く。認可は OAuth で、コマンドにできない。7つのアカウントそれぞれで要る。workspace の持ち主と、通知を見る channel は利用者が決める
+- Slack の workspace を、そのアカウントの Chatbot のコンソールで認可し、team ID と channel ID を env の値に書く。認可は OAuth で、コマンドにできない。7つのアカウントそれぞれで要る。workspace の持ち主と、通知を見る channel は利用者が決める。手順は [`docs/setup/ops-notification.md`](../../docs/setup/ops-notification.md)
 - 認可の前に apply すると、Chatbot の構成の作成が失敗する見込みである（確かめていない）
 
 ## supported / unsupported
