@@ -518,7 +518,24 @@ test_violation_version_deletion_pattern if {
 
 test_violation_key_deny_pattern if {
 	s := replace(valid_statements, 6, {"Effect": "Deny", "Action": delegated_actions, "Resource": sprintf("arn:aws:kms:*:%s:key/*", [account])})
-	fixture.has("[PLAN-APPLY-01]", messages(s))
+	some m in messages(s)
+	startswith(m, "[PLAN-APPLY-01] ")
+	contains(m, sprintf(" %s がアカウントへ委任する ", [key_policy_address]))
+	contains(m, sprintf("が鍵の ARN %v への Deny で拒んでいません", [key]))
+}
+
+# 書き込み先の子は NotAction の Resource を完全一致でだけ数える。
+test_violation_writes_target_pattern if {
+	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "arn:aws:s3:::a*/*"})
+	fixture.has(denied_03_writes(ao_objects), messages(s))
+}
+
+# すべての ARN（か partition・service のすべて）に当たる pattern は、"*" と同じく数えない。
+test_violation_resource_universal_pattern if {
+	every r in ["**", "?*", "arn:*", "arn:aws:*", "arn:aws:s3:*"] {
+		msgs := messages(replace(valid_statements, 5, full_deny([r, sprintf("%s/*", [po])])))
+		fixture.has(denied_03(po), msgs)
+	}
 }
 
 test_violation_not_action_names_non_read if {
