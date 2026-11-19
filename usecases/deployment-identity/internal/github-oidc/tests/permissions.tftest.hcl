@@ -775,42 +775,97 @@ run "key_in_other_partition" {
 }
 
 # inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
-# mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、aws-cn の 63文字の Bucket）と、
-# それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、partition と name_prefix から長さが決まる。
+# mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
+# 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
+# partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
+# 合わせる。この組は AWS に無いが、文書はどちらの長さにも単調に伸びるので、実在するどの組より短くならない。
+# aws_partitions は、provider が partition を解決する一覧（aws-sdk-go-base の endpoints）の写しである。
 run "policy_length" {
   command = apply
+  # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
+  state_key = "policy_length"
 
   variables {
     # env は admin（統制の文が入る）のまま、role 名が最も長くなる log-archive の name_prefix を使う。
     name_prefix             = "abcdefghijklmnopqrstuvwxyz0123456-log-archive"
-    state_bucket_arn        = format("arn:aws-cn:s3:::%063d", 1)
-    state_key_arn           = "arn:aws-cn:kms:cn-northwest-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-    plan_output_bucket_arn  = format("arn:aws-cn:s3:::%063d", 2)
-    apply_output_bucket_arn = format("arn:aws-cn:s3:::%063d", 3)
-    # root の入力が許す最も長い break-glass（4つ。名前は IAM の上限の user・role 64文字、group 128文字）。
+    state_bucket_arn        = format("arn:aws-us-gov:s3:::%063d", 1)
+    state_key_arn           = "arn:aws-us-gov:kms:us-isof-south-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    plan_output_bucket_arn  = format("arn:aws-us-gov:s3:::%063d", 2)
+    apply_output_bucket_arn = format("arn:aws-us-gov:s3:::%063d", 3)
+    # root の入力が許す最も長い break-glass（4つ。admin は user・group・role を1つ以上含め、名前は IAM の上限の
+    # user・role 64文字、group 128文字なので、長い group を2つにする）。
     break_glass_arns = [
-      format("arn:aws-cn:iam::123456789012:user/break-glass/%064d", 1),
-      format("arn:aws-cn:iam::123456789012:user/break-glass/%064d", 2),
-      format("arn:aws-cn:iam::123456789012:group/break-glass/%0128d", 3),
-      format("arn:aws-cn:iam::123456789012:role/break-glass/%064d", 4),
+      format("arn:aws-us-gov:iam::123456789012:user/break-glass/%064d", 1),
+      format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 2),
+      format("arn:aws-us-gov:iam::123456789012:group/break-glass/%0128d", 3),
+      format("arn:aws-us-gov:iam::123456789012:role/break-glass/%064d", 4),
     ]
+    aws_partitions = {
+      "aws" = [
+        "af-south-1", "ap-east-1", "ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1",
+        "ap-south-2", "ap-southeast-1", "ap-southeast-2", "ap-southeast-3", "ap-southeast-4", "ap-southeast-5",
+        "ap-southeast-6", "ap-southeast-7", "ca-central-1", "ca-west-1", "eu-central-1", "eu-central-2", "eu-north-1",
+        "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3", "il-central-1", "me-central-1", "me-south-1",
+        "mx-central-1", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+      ]
+      "aws-cn"     = ["cn-north-1", "cn-northwest-1"]
+      "aws-eusc"   = ["eusc-de-east-1"]
+      "aws-iso"    = ["us-iso-east-1", "us-iso-west-1"]
+      "aws-iso-b"  = ["us-isob-east-1", "us-isob-west-1"]
+      "aws-iso-e"  = ["eu-isoe-west-1"]
+      "aws-iso-f"  = ["us-isof-east-1", "us-isof-south-1"]
+      "aws-us-gov" = ["us-gov-east-1", "us-gov-west-1"]
+    }
   }
 
   override_data {
     target = data.aws_partition.current
-    values = { partition = "aws-cn" }
+    values = { partition = "aws-us-gov" }
   }
   override_data {
     target = data.aws_region.current
-    values = { region = "cn-northwest-1" }
+    values = { region = "us-isof-south-1" }
   }
   override_resource {
     target = aws_iam_openid_connect_provider.github
-    values = { arn = "arn:aws-cn:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+    values = { arn = "arn:aws-us-gov:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
   }
 
   assert {
-    condition     = length(trimprefix(var.state_bucket_arn, "arn:aws-cn:s3:::")) == 63
+    condition = (
+      contains(keys(var.aws_partitions), data.aws_partition.current.partition) &&
+      length(data.aws_partition.current.partition) == max([for p in keys(var.aws_partitions) : length(p)]...)
+    )
+    error_message = "境界の入力の partition が、aws_partitions の中で最も長いものになっていません。"
+  }
+
+  assert {
+    condition = (
+      contains(flatten(values(var.aws_partitions)), data.aws_region.current.region) &&
+      length(data.aws_region.current.region) == max([for r in flatten(values(var.aws_partitions)) : length(r)]...)
+    )
+    error_message = "境界の入力の region が、aws_partitions の中で最も長いものになっていません。"
+  }
+
+  assert {
+    condition = alltrue([
+      for a in [var.state_bucket_arn, var.plan_output_bucket_arn, var.apply_output_bucket_arn, aws_iam_openid_connect_provider.github.arn] :
+      startswith(a, "arn:${data.aws_partition.current.partition}:")
+    ])
+    error_message = "境界の入力の Bucket か OIDC provider の ARN が、境界の partition のものになっていません。"
+  }
+
+  assert {
+    condition = (
+      length([for a in var.break_glass_arns : a if strcontains(a, ":group/")]) == 2 &&
+      length([for a in var.break_glass_arns : a if strcontains(a, ":user/")]) == 1 &&
+      length([for a in var.break_glass_arns : a if strcontains(a, ":role/")]) == 1
+    )
+    error_message = "境界の入力の break-glass が、最も長い組成（group 2つと user・role）になっていません。"
+  }
+
+  assert {
+    condition     = length(trimprefix(var.state_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")) == 63
     error_message = "境界の入力の長さが、Bucket 名の 63 文字になっていません。"
   }
 
@@ -972,7 +1027,6 @@ run "apply_output_bucket_arn_follows_input" {
 }
 
 # 統制の構成物は管理アカウントの identity root だけが持つ（deployment-identity/ADR-0201 決定3）。apply の role の Deny は env を問わない。
-# 管理アカウントの外では break-glass は role だけを持つ。
 run "no_governance_in_dev" {
   command = apply
 
