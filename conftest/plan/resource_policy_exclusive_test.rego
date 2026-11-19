@@ -35,7 +35,7 @@ declared := [
 	rc("aws_s3_bucket_policy", state_bucket_policy, {"bucket": "state-id"}),
 	rc("aws_s3_bucket_policy", output_bucket_policy, {"bucket": "plan-id", "policy": json.marshal({"Statement": statements(5)})}),
 	rc("aws_kms_key_policy", key_policy, {"key_id": "key-id"}),
-	rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": json.marshal({"Statement": statements(4)})}),
+	rc("aws_s3_bucket_policy", apply_bucket_policy, {"bucket": "apply-id", "policy": json.marshal({"Statement": statements(3)})}),
 ]
 
 messages(extra) := msgs if {
@@ -203,12 +203,12 @@ with_documents(plan_n, apply_n) := array.concat(targets, [
 statement_messages(plan_n, apply_n) := {m | some m in gate.deny with input as fixture.plan(with_documents(plan_n, apply_n)); startswith(m, "[PLAN-RPE-03]")}
 
 test_pass_output_bucket_policy_statement_counts if {
-	count(statement_messages(5, 4)) == 0
+	count(statement_messages(5, 3)) == 0
 }
 
 test_violation_output_bucket_policy_statement_counts if {
-	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 4 件で、宣言（policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements）の 5 件と一致しません", [output_bucket_policy]), statement_messages(4, 4))
-	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 5 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 4 件と一致しません", [apply_bucket_policy]), statement_messages(5, 5))
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 4 件で、宣言（policy_plan.deployment_identity.apply_identity_role.output_bucket_policy_statements）の 5 件と一致しません", [output_bucket_policy]), statement_messages(4, 3))
+	fixture.has(sprintf("[PLAN-RPE-03] p.json: %s の文が 4 件で、宣言（policy_plan.state_backend.apply_output_bucket_policy_statements）の 3 件と一致しません", [apply_bucket_policy]), statement_messages(5, 4))
 }
 
 # CI の plan で Bucket と同時に作るときは、文書が plan で決まらなくても落とさない。
