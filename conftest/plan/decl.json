@@ -280,7 +280,7 @@
         "apply_role",
         "workload_unlock_role"
       ],
-      "apply_output_bucket_policy_statements": 4
+      "apply_output_bucket_policy_statements": 3
     },
     "finops": {
       "budget": "aws_budgets_budget",
