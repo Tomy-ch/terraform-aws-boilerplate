@@ -33,7 +33,16 @@ locals {
   state_key_arn_prefix = "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:key/"
 
   identity_role_arns = [for k in keys(local.roles) : local.role_arns[k]]
-  identity_arns      = concat(local.identity_role_arns, [aws_iam_openid_connect_provider.github.arn])
+
+  iam_arn_prefix = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}"
+  # CI の role と customer managed policy は名前を `<name_prefix>-ci-` で始める（deployment-identity/ADR-0201 決定5）。
+  ci_arn_patterns = ["${local.iam_arn_prefix}:role/${var.name_prefix}-ci-*", "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"]
+
+  # apply の role の workload の権限（決定17）と、role を作る usecase ごとの permissions boundary（決定15）。
+  workload_policy_name  = "${var.name_prefix}-ci-apply-workload"
+  workload_policy_arn   = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
+  boundary_policy_names = { ops_notification = "${var.name_prefix}-ci-boundary-ops-notification" }
+  boundary_policy_arns  = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
 
   bucket_read_actions = [
     "s3:GetAccelerateConfiguration",
@@ -93,6 +102,12 @@ locals {
       Resource = local.identity_role_arns
     },
     { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
+    {
+      Sid      = "ReadCiPolicies"
+      Effect   = "Allow"
+      Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
+      Resource = local.ci_policy_arns
+    },
   ]
 
   # 統制の構成物（organization-baseline）は管理アカウントの identity root だけが持つ（deployment-identity/ADR-0201 決定3）。
@@ -112,6 +127,52 @@ locals {
   governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
+  ci_policy_arns         = concat(local.governance_policy_arns, [local.workload_policy_arn], values(local.boundary_policy_arns))
+
+  # workload root の usecase の構成物の読み取り（決定13）。名前を `<name_prefix>-` で始める構成物の pattern で限る。
+  regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
+  workload_key_arns   = "arn:${data.aws_partition.current.partition}:kms:${local.regional_arn_suffix}:key/*"
+  workload_key_conditions = {
+    StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT", "kms:KeyOrigin" = "AWS_KMS" }
+    Bool         = { "kms:MultiRegion" = "false" }
+  }
+  workload_read_statements = [
+    {
+      Sid      = "ReadWorkloadTopics"
+      Effect   = "Allow"
+      Action   = ["sns:GetTopicAttributes", "sns:ListTagsForResource"]
+      Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${var.name_prefix}-*"
+    },
+    {
+      Sid       = "ReadWorkloadKeys"
+      Effect    = "Allow"
+      Action    = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+      Resource  = local.workload_key_arns
+      Condition = local.workload_key_conditions
+    },
+    {
+      Sid    = "ReadWorkloadSchedules"
+      Effect = "Allow"
+      Action = ["scheduler:GetSchedule", "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource"]
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule-group/${var.name_prefix}-*",
+        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule/${var.name_prefix}-*/*",
+      ]
+    },
+    { Sid = "DescribeChatConfigurations", Effect = "Allow", Action = "chatbot:DescribeSlackChannelConfigurations", Resource = "*" },
+    {
+      Sid      = "ReadWorkloadRoles"
+      Effect   = "Allow"
+      Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]
+      Resource = "${local.iam_arn_prefix}:role/${var.name_prefix}-*"
+    },
+    {
+      Sid      = "ReadWorkloadPolicies"
+      Effect   = "Allow"
+      Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
+      Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-*"
+    },
+  ]
 
   # Resource "*" でしか与えられない Action は、Action ごとの別の文にする（deployment-identity/ADR-0201 決定1）。
   governance_wildcard_read_actions = [
@@ -144,12 +205,6 @@ locals {
         Effect   = "Allow"
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = local.break_glass_role_arns
-      },
-      {
-        Sid      = "ReadGovernancePolicy"
-        Effect   = "Allow"
-        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
-        Resource = local.governance_policy_arn
       },
     ],
   ) : s if local.management]
@@ -230,21 +285,32 @@ locals {
     ],
   )
 
-  governance_policy_management_statements = [for s in [
+  ci_policy_management_statements = concat([
     {
-      Sid      = "ManageGovernancePolicy"
+      Sid      = "ManageCiPolicies"
       Effect   = "Allow"
       Action   = ["iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicy", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion"]
-      Resource = local.governance_policy_arn
+      Resource = local.ci_policy_arns
     },
     {
-      Sid       = "AttachGovernancePolicy"
+      Sid       = "AttachApplyWorkloadPolicy"
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
-      Resource  = local.role_arns.apply_identity
-      Condition = { ArnEquals = { "iam:PolicyARN" = local.governance_policy_arn } }
+      Resource  = local.role_arns.apply
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arn } }
     },
-  ] : s if local.management]
+    ], [for s in [
+      {
+        Sid       = "AttachGovernancePolicy"
+        Effect    = "Allow"
+        Action    = "iam:AttachRolePolicy"
+        Resource  = local.role_arns.apply_identity
+        Condition = { ArnEquals = { "iam:PolicyARN" = local.governance_policy_arn } }
+      },
+  ] : s if local.management])
+
+  # 決定1。apply-identity と apply の role に同じ文で置く。
+  lockout_bypass_deny_statement = { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } }
 
   # apply の role の統制の Deny（deployment-identity/ADR-0201 決定5）。Resource "*" で、条件を付けない。
   governance_change_actions = concat(
@@ -270,6 +336,21 @@ locals {
     ["sts:AssumeRoot"],
   )
 
+  # apply の role の Deny（deployment-identity/ADR-0201 決定5）。
+  bootstrap_deny_statements = [
+    { Sid = "DenyIdentityChange", Effect = "Deny", Action = "*", Resource = concat(local.ci_arn_patterns, [aws_iam_openid_connect_provider.github.arn]) },
+    { Sid = "DenyIdentityStateChange", Effect = "Deny", Action = "*", Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
+    { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:GetEncryptionConfiguration", "s3:ListBucket"], Resource = var.state_bucket_arn },
+    { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
+    { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = [var.plan_output_bucket_arn, "${var.plan_output_bucket_arn}/*"] },
+    { Sid = "DenyApplyOutputBucketChange", Effect = "Deny", Action = "*", Resource = var.apply_output_bucket_arn },
+    { Sid = "DenyApplyOutputChange", Effect = "Deny", NotAction = ["s3:PutObject"], Resource = "${var.apply_output_bucket_arn}/*" },
+    # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
+    { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
+    { Sid = "DenyGovernanceChange", Effect = "Deny", Action = local.governance_change_actions, Resource = "*" },
+    { Sid = "DenyBreakGlassChange", Effect = "Deny", Action = "*", Resource = var.break_glass_arns },
+  ]
+
   statements = {
     plan = concat(
       local.bucket_read_statements,
@@ -279,29 +360,21 @@ locals {
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
       ],
       local.identity_read_statements,
+      local.workload_read_statements,
       local.governance_read_statements,
     )
 
-    apply = [
+    apply = concat([
       { Sid = "ListStateBucket", Effect = "Allow", Action = "s3:ListBucket", Resource = var.state_bucket_arn },
       { Sid = "ReadStateBucketEncryption", Effect = "Allow", Action = "s3:GetEncryptionConfiguration", Resource = var.state_bucket_arn },
       { Sid = "WriteWorkloadState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.workload_state_key },
       { Sid = "LockWorkloadState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.workload_state_key}.tflock" },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
       { Sid = "WriteWorkloadApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.apply_output_bucket_arn}/*" },
-      # Deny の範囲と形は deployment-identity/ADR-0201 決定5。
-      { Sid = "DenyIdentityChange", Effect = "Deny", Action = "*", Resource = concat(local.identity_arns, local.governance_policy_arns) },
-      { Sid = "DenyIdentityStateChange", Effect = "Deny", Action = "*", Resource = [local.identity_state_key, "${local.identity_state_key}.tflock"] },
-      { Sid = "DenyStateBucketChange", Effect = "Deny", NotAction = ["s3:GetEncryptionConfiguration", "s3:ListBucket"], Resource = var.state_bucket_arn },
-      { Sid = "DenyStateVersionDeletion", Effect = "Deny", Action = "s3:DeleteObjectVersion", Resource = "${var.state_bucket_arn}/*" },
-      { Sid = "DenyPlanOutputChange", Effect = "Deny", Action = "*", Resource = [var.plan_output_bucket_arn, "${var.plan_output_bucket_arn}/*"] },
-      { Sid = "DenyApplyOutputBucketChange", Effect = "Deny", Action = "*", Resource = var.apply_output_bucket_arn },
-      { Sid = "DenyApplyOutputChange", Effect = "Deny", NotAction = ["s3:PutObject"], Resource = "${var.apply_output_bucket_arn}/*" },
-      # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
-      { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
-      { Sid = "DenyGovernanceChange", Effect = "Deny", Action = local.governance_change_actions, Resource = "*" },
-      { Sid = "DenyBreakGlassChange", Effect = "Deny", Action = "*", Resource = var.break_glass_arns },
-    ]
+      ], local.bootstrap_deny_statements, [
+      { Sid = "DenyBoundaryRemoval", Effect = "Deny", Action = "iam:DeleteRolePermissionsBoundary", Resource = "*" },
+      local.lockout_bypass_deny_statement,
+    ])
 
     apply_identity = concat(
       local.bucket_read_statements,
@@ -342,12 +415,12 @@ locals {
         # 鍵と alias を作る権限は与えない（deployment-identity/ADR-0201 決定3）。
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
         { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = var.state_key_arn },
-        { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = "kms:PutKeyPolicy", Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } },
+        local.lockout_bypass_deny_statement,
       ],
       local.identity_read_statements,
       [{ Sid = "WriteApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.plan_output_bucket_arn}/apply/*" }],
       local.governance_read_statements,
-      local.governance_policy_management_statements,
+      local.ci_policy_management_statements,
     )
 
     # 範囲と、各 Action が要る理由は deployment-identity/ADR-0201 決定9（unlock は決定11）。
