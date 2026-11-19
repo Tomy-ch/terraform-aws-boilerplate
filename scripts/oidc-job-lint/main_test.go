@@ -1210,7 +1210,7 @@ func Test_checkDetection(t *testing.T) {
 
 		j, aw := applyWith(t, "  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n",
 			"  other:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo\n\n  apply-admin-identity:\n    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, other]\n")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check） ではありません")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の other は、検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity） ではありません")
 	})
 
 	t.Run("if: が順序の検査の成功を見なければ違反", func(t *testing.T) {
@@ -1269,12 +1269,127 @@ func Test_checkDetection(t *testing.T) {
 		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n        working-directory: /tmp\n")
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "working-directory:")
 	})
+
+	const identitySuccess = " && needs.apply-admin-identity.result == 'success'"
+	waiting := func(t *testing.T, edits ...string) (workflow.Job, workflowInfo) {
+		t.Helper()
+
+		src := replaced(t, applyWorkflow, "  revert-plan:\n", fullWorkloadApplyJob+"  revert-plan:\n")
+		for k := 0; k < len(edits); k += 2 {
+			src = replaced(t, src, edits[k], edits[k+1])
+		}
+
+		return jobOf(t, src, "apply-admin-workload"), infoOf(src)
+	}
+
+	t.Run("workload root の apply が同じ env の identity root の apply の成功を待てば違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := waiting(t)
+		assert.Empty(t, checkDetection(j, aw.jobs, formatted))
+	})
+
+	t.Run("identity root の apply を待つのに if: がその成功を見なければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := waiting(t, identitySuccess, "")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs.apply-admin-identity.result == 'success' を含めて")
+	})
+
+	upstreamRefused := map[string][]string{
+		"別の env の identity root の apply は待てない":                 {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-apply-stg-identity RUNNER_MODE=host\n"},
+		"identity root の plan の job は待てない":                     {"      - run: make ci-apply-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"},
+		"lock を残す job は apply の job を待てない":                     {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"},
+		"lock の解除の job は apply の job を待てない":                    {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"},
+		"plan の job は apply の job を待てない":                       {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"},
+		"identity root の apply を待つのは workload root の apply だけ": {"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n", "      - run: make ci-apply-stg-identity RUNNER_MODE=host\n"},
+	}
+	for name, edit := range upstreamRefused {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			j, aw := waiting(t, edit...)
+			assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "needs の apply-admin-identity は、")
+		})
+	}
+
+	t.Run("identity root の apply は workload root の apply を待てない", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, applyWorkflow, "  revert-plan:\n", fullWorkloadApplyJob+"  revert-plan:\n")
+		src = replaced(t, src, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && github",
+			"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-workload]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && needs.apply-admin-workload.result == 'success' && github")
+		assert.Contains(t, messages(checkDetection(jobOf(t, src, "apply-admin-identity"), infoOf(src).jobs, formatted)), "needs の apply-admin-workload は、")
+	})
+
+	t.Run("identity root の apply を待っても検出を欠けば違反", func(t *testing.T) {
+		t.Parallel()
+
+		j, aw := waiting(t, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]\n    if: ${{ needs.apply-infra-code-gate.result == 'success' && ",
+			"    needs: [apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]\n    if: ${{ ")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
+	})
+}
+
+var fullWorkloadApplyJob = strings.Join([]string{
+	"  apply-admin-workload:",
+	"    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]",
+	"    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && needs.apply-admin-identity.result == 'success' && github.ref_name == github.event.repository.default_branch }}",
+	"    runs-on: ubuntu-24.04",
+	"    environment:",
+	"      name: admin-apply",
+	"    permissions:",
+	"      contents: read",
+	"      id-token: write",
+	"    steps:",
+	"      - name: Refuse stale commits",
+	"        id: refuse-stale",
+	"        run: test \"$SHA\" = \"$HEAD\"",
+	"      - uses: actions/checkout@0000000000000000000000000000000000000000",
+	"        with:",
+	"          persist-credentials: false",
+	"      - run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply RUNNER_MODE=host",
+	"      - run: make ci-apply-admin-workload RUNNER_MODE=host",
+	"",
+	"",
+}, "\n")
+
+func Test_upstreamApply(t *testing.T) {
+	t.Parallel()
+
+	src := replaced(t, applyWorkflow, "  revert-plan:\n", fullWorkloadApplyJob+"  revert-plan:\n")
+	identity, workload := jobOf(t, src, "apply-admin-identity"), jobOf(t, src, "apply-admin-workload")
+
+	t.Run("workload root の apply から同じ env の identity root の apply は true", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, upstreamApply(workload, identity))
+	})
+
+	t.Run("向きが逆なら false", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, upstreamApply(identity, workload))
+	})
+
+	t.Run("入口の無い job は false", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, upstreamApply(jobOf(t, src, "apply-infra-code-gate"), identity))
+	})
+
+	t.Run("env の無い workload の入口は false", func(t *testing.T) {
+		t.Parallel()
+
+		j := jobOf(t, replaced(t, src, "make ci-apply-admin-workload", "make ci-apply-workload"), "apply-admin-workload")
+		assert.False(t, upstreamApply(j, identity))
+	})
 }
 
 func Test_allowedNeeds(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）", allowedNeeds())
+	assert.Equal(t, "検出の job（make infra-code-gate）・順序の検査の job（make resource-order-check）・層の検査の job（make layer-check）・root の検査の job（make root-check）・workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）", allowedNeeds())
 }
 
 func Test_checkGateJob(t *testing.T) {

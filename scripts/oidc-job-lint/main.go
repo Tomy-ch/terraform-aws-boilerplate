@@ -979,20 +979,25 @@ var (
 )
 
 // checkDetection は、job が同じ workflow の検出の job の成功を待つことを検査します（ADR-0601 決定9）。
-// needs に置けるのは検出の job と applyGates の検査の job だけで、どれも同じ形の規則で見ます。job の if: は、
-// status の関数で失敗を越えないよう、検出の成功と、needs のすべての検査の成功を含むときだけ認めます。
+// needs に置けるのは検出の job と applyGates の検査の job で、どれも同じ形の規則で見ます。workload root の apply の
+// job に限り、同じ env の identity root の apply の job も置ける（upstreamApply）。job の if: は、status の関数で
+// 失敗を越えないよう、検出の成功と、needs のすべての検査と identity root の apply の成功を含むときだけ認めます。
 func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	type gated struct {
 		job  workflow.Job
 		gate gate
 	}
-	var detectors []workflow.Job
+	var detectors, upstream []workflow.Job
 	var checks []gated
 	var findings []lintreport.Finding
 	for _, n := range needs(job) {
 		i := slices.IndexFunc(jobs, func(j workflow.Job) bool { return j.ID == n })
 		if i >= 0 && runsGate(jobs[i], detectionGate) {
 			detectors = append(detectors, jobs[i])
+			continue
+		}
+		if i >= 0 && upstreamApply(job, jobs[i]) {
+			upstream = append(upstream, jobs[i])
 			continue
 		}
 		k := slices.IndexFunc(applyGates, func(g gate) bool { return i >= 0 && runsGate(jobs[i], g) })
@@ -1026,16 +1031,31 @@ func checkDetection(job workflow.Job, jobs []workflow.Job, finding func(int, str
 			findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", c.job.ID))
 		}
 	}
+	for _, u := range upstream {
+		if !requiresSuccess(cond, u.ID) {
+			findings = append(findings, finding(at, "job の if: に needs.%s.result == 'success' を含めてください", u.ID))
+		}
+	}
 	return findings
+}
+
+// upstreamApply は、job が workload root の apply の job で、dep が同じ env の identity root の apply の job かを返します。
+func upstreamApply(job, dep workflow.Job) bool {
+	if isUnlock(job) || isHold(job) || isUnlock(dep) || isHold(dep) {
+		return false
+	}
+	env, ok := strings.CutSuffix(entryRoot(job, applyEntry), "-workload")
+	return ok && env != "" && entryRoot(dep, applyEntry) == env+"-identity"
 }
 
 // allowedNeeds は、資格情報を取る job の needs に置ける job の形を、違反の文のために並べます。
 func allowedNeeds() string {
-	parts := make([]string, 0, 1+len(applyGates))
+	parts := make([]string, 0, 2+len(applyGates))
 	parts = append(parts, fmt.Sprintf("%s（%s）", detectionGate.label, detectionGate.check))
 	for _, g := range applyGates {
 		parts = append(parts, fmt.Sprintf("%s（%s）", g.label, g.check))
 	}
+	parts = append(parts, "workload root の apply の job に限り同じ env の identity root の apply の job（make ci-apply-<env>-identity）")
 	return strings.Join(parts, "・")
 }
 
