@@ -15,7 +15,7 @@
 2. 合成の順序は `modules/kms` → `modules/log-group` → `modules/vpc` とする。`modules/vpc` には Log Group の ARN を resource 参照のまま渡し、destroy が Flow Logs、Log Group の順になるようにする。
 3. `conftest/plan/decl.json` の `resource_wildcard_actions` に `logs:DescribeLogGroups` を置く。根拠は Context の Service Authorization Reference である（repository-wide/ADR-0301 (least-privilege-policy) 決定9）。
 4. Flow Logs の `log_format` の項目集合は `modules/vpc` が固定する独自判断（repository-wide/ADR-0207 (default-value-policy) 決定3 の優先順位6）であり、このユースケースが最初の呼び手として引き継ぐ。項目ごとの用途は `modules/vpc/README.md` が持つ。理由は、NAT Gateway など中間の ENI を越えた通信の元の送信元と宛先、接続の試行（SYN）、通信の方向と経路を、事後の調査で判別するためである。
-5. 既定の Security Group の規則が空であること、Flow Logs が `ALL` で CloudWatch Logs 宛てであること、配送 role の trust の Condition を、Policy（`plan.network_foundation` の PLAN-NET-01〜03）で固定する。Checkov と Trivy は既定の Security Group の規則を見ない（変異で確かめた）。
+5. 既定の Security Group の規則が空であること、Flow Logs が `ALL` で CloudWatch Logs 宛てであること、配送 role の trust の Condition、Flow Logs の Log Group がこのユースケースの鍵で暗号化されることを、Policy（`plan.network_foundation` の PLAN-NET-01〜03・05）で固定する。Checkov と Trivy は既定の Security Group の規則を見ない（変異で確かめた）。
 
 ## 検討した代替案
 
@@ -38,7 +38,7 @@ NAT Gateway 越しの通信で元の送信元と宛先が分からない。
 
 ## 保証範囲
 
-- 鍵の alias と Log Group の名前、Log Group の ARN が出力に渡ることは `tests/composition.tftest.hcl` が見る。
+- 鍵の alias と Log Group の名前、Log Group の ARN が出力に渡ることは `tests/composition.tftest.hcl` が見る。Log Group がこの鍵で暗号化されることは PLAN-NET-05 が見る。
 - 鍵の Key Policy の形は `plan.kms_key_policy` が、配送 role の Resource `"*"` の範囲は `plan.iam_action_wildcard` が見る。
 - `logs:CreateLogGroup` を持たない配送 role で Flow Logs が届くことは確かめていない（`modules/vpc` の逸脱）。
 

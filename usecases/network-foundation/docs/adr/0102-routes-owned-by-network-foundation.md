@@ -15,7 +15,7 @@
 2. Route Table の経路は inline の `route` で持ち、外部 egress を持たない既定では空の list にする。経路の伝播（`propagating_vgws`）も空の list にする。`aws_route` を使わない。帯域外で足された経路は次の plan に差分として出る。
 3. 外部 egress の経路は、`controlled-external-egress` の装置の識別子を入力で受けて、このユースケースが自分の Route Table に書く。有効化を bool の入力にしない。入力の名前と形は `controlled-external-egress` の設計で決める。この ADR は形を決めない。
 4. gateway 型の VPC Endpoint の関連付けは、endpoint の持ち主（`private-aws-access`）が `private_route_table_ids` の出力を受けて置く。inline の `route = []` と衝突しない（Context）。
-5. 外部への経路を作る resource（`aws_route`・`aws_internet_gateway`・`aws_nat_gateway`・`aws_egress_only_internet_gateway`・`aws_vpc_peering_connection`）が無いこと、Route Table の経路が空であることを Policy（`plan.network_foundation` の PLAN-NET-04）で固定する（repository-wide/ADR-0402 (policy-test-scope-and-verification) 決定4）。
+5. Route Table（subnet の Route Table と main Route Table）の経路と経路の伝播が空であること、このユースケースの module の下に宣言した型（`conftest/plan/decl.json` の `allowed_types`）の外の resource が無いことを、Policy（`plan.network_foundation` の PLAN-NET-04）で固定する（repository-wide/ADR-0402 (policy-test-scope-and-verification) 決定4）。経路を作る型を禁止の一覧で並べず、許す型を並べるので、Internet Gateway・NAT Gateway・VPN Gateway・Transit Gateway の attachment・VPC Endpoint・peering を、型の名前を知らなくても落とす。
 
 ## 検討した代替案
 
@@ -52,7 +52,7 @@ NAT Gateway は外部 egress のためだけの装置で、外部 egress を持�
 
 ## 影響
 
-- `controlled-external-egress` を有効にする変更は、このユースケースの入力と経路の追加を伴い、PLAN-NET-04 を「外部 egress を有効にしたときだけ private の Route Table が装置への経路を持つ」に改める。
+- `controlled-external-egress` を有効にする変更は、このユースケースの入力と経路と Internet Gateway の追加を伴い、`allowed_types` と PLAN-NET-04 を「外部 egress を有効にしたときだけ private の Route Table が装置への経路を持つ」に改める。
 
 ## 見直し条件
 

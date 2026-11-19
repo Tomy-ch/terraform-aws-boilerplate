@@ -6,7 +6,7 @@
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
       "kms:ListAliases",
-    "logs:DescribeLogGroups",
+      "logs:DescribeLogGroups",
       "organizations:DescribeOrganization",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
@@ -259,11 +259,30 @@
       "default_route_table": "module.network_foundation.module.vpc.aws_default_route_table.this",
       "flow_log": "module.network_foundation.module.vpc.aws_flow_log.this",
       "flow_logs_role": "module.network_foundation.module.vpc.aws_iam_role.flow_logs",
+      "flow_logs_log_group": "module.network_foundation.module.flow_logs.aws_cloudwatch_log_group.this",
+      "flow_logs_key": "module.network_foundation.module.kms.aws_kms_key.this",
       "route_tables": {
         "address": "module.network_foundation.module.subnet_tiers.aws_route_table.this",
         "count": 6
       },
-      "module_prefix": "module.network_foundation."
+      "module_prefix": "module.network_foundation.",
+      "allowed_types": [
+        "aws_cloudwatch_log_group",
+        "aws_default_route_table",
+        "aws_default_security_group",
+        "aws_flow_log",
+        "aws_iam_role",
+        "aws_iam_role_policies_exclusive",
+        "aws_iam_role_policy",
+        "aws_iam_role_policy_attachments_exclusive",
+        "aws_kms_alias",
+        "aws_kms_key",
+        "aws_kms_key_policy",
+        "aws_route_table",
+        "aws_route_table_association",
+        "aws_subnet",
+        "aws_vpc"
+      ]
     },
     "stateful_protection": {
       "protected_types": [
