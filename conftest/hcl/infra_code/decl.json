@@ -21,6 +21,7 @@
       "resource.aws_default_security_group": {"executes_code": false},
       "resource.aws_flow_log": {"executes_code": false},
       "resource.aws_iam_openid_connect_provider": {"executes_code": false},
+      "resource.aws_iam_policy": {"executes_code": false},
       "resource.aws_iam_role": {"executes_code": false},
       "resource.aws_iam_role_policies_exclusive": {"executes_code": false},
       "resource.aws_iam_role_policy": {"executes_code": false},
