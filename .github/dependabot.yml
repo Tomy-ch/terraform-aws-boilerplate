@@ -1,5 +1,3 @@
-# Dependabot configuration.
-#
 # `cooldown` withholds an update PR until the stated number of days has passed since the version
 # was published. A security update skips it and opens immediately, which is Dependabot's own
 # behaviour and not configurable here.
@@ -39,8 +37,7 @@ updates:
         patterns:
           - "*"
 
-  # 上流のイメージで実行する Security の道具（docker-compose.yaml の image:）。tag を上げる PR では
-  # make pin-images-resolve / pin-images-apply で digest を付け直す。
+  # 上流のイメージで実行する Security の道具（docker-compose.yaml の image:）。
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
