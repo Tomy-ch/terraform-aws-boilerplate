@@ -4,6 +4,7 @@
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
       "chatbot:DescribeSlackChannelConfigurations",
+      "cloudformation:CreateStackSet",
       "cloudwatch:DescribeAlarmsForMetric",
       "cloudwatch:GetMetricData",
       "cloudwatch:GetMetricStatistics",
@@ -120,6 +121,14 @@
             "sso:PutInlinePolicyToPermissionSet",
             "sso:PutPermissionsBoundaryToPermissionSet",
             "sso:UpdatePermissionSet",
+            "cloudformation:ActivateOrganizationsAccess",
+            "cloudformation:CreateStackInstances",
+            "cloudformation:CreateStackSet",
+            "cloudformation:DeactivateOrganizationsAccess",
+            "cloudformation:DeleteStackInstances",
+            "cloudformation:DeleteStackSet",
+            "cloudformation:UpdateStackInstances",
+            "cloudformation:UpdateStackSet",
             "sts:AssumeRoot"
           ]
         },

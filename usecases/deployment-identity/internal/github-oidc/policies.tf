@@ -124,6 +124,12 @@ locals {
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
   administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
+  cfn_arn_prefix = "arn:${data.aws_partition.current.partition}:cloudformation:${local.regional_arn_suffix}"
+  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。
+  cfn_target_arns = ["${local.cfn_arn_prefix}:stackset-target/*", "${local.cfn_arn_prefix}:type/resource/*"]
+  # StackSet の名前は break-glass の role と同じで、ARN の末尾の ID は作るまで決まらないので `:*` で書く（deployment-identity/ADR-0201 決定3）。
+  break_glass_stack_set_arns = [for a in local.break_glass_role_arns : "${local.cfn_arn_prefix}:stackset/${regex("[^/]+$", a)}:*"]
+
   governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
@@ -206,10 +212,23 @@ locals {
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = local.break_glass_role_arns
       },
+      {
+        Sid    = "ReadBreakGlassStackSet"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:DescribeStackInstance",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:DescribeStackSetOperation",
+          "cloudformation:ListStackInstances",
+          "cloudformation:ListStackSetOperationResults",
+        ]
+        Resource = local.break_glass_stack_set_arns
+      },
     ],
   ) : s if local.management]
 
   governance_wildcard_write_actions = [
+    "cloudformation:CreateStackSet",
     "iam:DeleteAccountPasswordPolicy",
     "iam:DisableOrganizationsRootCredentialsManagement",
     "iam:DisableOrganizationsRootSessions",
@@ -282,6 +301,15 @@ locals {
         Resource  = local.break_glass_role_arns
         Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
       },
+      # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
+      { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = concat(local.break_glass_stack_set_arns, local.cfn_target_arns) },
+      {
+        Sid       = "ManageBreakGlassStackInstances"
+        Effect    = "Allow"
+        Action    = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+        Resource  = concat(local.break_glass_stack_set_arns, local.cfn_target_arns)
+        Condition = { StringEquals = { "cloudformation:TargetRegion" = data.aws_region.current.region } }
+      },
     ],
   )
 
@@ -333,6 +361,7 @@ locals {
       "PutPermissionsBoundaryToPermissionSet",
       "UpdatePermissionSet",
     ] : "sso:${a}"],
+    [for a in ["ActivateOrganizationsAccess", "CreateStackInstances", "CreateStackSet", "DeactivateOrganizationsAccess", "DeleteStackInstances", "DeleteStackSet", "UpdateStackInstances", "UpdateStackSet"] : "cloudformation:${a}"],
     ["sts:AssumeRoot"],
   )
 
