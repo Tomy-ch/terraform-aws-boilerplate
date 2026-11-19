@@ -601,3 +601,18 @@ test_pass_inline_data_source_unknown if {
 	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as inline_decl
 	count(msgs) == 0
 }
+
+# 宣言（decl.json）を差し替えずに読む。
+test_violation_delete_replace_forget_of_topic_under_declaration if {
+	topic := "module.ops_notification.module.sns.aws_sns_topic.this"
+	every actions in [["delete"], ["delete", "create"], ["create", "delete"], ["forget"]] {
+		msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-workload.json", [change(topic, "aws_sns_topic", actions)])
+		count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == 1
+	}
+}
+
+test_pass_declared_protected_types if {
+	every type in ["aws_sns_topic", "aws_kms_key", "aws_kms_key_policy"] {
+		type in data.policy_plan.stateful_protection.protected_types
+	}
+}

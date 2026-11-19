@@ -148,3 +148,20 @@ test_pass_removed_topic_is_not_checked if {
 	t := {"address": topic_address, "type": "aws_sns_topic", "change": {"actions": ["delete"], "before": {"arn": arn}, "after": null}}
 	count(messages([t])) == 0
 }
+
+test_violation_malformed_policy_arn if {
+	every bad in ["arn:aws:sns", "tabp-sandbox-ops-notification", "arn:aws:sns:ap-northeast-1:12345:t"] {
+		rc := json.patch(policy(policy_address, good), [{"op": "replace", "path": "/change/after/arn", "value": bad}])
+		fixture.has(sprintf("[PLAN-SNS-00] p.json: module.x.module.sns.aws_sns_topic_policy.this の arn %s が SNS の Topic の ARN の形ではありません", [bad]), messages([topic, rc]))
+	}
+}
+
+test_violation_empty_statement if {
+	fixture.has("[PLAN-SNS-01] p.json: module.x.module.sns.aws_sns_topic_policy.this が、TLS でない sns:Publish", with_statements([]))
+}
+
+test_pass_forgotten_policy_is_not_read if {
+	rc := {"address": policy_address, "type": "aws_sns_topic_policy", "change": {"actions": ["forget"], "before": {"arn": arn}, "after": null}}
+	msgs := messages([topic, policy("module.x.module.sns.aws_sns_topic_policy.next", good), rc])
+	count(msgs) == 0
+}

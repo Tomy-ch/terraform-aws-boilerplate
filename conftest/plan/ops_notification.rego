@@ -73,6 +73,28 @@ deny contains msg if {
 	msg := sprintf("[PLAN-NOTIFY-00] %s の %s が plan で決まりません。tests/policy-input.tftest.hcl の override_resource で与えてください", [address, path[count(path) - 1]])
 }
 
+# 読む文書。plan で決まらないか読めなければ、それを見る規則が黙るので 00 で落とす。
+document_paths := [
+	[["topic_policy"], "policy"], [["key_policy"], "policy"], [["heartbeat", "policy"], "policy"],
+	[["chat", "policy"], "policy"], [["heartbeat", "role"], "assume_role_policy"], [["chat", "role"], "assume_role_policy"],
+]
+
+readable_document(address, attr) if {
+	a := after(address)
+	is_string(a[attr])
+	json.is_valid(a[attr])
+}
+
+deny contains msg if {
+	some p in document_paths
+	address := object.get(decl, p[0], null)
+	is_string(address)
+	some c in lib.changes
+	c.rc.address == address
+	not readable_document(address, p[1])
+	msg := sprintf("[PLAN-NOTIFY-00] %s の %s が plan で決まらないか、JSON の文書として読めません", [address, p[1]])
+}
+
 body(address) := b if {
 	some r in lib.readable
 	r.document.address == address
@@ -130,19 +152,48 @@ role_arn_by_name := {c.rc.change.after.name: c.rc.change.after.arn |
 
 grants_publish(s) if {
 	s.Effect == "Allow"
+	publish_action(s)
+	reaches_topic(s)
+}
+
+publish_action(s) if {
 	some a in lib.as_array(object.get(s, "Action", []))
 	lib.iam_match(lower(a), "sns:publish")
+}
+
+publish_action(s) if {
+	"NotAction" in object.keys(s)
+	not excludes_publish(s)
+}
+
+excludes_publish(s) if {
+	some a in lib.as_array(s.NotAction)
+	lib.iam_match(lower(a), "sns:publish")
+}
+
+reaches_topic(s) if {
 	some res in lib.as_array(object.get(s, "Resource", []))
 	lib.iam_match(res, topic_arn)
 }
 
-iam_publishers contains role_arn_by_name[c.rc.change.after.role] if {
+reaches_topic(s) if "NotResource" in object.keys(s)
+
+publishing_policies contains {"address": r.document.address, "role": object.get(c.rc.change.after, "role", null)} if {
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
 	some c in lib.changes
 	c.rc.address == r.document.address
 	some s in lib.statements(r.body)
 	grants_publish(s)
+}
+
+iam_publishers contains role_arn_by_name[p.role] if some p in publishing_policies
+
+# 付け先の role を入力から引けない policy を黙って数えから落とさない。
+deny contains msg if {
+	some p in publishing_policies
+	not role_arn_by_name[p.role]
+	msg := sprintf("[PLAN-NOTIFY-03] %s が Topic へ publish できるが、付け先の role %v が入力に無いか、その arn が plan で決まりません", [p.address, object.get(p, "role", null)])
 }
 
 key_publishers contains a if {
@@ -180,13 +231,13 @@ deny contains msg if {
 
 chat_trust := {
 	"Version": "2012-10-17",
-	"Statement": [{"Effect": "Allow", "Principal": {"Service": "chatbot.amazonaws.com"}, "Action": "sts:AssumeRole"}],
+	"Statement": [{"Effect": "Allow", "Principal": {"Service": "chatbot.amazonaws.com"}, "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"aws:SourceAccount": account}}}],
 }
 
 deny contains msg if {
 	after(decl.chat.role)
 	not trust(decl.chat.role) == chat_trust
-	msg := sprintf("[PLAN-NOTIFY-04] %s の信頼が、chatbot.amazonaws.com だけの1文ではありません", [decl.chat.role])
+	msg := sprintf("[PLAN-NOTIFY-04] %s の信頼が、chatbot.amazonaws.com を aws:SourceAccount（StringEquals）で自アカウントに限る1文ではありません", [decl.chat.role])
 }
 
 publish_to_topic_only(s) if {
@@ -242,6 +293,12 @@ deny contains msg if {
 
 deny contains msg if {
 	c := after(decl.chat.configuration)
+	not {t | some t in object.get(c, "sns_topic_arns", [])} == {topic_arn}
+	msg := sprintf("[PLAN-NOTIFY-06] %s が購読する Topic が、%s だけではありません", [decl.chat.configuration, topic_arn])
+}
+
+deny contains msg if {
+	c := after(decl.chat.configuration)
 	not c.user_authorization_required == true
 	msg := sprintf("[PLAN-NOTIFY-06] %s の user_authorization_required が true ではありません", [decl.chat.configuration])
 }
@@ -282,7 +339,7 @@ read_statement(s) if {
 deny contains msg if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_role"
-	startswith(c.rc.address, decl.module)
+	startswith(lib.strip_index(c.rc.address), decl.module)
 	is_object(c.rc.change.after)
 	not boundary(c.rc.change)
 	msg := sprintf("[PLAN-NOTIFY-08] %s: %s が permissions boundary を持ちません", [c.path, c.rc.address])
@@ -293,4 +350,3 @@ boundary(change) if {
 	change.after.permissions_boundary != ""
 }
 
-boundary(change) if object.get(object.get(change, "after_unknown", {}), "permissions_boundary", false) == true

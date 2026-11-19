@@ -17,7 +17,10 @@ topics contains c if {
 	is_object(c.rc.change.after)
 }
 
-topic_arn(r) := r.document.change.after.arn if is_string(r.document.change.after.arn)
+raw_arn(r) := r.document.change.after.arn if is_string(r.document.change.after.arn)
+
+# 形の崩れた ARN はアカウントを読めず、04 が黙る。00 で落とす。
+topic_arn(r) := raw_arn(r) if regex.match(`^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$`, raw_arn(r))
 
 account_of(arn) := split(arn, ":")[4]
 
@@ -33,7 +36,14 @@ deny contains msg if {
 
 deny contains msg if {
 	some r in topic_policies
+	arn := raw_arn(r)
 	not topic_arn(r)
+	msg := sprintf("[PLAN-SNS-00] %s: %s の arn %s が SNS の Topic の ARN の形ではありません", [r.document.path, r.document.address, arn])
+}
+
+deny contains msg if {
+	some r in topic_policies
+	not raw_arn(r)
 	msg := sprintf("[PLAN-SNS-00] %s: %s の arn が plan で決まりません。Topic の ARN を tests/policy-input.tftest.hcl の override_resource で与えてください", [r.document.path, r.document.address])
 }
 

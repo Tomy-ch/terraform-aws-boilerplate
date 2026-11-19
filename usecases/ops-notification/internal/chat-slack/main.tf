@@ -29,6 +29,8 @@ resource "aws_iam_role" "this" {
       Effect    = "Allow"
       Principal = { Service = "chatbot.amazonaws.com" }
       Action    = "sts:AssumeRole"
+      # 要求元をアカウントで限る（confused deputy。ops-notification/ADR-0201 決定5）。
+      Condition = { StringEquals = { "aws:SourceAccount" = local.account } }
     }]
   })
 

@@ -44,7 +44,7 @@ heartbeat_trust := [{
 	"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012", "aws:SourceArn": group_arn}},
 }]
 
-chat_trust := [{"Effect": "Allow", "Principal": {"Service": "chatbot.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+chat_trust := [{"Effect": "Allow", "Principal": {"Service": "chatbot.amazonaws.com"}, "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}}]
 
 read_statements := [
 	{"Sid": "ReadAlarms", "Effect": "Allow", "Action": ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"], "Resource": "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*"},
@@ -62,7 +62,7 @@ base := {
 	"chat_role": rc("aws_iam_role", "module.chat.aws_iam_role.this", {"name": "tabp-sandbox-ops-chat", "arn": chat_arn, "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)}),
 	"chat_policy": rc("aws_iam_policy", "module.chat.aws_iam_policy.read", {"arn": read_arn, "policy": doc(read_statements)}),
 	"attachments": rc("aws_iam_role_policy_attachments_exclusive", "module.chat.aws_iam_role_policy_attachments_exclusive.this", {"role_name": "tabp-sandbox-ops-chat", "policy_arns": [read_arn]}),
-	"configuration": rc("aws_chatbot_slack_channel_configuration", "module.chat.aws_chatbot_slack_channel_configuration.this", {"iam_role_arn": chat_arn, "guardrail_policy_arns": [read_arn], "user_authorization_required": true}),
+	"configuration": rc("aws_chatbot_slack_channel_configuration", "module.chat.aws_chatbot_slack_channel_configuration.this", {"iam_role_arn": chat_arn, "guardrail_policy_arns": [read_arn], "user_authorization_required": true, "sns_topic_arns": [topic_arn]}),
 }
 
 messages(changes) := msgs if {
@@ -131,7 +131,13 @@ test_violation_heartbeat_trust if {
 }
 
 test_violation_chat_trust if {
-	fixture.has("[PLAN-NOTIFY-04] module.ops_notification.module.chat.aws_iam_role.this の信頼", messages(with_after("chat_role", {"assume_role_policy": doc([object.union(chat_trust[0], {"Principal": {"AWS": "*"}})])})))
+	every statements in [
+		[object.union(chat_trust[0], {"Principal": {"AWS": "*"}})],
+		[object.remove(chat_trust[0], ["Condition"])],
+		[object.union(object.remove(chat_trust[0], ["Condition"]), {"Condition": {"StringEquals": {"aws:SourceAccount": "210987654321"}}})],
+	] {
+		fixture.has("[PLAN-NOTIFY-04] module.ops_notification.module.chat.aws_iam_role.this の信頼", messages(with_after("chat_role", {"assume_role_policy": doc(statements)})))
+	}
 }
 
 test_violation_heartbeat_policy_beyond_publish if {
@@ -193,4 +199,80 @@ test_violation_read_not_action if {
 test_violation_role_without_boundary if {
 	r := object.union(base.chat_role, {"change": {"after": {"permissions_boundary": null}}})
 	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification.module.chat.aws_iam_role.this が permissions boundary を持ちません", messages(object.union(base, {"chat_role": r})))
+}
+
+test_violation_declaration_degenerate if {
+	every d in [
+		object.union(data.policy_plan.ops_notification, {"publishers": []}),
+		object.union(data.policy_plan.ops_notification, {"publishers": [1]}),
+		object.union(data.policy_plan.ops_notification, {"chat": {"read_actions": []}}),
+		object.union(data.policy_plan.ops_notification, {"module": ""}),
+	] {
+		msgs := gate.deny with input as fixture.plan([v | some _, v in base]) with data.policy_plan.ops_notification as d
+		fixture.has("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.", msgs)
+	}
+}
+
+test_violation_unknown_values_other_than_topic if {
+	every k in ["heartbeat_role", "group", "chat_role", "chat_policy"] {
+		r := object.union(base[k], {"change": {"after": {"arn": null}, "after_unknown": {"arn": true}}})
+		fixture.has("[PLAN-NOTIFY-00] module.ops_notification.", messages(object.union(base, {k: r})))
+	}
+}
+
+test_violation_unknown_documents if {
+	every pair in [["heartbeat_policy", "policy"], ["chat_policy", "policy"], ["topic_policy", "policy"], ["key_policy", "policy"], ["heartbeat_role", "assume_role_policy"], ["chat_role", "assume_role_policy"]] {
+		r := object.union(base[pair[0]], {"change": {"after": {pair[1]: null}, "after_unknown": {pair[1]: true}}})
+		fixture.has(sprintf("[PLAN-NOTIFY-00] %s の %s が plan で決まらないか、JSON の文書として読めません", [base[pair[0]].address, pair[1]]), messages(object.union(base, {pair[0]: r})))
+	}
+}
+
+test_violation_publisher_role_not_in_input if {
+	extra_policy := rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", {"name": "p", "role": "missing", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": topic_arn}])})
+	fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this が Topic へ publish できるが、付け先の role", messages(object.union(base, {"extra_policy": extra_policy})))
+}
+
+test_violation_publisher_role_arn_unknown if {
+	extra_role := {"address": "module.x.aws_iam_role.this", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "x", "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)}, "after_unknown": {"arn": true}}}
+	extra_policy := rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", {"name": "p", "role": "x", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": topic_arn}])})
+	fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this が Topic へ publish できるが、付け先の role", messages(object.union(base, {"extra_role": extra_role, "extra_policy": extra_policy})))
+}
+
+test_violation_not_action_publisher if {
+	extra_role := rc("aws_iam_role", "module.x.aws_iam_role.this", {"name": "x", "arn": "arn:aws:iam::123456789012:role/x", "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)})
+	extra_policy := rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", {"name": "p", "role": "x", "policy": doc([{"Effect": "Allow", "NotAction": "s3:GetObject", "Resource": topic_arn}])})
+	fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role", messages(object.union(base, {"extra_role": extra_role, "extra_policy": extra_policy})))
+}
+
+test_violation_configuration_topic if {
+	every t in [[], ["arn:aws:sns:ap-northeast-1:123456789012:other"], [topic_arn, "arn:aws:sns:ap-northeast-1:123456789012:other"]] {
+		fixture.has("[PLAN-NOTIFY-06] module.ops_notification.module.chat.aws_chatbot_slack_channel_configuration.this が購読する Topic", messages(with_after("configuration", {"sns_topic_arns": t})))
+	}
+}
+
+test_violation_read_not_resource_and_deny if {
+	every extra in [
+		{"Effect": "Allow", "Action": "cloudwatch:DescribeAlarms", "NotResource": "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:x"},
+		{"Effect": "Deny", "Action": "cloudwatch:DescribeAlarms", "Resource": "*"},
+	] {
+		fixture.has("[PLAN-NOTIFY-07] module.ops_notification.module.chat.aws_iam_policy.read が、NotAction・NotResource を使わない Allow だけではありません", messages(with_after("chat_policy", {"policy": doc(array.concat(read_statements, [extra]))})))
+	}
+}
+
+test_violation_role_boundary_empty_or_unknown if {
+	empty := object.union(base.chat_role, {"change": {"after": {"permissions_boundary": ""}}})
+	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification.module.chat.aws_iam_role.this が permissions boundary を持ちません", messages(object.union(base, {"chat_role": empty})))
+	unknown := object.union(base.chat_role, {"change": {"after": {"permissions_boundary": null}, "after_unknown": {"permissions_boundary": true}}})
+	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification.module.chat.aws_iam_role.this が permissions boundary を持ちません", messages(object.union(base, {"chat_role": unknown})))
+}
+
+# for_each の index key が付いた address の role も、宣言の module の下として見る。
+test_violation_role_boundary_with_index_key if {
+	r := {"address": "module.ops_notification[\"a\"].module.extra.aws_iam_role.this[0]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "e", "arn": "arn:aws:iam::123456789012:role/e", "permissions_boundary": null}, "after_unknown": {}}}
+	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification[\"a\"].module.extra.aws_iam_role.this[0] が permissions boundary を持ちません", messages(object.union(base, {"extra": r})))
+}
+
+test_violation_publisher_role_unknown if {
+	extra_policy := {"address": "module.ops_notification.module.x.aws_iam_role_policy.this", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"name": "p", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": topic_arn}])}, "after_unknown": {"role": true}}}
+	fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this が Topic へ publish できるが、付け先の role", messages(object.union(base, {"extra_policy": extra_policy})))
 }

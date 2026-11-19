@@ -63,9 +63,10 @@ run "policies" {
         Effect    = "Allow"
         Principal = { Service = "chatbot.amazonaws.com" }
         Action    = "sts:AssumeRole"
+        Condition = { StringEquals = { "aws:SourceAccount" = "123456789012" } }
       }]
     }
-    error_message = "channel role の信頼が chatbot.amazonaws.com だけになっていません。"
+    error_message = "channel role の信頼が、chatbot.amazonaws.com を aws:SourceAccount で自アカウントに限る1文になっていません。"
   }
 
   assert {
