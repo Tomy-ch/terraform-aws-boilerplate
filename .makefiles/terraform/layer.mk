@@ -40,7 +40,7 @@ layer-verify:
 
 .PHONY: layer-detect ## Terraform の構成を層の規則で検査し、読んだファイルを独立の走査と突き合わせる
 layer-detect:
-	@set -u; mkdir -p $(LY_OUT); rm -f $(LY_OUT)/found.txt $(LY_OUT)/files.json $(LY_OUT)/hcl-input.json $(LY_OUT)/result.json; \
+	@set -u; mkdir -p $(LY_OUT); rm -f $(LY_OUT)/found.txt $(LY_OUT)/files.json $(LY_OUT)/hcl-input.json $(LY_OUT)/hcl-input.json.atomicwrite.tmp $(LY_OUT)/result.json; \
 	roots=""; for d in $(LY_ROOTS); do if [ -d "$(LY_BASE)/$$d" ]; then roots="$$roots $$d"; fi; done; \
 	if [ -z "$$roots" ]; then echo "❌ 走査の root が1つもありません（$(LY_ROOTS)）" >&2; exit 2; fi; \
 	(cd "$(LY_BASE)" && find $$roots \( -name '*.tf' -o -name '*.tf.json' \) -not -path '*/.terraform/*') > $(LY_OUT)/found.txt \
