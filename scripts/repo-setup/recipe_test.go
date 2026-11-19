@@ -65,6 +65,25 @@ func makeIn(t *testing.T, root string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// runChain は、setup-repo を、repo-setup を何もしないコマンドへ、$(MAKE) を呼ばれた target を記録する代役へ
+// 差し替えて実際に走らせ、出力と、連鎖が呼んだ target の順を返す。代役は fail の target でだけ失敗する。
+func runChain(t *testing.T, fail string) (string, []string, error) {
+	t.Helper()
+
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	fake := filepath.Join(dir, "fake-make")
+	script := "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in -*|*=*) ;; *) echo \"$a\" >> '" + log + "' ;; esac; done\n" +
+		"for a in \"$@\"; do [ \"$a\" = '" + fail + "' ] && exit 1; done\nexit 0\n"
+	require.NoError(t, os.WriteFile(fake, []byte(script), 0o700)) //nolint:gosec // 代役の make は実行できなければならない
+
+	out, err := makeIn(t, mirrorRoot(t), "setup-repo", "MAKE="+fake, "REPO_SETUP=true")
+	recorded, readErr := os.ReadFile(log)
+	require.NoError(t, readErr, out)
+
+	return out, parseLines(string(recorded)), err
+}
+
 // TestSetupRepoRecipe は、.makefiles/github/operation/setup-repository.mk の setup-repo と REPO_SETUP を、直下を写した
 // 一時ディレクトリで走らせる。連鎖そのものは gh のログインとラベル・保護設定の書き換えを含むので、`make -n` の展開で見る。
 func TestSetupRepoRecipe(t *testing.T) {
@@ -86,6 +105,36 @@ func TestSetupRepoRecipe(t *testing.T) {
 			}
 		})
 
+		t.Run("連鎖は upstream の remote を外した後に Private Vulnerability Reporting を適用する", func(t *testing.T) {
+			t.Parallel()
+
+			out, err := makeIn(t, mirrorRoot(t), "-n", "setup-repo")
+			require.NoError(t, err, out)
+			removed := strings.Index(out, "git remote remove upstream")
+			applied := strings.Index(out, "apply-vulnerability-reporting")
+			require.NotEqual(t, -1, removed, out)
+			require.NotEqual(t, -1, applied, out)
+			assert.Less(t, removed, applied)
+		})
+
+		t.Run("apply-vulnerability-reporting は repo-settings の sync を vulnerability-reporting だけに絞って起動する", func(t *testing.T) {
+			t.Parallel()
+
+			out, err := makeIn(t, mirrorRoot(t), "-n", "apply-vulnerability-reporting")
+			require.NoError(t, err, out)
+			assert.Contains(t, out, `exec "./tmp/bin/repo-settings" sync -only vulnerability-reporting -repo=`)
+		})
+
+		t.Run("Private Vulnerability Reporting の適用は連鎖の最後の段であり、成功すれば完了を報せる", func(t *testing.T) {
+			t.Parallel()
+
+			out, calls, err := runChain(t, "")
+			require.NoError(t, err, out)
+			require.NotEmpty(t, calls)
+			assert.Equal(t, "apply-vulnerability-reporting", calls[len(calls)-1])
+			assert.Contains(t, out, "初期化が完了しました")
+		})
+
 		t.Run("REPO_SETUP の prune-release-notes は直下のノートを整理する", func(t *testing.T) {
 			t.Parallel()
 			root := mirrorRoot(t)
@@ -103,6 +152,17 @@ func TestSetupRepoRecipe(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("Private Vulnerability Reporting の適用が失敗すれば、前の段を済ませたうえで非 0 で終わり、完了を報せない", func(t *testing.T) {
+			t.Parallel()
+
+			out, calls, err := runChain(t, "apply-vulnerability-reporting")
+			require.Error(t, err, out)
+			assert.Contains(t, out, "Private Vulnerability Reporting を適用できませんでした")
+			assert.NotContains(t, out, "初期化が完了しました")
+			assert.Subset(t, calls, []string{"apply-branch-protection", "apply-environments"})
+			assert.Equal(t, "apply-vulnerability-reporting", calls[len(calls)-1])
+		})
 
 		t.Run("DRY_RUN が立っていればツールを起動せずに止まる", func(t *testing.T) {
 			t.Parallel()

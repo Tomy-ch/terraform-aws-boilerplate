@@ -2,7 +2,8 @@
 .PHONY: setup-repo ## リポジトリの初期化
 
 # git / gh の手順は scripts/repo-setup が持つ（なぜシェルに置かないかは scripts/README.md の repo-setup 行）。
-# ラベル・ルールセット・environment・ワークフローの初期化は個別の make ターゲットなので、連鎖はここに残す。
+# ラベル・ルールセット・environment・Private Vulnerability Reporting・ワークフローの初期化は個別の make ターゲットなので、
+# 連鎖はここに残す。
 # ホストの認証情報を使うため、ツールランナーは経由しない。
 REPO_SETUP = $(call RUN_SCRIPT_HOST,repo-setup,$(1))
 
@@ -33,4 +34,9 @@ setup-repo:
 	@echo "✅ ルールセットと environment の適用を終了します。"
 
 	@git remote remove upstream || true
+
+	@echo "🔧 Private Vulnerability Reporting の適用を開始します..."
+	@$(MAKE) apply-vulnerability-reporting || { echo "❌ Private Vulnerability Reporting を適用できませんでした。ほかの初期化は済んでいます。直したら make apply-vulnerability-reporting で適用し直してください。"; exit 1; }
+	@echo "✅ Private Vulnerability Reporting の適用を終了します。"
+
 	@echo "✅ 初期化が完了しました"

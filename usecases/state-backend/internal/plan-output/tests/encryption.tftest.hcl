@@ -14,6 +14,7 @@ variables {
   name           = "tabp-admin-tfplan"
   retention_days = 7
   kms_key_arn    = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  writers        = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "pr/" }]
 }
 
 run "accepts_key_in_same_account_and_region" {

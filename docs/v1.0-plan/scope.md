@@ -558,6 +558,8 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 | 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification`、`network-foundation` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
 | 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks`、`network-foundation`（GuardDutyのRuntime MonitoringのVPC Endpoint、消費者のENI） | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
 
+`finops` は、sandboxでは常駐層の実体と同じアカウントに置き、AWS managed monitorはメンバーアカウントに1つしか置けないので、複製を作れない。条件2・3は、常駐する実体をdestroyして作り直すことで満たす。
+
 期待残存は、resourceの型ではなく、識別子・状態・期限で宣言する（ADR-0401 決定16）。
 
 1. mockユニット（`terraform test`＋`mock_provider`）が通る
