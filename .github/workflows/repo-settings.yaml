@@ -1,6 +1,6 @@
 name: Repo Settings
 
-# 保護設定（ruleset と environment）の宣言の整合（ADR-0603 決定4）と、デプロイブランチへ入る Pull Request の
+# 保護設定（ruleset、environment、Private Vulnerability Reporting）の宣言の整合（ADR-0603 決定4）と、デプロイブランチへ入る Pull Request の
 # 検査（ADR-0603 決定31）。宣言と実態の突合は CI に置かず、人が make repo-settings-drift で行う
 # （.github/settings/README.md）。
 #

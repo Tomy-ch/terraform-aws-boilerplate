@@ -134,8 +134,8 @@ decl := {
 	"state_backend": {
 		"bucket": "module.state_backend.module.s3.aws_s3_bucket.this",
 		"roots": [
-			{"writer": "apply_identity_role", "state": "identity/terraform.tfstate"},
-			{"writer": "apply_role", "state": "workload/terraform.tfstate"},
+			{"writer": "apply_identity_role", "state": "identity/terraform.tfstate", "unlocker": "unlock_role"},
+			{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"},
 		],
 	},
 }
@@ -153,7 +153,7 @@ plan_bucket := "module.state_backend.module.plan_output.aws_s3_bucket.this"
 
 apply_bucket := "module.state_backend.module.apply_output.aws_s3_bucket.this"
 
-# 宣言は丸ごと差し替える。子のパスだけを with で差し替えると、規則が親から読むときに decl.json の値と重なる。
+# 宣言は丸ごと差し替える（理由は lib/fixture.rego の inline_declaration）。
 messages_for(rcs, d) := msgs if {
 	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as object.union(object.remove(data.policy_plan, ["deployment_identity", "state_backend"]), d)
 }
@@ -361,7 +361,7 @@ test_violation_children_on_non_target if {
 }
 
 test_violation_no_writer_roots if {
-	every roots in [[{"writer": "apply_role", "state": "workload/terraform.tfstate"}], []] {
+	every roots in [[{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"}], []] {
 		d := json.patch(decl, [{"op": "replace", "path": "/state_backend/roots", "value": roots}])
 		fixture.has("[PLAN-APPLY-00] data.policy_plan.state_backend.roots に", messages_for(world(valid_statements), d))
 	}
@@ -631,9 +631,12 @@ test_violation_state_bucket_declaration_missing if {
 
 test_violation_roots_element_malformed if {
 	every root in [
-		{"writer": "other_role", "State": "other/terraform.tfstate"},
-		{"writer": "other_role", "state": ""},
-		{"writer": "other_role", "state": "other/terraform.tfstate", "lock": true},
+		{"writer": "other_role", "State": "other/terraform.tfstate", "unlocker": "other_unlock_role"},
+		{"writer": "other_role", "state": "", "unlocker": "other_unlock_role"},
+		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": "other_unlock_role", "lock": true},
+		{"writer": "other_role", "state": "other/terraform.tfstate"},
+		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": ""},
+		{"writer": "other_role", "state": "other/terraform.tfstate", "unlocker": 5},
 		"identity/terraform.tfstate",
 	] {
 		d := json.patch(decl, [{"op": "add", "path": "/state_backend/roots/-", "value": root}])

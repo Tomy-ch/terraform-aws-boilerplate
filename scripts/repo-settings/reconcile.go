@@ -10,8 +10,9 @@ import (
 
 type desired struct {
 	// Ruleset は保護設定の宣言そのもの（GitHub へ送る body でもある）。
-	Ruleset map[string]any
-	Envs    []desiredEnv
+	Ruleset                map[string]any
+	Envs                   []desiredEnv
+	VulnerabilityReporting bool
 }
 
 // Patterns が nil なら deployment branch policy を持たない。
@@ -40,6 +41,12 @@ type liveEnv struct {
 	Patterns map[string]int64
 }
 
+// liveVulnerabilityReporting は Private Vulnerability Reporting の実態。Public が偽なら Enabled は観測していない。
+type liveVulnerabilityReporting struct {
+	Public  bool
+	Enabled bool
+}
+
 type branchPolicy struct {
 	ProtectedBranches    bool `json:"protected_branches"`
 	CustomBranchPolicies bool `json:"custom_branch_policies"`
@@ -47,7 +54,6 @@ type branchPolicy struct {
 
 var customOnly = branchPolicy{ProtectedBranches: false, CustomBranchPolicies: true}
 
-// diff は宣言と実態の差分。
 type diff struct {
 	Ruleset rulesetDiff
 	Envs    []envDiff
@@ -343,6 +349,35 @@ func diffEnv(want desiredEnv, gotEnvs map[string]liveEnv) envDiff {
 	return ed
 }
 
+type vulnerabilityReportingDiff struct {
+	Findings []string
+	// Unobserved は突合しなかった理由。空なら突合した。
+	Unobserved string
+	// Method は差分を解消する要求。空なら送る要求は無い。
+	Method string
+	// Unavailable は、宣言が有効にするのに、リポジトリが PVR を提供しないこと。
+	Unavailable bool
+}
+
+const vulnerabilityReportingName = "Private Vulnerability Reporting"
+
+func diffVulnerabilityReporting(want bool, got liveVulnerabilityReporting) vulnerabilityReportingDiff {
+	if !got.Public {
+		if want {
+			return vulnerabilityReportingDiff{Findings: []string{"公開でないリポジトリでは使えません"}, Unavailable: true}
+		}
+		return vulnerabilityReportingDiff{Unobserved: vulnerabilityReportingName + "（公開でないリポジトリには提供されない）"}
+	}
+	if got.Enabled == want {
+		return vulnerabilityReportingDiff{}
+	}
+	method := "DELETE"
+	if want {
+		method = "PUT"
+	}
+	return vulnerabilityReportingDiff{Findings: []string{fmt.Sprintf("enabled が宣言の %t と異なります", want)}, Method: method}
+}
+
 type request struct {
 	Method string
 	Path   string
@@ -350,15 +385,18 @@ type request struct {
 }
 
 const (
-	onlyRuleset      = "ruleset"
-	onlyEnvironments = "environments"
+	onlyRuleset                = "ruleset"
+	onlyEnvironments           = "environments"
+	onlyVulnerabilityReporting = "vulnerability-reporting"
 )
 
-// planRequests は差分を、それを解消する要求列へ変えます。差分が無ければ空を返します。
+// planRequests は ruleset か environment の差分を、only が指す側について、それを解消する要求列へ変えます。
+// 差分が無いか、only がその2つのどちらでもなければ空を返します。
 func planRequests(d diff, want desired, repo, only string) []request {
 	var out []request
 	base := "/repos/" + repo
-	if only == onlyRuleset {
+	switch only {
+	case onlyRuleset:
 		switch {
 		case d.Ruleset.Missing:
 			out = append(out, request{Method: "POST", Path: base + "/rulesets", Body: want.Ruleset})
@@ -366,6 +404,9 @@ func planRequests(d diff, want desired, repo, only string) []request {
 			out = append(out, request{Method: "PUT", Path: fmt.Sprintf("%s/rulesets/%d", base, d.Ruleset.ID), Body: want.Ruleset})
 		}
 		return out
+	case onlyEnvironments:
+	default:
+		return nil
 	}
 	patterns := map[string][]string{}
 	for _, e := range want.Envs {

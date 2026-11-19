@@ -145,6 +145,44 @@ func fetchRuleset(ctx context.Context, c githubClient, repo, rulesetName string)
 	return ruleset, ids[0], nil
 }
 
+const (
+	visibilityPublic   = "public"
+	visibilityPrivate  = "private"
+	visibilityInternal = "internal"
+)
+
+func vulnerabilityReportingPath(repo string) string {
+	return "/repos/" + repo + "/private-vulnerability-reporting"
+}
+
+// fetchVulnerabilityReporting は Private Vulnerability Reporting の実態を読みます。GET だけを使います。
+// 公開でないリポジトリでは PVR が提供されないので、可視性だけを返し、PVR を問いません。
+func fetchVulnerabilityReporting(ctx context.Context, c githubClient, repo string) (liveVulnerabilityReporting, error) {
+	var meta struct {
+		Visibility string `json:"visibility"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/repos/"+repo, nil, &meta); err != nil {
+		return liveVulnerabilityReporting{}, err
+	}
+	switch meta.Visibility {
+	case visibilityPublic:
+	case visibilityPrivate, visibilityInternal:
+		return liveVulnerabilityReporting{}, nil
+	default:
+		return liveVulnerabilityReporting{}, xerrors.Wrapf(errUnexpectedResponse, "%s の visibility %q", repo, meta.Visibility)
+	}
+	var resp struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := c.do(ctx, http.MethodGet, vulnerabilityReportingPath(repo), nil, &resp); err != nil {
+		return liveVulnerabilityReporting{}, err
+	}
+	if resp.Enabled == nil {
+		return liveVulnerabilityReporting{}, xerrors.Wrapf(errUnexpectedResponse, "%s の Private Vulnerability Reporting に enabled がありません", repo)
+	}
+	return liveVulnerabilityReporting{Public: true, Enabled: *resp.Enabled}, nil
+}
+
 func fetchEnvironments(ctx context.Context, c githubClient, repo string) (map[string]liveEnv, error) {
 	type rule struct {
 		Type      string `json:"type"`
