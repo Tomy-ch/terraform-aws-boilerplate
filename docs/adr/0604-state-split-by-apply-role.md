@@ -32,7 +32,9 @@ state を細かく分ける利点は、誤った apply と state の破損の範
 ### state と lock
 
 7. 各 root の state は、そのアカウントの state Bucket に、root ごとに固定した1つの key で置く。identity root は `identity/terraform.tfstate`、workload root は `workload/terraform.tfstate` とする。CLI の workspace を使わない。backend は state を暗号化する設定（`encrypt = true`）とし、鍵の指定（`kms_key_id`）はソースに書かず init で渡す。
-8. lock は、S3 backend が state の key の隣に置く lock file（`<key>.tflock`）で取る。plan の role は state にも lock file にも書き込まない（ADR-0602 決定13）。したがって plan は lock を取らずに実行する。apply は lock を取る（ADR-0601 決定16）。apply が途中で止まって残った lock file を CI から消すのは、lock の解除の role（ADR-0602 決定13）だけとする。消してよいのは、apply の job の実行時間の上限を超えて残った lock だけであり、読んだ版と同じ版であることを条件に消す。lock の解除の実行は、apply の実行を待たせず、取り消さない。消すのは、CI のランナーが apply の job で取った lock だけである。
+8. lock は、S3 backend が state の key の隣に置く lock file（`<key>.tflock`）で取る。plan の role は state にも lock file にも書き込まない（ADR-0602 決定13）。したがって plan は lock を取らずに実行する。apply は lock を取る（ADR-0601 決定16）。apply が途中で止まって残った lock file を CI から消すのは、lock の解除の role（ADR-0602 決定13）だけとする。消してよいのは、apply の job の実行時間の上限を超えて残った lock だけであり、読んだ版と同じ版であることを条件に消す。lock の解除の実行は、apply の実行を待たせず、取り消さない。消すのは、CI のランナーが apply の job か lock を残す job で取った lock だけである。
+
+   lock の解除の role の権限は、lock が残る障害が起きるまで使われない。障害の前に実物で一度評価できるように、root ごとに、lock を残す job を1つ置く。lock を残す job は、その root の apply の job と同じ role・environment・concurrency の group で、その root の lock を取る。state と AWS の resource を変えず、apply せず、lock を外さずに終わる。起動は手動の起動だけとする（ADR-0602 決定14）。
 
 ### 書き込みの分離
 
@@ -108,10 +110,11 @@ identity root を bootstrap の構成物に限ったまま、統制を workload 
   - `env/<env>/identity/` が bootstrap の構成物か統制の構成物を持つ usecase 以外を呼ばないこと。統制の構成物を持つ usecase を、管理アカウント以外の identity root が呼ばないこと
   - `env/<env>/` の直下がそれらの usecase を呼ばないこと
 - Static Analysis（`make root-check`）: 各 root の backend の key が決定7 の値であり、lock file を使う設定であること（決定7・8）
-- Unit Test（`scripts/tf-local`）: plan の入口が lock を取らず、apply の入口が取ること（決定8）
+- Unit Test（`scripts/tf-local`）: plan の入口が lock を取らず、apply の入口と lock を残す入口が取ること。lock を残す入口が apply しないこと（決定8）
 - Unit Test（`scripts/tf-local`）: lock の解除が消す lock の経過時間の閾値が、apply の job の `timeout-minutes` を超えること。削除が、読んだ版の ETag を条件にすること。CI のランナー以外が取った lock を消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
-- Static Analysis（`make oidc-job-lint`）: `env/` の下で `*.tf` を持つディレクトリ（`.terraform` の下を除く）が決定5 の配置にだけ在り、その各 root に、その root を plan する job が1つ以上、apply する job と lock の解除の job が1つずつあること（決定2-5・8）
+- Static Analysis（`make oidc-job-lint`）: `env/` の下で `*.tf` を持つディレクトリ（`.terraform` の下を除く）が決定5 の配置にだけ在り、その各 root に、その root を plan する job が1つ以上、apply する job と lock の解除の job と lock を残す job が1つずつあること（決定2-5・8）
+- Static Analysis（`make oidc-job-lint`）: lock を残す job が、同じ root の apply の job と同じ role・environment・concurrency の group を持ち、実行中の run を取り消さず、起動が入力の無い手動の起動だけで、terraform を lock を残す入口でだけ走らせること（決定8）
 - Static Analysis: apply の job が、apply する plan に決定11-13 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
@@ -122,6 +125,7 @@ identity root を bootstrap の構成物に限ったまま、統制を workload 
 - state Bucket は、2つの key と lock file ごとの書き込みの拒否と、lock の解除の role に lock file の削除だけを許す拒否を、bucket policy に持つ。
 - workload root の plan と apply は、env の workload 全体を対象にする。変更が1つの usecase に閉じていても、env の workload 全体をロックする。
 - plan は lock を取らないので、apply と並行して走ると、apply の途中の state を読むことがある。apply は merge された commit で lock を取って実行するので（ADR-0601 決定6・16）、lock を取らない plan の結果は apply の内容を決めない。
+- lock を残す job を起動すると、その root の apply は、lock を外すまで（lock の解除が消せるのは apply の job の実行時間の上限を超えた後）止まる。起動できるのは、その env のデプロイブランチで workflow を手動で起動できる主体である。
 - stateful な resource を意図して削除するには、許可の宣言に address と理由を足す変更を通す。削除が済んだ後の変更で、その項目を取り除く。
 
 ## 見直し条件
