@@ -91,6 +91,46 @@ test_violation_kms_crypto_action_in_managed_policy if {
 	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc])
 }
 
+boundary_address := "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops_notification\"]"
+
+via_sns := {"Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "arn:aws:kms:ap-northeast-1:123456789012:key/*", "Condition": {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}}
+
+boundary_decl := {"workload": {"boundaries": {"ops_notification": boundary_address}}}
+
+test_pass_crypto_via_service_in_declared_boundary if {
+	upper := object.union(object.remove(via_sns, ["Action"]), {"Action": ["KMS:Decrypt"]})
+	rc := fixture.doc("aws_iam_policy", boundary_address, "policy", {"Statement": [via_sns, upper]})
+	count(p.deny) == 0 with input as fixture.plan([rc]) with data.policy_plan.resource_wildcard_actions as [] with data.policy_plan.deployment_identity as boundary_decl
+}
+
+test_violation_crypto_in_boundary_without_via_service if {
+	every s in [
+		object.remove(via_sns, ["Condition"]),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringLike": {"kms:ViaService": "*"}}}),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": []}}}),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": "ec2.ap-northeast-1.amazonaws.com"}}}),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": ["sns.ap-northeast-1.amazonaws.com", "s3.ap-northeast-1.amazonaws.com"]}}}),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com.evil"}}}),
+		object.union(object.remove(via_sns, ["Action"]), {"Action": ["kms:Decrypt", "kms:GenerateDataKey", "kms:CreateGrant"]}),
+		object.union(object.remove(via_sns, ["Action"]), {"Action": ["kms:Encrypt"]}),
+		object.union(object.remove(via_sns, ["Action"]), {"Action": ["kms:GenerateDataKey*"]}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "*"}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": ["arn:aws:kms:ap-northeast-1:123456789012:key/*", "arn:aws:s3:::b"]}),
+	] {
+		rc := fixture.doc("aws_iam_policy", boundary_address, "policy", {"Statement": [s]})
+		fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan.resource_wildcard_actions as [] with data.policy_plan.deployment_identity as boundary_decl
+	}
+}
+
+test_violation_crypto_via_service_outside_declared_boundary if {
+	every rc in [
+		fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.other", "policy", {"Statement": [via_sns]}),
+		fixture.doc("aws_iam_role_policy", boundary_address, "policy", {"Statement": [via_sns]}),
+	] {
+		fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan.resource_wildcard_actions as [] with data.policy_plan.deployment_identity as boundary_decl
+	}
+}
+
 # 鍵の管理の Action、Deny の暗号操作、Key Policy の暗号操作は見ない。
 test_pass_kms_without_crypto_in_identity_policy if {
 	manage := fixture.allow(["kms:DescribeKey", "kms:PutKeyPolicy", "kms:GetKeyPolicy", "kms:List*"])

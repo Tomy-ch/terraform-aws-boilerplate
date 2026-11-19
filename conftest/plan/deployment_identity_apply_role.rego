@@ -644,10 +644,17 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_names が %v ではありません", [a.path, a.address, [object.get(after(target), "name", null)]])
 }
 
+# apply の role に付いてよい managed policy は、宣言した workload の policy だけ（deployment-identity/ADR-0201 決定17）。
+workload_policy := object.get(object.get(di, "workload", {}), "policy", "")
+
+default expected_managed := []
+
+expected_managed := [object.get(after(workload_policy), "arn", null)] if workload_policy != ""
+
 deny contains msg if {
 	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
-	object.get(a.after, "policy_arns", null) != []
-	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arns が空ではありません", [a.path, a.address])
+	object.get(a.after, "policy_arns", null) != expected_managed
+	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arns が %v ではありません", [a.path, a.address, expected_managed])
 }
 
 # role の引数で付ける policy は、上の型を通らない。
