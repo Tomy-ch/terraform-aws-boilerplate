@@ -42,6 +42,8 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `AccountKeyAdministration` | アカウント（`arn:<partition>:iam::<account>:root`） | 鍵の管理の21 Action（`policy.tf` の `administration_actions`）。暗号操作と `kms:CreateGrant` を含まない | 無し |
 | `RolesViaS3ReadWrite` | `users.roles` のうち `via = "s3"`・`access = "read-write"` の role | `kms:Decrypt`・`kms:GenerateDataKey` | `kms:ViaService = s3.<region>.amazonaws.com` |
 | `RolesViaS3Read<n>` | `users.roles` のうち `via = "s3"`・`access = "read"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt` | `kms:ViaService = s3.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:s3:arn` にその role の `objects` |
+| `RolesViaEcrGrant` | `users.roles` のうち `via = "ecr"`（`access = "grant"`）の role | `kms:CreateGrant` | `kms:ViaService = ecr.<region>.amazonaws.com` と `Bool kms:GrantIsForAWSResource = true`（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 案D） |
+| `RolesViaEcr` | 同上 | `kms:DescribeKey`・`kms:RetireGrant` | `kms:ViaService = ecr.<region>.amazonaws.com`（`kms:GrantIsForAWSResource` はこの2つの Action に効かない） |
 | `LogsService` | `logs.<region>.amazonaws.com` | `kms:Decrypt`・`kms:Describe*`・`kms:Encrypt`・`kms:GenerateDataKey*`・`kms:ReEncrypt*` | `ArnEquals kms:EncryptionContext:aws:logs:arn` に `users.services.logs` の Log Group の ARN（`:*` を付けない） |
 | `RolesViaSns<n>` | `users.roles` のうち `via = "sns"` の role。1 role に1文で、`<n>` は ARN の昇順の 0 からの番号 | `kms:Decrypt`・`kms:GenerateDataKey*` | `kms:ViaService = sns.<region>.amazonaws.com` と、`StringEquals kms:EncryptionContext:aws:sns:topicArn` にその role の `topics` の Topic の ARN |
 | `SnsPublisherBudgets` | `budgets.amazonaws.com`。`users.services.sns` のいずれかの `publishers` が `budgets` を含むとき | `kms:Decrypt`・`kms:GenerateDataKey*` | `StringEquals aws:SourceAccount` に鍵のアカウント |
@@ -58,6 +60,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | --- | --- | --- |
 | `s3` | `kms:GenerateDataKey`（書き込み）・`kms:Decrypt`（読み出し。multipart の書き込みも要る） | Amazon S3 User Guide「Using server-side encryption with AWS KMS keys」。Terraform の S3 backend の文書は `kms:Encrypt` も挙げるが、S3 の文書を採る（ADR-0207 決定3） |
 | `sns` | `kms:GenerateDataKey*`・`kms:Decrypt`（暗号化した Topic への publish） | Amazon SNS Developer Guide「Managing Amazon SNS encryption keys and costs」。部分 wildcard の `kms:GenerateDataKey*` は文書の値のまま使う |
+| `ecr` | `kms:CreateGrant`・`kms:DescribeKey`（repository の作成）・`kms:RetireGrant`（repository の削除）。`access` は `grant` だけを受ける。push と pull の暗号操作は ECR が作る grant が持つ | Amazon ECR User Guide「Encryption at rest」 |
 
 `kms:ViaService` は IAM の主体が AWS のサービスを経由して呼ぶ要求にだけ当たる条件で、role はこの鍵を直接は使えない。`access = "read"` の文は、S3 が渡す暗号化コンテキスト `aws:s3:arn` で object を限る。Bucket Key を使う Bucket ではコンテキストが Bucket の ARN になるので、object では限れない（Amazon S3 User Guide「SSE-KMS」）。暗号化コンテキストに Bucket の ARN を置く文は `PLAN-KMS-12` が落とす。CloudWatch Logs の文はサービス principal に対する許可で、暗号化コンテキストで Log Group を名指して限る。CloudTrail の文は、組織の trail の `aws:SourceAccount` が trail を限らない管理アカウントを指すので、`aws:SourceArn` と暗号化コンテキストの trail の ARN の完全一致で限る（CloudTrail User Guide「Configure AWS KMS key policies for CloudTrail」の例はアカウント単位の wildcard）。Config の文は Config の文書のとおり `aws:SourceAccount` で限る。trail と Config のアカウントが鍵の外のアカウントのとき、`conftest/plan` の `PLAN-KMS-05` は `decl.json` の `kms_key_policy.cross_account_sources` に宣言した Key Policy でだけそれを受ける。SNS の文は、SNS が Topic の ARN を渡す暗号化コンテキスト `aws:sns:topicArn` で Topic を限る（Amazon SNS Developer Guide「Setting up Amazon SNS topic encryption」の Key Policy の例）。`kms:ViaService` はサービス principal の要求には当たらない（KMS の条件キーの文書）。EventBridge から暗号化した Topic への送信は `aws:SourceAccount`・`aws:SourceArn`・`aws:SourceOrgID` の条件を受けない（Amazon SNS Developer Guide）ので、`SnsPublisherEvents` は暗号化コンテキストだけで限る。Budgets と CloudWatch は `aws:SourceAccount` で限り、Topic では限らない。
 
@@ -65,7 +68,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 
 ## まだ持たないもの
 
-持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）・`users.services.cloudtrail`・`users.services.config`（`audit-evidence` の証跡の鍵）である。`users.services.logs` は `network-foundation` と `audit-evidence` が、`via = "sns"` と `users.services.sns` は `ops-notification` が渡す。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
+持つのは、`users.roles[*].via = "s3"`（`state-backend` の state の鍵）・`users.roles[*].via = "sns"`・`users.roles[*].via = "ecr"`（`image-registry` の repository の鍵）・`users.services.logs`（CloudWatch Logs）・`users.services.sns`（SNS の Topic）・`users.services.cloudtrail`・`users.services.config`（`audit-evidence` の証跡の鍵）である。`users.services.logs` は `network-foundation` と `audit-evidence` が、`via = "sns"` と `users.services.sns` は `ops-notification` が、`via = "ecr"` は `image-registry` が渡す。ほかは、それを使う消費者が着手するときに、同じ形（`via` の値か `users.services` の項と、その文）で足す。
 
 | 足すもの | 足す消費者 |
 | --- | --- |
@@ -91,6 +94,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
   - Key Policy の読み戻しが宣言と一致し、差分が出続けないこと（要素1つの Principal の正規化、role の作り直しで principal が一意 ID に置き換わること）
   - 作成直後の role を Principal に置く `PutKeyPolicy` が、IAM の結果整合で落ちないこと
   - `via = "s3"` の2つの Action で、S3 backend が state と lock file を読み書きできること
+  - `via = "ecr"` の3つの Action で、ECR が repository の作成で grant を作り、削除で廃止できること（`image-registry` の Integration）
   - 鍵を管理する role が、Provider が鍵・Key Policy・alias の作成・読み取りで呼ぶ API を、委任の21 Action と IAM で持てること。削除で呼ぶ API は、最初の消費者の管理 role が持たないので（deployment-identity/ADR-0201 の「与えないもの」）、その経路では確かめない
 - SNS の文（`RolesViaSns<n>`・`SnsPublisher*`）が `PLAN-KMS-*` を通ることは、`ops-notification` の reference の root の plan が確かめる。Rego のテストの SNS の文は `policy.tf` を手で写したもので、一致は検査しない
 - 次は実際の AWS で確かめていない。確かめるのは、最初の消費者（ops-notification）の sandbox での検証である

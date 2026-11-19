@@ -8,6 +8,7 @@
       "cloudwatch:GetMetricStatistics",
       "cloudwatch:GetMetricWidgetImage",
       "cloudwatch:ListMetrics",
+      "ecr:GetAuthorizationToken",
       "iam:DeleteAccountPasswordPolicy",
       "iam:DisableOrganizationsRootCredentialsManagement",
       "iam:DisableOrganizationsRootSessions",
@@ -48,6 +49,9 @@
       "aws_kms_key_policy": [
         "policy"
       ],
+      "aws_ecr_repository_policy": [
+        "policy"
+      ],
       "aws_sns_topic_policy": [
         "policy"
       ]
@@ -57,6 +61,7 @@
       "aws_iam_role_policy",
       "aws_kms_key_policy",
       "aws_s3_bucket_policy",
+      "aws_ecr_repository_policy",
       "aws_sns_topic_policy"
     ],
     "deployment_identity": {
@@ -282,6 +287,23 @@
       ],
       "apply_output_bucket_policy_statements": 3
     },
+    "image_registry": {
+      "repository": "module.image_registry.module.repository.aws_ecr_repository.this",
+      "lifecycle_policy": "module.image_registry.module.repository.aws_ecr_lifecycle_policy.this",
+      "repository_policy": "module.image_registry.module.repository.aws_ecr_repository_policy.this",
+      "registry_scanning": "module.image_registry.module.registry_scanning.aws_ecr_registry_scanning_configuration.this",
+      "publisher": {
+        "role": "module.image_registry.module.repository.aws_iam_role.publisher",
+        "policy": "module.image_registry.module.repository.aws_iam_role_policy.publisher",
+        "policies_exclusive": "module.image_registry.module.repository.aws_iam_role_policies_exclusive.publisher",
+        "attachments_exclusive": "module.image_registry.module.repository.aws_iam_role_policy_attachments_exclusive.publisher"
+      }
+    },
+    "publisher_trust": {
+      "roles": [
+        "module.image_registry.module.repository.aws_iam_role.publisher"
+      ]
+    },
     "finops": {
       "budget": "aws_budgets_budget",
       "budget_action": "aws_budgets_budget_action",
@@ -327,6 +349,9 @@
         "aws_organizations_organization",
         "aws_organizations_organizational_unit",
         "aws_iam_user",
+        "aws_ecr_repository",
+        "aws_ecr_lifecycle_policy",
+        "aws_ecr_registry_scanning_configuration",
         "aws_s3_bucket_object_lock_configuration",
         "aws_sns_topic"
       ],

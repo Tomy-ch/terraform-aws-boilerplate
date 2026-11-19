@@ -12,10 +12,13 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/audit-evidence/`・`usecases/ops-notification/`、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`、管理アカウントの identity root の `env/admin/identity/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
-- `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`finops`・`network-foundation`・`audit-evidence`・`ops-notification` と管理アカウントの identity root のほかに、ユースケースと環境が無い。`network-foundation`・`audit-evidence`・`ops-notification` を呼ぶ env は無い
+- `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`finops`・`network-foundation`・`audit-evidence`・`ops-notification`・`image-registry` と管理アカウントの identity root のほかに、ユースケースと環境が無い。`network-foundation`・`audit-evidence`・`ops-notification`・`image-registry` を呼ぶ env は無い
+- 発火側が所有する状態の検査（[0601](docs/adr/0601-change-delivery-path.md) 決定20-23 の検証方法）—— `lifecycle.ignore_changes`
+  を決定20 の一覧に限る HCL の検査、発火側の role の PassRole と Service の更新の Policy Test、元にする revision の
+  Contract Test は未作成である。決定20 の一覧を使う最初のユースケースを足す変更が作る
 - workload root の apply の経路 —— [0601](docs/adr/0601-change-delivery-path.md) が定める CI の経路のうち、
   配線済みは管理アカウントの identity root の分だけである（plan は `terraform-gates.yaml` の
   `plan-admin-identity`、apply は `terraform-apply.yaml` の `apply-admin-identity`）。管理アカウントの workload root は
