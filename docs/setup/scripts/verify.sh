@@ -98,10 +98,13 @@ role_arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
 sim() {
   local want=$1 role=$2 res=$3
   shift 3
-  local ctx=()
-  if [[ $1 == --context ]]; then
-    ctx=(--context-entries "$2")
+  local entries=() ctx=()
+  while [[ $1 == --context ]]; do
+    entries+=("$2")
     shift 2
+  done
+  if ((${#entries[@]} > 0)); then
+    ctx=(--context-entries "${entries[@]}")
   fi
   local out n=0 bad=()
   # 代入の失敗は set -e でスクリプトごと止めるので、NG として数えて続ける。下の代入も同じ。
@@ -199,7 +202,7 @@ stage4() {
     expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
       --arg p "$p" "$JQ_POLICY_NAMES"
     if [[ $r == apply-identity ]]; then
-      # 統制の customer managed policy は、PR-A2 の apply の後に付く（deployment-identity/ADR-0201 決定7）。
+      # 統制の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定7）。
       expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-identity-governance"])'
     else
@@ -309,8 +312,28 @@ permissions() {
     sim implicitDeny apply-identity "*" organizations:DeleteOrganization
     sim implicitDeny apply-identity "$bg" iam:DeleteRole
   else
-    echo "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（PR-A2 の apply の後にもう一度走らせる）"
+    echo "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
   fi
+
+  echo "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）"
+  local wp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload"
+  local bp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-boundary-ops-notification"
+  sim allowed apply-identity "$wp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim allowed apply-identity "$bp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${bp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim allowed plan "$wp" iam:GetPolicy iam:GetPolicyVersion
+  sim allowed plan "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:GetTopicAttributes sns:ListTagsForResource
+  sim implicitDeny plan "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:SetTopicAttributes
+  local wk="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000001"
+  local sym="ContextKeyName=kms:KeySpec,ContextKeyValues=SYMMETRIC_DEFAULT,ContextKeyType=string"
+  sim allowed plan "$wk" --context "$sym" --context "ContextKeyName=kms:KeyUsage,ContextKeyValues=ENCRYPT_DECRYPT,ContextKeyType=string" --context "ContextKeyName=kms:KeyOrigin,ContextKeyValues=AWS_KMS,ContextKeyType=string" --context "ContextKeyName=kms:MultiRegion,ContextKeyValues=false,ContextKeyType=boolean" kms:DescribeKey
+  sim implicitDeny plan "$wk" --context "ContextKeyName=kms:KeySpec,ContextKeyValues=RSA_2048,ContextKeyType=string" --context "ContextKeyName=kms:KeyUsage,ContextKeyValues=SIGN_VERIFY,ContextKeyType=string" --context "ContextKeyName=kms:KeyOrigin,ContextKeyValues=AWS_KMS,ContextKeyType=string" --context "ContextKeyName=kms:MultiRegion,ContextKeyValues=false,ContextKeyType=boolean" kms:DescribeKey
+  sim explicitDeny apply "$wp" iam:CreatePolicyVersion iam:DeletePolicy
+  sim explicitDeny apply "$bp" iam:CreatePolicyVersion iam:DeletePolicy
+  sim explicitDeny apply "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-other" iam:CreateRole iam:PassRole
+  sim explicitDeny apply "*" iam:DeleteRolePermissionsBoundary
+  sim explicitDeny apply "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
 
   echo "# unlock-identity の role"
   local lock="${key}.tflock"
