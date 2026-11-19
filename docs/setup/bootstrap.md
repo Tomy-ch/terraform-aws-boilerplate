@@ -385,17 +385,20 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
-   4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
+   4. 通知を受ける Slack の channel を用意し、管理アカウントの Amazon Q Developer in chat applications のコンソールで Slack の workspace を認可する。workspace の ID（team ID）と channel の ID を、`env/admin/main.tf` の `module "ops_notification"` の `chat` に書いた変更をリリース線へ merge しておく。認可の前に workload root を apply すると、Chatbot の構成の作成が失敗する
+      1. channel の名前は `#<project>-aws-<env>-ops` を勧める（`<project>` は env の root が usecase に渡す `project` の値、`<env>` は `admin`・`security`・`log-archive`・`sandbox`・`dev`・`stg`・`prd` をそのまま）。`aws` で AWS からの通知と分かり、`<project>` で始まるので一覧でまとまり、`<env>` と `ops` で AWS の側の名前（`<project>-<env>-ops-*`）とたどれる。通知はアカウントを越えないので、アカウントごとに別の channel にする。推奨であって規約ではない。名前は Terraform に入らず（渡すのは channel の ID だけ）、後で変えても通知は止まらない。毎日の心拍が届くので、毎日見る channel を選ぶ。非公開の channel なら、Amazon Q のアプリを channel に招待する
+      2. コンソールの最初の画面の「チャットクライアント」で「Slack」を選び、「クライアントを設定」を押して workspace を認可する
+   5. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
 
       ```bash
       make create-deploy-branch DEPLOY_ENV=admin
       ```
 
 2. `admin` の最初の run で、次をすべて確かめる。作成の push で run が起きなければ、リリース線から `admin` への最初の Pull Request の merge の run がそれに当たる。run の URL を issue に残す（アカウント ID を載せない）
-   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity` が緑
-   - ログの plan の要約が `No changes.`
+   - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity`・`apply-admin-workload` が緑
+   - `apply-admin-identity` のログの plan の要約が `No changes.`。`apply-admin-workload` は workload root の resource を作る
    - Policy の違反が無い
-   - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
+   - `OIDC の sub` の行が、`apply-admin-identity` では `:environment:admin-apply-identity`、`apply-admin-workload` では `:environment:admin-apply` で終わる
 
 #### 段5 の変更を適用する
 
@@ -443,7 +446,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    `make repo-settings-drift` で、宣言と実態が一致することを確かめてもよい。
 
-6. `Terraform Lock Hold` で lock を1つ残し、`Terraform Unlock` で外す。Actions の画面で apply の run を取り消しても lock は残らない（terraform は取り消しの信号で lock を外してから止まる）
+6. `Terraform Lock Hold` で identity root と workload root に lock を1つずつ残し、`Terraform Unlock` で外す。Actions の画面で apply の run を取り消しても lock は残らない（terraform は取り消しの信号で lock を外してから止まる）
    1. `admin` で走っている `Terraform Apply` の run と、待っている run が無いことを確かめる。待っている apply の run は、次の起動に置き換えられて走らず、通知も出ない
 
       ```bash
@@ -457,15 +460,16 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
       - run が緑
-      - ログに lock の ID・`Operation=OperationTypePlan`・版 ID と、`Terraform Unlock が消せるのは <時刻> より後` の行が出る
-      - `OIDC の sub` の行が `:environment:admin-apply-identity` で終わる
+      - `hold-admin-identity` と `hold-admin-workload` のログに、lock の ID・`Operation=OperationTypePlan`・版 ID と、`Terraform Unlock が消せるのは <時刻> より後` の行が出る
+      - `OIDC の sub` の行が、`hold-admin-identity` では `:environment:admin-apply-identity`、`hold-admin-workload` では `:environment:admin-apply` で終わる
    3. 一時 IAM user で lock file が在ることを確かめる
 
       ```bash
       aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix identity/terraform.tfstate.tflock
+      aws s3api list-objects-v2 --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --prefix workload/terraform.tfstate.tflock
       ```
 
-   4. 2 のログの時刻を過ぎるまで待つ。その間に `admin` の apply が起動すると、lock の取得で落ちて通知が届く
+   4. 2 のログの遅い方の時刻を過ぎるまで待つ。その間に `admin` の apply が起動すると、lock の取得で落ちて通知が届く
    5. `Terraform Unlock` を `admin` から起動し、次をすべて確かめる
 
       ```bash
@@ -473,8 +477,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       ```
 
       - run が緑
-      - ログに 2 と同じ lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
-      - `OIDC の sub` の行が `:environment:admin-unlock-identity` で終わる
+      - `unlock-admin-identity` と `unlock-admin-workload` のログに、2 と同じ lock の ID・経過分・消した lock の版 ID・delete marker の版 ID が出る
+      - `OIDC の sub` の行が、`unlock-admin-identity` では `:environment:admin-unlock-identity`、`unlock-admin-workload` では `:environment:admin-unlock` で終わる
       - 3 のコマンドが lock file を返さない
    6. `admin` の最新の apply の run を「Re-run all jobs」で再実行し、緑で plan の要約が `No changes.` であることを確かめる。4 の間に lock で落ちた run があれば、それも再実行する。`admin` の先頭の commit の apply が緑であることを確かめる
    7. 結果と run の URL を Pull Request に記録する（アカウント ID を載せない）
