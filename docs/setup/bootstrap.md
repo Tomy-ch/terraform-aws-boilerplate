@@ -356,7 +356,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
 | 工程 | 手順 | 完了条件 |
 | --- | --- | --- |
-| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | `admin` の最初の run が緑で `No changes.` |
+| [CI の apply を有効にする](#ci-の-apply-を有効にする) | 1・2 | `admin` の最初の run が緑で、`apply-admin-identity` が `No changes.` |
 | [段5 の変更を適用する](#段5-の変更を適用する) | 3・4 | 各変更の後の再実行が `No changes.` |
 | [lock の解除を用意して試す](#lock-の解除を用意して試す) | 5・6 | `Terraform Lock Hold` が残した lock を `Terraform Unlock` が外し、その後の apply の run が緑で `No changes.` |
 
@@ -385,10 +385,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
       gh secret set AWS_ACCOUNT_ID --env admin-unlock
       ```
 
-   4. 通知を受ける Slack の channel を用意し、管理アカウントの Amazon Q Developer in chat applications のコンソールで Slack の workspace を認可する。workspace の ID（team ID）と channel の ID を、`env/admin/main.tf` の `module "ops_notification"` の `chat` に書いた変更をリリース線へ merge しておく。認可の前に workload root を apply すると、Chatbot の構成の作成が失敗する
-      1. channel の名前は `#<project>-aws-<env>-ops` を勧める（`<project>` は env の root が usecase に渡す `project` の値、`<env>` は `admin`・`security`・`log-archive`・`sandbox`・`dev`・`stg`・`prd` をそのまま）。`aws` で AWS からの通知と分かり、`<project>` で始まるので一覧でまとまり、`<env>` と `ops` で AWS の側の名前（`<project>-<env>-ops-*`）とたどれる。通知はアカウントを越えないので、アカウントごとに別の channel にする。推奨であって規約ではない。名前は Terraform に入らず（渡すのは channel の ID だけ）、後で変えても通知は止まらない。毎日の心拍が届くので、毎日見る channel を選ぶ。非公開の channel なら、Amazon Q のアプリを channel に招待する
-      2. コンソールの最初の画面の「チャットクライアント」で「Slack」を選び、「クライアントを設定」を押して workspace を認可する
-   5. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
+   4. デプロイブランチ `admin` を、デフォルトブランチの先頭から作る。既に在れば失敗する
 
       ```bash
       make create-deploy-branch DEPLOY_ENV=admin

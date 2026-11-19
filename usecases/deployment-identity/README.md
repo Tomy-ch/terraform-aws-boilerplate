@@ -131,6 +131,7 @@ sandbox のアカウント（#21）は無い。配線された後に遡って検
 - apply の role の鍵の Deny が、実際の要求で文書どおりに評価されること。`simulate-principal-policy` は IAM の評価だけを見る
 - `state-backend` の出力の2つの Bucket の Bucket Policy が、plan の role の `pr/*`・`branch/*`、apply-identity の role の `apply/*`、apply の role の apply の出力の Bucket への書き込みを、実際の要求で拒まないこと。誤ると plan の job が全文を置けず、それを直す昇格の Pull Request も merge できない。Bucket Policy を変える昇格の merge の前に、人が `make tf-policy` の後の `POLICY_SOURCE=reference docs/setup/scripts/verify.sh output-policy` で `simulate-principal-policy --resource-policy` の評価を確かめる。Policy Test は reference の plan で文の数を、Unit Test は文書を見るだけである
 - 同じ apply で role を足すとき、apply-identity の inline policy の書き込みが、role の作成（`iam:CreateRole`）までに IAM の評価へ反映されること。反映が遅れるとその apply は AccessDenied で失敗する。失敗の段は apply なので、`revert-plan` が revert のブランチを用意して通知するが、その revert の Pull Request は開かない。run の「Re-run failed jobs」で再実行し、緑になったら用意された revert のブランチを消す。再実行も同じ AccessDenied で落ちるなら反映の遅れではないので、止まって通知の revert を使うかを判断する
+- 同じ run の中で、identity root の apply が書いた apply の role の権限と permissions boundary が、続く workload root の apply までに IAM の評価へ反映されること。反映が遅れると `apply-admin-workload` が AccessDenied で失敗し、上と同じく revert のブランチと通知が出る。扱いも上と同じで、再実行して緑になれば revert のブランチを消す
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
