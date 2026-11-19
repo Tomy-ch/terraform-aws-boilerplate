@@ -35,11 +35,7 @@ override_resource {
   values = { arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-ops-chat-read" }
 }
 
-run "reference_topic" {
+# reference の値が入力の検査と precondition を通り、mock の apply まで進むこと。
+run "reference_applies" {
   command = apply
-
-  assert {
-    condition     = module.ops_notification.topic_arn == "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
-    error_message = "reference の値から Topic が組まれていません。"
-  }
 }

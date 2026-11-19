@@ -55,6 +55,26 @@ run "rejects_empty_env" {
   expect_failures = [var.env]
 }
 
+run "rejects_uppercase_env" {
+  command = plan
+
+  variables {
+    env = "Sandbox"
+  }
+
+  expect_failures = [var.env]
+}
+
+run "rejects_env_with_symbol" {
+  command = plan
+
+  variables {
+    env = "sand<box>"
+  }
+
+  expect_failures = [var.env]
+}
+
 run "rejects_topic_name_instead_of_arn" {
   command = plan
 

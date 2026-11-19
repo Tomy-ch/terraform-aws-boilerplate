@@ -2,7 +2,7 @@
 # 実行は人が行う（README の「検証方法」）。CI と make tf-test はこのディレクトリを走らせない。
 #
 #   terraform -chdir=usecases/ops-notification test -test-directory=tests/integration \
-#     -var project=<実行の識別子を含む token> -var 'chat={slack={team_id="<ID>",channel_id="<ID>"}}' \
+#     -var project=it<実行の識別子> -var 'chat={slack={team_id="<ID>",channel_id="<ID>"}}' \
 #     -var permissions_boundary_arn=<boundary の ARN>
 provider "aws" {
   region = "ap-northeast-1"
@@ -14,6 +14,14 @@ provider "aws" {
 
 variables {
   env = "sandbox"
+}
+
+run "replica_name" {
+  command = plan
+
+  module {
+    source = "./tests/integration/guard"
+  }
 }
 
 run "replica" {

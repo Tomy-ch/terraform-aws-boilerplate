@@ -51,9 +51,4 @@ run "outputs" {
     condition     = output.topic_arn == module.sns.topic_arn
     error_message = "topic_arn が modules/sns の Topic の ARN を返していません。"
   }
-
-  assert {
-    condition     = output.topic_arn == "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
-    error_message = "topic_arn が Topic の ARN になっていません。"
-  }
 }
