@@ -98,11 +98,35 @@ resource "aws_iam_policy" "governance" {
   depends_on = [aws_iam_role_policy.apply_identity]
 }
 
+# apply の role の workload の権限（deployment-identity/ADR-0201 決定17）。
+resource "aws_iam_policy" "workload" {
+  name = local.workload_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = concat(local.workload_read_statements, local.workload_manage_statements)
+  })
+
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
+# apply の role が作る role の permissions boundary。role を作る usecase ごとに1つ（deployment-identity/ADR-0201 決定15）。
+resource "aws_iam_policy" "boundary" {
+  for_each = local.boundary_policy_names
+
+  name = each.value
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = concat(local.boundary_allow_statements[each.key], local.bootstrap_deny_statements)
+  })
+
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : []
+  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : each.key == "apply" ? [local.workload_policy_arn] : []
 
-  depends_on = [aws_iam_policy.governance]
+  depends_on = [aws_iam_policy.governance, aws_iam_policy.workload]
 }

@@ -3,6 +3,7 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "chatbot:CreateSlackChannelConfiguration",
       "chatbot:DescribeSlackChannelConfigurations",
       "cloudwatch:DescribeAlarmsForMetric",
       "cloudwatch:GetMetricData",
@@ -18,6 +19,7 @@
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
       "iam:UpdateAccountPasswordPolicy",
+      "kms:CreateKey",
       "kms:ListAliases",
       "logs:DescribeLogGroups",
       "organizations:CreateOrganization",
@@ -258,6 +260,26 @@
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"unlock\"]",
         "lock_key": "workload/terraform.tfstate.tflock",
         "state_bucket": "module.state_backend.module.s3.aws_s3_bucket.this"
+      },
+      "workload": {
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
+        "boundaries": {
+          "ops-notification": "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]"
+        },
+        "usecase_iam_prefixes": [
+          "ops-"
+        ],
+        "service_linked_roles": [
+          "management.chatbot.amazonaws.com"
+        ],
+        "passed_to_services": [
+          "chatbot.amazonaws.com",
+          "scheduler.amazonaws.com"
+        ],
+        "apply_only_denies": [
+          "DenyBoundaryRemoval",
+          "DenyLockoutSafetyBypass"
+        ]
       }
     },
     "state_backend": {
@@ -513,6 +535,14 @@
       "lifecycle_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_lifecycle_configuration.this",
       "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this",
       "metric_alarm": "module.audit_evidence.module.archive.aws_cloudwatch_metric_alarm.delivery_stalled"
+    },
+    "workload_role_boundary": {
+      "modules": {
+        "module.ops_notification.": {
+          "usecase": "ops-notification",
+          "iam_prefix": "ops-"
+        }
+      }
     }
   }
 }
