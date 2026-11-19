@@ -220,6 +220,7 @@ func Test_collectWarnings(t *testing.T) {
 		{"基点の直下を指す警告", "base/modules", "../x.tf", "x.tf"},
 		{".. で始まる名前のディレクトリ", "base/modules/a", "..foo/main.tf", "modules/a/..foo/main.tf"},
 		{".terraform で始まる別の名前のディレクトリ", "base/modules/a", ".terraform-x/main.tf", "modules/a/.terraform-x/main.tf"},
+		{"基点そのものを指す警告", "base/modules", "..", "."},
 	}
 	for _, c := range inside {
 		t.Run(c.name+"は基点の内側として数える", func(t *testing.T) {

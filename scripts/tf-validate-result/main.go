@@ -23,7 +23,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -47,12 +46,18 @@ var (
 )
 
 func main() {
-	log.SetFlags(0)
-	log.SetOutput(&lineGuard{w: os.Stderr})
-	if err := run(os.Args[1:], os.Stdout); err != nil {
-		log.Printf("❌ tf-validate-result: %v", err)
-		os.Exit(exitCode(err))
+	os.Exit(report(run(os.Args[1:], os.Stdout), os.Stderr))
+}
+
+// report は run のエラーを1行で w に書き、終了コードを返します。エラーの文言はパスや validate の
+// 出力を含むので、lineGuard を通します。
+func report(err error, w io.Writer) int {
+	if err != nil {
+		g := &lineGuard{w: w}
+		fmt.Fprintf(g, "❌ tf-validate-result: %v\n", err)
+		_ = g.flush()
 	}
+	return exitCode(err)
 }
 
 func exitCode(err error) int {
@@ -75,6 +80,10 @@ func run(args []string, w io.Writer) error {
 	manifest := fs.String("manifest", "", "結果の一覧（1行に ディレクトリ・終了コード・JSON・stderr をタブで区切る）")
 	ignorePath := fs.String("ignore", "", "抑止の宣言")
 	if err := fs.Parse(args); err != nil {
+		// usage は flag が既に出力している。
+		if xerrors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return xerrors.Wrapf(errUsage, "引数の解釈: %v", err)
 	}
 	if *base == "" || *manifest == "" || *ignorePath == "" {
@@ -196,14 +205,18 @@ func (g *lineGuard) Write(p []byte) (int, error) {
 	}
 }
 
-// flush は、改行で終わらなかった残りを1行として書きます。
+// flush は、まだ書いていない残りを Write と同じ規則で行に分けて書きます。改行で終わらない最後の行も
+// 1行として書きます。
 func (g *lineGuard) flush() error {
 	if len(g.buf) == 0 {
 		return nil
 	}
-	line := bytes.TrimSuffix(g.buf, []byte("\r"))
+	rest := bytes.TrimSuffix(g.buf, []byte("\r"))
+	if !bytes.HasSuffix(rest, []byte("\n")) {
+		rest = append(rest, '\n')
+	}
 	g.buf = nil
-	_, err := g.w.Write(guardLine(line))
+	_, err := g.Write(rest)
 	return err
 }
 

@@ -190,7 +190,20 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		err := run([]string{"-unknown"}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errUsage)
-		assert.ErrorContains(t, err, "引数が正しくありません")
+		assert.ErrorContains(t, err, "-unknown")
+	})
+	t.Run("-h は usage を出して成功で返る", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"-h"}, &out))
+		assert.Contains(t, out.String(), "-manifest")
+	})
+	t.Run("引数の解釈の失敗の出力も行頭に workflow command を作らない", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.ErrorIs(t, run([]string{"-unknown\n::error::x"}, &out), errUsage)
+		assert.Contains(t, out.String(), "│ ::error::x\n")
+		assertNoCommandLine(t, out.String())
 	})
 	t.Run("本文の各行に印を付け、行頭に workflow command を作らない", func(t *testing.T) {
 		t.Parallel()
@@ -212,8 +225,18 @@ func Test_run(t *testing.T) {
 		_, args := setup(t, empty, result{dir: "modules/a", json: data, stderr: "x\r::error::forged"})
 		var out bytes.Buffer
 		require.ErrorIs(t, run(args, &out), errFailed)
-		assert.Contains(t, out.String(), "  │ use new\n  │ ::warning::forged\n")
+		assert.Contains(t, out.String(), "modules/a/main.tf:3:12: [warning] S ::error::s（module \"i\" ::error::b）\n  │ use new\n  │ ::warning::forged\n")
 		assert.Contains(t, out.String(), "  │ x\n  │ ::error::forged\n")
+		assertNoCommandLine(t, out.String())
+	})
+	t.Run("エラーの見出しと本文の \\r の後ろにも行頭の workflow command を作らない", func(t *testing.T) {
+		t.Parallel()
+		data := `{"format_version":"1.0","valid":false,"error_count":1,"warning_count":0,"diagnostics":[
+{"severity":"error","summary":"E\r::error::e","detail":"d\r::error::x","range":{"filename":"main.tf","start":{"line":1,"column":1}}}]}`
+		base, args := setup(t, empty, result{dir: "modules/a", code: 1, json: data})
+		var out bytes.Buffer
+		require.ErrorIs(t, run(args, &out), errFailed)
+		assert.Contains(t, out.String(), base+"/modules/a/main.tf:1:1: E ::error::e\n  │ d\n  │ ::error::x\n")
 		assertNoCommandLine(t, out.String())
 	})
 	t.Run("改行を含むファイル名の警告でも行頭に workflow command を作らない", func(t *testing.T) {
@@ -228,17 +251,6 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "│ ::error::e.tf:1:1: E")
 		assertNoCommandLine(t, out.String())
 	})
-	t.Run("stderr のファイルを読めなければその旨を出し、JSON で判定を続ける", func(t *testing.T) {
-		t.Parallel()
-		base := t.TempDir()
-		js := writeFile(t, base, "a.json", cleanJSON)
-		manifest := writeFile(t, base, "manifest.tsv", "modules/a\t0\t"+js+"\t"+base+"\n")
-		ign := writeFile(t, base, "ignore.yaml", empty)
-		var out bytes.Buffer
-		require.NoError(t, run([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &out))
-		assert.Contains(t, out.String(), "modules/a の validate の stderr を読めません（判定は JSON で続けます）")
-		assert.Contains(t, out.String(), "✅ tf-validate: 1 ディレクトリを validate し")
-	})
 	t.Run("空白だけの stderr は出さない", func(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", json: cleanJSON, stderr: " \n\t\n"})
@@ -246,7 +258,7 @@ func Test_run(t *testing.T) {
 		require.NoError(t, run(args, &out))
 		assert.NotContains(t, out.String(), "stderr")
 	})
-	t.Run("stderr のファイルが無くても JSON で判定する", func(t *testing.T) {
+	t.Run("stderr のファイルを読めなければその旨を出し、JSON で判定を続ける", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
 		js := writeFile(t, base, "a.json", cleanJSON)
@@ -254,7 +266,7 @@ func Test_run(t *testing.T) {
 		ign := writeFile(t, base, "ignore.yaml", empty)
 		var out bytes.Buffer
 		require.NoError(t, run([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &out))
-		assert.Contains(t, out.String(), "modules/a の validate の stderr を読めません")
+		assert.Contains(t, out.String(), "modules/a の validate の stderr を読めません（判定は JSON で続けます）")
 		assert.Contains(t, out.String(), "✅ tf-validate: 1 ディレクトリを validate し")
 	})
 }
@@ -287,6 +299,30 @@ func Test_exitCode(t *testing.T) {
 			assert.Equal(t, c.want, exitCode(c.err))
 		})
 	}
+}
+
+func Test_report(t *testing.T) {
+	t.Parallel()
+	t.Run("成功なら何も書かず 0 を返す", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		assert.Equal(t, 0, report(nil, &out))
+		assert.Empty(t, out.String())
+	})
+	t.Run("落ちた判定は1行のエラーを書き 1 を返す", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		assert.Equal(t, 1, report(xerrors.Wrap(errFailed, "警告 1 件"), &out))
+		assert.Equal(t, "❌ tf-validate-result: 警告 1 件: validate が落ちた\n", out.String())
+	})
+	t.Run("改行を含むパスのエラーでも行頭に workflow command を作らない", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		err := xerrors.Wrapf(errOutside, "%s: %s", "modules/a", "../\n::error::x\r::warning::y")
+		assert.Equal(t, 2, report(err, &out))
+		assert.Contains(t, out.String(), "❌ tf-validate-result: modules/a: ../\n│ ::error::x\n│ ::warning::y")
+		assertNoCommandLine(t, out.String())
+	})
 }
 
 func Test_quote(t *testing.T) {
@@ -380,6 +416,15 @@ func Test_lineGuard_flush(t *testing.T) {
 		g := &lineGuard{w: failWriter{}, buf: []byte("a")}
 		require.ErrorIs(t, g.flush(), errWrite)
 	})
+	t.Run("書き込みが一度失敗した後の flush も、残った全行に印を付ける", func(t *testing.T) {
+		t.Parallel()
+		w := &failOnceWriter{}
+		g := &lineGuard{w: w}
+		_, err := g.Write([]byte("a\n::error::x\n"))
+		require.ErrorIs(t, err, errWrite)
+		require.NoError(t, g.flush())
+		assert.Equal(t, "a\n│ ::error::x\n", w.out.String())
+	})
 }
 
 func Test_guardLine(t *testing.T) {
@@ -407,6 +452,20 @@ var errWrite = xerrors.New("書けません")
 type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, errWrite }
+
+// failOnceWriter は最初の書き込みだけ失敗し、その後は out に書きます。
+type failOnceWriter struct {
+	failed bool
+	out    bytes.Buffer
+}
+
+func (w *failOnceWriter) Write(p []byte) (int, error) {
+	if !w.failed {
+		w.failed = true
+		return 0, errWrite
+	}
+	return w.out.Write(p)
+}
 
 func Test_readManifest(t *testing.T) {
 	t.Parallel()
