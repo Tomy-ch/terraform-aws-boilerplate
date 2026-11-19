@@ -50,9 +50,26 @@ aws iam list-organizations-features
 ### 3.3 Identity Center を有効にする
 
 1. 管理アカウントのコンソールで、リージョンを `ap-northeast-1` にして IAM Identity Center を有効にする。組織のインスタンスとし、鍵は AWS owned key のままにする
+   - 「インスタンス設定」は「単一リージョン」を選ぶ。「マルチリージョン」と「カスタム」は選ばない（[organization-baseline/ADR-0001](../../usecases/organization-baseline/docs/adr/0001-governance-in-management-identity-root.md) 決定4。multi-Region は customer managed key を要する）
 2. identity source を選ぶ。外部 IdP を SAML 2.0 でつなぎ、SCIM でユーザーとグループを送ることを勧める（AWS Well-Architected FND02-BP03、SRA）。IdP を持たなければ Identity Center の directory を使う
+   - 「設定」→「アイデンティティソース」タブ →「アクション」→「アイデンティティソースを変更」で選び、確認の画面で `ACCEPT` と入力する。有効にした直後の identity source は「Identity Center ディレクトリ」である
+   - 現在の値が「Identity Center ディレクトリ」以外（外部 ID プロバイダーや Active Directory を以前につないだ組織）で directory へ戻すときは、同じ操作で「Identity Center ディレクトリ」を選ぶ。IAM Identity Center User Guide の「Change your identity source」と「Considerations for changing your identity source」は、次のように述べる
+     - ユーザー・グループ・メンバーシップ・割当は残る。ただし同じ文書は、構成によっては割当と permission set の IAM role が消えうるとも警告する。確認の画面の説明を読んでから `ACCEPT` を入力する
+     - 外部 ID プロバイダーから戻す場合、Identity Center にパスワードを持たなかったユーザーは、管理者がパスワードのリセットを強制するまでサインインできない
+     - Active Directory から戻す場合、`d-xxxxxxxxxx.awsapps.com/start` の URL とその別名は使えなくなる。MFA の設定は残る
+   - 組織として管理している IdP（独自ドメインの Google Workspace、Microsoft Entra ID、Okta など）があれば「外部 ID プロバイダー」を選ぶ。個人の Gmail や Microsoft アカウントは SAML の IdP にならない
+   - 「Active Directory」は AWS Managed Microsoft AD か AD Connector を要し、常に費用がかかるので選ばない
+   - 同じメニューの「AWS アクセスポータル URL をカスタマイズ」は任意である。サブドメインは一度決めると変えられない
 3. すべてのサインインで MFA を必須にする。フィッシングに強い方式（FIDO2・passkey）を勧める。外部 IdP なら IdP の側で強制する
+   - 「設定」→「認証」タブ →「多要素認証」の「設定」で選ぶ
+   - MFA を求めるタイミング: 「サインインごと（常時オン）」
+   - 使える MFA のタイプ: 「セキュリティキーと組み込みの認証子」。セキュリティキーも passkey も持たない間は「認証アプリ」も許してよい
+   - MFA デバイスを持たないユーザー: 「サインイン時に MFA デバイスの登録を求める」
 4. 管理アカウントへ入る人の user を作り、ID を控える
+   - user は組織全体で1人につき1回だけ作る。どのアカウントへ入れるかは permission set の割当が決めるので、user の名前に環境の接尾辞（`-admin`・`-dev` など）を付けない
+   - 「ユーザーを追加」では、ユーザー名・メールアドレス・名・姓・表示名だけを入れる。任意の「お問い合わせ方法」「ジョブ関連情報」「アドレス」「環境設定」「追加の属性」（日本語のコンソールでの表記）は空のままにする。追加の属性は属性で権限を分ける ABAC のためのもので、この構成は使わない。CIS AWS Foundations Benchmark 1.1・1.2 の連絡先は AWS アカウントの代替連絡先で、[`bootstrap.md`](bootstrap.md#2-1-連絡先を登録する) の 2-1 で登録する
+   - 招待のメールから AWS access portal でパスワードと MFA を登録し、サインインできることを確かめる。割り当てたアカウントが無い間、ポータルには何も表示されない
+   - user ID は access portal では見られない。管理アカウントのコンソールへ戻り、IAM Identity Center の「ユーザー」から作った user を開き、そのユーザー ID（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` の形）を控える
 
 ### 3.4 break-glass の資格情報を設定する
 
