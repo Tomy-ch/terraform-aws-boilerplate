@@ -50,8 +50,21 @@ aws iam list-organizations-features
 ### 3.3 Identity Center を有効にする
 
 1. 管理アカウントのコンソールで、リージョンを `ap-northeast-1` にして IAM Identity Center を有効にする。組織のインスタンスとし、鍵は AWS owned key のままにする
+   - 「インスタンス設定」は「単一リージョン」を選ぶ。「マルチリージョン」と「カスタム」は選ばない（[organization-baseline/ADR-0001](../../usecases/organization-baseline/docs/adr/0001-governance-in-management-identity-root.md) 決定4。multi-Region は customer managed key を要する）
 2. identity source を選ぶ。外部 IdP を SAML 2.0 でつなぎ、SCIM でユーザーとグループを送ることを勧める（AWS Well-Architected FND02-BP03、SRA）。IdP を持たなければ Identity Center の directory を使う
+   - 「設定」→「アイデンティティソース」タブ →「アクション」→「アイデンティティソースを変更」で選び、確認の画面で `ACCEPT` と入力する。有効にした直後の identity source は「Identity Center ディレクトリ」である
+   - 現在の値が「Identity Center ディレクトリ」以外（外部 ID プロバイダーや Active Directory を以前につないだ組織）で directory へ戻すときは、同じ操作で「Identity Center ディレクトリ」を選ぶ。IAM Identity Center User Guide の「Change your identity source」と「Considerations for changing your identity source」は、次のように述べる
+     - ユーザー・グループ・メンバーシップ・割当は残る。ただし同じ文書は、構成によっては割当と permission set の IAM role が消えうるとも警告する。確認の画面の説明を読んでから `ACCEPT` を入力する
+     - 外部 ID プロバイダーから戻す場合、Identity Center にパスワードを持たなかったユーザーは、管理者がパスワードのリセットを強制するまでサインインできない
+     - Active Directory から戻す場合、`d-xxxxxxxxxx.awsapps.com/start` の URL とその別名は使えなくなる。MFA の設定は残る
+   - 組織として管理している IdP（独自ドメインの Google Workspace、Microsoft Entra ID、Okta など）があれば「外部 ID プロバイダー」を選ぶ。個人の Gmail や Microsoft アカウントは SAML の IdP にならない
+   - 「Active Directory」は AWS Managed Microsoft AD か AD Connector を要し、常に費用がかかるので選ばない
+   - 同じメニューの「AWS アクセスポータル URL をカスタマイズ」は任意である。サブドメインは一度決めると変えられない
 3. すべてのサインインで MFA を必須にする。フィッシングに強い方式（FIDO2・passkey）を勧める。外部 IdP なら IdP の側で強制する
+   - 「設定」→「認証」タブ →「多要素認証」の「設定」で選ぶ
+   - MFA を求めるタイミング: 「サインインごと（常時オン）」
+   - 使える MFA のタイプ: 「セキュリティキーと組み込みの認証子」。セキュリティキーも passkey も持たない間は「認証アプリ」も許してよい
+   - MFA デバイスを持たないユーザー: 「サインイン時に MFA デバイスの登録を求める」
 4. 管理アカウントへ入る人の user を作り、ID を控える
 
 ### 3.4 break-glass の資格情報を設定する
@@ -61,9 +74,19 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 1. `break-glass-1` と `break-glass-2` のそれぞれに、コンソールのパスワードを設定する（アクセスキーは作らない。group の policy が拒む）
 2. それぞれにハードウェア MFA を登録する
 3. パスワードと MFA の装置を、別々の安全な場所に保管する
-4. 3.5 の試験を1回行う
+4. 3.6 の試験を1回行う
 
-### 3.5 break-glass を試す（毎月）
+### 3.5 StackSets の信頼アクセスを有効にする
+
+メンバーアカウントへ break-glass の role を配る変更（CloudFormation の StackSet を作る変更）の merge より前に行う。`deployment-identity` に StackSets の権限を足す変更が昇格した後でよい。StackSet は、組織への信頼アクセスが無いと作れない。
+
+1. 管理アカウントのコンソールで、`ap-northeast-1` の CloudFormation を開き、「StackSets」を選ぶ
+2. 「AWS Organizations との信頼されたアクセスを有効にする」を選ぶ（API の `ActivateOrganizationsAccess`）
+3. IAM の role の一覧に `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` が在ることを確かめ、結果を Pull Request に書く
+
+AWS CLI を使える管理アカウントの資格情報が在るなら、`aws cloudformation activate-organizations-access` と `aws cloudformation describe-organizations-access`（`Status` が `ENABLED`）でもよい。
+
+### 3.6 break-glass を試す（毎月）
 
 45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。
 
@@ -72,7 +95,7 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 3. サインインと role の引き受けの通知が届くことを確かめる
 4. 試した日と結果を記録する
 
-### 3.6 policy を広げる前に PolicyStaging で試す
+### 3.7 policy を広げる前に PolicyStaging で試す
 
 PolicyStaging に付けた policy の付け先を広げる変更の前に行う。
 
