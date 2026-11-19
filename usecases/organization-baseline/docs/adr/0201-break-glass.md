@@ -11,7 +11,7 @@ repository-wide/ADR-0301 (least-privilege-policy) 決定19 は、IAM Identity Ce
 
 AWS の whitepaper「Organizing Your AWS Environment Using Multiple Accounts」は、管理アカウントの IAM user を break-glass に使う形を勧める。Well-Architected（2026-11-16 の版）の FND05-BP02 は、平時に使われない専用の非常用アカウントを勧める。SRA のチェックリストは IAM user を使わないことを MUST とし、break-glass を例外とする。Security Hub の IAM.2 は IAM user へ policy を直接付けないこと、IAM.7・IAM.15・IAM.16 はアカウントの password policy を求める。IAM User Guide の、MFA を管理する user の policy の例は、自分の MFA を外すことを MFA で認証したセッションに限る。
 
-本 ADR は管理アカウントの側（user・group・role・password policy）を決める。メンバーアカウントの break-glass の role の置き方は、それを配る変更が決める。
+本 ADR は管理アカウントの側（user・group・role・password policy）を決める。メンバーアカウントの break-glass の role の置き方は、organization-baseline/ADR-0202 が決める。
 
 ## Decision
 

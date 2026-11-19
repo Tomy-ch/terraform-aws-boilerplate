@@ -21,3 +21,4 @@
 | ID | タイトル | Status |
 | --- | --- | --- |
 | [0201](0201-break-glass.md) | break-glass を管理アカウントの IAM user と role で持つ | Accepted |
+| [0202](0202-member-break-glass-via-stacksets.md) | メンバーアカウントの break-glass の role を、service-managed の StackSet で配る | Accepted |
