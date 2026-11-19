@@ -7,9 +7,10 @@ import data.plan.lib
 
 cfg := object.get(data.policy_plan, "workload_role_boundary", null)
 
+# module の接頭辞は address の区切り（"."）で終わる module の address（module.a. か module.a.module.b.）に限る。
 well_formed_module(m, d) if {
 	is_string(m)
-	m != ""
+	regex.match(`^module\.[A-Za-z0-9_-]+(\.module\.[A-Za-z0-9_-]+)*\.$`, m)
 	is_object(d)
 	object.keys(d) == {"usecase", "iam_prefix"}
 	is_string(d.usecase)

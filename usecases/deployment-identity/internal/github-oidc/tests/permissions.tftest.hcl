@@ -1474,6 +1474,28 @@ run "role_arns_follow_data_sources" {
   }
 
   assert {
+    condition = { for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Sid => [s.Resource, try(s.Condition, null)] if contains(["ManageWorkloadSchedules", "ListWorkloadRoleInstanceProfiles", "AttachWorkloadPolicies", "PassWorkloadRoles", "CreateChatbotServiceLinkedRole"], s.Sid) } == {
+      ManageWorkloadSchedules = [[
+        "arn:aws-us-gov:scheduler:us-gov-west-1:210987654321:schedule-group/t4bp-dev-*",
+        "arn:aws-us-gov:scheduler:us-gov-west-1:210987654321:schedule/t4bp-dev-*/*",
+      ], null]
+      ListWorkloadRoleInstanceProfiles = ["arn:aws-us-gov:iam::210987654321:role/t4bp-dev-*", null]
+      AttachWorkloadPolicies = [["arn:aws-us-gov:iam::210987654321:role/t4bp-dev-ops-*"], {
+        StringEquals = { "iam:PermissionsBoundary" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-boundary-ops-notification"] }
+        ArnLike      = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ops-*"] }
+      }]
+      PassWorkloadRoles              = [["arn:aws-us-gov:iam::210987654321:role/t4bp-dev-ops-*"], { StringEquals = { "iam:PassedToService" = ["chatbot.amazonaws.com", "scheduler.amazonaws.com"] } }]
+      CreateChatbotServiceLinkedRole = ["arn:aws-us-gov:iam::210987654321:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot", { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }]
+    }
+    error_message = "apply の role の workload の policy の Resource と条件が、partition・リージョン・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload"])
+    error_message = "apply の role に付く workload の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
     condition = [for s in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["PublishTopics", "UseKeysViaSns", "ReadAlarms"], s.Sid)] == [
       ["arn:aws-us-gov:sns:us-gov-west-1:210987654321:t4bp-dev-ops-*", null],
       ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*", { StringEquals = { "kms:ViaService" = "sns.us-gov-west-1.amazonaws.com" } }],

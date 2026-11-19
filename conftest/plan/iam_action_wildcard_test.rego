@@ -91,11 +91,11 @@ test_violation_kms_crypto_action_in_managed_policy if {
 	fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc])
 }
 
-boundary_address := "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops_notification\"]"
+boundary_address := "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]"
 
 via_sns := {"Effect": "Allow", "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "arn:aws:kms:ap-northeast-1:123456789012:key/*", "Condition": {"StringEquals": {"kms:ViaService": "sns.ap-northeast-1.amazonaws.com"}}}
 
-boundary_decl := {"workload": {"boundaries": {"ops_notification": boundary_address}}}
+boundary_decl := {"workload": {"boundaries": {"ops-notification": boundary_address}}}
 
 test_pass_crypto_via_service_in_declared_boundary if {
 	upper := object.union(object.remove(via_sns, ["Action"]), {"Action": ["KMS:Decrypt"]})
@@ -116,6 +116,13 @@ test_violation_crypto_in_boundary_without_via_service if {
 		object.union(object.remove(via_sns, ["Action"]), {"Action": ["kms:GenerateDataKey*"]}),
 		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "*"}),
 		object.union(object.remove(via_sns, ["Resource"]), {"Resource": ["arn:aws:kms:ap-northeast-1:123456789012:key/*", "arn:aws:s3:::b"]}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "arn:aws:kms:ap-northeast-1:*:key/*"}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "arn:aws:kms:*:123456789012:key/*"}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "arn:aws:kms:ap-northeast-1:123456789012:alias/x"}),
+		object.union(object.remove(via_sns, ["Resource"]), {"Resource": "xarn:aws:kms:ap-northeast-1:123456789012:key/*"}),
+		object.remove(via_sns, ["Resource"]),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": "x.sns.ap-northeast-1.amazonaws.com"}}}),
+		object.union(object.remove(via_sns, ["Condition"]), {"Condition": {"StringEquals": {"kms:ViaService": "sns..amazonaws.com"}}}),
 	] {
 		rc := fixture.doc("aws_iam_policy", boundary_address, "policy", {"Statement": [s]})
 		fixture.has("[PLAN-IAM-04]", p.deny) with input as fixture.plan([rc]) with data.policy_plan.resource_wildcard_actions as [] with data.policy_plan.deployment_identity as boundary_decl

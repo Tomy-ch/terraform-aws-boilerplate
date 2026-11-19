@@ -278,3 +278,29 @@ deny contains msg if {
 	denies(b) != apply_bootstrap_denies
 	msg := sprintf("[PLAN-AWP-05] %s: %s の Deny が、apply の role %s の Deny（%v を除く）と同じ文ではありません（deployment-identity/ADR-0201 決定5・15）", [doc(b).document.path, b, apply_policy, wl.apply_only_denies])
 }
+
+# apply の role だけの Deny（boundary に置かない文）は、宣言した Sid の文が apply の role に在る。そのうち boundary の除去の
+# 拒否は、iam:DeleteRolePermissionsBoundary を Resource "*" で、条件なしに拒む（deployment-identity/ADR-0201 決定14）。
+deny contains msg if {
+	well_formed
+	doc(apply_policy)
+	some sid in wl.apply_only_denies
+	count({s | some s in denies(apply_policy); object.get(s, "Sid", "") == sid}) == 0
+	msg := sprintf("[PLAN-AWP-05] apply の role の %s に、宣言した apply の role だけの Deny %s がありません（deployment-identity/ADR-0201 決定5）", [apply_policy, sid])
+}
+
+boundary_removal_denied if {
+	some s in denies(apply_policy)
+	count(object.get(s, "Condition", {})) == 0
+	not "NotResource" in object.keys(s)
+	not "NotAction" in object.keys(s)
+	lib.lower_all(s.Action) == ["iam:deleterolepermissionsboundary"]
+	lib.as_array(object.get(s, "Resource", [])) == ["*"]
+}
+
+deny contains msg if {
+	well_formed
+	doc(apply_policy)
+	not boundary_removal_denied
+	msg := sprintf("[PLAN-AWP-05] apply の role の %s が、iam:DeleteRolePermissionsBoundary を Resource \"*\" の条件なしの Deny で拒んでいません（deployment-identity/ADR-0201 決定14）", [apply_policy])
+}

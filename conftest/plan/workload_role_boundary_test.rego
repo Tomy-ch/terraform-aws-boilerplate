@@ -62,6 +62,16 @@ test_violation_declaration_malformed if {
 		{"modules": {"module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ci-"}}},
 		{"modules": {"module.ops_notification.": {"usecase": "ops-notification"}}},
 		{"modules": {"": {"usecase": "ops-notification", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification": {"usecase": "ops-notification", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops": {"usecase": "ops-notification", "iam_prefix": "ops-"}}},
+		{"modules": {"ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "a.*", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "ops notification", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "Ops", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "ops-notification\n", "iam_prefix": "ops-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ops-X"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "-"}}},
+		{"modules": {"module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ops-", "x": 1}}},
 		{"modules": {"module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ops-"}}, "x": 1},
 	] {
 		fixture.has(malformed, messages_for(valid, d))
@@ -91,8 +101,15 @@ test_violation_role_without_declared_boundary if {
 
 # role の名前は <name_prefix>- に、宣言した usecase の IAM の接頭辞を続けて始まる。
 test_violation_role_name_outside_usecase_prefix if {
-	every name in ["tabp-sandbox-heartbeat", "tabp-sandbox-ci-heartbeat", "tabp-sandbox-OPS-heartbeat"] {
+	every name in ["tabp-sandbox-heartbeat", "tabp-sandbox-ci-heartbeat", "tabp-sandbox-OPS-heartbeat", "x-tabp-sandbox-ops-heartbeat"] {
 		rcs := [role(heartbeat, name, boundary), valid[1]]
 		fixture.has(sprintf("[PLAN-WRB-01] p.json: %s の permissions_boundary", [heartbeat]), messages_for(rcs, decl))
 	}
+}
+
+# 入れ子の module の接頭辞も宣言できる。
+test_pass_nested_module_prefix if {
+	d := {"modules": {"module.workload.module.ops_notification.": {"usecase": "ops-notification", "iam_prefix": "ops-"}}}
+	rcs := [role("module.workload.module.ops_notification.module.heartbeat.aws_iam_role.this", "tabp-sandbox-ops-heartbeat", boundary)]
+	count(messages_for(rcs, d)) == 0
 }
