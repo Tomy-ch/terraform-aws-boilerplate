@@ -268,7 +268,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Media | `media-ingest` | 署名付きアップロード→受入S3→GuardDuty Malware Protection for S3→スキャン結果タグで読み取りを制御（第6.3節） |
 | Network | `private-aws-access` | VPC Endpoint等によるAWSサービスへの私設到達 |
 | Network | `controlled-external-egress` | private subnetから明示した外部HTTPS宛先へ到達（第9.2節）。既定は無効で、有効にした環境だけがNATを持つ。制御手段の既定はNetwork Firewall。送信元IPの固定としてNAT GatewayのEIPを出力する |
-| Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
+| Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。サブネット・ルートテーブル・経路・Internet Gatewayの持ち主で、NAT Gateway・EIP・Network Firewallは`controlled-external-egress`が持つ。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
 | Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
 | Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
@@ -285,11 +285,11 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicと、Amazon Q Developer in chat applications（旧AWS Chatbot）のSlackの宛先、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
 | Governance | `finops` | AWS Budgets、Cost Anomaly Detection、通知先との接続。常駐層 |
 | Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに plan / apply / apply-identity / unlock-identity の4 role を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
-| Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は `audit-evidence`）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
+| Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は組織の trail（`security-tooling`）が記録し、`audit-evidence` が保管する）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。
 
-基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
+基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。**`network-foundation`も除く** —— 通知に値するmetricを出すresourceを持たないためである（`usecases/network-foundation/docs/adr/0202-no-alarm-topic.md`）。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
 
 ### 7.1 接続シナリオ
 
@@ -482,7 +482,7 @@ Workerのack・再試行・DLQ・drainの検証には、意図的に失敗する
 
 ### 10.1 アカウント構成
 
-管理（admin）、セキュリティ（security）、ログ保管（log-archive）、sandbox、各環境（dev / stg / prd）の7アカウントに分ける（#21）。セキュリティのアカウントは検知（GuardDuty等）の委任管理者で、メンバーアカウントを乗っ取った者がそのアカウントの検知を止められないように、検知の設定をメンバーの外から握る。検知を調べる日常の作業はここで行い、管理アカウントには入れない。ログ保管のアカウントは組織の監査ログを改ざんできない形で保管し（`audit-evidence`）、書き込み以外の出入りを持たない。記録される側（管理アカウントを含む）が、鍵を止めるなどして自分の記録を読めなくできないようにするためである。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用（Observability）のAWSアカウントは設けない。obpをAWSに載せるときは、セキュリティのアカウントではなく監視用のアカウントを別に立てる。
+管理（admin）、セキュリティ（security）、ログ保管（log-archive）、sandbox、各環境（dev / stg / prd）の7アカウントに分ける（#21）。セキュリティのアカウントは検知（GuardDuty等）の委任管理者で、メンバーアカウントを乗っ取った者がそのアカウントの検知を止められないように、検知の設定をメンバーの外から握る。検知を調べる日常の作業はここで行い、管理アカウントには入れない。ログ保管のアカウントは組織の監査ログを改ざんできない形で保管し（`audit-evidence`）、書き込みと、security の調査用の role からの読み取り（読み取りだけで、記録される）のほかには出入りを持たない。記録される側（管理アカウントを含む）が、鍵を止めるなどして自分の記録を読めなくできないようにするためである。クロスアカウント処理（スナップショット共有、KMSのkey grant）の検証は**devとsandboxの間で行う**。devは他の環境より破壊してよく、かつsandboxより準本番性が高いため、越境の相手役として使える。otelモードの送り先はAWS外（自宅のobp）を想定し、監視用（Observability）のAWSアカウントは設けない。obpをAWSに載せるときは、セキュリティのアカウントではなく監視用のアカウントを別に立てる。
 
 SCPによる方向の強制は、ライブで逆流を試して確かめない。**宣言の形と付き先をPolicy Testで見る** —— SCPという機構が効くことはAWSの仕様であり、検証すべきは自分たちのSCPが正しい形で正しいOUに付いていることである。ライブで試すと、拒否が効かなかったときに書き込みがdevへ残り、devは掃除CIの対象ではない（第10.2節）。同一アカウント構成はサポートしない（#99）。1つのアカウントに複数の環境の役割（dev・stg・prd・sandbox・管理など）を持たせる構成も、Organizationsを作らず単独のアカウント1つに環境を1つだけ置く構成も、対象外とする。前者は環境の境界を名前とタグの規約に頼ることになり、SCP・IAM Access Analyzer・GuardDuty・S3のPublic Access Blockなどアカウント単位の統制が環境の間で共有されるか効かない（AWS Well-Architected SEC01-BP01は環境をアカウントで分けることを求める）。後者は組織・OU・SCP・Identity Center・break-glassを前提とする統制（organization-baseline）と、アカウントをまたぐ処理（data-refresh）が成り立たない。アカウント構成と人間のSSOログインはorganization-baselineで構築する。管理アカウントはsandboxの掃除対象から常に除外し、専用のstateと専用のCI Roleで扱う。各アカウントは自分のstate Bucket・CMK・OIDC Provider・CI Roleを持ち、管理アカウントのstate Bucketには管理アカウント自身のstateだけを置く（#96）。例外は、メンバーアカウントを立ち上げる間のそのアカウントのbootstrapの構成物で、立ち上げの後にメンバー側へ移す（#142、ADR-0604 決定6）。
 
@@ -555,8 +555,10 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 |---|---|---|
 | 複製を作れる | `state-backend` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する |
 | 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認（`deployment-identity` は `make ci-assume-denied`）、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
-| 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
-| 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks` | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
+| 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification`、`network-foundation` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
+| 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks`、`network-foundation`（GuardDutyのRuntime MonitoringのVPC Endpoint、消費者のENI） | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
+
+`finops` は、sandboxでは常駐層の実体と同じアカウントに置き、AWS managed monitorはメンバーアカウントに1つしか置けないので、複製を作れない。条件2・3は、常駐する実体をdestroyして作り直すことで満たす。
 
 期待残存は、resourceの型ではなく、識別子・状態・期限で宣言する（ADR-0401 決定16）。
 

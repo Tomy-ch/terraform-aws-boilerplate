@@ -84,9 +84,25 @@ resource "aws_iam_role_policies_exclusive" "this" {
   policy_names = [local.all_policies[each.key].name]
 }
 
+# 管理アカウントの apply-identity の role にだけ付ける（deployment-identity/ADR-0201 決定7）。
+resource "aws_iam_policy" "governance" {
+  count = local.management ? 1 : 0
+
+  name = local.governance_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.governance_manage_statements
+  })
+
+  # 同じ apply で、apply-identity が CreatePolicy の権限を得てから作る（決定4 と同じ順序）。
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = []
+  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : []
+
+  depends_on = [aws_iam_policy.governance]
 }

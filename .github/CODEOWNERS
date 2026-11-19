@@ -68,5 +68,6 @@ scripts/tf-job-lint/                       @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch
 .github/workflows/terraform-unlock.yaml    @Tomy-ch
+.github/workflows/terraform-lock-hold.yaml @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch
