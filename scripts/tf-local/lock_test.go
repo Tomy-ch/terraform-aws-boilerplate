@@ -132,6 +132,34 @@ func Test_runLockETag(t *testing.T) {
 		assert.Equal(t, lockETagA, got)
 	})
 
+	t.Run("-want は lock の有無を確かめる", func(t *testing.T) {
+		t.Parallel()
+
+		held := write(t, lockList(lockKeyOK, false, 1, lockObject(lockKeyOK, lockETagA)))
+		empty := write(t, lockList(lockKeyOK, false, 0))
+
+		got, err := runLockETag([]string{"-key", lockKeyOK, "-want", "present", held}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Equal(t, lockETagA, got)
+
+		got, err = runLockETag([]string{"-key", lockKeyOK, "-want", "absent", empty}, os.ReadFile)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+
+		_, err = runLockETag([]string{"-key", lockKeyOK, "-want", "absent", held}, os.ReadFile)
+		require.ErrorIs(t, err, errLockExists)
+
+		_, err = runLockETag([]string{"-key", lockKeyOK, "-want", "present", empty}, os.ReadFile)
+		require.ErrorIs(t, err, errLockMissing)
+	})
+
+	t.Run("-want の一覧が読めなければ有無を判定せず errLockList", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := runLockETag([]string{"-key", lockKeyOK, "-want", "absent", write(t, lockList(lockKeyOK, true, 0))}, os.ReadFile)
+		require.ErrorIs(t, err, errLockList)
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
@@ -143,9 +171,10 @@ func Test_runLockETag(t *testing.T) {
 		})
 
 		for name, args := range map[string][]string{
-			"位置引数が無い": {"-key", lockKeyOK},
-			"位置引数が2つ": {"-key", lockKeyOK, "a", "b"},
-			"未知のフラグ":  {"-nope", "a"},
+			"位置引数が無い":   {"-key", lockKeyOK},
+			"位置引数が2つ":   {"-key", lockKeyOK, "a", "b"},
+			"未知のフラグ":    {"-nope", "a"},
+			"未知の -want": {"-key", lockKeyOK, "-want", "maybe", "a"},
 		} {
 			t.Run(name+"なら errUsage", func(t *testing.T) {
 				t.Parallel()
@@ -375,9 +404,17 @@ func Test_lockStale(t *testing.T) {
 		t.Run("閾値の timeout は apply の job の timeout-minutes と一致する", func(t *testing.T) {
 			t.Parallel()
 
-			got, n := applyTimeout(t, filepath.Join("..", "..", ".github", "workflows"))
+			got, n := entryTimeout(t, filepath.Join("..", "..", ".github", "workflows"), "make ci-apply-")
 			require.Positive(t, n, "make ci-apply- を走らせる job が見つかりません。検査の対象が0件です")
 			assert.Equal(t, applyJobTimeout, got)
+		})
+
+		t.Run("lock を残す job の timeout-minutes は閾値の apply の job の timeout を超えない", func(t *testing.T) {
+			t.Parallel()
+
+			got, n := entryTimeout(t, filepath.Join("..", "..", ".github", "workflows"), "make ci-hold-")
+			require.Positive(t, n, "make ci-hold- を走らせる job が見つかりません。検査の対象が0件です")
+			assert.LessOrEqual(t, got, applyJobTimeout, "lock を残す job が閾値より長く生きると、生きている lock を lock の解除が消す")
 		})
 
 		t.Run("lock の形を確かめた版は mise.toml の Terraform の版と一致する", func(t *testing.T) {
@@ -468,9 +505,9 @@ func Test_logSafe(t *testing.T) {
 	}
 }
 
-// applyTimeout は、dir の workflow のうち `make ci-apply-` を走らせる job の timeout-minutes の最大値と、
+// entryTimeout は、dir の workflow のうち entry（`make ci-apply-` など）を走らせる job の timeout-minutes の最大値と、
 // その job の数を返す。
-func applyTimeout(t *testing.T, dir string) (time.Duration, int) {
+func entryTimeout(t *testing.T, dir, entry string) (time.Duration, int) {
 	t.Helper()
 
 	entries, err := os.ReadDir(dir)
@@ -493,7 +530,7 @@ func applyTimeout(t *testing.T, dir string) (time.Duration, int) {
 		require.NoError(t, err)
 
 		for _, job := range workflow.SplitJobs(string(content)).Jobs {
-			minutes, applies := jobApplyTimeout(job, timeoutLine)
+			minutes, applies := jobEntryTimeout(job, timeoutLine, entry)
 			if !applies {
 				continue
 			}
@@ -508,14 +545,13 @@ func applyTimeout(t *testing.T, dir string) (time.Duration, int) {
 	return time.Duration(maxMinutes) * time.Minute, n
 }
 
-// skippedLine は、apply の job を数えないコメントと step の name: の行。
 var skippedLine = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
 
-func jobApplyTimeout(job workflow.Job, timeoutLine *regexp.Regexp) (int, bool) {
+func jobEntryTimeout(job workflow.Job, timeoutLine *regexp.Regexp, entry string) (int, bool) {
 	minutes, applies := 0, false
 
 	for _, l := range job.Lines {
-		if strings.Contains(l.Text, "make ci-apply-") && !skippedLine.MatchString(l.Text) {
+		if strings.Contains(l.Text, entry) && !skippedLine.MatchString(l.Text) {
 			applies = true
 		}
 
@@ -527,7 +563,7 @@ func jobApplyTimeout(job workflow.Job, timeoutLine *regexp.Regexp) (int, bool) {
 	return minutes, applies
 }
 
-func Test_applyTimeout(t *testing.T) {
+func Test_entryTimeout(t *testing.T) {
 	t.Parallel()
 
 	write := func(t *testing.T, files map[string]string) string {
@@ -551,7 +587,7 @@ func Test_applyTimeout(t *testing.T) {
 			"apply.yaml":  "jobs:\n" + job("apply", "30", "make ci-apply-admin-identity RUNNER_MODE=host"),
 			"unlock.yaml": "jobs:\n" + job("unlock", "15", "make ci-unlock-admin-identity RUNNER_MODE=host"),
 		})
-		got, n := applyTimeout(t, dir)
+		got, n := entryTimeout(t, dir, "make ci-apply-")
 		assert.Equal(t, 30*time.Minute, got)
 		assert.Equal(t, 1, n)
 	})
@@ -559,22 +595,33 @@ func Test_applyTimeout(t *testing.T) {
 	t.Run("apply の job が無ければ0件と返す", func(t *testing.T) {
 		t.Parallel()
 
-		_, n := applyTimeout(t, write(t, map[string]string{"unlock.yaml": "jobs:\n" + job("unlock", "15", "make ci-unlock-admin-identity")}))
+		_, n := entryTimeout(t, write(t, map[string]string{"unlock.yaml": "jobs:\n" + job("unlock", "15", "make ci-unlock-admin-identity")}), "make ci-apply-")
 		assert.Zero(t, n)
 	})
 
 	t.Run("複数の apply の job は最大値を返す", func(t *testing.T) {
 		t.Parallel()
 
-		got, n := applyTimeout(t, write(t, map[string]string{
+		got, n := entryTimeout(t, write(t, map[string]string{
 			"a.yaml": "jobs:\n" + job("a", "30", "make ci-apply-admin-identity") + job("b", "45", "make ci-apply-admin"),
-		}))
+		}), "make ci-apply-")
 		assert.Equal(t, 45*time.Minute, got)
 		assert.Equal(t, 2, n)
 	})
+
+	t.Run("lock を残す入口は lock を残す job だけを数える", func(t *testing.T) {
+		t.Parallel()
+
+		got, n := entryTimeout(t, write(t, map[string]string{
+			"apply.yaml": "jobs:\n" + job("apply", "30", "make ci-apply-admin-identity"),
+			"hold.yaml":  "jobs:\n" + job("hold", "20", "make ci-hold-admin-identity"),
+		}), "make ci-hold-")
+		assert.Equal(t, 20*time.Minute, got)
+		assert.Equal(t, 1, n)
+	})
 }
 
-func Test_jobApplyTimeout(t *testing.T) {
+func Test_jobEntryTimeout(t *testing.T) {
 	t.Parallel()
 
 	re := regexp.MustCompile(`^ {4}timeout-minutes:\s*([0-9]+)\s*$`)
@@ -601,7 +648,7 @@ func Test_jobApplyTimeout(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			minutes, applies := jobApplyTimeout(c.job, re)
+			minutes, applies := jobEntryTimeout(c.job, re, "make ci-apply-")
 			assert.Equal(t, c.minutes, minutes)
 			assert.Equal(t, c.applies, applies)
 		})
@@ -643,4 +690,280 @@ func Test_readLockMeta(t *testing.T) {
 			})
 		}
 	})
+}
+
+func lockBodyOp(id, who, operation string) string {
+	return strings.Replace(lockBody(id, who), `"OperationTypeApply"`, strconv.Quote(operation), 1)
+}
+
+func Test_wantLock(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		want, etag string
+		err        error
+	}{
+		"指定が無ければ lock が在っても ETag を返す":         {"", lockETagA, nil},
+		"指定が無ければ lock が無くても空を返す":              {"", "", nil},
+		"absent で lock が無ければ空を返す":             {"absent", "", nil},
+		"absent で lock が在れば errLockExists":    {"absent", lockETagA, errLockExists},
+		"present で lock が在れば ETag を返す":        {"present", lockETagA, nil},
+		"present で lock が無ければ errLockMissing": {"present", "", errLockMissing},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := wantLock(c.want, c.etag)
+			if c.err != nil {
+				require.ErrorIs(t, err, c.err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, c.etag, got)
+		})
+	}
+}
+
+func Test_ciLock(t *testing.T) {
+	t.Parallel()
+
+	modified := lockNow.Add(-time.Minute)
+
+	t.Run("CI のランナーの Plan と Apply の lock は説明と LastModified を返す", func(t *testing.T) {
+		t.Parallel()
+
+		for _, op := range []string{planOperation, applyOperation} {
+			line, got, err := ciLock(lockETagA, []byte(lockMeta(lockETagA, modified)), []byte(lockBodyOp(lockID, "runner@fv-az1-2", op)), lockNow)
+			require.NoError(t, err)
+			assert.Contains(t, line, "Operation="+op)
+			assert.True(t, got.Equal(modified))
+		}
+	})
+
+	t.Run("古さでは失敗しない", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := ciLock(lockETagA, []byte(lockMeta(lockETagA, lockNow)), []byte(lockBody(lockID, "runner@fv-az1-2")), lockNow)
+		require.NoError(t, err)
+	})
+
+	for name, c := range map[string]struct {
+		meta, body string
+		want       error
+	}{
+		"人の手元の lock は errLockForeign":     {lockMeta(lockETagA, modified), lockBody(lockID, "alice@laptop"), errLockForeign},
+		"Plan と Apply 以外は errLockForeign": {lockMeta(lockETagA, modified), lockBodyOp(lockID, "runner@fv-az1-2", "OperationTypeRefresh"), errLockForeign},
+		"ETag が違えば errLockChanged":        {lockMeta(`"ffffffffffffffffffffffffffffffff"`, modified), lockBody(lockID, "runner@fv-az1-2"), errLockChanged},
+		"ID の形が違えば errLockInfo":           {lockMeta(lockETagA, modified), lockBody("not-a-uuid", "runner@fv-az1-2"), errLockInfo},
+		"JSON でなければ errLockInfo":          {lockMeta(lockETagA, modified), "nope", errLockInfo},
+		"空なら errLockInfo":                 {lockMeta(lockETagA, modified), "", errLockInfo},
+		"属性が JSON でなければ errLockMeta":      {"nope", lockBody(lockID, "runner@fv-az1-2"), errLockMeta},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := ciLock(lockETagA, []byte(c.meta), []byte(c.body), lockNow)
+			require.ErrorIs(t, err, c.want)
+		})
+	}
+}
+
+func Test_lockHeld(t *testing.T) {
+	t.Parallel()
+
+	t.Run("消せる時刻は LastModified に apply の job の timeout と余裕を足した時刻", func(t *testing.T) {
+		t.Parallel()
+
+		modified := time.Date(2026, 11, 12, 11, 59, 0, 0, time.UTC)
+		got, err := lockHeld(lockETagA, []byte(lockMeta(lockETagA, modified)), []byte(lockBodyOp(lockID, "runner@fv-az1-2", planOperation)), lockNow)
+		require.NoError(t, err)
+		assert.Contains(t, got, "ID="+lockID)
+		assert.Contains(t, got, "Terraform Unlock が消せるのは 2026-11-12T12:34:00Z より後")
+	})
+
+	t.Run("消せる時刻は lockStale が消し始める境界と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		modified := lockNow.Add(-(applyJobTimeout + staleLockMargin))
+		meta, body := []byte(lockMeta(lockETagA, modified)), []byte(lockBody(lockID, "runner@fv-az1-2"))
+
+		_, err := lockStale(lockETagA, meta, body, lockNow)
+		require.ErrorIs(t, err, errLockFresh, "境界の時刻ちょうどでは消さない")
+
+		_, err = lockStale(lockETagA, meta, body, lockNow.Add(time.Second))
+		require.NoError(t, err, "境界を過ぎれば消す")
+
+		got, err := lockHeld(lockETagA, meta, body, lockNow)
+		require.NoError(t, err)
+		assert.Contains(t, got, lockNow.UTC().Format(time.RFC3339)+" より後")
+	})
+
+	t.Run("lock の解除が消さない形なら errLockForeign", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := lockHeld(lockETagA, []byte(lockMeta(lockETagA, lockNow)), []byte(lockBody(lockID, "alice@laptop")), lockNow)
+		require.ErrorIs(t, err, errLockForeign)
+	})
+}
+
+func Test_runLockHeld(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	m, b := filepath.Join(dir, "meta.json"), filepath.Join(dir, "lock.json")
+	require.NoError(t, os.WriteFile(m, []byte(lockMeta(lockETagA, lockNow)), 0o600))
+	require.NoError(t, os.WriteFile(b, []byte(lockBodyOp(lockID, "runner@fv-az1-2", planOperation)), 0o600))
+	none := filepath.Join(dir, "none")
+	d := deps{readFile: os.ReadFile, now: func() time.Time { return lockNow }}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := runLockHeld([]string{"-etag", lockETagA, "-meta", m, b}, d)
+		require.NoError(t, err)
+		assert.Contains(t, got, "Operation="+planOperation)
+	})
+
+	for name, c := range map[string]struct {
+		args []string
+		want error
+	}{
+		"位置引数が無ければ errUsage":            {[]string{"-etag", lockETagA, "-meta", m}, errUsage},
+		"未知のフラグなら errUsage":             {[]string{"-nope", b}, errUsage},
+		"属性のファイルを読めなければ errLockMeta":    {[]string{"-etag", lockETagA, "-meta", none, b}, errLockMeta},
+		"lock file を読めなければ errLockInfo": {[]string{"-etag", lockETagA, "-meta", m, none}, errLockInfo},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runLockHeld(c.args, d)
+			require.ErrorIs(t, err, c.want)
+		})
+	}
+}
+
+// waitDeps は、alive の値を使い切った後は最後の値を返す。
+func waitDeps(alive []bool, sleeps *int) deps {
+	i := 0
+
+	return deps{
+		readFile: os.ReadFile,
+		alive: func(int) bool {
+			v := alive[min(i, len(alive)-1)]
+			i++
+
+			return v
+		},
+		sleep: func(time.Duration) { *sleeps++ },
+	}
+}
+
+func Test_lockWait(t *testing.T) {
+	t.Parallel()
+
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+
+		path := filepath.Join(t.TempDir(), "out.txt")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+
+		return path
+	}
+	header := "plan: commit=0123 dirty=false\nInitializing the backend...\n"
+
+	for name, line := range map[string]string{
+		"resource の refresh":  `aws_iam_role.apply: Refreshing state... [id=apply]`,
+		"data source の読み取り":   `data.aws_caller_identity.current: Reading...`,
+		"空白を含む key の address": `module.ci.aws_iam_role.this["a b"]: Refreshing state... [id=x]`,
+	} {
+		t.Run(name+"の行が在れば held を返す", func(t *testing.T) {
+			t.Parallel()
+
+			sleeps := 0
+			got, err := lockWait(write(t, header+line+"\n"), 1, time.Second, time.Minute, waitDeps([]bool{true}, &sleeps))
+			require.NoError(t, err)
+			assert.Equal(t, "held", got)
+			assert.Zero(t, sleeps)
+		})
+	}
+
+	t.Run("plan が終わった後に書かれた行も読む", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		got, err := lockWait(write(t, header+"aws_iam_role.apply: Refreshing state... [id=apply]\n"), 1, time.Second, time.Minute, waitDeps([]bool{false}, &sleeps))
+		require.NoError(t, err)
+		assert.Equal(t, "held", got)
+	})
+
+	t.Run("行が現れずに plan が終われば空を返す", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		got, err := lockWait(write(t, header+"Acquiring state lock. This may take a few moments...\n"), 1, time.Second, time.Minute, waitDeps([]bool{true, true, false}, &sleeps))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+		assert.Equal(t, 2, sleeps)
+	})
+
+	t.Run("行に似た文の途中の一致は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		got, err := lockWait(write(t, header+"  note: Refreshing state... is printed later\n"), 1, time.Second, time.Minute, waitDeps([]bool{false}, &sleeps))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("limit を過ぎれば errLockWait", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		_, err := lockWait(write(t, header), 1, time.Second, 3*time.Second, waitDeps([]bool{true}, &sleeps))
+		require.ErrorIs(t, err, errLockWait)
+		assert.Equal(t, 3, sleeps, "limit ちょうどの回まで読む")
+	})
+
+	t.Run("全文を読めなければ errLockWait", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		_, err := lockWait(filepath.Join(t.TempDir(), "none"), 1, time.Second, time.Minute, waitDeps([]bool{true}, &sleeps))
+		require.ErrorIs(t, err, errLockWait)
+	})
+}
+
+func Test_runLockWait(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "out.txt")
+	require.NoError(t, os.WriteFile(path, []byte("data.aws_caller_identity.current: Reading...\n"), 0o600))
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		sleeps := 0
+		got, err := runLockWait([]string{"-pid", "1", "-interval", "500ms", "-limit", "1m", path}, waitDeps([]bool{true}, &sleeps))
+		require.NoError(t, err)
+		assert.Equal(t, "held", got)
+	})
+
+	for name, args := range map[string][]string{
+		"位置引数が無い":       {"-pid", "1"},
+		"pid が無い":       {path},
+		"pid が0以下":      {"-pid", "0", path},
+		"interval が0以下": {"-pid", "1", "-interval", "0s", path},
+		"limit が0以下":    {"-pid", "1", "-limit", "-1s", path},
+		"未知のフラグ":        {"-nope", path},
+	} {
+		t.Run(name+"なら errUsage", func(t *testing.T) {
+			t.Parallel()
+
+			sleeps := 0
+			_, err := runLockWait(args, waitDeps([]bool{true}, &sleeps))
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
 }

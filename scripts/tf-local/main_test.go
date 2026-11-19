@@ -1262,7 +1262,7 @@ func TestLocalMk(t *testing.T) {
 	})
 }
 
-// TestCiMk は、ci.mk のレシピが CI の profile で plan・apply・lock の解除を行い、terraform の出力を公開される
+// TestCiMk は、ci.mk のレシピが CI の profile で plan・apply・lock を残す入口・lock の解除を行い、terraform の出力を公開される
 // ログに出さない配線を、make -n の展開結果で見る。
 func TestCiMk(t *testing.T) {
 	t.Parallel()
@@ -1330,16 +1330,17 @@ func TestCiMk(t *testing.T) {
 		raw, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
 		require.NoError(t, err)
 		phony := map[string]string{}
-		for _, m := range regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1) {
+		for _, m := range regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply|hold)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1) {
 			phony[m[1]] = m[2]
 		}
 		var rules []string
-		for _, m := range regexp.MustCompile(`(?m)^(ci-(?:plan|apply)-[A-Za-z0-9_-]+):\s*$`).FindAllStringSubmatch(string(raw), -1) {
+		for _, m := range regexp.MustCompile(`(?m)^(ci-(?:plan|apply|hold)-[A-Za-z0-9_-]+):\s*$`).FindAllStringSubmatch(string(raw), -1) {
 			rules = append(rules, m[1])
 		}
 		require.ElementsMatch(t, slices.Collect(maps.Keys(phony)), rules, "入口の .PHONY とレシピの行が食い違います")
 		require.Contains(t, slices.Collect(maps.Values(phony)), "plan", "ci.mk に plan の入口がありません")
 		require.Contains(t, slices.Collect(maps.Values(phony)), "apply", "ci.mk に apply の入口がありません")
+		require.Contains(t, slices.Collect(maps.Values(phony)), "hold", "ci.mk に lock を残す入口がありません")
 		for target, kind := range phony {
 			t.Run("入口 "+target, func(t *testing.T) {
 				t.Parallel()
@@ -1448,6 +1449,35 @@ func TestCiMk(t *testing.T) {
 		)
 		assert.Equal(t, 1, strings.Count(got, "delete-object"), got)
 		assert.NotContains(t, got, "--version-id")
+	})
+
+	t.Run("lock を残す入口は apply-identity の profile で lock を取る plan を裏で起動し、apply も書き込みもしない", func(t *testing.T) {
+		t.Parallel()
+
+		got := expand(t, "ci-hold-admin-identity")
+		assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-plan")
+		assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-unlock-identity")
+		assert.NotContains(t, got, "-lock=false")
+		assert.NotContains(t, got, "-out=")
+		assert.NotContains(t, got, " apply ")
+		assert.NotContains(t, got, "put-object")
+		assert.NotContains(t, got, "delete-object")
+		assert.Contains(t, got, `trap 'test -z "$pid" || kill -KILL "$pid" 2>/dev/null || :;`)
+		order(t, got,
+			envPrefix("apply-identity")+` terraform -chdir="$dir" init -input=false`,
+			`lock-key "$dir"'`,
+			envPrefix("apply-identity")+` aws s3api list-objects-v2 --region "$region" --bucket "$bucket" --prefix "$key" --expected-bucket-owner "$account" --no-paginate --output json > "$list"`,
+			`lock-etag -key "$key" -want absent "$list"'`,
+			envPrefix("apply-identity")+` terraform -chdir="$dir" plan -input=false -no-color -parallelism=1 > "$hold" 2>&1 & pid=$!`,
+			`lock-wait -pid "$pid" -interval 200ms -limit 10m "$hold"'`,
+			`kill -KILL "$pid"`,
+			`test -n "$held" ||`,
+			envPrefix("apply-identity")+` aws s3api list-objects-v2`,
+			`lock-etag -key "$key" -want present "$list"'`,
+			envPrefix("apply-identity")+` aws s3api get-object --region "$region" --bucket "$bucket" --key "$key" --if-match "$etag" --expected-bucket-owner "$account" --output json "$body" > "$meta"`,
+			`lock-held -etag "$etag" -meta "$meta" "$body"'`,
+		)
+		assert.Equal(t, 1, strings.Count(got, " plan -input=false"), got)
 	})
 
 	t.Run("apply の全文の置き場は、identity root なら plan の出力の Bucket、ほかの root なら apply の出力の Bucket", func(t *testing.T) {
@@ -1563,8 +1593,7 @@ func TestCiMk(t *testing.T) {
 	})
 }
 
-// ciFakes は、ci.mk のレシピが起動する道具の偽物です。plan・apply・assume-role は secret の文字列を出し、
-// それが公開されるログへ漏れないことを見られるようにする。
+// ciFakes の plan・apply・assume-role は secret の文字列を出し、それが公開されるログへ漏れないことを見られるようにする。
 const ciFakes = `#!/bin/sh
 k=%[1]q
 rc() { cat "$k/$1" 2>/dev/null || echo 0; }
@@ -1581,7 +1610,10 @@ aws)
 		exit "$(rc assume-rc)" ;;
 	"kms list-aliases") cat "$k/aliases" 2>/dev/null || echo '{"Aliases":[{"AliasName":"alias/tabp-admin-tfstate","AliasArn":"arn:aws:kms:ap-northeast-1:123456789012:alias/tabp-admin-tfstate","TargetKeyId":"1234abcd-12ab-34cd-56ef-1234567890ab"}]}'; exit "$(rc kms-rc)" ;;
 	"s3api get-bucket-encryption") cat "$k/encryption" 2>/dev/null || echo '{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}}'; exit "$(rc encryption-rc)" ;;
-	"s3api list-objects-v2") cat "$k/lock-list" 2>/dev/null || echo '{"Name":"b","Prefix":"identity/terraform.tfstate.tflock","KeyCount":0,"MaxKeys":1000,"IsTruncated":false}'; exit "$(rc list-rc)" ;;
+	"s3api list-objects-v2")
+		n=$(grep -c '^aws s3api list-objects-v2' "$k/calls")
+		test -f "$k/lock-list-$n" && { cat "$k/lock-list-$n"; exit "$(rc list-rc)"; }
+		cat "$k/lock-list" 2>/dev/null || echo '{"Name":"b","Prefix":"identity/terraform.tfstate.tflock","KeyCount":0,"MaxKeys":1000,"IsTruncated":false}'; exit "$(rc list-rc)" ;;
 	"s3api get-object")
 		for a; do last=$a; done
 		cat "$k/lock-body" > "$last"; cat "$k/lock-meta"; exit "$(rc get-rc)" ;;
@@ -1620,6 +1652,7 @@ plan)
 	for a; do case "$a" in -out=*) echo plan > "${a#-out=}" ;; esac; done
 	echo PLAN-SECRET
 	cat "$k/plan-out" 2>/dev/null
+	test -f "$k/plan-hold" && { echo $$ > "$k/plan-pid"; exec sleep 60; }
 	exit "$(rc plan-rc)" ;;
 show) test -s "$last" || exit 1; cat "$k/plan.json" ;;
 apply) echo APPLY-SECRET; cat "$k/apply-out" 2>/dev/null; exit "$(rc apply-rc)" ;;
@@ -1795,6 +1828,11 @@ func TestCiRecipes(t *testing.T) {
 	t.Run("lock の解除の入口", func(t *testing.T) {
 		t.Parallel()
 		testCiUnlockEntry(t, recipe)
+	})
+
+	t.Run("lock を残す入口", func(t *testing.T) {
+		t.Parallel()
+		testCiHoldEntry(t, recipe)
 	})
 
 	t.Run("拒否の確認の入口", func(t *testing.T) {
@@ -2356,7 +2394,7 @@ func testCiUnlockEntry(t *testing.T, recipe recipeFunc) {
 	}{
 		"新しい lock は消さずに ID を出して失敗する":   {with(map[string]string{"lock-meta": meta(fresh)}), "ID=" + id, 1, 1, 0},
 		"lock の中身を読めなければ消さない":          {with(map[string]string{"lock-body": "nope"}), "Terraform の lock として読めません", 1, 1, 0},
-		"人の手元の apply の lock は古くても消さない": {with(map[string]string{"lock-body": strings.Replace(body, "runner@fv-az1-2", "alice@laptop.local", 1)}), "CI のランナーが apply の job で取った lock ではない", 1, 1, 0},
+		"人の手元の apply の lock は古くても消さない": {with(map[string]string{"lock-body": strings.Replace(body, "runner@fv-az1-2", "alice@laptop.local", 1)}), "CI のランナーが apply の job か lock を残す job で取った lock ではない", 1, 1, 0},
 		"一覧の後に置き換わった lock は消さない":       {with(map[string]string{"lock-meta": strings.Replace(meta("2000-01-01T00:00:00+00:00"), "0123", "ffff", 1)}), "置き換わりました", 1, 1, 0},
 		"版 ID の無い lock は消さない":          {with(map[string]string{"lock-meta": `{"ETag":"\"0123456789abcdef0123456789abcdef\"","LastModified":"2000-01-01T00:00:00+00:00"}`}), "版 ID がありません", 1, 1, 0},
 		"一覧の形を読めなければ lock 無しと読まない":     {map[string]string{"lock-list": `{"Contents":[]}`}, "一覧を読めません", 1, 0, 0},
@@ -2470,5 +2508,143 @@ func testCiCredentials(t *testing.T, recipe recipeFunc) {
 		assert.Zero(t, countCalls(r.calls, "aws configure"), r.calls)
 		assert.NotContains(t, r.out, "profile に資格情報を置きました")
 		assert.Empty(t, r.left, "token と応答が残っています")
+	})
+}
+
+func Test_processAlive(t *testing.T) {
+	t.Parallel()
+
+	t.Run("走っているプロセスは生きている", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, processAlive(os.Getpid()))
+	})
+
+	t.Run("終わって回収されたプロセスは生きていない", func(t *testing.T) {
+		t.Parallel()
+
+		cmd := exec.CommandContext(t.Context(), "true")
+		require.NoError(t, cmd.Run())
+		assert.False(t, processAlive(cmd.Process.Pid))
+	})
+}
+
+func testCiHoldEntry(t *testing.T, recipe recipeFunc) {
+	t.Helper()
+
+	const (
+		key  = "identity/terraform.tfstate.tflock"
+		etag = `"0123456789abcdef0123456789abcdef"`
+		id   = "c7f6a1b2-3d4e-4f50-8a9b-0c1d2e3f4a5b"
+	)
+	empty := `{"Name":"b","Prefix":"` + key + `","KeyCount":0,"MaxKeys":1000,"IsTruncated":false}`
+	held := `{"Name":"b","Prefix":"` + key + `","KeyCount":1,"MaxKeys":1000,"IsTruncated":false,"Contents":[{"Key":"` + key + `","ETag":"\"0123456789abcdef0123456789abcdef\""}]}`
+	body := `{"ID":"` + id + `","Operation":"OperationTypePlan","Who":"runner@fv-az1-2","Version":"1.17.1","Path":"tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate"}`
+	now := time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
+	meta := `{"ETag":"\"0123456789abcdef0123456789abcdef\"","LastModified":"` + now + `","VersionId":"lock-ver-1"}`
+	ok := map[string]string{
+		"plan-out": "aws_iam_role.apply: Refreshing state... [id=apply]\n", "plan-hold": "1",
+		"lock-list-1": empty, "lock-list-2": held, "lock-body": body, "lock-meta": meta,
+	}
+	with := func(over map[string]string, drop ...string) map[string]string {
+		m := maps.Clone(ok)
+		maps.Copy(m, over)
+
+		for _, k := range drop {
+			delete(m, k)
+		}
+
+		return m
+	}
+	plans := func(calls string) int {
+		n := 0
+
+		for line := range strings.Lines(calls) {
+			if strings.HasPrefix(line, applyCall) && strings.Contains(line, " plan ") {
+				n++
+			}
+		}
+
+		return n
+	}
+	planGone := func(t *testing.T, r recipeResult) {
+		t.Helper()
+
+		raw, err := os.ReadFile(filepath.Join(filepath.Dir(r.plans), "knobs", "plan-pid"))
+		if err != nil {
+			return
+		}
+
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		require.NoError(t, err)
+		assert.Eventually(t, func() bool { return !processAlive(pid) }, 5*time.Second, 50*time.Millisecond, "裏の terraform が残っています")
+	}
+
+	t.Run("lock を取った後に止め、残った lock の形と消せる時刻を出して成功する", func(t *testing.T) {
+		t.Parallel()
+
+		start := time.Now()
+		r := recipe(t, "ci-hold-admin-identity", ok)
+		require.NoError(t, r.err, r.out)
+		assert.Less(t, time.Since(start), 30*time.Second, "plan の終わりを待たずに止める")
+		assert.Contains(t, r.out, "lock: ID="+id)
+		assert.Contains(t, r.out, "Operation=OperationTypePlan")
+		assert.Contains(t, r.out, "Terraform Unlock が消せるのは ")
+		assert.Contains(t, r.out, "✅ lock を残しました")
+		assert.NotContains(t, r.out, "PLAN-SECRET", "plan の全文をログに出さない")
+		assert.NotContains(t, r.out, "123456789012", "アカウント ID と Bucket 名をログに出さない")
+		assert.Equal(t, 1, plans(r.calls), r.calls)
+		assert.Zero(t, applies(r.calls), "apply しない")
+		assert.Zero(t, countCalls(r.calls, "aws s3api delete-object"), r.calls)
+		assert.Zero(t, countCalls(r.calls, "aws s3api put-object"), r.calls)
+		assert.Contains(t, r.calls, "aws s3api get-object --region ap-northeast-1 --bucket tabp-admin-tfstate-123456789012-ap-northeast-1-an --key "+key+" --if-match "+etag)
+		assert.Contains(t, r.summary, "```text\nlock: ID="+id)
+		assert.Empty(t, r.left, "作業ファイルが残っています")
+		planGone(t, r)
+	})
+
+	for name, c := range map[string]struct {
+		knobs              map[string]string
+		env                []string
+		want               string
+		lists, plans, gets int
+	}{
+		"lock が既にあれば plan を起動しない":              {with(map[string]string{"lock-list-1": held}), nil, "lock が既にあります", 1, 0, 0},
+		"lock を取った後の行を出さずに plan が終われば失敗する":     {with(nil, "plan-hold", "plan-out"), nil, "lock を取った後の行を出さずに終わりました", 1, 1, 0},
+		"行を出した後に lock が無ければ失敗する":               {with(map[string]string{"lock-list-2": empty}), nil, "lock が残りませんでした", 2, 1, 0},
+		"残った lock が lock の解除の消す形でなければ失敗する":     {with(map[string]string{"lock-body": strings.Replace(body, "runner@fv-az1-2", "alice@laptop.local", 1)}), nil, "lock ではないので消しません", 2, 1, 1},
+		"待つ時間の内に行が現れなければ裏の terraform を止めて失敗する": {with(nil, "plan-out"), []string{"CI_HOLD_LIMIT=1s"}, "待つ時間の内に出しませんでした", 1, 1, 0},
+		"一覧を取れなければ plan を起動しない":                {with(map[string]string{"list-rc": "254"}), nil, "", 1, 0, 0},
+		"lock を読めなければ成功しない":                    {with(map[string]string{"get-rc": "254"}), nil, "", 2, 1, 1},
+		"init が失敗すれば一覧も plan も呼ばない":            {with(map[string]string{"init-rc": "1"}), nil, "init が失敗しました", 0, 0, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := recipe(t, "ci-hold-admin-identity", c.knobs, c.env...)
+			require.Error(t, r.err, r.out)
+			if c.want != "" {
+				assert.Contains(t, r.out, c.want)
+			}
+			assert.Equal(t, c.lists, countCalls(r.calls, "aws s3api list-objects-v2"), r.calls)
+			assert.Equal(t, c.plans, plans(r.calls), r.calls)
+			assert.Equal(t, c.gets, countCalls(r.calls, "aws s3api get-object"), r.calls)
+			assert.Zero(t, applies(r.calls), "apply しない")
+			assert.Zero(t, countCalls(r.calls, "aws s3api delete-object"), r.calls)
+			assert.NotContains(t, r.out, "✅")
+			assert.NotContains(t, r.out, "PLAN-SECRET")
+			assert.Empty(t, r.summary)
+			assert.Empty(t, r.left, "作業ファイルが残っています")
+			planGone(t, r)
+		})
+	}
+
+	t.Run("job summary が無くても成功する", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-hold-admin-identity", ok, "GITHUB_STEP_SUMMARY=")
+		require.NoError(t, r.err, r.out)
+		assert.Contains(t, r.out, "✅ lock を残しました")
+		planGone(t, r)
 	})
 }

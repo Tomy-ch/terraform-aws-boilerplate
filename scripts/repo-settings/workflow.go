@@ -15,6 +15,8 @@ const workflowsDir = ".github/workflows"
 
 // isApplySuffix は、push で起動する apply の job が使う environment の接尾辞かを返します。plan は
 // Pull Request で、lock の解除は workflow_dispatch だけで起動するので、push の起動条件を持たない。
+// lock を残す job は apply と同じ environment を使うが workflow_dispatch だけで起動するので、接尾辞ではなく
+// 入口（holdEntry）で除く。
 func isApplySuffix(suffix string) bool {
 	return suffix != planSuffix && suffix != unlockIdentitySuffix && suffix != unlockSuffix
 }
@@ -30,6 +32,9 @@ var (
 	branchesKey    = regexp.MustCompile(`^ {4}branches:[ \t]*(?:#.*)?$`)
 	branchItem     = regexp.MustCompile(`^ {6}- `)
 	blankOrComment = regexp.MustCompile(`^\s*(?:#.*)?$`)
+	// holdEntry は lock を残す入口。それを走らせる job は workflow_dispatch だけで起動する（ADR-0604 決定8）。
+	holdEntry = regexp.MustCompile(`\bmake\b.*\bci-hold-[a-z0-9-]+`)
+	skipLine  = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
 )
 
 type workflowEdit struct {
@@ -90,10 +95,12 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 // applyEnvs は、workflow の job が使う apply の environment の env を、重複を除いて返します。job の
 // environment: を字下げ4桁のスカラー以外（mapping、式、アンカー、別の字下げ）で書いた行があれば失敗する
 // —— 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる（ADR-0702 決定14）。job の
-// steps: の列（[workflow.StepsSpan]）の中の行は step の入力なので読まない。
+// steps: の列（[workflow.StepsSpan]）の中の行は step の入力なので読まない。lock を残す job の environment は、
+// 読めることだけを確かめて数えない。
 func applyEnvs(src string) ([]string, error) {
 	var envs []string
 	for _, job := range workflow.SplitJobs(src).Jobs {
+		hold := isHoldJob(job)
 		from, to, hasSteps := workflow.StepsSpan(job)
 		for i, l := range job.Lines {
 			if (hasSteps && i >= from && i < to) || !anyEnvironment.MatchString(l.Text) {
@@ -104,12 +111,19 @@ func applyEnvs(src string) ([]string, error) {
 				return nil, xerrors.Wrapf(errTrigger, "%d 行目の environment: を読めません。job の直下に名前1つで書いてください", l.Number)
 			}
 			env, suffix, ok := splitIdentity(m[1] + m[2] + m[3])
-			if ok && isApplySuffix(suffix) && !slices.Contains(envs, env) {
+			if ok && !hold && isApplySuffix(suffix) && !slices.Contains(envs, env) {
 				envs = append(envs, env)
 			}
 		}
 	}
 	return envs, nil
+}
+
+// isHoldJob は、job が lock を残す入口を走らせるかを返します。コメントと step の name: の行は数えない。
+func isHoldJob(job workflow.Job) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
+		return !skipLine.MatchString(l.Text) && holdEntry.MatchString(l.Text)
+	})
 }
 
 // renderPushBranches は、on.push.branches のブロック形式の一覧を branch 1つへ置き換えた本文を返します。

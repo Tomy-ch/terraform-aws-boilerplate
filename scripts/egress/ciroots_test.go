@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bindingSSOT は root "env/t/identity" が a.yaml:one を名指す宣言。
 func bindingSSOT(t *testing.T) *ssot {
 	t.Helper()
 	return mustParse(t, "[job.\"a.yaml:one\"]\nclasses = []\n[job.\"a.yaml:two\"]\nclasses = []\n[root.\"env/t/identity\"]\njobs = [\"a.yaml:one\"]\n")
@@ -121,6 +120,16 @@ func Test_parseCIMake(t *testing.T) {
 			}, got)
 		})
 
+		t.Run("lock を残す入口も root に結びつけ、Terraform を実行する入口とする", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseCIMake(testCIMake + "ci-hold-t-identity:\n\t@$(call CI_HOLD,t,identity)\n")
+			require.NoError(t, err)
+			assert.Equal(t, map[string]ciEntry{
+				"ci-plan-t-identity": {root: "env/t/identity", terraform: true},
+				"ci-hold-t-identity": {root: "env/t/identity", terraform: true},
+			}, got)
+		})
+
 		// lock の解除の job に型の宛先を求めない根拠は、CI_UNLOCK が terraform を呼ばないことにある。ci.mk の
 		// 外の define も含めて展開した結果を、実物の ci.mk の入口ごとに make -n で突き合わせる。
 		t.Run("実物の ci.mk の入口が terraform を呼ぶかが、Terraform を実行するかの区別と一致する", func(t *testing.T) {
@@ -152,6 +161,8 @@ func Test_parseCIMake(t *testing.T) {
 			"plan の入口が CI_APPLY を呼ぶ":            {"ci-plan-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_PLAN,"},
 			"lock の解除の入口が CI_APPLY を呼ぶ":         {"ci-unlock-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_UNLOCK,"},
 			"見出しを経ない CI_UNLOCK の字面がある":          {testCIMake + "x: y\n\t@$(call CI_UNLOCK,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
+			"lock を残す入口が CI_APPLY を呼ぶ":          {"ci-hold-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_HOLD,"},
+			"見出しを経ない CI_HOLD の字面がある":            {testCIMake + "x: y\n\t@$(call CI_HOLD,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
 			"root の種類が identity / workload でない": {"ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n", "次の行が $(call CI_PLAN,"},
 			"入口が重複している":                         {testCIMake + testCIMake, "ci-plan-t-identity が重複しています"},
 			"見出しを経ない呼び出しの字面がある":                 {testCIMake + "x: y\n\t@$(call CI_PLAN,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
@@ -209,6 +220,7 @@ func Test_ranRoots(t *testing.T) {
 		"ci-apply-t-identity":  {root: "env/t/identity", terraform: true},
 		"ci-plan-t-workload":   {root: "env/t", terraform: true},
 		"ci-unlock-t-identity": {root: "env/t/identity"},
+		"ci-hold-t-identity":   {root: "env/t/identity", terraform: true},
 	}
 
 	t.Run("正常系", func(t *testing.T) {
@@ -223,6 +235,23 @@ func Test_ranRoots(t *testing.T) {
 			got, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
 			require.NoError(t, err)
 			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true, "env/t": true}}, got)
+		})
+
+		t.Run("lock を残す入口で触れる root は Terraform を実行する root とする", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-hold-t-identity"))
+			got, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}}, got)
+		})
+
+		t.Run("ci.mk に無い lock を残す入口は未知の入口として落とす", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-hold-x"))
+			_, err := ranRoots(openRoot(t, repo), []string{"a.yaml"}, targets)
+			require.ErrorIs(t, err, errCITargetUnknown)
 		})
 
 		t.Run("lock の解除の入口だけで触れる root は Terraform を実行しない root とする", func(t *testing.T) {
@@ -306,6 +335,7 @@ func Test_entryTokens(t *testing.T) {
 			"        run: make ci-plan-a-identity ci-apply-a-identity RUNNER_MODE=host": {"ci-plan-a-identity", "ci-apply-a-identity"},
 			"        run: make ci-plan-${{ x }}":                                        {"ci-plan-"},
 			"        run: make ci-unlock-a-identity RUNNER_MODE=host":                   {"ci-unlock-a-identity"},
+			"        run: make ci-hold-a-identity RUNNER_MODE=host":                     {"ci-hold-a-identity"},
 			"        run: make tf-ci-plan-a-identity lint":                              nil,
 			"      - name: Plan ci-plan-a-identity":                                     nil,
 			"        # make ci-plan-a-identity":                                         nil,
