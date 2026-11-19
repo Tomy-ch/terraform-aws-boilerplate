@@ -109,7 +109,8 @@ locals {
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
   administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
-  governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-ci-apply-identity-governance"
+  governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
+  governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
 
   # Resource "*" でしか与えられない Action は、Action ごとの別の文にする（deployment-identity/ADR-0201 決定1）。

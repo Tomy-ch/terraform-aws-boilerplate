@@ -88,7 +88,7 @@ resource "aws_iam_role_policies_exclusive" "this" {
 resource "aws_iam_policy" "governance" {
   count = local.management ? 1 : 0
 
-  name = "${var.name_prefix}-ci-apply-identity-governance"
+  name = local.governance_policy_name
   policy = jsonencode({
     Version   = "2012-10-17"
     Statement = local.governance_manage_statements
