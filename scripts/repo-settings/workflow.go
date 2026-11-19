@@ -34,7 +34,9 @@ var (
 	blankOrComment = regexp.MustCompile(`^\s*(?:#.*)?$`)
 	// holdEntry は lock を残す入口。それを走らせる job は workflow_dispatch だけで起動する（ADR-0604 決定8）。
 	holdEntry = regexp.MustCompile(`\bmake\b.*\bci-hold-[a-z0-9-]+`)
-	skipLine  = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
+	// otherEntry は lock を残す入口のほかの CI の入口。
+	otherEntry = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
+	skipLine   = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
 )
 
 type workflowEdit struct {
@@ -96,11 +98,15 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 // environment: を字下げ4桁のスカラー以外（mapping、式、アンカー、別の字下げ）で書いた行があれば失敗する
 // —— 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる（ADR-0702 決定14）。job の
 // steps: の列（[workflow.StepsSpan]）の中の行は step の入力なので読まない。lock を残す job の environment は、
-// 読めることだけを確かめて数えない。
+// 読めることだけを確かめて数えない。lock を残す入口とほかの CI の入口を併せ持つ job は失敗する —— 数えないと
+// apply の environment が起動条件の生成から黙って外れる。
 func applyEnvs(src string) ([]string, error) {
 	var envs []string
 	for _, job := range workflow.SplitJobs(src).Jobs {
 		hold := isHoldJob(job)
+		if hold && hasEntry(job, otherEntry) {
+			return nil, xerrors.Wrapf(errTrigger, "job %s が lock を残す入口とほかの CI の入口を併せ持ちます。lock を残す job か apply の job かを決められません", job.ID)
+		}
 		from, to, hasSteps := workflow.StepsSpan(job)
 		for i, l := range job.Lines {
 			if (hasSteps && i >= from && i < to) || !anyEnvironment.MatchString(l.Text) {
@@ -121,8 +127,12 @@ func applyEnvs(src string) ([]string, error) {
 
 // isHoldJob は、job が lock を残す入口を走らせるかを返します。コメントと step の name: の行は数えない。
 func isHoldJob(job workflow.Job) bool {
+	return hasEntry(job, holdEntry)
+}
+
+func hasEntry(job workflow.Job, re *regexp.Regexp) bool {
 	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
-		return !skipLine.MatchString(l.Text) && holdEntry.MatchString(l.Text)
+		return !skipLine.MatchString(l.Text) && re.MatchString(l.Text)
 	})
 }
 

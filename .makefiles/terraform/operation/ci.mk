@@ -184,13 +184,13 @@ endef
 # 後続を省いて失敗することだけを決める（ADR-0702 決定24）。
 define CI_HOLD
 $(call CI_PREPARE,$(1),$(2)); \
-list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; hold="$$d/$$root.hold.txt"; pid=; \
+list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; hold="$$d/$$root.hold.txt"; pid=; started=; \
 rm -f "$$list" "$$body" "$$meta" "$$hold"; \
-trap 'test -z "$$pid" || kill -KILL "$$pid" 2>/dev/null || :; rm -f "$$out" "$$json" "$$tfplan" "$$pol" "$$list" "$$body" "$$meta" "$$hold"' EXIT; \
+trap 'rc=$$?; test -z "$$pid" || kill -KILL "$$pid" 2>/dev/null || :; rm -f "$$out" "$$json" "$$tfplan" "$$pol" "$$list" "$$body" "$$meta" "$$hold"; test "$$rc" = 0 || test -z "$$started" || echo "❌ plan を起動した後に失敗しました。lock が残っていれば、lock の解除の閾値を過ぎてから Terraform Unlock で外してください" >&2' EXIT; \
 export list body meta hold; key=$$($(call TF_LOCAL,lock-key "$$dir")); export key; \
 $(TF_LOCAL_ENV) $(AWS_BIN) s3api list-objects-v2 --region "$$region" --bucket "$$bucket" --prefix "$$key" --expected-bucket-owner "$$account" --no-paginate --output json > "$$list"; \
 $(call TF_LOCAL,lock-etag -key "$$key" -want absent "$$list") > /dev/null; \
-$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan -input=false -no-color -parallelism=1 > "$$hold" 2>&1 & pid=$$!; export pid; \
+$(TF_LOCAL_ENV) $(TF_BIN) -chdir="$$dir" plan -input=false -no-color -parallelism=1 > "$$hold" 2>&1 & pid=$$!; started=1; export pid; \
 held=$$($(call TF_LOCAL,lock-wait -pid "$$pid" -interval $(CI_HOLD_INTERVAL) -limit $(CI_HOLD_LIMIT) "$$hold")); \
 kill -KILL "$$pid" 2>/dev/null || :; wait "$$pid" 2>/dev/null || :; pid=; \
 test -n "$$held" || { echo "❌ plan が lock を取った後の行を出さずに終わりました。全文はランナーの外に出しません" >&2; exit 1; }; \

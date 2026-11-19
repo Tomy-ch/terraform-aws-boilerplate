@@ -172,6 +172,9 @@ func Test_applyEnvs(t *testing.T) {
 		"タブで字下げした environment":   "jobs:\n  a:\n\tenvironment: x-apply\n",
 		"steps の後の job のキー":      "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
 		"lock を残す job の mapping": "jobs:\n  hold:\n    environment:\n      name: x-apply\n    steps:\n      - run: make ci-hold-x-identity\n",
+		"apply の入口と lock を残す入口を併せ持つ job":     "jobs:\n  a:\n    environment: x-apply\n    steps:\n      - run: make ci-apply-x-workload\n      - run: make ci-hold-x-workload\n",
+		"行末のコメントに lock を残す入口を持つ apply の job": "jobs:\n  a:\n    environment: x-apply\n    steps:\n      - run: make ci-apply-x-workload # make ci-hold-x-workload\n",
+		"lock の解除の入口と lock を残す入口を併せ持つ job":   "jobs:\n  a:\n    environment: x-unlock\n    steps:\n      - run: make ci-unlock-x-workload\n      - run: make ci-hold-x-workload\n",
 	}
 	for name, src := range unreadable {
 		t.Run("読めない environment: は失敗する（"+name+"）", func(t *testing.T) {
@@ -291,6 +294,27 @@ func Test_isHoldJob(t *testing.T) {
 			jobs := workflow.SplitJobs(c.src).Jobs
 			require.Len(t, jobs, 1)
 			assert.Equal(t, c.want, isHoldJob(jobs[0]))
+		})
+	}
+}
+
+func Test_hasEntry(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"入口を走らせる行がある":     {"jobs:\n  a:\n    steps:\n      - run: make ci-apply-x-identity\n", true},
+		"行末のコメントの入口も数える":  {"jobs:\n  a:\n    steps:\n      - run: echo # make ci-apply-x-identity\n", true},
+		"行頭のコメントの入口は数えない": {"jobs:\n  a:\n    steps:\n      # make ci-apply-x-identity\n      - run: x\n", false},
+		"入口が無い":           {"jobs:\n  a:\n    steps:\n      - run: make lint\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			jobs := workflow.SplitJobs(c.src).Jobs
+			require.Len(t, jobs, 1)
+			assert.Equal(t, c.want, hasEntry(jobs[0], otherEntry))
 		})
 	}
 }
