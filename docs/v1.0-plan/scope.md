@@ -268,7 +268,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Media | `media-ingest` | 署名付きアップロード→受入S3→GuardDuty Malware Protection for S3→スキャン結果タグで読み取りを制御（第6.3節） |
 | Network | `private-aws-access` | VPC Endpoint等によるAWSサービスへの私設到達 |
 | Network | `controlled-external-egress` | private subnetから明示した外部HTTPS宛先へ到達（第9.2節）。既定は無効で、有効にした環境だけがNATを持つ。制御手段の既定はNetwork Firewall。送信元IPの固定としてNAT GatewayのEIPを出力する |
-| Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
+| Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。サブネット・ルートテーブル・経路・Internet Gatewayの持ち主で、NAT Gateway・EIP・Network Firewallは`controlled-external-egress`が持つ。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
 | Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
 | Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
@@ -289,7 +289,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。
 
-基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
+基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。**`network-foundation`も除く** —— 通知に値するmetricを出すresourceを持たないためである（`usecases/network-foundation/docs/adr/0202-no-alarm-topic.md`）。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
 
 ### 7.1 接続シナリオ
 
@@ -555,8 +555,8 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 |---|---|---|
 | 複製を作れる | `state-backend` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する |
 | 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認（`deployment-identity` は `make ci-assume-denied`）、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
-| 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
-| 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks` | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
+| 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification`、`network-foundation` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
+| 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks`、`network-foundation`（GuardDutyのRuntime MonitoringのVPC Endpoint、消費者のENI） | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
 
 期待残存は、resourceの型ではなく、識別子・状態・期限で宣言する（ADR-0401 決定16）。
 
