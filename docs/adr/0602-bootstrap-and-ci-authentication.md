@@ -145,6 +145,10 @@ CI の権限については循環の性質が異なる。backend さえあれば
     lock file の復号だけである。state の key、state backend と鍵の設定、bootstrap の構成物を変更する権限は
     与えない。lock の解除の role は、本 ADR が apply の role に課す条件（決定14-16）に従い、apply 系の role
     とは別の environment を持つ。
+
+    apply 系の role を、apply のほかには、lock を残す job（ADR-0604 決定8）にだけ使う。この job は apply せず、
+    state と AWS の resource を変えない。lock の解除の role の権限を、lock が残る障害の前に実物で評価するために
+    置く。
 14. 各 role の信頼条件を、GitHub Actions の OIDC claim のうち **environment** によって限定する。ref と
     event による限定（`ref:` / `pull_request` 形式の `sub`）を用いない。ref の限定は environment の
     deployment branch policy が、event の限定は workflow の起動条件が担う。
@@ -169,7 +173,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
     - environment の管理者による保護の迂回を無効とする。これは ADR-0603 決定22 が禁じるブランチの保護規則の
       bypass とは別の設定である
     - apply の role を assume する job の起動条件を、デプロイブランチへの push と手動の起動に限る。lock の
-      解除の role を assume する job の起動条件は、手動の起動だけとする。どちらの手動の起動も ref や commit を
+      解除の role を assume する job の起動条件は、手動の起動だけとする。lock を残す job（ADR-0604 決定8）の起動条件は、手動の起動だけとする。どちらの手動の起動も ref や commit を
       入力に取らず、起動したブランチの最新の commit だけを対象とする。environment は同じ ref から起動された
       event を区別しないためである。sandbox の apply の role を assume する job の起動条件は、Pull Request
       だけとする。手動の起動を持たない。
@@ -267,7 +271,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Policy Test: lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られ、その復号を Key Policy が同じ lock file の object に限って許すこと（決定13）
 - Policy Test（apply-identity の role の権限の与え方を持つ use-case の Policy Test。検査の形はその use-case の ADR が持つ）: apply-identity の role の、plan の出力の置き場の object に届く Allow が、plan の role が書けない key への `s3:PutObject` だけであること（決定13）
 - Policy Test（apply の role の権限の与え方を持つ use-case の Policy Test。検査の形はその use-case の ADR が持つ）: reference の plan で、apply の role が、bootstrap の構成物（決定1）のうち state の鍵と alias を除く resource の ARN ごとに読み取り以外の Action を、state Bucket のすべての object の版の削除を、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。bootstrap の構成物を持つ use-case の下の resource が、宣言ですべて分類されていること（決定13）
-- Static Analysis: apply の role を assume する job の起動条件が、デプロイブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと（決定14）
+- Static Analysis: apply の role を assume する job の起動条件が、デプロイブランチへの push と手動の起動に限られ、手動の起動が ref や commit を入力に取らないこと。lock を残す job の起動が、入力の無い手動の起動だけであること（決定13-14）
 - Static Analysis: plan の role を assume する job が、fork からの Pull Request で assume の前に失敗する条件を持つこと（決定14）
 - Policy Test: 信頼条件にワイルドカードが存在しないこと（決定15、ADR-0402）
 - Policy Test: 信頼条件の `sub` が environment 形式であり、ref 形式と event 形式を含まないこと（決定14）
