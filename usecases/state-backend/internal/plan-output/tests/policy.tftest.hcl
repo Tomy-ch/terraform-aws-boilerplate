@@ -109,7 +109,7 @@ run "bucket_policy_whole_bucket_writer" {
         Resource  = "${aws_s3_bucket.this.arn}/*"
       },
     ]
-    error_message = "接頭辞が空の書き手の Bucket Policy が、書き手の外の PutObject の拒否と削除の拒否の文だけになっていません。接頭辞の外への書き込みを拒む文は、NotResource が Bucket のすべての object を覆うので作りません。"
+    error_message = "接頭辞が空の書き手の Bucket Policy が、書き手の外の PutObject の拒否と削除の拒否の文だけになっていません。接頭辞の外への書き込みを拒む文は、NotResource が Bucket のすべての object に一致して何も拒まないので作りません。"
   }
 }
 
