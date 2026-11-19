@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bootstrap.md の読むだけの確認を、期待値と突き合わせて実行する。何も作らず、何も変えない。
-# 使い方: docs/setup/scripts/verify.sh <stage1|before-apply|stage4|permissions|stage5>
+# 使い方: docs/setup/scripts/verify.sh <stage1|before-apply|stage4|permissions|stage5|output-policy>
 # 前提: make aws-login 済み。aws と jq が PATH に在る。出力のアカウント ID は伏せる。
 set -euo pipefail
 
@@ -8,6 +8,11 @@ REGION=${REGION:-ap-northeast-1}
 export AWS_PROFILE=${AWS_PROFILE:-tabp-bootstrap}
 # 段3 で bootstrap_executor_user_name を渡したときだけ、その user の名前を与える。
 BOOTSTRAP_EXECUTOR=${BOOTSTRAP_EXECUTOR:-}
+# output-policy が評価する Bucket Policy の文書の出所。live はいま Bucket に付いている文書、reference は make tf-policy が
+# 書いた state-backend の reference の plan の文書（アカウント ID を置き換える）。
+POLICY_SOURCE=${POLICY_SOURCE:-live}
+REFERENCE_PLAN=tmp/tf-policy/state-backend.json
+REFERENCE_ACCOUNT_ID=123456789012
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 KEY_ALIAS=alias/tabp-admin-tfstate
@@ -47,10 +52,11 @@ JQ
 )
 JQ_KEY_POLICY=$(jq_program <<'JQ'
 def arr: if type == "array" then . else [.] end;
-.Statement | length == 3
+.Statement | length == 4
 and any(.Effect == "Allow" and .Principal.AWS == $root)
-and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"] and .Condition.StringEquals["kms:ViaService"] == $via)
+and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan, $apply] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"] and .Condition.StringEquals["kms:ViaService"] == $via)
 and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$unlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$lock]) and .Condition.StringEquals["kms:ViaService"] == $via)
+and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$wunlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$wlock]) and .Condition.StringEquals["kms:ViaService"] == $via)
 JQ
 )
 
@@ -114,6 +120,33 @@ sim() {
     ok "$role $res: $# 件が $want"
   else
     ng "$role $res: $want を期待（返った件数 $n / $#、違う判定: ${bad[*]:-なし}）"
+  fi
+}
+
+# 出力の Bucket の Bucket Policy の文書（$1、JSON の文字列）を Bucket の各 object に付けたものとして、role の要求を評価する。
+# Bucket Policy は aws:PrincipalArn で書き手を比べるので、その値を context で role の ARN にする。
+sim_bucket_policy() {
+  local want=$1 role=$2 res=$3 doc=$4
+  shift 4
+  local out n=0 bad=()
+  if ! out=$(aws iam simulate-principal-policy --policy-source-arn "$(role_arn "$role")" --caller-arn "$(role_arn "$role")" \
+    --resource-arns "$res" --resource-policy "$doc" --resource-owner "$ACCOUNT_ID" \
+    --context-entries "ContextKeyName=aws:PrincipalArn,ContextKeyValues=$(role_arn "$role"),ContextKeyType=string" \
+    "ContextKeyName=aws:SecureTransport,ContextKeyValues=true,ContextKeyType=boolean" \
+    --action-names "$@" --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text); then
+    ng "$role $res: Bucket Policy を含む simulate-principal-policy が失敗した"
+    return 0
+  fi
+  local action decision
+  while read -r action decision; do
+    [[ -n $action ]] || continue
+    n=$((n + 1))
+    [[ $decision == "$want" ]] || bad+=("${action}=${decision}")
+  done <<<"$out"
+  if ((n == $#)) && ((${#bad[@]} == 0)); then
+    ok "$role $res（Bucket Policy を含む）: $# 件が $want"
+  else
+    ng "$role $res（Bucket Policy を含む）: $want を期待（返った件数 $n / $#、違う判定: ${bad[*]:-なし}）"
   fi
 }
 
@@ -193,10 +226,11 @@ stage4() {
     '.KeyMetadata | .KeyState == "Enabled" and .KeySpec == "SYMMETRIC_DEFAULT" and .KeyUsage == "ENCRYPT_DECRYPT" and .MultiRegion == false and .Origin == "AWS_KMS"'
   expect_json "state の鍵の自動 rotation が 365 日" "$(aws kms get-key-rotation-status --region "$REGION" --key-id "$KEY_ALIAS")" \
     '.KeyRotationEnabled == true and .RotationPeriodInDays == 365'
-  expect_json "Key Policy が、アカウントへの委任・plan と apply-identity の S3 経由の暗号操作・unlock-identity の lock file の復号の3文だけ" \
+  expect_json "Key Policy が、アカウントへの委任・plan と apply-identity と apply の S3 経由の暗号操作・unlock-identity と unlock のそれぞれの lock file の復号の4文だけ" \
     "$(aws kms get-key-policy --region "$REGION" --key-id "$KEY_ALIAS" --policy-name default --query Policy --output text)" \
     --arg root "arn:aws:iam::${ACCOUNT_ID}:root" --arg plan "$(role_arn plan)" --arg ai "$(role_arn apply-identity)" \
-    --arg unlock "$(role_arn unlock-identity)" --arg via "s3.${REGION}.amazonaws.com" --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" \
+    --arg apply "$(role_arn apply)" --arg unlock "$(role_arn unlock-identity)" --arg wunlock "$(role_arn unlock)" --arg via "s3.${REGION}.amazonaws.com" \
+    --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" --arg wlock "arn:aws:s3:::${BUCKET}/workload/terraform.tfstate.tflock" \
     "$JQ_KEY_POLICY"
 }
 
@@ -299,6 +333,49 @@ permissions() {
   sim implicitDeny unlock "$sk" kms:Decrypt
 }
 
+reference_policy() {
+  jq -er --arg a "module.state_backend.module.$1.aws_s3_bucket_policy.this" \
+    '.resource_changes[] | select(.address == $a) | .change.after.policy' "$ROOT/$REFERENCE_PLAN" |
+    LC_ALL=C sed "s/${REFERENCE_ACCOUNT_ID}/${ACCOUNT_ID}/g"
+}
+
+# 出力の2つの Bucket の Bucket Policy が書き手を拒まず、書き手の外と削除を拒むこと（state-backend/ADR-0201 決定8）。
+output_policy() {
+  local pb="arn:aws:s3:::${PLAN_BUCKET}" ab="arn:aws:s3:::${APPLY_BUCKET}" pdoc adoc
+  case $POLICY_SOURCE in
+  live)
+    pdoc=$(s3 get-bucket-policy "$PLAN_BUCKET" --query Policy --output text) || pdoc=""
+    adoc=$(s3 get-bucket-policy "$APPLY_BUCKET" --query Policy --output text) || adoc=""
+    ;;
+  reference)
+    pdoc=$(reference_policy plan_output) || pdoc=""
+    adoc=$(reference_policy apply_output) || adoc=""
+    ;;
+  *)
+    ng "POLICY_SOURCE が live でも reference でもない（${POLICY_SOURCE}）"
+    return 0
+    ;;
+  esac
+  echo "# 文書の出所: ${POLICY_SOURCE}"
+  expect_json "plan の出力の Bucket の Bucket Policy の文書を読めた" "$pdoc" '.Statement | length > 0'
+  expect_json "apply の出力の Bucket の Bucket Policy の文書を読めた" "$adoc" '.Statement | length > 0'
+
+  echo "# plan の出力の Bucket"
+  sim_bucket_policy allowed plan "${pb}/pr/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy allowed plan "${pb}/branch/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy allowed apply-identity "${pb}/apply/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy explicitDeny plan "${pb}/apply/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy explicitDeny apply-identity "${pb}/pr/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy explicitDeny apply "${pb}/pr/1/x" "$pdoc" s3:PutObject
+  sim_bucket_policy explicitDeny plan "${pb}/pr/1/x" "$pdoc" s3:DeleteObject s3:DeleteObjectVersion
+  sim_bucket_policy explicitDeny apply-identity "${pb}/apply/1/x" "$pdoc" s3:DeleteObject s3:DeleteObjectVersion
+
+  echo "# apply の出力の Bucket"
+  sim_bucket_policy allowed apply "${ab}/x" "$adoc" s3:PutObject
+  sim_bucket_policy explicitDeny apply-identity "${ab}/x" "$adoc" s3:PutObject
+  sim_bucket_policy explicitDeny apply "${ab}/x" "$adoc" s3:DeleteObject s3:DeleteObjectVersion
+}
+
 stage5() {
   check_kms_encryption
   expect_json "identity root の state が state の鍵の SSE-KMS で書かれている" \
@@ -310,9 +387,9 @@ stage5() {
 main() {
   local stage=${1:-}
   case $stage in
-  stage1 | before-apply | stage4 | permissions | stage5) ;;
+  stage1 | before-apply | stage4 | permissions | stage5 | output-policy) ;;
   *)
-    echo "使い方: $0 <stage1|before-apply|stage4|permissions|stage5>" >&2
+    echo "使い方: $0 <stage1|before-apply|stage4|permissions|stage5|output-policy>" >&2
     return 2
     ;;
   esac
@@ -337,6 +414,7 @@ main() {
   stage4) stage4 ;;
   permissions) permissions ;;
   stage5) stage5 ;;
+  output-policy) output_policy ;;
   esac
   echo "# 結果: ${checks} 件のうち NG ${fails} 件"
   ((checks > 0 && fails == 0))

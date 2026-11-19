@@ -20,12 +20,13 @@ variable "env" {
 }
 
 variable "ci_role_arns" {
-  description = "CI の role の ARN。plan は CI の plan、apply は workload root の apply、apply_identity は identity root の apply、unlock_identity は identity root の lock を外す role。state の鍵は、plan と apply_identity に復号と鍵の生成を、unlock_identity に identity root の lock file の復号だけを許す。state Bucket は、apply に workload root の state と lock file の書き込みを、apply_identity に identity root の state と lock file の書き込みを、unlock_identity に identity root の lock file の削除だけを許し、ほかの主体の object の書き込みを拒否する。どれも鍵と同じアカウントの role にする。"
+  description = "CI の role の ARN。plan は CI の plan、apply は workload root の apply、apply_identity は identity root の apply、unlock_identity は identity root の lock を外す role、unlock は workload root の lock を外す role。state の鍵は、plan と apply と apply_identity に復号と鍵の生成を、unlock_identity と unlock にそれぞれの root の lock file の復号だけを許す。state Bucket は、apply に workload root の state と lock file の書き込みを、apply_identity に identity root の state と lock file の書き込みを、unlock_identity と unlock にそれぞれの root の lock file の削除だけを許し、ほかの主体の object の書き込みを拒否する。plan の出力の Bucket は plan に pr/ と branch/ の、apply_identity に apply/ の書き込みを、apply の出力の Bucket は apply に書き込みを許し、ほかの書き込みとすべての主体の削除を拒否する。どれも鍵と同じアカウントの role にする。"
   type = object({
     plan            = string
     apply           = string
     apply_identity  = string
     unlock_identity = string
+    unlock          = string
   })
   nullable = false
 
@@ -37,7 +38,7 @@ variable "ci_role_arns" {
   # 同じ role を2つの役割に渡すと、ある役割が別の役割の権限で走っても気づけない。
   validation {
     condition     = length(distinct(values(var.ci_role_arns))) == length(values(var.ci_role_arns))
-    error_message = "ci_role_arns の plan・apply・apply_identity・unlock_identity に同じ role を渡さないでください。"
+    error_message = "ci_role_arns の plan・apply・apply_identity・unlock_identity・unlock に同じ role を渡さないでください。"
   }
 }
 

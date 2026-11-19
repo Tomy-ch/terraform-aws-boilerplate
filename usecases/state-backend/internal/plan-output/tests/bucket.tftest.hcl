@@ -14,6 +14,7 @@ variables {
   kms_key_arn    = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
   name           = "tabp-admin-tfplan"
   retention_days = 7
+  writers        = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "pr/" }]
 }
 
 run "account_regional_name" {
