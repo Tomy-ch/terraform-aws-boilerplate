@@ -1,6 +1,6 @@
 output "arns" {
-  description = "管理アカウントの break-glass の IAM user・group・role の ARN。"
-  value       = concat(sort([for u in aws_iam_user.this : u.arn]), [aws_iam_group.this.arn, aws_iam_role.this.arn])
+  description = "管理アカウントの break-glass の IAM user 2つ・group・role の ARN。path と名前から組むので、plan の時点で決まる。"
+  value       = local.arns
 }
 
 output "role_arn" {

@@ -33,16 +33,6 @@ override_resource {
   values = { arn = "arn:aws:iam::111111111111:user/break-glass/break-glass-2" }
 }
 
-override_resource {
-  target = module.break_glass.aws_iam_group.this
-  values = { arn = "arn:aws:iam::111111111111:group/break-glass/break-glass" }
-}
-
-override_resource {
-  target = module.break_glass.aws_iam_role.this
-  values = { arn = "arn:aws:iam::111111111111:role/break-glass/tabp-break-glass" }
-}
-
 run "outputs" {
   command = apply
 

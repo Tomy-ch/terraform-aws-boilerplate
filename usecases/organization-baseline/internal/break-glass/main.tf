@@ -9,6 +9,14 @@ locals {
   partition = data.aws_partition.current.partition
   # 2つ目は予備（ADR-0301 決定19）。
   user_names = toset(["break-glass-1", "break-glass-2"])
+  group_name = "break-glass"
+
+  # 作る前に決まる ARN。deployment-identity の policy が、まだ無い break-glass を名指せる。
+  arn_prefix = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
+  arns = concat(
+    [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"],
+    ["${local.arn_prefix}:group${var.path}${local.group_name}", "${local.arn_prefix}:role${var.path}${var.role_name}"],
+  )
 }
 
 # パスワードとハードウェア MFA は Terraform で作らず、人が設定する。
@@ -25,7 +33,7 @@ resource "aws_iam_user" "this" {
 }
 
 resource "aws_iam_group" "this" {
-  name = "break-glass"
+  name = local.group_name
   path = var.path
 }
 

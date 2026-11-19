@@ -137,3 +137,34 @@ run "password_policy" {
     error_message = "password policy は14文字以上、24世代の再利用の禁止、4種の文字を求めてください（Security Hub IAM.7・IAM.15・IAM.16）。"
   }
 }
+
+# deployment-identity の policy が名指すので、作る前の plan で値が決まっていること。
+run "arns_known_at_plan" {
+  command = plan
+
+  assert {
+    condition = output.arns == [
+      "arn:aws:iam::111111111111:user/break-glass/break-glass-1",
+      "arn:aws:iam::111111111111:user/break-glass/break-glass-2",
+      "arn:aws:iam::111111111111:group/break-glass/break-glass",
+      "arn:aws:iam::111111111111:role/break-glass/tabp-break-glass",
+    ]
+    error_message = "break-glass の ARN が、plan の時点で path と名前から組んだ値になっていません。"
+  }
+}
+
+# 組んだ ARN が、作った resource の path と名前を指すこと。
+run "arns_match_resources" {
+  command = apply
+
+  assert {
+    condition = output.arns == concat(
+      [for n in sort(keys(aws_iam_user.this)) : "arn:aws:iam::111111111111:user${aws_iam_user.this[n].path}${aws_iam_user.this[n].name}"],
+      [
+        "arn:aws:iam::111111111111:group${aws_iam_group.this.path}${aws_iam_group.this.name}",
+        "arn:aws:iam::111111111111:role${aws_iam_role.this.path}${aws_iam_role.this.name}",
+      ],
+    )
+    error_message = "break-glass の ARN が、作った user・group・role の path と名前を指していません。"
+  }
+}
