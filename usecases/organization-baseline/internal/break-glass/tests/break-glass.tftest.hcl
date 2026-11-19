@@ -138,7 +138,6 @@ run "password_policy" {
   }
 }
 
-# deployment-identity の policy が名指すので、作る前の plan で値が決まっていること。
 run "arns_known_at_plan" {
   command = plan
 
@@ -153,7 +152,6 @@ run "arns_known_at_plan" {
   }
 }
 
-# 組んだ ARN が、作った resource の path と名前を指すこと。
 run "arns_match_resources" {
   command = apply
 

@@ -89,7 +89,6 @@ run "admin_state_key_alias_name" {
   }
 }
 
-# organization-baseline の break_glass_arns が、作る前の plan で決まった値として deployment-identity へ渡る。
 run "admin_break_glass_arns" {
   command = plan
 
