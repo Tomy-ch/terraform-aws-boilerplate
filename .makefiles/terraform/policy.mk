@@ -92,7 +92,7 @@ endef
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
-	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}' > "$$root/data.json"; \
+	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}' > "$$root/data.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
 		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" "$$@" 2>&1); rc=$$?; \
@@ -100,7 +100,7 @@ tf-policy-canary:
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
-	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego "$$root/rego"/audit_evidence*.rego "$$root/rego"/finops*.rego "$$root/rego"/network_foundation*.rego "$$root/rego"/ops_notification*.rego; \
+	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego "$$root/rego"/audit_evidence*.rego "$$root/rego"/finops*.rego "$$root/rego"/network_foundation*.rego "$$root/rego"/ops_notification*.rego "$$root/rego"/image_registry*.rego "$$root/rego"/publisher_trust*.rego "$$root/rego"/organization_baseline_*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
 	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \

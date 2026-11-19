@@ -10,6 +10,17 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  # 子の OU の parent_id の検査を通す形にする。
+  mock_resource "aws_organizations_organization" {
+    defaults = {
+      id                = "o-exampleorg1"
+      master_account_id = "123456789012"
+      roots             = [{ id = "r-exam", arn = "arn:aws:organizations::123456789012:root/o-exampleorg1/r-exam", name = "Root", policy_types = [] }]
+    }
+  }
+  mock_resource "aws_organizations_organizational_unit" {
+    defaults = { id = "ou-exam-abcdefgh" }
+  }
 }
 
 # state の鍵の Key Policy の precondition（同じアカウントの role）を plan で評価させるため、role の ARN を既知の値にする。
@@ -78,12 +89,11 @@ run "admin_state_key_alias_name" {
   }
 }
 
-# organization-baseline の break_glass_arns と同じ規則（path /break-glass/ と名前）で組んだ ARN が、apply の role の Deny に渡る。
 run "admin_break_glass_arns" {
   command = plan
 
   assert {
-    condition = local.break_glass_arns == [
+    condition = module.organization_baseline.break_glass_arns == [
       "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
       "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
       "arn:aws:iam::123456789012:group/break-glass/break-glass",
