@@ -248,92 +248,29 @@ address(c) := trim_prefix(split(c.id, "#")[1], "resource.")
 
 resource_ids := {c.id | some c in resources}
 
-# 値の文字列から、補間（`${...}`）の内側の参照を取り出す。辿り方は README の「親を指す引数の辿り方」。
-ref_tokens(v) := {tok |
-	some s in strings_in(v)
-	some tok in string_tokens(s)
-}
+name_of(c) := substring(address(c), count(type_of(c)) + 1, -1)
 
-# 補間の対応を読めない文字列は、参照を取りこぼさないよう、許されない葉として返す。
-unreadable := "（読めない式）"
+resource_attrs(c, path) := [a |
+	some b in go_blocks
+	b.kind == "resource"
+	b.file == c.path
+	b.labels == [type_of(c), name_of(c)]
+	some a in b.attributes
+	a.path == path
+]
 
-strings_in(v) := {v} if is_string(v)
+ref_token(r) := concat(".", [r.root, r.steps[0].name]) if first_step_named(r)
 
-# オブジェクトのキーも式を持ちうる（`{ (var.x) = ... }`）ので、値と並べて読む。
-strings_in(v) := {s | walk(v, [_, s]); is_string(s)} | {k | walk(v, [p, _]); some k in p; is_string(k)} if not is_string(v)
+ref_token(r) := r.root if not first_step_named(r)
 
-# 式の中の引用符の文字列。中の `{` `}` `$` は文字列の一部で、補間の対応にも参照にも数えない。
-quoted := `"(?:[^"\\]|\\.)*"`
+first_step_named(r) if r.steps[0].kind == "attr"
 
-# 入れ子の `{}` は3段まで読む。それより深い補間は外に `${` が残るので unreadable になる。
-interpolation := sprintf(`\$\{((?:[^{}"]|%s|\{(?:[^{}"]|%s|\{(?:[^{}"]|%s)*\})*\})*)\}`, [quoted, quoted, quoted])
-
-interpolations(s) := [m[1] | some m in regex.find_all_string_submatch_n(interpolation, s, -1)]
-
-string_tokens(s) := {unreadable} if unreadable_string(s)
-
-string_tokens(s) := {tok |
-	some expr in interpolations(s)
-	some tok in expression_tokens(expr)
-} if not unreadable_string(s)
-
-# パーサは隣り合う文字列を連結して返す。次の形は、本物のエスケープや文字列と、連結の結果とを区別できない。
-unreadable_string(s) if contains(regex.replace(s, interpolation, ""), "${")
-
-unreadable_string(s) if contains(s, "$${")
-
-# テンプレートの指示子（`%{ if }` `%{ for }`）の式は読まない。`%%{` はリテラルのエスケープ。
-unreadable_string(s) if contains(replace(s, "%%{", ""), "%{")
-
-# 式の中のコメントは、引用符を含めば文字列の対をずらす。
-unreadable_string(s) if {
-	some expr in interpolations(s)
-	regex.match(`/\*|//|#`, literal_free(expr))
-}
-
-# 予約された根や resource の型と同じ名前の反復変数は、同じ式の外部参照を隠しうる。
-unreadable_string(s) if {
-	some expr in interpolations(s)
-	some name in for_iterators(literal_free(expr))
-	name in keywords | resource_types
-}
-
-resource_types := {type_of(c) | some c in resources}
-
-# 式の中の、補間を持たない引用符の文字列は参照ではない。`for` の反復変数は参照の根でない。
-expression_tokens(expr) := {tok |
-	body := strip_index(literal_free(expr))
-	iterators := for_iterators(literal_free(expr))
-	some m in regex.find_all_string_submatch_n(`(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_*][A-Za-z0-9_-]*)+)`, body, -1)
-	parts := split(m[2], ".")
-	not parts[0] in iterators
-	tok := concat(".", array.slice(parts, 0, 2))
-}
-
-for_iterators(expr) := {name |
-	some m in regex.find_all_string_submatch_n(`\bfor\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s*,\s*([A-Za-z_][A-Za-z0-9_-]*))?\s+in\b`, expr, -1)
-	some name in array.slice(m, 1, 3)
-	name != ""
-}
-
-# 引用符の文字列を字句として左から切り出し、補間を持たないものを除く。補間を持つ文字列は中の参照を読むので残す。
-literal_free(expr) := concat(" ", [t |
-	some t in regex.find_n(sprintf(`%s|[^"]+`, [quoted]), expr, -1)
-	keep_token(t)
-])
-
-keep_token(t) if not startswith(t, `"`)
-
-keep_token(t) if {
-	startswith(t, `"`)
-	contains(t, "${")
-}
-
-# resource か local の参照（`<名前>.<名前>`）の直後の添字は親を選ぶだけなので、中を辿らない。属性の後の添字と、
-# 2つ目以降の添字は辿る。剥がした跡の `#` は、続く添字を参照の直後と読ませない。
-strip_index(s) := r if {
-	pattern := `(^|[^A-Za-z0-9_.\]#])([A-Za-z_][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_-]*)\[[^\[\]]*\]`
-	r := regex.replace(regex.replace(regex.replace(s, pattern, "$1$2#"), pattern, "$1$2#"), pattern, "$1$2#")
+# 参照の根と最初の名前の直後の添字（段1）は親を選ぶだけなので、その中の参照を辿らない。within は祖先を
+# すべて持つので、その添字の中の、さらに入れ子の添字の参照も外れる。
+skipped(refs, r) if {
+	some w in r.within
+	w.step == 1
+	first_step_named(refs[w.ref])
 }
 
 token_node(d, _, tok) := sprintf("local|%s|%s", [d, substring(tok, 6, -1)]) if startswith(tok, "local.")
@@ -354,23 +291,27 @@ token_node(_, _, tok) := sprintf("leaf|%s", [tok]) if {
 	tok != "count.index"
 }
 
-nodes_of(d, cid, v) := {n | some tok in ref_tokens(v); n := token_node(d, cid, tok)}
+nodes_of(d, cid, refs) := {token_node(d, cid, ref_token(r)) | some r in refs; not skipped(refs, r)}
 
-local_values := {[hcl.dir(f.path), name, value] |
-	some f in tf_files
-	some l in object.get(f.contents, "locals", [])
-	some name, value in l
-}
+local_attrs := [[hcl.dir(b.file), a] |
+	some b in go_blocks
+	b.kind == "locals"
+	some a in b.attributes
+]
 
+# 同じ名前の local を複数の block が定義しても、辿る先を1つの節に合わせる（Terraform はこれを拒む）。
 ref_graph := object.union(
-	{sprintf("local|%s|%s", [d, n]): nodes_of(d, "", v) | some [d, n, v] in local_values},
-	{sprintf("each|%s", [c.id]): nodes_of(hcl.dir(c.path), "", object.get(c.body, "for_each", null)) | some c in resources},
+	{sprintf("local|%s|%s", [d, n]): union({nodes_of(d, "", a.refs) | some [d2, a] in local_attrs; d2 == d; a.path == n}) |
+		some [d, a0] in local_attrs
+		n := a0.path
+	},
+	{sprintf("each|%s", [c.id]): union({nodes_of(hcl.dir(c.path), "", a.refs) | some a in resource_attrs(c, "for_each")}) | some c in resources},
 )
 
 # graph.reachable は graph のキーに無い節（葉）を返さないので、辿った節の辺の先から葉を集める。
 # 定義の無い local も、辿れない参照として葉に残す。
-leaves(c, v) := {l |
-	start := nodes_of(hcl.dir(c.path), c.id, v)
+leaves(c, refs) := {l |
+	start := nodes_of(hcl.dir(c.path), c.id, refs)
 	reached := graph.reachable(ref_graph, start)
 	some n in start | {m | some r in reached; some m in ref_graph[r]}
 	l := leaf_of(n)
@@ -398,13 +339,14 @@ parent_type_ok(types, t) if t in types
 parent_type_ok(types, _) if "*" in types
 
 deny contains msg if {
+	go_ok
 	is_object(attachments)
 	some c in resources
 	a := attachments[type_of(c)]
 	well_formed_attachment(a)
 	some arg, types in a.parents
-	some v in hcl.values_at(c.body, arg)
-	ls := leaves(c, v)
+	some at in resource_attrs(c, arg)
+	ls := leaves(c, at.refs)
 	bad := {l | some l in ls; not allowed_leaf(c, types, l)}
 	not_same_module(ls, bad)
 	msg := sprintf("LY301 [親の同居] %s の %s の %s が、同じ module の親（%s）だけを参照していません: %s（ADR-0102 決定18）→ 親の resource と同じ module に置き、親を参照する", [c.path, address(c), arg, concat(", ", types), describe(ls, bad)])
@@ -419,19 +361,20 @@ describe(ls, _) := "参照がありません" if count(ls) == 0
 describe(ls, bad) := concat(", ", sort(bad)) if count(bad) > 0
 
 deny contains msg if {
+	go_ok
 	is_object(attachments)
 	some c in resources
 	a := attachments[type_of(c)]
 	well_formed_attachment(a)
 	a.optional == false
 	every arg, _ in a.parents {
-		count(hcl.values_at(c.body, arg)) == 0
+		count(resource_attrs(c, arg)) == 0
 	}
 	msg := sprintf("LY302 [親の引数が無い] %s の %s が、宣言した親の引数（%s）をどれも持ちません。Provider が引数の名前を変えたなら宣言を直す", [c.path, address(c), concat(", ", sort(object.keys(a.parents)))])
 }
 
 # 宣言のどの区分にも無い型は、親を外から書き換える経路かどうかを判定できないので落とす。親の型に
-# 現れるだけでは分類に数えない。親になる型も、それ自身が attachment かどうかの判断を宣言に残す。
+# 現れるだけでは分類に数えない。
 classified contains t if some t, _ in attachments
 
 classified contains t if some t, _ in not_attachments
@@ -442,4 +385,172 @@ deny contains msg if {
 	some t in {type_of(c) | some c in resources}
 	not t in classified
 	msg := sprintf("LY303 [分類されていない型] resource の型 %s が宣言（conftest/hcl/layer/decl.json）のどの区分にもありません → attachment なら親の引数と親の型を、そうでなければ理由を宣言に足す", [t])
+}
+
+# --- HCL の入力（hcl-input の出力。ADR-0501 決定5） ---
+#
+# 形の崩れた入力は LY004 だけで落とし、それを読む規則は評価しない。欠けを空として先へ進めると、
+# 親の引数が無いものとして LY301 が黙って通るため。
+
+default hcl_input := null
+
+hcl_input := data.hcl_input
+
+go_ok if {
+	is_object(hcl_input)
+	go_files_ok
+	is_array(hcl_input.blocks)
+	every b in hcl_input.blocks {
+		well_formed_block(b)
+	}
+}
+
+go_files_ok if {
+	is_array(hcl_input.files)
+	every p in hcl_input.files {
+		non_empty_string(p)
+	}
+}
+
+go_blocks := hcl_input.blocks if go_ok
+
+go_files := {p | some p in hcl_input.files} if go_ok
+
+well_formed_block_head(b) if {
+	is_object(b)
+	{k | some k, _ in b} == {"file", "kind", "labels", "attributes"}
+	non_empty_string(b.file)
+	non_empty_string(b.kind)
+	is_array(b.labels)
+	every l in b.labels {
+		is_string(l)
+	}
+	is_array(b.attributes)
+}
+
+well_formed_block(b) if {
+	well_formed_block_head(b)
+	every a in b.attributes {
+		well_formed_attribute(a)
+	}
+}
+
+well_formed_attribute(a) if {
+	is_object(a)
+	{k | some k, _ in a} == {"path", "refs"}
+	non_empty_string(a.path)
+	is_array(a.refs)
+	every r in a.refs {
+		well_formed_ref(a.refs, r)
+	}
+}
+
+well_formed_ref(refs, r) if {
+	is_object(r)
+	{k | some k, _ in r} == {"root", "steps", "within"}
+	non_empty_string(r.root)
+	is_array(r.steps)
+	every s in r.steps {
+		well_formed_step(s)
+	}
+	is_array(r.within)
+	every w in r.within {
+		well_formed_within(refs, w)
+	}
+}
+
+well_formed_step(s) if s == {"kind": "index"}
+
+well_formed_step(s) if s == {"kind": "splat"}
+
+well_formed_step(s) if {
+	is_object(s)
+	{k | some k, _ in s} == {"kind", "name"}
+	s.kind == "attr"
+	non_empty_string(s.name)
+}
+
+well_formed_within(refs, w) if {
+	is_object(w)
+	{k | some k, _ in w} == {"ref", "step"}
+	refs[w.ref].steps[w.step].kind == "index"
+}
+
+deny contains msg if {
+	not is_object(hcl_input)
+	msg := "LY004 [HCL の入力の形] data.hcl_input がオブジェクトではありません → make layer-check が hcl-input の出力を --data で渡す"
+}
+
+deny contains msg if {
+	is_object(hcl_input)
+	not go_files_ok
+	msg := "LY004 [HCL の入力の形] hcl_input.files が、空でない文字列の配列ではありません"
+}
+
+deny contains msg if {
+	is_object(hcl_input)
+	not is_array(object.get(hcl_input, "blocks", null))
+	msg := "LY004 [HCL の入力の形] hcl_input.blocks が配列ではありません"
+}
+
+deny contains msg if {
+	is_array(object.get(hcl_input, "blocks", null))
+	some i, b in hcl_input.blocks
+	not well_formed_block_head(b)
+	msg := sprintf("LY004 [HCL の入力の形] hcl_input.blocks[%d] が、file・kind・labels（文字列の配列）・attributes（配列）だけを持つ形ではありません", [i])
+}
+
+deny contains msg if {
+	is_array(object.get(hcl_input, "blocks", null))
+	some i, b in hcl_input.blocks
+	well_formed_block_head(b)
+	some j, a in b.attributes
+	not well_formed_attribute(a)
+	msg := sprintf("LY004 [HCL の入力の形] hcl_input.blocks[%d].attributes[%d]（%s）が、path と refs（root・steps・within を持つ参照の配列）の形ではありません", [i, j, b.file])
+}
+
+deny contains msg if {
+	go_ok
+	some p in {f.path | some f in tf_files}
+	not p in go_files
+	msg := sprintf("LY002 [件数の不一致] %s を hcl-input が読んでいません", [p])
+}
+
+deny contains msg if {
+	go_ok
+	some p in go_files
+	not p in {f.path | some f in tf_files}
+	msg := sprintf("LY002 [件数の不一致] %s は hcl-input が読みましたが、Conftest は読んでいません", [p])
+}
+
+conftest_resource_keys := {[c.path, [type_of(c), name_of(c)]] | some c in resources}
+
+go_resource_keys := {[b.file, b.labels] | some b in go_blocks; b.kind == "resource"}
+
+deny contains msg if {
+	go_ok
+	some [path, labels] in conftest_resource_keys
+	not [path, labels] in go_resource_keys
+	msg := sprintf("LY005 [HCL の入力の突き合わせ] %s の resource %s を hcl-input が出していません", [path, concat(".", labels)])
+}
+
+deny contains msg if {
+	go_ok
+	some [path, labels] in go_resource_keys
+	not [path, labels] in conftest_resource_keys
+	msg := sprintf("LY005 [HCL の入力の突き合わせ] hcl-input が出した %s の resource %s を Conftest が読んでいません", [path, concat(".", labels)])
+}
+
+# 片方のパーサだけが読んだ引数を、「親の引数が無い」として通さないため。
+deny contains msg if {
+	go_ok
+	is_object(attachments)
+	some c in resources
+	a := attachments[type_of(c)]
+	well_formed_attachment(a)
+	some arg in {k | some k, _ in a.parents} | {"for_each"}
+	want := count(hcl.values_at(c.body, arg))
+	got := count(resource_attrs(c, arg))
+	want != got
+	msg := sprintf("LY005 [HCL の入力の突き合わせ] %s の %s の %s が、Conftest では %d 個、hcl-input では %d 個です", [c.path, address(c), arg, want, got])
 }
