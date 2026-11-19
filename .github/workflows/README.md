@@ -329,7 +329,7 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
 - **AWS のアカウント ID は environment `admin-apply-identity` と `admin-apply` の secret `AWS_ACCOUNT_ID` を読む。** apply の job と
   同じ secret である
 - 通知は持たない。人が起動し、結果を画面で見る
-- 許す AWS の宛先は apply の job と同じ（`terraform` と `aws` のクラス）である。`ci-hold-*` は terraform を
+- 許す AWS の宛先は、その root の apply の job と同じクラスである。`ci-hold-*` は terraform を
   呼ぶ入口なので、egress の `root` に名指され、型の宛先を求められる（「ランナーの封じ込め」節）
 - job の形（role・environment・concurrency の group の apply の job との一致、起動条件、拒否の step、入口）は
   `make oidc-job-lint` が、`CI_HOLD` が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
@@ -619,6 +619,7 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 | `deps-dev` | deps.dev（パッケージの供給網の情報） | 依存を評価する job（Dependency Review、Scorecard） |
 | `aws-state` | STS・S3 の endpoint（region と wildcard の理由は宣言のコメント） | OIDC で role を assume し、state の Bucket に触れる job（lock の解除の job） |
 | `aws` | `aws-state` に加えて IAM・KMS・S3 Control の endpoint | Terraform で AWS の API を呼ぶ job |
+| `aws-notify` | `aws` に加えて SNS・EventBridge Scheduler・Chatbot の endpoint | 通知の構成物を持つ workload root を Terraform で扱う job |
 
 1つの job に固有のものは、その job の `extra` へ置く —— 走査のデータ源、通知先の `hooks.slack.com`。
 2つ目の job の `extra` に現れた宛先は、クラスへ移す。
