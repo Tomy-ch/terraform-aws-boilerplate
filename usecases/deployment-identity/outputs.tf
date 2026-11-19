@@ -27,3 +27,8 @@ output "github_oidc_provider_arn" {
   description = "GitHub Actions の OIDC provider の ARN。このアカウントで、本リポジトリの外の CI を信頼する role（ADR-0602 決定19）が信頼条件の Principal に使う。"
   value       = module.github_oidc.oidc_provider_arn
 }
+
+output "permissions_boundary_arns" {
+  description = "IAM の role を作る workload root の usecase ごとの permissions boundary の ARN（usecase の名前を key にした map）。その usecase が作るすべての role に付ける（deployment-identity/ADR-0201 決定15）。"
+  value       = module.github_oidc.permissions_boundary_arns
+}
