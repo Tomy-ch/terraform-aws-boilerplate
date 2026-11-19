@@ -481,3 +481,98 @@ run "key_policy_output" {
     error_message = "key_policy が、委任・read-write・read の3文の文書になっていません。"
   }
 }
+
+# 組織の trail は鍵の外のアカウント（管理アカウント）が持つ。値は ARN の文字列のまま、要求元と暗号化コンテキストの両方を限る。
+run "cloudtrail_service" {
+  command = plan
+
+  variables {
+    users = {
+      services = { cloudtrail = [
+        "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+        "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-another",
+      ] }
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [
+        var.administration,
+        {
+          Sid       = "CloudTrailEncrypt"
+          Effect    = "Allow"
+          Principal = { Service = "cloudtrail.amazonaws.com" }
+          Action    = "kms:GenerateDataKey*"
+          Resource  = "*"
+          Condition = { StringEquals = {
+            "aws:SourceArn" = [
+              "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-another",
+              "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+            ]
+            "kms:EncryptionContext:aws:cloudtrail:arn" = [
+              "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-another",
+              "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+            ]
+          } }
+        },
+        {
+          Sid       = "CloudTrailDescribeKey"
+          Effect    = "Allow"
+          Principal = { Service = "cloudtrail.amazonaws.com" }
+          Action    = "kms:DescribeKey"
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceArn" = [
+            "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-another",
+            "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+          ] } }
+        },
+      ]
+    }
+    error_message = "trail だけを渡したときの Key Policy が、管理の委任と CloudTrail の2文になっていません。"
+  }
+}
+
+run "config_service" {
+  command = plan
+
+  variables {
+    users = {
+      services = { config = ["333333333333", "222222222222"] }
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [
+        var.administration,
+        {
+          Sid       = "ConfigService"
+          Effect    = "Allow"
+          Principal = { Service = "config.amazonaws.com" }
+          Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+          Resource  = "*"
+          Condition = { StringEquals = { "aws:SourceAccount" = ["222222222222", "333333333333"] } }
+        },
+      ]
+    }
+    error_message = "Config のアカウントだけを渡したときの Key Policy が、管理の委任と Config の文になっていません。"
+  }
+}
+
+run "services_without_cloudtrail_and_config" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
+    }
+  }
+
+  assert {
+    condition     = length([for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s if contains(["CloudTrailEncrypt", "CloudTrailDescribeKey", "ConfigService"], s.Sid)]) == 0
+    error_message = "trail と Config を渡さないのに、その文が出ています。"
+  }
+}
