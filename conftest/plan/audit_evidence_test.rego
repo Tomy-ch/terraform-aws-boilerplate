@@ -387,3 +387,10 @@ test_violation_config_only_on_one_side if {
 test_pass_no_config_on_either_side if {
 	count(msgs(replace(replace(valid, key_policy([key_trail])), bucket_policy(array.concat(denies, [trail_write]))))) == 0
 }
+
+# 形を見る Deny の一覧と、欠落を見る Sid の一覧が食い違うと、片方にだけある Deny は黙って検査の外に出る。
+test_pass_expected_denies_match_required_sids if {
+	sids := {sid | some sid, _ in p.expected_denies} with input as fixture.plan(valid) with data.policy_plan as {"audit_evidence": decl}
+	sids == p.required_denies
+	count(sids) == 8
+}
