@@ -204,8 +204,14 @@ test_violation_put_object_policy_variable if {
 
 # Resource の配列は、正しい key が混ざっていても要素ごとに見る。
 test_violation_put_object_resource_array if {
-	every extra in ["arn:aws:s3:::${aws:username}-tfplan-x/pr/*", "*", 5] {
-		s := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": [sprintf("%s/pr/*", [plan_bucket]), extra]}
+	valid := sprintf("%s/pr/*", [plan_bucket])
+	every resources in [
+		[valid, "arn:aws:s3:::${aws:username}-tfplan-x/pr/*"],
+		[valid, "*"],
+		[valid, 5],
+		["*", valid],
+	] {
+		s := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": resources}
 		msgs := p.deny with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
 		{substring(m, 0, 14) | some m in msgs} == {"[PLAN-ROLE-03]"}
 	}
