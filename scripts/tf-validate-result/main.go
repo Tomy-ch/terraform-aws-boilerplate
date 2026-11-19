@@ -19,6 +19,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -27,12 +28,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 var (
-	errUsage         = xerrors.New("引数が足りません")
+	errUsage         = xerrors.New("引数が正しくありません")
 	errManifest      = xerrors.New("結果の一覧を解釈できません")
 	errNoTargets     = xerrors.New("validate の対象ディレクトリが0件です")
 	errUnreadable    = xerrors.New("validate の出力を読み取れません")
@@ -46,6 +48,7 @@ var (
 
 func main() {
 	log.SetFlags(0)
+	log.SetOutput(&lineGuard{w: os.Stderr})
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		log.Printf("❌ tf-validate-result: %v", err)
 		os.Exit(exitCode(err))
@@ -63,7 +66,9 @@ func exitCode(err error) int {
 	}
 }
 
-func run(args []string, out io.Writer) error {
+func run(args []string, w io.Writer) error {
+	out := &lineGuard{w: w}
+	defer func() { _ = out.flush() }()
 	fs := flag.NewFlagSet("tf-validate-result", flag.ContinueOnError)
 	fs.SetOutput(out)
 	base := fs.String("base", "", "走査の基点（TF_BASE）")
@@ -91,7 +96,10 @@ func run(args []string, out io.Writer) error {
 		if err != nil {
 			return xerrors.Wrapf(errUnreadable, "%s: %s", e.dir, e.json)
 		}
-		stderr, _ := os.ReadFile(filepath.Clean(e.stderr))
+		stderr, err := os.ReadFile(filepath.Clean(e.stderr))
+		if err != nil {
+			fmt.Fprintf(out, "%s の validate の stderr を読めません（判定は JSON で続けます）: %v\n", e.dir, err)
+		}
 		if s := strings.TrimSpace(string(stderr)); s != "" {
 			fmt.Fprintf(out, "%s の validate の stderr:\n%s\n", e.dir, quote(s))
 		}
@@ -149,15 +157,64 @@ func run(args []string, out io.Writer) error {
 	return nil
 }
 
-// quote は Terraform と Provider が出した文字列の各行に、空白でない印を前置します。
-// 行頭の `::` を GitHub Actions が workflow command と読まないようにするためです。
+// newlines は、GitHub Actions の runner が行の終わりと読む `\r\n` と `\r` を `\n` に揃えます。
+var newlines = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
+// quote は Terraform と Provider が出した文字列の各行に `│` を前置し、見出しの行と区別します。
 func quote(s string) string {
-	return "  │ " + strings.ReplaceAll(s, "\n", "\n  │ ")
+	return "  │ " + strings.ReplaceAll(newlines.Replace(s), "\n", "\n  │ ")
 }
 
-// oneLine は、見出しの行に入れる文字列の改行を空白に置き換えます。理由は quote と同じです。
+// oneLine は、見出しの行に入れる文字列の改行を空白に置き換えます。
 func oneLine(s string) string {
-	return strings.ReplaceAll(s, "\n", " ")
+	return strings.ReplaceAll(newlines.Replace(s), "\n", " ")
+}
+
+// lineGuard は、書き込まれた出力を runner と同じ規則（`\n`・`\r`・`\r\n`）で行に分け、空白を除いて
+// `::` で始まる行に印を前置します。出力にはパスや Terraform の文字列が混ざり、行頭の `::` は GitHub
+// Actions が workflow command と読むためです。行の途中で終わった書き込みは、次の改行か flush まで持ちます。
+type lineGuard struct {
+	w   io.Writer
+	buf []byte
+}
+
+func (g *lineGuard) Write(p []byte) (int, error) {
+	g.buf = append(g.buf, p...)
+	for {
+		i := bytes.IndexAny(g.buf, "\r\n")
+		if i < 0 || (g.buf[i] == '\r' && i == len(g.buf)-1) {
+			return len(p), nil
+		}
+		next := i + 1
+		if g.buf[i] == '\r' && g.buf[next] == '\n' {
+			next++
+		}
+		if _, err := g.w.Write(guardLine(g.buf[:i])); err != nil {
+			return 0, err
+		}
+		g.buf = g.buf[next:]
+	}
+}
+
+// flush は、改行で終わらなかった残りを1行として書きます。
+func (g *lineGuard) flush() error {
+	if len(g.buf) == 0 {
+		return nil
+	}
+	line := bytes.TrimSuffix(g.buf, []byte("\r"))
+	g.buf = nil
+	_, err := g.w.Write(guardLine(line))
+	return err
+}
+
+// guardLine は、改行を除いた1行に改行を付けて返します。空白を除いて `::` で始まる行には印を前置します。
+func guardLine(line []byte) []byte {
+	out := make([]byte, 0, len(line)+len("│ \n"))
+	if bytes.HasPrefix(bytes.TrimLeftFunc(line, unicode.IsSpace), []byte("::")) {
+		out = append(out, "│ "...)
+	}
+	out = append(out, line...)
+	return append(out, '\n')
 }
 
 type manifestEntry struct {
