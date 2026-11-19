@@ -69,7 +69,7 @@ type typeUse struct {
 }
 
 // checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
-// その root で Terraform を実行するジョブ（ran が plan / apply の入口を呼ぶと言うジョブ）の許可リストに
+// その root で Terraform を実行するジョブ（ran が plan / apply / lock を残す入口を呼ぶと言うジョブ）の許可リストに
 // あることを確かめる。lock の解除の入口だけを呼ぶジョブには型の宛先を求めない。欠けたときの症状は
 // .github/workflows/README.md の「ランナーの封じ込め」節が持つ。
 func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {

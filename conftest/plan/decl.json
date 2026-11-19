@@ -7,6 +7,7 @@
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
       "kms:ListAliases",
+      "logs:DescribeLogGroups",
       "organizations:DescribeOrganization",
       "organizations:ListAWSServiceAccessForOrganization",
       "organizations:ListAccounts",
@@ -279,6 +280,42 @@
         "module.image_registry.module.repository.aws_iam_role.publisher"
       ]
     },
+    "finops": {
+      "budget": "aws_budgets_budget",
+      "budget_action": "aws_budgets_budget_action",
+      "anomaly_subscription": "aws_ce_anomaly_subscription"
+    },
+    "network_foundation": {
+      "vpc": "module.network_foundation.module.vpc.aws_vpc.this",
+      "default_security_group": "module.network_foundation.module.vpc.aws_default_security_group.this",
+      "default_route_table": "module.network_foundation.module.vpc.aws_default_route_table.this",
+      "flow_log": "module.network_foundation.module.vpc.aws_flow_log.this",
+      "flow_logs_role": "module.network_foundation.module.vpc.aws_iam_role.flow_logs",
+      "flow_logs_log_group": "module.network_foundation.module.flow_logs.aws_cloudwatch_log_group.this",
+      "flow_logs_key": "module.network_foundation.module.kms.aws_kms_key.this",
+      "route_tables": {
+        "address": "module.network_foundation.module.subnet_tiers.aws_route_table.this",
+        "count": 6
+      },
+      "module_prefix": "module.network_foundation.",
+      "allowed_types": [
+        "aws_cloudwatch_log_group",
+        "aws_default_route_table",
+        "aws_default_security_group",
+        "aws_flow_log",
+        "aws_iam_role",
+        "aws_iam_role_policies_exclusive",
+        "aws_iam_role_policy",
+        "aws_iam_role_policy_attachments_exclusive",
+        "aws_kms_alias",
+        "aws_kms_key",
+        "aws_kms_key_policy",
+        "aws_route_table",
+        "aws_route_table_association",
+        "aws_subnet",
+        "aws_vpc"
+      ]
+    },
     "stateful_protection": {
       "protected_types": [
         "aws_s3_bucket",
@@ -287,7 +324,8 @@
         "aws_kms_key_policy",
         "aws_ecr_repository",
         "aws_ecr_lifecycle_policy",
-        "aws_ecr_registry_scanning_configuration"
+        "aws_ecr_registry_scanning_configuration",
+        "aws_s3_bucket_object_lock_configuration"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -310,7 +348,26 @@
       },
       "aws_kms_key": {
         "policy": null
+      },
+      "aws_s3_bucket_object_lock_configuration": {
+        "expected_bucket_owner": null
       }
+    },
+    "kms_key_policy": {
+      "cross_account_sources": {
+        "module.audit_evidence.module.archive_key.aws_kms_key_policy.this": [
+          "cloudtrail.amazonaws.com",
+          "config.amazonaws.com"
+        ]
+      }
+    },
+    "audit_evidence": {
+      "bucket": "module.audit_evidence.module.archive.aws_s3_bucket.this",
+      "bucket_policy": "module.audit_evidence.module.archive.aws_s3_bucket_policy.this",
+      "object_lock_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_object_lock_configuration.this",
+      "lifecycle_configuration": "module.audit_evidence.module.archive.aws_s3_bucket_lifecycle_configuration.this",
+      "key_policy": "module.audit_evidence.module.archive_key.aws_kms_key_policy.this",
+      "metric_alarm": "module.audit_evidence.module.archive.aws_cloudwatch_metric_alarm.delivery_stalled"
     }
   }
 }

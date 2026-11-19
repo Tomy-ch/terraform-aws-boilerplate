@@ -3,7 +3,7 @@ package plan.kms_key_policy_test
 import data.plan.fixture
 import data.plan.kms_key_policy as p
 
-# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend の reference の plan への適用が見る。CloudWatch Logs の文は reference の plan に現れないので見ない。
+# modules/kms/tests/policy.tftest.hcl の期待値と同じ文。module の実際の出力が通ることは、state-backend と audit-evidence の reference の plan への適用が見る。
 root := {
 	"Sid": "AccountKeyAdministration",
 	"Effect": "Allow",
@@ -527,4 +527,86 @@ test_violation_sns_role_without_topic if {
 
 test_pass_s3_role_is_not_sns if {
 	count(ids([root, via_s3])) == 0
+}
+
+trail_encrypt := {
+	"Sid": "CloudTrailEncrypt",
+	"Effect": "Allow",
+	"Principal": {"Service": "cloudtrail.amazonaws.com"},
+	"Action": "kms:GenerateDataKey*",
+	"Resource": "*",
+	"Condition": {"StringEquals": {
+		"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+	}},
+}
+
+config_service := {
+	"Sid": "ConfigService",
+	"Effect": "Allow",
+	"Principal": {"Service": "config.amazonaws.com"},
+	"Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+	"Resource": "*",
+	"Condition": {"StringEquals": {"aws:SourceAccount": ["111111111111", "222222222222"]}},
+}
+
+cross := {"cross_account_sources": {declared: ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}}
+
+cross_ids(statements, decl) := found if {
+	found := {substring(m, 0, 13) | some m in p.deny} with input as fixture.plan([key_policy(statements)])
+		with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": decl})
+}
+
+test_pass_declared_cross_account_sources if {
+	count(cross_ids([root, trail_encrypt, config_service], cross)) == 0
+}
+
+test_violation_cross_account_sources_not_declared if {
+	every decl in [
+		{},
+		{"cross_account_sources": {}},
+		{"cross_account_sources": {"module.other.aws_kms_key_policy.this": ["cloudtrail.amazonaws.com", "config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: ["config.amazonaws.com"]}},
+		{"cross_account_sources": {declared: "cloudtrail.amazonaws.com"}},
+		{"cross_account_sources": []},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], decl)
+	}
+}
+
+test_violation_declared_cross_account_sources_not_typed if {
+	every c in [
+		{"StringEquals": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:*:trail/tabp-org"}},
+		{"StringLike": {"aws:SourceArn": "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/*"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws-cn:cloudtrail:cn-north-1:111111111111:trail/tabp-org"}},
+		{"StringEquals": {"aws:SourceArn": "arn:aws:s3:::bucket"}},
+		{"StringEquals": {"aws:SourceAccount": "*"}},
+		{"StringEquals": {"aws:SourceAccount": "1111"}},
+	] {
+		"[PLAN-KMS-05]" in cross_ids([root, with_condition(trail_encrypt, c)], cross)
+	}
+}
+
+# 宣言したサービスと宣言の外のサービスを1つの文に並べても、外のアカウントは受けない。
+test_violation_declared_cross_account_mixed_principal if {
+	s := json.patch(trail_encrypt, [{"op": "replace", "path": "/Principal/Service", "value": ["cloudtrail.amazonaws.com", "logs.ap-northeast-1.amazonaws.com"]}])
+	"[PLAN-KMS-05]" in cross_ids([root, s], cross)
+}
+
+# 宣言した文でも、許す値と外の値が混ざれば外の値の規則だけが落とす。
+test_violation_declared_cross_account_mixed_values if {
+	every v in ["arn:aws:s3:::bucket", "arn:aws:cloudtrail:ap-northeast-1::trail/x", "1111"] {
+		c := {"StringEquals": {
+			"aws:SourceArn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org", v],
+			"kms:EncryptionContext:aws:cloudtrail:arn": ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"],
+		}}
+		found := p.deny with input as fixture.plan([key_policy([root, with_condition(trail_encrypt, c)])])
+			with data.policy_plan as object.union(object.remove(data.policy_plan, ["kms_key_policy"]), {"kms_key_policy": cross})
+		some m in found
+		contains(m, "委任のアカウントの外の値")
+	}
+}
+
+test_violation_cross_account_sources_empty_service_list if {
+	"[PLAN-KMS-05]" in cross_ids([root, trail_encrypt], {"cross_account_sources": {declared: []}})
 }

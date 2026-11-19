@@ -714,6 +714,131 @@ run "users_rejects_257_character_sns_service_topic" {
   expect_failures = [var.users]
 }
 
+run "users_accepts_cloudtrail_only" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org"] } }
+  }
+}
+
+run "users_accepts_config_only" {
+  command = plan
+
+  variables {
+    users = { services = { config = ["111111111111"] } }
+  }
+}
+
+run "users_rejects_cloudtrail_wildcard" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/*"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_cloudtrail_non_trail_arn" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:eventdatastore/abc"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_cloudtrail_short_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/ab"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_cloudtrail" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = [
+      "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+      "arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/tabp-org",
+    ] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_other_partition_cloudtrail" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws-cn:cloudtrail:cn-north-1:111111111111:trail/tabp-org"] } }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_config_non_account" {
+  command = plan
+
+  variables {
+    users = { services = { config = ["1111"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_config_wildcard" {
+  command = plan
+
+  variables {
+    users = { services = { config = ["*"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_config" {
+  command = plan
+
+  variables {
+    users = { services = { config = ["111111111111", "111111111111"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_three_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/abc"] } }
+  }
+}
+
+run "users_accepts_128_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz"] } }
+  }
+}
+
+run "users_rejects_129_character_trail_name" {
+  command = plan
+
+  variables {
+    users = { services = { cloudtrail = ["arn:aws:cloudtrail:ap-northeast-1:111111111111:trail/taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazx"] } }
+  }
+
+  expect_failures = [var.users]
+}
+
 run "users_rejects_grant_via_s3" {
   command = plan
 

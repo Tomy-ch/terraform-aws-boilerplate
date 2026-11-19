@@ -36,6 +36,8 @@ locals {
   s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
   ecr_roles  = sort([for r in var.users.roles : r.arn if r.via == "ecr"])
   log_groups = sort(distinct(var.users.services.logs))
+  trails     = sort(distinct(var.users.services.cloudtrail))
+  config     = sort(distinct(var.users.services.config))
 
   sns_roles      = { for r in var.users.roles : r.arn => sort(r.topics) if r.via == "sns" }
   sns_publishers = { for p in ["budgets", "cloudwatch", "costalerts", "events"] : p => sort([for t in var.users.services.sns : t.topic if contains(t.publishers, p)]) }
@@ -57,7 +59,7 @@ locals {
       Resource  = "*"
       Condition = { StringEquals = { "kms:ViaService" = "s3.${local.region}.amazonaws.com" } }
     }],
-    # Bucket Key を使わない Bucket では、S3 が渡す暗号化コンテキストは object の ARN になる（Amazon S3 User Guide「SSE-KMS」）。
+    # object の ARN で限れるのは Bucket Key を使わない Bucket だけ（README「Key Policy の文書」）。
     [for i, arn in sort(keys(local.s3_readers)) : {
       Sid       = "RolesViaS3Read${i}"
       Effect    = "Allow"
@@ -133,6 +135,36 @@ locals {
         "kms:EncryptionContext:aws:sns:topicArn" = [for t in local.sns_publishers.events : "${local.topic_arn}:${t}"]
       } }
     }],
+    # aws:SourceAccount を足さない。組織の trail では管理アカウントを指し、trail を限らない（README「Key Policy の文書」）。
+    length(local.trails) == 0 ? [] : [
+      {
+        Sid       = "CloudTrailEncrypt"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "kms:GenerateDataKey*"
+        Resource  = "*"
+        Condition = { StringEquals = {
+          "aws:SourceArn"                            = local.trails
+          "kms:EncryptionContext:aws:cloudtrail:arn" = local.trails
+        } }
+      },
+      {
+        Sid       = "CloudTrailDescribeKey"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "kms:DescribeKey"
+        Resource  = "*"
+        Condition = { StringEquals = { "aws:SourceArn" = local.trails } }
+      },
+    ],
+    length(local.config) == 0 ? [] : [{
+      Sid       = "ConfigService"
+      Effect    = "Allow"
+      Principal = { Service = "config.amazonaws.com" }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+      Resource  = "*"
+      Condition = { StringEquals = { "aws:SourceAccount" = local.config } }
+    }],
   )
 
   policy = jsonencode({ Version = "2012-10-17", Statement = local.statements })
@@ -157,6 +189,11 @@ resource "aws_kms_key_policy" "this" {
     precondition {
       condition     = alltrue(flatten([for r in var.users.roles : [for o in r.objects : startswith(o, "arn:${local.partition}:s3:::")]]))
       error_message = "users.roles[*].objects は、この鍵と同じ partition の S3 の object にしてください。"
+    }
+
+    precondition {
+      condition     = alltrue([for a in var.users.services.cloudtrail : startswith(a, "arn:${local.partition}:cloudtrail:")])
+      error_message = "users.services.cloudtrail は、この鍵と同じ partition の trail にしてください。"
     }
 
     precondition {
