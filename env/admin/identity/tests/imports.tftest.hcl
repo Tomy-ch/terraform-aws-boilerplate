@@ -89,12 +89,12 @@ run "admin_state_key_alias_name" {
   }
 }
 
-# organization-baseline の break_glass_arns と同じ規則（path /break-glass/ と名前）で組んだ ARN が、apply の role の Deny に渡る。
+# organization-baseline の break_glass_arns が、作る前の plan で決まった値として deployment-identity へ渡る。
 run "admin_break_glass_arns" {
   command = plan
 
   assert {
-    condition = local.break_glass_arns == [
+    condition = module.organization_baseline.break_glass_arns == [
       "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
       "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
       "arn:aws:iam::123456789012:group/break-glass/break-glass",
