@@ -123,6 +123,10 @@
             "integration_id": 15368
           },
           {
+            "context": "plan-admin-workload",
+            "integration_id": 15368
+          },
+          {
             "context": "repo-settings-check",
             "integration_id": 15368
           },
