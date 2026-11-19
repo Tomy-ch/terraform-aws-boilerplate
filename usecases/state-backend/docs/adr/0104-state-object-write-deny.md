@@ -15,8 +15,8 @@ S3 User Guide は、`x-amz-server-side-encryption: aws:kms` を指定して鍵 I
 
 ## Decision
 
-1. state Bucket の bucket policy に、object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`、およびレプリケーションによる書き込みの `s3:ReplicateObject`・`s3:ReplicateDelete`）を、identity root と workload root の apply の role と identity root の lock の解除の role 以外のすべての主体に拒否する Deny を置く。Principal は `"*"`、例外は `aws:PrincipalArn` の `ArnNotEquals` で role の ARN を完全一致で書く。
-2. 決定1 の各 role について、その role が書ける key の外への書き込みを拒否する Deny と、その key への許さない操作を拒否する Deny を置く。apply の role は自分の root の state の key と lock file への `s3:PutObject` と `s3:DeleteObject`、lock の解除の role は identity root の lock file への `s3:DeleteObject` だけを書ける。`s3:DeleteObjectVersion` とレプリケーションによる書き込みはどの role にも許さない。bucket policy はこの外側の層であり、各 role の IAM の Allow はさらに狭い（deployment-identity/ADR-0201 (enumerated-permissions) 決定5・9）。たとえば state の key への `s3:DeleteObject` は IAM が与えない。
+1. state Bucket の bucket policy に、object の書き込み（`s3:PutObject`・`s3:DeleteObject`・`s3:DeleteObjectVersion`、およびレプリケーションによる書き込みの `s3:ReplicateObject`・`s3:ReplicateDelete`）を、identity root と workload root の apply の role と、identity root と workload root の lock の解除の role（unlock-identity と unlock）以外のすべての主体に拒否する Deny を置く。Principal は `"*"`、例外は `aws:PrincipalArn` の `ArnNotEquals` で role の ARN を完全一致で書く。
+2. 決定1 の各 role について、その role が書ける key の外への書き込みを拒否する Deny と、その key への許さない操作を拒否する Deny を置く。apply の role は自分の root の state の key と lock file への `s3:PutObject` と `s3:DeleteObject`、lock の解除の role は自分の root の lock file への `s3:DeleteObject` だけを書ける（unlock-identity は identity root、unlock は workload root）。`s3:DeleteObjectVersion` とレプリケーションによる書き込みはどの role にも許さない。bucket policy はこの外側の層であり、各 role の IAM の Allow はさらに狭い（deployment-identity/ADR-0201 (enumerated-permissions) 決定5・9）。たとえば state の key への `s3:DeleteObject` は IAM が与えない。
 3. 書き込みの Deny の Resource は object の ARN だけとし、Action は決定1 の5つに限る。Bucket の ARN と Bucket の設定の Action を含めない。Bucket Policy を書き換えられる主体が、拒否を誤ったときに直せるようにするためである。
 4. 例外の role・key・操作は、`modules/s3` の型付きの入力で受ける。操作は「書き込み」と「削除だけ」の2値で受け、AWS の Action の文字列を受けない。policy の文を受ける入力を作らない（repository-wide/ADR-0204 (no-generic-escape-hatch) 決定1・2）。
 5. state Bucket への `s3:PutObject` のうち、次のものを全主体に拒否する。暗号化の方式の header が在って `aws:kms` でないもの。鍵 ID の header が在って state の鍵の ARN でないもの。方式の header が `aws:kms` で鍵 ID の header が無いもの。条件キーを持たない要求は拒否しない。条件キーは `Null` で在ることを確かめてから値を比べる。方式の header が `aws:kms` で鍵 ID の header が無い要求をどの鍵で暗号化するかによらず、この拒否は state の鍵以外で書かれる要求だけに当たる。
@@ -82,8 +82,8 @@ repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 �
 ## 検証方法
 
 - Unit Test: `modules/s3/tests/policy.tftest.hcl` が文書の完全一致を、`tests/writers.tftest.hcl` が入力の検査を見る
-- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）と、`plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`02`。00 は宣言した resource と policy が入力に在ること。宣言した Bucket Policy が state Bucket を指し、state Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであること。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.state_backend_write_deny` が読まない文書が実体になりうる）
-- Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
+- Policy Test: `plan.state_backend_write_deny`（`PLAN-SBW-00`〜`09`。08 は TLS の拒否が在ること、09 は Deny でない文が無いこと）と、`plan.resource_policy_exclusive`（`PLAN-RPE-00`〜`03`。00 は宣言した resource と policy が入力に在ること、03 は出力の2つの Bucket の Bucket Policy の文の数が宣言と一致すること。03 は state Bucket の Bucket Policy を対象にしない。宣言した Bucket Policy が state Bucket を指し、state Bucket を指す（または指す先が plan で決まらない）`aws_s3_bucket_policy` が宣言した1つだけであること。Bucket Policy は Bucket に1つで、宣言の外の resource が同じ Bucket を指すと置き換えるので、`plan.state_backend_write_deny` が読まない文書が実体になりうる）
+- Contract Test: `ci_role_arns` の apply・apply_identity・unlock_identity・unlock と `bootstrap_executor_user_name` が `modules/s3` の例外へ届くこと
 - 手順: 段5 の成功条件の、例外に無い主体の、存在しない key への `delete-object` が `AccessDenied` を返すこと（`docs/setup/bootstrap.md`）
 
 ## 影響

@@ -26,13 +26,13 @@ state_key_arn := after(declared("state_key")).arn
 
 object_arn(key) := sprintf("%s/%s", [bucket_arn, key])
 
-lock_key := object.get(object.get(di, "unlock_role", {}), "lock_key", "")
+lock_key(name) := object.get(object.get(di, name, {}), "lock_key", "")
 
 root_keys(root) := {object_arn(k) | some k in [root.state, sprintf("%s.tflock", [root.state])]}
 
 object_write_actions := {"s3:deleteobject", "s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}
 
-writer_names := array.concat([root.writer | some root in object.get(cfg, "roots", [])], [object.get(cfg, "unlocker", "")])
+writer_names := array.concat([root.writer | some root in object.get(cfg, "roots", [])], [object.get(root, "unlocker", "") | some root in object.get(cfg, "roots", [])])
 
 # 同じ role を2つの役割に宣言すると writers の key が重なり、評価そのものが落ちる。先に SBW-00 で止める。
 distinct_writers if count({n | some n in writer_names}) == count(writer_names)
@@ -43,14 +43,17 @@ writers[arn] := {"keys": root_keys(root), "denied": {"s3:deleteobjectversion", "
 	arn := role_arn(root.writer)
 }
 
-writers[arn] := {"keys": {object_arn(lock_key)}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} if {
+writers[arn] := {"keys": {object_arn(lock_key(root.unlocker))}, "denied": {"s3:deleteobjectversion", "s3:putobject", "s3:replicatedelete", "s3:replicateobject"}} if {
 	distinct_writers
-	arn := role_arn(object.get(cfg, "unlocker", ""))
+	some root in object.get(cfg, "roots", [])
+	arn := role_arn(root.unlocker)
 }
 
 well_formed_root(root) if {
 	is_string(root.writer)
 	is_string(root.state)
+	is_string(root.unlocker)
+	root.unlocker != ""
 }
 
 deny contains msg if {
@@ -61,7 +64,7 @@ deny contains msg if {
 deny contains msg if {
 	some root in object.get(cfg, "roots", [])
 	not well_formed_root(root)
-	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素 %v が writer と state の文字列を持っていません", [root])
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.roots の要素 %v が writer と state と unlocker の文字列を持っていません", [root])
 }
 
 deny contains msg if {
@@ -69,9 +72,18 @@ deny contains msg if {
 	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles が配列ではありません"
 }
 
+# lock file の復号を Key Policy が許さなければ、lock を外す role は lock file を読めない。
+deny contains msg if {
+	some root in object.get(cfg, "roots", [])
+	well_formed_root(root)
+	is_array(object.get(cfg, "key_user_roles", []))
+	not root.unlocker in object.get(cfg, "key_user_roles", [])
+	msg := sprintf("[PLAN-SBW-00] root の lock を外す role %s が data.policy_plan.state_backend.key_user_roles にありません", [root.unlocker])
+}
+
 deny contains msg if {
 	not distinct_writers
-	msg := sprintf("[PLAN-SBW-00] root の writer と lock を外す role（data.policy_plan.state_backend.roots・unlocker）に同じ role %v が重なっています", [writer_names])
+	msg := sprintf("[PLAN-SBW-00] root の writer と lock を外す role（data.policy_plan.state_backend.roots の writer・unlocker）に同じ role %v が重なっています", [writer_names])
 }
 
 bucket_policies contains r if {
@@ -190,7 +202,9 @@ role_names contains name if {
 }
 
 role_names contains name if {
-	name := object.get(cfg, "unlocker", "")
+	some root in object.get(cfg, "roots", [])
+	name := object.get(root, "unlocker", "")
+	is_string(name)
 	name != ""
 }
 
@@ -212,11 +226,6 @@ bucket_known if is_string(bucket_arn)
 state_key_known if is_string(state_key_arn)
 
 deny contains msg if {
-	object.get(cfg, "unlocker", "") == ""
-	msg := "[PLAN-SBW-00] lock を外す role（data.policy_plan.state_backend.unlocker）が宣言にありません"
-}
-
-deny contains msg if {
 	count(object.get(cfg, "key_user_roles", [])) == 0
 	msg := "[PLAN-SBW-00] state の鍵の暗号操作を許す role（data.policy_plan.state_backend.key_user_roles）が宣言にありません"
 }
@@ -227,8 +236,10 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	lock_key == ""
-	msg := "[PLAN-SBW-00] lock を外す role が消せる lock file の key（data.policy_plan.deployment_identity.unlock_role.lock_key）が宣言にありません"
+	some root in object.get(cfg, "roots", [])
+	well_formed_root(root)
+	lock_key(root.unlocker) == ""
+	msg := sprintf("[PLAN-SBW-00] lock を外す role が消せる lock file の key（data.policy_plan.deployment_identity.%s.lock_key）が宣言にありません", [root.unlocker])
 }
 
 deny contains msg if {
@@ -342,10 +353,11 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	lock_key != ""
-	count(object.get(cfg, "roots", [])) > 0
-	not lock_key in {sprintf("%s.tflock", [root.state]) | some root in object.get(cfg, "roots", [])}
-	msg := sprintf("[PLAN-SBW-05] lock を外す role が消せる key %q が、どの root の lock file（<state>.tflock）でもありません", [lock_key])
+	some root in object.get(cfg, "roots", [])
+	well_formed_root(root)
+	lock_key(root.unlocker) != ""
+	lock_key(root.unlocker) != sprintf("%s.tflock", [root.state])
+	msg := sprintf("[PLAN-SBW-05] lock を外す role %s が消せる key %q が、その root の lock file %q ではありません", [root.unlocker, lock_key(root.unlocker), sprintf("%s.tflock", [root.state])])
 }
 
 crypto(a) if a in lib.crypto_actions

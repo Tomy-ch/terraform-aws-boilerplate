@@ -29,6 +29,7 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `key_arn` | 鍵を使う resource（S3 の暗号化と Bucket Policy の条件、backend の `kms_key_id`、Log Group の `kms_key_id`）。同じ apply で鍵を作って暗号化を始める消費者が既定の Key Policy の間に鍵を使わないよう、Key Policy の置き換えの後に決まる（`depends_on`） |
 | `key_arn_for_iam` | `key_arn` と同じ値で、Key Policy の置き換えを待たない。鍵を使わず ARN だけを名指す場所（IAM の policy の Resource）にだけ使う。Key Policy が名指す role の IAM が鍵の ARN を要るとき、`key_arn` を使うと role → Key Policy → `key_arn` → role の IAM の循環になりうる |
 | `alias_name` | 人の手順が鍵を名指す名前（`state-backend` の `state_key_alias_name`）。入力だけから決まるので、鍵より前に参照できる |
+| `key_policy` | 呼び出す usecase のテスト。Key Policy の文書（JSON の文字列）を返し、渡した `users` から組まれた文を確かめるのに使う。権限の配線には使わない |
 
 消費者は alias ではなく `key_arn` で鍵を指す。alias を管理できる主体は、alias の付け替えで暗号化先をすり替えられる（KMS「Default key policy」の Warning）。alias の名前は人の識別と、人の手順と init の運用機構（`scripts/tf-local` の `state-key`）が鍵の ARN を引くことに使う。名前を変える変更は、それを引く消費者の手順の変更を伴う。
 

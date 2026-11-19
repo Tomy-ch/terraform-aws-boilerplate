@@ -449,15 +449,16 @@ child_holder(r) if {
 
 well_formed_root(root) if {
 	is_object(root)
-	object.keys(root) == {"writer", "state"}
+	object.keys(root) == {"writer", "state", "unlocker"}
 	nonempty_string(root.writer)
 	nonempty_string(root.state)
+	nonempty_string(root.unlocker)
 }
 
 deny contains msg if {
 	some root in object.get(sb, "roots", [])
 	not well_formed_root(root)
-	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素 %v が、writer と state の空でない文字列だけを持っていません", [root])
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.state_backend.roots の要素 %v が、writer と state と unlocker の空でない文字列だけを持っていません", [root])
 }
 
 # identity root の state と lock file と版の削除の要求は、state Bucket の children だけが生む。宣言が外れると対象が0件のまま通る。
