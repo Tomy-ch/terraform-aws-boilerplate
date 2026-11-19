@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
 
 // editorconfig-checker-disable -- raw string の fixture は埋め込んだ YAML の字下げを持つ。撤回: fixture を外部ファイルへ移したとき
@@ -135,17 +136,20 @@ func Test_applyEnvs(t *testing.T) {
 		src  string
 		want []string
 	}{
-		"apply-identity の env を返す":                        {applyWorkflowFixture, []string{"x"}},
-		"lock の解除と plan の env は返さない":                      {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
-		"workload root の lock の解除の env は返さない":             {"jobs:\n  a:\n    environment: x-unlock\n", nil},
-		"同じ env の apply と apply-identity は1つ":             {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
-		"jobs の外の environment は読まない":                      {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
-		"接尾辞だけの名前は env を持たない":                             {"jobs:\n  a:\n    environment: -apply\n", nil},
-		"一重引用符で囲んだ environment も読む":                       {"jobs:\n  a:\n    environment: 'x-apply'\n", []string{"x"}},
-		"step の入力の environment: は job の environment ではない": {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n  b:\n    steps:\n      with:\n        environment: prod\n", []string{"x"}},
-		"steps と同じ字下げの要素の中の environment: は読まない":           {"jobs:\n  a:\n    steps:\n    - uses: a/b@v1\n      with:\n        environment: prod\n    environment: x-apply\n", []string{"x"}},
-		"steps の中の空行の後の step の入力の environment: は読まない":     {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n\n        # 入力\n        with:\n          environment: prod\n", []string{"x"}},
-		"steps の後に書いた job の environment も読む":              {"jobs:\n  a:\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n\n    environment: x-apply\n", []string{"x"}},
+		"apply-identity の env を返す":                         {applyWorkflowFixture, []string{"x"}},
+		"lock の解除と plan の env は返さない":                       {unlockWorkflowFixture + "  plan:\n    environment: x-plan\n", nil},
+		"workload root の lock の解除の env は返さない":              {"jobs:\n  a:\n    environment: x-unlock\n", nil},
+		"同じ env の apply と apply-identity は1つ":              {applyWorkflowFixture + "  workload:\n    environment: x-apply\n", []string{"x"}},
+		"jobs の外の environment は読まない":                       {"env:\n    environment: x-apply\njobs:\n  a:\n    runs-on: x\n", nil},
+		"接尾辞だけの名前は env を持たない":                              {"jobs:\n  a:\n    environment: -apply\n", nil},
+		"一重引用符で囲んだ environment も読む":                        {"jobs:\n  a:\n    environment: 'x-apply'\n", []string{"x"}},
+		"step の入力の environment: は job の environment ではない":  {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n  b:\n    steps:\n      with:\n        environment: prod\n", []string{"x"}},
+		"steps と同じ字下げの要素の中の environment: は読まない":            {"jobs:\n  a:\n    steps:\n    - uses: a/b@v1\n      with:\n        environment: prod\n    environment: x-apply\n", []string{"x"}},
+		"steps の中の空行の後の step の入力の environment: は読まない":      {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      - uses: a/b@v1\n\n        # 入力\n        with:\n          environment: prod\n", []string{"x"}},
+		"steps の後に書いた job の environment も読む":               {"jobs:\n  a:\n    steps:\n      - uses: a/b@v1\n        with:\n          environment: prod\n\n    environment: x-apply\n", []string{"x"}},
+		"lock を残す job の environment は返さない":                 {"jobs:\n  hold:\n    environment: x-apply-identity\n    steps:\n      - run: make ci-hold-x-identity RUNNER_MODE=host\n", nil},
+		"lock を残す job と同じ workflow の apply の job は返す":      {"jobs:\n  hold:\n    environment: x-apply-identity\n    steps:\n      - run: make ci-hold-x-identity RUNNER_MODE=host\n  apply:\n    environment: y-apply\n", []string{"y"}},
+		"コメントと name: の make ci-hold- は lock を残す job と数えない": {"jobs:\n  a:\n    environment: x-apply\n    steps:\n      # make ci-hold-x-identity\n      - name: make ci-hold-x-identity\n        run: make ci-apply-x-workload\n", []string{"x"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -158,15 +162,19 @@ func Test_applyEnvs(t *testing.T) {
 
 	// 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる。
 	unreadable := map[string]string{
-		"mapping の形":           "jobs:\n  a:\n    environment:\n      name: x-apply\n",
-		"式":                    "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
-		"アンカー":                 "jobs:\n  a:\n    environment: &e x-apply\n",
-		"plan の mapping":       "jobs:\n  a:\n    environment:\n      name: x-plan\n",
-		"別の字下げ":                "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
-		"引用符付きのキー":             "jobs:\n  a:\n    \"environment\": x-apply\n",
-		"コロンの前の空白":             "jobs:\n  a:\n    environment : x-apply\n",
-		"タブで字下げした environment": "jobs:\n  a:\n\tenvironment: x-apply\n",
-		"steps の後の job のキー":    "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
+		"mapping の形":             "jobs:\n  a:\n    environment:\n      name: x-apply\n",
+		"式":                      "jobs:\n  a:\n    environment: ${{ inputs.env }}\n",
+		"アンカー":                   "jobs:\n  a:\n    environment: &e x-apply\n",
+		"plan の mapping":         "jobs:\n  a:\n    environment:\n      name: x-plan\n",
+		"別の字下げ":                  "jobs:\n  a:\n      runs-on: x\n      environment: x-apply\n",
+		"引用符付きのキー":               "jobs:\n  a:\n    \"environment\": x-apply\n",
+		"コロンの前の空白":               "jobs:\n  a:\n    environment : x-apply\n",
+		"タブで字下げした environment":   "jobs:\n  a:\n\tenvironment: x-apply\n",
+		"steps の後の job のキー":      "jobs:\n  a:\n    steps:\n      - run: x\n    environment:\n      name: x-apply\n",
+		"lock を残す job の mapping": "jobs:\n  hold:\n    environment:\n      name: x-apply\n    steps:\n      - run: make ci-hold-x-identity\n",
+		"apply の入口と lock を残す入口を併せ持つ job":     "jobs:\n  a:\n    environment: x-apply\n    steps:\n      - run: make ci-apply-x-workload\n      - run: make ci-hold-x-workload\n",
+		"行末のコメントに lock を残す入口を持つ apply の job": "jobs:\n  a:\n    environment: x-apply\n    steps:\n      - run: make ci-apply-x-workload # make ci-hold-x-workload\n",
+		"lock の解除の入口と lock を残す入口を併せ持つ job":   "jobs:\n  a:\n    environment: x-unlock\n    steps:\n      - run: make ci-unlock-x-workload\n      - run: make ci-hold-x-workload\n",
 	}
 	for name, src := range unreadable {
 		t.Run("読めない environment: は失敗する（"+name+"）", func(t *testing.T) {
@@ -267,4 +275,46 @@ func Test_isApplySuffix(t *testing.T) {
 			assert.Contains(t, want, suffix)
 		}
 	})
+}
+
+func Test_isHoldJob(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"make ci-hold-* を走らせる job":    {"jobs:\n  a:\n    steps:\n      - run: make ci-hold-x-identity RUNNER_MODE=host\n", true},
+		"apply の job":                 {"jobs:\n  a:\n    steps:\n      - run: make ci-apply-x-identity RUNNER_MODE=host\n", false},
+		"コメントの make ci-hold- は数えない":   {"jobs:\n  a:\n    steps:\n      # make ci-hold-x-identity\n      - run: x\n", false},
+		"name: の make ci-hold- は数えない": {"jobs:\n  a:\n    steps:\n      - name: make ci-hold-x-identity\n        run: x\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			jobs := workflow.SplitJobs(c.src).Jobs
+			require.Len(t, jobs, 1)
+			assert.Equal(t, c.want, isHoldJob(jobs[0]))
+		})
+	}
+}
+
+func Test_hasEntry(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"入口を走らせる行がある":     {"jobs:\n  a:\n    steps:\n      - run: make ci-apply-x-identity\n", true},
+		"行末のコメントの入口も数える":  {"jobs:\n  a:\n    steps:\n      - run: echo # make ci-apply-x-identity\n", true},
+		"行頭のコメントの入口は数えない": {"jobs:\n  a:\n    steps:\n      # make ci-apply-x-identity\n      - run: x\n", false},
+		"入口が無い":           {"jobs:\n  a:\n    steps:\n      - run: make lint\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			jobs := workflow.SplitJobs(c.src).Jobs
+			require.Len(t, jobs, 1)
+			assert.Equal(t, c.want, hasEntry(jobs[0], otherEntry))
+		})
+	}
 }

@@ -474,7 +474,7 @@ test_violation_removal_of_protected_lifecycle if {
 }
 
 # ADR-0604 決定13。宣言した引数を書く変更は、許可の宣言によらず落とす。
-inline_decl := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], "allow": {}}
+inline_decl := {"protected_types": array.concat(["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_kms_key"], [t | some t, _ in data.policy_plan.inline_arguments]), "allow": {}}
 
 inline_written(empty) := [{"x": "y"}] if empty == []
 
@@ -483,6 +483,7 @@ inline_written(empty) := "{\"Statement\":[]}" if empty == null
 inline_change(type, actions, before, after, after_unknown) := {"address": sprintf("module.x.%s.this", [type]), "type": type, "change": {"actions": actions, "before": before, "after": after, "after_unknown": after_unknown}}
 
 test_violation_inline_argument_changed_on_update if {
+	count(data.policy_plan.inline_arguments) > 0
 	every type, args in data.policy_plan.inline_arguments {
 		every arg, empty in args {
 			before := data.policy_plan.inline_arguments[type]
@@ -600,4 +601,15 @@ test_pass_inline_data_source_unknown if {
 	rc := object.union(inline_change("aws_s3_bucket", ["read"], {"policy": "{}"}, {}, {"policy": true}), {"mode": "data"})
 	msgs := stateful_protection.deny with input as fixture.plan([rc]) with data.policy_plan.stateful_protection as inline_decl
 	count(msgs) == 0
+}
+
+# 宣言の protected_types は、証跡の保管の Object Lock の設定の削除と置換を落とす（audit-evidence/ADR-0101）。
+test_violation_delete_or_replace_of_object_lock_configuration if {
+	lock := "module.audit_evidence.module.archive.aws_s3_bucket_object_lock_configuration.this"
+	every actions in [["delete"], ["delete", "create"]] {
+		msgs := stateful_protection.deny with input as fixture.plan([change(lock, "aws_s3_bucket_object_lock_configuration", actions)])
+		some m in msgs
+		contains(m, "[PLAN-STATE-01]")
+		contains(m, lock)
+	}
 }

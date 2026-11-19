@@ -4,6 +4,9 @@
 ## terraform を実行する経路は運用機構（scripts/）を経由しない（ADR-0702 決定3）。tf-lint だけは先に
 ## tool-cooldown-check を呼ぶ。
 ##
+## tf-validate は、terraform validate のエラーに加えて警告でも落とす。validate は警告を出しても
+## 0 で終わるためである。判定は scripts/tf-validate-result が持つ。
+##
 ## 走査の対象が0件なら失敗する。Terraform コードの無いツリーで pre-commit が通るのは、
 ## .lefthook.yaml が tf-no-targets で skip を明示するからであり、ここが成功を返すからではない。
 ##
@@ -29,6 +32,11 @@ TF_ENV = env $(AWS_ENV_UNSET) \
 # その backend の資格情報を探して落ちる。
 # terraform は相対の TF_DATA_DIR を -chdir の先から解決するので、絶対パスで渡す。
 TF_GATES_DATA = $(abspath $(TF_BASE))/tmp/tf-gates-data
+# validate の結果は tf-validate-result が読む（ADR-0702 決定24）。container の経路でも読めるよう、
+# 直下からの相対パスで置く。一覧（manifest.tsv）は毎回書き直し、そこに載るファイルだけが読まれる。
+TF_VALIDATE_OUT = $(TF_BASE)/tmp/tf-validate
+# 警告の抑止の宣言（ADR-0501 決定13）。fixture は自分の宣言を渡す。
+TF_VALIDATE_IGNORE ?= .tf-validate-ignore.yaml
 TF_BIN ?= terraform
 TFLINT_BIN ?= tflint
 TF = $(TF_ENV) $(TF_BIN)
@@ -92,11 +100,16 @@ tf-init:
 	done; \
 	$(TF_REPORT_FAILED)
 
-.PHONY: tf-validate ## Terraform の構成を検査（provider の取得を伴う）
+.PHONY: tf-validate ## Terraform の構成を検査し、エラーと抑止されない警告で落とす（provider の取得を伴う）
 tf-validate: tf-init
-	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_DATA_DIR_OF); failed=""; \
-	for d in $$dirs; do TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" validate || failed="$$failed $$d"; done; \
-	$(TF_REPORT_FAILED)
+	@set -eu; dirs=$(TF_LIST_DIRS); $(TF_REQUIRE_DIRS); $(TF_DATA_DIR_OF); \
+	out="$(TF_VALIDATE_OUT)"; mkdir -p "$$out"; : > "$$out/manifest.tsv"; i=0; \
+	for d in $$dirs; do \
+		i=$$((i + 1)); rc=0; \
+		TF_DATA_DIR="$$(data_dir "$$d")" $(TF) -chdir="$$d" validate -json > "$$out/$$i.json" 2> "$$out/$$i.err" || rc=$$?; \
+		printf '%s\t%s\t%s\t%s\n' "$$d" "$$rc" "$$out/$$i.json" "$$out/$$i.err" >> "$$out/manifest.tsv"; \
+	done; \
+	$(call RUN_SCRIPT,tf-validate-result,-base $(TF_BASE) -manifest $(TF_VALIDATE_OUT)/manifest.tsv -ignore $(TF_VALIDATE_IGNORE))
 
 .PHONY: tf-test ## terraform test を実行（*.tftest.hcl を持つディレクトリ）
 tf-test: tf-init
@@ -123,3 +136,39 @@ tf-lint:
 .PHONY: tf-no-targets
 tf-no-targets:
 	@dirs=$(TF_LIST_DIRS) && test -z "$$dirs"
+
+# tf-gates-test の fixture は provider を持たず、警告を Terraform 本体（非推奨の variable）に出させる。
+# 実物の AWS Provider の版は state-backend の reference の lock に揃え、plugin cache に無ければ取得する。
+# 抑止の宣言の detail は、この canary の出力から取る（版で文言が変わるため）。
+TF_VALIDATE_CANARY_DIR = tmp/tf-validate-canary
+
+define TF_VALIDATE_AWS_FIXTURE
+mkdir -p "$$1/usecases/x/reference"; \
+cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
+printf 'resource "aws_iam_role" "this" {\n  name               = "canary"\n  assume_role_policy = "{}"\n%b}\n' "$$2" > "$$1/usecases/x/reference/main.tf"
+endef
+
+.PHONY: tf-validate-canary ## tf-validate が AWS Provider の非推奨の引数で落ち、宣言に当たる警告と非推奨の無い構成で通ることを検査
+tf-validate-canary:
+	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_VALIDATE_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
+	fixture() { $(TF_VALIDATE_AWS_FIXTURE); }; \
+	printf 'warnings: []\n' > "$$root/ignore-empty.yaml"; \
+	expect() { \
+		want="$$1"; case_name="$$2"; base="$$3"; ignore="$$4"; pattern="$$5"; \
+		out=$$($(MAKE) -s --no-print-directory tf-validate TF_BASE="$$base" TF_VALIDATE_IGNORE="$$ignore" 2>&1); rc=$$?; \
+		if [ "$$want" = pass ] && { [ "$$rc" -ne 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
+		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
+		fi; \
+	}; \
+	fixture "$$root/clean" ''; \
+	expect pass clean "$$root/clean" "$$root/ignore-empty.yaml" "1 ディレクトリを validate し"; \
+	fixture "$$root/deprecated" '  managed_policy_arns = []\n'; \
+	expect fail deprecated "$$root/deprecated" "$$root/ignore-empty.yaml" \
+		'usecases/x/reference/main.tf:4:25: [warning] Argument is deprecated（resource "aws_iam_role" "this"）'; \
+	detail=$$(jq -er '[.diagnostics[] | select(.severity == "warning")] | if length == 1 then .[0].detail else error("警告がちょうど1件ではありません") end' \
+		"$$root/deprecated/tmp/tf-validate/1.json") || { failed="$$failed detail"; detail=""; }; \
+	jq -n --arg d "$$detail" '{warnings: [{summary: "Argument is deprecated", path: "usecases/x/reference/main.tf", block: "resource \"aws_iam_role\" \"this\"", detail: $$d, occurrences: 1, reason: "canary", withdrawal: "canary"}]}' \
+		> "$$root/ignore-aws.yaml"; \
+	expect pass ignored "$$root/deprecated" "$$root/ignore-aws.yaml" "抑止 1 件"; \
+	if [ -n "$$failed" ]; then echo "❌ tf-validate の canary が期待どおりでなかったケース:$$failed"; exit 1; fi; \
+	echo "✅ tf-validate は AWS Provider の非推奨の引数で落ち、宣言に当たる警告と非推奨の無い構成で通る"
