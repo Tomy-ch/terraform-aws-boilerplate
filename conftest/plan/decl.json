@@ -387,7 +387,9 @@
         "aws_ecr_lifecycle_policy",
         "aws_ecr_registry_scanning_configuration",
         "aws_s3_bucket_object_lock_configuration",
-        "aws_sns_topic"
+        "aws_sns_topic",
+        "aws_cloudformation_stack_set",
+        "aws_cloudformation_stack_instances"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -494,7 +496,9 @@
         ],
         "group_policy": "module.organization_baseline.module.break_glass.aws_iam_group_policy.this",
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
-        "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
+        "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this",
+        "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
+        "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
       }
     },
     "ops_notification": {

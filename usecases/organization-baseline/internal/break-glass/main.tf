@@ -4,6 +4,7 @@
 
 data "aws_partition" "current" {}
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 locals {
   partition = data.aws_partition.current.partition
@@ -13,8 +14,9 @@ locals {
 
   # 作る前に決まる ARN。deployment-identity の policy が、まだ無い break-glass を名指せる。
   arn_prefix = "arn:${local.partition}:iam::${data.aws_caller_identity.current.account_id}"
+  user_arns  = [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"]
   arns = concat(
-    [for n in sort(local.user_names) : "${local.arn_prefix}:user${var.path}${n}"],
+    local.user_arns,
     ["${local.arn_prefix}:group${var.path}${local.group_name}", "${local.arn_prefix}:role${var.path}${var.role_name}"],
   )
 }
@@ -127,4 +129,62 @@ resource "aws_iam_account_password_policy" "this" {
   allow_users_to_change_password = true
   max_password_age               = 90
   hard_expiry                    = false
+}
+
+# メンバーアカウントの break-glass の role（organization-baseline/ADR-0202）。
+resource "aws_cloudformation_stack_set" "this" {
+  name             = var.role_name
+  description      = "メンバーアカウントの break-glass の role"
+  permission_model = "SERVICE_MANAGED"
+  capabilities     = ["CAPABILITY_NAMED_IAM"]
+
+  auto_deployment {
+    enabled                          = true
+    retain_stacks_on_account_removal = false
+  }
+
+  managed_execution {
+    active = true
+  }
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Resources = {
+      BreakGlassRole = {
+        Type = "AWS::IAM::Role"
+        Properties = {
+          RoleName           = var.role_name
+          Path               = var.path
+          MaxSessionDuration = 3600
+          ManagedPolicyArns  = ["arn:${local.partition}:iam::aws:policy/AdministratorAccess"]
+          AssumeRolePolicyDocument = {
+            Version = "2012-10-17"
+            Statement = [{
+              Effect    = "Allow"
+              Principal = { AWS = local.user_arns }
+              Action    = "sts:AssumeRole"
+              Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
+            }]
+          }
+        }
+      }
+    }
+  })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_cloudformation_stack_instances" "this" {
+  stack_set_name = aws_cloudformation_stack_set.this.name
+  regions        = [data.aws_region.current.region]
+
+  deployment_targets {
+    organizational_unit_ids = [var.organization_root_id]
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

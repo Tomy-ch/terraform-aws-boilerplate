@@ -6,6 +6,9 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
   mock_resource "aws_organizations_organization" {
     defaults = {
       id                = "o-exampleorg1"

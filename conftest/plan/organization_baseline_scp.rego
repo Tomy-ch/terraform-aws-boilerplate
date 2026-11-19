@@ -223,7 +223,7 @@ covers(patterns, action) if {
 
 # NotAction の Deny は、拒む Action を列挙できず、どの規則の covers も読めない。
 deny contains msg if {
-	some key in scp_keys | rcp_keys
+	some key in (scp_keys | rcp_keys)
 	some s in statements(key)
 	s.Effect == "Deny"
 	object.get(s, "NotAction", null) != null
@@ -289,14 +289,15 @@ deny contains msg if {
 deny contains msg if {
 	content("protect-governance-roles")
 	not governance_roles_shape
-	msg := "[PLAN-ORG-06] protect-governance-roles が break-glass の role を条件なしで守る形ではありません"
+	msg := "[PLAN-ORG-06] protect-governance-roles が、StackSet の実行の role のほかを外さずに break-glass の role を守る形ではありません"
 }
 
+# 外せるのは StackSet の実行の role だけ（organization-baseline/ADR-0202）。break-glass の role を配る主体である。
 governance_roles_shape if {
 	some s in statements("protect-governance-roles")
 	s.Effect == "Deny"
 	s.Resource == break_glass_pattern
-	not s.Condition
+	object.get(s, "Condition", {}) in {{}, {"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/stacksets-exec-*"}}}
 }
 
 deny contains msg if {

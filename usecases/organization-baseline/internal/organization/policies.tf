@@ -54,6 +54,8 @@ locals {
         Effect   = "Deny"
         Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
         Resource = local.break_glass_role_arn_pattern
+        # StackSet の service-linked role は SCP の外だが、role を作る stacksets-exec-* は SCP を受ける（organization-baseline/ADR-0202）。
+        Condition = { ArnNotLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/stacksets-exec-*" } }
       }]
     }
     deny-guardduty-stop = {

@@ -131,8 +131,11 @@ run "policies" {
   }
 
   assert {
-    condition     = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" && !can(jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition)
-    error_message = "統制の role の保護の対象は break-glass の role です。"
+    condition = (
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" &&
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition == { ArnNotLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/stacksets-exec-*" } }
+    )
+    error_message = "統制の role の保護の対象は break-glass の role で、外すのは StackSet の実行の role（stacksets-exec-*）だけです。"
   }
 
   assert {

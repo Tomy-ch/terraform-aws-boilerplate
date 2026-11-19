@@ -33,7 +33,7 @@ trust_statements := lib.statements(body(object.get(bg, "role", ""), "assume_role
 self_management := {"iam:changepassword", "iam:enablemfadevice", "iam:getuser", "iam:listmfadevices", "iam:resyncmfadevice"}
 
 deny contains msg if {
-	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", "")])
+	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "stack_set", ""), object.get(bg, "stack_instances", "")])
 	not after(a)
 	msg := sprintf("[PLAN-BG-00] 宣言した break-glass の %s が入力にありません", [a])
 }
@@ -145,4 +145,51 @@ deny contains msg if {
 	attachment := after(object.get(bg, "role_attachments", ""))
 	{a | some a in attachment.policy_arns} != {administrator_access}
 	msg := "[PLAN-BG-04] break-glass の role に付ける managed policy が AdministratorAccess だけではありません"
+}
+
+# メンバーの break-glass の role（organization-baseline/ADR-0202）。
+stack_set := after(object.get(bg, "stack_set", ""))
+
+template := body(object.get(bg, "stack_set", ""), "template_body")
+
+member_role_keys := {"RoleName", "Path", "MaxSessionDuration", "ManagedPolicyArns", "AssumeRolePolicyDocument"}
+
+deny contains msg if {
+	stack_set
+	not service_managed_auto(stack_set)
+	msg := "[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed で新しいアカウントへ自動で置く形ではありません"
+}
+
+service_managed_auto(s) if {
+	s.permission_model == "SERVICE_MANAGED"
+	s.auto_deployment[0].enabled == true
+}
+
+deny contains msg if {
+	stack_set
+	not member_role_shape
+	msg := "[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレートが、管理アカウントの break-glass の role と同じ1つの role ではありません"
+}
+
+member_role_shape if {
+	count(template.Resources) == 1
+	some r in template.Resources
+	r.Type == "AWS::IAM::Role"
+	object.keys(r.Properties) == member_role_keys
+	r.Properties.RoleName == role.name
+	r.Properties.Path == role.path
+	r.Properties.ManagedPolicyArns == [administrator_access]
+	statements := lib.statements(r.Properties.AssumeRolePolicyDocument)
+	count([s | some s in statements; s.Effect == "Allow"]) > 0
+	every s in statements {
+		s.Effect == "Allow"
+		trust_shape(s)
+	}
+}
+
+deny contains msg if {
+	stack_set
+	instances := after(object.get(bg, "stack_instances", ""))
+	instances.stack_set_name != stack_set.name
+	msg := "[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません"
 }
