@@ -12,8 +12,10 @@ mock_provider "aws" {
 
 variables {
   name                     = "tabp-sandbox-ops-heartbeat"
+  us_east_1_name           = "tabp-sandbox-ops-us-east-1"
   env                      = "sandbox"
   topic_arn                = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  us_east_1_topic_arn      = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-workload-boundary"
 }
 
@@ -33,6 +35,34 @@ run "rejects_65_character_name" {
   }
 
   expect_failures = [var.name]
+}
+
+run "accepts_64_character_us_east_1_name" {
+  command = plan
+
+  variables {
+    us_east_1_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+
+run "rejects_65_character_us_east_1_name" {
+  command = plan
+
+  variables {
+    us_east_1_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+
+  expect_failures = [var.us_east_1_name]
+}
+
+run "rejects_us_east_1_name_with_slash" {
+  command = plan
+
+  variables {
+    us_east_1_name = "tabp/sandbox"
+  }
+
+  expect_failures = [var.us_east_1_name]
 }
 
 run "rejects_name_with_slash" {
@@ -110,6 +140,36 @@ run "rejects_topic_in_another_region" {
 
   variables {
     topic_arn = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification"
+  }
+
+  expect_failures = [aws_iam_role_policy.this]
+}
+
+run "rejects_us_east_1_topic_in_another_region" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
+  }
+
+  expect_failures = [var.us_east_1_topic_arn]
+}
+
+run "rejects_us_east_1_topic_in_another_account" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws:sns:us-east-1:210987654321:tabp-sandbox-ops-notification-us-east-1"
+  }
+
+  expect_failures = [aws_iam_role_policy.this]
+}
+
+run "rejects_us_east_1_topic_in_another_partition" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws-us-gov:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   }
 
   expect_failures = [aws_iam_role_policy.this]
