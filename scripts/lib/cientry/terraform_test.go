@@ -450,10 +450,10 @@ func TestCheckTerraformRoles(t *testing.T) {
 
 		t.Run("name だけが欠けた role を、その role の行の name のずれとして弾く", func(t *testing.T) {
 			t.Parallel()
-			rows := append(registryRowsWithout(Apply), roleRow("apply", "aply", "apply"))
+			rows := append(registryRowsWithout(Apply), roleRow("apply", "apply-x", "apply"))
 			err := CheckTerraformRoles(parse(t, rows...))
 			require.ErrorIs(t, err, ErrTerraformRole)
-			assert.Contains(t, err.Error(), "apply の name ${var.name_prefix}-ci-aply は ${var.name_prefix}-ci-apply ではありません")
+			assert.Contains(t, err.Error(), "apply の name ${var.name_prefix}-ci-apply-x は ${var.name_prefix}-ci-apply ではありません")
 		})
 
 		t.Run("name の -ci- の接頭辞が違えば弾く", func(t *testing.T) {
