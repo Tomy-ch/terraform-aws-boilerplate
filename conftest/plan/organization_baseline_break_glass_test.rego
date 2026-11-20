@@ -382,3 +382,18 @@ test_pass_user_arn_path_and_partition_not_reported_as_unfixed if {
 		not fixture.has("[PLAN-BG-03]", deny)
 	}
 }
+
+test_violation_user_not_shaped if {
+	every after1 in [
+		{"name": "", "arn": "arn:aws:iam::111111111111:user/break-glass/"},
+		{"name": 1, "arn": user_arns[0]},
+		{"name": "break-glass-1", "arn": user_arns[1]},
+		{"name": "break-glass-1", "arn": "arn:aws:iam::111111111111:role/break-glass/break-glass-1"},
+		{"name": "break-glass-1", "arn": "arn:aws:iam::11111111111:user/break-glass/break-glass-1"},
+	] {
+		inp := fixture.plan(with_changes(valid_group, users_as(after1, {"name": "break-glass-2", "arn": user_arns[1]})))
+		deny := p.deny with input as inp with data.policy_plan as {"organization_baseline": decl}
+		fixture.has(user_not_fixed(user_address(1)), deny)
+		not fixture.has(user_not_fixed(user_address(2)), deny)
+	}
+}
