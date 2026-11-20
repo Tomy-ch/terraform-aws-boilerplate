@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -296,6 +298,12 @@ var (
 	// blockScalar は、値がブロックスカラーで始まる行（コメントを除いた字面）。キーの値か列の要素で、アンカーと
 	// タグが前に付いてもよい。
 	blockScalar = regexp.MustCompile(`(?:^|[:\s-])[ \t]*(?:[&!]\S*[ \t]+)*[|>][-+0-9]*[ \t]*$`)
+	// explicitKey は、明示的なキー（`? `）で始まる行。キーと値が別の行に分かれ、if: を見分けられない。
+	explicitKey = regexp.MustCompile(`^[ \t]*(?:-[ \t]+)*\?(?:[ \t]|$)`)
+	// singleQuotedValue は、行のキーの桁からの、一重引用符のスカラーで始まる値の手前まで（キーと `: `）と、その引用符。
+	singleQuotedValue = regexp.MustCompile(`^(?:(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s'"#][^:]*?)[ \t]*:[ \t]+)?'`)
+	// singleQuotedKey は、一重引用符のスカラーがキーであること（後ろに `:` が続く）。
+	singleQuotedKey = regexp.MustCompile(`^'(?:[^']|'')*'[ \t]*:(?:[ \t]|$)`)
 )
 
 // checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ブランチの名前か ref を
@@ -398,10 +406,17 @@ func expressions(src string) ([]expression, error) {
 		if ifLoose.MatchString(code) {
 			ifs++
 		}
+		if explicitKey.MatchString(code) {
+			return nil, xerrors.Wrapf(errExpression, "%d 行目: 明示的なキー（`? `）の書き方は読めません", i+1)
+		}
 		col := keyColumn(code)
 		m := ifLine.FindStringSubmatch(code)
 		if m == nil {
-			for _, e := range exprSpans(code) {
+			value, err := unquotedValue(code, col)
+			if err != nil {
+				return nil, xerrors.Wrapf(err, "%d 行目", i+1)
+			}
+			for _, e := range exprSpans(value) {
 				out = append(out, expression{line: i + 1, text: e})
 				readOpens++
 			}
@@ -423,6 +438,8 @@ func expressions(src string) ([]expression, error) {
 		value := strings.TrimSpace(m[2])
 		if blockScalar.MatchString(code) {
 			body, next := blockBody(lines, i+1, col)
+			// opens と readOpens を同じ字面から数えるので、ここは突き合わせにならない。本文はまるごと1つの式として
+			// 読むので、閉じない `${{` や包みの外の字面は refComparisons の exprBody が失敗させる。
 			for _, l := range body {
 				n := len(exprOpen.FindAllString(l, -1))
 				opens += n
@@ -454,6 +471,25 @@ func expressions(src string) ([]expression, error) {
 		return nil, xerrors.Wrapf(errExpression, "if: を %d 件読みましたが、字面では %d 件あります。読めない書き方があります", readIfs, ifs)
 	}
 	return out, nil
+}
+
+// unquotedValue は、col 桁にキーか列の要素が始まる行 code の値が一重引用符のスカラーなら、YAML の文字列として
+// 読んだ値を、そうでなければ code をそのまま返します。`${{` を含む一重引用符の値が1行の YAML の文字列として
+// 読めなければ失敗する（行をまたぐ値と、閉じた引用符の後ろに字面が続く値）。
+func unquotedValue(code string, col int) (string, error) {
+	rest := code[col:]
+	loc := singleQuotedValue.FindStringIndex(rest)
+	if loc == nil || singleQuotedKey.MatchString(rest[loc[1]-1:]) {
+		return code, nil
+	}
+	var m map[string]string
+	if err := yaml.Unmarshal([]byte("v: "+strings.TrimSpace(rest[loc[1]-1:])), &m); err != nil {
+		if strings.Contains(code, exprOpenWrap) {
+			return "", xerrors.Wrapf(errExpression, "一重引用符の値を YAML の文字列として読めません: %v", err)
+		}
+		return code, nil
+	}
+	return m["v"], nil
 }
 
 // keyColumn は、行のキーが始まる桁を返します。列の要素の `- ` はキーの桁に含める。

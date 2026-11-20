@@ -468,6 +468,21 @@ func Test_checkRefLiterals(t *testing.T) {
 		require.ErrorIs(t, err, errRefLiteral)
 		assert.ErrorContains(t, err, "github.ref_name == 'x'")
 	})
+	t.Run("一重引用符の値の中の式も YAML の文字列として読み、落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    name: '${{ github.ref_name == ''main'' }}'\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "github.ref_name == 'main'")
+	})
+	t.Run("読めない式と ref の比較が並べば、最初に読めない式で失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: github.ref_name == 'main'\n    name: ${{ lower(github.ref) }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+		assert.NotErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, wf("a.yaml")+":4")
+	})
 	t.Run("複数のファイルの比較をすべて報せる", func(t *testing.T) {
 		t.Parallel()
 		root := repo(t, map[string]string{
@@ -539,6 +554,9 @@ func Test_expressions(t *testing.T) {
 		"文字列リテラルの中の }} で式を切らない": {"a: ${{ format('}}') }}\n", []expression{{1, "${{ format('}}') }}"}}, ""},
 		"閉じていない式は拒む":            {"a: ${{ x\n", nil, "閉じていない式"},
 		"読めない書き方の if: は拒む":      {"    steps: [{if: x}]\n", nil, "読めない書き方"},
+		"明示的なキーの if: は拒む":       {"    ? if\n    : github.ref_name == 'main'\n", nil, "明示的なキー"},
+		"一重引用符の値は '' を ' として読む": {"    name: '${{ a == ''b'' }}'\n", []expression{{1, "${{ a == 'b' }}"}}, ""},
+		"行をまたぐ一重引用符の値の式は拒む":     {"    name: '${{ a ==\n      ''b'' }}'\n", nil, "YAML の文字列として読めません"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -561,6 +579,39 @@ func Test_withoutGenerated(t *testing.T) {
 	assert.Equal(t, "true && x", withoutGenerated("contains(fromJSON('[\"a\"]'), github.base_ref) && x", setDeploy))
 	assert.Equal(t, "true && x", withoutGenerated("(startsWith(github.head_ref, 'a/')) && x", setLines))
 	assert.Equal(t, "y", withoutGenerated("y", setRuleset))
+}
+
+func Test_unquotedValue(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct{ code, want string }{
+		"キーの値の一重引用符を外す":           {"  name: '${{ a == ''b'' }}'", "${{ a == 'b' }}"},
+		"列の要素の一重引用符を外す":           {"  - 'x ''${{ y }}'''", "x '${{ y }}'"},
+		"引用符のキーの値の一重引用符を外す":       {`  "k": '${{ x }}'`, "${{ x }}"},
+		"一重引用符のキーの plain の値はそのまま": {"  'k': ${{ x }}", "  'k': ${{ x }}"},
+		"値の無い一重引用符のキーはそのまま":       {"  'k':", "  'k':"},
+		"plain の値の中の一重引用符はそのまま":   {"  run: echo '${{ x }}'", "  run: echo '${{ x }}'"},
+		"二重引用符の値はそのまま":            {`  a: "${{ x }}"`, `  a: "${{ x }}"`},
+		"式の無い閉じない一重引用符の値はそのまま":    {"  a: 'x", "  a: 'x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := unquotedValue(tc.code, keyColumn(tc.code))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	for name, code := range map[string]string{
+		"閉じない一重引用符の値の式は失敗する":    "  a: '${{ x",
+		"閉じた引用符の後ろに字面が続く値は失敗する": "  a: '${{ x }}' y",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := unquotedValue(code, keyColumn(code))
+			require.ErrorIs(t, err, errExpression)
+			assert.ErrorContains(t, err, "YAML の文字列として読めません")
+		})
+	}
 }
 
 func Test_keyColumn(t *testing.T) {
