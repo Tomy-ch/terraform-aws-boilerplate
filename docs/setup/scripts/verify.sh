@@ -71,14 +71,13 @@ ng() {
   printf 'NG  %s\n' "$*"
 }
 
-# jq の式（最後の引数。その前に --arg などを置ける）が真なら ok。式が偽か、入力が JSON でなければ NG。
+# jq の式は最後の引数。その前に --arg などを置ける。
 expect_json() {
   local desc=$1 json=$2
   shift 2
   if jq -e "$@" >/dev/null 2>&1 <<<"$json"; then ok "$desc"; else ng "$desc"; fi
 }
 
-# AWS のエラーの code を期待する確認。成功したか、別のエラーなら NG。
 expect_error() {
   local desc=$1 code=$2
   shift 2
@@ -208,8 +207,8 @@ stage4() {
         '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-identity-governance"])'
     elif [[ $r == apply ]]; then
       # workload の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定17）。
-      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-        '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-workload"])'
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の2つの policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | sort | (. == [] or . == ["tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-read"])'
     else
       expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies == []'
@@ -322,12 +321,21 @@ permissions() {
 
   echo "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）"
   local wp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload"
+  local wrp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload-read"
   local bp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-boundary-ops-notification"
   sim allowed apply-identity "$wp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim allowed apply-identity "$wrp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$bp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wrp},ContextKeyType=arn" iam:AttachRolePolicy
   sim implicitDeny apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${bp},ContextKeyType=arn" iam:AttachRolePolicy
   sim allowed plan "$wp" iam:GetPolicy iam:GetPolicyVersion
+  sim allowed plan "$wrp" iam:GetPolicy iam:GetPolicyVersion
+  # workload の権限は provider の region と us-east-1 に及び、ほかの region には及ばない（ADR-0208 決定4）。
+  sim allowed plan "arn:aws:sns:us-east-1:${ACCOUNT_ID}:tabp-admin-ops-notification-us-east-1" sns:GetTopicAttributes sns:ListTagsForResource
+  local other_region=us-west-2
+  [[ $REGION == "$other_region" ]] && other_region=eu-west-1
+  sim implicitDeny plan "arn:aws:sns:${other_region}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:GetTopicAttributes
   sim allowed plan "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:GetTopicAttributes sns:ListTagsForResource
   sim implicitDeny plan "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:SetTopicAttributes
   local wk="arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/00000000-0000-0000-0000-000000000001"
@@ -335,11 +343,14 @@ permissions() {
   sim allowed plan "$wk" --context "$sym" --context "ContextKeyName=kms:KeyUsage,ContextKeyValues=ENCRYPT_DECRYPT,ContextKeyType=string" --context "ContextKeyName=kms:KeyOrigin,ContextKeyValues=AWS_KMS,ContextKeyType=string" --context "ContextKeyName=kms:MultiRegion,ContextKeyValues=false,ContextKeyType=boolean" kms:DescribeKey
   sim implicitDeny plan "$wk" --context "ContextKeyName=kms:KeySpec,ContextKeyValues=RSA_2048,ContextKeyType=string" --context "ContextKeyName=kms:KeyUsage,ContextKeyValues=SIGN_VERIFY,ContextKeyType=string" --context "ContextKeyName=kms:KeyOrigin,ContextKeyValues=AWS_KMS,ContextKeyType=string" --context "ContextKeyName=kms:MultiRegion,ContextKeyValues=false,ContextKeyType=boolean" kms:DescribeKey
   sim explicitDeny apply "$wp" iam:CreatePolicyVersion iam:DeletePolicy
+  sim explicitDeny apply "$wrp" iam:CreatePolicyVersion iam:DeletePolicy
   sim explicitDeny apply "$bp" iam:CreatePolicyVersion iam:DeletePolicy
   sim explicitDeny apply "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-other" iam:CreateRole iam:PassRole
   sim explicitDeny apply "*" iam:DeleteRolePermissionsBoundary
   sim explicitDeny apply "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
-  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply --query 'AttachedPolicies[].PolicyName' --output text) == tabp-admin-ci-apply-workload ]]; then
+  local attached
+  attached=$(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply --query 'sort(AttachedPolicies[].PolicyName)' --output text)
+  if [[ $attached == $'tabp-admin-ci-apply-workload\ttabp-admin-ci-apply-workload-read' ]]; then
     local or="arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ops-heartbeat" pbctx="ContextKeyName=iam:PermissionsBoundary,ContextKeyValues=${bp},ContextKeyType=arn"
     sim allowed apply "$or" --context "$pbctx" iam:CreateRole iam:PutRolePolicy iam:DeleteRole
     sim implicitDeny apply "$or" iam:CreateRole iam:PutRolePolicy
@@ -349,8 +360,10 @@ permissions() {
     sim allowed apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:CreateTopic sns:SetTopicAttributes
     sim implicitDeny apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:DeleteTopic sns:Subscribe
     sim implicitDeny apply "$wk" kms:ScheduleKeyDeletion
+  elif [[ -z $attached || $attached == None ]]; then
+    echo "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
   else
-    echo "  workload の policy がまだ付いていないので、apply の role の workload の権限は確かめない（workload の policy を作って付ける apply の後にもう一度走らせる）"
+    ng "apply の role に付く managed policy が workload の2つの policy ではない（${attached}）"
   fi
 
   echo "# unlock-identity の role"
