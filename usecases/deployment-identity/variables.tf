@@ -16,7 +16,7 @@ variable "project" {
 }
 
 variable "env" {
-  description = "role を置くアカウントの env の token。管理アカウントは `admin`、統制のメンバーアカウントは `security` と `log-archive`。GitHub の environment 名は `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` になる。"
+  description = "role を置くアカウントの env の token。管理アカウントは `admin`、統制のメンバーアカウントは `security` と `log-archive`。GitHub の environment 名は `<env>-<役割>` になる。役割はこのユースケースの README の role の表が持つ。"
   type        = string
 
   validation {
