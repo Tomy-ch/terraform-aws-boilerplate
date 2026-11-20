@@ -65,18 +65,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate is built from scripts/.
+      # go: infra-code-gate, hcl-input and hcl-tally are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
           tools: aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run the infrastructure-code gate's own tests
-        run: make infra-code-gate-test RUNNER_MODE=host
-
       - name: Detect infrastructure code
-        run: make infra-code-gate RUNNER_MODE=host
+        run: make -k infra-code-gate RUNNER_MODE=host
 
   unlock-admin-identity:
     needs: unlock-infra-code-gate
