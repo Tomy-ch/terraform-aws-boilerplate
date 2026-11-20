@@ -17,8 +17,8 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// countedSuffixes は、Terraform が構成として読むファイルです（ADR-0103 決定11）。`.tf.json` と
-// `.tftest.json` と `.tfquery.hcl` は検出が未対応の入力として落とすが、読んだ件数には数えます。
+// countedSuffixes は、Terraform が構成として読むファイルです（ADR-0103 決定11）。読んだファイルの集合と find の
+// 一覧との突き合わせは hcl-input が持ち、ここは走査の対象が0件でないこと、root の外に構成ファイルが無いことに使います。
 var countedSuffixes = []string{".tf", ".tf.json", ".tftest.hcl", ".tftest.json", ".tfquery.hcl"}
 
 var (
@@ -39,16 +39,15 @@ type conftestResult struct {
 func runCount(args []string, repo string, out io.Writer) error {
 	fset := flag.NewFlagSet("count", flag.ContinueOnError)
 	fset.SetOutput(out)
-	resultsPath := fset.String("results", "", "`conftest test --output json` の出力のパス")
-	combinedPath := fset.String("combined", "", "`conftest test --combine --output json` の出力のパス")
+	combinedPath := fset.String("combined", "", "`conftest test --output json` の出力のパス")
 	repoFlag := fset.String("repo", repo, "走査の root を解くリポジトリの root")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
 	repo = *repoFlag
 	roots := fset.Args()
-	if *resultsPath == "" || *combinedPath == "" || len(roots) == 0 {
-		return xerrors.Wrap(errUsage, "count -results <path> -combined <path> <root>...")
+	if *combinedPath == "" || len(roots) == 0 {
+		return xerrors.Wrap(errUsage, "count -combined <path> <root>...")
 	}
 
 	walked, err := walkConfigs(repo, roots)
@@ -57,10 +56,6 @@ func runCount(args []string, repo string, out io.Writer) error {
 	}
 	if len(walked) == 0 {
 		return xerrors.Wrapf(errNoInput, "Terraform の構成ファイルが %s に1件もありません", strings.Join(roots, " "))
-	}
-	results, err := readResults(*resultsPath)
-	if err != nil {
-		return err
 	}
 	combined, err := readResults(*combinedPath)
 	if err != nil {
@@ -74,14 +69,13 @@ func runCount(args []string, repo string, out io.Writer) error {
 		return xerrors.Wrapf(errNoInput, "%s で追跡しているファイルが1件もありません", repo)
 	}
 
-	findings := compare(results, walked)
-	findings = append(findings, evaluated(combined, *combinedPath)...)
+	findings := evaluated(combined, *combinedPath)
 	findings = append(findings, outsideRoots(tracked, roots)...)
 	findings = append(findings, trackedTerraformDirs(tracked)...)
 	if err := report(out, "count", findings); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "✅ infra-code-gate count: Conftest が読んだ構成ファイル %d 件が、独立の走査の %d 件と一致しました\n", len(walked), len(walked))
+	fmt.Fprintf(out, "✅ infra-code-gate count: 走査の root の構成ファイル %d 件について検出の規則が評価され、root の外と .terraform の下に追跡している構成ファイルはありません\n", len(walked))
 	return nil
 }
 
@@ -128,33 +122,6 @@ func walkConfigs(repo string, roots []string) ([]string, error) {
 	}
 	slices.Sort(files)
 	return slices.Compact(files), nil
-}
-
-// compare は、Conftest が結果を返したファイルの集合と、独立に走査した集合を突き合わせます。
-// どの規則も評価されなかった結果も違反にします。名前空間に規則が無いと、Conftest は違反も成功も
-// 数えずに 0 で終えるためです。
-func compare(results []conftestResult, walked []string) []lintreport.Finding {
-	var findings []lintreport.Finding
-	seen := map[string]bool{}
-	for _, r := range results {
-		name := filepath.ToSlash(filepath.Clean(r.Filename))
-		if r.Successes+len(r.Failures)+len(r.Warnings)+len(r.Exceptions) == 0 {
-			findings = append(findings, lintreport.Finding{File: name, Line: 1, Message: fmt.Sprintf("名前空間 %q の規則が1つも評価されていません", r.Namespace)})
-		}
-		if hasSuffix(name, countedSuffixes) {
-			seen[name] = true
-		}
-	}
-	for _, f := range walked {
-		if !seen[f] {
-			findings = append(findings, lintreport.Finding{File: f, Line: 1, Message: "Conftest がこのファイルを読んでいません"})
-		}
-		delete(seen, f)
-	}
-	for _, f := range sortedKeys(seen) {
-		findings = append(findings, lintreport.Finding{File: f, Line: 1, Message: "Conftest が読んだファイルが、独立の走査に現れません"})
-	}
-	return findings
 }
 
 // evaluated は、全ファイルを1つの入力として掛けた規則が実際に評価されたことを検査します。規則の無い

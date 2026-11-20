@@ -2,19 +2,6 @@ package lib.hcl
 
 files(path, src) := [{"path": path, "contents": parse_config("hcl2", src)}]
 
-test_dir if {
-	dir("modules/a/main.tf") == "modules/a"
-	dir("main.tf") == "."
-}
-
-test_module_dir if {
-	module_dir("modules/a/tests/x.tftest.hcl") == "modules/a"
-	module_dir("modules/a/x.tftest.hcl") == "modules/a"
-	module_dir("tests/x.tftest.hcl") == "."
-	module_dir("x.tftest.hcl") == "."
-	module_dir("modules/a/main.tf") == "modules/a"
-}
-
 test_components_reads_every_kind_and_check_data if {
 	src := concat("\n", [
 		`resource "aws_s3_bucket" "b" {}`,
@@ -116,19 +103,6 @@ test_has_key_anywhere if {
 	not has_key_anywhere(parse_config("hcl2", `region = "x"`), "exec")
 }
 
-test_clean if {
-	clean("m/./src/../src/a.py") == "m/src/a.py"
-	clean("m/a/../../b") == "b"
-	clean("m//a") == "m/a"
-	clean("a/b/..") == "a"
-	clean("a/../b") == "b"
-	clean("a/..") == ""
-	clean(".") == ""
-	not clean("m/../../x")
-	not clean("../x")
-	not clean("a/../..")
-}
-
 test_component_shape if {
 	component("m/a.tf", "resource", "aws_x", "n", {"k": 1}) == {
 		"id": "m#resource.aws_x.n",
@@ -144,12 +118,6 @@ test_provider_id_alias_in_tftest if {
 }`))}
 	ids == {"m/tests/x.tftest.hcl#provider.aws.use1"}
 	{p.module | some p in providers(files("m/tests/x.tftest.hcl", `provider "aws" {}`))} == {"m"}
-}
-
-test_normalize_source if {
-	normalize_source("HashiCorp/AWS") == "registry.terraform.io/hashicorp/aws"
-	normalize_source("registry.terraform.io/HashiCorp/AWS") == "registry.terraform.io/hashicorp/aws"
-	normalize_source("example.com/o/p") == "example.com/o/p"
 }
 
 test_required_sources_defaults_entries_without_source if {
@@ -177,24 +145,4 @@ test_values_at_folds_dynamic_blocks if {
 	}
 }`)
 	values_at(body, "launch_specification.user_data") == ["d"]
-}
-
-test_module_target_resolves_relative_literals if {
-	module_target("env/dev", "../../usecases/u") == "usecases/u"
-	module_target("usecases/u", "./internal/x") == "usecases/u/internal/x"
-}
-
-test_module_target_rejects_non_relative_and_escaping_sources if {
-	not module_target("env/dev", "git::https://example.com/m.git")
-	not module_target("env/dev", "${var.src}/m")
-	not module_target("env/dev", "../${var.x}")
-	not module_target("env/dev", "../../../outside")
-	not module_target("env/dev", null)
-}
-
-test_module_target_rejects_sources_that_are_not_relative_paths if {
-	not module_target("env/dev", ".")
-	not module_target("env/dev", "..")
-	not module_target("env/dev", "/abs/path")
-	not module_target("env/dev", 1)
 }

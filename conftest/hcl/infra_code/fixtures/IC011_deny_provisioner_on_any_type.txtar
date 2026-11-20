@@ -1,0 +1,6 @@
+-- m/main.tf --
+resource "terraform_data" "t" {
+  provisioner "local-exec" {
+    command = "curl x"
+  }
+}

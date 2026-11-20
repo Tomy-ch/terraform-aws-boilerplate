@@ -164,7 +164,7 @@
 - 各ユースケースは supported / unsupported を記述したドキュメントを持つこと（Static Analysisで存在を検査）
 - 各ユースケースは最低1つの reference を持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
-- 次を、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
+- 次を、Static Analysis 層で HCL のソースから作った JSON を Conftest が読んで検査する（ADR-0501 決定5）
   - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block と、決定14 の root module にしか置けない block が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
   - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。どの参照を辿り、何を違反とするかは `conftest/hcl/layer/` が持つ

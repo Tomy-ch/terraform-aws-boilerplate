@@ -68,7 +68,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate is built from scripts/.
+      # go: infra-code-gate and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -132,7 +132,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -264,7 +264,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:

@@ -44,7 +44,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    | レイヤー | 道具 | 実 AWS |
    | --- | --- | --- |
    | Syntax | `terraform fmt` / `terraform validate` | 不要 |
-   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソース。決定5） | 不要 |
+   | Static Analysis | TFLint（AWS Provider 利用時は tflint-ruleset-aws を併用）。本リポジトリのソースの構造の規約は Conftest / OPA（入力は HCL のソースから作る JSON。決定5） | 不要 |
    | Security | Trivy / Checkov / KICS / Semgrep CE（決定6） | 不要 |
    | Unit | `terraform test`（mock provider。`command = plan` を基本とし、plan で値が決まらない値の検査に限って `command = apply` を用いる） | 不要 |
    | Contract | `terraform test` | 不要 |
@@ -71,8 +71,8 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
    決定13-15）。JSON の構成（`.tf.json` 等）は、ADR-0103 決定11 のとおり未対応の入力として落とす。この運用機構は
    決定3 の3条件を満たす —— 既存の道具（Conftest の HCL のパーサ）は式を構文の木として渡さない、規則が本リポジトリ
    固有である、Static Analysis の毎回の検査で使う。Conftest と HCL の構文の木を読むライブラリは既に用いており、
-   道具は増えない。移行が済むまで、層の検査の block の構造と、コード実行の検出・resource の作成の順序の検査・
-   root の構成の検査は、Conftest の HCL のパーサの入力を読み、JSON が持つのは参照の列だけである（#367）。
+   道具は増えない。移行が済むまで、層の検査の block の構造だけは、Conftest の HCL のパーサの入力を読み、
+   層の検査に渡す JSON は参照の列だけを持つ（#367）。
 
    ただし、保護設定の宣言（ADR-0603 決定4）が Terraform のソースの**値**と一致することを見る検査は、リポジトリ
    運用機構（ADR-0702 決定1）が持つ。対象は、environment の宣言と、`deployment-identity` の role の信頼条件が名指す

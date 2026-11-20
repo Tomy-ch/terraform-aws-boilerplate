@@ -3,6 +3,7 @@
 package layer
 
 import data.lib.hcl
+import data.lib.hcl_input as hcl_shape
 
 default decl := {}
 
@@ -922,45 +923,12 @@ well_formed_ref(refs, r) if {
 	non_empty_string(r.root)
 	is_array(r.steps)
 	every s in r.steps {
-		well_formed_step(s)
+		hcl_shape.well_formed_step(s)
 	}
 	is_array(r.within)
 	every w in r.within {
 		well_formed_within(refs, w)
 	}
-}
-
-well_formed_step(s) if {
-	is_object(s)
-	{k | some k, _ in s} == {"kind", "index"}
-	s.kind == "index"
-	well_formed_index(s.index)
-}
-
-well_formed_index(x) if {
-	is_object(x)
-	{k | some k, _ in x} == {"form"}
-	x.form in {"each_key", "each_value", "count_index", "other"}
-}
-
-well_formed_index(x) if {
-	is_object(x)
-	{k | some k, _ in x} == {"form", "value"}
-	x.form == "literal"
-	literal_value(x.value)
-}
-
-literal_value(v) if is_string(v)
-
-literal_value(v) if is_number(v)
-
-well_formed_step(s) if s == {"kind": "splat"}
-
-well_formed_step(s) if {
-	is_object(s)
-	{k | some k, _ in s} == {"kind", "name"}
-	s.kind == "attr"
-	non_empty_string(s.name)
 }
 
 well_formed_within(refs, w) if {

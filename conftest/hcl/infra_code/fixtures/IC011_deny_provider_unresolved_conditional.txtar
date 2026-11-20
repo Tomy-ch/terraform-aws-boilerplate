@@ -1,0 +1,4 @@
+-- m/main.tf --
+provider "helm" {
+  kubernetes = var.on ? { exec = { command = "aws" } } : null
+}
