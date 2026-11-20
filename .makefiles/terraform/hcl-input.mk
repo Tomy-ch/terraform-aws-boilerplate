@@ -10,7 +10,7 @@ HCL_BLOCK_LINE = ^[A-Za-z_][A-Za-z0-9_-]*([[:space:]]+("[^"]*"|[A-Za-z_][A-Za-z0
 
 # hcl-input の起動。$(1) は走査の base、$(2) は出力の置き場。root は sh -c の位置引数で渡す（RUN_SCRIPT の $(2) は
 # 単一引用符の内側に入り、レシピのシェル変数が展開されない）。
-HCL_INPUT_CMD = $(call RUN_SCRIPT,hcl-input,-format syntax -base "$(1)" -listed "$(2)/found.txt" -out "$(2)/hcl-input.json" "$$@") hcl-input $$roots
+HCL_INPUT_CMD = $(call RUN_SCRIPT,hcl-input,-base "$(1)" -listed "$(2)/found.txt" -out "$(2)/hcl-input.json" "$$@") hcl-input $$roots
 
 # HCL_INPUT_DETECT は、呼び出し側のシェル変数 roots（空白区切り）の下を find で列挙し、$(3) で hcl-input を起動し、
 # $(2)/hcl-input.json（Conftest の入力）と $(2)/hcl-counts.json（--data）を書く。$(1) は走査の base。
