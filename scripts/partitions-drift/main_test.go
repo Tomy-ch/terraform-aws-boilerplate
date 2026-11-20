@@ -19,26 +19,24 @@ import (
 )
 
 const (
-	versionsTF = `terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 6.68.0, < 7.0.0"
-    }
-  }
-}
-`
-	copyHCL = `variables {
-  aws_partitions = {
-    "aws"    = ["us-east-1", "ap-northeast-1"]
-    "aws-cn" = ["cn-north-1"]
-  }
-}
-
-run "x" {
-  command = plan
-}
-`
+	versionsTF = "terraform {\n" +
+		"  required_providers {\n" +
+		"    aws = {\n" +
+		"      source  = \"hashicorp/aws\"\n" +
+		"      version = \">= 6.68.0, < 7.0.0\"\n" +
+		"    }\n" +
+		"  }\n" +
+		"}\n"
+	copyHCL = "variables {\n" +
+		"  aws_partitions = {\n" +
+		"    \"aws\"    = [\"us-east-1\", \"ap-northeast-1\"]\n" +
+		"    \"aws-cn\" = [\"cn-north-1\"]\n" +
+		"  }\n" +
+		"}\n" +
+		"\n" +
+		"run \"x\" {\n" +
+		"  command = plan\n" +
+		"}\n"
 	endpointsSrc = `package endpoints
 
 const (
