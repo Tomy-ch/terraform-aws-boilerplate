@@ -143,14 +143,3 @@ variable "users" {
     error_message = "users.services.config に同じアカウントを重ねないでください。"
   }
 }
-
-variable "region" {
-  description = "鍵を置くリージョン。null なら provider のリージョン。provider と別のリージョンは、us-east-1 にしか置けない鍵の利用者（Route 53 のクエリログの Log Group）のための us-east-1 だけを受ける。"
-  type        = string
-  default     = null
-
-  validation {
-    condition     = var.region == null || var.region == "us-east-1"
-    error_message = "region は null（provider のリージョン）か us-east-1 にしてください。"
-  }
-}

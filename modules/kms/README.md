@@ -21,7 +21,6 @@ customer managed key と、その Key Policy・alias を持つ一般 module（AD
 | `users.services.sns` | 鍵で暗号化する SNS の Topic の名前（`topic`）と、その Topic へ publish する同じアカウントの AWS のサービス（`publishers`。`budgets`・`cloudwatch`・`costalerts`・`events` から1つ以上）。同じ Topic を2回は受けない。`modules/sns` の `name`・`publishers` と同じ値を渡す |
 | `users.services.cloudtrail` | 鍵で暗号化して配信する CloudTrail の trail の ARN。`*`・`?` を受けない。鍵と同じ partition だけを受け、鍵の外のアカウントの trail（組織の trail）も受ける |
 | `users.services.config` | 鍵で暗号化して配信する AWS Config のアカウントの12桁の ID。鍵の外のアカウントも受ける |
-| `region` | 鍵・alias・Key Policy を置くリージョン。既定の `null` は provider のリージョン。provider と別のリージョンは `us-east-1` だけを受ける（Route 53 の公開 DNS のクエリログの Log Group が us-east-1 にしか置けないため。`dns-zone` が渡す）。Key Policy の `<region>`（サービスの principal、`kms:ViaService`、組む ARN）はこの値になる |
 
 `users` は合わせて1件以上を要る。管理の委任は暗号操作を含まないので、利用者の無い鍵は誰も使えない。
 
@@ -75,7 +74,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 | --- | --- |
 | `via = "logs"` | それを要る消費者 |
 | 他のアカウントへの許可と `aws_kms_grant` | data-refresh（#59）。方式（Key Policy か grant か）は未決 |
-| us-east-1 のほかの、provider と別の region の鍵 | その region の鍵を要る消費者。`region` の許す値に足す |
+| us-east-1 など別の region の鍵 | その region の鍵を要る消費者が `internal/` に持つ。この module は呼ばれた provider の region に1本作り、`region` の入力を持たない（`make egress-check` は block の `region` が literal であることを求める）。Route 53 のクエリログと DNSSEC の鍵は `dns-zone` が持つ |
 
 ## 保証しないもの
 

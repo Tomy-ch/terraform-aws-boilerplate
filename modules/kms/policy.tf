@@ -3,7 +3,7 @@
 
 locals {
   account   = data.aws_caller_identity.current.account_id
-  region    = coalesce(var.region, data.aws_region.current.region)
+  region    = data.aws_region.current.region
   partition = data.aws_partition.current.partition
 
   # 管理の委任は暗号操作と kms:CreateGrant を含まない。暗号操作は下の文で名指した相手だけに許す（README「公式推奨からの逸脱」）。
@@ -31,7 +31,8 @@ locals {
     "kms:UpdateKeyDescription",
   ]
 
-  s3_roles   = sort([for r in var.users.roles : r.arn if r.via == "s3" && r.access == "read-write"])
+  s3_roles = sort([for r in var.users.roles : r.arn if r.via == "s3" && r.access == "read-write"])
+  # read の role は文を分けて、暗号化コンテキストの object を role ごとに限る。
   s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
   ecr_roles  = sort([for r in var.users.roles : r.arn if r.via == "ecr"])
   log_groups = sort(distinct(var.users.services.logs))
@@ -170,7 +171,6 @@ locals {
 }
 
 resource "aws_kms_key_policy" "this" {
-  region                             = var.region
   key_id                             = aws_kms_key.this.id
   policy                             = local.policy
   bypass_policy_lockout_safety_check = false

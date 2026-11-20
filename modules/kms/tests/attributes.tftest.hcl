@@ -86,16 +86,3 @@ run "attachments_and_output" {
     error_message = "key_arn_for_iam が key_arn と同じ鍵の ARN を返していません。"
   }
 }
-
-run "places_key_alias_and_policy_in_the_given_region" {
-  command = plan
-
-  variables {
-    region = "us-east-1"
-  }
-
-  assert {
-    condition     = aws_kms_key.this.region == "us-east-1" && aws_kms_alias.this.region == "us-east-1" && aws_kms_key_policy.this.region == "us-east-1"
-    error_message = "region を渡したとき、鍵・alias・Key Policy がそのリージョンに置かれていません。"
-  }
-}

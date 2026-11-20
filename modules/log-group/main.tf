@@ -8,7 +8,6 @@ data "aws_region" "current" {}
 data "aws_partition" "current" {}
 
 resource "aws_cloudwatch_log_group" "this" {
-  region                      = var.region
   name                        = var.name
   log_group_class             = "STANDARD"
   retention_in_days           = var.retention_days
@@ -19,7 +18,7 @@ resource "aws_cloudwatch_log_group" "this" {
   lifecycle {
     # validation が他の object を参照できるのは Terraform 1.9 からで、下限の 1.7 では precondition に置く。
     precondition {
-      condition     = startswith(var.kms_key_arn, "arn:${data.aws_partition.current.partition}:kms:${coalesce(var.region, data.aws_region.current.region)}:${data.aws_caller_identity.current.account_id}:key/")
+      condition     = startswith(var.kms_key_arn, "arn:${data.aws_partition.current.partition}:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:key/")
       error_message = "kms_key_arn が、Log Group と同じ partition・リージョン・アカウントの鍵ではありません。"
     }
   }
