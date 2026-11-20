@@ -37,10 +37,10 @@ var (
 	shellArgRe   = regexp.MustCompile(`(?:\b(?:sh|bash|dash|zsh|ksh)|\$[({]SHELL[)}]|\$\$\{?SHELL\}?)\s+(?:\S+\s+)*?-[A-Za-z]*c[A-Za-z]*\s+(?:--\s+)?(?:'([^']*)'?|"((?:[^"\\]|\\.)*)"?)`)
 	// 引用の字句を正規表現で解けない書き方。解釈できない入力として落とす（決定14）。
 	unparsableRe = regexp.MustCompile(`\\'|'\\''|\$\$'|\$'|\|\s*(?:sh|bash|dash|zsh|ksh|\$[({]SHELL[)}])\b|<<<|\bsh\s+-s\b`)
-	computedRe    = regexp.MustCompile(`\$[({]\$`)
-	assignPrefix  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	makeRefRe     = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
-	varRefRe      = regexp.MustCompile(`\$[({](?:call\s+|value\s+)?([A-Za-z_][A-Za-z0-9_.-]*)[\s,:)}]`)
+	computedRe   = regexp.MustCompile(`\$[({]\$`)
+	assignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	makeRefRe    = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
+	varRefRe     = regexp.MustCompile(`\$[({](?:call\s+|value\s+)?([A-Za-z_][A-Za-z0-9_.-]*)[\s,:)}]`)
 )
 
 // constructs は1行が持つ、決定25 の閉じた一覧に当たる書き方を返す。
