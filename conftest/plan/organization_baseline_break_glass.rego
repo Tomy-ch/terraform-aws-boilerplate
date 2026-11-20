@@ -19,7 +19,9 @@ user_arns := {u.arn | some u in users}
 
 # break-glass の user が自分を指す Resource。group の文は2つの user の両方に掛かるので、2つの ARN が同じ1つの接頭辞を持つときだけ定まる。
 own_user_resource := concat("", [prefix, "${aws:username}"]) if {
-	prefixes := [user_prefix(after(a)) | some a in object.get(bg, "users", [])]
+	# 同じ user を2度宣言しても1人と数える。
+	declared := {a | some a in object.get(bg, "users", [])}
+	prefixes := [user_prefix(after(a)) | some a in declared]
 	count(prefixes) == 2
 	distinct := {p | some p in prefixes}
 	count(distinct) == 1
@@ -85,6 +87,7 @@ allowed_group_statement(s) if {
 }
 
 allowed_group_statement(s) if {
+	count(lib.lower_all(s.Action)) > 0
 	every a in lib.lower_all(s.Action) {
 		a in self_management
 	}

@@ -174,47 +174,98 @@ manage_own(resource) := object.union(self_manage, {"Sid": "ManageOwn", "Resource
 
 deactivate_own(resource) := object.union(deactivate, {"Sid": "DeactivateOwnMfa", "Resource": resource})
 
-manage_own_denied := "[PLAN-BG-02] break-glass の group の Allow ManageOwn が、role の引き受けと自分の資格情報の管理の外です"
+denied(sid) := sprintf("[PLAN-BG-02] break-glass の group の Allow %s が、role の引き受けと自分の資格情報の管理の外です", [sid])
 
-with_changes(group, replacements) := [object.get(replacements, r.address, r) | some r in rcs(group, trust(user_arns), [admin])]
+user_address(n) := user(n, "").address
 
-users_as(after1, after2) := {
-	"module.b.aws_iam_user.this[\"break-glass-1\"]": change("module.b.aws_iam_user.this[\"break-glass-1\"]", "aws_iam_user", after1),
-	"module.b.aws_iam_user.this[\"break-glass-2\"]": change("module.b.aws_iam_user.this[\"break-glass-2\"]", "aws_iam_user", after2),
+# 差し替え先の address が参照形に無ければ未定義にし、空振りした差し替えでテストが通らないようにする。
+with_changes(group, replacements) := changes if {
+	base := rcs(group, trust(user_arns), [admin])
+	every address, _ in replacements {
+		some r in base
+		r.address == address
+	}
+	changes := [object.get(replacements, r.address, r) | some r in base]
 }
 
-manage_own_group(resource) := [assume, manage_own(resource), deactivate, password_policy, long_term_credentials_deny]
+users_as(after1, after2) := {
+	user_address(1): change(user_address(1), "aws_iam_user", after1),
+	user_address(2): change(user_address(2), "aws_iam_user", after2),
+}
+
+manage_own_group(statement) := [assume, statement, deactivate, password_policy, long_term_credentials_deny]
+
+deactivate_own_group(statement) := [assume, self_manage, statement, password_policy, long_term_credentials_deny]
+
+not_own_resources := [
+	"arn:aws:iam::111111111111:user/*${aws:username}",
+	"arn:aws:iam::111111111111:user/admins/${aws:username}",
+	"arn:aws:iam::*:user/break-glass/${aws:username}",
+	user_arns[0],
+	[user_arns[0]],
+	[own, "arn:aws:iam::111111111111:user/*${aws:username}"],
+	[],
+	null,
+]
 
 test_violation_self_manage_resource_not_own if {
-	every resource in [
-		"arn:aws:iam::111111111111:user/*${aws:username}",
-		"arn:aws:iam::111111111111:user/admins/${aws:username}",
-		"arn:aws:iam::*:user/break-glass/${aws:username}",
-		[own, "arn:aws:iam::111111111111:user/*${aws:username}"],
-		[],
-	] {
-		fixture.has(manage_own_denied, p.deny) with input as fixture.plan(with_changes(manage_own_group(resource), {})) with data.policy_plan as {"organization_baseline": decl}
+	every resource in not_own_resources {
+		inp := fixture.plan(with_changes(manage_own_group(manage_own(resource)), {}))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 	}
 }
 
-test_violation_deactivate_wildcard_before_username if {
-	group := [assume, self_manage, deactivate_own("arn:aws:iam::111111111111:user/*${aws:username}"), password_policy, long_term_credentials_deny]
-	fixture.has("[PLAN-BG-02] break-glass の group の Allow DeactivateOwnMfa が、", p.deny) with input as fixture.plan(with_changes(group, {})) with data.policy_plan as {"organization_baseline": decl}
+test_violation_deactivate_resource_not_own if {
+	every resource in not_own_resources {
+		inp := fixture.plan(with_changes(deactivate_own_group(deactivate_own(resource)), {}))
+		fixture.has(denied("DeactivateOwnMfa"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+test_violation_self_manage_without_resource if {
+	every statement in [
+		object.remove(manage_own(own), ["Resource"]),
+		object.union(object.remove(manage_own(own), ["Resource"]), {"NotResource": own}),
+	] {
+		inp := fixture.plan(with_changes(manage_own_group(statement), {}))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+# 空の Action は every を真にするので、自分の管理の枝に Action が在ることを求める。
+test_violation_self_manage_empty_action if {
+	inp := fixture.plan(with_changes(manage_own_group(object.union(manage_own(own), {"Action": []})), {}))
+	fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_own_resource_not_derivable if {
 	every users in [
-		# ARN が無い。
 		users_as({"name": "break-glass-1"}, {"name": "break-glass-2", "arn": user_arns[1]}),
-		# 2人の path が違う。
+		users_as(null, {"name": "break-glass-2", "arn": user_arns[1]}),
+		users_as({"name": 1, "arn": user_arns[0]}, {"name": "break-glass-2", "arn": user_arns[1]}),
+		users_as({"name": null, "arn": user_arns[0]}, {"name": "break-glass-2", "arn": user_arns[1]}),
+		users_as({"name": "break-glass-1", "arn": 1}, {"name": "break-glass-2", "arn": user_arns[1]}),
+		users_as({"name": "break-glass-1", "arn": null}, {"name": "break-glass-2", "arn": user_arns[1]}),
 		users_as({"name": "break-glass-1", "arn": user_arns[0]}, {"name": "break-glass-2", "arn": "arn:aws:iam::111111111111:user/other/break-glass-2"}),
-		# ARN が自分の名前で終わらない。
 		users_as({"name": "break-glass-1", "arn": user_arns[1]}, {"name": "break-glass-2", "arn": user_arns[0]}),
-		# 名前が空。
 		users_as({"name": "", "arn": "arn:aws:iam::111111111111:user/break-glass/"}, {"name": "", "arn": "arn:aws:iam::111111111111:user/break-glass/"}),
 	] {
-		fixture.has(manage_own_denied, p.deny) with input as fixture.plan(with_changes(manage_own_group(own), users)) with data.policy_plan as {"organization_baseline": decl}
+		inp := fixture.plan(with_changes(manage_own_group(manage_own(own)), users))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 	}
+}
+
+test_violation_own_resource_users_not_two if {
+	every users in [[], [decl.break_glass.users[0]], [decl.break_glass.users[0], decl.break_glass.users[0]]] {
+		d := {"break_glass": object.union(decl.break_glass, {"users": users})}
+		inp := fixture.plan(with_changes(manage_own_group(manage_own(own)), {}))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": d}
+	}
+}
+
+test_violation_own_resource_user_change_missing if {
+	inp := fixture.plan([r | some r in with_changes(manage_own_group(manage_own(own)), {}); r.address != user_address(2)])
+	fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_own_resource_from_unfixed_arn if {
@@ -224,16 +275,41 @@ test_violation_own_resource_from_unfixed_arn if {
 			{"name": "break-glass-2", "arn": sprintf("arn:aws:iam::111111111111:user%sbreak-glass-2", [path])},
 		)
 		resource := sprintf("arn:aws:iam::111111111111:user%s${aws:username}", [path])
-		fixture.has(manage_own_denied, p.deny) with input as fixture.plan(with_changes(manage_own_group(resource), users)) with data.policy_plan as {"organization_baseline": decl}
+		inp := fixture.plan(with_changes(manage_own_group(manage_own(resource)), users))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 	}
 }
 
+# 接頭辞は partition・iam・12桁のアカウント・user の path を書き切る形に限る。
 test_violation_own_resource_from_malformed_arn if {
-	users := users_as({"name": "break-glass-1", "arn": "x/break-glass-1"}, {"name": "break-glass-2", "arn": "x/break-glass-2"})
-	fixture.has(manage_own_denied, p.deny) with input as fixture.plan(with_changes(manage_own_group("x/${aws:username}"), users)) with data.policy_plan as {"organization_baseline": decl}
+	every prefix in [
+		"x/",
+		"xarn:aws:iam::111111111111:user/break-glass/",
+		"arn:aws:s3::111111111111:user/break-glass/",
+		"arn:aws:iam::11111111111:user/break-glass/",
+		"arn:aws:iam::111111111111:role/break-glass/",
+	] {
+		users := users_as({"name": "break-glass-1", "arn": concat("", [prefix, "break-glass-1"])}, {"name": "break-glass-2", "arn": concat("", [prefix, "break-glass-2"])})
+		inp := fixture.plan(with_changes(manage_own_group(manage_own(concat("", [prefix, "${aws:username}"]))), users))
+		fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+	}
 }
 
 test_pass_own_resource_as_array if {
 	group := [assume, manage_own([own]), deactivate_own([own]), password_policy, long_term_credentials_deny]
 	count(p.deny) == 0 with input as fixture.plan(with_changes(group, {})) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_own_resource_path_and_partition if {
+	every prefix in [
+		"arn:aws:iam::111111111111:user/",
+		"arn:aws:iam::111111111111:user/a/b/",
+		"arn:aws-us-gov:iam::111111111111:user/break-glass/",
+	] {
+		users := users_as({"name": "break-glass-1", "arn": concat("", [prefix, "break-glass-1"])}, {"name": "break-glass-2", "arn": concat("", [prefix, "break-glass-2"])})
+		resource := concat("", [prefix, "${aws:username}"])
+		group := [assume, manage_own(resource), deactivate_own(resource), password_policy, long_term_credentials_deny]
+		deny := p.deny with input as fixture.plan(with_changes(group, users)) with data.policy_plan as {"organization_baseline": decl}
+		not fixture.has("[PLAN-BG-02]", deny)
+	}
 }
