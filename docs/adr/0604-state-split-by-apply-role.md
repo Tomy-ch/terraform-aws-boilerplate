@@ -115,6 +115,7 @@ identity root を bootstrap の構成物に限ったまま、統制を workload 
 - Static Analysis（`make oidc-job-lint`）: lock の解除の job が、同じ root の apply の job と異なる concurrency の group を持ち、実行中の run を取り消さないこと（決定8）
 - Static Analysis（`make oidc-job-lint`）: `env/` の下で `*.tf` を持つディレクトリ（`.terraform` の下を除く）が決定5 の配置にだけ在り、その各 root に、その root を plan する job が1つ以上、apply する job と lock の解除の job と lock を残す job が1つずつあること（決定2-5・8）
 - Static Analysis（`make oidc-job-lint`）: lock を残す job が、同じ root の apply の job と同じ role・environment・concurrency の group を持ち、実行中の run を取り消さず、起動が入力の無い手動の起動だけで、terraform を lock を残す入口でだけ走らせること（決定8）
+- Static Analysis（`make oidc-job-lint`）: apply・lock の解除・lock を残す job が取る role が、走らせる入口の root に対応すること（identity root は `apply-identity`・`unlock-identity`、workload root は `apply`・`unlock`）（決定3・4・8）
 - Static Analysis: apply の job が、apply する plan に決定11-13 の Policy Test を掛け、その成功を apply の条件にしていること（決定11）
 - Policy Test（`plan.state_backend_write_deny`）: state Bucket の bucket policy が、各 apply の role の ARN について、もう一方の root の key と lock file への書き込みを拒否し、lock の解除の role の ARN について、対応する root の lock file の削除のほかの書き込みを拒否すること（決定9）
 - Policy Test（apply の role と lock の解除の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、state Bucket と identity root の state と lock file の ARN への読み取り以外の Action と、state Bucket のすべての object への `s3:DeleteObjectVersion` と、state の鍵の Key Policy がアカウントへ委任する Action を、条件なしで拒まれること。lock の解除の role の Allow が、対応する root の lock file の一覧・読み取り・削除に限られること（決定10）
