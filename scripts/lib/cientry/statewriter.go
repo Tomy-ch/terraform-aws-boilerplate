@@ -28,13 +28,17 @@ var (
 	ErrStateWriterRole = xerrors.New("state に書く role の写しが登録簿と一致しません")
 )
 
-const stateWriterLocal = "state_writer_role_patterns"
+const (
+	stateWriterLocal = "state_writer_role_patterns"
+	regoRolePrefix   = `^arn:aws:iam::\*:role/`
+)
 
 var (
 	// regoHeadRe は state_writer_pattern を頭に持つ規則の行。代入の記号と規則の形を問わない。
 	regoHeadRe    = regexp.MustCompile(`^\s*state_writer_pattern\b`)
 	regoPatternRe = regexp.MustCompile("^state_writer_pattern := `([^`]*)`$")
-	roleGroupRe   = regexp.MustCompile(`-ci-\(([^()]*)\)\$$`)
+	// regoShapeRe は regoRolePrefix に続く部分の形。env の選択肢は語の形だけを見て、値を問わない。
+	regoShapeRe = regexp.MustCompile(`^\[a-z0-9\]\+-\(` + envWord + `(?:\|` + envWord + `)*\)-ci-\(([^()]*)\)\$$`)
 )
 
 // StateWriterRoles は state Bucket に書き込む role を、重複を除いて登録簿の順で返します。lock を取らない
@@ -244,8 +248,8 @@ func countRoleQuotes(src []byte, rng hcl.Range, name string) int {
 // `-ci-(<role>|...)$` の role を書かれた順で返します。
 //
 // state_writer_pattern を頭に持つ規則の行はちょうど1つで、その行は raw string の正規表現1つの代入に限ります。
-// 正規表現が組めないか、`-ci-(` がちょうど1つでないか、末尾が `-ci-(...)$` でないか、role の形でない選択肢か
-// 重複があれば [ErrStateWriterParse] です。
+// 正規表現は `^arn:aws:iam::\*:role/[a-z0-9]+-(<env>|...)-ci-(<role>|...)$` の形に限り、env の選択肢は1つ以上の
+// 語です。正規表現が組めないか、この形でないか、role の形でない選択肢か重複があれば [ErrStateWriterParse] です。
 func parseRegoStateWriterRoles(src []byte) ([]string, error) {
 	lines := strings.Split(string(src), "\n")
 	var heads []int
@@ -266,12 +270,13 @@ func parseRegoStateWriterRoles(src []byte) ([]string, error) {
 	if _, err := regexp.Compile(pattern); err != nil {
 		return nil, xerrors.Wrap(ErrStateWriterParse, fmt.Sprintf("%d 行目: 正規表現を組めません: %v", line, err))
 	}
-	if n := strings.Count(pattern, "-ci-("); n != 1 {
-		return nil, xerrors.Wrap(ErrStateWriterParse, fmt.Sprintf("%d 行目: -ci-( が %d 個です（1個を期待）", line, n))
+	rest, ok := strings.CutPrefix(pattern, regoRolePrefix)
+	if !ok {
+		return nil, xerrors.Wrap(ErrStateWriterParse, fmt.Sprintf("%d 行目: 正規表現が %s で始まりません", line, regoRolePrefix))
 	}
-	g := roleGroupRe.FindStringSubmatch(pattern)
+	g := regoShapeRe.FindStringSubmatch(rest)
 	if g == nil {
-		return nil, xerrors.Wrap(ErrStateWriterParse, fmt.Sprintf("%d 行目: 正規表現が -ci-(<role>|...)$ で終わりません", line))
+		return nil, xerrors.Wrap(ErrStateWriterParse, fmt.Sprintf("%d 行目: 正規表現が %s[a-z0-9]+-(<env>|...)-ci-(<role>|...)$ の形ではありません", line, regoRolePrefix))
 	}
 	var roles []string
 	for _, role := range strings.Split(g[1], "|") {

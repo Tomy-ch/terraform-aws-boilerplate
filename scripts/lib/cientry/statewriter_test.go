@@ -487,6 +487,8 @@ func Test_parseRegoStateWriterRoles(t *testing.T) {
 		t.Parallel()
 
 		head := "state_writer_pattern := `^r/(dev)-ci-(apply)$`\n"
+		regoLine := func(pattern string) string { return "state_writer_pattern := `" + pattern + "`\n" }
+		env := `^arn:aws:iam::\*:role/[a-z0-9]+-(dev|log-archive)-ci-`
 		cases := []struct {
 			name, src, reason string
 		}{
@@ -496,11 +498,20 @@ func Test_parseRegoStateWriterRoles(t *testing.T) {
 			{"本体を持つ規則も数える", regoSrc("apply") + "state_writer_pattern if {\n\ttrue\n}\n", "規則の行が 2 行です"},
 			{"二重引用符の文字列", "state_writer_pattern := \"^r-ci-(apply)$\"\n", "1 行目: state_writer_pattern が raw string 1つの代入ではありません"},
 			{"= の代入", "state_writer_pattern = `^r-ci-(apply)$`\n", "raw string 1つの代入ではありません"},
-			{"正規表現を組めない", "x := 1\nstate_writer_pattern := `^r-ci-(apply$`\n", "2 行目: 正規表現を組めません"},
-			{"-ci-( が無い", "state_writer_pattern := `^r-ci-apply$`\n", "-ci-( が 0 個です"},
-			{"-ci-( が2つ", "state_writer_pattern := `^r-ci-(a)-ci-(apply)$`\n", "-ci-( が 2 個です"},
-			{"選択肢が末尾に無い", "state_writer_pattern := `^r-ci-(apply)-x$`\n", "-ci-(<role>|...)$ で終わりません"},
-			{"選択肢が入れ子", "state_writer_pattern := `^r-ci-(apply(-identity)?)$`\n", "-ci-(<role>|...)$ で終わりません"},
+			{"正規表現を組めない", "x := 1\n" + regoLine(env+"(apply$"), "2 行目: 正規表現を組めません"},
+			{"ARN の接頭辞が無い", regoLine(`^r/[a-z0-9]+-(dev)-ci-(apply)$`), `1 行目: 正規表現が ^arn:aws:iam::\*:role/ で始まりません`},
+			{"接頭辞を .* に緩める", regoLine(`^.*-ci-(apply)$`), "で始まりません"},
+			{"^ が無い", regoLine(`arn:aws:iam::\*:role/[a-z0-9]+-(dev)-ci-(apply)$`), "で始まりません"},
+			{"project を .* に緩める", regoLine(`^arn:aws:iam::\*:role/.*-(dev)-ci-(apply)$`), "1 行目: 正規表現が ^arn:aws:iam::\\*:role/[a-z0-9]+-(<env>|...)-ci-(<role>|...)$ の形ではありません"},
+			{"env の選択肢が無い", regoLine(`^arn:aws:iam::\*:role/[a-z0-9]+-ci-(apply)$`), "の形ではありません"},
+			{"env の選択肢を括弧で囲まない", regoLine(`^arn:aws:iam::\*:role/[a-z0-9]+-dev-ci-(apply)$`), "の形ではありません"},
+			{"env の選択肢が空", regoLine(`^arn:aws:iam::\*:role/[a-z0-9]+-()-ci-(apply)$`), "の形ではありません"},
+			{"env の選択肢に空の語", regoLine(`^arn:aws:iam::\*:role/[a-z0-9]+-(dev|)-ci-(apply)$`), "の形ではありません"},
+			{"env を .* に緩める", regoLine(`^arn:aws:iam::\*:role/[a-z0-9]+-(.*)-ci-(apply)$`), "の形ではありません"},
+			{"-ci-( が無い", regoLine(env + "apply$"), "の形ではありません"},
+			{"-ci-( が2つ", regoLine(env + "(a)-ci-(apply)$"), "の形ではありません"},
+			{"選択肢が末尾に無い", regoLine(env + "(apply)-x$"), "の形ではありません"},
+			{"選択肢が入れ子", regoLine(env + "(apply(-identity)?)$"), "の形ではありません"},
 			{"空の選択肢", regoSrc("apply||unlock"), `3 行目: role "" を読めません`},
 			{"role の形でない選択肢", regoSrc("apply|unlock.*"), `role "unlock.*" を読めません`},
 			{"選択肢が重複", regoSrc("apply|apply"), "role apply が重複しています"},
