@@ -1,14 +1,20 @@
 // hcl-input は、HCL のソースから Conftest の入力の JSON（data のトップキー `hcl_input`）を作ります
 // （ADR-0501 決定5）。順序と Conftest への受け渡しは make が持ちます（ADR-0702 決定24）。
 //
-//	hcl-input -base <dir> -listed <find の一覧> -out <json> <root>...
+//	hcl-input [-format syntax] -base <dir> -listed <find の一覧> -out <json> <root>...
+//	hcl-input fixtures -dir <txtar のディレクトリ> -out <json>
 //
-// root の下の `.tf` を読み、全種類の block と、その属性の式が持つ参照を出します。読めなかったもの
-// —— 構文の誤り、知らない式の型、`Variables()` との食い違い、`.tf.json`、symlink —— は JSON に現れず、
-// 非ゼロで終えて -out を書きません。読んだファイルの集合は、別の経路の走査（-listed）と突き合わせます
-// （ADR-0702 決定15）。
+// 既定の形は、root の下の `.tf` の全種類の block と、その属性の式が持つ参照です（層の検査が --data で読む。
+// トップキー `hcl_input`）。`-format syntax` の形は、root の下の通常のファイルすべての一覧と、`.tf`・
+// `.tftest.hcl` の block を、入れ子の block と属性の式の構文の木とともに出します（Conftest の入力のファイル
+// そのもの）。fixtures は、txtar の1ファイルを1つの木として `-format syntax` と同じ経路で読み、Rego の
+// テストに渡す JSON（トップキー `fixtures`）を書きます。
 //
-// 読むファイルが0件のときは、違反（1）とは別の終了コード（2）で終えます（ADR-0702 決定13）。
+// 読めなかったもの —— 構文の誤り、知らない式の型、`Variables()` との食い違い、symlink、既定の形の
+// `.tf.json` —— は JSON に現れず、非ゼロで終えて -out を書きません。読んだファイルの集合は、別の経路の
+// 走査（-listed）と突き合わせます（ADR-0702 決定15）。
+//
+// 構文として読むファイルが0件のときは、違反（1）とは別の終了コード（2）で終えます（ADR-0702 決定13）。
 package main
 
 import (
@@ -36,7 +42,10 @@ var (
 	errRefsMismatch      = xerrors.New("式から取り出した参照が、hclsyntax の Variables() と一致しません")
 	errFileSetMismatch   = xerrors.New("読んだファイルの集合が、独立の走査の一覧（-listed）と一致しません")
 	errListed            = xerrors.New("独立の走査の一覧（-listed）を読めません")
+	errFixture           = xerrors.New("fixture の txtar を読めません")
 )
+
+const formatSyntax = "syntax"
 
 func main() {
 	log.SetFlags(0)
@@ -60,17 +69,28 @@ func exitCode(err error) int {
 // run は、走査の分類（symlink・`.tf.json`）を一覧との突き合わせより先に判定します。一覧の過不足として
 // 報告すると、原因のファイルの種類が読み手に伝わらないためです。
 func run(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "fixtures" {
+		return runFixtures(args[1:], out)
+	}
 	fset := flag.NewFlagSet("hcl-input", flag.ContinueOnError)
 	fset.SetOutput(out)
 	base := fset.String("base", "", "走査の root と、JSON と -listed の一覧に書くパスの起点のディレクトリ（-listed と -out のパスそのものは作業ディレクトリから解決する）")
 	listedPath := fset.String("listed", "", "独立の走査（find）が列挙した構成ファイルの一覧")
 	outPath := fset.String("out", "", "書き出す JSON のパス")
+	format := fset.String("format", "", "出力の形。空なら参照の列だけの形、syntax なら構文の木の形")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	roots := fset.Args()
 	if *base == "" || *listedPath == "" || *outPath == "" || len(roots) == 0 {
 		return errUsage
+	}
+	switch *format {
+	case "":
+	case formatSyntax:
+		return runSyntax(*base, *listedPath, *outPath, roots, out)
+	default:
+		return xerrors.Wrapf(errUsage, "知らない -format %q", *format)
 	}
 
 	files, err := walkFiles(*base, roots)
@@ -111,4 +131,73 @@ func run(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "✅ hcl-input: %d 件のファイルから %d 個の block を %s へ書きました\n", len(files), len(blocks), *outPath)
 
 	return nil
+}
+
+func runSyntax(base, listedPath, outPath string, roots []string, out io.Writer) error {
+	listed, err := readListed(listedPath)
+	if err != nil {
+		return err
+	}
+	doc, err := buildSyntax(base, roots, listed)
+	if err != nil {
+		return err
+	}
+	data, err := encodeSyntax(doc)
+	if err != nil {
+		return err
+	}
+	if err := atomicwrite.Apply(map[string]string{outPath: string(data)}, outPerm); err != nil {
+		return xerrors.Wrapf(err, "%s への書き込み", outPath)
+	}
+	fmt.Fprintf(out, "✅ hcl-input: %d 件のファイル（構文として %d 件）から %d 個の block を %s へ書きました\n", len(doc.Files), countParsed(doc.Files), len(doc.Blocks), outPath)
+
+	return nil
+}
+
+// buildSyntax は base の下の roots を歩いて listed と突き合わせ、構文として読むファイルを読みます。
+// symlink と走査の分類を、一覧との突き合わせより先に判定します。
+func buildSyntax(base string, roots, listed []string) (syntaxDoc, error) {
+	files, err := walkAllFiles(base, roots)
+	if err != nil {
+		return syntaxDoc{}, err
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
+	}
+	if err := compareFiles(paths, listed); err != nil {
+		return syntaxDoc{}, err
+	}
+	if countParsed(files) == 0 {
+		return syntaxDoc{}, xerrors.Wrapf(errNoInput, "%v", roots)
+	}
+
+	doc := syntaxDoc{Files: files, Blocks: []synBlock{}}
+	for _, f := range files {
+		if !f.Parsed {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(f.Path)))
+		if err != nil {
+			return syntaxDoc{}, xerrors.Wrapf(err, "%s の読み取り", f.Path)
+		}
+		got, err := parseSyntaxFile(f.Path, src)
+		if err != nil {
+			return syntaxDoc{}, err
+		}
+		doc.Blocks = append(doc.Blocks, got...)
+	}
+
+	return doc, nil
+}
+
+func countParsed(files []fileEntry) int {
+	n := 0
+	for _, f := range files {
+		if f.Parsed {
+			n++
+		}
+	}
+
+	return n
 }
