@@ -1,6 +1,5 @@
-# 層の規則の検査（ADR-0102 決定14・17・18。検証方法の3つ）。
+# 層の規則の検査（ADR-0102 決定14・17・18 と、その検証方法）。
 #
-# deny contains は行頭に置く。tf-local policy-result が行頭の deny contains を数える（README の「検査」）。
 package layer
 
 import data.lib.hcl
@@ -60,10 +59,79 @@ well_formed_parents(ps) if {
 
 well_formed_attachment(a) if {
 	is_object(a)
-	{k | some k, _ in a} == {"parents", "optional"}
+	{k | some k, _ in a} == {"parents", "optional", "parent_arguments", "whole_document"}
 	is_boolean(a.optional)
 	well_formed_parents(a.parents)
+	is_boolean(a.whole_document)
+	well_formed_parent_arguments(a)
 }
+
+well_formed_parent_arguments(a) if {
+	is_object(a.parent_arguments)
+	every t, args in a.parent_arguments {
+		t in parent_types_of(a)
+		t != "*"
+		is_object(args)
+		count(args) > 0
+		every arg, v in args {
+			non_empty_string(arg)
+			unwritten_value(v)
+		}
+	}
+}
+
+unwritten_value(null)
+
+unwritten_value(v) if v == []
+
+parent_types_of(a) := {t | some _, ts in a.parents; some t in ts}
+
+well_formed_reasons(x) if {
+	is_object(x)
+	every t, args in x {
+		non_empty_string(t)
+		is_object(args)
+		count(args) > 0
+		every arg, reason in args {
+			non_empty_string(arg)
+			non_empty_string(reason)
+		}
+	}
+}
+
+# Policy Test は、保護の対象の型の分をここから導く（ADR-0402 決定17）。
+well_formed_unrelated(x) if {
+	is_object(x)
+	every t, args in x {
+		non_empty_string(t)
+		is_object(args)
+		count(args) > 0
+		every arg, e in args {
+			non_empty_string(arg)
+			is_object(e)
+			{k | some k, _ in e} == {"reason", "unwritten"}
+			non_empty_string(e.reason)
+			unwritten_value(e.unwritten)
+		}
+	}
+}
+
+unrelated_deprecated := object.get(decl, "unrelated_deprecated_arguments", null)
+
+inline_owned := object.get(decl, "inline_owned", null)
+
+declared_parent_types := {t | some _, a in attachments; some t in parent_types_of(a); t != "*"} if is_object(attachments)
+
+# parent_argument_decl は、attachment 型と同じ設定を書くと宣言した（親の型, 引数, それを宣言した attachment 型）の組。
+parent_argument_decl := {[t, arg, at] |
+	some at, a in attachments
+	is_object(a.parent_arguments)
+	some t, args in a.parent_arguments
+	is_object(args)
+	some arg, _ in args
+} if is_object(attachments)
+
+parent_argument_pairs := {[t, arg] | some [t, arg, _] in parent_argument_decl}
 
 deny contains msg if {
 	not is_object(attachments)
@@ -80,7 +148,60 @@ deny contains msg if {
 	is_object(attachments)
 	some t, a in attachments
 	not well_formed_attachment(a)
-	msg := sprintf("LY001 [宣言の形] attachments.%s が parents（引数から親の型の空でない配列への空でないオブジェクト）と optional（真偽値）だけを持ちません", [t])
+	msg := sprintf("LY001 [宣言の形] attachments.%s が parents（引数から親の型の空でない配列への空でないオブジェクト）・optional（真偽値）・parent_arguments（parents に在る具体の親の型から、引数と書かないときの値 null か [] への空でないオブジェクト）・whole_document（真偽値）だけを持ちません", [t])
+}
+
+deny contains msg if {
+	is_object(attachments)
+	some t, a in attachments
+	is_object(a)
+	a.whole_document == true
+	count(a.parents) != 1
+	msg := sprintf("LY001 [宣言の形] attachments.%s は whole_document が true ですが、親の引数がちょうど1つではありません", [t])
+}
+
+deny contains msg if {
+	not well_formed_unrelated(unrelated_deprecated)
+	msg := "LY001 [宣言の形] data.layer_decl.unrelated_deprecated_arguments が、親の型から、引数と reason（空でない理由）・unwritten（null か []）へのオブジェクトではありません"
+}
+
+deny contains msg if {
+	not well_formed_reasons(inline_owned)
+	msg := "LY001 [宣言の形] data.layer_decl.inline_owned が、親の型から、引数と空でない理由へのオブジェクトではありません"
+}
+
+deny contains msg if {
+	some name, x in {"unrelated_deprecated_arguments": unrelated_deprecated, "inline_owned": inline_owned}
+	is_object(x)
+	some t, _ in x
+	not t in declared_parent_types
+	msg := sprintf("LY001 [宣言の形] %s.%s は、attachments のどの項目の親の型でもありません", [name, t])
+}
+
+deny contains msg if {
+	is_object(unrelated_deprecated)
+	some t, args in unrelated_deprecated
+	some arg, _ in args
+	[t, arg] in parent_argument_pairs
+	msg := sprintf("LY001 [宣言の形] %s.%s が parent_arguments と unrelated_deprecated_arguments の両方にあります", [t, arg])
+}
+
+deny contains msg if {
+	is_object(inline_owned)
+	some t, args in inline_owned
+	some arg, _ in args
+	not [t, arg] in parent_argument_pairs
+	msg := sprintf("LY001 [宣言の形] inline_owned.%s.%s は、どの attachment 型の parent_arguments にもありません", [t, arg])
+}
+
+deny contains msg if {
+	some [t, arg, a1] in parent_argument_decl
+	some [t2, arg2, a2] in parent_argument_decl
+	t2 == t
+	arg2 == arg
+	a1 < a2
+	attachments[a1].parent_arguments[t][arg] != attachments[a2].parent_arguments[t][arg]
+	msg := sprintf("LY001 [宣言の形] %s.%s の書かないときの値が、%s と %s で食い違います", [t, arg, a1, a2])
 }
 
 deny contains msg if {
@@ -373,6 +494,356 @@ deny contains msg if {
 	msg := sprintf("LY302 [親の引数が無い] %s の %s が、宣言した親の引数（%s）をどれも持ちません。Provider が引数の名前を変えたなら宣言を直す", [c.path, address(c), concat(", ", sort(object.keys(a.parents)))])
 }
 
+# --- 決定18 の共存: 親の inline の引数（LY304）と、排他に持つ引数の親への attachment 型（LY307） ---
+
+owned_pairs := {[t, arg] | some t, args in inline_owned; some arg, _ in args} if is_object(inline_owned)
+
+default owned_pairs := set()
+
+# written_arg は、resource c が引数 arg を書いたかを、2つのパーサのどちらか一方でも書いたと読めば真とする。
+# hcl-input は属性を持たない block（inline_policy {}）を出さず、hcl2 の入力は block の構造を持つので、
+# 片方の読み落としで黙って通さない。値と式は評価しない（null も [] も書いたと数える）。
+written_arg(c, arg) if count(hcl.values_at(c.body, arg)) > 0
+
+written_arg(c, arg) if {
+	some b in go_blocks
+	b.kind == "resource"
+	b.file == c.path
+	b.labels == [type_of(c), name_of(c)]
+	some a in b.attributes
+	arg_path_prefix(a.path, arg)
+}
+
+arg_path_prefix(path, arg) if path == arg
+
+arg_path_prefix(path, arg) if startswith(path, concat("", [arg, "."]))
+
+arg_path_prefix(path, arg) if startswith(path, concat("", ["dynamic.", arg, "."]))
+
+deny contains msg if {
+	is_object(attachments)
+	some c in resources
+	t := type_of(c)
+	some arg in {a | some [t2, a] in parent_argument_pairs; t2 == t}
+	not [t, arg] in owned_pairs
+	written_arg(c, arg)
+	ats := sort({at | some [t3, arg3, at] in parent_argument_decl; t3 == t; arg3 == arg})
+	msg := sprintf("LY304 [親の inline の引数] %s の %s が %s を書いています。同じ設定を attachment 型（%s）が書くので、値を問わず書きません（ADR-0102 決定18）→ attachment 型の resource で書く", [c.path, address(c), arg, concat(", ", ats)])
+}
+
+deny contains msg if {
+	go_ok
+	is_object(attachments)
+	some c in resources
+	a := attachments[type_of(c)]
+	well_formed_attachment(a)
+	some t, args in a.parent_arguments
+	some arg, _ in args
+	[t, arg] in owned_pairs
+	some parg, types in a.parents
+	t in types
+	some at in resource_attrs(c, parg)
+	some l in leaves(c, at.refs)
+	startswith(l, concat("", [t, "."]))
+	allowed_leaf(c, types, l)
+	msg := sprintf("LY307 [排他の引数の親への attachment] %s の %s が、%s を排他に持つと宣言した親 %s を指しています（ADR-0102 決定18）→ 親の %s で書く", [c.path, address(c), arg, l, arg])
+}
+
+# --- 決定18 の文書全体の attachment の重複（LY305・LY308） ---
+#
+# 比べるのは別々の block の間だけ。1つの block の count・for_each の instance どうしは比べない（README の「保証しないこと」）。
+
+whole_document_resources := [c |
+	some c in resources
+	a := attachments[type_of(c)]
+	well_formed_attachment(a)
+	a.whole_document == true
+]
+
+whole_document_arg(c) := arg if some arg, _ in attachments[type_of(c)].parents
+
+multi(c) if c.body.count
+
+multi(c) if c.body.for_each
+
+multi(c) if count(resource_attrs(c, "count")) > 0
+
+multi(c) if count(resource_attrs(c, "for_each")) > 0
+
+resource_ref(r) if {
+	first_step_named(r)
+	not r.root in keywords
+}
+
+selection(r) := "whole" if count(r.steps) == 1
+
+selection(r) := "whole" if r.steps[1].kind == "attr"
+
+selection(r) := concat("", ["literal:", literal_key(r.steps[1].index.value)]) if {
+	r.steps[1].kind == "index"
+	r.steps[1].index.form == "literal"
+}
+
+default selection(_) := "undecidable"
+
+# this[0] と this["0"] を同じに読む（Terraform は数の形の文字列を数へ変換する）。等しいと読む側に倒す。
+numeric_string := `^[+-]?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?$`
+
+literal_key(v) := sprintf("%v", [to_number(v)]) if {
+	is_string(v)
+	regex.match(numeric_string, v)
+}
+
+literal_key(v) := sprintf("%v", [v]) if is_number(v)
+
+literal_key(v) := v if {
+	is_string(v)
+	not regex.match(numeric_string, v)
+}
+
+pairs_in(refs) := {[ref_token(r), selection(r)] | some r in refs; not skipped(refs, r); resource_ref(r)}
+
+plain_local(r) if {
+	r.root == "local"
+	first_step_named(r)
+	selection(r) == "whole"
+}
+
+selected_local(r) if {
+	r.root == "local"
+	first_step_named(r)
+	selection(r) != "whole"
+}
+
+local_node(d, r) := sprintf("%s|%s", [d, r.steps[0].name])
+
+# 同じ名前の local を複数の block が定義しても（Terraform はこれを拒む）、定義ごとの refs の集合として1つの節に合わせる。
+local_defs := {k: {a2.refs | some [d2, a2] in local_attrs; sprintf("%s|%s", [d2, a2.path]) == k} |
+	some [d, a] in local_attrs
+	k := sprintf("%s|%s", [d, a.path])
+}
+
+local_pairs(n) := {p | some refs in object.get(local_defs, n, set()); some p in pairs_in(refs)}
+
+local_edges(sel) := {n: {local_node(split(n, "|")[0], r) |
+	some refs in defs
+	some r in refs
+	not skipped(refs, r)
+	edge_kind(sel, r)
+} | some n, defs in local_defs}
+
+edge_kind(false, r) if plain_local(r)
+
+edge_kind(true, r) if selected_local(r)
+
+edge_kind("all", r) if plain_local(r)
+
+edge_kind("all", r) if selected_local(r)
+
+plain_graph := local_edges(false)
+
+selected_graph := local_edges(true)
+
+full_graph := local_edges("all")
+
+# local を添字で選んだら、その先の葉はすべて undecidable にする。
+block_pairs(d, refs) := direct | via_plain | via_selected if {
+	direct := pairs_in(refs)
+	start_plain := {local_node(d, r) | some r in refs; not skipped(refs, r); plain_local(r)}
+	start_sel := {local_node(d, r) | some r in refs; not skipped(refs, r); selected_local(r)}
+	reach_plain := graph.reachable(plain_graph, start_plain)
+	via_plain := {p | some n in reach_plain; some p in local_pairs(n)}
+	sel_roots := start_sel | {m | some n in reach_plain; some m in object.get(selected_graph, n, set())}
+	reach_sel := graph.reachable(full_graph, sel_roots)
+	via_selected := {[l, "undecidable"] | some n in reach_sel; some [l, _] in local_pairs(n)}
+}
+
+# block_pairs が拾わない葉（each を経たもの）は undecidable にする。
+parent_pairs(c) := {[l, s] |
+	arg := whole_document_arg(c)
+	types := attachments[type_of(c)].parents[arg]
+	some at in resource_attrs(c, arg)
+	ps := block_pairs(hcl.dir(c.path), at.refs)
+	found := {l2 | some [l2, _] in ps}
+	some [l, s] in ps | {[l3, "undecidable"] | some l3 in leaves(c, at.refs); not l3 in found}
+	allowed_leaf(c, types, l)
+}
+
+decided(s) if s == "whole"
+
+decided(s) if startswith(s, "literal:")
+
+same_selection(s1, s2) if {
+	decided(s1)
+	decided(s2)
+	s1 == s2
+}
+
+same_selection(s1, s2) if {
+	decided(s1)
+	decided(s2)
+	"whole" in {s1, s2}
+}
+
+whole_document_pair contains [c1, c2, l] if {
+	go_ok
+	some c1 in whole_document_resources
+	some c2 in whole_document_resources
+	c1.id < c2.id
+	type_of(c1) == type_of(c2)
+	hcl.dir(c1.path) == hcl.dir(c2.path)
+	some [l, _] in parent_pairs(c1)
+	some [l2, _] in parent_pairs(c2)
+	l2 == l
+}
+
+equal_pair(c1, c2, l) if {
+	not multi(c1)
+	not multi(c2)
+	some [l1, s1] in parent_pairs(c1)
+	some [l2, s2] in parent_pairs(c2)
+	l1 == l
+	l2 == l
+	same_selection(s1, s2)
+}
+
+undecided_pair(c1, c2, _) if multi(c1)
+
+undecided_pair(c1, c2, _) if multi(c2)
+
+undecided_pair(c1, c2, l) if {
+	some [l1, s] in parent_pairs(c1) | parent_pairs(c2)
+	l1 == l
+	not decided(s)
+}
+
+deny contains msg if {
+	some [c1, c2, l] in whole_document_pair
+	equal_pair(c1, c2, l)
+	msg := sprintf("LY305 [文書全体の重複] %s の %s と %s が、同じ親 %s の文書全体を書きます（ADR-0102 決定18）→ 1つの resource にまとめる", [c1.path, address(c1), address(c2), l])
+}
+
+deny contains msg if {
+	some [c1, c2, l] in whole_document_pair
+	not equal_pair(c1, c2, l)
+	undecided_pair(c1, c2, l)
+	msg := sprintf("LY308 [判定できない文書全体の重複] %s の %s と %s が、同じ親 %s を指し、同じ instance かを参照から判定できません（ADR-0102 決定18）→ 1つの resource にまとめるか、別々の instance をリテラルの添字で指す", [c1.path, address(c1), address(c2), l])
+}
+
+# --- 決定18 の分類の網羅: Provider の schema との突き合わせ（LY306） ---
+
+schema := data.layer_schema
+
+default schema_ok := false
+
+schema_ok if {
+	is_object(schema)
+	count(schema) > 0
+	every _, e in schema {
+		well_formed_schema_entry(e)
+	}
+}
+
+well_formed_schema_entry(e) if {
+	is_object(e)
+	{k | some k, _ in e} == {"arguments", "deprecated", "blocks"}
+	every k in ["arguments", "deprecated", "blocks"] {
+		is_array(e[k])
+		every x in e[k] {
+			non_empty_string(x)
+		}
+	}
+	every x in e.deprecated {
+		x in e.arguments
+	}
+	every x in e.blocks {
+		x in e.arguments
+	}
+}
+
+deny contains msg if {
+	not schema_ok
+	msg := "LY306 [schema の一覧] data.layer_schema が無いか、空か、形が違います（型ごとに arguments・deprecated・blocks の文字列の配列。deprecated と blocks は arguments の部分集合）→ make layer-check から起動する"
+}
+
+# 書ける引数を1つも持たない親の型は、抜き出しの式が壊れて全型が空になった状態と区別できないので落とす。
+deny contains msg if {
+	schema_ok
+	some t in declared_parent_types
+	count(schema[t].arguments) == 0
+	msg := sprintf("LY306 [schema の引数が空] 親の型 %s の書ける引数が schema から1つも取れていません → scripts/provider-schema の抜き出しと、terraform providers schema -json の出力を確かめる", [t])
+}
+
+deny contains msg if {
+	schema_ok
+	some t in declared_parent_types
+	not schema[t]
+	msg := sprintf("LY306 [schema に無い親の型] 親の型 %s が Provider の schema にありません → 宣言の型名を直すか、Provider の版を確かめる", [t])
+}
+
+classified_args(t) := {arg | some [t2, arg] in parent_argument_pairs; t2 == t} | {arg | some arg, _ in object.get(unrelated_deprecated, t, {})}
+
+deny contains msg if {
+	schema_ok
+	is_object(unrelated_deprecated)
+	some t in declared_parent_types
+	some arg in schema[t].deprecated
+	not arg in classified_args(t)
+	msg := sprintf("LY306 [分類されていない非推奨の引数] 親の型 %s の非推奨の引数 %s が、どの attachment 型の parent_arguments にも unrelated_deprecated_arguments にもありません（ADR-0102 決定18）→ 同じ設定を書く attachment 型の parent_arguments か、理由とともに unrelated_deprecated_arguments に置く", [t, arg])
+}
+
+declared_args := parent_argument_pairs | {[t, arg] | some t, args in unrelated_deprecated; some arg, _ in args} | owned_pairs
+
+deny contains msg if {
+	schema_ok
+	is_object(unrelated_deprecated)
+	some [t, arg] in declared_args
+	schema[t]
+	not arg in schema[t].arguments
+	msg := sprintf("LY306 [schema に無い引数] 宣言の %s.%s が、Provider の schema の書ける引数にありません → 宣言の引数名を直す", [t, arg])
+}
+
+deny contains msg if {
+	schema_ok
+	is_object(unrelated_deprecated)
+	some t, args in unrelated_deprecated
+	schema[t]
+	some arg, _ in args
+	not arg in schema[t].deprecated
+	msg := sprintf("LY306 [古い分類] unrelated_deprecated_arguments の %s.%s は、Provider の schema で非推奨ではありません → 宣言から外す", [t, arg])
+}
+
+deny contains msg if {
+	schema_ok
+	some [t, arg, at] in parent_argument_decl
+	schema[t]
+	arg in schema[t].arguments
+	v := attachments[at].parent_arguments[t][arg]
+	not unwritten_matches(schema[t], arg, v)
+	msg := sprintf("LY306 [書かないときの値] attachments.%s.parent_arguments の %s.%s の値が schema の種類と合いません（block は []、属性は null）", [at, t, arg])
+}
+
+deny contains msg if {
+	schema_ok
+	well_formed_unrelated(unrelated_deprecated)
+	some t, args in unrelated_deprecated
+	schema[t]
+	some arg, e in args
+	arg in schema[t].arguments
+	not unwritten_matches(schema[t], arg, e.unwritten)
+	msg := sprintf("LY306 [書かないときの値] unrelated_deprecated_arguments の %s.%s の unwritten が schema の種類と合いません（block は []、属性は null）", [t, arg])
+}
+
+unwritten_matches(e, arg, v) if {
+	arg in e.blocks
+	v == []
+}
+
+unwritten_matches(e, arg, v) if {
+	not arg in e.blocks
+	v == null
+}
+
 # 宣言のどの区分にも無い型は、親を外から書き換える経路かどうかを判定できないので落とす。親の型に
 # 現れるだけでは分類に数えない。
 classified contains t if some t, _ in attachments
@@ -459,7 +930,29 @@ well_formed_ref(refs, r) if {
 	}
 }
 
-well_formed_step(s) if s == {"kind": "index"}
+well_formed_step(s) if {
+	is_object(s)
+	{k | some k, _ in s} == {"kind", "index"}
+	s.kind == "index"
+	well_formed_index(s.index)
+}
+
+well_formed_index(x) if {
+	is_object(x)
+	{k | some k, _ in x} == {"form"}
+	x.form in {"each_key", "each_value", "count_index", "other"}
+}
+
+well_formed_index(x) if {
+	is_object(x)
+	{k | some k, _ in x} == {"form", "value"}
+	x.form == "literal"
+	literal_value(x.value)
+}
+
+literal_value(v) if is_string(v)
+
+literal_value(v) if is_number(v)
 
 well_formed_step(s) if s == {"kind": "splat"}
 

@@ -7,7 +7,9 @@
             "aws_accessanalyzer_analyzer"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_acm_certificate_validation": {
         "parents": {
@@ -15,7 +17,9 @@
             "aws_acm_certificate"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_amplify_domain_association": {
         "parents": {
@@ -23,7 +27,9 @@
             "aws_amplify_app"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_api_gateway_base_path_mapping": {
         "parents": {
@@ -31,7 +37,9 @@
             "aws_api_gateway_domain_name"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_api_gateway_method_settings": {
         "parents": {
@@ -42,7 +50,9 @@
             "aws_api_gateway_stage"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_api_gateway_rest_api_policy": {
         "parents": {
@@ -50,7 +60,9 @@
             "aws_api_gateway_rest_api"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_api_gateway_usage_plan_key": {
         "parents": {
@@ -58,7 +70,9 @@
             "aws_api_gateway_usage_plan"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_apigatewayv2_api_mapping": {
         "parents": {
@@ -66,7 +80,9 @@
             "aws_apigatewayv2_domain_name"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_appconfig_deployment": {
         "parents": {
@@ -74,7 +90,9 @@
             "aws_appconfig_environment"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_appconfig_extension_association": {
         "parents": {
@@ -84,7 +102,9 @@
             "aws_appconfig_environment"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_athena_named_query": {
         "parents": {
@@ -92,7 +112,9 @@
             "aws_athena_workgroup"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_athena_prepared_statement": {
         "parents": {
@@ -100,7 +122,9 @@
             "aws_athena_workgroup"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_attachment": {
         "parents": {
@@ -108,7 +132,14 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_autoscaling_group": {
+            "load_balancers": null,
+            "target_group_arns": null
+          }
+        },
+        "whole_document": false
       },
       "aws_autoscaling_group_tag": {
         "parents": {
@@ -116,7 +147,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_lifecycle_hook": {
         "parents": {
@@ -124,7 +157,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_notification": {
         "parents": {
@@ -132,7 +167,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_policy": {
         "parents": {
@@ -140,7 +177,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_schedule": {
         "parents": {
@@ -148,7 +187,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_autoscaling_traffic_source_attachment": {
         "parents": {
@@ -156,7 +197,9 @@
             "aws_autoscaling_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_backup_selection": {
         "parents": {
@@ -164,7 +207,9 @@
             "aws_backup_plan"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_backup_vault_lock_configuration": {
         "parents": {
@@ -172,7 +217,9 @@
             "aws_backup_vault"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_backup_vault_notifications": {
         "parents": {
@@ -180,7 +227,9 @@
             "aws_backup_vault"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_backup_vault_policy": {
         "parents": {
@@ -188,7 +237,9 @@
             "aws_backup_vault"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_budgets_budget_action": {
         "parents": {
@@ -196,7 +247,9 @@
             "aws_budgets_budget"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ce_anomaly_subscription": {
         "parents": {
@@ -204,7 +257,9 @@
             "aws_ce_anomaly_monitor"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudfront_monitoring_subscription": {
         "parents": {
@@ -212,7 +267,9 @@
             "aws_cloudfront_distribution"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_event_archive": {
         "parents": {
@@ -220,7 +277,9 @@
             "aws_cloudwatch_event_bus"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_event_bus_policy": {
         "parents": {
@@ -228,7 +287,9 @@
             "aws_cloudwatch_event_bus"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_event_permission": {
         "parents": {
@@ -236,7 +297,9 @@
             "aws_cloudwatch_event_bus"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_event_target": {
         "parents": {
@@ -244,7 +307,9 @@
             "aws_cloudwatch_event_rule"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_data_protection_policy": {
         "parents": {
@@ -252,7 +317,9 @@
             "aws_cloudwatch_log_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_delivery": {
         "parents": {
@@ -260,7 +327,9 @@
             "aws_cloudwatch_log_delivery_source"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_delivery_destination_policy": {
         "parents": {
@@ -268,7 +337,9 @@
             "aws_cloudwatch_log_delivery_destination"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_delivery_source": {
         "parents": {
@@ -276,7 +347,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_index_policy": {
         "parents": {
@@ -284,7 +357,9 @@
             "aws_cloudwatch_log_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_metric_filter": {
         "parents": {
@@ -292,7 +367,9 @@
             "aws_cloudwatch_log_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_resource_policy": {
         "parents": {
@@ -300,7 +377,9 @@
             "*"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_stream": {
         "parents": {
@@ -308,7 +387,9 @@
             "aws_cloudwatch_log_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cloudwatch_log_subscription_filter": {
         "parents": {
@@ -316,7 +397,9 @@
             "aws_cloudwatch_log_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_identity_pool_provider_principal_tag": {
         "parents": {
@@ -324,7 +407,9 @@
             "aws_cognito_identity_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_identity_pool_roles_attachment": {
         "parents": {
@@ -332,7 +417,9 @@
             "aws_cognito_identity_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_log_delivery_configuration": {
         "parents": {
@@ -340,7 +427,9 @@
             "aws_cognito_user_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_managed_user_pool_client": {
         "parents": {
@@ -348,7 +437,9 @@
             "aws_cognito_user_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_risk_configuration": {
         "parents": {
@@ -356,7 +447,9 @@
             "aws_cognito_user_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_user_pool_domain": {
         "parents": {
@@ -364,7 +457,9 @@
             "aws_cognito_user_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_cognito_user_pool_ui_customization": {
         "parents": {
@@ -372,7 +467,9 @@
             "aws_cognito_user_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_config_configuration_recorder_status": {
         "parents": {
@@ -380,7 +477,9 @@
             "aws_config_configuration_recorder"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_db_instance_role_association": {
         "parents": {
@@ -388,7 +487,9 @@
             "aws_db_instance"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_db_proxy_default_target_group": {
         "parents": {
@@ -396,7 +497,9 @@
             "aws_db_proxy"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_db_proxy_target": {
         "parents": {
@@ -404,7 +507,9 @@
             "aws_db_proxy"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_default_route_table": {
         "parents": {
@@ -412,7 +517,9 @@
             "aws_vpc"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_default_security_group": {
         "parents": {
@@ -420,7 +527,9 @@
             "aws_vpc"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_dynamodb_contributor_insights": {
         "parents": {
@@ -428,7 +537,9 @@
             "aws_dynamodb_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_dynamodb_kinesis_streaming_destination": {
         "parents": {
@@ -436,7 +547,9 @@
             "aws_dynamodb_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_dynamodb_resource_policy": {
         "parents": {
@@ -444,7 +557,9 @@
             "aws_dynamodb_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_dynamodb_table_replica": {
         "parents": {
@@ -452,7 +567,13 @@
             "aws_dynamodb_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_dynamodb_table": {
+            "replica": []
+          }
+        },
+        "whole_document": false
       },
       "aws_dynamodb_tag": {
         "parents": {
@@ -460,7 +581,9 @@
             "aws_dynamodb_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ec2_tag": {
         "parents": {
@@ -468,7 +591,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ecr_lifecycle_policy": {
         "parents": {
@@ -476,7 +601,9 @@
             "aws_ecr_repository"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_ecr_repository_policy": {
         "parents": {
@@ -484,7 +611,9 @@
             "aws_ecr_repository"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_ecs_cluster_capacity_providers": {
         "parents": {
@@ -492,7 +621,9 @@
             "aws_ecs_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_ecs_tag": {
         "parents": {
@@ -500,7 +631,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_efs_backup_policy": {
         "parents": {
@@ -508,7 +641,9 @@
             "aws_efs_file_system"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_efs_file_system_policy": {
         "parents": {
@@ -516,7 +651,9 @@
             "aws_efs_file_system"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_efs_replication_configuration": {
         "parents": {
@@ -524,7 +661,9 @@
             "aws_efs_file_system"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_eip_association": {
         "parents": {
@@ -532,7 +671,9 @@
             "aws_eip"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_eks_access_entry": {
         "parents": {
@@ -540,7 +681,9 @@
             "aws_eks_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_eks_access_policy_association": {
         "parents": {
@@ -552,7 +695,9 @@
             "aws_eks_access_entry"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_eks_addon": {
         "parents": {
@@ -560,7 +705,9 @@
             "aws_eks_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_eks_identity_provider_config": {
         "parents": {
@@ -568,7 +715,9 @@
             "aws_eks_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_eks_pod_identity_association": {
         "parents": {
@@ -576,7 +725,9 @@
             "aws_eks_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_elasticache_user_group_association": {
         "parents": {
@@ -584,7 +735,9 @@
             "aws_elasticache_user_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_flow_log": {
         "parents": {
@@ -607,7 +760,9 @@
             "aws_nat_gateway"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_glue_partition_index": {
         "parents": {
@@ -619,7 +774,9 @@
             "aws_glue_catalog_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_guardduty_detector_feature": {
         "parents": {
@@ -627,7 +784,13 @@
             "aws_guardduty_detector"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_guardduty_detector": {
+            "datasources": []
+          }
+        },
+        "whole_document": false
       },
       "aws_guardduty_filter": {
         "parents": {
@@ -635,7 +798,9 @@
             "aws_guardduty_detector"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_guardduty_malware_protection_plan": {
         "parents": {
@@ -643,7 +808,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_guardduty_publishing_destination": {
         "parents": {
@@ -651,7 +818,9 @@
             "aws_guardduty_detector"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_iam_group_membership": {
         "parents": {
@@ -659,7 +828,9 @@
             "aws_iam_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_iam_group_policy": {
         "parents": {
@@ -667,7 +838,9 @@
             "aws_iam_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_iam_group_policy_attachment": {
         "parents": {
@@ -675,7 +848,9 @@
             "aws_iam_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_iam_instance_profile": {
         "parents": {
@@ -683,7 +858,9 @@
             "aws_iam_role"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_iam_policy_attachment": {
         "parents": {
@@ -697,7 +874,13 @@
             "aws_iam_group"
           ]
         },
-        "optional": true
+        "optional": true,
+        "parent_arguments": {
+          "aws_iam_role": {
+            "managed_policy_arns": null
+          }
+        },
+        "whole_document": false
       },
       "aws_iam_role_policies_exclusive": {
         "parents": {
@@ -705,7 +888,13 @@
             "aws_iam_role"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_iam_role": {
+            "inline_policy": []
+          }
+        },
+        "whole_document": true
       },
       "aws_iam_role_policy": {
         "parents": {
@@ -713,7 +902,13 @@
             "aws_iam_role"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_iam_role": {
+            "inline_policy": []
+          }
+        },
+        "whole_document": false
       },
       "aws_iam_role_policy_attachment": {
         "parents": {
@@ -721,7 +916,13 @@
             "aws_iam_role"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_iam_role": {
+            "managed_policy_arns": null
+          }
+        },
+        "whole_document": false
       },
       "aws_iam_role_policy_attachments_exclusive": {
         "parents": {
@@ -729,7 +930,13 @@
             "aws_iam_role"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_iam_role": {
+            "managed_policy_arns": null
+          }
+        },
+        "whole_document": true
       },
       "aws_iam_user_policy": {
         "parents": {
@@ -737,7 +944,9 @@
             "aws_iam_user"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_iam_user_policy_attachment": {
         "parents": {
@@ -745,7 +954,9 @@
             "aws_iam_user"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_kms_alias": {
         "parents": {
@@ -753,7 +964,9 @@
             "aws_kms_key"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_kms_grant": {
         "parents": {
@@ -761,7 +974,9 @@
             "aws_kms_key"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_kms_key_policy": {
         "parents": {
@@ -769,7 +984,13 @@
             "aws_kms_key"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_kms_key": {
+            "policy": null
+          }
+        },
+        "whole_document": true
       },
       "aws_lambda_event_source_mapping": {
         "parents": {
@@ -777,7 +998,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_function_event_invoke_config": {
         "parents": {
@@ -785,7 +1008,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_function_recursion_config": {
         "parents": {
@@ -793,7 +1018,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_function_url": {
         "parents": {
@@ -801,7 +1028,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_layer_version_permission": {
         "parents": {
@@ -812,7 +1041,9 @@
             "aws_lambda_layer_version"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_permission": {
         "parents": {
@@ -820,7 +1051,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_provisioned_concurrency_config": {
         "parents": {
@@ -828,7 +1061,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lambda_runtime_management_config": {
         "parents": {
@@ -836,7 +1071,9 @@
             "aws_lambda_function"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lb_listener_certificate": {
         "parents": {
@@ -844,7 +1081,9 @@
             "aws_lb_listener"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lb_target_group_attachment": {
         "parents": {
@@ -852,7 +1091,9 @@
             "aws_lb_target_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_bucket_access_key": {
         "parents": {
@@ -860,7 +1101,9 @@
             "aws_lightsail_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_bucket_resource_access": {
         "parents": {
@@ -868,7 +1111,9 @@
             "aws_lightsail_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_container_service_deployment_version": {
         "parents": {
@@ -876,7 +1121,9 @@
             "aws_lightsail_container_service"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_disk_attachment": {
         "parents": {
@@ -884,7 +1131,9 @@
             "aws_lightsail_instance"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_instance_public_ports": {
         "parents": {
@@ -892,7 +1141,9 @@
             "aws_lightsail_instance"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_lb_attachment": {
         "parents": {
@@ -900,7 +1151,9 @@
             "aws_lightsail_lb"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_lb_certificate_attachment": {
         "parents": {
@@ -908,7 +1161,9 @@
             "aws_lightsail_lb"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_lb_https_redirection_policy": {
         "parents": {
@@ -916,7 +1171,9 @@
             "aws_lightsail_lb"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_lb_stickiness_policy": {
         "parents": {
@@ -924,7 +1181,9 @@
             "aws_lightsail_lb"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_lightsail_static_ip_attachment": {
         "parents": {
@@ -932,7 +1191,9 @@
             "aws_lightsail_instance"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_main_route_table_association": {
         "parents": {
@@ -940,7 +1201,9 @@
             "aws_vpc"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_network_acl_association": {
         "parents": {
@@ -948,7 +1211,13 @@
             "aws_network_acl"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_network_acl": {
+            "subnet_ids": null
+          }
+        },
+        "whole_document": false
       },
       "aws_network_acl_rule": {
         "parents": {
@@ -956,7 +1225,14 @@
             "aws_network_acl"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_network_acl": {
+            "ingress": null,
+            "egress": null
+          }
+        },
+        "whole_document": false
       },
       "aws_network_interface_sg_attachment": {
         "parents": {
@@ -964,7 +1240,13 @@
             "aws_network_interface"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_network_interface": {
+            "security_groups": null
+          }
+        },
+        "whole_document": false
       },
       "aws_networkfirewall_logging_configuration": {
         "parents": {
@@ -972,7 +1254,9 @@
             "aws_networkfirewall_firewall"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_networkfirewall_resource_policy": {
         "parents": {
@@ -981,7 +1265,9 @@
             "aws_networkfirewall_rule_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_opensearch_authorize_vpc_endpoint_access": {
         "parents": {
@@ -989,7 +1275,9 @@
             "aws_opensearch_domain"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_opensearch_domain_policy": {
         "parents": {
@@ -997,7 +1285,9 @@
             "aws_opensearch_domain"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_opensearch_domain_saml_options": {
         "parents": {
@@ -1005,7 +1295,9 @@
             "aws_opensearch_domain"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_organizations_delegated_administrator": {
         "parents": {
@@ -1013,7 +1305,9 @@
             "aws_organizations_account"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_organizations_policy_attachment": {
         "parents": {
@@ -1023,7 +1317,9 @@
             "aws_organizations_organizational_unit"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_pinpointsmsvoicev2_event_destination": {
         "parents": {
@@ -1031,7 +1327,9 @@
             "aws_pinpointsmsvoicev2_configuration_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_pinpointsmsvoicev2_keyword": {
         "parents": {
@@ -1039,7 +1337,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_pinpointsmsvoicev2_resource_policy": {
         "parents": {
@@ -1047,7 +1347,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_rds_cluster_activity_stream": {
         "parents": {
@@ -1055,7 +1357,9 @@
             "aws_rds_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_rds_cluster_role_association": {
         "parents": {
@@ -1063,7 +1367,13 @@
             "aws_rds_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_rds_cluster": {
+            "iam_roles": null
+          }
+        },
+        "whole_document": false
       },
       "aws_rds_integration": {
         "parents": {
@@ -1071,7 +1381,9 @@
             "aws_rds_cluster"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_redshiftserverless_resource_policy": {
         "parents": {
@@ -1079,7 +1391,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_route": {
         "parents": {
@@ -1087,7 +1401,13 @@
             "aws_route_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_route_table": {
+            "route": null
+          }
+        },
+        "whole_document": false
       },
       "aws_route53_hosted_zone_dnssec": {
         "parents": {
@@ -1095,7 +1415,9 @@
             "aws_route53_zone"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_route53_key_signing_key": {
         "parents": {
@@ -1103,7 +1425,9 @@
             "aws_route53_zone"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_route53_query_log": {
         "parents": {
@@ -1111,7 +1435,9 @@
             "aws_route53_zone"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_route53_vpc_association_authorization": {
         "parents": {
@@ -1119,7 +1445,9 @@
             "aws_route53_zone"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_route53_zone_association": {
         "parents": {
@@ -1127,7 +1455,13 @@
             "aws_route53_zone"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_route53_zone": {
+            "vpc": []
+          }
+        },
+        "whole_document": false
       },
       "aws_route_table_association": {
         "parents": {
@@ -1135,7 +1469,9 @@
             "aws_route_table"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_accelerate_configuration": {
         "parents": {
@@ -1143,7 +1479,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "acceleration_status": null
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_acl": {
         "parents": {
@@ -1151,7 +1493,14 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "acl": null,
+            "grant": []
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_analytics_configuration": {
         "parents": {
@@ -1159,7 +1508,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_cors_configuration": {
         "parents": {
@@ -1167,7 +1518,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "cors_rule": []
+          }
+        },
+        "whole_document": true
       },
       "aws_s3_bucket_intelligent_tiering_configuration": {
         "parents": {
@@ -1175,7 +1532,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_inventory": {
         "parents": {
@@ -1183,7 +1542,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_lifecycle_configuration": {
         "parents": {
@@ -1191,7 +1552,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "lifecycle_rule": []
+          }
+        },
+        "whole_document": true
       },
       "aws_s3_bucket_logging": {
         "parents": {
@@ -1199,7 +1566,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "logging": []
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_metric": {
         "parents": {
@@ -1207,7 +1580,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_notification": {
         "parents": {
@@ -1215,7 +1590,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_s3_bucket_object_lock_configuration": {
         "parents": {
@@ -1223,7 +1600,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "object_lock_configuration": []
+          }
+        },
+        "whole_document": true
       },
       "aws_s3_bucket_ownership_controls": {
         "parents": {
@@ -1231,7 +1614,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_policy": {
         "parents": {
@@ -1239,7 +1624,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "policy": null
+          }
+        },
+        "whole_document": true
       },
       "aws_s3_bucket_public_access_block": {
         "parents": {
@@ -1247,7 +1638,9 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_s3_bucket_replication_configuration": {
         "parents": {
@@ -1255,7 +1648,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "replication_configuration": []
+          }
+        },
+        "whole_document": true
       },
       "aws_s3_bucket_request_payment_configuration": {
         "parents": {
@@ -1263,7 +1662,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "request_payer": null
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_server_side_encryption_configuration": {
         "parents": {
@@ -1271,7 +1676,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "server_side_encryption_configuration": []
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_versioning": {
         "parents": {
@@ -1279,7 +1690,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "versioning": []
+          }
+        },
+        "whole_document": false
       },
       "aws_s3_bucket_website_configuration": {
         "parents": {
@@ -1287,7 +1704,13 @@
             "aws_s3_bucket"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_s3_bucket": {
+            "website": []
+          }
+        },
+        "whole_document": false
       },
       "aws_secretsmanager_secret_policy": {
         "parents": {
@@ -1295,7 +1718,9 @@
             "aws_secretsmanager_secret"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_secretsmanager_secret_rotation": {
         "parents": {
@@ -1303,7 +1728,9 @@
             "aws_secretsmanager_secret"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_secretsmanager_secret_version": {
         "parents": {
@@ -1311,7 +1738,9 @@
             "aws_secretsmanager_secret"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_security_group_rule": {
         "parents": {
@@ -1319,7 +1748,14 @@
             "aws_security_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_security_group": {
+            "ingress": null,
+            "egress": null
+          }
+        },
+        "whole_document": false
       },
       "aws_ses_active_receipt_rule_set": {
         "parents": {
@@ -1327,7 +1763,9 @@
             "aws_ses_receipt_rule_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_domain_dkim": {
         "parents": {
@@ -1335,7 +1773,9 @@
             "aws_ses_domain_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_domain_identity_verification": {
         "parents": {
@@ -1343,7 +1783,9 @@
             "aws_ses_domain_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_domain_mail_from": {
         "parents": {
@@ -1351,7 +1793,9 @@
             "aws_ses_domain_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_event_destination": {
         "parents": {
@@ -1359,7 +1803,9 @@
             "aws_ses_configuration_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_identity_notification_topic": {
         "parents": {
@@ -1368,7 +1814,9 @@
             "aws_ses_email_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ses_identity_policy": {
         "parents": {
@@ -1377,7 +1825,9 @@
             "aws_ses_email_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sesv2_configuration_set_event_destination": {
         "parents": {
@@ -1385,7 +1835,9 @@
             "aws_sesv2_configuration_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sesv2_dedicated_ip_assignment": {
         "parents": {
@@ -1393,7 +1845,9 @@
             "aws_sesv2_dedicated_ip_pool"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sesv2_email_identity_feedback_attributes": {
         "parents": {
@@ -1401,7 +1855,9 @@
             "aws_sesv2_email_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sesv2_email_identity_mail_from_attributes": {
         "parents": {
@@ -1409,7 +1865,9 @@
             "aws_sesv2_email_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sesv2_email_identity_policy": {
         "parents": {
@@ -1417,7 +1875,9 @@
             "aws_sesv2_email_identity"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sns_topic_data_protection_policy": {
         "parents": {
@@ -1425,7 +1885,9 @@
             "aws_sns_topic"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sns_topic_policy": {
         "parents": {
@@ -1433,7 +1895,9 @@
             "aws_sns_topic"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_sns_topic_subscription": {
         "parents": {
@@ -1441,7 +1905,9 @@
             "aws_sns_topic"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_sqs_queue_policy": {
         "parents": {
@@ -1449,7 +1915,9 @@
             "aws_sqs_queue"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_sqs_queue_redrive_allow_policy": {
         "parents": {
@@ -1457,7 +1925,9 @@
             "aws_sqs_queue"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_sqs_queue_redrive_policy": {
         "parents": {
@@ -1465,7 +1935,9 @@
             "aws_sqs_queue"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_ssoadmin_account_assignment": {
         "parents": {
@@ -1473,7 +1945,9 @@
             "aws_ssoadmin_permission_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ssoadmin_application_access_scope": {
         "parents": {
@@ -1481,7 +1955,9 @@
             "aws_ssoadmin_application"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ssoadmin_application_assignment": {
         "parents": {
@@ -1489,7 +1965,9 @@
             "aws_ssoadmin_application"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ssoadmin_customer_managed_policy_attachment": {
         "parents": {
@@ -1497,7 +1975,9 @@
             "aws_ssoadmin_permission_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ssoadmin_managed_policy_attachment": {
         "parents": {
@@ -1505,7 +1985,9 @@
             "aws_ssoadmin_permission_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_ssoadmin_permission_set_inline_policy": {
         "parents": {
@@ -1513,7 +1995,9 @@
             "aws_ssoadmin_permission_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_ssoadmin_permissions_boundary_attachment": {
         "parents": {
@@ -1521,7 +2005,9 @@
             "aws_ssoadmin_permission_set"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       },
       "aws_vpc_endpoint_policy": {
         "parents": {
@@ -1529,7 +2015,9 @@
             "aws_vpc_endpoint"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_vpc_endpoint_route_table_association": {
         "parents": {
@@ -1537,7 +2025,13 @@
             "aws_vpc_endpoint"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_vpc_endpoint": {
+            "route_table_ids": null
+          }
+        },
+        "whole_document": false
       },
       "aws_vpc_endpoint_security_group_association": {
         "parents": {
@@ -1545,7 +2039,13 @@
             "aws_vpc_endpoint"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_vpc_endpoint": {
+            "security_group_ids": null
+          }
+        },
+        "whole_document": false
       },
       "aws_vpc_endpoint_subnet_association": {
         "parents": {
@@ -1553,7 +2053,13 @@
             "aws_vpc_endpoint"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_vpc_endpoint": {
+            "subnet_ids": null
+          }
+        },
+        "whole_document": false
       },
       "aws_vpc_security_group_egress_rule": {
         "parents": {
@@ -1561,7 +2067,13 @@
             "aws_security_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_security_group": {
+            "egress": null
+          }
+        },
+        "whole_document": false
       },
       "aws_vpc_security_group_ingress_rule": {
         "parents": {
@@ -1569,7 +2081,13 @@
             "aws_security_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {
+          "aws_security_group": {
+            "ingress": null
+          }
+        },
+        "whole_document": false
       },
       "aws_vpc_security_group_vpc_association": {
         "parents": {
@@ -1577,7 +2095,9 @@
             "aws_security_group"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_wafv2_web_acl_association": {
         "parents": {
@@ -1585,7 +2105,9 @@
             "*"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": false
       },
       "aws_wafv2_web_acl_logging_configuration": {
         "parents": {
@@ -1593,7 +2115,9 @@
             "aws_wafv2_web_acl"
           ]
         },
-        "optional": false
+        "optional": false,
+        "parent_arguments": {},
+        "whole_document": true
       }
     },
     "not_attachments": {
@@ -1681,7 +2205,7 @@
       "aws_iam_group": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_openid_connect_provider": "親を持たない（アカウントかリージョンの単位で設定する）",
       "aws_iam_organizations_features": "親を持たない（組織の単位で設定する。組織を引数で名指さない）",
-      "aws_iam_policy": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない。role への付与は aws_iam_role_policy_attachments_exclusive が持つ）",
+      "aws_iam_policy": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない。role への付与は aws_iam_role_policy_attachment が持ち、帯域外の付与の排除は aws_iam_role_policy_attachments_exclusive が持つ）",
       "aws_iam_role": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_iam_user": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_kms_key": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
@@ -1744,6 +2268,19 @@
       "aws_vpc": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_vpc_endpoint": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
       "aws_wafv2_web_acl": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）"
+    },
+    "unrelated_deprecated_arguments": {
+      "aws_cloudwatch_event_rule": {
+        "is_enabled": {
+          "reason": "同じ resource の state に置き換わる非推奨の引数で、attachment 型（aws_cloudwatch_event_target）は規則の有効を書かない",
+          "unwritten": null
+        }
+      }
+    },
+    "inline_owned": {
+      "aws_route_table": {
+        "route": "経路を inline の空の list で排他に持ち、帯域外で足された経路を plan に出す（network-foundation/ADR-0102 決定2）。同じ設定を書く aws_route は置かない"
+      }
     }
   }
 }
