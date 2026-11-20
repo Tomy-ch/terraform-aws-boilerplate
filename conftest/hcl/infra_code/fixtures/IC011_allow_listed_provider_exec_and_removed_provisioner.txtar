@@ -1,0 +1,17 @@
+-- m/main.tf --
+provider "kubernetes" {
+  exec {
+    command = "aws"
+  }
+}
+
+removed {
+  from = aws_s3_bucket.old
+  lifecycle {
+    destroy = false
+  }
+  provisioner "local-exec" {
+    when    = destroy
+    command = "x"
+  }
+}

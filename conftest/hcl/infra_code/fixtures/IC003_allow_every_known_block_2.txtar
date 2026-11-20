@@ -1,0 +1,15 @@
+-- m/x.tftest.hcl --
+variables {}
+provider "aws" {}
+mock_provider "aws" {}
+override_resource {
+  target = aws_s3_bucket.b
+}
+override_data {
+  target = data.aws_region.r
+}
+override_module {
+  target = module.m
+}
+test {}
+run "a" {}

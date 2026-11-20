@@ -1,0 +1,39 @@
+required_providers の書き方ごとの source と、module の source、backend と cloud。
+-- m/versions.tf --
+terraform {
+  required_providers {
+    aws = {
+      version = "~> 6.0"
+    }
+    k8s = "~> 2.0"
+    gh = {
+      source = "integrations/github"
+    }
+    dyn = {
+      source  = var.s
+      version = "1"
+    }
+    mixed = {
+      source  = "Example/Mixed"
+      version = var.v
+    }
+  }
+
+  backend "s3" {
+    key          = "k"
+    use_lockfile = true
+    encrypt      = var.e
+  }
+
+  cloud {}
+}
+-- m/main.tf --
+module "lit" {
+  source = "../n"
+}
+
+module "expr" {
+  source = "${path.module}/n"
+}
+
+module "none" {}

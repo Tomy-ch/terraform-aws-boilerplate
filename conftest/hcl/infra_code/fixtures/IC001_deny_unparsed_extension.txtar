@@ -1,0 +1,4 @@
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+-- m/src/handler.py --
+print("x")

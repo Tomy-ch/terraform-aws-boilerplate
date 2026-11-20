@@ -1,0 +1,6 @@
+-- u/internal/fn/main.tf --
+resource "aws_spot_fleet_request" "s" {
+  launch_specification {
+    ami = "x"
+  }
+}

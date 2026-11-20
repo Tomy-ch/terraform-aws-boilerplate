@@ -1,0 +1,10 @@
+-- m/providers.tf --
+provider "aws" {}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}

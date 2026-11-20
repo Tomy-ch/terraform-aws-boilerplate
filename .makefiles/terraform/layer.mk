@@ -10,6 +10,8 @@
 ## 検査(3) の参照は scripts/hcl-input が HCL の構文の木から作る JSON（data.hcl_input）を読む（ADR-0501 決定5）。
 ## hcl-input が失敗したら Conftest を起動しない —— 欠けた入力の上の Rego の結果は、読み手を迷わせる。
 
+include .makefiles/terraform/hcl-input.mk
+
 LY_BASE ?= .
 LY_ROOTS = usecases modules env
 LY_DECL ?= conftest/hcl/layer/decl.json
@@ -19,6 +21,8 @@ LY_REGO = conftest/hcl/layer/layer.rego
 LY_NS ?= layer
 LY_POLICY_LIST = $(subst $(space),$(comma),$(strip $(LY_POLICY)))
 LY_OUT = tmp/layer-check
+# 層の block の構造が hcl2 の形を読む間だけ、層の木のテストに parse_config を許す。#367 PR-B で外す。
+LY_ALLOW_PARSE_CONFIG = conftest/hcl/layer
 # root は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、レシピのシェル変数が展開されない。
 LY_HCL_INPUT_CMD = $(call RUN_SCRIPT,hcl-input,-base "$(LY_BASE)" -listed "$(LY_OUT)/found.txt" -out "$(LY_OUT)/hcl-input.json" "$$@") hcl-input $$roots
 
@@ -33,9 +37,10 @@ layer-check:
 .PHONY: layer-verify ## 層の検査の Rego のテストを走らせ、各 deny に違反と非違反のテストがあることを検査
 layer-verify:
 	@set -u; mkdir -p $(LY_OUT); rc=0; \
-	$(GO_TOOL) $(CONFTEST_BIN) verify $(foreach p,$(LY_POLICY),-p $(p)) --no-color --report notes > $(LY_OUT)/verify.txt 2>&1 || rc=$$?; \
+	$(call HCL_INPUT_FIXTURES,$(LY_OUT),conftest/hcl/lib/fixtures); \
+	$(GO_TOOL) $(CONFTEST_BIN) verify $(foreach p,$(LY_POLICY),-p $(p)) --data $(call HCL_FIXTURE_JSON,$(LY_OUT),conftest/hcl/lib/fixtures) --no-color --report notes > $(LY_OUT)/verify.txt 2>&1 || rc=$$?; \
 	if [ "$$rc" -ne 0 ]; then cat $(LY_OUT)/verify.txt; fi; \
-	$(call RUN_SCRIPT,infra-code-gate,rego-tests -policy $(LY_POLICY_LIST) -report $(LY_OUT)/verify.txt -namespaces $(LY_NS)) || rc=1; \
+	$(call RUN_SCRIPT,infra-code-gate,rego-tests -policy $(LY_POLICY_LIST) -report $(LY_OUT)/verify.txt -namespaces $(LY_NS) -allow-parse-config $(LY_ALLOW_PARSE_CONFIG)) || rc=1; \
 	exit $$rc
 
 .PHONY: layer-detect ## Terraform の構成を層の規則で検査し、読んだファイルを独立の走査と突き合わせる

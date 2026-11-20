@@ -1,0 +1,2 @@
+-- m/main.tf --
+future_block "x" {}
