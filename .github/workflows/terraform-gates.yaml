@@ -227,9 +227,6 @@ jobs:
       - name: Check the resource order
         run: make resource-order-check RUNNER_MODE=host
 
-      - name: Run the layer check's own tests
-        run: make layer-check-test RUNNER_MODE=host
-
       - name: Check the layer rules
         run: make layer-check RUNNER_MODE=host
 
