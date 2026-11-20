@@ -110,7 +110,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
   （ADR-0602 決定14）。Copilot coding agent の Pull Request は、人が workflow の実行を承認したときだけ走る。
   この承認を省くリポジトリの設定を有効にしないこと（設定を突き合わせる検査は無い）
 - **plan の role を assume した後、plan の前に、apply 系の role の assume が拒否されることを確かめる。**
-  `make ci-assume-denied` が同じ job の OIDC token で apply・apply-identity・unlock-identity・unlock の role を assume し、
+  `make ci-assume-denied` が同じ job の OIDC token で、`pull_request` で起動する種別のほかのすべての role（ci.mk の `CI_DENIED_ROLES`。
+  `scripts/lib/cientry` の登録簿との一致は `cientry.Parse` が見る）を assume し、
   すべてが STS の `AccessDenied` でなければ落ちる。資格情報は置かない。plan の job のこの step は skip できず、
   欠ければ `make oidc-job-lint` が落ちる。失敗した assume は run ごとに CloudTrail に残る（session 名は `gha-denied-` で始まる）
 - **リリース線宛の plan は、管理アカウントの今の状態に対する差分である。** 管理アカウントへ当たっているのは
@@ -186,8 +187,8 @@ role を assume し（ADR-0602 決定14）、管理アカウントの identity r
     workload root の apply がそれを使うので、同じ run の中で順に当てる
 - **root ごとに、plan・apply・lock の解除・lock を残す job を1つずつ置く。** root は `env/<env>/identity/`（identity root）と
   `env/<env>/`（workload root）に限り（ADR-0604 決定5）、それぞれに Pull Request で起動する plan の job が1つ以上、
-  apply の job と lock の解除の job と lock を残す job がちょうど1つずつ要る。make の入口は `ci-plan-<env>-<root>`・`ci-apply-<env>-<root>`・
-  `ci-unlock-<env>-<root>`・`ci-hold-<env>-<root>`（`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
+  apply の job と lock の解除の job と lock を残す job がちょうど1つずつ要る。make の入口は `ci-<種別>-<env>-<root>`
+  （種別は `scripts/lib/cientry` の登録簿の種別、`<root>` は `identity` か `workload`）。root を足す変更は、同じ変更でその job を足す。
   配置と job の過不足は `make oidc-job-lint` が、root が呼ぶ usecase と backend の設定（key が ADR-0604 決定7 の値で、
   lock file を使う）は `make root-check` が落とす
 - **env ごとに、apply の workflow と lock の解除の workflow と lock を残す workflow を1つずつ置く。** 1つの workflow が複数の env の apply を
@@ -645,12 +646,12 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 CI の実行する root とそれを実行する job を、`type` が resource / data source の型の呼ぶ宛先を持つ。
 `make egress-check` は root から相対パスの module を辿って型を集め、どの `type` にも当たらない型と、
 `type` の宛先を持たない job と、`type` の宛先を許すのにどの root にも名指されていない job で落ちる。
-job が実際に実行する root は、job が呼ぶ `make ci-plan-*` / `ci-apply-*` / `ci-unlock-*` / `ci-hold-*` を `.makefiles/terraform/operation/ci.mk`
-の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。`type` の宛先を
-求めるのは、その root の `ci-plan-*` か `ci-apply-*` か `ci-hold-*` を呼ぶ job だけである —— `ci-unlock-*` は terraform を
-呼ばないので、それだけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が plan か
-apply の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも `ci-plan-*` / `ci-apply-*` / `ci-hold-*`
-を呼ばなければ落ちる。region を含む
+job が実際に実行する root は、job が呼ぶ CI の入口 `make ci-<種別>-*`（種別は `scripts/lib/cientry` の登録簿の種別）を
+`.makefiles/terraform/operation/ci.mk` の呼び出しの引数から読み（配置は ADR-0604 決定5）、`root` の名指しと食い違えば落ちる。
+`type` の宛先を求めるのは、その root で Terraform を実行する種別（登録簿の `Terraform`）の入口を呼ぶ job だけである ——
+Terraform を実行しない種別の入口だけを呼ぶ job には求めない。区別は呼ぶ入口から導くので、lock の解除の job が
+Terraform を実行する種別の入口も呼べば、その job は型の宛先を求められる。root を名指す job のどれも Terraform を
+実行する種別の入口を呼ばなければ落ちる。region を含む
 `type` の宛先の region の集合が、その `type` に当たる型のブロックを置く region の集合（ブロックの `region`
 引数のリテラル。持たないブロックは、辿る aws の provider のただ 1 つの `region`）と一致しなければ落ち、
 ブロックの `region` 引数（`action` は `config` の中）が region の形のリテラルでなくても、`action` の `region` を
