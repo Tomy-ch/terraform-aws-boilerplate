@@ -306,7 +306,7 @@ decrypt_limited_to_lock(s, n) if {
 	vs := lib.limiting_values(s, "kms:encryptioncontext:aws:s3:arn")
 	count(vs) > 0
 	every v in vs {
-		lib.no_wildcard(v)
+		lib.fixed_value(v)
 	}
 	{v | some v in vs} == lock_objects(n)
 }
