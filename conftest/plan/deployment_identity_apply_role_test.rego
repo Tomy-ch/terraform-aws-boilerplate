@@ -666,23 +666,58 @@ workload_world(arns) := array.concat(
 	[res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})})],
 )
 
-test_pass_declared_workload_policy_attached if {
-	count(messages_for(workload_world([workload_policy_arn]), with_workload_decl)) == 0
+test_violation_workload_declared_without_read_policy if {
+	fixture.has("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.read_policy", messages_for(workload_world([workload_policy_arn]), with_workload_decl))
+}
+
+test_violation_declared_read_policy_absent if {
+	fixture.has("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.read_policy", messages_for(workload_world([workload_policy_arn]), with_two_workload_decl))
 }
 
 workload_attachment(arn) := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload", [g]), {"role": "ci-apply", "policy_arn": arn})
 
+read_attachment := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload_read", [g]), {"role": "ci-apply", "policy_arn": read_policy_arn})
+
+declared_world := two_workload_world([workload_policy_arn, read_policy_arn])
+
 test_pass_declared_workload_policy_attachment if {
-	count(messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment(workload_policy_arn)]), with_workload_decl)) == 0
+	count(messages_for(array.concat(declared_world, [workload_attachment(workload_policy_arn), read_attachment]), with_two_workload_decl)) == 0
 }
 
 test_violation_attachment_of_undeclared_policy if {
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment("arn:aws:iam::aws:policy/ReadOnlyAccess")]), with_workload_decl))
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(declared_world, [workload_attachment("arn:aws:iam::aws:policy/ReadOnlyAccess")]), with_two_workload_decl))
 }
 
-test_violation_workload_policy_not_attached if {
-	every arns in [[], [workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"], ["arn:aws:iam::aws:policy/ReadOnlyAccess"]] {
-		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(workload_world(arns), with_workload_decl))
+read_policy_address := sprintf("%saws_iam_policy.workload_read", [g])
+
+read_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload-read", [account])
+
+with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address}}])
+
+# 宣言した型の aws_iam_policy は Deny で守る対象なので、2つの policy の ARN を Deny に載せる。
+two_workload_world(arns) := array.concat(
+	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn, read_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
+	[
+		res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})}),
+		res("aws_iam_policy", read_policy_address, {"name": "ci-apply-workload-read", "arn": read_policy_arn, "policy": json.marshal({"Statement": []})}),
+	],
+)
+
+test_pass_two_workload_policies_attached_in_any_order if {
+	every arns in [[workload_policy_arn, read_policy_arn], [read_policy_arn, workload_policy_arn]] {
+		count(messages_for(two_workload_world(arns), with_two_workload_decl)) == 0
+	}
+}
+
+test_violation_two_workload_policies_not_attached if {
+	every arns in [
+		[workload_policy_arn], [read_policy_arn], [],
+		[workload_policy_arn, read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[workload_policy_arn, workload_policy_arn],
+	] {
+		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(two_workload_world(arns), with_two_workload_decl))
 	}
 }
 
@@ -1052,22 +1087,22 @@ test_violation_governance_declaration_actions_not_array if {
 
 # workload の policy の ARN が plan で決まらないと、比べる先が [null] になる。値の無い attachment を一致と数えない。
 test_violation_attachment_policy_arn_absent_while_workload_arn_unknown if {
-	world := [r | some r in workload_world([workload_policy_arn]); r.address != workload_policy_address]
+	world := [r | some r in declared_world; r.address != workload_policy_address]
 	unknown_policy := {"address": workload_policy_address, "type": "aws_iam_policy", "change": {"actions": ["create"], "after": {"name": "ci-apply-workload", "policy": json.marshal({"Statement": []})}, "after_unknown": {"arn": true}}}
 	absent := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload", [g]), {"role": "ci-apply"})
-	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(world, [unknown_policy, absent]), with_workload_decl))
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(world, [unknown_policy, absent]), with_two_workload_decl))
 }
 
 test_violation_attachment_policy_arn_unknown if {
 	unknown := {"address": sprintf("%saws_iam_role_policy_attachment.workload", [g]), "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {"role": "ci-apply"}, "after_unknown": {"policy_arn": true}}}
-	msgs := messages_for(array.concat(workload_world([workload_policy_arn]), [unknown]), with_workload_decl)
+	msgs := messages_for(array.concat(declared_world, [unknown]), with_two_workload_decl)
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload の policy_arn を plan で読めません", [g]), msgs)
 	not fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), msgs)
 }
 
 test_pass_attachment_on_other_role if {
 	other := res("aws_iam_role_policy_attachment", "module.workload.aws_iam_role_policy_attachment.other", {"role": "other", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"})
-	count([m | some m in messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment(workload_policy_arn), other]), with_workload_decl); startswith(m, "[PLAN-APPLY-05]")]) == 0
+	count([m | some m in messages_for(array.concat(declared_world, [workload_attachment(workload_policy_arn), read_attachment, other]), with_two_workload_decl); startswith(m, "[PLAN-APPLY-05]")]) == 0
 }
 
 # 合成の宣言は2つの Action しか持たない。実際の宣言の Action（CloudFormation を含む）でも、Deny の過不足を見分けることを固定する。
