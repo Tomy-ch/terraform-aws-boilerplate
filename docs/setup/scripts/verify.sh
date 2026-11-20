@@ -88,14 +88,15 @@ expect_error() {
   elif grep -q "$code" <<<"$out"; then
     ok "$desc"
   else
-    ng "${desc}（$code ではないエラー）"
+    local got
+    got=$(grep -oE 'An error occurred \([A-Za-z0-9.]+\)' <<<"$out" | head -n 1 | sed -E 's/.*\((.*)\)/\1/') || got=""
+    ng "${desc}（$code ではないエラー${got:+: $got}）"
   fi
 }
 
 role_arn() { echo "arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ci-$1"; }
 
 # simulate-principal-policy の各 Action の判定が want であること。--context は context entry を1つ渡し、繰り返せる。
-# 繰り返した分は1つの --context-entries にまとめて渡す。
 sim() {
   local want=$1 role=$2 res=$3
   shift 3
@@ -189,6 +190,20 @@ before_apply() {
   # 在ると、段4 の apply は鍵を作った後の alias の作成で落ち、alias の無い鍵が残る。
   expect_json "state の鍵の alias（${KEY_ALIAS}）がまだ無い" "$(aws kms list-aliases --region "$REGION")" \
     --arg a "$KEY_ALIAS" "$JQ_ALIAS_ABSENT"
+  # 段4 は統制の構成物も作る（ADR-0602 決定1）。既に組織を持つ管理アカウントは organization-baseline の unsupported。
+  expect_error "組織がまだ無い" AWSOrganizationsNotInUseException aws organizations describe-organization
+  local u
+  for u in break-glass-1 break-glass-2; do
+    expect_error "IAM user ${u} がまだ無い" NoSuchEntity aws iam get-user --user-name "$u"
+  done
+  expect_error "IAM group break-glass がまだ無い" NoSuchEntity aws iam get-group --group-name break-glass
+  expect_error "role tabp-break-glass がまだ無い" NoSuchEntity aws iam get-role --role-name tabp-break-glass
+  local p
+  for p in apply-identity-governance apply-workload boundary-ops-notification; do
+    expect_error "policy tabp-admin-ci-$p がまだ無い" NoSuchEntity aws iam get-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-$p"
+  done
+  # 在ると、段4 の apply は import せずに上書きする。
+  expect_error "account password policy がまだ無い" NoSuchEntity aws iam get-account-password-policy
 }
 
 stage4() {
@@ -203,13 +218,11 @@ stage4() {
     expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
       --arg p "$p" "$JQ_POLICY_NAMES"
     if [[ $r == apply-identity ]]; then
-      # 統制の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定7）。
-      expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-        '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-identity-governance"])'
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | . == ["tabp-admin-ci-apply-identity-governance"]'
     elif [[ $r == apply ]]; then
-      # workload の customer managed policy は、作る前は付いていない（deployment-identity/ADR-0201 決定17）。
-      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の policy だけか無い" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-        '.AttachedPolicies | map(.PolicyName) | (. == [] or . == ["tabp-admin-ci-apply-workload"])'
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | . == ["tabp-admin-ci-apply-workload"]'
     else
       expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies == []'
@@ -232,6 +245,14 @@ stage4() {
     "$JQ_LIFECYCLE"
   expect_json "state の鍵が有効な対称鍵（単一リージョン、AWS_KMS）" "$(aws kms describe-key --region "$REGION" --key-id "$KEY_ALIAS")" \
     '.KeyMetadata | .KeyState == "Enabled" and .KeySpec == "SYMMETRIC_DEFAULT" and .KeyUsage == "ENCRYPT_DECRYPT" and .MultiRegion == false and .Origin == "AWS_KMS"'
+  # 段4 は統制の構成物も作る（ADR-0602 決定1）。資格情報は organization-baseline.md の 3.4 で人が設定する。
+  expect_json "組織の FeatureSet が ALL" "$(aws organizations describe-organization)" '.Organization.FeatureSet == "ALL"'
+  local u
+  for u in break-glass-1 break-glass-2; do
+    expect_json "IAM user ${u} がアクセスキーを持たない" "$(aws iam list-access-keys --user-name "$u")" '.AccessKeyMetadata == []'
+  done
+  expect_json "role tabp-break-glass の信頼条件が MFA を求める" "$(aws iam get-role --role-name tabp-break-glass)" \
+    '.Role.AssumeRolePolicyDocument.Statement | length > 0 and all(.Condition.Bool["aws:MultiFactorAuthPresent"] == "true")'
   expect_json "state の鍵の自動 rotation が 365 日" "$(aws kms get-key-rotation-status --region "$REGION" --key-id "$KEY_ALIAS")" \
     '.KeyRotationEnabled == true and .RotationPeriodInDays == 365'
   expect_json "Key Policy が、アカウントへの委任・plan と apply-identity と apply の S3 経由の暗号操作・unlock-identity と unlock のそれぞれの lock file の復号の4文だけ" \

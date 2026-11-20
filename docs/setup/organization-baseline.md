@@ -2,15 +2,15 @@
 
 ## 1. 設定の概要
 
-管理アカウントに AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資格情報の中央管理、break-glass を置く（[`usecases/organization-baseline/README.md`](../../usecases/organization-baseline/README.md)）。resource は CI の apply-identity の role が apply する。人が行うのは、Terraform が持たない有効化と資格情報の設定、apply の後の確認である。
+管理アカウントに AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資格情報の中央管理、break-glass を置く（[`usecases/organization-baseline/README.md`](../../usecases/organization-baseline/README.md)）。resource は bootstrap の段4 が管理アカウントの identity root の apply で作り（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）、以後の変更は CI の apply-identity の role が apply する。人が行うのは、Terraform が持たない有効化と資格情報の設定、apply の後の確認である。
 
 | 実施者 | 担当 |
 | --- | --- |
-| リポジトリの管理者 | merge の前の確認と、昇格の Pull Request |
+| リポジトリの管理者 | 昇格の Pull Request |
 | `organization_admin` の permission set を持つ人 | Identity Center の有効化の後の作業、break-glass の資格情報の設定、apply の後の確認 |
 | break-glass の資格情報を持つ人 | 定期の試験 |
 
-`bootstrap.md` の段5 が終わった後に行う。この usecase を足す変更より先に、`deployment-identity` の権限を足す変更が昇格していること。
+[`bootstrap.md`](bootstrap.md) の段5 が終わった後に、3.2 から行う。
 
 ## 2. 設定完了後の状態
 
@@ -22,17 +22,11 @@
 
 ## 3. 手順
 
-### 3.1 merge の前: 組織が無いことを確かめる
+### 3.1 段4 の前: 組織が無いことを確かめる
 
-この usecase は組織を作る。既に組織を持つ管理アカウントは unsupported である。
+この usecase は組織を作る。既に組織を持つ管理アカウントは unsupported である。組織と break-glass の IAM user・group・role がまだ無いことは、`bootstrap.md` の段2 と段4 の `verify.sh before-apply` が確かめる。
 
-```sh
-aws organizations describe-organization
-```
-
-`AWSOrganizationsNotInUseException` が返ることを確かめ、結果を Pull Request に書く。組織が返ったら merge しない。
-
-### 3.2 昇格の後: 組織と policy を確かめる
+### 3.2 段5 の後: 組織と policy を確かめる
 
 ```sh
 aws organizations describe-organization --query 'Organization.[Id,FeatureSet]'
