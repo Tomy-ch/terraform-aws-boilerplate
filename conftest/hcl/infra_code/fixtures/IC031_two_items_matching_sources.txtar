@@ -1,0 +1,8 @@
+-- u/internal/fn/main.tf --
+resource "aws_lambda_function" "f" {
+  filename = "${path.module}/src1/fn.zip"
+}
+
+resource "aws_lambda_function" "g" {
+  filename = "${path.module}/src2/fn.zip"
+}

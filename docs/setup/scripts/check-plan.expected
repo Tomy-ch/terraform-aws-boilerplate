@@ -42,6 +42,7 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlo
 add module.deployment_identity.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.workload
+add module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["plan"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply_identity"]
@@ -52,6 +53,9 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["apply_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock"]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.governance[0]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_read
 
 add module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this
 add module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this
@@ -60,6 +64,7 @@ add module.organization_baseline.module.break_glass.aws_iam_group.this
 add module.organization_baseline.module.break_glass.aws_iam_group_membership.this
 add module.organization_baseline.module.break_glass.aws_iam_group_policy.this
 add module.organization_baseline.module.break_glass.aws_iam_role.this
+add module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access
 add module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this
 add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-1"]
 add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-2"]

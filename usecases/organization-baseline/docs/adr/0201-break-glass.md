@@ -60,7 +60,7 @@ Trivy・Checkov・KICS の既定のルールが、90日を超える有効期限�
 
 ## 検証方法
 
-- Unit Test: `internal/break-glass/tests/break-glass.tftest.hcl` が user、group と membership、group の policy、role の信頼条件と managed policy、password policy を固定する
+- Unit Test: `internal/break-glass/tests/break-glass.tftest.hcl` が user、group と membership、group の policy、role の信頼条件と、managed policy の attachment と排他、password policy を固定する
 - Policy Test: `conftest/plan/organization_baseline_break_glass.rego`（`PLAN-BG-*`）
 - 実環境: 人が45日より短い間隔（毎月）で、break-glass の user でサインインし、MFA を使って管理アカウントの break-glass の role を引き受け、通知が届くことを確かめる。手順は README が持つ
 

@@ -103,7 +103,17 @@ resource "aws_iam_policy" "workload" {
   name = local.workload_policy_name
   policy = jsonencode({
     Version   = "2012-10-17"
-    Statement = concat(local.workload_read_statements, local.workload_manage_statements)
+    Statement = local.workload_manage_statements
+  })
+
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
+resource "aws_iam_policy" "workload_read" {
+  name = local.workload_read_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.workload_read_statements
   })
 
   depends_on = [aws_iam_role_policy.apply_identity]
@@ -122,11 +132,29 @@ resource "aws_iam_policy" "boundary" {
   depends_on = [aws_iam_role_policy.apply_identity]
 }
 
+# 付け外しは policy ごとの attachment に持たせ、policy_arn で policy を参照する（repository-wide/ADR-0301 決定21、deployment-identity/ADR-0201 決定7）。
+resource "aws_iam_role_policy_attachment" "governance" {
+  count = local.management ? 1 : 0
+
+  role       = aws_iam_role.apply_identity.name
+  policy_arn = aws_iam_policy.governance[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "workload" {
+  role       = aws_iam_role.this["apply"].name
+  policy_arn = aws_iam_policy.workload.arn
+}
+
+resource "aws_iam_role_policy_attachment" "workload_read" {
+  role       = aws_iam_role.this["apply"].name
+  policy_arn = aws_iam_policy.workload_read.arn
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : each.key == "apply" ? [local.workload_policy_arn] : []
+  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : each.key == "apply" ? local.workload_policy_arns : []
 
-  depends_on = [aws_iam_policy.governance, aws_iam_policy.workload]
+  depends_on = [aws_iam_role_policy_attachment.governance, aws_iam_role_policy_attachment.workload, aws_iam_role_policy_attachment.workload_read]
 }

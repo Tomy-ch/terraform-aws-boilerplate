@@ -1,0 +1,12 @@
+-- m/providers.tf --
+provider "aws" {
+  region = "ap-northeast-1"
+}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}

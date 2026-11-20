@@ -44,8 +44,7 @@ well_formed_change(rc) if {
 }
 
 # state-backend/ADR-0103 決定7（保持日数の短縮）。保護の対象に宣言した lifecycle で、有効な規則が版を消す
-# 日数の最小か失効の日付の最早が、変更の前より早くなる変更を落とす。前に無ければ、どの値も早くなったと読む。
-# 変更の前は、同じ address の値か、同じ plan で外す同じ型の値である（address を替えた作成）。
+# 日数の最小か失効の日付の最早が、変更の前（priors）より早くなる変更を落とす。前に無ければ、どの値も早くなったと読む。
 lifecycle_type := "aws_s3_bucket_lifecycle_configuration"
 
 default shorten_allow := {}
@@ -101,7 +100,7 @@ protected_lifecycle(rc) if {
 	rc.type in decl.protected_types
 }
 
-# 変更の前の値を持つ組。同じ address の更新と置換のほか、同じ plan で外した同じ型と、作った同じ型を組にする。
+# 変更の前の値を持つ組。同じ address の更新と置換のほか、同じ plan で外した同じ型（address を替えた作成）と、作った同じ型を組にする。
 priors contains {"f": f, "rc": rc, "before": rc.change.before} if {
 	some f in input
 	some rc in f.contents.resource_changes
@@ -193,7 +192,7 @@ shared_buckets contains {"path": a.f.path, "bucket": a.bucket, "addresses": sort
 # 宣言が無ければ null にして、PLAN-STATE-00 で落とす。
 default inline_decl := null
 
-inline_decl := data.policy_plan.inline_arguments
+inline_decl := lib.inline_arguments
 
 # 更新の前の値は、別の resource が書いた設定を読み戻したもの。
 inline_writes contains {"path": f.path, "address": rc.address, "arg": arg} if {
@@ -344,8 +343,18 @@ well_formed(d) if {
 }
 
 deny contains msg if {
-	not lib.inline_arguments_shape(data.policy_plan)
+	not inline_shape_ok
 	msg := "[PLAN-STATE-00] 宣言の policy_plan.inline_arguments が、型ごとに空でない object（引数 → 書かないときの値 null か []）で documents と重ならない形ではありません"
+}
+
+inline_shape_ok if {
+	lib.raw_inline_shape(data.policy_plan)
+	lib.inline_arguments_shape(lib.effective_policy_plan)
+}
+
+deny contains msg if {
+	not lib.layer_decl_ok
+	msg := "[PLAN-STATE-00] 層の宣言 data.layer_decl（conftest/hcl/layer/decl.json）を読めていません。inline_arguments の一部はそこから導きます"
 }
 
 deny contains msg if {

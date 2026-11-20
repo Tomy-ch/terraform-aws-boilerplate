@@ -8,6 +8,7 @@ decl := {"organization": "module.o.aws_organizations_organization.this", "break_
 	"group_policy": "module.b.aws_iam_group_policy.this",
 	"role": "module.b.aws_iam_role.this",
 	"role_attachments": "module.b.aws_iam_role_policy_attachments_exclusive.this",
+	"role_policy_attachment": "module.b.aws_iam_role_policy_attachment.administrator_access",
 	"stack_set": "module.b.aws_cloudformation_stack_set.this",
 	"stack_instances": "module.b.aws_cloudformation_stack_instances.this",
 }}
@@ -44,6 +45,8 @@ attachments(arns) := change("module.b.aws_iam_role_policy_attachments_exclusive.
 
 admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 
+attachment(arn) := change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass", "policy_arn": arn})
+
 member_properties := {
 	"RoleName": "tabp-break-glass",
 	"Path": "/break-glass/",
@@ -67,7 +70,7 @@ instances(name) := instances_with({"stack_set_name": name, "deployment_targets":
 
 valid_member := {"BreakGlassRole": {"Type": "AWS::IAM::Role", "Properties": member_properties}}
 
-member_rcs_with(set, inst) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), set, inst]
+member_rcs_with(set, inst) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), attachment(admin), set, inst]
 
 member_rcs(set) := member_rcs_with(set, instances("tabp-break-glass"))
 
@@ -81,7 +84,7 @@ member_messages(rcs) := msgs if {
 
 with_properties(patch) := {"BreakGlassRole": {"Type": "AWS::IAM::Role", "Properties": object.union(member_properties, patch)}}
 
-rcs(group, trusts, arns) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns), stack_set("SERVICE_MANAGED", true, valid_member), instances("tabp-break-glass")]
+rcs(group, trusts, arns) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns), attachment(admin), stack_set("SERVICE_MANAGED", true, valid_member), instances("tabp-break-glass")]
 
 valid := fixture.plan(rcs(valid_group, trust(user_arns), [admin]))
 
@@ -90,8 +93,24 @@ test_pass_reference_shape if {
 }
 
 test_violation_declared_resource_missing if {
-	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), role(trust(user_arns)), attachments([admin])])
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), role(trust(user_arns)), attachments([admin]), attachment(admin)])
 	fixture.has("[PLAN-BG-00]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_declared_attachment_missing if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin])])
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_iam_role_policy_attachment.administrator_access", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_other_policy if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), attachment("arn:aws:iam::aws:policy/ReadOnlyAccess")])
+	fixture.has("[PLAN-BG-04] break-glass の role の attachment が付ける policy", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_on_other_role if {
+	other := change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "other", "policy_arn": admin})
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), other])
+	fixture.has("[PLAN-BG-04] module.b.aws_iam_role_policy_attachment.administrator_access が AdministratorAccess を break-glass の role の外へ", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_three_users if {
@@ -334,4 +353,19 @@ test_violation_member_instances_without_stack_set_name if {
 test_violation_declared_stack_instances_missing if {
 	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
 	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_cloudformation_stack_instances.this", member_messages(rcs))
+}
+
+test_violation_second_admin_attachment_on_break_glass_role if {
+	second := change("module.b.aws_iam_role_policy_attachment.second", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass", "policy_arn": admin})
+	fixture.has("[PLAN-BG-04] module.b.aws_iam_role_policy_attachment.second が AdministratorAccess を break-glass の role の外へ", p.deny) with input as fixture.plan(array.concat(rcs(valid_group, trust(user_arns), [admin]), [second])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_without_policy_arn if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass"})])
+	fixture.has("[PLAN-BG-04] break-glass の role の attachment が付ける policy", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_declaration_key_absent if {
+	d := {"break_glass": object.remove(decl.break_glass, ["role_policy_attachment"])}
+	fixture.has("[PLAN-BG-00]", p.deny) with input as valid with data.policy_plan as {"organization_baseline": d}
 }

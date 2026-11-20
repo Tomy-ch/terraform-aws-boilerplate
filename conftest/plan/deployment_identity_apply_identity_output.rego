@@ -169,7 +169,7 @@ deny contains msg if {
 deny contains msg if {
 	some a in allows
 	some resource in resources(a.statement)
-	contains(resource, "${")
+	lib.policy_variable(resource)
 	msg := sprintf("[PLAN-AIO-01] %s: apply-identity の role の Allow の Resource %s が policy 変数を使っています。値を書いてください", [a.path, resource])
 }
 
@@ -224,10 +224,27 @@ exclusive(type) := {a | some a in attached; a.type == type; on_role(a)}
 deny contains msg if {
 	role_known
 	some a in attached
-	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
+	a.type == "aws_iam_role_policy"
 	on_role(a)
 	a.address != target
 	msg := sprintf("[PLAN-AIO-05] %s: %s が apply-identity の role に権限を足しています。この role の権限は %s だけに置いてください", [a.path, a.address, target])
+}
+
+deny contains msg if {
+	some a in attached
+	a.type == "aws_iam_role_policy_attachment"
+	on_role(a)
+	object.get(a.unknown, "policy_arn", false) != true
+	not object.get(a.after, "policy_arn", null) in managed_arns
+	msg := sprintf("[PLAN-AIO-05] %s: %s が apply-identity の role に付ける policy が、宣言した customer managed policy の ARN %v のどれでもありません", [a.path, a.address, sort([p | some p in managed_arns])])
+}
+
+deny contains msg if {
+	some a in attached
+	a.type == "aws_iam_role_policy_attachment"
+	on_role(a)
+	object.get(a.unknown, "policy_arn", false) == true
+	msg := sprintf("[PLAN-AIO-05] %s: %s の policy_arn を plan で読めません", [a.path, a.address])
 }
 
 deny contains msg if {

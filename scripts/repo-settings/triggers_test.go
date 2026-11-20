@@ -408,17 +408,41 @@ func Test_checkRefLiterals(t *testing.T) {
 			require.ErrorIs(t, err, errRefLiteral, expr)
 		}
 	})
-	t.Run("大文字の GITHUB を添字で引く式も読めないとして失敗する", func(t *testing.T) {
+	t.Run("大文字の GITHUB を文字列リテラルの添字で引く比較も落とす", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  a:\n    if: ${{ GITHUB['ref'] == 'main' }}\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
-		require.ErrorIs(t, err, errExpression)
+		require.ErrorIs(t, err, errRefLiteral)
 	})
-	t.Run("github を添字で引く式は読めないとして失敗する", func(t *testing.T) {
+	t.Run("github を文字列リテラルの添字で引く比較も落とす", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  a:\n    if: ${{ github['ref_name'] == 'main' }}\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("github をリテラルでない添字で引く式は読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ github.event[format('{0}', 'ref')] == 'main' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errExpression)
+		assert.ErrorContains(t, err, wf("a.yaml")+":3")
+	})
+	t.Run("包みの外に字面が残る if: は読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ github.event_name }} == 'push'\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+	})
+	t.Run("関数で加工した ref と kebab-case の input の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "runs:\n  steps:\n    - if: format('{0}', github.ref_name) == 'main' || inputs.base-ref == 'main'\n      run: x\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{
+			wf("scan.yaml"): scanWorkflowRendered,
+			filepath.Join(actionsDir, "a", "action.yaml"): src,
+		}))
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "format('{0}', github.ref_name) == 'main'")
+		assert.ErrorContains(t, err, "inputs.base-ref == 'main'")
 	})
 	t.Run("対象のファイルが無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -439,9 +463,25 @@ func Test_checkRefLiterals(t *testing.T) {
 	})
 	t.Run("二重引用符の中の \\\" の後ろの式も読み、落とす", func(t *testing.T) {
 		t.Parallel()
-		src := "jobs:\n  a:\n    if: \"a \\\" # ${{ github.ref_name == 'x' }}\"\n"
+		src := "jobs:\n  a:\n    if: \"github.event_name != 'a \\\" #' && github.ref_name == 'x'\"\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "github.ref_name == 'x'")
+	})
+	t.Run("一重引用符の値の中の式も YAML の文字列として読み、落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    name: '${{ github.ref_name == ''main'' }}'\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "github.ref_name == 'main'")
+	})
+	t.Run("読めない式と ref の比較が並べば、最初に読めない式で失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: github.ref_name == 'main'\n    name: ${{ lower(github.ref) }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+		assert.NotErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, wf("a.yaml")+":4")
 	})
 	t.Run("複数のファイルの比較をすべて報せる", func(t *testing.T) {
 		t.Parallel()
@@ -511,8 +551,17 @@ func Test_expressions(t *testing.T) {
 			"    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) || x }} # branch-set: deploy\n",
 			[]expression{{1, "${{ true || x }}"}}, "",
 		},
-		"閉じていない式は拒む":       {"a: ${{ x\n", nil, "閉じていない式"},
-		"読めない書き方の if: は拒む": {"    steps: [{if: x}]\n", nil, "読めない書き方"},
+		"文字列リテラルの中の }} で式を切らない":        {"a: ${{ format('}}') }}\n", []expression{{1, "${{ format('}}') }}"}}, ""},
+		"閉じていない式は拒む":                   {"a: ${{ x\n", nil, "閉じていない式"},
+		"読めない書き方の if: は拒む":             {"    steps: [{if: x}]\n", nil, "読めない書き方"},
+		"明示的なキーの if: は拒む":              {"    ? if\n    : github.ref_name == 'main'\n", nil, "明示的なキー"},
+		"名前の無い明示的なキーは拒む":               {"    ?\n    : x\n", nil, "明示的なキー"},
+		"列の要素の明示的なキーは拒む":               {"    - ? if\n", nil, "明示的なキー"},
+		"複数行の plain のスカラーの続きの行の ? も拒む": {"    a: foo\n      ? bar\n", nil, "明示的なキー"},
+		"? で始まる名前のキーの値の式も読む":           {"    ?x: ${{ y }}\n", []expression{{1, "${{ y }}"}}, ""},
+		"ブロックスカラーの本文の ? の行の式も読む":       {"    run: |\n      ? ${{ y }}\n", []expression{{2, "${{ y }}"}}, ""},
+		"一重引用符の値は '' を ' として読む":        {"    name: '${{ a == ''b'' }}'\n", []expression{{1, "${{ a == 'b' }}"}}, ""},
+		"行をまたぐ一重引用符の値の式は拒む":            {"    name: '${{ a ==\n      ''b'' }}'\n", nil, "YAML の文字列として読めません"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -537,31 +586,39 @@ func Test_withoutGenerated(t *testing.T) {
 	assert.Equal(t, "y", withoutGenerated("y", setRuleset))
 }
 
-func Test_refLiteralTerms(t *testing.T) {
+func Test_unquotedValue(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		expr string
-		want int
-	}{
-		"== の右のリテラル":                {"github.ref_name == 'production'", 1},
-		"!= の左のリテラル":                {"'main' != github.base_ref", 1},
-		"startsWith":                {"startsWith(github.head_ref, 'release/')", 1},
-		"endsWith":                  {"endsWith(github.ref, '/main')", 1},
-		"contains の文字列":             {"contains(github.event.ref, 'hotfix')", 1},
-		"contains の fromJSON":       {"contains(fromJSON('[\"a\"]'), github.event.workflow_run.head_branch)", 1},
-		"pull_request の head の ref": {"github.event.pull_request.head.ref == 'x'", 1},
-		"pull_request の base の ref": {"github.event.pull_request.base.ref == 'x'", 1},
-		"空白の無い ==":                  {"github.ref_name=='x'", 1},
-		"context 同士の比較は通す":          {"github.ref_name == github.event.repository.default_branch", 0},
-		"ref でない context は通す":       {"github.event_name == 'push' || github.ref_type == 'tag'", 0},
-		"ref と無関係な fromJSON は通す":    {"contains(fromJSON('[\"failure\"]'), needs.a.result)", 0},
-		"ref を値として渡すだけなら通す":         {"${{ github.ref }}", 0},
-	}
-	for name, tc := range cases {
+	for name, tc := range map[string]struct{ code, want string }{
+		"キーの値の一重引用符を外す":           {"  name: '${{ a == ''b'' }}'", "${{ a == 'b' }}"},
+		"列の要素の一重引用符を外す":           {"  - 'x ''${{ y }}'''", "x '${{ y }}'"},
+		"引用符のキーの値の一重引用符を外す":       {`  "k": '${{ x }}'`, "${{ x }}"},
+		"一重引用符のキーの plain の値はそのまま": {"  'k': ${{ x }}", "  'k': ${{ x }}"},
+		"値の無い一重引用符のキーはそのまま":       {"  'k':", "  'k':"},
+		"plain の値の中の一重引用符はそのまま":   {"  run: echo '${{ x }}'", "  run: echo '${{ x }}'"},
+		"二重引用符の値はそのまま":            {`  a: "${{ x }}"`, `  a: "${{ x }}"`},
+		"式の無い閉じない一重引用符の値はそのまま":    {"  a: 'x", "  a: 'x"},
+		"列の要素のキーの値の一重引用符を外す":      {"  - name: '${{ a }}'", "${{ a }}"},
+		"一重引用符のキーの一重引用符の値を外す":     {"  'k': '${{ x }}'", "${{ x }}"},
+		"空の一重引用符の値は空文字列":          {"  a: ''", ""},
+		"式の無い後ろに字面が続く値はそのまま":      {"  a: 'x' y", "  a: 'x' y"},
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			assert.Len(t, refLiteralTerms(tc.expr), tc.want)
+			got, err := unquotedValue(tc.code, keyColumn(tc.code))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+	for name, code := range map[string]string{
+		"閉じない一重引用符の値の式は失敗する":    "  a: '${{ x",
+		"閉じた引用符の後ろに字面が続く値は失敗する": "  a: '${{ x }}' y",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := unquotedValue(code, keyColumn(code))
+			require.ErrorIs(t, err, errExpression)
+			assert.ErrorContains(t, err, "YAML の文字列として読めません")
 		})
 	}
 }

@@ -8,3 +8,9 @@
 #
 # **作業ツリーに残り続ける検出をここへ書かない。** それは `.gitleaks.toml` の allowlist が
 # path と regex で狭く受ける。fingerprint は行番号を含むので、1行足しただけで当たらなくなる。
+
+# 理由: generic-api-key の誤検出。秘密ではなく、Rego のテストのケース名の列（"RT202_deny_key_number" など）に当たった。
+# 作業ツリーではケース名から key の語を外したので、検出はこの commit の行だけに残る（#367）。撤回: この commit が履歴から消えたとき。
+ae66fbdfb5af692bcbfd45f59c884bf71a743660:conftest/hcl/root/input_test.rego:generic-api-key:287
+# 理由: 同上（"RT202_deny_workload_key_in_identity_root" の行）。撤回: この commit が履歴から消えたとき。
+ae66fbdfb5af692bcbfd45f59c884bf71a743660:conftest/hcl/root/input_test.rego:generic-api-key:289

@@ -113,9 +113,14 @@ resource "aws_iam_role" "this" {
   }
 }
 
+resource "aws_iam_role_policy_attachment" "administrator_access" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:${local.partition}:iam::aws:policy/AdministratorAccess"
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   role_name   = aws_iam_role.this.name
-  policy_arns = ["arn:${local.partition}:iam::aws:policy/AdministratorAccess"]
+  policy_arns = [aws_iam_role_policy_attachment.administrator_access.policy_arn]
 }
 
 # break-glass の user のパスワードに掛かる（Security Hub IAM.7・IAM.15・IAM.16）。

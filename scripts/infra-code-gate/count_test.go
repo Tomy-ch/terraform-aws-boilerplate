@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func result(name string, successes, failures int) conftestResult {
-	r := conftestResult{Filename: name, Namespace: "infra_code_input", Successes: successes}
+func result(namespace string, successes, failures int) conftestResult {
+	r := conftestResult{Filename: "input.json", Namespace: namespace, Successes: successes}
 	for range failures {
 		r.Failures = append(r.Failures, []byte(`{}`))
 	}
@@ -30,10 +31,9 @@ func Test_runCount(t *testing.T) {
 	t.Parallel()
 
 	const healthyCombined = `[{"filename": "Combined", "namespace": "infra_code", "successes": 15}]`
-	const healthyResults = `[{"filename": "modules/a/main.tf", "namespace": "n", "successes": 3}, {"filename": "env/dev/main.tf", "namespace": "n", "successes": 3}]`
 
 	// setup は、3つの root を持ち、構成ファイルを追跡しているリポジトリを建てる。extra は root の外などへ足すファイル。
-	setup := func(t *testing.T, results, combined string, extra ...string) (repo, resultsPath, combinedPath string) {
+	setup := func(t *testing.T, combined string, extra ...string) (repo, combinedPath string) {
 		t.Helper()
 		repo = t.TempDir()
 		git(t, repo, "init", "-q")
@@ -44,64 +44,53 @@ func Test_runCount(t *testing.T) {
 			writeFile(t, filepath.Join(repo, f), "x")
 		}
 		git(t, repo, "add", "-A", "-f")
-		dir := t.TempDir()
-		resultsPath = filepath.Join(dir, "results.json")
-		combinedPath = filepath.Join(dir, "combined.json")
-		writeFile(t, resultsPath, results)
+		combinedPath = filepath.Join(t.TempDir(), "combined.json")
 		writeFile(t, combinedPath, combined)
-		return repo, resultsPath, combinedPath
+		return repo, combinedPath
 	}
 	roots := []string{"usecases", "modules", "env"}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
-		repo, r, c := setup(t, healthyResults, healthyCombined)
+		repo, c := setup(t, healthyCombined)
 		var out bytes.Buffer
-		require.NoError(t, runCount(append([]string{"-results", r, "-combined", c}, roots...), repo, &out))
-		assert.Contains(t, out.String(), "2 件が、独立の走査の 2 件と一致しました")
+		require.NoError(t, runCount(append([]string{"-combined", c}, roots...), repo, &out))
+		assert.Contains(t, out.String(), "構成ファイル 2 件について検出の規則が評価され")
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]struct {
-			results, combined string
-			extra             []string
-			args              func(r, c string) []string
-			untracked         bool
-			want              error
-			msg               string
+			combined  string
+			extra     []string
+			args      func(c string) []string
+			untracked bool
+			want      error
+			msg       string
 		}{
-			"結果の指定が無ければ使い方のエラー": {
-				args: func(_, _ string) []string { return roots }, want: errUsage,
-			},
 			"検出の結果の指定が無ければ使い方のエラー": {
-				args: func(r, _ string) []string { return append([]string{"-results", r}, roots...) }, want: errUsage,
+				args: func(_ string) []string { return roots }, want: errUsage,
 			},
 			"root の指定が無ければ使い方のエラー": {
-				args: func(r, c string) []string { return []string{"-results", r, "-combined", c} }, want: errUsage,
+				args: func(c string) []string { return []string{"-combined", c} }, want: errUsage,
 			},
 			"root が1つでも無ければエラー": {
-				args: func(r, c string) []string { return []string{"-results", r, "-combined", c, "modules", "no-such"} }, want: errMissingRoot,
+				args: func(c string) []string { return []string{"-combined", c, "modules", "no-such"} }, want: errMissingRoot,
 			},
 			"走査の対象が0件なら、結果を読む前に0件のエラー": {
-				results: `not json`,
-				args:    func(r, c string) []string { return []string{"-results", r, "-combined", c, "usecases"} },
-				want:    errNoInput,
+				combined: `not json`,
+				args:     func(c string) []string { return []string{"-combined", c, "usecases"} },
+				want:     errNoInput,
 			},
-			"結果を解釈できなければエラー": {results: `not json`, want: errResults},
-			"結果のファイルが無ければエラー": {
-				args: func(_, c string) []string { return append([]string{"-results", "/no/such", "-combined", c}, roots...) }, want: os.ErrNotExist,
+			"検出の結果のファイルが無ければエラー": {
+				args: func(_ string) []string { return append([]string{"-combined", "/no/such"}, roots...) }, want: os.ErrNotExist,
 			},
 			"検出の結果を解釈できなければエラー":     {combined: `{}`, want: errResults},
 			"追跡しているファイルが0件なら0件のエラー": {untracked: true, want: errNoInput},
-			"Conftest が読んでいないファイルがあれば違反": {
-				results: `[{"filename": "modules/a/main.tf", "namespace": "n", "successes": 1}]`,
-				want:    errViolations, msg: "Conftest がこのファイルを読んでいません",
-			},
-			"検出の結果が空なら違反": {combined: `[]`, want: errViolations, msg: "検出の結果が1件もありません"},
+			"検出の結果が空なら違反":           {combined: `[]`, want: errViolations, msg: "検出の結果が1件もありません"},
 			"検出の規則が評価されていなければ違反": {
-				combined: `[{"filename": "Combined", "namespace": "no_such"}]`,
+				combined: `[{"filename": "input.json", "namespace": "no_such"}]`,
 				want:     errViolations, msg: `検出の名前空間 "no_such" の規則が1つも評価されていません`,
 			},
 			"root の外に追跡している構成ファイルがあれば違反": {
@@ -114,20 +103,17 @@ func Test_runCount(t *testing.T) {
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				results, combined := tt.results, tt.combined
-				if results == "" {
-					results = healthyResults
-				}
+				combined := tt.combined
 				if combined == "" {
 					combined = healthyCombined
 				}
-				repo, r, c := setup(t, results, combined, tt.extra...)
+				repo, c := setup(t, combined, tt.extra...)
 				if tt.untracked {
 					git(t, repo, "rm", "-q", "-r", "--cached", ".")
 				}
-				args := append([]string{"-results", r, "-combined", c}, roots...)
+				args := append([]string{"-combined", c}, roots...)
 				if tt.args != nil {
-					args = tt.args(r, c)
+					args = tt.args(c)
 				}
 				var out bytes.Buffer
 				err := runCount(args, repo, &out)
@@ -208,50 +194,6 @@ func Test_walkConfigs(t *testing.T) {
 	})
 }
 
-func Test_compare(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		results []conftestResult
-		walked  []string
-		want    []string
-	}{
-		"集合が一致すれば違反なし": {
-			results: []conftestResult{result("a.tf", 1, 0), result("b.tftest.hcl", 0, 1)},
-			walked:  []string{"a.tf", "b.tftest.hcl"},
-		},
-		"規則が評価されていない要素は違反": {
-			results: []conftestResult{result("a.tf", 0, 0)},
-			walked:  []string{"a.tf"},
-			want:    []string{`名前空間 "infra_code_input" の規則が1つも評価されていません`},
-		},
-		"走査にだけ在るファイル": {
-			results: []conftestResult{result("a.tf", 1, 0)},
-			walked:  []string{"a.tf", "b.tf"},
-			want:    []string{"Conftest がこのファイルを読んでいません"},
-		},
-		"Conftest の結果にだけ在るファイル": {
-			results: []conftestResult{result("a.tf", 1, 0), result("./b.tf", 1, 0)},
-			walked:  []string{"a.tf"},
-			want:    []string{"Conftest が読んだファイルが、独立の走査に現れません"},
-		},
-		"構成ファイルでない結果は集合に入れない": {
-			results: []conftestResult{result("a.tf", 1, 0), result("x.tfvars", 0, 1)},
-			walked:  []string{"a.tf"},
-		},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			got := compare(tt.results, tt.walked)
-			require.Len(t, got, len(tt.want), "%v", got)
-			for i, w := range tt.want {
-				assert.Contains(t, got[i].Message, w)
-			}
-		})
-	}
-}
-
 func Test_evaluated(t *testing.T) {
 	t.Parallel()
 
@@ -260,7 +202,9 @@ func Test_evaluated(t *testing.T) {
 		want    []string
 	}{
 		"規則が評価されていれば違反なし": {results: []conftestResult{{Namespace: "infra_code", Successes: 15}}},
-		"違反だけでも評価されている":   {results: []conftestResult{result("Combined", 0, 2)}},
+		"違反だけでも評価されている":   {results: []conftestResult{result("infra_code", 0, 2)}},
+		"警告だけでも評価されている":   {results: []conftestResult{{Namespace: "infra_code", Warnings: []json.RawMessage{[]byte(`{}`)}}}},
+		"例外だけでも評価されている":   {results: []conftestResult{{Namespace: "infra_code", Exceptions: []json.RawMessage{[]byte(`{}`)}}}},
 		"結果が無い":     {results: nil, want: []string{"検出の結果が1件もありません"}},
 		"規則の無い名前空間": {results: []conftestResult{{Namespace: "no_such"}}, want: []string{`検出の名前空間 "no_such" の規則が1つも評価されていません`}},
 	}

@@ -1,0 +1,50 @@
+-- env/mem/backend.tf --
+terraform {
+  backend "s3" {
+    key    = "workload/terraform.tfstate"
+    region = "ap-northeast-1"
+    use_lockfile = true
+    encrypt = true
+    dynamodb_table = null
+  }
+}
+-- env/mem/identity/backend.tf --
+terraform {
+  backend "s3" {
+    key          = "identity/terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
+    encrypt      = true
+  }
+}
+-- env/mem/identity/main.tf --
+module "b" {
+  source = "../../../usecases/b"
+}
+-- env/mem/main.tf --
+module "w" {
+  source = "../../usecases/w"
+}
+-- env/mgmt/identity/backend.tf --
+terraform {
+  backend "s3" {
+    key          = "identity/terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
+    encrypt      = true
+  }
+}
+-- env/mgmt/identity/main.tf --
+module "b" {
+  source = "../../../usecases/b"
+}
+
+module "c" {
+  source = "../../../usecases/c"
+}
+-- usecases/b/main.tf --
+resource "aws_s3_bucket" "this" {}
+-- usecases/c/main.tf --
+resource "aws_organizations_organization" "this" {}
+-- usecases/w/main.tf --
+resource "aws_sqs_queue" "this" {}

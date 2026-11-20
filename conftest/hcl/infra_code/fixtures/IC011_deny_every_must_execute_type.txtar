@@ -1,0 +1,20 @@
+-- m/main.tf --
+resource "aws_instance" "a" {}
+
+resource "aws_launch_configuration" "a" {}
+
+resource "aws_launch_template" "a" {}
+
+resource "aws_lightsail_instance" "a" {}
+
+resource "aws_spot_fleet_request" "a" {}
+
+resource "aws_spot_instance_request" "a" {}
+
+resource "aws_lambda_invocation" "a" {}
+
+data "aws_lambda_invocation" "a" {}
+
+action "aws_lambda_invoke" "a" {}
+
+data "external" "a" {}

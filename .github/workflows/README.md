@@ -14,6 +14,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
+| `.mk` の規約 | Pull Request と週次 | `.mk` のレシピの分岐・繰り返しとテストのターゲットを報告し（必須の検査ではない）、移行中の除外（[`mk-test-bypass.toml`](../mk-test-bypass.toml)、ADR-0702 決定18）の期限を回収する |
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | 上流の報告 | 週次と手動 | 宣言より新しい版や、手で写した一覧と上流とのずれを issue へ書く。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
@@ -32,8 +33,9 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | `lines` | 各線（`<接頭辞>**`） | `branches:`、`(startsWith(<ref>, '<接頭辞>') \|\| ...)` を持つ `if:` |
 
 印の無い `branches:` / `branches-ignore:` の一覧（apply の workflow のものを除く）と、ブランチの名前か ref を値に持つ
-context（`github.ref` など）を文字列と比べる式（印の行で生成した項を除く）は、`repo-settings-check` が落とす。
-`env:` へ移した値の比較と、シェルの中の比較は見ない。
+値（`github` と `inputs` の下の値と、それを関数や演算で加工した値）を式の中で作った文字列と比べる式（印の行で生成した
+項を除く）と、式として読めない式は、`repo-settings-check` が落とす。見分ける規則は検査が持つ（[`scripts/README.md`](../../scripts/README.md)
+の `repo-settings/` の行）。`env:` や step・job の出力へ移した値の比較と、シェルの中の比較は見ない。
 
 ## 必須検査はすべての Pull Request で報告される
 
@@ -491,6 +493,7 @@ truthy 側へ置く。
 | `secret-scan.yaml` | 15 | 実測は Pull Request のみ。週次は履歴全体を走査し、完了 run が無い |
 | `hygiene.yaml` の2 job、`scorecard.yaml:scorecard` | 15 | 実測できる完了 run が無い（新設） |
 | `repo-settings.yaml:repo-settings-check`、`repo-settings.yaml:deploy-source-check` | 15 | 同上（新設） |
+| `makefiles.yaml:mk-test-lint` | 15 | 同上（新設） |
 
 限界に触れ始めた job は実測を追い越している。数字を小突かず、測り直して式を当て直す。
 再利用可能 workflow を呼ぶ job は `timeout-minutes` を持てない（キーが無効）ので、検査は除外し、

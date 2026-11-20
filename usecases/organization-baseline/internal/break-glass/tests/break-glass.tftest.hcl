@@ -114,6 +114,11 @@ run "role" {
   }
 
   assert {
+    condition     = aws_iam_role_policy_attachment.administrator_access.role == aws_iam_role.this.name && aws_iam_role_policy_attachment.administrator_access.policy_arn == "arn:aws:iam::aws:policy/AdministratorAccess"
+    error_message = "AdministratorAccess を break-glass の role に付けるのが、attachment になっていません。"
+  }
+
+  assert {
     condition     = aws_iam_role.this.max_session_duration == 3600
     error_message = "break-glass の role のセッションは1時間です。"
   }

@@ -37,6 +37,7 @@
       "resource.aws_iam_role": {"executes_code": false},
       "resource.aws_iam_role_policies_exclusive": {"executes_code": false},
       "resource.aws_iam_role_policy": {"executes_code": false},
+      "resource.aws_iam_role_policy_attachment": {"executes_code": false},
       "resource.aws_iam_role_policy_attachments_exclusive": {"executes_code": false},
       "resource.aws_iam_user": {"executes_code": false},
       "resource.aws_instance": {"executes_code": true, "body_args": ["user_data", "user_data_base64"]},
