@@ -24,7 +24,6 @@
 "infra-code-gate-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
 "resource-order-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
 "root-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
-"layer-check-test" = { expires = 2027-02-20, issue = 439, reason = "M6: #433 と #367 PR-B の merge の後に、判定ごと Go へ移す" }
 "tf-gates-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }
 "tf-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: レシピが対象のディレクトリを選ぶ判定を持つ。gates.mk の判定ごと Go へ移し、道具を起動するだけの runner にする" }
 "tf-validate-canary" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }

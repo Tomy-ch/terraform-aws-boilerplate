@@ -1,0 +1,11 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this[var.i].id
+  policy = jsonencode([local.all[0].id, module.m.list[*], aws_s3_bucket.this[each.key].arn])
+}
+
+locals {
+  all = [aws_s3_bucket.this]
+}

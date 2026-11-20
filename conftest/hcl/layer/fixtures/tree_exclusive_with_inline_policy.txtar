@@ -1,0 +1,29 @@
+-- env/dev/main.tf --
+module "u" {
+  source = "../../usecases/u"
+}
+-- modules/a/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}
+-- modules/a/x.tf --
+resource "aws_iam_role" "r" {}
+
+resource "aws_iam_role_policies_exclusive" "e" {
+  role_name    = aws_iam_role.r.name
+  policy_names = []
+}
+
+resource "aws_iam_role_policy" "p" {
+  role = aws_iam_role.r.name
+}
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}

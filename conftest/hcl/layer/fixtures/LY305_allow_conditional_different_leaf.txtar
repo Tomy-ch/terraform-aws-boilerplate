@@ -1,0 +1,14 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "third" {}
+
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket" "other" {}
+
+resource "aws_s3_bucket_policy" "x" {
+  bucket = aws_s3_bucket.this.bucket != "" ? aws_s3_bucket.this.id : aws_s3_bucket.other.id
+}
+
+resource "aws_s3_bucket_policy" "y" {
+  bucket = aws_s3_bucket.third.id
+}

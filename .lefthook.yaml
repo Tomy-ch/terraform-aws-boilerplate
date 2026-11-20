@@ -276,7 +276,7 @@ pre-commit:
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make layer-check-test layer-check
+      run: make layer-check
     root-check:
       glob:
         - "usecases/**"

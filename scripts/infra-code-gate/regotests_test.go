@@ -62,16 +62,20 @@ func Test_runRegoTests(t *testing.T) {
 		assert.Contains(t, out.String(), "ID RO001 に test_RO001_deny_* のテストがありません")
 	})
 
-	t.Run("parse_config は、-allow-parse-config の置き場所の外では違反", func(t *testing.T) {
+	t.Run("テストの中の parse_config も違反", func(t *testing.T) {
 		t.Parallel()
 		repo, p := setup(t, policyOK, policyTestOK+"\nx := parse_config(\"hcl2\", \"\")\n", reportOK)
-		writeFile(t, filepath.Join(repo, "conftest/layer/b_test.rego"), "package layer\n\ny := parse_config(\"hcl2\", \"\")\n\ntest_x if { true }\n")
-		writeFile(t, p, reportOK+"data.layer.test_x: PASS (1ms)\n")
 		var out bytes.Buffer
-		err := runRegoTests([]string{"-policy", "conftest/hcl,conftest/layer", "-report", p, "-namespaces", "infra_code", "-allow-parse-config", "conftest/layer"}, repo, &out)
+		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}, repo, &out)
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out.String(), "conftest/hcl/a_test.rego\n    :7  parse_config で HCL を読んでいます")
-		assert.NotContains(t, out.String(), "conftest/layer/b_test.rego")
+	})
+
+	t.Run("-allow-parse-config は無くなった", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK, reportOK)
+		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code", "-allow-parse-config", "conftest/hcl"}, repo, &bytes.Buffer{})
+		require.ErrorContains(t, err, "flag provided but not defined: -allow-parse-config")
 	})
 
 	t.Run("ID もテストも無い置き場所は違反", func(t *testing.T) {
@@ -82,15 +86,6 @@ func Test_runRegoTests(t *testing.T) {
 		err := runRegoTests([]string{"-policy", "conftest/hcl,conftest/empty", "-report", p, "-namespaces", "infra_code"}, repo, &out)
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out.String(), "Rego の置き場所に ID を持つ deny もテストも1件もありません")
-	})
-
-	t.Run("parse_config を -allow-parse-config の置き場所の中でだけ使えば通る", func(t *testing.T) {
-		t.Parallel()
-		repo, p := setup(t, policyOK, policyTestOK, reportOK)
-		writeFile(t, filepath.Join(repo, "conftest/layer/b_test.rego"), "package layer\n\ny := parse_config(\"hcl2\", \"\")\n\ntest_x if { true }\n")
-		writeFile(t, p, reportOK+"data.layer.test_x: PASS (1ms)\n")
-		var out bytes.Buffer
-		require.NoError(t, runRegoTests([]string{"-policy", "conftest/hcl,conftest/layer", "-report", p, "-namespaces", "infra_code", "-allow-parse-config", "conftest/layer"}, repo, &out))
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -302,13 +297,6 @@ func Test_checkRan(t *testing.T) {
 	assert.Equal(t, "テスト data.q.test_d が ERROR です", got[2].Message)
 }
 
-func Test_splitList(t *testing.T) {
-	t.Parallel()
-
-	assert.Nil(t, splitList(""))
-	assert.Equal(t, []string{"a", "b"}, splitList("a,b"))
-}
-
 func Test_checkParseConfig(t *testing.T) {
 	t.Parallel()
 
@@ -323,20 +311,19 @@ func Test_checkParseConfig(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		policy, allowed []string
-		want            []string
+		policy []string
+		want   []string
 	}{
-		"除外の置き場所のテストは違反なし":               {policy: []string{"q"}, allowed: []string{"q"}},
-		"除外の置き場所でもテストでなければ違反":            {policy: []string{"r"}, allowed: []string{"r"}, want: []string{"r/e.rego:2"}},
+		"テストの中も違反":                       {policy: []string{"q"}, want: []string{"q/d_test.rego:2"}},
+		"テストでない Rego も違反":                {policy: []string{"r"}, want: []string{"r/e.rego:2"}},
 		"組み込み関数の形をすべて捕まえる":               {policy: []string{"forms"}, want: []string{"forms/bytes.rego:2", "forms/combined.rego:2", "forms/config.rego:2", "forms/file.rego:2"}},
 		"入れ子の Rego の parse_config_bytes": {policy: []string{"p"}, want: []string{"p/sub/b_test.rego:4"}},
-		"除外の置き場所の外":                      {policy: []string{"p", "q"}, allowed: []string{"q"}, want: []string{"p/sub/b_test.rego:4"}},
-		"-policy に無い除外は違反":               {policy: []string{"q"}, allowed: []string{"q", "s"}, want: []string{"s:1 -allow-parse-config の s が -policy（q）にありません"}},
+		"複数の置き場所":                        {policy: []string{"p", "q"}, want: []string{"p/sub/b_test.rego:4", "q/d_test.rego:2"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := checkParseConfig(repo, tt.policy, tt.allowed)
+			got, err := checkParseConfig(repo, tt.policy)
 			require.NoError(t, err)
 			var lines []string
 			for _, f := range got {
@@ -351,7 +338,7 @@ func Test_checkParseConfig(t *testing.T) {
 
 	t.Run("置き場所が無ければエラー", func(t *testing.T) {
 		t.Parallel()
-		_, err := checkParseConfig(repo, []string{"none"}, nil)
+		_, err := checkParseConfig(repo, []string{"none"})
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
@@ -364,16 +351,14 @@ func Test_scanParseConfig(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "sub/b_test.rego"), "package a\nx := parse_config(\"hcl2\", \"\")\n")
 
 	tests := map[string]struct {
-		exempt bool
-		want   []string
+		want []string
 	}{
-		"テストも見る":      {want: []string{"p/a.rego:3", "p/sub/b_test.rego:2"}},
-		"除外ならテストを見ない": {exempt: true, want: []string{"p/a.rego:3"}},
+		"テストも見る": {want: []string{"p/a.rego:3", "p/sub/b_test.rego:2"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := scanParseConfig(dir, "p", tt.exempt)
+			got, err := scanParseConfig(dir, "p")
 			require.NoError(t, err)
 			var lines []string
 			for _, f := range got {
@@ -385,7 +370,7 @@ func Test_scanParseConfig(t *testing.T) {
 
 	t.Run("置き場所が無ければエラー", func(t *testing.T) {
 		t.Parallel()
-		_, err := scanParseConfig(filepath.Join(dir, "none"), "none", false)
+		_, err := scanParseConfig(filepath.Join(dir, "none"), "none")
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -397,7 +382,7 @@ func Test_scanParseConfig(t *testing.T) {
 			writeFile(t, filepath.Join(d, "sub/a.rego"), "package a\n")
 			require.NoError(t, os.Chmod(filepath.Join(d, target), 0o000))
 			t.Cleanup(func() { _ = os.Chmod(filepath.Join(d, target), 0o750) })
-			_, err := scanParseConfig(d, "p", false)
+			_, err := scanParseConfig(d, "p")
 			require.ErrorIs(t, err, fs.ErrPermission, target)
 		}
 	})

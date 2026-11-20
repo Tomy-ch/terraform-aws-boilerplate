@@ -1,6 +1,6 @@
 # resource の作成の順序の検査。宣言した module の resource が、depends_on に宣言した resource を持つこと。
 #
-# 入力は scripts/hcl-input が走査の root の下から作る JSON（`-format syntax`）。make が別の経路で数えた
+# 入力は scripts/hcl-input が走査の root の下から作る JSON。make が別の経路で数えた
 # 構成ファイルの一覧（data.resource_order_files）と、入力が読んだファイルを突き合わせる（ADR-0702 決定15）。
 package resource_order
 

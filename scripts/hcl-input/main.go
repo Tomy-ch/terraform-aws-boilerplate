@@ -1,18 +1,16 @@
-// hcl-input は、HCL のソースから Conftest の入力の JSON（data のトップキー `hcl_input`）を作ります
-// （ADR-0501 決定5）。順序と Conftest への受け渡しは make が持ちます（ADR-0702 決定24）。
+// hcl-input は、HCL のソースから、conftest/hcl/ の検査の入力の JSON を作ります（ADR-0501 決定5）。順序と
+// Conftest への受け渡しは make が持ちます（ADR-0702 決定24）。
 //
-//	hcl-input [-format syntax] -base <dir> -listed <find の一覧> -out <json> <root>...
+//	hcl-input -base <dir> -listed <走査の root の下の通常のファイルの一覧> -out <json> <root>...
 //	hcl-input fixtures -dir <txtar のディレクトリ> -out <json>
 //
-// 既定の形は、root の下の `.tf` の全種類の block と、その属性の式が持つ参照です（層の検査が --data で読む。
-// トップキー `hcl_input`）。`-format syntax` の形は、root の下の通常のファイルすべての一覧と、`.tf`・
-// `.tftest.hcl` の block を、入れ子の block と属性の式の構文の木とともに出します（Conftest の入力のファイル
-// そのもの）。fixtures は、txtar の1ファイルを1つの木として `-format syntax` と同じ経路で読み、Rego の
-// テストに渡す JSON（トップキー `fixtures`）を書きます。
+// root の下の通常のファイルすべての一覧と、`.tf`・`.tftest.hcl` の block を、入れ子の block と属性の式の
+// 構文の木とともに出します（Conftest の入力のファイルそのもの）。fixtures は、txtar の1ファイルを1つの木として
+// 同じ経路で読み、Rego のテストに渡す JSON（トップキー `fixtures`）を書きます。
 //
-// 読めなかったもの —— 構文の誤り、知らない式の型、`Variables()` との食い違い、symlink、既定の形の
-// `.tf.json` —— は JSON に現れず、非ゼロで終えて -out を書きません。読んだファイルの集合は、別の経路の
-// 走査（-listed）と突き合わせます（ADR-0702 決定15）。
+// 読めなかったもの —— 構文の誤り、知らない式の型、`Variables()` との食い違い、symlink —— は JSON に現れず、
+// 非ゼロで終えて -out を書きません。読んだファイルの集合は、別の経路の走査（-listed）と突き合わせます
+// （ADR-0702 決定15）。
 //
 // 構文として読むファイルが0件のときは、違反（1）とは別の終了コード（2）で終えます（ADR-0702 決定13）。
 package main
@@ -45,8 +43,6 @@ var (
 	errFixture           = xerrors.New("fixture の txtar を読めません")
 )
 
-const formatSyntax = "syntax"
-
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -66,7 +62,7 @@ func exitCode(err error) int {
 	}
 }
 
-// run は、走査の分類（symlink・`.tf.json`）を一覧との突き合わせより先に判定します。一覧の過不足として
+// run は、走査の分類（symlink と、構成ファイルの名前のディレクトリ）を一覧との突き合わせより先に判定します。一覧の過不足として
 // 報告すると、原因のファイルの種類が読み手に伝わらないためです。
 func run(args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "fixtures" {
@@ -75,9 +71,8 @@ func run(args []string, out io.Writer) error {
 	fset := flag.NewFlagSet("hcl-input", flag.ContinueOnError)
 	fset.SetOutput(out)
 	base := fset.String("base", "", "走査の root と、JSON と -listed の一覧に書くパスの起点のディレクトリ（-listed と -out のパスそのものは作業ディレクトリから解決する）")
-	listedPath := fset.String("listed", "", "独立の走査（find）が列挙した構成ファイルの一覧")
+	listedPath := fset.String("listed", "", "走査の root の下の通常のファイルの一覧（独立の走査 find が列挙したもの）")
 	outPath := fset.String("out", "", "書き出す JSON のパス")
-	format := fset.String("format", "", "出力の形。空なら参照の列だけの形、syntax なら構文の木の形")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
@@ -85,54 +80,11 @@ func run(args []string, out io.Writer) error {
 	if *base == "" || *listedPath == "" || *outPath == "" || len(roots) == 0 {
 		return errUsage
 	}
-	switch *format {
-	case "":
-	case formatSyntax:
-		return runSyntax(*base, *listedPath, *outPath, roots, out)
-	default:
-		return xerrors.Wrapf(errUsage, "知らない -format %q", *format)
-	}
 
-	files, err := walkFiles(*base, roots)
-	if err != nil {
-		return err
-	}
-	listed, err := readListed(*listedPath)
-	if err != nil {
-		return err
-	}
-	if err := compareFiles(files, listed); err != nil {
-		return err
-	}
-	if len(files) == 0 {
-		return xerrors.Wrapf(errNoInput, "%v", roots)
-	}
-
-	var blocks []block
-	for _, rel := range files {
-		src, err := os.ReadFile(filepath.Join(*base, filepath.FromSlash(rel)))
-		if err != nil {
-			return xerrors.Wrapf(err, "%s の読み取り", rel)
-		}
-		got, err := parseFile(rel, src)
-		if err != nil {
-			return err
-		}
-		blocks = append(blocks, got...)
-	}
-
-	data, err := encode(files, blocks)
-	if err != nil {
-		return err
-	}
-	if err := atomicwrite.Apply(map[string]string{*outPath: string(data)}, outPerm); err != nil {
-		return xerrors.Wrapf(err, "%s への書き込み", *outPath)
-	}
-	fmt.Fprintf(out, "✅ hcl-input: %d 件のファイルから %d 個の block を %s へ書きました\n", len(files), len(blocks), *outPath)
-
-	return nil
+	return runSyntax(*base, *listedPath, *outPath, roots, out)
 }
 
+// runSyntax は JSON を outPath へ書きます。
 func runSyntax(base, listedPath, outPath string, roots []string, out io.Writer) error {
 	listed, err := readListed(listedPath)
 	if err != nil {

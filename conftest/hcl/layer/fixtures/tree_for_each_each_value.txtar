@@ -1,0 +1,27 @@
+-- env/dev/main.tf --
+module "u" {
+  source = "../../usecases/u"
+}
+-- modules/a/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}
+-- modules/a/x.tf --
+resource "aws_s3_bucket" "m" {
+  for_each = toset(["a"])
+}
+
+resource "aws_s3_bucket_policy" "m" {
+  for_each = aws_s3_bucket.m
+  bucket   = each.value.id
+}
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}
