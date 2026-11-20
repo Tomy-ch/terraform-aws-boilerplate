@@ -204,25 +204,42 @@ func check(in input, today time.Time) (result, error) {
 			}
 		}
 	}
+	// Makefile 自身の規則も同じ突き合わせに掛ける。include 行は上で読んだので外す。
+	var top []string
+	for _, line := range strings.Split(string(in.makefile), "\n") {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == "include" {
+			line = ""
+		}
+		top = append(top, line)
+	}
+	topMk, err := parseMk([]byte(strings.Join(top, "\n")))
+	if err != nil {
+		return res, xerrors.Wrapf(err, "%s", in.makefilePath)
+	}
+	topNames, err := reconcile(in.makefilePath, topMk, db[filepath.Base(in.makefilePath)])
+	if err != nil {
+		return res, err
+	}
+	for _, name := range topNames {
+		if _, ok := defined[name]; !ok {
+			defined[name] = target{file: in.makefilePath, line: topMk.line(name), recipe: topMk.recipes[name]}
+		}
+	}
 	if len(defined) == 0 {
 		return res, xerrors.Wrap(errNoTargets, "ターゲットを1つも取り出せません")
 	}
 	res.files = len(includes)
 	res.targets = len(defined)
 
-	for name, tool := range runners {
-		t, ok := defined[name]
-		switch {
-		case !ok:
+	for _, name := range keys(runners) {
+		if _, ok := defined[name]; !ok {
 			add(in.makefilePath, 0, "除外する runner %s が定義されていません。除外の一覧（runners）を直してください", name)
-		case !tool.MatchString(t.recipe):
-			add(t.file, t.line, "%s は %s を起動するだけの runner として除外されていますが、レシピがそれを起動していません", name, tool)
 		}
 	}
 
 	for _, name := range keys(defined) {
 		t := defined[name]
-		if !isTestName(name) || runners[name] != nil {
+		if !isTestName(name) || isRunner(name, t.recipe) {
 			continue
 		}
 		if b, ok := bypasses[name]; ok && b.valid(today) {
@@ -232,7 +249,7 @@ func check(in input, today time.Time) (result, error) {
 		add(t.file, t.line, "%s はテストのターゲットです。テストは運用機構の Go のテストへ置きます", name)
 	}
 
-	limit := today.AddDate(0, maxBypassMonths, 0)
+	limit := addMonths(today, maxBypassMonths)
 	for _, name := range keys(bypasses) {
 		b := bypasses[name]
 		t, ok := defined[name]
@@ -245,8 +262,8 @@ func check(in input, today time.Time) (result, error) {
 			add(in.bypassPath, b.line, "%s は定義されていません。移したならエントリを消してください", name)
 		case !isTestName(name):
 			add(in.bypassPath, b.line, "%s はテストの名前に当たりません。不要なエントリです", name)
-		case runners[name] != nil:
-			add(t.file, t.line, "%s は runner として除外済みです。宣言のエントリは不要です", name)
+		case isRunner(name, t.recipe):
+			add(t.file, t.line, "%s は道具を起動するだけの runner として除外済みです。宣言のエントリは不要です", name)
 		}
 	}
 	return res, nil

@@ -15,10 +15,11 @@ var (
 	errSyntax = xerrors.New("解釈できない構文です")
 
 	// runners は、テストの名前を持つが `go test` / `terraform test` を起動するだけのターゲットと、
-	// そのレシピが起動しなければならない道具。テストの本体は `.mk` の外に在る。
+	// そのレシピの唯一の行が当たる形。テストの本体は `.mk` の外に在る。ほかの行や判定を持つ
+	// レシピは runner ではなく、テストのターゲットとして判定する。
 	runners = map[string]*regexp.Regexp{
-		"go-test": regexp.MustCompile(`\bgo -C scripts test\b`),
-		"tf-test": regexp.MustCompile(`\$\(TF\) [^;]*\btest\b`),
+		"go-test": regexp.MustCompile(`^@?\$\(GO_TOOL\)( \$\([A-Z_]+\))* go -C scripts test \./\.\.\.$`),
+		"tf-test": regexp.MustCompile(`^@?(\$\([A-Z_]+\) )*\$\(TF\) (-chdir=\S+ )?test( [^;&|]*)?$`),
 	}
 
 	includeRe = regexp.MustCompile(`^include\s+(\S+)\s*(#.*)?$`)
@@ -65,6 +66,28 @@ type mkFile struct {
 }
 
 func (m mkFile) line(name string) int { return m.literal[name] }
+
+// isRunner は、name が runner で、レシピがその道具を起動する1行だけからなるかを返す。
+func isRunner(name, recipe string) bool {
+	re, ok := runners[name]
+	if !ok {
+		return false
+	}
+	var lines []string
+	for _, l := range strings.Split(recipe, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return len(lines) == 1 && re.MatchString(lines[0])
+}
+
+// addMonths は t の n ヶ月後を返す。月末を越える日は、その月の末日に丸める（11月30日 + 3 = 2月28日）。
+func addMonths(t time.Time, n int) time.Time {
+	first := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location()).AddDate(0, n, 0)
+	last := first.AddDate(0, 1, -1).Day()
+	return time.Date(first.Year(), first.Month(), min(t.Day(), last), 0, 0, 0, 0, t.Location())
+}
 
 // parseMk は `.mk` の規則の行を取り出す。define の中・レシピ・代入・条件分岐の行は規則としない。
 // 閉じない define と、続きの行の途中で終わるファイルは、読めない入力とする（決定14）。
@@ -114,10 +137,7 @@ func parseMk(raw []byte) (mkFile, error) {
 		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			if trimmed == "" {
-				finish()
-			}
-			continue
+			continue // make はレシピの途中の空行とコメントの後も、タブの行を同じレシピとして読む
 		}
 		finish()
 		switch head[0] {
@@ -143,6 +163,10 @@ func parseMk(raw []byte) (mkFile, error) {
 		}
 		if len(names) == 0 {
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: ターゲットの無い規則", n)
+		}
+		for continued && i+1 < len(lines) { // 前提条件の続きの行を読み切る
+			i++
+			continued = strings.HasSuffix(lines[i], "\\")
 		}
 		hasRecipe := recipe != "" || (i+1 < len(lines) && strings.HasPrefix(lines[i+1], "\t"))
 		for _, name := range names {
@@ -282,7 +306,7 @@ type bypass struct {
 }
 
 func (b bypass) valid(today time.Time) bool {
-	return !b.expires.Before(today) && !b.expires.After(today.AddDate(0, maxBypassMonths, 0))
+	return !b.expires.Before(today) && !b.expires.After(addMonths(today, maxBypassMonths))
 }
 
 // parseBypass は `"<ターゲット>" = { expires = YYYY-MM-DD, issue = <N>, reason = "..." }` の行を読む。

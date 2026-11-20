@@ -74,6 +74,20 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, 2, mk.unresolved)
 		assert.Empty(t, mk.literal)
 	})
+	t.Run("前提条件が続きの行にまたがる規則もレシピを持つ", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("multi: a \\\n  b\n\techo hi\n"))
+		require.NoError(t, err)
+		assert.Equal(t, map[string]struct{}{"multi": {}}, mk.withRecipe)
+		assert.Equal(t, "\n\techo hi", mk.recipes["multi"])
+	})
+	t.Run("レシピの途中の空行とコメントの後のタブの行も同じレシピとする", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("a:\n\techo 1\n\n# c\n\techo 2\nb:\n\techo 3\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "\n\techo 1\n\techo 2", mk.recipes["a"])
+		assert.Equal(t, "\n\techo 3", mk.recipes["b"])
+	})
 	t.Run("1行に複数のターゲットを持つ規則は、それぞれにレシピを持たせる", func(t *testing.T) {
 		t.Parallel()
 		mk, err := parseMk([]byte("a b:\n\techo\n"))
@@ -204,6 +218,48 @@ func Test_parseBypass(t *testing.T) {
 			_, err := parseBypass([]byte(src))
 			require.ErrorIs(t, err, errSyntax)
 			assert.False(t, xerrors.Is(err, errViolations))
+		})
+	}
+}
+
+func Test_isRunner(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name, target, recipe string
+		want                 bool
+	}{
+		{"go-test の1行", "go-test", "\n\t@$(GO_TOOL) $(GO_TEST_GIT_POISON) go -C scripts test ./...", true},
+		{"tf-test の1行", "tf-test", "\n\t@$(TF) -chdir=x test", true},
+		{"ほかの行を持つ", "go-test", "\n\techo x\n\t@$(GO_TOOL) go -C scripts test ./...", false},
+		{"同じ行にほかのコマンドを持つ", "go-test", "\n\t@$(GO_TOOL) go -C scripts test ./...; echo x", false},
+		{"行をまたいで当たる形", "tf-test", "\n\t@$(TF) fmt\n\t@echo test", false},
+		{"レシピが無い", "go-test", "", false},
+		{"runner でない名前", "x-test", "\n\t@$(GO_TOOL) go -C scripts test ./...", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isRunner(c.target, c.recipe))
+		})
+	}
+}
+
+func Test_addMonths(t *testing.T) {
+	t.Parallel()
+
+	d := func(y int, m time.Month, day int) time.Time { return time.Date(y, m, day, 0, 0, 0, 0, time.UTC) }
+	for _, c := range []struct {
+		name     string
+		in, want time.Time
+	}{
+		{"月の途中", d(2026, 11, 20), d(2027, 2, 20)},
+		{"月末を越える日は末日に丸める", d(2026, 11, 30), d(2027, 2, 28)},
+		{"閏年の末日", d(2027, 11, 30), d(2028, 2, 29)},
+		{"年をまたぐ", d(2026, 12, 31), d(2027, 3, 31)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, addMonths(c.in, 3))
 		})
 	}
 }

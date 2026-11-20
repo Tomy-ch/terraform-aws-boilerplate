@@ -19,7 +19,7 @@ var testToday = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 // 違反の無い最小の構成。
 var baseMk = map[string]string{
 	".makefiles/go.mk": ".PHONY: go-test ## t\ngo-test:\n\t@$(GO_TOOL) go -C scripts test ./...\n",
-	".makefiles/tf.mk": ".PHONY: tf-test ## t\ntf-test: tf-init\n\t@$(TF) -chdir=\"$$d\" test || x\n\ntf-init:\n\techo\n",
+	".makefiles/tf.mk": ".PHONY: tf-test ## t\ntf-test: tf-init\n\t@$(TF) -chdir=x test\n\ntf-init:\n\techo\n",
 }
 
 // dbFor は、`.mk` のレシピを持つ規則を make -p の出力の形に並べる（make を起動せずに済ませる）。
@@ -207,6 +207,24 @@ func Test_check(t *testing.T) {
 		require.Len(t, res.findings, 1)
 		assert.Contains(t, res.findings[0].Message, "v-canary はテストのターゲットです")
 	})
+	t.Run("Makefile に直接書いた規則も判定する", func(t *testing.T) {
+		t.Parallel()
+		in := inputFor(t, baseMk, "")
+		in.makefile = append(in.makefile, []byte("\nfoo-test:\n\techo hi\n")...)
+		in.db = []byte(strings.Replace(string(in.db), dbHead+"# Files\n\n", dbHead+"# Files\n\nfoo-test:\n#  recipe to execute (from 'Makefile', line 4):\n\n", 1))
+		res, err := check(in, testToday)
+		require.NoError(t, err)
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "Makefile", res.findings[0].File)
+		assert.Equal(t, 4, res.findings[0].Line)
+	})
+	t.Run("Makefile の規則が make の出力と食い違えば落とす", func(t *testing.T) {
+		t.Parallel()
+		in := inputFor(t, baseMk, "")
+		in.makefile = append(in.makefile, []byte("\nfoo:\n\techo hi\n")...)
+		_, err := check(in, testToday)
+		require.ErrorIs(t, err, errMismatch)
+	})
 	t.Run("レシピを持たない規則のテストの名前も判定する", func(t *testing.T) {
 		t.Parallel()
 		res, err := check(inputFor(t, with(map[string]string{".makefiles/x.mk": "x-test: go-test\n"}), ""), testToday)
@@ -236,9 +254,10 @@ func Test_check(t *testing.T) {
 		{"上限を越えたエントリは除外しない", with(x), entry("x-test", "2027-02-21"), "上限（2026-11-20 から 3 ヶ月 = 2027-02-20）を越えています"},
 		{"定義されていないターゲットのエントリを落とす", baseMk, entry("gone-test", "2027-01-31"), "gone-test は定義されていません"},
 		{"テストの名前に当たらないエントリを落とす", with(map[string]string{".makefiles/x.mk": "lint:\n\techo\n"}), entry("lint", "2027-01-31"), "lint はテストの名前に当たりません"},
-		{"runner のエントリは不要として落とす", baseMk, entry("go-test", "2027-01-31"), "go-test は runner として除外済みです"},
+		{"道具を起動するだけの runner のエントリは不要として落とす", baseMk, entry("go-test", "2027-01-31"), "go-test は道具を起動するだけの runner として除外済みです"},
 		{"runner が定義されていなければ除外の前提が崩れたとして落とす", map[string]string{".makefiles/go.mk": baseMk[".makefiles/go.mk"]}, "", "除外する runner tf-test が定義されていません"},
-		{"runner のレシピが道具を起動しなければ落とす", map[string]string{".makefiles/go.mk": "go-test:\n\techo fake\n", ".makefiles/tf.mk": baseMk[".makefiles/tf.mk"]}, "", "go-test は"},
+		{"runner のレシピが道具を起動しなければテストのターゲットとして落とす", map[string]string{".makefiles/go.mk": "go-test:\n\techo fake\n", ".makefiles/tf.mk": baseMk[".makefiles/tf.mk"]}, "", "go-test はテストのターゲットです"},
+		{"runner のレシピがほかの行を持てばテストのターゲットとして落とす", map[string]string{".makefiles/go.mk": baseMk[".makefiles/go.mk"], ".makefiles/tf.mk": "tf-test:\n\t@$(TF) fmt\n\t@echo test\n"}, "", "tf-test はテストのターゲットです"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -270,7 +289,7 @@ func Test_check(t *testing.T) {
 		{"ターゲットが1つも無ければ落とす", func(in *input) {
 			in.mk = map[string][]byte{".makefiles/v.mk": []byte("X := 1\n")}
 			in.makefile = []byte("include .makefiles/v.mk\n")
-			in.db = []byte(dbHead + "# Files\n\nother:\n#  commands to execute (from `Makefile', line 1):\n\n" + dbTail)
+			in.db = []byte(dbHead + "# Files\n\nother:\n#  commands to execute (from `elsewhere.mk', line 1):\n\n" + dbTail)
 		}, errNoTargets},
 	} {
 		t.Run(c.name, func(t *testing.T) {
