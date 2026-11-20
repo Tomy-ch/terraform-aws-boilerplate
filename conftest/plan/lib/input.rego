@@ -7,7 +7,7 @@ import data.plan.lib
 
 # 宣言そのものが欠けると、それを参照する規則が未定義になって黙る。
 deny contains msg if {
-	not well_formed_declaration(data.policy_plan)
+	not well_formed_policy_plan(data.policy_plan)
 	msg := "[PLAN-DATA-01] 宣言の policy_plan が、plan_format_version / provider_format_version / documents / required_documents / deployment_identity / inline_arguments の形を満たしていません"
 }
 
@@ -63,10 +63,9 @@ deny contains msg if {
 	msg := sprintf("[PLAN-INPUT-08] %s: resource_changes の要素が address / type / change.actions の形を満たしていません", [f.path])
 }
 
-# 宣言した引数に、書かないときの値でない値か、plan で決まらない値が在る。
 inline_writes contains {"path": c.path, "address": c.rc.address, "arg": arg} if {
 	some c in lib.changes
-	some arg, empty in data.policy_plan.inline_arguments[c.rc.type]
+	some arg, empty in lib.inline_arguments[c.rc.type]
 	inline_written(c.rc.change, arg, empty)
 }
 
@@ -94,15 +93,29 @@ inline_seen(type, arg) if {
 	arg in object.keys(object.get(c.rc.change, "after_unknown", {}))
 }
 
-# 宣言が入力に当たらなければ、その引数は1つも検査されていない。
+# 決定17 の宣言は、層の宣言から導ける引数を持たない（同じ引数を2つの宣言に別々に書かない）。層の宣言が
+# 読めなければ、導く分が黙って欠けるので落とす。
+deny contains msg if {
+	not lib.layer_decl_ok
+	msg := "[PLAN-INPUT-12] 層の宣言 data.layer_decl（conftest/hcl/layer/decl.json）を読めていません。inline_arguments の一部はそこから導きます"
+}
+
 deny contains msg if {
 	some type, args in data.policy_plan.inline_arguments
+	some arg, _ in args
+	arg in object.keys(object.get(lib.derived_inline_arguments, type, {}))
+	msg := sprintf("[PLAN-INPUT-12] policy_plan.inline_arguments の %s の %s は、層の宣言（ADR-0102 決定18）から導かれます → policy_plan から外す", [type, arg])
+}
+
+# 宣言が入力に当たらなければ、その引数は1つも検査されていない。
+deny contains msg if {
+	some type, args in lib.inline_arguments
 	some arg, _ in args
 	not inline_seen(type, arg)
 	msg := sprintf("[PLAN-INPUT-10] inline_arguments の %s の %s が、入力のどの変更にもありません", [type, arg])
 }
 
-# data.provider_schema は make tf-policy が mock の plan の provider_schemas から取り出す（型 → 書ける非推奨の引数）。
+# data.provider_schema は、型 → 書ける非推奨の引数（ADR-0402 決定18）。
 deprecated_arguments_present if {
 	is_object(data.provider_schema.deprecated_arguments)
 	count(data.provider_schema.deprecated_arguments) > 0
@@ -115,17 +128,28 @@ deny contains msg if {
 
 deny contains msg if {
 	deprecated_arguments_present
-	some type, _ in data.policy_plan.inline_arguments
+	some type, _ in lib.inline_arguments
 	not type in object.keys(data.provider_schema.deprecated_arguments)
 	msg := sprintf("[PLAN-INPUT-11] %s が mock の plan の Provider の schema にありません", [type])
 }
 
 deny contains msg if {
 	some type, args in data.provider_schema.deprecated_arguments
-	type in object.keys(data.policy_plan.inline_arguments)
+	type in object.keys(lib.inline_arguments)
 	some arg in args
-	not arg in object.keys(data.policy_plan.inline_arguments[type])
+	not arg in object.keys(lib.inline_arguments[type])
 	msg := sprintf("[PLAN-INPUT-11] %s の非推奨の引数 %s が inline_arguments にありません", [type, arg])
+}
+
+# 層の宣言で attachment 型の親になる保護の対象の型は、非推奨の引数を層の宣言で必ず分類する（ADR-0102 決定18）ので、
+# 実効の宣言に型ごと現れる。現れなければ、層の宣言の欠けで導く分が型ごと消えている。
+deny contains msg if {
+	lib.layer_decl_ok
+	some type in data.policy_plan.stateful_protection.protected_types
+	type in lib.layer_parent_types
+	count({arg | some arg in object.get(data.provider_schema.deprecated_arguments, type, []); not lib.owned(type, arg)}) > 0
+	not type in object.keys(lib.inline_arguments)
+	msg := sprintf("[PLAN-INPUT-11] 保護の対象の型 %s は、層の宣言で attachment 型の親で非推奨の引数を持つのに、inline_arguments にありません", [type])
 }
 
 resource_changes_present(f) if {
@@ -137,6 +161,11 @@ well_formed_change(rc) if {
 	is_string(rc.address)
 	is_string(rc.type)
 	is_array(rc.change.actions)
+}
+
+well_formed_policy_plan(decl) if {
+	lib.raw_inline_shape(decl)
+	well_formed_declaration(lib.effective_policy_plan)
 }
 
 well_formed_declaration(decl) if {

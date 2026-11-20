@@ -20,6 +20,11 @@ read_verbs := ["get", "list", "describe", "head"]
 # 入力に Bucket の resource が無いので、plan の出力の Bucket を address で引けない。名前の形で見る。
 plan_output_key := `^arn:aws:s3:::[^/*?]+-tfplan-[^/*?]+/(pr|branch)/\*$`
 
+plan_output(resource) if {
+	regex.match(plan_output_key, resource)
+	not lib.policy_variable(resource)
+}
+
 allows contains {"path": r.document.path, "statement": s} if {
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
@@ -90,8 +95,8 @@ deny contains msg if {
 	some a in allows
 	"s3:putobject" in lib.lower_all(object.get(a.statement, "Action", []))
 	some resource in lib.as_array(object.get(a.statement, "Resource", []))
-	not regex.match(plan_output_key, resource)
-	msg := sprintf("[PLAN-ROLE-03] %s: plan の role の s3:PutObject の Resource %s が、plan の出力の Bucket の pr/* か branch/* ではありません", [a.path, resource])
+	not plan_output(resource)
+	msg := sprintf("[PLAN-ROLE-03] %s: plan の role の s3:PutObject の Resource %s が、plan の出力の Bucket の pr/* か branch/* ではないか、policy 変数を含みます", [a.path, resource])
 }
 
 deny contains msg if {

@@ -9,9 +9,17 @@ import (
 	"slices"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
+
+// generatedRefPaths は、[refContext] の github の下のパス。
+var generatedRefPaths = []string{
+	"ref_name", "ref", "base_ref", "head_ref", "event.ref", "event.pull_request.base.ref", "event.pull_request.head.ref",
+	"event.workflow_run.head_branch",
+}
 
 var (
 	errBranchSet  = xerrors.New("workflow の分岐の集合を生成できません")
@@ -26,9 +34,9 @@ var (
 	// branchesLoose は、branchesLine が読めない書き方も拾う。数が食い違えば、読めない形がある。
 	branchesLoose = regexp.MustCompile(`branches(?:-ignore)?["']?\s*:`)
 	ifLine        = regexp.MustCompile(`^(\s*)(?:-\s+)?(?:"if"|'if'|if)[ \t]*:(.*)$`)
-	// refContext は、ブランチの名前か ref を値に持つ context の閉じた一覧。Actions の式は context と property の
+	// refContext は、生成する項（[renderIfLine]）が名指せる ref の context。Actions の式は context と property の
 	// 名前の大文字小文字を区別しないので、ここも区別しない。
-	refContext = regexp.MustCompile(`(?i:github\.(?:ref_name|ref|base_ref|head_ref|event\.ref|event\.pull_request\.base\.ref|event\.pull_request\.head\.ref|event\.workflow_run\.head_branch))\b`)
+	refContext = regexp.MustCompile(`(?i:github\.(?:` + strings.ReplaceAll(strings.Join(generatedRefPaths, "|"), ".", `\.`) + `))\b`)
 	// containsSet は、完全一致の集合を名指す項 contains(fromJSON('[...]'), <ref>)。
 	containsSet = regexp.MustCompile(`contains\(fromJSON\('(\[[^']*\])'\),\s*(` + refContext.String() + `)\)`)
 	// prefixGroup は、前方一致の集合を名指す項 (startsWith(<ref>, '<prefix>') || ...)。
@@ -285,28 +293,24 @@ func splitComment(line string) (code, comment string) {
 const actionsDir = ".github/actions"
 
 var (
-	// refLiteral は、ref の context と文字列リテラルを比べる項。
-	refLiteral = []*regexp.Regexp{
-		regexp.MustCompile(`(` + refContext.String() + `)\s*(?:==|!=)\s*'`),
-		regexp.MustCompile(`'[^']*'\s*(?:==|!=)\s*(` + refContext.String() + `)`),
-		regexp.MustCompile(`(?i:startsWith|endsWith|contains)\(\s*(` + refContext.String() + `)\s*,\s*'`),
-		regexp.MustCompile(`(?i:contains)\(\s*(?:(?i:fromJSON)\(\s*)?'[^']*'\s*\)?\s*,\s*(` + refContext.String() + `)`),
-	}
-	// indexedGithub は、github の context を添字で引く書き方。添字の先が ref かを字面では決められないので、
-	// 読めない式として扱う。
-	indexedGithub = regexp.MustCompile(`(?i)\bgithub\s*\[`)
-	exprOpen      = regexp.MustCompile(`\$\{\{`)
-	exprWhole     = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	ifLoose       = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
+	exprOpen = regexp.MustCompile(`\$\{\{`)
+	ifLoose  = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
 	// blockScalar は、値がブロックスカラーで始まる行（コメントを除いた字面）。キーの値か列の要素で、アンカーと
 	// タグが前に付いてもよい。
 	blockScalar = regexp.MustCompile(`(?:^|[:\s-])[ \t]*(?:[&!]\S*[ \t]+)*[|>][-+0-9]*[ \t]*$`)
+	// explicitKey は、明示的なキー（`? `）で始まる行。キーと値が別の行に分かれ、if: を見分けられない。
+	explicitKey = regexp.MustCompile(`^[ \t]*(?:-[ \t]+)*\?(?:[ \t]|$)`)
+	// singleQuotedValue は、行のキーの桁からの、一重引用符のスカラーで始まる値の手前まで（キーと `: `）と、その引用符。
+	singleQuotedValue = regexp.MustCompile(`^(?:(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s'"#][^:]*?)[ \t]*:[ \t]+)?'`)
+	// singleQuotedKey は、一重引用符のスカラーがキーであること（後ろに `:` が続く）。
+	singleQuotedKey = regexp.MustCompile(`^'(?:[^']|'')*'[ \t]*:(?:[ \t]|$)`)
 )
 
-// checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ref の context
-// （[refContext]）を文字列リテラルと比べていないことを確かめます（ADR-0603 検証方法）。印 `# branch-set:` の
-// 行では、生成した項（[renderIfLine] が書き換える部分）だけを除いて見る。読んだ式の数を返す。対象のファイルか
-// 式が1件も無いとき、`${{` と if: のキーの字面の数が読めた数と食い違うときは失敗する。
+// checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ブランチの名前か ref を
+// 値に持つ値を、式の中で作った文字列と比べていないことを確かめます（ADR-0603 検証方法。判定は
+// [refComparisons]）。印 `# branch-set:` の行では、生成した項（[renderIfLine] が書き換える部分）だけを除いて
+// 見る。読んだ式の数を返す。対象のファイルか式が1件も無いとき、`${{` と if: のキーの字面の数が読めた数と
+// 食い違うとき、式として読めないものがあるときは失敗する。
 func checkRefLiterals(root string) (int, error) {
 	files, err := expressionFiles(root)
 	if err != nil {
@@ -329,10 +333,11 @@ func checkRefLiterals(root string) (int, error) {
 		}
 		total += len(exprs)
 		for _, e := range exprs {
-			if indexedGithub.MatchString(e.text) {
-				return 0, xerrors.Wrapf(errExpression, "%s:%d: github の context を添字で引く書き方は読めません。ドット記法で書いてください", rel, e.line)
+			terms, err := refComparisons(e.text)
+			if err != nil {
+				return 0, xerrors.Wrapf(err, "%s:%d", rel, e.line)
 			}
-			for _, term := range refLiteralTerms(e.text) {
+			for _, term := range terms {
 				findings = append(findings, fmt.Sprintf("%s:%d: %s", rel, e.line, term))
 			}
 		}
@@ -401,10 +406,17 @@ func expressions(src string) ([]expression, error) {
 		if ifLoose.MatchString(code) {
 			ifs++
 		}
+		if explicitKey.MatchString(code) {
+			return nil, xerrors.Wrapf(errExpression, "%d 行目: 明示的なキー（`? `）の書き方は読めません", i+1)
+		}
 		col := keyColumn(code)
 		m := ifLine.FindStringSubmatch(code)
 		if m == nil {
-			for _, e := range exprWhole.FindAllString(code, -1) {
+			value, err := unquotedValue(code, col)
+			if err != nil {
+				return nil, xerrors.Wrapf(err, "%d 行目", i+1)
+			}
+			for _, e := range exprSpans(value) {
 				out = append(out, expression{line: i + 1, text: e})
 				readOpens++
 			}
@@ -412,7 +424,7 @@ func expressions(src string) ([]expression, error) {
 				body, next := blockBody(lines, i+1, blockColumn(code, col))
 				for j, l := range body {
 					opens += len(exprOpen.FindAllString(l, -1))
-					for _, e := range exprWhole.FindAllString(l, -1) {
+					for _, e := range exprSpans(l) {
 						out = append(out, expression{line: i + 2 + j, text: e})
 						readOpens++
 					}
@@ -426,6 +438,8 @@ func expressions(src string) ([]expression, error) {
 		value := strings.TrimSpace(m[2])
 		if blockScalar.MatchString(code) {
 			body, next := blockBody(lines, i+1, col)
+			// opens と readOpens を同じ字面から数えるので、ここは突き合わせにならない。本文はまるごと1つの式として
+			// 読むので、閉じない `${{` や包みの外の字面は refComparisons の exprBody が失敗させる。
 			for _, l := range body {
 				n := len(exprOpen.FindAllString(l, -1))
 				opens += n
@@ -442,7 +456,7 @@ func expressions(src string) ([]expression, error) {
 				opens += len(exprOpen.FindAllString(l, -1))
 			}
 			value = folded
-			readOpens += len(exprWhole.FindAllString(value, -1))
+			readOpens += len(exprSpans(value))
 			i = next - 1
 		}
 		if mark := setMarker.FindStringSubmatch(comment); mark != nil {
@@ -457,6 +471,25 @@ func expressions(src string) ([]expression, error) {
 		return nil, xerrors.Wrapf(errExpression, "if: を %d 件読みましたが、字面では %d 件あります。読めない書き方があります", readIfs, ifs)
 	}
 	return out, nil
+}
+
+// unquotedValue は、col 桁にキーか列の要素が始まる行 code の値が一重引用符のスカラーなら、YAML の文字列として
+// 読んだ値を、そうでなければ code をそのまま返します。`${{` を含む一重引用符の値が1行の YAML の文字列として
+// 読めなければ失敗する（行をまたぐ値と、閉じた引用符の後ろに字面が続く値）。
+func unquotedValue(code string, col int) (string, error) {
+	rest := code[col:]
+	loc := singleQuotedValue.FindStringIndex(rest)
+	if loc == nil || singleQuotedKey.MatchString(rest[loc[1]-1:]) {
+		return code, nil
+	}
+	var m map[string]string
+	if err := yaml.Unmarshal([]byte("v: "+strings.TrimSpace(rest[loc[1]-1:])), &m); err != nil {
+		if strings.Contains(code, exprOpenWrap) {
+			return "", xerrors.Wrapf(errExpression, "一重引用符の値を YAML の文字列として読めません: %v", err)
+		}
+		return code, nil
+	}
+	return m["v"], nil
 }
 
 // keyColumn は、行のキーが始まる桁を返します。列の要素の `- ` はキーの桁に含める。
@@ -537,12 +570,4 @@ func withoutGenerated(value, set string) string {
 		return prefixGroup.ReplaceAllString(value, "true")
 	}
 	return value
-}
-
-func refLiteralTerms(expr string) []string {
-	out := make([]string, 0, len(refLiteral))
-	for _, re := range refLiteral {
-		out = append(out, re.FindAllString(expr, -1)...)
-	}
-	return out
 }

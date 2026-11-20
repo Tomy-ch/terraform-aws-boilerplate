@@ -154,7 +154,7 @@ deny contains msg if {
 	some svc in service_principals(s)
 	some v in source_values(s)
 	not allowed_source(v, s, r)
-	msg := sprintf("[PLAN-KMS-05] %s: %s が %s の要求元に、委任のアカウントの外の値 %v を置いています", [r.document.path, r.document.address, svc, v])
+	msg := sprintf("[PLAN-KMS-05] %s: %s が %s の要求元に、委任のアカウントの外の値か、wildcard か policy 変数を含む値 %v を置いています", [r.document.path, r.document.address, svc, v])
 }
 
 source_keys(s) := {k |
@@ -193,7 +193,7 @@ cross_account_statement(s, address) if {
 }
 
 foreign_source(v, _) if {
-	lib.no_wildcard(v)
+	lib.fixed_value(v)
 	regex.match(`^[0-9]{12}$`, v)
 }
 
@@ -203,7 +203,7 @@ foreign_source(v, body) if {
 }
 
 own_source(v, _, body) if {
-	lib.no_wildcard(v)
+	lib.fixed_value(v)
 	v == account(body)
 }
 
@@ -220,7 +220,7 @@ own_source(v, s, body) if {
 }
 
 own_partition_arn(v, body) if {
-	lib.no_wildcard(v)
+	lib.fixed_value(v)
 	parts := split(v, ":")
 	count(parts) >= 6
 	parts[0] == "arn"
@@ -345,10 +345,8 @@ s3_read(s) if {
 
 bucket_arn_value(v) if regex.match(`^arn:[^:]+:s3:::[^/]+$`, v)
 
-# IAM の policy 変数（${...}）は要求の時点で置き換わり、object を固定しない。
 own_object_arn(v, s, body) if {
-	lib.no_wildcard(v)
-	not contains(v, "${")
+	lib.fixed_value(v)
 	some region in s3_regions(s)
 	regex.match(sprintf(`^arn:%s:s3:::[a-z0-9][a-z0-9.-]*-%s-%s-an/.+$`, [split(roots(body)[0], ":")[1], account(body), region]), v)
 }

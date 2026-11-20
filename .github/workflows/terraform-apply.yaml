@@ -1,7 +1,7 @@
 name: Terraform Apply
 
-# 管理アカウントのデプロイブランチへの merge の後に、管理アカウントの identity root を CI が apply する。規則は
-# README.md の「apply の job」。apply の手順の定義は .makefiles/terraform/operation/ci.mk だけが持つ。
+# 管理アカウントのデプロイブランチへの merge の後に、管理アカウントの identity root と workload root を、この順に
+# CI が apply する。規則は README.md の「apply の job」。apply の手順の定義は .makefiles/terraform/operation/ci.mk だけが持つ。
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 # 実行中の apply は止めない。理由は README.md の「apply の job」。
 concurrency:
-  group: terraform-apply-admin-identity
+  group: terraform-apply-admin
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +68,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate is built from scripts/.
+      # go: infra-code-gate and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -132,7 +132,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -190,17 +190,21 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
+      # go: infra-code-gate と tf-local と hcl-input と provider-schema を scripts/ からビルドする。terraform: 層の検査が lock した AWS Provider の
+      # schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:open-policy-agent/conftest go
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the layer check's own tests
@@ -260,7 +264,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -374,10 +378,112 @@ jobs:
         id: apply
         run: make ci-apply-admin-identity RUNNER_MODE=host
 
+  # identity root の apply が apply の role の権限と permissions boundary を書き、この job がそれを使う。
+  apply-admin-workload:
+    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]
+    if: ${{ needs.apply-infra-code-gate.result == 'success' && needs.apply-resource-order-check.result == 'success' && needs.apply-layer-check.result == 'success' && needs.apply-root-check.result == 'success' && needs.apply-admin-identity.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-apply
+    permissions:
+      contents: read
+      id-token: write
+    # plan・failure・apply-outcome の意味は apply-admin-identity の outputs と同じ。
+    outputs:
+      plan: ${{ steps.apply.outputs.plan }}
+      failure: ${{ steps.apply.outputs.failure }}
+      apply-outcome: ${{ steps.apply.outcome }}
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+
+      # 古い run を止める理由は apply-admin-identity の Refuse stale commits と同じ。
+      - name: Refuse stale commits
+        id: refuse-stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          head=$(gh api "repos/$REPO/git/ref/heads/$REF" --jq .object.sha)
+          test "$SHA" = "$head" || { echo "❌ $SHA は $REF の先頭（$head）ではないので apply しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-apply の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local is built from scripts/.
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the apply role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=apply RUNNER_MODE=host
+
+      - name: Apply the workload root
+        id: apply
+        run: make ci-apply-admin-workload RUNNER_MODE=host
+
   # apply の失敗を戻す revert のブランチを用意するかと、その範囲を決める。規則は README.md の「apply の失敗の revert」。
   revert-plan:
-    needs: [apply-admin-identity]
-    if: ${{ always() && needs.apply-admin-identity.result == 'failure' }}
+    needs: [apply-admin-identity, apply-admin-workload]
+    if: ${{ always() && (needs.apply-admin-identity.result == 'failure' || needs.apply-admin-workload.result == 'failure') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -449,6 +555,7 @@ jobs:
           APPLY_REVERT_WORKFLOW: terraform-apply.yaml
           APPLY_REVERT_RESULTS: >-
             apply-admin-identity=${{ needs.apply-admin-identity.result }}:${{ needs.apply-admin-identity.outputs.apply-outcome }}:${{ needs.apply-admin-identity.outputs.failure }}
+            apply-admin-workload=${{ needs.apply-admin-workload.result }}:${{ needs.apply-admin-workload.outputs.apply-outcome }}:${{ needs.apply-admin-workload.outputs.failure }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: make ci-revert-plan RUNNER_MODE=host
 
@@ -495,13 +602,12 @@ jobs:
           REVERT_BRANCH: ${{ needs.revert-plan.outputs.branch }}
         run: make ci-revert-push RUNNER_MODE=host
 
-  # 理由は README.md の「通知の起動条件」。
   notify-failure:
-    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity]
-    if: ${{ always() && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-resource-order-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-layer-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-root-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result)) }}
+    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check, apply-admin-identity, apply-admin-workload]
+    if: ${{ always() && (contains(fromJSON('["failure", "cancelled"]'), needs.apply-infra-code-gate.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-resource-order-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-layer-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-root-check.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-identity.result) || contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-workload.result)) }}
     uses: ./.github/workflows/notify.yaml
     with:
-      failed-job: ${{ needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || (needs.apply-resource-order-check.result != 'success' && 'apply-resource-order-check' || (needs.apply-layer-check.result != 'success' && 'apply-layer-check' || 'apply-root-check'))) }}
+      failed-job: ${{ contains(fromJSON('["failure", "cancelled"]'), needs.apply-admin-workload.result) && 'apply-admin-workload' || (needs.apply-admin-identity.result != 'skipped' && 'apply-admin-identity' || (needs.apply-infra-code-gate.result != 'success' && 'apply-infra-code-gate' || (needs.apply-resource-order-check.result != 'success' && 'apply-resource-order-check' || (needs.apply-layer-check.result != 'success' && 'apply-layer-check' || 'apply-root-check')))) }}
     secrets:
       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
 
@@ -516,13 +622,22 @@ jobs:
     secrets:
       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
 
-  # 理由は README.md の「通知の起動条件」。
-  notify-success:
+  notify-success-admin-identity:
     needs: [apply-admin-identity]
     if: ${{ needs.apply-admin-identity.result == 'success' }}
     uses: ./.github/workflows/notify.yaml
     with:
       succeeded-job: apply-admin-identity
       details: ${{ needs.apply-admin-identity.outputs.plan }}
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}
+
+  notify-success-admin-workload:
+    needs: [apply-admin-workload]
+    if: ${{ needs.apply-admin-workload.result == 'success' }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      succeeded-job: apply-admin-workload
+      details: ${{ needs.apply-admin-workload.outputs.plan }}
     secrets:
       slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_DEPLOY_CRITICAL }}

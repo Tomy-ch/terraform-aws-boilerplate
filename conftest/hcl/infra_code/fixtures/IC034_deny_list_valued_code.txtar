@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+data "external" "e" {
+  program = ["python3", "${path.module}/src/x.py"]
+}

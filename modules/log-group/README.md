@@ -34,7 +34,7 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 | `aws_cloudwatch_log_data_protection_policy` | 何を機微とみなすかは usecase ごとに違い、一般 module が持つと入力の切り替えか、識別子を AWS の表現で受ける入力になる（ADR-0102 決定15、ADR-0204 決定2）。要る usecase が Log Group ごと `internal/` に置く |
 | `aws_cloudwatch_log_resource_policy` | AWS のサービスが書く Log Group は `modules/vended-log-group`。アカウント単位の policy（`policy_name`）は置かない（リージョンに10個までの共有の資源で、親を持たない） |
 | `STANDARD` 以外の class（`INFREQUENT_ACCESS`・`DELIVERY`・`ESSENTIALS`） | Subscription Filter などの機能の一部が使えない、または保持が1日か2日に固定される。class は作成後に変えられない |
-| 別のリージョンの Log Group（Route 53 の公開 DNS のクエリログは us-east-1） | 呼んだ provider のリージョンに作る。要る usecase の着手時に見直す |
+| 別のリージョンの Log Group | 呼んだ provider のリージョンに作る。`region` の入力を持たない（`make egress-check` は block の `region` が literal であることを求める）。Route 53 の公開 DNS のクエリログ（us-east-1）は `dns-zone` の `internal/query-log` が持つ |
 | サービスが Log Group を暗黙に作ること（ECS の `awslogs-create-group` など）の防止 | 書き手の module（ECS、IAM role）の不変条件 |
 
 ## 保証しないもの

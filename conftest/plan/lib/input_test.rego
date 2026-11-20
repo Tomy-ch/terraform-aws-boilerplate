@@ -1,6 +1,7 @@
 package plan.input_test
 
 import data.plan.fixture
+import data.plan.lib
 import data.plan.input as gate
 
 valid := fixture.role_policy([fixture.allow("s3:GetObject")])
@@ -36,7 +37,6 @@ test_pass_valid_input if {
 	count(gate.deny) == 0 with input as fixture.clean([valid]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
 }
 
-# mock provider は表に無い computed な属性に乱数を入れる。表にも inline_arguments にも無い属性は読まない。
 test_pass_untracked_attribute if {
 	rc := object.union(fixture.unwritten("aws_s3_bucket"), {"change": {"after": {"bucket_domain_name": "l3mra53t"}}})
 	count(gate.deny) == 0 with input as fixture.clean([valid, rc]) with data.policy_plan.required_documents as ["aws_iam_role_policy"] with data.provider_schema as fixture.provider_schema
@@ -156,10 +156,59 @@ test_pass_declaration if {
 }
 
 test_violation_declaration_empty_tables if {
-	every key in ["documents", "required_documents", "inline_arguments"] {
-		empty := {"documents": {}, "required_documents": [], "inline_arguments": {}}[key]
+	every key in ["documents", "required_documents"] {
+		empty := {"documents": {}, "required_documents": []}[key]
 		fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as object.union(object.remove(data.policy_plan, [key]), {key: empty})
 	}
+}
+
+# Policy Test が持つ宣言は空でもよい（層の宣言から導く分が在る）。導く分も無ければ、実効の宣言が空なので落とす。
+test_pass_raw_inline_arguments_empty if {
+	not fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration({})
+}
+
+test_violation_effective_inline_arguments_empty if {
+	fixture.has("[PLAN-DATA-01]", gate.deny) with input as fixture.plan([valid]) with data.policy_plan as fixture.inline_declaration({})
+		with data.layer_decl as {"attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}
+}
+
+test_violation_inline_argument_derivable if {
+	d := object.union(data.policy_plan.inline_arguments, {"aws_kms_key": {"policy": null}})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.policy_plan as fixture.inline_declaration(d) with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-12] policy_plan.inline_arguments の aws_kms_key の policy は、層の宣言", msgs)
+}
+
+test_violation_layer_decl_attachments_empty if {
+	msgs := gate.deny with input as fixture.clean([valid]) with data.layer_decl as {"attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}} with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-12] 層の宣言 data.layer_decl", msgs)
+}
+
+test_violation_layer_decl_missing if {
+	msgs := gate.deny with input as fixture.clean([valid]) with data.layer_decl as null with data.provider_schema as fixture.provider_schema
+	fixture.has("[PLAN-INPUT-12] 層の宣言 data.layer_decl", msgs)
+}
+
+test_pass_protected_parent_type_with_only_owned_deprecated if {
+	d := object.union(object.remove(data.layer_decl, ["attachments", "inline_owned"]), {
+		"attachments": {"aws_s3_bucket_policy": object.union(object.remove(data.layer_decl.attachments.aws_s3_bucket_policy, ["parent_arguments"]), {"parent_arguments": {}})},
+		"inline_owned": {"aws_s3_bucket": {"policy": "fixture"}},
+	})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.layer_decl as d with data.provider_schema as {"deprecated_arguments": {"aws_s3_bucket": ["policy"]}}
+	not fixture.has("[PLAN-INPUT-11] 保護の対象の型 aws_s3_bucket は", msgs)
+}
+
+test_violation_protected_parent_type_missing if {
+	d := object.union(object.remove(data.layer_decl, ["attachments"]), {"attachments": {"aws_s3_bucket_policy": object.union(object.remove(data.layer_decl.attachments.aws_s3_bucket_policy, ["parent_arguments"]), {"parent_arguments": {}})}})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.layer_decl as d with data.provider_schema as {"deprecated_arguments": {"aws_s3_bucket": ["policy"]}}
+	fixture.has("[PLAN-INPUT-11] 保護の対象の型 aws_s3_bucket は", msgs)
+}
+
+test_pass_inline_arguments_derived_from_layer if {
+	lib.inline_arguments.aws_s3_bucket.website == []
+	lib.inline_arguments.aws_kms_key.policy == null
+	not data.policy_plan.inline_arguments.aws_s3_bucket
+	msgs := gate.deny with input as fixture.clean([valid]) with data.provider_schema as fixture.provider_schema
+	not fixture.has("[PLAN-INPUT-12]", msgs)
 }
 
 test_pass_data_source_not_read if {
@@ -191,7 +240,7 @@ test_violation_inline_policy_empty_string_or_random if {
 }
 
 test_violation_inline_argument_unknown if {
-	rc := {"address": "module.x.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": object.remove(data.policy_plan.inline_arguments.aws_s3_bucket, ["policy"]), "after_unknown": {"policy": true}}}
+	rc := {"address": "module.x.aws_s3_bucket.this", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": object.remove(lib.inline_arguments.aws_s3_bucket, ["policy"]), "after_unknown": {"policy": true}}}
 	msgs := gate.deny with input as fixture.clean([valid, rc]) with data.provider_schema as fixture.provider_schema
 	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_s3_bucket.this の policy ", msgs)
 }
@@ -283,10 +332,10 @@ test_violation_inline_block_unknown_inside if {
 
 # 書いた値が plan で決まらない引数は after に現れない。after_unknown だけでも入力に在ると読む。
 test_pass_inline_seen_only_in_after_unknown if {
-	after := object.remove(data.policy_plan.inline_arguments.aws_kms_key, ["policy"])
+	after := object.remove(lib.inline_arguments.aws_kms_key, ["policy"])
 	rc := {"address": "module.x.aws_kms_key.this", "type": "aws_kms_key", "change": {"actions": ["create"], "after": after, "after_unknown": {"policy": true}}}
-	count(data.policy_plan.inline_arguments) > 1
-	rcs := array.concat([valid, rc], [fixture.unwritten(t) | some t, _ in data.policy_plan.inline_arguments; t != "aws_kms_key"])
+	count(lib.inline_arguments) > 1
+	rcs := array.concat([valid, rc], [fixture.unwritten(t) | some t, _ in lib.inline_arguments; t != "aws_kms_key"])
 	msgs := gate.deny with input as fixture.plan(rcs) with data.provider_schema as fixture.provider_schema
 	not fixture.has("[PLAN-INPUT-10]", msgs)
 	fixture.has("[PLAN-INPUT-09] p.json: module.x.aws_kms_key.this の policy ", msgs)
@@ -307,6 +356,66 @@ test_violation_provider_schema_not_object if {
 # 宣言を表で回すテストは、宣言が空なら何も見ずに通る。
 test_pass_declaration_covers_the_bucket_and_the_key if {
 	every type in ["aws_s3_bucket", "aws_kms_key"] {
-		count(object.get(data.policy_plan.inline_arguments, type, {})) > 0
+		count(object.get(lib.inline_arguments, type, {})) > 0
 	}
+}
+
+# 導く元の層の宣言。aws_s3_bucket は保護の対象、aws_iam_role は保護の対象でない親の型。
+derive_decl(owned) := {
+	"attachments": {
+		"aws_s3_bucket_policy": {"parents": {"bucket": ["aws_s3_bucket"]}, "optional": false, "parent_arguments": {"aws_s3_bucket": {"policy": null, "website": []}}, "whole_document": true},
+		"aws_iam_role_policy": {"parents": {"role": ["aws_iam_role"]}, "optional": false, "parent_arguments": {"aws_iam_role": {"inline_policy": []}}, "whole_document": false},
+	},
+	"unrelated_deprecated_arguments": {"aws_s3_bucket": {"acl": {"reason": "r", "unwritten": null}, "region": {"reason": "r", "unwritten": null}}},
+	"inline_owned": owned,
+}
+
+test_pass_derived_without_inline_owned if {
+	lib.derived_inline_arguments.aws_s3_bucket == {"policy": null, "website": [], "acl": null, "region": null} with data.layer_decl as derive_decl({})
+}
+
+# inline_owned の引数は、parent_arguments の側からは導かない。
+test_pass_derived_skips_inline_owned_parent_argument if {
+	lib.derived_inline_arguments.aws_s3_bucket == {"website": [], "acl": null, "region": null} with data.layer_decl as derive_decl({"aws_s3_bucket": {"policy": "r"}})
+}
+
+# inline_owned の引数は、unrelated_deprecated_arguments の側からも導かない。
+test_pass_derived_skips_inline_owned_unrelated_argument if {
+	lib.derived_inline_arguments.aws_s3_bucket == {"policy": null, "website": [], "region": null} with data.layer_decl as derive_decl({"aws_s3_bucket": {"acl": "r"}})
+}
+
+# 引数がすべて inline_owned なら、型ごと導かない。
+test_pass_derived_skips_type_fully_owned if {
+	owned := {"aws_s3_bucket": {"policy": "r", "website": "r", "acl": "r", "region": "r"}}
+	not lib.derived_inline_arguments.aws_s3_bucket with data.layer_decl as derive_decl(owned)
+}
+
+test_pass_derived_skips_unprotected_parent_type if {
+	not "aws_iam_role" in data.policy_plan.stateful_protection.protected_types
+	"aws_iam_role" in lib.layer_parent_types with data.layer_decl as derive_decl({})
+	not lib.derived_inline_arguments.aws_iam_role with data.layer_decl as derive_decl({})
+}
+
+# 同じ型を Policy Test の宣言と層の宣言の両方が持てば、実効の宣言は引数の和になる。
+test_pass_inline_arguments_union_of_raw_and_derived if {
+	got := lib.inline_arguments.aws_s3_bucket with data.layer_decl as derive_decl({})
+		with data.policy_plan as fixture.inline_declaration({"aws_s3_bucket": {"bucket_prefix": null}})
+	got == {"policy": null, "website": [], "acl": null, "region": null, "bucket_prefix": null}
+}
+
+# 保護の対象でも、層の宣言で親の型でなければ、実効の宣言に型が無くてよい。
+test_pass_protected_type_not_parent if {
+	"aws_ecr_lifecycle_policy" in data.policy_plan.stateful_protection.protected_types
+	not "aws_ecr_lifecycle_policy" in lib.layer_parent_types
+	not lib.inline_arguments.aws_ecr_lifecycle_policy
+	s := {"deprecated_arguments": object.union(fixture.provider_schema.deprecated_arguments, {"aws_ecr_lifecycle_policy": ["x"]})}
+	msgs := gate.deny with input as fixture.clean([valid]) with data.provider_schema as s
+	not fixture.has("[PLAN-INPUT-11] 保護の対象の型 aws_ecr_lifecycle_policy ", msgs)
+}
+
+# 親の型でも、非推奨の引数が0件なら、実効の宣言に型が無くてよい。
+test_pass_parent_type_without_deprecated_arguments if {
+	d := object.union(object.remove(data.layer_decl, ["attachments"]), {"attachments": {"aws_s3_bucket_policy": object.union(object.remove(data.layer_decl.attachments.aws_s3_bucket_policy, ["parent_arguments"]), {"parent_arguments": {}})}})
+	msgs := gate.deny with input as fixture.clean([valid]) with data.layer_decl as d with data.provider_schema as {"deprecated_arguments": {"aws_s3_bucket": []}}
+	not fixture.has("[PLAN-INPUT-11] 保護の対象の型 aws_s3_bucket ", msgs)
 }

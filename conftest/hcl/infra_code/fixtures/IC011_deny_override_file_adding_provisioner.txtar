@@ -1,0 +1,8 @@
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+-- m/main_override.tf --
+resource "aws_s3_bucket" "b" {
+  provisioner "local-exec" {
+    command = "x"
+  }
+}

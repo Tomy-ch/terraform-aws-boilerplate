@@ -104,7 +104,7 @@ endef
 define CI_POLICY
 $(if $(strip $(CI_POLICY_NAMESPACES)),,$(error CI_POLICY_NAMESPACES が空です)) \
 for ns in $(strip $(CI_POLICY_NAMESPACES)); do export ns; \
-$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace "$$ns" --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) "$$json" > "$$pol" || :; \
+$(GO_TOOL) $(CONFTEST_BIN) test --combine --no-color -o json --namespace "$$ns" --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) "$$json" > "$$pol" || :; \
 $(call TF_LOCAL,policy-result -namespace "$$ns" -rego "$(POLICY_PLAN_DIR)/$${ns#plan.}.rego" "$$pol") \
 || { $(1)echo "❌ $$ns の Policy を通りません（理由は上の行）" >&2; exit 1; }; \
 done
@@ -155,8 +155,8 @@ test -z "$${GITHUB_OUTPUT:-}" || printf 'plan=%s\n' "$$summary" >> "$$GITHUB_OUT
 endef
 
 # $(1)=env $(2)=root。apply の job の timeout を超えて残った lock だけを、読んだ版の ETag を条件に消す。
-# terraform は呼ばない。lock の有無と古さの判定は tf-local の lock-etag と lock-stale が持ち、ここは lock-etag が
-# 空を返したときに後続の道具を呼ばずに成功で終えることだけを決める（ADR-0702 決定24 の、空を条件に起動を省く順序）。
+# terraform は呼ばない。lock-etag が空を返したときは、後続の道具を呼ばずに成功で終える
+# （判定は tf-local が持つ。冒頭と ADR-0702 決定24）。
 define CI_UNLOCK
 set -eu -o pipefail; umask 077; d="$(CI_PLAN_DIR)"; mkdir -p "$$d"; dir="$(call TF_LOCAL_DIR,$(1),$(2))"; root="$(1)-$(2)"; \
 list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; \
@@ -180,8 +180,8 @@ endef
 # $(1)=env $(2)=root。lock の解除を障害の前に試すために、apply の role で root の lock を取り、外さずに残す
 # （ADR-0604 決定8）。lock は terraform 自身に取らせる —— lock の解除が相手にする lock と同じ形にするためである。
 # plan を裏で起動し、lock を取った後の行が全文に現れたら SIGKILL で止める。SIGINT と SIGTERM では terraform が
-# lock を外してから止まる。lock の有無と形の判定は tf-local が持ち、ここは lock-wait が空を返したときに
-# 後続を省いて失敗することだけを決める（ADR-0702 決定24）。
+# lock を外してから止まる。lock-wait が空を返したときは後続を省いて失敗する
+# （判定は tf-local が持つ。冒頭と ADR-0702 決定24）。
 define CI_HOLD
 $(call CI_PREPARE,$(1),$(2)); \
 list="$$d/$$root.lock-list.json"; body="$$d/$$root.lock.json"; meta="$$d/$$root.lock-meta.json"; hold="$$d/$$root.hold.txt"; pid=; started=; \
@@ -237,3 +237,29 @@ ci-hold-admin-identity: SHELL := /bin/bash
 ci-hold-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-hold-admin-identity:
 	@$(call CI_HOLD,admin,identity)
+
+.PHONY: ci-plan-admin-workload ## [CI] 管理アカウントの workload root を plan し、全文を plan の出力の Bucket に置く
+ci-plan-admin-workload: SHELL := /bin/bash
+ci-plan-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-plan-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
+ci-plan-admin-workload:
+	@$(call CI_PLAN,admin,workload)
+
+.PHONY: ci-apply-admin-workload ## [CI] 管理アカウントの workload root を plan し直し、Policy を通った plan を apply する
+ci-apply-admin-workload: SHELL := /bin/bash
+ci-apply-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-apply-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
+ci-apply-admin-workload:
+	@$(call CI_APPLY,admin,workload)
+
+.PHONY: ci-unlock-admin-workload ## [CI] 管理アカウントの workload root の state に、apply の job の timeout を超えて残った lock を外す
+ci-unlock-admin-workload: SHELL := /bin/bash
+ci-unlock-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,unlock)
+ci-unlock-admin-workload:
+	@$(call CI_UNLOCK,admin,workload)
+
+.PHONY: ci-hold-admin-workload ## [CI] 管理アカウントの workload root の state に lock を取り、外さずに残す（bootstrap 段5 の lock の解除の試行）
+ci-hold-admin-workload: SHELL := /bin/bash
+ci-hold-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
+ci-hold-admin-workload:
+	@$(call CI_HOLD,admin,workload)

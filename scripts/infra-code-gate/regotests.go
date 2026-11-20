@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -24,9 +25,13 @@ var (
 	ruleHead = regexp.MustCompile(`(?m)^(?:deny|warn|violation)(?:_[A-Za-z0-9]+)*\s*(?:contains\b|\[|if\b|:?=|\{)`)
 	testName = regexp.MustCompile(`(?m)^(test_[A-Za-z0-9_]+)\b`)
 	pairName = regexp.MustCompile(`^test_([A-Z]{2}\d{3})_(deny|allow)_`)
-	// forbiddenBuiltin は、判定を外界に依存させる組み込み関数です。
+	// forbiddenBuiltin は、判定を外界に依存させる組み込み関数です。字面で見るので、コメントや文字列の中の同じ並びにも
+	// 当たる（誤検出の側に倒し、受け入れる）。
 	forbiddenBuiltin = regexp.MustCompile(`\bhttp\.send\b|\bnet\.[a-z_]+\b|\bopa\.runtime\b`)
 	reportLine       = regexp.MustCompile(`^(data\.[A-Za-z0-9_.]+): (PASS|FAIL|ERROR)\b`)
+	// parseConfig は、HCL を Conftest のパーサで読む組み込み関数です。HCL の検査の入力は hcl-input の JSON
+	// なので、テストの fixture も含めて使わない（ADR-0501 決定5）。
+	parseConfig = regexp.MustCompile(`\bparse_(config(_file|_bytes)?|combined_config_files)\s*\(`)
 )
 
 // regoSuite は、Rego のソースから静的に読み取ったものです。
@@ -43,6 +48,7 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 	reportPath := fset.String("report", "", "`conftest verify --report notes` の出力のパス")
 	namespaces := fset.String("namespaces", "", "検出が評価する名前空間（, 区切り）。規則を持つ package はこのどれかでなければならない")
 	repoFlag := fset.String("repo", repo, "Rego の置き場所を解くリポジトリの root")
+	allowParseConfig := fset.String("allow-parse-config", "", "parse_config をテスト（_test.rego）で使ってよい Rego の置き場所（, 区切り）。-policy のどれかでなければならない。層の block の構造が hcl2 の形を読む間だけ conftest/hcl/layer に使う（#367 PR-B で外す）")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
@@ -56,6 +62,10 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		s, err := scanRego(filepath.Join(repo, dir), strings.Split(*namespaces, ","))
 		if err != nil {
 			return err
+		}
+		// ID もテストも無い置き場所は、渡し間違いか空の木で、何も検査しないまま数に入る。
+		if len(s.ids) == 0 && len(s.tests) == 0 {
+			suite.findings = append(suite.findings, lintreport.Finding{File: dir, Line: 1, Message: "Rego の置き場所に ID を持つ deny もテストも1件もありません"})
 		}
 		maps.Copy(suite.ids, s.ids)
 		maps.Copy(suite.tests, s.tests)
@@ -72,13 +82,79 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		return xerrors.Wrapf(errNoInput, "%s: テストが1件も走っていません", *reportPath)
 	}
 
-	findings := slices.Concat(suite.findings, checkPairs(suite), checkRan(suite, results))
+	parseFindings, err := checkParseConfig(repo, splitList(*policyDirs), splitList(*allowParseConfig))
+	if err != nil {
+		return err
+	}
+	findings := slices.Concat(suite.findings, parseFindings, checkPairs(suite), checkRan(suite, results))
 	if err := report(out, "rego-tests", findings); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "✅ infra-code-gate rego-tests: deny の ID %d 件のそれぞれに違反と非違反のテストがあり、テスト %d 件が走って通りました\n",
 		len(suite.ids), len(results))
 	return nil
+}
+
+func splitList(s string) []string {
+	if s == "" {
+		return nil
+	}
+
+	return strings.Split(s, ",")
+}
+
+// checkParseConfig は、policyDirs の Rego が parse_config 系の組み込み関数で HCL を読んでいれば違反を返します。
+// 除外は、allowed の置き場所の下のテスト（_test.rego）だけです。allowed が policyDirs のどれでもなければ、その
+// 宣言は何も除外しないので違反です。
+func checkParseConfig(repo string, policyDirs, allowed []string) ([]lintreport.Finding, error) {
+	var findings []lintreport.Finding
+	for _, a := range allowed {
+		if !slices.Contains(policyDirs, a) {
+			findings = append(findings, lintreport.Finding{File: a, Line: 1,
+				Message: fmt.Sprintf("-allow-parse-config の %s が -policy（%s）にありません", a, strings.Join(policyDirs, ", "))})
+		}
+	}
+	for _, dir := range policyDirs {
+		got, err := scanParseConfig(filepath.Join(repo, dir), dir, slices.Contains(allowed, dir))
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, got...)
+	}
+	return findings, nil
+}
+
+// scanParseConfig は、dir（報告では rel と書く）の下の Rego のうち parse_config 系を使うものを返します。exempt なら
+// テスト（_test.rego）を見ません。
+func scanParseConfig(dir, rel string, exempt bool) ([]lintreport.Finding, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s を開く", rel)
+	}
+	defer func() { _ = root.Close() }()
+	var findings []lintreport.Finding
+	err = fs.WalkDir(root.FS(), ".", func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") || exempt && strings.HasSuffix(e.Name(), "_test.rego") {
+			return nil
+		}
+		raw, err := root.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		src := string(raw)
+		if loc := parseConfig.FindStringIndex(src); loc != nil {
+			findings = append(findings, lintreport.Finding{File: path.Join(filepath.ToSlash(rel), p), Line: strings.Count(src[:loc[0]], "\n") + 1,
+				Message: "parse_config で HCL を読んでいます。入力とテストの fixture は hcl-input の JSON にする（ADR-0501 決定5）"})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s の走査", rel)
+	}
+	return findings, nil
 }
 
 func scanRego(dir string, namespaces []string) (*regoSuite, error) {

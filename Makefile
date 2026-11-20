@@ -30,6 +30,7 @@ include .makefiles/markdown/lint.mk
 # リポジトリの衛生
 include .makefiles/hygiene/editorconfig.mk
 include .makefiles/hygiene/typos.mk
+include .makefiles/hygiene/mk-test.mk
 
 # セキュリティ関連
 include .makefiles/security/trivy.mk
@@ -54,6 +55,9 @@ include .makefiles/terraform/layer-test.mk
 include .makefiles/terraform/root.mk
 include .makefiles/terraform/root-test.mk
 include .makefiles/terraform/policy.mk
+include .makefiles/terraform/check-plan.mk
+include .makefiles/terraform/check-plan-test.mk
+include .makefiles/terraform/partitions-drift.mk
 include .makefiles/terraform/operation/local.mk
 include .makefiles/terraform/operation/ci.mk
 # Docker関連

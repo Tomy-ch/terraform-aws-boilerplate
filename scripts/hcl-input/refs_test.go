@@ -122,23 +122,23 @@ func Test_walkExpr(t *testing.T) {
 		}{
 			"属性の後の添字": {
 				src: `aws_s3_bucket.this[module.x.key].id`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"},{"kind":"attr","name":"id"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"attr","name":"id"}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"x"},{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}]}]`,
 			},
 			"2つ目の添字": {
 				src: `aws_s3_bucket.this[module.a.x][module.b.y]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"a"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]},
 					{"root":"module","steps":[{"kind":"attr","name":"b"},{"kind":"attr","name":"y"}],"within":[{"ref":0,"step":2}]}]`,
 			},
 			"属性とリテラルの添字の後の添字": {
 				src: `aws_s3_bucket.this.tags["a"][module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"tags"},{"kind":"index"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"tags"},{"kind":"index","index":{"form":"literal","value":"a"}},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":3}]}]`,
 			},
 			"リテラルの添字の後の添字": {
 				src: `aws_s3_bucket.this[0][module.m.x]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":0}},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":2}]}]`,
 			},
 			"関数の呼び出しの後の添字は参照に付かない": {
@@ -167,22 +167,22 @@ func Test_walkExpr(t *testing.T) {
 			},
 			"添字の中の補間": {
 				src: `aws_s3_bucket.this["${module.m.x}"]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
 			},
 			"補間の中の添字": {
 				src: `"x-${aws_s3_bucket.this[module.m.x]}"`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
 			},
 			"添字の中の for の collection": {
 				src: `aws_s3_bucket.this[[for k in module.m.keys : k][0]]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"keys"}],"within":[{"ref":0,"step":1}]}]`,
 			},
 			"for の collection の中の添字": {
 				src: `[for b in aws_s3_bucket.this[module.m.x] : b.id]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
 					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"x"}],"within":[{"ref":0,"step":1}]}]`,
 			},
 			"テンプレートのリテラルの [ は添字にならない": {
@@ -192,8 +192,8 @@ func Test_walkExpr(t *testing.T) {
 			},
 			"祖先2段の入れ子の添字": {
 				src: `aws_s3_bucket.this[module.m.list[var.i]]`,
-				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"}],"within":[]},
-					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"list"},{"kind":"index"}],"within":[{"ref":0,"step":1}]},
+				want: `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]},
+					{"root":"module","steps":[{"kind":"attr","name":"m"},{"kind":"attr","name":"list"},{"kind":"index","index":{"form":"other"}}],"within":[{"ref":0,"step":1}]},
 					{"root":"var","steps":[{"kind":"attr","name":"i"}],"within":[{"ref":0,"step":1},{"ref":1,"step":2}]}]`,
 			},
 		}
@@ -428,7 +428,11 @@ func Test_stepsOf(t *testing.T) {
 			hcl.TraverseSplat{},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, []step{{Kind: stepAttr, Name: "a"}, {Kind: stepIndex}, {Kind: stepSplat}}, got)
+		assert.Equal(t, []step{
+			{Kind: stepAttr, Name: "a"},
+			{Kind: stepIndex, Index: &indexForm{Form: indexLiteral, Value: json.Number("0")}},
+			{Kind: stepSplat},
+		}, got)
 	})
 
 	t.Run("段が無ければ空の配列", func(t *testing.T) {
@@ -442,6 +446,96 @@ func Test_stepsOf(t *testing.T) {
 		t.Parallel()
 		_, err := stepsOf(hcl.Traversal{hcl.TraverseAttr{Name: "a"}, hcl.TraverseRoot{Name: "b"}})
 		require.ErrorIs(t, err, errUnknownExpression)
+	})
+}
+
+func Test_indexFormOf(t *testing.T) {
+	t.Parallel()
+
+	t.Run("添字の式を形へ写す", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			src  string
+			want *indexForm
+		}{
+			"each.key":                 {src: `each.key`, want: &indexForm{Form: indexEachKey}},
+			"each.value":               {src: `each.value`, want: &indexForm{Form: indexEachValue}},
+			"count.index":              {src: `count.index`, want: &indexForm{Form: indexCountIndex}},
+			"段が続く each.value は other":  {src: `each.value.id`, want: &indexForm{Form: indexOther}},
+			"根だけの each は other":        {src: `each`, want: &indexForm{Form: indexOther}},
+			"each の別の属性は other":        {src: `each.other`, want: &indexForm{Form: indexOther}},
+			"each の添字は other":          {src: `each["key"]`, want: &indexForm{Form: indexOther}},
+			"count の別の属性は other":       {src: `count.other`, want: &indexForm{Form: indexOther}},
+			"添字の段が続く each.key は other": {src: `each.key[0]`, want: &indexForm{Form: indexOther}},
+			"関数の中の each.key は other":   {src: `upper(each.key)`, want: &indexForm{Form: indexOther}},
+			"ほかの参照は other":             {src: `local.k`, want: &indexForm{Form: indexOther}},
+			"補間で包んだ each.key は other":  {src: `"${each.key}"`, want: &indexForm{Form: indexOther}},
+			"数のリテラル":                   {src: `1`, want: &indexForm{Form: indexLiteral, Value: json.Number("1")}},
+			"小数のリテラル":                  {src: `1.5`, want: &indexForm{Form: indexLiteral, Value: json.Number("1.5")}},
+			"補間の無い文字列":                 {src: `"a"`, want: &indexForm{Form: indexLiteral, Value: "a"}},
+			"真偽値は other":               {src: `true`, want: &indexForm{Form: indexOther}},
+			"null は other":             {src: `null`, want: &indexForm{Form: indexOther}},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, indexFormOf(parseExpr(t, tt.src), nil))
+			})
+		}
+	})
+
+	t.Run("添字の参照の段に形が載る", func(t *testing.T) {
+		t.Parallel()
+		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"each_key"}},{"kind":"attr","name":"id"}],"within":[]},
+			{"root":"each","steps":[{"kind":"attr","name":"key"}],"within":[{"ref":0,"step":1}]}]`, refsJSON(t, `aws_s3_bucket.this[each.key].id`))
+		assert.JSONEq(t, `[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":"a"}}],"within":[]}]`,
+			refsJSON(t, `aws_s3_bucket.this["a"]`))
+	})
+
+	t.Run("for の反復変数が each か count を覆うなら other", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, &indexForm{Form: indexOther}, indexFormOf(parseExpr(t, `each.key`), map[string]bool{"each": true}))
+		assert.Equal(t, &indexForm{Form: indexOther}, indexFormOf(parseExpr(t, `count.index`), map[string]bool{"count": true}))
+		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
+			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]}]`,
+			refsJSON(t, `[for each in var.x : aws_s3_bucket.this[each.key]]`))
+		assert.JSONEq(t, `[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]},
+			{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"other"}}],"within":[]}]`,
+			refsJSON(t, `[for count in var.x : aws_s3_bucket.this[count.index]]`))
+	})
+}
+
+func Test_literalForm(t *testing.T) {
+	t.Parallel()
+
+	t.Run("既知の数と文字列だけを literal にする", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			val  cty.Value
+			want *indexForm
+		}{
+			"整数":    {val: cty.NumberIntVal(0), want: &indexForm{Form: indexLiteral, Value: json.Number("0")}},
+			"文字列":   {val: cty.StringVal("0"), want: &indexForm{Form: indexLiteral, Value: "0"}},
+			"空の文字列": {val: cty.StringVal(""), want: &indexForm{Form: indexLiteral, Value: ""}},
+			"null":  {val: cty.NullVal(cty.String), want: &indexForm{Form: indexOther}},
+			"未知の値":  {val: cty.UnknownVal(cty.Number), want: &indexForm{Form: indexOther}},
+			"真偽値":   {val: cty.True, want: &indexForm{Form: indexOther}},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, literalForm(tt.val))
+			})
+		}
+	})
+
+	t.Run("空の文字列と 0 も JSON に value として出る", func(t *testing.T) {
+		t.Parallel()
+		raw, err := json.Marshal([]*indexForm{literalForm(cty.StringVal("")), literalForm(cty.NumberIntVal(0))})
+		require.NoError(t, err)
+		assert.JSONEq(t, `[{"form":"literal","value":""},{"form":"literal","value":0}]`, string(raw))
 	})
 }
 

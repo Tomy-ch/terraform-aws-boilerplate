@@ -1,0 +1,3 @@
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+data "aws_region" "r" {}

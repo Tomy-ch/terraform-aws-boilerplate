@@ -8,6 +8,7 @@
 "channel:deploy-critical" = "SLACK_WEBHOOK_URL_DEPLOY_CRITICAL"
 "channel:deploy-promotion" = "SLACK_WEBHOOK_URL_DEPLOY_PROMOTION"
 "channel:deploy-validation" = "SLACK_WEBHOOK_URL_DEPLOY_VALIDATION"
+"channel:maintenance" = "SLACK_WEBHOOK_URL_MAINTENANCE"
 
 "job:govulncheck.yaml:notify-detection" = "security"
 "job:govulncheck.yaml:notify-failure" = "security"
@@ -21,4 +22,6 @@
 "job:scorecard.yaml:notify-failure" = "security"
 "job:terraform-apply.yaml:notify-failure" = "deploy-critical"
 "job:terraform-apply.yaml:notify-revert" = "deploy-critical"
-"job:terraform-apply.yaml:notify-success" = "deploy-critical"
+"job:terraform-apply.yaml:notify-success-admin-identity" = "deploy-critical"
+"job:terraform-apply.yaml:notify-success-admin-workload" = "deploy-critical"
+"job:partitions-drift-report.yaml:notify-failure" = "maintenance"

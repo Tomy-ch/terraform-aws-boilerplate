@@ -28,6 +28,15 @@ pre-commit:
     editorconfig-check:
       run: make editorconfig-check
 
+    # 何を見るかと、なぜ要るかは scripts/README.md の mk-test-lint 行が持つ。
+    mk-test-lint:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - ".github/mk-test-bypass.toml"
+        - "scripts/mk-test-lint/**"
+      run: make mk-test-lint
+
     # 対象を絞らない。抑止が名指すファイルの改名・削除でも、抑止は対象を失う。
     secret-suppression-lint:
       run: make secret-suppression-lint
@@ -176,24 +185,28 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
+        - "conftest/hcl/layer/decl.json"
         - ".tf-validate-ignore.yaml"
+        - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
+        - "scripts/provider-schema/**"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
-      run: make -k tf-validate tf-test tf-policy
+      run: make -k tf-validate tf-test tf-policy check-plan-expected
     tf-gates-test:
       glob:
         - "Makefile"
         - ".makefiles/**"
+        - "docs/setup/scripts/check-plan.sh"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
-      run: make tf-gates-test
+      run: make -k tf-gates-test check-plan-expected-test
     tf-validate-canary:
       glob:
         - "Makefile"
@@ -210,7 +223,9 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - "conftest/plan/**"
+        - "conftest/hcl/layer/decl.json"
         - "scripts/tf-local/**"
+        - "scripts/provider-schema/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
@@ -224,6 +239,7 @@ pre-commit:
         - "conftest/**"
         - "docs/adr/**"
         - "scripts/infra-code-gate/**"
+        - "scripts/hcl-input/**"
         - "scripts/lib/**"
         - ".github/CODEOWNERS"
         - ".github/settings/branch-protection.json"
@@ -239,6 +255,7 @@ pre-commit:
         - "conftest/hcl/**"
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
+        - "scripts/hcl-input/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
@@ -253,6 +270,8 @@ pre-commit:
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
         - "scripts/hcl-input/**"
+        - "scripts/provider-schema/**"
+        - "**/.terraform.lock.hcl"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
@@ -265,6 +284,7 @@ pre-commit:
         - "conftest/hcl/**"
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
+        - "scripts/hcl-input/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"

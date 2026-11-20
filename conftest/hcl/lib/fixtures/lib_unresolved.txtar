@@ -1,0 +1,37 @@
+-- m/main.tf --
+provider "helm" {
+  kubernetes = var.on ? { exec = { command = "aws" } } : null
+}
+
+provider "kubectl" {
+  kubernetes = { (var.k) = { command = "aws" } }
+}
+
+provider "aws" {
+  region = var.region
+  default_tags {
+    tags = { a = "b" }
+  }
+}
+
+provider "nested" {
+  kubernetes {
+    x = var.c ? 1 : 2
+  }
+}
+
+provider "objval" {
+  kubernetes = { exec = var.c ? { command = "aws" } : null }
+}
+
+provider "callarg" {
+  kubernetes = merge(var.a, var.c ? { exec = {} } : {})
+}
+
+provider "tuplekey" {
+  kubernetes = [{ (var.k) = 1 }]
+}
+
+provider "secondkey" {
+  kubernetes = { a = 1, (var.k) = 2 }
+}

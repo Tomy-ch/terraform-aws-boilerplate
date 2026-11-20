@@ -1,20 +1,33 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// 段の種類。リテラルの添字と式の添字、`[*]` と `.*` は区別しません —— 読み手の規則が見るのは位置だけです。
+// 段の種類。`[*]` と `.*` は区別しません。添字の段は、添字の式の形を Index に持ちます。
 const (
 	stepAttr  = "attr"
 	stepIndex = "index"
 	stepSplat = "splat"
+)
+
+// 添字の式の形。each_key・each_value・count_index は、添字がちょうどその参照（段が続かない）のとき、
+// literal は数か文字列のリテラル（補間の無いテンプレートと、traversal の静的な添字を含む）のときで、
+// ほかはすべて other です。
+const (
+	indexEachKey    = "each_key"
+	indexEachValue  = "each_value"
+	indexCountIndex = "count_index"
+	indexLiteral    = "literal"
+	indexOther      = "other"
 )
 
 // ref は、式の中の1つの参照です。Within は、この参照が添字の中に在るとき、その添字を持つ参照
@@ -27,8 +40,16 @@ type ref struct {
 }
 
 type step struct {
-	Kind string `json:"kind"`
-	Name string `json:"name,omitempty"`
+	Kind  string     `json:"kind"`
+	Name  string     `json:"name,omitempty"`
+	Index *indexForm `json:"index,omitempty"`
+}
+
+// indexForm は、添字の段の式の形です。Value は Form が literal のときだけ持ち、数は json.Number、
+// 文字列は string です。
+type indexForm struct {
+	Form  string `json:"form"`
+	Value any    `json:"value,omitempty"`
 }
 
 type within struct {
@@ -102,7 +123,7 @@ func (w *walker) walk(e hclsyntax.Expression, sc scope) (int, error) {
 		}
 		inner := sc
 		if idx >= 0 {
-			w.refs[idx].Steps = append(w.refs[idx].Steps, step{Kind: stepIndex})
+			w.refs[idx].Steps = append(w.refs[idx].Steps, step{Kind: stepIndex, Index: indexFormOf(e.Key, sc.locals)})
 			inner.within = append(slices.Clone(sc.within), within{Ref: idx, Step: len(w.refs[idx].Steps) - 1})
 		}
 
@@ -194,7 +215,7 @@ func stepsOf(trav hcl.Traversal) ([]step, error) {
 		case hcl.TraverseAttr:
 			steps = append(steps, step{Kind: stepAttr, Name: t.Name})
 		case hcl.TraverseIndex:
-			steps = append(steps, step{Kind: stepIndex})
+			steps = append(steps, step{Kind: stepIndex, Index: literalForm(t.Key)})
 		case hcl.TraverseSplat:
 			steps = append(steps, step{Kind: stepSplat})
 		default:
@@ -203,6 +224,54 @@ func stepsOf(trav hcl.Traversal) ([]step, error) {
 	}
 
 	return steps, nil
+}
+
+// indexFormOf は、添字の式 e の形を返します。locals は for の反復変数の名前で、each か count を覆うなら other です。
+func indexFormOf(e hclsyntax.Expression, locals map[string]bool) *indexForm {
+	switch e := e.(type) {
+	case *hclsyntax.ScopeTraversalExpr:
+		if len(e.Traversal) != 2 || locals[e.Traversal.RootName()] {
+			return &indexForm{Form: indexOther}
+		}
+		attr, ok := e.Traversal[1].(hcl.TraverseAttr)
+		if !ok {
+			return &indexForm{Form: indexOther}
+		}
+		switch [2]string{e.Traversal.RootName(), attr.Name} {
+		case [2]string{"each", "key"}:
+			return &indexForm{Form: indexEachKey}
+		case [2]string{"each", "value"}:
+			return &indexForm{Form: indexEachValue}
+		case [2]string{"count", "index"}:
+			return &indexForm{Form: indexCountIndex}
+		}
+	case *hclsyntax.LiteralValueExpr:
+		return literalForm(e.Val)
+	case *hclsyntax.TemplateExpr:
+		if e.IsStringLiteral() {
+			v, diags := e.Value(nil)
+			if !diags.HasErrors() {
+				return literalForm(v)
+			}
+		}
+	}
+
+	return &indexForm{Form: indexOther}
+}
+
+// literalForm は、既知の数か文字列の v を literal として返します。それ以外の値は other です。
+func literalForm(v cty.Value) *indexForm {
+	if v.IsNull() || !v.IsKnown() {
+		return &indexForm{Form: indexOther}
+	}
+	switch v.Type() {
+	case cty.String:
+		return &indexForm{Form: indexLiteral, Value: v.AsString()}
+	case cty.Number:
+		return &indexForm{Form: indexLiteral, Value: json.Number(v.AsBigFloat().Text('f', -1))}
+	}
+
+	return &indexForm{Form: indexOther}
 }
 
 // checkRefs は、got（自前の歩きが参照とした traversal の範囲）が、hclsyntax.Variables(e) の traversal の

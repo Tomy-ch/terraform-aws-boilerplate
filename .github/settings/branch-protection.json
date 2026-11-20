@@ -103,6 +103,10 @@
             "integration_id": 15368
           },
           {
+            "context": "mk-test-lint",
+            "integration_id": 15368
+          },
+          {
             "context": "mod-tidy-check",
             "integration_id": 15368
           },
@@ -120,6 +124,10 @@
           },
           {
             "context": "plan-admin-identity",
+            "integration_id": 15368
+          },
+          {
+            "context": "plan-admin-workload",
             "integration_id": 15368
           },
           {

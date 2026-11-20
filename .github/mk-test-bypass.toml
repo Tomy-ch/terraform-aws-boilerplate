@@ -1,0 +1,31 @@
+# `.mk` のテストのターゲットを、Go へ移すまでの間だけ mk-test-lint から外す宣言（SSOT）。
+# make mk-test-lint と .github/workflows/makefiles.yaml が読む。規則は ADR-0702 決定25。
+#
+# 1 行 1 エントリ。形式は以下で、3 つのキーは順序も含めてすべて必須。
+#
+#   "<ターゲット>" = { expires = YYYY-MM-DD, issue = <N>, reason = "..." }
+#
+# 期限切れ・上限（今日から 3 ヶ月）超過・定義されていないターゲット・テストの名前に当たらない
+# ターゲットのエントリは、検査を落とす（ADR-0702 決定18）。移したらエントリを消す。
+"check-plan-expected-test" = { expires = 2027-01-31, issue = 432, reason = "#432 PR-A が check-plan-test.mk を消し、Go のテストへ移す" }
+"secret-gates-test" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
+"gitleaks-canary" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
+"trufflehog-canary" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
+"trivy-secret-canary" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
+"checkov-canary" = { expires = 2027-01-31, issue = 439, reason = "M2: 走査器の件数の突き合わせと canary を Go へ移す" }
+"kics-canary" = { expires = 2027-01-31, issue = 439, reason = "M2: 走査器の件数の突き合わせと canary を Go へ移す" }
+"kics-canary-threshold" = { expires = 2027-01-31, issue = 439, reason = "M2: 走査器の件数の突き合わせと canary を Go へ移す" }
+"semgrep-canary" = { expires = 2027-01-31, issue = 439, reason = "M2: 走査器の件数の突き合わせと canary を Go へ移す" }
+"trivy-config-canary" = { expires = 2027-01-31, issue = 439, reason = "M2: 走査器の件数の突き合わせと canary を Go へ移す" }
+"typos-canary" = { expires = 2027-01-31, issue = 439, reason = "M3: 衛生の canary を Go へ移す" }
+"editorconfig-check-canary" = { expires = 2027-01-31, issue = 439, reason = "M3: 衛生の canary を Go へ移す" }
+"editorconfig-directive-canary" = { expires = 2027-01-31, issue = 439, reason = "M3: 衛生の canary を Go へ移す" }
+"node-tools-host-canary" = { expires = 2027-01-31, issue = 439, reason = "M4: node-tools の canary を Go へ移す" }
+"infra-code-gate-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
+"resource-order-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
+"root-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
+"layer-check-test" = { expires = 2027-02-20, issue = 439, reason = "M6: #433 と #367 PR-B の merge の後に、判定ごと Go へ移す" }
+"tf-gates-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }
+"tf-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: レシピが対象のディレクトリを選ぶ判定を持つ。gates.mk の判定ごと Go へ移し、道具を起動するだけの runner にする" }
+"tf-validate-canary" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }
+"tf-policy-canary" = { expires = 2027-02-20, issue = 439, reason = "M7b: #433 と #429 の merge の後に、policy.mk の判定ごと Go へ移す" }

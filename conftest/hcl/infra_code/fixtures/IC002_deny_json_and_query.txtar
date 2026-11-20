@@ -1,0 +1,8 @@
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+-- m/x.tf.json --
+{}
+-- m/x.tftest.json --
+{}
+-- m/x.tfquery.hcl --
+list "aws_instance" "x" {}

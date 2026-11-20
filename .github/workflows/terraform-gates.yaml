@@ -57,7 +57,8 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 層の検査が hcl-input を、tf-validate が tf-validate-result を走らせ、どれもこのソースからビルドする。
+          # 順序の検査と層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を、tf-validate が tf-validate-result を走らせ、
+          # どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -75,12 +76,14 @@ jobs:
               - 'scripts/infra-code-gate/**'
               - 'scripts/tf-local/**'
               - 'scripts/hcl-input/**'
+              - 'scripts/provider-schema/**'
               - 'scripts/tf-validate-result/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
               - 'conftest/plan/**'
               - 'conftest/hcl/**'
+              - 'docs/setup/scripts/check-plan.*'
 
   tf-fmt-check:
     needs: changes
@@ -192,18 +195,22 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、層の検査が
-      # hcl-input を走らせ、4つとも scripts/ からビルドする。conftest: 順序の検査と層の検査が使う。
+      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
+      # 層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を走らせ、5つとも scripts/ からビルドする。conftest: 順序の検査と
+      # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:terraform-linters/tflint aqua:open-policy-agent/conftest go
+          tools: aqua:terraform-linters/tflint aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # GITHUB_TOKEN: `tflint --init` は ruleset を GitHub Releases API から取り、API は認証の無い呼び出しを
@@ -296,8 +303,8 @@ jobs:
 
       # -k: validate が落ちても test の結果を出す。どれが落ちても step は落ちる。
       # この step に secret を渡さない: init は PR の構成が解決した provider をそのまま走らせる。
-      - name: Run terraform validate and terraform test
-        run: make -k tf-validate-canary tf-validate tf-test RUNNER_MODE=host
+      - name: Run terraform validate, terraform test and the bootstrap plan expectation check
+        run: make -k tf-validate-canary tf-validate tf-test check-plan-expected RUNNER_MODE=host
 
   tf-policy:
     needs: changes
@@ -428,7 +435,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the Terraform gates' own tests
-        run: make tf-gates-test RUNNER_MODE=host
+        run: make -k tf-gates-test check-plan-expected-test RUNNER_MODE=host
 
   # path で絞らない: README.md の「インフラ内コードの検出への依存」.
   infra-code-gate:
@@ -480,7 +487,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate は scripts/ からビルドする。
+      # go: infra-code-gate と hcl-input は scripts/ からビルドする。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -592,3 +599,106 @@ jobs:
           CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           CI_PR: ${{ github.event.pull_request.number }}
         run: make ci-plan-admin-identity RUNNER_MODE=host
+
+  # 規則は README.md の「plan の job」.
+  plan-admin-workload:
+    needs: infra-code-gate
+    if: ${{ needs.infra-code-gate.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: admin-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
+            sts.ap-northeast-1.amazonaws.com
+            s3.ap-northeast-1.amazonaws.com
+            *.s3.ap-northeast-1.amazonaws.com
+            iam.amazonaws.com
+            kms.ap-northeast-1.amazonaws.com
+            organizations.us-east-1.amazonaws.com
+            *.s3-control.ap-northeast-1.amazonaws.com
+            sns.ap-northeast-1.amazonaws.com
+            scheduler.ap-northeast-1.amazonaws.com
+            chatbot.us-west-2.amazonaws.com
+
+      # 失敗にする理由は plan-admin-identity の Refuse untrusted Pull Requests と同じ。
+      - name: Refuse untrusted Pull Requests
+        id: refuse-untrusted
+        env:
+          HEAD_REPO_ID: ${{ github.event.pull_request.head.repo.id }}
+          REPO_ID: ${{ github.repository_id }}
+          ACTOR: ${{ github.actor }}
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: |
+          test "$HEAD_REPO_ID" = "$REPO_ID" || { echo "❌ fork からの Pull Request では plan の role を assume しません"; exit 1; }
+          test "$ACTOR" != "dependabot[bot]" || { echo "❌ Dependabot の Pull Request では plan の role を assume しません"; exit 1; }
+          test -n "$ACCOUNT_ID" || { echo "❌ environment admin-plan の secret AWS_ACCOUNT_ID がありません"; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go: tf-local は scripts/ からビルドする。
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest aqua:aws/aws-cli go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assume the plan role
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan RUNNER_MODE=host
+
+      - name: Confirm the apply-family roles refuse this job
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: make ci-assume-denied CI_ENV=admin RUNNER_MODE=host
+
+      - name: Plan the workload root
+        env:
+          CI_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          CI_PR: ${{ github.event.pull_request.number }}
+        run: make ci-plan-admin-workload RUNNER_MODE=host
