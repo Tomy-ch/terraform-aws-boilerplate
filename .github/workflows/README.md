@@ -33,8 +33,9 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | `lines` | 各線（`<接頭辞>**`） | `branches:`、`(startsWith(<ref>, '<接頭辞>') \|\| ...)` を持つ `if:` |
 
 印の無い `branches:` / `branches-ignore:` の一覧（apply の workflow のものを除く）と、ブランチの名前か ref を値に持つ
-context（`github.ref` など）を文字列と比べる式（印の行で生成した項を除く）は、`repo-settings-check` が落とす。
-`env:` へ移した値の比較と、シェルの中の比較は見ない。
+値（`github` と `inputs` の下の値と、それを関数や演算で加工した値）を式の中で作った文字列と比べる式（印の行で生成した
+項を除く）と、式として読めない式は、`repo-settings-check` が落とす。見分ける規則は検査が持つ（[`scripts/README.md`](../../scripts/README.md)
+の `repo-settings/` の行）。`env:` や step・job の出力へ移した値の比較と、シェルの中の比較は見ない。
 
 ## 必須検査はすべての Pull Request で報告される
 
