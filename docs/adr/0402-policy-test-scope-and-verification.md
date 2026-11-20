@@ -67,7 +67,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 ### Policy が読まない経路で設定を書く引数
 
-17. Policy は、設定を、それを書く resource の宣言した型と属性から読む。親の resource の引数が別の resource と同じ設定を書く場合、その引数は、Policy が読まない経路で同じ設定を書き換える。そのような引数を持つ型を、Policy Test が持つ宣言に載せる。載せる型は、Policy Test が stateful な resource の保護の対象として宣言した型（ADR-0604 決定11）に限る。載せた型については、別の resource と同じ設定を書くかを問わず、Provider の schema が非推奨とする書ける引数（属性と block）をすべて載せる。網羅を機械で確かめるためである。resource の NOTE が別の resource との併用で互いに上書きすると告げる引数も載せる。各引数には、書かないときの値（属性は `null`、block は空の list）を添える。
+17. Policy は、設定を、それを書く resource の宣言した型と属性から読む。親の resource の引数が別の resource と同じ設定を書く場合、その引数は、Policy が読まない経路で同じ設定を書き換える。そのような引数を持つ型を、Policy Test が読む宣言に載せる。載せる型は、Policy Test が stateful な resource の保護の対象として宣言した型（ADR-0604 決定11）に限る。attachment 型と同じ設定を書く引数と、attachment 型の親として宣言した型の非推奨の引数は、ADR-0102 決定18 の宣言が持ち、Policy Test はそこから導く。Policy Test が持つ宣言には、それ以外の引数だけを置く。載せた型については、別の resource と同じ設定を書くかを問わず、Provider の schema が非推奨とする書ける引数（属性と block）をすべて載せる。網羅を機械で確かめるためである。resource の NOTE が別の resource との併用で互いに上書きすると告げる引数も載せる。各引数には、書かないときの値（属性は `null`、block は空の list）を添える。
 18. reference の plan を入力とする Policy Test は、決定17 で宣言した引数が書かないときの値でない変更と、その値が plan で決まらない変更を失敗させる。宣言した型と引数が入力のどこにも現れない場合と、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に無い場合も失敗させる。後者の schema は、mock provider の下の `test_plan` の `provider_schemas` から型ごとの非推奨の引数の一覧として取り出し、宣言と同じく data として Policy に渡す。取り出しは `provider_format_version` を検査し、期待する版でなければ失敗する。
 19. 決定17・18 の検査は、Policy が設定をどの resource から読むかという本リポジトリの入力の設計に依る。外部のルールセットはこの設計を知り得ないので、決定2 により Policy に置く。
 
@@ -108,7 +108,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 ## 保証範囲
 
 - 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと。reference の plan で、宣言した引数が書かないときの値であり、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に在ること（決定17・18）。値を固定と読む判定が、wildcard と policy 変数を含む値を固定と読まないこと（決定20）
-- 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足。resource の NOTE だけが告げる引数を宣言に載せたこと。保護の対象でない型の、別の resource と同じ設定を書く引数。保護の対象に足した型を宣言に載せたこと
+- 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足。resource の NOTE だけが告げる引数を宣言に載せたこと。保護の対象でない型の、別の resource と同じ設定を書く引数（attachment 型と同じ設定を書く引数は、ADR-0102 決定18 が書くことを禁じ、層の検査が HCL のソースで落とす）。保護の対象に足した型を宣言に載せたこと
 
 ## 検証方法
 

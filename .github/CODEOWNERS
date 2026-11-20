@@ -61,6 +61,7 @@ usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
 conftest/hcl/                              @Tomy-ch
 scripts/infra-code-gate/                   @Tomy-ch
 scripts/hcl-input/                         @Tomy-ch
+scripts/provider-schema/                   @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
 scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/infra-code.mk         @Tomy-ch

@@ -21,12 +21,20 @@ LY_REGO = conftest/hcl/layer/layer.rego
 LY_NS ?= layer
 LY_POLICY_LIST = $(subst $(space),$(comma),$(strip $(LY_POLICY)))
 LY_OUT = tmp/layer-check
+# LY306 が読む schema は layer-schema が作る（conftest/hcl/layer/README.md の Provider の schema）。
+# fixture は LY_SCHEMA_STUB に固定の JSON を渡す。
+LY_SCHEMA_STUB =
+LY_SCHEMA_DIR = $(LY_OUT)/schema
+LY_AWS_PROVIDER = registry.terraform.io/hashicorp/aws
+# lock の版の抽出と検証、取り直しの判定、抽出と和は scripts/provider-schema が持つ。ここは init と schema の取得の順序だけを持つ。
+# lock は git が追跡する一覧を位置引数で、find の独立の走査を -listed で渡す（ADR-0702 決定15。LY_HCL_INPUT_CMD と同じ理由）。
+LY_SCHEMA_PREPARE_CMD = $(call RUN_SCRIPT,provider-schema,prepare -provider $(LY_AWS_PROVIDER) -out "$(LY_SCHEMA_DIR)" -listed "$(LY_OUT)/locks.found" "$$@") provider-schema $$locks
 # 層の block の構造が hcl2 の形を読む間だけ、層の木のテストに parse_config を許す。#367 PR-B で外す。
 LY_ALLOW_PARSE_CONFIG = conftest/hcl/layer
 # root は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、レシピのシェル変数が展開されない。
 LY_HCL_INPUT_CMD = $(call RUN_SCRIPT,hcl-input,-base "$(LY_BASE)" -listed "$(LY_OUT)/found.txt" -out "$(LY_OUT)/hcl-input.json" "$$@") hcl-input $$roots
 
-.PHONY: layer-check ## 層の規則（usecase 直下の block、module の source の向き、attachment 型の親の同居）を HCL のソースで検査する
+.PHONY: layer-check ## 層の規則（usecase 直下の block、module の source の向き、attachment 型の親の同居と共存）を HCL のソースで検査する
 layer-check:
 	@set -u; failed=""; \
 	for t in layer-verify layer-detect; do \
@@ -43,6 +51,26 @@ layer-verify:
 	$(call RUN_SCRIPT,infra-code-gate,rego-tests -policy $(LY_POLICY_LIST) -report $(LY_OUT)/verify.txt -namespaces $(LY_NS) -allow-parse-config $(LY_ALLOW_PARSE_CONFIG)) || rc=1; \
 	exit $$rc
 
+.PHONY: layer-schema ## 層の検査に渡す AWS Provider の schema の一覧（lock した版ごとの和）を作る
+layer-schema:
+	@set -eu; mkdir -p $(LY_OUT); : > $(LY_OUT)/schema.json; \
+	if [ -n "$(LY_SCHEMA_STUB)" ]; then cp "$(LY_SCHEMA_STUB)" $(LY_OUT)/schema.json; exit 0; fi; \
+	roots=""; for d in $(LY_ROOTS); do if [ -d "$(LY_BASE)/$$d" ]; then roots="$$roots $$d"; fi; done; \
+	[ -n "$$roots" ] || { echo "❌ 走査の root が1つもありません（$(LY_ROOTS)）" >&2; exit 2; }; \
+	git -C "$(LY_BASE)" ls-files -- $(foreach r,$(LY_ROOTS),'$(r)/*.terraform.lock.hcl') > $(LY_OUT)/locks.git; \
+	(cd "$(LY_BASE)" && find $$roots -name .terraform.lock.hcl -not -path '*/.terraform/*') > $(LY_OUT)/locks.raw; \
+	sed 's|^|$(LY_BASE)/|' $(LY_OUT)/locks.raw > $(LY_OUT)/locks.found; \
+	locks=$$(sed 's|^|$(LY_BASE)/|' $(LY_OUT)/locks.git); \
+	mkdir -p "$$TF_PLUGIN_CACHE_DIR"; \
+	dirs=$$($(LY_SCHEMA_PREPARE_CMD)); \
+	for d in $$dirs; do \
+		$(TF) -chdir="$$d" init -backend=false -lockfile=readonly -input=false -no-color > "$$d/init.log" 2>&1 \
+			|| { cat "$$d/init.log" >&2; echo "❌ $$d の init が失敗しました" >&2; exit 1; }; \
+		$(TF) -chdir="$$d" providers schema -json > "$$d/raw.tmp" || { echo "❌ $$d の schema を取れませんでした" >&2; exit 1; }; \
+		mv "$$d/raw.tmp" "$$d/raw.json"; \
+	done; \
+	$(call RUN_SCRIPT,provider-schema,merge -provider $(LY_AWS_PROVIDER) -dir "$(LY_SCHEMA_DIR)" -out $(LY_OUT)/schema.json)
+
 .PHONY: layer-detect ## Terraform の構成を層の規則で検査し、読んだファイルを独立の走査と突き合わせる
 layer-detect:
 	@set -u; mkdir -p $(LY_OUT); rm -f $(LY_OUT)/found.txt $(LY_OUT)/files.json $(LY_OUT)/hcl-input.json $(LY_OUT)/hcl-input.json.atomicwrite.tmp $(LY_OUT)/result.json; \
@@ -54,8 +82,10 @@ layer-detect:
 	printf '{"layer_files": [%s]}\n' "$$files" > $(LY_OUT)/files.json; \
 	$(LY_HCL_INPUT_CMD) || { echo "❌ hcl-input が失敗したので、Conftest を起動しません" >&2; exit 1; }; \
 	[ -f $(LY_OUT)/hcl-input.json ] || { echo "❌ hcl-input が成功を返しましたが、$(LY_OUT)/hcl-input.json を書いていません" >&2; exit 1; }; \
+	$(MAKE) -s --no-print-directory layer-schema || { echo "❌ layer-schema が失敗したので、Conftest を起動しません" >&2; exit 1; }; \
+	[ -s $(LY_OUT)/schema.json ] || { echo "❌ layer-schema が成功を返しましたが、$(LY_OUT)/schema.json を書いていません" >&2; exit 1; }; \
 	$(GO_TOOL) sh -c 'set -u; root=$$PWD; cd "$(LY_BASE)"; \
 		exec $(CONFTEST_BIN) test --combine $(foreach p,$(LY_POLICY),-p "$$root/$(p)") --data "$$root/$(LY_DECL)" --data "$$root/$(LY_OUT)/files.json" \
-		--data "$$root/$(LY_OUT)/hcl-input.json" \
+		--data "$$root/$(LY_OUT)/hcl-input.json" --data "$$root/$(LY_OUT)/schema.json" \
 		--namespace $(LY_NS) --ignore "$(IC_IGNORE)" --no-color -o json "$$@"' sh $$roots > $(LY_OUT)/result.json || :; \
 	$(call RUN_SCRIPT,tf-local,policy-result -namespace $(LY_NS) -rego $(LY_REGO) $(LY_OUT)/result.json)
