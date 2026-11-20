@@ -114,6 +114,7 @@ func TestKinds(t *testing.T) {
 				assert.Equal(t, k.Lock == LockSkip, strings.Contains(out, " plan -lock=false"), e.Target)
 				switch k.Lock {
 				case LockSkip:
+					assert.Contains(t, out, " plan -lock=false -input=false", e.Target)
 					assert.NotContains(t, out, " apply ", e.Target)
 				case LockRelease:
 					assert.NotContains(t, out, "-lock=false", e.Target)
