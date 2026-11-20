@@ -44,7 +44,8 @@ Log Group に resource policy が無いと、配送を作る主体が権限を�
 | 持たないもの | 行き先 |
 | --- | --- |
 | delivery source と delivery | 送り側の resource（Bucket など）を持つ module に置く。delivery source は送り側の resource を親に取る（ADR-0102 決定18） |
-| V1 permissions の配送（AWS WAF）と、Route 53 の公開 DNS のクエリログ | delivery destination を使わず、resource policy の形も違う（WAF はアカウント単位、Route 53 は `route53.amazonaws.com`）。要る usecase の着手時に見直す |
+| V1 permissions の配送（AWS WAF） | delivery destination を使わず、resource policy の形も違う（アカウント単位）。要る usecase の着手時に見直す |
+| Route 53 の公開 DNS のクエリログ | delivery destination を使わず、us-east-1 のアカウント単位の resource policy（`route53.amazonaws.com`）を使う。`dns-zone` の `internal/query-log` が持つ |
 | S3 や Firehose など CloudWatch Logs 以外の宛先 | 宛先の種類が違う。要る usecase の着手時に見直す |
 | 別のアカウントからの配送（`PutDeliveryDestinationPolicy`） | 責務外（ADR-0301 決定18） |
 | delivery destination の `output_format` | 置かない。受けられる形式は送り側の log type で決まり、AWS の S3 の例も省いている。一般 module は送り側の log type を知らない |

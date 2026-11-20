@@ -269,7 +269,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Network | `private-aws-access` | VPC Endpoint等によるAWSサービスへの私設到達 |
 | Network | `controlled-external-egress` | private subnetから明示した外部HTTPS宛先へ到達（第9.2節）。既定は無効で、有効にした環境だけがNATを持つ。制御手段の既定はNetwork Firewall。送信元IPの固定としてNAT GatewayのEIPを出力する |
 | Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。サブネット・ルートテーブル・経路・Internet Gatewayの持ち主で、NAT Gateway・EIP・Network Firewallは`controlled-external-egress`が持つ。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
-| Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。常駐層（#94） |
+| Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。公開DNSのクエリログとDNSSECの署名を持ち、Log Group・鍵・alarmはus-east-1に置く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
 | Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
 | Security | `audit-evidence` | 監査証跡（CloudTrail等）の改ざん防止保管。S3 Object Lock、長期保持、アクセス記録 |
@@ -553,7 +553,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 
 | 区分 | usecase | 条件2・3 の置き換え |
 |---|---|---|
-| 複製を作れる | `state-backend`、`image-registry` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する。`image-registry`のregistryのスキャンの設定はアカウントに1つで、複製は常駐の設定を上書きするので作らない（検出できない故障モードとしてREADMEに置く） |
+| 複製を作れる | `state-backend`、`image-registry`、`dns-zone` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する。`dns-zone`の複製は委任しないドメインで作り、公開のDNSからの到達ではなくAPIの状態で検証する。期待残存はus-east-1の削除待ちの鍵2本である。`image-registry`のregistryのスキャンの設定はアカウントに1つで、複製は常駐の設定を上書きするので作らない（検出できない故障モードとしてREADMEに置く） |
 | 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認（`deployment-identity` は `make ci-assume-denied`）、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
 | 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification`、`network-foundation` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
 | 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks`、`network-foundation`（GuardDutyのRuntime MonitoringのVPC Endpoint、消費者のENI） | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |

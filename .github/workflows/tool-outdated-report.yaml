@@ -107,66 +107,40 @@ jobs:
           fi
           exit "${rc}"
 
-      # The issue is the notification, so it is created only while something is actionable and is
-      # closed again once nothing is. Reusing one title as the identity key keeps a weekly schedule
-      # from filing a new issue every Monday. It also runs after a survey that failed on some tools,
-      # so one unconfirmable tool does not stop the notice for the others.
-      - name: Create or update the report issue
+      # This also runs after a survey that failed on some tools, so one unconfirmable tool does not
+      # stop the notice for the others.
+      - name: Decide the report state
+        id: decide
         if: ${{ !cancelled() && steps.survey.outputs.actionable != '' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        shell: bash
         env:
           ACTIONABLE: ${{ steps.survey.outputs.actionable }}
           FAILED: ${{ steps.survey.outputs.failed }}
+        run: |
+          set -euo pipefail
+          # An empty count means the survey never wrote its output; closing the issue on it would
+          # report "nothing to update" without having looked.
+          if ! [[ "${ACTIONABLE}" =~ ^[0-9]+$ && "${FAILED}" =~ ^[0-9]+$ ]]; then
+            echo "::error::survey did not report its counts (actionable=${ACTIONABLE}, failed=${FAILED})"
+            exit 1
+          fi
+          # Nothing actionable is only "nothing to update" when every tool was confirmed.
+          if [ "${ACTIONABLE}" -gt 0 ]; then
+            state=open
+          elif [ "${FAILED}" -gt 0 ]; then
+            state=keep
+          else
+            state=close
+          fi
+          echo "state=${state}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update the report issue
+        if: ${{ !cancelled() && steps.decide.outputs.state != '' }}
+        uses: ./.github/actions/upsert-report-issue
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const title = 'Tool Version Report: 窓を満たす更新があります';
-            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
-              owner, repo, state: 'open', per_page: 100,
-            });
-            const existing = issues.find(issue => issue.title === title);
-
-            // An empty count means the survey never wrote its output; closing the issue on it would
-            // report "nothing to update" without having looked.
-            const actionable = process.env.ACTIONABLE ?? '';
-            const failed = process.env.FAILED ?? '';
-            if (!/^[0-9]+$/.test(actionable) || !/^[0-9]+$/.test(failed)) {
-              core.setFailed(`survey did not report its counts (actionable=${JSON.stringify(actionable)}, failed=${JSON.stringify(failed)})`);
-              return;
-            }
-
-            // Nothing actionable is only "nothing to update" when every tool was confirmed.
-            if (Number(actionable) === 0 && Number(failed) > 0) {
-              return;
-            }
-
-            if (Number(actionable) === 0) {
-              if (existing) {
-                await github.rest.issues.createComment({
-                  owner, repo, issue_number: existing.number,
-                  body: `窓を満たす更新が無くなったので閉じます。[実行](${runUrl})`,
-                });
-                await github.rest.issues.update({
-                  owner, repo, issue_number: existing.number, state: 'closed',
-                });
-              }
-              return;
-            }
-
-            const body = [
-              '<!-- tool-outdated-report -->',
-              fs.readFileSync('tool-outdated.md', 'utf8'),
-              `実行: [${context.workflow}](${runUrl})`,
-            ].join('\n');
-
-            if (existing) {
-              await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
-            } else {
-              await github.rest.issues.create({ owner, repo, title, body });
-            }
+          title: 'Tool Version Report: 窓を満たす更新があります'
+          marker: '<!-- tool-outdated-report -->'
+          state: ${{ steps.decide.outputs.state }}
+          body-file: tool-outdated.md
+          close-comment: 窓を満たす更新が無くなったので閉じます。

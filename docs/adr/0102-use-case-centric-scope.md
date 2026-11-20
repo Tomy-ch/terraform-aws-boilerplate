@@ -77,7 +77,7 @@
 16. ユースケースの間で共有するのは、module のコードと resource の実体の2つであり、扱いを分ける。
 
     - module のコード: 一般 module として `modules/` に置き、各ユースケースが呼ぶ。共有のための別の置き場を設けない
-    - resource の実体: 持ち主のユースケースが1つだけ作り、他のユースケースへは ARN、ID、Endpoint、DNS 名などの識別子で渡す。受け側のユースケースは識別子を `variable` で受け、自分が呼ぶ module へ渡す。env が送り側の output をそこへ渡す。root をまたぐ受け渡しは remote state または SSM Parameter で行う。remote state は送り側の state 全体の読み取りを要するので、どちらを使うかと、受け側に許す権限は ADR-0301 に従う
+    - resource の実体: 持ち主のユースケースが1つだけ作り、他のユースケースへは ARN、ID、Endpoint、DNS 名などの識別子で渡す。受け側のユースケースは識別子を `variable` で受け、自分が呼ぶ module へ渡す。env が送り側の output をそこへ渡す。root をまたぐ受け渡しは remote state または SSM Parameter で行う。remote state は送り側の state 全体の読み取りを要するので、どちらを使うかと、受け側に許す権限は ADR-0301 に従う。ただし、送り側の公開契約が名前の規則を固定し、受け側がその識別子で得る権限が IAM の条件で同じ値に限られている識別子は、env が名前の規則とアカウント・partition から組んで渡してよい。受け渡しの経路を持たない代わりに、env の Unit Test が送り側の module を同じテストで走らせ、組んだ値と送り側の output が一致することを確かめる。一致しなければ、IAM の条件が受け側の apply を拒む
     - 他のユースケースの内部 resource の address へ依存しない
 
 17. module block の `source` が指してよい先を、層ごとに次へ限る。
@@ -164,6 +164,8 @@
   - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block と、決定14 の root module にしか置けない block が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
   - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。どの参照を辿り、何を違反とするかは `conftest/hcl/layer/` が持つ
+
+- 名前の規則から組む識別子（決定16 のただし書き）: env の Unit Test が送り側の module を同じテストで走らせ、組んだ値と output の一致を確かめる。ただし、送り側に渡す入力（project と env）はテストが写して持つので、その写しと本物の入力のズレは、このテストには映らない
 
 決定15（一般 module がユースケースごとの差異を抱えないこと）は機械判定できない。一般 module の入力に用途の種別や `enable_*` が現れる、特定のユースケースだけが使う引数が増える、は崩れ始めた徴候であり、レビューで見る。徴候が出た機構は `internal/` へ移す。
 

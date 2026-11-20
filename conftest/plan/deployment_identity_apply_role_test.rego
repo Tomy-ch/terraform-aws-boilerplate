@@ -658,6 +658,27 @@ test_violation_exclusive_contents if {
 	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), msgs)
 }
 
+workload_policy_address := sprintf("%saws_iam_policy.workload", [g])
+
+workload_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload", [account])
+
+with_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address}}])
+
+workload_world(arns) := array.concat(
+	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
+	[res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})})],
+)
+
+test_pass_declared_workload_policy_attached if {
+	count(messages_for(workload_world([workload_policy_arn]), with_workload_decl)) == 0
+}
+
+test_violation_workload_policy_not_attached if {
+	every arns in [[], [workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"], ["arn:aws:iam::aws:policy/ReadOnlyAccess"]] {
+		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(workload_world(arns), with_workload_decl))
+	}
+}
+
 # --- 2本目の鍵 ---
 
 second_key := sprintf("arn:aws:kms:ap-northeast-1:%s:key/22222222-12ab-34cd-56ef-1234567890ab", [account])
@@ -1020,4 +1041,22 @@ test_violation_governance_declaration_actions_not_array if {
 		some m in messages_for(world(valid_statements), with_governance(g))
 		startswith(m, malformed_governance)
 	}
+}
+
+# 合成の宣言は2つの Action しか持たない。実際の宣言の Action（CloudFormation を含む）でも、Deny の過不足を見分けることを固定する。
+declared_governance_actions := data.policy_plan.deployment_identity.apply_role.governance.actions
+
+declared_decl := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance/actions", "value": declared_governance_actions}])
+
+declared_messages(actions) := messages_for(world(replace(valid_statements, governance_index, {"Effect": "Deny", "Action": actions, "Resource": "*"})), declared_decl)
+
+test_pass_declared_governance_actions if {
+	count([a | some a in declared_governance_actions; startswith(a, "cloudformation:")]) > 0
+	count(declared_messages(declared_governance_actions)) == 0
+}
+
+test_violation_declared_cloudformation_action_missing if {
+	msgs := declared_messages([a | some a in declared_governance_actions; a != "cloudformation:UpdateStackInstances"])
+	some m in msgs
+	startswith(m, denied_06("cloudformation:UpdateStackInstances"))
 }

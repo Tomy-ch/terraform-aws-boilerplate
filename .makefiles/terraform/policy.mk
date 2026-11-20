@@ -88,6 +88,7 @@ mkdir -p "$$1/usecases/x/reference/tests"; printf '%s\n' "$$2" > "$$1/usecases/x
 printf 'run "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"
 endef
 
+# canary の宣言は usecase ごとの宣言を持たないので、それを読む package を外す（宣言が無ければ各 package の 00 で落ちる）。
 .PHONY: tf-policy-canary ## tf-policy が0件・テストの欠落・件数のずれ・評価されない規則・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ち、違反の無い入力で通ることを検査
 tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
@@ -100,7 +101,7 @@ tf-policy-canary:
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
 	}; \
-	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego "$$root/rego"/audit_evidence*.rego "$$root/rego"/finops*.rego "$$root/rego"/network_foundation*.rego "$$root/rego"/ops_notification*.rego "$$root/rego"/image_registry*.rego "$$root/rego"/publisher_trust*.rego "$$root/rego"/organization_baseline_*.rego; \
+	mkdir -p "$$root/rego"; cp -R $(POLICY_PLAN_DIR)/. "$$root/rego/"; rm "$$root/rego"/deployment_identity_*.rego "$$root/rego"/state_backend_*.rego "$$root/rego"/kms_key_policy*.rego "$$root/rego"/resource_policy_exclusive*.rego "$$root/rego"/audit_evidence*.rego "$$root/rego"/finops*.rego "$$root/rego"/network_foundation*.rego "$$root/rego"/dns_zone*.rego "$$root/rego"/ops_notification*.rego "$$root/rego"/image_registry*.rego "$$root/rego"/publisher_trust*.rego "$$root/rego"/organization_baseline_*.rego "$$root/rego"/workload_role_boundary*.rego; \
 	fixture "$$root/ok" 'resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }'; \
 	expect pass ok "$$root/ok" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego"; \
 	mkdir -p "$$root/empty/modules/a"; printf 'variable "x" {\n  type = string\n}\n' > "$$root/empty/modules/a/main.tf"; \

@@ -1,0 +1,119 @@
+name: Partitions Drift Report
+
+# policy_length の境界の候補（aws_partitions）は provider の endpoints の一覧の手写しで、上流が partition か
+# region を足しても誰も気づかない。比べる相手は変更そのものではなく上流なので、Pull Request を止めず、
+# 週次で issue へ報告する。
+
+on:
+  schedule:
+    - cron: '45 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+            registry.terraform.io
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      - name: Compare with upstream
+        id: compare
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          make partitions-drift RUNNER_MODE=host OUT=partitions-drift.md STATE=partitions-drift.state || rc=$?
+          # 判定は要約を書けた後にだけ書かれる。make は非0を区別しないので、終了コードではなく判定で分ける。
+          if [ ! -f partitions-drift.state ]; then
+            echo "::error::partitions-drift が判定を書かずに終わりました（make の終了コード ${rc}）"
+            exit 1
+          fi
+          cat partitions-drift.md >> "${GITHUB_STEP_SUMMARY}"
+          verdict=$(cat partitions-drift.state)
+          case "${verdict}:${rc}" in
+            match:0) echo "state=close" >> "${GITHUB_OUTPUT}" ;;
+            drift:[1-9]*) echo "state=open" >> "${GITHUB_OUTPUT}" ;;
+            unconfirmed:[1-9]*) echo "state=open" >> "${GITHUB_OUTPUT}"; exit 1 ;;
+            *) echo "::error::判定と make の終了コードが合いません（${verdict}・${rc}）"; exit 1 ;;
+          esac
+
+      - name: Create, update or close the report issue
+        if: ${{ !cancelled() && steps.compare.outputs.state != '' }}
+        uses: ./.github/actions/upsert-report-issue
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          title: 'Partitions Drift Report: aws_partitions の写しの確認が要ります'
+          marker: '<!-- partitions-drift-report -->'
+          state: ${{ steps.compare.outputs.state }}
+          body-file: partitions-drift.md
+          close-comment: 写しが上流の一覧と一致したので閉じます。
+
+  # 理由は README.md の「通知の起動条件」。
+  notify-failure:
+    needs: report
+    if: ${{ always() && github.event_name == 'schedule' && contains(fromJSON('["failure", "cancelled"]'), needs.report.result) }}
+    uses: ./.github/workflows/notify.yaml
+    with:
+      failed-job: report
+    secrets:
+      slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL_MAINTENANCE }}
