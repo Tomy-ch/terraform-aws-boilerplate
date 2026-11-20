@@ -311,6 +311,24 @@ func lines(texts ...string) []workflow.Line {
 func Test_run(t *testing.T) {
 	t.Parallel()
 
+	t.Run("job の外に入口の行しか無い workflow だけなら、対象0件より先に違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"p.yaml": "on:\n  push:\nx: make ci-apply-a\n"}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "job の行として読めません")
+	})
+
+	t.Run("入口の job が id-token を欠く workflow だけなら、対象0件より先に違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		wf, env := repoWith(t, map[string]string{"plan.yaml": strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
+		assert.Contains(t, out.String(), "job plan-admin-identity は CI の入口")
+	})
+
 	t.Run("plan と apply の job が規則を満たせば成功する", func(t *testing.T) {
 		t.Parallel()
 
@@ -493,12 +511,108 @@ func Test_check(t *testing.T) {
 		assert.Empty(t, f)
 	})
 
-	t.Run("id-token を持たない job は対象にしない", func(t *testing.T) {
+	t.Run("id-token を持たない入口の job は対象にせず違反にする", func(t *testing.T) {
 		t.Parallel()
 
 		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "", 1), envs)
 		assert.Zero(t, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Regexp(t, `^job plan-admin-identity は CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を走らせますが（\d+ 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません$`, f[0].Message)
+		before, _, found := strings.Cut(planWorkflow, "  plan-admin-identity:\n")
+		require.True(t, found)
+		assert.Equal(t, strings.Count(before, "\n")+1, f[0].Line)
+	})
+
+	t.Run("対象の job と id-token を持たない入口の job が並ぶ workflow は、後者だけ違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := planWorkflow + "\n  plan-extra:\n    steps:\n      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"
+		n, f := check("p.yaml", src, envs)
+		assert.Equal(t, 1, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job plan-extra は CI の入口")
+	})
+
+	t.Run("行継続で make と別の行にある入口も、id-token が無ければ違反", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", "on:\n  push:\njobs:\n  apply-x:\n    steps:\n      - run: |\n          make \\\n            ci-apply-admin-workload\n", envs)
+		assert.Zero(t, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job apply-x は CI の入口")
+		assert.Contains(t, f[0].Message, "（8 行目）")
+	})
+
+	t.Run("jobs: を持たず入口の行だけがある workflow は違反", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", "on:\n  push:\nx: make ci-apply-a\n", envs)
+		assert.Zero(t, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 1 件のうち 1 件を、job の行として読めません", f[0].Message)
+	})
+
+	t.Run("job の外の入口が2行なら2件と報せる", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", planWorkflow+"x-note: make ci-apply-a\ny-note: make ci-hold-a\n", envs)
+		assert.Equal(t, 1, n)
+		require.Len(t, f, 1, messages(f))
+		require.Equal(t, 1, strings.Count(planWorkflow, "ci-plan-"), "planWorkflow の入口の行の数が前提と違う")
+		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 3 件のうち 2 件を、job の行として読めません", f[0].Message)
+	})
+
+	t.Run("permissions を持たない入口の job は違反にする", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "", 1), envs)
+		assert.Zero(t, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job plan-admin-identity は CI の入口")
+	})
+
+	t.Run("入口も id-token も持たない job は違反にしない", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", "on:\n  pull_request:\njobs:\n  lint:\n    steps:\n      - run: make lint\n", envs)
+		assert.Zero(t, n)
 		assert.Empty(t, f)
+	})
+
+	t.Run("workflow 全体にだけ id-token を置いた入口の job は両方の違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := strings.Replace(planWorkflow, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: read\n  id-token: write\n\njobs:", 1)
+		src = strings.Replace(src, "      id-token: write\n", "", 1)
+		n, f := check("p.yaml", src, envs)
+		assert.Zero(t, n)
+		require.Len(t, f, 2, messages(f))
+		assert.Contains(t, messages(f), "workflow 全体の permissions に id-token")
+		assert.Contains(t, messages(f), "job plan-admin-identity は CI の入口")
+	})
+
+	for name, c := range map[string]struct{ from, to string }{
+		"jobs: より前のトップレベルのキーの入口は違反": {"\njobs:\n", "\nx-note: make ci-apply-admin-identity\njobs:\n"},
+		"jobs: と最初の job の間の入口は違反":   {"\njobs:\n", "\njobs:\n    make ci-apply-admin-identity\n"},
+		"桁0の name: の入口も数える":         {"\njobs:\n", "\nname: make ci-apply-admin-identity\njobs:\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			n, f := check("p.yaml", strings.Replace(planWorkflow, c.from, c.to, 1), envs)
+			assert.Equal(t, 1, n)
+			require.Len(t, f, 1, messages(f))
+			assert.Regexp(t, `^CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を持つ行 \d+ 件のうち 1 件を、job の行として読めません$`, f[0].Message)
+		})
+	}
+
+	t.Run("jobs: の後のトップレベルのキーの入口は違反", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", planWorkflow+"x-note: make ci-apply-admin-identity\n", envs)
+		assert.Equal(t, 1, n)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "のうち 1 件を、job の行として読めません")
 	})
 
 	t.Run("workflow 全体の permissions の id-token は違反", func(t *testing.T) {
@@ -515,7 +629,8 @@ func Test_check(t *testing.T) {
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: { contents: read, id-token: write }\n", 1)
 		n, f := check("p.yaml", src, envs)
 		assert.Zero(t, n)
-		assert.Contains(t, messages(f), "job plan-admin-identity の permissions を読めません")
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job plan-admin-identity の permissions を読めません")
 	})
 
 	t.Run("job の write-all は読めないとして違反", func(t *testing.T) {
@@ -523,7 +638,8 @@ func Test_check(t *testing.T) {
 
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    permissions: write-all\n", 1)
 		_, f := check("p.yaml", src, envs)
-		assert.Contains(t, messages(f), "job plan-admin-identity の permissions を読めません")
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job plan-admin-identity の permissions を読めません")
 	})
 
 	t.Run("workflow 全体の write-all は違反", func(t *testing.T) {
@@ -554,7 +670,9 @@ func Test_check(t *testing.T) {
 
 			n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", perm, 1), envs)
 			assert.Zero(t, n)
+			require.NotEmpty(t, f)
 			assert.Contains(t, messages(f), "job の permissions として読めません")
+			assert.NotContains(t, messages(f), "CI の入口")
 		})
 	}
 
@@ -564,15 +682,18 @@ func Test_check(t *testing.T) {
 		src := strings.Replace(planWorkflow, "    permissions:\n      contents: read\n      id-token: write\n", "    \"permissions\":\n      contents: read\n      id-token: write\n", 1)
 		n, f := check("p.yaml", src, envs)
 		assert.Zero(t, n)
+		require.NotEmpty(t, f)
 		assert.Contains(t, messages(f), "job の permissions として読めません")
+		assert.NotContains(t, messages(f), "CI の入口")
 	})
 
-	t.Run("id-token: read は token を得る行として数えない", func(t *testing.T) {
+	t.Run("id-token: read は token を得る行として数えず、入口の job を違反にする", func(t *testing.T) {
 		t.Parallel()
 
 		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "      id-token: read\n", 1), envs)
 		assert.Zero(t, n)
-		assert.Empty(t, f)
+		require.Len(t, f, 1, messages(f))
+		assert.Contains(t, f[0].Message, "job plan-admin-identity は CI の入口")
 	})
 
 	t.Run("長期のアクセスキーの参照は違反", func(t *testing.T) {
@@ -595,6 +716,79 @@ func Test_check(t *testing.T) {
 
 func Test_checkJob(t *testing.T) {
 	t.Parallel()
+
+	t.Run("plan の入口の job が lock の解除の role を取れば、plan の規則で1件だけ role の違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, planWorkflow, "CI_ROLE=plan", "CI_ROLE=unlock-identity")
+		src = replaced(t, src, "environment: admin-plan", "environment: admin-unlock-identity")
+		_, f := check("p.yaml", src, envs)
+		got := messages(f)
+		assert.Equal(t, 1, strings.Count(got, "lock の解除の job（make ci-unlock-*）だけが取って"), got)
+		assert.NotContains(t, got, "apply の job は")
+		assert.NotContains(t, got, "plan の job は plan の role")
+	})
+
+	logArchive := func(t *testing.T) string {
+		t.Helper()
+
+		src := strings.ReplaceAll(planWorkflow, "CI_ENV=admin", "CI_ENV=log-archive")
+		src = replaced(t, src, "environment: admin-plan", "environment: log-archive-plan")
+		return replaced(t, src, "make ci-plan-admin-identity", "make ci-plan-log-archive-identity")
+	}
+	logArchiveEnvs := append(slices.Clone(envs), "log-archive-plan")
+
+	t.Run("ハイフンを含む env の plan の job は、資格情報と拒否の確認と入口を通して違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", logArchive(t), logArchiveEnvs)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, messages(f))
+	})
+
+	t.Run("ハイフンを含む env の資格情報と、入口の env の食い違いは違反", func(t *testing.T) {
+		t.Parallel()
+
+		_, f := check("p.yaml", replaced(t, logArchive(t), "make ci-plan-log-archive-identity", "make ci-plan-archive-identity"), logArchiveEnvs)
+		assert.Contains(t, messages(f), "資格情報の CI_ENV=log-archive が、入口 make ci-plan-archive-identity の env archive と違います")
+	})
+
+	t.Run("ハイフンを含む env の資格情報と、拒否の確認の CI_ENV の食い違いは違反", func(t *testing.T) {
+		t.Parallel()
+
+		_, f := check("p.yaml", replaced(t, logArchive(t), "ci-assume-denied CI_ENV=log-archive", "ci-assume-denied CI_ENV=log"), logArchiveEnvs)
+		assert.Contains(t, messages(f), "make ci-assume-denied の CI_ENV=log が、資格情報の CI_ENV=log-archive と違います")
+	})
+
+	t.Run("checkJob を通しても入口の env と CI_ENV の食い違いを出す", func(t *testing.T) {
+		t.Parallel()
+
+		_, f := check("a.yaml", replaced(t, applyWorkflow, "make ci-apply-admin-identity", "make ci-apply-stg-identity"), envs)
+		assert.Contains(t, messages(f), "資格情報の CI_ENV=admin が、入口 make ci-apply-stg-identity の env stg と違います")
+	})
+
+	for _, c := range []struct{ kind, src, entry, other string }{
+		{kindPlan, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-stg-workload RUNNER_MODE=host\n"},
+		{kindApply, applyWorkflow, applyEntryLine, "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n"},
+		{kindUnlock, unlockWorkflow, unlockEntryLine, "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"},
+		{kindHold, holdWorkflow, holdEntryLine, "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"},
+	} {
+		for n, to := range map[int]string{0: "", 2: c.other + c.entry} {
+			t.Run(fmt.Sprintf("%s の入口が %d 件なら role を比べずに数の違反を出す", c.kind, n), func(t *testing.T) {
+				t.Parallel()
+
+				_, f := check("w.yaml", replaced(t, c.src, c.entry, to), envs)
+				got := messages(f)
+				// 入口0件の lock の解除と lock を残す job は、入口で種別が決まるので apply の job として数の違反になる。
+				assert.Contains(t, got, fmt.Sprintf("を1回だけ走らせてください（%d 回）", n))
+				if n == 2 {
+					assert.Contains(t, got, fmt.Sprintf("make ci-%s-* を1回だけ走らせてください（2 回）", c.kind))
+				}
+				assert.NotContains(t, got, "の root が決める role")
+				assert.NotContains(t, got, "資格情報の CI_ENV=")
+			})
+		}
+	}
 
 	w := infoOf(planWorkflow)
 	jobWith := func(t *testing.T, from, to string) workflow.Job {
@@ -898,7 +1092,7 @@ func Test_checkApply(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, "make ci-apply-admin-identity", "echo")
-		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "make ci-apply-* がありません")
+		assert.Contains(t, messages(checkApply(j, credOf(j), aw, formatted)), "apply の job は make ci-apply-* を1回だけ走らせてください（0 回）")
 	})
 
 	t.Run("workflow の cancel-in-progress: true は job の false で隠せない", func(t *testing.T) {
@@ -1799,7 +1993,7 @@ func Test_checkTerraform(t *testing.T) {
 	t.Run("入口だけで走らせれば違反0件", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkTerraform(jobOf(t, planWorkflow, "plan-admin-identity"), ciPlan, "plan", formatted))
+		assert.Empty(t, checkTerraform(jobOf(t, planWorkflow, "plan-admin-identity"), kindPlan, formatted))
 	})
 
 	cases := map[string]string{
@@ -1817,20 +2011,20 @@ func Test_checkTerraform(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkTerraform(planWith(t, add), ciPlan, "plan", formatted)), "make ci-plan-* でだけ")
+			assert.Contains(t, messages(checkTerraform(planWith(t, add), kindPlan, formatted)), "make ci-plan-* でだけ")
 		})
 	}
 
 	t.Run("terraform を入れる行は起動と数えない", func(t *testing.T) {
 		t.Parallel()
 
-		assert.Empty(t, checkTerraform(planWith(t, "      - uses: ./.github/actions/setup-mise\n        with:\n          tools: aqua:hashicorp/terraform go\n"), ciPlan, "plan", formatted))
+		assert.Empty(t, checkTerraform(planWith(t, "      - uses: ./.github/actions/setup-mise\n        with:\n          tools: aqua:hashicorp/terraform go\n"), kindPlan, formatted))
 	})
 
 	t.Run("terraform を入れる字面を添えた run: の起動は違反", func(t *testing.T) {
 		t.Parallel()
 
-		got := messages(checkTerraform(planWith(t, "      - run: terraform plan # aqua:hashicorp/terraform\n"), ciPlan, "plan", formatted))
+		got := messages(checkTerraform(planWith(t, "      - run: terraform plan # aqua:hashicorp/terraform\n"), kindPlan, formatted))
 		assert.Contains(t, got, "make ci-plan-* でだけ")
 	})
 
@@ -1838,7 +2032,28 @@ func Test_checkTerraform(t *testing.T) {
 		t.Parallel()
 
 		job := jobOf(t, strings.Replace(planWorkflow, "make ci-plan-admin-identity", "echo", 1), "plan-admin-identity")
-		assert.Contains(t, messages(checkTerraform(job, ciPlan, "plan", formatted)), "make ci-plan-* がありません")
+		assert.Contains(t, messages(checkTerraform(job, kindPlan, formatted)), "plan の job は make ci-plan-* を1回だけ走らせてください（0 回）")
+	})
+
+	t.Run("入口が2つなら違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := messages(checkTerraform(planWith(t, "      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"), kindPlan, formatted))
+		assert.Equal(t, "plan の job は make ci-plan-* を1回だけ走らせてください（2 回）\n", got)
+	})
+
+	t.Run("apply の入口が2つなら違反", func(t *testing.T) {
+		t.Parallel()
+
+		src := replaced(t, applyWorkflow, applyEntryLine, applyEntryLine+"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n")
+		got := messages(checkTerraform(jobOf(t, src, "apply-admin-identity"), kindApply, formatted))
+		assert.Equal(t, "apply の job は make ci-apply-* を1回だけ走らせてください（2 回）\n", got)
+	})
+
+	t.Run("コメントと name: の入口の字面は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkTerraform(planWith(t, "      # make ci-plan-admin-workload\n      - name: make ci-plan-admin-workload\n        run: echo x\n"), kindPlan, formatted))
 	})
 }
 
@@ -2328,6 +2543,155 @@ func Test_hasConcurrency(t *testing.T) {
 	}
 }
 
+func bodyJob(t *testing.T, body string) workflow.Job {
+	t.Helper()
+	jobs := workflow.SplitJobs("on:\n  push:\njobs:\n  x:\n" + body).Jobs
+	require.Len(t, jobs, 1)
+	return jobs[0]
+}
+
+func Test_assumesRole(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		body string
+		want bool
+	}{
+		"job の id-token: write は対象":        {"    permissions:\n      contents: read\n      id-token: write\n", true},
+		"引用符付きの id-token: write は対象":       {"    permissions:\n      \"id-token\": \"write\"\n", true},
+		"permissions が無ければ対象にしない":          {"    steps:\n      - run: make lint\n", false},
+		"id-token: read は対象にしない":           {"    permissions:\n      id-token: read\n", false},
+		"id-token の無い permissions は対象にしない": {"    permissions:\n      contents: read\n", false},
+		"write-all は対象にしない":                {"    permissions: write-all\n", false},
+		"1行の {} は対象にしない":                   {"    permissions: { id-token: write }\n", false},
+		"空の {} は対象にしない":                    {"    permissions: {}\n", false},
+		"行末コメント付きの id-token: write は対象":    {"    permissions:\n      id-token: write # oidc\n", true},
+		"値が次の行に続く id-token は対象にしない":        {"    permissions:\n      id-token:\n        write\n", false},
+		"step の深さの permissions は対象にしない":    {"    steps:\n      - permissions:\n          id-token: write\n", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, assumesRole(bodyJob(t, c.body)))
+		})
+	}
+}
+
+func Test_hasTokenLine(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		body string
+		want bool
+	}{
+		"読める id-token: write を持つ":            {"    permissions:\n      id-token: write\n", true},
+		"引用符付きの \"id-token\": \"write\" を持つ": {"    permissions:\n      \"id-token\": \"write\"\n", true},
+		"値が次の行に続く id-token を持つ":              {"    permissions:\n      id-token:\n        write\n", true},
+		"コロンの前に空白のある id-token を持つ":           {"    permissions:\n      id-token : write\n", true},
+		"id-token: read は持たない":               {"    permissions:\n      id-token: read\n", false},
+		"id-token: none は持たない":               {"    permissions:\n      id-token: none\n", false},
+		"引用符付きの id-token: \"read\" は持たない":    {"    permissions:\n      id-token: \"read\"\n", false},
+		"コメント付きの id-token: read は持たない":       {"    permissions:\n      id-token: read # c\n", false},
+		"1行の {} の id-token: none は持たない":      {"    permissions: { id-token: none }\n", false},
+		"コメントの id-token は持たない":               {"    # id-token: write\n    steps:\n      - run: make lint\n", false},
+		"id-token の行が無ければ持たない":               {"    permissions:\n      contents: read\n", false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, hasTokenLine(bodyJob(t, c.body)))
+		})
+	}
+}
+
+func Test_entryLine(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		line string
+		want bool
+	}{
+		"run: の make ci-plan-* は入口":      {"      - run: make ci-plan-admin-identity RUNNER_MODE=host", true},
+		"make ci-apply-* は入口":            {"          make ci-apply-admin-workload RUNNER_MODE=host", true},
+		"make ci-unlock-* は入口":           {"        run: make ci-unlock-admin-identity", true},
+		"make ci-hold-* は入口":             {"        run: make ci-hold-admin-identity", true},
+		"echo の引数の入口も数える":                {"        run: echo \"make ci-unlock-admin-identity で解除\"", true},
+		"env: の値の入口も数える":                 {"          NOTE: make ci-apply-admin-identity", true},
+		"step と別の行の run: は数える":           {"        run: make ci-apply-admin-identity", true},
+		"桁0の name: は数える":                 {"name: make ci-apply-admin-identity", true},
+		"コメントの入口は数えない":                   {"      # make ci-apply-admin-identity", false},
+		"step の name: の入口は数えない":          {"      - name: make ci-apply-admin-identity", false},
+		"job の name: の入口は数えない":           {"    name: make ci-apply-admin-identity", false},
+		"ci-revert-* は入口ではない":            {"        run: make ci-revert-plan RUNNER_MODE=host", false},
+		"ci-aws-credentials は入口ではない":     {"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", false},
+		"make を伴わない ci-apply-* も入口":      {"        run: echo ci-apply-admin-identity", true},
+		"行継続の次の行の入口も数える":                 {"            ci-apply-admin-identity RUNNER_MODE=host", true},
+		"$(MAKE) の入口も数える":                {"        run: $(MAKE) ci-hold-admin-identity", true},
+		"式で組んだ名前の入口も数える":                 {"        run: make ci-apply-${{ inputs.root }}", true},
+		"ci-plan と区切りの無い語は入口ではない":        {"        run: make ci-planner", false},
+		"ci-plan- の後の名前は入口":              {"        run: make ci-plan-x", true},
+		"語の途中の ci-apply- は入口ではない":        {"        run: make xci-apply-x", false},
+		"ハイフンで続く接頭辞の後の ci-apply- は入口":    {"        run: make my-ci-apply-x", true},
+		"名前の無い ci-apply- も入口":            {"        run: make ci-apply-", true},
+		"concurrency の group の入口の字面も数える": {"      group: ci-apply-${{ github.ref }}", true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, entryLine(c.line))
+		})
+	}
+}
+
+func Test_countEntryLines(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job の外を含むファイル全体の入口の行を数え、コメントと name: を除く", func(t *testing.T) {
+		t.Parallel()
+
+		src := "x-note: make ci-plan-a\njobs:\n  x:\n    steps:\n      - name: make ci-apply-a\n        run: make ci-apply-a\n      # make ci-hold-a\n      - run: |\n          make ci-unlock-a\n"
+		assert.Equal(t, 3, countEntryLines(src))
+	})
+
+	t.Run("入口の無いファイルは0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Zero(t, countEntryLines("on:\n  push:\njobs:\n  x:\n    steps:\n      - run: make lint\n      # make ci-apply-a\n"))
+	})
+}
+
+func Test_jobEntryLines(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job の中の入口の行を行ごとに数える", func(t *testing.T) {
+		t.Parallel()
+
+		job := bodyJob(t, "    steps:\n      - name: make ci-plan-a\n        run: make ci-plan-a\n      - run: make ci-apply-a\n      # make ci-hold-a\n")
+		assert.Equal(t, 2, jobEntryLines(job))
+	})
+
+	t.Run("入口の無い job は0件", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Zero(t, jobEntryLines(bodyJob(t, "    steps:\n      - run: make lint\n")))
+	})
+
+	t.Run("実物の形の plan の workflow の入口は job の中にすべて在る", func(t *testing.T) {
+		t.Parallel()
+
+		split := workflow.SplitJobs(planWorkflow)
+		n := 0
+		for _, job := range split.Jobs {
+			n += jobEntryLines(job)
+		}
+		require.Positive(t, n)
+		assert.Equal(t, countEntryLines(planWorkflow), n)
+	})
+}
+
 func Test_countTokenLines(t *testing.T) {
 	t.Parallel()
 
@@ -2606,6 +2970,7 @@ var unlockWorkflow = strings.Join([]string{
 
 const (
 	unlockEntryLine     = "      - run: make ci-unlock-admin-identity RUNNER_MODE=host\n"
+	applyEntryLine      = "      - run: make ci-apply-admin-identity RUNNER_MODE=host\n"
 	unlockGroup         = "  group: terraform-unlock-admin\n"
 	unlockEnv           = "    environment: admin-unlock-identity\n"
 	unlockWfConcurrency = "concurrency:\n" + unlockGroup + "  cancel-in-progress: false\n"
@@ -2721,11 +3086,58 @@ func Test_checkRole(t *testing.T) {
 	workloadUnlockJob := jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")
 	holdJob := jobOf(t, holdWorkflow, "hold-admin-identity")
 	workloadHoldJob := jobOf(t, workloadHoldWorkflow(t), "hold-admin-identity")
+	kindOf := func(j workflow.Job) string {
+		switch {
+		case isUnlock(j):
+			return kindUnlock
+		case isHold(j):
+			return kindHold
+		case hasLine(j, planEntry):
+			return kindPlan
+		}
+		return kindApply
+	}
+	workloadApplyJob := jobOf(t, replaced(t, applyWorkflow, "make ci-apply-admin-identity", "make ci-apply-admin-workload"), "apply-admin-identity")
+	workloadPlanJob := jobOf(t, replaced(t, planWorkflow, "make ci-plan-admin-identity", "make ci-plan-admin-workload"), "plan-admin-identity")
+	otherEnvApplyJob := jobOf(t, replaced(t, applyWorkflow, "make ci-apply-admin-identity", "make ci-apply-stg-identity"), "apply-admin-identity")
+	otherEnvUnlockJob := jobOf(t, replaced(t, unlockWorkflow, "make ci-unlock-admin-identity", "make ci-unlock-stg-identity"), "unlock-admin-identity")
+	badRootApplyJob := jobOf(t, replaced(t, applyWorkflow, "make ci-apply-admin-identity", "make ci-apply-admin-other"), "apply-admin-identity")
+	twoEntryApplyJob := jobOf(t, replaced(t, applyWorkflow, applyEntryLine, applyEntryLine+"      - run: make ci-apply-admin-workload RUNNER_MODE=host\n"), "apply-admin-identity")
+	planLine := "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"
+	otherEnvPlanJob := jobOf(t, replaced(t, planWorkflow, "make ci-plan-admin-identity", "make ci-plan-stg-workload"), "plan-admin-identity")
+	otherEnvHoldJob := jobOf(t, replaced(t, holdWorkflow, "make ci-hold-admin-identity", "make ci-hold-stg-identity"), "hold-admin-identity")
+	badRootPlanJob := jobOf(t, replaced(t, planWorkflow, "make ci-plan-admin-identity", "make ci-plan-admin-other"), "plan-admin-identity")
+	badRootUnlockJob := jobOf(t, replaced(t, unlockWorkflow, "make ci-unlock-admin-identity", "make ci-unlock-admin-other"), "unlock-admin-identity")
+	badRootHoldJob := jobOf(t, replaced(t, holdWorkflow, "make ci-hold-admin-identity", "make ci-hold-admin-other"), "hold-admin-identity")
+	// 先頭の入口は role に合わない root にし、比べれば違反になる形で「比べない」を見る。
+	twoEntryPlanJob := jobOf(t, replaced(t, planWorkflow, planLine, "      - run: make ci-plan-stg-workload RUNNER_MODE=host\n"+planLine), "plan-admin-identity")
+	twoEntryUnlockJob := jobOf(t, replaced(t, unlockWorkflow, unlockEntryLine, "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"+unlockEntryLine), "unlock-admin-identity")
+	twoEntryHoldJob := jobOf(t, replaced(t, holdWorkflow, holdEntryLine, "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"+holdEntryLine), "hold-admin-identity")
+	logArchiveJob := jobOf(t, replaced(t, replaced(t, applyWorkflow, "make ci-apply-admin-identity", "make ci-apply-log-archive-workload"), "CI_ENV=admin CI_ROLE=apply-identity", "CI_ENV=log-archive CI_ROLE=apply"), "apply-admin-identity")
 	for name, c := range map[string]struct {
 		job  workflow.Job
 		role string
 		want string
 	}{
+		"workload の apply の job の apply は違反0件":           {workloadApplyJob, "apply", ""},
+		"workload の apply の job の apply-identity は違反":    {workloadApplyJob, "apply-identity", "apply の job は apply の role を取って"},
+		"identity の apply の job の apply は違反":             {applyJob, "apply", "apply の job は apply-identity の role を取って"},
+		"workload の plan の job の plan は違反0件":             {workloadPlanJob, "plan", ""},
+		"入口の env と資格情報の CI_ENV が違えば違反":                   {otherEnvApplyJob, "apply-identity", "資格情報の CI_ENV=admin が、入口 make ci-apply-stg-identity の env stg と違います"},
+		"lock の解除の入口の env と資格情報の CI_ENV が違えば違反":          {otherEnvUnlockJob, "unlock-identity", "資格情報の CI_ENV=admin が、入口 make ci-unlock-stg-identity の env stg と違います"},
+		"root の接尾辞を読めない入口は違反":                            {badRootApplyJob, "apply-identity", "入口 make ci-apply-admin-other の root を読めません"},
+		"入口が2つの apply の job は role と env を比べない":          {twoEntryApplyJob, "apply", ""},
+		"入口が2つの plan の job は role と env を比べない":           {twoEntryPlanJob, "plan", ""},
+		"入口が2つの lock の解除の job は role と env を比べない":        {twoEntryUnlockJob, "unlock-identity", ""},
+		"入口が2つの lock を残す job は role と env を比べない":         {twoEntryHoldJob, "apply-identity", ""},
+		"plan の入口の env と資格情報の CI_ENV が違えば違反":             {otherEnvPlanJob, "plan", "資格情報の CI_ENV=admin が、入口 make ci-plan-stg-workload の env stg と違います"},
+		"lock を残す入口の env と資格情報の CI_ENV が違えば違反":           {otherEnvHoldJob, "apply-identity", "資格情報の CI_ENV=admin が、入口 make ci-hold-stg-identity の env stg と違います"},
+		"plan の job の apply-identity は違反":                {planJob, "apply-identity", "plan の job は plan の role を取って"},
+		"workload の plan の job の apply は違反":              {workloadPlanJob, "apply", "plan の job は plan の role を取って"},
+		"root の接尾辞を読めない plan の入口は違反":                     {badRootPlanJob, "plan", "入口 make ci-plan-admin-other の root を読めません"},
+		"root の接尾辞を読めない lock の解除の入口は違反":                  {badRootUnlockJob, "unlock-identity", "入口 make ci-unlock-admin-other の root を読めません"},
+		"root の接尾辞を読めない lock を残す入口は違反":                   {badRootHoldJob, "apply-identity", "入口 make ci-hold-admin-other の root を読めません"},
+		"ハイフンを含む env の資格情報は入口の env と一致する":                {logArchiveJob, "apply", ""},
 		"lock の解除の job の unlock-identity は違反0件":          {unlockJob, "unlock-identity", ""},
 		"lock の解除の job の apply-identity は違反":             {unlockJob, "apply-identity", "lock の解除の job は unlock-identity の role を取って"},
 		"lock の解除の job の apply は違反":                      {unlockJob, "apply", "lock の解除の job は unlock-identity の role を取って"},
@@ -2749,7 +3161,7 @@ func Test_checkRole(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got := messages(checkRole(c.job, credOf(c.job), c.role, formatted))
+			got := messages(checkRole(c.job, credOf(c.job), c.role, kindOf(c.job), formatted))
 			if c.want == "" {
 				assert.Empty(t, got)
 
@@ -2758,6 +3170,31 @@ func Test_checkRole(t *testing.T) {
 			assert.Contains(t, got, c.want)
 		})
 	}
+
+	for name, c := range map[string]struct {
+		job  workflow.Job
+		role string
+		n    int
+	}{
+		"apply の job の unlock-identity は1件だけ違反": {applyJob, "unlock-identity", 1},
+		"apply の job の unlock は1件だけ違反":          {applyJob, "unlock", 1},
+		"role と env の両方が違えば2件の違反":               {otherEnvApplyJob, "apply", 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := checkRole(c.job, credOf(c.job), c.role, kindOf(c.job), formatted)
+			assert.Len(t, got, c.n, messages(got))
+		})
+	}
+
+	t.Run("plan の job の lock の解除の role は1件だけ違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkRole(planJob, credOf(planJob), "unlock-identity", kindPlan, formatted)
+		require.Len(t, got, 1, messages(got))
+		assert.Contains(t, got[0].Message, "lock の解除の job（make ci-unlock-*）だけが取って")
+	})
 }
 
 func Test_checkUnlock(t *testing.T) {
@@ -3424,35 +3861,244 @@ func Test_isUnlockRole(t *testing.T) {
 	}
 }
 
-func Test_unlockRoleFor(t *testing.T) {
+func Test_entryCredential(t *testing.T) {
 	t.Parallel()
 
-	t.Run("identity root の lock の解除は unlock-identity", func(t *testing.T) {
+	for name, c := range map[string]struct {
+		kind, envRoot, env, role string
+	}{
+		"identity root の plan は plan":                {kindPlan, "admin-identity", "admin", "plan"},
+		"workload root の plan は plan":                {kindPlan, "admin-workload", "admin", "plan"},
+		"identity root の apply は apply-identity":     {kindApply, "admin-identity", "admin", "apply-identity"},
+		"workload root の apply は apply":              {kindApply, "admin-workload", "admin", "apply"},
+		"identity root の lock を残す入口は apply-identity": {kindHold, "admin-identity", "admin", "apply-identity"},
+		"workload root の lock を残す入口は apply":          {kindHold, "admin-workload", "admin", "apply"},
+		"identity root の lock の解除は unlock-identity":  {kindUnlock, "admin-identity", "admin", "unlock-identity"},
+		"workload root の lock の解除は unlock":           {kindUnlock, "admin-workload", "admin", "unlock"},
+		"ハイフンを含む env も末尾で切る":                         {kindApply, "log-archive-workload", "log-archive", "apply"},
+		"接尾辞は末尾から1回だけ切る":                             {kindApply, "x-identity-workload", "x-identity", "apply"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			env, role, ok := entryCredential(c.kind, c.envRoot)
+			require.True(t, ok)
+			assert.Equal(t, c.env, env)
+			assert.Equal(t, c.role, role)
+		})
+	}
+
+	for name, c := range map[string]struct{ kind, envRoot string }{
+		"接尾辞の無い root は読めない":  {kindApply, "admin-other"},
+		"env の無い root は読めない": {kindApply, "-identity"},
+		"空の入口は読めない":          {kindUnlock, ""},
+		"知らない種別は読めない":        {"revert", "admin-identity"},
+		"接尾辞だけの名前は読めない":      {kindHold, "workload"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			env, role, ok := entryCredential(c.kind, c.envRoot)
+			assert.False(t, ok)
+			assert.Empty(t, env)
+			assert.Empty(t, role)
+		})
+	}
+
+}
+
+func Test_entryKinds(t *testing.T) {
+	t.Parallel()
+
+	// 写しと正本のずれを検出する検査は、正本の実物を読んでよい（ADR-0702 決定17）。
+	t.Run("写しと正本のずれ: ci.mk の入口の種別と profile が一覧と導出に一致する", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, unlockWorkflow, "unlock-admin-identity")))
+
+		body, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
+		require.NoError(t, err)
+		lines := strings.Split(string(body), "\n")
+		target := regexp.MustCompile(`^(ci-[a-z0-9-]+):$`)
+		call := regexp.MustCompile(`^\t@\$\(call CI_([A-Z]+),([a-z0-9-]+),(identity|workload)\)$`)
+		profile := regexp.MustCompile(`^(ci-[a-z0-9-]+): TF_LOCAL_PROFILE := \$\(call CI_PROFILE,([a-z0-9-]+),([a-z-]+)\)$`)
+		// 入口ではない ci- のターゲット。資格情報と拒否の確認は root を持たない。
+		notEntries := []string{"ci-aws-credentials", "ci-assume-denied"}
+
+		kinds := map[string]bool{}
+		entries := map[string]string{} // ターゲット名 → 種別
+		for i, l := range lines {
+			m := target.FindStringSubmatch(l)
+			if m == nil || slices.Contains(notEntries, m[1]) {
+				continue
+			}
+			require.Less(t, i+1, len(lines), "%s の recipe がありません", m[1])
+			c := call.FindStringSubmatch(lines[i+1])
+			require.NotNil(t, c, "%s の recipe を入口の呼び出し $(call CI_<種別>,<env>,<root>) として読めません: %q", m[1], lines[i+1])
+			kind := strings.ToLower(c[1])
+			require.Equal(t, "ci-"+kind+"-"+c[2]+"-"+c[3], m[1], "ターゲットの名前と呼び出しの種別・env・root が食い違います")
+			kinds[kind] = true
+			entries[m[1]] = kind
+		}
+		// 独立した経路の件数（ADR-0702 決定15）: 呼び出しの字面の行と、読めた入口の数。
+		calls := 0
+		for _, l := range lines {
+			if strings.HasPrefix(l, "\t@$(call CI_") {
+				calls++
+			}
+		}
+		require.NotEmpty(t, entries)
+		require.Equal(t, calls, len(entries), "入口の呼び出しの行と、読めた入口の数が食い違います")
+		assert.ElementsMatch(t, entryKinds, slices.Collect(maps.Keys(kinds)), "ci.mk の入口の種別と entryKinds が食い違います")
+
+		profiles := 0
+		for _, l := range lines {
+			m := profile.FindStringSubmatch(l)
+			if m == nil {
+				continue
+			}
+			kind, ok := entries[m[1]]
+			require.True(t, ok, "%s は入口として読めていません", m[1])
+			profiles++
+			envRoot := strings.TrimPrefix(m[1], "ci-"+kind+"-")
+			env, role, ok := entryCredential(kind, envRoot)
+			require.True(t, ok, m[1])
+			assert.Equal(t, m[2], env, m[1])
+			assert.Equal(t, m[3], role, m[1])
+			assert.True(t, isKindEntry(kind, "      - run: make "+m[1]+" RUNNER_MODE=host"), m[1])
+			assert.True(t, entryToken.MatchString(m[1]), m[1])
+		}
+		assert.Equal(t, len(entries), profiles, "TF_LOCAL_PROFILE を持たない入口があります")
+	})
+}
+
+func Test_entryRuns(t *testing.T) {
+	t.Parallel()
+
+	t.Run("種別の一覧のすべてに入口の run: の形があり、ほかに無い", func(t *testing.T) {
+		t.Parallel()
+
+		require.Len(t, entryRuns, len(entryKinds))
+		for _, k := range entryKinds {
+			re := entryRuns[k]
+			require.NotNil(t, re, k)
+			m := re.FindStringSubmatch("      - run: make ci-" + k + "-x-identity RUNNER_MODE=host")
+			require.NotNil(t, m, k)
+			assert.Equal(t, "x-identity", m[1], k)
+			_, _, ok := entryCredential(k, m[1])
+			assert.True(t, ok, k)
+		}
+	})
+}
+
+func Test_entryNames(t *testing.T) {
+	t.Parallel()
+
+	t.Run("違反の文の入口の並びは種別の一覧から組む", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, "make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*", entryNames)
+	})
+}
+
+func Test_entryPattern(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		got  *regexp.Regexp
+		want string
+	}{
+		"ciEntry":     {ciEntry, `\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`},
+		"entryToken":  {entryToken, `\bci-(?:plan|apply|unlock|hold)-`},
+		"unlockEntry": {unlockEntry, `\bmake\b.*\bci-(?:unlock)-([a-z0-9-]+)`},
+		"holdEntry":   {holdEntry, `\bmake\b.*\bci-(?:hold)-([a-z0-9-]+)`},
+		"otherEntry":  {otherEntry, `\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`},
+		"applyEntry":  {applyEntry, `\bmake\b.*\bci-(?:apply)-([a-z0-9-]+)`},
+		"planEntry":   {planEntry, `\bmake\b.*\bci-(?:plan)-[a-z0-9-]+`},
+		"runEntry":    {runEntry, `\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`},
+	} {
+		t.Run(name+" は種別の一覧から同じ字面に組まれる", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, c.got.String())
+		})
+	}
+
+	t.Run("種別は正規表現の字として引用する", func(t *testing.T) {
+		t.Parallel()
+
+		re := entryPattern(`ci-`, `-`, "a.b")
+		assert.True(t, re.MatchString("ci-a.b-"))
+		assert.False(t, re.MatchString("ci-axb-"))
 	})
 
-	t.Run("identity root でない root の lock の解除は unlock", func(t *testing.T) {
+	for name, c := range map[string]struct {
+		re   *regexp.Regexp
+		line string
+		want bool
+	}{
+		"ciEntry は make の hold の入口に当たる": {ciEntry, "run: make ci-hold-admin-identity", true},
+		"ciEntry は make の無い入口に当たらない":    {ciEntry, "run: echo ci-hold-admin-identity", false},
+		"entryToken は make の無い入口にも当たる":  {entryToken, "group: ci-apply-x", true},
+		"entryToken は語の途中に当たらない":        {entryToken, "xci-apply-x", false},
+		"otherEntry は hold の入口に当たらない":   {otherEntry, "run: make ci-hold-admin-identity", false},
+		"otherEntry は unlock の入口に当たる":   {otherEntry, "run: make ci-unlock-admin-identity", true},
+		"runEntry は unlock の入口に当たらない":   {runEntry, "run: make ci-unlock-admin-identity", false},
+		"runEntry は apply の入口に当たる":      {runEntry, "run: make ci-apply-admin-identity", true},
+		"applyEntry は plan の入口に当たらない":   {applyEntry, "run: make ci-plan-admin-identity", false},
+		"planEntry は ci-planner に当たらない": {planEntry, "run: make ci-planner-x", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, c.re.MatchString(c.line))
+		})
+	}
+}
+
+func Test_isKindEntry(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		kind, line string
+		want       bool
+	}{
+		"apply の入口の run: は apply の入口": {kindApply, "      - run: make ci-apply-admin-identity RUNNER_MODE=host", true},
+		"plan の入口は apply の入口ではない":     {kindApply, "      - run: make ci-plan-admin-identity RUNNER_MODE=host", false},
+		"コメントの入口は数えない":                {kindHold, "      # - run: make ci-hold-admin-identity", false},
+		"name: の入口は数えない":              {kindUnlock, "      - name: make ci-unlock-admin-identity", false},
+		"run: の形でない入口は数えない":           {kindPlan, "      - run: make ci-plan-admin-identity || true", false},
+		"step と別の行の run: も入口":         {kindHold, "        run: make ci-hold-admin-workload", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, isKindEntry(c.kind, c.line))
+		})
+	}
+}
+
+func Test_kindEntries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("job の中の種別の入口の行を返し、name: とコメントを除く", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, workloadUnlockWorkflow(t), "unlock-admin-identity")))
+
+		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      # make ci-unlock-admin-workload\n      - name: make ci-unlock-admin-workload\n        run: echo x\n")
+		got := kindEntries(jobOf(t, src, "unlock-admin-identity"), kindUnlock)
+		require.Len(t, got, 1)
+		assert.Equal(t, strings.TrimSuffix(unlockEntryLine, "\n"), got[0].Text)
 	})
 
-	t.Run("name の中の make ci-unlock-* は数えない", func(t *testing.T) {
+	t.Run("入口を2つ持てば2行を返す", func(t *testing.T) {
 		t.Parallel()
-		src := replaced(t, unlockWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-unlock-admin-workload\n")
-		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
-	})
 
-	t.Run("identity と別の root の入口を併せ持てば unlock を返す", func(t *testing.T) {
-		t.Parallel()
 		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n")
-		assert.Equal(t, "unlock", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+		assert.Len(t, kindEntries(jobOf(t, src, "unlock-admin-identity"), kindUnlock), 2)
 	})
 
-	t.Run("コメントの中の make ci-unlock-* は数えない", func(t *testing.T) {
+	t.Run("別の種別の入口は返さない", func(t *testing.T) {
 		t.Parallel()
-		src := replaced(t, unlockWorkflow, unlockEntryLine, unlockEntryLine+"      # make ci-unlock-admin-workload\n")
-		assert.Equal(t, "unlock-identity", unlockRoleFor(jobOf(t, src, "unlock-admin-identity")))
+
+		assert.Empty(t, kindEntries(jobOf(t, unlockWorkflow, "unlock-admin-identity"), kindHold))
 	})
 }
 
@@ -3544,6 +4190,9 @@ func rootsWith(t *testing.T, roots ...string) string {
 	return dir
 }
 
+// rootPerm は、checkRootCoverage が数える対象の job（assumesRole）にする permissions。
+const rootPerm = "    permissions:\n      contents: read\n      id-token: write\n"
+
 func rootJobs(roots ...string) map[string]string {
 	var plan, apply, unlock, hold strings.Builder
 	plan.WriteString("on:\n  pull_request:\njobs:\n")
@@ -3551,10 +4200,10 @@ func rootJobs(roots ...string) map[string]string {
 	unlock.WriteString("on:\n  workflow_dispatch:\njobs:\n")
 	hold.WriteString("on:\n  workflow_dispatch:\njobs:\n")
 	for _, r := range roots {
-		plan.WriteString("  plan-" + r + ":\n    steps:\n      - run: make ci-plan-" + r + " RUNNER_MODE=host\n")
-		apply.WriteString("  apply-" + r + ":\n    steps:\n      - run: make ci-apply-" + r + " RUNNER_MODE=host\n")
-		unlock.WriteString("  unlock-" + r + ":\n    steps:\n      - run: make ci-unlock-" + r + " RUNNER_MODE=host\n")
-		hold.WriteString("  hold-" + r + ":\n    steps:\n      - run: make ci-hold-" + r + " RUNNER_MODE=host\n")
+		plan.WriteString("  plan-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-plan-" + r + " RUNNER_MODE=host\n")
+		apply.WriteString("  apply-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-apply-" + r + " RUNNER_MODE=host\n")
+		unlock.WriteString("  unlock-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-unlock-" + r + " RUNNER_MODE=host\n")
+		hold.WriteString("  hold-" + r + ":\n" + rootPerm + "    steps:\n      - run: make ci-hold-" + r + " RUNNER_MODE=host\n")
 	}
 	return map[string]string{"plan.yaml": plan.String(), "apply.yaml": apply.String(), "unlock.yaml": unlock.String(), "hold.yaml": hold.String()}
 }
@@ -3580,7 +4229,26 @@ func Test_runRoots(t *testing.T) {
 
 	t.Run("root が1つも無ければ対象なしで失敗する", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), t.TempDir(), &bytes.Buffer{}), errNoTarget)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), t.TempDir(), &out), errNoTarget)
+		assert.NotContains(t, out.String(), "違反")
+	})
+
+	t.Run("root が無くても workflow の違反を先に出して違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+		bad, benv := repoWith(t, map[string]string{"plan.yaml": strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
+		var out bytes.Buffer
+		err := run(bad, benv, rulesetOf(benv), t.TempDir(), &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.NotErrorIs(t, err, errNoTarget)
+		assert.Contains(t, out.String(), "job plan-admin-identity は CI の入口")
+	})
+
+	t.Run("root を渡さなければ root の有無を見ない", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.NoError(t, run(wf, env, rulesetOf(env), "", &out), out.String())
+		assert.Contains(t, out.String(), "root 0 件の CI の経路")
 	})
 }
 
@@ -3598,10 +4266,66 @@ func Test_checkRootCoverage(t *testing.T) {
 		assert.Empty(t, messages(findings))
 	})
 
+	drift := "on:\n  pull_request:\n  schedule:\njobs:\n  drift:\n" + rootPerm + "    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"
+	withoutPlan := func(j map[string]string) map[string]string {
+		j["plan.yaml"] = strings.Replace(j["plan.yaml"], "make ci-plan-admin-identity", "echo", 1)
+		return j
+	}
+
 	t.Run("同じ root の plan が2つあっても違反にしない（定期 plan）", func(t *testing.T) {
 		t.Parallel()
 		jobs := rootJobs(four...)
-		jobs["drift.yaml"] = "on:\n  pull_request:\n  schedule:\njobs:\n  drift:\n    steps:\n      - run: make ci-plan-admin-identity RUNNER_MODE=host\n"
+		jobs["drift.yaml"] = drift
+		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+		require.NoError(t, err)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("定期 plan の job も plan として数える", func(t *testing.T) {
+		t.Parallel()
+		jobs := withoutPlan(rootJobs(four...))
+		jobs["drift.yaml"] = drift
+		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+		require.NoError(t, err)
+		assert.Empty(t, messages(findings))
+	})
+
+	t.Run("id-token を持たない plan の job は数えない", func(t *testing.T) {
+		t.Parallel()
+		jobs := withoutPlan(rootJobs(four...))
+		jobs["drift.yaml"] = strings.Replace(drift, "      id-token: write\n", "", 1)
+		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+		require.NoError(t, err)
+		assert.Equal(t, "root admin-identity を Pull Request で plan する job がありません\n", messages(findings))
+	})
+
+	t.Run("id-token を持たない apply の job は数えない", func(t *testing.T) {
+		t.Parallel()
+		jobs := rootJobs(four...)
+		jobs["apply.yaml"] = strings.Replace(jobs["apply.yaml"], "  apply-security-workload:\n"+rootPerm, "  apply-security-workload:\n    permissions:\n      contents: read\n", 1)
+		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+		require.NoError(t, err)
+		assert.Equal(t, "root security-workload を apply する job が 0 件です（1件を期待）\n", messages(findings))
+	})
+
+	for name, c := range map[string]struct{ file, job, want string }{
+		"id-token を持たない unlock の job は数えない": {"unlock.yaml", "unlock-security-identity", "root security-identity の lock を外す job が 0 件です（1件を期待）\n"},
+		"id-token を持たない hold の job は数えない":   {"hold.yaml", "hold-security-identity", "root security-identity の lock を残す job が 0 件です（1件を期待）\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			jobs := rootJobs(four...)
+			jobs[c.file] = strings.Replace(jobs[c.file], "  "+c.job+":\n"+rootPerm, "  "+c.job+":\n    permissions:\n      contents: read\n", 1)
+			_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, messages(findings))
+		})
+	}
+
+	t.Run("対象の apply の job と並ぶ id-token を持たない入口の job は数えない", func(t *testing.T) {
+		t.Parallel()
+		jobs := rootJobs(four...)
+		jobs["extra.yaml"] = "on:\n  push:\njobs:\n  x:\n    steps:\n      - run: make ci-apply-admin-identity RUNNER_MODE=host\n"
 		_, findings, err := checkRootCoverage(rootsWith(t, dirs...), jobs)
 		require.NoError(t, err)
 		assert.Empty(t, messages(findings))
@@ -3947,32 +4671,6 @@ func Test_isHold(t *testing.T) {
 			assert.Equal(t, c.want, isHold(c.job))
 		})
 	}
-}
-
-func Test_holdRoleFor(t *testing.T) {
-	t.Parallel()
-
-	t.Run("identity root の lock を残す job は apply-identity", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "apply-identity", holdRoleFor(jobOf(t, holdWorkflow, "hold-admin-identity")))
-	})
-
-	t.Run("identity root でない root の lock を残す job は apply", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "apply", holdRoleFor(jobOf(t, workloadHoldWorkflow(t), "hold-admin-identity")))
-	})
-
-	t.Run("name の中の make ci-hold-* は数えない", func(t *testing.T) {
-		t.Parallel()
-		src := replaced(t, holdWorkflow, "      - name: Refuse stale commits\n", "      - name: make ci-hold-admin-workload\n")
-		assert.Equal(t, "apply-identity", holdRoleFor(jobOf(t, src, "hold-admin-identity")))
-	})
-
-	t.Run("コメントの make ci-hold-* は数えない", func(t *testing.T) {
-		t.Parallel()
-		src := replaced(t, holdWorkflow, "      - name: Refuse stale commits\n", "      # make ci-hold-admin-workload\n      - name: Refuse stale commits\n")
-		assert.Equal(t, "apply-identity", holdRoleFor(jobOf(t, src, "hold-admin-identity")))
-	})
 }
 
 func Test_checkHold(t *testing.T) {

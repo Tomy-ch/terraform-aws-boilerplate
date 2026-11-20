@@ -16,7 +16,8 @@
 //
 //   - environment を字面で宣言し、その名前が environments.json に在る
 //   - `make ci-aws-credentials CI_ENV=<env> CI_ROLE=<役割> RUNNER_MODE=host` だけの run: をちょうど1回持ち、
-//     `<env>-<役割>` が environment の名前と一致する
+//     `<env>-<役割>` が environment の名前と一致する。CI_ENV と CI_ROLE は、job のちょうど1つの入口
+//     `make ci-<種別>-<env>-<root>` の env と、root と種別が決める role（entryCredential。ADR-0604 決定3・4・8）に一致する
 //   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
 //     その job の成功を条件に含め、status の関数・論理和・否定を置かない（ADR-0601 決定9）。検出の job は
 //     needs:・if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を持たず、
@@ -29,7 +30,7 @@
 //     役割の拒否の step・資格情報を取る step・CI の入口に限る —— どれも
 //     入口を実行させないか、道具を替えるか、失敗を成功として報告させる
 //   - plan の job は、workflow の起動が pull_request だけで、id が refuse-untrusted で if: と continue-on-error: を持たない step を
-//     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ走らせる
+//     資格情報の取得より前に置き（ADR-0602 決定14）、terraform を `make ci-plan-*` でだけ、ちょうど1回走らせる
 //     （lock を取らない経路。ADR-0604 決定8）。資格情報を取った後で plan の入口より前に
 //     `make ci-assume-denied CI_ENV=<env> RUNNER_MODE=host` だけの run: をちょうど1回持ち、その CI_ENV は資格情報と
 //     同じである —— この job の token で apply 系の role の assume が拒否されることを確かめる。この step は
@@ -38,7 +39,7 @@
 //     push に paths を持たず、concurrency を持ち、workflow 全体と job に在る concurrency が
 //     すべて cancel-in-progress: false で —— 後から起動した run が、実行中の apply を途中で止めない ——、id が refuse-stale で
 //     if: と continue-on-error: を持たない step を資格情報の取得より前に置き
-//     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ走らせる（Policy を通った plan だけを
+//     （古い commit の再実行を拒む）、terraform を `make ci-apply-*` でだけ、ちょうど1回走らせる（Policy を通った plan だけを
 //     apply する経路。ADR-0604 決定11）
 //   - lock の解除の job（`make ci-unlock-*` を持つ job）は、外す root の lock の解除の role（identity root は
 //     unlock-identity、ほかの root は unlock）を取り、workflow の起動が
@@ -54,6 +55,9 @@
 //     字面で書き、`make ci-hold-<env>-<root>` に対して `make ci-apply-<env>-<root>` を走らせるただ1つの apply の job の
 //     environment と、字面の group に一致する —— 同じ group なので apply と並んで lock を奪い合わない（ADR-0604 決定8）
 //   - plan と apply と lock を残す job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
+//
+// CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせる job が対象でなければ違反にし、
+// 入口の行をファイル全体で別に数えて、job の行として読めない行があれば落とす。root の網羅も、対象の job だけを数える。
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
@@ -86,6 +90,7 @@ const (
 	refuseStale             = "refuse-stale"
 	unlockIdentityRole      = "unlock-identity"
 	unlockWorkloadRole      = "unlock"
+	planRole                = "plan"
 	applyIdentityRole       = "apply-identity"
 	applyWorkloadRole       = "apply"
 )
@@ -102,24 +107,26 @@ var (
 	envScalar     = regexp.MustCompile(`^ {4}environment:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	envName       = regexp.MustCompile(`^ {6}name:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
-	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=[a-z0-9]+\s+CI_ROLE=[a-z-]+`)
-	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
+	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=` + envWord + `\s+CI_ROLE=[a-z-]+`)
+	ciEnv         = regexp.MustCompile(`\bCI_ENV=(` + envWord + `)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity|unlock)(?:\s|$)`)
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
-	ciPlan      = makeRun(`ci-plan-[a-z0-9-]+`)
-	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
+	ciPlan      = makeRun(`ci-` + kindPlan + `-([a-z0-9-]+)`)
+	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=` + envWord)
 	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
-	ciApply     = makeRun(`ci-apply-[a-z0-9-]+`)
-	ciApplyRoot = makeRun(`ci-apply-([a-z0-9-]+)`)
-	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
-	ciHold      = makeRun(`ci-hold-[a-z0-9-]+`)
-	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`)
-	unlockEntry = regexp.MustCompile(`\bmake\b.*\bci-unlock-([a-z0-9-]+)`)
-	holdEntry   = regexp.MustCompile(`\bmake\b.*\bci-hold-([a-z0-9-]+)`)
-	otherEntry  = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
-	applyEntry  = regexp.MustCompile(`\bmake\b.*\bci-apply-([a-z0-9-]+)`)
-	planEntry   = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
-	runEntry    = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
+	ciApply     = makeRun(`ci-` + kindApply + `-([a-z0-9-]+)`)
+	ciApplyRoot = ciApply
+	ciUnlock    = makeRun(`ci-` + kindUnlock + `-([a-z0-9-]+)`)
+	ciHold      = makeRun(`ci-` + kindHold + `-([a-z0-9-]+)`)
+	ciEntry     = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, entryKinds...)
+	// entryToken は make の有無も名前の形も問わない。行継続・$(MAKE)・式で組んだ名前の入口も数える。
+	entryToken  = entryPattern(`\bci-`, `-`, entryKinds...)
+	unlockEntry = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindUnlock)
+	holdEntry   = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindHold)
+	otherEntry  = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, slices.DeleteFunc(slices.Clone(entryKinds), func(k string) bool { return k == kindHold })...)
+	applyEntry  = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindApply)
+	planEntry   = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindPlan)
+	runEntry    = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindPlan, kindApply)
 	detection   = makeRun(`infra-code-gate`)
 	orderCheck  = makeRun(`resource-order-check`)
 	layerCheck  = makeRun(`layer-check`)
@@ -264,10 +271,15 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
 	}
 	roots := 0
+	// root が1つも無いときも、違反を先に出してから errNoTarget を返す（targets == 0 と同じ順序）。
+	var noRoots error
 	if rootsDir != "" {
 		n, f, err := checkRootCoverage(rootsDir, sources)
 		roots = n
-		if err != nil {
+		switch {
+		case xerrors.Is(err, errNoTarget):
+			noRoots = err
+		case err != nil:
 			return err
 		}
 		findings = append(findings, f...)
@@ -276,6 +288,9 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		fmt.Fprintf(out, "❌ oidc-job-lint: %d 件の違反\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
 		return xerrors.Wrapf(errViolations, "%d 件", len(findings))
+	}
+	if noRoots != nil {
+		return noRoots
 	}
 	if targets == 0 {
 		return xerrors.Wrapf(errNoTarget, "%s", dir)
@@ -423,7 +438,11 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 	on, onLine := triggers(split.Preamble)
 	w := workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
 	targets := 0
+	// entries は、CI の入口の行のうち、job の行として読めた行の数。
+	entries := 0
 	for _, job := range split.Jobs {
+		n := jobEntryLines(job)
+		entries += n
 		values, at, ok := permissionsBlock(job.Lines, "    ")
 		if ok && unreadable(values) {
 			attributed++
@@ -431,7 +450,13 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 				Message: fmt.Sprintf("job %s の permissions を読めません。write-all と1行の {} は使わず、権限を1行ずつ書いてください", job.ID)})
 			continue
 		}
-		if !ok || !hasIDToken(values) {
+		if !assumesRole(job) {
+			// id-token の行を持つが読めない job は、下の countTokenLines の違反が原因を言う。
+			if n > 0 && !hasTokenLine(job) {
+				first := job.Lines[slices.IndexFunc(job.Lines, func(l workflow.Line) bool { return entryLine(l.Text) })].Number
+				findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
+					Message: fmt.Sprintf("job %s は CI の入口（%s）を走らせますが（%d 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID, entryNames, first)})
+			}
 			continue
 		}
 		attributed++
@@ -442,7 +467,56 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		findings = append(findings, lintreport.Finding{File: file, Line: 1,
 			Message: fmt.Sprintf("id-token: write か write-all を持つ行 %d 件のうち %d 件を、job の permissions として読めません", n, n-attributed)})
 	}
+	if n := countEntryLines(source); n > entries {
+		findings = append(findings, lintreport.Finding{File: file, Line: 1,
+			Message: fmt.Sprintf("CI の入口（%s）を持つ行 %d 件のうち %d 件を、job の行として読めません", entryNames, n, n-entries)})
+	}
 	return targets, findings
+}
+
+// assumesRole は、job がこの検査の対象（job の permissions に id-token: write を読める形で持つ job）かを返します。
+// check・groupRecords・checkRootCoverage はこの述語で対象を決める。
+func assumesRole(job workflow.Job) bool {
+	values, _, ok := permissionsBlock(job.Lines, "    ")
+	return ok && !unreadable(values) && hasIDToken(values)
+}
+
+// hasTokenLine は、job が token を得うる id-token の行（値が read か none と読めないもの）を持つかを返します。
+func hasTokenLine(job workflow.Job) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
+		if commentLine.MatchString(l.Text) {
+			return false
+		}
+		m := idTokenKey.FindStringSubmatch(l.Text)
+		return m != nil && !tokenDenied.MatchString(m[1])
+	})
+}
+
+// entryLine は、行が CI の入口を走らせうる字面かを返します。コメントと name: の行は除き、run: の外の字面
+// （echo の引数、env: の値）も入口として数える。
+func entryLine(text string) bool {
+	return !commentLine.MatchString(text) && !nameLine.MatchString(text) && entryToken.MatchString(text)
+}
+
+// countEntryLines は、job の切り出しとは別に、CI の入口の行をファイル全体で数えます。
+func countEntryLines(source string) int {
+	n := 0
+	for _, text := range strings.Split(source, "\n") {
+		if entryLine(text) {
+			n++
+		}
+	}
+	return n
+}
+
+func jobEntryLines(job workflow.Job) int {
+	n := 0
+	for _, l := range job.Lines {
+		if entryLine(l.Text) {
+			n++
+		}
+	}
+	return n
 }
 
 // countTokenLines は、job の切り出しとは別に、token を得うる行をファイル全体で数えます。
@@ -512,12 +586,21 @@ func checkJob(file string, job workflow.Job, permissions, envs []string, w workf
 	if env != "" && env != e[1]+"-"+role {
 		findings = append(findings, finding(cred.Number, "environment %s と、取る role の %s-%s が一致しません", env, e[1], role))
 	}
-	findings = append(findings, checkRole(job, cred, role, finding)...)
-	findings = append(findings, checkSteps(job, cred, finding)...)
-	findings = append(findings, checkDetection(job, w.jobs, finding)...)
 	// plan の入口の job が lock の解除の role を取った違反は checkRole が出すので、plan の規則で見る。
 	// ほかの role を取った plan の入口の job は、apply の規則が落とす。
-	plan := !isUnlock(job) && !isHold(job) && (role == "plan" || (isUnlockRole(role) && hasLine(job, planEntry)))
+	plan := !isUnlock(job) && !isHold(job) && (role == planRole || (isUnlockRole(role) && hasLine(job, planEntry)))
+	kind := kindApply
+	switch {
+	case isUnlock(job):
+		kind = kindUnlock
+	case isHold(job):
+		kind = kindHold
+	case plan:
+		kind = kindPlan
+	}
+	findings = append(findings, checkRole(job, cred, role, kind, finding)...)
+	findings = append(findings, checkSteps(job, cred, finding)...)
+	findings = append(findings, checkDetection(job, w.jobs, finding)...)
 	refusal := refuseStale
 	if plan {
 		refusal = refuseUntrusted
@@ -542,7 +625,7 @@ func checkPlan(job workflow.Job, cred workflow.Line, w workflowInfo, finding fun
 	}
 	findings = append(findings, checkRefusal(job, cred, refuseUntrusted, finding)...)
 	findings = append(findings, checkDenied(job, cred, finding)...)
-	return append(findings, checkTerraform(job, ciPlan, "plan", finding)...)
+	return append(findings, checkTerraform(job, kindPlan, finding)...)
 }
 
 // checkDenied は、plan の job が `make ci-assume-denied` をちょうど1回、資格情報を取った後で plan の入口より前に
@@ -596,7 +679,7 @@ func checkApply(job workflow.Job, cred workflow.Line, w workflowInfo, finding fu
 	}
 	findings = append(findings, checkUpstream(job, w.jobs, finding)...)
 	findings = append(findings, checkRefusal(job, cred, refuseStale, finding)...)
-	return append(findings, checkTerraform(job, ciApply, "apply", finding)...)
+	return append(findings, checkTerraform(job, kindApply, finding)...)
 }
 
 // checkTriggerForm は、push と workflow_dispatch の起動条件がブロック形式で、workflow_dispatch が inputs を
@@ -628,51 +711,93 @@ func checkNoCancel(job workflow.Job, w workflowInfo, kind string, finding func(i
 	return nil
 }
 
-// checkRole は、lock の解除の job が外す root の lock の解除の role（unlockRoleFor）を、lock を残す job が残す root の
-// apply の role（holdRoleFor）を取り、ほかの job が lock の解除の role を取らないことを検査します。
-func checkRole(job workflow.Job, cred workflow.Line, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
-	unlock := isUnlock(job)
-	switch {
-	case unlock && role != unlockRoleFor(job):
-		return []lintreport.Finding{finding(cred.Number, "lock の解除の job は %s の role を取ってください（%s）。その root の lock file を消す権限だけを持つ role です", unlockRoleFor(job), role)}
-	case !unlock && isHold(job) && role != holdRoleFor(job):
-		return []lintreport.Finding{finding(cred.Number, "lock を残す job は %s の role を取ってください（%s）。その root の apply の job と同じ role で lock を取ります（ADR-0604 決定8）", holdRoleFor(job), role)}
-	case !unlock && isUnlockRole(role):
-		return []lintreport.Finding{finding(cred.Number, "%s の role は lock の解除の job（make ci-unlock-*）だけが取ってください", role)}
+// checkRole は、資格情報の CI_ENV と CI_ROLE が、job の種別の入口 make ci-<種別>-<env>-<root> の env と、root と
+// 種別が決める role（entryCredential）に一致し、lock の解除の job のほかが lock の解除の role を取らないことを
+// 検査します。入口がちょうど1つでない job は比べない —— 入口の数の違反を checkTerraform・checkHoldEntry・
+// checkUnlockEntry が出す。
+func checkRole(job workflow.Job, cred workflow.Line, role, kind string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+	var findings []lintreport.Finding
+	if kind != kindUnlock && kind != kindHold && isUnlockRole(role) {
+		findings = append(findings, finding(cred.Number, "%s の role は lock の解除の job（make ci-unlock-*）だけが取ってください", role))
 	}
-	return nil
+	entries := kindEntries(job, kind)
+	if len(entries) != 1 {
+		return findings
+	}
+	envRoot := entryRuns[kind].FindStringSubmatch(entries[0].Text)[1]
+	env, want, ok := entryCredential(kind, envRoot)
+	if !ok {
+		return append(findings, finding(entries[0].Number, "入口 make ci-%s-%s の root を読めません。<env>-identity か <env>-workload の名前にしてください（ADR-0604 決定5）", kind, envRoot))
+	}
+	if role != want {
+		switch kind {
+		case kindUnlock:
+			findings = append(findings, finding(cred.Number, "lock の解除の job は %s の role を取ってください（%s）。その root の lock file を消す権限だけを持つ role です", want, role))
+		case kindHold:
+			findings = append(findings, finding(cred.Number, "lock を残す job は %s の role を取ってください（%s）。その root の apply の job と同じ role で lock を取ります（ADR-0604 決定8）", want, role))
+		default:
+			if !isUnlockRole(role) {
+				findings = append(findings, finding(cred.Number, "%s の job は %s の role を取ってください（%s）。入口 make ci-%s-%s の root が決める role です（ADR-0604 決定3・4）", kind, want, role, kind, envRoot))
+			}
+		}
+	}
+	if m := ciEnv.FindStringSubmatch(cred.Text); m != nil && m[1] != env {
+		findings = append(findings, finding(cred.Number, "資格情報の CI_ENV=%s が、入口 make ci-%s-%s の env %s と違います", m[1], kind, envRoot, env))
+	}
+	return findings
 }
 
 func isUnlockRole(role string) bool {
 	return role == unlockIdentityRole || role == unlockWorkloadRole
 }
 
-// unlockRoleFor は、lock の解除の job の make ci-unlock-<env>-<root> の root から、取るべき role を返します。
-// identity root は unlock-identity、ほかの root は unlock。
-func unlockRoleFor(job workflow.Job) string {
-	for _, l := range job.Lines {
-		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) {
-			continue
-		}
-		if m := unlockEntry.FindStringSubmatch(l.Text); m != nil && !strings.HasSuffix(m[1], "-identity") {
-			return unlockWorkloadRole
+// entryCredential は、入口 make ci-<kind>-<envRoot> の envRoot を末尾の -identity か -workload で切り、
+// 資格情報が取るべき env と role を返します（ADR-0604 決定3・4・8）。
+// どちらの接尾辞でもないか、env が空なら ok を偽にする。
+func entryCredential(kind, envRoot string) (env, role string, ok bool) {
+	env, identity := strings.CutSuffix(envRoot, "-identity")
+	if !identity {
+		var workload bool
+		if env, workload = strings.CutSuffix(envRoot, "-workload"); !workload {
+			return "", "", false
 		}
 	}
-	return unlockIdentityRole
+	if env == "" {
+		return "", "", false
+	}
+	switch kind {
+	case kindPlan:
+		return env, planRole, true
+	case kindApply, kindHold:
+		if identity {
+			return env, applyIdentityRole, true
+		}
+		return env, applyWorkloadRole, true
+	case kindUnlock:
+		if identity {
+			return env, unlockIdentityRole, true
+		}
+		return env, unlockWorkloadRole, true
+	}
+	return "", "", false
 }
 
-// holdRoleFor は、lock を残す job の make ci-hold-<env>-<root> の root から、取るべき role を返します。
-// identity root は apply-identity、ほかの root は apply。
-func holdRoleFor(job workflow.Job) string {
+// entryRuns は、種別ごとの入口の run: の形。捕捉するのは入口の <env>-<root>。
+var entryRuns = map[string]*regexp.Regexp{kindPlan: ciPlan, kindApply: ciApply, kindUnlock: ciUnlock, kindHold: ciHold}
+
+// isKindEntry は、行が種別 kind の入口の run: かを返します。入口の数と、資格情報と比べる入口は、この述語で決める。
+func isKindEntry(kind, text string) bool {
+	return !commentLine.MatchString(text) && !nameLine.MatchString(text) && entryRuns[kind].MatchString(text)
+}
+
+func kindEntries(job workflow.Job, kind string) []workflow.Line {
+	var lines []workflow.Line
 	for _, l := range job.Lines {
-		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) {
-			continue
-		}
-		if m := holdEntry.FindStringSubmatch(l.Text); m != nil && !strings.HasSuffix(m[1], "-identity") {
-			return applyWorkloadRole
+		if isKindEntry(kind, l.Text) {
+			lines = append(lines, l)
 		}
 	}
-	return applyIdentityRole
+	return lines
 }
 
 // checkHold は、lock の解除を障害の前に試すために lock を外さずに残す job を検査します。入口の本数と terraform の
@@ -702,7 +827,7 @@ func checkHoldEntry(job workflow.Job, finding func(int, string, ...any) lintrepo
 		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
 			continue
 		}
-		matched := ciHold.MatchString(l.Text)
+		matched := isKindEntry(kindHold, l.Text)
 		if matched {
 			entries++
 		}
@@ -743,7 +868,7 @@ func checkUnlockEntry(job workflow.Job, finding func(int, string, ...any) lintre
 		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
 			continue
 		}
-		matched := ciUnlock.MatchString(l.Text)
+		matched := isKindEntry(kindUnlock, l.Text)
 		if matched {
 			entries++
 		}
@@ -759,10 +884,35 @@ func checkUnlockEntry(job workflow.Job, finding func(int, string, ...any) lintre
 
 // job の種類。分類は checkJob と同じく入口で決め、lock の解除の入口を先に、lock を残す入口を次に見る。
 const (
+	kindPlan   = "plan"
 	kindApply  = "apply"
 	kindUnlock = "unlock"
 	kindHold   = "hold"
 )
+
+// envWord は env の名前の形。log-archive のようにハイフンで区切った語も env の名前である。
+const envWord = `[a-z0-9]+(?:-[a-z0-9]+)*`
+
+// entryKinds は CI の入口 make ci-<種別>-<env>-<root> の種別の一覧。
+// .makefiles/terraform/operation/ci.mk の入口の種別の写しで、ずれはテストが見る。
+var entryKinds = []string{kindPlan, kindApply, kindUnlock, kindHold}
+
+// entryPattern は、種別 kinds のどれかを prefix と suffix で挟んだ正規表現を組みます。
+func entryPattern(prefix, suffix string, kinds ...string) *regexp.Regexp {
+	quoted := make([]string, len(kinds))
+	for i, k := range kinds {
+		quoted[i] = regexp.QuoteMeta(k)
+	}
+	return regexp.MustCompile(prefix + `(?:` + strings.Join(quoted, "|") + `)` + suffix)
+}
+
+var entryNames = func() string {
+	names := make([]string, len(entryKinds))
+	for i, k := range entryKinds {
+		names[i] = "ci-" + k + "-*"
+	}
+	return "make " + strings.Join(names, "・")
+}()
 
 // groupRecord は、資格情報を取る job のうち apply の job と lock の解除の job と lock を残す job の、入口の
 // `<env>-<root>` と実効の concurrency の group と environment です。
@@ -781,8 +931,7 @@ func groupRecords(file, source string) []groupRecord {
 	split := workflow.SplitJobs(source)
 	var records []groupRecord
 	for _, job := range split.Jobs {
-		values, _, ok := permissionsBlock(job.Lines, "    ")
-		if !ok || !hasIDToken(values) {
+		if !assumesRole(job) {
 			continue
 		}
 		kind, entry := kindApply, applyEntry
@@ -1257,23 +1406,23 @@ func checkRefusal(job workflow.Job, cred workflow.Line, id string, finding func(
 // checkTerraform は、job が terraform を entry の make でだけ走らせることを検査します。plan の入口は lock を
 // 取らず（ADR-0604 決定8）、apply の入口は Policy を通った plan だけを apply する（同 決定11）ので、
 // 役割の違う入口も認めません。
-func checkTerraform(job workflow.Job, entry *regexp.Regexp, role string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
+func checkTerraform(job workflow.Job, kind string, finding func(int, string, ...any) lintreport.Finding) []lintreport.Finding {
 	var findings []lintreport.Finding
 	entries := 0
 	for _, l := range job.Lines {
 		if commentLine.MatchString(l.Text) || nameLine.MatchString(l.Text) || installsTF.MatchString(l.Text) {
 			continue
 		}
-		matched := entry.MatchString(l.Text)
+		matched := isKindEntry(kind, l.Text)
 		if matched {
 			entries++
 		}
 		if runsTerraform.MatchString(l.Text) || (!matched && ciEntry.MatchString(l.Text)) {
-			findings = append(findings, finding(l.Number, "%s の job は terraform を make ci-%s-* でだけ走らせてください", role, role))
+			findings = append(findings, finding(l.Number, "%s の job は terraform を make ci-%s-* でだけ走らせてください", kind, kind))
 		}
 	}
-	if entries == 0 {
-		findings = append(findings, finding(job.Number, "%s の job に make ci-%s-* がありません", role, role))
+	if entries != 1 {
+		findings = append(findings, finding(job.Number, "%s の job は make ci-%s-* を1回だけ走らせてください（%d 回）", kind, kind, entries))
 	}
 	return findings
 }
@@ -1651,7 +1800,7 @@ func notifiesSuccess(j workflow.Job, apply string) bool {
 
 // checkRootCoverage は、rootsDir の下で *.tf を持つディレクトリが ADR-0604 決定5 の配置（<env>/ と <env>/identity/）
 // にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job と
-// lock を残す job がちょうど1つずつあることを検査します。見た root の数を返し、0件なら errNoTarget にする。
+// lock を残す job がちょうど1つずつあることを検査します。数えるのは対象の job（assumesRole）だけである。見た root の数を返し、0件なら errNoTarget にする。
 func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintreport.Finding, error) {
 	var findings []lintreport.Finding
 	var roots []string
@@ -1700,7 +1849,7 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 	files := slices.Sorted(maps.Keys(sources))
 	for _, root := range roots {
 		count := func(kind string, pullRequestOnly bool) int {
-			re := regexp.MustCompile(`\bmake\b.*\bci-` + kind + `-` + regexp.QuoteMeta(root) + `(?:\s|$)`)
+			re := entryPattern(`\bmake\b.*\bci-`, `-`+regexp.QuoteMeta(root)+`(?:\s|$)`, kind)
 			n := 0
 			for _, f := range files {
 				split := workflow.SplitJobs(sources[f])
@@ -1710,23 +1859,23 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 					}
 				}
 				for _, job := range split.Jobs {
-					if hasLine(job, re) {
+					if assumesRole(job) && hasLine(job, re) {
 						n++
 					}
 				}
 			}
 			return n
 		}
-		if count("plan", true) == 0 {
+		if count(kindPlan, true) == 0 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を Pull Request で plan する job がありません", root)})
 		}
-		if n := count("apply", false); n != 1 {
+		if n := count(kindApply, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を apply する job が %d 件です（1件を期待）", root, n)})
 		}
-		if n := count("unlock", false); n != 1 {
+		if n := count(kindUnlock, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を外す job が %d 件です（1件を期待）", root, n)})
 		}
-		if n := count("hold", false); n != 1 {
+		if n := count(kindHold, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を残す job が %d 件です（1件を期待）", root, n)})
 		}
 	}
