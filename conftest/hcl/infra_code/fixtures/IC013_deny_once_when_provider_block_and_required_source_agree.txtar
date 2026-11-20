@@ -1,0 +1,10 @@
+-- m/providers.tf --
+provider "evil" {}
+-- m/versions.tf --
+terraform {
+  required_providers {
+    evil = {
+      source = "evil/x"
+    }
+  }
+}

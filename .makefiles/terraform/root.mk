@@ -7,6 +7,8 @@
 ## 規則の無い名前空間を渡された Conftest は何も数えずに 0 で終えるので、規則の評価の数は
 ## tf-local policy-result が Rego の deny contains の数と突き合わせる。
 
+include .makefiles/terraform/hcl-input.mk
+
 RT_BASE ?= .
 RT_ROOTS = usecases env
 RT_DECL ?= conftest/hcl/root/decl.json
@@ -18,6 +20,8 @@ RT_POLICY_LIST = $(subst $(space),$(comma),$(strip $(RT_POLICY)))
 RT_OUT = tmp/root-check
 # module block の行頭。ラベルは引用符で囲むか識別子で書ける。
 RT_MODULE_LINE = ^[[:space:]]*module[[:space:]]+("|[A-Za-z_])
+RT_FIXTURES = conftest/hcl/lib/fixtures conftest/hcl/root/fixtures
+RT_HCL_INPUT_CMD = $(call HCL_INPUT_CMD,$(RT_BASE),$(RT_OUT)/hcl)
 
 .PHONY: root-check ## root が呼ぶ usecase の構成と、backend 設定の不変条件を HCL のソースで検査する
 root-check:
@@ -30,7 +34,8 @@ root-check:
 .PHONY: root-verify ## root の検査の Rego のテストを走らせ、各 deny に違反と非違反のテストがあることを検査
 root-verify:
 	@set -u; mkdir -p $(RT_OUT); rc=0; \
-	$(GO_TOOL) $(CONFTEST_BIN) verify $(foreach p,$(RT_POLICY),-p $(p)) --no-color --report notes > $(RT_OUT)/verify.txt 2>&1 || rc=$$?; \
+	$(call HCL_INPUT_FIXTURES,$(RT_OUT),$(RT_FIXTURES)); \
+	$(GO_TOOL) $(CONFTEST_BIN) verify $(foreach p,$(RT_POLICY),-p $(p)) $(foreach d,$(RT_FIXTURES),--data $(call HCL_FIXTURE_JSON,$(RT_OUT),$(d))) --no-color --report notes > $(RT_OUT)/verify.txt 2>&1 || rc=$$?; \
 	if [ "$$rc" -ne 0 ]; then cat $(RT_OUT)/verify.txt; fi; \
 	$(call RUN_SCRIPT,infra-code-gate,rego-tests -policy $(RT_POLICY_LIST) -report $(RT_OUT)/verify.txt -namespaces $(RT_NS)) || rc=1; \
 	exit $$rc
@@ -50,7 +55,8 @@ root-detect:
 		q=$$(printf '%s' "$$p" | sed 's/[\\"]/\\&/g'); counts="$$counts$${counts:+,}\"$$q\": $$n"; \
 	done < $(RT_OUT)/found.txt; \
 	printf '{"root_files": [%s], "root_module_counts": {%s}}\n' "$$files" "$$counts" > $(RT_OUT)/files.json; \
-	$(GO_TOOL) sh -c 'set -u; root=$$PWD; cd "$(RT_BASE)"; \
-		exec $(CONFTEST_BIN) test --combine $(foreach p,$(RT_POLICY),-p "$$root/$(p)") --data "$$root/$(RT_DECL)" --data "$$root/$(RT_OUT)/files.json" \
-		--namespace $(RT_NS) --ignore "$(IC_IGNORE)" --no-color -o json "$$@"' sh $$roots > $(RT_OUT)/result.json || :; \
+	mkdir -p $(RT_OUT)/hcl; \
+	$(call HCL_INPUT_DETECT,$(RT_BASE),$(RT_OUT)/hcl,$(RT_HCL_INPUT_CMD)); \
+	$(GO_TOOL) $(CONFTEST_BIN) test $(foreach p,$(RT_POLICY),-p $(p)) --data $(RT_DECL) --data $(RT_OUT)/files.json --data $(RT_OUT)/hcl/hcl-counts.json \
+		--namespace $(RT_NS) --no-color -o json $(RT_OUT)/hcl/hcl-input.json > $(RT_OUT)/result.json || :; \
 	$(call RUN_SCRIPT,tf-local,policy-result -namespace $(RT_NS) -rego $(RT_REGO) $(RT_OUT)/result.json)

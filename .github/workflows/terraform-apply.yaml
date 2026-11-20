@@ -68,7 +68,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate is built from scripts/.
+      # go: infra-code-gate and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -132,7 +132,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -190,17 +190,21 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
+      # go: infra-code-gate と tf-local と hcl-input と provider-schema を scripts/ からビルドする。terraform: 層の検査が lock した AWS Provider の
+      # schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:open-policy-agent/conftest go
+          tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the layer check's own tests
@@ -260,7 +264,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate and tf-local are built from scripts/.
+      # go: infra-code-gate, tf-local and hcl-input are built from scripts/.
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:

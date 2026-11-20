@@ -13,7 +13,7 @@ backend 設定の不変条件を、HCL のソースで検査する（同 ADR の
 | 段 | make | 判定するもの |
 | --- | --- | --- |
 | Rego のテスト | `root-verify` | 各 deny の ID が違反と非違反の両方のテストを持ち、テストがすべて走って通ったこと（`infra-code-gate rego-tests`） |
-| 検査 | `root-detect` | 走査の root（`usecases` `env`）の下の全ファイルを1つの入力として掛ける（`--combine`）。Conftest が読んだ `.tf` と `.tf.json` の集合を `find` の一覧と、ファイルごとの `module` block の数を `grep` が行頭で数えた数と突き合わせ、評価した規則の数を `root.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
+| 検査 | `root-detect` | 走査の root（`usecases` `env`）の下を [`scripts/hcl-input`](../../../scripts/README.md) が読んだ JSON 1つを入力として掛ける（段は `.makefiles/terraform/hcl-input.mk`）。入力の `.tf` と `.tf.json` の集合を `find` の一覧と、構文として読んだファイルとトップレベルの block の数、ファイルごとの `module` block の数を `grep` が行頭で数えた数と突き合わせ、評価した規則の数を `root.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
 
 `tf-local policy-result` は `root.rego` の行頭の `deny contains` を数える。規則は字下げせずにこのファイルへ置く。
 
@@ -22,9 +22,10 @@ backend 設定の不変条件を、HCL のソースで検査する（同 ADR の
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
 | `RT001` | 宣言（`decl.json`）の形が違う。`management_env` が env の名前でない、`usecases` がオブジェクトでない、値が `bootstrap` と `control` のどちらでもない、`bootstrap` の usecase が無い、未知の鍵を持つ | 宣言を直す |
-| `RT002` | 構成ファイルか root が0件。Conftest が読んだファイルと `find` の一覧が違う。ファイルの `module` block の数が独立の数え方と違う（ヒアドキュメントやブロックコメントの行頭の `module "`、symlink の構成ファイルなど） | 差のファイルを実体のファイルにするか、行頭に `module "` が来ないように書く |
+| `RT002` | 構成ファイルか root が0件。入力（hcl-input）が読んだファイルと `find` の一覧が違う。ファイルの `module` block の数が独立の数え方と違う | 差のファイルを実体のファイルにするか、行頭に `module "` が来ないように書く。symlink は hcl-input が先に落とす |
 | `RT003` | JSON の構成（`.tf.json`）か、root の中の override のファイル（`override.tf`、`*_override.tf`）が在る。検査はどちらも解釈しない | HCL（`.tf`）の元のファイルに書く |
 | `RT004` | 宣言の usecase の `usecases/<名前>/` に `.tf` が無い。`management_env` の identity root に `.tf` が無い | 宣言を直す |
+| `RT005` | 入力（hcl-input の JSON）の形が違う。または構文として読んだファイルの集合とトップレベルの block の数が独立の数と違う（ヒアドキュメントやブロックコメントの行頭の block の頭の形）。崩れた入力の上では、それを読む規則を評価しない | `make root-check` から起動する。行頭に block の頭の形が来ないように書く |
 | `RT101` | identity root（`env/<env>/identity/`）が、宣言した usecase 以外を呼ぶ（決定3） | workload root（`env/<env>/`）から呼ぶ |
 | `RT102` | 管理アカウント以外の identity root が、`control` の usecase を呼ぶ（決定3） | 管理アカウントの identity root から呼ぶ |
 | `RT103` | workload root が、宣言した usecase を呼ぶ（決定4） | identity root から呼ぶ |
@@ -44,7 +45,7 @@ root はディレクトリの位置で決める。`env/<env>/` を workload root
 `env/` の下でそれ以外の位置（`.terraform` の下を除く）に `.tf` を置くこと（決定5 の配置）と、各 root に plan・apply・
 lock の解除・lock を残す job があることは、`make oidc-job-lint` が見る（ADR-0501 決定5）。
 
-`module` の `source` は、ディレクトリと結んで `.` と `..` を字面で解いた後のパスで判定する（`lib.hcl.module_target`。
+`module` の `source` は、ディレクトリと結んで `.` と `..` を字面で解いた後のパスで判定する（`lib.hcl_input.module_target`。
 層の検査と同じ解き方）。解いた先が `usecases/<名前>` で、`<名前>` が宣言に在れば、その種類の usecase を呼ぶとみなす。
 env の root が `usecases/<名前>` 以外（usecase の下のディレクトリ、別の root、ローカルの module、実在しない先）を呼ぶことは、
 層の検査の `LY203`・`LY204` が落とす（ADR-0102 決定17）。`RT101`-`RT103` はその検査を通った入力を前提にする。
@@ -65,10 +66,9 @@ ADR-0602 決定1 は構成物の種類を定義し、どの usecase がどれに
 ## HCL の読み方
 
 読むのは block の種類（`module`、`terraform` の `backend` と `cloud`）と、`module` の `source` と `backend` の属性の
-リテラルの値だけである。式の中の参照は読まない。リテラルでない値（`${...}` を含む文字列、変数、関数の呼び出し）は、
+リテラルの値だけである。式の中の参照は読まない。リテラルでない値（補間を含むテンプレート、変数、関数の呼び出し）は、
 中身を読まずにリテラルでないものとして扱い、`source` なら `RT104`、`key`・`use_lockfile`・`encrypt` なら `RT202`-`RT204`
-で落とす。Conftest の hcl2 パーサの形に触れるのは `root.rego` の「入力の読み方」の節と `lib.hcl.module_target` だけである
-（入力を HCL の構文の木から作る JSON へ移すのは #367）。
+で落とす。hcl-input の JSON の形に触れるのは `root.rego` の「入力の読み方」の節と `lib.hcl_input` だけである。
 
 ## 保証しないこと
 
@@ -79,6 +79,6 @@ ADR-0602 決定1 は構成物の種類を定義し、どの usecase がどれに
 - `kms_key_id` の値が空でないこと。CI の init が state の鍵と照合した値を渡すことは `scripts/tf-local` の `stateKey` と
   そのテストが見る。鍵が無い間の bootstrap の手元の init（[`docs/setup/bootstrap.md`](../../../docs/setup/bootstrap.md)
   段2-4 の `-missing sse-s3`）は鍵を渡さない
-- 行頭の `module "` を数える独立の経路は、ヒアドキュメントやブロックコメントの中の行も数える。そのときは `RT002` で
-  落ちる（通す向きには壊れない）
+- 行頭の `module "` とトップレベルの block の頭を数える独立の経路は、ヒアドキュメントやブロックコメントの中の行も
+  数える。そのときは `RT005` か `RT002` で落ちる（通す向きには壊れない）
 - 走査の root の外の `.tf`。root の外に構成ファイルを置くことは `make infra-code-gate` が落とす

@@ -473,7 +473,6 @@ test_violation_removal_of_protected_lifecycle if {
 	fixture.has("[PLAN-STATE-01]", msgs)
 }
 
-# ADR-0604 決定13。宣言した引数を書く変更は、許可の宣言によらず落とす。
 inline_decl := {"protected_types": array.concat(["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], [t | some t, _ in data.policy_plan.inline_arguments]), "allow": {}}
 
 inline_written(empty) := [{"x": "y"}] if empty == []
@@ -532,7 +531,6 @@ test_pass_inline_unknown_on_create if {
 	count(msgs) == 0
 }
 
-# 更新の前の値は、別の resource が書いた設定を読み戻したもの。変わらなければ通す。
 test_pass_inline_same_as_before if {
 	v := {"policy": "{\"Statement\":[]}", "versioning": [{"enabled": true, "mfa_delete": false}]}
 	rcs := [inline_change("aws_s3_bucket", ["update"], v, v, {}), inline_change("aws_kms_key", ["no-op"], {"policy": "{}"}, {"policy": "{}"}, {})]
@@ -555,12 +553,17 @@ test_pass_inline_on_delete if {
 }
 
 test_violation_inline_arguments_missing_empty_or_not_object if {
-	every d in [null, {}, ["aws_s3_bucket"], {"aws_s3_bucket": {}}, {"aws_s3_bucket": ["policy"]}, {"aws_s3_bucket": "x"}, {"aws_s3_bucket": {"policy": ""}}, {"aws_kms_key_policy": {"policy": null}}] {
+	every d in [null, ["aws_s3_bucket"], {"aws_s3_bucket": {}}, {"aws_s3_bucket": ["policy"]}, {"aws_s3_bucket": "x"}, {"aws_s3_bucket": {"policy": ""}}, {"aws_kms_key_policy": {"policy": null}}] {
 		msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan as object.union(fixture.inline_declaration(d), {"stateful_protection": decl})
 		fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
 	}
 	msgs := stateful_protection.deny with input as fixture.plan([]) with data.policy_plan as {"stateful_protection": decl}
 	fixture.has("[PLAN-STATE-00] 宣言の policy_plan.inline_arguments", msgs)
+}
+
+test_violation_layer_decl_missing if {
+	msgs := stateful_protection.deny with input as fixture.plan([]) with data.layer_decl as null
+	fixture.has("[PLAN-STATE-00] 層の宣言 data.layer_decl", msgs)
 }
 
 test_violation_inline_block_unknown_inside_on_update if {
@@ -576,7 +579,7 @@ test_violation_inline_argument_cleared_on_update if {
 	}
 }
 
-# 置換の作成も、書かない引数が plan で決まらない。作成と同じく通す（ADR-0604 決定13）。
+# 置換の作成も、書かない引数が plan で決まらない。作成と同じく通す（ADR-0604 保証しないこと）。
 test_pass_inline_unknown_on_replace if {
 	msgs := stateful_protection.deny with input as fixture.plan([inline_change("aws_kms_key", ["delete", "create"], {"policy": "{}"}, {}, {"policy": true})]) with data.policy_plan.stateful_protection as {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "aws_kms_key"], "allow": {"p": [{"address": "module.x.aws_kms_key.this", "reason": "鍵を作り直す"}]}}
 	count(msgs) == 0

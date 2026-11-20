@@ -30,12 +30,19 @@ resource-order-check-test:
 	expect() { want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; expect_make "$$want" "$$case_name" resource-order-detect "$$base" "$$pattern" "$$@"; }; \
 	case_dir() { rm -rf "$$root/$$1"; mkdir -p "$$root/$$1/usecases" "$$root/$$1/env"; module "$$root/$$1" '  depends_on = [aws_iam_role_policy.first]\n'; decl "$$root/$$1"; printf '%s' "$$root/$$1"; }; \
 	printf '#!/bin/sh\nexit 1\n' > "$$root/conftest-fails"; printf '#!/bin/sh\nexit 0\n' > "$$root/conftest-silent"; chmod +x "$$root/conftest-fails" "$$root/conftest-silent"; \
+	printf '#!/bin/sh\nprintf "%%s\\n" "$$@" >> "%s"\nexec conftest "$$@"\n' "$$root/conftest-args" > "$$root/conftest-recording"; \
+	printf '#!/bin/sh\nprintf "{\\"fixtures\\": {}}\\n" > "$$2"\n' > "$$root/fixtures-empty"; \
+	chmod +x "$$root/conftest-recording" "$$root/fixtures-empty"; \
+	stub() { printf 'RO_HCL_INPUT_CMD=cp %s $(RO_OUT)/hcl/hcl-input.json' "$$1"; }; \
+	printf '"x"\n' > "$$root/not-object.json"; printf '{"files": ' > "$$root/malformed.json"; \
+	printf '{"files": [], "blocks": []}\n' > "$$root/no-files.json"; \
+	mkdir -p "$$root/badfx/fixtures"; printf -- '-- m/a.tf --\nresource {\n' > "$$root/badfx/fixtures/a.txtar"; \
 	d=$$(case_dir ok); \
 	expect pass ok "$$d" "違反はありません"; \
 	mkdir -p "$$root/no-roots"; decl "$$root/no-roots"; \
 	expect fail no-roots "$$root/no-roots" "走査の root が1つもありません"; \
 	mkdir -p "$$root/no-files/modules/a"; decl "$$root/no-files"; \
-	expect fail no-files "$$root/no-files" "no files found"; \
+	expect fail no-files "$$root/no-files" "Terraform の構成ファイル（.tf）が1件もありません"; \
 	d=$$(case_dir no-tf); rm "$$d/modules/a/main.tf"; \
 	expect fail no-tf "$$d" "RO002 [対象が0件]"; \
 	d=$$(case_dir no-depends-on); module "$$d" ''; \
@@ -56,7 +63,22 @@ resource-order-check-test:
 	printf 'resource "aws_iam_role" "this" {}\n' > "$$d/modules/a/.terraform/modules/x/main.tf"; \
 	expect pass terraform-cache "$$d" "違反はありません"; \
 	d=$$(case_dir symlink); mkdir -p "$$d/outside"; printf 'resource "aws_iam_role" "x" {}\n' > "$$d/outside/real.tf"; ln -s ../../outside/real.tf "$$d/modules/a/link.tf"; \
-	expect fail symlinked-config "$$d" "RO002 [件数の不一致]"; \
+	expect fail symlinked-config "$$d" "modules/a/link.tf: 走査の root の下に symlink があります"; \
+	d=$$(case_dir block-count); printf 'locals {\n  x = <<EOT\nresource "a" "b" {\nEOT\n}\n' > "$$d/modules/a/h.tf"; \
+	expect fail block-count-mismatch "$$d" "RO007 [入力の形] modules/a/h.tf のトップレベルの block を 1 個読みましたが、行頭の数えは 2 個です"; \
+	d=$$(case_dir hcl-input-fails); \
+	expect fail hcl-input-fails "$$d" "hcl-input が失敗したので、Conftest を起動しません" RO_HCL_INPUT_CMD="$$root/conftest-fails"; \
+	expect fail hcl-input-stale "$$d" "hcl-input が成功を返しましたが、$(RO_OUT)/hcl/hcl-input.json を書いていません" RO_HCL_INPUT_CMD=:; \
+	expect fail input-not-object "$$d" "RO007 [入力の形] 入力がオブジェクトではありません" "$$(stub "$$root/not-object.json")"; \
+	expect fail input-malformed "$$d" "結果を解釈できません" "$$(stub "$$root/malformed.json")"; \
+	expect fail input-malformed-parse "$$d" "unexpected end of JSON input" "$$(stub "$$root/malformed.json")"; \
+	expect fail input-missing-file "$$d" "RO007 [入力の形] modules/a/main.tf を構文として読んでいません（find は列挙しています）" "$$(stub "$$root/no-files.json")"; \
+	d=$$(case_dir json-only); : > "$$root/conftest-args"; \
+	expect pass conftest-input-json-only "$$d" "違反はありません" CONFTEST_BIN="$$root/conftest-recording"; \
+	if grep -qxE 'usecases|modules|env|.*\.tf|.*\.tftest\.hcl' "$$root/conftest-args" || [ "$$(grep -c 'hcl-input\.json$$' "$$root/conftest-args")" != 1 ]; then \
+		failed="$$failed conftest-input-json-only"; cat "$$root/conftest-args"; fi; \
+	expect_make fail verify-fixtures-broken resource-order-verify "$$d" "の fixture を JSON にできません" RO_FIXTURES="$$root/badfx/fixtures"; \
+	expect_make fail verify-fixtures-missing resource-order-verify "$$d" "のケースは 0 件です" HCL_FIXTURES_CMD="$$root/fixtures-empty"; \
 	d=$$(case_dir undeclared); printf '{"resource_order_decl": {"rules": []}}\n' > "$$d/decl.json"; \
 	expect fail undeclared "$$d" "RO001 [宣言の形]"; \
 	d=$$(case_dir no-rules); \
