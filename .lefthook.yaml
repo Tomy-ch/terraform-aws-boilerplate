@@ -240,13 +240,14 @@ pre-commit:
         - "docs/adr/**"
         - "scripts/infra-code-gate/**"
         - "scripts/hcl-input/**"
+        - "scripts/hcl-tally/**"
         - "scripts/lib/**"
         - ".github/CODEOWNERS"
         - ".github/settings/branch-protection.json"
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make infra-code-gate-test infra-code-gate
+      run: make -k infra-code-gate
     resource-order-check:
       glob:
         - "usecases/**"
@@ -256,11 +257,12 @@ pre-commit:
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
         - "scripts/hcl-input/**"
+        - "scripts/hcl-tally/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make resource-order-check-test resource-order-check
+      run: make -k resource-order-check
     layer-check:
       glob:
         - "usecases/**"
@@ -270,13 +272,14 @@ pre-commit:
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
         - "scripts/hcl-input/**"
+        - "scripts/hcl-tally/**"
         - "scripts/provider-schema/**"
         - "**/.terraform.lock.hcl"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make layer-check
+      run: make -k layer-check
     root-check:
       glob:
         - "usecases/**"
@@ -285,11 +288,12 @@ pre-commit:
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
         - "scripts/hcl-input/**"
+        - "scripts/hcl-tally/**"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make root-check-test root-check
+      run: make -k root-check
 
     secret-gates-test:
       glob:

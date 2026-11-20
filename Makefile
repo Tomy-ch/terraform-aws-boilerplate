@@ -47,12 +47,9 @@ include .makefiles/security/zizmor.mk
 include .makefiles/terraform/gates.mk
 include .makefiles/terraform/gates-test.mk
 include .makefiles/terraform/infra-code.mk
-include .makefiles/terraform/infra-code-test.mk
 include .makefiles/terraform/resource-order.mk
-include .makefiles/terraform/resource-order-test.mk
 include .makefiles/terraform/layer.mk
 include .makefiles/terraform/root.mk
-include .makefiles/terraform/root-test.mk
 include .makefiles/terraform/policy.mk
 include .makefiles/terraform/check-plan.mk
 include .makefiles/terraform/partitions-drift.mk

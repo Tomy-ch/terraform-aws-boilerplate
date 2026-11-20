@@ -1,12 +1,10 @@
 ## 層の規則の検査（ADR-0102 決定14・17・18。ADR-0501 決定5 がソースの構造の規約として Conftest に割り当てるもの）
 ##
 ## 判定は conftest/hcl/layer/ の Rego が持つ（規則は conftest/hcl/layer/README.md）。
-## ここが持つのは、入力の集め方と起動の順だけである。
+## ここが持つのは、道具を起動する順だけである。前の段が落ちれば、make はそこで止まり Conftest を起動しない。
 ##
-## Conftest の入力は scripts/hcl-input が走査の root の下から作る JSON で、読んだファイルの集合は find の一覧と、
-## 読んだ block の数は行頭の数えと突き合わせる（ADR-0702 決定15。段は hcl-input.mk）。構成ファイルの find の一覧も
-## --data で渡し、Rego が入力のファイルの集合と突き合わせる。規則の評価の数は tf-local policy-result が
-## Rego の deny contains の数と突き合わせる —— 規則の無い名前空間を渡された Conftest は、何も数えずに 0 で終える。
+## 規則の評価の数は tf-local policy-result が Rego の deny contains の数と突き合わせる —— 規則の無い名前空間を
+## 渡された Conftest は、何も数えずに 0 で終える。
 
 include .makefiles/terraform/hcl-input.mk
 
@@ -17,66 +15,35 @@ LY_DECL = conftest/hcl/layer/decl.json
 LY_POLICY = conftest/hcl/lib conftest/hcl/layer
 LY_REGO = conftest/hcl/layer/layer.rego
 LY_NS = layer
-LY_POLICY_LIST = $(subst $(space),$(comma),$(strip $(LY_POLICY)))
 LY_OUT = tmp/layer-check
 LY_FIXTURES = conftest/hcl/lib/fixtures conftest/hcl/layer/fixtures
 # LY306 が読む schema は layer-schema が作る（conftest/hcl/layer/README.md の Provider の schema）。
 LY_SCHEMA_DIR = $(LY_OUT)/schema
 LY_AWS_PROVIDER = registry.terraform.io/hashicorp/aws
-# lock の版の抽出と検証、取り直しの判定、抽出と和は scripts/provider-schema が持つ。ここは init と schema の取得の順序だけを持つ。
-# lock は git が追跡する一覧を位置引数で、find の独立の走査を -listed で渡す（ADR-0702 決定15。hcl-input と同じ理由）。
-LY_SCHEMA_PREPARE_CMD = $(call RUN_SCRIPT,provider-schema,prepare -provider $(LY_AWS_PROVIDER) -out "$(LY_SCHEMA_DIR)" -listed "$(LY_OUT)/locks.found" "$$@") provider-schema $$locks
-LY_HCL_INPUT_CMD = $(call HCL_INPUT_CMD,$(LY_BASE),$(LY_OUT)/hcl)
 
 .PHONY: layer-check ## 層の規則（usecase 直下の block、module の source の向き、attachment 型の親の同居と共存）を HCL のソースで検査する
-layer-check:
-	@set -u; failed=""; \
-	for t in layer-verify layer-detect; do \
-		$(MAKE) -s --no-print-directory "$$t" || failed="$$failed $$t"; \
-	done; \
-	if [ -n "$$failed" ]; then echo "❌ layer-check が落ちた検査:$$failed"; exit 1; fi
+layer-check: layer-verify layer-detect
 
 .PHONY: layer-verify ## 層の検査の Rego のテストを走らせ、各 deny に違反と非違反のテストがあることを検査
 layer-verify:
-	@set -u; mkdir -p $(LY_OUT); rc=0; \
-	$(call HCL_INPUT_FIXTURES,$(LY_OUT),$(LY_FIXTURES)); \
-	$(GO_TOOL) $(CONFTEST_BIN) verify $(foreach p,$(LY_POLICY),-p $(p)) $(foreach d,$(LY_FIXTURES),--data $(call HCL_FIXTURE_JSON,$(LY_OUT),$(d))) --no-color --report notes > $(LY_OUT)/verify.txt 2>&1 || rc=$$?; \
-	if [ "$$rc" -ne 0 ]; then cat $(LY_OUT)/verify.txt; fi; \
-	$(call RUN_SCRIPT,infra-code-gate,rego-tests -policy $(LY_POLICY_LIST) -report $(LY_OUT)/verify.txt -namespaces $(LY_NS)) || rc=1; \
-	exit $$rc
+	$(call HCL_VERIFY,$(LY_OUT)/verify,$(LY_POLICY),$(LY_FIXTURES),$(LY_NS))
 
+.PHONY: layer-inputs ## 層の検査の入力を、HCL の構文の木とは別の経路で数える
+layer-inputs:
+	@mkdir -p $(LY_OUT)
+	@$(call HCL_TALLY,$(LY_BASE),$(LY_OUT),$(LY_ROOTS),-files-key layer_files)
+
+# fetch は terraform をホストで起動する（terraform は提供段のコンテナに無い）。
 .PHONY: layer-schema ## 層の検査に渡す AWS Provider の schema の一覧（lock した版ごとの和）を作る
-layer-schema:
-	@set -eu; mkdir -p $(LY_OUT); : > $(LY_OUT)/schema.json; \
-	roots=""; for d in $(LY_ROOTS); do if [ -d "$(LY_BASE)/$$d" ]; then roots="$$roots $$d"; fi; done; \
-	[ -n "$$roots" ] || { echo "❌ 走査の root が1つもありません（$(LY_ROOTS)）" >&2; exit 2; }; \
-	git -C "$(LY_BASE)" ls-files -- $(foreach r,$(LY_ROOTS),'$(r)/*.terraform.lock.hcl') > $(LY_OUT)/locks.git; \
-	(cd "$(LY_BASE)" && find $$roots -name .terraform.lock.hcl -not -path '*/.terraform/*') > $(LY_OUT)/locks.raw; \
-	sed 's|^|$(LY_BASE)/|' $(LY_OUT)/locks.raw > $(LY_OUT)/locks.found; \
-	locks=$$(sed 's|^|$(LY_BASE)/|' $(LY_OUT)/locks.git); \
-	mkdir -p "$$TF_PLUGIN_CACHE_DIR"; \
-	dirs=$$($(LY_SCHEMA_PREPARE_CMD)); \
-	for d in $$dirs; do \
-		$(TF) -chdir="$$d" init -backend=false -lockfile=readonly -input=false -no-color > "$$d/init.log" 2>&1 \
-			|| { cat "$$d/init.log" >&2; echo "❌ $$d の init が失敗しました" >&2; exit 1; }; \
-		$(TF) -chdir="$$d" providers schema -json > "$$d/raw.tmp" || { echo "❌ $$d の schema を取れませんでした" >&2; exit 1; }; \
-		mv "$$d/raw.tmp" "$$d/raw.json"; \
-	done; \
-	$(call RUN_SCRIPT,provider-schema,merge -provider $(LY_AWS_PROVIDER) -dir "$(LY_SCHEMA_DIR)" -out $(LY_OUT)/schema.json)
+layer-schema: layer-inputs
+	@$(call RUN_SCRIPT,provider-schema,prepare -provider $(LY_AWS_PROVIDER) -out "$(LY_SCHEMA_DIR)" -base "$(LY_BASE)" -listed "$(LY_OUT)/found.txt" $(LY_ROOTS))
+	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
+	@$(TF_ENV) $(call RUN_SCRIPT_HOST,provider-schema,fetch -dir "$(LY_SCHEMA_DIR)")
+	@$(call RUN_SCRIPT,provider-schema,merge -provider $(LY_AWS_PROVIDER) -dir "$(LY_SCHEMA_DIR)" -out $(LY_OUT)/schema.json)
 
 .PHONY: layer-detect ## Terraform の構成を層の規則で検査し、読んだファイルを独立の走査と突き合わせる
-layer-detect:
-	@set -u; mkdir -p $(LY_OUT); rm -f $(LY_OUT)/found.txt $(LY_OUT)/files.json $(LY_OUT)/result.json; \
-	roots=""; for d in $(LY_ROOTS); do if [ -d "$(LY_BASE)/$$d" ]; then roots="$$roots $$d"; fi; done; \
-	if [ -z "$$roots" ]; then echo "❌ 走査の root が1つもありません（$(LY_ROOTS)）" >&2; exit 2; fi; \
-	(cd "$(LY_BASE)" && find $$roots \( -name '*.tf' -o -name '*.tf.json' \) -not -path '*/.terraform/*') > $(LY_OUT)/found.txt \
-		|| { echo "❌ 構成ファイルの独立の走査（find）が失敗しました" >&2; exit 1; }; \
-	files=$$(sort $(LY_OUT)/found.txt | sed 's/[\\"]/\\&/g; s/.*/"&"/' | paste -sd, -); \
-	printf '{"layer_files": [%s]}\n' "$$files" > $(LY_OUT)/files.json; \
-	mkdir -p $(LY_OUT)/hcl; \
-	$(call HCL_INPUT_DETECT,$(LY_BASE),$(LY_OUT)/hcl,$(LY_HCL_INPUT_CMD)); \
-	$(MAKE) -s --no-print-directory layer-schema || { echo "❌ layer-schema が失敗したので、Conftest を起動しません" >&2; exit 1; }; \
-	[ -s $(LY_OUT)/schema.json ] || { echo "❌ layer-schema が成功を返しましたが、$(LY_OUT)/schema.json を書いていません" >&2; exit 1; }; \
-	$(GO_TOOL) $(CONFTEST_BIN) test $(foreach p,$(LY_POLICY),-p $(p)) --data $(LY_DECL) --data $(LY_OUT)/files.json --data $(LY_OUT)/hcl/hcl-counts.json \
-		--data $(LY_OUT)/schema.json --namespace $(LY_NS) --no-color -o json $(LY_OUT)/hcl/hcl-input.json > $(LY_OUT)/result.json || :; \
-	$(call RUN_SCRIPT,tf-local,policy-result -namespace $(LY_NS) -rego $(LY_REGO) $(LY_OUT)/result.json)
+layer-detect: layer-schema
+	@$(call HCL_INPUT,$(LY_BASE),$(LY_OUT),$(LY_ROOTS))
+	-@$(GO_TOOL) $(CONFTEST_BIN) test $(foreach p,$(LY_POLICY),-p $(p)) --data $(LY_DECL) --data $(LY_OUT)/files.json --data $(LY_OUT)/hcl-counts.json \
+		--data $(LY_OUT)/schema.json --namespace $(LY_NS) --no-color -o json $(LY_OUT)/hcl-input.json > $(LY_OUT)/result.json
+	@$(call RUN_SCRIPT,tf-local,policy-result -namespace $(LY_NS) -rego $(LY_REGO) $(LY_OUT)/result.json)

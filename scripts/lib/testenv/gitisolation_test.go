@@ -242,7 +242,7 @@ func Test_makefiles_一時のリポジトリを建てるレシピはGIT_ISOLATE�
 
 	// 見つけたレシピが0件なら、印か読み方が壊れている。
 	assert.Subset(t, found, []string{
-		"infra-code-gate-test", "gitleaks-canary", "trufflehog-canary",
+		"gitleaks-canary", "trufflehog-canary",
 		"editorconfig-check-canary", "editorconfig-directive-canary",
 	})
 }

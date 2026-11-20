@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -144,9 +147,9 @@ func Test_parseLock(t *testing.T) {
 func Test_readListed(t *testing.T) {
 	t.Parallel()
 
-	t.Run("1行に1件を正規化して読む", func(t *testing.T) {
+	t.Run("lock の名前の行だけを正規化して読む", func(t *testing.T) {
 		t.Parallel()
-		p := writeFile(t, t.TempDir(), "locks.found", "./a/.terraform.lock.hcl\nb//.terraform.lock.hcl\n")
+		p := writeFile(t, t.TempDir(), "found.txt", "./a/.terraform.lock.hcl\na/main.tf\nb//.terraform.lock.hcl\nc/x.terraform.lock.hcl\n")
 		got, err := readListed(p)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"a/.terraform.lock.hcl", "b/.terraform.lock.hcl"}, got)
@@ -154,15 +157,18 @@ func Test_readListed(t *testing.T) {
 
 	t.Run("末尾の改行が無くても読む", func(t *testing.T) {
 		t.Parallel()
-		p := writeFile(t, t.TempDir(), "locks.found", "a/.terraform.lock.hcl")
+		p := writeFile(t, t.TempDir(), "found.txt", "a/.terraform.lock.hcl")
 		got, err := readListed(p)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"a/.terraform.lock.hcl"}, got)
 	})
 
-	t.Run("空のファイルは空の一覧", func(t *testing.T) {
+	t.Run("空のファイルと lock の無い一覧は空の一覧", func(t *testing.T) {
 		t.Parallel()
-		got, err := readListed(writeFile(t, t.TempDir(), "locks.found", ""))
+		got, err := readListed(writeFile(t, t.TempDir(), "found.txt", ""))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+		got, err = readListed(writeFile(t, t.TempDir(), "found.txt", "a/main.tf\n"))
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
@@ -178,7 +184,7 @@ func Test_readListed(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				_, err := readListed(writeFile(t, t.TempDir(), "locks.found", body))
+				_, err := readListed(writeFile(t, t.TempDir(), "found.txt", body))
 				require.ErrorIs(t, err, errLockList)
 			})
 		}
@@ -191,6 +197,32 @@ func Test_readListed(t *testing.T) {
 	})
 }
 
+func Test_gitLocks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root の下で追跡している lock だけを返す", func(t *testing.T) {
+		t.Parallel()
+		repo := t.TempDir()
+		writeFile(t, repo, "usecases/a/.terraform.lock.hcl", "")
+		writeFile(t, repo, "usecases/a/sub/.terraform.lock.hcl", "")
+		writeFile(t, repo, "usecases/a/main.tf", "")
+		writeFile(t, repo, "env/x/.terraform.lock.hcl", "")
+		writeFile(t, repo, "other/.terraform.lock.hcl", "")
+		writeFile(t, repo, "usecases/b/.terraform.lock.hcl", "")
+		gitIn(t, repo, "init", "-q")
+		gitIn(t, repo, "add", "usecases/a", "env", "other")
+		got, err := gitLocks(repo, []string{"usecases", "env"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"env/x/.terraform.lock.hcl", "usecases/a/.terraform.lock.hcl", "usecases/a/sub/.terraform.lock.hcl"}, got)
+	})
+
+	t.Run("git のリポジトリでなければエラー", func(t *testing.T) {
+		t.Parallel()
+		_, err := gitLocks(filepath.Join(t.TempDir(), "none"), []string{"usecases"})
+		require.Error(t, err)
+	})
+}
+
 func Test_reconcile(t *testing.T) {
 	t.Parallel()
 
@@ -200,9 +232,9 @@ func Test_reconcile(t *testing.T) {
 	}{
 		"一致":           {args: []string{"a", "b"}, listed: []string{"b", "a"}},
 		"正規化で一致する":     {args: []string{"./a", "b/../c"}, listed: []string{"a", "c"}},
-		"引数にだけある":      {args: []string{"a", "c", "b"}, listed: []string{"a"}, want: "引数にだけある: [b c]、独立の走査にだけある: []"},
-		"listed にだけある": {args: []string{"a"}, listed: []string{"a", "c", "b"}, want: "引数にだけある: []、独立の走査にだけある: [b c]"},
-		"両向き":          {args: []string{"a", "b"}, listed: []string{"a", "c"}, want: "引数にだけある: [b]、独立の走査にだけある: [c]"},
+		"git の追跡にだけある": {args: []string{"a", "c", "b"}, listed: []string{"a"}, want: "git の追跡にだけある: [b c]、独立の走査にだけある: []"},
+		"listed にだけある": {args: []string{"a"}, listed: []string{"a", "c", "b"}, want: "git の追跡にだけある: []、独立の走査にだけある: [b c]"},
+		"両向き":          {args: []string{"a", "b"}, listed: []string{"a", "c"}, want: "git の追跡にだけある: [b]、独立の走査にだけある: [c]"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -283,23 +315,40 @@ func Test_needsFetch(t *testing.T) {
 	})
 }
 
+// lockFixture は base に lock を置き、prepare の引数（-base・-listed・root）と、追跡している lock を返す偽の
+// lister を返す。tracked が nil なら、置いた lock のすべてを追跡しているとする。
+func lockFixture(t *testing.T, base string, locks map[string]string, tracked []string) ([]string, lockLister) {
+	t.Helper()
+	var listed []string
+	for rel, body := range locks {
+		writeFile(t, base, rel, body)
+		listed = append(listed, rel)
+	}
+	if tracked == nil {
+		tracked = listed
+	}
+	found := writeFile(t, base, "found.txt", strings.Join(append(listed, "a/main.tf"), "\n")+"\n")
+
+	return []string{"-base", base, "-listed", found, "a", "b", "c", "d"}, func(string, []string) ([]string, error) { return tracked, nil }
+}
+
 func Test_prepare(t *testing.T) {
 	t.Parallel()
 
-	t.Run("版ごとに lock と versions.tf を置き、取り直す版を出す", func(t *testing.T) {
+	t.Run("版ごとに lock と versions.tf を置き、取り直す版を fetch.txt に書く", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
-		locks := []string{
-			writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a=")),
-			writeFile(t, base, "b/.terraform.lock.hcl", randomBlock),
-			writeFile(t, base, "c/.terraform.lock.hcl", awsLock("6.2.0", "h1:other=")),
-			writeFile(t, base, "d/.terraform.lock.hcl", awsLock("5.9.0", "h1:d=")),
-		}
+		args, ls := lockFixture(t, base, map[string]string{
+			"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a="),
+			"b/.terraform.lock.hcl": randomBlock,
+			"c/.terraform.lock.hcl": awsLock("6.2.0", "h1:other="),
+			"d/.terraform.lock.hcl": awsLock("5.9.0", "h1:d="),
+		}, []string{"a/.terraform.lock.hcl", "b/.terraform.lock.hcl", "c/.terraform.lock.hcl", "d/.terraform.lock.hcl"})
 		dir := filepath.Join(base, "schema")
-		var stdout, stderr bytes.Buffer
-		require.NoError(t, prepare(append([]string{"-provider", awsProvider, "-out", dir, "-listed", writeListed(t, base, locks...)}, locks...), &stdout, &stderr))
+		var stderr bytes.Buffer
+		require.NoError(t, prepare(append([]string{"-provider", awsProvider, "-out", dir}, args...), &stderr, ls))
 
-		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n"+filepath.Join(dir, "5.9.0")+"\n", stdout.String())
+		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n"+filepath.Join(dir, "5.9.0")+"\n", readFile(t, filepath.Join(dir, fetchName)))
 		assert.Equal(t, "6.2.0\n5.9.0\n", readFile(t, filepath.Join(dir, versionsName)))
 		assert.Equal(t, awsBlock("6.2.0", "h1:a="), readFile(t, filepath.Join(dir, "6.2.0", lockName)), "その版を持つ最初の lock の block")
 		assert.Equal(t, awsBlock("5.9.0", "h1:d="), readFile(t, filepath.Join(dir, "5.9.0", lockName)))
@@ -310,23 +359,21 @@ func Test_prepare(t *testing.T) {
 	t.Run("lock が同じで schema があれば取り直さず、lock が変われば schema を消す", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
-		a := writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a="))
-		b := writeFile(t, base, "b/.terraform.lock.hcl", awsLock("5.9.0", "h1:b="))
+		locks := map[string]string{"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a="), "b/.terraform.lock.hcl": awsLock("5.9.0", "h1:b=")}
+		rest, ls := lockFixture(t, base, locks, []string{"a/.terraform.lock.hcl", "b/.terraform.lock.hcl"})
 		dir := filepath.Join(base, "schema")
-		args := []string{"-provider", awsProvider, "-out", dir, "-listed", writeListed(t, base, a, b), a, b}
-		require.NoError(t, prepare(args, &bytes.Buffer{}, &bytes.Buffer{}))
+		args := append([]string{"-provider", awsProvider, "-out", dir}, rest...)
+		require.NoError(t, prepare(args, &bytes.Buffer{}, ls))
 		writeFile(t, dir, "6.2.0/raw.json", "{}")
 		writeFile(t, dir, "5.9.0/raw.json", "{}")
 
-		var stdout bytes.Buffer
-		require.NoError(t, prepare(args, &stdout, &bytes.Buffer{}))
-		assert.Empty(t, stdout.String())
+		require.NoError(t, prepare(args, &bytes.Buffer{}, ls))
+		assert.Empty(t, readFile(t, filepath.Join(dir, fetchName)))
 		assert.FileExists(t, filepath.Join(dir, "6.2.0", rawName))
 
 		writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:changed="))
-		stdout.Reset()
-		require.NoError(t, prepare(args, &stdout, &bytes.Buffer{}))
-		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n", stdout.String())
+		require.NoError(t, prepare(args, &bytes.Buffer{}, ls))
+		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n", readFile(t, filepath.Join(dir, fetchName)))
 		assert.NoFileExists(t, filepath.Join(dir, "6.2.0", rawName))
 		assert.Equal(t, awsBlock("6.2.0", "h1:changed="), readFile(t, filepath.Join(dir, "6.2.0", lockName)))
 		assert.FileExists(t, filepath.Join(dir, "5.9.0", rawName))
@@ -335,15 +382,17 @@ func Test_prepare(t *testing.T) {
 	t.Run("引数が足りなければ errUsage", func(t *testing.T) {
 		t.Parallel()
 		for name, args := range map[string][]string{
-			"-provider が無い":   {"-out", "d", "-listed", "f", "l"},
-			"-out が無い":        {"-provider", awsProvider, "-listed", "f", "l"},
-			"-listed が無い":     {"-provider", awsProvider, "-out", "d", "l"},
-			"-provider の形が違う": {"-provider", "aws", "-out", "d", "-listed", "f", "l"},
-			"知らないフラグ":         {"-x", "-provider", awsProvider, "-out", "d", "-listed", "f", "l"},
+			"-provider が無い":   {"-out", "d", "-base", ".", "-listed", "f", "r"},
+			"-out が無い":        {"-provider", awsProvider, "-base", ".", "-listed", "f", "r"},
+			"-base が無い":       {"-provider", awsProvider, "-out", "d", "-listed", "f", "r"},
+			"-listed が無い":     {"-provider", awsProvider, "-out", "d", "-base", ".", "r"},
+			"root が無い":        {"-provider", awsProvider, "-out", "d", "-base", ".", "-listed", "f"},
+			"-provider の形が違う": {"-provider", "aws", "-out", "d", "-base", ".", "-listed", "f", "r"},
+			"知らないフラグ":         {"-x", "-provider", awsProvider, "-out", "d", "-base", ".", "-listed", "f", "r"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				require.ErrorIs(t, prepare(args, &bytes.Buffer{}, &bytes.Buffer{}), errUsage)
+				require.ErrorIs(t, prepare(args, &bytes.Buffer{}, func(string, []string) ([]string, error) { return []string{"x"}, nil }), errUsage)
 			})
 		}
 	})
@@ -356,7 +405,7 @@ func Test_prepare(t *testing.T) {
 			locks map[string]string
 			want  error
 		}{
-			"lock が0件":          {want: errNoLocks},
+			"追跡している lock が0件":   {want: errNoLocks},
 			"構文の誤り":             {locks: map[string]string{"a": good, "b": "provider \"x\" {\n"}, want: errLockSyntax},
 			"version の無い block": {locks: map[string]string{"a": good, "b": "provider \"" + awsProvider + "\" {\n}\n"}, want: errVersion},
 			"版の形でない version":    {locks: map[string]string{"a": good, "b": awsBlock("6.2.0/../../x", "h1:a=")}, want: errVersion},
@@ -366,29 +415,41 @@ func Test_prepare(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				base := t.TempDir()
-				var paths []string
+				locks := map[string]string{}
+				tracked := []string{}
 				for _, n := range []string{"a", "b"} {
 					if body, ok := tt.locks[n]; ok {
-						paths = append(paths, writeFile(t, base, n+"/.terraform.lock.hcl", body))
+						locks[n+"/.terraform.lock.hcl"] = body
+						tracked = append(tracked, n+"/.terraform.lock.hcl")
 					}
 				}
+				rest, ls := lockFixture(t, base, locks, tracked)
 				dir := filepath.Join(base, "schema")
-				var stdout bytes.Buffer
-				listed := writeListed(t, base, paths...)
-				err := prepare(append([]string{"-provider", awsProvider, "-out", dir, "-listed", listed}, paths...), &stdout, &bytes.Buffer{})
+				err := prepare(append([]string{"-provider", awsProvider, "-out", dir}, rest...), &bytes.Buffer{}, ls)
 				require.ErrorIs(t, err, tt.want)
 				assert.NoDirExists(t, dir)
-				assert.Empty(t, stdout.String())
 			})
 		}
 	})
 
-	t.Run("lock を読めなければ失敗し、何も書かない", func(t *testing.T) {
+	t.Run("git の一覧を取れなければ失敗し、何も書かない", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
+		rest, _ := lockFixture(t, base, map[string]string{"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a=")}, nil)
 		dir := filepath.Join(base, "schema")
-		missing := filepath.Join(base, "missing.hcl")
-		err := prepare([]string{"-provider", awsProvider, "-out", dir, "-listed", writeListed(t, base, missing), missing}, &bytes.Buffer{}, &bytes.Buffer{})
+		boom := errors.New("git が無い")
+		err := prepare(append([]string{"-provider", awsProvider, "-out", dir}, rest...), &bytes.Buffer{}, func(string, []string) ([]string, error) { return nil, boom })
+		require.ErrorIs(t, err, boom)
+		assert.NoDirExists(t, dir)
+	})
+
+	t.Run("追跡している lock を読めなければ失敗し、何も書かない", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		found := writeFile(t, base, "found.txt", "a/.terraform.lock.hcl\n")
+		dir := filepath.Join(base, "schema")
+		err := prepare([]string{"-provider", awsProvider, "-out", dir, "-base", base, "-listed", found, "a"}, &bytes.Buffer{},
+			func(string, []string) ([]string, error) { return []string{"a/.terraform.lock.hcl"}, nil })
 		require.ErrorIs(t, err, fs.ErrNotExist)
 		assert.NoDirExists(t, dir)
 	})
@@ -396,60 +457,59 @@ func Test_prepare(t *testing.T) {
 	t.Run("-listed を読めなければ失敗し、何も書かない", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
-		lock := writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a="))
+		_, ls := lockFixture(t, base, map[string]string{"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a=")}, nil)
 		dir := filepath.Join(base, "schema")
-		var stdout bytes.Buffer
-		err := prepare([]string{"-provider", awsProvider, "-out", dir, "-listed", filepath.Join(base, "missing.txt"), lock}, &stdout, &bytes.Buffer{})
+		err := prepare([]string{"-provider", awsProvider, "-out", dir, "-base", base, "-listed", filepath.Join(base, "missing.txt"), "a"}, &bytes.Buffer{}, ls)
 		require.ErrorIs(t, err, fs.ErrNotExist)
 		assert.NoDirExists(t, dir)
-		assert.Empty(t, stdout.String())
 	})
 
-	t.Run("lock の一覧が引数と食い違えば失敗し、何も書かない", func(t *testing.T) {
+	t.Run("lock の一覧が git の追跡と食い違えば失敗し、何も書かない", func(t *testing.T) {
 		t.Parallel()
 
-		// listed の各行の {base} は、テストごとの一時ディレクトリに置き換える。
 		tests := map[string]struct {
-			listed string
-			want   error
+			tracked []string
+			want    error
 		}{
-			"引数にだけある":  {listed: "{base}/a/.terraform.lock.hcl\n", want: errCountMismatch},
-			"一覧にだけある":  {listed: "{base}/a/.terraform.lock.hcl\n{base}/b/.terraform.lock.hcl\n{base}/c/.terraform.lock.hcl\n", want: errCountMismatch},
-			"一覧に空行がある": {listed: "{base}/a/.terraform.lock.hcl\n\n{base}/b/.terraform.lock.hcl\n", want: errLockList},
-			"一覧に重複がある": {listed: "{base}/a/.terraform.lock.hcl\n{base}/b/.terraform.lock.hcl\n{base}/./a/.terraform.lock.hcl\n", want: errLockList},
+			"git の追跡にだけある": {tracked: []string{"a/.terraform.lock.hcl", "b/.terraform.lock.hcl", "c/.terraform.lock.hcl"}, want: errCountMismatch},
+			"独立の走査にだけある":   {tracked: []string{"a/.terraform.lock.hcl"}, want: errCountMismatch},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				base := t.TempDir()
-				locks := []string{
-					writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a=")),
-					writeFile(t, base, "b/.terraform.lock.hcl", awsLock("5.9.0", "h1:b=")),
-				}
-				listed := writeFile(t, base, "locks.found", strings.ReplaceAll(tt.listed, "{base}", base))
+				rest, ls := lockFixture(t, base, map[string]string{
+					"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a="),
+					"b/.terraform.lock.hcl": awsLock("5.9.0", "h1:b="),
+				}, tt.tracked)
 				dir := filepath.Join(base, "schema")
-				var stdout bytes.Buffer
-				err := prepare(append([]string{"-provider", awsProvider, "-out", dir, "-listed", listed}, locks...), &stdout, &bytes.Buffer{})
+				err := prepare(append([]string{"-provider", awsProvider, "-out", dir}, rest...), &bytes.Buffer{}, ls)
 				require.ErrorIs(t, err, tt.want)
 				assert.NoDirExists(t, dir)
-				assert.Empty(t, stdout.String())
 			})
 		}
 	})
 
-	t.Run("書き込めなければ失敗し、取り直す版を出さない", func(t *testing.T) {
+	t.Run("書き込めなければ失敗し、取り直す版を書かない", func(t *testing.T) {
 		t.Parallel()
 		testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
 		base := t.TempDir()
-		lock := writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a="))
+		rest, ls := lockFixture(t, base, map[string]string{"a/.terraform.lock.hcl": awsLock("6.2.0", "h1:a=")}, nil)
 		dir := filepath.Join(base, "schema")
 		require.NoError(t, os.MkdirAll(filepath.Join(dir, "6.2.0"), 0o750))
 		require.NoError(t, os.Chmod(dir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(dir, 0o750) })
-		var stdout bytes.Buffer
-		err := prepare([]string{"-provider", awsProvider, "-out", dir, "-listed", writeListed(t, base, lock), lock}, &stdout, &bytes.Buffer{})
+		err := prepare(append([]string{"-provider", awsProvider, "-out", dir}, rest...), &bytes.Buffer{}, ls)
 		require.ErrorIs(t, err, fs.ErrPermission)
-		assert.Empty(t, stdout.String())
 		assert.NoFileExists(t, filepath.Join(dir, versionsName))
+		assert.NoFileExists(t, filepath.Join(dir, fetchName))
 	})
+}
+
+// gitIn は dir で git を走らせる。
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
