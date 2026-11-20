@@ -170,3 +170,31 @@ test_IC005_deny_malformed_input_without_judging_allowlist if {
 	count(with_id(msgs, "IC020")) == 0
 	msgs == with_id(msgs, "IC005")
 }
+
+# 許可リストの項目は id の一致する構成要素だけに当たる。
+test_IC031_deny_only_the_matching_component if {
+	d := lambda_decl([
+		repo_item("u/internal/fn#resource.aws_lambda_function.f", "u/internal/fn/src1"),
+		repo_item("u/internal/fn#resource.aws_lambda_function.g", "u/internal/fn/src1"),
+	])
+	with_id(denies(fx("IC031_two_items_two_components"), d), "IC031") == {"IC031 [path] u/internal/fn/main.tf: u/internal/fn#resource.aws_lambda_function.g の filename が指す u/internal/fn/src2/fn.zip は、ソースの所在 u/internal/fn/src1 の下にありません"}
+}
+
+test_IC032_deny_external_item_pointing_into_repository_exactly if {
+	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r"}])
+	denies(fx("IC032_external_item_repository_path"), d) == {"IC032 [path] u/internal/fn/main.tf: 外部所有の項目 u/internal/fn#resource.aws_lambda_function.f の filename がリポジトリ内のパスを指しています"}
+}
+
+# 第1引数が参照の file() は、path として静的に確定しない。
+test_IC030_deny_file_function_with_reference if {
+	d := lambda_decl([repo_item("u/internal/fn#resource.aws_cloudfront_function.c", "u/internal/fn/src")])
+	some m in with_id(denies(fx("IC030_deny_file_function_with_reference"), d), "IC030")
+	contains(m, "パスでもインラインのコードでもありません（2 行目）")
+}
+
+# body_args が入れ子の block を指すとき、値はリストとして扱う。
+test_IC034_deny_nested_block_body_arg if {
+	d := object.union(lambda_decl([repo_item("u/internal/fn#resource.aws_spot_fleet_request.s", "u/internal/fn/src")]), {"types": object.union(lambda_decl([]).types, {"resource.aws_spot_fleet_request": {"executes_code": true, "body_args": ["launch_specification"]}})})
+	some m in with_id(denies(fx("IC034_deny_nested_block_body_arg"), d), "IC034")
+	contains(m, "launch_specification はリスト")
+}

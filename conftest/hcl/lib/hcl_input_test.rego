@@ -3,7 +3,7 @@ package lib.hcl_input
 # fixture は conftest/hcl/lib/fixtures の txtar を hcl-input fixtures が JSON にしたもの（data.fixtures）。
 fx(name) := data.fixtures[name]
 
-lib_cases := {"lib_components", "lib_bodies", "lib_sources"}
+lib_cases := {"lib_components", "lib_bodies", "lib_sources", "lib_unresolved"}
 
 test_fixtures_present if {
 	every name in lib_cases {
@@ -299,4 +299,11 @@ test_module_target_rejects_sources_that_are_not_relative_paths if {
 	not module_target("env/dev", "..")
 	not module_target("env/dev", "/abs/path")
 	not module_target("env/dev", 1)
+}
+
+test_unresolved_expr if {
+	doc := fx("lib_unresolved")
+	unresolved_expr(scope_of(block(doc, "provider", ["helm"])))
+	unresolved_expr(scope_of(block(doc, "provider", ["kubectl"])))
+	not unresolved_expr(scope_of(block(doc, "provider", ["aws"])))
 }

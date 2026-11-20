@@ -250,11 +250,14 @@ fixture_cases := {
 	"IC011_deny_declared_command_block",
 	"IC011_deny_declared_command_block_in_tftest",
 	"IC011_deny_dynamic_provisioner",
+	"IC011_deny_every_must_execute_type",
 	"IC011_deny_external_inside_check",
 	"IC011_deny_override_file_adding_provisioner",
 	"IC011_deny_provider_exec_at_any_depth",
 	"IC011_deny_provider_exec_in_attribute_form",
 	"IC011_deny_provider_exec_in_tftest",
+	"IC011_deny_provider_unresolved_conditional",
+	"IC011_deny_provider_unresolved_object_key",
 	"IC011_deny_provisioner_in_removed_block",
 	"IC011_deny_provisioner_on_any_type",
 	"IC013_allow_classified_provider_with_required_source",
@@ -270,6 +273,7 @@ fixture_cases := {
 	"IC030_allow_static_paths_3",
 	"IC030_deny_absolute_path",
 	"IC030_deny_file_function_followed_by_more_code",
+	"IC030_deny_file_function_with_reference",
 	"IC030_deny_non_static_inline_code",
 	"IC030_deny_non_static_path_2",
 	"IC030_deny_non_static_path_3",
@@ -298,9 +302,12 @@ fixture_cases := {
 	"IC031_deny_path_outside_source_1",
 	"IC031_deny_path_outside_source_2",
 	"IC031_deny_path_outside_source_3",
+	"IC031_two_items_two_components",
 	"IC032_allow_external_item_without_repository_path",
+	"IC032_external_item_repository_path",
 	"IC033_deny_inline_code_with_other_source",
 	"IC034_deny_list_valued_code",
+	"IC034_deny_nested_block_body_arg",
 }
 
 test_fixtures_present if {
@@ -314,4 +321,37 @@ test_fixtures_present if {
 test_IC011_deny_provider_exec_in_attribute_form if {
 	some m in with_id(denies(fx("IC011_deny_provider_exec_in_attribute_form"), base_decl), "IC011")
 	contains(m, "m#provider.helm（provider の exec）")
+}
+
+# provider の中の、中を読めない式（条件など）と、キーがリテラルでないオブジェクトは、exec を隠せるので検出する。
+test_IC011_deny_provider_unresolved_expression if {
+	every c in ["IC011_deny_provider_unresolved_conditional", "IC011_deny_provider_unresolved_object_key"] {
+		with_id(denies(fx(c), base_decl), "IC011") == {"IC011 [許可リストに無い] m/main.tf: m#provider.helm（解けない式）はインフラ内コードです → allowlist に項目を足し、本リポジトリ所有なら ADR-0103 決定13 の ADR を書く"}
+	}
+}
+
+test_IC011_allow_listed_provider_unresolved_expression if {
+	d := object.union(base_decl, {"allowlist": [{"id": "m#provider.helm", "owner": "external", "repository": "github.com/o/r"}]})
+	every c in ["IC011_deny_provider_unresolved_conditional", "IC011_deny_provider_unresolved_object_key"] {
+		count(with_id(denies(fx(c), d), "IC011")) == 0
+	}
+}
+
+must_execute_decl(v) := object.union(base_decl, {"types": object.union(base_decl.types, {k: {"executes_code": v} | some k in must_execute})})
+
+test_IC012_deny_every_must_execute_type_on_the_wrong_side if {
+	msgs := with_id(denies(fx("IC002_allow_hcl"), must_execute_decl(false)), "IC012")
+	every k in must_execute {
+		some m in msgs
+		contains(m, concat("", [k, " はコードを実行させる型です"]))
+	}
+	count(msgs) == count(must_execute)
+}
+
+test_IC011_deny_every_must_execute_type if {
+	msgs := with_id(denies(fx("IC011_deny_every_must_execute_type"), must_execute_decl(true)), "IC011")
+	every k in must_execute {
+		some m in msgs
+		contains(m, sprintf("コードを実行させる型 %s", [k]))
+	}
 }

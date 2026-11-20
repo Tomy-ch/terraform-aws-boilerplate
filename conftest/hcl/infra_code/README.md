@@ -54,7 +54,9 @@ deny のメッセージは固定の ID で始まり、何を直すかを含む�
 
 `providers` のキーは source address（`registry.terraform.io/<namespace>/<name>`）である。`command_blocks` には
 コマンドを実行させるブロックの位置を `.` 区切りで書く。任意の深さの `exec` ブロックは、ここに書かなくても
-検出する。
+検出する。属性の値のオブジェクトのキーの `exec` も同じである。provider の設定の中の、中を構文として読めない式（条件・
+for・splat・演算子・式の添字）と、キーがリテラルでないオブジェクトは、その中に `exec` を隠せるので、理由「解けない式」の
+インフラ内コードとして検出する（`IC011`。使うなら許可リストに項目を足す）。
 
 許可リストの項目の `id` は `<宣言した module のディレクトリ>#<種別>.<型>.<名前>` である。provider は
 `<module のディレクトリ>#provider.<名前>[.<alias>]`、`.tftest.hcl` の provider は `<ファイル>#provider.<名前>`、

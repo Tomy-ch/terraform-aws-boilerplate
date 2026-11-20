@@ -146,6 +146,26 @@ has_key_anywhere(s, key) if {
 	q[count(q) - 1] == key
 }
 
+# unresolved_expr は、scope の任意の深さの属性の式が、中を構文として読めない式（条件・for・splat・演算子・式の
+# 添字。kind が other）か、キーがリテラルでないオブジェクトを含むかを返す。その中にどのキーが在るかは決められない。
+unresolved_expr(s) if {
+	some a in attrs_in(s)
+	walk(a.expr, [_, v])
+	is_object(v)
+	v.kind == "other"
+	is_string(v.syntax)
+}
+
+unresolved_expr(s) if {
+	some a in attrs_in(s)
+	walk(a.expr, [_, v])
+	is_object(v)
+	v.kind == "object"
+	some it in v.items
+	k := it.key
+	not literal_string(k)
+}
+
 # has_provisioner は、scope の直下に provisioner の block（dynamic を含む）が在るかを返す。
 has_provisioner(s) if {
 	some n in nested_in(s)

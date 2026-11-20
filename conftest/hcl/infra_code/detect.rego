@@ -52,6 +52,12 @@ detected contains {"id": p.id, "path": p.path, "reason": "provider の exec"} if
 	hcl.has_key_anywhere(p.scope, "exec")
 }
 
+# 中を読めない式の中に exec などのコマンドの block が在るかは決められないので、検出として許可リストに委ねる。
+detected contains {"id": p.id, "path": p.path, "reason": "解けない式"} if {
+	some p in providers
+	hcl.unresolved_expr(p.scope)
+}
+
 detected contains {"id": p.id, "path": p.path, "reason": sprintf("provider の %s", [block])} if {
 	some p in providers
 	source := hcl.provider_source(doc, p.module, p.name)
