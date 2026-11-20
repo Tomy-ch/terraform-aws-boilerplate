@@ -266,7 +266,6 @@ test_violation_role_boundary_empty_or_unknown if {
 	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification.module.chat.aws_iam_role.this が permissions boundary を持ちません", messages(object.union(base, {"chat_role": unknown})))
 }
 
-# for_each の index key が付いた address の role も、宣言の module の下として見る。
 test_violation_role_boundary_with_index_key if {
 	r := {"address": "module.ops_notification[\"a\"].module.extra.aws_iam_role.this[0]", "type": "aws_iam_role", "change": {"actions": ["create"], "after": {"name": "e", "arn": "arn:aws:iam::123456789012:role/e", "permissions_boundary": null}, "after_unknown": {}}}
 	fixture.has("[PLAN-NOTIFY-08] p.json: module.ops_notification[\"a\"].module.extra.aws_iam_role.this[0] が permissions boundary を持ちません", messages(object.union(base, {"extra": r})))
@@ -275,4 +274,46 @@ test_violation_role_boundary_with_index_key if {
 test_violation_publisher_role_unknown if {
 	extra_policy := {"address": "module.ops_notification.module.x.aws_iam_role_policy.this", "type": "aws_iam_role_policy", "change": {"actions": ["create"], "after": {"name": "p", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": topic_arn}])}, "after_unknown": {"role": true}}}
 	fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this が Topic へ publish できるが、付け先の role", messages(object.union(base, {"extra_policy": extra_policy})))
+}
+
+topic_prefix := concat(":", array.slice(split(topic_arn, ":"), 0, 5))
+
+topic_account := split(topic_arn, ":")[4]
+
+with_publisher(statement) := object.union(base, {
+	"extra_role": rc("aws_iam_role", "module.x.aws_iam_role.this", {"name": "x", "arn": sprintf("arn:aws:iam::%s:role/x", [topic_account]), "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)}),
+	"extra_policy": rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.this", {"name": "p", "role": "x", "policy": doc([statement])}),
+})
+
+test_violation_publisher_resource_policy_variable if {
+	every s in [
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/topic}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": [sprintf("%s:other", [topic_prefix]), sprintf("%s:tabp-${aws:PrincipalTag/env, 'sandbox'}-ops-notification", [topic_prefix])]},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": [sprintf("%s:${aws:username}", [topic_prefix]), sprintf("%s:other", [topic_prefix])]},
+		{"Effect": "Allow", "NotAction": "s3:GetObject", "Resource": sprintf("%s:${*}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": [topic_arn, sprintf("%s:${aws:username}", [topic_prefix])]},
+		{"Effect": "Allow", "Action": "sns:*", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/${aws:username}}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/topic, 'a}b'}", [topic_prefix])},
+	] {
+		fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this の Allow の Resource ", messages(with_publisher(s)))
+	}
+}
+
+test_pass_policy_variable_not_reaching_topic if {
+	every s in [
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": "arn:aws:sns:ap-northeast-1:111111111111:${aws:PrincipalTag/topic}"},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("arn:aws:sns:us-east-1:%s:${aws:PrincipalTag/topic}", [topic_account])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:other-${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username}-other", [topic_prefix])},
+		{"Effect": "Allow", "Action": "s3:GetObject", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Deny", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+	] {
+		count(messages(with_publisher(s))) == 0
+	}
+}
+
+test_violation_not_resource_publisher_with_policy_variable if {
+	s := {"Effect": "Allow", "Action": "sns:Publish", "NotResource": sprintf("%s:${aws:username}", [topic_prefix])}
+	fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role", messages(with_publisher(s)))
 }
