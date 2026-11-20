@@ -199,6 +199,18 @@ run "policies" {
         Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
         Resource = "arn:aws:iam::123456789012:policy/tabp-admin-*"
       },
+      {
+        Sid      = "ReadWorkloadBudgets"
+        Effect   = "Allow"
+        Action   = ["budgets:ListTagsForResource", "budgets:ViewBudget"]
+        Resource = "arn:aws:budgets::123456789012:budget/tabp-admin-*"
+      },
+      {
+        Sid      = "ReadAnomalyDetection"
+        Effect   = "Allow"
+        Action   = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"]
+        Resource = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
+      },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
@@ -464,8 +476,15 @@ run "policies" {
         Resource  = "*"
         Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } }
       },
+      {
+        Sid       = "DenyBootstrapAnomalyDetectionChange"
+        Effect    = "Deny"
+        Action    = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UntagResource", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+        Resource  = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
+        Condition = { Null = { "aws:ResourceTag/tabp:bootstrap" = "false" } }
+      },
     ]
-    error_message = "apply の role の権限が、init の前の暗号化の設定と alias の一覧と、workload の state と lock の読み書きと、apply の出力の書き込みと、bootstrap の構成物・identity の state・3つの Bucket・plan の出力・apply の出力の書き込みのほか・state の鍵の変更の拒否になっていません。"
+    error_message = "apply の role の権限が、init の前の暗号化の設定と alias の一覧と、workload の state と lock の読み書きと、apply の出力の書き込みと、bootstrap の構成物・identity の state・3つの Bucket・plan の出力・apply の出力の書き込みのほか・state の鍵の変更と、tag を持つ bootstrap の異常検知の変更の拒否になっていません。"
   }
 
   assert {
@@ -847,7 +866,7 @@ run "policies" {
 
   # deployment-identity/ADR-0201 決定13・14・17。
   assert {
-    condition     = jsondecode(aws_iam_policy.workload_read.policy).Statement == [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies"], s.Sid)]
+    condition     = jsondecode(aws_iam_policy.workload_read.policy).Statement == [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"], s.Sid)]
     error_message = "apply の role の workload の読み取りの policy が、plan の role の workload の読み取りと同じ文になっていません。"
   }
 
@@ -965,9 +984,23 @@ run "policies" {
           Resource  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
           Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
         },
+        {
+          Sid      = "ManageWorkloadBudgets"
+          Effect   = "Allow"
+          Action   = "budgets:ModifyBudget"
+          Resource = "arn:aws:budgets::123456789012:budget/tabp-admin-*"
+        },
+        { Sid = "CreateAnomalyMonitors", Effect = "Allow", Action = "ce:CreateAnomalyMonitor", Resource = "*" },
+        { Sid = "CreateAnomalySubscriptions", Effect = "Allow", Action = "ce:CreateAnomalySubscription", Resource = "*" },
+        {
+          Sid      = "ManageAnomalyDetection"
+          Effect   = "Allow"
+          Action   = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+          Resource = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
+        },
       ],
     )
-    error_message = "apply の role の workload の policy の文書が、決定13・14 の読み取りと管理になっていません。"
+    error_message = "apply の role の workload の policy の文書が、決定13・14・18 の管理になっていません。"
   }
 
   assert {
@@ -999,7 +1032,7 @@ run "policies" {
         { Sid = "GetMetricWidgetImage", Effect = "Allow", Action = "cloudwatch:GetMetricWidgetImage", Resource = "*" },
         { Sid = "ListMetrics", Effect = "Allow", Action = "cloudwatch:ListMetrics", Resource = "*" },
       ],
-      [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s if s.Effect == "Deny" && !contains(["DenyBoundaryRemoval", "DenyLockoutSafetyBypass"], s.Sid)],
+      [for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s if s.Effect == "Deny" && !contains(["DenyBoundaryRemoval", "DenyLockoutSafetyBypass", "DenyBootstrapAnomalyDetectionChange"], s.Sid)],
     )
     error_message = "ops-notification の boundary の文書が、心拍と Chatbot の role の要る Allow と、apply の role の bootstrap の Deny になっていません。"
   }
@@ -1159,6 +1192,38 @@ run "policies" {
       },
     ]
     error_message = "統制の customer managed policy の文書が、統制の構成物の作成と設定だけになっていません。"
+  }
+
+  # deployment-identity/ADR-0201 決定20 と「与えないもの」。
+  assert {
+    condition = alltrue(flatten([
+      for d in [aws_iam_policy.workload.policy, aws_iam_policy.workload_read.policy, aws_iam_role_policy.this["plan"].policy] : [
+        for s in jsondecode(d).Statement : [
+          for a in flatten([try(s.Action, [])]) : !can(regex("^((budgets|ce):(tag|untag)resource|aws-portal:.*|budgets:(createbudgetaction|executebudgetaction))$", lower(a)))
+        ]
+      ]
+    ]))
+    error_message = "workload の2つの policy か plan の role の policy が、budgets・ce の tag の書き込み、aws-portal、予算の action のどれかを許しています。"
+  }
+
+  assert {
+    condition = [
+      [for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Sid if s.Resource == "*"],
+      [for s in jsondecode(aws_iam_policy.workload_read.policy).Statement : s.Sid if s.Resource == "*"],
+      ] == [
+      ["CreateWorkloadKeys", "CreateChatConfigurations", "CreateAnomalyMonitors", "CreateAnomalySubscriptions"],
+      ["DescribeChatConfigurations"],
+    ]
+    error_message = "workload の2つの policy の Resource \"*\" の文が、resource-level 権限を持たない Action の文だけになっていません。"
+  }
+
+  # deployment-identity/ADR-0201 決定13。tag の key の有無で見て、tag の除去も拒む。
+  assert {
+    condition = one([
+      for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : [s.Effect, s.Condition, contains(s.Action, "ce:UntagResource"), contains(s.Action, "ce:TagResource")]
+      if s.Sid == "DenyBootstrapAnomalyDetectionChange"
+    ]) == ["Deny", { Null = { "aws:ResourceTag/tabp:bootstrap" = "false" } }, true, false]
+    error_message = "apply の role に、tag tabp:bootstrap の key を持つ anomaly monitor と subscription の変更と tag の除去を拒む Deny がありません。"
   }
 }
 
@@ -1668,6 +1733,14 @@ run "policy_length_aws" {
     )
     error_message = "aws の partition の境界の入力で、workload の2つの policy と boundary が2つの region の形になっていません。"
   }
+
+  assert {
+    condition = [for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Resource if contains(["ReadWorkloadBudgets", "ReadAnomalyDetection"], st.Sid)] == [
+      "arn:aws:budgets::123456789012:budget/abcdefghijklmnopqrstuvwxyz0123456-log-archive-*",
+      ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"],
+    ]
+    error_message = "aws の partition の境界の入力で、Budgets と Cost Explorer の Resource が region を持つか、us-east-1 の分だけ増えています。"
+  }
 }
 
 run "policy_length_outside_admin_aws" {
@@ -1913,6 +1986,28 @@ run "role_arns_follow_data_sources" {
     ]
     error_message = "boundary の Allow の Resource と kms:ViaService が、partition・リージョン・アカウント・name_prefix から組まれていません。"
   }
+
+  assert {
+    condition = [
+      one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadWorkloadBudgets"]),
+      one([for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Resource if s.Sid == "ManageWorkloadBudgets"]),
+    ] == [for _ in range(2) : "arn:aws-us-gov:budgets::210987654321:budget/t4bp-dev-*"]
+    error_message = "予算の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition = [
+      one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadAnomalyDetection"]),
+      one([for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Resource if s.Sid == "ManageAnomalyDetection"]),
+      one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBootstrapAnomalyDetectionChange"]),
+    ] == [for _ in range(3) : ["arn:aws-us-gov:ce::210987654321:anomalymonitor/*", "arn:aws-us-gov:ce::210987654321:anomalysubscription/*"]]
+    error_message = "anomaly monitor と subscription の読み取り・管理・Deny の Resource が、partition・アカウントから組まれていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Condition if s.Sid == "DenyBootstrapAnomalyDetectionChange"]) == { Null = { "aws:ResourceTag/t4bp:bootstrap" = "false" } }
+    error_message = "apply の role の異常検知の Deny の tag の key が、name_prefix の project から組まれていません。"
+  }
 }
 
 run "plan_output_bucket_arn_follows_input" {
@@ -2012,7 +2107,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
     error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2060,6 +2155,7 @@ run "no_governance_in_dev" {
       "DenyBreakGlassChange",
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
+      "DenyBootstrapAnomalyDetectionChange",
     ]
     error_message = "dev の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -2113,7 +2209,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
     error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2161,6 +2257,7 @@ run "no_governance_in_security" {
       "DenyBreakGlassChange",
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
+      "DenyBootstrapAnomalyDetectionChange",
     ]
     error_message = "security の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -2214,7 +2311,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
     error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2262,6 +2359,7 @@ run "no_governance_in_log_archive" {
       "DenyBreakGlassChange",
       "DenyBoundaryRemoval",
       "DenyLockoutSafetyBypass",
+      "DenyBootstrapAnomalyDetectionChange",
     ]
     error_message = "log-archive の apply の role の文が、統制の構成物と break-glass の変更の Deny を含む一覧になっていません。"
   }
@@ -2506,6 +2604,14 @@ run "workload_regions_in_aws_cn" {
     condition     = one([for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Resource if st.Sid == "ReadWorkloadTopics"]) == ["arn:aws-cn:sns:cn-north-1:123456789012:tabp-admin-*"]
     error_message = "aws の外の partition で、workload の Resource に us-east-1 が足されています。"
   }
+
+  assert {
+    condition = [for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Resource if contains(["ReadWorkloadBudgets", "ReadAnomalyDetection"], st.Sid)] == [
+      "arn:aws-cn:budgets::123456789012:budget/tabp-admin-*",
+      ["arn:aws-cn:ce::123456789012:anomalymonitor/*", "arn:aws-cn:ce::123456789012:anomalysubscription/*"],
+    ]
+    error_message = "Budgets と Cost Explorer の Resource が、data source の partition から組まれていません。"
+  }
 }
 
 run "workload_regions_in_aws_iso_b" {
@@ -2535,5 +2641,13 @@ run "workload_regions_in_aws_iso_b" {
   assert {
     condition     = one([for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Resource if st.Sid == "ReadWorkloadTopics"]) == ["arn:aws-iso-b:sns:us-isob-east-1:123456789012:tabp-admin-*"]
     error_message = "aws の外の partition で、workload の Resource に us-east-1 が足されています。"
+  }
+
+  assert {
+    condition = [for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Resource if contains(["ReadWorkloadBudgets", "ReadAnomalyDetection"], st.Sid)] == [
+      "arn:aws-iso-b:budgets::123456789012:budget/tabp-admin-*",
+      ["arn:aws-iso-b:ce::123456789012:anomalymonitor/*", "arn:aws-iso-b:ce::123456789012:anomalysubscription/*"],
+    ]
+    error_message = "Budgets と Cost Explorer の Resource が、data source の partition から組まれていません。"
   }
 }

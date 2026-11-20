@@ -162,6 +162,11 @@ locals {
     StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT", "kms:KeyOrigin" = "AWS_KMS" }
     Bool         = { "kms:MultiRegion" = "false" }
   }
+  # Budgets と Cost Explorer の ARN は region を持たない。monitor と subscription の ARN は名前を含まない（決定13）。
+  workload_budget_arn    = "arn:${data.aws_partition.current.partition}:budgets::${data.aws_caller_identity.current.account_id}:budget/${var.name_prefix}-*"
+  anomaly_detection_arns = [for t in ["anomalymonitor", "anomalysubscription"] : "arn:${data.aws_partition.current.partition}:ce::${data.aws_caller_identity.current.account_id}:${t}/*"]
+  # project は英小文字と数字だけなので（usecases/deployment-identity の variables.tf）、name_prefix の最初の - の前が project である。
+  bootstrap_tag_key = "${split("-", var.name_prefix)[0]}:bootstrap"
   workload_read_statements = [
     {
       Sid      = "ReadWorkloadTopics"
@@ -195,6 +200,9 @@ locals {
       Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
       Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-*"
     },
+    # Provider は tag を付けなくても Read のたびに ListTagsForResource を呼ぶ。
+    { Sid = "ReadWorkloadBudgets", Effect = "Allow", Action = ["budgets:ListTagsForResource", "budgets:ViewBudget"], Resource = local.workload_budget_arn },
+    { Sid = "ReadAnomalyDetection", Effect = "Allow", Action = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"], Resource = local.anomaly_detection_arns },
   ]
 
   workload_role_write_arns   = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:role/${p}*"]
@@ -298,6 +306,16 @@ locals {
       Action    = "iam:CreateServiceLinkedRole"
       Resource  = "${local.iam_arn_prefix}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
       Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+    },
+    # budgets:ModifyBudget は予算と通知の作成・更新・削除を1つの Action で許す（決定13・18）。
+    { Sid = "ManageWorkloadBudgets", Effect = "Allow", Action = "budgets:ModifyBudget", Resource = local.workload_budget_arn },
+    { Sid = "CreateAnomalyMonitors", Effect = "Allow", Action = "ce:CreateAnomalyMonitor", Resource = "*" },
+    { Sid = "CreateAnomalySubscriptions", Effect = "Allow", Action = "ce:CreateAnomalySubscription", Resource = "*" },
+    {
+      Sid      = "ManageAnomalyDetection"
+      Effect   = "Allow"
+      Action   = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+      Resource = local.anomaly_detection_arns
     },
   ]
 
@@ -549,6 +567,14 @@ locals {
       ], local.bootstrap_deny_statements, [
       { Sid = "DenyBoundaryRemoval", Effect = "Deny", Action = "iam:DeleteRolePermissionsBoundary", Resource = "*" },
       local.lockout_bypass_deny_statement,
+      # 人が tag を付けた、管理アカウントの bootstrap の前提の異常検知を守る（決定13）。boundary へ写さない。
+      {
+        Sid       = "DenyBootstrapAnomalyDetectionChange"
+        Effect    = "Deny"
+        Action    = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UntagResource", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+        Resource  = local.anomaly_detection_arns
+        Condition = { Null = { "aws:ResourceTag/${local.bootstrap_tag_key}" = "false" } }
+      },
     ])
 
     apply_identity = concat(
