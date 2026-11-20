@@ -30,7 +30,6 @@ include .makefiles/markdown/lint.mk
 # リポジトリの衛生
 include .makefiles/hygiene/editorconfig.mk
 include .makefiles/hygiene/typos.mk
-include .makefiles/hygiene/mk-test.mk
 
 # セキュリティ関連
 include .makefiles/security/trivy.mk
