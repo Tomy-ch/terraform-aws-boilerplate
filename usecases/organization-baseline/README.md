@@ -68,7 +68,7 @@ unsupported:
 区分は「破棄すると認証や組織の構造を失う」（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14）。sandbox での apply と destroy、残存検出を行わない。代わりに次を行う。
 
 - Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさを、`internal/break-glass` が user・group・role・password policy を固定する。`tests/` が入力の検査と出力の配線を固定する
-- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）が、reference の mock の plan で見る。実 plan には掛けない
+- Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
 - 拒まれるべき操作が拒まれることを人が確かめる（下の手順）。結果を Pull Request に記録し、行わなかったものは行わなかったと書く
 - drift が0であること: 昇格の後の次の plan が変更を示さないこと
 
@@ -96,6 +96,7 @@ unsupported:
 | whitepaper「Organizing Your AWS Environment Using Multiple Accounts」 | OU の木（Security・Workloads（Prod・NonProd）・Sandbox・Policy Staging）、break-glass を管理アカウントの IAM user で持つ形 | Infrastructure・Suspended の OU（要るまで作らない） |
 | AWS Security Reference Architecture | Security Tooling・Log Archive のアカウントの分離 | Identity Center と root の中央管理の委任、Infrastructure の OU（[organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md)、[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)） |
 | Well-Architected Framework（2026-11-16 の版。FND01・FND02・FND05） | メンバーの root と IAM user を SCP で縛る、データ境界の SCP と RCP、検知の停止の拒否 | 専用の非常用アカウント（FND05-BP02。[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)） |
+| AWS Provider v6.73.0 の `aws_iam_role`・`aws_iam_role_policy_attachment`・`aws_iam_role_policy_attachments_exclusive` の文書と `internal/service/iam/role.go`（2026-11-20） | break-glass の role に `AdministratorAccess` を `aws_iam_role_policy_attachment` で付け、排他の resource を併用して同じ ARN を載せる（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定21） | `force_detach_policies`（role の削除だけに効く。role は `prevent_destroy`） |
 | Security Hub の標準（FSBP、CIS AWS Foundations Benchmark v3.0.0・v5.0.0） | IAM.2（group で権限を与える）、IAM.7・IAM.15・IAM.16（password policy） | — |
 | Terraform Registry の AWS・HashiCorp が publisher の module（`aws`・`aws-ia`・`hashicorp` の namespace の一覧から） | `aws-ia/iam-identity-center` を permission set と割当の形の参照先とする | `aws-ia/control_tower_account_factory`（AWS Control Tower を前提とする。この usecase は Control Tower を使わない）。依存として使うことはしない（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md)） |
 
