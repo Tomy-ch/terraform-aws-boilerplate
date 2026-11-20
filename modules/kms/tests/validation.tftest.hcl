@@ -436,11 +436,117 @@ run "users_rejects_object_in_other_partition" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws-cn:s3:::bkt/k"] }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws-cn:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] }]
     }
   }
 
   expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_in_global_namespace_bucket" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_in_other_account_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-111111111111-ap-northeast-1-an/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_in_other_region_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-us-east-1-an/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_without_an_suffix" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_namespace_suffix_without_separator" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate123456789012-ap-northeast-1-an/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_namespace_suffix_inside_bucket_name" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an-x/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_namespace_suffix_only_in_key" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate/x-123456789012-ap-northeast-1-an"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_one_object_outside_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a", "arn:aws:s3:::tabp-admin-tfstate/b"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_accepts_object_in_own_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] }]
+    }
+  }
 }
 
 run "users_accepts_sns_role" {
