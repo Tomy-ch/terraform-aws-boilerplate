@@ -58,7 +58,7 @@ func Test_exprOf(t *testing.T) {
 		"展開": {`concat(var.xs...)`,
 			`{"kind":"call","name":"concat","args":[{"kind":"traversal","root":"var","steps":[{"kind":"attr","name":"xs"}]}],"expand":true}`},
 		"添字を持つ traversal": {`aws_s3_bucket.this[0].id`,
-			`{"kind":"traversal","root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index"},{"kind":"attr","name":"id"}]}`},
+			`{"kind":"traversal","root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"index","index":{"form":"literal","value":0}},{"kind":"attr","name":"id"}]}`},
 		"depends_on の形": {`[aws_iam_role_policy.first, module.m]`,
 			`{"kind":"tuple","items":[{"kind":"traversal","root":"aws_iam_role_policy","steps":[{"kind":"attr","name":"first"}]},{"kind":"traversal","root":"module","steps":[{"kind":"attr","name":"m"}]}]}`},
 		"参照を含む object": {`{(var.k) = 1, b = var.v}`,

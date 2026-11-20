@@ -6,12 +6,12 @@ tf(path, src) := {"path": path, "contents": parse_config("hcl2", src)}
 
 fixture_decl := {
 	"attachments": {
-		"aws_s3_bucket_policy": {"parents": {"bucket": ["aws_s3_bucket"]}, "optional": false},
-		"aws_flow_log": {"parents": {"vpc_id": ["aws_vpc"], "subnet_id": ["aws_subnet"]}, "optional": true},
-		"aws_ec2_tag": {"parents": {"resource_id": ["*"]}, "optional": false},
-		"aws_guardduty_malware_protection_plan": {"parents": {"protected_resource.s3_bucket.bucket_name": ["aws_s3_bucket"]}, "optional": false},
-		"aws_api_gateway_method_settings": {"parents": {"rest_api_id": ["aws_api_gateway_rest_api"], "stage_name": ["aws_api_gateway_stage"]}, "optional": false},
-		"aws_kms_alias": {"parents": {"target_key_id": ["aws_kms_key", "aws_kms_replica_key"]}, "optional": false},
+		"aws_s3_bucket_policy": {"parents": {"bucket": ["aws_s3_bucket"]}, "optional": false, "parent_arguments": {"aws_s3_bucket": {"policy": null}}, "whole_document": true},
+		"aws_flow_log": {"parents": {"vpc_id": ["aws_vpc"], "subnet_id": ["aws_subnet"]}, "optional": true, "parent_arguments": {}, "whole_document": false},
+		"aws_ec2_tag": {"parents": {"resource_id": ["*"]}, "optional": false, "parent_arguments": {}, "whole_document": false},
+		"aws_guardduty_malware_protection_plan": {"parents": {"protected_resource.s3_bucket.bucket_name": ["aws_s3_bucket"]}, "optional": false, "parent_arguments": {}, "whole_document": false},
+		"aws_api_gateway_method_settings": {"parents": {"rest_api_id": ["aws_api_gateway_rest_api"], "stage_name": ["aws_api_gateway_stage"]}, "optional": false, "parent_arguments": {}, "whole_document": false},
+		"aws_kms_alias": {"parents": {"target_key_id": ["aws_kms_key", "aws_kms_replica_key"]}, "optional": false, "parent_arguments": {}, "whole_document": false},
 	},
 	"not_attachments": {
 		"aws_lb_listener": "子 resource",
@@ -23,13 +23,23 @@ fixture_decl := {
 		"aws_kms_key": "親になる resource",
 		"aws_kms_replica_key": "親になる resource",
 	},
+	"unrelated_deprecated_arguments": {"aws_s3_bucket": {"acceleration_status": {"reason": "fixture", "unwritten": null}}},
+	"inline_owned": {},
 }
+
+fixture_schema := object.union(
+	{t: {"arguments": ["name"], "deprecated": [], "blocks": []} |
+		some t in {"aws_vpc", "aws_subnet", "aws_api_gateway_rest_api", "aws_api_gateway_stage", "aws_kms_key", "aws_kms_replica_key"}
+	},
+	{"aws_s3_bucket": {"arguments": ["bucket", "policy", "acceleration_status", "versioning"], "deprecated": ["policy", "acceleration_status"], "blocks": ["versioning"]}},
+)
 
 denies_input(files, listed, d, h) := result if {
 	result := deny with input as files
 		with data.layer_decl as d
 		with data.layer_files as listed
 		with data.hcl_input as h
+		with data.layer_schema as fixture_schema
 }
 
 denies_with(files, listed, d) := denies_input(files, listed, d, go_input(files, []))
@@ -38,10 +48,9 @@ listed_of(files) := [f.path | some f in files; not endswith(f.path, ".tftest.hcl
 
 denies(files) := denies_with(files, listed_of(files), fixture_decl)
 
-# denies_go は、手で書いた block を hcl-input の出力として渡す。
 denies_go(files, blocks) := denies_input(files, listed_of(files), fixture_decl, go_input(files, blocks))
 
-# go_input は、files に対応する hcl-input の出力を作る。blocks に無い resource の block は、属性なしで足す。
+# blocks に無い resource の block は、属性なしで足す。
 go_input(files, blocks) := {
 	"files": sort([f.path | some f in files; hcl.is_tf(f.path)]),
 	"blocks": array.concat(blocks, [blk(c.path, "resource", [type_of(c), name_of(c)], []) |
@@ -67,7 +76,7 @@ ref(s) := {"root": parts[0], "steps": [step(p) | some p in array.slice(parts, 1,
 	parts := regex.find_n(`\[\*\]|\[\]|[^.\[\]]+`, s, -1)
 }
 
-step("[]") := {"kind": "index"}
+step("[]") := {"kind": "index", "index": {"form": "other"}}
 
 step("[*]") := {"kind": "splat"}
 
@@ -86,104 +95,95 @@ test_LY001_allow_declared if {
 }
 
 test_LY001_deny_attachments_missing if {
-	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"not_attachments": {}})
-	count(with_id(msgs, "LY001")) == 1
+	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
 test_LY001_deny_attachments_empty if {
-	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"attachments": {}, "not_attachments": {}})
-	some m in with_id(msgs, "LY001")
-	contains(m, "空です")
+	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"attachments": {}, "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments が空です")
 }
 
 test_LY001_deny_attachments_array if {
-	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"attachments": [], "not_attachments": {}})
-	count(with_id(msgs, "LY001")) == 1
+	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"attachments": [], "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
 test_LY001_deny_parents_empty if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {}, "optional": false}}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(msgs, "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_parent_types_empty if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": []}, "optional": false}}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(msgs, "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_parents_as_list if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": ["a"], "optional": false}}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(msgs, "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_optional_not_boolean if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": ["aws_y"]}, "optional": "false"}}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(msgs, "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_extra_key if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": ["aws_y"]}, "optional": false, "skip": true}}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(msgs, "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_not_attachments_missing if {
-	msgs := denies_with([ok_module], ["modules/m/main.tf"], {"attachments": fixture_decl.attachments})
-	some m in with_id(msgs, "LY001")
-	contains(m, "not_attachments がオブジェクトではありません")
+	msgs := denies_with([ok_module], ["modules/m/main.tf"], object.remove(fixture_decl, ["not_attachments"]))
+	only_with(with_id(msgs, "LY001"), "not_attachments がオブジェクトではありません")
 }
 
 test_LY001_deny_empty_reason if {
 	d := object.union(fixture_decl, {"not_attachments": {"aws_lb_listener": ""}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "not_attachments.aws_lb_listener")
+	only_with(with_id(msgs, "LY001"), "not_attachments.aws_lb_listener")
 }
 
 test_LY001_deny_type_in_both if {
 	d := object.union(fixture_decl, {"not_attachments": {"aws_s3_bucket_policy": "子 resource"}})
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], d)
-	some m in with_id(msgs, "LY001")
-	contains(m, "両方")
+	only_with(with_id(msgs, "LY001"), "両方")
 }
 
 test_LY001_deny_decl_not_object if {
 	msgs := denies_with([ok_module], ["modules/m/main.tf"], "x")
-	some m in with_id(msgs, "LY001")
-	contains(m, "attachments がオブジェクトではありません")
+	with_id(msgs, "LY001") == {
+		"LY001 [宣言の形] data.layer_decl.attachments がオブジェクトではありません",
+		"LY001 [宣言の形] data.layer_decl.not_attachments がオブジェクトではありません",
+		"LY001 [宣言の形] data.layer_decl.unrelated_deprecated_arguments が、親の型から、引数と reason（空でない理由）・unwritten（null か []）へのオブジェクトではありません",
+		"LY001 [宣言の形] data.layer_decl.inline_owned が、親の型から、引数と空でない理由へのオブジェクトではありません",
+	}
 }
 
 test_LY001_deny_entry_not_object if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": "bucket"}})
-	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_empty_argument_name if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"": ["aws_y"]}, "optional": false}}})
-	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_empty_parent_type if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": [""]}, "optional": false}}})
-	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001"), "attachments.aws_x")
 }
 
 test_LY001_deny_parent_types_as_string if {
 	d := object.union(fixture_decl, {"attachments": {"aws_x": {"parents": {"a": "aws_y"}, "optional": false}}})
-	some m in with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001")
-	contains(m, "attachments.aws_x")
+	only_with(with_id(denies_with([ok_module], ["modules/m/main.tf"], d), "LY001"), "attachments.aws_x")
 }
 
 test_LY002_deny_files_list_missing if {
@@ -270,101 +270,116 @@ test_LY004_allow_helper_shapes if {
 
 test_LY004_deny_missing if {
 	msgs := deny with input as [ok_module] with data.layer_decl as fixture_decl with data.layer_files as ["modules/m/main.tf"]
-	some m in with_id(msgs, "LY004")
-	contains(m, "data.hcl_input がオブジェクトではありません")
+	only_with(with_id(msgs, "LY004"), "data.hcl_input がオブジェクトではありません")
 }
 
 test_LY004_deny_not_object if {
-	some m in go_shape_denies([])
-	contains(m, "data.hcl_input がオブジェクトではありません")
+	only_with(go_shape_denies([]), "data.hcl_input がオブジェクトではありません")
 }
 
 test_LY004_deny_files_not_strings if {
-	some m in go_shape_denies({"files": [1], "blocks": []})
-	contains(m, "hcl_input.files")
+	only_with(go_shape_denies({"files": [1], "blocks": []}), "hcl_input.files")
 }
 
 test_LY004_deny_blocks_missing if {
-	some m in go_shape_denies({"files": ["modules/m/main.tf"]})
-	contains(m, "hcl_input.blocks が配列ではありません")
+	only_with(go_shape_denies({"files": ["modules/m/main.tf"]}), "hcl_input.blocks が配列ではありません")
 }
 
 test_LY004_deny_block_extra_key if {
 	b := object.union(blk("modules/m/main.tf", "resource", ["aws_s3_bucket", "this"], []), {"line": 1})
-	some m in go_shape_denies({"files": ["modules/m/main.tf"], "blocks": [b]})
-	contains(m, "hcl_input.blocks[0] が")
+	only_with(go_shape_denies({"files": ["modules/m/main.tf"], "blocks": [b]}), "hcl_input.blocks[0] が")
 }
 
 test_LY004_deny_labels_not_strings if {
-	some m in go_shape_denies({"files": ["modules/m/main.tf"], "blocks": [blk("modules/m/main.tf", "resource", ["aws_s3_bucket", 1], [])]})
-	contains(m, "hcl_input.blocks[0] が")
+	only_with(go_shape_denies({"files": ["modules/m/main.tf"], "blocks": [blk("modules/m/main.tf", "resource", ["aws_s3_bucket", 1], [])]}), "hcl_input.blocks[0] が")
 }
 
 shape_of_attr(a) := go_shape_denies({"files": ["modules/m/main.tf"], "blocks": [blk("modules/m/main.tf", "resource", ["aws_s3_bucket", "this"], [a])]})
 
 test_LY004_deny_refs_missing if {
-	some m in shape_of_attr({"path": "tags"})
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr({"path": "tags"}), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_empty_path if {
-	some m in shape_of_attr(attr("", []))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("", [])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_ref_without_within if {
-	some m in shape_of_attr(attr("tags", [{"root": "var", "steps": []}]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": []}])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_unknown_step if {
-	some m in shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "call"}], "within": []}]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "call"}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_attr_step_without_name if {
-	some m in shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "attr"}], "within": []}]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "attr"}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_index_step_with_name if {
-	some m in shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "name": "x"}], "within": []}]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "name": "x"}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_deny_index_step_without_form if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index"}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_deny_unknown_index_form if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "index": {"form": "each"}}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_deny_literal_without_value if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "index": {"form": "literal"}}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_deny_literal_value_not_scalar if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "index": {"form": "literal", "value": true}}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_deny_value_on_non_literal if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "index": {"form": "each_key", "value": "a"}}], "within": []}])), "hcl_input.blocks[0].attributes[0]")
+}
+
+test_LY004_allow_index_forms if {
+	count(shape_of_attr(attr("tags", [{"root": "var", "steps": [
+		{"kind": "attr", "name": "m"},
+		{"kind": "index", "index": {"form": "each_key"}},
+		{"kind": "index", "index": {"form": "count_index"}},
+		{"kind": "index", "index": {"form": "literal", "value": 0}},
+		{"kind": "index", "index": {"form": "literal", "value": ""}},
+	], "within": []}]))) == 0
 }
 
 test_LY004_deny_within_out_of_range if {
-	some m in shape_of_attr(attr("tags", [ref("aws_s3_bucket.this[]"), ref_in("var.i", [[0, 2]])]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [ref("aws_s3_bucket.this[]"), ref_in("var.i", [[0, 2]])])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_within_not_index if {
-	some m in shape_of_attr(attr("tags", [ref("aws_s3_bucket.this[]"), ref_in("var.i", [[0, 0]])]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [ref("aws_s3_bucket.this[]"), ref_in("var.i", [[0, 0]])])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_within_unknown_ref if {
-	some m in shape_of_attr(attr("tags", [ref_in("var.i", [[3, 1]])]))
-	contains(m, "hcl_input.blocks[0].attributes[0]")
+	only_with(shape_of_attr(attr("tags", [ref_in("var.i", [[3, 1]])])), "hcl_input.blocks[0].attributes[0]")
 }
 
 test_LY004_deny_alone_on_broken_input if {
 	files := module_with(policy("aws_s3_bucket.this.id"))
 	msgs := denies_input(files, listed_of(files), fixture_decl, {"files": "x", "blocks": []})
-	count(with_id(msgs, "LY004")) == 1
+	only_with(with_id(msgs, "LY004"), "hcl_input.files が、空でない文字列の配列ではありません")
 	count(msgs) == 1
 }
 
 test_LY004_deny_alone_on_broken_within if {
 	files := module_with(policy("module.m.id"))
 	msgs := denies_go(files, [policy_blk([ref("aws_s3_bucket.this[]"), ref_in("module.m.id", [[0, 0]])])])
-	count(with_id(msgs, "LY004")) == 1
+	only_with(with_id(msgs, "LY004"), "hcl_input.blocks[0].attributes[0]（modules/m/main.tf）が")
 	count(msgs) == 1
 }
 
 test_LY004_deny_alone_on_attribute_without_refs if {
 	files := module_with(policy("module.m.id"))
 	msgs := denies_go(files, [policy_blk_with([{"path": "bucket"}])])
-	count(with_id(msgs, "LY004")) == 1
+	only_with(with_id(msgs, "LY004"), "hcl_input.blocks[0].attributes[0]（modules/m/main.tf）が")
 	count(msgs) == 1
 }
 
@@ -403,4 +418,43 @@ test_LY005_deny_extra_parent_argument_in_hcl_input if {
 	b := blk("modules/m/main.tf", "resource", ["aws_s3_bucket_policy", "this"], [attr("bucket", []), attr("bucket", [])])
 	some m in with_id(denies_go(module_with(policy("aws_s3_bucket.this.id")), [b]), "LY005")
 	contains(m, "Conftest では 1 個、hcl-input では 2 個です")
+}
+
+# msgs がちょうど1件で、それが s を含む。別の理由の同じ ID が並んで通ることを防ぐ。
+only_with(msgs, s) if {
+	count(msgs) == 1
+	some m in msgs
+	contains(m, s)
+}
+
+# --- LY004 の添字の段の形 ---
+
+index_step_denied(x) if {
+	only_with(shape_of_attr(attr("tags", [{"root": "var", "steps": [{"kind": "index", "index": x}], "within": []}])), "hcl_input.blocks[0].attributes[0]（modules/m/main.tf）が")
+}
+
+test_LY004_deny_index_null if {
+	index_step_denied(null)
+}
+
+test_LY004_deny_index_extra_key if {
+	every x in [{"form": "other", "value": "a"}, {"form": "literal", "value": 0, "raw": "0"}] {
+		index_step_denied(x)
+	}
+}
+
+test_LY004_deny_index_form_not_string if {
+	every form in [1, null, ["literal"]] {
+		index_step_denied({"form": form})
+	}
+}
+
+test_LY004_deny_literal_value_null if {
+	index_step_denied({"form": "literal", "value": null})
+}
+
+test_LY004_deny_literal_value_array if {
+	every v in [[0], {"a": 0}] {
+		index_step_denied({"form": "literal", "value": v})
+	}
 }

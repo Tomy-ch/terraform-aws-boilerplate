@@ -18,7 +18,7 @@ func Test_encode(t *testing.T) {
 			Kind:   "resource",
 			Labels: []string{"aws_s3_bucket_policy", "this"},
 			Attributes: []attribute{{Path: "bucket", Refs: []ref{
-				{Root: "aws_s3_bucket", Steps: []step{{Kind: stepAttr, Name: "this"}, {Kind: stepIndex}, {Kind: stepAttr, Name: "id"}}, Within: []within{}},
+				{Root: "aws_s3_bucket", Steps: []step{{Kind: stepAttr, Name: "this"}, {Kind: stepIndex, Index: &indexForm{Form: indexEachKey}}, {Kind: stepAttr, Name: "id"}}, Within: []within{}},
 				{Root: "module", Steps: []step{{Kind: stepAttr, Name: "x"}, {Kind: stepAttr, Name: "key"}}, Within: []within{{Ref: 0, Step: 1}}},
 			}}},
 		}})
@@ -27,7 +27,7 @@ func Test_encode(t *testing.T) {
 			"files": ["modules/a/main.tf"],
 			"blocks": [{"file": "modules/a/main.tf", "kind": "resource", "labels": ["aws_s3_bucket_policy", "this"], "attributes": [
 				{"path": "bucket", "refs": [
-					{"root": "aws_s3_bucket", "steps": [{"kind": "attr", "name": "this"}, {"kind": "index"}, {"kind": "attr", "name": "id"}], "within": []},
+					{"root": "aws_s3_bucket", "steps": [{"kind": "attr", "name": "this"}, {"kind": "index", "index": {"form": "each_key"}}, {"kind": "attr", "name": "id"}], "within": []},
 					{"root": "module", "steps": [{"kind": "attr", "name": "x"}, {"kind": "attr", "name": "key"}], "within": [{"ref": 0, "step": 1}]}
 				]}
 			]}]

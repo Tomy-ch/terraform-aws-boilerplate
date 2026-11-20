@@ -28,6 +28,15 @@ pre-commit:
     editorconfig-check:
       run: make editorconfig-check
 
+    # 何を見るかと、なぜ要るかは scripts/README.md の mk-test-lint 行が持つ。
+    mk-test-lint:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - ".github/mk-test-bypass.toml"
+        - "scripts/mk-test-lint/**"
+      run: make mk-test-lint
+
     # 対象を絞らない。抑止が名指すファイルの改名・削除でも、抑止は対象を失う。
     secret-suppression-lint:
       run: make secret-suppression-lint
@@ -176,6 +185,7 @@ pre-commit:
         - "env/**"
         - "**/.terraform.lock.hcl"
         - "conftest/plan/**"
+        - "conftest/hcl/layer/decl.json"
         - ".tf-validate-ignore.yaml"
         - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
@@ -212,6 +222,7 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - "conftest/plan/**"
+        - "conftest/hcl/layer/decl.json"
         - "scripts/tf-local/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
@@ -257,6 +268,8 @@ pre-commit:
         - "scripts/infra-code-gate/**"
         - "scripts/tf-local/**"
         - "scripts/hcl-input/**"
+        - "scripts/provider-schema/**"
+        - "**/.terraform.lock.hcl"
         - "scripts/lib/**"
         - "mise.toml"
         - "Makefile"
