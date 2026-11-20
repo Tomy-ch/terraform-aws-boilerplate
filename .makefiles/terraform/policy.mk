@@ -97,7 +97,7 @@ tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
 	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}' > "$$root/data.json"; \
-	printf '%s\n' '{"layer_decl": {"attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}' > "$$root/layer.json"; \
+	printf '%s\n' '{"layer_decl": {"attachments": {"aws_x_policy": {"parents": {"x": ["aws_x"]}, "optional": false, "parent_arguments": {}, "whole_document": false}}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}' > "$$root/layer.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
 		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" POLICY_LAYER_DATA="$$root/layer.json" "$$@" 2>&1); rc=$$?; \

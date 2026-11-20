@@ -43,7 +43,7 @@ cox_ids(src, blocks, id) := with_id(cox_denies([tf(main_tf, src)], blocks), id)
 
 test_LY304_deny_inline_policy_block if {
 	msgs := cox_ids(`resource "aws_iam_role" "r" {
-  inline_policy {}
+	inline_policy {}
 }
 `, [], "LY304")
 	only_with(msgs, "aws_iam_role.r が inline_policy を書いています。同じ設定を attachment 型（aws_iam_role_policies_exclusive, aws_iam_role_policy）が書く")
@@ -51,26 +51,26 @@ test_LY304_deny_inline_policy_block if {
 
 test_LY304_deny_dynamic_inline_policy if {
 	count(cox_ids(`resource "aws_iam_role" "r" {
-  dynamic "inline_policy" {
-    for_each = var.p
-    content {
-      name = inline_policy.key
-    }
-  }
+	dynamic "inline_policy" {
+		for_each = var.p
+		content {
+			name = inline_policy.key
+		}
+	}
 }
 `, [], "LY304")) == 1
 }
 
 test_LY304_deny_null_attribute if {
 	count(cox_ids(`resource "aws_iam_role" "r" {
-  managed_policy_arns = null
+	managed_policy_arns = null
 }
 `, [], "LY304")) == 1
 }
 
 test_LY304_deny_empty_list if {
 	msgs := cox_ids(`resource "aws_security_group" "s" {
-  ingress = []
+	ingress = []
 }
 `, [], "LY304")
 	only_with(msgs, "aws_security_group.s が ingress を書いています。同じ設定を attachment 型（aws_security_group_rule）が書く")
@@ -88,22 +88,22 @@ test_LY304_deny_dynamic_only_in_hcl_input if {
 
 test_LY304_allow_default_security_group if {
 	count(cox_ids(`resource "aws_default_security_group" "d" {
-  ingress = []
-  egress  = []
+	ingress = []
+	egress  = []
 }
 `, [], "LY304")) == 0
 }
 
 test_LY304_allow_unrelated_argument if {
 	count(cox_ids(`resource "aws_iam_role" "r" {
-  name = "x"
+	name = "x"
 }
 `, [], "LY304")) == 0
 }
 
 test_LY304_allow_inline_owned if {
 	count(cox_ids(`resource "aws_route_table" "t" {
-  route = []
+	route = []
 }
 `, [], "LY304")) == 0
 }
@@ -113,13 +113,13 @@ test_LY304_allow_exclusive_with_individual_attachment if {
 	src := `resource "aws_iam_role" "r" {}
 
 resource "aws_iam_role_policy_attachments_exclusive" "e" {
-  role_name   = aws_iam_role.r.name
-  policy_arns = ["arn"]
+	role_name   = aws_iam_role.r.name
+	policy_arns = ["arn"]
 }
 
 resource "aws_iam_role_policy_attachment" "a" {
-  role       = aws_iam_role.r.name
-  policy_arn = "arn"
+	role       = aws_iam_role.r.name
+	policy_arn = "arn"
 }
 `
 	blocks := [
@@ -132,11 +132,11 @@ resource "aws_iam_role_policy_attachment" "a" {
 # --- LY307 ---
 
 route_src := `resource "aws_route_table" "t" {
-  route = []
+	route = []
 }
 
 resource "aws_route" "r" {
-  route_table_id = aws_route_table.t.id
+	route_table_id = aws_route_table.t.id
 }
 `
 
@@ -169,13 +169,13 @@ each_key_ref := {"root": "aws_s3_bucket", "steps": [
 ], "within": []}
 
 two_policies(extra1, extra2) := sprintf(`resource "aws_s3_bucket_policy" "a" {
-  %s
-  bucket = "x"
+	%s
+	bucket = "x"
 }
 
 resource "aws_s3_bucket_policy" "b" {
-  %s
-  bucket = "x"
+	%s
+	bucket = "x"
 }
 `, [extra1, extra2])
 
@@ -256,11 +256,11 @@ test_LY305_allow_not_whole_document if {
 	src := `resource "aws_iam_role" "r" {}
 
 resource "aws_iam_role_policy" "a" {
-  role = aws_iam_role.r.name
+	role = aws_iam_role.r.name
 }
 
 resource "aws_iam_role_policy" "b" {
-  role = aws_iam_role.r.name
+	role = aws_iam_role.r.name
 }
 `
 	blocks := [
@@ -305,8 +305,8 @@ test_LY308_deny_selected_local if {
 # 1つの block の instance どうしは比べない（README の「保証しないこと」）。
 test_LY308_allow_single_multi_block if {
 	src := `resource "aws_s3_bucket_policy" "a" {
-  for_each = aws_s3_bucket.this
-  bucket   = each.value.id
+	for_each = aws_s3_bucket.this
+	bucket   = each.value.id
 }
 `
 	blocks := [pol("a", [attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [ref("each.value.id")])])]
@@ -579,7 +579,7 @@ test_LY305_allow_same_names_in_other_module if {
 	src_b := `resource "aws_s3_bucket" "this" {}
 
 resource "aws_s3_bucket_policy" "b" {
-  bucket = "x"
+	bucket = "x"
 }
 `
 	src_a := concat("", [bucket, "resource \"aws_s3_bucket_policy\" \"a\" {\n  bucket = \"x\"\n}\n"])

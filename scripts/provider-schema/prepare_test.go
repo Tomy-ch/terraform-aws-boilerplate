@@ -235,12 +235,12 @@ func Test_versionsTF(t *testing.T) {
 			p, err := parseProvider(tt.addr)
 			require.NoError(t, err)
 			assert.Equal(t, `terraform {
-  required_providers {
-    aws = {
-      source  = "`+tt.source+`"
-      version = "6.2.0"
-    }
-  }
+	required_providers {
+		aws = {
+			source  = "`+tt.source+`"
+			version = "6.2.0"
+		}
+	}
 }
 `, versionsTF(p, "6.2.0"))
 		})

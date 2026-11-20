@@ -171,7 +171,7 @@ func reconcile(args, listed []string) error {
 
 // versionsTF は、版を1つに固定した required_providers を返します。
 func versionsTF(p providerAddr, version string) string {
-	return fmt.Sprintf("terraform {\n  required_providers {\n    %s = {\n      source  = %q\n      version = %q\n    }\n  }\n}\n",
+	return fmt.Sprintf("terraform {\n\trequired_providers {\n\t\t%s = {\n\t\t\tsource  = %q\n\t\t\tversion = %q\n\t\t}\n\t}\n}\n",
 		p.name, p.source(), version)
 }
 
