@@ -40,17 +40,17 @@ us-east-1 にしか出ない metric は、ほかの region の alarm から見�
 ## 保証範囲
 
 - CI の role の権限が provider の region と us-east-1 に及び、aws の外の partition では及ばないことは、CI の role を持つ usecase の Unit Test が見る。
-- us-east-1 に資源を置く usecase の、資源の region と一般 module との値の一致は、その usecase の Unit Test と Policy Test が見る。最初にそうする usecase が検査を足すまで、この保証は無い。
+- us-east-1 に資源を置く usecase の、資源の region と文書の形は、その usecase の Unit Test と Policy Test が見る。属性の値が一般 module と一致することは、両方の Unit Test が同じ値を固定することで保つ。片方の値を変えたときにもう片方を変え忘れても、どの検査も落ちない。
 - `region` 引数を実際の AWS が受けることは、usecase ごとの sandbox の Integration Test が見る。sandbox の Integration Test を走らせる経路が無い間は確かめない。
 
 ## 検証方法
 
-- CI の role を持つ usecase の Unit Test、us-east-1 に資源を置く usecase の `internal/*/tests/` と `conftest/plan/` の Policy（最初にそうする usecase が足す）、`make egress-check`
+- CI の role を持つ usecase の Unit Test、us-east-1 に資源を置く usecase の `internal/*/tests/` と `conftest/plan/` の Policy、`make egress-check`
 
 ## 影響
 
 - us-east-1 に資源を置く usecase は、`internal/` に一般 module と同じ値を写す。
-- CI の apply・plan の role の権限は us-east-1 を含む。ランナーの egress の宣言は、最初に us-east-1 に資源を置く usecase が足す。
+- CI の apply・plan の role の権限は us-east-1 を含む。ランナーの egress の us-east-1 の宛先は、us-east-1 に資源を置く root を実行する job に限って持つ（`make egress-check` は root ごとに、置く region の宛先だけを求める）。
 
 ## 見直し条件
 

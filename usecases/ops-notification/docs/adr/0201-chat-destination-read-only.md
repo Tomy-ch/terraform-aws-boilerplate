@@ -17,19 +17,19 @@ Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ
 
 ## Decision
 
-1. 宛先は Chatbot の Slack の channel とし、1つのアカウントに構成を1つ置く（`internal/chat-slack`）。使い手はこのユースケースだけなので、一般 module にしない（repository-wide/ADR-0102 (use-case-centric-scope) 決定12・15）。
+1. 宛先は Chatbot の Slack の channel とし、1つのアカウントに構成を1つ置く（`internal/chat-slack`）。使い手はこのユースケースだけなので、一般 module にしない（repository-wide/ADR-0102 (use-case-centric-scope) 決定12・15）。1つの構成が、provider の region の Topic と us-east-1 の Topic の2つを購読する。Chatbot の文書は、1つの構成に複数の region の Topic を組み合わせられるとする。
 2. `read` の Action 集合を次の8つと定義する。通知に添えられた alarm と metric を Chatbot が描くのに要る読み取りに限る。
 
    | Action | Resource |
    | --- | --- |
-   | `cloudwatch:DescribeAlarms`・`cloudwatch:DescribeAlarmHistory`・`cloudwatch:ListTagsForResource` | `arn:<partition>:cloudwatch:<region>:<account>:alarm:*`（resource-level の権限を持つ） |
+   | `cloudwatch:DescribeAlarms`・`cloudwatch:DescribeAlarmHistory`・`cloudwatch:ListTagsForResource` | `arn:<partition>:cloudwatch:<region>:<account>:alarm:*`（`<region>` は provider の region と us-east-1。resource-level の権限を持つ） |
    | `cloudwatch:DescribeAlarmsForMetric`・`cloudwatch:GetMetricData`・`cloudwatch:GetMetricStatistics`・`cloudwatch:GetMetricWidgetImage`・`cloudwatch:ListMetrics` | `"*"`（Service Authorization Reference が resource-level の権限を持たないとする。`GetMetricData`・`ListMetrics` の `dataset` は任意の resource type で、metric の読み取りには当たらない） |
 
    Resource `"*"` の5つは `conftest/plan/decl.json` の `resource_wildcard_actions` に置き、別の statement に分ける（repository-wide/ADR-0301 決定9）。
 3. この集合を1つの customer managed policy にし、guardrail と channel role の両方に置く。channel role に付く policy と guardrail は同じ1つだけとする。`user_authorization_required = true` にする。AWS managed policy を使わない（repository-wide/ADR-0301 決定10）。
 4. 決定2 は公式推奨からの逸脱である（下の表。repository-wide/ADR-0207 決定11）。
 5. channel role の信頼は、`chatbot.amazonaws.com` の `sts:AssumeRole` を `aws:SourceAccount`（`StringEquals`、自アカウントの固定値）で限る1文とする。Chatbot の文書は信頼の例を持たず、principal も confused deputy の条件も示さない（confused deputy の頁は無い）。principal は Chatbot の慣行に依り、条件は IAM の一般の指針（cross-service confused deputy prevention）に従う。`aws:SourceArn` は、Chatbot が渡す ARN の形を示す一次資料が無いので置かない。この信頼で Chatbot が role を引き受けられることは、sandbox で心拍が Slack に届くことで確かめる。
-6. 構成の `region` は `us-west-2` を明示する。Provider が寄せる region と宣言を一致させるためで、AWS の文書の推奨ではない。この宛先は、env の配線（#222 PR-B）で egress の宣言に足す。Topic は provider の region（ap-northeast-1）に置き、構成は別の region から購読する。
+6. 構成の `region` は `us-west-2` を明示する。Provider が寄せる region と宣言を一致させるためで、AWS の文書の推奨ではない。この宛先は、env の配線（#222 PR-B）で egress の宣言に足す。Topic は provider の region と us-east-1 に置き、構成は us-west-2 から2つを購読する。
 7. `logging_level = "NONE"` にする。ログは Terraform の管理の外の Log Group に出る。
 8. Teams はまだ持たない。別の resource 型（`aws_chatbot_teams_channel_configuration`）で、届くことを確かめる tenant が無い（repository-wide/ADR-0401 (testing-policy) 決定3）。入力 `chat` は `teams` を後から足せる形にする。
 
@@ -56,7 +56,7 @@ AWS が Action を足すと黙って広がる。repository-wide/ADR-0301 決定1
 ## 意図的に捨てるもの
 
 - チャットからの書き込みの操作
-- provider の region の外の alarm を Chatbot が読むこと（alarm の Resource は provider の region に限る）
+- provider の region と us-east-1 の外の alarm を Chatbot が読むこと（alarm の Resource は2つの region に限る）
 
 ## 保証範囲
 
