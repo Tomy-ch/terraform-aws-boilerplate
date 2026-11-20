@@ -32,7 +32,6 @@ var (
 	stepNameLineRe = regexp.MustCompile(`^\s+(?:- )?name:`)
 )
 
-// entryPrefixes は登録簿の種別ごとの入口の名前の接頭辞 ci-<種別>-。
 var entryPrefixes = func() []string {
 	kinds := cientry.Kinds()
 	out := make([]string, len(kinds))

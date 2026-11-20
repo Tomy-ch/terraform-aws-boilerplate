@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// repoRoot は実物の ci.mk を読むテストのリポジトリの直下。
 var repoRoot = filepath.Join("..", "..", "..")
 
 const nonEntryBlock = ".PHONY: ci-aws-credentials ## x\n" +
@@ -50,7 +49,6 @@ func fixture(entries ...[3]string) string {
 	return b.String()
 }
 
-// allEntries は登録簿のすべての種別を、identity と workload の両方の root で持つ入口。
 func allEntries(env string) [][3]string {
 	var out [][3]string
 	for _, k := range Kinds() {

@@ -750,14 +750,12 @@ func checkRole(job workflow.Job, cred workflow.Line, role, kind string, finding 
 	return findings
 }
 
-// isUnlockRole は、role が lock を外す種別（cientry.LockRemove）の role かを返します。
 func isUnlockRole(role string) bool {
 	return slices.ContainsFunc(cientry.Kinds(), func(k cientry.Kind) bool {
 		return k.Lock == cientry.LockRemove && kindHasRole(k, role)
 	})
 }
 
-// kindHasRole は、role が種別 k のどちらかの root の role かを返します。
 func kindHasRole(k cientry.Kind, role string) bool {
 	return role != "" && (k.Role(cientry.RootIdentity) == role || k.Role(cientry.RootWorkload) == role)
 }
@@ -782,7 +780,6 @@ func entryCredential(kind, envRoot string) (env, role string, ok bool) {
 	return env, k.Role(root), true
 }
 
-// kindOf は登録簿の種別を名前で引く。
 var kindOf = func() map[string]cientry.Kind {
 	m := map[string]cientry.Kind{}
 	for _, k := range cientry.Kinds() {

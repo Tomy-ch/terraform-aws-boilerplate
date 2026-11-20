@@ -59,11 +59,9 @@ var (
 	branchesKey    = regexp.MustCompile(`^ {4}branches:[ \t]*(?:#.*)?$`)
 	branchItem     = regexp.MustCompile(`^ {6}- `)
 	blankOrComment = regexp.MustCompile(`^\s*(?:#.*)?$`)
-	// sharedEnvEntry は sharedEnvKinds の入口。
 	sharedEnvEntry = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, sharedEnvKinds...)
-	// otherEntry は sharedEnvKinds のほかの CI の入口。
-	otherEntry = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, otherKinds...)
-	skipLine   = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
+	otherEntry     = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, otherKinds...)
+	skipLine       = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
 )
 
 type workflowEdit struct {
@@ -152,7 +150,7 @@ func applyEnvs(src string) ([]string, error) {
 	return envs, nil
 }
 
-// isSharedEnvJob は、job が sharedEnvKinds の入口を走らせるかを返します。コメントと step の name: の行は数えない。
+// isSharedEnvJob はコメントと step の name: の行を数えない。
 func isSharedEnvJob(job workflow.Job) bool {
 	return hasEntry(job, sharedEnvEntry)
 }

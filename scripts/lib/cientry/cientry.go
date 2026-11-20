@@ -57,8 +57,7 @@ const (
 // Kind は入口の種別1件と、その属性です。
 type Kind struct {
 	// Name は `[a-z]+` の1語。入口は ci-<Name>-<env>-<root>、define は CI_<NAME>。
-	Name string
-	// Terraform は、入口が root で Terraform を実行するか。
+	Name      string
 	Terraform bool
 	Lock      Lock
 	// Events は起動として許すイベント。入口を走らせる workflow の起動は、この空でない部分集合に限る。
@@ -293,7 +292,6 @@ func Parse(data string) ([]Entry, error) {
 	return entries, nil
 }
 
-// parseRules はルール行と次の呼び出しの行から入口を読みます。
 func parseRules(lines []string) ([]Entry, error) {
 	var entries []Entry
 	for i, l := range lines {
