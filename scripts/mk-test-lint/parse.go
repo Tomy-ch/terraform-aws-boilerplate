@@ -18,8 +18,8 @@ var (
 	// そのレシピの唯一の行が当たる形。テストの本体は `.mk` の外に在る。ほかの行や判定を持つ
 	// レシピは runner ではなく、テストのターゲットとして判定する。
 	runners = map[string]*regexp.Regexp{
-		"go-test": regexp.MustCompile(`^@?\$\(GO_TOOL\)( \$\([A-Z_]+\))* go -C scripts test \./\.\.\.$`),
-		"tf-test": regexp.MustCompile(`^@?(\$\([A-Z_]+\) )*\$\(TF\) (-chdir=\S+ )?test( [^;&|]*)?$`),
+		"go-test": regexp.MustCompile(`^@?\$\(GO_TOOL\)( \$\(GO_TEST_GIT_POISON\))? go -C scripts test \./\.\.\.$`),
+		"tf-test": regexp.MustCompile(`^@?\$\(TF\)( -chdir=[A-Za-z0-9_./-]+)? test( -[A-Za-z0-9_./=-]+)*$`),
 	}
 
 	includeRe = regexp.MustCompile(`^include\s+(\S+)\s*(#.*)?$`)
@@ -139,6 +139,10 @@ func parseMk(raw []byte) (mkFile, error) {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue // make はレシピの途中の空行とコメントの後も、タブの行を同じレシピとして読む
 		}
+		switch head[0] {
+		case "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif":
+			continue // make は条件分岐をまたいでレシピを読み続ける。どちらの枝のタブの行もレシピに積む
+		}
 		finish()
 		switch head[0] {
 		case "define":
@@ -146,7 +150,7 @@ func parseMk(raw []byte) (mkFile, error) {
 			continue
 		case "endef":
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 対応する define の無い endef", n)
-		case "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif", "export", "unexport", "override", "vpath":
+		case "export", "unexport", "override", "vpath":
 			continue
 		case "include", "-include", "sinclude":
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: `.mk` の中の include は数えられません", n)
@@ -167,6 +171,9 @@ func parseMk(raw []byte) (mkFile, error) {
 		for continued && i+1 < len(lines) { // 前提条件の続きの行を読み切る
 			i++
 			continued = strings.HasSuffix(lines[i], "\\")
+			if semi := strings.Index(lines[i], ";"); semi >= 0 && recipe == "" {
+				recipe = lines[i][semi+1:]
+			}
 		}
 		next := i + 1
 		for next < len(lines) && (strings.TrimSpace(lines[next]) == "" || strings.HasPrefix(lines[next], "#")) {

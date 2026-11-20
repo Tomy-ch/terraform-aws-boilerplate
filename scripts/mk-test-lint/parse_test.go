@@ -82,6 +82,19 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, map[string]struct{}{"multi": {}}, mk.withRecipe)
 		assert.Equal(t, "\n\techo hi", mk.recipes["multi"])
 	})
+	t.Run("条件分岐をまたいだタブの行も同じレシピに積む", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("go-test:\n\t@one\nifdef X\n\t@two\nelse\n\t@three\nendif\n\t@four\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "\n\t@one\n\t@two\n\t@three\n\t@four", mk.recipes["go-test"])
+	})
+	t.Run("前提条件の続きの行にある `;` の後ろをレシピとする", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("foo-test: a \\\n b ; echo hi\n"))
+		require.NoError(t, err)
+		assert.Equal(t, map[string]struct{}{"foo-test": {}}, mk.withRecipe)
+		assert.Equal(t, " echo hi", mk.recipes["foo-test"])
+	})
 	t.Run("規則とレシピの間の空行とコメントを読み飛ばす", func(t *testing.T) {
 		t.Parallel()
 		mk, err := parseMk([]byte("foo:\n\n\t@echo hi\nbar:\n# c\n\t@echo bar\n"))
@@ -258,6 +271,10 @@ func Test_isRunner(t *testing.T) {
 		{"ほかの行を持つ", "go-test", "\n\techo x\n\t@$(GO_TOOL) go -C scripts test ./...", false},
 		{"同じ行にほかのコマンドを持つ", "go-test", "\n\t@$(GO_TOOL) go -C scripts test ./...; echo x", false},
 		{"行をまたいで当たる形", "tf-test", "\n\t@$(TF) fmt\n\t@echo test", false},
+		{"tf-test の引数に別の実行を埋め込む", "tf-test", "\n\t@$(TF) test $$(./x.sh)", false},
+		{"tf-test の前に任意の変数を置く", "tf-test", "\n\t@$(X) $(TF) test", false},
+		{"go-test の前に任意の変数を置く", "go-test", "\n\t@$(GO_TOOL) $(X) go -C scripts test ./...", false},
+		{"tf-test の引数を持つ1行", "tf-test", "\n\t@$(TF) -chdir=usecases/a test -verbose", true},
 		{"レシピが無い", "go-test", "", false},
 		{"runner でない名前", "x-test", "\n\t@$(GO_TOOL) go -C scripts test ./...", false},
 	} {
