@@ -102,7 +102,7 @@ func buildCase(files map[string]string) (syntaxDoc, error) {
 	if err != nil {
 		return syntaxDoc{}, xerrors.Wrapf(errFixture, "一時ディレクトリ: %v", err)
 	}
-	defer os.RemoveAll(base)
+	defer func() { _ = os.RemoveAll(base) }()
 
 	var listed, roots []string
 	for name, body := range files {

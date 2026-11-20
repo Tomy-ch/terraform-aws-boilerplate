@@ -300,31 +300,31 @@ func Test_parseSyntaxFile(t *testing.T) {
 	t.Run("空の入れ子の block と null の属性も出す", func(t *testing.T) {
 		t.Parallel()
 		src := `resource "aws_iam_role" "r" {
-  managed_policy_arns = null
-  inline_policy {}
-  ingress = []
+	managed_policy_arns = null
+	inline_policy {}
+	ingress = []
 }
 
 terraform {
-  cloud {}
-  backend "s3" {
-    key = "k"
-  }
+	cloud {}
+	backend "s3" {
+		key = "k"
+	}
 }
 `
 		want := `[
 			{"file":"m/main.tf","line":1,"type":"resource","labels":["aws_iam_role","r"],
-			 "blocks":[{"path":"inline_policy","parent":-1,"line":3,"type":"inline_policy","labels":[],"dynamic":false}],
-			 "attributes":[
+				"blocks":[{"path":"inline_policy","parent":-1,"line":3,"type":"inline_policy","labels":[],"dynamic":false}],
+				"attributes":[
 				{"path":"managed_policy_arns","parent":-1,"line":2,"expr":{"kind":"literal","value":null},"refs":[]},
 				{"path":"ingress","parent":-1,"line":4,"expr":{"kind":"literal","value":[]},"refs":[]}
-			 ]},
+				]},
 			{"file":"m/main.tf","line":7,"type":"terraform","labels":[],
-			 "blocks":[
+				"blocks":[
 				{"path":"cloud","parent":-1,"line":8,"type":"cloud","labels":[],"dynamic":false},
 				{"path":"backend.s3","parent":-1,"line":9,"type":"backend","labels":["s3"],"dynamic":false}
-			 ],
-			 "attributes":[{"path":"backend.s3.key","parent":1,"line":10,"expr":{"kind":"literal","value":"k"},"refs":[]}]}
+				],
+				"attributes":[{"path":"backend.s3.key","parent":1,"line":10,"expr":{"kind":"literal","value":"k"},"refs":[]}]}
 		]`
 		assert.JSONEq(t, want, syntaxJSON(t, "m/main.tf", src))
 	})
@@ -332,10 +332,10 @@ terraform {
 	t.Run("dynamic を自身の block と、畳んだ content の block として出す", func(t *testing.T) {
 		t.Parallel()
 		src := `resource "aws_s3_bucket" "p" {
-  dynamic "provisioner" {
-    for_each = []
-    content {}
-  }
+	dynamic "provisioner" {
+		for_each = []
+		content {}
+	}
 }
 `
 		want := `[{"file":"m/p.tf","line":1,"type":"resource","labels":["aws_s3_bucket","p"],

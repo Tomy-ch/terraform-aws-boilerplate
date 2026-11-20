@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -113,32 +114,44 @@ func checkParseConfig(repo string, policyDirs, allowed []string) ([]lintreport.F
 		}
 	}
 	for _, dir := range policyDirs {
-		exempt := slices.Contains(allowed, dir)
-		err := filepath.WalkDir(filepath.Join(repo, dir), func(p string, e fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") || exempt && strings.HasSuffix(e.Name(), "_test.rego") {
-				return nil
-			}
-			raw, err := os.ReadFile(filepath.Clean(p))
-			if err != nil {
-				return err
-			}
-			src := string(raw)
-			if loc := parseConfig.FindStringIndex(src); loc != nil {
-				rel, err := filepath.Rel(repo, p)
-				if err != nil {
-					return err
-				}
-				findings = append(findings, lintreport.Finding{File: filepath.ToSlash(rel), Line: strings.Count(src[:loc[0]], "\n") + 1,
-					Message: "parse_config で HCL を読んでいます。入力とテストの fixture は hcl-input の JSON にする（ADR-0501 決定5）"})
-			}
-			return nil
-		})
+		got, err := scanParseConfig(filepath.Join(repo, dir), dir, slices.Contains(allowed, dir))
 		if err != nil {
-			return nil, xerrors.Wrapf(err, "%s の走査", dir)
+			return nil, err
 		}
+		findings = append(findings, got...)
+	}
+	return findings, nil
+}
+
+// scanParseConfig は、dir（報告では rel と書く）の下の Rego のうち parse_config 系を使うものを返します。exempt なら
+// テスト（_test.rego）を見ません。
+func scanParseConfig(dir, rel string, exempt bool) ([]lintreport.Finding, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s を開く", rel)
+	}
+	defer func() { _ = root.Close() }()
+	var findings []lintreport.Finding
+	err = fs.WalkDir(root.FS(), ".", func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") || exempt && strings.HasSuffix(e.Name(), "_test.rego") {
+			return nil
+		}
+		raw, err := root.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		src := string(raw)
+		if loc := parseConfig.FindStringIndex(src); loc != nil {
+			findings = append(findings, lintreport.Finding{File: path.Join(filepath.ToSlash(rel), p), Line: strings.Count(src[:loc[0]], "\n") + 1,
+				Message: "parse_config で HCL を読んでいます。入力とテストの fixture は hcl-input の JSON にする（ADR-0501 決定5）"})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s の走査", rel)
 	}
 	return findings, nil
 }

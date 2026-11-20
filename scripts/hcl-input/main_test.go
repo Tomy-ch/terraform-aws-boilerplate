@@ -237,7 +237,7 @@ func Test_run_syntax(t *testing.T) {
 			],
 			"blocks": [
 				{"file": "modules/a/main.tf", "line": 1, "type": "terraform", "labels": [],
-				 "blocks": [{"path": "cloud", "parent": -1, "line": 2, "type": "cloud", "labels": [], "dynamic": false}], "attributes": []},
+					"blocks": [{"path": "cloud", "parent": -1, "line": 2, "type": "cloud", "labels": [], "dynamic": false}], "attributes": []},
 				{"file": "modules/a/tests/x.tftest.hcl", "line": 1, "type": "run", "labels": ["ok"], "blocks": [], "attributes": []}
 			]
 		}`, string(raw))

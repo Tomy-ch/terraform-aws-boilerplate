@@ -172,12 +172,18 @@ func buildSyntax(base string, roots, listed []string) (syntaxDoc, error) {
 		return syntaxDoc{}, xerrors.Wrapf(errNoInput, "%v", roots)
 	}
 
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return syntaxDoc{}, xerrors.Wrapf(err, "%s を開く", base)
+	}
+	defer func() { _ = root.Close() }()
+
 	doc := syntaxDoc{Files: files, Blocks: []synBlock{}}
 	for _, f := range files {
 		if !f.Parsed {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(f.Path)))
+		src, err := root.ReadFile(filepath.FromSlash(f.Path))
 		if err != nil {
 			return syntaxDoc{}, xerrors.Wrapf(err, "%s の読み取り", f.Path)
 		}

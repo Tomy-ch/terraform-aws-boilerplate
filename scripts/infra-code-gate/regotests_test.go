@@ -328,3 +328,37 @@ func Test_checkParseConfig(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
+
+func Test_scanParseConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.rego"), "package a\n\nx := parse_config(\"hcl2\", \"\")\n")
+	writeFile(t, filepath.Join(dir, "sub/b_test.rego"), "package a\nx := parse_config(\"hcl2\", \"\")\n")
+
+	tests := map[string]struct {
+		exempt bool
+		want   []string
+	}{
+		"テストも見る":      {want: []string{"p/a.rego:3", "p/sub/b_test.rego:2"}},
+		"除外ならテストを見ない": {exempt: true, want: []string{"p/a.rego:3"}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := scanParseConfig(dir, "p", tt.exempt)
+			require.NoError(t, err)
+			var lines []string
+			for _, f := range got {
+				lines = append(lines, fmt.Sprintf("%s:%d", f.File, f.Line))
+			}
+			assert.Equal(t, tt.want, lines)
+		})
+	}
+
+	t.Run("置き場所が無ければエラー", func(t *testing.T) {
+		t.Parallel()
+		_, err := scanParseConfig(filepath.Join(dir, "none"), "none", false)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
