@@ -8,7 +8,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 
 ## 実行形態とネットワーク境界
 
-- AWS の上で動く処理は無い。管理アカウントの CI の apply-identity の role が、Organizations と IAM の API を呼ぶ
+- AWS の上で動く処理は無い。管理アカウントの CI の apply-identity の role が、Organizations と IAM の API を呼ぶ。最初の作成だけは、bootstrap の段4 の一時 IAM user が呼ぶ（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1・9）
 - Organizations の API は global の endpoint（`organizations.us-east-1.amazonaws.com`）を、IAM は `iam.amazonaws.com` を呼ぶ
 - 外への egress は無い
 
@@ -60,7 +60,7 @@ unsupported:
 
 ## 依存するユースケースと判断 Issue
 
-- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。権限の変更を先に merge し、昇格してから、この usecase を足す変更を昇格する
+- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。初回は bootstrap の段4 が、権限とこの usecase の resource を同じ apply で作る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。以後、この usecase の resource を足す変更は、その権限の変更を先に昇格してから昇格する
 - 判断 Issue: #21（7つのアカウント、OU、break-glass、Identity Center、データ境界の決定）、#99、#142、#156、#128
 
 ## 検証方法
