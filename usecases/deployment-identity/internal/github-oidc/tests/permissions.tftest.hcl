@@ -1217,7 +1217,7 @@ run "policies" {
     error_message = "workload の2つの policy の Resource \"*\" の文が、resource-level 権限を持たない Action の文だけになっていません。"
   }
 
-  # deployment-identity/ADR-0201 決定13。tag の key の有無で見て、tag の除去も拒む。
+  # deployment-identity/ADR-0201 決定13。
   assert {
     condition = one([
       for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : [s.Effect, s.Condition, contains(s.Action, "ce:UntagResource"), contains(s.Action, "ce:TagResource")]
@@ -1350,15 +1350,13 @@ run "accepts_single_letter_break_glass_role_name_in_admin" {
   }
 }
 
-# inline policy は role あたり 10,240 文字（空白を除く）が上限である（deployment-identity/ADR-0201「影響」）。
 # mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
 # 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
 # partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
 # 合わせる。この組は AWS に無い。policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
 # 文書はどちらの長さにも伸びる。そうでない使い方を入れたら、この組が最長である前提は崩れる。
 # 名前は IAM の上限（user・role 64文字、group 128文字）。組成は README の break_glass_arns の行が持つ。
-# 長さを決める入力が違うので2つの run で測り、どちらも role 名が最も長くなる log-archive の name_prefix を使う。
-# us-east-1 は aws の partition にだけ足すので、aws の最長の region と us-east-1 の2つを並べた形も `_aws` の2つの run で測る。
+# どの run も role 名が最も長くなる log-archive の name_prefix を使う。
 run "policy_length" {
   command = apply
   # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
@@ -1595,7 +1593,7 @@ run "policy_length_outside_admin" {
 # 既定と違う partition とアカウントを与え、入力を読んだかを区別する。
 run "policy_length_aws" {
   command = apply
-  # 前の run の state を引き継ぐと、作成済みの OIDC provider に override が効かず、mock の短い ARN で数えてしまう。
+  # state_key を分ける理由は policy_length と同じ。
   state_key = "policy_length_aws"
 
   variables {
@@ -2554,7 +2552,7 @@ run "governance_follows_data_sources" {
   }
 }
 
-# us-east-1 は provider の region と重ねず、aws の partition の外では足さない（repository-wide/ADR-0208 決定4）。
+# us-east-1 は provider の region と重ねず、aws の partition の外では足さない（repository-wide/ADR-0208 決定4・5）。
 run "workload_regions_in_us_east_1" {
   command   = apply
   state_key = "workload_regions_in_us_east_1"

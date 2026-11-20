@@ -157,7 +157,7 @@ test_violation_exclusive_contents_absent if {
 	}
 }
 
-# 実際の plan には apply の role の排他と attachment も並ぶ。plan の role に付くものだけを数えることを見る。
+# 実際の plan には apply の role の排他と attachment も並ぶ。
 test_pass_other_role_exclusive_and_attachment_are_not_checked if {
 	others := [
 		rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_names": ["apply"]}),
@@ -218,7 +218,6 @@ test_violation_put_object_resource_array if {
 	}
 }
 
-# 動詞が読み取りの形でない読み取りの Action は、plan_role.read_actions の宣言で読み取りに入る（deployment-identity/ADR-0201 決定13）。
 read_decl(actions) := {"plan_role": object.union(decl.plan_role, {"read_actions": actions})}
 
 test_pass_declared_read_action if {
@@ -251,7 +250,6 @@ test_violation_read_actions_malformed if {
 	}
 }
 
-# 変更系の動詞の宣言は落とし、その Action を読み取りにも入れない。
 test_violation_read_actions_write_verb if {
 	every x in ["budgets:ModifyBudget", "ce:CreateAnomalyMonitor", "ce:DeleteAnomalyMonitor", "ce:UpdateAnomalySubscription", "s3:PutBucketPolicy", "ce:TagResource", "ce:UntagResource", "BUDGETS:MODIFYBUDGET"] {
 		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])

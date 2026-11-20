@@ -5,7 +5,6 @@ import data.plan.lib
 
 cfg := object.get(object.get(data.policy_plan, "deployment_identity", {}), "plan_role", {})
 
-# index key 付きの address（["plan"]）で宣言する。同じ resource の apply 系の instance と分けるため。
 default target := ""
 
 target := object.get(cfg, "policy", "")
@@ -14,7 +13,6 @@ default role := ""
 
 role := object.get(cfg, "role", "")
 
-# 暗号操作は動詞で読み取りに入らないので落ちる（deployment-identity/ADR-0201 決定3）。
 read_verbs := ["get", "list", "describe", "head"]
 
 # 入力に Bucket の resource が無いので、plan の出力の Bucket を address で引けない。名前の形で見る。
@@ -41,7 +39,7 @@ read_only(action) if {
 	startswith(parts[1], v)
 }
 
-# 動詞が読み取りの形でない読み取りの Action（deployment-identity/ADR-0201 決定13）。宣言の形を満たす要素だけが読み取りになる。
+# 動詞が読み取りの形でない読み取りの Action（deployment-identity/ADR-0201 決定13）。
 read_actions := object.get(cfg, "read_actions", [])
 
 write_verbs := ["modify", "create", "delete", "update", "put", "tag", "untag"]
