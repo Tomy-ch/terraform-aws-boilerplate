@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-25
 - Scope: deployment-identity
-- Related: repository-wide/ADR-0602, repository-wide/ADR-0604, repository-wide/ADR-0301, repository-wide/ADR-0402
+- Related: repository-wide/ADR-0602, repository-wide/ADR-0604, repository-wide/ADR-0301, repository-wide/ADR-0402, organization-baseline/ADR-0202
 
 ## Context
 

@@ -95,6 +95,13 @@ AWS CLI を使える管理アカウントの資格情報が在るなら、`aws c
 1. CloudFormation の「StackSets」で `<project>-break-glass` を開き、「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
 2. 3.6 の試験で、メンバーアカウントの break-glass の role へも切り替えられることを確かめ、結果を Pull Request に書く
 
+StackSet か stack instance の作成で昇格の apply が失敗したときは、次の順に直す。失敗した resource は state に tainted で残り、次の plan は作り直しを求めて `prevent_destroy` で止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
+
+1. CloudFormation の「StackSets」で `<project>-break-glass` の「オペレーション」を開き、失敗した操作とアカウントの理由を見る
+2. 原因を直す。コードの変更が要るなら、それを Pull Request で直して昇格する
+3. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
+4. CI の plan が作り直しを示さないことを確かめ、昇格の apply をやり直す
+
 ### 3.6 break-glass を試す（毎月）
 
 45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。

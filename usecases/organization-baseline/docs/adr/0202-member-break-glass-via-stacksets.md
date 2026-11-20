@@ -17,23 +17,24 @@ service-managed の StackSet は、組織への信頼アクセスを CloudFormat
 
 ## Decision
 
-1. メンバーアカウントの break-glass の role を、管理アカウントの CloudFormation StackSet（permission model は `SERVICE_MANAGED`）で配る。自動展開を有効にし、新しく作るアカウントにも置く。アカウントが組織を離れたときは stack を残さない。
+1. メンバーアカウントの break-glass の role を、管理アカウントの CloudFormation StackSet（permission model は `SERVICE_MANAGED`）で配る。自動展開を有効にし、新しく作るアカウントにも置く。アカウントが組織を離れたときは stack を残さない。managed execution を有効にし、自動展開と更新の操作が重なったときは、後の操作を失敗させずに待たせる。
 2. stack instance の対象は組織の Root とし、region は provider の region だけとする。StackSets は管理アカウントへ stack を置かない。管理アカウントの role は organization-baseline/ADR-0201 決定4 が持つ。
 3. StackSet の名前は break-glass の role の名前と同じにする。`deployment-identity` は、`break_glass_arns` の role の ARN からこの名前を組み、apply-identity の role の権限の Resource を限る（deployment-identity/ADR-0201 決定3・4）。
 4. テンプレートは `AWS::IAM::Role` を1つだけ持つ。名前・path・セッションの長さ・信頼条件・managed policy（`AdministratorAccess` だけ）は、管理アカウントの break-glass の role と同じにする。信頼条件は、管理アカウントの break-glass の user の ARN（path と名前から組んだもの）と `aws:MultiFactorAuthPresent` に限る。inline policy と tag を持たない。
-5. `protect-governance-roles` の SCP は、`stacksets-exec-*` の role を `aws:PrincipalArn` の例外にする。例外が無いと、StackSet がメンバーで role を作れない。例外にするのは StackSets の実行の role だけとし、break-glass の role の変更は、ほかのすべての主体に拒む。
+5. `protect-governance-roles` の SCP は、`stacksets-exec-*` の role を `aws:PrincipalArn` の例外にする。例外が無いと、StackSet がメンバーで role を作れない。例外にするのは StackSets の実行の role だけとし、break-glass の role の変更は、ほかのすべての主体に拒む。例外は role の名前で当たるので、同じ SCP で、`stacksets-exec-*` の role の作成と変更をすべての主体に拒む。この role を作るのは service-linked role で、SCP の対象にならない。
 6. StackSet と stack instance に `prevent_destroy` を付け、`stateful_protection.protected_types` に載せる。CI の apply-identity の role に、その削除の権限を与えない（deployment-identity/ADR-0201）。
 7. 組織への信頼アクセスの有効化（`ActivateOrganizationsAccess`）は、人がコンソールで行う。Organizations の API で有効にせず、CloudFormation の側で有効にする（organization-baseline/ADR-0001 決定5）。手順は `docs/setup/organization-baseline.md` が持つ。
 8. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
-   - 外れる対象: CloudFormation.4（stack に service role が付いていること）
+   - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
    - 理由: service-managed の StackSet が作る stack は、service role を持てない。コントロールの文書は、この stack を必ず FAILED にすると述べる
-   - 影響: すべてのメンバーアカウントで、break-glass の stack が CloudFormation.4 の FAILED になる。Security Hub での抑止はこの usecase で行わない（検出結果の抑止は、それを持つ変更が決める）
+   - ユースケース上の制約: 管理アカウントの identity root は、メンバーアカウントへ届く provider を持たない（organization-baseline/ADR-0001）。メンバーへ resource を置く経路は StackSets だけである
+   - 影響: security は、すべてのメンバーアカウントで break-glass の stack が CloudFormation.4 の FAILED になる（Security Hub での抑止はこの usecase で行わない。検出結果の抑止は、それを持つ変更が決める）。stack の権限は CloudFormation の service role ではなく StackSets の実行の role が持つ。availability と cost への影響は無い
    - 代替案: 管理アカウントの外の provider（メンバーごとの alias）で role を作る。採らない理由は「検討した代替案」に在る
    - 見直し条件: StackSets の service-managed の stack が service role を持てるようになったとき。メンバーアカウントへ届く provider を、この root が持つと決めたとき
 
 ## ネイティブ統合で解けない理由
 
-StackSets は、組織のメンバーアカウントへ resource を配る AWS のネイティブな仕組みそのものである。テンプレートは `AWS::IAM::Role` を1つ宣言するだけで、コードを実行しない論理リソースの宣言である（repository-wide/ADR-0103 決定4）。`aws_cloudformation_stack_set` は、テンプレートに Lambda のコードを埋め込める型なので、型の性質でインフラ内コードに分類される（同 決定9）。そのためインフラ内コードの許可リストに載せる。
+ネイティブ統合で解けており、コードは持たない。メンバーへ role を配るのは AWS の StackSets で、テンプレートは `AWS::IAM::Role` を1つ宣言するだけの論理リソースの宣言である（repository-wide/ADR-0103 決定4）。`aws_cloudformation_stack_set` は、テンプレートに Lambda のコードを埋め込める型なので、型の分類でインフラ内コードに当たり（同 決定9）、許可リストに載る。テンプレートがコードを持たないことは `PLAN-BG-05` が見る。
 
 ## 入出力
 
@@ -42,7 +43,7 @@ StackSets は、組織のメンバーアカウントへ resource を配る AWS �
 
 ## 失敗時の扱い
 
-stack instance の作成や更新が失敗すると、Terraform の apply は StackSet の操作の失敗で止まる（provider は操作の完了を待つ）。role が置かれないメンバーアカウントは、手順書の確認で人が見つけ、原因を直す変更を昇格する。
+stack instance の作成や更新が失敗すると、Terraform の apply は StackSet の操作の失敗で止まる（AWS Provider の `aws_cloudformation_stack_instances` は操作の完了を待つ）。作成で失敗した resource は state に tainted で残り、次の plan は作り直しを求めて `prevent_destroy` で止まる。CI は削除の権限を持たないので、人が原因を直し、state の tainted を外す。手順は `docs/setup/organization-baseline.md` が持つ。
 
 ## 業務要件の変更で修正が必要にならない理由
 
@@ -77,8 +78,8 @@ stack instance の作成や更新が失敗すると、Terraform の apply は St
 
 ## 保証範囲
 
-- 保証すること: StackSet が service-managed で自動展開し、テンプレートが管理アカウントの break-glass の role と同じ1つの role だけを持つこと（Unit Test と `plan.organization_baseline_break_glass` の `PLAN-BG-05`）。`protect-governance-roles` が外すのは `stacksets-exec-*` だけであること（`PLAN-ORG-06`）
-- 保証しないこと: すべてのメンバーアカウントで stack instance が実際に `CURRENT` になること（人の確認。手順書が持つ）。メンバーで role が作られた後に変えられていないこと（`protect-governance-roles` と StackSets の drift 検出に依る）
+- 保証すること: StackSet が service-managed で自動展開し、テンプレートが管理アカウントの break-glass の role と同じ1つの role だけを持つこと（Unit Test と `plan.organization_baseline_break_glass` の `PLAN-BG-05`）。`protect-governance-roles` が外すのは `stacksets-exec-*` だけで、その名前の role の作成と変更をすべての主体に拒むこと（`PLAN-ORG-06`）
+- 保証しないこと: すべてのメンバーアカウントで stack instance が実際に `CURRENT` になること（人の確認。手順書が持つ）。メンバーで role が作られた後に変えられていないこと（`protect-governance-roles` と StackSets の drift 検出に依る）。StackSets が `stacksets-exec-*` の role を作り、変える経路が、SCP の対象にならない service-linked role であること（AWS の文書に依る。メンバーアカウントを作った後に、stack instance が `CURRENT` になることで人が確かめる）
 
 ## 検証方法
 
