@@ -13,6 +13,13 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
+// generatedRefPaths は、[refContext] の github の下のパス。同じ接頭辞を持つものは長いものを先に置く。どれも
+// [refPath] が ref と見分けるものでなければならない。
+var generatedRefPaths = []string{
+	"ref_name", "ref", "base_ref", "head_ref", "event.ref", "event.pull_request.base.ref", "event.pull_request.head.ref",
+	"event.workflow_run.head_branch",
+}
+
 var (
 	errBranchSet  = xerrors.New("workflow の分岐の集合を生成できません")
 	errRefLiteral = xerrors.New("workflow の式が ref を宣言から生成していない文字列と比べています（印 `# branch-set:` で生成してください）")
@@ -26,9 +33,9 @@ var (
 	// branchesLoose は、branchesLine が読めない書き方も拾う。数が食い違えば、読めない形がある。
 	branchesLoose = regexp.MustCompile(`branches(?:-ignore)?["']?\s*:`)
 	ifLine        = regexp.MustCompile(`^(\s*)(?:-\s+)?(?:"if"|'if'|if)[ \t]*:(.*)$`)
-	// refContext は、ブランチの名前か ref を値に持つ context の閉じた一覧。Actions の式は context と property の
+	// refContext は、生成する項（[renderIfLine]）が名指せる ref の context。Actions の式は context と property の
 	// 名前の大文字小文字を区別しないので、ここも区別しない。
-	refContext = regexp.MustCompile(`(?i:github\.(?:ref_name|ref|base_ref|head_ref|event\.ref|event\.pull_request\.base\.ref|event\.pull_request\.head\.ref|event\.workflow_run\.head_branch))\b`)
+	refContext = regexp.MustCompile(`(?i:github\.(?:` + strings.ReplaceAll(strings.Join(generatedRefPaths, "|"), ".", `\.`) + `))\b`)
 	// containsSet は、完全一致の集合を名指す項 contains(fromJSON('[...]'), <ref>)。
 	containsSet = regexp.MustCompile(`contains\(fromJSON\('(\[[^']*\])'\),\s*(` + refContext.String() + `)\)`)
 	// prefixGroup は、前方一致の集合を名指す項 (startsWith(<ref>, '<prefix>') || ...)。
@@ -285,28 +292,18 @@ func splitComment(line string) (code, comment string) {
 const actionsDir = ".github/actions"
 
 var (
-	// refLiteral は、ref の context と文字列リテラルを比べる項。
-	refLiteral = []*regexp.Regexp{
-		regexp.MustCompile(`(` + refContext.String() + `)\s*(?:==|!=)\s*'`),
-		regexp.MustCompile(`'[^']*'\s*(?:==|!=)\s*(` + refContext.String() + `)`),
-		regexp.MustCompile(`(?i:startsWith|endsWith|contains)\(\s*(` + refContext.String() + `)\s*,\s*'`),
-		regexp.MustCompile(`(?i:contains)\(\s*(?:(?i:fromJSON)\(\s*)?'[^']*'\s*\)?\s*,\s*(` + refContext.String() + `)`),
-	}
-	// indexedGithub は、github の context を添字で引く書き方。添字の先が ref かを字面では決められないので、
-	// 読めない式として扱う。
-	indexedGithub = regexp.MustCompile(`(?i)\bgithub\s*\[`)
-	exprOpen      = regexp.MustCompile(`\$\{\{`)
-	exprWhole     = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	ifLoose       = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
+	exprOpen = regexp.MustCompile(`\$\{\{`)
+	ifLoose  = regexp.MustCompile(`(?:^|[\s{,-])["']?if["']?\s*:`)
 	// blockScalar は、値がブロックスカラーで始まる行（コメントを除いた字面）。キーの値か列の要素で、アンカーと
 	// タグが前に付いてもよい。
 	blockScalar = regexp.MustCompile(`(?:^|[:\s-])[ \t]*(?:[&!]\S*[ \t]+)*[|>][-+0-9]*[ \t]*$`)
 )
 
-// checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ref の context
-// （[refContext]）を文字列リテラルと比べていないことを確かめます（ADR-0603 検証方法）。印 `# branch-set:` の
-// 行では、生成した項（[renderIfLine] が書き換える部分）だけを除いて見る。読んだ式の数を返す。対象のファイルか
-// 式が1件も無いとき、`${{` と if: のキーの字面の数が読めた数と食い違うときは失敗する。
+// checkRefLiterals は、workflow と composite action の式（`${{ }}` と if: の値）が、ブランチの名前か ref を
+// 値に持つ値を、式の中で作った文字列と比べていないことを確かめます（ADR-0603 検証方法。判定は
+// [refComparisons]）。印 `# branch-set:` の行では、生成した項（[renderIfLine] が書き換える部分）だけを除いて
+// 見る。読んだ式の数を返す。対象のファイルか式が1件も無いとき、`${{` と if: のキーの字面の数が読めた数と
+// 食い違うとき、式として読めないものがあるときは失敗する。
 func checkRefLiterals(root string) (int, error) {
 	files, err := expressionFiles(root)
 	if err != nil {
@@ -329,10 +326,11 @@ func checkRefLiterals(root string) (int, error) {
 		}
 		total += len(exprs)
 		for _, e := range exprs {
-			if indexedGithub.MatchString(e.text) {
-				return 0, xerrors.Wrapf(errExpression, "%s:%d: github の context を添字で引く書き方は読めません。ドット記法で書いてください", rel, e.line)
+			terms, err := refComparisons(e.text)
+			if err != nil {
+				return 0, xerrors.Wrapf(err, "%s:%d", rel, e.line)
 			}
-			for _, term := range refLiteralTerms(e.text) {
+			for _, term := range terms {
 				findings = append(findings, fmt.Sprintf("%s:%d: %s", rel, e.line, term))
 			}
 		}
@@ -404,7 +402,7 @@ func expressions(src string) ([]expression, error) {
 		col := keyColumn(code)
 		m := ifLine.FindStringSubmatch(code)
 		if m == nil {
-			for _, e := range exprWhole.FindAllString(code, -1) {
+			for _, e := range exprSpans(code) {
 				out = append(out, expression{line: i + 1, text: e})
 				readOpens++
 			}
@@ -412,7 +410,7 @@ func expressions(src string) ([]expression, error) {
 				body, next := blockBody(lines, i+1, blockColumn(code, col))
 				for j, l := range body {
 					opens += len(exprOpen.FindAllString(l, -1))
-					for _, e := range exprWhole.FindAllString(l, -1) {
+					for _, e := range exprSpans(l) {
 						out = append(out, expression{line: i + 2 + j, text: e})
 						readOpens++
 					}
@@ -442,7 +440,7 @@ func expressions(src string) ([]expression, error) {
 				opens += len(exprOpen.FindAllString(l, -1))
 			}
 			value = folded
-			readOpens += len(exprWhole.FindAllString(value, -1))
+			readOpens += len(exprSpans(value))
 			i = next - 1
 		}
 		if mark := setMarker.FindStringSubmatch(comment); mark != nil {
@@ -537,12 +535,4 @@ func withoutGenerated(value, set string) string {
 		return prefixGroup.ReplaceAllString(value, "true")
 	}
 	return value
-}
-
-func refLiteralTerms(expr string) []string {
-	out := make([]string, 0, len(refLiteral))
-	for _, re := range refLiteral {
-		out = append(out, re.FindAllString(expr, -1)...)
-	}
-	return out
 }

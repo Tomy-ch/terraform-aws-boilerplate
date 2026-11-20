@@ -408,17 +408,41 @@ func Test_checkRefLiterals(t *testing.T) {
 			require.ErrorIs(t, err, errRefLiteral, expr)
 		}
 	})
-	t.Run("大文字の GITHUB を添字で引く式も読めないとして失敗する", func(t *testing.T) {
+	t.Run("大文字の GITHUB を文字列リテラルの添字で引く比較も落とす", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  a:\n    if: ${{ GITHUB['ref'] == 'main' }}\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
-		require.ErrorIs(t, err, errExpression)
+		require.ErrorIs(t, err, errRefLiteral)
 	})
-	t.Run("github を添字で引く式は読めないとして失敗する", func(t *testing.T) {
+	t.Run("github を文字列リテラルの添字で引く比較も落とす", func(t *testing.T) {
 		t.Parallel()
 		src := "jobs:\n  a:\n    if: ${{ github['ref_name'] == 'main' }}\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errRefLiteral)
+	})
+	t.Run("github をリテラルでない添字で引く式は読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ github.event[format('{0}', 'ref')] == 'main' }}\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errExpression)
+		assert.ErrorContains(t, err, wf("a.yaml")+":3")
+	})
+	t.Run("包みの外に字面が残る if: は読めないとして失敗する", func(t *testing.T) {
+		t.Parallel()
+		src := "jobs:\n  a:\n    if: ${{ github.event_name }} == 'push'\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
+		require.ErrorIs(t, err, errExpression)
+	})
+	t.Run("関数で加工した ref と kebab-case の input の比較も落とす", func(t *testing.T) {
+		t.Parallel()
+		src := "runs:\n  steps:\n    - if: format('{0}', github.ref_name) == 'main' || inputs.base-ref == 'main'\n      run: x\n"
+		_, err := checkRefLiterals(repo(t, map[string]string{
+			wf("scan.yaml"): scanWorkflowRendered,
+			filepath.Join(actionsDir, "a", "action.yaml"): src,
+		}))
+		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "format('{0}', github.ref_name) == 'main'")
+		assert.ErrorContains(t, err, "inputs.base-ref == 'main'")
 	})
 	t.Run("対象のファイルが無ければ失敗する", func(t *testing.T) {
 		t.Parallel()
@@ -439,9 +463,10 @@ func Test_checkRefLiterals(t *testing.T) {
 	})
 	t.Run("二重引用符の中の \\\" の後ろの式も読み、落とす", func(t *testing.T) {
 		t.Parallel()
-		src := "jobs:\n  a:\n    if: \"a \\\" # ${{ github.ref_name == 'x' }}\"\n"
+		src := "jobs:\n  a:\n    if: \"github.event_name != 'a \\\" #' && github.ref_name == 'x'\"\n"
 		_, err := checkRefLiterals(repo(t, map[string]string{wf("a.yaml"): src}))
 		require.ErrorIs(t, err, errRefLiteral)
+		assert.ErrorContains(t, err, "github.ref_name == 'x'")
 	})
 	t.Run("複数のファイルの比較をすべて報せる", func(t *testing.T) {
 		t.Parallel()
@@ -511,8 +536,9 @@ func Test_expressions(t *testing.T) {
 			"    if: ${{ contains(fromJSON('[\"a\"]'), github.base_ref) || x }} # branch-set: deploy\n",
 			[]expression{{1, "${{ true || x }}"}}, "",
 		},
-		"閉じていない式は拒む":       {"a: ${{ x\n", nil, "閉じていない式"},
-		"読めない書き方の if: は拒む": {"    steps: [{if: x}]\n", nil, "読めない書き方"},
+		"文字列リテラルの中の }} で式を切らない": {"a: ${{ format('}}') }}\n", []expression{{1, "${{ format('}}') }}"}}, ""},
+		"閉じていない式は拒む":            {"a: ${{ x\n", nil, "閉じていない式"},
+		"読めない書き方の if: は拒む":      {"    steps: [{if: x}]\n", nil, "読めない書き方"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -535,35 +561,6 @@ func Test_withoutGenerated(t *testing.T) {
 	assert.Equal(t, "true && x", withoutGenerated("contains(fromJSON('[\"a\"]'), github.base_ref) && x", setDeploy))
 	assert.Equal(t, "true && x", withoutGenerated("(startsWith(github.head_ref, 'a/')) && x", setLines))
 	assert.Equal(t, "y", withoutGenerated("y", setRuleset))
-}
-
-func Test_refLiteralTerms(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]struct {
-		expr string
-		want int
-	}{
-		"== の右のリテラル":                {"github.ref_name == 'production'", 1},
-		"!= の左のリテラル":                {"'main' != github.base_ref", 1},
-		"startsWith":                {"startsWith(github.head_ref, 'release/')", 1},
-		"endsWith":                  {"endsWith(github.ref, '/main')", 1},
-		"contains の文字列":             {"contains(github.event.ref, 'hotfix')", 1},
-		"contains の fromJSON":       {"contains(fromJSON('[\"a\"]'), github.event.workflow_run.head_branch)", 1},
-		"pull_request の head の ref": {"github.event.pull_request.head.ref == 'x'", 1},
-		"pull_request の base の ref": {"github.event.pull_request.base.ref == 'x'", 1},
-		"空白の無い ==":                  {"github.ref_name=='x'", 1},
-		"context 同士の比較は通す":          {"github.ref_name == github.event.repository.default_branch", 0},
-		"ref でない context は通す":       {"github.event_name == 'push' || github.ref_type == 'tag'", 0},
-		"ref と無関係な fromJSON は通す":    {"contains(fromJSON('[\"failure\"]'), needs.a.result)", 0},
-		"ref を値として渡すだけなら通す":         {"${{ github.ref }}", 0},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Len(t, refLiteralTerms(tc.expr), tc.want)
-		})
-	}
 }
 
 func Test_keyColumn(t *testing.T) {
