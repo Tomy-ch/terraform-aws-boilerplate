@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,37 @@ func Test_runRegoTests(t *testing.T) {
 		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "resource_order"}, repo, &out)
 		require.ErrorIs(t, err, errViolations)
 		assert.Contains(t, out.String(), "ID RO001 に test_RO001_deny_* のテストがありません")
+	})
+
+	t.Run("parse_config は、-allow-parse-config の置き場所の外では違反", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK+"\nx := parse_config(\"hcl2\", \"\")\n", reportOK)
+		writeFile(t, filepath.Join(repo, "conftest/layer/b_test.rego"), "package layer\n\ny := parse_config(\"hcl2\", \"\")\n\ntest_x if { true }\n")
+		writeFile(t, p, reportOK+"data.layer.test_x: PASS (1ms)\n")
+		var out bytes.Buffer
+		err := runRegoTests([]string{"-policy", "conftest/hcl,conftest/layer", "-report", p, "-namespaces", "infra_code", "-allow-parse-config", "conftest/layer"}, repo, &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.Contains(t, out.String(), "conftest/hcl/a_test.rego\n    :7  parse_config で HCL を読んでいます")
+		assert.NotContains(t, out.String(), "conftest/layer/b_test.rego")
+	})
+
+	t.Run("ID もテストも無い置き場所は違反", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK, reportOK)
+		writeFile(t, filepath.Join(repo, "conftest/empty/a.rego"), "package lib\n\nx := 1\n")
+		var out bytes.Buffer
+		err := runRegoTests([]string{"-policy", "conftest/hcl,conftest/empty", "-report", p, "-namespaces", "infra_code"}, repo, &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.Contains(t, out.String(), "Rego の置き場所に ID を持つ deny もテストも1件もありません")
+	})
+
+	t.Run("parse_config を -allow-parse-config の置き場所の中でだけ使えば通る", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK, reportOK)
+		writeFile(t, filepath.Join(repo, "conftest/layer/b_test.rego"), "package layer\n\ny := parse_config(\"hcl2\", \"\")\n\ntest_x if { true }\n")
+		writeFile(t, p, reportOK+"data.layer.test_x: PASS (1ms)\n")
+		var out bytes.Buffer
+		require.NoError(t, runRegoTests([]string{"-policy", "conftest/hcl,conftest/layer", "-report", p, "-namespaces", "infra_code", "-allow-parse-config", "conftest/layer"}, repo, &out))
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -133,10 +165,13 @@ func Test_scanRego(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "noid.rego"), "package infra_code\n\ndeny contains msg if {\n\tmsg := \"no id\"\n}\n")
 	writeFile(t, filepath.Join(dir, "forms.rego"), "package infra_code_input\n\ndeny[msg] if { msg := \"x\" }\n\nviolation contains \"y\" if { true }\n\nwarn contains \"IC012 z\" if { true }\n\ndeny_extra contains \"w\" if { true }\n\ndenies(x) := x\n")
 	writeFile(t, filepath.Join(dir, "other.rego"), "package elsewhere\n\ndeny contains \"IC013 a\" if { true }\n")
+	writeFile(t, filepath.Join(dir, "net.rego"), "package lib\n\nx := net.cidr_contains(\"10.0.0.0/8\", \"10.0.0.1\")\n")
+	writeFile(t, filepath.Join(dir, "runtime.rego"), "package lib\n\nx := opa.runtime()\n")
+	writeFile(t, filepath.Join(dir, "extra_ids.rego"), "package infra_code\n\ndeny contains msg if {\n\tmsg := concat(\"\", [\"IC014 a\", \"IC015 b\"])\n}\n")
 
 	suite, err := scanRego(dir, []string{"infra_code", "infra_code_input"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"IC010", "IC011", "IC012", "IC013"}, sortedKeys(suite.ids))
+	assert.Equal(t, []string{"IC010", "IC011", "IC012", "IC013", "IC014", "IC015"}, sortedKeys(suite.ids))
 	assert.Equal(t, []string{"data.infra_code.test_IC010_allow_known", "data.infra_code.test_IC010_deny_unknown"}, sortedKeys(suite.tests))
 	var msgs []string
 	for _, f := range suite.findings {
@@ -144,6 +179,9 @@ func Test_scanRego(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{
 		"判定を外界に依存させる組み込み関数 http.send を使っています",
+		"判定を外界に依存させる組み込み関数 net.cidr_contains を使っています",
+		"判定を外界に依存させる組み込み関数 opa.runtime を使っています",
+		"規則 1 個に対し、メッセージの先頭の ID が 2 個です。各規則のメッセージを ID で始める",
 		"package 宣言がありません",
 		"規則 1 個に対し、メッセージの先頭の ID が 0 個です。各規則のメッセージを ID で始める",
 		"規則 4 個に対し、メッセージの先頭の ID が 1 個です。各規則のメッセージを ID で始める",
@@ -235,4 +273,58 @@ func Test_checkRan(t *testing.T) {
 	assert.Equal(t, "テスト data.p.test_b が FAIL です", got[0].Message)
 	assert.Equal(t, "テスト data.p.test_c が走っていません", got[1].Message)
 	assert.Equal(t, "テスト data.q.test_d が ERROR です", got[2].Message)
+}
+
+func Test_splitList(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, splitList(""))
+	assert.Equal(t, []string{"a", "b"}, splitList("a,b"))
+}
+
+func Test_checkParseConfig(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "p/a.rego"), "package a\n")
+	writeFile(t, filepath.Join(repo, "p/sub/b_test.rego"), "package a\n\n\nx := parse_config_bytes(\"hcl2\", \"\")\n")
+	writeFile(t, filepath.Join(repo, "p/c.txt"), "parse_config(")
+	writeFile(t, filepath.Join(repo, "q/d_test.rego"), "package q\nx := parse_config(\"hcl2\", \"\")\n")
+	writeFile(t, filepath.Join(repo, "r/e.rego"), "package r\nx := parse_config(\"hcl2\", \"\")\n")
+	for name, call := range map[string]string{"config": "parse_config (", "file": "parse_config_file(", "bytes": "parse_config_bytes(", "combined": "parse_combined_config_files("} {
+		writeFile(t, filepath.Join(repo, "forms", name+".rego"), "package f\n"+call+"\"x\")\n")
+	}
+
+	tests := map[string]struct {
+		policy, allowed []string
+		want            []string
+	}{
+		"除外の置き場所のテストは違反なし":               {policy: []string{"q"}, allowed: []string{"q"}},
+		"除外の置き場所でもテストでなければ違反":            {policy: []string{"r"}, allowed: []string{"r"}, want: []string{"r/e.rego:2"}},
+		"組み込み関数の形をすべて捕まえる":               {policy: []string{"forms"}, want: []string{"forms/bytes.rego:2", "forms/combined.rego:2", "forms/config.rego:2", "forms/file.rego:2"}},
+		"入れ子の Rego の parse_config_bytes": {policy: []string{"p"}, want: []string{"p/sub/b_test.rego:4"}},
+		"除外の置き場所の外":                      {policy: []string{"p", "q"}, allowed: []string{"q"}, want: []string{"p/sub/b_test.rego:4"}},
+		"-policy に無い除外は違反":               {policy: []string{"q"}, allowed: []string{"q", "s"}, want: []string{"s:1 -allow-parse-config の s が -policy（q）にありません"}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := checkParseConfig(repo, tt.policy, tt.allowed)
+			require.NoError(t, err)
+			var lines []string
+			for _, f := range got {
+				lines = append(lines, fmt.Sprintf("%s:%d %s", f.File, f.Line, f.Message))
+			}
+			require.Len(t, lines, len(tt.want), "%v", lines)
+			for i, w := range tt.want {
+				assert.Contains(t, lines[i], w)
+			}
+		})
+	}
+
+	t.Run("置き場所が無ければエラー", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkParseConfig(repo, []string{"none"}, nil)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
 }
