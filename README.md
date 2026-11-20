@@ -25,7 +25,7 @@
 | `modules/` | 一般 module の `s3/`・`kms/`・`log-group/`・`vended-log-group/`・`sns/`・`vpc/` だけ |
 | `usecases/` | `state-backend/` と `deployment-identity/`（bootstrap の段1-4 の分）と `finops/`・`network-foundation/`・`dns-zone/`・`audit-evidence/`・`ops-notification/`・`image-registry/`（どの root からも呼ばれない）だけ |
 | `env/` | 管理アカウントの identity root の `admin/identity/` だけ |
-| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査・root の構成と backend 設定の不変条件の検査（入力は HCL のソース）は `make`・pre-commit・CI に配線済み |
+| Terraform 側の検査 | fmt / validate / TFLint / `terraform test` / Policy Test（Conftest、入力は plan）と、Conftest によるインフラ内コードの検出・resource の作成の順序の検査・層の規則の検査・root の構成と backend 設定の不変条件の検査（入力は HCL のソースから作る JSON）は `make`・pre-commit・CI に配線済み |
 
 ## 使い方
 

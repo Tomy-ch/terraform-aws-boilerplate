@@ -12,12 +12,12 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// dynamicContent は conftest/hcl/lib/hcl.rego の fold_dynamic と同じ正規表現です。Rego の values_at と
+// dynamicContent は conftest/hcl/layer/hcl2.rego の fold_dynamic と同じ正規表現です。Rego の values_at と
 // 同じ並びで引けるよう、規則も適用の回数（2回）も揃えます。
 var dynamicContent = regexp.MustCompile(`(^|\.)dynamic\.([^.]+)\.content(\.|$)`)
 
 // labelCounts は、ラベルの個数を Terraform が決めている block の種類です。
-var labelCounts = map[string]int{"resource": 2, "data": 2}
+var labelCounts = map[string]int{"resource": 2, "data": 2, "ephemeral": 2, "action": 2, "provider": 1, "module": 1}
 
 type block struct {
 	File       string      `json:"file"`
@@ -35,6 +35,31 @@ type attribute struct {
 // parseFile は、name のファイルの最上位の block をソースの順に返します。診断は warning を含めて1つでも
 // あれば errSyntax です。
 func parseFile(name string, src []byte) ([]block, error) {
+	body, err := parseConfigBody(name, src)
+	if err != nil {
+		return nil, err
+	}
+
+	return blocksOf(name, body)
+}
+
+// blocksOf は、body の最上位の block を、既定の形でソースの順に返します。
+func blocksOf(name string, body *hclsyntax.Body) ([]block, error) {
+	blocks := make([]block, 0, len(body.Blocks))
+	for _, b := range body.Blocks {
+		attrs, err := bodyAttributes(b.Body, nil)
+		if err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, block{File: name, Kind: b.Type, Labels: append([]string{}, b.Labels...), Attributes: attrs})
+	}
+
+	return blocks, nil
+}
+
+// parseConfigBody は name のファイルを構文として読み、最上位の body を返します。診断は warning を含めて
+// 1つでもあれば errSyntax、ファイルの直下の属性とラベルの個数の違う resource・data は errUnsupportedInput です。
+func parseConfigBody(name string, src []byte) (*hclsyntax.Body, error) {
 	f, diags := hclsyntax.ParseConfig(src, name, hcl.InitialPos)
 	if len(diags) > 0 {
 		return nil, xerrors.Wrapf(errSyntax, "%s", diags.Error())
@@ -46,20 +71,32 @@ func parseFile(name string, src []byte) ([]block, error) {
 
 		return nil, xerrors.Wrapf(errUnsupportedInput, "%s: ファイルの直下に属性 %q があります", first.SrcRange, first.Name)
 	}
-
-	blocks := make([]block, 0, len(body.Blocks))
 	for _, b := range body.Blocks {
-		if want, ok := labelCounts[b.Type]; ok && len(b.Labels) != want {
-			return nil, xerrors.Wrapf(errUnsupportedInput, "%s: %s の block のラベルが %d 個です（%d 個を要します）", b.TypeRange, b.Type, len(b.Labels), want)
-		}
-		attrs, err := bodyAttributes(b.Body, nil)
-		if err != nil {
+		if err := checkLabels(b); err != nil {
 			return nil, err
 		}
-		blocks = append(blocks, block{File: name, Kind: b.Type, Labels: append([]string{}, b.Labels...), Attributes: attrs})
+		// check の中の data も、最上位の data と同じく型と名前の2つのラベルを要する。
+		if b.Type == "check" {
+			for _, nb := range b.Body.Blocks {
+				if nb.Type == "data" {
+					if err := checkLabels(nb); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 	}
 
-	return blocks, nil
+	return body, nil
+}
+
+// checkLabels は、ラベルの個数を Terraform が決めている種類の block のラベルの個数を確かめます。
+func checkLabels(b *hclsyntax.Block) error {
+	if want, ok := labelCounts[b.Type]; ok && len(b.Labels) != want {
+		return xerrors.Wrapf(errUnsupportedInput, "%s: %s の block のラベルが %d 個です（%d 個を要します）", b.TypeRange, b.Type, len(b.Labels), want)
+	}
+
+	return nil
 }
 
 // bodyAttributes は、body の属性と入れ子の block の属性を、深さ優先のソースの順に返します。入れ子の
@@ -118,4 +155,108 @@ func foldDynamic(dotted string) string {
 	const repl = "${1}${2}${3}"
 
 	return dynamicContent.ReplaceAllString(dynamicContent.ReplaceAllString(dotted, repl), repl)
+}
+
+// synBlock は -format syntax の最上位の block です。入れ子の block と属性は、深さを問わず Blocks と
+// Attributes に深さ優先・ソースの順で平らに並び、Parent（Blocks の位置、直下は -1）で親を引けます。
+type synBlock struct {
+	File       string    `json:"file"`
+	Line       int       `json:"line"`
+	Type       string    `json:"type"`
+	Labels     []string  `json:"labels"`
+	Blocks     []nested  `json:"blocks"`
+	Attributes []synAttr `json:"attributes"`
+}
+
+// nested の Path は種類とラベルを段に持つ dotted な並びを foldDynamic で畳んだものです。属性を持たない
+// block も1つの nested として残ります。
+type nested struct {
+	Path    string   `json:"path"`
+	Parent  int      `json:"parent"`
+	Line    int      `json:"line"`
+	Type    string   `json:"type"`
+	Labels  []string `json:"labels"`
+	Dynamic bool     `json:"dynamic"`
+}
+
+type synAttr struct {
+	Path   string `json:"path"`
+	Parent int    `json:"parent"`
+	Line   int    `json:"line"`
+	Expr   expr   `json:"expr"`
+	Refs   []ref  `json:"refs"`
+}
+
+// parseSyntaxFile は、name のファイルの最上位の block を、入れ子の block と属性の式を含めてソースの順に
+// 返します。受理の条件は parseFile と同じです。
+func parseSyntaxFile(name string, src []byte) ([]synBlock, error) {
+	body, err := parseConfigBody(name, src)
+	if err != nil {
+		return nil, err
+	}
+
+	return syntaxBlocks(name, body)
+}
+
+// syntaxBlocks は、body の最上位の block を、-format syntax の形でソースの順に返します。
+func syntaxBlocks(name string, body *hclsyntax.Body) ([]synBlock, error) {
+	blocks := make([]synBlock, 0, len(body.Blocks))
+	for _, b := range body.Blocks {
+		sb := synBlock{
+			File: name, Line: b.TypeRange.Start.Line, Type: b.Type, Labels: append([]string{}, b.Labels...),
+			Blocks: []nested{}, Attributes: []synAttr{},
+		}
+		if err := syntaxBody(b.Body, nil, -1, &sb); err != nil {
+			return nil, err
+		}
+		blocks = append(blocks, sb)
+	}
+
+	return blocks, nil
+}
+
+// syntaxBody は body の属性と入れ子の block を、親 parent・前置き prefix のもとで sb へ足します。
+func syntaxBody(body *hclsyntax.Body, prefix []string, parent int, sb *synBlock) error {
+	type item struct {
+		pos  int
+		attr *hclsyntax.Attribute
+		blk  *hclsyntax.Block
+	}
+	items := make([]item, 0, len(body.Attributes)+len(body.Blocks))
+	for _, a := range attributesOf(body) {
+		items = append(items, item{pos: a.SrcRange.Start.Byte, attr: a})
+	}
+	for _, b := range body.Blocks {
+		items = append(items, item{pos: b.TypeRange.Start.Byte, blk: b})
+	}
+	slices.SortStableFunc(items, func(a, b item) int { return cmp.Compare(a.pos, b.pos) })
+
+	for _, it := range items {
+		if it.attr != nil {
+			refs, err := walkExpr(it.attr.Expr)
+			if err != nil {
+				return err
+			}
+			e, err := exprOf(it.attr.Expr)
+			if err != nil {
+				return err
+			}
+			path := append(slices.Clone(prefix), it.attr.Name)
+			sb.Attributes = append(sb.Attributes, synAttr{
+				Path: foldDynamic(strings.Join(path, ".")), Parent: parent, Line: it.attr.SrcRange.Start.Line, Expr: e, Refs: refs,
+			})
+
+			continue
+		}
+		sub := append(append(slices.Clone(prefix), it.blk.Type), it.blk.Labels...)
+		sb.Blocks = append(sb.Blocks, nested{
+			Path: foldDynamic(strings.Join(sub, ".")), Parent: parent, Line: it.blk.TypeRange.Start.Line,
+			Type: it.blk.Type, Labels: append([]string{}, it.blk.Labels...), Dynamic: it.blk.Type == "dynamic",
+		})
+		if err := syntaxBody(it.blk.Body, sub, len(sb.Blocks)-1, sb); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

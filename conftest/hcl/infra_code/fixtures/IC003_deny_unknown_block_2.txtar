@@ -1,0 +1,2 @@
+-- m/x.tftest.hcl --
+resource "aws_s3_bucket" "b" {}

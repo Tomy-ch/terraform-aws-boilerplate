@@ -1,10 +1,10 @@
 # resource の作成の順序の検査。宣言した module の resource が、depends_on に宣言した resource を持つこと。
 #
-# 走査の root の下の全ファイルを1つの入力として掛ける（--combine）。make が Conftest とは別の経路で数えた
-# 構成ファイルの一覧（data.resource_order_files）と、Conftest が読んだファイルを突き合わせる（ADR-0702 決定15）。
+# 入力は scripts/hcl-input が走査の root の下から作る JSON（`-format syntax`）。make が別の経路で数えた
+# 構成ファイルの一覧（data.resource_order_files）と、入力が読んだファイルを突き合わせる（ADR-0702 決定15）。
 package resource_order
 
-import data.lib.hcl
+import data.lib.hcl_input as hcl
 
 default rules := []
 
@@ -17,7 +17,9 @@ listed := {p | some p in data.resource_order_files} if is_array(data.resource_or
 # JSON の構成は検査が解釈しないので、数えたうえで落とす（ADR-0501 決定5、ADR-0103 決定11）。
 is_tf_json(path) if endswith(path, ".tf.json")
 
-read := {f.path | some f in input; is_config(f.path)}
+doc := input if hcl.input_ok
+
+read := {f.path | some f in doc.files; is_config(f.path)}
 
 is_config(path) if hcl.is_tf(path)
 
@@ -37,6 +39,11 @@ well_formed(r) if {
 }
 
 deny contains msg if {
+	some e in hcl.input_errors
+	msg := sprintf("RO007 [入力の形] %s → make resource-order-check から起動する。hcl-input の出力と conftest/hcl/lib/hcl_input.rego の読む形を揃える", [e])
+}
+
+deny contains msg if {
 	count(rules) == 0
 	msg := "RO001 [宣言の形] data.resource_order_decl.rules が空か、配列ではありません"
 }
@@ -53,9 +60,10 @@ deny contains msg if {
 }
 
 deny contains msg if {
+	hcl.input_ok
 	some p in listed
 	not p in read
-	msg := sprintf("RO002 [件数の不一致] %s を Conftest が読んでいません", [p])
+	msg := sprintf("RO002 [件数の不一致] %s を入力（hcl-input）が読んでいません", [p])
 }
 
 deny contains msg if {
@@ -73,6 +81,7 @@ deny contains msg if {
 module_files(module) := {p | some p in read; hcl.dir(p) == module}
 
 deny contains msg if {
+	hcl.input_ok
 	some r in rules
 	well_formed(r)
 	count(module_files(r.module)) == 0
@@ -80,11 +89,12 @@ deny contains msg if {
 }
 
 declared(module, address) := [c |
-	some c in hcl.components(input)
+	some c in hcl.components(doc)
 	c.id == sprintf("%s#resource.%s", [module, address])
 ]
 
 deny contains msg if {
+	hcl.input_ok
 	some r in rules
 	well_formed(r)
 	count(module_files(r.module)) > 0
@@ -94,15 +104,18 @@ deny contains msg if {
 	msg := sprintf("RO004 [resource が無い] %s の resource %s が %d 件です（1件を期待）。address を変えたなら resource_order の宣言を直してください", [r.module, address, n])
 }
 
-depends_on(body) := {trim_suffix(trim_prefix(d, "${"), "}") |
-	some d in object.get(body, "depends_on", [])
-	is_string(d)
+# depends_on は、depends_on の tuple の要素のうち、段がすべて属性の参照の address を返す。
+depends_on(s) := {a |
+	e := hcl.direct_attr(s, "depends_on")
+	e.kind == "tuple"
+	some it in e.items
+	a := hcl.address_of(it)
 }
 
 deny contains msg if {
 	some r in rules
 	well_formed(r)
 	some c in declared(r.module, r.resource)
-	not r.after in depends_on(c.body)
+	not r.after in depends_on(c.scope)
 	msg := sprintf("RO005 [順序] %s の %s が depends_on に %s を持ちません（%s）", [c.path, r.resource, r.after, r.adr])
 }

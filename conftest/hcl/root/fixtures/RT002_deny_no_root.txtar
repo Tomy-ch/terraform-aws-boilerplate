@@ -1,0 +1,6 @@
+-- usecases/b/main.tf --
+resource "aws_s3_bucket" "this" {}
+-- usecases/c/main.tf --
+resource "aws_organizations_organization" "this" {}
+-- usecases/w/main.tf --
+resource "aws_sqs_queue" "this" {}

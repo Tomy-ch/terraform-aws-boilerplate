@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/branchdecl"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
 
@@ -261,14 +262,14 @@ func Test_nextMatch(t *testing.T) {
 func Test_isApplySuffix(t *testing.T) {
 	t.Parallel()
 
-	want := map[string]bool{"-apply": true, "-apply-identity": true, planSuffix: false, unlockIdentitySuffix: false, unlockSuffix: false}
+	want := map[string]bool{"-apply": true, "-apply-identity": true, "-plan": false, "-unlock-identity": false, "-unlock": false, "-other": false, "": false}
 	for suffix, w := range want {
 		t.Run(suffix, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, w, isApplySuffix(suffix))
 		})
 	}
-	t.Run("宣言の接尾辞はどれも期待値を持つ", func(t *testing.T) {
+	t.Run("登録簿の role の接尾辞はどれも期待値を持つ", func(t *testing.T) {
 		t.Parallel()
 		require.NotEmpty(t, identitySuffixes)
 		for _, suffix := range identitySuffixes {
@@ -277,7 +278,123 @@ func Test_isApplySuffix(t *testing.T) {
 	})
 }
 
-func Test_isHoldJob(t *testing.T) {
+func Test_isPullRequestSuffix(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]bool{"-plan": true, "-apply": false, "-apply-identity": false, "-unlock-identity": false, "-unlock": false, "-other": false}
+	for suffix, w := range want {
+		t.Run(suffix, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, w, isPullRequestSuffix(suffix))
+		})
+	}
+	t.Run("登録簿の role の接尾辞はどれも期待値を持つ", func(t *testing.T) {
+		t.Parallel()
+		require.NotEmpty(t, identitySuffixes)
+		for _, suffix := range identitySuffixes {
+			assert.Contains(t, want, suffix)
+		}
+	})
+}
+
+func Test_roleSuffixOf(t *testing.T) {
+	t.Parallel()
+
+	for _, k := range cientry.Kinds() {
+		for _, root := range []cientry.Root{cientry.RootIdentity, cientry.RootWorkload} {
+			suffix := "-" + k.Role(root)
+			for _, event := range k.Events {
+				t.Run(k.Name+" の "+suffix+" は "+event+" の種別の接尾辞", func(t *testing.T) {
+					t.Parallel()
+					assert.True(t, roleSuffixOf(suffix, event))
+				})
+			}
+		}
+	}
+
+	for name, c := range map[string]struct{ suffix, event string }{
+		"登録簿に無い role":     {"-other", cientry.EventPush},
+		"ハイフンの無い role":    {"apply", cientry.EventPush},
+		"どの種別も許さないイベント":   {"-apply", "schedule"},
+		"role を持つ種別が許さない": {"-unlock", cientry.EventPush},
+	} {
+		t.Run(name+"は接尾辞ではない", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, roleSuffixOf(c.suffix, c.event))
+		})
+	}
+}
+
+func Test_splitEnvKinds(t *testing.T) {
+	t.Parallel()
+
+	names := func(kinds []cientry.Kind) []string {
+		out := make([]string, len(kinds))
+		for i, k := range kinds {
+			out[i] = k.Name
+		}
+		return out
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("登録簿の種別を、重ならずに漏れなく分ける", func(t *testing.T) {
+			t.Parallel()
+			shared, other, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			require.NotEmpty(t, shared)
+			require.NotEmpty(t, other)
+			for _, k := range shared {
+				assert.NotContains(t, names(other), k.Name)
+			}
+			assert.ElementsMatch(t, names(cientry.Kinds()), append(names(shared), names(other)...))
+		})
+
+		t.Run("apply と environment を共有するのは hold だけ", func(t *testing.T) {
+			t.Parallel()
+			shared, _, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			assert.Equal(t, []string{cientry.Hold}, names(shared))
+		})
+
+		t.Run("初期化された変数は登録簿を分けたものと同じ", func(t *testing.T) {
+			t.Parallel()
+			shared, other, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			assert.Equal(t, shared, sharedEnvKinds)
+			assert.Equal(t, other, otherKinds)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, c := range map[string]struct {
+			keep func(cientry.Kind) bool
+			want string
+		}{
+			"apply と environment を共有する種別が無い": {func(k cientry.Kind) bool { return k.Name != cientry.Hold }, "role を共有する種別がありません"},
+			"そのほかの種別が無い":                     {func(k cientry.Kind) bool { return k.Name == cientry.Hold }, "role を共有しない種別がありません"},
+			"種別が1つも無い":                       {func(cientry.Kind) bool { return false }, "role を共有する種別がありません"},
+		} {
+			t.Run(name+"なら失敗する", func(t *testing.T) {
+				t.Parallel()
+				var kinds []cientry.Kind
+				for _, k := range cientry.Kinds() {
+					if c.keep(k) {
+						kinds = append(kinds, k)
+					}
+				}
+				_, _, err := splitEnvKinds(kinds)
+				require.ErrorIs(t, err, errKindSplit)
+				assert.Contains(t, err.Error(), c.want)
+			})
+		}
+	})
+}
+
+func Test_isSharedEnvJob(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
@@ -293,7 +410,7 @@ func Test_isHoldJob(t *testing.T) {
 			t.Parallel()
 			jobs := workflow.SplitJobs(c.src).Jobs
 			require.Len(t, jobs, 1)
-			assert.Equal(t, c.want, isHoldJob(jobs[0]))
+			assert.Equal(t, c.want, isSharedEnvJob(jobs[0]))
 		})
 	}
 }
