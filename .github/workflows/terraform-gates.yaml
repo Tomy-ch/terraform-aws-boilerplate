@@ -57,7 +57,7 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 層の検査が hcl-input を、tf-validate が tf-validate-result を走らせ、どれもこのソースからビルドする。
+          # 順序の検査と層の検査と root の検査が hcl-input を、tf-validate が tf-validate-result を走らせ、どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -199,8 +199,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、層の検査が
-      # hcl-input を走らせ、4つとも scripts/ からビルドする。conftest: 順序の検査と層の検査が使う。
+      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
+      # 層の検査と root の検査が hcl-input を走らせ、4つとも scripts/ からビルドする。conftest: 順序の検査と層の検査と root の検査が使う。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -481,7 +481,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate は scripts/ からビルドする。
+      # go: infra-code-gate と hcl-input は scripts/ からビルドする。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:

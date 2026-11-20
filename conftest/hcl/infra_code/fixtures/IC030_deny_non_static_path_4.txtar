@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+resource "aws_lambda_function" "f" {
+  filename = "${data.archive_file.a.output_path}"
+}

@@ -1,0 +1,68 @@
+provisioner・dynamic・入れ子の block・removed・provider の alias。
+-- m/main.tf --
+resource "aws_instance" "i" {
+  user_data = "a"
+
+  provisioner "local-exec" {
+    command = "x"
+  }
+}
+
+resource "aws_spot_fleet_request" "f" {
+  dynamic "launch_specification" {
+    for_each = [1]
+    content {
+      user_data = "d"
+    }
+  }
+
+  dynamic "provisioner" {
+    for_each = []
+    content {}
+  }
+}
+
+resource "aws_s3_bucket" "plain" {
+  tags = { exec = "x" }
+}
+
+removed {
+  from = aws_s3_bucket.old
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "x"
+  }
+}
+
+removed {
+  from = aws_s3_bucket.gone[0]
+}
+
+provider "kubernetes" {
+  exec {
+    api_version = "v1"
+  }
+}
+
+provider "helm" {
+  kubernetes = {
+    exec = {
+      command = var.c
+    }
+  }
+}
+
+provider "aws" {
+  alias = "use1"
+}
+
+provider "aws" {
+  alias = var.a
+}
+-- m/tests/x.tftest.hcl --
+provider "aws" {
+  alias = "use1"
+}
+
+provider "aws" {}

@@ -1,0 +1,7 @@
+-- m/main.tf --
+resource "aws_iam_role_policy" "first" {}
+
+resource "aws_iam_role" "this" {
+  depends_on = [aws_iam_role_policy.first]
+}
+-- n/main.tf --
