@@ -284,7 +284,6 @@ func Test_splitIdentity(t *testing.T) {
 			assert.Equal(t, tc.suffix, suffix)
 		})
 	}
-
 }
 
 func Test_checkDeployEnvs(t *testing.T) {

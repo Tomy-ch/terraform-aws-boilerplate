@@ -82,6 +82,7 @@ func Test_roleARN(t *testing.T) {
 		})
 	}
 
+	// 写しと正本のずれを検出する検査は、正本の実物を読んでよい（ADR-0702 決定17）。
 	t.Run("usecases/deployment-identity の role 名の規則と一致する", func(t *testing.T) {
 		t.Parallel()
 
@@ -96,8 +97,10 @@ func Test_roleARN(t *testing.T) {
 		for _, row := range rows {
 			got, err := roleARN("tabp", "admin", row.Role, account)
 			require.NoError(t, err, row.Role)
+			want := "arn:aws:iam::123456789012:role/tabp-admin-ci-" + row.Role
+			assert.Equal(t, want, got, row.Role)
 			name := strings.Replace(row.Name, cientry.TerraformNamePrefix, "tabp-admin", 1)
-			assert.Equal(t, "arn:aws:iam::"+account+":role/"+name, got, row.Role)
+			assert.Equal(t, want, "arn:aws:iam::123456789012:role/"+name, row.Role)
 		}
 	})
 

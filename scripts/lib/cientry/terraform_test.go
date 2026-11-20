@@ -99,7 +99,7 @@ func TestParseTerraformRoles(t *testing.T) {
 		cases := []struct {
 			name, src, reason string
 		}{
-			{"HCL として読めない", "locals {\n  roles = {\n", ""},
+			{"HCL として読めない", "locals {\n  roles = {\n", "Missing expression"},
 			{"roles が無い", "locals {\n  other = 1\n}\n", "0 個"},
 			{"roles が locals の外にしか無い", "variable \"roles\" {\n  default = {}\n}\n", "0 個"},
 			{"roles が2つの locals に在る", rolesSrc(plan) + rolesSrc(plan), "2 個"},
@@ -116,7 +116,8 @@ func TestParseTerraformRoles(t *testing.T) {
 			{"属性のキーが引用符付き", rolesSrc(`    plan = { "name" = "${var.name_prefix}-ci-plan", environment = "${var.env}-plan" }` + "\n"), "name と environment に限ります"},
 			{"name が無い", rolesSrc(`    plan = { environment = "${var.env}-plan" }` + "\n"), "両方がありません"},
 			{"environment が無い", rolesSrc(`    plan = { name = "${var.name_prefix}-ci-plan" }` + "\n"), "両方がありません"},
-			{"属性が重複", rolesSrc(`    plan = { name = "${var.name_prefix}-ci-plan", name = "${var.name_prefix}-ci-plan" }` + "\n"), "name が重複"},
+			{"name が重複", rolesSrc(`    plan = { name = "${var.name_prefix}-ci-plan", name = "${var.name_prefix}-ci-plan" }` + "\n"), "name が重複"},
+			{"environment が重複", rolesSrc(`    plan = { name = "${var.name_prefix}-ci-plan", environment = "${var.env}-plan", environment = "${var.env}-plan" }` + "\n"), "environment が重複"},
 			{"name が template の包みだけ", rolesSrc(`    plan = { name = "${var.name_prefix}", environment = "${var.env}-plan" }` + "\n"), "の name は"},
 			{"name が固定の文字列だけ", rolesSrc(`    plan = { name = "tabp-admin-ci-plan", environment = "${var.env}-plan" }` + "\n"), "の name は"},
 			{"name が別の変数を参照", rolesSrc(`    plan = { name = "${var.project}-ci-plan", environment = "${var.env}-plan" }` + "\n"), "の name は"},
@@ -149,6 +150,7 @@ func TestParseTerraformRoles(t *testing.T) {
 			t.Parallel()
 			_, err := ParseTerraformRoles(nil)
 			require.ErrorIs(t, err, ErrTerraformParse)
+			assert.Contains(t, err.Error(), "0 個")
 		})
 	})
 }
@@ -186,6 +188,23 @@ func Test_parseTerraformRow(t *testing.T) {
 			src := "{ plan = \"x\" }"
 			_, err := parseTerraformRow([]byte(src), item(t, src))
 			require.ErrorIs(t, err, ErrTerraformParse)
+			assert.Contains(t, err.Error(), "値が object のリテラルではありません")
+		})
+
+		t.Run("name と environment のほかの属性があれば弾く", func(t *testing.T) {
+			t.Parallel()
+			src := "{ plan = { name = \"${var.name_prefix}-ci-plan\", environment = \"${var.env}-plan\", arn = \"x\" } }"
+			_, err := parseTerraformRow([]byte(src), item(t, src))
+			require.ErrorIs(t, err, ErrTerraformParse)
+			assert.Contains(t, err.Error(), "name と environment に限ります")
+		})
+
+		t.Run("name と environment の両方が無ければ弾く", func(t *testing.T) {
+			t.Parallel()
+			src := "{ plan = {} }"
+			_, err := parseTerraformRow([]byte(src), item(t, src))
+			require.ErrorIs(t, err, ErrTerraformParse)
+			assert.Contains(t, err.Error(), "両方がありません")
 		})
 	})
 }
@@ -291,20 +310,25 @@ func Test_countEnvironmentTokens(t *testing.T) {
 			t.Parallel()
 			inside := "a = { environment = 1, environment: 2, environment_id = 3, x = environment, y = \"environment = 0\" }\n# environment = 4\n"
 			src := []byte(inside + "b = { environment = 5 }\n")
-			got, err := countEnvironmentTokens(src, hcl.Range{Start: hcl.InitialPos, End: hcl.Pos{Byte: len(inside)}})
-			require.NoError(t, err)
-			assert.Equal(t, 2, got)
+			assert.Equal(t, 2, countEnvironmentTokens(src, hcl.Range{Start: hcl.InitialPos, End: hcl.Pos{Byte: len(inside)}}))
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("字句として読めなければ弾く", func(t *testing.T) {
+		t.Run("字句として読めないソースは panic する", func(t *testing.T) {
 			t.Parallel()
 			src := []byte("a = \"\xff\"\n")
-			_, err := countEnvironmentTokens(src, hcl.Range{Start: hcl.InitialPos, End: hcl.Pos{Byte: len(src)}})
-			require.ErrorIs(t, err, ErrTerraformParse)
+			var got any
+			func() {
+				defer func() { got = recover() }()
+				countEnvironmentTokens(src, hcl.Range{Start: hcl.InitialPos, End: hcl.Pos{Byte: len(src)}})
+			}()
+			msg, ok := got.(string)
+			require.True(t, ok, "panic しないか、値が文字列ではありません: %v", got)
+			assert.Contains(t, msg, "hclsyntax.ParseConfig が読めたソースではありません")
+			assert.Contains(t, msg, "Invalid character encoding")
 		})
 	})
 }
@@ -472,6 +496,17 @@ func Test_registry_checkTerraformRoles(t *testing.T) {
 		t.Run("行が無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, r.checkTerraformRoles(nil), ErrTerraformRole)
+		})
+
+		t.Run("同じ role の行が2つあれば、両方の行を名指して弾く", func(t *testing.T) {
+			t.Parallel()
+			dup := row("a")
+			dup.Key, dup.Line = "a2", 4
+			first := row("a")
+			first.Line = 2
+			err := r.checkTerraformRoles([]TerraformRole{first, row("b"), row("a-identity"), dup})
+			require.ErrorIs(t, err, ErrTerraformRole)
+			assert.Contains(t, err.Error(), "4 行目: a2 の role a が 2 行目の a と重複しています")
 		})
 
 		t.Run("登録簿が空なら、行の有無を問わず弾く", func(t *testing.T) {

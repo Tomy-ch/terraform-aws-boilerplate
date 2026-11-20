@@ -56,10 +56,8 @@ func ParseTerraformRoles(src []byte) ([]TerraformRole, error) {
 	if diags.HasErrors() {
 		return nil, xerrors.Wrap(ErrTerraformParse, diags.Error())
 	}
-	body, ok := file.Body.(*hclsyntax.Body)
-	if !ok {
-		return nil, xerrors.Wrap(ErrTerraformParse, "本体を読めません")
-	}
+	// hclsyntax.ParseConfig の返す本体は常に *hclsyntax.Body。
+	body := file.Body.(*hclsyntax.Body)
 	var attrs []*hclsyntax.Attribute
 	for _, block := range body.Blocks {
 		if block.Type != "locals" {
@@ -93,11 +91,7 @@ func ParseTerraformRoles(src []byte) ([]TerraformRole, error) {
 		}
 		rows = append(rows, row)
 	}
-	count, err := countEnvironmentTokens(src, attr.SrcRange)
-	if err != nil {
-		return nil, err
-	}
-	if count != len(rows) {
+	if count := countEnvironmentTokens(src, attr.SrcRange); count != len(rows) {
 		return nil, xerrors.Wrap(ErrTerraformParse, fmt.Sprintf("字句の列の environment の属性 %d 個 / 読めた行 %d 行", count, len(rows)))
 	}
 	return rows, nil
@@ -186,11 +180,12 @@ func prefixedTemplate(src []byte, expr hclsyntax.Expression, variable string) (s
 }
 
 // countEnvironmentTokens は rng の中で、識別子 environment に = か : が続く字句の組を数えます。
-// コメントと文字列の中の environment は字句が違うので数えません。
-func countEnvironmentTokens(src []byte, rng hcl.Range) (int, error) {
+// コメントと文字列の中の environment は字句が違うので数えません。src は hclsyntax.ParseConfig が誤り無く読んだ
+// ソースに限ります。字句として読めなければ panic します。
+func countEnvironmentTokens(src []byte, rng hcl.Range) int {
 	tokens, diags := hclsyntax.LexConfig(src, TerraformRolesFile, hcl.InitialPos)
 	if diags.HasErrors() {
-		return 0, xerrors.Wrap(ErrTerraformParse, diags.Error())
+		panic("cientry.countEnvironmentTokens: hclsyntax.ParseConfig が読めたソースではありません: " + diags.Error())
 	}
 	n := 0
 	for i := 0; i+1 < len(tokens); i++ {
@@ -203,7 +198,7 @@ func countEnvironmentTokens(src []byte, rng hcl.Range) (int, error) {
 			n++
 		}
 	}
-	return n, nil
+	return n
 }
 
 // TerraformRolesRepo はリポジトリ repo の [TerraformRolesFile] を読んで [ParseTerraformRoles] します。
@@ -224,8 +219,8 @@ func TerraformRolesRepo(repo string) ([]TerraformRole, error) {
 	return rows, nil
 }
 
-// CheckTerraformRoles は、rows の各行の name が `${var.name_prefix}-ci-<role>` であることと、rows の role の
-// 集合が登録簿の role の集合と過不足なく一致することを見ます。どちらかが成り立たなければ
+// CheckTerraformRoles は、rows の各行の name が `${var.name_prefix}-ci-<role>` であることと、rows の role に
+// 重複が無く、その集合が登録簿の role の集合と過不足なく一致することを見ます。どれかが成り立たなければ
 // [ErrTerraformRole] を返し、登録簿にだけ在る role と rows にだけ在る role を分けて名指します。
 func CheckTerraformRoles(rows []TerraformRole) error {
 	return std.checkTerraformRoles(rows)
@@ -247,7 +242,10 @@ func (r registry) checkTerraformRoles(rows []TerraformRole) error {
 		}
 	}
 	var got []string
-	for _, row := range rows {
+	for i, row := range rows {
+		if j := slices.IndexFunc(rows[:i], func(p TerraformRole) bool { return p.Role == row.Role }); j >= 0 {
+			return xerrors.Wrap(ErrTerraformRole, fmt.Sprintf("%d 行目: %s の role %s が %d 行目の %s と重複しています", row.Line, row.Key, row.Role, rows[j].Line, rows[j].Key))
+		}
 		if name := TerraformNamePrefix + "-ci-" + row.Role; row.Name != name {
 			return xerrors.Wrap(ErrTerraformRole, fmt.Sprintf("%d 行目: %s の name %s は %s ではありません", row.Line, row.Key, row.Name, name))
 		}
