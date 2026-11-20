@@ -99,7 +99,6 @@ func TestParseTerraformRoles(t *testing.T) {
 		cases := []struct {
 			name, src, reason string
 		}{
-			{"HCL として読めない", "locals {\n  roles = {\n", "Missing expression"},
 			{"roles が無い", "locals {\n  other = 1\n}\n", "0 個"},
 			{"roles が locals の外にしか無い", "variable \"roles\" {\n  default = {}\n}\n", "0 個"},
 			{"roles が2つの locals に在る", rolesSrc(plan) + rolesSrc(plan), "2 個"},
@@ -145,6 +144,13 @@ func TestParseTerraformRoles(t *testing.T) {
 				assert.Contains(t, err.Error(), c.reason)
 			})
 		}
+
+		t.Run("HCL として読めなければ、roles を探す前に弾く", func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseTerraformRoles([]byte("locals {\n  roles = {\n"))
+			require.ErrorIs(t, err, ErrTerraformParse)
+			assert.NotContains(t, err.Error(), "個")
+		})
 
 		t.Run("空のソースは roles が無いとして弾く", func(t *testing.T) {
 			t.Parallel()
@@ -327,8 +333,7 @@ func Test_countEnvironmentTokens(t *testing.T) {
 			}()
 			msg, ok := got.(string)
 			require.True(t, ok, "panic しないか、値が文字列ではありません: %v", got)
-			assert.Contains(t, msg, "hclsyntax.ParseConfig が読めたソースではありません")
-			assert.Contains(t, msg, "Invalid character encoding")
+			assert.True(t, strings.HasPrefix(msg, "cientry.countEnvironmentTokens: hclsyntax.ParseConfig が読めたソースではありません: "), msg)
 		})
 	})
 }

@@ -217,7 +217,6 @@ func Test_parseSCPStateWriterRoles(t *testing.T) {
 		cases := []struct {
 			name, src, reason string
 		}{
-			{"HCL として読めない", "locals {\n  state_writer_role_patterns = [\n", "Missing expression"},
 			{"属性が無い", "locals {\n  other = 1\n}\n", "0 個"},
 			{"属性が locals の外にしか無い", "variable \"state_writer_role_patterns\" {\n  default = 1\n}\n", "0 個"},
 			{"属性が2つの locals に在る", scpSrc(scpPatterns("apply")) + scpSrc(scpPatterns("apply")), "2 個"},
@@ -242,6 +241,13 @@ func Test_parseSCPStateWriterRoles(t *testing.T) {
 				assert.Contains(t, err.Error(), c.reason)
 			})
 		}
+
+		t.Run("HCL として読めなければ、属性を探す前に弾く", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSCPStateWriterRoles([]byte("locals {\n  state_writer_role_patterns = [\n"))
+			require.ErrorIs(t, err, ErrStateWriterParse)
+			assert.NotContains(t, err.Error(), "個")
+		})
 
 		t.Run("空のソースは属性が無いとして弾く", func(t *testing.T) {
 			t.Parallel()
