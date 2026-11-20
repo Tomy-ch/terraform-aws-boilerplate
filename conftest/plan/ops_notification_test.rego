@@ -9,6 +9,10 @@ topic_arn := "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notificat
 
 group_arn := "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-sandbox-ops-heartbeat"
 
+ue1_topic_arn := "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
+
+ue1_group_arn := "arn:aws:scheduler:us-east-1:123456789012:schedule-group/tabp-sandbox-ops-us-east-1"
+
 heartbeat_arn := "arn:aws:iam::123456789012:role/tabp-sandbox-ops-heartbeat"
 
 chat_arn := "arn:aws:iam::123456789012:role/tabp-sandbox-ops-chat"
@@ -37,17 +41,28 @@ key_statements := array.concat(
 	[{"Effect": "Allow", "Principal": {"Service": sprintf("%s.amazonaws.com", [s])}, "Action": ["kms:Decrypt", "kms:GenerateDataKey*"], "Resource": "*", "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}} | some s in ["budgets", "cloudwatch", "costalerts"]],
 )
 
+ue1_topic_policy_statements := [
+	{"Effect": "Deny", "Principal": "*", "Action": "sns:Publish", "Resource": ue1_topic_arn, "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+	{"Effect": "Allow", "Principal": {"Service": "cloudwatch.amazonaws.com"}, "Action": "sns:Publish", "Resource": ue1_topic_arn, "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}},
+]
+
+ue1_key_statements := [
+	{"Sid": "AccountKeyAdministration", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": ["kms:DescribeKey"], "Resource": "*"},
+	{"Sid": "RolesViaSns0", "Effect": "Allow", "Principal": {"AWS": [heartbeat_arn]}, "Action": ["kms:Decrypt", "kms:GenerateDataKey*"], "Resource": "*", "Condition": {"StringEquals": {"kms:ViaService": "sns.us-east-1.amazonaws.com", "kms:EncryptionContext:aws:sns:topicArn": [ue1_topic_arn]}}},
+	{"Sid": "SnsPublisherCloudWatch", "Effect": "Allow", "Principal": {"Service": "cloudwatch.amazonaws.com"}, "Action": ["kms:Decrypt", "kms:GenerateDataKey*"], "Resource": "*", "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}},
+]
+
 heartbeat_trust := [{
 	"Effect": "Allow",
 	"Principal": {"Service": "scheduler.amazonaws.com"},
 	"Action": "sts:AssumeRole",
-	"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012", "aws:SourceArn": group_arn}},
+	"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012", "aws:SourceArn": [group_arn, ue1_group_arn]}},
 }]
 
 chat_trust := [{"Effect": "Allow", "Principal": {"Service": "chatbot.amazonaws.com"}, "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}}]
 
 read_statements := [
-	{"Sid": "ReadAlarms", "Effect": "Allow", "Action": ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"], "Resource": "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*"},
+	{"Sid": "ReadAlarms", "Effect": "Allow", "Action": ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"], "Resource": ["arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*", "arn:aws:cloudwatch:us-east-1:123456789012:alarm:*"]},
 	{"Sid": "ReadMetrics", "Effect": "Allow", "Action": ["cloudwatch:DescribeAlarmsForMetric", "cloudwatch:GetMetricData", "cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricWidgetImage", "cloudwatch:ListMetrics"], "Resource": "*"},
 ]
 
@@ -55,14 +70,21 @@ base := {
 	"topic": rc("aws_sns_topic", "module.sns.aws_sns_topic.this", {"arn": topic_arn, "policy": null}),
 	"topic_policy": rc("aws_sns_topic_policy", "module.sns.aws_sns_topic_policy.this", {"arn": topic_arn, "policy": doc(topic_policy_statements)}),
 	"key_policy": rc("aws_kms_key_policy", "module.kms.aws_kms_key_policy.this", {"key_id": "k", "policy": doc(key_statements)}),
+	"ue1_topic": rc("aws_sns_topic", "module.us_east_1_topic.aws_sns_topic.this", {"arn": ue1_topic_arn, "policy": null, "region": "us-east-1"}),
+	"ue1_topic_policy": rc("aws_sns_topic_policy", "module.us_east_1_topic.aws_sns_topic_policy.this", {"arn": ue1_topic_arn, "policy": doc(ue1_topic_policy_statements), "region": "us-east-1"}),
+	"ue1_cmk": rc("aws_kms_key", "module.us_east_1_topic.aws_kms_key.this", {"region": "us-east-1"}),
+	"ue1_alias": rc("aws_kms_alias", "module.us_east_1_topic.aws_kms_alias.this", {"name": "alias/tabp-sandbox-ops-notification-us-east-1", "region": "us-east-1"}),
+	"ue1_key_policy": rc("aws_kms_key_policy", "module.us_east_1_topic.aws_kms_key_policy.this", {"key_id": "k2", "policy": doc(ue1_key_statements), "region": "us-east-1"}),
 	"heartbeat_role": rc("aws_iam_role", "module.heartbeat.aws_iam_role.this", {"name": "tabp-sandbox-ops-heartbeat", "arn": heartbeat_arn, "permissions_boundary": boundary, "assume_role_policy": doc(heartbeat_trust)}),
-	"heartbeat_policy": rc("aws_iam_role_policy", "module.heartbeat.aws_iam_role_policy.this", {"name": "publish", "role": "tabp-sandbox-ops-heartbeat", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": topic_arn}])}),
+	"heartbeat_policy": rc("aws_iam_role_policy", "module.heartbeat.aws_iam_role_policy.this", {"name": "publish", "role": "tabp-sandbox-ops-heartbeat", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": [topic_arn, ue1_topic_arn]}])}),
 	"group": rc("aws_scheduler_schedule_group", "module.heartbeat.aws_scheduler_schedule_group.this", {"name": "tabp-sandbox-ops-heartbeat", "arn": group_arn}),
 	"schedule": rc("aws_scheduler_schedule", "module.heartbeat.aws_scheduler_schedule.this", {"target": [{"arn": topic_arn, "role_arn": heartbeat_arn}]}),
+	"ue1_group": rc("aws_scheduler_schedule_group", "module.heartbeat.aws_scheduler_schedule_group.us_east_1", {"name": "tabp-sandbox-ops-us-east-1", "arn": ue1_group_arn, "region": "us-east-1"}),
+	"ue1_schedule": rc("aws_scheduler_schedule", "module.heartbeat.aws_scheduler_schedule.us_east_1", {"target": [{"arn": ue1_topic_arn, "role_arn": heartbeat_arn}], "region": "us-east-1"}),
 	"chat_role": rc("aws_iam_role", "module.chat.aws_iam_role.this", {"name": "tabp-sandbox-ops-chat", "arn": chat_arn, "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)}),
 	"chat_policy": rc("aws_iam_policy", "module.chat.aws_iam_policy.read", {"arn": read_arn, "policy": doc(read_statements)}),
 	"attachments": rc("aws_iam_role_policy_attachments_exclusive", "module.chat.aws_iam_role_policy_attachments_exclusive.this", {"role_name": "tabp-sandbox-ops-chat", "policy_arns": [read_arn]}),
-	"configuration": rc("aws_chatbot_slack_channel_configuration", "module.chat.aws_chatbot_slack_channel_configuration.this", {"iam_role_arn": chat_arn, "guardrail_policy_arns": [read_arn], "user_authorization_required": true, "sns_topic_arns": [topic_arn]}),
+	"configuration": rc("aws_chatbot_slack_channel_configuration", "module.chat.aws_chatbot_slack_channel_configuration.this", {"iam_role_arn": chat_arn, "guardrail_policy_arns": [read_arn], "user_authorization_required": true, "sns_topic_arns": [topic_arn, ue1_topic_arn]}),
 }
 
 messages(changes) := msgs if {
@@ -276,6 +298,157 @@ test_violation_publisher_role_unknown if {
 	fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this が Topic へ publish できるが、付け先の role", messages(object.union(base, {"extra_policy": extra_policy})))
 }
 
+test_violation_us_east_1_publishers_differ if {
+	extra := {"Effect": "Allow", "Principal": {"Service": "budgets.amazonaws.com"}, "Action": "sns:Publish", "Resource": ue1_topic_arn, "Condition": {"StringEquals": {"aws:SourceAccount": "123456789012"}}}
+	fixture.has("[PLAN-NOTIFY-01] module.ops_notification.module.us_east_1_topic.aws_sns_topic_policy.this の送り手", messages(with_after("ue1_topic_policy", {"policy": doc(array.concat(ue1_topic_policy_statements, [extra]))})))
+	statements := [s | some s in ue1_key_statements; object.get(s, "Sid", "") != "SnsPublisherCloudWatch"]
+	fixture.has("[PLAN-NOTIFY-01] module.ops_notification.module.us_east_1_topic.aws_kms_key_policy.this のサービス principal", messages(with_after("ue1_key_policy", {"policy": doc(statements)})))
+}
+
+test_violation_us_east_1_key_without_heartbeat if {
+	statements := [s | some s in ue1_key_statements; object.get(s, "Sid", "") != "RolesViaSns0"]
+	fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role [\"arn:aws:iam::123456789012:role/tabp-sandbox-ops-heartbeat\"] と、module.ops_notification.module.us_east_1_topic.aws_kms_key_policy.this", messages(with_after("ue1_key_policy", {"policy": doc(statements)})))
+}
+
+test_violation_heartbeat_trust_single_group if {
+	statements := [object.union(heartbeat_trust[0], {"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012", "aws:SourceArn": group_arn}}})]
+	fixture.has("[PLAN-NOTIFY-04] module.ops_notification.module.heartbeat.aws_iam_role.this の信頼", messages(with_after("heartbeat_role", {"assume_role_policy": doc(statements)})))
+}
+
+test_violation_heartbeat_policy_single_topic if {
+	every r in [topic_arn, ue1_topic_arn, [ue1_topic_arn, topic_arn]] {
+		fixture.has("[PLAN-NOTIFY-05] module.ops_notification.module.heartbeat.aws_iam_role_policy.this が、Topic", messages(with_after("heartbeat_policy", {"policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": r}])})))
+	}
+}
+
+test_violation_us_east_1_schedule_target if {
+	every t in [[{"arn": topic_arn, "role_arn": heartbeat_arn}], [{"arn": ue1_topic_arn, "role_arn": chat_arn}], []] {
+		fixture.has("[PLAN-NOTIFY-05] module.ops_notification.module.heartbeat.aws_scheduler_schedule.us_east_1 の target", messages(with_after("ue1_schedule", {"target": t})))
+	}
+}
+
+test_violation_configuration_without_us_east_1_topic if {
+	fixture.has("[PLAN-NOTIFY-06] module.ops_notification.module.chat.aws_chatbot_slack_channel_configuration.this が購読する Topic", messages(with_after("configuration", {"sns_topic_arns": [topic_arn]})))
+}
+
+test_violation_read_resource_outside_two_regions if {
+	every r in ["arn:aws:cloudwatch:us-west-2:123456789012:alarm:*", "arn:aws:cloudwatch:us-east-1:210987654321:alarm:*", "arn:aws:logs:us-east-1:123456789012:log-group:*"] {
+		alarms := [object.union(read_statements[0], {"Resource": [r]}), read_statements[1]]
+		fixture.has("[PLAN-NOTIFY-07] module.ops_notification.module.chat.aws_iam_policy.read の alarm を読む文の Resource", messages(with_after("chat_policy", {"policy": doc(alarms)})))
+		metrics := [read_statements[0], object.union(read_statements[1], {"Resource": [r]})]
+		fixture.has("[PLAN-NOTIFY-07] module.ops_notification.module.chat.aws_iam_policy.read の Resource", messages(with_after("chat_policy", {"policy": doc(metrics)})))
+	}
+}
+
+test_violation_us_east_1_region if {
+	every k in ["ue1_topic", "ue1_topic_policy", "ue1_cmk", "ue1_alias", "ue1_key_policy", "ue1_group", "ue1_schedule"] {
+		fixture.has(sprintf("[PLAN-NOTIFY-09] %s の region", [base[k].address]), messages(with_after(k, {"region": "ap-northeast-1"})))
+	}
+	t := "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
+	fixture.has("[PLAN-NOTIFY-09] module.ops_notification.module.us_east_1_topic.aws_sns_topic.this の arn", messages(with_after("ue1_topic", {"arn": t})))
+}
+
+test_violation_us_east_1_declaration_missing if {
+	d := object.remove(data.policy_plan.ops_notification, ["us_east_1"])
+	msgs := gate.deny with input as fixture.plan([v | some _, v in base]) with data.policy_plan.ops_notification as d
+	fixture.has("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.us_east_1.topic が、空でない文字列ではありません", msgs)
+	fixture.has("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.us_east_1.publishers が、空でない文字列の配列ではありません", msgs)
+	fixture.has("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.heartbeat.us_east_1_schedule の ", messages(without("ue1_schedule")))
+}
+
+test_violation_us_east_1_unknown_values if {
+	every k in ["ue1_topic", "ue1_group"] {
+		r := object.union(base[k], {"change": {"after": {"arn": null}, "after_unknown": {"arn": true}}})
+		fixture.has(sprintf("[PLAN-NOTIFY-00] %s の arn が plan で決まりません", [base[k].address]), messages(object.union(base, {k: r})))
+	}
+}
+
+test_violation_read_alarms_wildcard_or_single_region if {
+	every r in ["*", ["arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*"], ["arn:aws:cloudwatch:us-east-1:123456789012:alarm:*"]] {
+		statements := [object.union(read_statements[0], {"Resource": r}), read_statements[1]]
+		fixture.has("[PLAN-NOTIFY-07] module.ops_notification.module.chat.aws_iam_policy.read の alarm を読む文の Resource", messages(with_after("chat_policy", {"policy": doc(statements)})))
+	}
+}
+
+test_violation_us_east_1_unknown_documents if {
+	every k in ["ue1_topic_policy", "ue1_key_policy"] {
+		r := object.union(base[k], {"change": {"after": {"policy": null}, "after_unknown": {"policy": true}}})
+		fixture.has(sprintf("[PLAN-NOTIFY-00] %s の policy が plan で決まらないか、JSON の文書として読めません", [base[k].address]), messages(object.union(base, {k: r})))
+	}
+}
+
+test_violation_us_east_1_resources_missing if {
+	every pair in [
+		["ue1_topic_policy", ["us_east_1", "topic_policy"]],
+		["ue1_cmk", ["us_east_1", "key"]],
+		["ue1_alias", ["us_east_1", "alias"]],
+		["ue1_key_policy", ["us_east_1", "key_policy"]],
+		["ue1_group", ["heartbeat", "us_east_1_schedule_group"]],
+	] {
+		fixture.has(sprintf("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.%s の ", [concat(".", pair[1])]), messages(without(pair[0])))
+	}
+}
+
+test_violation_us_east_1_publishers_degenerate if {
+	every p in [[], [1]] {
+		d := object.union(data.policy_plan.ops_notification, {"us_east_1": object.union(data.policy_plan.ops_notification.us_east_1, {"publishers": p})})
+		msgs := gate.deny with input as fixture.plan([v | some _, v in base]) with data.policy_plan.ops_notification as d
+		fixture.has("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.us_east_1.publishers が、空でない文字列の配列ではありません", msgs)
+	}
+}
+
+test_violation_us_east_1_events_key_names_other_topic if {
+	d := object.union(data.policy_plan.ops_notification, {"us_east_1": object.union(data.policy_plan.ops_notification.us_east_1, {"publishers": ["cloudwatch.amazonaws.com", "events.amazonaws.com"]})})
+	events := {"Effect": "Allow", "Principal": {"Service": "events.amazonaws.com"}, "Action": ["kms:Decrypt", "kms:GenerateDataKey*"], "Resource": "*", "Condition": {"StringEquals": {"kms:EncryptionContext:aws:sns:topicArn": [topic_arn]}}}
+	changes := with_after("ue1_key_policy", {"policy": doc(array.concat(ue1_key_statements, [events]))})
+	msgs := gate.deny with input as fixture.plan([v | some _, v in changes]) with data.policy_plan.ops_notification as d
+	fixture.has("[PLAN-NOTIFY-02] module.ops_notification.module.us_east_1_topic.aws_kms_key_policy.this の events.amazonaws.com の文が、暗号化コンテキスト aws:sns:topicArn で Topic arn:aws:sns:us-east-1:", msgs)
+}
+
+# Topic ごとに、その Topic へ publish できる role と、その Topic の鍵が許す role を突き合わせる。
+test_pass_publisher_per_topic if {
+	role_y := "arn:aws:iam::123456789012:role/y"
+	extra_role := rc("aws_iam_role", "module.y.aws_iam_role.this", {"name": "y", "arn": role_y, "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)})
+	extra_policy := rc("aws_iam_role_policy", "module.y.aws_iam_role_policy.this", {"name": "p", "role": "y", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": ue1_topic_arn}])})
+	statements := [object.union(s, {"Principal": {"AWS": [heartbeat_arn, role_y]}}) | some s in ue1_key_statements; s.Sid == "RolesViaSns0"]
+	others := [s | some s in ue1_key_statements; s.Sid != "RolesViaSns0"]
+	changes := object.union(with_after("ue1_key_policy", {"policy": doc(array.concat(others, statements))}), {"extra_role": extra_role, "extra_policy": extra_policy})
+	count([m | some m in messages(changes); startswith(m, "[PLAN-NOTIFY-03]")]) == 0
+}
+
+test_violation_publisher_only_on_us_east_1_key if {
+	role_y := "arn:aws:iam::123456789012:role/y"
+	extra_role := rc("aws_iam_role", "module.y.aws_iam_role.this", {"name": "y", "arn": role_y, "permissions_boundary": boundary, "assume_role_policy": doc(chat_trust)})
+	extra_policy := rc("aws_iam_role_policy", "module.y.aws_iam_role_policy.this", {"name": "p", "role": "y", "policy": doc([{"Effect": "Allow", "Action": "sns:Publish", "Resource": ue1_topic_arn}])})
+	fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role [\"arn:aws:iam::123456789012:role/tabp-sandbox-ops-heartbeat\", \"arn:aws:iam::123456789012:role/y\"] と、module.ops_notification.module.us_east_1_topic.aws_kms_key_policy.this", messages(object.union(base, {"extra_role": extra_role, "extra_policy": extra_policy})))
+	not fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role [\"arn:aws:iam::123456789012:role/tabp-sandbox-ops-heartbeat\", \"arn:aws:iam::123456789012:role/y\"] と、module.ops_notification.module.kms.aws_kms_key_policy.this", messages(object.union(base, {"extra_role": extra_role, "extra_policy": extra_policy})))
+}
+
+test_violation_heartbeat_trust_order_or_us_east_1_only if {
+	every arns in [ue1_group_arn, [ue1_group_arn], [ue1_group_arn, group_arn]] {
+		statements := [object.union(heartbeat_trust[0], {"Condition": {"StringEquals": {"aws:SourceAccount": "123456789012", "aws:SourceArn": arns}}})]
+		fixture.has("[PLAN-NOTIFY-04] module.ops_notification.module.heartbeat.aws_iam_role.this の信頼", messages(with_after("heartbeat_role", {"assume_role_policy": doc(statements)})))
+	}
+}
+
+test_violation_configuration_without_provider_region_topic if {
+	fixture.has("[PLAN-NOTIFY-06] module.ops_notification.module.chat.aws_chatbot_slack_channel_configuration.this が購読する Topic", messages(with_after("configuration", {"sns_topic_arns": [ue1_topic_arn]})))
+}
+
+test_violation_us_east_1_region_absent_or_other if {
+	every k in ["ue1_cmk", "ue1_group"] {
+		r := object.union(object.remove(base[k], ["change"]), {"change": object.union(object.remove(base[k].change, ["after"]), {"after": object.remove(base[k].change.after, ["region"])})})
+		fixture.has(sprintf("[PLAN-NOTIFY-09] %s の region null が us-east-1 ではありません", [base[k].address]), messages(object.union(without(k), {k: r})))
+		fixture.has(sprintf("[PLAN-NOTIFY-09] %s の region us-west-2 が us-east-1 ではありません", [base[k].address]), messages(with_after(k, {"region": "us-west-2"})))
+	}
+}
+
+test_violation_us_east_1_topic_in_other_account_or_partition if {
+	every t in ["arn:aws:sns:us-east-1:210987654321:tabp-sandbox-ops-notification-us-east-1", "arn:aws-us-gov:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"] {
+		fixture.has("[PLAN-NOTIFY-09] module.ops_notification.module.us_east_1_topic.aws_sns_topic.this の arn", messages(with_after("ue1_topic", {"arn": t})))
+	}
+}
+
 topic_prefix := concat(":", array.slice(split(topic_arn, ":"), 0, 5))
 
 topic_account := split(topic_arn, ":")[4]
@@ -309,7 +482,7 @@ test_violation_publisher_resource_policy_variable if {
 test_pass_policy_variable_not_reaching_topic if {
 	every s in [
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": "arn:aws:sns:ap-northeast-1:111111111111:${aws:PrincipalTag/topic}"},
-		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("arn:aws:sns:us-east-1:%s:${aws:PrincipalTag/topic}", [topic_account])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("arn:aws:sns:us-west-2:%s:${aws:PrincipalTag/topic}", [topic_account])},
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:other-${aws:username}", [topic_prefix])},
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username}-other", [topic_prefix])},
 		{"Effect": "Allow", "Action": "s3:GetObject", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
@@ -326,4 +499,31 @@ test_pass_policy_variable_not_reaching_topic if {
 test_violation_not_resource_publisher_with_policy_variable if {
 	s := {"Effect": "Allow", "Action": "sns:Publish", "NotResource": sprintf("%s:${aws:username}", [topic_prefix])}
 	fixture.has("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role", messages(with_publisher(s)))
+}
+
+test_violation_publisher_policy_variable_reaching_us_east_1_topic if {
+	s := {"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("arn:aws:sns:us-east-1:%s:${aws:PrincipalTag/topic}", [topic_account])}
+	fixture.has(sprintf("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this の Allow の Resource arn:aws:sns:us-east-1:%s:${aws:PrincipalTag/topic} が policy 変数（${...}）を含み、Topic %s へ", [topic_account, ue1_topic_arn]), messages(with_publisher(s)))
+}
+
+# provider の region が us-east-1 のとき、alarm の Resource は1つに畳まれ、2つの Topic は名前で分かれる。
+test_pass_provider_region_us_east_1 if {
+	shifted := json.unmarshal(replace(json.marshal(base), "ap-northeast-1", "us-east-1"))
+	count(messages(shifted)) == 0
+}
+
+test_violation_no_alarm_statement if {
+	fixture.has("[PLAN-NOTIFY-07] module.ops_notification.module.chat.aws_iam_policy.read に alarm を読む文がありません", messages(with_after("chat_policy", {"policy": doc([read_statements[1]])})))
+}
+
+test_violation_alarm_actions_not_declared if {
+	d := object.union(data.policy_plan.ops_notification, {"chat": object.union(data.policy_plan.ops_notification.chat, {"read_actions": [a | some a in data.policy_plan.ops_notification.chat.read_actions; a != "cloudwatch:DescribeAlarms"]})})
+	msgs := gate.deny with input as fixture.plan([v | some _, v in base]) with data.policy_plan.ops_notification as d
+	fixture.has("[PLAN-NOTIFY-07] 宣言の chat.read_actions に alarm を読む Action [\"cloudwatch:describealarms\"] がありません", msgs)
+}
+
+test_violation_us_east_1_topic_arn_shape if {
+	every t in ["arn:aws:s3:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"] {
+		fixture.has("[PLAN-NOTIFY-09] module.ops_notification.module.us_east_1_topic.aws_sns_topic.this の arn", messages(with_after("ue1_topic", {"arn": t})))
+	}
 }
