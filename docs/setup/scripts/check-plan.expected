@@ -53,6 +53,8 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock"]
 
+add module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this
+add module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this
 add module.organization_baseline.module.break_glass.aws_iam_account_password_policy.this
 add module.organization_baseline.module.break_glass.aws_iam_group.this
 add module.organization_baseline.module.break_glass.aws_iam_group_membership.this

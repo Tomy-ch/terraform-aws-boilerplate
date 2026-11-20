@@ -76,7 +76,7 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 
 ### 3.5 StackSets の信頼アクセスを有効にする
 
-このリポジトリを新しく使う管理アカウントでは、組織の作成と StackSet の作成が同じ apply に入る。その apply は、信頼アクセスが無いために StackSet の作成で止まる（組織と他の resource は作られ、StackSet は state に残らない）。止まったら次の手順で信頼アクセスを有効にし、同じ apply をやり直す。
+このリポジトリを新しく使う管理アカウントでは、組織の作成と StackSet の作成が同じ apply に入る。その apply は、信頼アクセスが無いために StackSet の作成で止まる（組織と他の resource は作られ、StackSet は state に残らない）。止まったら次の手順で信頼アクセスを有効にし、同じ apply をやり直す（[bootstrap 手順書](bootstrap.md) の段4 の手順7）。
 
 メンバーアカウントへ break-glass の role を配る変更（CloudFormation の StackSet を作る変更）の merge より前に行う。`deployment-identity` に StackSets の権限を足す変更が昇格した後でよい。StackSet は、組織への信頼アクセスが無いと作れない。
 
