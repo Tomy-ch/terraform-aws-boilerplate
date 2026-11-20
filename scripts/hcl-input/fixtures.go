@@ -22,39 +22,48 @@ type fixtureDoc struct {
 	Fixtures map[string]syntaxDoc `json:"fixtures"`
 }
 
-// runFixtures は、-dir の `*.txtar` の1ファイルを1つの木として一時ディレクトリに建て、通常の実行と
-// 同じ経路（buildSyntax）で読んで -out へ書きます。txtar の0件、ファイルの0件のケースは errFixture です。
+// runFixtures は、位置引数の各ディレクトリの `*.txtar` の1ファイルを1つの木として一時ディレクトリに建て、
+// 通常の実行と同じ経路（buildSyntax）で読んで、すべてのディレクトリのケースを1つの -out へ書きます。txtar の
+// 0件のディレクトリ、ファイルの0件のケース、ディレクトリをまたいだケースの名前の重なりは errFixture です。
 func runFixtures(args []string, out io.Writer) error {
 	fset := flag.NewFlagSet("hcl-input fixtures", flag.ContinueOnError)
 	fset.SetOutput(out)
-	dir := fset.String("dir", "", "fixture の txtar を置いたディレクトリ")
 	outPath := fset.String("out", "", "書き出す JSON のパス")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
-	if *dir == "" || *outPath == "" || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "hcl-input fixtures -dir <dir> -out <path>")
+	dirs := fset.Args()
+	if *outPath == "" || len(dirs) == 0 {
+		return xerrors.Wrap(errUsage, "hcl-input fixtures -out <path> <dir>...")
 	}
-	cases, err := filepath.Glob(filepath.Join(*dir, "*.txtar"))
-	if err != nil {
-		return xerrors.Wrapf(errFixture, "%v", err)
-	}
-	if len(cases) == 0 {
-		return xerrors.Wrapf(errFixture, "%s に txtar が1件もありません", *dir)
-	}
-	slices.Sort(cases)
 
 	doc := fixtureDoc{Fixtures: map[string]syntaxDoc{}}
-	for _, c := range cases {
-		files, err := readCase(c)
+	from := map[string]string{}
+	for _, dir := range dirs {
+		cases, err := filepath.Glob(filepath.Join(dir, "*.txtar"))
 		if err != nil {
-			return err
+			return xerrors.Wrapf(errFixture, "%v", err)
 		}
-		got, err := buildCase(files)
-		if err != nil {
-			return xerrors.Wrapf(err, "%s", c)
+		if len(cases) == 0 {
+			return xerrors.Wrapf(errFixture, "%s に txtar が1件もありません", dir)
 		}
-		doc.Fixtures[strings.TrimSuffix(filepath.Base(c), ".txtar")] = got
+		slices.Sort(cases)
+		for _, c := range cases {
+			name := strings.TrimSuffix(filepath.Base(c), ".txtar")
+			if prev, dup := from[name]; dup {
+				return xerrors.Wrapf(errFixture, "ケースの名前 %q が %s と %s の2つにあります", name, prev, c)
+			}
+			from[name] = c
+			files, err := readCase(c)
+			if err != nil {
+				return err
+			}
+			got, err := buildCase(files)
+			if err != nil {
+				return xerrors.Wrapf(err, "%s", c)
+			}
+			doc.Fixtures[name] = got
+		}
 	}
 	data, err := marshalIndent(doc)
 	if err != nil {

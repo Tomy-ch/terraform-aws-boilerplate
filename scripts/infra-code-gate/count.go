@@ -70,6 +70,7 @@ func runCount(args []string, repo string, out io.Writer) error {
 	}
 
 	findings := evaluated(combined, *combinedPath)
+	findings = append(findings, violations(combined, *combinedPath)...)
 	findings = append(findings, outsideRoots(tracked, roots)...)
 	findings = append(findings, trackedTerraformDirs(tracked)...)
 	if err := report(out, "count", findings); err != nil {
@@ -122,6 +123,27 @@ func walkConfigs(repo string, roots []string) ([]string, error) {
 	}
 	slices.Sort(files)
 	return slices.Compact(files), nil
+}
+
+// violations は、Conftest の結果の違反を、その文のまま finding にします。Conftest の終了コードは make が
+// 捨てるので、違反で落とすのはここです。
+func violations(results []conftestResult, file string) []lintreport.Finding {
+	var findings []lintreport.Finding
+	for _, r := range results {
+		for _, f := range r.Failures {
+			var v struct {
+				Msg string `json:"msg"`
+			}
+			if err := json.Unmarshal(f, &v); err != nil || v.Msg == "" {
+				findings = append(findings, lintreport.Finding{File: file, Line: 1, Message: fmt.Sprintf("名前空間 %q の違反を読めません: %s", r.Namespace, string(f))})
+
+				continue
+			}
+			findings = append(findings, lintreport.Finding{File: file, Line: 1, Message: v.Msg})
+		}
+	}
+
+	return findings
 }
 
 // evaluated は、全ファイルを1つの入力として掛けた規則が実際に評価されたことを検査します。規則の無い

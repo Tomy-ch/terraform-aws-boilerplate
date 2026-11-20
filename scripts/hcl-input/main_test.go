@@ -21,7 +21,7 @@ const (
 )
 
 // fixture は base に構成と find の一覧を置き、-listed と -out のパスを返す。listed が nil なら、置いた
-// ファイルのうち .terraform の外のものを書く（hcl-input.mk の find と同じ）。
+// ファイルのうち .terraform の外のものを書く（hcl-tally inputs の一覧と同じ）。
 func fixture(t *testing.T, files map[string]string, listed []string) (base, listedPath, outPath string) {
 	t.Helper()
 	base = writeTree(t, files)

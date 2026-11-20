@@ -62,6 +62,33 @@ func Test_runRegoTests(t *testing.T) {
 		assert.Contains(t, out.String(), "ID RO001 に test_RO001_deny_* のテストがありません")
 	})
 
+	t.Run("落ちたテストがあれば verify の報告を写してから違反を出す", func(t *testing.T) {
+		t.Parallel()
+		report := strings.Replace(reportOK, "PASS", "FAIL", 1) + "FAIL の理由の行\n"
+		repo, p := setup(t, policyOK, policyTestOK, report)
+		var out bytes.Buffer
+		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}, repo, &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.Contains(t, out.String(), "conftest verify の報告（"+p+"）:\n"+strings.TrimRight(report, "\n")+"\n❌ infra-code-gate rego-tests")
+	})
+
+	t.Run("テストが1件も走っていなければ verify の報告を写す", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK, "rego_parse_error: x\n")
+		var out bytes.Buffer
+		err := runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}, repo, &out)
+		require.ErrorIs(t, err, errNoInput)
+		assert.Contains(t, out.String(), "rego_parse_error: x")
+	})
+
+	t.Run("通れば verify の報告を写さない", func(t *testing.T) {
+		t.Parallel()
+		repo, p := setup(t, policyOK, policyTestOK, reportOK)
+		var out bytes.Buffer
+		require.NoError(t, runRegoTests([]string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}, repo, &out))
+		assert.NotContains(t, out.String(), "conftest verify の報告")
+	})
+
 	t.Run("テストの中の parse_config も違反", func(t *testing.T) {
 		t.Parallel()
 		repo, p := setup(t, policyOK, policyTestOK+"\nx := parse_config(\"hcl2\", \"\")\n", reportOK)
@@ -283,6 +310,26 @@ func Test_readReport(t *testing.T) {
 		t.Parallel()
 		_, err := readReport(filepath.Join(t.TempDir(), "none"))
 		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+func Test_printReport(t *testing.T) {
+	t.Parallel()
+
+	t.Run("報告を見出しつきで写す", func(t *testing.T) {
+		t.Parallel()
+		p := filepath.Join(t.TempDir(), "report.txt")
+		writeFile(t, p, "a\nb\n\n")
+		var out bytes.Buffer
+		printReport(&out, p)
+		assert.Equal(t, "conftest verify の報告（"+p+"）:\na\nb\n", out.String())
+	})
+
+	t.Run("読めなければ何も写さない", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		printReport(&out, filepath.Join(t.TempDir(), "missing.txt"))
+		assert.Empty(t, out.String())
 	})
 }
 
