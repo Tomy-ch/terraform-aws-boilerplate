@@ -41,6 +41,29 @@ read_only(action) if {
 	startswith(parts[1], v)
 }
 
+# 動詞が読み取りの形でない読み取りの Action（deployment-identity/ADR-0201 決定13）。宣言の形を満たす要素だけが読み取りになる。
+read_actions := object.get(cfg, "read_actions", [])
+
+write_verbs := ["modify", "create", "delete", "update", "put", "tag", "untag"]
+
+read_action_shaped(x) if {
+	is_string(x)
+	regex.match(`^[A-Za-z0-9-]+:[A-Za-z0-9]+$`, x)
+}
+
+write_verb(x) if {
+	some v in write_verbs
+	startswith(split(lower(x), ":")[1], v)
+}
+
+declared_reads := {lower(x) | some x in read_actions; read_action_shaped(x); not write_verb(x)} if {
+	is_array(read_actions)
+} else := set()
+
+read_only(action) if action in declared_reads
+
+allowed_actions := {action | some a in allows; some action in lib.lower_all(object.get(a.statement, "Action", []))}
+
 after(address) := c.rc.change.after if {
 	some c in lib.changes
 	c.rc.address == address
@@ -74,6 +97,31 @@ role_known if is_string(role_name)
 deny contains msg if {
 	not role_known
 	msg := sprintf("[PLAN-ROLE-00] plan の role %q の名前が入力にありません。address が変わったなら data.policy_plan.deployment_identity.plan_role を直してください", [role])
+}
+
+deny contains msg if {
+	not is_array(read_actions)
+	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions が配列ではありません: %v", [read_actions])
+}
+
+deny contains msg if {
+	some x in read_actions
+	not read_action_shaped(x)
+	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %v が、wildcard を含まない <service>:<Action> の文字列ではありません", [x])
+}
+
+deny contains msg if {
+	some x in read_actions
+	read_action_shaped(x)
+	write_verb(x)
+	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が %v のどれかで始まります。変更系の Action を読み取りとして宣言しないでください", [x, write_verbs])
+}
+
+deny contains msg if {
+	some x in read_actions
+	read_action_shaped(x)
+	not lower(x) in allowed_actions
+	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s は、plan の role の Allow で使われていません。使わなくなったなら宣言から外してください", [x])
 }
 
 deny contains msg if {
