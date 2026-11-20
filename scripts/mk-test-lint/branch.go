@@ -34,11 +34,13 @@ var (
 	directiveRe  = regexp.MustCompile(`^ *(ifeq|ifneq|ifdef|ifndef|else|endif)\b`)
 	commandSepRe = regexp.MustCompile(`;|\||&|\(|\)|\{|\}|(?:^|\s)(?:then|do|else)(?:\s|$)`)
 	quotedRe     = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"`)
-	shellArgRe   = regexp.MustCompile(`\b(?:sh|bash|dash|zsh)\s+(?:-[a-z]+\s+)*-c\s+(?:'([^']*)'?|"((?:[^"\\]|\\.)*)"?)`)
-	computedRe   = regexp.MustCompile(`\$[({]\$`)
-	assignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	makeRefRe    = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
-	varRefRe     = regexp.MustCompile(`\$[({](?:call\s+|value\s+)?([A-Za-z_][A-Za-z0-9_.-]*)[\s,:)}]`)
+	shellArgRe   = regexp.MustCompile(`(?:\b(?:sh|bash|dash|zsh|ksh)|\$[({]SHELL[)}]|\$\$\{?SHELL\}?)\s+(?:\S+\s+)*?-[A-Za-z]*c[A-Za-z]*\s+(?:--\s+)?(?:'([^']*)'?|"((?:[^"\\]|\\.)*)"?)`)
+	// 引用の字句を正規表現で解けない書き方。解釈できない入力として落とす（決定14）。
+	unparseableRe = regexp.MustCompile(`\\'|'\\''|\$\$'|\$'|\|\s*(?:sh|bash|dash|zsh|ksh|\$[({]SHELL[)}])\b|<<<|\bsh\s+-s\b`)
+	computedRe    = regexp.MustCompile(`\$[({]\$`)
+	assignPrefix  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+	makeRefRe     = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
+	varRefRe      = regexp.MustCompile(`\$[({](?:call\s+|value\s+)?([A-Za-z_][A-Za-z0-9_.-]*)[\s,:)}]`)
 )
 
 // constructs は1行が持つ、決定25 の閉じた一覧に当たる書き方を返す。
@@ -76,6 +78,9 @@ func constructs(line string) []string {
 	if computedRe.MatchString(line) {
 		add("計算された変数名")
 	}
+	if unparseableRe.MatchString(line) {
+		add("解釈できない引用かシェルへの流し込み")
+	}
 	// `sh -c` と `bash -c` の引数の文字列も、同じ規則で見る（決定25）。
 	for _, m := range shellArgRe.FindAllStringSubmatch(line, -1) {
 		for _, c := range constructs(m[1] + m[2]) {
@@ -99,13 +104,17 @@ func constructs(line string) []string {
 		// レシピの前置き（@・-・+）と、否定・環境変数の代入・time などの前置きを飛ばして、コマンドの語を取る。
 		fields[0] = strings.TrimLeft(fields[0], "@-+")
 		k := 0
-		for k < len(fields) && (fields[k] == "" || fields[k] == "!" || fields[k] == "time" || fields[k] == "env" || fields[k] == "command" || assignPrefix.MatchString(fields[k])) {
+		for k < len(fields) && (fields[k] == "" || fields[k] == "!" || fields[k] == "time" || fields[k] == "env" || fields[k] == "command" || assignPrefix.MatchString(fields[k]) || (k > 0 && (fields[k-1] == "env" || fields[k-1] == "command" || strings.HasPrefix(fields[k-1], "-")) && strings.HasPrefix(fields[k], "-"))) {
 			k++
 		}
 		if k == len(fields) {
 			continue
 		}
 		word := fields[k]
+		if word == "Q" {
+			add("引用したコマンドの名前") // 潰した引用符がコマンドの位置に来た。中身を検査できない
+			continue
+		}
 		fields = fields[k:]
 		if word == "." && len(fields) < 2 {
 			continue // `.` だけの値（作業ディレクトリ）は source ではない

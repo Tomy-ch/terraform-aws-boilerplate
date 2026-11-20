@@ -53,6 +53,16 @@ func Test_constructs(t *testing.T) {
 		{"function キーワードの関数定義", "\tfunction f { a; }", []string{"関数定義"}},
 		{"go-do のような語を区切りと読まない", "\t@go-do test-x", nil},
 		{"計算された変数名", "\t@$($(N))", []string{"計算された変数名"}},
+		{"結合したフラグの sh -euc", "\t@sh -euc 'if x; then y; fi'", []string{"if"}},
+		{"-c の前に別のオプション", "\t@bash -o pipefail -c 'while x; do y; done'", []string{"while"}},
+		{"-c の後ろの --", "\t@sh -c -- 'test -f a'", []string{"test"}},
+		{"$(SHELL) -c", "\t@$(SHELL) -c 'for d in a; do b; done'", []string{"for"}},
+		{"エスケープした引用符は解釈できない", "\techo \\' ; if x; then y; fi ; echo '", []string{"解釈できない引用かシェルへの流し込み"}},
+		{"'\\'' を含む sh -c は解釈できない", "\t@sh -c 'echo '\\''x'\\''; exit 1'", []string{"解釈できない引用かシェルへの流し込み"}},
+		{"シェルへの流し込みは解釈できない", "\techo 'if x; then y; fi' | sh", []string{"解釈できない引用かシェルへの流し込み"}},
+		{"ANSI-C の引用は解釈できない", "\t@sh -c $$'exit 1'", []string{"解釈できない引用かシェルへの流し込み"}},
+		{"引用したコマンドの名前", "\t@\"test\" -f x", []string{"引用したコマンドの名前"}},
+		{"env のオプションの後ろのコマンドを読む", "\t@env -i test -f x", []string{"test"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -139,6 +149,16 @@ func Test_recipeFindings(t *testing.T) {
 		a := parse(t, "a: $(or $(A),b)\n\t@echo\n")
 		got := recipeFindings("a.mk", a, vars("a.mk", a))
 		assert.Equal(t, []finding{{file: "a.mk", line: 1, what: "$(or)", where: "ターゲット a のレシピ"}}, got)
+	})
+	t.Run("規則の直後の条件ディレクティブの先のレシピも検査する", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a:\nifndef X\n\t@if x; then y; fi\nendif\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		var whats []string
+		for _, f := range got {
+			whats = append(whats, f.what)
+		}
+		assert.ElementsMatch(t, []string{"条件ディレクティブ", "if"}, whats)
 	})
 	t.Run("名前に変数を含む規則のレシピも検査する", func(t *testing.T) {
 		t.Parallel()

@@ -267,8 +267,8 @@ func parseMk(raw []byte) (mkFile, error) {
 			}
 		}
 		next := i + 1
-		for next < len(lines) && (strings.TrimSpace(lines[next]) == "" || strings.HasPrefix(lines[next], "#")) {
-			next++ // make は規則とレシピの間の空行とコメントを読み飛ばす
+		for next < len(lines) && (strings.TrimSpace(lines[next]) == "" || strings.HasPrefix(lines[next], "#") || directiveRe.MatchString(lines[next])) {
+			next++ // make は規則とレシピの間の空行・コメント・条件ディレクティブを読み飛ばす
 		}
 		hasRecipe := recipe != "" || (next < len(lines) && strings.HasPrefix(lines[next], "\t"))
 		for _, name := range names {
