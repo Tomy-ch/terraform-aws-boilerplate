@@ -37,7 +37,7 @@ CI は OIDC で role を assume して AWS を操作する（[ADR-0602](../../do
 | `github_oidc_provider_arn` | `image-registry` の `github_oidc_provider_arn`（push の role の信頼条件の Principal。[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定19） |
 | `permissions_boundary_arns` | IAM の role を作る workload root の usecase（`ops-notification` の `permissions_boundary_arn`）。key は usecase の名前（`ops-notification`）、値は `<project>-<env>-ci-boundary-<usecase>` の ARN。workload root は identity root の state を読めないので、env の root が同じ名前から ARN を組んで渡す（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) 決定15）。identity root の boundary と workload root が渡す ARN の一致は、env の root を配線するまで（#330）検査が無く、Policy Test（`PLAN-WRB-*`）は名前の形だけを見る |
 
-5つの role の ARN は、role の computed の `arn` ではなく、role の名前とアカウント・partition から組む。role の作成と置換の plan でも値が決まるので、それを名指す state の鍵の Key Policy が CI の `plan.kms_key_policy`（`PLAN-KMS-09`）で落ちない。`internal/github-oidc/tests/trust.tftest.hcl` の `role_arns_do_not_read_computed_arn` が見る。同じ名前のまま role を作り直す plan（taint、`-replace`、`moved` の無い address の変更）では ARN が変わらず、Key Policy が書き直されないので、作り直した role は鍵を使えない。CI はその plan を `PLAN-KMS-10` で落とす。Key Policy を同じ apply で作り直すには、`conftest/plan/decl.json` の `stateful_protection.allow` に Key Policy の置換を宣言する（`plan.stateful_protection` が Key Policy の置換を守るため）。名前を resource から読むことで role の作成を Key Policy の更新より先に走らせる順序は、テストが見ない
+role の ARN は、role の computed の `arn` ではなく、role の名前とアカウント・partition から組む。role の作成と置換の plan でも値が決まるので、それを名指す state の鍵の Key Policy が CI の `plan.kms_key_policy`（`PLAN-KMS-09`）で落ちない。`internal/github-oidc/tests/trust.tftest.hcl` の `role_arns_do_not_read_computed_arn` が見る。同じ名前のまま role を作り直す plan（taint、`-replace`、`moved` の無い address の変更）では ARN が変わらず、Key Policy が書き直されないので、作り直した role は鍵を使えない。CI はその plan を `PLAN-KMS-10` で落とす。Key Policy を同じ apply で作り直すには、`conftest/plan/decl.json` の `stateful_protection.allow` に Key Policy の置換を宣言する（`plan.stateful_protection` が Key Policy の置換を守るため）。名前を resource から読むことで role の作成を Key Policy の更新より先に走らせる順序は、テストが見ない
 
 role と environment の名前は入力から決まる。利用者は選ばない（[deployment-identity/ADR-0101](docs/adr/0101-trust-by-immutable-environment-subject.md) 決定3）。
 
@@ -48,6 +48,8 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 | apply-identity | `<project>-<env>-ci-apply-identity` | `<env>-apply-identity` | identity root の apply と、その lock を残す job（`terraform-lock-hold.yaml`。ADR-0604 決定8） |
 | unlock-identity | `<project>-<env>-ci-unlock-identity` | `<env>-unlock-identity` | identity root の state に残った lock の解除（`terraform-unlock.yaml`） |
 | unlock | `<project>-<env>-ci-unlock` | `<env>-unlock` | workload root の state に残った lock の解除 |
+
+role の集合は CI の入口の種別の登録簿（`scripts/lib/cientry`）の role と過不足なく一致し、`internal/github-oidc` の `local.roles` との一致は `lib/cientry` のテスト（`TestCheckTerraformRoles`）が見る。role を足すときは、同じ変更で登録簿の種別にその role を持たせる。どの入口も取らない role は作らない。
 
 - ログの所在: 無い。`AssumeRoleWithWebIdentity` の記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `deployment-identity` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
@@ -103,7 +105,7 @@ unsupported:
 
 - ユースケース: `state-backend`（`bucket_arn`、`state_key_arn`、`plan_output_bucket_arn`、`apply_output_bucket_arn`）。`state-backend` は、このユースケースの `plan_role_arn`・`apply_role_arn`・`apply_identity_role_arn`・`unlock_identity_role_arn`・`unlock_role_arn` を `ci_role_arns` に受ける
 - 判断 Issue: #130、#98、#142、#96、#83。いずれも閉じている
-- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの `<env>-plan` / `<env>-apply` / `<env>-apply-identity` / `<env>-unlock-identity` / `<env>-unlock` の写しで、`env/` の root が渡す `env` ごとに5つが宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が、unlock-identity の role は `terraform-unlock.yaml` の `unlock-admin-identity` が assume する。apply の role は `terraform-apply.yaml` の `apply-admin-workload` と `terraform-lock-hold.yaml` の `hold-admin-workload` が、unlock の role は `terraform-unlock.yaml` の `unlock-admin-workload` が assume する
+- GitHub 側の environment は [`.github/settings/environments.json`](../../.github/settings/environments.json) が宣言する。名前はこのユースケースの role の表の `<env>-<role>` の写しで、`env/` の root が渡す `env` ごとにすべての role の名前が宣言に揃っていることを `make repo-settings-check` が見る。plan の role は `terraform-gates.yaml` の `plan-admin-identity` が、apply-identity の role は `terraform-apply.yaml` の `apply-admin-identity` が、unlock-identity の role は `terraform-unlock.yaml` の `unlock-admin-identity` が assume する。apply の role は `terraform-apply.yaml` の `apply-admin-workload` と `terraform-lock-hold.yaml` の `hold-admin-workload` が、unlock の role は `terraform-unlock.yaml` の `unlock-admin-workload` が assume する
 
 identity root に構成物を足すときは、権限の変更を先に merge してから、その権限で作る resource を apply する（[deployment-identity/ADR-0201](docs/adr/0201-enumerated-permissions.md) の影響）。
 
