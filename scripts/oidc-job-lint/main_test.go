@@ -3813,6 +3813,105 @@ func Test_entryCredential(t *testing.T) {
 			assert.Empty(t, role)
 		})
 	}
+
+	// 写しと正本のずれ（ADR-0702 決定17）: 入口の種別の一覧と、入口ごとの env と role の導出は、ci.mk の
+	// 入口の写しである。ci.mk に種別か入口が足されて写しが追随しないとき、ここが落ちる。
+	t.Run("写しと正本のずれ: ci.mk の入口の種別と profile が一覧と導出に一致する", func(t *testing.T) {
+		t.Parallel()
+
+		body, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
+		require.NoError(t, err)
+		lines := strings.Split(string(body), "\n")
+		target := regexp.MustCompile(`^(ci-[a-z0-9-]+):$`)
+		call := regexp.MustCompile(`^\t@\$\(call CI_([A-Z]+),([a-z0-9-]+),(identity|workload)\)$`)
+		profile := regexp.MustCompile(`^(ci-[a-z0-9-]+): TF_LOCAL_PROFILE := \$\(call CI_PROFILE,([a-z0-9-]+),([a-z-]+)\)$`)
+		// 入口ではない ci- のターゲット。資格情報と拒否の確認は root を持たない。
+		notEntries := []string{"ci-aws-credentials", "ci-assume-denied"}
+
+		kinds := map[string]bool{}
+		entries := map[string]string{} // ターゲット名 → 種別
+		for i, l := range lines {
+			m := target.FindStringSubmatch(l)
+			if m == nil || slices.Contains(notEntries, m[1]) {
+				continue
+			}
+			require.Less(t, i+1, len(lines), "%s の recipe がありません", m[1])
+			c := call.FindStringSubmatch(lines[i+1])
+			require.NotNil(t, c, "%s の recipe を入口の呼び出し $(call CI_<種別>,<env>,<root>) として読めません: %q", m[1], lines[i+1])
+			kind := strings.ToLower(c[1])
+			require.Equal(t, "ci-"+kind+"-"+c[2]+"-"+c[3], m[1], "ターゲットの名前と呼び出しの種別・env・root が食い違います")
+			kinds[kind] = true
+			entries[m[1]] = kind
+		}
+		// 独立した経路の件数（ADR-0702 決定15）: 呼び出しの字面の行と、読めた入口の数。
+		calls := 0
+		for _, l := range lines {
+			if strings.HasPrefix(l, "\t@$(call CI_") {
+				calls++
+			}
+		}
+		require.NotEmpty(t, entries)
+		require.Equal(t, calls, len(entries), "入口の呼び出しの行と、読めた入口の数が食い違います")
+		assert.ElementsMatch(t, entryKinds, slices.Collect(maps.Keys(kinds)), "ci.mk の入口の種別と entryKinds が食い違います")
+
+		profiles := 0
+		for _, l := range lines {
+			m := profile.FindStringSubmatch(l)
+			if m == nil {
+				continue
+			}
+			kind, ok := entries[m[1]]
+			require.True(t, ok, "%s は入口として読めていません", m[1])
+			profiles++
+			envRoot := strings.TrimPrefix(m[1], "ci-"+kind+"-")
+			env, role, ok := entryCredential(kind, envRoot)
+			require.True(t, ok, m[1])
+			assert.Equal(t, m[2], env, m[1])
+			assert.Equal(t, m[3], role, m[1])
+			assert.True(t, isKindEntry(kind, "      - run: make "+m[1]+" RUNNER_MODE=host"), m[1])
+			assert.True(t, entryToken.MatchString(m[1]), m[1])
+		}
+		assert.Equal(t, len(entries), profiles, "TF_LOCAL_PROFILE を持たない入口があります")
+	})
+}
+
+func Test_entryPattern(t *testing.T) {
+	t.Parallel()
+
+	// 種別の一覧から組んだ正規表現が、一覧を手で書いていたときの字面と同じであること。
+	for name, c := range map[string]struct {
+		got  *regexp.Regexp
+		want string
+	}{
+		"ciEntry":     {ciEntry, `\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`},
+		"entryToken":  {entryToken, `\bci-(?:plan|apply|unlock|hold)-`},
+		"unlockEntry": {unlockEntry, `\bmake\b.*\bci-(?:unlock)-([a-z0-9-]+)`},
+		"holdEntry":   {holdEntry, `\bmake\b.*\bci-(?:hold)-([a-z0-9-]+)`},
+		"otherEntry":  {otherEntry, `\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`},
+		"applyEntry":  {applyEntry, `\bmake\b.*\bci-(?:apply)-([a-z0-9-]+)`},
+		"planEntry":   {planEntry, `\bmake\b.*\bci-(?:plan)-[a-z0-9-]+`},
+		"runEntry":    {runEntry, `\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`},
+	} {
+		t.Run(name+" は種別の一覧から同じ字面に組まれる", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, c.got.String())
+		})
+	}
+
+	t.Run("種別は正規表現の字として引用する", func(t *testing.T) {
+		t.Parallel()
+
+		re := entryPattern(`ci-`, `-`, "a.b")
+		assert.True(t, re.MatchString("ci-a.b-"))
+		assert.False(t, re.MatchString("ci-axb-"))
+	})
+
+	t.Run("違反の文の入口の並びは種別の一覧から組む", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, "make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*", entryNames)
+	})
 }
 
 func Test_isKindEntry(t *testing.T) {

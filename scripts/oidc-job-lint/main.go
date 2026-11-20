@@ -111,22 +111,22 @@ var (
 	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity|unlock)(?:\s|$)`)
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
-	ciPlan      = makeRun(`ci-plan-([a-z0-9-]+)`)
+	ciPlan      = makeRun(`ci-` + kindPlan + `-([a-z0-9-]+)`)
 	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
 	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
-	ciApply     = makeRun(`ci-apply-([a-z0-9-]+)`)
+	ciApply     = makeRun(`ci-` + kindApply + `-([a-z0-9-]+)`)
 	ciApplyRoot = ciApply
-	ciUnlock    = makeRun(`ci-unlock-([a-z0-9-]+)`)
-	ciHold      = makeRun(`ci-hold-([a-z0-9-]+)`)
-	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`)
+	ciUnlock    = makeRun(`ci-` + kindUnlock + `-([a-z0-9-]+)`)
+	ciHold      = makeRun(`ci-` + kindHold + `-([a-z0-9-]+)`)
+	ciEntry     = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, entryKinds...)
 	// entryToken は make の有無も名前の形も問わない。行継続・$(MAKE)・式で組んだ名前の入口も数える。
-	entryToken  = regexp.MustCompile(`\bci-(?:plan|apply|unlock|hold)-`)
-	unlockEntry = regexp.MustCompile(`\bmake\b.*\bci-unlock-([a-z0-9-]+)`)
-	holdEntry   = regexp.MustCompile(`\bmake\b.*\bci-hold-([a-z0-9-]+)`)
-	otherEntry  = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
-	applyEntry  = regexp.MustCompile(`\bmake\b.*\bci-apply-([a-z0-9-]+)`)
-	planEntry   = regexp.MustCompile(`\bmake\b.*\bci-plan-[a-z0-9-]+`)
-	runEntry    = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`)
+	entryToken  = entryPattern(`\bci-`, `-`, entryKinds...)
+	unlockEntry = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindUnlock)
+	holdEntry   = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindHold)
+	otherEntry  = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, slices.DeleteFunc(slices.Clone(entryKinds), func(k string) bool { return k == kindHold })...)
+	applyEntry  = entryPattern(`\bmake\b.*\bci-`, `-([a-z0-9-]+)`, kindApply)
+	planEntry   = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindPlan)
+	runEntry    = entryPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, kindPlan, kindApply)
 	detection   = makeRun(`infra-code-gate`)
 	orderCheck  = makeRun(`resource-order-check`)
 	layerCheck  = makeRun(`layer-check`)
@@ -455,7 +455,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 			if n > 0 && !hasTokenLine(job) {
 				first := job.Lines[slices.IndexFunc(job.Lines, func(l workflow.Line) bool { return entryLine(l.Text) })].Number
 				findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
-					Message: fmt.Sprintf("job %s は CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせますが（%d 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID, first)})
+					Message: fmt.Sprintf("job %s は CI の入口（%s）を走らせますが（%d 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID, entryNames, first)})
 			}
 			continue
 		}
@@ -469,7 +469,7 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 	}
 	if n := countEntryLines(source); n > entries {
 		findings = append(findings, lintreport.Finding{File: file, Line: 1,
-			Message: fmt.Sprintf("CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 %d 件のうち %d 件を、job の行として読めません", n, n-entries)})
+			Message: fmt.Sprintf("CI の入口（%s）を持つ行 %d 件のうち %d 件を、job の行として読めません", entryNames, n, n-entries)})
 	}
 	return targets, findings
 }
@@ -890,6 +890,28 @@ const (
 	kindUnlock = "unlock"
 	kindHold   = "hold"
 )
+
+// entryKinds は CI の入口 make ci-<種別>-<env>-<root> の種別の一覧。入口の正規表現と違反の文はここから組み、
+// .makefiles/terraform/operation/ci.mk の入口の種別との一致はテストが見る。
+var entryKinds = []string{kindPlan, kindApply, kindUnlock, kindHold}
+
+// entryPattern は、種別 kinds のどれかを prefix と suffix で挟んだ正規表現（prefix(?:kinds)suffix）を組みます。
+func entryPattern(prefix, suffix string, kinds ...string) *regexp.Regexp {
+	quoted := make([]string, len(kinds))
+	for i, k := range kinds {
+		quoted[i] = regexp.QuoteMeta(k)
+	}
+	return regexp.MustCompile(prefix + `(?:` + strings.Join(quoted, "|") + `)` + suffix)
+}
+
+// entryNames は、違反の文に出す入口の名前の並び（make ci-plan-*・ci-apply-*・…）。
+var entryNames = func() string {
+	names := make([]string, len(entryKinds))
+	for i, k := range entryKinds {
+		names[i] = "ci-" + k + "-*"
+	}
+	return "make " + strings.Join(names, "・")
+}()
 
 // groupRecord は、資格情報を取る job のうち apply の job と lock の解除の job と lock を残す job の、入口の
 // `<env>-<root>` と実効の concurrency の group と environment です。
@@ -1843,16 +1865,16 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 			}
 			return n
 		}
-		if count("plan", true) == 0 {
+		if count(kindPlan, true) == 0 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を Pull Request で plan する job がありません", root)})
 		}
-		if n := count("apply", false); n != 1 {
+		if n := count(kindApply, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s を apply する job が %d 件です（1件を期待）", root, n)})
 		}
-		if n := count("unlock", false); n != 1 {
+		if n := count(kindUnlock, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を外す job が %d 件です（1件を期待）", root, n)})
 		}
-		if n := count("hold", false); n != 1 {
+		if n := count(kindHold, false); n != 1 {
 			findings = append(findings, lintreport.Finding{File: rootsDir, Line: 1, Message: fmt.Sprintf("root %s の lock を残す job が %d 件です（1件を期待）", root, n)})
 		}
 	}
