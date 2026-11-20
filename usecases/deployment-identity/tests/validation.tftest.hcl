@@ -401,7 +401,7 @@ run "accepts_break_glass_names_at_iam_limit" {
       format("arn:aws:iam::123456789012:user/break-glass/%064d", 1),
       format("arn:aws:iam::123456789012:user/break-glass/%064d", 2),
       format("arn:aws:iam::123456789012:group/break-glass/%0128d", 3),
-      format("arn:aws:iam::123456789012:role/break-glass/%064d", 4),
+      format("arn:aws:iam::123456789012:role/break-glass/r%063d", 4),
     ]
   }
 }

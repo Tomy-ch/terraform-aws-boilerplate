@@ -237,3 +237,29 @@ ci-hold-admin-identity: SHELL := /bin/bash
 ci-hold-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-hold-admin-identity:
 	@$(call CI_HOLD,admin,identity)
+
+.PHONY: ci-plan-admin-workload ## [CI] 管理アカウントの workload root を plan し、全文を plan の出力の Bucket に置く
+ci-plan-admin-workload: SHELL := /bin/bash
+ci-plan-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-plan-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
+ci-plan-admin-workload:
+	@$(call CI_PLAN,admin,workload)
+
+.PHONY: ci-apply-admin-workload ## [CI] 管理アカウントの workload root を plan し直し、Policy を通った plan を apply する
+ci-apply-admin-workload: SHELL := /bin/bash
+ci-apply-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-apply-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
+ci-apply-admin-workload:
+	@$(call CI_APPLY,admin,workload)
+
+.PHONY: ci-unlock-admin-workload ## [CI] 管理アカウントの workload root の state に、apply の job の timeout を超えて残った lock を外す
+ci-unlock-admin-workload: SHELL := /bin/bash
+ci-unlock-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,unlock)
+ci-unlock-admin-workload:
+	@$(call CI_UNLOCK,admin,workload)
+
+.PHONY: ci-hold-admin-workload ## [CI] 管理アカウントの workload root の state に lock を取り、外さずに残す（bootstrap 段5 の lock の解除の試行）
+ci-hold-admin-workload: SHELL := /bin/bash
+ci-hold-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
+ci-hold-admin-workload:
+	@$(call CI_HOLD,admin,workload)

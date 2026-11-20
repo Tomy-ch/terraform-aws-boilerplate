@@ -1396,7 +1396,7 @@ func TestCiMk(t *testing.T) {
 	t.Run("Policy の名前空間が空なら展開で落ちる", func(t *testing.T) {
 		t.Parallel()
 
-		for _, target := range []string{"ci-plan-admin-identity", "ci-apply-admin-identity"} {
+		for _, target := range []string{"ci-plan-admin-identity", "ci-apply-admin-identity", "ci-plan-admin-workload", "ci-apply-admin-workload"} {
 			for _, value := range []string{"", " "} {
 				t.Run(target+" "+strconv.Quote(value), func(t *testing.T) {
 					t.Parallel()
@@ -1416,7 +1416,7 @@ func TestCiMk(t *testing.T) {
 	t.Run("CI の init は鍵を渡さない選択を受けない", func(t *testing.T) {
 		t.Parallel()
 
-		for _, target := range []string{"ci-plan-admin-identity", "ci-apply-admin-identity"} {
+		for _, target := range []string{"ci-plan-admin-identity", "ci-apply-admin-identity", "ci-plan-admin-workload", "ci-apply-admin-workload"} {
 			got := expand(t, target, "TF_LOCAL_MISSING_STATE_KEY=sse-s3")
 			assert.Contains(t, got, `-missing fail'`, target)
 			assert.NotContains(t, got, "sse-s3", target)
@@ -1514,6 +1514,44 @@ func TestCiMk(t *testing.T) {
 			`lock-held -etag "$etag" -meta "$meta" "$body"'`,
 		)
 		assert.Equal(t, 1, strings.Count(got, " plan -input=false"), got)
+	})
+
+	t.Run("workload root の入口は役割の profile で workload root を扱い、apply の全文を apply の出力の Bucket に置く", func(t *testing.T) {
+		t.Parallel()
+
+		cases := map[string]struct {
+			role    string
+			want    []string
+			notWant []string
+		}{
+			"ci-plan-admin-workload":   {"plan", []string{`for ns in plan.stateful_protection; do export ns`, `bucket -project tabp -env admin -kind tfplan`}, nil},
+			"ci-apply-admin-workload":  {"apply", []string{`for ns in plan.stateful_protection; do export ns`, `bucket -project tabp -env admin -kind tfapply`, `timeout -s INT 20m `}, []string{"-kind tfplan", "-lock=false"}},
+			"ci-unlock-admin-workload": {"unlock", []string{`lock-key "$dir"'`, `--if-match "$etag"`}, []string{" terraform ", "--version-id"}},
+			"ci-hold-admin-workload":   {"apply", []string{`lock-wait -pid "$pid"`, `-parallelism=1 > "$hold"`}, []string{" apply ", "-lock=false", "-out=", "put-object", "delete-object"}},
+		}
+		for target, c := range cases {
+			t.Run(target, func(t *testing.T) {
+				t.Parallel()
+
+				got := expand(t, target)
+				assert.Contains(t, got, `dir="./env/admin"; root="admin-workload"`)
+				assert.Contains(t, got, "AWS_PROFILE=tabp-admin-ci-"+c.role+" ")
+				for _, other := range []string{"plan", "apply", "apply-identity", "unlock", "unlock-identity"} {
+					if other != c.role {
+						assert.NotContains(t, got, "AWS_PROFILE=tabp-admin-ci-"+other+" ", target)
+					}
+				}
+				for _, w := range c.want {
+					assert.Contains(t, got, w)
+				}
+				for _, w := range c.notWant {
+					assert.NotContains(t, got, w)
+				}
+				for _, once := range []string{" apply -input=false", "put-object", "delete-object"} {
+					assert.LessOrEqual(t, strings.Count(got, once), 1, once)
+				}
+			})
+		}
 	})
 
 	t.Run("apply の全文の置き場は、identity root なら plan の出力の Bucket、ほかの root なら apply の出力の Bucket", func(t *testing.T) {
@@ -1788,6 +1826,10 @@ func newRecipe(bin string) recipeFunc {
 
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "backend.tf"), []byte(backend), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(identity, "providers.tf"), []byte(providersOK), 0o600))
+		// workload root は identity root の親のディレクトリに在る（ADR-0604 決定5）。
+		workload := filepath.Dir(identity)
+		require.NoError(t, os.WriteFile(filepath.Join(workload, "backend.tf"), []byte(strings.Replace(backendOK, "identity/terraform.tfstate", "workload/terraform.tfstate", 1)), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(workload, "providers.tf"), []byte(providersOK), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "stateful_protection.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 2)), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "kms_key_policy.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 3)), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(policy, "resource_policy_exclusive.rego"), []byte(strings.Repeat("deny contains msg if {\n}\n\n", 4)), 0o600))
@@ -1986,6 +2028,28 @@ func testCiAssumeDenied(t *testing.T, recipe recipeFunc) {
 
 func testCiApplyEntry(t *testing.T, recipe recipeFunc) {
 	t.Helper()
+
+	t.Run("workload root の apply は stateful_protection だけを掛け、全文を apply の出力の Bucket に置く", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-workload", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass})
+		require.NoError(t, r.err, r.out)
+		assert.Equal(t, 1, applies(r.calls), r.calls)
+		assert.Equal(t, 1, countCalls(r.calls, "conftest test "), r.calls)
+		assert.Contains(t, r.calls, "--namespace plan.stateful_protection")
+		assert.Equal(t, 1, countCalls(r.calls, "aws s3api put-object"), r.calls)
+		assert.Contains(t, r.calls, "--bucket tabp-admin-tfapply-123456789012-ap-northeast-1-an --key apply/8-1-admin-workload.txt")
+		assert.NotContains(t, r.calls, "tabp-admin-tfplan-", "apply の role は plan の出力の Bucket に書かない")
+	})
+
+	t.Run("workload root の apply の失敗も全文を apply の出力の Bucket に置いてから失敗する", func(t *testing.T) {
+		t.Parallel()
+
+		r := recipe(t, "ci-apply-admin-workload", map[string]string{"plan-rc": "2", "plan.json": recipeCreate, "policy.json": recipePass, "apply-rc": "1"})
+		require.Error(t, r.err, r.out)
+		assert.Contains(t, r.calls, "--bucket tabp-admin-tfapply-123456789012-ap-northeast-1-an --key apply/8-1-admin-workload.txt")
+		assert.Contains(t, r.output, "failure=apply")
+	})
 
 	// output は成功の通知が運ぶ件数の行。変更の有無を通知で見分けられるのは、この行だけである。
 	ok := map[string]struct{ planRC, plan, output string }{
@@ -2605,7 +2669,6 @@ func testCiHoldEntry(t *testing.T, recipe recipeFunc) {
 
 		return n
 	}
-	// planGone は、knobs が plan-hold を持ち plan を起動していれば、偽物の plan が書いた pid のプロセスが止まっていることを確かめる。
 	planGone := func(t *testing.T, r recipeResult, knobs map[string]string) {
 		t.Helper()
 
