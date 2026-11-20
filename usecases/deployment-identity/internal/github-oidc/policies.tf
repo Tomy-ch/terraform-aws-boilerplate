@@ -126,6 +126,18 @@ locals {
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
   administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
+  # StackSet の名前は break-glass の role と同じで、ARN の末尾の ID は作るまで決まらないので `:*` で書く（deployment-identity/ADR-0201 決定3・4）。
+  cfn_arn_prefix              = "arn:${data.aws_partition.current.partition}:cloudformation:${local.regional_arn_suffix}"
+  break_glass_stack_set_names = [for a in local.break_glass_role_arns : regex("[^/]+$", a)]
+  break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
+  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。
+  # AWS の resource 型の ARN はアカウントを持たないことがあるので、アカウントを `*` にする（決定4）。
+  break_glass_stack_set_write_arns = concat(
+    local.break_glass_stack_set_arns,
+    [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset-target/${n}:*"],
+    ["arn:${data.aws_partition.current.partition}:cloudformation:${data.aws_region.current.region}:*:type/resource/AWS-IAM-Role"],
+  )
+
   governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
@@ -338,6 +350,18 @@ locals {
         Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:ListRoleTags"]
         Resource = local.break_glass_role_arns
       },
+      {
+        Sid    = "ReadBreakGlassStackSet"
+        Effect = "Allow"
+        Action = [
+          "cloudformation:DescribeStackInstance",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:DescribeStackSetOperation",
+          "cloudformation:ListStackInstances",
+          "cloudformation:ListStackSetOperationResults",
+        ]
+        Resource = local.break_glass_stack_set_arns
+      },
     ],
   ) : s if local.management]
 
@@ -354,6 +378,8 @@ locals {
   # 組織の削除・メンバーの閉鎖・組織からの除外と、prevent_destroy を持つ構成物の削除は与えない（deployment-identity/ADR-0201 決定3）。
   governance_manage_statements = concat(
     [for a in local.governance_wildcard_write_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+    # StackSet に tag を付けないので、tag を伴う作成を拒む。
+    [{ Sid = "CloudformationCreateStackSet", Effect = "Allow", Action = "cloudformation:CreateStackSet", Resource = "*", Condition = { Null = { "aws:TagKeys" = "true" } } }],
     [for a in ["organizations:DisableAWSServiceAccess", "organizations:EnableAWSServiceAccess"] : {
       Sid       = replace(title(replace(a, ":", " ")), " ", "")
       Effect    = "Allow"
@@ -414,6 +440,15 @@ locals {
         Resource  = local.break_glass_role_arns
         Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
       },
+      # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
+      { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.break_glass_stack_set_write_arns },
+      {
+        Sid       = "ManageBreakGlassStackInstances"
+        Effect    = "Allow"
+        Action    = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+        Resource  = local.break_glass_stack_set_write_arns
+        Condition = { StringEquals = { "cloudformation:TargetRegion" = data.aws_region.current.region } }
+      },
     ],
   )
 
@@ -465,6 +500,7 @@ locals {
       "PutPermissionsBoundaryToPermissionSet",
       "UpdatePermissionSet",
     ] : "sso:${a}"],
+    [for a in ["ActivateOrganizationsAccess", "CreateStackInstances", "CreateStackSet", "DeactivateOrganizationsAccess", "DeleteStackInstances", "DeleteStackSet", "ImportStacksToStackSet", "StopStackSetOperation", "UpdateStackInstances", "UpdateStackSet"] : "cloudformation:${a}"],
     ["sts:AssumeRoot"],
   )
 
@@ -594,6 +630,12 @@ resource "aws_iam_role_policy" "apply_identity" {
     precondition {
       condition     = !local.management || (length(local.break_glass_user_arns) > 0 && length(local.break_glass_group_arns) > 0 && length(local.break_glass_role_arns) > 0)
       error_message = "管理アカウント（env が admin）の break_glass_arns は、break-glass の IAM user・group・role をそれぞれ1つ以上含めてください。"
+    }
+
+    # role の名前は StackSet の名前にもなる。IAM が許して StackSet が許さない名前では、Allow がどの StackSet にも当たらない。
+    precondition {
+      condition     = !local.management || alltrue([for n in local.break_glass_stack_set_names : can(regex("^[A-Za-z][-A-Za-z0-9]*$", n))])
+      error_message = "管理アカウント（env が admin）の break-glass の role の名前は、英字で始まり英数字とハイフンだけの名前にしてください（StackSet の名前の制約）。"
     }
   }
 }

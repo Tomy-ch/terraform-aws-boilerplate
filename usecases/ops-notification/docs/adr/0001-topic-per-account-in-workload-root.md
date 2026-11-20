@@ -16,6 +16,7 @@ state は apply する role ごとに root を分ける（repository-wide/ADR-06
 1. 1つのアカウントに Topic を1つ置き、そのアカウントの workload root から呼ぶ。
 2. Topic へ publish できるのは、同じアカウントの AWS のサービス（ops-notification/ADR-0101 (fixed-publishers)）と、IAM で `sns:Publish` を与えた同じアカウントの role（心拍の role）だけとする。他のアカウントからの publish の口を持たない。
 3. 宛先（Chatbot の Slack の channel）は、アカウントごとに構成する。7つのアカウントそれぞれで Slack の workspace の認可が要る。
+4. 管理アカウント（`env = "admin"`）にも、ほかのアカウントと同じく Topic・鍵・心拍・Chatbot の構成を置く。AWS Organizations User Guide「Best practices for the management account」は、管理アカウントに置くものを管理アカウントでしかできないものに限ることを勧める。この推奨から外れる。Topic は同じアカウントの送り手の宛先で（決定1・2）、その送り手と同じアカウントで生まれて消える。管理アカウントの送り手（心拍と、管理アカウントにしか置けない構成物の通知）の宛先を別のアカウントに置くと、決定2 が拒む越境の publish を要る。管理アカウントには SCP が効かないので、Topic・鍵・role の守りは Topic Policy・Key Policy・permissions boundary と、apply の role の権限の列挙が持つ。
 
 ## 検討した代替案
 
@@ -48,3 +49,4 @@ Topic Policy が他のアカウントの主体と、`aws:SourceAccount` が自�
 
 - 組織の外に通知の死活を見る仕組み（obp）が稼働したとき
 - AWS が越境の送信に、送り手の主体を名指せる条件を提供したとき
+- 管理アカウントの送り手の通知を、越境の publish なしに別のアカウントで受けられるようになったとき（決定4）

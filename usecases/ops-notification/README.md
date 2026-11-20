@@ -81,12 +81,12 @@ unsupported:
 
 - ユースケース: `deployment-identity` の permissions boundary の ARN を受ける。workload root の apply の role がこのユースケースの resource と role を作る権限は、`deployment-identity` が持つ（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13-17）
 - 判断 Issue: #97（アカウントごとの Topic と心拍）、#109（alarm を持たない）、#110（`modules/sns`・`modules/kms` の SNS の文）、#256（宛先を Chatbot にする）、#254（作る role の範囲。permissions boundary）
-- env の配線（管理アカウントの workload root）は #222 が持つ
+- env の配線: 管理アカウントは workload root（`env/admin/`）が呼ぶ。security・log-archive は #21、dev・stg・prd は #330 が配線する
 
 ## 検証方法
 
-- Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`internal/heartbeat/tests/` が schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role を、`reference/tests/plan.tftest.hcl` が reference の値を見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
-- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、Topic Policy の形（`plan.sns_topic_policy`。TLS の Deny、Allow がサービス principal の `sns:Publish` だけで条件が自アカウントの `aws:SourceAccount` だけ、Topic ごとに Topic Policy が1つ）、合成の不変条件（`plan.ops_notification`。Topic Policy と Key Policy の送り手の一致、EventBridge の文が Topic を名指すこと、IAM で publish する role と Key Policy の SNS 経由の role の一致、2つの role の信頼、心拍の権限と target、guardrail と channel role の policy の一致、`read` の Action 集合、作る role が permissions boundary を持つこと）、Key Policy の形（`plan.kms_key_policy`。SNS の文を plan から導いた入力で見る）、Resource `"*"` の Action（`plan.iam_action_wildcard`）を確かめる。Topic と鍵の削除と置換、`aws_sns_topic` と `aws_kms_key` の inline の `policy` は、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection` が見る（CI の経路は env の配線の後）
+- Unit Test（mock の plan と apply）: `tests/validation.tftest.hcl` が入力の検査を、`tests/contract.tftest.hcl` が `topic_arn` の配線を、`tests/composition.tftest.hcl` が名前の組み立てと固定の送り手と鍵の利用者を、`internal/heartbeat/tests/` が schedule の固定値・本文・role の信頼と権限を、`internal/chat-slack/tests/` が Chatbot の構成・読み取りの policy・channel role を、`reference/tests/plan.tftest.hcl` が reference の値を見る。管理アカウントの workload root が渡す permissions boundary の ARN は `env/admin/tests/` が見る。Topic と鍵の文書は `modules/sns/tests/`・`modules/kms/tests/` が見る
+- Policy Test（`make tf-policy`）: `reference/tests/policy-input.tftest.hcl` の plan に対して、Topic Policy の形（`plan.sns_topic_policy`。TLS の Deny、Allow がサービス principal の `sns:Publish` だけで条件が自アカウントの `aws:SourceAccount` だけ、Topic ごとに Topic Policy が1つ）、合成の不変条件（`plan.ops_notification`。Topic Policy と Key Policy の送り手の一致、EventBridge の文が Topic を名指すこと、IAM で publish する role と Key Policy の SNS 経由の role の一致、2つの role の信頼、心拍の権限と target、guardrail と channel role の policy の一致、`read` の Action 集合、作る role が permissions boundary を持つこと）、Key Policy の形（`plan.kms_key_policy`。SNS の文を plan から導いた入力で見る）、Resource `"*"` の Action（`plan.iam_action_wildcard`）を確かめる。Topic と鍵の削除と置換、`aws_sns_topic` と `aws_kms_key` の inline の `policy` は、reference の plan で `plan.input`（`PLAN-INPUT-09`）が、CI の plan と apply で `plan.stateful_protection` が見る
 - Static Analysis: `make layer-check`・`make infra-code-gate`・`make resource-order-check`
 - 実環境テストの形: [ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の「常駐する実体を持つが、同じ構成の複製を作れる」に当たる。`tests/integration/sandbox.tftest.hcl` が、実行の識別子の接頭辞 `it` を持つ `project`（`tests/integration/guard` が検証し、外れたら複製を作る前に止まる）で sandbox に複製を作り、確かめてから破棄する。実行は人が行い、CI と `make tf-test` は走らせない。複製が在る間に、人が次を確かめる: 心拍の role・CloudWatch の alarm（`set-alarm-state`）・EventBridge の rule・Budgets・Cost Anomaly Detection からの publish が Topic Policy と Key Policy で拒まれずに Slack まで届くこと、TLS でない publish が拒まれること、心拍の本文の予定時刻が置換されること、Chatbot の描画が `read` の8つの Action で欠けないこと、Security Hub の SNS.4 の判定。期待残存（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定16）は、削除の猶予に入った鍵（鍵の ID・`PendingDeletion`・削除の日付）と、Slack の workspace の認可（team ID。Terraform の管理の外）である
 
@@ -166,6 +166,7 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 | 逸脱 | 記録 |
 | --- | --- |
 | Chatbot の読み取りの policy を、公式の Notifications only の部分 wildcard ではなく8つの Action に限る | [ops-notification/ADR-0201](docs/adr/0201-chat-destination-read-only.md) 決定4 |
+| AWS Organizations: 管理アカウントに置くものを管理アカウントでしかできないものに限る。管理アカウントにも Topic・鍵・心拍・Chatbot の構成を置く | [ops-notification/ADR-0001](docs/adr/0001-topic-per-account-in-workload-root.md) 決定4 |
 | CloudWatch・Budgets の Allow に `aws:SourceArn` のワイルドカードを置かない、EventBridge の Allow に `aws:SourceAccount` を置く | [`modules/sns/README.md`](../../modules/sns/README.md) の「公式推奨からの逸脱」を引き継ぐ |
 | 鍵の管理の委任を21 Action にする、CloudWatch・Budgets の文の `aws:SourceArn` を置かない、EventBridge の文に暗号化コンテキストを置く | [`modules/kms/README.md`](../../modules/kms/README.md) の「公式推奨からの逸脱」を引き継ぐ |
 
@@ -175,7 +176,7 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 - Chatbot の channel role の信頼（`chatbot.amazonaws.com` を `aws:SourceAccount` で限る）は、Chatbot の文書に例が無い（confused deputy の頁も無い）。principal は Chatbot の慣行に、条件は IAM の一般の指針に従う。この信頼で Chatbot が role を引き受けられることは、sandbox で心拍が Slack に届くことで確かめる
 - IAM で Topic へ publish できる role と Key Policy の SNS 経由の role の一致（`PLAN-NOTIFY-03`）は、inline policy（`aws_iam_role_policy`）だけを数える。attach した managed policy の `sns:Publish` は数えない
 - 心拍の role を同じ名前で作り直したとき、Topic の鍵の Key Policy が書き直されず、KMS が古い role を名指し続けること。`plan.kms_key_policy` の `PLAN-KMS-10` は、宣言した state の鍵の Key Policy だけを見る
-- Topic ごとに Topic Policy が1つであること（`PLAN-SNS-05`）は、Topic の ARN が plan で決まる mock の入力でだけ見る。CI の実 plan に掛けるかは、workload root の配線（#222）で決める
+- CI の実 plan（workload root の plan と apply）には `plan.stateful_protection` だけを掛ける。Topic Policy の形（`plan.sns_topic_policy`）、合成の不変条件（`plan.ops_notification`）、Key Policy の形（`plan.kms_key_policy`）、Resource `"*"` の Action（`plan.iam_action_wildcard`）は、mock の plan でだけ見る。作成の plan では Topic と role の ARN が決まらず、`plan.kms_key_policy` と `plan.iam_action_wildcard` は identity root の宣言を入力に要るからである。CI の実 plan での守りは、permissions boundary と apply の role の権限の列挙が持つ
 - `env` の値と、Topic が実際に在るアカウントの対応。env の root が決める
 - 層検査・コード実行の検出・作成の順序の検査は HCL のソースの形だけを見る
 - Security の道具の抑止: KICS の e592a0c5（IAM Access Analyzer）・e38a8e0a（tag）を `internal/heartbeat/main.tf`・`internal/chat-slack/main.tf` の先頭で、Checkov の CKV_AWS_297 を `aws_scheduler_schedule.this` で抑止している。理由と撤回条件は各行が持つ
