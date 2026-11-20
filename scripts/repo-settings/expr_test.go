@@ -316,10 +316,10 @@ func Test_exprParser_parsePrimary(t *testing.T) {
 func Test_isRefSegment(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"ref", "base_ref", "HEAD_REF", "head_branch", "branches", "default_branch", "ref_name", "Ref-Name", "target_commitish", "base-ref", "target-branch", "release-branch", "workflow_ref", "full_ref", "targetBranch", "baseRef", "RefName", "headRef", "defaultBranch", "HEADRef"} {
+	for _, name := range []string{"ref", "base_ref", "HEAD_REF", "head_branch", "branches", "default_branch", "ref_name", "Ref-Name", "target_commitish", "base-ref", "target-branch", "release-branch", "workflow_ref", "full_ref", "targetBranch", "baseRef", "RefName", "headRef", "defaultBranch", "HEADRef", "URLRef", "ARef"} {
 		assert.True(t, isRefSegment(name), name)
 	}
-	for _, name := range []string{"ref_type", "ref_protected", "branches_url", "refs", "dry-run", "name", "ref_x", "prefix", "-ref", "ref-", "refType", "branchesUrl", "dryRun", "REFNAME", "headRefOid", "headSha"} {
+	for _, name := range []string{"ref_type", "ref_protected", "branches_url", "refs", "dry-run", "name", "ref_x", "prefix", "-ref", "ref-", "refType", "branchesUrl", "dryRun", "REFNAME", "HEADREF", "headRefOid", "headSha"} {
 		assert.False(t, isRefSegment(name), name)
 	}
 }
