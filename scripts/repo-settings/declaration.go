@@ -105,7 +105,7 @@ func requiredDeployFrom(name string) (string, bool) {
 	switch {
 	case !ok:
 		return "", false
-	case suffix == planSuffix:
+	case isPullRequestSuffix(suffix):
 		return deployFromProtectedPR, true
 	default:
 		return deployFromDeployBranch, true

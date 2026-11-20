@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -20,18 +21,17 @@ const (
 	identityUseCaseDir = "usecases/deployment-identity"
 )
 
-// planSuffix は、Pull Request からも起動する plan の environment の接尾辞。
-const planSuffix = "-plan"
-
-// unlockIdentitySuffix は、人が workflow_dispatch で起動する lock の解除の environment の接尾辞。
-const unlockIdentitySuffix = "-unlock-identity"
-
-// unlockSuffix は、workload root の lock の解除の environment の接尾辞。
-const unlockSuffix = "-unlock"
-
-// identitySuffixes は、deployment-identity の role の信頼条件が名指す environment 名の接尾辞。
-// `<env>` に続く形は deployment-identity の公開契約で、tests/contract.tftest.hcl が固定する。
-var identitySuffixes = []string{planSuffix, "-apply", "-apply-identity", unlockIdentitySuffix, unlockSuffix}
+// identitySuffixes は、deployment-identity の role の信頼条件が名指す environment 名の接尾辞 `-<role>`。
+// role は CI の入口の種別の登録簿（lib/cientry）から導く。`<env>` に続く形は deployment-identity の公開契約で、
+// tests/contract.tftest.hcl が固定する。
+var identitySuffixes = func() []string {
+	roles := cientry.Roles()
+	out := make([]string, len(roles))
+	for i, r := range roles {
+		out[i] = "-" + r
+	}
+	return out
+}()
 
 var (
 	errTerraform           = xerrors.New("Terraform のソースから deployment-identity の env を読めません")
