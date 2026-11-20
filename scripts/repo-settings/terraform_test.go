@@ -222,7 +222,7 @@ func Test_checkIdentityEnvironments(t *testing.T) {
 		err := checkIdentityEnvironments([]string{"admin", "dev"},
 			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"))
 		require.ErrorIs(t, err, errEnvironmentMismatch)
-		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-unlock-identity が宣言にありません; environment dev-unlock が宣言にありません")
+		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-apply が宣言にありません; environment dev-unlock-identity が宣言にありません; environment dev-unlock が宣言にありません")
 	})
 
 	t.Run("どの env にも当たらない宣言は失敗する", func(t *testing.T) {

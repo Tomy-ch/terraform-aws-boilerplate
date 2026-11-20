@@ -25,7 +25,6 @@ func writeFile(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-// writeListed は、paths を1行に1件で書いた -listed の一覧を dir に置き、そのパスを返す。
 func writeListed(t *testing.T, dir string, paths ...string) string {
 	t.Helper()
 	var body strings.Builder
@@ -64,6 +63,17 @@ func Test_run(t *testing.T) {
 		assert.FileExists(t, out)
 	})
 
+	t.Run("plan-deprecated を選ぶ", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		in := writeFile(t, base, "a.jsonl", planJSONL(providerBody(awsProvider, resourceX)))
+		out := filepath.Join(base, "provider-schema.json")
+		var stdout, stderr bytes.Buffer
+		require.NoError(t, run([]string{"plan-deprecated", "-out", out, in}, &stdout, &stderr))
+		assert.Empty(t, stdout.String(), "plan-deprecated は stdout に何も出さない")
+		assert.FileExists(t, out)
+	})
+
 	t.Run("サブコマンドが無いか知らなければ errUsage", func(t *testing.T) {
 		t.Parallel()
 		for name, args := range map[string][]string{"引数が無い": nil, "知らないサブコマンド": {"fetch"}} {
@@ -95,6 +105,10 @@ func Test_exitCode(t *testing.T) {
 		"schema が無い":           {err: xerrors.Wrap(errSchemaMissing, "x"), want: 1},
 		"schema を読めない":         {err: xerrors.Wrap(errSchemaMalformed, "x"), want: 1},
 		"resource の型が無い":       {err: xerrors.Wrap(errNoResources, "x"), want: 1},
+		"plan が0件":             {err: xerrors.Wrap(errNoPlans, "x"), want: 2},
+		"plan を解釈できない":         {err: xerrors.Wrap(errPlanMalformed, "x"), want: 1},
+		"plan の型が schema に無い":  {err: xerrors.Wrap(errPlanTypeMissing, "x"), want: 1},
+		"書ける引数を持つ型が無い":         {err: xerrors.Wrap(errNoArguments, "x"), want: 1},
 		"センチネルでないエラーは既定の 1":    {err: fs.ErrNotExist, want: 1},
 	}
 	for name, tt := range tests {

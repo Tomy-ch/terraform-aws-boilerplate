@@ -19,9 +19,9 @@ POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
 # 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
 POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
 POLICY_LAYER_DATA = $(POLICY_LAYER_DECL)
-TF_POLICY_DEPRECATED = [.[] | select(.type == "test_plan") | .test_plan.provider_schemas // {} | to_entries[] | .value.resource_schemas // {} | to_entries[] \
-	| {key: .key, value: ([(.value.block.attributes // {}) | to_entries[] | select(.value.deprecated == true and (.value.optional == true or .value.required == true)) | .key] \
-	+ [(.value.block.block_types // {}) | to_entries[] | select(.value.block.deprecated == true) | .key])}]
+# 非推奨の書ける引数の取り出しと root をまたいだ和は scripts/provider-schema が、層の検査と同じ関数で持つ（ADR-0402 決定18）。
+# jsonl は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入り、レシピのシェル変数が展開されない。
+TF_POLICY_DEPRECATED_CMD = $(call RUN_SCRIPT,provider-schema,plan-deprecated -out "$(TF_POLICY_INPUT)/provider-schema.json" "$$@") provider-schema $$plans
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
 TF_POLICY_INPUT = $(TF_BASE)/tmp/tf-policy
@@ -58,7 +58,7 @@ tf-policy: tf-init
 	passed=$$(printf '%s' "$$verify" | jq '[.[].successes] | add // 0'); \
 	if [ "$$passed" -ne "$$want" ]; then echo "❌ 通った Rego のテストが $$passed 件で、宣言された $$want 件と一致しません"; exit 1; fi; \
 	echo "✅ Rego のテスト $$passed 件"; \
-	rm -rf "$(TF_POLICY_INPUT)"; mkdir -p "$(TF_POLICY_INPUT)"; inputs=""; failed=""; \
+	rm -rf "$(TF_POLICY_INPUT)"; mkdir -p "$(TF_POLICY_INPUT)"; inputs=""; plans=""; failed=""; \
 	want_pfv=$$(jq -r '.policy_plan.provider_format_version // "（宣言に無い）"' $(POLICY_PLAN_DATA)); \
 	for d in $$roots; do \
 		name=$$(printf '%s' "$${d#$(TF_BASE)/usecases/}" | sed 's|/reference$$||'); out="$(TF_POLICY_INPUT)/$$name"; \
@@ -69,13 +69,12 @@ tf-policy: tf-init
 		if [ "$$n" -ne 1 ]; then echo "❌ $$d: test_plan が $$n 件です（1件を期待）"; failed="$$failed $$d"; continue; fi; \
 		pfv=$$(jq -s -r '[.[] | select(.type == "test_plan") | .test_plan.provider_format_version][0] // "（無い）"' "$$out.jsonl"); \
 		if [ "$$pfv" != "$$want_pfv" ]; then echo "❌ $$d: test_plan の provider_format_version が $$pfv で、宣言の $$want_pfv ではありません（Provider の schema の形が変わった可能性があります）"; failed="$$failed $$d"; continue; fi; \
-		jq -s '$(TF_POLICY_DEPRECATED)' "$$out.jsonl" > "$$out.schema"; \
 		jq -s '[.[] | select(.type == "test_plan") | .test_plan | del(.provider_schemas)][0]' "$$out.jsonl" > "$$out.json"; \
-		inputs="$$inputs $$out.json"; \
+		inputs="$$inputs $$out.json"; plans="$$plans $$out.jsonl"; \
 	done; \
 	$(TF_REPORT_FAILED); \
 	if [ -z "$$inputs" ]; then echo "❌ Policy の入力が0件です（reference の root から test_plan を1件も得られませんでした）"; exit 1; fi; \
-	jq -s 'add | group_by(.key) | map({key: .[0].key, value: (map(.value) | add | unique)}) | from_entries | {provider_schema: {deprecated_arguments: .}}' "$(TF_POLICY_INPUT)"/*.schema > "$(TF_POLICY_INPUT)/provider-schema.json"; \
+	$(TF_POLICY_DEPRECATED_CMD) || { echo "❌ Provider の schema から非推奨の引数を取り出せなかったので、Conftest を起動しません"; exit 1; }; \
 	$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data $(POLICY_LAYER_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs > "$(TF_POLICY_INPUT)/result.json" || :; \
 	$(call RUN_SCRIPT,tf-local,policy-result -policy $(POLICY_PLAN_DIR) $(TF_POLICY_INPUT)/result.json) || { \
 		echo "❌ Policy の違反か、評価の欠けがあります（理由は上の行）"; exit 1; }; \
@@ -158,7 +157,8 @@ tf-policy-canary:
 	expect fail provider-format "$$root/ok" "宣言の 0.0 ではありません" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/format.json"; \
 	jq 'del(.policy_plan.provider_format_version)' "$$root/data.json" > "$$root/format-undeclared.json"; \
 	expect fail provider-format-undeclared "$$root/ok" "宣言の （宣言に無い） ではありません" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/format-undeclared.json"; \
-	expect fail schema-empty "$$root/ok" "[PLAN-INPUT-11] mock の plan の Provider の schema から" POLICY_PLAN_DIR="$$root/rego" TF_POLICY_DEPRECATED='[]'; \
+	fixture "$$root/schema-empty" 'output "x" { value = 1 }'; \
+	expect fail schema-empty "$$root/schema-empty" "schema に resource の型が1つもありません" POLICY_PLAN_DIR="$$root/rego"; \
 	aws_fixture() { \
 		cp -R "$$root/ok" "$$1"; cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
 		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \

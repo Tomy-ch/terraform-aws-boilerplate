@@ -1,10 +1,13 @@
-// provider-schema は、lock した Provider の版ごとの schema から、層の検査（`make layer-check`）が
-// Conftest に `--data` で渡す一覧（data のトップキー `layer_schema`）を作ります。schema の取得
-// （`terraform init` と `terraform providers schema -json`）とその順序は make が持ちます
-// （ADR-0702 決定24）。
+// provider-schema は、Provider の schema から、Conftest に `--data` で渡す一覧を作ります。層の検査
+// （`make layer-check`）には lock した Provider の版ごとの schema から data のトップキー `layer_schema` を、
+// Policy Test（`make tf-policy`）には mock の plan の schema から data のトップキー `provider_schema` を
+// 作ります。非推奨の書ける引数は、どちらも同じ関数（schema.go の extract）で取り出します。schema の取得
+// （`terraform init`、`terraform providers schema -json`、`terraform test -json`）とその順序は make が
+// 持ちます（ADR-0702 決定24）。
 //
 //	provider-schema prepare -provider <address> -out <dir> -listed <file> <.terraform.lock.hcl>...
 //	provider-schema merge -provider <address> -dir <dir> -out <json>
+//	provider-schema plan-deprecated -out <json> <test.jsonl>...
 //
 // prepare は、位置引数の lock の集合を -listed の一覧（独立に走査した lock のパスを1行に1件）の集合と
 // 突き合わせてから（ADR-0702 決定15）、lock から Provider の版を取り出し、版ごとに `<dir>/<version>/` へ、
@@ -15,8 +18,11 @@
 // merge は `<dir>/versions.txt` の各版の raw.json から resource の型ごとに書ける引数・非推奨の引数・
 // block を取り出し、版をまたいだ和を -out へ書きます。
 //
-// 読めない lock、版を取れない Provider の block、読めない schema は、黙って飛ばさずに失敗させます
-// （ADR-0702 決定14）。lock が0件のときは、それ以外の失敗（1）とは別の終了コード（2）で終えます
+// plan-deprecated は、reference の root ごとの `terraform test -json -verbose` の出力から test_plan の
+// すべての Provider の schema を読み、型ごとの非推奨の書ける引数の root をまたいだ和を -out へ書きます。
+//
+// 読めない lock、版を取れない Provider の block、読めない schema と plan は、黙って飛ばさずに失敗させます
+// （ADR-0702 決定14）。lock か plan が0件のときは、それ以外の失敗（1）とは別の終了コード（2）で終えます
 // （ADR-0702 決定13）。
 package main
 
@@ -35,7 +41,7 @@ const outPerm = 0o644
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 
 var (
-	errUsage           = xerrors.New("使い方: provider-schema prepare -provider <address> -out <dir> -listed <path> <lock>... | provider-schema merge -provider <address> -dir <dir> -out <path>")
+	errUsage           = xerrors.New("使い方: provider-schema prepare -provider <address> -out <dir> -listed <path> <lock>... | provider-schema merge -provider <address> -dir <dir> -out <path> | provider-schema plan-deprecated -out <path> <test.jsonl>...")
 	errNoLocks         = xerrors.New(".terraform.lock.hcl が1件も渡されていません")
 	errLockSyntax      = xerrors.New("lock の HCL の構文の誤りがあります")
 	errDuplicateBlock  = xerrors.New("lock に同じ Provider の block が2つ以上あります")
@@ -47,6 +53,10 @@ var (
 	errSchemaMissing   = xerrors.New("schema（raw.json）が無いか空です")
 	errSchemaMalformed = xerrors.New("schema（raw.json）を解釈できません")
 	errNoResources     = xerrors.New("schema に resource の型が1つもありません")
+	errNoPlans         = xerrors.New("terraform test の出力（jsonl）が1件も渡されていません")
+	errPlanMalformed   = xerrors.New("terraform test の出力（jsonl）を解釈できません")
+	errPlanTypeMissing = xerrors.New("plan の resource_changes の型が、plan の Provider の schema にありません")
+	errNoArguments     = xerrors.New("schema のどの resource の型も、書ける引数を持ちません")
 )
 
 func main() {
@@ -61,7 +71,7 @@ func exitCode(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case xerrors.Is(err, errNoLocks):
+	case xerrors.Is(err, errNoLocks), xerrors.Is(err, errNoPlans):
 		return 2
 	default:
 		return 1
@@ -78,6 +88,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return prepare(args[1:], stdout, stderr)
 	case "merge":
 		return merge(args[1:], stderr)
+	case "plan-deprecated":
+		return planDeprecated(args[1:], stderr)
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}
