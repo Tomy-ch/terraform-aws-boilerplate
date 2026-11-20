@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 )
@@ -413,33 +414,39 @@ func Test_lockStale(t *testing.T) {
 	t.Run("写しと正本のずれ", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("閾値の timeout は apply の job の timeout-minutes と一致する", func(t *testing.T) {
+		t.Run("入口を走らせる job の timeout-minutes は、種別の lock の扱いが求める上限に従う", func(t *testing.T) {
 			t.Parallel()
 
-			got, n := entryTimeout(t, filepath.Join("..", "..", ".github", "workflows"), "make ci-apply-")
-			require.Positive(t, n, "make ci-apply- を走らせる job が見つかりません。検査の対象が0件です")
-			assert.Equal(t, applyJobTimeout, got)
-		})
-
-		t.Run("lock を残す job の timeout-minutes は閾値の apply の job の timeout を超えない", func(t *testing.T) {
-			t.Parallel()
-
-			got, n := entryTimeout(t, filepath.Join("..", "..", ".github", "workflows"), "make ci-hold-")
-			require.Positive(t, n, "make ci-hold- を走らせる job が見つかりません。検査の対象が0件です")
-			assert.LessOrEqual(t, got, applyJobTimeout, "lock を残す job が閾値より長く生きると、生きている lock を lock の解除が消す")
-		})
-
-		t.Run("apply と lock を残す入口を走らせる job は、ci.mk の入口と同じ数だけ在る", func(t *testing.T) {
-			t.Parallel()
-
-			// 入口を走らせる job を読みそこねると、その job の timeout は上の2つの検査から黙って外れる。
-			raw, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
+			entries, err := cientry.ParseRepo(filepath.Join("..", ".."))
 			require.NoError(t, err)
-			for _, kind := range []string{"apply", "hold"} {
-				want := len(regexp.MustCompile(`(?m)^\.PHONY: ci-`+kind+`-[a-z0-9-]+ `).FindAllString(string(raw), -1))
-				require.Positive(t, want, kind)
-				_, n := entryTimeout(t, filepath.Join("..", "..", ".github", "workflows"), "make ci-"+kind+"-")
-				assert.Equal(t, want, n, kind)
+			want := map[string]int{}
+			for _, e := range entries {
+				want[e.Kind.Name]++
+			}
+			workflows := filepath.Join("..", "..", ".github", "workflows")
+			for _, k := range cientry.Kinds() {
+				t.Run("種別 "+k.Name, func(t *testing.T) {
+					t.Parallel()
+
+					require.Positive(t, want[k.Name], "ci.mk に種別 %s の入口がありません。検査の対象が0件です", k.Name)
+					switch k.Lock {
+					case cientry.LockRelease:
+						// 入口を走らせる job を読みそこねると、その job の timeout は検査から黙って外れる。
+						got, n := entryTimeout(t, workflows, "make ci-"+k.Name+"-")
+						assert.Equal(t, want[k.Name], n, "入口を走らせる job の数が ci.mk の入口の数と違います")
+						assert.Equal(t, applyJobTimeout, got, "閾値の timeout は lock を外す job の timeout-minutes と一致する")
+					case cientry.LockKeep:
+						got, n := entryTimeout(t, workflows, "make ci-"+k.Name+"-")
+						assert.Equal(t, want[k.Name], n, "入口を走らせる job の数が ci.mk の入口の数と違います")
+						assert.LessOrEqual(t, got, applyJobTimeout, "lock を残す job が閾値より長く生きると、生きている lock を lock の解除が消す")
+					case cientry.LockSkip:
+						// lock を取らないので、閾値と比べる timeout は無い。
+					case cientry.LockRemove:
+						// 残った lock を外す側であり、閾値と比べる timeout は無い。
+					default:
+						t.Fatalf("種別 %s の lock の扱い %d を知りません", k.Name, k.Lock)
+					}
+				})
 			}
 		})
 
