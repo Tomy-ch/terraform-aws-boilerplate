@@ -307,9 +307,9 @@ classes = []
 [job."terraform-gates.yaml:tf-fmt-check"]
 classes = ["terraform"]
 
-# terraform を呼ばない。ruleset は GitHub Release から取る。
+# ruleset は GitHub Release から取る。層の検査は lock した AWS Provider の schema を取る（provider の取得）。
 [job."terraform-gates.yaml:tf-lint"]
-classes = ["mise"]
+classes = ["terraform"]
 
 [job."terraform-gates.yaml:tf-validate-test"]
 classes = ["terraform"]
@@ -337,9 +337,9 @@ classes = ["mise"]
 [job."terraform-apply.yaml:apply-resource-order-check"]
 classes = ["mise"]
 
-# conftest の入手は apply-infra-code-gate と同じ。
+# conftest の入手は apply-infra-code-gate と同じ。層の検査は lock した AWS Provider の schema を取る（provider の取得）。
 [job."terraform-apply.yaml:apply-layer-check"]
-classes = ["mise"]
+classes = ["terraform"]
 
 # conftest の入手は apply-infra-code-gate と同じ。
 [job."terraform-apply.yaml:apply-root-check"]
