@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,16 +23,22 @@ var baseMk = map[string]string{
 	".makefiles/tf.mk": ".PHONY: tf-test ## t\ntf-test: tf-init\n\t@$(TF) -chdir=x test\n\ntf-init:\n\techo\n",
 }
 
-// dbFor は、`.mk` のレシピを持つ規則を make -p の出力の形に並べる（make を起動せずに済ませる）。
+// dbFor は、make -p の出力の形を、parseMk を使わずに組む。行頭の `名前:` の直後の行がタブで
+// 始まるものだけを、レシピを持つ規則として並べる。fixture はこの形で書く。
 func dbFor(t *testing.T, files map[string]string) string {
 	t.Helper()
 	var b strings.Builder
 	b.WriteString(dbHead + "# Files\n\n")
 	for _, path := range keys(files) {
-		mk, err := parseMk([]byte(files[path]))
-		require.NoError(t, err)
-		for _, name := range keys(mk.withRecipe) {
-			b.WriteString(name + ":\n#  commands to execute (from `" + path + "', line 1):\n\techo\n\n")
+		lines := strings.Split(files[path], "\n")
+		for i := 0; i+1 < len(lines); i++ {
+			head, _, found := strings.Cut(lines[i], ":")
+			if !found || head == "" || strings.ContainsAny(head[:1], "\t.#$ ") || strings.HasPrefix(lines[i][len(head):], ":=") || !strings.HasPrefix(lines[i+1], "\t") {
+				continue
+			}
+			for _, name := range strings.Fields(head) {
+				b.WriteString(name + ":\n#  commands to execute (from `" + path + "', line 1):\n\techo\n\n")
+			}
 		}
 	}
 	b.WriteString(dbTail)
@@ -126,6 +133,31 @@ func Test_run(t *testing.T) {
 		err := run(a, &bytes.Buffer{}, time.Date(2026, 11, 26, 15, 0, 0, 0, time.UTC))
 		require.ErrorIs(t, err, errViolations)
 	})
+	t.Run("-today を省けば、期限の当日は午後でも除外する", func(t *testing.T) {
+		t.Parallel()
+		files := with(map[string]string{".makefiles/x.mk": "x-test:\n\techo\n"})
+		mf, db, bp := writeTree(t, files, makefileFor(files), dbFor(t, files), entry("x-test", "2026-11-25"))
+		a := args(mf, db, bp)
+		a = a[:len(a)-2]
+		require.NoError(t, run(a, &bytes.Buffer{}, time.Date(2026, 11, 25, 15, 0, 0, 0, time.UTC)))
+	})
+	for name, drop := range map[string]string{"-db": "-db", "-db-exit": "-db-exit", "-bypass": "-bypass"} {
+		t.Run(name+" を省けば読めない入力とする", func(t *testing.T) {
+			t.Parallel()
+			files := with(nil)
+			mf, db, bp := writeTree(t, files, makefileFor(files), dbFor(t, files), "")
+			full := args(mf, db, bp)
+			var a []string
+			for i := 0; i < len(full); i += 2 {
+				if full[i] != drop {
+					a = append(a, full[i], full[i+1])
+				}
+			}
+			err := run(a, &bytes.Buffer{}, testToday)
+			require.ErrorIs(t, err, errUnreadable)
+			assert.Equal(t, 2, exitCode(err))
+		})
+	}
 	t.Run("-today が日付でなければ読めない入力とする", func(t *testing.T) {
 		t.Parallel()
 		files := with(nil)
@@ -135,7 +167,9 @@ func Test_run(t *testing.T) {
 	})
 	t.Run("知らない引数はエラーにする", func(t *testing.T) {
 		t.Parallel()
-		require.Error(t, run([]string{"-x"}, &bytes.Buffer{}, testToday))
+		err := run([]string{"-x"}, &bytes.Buffer{}, testToday)
+		require.Error(t, err)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 
@@ -153,6 +187,7 @@ func Test_exitCode(t *testing.T) {
 		{"0件は2", xerrors.Wrap(errNoTargets, "x"), 2},
 		{"件数の食い違いは2", xerrors.Wrap(errMismatch, "x"), 2},
 		{"構文の誤りは2", xerrors.Wrap(errSyntax, "x"), 2},
+		{"センチネルを持たないエラーは2", xerrors.New("x"), 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -196,6 +231,22 @@ func Test_check(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, res.findings)
 		assert.Equal(t, result{files: 2, targets: 3}, res)
+	})
+	t.Run("GNU make 3.81 の実物の出力と突き合わせ、テストのターゲットを ファイル:行 で報告する", func(t *testing.T) {
+		t.Parallel()
+		in := input{
+			makefilePath: "Makefile", makefile: []byte("include .makefiles/a.mk\n\n.PHONY: help\nhelp:\n\t@echo help\n"),
+			mk: map[string][]byte{".makefiles/a.mk": []byte("X := 1\n.PHONY: a-test ## t\na-test: b\n\t@echo a\n\nb:\n\t@echo b\n\n$(X)-gen:\n\t@echo gen\n")},
+			db: []byte(realDB381), dbExit: 1, bypassPath: "bypass.toml",
+		}
+		res, err := check(in, testToday)
+		require.NoError(t, err)
+		var got []string
+		for _, f := range res.findings {
+			got = append(got, fmt.Sprintf("%s:%d", f.File, f.Line))
+		}
+		assert.Contains(t, got, ".makefiles/a.mk:3")
+		assert.Equal(t, 4, res.targets) // a-test・b・1-gen・help
 	})
 	t.Run("名前に変数を含む規則は make の展開した名前で判定する", func(t *testing.T) {
 		t.Parallel()
@@ -266,9 +317,34 @@ func Test_check(t *testing.T) {
 			assert.Contains(t, strings.Join(msgs, "\n"), c.want)
 		})
 	}
-	t.Run("期限の当日のエントリは除外する", func(t *testing.T) {
+	t.Run("期限の当日と上限ちょうどのエントリは除外し、移行中として数える", func(t *testing.T) {
 		t.Parallel()
-		assert.Empty(t, findingsOf(t, with(x), entry("x-test", "2026-11-20")))
+		for _, expires := range []string{"2026-11-20", "2027-02-20"} {
+			res, err := check(inputFor(t, with(x), entry("x-test", expires)), testToday)
+			require.NoError(t, err)
+			assert.Empty(t, res.findings, expires)
+			assert.Equal(t, 1, res.bypassed, expires)
+		}
+	})
+	t.Run("期限切れと上限超えのエントリは除外せず、ターゲットの違反とエントリの違反を両方出す", func(t *testing.T) {
+		t.Parallel()
+		for _, expires := range []string{"2026-11-19", "2027-02-21"} {
+			res, err := check(inputFor(t, with(x), entry("x-test", expires)), testToday)
+			require.NoError(t, err)
+			require.Len(t, res.findings, 2, expires)
+			assert.Equal(t, 0, res.bypassed, expires)
+			files := []string{res.findings[0].File, res.findings[1].File}
+			assert.ElementsMatch(t, []string{".makefiles/x.mk", "bypass.toml"}, files, expires)
+		}
+	})
+	t.Run("同じターゲットが前提条件だけの行と別のファイルのレシピに分かれても、レシピで runner を判定する", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			".makefiles/a.mk":  "go-test: tf-init\n",
+			".makefiles/go.mk": baseMk[".makefiles/go.mk"],
+			".makefiles/tf.mk": baseMk[".makefiles/tf.mk"],
+		}
+		assert.Empty(t, findingsOf(t, files, ""))
 	})
 
 	for _, c := range []struct {
@@ -283,13 +359,17 @@ func Test_check(t *testing.T) {
 		{"make の出力を読めなければ落とす", func(in *input) { in.dbExit = 2 }, errUnreadable},
 		{"宣言を読めなければ落とす", func(in *input) { in.bypass = []byte("x") }, errSyntax},
 		{"`.mk` を解釈できなければ落とす", func(in *input) { in.mk[".makefiles/go.mk"] = []byte("define F\n") }, errSyntax},
+		{"Makefile にも include にも無いファイルの規則が make の出力にあれば落とす", func(in *input) {
+			in.db = []byte(strings.Replace(string(in.db), dbHead+"# Files\n\n", dbHead+"# Files\n\nz:\n#  commands to execute (from `other.mk', line 1):\n\n", 1))
+		}, errMismatch},
+		{"Makefile の define が閉じなければ落とす", func(in *input) { in.makefile = append(in.makefile, []byte("define F\n")...) }, errSyntax},
 		{"make にだけある規則があれば落とす", func(in *input) {
 			in.db = []byte(strings.Replace(string(in.db), dbHead+"# Files\n\n", dbHead+"# Files\n\nhidden:\n#  commands to execute (from `.makefiles/go.mk', line 9):\n\n", 1))
 		}, errMismatch},
 		{"ターゲットが1つも無ければ落とす", func(in *input) {
 			in.mk = map[string][]byte{".makefiles/v.mk": []byte("X := 1\n")}
 			in.makefile = []byte("include .makefiles/v.mk\n")
-			in.db = []byte(dbHead + "# Files\n\nother:\n#  commands to execute (from `elsewhere.mk', line 1):\n\n" + dbTail)
+			in.db = []byte(dbHead + "# Files\n\n.DEFAULT:\n#  commands to execute (from `Makefile', line 1):\n\n" + dbTail)
 		}, errNoTargets},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -366,6 +446,30 @@ func Test_isTestName(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, want, isTestName(name))
+		})
+	}
+}
+
+func Test_keep(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name  string
+		order []target
+		want  target
+	}{
+		{"最初の定義を記録する", []target{{file: "a", line: 1}}, target{file: "a", line: 1}},
+		{"レシピを持つ定義を、前提条件だけの定義より優先する", []target{{file: "a", line: 1}, {file: "b", line: 2, recipe: "r"}}, target{file: "b", line: 2, recipe: "r"}},
+		{"レシピを持つ定義を、後の前提条件だけの定義で消さない", []target{{file: "a", line: 1, recipe: "r"}, {file: "b", line: 2}}, target{file: "a", line: 1, recipe: "r"}},
+		{"レシピを持つ定義が複数あれば後のものを採る", []target{{file: "a", line: 1, recipe: "r1"}, {file: "b", line: 2, recipe: "r2"}}, target{file: "b", line: 2, recipe: "r2"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			defined := map[string]target{}
+			for _, tg := range c.order {
+				keep(defined, "x", tg)
+			}
+			assert.Equal(t, c.want, defined["x"])
 		})
 	}
 }

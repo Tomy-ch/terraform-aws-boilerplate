@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -81,6 +82,12 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, map[string]struct{}{"multi": {}}, mk.withRecipe)
 		assert.Equal(t, "\n\techo hi", mk.recipes["multi"])
 	})
+	t.Run("規則とレシピの間の空行とコメントを読み飛ばす", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("foo:\n\n\t@echo hi\nbar:\n# c\n\t@echo bar\n"))
+		require.NoError(t, err)
+		assert.Equal(t, map[string]struct{}{"foo": {}, "bar": {}}, mk.withRecipe)
+	})
 	t.Run("レシピの途中の空行とコメントの後のタブの行も同じレシピとする", func(t *testing.T) {
 		t.Parallel()
 		mk, err := parseMk([]byte("a:\n\techo 1\n\n# c\n\techo 2\nb:\n\techo 3\n"))
@@ -144,7 +151,7 @@ func Test_parseDB(t *testing.T) {
 		db := dbHead + "# Variables\nx: y\n#  commands to execute (from `v.mk', line 1):\n\n# Files\n\n" +
 			"a-test:\n#  Phony target.\n#  commands to execute (from `.makefiles/a.mk', line 3):\n\techo\n\n" +
 			"b: c\n#  recipe to execute (from '.makefiles/b.mk', line 1):\n\techo\n\n" +
-			"# Not a target:\n.makefiles/a.mk:\n#  commands to execute (from `Makefile', line 1):\n\n" +
+			"# Not a target:\nnot-a-test:\n#  commands to execute (from `.makefiles/a.mk', line 9):\n\n" +
 			".PHONY: a-test\n\nd:\n#  Phony target.\n" + dbTail
 		got, err := parseDB([]byte(db), 1)
 		require.NoError(t, err)
@@ -153,10 +160,27 @@ func Test_parseDB(t *testing.T) {
 			".makefiles/b.mk": {"b": {}},
 		}, got)
 	})
-	t.Run("make の終了コードが 0 と 1 以外なら読めない入力とする", func(t *testing.T) {
+	for _, exit := range []int{-1, 2, 3} {
+		t.Run(fmt.Sprintf("make の終了コード %d は読めない入力とする", exit), func(t *testing.T) {
+			t.Parallel()
+			_, err := parseDB([]byte(dbHead+dbTail), exit)
+			require.ErrorIs(t, err, errUnreadable)
+		})
+	}
+	t.Run("make の終了コード 0 の出力も読む", func(t *testing.T) {
 		t.Parallel()
-		_, err := parseDB([]byte(dbHead+dbTail), 2)
-		require.ErrorIs(t, err, errUnreadable)
+		got, err := parseDB([]byte(dbHead+"# Files\n\na:\n#  recipe to execute (from '.makefiles/a.mk', line 1):\n"+dbTail), 0)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]map[string]struct{}{".makefiles/a.mk": {"a": {}}}, got)
+	})
+	t.Run("GNU make 3.81 の実物の出力から、レシピを定義したファイルごとのターゲットを取り出す", func(t *testing.T) {
+		t.Parallel()
+		got, err := parseDB([]byte(realDB381), 1)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]map[string]struct{}{
+			".makefiles/a.mk": {"a-test": {}, "b": {}, "1-gen": {}},
+			"Makefile":        {"help": {}},
+		}, got)
 	})
 	t.Run("始まりか終わりの無い出力は読めない入力とする", func(t *testing.T) {
 		t.Parallel()
@@ -263,3 +287,97 @@ func Test_addMonths(t *testing.T) {
 		})
 	}
 }
+
+// realDB381 は、次の構成で GNU make 3.81 の `make -pRrq -f Makefile help` が出した `# Files` の節（統計の行を除く）。
+//
+//	Makefile:        include .makefiles/a.mk / .PHONY: help / help: レシピ1行
+//	.makefiles/a.mk: X := 1 / a-test: b / b: / $(X)-gen: それぞれレシピ1行
+var realDB381 = "# GNU Make 3.81\n\n# Make data base, printed on x\n\n" +
+	"# Files\n" +
+	"\n" +
+	"a-test: b\n" +
+	"#  Phony target (prerequisite of .PHONY).\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  File does not exist.\n" +
+	"#  File has not been updated.\n" +
+	"#  commands to execute (from `.makefiles/a.mk', line 4):\n" +
+	"\t@echo a\n" +
+	"\t\n" +
+	"\n" +
+	"b:\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Modification time never checked.\n" +
+	"#  File has not been updated.\n" +
+	"#  commands to execute (from `.makefiles/a.mk', line 7):\n" +
+	"\t@echo b\n" +
+	"\t\n" +
+	"\n" +
+	".PHONY: a-test help\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Modification time never checked.\n" +
+	"#  File has not been updated.\n" +
+	"\n" +
+	"# Not a target:\n" +
+	".makefiles/a.mk:\n" +
+	"#  Implicit rule search has been done.\n" +
+	"#  Last modified 2026-11-20 23:20:18\n" +
+	"#  File has been updated.\n" +
+	"#  Successfully updated.\n" +
+	"\n" +
+	"# Not a target:\n" +
+	".SUFFIXES:\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Modification time never checked.\n" +
+	"#  File has not been updated.\n" +
+	"\n" +
+	"# Not a target:\n" +
+	"Makefile:\n" +
+	"#  Implicit rule search has been done.\n" +
+	"#  Last modified 2026-11-20 23:20:18\n" +
+	"#  File has been updated.\n" +
+	"#  Successfully updated.\n" +
+	"\n" +
+	"help:\n" +
+	"#  Phony target (prerequisite of .PHONY).\n" +
+	"#  Command-line target.\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Implicit/static pattern stem: `'\n" +
+	"#  File does not exist.\n" +
+	"#  File has been updated.\n" +
+	"#  Needs to be updated (-q is set).\n" +
+	"# automatic\n" +
+	"# @ := help\n" +
+	"# automatic\n" +
+	"# % := \n" +
+	"# automatic\n" +
+	"# * := \n" +
+	"# automatic\n" +
+	"# + := \n" +
+	"# automatic\n" +
+	"# | := \n" +
+	"# automatic\n" +
+	"# < := \n" +
+	"# automatic\n" +
+	"# ^ := \n" +
+	"# automatic\n" +
+	"# ? := \n" +
+	"#  commands to execute (from `Makefile', line 5):\n" +
+	"\t@echo help\n" +
+	"\t\n" +
+	"\n" +
+	"# Not a target:\n" +
+	".DEFAULT:\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Modification time never checked.\n" +
+	"#  File has not been updated.\n" +
+	"\n" +
+	"1-gen:\n" +
+	"#  Implicit rule search has not been done.\n" +
+	"#  Modification time never checked.\n" +
+	"#  File has not been updated.\n" +
+	"#  commands to execute (from `.makefiles/a.mk', line 10):\n" +
+	"\t@echo gen\n" +
+	"\t\n" +
+	"\n" +
+	"" +
+	"\n# files hash-table stats:\n\n# Finished Make data base on x\n"
