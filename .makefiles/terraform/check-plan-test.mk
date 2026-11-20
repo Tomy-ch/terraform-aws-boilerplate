@@ -1,7 +1,8 @@
 ## check-plan.sh の判定そのものの検査（ADR-0702 決定13・14・16・17）
 ##
 ## fixture は毎回 tmp/ に作る。スクリプトの写しを fixture の docs/setup/scripts/ に置き、期待値もそこへ書く。
-## 本物の plan の経路は terraform を TERRAFORM で差し替え、git は fixture の中の使い捨ての repository を読ませる。
+## 本物の plan の経路は terraform を TERRAFORM で差し替え、git は fixture の中の使い捨ての repository を読ませる
+## （外側のリポジトリから切り離すのは GIT_ISOLATE。git-isolation.mk）。
 
 CHECK_PLAN_TEST_DIR = tmp/check-plan-test
 # fixture の plan の resource_changes。期待値の「import b.y」「add a.x」に当たり、data source は数えない。
@@ -9,14 +10,14 @@ CHECK_PLAN_TEST_CHANGES = [{"address":"a.x","mode":"managed","change":{"actions"
 
 .PHONY: check-plan-expected-test ## check-plan.sh が一致・不足・余剰・読めない入力で期待どおりの終了コードを返すかを検査
 check-plan-expected-test:
-	@set -u; command -v jq >/dev/null || { echo "❌ jq がホストにありません"; exit 1; }; \
+	@set -u; $(GIT_ISOLATE); command -v jq >/dev/null || { echo "❌ jq がホストにありません"; exit 1; }; \
 	mkdir -p tmp; root=$$(mktemp -d "$(CHECK_PLAN_TEST_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; \
 	root=$$(cd "$$root" && pwd); s="$$root/docs/setup/scripts"; failed=""; \
 	mkdir -p "$$s" "$$root/env/admin/identity" "$$root/bin"; cp docs/setup/scripts/check-plan.sh "$$s/"; \
 	changes='$(CHECK_PLAN_TEST_CHANGES)'; \
 	expect() { \
 		want="$$1"; name="$$2"; shift 2; \
-		out=$$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE "$$s/check-plan.sh" "$$@" 2>&1); rc=$$?; \
+		out=$$("$$s/check-plan.sh" "$$@" 2>&1); rc=$$?; \
 		if [ "$$rc" -ne "$$want" ]; then failed="$$failed $$name"; printf '%s: 終了コード %s（%s を期待）\n%s\n' "$$name" "$$rc" "$$want" "$$out"; fi; \
 	}; \
 	expected() { printf '%s\n' "$$@" > "$$s/check-plan.expected"; }; \
@@ -50,8 +51,8 @@ check-plan-expected-test:
 	expect 1 "mock:知らない actions" --mock "$$root/unknown.jsonl"; \
 	mock replace.jsonl pass "$$(test_plan 1.2 "$$(printf '%s' "$$changes" | sed 's/\["create"\]/["delete","create"]/')")"; \
 	expected "import b.y" "add a.x" "destroy a.x"; expect 0 "mock:置き換えを add と destroy に数える" --mock "$$root/replace.jsonl"; \
-	env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$$root" init -q && \
-		env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$$root" -c user.name=canary -c user.email=canary@example.invalid -c commit.gpgsign=false commit -q --allow-empty -m canary \
+	git -C "$$root" init -q && \
+		git -C "$$root" -c user.name=canary -c user.email=canary@example.invalid -c commit.gpgsign=false commit -q --allow-empty -m canary \
 		|| { echo "❌ fixture の git repository を作れません"; exit 1; }; \
 	printf '#!/bin/sh\ncat "%s/real.json"\n' "$$root" > "$$root/bin/terraform"; chmod +x "$$root/bin/terraform"; export TERRAFORM="$$root/bin/terraform"; \
 	: > "$$root/p.tfplan"; real() { printf '{"format_version":"1.2","complete":%s,"errored":%s,"resource_changes":%s}' "$$1" "$$2" "$$3" > "$$root/real.json"; }; \
@@ -69,7 +70,7 @@ check-plan-expected-test:
 	chmod +x "$$root/bin/tf-recipe"; \
 	recipe() { \
 		want="$$1"; name="$$2"; pattern="$$3"; \
-		out=$$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE $(MAKE) -s --no-print-directory check-plan-expected TF_BASE="$$r" TF_BIN="$$root/bin/tf-recipe" 2>&1); rc=$$?; \
+		out=$$($(MAKE) -s --no-print-directory check-plan-expected TF_BASE="$$r" TF_BIN="$$root/bin/tf-recipe" 2>&1); rc=$$?; \
 		if { [ "$$want" = pass ] && [ "$$rc" -ne 0 ]; } || { [ "$$want" = fail ] && [ "$$rc" -eq 0 ]; } || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; then \
 			failed="$$failed $$name"; printf '%s: 終了コード %s（%s を期待）\n%s\n' "$$name" "$$rc" "$$want" "$$out"; \
 		fi; \
