@@ -729,6 +729,37 @@ func Test_checkJob(t *testing.T) {
 		assert.NotContains(t, got, "plan の job は plan の role")
 	})
 
+	logArchive := func(t *testing.T) string {
+		t.Helper()
+
+		src := strings.ReplaceAll(planWorkflow, "CI_ENV=admin", "CI_ENV=log-archive")
+		src = replaced(t, src, "environment: admin-plan", "environment: log-archive-plan")
+		return replaced(t, src, "make ci-plan-admin-identity", "make ci-plan-log-archive-identity")
+	}
+	logArchiveEnvs := append(slices.Clone(envs), "log-archive-plan")
+
+	t.Run("ハイフンを含む env の plan の job は、資格情報と拒否の確認と入口を通して違反0件", func(t *testing.T) {
+		t.Parallel()
+
+		n, f := check("p.yaml", logArchive(t), logArchiveEnvs)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, messages(f))
+	})
+
+	t.Run("ハイフンを含む env の資格情報と、入口の env の食い違いは違反", func(t *testing.T) {
+		t.Parallel()
+
+		_, f := check("p.yaml", replaced(t, logArchive(t), "make ci-plan-log-archive-identity", "make ci-plan-archive-identity"), logArchiveEnvs)
+		assert.Contains(t, messages(f), "資格情報の CI_ENV=log-archive が、入口 make ci-plan-archive-identity の env archive と違います")
+	})
+
+	t.Run("ハイフンを含む env の資格情報と、拒否の確認の CI_ENV の食い違いは違反", func(t *testing.T) {
+		t.Parallel()
+
+		_, f := check("p.yaml", replaced(t, logArchive(t), "ci-assume-denied CI_ENV=log-archive", "ci-assume-denied CI_ENV=log"), logArchiveEnvs)
+		assert.Contains(t, messages(f), "make ci-assume-denied の CI_ENV=log が、資格情報の CI_ENV=log-archive と違います")
+	})
+
 	t.Run("checkJob を通しても入口の env と CI_ENV の食い違いを出す", func(t *testing.T) {
 		t.Parallel()
 
@@ -737,7 +768,7 @@ func Test_checkJob(t *testing.T) {
 	})
 
 	for _, c := range []struct{ kind, src, entry, other string }{
-		{kindPlan, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"},
+		{kindPlan, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-stg-workload RUNNER_MODE=host\n"},
 		{kindApply, applyWorkflow, applyEntryLine, "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n"},
 		{kindUnlock, unlockWorkflow, unlockEntryLine, "      - run: make ci-unlock-admin-workload RUNNER_MODE=host\n"},
 		{kindHold, holdWorkflow, holdEntryLine, "      - run: make ci-hold-admin-workload RUNNER_MODE=host\n"},
