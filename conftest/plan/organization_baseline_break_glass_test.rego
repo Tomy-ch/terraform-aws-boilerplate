@@ -263,6 +263,12 @@ test_violation_own_resource_users_not_two if {
 	}
 }
 
+test_violation_own_resource_three_users if {
+	d := {"break_glass": object.union(decl.break_glass, {"users": array.concat(decl.break_glass.users, [user_address(3)])})}
+	inp := fixture.plan(array.concat(with_changes(manage_own_group(manage_own(own)), {}), [user(3, "arn:aws:iam::111111111111:user/break-glass/break-glass-3")]))
+	fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": d}
+}
+
 test_violation_own_resource_user_change_missing if {
 	inp := fixture.plan([r | some r in with_changes(manage_own_group(manage_own(own)), {}); r.address != user_address(2)])
 	fixture.has(denied("ManageOwn"), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
@@ -285,6 +291,8 @@ test_violation_own_resource_from_malformed_arn if {
 	every prefix in [
 		"x/",
 		"xarn:aws:iam::111111111111:user/break-glass/",
+		"arn::iam::111111111111:user/break-glass/",
+		"arn:aws:iam::111111111111:user/break-glass//",
 		"arn:aws:s3::111111111111:user/break-glass/",
 		"arn:aws:iam::11111111111:user/break-glass/",
 		"arn:aws:iam::111111111111:role/break-glass/",
