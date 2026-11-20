@@ -1,4 +1,8 @@
 mock_provider "aws" {
+  # attachment の policy_arn は ARN の形を検証するので、mock の policy の ARN を ARN の形にする。
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
+  }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
   }

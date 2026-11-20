@@ -33,7 +33,7 @@ trust_statements := lib.statements(body(object.get(bg, "role", ""), "assume_role
 self_management := {"iam:changepassword", "iam:enablemfadevice", "iam:getuser", "iam:listmfadevices", "iam:resyncmfadevice"}
 
 deny contains msg if {
-	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", "")])
+	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", "")])
 	not after(a)
 	msg := sprintf("[PLAN-BG-00] 宣言した break-glass の %s が入力にありません", [a])
 }
@@ -73,7 +73,6 @@ allowed_group_statement(s) if {
 
 allowed_group_statement(s) if lib.lower_all(s.Action) == ["iam:getaccountpasswordpolicy"]
 
-# 自分の MFA を外すのは、MFA で認証したセッションに限る。
 allowed_group_statement(s) if {
 	lib.lower_all(s.Action) == ["iam:deactivatemfadevice"]
 	endswith(s.Resource, "${aws:username}")
@@ -141,8 +140,19 @@ break_glass_attachment(rc) if {
 	rc.change.after.role_name == role.name
 }
 
+break_glass_attachment(rc) if {
+	rc.address == bg.role_policy_attachment
+	rc.change.after.role == role.name
+}
+
 deny contains msg if {
 	attachment := after(object.get(bg, "role_attachments", ""))
 	{a | some a in attachment.policy_arns} != {administrator_access}
 	msg := "[PLAN-BG-04] break-glass の role に付ける managed policy が AdministratorAccess だけではありません"
+}
+
+deny contains msg if {
+	attachment := after(object.get(bg, "role_policy_attachment", ""))
+	object.get(attachment, "policy_arn", null) != administrator_access
+	msg := "[PLAN-BG-04] break-glass の role の attachment が付ける policy が AdministratorAccess ではありません"
 }

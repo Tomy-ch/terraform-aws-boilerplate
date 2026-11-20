@@ -1,4 +1,8 @@
 mock_provider "aws" {
+  # attachment の policy_arn は ARN の形を検証するので、mock の policy の ARN を ARN の形にする。
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
+  }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
   }
@@ -43,6 +47,19 @@ variables {
 # role の ARN は名前から組むので、mock の role の ARN ではなく literal と比べる。
 run "policies" {
   command = apply
+
+  override_resource {
+    target = aws_iam_policy.workload
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload" }
+  }
+  override_resource {
+    target = aws_iam_policy.workload_read
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read" }
+  }
+  override_resource {
+    target = aws_iam_policy.governance[0]
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
+  }
 
   assert {
     condition = jsondecode(aws_iam_role_policy.this["plan"].policy).Statement == [
@@ -805,6 +822,19 @@ run "policies" {
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
     error_message = "managed policy が、apply の role の workload の2つの policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
+  }
+
+  assert {
+    condition = jsonencode([
+      [aws_iam_role_policy_attachment.workload.role, aws_iam_role_policy_attachment.workload.policy_arn],
+      [aws_iam_role_policy_attachment.workload_read.role, aws_iam_role_policy_attachment.workload_read.policy_arn],
+      [aws_iam_role_policy_attachment.governance[0].role, aws_iam_role_policy_attachment.governance[0].policy_arn],
+      ]) == jsonencode([
+      [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"],
+      [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
+      [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"],
+    ])
+    error_message = "workload の2つの policy と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
   }
 
   assert {
