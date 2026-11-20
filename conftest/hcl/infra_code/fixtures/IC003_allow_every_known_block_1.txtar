@@ -1,0 +1,27 @@
+-- m/main.tf --
+terraform {}
+provider "aws" {}
+variable "v" {}
+output "o" {
+  value = 1
+}
+locals {}
+module "m" {
+  source = "./m"
+}
+resource "aws_s3_bucket" "b" {}
+data "aws_region" "r" {}
+moved {
+  from = a.b
+  to   = a.c
+}
+import {
+  to = a.b
+  id = "x"
+}
+removed {
+  from = a.d
+}
+check "c" {}
+ephemeral "aws_x" "e" {}
+action "aws_lambda_invoke" "a" {}

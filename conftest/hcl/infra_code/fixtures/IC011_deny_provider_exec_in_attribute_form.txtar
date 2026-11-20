@@ -1,0 +1,8 @@
+-- m/main.tf --
+provider "helm" {
+  kubernetes = {
+    exec = {
+      command = "aws"
+    }
+  }
+}

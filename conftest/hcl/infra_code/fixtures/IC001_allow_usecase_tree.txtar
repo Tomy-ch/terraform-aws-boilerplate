@@ -1,0 +1,16 @@
+-- usecases/u/main.tf --
+resource "aws_s3_bucket" "b" {}
+-- usecases/u/tests/a.tftest.hcl --
+run "a" {}
+-- usecases/u/README.md --
+# u
+-- usecases/u/docs/adr/0001-x.md --
+# 0001
+-- usecases/u/reference/main.tf --
+module "u" {
+  source = "../"
+}
+-- usecases/u/reference/.terraform.lock.hcl --
+provider "registry.terraform.io/hashicorp/aws" {
+  version = "6.70.0"
+}

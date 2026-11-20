@@ -45,12 +45,19 @@ root-check-test:
 	printf '#!/bin/sh\nexit 1\n' > "$$root/conftest-fails"; printf '#!/bin/sh\nexit 0\n' > "$$root/conftest-silent"; \
 	printf '#!/bin/sh\nconftest "$$@"\nexit 1\n' > "$$root/conftest-passes-then-fails"; \
 	chmod +x "$$root/conftest-fails" "$$root/conftest-silent" "$$root/conftest-passes-then-fails"; \
+	printf '#!/bin/sh\nprintf "%%s\\n" "$$@" >> "%s"\nexec conftest "$$@"\n' "$$root/conftest-args" > "$$root/conftest-recording"; \
+	printf '#!/bin/sh\nprintf "{\\"fixtures\\": {}}\\n" > "$$2"\n' > "$$root/fixtures-empty"; \
+	chmod +x "$$root/conftest-recording" "$$root/fixtures-empty"; \
+	stub() { printf 'RT_HCL_INPUT_CMD=cp %s $(RT_OUT)/hcl/hcl-input.json' "$$1"; }; \
+	printf '"x"\n' > "$$root/not-object.json"; printf '{"files": ' > "$$root/malformed.json"; \
+	printf '{"files": [], "blocks": []}\n' > "$$root/no-files.json"; \
+	mkdir -p "$$root/badfx/fixtures"; printf -- '-- m/a.tf --\nresource {\n' > "$$root/badfx/fixtures/a.txtar"; \
 	d=$$(case_dir ok); \
 	expect pass ok "$$d" "違反はありません"; \
 	mkdir -p "$$root/no-roots"; decl "$$root/no-roots"; \
 	expect fail no-roots "$$root/no-roots" "走査の root が1つもありません"; \
 	mkdir -p "$$root/no-files/env/mem"; decl "$$root/no-files"; \
-	expect fail no-files "$$root/no-files" "no files found"; \
+	expect fail no-files "$$root/no-files" "Terraform の構成ファイル（.tf）が1件もありません"; \
 	d=$$(case_dir no-tf); find "$$d/usecases" "$$d/env" -name '*.tf' -exec rm {} +; mkdir -p "$$d/env/mem/tests"; \
 	printf 'run "ok" {\n  command = plan\n}\n' > "$$d/env/mem/tests/ok.tftest.hcl"; \
 	expect fail no-tf "$$d" "RT002 [対象が0件]"; \
@@ -72,11 +79,11 @@ root-check-test:
 	d=$$(case_dir quoted-name); printf '# x\n' > "$$d/env/mem/q\"b\\c.tf"; \
 	expect pass quoted-name "$$d" "違反はありません"; \
 	d=$$(case_dir symlink); mkdir -p "$$d/outside"; printf 'locals {}\n' > "$$d/outside/real.tf"; ln -s ../../outside/real.tf "$$d/env/mem/link.tf"; \
-	expect fail symlinked-config "$$d" "RT002 [件数の不一致] env/mem/link.tf"; \
+	expect fail symlinked-config "$$d" "env/mem/link.tf: 走査の root の下に symlink があります"; \
 	d=$$(case_dir module-one-line); printf 'module "w2" { source = "../../usecases/w" }\n' > "$$d/env/mem/extra.tf"; \
 	expect pass module-one-line "$$d" "違反はありません"; \
 	d=$$(case_dir module-count); printf 'locals {\n  doc = <<EOT\nmodule "fake" {\nEOT\n}\n' > "$$d/env/mem/doc.tf"; \
-	expect fail module-count-mismatch "$$d" "RT002 [件数の不一致] env/mem/doc.tf の module block を 0 件読みましたが、独立の走査は 1 件です"; \
+	expect fail module-count-mismatch "$$d" "RT005 [入力の形] env/mem/doc.tf のトップレベルの block を 1 個読みましたが、行頭の数えは 2 個です"; \
 	d=$$(case_dir tf-json); printf '{"locals": {}}\n' > "$$d/env/mem/extra.tf.json"; \
 	expect fail tf-json "$$d" "RT003 [未対応の入力] env/mem/extra.tf.json"; \
 	d=$$(case_dir override); printf 'locals {}\n' > "$$d/env/mem/override.tf"; \
@@ -127,6 +134,24 @@ root-check-test:
 	expect fail detect-conftest-fails "$$d" "結果を解釈できません" CONFTEST_BIN="$$root/conftest-fails"; \
 	d=$$(case_dir no-rules); \
 	expect fail no-rules "$$d" "名前空間の規則が1つも評価されていません" RT_NS=no_such_namespace; \
+	d=$$(case_dir hcl-input-fails); \
+	expect fail hcl-input-fails "$$d" "hcl-input が失敗したので、Conftest を起動しません" RT_HCL_INPUT_CMD="$$root/conftest-fails"; \
+	expect fail hcl-input-stale "$$d" "hcl-input が成功を返しましたが、$(RT_OUT)/hcl/hcl-input.json を書いていません" RT_HCL_INPUT_CMD=:; \
+	expect fail input-not-object "$$d" "RT005 [入力の形] 入力がオブジェクトではありません" "$$(stub "$$root/not-object.json")"; \
+	expect fail input-malformed "$$d" "結果を解釈できません" "$$(stub "$$root/malformed.json")"; \
+	expect fail input-malformed-parse "$$d" "unexpected end of JSON input" "$$(stub "$$root/malformed.json")"; \
+	expect fail input-missing-file "$$d" "RT005 [入力の形] env/mem/main.tf を構文として読んでいません（find は列挙しています）" "$$(stub "$$root/no-files.json")"; \
+	m=$$(case_dir zero-blocks-mirror); find "$$m" -name '*.tf' -exec sh -c ': > "$$1"' sh {} \; ; \
+	$(MAKE) -s --no-print-directory root-detect RT_BASE="$$m" RT_DECL="$$m/decl.json" >/dev/null 2>&1 || :; \
+	if cp "$(RT_OUT)/hcl/hcl-input.json" "$$root/zero-blocks.json"; then \
+		expect fail block-count-stub "$$d" "RT005 [入力の形] env/mem/main.tf のトップレベルの block を 0 個読みましたが、行頭の数えは 1 個です" "$$(stub "$$root/zero-blocks.json")"; \
+	else failed="$$failed block-count-stub"; fi; \
+	d=$$(case_dir json-only); : > "$$root/conftest-args"; \
+	expect pass conftest-input-json-only "$$d" "違反はありません" CONFTEST_BIN="$$root/conftest-recording"; \
+	if grep -qxE 'usecases|modules|env|.*\.tf|.*\.tftest\.hcl' "$$root/conftest-args" || [ "$$(grep -c 'hcl-input\.json$$' "$$root/conftest-args")" != 1 ]; then \
+		failed="$$failed conftest-input-json-only"; cat "$$root/conftest-args"; fi; \
+	expect_make fail verify-fixtures-broken root-verify "$$d" "の fixture を JSON にできません" RT_FIXTURES="$$root/badfx/fixtures"; \
+	expect_make fail verify-fixtures-missing root-verify "$$d" "のケースは 0 件です" HCL_FIXTURES_CMD="$$root/fixtures-empty"; \
 	d=$$(case_dir no-conftest); \
 	expect fail no-conftest "$$d" "/nonexistent/conftest" CONFTEST_BIN=/nonexistent/conftest; \
 	expect_make pass verify-ok root-verify "$$d" "走って通りました"; \

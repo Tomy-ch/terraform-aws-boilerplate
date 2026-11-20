@@ -75,12 +75,13 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string][]string{
-			"引数が無い":       nil,
-			"-base が無い":   {"-listed", "l.txt", "-out", "o.json", "modules"},
-			"-listed が無い": {"-base", ".", "-out", "o.json", "modules"},
-			"-out が無い":    {"-base", ".", "-listed", "l.txt", "modules"},
-			"root が無い":    {"-base", ".", "-listed", "l.txt", "-out", "o.json"},
-			"知らないフラグ":     {"-x", "-base", ".", "-listed", "l.txt", "-out", "o.json", "modules"},
+			"引数が無い":        nil,
+			"-base が無い":    {"-listed", "l.txt", "-out", "o.json", "modules"},
+			"-listed が無い":  {"-base", ".", "-out", "o.json", "modules"},
+			"-out が無い":     {"-base", ".", "-listed", "l.txt", "modules"},
+			"root が無い":     {"-base", ".", "-listed", "l.txt", "-out", "o.json"},
+			"知らないフラグ":      {"-x", "-base", ".", "-listed", "l.txt", "-out", "o.json", "modules"},
+			"知らない -format": {"-format", "refs", "-base", ".", "-listed", "l.txt", "-out", "o.json", "modules"},
 		}
 		for name, args := range tests {
 			t.Run(name, func(t *testing.T) {
@@ -207,6 +208,135 @@ func Test_run(t *testing.T) {
 		require.ErrorIs(t, err, fs.ErrPermission)
 		assert.NoFileExists(t, out)
 	})
+}
+
+func Test_run_syntax(t *testing.T) {
+	t.Parallel()
+
+	t.Run("-format syntax は全ファイルと構文の木を書き、件数を報告する", func(t *testing.T) {
+		t.Parallel()
+		files := map[string]string{
+			"modules/a/main.tf":             "terraform {\n  cloud {}\n}\n",
+			"modules/a/tests/x.tftest.hcl":  "run \"ok\" {}\n",
+			"modules/a/README.md":           "# a\n",
+			"modules/a/o.tf.json":           "{}",
+			"modules/a/.terraform/m/bad.tf": "resource {",
+		}
+		base, listed, out := fixture(t, files, []string{"modules/a/README.md", "modules/a/main.tf", "modules/a/o.tf.json", "modules/a/tests/x.tftest.hcl"})
+		require.NoError(t, os.MkdirAll(filepath.Dir(out), 0o750))
+		var stdout bytes.Buffer
+		require.NoError(t, run([]string{"-format", "syntax", "-base", base, "-listed", listed, "-out", out, "modules"}, &stdout))
+		raw, err := os.ReadFile(out)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{
+			"files": [
+				{"path": "modules/a/README.md", "parsed": false},
+				{"path": "modules/a/main.tf", "parsed": true},
+				{"path": "modules/a/o.tf.json", "parsed": false},
+				{"path": "modules/a/tests/x.tftest.hcl", "parsed": true}
+			],
+			"blocks": [
+				{"file": "modules/a/main.tf", "line": 1, "type": "terraform", "labels": [],
+					"blocks": [{"path": "cloud", "parent": -1, "line": 2, "type": "cloud", "labels": [], "dynamic": false}], "attributes": []},
+				{"file": "modules/a/tests/x.tftest.hcl", "line": 1, "type": "run", "labels": ["ok"], "blocks": [], "attributes": []}
+			]
+		}`, string(raw))
+		assert.Equal(t, "✅ hcl-input: 4 件のファイル（構文として 2 件）から 2 個の block を "+out+" へ書きました\n", stdout.String())
+	})
+
+	t.Run("-format syntax の失敗は出力を書かない", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			files  map[string]string
+			listed []string
+			want   error
+		}{
+			"構文として読むファイルが0件": {files: map[string]string{"modules/a/README.md": ""}, listed: []string{"modules/a/README.md"}, want: errNoInput},
+			"構文の誤り":          {files: map[string]string{"modules/a/t.tftest.hcl": "run {"}, listed: []string{"modules/a/t.tftest.hcl"}, want: errSyntax},
+			"一覧に無いファイル":      {files: map[string]string{"modules/a/main.tf": "", "modules/a/x.md": ""}, listed: []string{"modules/a/main.tf"}, want: errFileSetMismatch},
+		}
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				base, listed, out := fixture(t, tt.files, tt.listed)
+				require.NoError(t, os.MkdirAll(filepath.Dir(out), 0o750))
+				err := run([]string{"-format", "syntax", "-base", base, "-listed", listed, "-out", out, "modules"}, &bytes.Buffer{})
+				require.ErrorIs(t, err, tt.want)
+				assert.NoFileExists(t, out)
+			})
+		}
+	})
+}
+
+func Test_runSyntax(t *testing.T) {
+	t.Parallel()
+
+	t.Run("一覧を読めなければ errListed", func(t *testing.T) {
+		t.Parallel()
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		out := filepath.Join(t.TempDir(), "o.json")
+		require.ErrorIs(t, runSyntax(base, filepath.Join(base, "none.txt"), out, []string{"modules"}, &bytes.Buffer{}), errListed)
+		assert.NoFileExists(t, out)
+	})
+
+	t.Run("書き込めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では読み取り専用ディレクトリへも書けるため検証できない")
+		base, listed, out := fixture(t, map[string]string{"modules/a/main.tf": ""}, nil)
+		dir := filepath.Dir(out)
+		require.NoError(t, os.MkdirAll(dir, 0o750))
+		require.NoError(t, os.Chmod(dir, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o750) })
+		require.ErrorIs(t, runSyntax(base, listed, out, []string{"modules"}, &bytes.Buffer{}), fs.ErrPermission)
+	})
+}
+
+func Test_buildSyntax(t *testing.T) {
+	t.Parallel()
+
+	t.Run("symlink は一覧との突き合わせより先に落とす", func(t *testing.T) {
+		t.Parallel()
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		require.NoError(t, os.Symlink("main.tf", filepath.Join(base, "modules/a/link.md")))
+		_, err := buildSyntax(base, []string{"modules"}, []string{"modules/a/link.md", "modules/a/main.tf"})
+		require.ErrorIs(t, err, errSymlink)
+	})
+
+	t.Run("構成ファイルを読めなければ失敗する", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では権限の無いファイルも読めるため検証できない")
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		require.NoError(t, os.Chmod(filepath.Join(base, "modules/a/main.tf"), 0o000))
+		_, err := buildSyntax(base, []string{"modules"}, []string{"modules/a/main.tf"})
+		require.ErrorIs(t, err, fs.ErrPermission)
+	})
+
+	t.Run("base を開けなければ失敗する（実行の権限だけで読めない base）", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では権限の無いディレクトリも開けるため検証できない")
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		require.NoError(t, os.Chmod(base, 0o100))
+		t.Cleanup(func() { _ = os.Chmod(base, 0o750) })
+		_, err := buildSyntax(base, []string{"modules"}, []string{"modules/a/main.tf"})
+		require.ErrorIs(t, err, fs.ErrPermission)
+	})
+
+	t.Run("空のファイルは block 0個で、0件ではない", func(t *testing.T) {
+		t.Parallel()
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		doc, err := buildSyntax(base, []string{"modules"}, []string{"modules/a/main.tf"})
+		require.NoError(t, err)
+		assert.Equal(t, []fileEntry{{Path: "modules/a/main.tf", Parsed: true}}, doc.Files)
+		assert.Empty(t, doc.Blocks)
+	})
+}
+
+func Test_countParsed(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, 0, countParsed(nil))
+	assert.Equal(t, 1, countParsed([]fileEntry{{Path: "a.tf", Parsed: true}, {Path: "a.md"}}))
 }
 
 func Test_exitCode(t *testing.T) {

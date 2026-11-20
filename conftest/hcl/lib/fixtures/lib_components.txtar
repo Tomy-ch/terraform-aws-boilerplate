@@ -1,0 +1,24 @@
+型を持つ構成要素（check の中の data を含む）と、.tftest.hcl の中の resource を数えないこと。
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+
+data "aws_region" "r" {}
+
+ephemeral "aws_x" "e" {}
+
+action "aws_lambda_invoke" "a" {}
+
+check "c" {
+  data "aws_caller_identity" "me" {}
+
+  assert {
+    condition     = true
+    error_message = "x"
+  }
+}
+
+locals {
+  x = 1
+}
+-- m/tests/a.tftest.hcl --
+run "ok" {}

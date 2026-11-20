@@ -1,35 +1,21 @@
-# HCL のソースを、Conftest の hcl2 パーサが返す形のまま読むための共通部分。
+# 層の検査が、Conftest の hcl2 パーサが返す形のまま HCL のソースを読むための共通部分。
+# path だけの補助は lib.hcl_input が正で、ここはそれへ委ねる。
 #
 # パーサは、ラベルを持つブロックをラベルごとの入れ子のオブジェクトに、本体を配列にして返す
 # （`resource "a" "b" {}` は `resource.a.b[0]`）。式は `${...}` の文字列になる。
 package lib.hcl
 
-typed_kinds := {"resource", "data", "ephemeral", "action"}
+import data.lib.hcl_input
 
-is_tf(path) if endswith(path, ".tf")
+typed_kinds := hcl_input.typed_kinds
 
-is_tftest(path) if endswith(path, ".tftest.hcl")
+is_tf(path) if hcl_input.is_tf(path)
 
-# dir はファイルを宣言した module のディレクトリを返す。
-dir(path) := concat("/", array.slice(parts, 0, count(parts) - 1)) if {
-	parts := split(path, "/")
-	count(parts) > 1
-}
+is_tftest(path) if hcl_input.is_tftest(path)
 
-dir(path) := "." if not contains(path, "/")
+dir(path) := hcl_input.dir(path)
 
-# module_dir は、`.tftest.hcl` については、それが検査する module のディレクトリを返す。
-module_dir(path) := "." if {
-	is_tftest(path)
-	dir(path) == "tests"
-}
-
-module_dir(path) := trim_suffix(dir(path), "/tests") if {
-	is_tftest(path)
-	dir(path) != "tests"
-}
-
-module_dir(path) := dir(path) if not is_tftest(path)
+module_dir(path) := hcl_input.module_dir(path)
 
 # components は、型を持つ構成要素をすべて返す。check の中の data も含む。
 components(files) := {c |
@@ -132,9 +118,7 @@ declared_source(files, module, name) if {
 	n == name
 }
 
-normalize_source(s) := lower(sprintf("registry.terraform.io/%s", [s])) if count(split(s, "/")) == 2
-
-normalize_source(s) := lower(s) if count(split(s, "/")) != 2
+normalize_source(s) := hcl_input.normalize_source(s)
 
 # values_at は、body の中で、ブロックをまたいだキーの並びが dotted に一致する値をすべて返す。リストの値は
 # リストのまま返し、その要素を別の値として返さない。
@@ -156,46 +140,8 @@ has_key_anywhere(body, key) if {
 	p[count(p) - 1] == key
 }
 
-relative_source(s) if {
-	is_string(s)
-	not contains(s, "${")
-	startswith(s, "./")
-}
+relative_source(s) if hcl_input.relative_source(s)
 
-relative_source(s) if {
-	is_string(s)
-	not contains(s, "${")
-	startswith(s, "../")
-}
+module_target(d, source) := hcl_input.module_target(d, source)
 
-# module_target は、ディレクトリ dir の module の source が指すディレクトリを返す。相対パスでないか、
-# 走査の root より上へ出るなら undefined。
-module_target(dir, source) := clean(sprintf("%s/%s", [dir, source])) if relative_source(source)
-
-# clean は `/` 区切りのパスの `.` と `..` を字面で解く。root より上へ出るパスは undefined。
-clean(path) := concat("/", kept) if {
-	segs := split(path, "/")
-	not escapes(segs)
-	kept := [segs[i] |
-		some i in numbers.range(0, count(segs) - 1)
-		weight(segs[i]) == 1
-		not cancelled(segs, i)
-	]
-}
-
-escapes(segs) if {
-	some j in numbers.range(0, count(segs) - 1)
-	sum([weight(segs[k]) | some k in numbers.range(0, j)]) < 0
-}
-
-cancelled(segs, i) if {
-	some j in numbers.range(i + 1, count(segs) - 1)
-	j > i
-	sum([weight(segs[k]) | some k in numbers.range(i + 1, j)]) < 0
-}
-
-weight(s) := 0 if s in {".", ""}
-
-weight(s) := -1 if s == ".."
-
-weight(s) := 1 if not s in {".", "", ".."}
+clean(path) := hcl_input.clean(path)
