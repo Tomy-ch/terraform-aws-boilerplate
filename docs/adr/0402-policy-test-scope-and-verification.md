@@ -118,6 +118,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 - Policy のテスト: 決定17 で宣言した引数ごとに、書いた値と plan で決まらない値で違反を報告し、書かないときの値で報告しないこと。宣言した型と引数が入力に無い場合と、Provider の schema が非推奨とする書ける引数が宣言に無い場合に違反を報告すること（決定18）
 - Policy のテスト: 値を固定と読む判定ごとに、wildcard と policy 変数を含む値で違反を報告すること（決定20）
 - Static Analysis（`make tf-policy-canary`）: mock provider の plan で、書いた文字列の属性の値が override に隠されずに Policy の入力へ現れること。Provider の schema から取り出した非推奨の引数の一覧が Policy に届くこと（決定18）
+- Unit Test（`scripts/provider-schema`）: Provider の schema が非推奨とする書ける引数を、層の検査（ADR-0102 決定18）と同じ関数で取り出し、同じ schema から同じ一覧を得ること（決定18）
 - レビュー: 決定2 の基準による配置の判断、決定3 の重複の不在、および決定17 の resource の NOTE に依る引数の選定。いずれも機械判定できないため、Policy を追加・変更する Pull Request のレビュー観点とする
 
 ## 影響

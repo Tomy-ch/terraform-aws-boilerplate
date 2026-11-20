@@ -6,7 +6,7 @@
 
 各 `usecases/<use-case>/reference/tests/policy-input.tftest.hcl` を mock provider で plan し、`terraform test -json -verbose` が出す `test_plan` から `provider_schemas` を除いたものである（同 決定11）。すべての reference の root がこのファイルを持たなければ、`make tf-policy` は落ちる。
 
-除いた `provider_schemas` からは、型ごとの書ける非推奨の引数（属性と block）の一覧を取り出し、`data.provider_schema.deprecated_arguments` として2つ目の `--data` で渡す（同 決定18）。宣言は root に依らず1つなので、一覧は reference の root をまたいだ和である。`test_plan` の `provider_format_version` が宣言と違えば、取り出す前に落ちる。
+除いた `provider_schemas` からは、型ごとの書ける非推奨の引数（属性と block）の一覧を取り出し、`data.provider_schema.deprecated_arguments` として2つ目の `--data` で渡す（同 決定18）。取り出しは [`scripts/provider-schema`](../../scripts/README.md) の `plan-deprecated` が、層の検査（[`../hcl/layer/`](../hcl/layer/README.md) の `LY306`）と同じ関数で行う。宣言は root に依らず1つなので、一覧は reference の root をまたいだ和である。`test_plan` の `provider_format_version` が宣言と違えば、取り出す前に落ちる。
 
 policy の文書が参照する ARN は、`override_resource`（`override_during = plan`）で instance ごとに与える。与えないと文書が plan で unknown になり、`[PLAN-INPUT-04]` で落ちる。
 
