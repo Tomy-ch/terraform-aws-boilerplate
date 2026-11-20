@@ -45,8 +45,8 @@ iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()
 policy_variable(v) if contains(v, "${")
 
 # policy 変数を任意の文字列と読んだ IAM の pattern。最初の ${ から最後の } まで（閉じなければ末尾まで）を * に置くので、
-# 入れ子や既定値の中の } でも、当たりうる範囲を狭めない（ADR-0402 決定21）。
-policy_variable_as_wildcard(p) := regex.replace(p, `\$\{(.*\}|.*$)`, "*")
+# 入れ子や既定値の中の } と改行でも、当たりうる範囲を狭めない（ADR-0402 決定21）。
+policy_variable_as_wildcard(p) := regex.replace(p, `(?s)\$\{(.*\}|.*$)`, "*")
 
 iam_match(pattern, value) if regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
 

@@ -295,6 +295,12 @@ test_violation_publisher_resource_policy_variable if {
 		{"Effect": "Allow", "Action": "sns:*", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/${aws:username}}", [topic_prefix])},
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/topic, 'a}b'}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:PrincipalTag/x\n}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${a\nb", [topic_prefix])},
+		{"Effect": "Allow", "Action": "SNS:PUBLISH", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "Action": ["s3:*", "sns:Publish"], "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": "arn:aws:sns:*:*:${aws:username}"},
 	] {
 		fixture.has("[PLAN-NOTIFY-03] module.ops_notification.module.x.aws_iam_role_policy.this の Allow の Resource ", messages(with_publisher(s)))
 	}
@@ -308,6 +314,10 @@ test_pass_policy_variable_not_reaching_topic if {
 		{"Effect": "Allow", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username}-other", [topic_prefix])},
 		{"Effect": "Allow", "Action": "s3:GetObject", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
 		{"Effect": "Deny", "Action": "sns:Publish", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "NotAction": "sns:Publish", "Resource": sprintf("%s:${aws:username}", [topic_prefix])},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": []},
+		{"Effect": "Allow", "Action": "sns:Publish"},
+		{"Effect": "Allow", "Action": "sns:Publish", "Resource": [1, null]},
 	] {
 		count(messages(with_publisher(s))) == 0
 	}
