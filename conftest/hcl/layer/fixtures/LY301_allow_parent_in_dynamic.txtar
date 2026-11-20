@@ -1,0 +1,12 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+resource "aws_guardduty_malware_protection_plan" "this" {
+  dynamic "protected_resource" {
+    for_each = [1]
+    content {
+      s3_bucket {
+        bucket_name = aws_s3_bucket.this.bucket
+      }
+    }
+  }
+}

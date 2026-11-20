@@ -1,0 +1,11 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "a" {
+  for_each = toset(["a"])
+  bucket = aws_s3_bucket.this.id
+}
+
+resource "aws_s3_bucket_policy" "b" {
+  bucket = aws_s3_bucket.this.id
+}
