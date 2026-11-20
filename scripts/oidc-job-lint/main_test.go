@@ -517,7 +517,7 @@ func Test_check(t *testing.T) {
 		n, f := check("p.yaml", strings.Replace(planWorkflow, "      id-token: write\n", "", 1), envs)
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
-		assert.Equal(t, "job plan-admin-identity は CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせますが、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", f[0].Message)
+		assert.Regexp(t, `^job plan-admin-identity は CI の入口（make ci-plan-\*・ci-apply-\*・ci-unlock-\*・ci-hold-\*）を走らせますが（\d+ 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません$`, f[0].Message)
 		before, _, found := strings.Cut(planWorkflow, "  plan-admin-identity:\n")
 		require.True(t, found)
 		assert.Equal(t, strings.Count(before, "\n")+1, f[0].Line)
@@ -540,6 +540,7 @@ func Test_check(t *testing.T) {
 		assert.Zero(t, n)
 		require.Len(t, f, 1, messages(f))
 		assert.Contains(t, f[0].Message, "job apply-x は CI の入口")
+		assert.Contains(t, f[0].Message, "（8 行目）")
 	})
 
 	t.Run("jobs: を持たず入口の行だけがある workflow は違反", func(t *testing.T) {
@@ -557,7 +558,8 @@ func Test_check(t *testing.T) {
 		n, f := check("p.yaml", planWorkflow+"x-note: make ci-apply-a\ny-note: make ci-hold-a\n", envs)
 		assert.Equal(t, 1, n)
 		require.Len(t, f, 1, messages(f))
-		assert.Regexp(t, `を持つ行 \d+ 件のうち 2 件を、job の行として読めません$`, f[0].Message)
+		require.Equal(t, 1, strings.Count(planWorkflow, "ci-plan-"), "planWorkflow の入口の行の数が前提と違う")
+		assert.Equal(t, "CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 3 件のうち 2 件を、job の行として読めません", f[0].Message)
 	})
 
 	t.Run("permissions を持たない入口の job は違反にする", func(t *testing.T) {
@@ -2489,16 +2491,17 @@ func Test_hasTokenLine(t *testing.T) {
 		body string
 		want bool
 	}{
-		"読める id-token: write を持つ":         {"    permissions:\n      id-token: write\n", true},
-		"値が次の行に続く id-token を持つ":           {"    permissions:\n      id-token:\n        write\n", true},
-		"コロンの前に空白のある id-token を持つ":        {"    permissions:\n      id-token : write\n", true},
-		"id-token: read は持たない":            {"    permissions:\n      id-token: read\n", false},
-		"id-token: none は持たない":            {"    permissions:\n      id-token: none\n", false},
-		"引用符付きの id-token: \"read\" は持たない": {"    permissions:\n      id-token: \"read\"\n", false},
-		"コメント付きの id-token: read は持たない":    {"    permissions:\n      id-token: read # c\n", false},
-		"1行の {} の id-token: none は持たない":   {"    permissions: { id-token: none }\n", false},
-		"コメントの id-token は持たない":            {"    # id-token: write\n    steps:\n      - run: make lint\n", false},
-		"id-token の行が無ければ持たない":            {"    permissions:\n      contents: read\n", false},
+		"読める id-token: write を持つ":            {"    permissions:\n      id-token: write\n", true},
+		"引用符付きの \"id-token\": \"write\" を持つ": {"    permissions:\n      \"id-token\": \"write\"\n", true},
+		"値が次の行に続く id-token を持つ":              {"    permissions:\n      id-token:\n        write\n", true},
+		"コロンの前に空白のある id-token を持つ":           {"    permissions:\n      id-token : write\n", true},
+		"id-token: read は持たない":               {"    permissions:\n      id-token: read\n", false},
+		"id-token: none は持たない":               {"    permissions:\n      id-token: none\n", false},
+		"引用符付きの id-token: \"read\" は持たない":    {"    permissions:\n      id-token: \"read\"\n", false},
+		"コメント付きの id-token: read は持たない":       {"    permissions:\n      id-token: read # c\n", false},
+		"1行の {} の id-token: none は持たない":      {"    permissions: { id-token: none }\n", false},
+		"コメントの id-token は持たない":               {"    # id-token: write\n    steps:\n      - run: make lint\n", false},
+		"id-token の行が無ければ持たない":               {"    permissions:\n      contents: read\n", false},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -2516,24 +2519,29 @@ func Test_entryLine(t *testing.T) {
 		line string
 		want bool
 	}{
-		"run: の make ci-plan-* は入口":  {"      - run: make ci-plan-admin-identity RUNNER_MODE=host", true},
-		"make ci-apply-* は入口":        {"          make ci-apply-admin-workload RUNNER_MODE=host", true},
-		"make ci-unlock-* は入口":       {"        run: make ci-unlock-admin-identity", true},
-		"make ci-hold-* は入口":         {"        run: make ci-hold-admin-identity", true},
-		"echo の引数の入口も数える":            {"        run: echo \"make ci-unlock-admin-identity で解除\"", true},
-		"env: の値の入口も数える":             {"          NOTE: make ci-apply-admin-identity", true},
-		"step と別の行の run: は数える":       {"        run: make ci-apply-admin-identity", true},
-		"桁0の name: は数える":             {"name: make ci-apply-admin-identity", true},
-		"コメントの入口は数えない":               {"      # make ci-apply-admin-identity", false},
-		"step の name: の入口は数えない":      {"      - name: make ci-apply-admin-identity", false},
-		"job の name: の入口は数えない":       {"    name: make ci-apply-admin-identity", false},
-		"ci-revert-* は入口ではない":        {"        run: make ci-revert-plan RUNNER_MODE=host", false},
-		"ci-aws-credentials は入口ではない": {"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", false},
-		"make を伴わない ci-apply-* も入口":  {"        run: echo ci-apply-admin-identity", true},
-		"行継続の次の行の入口も数える":             {"            ci-apply-admin-identity RUNNER_MODE=host", true},
-		"$(MAKE) の入口も数える":            {"        run: $(MAKE) ci-hold-admin-identity", true},
-		"式で組んだ名前の入口も数える":             {"        run: make ci-apply-${{ inputs.root }}", true},
-		"ci-plan と区切りの無い語は入口ではない":    {"        run: make ci-planner", false},
+		"run: の make ci-plan-* は入口":      {"      - run: make ci-plan-admin-identity RUNNER_MODE=host", true},
+		"make ci-apply-* は入口":            {"          make ci-apply-admin-workload RUNNER_MODE=host", true},
+		"make ci-unlock-* は入口":           {"        run: make ci-unlock-admin-identity", true},
+		"make ci-hold-* は入口":             {"        run: make ci-hold-admin-identity", true},
+		"echo の引数の入口も数える":                {"        run: echo \"make ci-unlock-admin-identity で解除\"", true},
+		"env: の値の入口も数える":                 {"          NOTE: make ci-apply-admin-identity", true},
+		"step と別の行の run: は数える":           {"        run: make ci-apply-admin-identity", true},
+		"桁0の name: は数える":                 {"name: make ci-apply-admin-identity", true},
+		"コメントの入口は数えない":                   {"      # make ci-apply-admin-identity", false},
+		"step の name: の入口は数えない":          {"      - name: make ci-apply-admin-identity", false},
+		"job の name: の入口は数えない":           {"    name: make ci-apply-admin-identity", false},
+		"ci-revert-* は入口ではない":            {"        run: make ci-revert-plan RUNNER_MODE=host", false},
+		"ci-aws-credentials は入口ではない":     {"        run: make ci-aws-credentials CI_ENV=admin CI_ROLE=plan", false},
+		"make を伴わない ci-apply-* も入口":      {"        run: echo ci-apply-admin-identity", true},
+		"行継続の次の行の入口も数える":                 {"            ci-apply-admin-identity RUNNER_MODE=host", true},
+		"$(MAKE) の入口も数える":                {"        run: $(MAKE) ci-hold-admin-identity", true},
+		"式で組んだ名前の入口も数える":                 {"        run: make ci-apply-${{ inputs.root }}", true},
+		"ci-plan と区切りの無い語は入口ではない":        {"        run: make ci-planner", false},
+		"ci-plan- の後の名前は入口":              {"        run: make ci-plan-x", true},
+		"語の途中の ci-apply- は入口ではない":        {"        run: make xci-apply-x", false},
+		"ハイフンで続く接頭辞の後の ci-apply- は入口":    {"        run: make my-ci-apply-x", true},
+		"名前の無い ci-apply- も入口":            {"        run: make ci-apply-", true},
+		"concurrency の group の入口の字面も数える": {"      group: ci-apply-${{ github.ref }}", true},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

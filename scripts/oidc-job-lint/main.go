@@ -443,8 +443,9 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		if !assumesRole(job) {
 			// id-token の行を持つが読めない job は、下の countTokenLines の違反が原因を言う。
 			if n > 0 && !hasTokenLine(job) {
+				first := job.Lines[slices.IndexFunc(job.Lines, func(l workflow.Line) bool { return entryLine(l.Text) })].Number
 				findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
-					Message: fmt.Sprintf("job %s は CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせますが、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID)})
+					Message: fmt.Sprintf("job %s は CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせますが（%d 行目）、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID, first)})
 			}
 			continue
 		}
