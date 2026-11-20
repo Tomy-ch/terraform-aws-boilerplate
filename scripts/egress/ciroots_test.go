@@ -310,6 +310,14 @@ func Test_entryTokens(t *testing.T) {
 				assert.Equal(t, want, entryTokens(workflow.Line{Number: 1, Text: text}))
 			})
 		}
+
+		for _, k := range cientry.Kinds() {
+			t.Run("登録簿の種別 "+k.Name+" の入口の名前を拾う", func(t *testing.T) {
+				t.Parallel()
+				want := "ci-" + k.Name + "-a-identity"
+				assert.Equal(t, []string{want}, entryTokens(workflow.Line{Number: 1, Text: "        run: make " + want}))
+			})
+		}
 	})
 }
 

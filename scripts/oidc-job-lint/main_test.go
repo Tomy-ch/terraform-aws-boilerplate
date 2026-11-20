@@ -4030,6 +4030,16 @@ func Test_entryNames(t *testing.T) {
 
 		assert.Equal(t, "make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*", entryNames)
 	})
+
+	t.Run("登録簿のすべての種別を登録簿の順に並べる", func(t *testing.T) {
+		t.Parallel()
+
+		var names []string
+		for _, k := range cientry.Kinds() {
+			names = append(names, "ci-"+k.Name+"-*")
+		}
+		assert.Equal(t, "make "+strings.Join(names, "・"), entryNames)
+	})
 }
 
 func Test_entryRegexps(t *testing.T) {
@@ -4049,6 +4059,39 @@ func Test_entryRegexps(t *testing.T) {
 		"runEntry":    {runEntry, `\bmake\b.*\bci-(?:plan|apply)-[a-z0-9-]+`},
 	} {
 		t.Run(name+" は登録簿から同じ字面に組まれる", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.want, c.got.String())
+		})
+	}
+
+	alt := func(keep func(cientry.Kind) bool) string {
+		var names []string
+		for _, k := range cientry.Kinds() {
+			if keep(k) {
+				names = append(names, k.Name)
+			}
+		}
+		return "(?:" + strings.Join(names, "|") + ")"
+	}
+	is := func(names ...string) func(cientry.Kind) bool {
+		return func(k cientry.Kind) bool { return slices.Contains(names, k.Name) }
+	}
+	all := func(cientry.Kind) bool { return true }
+	for name, c := range map[string]struct {
+		got  *regexp.Regexp
+		want string
+	}{
+		"ciEntry":     {ciEntry, `\bmake\b.*\bci-` + alt(all) + `-[a-z0-9-]+`},
+		"entryToken":  {entryToken, `\bci-` + alt(all) + `-`},
+		"unlockEntry": {unlockEntry, `\bmake\b.*\bci-` + alt(is(cientry.Unlock)) + `-([a-z0-9-]+)`},
+		"holdEntry":   {holdEntry, `\bmake\b.*\bci-` + alt(is(cientry.Hold)) + `-([a-z0-9-]+)`},
+		"otherEntry":  {otherEntry, `\bmake\b.*\bci-` + alt(func(k cientry.Kind) bool { return k.Name != cientry.Hold }) + `-[a-z0-9-]+`},
+		"applyEntry":  {applyEntry, `\bmake\b.*\bci-` + alt(is(cientry.Apply)) + `-([a-z0-9-]+)`},
+		"planEntry":   {planEntry, `\bmake\b.*\bci-` + alt(is(cientry.Plan)) + `-[a-z0-9-]+`},
+		"runEntry":    {runEntry, `\bmake\b.*\bci-` + alt(is(cientry.Plan, cientry.Apply)) + `-[a-z0-9-]+`},
+	} {
+		t.Run(name+" の種別の並びは登録簿の種別から導かれる", func(t *testing.T) {
 			t.Parallel()
 
 			assert.Equal(t, c.want, c.got.String())

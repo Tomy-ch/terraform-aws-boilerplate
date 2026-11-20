@@ -114,6 +114,7 @@ func TestKinds(t *testing.T) {
 				assert.Equal(t, k.Lock == LockSkip, strings.Contains(out, " plan -lock=false"), e.Target)
 				switch k.Lock {
 				case LockSkip:
+					assert.NotContains(t, out, " apply ", e.Target)
 				case LockRelease:
 					assert.NotContains(t, out, "-lock=false", e.Target)
 					assert.Contains(t, out, " plan -input=false", e.Target)
@@ -327,6 +328,7 @@ func TestParse(t *testing.T) {
 		t.Parallel()
 
 		base := fixture([3]string{Plan, "t", "identity"})
+		both := fixture([3]string{Plan, "t", "identity"}, [3]string{Plan, "t", "workload"})
 		const call = "\t@$(call CI_PLAN,t,identity)\n"
 		const profile = "ci-plan-t-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,t,plan)\n"
 		const phony = ".PHONY: ci-plan-t-identity ## [CI] x\n"
@@ -381,6 +383,26 @@ func TestParse(t *testing.T) {
 				return replaced(t, base, deniedLine, "CI_DENIED_ROLES ?= plan apply apply-identity unlock-identity unlock\n")
 			}, ErrRole, "CI_DENIED_ROLES は"},
 			"ルール行を経ない呼び出しの行がある": {func(*testing.T) string { return base + "x:\n" + call }, ErrParse, "呼び出しの行 2 件 / 読めた入口 1 件"},
+			"本文が空": {func(*testing.T) string { return "" }, ErrParse, "入口が 1 件もありません"},
+			"ルール行のコロンの後に空白がある": {func(t *testing.T) string {
+				return replaced(t, both, "ci-plan-t-identity:\n", "ci-plan-t-identity: \n")
+			}, ErrParse, "ci-plan-t-identity は入口でも"},
+			"1行のルール行に入口が2つある": {func(t *testing.T) string {
+				return replaced(t, both, "ci-plan-t-identity:\n", "ci-plan-t-identity ci-plan-t-workload:\n")
+			}, ErrParse, "ci-plan-t-identity は入口でも"},
+			"行末が CRLF": {func(*testing.T) string { return strings.ReplaceAll(base, "\n", "\r\n") }, ErrParse, "入口が 1 件もありません"},
+			"入口の1つのルール行の行末が CRLF": {func(t *testing.T) string {
+				return replaced(t, both, "ci-plan-t-identity:\n", "ci-plan-t-identity:\r\n")
+			}, ErrParse, "ci-plan-t-identity は入口でも"},
+			"呼び出しの行に @ が無い": {func(t *testing.T) string {
+				return replaced(t, base, call, "\t$(call CI_PLAN,t,identity)\n")
+			}, ErrParse, "の次の行が"},
+			"呼び出しの引数のカンマの後に空白がある": {func(t *testing.T) string {
+				return replaced(t, base, call, "\t@$(call CI_PLAN, t,identity)\n")
+			}, ErrParse, "の次の行が"},
+			"種別の define が2つある": {func(t *testing.T) string {
+				return replaced(t, base, "define CI_PLAN\n", "define CI_PLAN\nendef\ndefine CI_PLAN\n")
+			}, ErrParse, "define CI_PLAN が 2 個です"},
 		} {
 			t.Run(name+"なら弾く", func(t *testing.T) {
 				t.Parallel()
@@ -429,6 +451,13 @@ func TestParseRepo(t *testing.T) {
 			t.Parallel()
 			_, err := ParseRepo(t.TempDir())
 			require.ErrorIs(t, err, fs.ErrNotExist)
+		})
+
+		t.Run("ci.mk が空なら弾く", func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseRepo(write(t, ""))
+			require.ErrorIs(t, err, ErrParse)
+			assert.Contains(t, err.Error(), "入口が 1 件もありません")
 		})
 
 		t.Run("登録簿に無い種別のエラーをそのまま返す", func(t *testing.T) {
@@ -503,6 +532,14 @@ func Test_newRegistry(t *testing.T) {
 			assert.Equal(t, registry{valid(), b}, r)
 		})
 
+		t.Run("Terraform と Lock の組み合わせは突き合わせない", func(t *testing.T) {
+			t.Parallel()
+			k := valid()
+			k.Terraform, k.Lock = false, LockSkip
+			_, err := newRegistry(k)
+			assert.NoError(t, err)
+		})
+
 		t.Run("種別をまたいで同じ role を持てる", func(t *testing.T) {
 			t.Parallel()
 			b := valid()
@@ -542,6 +579,17 @@ func Test_newRegistry(t *testing.T) {
 			t.Parallel()
 			_, err := newRegistry()
 			require.ErrorIs(t, err, errRegistry)
+		})
+
+		t.Run("種別をまたいで role の末尾が別の role と同じなら、渡す順を問わず弾く", func(t *testing.T) {
+			t.Parallel()
+			b := valid()
+			b.Name, b.IdentityRole, b.WorkloadRole = "b", "b-identity", "x-a"
+			for _, kinds := range [][]Kind{{valid(), b}, {b, valid()}} {
+				_, err := newRegistry(kinds...)
+				require.ErrorIs(t, err, errRegistry)
+				assert.Contains(t, err.Error(), "の末尾が role")
+			}
 		})
 
 		t.Run("名前が重複すれば弾く", func(t *testing.T) {
