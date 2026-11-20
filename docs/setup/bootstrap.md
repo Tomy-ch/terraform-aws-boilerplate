@@ -2,7 +2,7 @@
 
 ## 1. 設定の概要
 
-管理アカウントに、Terraform の state の置き場（`state-backend`）と、CI が AWS に入るための role（`deployment-identity`）を作る。これらは CI 自身では作れないので、最初の一度だけ人が作る。
+管理アカウントに、Terraform の state の置き場（`state-backend`）と、CI が AWS に入るための role（`deployment-identity`）を作る。これらは CI 自身では作れないので、最初の一度だけ人が作る。同じ apply で、管理アカウントの identity root が持つ統制の構成物（`organization-baseline` の組織・OU・SCP などと break-glass）も作る（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。その後の設定は [organization-baseline 手順書](organization-baseline.md) が持つ。
 
 | 実施者 | 担当 |
 | --- | --- |
@@ -21,7 +21,7 @@
 - CI はアクセスキーを持たず、GitHub の OIDC で AWS に入る
 - 残った lock は GitHub Actions の `Terraform Unlock` で外す
 - アカウントは Paid plan で、連絡先・Cost Explorer・Cost Anomaly Detection が設定済みである
-- root は MFA を2台以上持ち、アクセスキーを持たない。人の IAM user は無い
+- root は MFA を2台以上持ち、アクセスキーを持たない。IAM user は break-glass の2つだけである
 
 ## 3. やること
 
@@ -36,11 +36,12 @@
 | [段3](#段3-入力の値を用意する) | 自分のリポジトリの値を入れ、Pull Request を開く | 一時 IAM user | `sub` が immutable 形式、Pull Request の commit で `check-plan.sh` が一致 |
 | [段4](#段4-ローカルから-apply-する) | Pull Request の commit を手元から apply し、merge する | 一時 IAM user、管理者 | plan が `No changes.`、`verify.sh stage4` と `permissions` が `NG 0 件`、CI の plan が変更なし、記録が Pull Request に在る |
 | [段5](#段5-ci-の-apply-に移る) | 以後の変更を CI に apply させる | 管理者、CI | [段5 の成功条件](#段5-の成功条件)をすべて満たす |
-| [削除](#一時-iam-user-の削除) | 一時 IAM user を消す | root | Credential report で IAM user が0件、root はアクセスキー無しで MFA が有効 |
+| [削除](#一時-iam-user-の削除) | 一時 IAM user を消す | root | Credential report の IAM user が break-glass の2つだけ、root はアクセスキー無しで MFA が有効 |
 
 - 上から順に行う。前の作業の完了条件を満たすまで次へ進まない
 - 2-2 の結果は翌日以降に揃う。待つ間に段1 へ進んでよい
 - 一時 IAM user は段5 の成功まで削除しない
+- 段5 の後、[organization-baseline 手順書](organization-baseline.md) の 3.2 以降を行う
 
 ## 4. 手順
 
@@ -222,7 +223,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    rm -f tmp/plan/admin-identity.tfplan
    ```
 
-   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 41 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
+   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
 
    > **重要**: `check-plan.sh` を実際の plan で初めて使うときは、plan の出力（`terraform plan` が表示したもの）の取り込みと追加の一覧を、`check-plan.expected` とも目で照合する。両者の判定が食い違ったら、止まって Pull Request に記録する。
 
@@ -515,7 +516,7 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 4. IAM コンソール →「Credential report」を取得する
 5. root からサインアウトする
 
-Credential report で IAM user が0件、root の行でアクセスキーが無く MFA が有効で、`~/.aws/credentials` にこのアカウントのアクセスキーが無ければ完了。
+Credential report の IAM user が break-glass の2つ（`break-glass-1`・`break-glass-2`）だけで、root の行でアクセスキーが無く MFA が有効で、`~/.aws/credentials` にこのアカウントのアクセスキーが無ければ完了。
 
 ## トラブルシューティング
 
@@ -572,6 +573,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 - Terraform の宣言と段1 の Bucket のどちらが誤っているかを見る
 - 宣言を直すときも、**安全側の値を弱めて差分を消さない**（ADR-0501 決定14）
 - 段1 の誤りなら、Bucket を消して段1 からやり直す
+- 期待値が identity root の import と追加の address と一致することは、CI の `make check-plan-expected` が mock の plan で見ている。その commit でこの検査が通っているのに一致しなければ、原因は実 AWS の側（段1 の Bucket）か、mock と実 provider の違いである。止まって Pull Request に記録する
 
 ### 段4 の apply が失敗した
 
@@ -581,7 +583,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | `MalformedPolicyDocumentException` | commit を変えずに手順4 からやり直す |
 | `EntityAlreadyExists` | 手順3 に戻る |
 | その他のエラー | 原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も取り直す |
-| やり直しの手順6 で `before-apply` が Policy か lifecycle を返す | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
+| やり直しの手順6 で `before-apply` が NG を返す（Bucket Policy・lifecycle・state の鍵の alias・組織・break-glass の user・group・role など） | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
 
 やり直しの手順4 では、前の apply が作ったものが state に入っているので、`check-plan.sh` は不足を示す。手順4 のブロックの `check-plan.sh` を `check-plan.sh --partial` に替えて実行する。apply 済みのものは `済み` として示され、最後の行が `余剰 0 件` なら次へ進んでよい。余剰があれば止まる。
 
@@ -627,7 +629,8 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 ## この文書の保守
 
-- identity root に resource を足す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する
+- identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
+- identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`docs/setup/scripts/verify.sh` の `before-apply` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
 - apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
 - state の鍵の Key Policy の `users` を変える変更は、`docs/setup/scripts/verify.sh` の `JQ_KEY_POLICY` と、その文の数を同じ変更で更新する
 - 出力の2つの Bucket の Bucket Policy を変える変更は、`docs/setup/scripts/verify.sh` の `output-policy` の期待を同じ変更で更新する
