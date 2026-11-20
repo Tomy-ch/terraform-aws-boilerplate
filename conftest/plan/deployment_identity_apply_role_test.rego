@@ -1069,3 +1069,21 @@ test_pass_attachment_on_other_role if {
 	other := res("aws_iam_role_policy_attachment", "module.workload.aws_iam_role_policy_attachment.other", {"role": "other", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"})
 	count([m | some m in messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment(workload_policy_arn), other]), with_workload_decl); startswith(m, "[PLAN-APPLY-05]")]) == 0
 }
+
+# 合成の宣言は2つの Action しか持たない。実際の宣言の Action（CloudFormation を含む）でも、Deny の過不足を見分けることを固定する。
+declared_governance_actions := data.policy_plan.deployment_identity.apply_role.governance.actions
+
+declared_decl := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance/actions", "value": declared_governance_actions}])
+
+declared_messages(actions) := messages_for(world(replace(valid_statements, governance_index, {"Effect": "Deny", "Action": actions, "Resource": "*"})), declared_decl)
+
+test_pass_declared_governance_actions if {
+	count([a | some a in declared_governance_actions; startswith(a, "cloudformation:")]) > 0
+	count(declared_messages(declared_governance_actions)) == 0
+}
+
+test_violation_declared_cloudformation_action_missing if {
+	msgs := declared_messages([a | some a in declared_governance_actions; a != "cloudformation:UpdateStackInstances"])
+	some m in msgs
+	startswith(m, denied_06("cloudformation:UpdateStackInstances"))
+}
