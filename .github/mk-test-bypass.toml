@@ -7,7 +7,6 @@
 #
 # 期限切れ・上限（今日から 3 ヶ月）超過・定義されていないターゲット・テストの名前に当たらない
 # ターゲットのエントリは、検査を落とす（ADR-0702 決定18）。移したらエントリを消す。
-"check-plan-expected-test" = { expires = 2027-01-31, issue = 432, reason = "#432 PR-A が check-plan-test.mk を消し、Go のテストへ移す" }
 "secret-gates-test" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
 "gitleaks-canary" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }
 "trufflehog-canary" = { expires = 2027-01-31, issue = 439, reason = "M1: 秘密の走査の判定と canary を Go へ移す" }

@@ -75,6 +75,7 @@ jobs:
               - 'scripts/tool-cooldown/**'
               - 'scripts/infra-code-gate/**'
               - 'scripts/tf-local/**'
+              - 'scripts/bootstrap-check/**'
               - 'scripts/hcl-input/**'
               - 'scripts/provider-schema/**'
               - 'scripts/tf-validate-result/**'
@@ -435,7 +436,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the Terraform gates' own tests
-        run: make -k tf-gates-test check-plan-expected-test RUNNER_MODE=host
+        run: make -k tf-gates-test RUNNER_MODE=host
 
   # path で絞らない: README.md の「インフラ内コードの検出への依存」.
   infra-code-gate:
