@@ -199,9 +199,7 @@ func check(in input, today time.Time) (result, error) {
 			return res, err
 		}
 		for _, name := range names {
-			if _, ok := defined[name]; !ok {
-				defined[name] = target{file: path, line: mk.line(name), recipe: mk.recipes[name]}
-			}
+			keep(defined, name, target{file: path, line: mk.line(name), recipe: mk.recipes[name]})
 		}
 	}
 	// Makefile 自身の規則も同じ突き合わせに掛ける。include 行は上で読んだので外す。
@@ -216,13 +214,21 @@ func check(in input, today time.Time) (result, error) {
 	if err != nil {
 		return res, xerrors.Wrapf(err, "%s", in.makefilePath)
 	}
-	topNames, err := reconcile(in.makefilePath, topMk, db[filepath.Base(in.makefilePath)])
+	topNames, err := reconcile(in.makefilePath, topMk, db[in.makefilePath])
 	if err != nil {
 		return res, err
 	}
 	for _, name := range topNames {
-		if _, ok := defined[name]; !ok {
-			defined[name] = target{file: in.makefilePath, line: topMk.line(name), recipe: topMk.recipes[name]}
+		keep(defined, name, target{file: in.makefilePath, line: topMk.line(name), recipe: topMk.recipes[name]})
+	}
+	// make が読んだ規則のうち、Makefile と include した `.mk` のどれにも帰さないものは数えられない。
+	known := map[string]struct{}{in.makefilePath: {}}
+	for _, p := range includes {
+		known[p] = struct{}{}
+	}
+	for _, file := range keys(db) {
+		if _, ok := known[file]; !ok {
+			return res, xerrors.Wrapf(errMismatch, "make が %s から規則を読みましたが、Makefile にも include にもありません", file)
 		}
 	}
 	if len(defined) == 0 {
@@ -267,6 +273,14 @@ func check(in input, today time.Time) (result, error) {
 		}
 	}
 	return res, nil
+}
+
+// keep は name の定義を記録する。レシピを持つ定義を優先し、複数あれば後のものを採る
+// （make は後に読んだレシピで上書きする）。
+func keep(defined map[string]target, name string, t target) {
+	if _, ok := defined[name]; !ok || t.recipe != "" {
+		defined[name] = t
+	}
 }
 
 type target struct {

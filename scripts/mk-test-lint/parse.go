@@ -168,7 +168,11 @@ func parseMk(raw []byte) (mkFile, error) {
 			i++
 			continued = strings.HasSuffix(lines[i], "\\")
 		}
-		hasRecipe := recipe != "" || (i+1 < len(lines) && strings.HasPrefix(lines[i+1], "\t"))
+		next := i + 1
+		for next < len(lines) && (strings.TrimSpace(lines[next]) == "" || strings.HasPrefix(lines[next], "#")) {
+			next++ // make は規則とレシピの間の空行とコメントを読み飛ばす
+		}
+		hasRecipe := recipe != "" || (next < len(lines) && strings.HasPrefix(lines[next], "\t"))
 		for _, name := range names {
 			if strings.HasPrefix(name, ".") {
 				continue // .PHONY などの特別なターゲット
