@@ -110,6 +110,7 @@ bootstrap := {
 		"aws_iam_role": {"class": "target"},
 		"aws_iam_role_policies_exclusive": cov("aws_iam_role", "role_name", "name"),
 		"aws_iam_role_policy": cov("aws_iam_role", "role", "name"),
+		"aws_iam_role_policy_attachment": cov("aws_iam_role", "role", "name"),
 		"aws_iam_role_policy_attachments_exclusive": cov("aws_iam_role", "role_name", "name"),
 		"aws_kms_alias": cov("aws_kms_key", "target_key_id", "key_id"),
 		"aws_kms_key": {"class": "key"},
@@ -464,7 +465,6 @@ test_violation_ci_role_pattern_misses_role if {
 	fixture.has(denied_03(role_arn("ci-apply")), messages(s))
 }
 
-# 完全一致だけを数える ARN（identity root の key と lock file）は、pattern の Deny を数えない。
 test_violation_resource_pattern_strict_target if {
 	msgs := messages(replace(valid_statements, 2, full_deny([sprintf("%s/identity/*", [st])])))
 	fixture.has(denied_03_strict(identity_keys[0]), msgs)
@@ -476,7 +476,6 @@ test_violation_resource_pattern_strict_lock_file if {
 	fixture.has(denied_03_strict(identity_keys[1]), msgs)
 }
 
-# 子の ARN が literal の * を持つとき（object のすべて）、pattern はその文字列に当たっても子のすべては覆わない。
 test_violation_resource_pattern_on_literal_wildcard_target if {
 	every r in ["arn:aws:s3:::po/?", "arn:aws:s3:::po/x*"] {
 		msgs := messages(replace(valid_statements, 5, full_deny([po, r])))
@@ -524,13 +523,11 @@ test_violation_key_deny_pattern if {
 	contains(m, sprintf("が鍵の ARN %v への Deny で拒んでいません", [key]))
 }
 
-# 書き込み先の子は NotAction の Resource を完全一致でだけ数える。
 test_violation_writes_target_pattern if {
 	s := replace(valid_statements, 8, {"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": "arn:aws:s3:::a*/*"})
 	fixture.has(denied_03_writes(ao_objects), messages(s))
 }
 
-# すべての ARN（か partition・service のすべて）に当たる pattern は、"*" と同じく数えない。
 test_violation_resource_universal_pattern if {
 	every r in ["**", "?*", "arn:*", "arn:aws:*", "arn:aws:s3:*"] {
 		msgs := messages(replace(valid_statements, 5, full_deny([r, sprintf("%s/*", [po])])))
@@ -671,6 +668,16 @@ workload_world(arns) := array.concat(
 
 test_pass_declared_workload_policy_attached if {
 	count(messages_for(workload_world([workload_policy_arn]), with_workload_decl)) == 0
+}
+
+workload_attachment(arn) := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload", [g]), {"role": "ci-apply", "policy_arn": arn})
+
+test_pass_declared_workload_policy_attachment if {
+	count(messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment(workload_policy_arn)]), with_workload_decl)) == 0
+}
+
+test_violation_attachment_of_undeclared_policy if {
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment("arn:aws:iam::aws:policy/ReadOnlyAccess")]), with_workload_decl))
 }
 
 test_violation_workload_policy_not_attached if {
@@ -1041,4 +1048,24 @@ test_violation_governance_declaration_actions_not_array if {
 		some m in messages_for(world(valid_statements), with_governance(g))
 		startswith(m, malformed_governance)
 	}
+}
+
+# workload の policy の ARN が plan で決まらないと、比べる先が [null] になる。値の無い attachment を一致と数えない。
+test_violation_attachment_policy_arn_absent_while_workload_arn_unknown if {
+	world := [r | some r in workload_world([workload_policy_arn]); r.address != workload_policy_address]
+	unknown_policy := {"address": workload_policy_address, "type": "aws_iam_policy", "change": {"actions": ["create"], "after": {"name": "ci-apply-workload", "policy": json.marshal({"Statement": []})}, "after_unknown": {"arn": true}}}
+	absent := res("aws_iam_role_policy_attachment", sprintf("%saws_iam_role_policy_attachment.workload", [g]), {"role": "ci-apply"})
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), messages_for(array.concat(world, [unknown_policy, absent]), with_workload_decl))
+}
+
+test_violation_attachment_policy_arn_unknown if {
+	unknown := {"address": sprintf("%saws_iam_role_policy_attachment.workload", [g]), "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {"role": "ci-apply"}, "after_unknown": {"policy_arn": true}}}
+	msgs := messages_for(array.concat(workload_world([workload_policy_arn]), [unknown]), with_workload_decl)
+	fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload の policy_arn を plan で読めません", [g]), msgs)
+	not fixture.has(sprintf("[PLAN-APPLY-05] p.json: %saws_iam_role_policy_attachment.workload が apply の role に付ける policy が", [g]), msgs)
+}
+
+test_pass_attachment_on_other_role if {
+	other := res("aws_iam_role_policy_attachment", "module.workload.aws_iam_role_policy_attachment.other", {"role": "other", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"})
+	count([m | some m in messages_for(array.concat(workload_world([workload_policy_arn]), [workload_attachment(workload_policy_arn), other]), with_workload_decl); startswith(m, "[PLAN-APPLY-05]")]) == 0
 }

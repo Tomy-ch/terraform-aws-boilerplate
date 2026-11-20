@@ -619,10 +619,34 @@ deny contains msg if {
 
 deny contains msg if {
 	some a in attached
-	a.type in {"aws_iam_role_policy", "aws_iam_role_policy_attachment"}
+	a.type == "aws_iam_role_policy"
 	on_apply_role(a)
 	a.address != target
 	msg := sprintf("[PLAN-APPLY-05] %s: %s が apply の role に policy を付けています。apply の role の policy は %s だけに置いてください", [a.path, a.address, target])
+}
+
+deny contains msg if {
+	some a in attached
+	a.type == "aws_iam_role_policy_attachment"
+	on_apply_role(a)
+	object.get(a.unknown, "policy_arn", false) != true
+	not declared_attachment(a)
+	msg := sprintf("[PLAN-APPLY-05] %s: %s が apply の role に付ける policy が %v のどれでもありません", [a.path, a.address, expected_managed])
+}
+
+# workload の policy の ARN が plan で決まらないとき、expected_managed は [null] になる。null を一致と数えない。
+declared_attachment(a) if {
+	p := object.get(a.after, "policy_arn", null)
+	is_string(p)
+	p in expected_managed
+}
+
+deny contains msg if {
+	some a in attached
+	a.type == "aws_iam_role_policy_attachment"
+	on_apply_role(a)
+	object.get(a.unknown, "policy_arn", false) == true
+	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arn を plan で読めません", [a.path, a.address])
 }
 
 deny contains msg if {
