@@ -54,6 +54,7 @@ include .makefiles/terraform/layer-test.mk
 include .makefiles/terraform/root.mk
 include .makefiles/terraform/root-test.mk
 include .makefiles/terraform/policy.mk
+include .makefiles/terraform/partitions-drift.mk
 include .makefiles/terraform/operation/local.mk
 include .makefiles/terraform/operation/ci.mk
 # Docker関連

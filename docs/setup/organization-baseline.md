@@ -78,9 +78,19 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 1. `break-glass-1` と `break-glass-2` のそれぞれに、コンソールのパスワードを設定する（アクセスキーは作らない。group の policy が拒む）
 2. それぞれにハードウェア MFA を登録する
 3. パスワードと MFA の装置を、別々の安全な場所に保管する
-4. 3.5 の試験を1回行う
+4. 3.6 の試験を1回行う
 
-### 3.5 break-glass を試す（毎月）
+### 3.5 StackSets の信頼アクセスを有効にする
+
+メンバーアカウントへ break-glass の role を配る変更（CloudFormation の StackSet を作る変更）の merge より前に行う。`deployment-identity` に StackSets の権限を足す変更が昇格した後でよい。StackSet は、組織への信頼アクセスが無いと作れない。
+
+1. 管理アカウントのコンソールで、`ap-northeast-1` の CloudFormation を開き、「StackSets」を選ぶ
+2. 「AWS Organizations との信頼されたアクセスを有効にする」を選ぶ（API の `ActivateOrganizationsAccess`）
+3. IAM の role の一覧に `AWSServiceRoleForCloudFormationStackSetsOrgAdmin` が在ることを確かめ、結果を Pull Request に書く
+
+AWS CLI を使える管理アカウントの資格情報が在るなら、`aws cloudformation activate-organizations-access` と `aws cloudformation describe-organizations-access`（`Status` が `ENABLED`）でもよい。
+
+### 3.6 break-glass を試す（毎月）
 
 45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。
 
@@ -89,7 +99,7 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 3. サインインと role の引き受けの通知が届くことを確かめる
 4. 試した日と結果を記録する
 
-### 3.6 policy を広げる前に PolicyStaging で試す
+### 3.7 policy を広げる前に PolicyStaging で試す
 
 PolicyStaging に付けた policy の付け先を広げる変更の前に行う。
 

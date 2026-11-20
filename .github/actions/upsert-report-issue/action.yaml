@@ -1,0 +1,90 @@
+name: Upsert report issue
+description: 週次の報告を、title を同一性の鍵にした1件の issue へ書く（作成・更新・クローズ）
+
+inputs:
+  github-token:
+    required: true
+    description: issue を読み書きする token（job に issues の write が要る）
+  title:
+    required: true
+    description: issue の title。開いている issue のうち title が一致するものを同じ報告とみなす
+  marker:
+    required: true
+    description: 本文の先頭に置く HTML コメントのマーカー
+  state:
+    required: true
+    description: >-
+      `open` は issue を作るか本文を更新する。`close` は開いている issue に close-comment を書いて閉じる。
+      `keep` は何もしない（何も確かめられなかった回が、前の報告を閉じないため）。ほかの値は失敗にする
+  body-file:
+    required: false
+    default: ""
+    description: '`open` のときの本文のファイル。`open` で無ければ失敗にする'
+  close-comment:
+    required: false
+    default: 報告するものが無くなったので閉じます。
+    description: '`close` のときに閉じる前に書くコメント。末尾に実行の URL を足す'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      env:
+        TITLE: ${{ inputs.title }}
+        MARKER: ${{ inputs.marker }}
+        STATE: ${{ inputs.state }}
+        BODY_FILE: ${{ inputs.body-file }}
+        CLOSE_COMMENT: ${{ inputs.close-comment }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          const title = process.env.TITLE;
+          const state = process.env.STATE;
+          const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+          if (!['open', 'close', 'keep'].includes(state)) {
+            core.setFailed(`state は open・close・keep のどれかです（${JSON.stringify(state)} が渡されました）`);
+            return;
+          }
+          if (state === 'keep') {
+            return;
+          }
+
+          const issues = await github.paginate(github.rest.issues.listForRepo, {
+            owner, repo, state: 'open', per_page: 100,
+          });
+          const existing = issues.find(issue => issue.title === title && !issue.pull_request);
+
+          if (state === 'close') {
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `${process.env.CLOSE_COMMENT} [実行](${runUrl})`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: existing.number, state: 'closed',
+              });
+            }
+            return;
+          }
+
+          const bodyFile = process.env.BODY_FILE;
+          if (!bodyFile || !fs.existsSync(bodyFile)) {
+            core.setFailed(`state が open なのに本文のファイルがありません（${JSON.stringify(bodyFile)}）`);
+            return;
+          }
+          const body = [
+            process.env.MARKER,
+            fs.readFileSync(bodyFile, 'utf8'),
+            `実行: [${context.workflow}](${runUrl})`,
+          ].join('\n');
+
+          if (existing) {
+            await github.rest.issues.update({ owner, repo, issue_number: existing.number, body });
+          } else {
+            await github.rest.issues.create({ owner, repo, title, body });
+          }
