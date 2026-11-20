@@ -117,8 +117,9 @@ var (
 	profileRe   = regexp.MustCompile(`^(ci-[a-z0-9-]+): TF_LOCAL_PROFILE := \$\(call CI_PROFILE,(` + envWord + `),([a-z-]+)\)$`)
 	defineRe    = regexp.MustCompile(`^define CI_([A-Z_]+)$`)
 	deniedRe    = regexp.MustCompile(`^CI_DENIED_ROLES \?=(.*)$`)
-	// deniedNameRe は CI_DENIED_ROLES を代入する行。名前の続く CI_DENIED_ROLES_X などは別の変数である。
-	deniedNameRe = regexp.MustCompile(`^CI_DENIED_ROLES(?:[^A-Za-z0-9_]|$)`)
+	// deniedNameRe は CI_DENIED_ROLES を定める行。行頭の空白、override・export・private、target ごとの変数、
+	// 代入の記号の違い、define も含む。名前の続く CI_DENIED_ROLES_X などは別の変数である。
+	deniedNameRe = regexp.MustCompile(`^\s*(?:(?:override|export|private)\s+)*(?:[^\s#:=][^#:=]*:\s*(?:(?:override|export|private)\s+)*)?CI_DENIED_ROLES\s*(?:\?=|:::=|::=|:=|\+=|!=|=)|^\s*define\s+CI_DENIED_ROLES(?:\s|$)`)
 )
 
 // callPrefix は入口の呼び出しの行の字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。

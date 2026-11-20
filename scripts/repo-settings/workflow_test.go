@@ -370,20 +370,25 @@ func Test_splitEnvKinds(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, keep := range map[string]func(cientry.Kind) bool{
-			"apply と environment を共有する種別が無い": func(k cientry.Kind) bool { return k.Name != cientry.Hold },
-			"そのほかの種別が無い":                     func(k cientry.Kind) bool { return k.Name == cientry.Hold },
+		for name, c := range map[string]struct {
+			keep func(cientry.Kind) bool
+			want string
+		}{
+			"apply と environment を共有する種別が無い": {func(k cientry.Kind) bool { return k.Name != cientry.Hold }, "role を共有する種別がありません"},
+			"そのほかの種別が無い":                     {func(k cientry.Kind) bool { return k.Name == cientry.Hold }, "role を共有しない種別がありません"},
+			"種別が1つも無い":                       {func(cientry.Kind) bool { return false }, "role を共有する種別がありません"},
 		} {
 			t.Run(name+"なら失敗する", func(t *testing.T) {
 				t.Parallel()
 				var kinds []cientry.Kind
 				for _, k := range cientry.Kinds() {
-					if keep(k) {
+					if c.keep(k) {
 						kinds = append(kinds, k)
 					}
 				}
 				_, _, err := splitEnvKinds(kinds)
 				require.ErrorIs(t, err, errKindSplit)
+				assert.Contains(t, err.Error(), c.want)
 			})
 		}
 	})

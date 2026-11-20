@@ -701,6 +701,14 @@ func Test_checkTargets(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run(".PHONY に無い ci- のルール行は、ルール行として弾く", func(t *testing.T) {
+			t.Parallel()
+			err := checkTargets([]string{phony, profile, "ci-plan-t-identity:", "ci-zzz-t-identity:"}, entries())
+			require.ErrorIs(t, err, ErrParse)
+			assert.Contains(t, err.Error(), "4 行目: ci-zzz-t-identity は入口でも")
+			assert.NotContains(t, err.Error(), ".PHONY の")
+		})
+
 		t.Run(".PHONY が2行なら弾く", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, checkTargets([]string{phony, phony, profile}, entries()), ErrParse)
@@ -747,12 +755,19 @@ func Test_checkDefines(t *testing.T) {
 func Test_checkDenied(t *testing.T) {
 	t.Parallel()
 
+	const good = "CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock"
+
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("順序と重複を問わず、集合で一致すれば成功する", func(t *testing.T) {
 			t.Parallel()
 			assert.NoError(t, checkDenied([]string{"CI_DENIED_ROLES ?= unlock unlock-identity apply-identity apply apply"}))
+		})
+
+		t.Run("値を読むだけの行と、名前の続く別の変数は代入と数えない", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, checkDenied([]string{good, "\t@$(call CI_ASSUME_DENIED,$(CI_ENV),$(CI_DENIED_ROLES))", ".PHONY: ci-assume-denied ## CI_DENIED_ROLES の role", "CI_DENIED_ROLES_X := x"}))
 		})
 	})
 
@@ -763,9 +778,16 @@ func Test_checkDenied(t *testing.T) {
 			lines []string
 			err   error
 		}{
-			"行が無い":        {[]string{"CI_ROLE ?= plan"}, ErrParse},
-			"空の一覧":        {[]string{"CI_DENIED_ROLES ?="}, ErrRole},
-			"登録簿に無い role": {[]string{"CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock revert"}, ErrRole},
+			"行が無い":         {[]string{"CI_ROLE ?= plan"}, ErrParse},
+			"行頭に空白のある代入":   {[]string{good, " CI_DENIED_ROLES := plan"}, ErrParse},
+			"override の代入": {[]string{good, "override CI_DENIED_ROLES := plan"}, ErrParse},
+			"export の代入":   {[]string{good, "export CI_DENIED_ROLES := plan"}, ErrParse},
+			"target ごとの代入": {[]string{good, "ci-x: CI_DENIED_ROLES := plan"}, ErrParse},
+			"記号の前に空白の無い代入": {[]string{good, "CI_DENIED_ROLES?= plan"}, ErrParse},
+			"+= の代入":       {[]string{good, "CI_DENIED_ROLES += plan"}, ErrParse},
+			"define":       {[]string{good, "define CI_DENIED_ROLES"}, ErrParse},
+			"空の一覧":         {[]string{"CI_DENIED_ROLES ?="}, ErrRole},
+			"登録簿に無い role":  {[]string{"CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock revert"}, ErrRole},
 		} {
 			t.Run(name+"なら弾く", func(t *testing.T) {
 				t.Parallel()

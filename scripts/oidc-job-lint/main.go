@@ -186,9 +186,10 @@ var (
 var stepEnvKeys = []string{"GH_TOKEN", "REPO", "REF", "SHA", "ACCOUNT_ID", "HEAD_REPO_ID", "REPO_ID", "ACTOR", "CI_ACCOUNT_ID", "CI_PR"}
 
 var (
-	errNoTarget   = xerrors.New("OIDC で role を assume する job が1つもありません")
-	errViolations = xerrors.New("違反があります")
-	errEnvDecl    = xerrors.New("environments.json を読めません")
+	errNoTarget    = xerrors.New("OIDC で role を assume する job が1つもありません")
+	errKindMissing = xerrors.New("規則で名指す種別が lib/cientry の登録簿にありません")
+	errViolations  = xerrors.New("違反があります")
+	errEnvDecl     = xerrors.New("environments.json を読めません")
 )
 
 func main() {
@@ -782,16 +783,27 @@ func entryCredential(kind, envRoot string) (env, role string, ok bool) {
 
 // kindOf は、この検査が規則で名指す種別。どれかが登録簿に無ければ、零値の種別で検査を組まないよう起動時に panic する。
 var kindOf = func() map[string]cientry.Kind {
-	m := map[string]cientry.Kind{}
-	for _, name := range []string{cientry.Plan, cientry.Apply, cientry.Unlock, cientry.Hold} {
-		k, ok := cientry.Lookup(name)
-		if !ok {
-			panic(fmt.Sprintf("oidc-job-lint: 規則で名指す種別 %s が lib/cientry の登録簿にありません", name))
-		}
-		m[name] = k
+	m, err := namedKinds(cientry.Lookup)
+	if err != nil {
+		// 終了コード 2 は「対象が無い」に当てているので、panic ではなく 1 で終える。
+		fmt.Fprintln(os.Stderr, "❌ oidc-job-lint:", err)
+		os.Exit(1)
 	}
 	return m
 }()
+
+// namedKinds は、規則が名指す種別を lookup で引きます。登録簿に無い種別があればエラーにする。
+func namedKinds(lookup func(string) (cientry.Kind, bool)) (map[string]cientry.Kind, error) {
+	m := map[string]cientry.Kind{}
+	for _, name := range []string{cientry.Plan, cientry.Apply, cientry.Unlock, cientry.Hold} {
+		k, ok := lookup(name)
+		if !ok {
+			return nil, xerrors.Wrapf(errKindMissing, "%s", name)
+		}
+		m[name] = k
+	}
+	return m, nil
+}
 
 // entryRuns は、種別ごとの入口の run: の形。捕捉するのは入口の <env>-<root>。
 var entryRuns = func() map[string]*regexp.Regexp {

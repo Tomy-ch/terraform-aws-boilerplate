@@ -4002,6 +4002,30 @@ func Test_entryCredential(t *testing.T) {
 
 }
 
+func Test_namedKinds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("規則が名指す種別を登録簿から引く", func(t *testing.T) {
+		t.Parallel()
+		got, err := namedKinds(cientry.Lookup)
+		require.NoError(t, err)
+		assert.Len(t, got, 4)
+		assert.Equal(t, cientry.Hold, got[cientry.Hold].Name)
+	})
+
+	t.Run("登録簿に無い種別があれば失敗する", func(t *testing.T) {
+		t.Parallel()
+		_, err := namedKinds(func(name string) (cientry.Kind, bool) {
+			if name == cientry.Hold {
+				return cientry.Kind{}, false
+			}
+			return cientry.Lookup(name)
+		})
+		require.ErrorIs(t, err, errKindMissing)
+		assert.Contains(t, err.Error(), cientry.Hold)
+	})
+}
+
 func Test_entryRuns(t *testing.T) {
 	t.Parallel()
 
