@@ -38,18 +38,18 @@ test_RT202_allow_expected_keys if {
 	count(with_id(denies(ok_tree), "RT202")) == 0
 }
 
-test_RT202_deny_wrong_key if {
-	some m in with_id(denies(fx("RT202_deny_wrong_key")), "RT202")
+test_RT202_deny_wrong_state_path if {
+	some m in with_id(denies(fx("RT202_deny_wrong_state_path")), "RT202")
 	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate")
 }
 
-test_RT202_deny_key_null if {
-	some m in with_id(denies(fx("RT202_deny_key_null")), "RT202")
+test_RT202_deny_state_path_null if {
+	some m in with_id(denies(fx("RT202_deny_state_path_null")), "RT202")
 	contains(m, "env/mem/identity/backend.tf")
 }
 
-test_RT202_deny_key_expression if {
-	some m in with_id(denies(fx("RT202_deny_key_expression")), "RT202")
+test_RT202_deny_state_path_expression if {
+	some m in with_id(denies(fx("RT202_deny_state_path_expression")), "RT202")
 	contains(m, "env/mem/backend.tf")
 }
 
@@ -145,18 +145,18 @@ test_RT201_allow_terraform_block_without_backend if {
 	count(with_id(denies(fx("RT201_allow_terraform_block_without_backend")), "RT201")) == 0
 }
 
-test_RT202_deny_key_omitted if {
-	some m in with_id(denies(fx("RT202_deny_key_omitted")), "RT202")
+test_RT202_deny_state_path_omitted if {
+	some m in with_id(denies(fx("RT202_deny_state_path_omitted")), "RT202")
 	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate")
 }
 
-test_RT202_deny_workload_key_in_identity_root if {
-	some m in with_id(denies(fx("RT202_deny_workload_key_in_identity_root")), "RT202")
+test_RT202_deny_workload_state_path_in_identity_root if {
+	some m in with_id(denies(fx("RT202_deny_workload_state_path_in_identity_root")), "RT202")
 	contains(m, "env/mem/identity/backend.tf の key が identity/terraform.tfstate")
 }
 
-test_RT202_deny_key_number if {
-	some m in with_id(denies(fx("RT202_deny_key_number")), "RT202")
+test_RT202_deny_state_path_number if {
+	some m in with_id(denies(fx("RT202_deny_state_path_number")), "RT202")
 	contains(m, "env/mem/backend.tf の key が workload/terraform.tfstate のリテラルではありません")
 }
 
