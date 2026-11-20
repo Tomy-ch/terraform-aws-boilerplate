@@ -15,6 +15,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
+| 上流の報告 | 週次と手動 | 宣言より新しい版や、手で写した一覧と上流とのずれを issue へ書く。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
 | lock の解除 | 人が手動で起動する | apply の job の timeout を超えて残った state の lock を外す |
 | lock を残す | 人が手動で起動する | lock の解除を障害の前に試すために、apply と同じ role で state の lock を取り、外さずに残す |
@@ -478,7 +479,7 @@ truthy 側へ置く。
 | job | 分 | 式から外れる理由 |
 | --- | --- | --- |
 | `go-test.yaml:go-test` | 20 | 実測 約5分 |
-| `notify.yaml:notify`、`tool-outdated-report.yaml:report` | 15 | 実測できる完了 run が無い |
+| `notify.yaml:notify`、`tool-outdated-report.yaml:report`、`partitions-drift-report.yaml:report` | 15 | 実測できる完了 run が無い |
 | `md-lint.yaml:adr-lint`、`md-lint.yaml:skill-lint`、`go-test.yaml:test-mapping` | 15 | 同上（新設） |
 | `go-lint.yaml:go-lint`、`go-lint.yaml:go-fmt-check` | 15 | 同上（新設） |
 | `terraform-gates.yaml` の `changes` と plan の2 job を除く6 job、`terraform-apply.yaml:apply-infra-code-gate`、`terraform-apply.yaml:apply-resource-order-check`、`terraform-apply.yaml:apply-layer-check`、`terraform-apply.yaml:apply-root-check` | 15 | 同上（新設） |
@@ -501,7 +502,7 @@ truthy 側へ置く。
 
 ## 通知の起動条件
 
-通知は受け手ごとに4つの系統に分かれる。deploy の3つは、環境の役割（`docs/v1.0-plan/scope.md` 第10節）で分ける。
+通知は受け手ごとに5つの系統に分かれる。deploy の3つは、環境の役割（`docs/v1.0-plan/scope.md` 第10節）で分ける。
 
 | 系統 | 送るもの |
 | --- | --- |
@@ -509,6 +510,7 @@ truthy 側へ置く。
 | critical の deploy | 管理アカウント（admin）と本番（prd）の apply の成功と失敗 |
 | promotion の deploy | 本番へ上がる途中の段（dev・stg）の apply の成功と失敗 |
 | validation の deploy | 検証の器（sandbox）の apply の成功と失敗 |
+| 保守 | 上流の報告（`partitions-drift-report.yaml`）の失敗 |
 
 critical は、壊れると他の環境へ響く環境である。本番は利用者へ、管理アカウントは state backend と CI の
 role を通じてすべての環境へ響く。env を足すときは、その役割に合う系統へ割り当てる。
@@ -549,6 +551,9 @@ webhook の secret が未設定なら配信を省いて run を緑のままに�
 | `govulncheck.yaml` | 運用機構（`scripts/`）の Go のコードの呼び出し経路が届く既知脆弱性 | schedule |
 
 `tool-outdated-report.yaml` は `notify.yaml` を呼ばず、宣言より新しい版が上流に在ることを issue へ書く。
+`partitions-drift-report.yaml` は、写しと上流のずれと、上流と比べられなかったことを issue へ書き、比べられなかった回は
+job も落とす。issue へ書く前の段（setup・egress・checkout）で落ちた回は issue に現れないので、スケジュールの失敗を
+保守の系統へ通知する。
 
 `terraform-apply.yaml` は push で起動するが、スケジュールと同じ理由で failure モードを持つ —— merge の後の
 失敗は誰にも見えず、merge したのに apply されない状態を黙って作る。検出・順序の検査・層の検査の job が落ちると
@@ -679,6 +684,7 @@ label を手で書き換えない —— check が拒む。
 | `setup-mise` | digest を検証してから pin された mise を導入し、呼び出し側が名指しした道具を入れる |
 | `upsert-pr-comment` | マーカーによる PR コメントの upsert（既存を検出 → 更新 / 作成）。`status: success` は既存を更新するが新規は作らない |
 | `notify-detail` | 走査の Markdown 要約を所見の行だけへ削る。検出通知が、PR コメント向けの散文を運ばずに所見を名指しできる |
+| `upsert-report-issue` | 週次の報告を、title を同一性の鍵にした1件の issue へ書く。呼び出し側が `open`（作成・更新）・`close`・`keep`（何もしない）を選ぶ |
 
 ### mise の導入
 

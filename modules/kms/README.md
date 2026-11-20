@@ -74,7 +74,7 @@ Key Policy の文書が 32768 文字（KMS の `PutKeyPolicy`）を超えると�
 | --- | --- |
 | `via = "logs"` | それを要る消費者 |
 | 他のアカウントへの許可と `aws_kms_grant` | data-refresh（#59）。方式（Key Policy か grant か）は未決 |
-| us-east-1 など別の region の鍵 | その region の鍵を要る消費者。この module は呼ばれた provider の region に1本作る |
+| us-east-1 など別の region の鍵 | その region の鍵を要る消費者が `internal/` に持つ。この module は呼ばれた provider の region に1本作り、`region` の入力を持たない（`make egress-check` は block の `region` が literal であることを求める）。Route 53 のクエリログと DNSSEC の鍵は `dns-zone` が持つ |
 
 ## 保証しないもの
 
