@@ -92,6 +92,10 @@
 
 18. ユースケース内の配線（Security Group のルール、IAM Policy、DNS レコード、resource-level policy 等）は、独立した resource として置かない。受け側の module の意味論的な入力として表す。attachment 型の resource（bucket policy、queue policy、Security Group のルール、role policy 等）は、親の resource と同じ module に置く。
 
+    attachment 型の resource が書く設定を、親の resource の引数で書かない。その引数は値を問わず書かない（空の list も、その設定を空にすることを書く）。親の設定の文書全体を置き換える attachment 型の resource は、1つの親に1つだけ置く。同じ設定を2つの resource が書くと、apply のたびに互いを上書きするか恒久的な差分が残り、検査が読む resource と実際に効く設定が食い違うためである。ただし、親の設定の集合全体を親の引数で排他に持つと宣言した引数は、親の引数で書いてよい。その場合、同じ設定を書く attachment 型の resource をその親に置かない。
+
+    どの引数が attachment 型の resource と同じ設定を書くかと、どの attachment 型が文書全体を置き換えるかは、宣言で決める。attachment 型の親として宣言した型については、Provider の schema が非推奨とする書ける引数（属性と block）を、attachment 型と同じ設定を書くかどうかにかかわらず、すべて宣言で分類する。網羅を機械で確かめるためである。非推奨でない引数は、resource の NOTE が attachment 型との併用で互いに上書きすると告げるものを宣言に載せる。attachment 型の親として宣言していない型の引数は、この規則の対象にしない。
+
 ### experimental
 
 19. 契約が安定していないユースケースは、experimentalとして明示したうえで追加してよい。
@@ -152,18 +156,23 @@
 
 ## 保証範囲
 
-- 保証すること: supportedと宣言されたユースケースの完成度（安全なdefault、テスト、契約の明確さ）。決定14・17・18 の層の規則が守られていること
-- 保証しないこと: unsupportedと宣言された構成、ユースケース同士の任意の組み合わせ
+- 保証すること: supportedと宣言されたユースケースの完成度（安全なdefault、テスト、契約の明確さ）。決定14・17・18 の層の規則が、宣言した型と引数について守られていること。attachment 型の親として宣言した型の、Provider の schema が非推奨とする書ける引数が、宣言で分類されていること
+- 保証しないこと: unsupportedと宣言された構成、ユースケース同士の任意の組み合わせ。決定18 の宣言の正しさ（resource の NOTE だけが告げる引数を宣言に載せたこと、attachment 型が文書全体を置き換えるかの判定、排他に持つと宣言した引数の選定）。文書全体を置き換える attachment 型の1つの resource の、`count` と `for_each` の instance どうしが同じ親を指す重複のうち、親の resource を `each.key`・`count.index`（`for_each` が親の resource そのものなら `each.value` も）で直接選ばない形のもの
 
 ## 検証方法
 
 - 各ユースケースは supported / unsupported を記述したドキュメントを持つこと（Static Analysisで存在を検査）
 - 各ユースケースは最低1つの reference を持ち、Contract TestおよびPolicy Testの対象とすること（ADR-0401）
 - experimentalなユースケースは、その旨と昇格・削除条件がADRとして存在すること
-- 次の3つを、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
+- 次を、Static Analysis 層で Conftest が HCL のソースを読んで検査する（ADR-0501 決定5）
   - `usecases/<use-case>/` 直下の `*.tf` に `resource` block と `provider` block と、決定14 の root module にしか置けない block が無いこと（決定14）
   - module block の `source` が、層ごとに許された先だけを指すこと（決定17）
   - attachment 型の resource の親を指す引数が、同じ module の、親の型の resource だけを参照すること（決定18）。どの参照を辿り、何を違反とするかは `conftest/hcl/layer/` が持つ
+  - 親の resource が、attachment 型と同じ設定を書くと宣言した引数を書かないこと。文書全体を置き換えると宣言した attachment 型の resource とその `count`・`for_each` の instance が、同じ親を2つ以上から参照しないこと（決定18）。同じ親かどうかは、前項により親を同じ module の参照で指すので、plan の値ではなく、参照と、親を選ぶ添字の形で突き合わせる。別々の resource の間で突き合わせられない組は違反として扱い、1つの resource の instance どうしは、親を直接選ぶ形だけを判定する
+  - 排他に持つと宣言した親の引数について、同じ設定を書く attachment 型の resource が、その親を参照しないこと（決定18）
+  - attachment 型の親として宣言した型の、Provider の schema が非推奨とする書ける引数が、すべて宣言で分類されていること（決定18）
+- 決定18 の宣言は `conftest/hcl/layer/` が持つ。同じ引数を ADR-0402 決定17 の宣言にも載せる場合は、片方を正とし、他方をそこから導く
+- レビュー: 決定18 の、resource の NOTE に依る引数の選定と、attachment 型が文書全体を置き換えるかの判定。いずれも機械判定できないため、宣言を変える Pull Request のレビュー観点とする。判定の根拠は Provider の docs と AWS の API の docs に置く（ADR-0206 決定3、ADR-0501 決定21）
 
 - 名前の規則から組む識別子（決定16 のただし書き）: env の Unit Test が送り側の module を同じテストで走らせ、組んだ値と output の一致を確かめる。ただし、送り側に渡す入力（project と env）はテストが写して持つので、その写しと本物の入力のズレは、このテストには映らない
 
@@ -173,6 +182,7 @@
 
 - 利用者要求の一部は明示的に「対象外」と回答される。
 - ユースケース追加の判断は、設定項目追加の判断より重い手続きになる。
+- 親の inline の引数で書ける設定も、排他に持つと宣言した引数を除き、attachment 型で書く。Provider が親の型に非推奨の引数を足すと、分類するまで層の検査が落ちる。
 - 一般 module で表せない機構は、ユースケースごとの `internal/` に作られる。その間の重複は、重複のみを理由に統合しない（ADR-0205 決定11）。
 - 一般 module の resource に固有の attachment が要る場合、親の resource ごと `internal/` に置くので（決定15・18）、その親が持つ不変条件はユースケースごとに複製され、修正の追従もユースケースごとになる。案F を退けた理由と同じ形の費用を、この範囲に限って受け入れる。
 - 一般 module の変更は、それを呼ぶすべてのユースケースに及ぶ。一般 module の入出力の変更は、呼ぶ側のユースケースの Contract Test で検出する（ADR-0401）。
