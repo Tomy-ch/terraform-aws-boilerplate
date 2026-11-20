@@ -172,7 +172,32 @@ func check(in input, today time.Time) (result, error) {
 	if err != nil {
 		return res, xerrors.Wrapf(err, "%s", in.makefilePath)
 	}
-	if err := sameSet("include", includes, keys(in.mk)); err != nil {
+	// include を Makefile から辿る。`.mk` が別の `.mk` を include してもよい。
+	parsed := map[string]mkFile{}
+	order := []string{}
+	seen := map[string]struct{}{}
+	push := func(paths []string) {
+		for _, p := range paths {
+			if _, ok := seen[p]; !ok {
+				seen[p] = struct{}{}
+				order = append(order, p)
+			}
+		}
+	}
+	push(includes)
+	for i := 0; i < len(order); i++ {
+		raw, ok := in.mk[order[i]]
+		if !ok {
+			continue // 実在しない include は下の突き合わせが落とす
+		}
+		mk, err := parseMk(raw)
+		if err != nil {
+			return res, xerrors.Wrapf(err, "%s", order[i])
+		}
+		parsed[order[i]] = mk
+		push(mk.includes)
+	}
+	if err := sameSet("include", order, keys(in.mk)); err != nil {
 		return res, err
 	}
 	db, err := parseDB(in.db, in.dbExit)
@@ -189,11 +214,8 @@ func check(in input, today time.Time) (result, error) {
 	}
 
 	defined := map[string]target{}
-	for _, path := range includes {
-		mk, err := parseMk(in.mk[path])
-		if err != nil {
-			return res, xerrors.Wrapf(err, "%s", path)
-		}
+	for _, path := range order {
+		mk := parsed[path]
 		names, err := reconcile(path, mk, db[path])
 		if err != nil {
 			return res, err
@@ -202,15 +224,8 @@ func check(in input, today time.Time) (result, error) {
 			keep(defined, name, target{file: path, line: mk.line(name), recipe: mk.recipes[name]})
 		}
 	}
-	// Makefile 自身の規則も同じ突き合わせに掛ける。include 行は上で読んだので外す。
-	var top []string
-	for _, line := range strings.Split(string(in.makefile), "\n") {
-		if f := strings.Fields(line); len(f) > 0 && f[0] == "include" {
-			line = ""
-		}
-		top = append(top, line)
-	}
-	topMk, err := parseMk([]byte(strings.Join(top, "\n")))
+	// Makefile 自身の規則も同じ突き合わせに掛ける。
+	topMk, err := parseMk(in.makefile)
 	if err != nil {
 		return res, xerrors.Wrapf(err, "%s", in.makefilePath)
 	}
@@ -223,7 +238,7 @@ func check(in input, today time.Time) (result, error) {
 	}
 	// make が読んだ規則のうち、Makefile と include した `.mk` のどれにも帰さないものは数えられない。
 	known := map[string]struct{}{in.makefilePath: {}}
-	for _, p := range includes {
+	for _, p := range order {
 		known[p] = struct{}{}
 	}
 	for _, file := range keys(db) {
@@ -234,7 +249,7 @@ func check(in input, today time.Time) (result, error) {
 	if len(defined) == 0 {
 		return res, xerrors.Wrap(errNoTargets, "ターゲットを1つも取り出せません")
 	}
-	res.files = len(includes)
+	res.files = len(order)
 	res.targets = len(defined)
 
 	for _, name := range keys(runners) {

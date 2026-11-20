@@ -258,6 +258,28 @@ func Test_check(t *testing.T) {
 		require.Len(t, res.findings, 1)
 		assert.Contains(t, res.findings[0].Message, "v-canary はテストのターゲットです")
 	})
+	t.Run("`.mk` が include する `.mk` を辿り、同じものを二度数えない", func(t *testing.T) {
+		t.Parallel()
+		files := with(map[string]string{
+			".makefiles/a.mk":      "include .makefiles/common.mk\na:\n\techo\n",
+			".makefiles/b.mk":      "include .makefiles/common.mk\nb-test:\n\techo\n",
+			".makefiles/common.mk": "C := 1\n",
+		})
+		in := inputFor(t, files, "")
+		in.makefile = []byte("include .makefiles/a.mk\ninclude .makefiles/b.mk\ninclude .makefiles/go.mk\ninclude .makefiles/tf.mk\n")
+		res, err := check(in, testToday)
+		require.NoError(t, err)
+		assert.Equal(t, 5, res.files)
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, ".makefiles/b.mk", res.findings[0].File)
+	})
+	t.Run("どこからも include されない `.mk` は、辿った後でも落とす", func(t *testing.T) {
+		t.Parallel()
+		in := inputFor(t, baseMk, "")
+		in.mk[".makefiles/orphan.mk"] = []byte("o:\n\techo\n")
+		_, err := check(in, testToday)
+		require.ErrorIs(t, err, errMismatch)
+	})
 	t.Run("Makefile に直接書いた規則も判定する", func(t *testing.T) {
 		t.Parallel()
 		in := inputFor(t, baseMk, "")

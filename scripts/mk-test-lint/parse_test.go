@@ -108,6 +108,13 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, "\n\techo 1\n\techo 2", mk.recipes["a"])
 		assert.Equal(t, "\n\techo 3", mk.recipes["b"])
 	})
+	t.Run("`.mk` の中のリテラルの include を集める", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("include .makefiles/c.mk\na:\n\techo\n"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{".makefiles/c.mk"}, mk.includes)
+		assert.Equal(t, map[string]int{"a": 2}, mk.literal)
+	})
 	t.Run("1行に複数のターゲットを持つ規則は、それぞれにレシピを持たせる", func(t *testing.T) {
 		t.Parallel()
 		mk, err := parseMk([]byte("a b:\n\techo\n"))
@@ -115,11 +122,13 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, map[string]struct{}{"a": {}, "b": {}}, mk.withRecipe)
 	})
 	for name, src := range map[string]string{
-		"閉じない define":       "define F\nx:\n",
-		"対応の無い endef":       "endef\n",
-		"続きの行の途中で終わるファイル":   "a:\n\techo \\",
-		"`.mk` の中の include": "include x.mk\n",
-		"ターゲットの無い規則":        ": a\n",
+		"閉じない define":             "define F\nx:\n",
+		"対応の無い endef":             "endef\n",
+		"続きの行の途中で終わるファイル":         "a:\n\techo \\",
+		"`.mk` の中の無くても黙る include": "-include x.mk\n",
+		"`.mk` の中の sinclude":      "sinclude x.mk\n",
+		"`.mk` の中の展開を要する include": "include $(X).mk\n",
+		"ターゲットの無い規則":              ": a\n",
 	} {
 		t.Run(name+"は読めない入力とする", func(t *testing.T) {
 			t.Parallel()

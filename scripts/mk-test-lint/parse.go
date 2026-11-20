@@ -63,6 +63,7 @@ type mkFile struct {
 	withRecipe map[string]struct{} // レシピを持つ規則のターゲット（リテラルの名前のもの）
 	recipes    map[string]string   // ターゲット → レシピの本文
 	unresolved int                 // 名前に変数かパターンを含み、レシピを持つ規則のターゲットの数
+	includes   []string            // この `.mk` が include する `.mk`
 }
 
 func (m mkFile) line(name string) int { return m.literal[name] }
@@ -152,8 +153,15 @@ func parseMk(raw []byte) (mkFile, error) {
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 対応する define の無い endef", n)
 		case "export", "unexport", "override", "vpath":
 			continue
-		case "include", "-include", "sinclude":
-			return mk, xerrors.Wrapf(errSyntax, "%d 行目: `.mk` の中の include は数えられません", n)
+		case "-include", "sinclude":
+			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 無くても黙る include は数えられません: %q", n, trimmed)
+		case "include":
+			m := includeRe.FindStringSubmatch(trimmed)
+			if m == nil || strings.Contains(m[1], "$") {
+				return mk, xerrors.Wrapf(errSyntax, "%d 行目: include は1行に1つのリテラルのパスで書きます: %q", n, trimmed)
+			}
+			mk.includes = append(mk.includes, m[1])
+			continue
 		}
 
 		colon := ruleColon(trimmed)
