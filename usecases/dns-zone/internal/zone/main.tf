@@ -1,5 +1,8 @@
-# kics-scan disable=e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10
+# kics-scan disable=e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10,e592a0c5-5bdb-414c-9066-5dba7cdea370,084c6686-2a70-4710-91b1-000393e54c12,7dbba512-e244-42dc-98bb-422339827967
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
+# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
+# 084c6686（Shield Advanced）: アカウントか組織の単位で結ぶ有償の契約で、zone ごとに決めない（README の unsupported）。撤回: 組織が Shield Advanced を採るとき。
+# 7dbba512（query log の Log Group）: Log Group は internal/query-log が持ち、入力で受ける。KICS は module をまたぐ参照を解けない。query log が宣言した Log Group を指すことは conftest/plan の PLAN-DNS-02 が見る。撤回: KICS が module をまたぐ参照を解くようになったとき。
 
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}

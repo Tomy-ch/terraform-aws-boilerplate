@@ -68,6 +68,8 @@ locals {
   })
 }
 
+# 非対称鍵は自動 rotation を持てない。KSK の rotation は人の手順（README「公式推奨からの逸脱」の KMS.4）。撤回: KMS が非対称鍵の自動 rotation を持ったとき。
+# nosemgrep: terraform.aws.security.aws-kms-no-rotation
 resource "aws_kms_key" "this" {
   region                             = "us-east-1"
   description                        = "Route 53 DNSSEC KSK for ${var.zone_name}"

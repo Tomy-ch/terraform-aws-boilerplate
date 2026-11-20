@@ -68,6 +68,7 @@
 | unsupported | 別のアカウントの state・provider・role を使った委任の書き込み（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定18）。値は人が env の値へ写す（[dns-zone/ADR-0101](docs/adr/0101-delegation-values-passed-by-input.md)） |
 | unsupported | reusable delegation set、ドメインの登録（Route 53 Domains）、health check と failover の record |
 | unsupported | DNSSEC を使わない zone、クエリログを持たない zone |
+| unsupported | AWS Shield Advanced の zone への適用。アカウントか組織の単位で結ぶ有償の契約で、zone ごとに決めない |
 | unsupported | 国際化ドメイン名の TLD（`xn--` で始まる TLD）。`apex_domain` は英小文字の TLD だけを受ける |
 
 ## 所有者
