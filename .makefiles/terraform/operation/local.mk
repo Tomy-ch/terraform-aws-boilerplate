@@ -63,3 +63,18 @@ init-admin-identity:
 plan-admin-identity: SHELL := /bin/bash
 plan-admin-identity: init-admin-identity
 	@$(call TF_LOCAL_PLAN,admin,identity)
+
+# 判定は bootstrap-check が持つ。terraform show は AWS を呼ばないので、環境変数は引き継がず、
+# terraform が動くのに要る PATH と HOME だけを渡す。
+# bootstrap-check へはホストの terraform の出力を標準入力で渡し、plan のパスはホストの絶対パスなので、
+# RUN_SCRIPT_HOST で起動する。
+# PARTIAL は環境変数から取らず、make の引数でだけ渡せる。
+PARTIAL :=
+BOOTSTRAP_CHECK_OUT = tmp/bootstrap-check
+
+.PHONY: bootstrap-check-plan ## 保存した plan を段2-4 の期待値と突き合わせる（PLAN=<plan のファイル>、段4 のやり直しは PARTIAL=-partial）
+bootstrap-check-plan: SHELL := /bin/bash
+bootstrap-check-plan:
+	@umask 077; mkdir -p "$(BOOTSTRAP_CHECK_OUT)"
+	@umask 077; $(call TF_LOCAL,plan-header) > "$(BOOTSTRAP_CHECK_OUT)/header.txt"
+	@set -o pipefail; env -i PATH="$$PATH" HOME="$$HOME" TF_CLI_CONFIG_FILE=/dev/null CHECKPOINT_DISABLE=1 $(TF_BIN) -chdir="$(TF_BASE)/env/admin/identity" show -json "$(abspath $(PLAN))" | $(call RUN_SCRIPT_HOST,bootstrap-check,plan $(PARTIAL) -header-file "$(BOOTSTRAP_CHECK_OUT)/header.txt" -)

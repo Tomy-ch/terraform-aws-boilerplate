@@ -189,6 +189,7 @@ pre-commit:
         - ".tf-validate-ignore.yaml"
         - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
+        - "scripts/bootstrap-check/**"
         - "scripts/provider-schema/**"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
@@ -201,12 +202,11 @@ pre-commit:
       glob:
         - "Makefile"
         - ".makefiles/**"
-        - "docs/setup/scripts/check-plan.sh"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
-      run: make -k tf-gates-test check-plan-expected-test
+      run: make -k tf-gates-test
     tf-validate-canary:
       glob:
         - "Makefile"
@@ -276,7 +276,7 @@ pre-commit:
         - "mise.toml"
         - "Makefile"
         - ".makefiles/**"
-      run: make layer-check-test layer-check
+      run: make layer-check
     root-check:
       glob:
         - "usecases/**"

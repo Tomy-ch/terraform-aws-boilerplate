@@ -1,0 +1,4 @@
+-- modules/m/main.tf --
+resource "aws_security_group" "s" {
+  ingress = []
+}

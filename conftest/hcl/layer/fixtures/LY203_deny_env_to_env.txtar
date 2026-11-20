@@ -1,0 +1,35 @@
+-- env/dev/identity/main.tf --
+module "u" {
+  source = "../../../usecases/u"
+}
+-- env/dev/main.tf --
+module "p" {
+  source = "../prd"
+}
+-- env/prd/main.tf --
+-- modules/a/main.tf --
+module "b" {
+  source = "../b"
+}
+-- modules/b/main.tf --
+-- usecases/u/internal/i/main.tf --
+module "a" {
+  source = "../../../../modules/a"
+}
+module "j" {
+  source = "../j"
+}
+-- usecases/u/internal/j/main.tf --
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}
+module "i" {
+  source = "./internal/i"
+}
+-- usecases/u/reference/main.tf --
+module "u" {
+  source = "../"
+}
+-- usecases/v/internal/k/main.tf --
+-- usecases/v/main.tf --

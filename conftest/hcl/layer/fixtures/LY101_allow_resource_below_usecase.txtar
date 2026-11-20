@@ -1,0 +1,32 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+-- usecases/u/internal/i/main.tf --
+resource "aws_s3_bucket" "this" {}
+-- usecases/u/main.tf --
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+
+module "m" {
+  source = "../../modules/m"
+}
+
+data "aws_caller_identity" "this" {}
+
+moved {
+  from = module.old
+  to   = module.m
+}
+
+removed {
+  from = module.gone
+  lifecycle {
+    destroy = false
+  }
+}
+-- usecases/u/reference/main.tf --
+resource "aws_s3_bucket" "this" {}

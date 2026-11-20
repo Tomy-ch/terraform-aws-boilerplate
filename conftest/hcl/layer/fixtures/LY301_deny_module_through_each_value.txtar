@@ -1,0 +1,6 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+resource "aws_s3_bucket_policy" "this" {
+  for_each = module.m.ids
+  bucket   = each.value
+}

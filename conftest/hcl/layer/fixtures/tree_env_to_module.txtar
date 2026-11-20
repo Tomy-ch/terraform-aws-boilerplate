@@ -1,0 +1,18 @@
+-- env/dev/main.tf --
+module "a" {
+  source = "../../modules/a"
+}
+-- modules/a/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}

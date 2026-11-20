@@ -1,0 +1,4 @@
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}

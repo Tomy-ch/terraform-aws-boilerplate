@@ -1,0 +1,6 @@
+-- usecases/u/main.tf --
+module "i" {
+  source = "./internal/i"
+}
+-- usecases/u/internal/i/x.tftest.hcl --
+run "x" {}

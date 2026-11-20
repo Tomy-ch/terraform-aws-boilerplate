@@ -1,0 +1,7 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  dynamic "inline_policy" {
+    for_each = var.p
+    content {}
+  }
+}
