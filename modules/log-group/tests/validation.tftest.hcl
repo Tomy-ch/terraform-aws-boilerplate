@@ -428,3 +428,44 @@ run "rejects_name_with_colon" {
 
   expect_failures = [var.name]
 }
+
+run "region_rejects_other_region" {
+  command = plan
+
+  variables {
+    region      = "eu-west-1"
+    kms_key_arn = "arn:aws:kms:eu-west-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+  }
+
+  expect_failures = [var.region]
+}
+
+run "rejects_key_outside_the_given_region" {
+  command = plan
+
+  variables {
+    region = "us-east-1"
+  }
+
+  expect_failures = [aws_cloudwatch_log_group.this]
+}
+
+run "region_rejects_empty" {
+  command = plan
+
+  variables {
+    region = ""
+  }
+
+  expect_failures = [var.region]
+}
+
+run "region_rejects_the_provider_region" {
+  command = plan
+
+  variables {
+    region = "ap-northeast-1"
+  }
+
+  expect_failures = [var.region]
+}

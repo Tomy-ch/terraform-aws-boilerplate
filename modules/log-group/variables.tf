@@ -41,3 +41,14 @@ variable "deletion_protection" {
   type        = bool
   nullable    = false
 }
+
+variable "region" {
+  description = "Log Group を置くリージョン。null なら provider のリージョン。provider と別のリージョンは、Route 53 のクエリログの置き場の us-east-1 だけを受ける。鍵（kms_key_arn）は同じリージョンに置く。"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.region == null || var.region == "us-east-1"
+    error_message = "region は null（provider のリージョン）か us-east-1 にしてください。"
+  }
+}

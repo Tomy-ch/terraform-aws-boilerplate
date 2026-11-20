@@ -14,11 +14,13 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 | `retention_days` | ログを残す日数。365 以上の、CloudWatch Logs が受ける値（365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653）に限る。`0`（無期限）を受けない |
 | `kms_key_arn` | ログの暗号化に使う鍵の ARN。Log Group と同じ partition・リージョン・アカウントの鍵だけを受ける（plan で落ちる）。alias の ARN と多リージョンの鍵は受けない |
 | `deletion_protection` | Log Group の削除を拒むか。既定値を持たない |
+| `region` | Log Group を置くリージョン。既定の `null` は provider のリージョン。provider と別のリージョンは `us-east-1` だけを受ける（Route 53 の公開 DNS のクエリログの置き場。`dns-zone` が渡す）。鍵は同じリージョンに置く |
 
 | 出力 | 使う側 |
 | --- | --- |
 | `log_group_name` | ECS の `awslogs-group` など、名前で Log Group を指す設定 |
 | `log_group_arn` | usecase の出力契約「ログの所在」、書き手の IAM の Resource。API が付ける `:*` を除いた形で、log stream への Action には `<arn>:log-stream:*` を付ける |
+| `retention_days`・`deletion_protection` | Log Group に置いた値。呼ぶ usecase のテストが、入力が届いたことを見る |
 
 保持日数を 365 以上に限るのは、AWS Security Hub の CloudWatch.16 の既定の parameter（`minRetentionTime` 365）と Checkov の CKV_AWS_338 に合わせるためである。CloudWatch.16 の値は利用者が変えられる parameter で、唯一の推奨値ではない。下限は保持日数を固定するのではなく許容の集合を狭めるもので、365 以上のどれを選ぶかは利用者の要件のまま残る（ADR-0207 決定8・13）。365 日より短い保持を要る usecase は、この module の責務外とする（「持たないもの」）。
 
@@ -34,7 +36,7 @@ CloudWatch Logs の Log Group を、保持日数と鍵による暗号化を必�
 | `aws_cloudwatch_log_data_protection_policy` | 何を機微とみなすかは usecase ごとに違い、一般 module が持つと入力の切り替えか、識別子を AWS の表現で受ける入力になる（ADR-0102 決定15、ADR-0204 決定2）。要る usecase が Log Group ごと `internal/` に置く |
 | `aws_cloudwatch_log_resource_policy` | AWS のサービスが書く Log Group は `modules/vended-log-group`。アカウント単位の policy（`policy_name`）は置かない（リージョンに10個までの共有の資源で、親を持たない） |
 | `STANDARD` 以外の class（`INFREQUENT_ACCESS`・`DELIVERY`・`ESSENTIALS`） | Subscription Filter などの機能の一部が使えない、または保持が1日か2日に固定される。class は作成後に変えられない |
-| 別のリージョンの Log Group（Route 53 の公開 DNS のクエリログは us-east-1） | 呼んだ provider のリージョンに作る。要る usecase の着手時に見直す |
+| us-east-1 のほかの、provider と別のリージョンの Log Group | 要る消費者が、`region` の許す値に足す |
 | サービスが Log Group を暗黙に作ること（ECS の `awslogs-create-group` など）の防止 | 書き手の module（ECS、IAM role）の不変条件 |
 
 ## 保証しないもの

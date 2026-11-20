@@ -145,6 +145,66 @@ run "logs_service" {
   }
 }
 
+run "logs_service_in_another_region" {
+  command = plan
+
+  variables {
+    region = "us-east-1"
+    users = {
+      services = { logs = ["/aws/route53/example.com"] }
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy).Statement[1] == {
+      Sid       = "LogsService"
+      Effect    = "Allow"
+      Principal = { Service = "logs.us-east-1.amazonaws.com" }
+      Action    = ["kms:Decrypt", "kms:Describe*", "kms:Encrypt", "kms:GenerateDataKey*", "kms:ReEncrypt*"]
+      Resource  = "*"
+      Condition = { ArnEquals = { "kms:EncryptionContext:aws:logs:arn" = [
+        "arn:aws:logs:us-east-1:123456789012:log-group:/aws/route53/example.com",
+      ] } }
+    }
+    error_message = "region を渡したとき、CloudWatch Logs の文がそのリージョンの service principal と Log Group の ARN になっていません。"
+  }
+}
+
+run "role_conditions_follow_the_given_region" {
+  command = plan
+
+  variables {
+    region = "us-east-1"
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/tabp-dev-s3", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-dev-ecr", via = "ecr", access = "grant" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-dev-sns", via = "sns", access = "read-write", topics = ["tabp-dev-alerts"] },
+      ]
+    }
+  }
+
+  assert {
+    condition     = { for st in jsondecode(aws_kms_key_policy.this.policy).Statement : st.Sid => st }["RolesViaS3ReadWrite"].Condition.StringEquals["kms:ViaService"] == "s3.us-east-1.amazonaws.com"
+    error_message = "region を渡したとき、S3 経由の文の kms:ViaService が s3.us-east-1.amazonaws.com になっていません。"
+  }
+  assert {
+    condition     = { for st in jsondecode(aws_kms_key_policy.this.policy).Statement : st.Sid => st }["RolesViaEcr"].Condition.StringEquals["kms:ViaService"] == "ecr.us-east-1.amazonaws.com"
+    error_message = "region を渡したとき、ECR 経由の文の kms:ViaService が ecr.us-east-1.amazonaws.com になっていません。"
+  }
+  assert {
+    condition     = { for st in jsondecode(aws_kms_key_policy.this.policy).Statement : st.Sid => st }["RolesViaEcrGrant"].Condition.StringEquals["kms:ViaService"] == "ecr.us-east-1.amazonaws.com"
+    error_message = "region を渡したとき、ECR 経由の grant の文の kms:ViaService が ecr.us-east-1.amazonaws.com になっていません。"
+  }
+  assert {
+    condition = { for st in jsondecode(aws_kms_key_policy.this.policy).Statement : st.Sid => st }["RolesViaSns0"].Condition.StringEquals == {
+      "kms:ViaService"                         = "sns.us-east-1.amazonaws.com"
+      "kms:EncryptionContext:aws:sns:topicArn" = ["arn:aws:sns:us-east-1:123456789012:tabp-dev-alerts"]
+    }
+    error_message = "region を渡したとき、SNS 経由の文の kms:ViaService と Topic の ARN が us-east-1 になっていません。"
+  }
+}
+
 run "roles_and_logs" {
   command = plan
 

@@ -862,3 +862,41 @@ run "users_rejects_read_write_via_ecr" {
 
   expect_failures = [var.users]
 }
+
+run "region_accepts_us_east_1" {
+  command = plan
+
+  variables {
+    region = "us-east-1"
+  }
+}
+
+run "region_rejects_other_region" {
+  command = plan
+
+  variables {
+    region = "eu-west-1"
+  }
+
+  expect_failures = [var.region]
+}
+
+run "region_rejects_empty" {
+  command = plan
+
+  variables {
+    region = ""
+  }
+
+  expect_failures = [var.region]
+}
+
+run "region_rejects_the_provider_region" {
+  command = plan
+
+  variables {
+    region = "ap-northeast-1"
+  }
+
+  expect_failures = [var.region]
+}

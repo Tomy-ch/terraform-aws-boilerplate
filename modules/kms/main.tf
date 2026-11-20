@@ -8,6 +8,7 @@ data "aws_region" "current" {}
 data "aws_partition" "current" {}
 
 resource "aws_kms_key" "this" {
+  region                             = var.region
   key_usage                          = "ENCRYPT_DECRYPT"
   customer_master_key_spec           = "SYMMETRIC_DEFAULT"
   multi_region                       = false
@@ -23,6 +24,7 @@ locals {
 }
 
 resource "aws_kms_alias" "this" {
+  region        = var.region
   name          = local.alias_name
   target_key_id = aws_kms_key.this.key_id
 }
