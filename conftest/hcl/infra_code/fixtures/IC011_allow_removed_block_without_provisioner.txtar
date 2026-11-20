@@ -1,0 +1,7 @@
+-- m/main.tf --
+removed {
+	from = aws_s3_bucket.old
+	lifecycle {
+		destroy = false
+	}
+}

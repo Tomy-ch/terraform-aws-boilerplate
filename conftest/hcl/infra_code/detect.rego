@@ -1,8 +1,8 @@
-# インフラ内コードの検出（ADR-0103 決定9・10）。`conftest test --combine` で、走査の root の下の全ファイルを
-# 1つの入力として評価する。input は `{"path", "contents"}` の配列で、path はリポジトリの root からの相対パス。
+# インフラ内コードの検出（ADR-0103 決定9・10）。input は scripts/hcl-input が走査の root の下から作る JSON
+# （`-format syntax`）で、path はリポジトリの root からの相対パス。入力の形と数の検査は input.rego が持つ。
 package infra_code
 
-import data.lib.hcl
+import data.lib.hcl_input as hcl
 
 decl := data.infra_code_decl
 
@@ -28,9 +28,9 @@ provider_keys := {"command_blocks"}
 
 item_keys := {"id", "owner", "source", "language", "adr", "repository"}
 
-components := hcl.components(input)
+components := hcl.components(doc)
 
-providers := hcl.providers(input)
+providers := hcl.providers(doc)
 
 detected contains {"id": c.id, "path": c.path, "reason": sprintf("コードを実行させる型 %s", [c.key])} if {
 	some c in components
@@ -39,24 +39,24 @@ detected contains {"id": c.id, "path": c.path, "reason": sprintf("コードを�
 
 detected contains {"id": c.id, "path": c.path, "reason": "provisioner"} if {
 	some c in components
-	hcl.has_provisioner(c.body)
+	hcl.has_provisioner(c.scope)
 }
 
 detected contains {"id": r.id, "path": r.path, "reason": "provisioner"} if {
-	some r in hcl.removed_blocks(input)
-	hcl.has_provisioner(r.body)
+	some r in hcl.removed_blocks(doc)
+	hcl.has_provisioner(r.scope)
 }
 
 detected contains {"id": p.id, "path": p.path, "reason": "provider の exec"} if {
 	some p in providers
-	hcl.has_key_anywhere(p.body, "exec")
+	hcl.has_key_anywhere(p.scope, "exec")
 }
 
 detected contains {"id": p.id, "path": p.path, "reason": sprintf("provider の %s", [block])} if {
 	some p in providers
-	source := hcl.provider_source(input, p.module, p.name)
+	source := hcl.provider_source(doc, p.module, p.name)
 	some block in decl.providers[source].command_blocks
-	count(hcl.values_at(p.body, block)) > 0
+	count(hcl.values_at(p.scope, block)) > 0
 }
 
 detected_ids := {d.id | some d in detected}
@@ -84,24 +84,23 @@ deny contains msg if {
 
 deny contains msg if {
 	some p in providers
-	not hcl.declared_source(input, p.module, p.name)
-	source := hcl.provider_source(input, p.module, p.name)
-	not contains(source, "${")
+	not hcl.declared_source(doc, p.module, p.name)
+	source := hcl.provider_source(doc, p.module, p.name)
 	not decl.providers[source]
 	msg := sprintf("IC013 [未分類の provider] %s: %s は provider の分類にありません → 宣言（infra_code_decl）の providers に1行足す", [p.path, source])
 }
 
 # required_providers の source は、provider ブロックが無くても、その provider のバイナリを init で走らせる。
 deny contains msg if {
-	some [dir, name, source] in hcl.required_sources(input)
-	not contains(source, "${")
+	some [dir, name, source] in hcl.required_sources(doc)
+	is_string(source)
 	not decl.providers[hcl.normalize_source(source)]
 	msg := sprintf("IC013 [未分類の provider] %s: required_providers の %s（%s）は provider の分類にありません → 宣言（infra_code_decl）の providers に1行足す", [dir, name, hcl.normalize_source(source)])
 }
 
 deny contains msg if {
-	some [dir, name, source] in hcl.required_sources(input)
-	contains(source, "${")
+	some [dir, name, source] in hcl.required_sources(doc)
+	source == null
 	msg := sprintf("IC014 [解釈できない provider] %s: required_providers の %s の source がリテラルではありません", [dir, name])
 }
 

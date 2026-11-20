@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+resource "aws_cloudfront_function" "c" {
+	code = "function handler(event) { return event.request; }"
+}

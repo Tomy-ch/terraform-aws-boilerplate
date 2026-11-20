@@ -1,0 +1,8 @@
+-- m/versions.tf --
+terraform {
+	required_providers {
+		aws = {
+			source = "${var.ns}/aws"
+		}
+	}
+}

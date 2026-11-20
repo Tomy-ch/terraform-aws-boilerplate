@@ -1,0 +1,10 @@
+-- m/main.tf --
+resource "aws_s3_bucket" "b" {}
+-- m/versions.tf --
+terraform {
+	required_providers {
+		aws = {
+			source = "evil/aws"
+		}
+	}
+}

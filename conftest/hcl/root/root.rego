@@ -3,11 +3,14 @@
 # deny contains は行頭に置く。tf-local policy-result が行頭の deny contains を数える（README の「検査」）。
 package root
 
-import data.lib.hcl
+import data.lib.hcl_input as hcl
 
 # --- 入力の読み方 ---
 #
-# Conftest の hcl2 パーサが返す形に触れるのは、この節と lib.hcl.module_target の入力側だけである（README「HCL の読み方」）。
+# 入力は scripts/hcl-input が走査の root の下から作る JSON（`-format syntax`）で、その形に触れるのは、この節と
+# lib.hcl_input だけである（README「HCL の読み方」）。崩れた入力の上では、それを読む規則を評価しない。
+
+doc := input if hcl.input_ok
 
 is_tf_json(path) if endswith(path, ".tf.json")
 
@@ -15,49 +18,25 @@ is_config(path) if hcl.is_tf(path)
 
 is_config(path) if is_tf_json(path)
 
-read := {f.path | some f in input; is_config(f.path)}
+read := {f.path | some f in doc.files; is_config(f.path)}
 
-tf_files := [f | some f in input; hcl.is_tf(f.path)]
+tf_paths := {f.path | some f in doc.files; f.parsed; hcl.is_tf(f.path)}
 
-dirs := {hcl.dir(f.path) | some f in tf_files}
+dirs := {hcl.dir(p) | some p in tf_paths}
 
 base_name(path) := parts[count(parts) - 1] if {
 	parts := split(path, "/")
 }
 
-module_calls contains c if {
-	some f in tf_files
-	some name, bodies in object.get(f.contents, "module", {})
-	some body in bodies
-	c := {"path": f.path, "dir": hcl.dir(f.path), "name": name, "source": object.get(body, "source", null)}
-}
+module_calls := hcl.module_calls(doc)
 
-module_count(f) := sum([count(bodies) | some _, bodies in object.get(f.contents, "module", {})])
+module_count(path) := hcl.module_count(doc, path)
 
-backends contains b if {
-	some f in tf_files
-	some i, t in object.get(f.contents, "terraform", [])
-	some type, bodies in object.get(t, "backend", {})
-	some j, body in bodies
-	b := {"path": f.path, "dir": hcl.dir(f.path), "at": [i, j], "type": type, "attrs": body}
-}
+backends := hcl.backends(doc)
 
-cloud_blocks contains c if {
-	some f in tf_files
-	some i, t in object.get(f.contents, "terraform", [])
-	object.get(t, "cloud", null) != null
-	c := {"path": f.path, "dir": hcl.dir(f.path), "at": i}
-}
+cloud_blocks := hcl.cloud_blocks(doc)
 
-# パーサは式を `${...}` の文字列で返す。
-literal(v) if is_boolean(v)
-
-literal(v) if is_number(v)
-
-literal(v) if {
-	is_string(v)
-	not contains(v, "${")
-}
+literal(e) if hcl.is_literal(e)
 
 has_attr(b, name) if name in object.keys(b.attrs)
 
@@ -101,6 +80,11 @@ listed := {p | some p in data.root_files} if is_array(data.root_files)
 default module_counts := {}
 
 module_counts := data.root_module_counts if is_object(data.root_module_counts)
+
+deny contains msg if {
+	some e in hcl.input_errors
+	msg := sprintf("RT005 [入力の形] %s → make root-check から起動する。hcl-input の出力と conftest/hcl/lib/hcl_input.rego の読む形を揃える", [e])
+}
 
 deny contains msg if {
 	not is_object(raw_decl)
@@ -152,15 +136,17 @@ deny contains msg if {
 }
 
 deny contains msg if {
+	hcl.input_ok
 	count(listed) > 0
 	count(roots) == 0
 	msg := "RT002 [root が0件] env/<env>/ にも env/<env>/identity/ にも .tf がありません"
 }
 
 deny contains msg if {
+	hcl.input_ok
 	some p in listed
 	not p in read
-	msg := sprintf("RT002 [件数の不一致] %s を Conftest が読んでいません", [p])
+	msg := sprintf("RT002 [件数の不一致] %s を入力（hcl-input）が読んでいません", [p])
 }
 
 deny contains msg if {
@@ -170,9 +156,9 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	some f in tf_files
-	module_count(f) != object.get(module_counts, f.path, -1)
-	msg := sprintf("RT002 [件数の不一致] %s の module block を %d 件読みましたが、独立の走査は %v 件です", [f.path, module_count(f), object.get(module_counts, f.path, "数えていない")])
+	some p in tf_paths
+	module_count(p) != object.get(module_counts, p, -1)
+	msg := sprintf("RT002 [件数の不一致] %s の module block を %d 件読みましたが、独立の走査は %v 件です", [p, module_count(p), object.get(module_counts, p, "数えていない")])
 }
 
 deny contains msg if {
@@ -182,10 +168,10 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	some f in tf_files
-	root_kind(hcl.dir(f.path))
-	override_file(base_name(f.path))
-	msg := sprintf("RT003 [未対応の入力] %s は root の構成を上書きする override のファイルです。検査は上書きを合成しません → 元のファイルに書く", [f.path])
+	some p in tf_paths
+	root_kind(hcl.dir(p))
+	override_file(base_name(p))
+	msg := sprintf("RT003 [未対応の入力] %s は root の構成を上書きする override のファイルです。検査は上書きを合成しません → 元のファイルに書く", [p])
 }
 
 override_file(name) if name == "override.tf"
@@ -193,6 +179,7 @@ override_file(name) if name == "override.tf"
 override_file(name) if endswith(name, "_override.tf")
 
 deny contains msg if {
+	hcl.input_ok
 	is_object(declared)
 	some u, _ in declared
 	not concat("/", ["usecases", u]) in dirs
@@ -200,6 +187,7 @@ deny contains msg if {
 }
 
 deny contains msg if {
+	hcl.input_ok
 	env_token(management_env)
 	not sprintf("env/%s/identity", [management_env]) in dirs
 	msg := sprintf("RT004 [宣言が実体を指さない] management_env の %s の identity root（env/%s/identity）に .tf がありません", [management_env, management_env])
@@ -276,24 +264,24 @@ root_s3 := [b | some b in backends; root_kind(b.dir); b.type == "s3"]
 deny contains msg if {
 	some b in root_s3
 	want := expected_key[root_kind(b.dir)]
-	not literal_equals(object.get(b.attrs, "key", null), want)
+	not literal_equals(b.attrs, "key", want)
 	msg := sprintf("RT202 [backend の key] %s の key が %s のリテラルではありません（ADR-0604 決定7）", [b.path, want])
 }
 
-literal_equals(v, want) if {
-	literal(v)
-	v == want
+literal_equals(attrs, name, want) if {
+	literal(attrs[name])
+	attrs[name].value == want
 }
 
 deny contains msg if {
 	some b in root_s3
-	not object.get(b.attrs, "use_lockfile", null) == true
+	not literal_equals(b.attrs, "use_lockfile", true)
 	msg := sprintf("RT203 [lock file] %s の use_lockfile が真偽値のリテラル true ではありません（ADR-0604 決定8）", [b.path])
 }
 
 deny contains msg if {
 	some b in root_s3
-	not object.get(b.attrs, "encrypt", null) == true
+	not literal_equals(b.attrs, "encrypt", true)
 	msg := sprintf("RT204 [暗号化] %s の encrypt が真偽値のリテラル true ではありません（ADR-0604 決定7）", [b.path])
 }
 

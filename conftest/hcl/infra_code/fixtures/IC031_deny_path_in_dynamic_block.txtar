@@ -1,0 +1,9 @@
+-- u/internal/fn/main.tf --
+resource "aws_spot_fleet_request" "s" {
+	dynamic "launch_specification" {
+		for_each = [1]
+		content {
+			user_data = file("${path.module}/other/evil.sh")
+		}
+	}
+}

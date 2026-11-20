@@ -1,0 +1,8 @@
+-- m/main.tf --
+check "c" {
+	data "aws_caller_identity" "me" {}
+	assert {
+		condition     = true
+		error_message = "x"
+	}
+}

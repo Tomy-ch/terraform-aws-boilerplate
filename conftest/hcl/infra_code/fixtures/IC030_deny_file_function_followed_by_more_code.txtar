@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+resource "aws_cloudfront_function" "c" {
+	code = "${file("${path.module}/src/ok.js")}${file("${path.module}/other/evil.js")}"
+}

@@ -1,0 +1,10 @@
+-- m/main.tf --
+check "c" {
+	data "external" "e" {
+		program = ["sh"]
+	}
+	assert {
+		condition     = true
+		error_message = "x"
+	}
+}

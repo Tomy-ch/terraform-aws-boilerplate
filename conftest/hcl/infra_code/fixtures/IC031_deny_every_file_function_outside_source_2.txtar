@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+resource "aws_cloudfront_function" "c" {
+	code = filebase64("${path.module}/other/fn.js")
+}
