@@ -28,6 +28,15 @@ pre-commit:
     editorconfig-check:
       run: make editorconfig-check
 
+    # 何を見るかと、なぜ要るかは scripts/README.md の mk-test-lint 行が持つ。
+    mk-test-lint:
+      glob:
+        - "Makefile"
+        - ".makefiles/**"
+        - ".github/mk-test-bypass.toml"
+        - "scripts/mk-test-lint/**"
+      run: make mk-test-lint
+
     # 対象を絞らない。抑止が名指すファイルの改名・削除でも、抑止は対象を失う。
     secret-suppression-lint:
       run: make secret-suppression-lint
