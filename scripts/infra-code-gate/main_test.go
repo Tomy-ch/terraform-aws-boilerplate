@@ -24,7 +24,7 @@ func Test_run(t *testing.T) {
 			"サブコマンドが無ければ使い方のエラー":       {args: nil, want: errUsage},
 			"未知のサブコマンドは使い方のエラー":        {args: []string{"lint"}, want: errUsage},
 			"decl は宣言を読みに行く":           {args: []string{"decl", "-decl", "d.json"}, want: os.ErrNotExist},
-			"count は走査の root を見に行く":    {args: []string{"count", "-results", "r", "-combined", "c", "modules"}, want: errMissingRoot},
+			"count は走査の root を見に行く":    {args: []string{"count", "-combined", "c", "modules"}, want: errMissingRoot},
 			"rego-tests は Rego を読みに行く": {args: []string{"rego-tests", "-policy", "p", "-report", "r", "-namespaces", "n"}, want: os.ErrNotExist},
 		}
 		for name, tt := range tests {

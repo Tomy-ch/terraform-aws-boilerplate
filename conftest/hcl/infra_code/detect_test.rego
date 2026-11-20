@@ -17,157 +17,99 @@ base_decl := {
 	"allowlist": [],
 }
 
-tf(path, src) := {"path": path, "contents": parse_config("hcl2", src)}
+# fixture は conftest/hcl/infra_code/fixtures の txtar を hcl-input fixtures が JSON にしたもの（data.fixtures）。
+# 独立の数は fixture そのものから作り、count_errors を素通しにする。突き合わせの規則は input_test.rego が見る。
+fx(name) := data.fixtures[name]
 
-denies(files, d) := result if {
-	result := deny with input as files with data.infra_code_decl as d
+parsed_of(doc) := [f.path | some f in doc.files; f.parsed]
+
+empty_doc := {"files": [], "blocks": []}
+
+counts_of(doc) := {p: count([b | some b in doc.blocks; b.file == p]) | some p in parsed_of(doc)}
+
+denies(doc, d) := result if {
+	result := deny with input as doc
+		with data.infra_code_decl as d
+		with data.hcl_parsed_files as parsed_of(doc)
+		with data.hcl_block_counts as counts_of(doc)
 }
 
 with_id(msgs, id) := {m | some m in msgs; startswith(m, concat("", [id, " "]))}
 
 test_IC010_deny_unclassified_type if {
-	msgs := denies([tf("m/main.tf", `resource "aws_synthetics_canary" "c" {}`)], base_decl)
+	msgs := denies(fx("IC010_deny_unclassified_type"), base_decl)
 	count(with_id(msgs, "IC010")) == 1
 }
 
 test_IC010_deny_unclassified_data_inside_check if {
-	msgs := denies([tf("m/main.tf", `check "c" {
-	data "aws_caller_identity" "me" {}
-	assert {
-		condition     = true
-		error_message = "x"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC010_deny_unclassified_data_inside_check"), base_decl)
 	count(with_id(msgs, "IC010")) == 1
 }
 
 test_IC010_allow_classified_types if {
-	msgs := denies([tf("m/main.tf", `resource "aws_s3_bucket" "b" {}
-data "aws_region" "r" {}`)], base_decl)
+	msgs := denies(fx("IC010_allow_classified_types"), base_decl)
 	count(msgs) == 0
 }
 
 test_IC011_deny_code_executing_type if {
-	msgs := denies([tf("m/main.tf", `resource "aws_instance" "i" {}`)], base_decl)
+	msgs := denies(fx("IC011_allow_listed_code"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "m#resource.aws_instance.i")
 }
 
 test_IC011_deny_provisioner_on_any_type if {
-	msgs := denies([tf("m/main.tf", `resource "terraform_data" "t" {
-	provisioner "local-exec" {
-		command = "curl x"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_provisioner_on_any_type"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "provisioner")
 }
 
 test_IC011_deny_dynamic_provisioner if {
-	msgs := denies([tf("m/main.tf", `resource "aws_s3_bucket" "b" {
-	dynamic "provisioner" {
-		for_each = []
-		content {}
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_dynamic_provisioner"), base_decl)
 	count(with_id(msgs, "IC011")) == 1
 }
 
 test_IC011_deny_external_inside_check if {
-	msgs := denies([tf("m/main.tf", `check "c" {
-	data "external" "e" {
-		program = ["sh"]
-	}
-	assert {
-		condition     = true
-		error_message = "x"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_external_inside_check"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "m#data.external.e")
 }
 
 test_IC011_deny_provider_exec_at_any_depth if {
-	msgs := denies([tf("m/main.tf", `provider "kubernetes" {
-	exec {
-		command = "aws"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_provider_exec_at_any_depth"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "m#provider.kubernetes")
 }
 
 test_IC011_deny_provider_exec_in_tftest if {
-	msgs := denies([tf("m/tests/a.tftest.hcl", `provider "kubernetes" {
-	dynamic "exec" {
-		for_each = [1]
-		content {}
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_provider_exec_in_tftest"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "m/tests/a.tftest.hcl#provider.kubernetes")
 }
 
 test_IC011_deny_declared_command_block if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		runner = {
-			source = "example/runner"
-		}
-	}
-}`),
-		tf("m/providers.tf", `provider "runner" {
-	runner {
-		command = "x"
-	}
-}`),
-	]
-	msgs := denies(files, base_decl)
+	msgs := denies(fx("IC011_deny_declared_command_block"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "provider の runner.command")
 }
 
 test_IC011_deny_override_file_adding_provisioner if {
-	files := [
-		tf("m/main.tf", `resource "aws_s3_bucket" "b" {}`),
-		tf("m/main_override.tf", `resource "aws_s3_bucket" "b" {
-	provisioner "local-exec" {
-		command = "x"
-	}
-}`),
-	]
-	count(with_id(denies(files, base_decl), "IC011")) == 1
+	count(with_id(denies(fx("IC011_deny_override_file_adding_provisioner"), base_decl), "IC011")) == 1
 }
 
 test_IC011_deny_provisioner_in_removed_block if {
-	msgs := denies([tf("m/main.tf", `removed {
-	from = aws_s3_bucket.old
-	lifecycle {
-		destroy = false
-	}
-	provisioner "local-exec" {
-		when    = destroy
-		command = "curl x"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_deny_provisioner_in_removed_block"), base_decl)
 	some m in with_id(msgs, "IC011")
 	contains(m, "m#removed.aws_s3_bucket.old")
 }
 
 test_IC011_allow_removed_block_without_provisioner if {
-	msgs := denies([tf("m/main.tf", `removed {
-	from = aws_s3_bucket.old
-	lifecycle {
-		destroy = false
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC011_allow_removed_block_without_provisioner"), base_decl)
 	count(msgs) == 0
 }
 
 test_IC011_allow_listed_code if {
 	d := object.union(base_decl, {"allowlist": [{"id": "m#resource.aws_instance.i", "owner": "external", "repository": "github.com/o/r"}]})
-	msgs := denies([tf("m/main.tf", `resource "aws_instance" "i" {}`)], d)
+	msgs := denies(fx("IC011_allow_listed_code"), d)
 	count(msgs) == 0
 }
 
@@ -176,93 +118,48 @@ test_IC004_deny_missing_or_non_boolean_executes_code if {
 		"resource.aws_lambda_invocation": {},
 		"resource.aws_lambda_function": {"executes_code": "yes"},
 	})})
-	count(with_id(denies([], d), "IC004")) == 2
+	count(with_id(denies(empty_doc, d), "IC004")) == 2
 }
 
 test_IC012_deny_misclassified_must_execute_type if {
 	d := object.union(base_decl, {"types": object.union(base_decl.types, {"resource.aws_launch_template": {"executes_code": false}})})
-	msgs := denies([tf("m/main.tf", `resource "aws_s3_bucket" "b" {}`)], d)
+	msgs := denies(fx("IC002_allow_hcl"), d)
 	count(with_id(msgs, "IC012")) == 1
 }
 
 test_IC012_allow_must_execute_types_on_the_executing_side if {
-	msgs := denies([tf("m/main.tf", `resource "aws_s3_bucket" "b" {}`)], base_decl)
+	msgs := denies(fx("IC002_allow_hcl"), base_decl)
 	count(with_id(msgs, "IC012")) == 0
 }
 
 test_IC013_deny_unclassified_provider if {
-	msgs := denies([tf("m/main.tf", `provider "github" {}`)], base_decl)
+	msgs := denies(fx("IC013_deny_unclassified_provider"), base_decl)
 	some m in with_id(msgs, "IC013")
 	contains(m, "registry.terraform.io/hashicorp/github")
 }
 
 test_IC013_deny_required_source_without_provider_block if {
-	msgs := denies([tf("m/versions.tf", `terraform {
-	required_providers {
-		aws = {
-			source = "evil/aws"
-		}
-	}
-}`), tf("m/main.tf", `resource "aws_s3_bucket" "b" {}`)], base_decl)
+	msgs := denies(fx("IC013_deny_required_source_without_provider_block"), base_decl)
 	some m in with_id(msgs, "IC013")
 	contains(m, "registry.terraform.io/evil/aws")
 }
 
 test_IC013_allow_classified_provider_with_required_source if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		aws = {
-			source = "hashicorp/aws"
-		}
-	}
-}`),
-		tf("m/providers.tf", `provider "aws" {
-	region = "ap-northeast-1"
-}`),
-	]
-	count(denies(files, base_decl)) == 0
+	count(denies(fx("IC013_allow_classified_provider_with_required_source"), base_decl)) == 0
 }
 
 test_IC014_deny_non_literal_source if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		aws = {
-			source = "${var.ns}/aws"
-		}
-	}
-}`),
-		tf("m/providers.tf", `provider "aws" {}`),
-	]
-	msgs := denies(files, base_decl)
+	msgs := denies(fx("IC014_deny_non_literal_source"), base_decl)
 	count(with_id(msgs, "IC014")) == 1
 	count(with_id(msgs, "IC013")) == 0
 }
 
 test_IC014_deny_non_literal_required_source_without_provider_block if {
-	files := [tf("m/versions.tf", `terraform {
-	required_providers {
-		aws = {
-			source = "${var.ns}/aws"
-		}
-	}
-}`)]
-	count(with_id(denies(files, base_decl), "IC014")) == 1
+	count(with_id(denies(fx("IC014_deny_non_literal_required_source_without_provider_block"), base_decl), "IC014")) == 1
 }
 
 test_IC014_allow_literal_source if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		aws = {
-			source = "hashicorp/aws"
-		}
-	}
-}`),
-		tf("m/providers.tf", `provider "aws" {}`),
-	]
-	count(denies(files, base_decl)) == 0
+	count(denies(fx("IC014_allow_literal_source"), base_decl)) == 0
 }
 
 test_IC004_deny_unknown_keys if {
@@ -272,7 +169,7 @@ test_IC004_deny_unknown_keys if {
 		"providers": {"registry.terraform.io/hashicorp/aws": {"y": 1}},
 		"allowlist": [{"id": "a", "owner": "external", "z": 1}],
 	})
-	with_id(denies([], d), "IC004") == {
+	with_id(denies(empty_doc, d), "IC004") == {
 		"IC004 [宣言の形] infra_code_decl のキー extra を解釈できません",
 		"IC004 [宣言の形] types.resource.aws_s3_bucket のキー x を解釈できません",
 		"IC004 [宣言の形] providers.registry.terraform.io/hashicorp/aws のキー y を解釈できません",
@@ -282,14 +179,14 @@ test_IC004_deny_unknown_keys if {
 
 test_IC004_deny_allowlist_item_without_id_or_owner if {
 	d := object.union(base_decl, {"allowlist": [{"repository": "github.com/o/r"}]})
-	with_id(denies([], d), "IC004") == {
+	with_id(denies(empty_doc, d), "IC004") == {
 		"IC004 [宣言の形] allowlist の 0 番目の項目に id がありません",
 		"IC004 [宣言の形] allowlist の 0 番目の項目に owner がありません",
 	}
 }
 
 test_IC004_deny_missing_declaration if {
-	msgs := denies([], {})
+	msgs := denies(empty_doc, {})
 	"IC004 [宣言の形] infra_code_decl の types がありません" in msgs
 }
 
@@ -301,25 +198,11 @@ test_IC004_allow_known_keys if {
 			{"id": "n#resource.aws_instance.j", "owner": "external", "repository": "github.com/o/r"},
 		],
 	})
-	count(with_id(denies([], d), "IC004")) == 0
+	count(with_id(denies(empty_doc, d), "IC004")) == 0
 }
 
 test_IC011_deny_declared_command_block_in_tftest if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		runner = {
-			source = "example/runner"
-		}
-	}
-}`),
-		tf("m/tests/a.tftest.hcl", `provider "runner" {
-	runner {
-		command = "x"
-	}
-}`),
-	]
-	some msg in with_id(denies(files, base_decl), "IC011")
+	some msg in with_id(denies(fx("IC011_deny_declared_command_block_in_tftest"), base_decl), "IC011")
 	contains(msg, "m/tests/a.tftest.hcl#provider.runner（provider の runner.command）")
 }
 
@@ -328,50 +211,164 @@ test_IC011_allow_listed_provider_exec_and_removed_provisioner if {
 		{"id": "m#provider.kubernetes", "owner": "external", "repository": "github.com/o/r"},
 		{"id": "m#removed.aws_s3_bucket.old", "owner": "external", "repository": "github.com/o/r"},
 	]})
-	files := [tf("m/main.tf", `provider "kubernetes" {
-	exec {
-		command = "aws"
-	}
-}
-
-removed {
-	from = aws_s3_bucket.old
-	lifecycle {
-		destroy = false
-	}
-	provisioner "local-exec" {
-		when    = destroy
-		command = "x"
-	}
-}`)]
-	count(denies(files, d)) == 0
+	count(denies(fx("IC011_allow_listed_provider_exec_and_removed_provisioner"), d)) == 0
 }
 
 test_IC010_deny_when_declaration_is_empty if {
-	some msg in denies([tf("m/main.tf", `resource "aws_s3_bucket" "b" {}`)], {})
+	some msg in denies(fx("IC002_allow_hcl"), {})
 	startswith(msg, "IC010 ")
 }
 
 test_IC013_deny_required_provider_without_source if {
-	msgs := denies([tf("m/versions.tf", `terraform {
-	required_providers {
-		evil = ">= 1.0"
-	}
-}`)], base_decl)
+	msgs := denies(fx("IC013_deny_required_provider_without_source"), base_decl)
 	some m in with_id(msgs, "IC013")
 	contains(m, "registry.terraform.io/hashicorp/evil")
 }
 
 test_IC013_deny_once_when_provider_block_and_required_source_agree if {
-	files := [
-		tf("m/versions.tf", `terraform {
-	required_providers {
-		evil = {
-			source = "evil/x"
-		}
+	count(with_id(denies(fx("IC013_deny_once_when_provider_block_and_required_source_agree"), base_decl), "IC013")) == 1
+}
+
+# fixture_cases は fixtures の txtar のケース名すべて。ケースが欠けるか空なら、それを使うテストが空振りしないよう、ここで落とす。
+fixture_cases := {
+	"IC001_allow_terraform_files_2",
+	"IC001_allow_usecase_tree",
+	"IC001_deny_other_extension",
+	"IC001_deny_unparsed_extension",
+	"IC002_allow_hcl",
+	"IC002_deny_json_and_query",
+	"IC003_allow_every_known_block_1",
+	"IC003_allow_every_known_block_2",
+	"IC003_deny_unknown_block_1",
+	"IC003_deny_unknown_block_2",
+	"IC010_allow_classified_types",
+	"IC010_deny_unclassified_data_inside_check",
+	"IC010_deny_unclassified_type",
+	"IC011_allow_listed_code",
+	"IC011_allow_listed_provider_exec_and_removed_provisioner",
+	"IC011_allow_removed_block_without_provisioner",
+	"IC011_deny_declared_command_block",
+	"IC011_deny_declared_command_block_in_tftest",
+	"IC011_deny_dynamic_provisioner",
+	"IC011_deny_every_must_execute_type",
+	"IC011_deny_external_inside_check",
+	"IC011_deny_override_file_adding_provisioner",
+	"IC011_deny_provider_exec_at_any_depth",
+	"IC011_deny_provider_exec_in_attribute_form",
+	"IC011_deny_provider_exec_in_tftest",
+	"IC011_deny_provider_unresolved_conditional",
+	"IC011_deny_provider_unresolved_object_key",
+	"IC011_deny_provisioner_in_removed_block",
+	"IC011_deny_provisioner_on_any_type",
+	"IC013_allow_classified_provider_with_required_source",
+	"IC013_deny_once_when_provider_block_and_required_source_agree",
+	"IC013_deny_required_provider_without_source",
+	"IC013_deny_required_source_without_provider_block",
+	"IC013_deny_unclassified_provider",
+	"IC014_allow_literal_source",
+	"IC014_deny_non_literal_required_source_without_provider_block",
+	"IC014_deny_non_literal_source",
+	"IC020_deny_item_matching_nothing",
+	"IC030_allow_static_paths_2",
+	"IC030_allow_static_paths_3",
+	"IC030_deny_absolute_path",
+	"IC030_deny_file_function_followed_by_more_code",
+	"IC030_deny_file_function_with_reference",
+	"IC030_deny_non_static_inline_code",
+	"IC030_deny_non_static_path_2",
+	"IC030_deny_non_static_path_3",
+	"IC030_deny_non_static_path_4",
+	"IC030_deny_non_string_non_list_value_1",
+	"IC030_deny_non_string_non_list_value_2",
+	"IC030_deny_path_escaping_repository",
+	"IC030_deny_path_module_prefix_without_slash",
+	"IC031_allow_file_function_with_calls_in_later_args",
+	"IC031_allow_path_under_source_1",
+	"IC031_allow_path_under_source_2",
+	"IC031_allow_path_under_source_3",
+	"IC031_allow_path_under_source_4",
+	"IC031_allow_path_under_source_5",
+	"IC031_allow_path_under_source_6",
+	"IC031_allow_path_under_source_7",
+	"IC031_allow_source_is_the_file_itself",
+	"IC031_deny_every_file_function_outside_source_2",
+	"IC031_deny_every_file_function_outside_source_3",
+	"IC031_deny_every_file_function_outside_source_4",
+	"IC031_deny_every_file_function_outside_source_5",
+	"IC031_deny_every_file_function_outside_source_6",
+	"IC031_deny_file_function_outside_source",
+	"IC031_deny_file_function_with_calls_in_later_args",
+	"IC031_deny_path_in_dynamic_block",
+	"IC031_deny_path_outside_source_1",
+	"IC031_deny_path_outside_source_2",
+	"IC031_deny_path_outside_source_3",
+	"IC031_two_items_matching_sources",
+	"IC031_two_items_two_components",
+	"IC032_allow_external_item_without_repository_path",
+	"IC032_external_item_repository_path",
+	"IC033_deny_inline_code_with_other_source",
+	"IC034_deny_list_valued_code",
+	"IC034_deny_nested_block_body_arg",
+}
+
+test_fixtures_present if {
+	every name in fixture_cases {
+		count(fx(name).files) > 0
 	}
-}`),
-		tf("m/providers.tf", `provider "evil" {}`),
-	]
-	count(with_id(denies(files, base_decl), "IC013")) == 1
+	{k | some k, _ in data.fixtures; not startswith(k, "lib_")} == fixture_cases
+}
+
+# provider の設定は block を属性の形でも書ける（helm の kubernetes = { exec = {...} }）。
+test_IC011_deny_provider_exec_in_attribute_form if {
+	some m in with_id(denies(fx("IC011_deny_provider_exec_in_attribute_form"), base_decl), "IC011")
+	contains(m, "m#provider.helm（provider の exec）")
+}
+
+# provider の中の、中を読めない式（条件など）と、キーがリテラルでないオブジェクトは、exec を隠せるので検出する。
+test_IC011_deny_provider_unresolved_expression if {
+	every c in ["IC011_deny_provider_unresolved_conditional", "IC011_deny_provider_unresolved_object_key"] {
+		with_id(denies(fx(c), base_decl), "IC011") == {"IC011 [許可リストに無い] m/main.tf: m#provider.helm（解けない式）はインフラ内コードです → allowlist に項目を足し、本リポジトリ所有なら ADR-0103 決定13 の ADR を書く"}
+	}
+}
+
+test_IC011_allow_listed_provider_unresolved_expression if {
+	d := object.union(base_decl, {"allowlist": [{"id": "m#provider.helm", "owner": "external", "repository": "github.com/o/r"}]})
+	every c in ["IC011_deny_provider_unresolved_conditional", "IC011_deny_provider_unresolved_object_key"] {
+		count(with_id(denies(fx(c), d), "IC011")) == 0
+	}
+}
+
+must_execute_decl(v) := object.union(base_decl, {"types": object.union(base_decl.types, {k: {"executes_code": v} | some k in must_execute})})
+
+# ADR-0103 決定9 が名指す型の集合を、規則の must_execute とは別に書いて突き合わせる。
+must_execute_expected := {
+		"resource.aws_instance",
+		"resource.aws_launch_configuration",
+		"resource.aws_launch_template",
+		"resource.aws_lightsail_instance",
+		"resource.aws_spot_fleet_request",
+		"resource.aws_spot_instance_request",
+		"resource.aws_lambda_invocation",
+		"data.aws_lambda_invocation",
+		"action.aws_lambda_invoke",
+		"data.external",
+	}
+
+test_IC012_deny_every_must_execute_type_on_the_wrong_side if {
+	must_execute == must_execute_expected
+	msgs := with_id(denies(fx("IC002_allow_hcl"), must_execute_decl(false)), "IC012")
+	every k in must_execute {
+		some m in msgs
+		contains(m, concat("", [k, " はコードを実行させる型です"]))
+	}
+	count(msgs) == count(must_execute)
+}
+
+test_IC011_deny_every_must_execute_type if {
+	must_execute == must_execute_expected
+	msgs := with_id(denies(fx("IC011_deny_every_must_execute_type"), must_execute_decl(true)), "IC011")
+	every k in must_execute {
+		some m in msgs
+		contains(m, sprintf("コードを実行させる型 %s", [k]))
+	}
 }

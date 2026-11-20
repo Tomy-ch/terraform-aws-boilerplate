@@ -1,0 +1,77 @@
+name: Makefiles
+
+# `.mk` にテストのターゲットが無いことを検査する（ADR-0702 決定25）。移行中の除外の期限は宣言が
+# 変わらなくても来るので、定期実行にも載せる（ADR-0702 決定18）。
+on:
+  pull_request:
+  schedule:
+    - cron: '15 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mk-test-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner
+        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1
+        with:
+          egress-policy: block
+          dns-policy: allowed-domains-only
+          enable-sudo: false
+          allowed-ips: |
+            127.0.0.100
+          allowed-domains: |
+            api.github.com
+            github.com
+            codeload.github.com
+            objects.githubusercontent.com
+            raw.githubusercontent.com
+            release-assets.githubusercontent.com
+            *.actions.githubusercontent.com
+            productionresultssa30.blob.core.windows.net
+            productionresultssa31.blob.core.windows.net
+            productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: scripts/go.mod
+          cache: true
+          cache-dependency-path: scripts/go.sum
+
+      - name: Check that no .mk holds a test target
+        run: make mk-test-lint RUNNER_MODE=host

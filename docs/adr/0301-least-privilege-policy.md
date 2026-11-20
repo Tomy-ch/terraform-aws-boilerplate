@@ -96,6 +96,10 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 20. 上記のうち機械判定可能なものは、Policy Testのinvariantとして実装する。invariantを持たない安全性の主張を、保証として扱わない。
 
+### IAM の付与の破棄
+
+21. role に付けた managed policy は、role と policy の破棄と置換で、policy より先に外れる。付与1件ごとに、破棄で付与を外す resource（`aws_iam_role_policy_attachment`）を持たせ、付ける policy を参照させる。帯域外の付与を剥がす排他の resource（`aws_iam_role_policy_attachments_exclusive`）は、破棄で付与を外さない。そのため付与の持ち主にせず、同じ policy を載せて併用する。
+
 ## 検討した代替案
 
 ### 案A: 安全な設定をopt-inとし、defaultはAWS / Provider既定に従う
@@ -161,6 +165,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - 保証すること: break-glass の経路の形（IAM user の数と資格情報の種類、role の信頼条件、決定8・10 の例外の範囲、SCP からの除外の範囲、通知の経路）が宣言どおりであること
 - 保証すること: 人の permission set に付く AWS managed policy が、設計記録の一覧に載ったものだけであること。組織の管理者の permission set が管理アカウントにだけ、ユーザーへ直接割り当てられていること
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
+- 保証しないこと: attachment が参照で policy に依存すること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する。Policy Test の入力は構成を持たず、参照を見る検査は無い
 - 保証しないこと: 人の permission set に付く AWS managed policy の中身。AWS が改訂すると、宣言を変えずに人の権限が変わる
 - 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
 
@@ -180,6 +185,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - 管理アカウントで `sts:AssumeRoot` を許す主体が break-glass の role に限られること
   - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
   - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
+  - 排他の resource（`aws_iam_role_policy_attachments_exclusive`）が載せる policy ごとに、同じ role への attachment がちょうど1つ在ること。排他の resource に載らない attachment が無いこと（決定21。`plan.iam_role_attachment_pairing`、`PLAN-ATTACH-*`）
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。

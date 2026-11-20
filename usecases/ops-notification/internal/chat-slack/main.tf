@@ -47,9 +47,15 @@ resource "aws_iam_role_policies_exclusive" "this" {
   policy_names = []
 }
 
+# 付け外しは attachment に持たせ、policy_arn で policy を参照する（repository-wide/ADR-0301 決定21）。
+resource "aws_iam_role_policy_attachment" "read" {
+  role       = aws_iam_role.this.name
+  policy_arn = aws_iam_policy.read.arn
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   role_name   = aws_iam_role.this.name
-  policy_arns = [aws_iam_policy.read.arn]
+  policy_arns = [aws_iam_role_policy_attachment.read.policy_arn]
 }
 
 # Chatbot の API は us-east-2・us-west-2・eu-west-1・ap-southeast-1 にだけ在り、Provider はほかの region を us-west-2 へ寄せる（ops-notification/ADR-0201）。

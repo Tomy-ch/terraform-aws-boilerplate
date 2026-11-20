@@ -8,6 +8,7 @@ decl := {"break_glass": {
 	"group_policy": "module.b.aws_iam_group_policy.this",
 	"role": "module.b.aws_iam_role.this",
 	"role_attachments": "module.b.aws_iam_role_policy_attachments_exclusive.this",
+	"role_policy_attachment": "module.b.aws_iam_role_policy_attachment.administrator_access",
 }}
 
 user_arns := ["arn:aws:iam::111111111111:user/break-glass/break-glass-1", "arn:aws:iam::111111111111:user/break-glass/break-glass-2"]
@@ -40,7 +41,9 @@ attachments(arns) := change("module.b.aws_iam_role_policy_attachments_exclusive.
 
 admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 
-rcs(group, trusts, arns) := [user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns)]
+attachment(arn) := change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass", "policy_arn": arn})
+
+rcs(group, trusts, arns) := [user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns), attachment(admin)]
 
 valid := fixture.plan(rcs(valid_group, trust(user_arns), [admin]))
 
@@ -49,8 +52,24 @@ test_pass_reference_shape if {
 }
 
 test_violation_declared_resource_missing if {
-	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), role(trust(user_arns)), attachments([admin])])
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), role(trust(user_arns)), attachments([admin]), attachment(admin)])
 	fixture.has("[PLAN-BG-00]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_declared_attachment_missing if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin])])
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_iam_role_policy_attachment.administrator_access", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_other_policy if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), attachment("arn:aws:iam::aws:policy/ReadOnlyAccess")])
+	fixture.has("[PLAN-BG-04] break-glass の role の attachment が付ける policy", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_on_other_role if {
+	other := change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "other", "policy_arn": admin})
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), other])
+	fixture.has("[PLAN-BG-04] module.b.aws_iam_role_policy_attachment.administrator_access が AdministratorAccess を break-glass の role の外へ", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
 test_violation_three_users if {
@@ -396,4 +415,19 @@ test_violation_user_not_shaped if {
 		fixture.has(user_not_fixed(user_address(1)), deny)
 		not fixture.has(user_not_fixed(user_address(2)), deny)
 	}
+}
+
+test_violation_second_admin_attachment_on_break_glass_role if {
+	second := change("module.b.aws_iam_role_policy_attachment.second", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass", "policy_arn": admin})
+	fixture.has("[PLAN-BG-04] module.b.aws_iam_role_policy_attachment.second が AdministratorAccess を break-glass の role の外へ", p.deny) with input as fixture.plan(array.concat(rcs(valid_group, trust(user_arns), [admin]), [second])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_without_policy_arn if {
+	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass"})])
+	fixture.has("[PLAN-BG-04] break-glass の role の attachment が付ける policy", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_attachment_declaration_key_absent if {
+	d := {"break_glass": object.remove(decl.break_glass, ["role_policy_attachment"])}
+	fixture.has("[PLAN-BG-00]", p.deny) with input as valid with data.policy_plan as {"organization_baseline": d}
 }

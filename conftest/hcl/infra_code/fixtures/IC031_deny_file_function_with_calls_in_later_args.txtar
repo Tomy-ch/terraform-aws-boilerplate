@@ -1,0 +1,4 @@
+-- u/internal/fn/main.tf --
+resource "aws_cloudfront_function" "c" {
+  code = templatefile("${path.module}/other/fn.js", { a = jsonencode(var.x), b = ")" })
+}

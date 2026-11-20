@@ -167,6 +167,12 @@
               "ref": "role",
               "parent_ref": "name"
             },
+            "aws_iam_role_policy_attachment": {
+              "class": "covered_by",
+              "parent": "aws_iam_role",
+              "ref": "role",
+              "parent_ref": "name"
+            },
             "aws_iam_role_policy_attachments_exclusive": {
               "class": "covered_by",
               "parent": "aws_iam_role",
@@ -278,6 +284,7 @@
       },
       "workload": {
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
+        "read_policy": "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read",
         "boundaries": {
           "ops-notification": "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary[\"ops-notification\"]"
         },
@@ -336,6 +343,14 @@
         "policies_exclusive": "module.image_registry.module.repository.aws_iam_role_policies_exclusive.publisher",
         "attachments_exclusive": "module.image_registry.module.repository.aws_iam_role_policy_attachments_exclusive.publisher"
       }
+    },
+    "iam_role_attachment_pairing": {
+      "exclusives": [
+        "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply\"]",
+        "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"]",
+        "module.ops_notification.module.chat.aws_iam_role_policy_attachments_exclusive.this",
+        "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
+      ]
     },
     "publisher_trust": {
       "roles": [
@@ -437,24 +452,6 @@
       "shorten_allow": {}
     },
     "inline_arguments": {
-      "aws_s3_bucket": {
-        "acceleration_status": null,
-        "acl": null,
-        "policy": null,
-        "request_payer": null,
-        "cors_rule": [],
-        "grant": [],
-        "lifecycle_rule": [],
-        "logging": [],
-        "object_lock_configuration": [],
-        "replication_configuration": [],
-        "server_side_encryption_configuration": [],
-        "versioning": [],
-        "website": []
-      },
-      "aws_kms_key": {
-        "policy": null
-      },
       "aws_s3_bucket_object_lock_configuration": {
         "expected_bucket_owner": null
       },
@@ -463,9 +460,6 @@
       },
       "aws_organizations_organization": {
         "aws_service_access_principals": null
-      },
-      "aws_route53_zone": {
-        "vpc": []
       }
     },
     "organization_baseline": {
@@ -541,7 +535,8 @@
         ],
         "group_policy": "module.organization_baseline.module.break_glass.aws_iam_group_policy.this",
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
-        "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
+        "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this",
+        "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access"
       }
     },
     "ops_notification": {

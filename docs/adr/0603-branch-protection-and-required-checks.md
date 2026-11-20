@@ -281,8 +281,9 @@ install 先を確かめても、鍵を直接使う主体には効かない。
 
 - Static Analysis（make repo-settings-check）: workflow と composite action の起動条件の `branches` /
   `branches-ignore` の一覧が、決定1 の宣言から生成されていること。式（`${{ }}` と `if:` の値）が、ブランチの
-  名前か ref を値に持つ context（閉じた一覧は make repo-settings-check の検査が持つ）を、宣言から生成して
-  いない文字列と比べていないこと
+  名前か ref を値に持つ値（`github` と `inputs` の下の値と、それを関数や演算で加工した値。見分ける規則は
+  make repo-settings-check の検査が持つ）を、宣言から生成していない文字列と比べていないこと。式として
+  読めないものは合格にしない
 - Unit Test: 宣言を実行時に読むツール（base-branch / release / repo-setup）が、宣言のブランチの名前を
   変えた入力に追随すること
 - 突合の検査: 宣言と実態の差分が存在しないこと（決定4）

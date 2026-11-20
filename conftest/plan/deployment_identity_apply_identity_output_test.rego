@@ -60,7 +60,6 @@ test_pass_apply_output_write_and_bucket_configuration if {
 	count(messages([write_apply, configure, other_bucket, logs])) == 0
 }
 
-# IAM（deployment-identity）と Bucket（state-backend）は、実際には別のファイルの plan に在る。
 test_pass_bucket_in_other_file if {
 	inp := [
 		{"path": "deployment-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": identity_side([write_apply])}},
@@ -121,7 +120,6 @@ test_violation_role_missing if {
 	fixture.has("[PLAN-AIO-00] apply-identity の role \"", messages_for(fixture.plan(array.concat([policy([write_apply])], state_side)), decl))
 }
 
-# Bucket が読めないと、PLAN-AIO-02〜04 がすべて黙る。
 test_violation_bucket_unreadable if {
 	unknown := {"address": "module.s.aws_s3_bucket.plan", "type": "aws_s3_bucket", "change": {"actions": ["create"], "after": {}, "after_unknown": {"arn": true}}}
 	every inp in [
@@ -132,7 +130,6 @@ test_violation_bucket_unreadable if {
 	}
 }
 
-# 宣言した policy が別の role に付いていると、apply-identity の role の権限は1つも見られない。
 test_violation_policy_not_on_role if {
 	on_plan := object.union(policy([write_apply]), {"change": {"after": {"role": "ci-plan"}}})
 	msgs := messages_for(fixture.plan(array.concat([role, policies_exclusive, attachments_exclusive, on_plan], state_side)), decl)
@@ -290,7 +287,6 @@ test_violation_role_name_case if {
 	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_policy_attachment.extra", msgs)
 }
 
-# 同じアカウントの主体には、Bucket Policy の Allow だけで権限が付く。
 test_violation_bucket_policy_allow if {
 	allow := {"Sid": "X", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:role/ci-apply-identity"}, "Action": "s3:DeleteObject", "Resource": sprintf("%s/*", [b])}
 	inp := fixture.plan(array.concat(identity_side([write_apply]), [bucket, bucket_policy([tls_deny, allow])]))
@@ -302,7 +298,6 @@ test_violation_bucket_policy_missing if {
 	fixture.has("[PLAN-AIO-00] plan の出力の Bucket の Bucket Policy", messages_for(inp, decl))
 }
 
-# 値が plan で決まらない経路も、決まらないこと自体で落とす。
 unknown_attr(r, attr) := {"address": r.address, "type": r.type, "change": {"actions": ["create"], "after": object.remove(r.change.after, [attr]), "after_unknown": {attr: true}}}
 
 test_violation_unknown_attributes if {
@@ -351,6 +346,18 @@ create_org := {"Effect": "Allow", "Action": "organizations:CreateOrganization", 
 
 test_pass_governance_policy_attached if {
 	count(messages_for(with_governance([create_org], attached_governance), gdecl)) == 0
+}
+
+governance_attachment(arn) := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.governance[0]", {"role": "ci-apply-identity", "policy_arn": arn})
+
+with_governance_attachment(arn) := fixture.plan(array.concat([role, policies_exclusive, attached_governance, governance_attachment(arn), policy([write_apply]), governance([create_org])], state_side))
+
+test_pass_governance_policy_attachment if {
+	count(messages_for(with_governance_attachment(governance_arn), gdecl)) == 0
+}
+
+test_violation_attachment_of_undeclared_policy if {
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachment.governance[0] が apply-identity の role に付ける policy が", messages_for(with_governance_attachment("arn:aws:iam::aws:policy/AdministratorAccess"), gdecl))
 }
 
 test_pass_no_managed_policies_declared if {
@@ -463,4 +470,17 @@ test_violation_second_managed_policy_reads_output if {
 test_violation_attachments_exclusive_duplicated if {
 	dup := object.union(attachments_exclusive, {"address": "module.x.aws_iam_role_policy_attachments_exclusive.other"})
 	fixture.has("[PLAN-AIO-05] apply-identity の role ci-apply-identity の aws_iam_role_policy_attachments_exclusive が 2 件", messages_for(with_policy([write_apply], [dup]), decl))
+}
+
+test_violation_attachment_policy_arn_unknown if {
+	unknown := {"address": "module.x.aws_iam_role_policy_attachment.governance[0]", "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {"role": "ci-apply-identity"}, "after_unknown": {"policy_arn": true}}}
+	msgs := messages_for(fixture.plan(array.concat([role, policies_exclusive, attached_governance, unknown, policy([write_apply]), governance([create_org])], state_side)), gdecl)
+	fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachment.governance[0] の policy_arn を plan で読めません", msgs)
+	not fixture.has("[PLAN-AIO-05] p.json: module.x.aws_iam_role_policy_attachment.governance[0] が apply-identity の role に付ける policy が", msgs)
+}
+
+test_pass_attachment_on_other_role if {
+	other := rc("aws_iam_role_policy_attachment", "module.y.aws_iam_role_policy_attachment.other", {"role": "other", "policy_arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"})
+	msgs := messages_for(fixture.plan(array.concat([role, policies_exclusive, attached_governance, governance_attachment(governance_arn), other, policy([write_apply]), governance([create_org])], state_side)), gdecl)
+	count([m | some m in msgs; startswith(m, "[PLAN-AIO-05]")]) == 0
 }
