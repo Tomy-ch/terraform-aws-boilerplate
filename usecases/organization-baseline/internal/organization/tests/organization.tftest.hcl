@@ -139,6 +139,21 @@ run "policies" {
   }
 
   assert {
+    condition = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[1] == {
+      Sid      = "DenyStackSetsExecutionRoleChange"
+      Effect   = "Deny"
+      Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+      Resource = "arn:aws:iam::*:role/stacksets-exec-*"
+    }
+    error_message = "例外にした StackSet の実行の role の名前を、メンバーの主体が作ったり変えたりすることを拒んでください。"
+  }
+
+  assert {
+    condition     = output.root_id == "r-exam"
+    error_message = "root_id は組織の Root の ID です。"
+  }
+
+  assert {
     condition     = jsondecode(aws_organizations_policy.this["data-perimeter-prod-resources"].content).Statement[0].Condition["ForAnyValue:StringLike"]["aws:ResourceOrgPaths"] == "o-exampleorg1/r-exam/ou-exam-workload/ou-exam-prod/*"
     error_message = "下位の環境の SCP は Prod の OU の path の resource を拒んでください。"
   }

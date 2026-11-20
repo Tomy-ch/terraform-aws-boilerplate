@@ -172,12 +172,15 @@ deny contains msg if {
 }
 
 member_role_shape if {
+	object.keys(template) == {"AWSTemplateFormatVersion", "Resources"}
 	count(template.Resources) == 1
 	some r in template.Resources
+	object.keys(r) == {"Type", "Properties"}
 	r.Type == "AWS::IAM::Role"
 	object.keys(r.Properties) == member_role_keys
 	r.Properties.RoleName == role.name
 	r.Properties.Path == role.path
+	r.Properties.MaxSessionDuration == role.max_session_duration
 	r.Properties.ManagedPolicyArns == [administrator_access]
 	statements := lib.statements(r.Properties.AssumeRolePolicyDocument)
 	count([s | some s in statements; s.Effect == "Allow"]) > 0
@@ -190,6 +193,27 @@ member_role_shape if {
 deny contains msg if {
 	stack_set
 	instances := after(object.get(bg, "stack_instances", ""))
-	instances.stack_set_name != stack_set.name
+	not instances.stack_set_name == stack_set.name
 	msg := "[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません"
 }
+
+# 展開先は組織の Root だけ。メンバーのすべて（これから作るものを含む）に置く。
+organization_root_id := after(object.get(object.get(data.policy_plan, "organization_baseline", {}), "organization", "")).roots[0].id
+
+deny contains msg if {
+	stack_set
+	instances := after(object.get(bg, "stack_instances", ""))
+	not targets_root_only(instances)
+	msg := "[PLAN-BG-05] メンバーの break-glass の stack instance の展開先が、組織の Root だけではありません"
+}
+
+targets_root_only(instances) if {
+	count(instances.deployment_targets) == 1
+	target := instances.deployment_targets[0]
+	target.organizational_unit_ids == [organization_root_id]
+	no_accounts(target)
+}
+
+no_accounts(target) if object.get(target, "accounts", null) == null
+
+no_accounts(target) if count(target.accounts) == 0

@@ -57,7 +57,6 @@ usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
 # （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。
 conftest/hcl/                              @Tomy-ch
 scripts/infra-code-gate/                   @Tomy-ch
-usecases/organization-baseline/internal/break-glass/main.tf @Tomy-ch
 scripts/hcl-input/                         @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
 scripts/tf-job-lint/                       @Tomy-ch
@@ -73,3 +72,4 @@ scripts/tf-job-lint/                       @Tomy-ch
 .github/workflows/terraform-lock-hold.yaml @Tomy-ch
 .github/settings/branch-protection.json    @Tomy-ch
 .github/CODEOWNERS                         @Tomy-ch
+usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl @Tomy-ch

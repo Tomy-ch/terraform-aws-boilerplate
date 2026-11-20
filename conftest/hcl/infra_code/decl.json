@@ -82,7 +82,7 @@
       {
         "id": "usecases/organization-baseline/internal/break-glass#resource.aws_cloudformation_stack_set.this",
         "owner": "repository",
-        "source": "usecases/organization-baseline/internal/break-glass/main.tf",
+        "source": "usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl",
         "language": "hcl",
         "adr": "organization-baseline/member-break-glass-via-stacksets"
       }

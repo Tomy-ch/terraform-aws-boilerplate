@@ -147,29 +147,15 @@ resource "aws_cloudformation_stack_set" "this" {
     active = true
   }
 
-  template_body = jsonencode({
-    AWSTemplateFormatVersion = "2010-09-09"
-    Resources = {
-      BreakGlassRole = {
-        Type = "AWS::IAM::Role"
-        Properties = {
-          RoleName           = var.role_name
-          Path               = var.path
-          MaxSessionDuration = 3600
-          ManagedPolicyArns  = ["arn:${local.partition}:iam::aws:policy/AdministratorAccess"]
-          AssumeRolePolicyDocument = {
-            Version = "2012-10-17"
-            Statement = [{
-              Effect    = "Allow"
-              Principal = { AWS = local.user_arns }
-              Action    = "sts:AssumeRole"
-              Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
-            }]
-          }
-        }
-      }
-    }
+  template_body = templatefile("${path.module}/templates/member-break-glass-role.json.tftpl", {
+    role_name = var.role_name
+    role_path = var.path
+    partition = local.partition
+    user_arns = local.user_arns
   })
+
+  # 信頼条件が名指す user を先に作る。メンバーの IAM は、無い principal を信頼条件に書けない。
+  depends_on = [aws_iam_user.this]
 
   lifecycle {
     prevent_destroy = true
