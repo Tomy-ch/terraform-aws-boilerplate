@@ -14,17 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// roleRow は local.roles の1行を、キー key・name の接尾辞 nameRole・environment の接尾辞 envRole で組む。
 func roleRow(key, nameRole, envRole string) string {
 	return "    " + key + ` = { name = "${var.name_prefix}-ci-` + nameRole + `", environment = "${var.env}-` + envRole + `" }` + "\n"
 }
 
-// rolesSrc は rows を local.roles に持つ main.tf の本文を組む。
 func rolesSrc(rows ...string) string {
 	return "locals {\n  issuer = \"x\"\n\n  roles = {\n" + strings.Join(rows, "") + "  }\n}\n"
 }
 
-// registryRows は登録簿のすべての role の行を、キーを role の下線の形にして組む。
+// registryRows のキーは role の `-` を `_` にした形。
 func registryRows() []string {
 	var rows []string
 	for _, role := range Roles() {

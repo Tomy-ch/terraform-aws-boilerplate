@@ -25,7 +25,7 @@ const (
 
 // TerraformRole は `local.roles` の1行です。
 type TerraformRole struct {
-	// Key は行の map のキー。role との対応は Contract Test が持ち、ここでは見ません。
+	// Key と role の対応は Contract Test が持ち、ここでは見ません。
 	Key string
 	// Role は environment の `${var.env}-<role>` の `<role>`。
 	Role string
