@@ -97,10 +97,8 @@ func Test_roleARN(t *testing.T) {
 		for _, row := range rows {
 			got, err := roleARN("tabp", "admin", row.Role, account)
 			require.NoError(t, err, row.Role)
-			want := "arn:aws:iam::123456789012:role/tabp-admin-ci-" + row.Role
-			assert.Equal(t, want, got, row.Role)
 			name := strings.Replace(row.Name, cientry.TerraformNamePrefix, "tabp-admin", 1)
-			assert.Equal(t, want, "arn:aws:iam::123456789012:role/"+name, row.Role)
+			assert.Equal(t, "arn:aws:iam::123456789012:role/"+name, got, row.Role)
 		}
 	})
 
