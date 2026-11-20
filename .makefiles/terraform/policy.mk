@@ -16,6 +16,9 @@ POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
 POLICY_PLAN_DECL = conftest/plan/decl.json
 POLICY_PLAN_DATA = $(POLICY_PLAN_DECL)
+# 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
+POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
+POLICY_LAYER_DATA = $(POLICY_LAYER_DECL)
 TF_POLICY_DEPRECATED = [.[] | select(.type == "test_plan") | .test_plan.provider_schemas // {} | to_entries[] | .value.resource_schemas // {} | to_entries[] \
 	| {key: .key, value: ([(.value.block.attributes // {}) | to_entries[] | select(.value.deprecated == true and (.value.optional == true or .value.required == true)) | .key] \
 	+ [(.value.block.block_types // {}) | to_entries[] | select(.value.block.deprecated == true) | .key])}]
@@ -50,7 +53,7 @@ tf-policy: tf-init
 	if [ -n "$$untested" ]; then echo "❌ テストが一度も名指ししない違反の ID（ADR-0402 決定8・9）:$$untested"; exit 1; fi; \
 	want=$$(find $(POLICY_PLAN_DIR) -name '*_test.rego' -exec grep -h '^test_' {} + | wc -l | tr -d ' '); \
 	if [ "$$want" -eq 0 ]; then echo "❌ Rego のテストが0件です（$(POLICY_PLAN_DIR)）"; exit 1; fi; \
-	verify=$$($(GO_TOOL) $(CONFTEST_BIN) verify --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) -o json) || { \
+	verify=$$($(GO_TOOL) $(CONFTEST_BIN) verify --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) -o json) || { \
 		echo "$$verify"; echo "❌ Rego のテストが落ちました（$(POLICY_PLAN_DIR)）"; exit 1; }; \
 	passed=$$(printf '%s' "$$verify" | jq '[.[].successes] | add // 0'); \
 	if [ "$$passed" -ne "$$want" ]; then echo "❌ 通った Rego のテストが $$passed 件で、宣言された $$want 件と一致しません"; exit 1; fi; \
@@ -73,7 +76,7 @@ tf-policy: tf-init
 	$(TF_REPORT_FAILED); \
 	if [ -z "$$inputs" ]; then echo "❌ Policy の入力が0件です（reference の root から test_plan を1件も得られませんでした）"; exit 1; fi; \
 	jq -s 'add | group_by(.key) | map({key: .[0].key, value: (map(.value) | add | unique)}) | from_entries | {provider_schema: {deprecated_arguments: .}}' "$(TF_POLICY_INPUT)"/*.schema > "$(TF_POLICY_INPUT)/provider-schema.json"; \
-	$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs > "$(TF_POLICY_INPUT)/result.json" || :; \
+	$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DATA) --data $(POLICY_LAYER_DATA) --data "$(TF_POLICY_INPUT)/provider-schema.json" $$inputs > "$(TF_POLICY_INPUT)/result.json" || :; \
 	$(call RUN_SCRIPT,tf-local,policy-result -policy $(POLICY_PLAN_DIR) $(TF_POLICY_INPUT)/result.json) || { \
 		echo "❌ Policy の違反か、評価の欠けがあります（理由は上の行）"; exit 1; }; \
 	echo "✅ Policy を reference の root $$(echo $$inputs | wc -w | tr -d ' ') 件に適用しました"
@@ -94,9 +97,10 @@ tf-policy-canary:
 	@set -u; mkdir -p tmp; root=$$(mktemp -d "$(TF_POLICY_CANARY_DIR).XXXXXX") || exit 1; trap 'rm -rf "$$root"' EXIT; failed=""; \
 	fixture() { $(TF_POLICY_FIXTURE); }; \
 	printf '%s\n' '{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}' > "$$root/data.json"; \
+	printf '%s\n' '{"layer_decl": {"attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}' > "$$root/layer.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
-		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" "$$@" 2>&1); rc=$$?; \
+		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" POLICY_LAYER_DATA="$$root/layer.json" "$$@" 2>&1); rc=$$?; \
 		if [ "$$want" = pass ] && { [ "$$rc" -ne 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \
@@ -158,16 +162,21 @@ tf-policy-canary:
 	aws_fixture() { \
 		cp -R "$$root/ok" "$$1"; cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
 		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
-		printf 'mock_provider "aws" {\n  override_during = plan\n}\n\noverride_resource {\n  target          = aws_s3_bucket.b\n  override_during = plan\n  values = {\n    acceleration_status = null\n    acl                 = null\n    policy              = null\n    request_payer       = null\n  }\n}\n\nrun "policy_input" {\n  command = plan\n}\n' > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"; \
+		printf 'mock_provider "aws" {\n  override_during = plan\n}\n\noverride_resource {\n  target          = aws_s3_bucket.b\n  override_during = plan\n  values = {\n%s\n  }\n}\n\nrun "policy_input" {\n  command = plan\n}\n' "$$aws_null_values" > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"; \
 	}; \
-	jq --slurpfile d $(POLICY_PLAN_DECL) '.policy_plan.inline_arguments = {aws_s3_bucket: $$d[0].policy_plan.inline_arguments.aws_s3_bucket}' "$$root/data.json" > "$$root/aws.json"; \
-	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.website)' "$$root/aws.json" > "$$root/aws-uncovered.json"; \
+	aws_null_values=$$(jq -r '[(.layer_decl.attachments[].parent_arguments.aws_s3_bucket // {} | to_entries[] | select(.value == null) | .key), \
+		((.layer_decl.unrelated_deprecated_arguments.aws_s3_bucket // {}) | to_entries[] | select(.value.unwritten == null) | .key)] \
+		| unique | map("    \(.) = null") | join("\n")' $(POLICY_LAYER_DECL)) && [ -n "$$aws_null_values" ] || { echo "❌ 層の宣言から aws_s3_bucket の書かないときの値を組めませんでした"; exit 1; }; \
+	printf '{}\n' > "$$root/no-layer.json"; \
+	expect fail layer-decl-missing "$$root/ok" "[PLAN-INPUT-12] 層の宣言 data.layer_decl" POLICY_PLAN_DIR="$$root/rego" POLICY_LAYER_DATA="$$root/no-layer.json"; \
+	jq '.policy_plan.inline_arguments = {}' "$$root/data.json" > "$$root/aws.json"; \
+	jq 'del(.layer_decl.attachments.aws_s3_bucket_website_configuration.parent_arguments.aws_s3_bucket.website)' $(POLICY_LAYER_DECL) > "$$root/layer-uncovered.json"; \
+	jq 'del(.layer_decl.attachments.aws_s3_bucket_acl.parent_arguments.aws_s3_bucket.acl)' $(POLICY_LAYER_DECL) > "$$root/layer-uncovered-attr.json"; \
 	aws_fixture "$$root/aws-unwritten" ''; \
-	expect pass aws-unwritten "$$root/aws-unwritten" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
+	expect pass aws-unwritten "$$root/aws-unwritten" "Policy を reference の root 1 件に適用しました" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json" POLICY_LAYER_DATA=$(POLICY_LAYER_DECL); \
 	aws_fixture "$$root/aws-written" 'policy = "{}"'; \
-	expect fail aws-written "$$root/aws-written" "aws_s3_bucket.b の policy が書かれています" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json"; \
-	expect fail aws-uncovered "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 website" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered.json"; \
-	jq 'del(.policy_plan.inline_arguments.aws_s3_bucket.acl)' "$$root/aws.json" > "$$root/aws-uncovered-attr.json"; \
-	expect fail aws-uncovered-attr "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 acl" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws-uncovered-attr.json"; \
+	expect fail aws-written "$$root/aws-written" "aws_s3_bucket.b の policy が書かれています" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json" POLICY_LAYER_DATA=$(POLICY_LAYER_DECL); \
+	expect fail aws-uncovered "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 website" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json" POLICY_LAYER_DATA="$$root/layer-uncovered.json"; \
+	expect fail aws-uncovered-attr "$$root/aws-unwritten" "[PLAN-INPUT-11] aws_s3_bucket の非推奨の引数 acl" POLICY_PLAN_DIR="$$root/rego" POLICY_PLAN_DATA="$$root/aws.json" POLICY_LAYER_DATA="$$root/layer-uncovered-attr.json"; \
 	if [ -n "$$failed" ]; then echo "❌ tf-policy の canary が期待どおりでなかったケース:$$failed"; exit 1; fi; \
 	echo "✅ tf-policy は違反の無い入力で通り、0件・テストの欠落・件数のずれ・評価されない規則・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちる"

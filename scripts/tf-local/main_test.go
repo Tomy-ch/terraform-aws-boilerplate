@@ -1351,7 +1351,7 @@ func TestCiMk(t *testing.T) {
 			`--checksum-sha256 "$sha" --expected-bucket-owner "$account"`,
 			`plan-summary -exitcode "$rc" "$json"`,
 			`for ns in plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive; do export ns`,
-			`conftest test --combine --no-color -o json --namespace "$ns" --policy conftest/plan --data conftest/plan/decl.json "$json" > "$pol"`,
+			`conftest test --combine --no-color -o json --namespace "$ns" --policy conftest/plan --data conftest/plan/decl.json --data conftest/hcl/layer/decl.json "$json" > "$pol"`,
 			`policy-result -namespace "$ns" -rego "conftest/plan/${ns#plan.}.rego" "$pol"`,
 			`done`,
 		)

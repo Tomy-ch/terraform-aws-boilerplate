@@ -59,6 +59,59 @@ unknown_value(x) if {
 	v == true
 }
 
+# ADR-0402 決定17 の実効の宣言。Policy Test が持つ宣言（data.policy_plan.inline_arguments）と、ADR-0102 決定18 の
+# 宣言（data.layer_decl。conftest/hcl/layer/decl.json）から導いた分の和である。inline_owned の引数は導かない。
+default layer_decl_ok := false
+
+layer_decl_ok if {
+	is_object(data.layer_decl.attachments)
+	count(data.layer_decl.attachments) > 0
+	is_object(data.layer_decl.unrelated_deprecated_arguments)
+	is_object(data.layer_decl.inline_owned)
+}
+
+derived_inline_arguments := {t: args |
+	some t in data.policy_plan.stateful_protection.protected_types
+	args := object.union(
+		{arg: v |
+			some _, a in data.layer_decl.attachments
+			some arg, v in object.get(object.get(a, "parent_arguments", {}), t, {})
+			not owned(t, arg)
+		},
+		{arg: e.unwritten |
+			some arg, e in object.get(data.layer_decl.unrelated_deprecated_arguments, t, {})
+			not owned(t, arg)
+		},
+	)
+	count(args) > 0
+} if layer_decl_ok
+
+default derived_inline_arguments := {}
+
+owned(t, arg) if data.layer_decl.inline_owned[t][arg]
+
+layer_parent_types := {t | some _, a in data.layer_decl.attachments; some _, ts in a.parents; some t in ts} if layer_decl_ok
+
+default layer_parent_types := set()
+
+inline_arguments := object.union(derived_inline_arguments, data.policy_plan.inline_arguments) if is_object(data.policy_plan.inline_arguments)
+
+default inline_arguments := null
+
+effective_policy_plan := object.union(data.policy_plan, {"inline_arguments": inline_arguments}) if is_object(data.policy_plan)
+
+# Policy Test が持つ宣言そのもの（導く前）の形。導く分が在るので空でもよい。ほかは inline_arguments_shape と同じ。
+raw_inline_shape(decl) if {
+	is_object(decl.inline_arguments)
+	every _, args in decl.inline_arguments {
+		is_object(args)
+		count(args) > 0
+		every _, empty in args {
+			empty in [null, []]
+		}
+	}
+}
+
 # ADR-0402 決定17 の宣言 inline_arguments の形。型ごとに空でない object で、値は書かないときの値（null か []）、
 # documents の型と属性と重ならない。CI の実 plan は plan.input を掛けないので、plan.stateful_protection も同じ形を見る。
 inline_arguments_shape(decl) if {
