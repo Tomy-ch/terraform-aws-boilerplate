@@ -2,9 +2,9 @@
 provider "evil" {}
 -- m/versions.tf --
 terraform {
-	required_providers {
-		evil = {
-			source = "evil/x"
-		}
-	}
+  required_providers {
+    evil = {
+      source = "evil/x"
+    }
+  }
 }

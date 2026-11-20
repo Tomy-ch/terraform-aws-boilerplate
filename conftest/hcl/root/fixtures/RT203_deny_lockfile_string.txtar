@@ -1,20 +1,20 @@
 -- env/mem/backend.tf --
 terraform {
-	backend "s3" {
-		key    = "workload/terraform.tfstate"
-		region = "ap-northeast-1"
+  backend "s3" {
+    key    = "workload/terraform.tfstate"
+    region = "ap-northeast-1"
     use_lockfile = "true"
     encrypt = true
-	}
+  }
 }
 -- env/mem/identity/backend.tf --
 terraform {
-	backend "s3" {
-		key          = "identity/terraform.tfstate"
-		region       = "ap-northeast-1"
-		use_lockfile = true
-		encrypt      = true
-	}
+  backend "s3" {
+    key          = "identity/terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
+    encrypt      = true
+  }
 }
 -- env/mem/identity/main.tf --
 module "b" {
@@ -26,12 +26,12 @@ module "w" {
 }
 -- env/mgmt/identity/backend.tf --
 terraform {
-	backend "s3" {
-		key          = "identity/terraform.tfstate"
-		region       = "ap-northeast-1"
-		use_lockfile = true
-		encrypt      = true
-	}
+  backend "s3" {
+    key          = "identity/terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
+    encrypt      = true
+  }
 }
 -- env/mgmt/identity/main.tf --
 module "b" {

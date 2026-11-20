@@ -1,6 +1,6 @@
 -- m/main.tf --
 provider "kubernetes" {
-	exec {
-		command = "aws"
-	}
+  exec {
+    command = "aws"
+  }
 }

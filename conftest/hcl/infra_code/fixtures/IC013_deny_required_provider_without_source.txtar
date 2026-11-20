@@ -1,6 +1,6 @@
 -- m/versions.tf --
 terraform {
-	required_providers {
-		evil = ">= 1.0"
-	}
+  required_providers {
+    evil = ">= 1.0"
+  }
 }

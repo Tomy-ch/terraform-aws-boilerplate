@@ -1,4 +1,4 @@
 -- u/internal/fn/main.tf --
 resource "aws_lambda_function" "f" {
-	filename = "src/fn.zip"
+  filename = "src/fn.zip"
 }

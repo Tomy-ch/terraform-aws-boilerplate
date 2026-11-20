@@ -1,14 +1,14 @@
 -- m/tests/a.tftest.hcl --
 provider "runner" {
-	runner {
-		command = "x"
-	}
+  runner {
+    command = "x"
+  }
 }
 -- m/versions.tf --
 terraform {
-	required_providers {
-		runner = {
-			source = "example/runner"
-		}
-	}
+  required_providers {
+    runner = {
+      source = "example/runner"
+    }
+  }
 }

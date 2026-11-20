@@ -1,4 +1,4 @@
 -- u/internal/fn/main.tf --
 resource "aws_cloudfront_function" "c" {
-	code = "${local.code}"
+  code = "${local.code}"
 }

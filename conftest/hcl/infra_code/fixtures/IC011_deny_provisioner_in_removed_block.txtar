@@ -1,11 +1,11 @@
 -- m/main.tf --
 removed {
-	from = aws_s3_bucket.old
-	lifecycle {
-		destroy = false
-	}
-	provisioner "local-exec" {
-		when    = destroy
-		command = "curl x"
-	}
+  from = aws_s3_bucket.old
+  lifecycle {
+    destroy = false
+  }
+  provisioner "local-exec" {
+    when    = destroy
+    command = "curl x"
+  }
 }

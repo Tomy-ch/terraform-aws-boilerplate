@@ -1,7 +1,7 @@
 -- m/tests/a.tftest.hcl --
 provider "kubernetes" {
-	dynamic "exec" {
-		for_each = [1]
-		content {}
-	}
+  dynamic "exec" {
+    for_each = [1]
+    content {}
+  }
 }
