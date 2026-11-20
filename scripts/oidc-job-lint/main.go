@@ -55,6 +55,9 @@
 //     environment と、字面の group に一致する —— 同じ group なので apply と並んで lock を奪い合わない（ADR-0604 決定8）
 //   - plan と apply と lock を残す job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
 //
+// CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせる job が対象でなければ違反にし、
+// 入口の行をファイル全体で別に数えて、job の行として読めない行があれば落とす。root の網羅も、対象の job だけを数える。
+//
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
 package main
 
@@ -114,6 +117,8 @@ var (
 	ciUnlock    = makeRun(`ci-unlock-[a-z0-9-]+`)
 	ciHold      = makeRun(`ci-hold-[a-z0-9-]+`)
 	ciEntry     = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock|hold)-[a-z0-9-]+`)
+	// entryToken は make の有無も名前の形も問わない。行継続・$(MAKE)・式で組んだ名前の入口も数える。
+	entryToken  = regexp.MustCompile(`\bci-(?:plan|apply|unlock|hold)-`)
 	unlockEntry = regexp.MustCompile(`\bmake\b.*\bci-unlock-([a-z0-9-]+)`)
 	holdEntry   = regexp.MustCompile(`\bmake\b.*\bci-hold-([a-z0-9-]+)`)
 	otherEntry  = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
@@ -423,7 +428,11 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 	on, onLine := triggers(split.Preamble)
 	w := workflowInfo{on: on, onLine: onLine, preamble: split.Preamble, jobs: split.Jobs}
 	targets := 0
+	// entries は、CI の入口の行のうち、job の行として読めた行の数。
+	entries := 0
 	for _, job := range split.Jobs {
+		n := jobEntryLines(job)
+		entries += n
 		values, at, ok := permissionsBlock(job.Lines, "    ")
 		if ok && unreadable(values) {
 			attributed++
@@ -431,7 +440,12 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 				Message: fmt.Sprintf("job %s の permissions を読めません。write-all と1行の {} は使わず、権限を1行ずつ書いてください", job.ID)})
 			continue
 		}
-		if !ok || !hasIDToken(values) {
+		if !assumesRole(job) {
+			// id-token の行を持つが読めない job は、下の countTokenLines の違反が原因を言う。
+			if n > 0 && !hasTokenLine(job) {
+				findings = append(findings, lintreport.Finding{File: file, Line: job.Number,
+					Message: fmt.Sprintf("job %s は CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせますが、job の permissions に id-token: write がありません。この job はこの検査の規則を受けず、root の経路にも数えません", job.ID)})
+			}
 			continue
 		}
 		attributed++
@@ -442,7 +456,56 @@ func check(file, source string, envs []string) (int, []lintreport.Finding) {
 		findings = append(findings, lintreport.Finding{File: file, Line: 1,
 			Message: fmt.Sprintf("id-token: write か write-all を持つ行 %d 件のうち %d 件を、job の permissions として読めません", n, n-attributed)})
 	}
+	if n := countEntryLines(source); n > entries {
+		findings = append(findings, lintreport.Finding{File: file, Line: 1,
+			Message: fmt.Sprintf("CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を持つ行 %d 件のうち %d 件を、job の行として読めません", n, n-entries)})
+	}
 	return targets, findings
+}
+
+// assumesRole は、job がこの検査の対象（job の permissions に id-token: write を読める形で持つ job）かを返します。
+// check・groupRecords・checkRootCoverage はこの述語で対象を決める。
+func assumesRole(job workflow.Job) bool {
+	values, _, ok := permissionsBlock(job.Lines, "    ")
+	return ok && !unreadable(values) && hasIDToken(values)
+}
+
+// hasTokenLine は、job が token を得うる id-token の行（値が read か none と読めないもの）を持つかを返します。
+func hasTokenLine(job workflow.Job) bool {
+	return slices.ContainsFunc(job.Lines, func(l workflow.Line) bool {
+		if commentLine.MatchString(l.Text) {
+			return false
+		}
+		m := idTokenKey.FindStringSubmatch(l.Text)
+		return m != nil && !tokenDenied.MatchString(m[1])
+	})
+}
+
+// entryLine は、行が CI の入口を走らせうる字面かを返します。コメントと name: の行は除き、run: の外の字面
+// （echo の引数、env: の値）も入口として数える。
+func entryLine(text string) bool {
+	return !commentLine.MatchString(text) && !nameLine.MatchString(text) && entryToken.MatchString(text)
+}
+
+// countEntryLines は、job の切り出しとは別に、CI の入口の行をファイル全体で数えます。
+func countEntryLines(source string) int {
+	n := 0
+	for _, text := range strings.Split(source, "\n") {
+		if entryLine(text) {
+			n++
+		}
+	}
+	return n
+}
+
+func jobEntryLines(job workflow.Job) int {
+	n := 0
+	for _, l := range job.Lines {
+		if entryLine(l.Text) {
+			n++
+		}
+	}
+	return n
 }
 
 // countTokenLines は、job の切り出しとは別に、token を得うる行をファイル全体で数えます。
@@ -781,8 +844,7 @@ func groupRecords(file, source string) []groupRecord {
 	split := workflow.SplitJobs(source)
 	var records []groupRecord
 	for _, job := range split.Jobs {
-		values, _, ok := permissionsBlock(job.Lines, "    ")
-		if !ok || !hasIDToken(values) {
+		if !assumesRole(job) {
 			continue
 		}
 		kind, entry := kindApply, applyEntry
@@ -1651,7 +1713,7 @@ func notifiesSuccess(j workflow.Job, apply string) bool {
 
 // checkRootCoverage は、rootsDir の下で *.tf を持つディレクトリが ADR-0604 決定5 の配置（<env>/ と <env>/identity/）
 // にだけ在り、各 root に、Pull Request で起動する workflow の plan の job が1つ以上、apply の job と lock の解除の job と
-// lock を残す job がちょうど1つずつあることを検査します。見た root の数を返し、0件なら errNoTarget にする。
+// lock を残す job がちょうど1つずつあることを検査します。数えるのは対象の job（assumesRole）だけである。見た root の数を返し、0件なら errNoTarget にする。
 func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintreport.Finding, error) {
 	var findings []lintreport.Finding
 	var roots []string
@@ -1710,7 +1772,7 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 					}
 				}
 				for _, job := range split.Jobs {
-					if hasLine(job, re) {
+					if assumesRole(job) && hasLine(job, re) {
 						n++
 					}
 				}
