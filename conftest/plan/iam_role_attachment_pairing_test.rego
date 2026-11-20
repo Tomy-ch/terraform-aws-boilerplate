@@ -77,8 +77,8 @@ test_violation_attachment_in_other_plan if {
 }
 
 test_violation_unknown_values if {
-	ue := json.patch(exclusive([arn]), [{"op": "add", "path": "/change/after_unknown/policy_arns", "value": [true]}])
-	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の policy_arns を plan で読めません", [exclusive_address]), messages([ue, attachment("r", arn)]))
+	unknown_exclusive := json.patch(exclusive([arn]), [{"op": "add", "path": "/change/after_unknown/policy_arns", "value": [true]}])
+	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の policy_arns を plan で読めません", [exclusive_address]), messages([unknown_exclusive, attachment("r", arn)]))
 	ua := json.patch(attachment("r", arn), [{"op": "add", "path": "/change/after_unknown/policy_arn", "value": true}])
 	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の policy_arn を plan で読めません", [attachment_address]), messages([exclusive([arn]), ua]))
 }
@@ -91,16 +91,16 @@ test_pass_deleted_exclusive if {
 }
 
 test_violation_unknown_role if {
-	ue := {"address": exclusive_address, "type": "aws_iam_role_policy_attachments_exclusive", "change": {"actions": ["create"], "after": {"policy_arns": [arn]}, "after_unknown": {"role_name": true}}}
+	unknown_exclusive := {"address": exclusive_address, "type": "aws_iam_role_policy_attachments_exclusive", "change": {"actions": ["create"], "after": {"policy_arns": [arn]}, "after_unknown": {"role_name": true}}}
 	ua := {"address": attachment_address, "type": "aws_iam_role_policy_attachment", "change": {"actions": ["create"], "after": {"policy_arn": arn}, "after_unknown": {"role": true}}}
-	msgs := messages([ue, ua])
+	msgs := messages([unknown_exclusive, ua])
 	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の role_name を plan で読めません", [exclusive_address]), msgs)
 	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の role を plan で読めません", [attachment_address]), msgs)
 }
 
 test_violation_partially_unknown_policy_arns if {
-	ue := json.patch(exclusive([arn]), [{"op": "add", "path": "/change/after_unknown/policy_arns", "value": [false, true]}])
-	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の policy_arns を plan で読めません", [exclusive_address]), messages([ue, attachment("r", arn)]))
+	unknown_exclusive := json.patch(exclusive([arn]), [{"op": "add", "path": "/change/after_unknown/policy_arns", "value": [false, true]}])
+	fixture.has(sprintf("[PLAN-ATTACH-01] p.json: %s の policy_arns を plan で読めません", [exclusive_address]), messages([unknown_exclusive, attachment("r", arn)]))
 }
 
 # 削除の計画は在ることに数えない。
