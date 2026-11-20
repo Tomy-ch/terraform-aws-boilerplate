@@ -107,12 +107,12 @@ var (
 	envScalar     = regexp.MustCompile(`^ {4}environment:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	envName       = regexp.MustCompile(`^ {6}name:[ \t]*(.*?)[ \t]*(?:#.*)?$`)
 	credentials   = regexp.MustCompile(`\bmake\b.*\bci-aws-credentials\b`)
-	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=[a-z0-9]+\s+CI_ROLE=[a-z-]+`)
-	ciEnv         = regexp.MustCompile(`\bCI_ENV=([a-z0-9]+)\b`)
+	credRun       = makeRun(`ci-aws-credentials\s+CI_ENV=` + envWord + `\s+CI_ROLE=[a-z-]+`)
+	ciEnv         = regexp.MustCompile(`\bCI_ENV=(` + envWord + `)\b`)
 	ciRole        = regexp.MustCompile(`\bCI_ROLE=(plan|apply|apply-identity|unlock-identity|unlock)(?:\s|$)`)
 	// makeRun の形以外を拒む理由は scripts/README.md の oidc-job-lint の行が持つ。
 	ciPlan      = makeRun(`ci-` + kindPlan + `-([a-z0-9-]+)`)
-	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=[a-z0-9]+`)
+	deniedRun   = makeRun(`ci-assume-denied\s+CI_ENV=` + envWord)
 	deniedLine  = regexp.MustCompile(`\bmake\b.*\bci-assume-denied\b`)
 	ciApply     = makeRun(`ci-` + kindApply + `-([a-z0-9-]+)`)
 	ciApplyRoot = ciApply
@@ -787,7 +787,7 @@ var entryRuns = map[string]*regexp.Regexp{kindPlan: ciPlan, kindApply: ciApply, 
 
 // isKindEntry は、行が種別 kind の入口の run: かを返します。入口の数と、資格情報と比べる入口は、この述語で決める。
 func isKindEntry(kind, text string) bool {
-	return !commentLine.MatchString(text) && !nameLine.MatchString(text) && !installsTF.MatchString(text) && entryRuns[kind].MatchString(text)
+	return !commentLine.MatchString(text) && !nameLine.MatchString(text) && entryRuns[kind].MatchString(text)
 }
 
 func kindEntries(job workflow.Job, kind string) []workflow.Line {
@@ -889,6 +889,9 @@ const (
 	kindUnlock = "unlock"
 	kindHold   = "hold"
 )
+
+// envWord は env の名前の形。log-archive のようにハイフンで区切った語も env の名前である。
+const envWord = `[a-z0-9]+(?:-[a-z0-9]+)*`
 
 // entryKinds は CI の入口 make ci-<種別>-<env>-<root> の種別の一覧。
 // .makefiles/terraform/operation/ci.mk の入口の種別の写しで、ずれはテストが見る。
@@ -1846,7 +1849,7 @@ func checkRootCoverage(rootsDir string, sources map[string]string) (int, []lintr
 	files := slices.Sorted(maps.Keys(sources))
 	for _, root := range roots {
 		count := func(kind string, pullRequestOnly bool) int {
-			re := regexp.MustCompile(`\bmake\b.*\bci-` + kind + `-` + regexp.QuoteMeta(root) + `(?:\s|$)`)
+			re := entryPattern(`\bmake\b.*\bci-`, `-`+regexp.QuoteMeta(root)+`(?:\s|$)`, kind)
 			n := 0
 			for _, f := range files {
 				split := workflow.SplitJobs(sources[f])
