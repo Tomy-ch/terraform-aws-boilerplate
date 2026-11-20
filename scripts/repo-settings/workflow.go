@@ -7,19 +7,46 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const workflowsDir = ".github/workflows"
 
-// isApplySuffix は、push で起動する apply の job が使う environment の接尾辞かを返します。plan は
-// Pull Request で、lock の解除は workflow_dispatch だけで起動するので、push の起動条件を持たない。
-// lock を残す job は apply と同じ environment を使うが workflow_dispatch だけで起動するので、接尾辞ではなく
-// 入口（holdEntry）で除く。
+// isApplySuffix は、push で起動する種別の role の environment の接尾辞かを返します。push で起動しない種別が
+// 同じ role を使う job は、接尾辞ではなく入口（sharedEnvEntry）で除く。
 func isApplySuffix(suffix string) bool {
-	return suffix != planSuffix && suffix != unlockIdentitySuffix && suffix != unlockSuffix
+	return roleSuffixOf(suffix, cientry.EventPush)
 }
+
+// isPullRequestSuffix は、pull_request で起動する種別の role の environment の接尾辞かを返します。
+func isPullRequestSuffix(suffix string) bool {
+	return roleSuffixOf(suffix, cientry.EventPullRequest)
+}
+
+// roleSuffixOf は、suffix が、起動として event を許す種別のどれかの role の接尾辞 `-<role>` かを返します。
+func roleSuffixOf(suffix, event string) bool {
+	return slices.ContainsFunc(cientry.Kinds(), func(k cientry.Kind) bool {
+		return slices.Contains(k.Events, event) &&
+			(suffix == "-"+k.Role(cientry.RootIdentity) || suffix == "-"+k.Role(cientry.RootWorkload))
+	})
+}
+
+// sharedEnvKinds は、push で起動しない種別のうち、push で起動する種別と role を共有するもの。その入口を走らせる
+// job は push で起動する種別と同じ environment を使うが、push の起動条件の生成から除く。otherKinds はそのほかの種別。
+var sharedEnvKinds, otherKinds = func() ([]cientry.Kind, []cientry.Kind) {
+	var shared, other []cientry.Kind
+	for _, k := range cientry.Kinds() {
+		if !slices.Contains(k.Events, cientry.EventPush) &&
+			(isApplySuffix("-"+k.Role(cientry.RootIdentity)) || isApplySuffix("-"+k.Role(cientry.RootWorkload))) {
+			shared = append(shared, k)
+		} else {
+			other = append(other, k)
+		}
+	}
+	return shared, other
+}()
 
 var (
 	errTrigger      = xerrors.New("apply の workflow の起動条件を生成できません")
@@ -32,10 +59,10 @@ var (
 	branchesKey    = regexp.MustCompile(`^ {4}branches:[ \t]*(?:#.*)?$`)
 	branchItem     = regexp.MustCompile(`^ {6}- `)
 	blankOrComment = regexp.MustCompile(`^\s*(?:#.*)?$`)
-	// holdEntry は lock を残す入口。それを走らせる job は workflow_dispatch だけで起動する（ADR-0604 決定8）。
-	holdEntry = regexp.MustCompile(`\bmake\b.*\bci-hold-[a-z0-9-]+`)
-	// otherEntry は lock を残す入口のほかの CI の入口。
-	otherEntry = regexp.MustCompile(`\bmake\b.*\bci-(?:plan|apply|unlock)-[a-z0-9-]+`)
+	// sharedEnvEntry は sharedEnvKinds の入口。
+	sharedEnvEntry = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, sharedEnvKinds...)
+	// otherEntry は sharedEnvKinds のほかの CI の入口。
+	otherEntry = cientry.MustPattern(`\bmake\b.*\bci-`, `-[a-z0-9-]+`, otherKinds...)
 	skipLine   = regexp.MustCompile(`^\s*#|^\s+(?:- )?name:`)
 )
 
@@ -97,14 +124,14 @@ func renderApplyTriggers(root string, b branches) ([]workflowEdit, error) {
 // applyEnvs は、workflow の job が使う apply の environment の env を、重複を除いて返します。job の
 // environment: を字下げ4桁のスカラー以外（mapping、式、アンカー、別の字下げ）で書いた行があれば失敗する
 // —— 読めない形を対象外と読むと、その workflow の起動条件が宣言から外れる（ADR-0702 決定14）。job の
-// steps: の列（[workflow.StepsSpan]）の中の行は step の入力なので読まない。lock を残す job の environment は、
-// 読めることだけを確かめて数えない。lock を残す入口とほかの CI の入口を併せ持つ job は失敗する —— 数えないと
-// apply の environment が起動条件の生成から黙って外れる。
+// steps: の列（[workflow.StepsSpan]）の中の行は step の入力なので読まない。sharedEnvKinds の入口を走らせる
+// job の environment は、読めることだけを確かめて数えない。その入口とほかの CI の入口を併せ持つ job は失敗する
+// —— 数えないと apply の environment が起動条件の生成から黙って外れる。
 func applyEnvs(src string) ([]string, error) {
 	var envs []string
 	for _, job := range workflow.SplitJobs(src).Jobs {
-		hold := isHoldJob(job)
-		if hold && hasEntry(job, otherEntry) {
+		shared := isSharedEnvJob(job)
+		if shared && hasEntry(job, otherEntry) {
 			return nil, xerrors.Wrapf(errTrigger, "job %s が lock を残す入口とほかの CI の入口を併せ持ちます。lock を残す job か apply の job かを決められません", job.ID)
 		}
 		from, to, hasSteps := workflow.StepsSpan(job)
@@ -117,7 +144,7 @@ func applyEnvs(src string) ([]string, error) {
 				return nil, xerrors.Wrapf(errTrigger, "%d 行目の environment: を読めません。job の直下に名前1つで書いてください", l.Number)
 			}
 			env, suffix, ok := splitIdentity(m[1] + m[2] + m[3])
-			if ok && !hold && isApplySuffix(suffix) && !slices.Contains(envs, env) {
+			if ok && !shared && isApplySuffix(suffix) && !slices.Contains(envs, env) {
 				envs = append(envs, env)
 			}
 		}
@@ -125,9 +152,9 @@ func applyEnvs(src string) ([]string, error) {
 	return envs, nil
 }
 
-// isHoldJob は、job が lock を残す入口を走らせるかを返します。コメントと step の name: の行は数えない。
-func isHoldJob(job workflow.Job) bool {
-	return hasEntry(job, holdEntry)
+// isSharedEnvJob は、job が sharedEnvKinds の入口を走らせるかを返します。コメントと step の name: の行は数えない。
+func isSharedEnvJob(job workflow.Job) bool {
+	return hasEntry(job, sharedEnvEntry)
 }
 
 func hasEntry(job workflow.Job, re *regexp.Regexp) bool {
