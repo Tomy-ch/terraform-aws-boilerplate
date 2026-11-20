@@ -178,6 +178,7 @@ pre-commit:
         - "conftest/plan/**"
         - "conftest/hcl/layer/decl.json"
         - ".tf-validate-ignore.yaml"
+        - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
@@ -185,16 +186,17 @@ pre-commit:
         - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
-      run: make -k tf-validate tf-test tf-policy
+      run: make -k tf-validate tf-test tf-policy check-plan-expected
     tf-gates-test:
       glob:
         - "Makefile"
         - ".makefiles/**"
+        - "docs/setup/scripts/check-plan.sh"
         - "scripts/tf-validate-result/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
-      run: make tf-gates-test
+      run: make -k tf-gates-test check-plan-expected-test
     tf-validate-canary:
       glob:
         - "Makefile"

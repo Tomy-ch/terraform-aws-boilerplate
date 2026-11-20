@@ -238,6 +238,11 @@ extra = [
   "hooks.slack.com",
 ]
 
+# provider の版の一覧を registry の API から引く。Terraform は実行しない。
+[job."partitions-drift-report.yaml:report"]
+classes = ["mise"]
+extra = ["registry.terraform.io"]
+
 [job."pin-actions-check.yaml:pin-actions-check"]
 classes = ["mise"]
 

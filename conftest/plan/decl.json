@@ -5,6 +5,7 @@
     "resource_wildcard_actions": [
       "chatbot:CreateSlackChannelConfiguration",
       "chatbot:DescribeSlackChannelConfigurations",
+      "cloudformation:CreateStackSet",
       "cloudwatch:DescribeAlarmsForMetric",
       "cloudwatch:GetMetricData",
       "cloudwatch:GetMetricStatistics",
@@ -57,6 +58,9 @@
       ],
       "aws_sns_topic_policy": [
         "policy"
+      ],
+      "aws_cloudwatch_log_resource_policy": [
+        "policy_document"
       ]
     },
     "required_documents": [
@@ -65,7 +69,8 @@
       "aws_kms_key_policy",
       "aws_s3_bucket_policy",
       "aws_ecr_repository_policy",
-      "aws_sns_topic_policy"
+      "aws_sns_topic_policy",
+      "aws_cloudwatch_log_resource_policy"
     ],
     "deployment_identity": {
       "roles": [
@@ -122,6 +127,16 @@
             "sso:PutInlinePolicyToPermissionSet",
             "sso:PutPermissionsBoundaryToPermissionSet",
             "sso:UpdatePermissionSet",
+            "cloudformation:ActivateOrganizationsAccess",
+            "cloudformation:CreateStackInstances",
+            "cloudformation:CreateStackSet",
+            "cloudformation:DeactivateOrganizationsAccess",
+            "cloudformation:DeleteStackInstances",
+            "cloudformation:DeleteStackSet",
+            "cloudformation:ImportStacksToStackSet",
+            "cloudformation:StopStackSetOperation",
+            "cloudformation:UpdateStackInstances",
+            "cloudformation:UpdateStackSet",
             "sts:AssumeRoot"
           ]
         },
@@ -363,6 +378,43 @@
         "aws_vpc"
       ]
     },
+    "dns_zone": {
+      "zone": "module.dns_zone.module.zone.aws_route53_zone.this",
+      "query_log": "module.dns_zone.module.zone.aws_route53_query_log.this",
+      "query_log_group": "module.dns_zone.module.query_log.aws_cloudwatch_log_group.this",
+      "query_log_key": "module.dns_zone.module.query_log.aws_kms_key.this",
+      "query_log_resource_policy": "module.dns_zone.module.query_log.aws_cloudwatch_log_resource_policy.this",
+      "dnssec_key": "module.dns_zone.module.dnssec_key.aws_kms_key.this",
+      "dnssec_key_policy": "module.dns_zone.module.dnssec_key.aws_kms_key_policy.this",
+      "key_signing_key": "module.dns_zone.module.zone.aws_route53_key_signing_key.this",
+      "hosted_zone_dnssec": "module.dns_zone.module.zone.aws_route53_hosted_zone_dnssec.this",
+      "alarms": {
+        "address": "module.dns_zone.module.zone.aws_cloudwatch_metric_alarm.dnssec",
+        "count": 2
+      },
+      "delegation_ns": {
+        "address": "module.dns_zone.module.zone.aws_route53_record.delegation_ns",
+        "count": 2
+      },
+      "delegation_ds": {
+        "address": "module.dns_zone.module.zone.aws_route53_record.delegation_ds",
+        "count": 1
+      },
+      "module_prefix": "module.dns_zone.",
+      "allowed_types": [
+        "aws_cloudwatch_log_group",
+        "aws_cloudwatch_log_resource_policy",
+        "aws_cloudwatch_metric_alarm",
+        "aws_kms_alias",
+        "aws_kms_key",
+        "aws_kms_key_policy",
+        "aws_route53_hosted_zone_dnssec",
+        "aws_route53_key_signing_key",
+        "aws_route53_query_log",
+        "aws_route53_record",
+        "aws_route53_zone"
+      ]
+    },
     "stateful_protection": {
       "protected_types": [
         "aws_s3_bucket",
@@ -376,7 +428,10 @@
         "aws_ecr_lifecycle_policy",
         "aws_ecr_registry_scanning_configuration",
         "aws_s3_bucket_object_lock_configuration",
-        "aws_sns_topic"
+        "aws_sns_topic",
+        "aws_route53_zone",
+        "aws_route53_key_signing_key",
+        "aws_route53_hosted_zone_dnssec"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -390,6 +445,9 @@
       },
       "aws_organizations_organization": {
         "aws_service_access_principals": null
+      },
+      "aws_route53_zone": {
+        "vpc": []
       }
     },
     "organization_baseline": {

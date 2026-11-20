@@ -82,6 +82,7 @@ jobs:
               - 'scripts/go.sum'
               - 'conftest/plan/**'
               - 'conftest/hcl/**'
+              - 'docs/setup/scripts/check-plan.*'
 
   tf-fmt-check:
     needs: changes
@@ -301,8 +302,8 @@ jobs:
 
       # -k: validate が落ちても test の結果を出す。どれが落ちても step は落ちる。
       # この step に secret を渡さない: init は PR の構成が解決した provider をそのまま走らせる。
-      - name: Run terraform validate and terraform test
-        run: make -k tf-validate-canary tf-validate tf-test RUNNER_MODE=host
+      - name: Run terraform validate, terraform test and the bootstrap plan expectation check
+        run: make -k tf-validate-canary tf-validate tf-test check-plan-expected RUNNER_MODE=host
 
   tf-policy:
     needs: changes
@@ -433,7 +434,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run the Terraform gates' own tests
-        run: make tf-gates-test RUNNER_MODE=host
+        run: make -k tf-gates-test check-plan-expected-test RUNNER_MODE=host
 
   # path で絞らない: README.md の「インフラ内コードの検出への依存」.
   infra-code-gate:

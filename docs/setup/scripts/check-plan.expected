@@ -1,6 +1,7 @@
 # docs/setup/scripts/check-plan.sh の期待値。段2 から段4 の、管理アカウントの identity root の plan。
 # 1行に「<種類> <resource address>」。種類は import / add / change / destroy。順序は問わない。
 # 書いていない種類は0件を期待する。更新の規則は docs/setup/bootstrap.md の「この文書の保守」。
+# HCL との一致は make check-plan-expected（mock の plan）が見る。
 
 import module.state_backend.module.s3.aws_s3_bucket.this
 import module.state_backend.module.s3.aws_s3_bucket_public_access_block.this
@@ -38,6 +39,9 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["plan
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["apply"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlock_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlock"]
+add module.deployment_identity.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
+add module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]
+add module.deployment_identity.module.github_oidc.aws_iam_policy.workload
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["plan"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply_identity"]
@@ -48,3 +52,42 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["apply_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock"]
+
+add module.organization_baseline.module.break_glass.aws_iam_account_password_policy.this
+add module.organization_baseline.module.break_glass.aws_iam_group.this
+add module.organization_baseline.module.break_glass.aws_iam_group_membership.this
+add module.organization_baseline.module.break_glass.aws_iam_group_policy.this
+add module.organization_baseline.module.break_glass.aws_iam_role.this
+add module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this
+add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-1"]
+add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-2"]
+add module.organization_baseline.module.organization.aws_iam_organizations_features.this
+add module.organization_baseline.module.organization.aws_organizations_aws_service_access.iam
+add module.organization_baseline.module.organization.aws_organizations_organization.this
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.top["PolicyStaging"]
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.top["Sandbox"]
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.top["Security"]
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.top["Workloads"]
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads["NonProd"]
+add module.organization_baseline.module.organization.aws_organizations_organizational_unit.workloads["Prod"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-org-principals"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-prod-principals"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-prod-resources"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-bootstrap-role"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-guardduty-stop"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-iam-user"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-leave-and-close"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-root-user"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-state-write"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["ec2-defaults"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["protect-governance-roles"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-org-principals/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-prod-principals/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-prod-resources/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-guardduty-stop/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-iam-user/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-leave-and-close/root"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-root-user/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-state-write/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["ec2-defaults/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["protect-governance-roles/policy-staging"]
