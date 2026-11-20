@@ -223,8 +223,12 @@ func Lookup(name string) (Kind, bool) {
 
 // Roles は登録簿の種別が取る role を、重複を除いて返します。順は種別の順に identity、workload です。
 func Roles() []string {
+	return std.roles()
+}
+
+func (r registry) roles() []string {
 	var out []string
-	for _, k := range std {
+	for _, k := range r {
 		for _, role := range []string{k.IdentityRole, k.WorkloadRole} {
 			if !slices.Contains(out, role) {
 				out = append(out, role)

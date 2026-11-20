@@ -287,8 +287,8 @@ func parseRegoStateWriterRoles(src []byte) ([]string, error) {
 	return roles, nil
 }
 
-// readStateWriterRoles はリポジトリ repo の path を読み、parse で role の一覧にします。
-func readStateWriterRoles(repo, path string, parse func([]byte) ([]string, error)) ([]string, error) {
+// readRoles はリポジトリ repo の path を読み、parse で role の一覧にします。
+func readRoles(repo, path string, parse func([]byte) ([]string, error)) ([]string, error) {
 	r, err := os.OpenRoot(repo)
 	if err != nil {
 		return nil, xerrors.Wrap(err, "open "+repo)

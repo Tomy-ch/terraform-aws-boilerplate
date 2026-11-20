@@ -130,7 +130,7 @@ func Test_registry_checkStateWriterRoles(t *testing.T) {
 			} {
 				t.Run(c.path+" の role が登録簿の state に書く role と一致する", func(t *testing.T) {
 					t.Parallel()
-					got, err := readStateWriterRoles(repoRoot, c.path, c.parse)
+					got, err := readRoles(repoRoot, c.path, c.parse)
 					require.NoError(t, err)
 					assert.NoError(t, std.checkStateWriterRoles(c.path, got))
 				})
@@ -527,7 +527,7 @@ func Test_parseRegoStateWriterRoles(t *testing.T) {
 	})
 }
 
-func Test_readStateWriterRoles(t *testing.T) {
+func Test_readRoles(t *testing.T) {
 	t.Parallel()
 
 	write := func(t *testing.T, body string) string {
@@ -544,7 +544,7 @@ func Test_readStateWriterRoles(t *testing.T) {
 
 		t.Run("リポジトリのファイルを読んで解釈する", func(t *testing.T) {
 			t.Parallel()
-			got, err := readStateWriterRoles(write(t, regoSrc("apply")), StateWriterRegoFile, parseRegoStateWriterRoles)
+			got, err := readRoles(write(t, regoSrc("apply")), StateWriterRegoFile, parseRegoStateWriterRoles)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"apply"}, got)
 		})
@@ -555,19 +555,19 @@ func Test_readStateWriterRoles(t *testing.T) {
 
 		t.Run("リポジトリが無ければ弾く", func(t *testing.T) {
 			t.Parallel()
-			_, err := readStateWriterRoles(filepath.Join(t.TempDir(), "missing"), StateWriterRegoFile, parseRegoStateWriterRoles)
+			_, err := readRoles(filepath.Join(t.TempDir(), "missing"), StateWriterRegoFile, parseRegoStateWriterRoles)
 			require.ErrorIs(t, err, fs.ErrNotExist)
 		})
 
 		t.Run("ファイルが無ければ弾く", func(t *testing.T) {
 			t.Parallel()
-			_, err := readStateWriterRoles(t.TempDir(), StateWriterSCPFile, parseSCPStateWriterRoles)
+			_, err := readRoles(t.TempDir(), StateWriterSCPFile, parseSCPStateWriterRoles)
 			require.ErrorIs(t, err, fs.ErrNotExist)
 		})
 
 		t.Run("解釈できないファイルは、パスを添えて弾く", func(t *testing.T) {
 			t.Parallel()
-			_, err := readStateWriterRoles(write(t, "package x\n"), StateWriterRegoFile, parseRegoStateWriterRoles)
+			_, err := readRoles(write(t, "package x\n"), StateWriterRegoFile, parseRegoStateWriterRoles)
 			require.ErrorIs(t, err, ErrStateWriterParse)
 			assert.Contains(t, err.Error(), StateWriterRegoFile)
 		})

@@ -233,14 +233,7 @@ func (r registry) checkTerraformRoles(rows []TerraformRole) error {
 	if len(rows) == 0 {
 		return xerrors.Wrap(ErrTerraformRole, "local.roles が0行です")
 	}
-	var want []string
-	for _, k := range r {
-		for _, role := range []string{k.IdentityRole, k.WorkloadRole} {
-			if !slices.Contains(want, role) {
-				want = append(want, role)
-			}
-		}
-	}
+	want := r.roles()
 	var got []string
 	for i, row := range rows {
 		if j := slices.IndexFunc(rows[:i], func(p TerraformRole) bool { return p.Role == row.Role }); j >= 0 {
