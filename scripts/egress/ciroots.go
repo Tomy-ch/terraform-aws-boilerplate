@@ -9,15 +9,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// ciMakefile は CI が root の AWS に触れる入口（make ci-plan-* / ci-apply-* / ci-unlock-* / ci-hold-*）を持つ。
-const ciMakefile = ".makefiles/terraform/operation/ci.mk"
-
 var (
-	errCIMake          = xerrors.New("ci.mk の CI の入口を解釈できません")
 	errCITargetUnknown = xerrors.New("workflow が呼ぶ CI の入口が ci.mk にありません")
 	errRootUnbound     = xerrors.New("ジョブが実行する root を、SSOT の root がそのジョブとして名指していません")
 	errRootJobIdle     = xerrors.New("SSOT の root が名指すジョブが、その root を実行していません")
@@ -27,20 +24,25 @@ var (
 )
 
 var (
-	// ciTokenRe は workflow の行を名前の字で切ったトークン。ci-plan- / ci-apply- / ci-unlock- / ci-hold- で始まるトークンを
+	// ciTokenRe は workflow の行を名前の字で切ったトークン。登録簿の種別の ci-<種別>- で始まるトークンを
 	// CI の入口の呼び出しとみなし、make を介さない書き方でも拾う。ci.mk に無いもの（式で組んだ名前、
 	// 名前に使わない字が続くもの）は、切り詰めずにそのまま未知の入口として落とす。
 	ciTokenRe = regexp.MustCompile(`[A-Za-z0-9_-]+`)
 	// stepNameLineRe は step の名前の行。名前に入口の名前が在っても、それを実行しているとは数えない。
 	stepNameLineRe = regexp.MustCompile(`^\s+(?:- )?name:`)
-	ciRuleRe       = regexp.MustCompile(`^(ci-(plan|apply|unlock|hold)-[a-z0-9]+(?:-[a-z0-9]+)*):$`)
-	ciCallRe       = regexp.MustCompile(`^\t@\$\(call CI_(PLAN|APPLY|UNLOCK|HOLD),([a-z0-9]+),(identity|workload)\)$`)
-	// ciCallAnyRe は呼び出しの字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
-	ciCallAnyRe = regexp.MustCompile(`\$\(call CI_(?:PLAN|APPLY|UNLOCK|HOLD),`)
 )
 
-// ciEntry は ci.mk の入口 1 件。terraform は、その入口が root で Terraform を実行するか（CI_PLAN / CI_APPLY / CI_HOLD）。
-// CI_UNLOCK は state の lock を外すだけで、Terraform を実行しない。
+// entryPrefixes は登録簿の種別ごとの入口の名前の接頭辞 ci-<種別>-。
+var entryPrefixes = func() []string {
+	kinds := cientry.Kinds()
+	out := make([]string, len(kinds))
+	for i, k := range kinds {
+		out[i] = "ci-" + k.Name + "-"
+	}
+	return out
+}()
+
+// ciEntry は ci.mk の入口 1 件。terraform は、その入口が root で Terraform を実行するか（cientry.Kind.Terraform）。
 type ciEntry struct {
 	root      string
 	terraform bool
@@ -52,20 +54,16 @@ type rootRuns map[string]bool
 // checkCIRoots は ci.mk と workflow を読み、ジョブが実行する root と SSOT の root の名指しを突き合わせ、
 // ジョブごとの rootRuns を返す。names は .github/workflows の下のファイル名。
 func (s *ssot) checkCIRoots(repo string, names []string) (map[string]rootRuns, error) {
+	entries, err := cientry.ParseRepo(repo)
+	if err != nil {
+		return nil, err
+	}
 	r, err := os.OpenRoot(repo)
 	if err != nil {
 		return nil, xerrors.Wrap(err, "open "+repo)
 	}
 	defer func() { _ = r.Close() }()
-	mk, err := r.ReadFile(ciMakefile)
-	if err != nil {
-		return nil, xerrors.Wrap(err, "read "+ciMakefile)
-	}
-	targets, err := parseCIMake(string(mk))
-	if err != nil {
-		return nil, xerrors.Wrap(err, ciMakefile)
-	}
-	ran, err := ranRoots(r, names, targets)
+	ran, err := ranRoots(r, names, ciEntries(entries))
 	if err != nil {
 		return nil, err
 	}
@@ -75,39 +73,18 @@ func (s *ssot) checkCIRoots(repo string, names []string) (map[string]rootRuns, e
 	return ran, nil
 }
 
-// parseCIMake は ci.mk の入口ごとに、それが実行する root のパスと Terraform を実行するかを返す。
-func parseCIMake(data string) (map[string]ciEntry, error) {
-	lines := strings.Split(data, "\n")
-	targets := map[string]ciEntry{}
-	for i, line := range lines {
-		m := ciRuleRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		if _, ok := targets[m[1]]; ok {
-			return nil, xerrors.Wrap(errCIMake, fmt.Sprintf("%d 行目: %s が重複しています", i+1, m[1]))
-		}
-		var call []string
-		if i+1 < len(lines) {
-			call = ciCallRe.FindStringSubmatch(lines[i+1])
-		}
-		if call == nil || call[1] != strings.ToUpper(m[2]) {
-			return nil, xerrors.Wrap(errCIMake, fmt.Sprintf("%d 行目: %s の次の行が $(call CI_%s,<env>,<identity|workload>) ではありません", i+1, m[1], strings.ToUpper(m[2])))
-		}
-		targets[m[1]] = ciEntry{root: rootPath(call[2], call[3]), terraform: m[2] != "unlock"}
+// ciEntries は ci.mk の入口ごとに、それが実行する root のパスと Terraform を実行するかを返す。
+func ciEntries(entries []cientry.Entry) map[string]ciEntry {
+	targets := make(map[string]ciEntry, len(entries))
+	for _, e := range entries {
+		targets[e.Target] = ciEntry{root: rootPath(e.Env, e.Root), terraform: e.Kind.Terraform}
 	}
-	if len(targets) == 0 {
-		return nil, xerrors.Wrap(errCIMake, "入口が 1 件もありません")
-	}
-	if n := len(ciCallAnyRe.FindAllString(data, -1)); n != len(targets) {
-		return nil, xerrors.Wrap(errCIMake, fmt.Sprintf("読めた入口 %d 件 / 呼び出しの字面 %d 件", len(targets), n))
-	}
-	return targets, nil
+	return targets
 }
 
 // rootPath は env と root の種類から root のディレクトリを返す。配置は ADR-0604 決定5 が決める。
-func rootPath(env, kind string) string {
-	if kind == "identity" {
+func rootPath(env string, root cientry.Root) string {
+	if root == cientry.RootIdentity {
 		return "env/" + env + "/identity"
 	}
 	return "env/" + env
@@ -135,7 +112,7 @@ func ranRoots(repo *os.Root, names []string, targets map[string]ciEntry) (map[st
 				for _, tok := range entryTokens(l) {
 					e, ok := targets[tok]
 					if !ok {
-						return nil, xerrors.Wrap(errCITargetUnknown, fmt.Sprintf("%s %d 行目: %s（%s）", key, l.Number, tok, ciMakefile))
+						return nil, xerrors.Wrap(errCITargetUnknown, fmt.Sprintf("%s %d 行目: %s（%s）", key, l.Number, tok, cientry.Makefile))
 					}
 					if ran[key] == nil {
 						ran[key] = rootRuns{}
@@ -155,7 +132,7 @@ func entryTokens(l workflow.Line) []string {
 	}
 	var toks []string
 	for _, tok := range ciTokenRe.FindAllString(l.Text, -1) {
-		if strings.HasPrefix(tok, "ci-plan-") || strings.HasPrefix(tok, "ci-apply-") || strings.HasPrefix(tok, "ci-unlock-") || strings.HasPrefix(tok, "ci-hold-") {
+		if slices.ContainsFunc(entryPrefixes, func(p string) bool { return strings.HasPrefix(tok, p) }) {
 			toks = append(toks, tok)
 		}
 	}
@@ -180,7 +157,7 @@ func (s *ssot) checkBindings(ran map[string]rootRuns) error {
 	for _, name := range s.rootOrder {
 		for _, key := range s.roots[name].jobs {
 			if _, ok := ran[key][name]; !ok {
-				return xerrors.Wrap(errRootJobIdle, fmt.Sprintf("root %s: %s（%s の入口を呼んでいません）", name, key, ciMakefile))
+				return xerrors.Wrap(errRootJobIdle, fmt.Sprintf("root %s: %s（%s の入口を呼んでいません）", name, key, cientry.Makefile))
 			}
 		}
 	}

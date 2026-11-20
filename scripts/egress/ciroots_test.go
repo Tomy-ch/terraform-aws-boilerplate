@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 
 	"github.com/stretchr/testify/assert"
@@ -44,11 +45,21 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 		t.Run("ジョブが実行する root と宣言が一致すれば、ジョブごとに root で Terraform を実行するかを返す", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
-			writeFile(t, repo, ciMakefile, testCIMake)
+			writeFile(t, repo, cientry.Makefile, testCIMake)
 			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-plan-t-identity"))
 			got, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
 			require.NoError(t, err)
 			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": true}}, got)
+		})
+
+		t.Run("登録簿の一部の種別の入口しか持たない ci.mk も読む", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, cientry.Makefile, ciMakeFixture([3]string{cientry.Unlock, "t", "identity"}))
+			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-unlock-t-identity"))
+			got, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
+			require.NoError(t, err)
+			assert.Equal(t, map[string]rootRuns{"a.yaml:one": {"env/t/identity": false}}, got)
 		})
 	})
 
@@ -70,15 +81,25 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 		t.Run("ci.mk を解釈できなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
-			writeFile(t, repo, ciMakefile, "all:\n")
+			writeFile(t, repo, cientry.Makefile, "all:\n")
 			_, err := bindingSSOT(t).checkCIRoots(repo, nil)
-			require.ErrorIs(t, err, errCIMake)
+			require.ErrorIs(t, err, cientry.ErrParse)
+		})
+
+		t.Run("ci.mk に登録簿に無い種別の入口があれば弾く", func(t *testing.T) {
+			t.Parallel()
+			repo := t.TempDir()
+			writeFile(t, repo, cientry.Makefile, ciMakeFixture([3]string{cientry.Plan, "t", "identity"}, [3]string{"import", "t", "identity"}))
+			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make ci-plan-t-identity"))
+			_, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
+			require.ErrorIs(t, err, cientry.ErrKindUnknown)
+			assert.Contains(t, err.Error(), "ci-import-t-identity")
 		})
 
 		t.Run("workflow を読めなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
-			writeFile(t, repo, ciMakefile, testCIMake)
+			writeFile(t, repo, cientry.Makefile, testCIMake)
 			_, err := bindingSSOT(t).checkCIRoots(repo, []string{"missing.yaml"})
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
@@ -86,7 +107,7 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 		t.Run("宣言の名指すジョブが root を実行していなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := t.TempDir()
-			writeFile(t, repo, ciMakefile, testCIMake)
+			writeFile(t, repo, cientry.Makefile, testCIMake)
 			writeFile(t, repo, ".github/workflows/a.yaml", ciWorkflow("one", "make lint"))
 			_, err := bindingSSOT(t).checkCIRoots(repo, []string{"a.yaml"})
 			require.ErrorIs(t, err, errRootJobIdle)
@@ -94,88 +115,30 @@ func Test_ssot_checkCIRoots(t *testing.T) {
 	})
 }
 
-func Test_parseCIMake(t *testing.T) {
+func Test_ciEntries(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("入口ごとに実行する root のパスを返す", func(t *testing.T) {
-			t.Parallel()
-			got, err := parseCIMake(testCIMake + "ci-apply-t-workload:\n\t@$(call CI_APPLY,t,workload)\n")
-			require.NoError(t, err)
-			assert.Equal(t, map[string]ciEntry{
-				"ci-plan-t-identity":  {root: "env/t/identity", terraform: true},
-				"ci-apply-t-workload": {root: "env/t", terraform: true},
-			}, got)
-		})
-
-		t.Run("lock の解除の入口も root に結びつけ、Terraform を実行しない入口とする", func(t *testing.T) {
-			t.Parallel()
-			got, err := parseCIMake(testCIMake + "ci-unlock-t-identity:\n\t@$(call CI_UNLOCK,t,identity)\n")
-			require.NoError(t, err)
-			assert.Equal(t, map[string]ciEntry{
-				"ci-plan-t-identity":   {root: "env/t/identity", terraform: true},
-				"ci-unlock-t-identity": {root: "env/t/identity"},
-			}, got)
-		})
-
-		t.Run("lock を残す入口も root に結びつけ、Terraform を実行する入口とする", func(t *testing.T) {
-			t.Parallel()
-			got, err := parseCIMake(testCIMake + "ci-hold-t-identity:\n\t@$(call CI_HOLD,t,identity)\n")
-			require.NoError(t, err)
-			assert.Equal(t, map[string]ciEntry{
-				"ci-plan-t-identity": {root: "env/t/identity", terraform: true},
-				"ci-hold-t-identity": {root: "env/t/identity", terraform: true},
-			}, got)
-		})
-
-		// lock の解除の job に型の宛先を求めない根拠は、CI_UNLOCK が terraform を呼ばないことにある。ci.mk の
-		// 外の define も含めて展開した結果を、実物の ci.mk の入口ごとに make -n で突き合わせる。
-		t.Run("実物の ci.mk の入口が terraform を呼ぶかが、Terraform を実行するかの区別と一致する", func(t *testing.T) {
-			t.Parallel()
-			const sentinel = "tf-bin-sentinel"
-			mk, err := openRoot(t, filepath.Join("..", "..")).ReadFile(ciMakefile)
-			require.NoError(t, err)
-			targets, err := parseCIMake(string(mk))
-			require.NoError(t, err)
-			kinds := map[bool]int{}
-			for target, e := range targets {
-				out := makeDryRun(t, target, "TF_BIN="+sentinel)
-				assert.Equal(t, e.terraform, strings.Contains(out, sentinel), target)
-				kinds[e.terraform]++
-			}
-			assert.Positive(t, kinds[true], "Terraform を実行する入口が無い")
-			assert.Positive(t, kinds[false], "Terraform を実行しない入口が無い")
-		})
-	})
-
-	t.Run("異常系", func(t *testing.T) {
-		t.Parallel()
-
-		// 異常系はどれも errCIMake を返すので、落ちた理由を文で区別する。重複は件数の突き合わせでも落ちる。
-		for name, c := range map[string]struct{ data, reason string }{
-			"入口が 1 件も無い":                        {"ci-aws-credentials:\n\t@$(call CI_AWS_CREDENTIALS,a,b)\n", "入口が 1 件もありません"},
-			"見出しの次の行が呼び出しでない":                   {"ci-plan-t-identity:\n\t@echo x\n", "次の行が $(call CI_PLAN,"},
-			"見出しがファイルの最終行":                      {"ci-plan-t-identity:", "次の行が $(call CI_PLAN,"},
-			"plan の入口が CI_APPLY を呼ぶ":            {"ci-plan-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_PLAN,"},
-			"lock の解除の入口が CI_APPLY を呼ぶ":         {"ci-unlock-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_UNLOCK,"},
-			"見出しを経ない CI_UNLOCK の字面がある":          {testCIMake + "x: y\n\t@$(call CI_UNLOCK,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
-			"lock を残す入口が CI_APPLY を呼ぶ":          {"ci-hold-t-identity:\n\t@$(call CI_APPLY,t,identity)\n", "次の行が $(call CI_HOLD,"},
-			"plan の入口が CI_HOLD を呼ぶ":             {"ci-plan-t-identity:\n\t@$(call CI_HOLD,t,identity)\n", "次の行が $(call CI_PLAN,"},
-			"apply の入口が CI_HOLD を呼ぶ":            {"ci-apply-t-identity:\n\t@$(call CI_HOLD,t,identity)\n", "次の行が $(call CI_APPLY,"},
-			"見出しを経ない CI_HOLD の字面がある":            {testCIMake + "x: y\n\t@$(call CI_HOLD,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
-			"root の種類が identity / workload でない": {"ci-plan-t-other:\n\t@$(call CI_PLAN,t,other)\n", "次の行が $(call CI_PLAN,"},
-			"入口が重複している":                         {testCIMake + testCIMake, "ci-plan-t-identity が重複しています"},
-			"見出しを経ない呼び出しの字面がある":                 {testCIMake + "x: y\n\t@$(call CI_PLAN,t,identity)\n", "読めた入口 1 件 / 呼び出しの字面 2 件"},
-		} {
-			t.Run(name+"なら弾く", func(t *testing.T) {
+		for _, k := range cientry.Kinds() {
+			t.Run(k.Name+" の入口を root のパスと、その種別が Terraform を実行するかに写す", func(t *testing.T) {
 				t.Parallel()
-				_, err := parseCIMake(c.data)
-				require.ErrorIs(t, err, errCIMake)
-				assert.Contains(t, err.Error(), c.reason)
+				got := ciEntries([]cientry.Entry{
+					{Target: "ci-" + k.Name + "-t-identity", Kind: k, Env: "t", Root: cientry.RootIdentity},
+					{Target: "ci-" + k.Name + "-t-workload", Kind: k, Env: "t", Root: cientry.RootWorkload},
+				})
+				assert.Equal(t, map[string]ciEntry{
+					"ci-" + k.Name + "-t-identity": {root: "env/t/identity", terraform: k.Terraform},
+					"ci-" + k.Name + "-t-workload": {root: "env/t", terraform: k.Terraform},
+				}, got)
 			})
 		}
+
+		t.Run("入口が無ければ空を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, ciEntries(nil))
+		})
 	})
 }
 
@@ -187,22 +150,22 @@ func Test_rootPath(t *testing.T) {
 
 		t.Run("identity は env の下の identity を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "env/admin/identity", rootPath("admin", "identity"))
+			assert.Equal(t, "env/admin/identity", rootPath("admin", cientry.RootIdentity))
 		})
 
 		t.Run("workload は env の直下を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, "env/admin", rootPath("admin", "workload"))
+			assert.Equal(t, "env/admin", rootPath("admin", cientry.RootWorkload))
 		})
 
 		// 配置の規則は local.mk の TF_LOCAL_DIR も持つ。片方だけが動くと、CI が実行する dir と型を集める dir が
 		// ずれるので、実物の ci.mk の入口を make -n で展開して突き合わせる（ADR-0702 決定17）。
 		t.Run("実物の ci.mk の入口が terraform を実行する dir と一致する", func(t *testing.T) {
 			t.Parallel()
-			mk, err := openRoot(t, filepath.Join("..", "..")).ReadFile(ciMakefile)
+			entries, err := cientry.ParseRepo(filepath.Join("..", ".."))
 			require.NoError(t, err)
-			targets, err := parseCIMake(string(mk))
-			require.NoError(t, err)
+			targets := ciEntries(entries)
+			require.NotEmpty(t, targets)
 			dirRe := regexp.MustCompile(`dir="\./([^"]+)"`)
 			for target, e := range targets {
 				out := makeDryRun(t, target)

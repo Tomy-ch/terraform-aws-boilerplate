@@ -3,9 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -65,7 +67,33 @@ var (
 const testTerraform = "resource \"aws_x_thing\" \"a\" {}\ndata \"aws_none\" \"b\" {}\n"
 
 // testCIMake は testSSOT の root を実行する CI の入口。testWorkflow の one のジョブが呼ぶ。
-const testCIMake = "ci-plan-t-identity: SHELL := /bin/bash\nci-plan-t-identity:\n\t@$(call CI_PLAN,t,identity)\n"
+var testCIMake = ciMakeFixture([3]string{cientry.Plan, "t", "identity"})
+
+// ciMakeFixture は cientry.Parse が読める ci.mk の本文を組む。entries は {種別, env, root}。
+// 登録簿に無い種別の role は plan にする。
+func ciMakeFixture(entries ...[3]string) string {
+	var b strings.Builder
+	b.WriteString("CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock\n")
+	var defined []string
+	for _, e := range entries {
+		if !slices.Contains(defined, e[0]) {
+			defined = append(defined, e[0])
+			b.WriteString("define CI_" + strings.ToUpper(e[0]) + "\nx\nendef\n")
+		}
+	}
+	for _, e := range entries {
+		target := "ci-" + e[0] + "-" + e[1] + "-" + e[2]
+		role := "plan"
+		if k, ok := cientry.Lookup(e[0]); ok {
+			role = k.Role(cientry.Root(e[2]))
+		}
+		b.WriteString(".PHONY: " + target + "\n" +
+			target + ": SHELL := /bin/bash\n" +
+			target + ": TF_LOCAL_PROFILE := $(call CI_PROFILE," + e[1] + "," + role + ")\n" +
+			target + ":\n\t@$(call CI_" + strings.ToUpper(e[0]) + "," + e[1] + "," + e[2] + ")\n")
+	}
+	return b.String()
+}
 
 // testWorkflow は bullfrog の step の uses: 行に tail を続け、その後ろへ checkout の step を置いた 1 ジョブの workflow。
 // one のジョブは、さらに testSSOT の root を CI の入口で実行する。
@@ -104,7 +132,7 @@ func newTestRepo(t *testing.T, workflows map[string]string) string {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT), filePerm))
 	writeFile(t, root, "env/t/identity/main.tf", testTerraform)
-	writeFile(t, root, ciMakefile, testCIMake)
+	writeFile(t, root, cientry.Makefile, testCIMake)
 	for name, body := range workflows {
 		require.NoError(t, os.WriteFile(filepath.Join(root, ".github", "workflows", name), []byte(body), filePerm))
 	}
@@ -118,8 +146,8 @@ func unlockTestRepo(t *testing.T, run string) string {
 	b := syncedWorkflow("two", policyBlock, "b1.test", "b2.test") + "\n      - name: Unlock\n        run: " + run + "\n" +
 		strings.TrimPrefix(syncedWorkflow("audited", policyAudit), workflowHead)
 	root := newTestRepo(t, map[string]string{"a.yaml": syncedWorkflow("one", policyBlock, oneHosts...), "b.yaml": b})
-	writeFile(t, root, ciMakefile, testCIMake+
-		"ci-apply-t-identity:\n\t@$(call CI_APPLY,t,identity)\nci-unlock-t-identity:\n\t@$(call CI_UNLOCK,t,identity)\n")
+	writeFile(t, root, cientry.Makefile, ciMakeFixture(
+		[3]string{cientry.Plan, "t", "identity"}, [3]string{cientry.Apply, "t", "identity"}, [3]string{cientry.Unlock, "t", "identity"}))
 	ssot := strings.Replace(testSSOT, `jobs = ["a.yaml:one"]`, `jobs = ["a.yaml:one", "b.yaml:two"]`, 1)
 	require.NotEqual(t, testSSOT, ssot)
 	writeFile(t, root, ssotFile, ssot)
@@ -1506,7 +1534,7 @@ func Test_applyOrCheck(t *testing.T) {
 				"a.yaml": syncedWorkflow("one", policyBlock, oneHosts...),
 				"b.yaml": bWorkflow(),
 			})
-			writeFile(t, root, ciMakefile, testCIMake+"ci-plan-t-workload:\n\t@$(call CI_PLAN,t,workload)\n")
+			writeFile(t, root, cientry.Makefile, ciMakeFixture([3]string{cientry.Plan, "t", "identity"}, [3]string{cientry.Plan, "t", "workload"}))
 			writeFile(t, root, ".github/workflows/b.yml", syncedWorkflow("three", policyBlock, "b1.test", "b2.test")+
 				"\n      - name: Workload\n        run: make ci-plan-t-workload\n")
 			require.NoError(t, os.WriteFile(filepath.Join(root, ssotFile), []byte(testSSOT+"\n[job.\"b.yml:three\"]\nclasses = []\n"), filePerm))
@@ -1521,7 +1549,7 @@ func Test_applyOrCheck(t *testing.T) {
 				"a.yaml": staleWorkflow("one"),
 				"b.yaml": bWorkflow(),
 			})
-			writeFile(t, root, ciMakefile, testCIMake+"ci-plan-t-workload:\n\t@$(call CI_PLAN,t,workload)\n")
+			writeFile(t, root, cientry.Makefile, ciMakeFixture([3]string{cientry.Plan, "t", "identity"}, [3]string{cientry.Plan, "t", "workload"}))
 			stale := staleWorkflow("one") + "\n      - name: Workload\n        run: make ci-plan-t-workload\n"
 			writeFile(t, root, ".github/workflows/a.yaml", stale)
 			err := applyOrCheck(root, false)
