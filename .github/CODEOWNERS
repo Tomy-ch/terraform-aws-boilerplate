@@ -61,13 +61,13 @@ usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
 conftest/hcl/                              @Tomy-ch
 scripts/infra-code-gate/                   @Tomy-ch
 scripts/hcl-input/                         @Tomy-ch
+scripts/hcl-tally/                         @Tomy-ch
 scripts/provider-schema/                   @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
 scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/infra-code.mk         @Tomy-ch
-.makefiles/terraform/infra-code-test.mk    @Tomy-ch
+.makefiles/terraform/hcl-input.mk          @Tomy-ch
 .makefiles/terraform/resource-order.mk     @Tomy-ch
-.makefiles/terraform/resource-order-test.mk @Tomy-ch
 .makefiles/terraform/layer.mk              @Tomy-ch
 .github/workflows/terraform-gates.yaml     @Tomy-ch
 .github/workflows/terraform-apply.yaml     @Tomy-ch

@@ -20,9 +20,6 @@
 "editorconfig-check-canary" = { expires = 2027-01-31, issue = 439, reason = "M3: 衛生の canary を Go へ移す" }
 "editorconfig-directive-canary" = { expires = 2027-01-31, issue = 439, reason = "M3: 衛生の canary を Go へ移す" }
 "node-tools-host-canary" = { expires = 2027-01-31, issue = 439, reason = "M4: node-tools の canary を Go へ移す" }
-"infra-code-gate-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
-"resource-order-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
-"root-check-test" = { expires = 2027-02-15, issue = 439, reason = "M5: #434 の merge の後に、判定ごと Go へ移す" }
 "tf-gates-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }
 "tf-test" = { expires = 2027-02-20, issue = 439, reason = "M7a: レシピが対象のディレクトリを選ぶ判定を持つ。gates.mk の判定ごと Go へ移し、道具を起動するだけの runner にする" }
 "tf-validate-canary" = { expires = 2027-02-20, issue = 439, reason = "M7a: #433 と #429 の merge の後に、gates.mk の判定ごと Go へ移す" }
