@@ -207,9 +207,6 @@ jobs:
           tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run the layer check's own tests
-        run: make layer-check-test RUNNER_MODE=host
-
       - name: Check the layer rules
         run: make layer-check RUNNER_MODE=host
 

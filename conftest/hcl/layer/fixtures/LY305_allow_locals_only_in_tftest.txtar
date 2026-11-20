@@ -1,0 +1,14 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "a" {
+  bucket = local.b
+}
+
+resource "aws_s3_bucket_policy" "b" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/m/tests/a.tftest.hcl --
+locals {
+  b = aws_s3_bucket.this.id
+}

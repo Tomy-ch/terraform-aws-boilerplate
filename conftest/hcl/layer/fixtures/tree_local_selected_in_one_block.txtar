@@ -1,0 +1,32 @@
+-- env/dev/main.tf --
+module "u" {
+  source = "../../usecases/u"
+}
+-- modules/a/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}
+-- modules/a/x.tf --
+resource "aws_iam_role" "r" {
+  for_each = toset(["a"])
+}
+
+locals {
+  all = merge(aws_iam_role.r, {})
+}
+
+resource "aws_iam_role_policies_exclusive" "e" {
+  for_each     = toset(["a"])
+  role_name    = local.all[each.key].name
+  policy_names = []
+}
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}

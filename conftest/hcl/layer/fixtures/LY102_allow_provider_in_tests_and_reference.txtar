@@ -1,0 +1,34 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+-- usecases/u/main.tf --
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+
+module "m" {
+  source = "../../modules/m"
+}
+
+data "aws_caller_identity" "this" {}
+
+moved {
+  from = module.old
+  to   = module.m
+}
+
+removed {
+  from = module.gone
+  lifecycle {
+    destroy = false
+  }
+}
+-- usecases/u/main.tftest.hcl --
+provider "aws" {}
+-- usecases/u/reference/providers.tf --
+provider "aws" {}
+-- usecases/u/tests/a.tftest.hcl --
+provider "aws" {}

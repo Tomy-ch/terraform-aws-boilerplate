@@ -1,0 +1,6 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {
+  inline_policy {
+    name = "x"
+  }
+}

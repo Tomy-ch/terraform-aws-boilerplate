@@ -7,7 +7,7 @@ import data.lib.hcl_input as hcl
 
 # --- 入力の読み方 ---
 #
-# 入力は scripts/hcl-input が走査の root の下から作る JSON（`-format syntax`）で、その形に触れるのは、この節と
+# 入力は scripts/hcl-input が走査の root の下から作る JSON で、その形に触れるのは、この節と
 # lib.hcl_input だけである（README「HCL の読み方」）。崩れた入力の上では、それを読む規則を評価しない。
 
 doc := input if hcl.input_ok

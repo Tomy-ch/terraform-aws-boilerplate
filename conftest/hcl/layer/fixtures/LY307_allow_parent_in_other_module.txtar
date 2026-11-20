@@ -1,0 +1,6 @@
+-- modules/m/main.tf --
+resource "aws_route" "r" {
+  route_table_id = aws_route_table.t.id
+}
+-- modules/n/main.tf --
+resource "aws_route_table" "t" {}

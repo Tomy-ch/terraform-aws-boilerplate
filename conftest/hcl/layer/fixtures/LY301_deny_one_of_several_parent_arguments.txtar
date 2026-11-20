@@ -1,0 +1,8 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+resource "aws_vpc" "this" {}
+
+resource "aws_flow_log" "this" {
+  vpc_id    = aws_vpc.this.id
+  subnet_id = var.subnet
+}
