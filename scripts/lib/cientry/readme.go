@@ -28,15 +28,20 @@ var (
 // parseReadmeRoles は Markdown のソース src の、先頭の2つの列が `役割` と `role 名` の表から、役割の列の role を
 // 書かれた順で返します。
 //
-// 見出しの行はちょうど1つで、その次の行は区切りの行に限ります。表の行は区切りの行に続く `|` で始まる行で、
+// コードフェンスの中の行は見ません。見出しの行はちょうど1つで、その次の行は見出しと同じ列の数の区切りの行に限ります。表の行は区切りの行に続く `|` で始まる行で、
 // `|` で終わり、列の数が見出しと同じものに限ります。役割の列は role の形で、重複してはいけません。これ以外の形と
 // 0行は [ErrReadmeParse] です。読めた行数は、区切りの行から最初の空行までの行の数と突き合わせます（ADR-0702
 // 決定15）。
 func parseReadmeRoles(src []byte) ([]string, error) {
 	lines := strings.Split(string(src), "\n")
 	var heads []int
+	fenced := false
 	for i, l := range lines {
-		if readmeHeadRe.MatchString(l) {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			fenced = !fenced
+			continue
+		}
+		if !fenced && readmeHeadRe.MatchString(l) {
 			heads = append(heads, i)
 		}
 	}
@@ -57,6 +62,9 @@ func parseReadmeRoles(src []byte) ([]string, error) {
 	}
 	if h+1 >= len(lines) || !readmeSepRe.MatchString(strings.TrimRight(lines[h+1], " \t")) {
 		return nil, xerrors.Wrap(ErrReadmeParse, fmt.Sprintf("%d 行目: 見出しの次が区切りの行ではありません", h+2))
+	}
+	if sep := len(cells(lines[h+1])); sep != cols {
+		return nil, xerrors.Wrap(ErrReadmeParse, fmt.Sprintf("%d 行目: 区切りの列 %d 個が見出しの %d 個と違います", h+2, sep, cols))
 	}
 	var roles []string
 	for i := h + 2; i < len(lines) && strings.HasPrefix(lines[i], "|"); i++ {

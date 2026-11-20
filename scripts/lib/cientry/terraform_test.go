@@ -149,7 +149,7 @@ func TestParseTerraformRoles(t *testing.T) {
 			t.Parallel()
 			_, err := ParseTerraformRoles([]byte("locals {\n  roles = {\n"))
 			require.ErrorIs(t, err, ErrTerraformParse)
-			assert.NotContains(t, err.Error(), "個")
+			assert.NotContains(t, err.Error(), "locals の roles が")
 		})
 
 		t.Run("空のソースは roles が無いとして弾く", func(t *testing.T) {

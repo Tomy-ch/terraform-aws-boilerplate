@@ -246,7 +246,7 @@ func Test_parseSCPStateWriterRoles(t *testing.T) {
 			t.Parallel()
 			_, err := parseSCPStateWriterRoles([]byte("locals {\n  state_writer_role_patterns = [\n"))
 			require.ErrorIs(t, err, ErrStateWriterParse)
-			assert.NotContains(t, err.Error(), "個")
+			assert.NotContains(t, err.Error(), "locals の state_writer_role_patterns が")
 		})
 
 		t.Run("空のソースは属性が無いとして弾く", func(t *testing.T) {
