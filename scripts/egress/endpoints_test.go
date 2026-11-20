@@ -112,6 +112,26 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
 		})
 
+		t.Run("root が型を置かない region の宛先は、その root のジョブに求めない", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
+				"[job.\"c.yaml:y\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[root.\"r/w\"]\njobs = [\"c.yaml:y\"]\n"+
+				"[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
+			writeFile(t, repo, "r/w/main.tf", "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n"+
+				"resource \"aws_kms_key\" \"u\" {\n  region = \"us-east-1\"\n}\n")
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
+		})
+
+		t.Run("global の宛先は、provider の region が別でも呼ぶ宛先として数える", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"organizations.us-east-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_organizations_]\nhosts = [\"organizations.us-east-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_organizations_account\" \"a\" {}\n")
+			assert.NoError(t, s.checkEndpoints(repo, terraformRuns(s)))
+		})
+
 		t.Run("lock の解除だけで root に触れるジョブには、型が呼ぶ宛先を求めない", func(t *testing.T) {
 			t.Parallel()
 			s := endpointSSOT(t, "[root.r]\njobs = [\"a.yaml:one\", \"b.yaml:two\"]\n[type.aws_kms_]\nhosts = [\"kms.test\"]\n")
@@ -229,7 +249,7 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 				"resource \"aws_chatbot_slack_channel_configuration\" \"c\" {\n  region = \"us-west-2\"\n}\n")
 			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "chatbot.ap-northeast-1.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_chatbot_: us-west-2 の宛先がありません")
 		})
 
 		t.Run("同じ type に当たる別の型を置く region に宛先が無ければ弾く", func(t *testing.T) {
@@ -241,6 +261,49 @@ func Test_ssot_checkEndpoints(t *testing.T) {
 			err := s.checkEndpoints(repo, terraformRuns(s))
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "aws_kms_: us-west-2 の宛先がありません")
+		})
+
+		t.Run("root が型を置く region の宛先がジョブの許可リストに無ければ弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n"+
+				"resource \"aws_kms_key\" \"u\" {\n  region = \"us-east-1\"\n}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errEndpointMissing)
+			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com → c.yaml:x")
+		})
+
+		t.Run("どの root も型を置かない region の宛先を弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errHostUnplaced)
+			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
+		})
+
+		t.Run("2 つの root の和集合にも無い region の宛先を弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\", \"kms.us-west-2.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[root.\"r/w\"]\njobs = [\"c.yaml:x\"]\n"+
+				"[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\", \"kms.us-east-1.amazonaws.com\", \"kms.us-west-2.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
+			writeFile(t, repo, "r/w/main.tf", "provider \"aws\" {\n  region = \"us-west-2\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errHostUnplaced)
+			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
+		})
+
+		t.Run("どの root も使わない type は、宛先ではなく type の残存として弾く", func(t *testing.T) {
+			t.Parallel()
+			s := endpointSSOT(t, "[job.\"c.yaml:x\"]\nextra = [\"kms.ap-northeast-1.amazonaws.com\", \"sns.us-east-1.amazonaws.com\"]\n"+
+				"[root.r]\njobs = [\"c.yaml:x\"]\n[type.aws_kms_]\nhosts = [\"kms.ap-northeast-1.amazonaws.com\"]\n[type.aws_sns_]\nhosts = [\"sns.us-east-1.amazonaws.com\"]\n")
+			repo := endpointRepo(t, "provider \"aws\" {\n  region = \"ap-northeast-1\"\n}\nresource \"aws_kms_key\" \"k\" {}\n")
+			err := s.checkEndpoints(repo, terraformRuns(s))
+			require.ErrorIs(t, err, errTypeOrphan)
+			assert.NotErrorIs(t, err, errHostUnplaced)
 		})
 
 		t.Run("ブロックの region 引数がリテラルでなければ弾く", func(t *testing.T) {
@@ -805,6 +868,10 @@ func Test_checkRegions(t *testing.T) {
 	atProvider := func(hosts ...string) typeUse {
 		return typeUse{hosts: hosts, regions: map[string]bool{"": true}}
 	}
+	regionsErr := func(repo string, dirs []string, uses map[string]typeUse) error {
+		_, err := checkRegions(repo, dirs, uses)
+		return err
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -813,18 +880,22 @@ func Test_checkRegions(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
 			uses := map[string]typeUse{"aws_s3_": atProvider("iam.amazonaws.com", "*.s3.ap-northeast-1.amazonaws.com")}
-			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
+			got, err := checkRegions(repo, []string{"r"}, uses)
+			require.NoError(t, err)
+			assert.Equal(t, map[string][]string{"aws_s3_": {"iam.amazonaws.com", "*.s3.ap-northeast-1.amazonaws.com"}}, got)
 		})
 
-		t.Run("region を含む宛先が無ければ provider を読まない", func(t *testing.T) {
+		t.Run("region を含む宛先が無ければ provider を読まず、宛先をそのまま返す", func(t *testing.T) {
 			t.Parallel()
-			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, map[string]typeUse{"aws_iam_": atProvider("iam.amazonaws.com")}))
+			got, err := checkRegions(t.TempDir(), []string{"missing"}, map[string]typeUse{"aws_iam_": atProvider("iam.amazonaws.com")})
+			require.NoError(t, err)
+			assert.Equal(t, map[string][]string{"aws_iam_": {"iam.amazonaws.com"}}, got)
 		})
 
 		t.Run("ブロックの region 引数の region と宛先の region が一致すれば、provider を読まずに成功する", func(t *testing.T) {
 			t.Parallel()
 			uses := map[string]typeUse{"aws_chatbot_": {hosts: []string{"chatbot.us-west-2.amazonaws.com"}, regions: map[string]bool{"us-west-2": true}}}
-			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, uses))
+			assert.NoError(t, regionsErr(t.TempDir(), []string{"missing"}, uses))
 		})
 
 		t.Run("provider の region と region 引数の region の両方に置く type は、両方の宛先を持てば成功する", func(t *testing.T) {
@@ -834,20 +905,39 @@ func Test_checkRegions(t *testing.T) {
 				hosts:   []string{"kms.ap-northeast-1.amazonaws.com", "kms.us-west-2.amazonaws.com"},
 				regions: map[string]bool{"": true, "us-west-2": true},
 			}}
-			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
+			got, err := checkRegions(repo, []string{"r"}, uses)
+			require.NoError(t, err)
+			assert.Equal(t, map[string][]string{"aws_kms_": {"kms.ap-northeast-1.amazonaws.com", "kms.us-west-2.amazonaws.com"}}, got)
 		})
 
 		t.Run("AWS が region を固定した global の宛先は provider の region と突き合わせない", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
 			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com")}
-			assert.NoError(t, checkRegions(repo, []string{"r"}, uses))
+			assert.NoError(t, regionsErr(repo, []string{"r"}, uses))
+		})
+
+		t.Run("type を置かない region の宛先は、その root で呼ぶ宛先から外す", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			got, err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com")})
+			require.NoError(t, err)
+			assert.Equal(t, map[string][]string{"aws_kms_": {"kms.ap-northeast-1.amazonaws.com"}}, got)
+		})
+
+		t.Run("type を置かない region の宛先を外しても、region を持たない宛先と global の宛先は返す", func(t *testing.T) {
+			t.Parallel()
+			repo := endpointRepo(t, provider)
+			uses := map[string]typeUse{"aws_organizations_": atProvider("iam.amazonaws.com", "organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com", "kms.us-west-2.amazonaws.com")}
+			got, err := checkRegions(repo, []string{"r"}, uses)
+			require.NoError(t, err)
+			assert.Equal(t, map[string][]string{"aws_organizations_": {"iam.amazonaws.com", "organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com"}}, got)
 		})
 
 		t.Run("global の宛先だけなら provider を読まない", func(t *testing.T) {
 			t.Parallel()
 			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com")}
-			assert.NoError(t, checkRegions(t.TempDir(), []string{"missing"}, uses))
+			assert.NoError(t, regionsErr(t.TempDir(), []string{"missing"}, uses))
 		})
 	})
 
@@ -857,17 +947,9 @@ func Test_checkRegions(t *testing.T) {
 		t.Run("宛先の region が provider の region に無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.us-east-1.amazonaws.com")})
+			err := regionsErr(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.us-east-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
-		})
-
-		t.Run("2 つ目の宛先の region が合わなくても弾く", func(t *testing.T) {
-			t.Parallel()
-			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com", "kms.us-east-1.amazonaws.com")})
-			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "kms.us-east-1.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_kms_: ap-northeast-1 の宛先がありません（宛先の region: us-east-1）")
 		})
 
 		t.Run("region を含む宛先を持たない type の後の type も突き合わせる", func(t *testing.T) {
@@ -877,16 +959,16 @@ func Test_checkRegions(t *testing.T) {
 				"aws_iam_": atProvider("iam.amazonaws.com"),
 				"aws_kms_": atProvider("kms.us-east-1.amazonaws.com"),
 			}
-			err := checkRegions(repo, []string{"r"}, uses)
+			err := regionsErr(repo, []string{"r"}, uses)
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "aws_kms_: kms.us-east-1.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_kms_: ap-northeast-1 の宛先がありません")
 		})
 
 		t.Run("type を置く region のうち宛先の無いものがあれば弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
 			uses := map[string]typeUse{"aws_kms_": {hosts: []string{"kms.ap-northeast-1.amazonaws.com"}, regions: map[string]bool{"": true, "us-west-2": true}}}
-			err := checkRegions(repo, []string{"r"}, uses)
+			err := regionsErr(repo, []string{"r"}, uses)
 			require.ErrorIs(t, err, errRegionMismatch)
 			assert.Contains(t, err.Error(), "aws_kms_: us-west-2")
 		})
@@ -895,15 +977,15 @@ func Test_checkRegions(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
 			uses := map[string]typeUse{"aws_chatbot_": {hosts: []string{"chatbot.ap-northeast-1.amazonaws.com"}, regions: map[string]bool{"us-west-2": true}}}
-			err := checkRegions(repo, []string{"r"}, uses)
+			err := regionsErr(repo, []string{"r"}, uses)
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "chatbot.ap-northeast-1.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_chatbot_: us-west-2 の宛先がありません（宛先の region: ap-northeast-1）")
 		})
 
 		t.Run("provider の region が 2 つ以上なら、宛先の region が片方に当たっても弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider+"provider \"aws\" {\n  alias  = \"us\"\n  region = \"us-east-1\"\n}\n")
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
+			err := regionsErr(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionNotOne)
 			assert.Contains(t, err.Error(), "ap-northeast-1, us-east-1")
 		})
@@ -911,29 +993,29 @@ func Test_checkRegions(t *testing.T) {
 		t.Run("provider を読めなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, "resource \"aws_x\" \"x\" {}\n")
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
+			err := regionsErr(repo, []string{"r"}, map[string]typeUse{"aws_kms_": atProvider("kms.ap-northeast-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionUnknown)
 		})
 
 		t.Run("wildcard の付いた global の宛先は突き合わせから外さない", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("*.organizations.us-east-1.amazonaws.com")})
+			err := regionsErr(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("*.organizations.us-east-1.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionMismatch)
 		})
 
 		t.Run("global の宛先が混ざっていても、provider を読めなければ弾く", func(t *testing.T) {
 			t.Parallel()
 			uses := map[string]typeUse{"aws_organizations_": atProvider("organizations.us-east-1.amazonaws.com", "kms.ap-northeast-1.amazonaws.com")}
-			require.ErrorIs(t, checkRegions(t.TempDir(), []string{"missing"}, uses), errRegionUnknown)
+			require.ErrorIs(t, regionsErr(t.TempDir(), []string{"missing"}, uses), errRegionUnknown)
 		})
 
 		t.Run("global の宛先と同じサービスでも、別の region の宛先は弾く", func(t *testing.T) {
 			t.Parallel()
 			repo := endpointRepo(t, provider)
-			err := checkRegions(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("organizations.us-west-2.amazonaws.com")})
+			err := regionsErr(repo, []string{"r"}, map[string]typeUse{"aws_organizations_": atProvider("organizations.us-west-2.amazonaws.com")})
 			require.ErrorIs(t, err, errRegionMismatch)
-			assert.Contains(t, err.Error(), "organizations.us-west-2.amazonaws.com")
+			assert.Contains(t, err.Error(), "aws_organizations_: ap-northeast-1 の宛先がありません（宛先の region: us-west-2）")
 		})
 	})
 }
@@ -1013,7 +1095,6 @@ func Test_regionAttribute(t *testing.T) {
 		return body.Blocks[0]
 	}
 
-	// literal は返った region 引数がリテラルとして読めることを確かめ、その値を返す。
 	literal := func(t *testing.T, attr *hclsyntax.Attribute) string {
 		t.Helper()
 		got, ok := regionLiteral(attr)
