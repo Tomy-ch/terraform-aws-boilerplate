@@ -142,7 +142,7 @@ runner の DNS 構成の変更（egress proxy による `/etc/resolv.conf` の�
 
 - Static Analysis: `terraform` を実行する経路に運用機構が含まれないこと（決定3）
 - Static Analysis: 各運用機構にテストが存在すること（決定16）
-- Static Analysis: `.makefiles/` の `.mk` に、名前が `-test` で終わるか `-canary` を含むターゲットが無いこと。`go test` か `terraform test` を起動するだけの runner（`go-test`・`tf-test`）は除き、その名前が実在してレシピがその道具を起動することを確かめる。決定18 の宣言に載るものも除く。`make mk-test-lint` が、`Makefile` が `include` する `.mk` の集合と実在する `.mk`、取り出したターゲットの集合と make が読んだ規則の集合を突き合わせ、0件・名前を解釈できないターゲット・`include` されない `.mk` で落ちる（決定13-15・25）
+- Static Analysis: `Makefile` と `.makefiles/` の `.mk` に、名前が `-test` で終わるか `-canary` を含むターゲットが無いこと。`go test` か `terraform test` を起動するだけの runner（`go-test`・`tf-test`）は除き、その名前が実在してレシピがその道具を起動する1行だけであることを確かめる。決定18 の宣言に載るものも除く。`make mk-test-lint` が、`Makefile` が `include` する `.mk` の集合と実在する `.mk`、取り出したターゲットの集合と make が読んだ規則の集合を突き合わせ、0件・名前を解釈できないターゲット・`include` されない `.mk` で落ちる（決定13-15・25）
 - 各機構のテスト: 対象0件の入力に対して非ゼロで終了すること（決定13）
 - 各機構のテスト: 解釈できない入力に対してエラーを返すこと（決定14）
 - `egress-check`: steps を持つ job に bullfrog の step が無いこと、それが最初の step でないこと、`enable-sudo: false` を含む生成済みの `with:` からずれていることで落ちる（決定20・21）。宣言の root が module を辿って使う resource / data source の型が宣言の type に当たらないこと、type の宛先を root を実行する job の許可リストが持たないこと、type の宛先を許す job がどの root にも名指されていないこと、job が CI の plan / apply の入口を通して実行する root と宣言の root がその job を名指す先が食い違うこと、region を含む type の宛先の region の集合が、root がその type の resource / data source を置く region の集合（ブロックの `region` 引数のリテラル。持たないブロックは root の aws の provider のただ 1 つの region）と一致しないこと、ブロックの `region` 引数が region の形のリテラルでないことでも落ちる。ただし、AWS が region を固定した global のサービスの宛先（organizations.us-east-1.amazonaws.com）は、運用機構が閉じた一覧として持ち、この突き合わせから外す（決定20）

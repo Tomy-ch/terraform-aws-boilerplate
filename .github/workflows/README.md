@@ -14,7 +14,7 @@ CI の workflow 定義。Pull Request を止めるゲート、供給網のクー
 | 供給網のクールダウン | Pull Request と週次 | 公開直後のバージョンの採用を窓で止め、バイパスの期限を回収する |
 | 走査 | Pull Request と週次 | 秘密・誤設定・依存の脆弱性・workflow 自身の穴を報告する |
 | リポジトリの衛生 | すべての Pull Request | 綴りと `.editorconfig` の宣言とのずれで merge を止める |
-| `.mk` の規約 | Pull Request と週次 | `.mk` にテストのターゲットがあれば merge を止め、移行中の除外の期限を回収する |
+| `.mk` の規約 | Pull Request と週次 | `.mk` にテストのターゲットがあれば merge を止め、移行中の除外（[`mk-test-bypass.toml`](../mk-test-bypass.toml)、ADR-0702 決定18）の期限を回収する |
 | 供給網の衛生の報告 | 週次と既定ブランチ（線のどれか）への push | OpenSSF Scorecard の所見を code scanning へ送る。何も止めない |
 | 上流の報告 | 週次と手動 | 宣言より新しい版や、手で写した一覧と上流とのずれを issue へ書く。何も止めない |
 | apply | デプロイブランチ `admin` への push | 管理アカウントの identity root と workload root を、この順に apply する。失敗を通知し、失敗を戻す revert のブランチを用意する |
