@@ -84,7 +84,7 @@ func (r registry) checkStateWriterRoles(name string, got []string) error {
 // parseSCPStateWriterRoles は Terraform のソース src の `locals` の `state_writer_role_patterns` から、role の接尾辞の
 // 一覧を書かれた順で返します。
 //
-// 値は `flatten([for <env> in ... : [for <role> in [<文字列>, ...] : "...-ci-${<role>}"]])` の形に限り、内側の for の
+// 値は `flatten([for <env> in [<文字列>, ...] : [for <role> in [<文字列>, ...] : "...-ci-${<role>}"]])` の形に限り、内側の for の
 // 集まりが role の一覧です。これ以外の形、role の形でない要素、重複、0件は [ErrStateWriterParse] です。読めた件数は、
 // 字句の列から数えた内側の for の集まりの文字列の数と突き合わせます（ADR-0702 決定15）。
 func parseSCPStateWriterRoles(src []byte) ([]string, error) {
@@ -122,8 +122,9 @@ func parseSCPStateWriterRoles(src []byte) ([]string, error) {
 	return roles, nil
 }
 
-// innerRoleFor は expr が `flatten([for ... : [for <role> in [...] : "...-ci-${<role>}"]])` なら内側の for を返します。
-// 違えば [ErrStateWriterParse] を返します。
+// innerRoleFor は expr が `flatten([for <env> in [<文字列>, ...] : [for <role> in [...] : "...-ci-${<role>}"]])` なら
+// 内側の for を返します。外側の for の集まりが、文字列のリテラルを1つ以上並べた tuple でなくても
+// [ErrStateWriterParse] を返します。
 func innerRoleFor(expr hclsyntax.Expression) (*hclsyntax.ForExpr, error) {
 	call, ok := expr.(*hclsyntax.FunctionCallExpr)
 	if !ok || call.Name != "flatten" || len(call.Args) != 1 || call.ExpandFinal {
@@ -132,6 +133,12 @@ func innerRoleFor(expr hclsyntax.Expression) (*hclsyntax.ForExpr, error) {
 	outer, ok := call.Args[0].(*hclsyntax.ForExpr)
 	if !ok || outer.KeyExpr != nil || outer.CondExpr != nil {
 		return nil, xerrors.Wrap(ErrStateWriterParse, "flatten の引数が条件の無い tuple の for 式ではありません")
+	}
+	if envs, ok := outer.CollExpr.(*hclsyntax.TupleConsExpr); !ok || len(envs.Exprs) == 0 || slices.ContainsFunc(envs.Exprs, func(e hclsyntax.Expression) bool {
+		tmpl, ok := e.(*hclsyntax.TemplateExpr)
+		return !ok || !tmpl.IsStringLiteral()
+	}) {
+		return nil, xerrors.Wrap(ErrStateWriterParse, "外側の for の集まりが、文字列のリテラルを1つ以上並べた tuple ではありません")
 	}
 	inner, ok := outer.ValExpr.(*hclsyntax.ForExpr)
 	if !ok || inner.KeyExpr != nil || inner.CondExpr != nil || inner.KeyVar != "" {
