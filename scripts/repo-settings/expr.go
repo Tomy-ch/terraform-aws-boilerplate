@@ -313,13 +313,18 @@ func (p *exprParser) parsePrimary() (*exprNode, error) {
 	return nil, p.unexpected()
 }
 
-// refSegment は、ブランチの名前か ref を値に持つ property の名前。`-` と `_` を区別しない（`_` へ寄せてから
-// 比べる）。ref_type・ref_protected・branches_url のように名前の末尾が違うものは当たらない。
+// refSegment は、ブランチの名前か ref を値に持つ property の名前を、単語を `_` で区切った小文字で表す。
+// ref_type・ref_protected・branches_url のように名前の末尾が違うものは当たらない。
 var refSegment = regexp.MustCompile(`^(?:(?:[a-z0-9]+_)*(?:ref|branch|branches)|ref_name|target_commitish)$`)
 
-// isRefSegment は、区間の名前が [refSegment] に当たるかを、大文字小文字と `-` / `_` を区別せずに判定します。
+// camelBoundary は、camelCase の単語の境目（小文字か数字の直後の大文字）。
+var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+
+// isRefSegment は、区間の名前が [refSegment] に当たるかを判定します。camelCase の境目と `-` を `_` へ寄せ、
+// 大文字小文字を区別せずに比べる（targetBranch・target-branch・TARGET_BRANCH は同じ名前）。
 func isRefSegment(name string) bool {
-	return refSegment.MatchString(strings.ReplaceAll(strings.ToLower(name), "-", "_"))
+	snake := camelBoundary.ReplaceAllString(name, "${1}_${2}")
+	return refSegment.MatchString(strings.ReplaceAll(strings.ToLower(snake), "-", "_"))
 }
 
 // isRefRoot は、ref を値に持つ値を探す context の根（github と inputs）かを判定します。
@@ -479,9 +484,11 @@ func literalOnly(n *exprNode) bool {
 	return false
 }
 
+// hasStringLiteral は、n が空でない文字列リテラルを含むかを判定します。空文字列リテラルだけから作った値は
+// 空文字列と同じく、ブランチの名前と比べる定数に数えない。
 func hasStringLiteral(n *exprNode) bool {
 	if n.kind == nodeLiteral {
-		return n.litKind == tokString
+		return n.litKind == tokString && n.text != ""
 	}
 	for _, a := range n.args {
 		if hasStringLiteral(a) {
@@ -498,8 +505,9 @@ type exprCounts struct {
 }
 
 // walkExpr は、構文木のすべての節を辿り、比較の演算子と startsWith / endsWith / contains の呼び出しのうち、
-// 片側が [refDerived] でもう片側が [constString] であるものを、src の中の字面で返します。辿った節の件数も
-// 返す。根が github か inputs のパスの添字がリテラルでなければ失敗する —— 添字の先が ref かを決められない。
+// 片側が [refDerived] でもう片側が [constString] であるものと、[constString] の値を [refDerived] の添字で引く
+// 項（fromJSON の表を ref で引くのは比較と同じ）を、src の中の字面で返します。辿った節の件数も返す。根が
+// github か inputs のパスの添字がリテラルでなければ失敗する —— 添字の先が ref かを決められない。
 func walkExpr(root *exprNode, src string) ([]string, exprCounts, error) {
 	var (
 		found []string
@@ -528,6 +536,9 @@ func walkExpr(root *exprNode, src string) ([]string, exprCounts, error) {
 			i := n.args[1]
 			if base.kind == nodeIdent && isRefRoot(base.text) && (i.kind != nodeLiteral || (i.litKind != tokString && i.litKind != tokNumber)) {
 				return xerrors.Wrapf(errExpression, "%s の添字がリテラルではありません。添字の先が ref かを決められません", src[n.start:n.end])
+			}
+			if constString(n.args[0]) && refDerived(i, false) {
+				found = append(found, src[n.start:n.end])
 			}
 		case nodeCall:
 			if n.op == "contains" || n.op == "startswith" || n.op == "endswith" {
