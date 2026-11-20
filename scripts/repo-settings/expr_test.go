@@ -118,34 +118,39 @@ func Test_parseExpr(t *testing.T) {
 		"後置の . と [] と .* を読む":      {"a.b[0]['c'].*.d", "a.b[0]['c'].*.d"},
 		"|| の連なりは左結合":              {"a || b || c", "((a || b) || c)"},
 		"&& の連なりは左結合":              {"a && b && c", "((a && b) && c)"},
+		"引数の数が下限ちょうどの format を読む":  {"format('x')", "format('x')"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.want, sexpr(mustParse(t, tc.src)))
 		})
 	}
-	for name, src := range map[string]string{
-		"空の式は失敗する":               "",
-		"空白だけの式は失敗する":            " \n ",
-		"読み残しがあれば失敗する":           "a b",
-		"字句の誤りは失敗する":             "a == 'b",
-		"構文の誤りは失敗する":             "a ==",
-		"閉じない括弧は失敗する":            "(a == b",
-		"未知の関数は失敗する":             "lower(github.ref) == 'main'",
-		"引数の数が合わなければ失敗する":        "startsWith(github.ref)",
-		"case の引数が偶数なら失敗する":      "case(a, 'b', c, 'd')",
-		"引数の上限を超えれば失敗する":         "toJSON(a, b)",
-		"引数の無い format は失敗する":     "format()",
-		"引数の無い case は失敗する":       "case()",
-		"引数が1つの case は失敗する":      "case(a)",
-		"引数を取らない関数に引数があれば失敗する":   "always(a)",
-		"contains の引数が3つなら失敗する":  "contains(a, b, c)",
-		"context でない値の呼び出しは失敗する": "a.b(c)",
+	for name, tc := range map[string]struct{ src, msg string }{
+		"空の式は失敗する":               {"", ""},
+		"空白だけの式は失敗する":            {" \n ", ""},
+		"読み残しがあれば失敗する":           {"a b", ""},
+		"字句の誤りは失敗する":             {"a == 'b", ""},
+		"構文の誤りは失敗する":             {"a ==", ""},
+		"閉じない括弧は失敗する":            {"(a == b", ""},
+		"未知の関数は失敗する":             {"lower(github.ref) == 'main'", ""},
+		"引数の数が合わなければ失敗する":        {"startsWith(github.ref)", "引数の数"},
+		"case の引数が偶数なら失敗する":      {"case(a, 'b', c, 'd')", "引数の数"},
+		"引数の上限を超えれば失敗する":         {"toJSON(a, b)", "引数の数"},
+		"引数の無い format は失敗する":     {"format()", "引数の数"},
+		"引数の無い case は失敗する":       {"case()", "引数の数"},
+		"引数が1つの case は失敗する":      {"case(a)", "引数の数"},
+		"引数を取らない関数に引数があれば失敗する":   {"always(a)", "引数の数"},
+		"contains の引数が3つなら失敗する":  {"contains(a, b, c)", "引数の数"},
+		"引数の数が上限を超える join は失敗する": {"join(a, b, c)", "引数の数"},
+		"context でない値の呼び出しは失敗する": {"a.b(c)", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := parseExpr(src)
+			_, err := parseExpr(tc.src)
 			require.ErrorIs(t, err, errExpression)
+			if tc.msg != "" {
+				assert.ErrorContains(t, err, tc.msg)
+			}
 		})
 	}
 }
@@ -311,10 +316,10 @@ func Test_exprParser_parsePrimary(t *testing.T) {
 func Test_isRefSegment(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"ref", "base_ref", "HEAD_REF", "head_branch", "branches", "default_branch", "ref_name", "Ref-Name", "target_commitish", "base-ref", "target-branch", "release-branch", "workflow_ref", "full_ref", "targetBranch", "baseRef", "RefName", "headRef", "defaultBranch"} {
+	for _, name := range []string{"ref", "base_ref", "HEAD_REF", "head_branch", "branches", "default_branch", "ref_name", "Ref-Name", "target_commitish", "base-ref", "target-branch", "release-branch", "workflow_ref", "full_ref", "targetBranch", "baseRef", "RefName", "headRef", "defaultBranch", "HEADRef"} {
 		assert.True(t, isRefSegment(name), name)
 	}
-	for _, name := range []string{"ref_type", "ref_protected", "branches_url", "refs", "dry-run", "name", "ref_x", "prefix", "-ref", "ref-", "refType", "branchesUrl", "dryRun", "REFNAME"} {
+	for _, name := range []string{"ref_type", "ref_protected", "branches_url", "refs", "dry-run", "name", "ref_x", "prefix", "-ref", "ref-", "refType", "branchesUrl", "dryRun", "REFNAME", "headRefOid", "headSha"} {
 		assert.False(t, isRefSegment(name), name)
 	}
 }
@@ -374,24 +379,27 @@ func Test_refPath(t *testing.T) {
 		serialized bool
 		want       bool
 	}{
-		"名前が ref の区間":                  {"github", []string{"ref"}, false, true},
-		"途中の区間が ref ならその下も":            {"github", []string{"event", "changes", "base", "ref", "from"}, false, true},
-		"inputs の kebab-case の名前":      {"inputs", []string{"base-ref"}, false, true},
-		"github そのもの":                  {"github", nil, false, true},
-		"inputs そのもの":                  {"inputs", nil, false, true},
-		"github.event そのもの":            {"GitHub", []string{"Event"}, false, true},
-		"toJSON の中の github の下":         {"github", []string{"sha"}, true, true},
-		"action_ref は除く":               {"github", []string{"action_ref"}, false, false},
-		"action_ref の除外は github の直下だけ": {"github", []string{"event", "inputs", "action_ref"}, false, true},
-		"名前が ref でない区間":                {"github", []string{"event", "ref_type"}, false, false},
-		"根が github / inputs でない":       {"steps", []string{"a", "outputs", "branch"}, false, false},
-		"toJSON の中でも根が違えば ref でない":     {"matrix", nil, true, false},
-		"inputs.event はそのものでない":        {"inputs", []string{"event"}, false, false},
-		"base.label":                   {"github", []string{"event", "pull_request", "base", "label"}, false, true},
-		"inputs の head.label":          {"inputs", []string{"head", "label"}, false, true},
-		"label だけの区間は ref でない":         {"github", []string{"label"}, false, false},
-		"toJSON の中の inputs の下":         {"inputs", []string{"x"}, true, true},
-		"inputs の camelCase の名前":       {"inputs", []string{"targetBranch"}, false, true},
+		"名前が ref の区間":                        {"github", []string{"ref"}, false, true},
+		"途中の区間が ref ならその下も":                  {"github", []string{"event", "changes", "base", "ref", "from"}, false, true},
+		"inputs の kebab-case の名前":            {"inputs", []string{"base-ref"}, false, true},
+		"github そのもの":                        {"github", nil, false, true},
+		"inputs そのもの":                        {"inputs", nil, false, true},
+		"github.event そのもの":                  {"GitHub", []string{"Event"}, false, true},
+		"toJSON の中の github の下":               {"github", []string{"sha"}, true, true},
+		"action_ref は除く":                     {"github", []string{"action_ref"}, false, false},
+		"action_ref の除外は github の直下だけ":       {"github", []string{"event", "inputs", "action_ref"}, false, true},
+		"名前が ref でない区間":                      {"github", []string{"event", "ref_type"}, false, false},
+		"根が github / inputs でない":             {"steps", []string{"a", "outputs", "branch"}, false, false},
+		"toJSON の中でも根が違えば ref でない":           {"matrix", nil, true, false},
+		"inputs.event はそのものでない":              {"inputs", []string{"event"}, false, false},
+		"base の label は owner:branch の ref":  {"github", []string{"event", "pull_request", "base", "label"}, false, true},
+		"base / head でない区間の label は ref でない": {"github", []string{"x", "label"}, false, false},
+		"base.label の下は ref でない":             {"github", []string{"event", "pull_request", "base", "label", "x"}, false, false},
+		"大文字の Base.Label も ref":              {"github", []string{"Base", "Label"}, false, true},
+		"inputs の head.label":                {"inputs", []string{"head", "label"}, false, true},
+		"label だけの区間は ref でない":               {"github", []string{"label"}, false, false},
+		"toJSON の中の inputs の下":               {"inputs", []string{"x"}, true, true},
+		"inputs の camelCase の名前":             {"inputs", []string{"targetBranch"}, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -460,6 +468,9 @@ func Test_constString(t *testing.T) {
 		"case(x, 'a', 'b')",
 		"case(x, y, 'b')",
 		"toJSON('a')",
+		`fromJSON('{"x":"main"}').x`,
+		`fromJSON('{"x":{"y":"main"}}')['x']`,
+		`fromJSON('["a"]')[0]`,
 	} {
 		assert.True(t, constString(mustParse(t, src)), src)
 	}
@@ -478,6 +489,9 @@ func Test_constString(t *testing.T) {
 		"x && y",
 		"format('')",
 		"x && '' || format('')",
+		"vars.x.y",
+		"fromJSON(vars.x).y",
+		`fromJSON('{"x":"a"}')[vars.k]`,
 	} {
 		assert.False(t, constString(mustParse(t, src)), src)
 	}
@@ -606,10 +620,30 @@ func Test_literalCounts(t *testing.T) {
 				require.NoError(t, err, name)
 				_, read, err := walkExpr(mustParse(t, body), body)
 				require.NoError(t, err, name)
+				assert.NotEqual(t, exprCounts{}, read, name)
 				assert.Equal(t, read, literalCounts(body), name)
 			}
 		}
 	})
+	for name, tc := range map[string]struct {
+		text string
+		want exprCounts
+	}{
+		"定数の表を ref で引く":       {refComparisonsDetected["定数の表を ref で引く"], exprCounts{roots: 1, members: 1, indexes: 1, compares: 1}},
+		"contains の fromJSON": {refComparisonsDetected["contains の fromJSON"], exprCounts{roots: 1, members: 1, predicates: 1}},
+		"context 同士":          {refComparisonsUndetected["context 同士"], exprCounts{roots: 2, members: 4, compares: 1}},
+		"状態関数と - を含むジョブ名":     {refComparisonsUndetected["状態関数と - を含むジョブ名"], exprCounts{members: 2, compares: 1}},
+	} {
+		t.Run("refComparisons の表の式の件数: "+name, func(t *testing.T) {
+			t.Parallel()
+			body, err := exprBody(tc.text)
+			require.NoError(t, err)
+			_, read, err := walkExpr(mustParse(t, body), body)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, read)
+			assert.Equal(t, tc.want, literalCounts(body))
+		})
+	}
 }
 
 func Test_countMismatch(t *testing.T) {
@@ -709,7 +743,7 @@ var refComparisonsDetected = map[string]string{
 	"大文字の context":              "GITHUB.EVENT.MERGE_GROUP.BASE_REF == 'x'",
 	"大文字の関数名":                   "FORMAT('{0}', github.ref) == 'x'",
 	"三項の慣用句の定数":                 "github.ref_name == (github.event_name == 'push' && 'main' || 'dev')",
-	"三項の慣用句の定数（括弧を省いた右辺）":                 "github.ref == (x && 'refs/heads/a' || 'refs/heads/b')",
+	"三項の慣用句の定数（&& の左が ref でない）":           "github.ref == (x && 'refs/heads/a' || 'refs/heads/b')",
 	"case の結果の定数":                         "github.ref_name == case(x, 'a', 'b')",
 	"toJSON(github) の中の検索":                "contains(toJSON(github), 'refs/heads/main')",
 	"toJSON した祖先のパス":                      "toJSON(github.event.pull_request.base) == 'x'",
@@ -727,6 +761,10 @@ var refComparisonsDetected = map[string]string{
 	"camelCase の input の Ref":             "inputs.baseRef != 'main'",
 	"大文字で始まる camelCase の input":           "inputs.RefName == 'main'",
 	"`${{ }}` の一重引用符の値":                   "'${{ github.ref_name == ''main'' }}'",
+	"大文字の略語に続く camelCase の input":         "inputs.HEADRef == 'main'",
+	"定数の表の区間を ref で引く":                    `fromJSON('{"x":{"y":"main"}}').x[github.ref]`,
+	"定数の表のリテラルの添字の先を ref で引く":             `fromJSON('{"x":{"y":"main"}}')['x'][github.ref]`,
+	"定数の表の区間との比較":                         `fromJSON('{"x":"main"}').x == github.ref`,
 }
 
 var refComparisonsUndetected = map[string]string{
@@ -749,6 +787,10 @@ var refComparisonsUndetected = map[string]string{
 	"ref でない github の値（repository）":  "github.repository == 'o/r'",
 	"ref でない github の値（actor）":       "github.actor == 'x'",
 	"空の format との比較":                 "github.ref_name == format('')",
+	"camelCase の headRefOid":         "github.event.headRefOid == 'x'",
+	"camelCase の headSha":            "github.event.workflow_run.headSha == 'x'",
+	"定数でない表の区間を ref で引く":             "fromJSON(vars.x).y[github.ref]",
+	"定数でない表の区間との比較":                  "fromJSON(vars.x).y == github.ref",
 }
 
 func Test_refComparisons(t *testing.T) {

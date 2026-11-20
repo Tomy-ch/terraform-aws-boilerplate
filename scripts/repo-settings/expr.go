@@ -317,13 +317,17 @@ func (p *exprParser) parsePrimary() (*exprNode, error) {
 // ref_type・ref_protected・branches_url のように名前の末尾が違うものは当たらない。
 var refSegment = regexp.MustCompile(`^(?:(?:[a-z0-9]+_)*(?:ref|branch|branches)|ref_name|target_commitish)$`)
 
-// camelBoundary は、camelCase の単語の境目（小文字か数字の直後の大文字）。
-var camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+var (
+	// camelBoundary は、camelCase の単語の境目（小文字か数字の直後の大文字）。
+	camelBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	// acronymBoundary は、大文字の連なりの後ろの単語の境目（HEADRef の D と R の間）。
+	acronymBoundary = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+)
 
 // isRefSegment は、区間の名前が [refSegment] に当たるかを判定します。camelCase の境目と `-` を `_` へ寄せ、
 // 大文字小文字を区別せずに比べる（targetBranch・target-branch・TARGET_BRANCH は同じ名前）。
 func isRefSegment(name string) bool {
-	snake := camelBoundary.ReplaceAllString(name, "${1}_${2}")
+	snake := camelBoundary.ReplaceAllString(acronymBoundary.ReplaceAllString(name, "${1}_${2}"), "${1}_${2}")
 	return refSegment.MatchString(strings.ReplaceAll(strings.ToLower(snake), "-", "_"))
 }
 
@@ -431,11 +435,16 @@ func refDerived(n *exprNode, serialized bool) bool {
 
 // constString は、n の値が式の中で作った空でない文字列でありうるかを判定します。空でない文字列リテラルと、
 // 引数がリテラルとその呼び出しだけで文字列リテラルを含む format / join / toJSON / fromJSON、それを結果の引数に
-// 持つ case、それをオペランドに持つ `&&` / `||` である。空文字列はブランチの名前になりえないので含めない。
+// 持つ case、それをオペランドに持つ `&&` / `||`、それから `.名前` かリテラルの添字で続く値である。空文字列は
+// ブランチの名前になりえないので含めない。
 func constString(n *exprNode) bool {
 	switch n.kind {
 	case nodeLiteral:
 		return n.litKind == tokString && n.text != ""
+	case nodeMember:
+		return constString(n.args[0])
+	case nodeIndex:
+		return n.args[1].kind == nodeLiteral && constString(n.args[0])
 	case nodeCall:
 		switch n.op {
 		case "format", "join", "fromjson", "tojson":
