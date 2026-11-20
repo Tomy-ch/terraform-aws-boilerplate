@@ -61,7 +61,7 @@ func Test_run(t *testing.T) {
 			"blocks": [
 				{"file": "modules/a/main.tf", "kind": "resource", "labels": ["aws_s3_bucket_policy", "this"], "attributes": [
 					{"path": "bucket", "refs": [
-						{"root": "aws_s3_bucket", "steps": [{"kind": "attr", "name": "this"}, {"kind": "index"}, {"kind": "attr", "name": "id"}], "within": []},
+						{"root": "aws_s3_bucket", "steps": [{"kind": "attr", "name": "this"}, {"kind": "index", "index": {"form": "other"}}, {"kind": "attr", "name": "id"}], "within": []},
 						{"root": "module", "steps": [{"kind": "attr", "name": "x"}, {"kind": "attr", "name": "key"}], "within": [{"ref": 0, "step": 1}]}
 					]}
 				]},
