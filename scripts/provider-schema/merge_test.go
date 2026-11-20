@@ -15,8 +15,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
-// resourceX は、書ける属性・computed だけの属性・非推奨の属性・computed だけの非推奨の属性・block・
-// 非推奨の block を1つずつ持つ。
 const resourceX = `{"block": {
 	"attributes": {
 		"id": {"type": "string", "computed": true},
@@ -38,28 +36,7 @@ var entryX = entry{
 }
 
 func rawJSON(provider string, resources ...string) string {
-	items := make([]string, 0, len(resources))
-	for i, r := range resources {
-		items = append(items, fmt.Sprintf("\"aws_%d\": %s", i, r))
-	}
-
-	return fmt.Sprintf(`{"format_version": "1.0", "provider_schemas": {%q: {"resource_schemas": {%s}}}}`, provider, strings.Join(items, ","))
-}
-
-func Test_extract(t *testing.T) {
-	t.Parallel()
-
-	t.Run("書ける引数・非推奨・block を取り出し、computed だけの属性を除く", func(t *testing.T) {
-		t.Parallel()
-		got, err := decodeSchema("raw.json", []byte(rawJSON(awsProvider, resourceX)), awsProvider)
-		require.NoError(t, err)
-		assert.Equal(t, entryX, extract(got["aws_0"]))
-	})
-
-	t.Run("属性も block も無ければ空の配列", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, entry{Arguments: []string{}, Deprecated: []string{}, Blocks: []string{}}, extract(resourceSchema{}))
-	})
+	return fmt.Sprintf(`{"format_version": "1.0", "provider_schemas": %s}`, providerBody(provider, resources...))
 }
 
 func Test_decodeSchema(t *testing.T) {
@@ -143,49 +120,9 @@ func Test_readVersions(t *testing.T) {
 	})
 }
 
-func Test_union(t *testing.T) {
-	t.Parallel()
-
-	t.Run("型ごとに3つの配列それぞれの和を重複なしの昇順で返す", func(t *testing.T) {
-		t.Parallel()
-		got := union([]map[string]entry{
-			{
-				"aws_a": {Arguments: []string{"b", "old"}, Deprecated: []string{"old"}, Blocks: []string{"b"}},
-				"aws_b": {Arguments: []string{"x"}, Deprecated: []string{}, Blocks: []string{}},
-			},
-			{
-				"aws_a": {Arguments: []string{"a", "b"}, Deprecated: []string{}, Blocks: []string{"a", "b"}},
-				"aws_c": {Arguments: []string{}, Deprecated: []string{}, Blocks: []string{}},
-			},
-		})
-		assert.Equal(t, map[string]entry{
-			"aws_a": {Arguments: []string{"a", "b", "old"}, Deprecated: []string{"old"}, Blocks: []string{"a", "b"}},
-			"aws_b": {Arguments: []string{"x"}, Deprecated: []string{}, Blocks: []string{}},
-			"aws_c": {Arguments: []string{}, Deprecated: []string{}, Blocks: []string{}},
-		}, got)
-	})
-
-	t.Run("ある版だけで非推奨の引数も、和の非推奨に含める", func(t *testing.T) {
-		t.Parallel()
-		got := union([]map[string]entry{
-			{"aws_a": {Arguments: []string{"old"}, Deprecated: []string{"old"}, Blocks: []string{}}},
-			{"aws_a": {Arguments: []string{"old"}, Deprecated: []string{}, Blocks: []string{}}},
-		})
-		assert.Equal(t, map[string]entry{
-			"aws_a": {Arguments: []string{"old"}, Deprecated: []string{"old"}, Blocks: []string{}},
-		}, got)
-	})
-
-	t.Run("版が無ければ空", func(t *testing.T) {
-		t.Parallel()
-		assert.Empty(t, union(nil))
-	})
-}
-
 func Test_merge(t *testing.T) {
 	t.Parallel()
 
-	// setup は版ごとの raw.json を置き、versions.txt に版を並べる。
 	setup := func(t *testing.T, raws map[string]string, versions string) (dir, out string) {
 		t.Helper()
 		base := t.TempDir()

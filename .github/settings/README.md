@@ -50,7 +50,7 @@
 
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
-- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が `<env>-apply` か `<env>-apply-identity` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
+- ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が、`push` で起動する種別の role の `<env>-<role>` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
 - 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
@@ -59,12 +59,12 @@
 
 | キー | 意味 |
 | --- | --- |
-| `name` | environment の名前。`*-plan` / `*-apply` / `*-apply-identity` / `*-unlock-identity` / `*-unlock` は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに5つが揃い、どの `env` にも当たらない5種の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き） |
-| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`deploy-branch`（名前の env のデプロイブランチ1つだけ。`deployment-identity` の5種の名前にだけ使えます）、`any`（deployment branch policy を持たない） |
+| `name` | environment の名前。`<env>-<role>`（role は `scripts/lib/cientry` の登録簿の role）は `usecases/deployment-identity` の role の信頼条件が名指す名前の写し。`env/` の root が `deployment-identity` へ渡す `env` ごとに登録簿のすべての role の名前が揃い、どの `env` にも当たらない `<env>-<role>` の名前が無いことを `repo-settings-check` が見る（ADR-0501 決定5 の但し書き）。登録簿の role と `deployment-identity` が作る role の過不足の無い一致は `lib/cientry` のテストが見る |
+| `deploy_from` | `protected`（保護対象のブランチだけ）、`protected-and-pull-requests`（同 + Pull Request の ref `refs/pull/*/merge`）、`deploy-branch`（名前の env のデプロイブランチ1つだけ。`deployment-identity` の `<env>-<role>` の名前にだけ使えます）、`any`（deployment branch policy を持たない） |
 | `can_admins_bypass` | 管理者による保護の迂回。`false` だけを受けます（ADR-0602 決定14） |
 
 - パターンはこのファイルに書きません。`deploy_from` の種類から、`branches.json` を都度展開します。environment のパターンの `*` は `/` に当たらないので、`lines` は1階層（`release/*`）だけを許します。ruleset が保護する集合より狭く、許可の側は狭い方へ倒れます。
-- 名前の接尾辞が `deploy_from` を決めます。`*-apply` / `*-apply-identity` / `*-unlock-identity` / `*-unlock` は `deploy-branch` だけ、`*-plan` は `protected-and-pull-requests` だけを受けます（ADR-0602 決定14）。apply 系と lock の解除の environment は、保護パターンに当たる新しいブランチからは使えません。
+- 名前の接尾辞の role が `deploy_from` を決めます。登録簿で `pull_request` で起動する種別の role の名前は `protected-and-pull-requests` だけ、ほかの role の名前は `deploy-branch` だけを受け、`repo-settings-check` が見ます（ADR-0602 決定14）。`pull_request` で起動しない種別の environment は、保護パターンに当たる新しいブランチからは使えません。
 - 新しい environment を参照する workflow は、その environment を `make apply-environments` で宣言から作り、必要な secret を置いてから merge します。先に merge すると、走った workflow が GitHub に保護なしの environment を作らせます。手順は [`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 が持ちます。
 - 承認者と待機時間は持たず、突合は実態にそれらが無いことを要求します。ADR-0601 決定7 が任意とする機構を使わない選択です。
   - このリポジトリで承認者を置かないのは、単独メンテナで承認できる人が自分しかいないためです。 <!-- sample:line -->
@@ -101,7 +101,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`mk-test-lint`、`tf-gates-test`、`zizmor` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |

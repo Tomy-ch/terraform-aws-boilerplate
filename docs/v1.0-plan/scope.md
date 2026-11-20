@@ -284,7 +284,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Observability | `analytics` | AWSネイティブログの集計。Athena WorkGroup、Glueスキーマ、結果用S3。Log Groupの購読とS3ログの受け口（第9.3節） |
 | Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicと、Amazon Q Developer in chat applications（旧AWS Chatbot）のSlackの宛先、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
 | Governance | `finops` | AWS Budgets、Cost Anomaly Detection、通知先との接続。常駐層 |
-| Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに plan / apply / apply-identity / unlock-identity の4 role を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
+| Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに CI の role（一覧は `usecases/deployment-identity/README.md` の role の表）を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
 | Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は組織の trail（`security-tooling`）が記録し、`audit-evidence` が保管する）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。

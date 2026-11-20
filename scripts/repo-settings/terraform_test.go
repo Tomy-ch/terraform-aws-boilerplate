@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -222,7 +221,7 @@ func Test_checkIdentityEnvironments(t *testing.T) {
 		err := checkIdentityEnvironments([]string{"admin", "dev"},
 			declared("admin-plan", "admin-apply", "admin-apply-identity", "admin-unlock-identity", "admin-unlock"))
 		require.ErrorIs(t, err, errEnvironmentMismatch)
-		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-unlock-identity が宣言にありません; environment dev-unlock が宣言にありません")
+		assert.Contains(t, err.Error(), "environment dev-plan が宣言にありません; environment dev-apply-identity が宣言にありません; environment dev-apply が宣言にありません; environment dev-unlock-identity が宣言にありません; environment dev-unlock が宣言にありません")
 	})
 
 	t.Run("どの env にも当たらない宣言は失敗する", func(t *testing.T) {
@@ -285,19 +284,6 @@ func Test_splitIdentity(t *testing.T) {
 			assert.Equal(t, tc.suffix, suffix)
 		})
 	}
-
-	t.Run("写しと正本のずれ", func(t *testing.T) {
-		t.Parallel()
-
-		src, err := os.ReadFile(filepath.Join("..", "..", identityUseCaseDir, "internal", "github-oidc", "main.tf"))
-		require.NoError(t, err)
-		var declared []string
-		for _, m := range regexp.MustCompile(`environment\s*=\s*"\$\{var\.env\}(-[a-z0-9-]+)"`).FindAllStringSubmatch(string(src), -1) {
-			declared = append(declared, m[1])
-		}
-		require.NotEmpty(t, declared, "github-oidc の main.tf から role の environment を1つも読めません")
-		assert.ElementsMatch(t, identitySuffixes, declared, "identitySuffixes は github-oidc の role の environment の接尾辞と過不足なく一致する")
-	})
 }
 
 func Test_checkDeployEnvs(t *testing.T) {

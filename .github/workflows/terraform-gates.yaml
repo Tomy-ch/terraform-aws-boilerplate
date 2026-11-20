@@ -57,7 +57,7 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 順序の検査と層の検査と root の検査が hcl-input を、層の検査が provider-schema を、tf-validate が tf-validate-result を走らせ、
+          # 順序の検査と層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を、tf-validate が tf-validate-result を走らせ、
           # どれもこのソースからビルドする。
           filters: |
             relevant:
@@ -205,7 +205,7 @@ jobs:
           persist-credentials: false
 
       # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
-      # 層の検査と root の検査が hcl-input を、層の検査が provider-schema を走らせ、5つとも scripts/ からビルドする。conftest: 順序の検査と
+      # 層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を走らせ、5つとも scripts/ からビルドする。conftest: 順序の検査と
       # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise

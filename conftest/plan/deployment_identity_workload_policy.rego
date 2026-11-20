@@ -32,8 +32,9 @@ well_formed_prefix(x) if {
 
 well_formed if {
 	is_object(wl)
-	object.keys(wl) == {"policy", "boundaries", "usecase_iam_prefixes", "service_linked_roles", "passed_to_services", "apply_only_denies"}
+	object.keys(wl) == {"policy", "read_policy", "boundaries", "usecase_iam_prefixes", "service_linked_roles", "passed_to_services", "apply_only_denies"}
 	nonempty_string(wl.policy)
+	nonempty_string(wl.read_policy)
 	is_object(wl.boundaries)
 	count(wl.boundaries) > 0
 	every _, a in wl.boundaries {
@@ -61,13 +62,11 @@ doc(address) := r if {
 	r.document.address == address
 }
 
-# workload の policy の名前は <name_prefix>-ci-apply-workload（決定17）。<name_prefix> を接頭辞の組み立てに使う。
 name_prefix := trim_suffix(after(wl.policy).name, "-ci-apply-workload") if {
 	well_formed
 	endswith(after(wl.policy).name, "-ci-apply-workload")
 }
 
-# IAM の書き込みの Resource は、workload の policy と同じアカウントに限る。
 account := parts[0][1] if {
 	well_formed
 	parts := regex.find_all_string_submatch_n(`^arn:aws[a-z-]*:iam::([0-9]{12}):policy/`, object.get(after(wl.policy), "arn", ""), 1)
@@ -78,7 +77,6 @@ usecase_prefixes := {sprintf("%s-%s", [name_prefix, x]) | some x in wl.usecase_i
 
 boundary_arns := {after(a).arn | some _, a in wl.boundaries}
 
-# plan の boundary の instance。index key を除いた address が、宣言した boundary の address の index key を除いた形と一致する。
 boundary_instances := {c.rc.address |
 	some c in lib.changes
 	c.rc.type == "aws_iam_policy"
@@ -90,12 +88,12 @@ boundary_instances := {c.rc.address |
 
 deny contains msg if {
 	not well_formed
-	msg := "[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか、policy・boundaries（usecase を key にした address の空でない object）・usecase_iam_prefixes（小文字で - で終わり、ci- で始まらない接頭辞の空でない配列）・service_linked_roles・passed_to_services（空でない）・apply_only_denies（空でない文字列の配列）だけを持つ形を満たしていないか、deployment_identity.apply_role.policy がありません"
+	msg := "[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか、policy・read_policy・boundaries（usecase を key にした address の空でない object）・usecase_iam_prefixes（小文字で - で終わり、ci- で始まらない接頭辞の空でない配列）・service_linked_roles・passed_to_services（空でない）・apply_only_denies（空でない文字列の配列）だけを持つ形を満たしていないか、deployment_identity.apply_role.policy がありません"
 }
 
 deny contains msg if {
 	well_formed
-	some address in array.concat([wl.policy, apply_policy], [a | some _, a in wl.boundaries])
+	some address in array.concat([wl.policy, wl.read_policy, apply_policy], [a | some _, a in wl.boundaries])
 	not doc(address)
 	msg := sprintf("[PLAN-AWP-00] %s が入力にありません。address が変わったなら data.policy_plan.deployment_identity を直してください", [address])
 }
@@ -105,6 +103,21 @@ deny contains msg if {
 	doc(wl.policy)
 	not name_prefix
 	msg := sprintf("[PLAN-AWP-00] %s の名前 %v が <name_prefix>-ci-apply-workload の形ではありません", [wl.policy, object.get(after(wl.policy), "name", null)])
+}
+
+deny contains msg if {
+	well_formed
+	doc(wl.read_policy)
+	name_prefix
+	object.get(after(wl.read_policy), "name", null) != sprintf("%s-ci-apply-workload-read", [name_prefix])
+	msg := sprintf("[PLAN-AWP-00] %s の名前 %v が %s-ci-apply-workload-read ではありません", [wl.read_policy, object.get(after(wl.read_policy), "name", null), name_prefix])
+}
+
+deny contains msg if {
+	well_formed
+	doc(wl.read_policy)
+	not is_string(object.get(after(wl.read_policy), "arn", null))
+	msg := sprintf("[PLAN-AWP-00] %s の ARN が plan で決まっていません。tests/policy-input.tftest.hcl の override_resource で与えてください", [wl.read_policy])
 }
 
 deny contains msg if {
@@ -130,22 +143,21 @@ deny contains msg if {
 
 # --- 文 ---
 
-workload_allows contains {"path": r.document.path, "s": s} if {
+workload_allows contains {"path": r.document.path, "address": address, "s": s} if {
 	well_formed
-	r := doc(wl.policy)
+	some address in [wl.policy, wl.read_policy]
+	r := doc(address)
 	some s in lib.statements(r.body)
 	s.Effect == "Allow"
 }
 
 actions(s) := lib.lower_all(object.get(s, "Action", []))
 
-# IAM の Action の名前が読み取り（Get・List・Generate・Simulate）でなければ書き込みとする。名前の wildcard も書き込みとする。
 iam_write(a) if {
 	startswith(a, "iam:")
 	not regex.match(`^iam:(get|list|generate|simulate)[a-z0-9]*$`, a)
 }
 
-# サービスの部分が * か ? を含み、iam に当たりうる Action（"*:createrole"、"?am:createpolicy"、"*"）は、IAM の書き込みとする。
 iam_write(a) if {
 	service := split(a, ":")[0]
 	regex.match(`[*?]`, service)
@@ -161,7 +173,6 @@ role_writes := {
 	"iam:updateroledescription",
 }
 
-# 小文字で、同じアカウントの role か policy で、名前が宣言した usecase の接頭辞で始まり、接頭辞の後が空でなく "/" を含まない。
 # 接頭辞は ci- で始まらないので（well_formed_prefix）、CI の構成物（<name_prefix>-ci-）と重ならない。
 usecase_iam_arn(r) if {
 	r == lower(r)
@@ -198,7 +209,7 @@ deny contains msg if {
 	some r in lib.as_array(object.get(x.s, "Resource", []))
 	not usecase_iam_arn(r)
 	not service_linked(x.s, a, r)
-	msg := sprintf("[PLAN-AWP-01] %s: %s の Allow が %s を %s に許しています。IAM の書き込みは、同じアカウントの、小文字の宣言した usecase の接頭辞（%v）の role と policy に限ってください（deployment-identity/ADR-0201 決定13）", [x.path, wl.policy, a, r, sort(usecase_prefixes)])
+	msg := sprintf("[PLAN-AWP-01] %s: %s の Allow が %s を %s に許しています。IAM の書き込みは、同じアカウントの、小文字の宣言した usecase の接頭辞（%v）の role と policy に限ってください（deployment-identity/ADR-0201 決定13）", [x.path, x.address, a, r, sort(usecase_prefixes)])
 }
 
 # --- PLAN-AWP-02: role の書き込みの boundary の条件 ---
@@ -209,7 +220,7 @@ deny contains msg if {
 	some w in role_writes
 	matches(a, w)
 	not boundary_bound(x.s)
-	msg := sprintf("[PLAN-AWP-02] %s: %s の Allow が %s を、条件 StringEquals の iam:PermissionsBoundary を宣言した boundary %v に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, wl.policy, a, sort(boundary_arns)])
+	msg := sprintf("[PLAN-AWP-02] %s: %s の Allow が %s を、条件 StringEquals の iam:PermissionsBoundary を宣言した boundary %v に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, x.address, a, sort(boundary_arns)])
 }
 
 boundary_bound(s) if {
@@ -227,7 +238,7 @@ deny contains msg if {
 	some a in actions(x.s)
 	matches(a, "iam:passrole")
 	not passed_to_declared(x.s)
-	msg := sprintf("[PLAN-AWP-03] %s: %s の Allow が iam:PassRole を、条件 StringEquals の iam:PassedToService を宣言したサービス %v に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, wl.policy, wl.passed_to_services])
+	msg := sprintf("[PLAN-AWP-03] %s: %s の Allow が iam:PassRole を、条件 StringEquals の iam:PassedToService を宣言したサービス %v に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, x.address, wl.passed_to_services])
 }
 
 passed_to_declared(s) if {
@@ -245,7 +256,7 @@ deny contains msg if {
 	some a in actions(x.s)
 	matches(a, "iam:attachrolepolicy")
 	not policy_arn_bound(x.s)
-	msg := sprintf("[PLAN-AWP-04] %s: %s の Allow が iam:AttachRolePolicy を、条件 ArnLike か ArnEquals の iam:PolicyARN を宣言した usecase の接頭辞の policy に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, wl.policy])
+	msg := sprintf("[PLAN-AWP-04] %s: %s の Allow が iam:AttachRolePolicy を、条件 ArnLike か ArnEquals の iam:PolicyARN を宣言した usecase の接頭辞の policy に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, x.address])
 }
 
 policy_arn_bound(s) if {
@@ -279,8 +290,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-AWP-05] %s: %s の Deny が、apply の role %s の Deny（%v を除く）と同じ文ではありません（deployment-identity/ADR-0201 決定5・15）", [doc(b).document.path, b, apply_policy, wl.apply_only_denies])
 }
 
-# apply の role だけの Deny（boundary に置かない文）は、宣言した Sid の文が apply の role に在る。そのうち boundary の除去の
-# 拒否は、iam:DeleteRolePermissionsBoundary を Resource "*" で、条件なしに拒む（deployment-identity/ADR-0201 決定14）。
 deny contains msg if {
 	well_formed
 	doc(apply_policy)

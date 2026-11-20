@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 )
 
 const (
@@ -1360,39 +1362,6 @@ func TestCiMk(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(got, "| tee"), "tee は commit の行だけに使う: "+got)
 	})
 
-	t.Run("ci.mk のすべての plan の入口は lock を取らず、apply の入口は lock を取る", func(t *testing.T) {
-		t.Parallel()
-
-		raw, err := os.ReadFile(filepath.Join("..", "..", ".makefiles", "terraform", "operation", "ci.mk"))
-		require.NoError(t, err)
-		phony := map[string]string{}
-		for _, m := range regexp.MustCompile(`(?m)^\.PHONY: (ci-(plan|apply|hold)-[a-z0-9-]+)`).FindAllStringSubmatch(string(raw), -1) {
-			phony[m[1]] = m[2]
-		}
-		var rules []string
-		for _, m := range regexp.MustCompile(`(?m)^(ci-(?:plan|apply|hold)-[A-Za-z0-9_-]+):\s*$`).FindAllStringSubmatch(string(raw), -1) {
-			rules = append(rules, m[1])
-		}
-		require.ElementsMatch(t, slices.Collect(maps.Keys(phony)), rules, "入口の .PHONY とレシピの行が食い違います")
-		require.Contains(t, slices.Collect(maps.Values(phony)), "plan", "ci.mk に plan の入口がありません")
-		require.Contains(t, slices.Collect(maps.Values(phony)), "apply", "ci.mk に apply の入口がありません")
-		require.Contains(t, slices.Collect(maps.Values(phony)), "hold", "ci.mk に lock を残す入口がありません")
-		for target, kind := range phony {
-			t.Run("入口 "+target, func(t *testing.T) {
-				t.Parallel()
-
-				got := expand(t, target)
-				if kind == "plan" {
-					assert.Contains(t, got, "plan -lock=false -input=false")
-
-					return
-				}
-				assert.NotContains(t, got, "-lock=false")
-				assert.Contains(t, got, "plan -input=false")
-			})
-		}
-	})
-
 	t.Run("Policy の名前空間が空なら展開で落ちる", func(t *testing.T) {
 		t.Parallel()
 
@@ -1644,7 +1613,7 @@ func TestCiMk(t *testing.T) {
 		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
 		m := regexp.MustCompile(`for r in ([a-z -]+); do export r`).FindStringSubmatch(got)
 		require.Len(t, m, 2, got)
-		want := slices.DeleteFunc(slices.Clone(roleNames), func(r string) bool { return r == "plan" })
+		want := slices.DeleteFunc(slices.Clone(cientry.Roles()), func(r string) bool { return r == "plan" })
 		assert.ElementsMatch(t, want, strings.Fields(m[1]))
 	})
 

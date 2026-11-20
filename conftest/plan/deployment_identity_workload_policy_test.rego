@@ -15,6 +15,8 @@ ops_policies := sprintf("%s:policy/tabp-admin-ops-*", [iam])
 
 workload_address := sprintf("%saws_iam_policy.workload", [g])
 
+read_address := sprintf("%saws_iam_policy.workload_read", [g])
+
 boundary_address := sprintf("%saws_iam_policy.boundary[\"ops-notification\"]", [g])
 
 apply_address := sprintf("%saws_iam_role_policy.this[\"apply\"]", [g])
@@ -35,6 +37,8 @@ valid_workload := [
 	{"Effect": "Allow", "Action": "sns:CreateTopic", "Resource": "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*"},
 ]
 
+valid_read := [{"Effect": "Allow", "Action": ["sns:GetTopicAttributes"], "Resource": ["arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*", "arn:aws:sns:us-east-1:123456789012:tabp-admin-*"]}]
+
 bootstrap_denies := [
 	{"Sid": "DenyIdentityChange", "Effect": "Deny", "Action": "*", "Resource": [sprintf("%s:role/tabp-admin-ci-*", [iam])]},
 	{"Sid": "DenyBreakGlassChange", "Effect": "Deny", "Action": "*", "Resource": [sprintf("%s:role/break-glass/b", [iam])]},
@@ -48,11 +52,13 @@ res(type, address, after) := {"address": address, "type": type, "change": {"acti
 
 workload_rc(workload) := res("aws_iam_policy", workload_address, {"name": "tabp-admin-ci-apply-workload", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload", [iam]), "policy": json.marshal({"Statement": workload})})
 
+read_rc(read) := res("aws_iam_policy", read_address, {"name": "tabp-admin-ci-apply-workload-read", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload-read", [iam]), "policy": json.marshal({"Statement": read})})
+
 boundary_rc(boundary) := res("aws_iam_policy", boundary_address, {"name": "tabp-admin-ci-boundary-ops-notification", "arn": boundary_arn, "policy": json.marshal({"Statement": boundary})})
 
 apply_rc(apply) := res("aws_iam_role_policy", apply_address, {"name": "apply", "role": "tabp-admin-ci-apply", "policy": json.marshal({"Statement": apply})})
 
-world(workload, boundary, apply) := [workload_rc(workload), boundary_rc(boundary), apply_rc(apply)]
+world(workload, boundary, apply) := [workload_rc(workload), read_rc(valid_read), boundary_rc(boundary), apply_rc(apply)]
 
 valid_boundary := array.concat(boundary_allow, bootstrap_denies)
 
@@ -64,6 +70,7 @@ decl := {
 	"apply_role": {"policy": apply_address},
 	"workload": {
 		"policy": workload_address,
+		"read_policy": read_address,
 		"boundaries": {"ops-notification": boundary_address},
 		"usecase_iam_prefixes": ["ops-"],
 		"service_linked_roles": ["management.chatbot.amazonaws.com"],
@@ -121,7 +128,7 @@ test_violation_declaration_malformed if {
 }
 
 test_violation_input_missing if {
-	every address in [workload_address, boundary_address, apply_address] {
+	every address in [workload_address, read_address, boundary_address, apply_address] {
 		fixture.has(sprintf("[PLAN-AWP-00] %s が入力にありません", [address]), messages_for(without(valid_world, address), decl))
 	}
 }
@@ -129,6 +136,45 @@ test_violation_input_missing if {
 test_violation_policy_name if {
 	bad := res("aws_iam_policy", workload_address, {"name": "tabp-admin-workload", "arn": sprintf("%s:policy/tabp-admin-workload", [iam]), "policy": json.marshal({"Statement": valid_workload})})
 	fixture.has(sprintf("[PLAN-AWP-00] %s の名前", [workload_address]), messages_for(array.concat(without(valid_world, workload_address), [bad]), decl))
+}
+
+test_violation_read_policy_name if {
+	bad := res("aws_iam_policy", read_address, {"name": "tabp-admin-ci-apply-workload-2", "arn": sprintf("%s:policy/tabp-admin-ci-apply-workload-2", [iam]), "policy": json.marshal({"Statement": valid_read})})
+	fixture.has(sprintf("[PLAN-AWP-00] %s の名前", [read_address]), messages_for(array.concat(without(valid_world, read_address), [bad]), decl))
+}
+
+test_violation_iam_write_in_read_policy if {
+	every c in [
+		["PLAN-AWP-01", {"Effect": "Allow", "Action": "iam:CreateRole", "Resource": sprintf("%s:role/tabp-admin-*", [iam]), "Condition": pb}],
+		["PLAN-AWP-02", {"Effect": "Allow", "Action": "iam:CreateRole", "Resource": [ops_roles]}],
+		["PLAN-AWP-03", {"Effect": "Allow", "Action": "iam:PassRole", "Resource": [ops_roles]}],
+		["PLAN-AWP-04", {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": [ops_roles], "Condition": pb}],
+	] {
+		bad := read_rc(array.concat(valid_read, [c[1]]))
+		fixture.has(sprintf("[%s] p.json: %s の Allow が", [c[0], read_address]), messages_for(array.concat(without(valid_world, read_address), [bad]), decl))
+	}
+}
+
+test_violation_read_policy_unknown_arn if {
+	bad := json.patch(read_rc(valid_read), [{"op": "remove", "path": "/change/after/arn"}])
+	fixture.has(sprintf("[PLAN-AWP-00] %s の ARN が plan で決まっていません", [read_address]), messages_for(array.concat(without(valid_world, read_address), [bad]), decl))
+}
+
+test_violation_read_policy_same_as_policy if {
+	d := json.patch(decl, [{"op": "replace", "path": "/workload/read_policy", "value": workload_address}])
+	fixture.has(sprintf("[PLAN-AWP-00] %s の名前", [workload_address]), messages_for(valid_world, d))
+}
+
+test_violation_read_policy_malformed_declaration if {
+	every v in ["", 1, [read_address], null, {}] {
+		d := json.patch(decl, [{"op": "replace", "path": "/workload/read_policy", "value": v}])
+		fixture.has("[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか", messages_for(valid_world, d))
+	}
+}
+
+test_violation_read_policy_undeclared if {
+	d := json.patch(decl, [{"op": "remove", "path": "/workload/read_policy"}])
+	fixture.has("[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか", messages_for(valid_world, d))
 }
 
 test_violation_unknown_arns if {
@@ -170,7 +216,6 @@ test_violation_iam_write_resource if {
 	}
 }
 
-# サービスの部分の wildcard が iam に当たる Action も IAM の書き込みとする。
 test_violation_iam_write_wildcard_action if {
 	every a in ["iam:Create*", "*:CreateRole", "?am:CreateRole", "*:CreatePolicy", "*", "i*:*"] {
 		s := {"Effect": "Allow", "Action": a, "Resource": sprintf("%s:role/tabp-admin-*", [iam])}
@@ -189,13 +234,11 @@ test_violation_iam_read_wildcard_outside_usecase if {
 	fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:get* を", [workload_address]), messages(array.concat(valid_workload, [s])))
 }
 
-# Deny の文は見ない。
 test_pass_deny_statements_ignored if {
 	s := {"Effect": "Deny", "Action": ["iam:PassRole", "iam:CreateRole", "iam:AttachRolePolicy"], "Resource": "*"}
 	count(messages(array.concat(valid_workload, [s]))) == 0
 }
 
-# 3: 違反する要素を2つ目に置く。
 test_violation_second_element if {
 	other_role := sprintf("%s:role/tabp-admin-*", [iam])
 	other_policy := sprintf("%s:policy/tabp-admin-ci-*", [iam])
@@ -340,7 +383,6 @@ test_violation_no_shared_deny if {
 	fixture.has(sprintf("[PLAN-AWP-05] apply の role の %s に、boundary と共有する Deny", [apply_address]), msgs)
 }
 
-# apply の role だけの Deny は、宣言した Sid の文が apply の role に在り、boundary の除去を条件なしで拒む文が在る。
 test_violation_apply_only_deny_missing if {
 	msgs := messages_for(world(valid_workload, valid_boundary, bootstrap_denies), decl)
 	fixture.has(sprintf("[PLAN-AWP-05] apply の role の %s に、宣言した apply の role だけの Deny DenyBoundaryRemoval がありません", [apply_address]), msgs)
