@@ -56,7 +56,7 @@
 //     environment と、字面の group に一致する —— 同じ group なので apply と並んで lock を奪い合わない（ADR-0604 決定8）
 //   - plan と apply と lock を残す job は lock の解除の role を取らない —— lock file を消す権限は lock の解除の job だけが持つ
 //
-// CI の入口（make ci-plan-*・ci-apply-*・ci-unlock-*・ci-hold-*）を走らせる job が対象でなければ違反にし、
+// CI の入口（登録簿の種別の `make ci-<種別>-*`）を走らせる job が対象でなければ違反にし、
 // 入口の行をファイル全体で別に数えて、job の行として読めない行があれば落とす。root の網羅も、対象の job だけを数える。
 //
 // 対象の job が1つも無ければ、違反とは別の終了コード 2 で失敗します（ADR-0702 決定13）。
@@ -780,10 +780,15 @@ func entryCredential(kind, envRoot string) (env, role string, ok bool) {
 	return env, k.Role(root), true
 }
 
+// kindOf は、この検査が規則で名指す種別。どれかが登録簿に無ければ、零値の種別で検査を組まないよう起動時に panic する。
 var kindOf = func() map[string]cientry.Kind {
 	m := map[string]cientry.Kind{}
-	for _, k := range cientry.Kinds() {
-		m[k.Name] = k
+	for _, name := range []string{cientry.Plan, cientry.Apply, cientry.Unlock, cientry.Hold} {
+		k, ok := cientry.Lookup(name)
+		if !ok {
+			panic(fmt.Sprintf("oidc-job-lint: 規則で名指す種別 %s が lib/cientry の登録簿にありません", name))
+		}
+		m[name] = k
 	}
 	return m
 }()

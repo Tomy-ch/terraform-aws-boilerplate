@@ -325,6 +325,70 @@ func Test_roleSuffixOf(t *testing.T) {
 	}
 }
 
+func Test_splitEnvKinds(t *testing.T) {
+	t.Parallel()
+
+	names := func(kinds []cientry.Kind) []string {
+		out := make([]string, len(kinds))
+		for i, k := range kinds {
+			out[i] = k.Name
+		}
+		return out
+	}
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("登録簿の種別を、重ならずに漏れなく分ける", func(t *testing.T) {
+			t.Parallel()
+			shared, other, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			require.NotEmpty(t, shared)
+			require.NotEmpty(t, other)
+			for _, k := range shared {
+				assert.NotContains(t, names(other), k.Name)
+			}
+			assert.ElementsMatch(t, names(cientry.Kinds()), append(names(shared), names(other)...))
+		})
+
+		t.Run("apply と environment を共有するのは hold だけ", func(t *testing.T) {
+			t.Parallel()
+			shared, _, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			assert.Equal(t, []string{cientry.Hold}, names(shared))
+		})
+
+		t.Run("初期化された変数は登録簿を分けたものと同じ", func(t *testing.T) {
+			t.Parallel()
+			shared, other, err := splitEnvKinds(cientry.Kinds())
+			require.NoError(t, err)
+			assert.Equal(t, shared, sharedEnvKinds)
+			assert.Equal(t, other, otherKinds)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, keep := range map[string]func(cientry.Kind) bool{
+			"apply と environment を共有する種別が無い": func(k cientry.Kind) bool { return k.Name != cientry.Hold },
+			"そのほかの種別が無い":                     func(k cientry.Kind) bool { return k.Name == cientry.Hold },
+		} {
+			t.Run(name+"なら失敗する", func(t *testing.T) {
+				t.Parallel()
+				var kinds []cientry.Kind
+				for _, k := range cientry.Kinds() {
+					if keep(k) {
+						kinds = append(kinds, k)
+					}
+				}
+				_, _, err := splitEnvKinds(kinds)
+				require.ErrorIs(t, err, errKindSplit)
+			})
+		}
+	})
+}
+
 func Test_isSharedEnvJob(t *testing.T) {
 	t.Parallel()
 

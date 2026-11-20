@@ -36,8 +36,18 @@ func roleSuffixOf(suffix, event string) bool {
 // sharedEnvKinds は、push で起動しない種別のうち、push で起動する種別と role を共有するもの。その入口を走らせる
 // job は push で起動する種別と同じ environment を使うが、push の起動条件の生成から除く。otherKinds はそのほかの種別。
 var sharedEnvKinds, otherKinds = func() ([]cientry.Kind, []cientry.Kind) {
+	shared, other, err := splitEnvKinds(cientry.Kinds())
+	if err != nil {
+		panic(err)
+	}
+	return shared, other
+}()
+
+// splitEnvKinds は kinds を、push で起動せず push で起動する種別と role を共有する種別と、そのほかの種別に分けます。
+// どちらかが空なら、その側の入口の照合を組めないので失敗します。
+func splitEnvKinds(kinds []cientry.Kind) ([]cientry.Kind, []cientry.Kind, error) {
 	var shared, other []cientry.Kind
-	for _, k := range cientry.Kinds() {
+	for _, k := range kinds {
 		if !slices.Contains(k.Events, cientry.EventPush) &&
 			(isApplySuffix("-"+k.Role(cientry.RootIdentity)) || isApplySuffix("-"+k.Role(cientry.RootWorkload))) {
 			shared = append(shared, k)
@@ -45,11 +55,18 @@ var sharedEnvKinds, otherKinds = func() ([]cientry.Kind, []cientry.Kind) {
 			other = append(other, k)
 		}
 	}
-	return shared, other
-}()
+	if len(shared) == 0 {
+		return nil, nil, xerrors.Wrap(errKindSplit, "push で起動せず、push で起動する種別と role を共有する種別がありません")
+	}
+	if len(other) == 0 {
+		return nil, nil, xerrors.Wrap(errKindSplit, "push で起動する種別と role を共有しない種別がありません")
+	}
+	return shared, other, nil
+}
 
 var (
 	errTrigger      = xerrors.New("apply の workflow の起動条件を生成できません")
+	errKindSplit    = xerrors.New("repo-settings: lib/cientry の登録簿の種別を、apply と environment を共有するものとそのほかに分けられません")
 	errTriggerDrift = xerrors.New("apply の workflow の on.push.branches が branches.json からずれています（make repo-settings-apply）")
 
 	anyEnvironment = regexp.MustCompile(`^\s+["']?environment["']?\s*:`)

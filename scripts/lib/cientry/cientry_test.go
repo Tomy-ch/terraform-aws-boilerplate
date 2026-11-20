@@ -258,13 +258,6 @@ func TestMustPattern(t *testing.T) {
 			assert.Equal(t, `ci-(?:plan|apply)-`, MustPattern(`ci-`, `-`, Kind{Name: Plan}, Kind{Name: Apply}).String())
 		})
 
-		t.Run("種別は正規表現の字として引用する", func(t *testing.T) {
-			t.Parallel()
-			re := MustPattern(`ci-`, `-`, Kind{Name: "a.b"})
-			assert.True(t, re.MatchString("ci-a.b-"))
-			assert.False(t, re.MatchString("ci-axb-"))
-		})
-
 		t.Run("区切りまで含めるので、種別を接頭辞に持つ別の名前に当たらない", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, MustPattern(`ci-`, `-`, Kind{Name: Plan}).MatchString("ci-planner-x"))
@@ -278,6 +271,18 @@ func TestMustPattern(t *testing.T) {
 			t.Parallel()
 			assert.Panics(t, func() { MustPattern(`ci-`, `-`) })
 		})
+
+		for name, k := range map[string]Kind{
+			"零値の種別": {},
+			"名前が正規表現の字を含む種別": {Name: "a.b"},
+			"名前が2語の種別":       {Name: "force-unlock"},
+			"名前が大文字の種別":      {Name: "Plan"},
+		} {
+			t.Run(name+"が1つでも混じれば panic する", func(t *testing.T) {
+				t.Parallel()
+				assert.Panics(t, func() { MustPattern(`ci-`, `-`, Kind{Name: Plan}, k) })
+			})
+		}
 	})
 }
 
@@ -300,6 +305,13 @@ func TestParse(t *testing.T) {
 				target := "ci-" + want[0] + "-t-" + want[2]
 				assert.Equal(t, Entry{Target: target, Kind: k, Env: "t", Root: root, Role: k.Role(root), Line: slices.Index(lines, target+":") + 1}, got[i])
 			}
+		})
+
+		t.Run("名前の続く CI_DENIED_ROLES_X の行は CI_DENIED_ROLES と読まない", func(t *testing.T) {
+			t.Parallel()
+			got, err := Parse(fixture([3]string{Plan, "t", "identity"}) + "CI_DENIED_ROLES_X ?= x\n")
+			require.NoError(t, err)
+			assert.Len(t, got, 1)
 		})
 
 		t.Run("ハイフンを含む env を読む", func(t *testing.T) {

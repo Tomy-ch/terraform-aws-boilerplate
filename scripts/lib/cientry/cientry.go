@@ -117,6 +117,8 @@ var (
 	profileRe   = regexp.MustCompile(`^(ci-[a-z0-9-]+): TF_LOCAL_PROFILE := \$\(call CI_PROFILE,(` + envWord + `),([a-z-]+)\)$`)
 	defineRe    = regexp.MustCompile(`^define CI_([A-Z_]+)$`)
 	deniedRe    = regexp.MustCompile(`^CI_DENIED_ROLES \?=(.*)$`)
+	// deniedNameRe は CI_DENIED_ROLES を代入する行。名前の続く CI_DENIED_ROLES_X などは別の変数である。
+	deniedNameRe = regexp.MustCompile(`^CI_DENIED_ROLES(?:[^A-Za-z0-9_]|$)`)
 )
 
 // callPrefix は入口の呼び出しの行の字面。読めた入口の件数と突き合わせる（ADR-0702 決定15）。
@@ -242,17 +244,21 @@ func SplitEnvRoot(envRoot string) (string, Root, bool) {
 	return "", "", false
 }
 
-// MustPattern は、kinds の名前のどれかを prefix と suffix で挟んだ正規表現を組みます。名前は正規表現の字として
-// 引用します。kinds が空なら panic します。
+// MustPattern は、kinds の名前のどれかを prefix と suffix で挟んだ正規表現を組みます。kinds が空か、名前が
+// 登録簿の種別の名前の形（[a-z]+ の1語）でない種別があれば panic します。引き損ねた種別の零値 Kind{} から、
+// 何にも当たらない正規表現を組まないためです。
 func MustPattern(prefix, suffix string, kinds ...Kind) *regexp.Regexp {
 	if len(kinds) == 0 {
 		panic("cientry.MustPattern: 種別がありません")
 	}
-	quoted := make([]string, len(kinds))
+	names := make([]string, len(kinds))
 	for i, k := range kinds {
-		quoted[i] = regexp.QuoteMeta(k.Name)
+		if !kindNameRe.MatchString(k.Name) {
+			panic(fmt.Sprintf("cientry.MustPattern: 種別の名前 %q は [a-z]+ の1語ではありません", k.Name))
+		}
+		names[i] = k.Name
 	}
-	return regexp.MustCompile(prefix + `(?:` + strings.Join(quoted, "|") + `)` + suffix)
+	return regexp.MustCompile(prefix + `(?:` + strings.Join(names, "|") + `)` + suffix)
 }
 
 // Parse は ci.mk の入口を、書かれた順で返します。
@@ -416,7 +422,7 @@ func checkDefines(lines []string, entries []Entry) error {
 func checkDenied(lines []string) error {
 	var found []string
 	for n, l := range lines {
-		if !strings.HasPrefix(l, "CI_DENIED_ROLES") {
+		if !deniedNameRe.MatchString(l) {
 			continue
 		}
 		m := deniedRe.FindStringSubmatch(l)
