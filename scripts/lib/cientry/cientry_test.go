@@ -100,7 +100,8 @@ func TestKinds(t *testing.T) {
 			assert.Equal(t, EventPush, again[1].Events[0])
 		})
 
-		// 属性の宣言は ci.mk の define の本体の写しである。make のレシピを対象とするテストは実物を読んでよい（ADR-0702 決定17）。
+		// 属性の宣言は ci.mk の define の本体の写しである。このケースはレシピを対象とするテストで、ADR-0702 決定25 に反する。
+		// ci.mk の判定を tf-local へ移す変更（#439）で、置き換えと同時に消す。
 		t.Run("実物の ci.mk の入口のレシピが、種別の Terraform と Lock の属性と一致する", func(t *testing.T) {
 			t.Parallel()
 			const sentinel = "tf-bin-sentinel"

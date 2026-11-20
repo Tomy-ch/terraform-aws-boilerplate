@@ -76,4 +76,9 @@ run "wiring" {
     condition     = toset(aws_iam_role_policy_attachments_exclusive.this.policy_arns) == toset(aws_chatbot_slack_channel_configuration.this.guardrail_policy_arns)
     error_message = "channel role に付く policy と guardrail が同じではありません。"
   }
+
+  assert {
+    condition     = aws_iam_role_policy_attachment.read.role == aws_iam_role.this.name && aws_iam_role_policy_attachment.read.policy_arn == aws_iam_policy.read.arn
+    error_message = "読み取りの policy を channel role に付けるのが、attachment になっていません。"
+  }
 }
