@@ -15,11 +15,10 @@ after(address) := c.rc.change.after if {
 
 users := {after(a) | some a in object.get(bg, "users", [])}
 
-user_arns := {u.arn | some u in users}
+user_arns := {u.arn | some u in users; user_prefix(u)}
 
 # break-glass の user が自分を指す Resource。group の文は2つの user の両方に掛かるので、2つの ARN が同じ1つの接頭辞を持つときだけ定まる。
 own_user_resource := concat("", [prefix, "${aws:username}"]) if {
-	# 同じ user を2度宣言しても1人と数える。
 	declared := {a | some a in object.get(bg, "users", [])}
 	prefixes := [user_prefix(after(a)) | some a in declared]
 	count(prefixes) == 2
@@ -71,6 +70,13 @@ deny contains msg if {
 	some c in lib.changes
 	c.rc.type in {"aws_iam_access_key", "aws_iam_user_login_profile", "aws_iam_virtual_mfa_device"}
 	msg := sprintf("[PLAN-BG-01] %s が長期の資格情報を作ります", [c.rc.address])
+}
+
+deny contains msg if {
+	some a in object.get(bg, "users", [])
+	u := after(a)
+	not user_prefix(u)
+	msg := sprintf("[PLAN-BG-01] break-glass の user %s が、固定の形の ARN と名前を持ちません", [a])
 }
 
 deny contains msg if {

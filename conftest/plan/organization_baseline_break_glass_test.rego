@@ -321,3 +321,64 @@ test_pass_own_resource_path_and_partition if {
 		not fixture.has("[PLAN-BG-02]", deny)
 	}
 }
+
+user_not_fixed(address) := sprintf("[PLAN-BG-01] break-glass の user %s が、", [address])
+
+reported(prefix, msgs) := true if {
+	fixture.has(prefix, msgs)
+} else := false
+
+trust_denied := "[PLAN-BG-03] break-glass の role の信頼条件が、break-glass の user と aws:MultiFactorAuthPresent に限っていません"
+
+users_trusted_as(arn1, arn2, principals) := object.union(
+	users_as({"name": "break-glass-1", "arn": arn1}, {"name": "break-glass-2", "arn": arn2}),
+	{"module.b.aws_iam_role.this": role(trust(principals))},
+)
+
+test_violation_user_arn_not_fixed if {
+	every c in [
+		{"arns": ["arn:aws:iam::111111111111:user/break*/break-glass-1", "arn:aws:iam::111111111111:user/break*/break-glass-2"], "bad": {1, 2}},
+		{"arns": ["arn:aws:iam::111111111111:user/break?glass/break-glass-1", user_arns[1]], "bad": {1}},
+		{"arns": [user_arns[0], "arn:aws:iam::111111111111:user/${aws:PrincipalTag/p}/break-glass-2"], "bad": {2}},
+		{"arns": ["arn:aws:iam::111111111111:user/*", "arn:aws:iam::*:user/break-glass/break-glass-2"], "bad": {1, 2}},
+	] {
+		inp := fixture.plan(with_changes(valid_group, users_trusted_as(c.arns[0], c.arns[1], c.arns)))
+		deny := p.deny with input as inp with data.policy_plan as {"organization_baseline": decl}
+		fixture.has(trust_denied, deny)
+		every n in [1, 2] {
+			(n in c.bad) == reported(user_not_fixed(user_address(n)), deny)
+		}
+	}
+}
+
+# 信頼条件が固定の形の user だけを指していても、user が2人そろわなければ通さない。
+test_violation_trust_with_one_fixed_user if {
+	bad := "arn:aws:iam::111111111111:user/break*/break-glass-2"
+	inp := fixture.plan(with_changes(valid_group, users_trusted_as(user_arns[0], bad, [user_arns[0]])))
+	fixture.has(trust_denied, p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_user_after_null if {
+	inp := fixture.plan(with_changes(valid_group, users_as(null, {"name": "break-glass-2", "arn": user_arns[1]})))
+	fixture.has(user_not_fixed(user_address(1)), p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_missing_user_not_reported_as_unfixed if {
+	inp := fixture.plan([r | some r in rcs(valid_group, trust(user_arns), [admin]); r.address != user_address(2)])
+	deny := p.deny with input as inp with data.policy_plan as {"organization_baseline": decl}
+	fixture.has("[PLAN-BG-00]", deny)
+	not fixture.has(user_not_fixed(user_address(2)), deny)
+}
+
+test_pass_user_arn_path_and_partition_not_reported_as_unfixed if {
+	every prefix in [
+		"arn:aws:iam::111111111111:user/",
+		"arn:aws:iam::111111111111:user/a/b/",
+		"arn:aws-us-gov:iam::111111111111:user/break-glass/",
+	] {
+		arns := [concat("", [prefix, "break-glass-1"]), concat("", [prefix, "break-glass-2"])]
+		deny := p.deny with input as fixture.plan(with_changes(valid_group, users_trusted_as(arns[0], arns[1], arns))) with data.policy_plan as {"organization_baseline": decl}
+		not fixture.has("[PLAN-BG-01]", deny)
+		not fixture.has("[PLAN-BG-03]", deny)
+	}
+}
