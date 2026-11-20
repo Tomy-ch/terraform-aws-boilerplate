@@ -17,6 +17,28 @@ users := {after(a) | some a in object.get(bg, "users", [])}
 
 user_arns := {u.arn | some u in users}
 
+# break-glass の user が自分を指す Resource。group の文は2つの user の両方に掛かるので、2つの ARN が同じ1つの接頭辞を持つときだけ定まる。
+own_user_resource := concat("", [prefix, "${aws:username}"]) if {
+	prefixes := [user_prefix(after(a)) | some a in object.get(bg, "users", [])]
+	count(prefixes) == 2
+	distinct := {p | some p in prefixes}
+	count(distinct) == 1
+	some prefix in distinct
+}
+
+user_prefix(u) := prefix if {
+	is_string(u.name)
+	u.name != ""
+	lib.fixed_value(u.arn)
+	endswith(u.arn, concat("", ["/", u.name]))
+	prefix := substring(u.arn, 0, count(u.arn) - count(u.name))
+	regex.match(`^arn:[^:]+:iam::[0-9]{12}:user/([^/]+/)*$`, prefix)
+}
+
+own_resource(s) if {
+	{r | some r in lib.as_array(s.Resource)} == {own_user_resource}
+}
+
 role := after(object.get(bg, "role", ""))
 
 role_pattern := sprintf("arn:aws:iam::*:role%s%s", [role.path, role.name])
@@ -66,9 +88,7 @@ allowed_group_statement(s) if {
 	every a in lib.lower_all(s.Action) {
 		a in self_management
 	}
-	every r in lib.as_array(s.Resource) {
-		endswith(r, "${aws:username}")
-	}
+	own_resource(s)
 }
 
 allowed_group_statement(s) if lib.lower_all(s.Action) == ["iam:getaccountpasswordpolicy"]
@@ -76,7 +96,7 @@ allowed_group_statement(s) if lib.lower_all(s.Action) == ["iam:getaccountpasswor
 # 自分の MFA を外すのは、MFA で認証したセッションに限る。
 allowed_group_statement(s) if {
 	lib.lower_all(s.Action) == ["iam:deactivatemfadevice"]
-	endswith(s.Resource, "${aws:username}")
+	own_resource(s)
 	s.Condition == {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
 }
 
