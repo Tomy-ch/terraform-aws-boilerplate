@@ -36,7 +36,7 @@ var (
 	quotedRe     = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"`)
 	shellArgRe   = regexp.MustCompile(`(?:\b(?:sh|bash|dash|zsh|ksh)|\$[({]SHELL[)}]|\$\$\{?SHELL\}?)\s+(?:\S+\s+)*?-[A-Za-z]*c[A-Za-z]*\s+(?:--\s+)?(?:'([^']*)'?|"((?:[^"\\]|\\.)*)"?)`)
 	// 引用の字句を正規表現で解けない書き方。解釈できない入力として落とす（決定14）。
-	unparseableRe = regexp.MustCompile(`\\'|'\\''|\$\$'|\$'|\|\s*(?:sh|bash|dash|zsh|ksh|\$[({]SHELL[)}])\b|<<<|\bsh\s+-s\b`)
+	unparsableRe = regexp.MustCompile(`\\'|'\\''|\$\$'|\$'|\|\s*(?:sh|bash|dash|zsh|ksh|\$[({]SHELL[)}])\b|<<<|\bsh\s+-s\b`)
 	computedRe    = regexp.MustCompile(`\$[({]\$`)
 	assignPrefix  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	makeRefRe     = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
@@ -78,7 +78,7 @@ func constructs(line string) []string {
 	if computedRe.MatchString(line) {
 		add("計算された変数名")
 	}
-	if unparseableRe.MatchString(line) {
+	if unparsableRe.MatchString(line) {
 		add("解釈できない引用かシェルへの流し込み")
 	}
 	// `sh -c` と `bash -c` の引数の文字列も、同じ規則で見る（決定25）。
