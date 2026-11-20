@@ -108,6 +108,14 @@ func Test_parseMk(t *testing.T) {
 		assert.Equal(t, "\n\techo 1\n\techo 2", mk.recipes["a"])
 		assert.Equal(t, "\n\techo 3", mk.recipes["b"])
 	})
+	t.Run("レシピの行・define の本体・代入の値を行番号つきで集める", func(t *testing.T) {
+		t.Parallel()
+		mk, err := parseMk([]byte("X = a \\\n  b\ndefine D\nline1\nendef\nt: ; one\n\ttwo\n"))
+		require.NoError(t, err)
+		assert.Equal(t, []srcLine{{n: 1, text: "a \\"}, {n: 2, text: "  b"}}, mk.vars["X"])
+		assert.Equal(t, []srcLine{{n: 4, text: "line1"}}, mk.vars["D"])
+		assert.Equal(t, []srcLine{{n: 6, text: " one"}, {n: 7, text: "\ttwo"}}, mk.recipeSrc["t"])
+	})
 	t.Run("`.mk` の中のリテラルの include を集める", func(t *testing.T) {
 		t.Parallel()
 		mk, err := parseMk([]byte("include .makefiles/c.mk\na:\n\techo\n"))
@@ -407,3 +415,28 @@ var realDB381 = "# GNU Make 3.81\n\n# Make data base, printed on x\n\n" +
 	"\n" +
 	"" +
 	"\n# files hash-table stats:\n\n# Finished Make data base on x\n"
+
+func Test_assignment(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name, line, wantName, wantValue string
+		ok                              bool
+	}{
+		{"再帰の代入", "X = a b", "X", "a b", true},
+		{"即時の代入", "X := $(Y)", "X", "$(Y)", true},
+		{"条件つきの代入", "X ?= 1", "X", "1", true},
+		{"追記", "X += c", "X", "c", true},
+		{"シェルの代入", "X != date", "X", "date", true},
+		{"export つき", "export X := 1", "X", "1", true},
+		{"規則の行は代入ではない", "a: b", "", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			name, value, ok := assignment(c.line)
+			assert.Equal(t, c.ok, ok)
+			assert.Equal(t, c.wantName, name)
+			assert.Equal(t, c.wantValue, value)
+		})
+	}
+}

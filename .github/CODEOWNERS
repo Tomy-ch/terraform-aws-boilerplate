@@ -49,6 +49,8 @@ scripts/contents-write-lint/                @Tomy-ch
 
 # `.mk` のテストのターゲットを mk-test-lint から外す移行中の宣言（ADR-0702 決定18・25）。エントリを足しても検査は通る。
 .github/mk-test-bypass.toml           @Tomy-ch
+# 分岐・繰り返しの検査（ADR-0702 決定25）を掛ける `.mk` の範囲。外しても検査は通る。
+.github/mk-recipe-scope.toml          @Tomy-ch
 
 # Policy Test とその宣言 conftest/plan/decl.json（ADR-0402 決定15）。宣言から文書の型や role の address を
 # 落としても、reference root の policy input から override を落としても、Policy が読む範囲が縮んだまま検査は緑で通る。

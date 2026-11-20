@@ -59,11 +59,13 @@ func parseIncludes(raw []byte) ([]string, error) {
 
 // mkFile は1つの `.mk` から取り出した規則。
 type mkFile struct {
-	literal    map[string]int      // リテラルの名前を持つ規則のターゲット → 最初の行
-	withRecipe map[string]struct{} // レシピを持つ規則のターゲット（リテラルの名前のもの）
-	recipes    map[string]string   // ターゲット → レシピの本文
-	unresolved int                 // 名前に変数かパターンを含み、レシピを持つ規則のターゲットの数
-	includes   []string            // この `.mk` が include する `.mk`
+	literal    map[string]int       // リテラルの名前を持つ規則のターゲット → 最初の行
+	withRecipe map[string]struct{}  // レシピを持つ規則のターゲット（リテラルの名前のもの）
+	recipes    map[string]string    // ターゲット → レシピの本文
+	unresolved int                  // 名前に変数かパターンを含み、レシピを持つ規則のターゲットの数
+	includes   []string             // この `.mk` が include する `.mk`
+	recipeSrc  map[string][]srcLine // ターゲット → レシピの行（行番号つき。条件ディレクティブの行も含む）
+	vars       map[string][]srcLine // 変数か define の名前 → 本体の行
 }
 
 func (m mkFile) line(name string) int { return m.literal[name] }
@@ -93,15 +95,25 @@ func addMonths(t time.Time, n int) time.Time {
 // parseMk は `.mk` の規則の行を取り出す。define の中・レシピ・代入・条件分岐の行は規則としない。
 // 閉じない define と、続きの行の途中で終わるファイルは、読めない入力とする（決定14）。
 func parseMk(raw []byte) (mkFile, error) {
-	mk := mkFile{literal: map[string]int{}, withRecipe: map[string]struct{}{}, recipes: map[string]string{}}
+	mk := mkFile{
+		literal: map[string]int{}, withRecipe: map[string]struct{}{}, recipes: map[string]string{},
+		recipeSrc: map[string][]srcLine{}, vars: map[string][]srcLine{},
+	}
 	lines := strings.Split(string(raw), "\n")
 	depth := 0
 	var current []string // レシピを集めている規則のターゲット
 	inRecipe := false
 	continued := false
 
+	defineName := "" // 読んでいる define の名前
+	curVar := ""     // 続きの行を持つ代入の名前
 	finish := func() {
 		current, inRecipe = nil, false
+	}
+	addRecipe := func(n int, text string) {
+		for _, name := range current {
+			mk.recipeSrc[name] = append(mk.recipeSrc[name], srcLine{n: n, text: text})
+		}
 	}
 
 	for i := 0; i < len(lines); i++ {
@@ -115,9 +127,14 @@ func parseMk(raw []byte) (mkFile, error) {
 				for _, name := range current {
 					mk.recipes[name] += "\n" + line
 				}
+				addRecipe(n, line)
+			}
+			if curVar != "" {
+				mk.vars[curVar] = append(mk.vars[curVar], srcLine{n: n, text: line})
 			}
 			continue
 		}
+		curVar = ""
 		head := strings.Fields(line)
 		if depth > 0 {
 			switch {
@@ -126,6 +143,9 @@ func parseMk(raw []byte) (mkFile, error) {
 			case len(head) > 0 && head[0] == "define":
 				depth++
 			}
+			if depth > 0 {
+				mk.vars[defineName] = append(mk.vars[defineName], srcLine{n: n, text: line})
+			}
 			continue
 		}
 		if strings.HasPrefix(line, "\t") {
@@ -133,6 +153,7 @@ func parseMk(raw []byte) (mkFile, error) {
 				for _, name := range current {
 					mk.recipes[name] += "\n" + line
 				}
+				addRecipe(n, line)
 			}
 			continue
 		}
@@ -142,12 +163,18 @@ func parseMk(raw []byte) (mkFile, error) {
 		}
 		switch head[0] {
 		case "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif":
+			if inRecipe {
+				addRecipe(n, line) // レシピの中の条件ディレクティブは、それ自体が分岐である
+			}
 			continue // make は条件分岐をまたいでレシピを読み続ける。どちらの枝のタブの行もレシピに積む
 		}
 		finish()
 		switch head[0] {
 		case "define":
 			depth++
+			if len(head) > 1 {
+				defineName = head[1]
+			}
 			continue
 		case "endef":
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 対応する define の無い endef", n)
@@ -166,7 +193,13 @@ func parseMk(raw []byte) (mkFile, error) {
 
 		colon := ruleColon(trimmed)
 		if colon < 0 {
-			continue // 代入
+			if name, value, ok := assignment(trimmed); ok {
+				mk.vars[name] = append(mk.vars[name], srcLine{n: n, text: value})
+				if continued {
+					curVar = name
+				}
+			}
+			continue
 		}
 		names, recipe := strings.Fields(trimmed[:colon]), ""
 		rest := trimmed[colon+1:]
@@ -205,6 +238,9 @@ func parseMk(raw []byte) (mkFile, error) {
 				mk.withRecipe[name] = struct{}{}
 				current = append(current, name)
 				mk.recipes[name] += recipe
+				if recipe != "" {
+					mk.recipeSrc[name] = append(mk.recipeSrc[name], srcLine{n: n, text: recipe})
+				}
 			}
 		}
 		inRecipe = hasRecipe
@@ -354,4 +390,18 @@ func parseBypass(raw []byte) (map[string]bypass, error) {
 		out[m[1]] = bypass{expires: expires, issue: issue, line: i + 1}
 	}
 	return out, nil
+}
+
+var assignRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_.-]*)\s*(:::=|::=|:=|\?=|\+=|!=|=)\s?(.*)$`)
+
+// assignment は代入の行から、変数の名前と値を返す。
+func assignment(line string) (string, string, bool) {
+	for _, prefix := range []string{"export ", "override "} {
+		line = strings.TrimPrefix(line, prefix)
+	}
+	m := assignRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[3], true
 }

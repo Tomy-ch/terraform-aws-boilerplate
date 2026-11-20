@@ -1,0 +1,16 @@
+# 分岐・繰り返しの検査（ADR-0702 決定25 の閉じた一覧）を掛ける `.mk` の範囲（SSOT）。
+# make mk-test-lint が読む。ロジックを運用機構の Go へ移し終えた `.mk` を、その変更の中で足す。
+# すべての `.mk` を移し終えたら、この宣言を消し、検査をすべての `.mk` に掛ける。
+files = [
+  "Makefile",
+  ".makefiles/docker/lint.mk",
+  ".makefiles/docker/pin.mk",
+  ".makefiles/github/base-branch.mk",
+  ".makefiles/github/egress.mk",
+  ".makefiles/github/lint.mk",
+  ".makefiles/github/pin.mk",
+  ".makefiles/github/setting/github.mk",
+  ".makefiles/github/operation/release-branch.mk",
+  ".makefiles/hygiene/mk-test.mk",
+  ".makefiles/versions.mk",
+]

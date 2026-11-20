@@ -34,6 +34,7 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - ".github/mk-test-bypass.toml"
+        - ".github/mk-recipe-scope.toml"
         - "scripts/mk-test-lint/**"
       run: make mk-test-lint
 

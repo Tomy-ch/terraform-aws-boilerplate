@@ -20,12 +20,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -45,7 +49,7 @@ var (
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], os.Stdout, time.Now().UTC()); err != nil {
+	if err := run(os.Args[1:], os.Stdout, time.Now().UTC(), makeDatabase); err != nil {
 		log.Printf("❌ mk-test-lint: %v", err)
 		os.Exit(exitCode(err))
 	}
@@ -62,14 +66,33 @@ func exitCode(err error) int {
 	}
 }
 
-func run(args []string, out io.Writer, now time.Time) error {
+// makeDatabase は make が読んだ規則の一覧（`make -pRrq`）と、その終了コードを返す。make を起動
+// できなかったときだけエラーを返す。終了コードの判定は parseDB が持つ。
+func makeDatabase(makefile string) ([]byte, int, error) {
+	cmd := exec.CommandContext(context.Background(), "make", "--no-print-directory", "-pRrq", "-f", filepath.Base(makefile), "help") //nolint:gosec // 引数は固定と、Makefile のパスだけ
+	cmd.Dir = filepath.Dir(makefile)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+		return stdout.Bytes(), 0, nil
+	case errors.As(err, &exitErr):
+		return stdout.Bytes(), exitErr.ExitCode(), nil
+	default:
+		return nil, -1, xerrors.Wrapf(errUnreadable, "make を起動できません: %v", err)
+	}
+}
+
+func run(args []string, out io.Writer, now time.Time, database func(string) ([]byte, int, error)) error {
 	fs := flag.NewFlagSet("mk-test-lint", flag.ContinueOnError)
 	fs.SetOutput(out)
 	makefile := fs.String("makefile", "Makefile", "include を読む Makefile")
 	dir := fs.String("dir", ".makefiles", "`.mk` を置くディレクトリ")
-	dbPath := fs.String("db", "", "make -pRrq の出力")
-	dbExit := fs.Int("db-exit", -1, "make -pRrq の終了コード")
 	bypassPath := fs.String("bypass", "", "移行中の除外の宣言")
+	scopePath := fs.String("scope", "", "分岐の検査を掛ける `.mk` の範囲の宣言")
 	today := fs.String("today", "", "期限の判定に使う日付（YYYY-MM-DD。既定は今日）")
 	if err := fs.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
@@ -83,8 +106,11 @@ func run(args []string, out io.Writer, now time.Time) error {
 		day = d
 	}
 
-	in, err := load(*makefile, *dir, *dbPath, *dbExit, *bypassPath)
+	in, err := load(*makefile, *dir, *bypassPath, *scopePath)
 	if err != nil {
+		return err
+	}
+	if in.db, in.dbExit, err = database(*makefile); err != nil {
 		return err
 	}
 	res, err := check(in, day)
@@ -96,10 +122,10 @@ func run(args []string, out io.Writer, now time.Time) error {
 		lintreport.Sort(res.findings)
 		fmt.Fprintf(out, "❌ mk-test-lint: %d 件の違反\n\n", len(res.findings))
 		fmt.Fprintln(out, lintreport.Format(res.findings))
-		fmt.Fprintln(out, "\nテストは運用機構の Go のテストへ置く（ADR-0702 決定25、.makefiles/README.md）。")
+		fmt.Fprintln(out, "\nレシピは運用機構と道具を順に起動するだけにし、判定・分岐・繰り返しとテストは運用機構の Go が持つ（ADR-0702 決定25）。")
 		return xerrors.Wrapf(errViolations, "%d 件", len(res.findings))
 	}
-	fmt.Fprintf(out, "✅ mk-test-lint: %d ファイル / %d ターゲット / 移行中 %d 件\n", res.files, res.targets, res.bypassed)
+	fmt.Fprintf(out, "✅ mk-test-lint: %d ファイル / %d ターゲット / 移行中 %d 件 / 分岐の検査の範囲 %d ファイル\n", res.files, res.targets, res.bypassed, res.scoped)
 	return nil
 }
 
@@ -112,16 +138,18 @@ type input struct {
 	dbExit       int
 	bypassPath   string
 	bypass       []byte
+	scopePath    string
+	scope        []byte
 }
 
-func load(makefile, dir, dbPath string, dbExit int, bypassPath string) (input, error) {
-	in := input{makefilePath: makefile, dbExit: dbExit, bypassPath: bypassPath, mk: map[string][]byte{}}
+func load(makefile, dir, bypassPath, scopePath string) (input, error) {
+	in := input{makefilePath: filepath.Base(makefile), bypassPath: bypassPath, scopePath: scopePath, mk: map[string][]byte{}}
 	var err error
 	if in.makefile, err = os.ReadFile(filepath.Clean(makefile)); err != nil {
 		return in, xerrors.Wrapf(errUnreadable, "%s", makefile)
 	}
-	if in.db, err = os.ReadFile(filepath.Clean(dbPath)); err != nil {
-		return in, xerrors.Wrapf(errUnreadable, "make の出力 %q", dbPath)
+	if in.scope, err = os.ReadFile(filepath.Clean(scopePath)); err != nil {
+		return in, xerrors.Wrapf(errUnreadable, "範囲の宣言 %q", scopePath)
 	}
 	if in.bypass, err = os.ReadFile(filepath.Clean(bypassPath)); err != nil {
 		return in, xerrors.Wrapf(errUnreadable, "宣言 %q", bypassPath)
@@ -160,6 +188,7 @@ type result struct {
 	files    int
 	targets  int
 	bypassed int
+	scoped   int
 }
 
 // check は、include と実在、`.mk` と make の規則を突き合わせ、テストのターゲットを判定する。
@@ -246,6 +275,31 @@ func check(in input, today time.Time) (result, error) {
 			return res, xerrors.Wrapf(errMismatch, "make が %s から規則を読みましたが、Makefile にも include にもありません", file)
 		}
 	}
+	// 範囲の `.mk` のレシピと、そこから参照される変数の本体に、決定25 の閉じた一覧に当たる書き方が無いこと。
+	scope, err := parseScope(in.scope)
+	if err != nil {
+		return res, xerrors.Wrapf(err, "%s", in.scopePath)
+	}
+	vars := map[string][]varDef{}
+	all := map[string]mkFile{in.makefilePath: topMk}
+	for p, mk := range parsed {
+		all[p] = mk
+	}
+	for _, p := range keys(all) {
+		for name, body := range all[p].vars {
+			vars[name] = append(vars[name], varDef{file: p, body: body})
+		}
+	}
+	for _, p := range scope {
+		mk, ok := all[p]
+		if !ok {
+			return res, xerrors.Wrapf(errMismatch, "%s: 範囲の宣言の %s は Makefile にも include にもありません", in.scopePath, p)
+		}
+		for _, f := range recipeFindings(p, mk, vars) {
+			add(f.file, f.line, "%s を、%sが持ちます", f.what, f.where)
+		}
+	}
+	res.scoped = len(scope)
 	if len(defined) == 0 {
 		return res, xerrors.Wrap(errNoTargets, "ターゲットを1つも取り出せません")
 	}
