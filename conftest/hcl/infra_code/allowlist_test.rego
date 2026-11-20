@@ -198,3 +198,12 @@ test_IC034_deny_nested_block_body_arg if {
 	some m in with_id(denies(fx("IC034_deny_nested_block_body_arg"), d), "IC034")
 	contains(m, "launch_specification はリスト")
 }
+
+# 項目ごとの所在は、id の一致する構成要素にだけ当てる。取り違えれば f の path が g の所在の外になる。
+test_IC031_allow_each_item_against_its_own_component if {
+	d := lambda_decl([
+		repo_item("u/internal/fn#resource.aws_lambda_function.f", "u/internal/fn/src1"),
+		repo_item("u/internal/fn#resource.aws_lambda_function.g", "u/internal/fn/src2"),
+	])
+	count(with_id(denies(fx("IC031_two_items_matching_sources"), d), "IC031")) == 0
+}

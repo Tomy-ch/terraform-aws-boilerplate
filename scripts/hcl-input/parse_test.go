@@ -278,12 +278,13 @@ func Test_parseConfigBody(t *testing.T) {
 			src  string
 			want error
 		}{
-			"構文の誤り":                 {src: "resource \"a\" {\n", want: errSyntax},
-			"非 UTF-8":               {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
-			"ファイルの直下の属性":            {src: "x = 1\n", want: errUnsupportedInput},
-			"ラベルが1個の resource":      {src: "resource \"a\" {}\n", want: errUnsupportedInput},
-			"ラベルが1個の data":          {src: "data \"a\" {}\n", want: errUnsupportedInput},
-			"check の中のラベルが1個の data": {src: "check \"c\" {\n  data \"a\" {}\n}\n", want: errUnsupportedInput},
+			"構文の誤り":                            {src: "resource \"a\" {\n", want: errSyntax},
+			"非 UTF-8":                          {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
+			"ファイルの直下の属性":                       {src: "x = 1\n", want: errUnsupportedInput},
+			"ラベルが1個の resource":                 {src: "resource \"a\" {}\n", want: errUnsupportedInput},
+			"ラベルが1個の data":                     {src: "data \"a\" {}\n", want: errUnsupportedInput},
+			"check の中のラベルが1個の data":            {src: "check \"c\" {\n  data \"a\" {}\n}\n", want: errUnsupportedInput},
+			"check の中の assert の後のラベルが1個の data": {src: "check \"c\" {\n  assert {\n    condition     = true\n    error_message = \"x\"\n  }\n  data \"a\" {}\n}\n", want: errUnsupportedInput},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {

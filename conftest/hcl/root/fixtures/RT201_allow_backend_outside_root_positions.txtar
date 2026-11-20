@@ -77,3 +77,7 @@ terraform {
     path = "x"
   }
 }
+-- modules/x/cloud.tf --
+terraform {
+  cloud {}
+}

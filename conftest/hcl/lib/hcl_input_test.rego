@@ -305,5 +305,8 @@ test_unresolved_expr if {
 	doc := fx("lib_unresolved")
 	unresolved_expr(scope_of(block(doc, "provider", ["helm"])))
 	unresolved_expr(scope_of(block(doc, "provider", ["kubectl"])))
+	every name in ["nested", "objval", "callarg", "tuplekey", "secondkey"] {
+		unresolved_expr(scope_of(block(doc, "provider", [name])))
+	}
 	not unresolved_expr(scope_of(block(doc, "provider", ["aws"])))
 }

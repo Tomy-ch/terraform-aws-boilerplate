@@ -302,6 +302,7 @@ fixture_cases := {
 	"IC031_deny_path_outside_source_1",
 	"IC031_deny_path_outside_source_2",
 	"IC031_deny_path_outside_source_3",
+	"IC031_two_items_matching_sources",
 	"IC031_two_items_two_components",
 	"IC032_allow_external_item_without_repository_path",
 	"IC032_external_item_repository_path",
@@ -339,7 +340,22 @@ test_IC011_allow_listed_provider_unresolved_expression if {
 
 must_execute_decl(v) := object.union(base_decl, {"types": object.union(base_decl.types, {k: {"executes_code": v} | some k in must_execute})})
 
+# ADR-0103 決定9 が名指す型の集合を、規則の must_execute とは別に書いて突き合わせる。
+must_execute_expected := {
+		"resource.aws_instance",
+		"resource.aws_launch_configuration",
+		"resource.aws_launch_template",
+		"resource.aws_lightsail_instance",
+		"resource.aws_spot_fleet_request",
+		"resource.aws_spot_instance_request",
+		"resource.aws_lambda_invocation",
+		"data.aws_lambda_invocation",
+		"action.aws_lambda_invoke",
+		"data.external",
+	}
+
 test_IC012_deny_every_must_execute_type_on_the_wrong_side if {
+	must_execute == must_execute_expected
 	msgs := with_id(denies(fx("IC002_allow_hcl"), must_execute_decl(false)), "IC012")
 	every k in must_execute {
 		some m in msgs
@@ -349,6 +365,7 @@ test_IC012_deny_every_must_execute_type_on_the_wrong_side if {
 }
 
 test_IC011_deny_every_must_execute_type if {
+	must_execute == must_execute_expected
 	msgs := with_id(denies(fx("IC011_deny_every_must_execute_type"), must_execute_decl(true)), "IC011")
 	every k in must_execute {
 		some m in msgs

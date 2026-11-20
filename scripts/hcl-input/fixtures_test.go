@@ -147,12 +147,14 @@ func Test_buildCase(t *testing.T) {
 		require.ErrorIs(t, err, errFixture)
 	})
 
+	// 辞書順なら m/a を先に置き、次の m/a/b.tf で必ず落ちる。順が map の順なら m/a/c.tf が先になる回があり、
+	// そのときは m/a を置けずに落ちる。
 	t.Run("置く順は名前の辞書順で決まる", func(t *testing.T) {
 		t.Parallel()
-		for range 5 {
-			got, err := buildCase(map[string]string{"z/b.tf": "", "a/c.tf": "", "m/a.md": "", "m/b.tf": ""})
-			require.NoError(t, err)
-			assert.Equal(t, []fileEntry{{Path: "a/c.tf", Parsed: true}, {Path: "m/a.md"}, {Path: "m/b.tf", Parsed: true}, {Path: "z/b.tf", Parsed: true}}, got.Files)
+		for range 20 {
+			_, err := buildCase(map[string]string{"m/a": "", "m/a/b.tf": "", "m/a/c.tf": ""})
+			require.ErrorIs(t, err, errFixture)
+			assert.Contains(t, err.Error(), "m/a/b.tf を置けません")
 		}
 	})
 }
