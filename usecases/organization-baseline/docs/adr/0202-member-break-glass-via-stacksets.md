@@ -23,7 +23,7 @@ service-managed の StackSet は、組織への信頼アクセスを CloudFormat
 4. テンプレートは `AWS::IAM::Role` を1つだけ持つ。名前・path・セッションの長さ・信頼条件・managed policy（`AdministratorAccess` だけ）は、管理アカウントの break-glass の role と同じにする。信頼条件は、管理アカウントの break-glass の user の ARN（path と名前から組んだもの）と `aws:MultiFactorAuthPresent` に限る。inline policy と tag を持たない。
 5. `protect-governance-roles` の SCP は、`stacksets-exec-*` の role を `aws:PrincipalArn` の例外にする。例外が無いと、StackSet がメンバーで role を作れない。例外にするのは StackSets の実行の role だけとし、break-glass の role の変更は、ほかのすべての主体に拒む。例外は role の名前で当たるので、同じ SCP で、`stacksets-exec-*` の role の作成と変更をすべての主体に拒む。この role を作るのは service-linked role で、SCP の対象にならない。
 6. StackSet と stack instance に `prevent_destroy` を付け、`stateful_protection.protected_types` に載せる。CI の apply-identity の role に、その削除の権限を与えない（deployment-identity/ADR-0201）。
-7. 組織への信頼アクセスの有効化（`ActivateOrganizationsAccess`）は、人がコンソールで行う。Organizations の API で有効にせず、CloudFormation の側で有効にする（organization-baseline/ADR-0001 決定5）。手順は `docs/setup/organization-baseline.md` が持つ。
+7. 組織への信頼アクセスの有効化（`ActivateOrganizationsAccess`）は、人がコンソールで行う。Organizations の API で有効にせず、CloudFormation の側で有効にする（organization-baseline/ADR-0001 決定5）。手順は `docs/setup/organization-baseline.md` が持つ。組織の作成と StackSet の作成が同じ apply に入る新しい管理アカウントでは、その apply は StackSet の作成で止まる。人が信頼アクセスを有効にした後、apply をやり直す。
 8. FSBP の CloudFormation.4 から外れる（repository-wide/ADR-0207 決定11 の記録）。
    - 外れる推奨: FSBP の CloudFormation.4（stack に service role が付いていること）
    - 理由: service-managed の StackSet が作る stack は、service role を持てない。コントロールの文書は、この stack を必ず FAILED にすると述べる
