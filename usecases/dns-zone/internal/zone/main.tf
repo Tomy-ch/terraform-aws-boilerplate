@@ -5,9 +5,7 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  # Route 53 の DNSSEC の metric は us-east-1 にだけ出る（Route 53 Developer Guide「Monitoring hosted zones using Amazon CloudWatch」）。
-  alarm_region = "us-east-1"
-  ds_records   = { for k, d in var.delegations : k => d.ds_record if d.ds_record != null }
+  ds_records = { for k, d in var.delegations : k => d.ds_record if d.ds_record != null }
 }
 
 resource "aws_route53_zone" "this" {
@@ -73,7 +71,7 @@ resource "aws_cloudwatch_metric_alarm" "dnssec" {
     ksk_action       = "DNSSECKeySigningKeysNeedingAction"
   }
 
-  region              = local.alarm_region
+  region              = "us-east-1" # DNSSEC の metric は us-east-1 にだけ出る（Route 53 Developer Guide「Monitoring hosted zones using Amazon CloudWatch」）
   alarm_name          = "${var.name}-dns-${replace(each.key, "_", "-")}"
   alarm_description   = "Route 53 の DNSSEC の ${each.value} が 0 を超えました。"
   namespace           = "AWS/Route53"

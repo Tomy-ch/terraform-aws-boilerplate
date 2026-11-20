@@ -3,12 +3,13 @@
 # e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
 
+# Route 53 は DNSSEC の鍵を us-east-1 にしか受けない（Route 53 Developer Guide「Working with customer managed keys for DNSSEC」）。
+# region を literal で書くのは egress の宣言の検査が宛先を literal から導くため（dns-zone/ADR-0303）。
+
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  # Route 53 は DNSSEC の鍵を us-east-1 にしか受けない（Route 53 Developer Guide「Working with customer managed keys for DNSSEC」）。
-  region    = "us-east-1"
   account   = data.aws_caller_identity.current.account_id
   partition = data.aws_partition.current.partition
 
@@ -68,7 +69,7 @@ locals {
 }
 
 resource "aws_kms_key" "this" {
-  region                             = local.region
+  region                             = "us-east-1"
   description                        = "Route 53 DNSSEC KSK for ${var.zone_name}"
   key_usage                          = "SIGN_VERIFY"
   customer_master_key_spec           = "ECC_NIST_P256"
@@ -80,13 +81,13 @@ resource "aws_kms_key" "this" {
 }
 
 resource "aws_kms_alias" "this" {
-  region        = local.region
+  region        = "us-east-1"
   name          = "alias/${var.name}"
   target_key_id = aws_kms_key.this.key_id
 }
 
 resource "aws_kms_key_policy" "this" {
-  region                             = local.region
+  region                             = "us-east-1"
   key_id                             = aws_kms_key.this.id
   policy                             = local.policy
   bypass_policy_lockout_safety_check = false

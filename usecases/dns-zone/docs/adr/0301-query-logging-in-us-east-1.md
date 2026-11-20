@@ -12,7 +12,7 @@ Security Hub の Route53.2 は、公開の zone に DNS のクエリログを求
 ## Decision
 
 1. 公開の zone のクエリログを有効にする（Route53.2）。
-2. Log Group は `/aws/route53/<zone の名前>`、us-east-1、保持 365 日以上、このユースケースの鍵で暗号化する（`modules/log-group` と `modules/kms` に `region = "us-east-1"`）。保持日数と削除の保護は入力で受ける。
+2. Log Group は `/aws/route53/<zone の名前>`、us-east-1、保持 365 日以上、このユースケースの鍵で暗号化する。鍵と Log Group は `internal/query-log` が持つ（dns-zone/ADR-0303）。保持日数と削除の保護は入力で受ける。
 3. resource policy は us-east-1 のアカウント単位の policy（`<project>-<env>-dns-query-logs`）を1つ持つ。文は1つで、Principal は `route53.amazonaws.com`、Action は `logs:CreateLogStream` と `logs:PutLogEvents`、Resource はこのユースケースの Log Group の ARN と `:*` だけとし、`aws:SourceAccount` で要求元を限り、`aws:SourceArn` を置かない。zone の ARN を参照すると、zone を作る plan で文書が決まらず、Policy が文書を読めない（`PLAN-INPUT-04`）。`arn:aws:route53:::hostedzone/*` の pattern はアカウントを持たず、`aws:SourceAccount` より狭くならない（repository-wide/ADR-0301 (least-privilege-policy) 決定11）。同じアカウントの別の zone を区別しないことは「意図的に捨てるもの」に置く。
 4. query log の作成は resource policy の書き込みの後にする（`internal/query-log` の出力の `depends_on`）。
 

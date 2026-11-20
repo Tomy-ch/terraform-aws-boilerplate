@@ -370,8 +370,8 @@
     "dns_zone": {
       "zone": "module.dns_zone.module.zone.aws_route53_zone.this",
       "query_log": "module.dns_zone.module.zone.aws_route53_query_log.this",
-      "query_log_group": "module.dns_zone.module.query_log.module.log_group.aws_cloudwatch_log_group.this",
-      "query_log_key": "module.dns_zone.module.query_log.module.kms.aws_kms_key.this",
+      "query_log_group": "module.dns_zone.module.query_log.aws_cloudwatch_log_group.this",
+      "query_log_key": "module.dns_zone.module.query_log.aws_kms_key.this",
       "query_log_resource_policy": "module.dns_zone.module.query_log.aws_cloudwatch_log_resource_policy.this",
       "dnssec_key": "module.dns_zone.module.dnssec_key.aws_kms_key.this",
       "dnssec_key_policy": "module.dns_zone.module.dnssec_key.aws_kms_key_policy.this",

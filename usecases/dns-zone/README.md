@@ -44,7 +44,7 @@
 | 構成 | 中身 |
 | --- | --- |
 | `internal/zone` | 公開の Hosted Zone（`force_destroy = false`、`enable_accelerated_recovery = false`）、クエリログの設定、KSK（`ACTIVE`）と DNSSEC の署名、委任の NS（TTL 3600）と DS（TTL 300）、DNSSEC の2つの alarm（`DNSSECInternalFailure`・`DNSSECKeySigningKeysNeedingAction`、us-east-1） |
-| `internal/query-log` | クエリログの鍵（`modules/kms`、alias `<project>-<env>-dns-query-logs`）、Log Group（`modules/log-group`、`/aws/route53/<zone の名前>`）、アカウント単位の resource policy（`<project>-<env>-dns-query-logs`）。すべて us-east-1 |
+| `internal/query-log` | クエリログの鍵（対称鍵、alias `<project>-<env>-dns-query-logs`）と Key Policy、Log Group（`/aws/route53/<zone の名前>`、class `STANDARD`）、アカウント単位の resource policy（`<project>-<env>-dns-query-logs`）。すべて us-east-1 |
 | `internal/dnssec-key` | KSK の鍵（`ECC_NIST_P256`・`SIGN_VERIFY`、us-east-1、alias `<project>-<env>-dns-dnssec`）と Key Policy |
 
 ## まだ持たないもの
@@ -168,4 +168,4 @@ alias は destroy で消えるので、destroy の前に key ID を控えて照�
 
 ## 版
 
-- AWS Provider は `>= 6.68.0, < 7.0.0`。resource の `region` 引数（AWS Provider v6）を使う。`terraform test` と reference の lock は v6.73.0
+- AWS Provider は `>= 6.68.0, < 7.0.0`。resource の `region` 引数（AWS Provider v6）を literal で使う（[dns-zone/ADR-0303](docs/adr/0303-us-east-1-by-region-argument.md)）。`terraform test` と reference の lock は v6.73.0

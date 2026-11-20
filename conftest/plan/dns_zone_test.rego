@@ -12,8 +12,8 @@ dnssec_key_arn := "arn:aws:kms:us-east-1:123456789012:key/abcd1234-12ab-34cd-56e
 dz := {
 	"zone": "module.d.module.zone.aws_route53_zone.this",
 	"query_log": "module.d.module.zone.aws_route53_query_log.this",
-	"query_log_group": "module.d.module.query_log.module.log_group.aws_cloudwatch_log_group.this",
-	"query_log_key": "module.d.module.query_log.module.kms.aws_kms_key.this",
+	"query_log_group": "module.d.module.query_log.aws_cloudwatch_log_group.this",
+	"query_log_key": "module.d.module.query_log.aws_kms_key.this",
 	"query_log_resource_policy": "module.d.module.query_log.aws_cloudwatch_log_resource_policy.this",
 	"dnssec_key": "module.d.module.dnssec_key.aws_kms_key.this",
 	"dnssec_key_policy": "module.d.module.dnssec_key.aws_kms_key_policy.this",

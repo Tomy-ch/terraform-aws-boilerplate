@@ -11,12 +11,12 @@ mock_provider "aws" {
 }
 
 override_resource {
-  target = module.kms.aws_kms_key.this
+  target = aws_kms_key.this
   values = { arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
 }
 
 override_resource {
-  target = module.log_group.aws_cloudwatch_log_group.this
+  target = aws_cloudwatch_log_group.this
   values = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:/aws/route53/dev.example.com" }
 }
 
