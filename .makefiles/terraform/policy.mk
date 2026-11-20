@@ -161,7 +161,7 @@ tf-policy-canary:
 	expect fail schema-empty "$$root/schema-empty" "schema に resource の型が1つもありません" POLICY_PLAN_DIR="$$root/rego"; \
 	aws_fixture() { \
 		cp -R "$$root/ok" "$$1"; cp usecases/state-backend/reference/versions.tf usecases/state-backend/reference/.terraform.lock.hcl "$$1/usecases/x/reference/"; \
-		printf 'resource "aws_s3_bucket" "b" {\n  bucket = "canary"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
+		printf 'resource "aws_s3_bucket" "b" {\n  bucket           = "canary"\n  bucket_namespace = "account-regional"\n  %s\n}\n' "$$2" >> "$$1/usecases/x/reference/main.tf"; \
 		printf 'mock_provider "aws" {\n  override_during = plan\n}\n\noverride_resource {\n  target          = aws_s3_bucket.b\n  override_during = plan\n  values = {\n%s\n  }\n}\n\nrun "policy_input" {\n  command = plan\n}\n' "$$aws_null_values" > "$$1/usecases/x/reference/tests/policy-input.tftest.hcl"; \
 	}; \
 	aws_null_values=$$(jq -r '[(.layer_decl.attachments[].parent_arguments.aws_s3_bucket // {} | to_entries[] | select(.value == null) | .key), \
