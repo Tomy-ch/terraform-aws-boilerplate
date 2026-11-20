@@ -114,7 +114,7 @@ func Test_parseMk(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []srcLine{{n: 1, text: "a \\"}, {n: 2, text: "  b"}}, mk.vars["X"])
 		assert.Equal(t, []srcLine{{n: 4, text: "line1"}}, mk.vars["D"])
-		assert.Equal(t, []srcLine{{n: 6, text: " one"}, {n: 7, text: "\ttwo"}}, mk.recipeSrc["t"])
+		assert.Equal(t, []srcLine{{n: 6, text: " "}, {n: 6, text: " one"}, {n: 7, text: "\ttwo"}}, mk.recipeSrc["t"])
 	})
 	t.Run("`.mk` の中のリテラルの include を集める", func(t *testing.T) {
 		t.Parallel()

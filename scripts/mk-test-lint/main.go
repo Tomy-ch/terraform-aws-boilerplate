@@ -290,12 +290,17 @@ func check(in input, today time.Time) (result, error) {
 			vars[name] = append(vars[name], varDef{file: p, body: body})
 		}
 	}
+	reported := map[finding]struct{}{} // 同じ変数を範囲の複数のファイルが参照しても、1度だけ報告する
 	for _, p := range scope {
 		mk, ok := all[p]
 		if !ok {
 			return res, xerrors.Wrapf(errMismatch, "%s: 範囲の宣言の %s は Makefile にも include にもありません", in.scopePath, p)
 		}
 		for _, f := range recipeFindings(p, mk, vars) {
+			if _, dup := reported[f]; dup {
+				continue
+			}
+			reported[f] = struct{}{}
 			add(f.file, f.line, "%s を、%sが持ちます", f.what, f.where)
 		}
 	}

@@ -105,10 +105,11 @@ func parseMk(raw []byte) (mkFile, error) {
 	inRecipe := false
 	continued := false
 
-	defineName := "" // 読んでいる define の名前
-	curVar := ""     // 続きの行を持つ代入の名前
+	defineName := ""      // 読んでいる define の名前
+	curVar := ""          // 続きの行を持つ代入の名前
+	var pending []srcLine // レシピの途中の条件ディレクティブ。次にタブの行が来たときだけレシピに積む
 	finish := func() {
-		current, inRecipe = nil, false
+		current, inRecipe, pending = nil, false, nil
 	}
 	addRecipe := func(n int, text string) {
 		for _, name := range current {
@@ -122,6 +123,10 @@ func parseMk(raw []byte) (mkFile, error) {
 		wasContinued := continued
 		continued = strings.HasSuffix(line, "\\")
 
+		if wasContinued && depth > 0 {
+			mk.vars[defineName] = append(mk.vars[defineName], srcLine{n: n, text: line})
+			continue
+		}
 		if wasContinued {
 			if inRecipe {
 				for _, name := range current {
@@ -153,6 +158,10 @@ func parseMk(raw []byte) (mkFile, error) {
 				for _, name := range current {
 					mk.recipes[name] += "\n" + line
 				}
+				for _, d := range pending {
+					addRecipe(d.n, d.text)
+				}
+				pending = nil
 				addRecipe(n, line)
 			}
 			continue
@@ -164,7 +173,7 @@ func parseMk(raw []byte) (mkFile, error) {
 		switch head[0] {
 		case "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif":
 			if inRecipe {
-				addRecipe(n, line) // レシピの中の条件ディレクティブは、それ自体が分岐である
+				pending = append(pending, srcLine{n: n, text: line}) // レシピの中の条件ディレクティブは、それ自体が分岐である
 			}
 			continue // make は条件分岐をまたいでレシピを読み続ける。どちらの枝のタブの行もレシピに積む
 		}
@@ -178,7 +187,22 @@ func parseMk(raw []byte) (mkFile, error) {
 			continue
 		case "endef":
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 対応する define の無い endef", n)
-		case "export", "unexport", "override", "vpath":
+		case "export", "override":
+			if len(head) > 1 && head[1] == "define" {
+				depth++
+				if len(head) > 2 {
+					defineName = head[2]
+				}
+				continue
+			}
+			if name, value, ok := assignment(trimmed); ok {
+				mk.vars[name] = append(mk.vars[name], srcLine{n: n, text: value})
+				if continued {
+					curVar = name
+				}
+			}
+			continue
+		case "unexport", "vpath":
 			continue
 		case "-include", "sinclude":
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: 無くても黙る include は数えられません: %q", n, trimmed)
@@ -203,17 +227,43 @@ func parseMk(raw []byte) (mkFile, error) {
 		}
 		names, recipe := strings.Fields(trimmed[:colon]), ""
 		rest := trimmed[colon+1:]
+		if name, value, ok := assignment(strings.TrimSpace(rest)); ok {
+			// ターゲットだけに効く変数（`t: X = v`）。レシピの検査が辿れるよう、本体として集める。
+			// ターゲットの名前は、テストの名前の判定のために記録する。
+			for _, t := range names {
+				if _, seen := mk.literal[t]; !seen && !strings.HasPrefix(t, ".") && !strings.ContainsAny(t, "$%") {
+					mk.literal[t] = n
+				}
+			}
+			mk.vars[name] = append(mk.vars[name], srcLine{n: n, text: value})
+			if continued {
+				curVar = name
+			}
+			continue
+		}
+		prereq := rest
 		if semi := strings.Index(rest, ";"); semi >= 0 {
 			recipe = rest[semi+1:]
+			prereq = rest[:semi]
 		}
 		if len(names) == 0 {
 			return mk, xerrors.Wrapf(errSyntax, "%d 行目: ターゲットの無い規則", n)
 		}
-		for continued && i+1 < len(lines) { // 前提条件の続きの行を読み切る
+		var extra []srcLine // 前提条件とレシピの続きの行
+		inSemi := recipe != ""
+		for continued && i+1 < len(lines) { // 規則の行の続きを読み切る
 			i++
 			continued = strings.HasSuffix(lines[i], "\\")
-			if semi := strings.Index(lines[i], ";"); semi >= 0 && recipe == "" {
+			switch semi := strings.Index(lines[i], ";"); {
+			case inSemi:
+				recipe += "\n" + lines[i]
+				extra = append(extra, srcLine{n: i + 1, text: lines[i]})
+			case semi >= 0:
 				recipe = lines[i][semi+1:]
+				inSemi = true
+				extra = append(extra, srcLine{n: i + 1, text: lines[i]})
+			default:
+				extra = append(extra, srcLine{n: i + 1, text: lines[i]})
 			}
 		}
 		next := i + 1
@@ -228,6 +278,7 @@ func parseMk(raw []byte) (mkFile, error) {
 			if strings.ContainsAny(name, "$%") {
 				if hasRecipe {
 					mk.unresolved++
+					current = append(current, name) // レシピは名前を解かずに検査する
 				}
 				continue
 			}
@@ -238,10 +289,18 @@ func parseMk(raw []byte) (mkFile, error) {
 				mk.withRecipe[name] = struct{}{}
 				current = append(current, name)
 				mk.recipes[name] += recipe
-				if recipe != "" {
-					mk.recipeSrc[name] = append(mk.recipeSrc[name], srcLine{n: n, text: recipe})
-				}
 			}
+		}
+		// 前提条件の行も、make の関数の分岐を持ちうるので検査に掛ける。`;` の後ろのレシピと続きの行も積む。
+		for _, name := range names {
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			mk.recipeSrc[name] = append(mk.recipeSrc[name], srcLine{n: n, text: prereq})
+			if recipe != "" {
+				mk.recipeSrc[name] = append(mk.recipeSrc[name], srcLine{n: n, text: strings.SplitN(recipe, "\n", 2)[0]})
+			}
+			mk.recipeSrc[name] = append(mk.recipeSrc[name], extra...)
 		}
 		inRecipe = hasRecipe
 	}

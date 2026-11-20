@@ -180,6 +180,25 @@ func Test_run(t *testing.T) {
 		err := run(append(args(mf, db, bp), "-today", "x"), &bytes.Buffer{}, testToday, stubDB(t, db))
 		require.ErrorIs(t, err, errUnreadable)
 	})
+	t.Run("make を起動できなければ読めない入力として落とす", func(t *testing.T) {
+		t.Parallel()
+		files := with(nil)
+		mf, db, bp := writeTree(t, files, makefileFor(files), dbFor(t, files), "")
+		failing := func(string) ([]byte, int, error) { return nil, -1, xerrors.Wrap(errUnreadable, "x") }
+		err := run(args(mf, db, bp), &bytes.Buffer{}, testToday, failing)
+		require.ErrorIs(t, err, errUnreadable)
+		assert.Equal(t, 2, exitCode(err))
+	})
+	t.Run("範囲のレシピの違反を ファイル:行 で出し、終了コード 1 で落ちる", func(t *testing.T) {
+		t.Parallel()
+		files := with(map[string]string{".makefiles/go.mk": "go-test:\n\t@$(GO_TOOL) go -C scripts test ./...\n\nx:\n\t@a && b\n"})
+		mf, db, bp := writeTree(t, files, makefileFor(files), dbFor(t, files), "")
+		var out bytes.Buffer
+		err := run(args(mf, db, bp), &out, testToday, stubDB(t, db))
+		require.ErrorIs(t, err, errViolations)
+		assert.Equal(t, 1, exitCode(err))
+		assert.Contains(t, out.String(), ":5  && を、ターゲット x のレシピが持ちます")
+	})
 	t.Run("知らない引数はエラーにする", func(t *testing.T) {
 		t.Parallel()
 		err := run([]string{"-x"}, &bytes.Buffer{}, testToday, nil)
@@ -310,6 +329,31 @@ func Test_check(t *testing.T) {
 		assert.Equal(t, ".makefiles/x.mk", res.findings[0].File)
 		assert.Equal(t, 2, res.findings[0].Line)
 		assert.Equal(t, "&& を、ターゲット a のレシピが持ちます", res.findings[0].Message)
+	})
+	t.Run("範囲に Makefile を名指せば、Makefile 自身のレシピも検査する", func(t *testing.T) {
+		t.Parallel()
+		in := inputFor(t, baseMk, "")
+		in.makefile = append(in.makefile, []byte("\nhelp:\n\t@a || b\n")...)
+		in.db = []byte(strings.Replace(string(in.db), dbHead+"# Files\n\n", dbHead+"# Files\n\nhelp:\n#  recipe to execute (from 'Makefile', line 4):\n\n", 1))
+		in.scope = []byte("files = [\n  \"Makefile\",\n]\n")
+		res, err := check(in, testToday)
+		require.NoError(t, err)
+		require.Len(t, res.findings, 1)
+		assert.Equal(t, "Makefile", res.findings[0].File)
+		assert.Equal(t, 5, res.findings[0].Line)
+	})
+	t.Run("同じ変数を範囲の複数のファイルが参照しても、違反は1度だけ報告する", func(t *testing.T) {
+		t.Parallel()
+		files := with(map[string]string{
+			".makefiles/x.mk":   "x:\n\t@$(V)\n",
+			".makefiles/y.mk":   "y:\n\t@$(V)\n",
+			".makefiles/lib.mk": "V = a && b\n",
+		})
+		in := inputFor(t, files, "")
+		in.scope = []byte("files = [\n  \".makefiles/x.mk\",\n  \".makefiles/y.mk\",\n]\n")
+		res, err := check(in, testToday)
+		require.NoError(t, err)
+		assert.Len(t, res.findings, 1)
 	})
 	t.Run("範囲の宣言が Makefile にも include にも無い `.mk` を名指せば落とす", func(t *testing.T) {
 		t.Parallel()
@@ -546,16 +590,18 @@ func Test_makeDatabase(t *testing.T) {
 		t.Helper()
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "make"), []byte("#!/bin/sh\n"+script), 0o700)) //nolint:gosec // テストの偽の make
-		t.Setenv("PATH", dir)
+		t.Setenv("PATH", dir+":/bin:/usr/bin")
 		return filepath.Join(t.TempDir(), "Makefile")
 	}
 
 	t.Run("make の出力と終了コード 0 を返す", func(t *testing.T) {
-		mf := fake(t, "echo \"$@\"\n")
+		mf := fake(t, "echo \"$@\"; pwd -P; echo \"$LC_ALL\"\n")
 		out, code, err := makeDatabase(mf)
 		require.NoError(t, err)
 		assert.Equal(t, 0, code)
-		assert.Equal(t, "--no-print-directory -pRrq -f Makefile help\n", string(out))
+		dir, err := filepath.EvalSymlinks(filepath.Dir(mf))
+		require.NoError(t, err)
+		assert.Equal(t, "--no-print-directory -pRrq -f Makefile help\n"+dir+"\nC\n", string(out), "Makefile の置き場で、LC_ALL=C で起動する")
 	})
 	t.Run("make の非ゼロの終了コードは、判定を呼ぶ側に任せて返す", func(t *testing.T) {
 		mf := fake(t, "echo db\nexit 1\n")

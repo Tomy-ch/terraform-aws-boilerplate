@@ -37,6 +37,22 @@ func Test_constructs(t *testing.T) {
 		{"make の $(shell)", "X := $(shell date)", []string{"$(shell)"}},
 		{"条件ディレクティブ", "ifeq ($(A),1)", []string{"条件ディレクティブ"}},
 		{"値が . だけの代入は source ではない", ".", nil},
+		{". file は source", "\t. ./env.sh", []string{"source"}},
+		{"行頭の [ ] を拾う", "\t[ -f x ]", []string{"[ ]"}},
+		{"@ の後ろの空白を飛ばしてコマンドを読む", "\t@ if x; then y; fi", []string{"if"}},
+		{"! の後ろのコマンドを読む", "\t@! test -f a", []string{"test"}},
+		{"環境変数の代入の後ろのコマンドを読む", "\t@X=1 test -f a", []string{"test"}},
+		{"time の後ろのコマンドを読む", "\t@time if x; then y; fi", []string{"if"}},
+		{"sh -c の単引用符の中の if", "\t@sh -c 'if x; then y; fi'", []string{"if"}},
+		{"bash -c の二重引用符の中の while", "\t@bash -c \"while x; do y; done\"", []string{"while"}},
+		{"sh -c の中の test と [ ]", "\t@sh -c 'test -f a'; sh -c '[ -f b ]'", []string{"test", "[ ]"}},
+		{"閉じない sh -c の引数も読む", "\t@$(GO_TOOL) sh -c 'set -eu; for d in a; do \\", []string{"for"}},
+		{"引用符の中の jq の式をコマンドと読まない", "\t@jq '.a | if type == \"array\" then .[] else . end' x", nil},
+		{"数字の直後の & も背景実行", "\tsleep 5&", []string{"&（背景実行）"}},
+		{"リダイレクトの & は背景実行ではない", "\ta 2>&1 >&2 &>x", nil},
+		{"function キーワードの関数定義", "\tfunction f { a; }", []string{"関数定義"}},
+		{"go-do のような語を区切りと読まない", "\t@go-do test-x", nil},
+		{"計算された変数名", "\t@$($(N))", []string{"計算された変数名"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -50,7 +66,7 @@ func Test_varRefs(t *testing.T) {
 
 	t.Run("変数と call の名前を返し、make の関数を除く", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, []string{"A", "B", "C"}, varRefs("$(A) ${B} $(call C,x) $(if x,y) $(wildcard *)"))
+		assert.Equal(t, []string{"A", "B", "C", "my-var", "my.var", "D", "E"}, varRefs("$(A) ${B} $(call C,x) $(if x,y) $(wildcard *) $(my-var) $(my.var) $(value D) $(E:.a=.b)"))
 	})
 	t.Run("参照が無ければ空", func(t *testing.T) {
 		t.Parallel()
@@ -96,6 +112,56 @@ func Test_recipeFindings(t *testing.T) {
 		runner := parse(t, "RUN_SCRIPT = $(if $(A),b) $$(id -u)\nCOMPOSE_RUN = x || true\n")
 		assert.Empty(t, recipeFindings("a.mk", a, vars("runner.mk", runner)))
 	})
+	t.Run("define の本体の続きの行も辿る", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a:\n\t@$(D)\ndefine D\necho a \\\n && echo b\nendef\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		assert.Equal(t, []finding{{file: "a.mk", line: 5, what: "&&", where: "変数 D の本体"}}, got)
+	})
+	t.Run("export と override の代入と define の本体も辿る", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a:\n\t@$(E) $(O) $(F)\nexport E := a && b\noverride O = c || d\nexport define F\nfor x in y; do z; done\nendef\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		var whats []string
+		for _, f := range got {
+			whats = append(whats, f.what)
+		}
+		assert.ElementsMatch(t, []string{"&&", "||", "for"}, whats)
+	})
+	t.Run("ターゲットだけに効く変数の本体も辿る", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a: V = $(if $(X),y)\na:\n\t@$(V)\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		assert.Equal(t, []finding{{file: "a.mk", line: 1, what: "$(if)", where: "変数 V の本体"}}, got)
+	})
+	t.Run("前提条件の make の分岐も落とす", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a: $(or $(A),b)\n\t@echo\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		assert.Equal(t, []finding{{file: "a.mk", line: 1, what: "$(or)", where: "ターゲット a のレシピ"}}, got)
+	})
+	t.Run("名前に変数を含む規則のレシピも検査する", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "$(X)-gen:\n\t@a && b\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		assert.Equal(t, []finding{{file: "a.mk", line: 2, what: "&&", where: "ターゲット $(X)-gen のレシピ"}}, got)
+	})
+	t.Run("; の後ろのレシピの続きの行も検査する", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "b: ; foo \\\n  && bar\n")
+		got := recipeFindings("a.mk", a, vars("a.mk", a))
+		assert.Equal(t, []finding{{file: "a.mk", line: 2, what: "&&", where: "ターゲット b のレシピ"}}, got)
+	})
+	t.Run("名前にハイフンとドットを含む変数も辿る", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a:\n\t@$(my-var) $(my.var)\nmy-var = a && b\nmy.var = c || d\n")
+		assert.Len(t, recipeFindings("a.mk", a, vars("a.mk", a)), 2)
+	})
+	t.Run("RUN_SCRIPT_HOST の本体も辿らない", func(t *testing.T) {
+		t.Parallel()
+		a := parse(t, "a:\n\t@$(call RUN_SCRIPT_HOST,x,y)\nRUN_SCRIPT_HOST = sh -c 'a && b'\n")
+		assert.Empty(t, recipeFindings("a.mk", a, vars("a.mk", a)))
+	})
 	t.Run("参照されない変数の本体は見ない", func(t *testing.T) {
 		t.Parallel()
 		a := parse(t, "a:\n\t@echo ok\nUNUSED = a && b\n")
@@ -108,14 +174,11 @@ func Test_recipeFindings(t *testing.T) {
 		require.Len(t, got, 1)
 		assert.Equal(t, "変数の再帰", got[0].what)
 	})
-	t.Run("レシピの中の条件ディレクティブを落とす", func(t *testing.T) {
+	t.Run("レシピの中の条件ディレクティブを落とし、レシピの外のものは数えない", func(t *testing.T) {
 		t.Parallel()
-		a := parse(t, "a:\n\t@one\nifdef X\n\t@two\nendif\n")
+		a := parse(t, "a:\n\t@one\nifdef X\n\t@two\nendif\nifeq (a,b)\nZ := 1\nendif\n")
 		got := recipeFindings("a.mk", a, vars("a.mk", a))
-		assert.Equal(t, []finding{
-			{file: "a.mk", line: 3, what: "条件ディレクティブ", where: "ターゲット a のレシピ"},
-			{file: "a.mk", line: 5, what: "条件ディレクティブ", where: "ターゲット a のレシピ"},
-		}, got)
+		assert.Equal(t, []finding{{file: "a.mk", line: 3, what: "条件ディレクティブ", where: "ターゲット a のレシピ"}}, got)
 	})
 }
 

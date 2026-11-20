@@ -25,15 +25,20 @@ var (
 		"eval": "eval", "source": "source", ".": "source", "test": "test", "[": "[ ]", "[[": "[[ ]]",
 	}
 	andOrRe      = regexp.MustCompile(`&&|\|\|`)
-	backgroundRe = regexp.MustCompile(`(^|[^&>|0-9])&([^&>]|$)`)
+	backgroundRe = regexp.MustCompile(`(^|[^&>|])&([^&>]|$)`)
+	redirectRe   = regexp.MustCompile(`[0-9]*>&[0-9-]*|&>>?|<&[0-9-]*`)
 	paramCondRe  = regexp.MustCompile(`\$\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+?]`)
 	cmdSubstRe   = regexp.MustCompile("\\$\\$\\(|`")
-	funcDefRe    = regexp.MustCompile(`(^|[\s;{(])[A-Za-z_][A-Za-z0-9_]*\s*\(\)\s*\{`)
+	funcDefRe    = regexp.MustCompile(`(^|[\s;{(])([A-Za-z_][A-Za-z0-9_]*\s*\(\)|function\s+[A-Za-z_][A-Za-z0-9_]*)`)
 	makeFuncRe   = regexp.MustCompile(`\$[({](if|or|and|filter|filter-out|findstring|foreach|eval|shell)[\s,]`)
-	directiveRe  = regexp.MustCompile(`^\s*(ifeq|ifneq|ifdef|ifndef|else|endif)\b`)
-	commandSepRe = regexp.MustCompile(`;|\||&|\(|\)|\{|\}|\bthen\b|\bdo\b|\belse\b`)
+	directiveRe  = regexp.MustCompile(`^ *(ifeq|ifneq|ifdef|ifndef|else|endif)\b`)
+	commandSepRe = regexp.MustCompile(`;|\||&|\(|\)|\{|\}|(?:^|\s)(?:then|do|else)(?:\s|$)`)
+	quotedRe     = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"`)
+	shellArgRe   = regexp.MustCompile(`\b(?:sh|bash|dash|zsh)\s+(?:-[a-z]+\s+)*-c\s+(?:'([^']*)'?|"((?:[^"\\]|\\.)*)"?)`)
+	computedRe   = regexp.MustCompile(`\$[({]\$`)
+	assignPrefix = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 	makeRefRe    = regexp.MustCompile(`\$[({][^$(){}]*[)}]`)
-	varRefRe     = regexp.MustCompile(`\$[({](?:call\s+)?([A-Za-z_][A-Za-z0-9_]*)[\s,)}]`)
+	varRefRe     = regexp.MustCompile(`\$[({](?:call\s+|value\s+)?([A-Za-z_][A-Za-z0-9_.-]*)[\s,:)}]`)
 )
 
 // constructs は1行が持つ、決定25 の閉じた一覧に当たる書き方を返す。
@@ -56,7 +61,7 @@ func constructs(line string) []string {
 	for _, m := range andOrRe.FindAllString(line, -1) {
 		add(m)
 	}
-	if backgroundRe.MatchString(line) {
+	if backgroundRe.MatchString(redirectRe.ReplaceAllString(line, " ")) {
 		add("&（背景実行）")
 	}
 	if paramCondRe.MatchString(line) {
@@ -68,8 +73,17 @@ func constructs(line string) []string {
 	if funcDefRe.MatchString(line) {
 		add("関数定義")
 	}
+	if computedRe.MatchString(line) {
+		add("計算された変数名")
+	}
+	// `sh -c` と `bash -c` の引数の文字列も、同じ規則で見る（決定25）。
+	for _, m := range shellArgRe.FindAllStringSubmatch(line, -1) {
+		for _, c := range constructs(m[1] + m[2]) {
+			add(c)
+		}
+	}
 	// make の変数と関数の参照は、中の `(` で区切りを誤らないよう1語に潰してから、コマンドの位置を見る。
-	flat := line
+	flat := quotedRe.ReplaceAllString(line, "Q") // 引用符の中の語（jq や awk の式、文言）をコマンドと読まない
 	for {
 		next := makeRefRe.ReplaceAllString(flat, "MAKEREF")
 		if next == flat {
@@ -82,10 +96,17 @@ func constructs(line string) []string {
 		if len(fields) == 0 {
 			continue
 		}
-		word := strings.TrimLeft(fields[0], "@-+")
-		if word == "" && len(fields) > 1 {
-			word = fields[1]
+		// レシピの前置き（@・-・+）と、否定・環境変数の代入・time などの前置きを飛ばして、コマンドの語を取る。
+		fields[0] = strings.TrimLeft(fields[0], "@-+")
+		k := 0
+		for k < len(fields) && (fields[k] == "" || fields[k] == "!" || fields[k] == "time" || fields[k] == "env" || fields[k] == "command" || assignPrefix.MatchString(fields[k])) {
+			k++
 		}
+		if k == len(fields) {
+			continue
+		}
+		word := fields[k]
+		fields = fields[k:]
 		if word == "." && len(fields) < 2 {
 			continue // `.` だけの値（作業ディレクトリ）は source ではない
 		}
