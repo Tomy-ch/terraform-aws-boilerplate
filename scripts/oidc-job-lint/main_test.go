@@ -717,7 +717,6 @@ func Test_check(t *testing.T) {
 func Test_checkJob(t *testing.T) {
 	t.Parallel()
 
-	// role と env の比較を飛ばす入口0件・2件の job でも、入口の数の違反が必ず出る。
 	for _, c := range []struct{ kind, src, entry, other string }{
 		{kindPlan, planWorkflow, "      - run: make ci-plan-admin-identity RUNNER_MODE=host\n", "      - run: make ci-plan-admin-workload RUNNER_MODE=host\n"},
 		{kindApply, applyWorkflow, applyEntryLine, "      - run: make ci-apply-admin-workload RUNNER_MODE=host\n"},
@@ -3814,8 +3813,7 @@ func Test_entryCredential(t *testing.T) {
 		})
 	}
 
-	// 写しと正本のずれ（ADR-0702 決定17）: 入口の種別の一覧と、入口ごとの env と role の導出は、ci.mk の
-	// 入口の写しである。ci.mk に種別か入口が足されて写しが追随しないとき、ここが落ちる。
+	// 写しと正本のずれを検出する検査は、正本の実物を読んでよい（ADR-0702 決定17）。
 	t.Run("写しと正本のずれ: ci.mk の入口の種別と profile が一覧と導出に一致する", func(t *testing.T) {
 		t.Parallel()
 
@@ -3878,7 +3876,6 @@ func Test_entryCredential(t *testing.T) {
 func Test_entryPattern(t *testing.T) {
 	t.Parallel()
 
-	// 種別の一覧から組んだ正規表現が、一覧を手で書いていたときの字面と同じであること。
 	for name, c := range map[string]struct {
 		got  *regexp.Regexp
 		want string

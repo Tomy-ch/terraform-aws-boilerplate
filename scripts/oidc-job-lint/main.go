@@ -271,7 +271,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
 	}
 	roots := 0
-	// noRoots は、root が1つも無いことの errNoTarget。違反を先に出してから返す（targets == 0 と同じ順序）。
+	// root が1つも無いときも、違反を先に出してから errNoTarget を返す（targets == 0 と同じ順序）。
 	var noRoots error
 	if rootsDir != "" {
 		n, f, err := checkRootCoverage(rootsDir, sources)
@@ -752,8 +752,7 @@ func isUnlockRole(role string) bool {
 }
 
 // entryCredential は、入口 make ci-<kind>-<envRoot> の envRoot を末尾の -identity か -workload で切り、
-// 資格情報が取るべき env と role を返します（ADR-0604 決定3・4・8）。plan は root を問わず plan、apply と lock を
-// 残す入口は identity root が apply-identity でほかが apply、lock の解除は unlock-identity と unlock。
+// 資格情報が取るべき env と role を返します（ADR-0604 決定3・4・8）。
 // どちらの接尾辞でもないか、env が空なら ok を偽にする。
 func entryCredential(kind, envRoot string) (env, role string, ok bool) {
 	env, identity := strings.CutSuffix(envRoot, "-identity")
@@ -891,11 +890,11 @@ const (
 	kindHold   = "hold"
 )
 
-// entryKinds は CI の入口 make ci-<種別>-<env>-<root> の種別の一覧。入口の正規表現と違反の文はここから組み、
-// .makefiles/terraform/operation/ci.mk の入口の種別との一致はテストが見る。
+// entryKinds は CI の入口 make ci-<種別>-<env>-<root> の種別の一覧。
+// .makefiles/terraform/operation/ci.mk の入口の種別の写しで、ずれはテストが見る。
 var entryKinds = []string{kindPlan, kindApply, kindUnlock, kindHold}
 
-// entryPattern は、種別 kinds のどれかを prefix と suffix で挟んだ正規表現（prefix(?:kinds)suffix）を組みます。
+// entryPattern は、種別 kinds のどれかを prefix と suffix で挟んだ正規表現を組みます。
 func entryPattern(prefix, suffix string, kinds ...string) *regexp.Regexp {
 	quoted := make([]string, len(kinds))
 	for i, k := range kinds {
@@ -904,7 +903,6 @@ func entryPattern(prefix, suffix string, kinds ...string) *regexp.Regexp {
 	return regexp.MustCompile(prefix + `(?:` + strings.Join(quoted, "|") + `)` + suffix)
 }
 
-// entryNames は、違反の文に出す入口の名前の並び（make ci-plan-*・ci-apply-*・…）。
 var entryNames = func() string {
 	names := make([]string, len(entryKinds))
 	for i, k := range entryKinds {
