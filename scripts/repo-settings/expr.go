@@ -37,8 +37,8 @@ var (
 	exprPuncts = []string{"==", "!=", "<=", ">=", "&&", "||", "<", ">", "!", "(", ")", "[", "]", ".", ",", "*"}
 )
 
-// lexExpr は、式の本文（`${{ }}` を外したもの）を字句の列にします。文字列リテラルは `'` で囲み、`”` が `'` を
-// 表す。識別子は `-` を含んでよい。未知の文字と閉じない文字列リテラルは失敗する。
+// lexExpr は、式の本文（`${{ }}` を外したもの）を字句の列にします。文字列リテラルは `'` で囲み、`'` を2つ重ねて
+// `'` を表す。識別子は `-` を含んでよい。未知の文字と閉じない文字列リテラルは失敗する。
 func lexExpr(src string) ([]exprToken, error) {
 	var out []exprToken
 	for i := 0; i < len(src); {
@@ -116,8 +116,7 @@ type exprNode struct {
 	// op は nodeBinary の演算子と、nodeCall の関数名（小文字）。
 	op string
 	// text は nodeIdent と nodeMember の名前と、nodeLiteral の値。
-	text string
-	// litKind は nodeLiteral の字句の種類。
+	text       string
 	litKind    tokenKind
 	args       []*exprNode
 	start, end int
@@ -564,10 +563,8 @@ var (
 	exprOpenWrap = "${{"
 )
 
-// literalCounts は、[walkExpr] と同じ件数を、構文木を経ずに字面から数えます（ADR-0702 決定15）。文字列
-// リテラルを除いた字面で、前後が名前の文字でも `.` の後ろでもない github / inputs、`.` に続く名前か `*`、
-// `[`、比較の演算子、startsWith / endsWith / contains に続く `(` を数える。守るのは字句解析と木の走査が
-// 節を落とさないことで、ref を見分ける規則そのものの誤りは守らない。
+// literalCounts は、[walkExpr] と同じ [exprCounts] を、構文木を経ずに字面から数えます（ADR-0702 決定15）。
+// 守るのは字句解析と木の走査が節を落とさないことで、ref を見分ける規則そのものの誤りは守らない。
 func literalCounts(src string) exprCounts {
 	s := literalRe.ReplaceAllString(src, "''")
 	var c exprCounts

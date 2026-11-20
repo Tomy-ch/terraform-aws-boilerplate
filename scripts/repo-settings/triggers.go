@@ -13,8 +13,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// generatedRefPaths は、[refContext] の github の下のパス。同じ接頭辞を持つものは長いものを先に置く。どれも
-// [refPath] が ref と見分けるものでなければならない。
+// generatedRefPaths は、[refContext] の github の下のパス。
 var generatedRefPaths = []string{
 	"ref_name", "ref", "base_ref", "head_ref", "event.ref", "event.pull_request.base.ref", "event.pull_request.head.ref",
 	"event.workflow_run.head_branch",
