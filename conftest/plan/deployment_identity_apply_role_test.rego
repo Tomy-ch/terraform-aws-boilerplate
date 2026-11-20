@@ -669,13 +669,50 @@ workload_world(arns) := array.concat(
 	[res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})})],
 )
 
-test_pass_declared_workload_policy_attached if {
-	count(messages_for(workload_world([workload_policy_arn]), with_workload_decl)) == 0
+test_violation_workload_declared_without_read_policy if {
+	fixture.has("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.read_policy", messages_for(workload_world([workload_policy_arn]), with_workload_decl))
+}
+
+test_violation_declared_read_policy_absent if {
+	fixture.has("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.read_policy", messages_for(workload_world([workload_policy_arn]), with_two_workload_decl))
 }
 
 test_violation_workload_policy_not_attached if {
 	every arns in [[], [workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"], ["arn:aws:iam::aws:policy/ReadOnlyAccess"]] {
 		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(workload_world(arns), with_workload_decl))
+	}
+}
+
+read_policy_address := sprintf("%saws_iam_policy.workload_read", [g])
+
+read_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload-read", [account])
+
+with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address}}])
+
+# 宣言した型の aws_iam_policy は Deny で守る対象なので、2つの policy の ARN を Deny に載せる。
+two_workload_world(arns) := array.concat(
+	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn, read_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
+	[
+		res("aws_iam_policy", workload_policy_address, {"name": "ci-apply-workload", "arn": workload_policy_arn, "policy": json.marshal({"Statement": []})}),
+		res("aws_iam_policy", read_policy_address, {"name": "ci-apply-workload-read", "arn": read_policy_arn, "policy": json.marshal({"Statement": []})}),
+	],
+)
+
+test_pass_two_workload_policies_attached_in_any_order if {
+	every arns in [[workload_policy_arn, read_policy_arn], [read_policy_arn, workload_policy_arn]] {
+		count(messages_for(two_workload_world(arns), with_two_workload_decl)) == 0
+	}
+}
+
+test_violation_two_workload_policies_not_attached if {
+	every arns in [
+		[workload_policy_arn], [read_policy_arn], [],
+		[workload_policy_arn, read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[workload_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[read_policy_arn, "arn:aws:iam::aws:policy/ReadOnlyAccess"],
+		[workload_policy_arn, workload_policy_arn],
+	] {
+		fixture.has(sprintf("[PLAN-APPLY-05] p.json: %s の policy_arns", [exclusives[1].address]), messages_for(two_workload_world(arns), with_two_workload_decl))
 	}
 }
 
