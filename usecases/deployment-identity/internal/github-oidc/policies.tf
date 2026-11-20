@@ -39,9 +39,13 @@ locals {
   ci_arn_patterns = ["${local.iam_arn_prefix}:role/${var.name_prefix}-ci-*", "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"]
 
   # apply の role の workload の権限（決定17）と、role を作る usecase ごとの permissions boundary（決定15）。
-  workload_policy_name  = "${var.name_prefix}-ci-apply-workload"
-  workload_policy_arn   = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
-  boundary_policy_names = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
+  workload_policy_name = "${var.name_prefix}-ci-apply-workload"
+  workload_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
+  # workload の Allow が 6,144 文字を超えるので、読み取りを同じ役割の2つ目の policy に置く（決定17）。
+  workload_read_policy_name = "${var.name_prefix}-ci-apply-workload-read"
+  workload_read_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_read_policy_name}"
+  workload_policy_arns      = [local.workload_policy_arn, local.workload_read_policy_arn]
+  boundary_policy_names     = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
   # 決定13。IAM の role と policy を書き込む Allow は、usecase が IAM の名前の先頭に置く小文字の接頭辞に限る。
   usecase_iam_prefixes = { "ops-notification" = "${var.name_prefix}-ops-" }
   boundary_policy_arns = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
@@ -130,8 +134,7 @@ locals {
   cfn_arn_prefix              = "arn:${data.aws_partition.current.partition}:cloudformation:${local.regional_arn_suffix}"
   break_glass_stack_set_names = [for a in local.break_glass_role_arns : regex("[^/]+$", a)]
   break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
-  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。
-  # AWS の resource 型の ARN はアカウントを持たないことがあるので、アカウントを `*` にする（決定4）。
+  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。type の ARN はアカウントを `*` にする（deployment-identity/ADR-0201 決定4）。
   break_glass_stack_set_write_arns = concat(
     local.break_glass_stack_set_arns,
     [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset-target/${n}:*"],
@@ -141,11 +144,20 @@ locals {
   governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
-  ci_policy_arns         = concat(local.governance_policy_arns, [local.workload_policy_arn], values(local.boundary_policy_arns))
+  ci_policy_arns         = concat(local.governance_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
 
-  # workload root の usecase の構成物の読み取り（決定13）。名前を `<name_prefix>-` で始める構成物の pattern で限る。
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
-  workload_key_arns   = "arn:${data.aws_partition.current.partition}:kms:${local.regional_arn_suffix}:key/*"
+  # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
+  # 置かれる region は provider の region と us-east-1（repository-wide/ADR-0208 決定4）。
+  # us-east-1 は aws の partition の region なので、ほかの partition では足さない。
+  workload_regions      = distinct(concat([data.aws_region.current.region], data.aws_partition.current.partition == "aws" ? ["us-east-1"] : []))
+  workload_arn_suffixes = [for r in local.workload_regions : "${r}:${data.aws_caller_identity.current.account_id}"]
+  workload_key_arns     = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:kms:${x}:key/*"]
+  workload_topic_arns   = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:sns:${x}:${var.name_prefix}-*"]
+  workload_schedule_arns = flatten([for x in local.workload_arn_suffixes : [
+    "arn:${data.aws_partition.current.partition}:scheduler:${x}:schedule-group/${var.name_prefix}-*",
+    "arn:${data.aws_partition.current.partition}:scheduler:${x}:schedule/${var.name_prefix}-*/*",
+  ]])
   workload_key_conditions = {
     StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT", "kms:KeyOrigin" = "AWS_KMS" }
     Bool         = { "kms:MultiRegion" = "false" }
@@ -155,7 +167,7 @@ locals {
       Sid      = "ReadWorkloadTopics"
       Effect   = "Allow"
       Action   = ["sns:GetTopicAttributes", "sns:ListTagsForResource"]
-      Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${var.name_prefix}-*"
+      Resource = local.workload_topic_arns
     },
     {
       Sid       = "ReadWorkloadKeys"
@@ -165,13 +177,10 @@ locals {
       Condition = local.workload_key_conditions
     },
     {
-      Sid    = "ReadWorkloadSchedules"
-      Effect = "Allow"
-      Action = ["scheduler:GetSchedule", "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource"]
-      Resource = [
-        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule-group/${var.name_prefix}-*",
-        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule/${var.name_prefix}-*/*",
-      ]
+      Sid      = "ReadWorkloadSchedules"
+      Effect   = "Allow"
+      Action   = ["scheduler:GetSchedule", "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource"]
+      Resource = local.workload_schedule_arns
     },
     { Sid = "DescribeChatConfigurations", Effect = "Allow", Action = "chatbot:DescribeSlackChannelConfigurations", Resource = "*" },
     {
@@ -216,22 +225,19 @@ locals {
       Sid      = "ManageWorkloadKeyAliases"
       Effect   = "Allow"
       Action   = ["kms:CreateAlias", "kms:DeleteAlias", "kms:UpdateAlias"]
-      Resource = ["arn:${data.aws_partition.current.partition}:kms:${local.regional_arn_suffix}:alias/${var.name_prefix}-*", local.workload_key_arns]
+      Resource = concat([for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:kms:${x}:alias/${var.name_prefix}-*"], local.workload_key_arns)
     },
     {
       Sid      = "ManageWorkloadTopics"
       Effect   = "Allow"
       Action   = ["sns:CreateTopic", "sns:SetTopicAttributes"]
-      Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${var.name_prefix}-*"
+      Resource = local.workload_topic_arns
     },
     {
-      Sid    = "ManageWorkloadSchedules"
-      Effect = "Allow"
-      Action = ["scheduler:CreateSchedule", "scheduler:CreateScheduleGroup", "scheduler:DeleteSchedule", "scheduler:DeleteScheduleGroup", "scheduler:UpdateSchedule"]
-      Resource = [
-        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule-group/${var.name_prefix}-*",
-        "arn:${data.aws_partition.current.partition}:scheduler:${local.regional_arn_suffix}:schedule/${var.name_prefix}-*/*",
-      ]
+      Sid      = "ManageWorkloadSchedules"
+      Effect   = "Allow"
+      Action   = ["scheduler:CreateSchedule", "scheduler:CreateScheduleGroup", "scheduler:DeleteSchedule", "scheduler:DeleteScheduleGroup", "scheduler:UpdateSchedule"]
+      Resource = local.workload_schedule_arns
     },
     { Sid = "CreateChatConfigurations", Effect = "Allow", Action = "chatbot:CreateSlackChannelConfiguration", Resource = "*" },
     {
@@ -299,22 +305,23 @@ locals {
   boundary_allow_statements = {
     "ops-notification" = concat(
       [
-        { Sid = "PublishTopics", Effect = "Allow", Action = "sns:Publish", Resource = "arn:${data.aws_partition.current.partition}:sns:${local.regional_arn_suffix}:${local.usecase_iam_prefixes["ops-notification"]}*" },
+        { Sid = "PublishTopics", Effect = "Allow", Action = "sns:Publish", Resource = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:sns:${x}:${local.usecase_iam_prefixes["ops-notification"]}*"] },
         {
           Sid       = "UseKeysViaSns"
           Effect    = "Allow"
           Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
           Resource  = local.workload_key_arns
-          Condition = { StringEquals = { "kms:ViaService" = "sns.${data.aws_region.current.region}.amazonaws.com" } }
+          Condition = { StringEquals = { "kms:ViaService" = [for r in local.workload_regions : "sns.${r}.amazonaws.com"] } }
         },
         {
           Sid      = "ReadAlarms"
           Effect   = "Allow"
           Action   = ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"]
-          Resource = "arn:${data.aws_partition.current.partition}:cloudwatch:${local.regional_arn_suffix}:alarm:*"
+          Resource = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:cloudwatch:${x}:alarm:*"]
         },
       ],
-      [for a in ["cloudwatch:DescribeAlarmsForMetric", "cloudwatch:GetMetricData", "cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricWidgetImage", "cloudwatch:ListMetrics"] : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
+      # boundary は 6,144 文字が上限なので、Sid に service の名前を入れない。
+      [for a in ["cloudwatch:DescribeAlarmsForMetric", "cloudwatch:GetMetricData", "cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricWidgetImage", "cloudwatch:ListMetrics"] : { Sid = title(split(":", a)[1]), Effect = "Allow", Action = a, Resource = "*" }],
     )
   }
 
@@ -464,7 +471,7 @@ locals {
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.apply
-      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arn } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arns } }
     },
     ], [for s in [
       {

@@ -644,17 +644,39 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_names が %v ではありません", [a.path, a.address, [object.get(after(target), "name", null)]])
 }
 
-# apply の role に付いてよい managed policy は、宣言した workload の policy だけ（deployment-identity/ADR-0201 決定17）。
-workload_policy := object.get(object.get(di, "workload", {}), "policy", "")
+# apply の role に付いてよい managed policy は、宣言した workload の2つの policy だけ（deployment-identity/ADR-0201 決定17）。
+workload_policies := [p |
+	some key in ["policy", "read_policy"]
+	p := object.get(object.get(di, "workload", {}), key, "")
+	p != ""
+]
 
-default expected_managed := []
+expected_managed := [object.get(after(p), "arn", null) | some p in workload_policies]
 
-expected_managed := [object.get(after(workload_policy), "arn", null)] if workload_policy != ""
+# workload を宣言したら、2つの policy の address を持ち、どちらも入力に在る。欠けると期待が黙って縮む。
+deny contains msg if {
+	is_object(object.get(di, "workload", null))
+	some key in ["policy", "read_policy"]
+	address := object.get(di.workload, key, "")
+	not after_defined(address)
+	msg := sprintf("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.%s（%v）が無いか、入力にありません", [key, address])
+}
 
+after_defined(address) if {
+	address != ""
+	after(address)
+}
+
+# policy_arns は set なので、順序を問わずに比べる。
 deny contains msg if {
 	some a in exclusive("aws_iam_role_policy_attachments_exclusive")
-	object.get(a.after, "policy_arns", null) != expected_managed
+	not same_arns(object.get(a.after, "policy_arns", null))
 	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_arns が %v ではありません", [a.path, a.address, expected_managed])
+}
+
+same_arns(arns) if {
+	is_array(arns)
+	sort(arns) == sort(expected_managed)
 }
 
 # role の引数で付ける policy は、上の型を通らない。

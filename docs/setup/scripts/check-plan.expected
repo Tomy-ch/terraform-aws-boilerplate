@@ -42,6 +42,7 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlo
 add module.deployment_identity.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.workload
+add module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["plan"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["apply_identity"]
