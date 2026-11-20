@@ -269,10 +269,15 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		findings = append(findings, checkPullRequestGate(dir, groups, prGates[g.noun], g)...)
 	}
 	roots := 0
+	// noRoots は、root が1つも無いことの errNoTarget。違反を先に出してから返す（targets == 0 と同じ順序）。
+	var noRoots error
 	if rootsDir != "" {
 		n, f, err := checkRootCoverage(rootsDir, sources)
 		roots = n
-		if err != nil {
+		switch {
+		case xerrors.Is(err, errNoTarget):
+			noRoots = err
+		case err != nil:
 			return err
 		}
 		findings = append(findings, f...)
@@ -281,6 +286,9 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 		fmt.Fprintf(out, "❌ oidc-job-lint: %d 件の違反\n\n", len(findings))
 		fmt.Fprintln(out, lintreport.Format(findings))
 		return xerrors.Wrapf(errViolations, "%d 件", len(findings))
+	}
+	if noRoots != nil {
+		return noRoots
 	}
 	if targets == 0 {
 		return xerrors.Wrapf(errNoTarget, "%s", dir)

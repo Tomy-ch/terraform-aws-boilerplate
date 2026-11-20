@@ -3853,7 +3853,26 @@ func Test_runRoots(t *testing.T) {
 
 	t.Run("root が1つも無ければ対象なしで失敗する", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run(wf, env, rulesetOf(env), t.TempDir(), &bytes.Buffer{}), errNoTarget)
+		var out bytes.Buffer
+		require.ErrorIs(t, run(wf, env, rulesetOf(env), t.TempDir(), &out), errNoTarget)
+		assert.NotContains(t, out.String(), "違反")
+	})
+
+	t.Run("root が無くても workflow の違反を先に出して違反で失敗する", func(t *testing.T) {
+		t.Parallel()
+		bad, benv := repoWith(t, map[string]string{"plan.yaml": strings.Replace(planWorkflow, "      id-token: write\n", "", 1)}, envDecl)
+		var out bytes.Buffer
+		err := run(bad, benv, rulesetOf(benv), t.TempDir(), &out)
+		require.ErrorIs(t, err, errViolations)
+		assert.NotErrorIs(t, err, errNoTarget)
+		assert.Contains(t, out.String(), "job plan-admin-identity は CI の入口")
+	})
+
+	t.Run("root を渡さなければ root の有無を見ない", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		require.NoError(t, run(wf, env, rulesetOf(env), "", &out), out.String())
+		assert.Contains(t, out.String(), "root 0 件の CI の経路")
 	})
 }
 
