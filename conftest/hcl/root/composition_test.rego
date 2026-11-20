@@ -80,3 +80,10 @@ test_RT102_deny_control_call_when_management_env_missing if {
 	contains(m, "env/mgmt/identity/main.tf の module.c")
 	contains(m, "管理アカウント（null）")
 }
+
+# RT102 は identity root だけを見る。workload root が統制の usecase を呼ぶことは RT103 が落とす。
+test_RT102_allow_workload_root_calls_control if {
+	msgs := denies(fx("RT102_allow_workload_root_calls_control"))
+	count(with_id(msgs, "RT102")) == 0
+	count(with_id(msgs, "RT103")) == 1
+}

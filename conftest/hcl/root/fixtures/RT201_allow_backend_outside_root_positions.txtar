@@ -47,13 +47,31 @@ resource "aws_s3_bucket" "this" {}
 resource "aws_organizations_organization" "this" {}
 -- usecases/w/main.tf --
 resource "aws_sqs_queue" "this" {}
--- env/dev/identity/sub/backend.tf --
+-- env/dev/identity/sub/main.tf --
 terraform {
   backend "local" {
     path = "x"
   }
 }
--- modules/env/dev/identity/backend.tf --
+-- modules/env/dev/identity/main.tf --
+terraform {
+  backend "local" {
+    path = "x"
+  }
+}
+-- modules/z/env/dev/backend.tf --
+terraform {
+  backend "local" {
+    path = "x"
+  }
+}
+-- env/a/b/identity/backend.tf --
+terraform {
+  backend "local" {
+    path = "x"
+  }
+}
+-- modules/x/main.tf --
 terraform {
   backend "local" {
     path = "x"

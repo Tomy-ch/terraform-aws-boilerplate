@@ -72,12 +72,31 @@ func parseConfigBody(name string, src []byte) (*hclsyntax.Body, error) {
 		return nil, xerrors.Wrapf(errUnsupportedInput, "%s: ファイルの直下に属性 %q があります", first.SrcRange, first.Name)
 	}
 	for _, b := range body.Blocks {
-		if want, ok := labelCounts[b.Type]; ok && len(b.Labels) != want {
-			return nil, xerrors.Wrapf(errUnsupportedInput, "%s: %s の block のラベルが %d 個です（%d 個を要します）", b.TypeRange, b.Type, len(b.Labels), want)
+		if err := checkLabels(b); err != nil {
+			return nil, err
+		}
+		// check の中の data も、最上位の data と同じく型と名前の2つのラベルを要する。
+		if b.Type == "check" {
+			for _, nb := range b.Body.Blocks {
+				if nb.Type == "data" {
+					if err := checkLabels(nb); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 	}
 
 	return body, nil
+}
+
+// checkLabels は、ラベルの個数を Terraform が決めている種類の block のラベルの個数を確かめます。
+func checkLabels(b *hclsyntax.Block) error {
+	if want, ok := labelCounts[b.Type]; ok && len(b.Labels) != want {
+		return xerrors.Wrapf(errUnsupportedInput, "%s: %s の block のラベルが %d 個です（%d 個を要します）", b.TypeRange, b.Type, len(b.Labels), want)
+	}
+
+	return nil
 }
 
 // bodyAttributes は、body の属性と入れ子の block の属性を、深さ優先のソースの順に返します。入れ子の

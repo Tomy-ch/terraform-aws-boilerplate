@@ -240,6 +240,14 @@ func Test_walkAllFiles(t *testing.T) {
 		}, got)
 	})
 
+	t.Run(".terraform という名前の通常のファイルは列挙し、隣の .tf も列挙する", func(t *testing.T) {
+		t.Parallel()
+		base := writeTree(t, map[string]string{"modules/a/.terraform": "", "modules/a/main.tf": ""})
+		got, err := walkAllFiles(base, []string{"modules"})
+		require.NoError(t, err)
+		assert.Equal(t, []fileEntry{{Path: "modules/a/.terraform"}, {Path: "modules/a/main.tf", Parsed: true}}, got)
+	})
+
 	t.Run("ファイルが無ければ空", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()

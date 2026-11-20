@@ -265,6 +265,7 @@ fixture_cases := {
 	"RT003_deny_tf_json_outside_root",
 	"RT101_deny_identity_calls_general_module",
 	"RT101_deny_identity_calls_undeclared_usecase",
+	"RT102_allow_workload_root_calls_control",
 	"RT102_deny_member_calls_control",
 	"RT103_deny_workload_calls_bootstrap",
 	"RT103_deny_workload_calls_control",

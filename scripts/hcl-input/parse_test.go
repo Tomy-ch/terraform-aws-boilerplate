@@ -278,11 +278,12 @@ func Test_parseConfigBody(t *testing.T) {
 			src  string
 			want error
 		}{
-			"構文の誤り":            {src: "resource \"a\" {\n", want: errSyntax},
-			"非 UTF-8":          {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
-			"ファイルの直下の属性":       {src: "x = 1\n", want: errUnsupportedInput},
-			"ラベルが1個の resource": {src: "resource \"a\" {}\n", want: errUnsupportedInput},
-			"ラベルが1個の data":     {src: "data \"a\" {}\n", want: errUnsupportedInput},
+			"構文の誤り":                 {src: "resource \"a\" {\n", want: errSyntax},
+			"非 UTF-8":               {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
+			"ファイルの直下の属性":            {src: "x = 1\n", want: errUnsupportedInput},
+			"ラベルが1個の resource":      {src: "resource \"a\" {}\n", want: errUnsupportedInput},
+			"ラベルが1個の data":          {src: "data \"a\" {}\n", want: errUnsupportedInput},
+			"check の中のラベルが1個の data": {src: "check \"c\" {\n  data \"a\" {}\n}\n", want: errUnsupportedInput},
 		}
 		for name, tt := range tests {
 			t.Run(name, func(t *testing.T) {
@@ -491,5 +492,38 @@ func Test_syntaxBody(t *testing.T) {
 		body := &hclsyntax.Body{Blocks: hclsyntax.Blocks{{Type: "n", Body: inner}}}
 		sb := synBlock{}
 		require.ErrorIs(t, syntaxBody(body, nil, -1, &sb), errUnknownExpression)
+	})
+}
+
+func Test_checkLabels(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		typ    string
+		labels []string
+		ok     bool
+	}{
+		"resource の2つ":  {"resource", []string{"a", "b"}, true},
+		"resource の1つ":  {"resource", []string{"a"}, false},
+		"provider の1つ":  {"provider", []string{"a"}, true},
+		"module の2つ":    {"module", []string{"a", "b"}, false},
+		"決まりの無い種類は問わない": {"locals", []string{"x", "y", "z"}, true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := checkLabels(&hclsyntax.Block{Type: tt.typ, Labels: tt.labels})
+			if tt.ok {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, errUnsupportedInput)
+			}
+		})
+	}
+
+	t.Run("check の中の正しい data は通る", func(t *testing.T) {
+		t.Parallel()
+		_, err := parseConfigBody("m/a.tf", []byte("check \"c\" {\n  data \"a\" \"b\" {}\n}\n"))
+		require.NoError(t, err)
 	})
 }

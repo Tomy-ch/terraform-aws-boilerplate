@@ -139,9 +139,20 @@ func Test_buildCase(t *testing.T) {
 		require.ErrorIs(t, err, errNoInput)
 	})
 
+	// 名前は辞書順に置くので、ファイルの名前が同じ名前のディレクトリの中の名前より先に来る。逆の順（ディレクトリが
+	// 先）は辞書順では起きない。
 	t.Run("ファイルとディレクトリの名前が衝突すれば errFixture", func(t *testing.T) {
 		t.Parallel()
-		_, err := buildCase(map[string]string{"m/a": "", "m/a/b.tf": ""})
+		_, err := buildCase(map[string]string{"m/a/b.tf": "", "m/a": ""})
 		require.ErrorIs(t, err, errFixture)
+	})
+
+	t.Run("置く順は名前の辞書順で決まる", func(t *testing.T) {
+		t.Parallel()
+		for range 5 {
+			got, err := buildCase(map[string]string{"z/b.tf": "", "a/c.tf": "", "m/a.md": "", "m/b.tf": ""})
+			require.NoError(t, err)
+			assert.Equal(t, []fileEntry{{Path: "a/c.tf", Parsed: true}, {Path: "m/a.md"}, {Path: "m/b.tf", Parsed: true}, {Path: "z/b.tf", Parsed: true}}, got.Files)
+		}
 	})
 }

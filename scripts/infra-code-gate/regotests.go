@@ -25,7 +25,8 @@ var (
 	ruleHead = regexp.MustCompile(`(?m)^(?:deny|warn|violation)(?:_[A-Za-z0-9]+)*\s*(?:contains\b|\[|if\b|:?=|\{)`)
 	testName = regexp.MustCompile(`(?m)^(test_[A-Za-z0-9_]+)\b`)
 	pairName = regexp.MustCompile(`^test_([A-Z]{2}\d{3})_(deny|allow)_`)
-	// forbiddenBuiltin は、判定を外界に依存させる組み込み関数です。
+	// forbiddenBuiltin は、判定を外界に依存させる組み込み関数です。字面で見るので、コメントや文字列の中の同じ並びにも
+	// 当たる（誤検出の側に倒し、受け入れる）。
 	forbiddenBuiltin = regexp.MustCompile(`\bhttp\.send\b|\bnet\.[a-z_]+\b|\bopa\.runtime\b`)
 	reportLine       = regexp.MustCompile(`^(data\.[A-Za-z0-9_.]+): (PASS|FAIL|ERROR)\b`)
 	// parseConfig は、HCL を Conftest のパーサで読む組み込み関数です。HCL の検査の入力は hcl-input の JSON

@@ -312,6 +312,16 @@ func Test_buildSyntax(t *testing.T) {
 		require.ErrorIs(t, err, fs.ErrPermission)
 	})
 
+	t.Run("base を開けなければ失敗する（実行の権限だけで読めない base）", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では権限の無いディレクトリも開けるため検証できない")
+		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})
+		require.NoError(t, os.Chmod(base, 0o100))
+		t.Cleanup(func() { _ = os.Chmod(base, 0o750) })
+		_, err := buildSyntax(base, []string{"modules"}, []string{"modules/a/main.tf"})
+		require.ErrorIs(t, err, fs.ErrPermission)
+	})
+
 	t.Run("空のファイルは block 0個で、0件ではない", func(t *testing.T) {
 		t.Parallel()
 		base := writeTree(t, map[string]string{"modules/a/main.tf": ""})

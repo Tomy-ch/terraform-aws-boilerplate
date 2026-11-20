@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 const policyOK = "package infra_code\n\ndeny contains msg if {\n\tmsg := \"IC010 [未分類の型] x\"\n}\n"
@@ -190,6 +193,30 @@ func Test_scanRego(t *testing.T) {
 
 	_, err = scanRego(filepath.Join(dir, "none"), nil)
 	require.ErrorIs(t, err, os.ErrNotExist)
+
+	t.Run("読めないディレクトリと読めない Rego はエラー", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では権限の無いファイルも読めるため検証できない")
+		for _, target := range []string{"sub", "sub/a.rego"} {
+			d := t.TempDir()
+			writeFile(t, filepath.Join(d, "sub/a.rego"), "package a\n")
+			require.NoError(t, os.Chmod(filepath.Join(d, target), 0o000))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Join(d, target), 0o750) })
+			_, err := scanRego(d, []string{"a"})
+			require.ErrorIs(t, err, fs.ErrPermission, target)
+		}
+	})
+
+	t.Run("テストの中の外界に依存する組み込み関数も違反", func(t *testing.T) {
+		t.Parallel()
+		d := t.TempDir()
+		writeFile(t, filepath.Join(d, "a_test.rego"), "package infra_code\n\ntest_x if { http.send({}) }\n")
+		suite, err := scanRego(d, []string{"infra_code"})
+		require.NoError(t, err)
+		require.Len(t, suite.findings, 1)
+		assert.Equal(t, "判定を外界に依存させる組み込み関数 http.send を使っています", suite.findings[0].Message)
+	})
+
 }
 
 func Test_checkPairs(t *testing.T) {
@@ -361,4 +388,18 @@ func Test_scanParseConfig(t *testing.T) {
 		_, err := scanParseConfig(filepath.Join(dir, "none"), "none", false)
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
+
+	t.Run("読めないディレクトリと読めない Rego はエラー", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "特権実行では権限の無いファイルも読めるため検証できない")
+		for _, target := range []string{"sub", "sub/a.rego"} {
+			d := t.TempDir()
+			writeFile(t, filepath.Join(d, "sub/a.rego"), "package a\n")
+			require.NoError(t, os.Chmod(filepath.Join(d, target), 0o000))
+			t.Cleanup(func() { _ = os.Chmod(filepath.Join(d, target), 0o750) })
+			_, err := scanParseConfig(d, "p", false)
+			require.ErrorIs(t, err, fs.ErrPermission, target)
+		}
+	})
+
 }

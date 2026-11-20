@@ -177,6 +177,7 @@ fixture_cases := {
 	"RO002_deny_read_but_not_listed",
 	"RO003_allow_module_in_nested_dir",
 	"RO003_deny_module_missing",
+	"RO003_deny_module_with_shared_prefix",
 	"RO004_allow_resources_in_separate_files",
 	"RO004_deny_address_only_in_other_module",
 	"RO004_deny_after_missing",
@@ -212,4 +213,24 @@ test_RO004_deny_address_only_in_other_module if {
 test_RO001_deny_address_with_three_parts_and_non_string_after if {
 	count(with_id(denies(fx("ok"), ["m/main.tf"], [object.union(rule, {"resource": "a.b.c"})]), "RO001")) == 1
 	count(with_id(denies(fx("ok"), ["m/main.tf"], [object.union(rule, {"after": 1})]), "RO001")) == 1
+}
+
+test_RO002_deny_files_list_absent_or_not_array if {
+	doc := fx("ok")
+	msgs := deny with input as doc
+		with data.resource_order_decl as {"rules": [rule]}
+		with data.hcl_parsed_files as parsed_of(doc)
+		with data.hcl_block_counts as counts_of(doc)
+	some m in with_id(msgs, "RO002")
+	contains(m, "1件もありません")
+	msgs2 := denies(doc, {"x": 1}, [rule])
+	some m2 in with_id(msgs2, "RO002")
+	contains(m2, "1件もありません")
+}
+
+# module は前方一致ではなくディレクトリの一致で選ぶ。
+test_RO003_deny_module_with_shared_prefix if {
+	msgs := denies(fx("RO003_deny_module_with_shared_prefix"), ["modules/ab/main.tf"], [object.union(rule, {"module": "modules/a"})])
+	some m in with_id(msgs, "RO003")
+	contains(m, "modules/a に構成ファイルがありません")
 }

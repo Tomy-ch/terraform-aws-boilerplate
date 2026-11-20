@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -104,8 +105,10 @@ func buildCase(files map[string]string) (syntaxDoc, error) {
 	}
 	defer func() { _ = os.RemoveAll(base) }()
 
+	names := slices.Sorted(maps.Keys(files))
 	var listed, roots []string
-	for name, body := range files {
+	for _, name := range names {
+		body := files[name]
 		p := filepath.Join(base, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			return syntaxDoc{}, xerrors.Wrapf(errFixture, "%s を置けません（ファイルとディレクトリの名前の衝突など）: %v", name, err)
