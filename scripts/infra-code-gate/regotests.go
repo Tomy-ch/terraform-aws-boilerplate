@@ -48,7 +48,6 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 	reportPath := fset.String("report", "", "`conftest verify --report notes` の出力のパス")
 	namespaces := fset.String("namespaces", "", "検出が評価する名前空間（, 区切り）。規則を持つ package はこのどれかでなければならない")
 	repoFlag := fset.String("repo", repo, "Rego の置き場所を解くリポジトリの root")
-	allowParseConfig := fset.String("allow-parse-config", "", "parse_config をテスト（_test.rego）で使ってよい Rego の置き場所（, 区切り）。-policy のどれかでなければならない。層の block の構造が hcl2 の形を読む間だけ conftest/hcl/layer に使う（#367 PR-B で外す）")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrap(err, "引数の解釈")
 	}
@@ -82,7 +81,7 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		return xerrors.Wrapf(errNoInput, "%s: テストが1件も走っていません", *reportPath)
 	}
 
-	parseFindings, err := checkParseConfig(repo, splitList(*policyDirs), splitList(*allowParseConfig))
+	parseFindings, err := checkParseConfig(repo, strings.Split(*policyDirs, ","))
 	if err != nil {
 		return err
 	}
@@ -95,27 +94,12 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 	return nil
 }
 
-func splitList(s string) []string {
-	if s == "" {
-		return nil
-	}
-
-	return strings.Split(s, ",")
-}
-
-// checkParseConfig は、policyDirs の Rego が parse_config 系の組み込み関数で HCL を読んでいれば違反を返します。
-// 除外は、allowed の置き場所の下のテスト（_test.rego）だけです。allowed が policyDirs のどれでもなければ、その
-// 宣言は何も除外しないので違反です。
-func checkParseConfig(repo string, policyDirs, allowed []string) ([]lintreport.Finding, error) {
+// checkParseConfig は、policyDirs の Rego（テストを含む）が parse_config 系の組み込み関数で HCL を読んでいれば
+// 違反を返します。
+func checkParseConfig(repo string, policyDirs []string) ([]lintreport.Finding, error) {
 	var findings []lintreport.Finding
-	for _, a := range allowed {
-		if !slices.Contains(policyDirs, a) {
-			findings = append(findings, lintreport.Finding{File: a, Line: 1,
-				Message: fmt.Sprintf("-allow-parse-config の %s が -policy（%s）にありません", a, strings.Join(policyDirs, ", "))})
-		}
-	}
 	for _, dir := range policyDirs {
-		got, err := scanParseConfig(filepath.Join(repo, dir), dir, slices.Contains(allowed, dir))
+		got, err := scanParseConfig(filepath.Join(repo, dir), dir)
 		if err != nil {
 			return nil, err
 		}
@@ -124,9 +108,8 @@ func checkParseConfig(repo string, policyDirs, allowed []string) ([]lintreport.F
 	return findings, nil
 }
 
-// scanParseConfig は、dir（報告では rel と書く）の下の Rego のうち parse_config 系を使うものを返します。exempt なら
-// テスト（_test.rego）を見ません。
-func scanParseConfig(dir, rel string, exempt bool) ([]lintreport.Finding, error) {
+// scanParseConfig は、dir（報告では rel と書く）の下の Rego のうち parse_config 系を使うものを返します。
+func scanParseConfig(dir, rel string) ([]lintreport.Finding, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, xerrors.Wrapf(err, "%s を開く", rel)
@@ -137,7 +120,7 @@ func scanParseConfig(dir, rel string, exempt bool) ([]lintreport.Finding, error)
 		if err != nil {
 			return err
 		}
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") || exempt && strings.HasSuffix(e.Name(), "_test.rego") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") {
 			return nil
 		}
 		raw, err := root.ReadFile(p)
