@@ -16,7 +16,7 @@ func Test_parseIncludes(t *testing.T) {
 
 	t.Run("include 行のパスを順に返し、行末の注記を許す", func(t *testing.T) {
 		t.Parallel()
-		got, err := parseIncludes([]byte("# c\ninclude .makefiles/a.mk\n\ninclude .makefiles/b.mk # sample:line\nX := 1\n"))
+		got, err := parseIncludes([]byte("# c\ninclude .makefiles/a.mk\n\ninclude .makefiles/b.mk # sample" + ":line\nX := 1\n")) // 印は行ごと消されるので連結で書く
 		require.NoError(t, err)
 		assert.Equal(t, []string{".makefiles/a.mk", ".makefiles/b.mk"}, got)
 	})
