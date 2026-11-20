@@ -57,7 +57,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    - break-glass の IAM user と role（ADR-0301 決定19）
    - IAM Identity Center の permission set とその割当
 
-   統制の構成物は bootstrap の構成物ではない。CI が Terraform を実行できるようになるまでに要らないからである。したがって決定9 のローカルからの apply の例外の対象にならず、変更は常に ADR-0601 の経路で行う。
+   統制の構成物は bootstrap の構成物ではない。CI が Terraform を実行できるようになるまでに要らないからである。ただし管理アカウントの identity root は、統制の構成物も持つ（ADR-0604 決定3）。そのため、管理アカウントで初めて CI 実行基盤を用意するときの段4 の apply（決定9 の1つ目の契機）に限り、その root が宣言する統制の構成物も作る。回復の契機（決定9 の2つ目）の apply では、統制の構成物を変更しない。それ以外の統制の構成物の変更は、常に ADR-0601 の経路で行う。
 
 2. bootstrap の構成物も use-case として `usecases/` 配下へ置く（ADR-0102）。bootstrap であることを理由に、型付き契約（ADR-0203）・Generic Escape Hatch の禁止（ADR-0204）・最小権限（ADR-0301）・テスト（ADR-0401）のいずれも免除しない。
 3. bootstrap 層であることは、適用の契機が異なることのみを意味する。公開契約とテストの要件は他のユースケースと同一とする。
@@ -84,7 +84,7 @@ CI の権限については循環の性質が異なる。backend さえあれば
    CI/CD が apply すること（決定4）、人がローカル環境から本番環境へ直接 apply しないこと（決定5）、apply
    対象が merge された commit と一致すること（決定6）である。例外の範囲を次に限る。
 
-   - 対象: 本 ADR 決定1 が定める bootstrap の構成物のみ
+   - 対象: 本 ADR 決定1 が定める bootstrap の構成物。管理アカウントの1つ目の契機に限り、決定1 の但し書きが定める統制の構成物を含む
    - 契機: 次のいずれか
      - 当該 AWS アカウントで初めて CI 実行基盤を用意するとき、1回限り。**既に CI 実行基盤を持つ
        別のアカウントの CI から当該アカウントの bootstrap の構成物を作れる場合は、この契機に当たらない。**
@@ -224,7 +224,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 
 ### 案G: bootstrap の定義を広げ、統制の構成物を含める（決定1・13 に対して）
 
-区分が1つで済む。ただし決定9 のローカルからの apply の例外が、組織の統制まで広がる。統制の構成物は CI が動き出す前に要らないので、例外で手当てする理由が無い。
+区分が1つで済む。ただし統制の構成物が bootstrap の構成物と同じ扱いになり、回復の契機を含むすべてのローカルからの apply の例外へ広がる。統制の構成物は CI が動き出す前に要らないので、初回に root がまとめて作る分を除けば、例外で手当てする理由が無い。
 
 ### 案H: 定義を変えず、apply の role の有効な権限から統制の構成物の変更を外すだけにする（決定13 に対して）
 
@@ -251,6 +251,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 人のローカルからの実行を一度も行わないこと
 - CI の資格情報を設定画面のみで完結させること
 - ローカル apply の例外が、アカウントごとに1回で終わること
+- 統制の構成物を一度もローカルから作らないこと。管理アカウントの初回の段4 は、identity root が宣言する組織・SCP・break-glass を一時 IAM user で作る（決定1）
 - 信頼条件を AWS 側の宣言だけで読めること。契機の限定は GitHub の environment の宣言と合わせて読む
 - plan の role が書き込みを一切持たないこと。plan の出力の置き場への `s3:PutObject` だけを持つ
 - plan と apply の全文を Pull Request の画面や run のログで読めること。全文は AWS の認証を経て読む
@@ -286,9 +287,10 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - Policy Test（apply の role の権限の与え方を持つ use-case の Policy Test）: reference の plan で、apply の role が、統制の構成物の変更（Organizations の組織・OU・アカウント・policy とその付け先、root の資格情報の中央管理、break-glass の IAM user と role、Identity Center の permission set と割当）を、条件なしで拒まれること（決定13）
 - Contract Test: bootstrap の use-case の公開 variable / output の schema
 - Policy Test（発火側の role を持つ use-case の Policy Test）: 発火側の role の信頼条件が、決定14 の第1項の形を完全一致で持ち、ワイルドカードを含まないこと（決定19）
+- 運用機構（`make check-plan-expected`）: 段2-4 の期待値（`docs/setup/scripts/check-plan.expected`）が、管理アカウントの identity root の mock の plan と、import と追加の address の集合で一致すること（決定1・8）。実 plan との突合は段2 の手順が持つ
 - 手順: 段2 の完了条件（決定8）は、それ自体が検証である。plan が決定8 の条件を満たさない限り段3 へ進まない
 
-決定9 の契機の判定と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
+決定9 の契機の判定と、回復の契機の plan が統制の構成物に変更を示さないこと（決定1）と、決定10 の apply 前の条件と記録の存在は、機械判定できない。例外の commit を含む Pull Request のレビューで扱う。決定10 の merge 前の条件は、required check の plan が担う（ADR-0603 決定12）。決定11 のうち member account の SCP と root 資格情報の中央管理の中身は、`organization-baseline` の Policy Test が見る。本 ADR が見るのは、apply の role がそれらを変更できないことである。
 
 ## 影響
 
@@ -297,6 +299,7 @@ plan の role は変更系の権限を一切持たずに済む。ただし plan 
 - 別アカウントの CI から bootstrap の構成物を作れるアカウントでは、初回の例外を使わない。そのための cross-account の経路は、明示的なユースケースとして設計される（ADR-0301 決定18）。
 - 保護設定の宣言に environment が加わり、ADR-0603 の適用と突合の対象が広がる。
 - 管理アカウントの identity root が、組織全体（OU、アカウント、SCP、Identity Center）を持つ。その plan と apply は、bootstrap の構成物に加えて組織の統制を対象にする。
+- 管理アカウントの初回の段4 の apply は、統制の構成物（組織・SCP・break-glass）も一時 IAM user で作る。段4 の後、アカウントには break-glass の IAM user が2つ残る。
 - apply-identity の role に、統制の構成物の変更の権限が加わる。その与え方は `deployment-identity` の ADR が持つ。
 - apply の role の権限設計（決定16）が、当該 use-case の最大の設計課題になる。ADR-0301 決定8 のもとでは wildcard による解決が採れない。
 - workload root の use-case が、本リポジトリの外のリポジトリを信頼する role を持つ。その role は apply の role が作る（決定19）。
