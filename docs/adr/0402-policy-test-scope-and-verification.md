@@ -75,6 +75,10 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
 
 20. Policy が、要求元・暗号化コンテキスト・Resource の値を「1つの値に固定している」と読む判定は、wildcard（`*`・`?`）と IAM の policy 変数（`${...}`）を含む値を固定と読まない。policy 変数は要求の時点で置き換わり、どの値に当たるかが plan では決まらない。エスケープ（`${$}` など）も読み分けず、含むものとする。
 
+### 届く主体を数える判定
+
+21. Policy が、Allow の Resource がある resource に当たるかを読み、その resource へ権限が届く主体を数える判定は、IAM の policy 変数（`${...}`）を含む Resource を、当たるとも当たらないとも読まない。policy 変数を任意の文字列と読んで当たりうる Resource を、違反として報告する。届く主体の集合を別の文書と突き合わせる判定では、どちらに読んでも片側へ誤るためである。決定20 と同じく、エスケープ（`${*}` など）と既定値を持つ変数も読み分けない。Resource の policy 変数を一律に拒む判定は、これを満たす。
+
 ## 検討した代替案
 
 ### 案A: Security と Policy を分けず、いずれか一方へ寄せる
@@ -107,7 +111,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 
 ## 保証範囲
 
-- 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと。reference の plan で、宣言した引数が書かないときの値であり、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に在ること（決定17・18）。値を固定と読む判定が、wildcard と policy 変数を含む値を固定と読まないこと（決定20）
+- 保証すること: Security と Policy の間で、1つの invariant に検査の権威が1つであること。配線された Policy がテストを持つこと。reference の plan で、宣言した引数が書かないときの値であり、宣言した型の、Provider の schema が非推奨とする書ける引数が宣言に在ること（決定17・18）。値を固定と読む判定が、wildcard と policy 変数を含む値を固定と読まないこと（決定20）。届く主体を数える判定が、policy 変数を含み当たりうる Resource を数えずに違反とすること（決定21）
 - 保証しないこと: Security レイヤーのルールセットの網羅性。Policy が対象としていない invariant の充足。resource の NOTE だけが告げる引数を宣言に載せたこと。保護の対象でない型の、別の resource と同じ設定を書く引数（attachment 型と同じ設定を書く引数は、ADR-0102 決定18 が書くことを禁じ、層の検査が HCL のソースで落とす）。保護の対象に足した型を宣言に載せたこと
 
 ## 検証方法
@@ -117,6 +121,7 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 - Policy のテスト: 各 Policy が、違反する入力に対して違反を報告すること（決定8）
 - Policy のテスト: 決定17 で宣言した引数ごとに、書いた値と plan で決まらない値で違反を報告し、書かないときの値で報告しないこと。宣言した型と引数が入力に無い場合と、Provider の schema が非推奨とする書ける引数が宣言に無い場合に違反を報告すること（決定18）
 - Policy のテスト: 値を固定と読む判定ごとに、wildcard と policy 変数を含む値で違反を報告すること（決定20）
+- Policy のテスト: 届く主体を数える判定ごとに、policy 変数を含み対象に当たりうる Resource で違反を報告し、変数を任意の文字列と読んでも当たらない Resource で報告しないこと（決定21）
 - Static Analysis（`make tf-policy-canary`）: mock provider の plan で、書いた文字列の属性の値が override に隠されずに Policy の入力へ現れること。Provider の schema から取り出した非推奨の引数の一覧が Policy に届くこと（決定18）
 - Unit Test（`scripts/provider-schema`）: Provider の schema が非推奨とする書ける引数を、層の検査（ADR-0102 決定18）と同じ関数で取り出し、同じ schema から同じ一覧を得ること（決定18）
 - レビュー: 決定2 の基準による配置の判断、決定3 の重複の不在、および決定17 の resource の NOTE に依る引数の選定。いずれも機械判定できないため、Policy を追加・変更する Pull Request のレビュー観点とする
