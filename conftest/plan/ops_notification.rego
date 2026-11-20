@@ -178,6 +178,18 @@ reaches_topic(s) if {
 
 reaches_topic(s) if "NotResource" in object.keys(s)
 
+deny contains msg if {
+	some r in lib.readable
+	r.document.type == "aws_iam_role_policy"
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+	publish_action(s)
+	some res in lib.as_array(object.get(s, "Resource", []))
+	lib.policy_variable(res)
+	lib.iam_match(lib.policy_variable_as_wildcard(res), topic_arn)
+	msg := sprintf("[PLAN-NOTIFY-03] %s の Allow の Resource %s が policy 変数（${...}）を含み、Topic %s へ publish できるかが plan で決まりません。policy 変数を使わずに値を書いてください（ADR-0402 決定21）", [r.document.address, res, topic_arn])
+}
+
 publishing_policies contains {"address": r.document.address, "role": object.get(c.rc.change.after, "role", null)} if {
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"

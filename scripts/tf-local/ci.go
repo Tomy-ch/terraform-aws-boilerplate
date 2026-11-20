@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -33,7 +34,6 @@ const oidcHostSuffix = ".actions.githubusercontent.com"
 const maxTokenSize = 16 << 10
 
 var (
-	roleNames      = []string{"plan", "apply", "apply-identity", "unlock-identity", "unlock"}
 	subPattern     = regexp.MustCompile(`^repo:[^\s:]+:environment:[A-Za-z0-9_.-]+$`)
 	counterPattern = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	branchPattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
@@ -89,7 +89,7 @@ func runRoleARN(args []string) (string, error) {
 
 func roleARN(project, env, role, account string) (string, error) {
 	if !tokenPattern.MatchString(project) || !tokenPattern.MatchString(env) ||
-		!slices.Contains(roleNames, role) || !accountPattern.MatchString(account) {
+		!slices.Contains(cientry.Roles(), role) || !accountPattern.MatchString(account) {
 		return "", errRole
 	}
 
@@ -105,7 +105,7 @@ func runAssumeDenied(args []string, readFile func(string) ([]byte, error)) (stri
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
 
-	if fs.NArg() != 1 || !slices.Contains(roleNames, *role) {
+	if fs.NArg() != 1 || !slices.Contains(cientry.Roles(), *role) {
 		return "", errUsage
 	}
 

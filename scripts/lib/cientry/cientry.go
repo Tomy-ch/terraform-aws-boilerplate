@@ -4,6 +4,9 @@
 // 入口は `ci-<種別>-<env>-<root>` のターゲットで、その振る舞いは ci.mk の `define CI_<種別>` が持ちます。
 // 種別を足すときは、ci.mk の define と入口に加えて、登録簿に1件足します。ci.mk に在って登録簿に無い種別と
 // role のずれは [Parse] が、登録簿に在って ci.mk に入口が無い種別は [CheckDeclared] が落とします。
+//
+// 登録簿の role と、deployment-identity が作る role（[TerraformRolesFile] の `local.roles`）との過不足は
+// [CheckTerraformRoles] が落とします。
 package cientry
 
 import (
@@ -220,8 +223,12 @@ func Lookup(name string) (Kind, bool) {
 
 // Roles は登録簿の種別が取る role を、重複を除いて返します。順は種別の順に identity、workload です。
 func Roles() []string {
+	return std.roles()
+}
+
+func (r registry) roles() []string {
 	var out []string
-	for _, k := range std {
+	for _, k := range r {
 		for _, role := range []string{k.IdentityRole, k.WorkloadRole} {
 			if !slices.Contains(out, role) {
 				out = append(out, role)

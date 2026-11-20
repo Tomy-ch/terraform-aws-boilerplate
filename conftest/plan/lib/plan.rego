@@ -44,6 +44,10 @@ iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()
 # IAM の policy 変数（${...}）は要求の時点で置き換わる。
 policy_variable(v) if contains(v, "${")
 
+# policy 変数を任意の文字列と読んだ IAM の pattern。最初の ${ から最後の } まで（閉じなければ末尾まで）を * に置くので、
+# 入れ子や既定値の中の } と改行でも、当たりうる範囲を狭めない（ADR-0402 決定21）。
+policy_variable_as_wildcard(p) := regex.replace(p, `(?s)\$\{(.*\}|.*$)`, "*")
+
 iam_match(pattern, value) if regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
 
 # 鍵の暗号操作と grant。Key Policy のアカウントへの委任と IAM の Allow に置かない（ADR-0301 決定12）。
@@ -115,8 +119,7 @@ raw_inline_shape(decl) if {
 	}
 }
 
-# ADR-0402 決定17 の宣言 inline_arguments の形。型ごとに空でない object で、値は書かないときの値（null か []）、
-# documents の型と属性と重ならない。CI の実 plan は plan.input を掛けないので、plan.stateful_protection も同じ形を見る。
+# ADR-0402 決定17 の宣言 inline_arguments の形。CI の実 plan は plan.input を掛けないので、plan.stateful_protection も同じ形を見る。
 inline_arguments_shape(decl) if {
 	is_object(decl.inline_arguments)
 	count(decl.inline_arguments) > 0
