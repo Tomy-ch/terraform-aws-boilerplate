@@ -445,9 +445,6 @@
       },
       "aws_organizations_organization": {
         "aws_service_access_principals": null
-      },
-      "aws_route53_zone": {
-        "vpc": []
       }
     },
     "organization_baseline": {
