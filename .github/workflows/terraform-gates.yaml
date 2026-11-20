@@ -57,7 +57,8 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 順序の検査と層の検査と root の検査が hcl-input を、tf-validate が tf-validate-result を走らせ、どれもこのソースからビルドする。
+          # 順序の検査と層の検査と root の検査が hcl-input を、層の検査が provider-schema を、tf-validate が tf-validate-result を走らせ、
+          # どれもこのソースからビルドする。
           filters: |
             relevant:
               - '.github/workflows/terraform-gates.yaml'
@@ -75,6 +76,7 @@ jobs:
               - 'scripts/infra-code-gate/**'
               - 'scripts/tf-local/**'
               - 'scripts/hcl-input/**'
+              - 'scripts/provider-schema/**'
               - 'scripts/tf-validate-result/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
@@ -193,6 +195,9 @@ jobs:
             rekor.sigstore.dev
             fulcio.sigstore.dev
             awscli.amazonaws.com
+            registry.terraform.io
+            releases.hashicorp.com
+            github-releases.githubusercontent.com
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -200,11 +205,12 @@ jobs:
           persist-credentials: false
 
       # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
-      # 層の検査と root の検査が hcl-input を走らせ、4つとも scripts/ からビルドする。conftest: 順序の検査と層の検査と root の検査が使う。
+      # 層の検査と root の検査が hcl-input を、層の検査が provider-schema を走らせ、5つとも scripts/ からビルドする。conftest: 順序の検査と
+      # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:terraform-linters/tflint aqua:open-policy-agent/conftest go
+          tools: aqua:terraform-linters/tflint aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # GITHUB_TOKEN: `tflint --init` は ruleset を GitHub Releases API から取り、API は認証の無い呼び出しを

@@ -125,7 +125,7 @@ test_relative_source_and_module_target_reject_interpolated_literals if {
 
 test_address_of if {
 	address_of({"kind": "traversal", "root": "aws_x", "steps": [{"kind": "attr", "name": "y"}]}) == "aws_x.y"
-	not address_of({"kind": "traversal", "root": "aws_x", "steps": [{"kind": "attr", "name": "y"}, {"kind": "index"}]})
+	not address_of({"kind": "traversal", "root": "aws_x", "steps": [{"kind": "attr", "name": "y"}, {"kind": "index", "index": {"form": "other"}}]})
 	not address_of({"kind": "literal", "value": "aws_x.y"})
 }
 
@@ -155,7 +155,7 @@ ok_doc := {"files": [{"path": "m/a.tf", "parsed": true}], "blocks": [{
 			{"kind": "template", "parts": [{"kind": "traversal", "root": "path", "steps": [{"kind": "attr", "name": "module"}]}, {"kind": "literal", "value": "/x"}]},
 		]}},
 		{"path": "y", "parent": -1, "line": 4, "refs": [], "expr": {"kind": "object", "items": [
-			{"key": {"kind": "literal", "value": "k"}, "value": {"kind": "traversal", "root": "var", "steps": [{"kind": "splat"}, {"kind": "index"}]}},
+			{"key": {"kind": "literal", "value": "k"}, "value": {"kind": "traversal", "root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "literal", "value": 0}}]}},
 		]}},
 	],
 }]}
@@ -198,6 +198,11 @@ test_shape_errors_deny_each_broken_field if {
 		{"op": "add", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/0/name", "value": "x"},
 		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/kind", "value": "call"},
 		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1", "value": {"kind": "attr"}},
+		{"op": "remove", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index/form", "value": "each"},
+		{"op": "remove", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index/value"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index/value", "value": true},
+		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index", "value": {"form": "other", "value": 0}},
 		{"op": "remove", "path": "/blocks/0/attributes/1/expr/items/0/key/value"},
 	]
 	every op in ops {

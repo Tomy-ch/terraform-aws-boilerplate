@@ -619,7 +619,31 @@ node_fields_ok(e) if {
 	}
 }
 
-well_formed_step(st) if st == {"kind": "index"}
+# 段の形。式の木の traversal の段と、層の検査が読む参照の列の段（conftest/hcl/layer/）が共に使う。
+# 添字の段は添字の式の形を持ち、literal だけが値（文字列か数）を持つ。
+well_formed_step(st) if {
+	is_object(st)
+	{k | some k, _ in st} == {"kind", "index"}
+	st.kind == "index"
+	well_formed_index(st.index)
+}
+
+well_formed_index(x) if {
+	is_object(x)
+	{k | some k, _ in x} == {"form"}
+	x.form in {"each_key", "each_value", "count_index", "other"}
+}
+
+well_formed_index(x) if {
+	is_object(x)
+	{k | some k, _ in x} == {"form", "value"}
+	x.form == "literal"
+	literal_value(x.value)
+}
+
+literal_value(v) if is_string(v)
+
+literal_value(v) if is_number(v)
 
 well_formed_step(st) if st == {"kind": "splat"}
 
