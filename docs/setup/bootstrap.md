@@ -222,7 +222,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
    rm -f tmp/plan/admin-identity.tfplan
    ```
 
-   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 41 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
+   最後の行が `# 結果: 不足 0 件、余剰 0 件` で、`# plan:` の行が `import 4 / add 43 / change 0 / destroy 0`、`# commit:` の行に `未コミットの変更あり` が無ければ次へ。期待値は [`check-plan.expected`](scripts/check-plan.expected) に在る。NG の行があれば[トラブルシューティング](#段2-の-plan-が一致しない)へ。
 
    > **重要**: `check-plan.sh` を実際の plan で初めて使うときは、plan の出力（`terraform plan` が表示したもの）の取り込みと追加の一覧を、`check-plan.expected` とも目で照合する。両者の判定が食い違ったら、止まって Pull Request に記録する。
 
