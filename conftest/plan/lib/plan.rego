@@ -41,6 +41,9 @@ lower_all(xs) := [lower(x) | some x in as_array(xs)]
 # 構文として読み、閉じていないと評価が未定義になって規則が黙るので使わない。
 iam_regex(p) := strings.replace_n({"?": ".", "*": ".*"}, regex.replace(p, `[.+()\[\]{}|^$\\]`, `\${0}`))
 
+# IAM の policy 変数（${...}）は要求の時点で置き換わる。
+policy_variable(v) if contains(v, "${")
+
 iam_match(pattern, value) if regex.match(sprintf("^%s$", [iam_regex(pattern)]), value)
 
 # 鍵の暗号操作と grant。Key Policy のアカウントへの委任と IAM の Allow に置かない（ADR-0301 決定12）。

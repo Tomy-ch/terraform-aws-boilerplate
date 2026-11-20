@@ -419,3 +419,15 @@ test_violation_state_backend_root_malformed if {
 		fixture.has(sprintf("[PLAN-UNLOCK-00] data.policy_plan.state_backend.roots の要素 %v が、unlocker の文字列を持つ object ではありません", [root]), msgs)
 	}
 }
+
+# IAM と Key Policy の両方に同じ変数を置いても、04 は lock file の object に限ったと読まない。
+test_violation_context_policy_variable if {
+	v := concat("", [bucket, "/identity/${aws:PrincipalTag/k}"])
+	rl := object.union(remove_lock, {"Resource": v})
+	msgs := p.deny with input as input_with([list_lock, rl], key_policy([read_grant(role_arn, "kms:Decrypt", [v])]))
+		with data.policy_plan.deployment_identity as decl
+		with data.policy_plan.state_backend as sb
+	{substring(m, 0, 17) | some m in msgs} == {"[PLAN-UNLOCK-02] ", "[PLAN-UNLOCK-04] "}
+	some m in msgs
+	contains(m, "kms:EncryptionContext:aws:s3:arn で IAM の lock file の object")
+}

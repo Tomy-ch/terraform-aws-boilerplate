@@ -19,7 +19,7 @@ CloudWatch Logs は Log Group ごとに別の鍵を勧める（CloudWatch Logs U
 
 1. 証跡の鍵はこのユースケースが `modules/kms` で持つ。Key Policy の CloudTrail の文と Config の文は `modules/kms` の `users.services.cloudtrail`（trail の ARN）と `users.services.config`（アカウントの ID）が組む。
 2. CloudTrail の暗号化コンテキストの条件は、trail の ARN の完全一致にする。CloudTrail の文書の例（アカウント単位の wildcard）より狭い。
-3. `conftest/plan/decl.json` の `kms_key_policy.cross_account_sources` に、鍵の外のアカウントの要求元を受ける Key Policy の address と、受けるサービスを宣言する。`PLAN-KMS-05` は、宣言した Key Policy の、宣言したサービスだけを principal に持つ文に限って、wildcard の無いアカウントの ID か、アカウントの欄を持つ同じ partition の ARN を受ける。
+3. `conftest/plan/decl.json` の `kms_key_policy.cross_account_sources` に、鍵の外のアカウントの要求元を受ける Key Policy の address と、受けるサービスを宣言する。`PLAN-KMS-05` は、宣言した Key Policy の、宣言したサービスだけを principal に持つ文に限って、固定の値（repository-wide/ADR-0402 決定20）の、アカウントの ID か、アカウントの欄を持つ同じ partition の ARN を受ける。
 4. アクセスログの Log Group は、証跡の鍵と別の鍵で暗号化する。
 
 ## 検討した代替案
