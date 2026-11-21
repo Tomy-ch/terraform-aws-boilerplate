@@ -2649,3 +2649,33 @@ run "workload_regions_in_aws_iso_b" {
     error_message = "Budgets と Cost Explorer の Resource が、data source の partition から組まれていません。"
   }
 }
+
+run "rejects_empty_name_prefix" {
+  command = plan
+
+  variables {
+    name_prefix = ""
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_name_prefix_without_env" {
+  command = plan
+
+  variables {
+    name_prefix = "tabp"
+  }
+
+  expect_failures = [var.name_prefix]
+}
+
+run "rejects_name_prefix_with_empty_env" {
+  command = plan
+
+  variables {
+    name_prefix = "tabp-"
+  }
+
+  expect_failures = [var.name_prefix]
+}
