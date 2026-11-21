@@ -756,11 +756,13 @@ with_plan_policy(statements) := object.union(role_policies, {"module.d.aws_iam_r
 
 # lock を外す role は、IAM の s3:GetObject の lock file と Key Policy の復号が一致し、鍵の生成はどちらにも無い。
 test_violation_unlock_key_object_mismatch if {
-	every ks in [
-		replace(valid_key_statements, 5, read_only(u, array.concat(lock_keys, [identity_keys[0]]))),
-		replace(valid_key_statements, 6, read_write(wu, workload_lock_keys)),
+	every c in [
+		{"ks": replace(valid_key_statements, 5, read_only(u, array.concat(lock_keys, [identity_keys[0]]))), "role": "unlock_role", "action": "kms:Decrypt"},
+		{"ks": replace(valid_key_statements, 6, read_write(wu, workload_lock_keys)), "role": "workload_unlock_role", "action": "kms:GenerateDataKey"},
 	] {
-		fixture.has("[PLAN-SBW-10]", messages_on(valid_statements, ks, decl))
+		some m in messages_on(valid_statements, c.ks, decl)
+		startswith(m, sprintf("[PLAN-SBW-10] %s の role", [c.role]))
+		contains(m, sprintf("%s を許す object", [c.action]))
 	}
 }
 
