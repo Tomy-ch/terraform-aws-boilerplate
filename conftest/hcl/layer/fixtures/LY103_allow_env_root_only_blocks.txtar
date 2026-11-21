@@ -1,0 +1,18 @@
+-- env/dev/main.tf --
+module "u" {
+  source = "../../usecases/u"
+}
+-- env/dev/versions.tf --
+terraform {
+  backend "s3" {}
+}
+
+terraform {
+  cloud {}
+}
+
+import {
+  to = aws_s3_bucket.x
+  id = "x"
+}
+-- usecases/u/main.tf --

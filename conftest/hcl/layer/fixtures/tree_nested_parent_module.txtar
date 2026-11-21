@@ -1,0 +1,26 @@
+-- env/dev/main.tf --
+module "u" {
+  source = "../../usecases/u"
+}
+-- modules/a/main.tf --
+resource "aws_s3_bucket" "this" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+}
+-- modules/a/plan.tf --
+resource "aws_guardduty_malware_protection_plan" "this" {
+  protected_resource {
+    s3_bucket {
+      bucket_name = module.b.name
+    }
+  }
+}
+-- modules/a/tests/ok.tftest.hcl --
+run "ok" {
+  command = plan
+}
+-- usecases/u/main.tf --
+module "a" {
+  source = "../../modules/a"
+}

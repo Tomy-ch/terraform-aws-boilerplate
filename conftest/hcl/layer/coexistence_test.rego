@@ -1,6 +1,5 @@
 package layer
 
-# 参照は手で書き、HCL のソースは Conftest の側の block の構造を作る。
 
 cox_decl := {
 	"attachments": object.union(fixture_decl.attachments, {
@@ -27,106 +26,56 @@ cox_schema := object.union(fixture_schema, {
 	"aws_route_table": {"arguments": ["vpc_id", "route"], "deprecated": [], "blocks": []},
 })
 
-cox_denies_with(files, blocks, d, sch) := result if {
-	result := deny with input as files
+cox_denies_with(doc, d, sch) := result if {
+	result := deny with input as doc
 		with data.layer_decl as d
-		with data.layer_files as listed_of(files)
-		with data.hcl_input as go_input(files, blocks)
+		with data.layer_files as listed_of(doc)
+		with data.hcl_parsed_files as parsed_of(doc)
+		with data.hcl_block_counts as counts_of(doc)
 		with data.layer_schema as sch
 }
 
-cox_denies(files, blocks) := cox_denies_with(files, blocks, cox_decl, cox_schema)
-
-cox_ids(src, blocks, id) := with_id(cox_denies([tf(main_tf, src)], blocks), id)
+cox_denies(doc) := cox_denies_with(doc, cox_decl, cox_schema)
 
 # --- LY304 ---
 
 test_LY304_deny_inline_policy_block if {
-	msgs := cox_ids(`resource "aws_iam_role" "r" {
-	inline_policy {}
-}
-`, [], "LY304")
+	msgs := with_id(cox_denies(fx("LY304_deny_inline_policy_block")), "LY304")
 	only_with(msgs, "aws_iam_role.r が inline_policy を書いています。同じ設定を attachment 型（aws_iam_role_policies_exclusive, aws_iam_role_policy）が書く")
 }
 
 test_LY304_deny_dynamic_inline_policy if {
-	count(cox_ids(`resource "aws_iam_role" "r" {
-	dynamic "inline_policy" {
-		for_each = var.p
-		content {
-			name = inline_policy.key
-		}
-	}
-}
-`, [], "LY304")) == 1
+	count(with_id(cox_denies(fx("LY304_deny_dynamic_inline_policy")), "LY304")) == 1
 }
 
 test_LY304_deny_null_attribute if {
-	count(cox_ids(`resource "aws_iam_role" "r" {
-	managed_policy_arns = null
-}
-`, [], "LY304")) == 1
+	count(with_id(cox_denies(fx("LY304_deny_null_attribute")), "LY304")) == 1
 }
 
 test_LY304_deny_empty_list if {
-	msgs := cox_ids(`resource "aws_security_group" "s" {
-	ingress = []
-}
-`, [], "LY304")
+	msgs := with_id(cox_denies(fx("LY304_deny_empty_list")), "LY304")
 	only_with(msgs, "aws_security_group.s が ingress を書いています。同じ設定を attachment 型（aws_security_group_rule）が書く")
 }
 
-test_LY304_deny_written_only_in_hcl_input if {
-	count(cox_ids(`resource "aws_iam_role" "r" {}
-`, [blk(main_tf, "resource", ["aws_iam_role", "r"], [attr("managed_policy_arns", [])])], "LY304")) == 1
-}
-
-test_LY304_deny_dynamic_only_in_hcl_input if {
-	count(cox_ids(`resource "aws_iam_role" "r" {}
-`, [blk(main_tf, "resource", ["aws_iam_role", "r"], [attr("dynamic.inline_policy.for_each", [ref("var.p")])])], "LY304")) == 1
+test_LY304_deny_dynamic_without_attributes if {
+	count(with_id(cox_denies(fx("LY304_deny_dynamic_without_attributes")), "LY304")) == 1
 }
 
 test_LY304_allow_default_security_group if {
-	count(cox_ids(`resource "aws_default_security_group" "d" {
-	ingress = []
-	egress  = []
-}
-`, [], "LY304")) == 0
+	count(with_id(cox_denies(fx("LY304_allow_default_security_group")), "LY304")) == 0
 }
 
 test_LY304_allow_unrelated_argument if {
-	count(cox_ids(`resource "aws_iam_role" "r" {
-	name = "x"
-}
-`, [], "LY304")) == 0
+	count(with_id(cox_denies(fx("LY304_allow_unrelated_argument")), "LY304")) == 0
 }
 
 test_LY304_allow_inline_owned if {
-	count(cox_ids(`resource "aws_route_table" "t" {
-	route = []
-}
-`, [], "LY304")) == 0
+	count(with_id(cox_denies(fx("LY304_allow_inline_owned")), "LY304")) == 0
 }
 
 # 同じ role に、排他の型と個別の型を併用する形は、親の引数を書かないので落とさない。
 test_LY304_allow_exclusive_with_individual_attachment if {
-	src := `resource "aws_iam_role" "r" {}
-
-resource "aws_iam_role_policy_attachments_exclusive" "e" {
-	role_name   = aws_iam_role.r.name
-	policy_arns = ["arn"]
-}
-
-resource "aws_iam_role_policy_attachment" "a" {
-	role       = aws_iam_role.r.name
-	policy_arn = "arn"
-}
-`
-	blocks := [
-		blk(main_tf, "resource", ["aws_iam_role_policy_attachments_exclusive", "e"], [attr("role_name", [ref("aws_iam_role.r.name")])]),
-		blk(main_tf, "resource", ["aws_iam_role_policy_attachment", "a"], [attr("role", [ref("aws_iam_role.r.name")])]),
-	]
-	count(cox_denies([tf(main_tf, src)], blocks)) == 0
+	count(cox_denies(fx("LY304_allow_exclusive_with_individual_attachment"))) == 0
 }
 
 # --- LY307 ---
@@ -141,247 +90,164 @@ resource "aws_route" "r" {
 `
 
 test_LY307_deny_attachment_to_inline_owned_parent if {
-	some m in cox_ids(route_src, [blk(main_tf, "resource", ["aws_route", "r"], [attr("route_table_id", [ref("aws_route_table.t.id")])])], "LY307")
+	some m in with_id(cox_denies(fx("LY307_deny_attachment_to_inline_owned_parent")), "LY307")
 	contains(m, "aws_route.r が、route を排他に持つと宣言した親 aws_route_table.t")
 }
 
 test_LY307_allow_without_inline_owned if {
 	d := object.union(object.remove(cox_decl, ["inline_owned"]), {"inline_owned": {}})
-	files := [tf(main_tf, route_src)]
-	blocks := [blk(main_tf, "resource", ["aws_route", "r"], [attr("route_table_id", [ref("aws_route_table.t.id")])])]
-	msgs := cox_denies_with(files, blocks, d, cox_schema)
+	msgs := cox_denies_with(fx("LY307_deny_attachment_to_inline_owned_parent"), d, cox_schema)
 	count(with_id(msgs, "LY307")) == 0
 	count(with_id(msgs, "LY304")) == 1
 }
 
 # --- LY305・LY308 ---
 
-lit(v) := {"root": "aws_s3_bucket", "steps": [
-	{"kind": "attr", "name": "this"},
-	{"kind": "index", "index": {"form": "literal", "value": v}},
-	{"kind": "attr", "name": "id"},
-], "within": []}
-
-each_key_ref := {"root": "aws_s3_bucket", "steps": [
-	{"kind": "attr", "name": "this"},
-	{"kind": "index", "index": {"form": "each_key"}},
-	{"kind": "attr", "name": "id"},
-], "within": []}
-
-two_policies(extra1, extra2) := sprintf(`resource "aws_s3_bucket_policy" "a" {
-	%s
-	bucket = "x"
-}
-
-resource "aws_s3_bucket_policy" "b" {
-	%s
-	bucket = "x"
-}
-`, [extra1, extra2])
-
-pol(name, attrs) := blk(main_tf, "resource", ["aws_s3_bucket_policy", name], attrs)
-
-dup_denies(extra1, extra2, attrs1, attrs2, id) := with_id(cox_denies(module_with(two_policies(extra1, extra2)), [pol("a", attrs1), pol("b", attrs2)]), id)
-
 test_LY305_deny_same_whole_parent if {
-	some m in dup_denies("", "", [attr("bucket", [ref("aws_s3_bucket.this.id")])], [attr("bucket", [ref("aws_s3_bucket.this.id")])], "LY305")
+	some m in with_id(cox_denies(fx("LY305_deny_same_whole_parent")), "LY305")
 	contains(m, "aws_s3_bucket_policy.a と aws_s3_bucket_policy.b が、同じ親 aws_s3_bucket.this")
 }
 
 test_LY305_deny_same_literal if {
-	count(dup_denies("", "", [attr("bucket", [lit("a")])], [attr("bucket", [lit("a")])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_same_literal")), "LY305")) == 1
 }
 
 test_LY305_deny_number_and_numeric_string if {
-	count(dup_denies("", "", [attr("bucket", [lit(0)])], [attr("bucket", [lit("0")])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_number_and_numeric_string")), "LY305")) == 1
 }
 
 test_LY305_deny_signed_and_zero_padded_strings if {
-	count(dup_denies("", "", [attr("bucket", [lit(1)])], [attr("bucket", [lit("+1")])], "LY305")) == 1
-	count(dup_denies("", "", [attr("bucket", [lit(1)])], [attr("bucket", [lit("01")])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_signed_and_zero_padded_strings_1")), "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_signed_and_zero_padded_strings_2")), "LY305")) == 1
 }
 
 test_LY305_deny_exponent_string_and_number if {
-	count(dup_denies("", "", [attr("bucket", [lit(100000)])], [attr("bucket", [lit("1e5")])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_exponent_string_and_number")), "LY305")) == 1
 }
 
 test_LY305_deny_whole_and_literal if {
-	count(dup_denies("", "", [attr("bucket", [ref("aws_s3_bucket.this.id")])], [attr("bucket", [lit(1)])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_whole_and_literal")), "LY305")) == 1
 }
 
 test_LY305_deny_through_local if {
-	src := concat("", [two_policies("", ""), "locals {\n  b = aws_s3_bucket.this.id\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("local.b")])]),
-		pol("b", [attr("bucket", [ref("aws_s3_bucket.this.id")])]),
-		locals_blk(main_tf, [attr("b", [ref("aws_s3_bucket.this.id")])]),
-	]
-	count(with_id(cox_denies(module_with(src), blocks), "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_through_local")), "LY305")) == 1
 }
 
 # 同じ名前の local を2つの block が定義しても、評価を止めずに両方の定義を辿る。
 test_LY305_deny_through_duplicated_local if {
-	src := concat("", [two_policies("", ""), "resource \"aws_s3_bucket\" \"other\" {}\n\nlocals {\n  b = aws_s3_bucket.this.id\n}\n\nlocals {\n  b = aws_s3_bucket.other.id\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("local.b")])]),
-		pol("b", [attr("bucket", [ref("aws_s3_bucket.other.id")])]),
-		locals_blk(main_tf, [attr("b", [ref("aws_s3_bucket.this.id")])]),
-		locals_blk(main_tf, [attr("b", [ref("aws_s3_bucket.other.id")])]),
-	]
-	count(with_id(cox_denies(module_with(src), blocks), "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_through_duplicated_local")), "LY305")) == 1
 }
 
 test_LY305_deny_overlapping_literal_sets if {
-	count(dup_denies("", "", [attr("bucket", [lit(0), lit(1)])], [attr("bucket", [lit(1)])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_overlapping_literal_sets")), "LY305")) == 1
 }
 
 test_LY305_allow_distinct_literals if {
-	msgs := cox_denies(module_with(two_policies("", "")), [pol("a", [attr("bucket", [lit(0)])]), pol("b", [attr("bucket", [lit(1)])])])
+	msgs := cox_denies(fx("LY305_allow_distinct_literals"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 0
 }
 
 test_LY305_allow_distinct_parents if {
-	src := concat("", [two_policies("", ""), "resource \"aws_s3_bucket\" \"other\" {}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("aws_s3_bucket.this.id")])]),
-		pol("b", [attr("bucket", [ref("aws_s3_bucket.other.id")])]),
-	]
-	msgs := cox_denies(module_with(src), blocks)
+	msgs := cox_denies(fx("LY305_allow_distinct_parents"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 0
 }
 
 test_LY305_allow_not_whole_document if {
-	src := `resource "aws_iam_role" "r" {}
-
-resource "aws_iam_role_policy" "a" {
-	role = aws_iam_role.r.name
-}
-
-resource "aws_iam_role_policy" "b" {
-	role = aws_iam_role.r.name
-}
-`
-	blocks := [
-		blk(main_tf, "resource", ["aws_iam_role_policy", "a"], [attr("role", [ref("aws_iam_role.r.name")])]),
-		blk(main_tf, "resource", ["aws_iam_role_policy", "b"], [attr("role", [ref("aws_iam_role.r.name")])]),
-	]
-	count(cox_denies([tf(main_tf, src)], blocks)) == 0
+	count(cox_denies(fx("LY305_allow_not_whole_document"))) == 0
 }
 
 test_LY308_deny_multi_and_single if {
-	some m in dup_denies("for_each = aws_s3_bucket.this", "", [attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [each_key_ref])], [attr("bucket", [lit("a")])], "LY308")
+	some m in with_id(cox_denies(fx("LY308_deny_multi_and_single")), "LY308")
 	contains(m, "同じ instance かを参照から判定できません")
 }
 
 test_LY308_deny_two_multi if {
-	count(dup_denies(
-		"for_each = aws_s3_bucket.this", "for_each = aws_s3_bucket.this",
-		[attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [each_key_ref])],
-		[attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [each_key_ref])],
-		"LY308",
-	)) == 1
+	count(with_id(cox_denies(fx("LY308_deny_two_multi")), "LY308")) == 1
 }
 
 test_LY308_deny_conditional_count if {
-	count(dup_denies("count = var.x ? 1 : 0", "", [attr("count", [ref("var.x")]), attr("bucket", [ref("aws_s3_bucket.this.id")])], [attr("bucket", [ref("aws_s3_bucket.this.id")])], "LY308")) == 1
+	count(with_id(cox_denies(fx("LY308_deny_conditional_count")), "LY308")) == 1
 }
 
 test_LY308_deny_undecidable_index if {
-	count(dup_denies("", "", [attr("bucket", [ref("aws_s3_bucket.this[].id"), ref_in("var.k", [[0, 1]])])], [attr("bucket", [lit("a")])], "LY308")) == 1
+	count(with_id(cox_denies(fx("LY308_deny_undecidable_index")), "LY308")) == 1
 }
 
 test_LY308_deny_selected_local if {
-	src := concat("", [two_policies("", ""), "locals {\n  all = aws_s3_bucket.this\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("local.all[].id"), ref_in("var.k", [[0, 1]])])]),
-		pol("b", [attr("bucket", [lit("a")])]),
-		locals_blk(main_tf, [attr("all", [ref("aws_s3_bucket.this")])]),
-	]
-	count(with_id(cox_denies(module_with(src), blocks), "LY308")) == 1
+	count(with_id(cox_denies(fx("LY308_deny_selected_local")), "LY308")) == 1
 }
 
 # 1つの block の instance どうしは比べない（README の「保証しないこと」）。
 test_LY308_allow_single_multi_block if {
-	src := `resource "aws_s3_bucket_policy" "a" {
-	for_each = aws_s3_bucket.this
-	bucket   = each.value.id
-}
-`
-	blocks := [pol("a", [attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [ref("each.value.id")])])]
-	msgs := cox_denies(module_with(src), blocks)
+	msgs := cox_denies(fx("LY308_allow_single_multi_block"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 0
 }
 
 test_LY308_allow_multi_with_distinct_parent if {
-	src := concat("", [two_policies("for_each = aws_s3_bucket.this", ""), "resource \"aws_s3_bucket\" \"other\" {}\n"])
-	blocks := [
-		pol("a", [attr("for_each", [ref("aws_s3_bucket.this")]), attr("bucket", [each_key_ref])]),
-		pol("b", [attr("bucket", [ref("aws_s3_bucket.other.id")])]),
-	]
-	count(with_id(cox_denies(module_with(src), blocks), "LY308")) == 0
+	count(with_id(cox_denies(fx("LY308_allow_multi_with_distinct_parent")), "LY308")) == 0
 }
 
 # --- LY306 ---
 
 test_LY306_deny_schema_missing if {
-	msgs := cox_denies_with([ok_module], [], cox_decl, null)
+	msgs := cox_denies_with(fx("ok_module"), cox_decl, null)
 	only_with(with_id(msgs, "LY306"), "data.layer_schema が無いか")
 }
 
 test_LY306_deny_schema_empty if {
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, {}), "LY306"), "LY306 [schema の一覧] data.layer_schema が無いか、空か")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, {}), "LY306"), "LY306 [schema の一覧] data.layer_schema が無いか、空か")
 }
 
 test_LY306_deny_schema_entry_without_arguments if {
 	sch := object.union(cox_schema, {"aws_vpc": {"arguments": [], "deprecated": [], "blocks": []}})
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "親の型 aws_vpc の書ける引数が schema から1つも取れていません")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "親の型 aws_vpc の書ける引数が schema から1つも取れていません")
 }
 
 test_LY306_deny_deprecated_not_in_arguments if {
 	sch := object.union(cox_schema, {"aws_vpc": {"arguments": ["name"], "deprecated": ["x"], "blocks": []}})
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "LY306 [schema の一覧]")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "LY306 [schema の一覧]")
 }
 
 test_LY306_deny_parent_type_missing if {
 	sch := object.remove(cox_schema, ["aws_route_table"])
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "aws_route_table")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "aws_route_table")
 }
 
 test_LY306_deny_unclassified_deprecated if {
 	sch := object.union(cox_schema, {"aws_iam_role": {"arguments": ["name", "inline_policy", "managed_policy_arns", "x"], "deprecated": ["inline_policy", "managed_policy_arns", "x"], "blocks": ["inline_policy"]}})
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "aws_iam_role の非推奨の引数 x")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "aws_iam_role の非推奨の引数 x")
 }
 
 test_LY306_deny_declared_argument_not_in_schema if {
 	sch := object.union(cox_schema, {"aws_security_group": {"arguments": ["name", "ingress"], "deprecated": [], "blocks": []}})
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "aws_security_group.egress")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "aws_security_group.egress")
 }
 
 test_LY306_deny_stale_unrelated if {
 	sch := object.union(cox_schema, {"aws_s3_bucket": {"arguments": ["bucket", "policy", "acceleration_status", "versioning"], "deprecated": ["policy"], "blocks": ["versioning"]}})
-	only_with(with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306"), "古い分類")
+	only_with(with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306"), "古い分類")
 }
 
 test_LY306_deny_unwritten_value_mismatch if {
 	sch := object.union(cox_schema, {"aws_iam_role": {"arguments": ["name", "inline_policy", "managed_policy_arns"], "deprecated": ["inline_policy", "managed_policy_arns"], "blocks": []}})
-	with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306") == {
+	with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306") == {
 		"LY306 [書かないときの値] attachments.aws_iam_role_policy.parent_arguments の aws_iam_role.inline_policy の値が schema の種類と合いません（block は []、属性は null）",
 		"LY306 [書かないときの値] attachments.aws_iam_role_policies_exclusive.parent_arguments の aws_iam_role.inline_policy の値が schema の種類と合いません（block は []、属性は null）",
 	}
 }
 
 test_LY306_allow_classified if {
-	count(with_id(cox_denies([ok_module], []), "LY306")) == 0
+	count(with_id(cox_denies(fx("ok_module")), "LY306")) == 0
 }
 
 # --- LY001（決定18 の宣言の形） ---
 
 cox_decl_with(t, a) := object.union(cox_decl, {"attachments": {t: a}})
 
-cox_lY001(d) := with_id(cox_denies_with([ok_module], [], d, cox_schema), "LY001")
+cox_lY001(d) := with_id(cox_denies_with(fx("ok_module"), d, cox_schema), "LY001")
 
 test_LY001_allow_coexistence_decl if {
 	count(cox_lY001(cox_decl)) == 0
@@ -418,7 +284,7 @@ test_LY001_deny_unrelated_without_unwritten if {
 
 test_LY306_deny_unrelated_unwritten_mismatch if {
 	d := object.union(object.remove(cox_decl, ["unrelated_deprecated_arguments"]), {"unrelated_deprecated_arguments": {"aws_s3_bucket": {"acceleration_status": {"reason": "fixture", "unwritten": []}}}})
-	only_with(with_id(cox_denies_with([ok_module], [], d, cox_schema), "LY306"), "unrelated_deprecated_arguments の aws_s3_bucket.acceleration_status")
+	only_with(with_id(cox_denies_with(fx("ok_module"), d, cox_schema), "LY306"), "unrelated_deprecated_arguments の aws_s3_bucket.acceleration_status")
 }
 
 test_LY001_deny_inline_owned_empty_reason if {
@@ -444,151 +310,97 @@ test_LY001_deny_unwritten_value_conflict if {
 
 # --- LY304 の書いたと数える形 ---
 
-test_LY304_deny_nested_path_only_in_hcl_input if {
-	msgs := cox_ids(`resource "aws_iam_role" "r" {}
-`, [blk(main_tf, "resource", ["aws_iam_role", "r"], [attr("inline_policy.name", [])])], "LY304")
+test_LY304_deny_nested_attribute if {
+	msgs := with_id(cox_denies(fx("LY304_deny_nested_attribute")), "LY304")
 	only_with(msgs, "aws_iam_role.r が inline_policy を書いています")
 }
 
 # 引数名を接頭辞に持つ別の引数は、その引数を書いたと数えない。
 test_LY304_allow_argument_name_prefix if {
-	count(cox_ids(`resource "aws_iam_role" "r" {}
-`, [blk(main_tf, "resource", ["aws_iam_role", "r"], [attr("inline_policy_extra", []), attr("dynamic.inline_policy_extra.for_each", [])])], "LY304")) == 0
+	count(with_id(cox_denies(fx("LY304_allow_argument_name_prefix")), "LY304")) == 0
 }
 
 # 別の resource が書いた引数は、その resource の分だけを数える。
 test_LY304_deny_only_resource_that_writes if {
-	src := `resource "aws_iam_role" "r" {}
-
-resource "aws_iam_role" "q" {}
-`
-	msgs := cox_ids(src, [blk(main_tf, "resource", ["aws_iam_role", "q"], [attr("managed_policy_arns", [])])], "LY304")
+	msgs := with_id(cox_denies(fx("LY304_deny_only_resource_that_writes")), "LY304")
 	only_with(msgs, "aws_iam_role.q が managed_policy_arns を書いています")
 }
 
 # --- LY305・LY308 の参照の形 ---
 
-whole_ref := ref("aws_s3_bucket.this.id")
-
-# multi(c) の4つの規則は、どれか1つだけでも LY305 を LY308 に変える。
-multi_only(extra1, extra2, attrs1, attrs2) if {
-	count(dup_denies(extra1, extra2, attrs1, attrs2, "LY305")) == 0
-	count(dup_denies(extra1, extra2, attrs1, attrs2, "LY308")) == 1
+# count か for_each のどちらか1つだけでも、LY305 を LY308 に変える。比べる組の後ろの側（c2）だけでも変える。
+multi_only(name) if {
+	count(with_id(cox_denies(fx(name)), "LY305")) == 0
+	count(with_id(cox_denies(fx(name)), "LY308")) == 1
 }
 
-test_LY308_deny_count_only_in_hcl2 if {
-	multi_only("count = 1", "", [attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])])
+test_LY308_deny_count_on_first if {
+	multi_only("LY308_deny_count_on_first")
 }
 
-test_LY308_deny_for_each_only_in_hcl2 if {
-	multi_only("for_each = toset([\"a\"])", "", [attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])])
+test_LY308_deny_for_each_on_first if {
+	multi_only("LY308_deny_for_each_on_first")
 }
 
-test_LY308_deny_count_only_in_hcl_input if {
-	multi_only("", "", [attr("count", []), attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])])
-}
-
-test_LY308_deny_for_each_only_in_hcl_input if {
-	multi_only("", "", [attr("for_each", []), attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])])
-}
-
-# 比べる組の後ろの側（c2）だけが複数の instance を持つ。
 test_LY308_deny_multi_only_second if {
-	multi_only("", "count = 1", [attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])])
+	multi_only("LY308_deny_multi_only_second")
 }
 
 test_LY305_allow_no_multi if {
-	count(dup_denies("", "", [attr("bucket", [whole_ref])], [attr("bucket", [whole_ref])], "LY308")) == 0
+	count(with_id(cox_denies(fx("LY305_deny_same_whole_parent")), "LY308")) == 0
 }
 
-count_index_ref := {"root": "aws_s3_bucket", "steps": [
-	{"kind": "attr", "name": "this"},
-	{"kind": "index", "index": {"form": "count_index"}},
-	{"kind": "attr", "name": "id"},
-], "within": []}
-
 test_LY308_deny_count_index_selection if {
-	msgs := dup_denies("", "", [attr("bucket", [count_index_ref])], [attr("bucket", [whole_ref])], "LY308")
+	msgs := with_id(cox_denies(fx("LY308_deny_count_index_selection")), "LY308")
 	only_with(msgs, "aws_s3_bucket_policy.a と aws_s3_bucket_policy.b が、同じ親 aws_s3_bucket.this を指し")
 }
 
 test_LY308_deny_splat_selection if {
-	msgs := dup_denies("", "", [attr("bucket", [ref("aws_s3_bucket.this[*].id")])], [attr("bucket", [whole_ref])], "LY308")
+	msgs := with_id(cox_denies(fx("LY308_deny_splat_selection")), "LY308")
 	only_with(msgs, "同じ親 aws_s3_bucket.this を指し")
 }
 
 # 属性の続かない1段の参照は、親の全体を選ぶ。
 test_LY305_deny_reference_without_attribute if {
-	msgs := dup_denies("", "", [attr("bucket", [ref("aws_s3_bucket.this")])], [attr("bucket", [whole_ref])], "LY305")
+	msgs := with_id(cox_denies(fx("LY305_deny_reference_without_attribute")), "LY305")
 	only_with(msgs, "同じ親 aws_s3_bucket.this の文書全体を書きます")
 }
 
 test_LY305_deny_literal_and_whole if {
-	count(dup_denies("", "", [attr("bucket", [lit(1)])], [attr("bucket", [whole_ref])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_literal_and_whole")), "LY305")) == 1
 }
 
 test_LY305_deny_decimal_string_and_number if {
-	count(dup_denies("", "", [attr("bucket", [lit("1.0")])], [attr("bucket", [lit(1)])], "LY305")) == 1
+	count(with_id(cox_denies(fx("LY305_deny_decimal_string_and_number")), "LY305")) == 1
 }
 
 test_LY305_allow_distinct_string_literals if {
-	msgs := cox_denies(module_with(two_policies("", "")), [pol("a", [attr("bucket", [lit("a")])]), pol("b", [attr("bucket", [lit("b")])])])
+	msgs := cox_denies(fx("LY305_allow_distinct_string_literals"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 0
 }
 
 test_LY305_deny_through_two_plain_locals if {
-	src := concat("", [two_policies("", ""), "locals {\n  b = local.c\n  c = aws_s3_bucket.this.id\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("local.b")])]),
-		pol("b", [attr("bucket", [whole_ref])]),
-		locals_blk(main_tf, [attr("b", [ref("local.c")]), attr("c", [whole_ref])]),
-	]
-	only_with(with_id(cox_denies(module_with(src), blocks), "LY305"), "同じ親 aws_s3_bucket.this")
+	only_with(with_id(cox_denies(fx("LY305_deny_through_two_plain_locals")), "LY305"), "同じ親 aws_s3_bucket.this")
 }
 
 # plain な local の先で local を添字で選べば、その先の葉は判定できない。
 test_LY308_deny_plain_local_to_selected_local if {
-	src := concat("", [two_policies("", ""), "locals {\n  b = local.all[var.k].id\n  all = aws_s3_bucket.this\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [ref("local.b")])]),
-		pol("b", [attr("bucket", [lit("a")])]),
-		locals_blk(main_tf, [attr("b", [ref("local.all[].id"), ref_in("var.k", [[0, 1]])]), attr("all", [ref("aws_s3_bucket.this")])]),
-	]
-	msgs := cox_denies(module_with(src), blocks)
+	msgs := cox_denies(fx("LY308_deny_plain_local_to_selected_local"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 1
 }
 
 # local をリテラルの添字で選んでも、local の中身の添字までは辿らない。
 test_LY308_deny_local_selected_by_literal if {
-	src := concat("", [two_policies("", ""), "locals {\n  all = aws_s3_bucket.this\n}\n"])
-	blocks := [
-		pol("a", [attr("bucket", [{"root": "local", "steps": [{"kind": "attr", "name": "all"}, {"kind": "index", "index": {"form": "literal", "value": 0}}, {"kind": "attr", "name": "id"}], "within": []}])]),
-		pol("b", [attr("bucket", [lit(0)])]),
-		locals_blk(main_tf, [attr("all", [ref("aws_s3_bucket.this")])]),
-	]
-	msgs := cox_denies(module_with(src), blocks)
+	msgs := cox_denies(fx("LY308_deny_local_selected_by_literal"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 1
 }
 
 # 別の module の同じ名前の親と attachment は比べない。
 test_LY305_allow_same_names_in_other_module if {
-	other_tf := "modules/n/main.tf"
-	src_b := `resource "aws_s3_bucket" "this" {}
-
-resource "aws_s3_bucket_policy" "b" {
-	bucket = "x"
-}
-`
-	src_a := concat("", [bucket, "resource \"aws_s3_bucket_policy\" \"a\" {\n  bucket = \"x\"\n}\n"])
-	files := [tf(main_tf, src_a), tf(other_tf, src_b)]
-	blocks := [
-		pol("a", [attr("bucket", [whole_ref])]),
-		blk(other_tf, "resource", ["aws_s3_bucket_policy", "b"], [attr("bucket", [whole_ref])]),
-	]
-	msgs := cox_denies(files, blocks)
+	msgs := cox_denies(fx("LY305_allow_same_names_in_other_module"))
 	count(with_id(msgs, "LY305")) == 0
 	count(with_id(msgs, "LY308")) == 0
 	count(with_id(msgs, "LY301")) == 0
@@ -596,7 +408,7 @@ resource "aws_s3_bucket_policy" "b" {
 
 # --- LY306 の schema の形 ---
 
-cox_ly306(sch) := with_id(cox_denies_with([ok_module], [], cox_decl, sch), "LY306")
+cox_ly306(sch) := with_id(cox_denies_with(fx("ok_module"), cox_decl, sch), "LY306")
 
 # object.union は object を入れ子まで合わせるので、既存の型に重ねず、新しい型の項目として足す。
 schema_shape_denied(e) if only_with(cox_ly306(object.union(cox_schema, {"aws_zz": e})), "LY306 [schema の一覧]")
@@ -644,7 +456,7 @@ test_LY306_deny_unrelated_argument_not_in_schema if {
 # inline_owned の引数は parent_arguments にも在るのが正しい宣言なので、inline_owned にだけ在る引数（LY001 で落ちる宣言）で見る。
 test_LY306_deny_inline_owned_argument_not_in_schema if {
 	d := object.union(cox_decl, {"inline_owned": {"aws_route_table": {"route": "x", "gateway": "x"}}})
-	msgs := with_id(cox_denies_with([ok_module], [], d, cox_schema), "LY306")
+	msgs := with_id(cox_denies_with(fx("ok_module"), d, cox_schema), "LY306")
 	only_with(msgs, "宣言の aws_route_table.gateway が、Provider の schema の書ける引数にありません")
 }
 
@@ -696,4 +508,56 @@ test_LY001_deny_inline_owned_missing if {
 test_LY001_deny_parent_arguments_wildcard_type if {
 	d := cox_decl_with("aws_x", {"parents": {"a": ["*"]}, "optional": false, "parent_arguments": {"*": {"b": null}}, "whole_document": false})
 	only_with(cox_lY001(d), "attachments.aws_x が parents")
+}
+
+# .tftest.hcl の block は module の構成ではないので、そこに書いた locals は local の定義に数えない。
+test_LY305_allow_locals_only_in_tftest if {
+	count(with_id(cox_denies(fx("LY305_allow_locals_only_in_tftest")), "LY305")) == 0
+	some m in with_id(cox_denies(fx("LY305_allow_locals_only_in_tftest")), "LY301")
+	contains(m, "local.b")
+}
+
+# 文書全体を置き換える型どうしでも、型が違えば同じ文書ではない。
+test_LY305_allow_distinct_exclusive_types if {
+	count(cox_denies(fx("LY305_allow_distinct_exclusive_types"))) == 0
+}
+
+# 添字が別々の変数なら、同じ instance かを判定できない。
+test_LY308_deny_variable_indexes if {
+	msgs := cox_denies(fx("LY308_deny_variable_indexes"))
+	count(with_id(msgs, "LY305")) == 0
+	only_with(with_id(msgs, "LY308"), "aws_s3_bucket_policy.x と aws_s3_bucket_policy.y が、同じ親 aws_s3_bucket.this")
+}
+
+# 条件式の両方の枝が親の葉で、一方の枝が他方の resource と同じ葉を指せば重複である。
+test_LY305_deny_conditional_same_leaf if {
+	msgs := cox_denies(fx("LY305_deny_conditional_same_leaf"))
+	count(with_id(msgs, "LY301")) == 0
+	only_with(with_id(msgs, "LY305"), "aws_s3_bucket_policy.x と aws_s3_bucket_policy.y が、同じ親 aws_s3_bucket.this")
+}
+
+test_LY305_allow_conditional_different_leaf if {
+	count(cox_denies(fx("LY305_allow_conditional_different_leaf"))) == 0
+}
+
+# 何段の local を経ても、選び方が添字で辿れなければ判定できない側に倒す。
+test_LY308_deny_local_chain if {
+	msgs := cox_denies(fx("LY308_deny_local_chain"))
+	count(with_id(msgs, "LY305")) == 0
+	only_with(with_id(msgs, "LY308"), "aws_s3_bucket_policy.x と aws_s3_bucket_policy.y")
+}
+
+# 親の型を2つ持つ attachment 型は、排他に持つと宣言した親の型を指す resource だけが落ちる。
+two_parent_decl := json.patch(cox_decl, [{"op": "replace", "path": "/attachments/aws_route/parents/route_table_id", "value": ["aws_route_table", "aws_vpc"]}])
+
+test_LY307_deny_only_owned_parent_type if {
+	msgs := cox_denies_with(fx("LY307_deny_only_owned_parent_type"), two_parent_decl, cox_schema)
+	only_with(with_id(msgs, "LY307"), "aws_route.to_table が、route を排他に持つと宣言した親 aws_route_table.t")
+}
+
+# 同じ module に無い親は LY301 が落とし、LY307 は数えない。
+test_LY307_allow_parent_in_other_module if {
+	msgs := cox_denies(fx("LY307_allow_parent_in_other_module"))
+	count(with_id(msgs, "LY307")) == 0
+	count(with_id(msgs, "LY301")) == 1
 }

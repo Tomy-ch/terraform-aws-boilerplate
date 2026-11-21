@@ -1,0 +1,13 @@
+-- modules/m/a.tf --
+locals {
+  x = aws_s3_bucket.this.id
+}
+-- modules/m/b.tf --
+locals {
+  x = aws_s3_bucket.this.arn
+}
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+resource "aws_s3_bucket_policy" "this" {
+  bucket = local.x
+}

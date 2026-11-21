@@ -10,199 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func blocksJSON(t *testing.T, src string) string {
-	t.Helper()
-	blocks, err := parseFile("modules/a/main.tf", []byte(src))
-	require.NoError(t, err)
-	raw, err := json.Marshal(blocks)
-	require.NoError(t, err)
-
-	return string(raw)
-}
-
-func Test_parseFile(t *testing.T) {
-	t.Parallel()
-
-	t.Run("全種類の block を、ソースの順に属性を並べて出す", func(t *testing.T) {
-		t.Parallel()
-		src := `terraform {
-	required_version = ">= 1.0"
-}
-
-resource "aws_s3_bucket_policy" "this" {
-	bucket = aws_s3_bucket.this.id
-	provisioner "local-exec" {
-		command = "echo ${var.x}"
-	}
-	policy = data.aws_iam_policy_document.p.json
-	lifecycle {
-		ignore_changes = [tags]
-	}
-}
-
-locals {
-	all = []
-	b   = local.all
-}
-
-module "m" {
-	source = "../m"
-}
-
-data "aws_iam_policy_document" "p" {}
-`
-		want := `[
-			{"file":"modules/a/main.tf","kind":"terraform","labels":[],"attributes":[{"path":"required_version","refs":[]}]},
-			{"file":"modules/a/main.tf","kind":"resource","labels":["aws_s3_bucket_policy","this"],"attributes":[
-				{"path":"bucket","refs":[{"root":"aws_s3_bucket","steps":[{"kind":"attr","name":"this"},{"kind":"attr","name":"id"}],"within":[]}]},
-				{"path":"provisioner.local-exec.command","refs":[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]}]},
-				{"path":"policy","refs":[{"root":"data","steps":[{"kind":"attr","name":"aws_iam_policy_document"},{"kind":"attr","name":"p"},{"kind":"attr","name":"json"}],"within":[]}]},
-				{"path":"lifecycle.ignore_changes","refs":[{"root":"tags","steps":[],"within":[]}]}
-			]},
-			{"file":"modules/a/main.tf","kind":"locals","labels":[],"attributes":[
-				{"path":"all","refs":[]},
-				{"path":"b","refs":[{"root":"local","steps":[{"kind":"attr","name":"all"}],"within":[]}]}
-			]},
-			{"file":"modules/a/main.tf","kind":"module","labels":["m"],"attributes":[{"path":"source","refs":[]}]},
-			{"file":"modules/a/main.tf","kind":"data","labels":["aws_iam_policy_document","p"],"attributes":[]}
-		]`
-		assert.JSONEq(t, want, blocksJSON(t, src))
-	})
-
-	t.Run("dynamic を fold_dynamic と同じ並びに畳み、for_each は畳まない", func(t *testing.T) {
-		t.Parallel()
-		src := `resource "aws_s3_bucket_lifecycle_configuration" "this" {
-	dynamic "rule" {
-		for_each = var.rules
-		content {
-			dynamic "filter" {
-				for_each = rule.value.filters
-				content {
-					dynamic "and" {
-						for_each = filter.value
-						content {
-							prefix = and.value
-						}
-					}
-				}
-			}
-		}
-	}
-	dynamic "a.b" {
-		content {
-			x = 1
-		}
-	}
-}
-`
-		want := `[{"file":"modules/a/main.tf","kind":"resource","labels":["aws_s3_bucket_lifecycle_configuration","this"],"attributes":[
-			{"path":"dynamic.rule.for_each","refs":[{"root":"var","steps":[{"kind":"attr","name":"rules"}],"within":[]}]},
-			{"path":"rule.dynamic.filter.for_each","refs":[{"root":"rule","steps":[{"kind":"attr","name":"value"},{"kind":"attr","name":"filters"}],"within":[]}]},
-			{"path":"rule.filter.dynamic.and.for_each","refs":[{"root":"filter","steps":[{"kind":"attr","name":"value"}],"within":[]}]},
-			{"path":"rule.filter.and.prefix","refs":[{"root":"and","steps":[{"kind":"attr","name":"value"}],"within":[]}]},
-			{"path":"dynamic.a.b.content.x","refs":[]}
-		]}]`
-		assert.JSONEq(t, want, blocksJSON(t, src))
-	})
-
-	t.Run("同じ path の属性と block を重複のまま残す", func(t *testing.T) {
-		t.Parallel()
-		src := "resource \"aws_x\" \"y\" {\n  s { v = var.a }\n  s { v = var.b }\n}\n"
-		want := `[{"file":"modules/a/main.tf","kind":"resource","labels":["aws_x","y"],"attributes":[
-			{"path":"s.v","refs":[{"root":"var","steps":[{"kind":"attr","name":"a"}],"within":[]}]},
-			{"path":"s.v","refs":[{"root":"var","steps":[{"kind":"attr","name":"b"}],"within":[]}]}
-		]}]`
-		assert.JSONEq(t, want, blocksJSON(t, src))
-	})
-
-	t.Run("BOM と CRLF を受理する", func(t *testing.T) {
-		t.Parallel()
-		src := "\ufefflocals {\r\n  a = var.x\r\n}\r\n"
-		want := `[{"file":"modules/a/main.tf","kind":"locals","labels":[],"attributes":[{"path":"a","refs":[{"root":"var","steps":[{"kind":"attr","name":"x"}],"within":[]}]}]}]`
-		assert.JSONEq(t, want, blocksJSON(t, src))
-	})
-
-	t.Run("block の無いファイルは空の配列", func(t *testing.T) {
-		t.Parallel()
-		assert.JSONEq(t, `[]`, blocksJSON(t, "# comment only\n"))
-	})
-
-	t.Run("構文の誤りは errSyntax で、診断の全文を添える", func(t *testing.T) {
-		t.Parallel()
-		_, err := parseFile("modules/a/broken.tf", []byte("resource \"aws_s3_bucket\" {\n"))
-		require.ErrorIs(t, err, errSyntax)
-		assert.Contains(t, err.Error(), "modules/a/broken.tf")
-		assert.Contains(t, err.Error(), "Unclosed configuration block")
-	})
-
-	t.Run("Terraform が受け付けない形は errUnsupportedInput", func(t *testing.T) {
-		t.Parallel()
-
-		tests := map[string]struct {
-			src  string
-			want string
-		}{
-			"ファイルの直下の属性":       {src: "locals {}\nx = 1\n", want: "modules/a/main.tf:2"},
-			"ラベルが1個の resource": {src: "resource \"aws_s3_bucket\" {}\n", want: "modules/a/main.tf:1"},
-			"ラベルが3個の resource": {src: "resource \"aws_s3_bucket\" \"a\" \"b\" {}\n", want: "modules/a/main.tf:1"},
-			"ラベルが無い resource":  {src: "locals {}\nresource {}\n", want: "modules/a/main.tf:2"},
-			"ラベルが1個の data":     {src: "data \"aws_iam_policy_document\" {}\n", want: "modules/a/main.tf:1"},
-		}
-		for name, tt := range tests {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
-				_, err := parseFile("modules/a/main.tf", []byte(tt.src))
-				require.ErrorIs(t, err, errUnsupportedInput)
-				assert.Contains(t, err.Error(), tt.want)
-			})
-		}
-	})
-}
-
-func Test_bodyAttributes(t *testing.T) {
-	t.Parallel()
-
-	t.Run("入れ子の block の段を前置きに足して深さ優先に並べる", func(t *testing.T) {
-		t.Parallel()
-		f, diags := hclsyntax.ParseConfig([]byte("x {\n  b = 1\n  n \"l\" {\n    c = 2\n  }\n  a = 3\n}\n"), "t.tf", hcl.InitialPos)
-		require.Empty(t, diags)
-		body := f.Body.(*hclsyntax.Body).Blocks[0].Body
-		got, err := bodyAttributes(body, []string{"p"})
-		require.NoError(t, err)
-		assert.Equal(t, []attribute{
-			{Path: "p.b", Refs: []ref{}},
-			{Path: "p.n.l.c", Refs: []ref{}},
-			{Path: "p.a", Refs: []ref{}},
-		}, got)
-	})
-
-	t.Run("空の body は空の配列", func(t *testing.T) {
-		t.Parallel()
-		got, err := bodyAttributes(&hclsyntax.Body{}, nil)
-		require.NoError(t, err)
-		assert.Equal(t, []attribute{}, got)
-	})
-
-	t.Run("属性の式を読めなければ errUnknownExpression", func(t *testing.T) {
-		t.Parallel()
-		body := &hclsyntax.Body{Attributes: hclsyntax.Attributes{"a": {Name: "a", Expr: newUnknown()}}}
-		_, err := bodyAttributes(body, nil)
-		require.ErrorIs(t, err, errUnknownExpression)
-	})
-
-	t.Run("入れ子の block の属性の式を読めなければ errUnknownExpression", func(t *testing.T) {
-		t.Parallel()
-		inner := &hclsyntax.Body{Attributes: hclsyntax.Attributes{"a": {Name: "a", Expr: newUnknown()}}}
-		body := &hclsyntax.Body{Blocks: hclsyntax.Blocks{{Type: "n", Body: inner}}}
-		_, err := bodyAttributes(body, nil)
-		require.ErrorIs(t, err, errUnknownExpression)
-	})
-}
-
 func Test_foldDynamic(t *testing.T) {
 	t.Parallel()
 
-	// Rego の fold_dynamic と同じ並びであることは、layer-test.mk の dynamic-parent-* のケースが固定する。
+	// 畳んだ path を層の検査が同じ引数として読むことは、conftest/hcl/layer/tree_test.rego の dynamic_parent_* が固定する。
 	t.Run("期待の並びを返す", func(t *testing.T) {
 		t.Parallel()
 
@@ -275,12 +86,19 @@ func Test_parseConfigBody(t *testing.T) {
 		t.Parallel()
 
 		tests := map[string]struct {
-			src  string
-			want error
+			src     string
+			want    error
+			wantMsg []string
 		}{
-			"構文の誤り":                            {src: "resource \"a\" {\n", want: errSyntax},
-			"非 UTF-8":                          {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
-			"ファイルの直下の属性":                       {src: "x = 1\n", want: errUnsupportedInput},
+			"構文の誤り": {
+				src: "locals {}\nresource \"a\" {\n", want: errSyntax,
+				wantMsg: []string{"m/main.tf:2,", "Unclosed configuration block"},
+			},
+			"非 UTF-8": {src: "locals {\n  a = \"\xff\"\n}\n", want: errSyntax},
+			"ファイルの直下の属性": {
+				src: "locals {}\nx = 1\n", want: errUnsupportedInput,
+				wantMsg: []string{"m/main.tf:2,", `ファイルの直下に属性 "x" があります`},
+			},
 			"ラベルが1個の resource":                 {src: "resource \"a\" {}\n", want: errUnsupportedInput},
 			"ラベルが1個の data":                     {src: "data \"a\" {}\n", want: errUnsupportedInput},
 			"check の中のラベルが1個の data":            {src: "check \"c\" {\n  data \"a\" {}\n}\n", want: errUnsupportedInput},
@@ -291,6 +109,9 @@ func Test_parseConfigBody(t *testing.T) {
 				t.Parallel()
 				_, err := parseConfigBody("m/main.tf", []byte(tt.src))
 				require.ErrorIs(t, err, tt.want)
+				for _, m := range tt.wantMsg {
+					assert.Contains(t, err.Error(), m)
+				}
 			})
 		}
 	})
@@ -329,6 +150,21 @@ terraform {
 				"attributes":[{"path":"backend.s3.key","parent":1,"line":10,"expr":{"kind":"literal","value":"k"},"refs":[]}]}
 		]`
 		assert.JSONEq(t, want, syntaxJSON(t, "m/main.tf", src))
+	})
+
+	// 層の LY304 は、親の引数を書いたかを、空の block・null・[]・dynamic のどれでも数える。属性を持たない
+	// dynamic の content も、畳んだ path の block として残す。
+	t.Run("属性を持たない dynamic も、畳んだ path の block を出す", func(t *testing.T) {
+		t.Parallel()
+		src := "resource \"aws_iam_role\" \"r\" {\n  dynamic \"inline_policy\" {\n    for_each = []\n    content {}\n  }\n}\n"
+		blocks, err := parseSyntaxFile("m/main.tf", []byte(src))
+		require.NoError(t, err)
+		require.Len(t, blocks, 1)
+		var paths []string
+		for _, n := range blocks[0].Blocks {
+			paths = append(paths, n.Path)
+		}
+		assert.Equal(t, []string{"dynamic.inline_policy", "inline_policy"}, paths)
 	})
 
 	t.Run("dynamic を自身の block と、畳んだ content の block として出す", func(t *testing.T) {
@@ -418,23 +254,6 @@ func Test_syntaxBlocks(t *testing.T) {
 	t.Run("属性の式を読めなければ errUnknownExpression を伝える", func(t *testing.T) {
 		t.Parallel()
 		_, err := syntaxBlocks("m/a.tf", unknownBody())
-		require.ErrorIs(t, err, errUnknownExpression)
-	})
-}
-
-func Test_blocksOf(t *testing.T) {
-	t.Parallel()
-
-	t.Run("最上位の block を読む", func(t *testing.T) {
-		t.Parallel()
-		got, err := blocksOf("m/a.tf", &hclsyntax.Body{Blocks: hclsyntax.Blocks{{Type: "locals", Body: &hclsyntax.Body{}}}})
-		require.NoError(t, err)
-		assert.Equal(t, []block{{File: "m/a.tf", Kind: "locals", Labels: []string{}, Attributes: []attribute{}}}, got)
-	})
-
-	t.Run("属性の式を読めなければ errUnknownExpression を伝える", func(t *testing.T) {
-		t.Parallel()
-		_, err := blocksOf("m/a.tf", unknownBody())
 		require.ErrorIs(t, err, errUnknownExpression)
 	})
 }

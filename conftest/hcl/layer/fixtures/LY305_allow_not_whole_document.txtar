@@ -1,0 +1,10 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {}
+
+resource "aws_iam_role_policy" "a" {
+  role = aws_iam_role.r.name
+}
+
+resource "aws_iam_role_policy" "b" {
+  role = aws_iam_role.r.name
+}
