@@ -3,6 +3,8 @@
     "plan_format_version": "1.2",
     "provider_format_version": "1.0",
     "resource_wildcard_actions": [
+      "ce:CreateAnomalyMonitor",
+      "ce:CreateAnomalySubscription",
       "chatbot:CreateSlackChannelConfiguration",
       "chatbot:DescribeSlackChannelConfigurations",
       "cloudformation:CreateStackSet",
@@ -80,7 +82,10 @@
       "oidc_provider": "module.deployment_identity.module.github_oidc.aws_iam_openid_connect_provider.github",
       "plan_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
-        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]"
+        "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]",
+        "read_actions": [
+          "budgets:ViewBudget"
+        ]
       },
       "apply_role": {
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"apply\"]",
@@ -300,7 +305,8 @@
         ],
         "apply_only_denies": [
           "DenyBoundaryRemoval",
-          "DenyLockoutSafetyBypass"
+          "DenyLockoutSafetyBypass",
+          "DenyBootstrapAnomalyDetectionChange"
         ]
       }
     },

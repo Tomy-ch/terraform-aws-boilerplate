@@ -41,6 +41,8 @@ aws iam list-organizations-features
 
 次の CI の plan が変更を示さないことを確かめる。
 
+組織で細粒度の Billing の Action が有効であることを確かめる（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定20）。この組織は段4 で作ったので、AWS の文書では有効のはずである（[Migrating access control for AWS Billing](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/migrate-granularaccess-whatis.html)）。コンソールの上の検索に **Bulk Policy Migrator** と入れ、**Manage new IAM actions** の **Migrate accounts** タブに、移行の残っているアカウントが無いことを見る（[Confirming your migration](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/migrate-granularaccess-console.html#migrate-console-complete)）。残っていれば、finops を置く前に止めて、ADR-0201 決定20 の見直しを起こす。
+
 ### 3.3 Identity Center を有効にする
 
 1. 管理アカウントのコンソールで、リージョンを `ap-northeast-1` にして IAM Identity Center を有効にする。組織のインスタンスとし、鍵は AWS owned key のままにする
