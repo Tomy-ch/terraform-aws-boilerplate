@@ -2155,6 +2155,8 @@
       "aws_budgets_budget": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_ce_anomaly_monitor": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_chatbot_slack_channel_configuration": "子 resource（自前の identity と lifecycle を持つ。購読する SNS の Topic と使う IAM role を参照するが、それらの設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cloudformation_stack_instances": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",
+      "aws_cloudformation_stack_set": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_cloudfront_distribution": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_cloudwatch_event_bus": "親になる resource（自前の identity と lifecycle を持ち、他の resource の設定を書き換えない）",
       "aws_cloudwatch_event_rule": "子 resource（自前の identity と lifecycle を持ち、親の設定を書き換えない。ADR-0102 決定18 の attachment に当たらない）",

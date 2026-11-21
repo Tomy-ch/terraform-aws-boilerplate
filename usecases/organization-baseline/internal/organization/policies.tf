@@ -13,7 +13,8 @@ locals {
       for suffix in ["apply", "apply-identity", "unlock", "unlock-identity"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-${suffix}"
     ]
   ])
-  break_glass_role_arn_pattern = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
+  break_glass_role_arn_pattern    = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
+  stacksets_exec_role_arn_pattern = "arn:aws:iam::*:role/stacksets-exec-*"
 
   service_control_policies = {
     deny-leave-and-close = {
@@ -54,6 +55,14 @@ locals {
         Effect   = "Deny"
         Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
         Resource = local.break_glass_role_arn_pattern
+        # StackSet の service-linked role は SCP の外だが、role を作る stacksets-exec-* は SCP を受ける（organization-baseline/ADR-0202）。
+        Condition = { ArnNotLike = { "aws:PrincipalArn" = local.stacksets_exec_role_arn_pattern } }
+        }, {
+        # 例外は名前で当たるので、その名前の role をメンバーの主体に作らせない。作るのは SCP の外の service-linked role である。
+        Sid      = "DenyStackSetsExecutionRoleChange"
+        Effect   = "Deny"
+        Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+        Resource = local.stacksets_exec_role_arn_pattern
       }]
     }
     deny-guardduty-stop = {

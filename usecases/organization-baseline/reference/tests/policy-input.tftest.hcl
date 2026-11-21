@@ -8,6 +8,9 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
 }
 
 override_resource {

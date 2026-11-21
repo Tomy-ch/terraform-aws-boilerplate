@@ -12,6 +12,8 @@
       "resource.aws_ce_anomaly_monitor": {"executes_code": false},
       "resource.aws_ce_anomaly_subscription": {"executes_code": false},
       "resource.aws_chatbot_slack_channel_configuration": {"executes_code": false},
+      "resource.aws_cloudformation_stack_instances": {"executes_code": false},
+      "resource.aws_cloudformation_stack_set": {"executes_code": true, "body_args": ["template_body"]},
       "resource.aws_cloudwatch_log_delivery": {"executes_code": false},
       "resource.aws_cloudwatch_log_delivery_destination": {"executes_code": false},
       "resource.aws_cloudwatch_log_delivery_source": {"executes_code": false},
@@ -79,7 +81,17 @@
     "providers": {
       "registry.terraform.io/hashicorp/aws": {"command_blocks": []}
     },
-    "languages": {},
-    "allowlist": []
+    "languages": {
+      "hcl": {"contexts": ["tf-lint", "tf-validate-test", "tf-policy"]}
+    },
+    "allowlist": [
+      {
+        "id": "usecases/organization-baseline/internal/break-glass#resource.aws_cloudformation_stack_set.this",
+        "owner": "repository",
+        "source": "usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl",
+        "language": "hcl",
+        "adr": "organization-baseline/member-break-glass-via-stacksets"
+      }
+    ]
   }
 }

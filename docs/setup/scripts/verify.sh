@@ -197,6 +197,7 @@ before_apply() {
   done
   expect_error "IAM group break-glass がまだ無い" NoSuchEntity aws iam get-group --group-name break-glass
   expect_error "role tabp-break-glass がまだ無い" NoSuchEntity aws iam get-role --role-name tabp-break-glass
+  expect_error "StackSet tabp-break-glass がまだ無い" StackSetNotFoundException aws cloudformation describe-stack-set --region "$REGION" --stack-set-name tabp-break-glass
   local p
   for p in apply-identity-governance apply-workload boundary-ops-notification; do
     expect_error "policy tabp-admin-ci-$p がまだ無い" NoSuchEntity aws iam get-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-$p"
