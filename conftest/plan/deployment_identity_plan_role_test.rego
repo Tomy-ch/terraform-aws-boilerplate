@@ -250,11 +250,36 @@ test_violation_read_actions_malformed if {
 	}
 }
 
-test_violation_read_actions_write_verb if {
-	every x in ["budgets:ModifyBudget", "ce:CreateAnomalyMonitor", "ce:DeleteAnomalyMonitor", "ce:UpdateAnomalySubscription", "s3:PutBucketPolicy", "ce:TagResource", "ce:UntagResource", "BUDGETS:MODIFYBUDGET"] {
+test_violation_read_actions_verb_not_allowed if {
+	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget", "budgets:ExecuteBudgetAction", "ce:CreateAnomalyMonitor", "ce:TagResource", "s3:GetObject", "BUDGETS:MODIFYBUDGET", "budgets:XView"] {
 		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
 		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が", [x]), msgs)
+		not lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
+	}
+	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget"] {
+		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
 		fixture.has(sprintf("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action %s があります", [lower(x)]), msgs)
+	}
+}
+
+test_pass_declared_view_verb if {
+	every x in ["budgets:ViewBudget", "BUDGETS:VIEWBUDGET", "budgets:viewbudget", "aws-portal:ViewBilling", "budgets:ViewUpdateHistory", "budgets:ViewDeleteMarker"] {
+		count(p.deny) == 0 with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
+		lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
+	}
+}
+
+# with の data は decl.json と合わさってキーを消せないので、cfg を置き換える。
+test_violation_read_actions_missing if {
+	msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with p.cfg as object.remove(decl.plan_role, ["read_actions"])
+	fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action budgets:viewbudget があります", msgs)
+	not fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions が配列ではありません", msgs)
+}
+
+test_violation_read_actions_non_string if {
+	every x in [null, true, ["a"], {"a": 1}] {
+		msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget", x])
+		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %v が、wildcard を含まない", [x]), msgs)
 	}
 }
 

@@ -42,19 +42,20 @@ read_only(action) if {
 # 動詞が読み取りの形でない読み取りの Action（deployment-identity/ADR-0201 決定13）。
 read_actions := object.get(cfg, "read_actions", [])
 
-write_verbs := ["modify", "create", "delete", "update", "put", "tag", "untag"]
+# 宣言に許す動詞。ほかの動詞の書き込みを読み取りとして通さないよう、拒む動詞ではなく許す動詞を挙げる。
+declared_read_verbs := {"view"}
 
 read_action_shaped(x) if {
 	is_string(x)
 	regex.match(`^[A-Za-z0-9-]+:[A-Za-z0-9]+$`, x)
 }
 
-write_verb(x) if {
-	some v in write_verbs
+declared_read_verb(x) if {
+	some v in declared_read_verbs
 	startswith(split(lower(x), ":")[1], v)
 }
 
-declared_reads := {lower(x) | some x in read_actions; read_action_shaped(x); not write_verb(x)} if {
+declared_reads := {lower(x) | some x in read_actions; read_action_shaped(x); declared_read_verb(x)} if {
 	is_array(read_actions)
 } else := set()
 
@@ -111,8 +112,8 @@ deny contains msg if {
 deny contains msg if {
 	some x in read_actions
 	read_action_shaped(x)
-	write_verb(x)
-	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が %v のどれかで始まります。変更系の Action を読み取りとして宣言しないでください", [x, write_verbs])
+	not declared_read_verb(x)
+	msg := sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が %v のどれでも始まりません。読み取りとして宣言できるのは、この動詞の Action だけです", [x, declared_read_verbs])
 }
 
 deny contains msg if {
