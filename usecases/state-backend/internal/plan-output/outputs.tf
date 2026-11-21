@@ -25,3 +25,8 @@ output "writers" {
   description = "Bucket Policy が object の書き込みを許す role と key の接頭辞の組。呼び出し側のテストが、書き手の宣言を確かめるための出力。"
   value       = var.writers
 }
+
+output "writer_object_prefixes" {
+  description = "書き手の role の ARN ごとの、書ける object の接頭辞の ARN（<Bucket の ARN>/<key の接頭辞>）の昇順の一覧。Bucket の ARN は名前から組み、Bucket の作成を待たずに plan で決まる。鍵の Key Policy が書き手の object を限るのに使う。"
+  value       = tomap({ for arn, ps in { for w in var.writers : w.role_arn => w.key_prefix... } : arn => sort([for p in ps : "arn:${data.aws_partition.current.partition}:s3:::${local.bucket_name}/${p}"]) })
+}

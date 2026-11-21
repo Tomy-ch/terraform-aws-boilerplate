@@ -43,17 +43,36 @@ variables {
     Resource = "*"
   }
 
-  roles_via_s3 = {
-    Sid    = "RolesViaS3ReadWrite"
-    Effect = "Allow"
-    Principal = { AWS = [
-      "arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
-      "arn:aws:iam::123456789012:role/tabp-admin-ci-plan",
-    ] }
-    Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
-    Resource  = "*"
-    Condition = { StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" } }
-  }
+  roles_via_s3 = [
+    {
+      Sid       = "RolesViaS3ReadWrite0"
+      Effect    = "Allow"
+      Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply"] }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+      Resource  = "*"
+      Condition = {
+        StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+        StringLike = { "kms:EncryptionContext:aws:s3:arn" = [
+          "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/*",
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
+        ] }
+      }
+    },
+    {
+      Sid       = "RolesViaS3ReadWrite1"
+      Effect    = "Allow"
+      Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
+      Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+      Resource  = "*"
+      Condition = {
+        StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+        StringLike = { "kms:EncryptionContext:aws:s3:arn" = [
+          "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/*",
+          "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*",
+        ] }
+      }
+    },
+  ]
 
   logs_service = {
     Sid       = "LogsService"
@@ -75,8 +94,8 @@ run "roles_via_s3" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate"], object_prefixes = ["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/"] },
       ]
     }
   }
@@ -84,9 +103,9 @@ run "roles_via_s3" {
   assert {
     condition = jsondecode(aws_kms_key_policy.this.policy) == {
       Version   = "2012-10-17"
-      Statement = [var.administration, var.roles_via_s3]
+      Statement = concat([var.administration], var.roles_via_s3)
     }
-    error_message = "role だけを渡したときの Key Policy が、管理の委任と、S3 経由の利用の2文になっていません。"
+    error_message = "read-write の role だけを渡したときの Key Policy が、管理の委任と、role ごとに ARN の昇順の Sid で object を StringLike で限った S3 経由の文になっていません。"
   }
 }
 
@@ -95,7 +114,7 @@ run "single_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] }]
     }
   }
 
@@ -112,8 +131,8 @@ run "roles_order_does_not_matter" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate"], object_prefixes = ["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
       ]
     }
   }
@@ -121,9 +140,9 @@ run "roles_order_does_not_matter" {
   assert {
     condition = jsondecode(aws_kms_key_policy.this.policy) == {
       Version   = "2012-10-17"
-      Statement = [var.administration, var.roles_via_s3]
+      Statement = concat([var.administration], var.roles_via_s3)
     }
-    error_message = "role の並びを入れ替えると Key Policy が変わります。"
+    error_message = "role と object の並びを入れ替えると Key Policy が変わります。"
   }
 }
 
@@ -151,8 +170,8 @@ run "roles_and_logs" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate"], object_prefixes = ["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
       ]
       services = { logs = ["/tabp/admin/s3-access/plan", "/tabp/admin/s3-access/state"] }
     }
@@ -161,7 +180,7 @@ run "roles_and_logs" {
   assert {
     condition = jsondecode(aws_kms_key_policy.this.policy) == {
       Version   = "2012-10-17"
-      Statement = [var.administration, var.roles_via_s3, var.logs_service]
+      Statement = concat([var.administration], var.roles_via_s3, [var.logs_service])
     }
     error_message = "role と Log Group を渡したときの Key Policy が3文になっていません。"
   }
@@ -173,7 +192,7 @@ run "read_roles" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
         {
           arn    = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"
           via    = "s3"
@@ -193,14 +212,7 @@ run "read_roles" {
       Version = "2012-10-17"
       Statement = [
         var.administration,
-        {
-          Sid       = "RolesViaS3ReadWrite"
-          Effect    = "Allow"
-          Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
-          Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
-          Resource  = "*"
-          Condition = { StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" } }
-        },
+        merge(var.roles_via_s3[1], { Sid = "RolesViaS3ReadWrite0" }),
         {
           Sid       = "RolesViaS3Read0"
           Effect    = "Allow"
@@ -439,7 +451,7 @@ run "all_users" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
         { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp.admin-reader-123456789012-ap-northeast-1-an/k"] },
         { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "sns", access = "read-write", topics = ["t"] },
       ]
@@ -452,7 +464,7 @@ run "all_users" {
 
   assert {
     condition = [for s in jsondecode(aws_kms_key_policy.this.policy).Statement : s.Sid] == [
-      "AccountKeyAdministration", "RolesViaS3ReadWrite", "RolesViaS3Read0", "LogsService",
+      "AccountKeyAdministration", "RolesViaS3ReadWrite0", "RolesViaS3Read0", "LogsService",
       "RolesViaSns0", "SnsPublisherBudgets", "SnsPublisherCloudWatch", "SnsPublisherCostAlerts", "SnsPublisherEvents",
     ]
     error_message = "利用者の種類をすべて渡したときの文の並びが変わっています。"
@@ -465,7 +477,7 @@ run "key_policy_output" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
         { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock"] },
       ]
     }
@@ -567,7 +579,7 @@ run "services_without_cloudtrail_and_config" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] }]
     }
   }
 
@@ -609,5 +621,69 @@ run "roles_via_ecr" {
       }]
     }
     error_message = "via = ecr の role の Key Policy が、管理の委任と、ECR 経由の grant の作成（AWS の resource 向けに限る）と、鍵の参照・grant の廃止の3文になっていません。"
+  }
+}
+
+run "read_and_read_write_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] },
+        {
+          arn    = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+          via    = "s3"
+          access = "read"
+          objects = [
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
+          ]
+        },
+      ]
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy) == {
+      Version = "2012-10-17"
+      Statement = [
+        var.administration,
+        merge(var.roles_via_s3[1], { Sid = "RolesViaS3ReadWrite0" }),
+        {
+          Sid       = "RolesViaS3Read0"
+          Effect    = "Allow"
+          Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
+          Action    = "kms:Decrypt"
+          Resource  = "*"
+          Condition = { StringEquals = {
+            "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com"
+            "kms:EncryptionContext:aws:s3:arn" = [
+              "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
+              "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
+            ]
+          } }
+        },
+      ]
+    }
+    error_message = "read と read-write を併せ持つ role の文が、書く object の復号と鍵の生成の文と、読むだけの object の復号の文に分かれていません。"
+  }
+}
+
+run "read_write_objects_only" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate"] }]
+    }
+  }
+
+  assert {
+    condition = jsondecode(aws_kms_key_policy.this.policy).Statement[1].Condition == {
+      StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+      StringLike   = { "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate"] }
+    }
+    error_message = "固定の object だけの read-write の文が、StringLike でその object に限っていません。"
   }
 }

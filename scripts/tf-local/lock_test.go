@@ -103,12 +103,19 @@ func Test_lockKey(t *testing.T) {
 		type role struct {
 			LockKey string `json:"lock_key"`
 		}
+		type root struct {
+			Writer string `json:"writer"`
+			State  string `json:"state"`
+		}
 		var decl struct {
 			PolicyPlan struct {
 				DeploymentIdentity struct {
 					UnlockRole         role `json:"unlock_role"`
 					WorkloadUnlockRole role `json:"workload_unlock_role"`
 				} `json:"deployment_identity"`
+				StateBackend struct {
+					Roots []root `json:"roots"`
+				} `json:"state_backend"`
 			} `json:"policy_plan"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &decl))
@@ -116,6 +123,15 @@ func Test_lockKey(t *testing.T) {
 			"env/admin/identity の lock file の key が、Policy Test の宣言 unlock_role.lock_key と一致する")
 		assert.Equal(t, workload, decl.PolicyPlan.DeploymentIdentity.WorkloadUnlockRole.LockKey,
 			"env/admin の lock file の key が、Policy Test の宣言 workload_unlock_role.lock_key と一致する")
+
+		states := map[string]string{}
+		for _, r := range decl.PolicyPlan.StateBackend.Roots {
+			states[r.Writer] = r.State
+		}
+		assert.Equal(t, map[string]string{
+			"apply_identity_role": strings.TrimSuffix(identity, lockSuffix),
+			"apply_role":          strings.TrimSuffix(workload, lockSuffix),
+		}, states, "env/admin/identity と env/admin の backend.tf の state の key が、Policy Test の宣言 state_backend.roots の state と一致する")
 	})
 }
 

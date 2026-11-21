@@ -13,7 +13,7 @@ mock_provider "aws" {
 variables {
   name = "tabp-admin-tfstate"
   users = {
-    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
+    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/", "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/"] }]
   }
 }
 
