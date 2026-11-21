@@ -4,7 +4,8 @@ import data.plan.deployment_identity_plan_role as p
 import data.plan.fixture
 import data.plan.input as gate
 
-decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]"}}
+# with は decl.json の宣言と合わさるので、read_actions を空にして置き換える。
+decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]", "read_actions": []}}
 
 plan_bucket := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 
@@ -156,7 +157,7 @@ test_violation_exclusive_contents_absent if {
 	}
 }
 
-# 実際の plan には apply の role の排他と attachment も並ぶ。plan の role に付くものだけを数えることを見る。
+# 実際の plan には apply の role の排他と attachment も並ぶ。
 test_pass_other_role_exclusive_and_attachment_are_not_checked if {
 	others := [
 		rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"apply\"]", {"role_name": "ci-apply", "policy_names": ["apply"]}),
@@ -214,5 +215,77 @@ test_violation_put_object_resource_array if {
 		s := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": resources}
 		msgs := p.deny with input as with_role([s], []) with data.policy_plan.deployment_identity as decl
 		{substring(m, 0, 14) | some m in msgs} == {"[PLAN-ROLE-03]"}
+	}
+}
+
+read_decl(actions) := {"plan_role": object.union(decl.plan_role, {"read_actions": actions})}
+
+test_pass_declared_read_action if {
+	every allowed in ["budgets:ViewBudget", "BUDGETS:VIEWBUDGET", ["budgets:ViewBudget", "budgets:ListTagsForResource"]] {
+		count(p.deny) == 0 with input as with_role([fixture.allow(allowed), write_output], []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget"])
+	}
+}
+
+test_violation_undeclared_read_action if {
+	every d in [decl, read_decl([]), read_decl(["budgets:ViewBudget"])] {
+		msgs := p.deny with input as with_role([fixture.allow(["budgets:ViewBudget", "budgets:ViewBudgetAction"]), write_output], []) with data.policy_plan.deployment_identity as d
+		some m in msgs
+		startswith(m, "[PLAN-ROLE-02]")
+		contains(m, "budgets:viewbudgetaction")
+	}
+}
+
+test_violation_read_actions_not_array if {
+	every actions in ["budgets:ViewBudget", {"a": "budgets:ViewBudget"}, null] {
+		msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with data.policy_plan.deployment_identity as read_decl(actions)
+		fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions が配列ではありません", msgs)
+		fixture.has("[PLAN-ROLE-02]", msgs)
+	}
+}
+
+test_violation_read_actions_malformed if {
+	every x in [5, "", "budgets", "budgets:", ":ViewBudget", "budgets:View*", "*:ViewBudget", "budgets:View?udget", "budgets:ViewBudget:x", "budgets: ViewBudget"] {
+		msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget", x])
+		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %v が、wildcard を含まない", [x]), msgs)
+	}
+}
+
+test_violation_read_actions_verb_not_allowed if {
+	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget", "budgets:ExecuteBudgetAction", "ce:CreateAnomalyMonitor", "ce:TagResource", "s3:GetObject", "BUDGETS:MODIFYBUDGET", "budgets:XView"] {
+		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
+		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が", [x]), msgs)
+		not lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
+	}
+	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget"] {
+		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
+		fixture.has(sprintf("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action %s があります", [lower(x)]), msgs)
+	}
+}
+
+test_pass_declared_view_verb if {
+	every x in ["budgets:ViewBudget", "BUDGETS:VIEWBUDGET", "budgets:viewbudget", "aws-portal:ViewBilling", "budgets:ViewUpdateHistory", "budgets:ViewDeleteMarker"] {
+		count(p.deny) == 0 with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
+		lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
+	}
+}
+
+# with の data は decl.json と合わさってキーを消せないので、cfg を置き換える。
+test_violation_read_actions_missing if {
+	msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with p.cfg as object.remove(decl.plan_role, ["read_actions"])
+	fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action budgets:viewbudget があります", msgs)
+	not fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions が配列ではありません", msgs)
+}
+
+test_violation_read_actions_non_string if {
+	every x in [null, true, ["a"], {"a": 1}] {
+		msgs := p.deny with input as with_role([fixture.allow("budgets:ViewBudget"), write_output], []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget", x])
+		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %v が、wildcard を含まない", [x]), msgs)
+	}
+}
+
+test_violation_read_actions_unused if {
+	every statements in [[write_output], [fixture.allow("budgets:ListTagsForResource"), write_output], [{"Effect": "Deny", "Action": "budgets:ViewBudget", "Resource": "*"}, write_output]] {
+		msgs := p.deny with input as with_role(statements, []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget"])
+		fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の budgets:ViewBudget は、plan の role の Allow で使われていません", msgs)
 	}
 }

@@ -30,6 +30,11 @@ run "accepts_longest_names" {
     condition     = module.heartbeat.role_arn == "arn:aws:iam::123456789012:role/abcdefghijklmnopqrstuvwxyz01234567890-log-archive-ops-heartbeat"
     error_message = "37文字の project と log-archive で、63文字の role 名が組まれていません。"
   }
+
+  assert {
+    condition     = local.heartbeat_args.us_east_1_name == "abcdefghijklmnopqrstuvwxyz01234567890-log-archive-ops-us-east-1" && length(local.heartbeat_args.us_east_1_name) == 63
+    error_message = "37文字の project と log-archive で、us-east-1 の schedule group と schedule の63文字の名前が組まれていません。"
+  }
 }
 
 run "rejects_38_character_project" {

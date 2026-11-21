@@ -1,6 +1,12 @@
 variable "name_prefix" {
   description = "role の名前の前半。role 名は `<name_prefix>-ci-<役割>` になる。"
   type        = string
+
+  # 最初の `-` の前を project として tag の key `<project>:bootstrap` を組む。
+  validation {
+    condition     = can(regex("^[a-z0-9]+-.+$", var.name_prefix))
+    error_message = "name_prefix は `<project>-<env>` の形（project は英小文字と数字だけ、env は空でない）にしてください。"
+  }
 }
 
 variable "env" {
