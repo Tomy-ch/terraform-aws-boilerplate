@@ -2679,3 +2679,13 @@ run "rejects_name_prefix_with_empty_env" {
 
   expect_failures = [var.name_prefix]
 }
+
+run "rejects_name_prefix_with_uppercase_project" {
+  command = plan
+
+  variables {
+    name_prefix = "TABP-dev"
+  }
+
+  expect_failures = [var.name_prefix]
+}
