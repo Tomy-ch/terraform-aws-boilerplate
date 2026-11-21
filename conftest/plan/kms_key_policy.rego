@@ -258,7 +258,7 @@ own_topic_arn(v, body) if {
 	parts[5] != ""
 }
 
-# kms:ViaService は S3 経由であることしか限らないので、S3 経由で復号だけを許す文は、S3 が渡す暗号化コンテキストで object を名指す。
+# kms:ViaService は S3 経由であることしか限らないので、S3 経由で暗号操作を許す文は、S3 が渡す暗号化コンテキストで object を名指す。
 # account regional namespace の Bucket（名前が -<account>-<region>-an で終わる）は、そのアカウントにしか作れない（Amazon S3 User Guide
 # 「Namespaces for general purpose buckets」）。object の ARN はアカウントの欄が空なので、所有はこの接尾辞で読む。
 deny contains msg if {
@@ -266,18 +266,23 @@ deny contains msg if {
 	some s in allows(r.body)
 	some a in aws_principals(s)
 	not account_root(a)
-	s3_read(s)
+	s3_crypto(s)
 	count(lib.limiting_values(s, s3_arn_key)) == 0
-	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の %s に、復号を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています", [r.document.path, r.document.address, a])
+	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の %s に、暗号操作を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています", [r.document.path, r.document.address, a])
 }
 
 deny contains msg if {
 	some r in key_policies
 	some s in allows(r.body)
 	s3_role_statement(s)
-	some v in lib.limiting_values(s, s3_arn_key)
+	some op, kv in object.get(s, "Condition", {})
+	lower(op) in lib.limiting_operators
+	some k, vs in kv
+	lower(k) == s3_arn_key
+	some v in lib.as_array(vs)
 	not bucket_arn_value(v)
 	not own_object_arn(v, s, r.body)
+	not own_object_prefix(v, lower(op), s, r.body)
 	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に、委任のアカウントの account regional namespace の Bucket の object の ARN でない %v を置いています（Bucket の名前の region は、文の kms:ViaService の S3 の region と比べます）", [r.document.path, r.document.address, v])
 }
 
@@ -331,14 +336,18 @@ actions_readable(s) if {
 	every x in lib.as_array(object.get(s, "NotAction", [])) { is_string(x) }
 }
 
-# Action を読めない文（Action も NotAction も無い文を含む）も read と読み、object の限定を求める側に倒す。
-s3_read(s) if {
+# Action を読めない文（Action も NotAction も無い文を含む）も暗号操作を許すと読み、object の限定を求める側に倒す。
+s3_crypto(s) if {
 	via_s3(s)
 	grants(s, "kms:decrypt")
-	not grants(s, "kms:generatedatakey")
 }
 
-s3_read(s) if {
+s3_crypto(s) if {
+	via_s3(s)
+	grants(s, "kms:generatedatakey")
+}
+
+s3_crypto(s) if {
 	via_s3(s)
 	not actions_readable(s)
 }
@@ -349,6 +358,16 @@ own_object_arn(v, s, body) if {
 	lib.fixed_value(v)
 	some region in s3_regions(s)
 	regex.match(sprintf(`^arn:%s:s3:::[a-z0-9][a-z0-9.-]*-%s-%s-an/.+$`, [split(roots(body)[0], ":")[1], account(body), region]), v)
+}
+
+# 書く key が実行ごとに決まる Bucket は、接頭辞の pattern で限る（ADR-0301 決定11）。受けるのは鍵の生成を許す文の
+# StringLike・ArnLike の値で、Bucket を固定し、/ で区切った接頭辞の末尾に * を1つだけ持つものに限る。
+own_object_prefix(v, op, s, body) if {
+	op in {"stringlike", "arnlike"}
+	grants(s, "kms:generatedatakey")
+	is_string(v)
+	some region in s3_regions(s)
+	regex.match(sprintf(`^arn:%s:s3:::[a-z0-9][a-z0-9.-]*-%s-%s-an/([^/*?${}]+/)*\*$`, [split(roots(body)[0], ":")[1], account(body), region]), v)
 }
 
 # ForAllValues と kms:EncryptionContext の組は、暗号化コンテキストの無い要求も通す。Deny では拒む側に働くので見ない。

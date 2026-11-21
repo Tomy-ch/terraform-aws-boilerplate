@@ -5,9 +5,9 @@ import data.plan.state_backend_write_deny as p
 
 decl := {
 	"deployment_identity": {
-		"plan_role": {"role": "module.d.aws_iam_role.this[\"plan\"]"},
-		"apply_role": {"role": "module.d.aws_iam_role.this[\"apply\"]"},
-		"apply_identity_role": {"role": "module.d.aws_iam_role.apply_identity"},
+		"plan_role": {"role": "module.d.aws_iam_role.this[\"plan\"]", "policy": "module.d.aws_iam_role_policy.this[\"plan\"]"},
+		"apply_role": {"role": "module.d.aws_iam_role.this[\"apply\"]", "policy": "module.d.aws_iam_role_policy.this[\"apply\"]"},
+		"apply_identity_role": {"role": "module.d.aws_iam_role.apply_identity", "policy": "module.d.aws_iam_role_policy.apply_identity"},
 		"unlock_role": {"role": "module.d.aws_iam_role.this[\"unlock_identity\"]", "lock_key": "identity/terraform.tfstate.tflock"},
 		"workload_unlock_role": {"role": "module.d.aws_iam_role.this[\"unlock\"]", "lock_key": "workload/terraform.tfstate.tflock"},
 	},
@@ -21,6 +21,7 @@ decl := {
 			{"writer": "apply_role", "state": "workload/terraform.tfstate", "unlocker": "workload_unlock_role"},
 		],
 		"key_user_roles": ["plan_role", "apply_identity_role", "unlock_role", "apply_role", "workload_unlock_role"],
+		"key_object_roles": ["plan_role", "apply_identity_role", "apply_role"],
 	},
 }
 
@@ -91,13 +92,66 @@ valid_statements := array.concat(
 
 admin := {"Sid": "AccountKeyAdministration", "Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::123456789012:root"}, "Action": ["kms:PutKeyPolicy"], "Resource": "*"}
 
-read_write := {"Sid": "RolesViaS3ReadWrite", "Effect": "Allow", "Principal": {"AWS": [a, ai, plan_arn]}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*"}
+pb := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+
+ab := "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+
+state_keys := [sprintf("%s/identity/terraform.tfstate", [b]), sprintf("%s/workload/terraform.tfstate", [b])]
+
+plan_writes := [sprintf("%s/branch/*", [pb]), sprintf("%s/pr/*", [pb])]
+
+apply_identity_objects := array.concat(identity_keys, [sprintf("%s/apply/*", [pb])])
+
+apply_objects := array.concat(workload_keys, [sprintf("%s/*", [ab])])
+
+via_s3 := {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}
+
+# modules/kms の RolesViaS3ReadWrite<n>・RolesViaS3Read<n> と同じ形の文。
+read_write(arn, objects) := {"Sid": "RolesViaS3ReadWriteX", "Effect": "Allow", "Principal": {"AWS": [arn]}, "Action": ["kms:Decrypt", "kms:GenerateDataKey"], "Resource": "*", "Condition": object.union(via_s3, {"StringLike": {"kms:EncryptionContext:aws:s3:arn": objects}})}
+
+read_only(arn, objects) := {"Sid": "RolesViaS3ReadX", "Effect": "Allow", "Principal": {"AWS": [arn]}, "Action": "kms:Decrypt", "Resource": "*", "Condition": {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com", "kms:EncryptionContext:aws:s3:arn": objects}}}
+
+plan_write := read_write(plan_arn, plan_writes)
+
+plan_read := read_only(plan_arn, state_keys)
+
+apply_identity_write := read_write(ai, apply_identity_objects)
+
+apply_write := read_write(a, apply_objects)
 
 read_lock := {"Sid": "RolesViaS3Read0", "Effect": "Allow", "Principal": {"AWS": [u]}, "Action": "kms:Decrypt", "Resource": "*"}
 
 read_workload_lock := {"Sid": "RolesViaS3Read1", "Effect": "Allow", "Principal": {"AWS": [wu]}, "Action": "kms:Decrypt", "Resource": "*"}
 
-valid_key_statements := [admin, read_write, read_lock, read_workload_lock]
+valid_key_statements := [admin, apply_write, apply_identity_write, plan_write, plan_read, read_lock, read_workload_lock]
+
+# deployment-identity の inline policy の S3 の object の Allow と同じ形の文。
+plan_policy := [
+	{"Sid": "ListBuckets", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": [b, pb, ab]},
+	{"Sid": "ReadBucketConfiguration", "Effect": "Allow", "Action": ["s3:GetBucketPolicy", "s3:GetEncryptionConfiguration"], "Resource": [b, pb, ab]},
+	{"Sid": "ReadState", "Effect": "Allow", "Action": "s3:GetObject", "Resource": state_keys},
+	{"Sid": "WritePlanOutput", "Effect": "Allow", "Action": "s3:PutObject", "Resource": plan_writes},
+	{"Sid": "ReadOrganization", "Effect": "Allow", "Action": "organizations:Describe*", "Resource": "*"},
+]
+
+apply_identity_policy := [
+	{"Sid": "WriteIdentityState", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": identity_keys[0]},
+	{"Sid": "LockIdentityState", "Effect": "Allow", "Action": ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], "Resource": identity_keys[1]},
+	{"Sid": "WriteApplyOutput", "Effect": "Allow", "Action": "s3:PutObject", "Resource": sprintf("%s/apply/*", [pb])},
+]
+
+apply_policy := [
+	{"Sid": "WriteWorkloadState", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": workload_keys[0]},
+	{"Sid": "LockWorkloadState", "Effect": "Allow", "Action": ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], "Resource": workload_keys[1]},
+	{"Sid": "WriteWorkloadApplyOutput", "Effect": "Allow", "Action": "s3:PutObject", "Resource": sprintf("%s/*", [ab])},
+	{"Sid": "DenyIdentityStateChange", "Effect": "Deny", "Action": "*", "Resource": identity_keys},
+]
+
+role_policies := {
+	"module.d.aws_iam_role_policy.this[\"plan\"]": plan_policy,
+	"module.d.aws_iam_role_policy.apply_identity": apply_identity_policy,
+	"module.d.aws_iam_role_policy.this[\"apply\"]": apply_policy,
+}
 
 roles := [
 	change("module.d.aws_iam_role.this[\"plan\"]", "aws_iam_role", {"arn": plan_arn}),
@@ -107,8 +161,13 @@ roles := [
 	change("module.d.aws_iam_role.this[\"unlock\"]", "aws_iam_role", {"arn": wu}),
 ]
 
-input_with(statements, key_statements) := [
-	{"path": "deployment-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": roles}},
+input_with(statements, key_statements) := input_on(statements, key_statements, role_policies)
+
+input_on(statements, key_statements, policies) := [
+	{"path": "deployment-identity.json", "contents": {"plan_format_version": "1.2", "resource_changes": array.concat(roles, [
+		fixture.doc("aws_iam_role_policy", address, "policy", {"Statement": body}) |
+			some address, body in policies
+	])}},
 	{"path": "state-backend.json", "contents": {"plan_format_version": "1.2", "resource_changes": [
 		change("module.s.aws_s3_bucket.this", "aws_s3_bucket", {"arn": b}),
 		change("module.k.aws_kms_key.this", "aws_kms_key", {"arn": key}),
@@ -245,13 +304,13 @@ test_violation_unlock_role_writes_identity_state if {
 }
 
 test_violation_key_policy_grants_undeclared_role if {
-	extra := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [ai, a, plan_arn, "arn:aws:iam::123456789012:role/other"]}])
-	msgs := messages_on(valid_statements, [admin, extra, read_lock, read_workload_lock], decl)
+	extra := json.patch(plan_write, [{"op": "replace", "path": "/Principal/AWS", "value": ["arn:aws:iam::123456789012:role/other"]}])
+	msgs := messages_on(valid_statements, array.concat(valid_key_statements, [extra]), decl)
 	fixture.has("[PLAN-SBW-06]", msgs)
 }
 
 test_violation_key_policy_misses_declared_role if {
-	msgs := messages_on(valid_statements, [admin, read_write, read_lock], decl)
+	msgs := messages_on(valid_statements, [admin, apply_write, apply_identity_write, plan_write, plan_read, read_lock], decl)
 	fixture.has("[PLAN-SBW-06]", msgs)
 }
 
@@ -347,6 +406,8 @@ without_after(i) := json.patch(input_with(valid_statements, valid_key_statements
 
 with_state_backend(patch) := {"deployment_identity": decl.deployment_identity, "state_backend": object.union(decl.state_backend, patch)}
 
+with_state_backend_removed(name) := {"deployment_identity": decl.deployment_identity, "state_backend": object.remove(decl.state_backend, [name])}
+
 test_violation_key_policy_missing if {
 	fixture.has("[PLAN-SBW-00] state の鍵の Key Policy", messages_on(valid_statements, valid_key_statements, with_state_backend({"key_policy": "module.k.aws_kms_key_policy.other"})))
 }
@@ -406,8 +467,7 @@ test_violation_unlockers_swapped if {
 }
 
 test_violation_key_policy_misses_apply_role if {
-	rw := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [ai, plan_arn]}])
-	fixture.has("[PLAN-SBW-06] state の鍵の暗号操作を許す principal", messages_on(valid_statements, [admin, rw, read_lock, read_workload_lock], decl))
+	fixture.has("[PLAN-SBW-06] state の鍵の暗号操作を許す principal", messages_on(valid_statements, [admin, apply_identity_write, plan_write, plan_read, read_lock, read_workload_lock], decl))
 }
 
 test_violation_key_user_roles_empty if {
@@ -568,7 +628,119 @@ test_violation_bucket_policy_without_statement if {
 }
 
 test_violation_key_policy_misses_roles_full_message if {
-	rw := json.patch(read_write, [{"op": "replace", "path": "/Principal/AWS", "value": [plan_arn]}])
-	msgs := messages_on(valid_statements, [admin, rw, read_lock, read_workload_lock], decl)
+	msgs := messages_on(valid_statements, [admin, plan_write, plan_read, read_lock, read_workload_lock], decl)
 	fixture.has(sprintf("[PLAN-SBW-06] state の鍵の暗号操作を許す principal %v が、宣言（data.policy_plan.state_backend.key_user_roles）の role %v と一致しません", [sort([plan_arn, u, wu]), sort([plan_arn, ai, u, a, wu])]), msgs)
+}
+
+sbw10(msgs) := {m | some m in msgs; startswith(m, "[PLAN-SBW-10]")}
+
+key_with(i, st) := replace(valid_key_statements, i, st)
+
+test_pass_key_objects_match_iam if {
+	count(sbw10(messages_with(valid_statements))) == 0
+}
+
+# Key Policy が IAM より狭い場合も広い場合も落とす。
+test_violation_key_object_missing if {
+	every ks in [
+		key_with(2, read_write(ai, [identity_keys[0], sprintf("%s/apply/*", [pb])])),
+		key_with(4, read_only(plan_arn, [state_keys[0]])),
+		key_with(3, read_write(plan_arn, [sprintf("%s/pr/*", [pb])])),
+		key_with(1, read_write(a, workload_keys)),
+		remove(valid_key_statements, 4),
+	] {
+		fixture.has("[PLAN-SBW-10]", messages_on(valid_statements, ks, decl))
+	}
+}
+
+test_violation_key_object_extra if {
+	every ks in [
+		key_with(4, read_only(plan_arn, array.concat(state_keys, [sprintf("%s/apply/*", [pb])]))),
+		key_with(1, read_write(a, array.concat(apply_objects, [identity_keys[0]]))),
+		key_with(3, read_write(plan_arn, array.concat(plan_writes, [sprintf("%s/apply/*", [pb])]))),
+		array.concat(valid_key_statements, [read_only(ai, [sprintf("%s/pr/x", [pb])])]),
+	] {
+		fixture.has("[PLAN-SBW-10]", messages_on(valid_statements, ks, decl))
+	}
+}
+
+# 読むだけの state に鍵の生成を許すと、Decrypt の集合は一致しても GenerateDataKey の集合が IAM の PutObject とずれる。
+test_violation_generate_data_key_on_read_only_object if {
+	ks := key_with(4, json.patch(plan_read, [{"op": "replace", "path": "/Action", "value": ["kms:Decrypt", "kms:GenerateDataKey"]}]))
+	msgs := sbw10(messages_on(valid_statements, ks, decl))
+	fixture.has("[PLAN-SBW-10] plan_role", msgs)
+	count({m | some m in msgs; contains(m, "kms:GenerateDataKey")}) > 0
+}
+
+test_violation_decrypt_dropped_from_write if {
+	ks := key_with(3, json.patch(plan_write, [{"op": "replace", "path": "/Action", "value": "kms:GenerateDataKey"}]))
+	fixture.has("[PLAN-SBW-10] plan_role", messages_on(valid_statements, ks, decl))
+}
+
+test_violation_iam_wildcard_action if {
+	every extra in [
+		{"Effect": "Allow", "Action": "s3:Get*", "Resource": sprintf("%s/x", [b])},
+		{"Effect": "Allow", "Action": "S3:PUT*", "Resource": sprintf("%s/x", [b])},
+		{"Effect": "Allow", "NotAction": "iam:*", "Resource": sprintf("%s/x", [b])},
+		{"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+	] {
+		policies := object.union(role_policies, {"module.d.aws_iam_role_policy.this[\"plan\"]": array.concat(plan_policy, [extra])})
+		fixture.has("[PLAN-SBW-10] plan_role", messages_for(input_on(valid_statements, valid_key_statements, policies), decl))
+	}
+}
+
+test_pass_iam_not_action_excluding_s3_objects if {
+	extra := {"Effect": "Allow", "NotAction": ["s3:GetObject", "s3:PutObject", "iam:*"], "Resource": "*"}
+	policies := object.union(role_policies, {"module.d.aws_iam_role_policy.this[\"plan\"]": array.concat(plan_policy, [extra])})
+	count(sbw10(messages_for(input_on(valid_statements, valid_key_statements, policies), decl))) == 0
+}
+
+test_violation_iam_not_resource if {
+	extra := {"Effect": "Allow", "Action": "s3:GetObject", "NotResource": sprintf("%s/x", [b])}
+	policies := object.union(role_policies, {"module.d.aws_iam_role_policy.this[\"plan\"]": array.concat(plan_policy, [extra])})
+	fixture.has("[PLAN-SBW-10] deployment-identity.json: plan_role の IAM の policy", messages_for(input_on(valid_statements, valid_key_statements, policies), decl))
+}
+
+test_violation_key_grant_without_object if {
+	unlimited := json.patch(plan_write, [{"op": "replace", "path": "/Condition", "value": via_s3}])
+	fixture.has("[PLAN-SBW-10] state-backend.json: module.k.aws_kms_key_policy.this が plan_role の role", messages_on(valid_statements, array.concat(valid_key_statements, [unlimited]), decl))
+}
+
+# 見るものが無いときに黙って通らない。
+test_violation_key_object_roles_undeclared if {
+	every d in [
+		with_state_backend_removed("key_object_roles"),
+		with_state_backend({"key_object_roles": []}),
+		with_state_backend({"key_object_roles": "plan_role"}),
+	] {
+		fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles", messages_on(valid_statements, valid_key_statements, d))
+	}
+}
+
+test_violation_key_object_role_not_key_user if {
+	d := with_state_backend({"key_object_roles": ["plan_role", "apply_identity_role", "apply_role", "other_role"]})
+	fixture.has("[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles の other_role が key_user_roles にありません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_iam_policy_undeclared if {
+	d := {"deployment_identity": object.union(object.remove(decl.deployment_identity, ["plan_role"]), {"plan_role": {"role": decl.deployment_identity.plan_role.role}}), "state_backend": decl.state_backend}
+	fixture.has("[PLAN-SBW-00] data.policy_plan.deployment_identity.plan_role.policy が宣言にありません", messages_on(valid_statements, valid_key_statements, d))
+}
+
+test_violation_iam_policy_absent if {
+	policies := object.remove(role_policies, ["module.d.aws_iam_role_policy.this[\"plan\"]"])
+	fixture.has("[PLAN-SBW-00] plan_role の IAM の policy \"module.d.aws_iam_role_policy.this[\\\"plan\\\"]\" が入力にありません", messages_for(input_on(valid_statements, valid_key_statements, policies), decl))
+}
+
+test_violation_iam_policy_unknown if {
+	inp := json.patch(input_with(valid_statements, valid_key_statements), [
+		{"op": "replace", "path": sprintf("/0/contents/resource_changes/%d/change/after", [count(roles)]), "value": {}},
+		{"op": "replace", "path": sprintf("/0/contents/resource_changes/%d/change/after_unknown", [count(roles)]), "value": {"policy": true}},
+	])
+	fixture.has("[PLAN-SBW-10] deployment-identity.json: ", messages_for(inp, decl))
+}
+
+test_violation_key_object_role_arn_unreadable if {
+	d := {"deployment_identity": object.union(object.remove(decl.deployment_identity, ["apply_role"]), {"apply_role": {"role": "module.d.aws_iam_role.this[\"other\"]", "policy": decl.deployment_identity.apply_role.policy}}), "state_backend": decl.state_backend}
+	fixture.has("[PLAN-SBW-00] role \"module.d.aws_iam_role.this[\\\"other\\\"]\"", messages_on(valid_statements, valid_key_statements, d))
 }

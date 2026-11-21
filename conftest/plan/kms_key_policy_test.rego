@@ -18,17 +18,23 @@ root := {
 	"Resource": "*",
 }
 
+# modules/kms/tests/policy.tftest.hcl の RolesViaS3ReadWrite の期待値と同じ形の文。
 via_s3 := {
-	"Sid": "RolesViaS3ReadWrite",
+	"Sid": "RolesViaS3ReadWrite0",
 	"Effect": "Allow",
-	"Principal": {"AWS": [
-		"arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
-		"arn:aws:iam::123456789012:role/tabp-admin-ci-plan",
-	]},
+	"Principal": {"AWS": ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"]},
 	"Action": ["kms:Decrypt", "kms:GenerateDataKey"],
 	"Resource": "*",
-	"Condition": {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}},
+	"Condition": object.union(via_s3_service, via_s3_objects),
 }
+
+via_s3_service := {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}
+
+plan_output := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
+
+via_s3_objects := {"StringLike": {"kms:EncryptionContext:aws:s3:arn": [sprintf("%s/branch/*", [plan_output]), sprintf("%s/pr/*", [plan_output])]}}
+
+s3_write_with(op, values) := with_condition(via_s3, object.union(via_s3_service, {op: {"kms:EncryptionContext:aws:s3:arn": values}}))
 
 logs := {
 	"Sid": "LogsService",
@@ -168,7 +174,10 @@ test_pass_two_key_policies if {
 }
 
 test_pass_condition_case_insensitive if {
-	s := with_condition(via_s3, {"stringequals": {"KMS:VIASERVICE": "s3.ap-northeast-1.amazonaws.com"}})
+	s := with_condition(via_s3, {
+		"stringequals": {"KMS:VIASERVICE": "s3.ap-northeast-1.amazonaws.com"},
+		"STRINGLIKE": {"KMS:ENCRYPTIONCONTEXT:AWS:S3:ARN": sprintf("%s/pr/*", [plan_output])},
+	})
 	count(ids([root, s])) == 0
 }
 
@@ -179,7 +188,7 @@ test_pass_single_role_string if {
 
 test_pass_other_partition if {
 	r := json.patch(root, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws-cn:iam::123456789012:root"}])
-	s := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws-cn:iam::123456789012:role/a"}])
+	s := json.patch(s3_write_with("StringLike", ["arn:aws-cn:s3:::x-123456789012-ap-northeast-1-an/pr/*"]), [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws-cn:iam::123456789012:role/a"}])
 	count(ids([r, s])) == 0
 }
 
@@ -208,7 +217,7 @@ test_violation_no_account_delegation if {
 test_violation_account_undefined if {
 	other := json.patch(via_s3, [{"op": "replace", "path": "/Principal/AWS", "value": "arn:aws:iam::210987654321:role/a"}])
 	ids([logs]) == {"[PLAN-KMS-02]", "[PLAN-KMS-05]"}
-	ids([other]) == {"[PLAN-KMS-02]"}
+	ids([other]) == {"[PLAN-KMS-02]", "[PLAN-KMS-12]"}
 }
 
 test_violation_two_account_delegations if {
@@ -259,7 +268,7 @@ test_pass_role_limited_by_via_service if {
 		{"StringLike": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}},
 		{"StringEquals": {"kms:ViaService": ["s3.ap-northeast-1.amazonaws.com", "sqs.ap-northeast-1.amazonaws.com"]}},
 	] {
-		count(ids([root, with_condition(via_s3, c)])) == 0
+		count(ids([root, with_condition(via_s3, object.union(c, via_s3_objects))])) == 0
 	}
 }
 
@@ -581,18 +590,86 @@ test_pass_s3_read_other_partition if {
 	count(ids([cn_root, s])) == 0
 }
 
-test_pass_s3_read_write if {
+# 書く文も object の限定を求める。限らない形は Action の書き方によらず落とす。
+test_violation_s3_read_write_without_object if {
 	every s in [
-		json.patch(with_condition(via_s3, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}}), [{"op": "replace", "path": "/Action", "value": "kms:*"}]),
-		with_condition(via_s3, {"StringEquals": {
-			"kms:ViaService": "s3.ap-northeast-1.amazonaws.com",
-			"kms:EncryptionContext:aws:s3:arn": [own_object],
-		}}),
+		json.patch(with_condition(via_s3, via_s3_service), [{"op": "replace", "path": "/Action", "value": "kms:*"}]),
+		with_condition(via_s3, via_s3_service),
+		json.patch(with_condition(via_s3, via_s3_service), [{"op": "replace", "path": "/Action", "value": ["kms:Decrypt", "kms:GenerateDataKey*"]}]),
+		json.patch(with_condition(via_s3, via_s3_service), [{"op": "replace", "path": "/Action", "value": "kms:GenerateDataKey"}]),
+		json.patch(with_condition(via_s3, via_s3_service), [{"op": "remove", "path": "/Action"}, {"op": "add", "path": "/NotAction", "value": ["kms:Encrypt"]}]),
+		s3_write_with("StringEquals", []),
+		s3_write_with("StringNotLike", [sprintf("%s/pr/*", [plan_output])]),
+		s3_write_with("StringLikeIfExists", [sprintf("%s/pr/*", [plan_output])]),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-12]"}
+	}
+}
+
+# 鍵の生成を許す文は、固定の object と、Bucket を固定し末尾の * だけを持つ接頭辞の pattern（StringLike・ArnLike の下）を受ける。
+test_pass_s3_read_write_shapes if {
+	every s in [
+		via_s3,
+		s3_write_with("StringLike", [own_object, sprintf("%s/apply/*", [plan_output])]),
+		s3_write_with("StringLike", ["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/*"]),
+		s3_write_with("StringLike", sprintf("%s/a/b.c/*", [plan_output])),
+		s3_write_with("ArnLike", [sprintf("%s/pr/*", [plan_output])]),
+		s3_write_with("StringEquals", [own_object]),
+		s3_write_with("STRINGLIKE", [sprintf("%s/pr/*", [plan_output])]),
 		json.patch(via_s3, [{"op": "replace", "path": "/Action", "value": ["kms:Decrypt", "kms:GenerateDataKey*"]}]),
+		json.patch(via_s3, [{"op": "replace", "path": "/Action", "value": "kms:GenerateDataKey"}]),
 		json.patch(via_s3, [{"op": "remove", "path": "/Action"}, {"op": "add", "path": "/NotAction", "value": ["kms:Encrypt"]}]),
 	] {
-		count({i | some i in ids([root, s]); i == "[PLAN-KMS-12]"}) == 0
+		count(ids([root, s])) == 0
 	}
+}
+
+test_violation_s3_read_write_bad_pattern if {
+	every v in [
+		sprintf("%s/pr/*/x", [plan_output]),
+		sprintf("%s/pr/?", [plan_output]),
+		sprintf("%s/pr/x?", [plan_output]),
+		sprintf("%s/${aws:username}/*", [plan_output]),
+		sprintf("%s/pr/${aws:username}*", [plan_output]),
+		sprintf("%s/pr*", [plan_output]),
+		sprintf("%s/pr//*", [plan_output]),
+		sprintf("%s//*", [plan_output]),
+		sprintf("%s/**", [plan_output]),
+		sprintf("%s/pr/**", [plan_output]),
+		"arn:aws:s3:::tabp-*-an/pr/*",
+		"arn:aws:s3:::*/pr/*",
+		"arn:aws:s3:::tabp-admin-tfplan-111111111111-ap-northeast-1-an/pr/*",
+		"arn:aws:s3:::tabp-admin-tfplan-123456789012-us-east-1-an/pr/*",
+		"arn:aws:s3:::tabp-admin-tfplan/pr/*",
+		"arn:aws-cn:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*",
+		"arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an*",
+		"*",
+	] {
+		ids([root, s3_write_with("StringLike", [v])]) == {"[PLAN-KMS-12]"}
+	}
+}
+
+# StringEquals は * を文字として読むので、pattern の形でも何にも当たらない。read の文の pattern も受けない。
+test_violation_s3_pattern_outside_like_or_write if {
+	every s in [
+		s3_write_with("StringEquals", [sprintf("%s/pr/*", [plan_output])]),
+		s3_write_with("ArnEquals", [sprintf("%s/pr/*", [plan_output])]),
+		s3_read_with("StringLike", [sprintf("%s/pr/*", [plan_output])]),
+		s3_read_with("ArnLike", [sprintf("%s/pr/*", [plan_output])]),
+		json.patch(s3_write_with("StringLike", [sprintf("%s/pr/*", [plan_output])]), [{"op": "replace", "path": "/Action", "value": [1]}]),
+	] {
+		ids([root, s]) == {"[PLAN-KMS-12]"}
+	}
+}
+
+# 同じ値を StringEquals と StringLike の両方に置いても、StringEquals の下の pattern は落とす。
+test_violation_s3_pattern_under_both_operators if {
+	v := sprintf("%s/pr/*", [plan_output])
+	s := with_condition(via_s3, object.union(via_s3_service, {
+		"StringLike": {"kms:EncryptionContext:aws:s3:arn": [v]},
+		"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com", "kms:EncryptionContext:aws:s3:arn": [v]},
+	}))
+	ids([root, s]) == {"[PLAN-KMS-12]"}
 }
 
 test_violation_s3_read_without_object if {
@@ -660,7 +737,7 @@ test_violation_s3_read_account_undefined if {
 test_violation_s3_read_rule_messages if {
 	missing := p.deny with input as fixture.plan([key_policy([root, with_condition(via_s3_read, {"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"}})])])
 	some m1 in missing
-	contains(m1, "復号を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています")
+	contains(m1, "暗号操作を object の ARN（kms:EncryptionContext:aws:s3:arn）で限らずに許可しています")
 	foreign := p.deny with input as fixture.plan([key_policy([root, s3_read_with("StringEquals", ["arn:aws:s3:::bkt/k"])])])
 	some m2 in foreign
 	contains(m2, "account regional namespace の Bucket の object の ARN でない")

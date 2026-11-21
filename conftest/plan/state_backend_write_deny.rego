@@ -470,3 +470,136 @@ deny contains msg if {
 	a.statement.Effect != "Deny"
 	msg := sprintf("[PLAN-SBW-09] %s: state Bucket の Bucket Policy が Deny でない文（Effect %v）を持っています", [a.path, a.statement.Effect])
 }
+
+# CI の role の Key Policy の object を、その role の IAM の S3 の object と突き合わせる（state-backend/ADR-0201 決定9）。
+key_object_roles := object.get(cfg, "key_object_roles", null)
+
+key_object_names := key_object_roles if is_array(key_object_roles)
+
+default key_object_names := []
+
+iam_policy(name) := object.get(object.get(di, name, {}), "policy", "")
+
+deny contains msg if {
+	not is_array(key_object_roles)
+	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles が配列でないか、宣言にありません"
+}
+
+deny contains msg if {
+	is_array(key_object_roles)
+	count(key_object_roles) == 0
+	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles が空です"
+}
+
+deny contains msg if {
+	some name in key_object_names
+	not name in object.get(cfg, "key_user_roles", [])
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles の %s が key_user_roles にありません", [name])
+}
+
+deny contains msg if {
+	some name in key_object_names
+	iam_policy(name) == ""
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.deployment_identity.%s.policy が宣言にありません", [name])
+}
+
+deny contains msg if {
+	some name in key_object_names
+	iam_policy(name) != ""
+	count({d | some d in lib.documents; d.type == "aws_iam_role_policy"; d.address == iam_policy(name)}) == 0
+	msg := sprintf("[PLAN-SBW-00] %s の IAM の policy %q が入力にありません。address が変わったなら data.policy_plan.deployment_identity.%s.policy を直してください", [name, iam_policy(name), name])
+}
+
+deny contains msg if {
+	some name in key_object_names
+	some d in lib.documents
+	d.type == "aws_iam_role_policy"
+	d.address == iam_policy(name)
+	not lib.parsed(d)
+	msg := sprintf("[PLAN-SBW-10] %s: %s の IAM の policy %s が plan で決まらないか、JSON の文書として読めません", [d.path, name, d.address])
+}
+
+iam_allows(name) := {{"path": r.document.path, "statement": s} |
+	some r in lib.readable
+	r.document.type == "aws_iam_role_policy"
+	r.document.address == iam_policy(name)
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+}
+
+# Action と NotAction の wildcard は IAM の照合で読む。NotAction の Allow は列挙の外をすべて許す。
+allows_action(s, action) if {
+	some x in lib.lower_all(object.get(s, "Action", []))
+	lib.iam_match(x, action)
+}
+
+allows_action(s, action) if {
+	s.NotAction
+	not excludes_action(s, action)
+}
+
+excludes_action(s, action) if {
+	some x in lib.lower_all(s.NotAction)
+	lib.iam_match(x, action)
+}
+
+iam_objects(name, actions) := {x |
+	some a in iam_allows(name)
+	some action in actions
+	allows_action(a.statement, action)
+	some x in lib.as_array(object.get(a.statement, "Resource", []))
+}
+
+deny contains msg if {
+	some name in key_object_names
+	some a in iam_allows(name)
+	a.statement.NotResource
+	some action in ["s3:getobject", "s3:putobject"]
+	allows_action(a.statement, action)
+	msg := sprintf("[PLAN-SBW-10] %s: %s の IAM の policy %s の S3 の object の Allow が NotResource を使っています。Resource を列挙してください", [a.path, name, iam_policy(name)])
+}
+
+key_role_grants(arn) := {{"document": r.document, "statement": s} |
+	some r in key_policies
+	some s in lib.statements(r.body)
+	s.Effect == "Allow"
+	is_object(s.Principal)
+	arn in lib.as_array(object.get(s.Principal, "AWS", []))
+}
+
+key_objects(arn, action) := {v |
+	some g in key_role_grants(arn)
+	allows_action(g.statement, action)
+	some v in lib.limiting_values(g.statement, "kms:encryptioncontext:aws:s3:arn")
+}
+
+deny contains msg if {
+	some name in key_object_names
+	role_known(name)
+	some g in key_role_grants(role_arn(name))
+	some action in ["kms:decrypt", "kms:generatedatakey"]
+	allows_action(g.statement, action)
+	count(lib.limiting_values(g.statement, "kms:encryptioncontext:aws:s3:arn")) == 0
+	msg := sprintf("[PLAN-SBW-10] %s: %s が %s の role に、暗号操作を object（kms:EncryptionContext:aws:s3:arn）で限らずに許しています", [g.document.path, g.document.address, name])
+}
+
+# 文字列の完全一致で比べる。pattern 同士も文字列として比べ、当たる範囲の包含は読まない。
+deny contains msg if {
+	some name in key_object_names
+	role_known(name)
+	count(key_policies) > 0
+	keys := key_objects(role_arn(name), "kms:decrypt")
+	iam := iam_objects(name, ["s3:getobject", "s3:putobject"])
+	keys != iam
+	msg := sprintf("[PLAN-SBW-10] %s の role %s に Key Policy が kms:Decrypt を許す object %v が、IAM の s3:GetObject・s3:PutObject の Resource %v と一致しません", [name, role_arn(name), sort(keys), sort(iam)])
+}
+
+deny contains msg if {
+	some name in key_object_names
+	role_known(name)
+	count(key_policies) > 0
+	keys := key_objects(role_arn(name), "kms:generatedatakey")
+	iam := iam_objects(name, ["s3:putobject"])
+	keys != iam
+	msg := sprintf("[PLAN-SBW-10] %s の role %s に Key Policy が kms:GenerateDataKey を許す object %v が、IAM の s3:PutObject の Resource %v と一致しません", [name, role_arn(name), sort(keys), sort(iam)])
+}
