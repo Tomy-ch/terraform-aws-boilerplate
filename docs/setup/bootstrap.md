@@ -21,7 +21,7 @@
 - CI はアクセスキーを持たず、GitHub の OIDC で AWS に入る
 - 残った lock は GitHub Actions の `Terraform Unlock` で外す
 - アカウントは Paid plan で、連絡先・Cost Explorer・Cost Anomaly Detection が設定済みである
-- Cost Anomaly Detection の既存の AWS services monitor とその email の subscription が、tag `tabp:bootstrap` を持つ（CI の apply の role はそれらを変更・削除できない）
+- Cost Anomaly Detection の既存の AWS services monitor とその email の subscription が、tag `tabp:bootstrap` を持つ（2-4 の手順で人が確かめる。自動の検査は無い）。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）
 - root は MFA を2台以上持ち、アクセスキーを持たない。IAM user は break-glass の2つだけである
 
 ## 3. やること
@@ -164,7 +164,9 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 #### 2-4. 既存の異常検知に tag を付ける
 
-2-2 で AWS が作った AWS services monitor とその email の subscription に tag `tabp:bootstrap` を付ける。CI の apply の role は、この tag を持つ monitor と subscription を変更・削除できない（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）。2-3 の `check-account.sh` で 2-2 の行が OK になってから行う。
+2-2 で AWS が作った AWS services monitor とその email の subscription に tag `tabp:bootstrap` を付ける。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）。2-3 の `check-account.sh` で 2-2 の行が OK になってから行う。
+
+`tabp` は project の値である。自分の project の値に置き換える。
 
 1. monitor と subscription の ARN を控える
 
