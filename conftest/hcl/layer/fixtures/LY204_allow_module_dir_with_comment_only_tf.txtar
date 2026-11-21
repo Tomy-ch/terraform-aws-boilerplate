@@ -1,0 +1,6 @@
+-- modules/a/main.tf --
+module "b" {
+  source = "../b"
+}
+-- modules/b/main.tf --
+# 空の module

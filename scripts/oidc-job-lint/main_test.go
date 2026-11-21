@@ -108,7 +108,6 @@ var applyWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make layer-check-test RUNNER_MODE=host",
 	"      - run: make layer-check RUNNER_MODE=host",
 	"",
 	"  apply-root-check:",
@@ -267,8 +266,6 @@ var gatesWorkflow = strings.Join([]string{
 	"        run: make resource-order-check-test RUNNER_MODE=host",
 	"      - name: Check the resource order",
 	"        run: make resource-order-check RUNNER_MODE=host",
-	"      - name: Run the layer check's own tests",
-	"        run: make layer-check-test RUNNER_MODE=host",
 	"      - name: Check the layer rules",
 	"        run: make layer-check RUNNER_MODE=host",
 	"      - name: Run the root check's own tests",
@@ -445,7 +442,7 @@ func Test_run(t *testing.T) {
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make layer-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
-		assert.Contains(t, out.String(), "make layer-check-test と make layer-check を走らせるものがありません")
+		assert.Contains(t, out.String(), "make layer-check を走らせるものがありません")
 	})
 
 	t.Run("保護設定を読めなければ失敗する", func(t *testing.T) {
@@ -1674,7 +1671,7 @@ func Test_checkGateJob(t *testing.T) {
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
 	})
 
-	t.Run("層の検査の2つの make だけなら違反0件", func(t *testing.T) {
+	t.Run("層の検査の make だけなら違反0件", func(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-layer-check"), layerGate, formatted))
@@ -1685,7 +1682,15 @@ func Test_checkGateJob(t *testing.T) {
 
 		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
 		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check RUNNER_MODE=host LY_NS=x\n"), "apply-layer-check")
-		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check-test と make layer-check だけ")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
+	})
+
+	t.Run("層の検査の job の make layer-check-test は違反", func(t *testing.T) {
+		t.Parallel()
+
+		const layerStep = "      - run: make layer-check RUNNER_MODE=host\n"
+		j := jobOf(t, replaced(t, applyWorkflow, layerStep, "      - run: make layer-check-test RUNNER_MODE=host\n"+layerStep), "apply-layer-check")
+		assert.Contains(t, messages(checkGateJob(j, layerGate, formatted)), "層の検査の job apply-layer-check の run: は make layer-check だけ")
 	})
 
 	t.Run("root の検査の2つの make だけなら違反0件", func(t *testing.T) {
@@ -1761,8 +1766,8 @@ func Test_checkApplyGate(t *testing.T) {
 	}{
 		"順序の検査: 自己テストだけの job は数えない":           {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", ""},
 		"順序の検査: 検出も走らせる job は数えない":            {orderGate, "      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
-		"層の検査: 自己テストだけの job は数えない":            {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", ""},
-		"層の検査: 検出も走らせる job は数えない":             {layerGate, "      - run: make layer-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"層の検査: 層の検査を走らせない job は数えない":          {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", ""},
+		"層の検査: 検出も走らせる job は数えない":             {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n      - run: make layer-check RUNNER_MODE=host\n"},
 		"層の検査: 順序の検査の job は層の検査と数えない":         {layerGate, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n", "    needs: [apply-infra-code-gate, apply-resource-order-check]\n"},
 		"root の検査: 自己テストだけの job は数えない":        {rootGate, "      - run: make root-check RUNNER_MODE=host\n", ""},
 		"root の検査: 検出も走らせる job は数えない":         {rootGate, "      - run: make root-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
@@ -2188,14 +2193,14 @@ func Test_runsGate(t *testing.T) {
 		step string
 		want bool
 	}{
-		"make layer-check を走らせる": {"      - run: make layer-check RUNNER_MODE=host\n", true},
-		"自己テストだけは偽":              {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
-		"検出は層の検査ではない":            {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
-		"順序の検査は層の検査ではない":         {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
-		"-n（実行しない）は偽":            {"      - run: make -n layer-check\n", false},
-		"後置の -n は偽":              {"      - run: make layer-check -n\n", false},
-		"|| true で失敗を隠すのは偽":      {"      - run: make layer-check || true\n", false},
-		"ほかの変数の代入は偽":             {"      - run: make layer-check RUNNER_MODE=host LY_NS=x\n", false},
+		"make layer-check を走らせる":   {"      - run: make layer-check RUNNER_MODE=host\n", true},
+		"make layer-check-test は偽": {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
+		"検出は層の検査ではない":              {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
+		"順序の検査は層の検査ではない":           {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
+		"-n（実行しない）は偽":              {"      - run: make -n layer-check\n", false},
+		"後置の -n は偽":                {"      - run: make layer-check -n\n", false},
+		"|| true で失敗を隠すのは偽":        {"      - run: make layer-check || true\n", false},
+		"ほかの変数の代入は偽":               {"      - run: make layer-check RUNNER_MODE=host LY_NS=x\n", false},
 	}
 	for name, c := range layer {
 		t.Run("層の検査/"+name, func(t *testing.T) {
@@ -3636,6 +3641,16 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 		assert.Empty(t, f)
 	})
 
+	t.Run("層の検査は自己テストの make を要らない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Nil(t, layerGate.testRun)
+		require.NotContains(t, gatesWorkflow, "layer-check-test")
+		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, layerGate)
+		assert.Equal(t, 1, n)
+		assert.Empty(t, f)
+	})
+
 	t.Run("root の検査も同じ job で数える", func(t *testing.T) {
 		t.Parallel()
 
@@ -3673,13 +3688,9 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 		assert.Contains(t, messages(f), "root の検査の step に if:")
 	})
 
-	const (
-		layerCheck = "        run: make layer-check RUNNER_MODE=host\n"
-		layerSelf  = "        run: make layer-check-test RUNNER_MODE=host\n"
-	)
+	const layerCheck = "        run: make layer-check RUNNER_MODE=host\n"
 	for name, src := range map[string]string{
 		"層の検査そのものが無い":             strings.Replace(gatesWorkflow, layerCheck, "        run: echo\n", 1),
-		"層の検査の自己テストが無い":           strings.Replace(gatesWorkflow, layerSelf, "        run: echo\n", 1),
 		"層の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
 		"層の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, layerCheck, "        run: make layer-check RUNNER_MODE=host LY_NS=x\n", 1),
 		"層の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, layerCheck, "        # run: make layer-check RUNNER_MODE=host\n        run: echo\n", 1),

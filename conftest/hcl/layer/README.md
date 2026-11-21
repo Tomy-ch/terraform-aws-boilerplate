@@ -7,17 +7,22 @@ Conftest に割り当てる）。何を禁じるかは ADR が持ち、ここに
 
 起動は `make layer-check` で、CI では Pull Request の Static Analysis の層の job（`terraform-gates.yaml` の `tf-lint`）が
 TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `apply-layer-check` が走らせる。apply の job はその成功を
-待つ（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は
-`make layer-check-test` である。
+待つ（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は、
+Rego のテスト（`layer-verify`）と、`scripts/hcl-input` などの Go のテストである。
 
 | 段 | make | 判定するもの |
 | --- | --- | --- |
 | Rego のテスト | `layer-verify` | 各 deny の ID が違反と非違反の両方のテストを持ち、テストがすべて走って通ったこと（`infra-code-gate rego-tests`） |
 | Provider の schema | `layer-schema` | [`scripts/provider-schema`](../../../scripts/README.md) が、追跡している `.terraform.lock.hcl` の `hashicorp/aws` の版ごとに、その版だけを持つ一時の構成を作る。make はそれぞれを `init -lockfile=readonly` して `terraform providers schema -json` を取り、`provider-schema` が型ごとの書ける引数（`arguments`）・非推奨の書ける引数（`deprecated`。`make tf-policy` と同じ関数で取り出す）・block の名前（`blocks`）の和を JSON（`data.layer_schema`）に書く。lock が0件、Provider の block があるのに版が読めない、版の形が違う、init か schema の取得が失敗した、ある版の schema が読めないか型が0件のときは JSON を書かずに落ち、Conftest を起動しない。版ごとの schema は lock の内容が変わるまで `tmp/layer-check/schema/` に残し、取り直さない |
-| HCL の入力 | `layer-detect` | [`scripts/hcl-input`](../../../scripts/README.md) が走査の root の `.tf` を構文の木として読み、block と属性ごとの参照の列を JSON（`data.hcl_input`）に書く（ADR-0501 決定5）。読んだファイルの集合を `find` の一覧と突き合わせる。構文の誤り・知らない式・`.tf.json`・symlink・`.tf` が0件のときは JSON を書かずに落ち、Conftest を起動しない |
-| 検査 | `layer-detect` | 走査の root（`usecases` `modules` `env`）の下の全ファイルを1つの入力として掛ける（`--combine`）。Conftest が読んだ `.tf` と `.tf.json` の集合を `find` の一覧と、`.tf` の集合を `hcl_input` のファイルの一覧と突き合わせ、評価した規則の数を `layer.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
+| HCL の入力 | `layer-detect` | [`scripts/hcl-input`](../../../scripts/README.md) が走査の root（`usecases` `modules` `env`）の下のファイルを読み、block・入れ子の block・属性を、式の構文の木と参照の列とともに JSON に書く（ADR-0501 決定5）。読んだファイルの集合を `find` の一覧と突き合わせる。構文の誤り・知らない式・symlink・`.tf` が0件のときは JSON を書かずに落ち、Conftest を起動しない。段は `.makefiles/terraform/hcl-input.mk` が持ち、構文として読んだファイルの一覧とトップレベルの block の行頭の数えも `--data` に書く |
+| 検査 | `layer-detect` | その JSON を1つの入力として掛ける。入力の形と、構文として読んだファイルの集合・トップレベルの block の数を独立の数え（`find`・行頭の数え）と突き合わせ（`lib.hcl_input.input_errors`。ADR-0702 決定15）、入力の `.tf` と `.tf.json` の集合を構成ファイルの `find` の一覧と突き合わせ、評価した規則の数を `layer.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
 
 `tf-local policy-result` は `layer.rego` の行頭の `deny contains` を数える。規則は字下げせずにこのファイルへ置く。
+
+上の「JSON を書かずに落ち、Conftest を起動しない」順序はレシピ（`.makefiles/terraform/layer.mk`・`hcl-input.mk`）が持ち、レシピの
+ロジックを Go へ移すまで（#439）、テストで固定されていない。Conftest を起動した後の失敗は、Conftest の `|| :` の
+後の `tf-local policy-result` が結果を読めないか規則の数と合わないことで落とす（読み手の側は `scripts/tf-local` の Go の
+テストが固定する）。
 
 ## 失敗の読み方
 
@@ -27,10 +32,9 @@ symlink は実体のファイルで書く）。
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
 | `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
-| `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または Conftest が読んだファイルと `find` の一覧が違う（symlink の構成ファイルなど）か、Conftest が読んだ `.tf` と `hcl_input` のファイルの一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す。`hcl_input` との差は、2つのパーサの読むファイルが食い違っている |
+| `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `find` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
 | `LY003` | 走査の root に JSON の構成（`.tf.json`）が在る。検査はそれを解釈しない（ADR-0501 決定5、ADR-0103 決定11） | HCL（`.tf`）で書く |
-| `LY004` | `data.hcl_input` が無いか、形が違う（`files` が文字列の配列でない、block・属性・参照・段の形が違う、添字の段が式の種類 `index` を持たないか種類が知らないものか、`literal` だけが値を持つ形でない、`within` が添字の段を指さない）。形の崩れた入力の上では、それを読む規則（`LY002` の `hcl_input` の向き・`LY005`・`LY301`・`LY302`・`LY305`・`LY307`・`LY308`）を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `layer.rego` の読む形を揃える |
-| `LY005` | Conftest が読んだ resource の block（ファイル・型・名前）と `hcl_input` の resource の block が違う。または attachment 型の resource の、宣言した親の引数か `for_each` の数が、Conftest の側（`lib.hcl.values_at`）と `hcl_input` で違う | 2つのパーサの受理か block の畳み方が食い違っている。両方が同じに読む書き方へ直す |
+| `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `find` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
 | `LY101` | `usecases/<use-case>/` 直下の `.tf` に `resource` が在る（決定14） | module に置き、usecase は module を合成する |
 | `LY102` | `usecases/<use-case>/` 直下の `.tf` に `provider` が在る（決定14） | env の root に置く |
 | `LY103` | `usecases/<use-case>/` 直下の `.tf` に root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）が在る（決定14） | env の root に置く |
@@ -42,7 +46,7 @@ symlink は実体のファイルで書く）。
 | `LY206` | module の呼び出しが循環する | 循環を断つ |
 | `LY301` | attachment 型の resource の親を指す引数が、同じ module の、宣言した親の型の resource だけを参照していない（決定18） | 親の resource と同じ module に置き、親を参照する |
 | `LY302` | `optional` でない attachment 型の resource が、宣言したどの親の引数も持たない | Provider が引数の名前を変えたなら宣言を直す |
-| `LY304` | 親の型の resource が、attachment 型と同じ設定を書くと宣言した引数（`parent_arguments`）を書いている。値を問わない（`null`・`[]`・空の block・`dynamic` も書いたと数える）。2つのパーサのどちらか一方でも書いたと読めば落とす（決定18） | attachment 型の resource で書く |
+| `LY304` | 親の型の resource が、attachment 型と同じ設定を書くと宣言した引数（`parent_arguments`）を書いている。値を問わない（`null`・`[]`・空の block・`dynamic` も書いたと数える）（決定18） | attachment 型の resource で書く |
 | `LY305` | 文書全体を置き換える型（`whole_document`）の、同じ型の別々の resource が、同じ親を指す。親の選び方（下の「親の選び方」）がどちらも添字なしか、同じリテラルの添字か、一方が添字なし | 1つの resource にまとめる |
 | `LY306` | Provider の schema との突き合わせ。`data.layer_schema` が無いか空か形が違う、親の型が schema に無いか書ける引数を1つも持たない、親の型の非推奨の書ける引数がどの `parent_arguments` にも `unrelated_deprecated_arguments` にも無い、宣言の引数が schema の書ける引数に無い、`unrelated_deprecated_arguments` の引数が非推奨でない、書かないときの値が schema の種類（block は `[]`、属性は `null`）と合わない | Provider の版を上げたなら、足された非推奨の引数を分類する。宣言の引数名を直す |
 | `LY307` | 排他に持つと宣言した親の引数（`inline_owned`）を `parent_arguments` に持つ attachment 型の resource が、その親を指す（決定18 のただし書き） | 親の引数で書く |
@@ -58,7 +62,7 @@ symlink は実体のファイルで書く）。
 
 ## 親を指す引数の辿り方
 
-親を指す引数の式の参照は、`hcl_input` の属性の `refs` から読む。`scripts/hcl-input` が式を構文の木として歩き、参照
+親を指す引数の式の参照は、入力の属性の `refs` から読む。`scripts/hcl-input` が式を構文の木として歩き、参照
 （根と、属性・添字・splat の段）を取り出す。リテラルの文字列、`$${` のエスケープ、コメント、`for` 式の反復変数（入れ子で
 同名のものを含む）、括弧の無い1語のオブジェクトのキーは参照にならない。テンプレートの補間と指示子、条件式、関数の引数、
 括弧つきのオブジェクトのキーの中の参照は、どれも参照になる。取り出した参照の集合は、`hclsyntax` の `Variables()` と
@@ -77,7 +81,7 @@ symlink は実体のファイルで書く）。
 ### 親の選び方（LY305・LY308）
 
 文書全体を置き換える型の resource ごとに、親を指す引数から辿った親の葉と、その葉の選び方を決める。選び方は、葉の参照の
-最初の名前の直後の段で読む。段が無いか属性なら「添字なし」、添字で、`hcl_input` の式の種類が `literal` なら「リテラル」
+最初の名前の直後の段で読む。段が無いか属性なら「添字なし」、添字で、入力の式の種類が `literal` なら「リテラル」
 （数の形の文字列は数に直し、`this[0]` と `this["0"]` を同じに読む）、ほかは「判定できない」とする。`local` を経た葉は、
 その `local` の定義の参照の選び方を引き継ぐ。`local` を添字で選んだ先（`local.all[each.key]`）と、`each` を経て
 `for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の resource の組だけ
@@ -90,7 +94,7 @@ symlink は実体のファイルで書く）。
 - `attachments`: attachment 型の resource の型ごとに、`parents`（親を指す引数から、親として認める型の配列へ）と
   `optional`（宣言したどの親の引数も書かなくてよいか）を持つ。引数は `protected_resource.s3_bucket.bucket_name` の
   ように block をまたいだ dotted な並びで書き、`dynamic` で書いた block も同じ引数として読む。`dynamic.<名前>.content` を
-  `<名前>` に畳む規則は、`lib.hcl.fold_dynamic` と `scripts/hcl-input` が同じ正規表現で持ち、どちらも何段の入れ子でも畳む
+  `<名前>` に畳む規則は `scripts/hcl-input` が持ち、何段の入れ子でも畳む
 - `not_attachments`: attachment 型でない型と、その理由。親になる型も、それ自身が attachment 型でないことをここに置く
 - `attachments` の各項目の `parent_arguments`: 親の型から、その attachment 型と同じ設定を書く親の引数と、書かないときの値
   （属性は `null`、block は `[]`）へ。無ければ空のオブジェクトを明示する。`whole_document`: 親の設定の文書全体を
@@ -132,8 +136,9 @@ resource である。親と引数の組で同一性が決まり、自前の名�
 - lock を持たない一般 module が init で選ぶ Provider の版の schema。`layer-schema` は追跡している lock の版の和だけを読む
 - 参照の直後の添字の中の参照で選ぶ親。`aws_s3_bucket.this[module.x.key]` は `aws_s3_bucket.this` を親として通す
 - `dynamic` の `content` の中の反復変数（`protected_resource.value`）を `for_each` へ辿ること。反復変数は辿れない参照として違反になる
-- 2つのパーサ（`hcl-input` の `hclsyntax` と Conftest の hcl2 パーサ）が同じ書き方を同じに読むこと。受理が食い違う
-  ファイル・resource・親の引数は `LY002`・`LY005` で落ちる側に倒れ、誤って落ちることはあっても黙って通ることはない
+- 入れ子の block と属性の数。独立の数えと突き合わせるのはファイルの集合とトップレベルの block の数だけで、入れ子の
+  block と属性は独立に数えない。`hcl-input` が入れ子の block（属性を持たないもの・`dynamic` を含む）と属性を落とさず出すことは、
+  `hcl-input` の Go のテストが固定する
 - module の呼び出しが無い、層の置き場でないディレクトリの resource は `LY101` に当たらない。attachment 型であれば
   `LY301` が見る
 - `.tftest.hcl` の `run` の `module` の `source`

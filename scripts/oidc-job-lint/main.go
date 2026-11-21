@@ -159,8 +159,7 @@ var (
 	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
 	orderRun      = makeRun(`resource-order-check(?:-test)?`)
 	orderTestRun  = makeRun(`resource-order-check-test`)
-	layerRun      = makeRun(`layer-check(?:-test)?`)
-	layerTestRun  = makeRun(`layer-check-test`)
+	layerRun      = makeRun(`layer-check`)
 	rootRun       = makeRun(`root-check(?:-test)?`)
 	rootTestRun   = makeRun(`root-check-test`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
@@ -305,7 +304,7 @@ func run(dir, envFile, rulesetFile, rootsDir string, out io.Writer) error {
 const prGateIf = "!cancelled() && needs.changes.outputs.relevant != 'false'"
 
 // checkRequiredGateJobs は、pull_request で起動する workflow のうち、required の context を報告し
-// g の自己テストと検査の両方を走らせる job の数と、その job が検査を走らせずに成功を報告しうる形の違反を返します。
+// g の検査（自己テストを持つ検査では、その両方）を走らせる job の数と、その job が検査を走らせずに成功を報告しうる形の違反を返します。
 func checkRequiredGateJobs(file, source string, required map[string]bool, g gate) (int, []lintreport.Finding) {
 	split := workflow.SplitJobs(source)
 	on, _ := triggers(split.Preamble)
@@ -315,7 +314,7 @@ func checkRequiredGateJobs(file, source string, required map[string]bool, g gate
 	n := 0
 	var findings []lintreport.Finding
 	for _, j := range split.Jobs {
-		if !required[j.ID] || !runsGate(j, g) || !hasLine(j, g.testRun) {
+		if !required[j.ID] || !runsGate(j, g) || (g.testRun != nil && !hasLine(j, g.testRun)) {
 			continue
 		}
 		n++
@@ -1123,7 +1122,7 @@ func hasLine(job workflow.Job, re *regexp.Regexp) bool {
 
 // gate は、資格情報を取る job が needs に置ける、資格情報を持たない検査の job の種類です。job は名前ではなく、
 // 走らせる make のターゲット（marks）で見分けます。runs はその job に置ける run: の閉じた集合、testRun は
-// 自己テストの run: で、check は違反の文に出す検査の make です。
+// 自己テストの run:（無い検査は nil）で、check は違反の文に出す検査の make です。
 type gate struct {
 	noun, label, targets, check string
 	marks, runs, testRun        *regexp.Regexp
@@ -1132,7 +1131,7 @@ type gate struct {
 var (
 	detectionGate = gate{noun: "検出", label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", check: "make infra-code-gate", marks: detection, runs: detectionRun}
 	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", check: "make resource-order-check", marks: orderCheck, runs: orderRun, testRun: orderTestRun}
-	layerGate     = gate{noun: "層の検査", label: "層の検査の job", targets: "make layer-check-test と make layer-check", check: "make layer-check", marks: layerCheck, runs: layerRun, testRun: layerTestRun}
+	layerGate     = gate{noun: "層の検査", label: "層の検査の job", targets: "make layer-check", check: "make layer-check", marks: layerCheck, runs: layerRun}
 	rootGate      = gate{noun: "root の検査", label: "root の検査の job", targets: "make root-check-test と make root-check", check: "make root-check", marks: rootCheck, runs: rootRun, testRun: rootTestRun}
 	// applyGates は、apply の job が検出に加えて必ず待ち、Pull Request の必須検査も走らせる検査である。
 	applyGates = []gate{orderGate, layerGate, rootGate}

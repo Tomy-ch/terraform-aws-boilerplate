@@ -1,0 +1,13 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+locals {
+  all = merge(aws_s3_bucket.this, { extra = aws_s3_bucket.other })
+  keys = { a = "${var.prefix}-a" }
+}
+
+resource "aws_s3_bucket" "other" {}
+
+resource "aws_s3_bucket_policy" "this" {
+  for_each = local.keys
+  bucket   = local.all[each.key].id
+}

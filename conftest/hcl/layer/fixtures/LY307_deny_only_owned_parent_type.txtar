@@ -1,0 +1,12 @@
+-- modules/m/main.tf --
+resource "aws_route_table" "t" {}
+
+resource "aws_vpc" "v" {}
+
+resource "aws_route" "to_table" {
+  route_table_id = aws_route_table.t.id
+}
+
+resource "aws_route" "to_vpc" {
+  route_table_id = aws_vpc.v.id
+}

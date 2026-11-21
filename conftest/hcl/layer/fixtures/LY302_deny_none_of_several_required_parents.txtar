@@ -1,0 +1,2 @@
+-- modules/m/main.tf --
+resource "aws_api_gateway_method_settings" "this" {}

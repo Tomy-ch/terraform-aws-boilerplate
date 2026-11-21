@@ -103,8 +103,8 @@ run "admin_break_glass_arns" {
   }
 }
 
-# docs/setup/scripts/check-plan.sh --mock が、この run の plan を check-plan.expected と突き合わせる（make check-plan-expected）。
-# 判定はそのスクリプトが持つので、ここでは assert を置かない。
+# bootstrap-check plan -mock が、この run の plan を check-plan.expected と突き合わせる（make check-plan-expected）。
+# 判定はそのツールが持つので、ここでは assert を置かない。
 run "check_plan" {
   command = plan
 }

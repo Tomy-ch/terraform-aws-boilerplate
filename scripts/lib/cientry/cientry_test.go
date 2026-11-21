@@ -192,6 +192,33 @@ func TestRoles(t *testing.T) {
 	})
 }
 
+func Test_registry_roles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("lock を取らない種別も含め、種別の順に identity、workload の role を重複なく返す", func(t *testing.T) {
+			t.Parallel()
+			r := registry{
+				{Name: "a", Lock: LockSkip, IdentityRole: "a", WorkloadRole: "a"},
+				{Name: "b", Lock: LockRelease, IdentityRole: "b-identity", WorkloadRole: "b"},
+				{Name: "c", Lock: LockKeep, IdentityRole: "b-identity", WorkloadRole: "c"},
+			}
+			assert.Equal(t, []string{"a", "b-identity", "b", "c"}, r.roles())
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("種別が無ければ空を返す", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, registry{}.roles())
+		})
+	})
+}
+
 func TestKind_Role(t *testing.T) {
 	t.Parallel()
 

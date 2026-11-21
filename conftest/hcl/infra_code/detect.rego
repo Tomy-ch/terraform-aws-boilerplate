@@ -1,5 +1,5 @@
 # インフラ内コードの検出（ADR-0103 決定9・10）。input は scripts/hcl-input が走査の root の下から作る JSON
-# （`-format syntax`）で、path はリポジトリの root からの相対パス。入力の形と数の検査は input.rego が持つ。
+# で、path はリポジトリの root からの相対パス。入力の形と数の検査は input.rego が持つ。
 package infra_code
 
 import data.lib.hcl_input as hcl

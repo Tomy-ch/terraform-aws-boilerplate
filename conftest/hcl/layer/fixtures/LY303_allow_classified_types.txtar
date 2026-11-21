@@ -1,0 +1,5 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}
+resource "aws_lb_listener" "this" {}
+
+resource "aws_vpc" "this" {}

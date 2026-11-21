@@ -1,0 +1,12 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {}
+
+resource "aws_iam_role_policies_exclusive" "e" {
+  role_name    = aws_iam_role.r.name
+  policy_names = []
+}
+
+resource "aws_iam_role_policy_attachments_exclusive" "f" {
+  role_name   = aws_iam_role.r.name
+  policy_arns = []
+}
