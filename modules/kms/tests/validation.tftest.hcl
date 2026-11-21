@@ -1252,3 +1252,66 @@ run "users_rejects_read_write_via_ecr" {
 
   expect_failures = [var.users]
 }
+
+# Key Policy の StringEquals と StringLike は IAM の policy 変数を置き換えるので、固定の object にも policy 変数の文字を受けない。
+run "users_rejects_object_with_policy_variable" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/$${aws:username}"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_write_object_with_dollar" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a$b"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_write_object_with_brace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a{b}"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_object_with_other_punctuation" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a-b_c.d/e:f=g"] }]
+    }
+  }
+}
+
+# 同じ role の read-write を、固定の object だけと接頭辞だけの2件に分けて渡さない。
+run "users_rejects_same_role_read_write_split" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
+      ]
+    }
+  }
+
+  expect_failures = [var.users]
+}

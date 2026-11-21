@@ -295,6 +295,22 @@ deny contains msg if {
 	msg := sprintf("[PLAN-KMS-12] %s: %s が S3 経由の role の文の object に Bucket の ARN %v を置いています。Bucket Key を使う Bucket の暗号化コンテキストは受けません", [r.document.path, r.document.address, v])
 }
 
+# IAM は同じ条件キーを持つ2つの演算子（と大文字小文字だけが違う2つのキー）を AND で読む。値を和で読むと、どちらも
+# 満たさない要求しか通らない文を、限った文と見誤る。
+deny contains msg if {
+	some r in key_policies
+	some s in allows(r.body)
+	s3_role_statement(s)
+	count(s3_arn_entries(s)) > 1
+	msg := sprintf("[PLAN-KMS-12] %s: %s の S3 経由の文が kms:EncryptionContext:aws:s3:arn を2つ以上の演算子（かキー）に置いています。値を1つの演算子にまとめてください", [r.document.path, r.document.address])
+}
+
+s3_arn_entries(s) := [[op, k] |
+	some op, kv in object.get(s, "Condition", {})
+	some k, _ in kv
+	lower(k) == s3_arn_key
+]
+
 s3_arn_key := "kms:encryptioncontext:aws:s3:arn"
 
 s3_role_statement(s) if {

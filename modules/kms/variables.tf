@@ -65,12 +65,13 @@ variable "users" {
     error_message = "users.roles[*] は、via が s3 なら objects と object_prefixes を合わせて1件以上（object_prefixes は access が read-write のときだけ）に、via が s3 でなければ objects と object_prefixes を空にしてください。"
   }
 
-  # read-write の objects は Key Policy の StringLike に置かれ、* と ? をワイルドカードとして読むので、固定の object の ARN に閉じる。
+  # read-write の objects は Key Policy の StringLike に置かれ、* と ? をワイルドカードとして読む。StringEquals と StringLike は
+  # IAM の policy 変数（${...}）も置き換えるので、固定の object の ARN に閉じる。
   validation {
     condition = alltrue(flatten([for r in var.users.roles : [
-      for o in r.objects : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/[^*?]+$", o))
+      for o in r.objects : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/[^*?\\$\\{\\}]+$", o))
     ]]))
-    error_message = "users.roles[*].objects は S3 の object の ARN（arn:<partition>:s3:::<bucket>/<key>）にしてください。* と ? は受けません。"
+    error_message = "users.roles[*].objects は S3 の object の ARN（arn:<partition>:s3:::<bucket>/<key>）にしてください。* と ? と、IAM の policy 変数の文字（$ と { と }）は受けません。"
   }
 
   validation {

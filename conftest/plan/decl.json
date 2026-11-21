@@ -333,7 +333,9 @@
       "key_object_roles": [
         "plan_role",
         "apply_identity_role",
-        "apply_role"
+        "apply_role",
+        "unlock_role",
+        "workload_unlock_role"
       ],
       "apply_output_bucket_policy_statements": 3
     },

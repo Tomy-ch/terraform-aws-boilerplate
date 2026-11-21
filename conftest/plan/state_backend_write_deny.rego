@@ -491,6 +491,14 @@ deny contains msg if {
 	msg := "[PLAN-SBW-00] data.policy_plan.state_backend.key_object_roles が空です"
 }
 
+# 鍵の暗号操作を許す role は、どれも S3 経由で object を限るので、すべてを突き合わせる。
+deny contains msg if {
+	is_array(key_object_roles)
+	some name in object.get(cfg, "key_user_roles", [])
+	not name in key_object_names
+	msg := sprintf("[PLAN-SBW-00] data.policy_plan.state_backend.key_user_roles の %s が key_object_roles にありません", [name])
+}
+
 deny contains msg if {
 	some name in key_object_names
 	not name in object.get(cfg, "key_user_roles", [])
@@ -581,6 +589,28 @@ deny contains msg if {
 	allows_action(g.statement, action)
 	count(lib.limiting_values(g.statement, "kms:encryptioncontext:aws:s3:arn")) == 0
 	msg := sprintf("[PLAN-SBW-10] %s: %s が %s の role に、暗号操作を object（kms:EncryptionContext:aws:s3:arn）で限らずに許しています", [g.document.path, g.document.address, name])
+}
+
+# IAM は同じ条件キーの2つの演算子を AND で読むので、値の和で比べると、どちらも満たせない文を一致と見誤る。
+deny contains msg if {
+	some name in key_object_names
+	role_known(name)
+	some g in key_role_grants(role_arn(name))
+	count([k |
+		some _, kv in object.get(g.statement, "Condition", {})
+		some k, _ in kv
+		lower(k) == "kms:encryptioncontext:aws:s3:arn"
+	]) > 1
+	msg := sprintf("[PLAN-SBW-10] %s: %s の %s の role への文が kms:EncryptionContext:aws:s3:arn を2つ以上の演算子（かキー）に置いています", [g.document.path, g.document.address, name])
+}
+
+# 突き合わせる object が両側とも無いときは、一致ではなく何も見ていない。
+deny contains msg if {
+	some name in key_object_names
+	role_known(name)
+	count(key_objects(role_arn(name), "kms:decrypt")) == 0
+	count(iam_objects(name, ["s3:getobject", "s3:putobject"])) == 0
+	msg := sprintf("[PLAN-SBW-10] %s の role %s に、Key Policy も IAM も S3 の object を1つも許していません。宣言 key_object_roles か policy の address を確かめてください", [name, role_arn(name)])
 }
 
 # 文字列の完全一致で比べる。pattern 同士も文字列として比べ、当たる範囲の包含は読まない。

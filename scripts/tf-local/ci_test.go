@@ -667,8 +667,60 @@ func Test_runApplyKey(t *testing.T) {
 	})
 }
 
+// policyObjectPatterns は、deployment-identity の inline policy の宣言の、line に当たるただ1つの行から、
+// Bucket の変数 bucketVar の object の Resource の key の pattern（`pr/*` など）を取り出します。
+func policyObjectPatterns(t *testing.T, line *regexp.Regexp, bucketVar string) []string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "internal", "github-oidc", "policies.tf"))
+	require.NoError(t, err)
+
+	var hits []string
+	for l := range strings.Lines(string(raw)) {
+		if line.MatchString(l) {
+			hits = append(hits, l)
+		}
+	}
+	require.Len(t, hits, 1, "policies.tf の %s に当たる行", line)
+
+	var patterns []string
+	for _, m := range regexp.MustCompile(`"\$\{var\.`+regexp.QuoteMeta(bucketVar)+`\}/([^"]*)"`).FindAllStringSubmatch(hits[0], -1) {
+		patterns = append(patterns, m[1])
+	}
+	require.NotEmpty(t, patterns, "policies.tf の %q から %s の object の Resource を読めない", hits[0], bucketVar)
+
+	return patterns
+}
+
+// iamMatches は、IAM の Resource の pattern（* は / も越える）が key に当たるかを返します。
+func iamMatches(patterns []string, key string) bool {
+	for _, p := range patterns {
+		if regexp.MustCompile("^" + strings.ReplaceAll(regexp.QuoteMeta(p), `\*`, ".*") + "$").MatchString(key) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func Test_applyKey(t *testing.T) {
 	t.Parallel()
+
+	t.Run("写しと正本のずれ", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := applyKey("1", "1", "admin-identity")
+		require.NoError(t, err)
+
+		identity := policyObjectPatterns(t, regexp.MustCompile(`Sid = "WriteApplyOutput"`), "plan_output_bucket_arn")
+		assert.True(t, iamMatches(identity, got), "apply の全文の key %s が、apply-identity の role が plan の出力の Bucket に書ける Resource %v に当たる", got, identity)
+
+		workload := policyObjectPatterns(t, regexp.MustCompile(`Sid = "WriteWorkloadApplyOutput"`), "apply_output_bucket_arn")
+		assert.True(t, iamMatches(workload, got), "apply の全文の key %s が、apply の role が apply の出力の Bucket に書ける Resource %v に当たる", got, workload)
+
+		plan := policyObjectPatterns(t, regexp.MustCompile(`^\s*plan_output_keys\s*=`), "plan_output_bucket_arn")
+		assert.False(t, iamMatches(plan, got), "apply の全文の key %s が、plan の role の Resource %v に当たらない", got, plan)
+	})
 
 	t.Run("apply の全文は apply/ の下に置く", func(t *testing.T) {
 		t.Parallel()
@@ -827,6 +879,23 @@ func Test_runFailureKind(t *testing.T) {
 
 func Test_planKey(t *testing.T) {
 	t.Parallel()
+
+	t.Run("写しと正本のずれ", func(t *testing.T) {
+		t.Parallel()
+
+		pr, err := planKey("1", "", "1", "1", "admin-identity")
+		require.NoError(t, err)
+		branch, err := planKey("", "release/v0.1.0", "1", "1", "admin-identity")
+		require.NoError(t, err)
+
+		patterns := policyObjectPatterns(t, regexp.MustCompile(`^\s*plan_output_keys\s*=`), "plan_output_bucket_arn")
+		for _, key := range []string{pr, branch} {
+			assert.True(t, iamMatches(patterns, key), "plan の全文の key %s が、plan の role が書ける Resource %v に当たる", key, patterns)
+		}
+		for _, p := range patterns {
+			assert.True(t, iamMatches([]string{p}, pr) || iamMatches([]string{p}, branch), "plan の role の Resource %s に当たる plan の全文の key が無い", p)
+		}
+	})
 
 	t.Run("Pull Request の plan は pr/ の下に置く", func(t *testing.T) {
 		t.Parallel()

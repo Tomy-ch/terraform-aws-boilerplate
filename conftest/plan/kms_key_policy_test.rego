@@ -894,3 +894,32 @@ test_violation_topic_policy_variable if {
 		ids([root, with_condition(via_sns, c)]) == {"[PLAN-KMS-11]"}
 	}
 }
+
+# IAM は同じ条件キーの2つの演算子を AND で読むので、固定の object と pattern を分けた文はどちらの要求も通さない。
+test_violation_s3_arn_under_two_operators if {
+	every c in [
+		{
+			"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com", "kms:EncryptionContext:aws:s3:arn": [own_object]},
+			"StringLike": {"kms:EncryptionContext:aws:s3:arn": [sprintf("%s/pr/*", [plan_output])]},
+		},
+		{
+			"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"},
+			"StringLike": {"kms:EncryptionContext:aws:s3:arn": [sprintf("%s/pr/*", [plan_output])]},
+			"ArnLike": {"kms:EncryptionContext:aws:s3:arn": [sprintf("%s/branch/*", [plan_output])]},
+		},
+		{
+			"StringEquals": {"kms:ViaService": "s3.ap-northeast-1.amazonaws.com"},
+			"StringLike": {
+				"kms:EncryptionContext:aws:s3:arn": [sprintf("%s/pr/*", [plan_output])],
+				"KMS:ENCRYPTIONCONTEXT:AWS:S3:ARN": [sprintf("%s/branch/*", [plan_output])],
+			},
+		},
+	] {
+		msgs := p.deny with input as fixture.plan([key_policy([root, with_condition(via_s3, c)])])
+		fixture.has("[PLAN-KMS-12] p.json: module.state_backend.module.kms.aws_kms_key_policy.this の S3 経由の文が kms:EncryptionContext:aws:s3:arn を2つ以上の演算子", msgs)
+	}
+}
+
+test_pass_read_statement_single_operator if {
+	count({i | some i in ids([root, via_s3_read]); i == "[PLAN-KMS-12]"}) == 0
+}
