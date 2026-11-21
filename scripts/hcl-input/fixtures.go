@@ -22,7 +22,7 @@ type fixtureDoc struct {
 	Fixtures map[string]syntaxDoc `json:"fixtures"`
 }
 
-// runFixtures は、-dir の `*.txtar` の1ファイルを1つの木として一時ディレクトリに建て、`-format syntax` と
+// runFixtures は、-dir の `*.txtar` の1ファイルを1つの木として一時ディレクトリに建て、通常の実行と
 // 同じ経路（buildSyntax）で読んで -out へ書きます。txtar の0件、ファイルの0件のケースは errFixture です。
 func runFixtures(args []string, out io.Writer) error {
 	fset := flag.NewFlagSet("hcl-input fixtures", flag.ContinueOnError)

@@ -11,6 +11,11 @@ mock_provider "aws" {
   }
 }
 
+# ops-notification は aws の partition の外では動かない（ops-notification/ADR-0001 決定1）ので、この root の配線だけを見る。
+override_module {
+  target = module.ops_notification
+}
+
 run "boundary_arn_is_built_from_the_account_and_partition" {
   command = plan
 

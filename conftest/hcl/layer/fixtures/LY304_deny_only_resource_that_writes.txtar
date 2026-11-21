@@ -1,0 +1,6 @@
+-- modules/m/main.tf --
+resource "aws_iam_role" "r" {}
+
+resource "aws_iam_role" "q" {
+  managed_policy_arns = null
+}

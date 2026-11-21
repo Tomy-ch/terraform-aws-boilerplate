@@ -1,0 +1,2 @@
+-- modules/m/main.tf --
+resource "aws_s3_bucket" "this" {}

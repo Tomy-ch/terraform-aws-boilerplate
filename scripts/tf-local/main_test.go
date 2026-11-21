@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 )
 
 const (
@@ -1611,7 +1613,7 @@ func TestCiMk(t *testing.T) {
 		got := expand(t, "ci-assume-denied", "CI_ENV=admin")
 		m := regexp.MustCompile(`for r in ([a-z -]+); do export r`).FindStringSubmatch(got)
 		require.Len(t, m, 2, got)
-		want := slices.DeleteFunc(slices.Clone(roleNames), func(r string) bool { return r == "plan" })
+		want := slices.DeleteFunc(slices.Clone(cientry.Roles()), func(r string) bool { return r == "plan" })
 		assert.ElementsMatch(t, want, strings.Fields(m[1]))
 	})
 

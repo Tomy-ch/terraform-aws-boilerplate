@@ -282,9 +282,9 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Compute | `container-platform` | 環境ごとのECS Cluster。ECS Execの監査（ログと暗号化）、Container Insights、capacity providerを不変条件として持つ。Compute系のusecaseはCluster ARNを入力で受ける（#94） |
 | Compute | `image-registry` | 環境ごとのECR。repositoryとregistry単位の設定（不変タグ、push時スキャン、lifecycle、repository policy）を1つの書き手で持つ。常駐層（#94、#72） |
 | Observability | `analytics` | AWSネイティブログの集計。Athena WorkGroup、Glueスキーマ、結果用S3。Log Groupの購読とS3ログの受け口（第9.3節） |
-| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topicと、Amazon Q Developer in chat applications（旧AWS Chatbot）のSlackの宛先、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
+| Observability | `ops-notification` | 基盤系アラームの届け先。SNS Topic（providerのregionとus-east-1）と、Amazon Q Developer in chat applications（旧AWS Chatbot）のSlackの宛先、通知経路自体の死活。メトリクス途絶の検知はalarmを持つ各moduleが持つ（第9.3節）。`ops-notification`以外のusecaseがTopic ARNを入力で受ける。常駐層（第10.2節） |
 | Governance | `finops` | AWS Budgets、Cost Anomaly Detection、通知先との接続。常駐層 |
-| Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに plan / apply / apply-identity / unlock-identity の4 role を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
+| Governance | `deployment-identity` | CI/CD用OIDC、IAM Role/Policy、Trust Policy。アカウントごとに CI の role（一覧は `usecases/deployment-identity/README.md` の role の表）を持ち、信頼は environment claim で限定する（ADR-0602 決定13-14）。長期アクセスキーを使わない |
 | Governance | `state-backend` | Terraformのstate backend。Bucketの版管理・暗号化・Public Access Block、ロック、apply 系 role 以外の書き込み拒否。アクセス記録は CloudTrail が持ち（data events は組織の trail（`security-tooling`）が記録し、`audit-evidence` が保管する）、S3サーバーアクセスログは持たない（state-backend/ADR-0105）。改変の検知は GuardDuty（フェーズ1）に委ね、どの改変を検知するかは確かめていない（state-backend/ADR-0105）。フェーズ0でCLI作成→importで突合する（ADR-0602 決定1-2・4-8）。常駐層 |
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。
@@ -407,7 +407,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 **analytics:** AWSネイティブのログ（ALB、CloudFront、S3アクセスログ、VPC Flow Logs）の集計に限定する。アプリログの分析は送り先backend（obp）の責務とする。CloudWatch LogsをAthenaから直接引くconnectorは、実体がLambdaのため採用しない。LokiはS3に独自形式で保存するため、analyticsとobpで保存先は共有しない。
 
-**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgets・Cost Anomaly Detectionだけとする（越境しない。#97）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントのTopicへ毎日1回の心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
+**アラート:** AWS基盤系（ECS Task停止、SQS DLQ、Schedulerの起動失敗）のアラームは、モードに関係なくtabpがCloudWatchとEventBridgeで持つ。通知先のTopicは各アカウントの`ops-notification`が、providerのregionとus-east-1に1つずつ持ち、送れるのは同じアカウントのCloudWatch・EventBridge・Budgets・Cost Anomaly Detection（us-east-1のTopicはCloudWatchだけ）とする（越境しない。#97。us-east-1のTopicは、us-east-1にしか出ないmetricのalarmの通知先である。#421）。基盤系のアラームは平常時に1通も来ないため、すべてのアカウントでEventBridge Schedulerから自アカウントの2つのTopicへ毎日1回ずつ心拍を送り、来なくなったことに人が気づく形で通知経路の死活を見る。アプリ系のアラートの経路（Grafana Alerting）の死活はobp側が持つ。
 
 **アラームの置き場:** 通知のためのCloudWatchのmetric alarmは、そのmetricを出すresourceを持つmodule（一般moduleか、usecaseの`internal/`）が持つ。alarmだけを集めた一般moduleは設けない。alarmが鳴るかはmetricを出す側の仕様（報告される条件、inactiveでの送信の停止、前提の機能の有効化）で決まるので、その知識をresourceと同じmoduleに置く。dimensionはresourceへの参照で渡すので、存在しないresourceを指すdimensionはplanで失敗する。scalingなど、Topic以外へactionを送るalarmはこの節の対象外とする。
 

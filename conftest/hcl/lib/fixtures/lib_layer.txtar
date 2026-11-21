@@ -1,0 +1,45 @@
+-- m/main.tf --
+resource "aws_iam_role" "r" {
+  name                = "x"
+  managed_policy_arns = null
+  ingress             = []
+
+  inline_policy {}
+
+  dynamic "statement" {
+    for_each = []
+    content {}
+  }
+
+  nested {
+    deep = 1
+  }
+}
+
+locals {
+  a = aws_iam_role.r.arn
+}
+
+import {
+  to = aws_iam_role.r
+  id = "x"
+}
+-- m/empty.tf --
+-- m/versions.tf --
+terraform {
+  backend "s3" {}
+  cloud {}
+  required_version = ">= 1.0"
+}
+-- m/override.tf.json --
+{}
+-- m/tests/a.tftest.hcl --
+locals {
+  t = 1
+}
+
+run "ok" {}
+-- n/main.tf --
+locals {
+  b = 2
+}

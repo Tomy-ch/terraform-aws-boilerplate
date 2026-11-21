@@ -8,7 +8,7 @@
 
 | ID | タイトル | Status |
 | --- | --- | --- |
-| [0001](0001-topic-per-account-in-workload-root.md) | 通知の Topic を各アカウントの workload root に1つ置き、アカウントを越えて送らない | Accepted |
+| [0001](0001-topic-per-account-in-workload-root.md) | 通知の Topic を各アカウントの workload root に provider の region と us-east-1 の1つずつ置き、アカウントを越えて送らない | Accepted |
 
 ### 01 送り手と死活
 
@@ -16,7 +16,7 @@ Topic へ何が届くか（送り手）と、届く経路が働いているか�
 
 | ID | タイトル | Status |
 | --- | --- | --- |
-| [0101](0101-fixed-publishers.md) | Topic の送り手を budgets・cloudwatch・costalerts・events に固定し、入力にしない | Accepted |
+| [0101](0101-fixed-publishers.md) | Topic の送り手を budgets・cloudwatch・costalerts・events（us-east-1 の Topic は cloudwatch）に固定し、入力にしない | Accepted |
 | [0102](0102-daily-heartbeat.md) | 通知経路の死活を、毎日 09:00（Asia/Tokyo）の心拍で人が見る | Accepted |
 
 ### 02 宛先

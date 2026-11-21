@@ -3,7 +3,7 @@ package lib.hcl_input
 # fixture は conftest/hcl/lib/fixtures の txtar を hcl-input fixtures が JSON にしたもの（data.fixtures）。
 fx(name) := data.fixtures[name]
 
-lib_cases := {"lib_components", "lib_bodies", "lib_sources", "lib_unresolved"}
+lib_cases := {"lib_components", "lib_bodies", "lib_sources", "lib_unresolved", "lib_layer"}
 
 test_fixtures_present if {
 	every name in lib_cases {
@@ -154,7 +154,10 @@ ok_doc := {"files": [{"path": "m/a.tf", "parsed": true}], "blocks": [{
 		{"path": "n.x", "parent": 0, "line": 3, "refs": [], "expr": {"kind": "call", "name": "file", "expand": false, "args": [
 			{"kind": "template", "parts": [{"kind": "traversal", "root": "path", "steps": [{"kind": "attr", "name": "module"}]}, {"kind": "literal", "value": "/x"}]},
 		]}},
-		{"path": "y", "parent": -1, "line": 4, "refs": [], "expr": {"kind": "object", "items": [
+		{"path": "y", "parent": -1, "line": 4, "refs": [
+			{"root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "other"}}], "within": []},
+			{"root": "var", "steps": [{"kind": "attr", "name": "k"}], "within": [{"ref": 0, "step": 1}]},
+		], "expr": {"kind": "object", "items": [
 			{"key": {"kind": "literal", "value": "k"}, "value": {"kind": "traversal", "root": "var", "steps": [{"kind": "splat"}, {"kind": "index", "index": {"form": "literal", "value": 0}}]}},
 		]}},
 	],
@@ -204,6 +207,18 @@ test_shape_errors_deny_each_broken_field if {
 		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index/value", "value": true},
 		{"op": "replace", "path": "/blocks/0/attributes/1/expr/items/0/value/steps/1/index", "value": {"form": "other", "value": 0}},
 		{"op": "remove", "path": "/blocks/0/attributes/1/expr/items/0/key/value"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0", "value": "var"},
+		{"op": "add", "path": "/blocks/0/attributes/1/refs/0/extra", "value": 1},
+		{"op": "remove", "path": "/blocks/0/attributes/1/refs/0/within"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/root", "value": ""},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps", "value": {}},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps/0", "value": {"kind": "call"}},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps/1", "value": {"kind": "index", "name": "x"}},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/0/steps/1/index/form", "value": "each"},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/1/within", "value": {}},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/1/within/0", "value": {"ref": 0, "step": 0}},
+		{"op": "replace", "path": "/blocks/0/attributes/1/refs/1/within/0", "value": {"ref": 5, "step": 1}},
+		{"op": "add", "path": "/blocks/0/attributes/1/refs/1/within/0/extra", "value": 1},
 	]
 	every op in ops {
 		shape_one(op) == 1
@@ -314,4 +329,58 @@ test_unresolved_expr if {
 		unresolved_expr(scope_of(block(doc, "provider", [name])))
 	}
 	not unresolved_expr(scope_of(block(doc, "provider", ["aws"])))
+}
+
+# --- 層の検査が読む補助 ---
+
+test_tf_and_config_paths if {
+	d := fx("lib_layer")
+	tf_paths(d) == {"m/main.tf", "m/empty.tf", "m/versions.tf", "n/main.tf"}
+	config_paths(d) == {"m/main.tf", "m/empty.tf", "m/versions.tf", "m/override.tf.json", "n/main.tf"}
+}
+
+test_tf_blocks_skip_tftest if {
+	[b.file | some b in tf_blocks(fx("lib_layer"), "locals")] == ["m/main.tf", "n/main.tf"]
+	count(tf_blocks(fx("lib_layer"), "run")) == 0
+}
+
+test_root_only_kinds if {
+	d := fx("lib_layer")
+	root_only_kinds(d, "m/main.tf") == {"import"}
+	root_only_kinds(d, "m/versions.tf") == {"backend", "cloud"}
+	root_only_kinds(d, "n/main.tf") == set()
+}
+
+test_local_attrs if {
+	{[dir, a.path] | some [dir, a] in local_attrs(fx("lib_layer"))} == {["m", "a"], ["n", "b"]}
+}
+
+test_attrs_at if {
+	s := scope_of(block(fx("lib_layer"), "resource", ["aws_iam_role", "r"]))
+	[a.path | some a in attrs_at(s, "name")] == ["name"]
+	[a.path | some a in attrs_at(s, "nested.deep")] == ["nested.deep"]
+	attrs_at(s, "inline_policy") == []
+}
+
+test_writes_arg if {
+	s := scope_of(block(fx("lib_layer"), "resource", ["aws_iam_role", "r"]))
+	every arg in ["managed_policy_arns", "ingress", "inline_policy", "statement", "nested", "name"] {
+		writes_arg(s, arg)
+	}
+	not writes_arg(s, "policy")
+	not writes_arg(s, "nest")
+}
+
+test_arg_path if {
+	arg_path("a", "a")
+	arg_path("a.b", "a")
+	arg_path("dynamic.a", "a")
+	arg_path("dynamic.a.for_each", "a")
+	not arg_path("ab", "a")
+	not arg_path("b.a", "a")
+}
+
+test_is_tf_json if {
+	is_tf_json("m/x.tf.json")
+	not is_tf_json("m/x.tf")
 }

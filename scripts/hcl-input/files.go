@@ -11,57 +11,6 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// walkFiles は、roots の下の `.tf` を、base からの `/` 区切りの相対パスで辞書順に返します。
-// `.terraform` は init が落とした写しなので降りません。`.tftest.hcl` は読みません。
-// symlink は、ファイルもディレクトリも root そのものも errSymlink です。`.tf.json` と、構成ファイルの
-// 名前を持つ通常のファイルでないもの（`*.tf` の名前のディレクトリ）は errUnsupportedInput です。
-func walkFiles(base string, roots []string) ([]string, error) {
-	var files []string
-	for _, root := range roots {
-		dir := filepath.Join(base, filepath.FromSlash(root))
-		info, err := os.Lstat(dir)
-		switch {
-		case err != nil:
-			return nil, xerrors.Wrapf(errMissingRoot, "%s: %v", root, err)
-		case info.Mode()&fs.ModeSymlink != 0:
-			return nil, xerrors.Wrapf(errSymlink, "%s", root)
-		case !info.IsDir():
-			return nil, xerrors.Wrapf(errMissingRoot, "%s はディレクトリではありません", root)
-		}
-		err = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(base, p)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			name := e.Name()
-			switch {
-			case e.Type()&fs.ModeSymlink != 0:
-				return xerrors.Wrapf(errSymlink, "%s", rel)
-			case e.IsDir() && name == ".terraform":
-				return filepath.SkipDir
-			case strings.HasSuffix(name, ".tf.json"):
-				return xerrors.Wrapf(errUnsupportedInput, "%s: .tf.json は読みません", rel)
-			case strings.HasSuffix(name, ".tf") && !e.Type().IsRegular():
-				return xerrors.Wrapf(errUnsupportedInput, "%s: 構成ファイルの名前を持つ、通常のファイルでないものがあります", rel)
-			case strings.HasSuffix(name, ".tf"):
-				files = append(files, rel)
-			}
-
-			return nil
-		})
-		if err != nil {
-			return nil, xerrors.Wrapf(err, "%s の走査", root)
-		}
-	}
-	slices.Sort(files)
-
-	return slices.Compact(files), nil
-}
-
 // readListed は、find の出力（1行1パス）を、`./` を外した辞書順の重複なしの一覧で返します。空の行は
 // 読み飛ばします。
 func readListed(p string) ([]string, error) {
@@ -104,10 +53,10 @@ func compareFiles(walked, listed []string) error {
 // configDirSuffixes は、ディレクトリの名前として持つことを errUnsupportedInput にする、構成ファイルの接尾辞です。
 var configDirSuffixes = []string{".tf", ".tf.json", ".tftest.hcl", ".tftest.json"}
 
-// parsedSuffixes は、-format syntax が構文として読むファイルの接尾辞です。
+// parsedSuffixes は、構文として読むファイルの接尾辞です。
 var parsedSuffixes = []string{".tf", ".tftest.hcl"}
 
-// fileEntry は、-format syntax が列挙したファイルです。Parsed は構文として読んだかどうかで、読まない
+// fileEntry は、列挙したファイルです。Parsed は構文として読んだかどうかで、読まない
 // ファイルを未対応とするか対象外とするかは Rego が決めます。
 type fileEntry struct {
 	Path   string `json:"path"`

@@ -34,11 +34,9 @@ locals {
 
   identity_role_arns = [for k in keys(local.roles) : local.role_arns[k]]
 
-  iam_arn_prefix = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}"
-  # CI の role と customer managed policy は名前を `<name_prefix>-ci-` で始める（deployment-identity/ADR-0201 決定5）。
+  iam_arn_prefix  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}"
   ci_arn_patterns = ["${local.iam_arn_prefix}:role/${var.name_prefix}-ci-*", "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"]
 
-  # apply の role の workload の権限（決定17）と、role を作る usecase ごとの permissions boundary（決定15）。
   workload_policy_name = "${var.name_prefix}-ci-apply-workload"
   workload_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
   # workload の Allow が 6,144 文字を超えるので、読み取りを同じ役割の2つ目の policy に置く（決定17）。
@@ -148,8 +146,7 @@ locals {
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
-  # 置かれる region は provider の region と us-east-1（repository-wide/ADR-0208 決定4）。
-  # us-east-1 は aws の partition の region なので、ほかの partition では足さない。
+  # 置かれる region は provider の region と us-east-1（repository-wide/ADR-0208 決定4・5）。
   workload_regions      = distinct(concat([data.aws_region.current.region], data.aws_partition.current.partition == "aws" ? ["us-east-1"] : []))
   workload_arn_suffixes = [for r in local.workload_regions : "${r}:${data.aws_caller_identity.current.account_id}"]
   workload_key_arns     = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:kms:${x}:key/*"]
@@ -162,6 +159,11 @@ locals {
     StringEquals = { "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT", "kms:KeyOrigin" = "AWS_KMS" }
     Bool         = { "kms:MultiRegion" = "false" }
   }
+  # monitor と subscription の ARN は名前を含まないので、名前で限れない（決定13）。
+  workload_budget_arn    = "arn:${data.aws_partition.current.partition}:budgets::${data.aws_caller_identity.current.account_id}:budget/${var.name_prefix}-*"
+  anomaly_detection_arns = [for t in ["anomalymonitor", "anomalysubscription"] : "arn:${data.aws_partition.current.partition}:ce::${data.aws_caller_identity.current.account_id}:${t}/*"]
+  # project は英小文字と数字だけなので（usecases/deployment-identity の variables.tf）、name_prefix の最初の - の前が project である。
+  bootstrap_tag_key = "${split("-", var.name_prefix)[0]}:bootstrap"
   workload_read_statements = [
     {
       Sid      = "ReadWorkloadTopics"
@@ -195,6 +197,9 @@ locals {
       Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
       Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-*"
     },
+    # Provider は tag を付けなくても Read のたびに ListTagsForResource を呼ぶ。
+    { Sid = "ReadWorkloadBudgets", Effect = "Allow", Action = ["budgets:ListTagsForResource", "budgets:ViewBudget"], Resource = local.workload_budget_arn },
+    { Sid = "ReadAnomalyDetection", Effect = "Allow", Action = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"], Resource = local.anomaly_detection_arns },
   ]
 
   workload_role_write_arns   = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:role/${p}*"]
@@ -298,6 +303,16 @@ locals {
       Action    = "iam:CreateServiceLinkedRole"
       Resource  = "${local.iam_arn_prefix}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
       Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+    },
+    # budgets:ModifyBudget は予算と通知の作成・更新・削除を1つの Action で許す（決定13・18）。
+    { Sid = "ManageWorkloadBudgets", Effect = "Allow", Action = "budgets:ModifyBudget", Resource = local.workload_budget_arn },
+    { Sid = "CreateAnomalyMonitors", Effect = "Allow", Action = "ce:CreateAnomalyMonitor", Resource = "*" },
+    { Sid = "CreateAnomalySubscriptions", Effect = "Allow", Action = "ce:CreateAnomalySubscription", Resource = "*" },
+    {
+      Sid      = "ManageAnomalyDetection"
+      Effect   = "Allow"
+      Action   = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+      Resource = local.anomaly_detection_arns
     },
   ]
 
@@ -549,6 +564,14 @@ locals {
       ], local.bootstrap_deny_statements, [
       { Sid = "DenyBoundaryRemoval", Effect = "Deny", Action = "iam:DeleteRolePermissionsBoundary", Resource = "*" },
       local.lockout_bypass_deny_statement,
+      # 人が tag を付けた、管理アカウントの bootstrap の前提の異常検知を守る（決定13）。boundary へ写さない。
+      {
+        Sid       = "DenyBootstrapAnomalyDetectionChange"
+        Effect    = "Deny"
+        Action    = ["ce:DeleteAnomalyMonitor", "ce:DeleteAnomalySubscription", "ce:UntagResource", "ce:UpdateAnomalyMonitor", "ce:UpdateAnomalySubscription"]
+        Resource  = local.anomaly_detection_arns
+        Condition = { Null = { "aws:ResourceTag/${local.bootstrap_tag_key}" = "false" } }
+      },
     ])
 
     apply_identity = concat(

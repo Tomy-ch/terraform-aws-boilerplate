@@ -185,10 +185,15 @@ resource "aws_kms_key_policy" "this" {
       error_message = "users.roles[*].arn は、この鍵と同じアカウントと partition の role にしてください。"
     }
 
-    # S3 の ARN はアカウントを持たないので、別のアカウントの Bucket の object かどうかは見られない。partition だけを見る。
     precondition {
       condition     = alltrue(flatten([for r in var.users.roles : [for o in r.objects : startswith(o, "arn:${local.partition}:s3:::")]]))
       error_message = "users.roles[*].objects は、この鍵と同じ partition の S3 の object にしてください。"
+    }
+
+    # 所有は Bucket の名前の account regional namespace の接尾辞で読む。PLAN-KMS-12 と同じ判定なので、片方を変えたらもう片方も変える（README「公式実装の参照」）。
+    precondition {
+      condition     = alltrue(flatten([for r in var.users.roles : [for o in r.objects : endswith(try(regex("^arn:[^:]+:s3:::([^/]+)/", o)[0], ""), "-${local.account}-${local.region}-an")]]))
+      error_message = "users.roles[*].objects は、この鍵のアカウントと region の account regional namespace の Bucket（名前が -<account>-<region>-an で終わる）の object にしてください。"
     }
 
     precondition {

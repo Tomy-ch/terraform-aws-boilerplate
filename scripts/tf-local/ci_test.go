@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 )
 
 const (
@@ -70,7 +72,7 @@ func Test_runRoleARN(t *testing.T) {
 func Test_roleARN(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range []string{"plan", "apply", "apply-identity", "unlock-identity", "unlock"} {
+	for _, role := range cientry.Roles() {
 		t.Run(role+" の役割の ARN を組む", func(t *testing.T) {
 			t.Parallel()
 
@@ -80,6 +82,7 @@ func Test_roleARN(t *testing.T) {
 		})
 	}
 
+	// 写しと正本のずれを検出する検査は、正本の実物を読んでよい（ADR-0702 決定17）。
 	t.Run("usecases/deployment-identity の role 名の規則と一致する", func(t *testing.T) {
 		t.Parallel()
 
@@ -87,14 +90,16 @@ func Test_roleARN(t *testing.T) {
 		require.NoError(t, err)
 		assert.Regexp(t, `name_prefix\s*=\s*"\$\{var\.project\}-\$\{var\.env\}"`, string(uc))
 
-		roles, err := os.ReadFile(filepath.Join("..", "..", "usecases", "deployment-identity", "internal", "github-oidc", "main.tf"))
+		// 行の role と name の対応、および role の集合と登録簿の一致は lib/cientry の CheckTerraformRoles が見る。
+		rows, err := cientry.TerraformRolesRepo(filepath.Join("..", ".."))
 		require.NoError(t, err)
-		var declared []string
-		for _, m := range regexp.MustCompile(`"\$\{var\.name_prefix\}-ci-([a-z0-9-]+)"`).FindAllStringSubmatch(string(roles), -1) {
-			declared = append(declared, m[1])
+		require.NotEmpty(t, rows)
+		for _, row := range rows {
+			got, err := roleARN("tabp", "admin", row.Role, account)
+			require.NoError(t, err, row.Role)
+			name := strings.Replace(row.Name, cientry.TerraformNamePrefix, "tabp-admin", 1)
+			assert.Equal(t, "arn:aws:iam::123456789012:role/"+name, got, row.Role)
 		}
-		require.NotEmpty(t, declared, "github-oidc の main.tf から role 名を1つも読めません")
-		assert.ElementsMatch(t, roleNames, declared, "tf-local の役割と github-oidc の role は過不足なく一致する")
 	})
 
 	cases := map[string][4]string{

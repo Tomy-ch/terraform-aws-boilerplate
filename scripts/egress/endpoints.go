@@ -32,7 +32,8 @@ var (
 	errJobNoRoot       = xerrors.New("type の宛先を許すジョブが、どの root にも名指されていません")
 	errSymlink         = xerrors.New("Terraform の設定に symlink があります")
 	errRegionUnknown   = xerrors.New("root の aws の provider の region をリテラルとして読めません")
-	errRegionMismatch  = xerrors.New("type の宛先の region の集合が、type を置く region の集合と一致しません")
+	errRegionMismatch  = xerrors.New("type を置く region に、その region の宛先がありません")
+	errHostUnplaced    = xerrors.New("type の宛先の region に、どの root もその type を置きません")
 	errBlockRegion     = xerrors.New("ブロックの region 引数が region の形のリテラルではありません")
 	// errRegionNotOne は aws の provider の region が 2 つ以上の root のエラー。resource がどの provider を
 	// 使うかを読まないので、region ごとの宛先の過不足を判定できない。
@@ -68,15 +69,16 @@ type typeUse struct {
 	regions map[string]bool
 }
 
-// checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、型が呼ぶ宛先が、
+// checkEndpoints は各 root が module を辿って使う resource / data source の型を集め、その root で型が呼ぶ宛先が、
 // その root で Terraform を実行するジョブ（ran が plan / apply / lock を残す入口を呼ぶと言うジョブ）の許可リストに
-// あることを確かめる。lock の解除の入口だけを呼ぶジョブには型の宛先を求めない。欠けたときの症状は
-// .github/workflows/README.md の「ランナーの封じ込め」節が持つ。
+// あることを確かめる。呼ぶ宛先の決め方は checkRegions が持つ。lock の解除の入口だけを呼ぶジョブには型の宛先を求めない。
+// 欠けたときの症状は .github/workflows/README.md の「ランナーの封じ込め」節が持つ。
 func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {
 	if len(s.rootOrder) == 0 {
 		return errNoRoots
 	}
 	used := map[string]bool{}
+	called := map[string]bool{}
 	for _, name := range s.rootOrder {
 		r := s.roots[name]
 		if len(r.jobs) == 0 {
@@ -97,9 +99,6 @@ func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {
 				return xerrors.Wrap(errTypeUnmapped, fmt.Sprintf("root %s: %s（%s へ type を追加してください）", name, t, ssotFile))
 			}
 			used[prefix] = true
-			if err := s.requireHosts(runners, s.types[prefix].hosts); err != nil {
-				return xerrors.Wrap(err, fmt.Sprintf("root %s: %s", name, t))
-			}
 			u, ok := uses[prefix]
 			if !ok {
 				u = typeUse{hosts: s.types[prefix].hosts, regions: map[string]bool{}}
@@ -107,8 +106,25 @@ func (s *ssot) checkEndpoints(repo string, ran map[string]rootRuns) error {
 			}
 			maps.Copy(u.regions, types[t])
 		}
-		if err := checkRegions(repo, dirs, uses); err != nil {
+		hosts, err := checkRegions(repo, dirs, uses)
+		if err != nil {
 			return xerrors.Wrap(err, "root "+name)
+		}
+		for _, prefix := range sortedKeys(hosts) {
+			if err := s.requireHosts(runners, hosts[prefix]); err != nil {
+				return xerrors.Wrap(err, fmt.Sprintf("root %s: %s", name, prefix))
+			}
+			for _, h := range hosts[prefix] {
+				called[prefix+" "+h] = true
+			}
+		}
+	}
+	// どの root も呼ばない宛先を、許可リストに残さない。
+	for _, name := range s.typeOrder {
+		for _, h := range s.types[name].hosts {
+			if used[name] && !called[name+" "+h] {
+				return xerrors.Wrap(errHostUnplaced, fmt.Sprintf("%s: %s（%s の該当の宛先を削除してください）", name, h, ssotFile))
+			}
 		}
 	}
 	var orphans []string
@@ -220,11 +236,14 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// checkRegions は type ごとに、region を含む宛先（globalEndpoints を除く）の region の集合が、その type の
-// ブロックを置く region の集合と一致することを見る。region 引数を持たないブロックは dirs の aws の provider の
-// ただ 1 つの region に置かれる。provider は、その region が要る type があるときだけ読む。
-func checkRegions(repo string, dirs []string, uses map[string]typeUse) error {
+// checkRegions は root が使う type ごとに、type を置くどの region にもその region の宛先があることを確かめ、
+// その root で type が呼ぶ宛先を返す。返すのは、region を持たない宛先、AWS が region を固定した global の宛先、
+// type を置く region の宛先である。type を置かない region の宛先は、別の root が呼ぶので、ここでは返さない。
+// region 引数を持たないブロックは dirs の aws の provider のただ 1 つの region に置かれる。provider は、その region が
+// 要る type があるときだけ読む。
+func checkRegions(repo string, dirs []string, uses map[string]typeUse) (map[string][]string, error) {
 	provider := ""
+	called := map[string][]string{}
 	for _, name := range sortedKeys(uses) {
 		u := uses[name]
 		hosts := map[string]string{}
@@ -234,6 +253,7 @@ func checkRegions(repo string, dirs []string, uses map[string]typeUse) error {
 			}
 		}
 		if len(hosts) == 0 {
+			called[name] = u.hosts
 			continue
 		}
 		placed := map[string]bool{}
@@ -242,10 +262,10 @@ func checkRegions(repo string, dirs []string, uses map[string]typeUse) error {
 				if provider == "" {
 					regions, err := providerRegions(repo, dirs)
 					if err != nil {
-						return err
+						return nil, err
 					}
 					if len(regions) != 1 {
-						return xerrors.Wrap(errRegionNotOne, strings.Join(regions, ", "))
+						return nil, xerrors.Wrap(errRegionNotOne, strings.Join(regions, ", "))
 					}
 					provider = regions[0]
 				}
@@ -254,19 +274,22 @@ func checkRegions(repo string, dirs []string, uses map[string]typeUse) error {
 			placed[r] = true
 		}
 		declared := map[string]bool{}
-		for _, h := range sortedKeys(hosts) {
-			if !placed[hosts[h]] {
-				return xerrors.Wrap(errRegionMismatch, fmt.Sprintf("%s: %s（置く region: %s）", name, h, strings.Join(sortedKeys(placed), ", ")))
+		for _, h := range u.hosts {
+			r, regional := hosts[h]
+			if !regional || placed[r] {
+				called[name] = append(called[name], h)
 			}
-			declared[hosts[h]] = true
+			if regional {
+				declared[r] = true
+			}
 		}
 		for _, r := range sortedKeys(placed) {
 			if !declared[r] {
-				return xerrors.Wrap(errRegionMismatch, fmt.Sprintf("%s: %s の宛先がありません", name, r))
+				return nil, xerrors.Wrap(errRegionMismatch, fmt.Sprintf("%s: %s の宛先がありません（宛先の region: %s）", name, r, strings.Join(sortedKeys(declared), ", ")))
 			}
 		}
 	}
-	return nil
+	return called, nil
 }
 
 // hostRegion は宛先のラベルのうち region の形のものを返す。無ければ空文字列。

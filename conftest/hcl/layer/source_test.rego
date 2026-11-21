@@ -3,146 +3,126 @@ package layer
 call(name, source) := sprintf("module %q {\n  source = %q\n}\n", [name, source])
 
 # tree は、ADR-0102 決定17 の許可をすべて使う最小の木である。
-tree := [
-	tf("env/dev/main.tf", call("u", "../../usecases/u")),
-	tf("env/dev/identity/main.tf", call("u", "../../../usecases/u")),
-	tf("usecases/u/main.tf", concat("", [call("a", "../../modules/a"), call("i", "./internal/i")])),
-	tf("usecases/u/internal/i/main.tf", concat("", [call("a", "../../../../modules/a"), call("j", "../j")])),
-	tf("usecases/u/internal/j/main.tf", ""),
-	tf("usecases/u/reference/main.tf", call("u", "../")),
-	tf("usecases/v/main.tf", ""),
-	tf("usecases/v/internal/k/main.tf", ""),
-	tf("modules/a/main.tf", call("b", "../b")),
-	tf("modules/b/main.tf", ""),
-]
-
-with_file(path, src) := array.concat([f | some f in tree; f.path != path], [tf(path, src)])
-
-source_denies(path, src) := denies(with_file(path, src))
-
 test_LY201_allow_relative_paths if {
-	count(with_id(denies(tree), "LY201")) == 0
+	count(with_id(denies(fx("LY206_allow_chain")), "LY201")) == 0
 }
 
 test_LY201_deny_variable_source if {
-	msgs := source_denies("modules/a/main.tf", `module "b" {
-	source = var.src
-}
-`)
+	msgs := denies(fx("LY201_deny_variable_source"))
 	count(with_id(msgs, "LY201")) == 1
 }
 
 test_LY201_deny_registry_source if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "hashicorp/consul/aws")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_registry_source")), "LY201")) == 1
 }
 
 test_LY201_deny_git_source if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "git::https://example.com/m.git")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_git_source")), "LY201")) == 1
 }
 
 test_LY201_deny_url_source if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "https://example.com/m.zip")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_url_source")), "LY201")) == 1
 }
 
 test_LY201_deny_s3_source if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "s3::https://s3.amazonaws.com/b/m.zip")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_s3_source")), "LY201")) == 1
 }
 
 test_LY201_deny_github_shorthand if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "github.com/o/r")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_github_shorthand")), "LY201")) == 1
 }
 
 test_LY201_deny_missing_source if {
-	count(with_id(source_denies("modules/a/main.tf", `module "b" {}`), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_missing_source")), "LY201")) == 1
 }
 
 test_LY202_allow_parent_reference if {
-	count(with_id(denies(tree), "LY202")) == 0
+	count(with_id(denies(fx("LY206_allow_chain")), "LY202")) == 0
 }
 
 test_LY202_deny_outside_root if {
-	msgs := source_denies("modules/a/main.tf", call("b", "../../../outside"))
+	msgs := denies(fx("LY202_deny_outside_root"))
 	some m in with_id(msgs, "LY202")
 	contains(m, "../../../outside")
 }
 
 test_LY203_allow_every_permitted_direction if {
-	count(with_id(denies(tree), "LY203")) == 0
+	count(with_id(denies(fx("LY206_allow_chain")), "LY203")) == 0
 }
 
 test_LY203_deny_env_to_module if {
-	some m in with_id(source_denies("env/dev/main.tf", call("a", "../../modules/a")), "LY203")
+	some m in with_id(denies(fx("LY203_deny_env_to_module")), "LY203")
 	contains(m, "modules/a")
 }
 
 test_LY203_deny_env_to_internal if {
-	count(with_id(source_denies("env/dev/main.tf", call("i", "../../usecases/u/internal/i")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_env_to_internal")), "LY203")) == 1
 }
 
 test_LY203_deny_usecase_to_other_usecase if {
-	count(with_id(source_denies("usecases/u/main.tf", call("v", "../v")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_usecase_to_other_usecase")), "LY203")) == 1
 }
 
 test_LY203_deny_usecase_to_other_internal if {
-	count(with_id(source_denies("usecases/u/main.tf", call("k", "../v/internal/k")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_usecase_to_other_internal")), "LY203")) == 1
 }
 
 test_LY203_deny_usecase_to_env if {
-	count(with_id(source_denies("usecases/u/main.tf", call("e", "../../env/dev")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_usecase_to_env")), "LY203")) == 1
 }
 
 test_LY203_deny_internal_to_other_usecase_internal if {
-	count(with_id(source_denies("usecases/u/internal/i/main.tf", call("k", "../../../v/internal/k")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_internal_to_other_usecase_internal")), "LY203")) == 1
 }
 
 test_LY203_deny_module_to_usecase if {
-	count(with_id(source_denies("modules/a/main.tf", call("u", "../../usecases/u")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_module_to_usecase")), "LY203")) == 1
 }
 
 test_LY203_deny_module_to_internal if {
-	count(with_id(source_denies("modules/a/main.tf", call("i", "../../usecases/u/internal/i")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_module_to_internal")), "LY203")) == 1
 }
 
 test_LY203_deny_reference_to_other_usecase if {
-	count(with_id(source_denies("usecases/u/reference/main.tf", call("v", "../../v")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_reference_to_other_usecase")), "LY203")) == 1
 }
 
 test_LY203_deny_reference_to_module if {
-	count(with_id(source_denies("usecases/u/reference/main.tf", call("a", "../../../modules/a")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_reference_to_module")), "LY203")) == 1
 }
 
 test_LY204_allow_existing_target if {
-	count(with_id(denies(tree), "LY204")) == 0
+	count(with_id(denies(fx("LY206_allow_chain")), "LY204")) == 0
 }
 
 test_LY204_deny_missing_target if {
-	some m in with_id(source_denies("modules/a/main.tf", call("z", "../zzz")), "LY204")
+	some m in with_id(denies(fx("LY204_deny_missing_target")), "LY204")
 	contains(m, "modules/zzz")
 }
 
 test_LY205_allow_resource_only_in_unplaced_dir if {
-	count(with_id(denies(array.concat(tree, [tf("modules/a/sub/main.tf", `resource "aws_s3_bucket" "this" {}`)])), "LY205")) == 0
+	count(with_id(denies(fx("LY205_allow_resource_only_in_unplaced_dir")), "LY205")) == 0
 }
 
 test_LY205_deny_call_from_nested_module_dir if {
-	some m in with_id(denies(array.concat(tree, [tf("modules/a/sub/main.tf", call("b", "../../b"))])), "LY205")
+	some m in with_id(denies(fx("LY205_deny_call_from_nested_module_dir")), "LY205")
 	contains(m, "modules/a/sub/main.tf")
 }
 
 test_LY205_deny_call_from_deep_internal if {
-	count(with_id(denies(array.concat(tree, [tf("usecases/u/internal/i/j/main.tf", call("a", "../../../../../modules/a"))])), "LY205")) == 1
+	count(with_id(denies(fx("LY205_deny_call_from_deep_internal")), "LY205")) == 1
 }
 
 test_LY205_deny_call_from_env_dir_itself if {
-	count(with_id(denies(array.concat(tree, [tf("env/main.tf", call("u", "../usecases/u"))])), "LY205")) == 1
+	count(with_id(denies(fx("LY205_deny_call_from_env_dir_itself")), "LY205")) == 1
 }
 
 test_LY206_allow_chain if {
-	count(with_id(denies(tree), "LY206")) == 0
+	count(with_id(denies(fx("LY206_allow_chain")), "LY206")) == 0
 }
 
 test_LY206_deny_module_cycle if {
-	msgs := with_id(source_denies("modules/b/main.tf", call("a", "../a")), "LY206")
+	msgs := with_id(denies(fx("LY206_deny_module_cycle")), "LY206")
 	count(msgs) == 2
 	some ma in msgs
 	contains(ma, "LY206 [循環] modules/a の")
@@ -151,7 +131,7 @@ test_LY206_deny_module_cycle if {
 }
 
 test_LY206_deny_internal_cycle if {
-	msgs := with_id(source_denies("usecases/u/internal/j/main.tf", call("i", "../i")), "LY206")
+	msgs := with_id(denies(fx("LY206_deny_internal_cycle")), "LY206")
 	count(msgs) == 2
 	some mi in msgs
 	contains(mi, "usecases/u/internal/i の")
@@ -160,75 +140,75 @@ test_LY206_deny_internal_cycle if {
 }
 
 test_LY206_deny_self_call if {
-	msgs := with_id(source_denies("modules/b/main.tf", call("b", "./")), "LY206")
+	msgs := with_id(denies(fx("LY206_deny_self_call")), "LY206")
 	count(msgs) == 1
 	some m in msgs
 	contains(m, "modules/b の")
 }
 
 test_LY206_deny_three_node_cycle if {
-	files := array.concat([f | some f in tree; f.path != "modules/b/main.tf"], [
-		tf("modules/b/main.tf", call("c", "../c")),
-		tf("modules/c/main.tf", call("a", "../a")),
-	])
-	count(with_id(denies(files), "LY206")) == 3
+	count(with_id(denies(fx("LY206_deny_three_node_cycle")), "LY206")) == 3
 }
 
 test_LY201_deny_interpolated_relative_source if {
-	count(with_id(source_denies("modules/a/main.tf", call("b", "./${var.x}")), "LY201")) == 1
-	count(with_id(source_denies("modules/a/main.tf", call("b", "../${var.x}")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_interpolated_relative_source_1")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_interpolated_relative_source_2")), "LY201")) == 1
 }
 
 test_LY201_deny_non_string_source if {
-	count(with_id(source_denies("modules/a/main.tf", "module \"b\" {\n\tsource = 1\n}\n"), "LY201")) == 1
-	count(with_id(source_denies("modules/a/main.tf", "module \"b\" {\n\tsource = [\"../b\"]\n}\n"), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_non_string_source_1")), "LY201")) == 1
+	count(with_id(denies(fx("LY201_deny_non_string_source_2")), "LY201")) == 1
 }
 
 test_LY203_deny_module_to_unplaced_dir if {
-	files := array.concat(tree, [tf("modules/a/sub/main.tf", "")])
-	msgs := with_id(source_denies_in(files, "modules/a/main.tf", call("s", "./sub")), "LY203")
+	msgs := with_id(denies(fx("LY203_deny_module_to_unplaced_dir")), "LY203")
 	some m in msgs
 	contains(m, "modules/a/sub")
 }
 
 test_LY203_deny_env_to_env if {
-	files := array.concat(tree, [tf("env/prd/main.tf", "")])
-	count(with_id(source_denies_in(files, "env/dev/main.tf", call("p", "../prd")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_env_to_env")), "LY203")) == 1
 }
 
 test_LY203_deny_env_to_reference if {
-	count(with_id(source_denies("env/dev/main.tf", call("r", "../../usecases/u/reference")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_env_to_reference")), "LY203")) == 1
 }
 
 test_LY203_deny_internal_to_usecase if {
-	count(with_id(source_denies("usecases/u/internal/j/main.tf", call("u", "../../")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_internal_to_usecase")), "LY203")) == 1
 }
 
 test_LY203_deny_usecase_to_reference if {
-	count(with_id(source_denies("usecases/u/main.tf", call("r", "./reference")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_usecase_to_reference")), "LY203")) == 1
 }
 
 test_LY203_deny_reference_to_own_internal if {
-	count(with_id(source_denies("usecases/u/reference/main.tf", call("i", "../internal/i")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_reference_to_own_internal")), "LY203")) == 1
 }
-
-source_denies_in(files, path, src) := denies(array.concat([f | some f in files; f.path != path], [tf(path, src)]))
 
 # root の検査（conftest/hcl/root）は、env の root が usecases/<名前> だけを呼ぶことをこの規則に任せる。
 test_LY203_deny_env_to_local_module if {
-	files := array.concat(tree, [tf("env/dev/sub/main.tf", "")])
-	msgs := with_id(source_denies_in(files, "env/dev/main.tf", call("s", "./sub")), "LY203")
+	msgs := with_id(denies(fx("LY203_deny_env_to_local_module")), "LY203")
 	some m in msgs
 	contains(m, "env/dev/sub")
 }
 
 test_LY203_deny_env_to_identity_root if {
-	files := array.concat(tree, [tf("env/dev/identity/main.tf", "")])
-	msgs := with_id(source_denies_in(files, "env/dev/main.tf", call("i", "./identity")), "LY203")
+	msgs := with_id(denies(fx("LY203_deny_env_to_identity_root")), "LY203")
 	some m in msgs
 	contains(m, "env/dev/identity")
 }
 
 test_LY203_deny_env_to_repository_root if {
-	count(with_id(source_denies("env/dev/main.tf", call("r", "../..")), "LY203")) == 1
+	count(with_id(denies(fx("LY203_deny_env_to_repository_root")), "LY203")) == 1
+}
+
+# 構文として読んだ .tf があれば、block が無くても module のディレクトリである。
+test_LY204_allow_module_dir_with_comment_only_tf if {
+	count(with_id(denies(fx("LY204_allow_module_dir_with_comment_only_tf")), "LY204")) == 0
+}
+
+# .tftest.hcl だけを持つディレクトリは、構成の .tf を持たないので module の先ではない。
+test_LY204_deny_source_dir_with_only_tftest if {
+	only_with(with_id(denies(fx("LY204_deny_source_dir_with_only_tftest")), "LY204"), "usecases/u/internal/i")
 }

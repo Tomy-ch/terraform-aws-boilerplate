@@ -1,4 +1,4 @@
-# scripts/hcl-input の `-format syntax` の JSON を読むための共通部分（ADR-0501 決定5）。検査ではない。
+# scripts/hcl-input の JSON を読むための共通部分（ADR-0501 決定5）。検査ではない。
 #
 # 入力は {"files": [{"path", "parsed"}], "blocks": [Block]} で、Block の入れ子の block（blocks）と属性
 # （attributes）は深さを問わず平らに並び、parent（blocks の位置、直下は -1）で親を引ける。形は shape_errors が、
@@ -52,6 +52,39 @@ address_of(e) := concat(".", array.concat([e.root], [s.name | some s in e.steps]
 	}
 }
 
+# --- ファイルと block ---
+
+# doc は、形と独立の数が揃った入力。崩れていれば undefined で、それを読む規則は評価されない。
+doc := input if input_ok
+
+is_tf_json(path) if endswith(path, ".tf.json")
+
+# tf_paths は、構文として読んだ `.tf` の path を返す（空のファイル・コメントだけのファイルも含む）。
+tf_paths(d) := {f.path | some f in d.files; f.parsed; is_tf(f.path)}
+
+# config_paths は、Terraform の構成ファイル（`.tf` と `.tf.json`）の path を返す。
+config_paths(d) := {f.path | some f in d.files; is_tf(f.path)} | {f.path | some f in d.files; is_tf_json(f.path)}
+
+# tf_blocks は、`.tf` の最上位の block のうち、種類が type のものを返す。
+tf_blocks(d, type) := [b | some b in d.blocks; is_tf(b.file); b.type == type]
+
+# root_only_kinds は、path のファイルが持つ、root module にしか置けない block の種類（import、terraform の直下の
+# backend と cloud）を返す。
+root_only_kinds(d, path) := {"import" | some b in tf_blocks(d, "import"); b.file == path} | {n.type |
+	some b in tf_blocks(d, "terraform")
+	b.file == path
+	some n in b.blocks
+	n.parent == -1
+	n.type in {"backend", "cloud"}
+}
+
+# local_attrs は、`.tf` の locals の属性を、それを宣言した module のディレクトリとともに返す。
+local_attrs(d) := [[dir(b.file), a] |
+	some b in tf_blocks(d, "locals")
+	some a in b.attributes
+	a.parent == -1
+]
+
 # --- scope ---
 
 scope_of(b) := {"block": b, "at": -1}
@@ -101,6 +134,29 @@ direct_attr(s, name) := a.expr if {
 	a.parent == s.at
 	a.path == concat("", [prefix_of(s), name])
 }
+
+# attrs_at は、scope の中で、相対の path が path に一致する属性を返す（入れ子の block の属性は dotted な path）。
+attrs_at(s, path) := [a | some a in attrs_in(s); a.rel == path]
+
+# writes_arg は、scope が引数 arg を書いたかを返す。値と式は評価しない（null も [] も、属性を持たない block も、
+# dynamic も書いたと数える）。
+writes_arg(s, arg) if {
+	some a in attrs_in(s)
+	arg_path(a.rel, arg)
+}
+
+writes_arg(s, arg) if {
+	some n in nested_in(s)
+	arg_path(n.rel, arg)
+}
+
+arg_path(path, arg) if path == arg
+
+arg_path(path, arg) if startswith(path, concat("", [arg, "."]))
+
+arg_path(path, arg) if path == concat("", ["dynamic.", arg])
+
+arg_path(path, arg) if startswith(path, concat("", ["dynamic.", arg, "."]))
 
 # values_at は、scope の中で、相対の path が dotted に一致する属性（expr と line を持つ）と入れ子の block
 # （type と line を持つ）を返す。dynamic は hcl-input が畳んでいる。
@@ -543,6 +599,30 @@ well_formed_attr(a, nblocks) if {
 	is_number(a.line)
 	well_formed_expr(a.expr)
 	is_array(a.refs)
+	every r in a.refs {
+		well_formed_ref(a.refs, r)
+	}
+}
+
+# 参照の列の各参照。層の検査が親を辿るのに読む（根・段・それを含む添字の位置 within）。
+well_formed_ref(refs, r) if {
+	is_object(r)
+	{k | some k, _ in r} == {"root", "steps", "within"}
+	non_empty_string(r.root)
+	is_array(r.steps)
+	every st in r.steps {
+		well_formed_step(st)
+	}
+	is_array(r.within)
+	every w in r.within {
+		well_formed_within(refs, w)
+	}
+}
+
+well_formed_within(refs, w) if {
+	is_object(w)
+	{k | some k, _ in w} == {"ref", "step"}
+	refs[w.ref].steps[w.step].kind == "index"
 }
 
 # well_formed_expr は、規則が読む深さ（式と、その子と孫）の節の形を検査する。Rego は再帰の関数を持てない。

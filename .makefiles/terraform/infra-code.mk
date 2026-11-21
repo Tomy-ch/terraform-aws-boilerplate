@@ -23,8 +23,6 @@ comma := ,
 space := $(subst ,, )
 IC_OUT = tmp/infra-code-gate
 CONFTEST_BIN ?= conftest
-# init が落とした写しと lock は構成ではない。--ignore はファイルにだけ効き、ディレクトリの中は歩く。層の検査が使う。
-IC_IGNORE = (^|/)\.terraform(/|$$)|\.terraform\.lock\.hcl$$
 IC_HCL_INPUT_CMD = $(call HCL_INPUT_CMD,$(IC_BASE),$(IC_OUT))
 
 .PHONY: infra-code-gate ## インフラ内コードを検出し、許可リストに無いものを落とす（ADR-0103）

@@ -183,7 +183,7 @@ run "read_roles" {
             "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a.tflock",
           ]
         },
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-reader", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-reader", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp.admin-reader-123456789012-ap-northeast-1-an/k"] },
       ]
     }
   }
@@ -209,7 +209,7 @@ run "read_roles" {
           Resource  = "*"
           Condition = { StringEquals = {
             "kms:ViaService"                   = "s3.ap-northeast-1.amazonaws.com"
-            "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::bkt/k"]
+            "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::tabp.admin-reader-123456789012-ap-northeast-1-an/k"]
           } }
         },
         {
@@ -237,7 +237,7 @@ run "read_role_only" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp.admin-reader-123456789012-ap-northeast-1-an/k"] }]
     }
   }
 
@@ -440,7 +440,7 @@ run "all_users" {
     users = {
       roles = [
         { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp.admin-reader-123456789012-ap-northeast-1-an/k"] },
         { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "sns", access = "read-write", topics = ["t"] },
       ]
       services = {
@@ -466,7 +466,7 @@ run "key_policy_output" {
     users = {
       roles = [
         { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate/workload/terraform.tfstate.tflock"] },
+        { arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-unlock", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock"] },
       ]
     }
   }

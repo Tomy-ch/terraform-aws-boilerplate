@@ -1,9 +1,10 @@
 # 層の規則の検査（ADR-0102 決定14・17・18 と、その検証方法）。
 #
+# 入力は HCL のソースから作る JSON で、その形を読むのは lib.hcl_input だけである。
+# 形が崩れているか独立の数と食い違えば LY004 だけで落とし、それを読む規則は評価しない（hcl.doc が undefined）。
 package layer
 
-import data.lib.hcl
-import data.lib.hcl_input as hcl_shape
+import data.lib.hcl_input as hcl
 
 default decl := {}
 
@@ -17,17 +18,9 @@ default listed := set()
 
 listed := {p | some p in data.layer_files} if is_array(data.layer_files)
 
-is_tf_json(path) if endswith(path, ".tf.json")
+read := hcl.config_paths(hcl.doc)
 
-is_config(path) if hcl.is_tf(path)
-
-is_config(path) if is_tf_json(path)
-
-read := {f.path | some f in input; is_config(f.path)}
-
-tf_files := [f | some f in input; hcl.is_tf(f.path)]
-
-dirs := {hcl.dir(f.path) | some f in tf_files}
+dirs := {hcl.dir(p) | some p in hcl.tf_paths(hcl.doc)}
 
 layer(d) := "env" if regex.match(`^env(/[^/]+)+$`, d)
 
@@ -238,9 +231,10 @@ deny contains msg if {
 }
 
 deny contains msg if {
+	hcl.input_ok
 	some p in listed
 	not p in read
-	msg := sprintf("LY002 [件数の不一致] %s を Conftest が読んでいません", [p])
+	msg := sprintf("LY002 [件数の不一致] %s を入力（hcl-input）が読んでいません", [p])
 }
 
 deny contains msg if {
@@ -251,47 +245,36 @@ deny contains msg if {
 
 deny contains msg if {
 	some p in read
-	is_tf_json(p)
+	hcl.is_tf_json(p)
 	msg := sprintf("LY003 [未対応の入力] %s は検査が解釈しない JSON の構成です → HCL（.tf）で書く", [p])
 }
 
 # --- 検査(1): usecase 直下に置かない block（決定14） ---
 
-usecase_files := [f | some f in tf_files; layer(hcl.dir(f.path)) == "usecase"]
+in_usecase(path) if layer(hcl.dir(path)) == "usecase"
 
 deny contains msg if {
-	some f in usecase_files
-	some type, names in object.get(f.contents, "resource", {})
-	some name, _ in names
-	msg := sprintf("LY101 [usecase の resource] %s が resource %s.%s を持ちます（ADR-0102 決定14）→ module に置き、usecase は module を合成する", [f.path, type, name])
+	some b in hcl.tf_blocks(hcl.doc, "resource")
+	in_usecase(b.file)
+	msg := sprintf("LY101 [usecase の resource] %s が resource %s.%s を持ちます（ADR-0102 決定14）→ module に置き、usecase は module を合成する", [b.file, b.labels[0], b.labels[1]])
 }
 
 deny contains msg if {
-	some f in usecase_files
-	some name, _ in object.get(f.contents, "provider", {})
-	msg := sprintf("LY102 [usecase の provider] %s が provider %s を持ちます（ADR-0102 決定14）→ provider は env の root に置く", [f.path, name])
+	some b in hcl.tf_blocks(hcl.doc, "provider")
+	in_usecase(b.file)
+	msg := sprintf("LY102 [usecase の provider] %s が provider %s を持ちます（ADR-0102 決定14）→ provider は env の root に置く", [b.file, b.labels[0]])
 }
 
 deny contains msg if {
-	some f in usecase_files
-	some kind in root_only_blocks(f.contents)
-	msg := sprintf("LY103 [root 専用の block] %s が %s を持ちます。usecase は env から呼ばれる子 module です（ADR-0102 決定14）→ env の root に置く", [f.path, kind])
-}
-
-root_only_blocks(contents) := {"import" | object.get(contents, "import", null) != null} | {k |
-	some t in object.get(contents, "terraform", [])
-	some k in ["backend", "cloud"]
-	object.get(t, k, null) != null
+	some p in hcl.tf_paths(hcl.doc)
+	in_usecase(p)
+	some kind in hcl.root_only_kinds(hcl.doc, p)
+	msg := sprintf("LY103 [root 専用の block] %s が %s を持ちます。usecase は env から呼ばれる子 module です（ADR-0102 決定14）→ env の root に置く", [p, kind])
 }
 
 # --- 検査(2): module の source が指す先（決定17） ---
 
-calls contains c if {
-	some f in tf_files
-	some name, bodies in object.get(f.contents, "module", {})
-	some body in bodies
-	c := {"path": f.path, "dir": hcl.dir(f.path), "name": name, "source": object.get(body, "source", null)}
-}
+calls := hcl.module_calls(hcl.doc)
 
 relative(s) if hcl.relative_source(s)
 
@@ -362,7 +345,7 @@ deny contains msg if {
 
 # --- 検査(3): attachment 型の親が同じ module に在ること（決定18） ---
 
-resources := [c | some c in hcl.components(input); startswith(c.key, "resource.")]
+resources := [c | some c in hcl.components(hcl.doc); startswith(c.key, "resource.")]
 
 type_of(c) := trim_prefix(c.key, "resource.")
 
@@ -372,14 +355,7 @@ resource_ids := {c.id | some c in resources}
 
 name_of(c) := substring(address(c), count(type_of(c)) + 1, -1)
 
-resource_attrs(c, path) := [a |
-	some b in go_blocks
-	b.kind == "resource"
-	b.file == c.path
-	b.labels == [type_of(c), name_of(c)]
-	some a in b.attributes
-	a.path == path
-]
+resource_attrs(c, path) := hcl.attrs_at(c.scope, path)
 
 ref_token(r) := concat(".", [r.root, r.steps[0].name]) if first_step_named(r)
 
@@ -415,11 +391,7 @@ token_node(_, _, tok) := sprintf("leaf|%s", [tok]) if {
 
 nodes_of(d, cid, refs) := {token_node(d, cid, ref_token(r)) | some r in refs; not skipped(refs, r)}
 
-local_attrs := [[hcl.dir(b.file), a] |
-	some b in go_blocks
-	b.kind == "locals"
-	some a in b.attributes
-]
+local_attrs := hcl.local_attrs(hcl.doc)
 
 # 同じ名前の local を複数の block が定義しても、辿る先を1つの節に合わせる（Terraform はこれを拒む）。
 ref_graph := object.union(
@@ -461,7 +433,6 @@ parent_type_ok(types, t) if t in types
 parent_type_ok(types, _) if "*" in types
 
 deny contains msg if {
-	go_ok
 	is_object(attachments)
 	some c in resources
 	a := attachments[type_of(c)]
@@ -483,7 +454,6 @@ describe(ls, _) := "参照がありません" if count(ls) == 0
 describe(ls, bad) := concat(", ", sort(bad)) if count(bad) > 0
 
 deny contains msg if {
-	go_ok
 	is_object(attachments)
 	some c in resources
 	a := attachments[type_of(c)]
@@ -501,25 +471,9 @@ owned_pairs := {[t, arg] | some t, args in inline_owned; some arg, _ in args} if
 
 default owned_pairs := set()
 
-# written_arg は、resource c が引数 arg を書いたかを、2つのパーサのどちらか一方でも書いたと読めば真とする。
-# hcl-input は属性を持たない block（inline_policy {}）を出さず、hcl2 の入力は block の構造を持つので、
-# 片方の読み落としで黙って通さない。値と式は評価しない（null も [] も書いたと数える）。
-written_arg(c, arg) if count(hcl.values_at(c.body, arg)) > 0
-
-written_arg(c, arg) if {
-	some b in go_blocks
-	b.kind == "resource"
-	b.file == c.path
-	b.labels == [type_of(c), name_of(c)]
-	some a in b.attributes
-	arg_path_prefix(a.path, arg)
-}
-
-arg_path_prefix(path, arg) if path == arg
-
-arg_path_prefix(path, arg) if startswith(path, concat("", [arg, "."]))
-
-arg_path_prefix(path, arg) if startswith(path, concat("", ["dynamic.", arg, "."]))
+# written_arg は、resource c が引数 arg を書いたかを返す。値と式は評価しない（null も [] も、属性を持たない
+# block も dynamic も書いたと数える）。
+written_arg(c, arg) if hcl.writes_arg(c.scope, arg)
 
 deny contains msg if {
 	is_object(attachments)
@@ -533,7 +487,6 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	go_ok
 	is_object(attachments)
 	some c in resources
 	a := attachments[type_of(c)]
@@ -562,10 +515,6 @@ whole_document_resources := [c |
 ]
 
 whole_document_arg(c) := arg if some arg, _ in attachments[type_of(c)].parents
-
-multi(c) if c.body.count
-
-multi(c) if c.body.for_each
 
 multi(c) if count(resource_attrs(c, "count")) > 0
 
@@ -687,7 +636,6 @@ same_selection(s1, s2) if {
 }
 
 whole_document_pair contains [c1, c2, l] if {
-	go_ok
 	some c1 in whole_document_resources
 	some c2 in whole_document_resources
 	c1.id < c2.id
@@ -860,158 +808,8 @@ deny contains msg if {
 }
 
 # --- HCL の入力（hcl-input の出力。ADR-0501 決定5） ---
-#
-# 形の崩れた入力は LY004 だけで落とし、それを読む規則は評価しない。欠けを空として先へ進めると、
-# 親の引数が無いものとして LY301 が黙って通るため。
-
-default hcl_input := null
-
-hcl_input := data.hcl_input
-
-go_ok if {
-	is_object(hcl_input)
-	go_files_ok
-	is_array(hcl_input.blocks)
-	every b in hcl_input.blocks {
-		well_formed_block(b)
-	}
-}
-
-go_files_ok if {
-	is_array(hcl_input.files)
-	every p in hcl_input.files {
-		non_empty_string(p)
-	}
-}
-
-go_blocks := hcl_input.blocks if go_ok
-
-go_files := {p | some p in hcl_input.files} if go_ok
-
-well_formed_block_head(b) if {
-	is_object(b)
-	{k | some k, _ in b} == {"file", "kind", "labels", "attributes"}
-	non_empty_string(b.file)
-	non_empty_string(b.kind)
-	is_array(b.labels)
-	every l in b.labels {
-		is_string(l)
-	}
-	is_array(b.attributes)
-}
-
-well_formed_block(b) if {
-	well_formed_block_head(b)
-	every a in b.attributes {
-		well_formed_attribute(a)
-	}
-}
-
-well_formed_attribute(a) if {
-	is_object(a)
-	{k | some k, _ in a} == {"path", "refs"}
-	non_empty_string(a.path)
-	is_array(a.refs)
-	every r in a.refs {
-		well_formed_ref(a.refs, r)
-	}
-}
-
-well_formed_ref(refs, r) if {
-	is_object(r)
-	{k | some k, _ in r} == {"root", "steps", "within"}
-	non_empty_string(r.root)
-	is_array(r.steps)
-	every s in r.steps {
-		hcl_shape.well_formed_step(s)
-	}
-	is_array(r.within)
-	every w in r.within {
-		well_formed_within(refs, w)
-	}
-}
-
-well_formed_within(refs, w) if {
-	is_object(w)
-	{k | some k, _ in w} == {"ref", "step"}
-	refs[w.ref].steps[w.step].kind == "index"
-}
 
 deny contains msg if {
-	not is_object(hcl_input)
-	msg := "LY004 [HCL の入力の形] data.hcl_input がオブジェクトではありません → make layer-check が hcl-input の出力を --data で渡す"
-}
-
-deny contains msg if {
-	is_object(hcl_input)
-	not go_files_ok
-	msg := "LY004 [HCL の入力の形] hcl_input.files が、空でない文字列の配列ではありません"
-}
-
-deny contains msg if {
-	is_object(hcl_input)
-	not is_array(object.get(hcl_input, "blocks", null))
-	msg := "LY004 [HCL の入力の形] hcl_input.blocks が配列ではありません"
-}
-
-deny contains msg if {
-	is_array(object.get(hcl_input, "blocks", null))
-	some i, b in hcl_input.blocks
-	not well_formed_block_head(b)
-	msg := sprintf("LY004 [HCL の入力の形] hcl_input.blocks[%d] が、file・kind・labels（文字列の配列）・attributes（配列）だけを持つ形ではありません", [i])
-}
-
-deny contains msg if {
-	is_array(object.get(hcl_input, "blocks", null))
-	some i, b in hcl_input.blocks
-	well_formed_block_head(b)
-	some j, a in b.attributes
-	not well_formed_attribute(a)
-	msg := sprintf("LY004 [HCL の入力の形] hcl_input.blocks[%d].attributes[%d]（%s）が、path と refs（root・steps・within を持つ参照の配列）の形ではありません", [i, j, b.file])
-}
-
-deny contains msg if {
-	go_ok
-	some p in {f.path | some f in tf_files}
-	not p in go_files
-	msg := sprintf("LY002 [件数の不一致] %s を hcl-input が読んでいません", [p])
-}
-
-deny contains msg if {
-	go_ok
-	some p in go_files
-	not p in {f.path | some f in tf_files}
-	msg := sprintf("LY002 [件数の不一致] %s は hcl-input が読みましたが、Conftest は読んでいません", [p])
-}
-
-conftest_resource_keys := {[c.path, [type_of(c), name_of(c)]] | some c in resources}
-
-go_resource_keys := {[b.file, b.labels] | some b in go_blocks; b.kind == "resource"}
-
-deny contains msg if {
-	go_ok
-	some [path, labels] in conftest_resource_keys
-	not [path, labels] in go_resource_keys
-	msg := sprintf("LY005 [HCL の入力の突き合わせ] %s の resource %s を hcl-input が出していません", [path, concat(".", labels)])
-}
-
-deny contains msg if {
-	go_ok
-	some [path, labels] in go_resource_keys
-	not [path, labels] in conftest_resource_keys
-	msg := sprintf("LY005 [HCL の入力の突き合わせ] hcl-input が出した %s の resource %s を Conftest が読んでいません", [path, concat(".", labels)])
-}
-
-# 片方のパーサだけが読んだ引数を、「親の引数が無い」として通さないため。
-deny contains msg if {
-	go_ok
-	is_object(attachments)
-	some c in resources
-	a := attachments[type_of(c)]
-	well_formed_attachment(a)
-	some arg in {k | some k, _ in a.parents} | {"for_each"}
-	want := count(hcl.values_at(c.body, arg))
-	got := count(resource_attrs(c, arg))
-	want != got
-	msg := sprintf("LY005 [HCL の入力の突き合わせ] %s の %s の %s が、Conftest では %d 個、hcl-input では %d 個です", [c.path, address(c), arg, want, got])
+	some e in hcl.input_errors
+	msg := sprintf("LY004 [HCL の入力の形] %s → make layer-check から起動する。hcl-input の出力と conftest/hcl/lib/hcl_input.rego の読む形を揃える", [e])
 }

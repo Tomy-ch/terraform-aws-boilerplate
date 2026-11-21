@@ -21,6 +21,16 @@ override_resource {
   values = { arn = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab" }
 }
 
+override_resource {
+  target = module.us_east_1_topic.aws_sns_topic.this
+  values = { arn = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1" }
+}
+
+override_resource {
+  target = module.us_east_1_topic.aws_kms_key.this
+  values = { arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ac" }
+}
+
 # mock の apply では、ARN を検証する引数へ渡る値を与える。
 override_resource {
   target = module.heartbeat.aws_iam_role.this
@@ -50,5 +60,10 @@ run "outputs" {
   assert {
     condition     = output.topic_arn == module.sns.topic_arn
     error_message = "topic_arn が modules/sns の Topic の ARN を返していません。"
+  }
+
+  assert {
+    condition     = output.us_east_1_topic_arn == "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
+    error_message = "us_east_1_topic_arn が internal/us-east-1-topic の us-east-1 の Topic の ARN を返していません。"
   }
 }
