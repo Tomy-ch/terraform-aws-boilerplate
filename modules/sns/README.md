@@ -46,6 +46,7 @@ IAM の role の `sns:Publish` は Topic Policy に書かない。同じアカ�
 | `sms-voice` と platform application の送信 | sms-push-delivery（#44） |
 | email・https の subscription | 要る消費者。未確認の subscription は destroy で AWS に残り（AWS Provider の `aws_sns_topic_subscription` の NOTE）、届くことと購読が続くことを検査する手段を持たない |
 | 配送状況のログ（`*_failure_feedback_role_arn` と、その role） | 要る消費者。経路の死活は ops-notification の毎日の心拍が見る |
+| us-east-1 など別の region の Topic | その region の Topic を要る消費者が `internal/` に持つ。この module は呼ばれた provider の region に Topic を作り、`region` の入力を持たない（[ADR-0208](../../docs/adr/0208-us-east-1-resources-by-region-argument.md) 決定2）。us-east-1 の通知の Topic は `ops-notification` が持つ |
 
 ## 持たないもの
 

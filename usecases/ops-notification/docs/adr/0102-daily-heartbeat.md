@@ -9,12 +9,12 @@
 
 基盤系のアラームは平常時に1通も来ないので、経路（Topic・鍵・Chatbot の構成・Slack の認可）が壊れても気づけない。同じ Topic へ送る alarm は、その経路の故障を知らせられない。アカウントの外で死活を見る仕組みは無い（`docs/v1.0-plan/scope.md` 第9.3節、#97）。
 
-EventBridge Scheduler は SNS の Publish を templated target として呼べ、本文に予定時刻（`<aws.scheduler.scheduled-time>`）を置換して渡す（EventBridge Scheduler User Guide「Templated targets」「Context attributes」）。実行 role の信頼の `aws:SourceArn` は schedule group の ARN でなければならない（同「Confused deputy prevention」）。Amazon Q Developer in chat applications は `version`・`source`・`content.description` を持つ JSON を custom notification として描く（同 Administrator Guide「Custom notifications」）。
+EventBridge Scheduler は SNS の Publish を templated target として呼べ、本文に予定時刻（`<aws.scheduler.scheduled-time>`）を置換して渡す（EventBridge Scheduler User Guide「Templated targets」「Context attributes」）。実行 role の信頼の `aws:SourceArn` は schedule group の ARN でなければならない（同「Confused deputy prevention」）。Amazon Q Developer in chat applications は `version`・`source`・`content.description` を持つ JSON を custom notification として描く（同 Administrator Guide「Custom notifications」）。Scheduler が別の region の Topic へ送れることは文書に無い。
 
 ## Decision
 
-1. 専用の schedule group に、毎日 09:00（`Asia/Tokyo`）、`flexible_time_window` を OFF にした schedule を1つ置く。target は Topic で、本文は custom notification の JSON（title で警報でないことを示し、description に env・region・予定時刻を載せる。アカウント ID と ARN は載せない）。Scheduler は生の input の中の `<aws.scheduler.scheduled-time>` を置換するので、`jsonencode` が `<` `>` に変えたエスケープを戻し、トークンを生の input にそのまま置く。
-2. 実行 role の信頼は `scheduler.amazonaws.com` を `aws:SourceAccount` と schedule group の ARN の `aws:SourceArn`（`StringEquals`）で限る。権限は Topic への `sns:Publish` だけとし、鍵の暗号操作は Topic の鍵の Key Policy が SNS 経由に限って許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。Key Policy が名指す role の ARN は、role の resource の属性ではなく名前から組む。属性は作成まで plan で決まらず、決まらない Principal を持つ Key Policy は Policy Test で読めない。ARN を名前から組めるので、resource 参照による依存の解決で足り、prefix の pattern は要らない（repository-wide/ADR-0301 決定11）。作成の順序は出力の `depends_on` で role の後に置く。
+1. Topic ごとに専用の schedule group と、毎日 09:00（`Asia/Tokyo`）、`flexible_time_window` を OFF にした schedule を置く。us-east-1 の Topic の schedule group と schedule は、resource の `region = "us-east-1"` で置き、名前の末尾を `-us-east-1` にする。target は Topic で、本文は custom notification の JSON（title で警報でないことを示し、description に env・region・予定時刻を載せる。region で、どちらの Topic を通った心拍かを区別する。アカウント ID と ARN は載せない）。Scheduler は生の input の中の `<aws.scheduler.scheduled-time>` を置換するので、`jsonencode` が `<` `>` に変えたエスケープを戻し、トークンを生の input にそのまま置く。
+2. 実行 role を1つにし、その信頼は `scheduler.amazonaws.com` を `aws:SourceAccount` と2つの schedule group の ARN の `aws:SourceArn`（`StringEquals`）で限る。role を region ごとに分けると、名前が IAM の 64 文字の上限を超え、`project` の長さの上限を縮める契約の変更が要る。権限は2つの Topic への `sns:Publish` だけとし、鍵の暗号操作は Topic の鍵の Key Policy が SNS 経由に限って許す（repository-wide/ADR-0301 (least-privilege-policy) 決定12）。Key Policy が名指す role の ARN は、role の resource の属性ではなく名前から組む。属性は作成まで plan で決まらず、決まらない Principal を持つ Key Policy は Policy Test で読めない。ARN を名前から組めるので、resource 参照による依存の解決で足り、prefix の pattern は要らない（repository-wide/ADR-0301 決定11）。作成の順序は出力の `depends_on` で role の後に置く。
 3. retry は 185 回・3600 秒を明示する。1日遅れの心拍は次の日の心拍と区別できない。DLQ を置かない。
 4. 人が気づく形とする。channel を見る人が、毎朝の心拍が来ていないことに気づき、README の手順で原因を確かめる。自動の検知を置かない。
 5. 時刻と timezone は独自の判断である（repository-wide/ADR-0207 (default-value-policy) 決定3・4。公式の推奨値は無い）。09:00 `Asia/Tokyo` は、始業の時刻に揃えて「来ていない」に気づける時刻として採る。入力にしない。
@@ -43,10 +43,11 @@ EventBridge Scheduler は SNS の Publish を templated target として呼べ�
 
 - 心拍の不在の自動検知
 - 09:00 以外の時刻・timezone を利用者が選ぶこと
+- 毎朝の心拍が1通であること（2つの Topic から2通が来る）
 
 ## 保証範囲
 
-schedule の固定値・本文・信頼と権限の文書は Unit Test（`internal/heartbeat/tests/`）が、信頼と権限の形は Policy Test（`PLAN-NOTIFY-04`・`05`）が見る。心拍が実際に Slack に届くことと、壊れた経路で届かなくなることは、設計の意図であり、sandbox の Integration Test と管理アカウントの apply の後の着信でだけ確かめる。
+2つの schedule の固定値・本文・信頼と権限の文書は Unit Test（`internal/heartbeat/tests/`）が、信頼と権限の形は Policy Test（`PLAN-NOTIFY-04`・`05`）が見る。心拍が実際に Slack に届くことと、壊れた経路で届かなくなることは、設計の意図であり、sandbox の Integration Test と管理アカウントの apply の後の着信でだけ確かめる。
 
 ## 検証方法
 

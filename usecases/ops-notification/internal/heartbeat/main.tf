@@ -12,21 +12,28 @@ locals {
   partition = data.aws_partition.current.partition
 
   # Amazon Q Developer in chat applications の custom notification の形（ops-notification/ADR-0102）。
+  # region で、どちらの Topic を通った心拍かを区別する。
   # jsonencode は < > を \u003c \u003e に変え、Scheduler は生の input のトークンしか置換しないので戻す。
-  message = replace(replace(jsonencode({
+  messages = { for k, r in { this = local.region, us_east_1 = "us-east-1" } : k => replace(replace(jsonencode({
     version = "1.0"
     source  = "custom"
     content = {
       textType    = "client-markdown"
-      title       = "ops-notification の心拍（警報ではありません）"
-      description = "通知経路が働いていることを示す毎日の心拍です。対応は要りません。\nenv: ${var.env} / region: ${local.region} / 予定時刻: <aws.scheduler.scheduled-time>"
+      title       = "ops-notification の心拍（${r}。警報ではありません）"
+      description = "通知経路が働いていることを示す毎日の心拍です。対応は要りません。\nenv: ${var.env} / region: ${r} / 予定時刻: <aws.scheduler.scheduled-time>"
     }
-  }), "\\u003c", "<"), "\\u003e", ">")
+  }), "\\u003c", "<"), "\\u003e", ">") }
 }
 
 # 信頼の aws:SourceArn は schedule group の ARN だけを受ける。default の group は同じアカウントの別の schedule と共有になる。
 resource "aws_scheduler_schedule_group" "this" {
   name = var.name
+}
+
+# Scheduler が別の region の Topic へ送れることは文書に無いので、us-east-1 の Topic の schedule は us-east-1 に置く。
+resource "aws_scheduler_schedule_group" "us_east_1" {
+  region = "us-east-1"
+  name   = var.us_east_1_name
 }
 
 resource "aws_iam_role" "this" {
@@ -41,7 +48,7 @@ resource "aws_iam_role" "this" {
       Action    = "sts:AssumeRole"
       Condition = { StringEquals = {
         "aws:SourceAccount" = local.account
-        "aws:SourceArn"     = aws_scheduler_schedule_group.this.arn
+        "aws:SourceArn"     = [aws_scheduler_schedule_group.this.arn, aws_scheduler_schedule_group.us_east_1.arn]
       } }
     }]
   })
@@ -63,7 +70,7 @@ resource "aws_iam_role_policy" "this" {
     Statement = [{
       Effect   = "Allow"
       Action   = "sns:Publish"
-      Resource = var.topic_arn
+      Resource = [var.topic_arn, var.us_east_1_topic_arn]
     }]
   })
 
@@ -71,6 +78,11 @@ resource "aws_iam_role_policy" "this" {
     precondition {
       condition     = startswith(var.topic_arn, "arn:${local.partition}:sns:${local.region}:${local.account}:")
       error_message = "topic_arn が、この module と同じ partition・リージョン・アカウントの Topic ではありません。"
+    }
+
+    precondition {
+      condition     = startswith(var.us_east_1_topic_arn, "arn:${local.partition}:sns:us-east-1:${local.account}:")
+      error_message = "us_east_1_topic_arn が、この module と同じ partition・アカウントの us-east-1 の Topic ではありません。"
     }
   }
 }
@@ -101,7 +113,7 @@ resource "aws_scheduler_schedule" "this" {
   target {
     arn      = var.topic_arn
     role_arn = aws_iam_role.this.arn
-    input    = local.message
+    input    = local.messages.this
 
     # retry の上限は 1 日未満に収める（ops-notification/ADR-0102 決定3）。
     retry_policy {
@@ -111,5 +123,33 @@ resource "aws_scheduler_schedule" "this" {
   }
 
   # 権限が付く前に起動して拒まれないよう、inline policy の後に作る。
+  depends_on = [aws_iam_role_policy.this]
+}
+
+resource "aws_scheduler_schedule" "us_east_1" {
+  #checkov:skip=CKV_AWS_297:本文は機微な値を持たない固定の文で、CMK は守りを足さない（usecases/ops-notification/docs/adr/0102-daily-heartbeat.md 決定7）。撤回: 本文が機微な値を持つとき
+  region                       = "us-east-1"
+  name                         = var.us_east_1_name
+  group_name                   = aws_scheduler_schedule_group.us_east_1.name
+  schedule_expression          = "cron(0 9 * * ? *)"
+  schedule_expression_timezone = "Asia/Tokyo"
+  state                        = "ENABLED"
+  action_after_completion      = "NONE"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = var.us_east_1_topic_arn
+    role_arn = aws_iam_role.this.arn
+    input    = local.messages.us_east_1
+
+    retry_policy {
+      maximum_event_age_in_seconds = 3600
+      maximum_retry_attempts       = 185
+    }
+  }
+
   depends_on = [aws_iam_role_policy.this]
 }

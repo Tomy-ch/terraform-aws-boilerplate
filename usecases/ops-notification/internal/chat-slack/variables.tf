@@ -36,6 +36,17 @@ variable "topic_arn" {
   }
 }
 
+variable "us_east_1_topic_arn" {
+  description = "購読する us-east-1 の Topic の ARN。この module と同じ partition・アカウントの Topic にする。"
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:sns:us-east-1:[0-9]{12}:[A-Za-z0-9_-]{1,256}$", var.us_east_1_topic_arn))
+    error_message = "us_east_1_topic_arn は us-east-1 の標準の SNS の Topic の ARN（arn:<partition>:sns:us-east-1:<account>:<name>）にしてください。"
+  }
+}
+
 variable "permissions_boundary_arn" {
   description = "channel role に付ける permissions boundary の customer managed policy の ARN。この module と同じアカウントの policy にする。"
   type        = string

@@ -24,6 +24,7 @@ variables {
   name                     = "tabp-sandbox-ops-chat"
   slack                    = { team_id = "T07EA123LEP", channel_id = "C07EZ1ABC23" }
   topic_arn                = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  us_east_1_topic_arn      = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-workload-boundary"
 }
 
@@ -53,8 +54,8 @@ run "configuration" {
   }
 
   assert {
-    condition     = toset(aws_chatbot_slack_channel_configuration.this.sns_topic_arns) == toset([var.topic_arn])
-    error_message = "Chatbot の構成が購読する Topic が、渡した Topic だけになっていません。"
+    condition     = toset(aws_chatbot_slack_channel_configuration.this.sns_topic_arns) == toset([var.topic_arn, var.us_east_1_topic_arn])
+    error_message = "Chatbot の構成が購読する Topic が、渡した2つの Topic だけになっていません。"
   }
 }
 

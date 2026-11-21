@@ -1,4 +1,4 @@
-# ops-notification の合成の不変条件（ops-notification/ADR-0101・0102・0201、ADR-0301 決定7・12）。Topic Policy と Key Policy と
+# ops-notification の合成の不変条件（ops-notification/ADR-0001・0101・0102・0201、ADR-0301 決定7・12）。Topic Policy と Key Policy と
 # IAM は別の module が組むので、送り手と publish する role が両方の文書で一致することを、ここで突き合わせる。
 package plan.ops_notification
 
@@ -8,7 +8,9 @@ decl := data.policy_plan.ops_notification
 
 address_paths := [
 	["topic"], ["topic_policy"], ["key_policy"],
+	["us_east_1", "topic"], ["us_east_1", "topic_policy"], ["us_east_1", "key"], ["us_east_1", "alias"], ["us_east_1", "key_policy"],
 	["heartbeat", "role"], ["heartbeat", "policy"], ["heartbeat", "schedule_group"], ["heartbeat", "schedule"],
+	["heartbeat", "us_east_1_schedule_group"], ["heartbeat", "us_east_1_schedule"],
 	["chat", "role"], ["chat", "policy"], ["chat", "attachments"], ["chat", "configuration"],
 ]
 
@@ -33,7 +35,7 @@ string_set(xs) if {
 }
 
 deny contains msg if {
-	some path in [["publishers"], ["chat", "read_actions"]]
+	some path in [["publishers"], ["us_east_1", "publishers"], ["chat", "read_actions"]]
 	not string_set(object.get(decl, path, null))
 	msg := sprintf("[PLAN-NOTIFY-00] 宣言の policy_plan.ops_notification.%s が、空でない文字列の配列ではありません", [concat(".", path)])
 }
@@ -54,7 +56,8 @@ deny contains msg if {
 
 # 突き合わせに使う値。plan で決まらなければ比べられないので落とす。
 known_values := [
-	["topic", "arn"], ["heartbeat", "role", "arn"], ["heartbeat", "role", "name"], ["heartbeat", "schedule_group", "arn"],
+	["topic", "arn"], ["us_east_1", "topic", "arn"],
+	["heartbeat", "role", "arn"], ["heartbeat", "role", "name"], ["heartbeat", "schedule_group", "arn"], ["heartbeat", "us_east_1_schedule_group", "arn"],
 	["chat", "role", "arn"], ["chat", "policy", "arn"],
 ]
 
@@ -75,7 +78,8 @@ deny contains msg if {
 
 # 読む文書。plan で決まらないか読めなければ、それを見る規則が黙るので 00 で落とす。
 document_paths := [
-	[["topic_policy"], "policy"], [["key_policy"], "policy"], [["heartbeat", "policy"], "policy"],
+	[["topic_policy"], "policy"], [["key_policy"], "policy"],
+	[["us_east_1", "topic_policy"], "policy"], [["us_east_1", "key_policy"], "policy"], [["heartbeat", "policy"], "policy"],
 	[["chat", "policy"], "policy"], [["heartbeat", "role"], "assume_role_policy"], [["chat", "role"], "assume_role_policy"],
 ]
 
@@ -103,7 +107,16 @@ body(address) := b if {
 
 topic_arn := value(["topic", "arn"])
 
+us_east_1_topic_arn := value(["us_east_1", "topic", "arn"])
+
 account := split(topic_arn, ":")[4]
+
+region := split(topic_arn, ":")[3]
+
+# Topic ごとの文書と送り手。provider の region の Topic と、us-east-1 の Topic（ops-notification/ADR-0001 決定1）。
+topics contains {"arn": topic_arn, "topic_policy": decl.topic_policy, "key_policy": decl.key_policy, "publishers": {p | some p in decl.publishers}}
+
+topics contains {"arn": us_east_1_topic_arn, "topic_policy": decl.us_east_1.topic_policy, "key_policy": decl.us_east_1.key_policy, "publishers": {p | some p in decl.us_east_1.publishers}}
 
 service_principals(b) := {p |
 	some s in lib.statements(b)
@@ -112,33 +125,34 @@ service_principals(b) := {p |
 	some p in lib.as_array(object.get(s.Principal, "Service", []))
 }
 
-publishers := {p | some p in decl.publishers}
-
 deny contains msg if {
-	got := service_principals(body(decl.topic_policy))
-	got != publishers
-	msg := sprintf("[PLAN-NOTIFY-01] %s の送り手 %v が、宣言の送り手 %v と一致しません（ops-notification/ADR-0101）", [decl.topic_policy, sort(got), sort(publishers)])
+	some t in topics
+	got := service_principals(body(t.topic_policy))
+	got != t.publishers
+	msg := sprintf("[PLAN-NOTIFY-01] %s の送り手 %v が、宣言の送り手 %v と一致しません（ops-notification/ADR-0101）", [t.topic_policy, sort(got), sort(t.publishers)])
 }
 
 deny contains msg if {
-	got := service_principals(body(decl.key_policy))
-	got != publishers
-	msg := sprintf("[PLAN-NOTIFY-01] %s のサービス principal %v が、宣言の送り手 %v と一致しません。Topic Policy と Key Policy の送り手は同じにします", [decl.key_policy, sort(got), sort(publishers)])
+	some t in topics
+	got := service_principals(body(t.key_policy))
+	got != t.publishers
+	msg := sprintf("[PLAN-NOTIFY-01] %s のサービス principal %v が、宣言の送り手 %v と一致しません。Topic Policy と Key Policy の送り手は同じにします", [t.key_policy, sort(got), sort(t.publishers)])
 }
 
 # EventBridge は aws:Source* を受けないので、Key Policy は暗号化コンテキストで Topic を限る（modules/kms）。
-events_names_topic(b) if {
+events_names_topic(b, arn) if {
 	some s in lib.statements(b)
 	s.Effect == "Allow"
 	"events.amazonaws.com" in lib.as_array(object.get(object.get(s, "Principal", {}), "Service", []))
-	topic_arn in lib.limiting_values(s, "kms:encryptioncontext:aws:sns:topicarn")
+	arn in lib.limiting_values(s, "kms:encryptioncontext:aws:sns:topicarn")
 }
 
 deny contains msg if {
-	"events.amazonaws.com" in publishers
-	b := body(decl.key_policy)
-	not events_names_topic(b)
-	msg := sprintf("[PLAN-NOTIFY-02] %s の events.amazonaws.com の文が、暗号化コンテキスト aws:sns:topicArn で Topic %s を名指しません", [decl.key_policy, topic_arn])
+	some t in topics
+	"events.amazonaws.com" in t.publishers
+	b := body(t.key_policy)
+	not events_names_topic(b, t.arn)
+	msg := sprintf("[PLAN-NOTIFY-02] %s の events.amazonaws.com の文が、暗号化コンテキスト aws:sns:topicArn で Topic %s を名指しません", [t.key_policy, t.arn])
 }
 
 # IAM で Topic へ publish できる role（inline policy の Allow の Action が sns:Publish に当たり、Resource が Topic に当たる）。
@@ -150,10 +164,10 @@ role_arn_by_name := {c.rc.change.after.name: c.rc.change.after.arn |
 	is_string(c.rc.change.after.arn)
 }
 
-grants_publish(s) if {
+grants_publish(s, arn) if {
 	s.Effect == "Allow"
 	publish_action(s)
-	reaches_topic(s)
+	reaches_topic(s, arn)
 }
 
 publish_action(s) if {
@@ -171,14 +185,15 @@ excludes_publish(s) if {
 	lib.iam_match(lower(a), "sns:publish")
 }
 
-reaches_topic(s) if {
+reaches_topic(s, arn) if {
 	some res in lib.as_array(object.get(s, "Resource", []))
-	lib.iam_match(res, topic_arn)
+	lib.iam_match(res, arn)
 }
 
-reaches_topic(s) if "NotResource" in object.keys(s)
+reaches_topic(s, _) if "NotResource" in object.keys(s)
 
 deny contains msg if {
+	some t in topics
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
 	some s in lib.statements(r.body)
@@ -186,20 +201,21 @@ deny contains msg if {
 	publish_action(s)
 	some res in lib.as_array(object.get(s, "Resource", []))
 	lib.policy_variable(res)
-	lib.iam_match(lib.policy_variable_as_wildcard(res), topic_arn)
-	msg := sprintf("[PLAN-NOTIFY-03] %s の Allow の Resource %s が policy 変数（${...}）を含み、Topic %s へ publish できるかが plan で決まりません。policy 変数を使わずに値を書いてください（ADR-0402 決定21）", [r.document.address, res, topic_arn])
+	lib.iam_match(lib.policy_variable_as_wildcard(res), t.arn)
+	msg := sprintf("[PLAN-NOTIFY-03] %s の Allow の Resource %s が policy 変数（${...}）を含み、Topic %s へ publish できるかが plan で決まりません。policy 変数を使わずに値を書いてください（ADR-0402 決定21）", [r.document.address, res, t.arn])
 }
 
-publishing_policies contains {"address": r.document.address, "role": object.get(c.rc.change.after, "role", null)} if {
+publishing_policies contains {"address": r.document.address, "role": object.get(c.rc.change.after, "role", null), "topic": t.arn} if {
+	some t in topics
 	some r in lib.readable
 	r.document.type == "aws_iam_role_policy"
 	some c in lib.changes
 	c.rc.address == r.document.address
 	some s in lib.statements(r.body)
-	grants_publish(s)
+	grants_publish(s, t.arn)
 }
 
-iam_publishers contains role_arn_by_name[p.role] if some p in publishing_policies
+iam_publishers(arn) := {role_arn_by_name[p.role] | some p in publishing_policies; p.topic == arn}
 
 # 付け先の role を入力から引けない policy を黙って数えから落とさない。
 deny contains msg if {
@@ -208,19 +224,19 @@ deny contains msg if {
 	msg := sprintf("[PLAN-NOTIFY-03] %s が Topic へ publish できるが、付け先の role %v が入力に無いか、その arn が plan で決まりません", [p.address, object.get(p, "role", null)])
 }
 
-key_publishers contains a if {
-	some s in lib.statements(body(decl.key_policy))
+key_publishers(t) := {a |
+	some s in lib.statements(body(t.key_policy))
 	s.Effect == "Allow"
 	some v in lib.limiting_values(s, "kms:viaservice")
 	startswith(v, "sns.")
-	topic_arn in lib.limiting_values(s, "kms:encryptioncontext:aws:sns:topicarn")
+	t.arn in lib.limiting_values(s, "kms:encryptioncontext:aws:sns:topicarn")
 	some a in lib.as_array(object.get(object.get(s, "Principal", {}), "AWS", []))
 }
 
 deny contains msg if {
-	topic_arn
-	iam_publishers != key_publishers
-	msg := sprintf("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role %v と、Key Policy が SNS 経由で Topic に許す role %v が一致しません", [sort(iam_publishers), sort(key_publishers)])
+	some t in topics
+	iam_publishers(t.arn) != key_publishers(t)
+	msg := sprintf("[PLAN-NOTIFY-03] IAM で Topic へ sns:Publish を持つ role %v と、%s が SNS 経由で Topic %s に許す role %v が一致しません", [sort(iam_publishers(t.arn)), t.key_policy, t.arn, sort(key_publishers(t))])
 }
 
 trust(address) := json.unmarshal(after(address).assume_role_policy) if is_string(after(address).assume_role_policy)
@@ -231,14 +247,14 @@ heartbeat_trust := {
 		"Effect": "Allow",
 		"Principal": {"Service": "scheduler.amazonaws.com"},
 		"Action": "sts:AssumeRole",
-		"Condition": {"StringEquals": {"aws:SourceAccount": account, "aws:SourceArn": value(["heartbeat", "schedule_group", "arn"])}},
+		"Condition": {"StringEquals": {"aws:SourceAccount": account, "aws:SourceArn": [value(["heartbeat", "schedule_group", "arn"]), value(["heartbeat", "us_east_1_schedule_group", "arn"])]}},
 	}],
 }
 
 deny contains msg if {
 	after(decl.heartbeat.role)
 	not trust(decl.heartbeat.role) == heartbeat_trust
-	msg := sprintf("[PLAN-NOTIFY-04] %s の信頼が、scheduler.amazonaws.com を aws:SourceAccount と schedule group の aws:SourceArn（StringEquals）で限る1文ではありません", [decl.heartbeat.role])
+	msg := sprintf("[PLAN-NOTIFY-04] %s の信頼が、scheduler.amazonaws.com を aws:SourceAccount と2つの schedule group の aws:SourceArn（StringEquals）で限る1文ではありません", [decl.heartbeat.role])
 }
 
 chat_trust := {
@@ -252,17 +268,17 @@ deny contains msg if {
 	msg := sprintf("[PLAN-NOTIFY-04] %s の信頼が、chatbot.amazonaws.com を aws:SourceAccount（StringEquals）で自アカウントに限る1文ではありません", [decl.chat.role])
 }
 
-publish_to_topic_only(s) if {
+publish_to_topics_only(s) if {
 	s.Effect == "Allow"
 	lib.lower_all(s.Action) == ["sns:publish"]
-	lib.as_array(s.Resource) == [topic_arn]
+	lib.as_array(s.Resource) == [topic_arn, us_east_1_topic_arn]
 }
 
 deny contains msg if {
 	b := body(decl.heartbeat.policy)
 	some s in lib.statements(b)
-	not publish_to_topic_only(s)
-	msg := sprintf("[PLAN-NOTIFY-05] %s が、Topic %s への sns:Publish の Allow だけではありません", [decl.heartbeat.policy, topic_arn])
+	not publish_to_topics_only(s)
+	msg := sprintf("[PLAN-NOTIFY-05] %s が、Topic %s と %s への sns:Publish の Allow だけではありません", [decl.heartbeat.policy, topic_arn, us_east_1_topic_arn])
 }
 
 deny contains msg if {
@@ -271,15 +287,20 @@ deny contains msg if {
 	msg := sprintf("[PLAN-NOTIFY-05] %s が心拍の role %s に付いていません", [decl.heartbeat.policy, decl.heartbeat.role])
 }
 
+schedules contains [decl.heartbeat.schedule, topic_arn]
+
+schedules contains [decl.heartbeat.us_east_1_schedule, us_east_1_topic_arn]
+
 deny contains msg if {
-	t := object.get(after(decl.heartbeat.schedule), "target", [])
-	not schedule_targets_topic(t)
-	msg := sprintf("[PLAN-NOTIFY-05] %s の target が、心拍の role で Topic %s を指す1つではありません", [decl.heartbeat.schedule, topic_arn])
+	some p in schedules
+	t := object.get(after(p[0]), "target", [])
+	not schedule_targets_topic(t, p[1])
+	msg := sprintf("[PLAN-NOTIFY-05] %s の target が、心拍の role で Topic %s を指す1つではありません", [p[0], p[1]])
 }
 
-schedule_targets_topic(t) if {
+schedule_targets_topic(t, arn) if {
 	count(t) == 1
-	t[0].arn == topic_arn
+	t[0].arn == arn
 	t[0].role_arn == value(["heartbeat", "role", "arn"])
 }
 
@@ -305,8 +326,8 @@ deny contains msg if {
 
 deny contains msg if {
 	c := after(decl.chat.configuration)
-	not {t | some t in object.get(c, "sns_topic_arns", [])} == {topic_arn}
-	msg := sprintf("[PLAN-NOTIFY-06] %s が購読する Topic が、%s だけではありません", [decl.chat.configuration, topic_arn])
+	not {t | some t in object.get(c, "sns_topic_arns", [])} == {topic_arn, us_east_1_topic_arn}
+	msg := sprintf("[PLAN-NOTIFY-06] %s が購読する Topic が、%s と %s だけではありません", [decl.chat.configuration, topic_arn, us_east_1_topic_arn])
 }
 
 deny contains msg if {
@@ -345,6 +366,78 @@ read_statement(s) if {
 	s.Effect == "Allow"
 	not "NotAction" in object.keys(s)
 	not "NotResource" in object.keys(s)
+}
+
+# alarm を読む Resource は、provider の region と us-east-1 の、このアカウントの alarm に限る（ops-notification/ADR-0201 決定2）。
+read_resources := {r |
+	some s in lib.statements(body(decl.chat.policy))
+	not alarm_statement(s)
+	some r in lib.as_array(object.get(s, "Resource", []))
+	r != "*"
+}
+
+alarm_resources := {sprintf("arn:%s:cloudwatch:%s:%s:alarm:*", [split(topic_arn, ":")[1], r, account]) | some r in {region, "us-east-1"}}
+
+deny contains msg if {
+	extra := read_resources - alarm_resources
+	count(extra) > 0
+	msg := sprintf("[PLAN-NOTIFY-07] %s の Resource %v が、provider の region と us-east-1 の alarm %v の外です", [decl.chat.policy, sort(extra), sort(alarm_resources)])
+}
+
+# resource-level の権限を alarm に持つ Action（ops-notification/ADR-0201 決定2 の表の1行目）。
+alarm_actions := {"cloudwatch:describealarmhistory", "cloudwatch:describealarms", "cloudwatch:listtagsforresource"}
+
+alarm_statement(s) if {
+	some a in lib.lower_all(object.get(s, "Action", []))
+	a in alarm_actions
+}
+
+deny contains msg if {
+	missing := alarm_actions - read_actions
+	count(missing) > 0
+	msg := sprintf("[PLAN-NOTIFY-07] 宣言の chat.read_actions に alarm を読む Action %v がありません", [sort(missing)])
+}
+
+deny contains msg if {
+	b := body(decl.chat.policy)
+	count([s | some s in lib.statements(b); alarm_statement(s)]) == 0
+	msg := sprintf("[PLAN-NOTIFY-07] %s に alarm を読む文がありません", [decl.chat.policy])
+}
+
+# alarm を読む文は、"*" にも、どちらかの region が欠けた形にもしない。
+deny contains msg if {
+	some s in lib.statements(body(decl.chat.policy))
+	alarm_statement(s)
+	got := {r | some r in lib.as_array(object.get(s, "Resource", []))}
+	got != alarm_resources
+	msg := sprintf("[PLAN-NOTIFY-07] %s の alarm を読む文の Resource %v が、provider の region と us-east-1 の alarm %v と一致しません", [decl.chat.policy, sort(got), sort(alarm_resources)])
+}
+
+# us-east-1 の Topic・鍵・心拍は us-east-1 に置く（ops-notification/ADR-0001 決定1、repository-wide/ADR-0208 決定1）。
+us_east_1_addresses := [
+	decl.us_east_1.topic, decl.us_east_1.topic_policy, decl.us_east_1.key, decl.us_east_1.alias, decl.us_east_1.key_policy,
+	decl.heartbeat.us_east_1_schedule_group, decl.heartbeat.us_east_1_schedule,
+]
+
+deny contains msg if {
+	some address in us_east_1_addresses
+	a := after(address)
+	not a.region == "us-east-1"
+	msg := sprintf("[PLAN-NOTIFY-09] %s の region %v が us-east-1 ではありません", [address, object.get(a, "region", null)])
+}
+
+same_account_us_east_1(arn) if {
+	parts := split(arn, ":")
+	parts[1] == split(topic_arn, ":")[1]
+	parts[2] == "sns"
+	parts[3] == "us-east-1"
+	regex.match(`^[0-9]{12}$`, parts[4])
+	parts[4] == account
+}
+
+deny contains msg if {
+	not same_account_us_east_1(us_east_1_topic_arn)
+	msg := sprintf("[PLAN-NOTIFY-09] %s の arn %s が、provider の region の Topic と同じ partition・アカウントの us-east-1 の Topic ではありません", [decl.us_east_1.topic, us_east_1_topic_arn])
 }
 
 # 作る role がすべて permissions boundary を持つ（deployment-identity の apply の role が作れる role の範囲）。
