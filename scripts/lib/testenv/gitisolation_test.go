@@ -241,10 +241,7 @@ func Test_makefiles_一時のリポジトリを建てるレシピはGIT_ISOLATE�
 	}
 
 	// 見つけたレシピが0件なら、印か読み方が壊れている。
-	assert.Subset(t, found, []string{
-		"gitleaks-canary", "trufflehog-canary",
-		"editorconfig-check-canary", "editorconfig-directive-canary",
-	})
+	assert.Subset(t, found, []string{"gitleaks-canary", "trufflehog-canary"})
 }
 
 // go-test と go-test-cover は、git の位置の変数が壊れた場所を指す環境で走る。

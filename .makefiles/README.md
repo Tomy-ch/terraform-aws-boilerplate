@@ -95,7 +95,7 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `hygiene/`
 
-綴りと `.editorconfig` の一致、`.mk` にテストのターゲットが無いこと。
+綴りと `.editorconfig` の一致、editorconfig-checker の無効化の印の形。判定と canary は `scripts/typos-gate`・`scripts/editorconfig-gate`・`scripts/editorconfig-directive-lint` が持つ。
 
 ### `markdown/`
 

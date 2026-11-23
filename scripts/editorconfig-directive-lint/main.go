@@ -9,17 +9,28 @@
 //
 // 印の綴りはこのソース自身にも書けません。書けば、このファイルの残りが検査の外に出ます。そのため
 // 文字列は連結で組み立てます。
+//
+//	editorconfig-directive-lint [-files <一覧>]
+//
+// -files を省くと、`git -c core.quotepath=false ls-files -z` の一覧のうち、作業ツリーに在るものを見ます。git には
+// 外側のリポジトリから切り離した env（lib/gitenv）を渡します。在るかどうかで外すのは、作業ツリーから消えた追跡
+// ファイル（ErrNotExist）だけで、外した後の件数が0件なら落ちます。違反は終了コード 1、使い方の誤り・読めない
+// 入力・一覧を得られない・対象が0件は 2 です。
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -27,6 +38,7 @@ import (
 const prefix = "editorconfig-" + "checker-"
 
 var (
+	errUsage      = xerrors.New("引数が正しくありません")
 	errUnreadable = xerrors.New("検査対象を読み取れません")
 	errNoTargets  = xerrors.New("検査対象のファイルが0件です")
 	errViolations = xerrors.New("違反がある")
@@ -34,32 +46,51 @@ var (
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdout, func() ([]string, error) { return gitFiles(".", gitEnv) }); err != nil {
 		log.Printf("❌ editorconfig-directive-lint: %v", err)
 		os.Exit(exitCode(err))
 	}
+}
+
+func gitEnv() ([]string, error) { return gitEnvFrom(os.Environ()) }
+
+// gitEnvFrom は、environ から外側のリポジトリを指す git の変数を外した写しを返します。
+func gitEnvFrom(environ []string) ([]string, error) {
+	return gitenv.Env(environ)
 }
 
 func exitCode(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case xerrors.Is(err, errUnreadable), xerrors.Is(err, errNoTargets):
+	case xerrors.Is(err, errUsage), xerrors.Is(err, errUnreadable), xerrors.Is(err, errNoTargets):
 		return 2
 	default:
 		return 1
 	}
 }
 
-func run(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("editorconfig-directive-lint", flag.ContinueOnError)
-	fs.SetOutput(out)
-	list := fs.String("files", "", "検査するファイルの一覧（1行1パス。git ls-files の出力）")
-	if err := fs.Parse(args); err != nil {
-		return xerrors.Wrap(err, "引数の解釈")
+// listFunc は、-files を省いたときの検査対象の候補（git の追跡ファイル）を返します。テストは差し替えます。
+type listFunc func() ([]string, error)
+
+func run(args []string, out io.Writer, lister listFunc) error {
+	fset := flag.NewFlagSet("editorconfig-directive-lint", flag.ContinueOnError)
+	fset.SetOutput(out)
+	list := fset.String("files", "", "検査するファイルの一覧（1行1パス）。省くと git の追跡ファイル")
+	if err := fset.Parse(args); err != nil {
+		return xerrors.Wrapf(errUsage, "%v", err)
+	}
+	if fset.NArg() > 0 {
+		return xerrors.Wrapf(errUsage, "余分な引数 %q", fset.Args())
 	}
 
-	paths, err := readList(*list)
+	var paths []string
+	var err error
+	if *list != "" {
+		paths, err = readList(*list)
+	} else {
+		paths, err = existingFiles(lister)
+	}
 	if err != nil {
 		return err
 	}
@@ -104,6 +135,52 @@ func readList(path string) ([]string, error) {
 		return nil, xerrors.Wrapf(errNoTargets, "一覧 %q", path)
 	}
 	return paths, nil
+}
+
+// existingFiles は、lister の一覧のうち作業ツリーに在るものを返します。外すのは ErrNotExist だけで、それ以外の
+// 理由で調べられないものは残し、読むときに落とします。外した後が0件なら errNoTargets です。
+func existingFiles(lister listFunc) ([]string, error) {
+	names, err := lister()
+	if err != nil {
+		return nil, xerrors.Wrapf(errUnreadable, "追跡ファイルの一覧: %v", err)
+	}
+	var paths []string
+	for _, p := range names {
+		if _, err := os.Stat(filepath.Clean(p)); xerrors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return nil, xerrors.Wrapf(errNoTargets, "追跡ファイル %d 件のうち作業ツリーに在るもの", len(names))
+	}
+	return paths, nil
+}
+
+// gitFiles は、dir のリポジトリの追跡ファイルを、isolated が返す（外側のリポジトリから切り離した）env の git で
+// 列挙します。
+func gitFiles(dir string, isolated func() ([]string, error)) ([]string, error) {
+	env, err := isolated()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(context.Background(), "git", "-c", "core.quotepath=false", "ls-files", "-z")
+	cmd.Dir, cmd.Env = dir, env
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "git ls-files")
+	}
+	return splitNUL(string(raw)), nil
+}
+
+func splitNUL(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // check は1ファイルの印を、editorconfig-checker と同じ部分文字列の判定で分類します。

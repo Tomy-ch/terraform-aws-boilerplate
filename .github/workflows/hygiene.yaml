@@ -69,7 +69,7 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:crate-ci/typos
+          tools: go aqua:crate-ci/typos
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run typos
