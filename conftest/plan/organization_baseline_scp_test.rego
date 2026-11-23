@@ -36,9 +36,13 @@ policy_keys := [
 ]
 
 baseline_actions := [
-	"access-analyzer:DeleteAnalyzer", "config:DeleteConfigurationRecorder", "config:DeleteDeliveryChannel",
-	"config:StopConfigurationRecorder", "ec2:DisableEbsEncryptionByDefault", "ec2:ModifyVpcBlockPublicAccessOptions",
-	"elasticmapreduce:PutBlockPublicAccessConfiguration", "s3:PutAccountPublicAccessBlock", "ssm:UpdateServiceSetting",
+	"access-analyzer:CreateArchiveRule", "access-analyzer:DeleteAnalyzer", "access-analyzer:UpdateArchiveRule",
+	"config:DeleteConfigurationRecorder", "config:DeleteDeliveryChannel", "config:DeleteRetentionConfiguration",
+	"config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:PutRetentionConfiguration",
+	"config:StopConfigurationRecorder", "ec2:CreateVpcBlockPublicAccessExclusion", "ec2:DisableEbsEncryptionByDefault",
+	"ec2:ModifyVpcBlockPublicAccessExclusion", "ec2:ModifyVpcBlockPublicAccessOptions",
+	"elasticmapreduce:PutBlockPublicAccessConfiguration", "s3:PutAccountPublicAccessBlock",
+	"ssm:ResetServiceSetting", "ssm:UpdateServiceSetting",
 ]
 
 change(address, type, after) := {"address": address, "type": type, "change": {"actions": ["create"], "after": after, "after_unknown": {}}}
@@ -345,4 +349,25 @@ test_violation_enable_region_with_condition if {
 test_violation_enable_region_other_action if {
 	docs := with_doc("deny-enable-region", {"Effect": "Deny", "Action": "account:DisableRegion", "Resource": "*"})
 	fixture.has("[PLAN-ORG-09] deny-enable-region", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+baseline_with(resource, condition) := with_doc("deny-baseline-stop", {"Effect": "Deny", "Action": baseline_actions, "Resource": resource, "Condition": condition})
+
+apply_exception := {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply"]}}
+
+test_violation_baseline_stop_narrow_resource if {
+	docs := baseline_with("arn:aws:config:*:*:config-recorder/*", apply_exception)
+	fixture.has("[PLAN-ORG-09] deny-baseline-stop が", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_baseline_stop_exception if {
+	every v in ["arn:aws:iam::*:role/*", bg_pattern, "arn:aws:iam::*:role/tabp-dev-ci-apply-identity", "arn:aws:iam::*:role/tabp-*-ci-apply", "arn:aws:iam::*:role/tabp-qa-ci-apply"] {
+		docs := baseline_with("*", {"ArnNotLike": {"aws:PrincipalArn": [v]}})
+		fixture.has("[PLAN-ORG-09] deny-baseline-stop の条件 ArnNotLike", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+test_violation_baseline_stop_other_condition if {
+	docs := baseline_with("*", object.union(apply_exception, {"StringNotEquals": {"aws:PrincipalAccount": "111111111111"}}))
+	fixture.has("[PLAN-ORG-09] deny-baseline-stop の条件 StringNotEquals", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }

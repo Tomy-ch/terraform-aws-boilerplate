@@ -363,15 +363,38 @@ guardduty_stop_shape if {
 
 # account-baseline の設定を止める Action（account-baseline/ADR-0201 決定1）。
 baseline_stop_actions := {
-	"config:stopconfigurationrecorder", "config:deleteconfigurationrecorder", "config:deletedeliverychannel",
-	"access-analyzer:deleteanalyzer", "ec2:disableebsencryptionbydefault", "ec2:modifyvpcblockpublicaccessoptions",
-	"s3:putaccountpublicaccessblock", "elasticmapreduce:putblockpublicaccessconfiguration", "ssm:updateservicesetting",
+	"access-analyzer:createarchiverule", "access-analyzer:deleteanalyzer", "access-analyzer:updatearchiverule",
+	"config:deleteconfigurationrecorder", "config:deletedeliverychannel", "config:deleteretentionconfiguration",
+	"config:putconfigurationrecorder", "config:putdeliverychannel", "config:putretentionconfiguration",
+	"config:stopconfigurationrecorder", "ec2:createvpcblockpublicaccessexclusion", "ec2:disableebsencryptionbydefault",
+	"ec2:modifyvpcblockpublicaccessexclusion", "ec2:modifyvpcblockpublicaccessoptions",
+	"elasticmapreduce:putblockpublicaccessconfiguration", "s3:putaccountpublicaccessblock",
+	"ssm:resetservicesetting", "ssm:updateservicesetting",
 }
 
 baseline_stop_denied := {a |
 	some s in statements("deny-baseline-stop")
 	s.Effect == "Deny"
+	s.Resource == "*"
 	some a in lib.lower_all(object.get(s, "Action", []))
+}
+
+# 例外はメンバーの env の CI の apply の role に限る（account-baseline/ADR-0201 決定2・3）。
+baseline_apply_pattern := `^arn:aws:iam::\*:role/[a-z0-9]+-(security|log-archive|sandbox|dev|stg|prd)-ci-apply$`
+
+deny contains msg if {
+	some s in statements("deny-baseline-stop")
+	some op, keys in object.get(s, "Condition", {})
+	not baseline_exception_shape(op, keys)
+	msg := sprintf("[PLAN-ORG-09] deny-baseline-stop の条件 %s が、ArnNotLike aws:PrincipalArn でメンバーの CI の apply の role だけを外す形ではありません", [op])
+}
+
+baseline_exception_shape(op, keys) if {
+	op == "ArnNotLike"
+	object.keys(keys) == {"aws:PrincipalArn"}
+	every v in lib.as_array(keys["aws:PrincipalArn"]) {
+		regex.match(baseline_apply_pattern, v)
+	}
 }
 
 deny contains msg if {

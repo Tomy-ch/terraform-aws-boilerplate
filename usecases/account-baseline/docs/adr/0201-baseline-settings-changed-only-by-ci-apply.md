@@ -27,7 +27,7 @@ SCP は管理アカウントに効かない。break-glass の role を SCP の�
    | `access-analyzer:DeleteAnalyzer` | 外部アクセスの analyzer |
    | `access-analyzer:CreateArchiveRule`・`access-analyzer:UpdateArchiveRule` | analyzer の検出（archive rule で検出を隠すこと） |
    | `ec2:DisableEbsEncryptionByDefault` | EBS の既定の暗号化 |
-   | `ec2:ModifyVpcBlockPublicAccessOptions`・`ec2:CreateVpcBlockPublicAccessExclusion` | VPC Block Public Access（向きの変更と例外の作成） |
+   | `ec2:ModifyVpcBlockPublicAccessOptions`・`ec2:CreateVpcBlockPublicAccessExclusion`・`ec2:ModifyVpcBlockPublicAccessExclusion` | VPC Block Public Access（向きの変更と、例外の作成と変更） |
    | `s3:PutAccountPublicAccessBlock` | アカウントの S3 Public Access Block |
    | `elasticmapreduce:PutBlockPublicAccessConfiguration` | EMR の block public access |
    | `ssm:UpdateServiceSetting`・`ssm:ResetServiceSetting` | SSM document の公開共有と Automation のログの出力先 |
@@ -50,7 +50,7 @@ CI の経路が使えないときにも、break-glass で設定を直せる。�
 
 ### 案C: 設定の中身ごとに SCP を分ける（Config・analyzer・EBS などで1つずつ）
 
-拒む主体の例外が同じなので、分けても読む文が増えるだけである。付け先ごとに直接付けられる SCP の数の上限（10。AWS Organizations の quota の文書）にも早く届く。PolicyStaging には、この変更の後で8つの SCP が直接付く。
+拒む主体の例外が同じなので、分けても読む文が増えるだけである。付け先ごとに直接付けられる SCP の数の上限（10。AWS Organizations の quota の文書）にも早く届く。PolicyStaging には、この変更の後で、外さない既定の `FullAWSAccess` を含めて9つの SCP が直接付く。
 
 ### 評価
 
@@ -75,13 +75,14 @@ CI の経路が使えないときにも、break-glass で設定を直せる。�
 - 保証しないこと: 管理アカウントでの設定の停止と opt-in のリージョンの有効化。SCP は管理アカウントに効かない
 - 保証しないこと: PolicyStaging から Security・Workloads・Sandbox へ広げるまでの、メンバーでの拒否
 - 保証しないこと: CI の apply の role を書き換えられる主体（メンバーの apply-identity の role、break-glass の role）が、その role を経て設定を止めること
+- 保証しないこと: メンバーで role を作れるか信頼を書き換えられる主体が、`<project>-<env>-ci-apply` の名前の role を作って例外に入ること。例外は名前で当て、アカウントと env の組を問わない
 - 保証しないこと: 代替の連絡先と password policy の変更を拒むこと。決定1 の Action に含めない
 - 保証しないこと: SCP が実際に要求を拒むこと。PolicyStaging に sandbox を移した間の人の確認だけが見る
 
 ## 検証方法
 
 - Unit Test: `usecases/organization-baseline/internal/organization/tests/organization.tftest.hcl` の `baseline_scps` が、`deny-baseline-stop` の Action の一覧と例外の条件、`deny-enable-region` の文を固定する
-- Policy Test（`make tf-policy`）: `PLAN-ORG-09` が、`deny-baseline-stop` が各設定を止める Action を拒むことと、`deny-enable-region` が条件なしに拒むことを見る。`PLAN-ORG-05` が、break-glass の role を例外にする SCP が `deny-state-write` だけであることを見る。`PLAN-ORG-01` が付け先を見る
+- Policy Test（`make tf-policy`）: `PLAN-ORG-09` が、`deny-baseline-stop` が決定1 の Action のすべてを Resource `*` について拒み、例外が `ArnNotLike` の `aws:PrincipalArn` でメンバーの env の CI の apply の role だけであることと、`deny-enable-region` が条件なしに拒むことを見る。`PLAN-ORG-05` が、break-glass の role を例外にする SCP が `deny-state-write` だけであることを見る。`PLAN-ORG-01` が付け先を見る
 - 実環境: PolicyStaging に sandbox を移した間に、CI の apply の role の外の主体で決定1 の Action と `account:EnableRegion` が拒まれ、CI の apply の role で設定を変えられることを人が確かめ、結果を Pull Request に記録する
 
 ## 未確認
@@ -91,13 +92,14 @@ AWS の公式の文書で次を確かめきれていない。PolicyStaging で�
 - `access-analyzer:DeleteAnalyzer`・`access-analyzer:CreateArchiveRule`・`access-analyzer:UpdateArchiveRule` の IAM の Action 名。API の操作があることは確かめたが、IAM の Action 名を載せた頁は読めていない
 - アカウントの Public Access Block を消す操作（`DeletePublicAccessBlock`）に要る権限。`s3:PutAccountPublicAccessBlock` が要ることは、設定の操作（`PutPublicAccessBlock`）についてだけ文書で確かめた。消す操作に別の Action が要るなら、決定1 は削除を拒まない
 
-確かめたもの: config・ec2（`DisableEbsEncryptionByDefault`・`CreateVpcBlockPublicAccessExclusion`。`ModifyVpcBlockPublicAccessOptions` は VPC の IAM のポリシーの例）・elasticmapreduce・ssm・account の Action は、Service Authorization Reference と各 API の文書で確かめた。
+確かめたもの: config・ec2（`DisableEbsEncryptionByDefault`・`CreateVpcBlockPublicAccessExclusion`。`ModifyVpcBlockPublicAccessOptions`・`ModifyVpcBlockPublicAccessExclusion` は VPC の IAM のポリシーの例）・elasticmapreduce・ssm・account の Action は、Service Authorization Reference と各 API の文書で確かめた。
 
 ## 影響
 
 - このユースケースに設定を足す変更は、その設定を止める Action を `deny-baseline-stop` に足し、`PLAN-ORG-09` と `baseline_scps` の一覧を同じ変更で改める
 - メンバーの CI の apply の role の名前を変える変更は、`deny-baseline-stop` の例外も改める
 - sandbox の掃除の CI（#76）の role は例外にしないので、掃除の設定は常駐の設定を対象から外す必要がある
+- EBS の既定の暗号化の鍵を CMK にする変更は、`ec2:ModifyEbsDefaultKmsKeyId`・`ec2:ResetEbsDefaultKmsKeyId` を決定1 に足す
 
 ## 見直し条件
 

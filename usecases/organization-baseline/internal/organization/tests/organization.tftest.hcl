@@ -295,6 +295,7 @@ run "baseline_scps" {
       "config:StopConfigurationRecorder",
       "ec2:CreateVpcBlockPublicAccessExclusion",
       "ec2:DisableEbsEncryptionByDefault",
+      "ec2:ModifyVpcBlockPublicAccessExclusion",
       "ec2:ModifyVpcBlockPublicAccessOptions",
       "elasticmapreduce:PutBlockPublicAccessConfiguration",
       "s3:PutAccountPublicAccessBlock",
