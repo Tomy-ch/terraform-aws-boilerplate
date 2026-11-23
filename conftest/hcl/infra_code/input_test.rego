@@ -15,7 +15,7 @@ test_IC001_allow_terraform_files if {
 	count(with_id(denies(fx("IC001_allow_terraform_files_2"), base_decl), "IC001")) == 0
 }
 
-# 除外の宣言（.md と .terraform.lock.hcl）に当たるファイルは、usecase の木に在っても IC001 にならない。
+# 除外の宣言（.md・.tftpl と .terraform.lock.hcl）に当たるファイルは、usecase の木に在っても IC001 にならない。
 test_IC001_allow_usecase_tree if {
 	fx("IC001_allow_usecase_tree").files == [
 		{"path": "usecases/u/README.md", "parsed": false},
@@ -23,6 +23,7 @@ test_IC001_allow_usecase_tree if {
 		{"path": "usecases/u/main.tf", "parsed": true},
 		{"path": "usecases/u/reference/.terraform.lock.hcl", "parsed": false},
 		{"path": "usecases/u/reference/main.tf", "parsed": true},
+		{"path": "usecases/u/templates/role.json.tftpl", "parsed": false},
 		{"path": "usecases/u/tests/a.tftest.hcl", "parsed": true},
 	]
 	count(with_id(denies(fx("IC001_allow_usecase_tree"), base_decl), "IC001")) == 0

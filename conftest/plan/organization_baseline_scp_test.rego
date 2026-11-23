@@ -157,9 +157,49 @@ test_violation_break_glass_exempt_from_detection if {
 	fixture.has("[PLAN-ORG-05]", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }
 
+exec_pattern := "arn:aws:iam::*:role/stacksets-exec-*"
+
+bg_with_exception := {"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern, "Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}}}
+
+exec_protection := {"Effect": "Deny", "Action": ["iam:Attach*", "iam:Create*", "iam:PassRole", "iam:Put*", "iam:Update*"], "Resource": exec_pattern}
+
+with_statements(key, statements) := object.union(valid_docs, {key: {"Type": valid_docs[key].Type, "Statement": statements}})
+
+governance_roles_messages(statements) := msgs if {
+	msgs := p.deny with input as plan_with(with_statements("protect-governance-roles", statements), valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_governance_roles_stacksets_exception if {
+	not fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, exec_protection]))
+}
+
+test_violation_governance_roles_exception_without_exec_protection if {
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception]))
+}
+
+test_violation_governance_roles_exec_protection_with_condition if {
+	conditioned := object.union(exec_protection, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, conditioned]))
+}
+
+test_violation_governance_roles_exec_protection_allows_create if {
+	no_create := object.union(exec_protection, {"Action": ["iam:Attach*", "iam:PassRole", "iam:Put*", "iam:Update*"]})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, no_create]))
+}
+
+test_violation_governance_roles_exec_protection_other_resource if {
+	other := object.union(exec_protection, {"Resource": "arn:aws:iam::*:role/other-*"})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, other]))
+}
+
 test_violation_governance_roles_wider_exception if {
-	docs := with_doc("protect-governance-roles", {"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern, "Condition": {"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/stacksets-exec-*"}}})
-	fixture.has("[PLAN-ORG-06]", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	wider := object.union(bg_with_exception, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/*"}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([wider, exec_protection]))
+}
+
+test_violation_governance_roles_extra_condition if {
+	extra := object.union(bg_with_exception, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}, "StringEquals": {"aws:RequestedRegion": "us-east-1"}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([extra, exec_protection]))
 }
 
 test_violation_prod_resources_wrong_path if {

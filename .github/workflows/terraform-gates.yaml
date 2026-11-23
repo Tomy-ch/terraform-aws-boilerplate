@@ -79,6 +79,7 @@ jobs:
               - 'scripts/hcl-input/**'
               - 'scripts/hcl-tally/**'
               - 'scripts/provider-schema/**'
+              - 'scripts/tf-policy/**'
               - 'scripts/tf-gates/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
@@ -361,6 +362,8 @@ jobs:
           tools: aqua:hashicorp/terraform aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # go: Policy Test の段（scripts/tf-policy・provider-schema・tf-local）を scripts/ からビルドする。conftest と terraform:
+      # canary はホストの PATH のものを起動する。
       # canary を先に走らせる: 落ちえないゲートは reference の root について何も言わない。
       # この step に secret を渡さない: plan は資格情報なしに mock_provider で走る。
       - name: Run the Policy Test
@@ -545,6 +548,7 @@ jobs:
             sts.ap-northeast-1.amazonaws.com
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
@@ -645,6 +649,7 @@ jobs:
             sts.ap-northeast-1.amazonaws.com
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
