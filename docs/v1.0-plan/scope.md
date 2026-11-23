@@ -271,7 +271,8 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 | Network | `network-foundation` | 環境ごとのVPC、サブネット、ルートテーブル、既定のSecurity Group（ルールを空にして管理下に置く）、VPC Flow Logs。サブネット・ルートテーブル・経路・Internet Gatewayの持ち主で、NAT Gateway・EIP・Network Firewallは`controlled-external-egress`が持つ。他のusecaseはVPCとサブネットのIDを入力で受ける。sandboxでは非常駐（#94） |
 | Network | `dns-zone` | 環境ごとのサブドメインのRoute53 Hosted Zone。prdは親のzoneとdev / stgへの委任を持つ。zoneの置換をplanで止める。レコードは、それが指す先を持つusecaseが書く。公開DNSのクエリログとDNSSECの署名を持ち、Log Group・鍵・alarmはus-east-1に置く。常駐層（#94） |
 | Security | `organization-baseline` | AWS Organizations、SCP、IAM Identity Center（人間のSSOログイン）。第10.1節のアカウント構成を構築する |
-| Security | `account-baseline` | CloudTrail、GuardDuty、AWS Config、IAM Access Analyzer、アカウント単位のS3 Public Access Block、EBS既定暗号化 |
+| Security | `account-baseline` | アカウント単位の安全側の設定。S3 Public Access Block、EBS既定暗号化、VPC Block Public Access、EMRのblock public access、SSM documentの公開共有のブロックとAutomationのログ、IAM Access Analyzer（外部アクセス）、AWS Configの記録、セキュリティの代替連絡先、メンバーのpassword policy。全アカウントのworkload rootから呼ぶ |
+| Security | `security-tooling` | 委任管理者（securityのアカウント）で持つ組織の検知。組織のCloudTrail、GuardDuty、Configの集約、Access Analyzer（組織）、Inspector、Security Hub、検知の通知（#473） |
 | Security | `audit-evidence` | 監査証跡（CloudTrail等）の改ざん防止保管。S3 Object Lock、長期保持、アクセス記録 |
 | Access | `operator-access` | SSM Session Managerのポートフォワーディング、ECS Exec。インバウンドを開けずに人間がprivate資源へ到達 |
 | Data | `data-refresh` | 本番（prd）→stgへの一方向のデータ同期。DBはBE提供のマスキングJobを必須とし、公開画像はコピー、非公開画像は同期しない（第9.6節）。既定は無効 |
@@ -289,7 +290,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 各ユースケースの出力契約には、ログの所在（Log Group ARN、S3にしか出せないログ種別のBucket）を含める（第9.3節）。
 
-基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。**`network-foundation`も除く** —— 通知に値するmetricを出すresourceを持たないためである（`usecases/network-foundation/docs/adr/0202-no-alarm-topic.md`）。**`image-registry`も除く** —— 基盤系アラームの対象となるmetricを持たず、スキャンの所見はInspectorとSecurity Hubの経路（`account-baseline`）が持つためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
+基盤系アラームの通知先（`ops-notification`が出力するSNS Topic ARN）を、各ユースケースの入力契約に含める（第9.3節）。**`ops-notification`自身と、フェーズ0の`state-backend` / `deployment-identity`、および`ops-notification`を作る前に立つ`organization-baseline`は除く** —— Topicがまだ存在しないためである。**`network-foundation`も除く** —— 通知に値するmetricを出すresourceを持たないためである（`usecases/network-foundation/docs/adr/0202-no-alarm-topic.md`）。**`image-registry`も除く** —— 基盤系アラームの対象となるmetricを持たず、スキャンの所見はInspectorとSecurity Hubの経路（`security-tooling`）が持つためである。**`account-baseline`も除く** —— 通知に値するmetricを出すresourceを持たないためである。フェーズ1では`ops-notification`を`organization-baseline`の直後に実装する。
 
 ### 7.1 接続シナリオ
 
@@ -355,7 +356,7 @@ AWSサービスへの到達はVPC Endpointを使い、NATを要しない（第9.
 
 `cdn`がFE成果物を保持する場合、S3とCloudFrontを一体のライフサイクルにできる。業務画像は別データとしてS3を独立させる。
 
-共有KMS、AWS Backup、Glue Catalogは独立したusecaseにせず、関係するusecase（`account-baseline`、`backup-restore`、`analytics`/`business-analytics`）の内部で扱う。
+AWS Backup、Glue Catalogは独立したusecaseにせず、関係するusecase（`backup-restore`、`analytics`/`business-analytics`）の内部で扱う。KMSの鍵は、使うusecaseがそれぞれ`modules/kms`で持つ。
 
 ## 9. 横断要件
 
@@ -507,7 +508,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 | フェーズ | 内容 | 主な前提 |
 |---|---|---|
 | 0. bootstrap | `state-backend` と `deployment-identity` の2usecaseを管理アカウントに立ち上げる（ADR-0602 決定4-11）。人が手で作るのは管理アカウント1つだけである。rootで行うのは、rootでしかできない作業（rootのMFAの2台以上の登録、Paid Planへの移行、BillingへのIAMアクセスの有効化）と、最初のIAM主体である一時IAM userの作成に限る。以後の実行者は一時IAM user（コンソールパスワード、MFA、`aws login`。アクセスキーを作らない）とし、連絡先の登録とCost Explorerの有効化もこのuserで行う（#130）。アカウントの準備、段1-5、一時IAM userの削除の手順は[`docs/setup/bootstrap.md`](../setup/bootstrap.md)が持つ。各段の手順は、その段のusecaseを実装する変更が書き足す。段1: AWS CLIでstate Bucketを作る（版管理、Public Access Block、Object Ownershipだけ。既定の暗号化は段4でstate の鍵によるSSE-KMSを置く）。段2: 同じ構成をTerraformで書いて`import` blockで取り込み、`terraform plan`が取り込んだresourceに変更を示さなくなるまで突合する。段3-4: OIDC Providerと plan / apply / apply-identity / unlock-identity のrole、objectの書き込みをCIのroleと段4の実行者に限るbucket policy、state Bucketのlifecycle、plan の出力の Bucket、state の鍵（CMK・Key Policy・alias）を、一時IAM userのローカル権限でapplyする（ADR-0602 決定9・10 の例外）。段5: stateのSSE-KMSでの書き直しと、段4の実行者の書き込みの例外の除去を、CI（apply-identity）でapplyする。state Bucketと2つの出力のBucketはS3サーバーアクセスログを持たない（state-backend/ADR-0105）。段5 の完了後に、rootで一時IAM userを削除する。実行の記録はADR-0602 決定10に従う。Organizations、メンバーアカウント6つ（security / log-archive / sandbox / dev / stg / prd）、Identity Centerの権限は`organization-baseline`がフェーズ1で作る | 管理アカウントが存在し、Paid Planであること（手順は`docs/setup/bootstrap.md`が持つ） |
-| 1. 基盤 | `organization-baseline`、その直後に`account-baseline`と`ops-notification`、続いて`audit-evidence`、`finops`、`image-registry`。メンバーアカウントの`state-backend`と`deployment-identity`は、管理アカウントのapply-identity roleがメンバー作成時の既定Roleを経由してTerraformで作り、その後所有を各アカウントへ移す（#142）。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
+| 1. 基盤 | `organization-baseline`、その直後に`account-baseline`と`ops-notification`、続いて`audit-evidence`、`security-tooling`、`finops`、`image-registry`。メンバーアカウントの`state-backend`と`deployment-identity`は、管理アカウントのapply-identity roleがメンバー作成時の既定Roleを経由してTerraformで作り、その後所有を各アカウントへ移す（#142）。横断CI（第2.2節のゲート、第3.1節の層検査、policy test、掃除CI、定期plan）。`deployment-identity`はフェーズ0で初回のapplyが済んでおり、以後はCIが更新する | フェーズ0 |
 | 2. ネットワーク | `vpc`（module）、`network-foundation`、`dns-zone`、`private-aws-access`、`controlled-external-egress`、`operator-access` | フェーズ1 |
 | 3. Compute・データ | `ecs`（module）、`container-platform`、観測の三モードとCollector、`private-api`、`public-api-alb`、`private-rds`、`private-aurora`、`cache`、`search` | フェーズ2 |
 | 4. 非同期・配信 | `queue-worker`、`on-demand-job`、`scheduled-job`、`event-job`、`event-queue-worker`、`outbox-delivery`、`realtime-delivery`、`email-delivery`、`email-inbound`、`sms-push-delivery` | フェーズ3 |
@@ -556,6 +557,7 @@ usecaseは下表のフェーズ順に実装する。各フェーズは前のフ�
 | 複製を作れる | `state-backend`、`image-registry`、`dns-zone` | 実行ごとにsandboxへ複製を作り、apply→検証→destroyする。複製は常駐する実体とbackend・名前・鍵を共有しない。残存は期待残存の宣言と照合する。`dns-zone`の複製は委任しないドメインで作り、公開のDNSからの到達ではなくAPIの状態で検証する。期待残存はus-east-1の削除待ちの鍵2本である。`image-registry`のregistryのスキャンの設定はアカウントに1つで、複製は常駐の設定を上書きするので作らない（検出できない故障モードとしてREADMEに置く） |
 | 破棄すると認証や組織の構造を失う | `deployment-identity`、`organization-baseline` | destroyしない。Policy Test、拒否されるべき主体のassumeや操作が拒否されることの確認（`deployment-identity` は `make ci-assume-denied`）、drift 0 で代える。SCPは検証用のOU（Policy Staging OU）に先に付けてから広げる |
 | 破棄できるが、仕様で残るものがある | `audit-evidence`、`finops`、`ops-notification`、`network-foundation` | 条件2はそのまま。条件3を、期待残存（削除待機中のKMS鍵、保持期間中のobject等）との照合で余剰0件とする |
+| アカウントかリージョンに1つしか置けない安全側の設定を常駐させる | `account-baseline` | destroyしない。Policy Test、拒否されるべき操作が拒否されることの確認、drift 0 で代える（ADR-0401 決定14）。sandboxに置かないAWS Configは対象の外 |
 | 実行中にTerraformの外でresourceを作る | `realtime-delivery`、`eks`、`network-foundation`（GuardDutyのRuntime MonitoringのVPC Endpoint、消費者のENI） | destroyの前に、作った側に回収させる。残存は所属（VPC内のENI・LB、名前のprefix）で列挙して検出する |
 
 `finops` は、sandboxでは常駐層の実体と同じアカウントに置き、AWS managed monitorはメンバーアカウントに1つしか置けないので、複製を作れない。条件2・3は、常駐する実体をdestroyして作り直すことで満たす。
@@ -596,7 +598,7 @@ moduleのIssueは適用経路を持たないため、完了条件を別に置く
 
 起票の規約とIssueの構成は、統括Issueに置く。
 
-**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。`account-baseline`の常駐（#86、第10.2節。sandboxはGuardDutyだけ常駐させ、Configは常駐させない）。共有基盤の所有者（#94、第3節・第7節。資源ごとの専用usecaseを各環境のアカウントに置き、共有基盤用のアカウントは設けない）。コード実行許可リストの人間レビューの成立条件（#100。ADR-0103 の機械のゲートを保証とし、人のレビューは2人目のメンテナが加わるまで運用にとどめる）。コンテナイメージdigestの供給経路（#95、第9.4節・ADR-0601 決定20-23。発火側がTask定義のrevisionを登録してServiceを更新し、Terraformは`aws_ecs_service.task_definition`だけを無視する）。
+**フェーズ1で解決した論点:** 通知Topicのアカウント配置（#97、第9.3節）。同一アカウント構成の扱い（#99、第10.1節。サポートしない）。検知の常駐（#86、第10.2節。sandboxはGuardDuty（`security-tooling`）だけ常駐させ、Config（`account-baseline`）は常駐させない）。共有基盤の所有者（#94、第3節・第7節。資源ごとの専用usecaseを各環境のアカウントに置き、共有基盤用のアカウントは設けない）。コード実行許可リストの人間レビューの成立条件（#100。ADR-0103 の機械のゲートを保証とし、人のレビューは2人目のメンテナが加わるまで運用にとどめる）。コンテナイメージdigestの供給経路（#95、第9.4節・ADR-0601 決定20-23。発火側がTask定義のrevisionを登録してServiceを更新し、Terraformは`aws_ecs_service.task_definition`だけを無視する）。
 
 **フェーズ0で解決した論点:** 管理アカウントの作成前提（#130）、state Bucketのアカウント配置（#96）、メンバーアカウントのCI Roleとstateの用意（#142）—— いずれも #11 の横断決定による。層検査の入力形式と道具（#93）。常駐層usecaseの完了条件（#98、第11.1節）。stateの分割粒度（#83、ADR-0604）。
 

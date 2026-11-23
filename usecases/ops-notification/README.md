@@ -27,7 +27,7 @@
 
 | 出力 | 使う側 |
 | --- | --- |
-| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`account-baseline` の GuardDuty の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
+| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`security-tooling` の検知の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
 | `us_east_1_topic_arn` | us-east-1 にしか出ない metric の CloudWatch の alarm を持つユースケース（Route 53 の DNSSEC の alarm など）。送り手は CloudWatch だけ。env の root が渡す |
 
 - ログの所在: このユースケースはログを持たない。Chatbot の `logging_level` は `NONE`、SNS の配送状況のログ（delivery status logging）も持たない。API の呼び出しの記録は CloudTrail が持つ

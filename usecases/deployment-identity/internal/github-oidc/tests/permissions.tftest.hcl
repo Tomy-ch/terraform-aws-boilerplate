@@ -48,6 +48,71 @@ variables {
 run "policies" {
   command = apply
 
+  variables {
+    # Service Authorization Reference「Actions, resources, and condition keys for AWS IAM Identity Center」で Access level が
+    # Read か List の Action（2026-11-24 の写し）。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
+    sso_read_actions = [
+      "sso:DescribeAccountAssignmentCreationStatus",
+      "sso:DescribeAccountAssignmentDeletionStatus",
+      "sso:DescribeApplication",
+      "sso:DescribeApplicationAssignment",
+      "sso:DescribeApplicationProvider",
+      "sso:DescribeInstance",
+      "sso:DescribeInstanceAccessControlAttributeConfiguration",
+      "sso:DescribePermissionSet",
+      "sso:DescribePermissionSetProvisioningStatus",
+      "sso:DescribeRegion",
+      "sso:DescribeRegisteredRegions",
+      "sso:DescribeTrustedTokenIssuer",
+      "sso:GetApplicationAccessScope",
+      "sso:GetApplicationAssignmentConfiguration",
+      "sso:GetApplicationAuthenticationMethod",
+      "sso:GetApplicationGrant",
+      "sso:GetApplicationInstance",
+      "sso:GetApplicationSessionConfiguration",
+      "sso:GetApplicationTemplate",
+      "sso:GetInlinePolicyForPermissionSet",
+      "sso:GetManagedApplicationInstance",
+      "sso:GetMfaDeviceManagementForDirectory",
+      "sso:GetPermissionSet",
+      "sso:GetPermissionsBoundaryForPermissionSet",
+      "sso:GetProfile",
+      "sso:GetSSOStatus",
+      "sso:GetSharedSsoConfiguration",
+      "sso:GetSsoConfiguration",
+      "sso:GetTrust",
+      "sso:ListAccountAssignmentCreationStatus",
+      "sso:ListAccountAssignmentDeletionStatus",
+      "sso:ListAccountAssignments",
+      "sso:ListAccountAssignmentsForPrincipal",
+      "sso:ListAccountsForProvisionedPermissionSet",
+      "sso:ListApplicationAccessScopes",
+      "sso:ListApplicationAssignments",
+      "sso:ListApplicationAssignmentsForPrincipal",
+      "sso:ListApplicationAuthenticationMethods",
+      "sso:ListApplicationGrants",
+      "sso:ListApplicationInstanceCertificates",
+      "sso:ListApplicationInstances",
+      "sso:ListApplicationProviders",
+      "sso:ListApplicationTemplates",
+      "sso:ListApplications",
+      "sso:ListCustomerManagedPolicyReferencesInPermissionSet",
+      "sso:ListDirectoryAssociations",
+      "sso:ListInstances",
+      "sso:ListManagedPoliciesInPermissionSet",
+      "sso:ListPermissionSetProvisioningStatus",
+      "sso:ListPermissionSets",
+      "sso:ListPermissionSetsProvisionedToAccount",
+      "sso:ListProfileAssociations",
+      "sso:ListProfiles",
+      "sso:ListRegions",
+      "sso:ListTagsForResource",
+      "sso:ListTrustedTokenIssuers",
+      "sso:SearchGroups",
+      "sso:SearchUsers",
+    ]
+  }
+
   override_resource {
     target = aws_iam_policy.workload
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload" }
@@ -153,6 +218,7 @@ run "policies" {
         Effect = "Allow"
         Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
         Resource = [
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
@@ -429,19 +495,13 @@ run "policies" {
           "iam:DisableOrganizationsRoot*",
           "iam:EnableOrganizationsRoot*",
           "iam:UpdateAccountPasswordPolicy",
-          "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
-          "sso:AttachManagedPolicyToPermissionSet",
-          "sso:CreateAccountAssignment",
+          "sso:*AccountAssignment",
+          "sso:*FromPermissionSet",
+          "sso:*ToPermissionSet",
           "sso:CreatePermissionSet",
-          "sso:DeleteAccountAssignment",
-          "sso:DeleteInlinePolicyFromPermissionSet",
           "sso:DeletePermissionSet",
-          "sso:DeletePermissionsBoundaryFromPermissionSet",
-          "sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
-          "sso:DetachManagedPolicyFromPermissionSet",
           "sso:ProvisionPermissionSet",
-          "sso:PutInlinePolicyToPermissionSet",
-          "sso:PutPermissionsBoundaryToPermissionSet",
+          "sso:PutPermissionsPolicy",
           "sso:UpdatePermissionSet",
           "cloudformation:ActivateOrganizationsAccess",
           "cloudformation:CreateStackInstances",
@@ -462,10 +522,9 @@ run "policies" {
         Effect = "Deny"
         Action = "*"
         Resource = [
-          "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
-          "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
-          "arn:aws:iam::123456789012:group/break-glass/break-glass",
-          "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
+          "arn:aws:iam::123456789012:group/break-glass/*",
+          "arn:aws:iam::123456789012:role/break-glass/*",
+          "arn:aws:iam::123456789012:user/break-glass/*",
         ]
       },
       { Sid = "DenyBoundaryRemoval", Effect = "Deny", Action = "iam:DeleteRolePermissionsBoundary", Resource = "*" },
@@ -644,6 +703,7 @@ run "policies" {
         Effect = "Allow"
         Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
         Resource = [
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
@@ -738,6 +798,7 @@ run "policies" {
           "iam:SetDefaultPolicyVersion",
         ]
         Resource = [
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
@@ -752,12 +813,12 @@ run "policies" {
         Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"] } }
       },
       {
-        Sid      = "AttachGovernancePolicy"
+        Sid      = "AttachApplyIdentityPolicies"
         Effect   = "Allow"
         Action   = "iam:AttachRolePolicy"
         Resource = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
         Condition = {
-          ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
+          ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"] }
         }
       },
     ]
@@ -1040,6 +1101,27 @@ run "policies" {
   assert {
     condition     = length([for s in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : s if s.Effect == "Deny"]) == 10
     error_message = "boundary の Deny の文が、apply の role の bootstrap の Deny の10文になっていません。"
+  }
+
+  # IAM の wildcard を正規表現へ訳し（metacharacter を escape してから * を .*、? を . に）、サービスの欄が大文字小文字を
+  # 問わず sso に当たりうる pattern をすべて、Read・List の Action に当てる。
+  assert {
+    condition = alltrue(flatten([
+      for p in flatten([one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"])]) : [
+        for r in var.sso_read_actions : !can(regex("^(?i)${replace(replace(replace(p, "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", r))
+      ] if can(regex("^(?i)${replace(replace(replace(split(":", p)[0], "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", "sso"))
+    ]))
+    error_message = "DenyGovernanceChange の Action が、Identity Center の Read・List の Action に当たります（決定5）。"
+  }
+
+  assert {
+    condition     = length([for p in flatten([one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"])]) : p if can(regex("^(?i)${replace(replace(replace(split(":", p)[0], "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", "sso"))]) > 0
+    error_message = "DenyGovernanceChange が sso の Action を持たず、上の Read・List の assert が何も見ていません。"
+  }
+
+  assert {
+    condition     = length(var.sso_read_actions) == 58
+    error_message = "Identity Center の Read・List の Action の写しが 58 件ではありません。"
   }
 
   assert {
@@ -1908,13 +1990,14 @@ run "role_arns_follow_data_sources" {
   assert {
     condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)] == [
       for _ in range(2) : [
+        "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-manage",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-boundary-ops-notification",
       ]
     ]
-    error_message = "apply-identity の role の CI の policy の読み取りと管理の Resource が、統制の policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
+    error_message = "apply-identity の role の CI の policy の読み取りと管理の Resource が、apply-identity の role の2つの policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
   }
 
   assert {
@@ -2005,6 +2088,11 @@ run "role_arns_follow_data_sources" {
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Condition if s.Sid == "DenyBootstrapAnomalyDetectionChange"]) == { Null = { "aws:ResourceTag/t4bp:bootstrap" = "false" } }
     error_message = "apply の role の異常検知の Deny の tag の key が、name_prefix の project から組まれていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws-us-gov:iam::210987654321:group/break-glass/*", "arn:aws-us-gov:iam::210987654321:role/break-glass/*", "arn:aws-us-gov:iam::210987654321:user/break-glass/*"]
+    error_message = "apply の role の break-glass の Deny の pattern が、partition・アカウントから組まれていません。"
   }
 }
 
@@ -2129,8 +2217,9 @@ run "no_governance_in_dev" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachApplyIdentityPolicies",
     ]
-    error_message = "dev の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "dev の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
@@ -2174,16 +2263,22 @@ run "no_governance_in_dev" {
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
       ] == [for _ in range(3) : [
+        "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-workload-read",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-boundary-ops-notification",
     ]]
-    error_message = "dev の CI の policy の読み取りと管理の Resource が、apply の role の workload の policy と boundary の2つになっていません。"
+    error_message = "dev の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "dev の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-identity-manage"] } }
+    error_message = "dev で apply-identity が自分の role に付けてよい policy が、manage の policy に限られていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "dev の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2231,8 +2326,9 @@ run "no_governance_in_security" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachApplyIdentityPolicies",
     ]
-    error_message = "security の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "security の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
@@ -2276,16 +2372,22 @@ run "no_governance_in_security" {
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
       ] == [for _ in range(3) : [
+        "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-workload-read",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-boundary-ops-notification",
     ]]
-    error_message = "security の CI の policy の読み取りと管理の Resource が、apply の role の workload の policy と boundary の2つになっていません。"
+    error_message = "security の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "security の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-security-ci-apply-identity-manage"] } }
+    error_message = "security で apply-identity が自分の role に付けてよい policy が、manage の policy に限られていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "security の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2333,8 +2435,9 @@ run "no_governance_in_log_archive" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachApplyIdentityPolicies",
     ]
-    error_message = "log-archive の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "log-archive の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
@@ -2378,16 +2481,22 @@ run "no_governance_in_log_archive" {
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
       ] == [for _ in range(3) : [
+        "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-workload-read",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-boundary-ops-notification",
     ]]
-    error_message = "log-archive の CI の policy の読み取りと管理の Resource が、apply の role の workload の policy と boundary の2つになっていません。"
+    error_message = "log-archive の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "log-archive の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-identity-manage"] } }
+    error_message = "log-archive で apply-identity が自分の role に付けてよい policy が、manage の policy に限られていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "log-archive の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2406,6 +2515,37 @@ run "break_glass_in_other_account" {
 
   variables {
     break_glass_arns = ["arn:aws:iam::210987654321:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "break_glass_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+# 種類ごとに path の内の ARN も含め、管理アカウントの precondition ではなく path の precondition で落ちることを見る。
+run "break_glass_user_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "break_glass_group_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:group/break-glass"]
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
@@ -2533,6 +2673,11 @@ run "governance_follows_data_sources" {
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : contains(s.Resource, "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance") if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) && length([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) == 2
     error_message = "apply-identity の統制の policy の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance"] } }
+    error_message = "apply-identity が自分の role に付けてよい policy の ARN が、partition・アカウント・name_prefix から組んだ manage と統制の policy になっていません。"
   }
 
   assert {

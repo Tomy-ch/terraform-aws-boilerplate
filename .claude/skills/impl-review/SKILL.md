@@ -251,7 +251,7 @@ an architecture violation and as a type-design suggestion, and shipping both dou
 | `docker/**` | `make docker-lint` / `make trivy-config` |
 | `*.md` | `make md-lint`。`.claude/skills/**` なら `make skill-lint` も |
 | `usecases/**` / `modules/**` / `env/**` / `*.tf` | `make tf-fmt-check` / `make tf-validate` / `make tf-test` / `make tf-lint` / `make trivy-config` |
-| `.makefiles/terraform/**` | `make tf-gates-test` |
+| `.makefiles/terraform/**` / `scripts/tf-gates/**` | `make tf-validate-canary` |
 
 **走らせる前に `make help` で対象が実在するか確かめる。** この表は現時点の配線であり、`make` が
 持っていないターゲットを走らせたつもりで報告しない。何が未配線かは `AGENTS.md` *現在の配線状態* が持つ

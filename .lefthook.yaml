@@ -149,6 +149,7 @@ pre-commit:
         - "usecases/**"
         - "modules/**"
         - "env/**"
+        - "scripts/tf-gates/**"
       skip:
         - run: make -s tf-no-targets
       run: make tf-fmt-check
@@ -162,6 +163,7 @@ pre-commit:
         - "Makefile"
         - ".makefiles/**"
         - "scripts/tool-cooldown/**"
+        - "scripts/tf-gates/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
@@ -182,29 +184,20 @@ pre-commit:
         - "scripts/tf-local/**"
         - "scripts/bootstrap-check/**"
         - "scripts/provider-schema/**"
-        - "scripts/tf-validate-result/**"
+        - "scripts/tf-gates/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy check-plan-expected
-    tf-gates-test:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "scripts/tf-validate-result/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make -k tf-gates-test
     tf-validate-canary:
       glob:
         - "Makefile"
         - ".makefiles/**"
         - "usecases/state-backend/reference/versions.tf"
         - "usecases/state-backend/reference/.terraform.lock.hcl"
-        - "scripts/tf-validate-result/**"
+        - "scripts/tf-gates/**"
         - "scripts/lib/**"
         - "scripts/go.mod"
         - "scripts/go.sum"

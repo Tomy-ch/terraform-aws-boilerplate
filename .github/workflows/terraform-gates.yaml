@@ -57,7 +57,7 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 順序の検査と層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を、tf-validate が tf-validate-result を走らせ、
+          # 順序の検査と層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を、Terraform の各段が tf-gates を走らせ、
           # どれもこのソースからビルドする。
           filters: |
             relevant:
@@ -79,7 +79,7 @@ jobs:
               - 'scripts/hcl-input/**'
               - 'scripts/hcl-tally/**'
               - 'scripts/provider-schema/**'
-              - 'scripts/tf-validate-result/**'
+              - 'scripts/tf-gates/**'
               - 'scripts/lib/**'
               - 'scripts/go.mod'
               - 'scripts/go.sum'
@@ -142,10 +142,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # go: 対象のディレクトリの選び方と起動は scripts/tf-gates が持つ。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: aqua:hashicorp/terraform
+          tools: aqua:hashicorp/terraform go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Terraform formatting
@@ -206,7 +207,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
+      # go: tf-lint が先に tool-cooldown-check を、TFLint の起動に tf-gates を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
       # 層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を走らせ、6つとも scripts/ からビルドする。conftest: 順序の検査と
       # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
@@ -287,7 +288,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-validate の判定（scripts/tf-validate-result）をビルドする。
+      # go: 対象のディレクトリの選び方・起動・validate の判定は scripts/tf-gates が持つ。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
@@ -297,7 +298,7 @@ jobs:
       # -k: validate が落ちても test の結果を出す。どれが落ちても step は落ちる。
       # この step に secret を渡さない: init は PR の構成が解決した provider をそのまま走らせる。
       - name: Run terraform validate, terraform test and the bootstrap plan expectation check
-        run: make -k tf-validate-canary tf-validate tf-test check-plan-expected RUNNER_MODE=host
+        run: make -k tf-validate tf-test check-plan-expected RUNNER_MODE=host
 
   tf-policy:
     needs: changes
@@ -420,15 +421,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: tf-lint のケースが、scripts/ からビルドする tool-cooldown-check を走らせる。
+      # go: canary は scripts/tf-gates が、実物の terraform と AWS Provider で validate と判定の全体を走らせる。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
           tools: aqua:hashicorp/terraform go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run the Terraform gates' own tests
-        run: make -k tf-gates-test RUNNER_MODE=host
+      - name: Run the terraform validate canary
+        run: make tf-validate-canary RUNNER_MODE=host
 
   # path で絞らない: README.md の「インフラ内コードの検出への依存」.
   infra-code-gate:
