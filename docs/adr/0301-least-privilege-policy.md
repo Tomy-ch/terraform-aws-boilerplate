@@ -69,6 +69,8 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
     ただし、人が IAM Identity Center から到達するときの permission set には、AWS managed の職務別 policy を付ける。付けてよい policy と、それを付ける permission set は、`organization-baseline` の設計記録が閉じた一覧として持つ。人の作業は CI の role と違って前もって列挙できず、読み取りの Action を本リポジトリで列挙すると数千に及び、AWS のサービスが増えるたびに追随できないためである。AWS も、職務別の managed policy から始め、使われ方を見て絞ることを勧めている。これらの policy の中の Action wildcard は、本リポジトリが生成する policy document ではないので決定8 の対象外とする。break-glass の role（決定19）も同じ扱いである。
 11. ARNが事前に確定しない場合は、まずresource参照による依存順序の解決を試みる。解決できない場合に限り、prefixベースのARN patternをConditionで限定して使用し、根拠を記録する。
+
+    ただし、拒否する statement（`Deny`）の Resource は、ARN が確定していても、それらを覆う prefix ベースの ARN pattern で書いてよく、Condition での限定を要しない。pattern は拒む範囲を広げるだけで、Allow が許す範囲を広げないからである（決定8 が Deny の Action wildcard を許すのと同じ理由）。この但し書きを使う箇所は、次の3つを当該ユースケースの ADR に記録する: 覆うべき ARN のすべてが pattern に入ることを確かめる入力の検証か検査、pattern が覆うべき ARN の外に当てる範囲、列挙せずに pattern で書く理由。
 12. KMS の鍵の暗号操作（`kms:Decrypt`・`kms:Encrypt`・`kms:GenerateDataKey` など）と `kms:CreateGrant` は、IAM policy で与えない。その鍵の Key Policy が、使う principal を名指して許す。Key Policy がアカウントへ委任するのは鍵の管理の Action に限り、暗号操作と `kms:CreateGrant` を含めない。鍵を使う主体の一覧が、鍵ごとに Key Policy の1箇所に揃い、IAM の Allow を足しても鍵を使えるようにはならない。
 
 ### ネットワーク
