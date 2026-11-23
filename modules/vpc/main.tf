@@ -1,6 +1,6 @@
 # kics-scan disable=fd632aaf-b8a1-424d-a4d1-0de22fd3247a,e592a0c5-5bdb-414c-9066-5dba7cdea370,e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10
 # fd632aaf（Network Firewall 無し）: この module の VPC は外部 egress の経路を持たない。egress は usecase ごとに必要な範囲だけを持つ（ADR-0301 決定16）。Network Firewall は、外部 egress を有効にする環境で経路を持つ usecase が置く。撤回: 外部 egress を持たない VPC が既定でなくなったとき。
-# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で、この module の resource を親に取らない。撤回: account-baseline を実装したとき。
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で、この module の resource を親に取らない。撤回: KICS がファイルの外の宣言を数えるようになったとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
 
 data "aws_caller_identity" "current" {}

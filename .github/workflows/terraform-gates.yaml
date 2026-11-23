@@ -57,7 +57,7 @@ jobs:
           # 空の token で、大きな diff を拒む compare API ではなく `git diff` を使わせる。
           token: ''
           # scripts/: tf-lint が tool-cooldown-check を、順序の検査と層の検査と Policy Test が infra-code-gate と tf-local を、
-          # 順序の検査と層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を、tf-validate が tf-validate-result を走らせ、
+          # 順序の検査と層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を、tf-validate が tf-validate-result を走らせ、
           # どれもこのソースからビルドする。
           filters: |
             relevant:
@@ -77,6 +77,7 @@ jobs:
               - 'scripts/tf-local/**'
               - 'scripts/bootstrap-check/**'
               - 'scripts/hcl-input/**'
+              - 'scripts/hcl-tally/**'
               - 'scripts/provider-schema/**'
               - 'scripts/tf-validate-result/**'
               - 'scripts/lib/**'
@@ -206,7 +207,7 @@ jobs:
           persist-credentials: false
 
       # go: tf-lint が先に tool-cooldown-check を、順序の検査と層の検査が infra-code-gate と tf-local を、順序の検査と
-      # 層の検査と root の検査が hcl-input を、層の検査と Policy Test が provider-schema を走らせ、5つとも scripts/ からビルドする。conftest: 順序の検査と
+      # 層の検査と root の検査が hcl-input と hcl-tally を、層の検査と Policy Test が provider-schema を走らせ、6つとも scripts/ からビルドする。conftest: 順序の検査と
       # 層の検査と root の検査が使う。terraform: 層の検査が lock した AWS Provider の schema を取る（ADR-0102 決定18 の分類の網羅）。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
@@ -222,20 +223,14 @@ jobs:
         run: make tf-lint RUNNER_MODE=host
 
       # Static Analysis の Conftest の側で、TFLint と同じ層なのでこの job に置く（ADR-0501 決定4）。
-      - name: Run the resource-order check's own tests
-        run: make resource-order-check-test RUNNER_MODE=host
-
       - name: Check the resource order
-        run: make resource-order-check RUNNER_MODE=host
+        run: make -k resource-order-check RUNNER_MODE=host
 
       - name: Check the layer rules
-        run: make layer-check RUNNER_MODE=host
-
-      - name: Run the root check's own tests
-        run: make root-check-test RUNNER_MODE=host
+        run: make -k layer-check RUNNER_MODE=host
 
       - name: Check the root composition and backend settings
-        run: make root-check RUNNER_MODE=host
+        run: make -k root-check RUNNER_MODE=host
 
   tf-validate-test:
     needs: changes
@@ -485,18 +480,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # go: infra-code-gate と hcl-input は scripts/ からビルドする。
+      # go: infra-code-gate と hcl-input と hcl-tally は scripts/ からビルドする。
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
           tools: aqua:open-policy-agent/conftest go
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run the infrastructure-code gate's own tests
-        run: make infra-code-gate-test RUNNER_MODE=host
-
       - name: Detect infrastructure code
-        run: make infra-code-gate RUNNER_MODE=host
+        run: make -k infra-code-gate RUNNER_MODE=host
 
   # 規則は README.md の「plan の job」.
   plan-admin-identity:

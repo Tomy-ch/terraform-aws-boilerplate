@@ -25,7 +25,7 @@ func Test_runFixtures(t *testing.T) {
 		})
 		out := filepath.Join(t.TempDir(), "fx.json")
 		var stdout bytes.Buffer
-		require.NoError(t, run([]string{"fixtures", "-dir", dir, "-out", out}, &stdout))
+		require.NoError(t, run([]string{"fixtures", "-out", out, dir}, &stdout))
 		raw, err := os.ReadFile(out)
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"fixtures": {
@@ -34,6 +34,42 @@ func Test_runFixtures(t *testing.T) {
 				"blocks": [{"file": "m/main.tf", "line": 1, "type": "resource", "labels": ["aws_s3_bucket", "b"], "blocks": [], "attributes": []}]}
 		}}`, string(raw))
 		assert.Equal(t, "✅ hcl-input fixtures: 2 件のケースを "+out+" へ書きました\n", stdout.String())
+	})
+
+	t.Run("複数のディレクトリのケースを1つの JSON にまとめる", func(t *testing.T) {
+		t.Parallel()
+		lib := writeTree(t, map[string]string{"lib_case.txtar": "-- m/main.tf --\n"})
+		tree := writeTree(t, map[string]string{"tree_case.txtar": "-- env/x/main.tf --\n"})
+		out := filepath.Join(t.TempDir(), "fx.json")
+		var stdout bytes.Buffer
+		require.NoError(t, run([]string{"fixtures", "-out", out, lib, tree}, &stdout))
+		raw, err := os.ReadFile(out)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"fixtures": {
+			"lib_case": {"files": [{"path": "m/main.tf", "parsed": true}], "blocks": []},
+			"tree_case": {"files": [{"path": "env/x/main.tf", "parsed": true}], "blocks": []}
+		}}`, string(raw))
+		assert.Equal(t, "✅ hcl-input fixtures: 2 件のケースを "+out+" へ書きました\n", stdout.String())
+	})
+
+	t.Run("ディレクトリをまたいでケースの名前が重なれば errFixture で、出力を書かない", func(t *testing.T) {
+		t.Parallel()
+		a := writeTree(t, map[string]string{"same.txtar": "-- m/main.tf --\n"})
+		b := writeTree(t, map[string]string{"same.txtar": "-- env/x/main.tf --\n"})
+		out := filepath.Join(t.TempDir(), "fx.json")
+		err := run([]string{"fixtures", "-out", out, a, b}, &bytes.Buffer{})
+		require.ErrorIs(t, err, errFixture)
+		assert.Contains(t, err.Error(), `"same"`)
+		assert.NoFileExists(t, out)
+	})
+
+	t.Run("2つ目のディレクトリの txtar が0件なら errFixture で、出力を書かない", func(t *testing.T) {
+		t.Parallel()
+		a := writeTree(t, map[string]string{"a.txtar": "-- m/main.tf --\n"})
+		empty := writeTree(t, map[string]string{"x.md": ""})
+		out := filepath.Join(t.TempDir(), "fx.json")
+		require.ErrorIs(t, run([]string{"fixtures", "-out", out, a, empty}, &bytes.Buffer{}), errFixture)
+		assert.NoFileExists(t, out)
 	})
 
 	t.Run("失敗は出力を書かない", func(t *testing.T) {
@@ -53,7 +89,7 @@ func Test_runFixtures(t *testing.T) {
 				t.Parallel()
 				dir := writeTree(t, tt.files)
 				out := filepath.Join(t.TempDir(), "fx.json")
-				require.ErrorIs(t, run([]string{"fixtures", "-dir", dir, "-out", out}, &bytes.Buffer{}), tt.want)
+				require.ErrorIs(t, run([]string{"fixtures", "-out", out, dir}, &bytes.Buffer{}), tt.want)
 				assert.NoFileExists(t, out)
 			})
 		}
@@ -67,17 +103,16 @@ func Test_runFixtures(t *testing.T) {
 		require.NoError(t, os.Chmod(outDir, 0o500))
 		t.Cleanup(func() { _ = os.Chmod(outDir, 0o750) })
 		out := filepath.Join(outDir, "fx.json")
-		require.ErrorIs(t, run([]string{"fixtures", "-dir", dir, "-out", out}, &bytes.Buffer{}), fs.ErrPermission)
+		require.ErrorIs(t, run([]string{"fixtures", "-out", out, dir}, &bytes.Buffer{}), fs.ErrPermission)
 		assert.NoFileExists(t, out)
 	})
 
 	t.Run("引数が足りなければ errUsage", func(t *testing.T) {
 		t.Parallel()
 		for name, args := range map[string][]string{
-			"-dir が無い": {"-out", "o.json"},
-			"-out が無い": {"-dir", "."},
-			"余計な引数":    {"-dir", ".", "-out", "o.json", "x"},
-			"知らないフラグ":  {"-x"},
+			"ディレクトリが無い": {"-out", "o.json"},
+			"-out が無い":  {"."},
+			"知らないフラグ":   {"-x"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()

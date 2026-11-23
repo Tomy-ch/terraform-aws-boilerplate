@@ -7,13 +7,13 @@ backend 設定の不変条件を、HCL のソースで検査する（同 ADR の
 
 起動は `make root-check` で、CI では Pull Request の Static Analysis の層の job（`terraform-gates.yaml` の `tf-lint`）が
 走らせ、apply する木では `terraform-apply.yaml` の `apply-root-check` が走らせる。apply の job はその成功を待つ
-（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は
-`make root-check-test` である。
+（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は、
+Rego のテスト（`root-verify`）と、`scripts/hcl-input`・`scripts/hcl-tally` などの Go のテストである。
 
 | 段 | make | 判定するもの |
 | --- | --- | --- |
 | Rego のテスト | `root-verify` | 各 deny の ID が違反と非違反の両方のテストを持ち、テストがすべて走って通ったこと（`infra-code-gate rego-tests`） |
-| 検査 | `root-detect` | 走査の root（`usecases` `env`）の下を [`scripts/hcl-input`](../../../scripts/README.md) が読んだ JSON 1つを入力として掛ける（段は `.makefiles/terraform/hcl-input.mk`）。入力の `.tf` と `.tf.json` の集合を `find` の一覧と、構文として読んだファイルとトップレベルの block の数、ファイルごとの `module` block の数を `grep` が行頭で数えた数と突き合わせ、評価した規則の数を `root.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
+| 検査 | `root-detect` | 走査の root（`usecases` `env`）の下を [`scripts/hcl-input`](../../../scripts/README.md) が読んだ JSON 1つを入力として掛ける。入力の `.tf` と `.tf.json` の集合を、構文として読んだファイルとトップレベルの block の数、ファイルごとの `module` block の数を、[`scripts/hcl-tally`](../../../scripts/README.md) が hcl-input とは別の経路（ファイルの列挙と行頭の正規表現）で数えた数と突き合わせ、評価した規則の数を `root.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
 
 `tf-local policy-result` は `root.rego` の行頭の `deny contains` を数える。規則は字下げせずにこのファイルへ置く。
 
@@ -22,7 +22,7 @@ backend 設定の不変条件を、HCL のソースで検査する（同 ADR の
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
 | `RT001` | 宣言（`decl.json`）の形が違う。`management_env` が env の名前でない、`usecases` がオブジェクトでない、値が `bootstrap` と `control` のどちらでもない、`bootstrap` の usecase が無い、未知の鍵を持つ | 宣言を直す |
-| `RT002` | 構成ファイルか root が0件。入力（hcl-input）が読んだファイルと `find` の一覧が違う。ファイルの `module` block の数が独立の数え方と違う | 差のファイルを実体のファイルにするか、行頭に `module "` が来ないように書く。symlink は hcl-input が先に落とす |
+| `RT002` | 構成ファイルか root が0件。入力（hcl-input）が読んだファイルと `hcl-tally` の一覧が違う。ファイルの `module` block の数が独立の数え方と違う | 差のファイルを実体のファイルにするか、行頭に `module "` が来ないように書く。symlink は hcl-input が先に落とす |
 | `RT003` | JSON の構成（`.tf.json`）か、root の中の override のファイル（`override.tf`、`*_override.tf`）が在る。検査はどちらも解釈しない | HCL（`.tf`）の元のファイルに書く |
 | `RT004` | 宣言の usecase の `usecases/<名前>/` に `.tf` が無い。`management_env` の identity root に `.tf` が無い | 宣言を直す |
 | `RT005` | 入力（hcl-input の JSON）の形が違う。または構文として読んだファイルの集合とトップレベルの block の数が独立の数と違う（ヒアドキュメントやブロックコメントの行頭の block の頭の形）。崩れた入力の上では、それを読む規則を評価しない | `make root-check` から起動する。行頭に block の頭の形が来ないように書く |

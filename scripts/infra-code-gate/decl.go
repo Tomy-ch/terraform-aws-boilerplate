@@ -33,10 +33,12 @@ const (
 var codeownerTargets = []string{
 	"conftest/hcl/",
 	"scripts/infra-code-gate/",
+	"scripts/hcl-input/",
+	"scripts/hcl-tally/",
 	"scripts/lib/adrdoc/",
 	"scripts/tf-job-lint/",
 	".makefiles/terraform/infra-code.mk",
-	".makefiles/terraform/infra-code-test.mk",
+	".makefiles/terraform/hcl-input.mk",
 	".github/settings/branch-protection.json",
 	".github/CODEOWNERS",
 }

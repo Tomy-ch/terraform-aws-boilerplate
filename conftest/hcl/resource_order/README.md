@@ -7,19 +7,19 @@
 
 起動は `make resource-order-check` で、CI では Pull Request の Static Analysis の層の job（`terraform-gates.yaml` の
 `tf-lint`）が TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `apply-resource-order-check` が
-走らせる。apply の job はその成功を待つ（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は `make resource-order-check-test` である。
+走らせる。apply の job はその成功を待つ（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は、Rego のテスト（`resource-order-verify`）と、`scripts/hcl-input`・`scripts/hcl-tally` などの Go のテストである。
 
 | 段 | make | 判定するもの |
 | --- | --- | --- |
 | Rego のテスト | `resource-order-verify` | 各 deny の ID が違反と非違反の両方のテストを持ち、テストがすべて走って通ったこと（`infra-code-gate rego-tests`） |
-| 検査 | `resource-order-detect` | 走査の root（`usecases` `modules` `env`）の下を [`scripts/hcl-input`](../../../scripts/README.md) が読んだ JSON 1つを入力として掛ける（段は `.makefiles/terraform/hcl-input.mk`）。入力の `.tf` と `.tf.json` の集合を `find` の一覧と、構文として読んだファイルとトップレベルの block の数を独立の数と突き合わせ、評価した規則の数を `deny contains` の数と突き合わせる（`tf-local policy-result`） |
+| 検査 | `resource-order-detect` | 走査の root（`usecases` `modules` `env`）の下を [`scripts/hcl-input`](../../../scripts/README.md) が読んだ JSON 1つを入力として掛ける。入力の `.tf` と `.tf.json` の集合と、構文として読んだファイルとトップレベルの block の数を、[`scripts/hcl-tally`](../../../scripts/README.md) の独立の数えと突き合わせ、評価した規則の数を `deny contains` の数と突き合わせる（`tf-local policy-result`） |
 
 ## 失敗の読み方
 
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
 | `RO001` | 宣言の `rules` が空か、項目が `module` / `resource` / `after` / `adr` の4つの空でない文字列を持たない | 宣言を直す |
-| `RO002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだファイルと `find` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す。symlink は hcl-input が先に落とす |
+| `RO002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだファイルと `hcl-tally` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す。symlink は hcl-input が先に落とす |
 | `RO003` | 宣言した module のディレクトリに `.tf` が無い | module を動かしたなら宣言の `module` を直す |
 | `RO004` | 宣言した resource が module の中にちょうど1つ無い | address を変えたなら宣言を直す |
 | `RO005` | resource の `depends_on` に宣言した resource が無い | `depends_on` を戻す。順序を変えるなら `adr` の決定を先に変える |

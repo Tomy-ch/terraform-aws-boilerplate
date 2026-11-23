@@ -2,11 +2,11 @@
 // Conftest への受け渡しは make が持ちます（ADR-0702 決定24）。
 //
 //	hcl-input -base <dir> -listed <走査の root の下の通常のファイルの一覧> -out <json> <root>...
-//	hcl-input fixtures -dir <txtar のディレクトリ> -out <json>
+//	hcl-input fixtures -out <json> <txtar のディレクトリ>...
 //
 // root の下の通常のファイルすべての一覧と、`.tf`・`.tftest.hcl` の block を、入れ子の block と属性の式の
 // 構文の木とともに出します（Conftest の入力のファイルそのもの）。fixtures は、txtar の1ファイルを1つの木として
-// 同じ経路で読み、Rego のテストに渡す JSON（トップキー `fixtures`）を書きます。
+// 同じ経路で読み、すべてのディレクトリのケースを、Rego のテストに渡す1つの JSON（トップキー `fixtures`）へ書きます。
 //
 // 読めなかったもの —— 構文の誤り、知らない式の型、`Variables()` との食い違い、symlink —— は JSON に現れず、
 // 非ゼロで終えて -out を書きません。読んだファイルの集合は、別の経路の走査（-listed）と突き合わせます

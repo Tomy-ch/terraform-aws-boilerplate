@@ -1,5 +1,5 @@
 # kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370,4bc4dd4c-7d8d-405e-a0fb-57fa4c31b4d9
-# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
 # 4bc4dd4c（HTTP の要求を受ける）: Statement を concat で組むので KICS が TLS の Deny を読めない。Deny の在ることは Policy Test の PLAN-SBW-08 が、Deny 以外の文の無いことは PLAN-SBW-09 が見る。撤回: KICS が concat を評価するか、Statement を literal の列で書けるようになったとき。
 
 locals {

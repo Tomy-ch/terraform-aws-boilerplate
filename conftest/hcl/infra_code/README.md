@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Rego のテスト | `infra-code-verify` | 各 deny が違反する入力と違反しない入力の両方で検証されていること（ADR-0402 決定7-9 の規律） |
 | 宣言の突き合わせ | `infra-code-decl-check` | ソースの所在の実体、参照する ADR、言語の required context、code owner の宣言、required の宣言 |
-| 検出 | `infra-code-detect` | 入力の形と独立の数（find の一覧・行頭の block の数）、型の分類、コードを実行させる構成要素と許可リストの照合、path、規則が評価されたこと |
+| 検出 | `infra-code-detect` | 入力の形と独立の数（`scripts/hcl-tally` のファイルの一覧・行頭の block の数）、型の分類、コードを実行させる構成要素と許可リストの照合、path、規則が評価されたこと |
 
 HCL のソースから判定できるものはこの木の Rego が持ち、ファイルシステムと Markdown と他の宣言を
 読むものは [`scripts/infra-code-gate`](../../../scripts/README.md) が持つ。Rego はファイルシステムを見られず、
@@ -14,8 +14,8 @@ Conftest は Markdown を読まないためである（ADR-0103 決定11）。
 
 入力は [`scripts/hcl-input`](../../../scripts/README.md) が走査の root の下の通常のファイルすべてから作る JSON 1つで
 （ADR-0501 決定5）、名前空間 `infra_code` がそれを1度に評価する。許可リストの項目がどの構成要素にも当たらない
-ことは、全ファイルを見ないと決まらない。入力を作る段は `.makefiles/terraform/hcl-input.mk` が持ち、hcl-input が
-失敗すれば Conftest を起動しない（`❌ hcl-input:` で始まる行が名指すファイルを直す）。
+ことは、全ファイルを見ないと決まらない。hcl-input が失敗すれば make はそこで止まり、Conftest を起動しない
+（`❌ hcl-input:` で始まる行が名指すファイルを直す）。Conftest の違反は `infra-code-gate count` が報告する。
 
 ## 失敗の読み方
 
@@ -27,7 +27,7 @@ deny のメッセージは固定の ID で始まり、何を直すかを含む�
 | `IC002` | JSON の構成（`.tf.json` 等）か `.tfquery.hcl` | HCL で書く。検出はこれらを解釈しない |
 | `IC003` | 解釈できないトップレベルのブロック | 検出がそのブロックを読めるようにしてから使う |
 | `IC004` | 宣言に未知のキーがある。型の行の `executes_code` が `true` / `false` でない。許可リストの項目に `id` か `owner` が無い。宣言そのものが無い | キーの綴りを直す / 足りないキーを書く |
-| `IC005` | 入力（hcl-input の JSON）の形が違う。または読んだファイルの集合が find の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違う。崩れた入力の上では、それを読む規則を評価しない | `make infra-code-gate` から起動する。行頭の数えとの差は、ヒアドキュメントやブロックコメントの行頭に block の頭の形が在る |
+| `IC005` | 入力（hcl-input の JSON）の形が違う。または読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違う。崩れた入力の上では、それを読む規則を評価しない | `make infra-code-gate` から起動する。行頭の数えとの差は、ヒアドキュメントやブロックコメントの行頭に block の頭の形が在る |
 | `IC010` | 型の分類に無い型 | [`decl.json`](decl.json) の `types` に1行足す |
 | `IC011` | 許可リストに無いインフラ内コード | `allowlist` に項目を足す。本リポジトリ所有なら ADR-0103 決定13 の ADR を書く |
 | `IC012` | 決定9 が決定5 の側に置く型を、そうでない側に分類している | `executes_code` を `true` にする |

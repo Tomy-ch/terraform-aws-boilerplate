@@ -21,7 +21,7 @@
 //   - `needs` に、同じ workflow の中で `make infra-code-gate` を走らせる job を持ち、job の if: を持つなら
 //     その job の成功を条件に含め、status の関数・論理和・否定を置かない（ADR-0601 決定9）。検出の job は
 //     needs:・if:・continue-on-error:・working-directory:・defaults:・env:・shell:・container:・services: を持たず、
-//     run: は `make infra-code-gate-test` と `make infra-code-gate`（RUNNER_MODE=host だけ）に限る
+//     run: は `make infra-code-gate`（-k と RUNNER_MODE=host だけ）に限る
 //   - workflow 全体と対象の job と検出の job に MAKEFLAGS・MAKEFILES・PATH を書かず、GITHUB_PATH と
 //     GITHUB_ENV に書き込まず、YAML のアンカーとエイリアスを使わない。workflow 全体に defaults: と env: を、job に
 //     continue-on-error:・container:・services:・defaults:・env: を、資格情報を取る step と CI の入口の step に
@@ -156,12 +156,6 @@ var (
 	blockScalar   = regexp.MustCompile(`^[|>][-+0-9]*(?:[ \t]+#.*)?$`)
 	stepRun       = regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:`)
 	stepWorkDir   = regexp.MustCompile(`^ {6}(?:- | {2})["']?working-directory["']?[ \t]*:`)
-	detectionRun  = makeRun(`infra-code-gate(?:-test)?`)
-	orderRun      = makeRun(`resource-order-check(?:-test)?`)
-	orderTestRun  = makeRun(`resource-order-check-test`)
-	layerRun      = makeRun(`layer-check`)
-	rootRun       = makeRun(`root-check(?:-test)?`)
-	rootTestRun   = makeRun(`root-check-test`)
 	stepShell     = regexp.MustCompile(`^ {6}(?:- | {2})["']?shell["']?[ \t]*:`)
 	defaultsAt    = regexp.MustCompile(`^["']?defaults["']?[ \t]*:`)
 	listItem      = regexp.MustCompile(`^ {6}- [ \t]*["']?([A-Za-z0-9_-]+)["']?[ \t]*(?:#.*)?$`)
@@ -314,7 +308,7 @@ func checkRequiredGateJobs(file, source string, required map[string]bool, g gate
 	n := 0
 	var findings []lintreport.Finding
 	for _, j := range split.Jobs {
-		if !required[j.ID] || !runsGate(j, g) || (g.testRun != nil && !hasLine(j, g.testRun)) {
+		if !required[j.ID] || !runsGate(j, g) {
 			continue
 		}
 		n++
@@ -357,7 +351,7 @@ func checkRequiredGateJob(file string, job workflow.Job, preamble []workflow.Lin
 		findings = append(findings, checkIndirect(l, finding)...)
 	}
 	for _, step := range workflow.SplitSteps(job) {
-		if runs, ok := stepRunLine(step); !ok || !g.runs.MatchString(runs.Text) {
+		if runs, ok := stepRunLine(step); !ok || !g.marks.MatchString(runs.Text) {
 			continue
 		}
 		for _, l := range step.Lines {
@@ -382,7 +376,7 @@ func checkPullRequestGate(dir string, records []groupRecord, found int, g gate) 
 	if found > 0 || !slices.ContainsFunc(records, func(r groupRecord) bool { return r.kind == cientry.Apply }) {
 		return nil
 	}
-	return []lintreport.Finding{{File: dir, Line: 1, Message: fmt.Sprintf("pull_request で起動し保護設定が required とする job に、%s を走らせるものがありません。apply の job が待つ%sを、merge の前の必須検査にも置いてください", g.targets, g.noun)}}
+	return []lintreport.Finding{{File: dir, Line: 1, Message: fmt.Sprintf("pull_request で起動し保護設定が required とする job に、%s を走らせるものがありません。apply の job が待つ%sを、merge の前の必須検査にも置いてください", g.check, g.noun)}}
 }
 
 // readEnvironments は、宣言された environment の名前を返します。0件の宣言は、どの job の environment も
@@ -1121,18 +1115,18 @@ func hasLine(job workflow.Job, re *regexp.Regexp) bool {
 }
 
 // gate は、資格情報を取る job が needs に置ける、資格情報を持たない検査の job の種類です。job は名前ではなく、
-// 走らせる make のターゲット（marks）で見分けます。runs はその job に置ける run: の閉じた集合、testRun は
-// 自己テストの run:（無い検査は nil）で、check は違反の文に出す検査の make です。
+// 走らせる make のターゲット（marks）で見分けます。その job に置ける run: は marks の1つだけで、check は違反の文に
+// 出す検査の make です。
 type gate struct {
-	noun, label, targets, check string
-	marks, runs, testRun        *regexp.Regexp
+	noun, label, check string
+	marks              *regexp.Regexp
 }
 
 var (
-	detectionGate = gate{noun: "検出", label: "検出の job", targets: "make infra-code-gate-test と make infra-code-gate", check: "make infra-code-gate", marks: detection, runs: detectionRun}
-	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", targets: "make resource-order-check-test と make resource-order-check", check: "make resource-order-check", marks: orderCheck, runs: orderRun, testRun: orderTestRun}
-	layerGate     = gate{noun: "層の検査", label: "層の検査の job", targets: "make layer-check", check: "make layer-check", marks: layerCheck, runs: layerRun}
-	rootGate      = gate{noun: "root の検査", label: "root の検査の job", targets: "make root-check-test と make root-check", check: "make root-check", marks: rootCheck, runs: rootRun, testRun: rootTestRun}
+	detectionGate = gate{noun: "検出", label: "検出の job", check: "make infra-code-gate", marks: detection}
+	orderGate     = gate{noun: "順序の検査", label: "順序の検査の job", check: "make resource-order-check", marks: orderCheck}
+	layerGate     = gate{noun: "層の検査", label: "層の検査の job", check: "make layer-check", marks: layerCheck}
+	rootGate      = gate{noun: "root の検査", label: "root の検査の job", check: "make root-check", marks: rootCheck}
 	// applyGates は、apply の job が検出に加えて必ず待ち、Pull Request の必須検査も走らせる検査である。
 	applyGates = []gate{orderGate, layerGate, rootGate}
 )
@@ -1251,8 +1245,8 @@ func checkGateJob(d workflow.Job, g gate, finding func(int, string, ...any) lint
 		findings = append(findings, checkIndirect(l, finding)...)
 	}
 	for _, step := range workflow.SplitSteps(d) {
-		if runs, ok := stepRunLine(step); ok && !g.runs.MatchString(runs.Text) {
-			findings = append(findings, finding(runs.Number, "%s %s の run: は %s だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", g.label, d.ID, g.targets))
+		if runs, ok := stepRunLine(step); ok && !g.marks.MatchString(runs.Text) {
+			findings = append(findings, finding(runs.Number, "%s %s の run: は %s だけにしてください。ほかの run: は後続の step の PATH と環境を替えます", g.label, d.ID, g.check))
 		}
 	}
 	return findings
@@ -1639,9 +1633,11 @@ func cancelsNothing(lines []workflow.Line, indent string) bool {
 }
 
 // makeRun は、step の run: の値が `make`、target の1つ、前後どちらかの RUNNER_MODE=host だけで成る行に当たる正規表現を返します。
+// makeRun は、target を走らせる run: の行です。-k は、検査のターゲットが前提に持つ段を、1つが落ちても残りまで
+// 走らせるためのもので、検査を省かせません。
 func makeRun(target string) *regexp.Regexp {
 	const mode = `(?:\s+RUNNER_MODE=host)?`
-	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make` + mode + `\s+` + target + mode + `[ \t]*$`)
+	return regexp.MustCompile(`^ {6}(?:- | {2})["']?run["']?[ \t]*:[ \t]*make(?:\s+-k)?` + mode + `\s+` + target + mode + `[ \t]*$`)
 }
 
 // requiresSuccess は、if: の式が && で結んだ項の1つとして、そのまま needs.<id>.result == 'success' を持つかを返します。

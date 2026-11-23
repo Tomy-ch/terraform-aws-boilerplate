@@ -1,6 +1,6 @@
 # kics-scan disable=7ebc9038-0bde-479a-acc4-6ed7b6758899,e592a0c5-5bdb-414c-9066-5dba7cdea370,e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10,e39f87f5-0abf-488b-864c-63ee1f588140
 # 7ebc9038（鍵の inline の policy）: Key Policy は aws_kms_key_policy が持つ。inline と併用すると互いに上書きする（AWS Provider の aws_kms_key の NOTE）。文書は conftest/plan の plan.kms_key_policy が見る。撤回: KICS が aws_kms_key_policy の文書を見るようになったとき。
-# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
 # e39f87f5（S3 の通知）: SNS の Topic を持つファイルに aws_s3_bucket_notification が無いことを落とす。この Topic は S3 のイベントの送り先ではなく、S3 の通知は Bucket を持つ usecase が持つ。撤回: KICS がこの query を通知の送り先を持つ Bucket に限ったとき。
 
