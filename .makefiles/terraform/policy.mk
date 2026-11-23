@@ -12,6 +12,15 @@
 ## conftest は名前空間に当たる package が無くても、規則が減っても、評価できた分だけで成功を返す。
 ## 適用の段の件数は tf-local policy-result が突き合わせる（conftest/plan/README.md の「Policy を足すとき」）。
 
+# ディレクトリごとの TF_DATA_DIR の名前と、落ちたディレクトリの報告。tf-gates と同じ写し方である。
+define TF_DATA_DIR_OF
+data_dir() { printf '%s/%s' "$(TF_GATES_DATA)" "$$(printf '%s' "$${1#$(TF_BASE)/}" | sed -e 's/_/_u/g' -e 's|/|__|g')"; }
+endef
+
+define TF_REPORT_FAILED
+if [ -n "$$failed" ]; then echo "❌ $@ が落ちたディレクトリ:$$failed"; exit 1; fi
+endef
+
 POLICY_PLAN_DIR = conftest/plan
 # Rego のテストは宣言そのもの（POLICY_PLAN_DECL）に対して走る。canary が差し替えるのは、適用の段の宣言だけである。
 POLICY_PLAN_DECL = conftest/plan/decl.json
