@@ -333,6 +333,7 @@ permissions() {
   local mp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-manage"
   sim allowed apply-identity "$mp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${mp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${mp},ContextKeyType=arn" iam:AttachRolePolicy
   sim allowed plan "$mp" iam:GetPolicy iam:GetPolicyVersion
   sim explicitDeny apply "$mp" iam:CreatePolicyVersion
   sim allowed plan "*" organizations:DescribeOrganization organizations:ListRoots organizations:ListAccounts iam:ListOrganizationsFeatures iam:GetAccountPasswordPolicy
