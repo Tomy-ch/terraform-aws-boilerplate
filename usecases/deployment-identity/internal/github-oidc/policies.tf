@@ -36,6 +36,8 @@ locals {
 
   iam_arn_prefix  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}"
   ci_arn_patterns = ["${local.iam_arn_prefix}:role/${var.name_prefix}-ci-*", "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"]
+  # break-glass の Deny は path の pattern で書く（deployment-identity/ADR-0201 決定5）。入力はこの prefix の下に限る。
+  break_glass_arn_prefixes = [for t in ["group", "role", "user"] : "${local.iam_arn_prefix}:${t}/break-glass/"]
 
   workload_policy_name = "${var.name_prefix}-ci-apply-workload"
   workload_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
@@ -506,22 +508,8 @@ locals {
     [for v in ["Accept", "Attach", "Cancel", "Close", "Create", "Decline", "Delete", "Deregister", "Detach", "Disable", "Enable", "Invite", "Leave", "Move", "Put", "Register", "Remove", "Tag", "Terminate", "Untag", "Update"] : "organizations:${v}*"],
     ["account:CloseAccount"],
     ["iam:DeleteAccountPasswordPolicy", "iam:DisableOrganizationsRoot*", "iam:EnableOrganizationsRoot*", "iam:UpdateAccountPasswordPolicy"],
-    [for a in [
-      "AttachCustomerManagedPolicyReferenceToPermissionSet",
-      "AttachManagedPolicyToPermissionSet",
-      "CreateAccountAssignment",
-      "CreatePermissionSet",
-      "DeleteAccountAssignment",
-      "DeleteInlinePolicyFromPermissionSet",
-      "DeletePermissionSet",
-      "DeletePermissionsBoundaryFromPermissionSet",
-      "DetachCustomerManagedPolicyReferenceFromPermissionSet",
-      "DetachManagedPolicyFromPermissionSet",
-      "ProvisionPermissionSet",
-      "PutInlinePolicyToPermissionSet",
-      "PutPermissionsBoundaryToPermissionSet",
-      "UpdatePermissionSet",
-    ] : "sso:${a}"],
+    ["sso:*AccountAssignment", "sso:*FromPermissionSet", "sso:*ToPermissionSet"],
+    [for a in ["CreatePermissionSet", "DeletePermissionSet", "ProvisionPermissionSet", "PutPermissionsPolicy", "UpdatePermissionSet"] : "sso:${a}"],
     [for a in ["ActivateOrganizationsAccess", "CreateStackInstances", "CreateStackSet", "DeactivateOrganizationsAccess", "DeleteStackInstances", "DeleteStackSet", "ImportStacksToStackSet", "StopStackSetOperation", "UpdateStackInstances", "UpdateStackSet"] : "cloudformation:${a}"],
     ["sts:AssumeRoot"],
   )
@@ -538,7 +526,7 @@ locals {
     # kms:* にすると、Key Policy が role を名指して許す暗号操作まで塞ぐ。
     { Sid = "DenyStateKeyChange", Effect = "Deny", Action = local.state_key_administration_actions, Resource = var.state_key_arn },
     { Sid = "DenyGovernanceChange", Effect = "Deny", Action = local.governance_change_actions, Resource = "*" },
-    { Sid = "DenyBreakGlassChange", Effect = "Deny", Action = "*", Resource = var.break_glass_arns },
+    { Sid = "DenyBreakGlassChange", Effect = "Deny", Action = "*", Resource = [for p in local.break_glass_arn_prefixes : "${p}*"] },
   ]
 
   statements = {
@@ -650,10 +638,10 @@ resource "aws_iam_role_policy" "apply_identity" {
       error_message = "state_key_arn が、role と同じ partition・リージョン・アカウントの鍵ではありません。"
     }
 
-    # 空か別のアカウントの ARN では、apply の role の Deny が自分の break-glass に効かない。
+    # apply の role の DenyBreakGlassChange は path の pattern なので、その外の ARN には効かない。
     precondition {
-      condition     = length(var.break_glass_arns) > 0 && alltrue([for a in var.break_glass_arns : startswith(a, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:")])
-      error_message = "break_glass_arns が空か、role と同じ partition・アカウントの ARN ではありません。"
+      condition     = length(var.break_glass_arns) > 0 && alltrue([for a in var.break_glass_arns : anytrue([for p in local.break_glass_arn_prefixes : startswith(a, p)])])
+      error_message = "break_glass_arns が空か、role と同じ partition・アカウントの、path が /break-glass/ の IAM user・group・role の ARN ではありません。"
     }
 
     # 管理アカウントでは種類ごとの文の Resource になる。空の Resource は IAM が拒む。

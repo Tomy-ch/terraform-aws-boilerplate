@@ -131,6 +131,7 @@
             "sso:ProvisionPermissionSet",
             "sso:PutInlinePolicyToPermissionSet",
             "sso:PutPermissionsBoundaryToPermissionSet",
+            "sso:PutPermissionsPolicy",
             "sso:UpdatePermissionSet",
             "cloudformation:ActivateOrganizationsAccess",
             "cloudformation:CreateStackInstances",
