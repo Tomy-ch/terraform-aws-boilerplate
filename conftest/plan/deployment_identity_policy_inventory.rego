@@ -11,6 +11,7 @@ address_pattern := `^module\.[a-z0-9_]+(\.module\.[a-z0-9_]+)*\.aws_iam_policy\.
 well_formed if {
 	is_array(raw)
 	count(raw) > 0
+	count(raw) == count({a | some a in raw})
 	every a in raw {
 		is_string(a)
 		regex.match(address_pattern, a)
@@ -25,17 +26,20 @@ module_of(address) := regex.replace(address, `\.aws_iam_policy\.[a-z0-9_]+$`, ""
 
 modules := {module_of(a) | some a in declared}
 
-present contains {"path": c.path, "address": lib.strip_index(c.rc.address)} if {
+# 名前を address_pattern で絞らない。宣言の形を外れた名前の policy も、宣言にないものとして数える。
+present contains {"path": c.path, "address": address} if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_policy"
-	module_of(lib.strip_index(c.rc.address)) in modules
+	address := lib.strip_index(c.rc.address)
+	some m in modules
+	startswith(address, concat("", [m, ".aws_iam_policy."]))
 }
 
 present_addresses := {p.address | some p in present}
 
 deny contains msg if {
 	not well_formed
-	msg := "[PLAN-CMP-00] data.policy_plan.deployment_identity.customer_managed_policies が、index key を除いた aws_iam_policy の address の、空でない配列ではありません"
+	msg := "[PLAN-CMP-00] data.policy_plan.deployment_identity.customer_managed_policies が、index key を除いた aws_iam_policy の address の、重複のない空でない配列ではありません"
 }
 
 deny contains msg if {
