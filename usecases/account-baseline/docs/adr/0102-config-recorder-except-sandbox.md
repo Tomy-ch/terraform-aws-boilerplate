@@ -64,14 +64,14 @@ Config.1 の SLR の検査で外れる。`audit-evidence` はアカウントご�
 
 ## 保証範囲
 
-- 保証すること: `sandbox` で Config の module が0件で、ほかの env で1件であること。reference の plan で、Config の4つの型が集合の各リージョンに在り、recorder の `role_arn` が Config の SLR の ARN の形で、status が有効で、グローバルな resource を記録する recorder がちょうど1つのリージョンであること。`config_delivery` が各リージョンの delivery channel に届くこと
+- 保証すること: `sandbox` で Config の module が0件で、ほかの env で1件であること。reference の plan で、Config の4つの型が集合の各リージョンに在り、recorder の `role_arn` が Config の SLR の ARN の形で、status が有効で、グローバルな resource を記録する recorder がちょうど1つのリージョンであること。`config_delivery` が各リージョンの delivery channel に届くこと。provider のリージョンが集合の外にあるとき（グローバルな resource を記録する recorder が無くなるとき）と、集合が空のときに plan で落ちること
 - 保証しないこと: 別のアカウントの Bucket へ、SLR の主体で配信が届くこと。`config_history_retention_days` の範囲が API の受ける範囲と一致すること
 
 ## 検証方法
 
-- Unit Test: `internal/config-recorder/tests/` の `recorder_per_region` が、SLR の service 名、すべての resource の継続の記録、home だけのグローバルな記録、配信先、status、保持日数を確かめる
+- Unit Test: `internal/config-recorder/tests/` の `recorder_per_region` が、SLR の service 名、すべての resource の継続の記録、home だけのグローバルな記録、配信先、status、保持日数を確かめる。`home_region_outside` が、provider のリージョンが集合の外にあるときに recorder の precondition で plan が落ちることを、`empty_regions` が空の集合を拒むことを確かめる
 - Contract Test: `tests/contract.tftest.hcl` の `workload_account` が Config の合成と配信先を、`sandbox_has_no_config` が sandbox で0件であることを確かめる。`tests/validation.tftest.hcl` が `config_delivery` の鍵の形と、保持日数の範囲を確かめる
-- Policy Test（`make tf-policy`）: `PLAN-ABL-01`（各リージョンに在る）、`PLAN-ABL-02`（`role_arn` と status）、`PLAN-ABL-03`（グローバルな記録が1つのリージョン）
+- Policy Test（`make tf-policy`）: `PLAN-ABL-01`（Config の型を1つでも持つ instance で、4つの型が各リージョンに在る）、`PLAN-ABL-02`（`role_arn` と status）、`PLAN-ABL-03`（グローバルな記録が1つのリージョン）
 
 ## 影響
 

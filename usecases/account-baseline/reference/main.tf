@@ -2,7 +2,7 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
-# Config を置く workload のアカウント、Config を置かない sandbox、password policy を置かない管理アカウントの3つを、推奨構成として示す。
+# dev・sandbox・admin の3つの呼び出しは、mock の plan で env ごとの合成を見るためのもので、1つのアカウントに複数の env を置く構成を勧めるものではない。
 module "account_baseline_dev" {
   source = "../"
 

@@ -1,4 +1,4 @@
-# ADR-0103: service-linked role は、ARN を resource の引数に渡すものだけを持つ
+# ADR-0103: このユースケースは、AWS Config の記録に要る service-linked role だけを持つ
 
 - Status: Accepted
 - Date: 2026-11-24
@@ -50,13 +50,13 @@ issue #472 で退けた。Chatbot の SLR を前提にする `ops-notification` 
 
 ## 保証範囲
 
-- 保証すること: Config の SLR の service 名が `config.amazonaws.com` であること。reference の plan で、recorder の `role_arn` が Config の SLR の ARN の形であること。reference の plan で SLR の削除と置換が Policy Test で落ちること
-- 保証しないこと: Config の SLR が既に在るアカウントで、SLR の作成が通ること。ARN を引数に渡さない SLR を、サービスが作ること
+- 保証すること: Config の SLR の service 名が `config.amazonaws.com` であること。reference の plan で、recorder の `role_arn` が Config の SLR の ARN の形であること。`aws_iam_service_linked_role` が `stateful_protection.protected_types` に在ること
+- 保証しないこと: Config の SLR が既に在るアカウントで、SLR の作成が通ること。ARN を引数に渡さない SLR を、サービスが作ること。SLR の削除と置換を止めること。`plan.stateful_protection` は CI の実 plan に掛かり、reference の plan は作成しか持たないので、account-baseline を呼ぶ env の root が配線されるまで、どの plan も SLR の削除と置換を見ない。mock の SLR の ARN は手書きで、実 provider の値の形と一致することを、どの層も見ない
 
 ## 検証方法
 
 - Unit Test: `internal/config-recorder/tests/` の `recorder_per_region` が SLR の service 名を確かめる
-- Policy Test（`make tf-policy`）: `PLAN-ABL-02` が recorder の `role_arn` の形を、`PLAN-STATE-*` が SLR の削除と置換を見る
+- Policy Test（`make tf-policy`）: `PLAN-ABL-02` が reference の plan で recorder の `role_arn` の形を見る。`conftest/plan/stateful_protection_test.rego` が、宣言の `protected_types` から SLR の型が外れることを落とす。`PLAN-STATE-*` は CI の実 plan（`plan.stateful_protection`）で SLR の削除と置換を見る
 
 ## 影響
 

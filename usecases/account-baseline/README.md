@@ -16,11 +16,11 @@ Security Hub の AWS Foundational Security Best Practices（FSBP）と CIS AWS F
 
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
-| `project` | `string`（英小文字と数字、234文字以内） | 名前の先頭に置くプロジェクトの token |
+| `project` | `string`（英小文字で始まり、英小文字と数字だけ、234文字以内） | 名前の先頭に置くプロジェクトの token |
 | `env` | `admin` / `security` / `log-archive` / `sandbox` / `dev` / `stg` / `prd` | 置くアカウントの env の token。`sandbox` では AWS Config を置かず、`admin` では IAM の password policy を置かない |
-| `config_delivery` | `object({ bucket_name = string, kms_key_arn = string })` | Config の配信先。log-archive の `audit-evidence` の `bucket_name` と `kms_key_arn`。鍵は ARN だけを受け、alias を受けない。`sandbox` では使わない |
+| `config_delivery` | `object({ bucket_name = string, kms_key_arn = string })` | Config の配信先。log-archive の `audit-evidence` の `bucket_name` と `kms_key_arn`。鍵は単一リージョンの鍵の ARN だけを受け、alias と multi-Region key（`mrk-`）を受けない。`sandbox` では使わない |
 | `config_history_retention_days` | `number`（30 以上 2557 以下の整数） | Config の構成の履歴を保持する日数。`sandbox` では使わない |
-| `security_contact` | `object({ name, title, email_address, phone_number })`（すべて `string`、`sensitive`） | セキュリティの代替の連絡先。4つとも空にできない。`email_address` はメールアドレス、`phone_number` は `+` で始まる国際形式 |
+| `security_contact` | `object({ name, title, email_address, phone_number })`（すべて `string`、`sensitive`） | セキュリティの代替の連絡先。長さと形は PutAlternateContact の API の制約に合わせる。`name` は1文字以上64文字以内、`title` は1文字以上50文字以内、`email_address` は254文字以内のメールアドレス、`phone_number` は `+` と数字で始まる国際形式で25文字以内 |
 
 すべての入力は既定値を持たない。リージョン、Config の記録の範囲と頻度、各設定の値は入力にしない。
 
@@ -66,6 +66,7 @@ unsupported:
 | Access Analyzer の unused access の analyzer | Security Hub のコントロールに無く、有料で、要求する利用者が無い（[ADR-0102](../../docs/adr/0102-use-case-centric-scope.md) 決定6） |
 | Config rule と conformance pack | 組織に配る形は委任管理者が持つ（#362） |
 | EBS の既定の暗号化の鍵を customer managed key にすること | 公式推奨に一意の値が無い。一般 module は region を受けない（[ADR-0208](../../docs/adr/0208-us-east-1-resources-by-region-argument.md) 決定2） |
+| Config の配信先の鍵に multi-Region key（`mrk-`）を使うこと | `audit-evidence` の鍵は単一リージョンの鍵である。`config_delivery.kms_key_arn` の検査は、鍵の ID が UUID の形の ARN だけを受ける |
 | aws の外の partition | 集合を持たない。plan で落ちる（[account-baseline/ADR-0101](docs/adr/0101-default-regions-per-partition.md)） |
 | opt-in のリージョンが有効なアカウント | 同上 |
 | VPC Block Public Access の例外（exclusion） | 例外は Internet Gateway を通す subnet の持ち主の判断で、このユースケースは両向きを止める形だけを持つ |
@@ -102,9 +103,10 @@ unsupported:
 
 | 層 | 何を確かめるか | 道具 |
 | --- | --- | --- |
-| Unit | `internal/account-controls` の PAB の4項目・代替の連絡先・password policy の値と有無、`internal/regional-controls` の各リージョンの6つの設定の値と件数・集合の外の有効なリージョンで plan が落ちること・空の集合の拒否、`internal/config-recorder` の SLR・記録の範囲・home だけのグローバルな記録・配信先・status・保持日数 | `make tf-test`（`internal/*/tests/`） |
-| Contract | env ごとの合成（Config と password policy の件数）、aws の集合が届くこと、`config_delivery` の届き先、aws の外の partition で plan が落ちること、入力の検査 | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` |
-| Policy | `PLAN-ABL-00`-`05`（宣言の形と見る型の変更の存在、リージョンごとの型と Config の型が宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと）、`PLAN-STATE-*`（PAB・EBS の既定の暗号化・analyzer・recorder・delivery channel・SLR の削除と置換） | `make tf-policy`（reference の root の mock の plan） |
+| Unit | `internal/account-controls` の PAB の4項目・代替の連絡先・password policy の値と有無、`internal/regional-controls` の各リージョンの6つの設定の値と件数・集合の外の有効なリージョンで plan が落ちること・空の集合の拒否、`internal/config-recorder` の SLR・記録の範囲・home だけのグローバルな記録・配信先・status・保持日数・provider のリージョンが集合の外にあるときに recorder の precondition で plan が落ちること・空の集合の拒否 | `make tf-test`（`internal/*/tests/`） |
+| Contract | env ごとの合成（Config と password policy の件数）、aws の集合が届くこと、`config_delivery` の届き先、aws の外の partition で plan が落ちること、入力の検査（`project` の形と234文字の境界、代替の連絡先の長さと形の境界） | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` |
+| Policy | `PLAN-ABL-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
+| Policy（削除の保護） | `PLAN-STATE-*`（`stateful_protection.protected_types` の13型。PAB・代替の連絡先・password policy・EBS の既定の暗号化・analyzer・SSM のサービス設定・EMR の block public access・VPC Block Public Access・SLR・recorder・delivery channel・recorder の status・retention の削除と置換）。reference の plan は作成しか持たないので、ここでは効かない。型が宣言から外れることは `conftest/plan/stateful_protection_test.rego` が落とす | CI の実 plan（`plan.stateful_protection`）。account-baseline を呼ぶ env の root が配線されるまで効かない |
 | Static | 層の規則、型の分類 | `make layer-check`、`make infra-code-gate` |
 | Integration（sandbox） | 拒まれるべき操作が拒まれること、drift 0、`internal/config-recorder` の作成と破棄 | 未実施。sandbox の apply の経路（#331）の後に行う |
 
@@ -119,16 +121,23 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 | 既存の代替の連絡先と password policy に対する作成が、上書きでなく失敗する | apply が落ちる | apply の失敗 |
 | SLR の主体での、別のアカウントの Bucket と鍵への配信が拒まれる | Config の配信が届かない | 無い。`audit-evidence` の配信の途絶の alarm は、組織の trail が書き込んでいる間は鳴らない |
 | 実 API が読み戻す設定の値が宣言と違う | plan が毎回差分を出す | 配線の後の plan |
+| SSM の `setting_id` を `/ssm/...` の形で書いたのに、実 API が ARN の形で読み戻す（未確認） | plan が毎回差分を出す | 配線の後の plan |
+| 別の経路（Security Hub の central configuration、Control Tower など）が先に recorder か delivery channel を作っている | 作成が止まり、apply が落ちる | 配線の前の人の確認（全リージョンで `aws configservice describe-configuration-recorders`） |
+| mock の SLR の ARN は手書きで、実 provider の値の形と一致することを確かめていない | `PLAN-ABL-02` の `role_arn` の検査が、実際の値と違う形を見て通る | 無い。どの層も見ていない |
+| opt-in のリージョンの判定を、mock の `aws_regions` の値でしか確かめていない | 実 provider の `aws_regions` が返す集合が mock と違えば、有効な opt-in のリージョンを見逃す | 無い |
+| 適用の後にアカウントで opt-in のリージョンを有効にする | `aws_regions` の postcondition で、destroy の plan も止まる | plan の失敗 |
+| EMR の block public access・SSM の2つの設定・VPC Block Public Access・analyzer が、実際には効かない | 設定は在るが効かない | apply の後の人の確認（未実施） |
 
 ## 保証しないもの
 
 - 実際の AWS での作成。このユースケースを呼ぶ root と、その apply の経路が要る
 - 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ABL-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かるのは `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけである（[`conftest/plan/README.md`](../../conftest/plan/README.md)）
+- 設定の削除と置換を止めること。`plan.stateful_protection` は CI の実 plan に掛かり、account-baseline を呼ぶ env の root が配線されるまで、どの plan も見ない
 - 設定の停止と変更を、主体ごとに拒むこと。拒否は組織の SCP が持ち、このユースケースは持たない
 - 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。管理アカウントには SCP が効かず、有効なリージョンの検出は plan の postcondition だけである
 - SSM Automation が作る既定の Log Group（`/aws/ssm/automation/executeScript`）の暗号化と保持日数。出力先を CloudWatch にする設定だけを持つ
-- メンバーの apply の role が password policy を書けること（上の「依存するユースケースと判断 Issue」）
-- `project` の長さの上限（234文字）を、テストが確かめること
+- メンバーの apply の role が password policy を書けること。[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5 の `DenyGovernanceChange` の password policy の Action を管理アカウントに限る改訂（#465 の後）までは、メンバーでの apply が落ちる（[account-baseline/ADR-0001](docs/adr/0001-workload-root-in-every-account.md)「影響」）
+- `project` の上限（234文字）で組んだ255文字の analyzer の名前を、AWS が実際に受けること。入力の検査の境界は `tests/validation.tftest.hcl` が確かめる
 - Security Hub のコントロールの判定そのもの。Security Hub はこのユースケースが有効にしない
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

@@ -16,4 +16,4 @@
 | --- | --- | --- |
 | [0101](0101-default-regions-per-partition.md) | リージョンごとの設定を、partition ごとの既定で有効な全リージョンに置き、有効なリージョンが集合の外なら plan を止める | Accepted |
 | [0102](0102-config-recorder-except-sandbox.md) | AWS Config を sandbox の外の全アカウント・全リージョンで記録し、log-archive へ配信する | Accepted |
-| [0103](0103-service-linked-roles-by-arn-reference.md) | service-linked role は、ARN を resource の引数に渡すものだけを持つ | Accepted |
+| [0103](0103-service-linked-roles-by-arn-reference.md) | このユースケースは、AWS Config の記録に要る service-linked role だけを持つ | Accepted |
