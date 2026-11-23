@@ -473,7 +473,7 @@ func Test_ownedTargets(t *testing.T) {
 	}}
 	got := ownedTargets(d, gateWorkflowTargets)
 	assert.Equal(t, append(append(append([]string{}, codeownerTargets...), gateWorkflowTargets...), "usecases/x/src"), got)
-	assert.Len(t, codeownerTargets, 8, "固定の対象を書き換えていない")
+	assert.Len(t, codeownerTargets, 10, "固定の対象を書き換えていない")
 	assert.NotContains(t, codeownerTargets, ".github/workflows/terraform-apply.yaml", "workflow は直書きせず導く")
 }
 

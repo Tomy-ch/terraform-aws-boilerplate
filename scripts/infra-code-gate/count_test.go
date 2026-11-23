@@ -93,6 +93,10 @@ func Test_runCount(t *testing.T) {
 				combined: `[{"filename": "input.json", "namespace": "no_such"}]`,
 				want:     errViolations, msg: `検出の名前空間 "no_such" の規則が1つも評価されていません`,
 			},
+			"検出が違反を報告していれば、その文で違反": {
+				combined: `[{"filename": "input.json", "namespace": "infra_code", "successes": 3, "failures": [{"msg": "IC001 [検出] usecases/a/main.tf の null_resource"}]}]`,
+				want:     errViolations, msg: "IC001 [検出] usecases/a/main.tf の null_resource",
+			},
 			"root の外に追跡している構成ファイルがあれば違反": {
 				extra: []string{"docs/x.tf"}, want: errViolations, msg: "走査の root（usecases modules env）の外に在ります",
 			},
@@ -192,6 +196,39 @@ func Test_walkConfigs(t *testing.T) {
 		_, err := walkConfigs(repo, []string{"modules/a/main.tf"})
 		require.ErrorIs(t, err, errMissingRoot)
 	})
+}
+
+func Test_violations(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		results []conftestResult
+		want    []string
+	}{
+		"違反が無ければ空": {results: []conftestResult{{Namespace: "infra_code", Successes: 3}}},
+		"違反の文をそのまま出す": {
+			results: []conftestResult{{Namespace: "infra_code", Failures: []json.RawMessage{[]byte(`{"msg": "IC001 [検出] a"}`), []byte(`{"msg": "IC002 [検出] b"}`)}}},
+			want:    []string{"IC001 [検出] a", "IC002 [検出] b"},
+		},
+		"文の無い違反も落とす": {
+			results: []conftestResult{{Namespace: "infra_code", Failures: []json.RawMessage{[]byte(`{}`)}}},
+			want:    []string{`名前空間 "infra_code" の違反を読めません: {}`},
+		},
+		"形の違う違反も落とす": {
+			results: []conftestResult{{Namespace: "infra_code", Failures: []json.RawMessage{[]byte(`"x"`)}}},
+			want:    []string{`名前空間 "infra_code" の違反を読めません: "x"`},
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := violations(tt.results, "combined.json")
+			require.Len(t, got, len(tt.want), "%v", got)
+			for i, w := range tt.want {
+				assert.Equal(t, w, got[i].Message)
+			}
+		})
+	}
 }
 
 func Test_evaluated(t *testing.T) {

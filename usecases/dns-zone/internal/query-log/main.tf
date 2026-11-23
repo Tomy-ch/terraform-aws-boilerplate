@@ -2,7 +2,7 @@
 # 7ebc9038（鍵の inline の policy）: Key Policy は aws_kms_key_policy が持つ。inline と併用すると互いに上書きする（AWS Provider の aws_kms_key の NOTE）。文書は conftest/plan の plan.kms_key_policy が見る。撤回: KICS が aws_kms_key_policy の文書を見るようになったとき。
 # ef0b316a（保持日数）: KICS は変数参照の値を解けず、許容値に無いと判定する。許容値への限定は usecase の variables.tf の validation が持つ。撤回: KICS が変数参照の値を解くようになったとき。
 # e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
-# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
 
 # Route 53 は公開の Hosted Zone のクエリログを us-east-1 の Log Group にしか送らない（Route 53 Developer Guide「Public DNS query logging」）。
 # region を literal で書くのは egress の宣言の検査が宛先を literal から導くため（dns-zone/ADR-0303）。

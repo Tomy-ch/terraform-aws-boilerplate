@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -24,6 +27,7 @@ const (
 	lockName     = ".terraform.lock.hcl"
 	rawName      = "raw.json"
 	versionsName = "versions.txt"
+	fetchName    = "fetch.txt"
 )
 
 // defaultRegistry は、required_providers の source で省略できるホストです。
@@ -111,8 +115,8 @@ func parseLock(name string, src []byte, provider string) (lockResult, error) {
 	return res, nil
 }
 
-// readListed は、独立に走査した lock の一覧を1行に1件で読み、filepath.Clean で正規化して返します。
-// 空行と、正規化して重なる行は errLockList です。
+// readListed は、独立に走査したファイルの一覧（hcl-tally inputs の found.txt）を1行に1件で読み、名前が
+// .terraform.lock.hcl の行だけを path.Clean で正規化して返します。空行と、正規化して重なる行は errLockList です。
 func readListed(p string) ([]string, error) {
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {
@@ -127,18 +131,48 @@ func readListed(p string) ([]string, error) {
 		if line == "" {
 			return nil, xerrors.Wrapf(errLockList, "%s:%d: 空行があります", p, i+1)
 		}
-		c := filepath.Clean(line)
+		c := path.Clean(line)
 		if seen[c] {
 			return nil, xerrors.Wrapf(errLockList, "%s:%d: %q が重複しています", p, i+1, line)
 		}
 		seen[c] = true
-		listed = append(listed, c)
+		if path.Base(c) == lockName {
+			listed = append(listed, c)
+		}
 	}
 
 	return listed, nil
 }
 
-// reconcile は、引数の lock の集合を、独立に走査した lock の集合と突き合わせます（ADR-0702 決定15）。
+// lockLister は、base の下で roots の下の lock のうち git が追跡するものを、base からの `/` 区切りの相対パスで返します。
+type lockLister func(base string, roots []string) ([]string, error)
+
+// gitLocks は、`git ls-files` が返す追跡しているファイルのうち、roots の下の .terraform.lock.hcl を返します。
+func gitLocks(base string, roots []string) ([]string, error) {
+	cmd := exec.CommandContext(context.Background(), "git", "ls-files", "-z")
+	cmd.Dir = base
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "git ls-files")
+	}
+	var locks []string
+	for _, f := range strings.Split(string(raw), "\x00") {
+		if path.Base(f) != lockName {
+			continue
+		}
+		for _, r := range roots {
+			if strings.HasPrefix(f, path.Clean(r)+"/") {
+				locks = append(locks, f)
+
+				break
+			}
+		}
+	}
+
+	return locks, nil
+}
+
+// reconcile は、git が追跡する lock の集合を、独立に走査した lock の集合と突き合わせます（ADR-0702 決定15）。
 // どちらのパスも filepath.Clean で正規化してから比べます。
 func reconcile(args, listed []string) error {
 	inArgs := map[string]bool{}
@@ -166,7 +200,7 @@ func reconcile(args, listed []string) error {
 	slices.Sort(onlyArgs)
 	slices.Sort(onlyListed)
 
-	return xerrors.Wrapf(errCountMismatch, "引数にだけある: %v、独立の走査にだけある: %v", onlyArgs, onlyListed)
+	return xerrors.Wrapf(errCountMismatch, "git の追跡にだけある: %v、独立の走査にだけある: %v", onlyArgs, onlyListed)
 }
 
 // versionsTF は、版を1つに固定した required_providers を返します。
@@ -200,23 +234,28 @@ func needsFetch(dir string, lock []byte) (bool, error) {
 }
 
 // prepare は、lock をすべて読み終えてから書き始めます。読めない lock が1つでもあれば何も書きません。
-func prepare(args []string, stdout, stderr io.Writer) error {
+func prepare(args []string, stderr io.Writer, lsLocks lockLister) error {
 	fset := flag.NewFlagSet("provider-schema prepare", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	providerFlag := fset.String("provider", "", "版を取り出す Provider のアドレス（例: registry.terraform.io/hashicorp/aws）")
 	outDir := fset.String("out", "", "版ごとのディレクトリを置くディレクトリ")
-	listedPath := fset.String("listed", "", "位置引数とは独立に走査した lock のパスの一覧（1行に1件）")
+	base := fset.String("base", "", "走査の root と、一覧のパスの起点のディレクトリ")
+	listedPath := fset.String("listed", "", "git とは独立に走査した、root の下のファイルの一覧（1行に1件。hcl-tally inputs の found.txt）")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
-	if *providerFlag == "" || *outDir == "" || *listedPath == "" {
+	roots := fset.Args()
+	if *providerFlag == "" || *outDir == "" || *base == "" || *listedPath == "" || len(roots) == 0 {
 		return errUsage
 	}
 	provider, err := parseProvider(*providerFlag)
 	if err != nil {
 		return err
 	}
-	locks := fset.Args()
+	locks, err := lsLocks(*base, roots)
+	if err != nil {
+		return err
+	}
 	if len(locks) == 0 {
 		return errNoLocks
 	}
@@ -231,12 +270,12 @@ func prepare(args []string, stdout, stderr io.Writer) error {
 	var versions []string
 	blocks := map[string][]byte{}
 	absent := 0
-	for _, path := range locks {
-		src, err := os.ReadFile(filepath.Clean(path))
+	for _, rel := range locks {
+		src, err := os.ReadFile(filepath.Join(*base, filepath.FromSlash(rel)))
 		if err != nil {
-			return xerrors.Wrapf(err, "%s の読み取り", path)
+			return xerrors.Wrapf(err, "%s の読み取り", rel)
 		}
-		res, err := parseLock(path, src, provider.full)
+		res, err := parseLock(rel, src, provider.full)
 		if err != nil {
 			return err
 		}
@@ -280,6 +319,11 @@ func prepare(args []string, stdout, stderr io.Writer) error {
 			return xerrors.Wrapf(err, "%s の削除", filepath.Join(dir, rawName))
 		}
 	}
+	var list strings.Builder
+	for _, dir := range fetch {
+		list.WriteString(dir + "\n")
+	}
+	changes[filepath.Join(*outDir, fetchName)] = list.String()
 	if err := os.MkdirAll(*outDir, dirPerm); err != nil {
 		return xerrors.Wrapf(err, "%s の作成", *outDir)
 	}
@@ -287,9 +331,6 @@ func prepare(args []string, stdout, stderr io.Writer) error {
 		return xerrors.Wrapf(err, "%s への書き込み", *outDir)
 	}
 
-	for _, dir := range fetch {
-		fmt.Fprintln(stdout, dir)
-	}
 	fmt.Fprintf(stderr, "provider-schema prepare: %s の版 %s（lock %d 件、うち Provider の無い lock %d 件）、schema の取り直し %d 版\n",
 		provider.full, strings.Join(versions, " "), len(locks), absent, len(fetch))
 
