@@ -2,10 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1506,5 +1508,118 @@ func Test_checkReleaseNote(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrPermission)
 			require.NotErrorIs(t, err, errNoReleaseNote)
 		})
+	})
+}
+
+type call struct {
+	dir  string
+	line string
+}
+
+func writeRootNote(t *testing.T, root, v string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, releaseNoteDir), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(root, notePath(v)), []byte("note\n"), 0o600))
+}
+
+// fakeTools は、呼び出しごとに作業ディレクトリと引数を1行ずつ記録する git / gh の偽物を PATH の先頭へ置く環境変数と、
+// 記録を読む関数を返す。git の rev-parse だけは本物へ渡す。引数なしの `git tag` は tags を出力し、`git ls-remote` は
+// 一致が無いときの終了コード 2 で終わる。ほかは何もせず成功する。
+func fakeTools(t *testing.T, tags string) (string, func() []call) {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	record := fmt.Sprintf("printf '%%s\\t%%s %%s\\n' \"$(pwd -P)\" \"$(basename \"$0\")\" \"$*\" >> %q\n", log)
+	git := "#!/bin/sh\n" + record + fmt.Sprintf("if [ \"$1\" = rev-parse ]; then exec %q \"$@\"; fi\n", realGit) +
+		fmt.Sprintf("if [ \"$*\" = tag ]; then printf '%%s\\n' %q; fi\n", tags) +
+		"if [ \"$1\" = ls-remote ]; then exit 2; fi\n"
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(git), 0o700))                 //nolint:gosec // 偽物の道具は実行できなければならない
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\n"+record), 0o700)) //nolint:gosec // 同上
+
+	return "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), func() []call {
+		raw, err := os.ReadFile(log)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		require.NoError(t, err)
+		var calls []call
+		for line := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {
+			dir, rest, ok := strings.Cut(line, "\t")
+			require.True(t, ok, line)
+			calls = append(calls, call{dir: dir, line: rest})
+		}
+		return calls
+	}
+}
+
+// lines は、記録から rev-parse を除いた呼び出しの並びを返す。rev-parse は直下の確認で、手順ではない。
+func lines(calls []call) []string {
+	got := make([]string, 0, len(calls))
+	for _, c := range calls {
+		if !strings.HasPrefix(c.line, "git rev-parse ") {
+			got = append(got, c.line)
+		}
+	}
+	return got
+}
+
+// TestEntryRequiresRepoRoot は、ビルドした release を直下以外で起動したとき、git / gh の手順にもリリースノートの判定にも
+// 入らずに止まることを見る。直下の外で起動すると、ノートの相対パスが別の場所を指す。
+func TestEntryRequiresRepoRoot(t *testing.T) {
+	t.Parallel()
+
+	bin := filepath.Join(t.TempDir(), "release")
+	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".").CombinedOutput()
+	require.NoError(t, err, string(out))
+	start := func(t *testing.T, dir string, env ...string) (string, []call, error) {
+		t.Helper()
+		path, calls := fakeTools(t, "")
+		cmd := exec.CommandContext(t.Context(), bin, "tag", "-version", "v0.1.0")
+		cmd.Dir = dir
+		cmd.Env = append(append(slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "PATH=") }), path), env...)
+		out, err := cmd.CombinedOutput()
+		return string(out), calls(), err
+	}
+
+	t.Run("直下の下では、そこにノートが在っても手順に入らない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		out, err := exec.CommandContext(t.Context(), "git", "init", "-q", root).CombinedOutput()
+		require.NoError(t, err, string(out))
+		sub := filepath.Join(root, "scripts")
+		writeRootNote(t, sub, "v0.1.0")
+
+		got, calls, err := start(t, sub)
+		require.Error(t, err, got)
+		assert.Contains(t, got, "はリポジトリの直下ではありません")
+		assert.Empty(t, lines(calls))
+	})
+
+	t.Run("直下を解決できなければ手順に入らない", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		writeRootNote(t, dir, "v0.1.0")
+
+		got, calls, err := start(t, dir)
+		require.Error(t, err, got)
+		assert.Contains(t, got, "リポジトリの直下を解決できません")
+		assert.Empty(t, lines(calls))
+	})
+
+	t.Run("GIT_DIR が立っていれば直下の下からでも手順に入らない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		out, err := exec.CommandContext(t.Context(), "git", "init", "-q", root).CombinedOutput()
+		require.NoError(t, err, string(out))
+		sub := filepath.Join(root, "scripts")
+		writeRootNote(t, sub, "v0.1.0")
+
+		got, calls, err := start(t, sub, "GIT_DIR="+filepath.Join(root, ".git"))
+		require.Error(t, err, got)
+		assert.Contains(t, got, "GIT_DIR: が環境に立っています")
+		assert.Empty(t, lines(calls))
 	})
 }
