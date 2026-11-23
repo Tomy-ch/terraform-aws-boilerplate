@@ -108,7 +108,7 @@ tf-policy-canary:
 	printf '%s\n' '{"layer_decl": {"attachments": {"aws_x_policy": {"parents": {"x": ["aws_x"]}, "optional": false, "parent_arguments": {}, "whole_document": false}}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}' > "$$root/layer.json"; \
 	expect() { \
 		want="$$1"; case_name="$$2"; base="$$3"; pattern="$$4"; shift 4; \
-		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" POLICY_PLAN_DATA="$$root/data.json" POLICY_LAYER_DATA="$$root/layer.json" "$$@" 2>&1); rc=$$?; \
+		out=$$($(MAKE) -s --no-print-directory tf-policy TF_BASE="$$base" TF_GATES_ROOTS_FLAG=-allow-missing-roots POLICY_PLAN_DATA="$$root/data.json" POLICY_LAYER_DATA="$$root/layer.json" "$$@" 2>&1); rc=$$?; \
 		if [ "$$want" = pass ] && { [ "$$rc" -ne 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		elif [ "$$want" = fail ] && { [ "$$rc" -eq 0 ] || ! printf '%s' "$$out" | grep -qF -- "$$pattern"; }; then failed="$$failed $$case_name"; echo "$$out"; \
 		fi; \

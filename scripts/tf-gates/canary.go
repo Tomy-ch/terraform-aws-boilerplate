@@ -116,7 +116,7 @@ func canaryCase(work, name, reference, extra string) (string, error) {
 // validateFixture は、base の init・validate・判定を、検査と同じ関数で走らせ、判定の出力を返します。
 func validateFixture(base, data, ignore string, tool toolFunc) (string, error) {
 	var out bytes.Buffer
-	targets, err := requireDirs(base, []string{"usecases"})
+	targets, err := requireDirs(scan{base: base, roots: []string{"usecases"}, log: &out})
 	if err != nil {
 		return "", err
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,7 +83,7 @@ func Test_runEach(t *testing.T) {
 			}
 			base := tree(t, files)
 			tool, calls := fakeTool(t)
-			targets, err := requireDirs(base, []string{"modules", "usecases"})
+			targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases"}, log: io.Discard})
 			require.NoError(t, err)
 			var out bytes.Buffer
 			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd { return tool(tg.path, toolEnv(os.Environ()), stepTest) })
@@ -127,6 +128,24 @@ func Test_runFmt(t *testing.T) {
 		assert.Empty(t, calls())
 	})
 
+	t.Run("宣言した root が無ければ起動せずに errMissingRoot", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules/a/main.tf": ""})
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, runFmt([]string{"-check", "-base", base, "modules", "env"}, &bytes.Buffer{}, tool), errMissingRoot)
+		assert.Empty(t, calls())
+	})
+
+	t.Run("-allow-missing-roots なら、無い root を名指して飛ばし、在る root だけで fmt を起動する", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules/a/main.tf": ""})
+		tool, calls := fakeTool(t)
+		var out bytes.Buffer
+		require.NoError(t, runFmt([]string{"-check", "-allow-missing-roots", "-base", base, "modules", "env"}, &out, tool))
+		assert.Equal(t, []string{filepath.Join(base, "modules") + " fmt-check   "}, calls())
+		assert.Contains(t, out.String(), "走査の root env が無いので飛ばします")
+	})
+
 	t.Run("引数の誤りは errUsage", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
@@ -149,6 +168,13 @@ func Test_parseData(t *testing.T) {
 		base := tree(t, map[string]string{"modules/.keep": ""})
 		_, _, err := parseData("x", []string{"-base", base, "-data", "/d", "modules"}, &bytes.Buffer{}, nil)
 		require.ErrorIs(t, err, errNoTargets)
+	})
+
+	t.Run("宣言した root が無ければ errMissingRoot", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		_, _, err := parseData("x", []string{"-base", base, "-data", "/d", "modules", "nowhere"}, &bytes.Buffer{}, nil)
+		require.ErrorIs(t, err, errMissingRoot)
 	})
 
 	t.Run("-data と対象を返す", func(t *testing.T) {
@@ -235,7 +261,7 @@ func Test_validateTargets(t *testing.T) {
 	t.Run("道具を起動できなければ errDirsFailed で、一覧を書かない", func(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, nil)
-		targets, err := requireDirs(base, []string{"modules"})
+		targets, err := requireDirs(scan{base: base, roots: []string{"modules"}, log: io.Discard})
 		require.NoError(t, err)
 		out := filepath.Join(t.TempDir(), "v")
 		broken := func(d string, env []string, _ string) *exec.Cmd {

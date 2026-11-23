@@ -20,16 +20,29 @@ type target struct {
 	path string
 }
 
+// scan は走査の範囲です。allowMissing が true のときだけ、無い root を飛ばします。既定は、宣言した root が
+// 1つでも無ければ落とします —— 黙って範囲が縮むと、対象が減ったことと合格が区別できない（ADR-0702 決定13）。
+// 飛ばすのは、root の一部だけを持つ fixture で検査を走らせる canary のためです。
+type scan struct {
+	base         string
+	roots        []string
+	allowMissing bool
+	log          io.Writer
+}
+
 // listDirs は、roots の下の `.tf` を持つディレクトリを、相対パスの辞書順で返します。段に `tests` か `.terraform`
-// を持つディレクトリは除きます。無い root は飛ばし（対象が0件なら呼び出し側が落とす）、ディレクトリでない root は
-// errMissingRoot です。
-func listDirs(base string, roots []string) ([]target, error) {
+// を持つディレクトリは除きます。無い root は allowMissing のときだけ飛ばし、飛ばした root を log に名指します。
+// ディレクトリでない root は errMissingRoot です。
+func listDirs(s scan) ([]target, error) {
+	base, roots := s.base, s.roots
 	seen := map[string]bool{}
 	for _, root := range roots {
 		dir := filepath.Join(base, filepath.FromSlash(root))
 		info, err := os.Stat(dir)
 		switch {
-		case xerrors.Is(err, fs.ErrNotExist):
+		case xerrors.Is(err, fs.ErrNotExist) && s.allowMissing:
+			fmt.Fprintf(s.log, "走査の root %s が無いので飛ばします（%s）\n", root, dir)
+
 			continue
 		case err != nil:
 			return nil, xerrors.Wrapf(errMissingRoot, "%s: %v", root, err)
@@ -70,14 +83,14 @@ func listDirs(base string, roots []string) ([]target, error) {
 	return targets, nil
 }
 
-// requireDirs は listDirs の結果が0件なら errNoTargets にします。
-func requireDirs(base string, roots []string) ([]target, error) {
-	targets, err := listDirs(base, roots)
+// requireDirs は listDirs の結果が0件なら errNoTargets にします。root を全部飛ばした結果の0件も同じです。
+func requireDirs(s scan) ([]target, error) {
+	targets, err := listDirs(s)
 	if err != nil {
 		return nil, err
 	}
 	if len(targets) == 0 {
-		return nil, xerrors.Wrapf(errNoTargets, "Terraform の対象ディレクトリが0件です（走査: %s）", strings.Join(roots, " "))
+		return nil, xerrors.Wrapf(errNoTargets, "Terraform の対象ディレクトリが0件です（走査: %s）", strings.Join(s.roots, " "))
 	}
 
 	return targets, nil
@@ -126,34 +139,36 @@ func hasTests(dir string) (bool, error) {
 	return false, nil
 }
 
-// parseCommon は、-base と root を持つサブコマンドの引数を読みます。extra は各サブコマンドのフラグを足します。
-func parseCommon(name string, args []string, w io.Writer, extra func(*flag.FlagSet)) (string, []string, error) {
+// parseCommon は、-base・-allow-missing-roots と root を持つサブコマンドの引数を読みます。extra は各サブコマンドの
+// フラグを足します。
+func parseCommon(name string, args []string, w io.Writer, extra func(*flag.FlagSet)) (scan, error) {
 	fset := flag.NewFlagSet("tf-gates "+name, flag.ContinueOnError)
 	fset.SetOutput(w)
 	base := fset.String("base", "", "走査の基点（TF_BASE）")
+	allow := fset.Bool("allow-missing-roots", false, "無い root を、名指したうえで飛ばす（root の一部だけを持つ canary の fixture のため）")
 	if extra != nil {
 		extra(fset)
 	}
 	if err := fset.Parse(args); err != nil {
-		return "", nil, xerrors.Wrapf(errUsage, "%v", err)
+		return scan{}, xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if *base == "" || fset.NArg() == 0 {
-		return "", nil, xerrors.Wrapf(errUsage, "tf-gates %s は -base と root が要ります", name)
+		return scan{}, xerrors.Wrapf(errUsage, "tf-gates %s は -base と root が要ります", name)
 	}
 	roots := fset.Args()
 	for i, r := range roots {
 		roots[i] = path.Clean(r)
 	}
 
-	return *base, roots, nil
+	return scan{base: *base, roots: roots, allowMissing: *allow, log: w}, nil
 }
 
 func runDirs(args []string, w io.Writer) error {
-	base, roots, err := parseCommon("dirs", args, w, nil)
+	s, err := parseCommon("dirs", args, w, nil)
 	if err != nil {
 		return err
 	}
-	targets, err := requireDirs(base, roots)
+	targets, err := requireDirs(s)
 	if err != nil {
 		return err
 	}
@@ -166,11 +181,11 @@ func runDirs(args []string, w io.Writer) error {
 
 // runNone は、対象が0件なら成功し、在れば errTargets で失敗します（lefthook の skip の条件）。
 func runNone(args []string, w io.Writer) error {
-	base, roots, err := parseCommon("none", args, w, nil)
+	s, err := parseCommon("none", args, w, nil)
 	if err != nil {
 		return err
 	}
-	targets, err := listDirs(base, roots)
+	targets, err := listDirs(s)
 	if err != nil {
 		return err
 	}

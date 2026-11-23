@@ -94,22 +94,26 @@ func runEach(name string, targets []target, w io.Writer, cmdOf func(target) *exe
 // runFmt は、root ごとに terraform fmt を起動します。fmt は root の下を再帰で見るので、ディレクトリごとには起動しません。
 func runFmt(args []string, w io.Writer, tool toolFunc) error {
 	var check bool
-	base, roots, err := parseCommon("fmt", args, w, func(f *flag.FlagSet) {
+	s, err := parseCommon("fmt", args, w, func(f *flag.FlagSet) {
 		f.BoolVar(&check, "check", false, "書き換えずに、整っていなければ落とす")
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := requireDirs(base, roots); err != nil {
+	if _, err := requireDirs(s); err != nil {
 		return err
 	}
 	name, step := "tf-fmt", stepFmt
 	if check {
 		name, step = "tf-fmt-check", stepFmtCheck
 	}
-	targets := make([]target, 0, len(roots))
-	for _, r := range roots {
-		targets = append(targets, target{rel: r, path: filepath.Join(base, filepath.FromSlash(r))})
+	targets := make([]target, 0, len(s.roots))
+	for _, r := range s.roots {
+		p := filepath.Join(s.base, filepath.FromSlash(r))
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		targets = append(targets, target{rel: r, path: p})
 	}
 	env := toolEnv(os.Environ())
 
@@ -118,7 +122,7 @@ func runFmt(args []string, w io.Writer, tool toolFunc) error {
 
 // parseData は、-data を持つサブコマンドの引数を読み、対象のディレクトリを返します。
 func parseData(name string, args []string, w io.Writer, extra func(*flag.FlagSet)) (data string, targets []target, err error) {
-	base, roots, err := parseCommon(name, args, w, func(f *flag.FlagSet) {
+	s, err := parseCommon(name, args, w, func(f *flag.FlagSet) {
 		f.StringVar(&data, "data", "", "ディレクトリごとの TF_DATA_DIR を置くディレクトリ（絶対パス）")
 		if extra != nil {
 			extra(f)
@@ -130,7 +134,7 @@ func parseData(name string, args []string, w io.Writer, extra func(*flag.FlagSet
 	if !filepath.IsAbs(data) {
 		return "", nil, xerrors.Wrapf(errUsage, "-data %q は絶対パスにする（terraform は相対の TF_DATA_DIR を作業ディレクトリから解く）", data)
 	}
-	targets, err = requireDirs(base, roots)
+	targets, err = requireDirs(s)
 
 	return data, targets, err
 }
@@ -241,7 +245,7 @@ func runTest(args []string, w io.Writer, tool toolFunc) error {
 // runLint は、TFLint の ruleset を取得してから、各ディレクトリで TFLint を起動します。
 func runLint(args []string, w io.Writer, tool toolFunc) error {
 	var config, plugins string
-	base, roots, err := parseCommon("lint", args, w, func(f *flag.FlagSet) {
+	s, err := parseCommon("lint", args, w, func(f *flag.FlagSet) {
 		f.StringVar(&config, "config", "", "TFLint の設定（.tflint.hcl）")
 		f.StringVar(&plugins, "plugin-dir", "", "ruleset を置くディレクトリ")
 	})
@@ -251,10 +255,11 @@ func runLint(args []string, w io.Writer, tool toolFunc) error {
 	if config == "" || plugins == "" {
 		return xerrors.Wrap(errUsage, "tf-gates lint は -config と -plugin-dir が要ります")
 	}
-	targets, err := requireDirs(base, roots)
+	targets, err := requireDirs(s)
 	if err != nil {
 		return err
 	}
+	base := s.base
 	config, err = filepath.Abs(config)
 	if err != nil {
 		return xerrors.Wrapf(err, "%s", config)

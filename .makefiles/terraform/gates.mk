@@ -30,7 +30,9 @@ TF_VALIDATE_OUT = $(TF_BASE)/tmp/tf-validate
 TF_VALIDATE_IGNORE ?= .tf-validate-ignore.yaml
 TF_BIN ?= terraform
 TF = $(TF_ENV) $(TF_BIN)
-TF_GATES = $(call RUN_SCRIPT_HOST,tf-gates,$(1) -base "$(TF_BASE)" $(2) $(TF_ROOTS))
+# 無い root を飛ばすのは、root の一部だけを持つ fixture で検査を走らせる canary だけである（-allow-missing-roots）。
+TF_GATES_ROOTS_FLAG ?=
+TF_GATES = $(call RUN_SCRIPT_HOST,tf-gates,$(1) -base "$(TF_BASE)" $(TF_GATES_ROOTS_FLAG) $(2) $(TF_ROOTS))
 
 .PHONY: tf-fmt ## Terraform の書式を整える
 tf-fmt:
