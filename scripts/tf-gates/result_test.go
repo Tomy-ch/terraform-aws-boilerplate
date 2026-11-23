@@ -35,7 +35,7 @@ func setup(t *testing.T, ignore string, results ...result) (string, []string) {
 	return base, []string{"-base", base, "-manifest", manifest, "-ignore", ign}
 }
 
-func Test_run(t *testing.T) {
+func Test_runResult(t *testing.T) {
 	t.Parallel()
 	const empty = "warnings: []\n"
 
@@ -43,14 +43,14 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", json: cleanJSON}, result{dir: "usecases/b", json: cleanJSON})
 		var out bytes.Buffer
-		require.NoError(t, run(args, &out))
+		require.NoError(t, runResult(args, &out))
 		assert.Contains(t, out.String(), "✅ tf-validate: 2 ディレクトリを validate し、エラーと抑止されない警告はありません（抑止 0 件）")
 	})
 	t.Run("警告が1件でもあれば失敗し、位置と本文と現れたディレクトリを出す", func(t *testing.T) {
 		t.Parallel()
 		base, args := setup(t, empty, result{dir: "modules/a", json: awsWarningJSON})
 		var out bytes.Buffer
-		err := run(args, &out)
+		err := runResult(args, &out)
 		require.ErrorIs(t, err, errFailed)
 		assert.Contains(t, out.String(), "modules/a/main.tf:14:25: [warning] Argument is deprecated（resource \"aws_iam_role\" \"this\"）")
 		assert.Contains(t, out.String(), "\n  │ managed_policy_arns is deprecated.")
@@ -65,7 +65,7 @@ func Test_run(t *testing.T) {
 			result{dir: "modules/inner", json: childWarningJSON("main.tf")},
 			result{dir: "usecases/b", json: childWarningJSON("../../modules/inner/main.tf")})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "抑止されない警告が 1 件")
 	})
 	t.Run("宣言に当たる警告は外され、件数が合えば成功する", func(t *testing.T) {
@@ -88,7 +88,7 @@ func Test_run(t *testing.T) {
 				"    withdrawal: 撤回の条件\n"
 		_, args := setup(t, ign, result{dir: "modules/a", json: awsWarningJSON})
 		var out bytes.Buffer
-		require.NoError(t, run(args, &out))
+		require.NoError(t, runResult(args, &out))
 		assert.Contains(t, out.String(), "✅ tf-validate: 1 ディレクトリを validate し、エラーと抑止されない警告はありません（抑止 2 件）")
 	})
 	t.Run("宣言が一部の警告にしか当たらなければ失敗する", func(t *testing.T) {
@@ -104,7 +104,7 @@ func Test_run(t *testing.T) {
 				"    withdrawal: 撤回の条件\n"
 		_, args := setup(t, ign, result{dir: "modules/a", json: awsWarningJSON})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "抑止されない警告が 1 件")
 		assert.NotContains(t, out.String(), "件数の合わない抑止")
 	})
@@ -112,7 +112,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, validIgnore, result{dir: "modules/a", json: cleanJSON})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "当たった警告 0 件、宣言 1 件")
 		assert.Contains(t, out.String(), "件数の合わない抑止の宣言が 1 件")
 	})
@@ -123,7 +123,7 @@ func Test_run(t *testing.T) {
 			result{dir: "usecases/b", json: cleanJSON},
 			result{dir: "usecases/c", code: 1, json: errorJSON})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), filepath.Join(base, "modules/a")+"/main.tf:2:11: Reference to undeclared input variable")
 		assert.Contains(t, out.String(), fmt.Sprintf("❌ tf-validate が落ちたディレクトリ: %s %s",
 			filepath.Join(base, "modules/a"), filepath.Join(base, "usecases/c")))
@@ -132,7 +132,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", code: 1, json: errorJSON}, result{dir: "modules/b", json: awsWarningJSON})
 		var out bytes.Buffer
-		err := run(args, &out)
+		err := runResult(args, &out)
 		require.ErrorIs(t, err, errFailed)
 		assert.Contains(t, out.String(), "❌ tf-validate が落ちたディレクトリ:")
 		assert.Contains(t, out.String(), "抑止されない警告が 2 件")
@@ -141,14 +141,14 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", code: 1, json: "", stderr: "chdir failed"})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errUnreadable)
+		require.ErrorIs(t, runResult(args, &out), errUnreadable)
 		assert.Contains(t, out.String(), "chdir failed")
 	})
 	t.Run("通った validate でも stderr が空でなければ出す", func(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", json: cleanJSON, stderr: "provider の注意"})
 		var out bytes.Buffer
-		require.NoError(t, run(args, &out))
+		require.NoError(t, runResult(args, &out))
 		assert.Contains(t, out.String(), "modules/a の validate の stderr:\n  │ provider の注意\n")
 	})
 	t.Run("JSON のファイルが無ければエラー", func(t *testing.T) {
@@ -156,22 +156,22 @@ func Test_run(t *testing.T) {
 		base := t.TempDir()
 		manifest := writeFile(t, base, "manifest.tsv", "modules/a\t0\t"+base+"/missing.json\t"+base+"/missing.err\n")
 		ign := writeFile(t, base, "ignore.yaml", empty)
-		require.ErrorIs(t, run([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &bytes.Buffer{}), errUnreadable)
+		require.ErrorIs(t, runResult([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &bytes.Buffer{}), errUnreadable)
 	})
 	t.Run("基点の外を指す警告はエラー", func(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", json: childWarningJSON("../../../outside.tf")})
-		require.ErrorIs(t, run(args, &bytes.Buffer{}), errOutside)
+		require.ErrorIs(t, runResult(args, &bytes.Buffer{}), errOutside)
 	})
 	t.Run("抑止の宣言が壊れていればエラー", func(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, "", result{dir: "modules/a", json: cleanJSON})
-		require.ErrorIs(t, run(args, &bytes.Buffer{}), errIgnore)
+		require.ErrorIs(t, runResult(args, &bytes.Buffer{}), errIgnore)
 	})
 	t.Run("結果の一覧が0件ならエラー", func(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty)
-		require.ErrorIs(t, run(args, &bytes.Buffer{}), errNoTargets)
+		require.ErrorIs(t, runResult(args, &bytes.Buffer{}), errNoTargets)
 	})
 	for _, missing := range []string{"-base", "-manifest", "-ignore"} {
 		t.Run(missing+" が無ければエラー", func(t *testing.T) {
@@ -183,25 +183,25 @@ func Test_run(t *testing.T) {
 					break
 				}
 			}
-			require.ErrorIs(t, run(args, &bytes.Buffer{}), errUsage)
+			require.ErrorIs(t, runResult(args, &bytes.Buffer{}), errUsage)
 		})
 	}
 	t.Run("知らない引数はエラー", func(t *testing.T) {
 		t.Parallel()
-		err := run([]string{"-unknown"}, &bytes.Buffer{})
+		err := runResult([]string{"-unknown"}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errUsage)
 		assert.ErrorContains(t, err, "-unknown")
 	})
 	t.Run("-h は usage を出して成功で返る", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"-h"}, &out))
+		require.NoError(t, runResult([]string{"-h"}, &out))
 		assert.Contains(t, out.String(), "-manifest")
 	})
 	t.Run("引数の解釈の失敗の出力も行頭に workflow command を作らない", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
-		require.ErrorIs(t, run([]string{"-unknown\n::error::x"}, &out), errUsage)
+		require.ErrorIs(t, runResult([]string{"-unknown\n::error::x"}, &out), errUsage)
 		assert.Contains(t, out.String(), "│ ::error::x\n")
 		assertNoCommandLine(t, out.String())
 	})
@@ -212,7 +212,7 @@ func Test_run(t *testing.T) {
 "range":{"filename":"main.tf","start":{"line":3,"column":12}},"snippet":{"context":"module \"i\""}}]}`
 		_, args := setup(t, empty, result{dir: "modules/a", json: data, stderr: "::error::forged"})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "  │ use new\n  │ ::warning::forged\n")
 		assert.Contains(t, out.String(), "  │ ::error::forged\n")
 		assertNoCommandLine(t, out.String())
@@ -224,7 +224,7 @@ func Test_run(t *testing.T) {
 "range":{"filename":"main.tf","start":{"line":3,"column":12}},"snippet":{"context":"module \"i\"\r::error::b"}}]}`
 		_, args := setup(t, empty, result{dir: "modules/a", json: data, stderr: "x\r::error::forged"})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "modules/a/main.tf:3:12: [warning] S ::error::s（module \"i\" ::error::b）\n  │ use new\n  │ ::warning::forged\n")
 		assert.Contains(t, out.String(), "  │ x\n  │ ::error::forged\n")
 		assertNoCommandLine(t, out.String())
@@ -235,7 +235,7 @@ func Test_run(t *testing.T) {
 {"severity":"error","summary":"E\r::error::e","detail":"d\r::error::x","range":{"filename":"main.tf","start":{"line":1,"column":1}}}]}`
 		base, args := setup(t, empty, result{dir: "modules/a", code: 1, json: data})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), base+"/modules/a/main.tf:1:1: E ::error::e\n  │ d\n  │ ::error::x\n")
 		assertNoCommandLine(t, out.String())
 	})
@@ -246,7 +246,7 @@ func Test_run(t *testing.T) {
 {"severity":"error","summary":"E","detail":"d","range":{"filename":"b\r::error::e.tf","start":{"line":1,"column":1}}}]}`
 		_, args := setup(t, empty, result{dir: "modules/a", code: 1, json: data})
 		var out bytes.Buffer
-		require.ErrorIs(t, run(args, &out), errFailed)
+		require.ErrorIs(t, runResult(args, &out), errFailed)
 		assert.Contains(t, out.String(), "│ ::warning::w.tf:1:1: [warning] W")
 		assert.Contains(t, out.String(), "│ ::error::e.tf:1:1: E")
 		assertNoCommandLine(t, out.String())
@@ -255,7 +255,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		_, args := setup(t, empty, result{dir: "modules/a", json: cleanJSON, stderr: " \n\t\n"})
 		var out bytes.Buffer
-		require.NoError(t, run(args, &out))
+		require.NoError(t, runResult(args, &out))
 		assert.NotContains(t, out.String(), "stderr")
 	})
 	t.Run("stderr のファイルを読めなければその旨を出し、JSON で判定を続ける", func(t *testing.T) {
@@ -265,7 +265,7 @@ func Test_run(t *testing.T) {
 		manifest := writeFile(t, base, "manifest.tsv", base+"/modules/a\t0\t"+js+"\t"+base+"/missing.err\n")
 		ign := writeFile(t, base, "ignore.yaml", empty)
 		var out bytes.Buffer
-		require.NoError(t, run([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &out))
+		require.NoError(t, runResult([]string{"-base", base, "-manifest", manifest, "-ignore", ign}, &out))
 		assert.Contains(t, out.String(), "modules/a の validate の stderr を読めません（判定は JSON で続けます）")
 		assert.Contains(t, out.String(), "✅ tf-validate: 1 ディレクトリを validate し")
 	})
@@ -292,6 +292,11 @@ func Test_exitCode(t *testing.T) {
 		{"読めない出力は 2", xerrors.Wrap(errUnreadable, "x"), 2},
 		{"壊れた宣言は 2", xerrors.Wrap(errIgnore, "x"), 2},
 		{"0件は 2", xerrors.Wrap(errNoTargets, "x"), 2},
+		{"段の落ちたディレクトリは 1", xerrors.Wrap(errDirsFailed, "x"), 1},
+		{"対象が在る（none）は 1", xerrors.Wrap(errTargets, "x"), 1},
+		{"canary の食い違いは 1", xerrors.Wrap(errCanary, "x"), 1},
+		{"root が無いのは 2", xerrors.Wrap(errMissingRoot, "x"), 2},
+		{"使い方の誤りは 2", xerrors.Wrap(errUsage, "x"), 2},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -313,14 +318,14 @@ func Test_report(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
 		assert.Equal(t, 1, report(xerrors.Wrap(errFailed, "警告 1 件"), &out))
-		assert.Equal(t, "❌ tf-validate-result: 警告 1 件: validate が落ちた\n", out.String())
+		assert.Equal(t, "❌ tf-gates: 警告 1 件: validate が落ちた\n", out.String())
 	})
 	t.Run("改行を含むパスのエラーでも行頭に workflow command を作らない", func(t *testing.T) {
 		t.Parallel()
 		var out bytes.Buffer
 		err := xerrors.Wrapf(errOutside, "%s: %s", "modules/a", "../\n::error::x\r::warning::y")
 		assert.Equal(t, 2, report(err, &out))
-		assert.Contains(t, out.String(), "❌ tf-validate-result: modules/a: ../\n│ ::error::x\n│ ::warning::y")
+		assert.Contains(t, out.String(), "❌ tf-gates: modules/a: ../\n│ ::error::x\n│ ::warning::y")
 		assertNoCommandLine(t, out.String())
 	})
 }
