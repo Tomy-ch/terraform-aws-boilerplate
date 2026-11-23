@@ -1,20 +1,3 @@
-// tf-validate-result は、`make tf-validate` がディレクトリごとに走らせた `terraform validate -json`
-// の結果を読み、エラーと警告の両方で失敗を判定します（ADR-0501 決定4・13）。
-//
-// 解いている問題:
-//
-// **`terraform validate` は警告を出しても 0 で終わる。** 終了コードだけを見るゲートは、Provider が
-// 非推奨とした引数を書いた構成を通します。警告を数えるには `-json` の出力を読む必要があり、読む側が
-// 壊れると、ゲートは何も数えずに緑を返します。そのため、出力が読めない、件数の欄が diagnostic の数と
-// 食い違う、終了コードと `valid` が食い違う、知らない severity が在る、対象が0件のときは、
-// いずれも成功させません（ADR-0702 決定13-15）。
-//
-// 子 module の警告は、それを呼ぶディレクトリの validate にも現れます。走査の基点からのパス・行・列・
-// summary・detail が同じ警告は1件に数えます。
-//
-// 抑止は宣言（既定は `.tf-validate-ignore.yaml`）が持ちます。Terraform の警告は検出 ID も inline の
-// 抑止も持たないので、summary を検出 ID とし、パス・ブロック・detail で対象を名指します
-// （ADR-0501 決定13）。宣言の件数が、当たった警告の件数と一致しなければ失敗します。
 package main
 
 import (
@@ -33,9 +16,8 @@ import (
 )
 
 var (
-	errUsage         = xerrors.New("引数が正しくありません")
 	errManifest      = xerrors.New("結果の一覧を解釈できません")
-	errNoTargets     = xerrors.New("validate の対象ディレクトリが0件です")
+	errNoTargets     = xerrors.New("対象ディレクトリが0件です")
 	errUnreadable    = xerrors.New("validate の出力を読み取れません")
 	errMalformed     = xerrors.New("validate の出力が想定の形ではありません")
 	errCountMismatch = xerrors.New("validate の件数の欄が diagnostic の数と食い違います")
@@ -45,36 +27,21 @@ var (
 	errFailed        = xerrors.New("validate が落ちた")
 )
 
-func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout), os.Stderr))
-}
-
-// report は run のエラーを1行で w に書き、終了コードを返します。エラーの文言はパスや validate の
-// 出力を含むので、lineGuard を通します。
-func report(err error, w io.Writer) int {
-	if err != nil {
-		g := &lineGuard{w: w}
-		fmt.Fprintf(g, "❌ tf-validate-result: %v\n", err)
-		_ = g.flush()
-	}
-	return exitCode(err)
-}
-
-func exitCode(err error) int {
-	switch {
-	case err == nil:
-		return 0
-	case xerrors.Is(err, errFailed):
-		return 1
-	default:
-		return 2
-	}
-}
-
-func run(args []string, w io.Writer) error {
+// runResult は、validate の結果の一覧を読み、エラーと警告の両方で失敗を判定します（ADR-0501 決定4・13）。
+//
+// **`terraform validate` は警告を出しても 0 で終わる。** 終了コードだけを見るゲートは、Provider が非推奨とした
+// 引数を書いた構成を通します。警告を数えるには `-json` の出力を読む必要があり、読む側が壊れると、ゲートは何も
+// 数えずに緑を返します。そのため、出力が読めない、件数の欄が diagnostic の数と食い違う、終了コードと `valid` が
+// 食い違う、知らない severity が在る、対象が0件のときは、いずれも成功させません（ADR-0702 決定13-15）。
+//
+// 子 module の警告は、それを呼ぶディレクトリの validate にも現れます。走査の基点からのパス・行・列・summary・
+// detail が同じ警告は1件に数えます。抑止は宣言（既定は `.tf-validate-ignore.yaml`）が持ち、summary を検出 ID と
+// し、パス・ブロック・detail で対象を名指します（ADR-0501 決定13）。宣言の件数が、当たった警告の件数と一致
+// しなければ失敗します。
+func runResult(args []string, w io.Writer) error {
 	out := &lineGuard{w: w}
 	defer func() { _ = out.flush() }()
-	fs := flag.NewFlagSet("tf-validate-result", flag.ContinueOnError)
+	fs := flag.NewFlagSet("tf-gates result", flag.ContinueOnError)
 	fs.SetOutput(out)
 	base := fs.String("base", "", "走査の基点（TF_BASE）")
 	manifest := fs.String("manifest", "", "結果の一覧（1行に ディレクトリ・終了コード・JSON・stderr をタブで区切る）")
