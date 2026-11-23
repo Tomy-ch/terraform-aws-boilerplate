@@ -141,10 +141,13 @@ locals {
     ["arn:${data.aws_partition.current.partition}:cloudformation:${data.aws_region.current.region}:*:type/resource/AWS-IAM-Role"],
   )
 
-  governance_policy_name = "${var.name_prefix}-ci-apply-identity-governance"
-  governance_policy_arn  = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
-  governance_policy_arns = [for a in [local.governance_policy_arn] : a if local.management]
-  ci_policy_arns         = concat(local.governance_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
+  governance_policy_name     = "${var.name_prefix}-ci-apply-identity-governance"
+  governance_policy_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
+  governance_policy_arns     = [for a in [local.governance_policy_arn] : a if local.management]
+  manage_policy_name         = "${var.name_prefix}-ci-apply-identity-manage"
+  manage_policy_arn          = "${local.iam_arn_prefix}:policy/${local.manage_policy_name}"
+  apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns)
+  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
@@ -476,7 +479,7 @@ locals {
     ],
   )
 
-  ci_policy_management_statements = concat([
+  ci_policy_management_statements = [
     {
       Sid      = "ManageCiPolicies"
       Effect   = "Allow"
@@ -490,15 +493,14 @@ locals {
       Resource  = local.role_arns.apply
       Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arns } }
     },
-    ], [for s in [
-      {
-        Sid       = "AttachGovernancePolicy"
-        Effect    = "Allow"
-        Action    = "iam:AttachRolePolicy"
-        Resource  = local.role_arns.apply_identity
-        Condition = { ArnEquals = { "iam:PolicyARN" = local.governance_policy_arn } }
-      },
-  ] : s if local.management])
+    {
+      Sid       = "AttachApplyIdentityPolicies"
+      Effect    = "Allow"
+      Action    = "iam:AttachRolePolicy"
+      Resource  = local.role_arns.apply_identity
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.apply_identity_policy_arns } }
+    },
+  ]
 
   # 決定1。apply-identity と apply の role に同じ文で置く。
   lockout_bypass_deny_statement = { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } }
