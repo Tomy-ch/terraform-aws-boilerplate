@@ -1060,6 +1060,78 @@ test_violation_governance_by_wildcard_action if {
 	}
 }
 
+sso_governance_actions := [
+	"sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
+	"sso:AttachManagedPolicyToPermissionSet",
+	"sso:CreateAccountAssignment",
+	"sso:CreatePermissionSet",
+	"sso:DeleteAccountAssignment",
+	"sso:DeleteInlinePolicyFromPermissionSet",
+	"sso:DeletePermissionSet",
+	"sso:DeletePermissionsBoundaryFromPermissionSet",
+	"sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
+	"sso:DetachManagedPolicyFromPermissionSet",
+	"sso:ProvisionPermissionSet",
+	"sso:PutInlinePolicyToPermissionSet",
+	"sso:PutPermissionsBoundaryToPermissionSet",
+	"sso:PutPermissionsPolicy",
+	"sso:UpdatePermissionSet",
+]
+
+sso_deny_actions := [
+	"sso:*AccountAssignment",
+	"sso:*FromPermissionSet",
+	"sso:*ToPermissionSet",
+	"sso:CreatePermissionSet",
+	"sso:DeletePermissionSet",
+	"sso:ProvisionPermissionSet",
+	"sso:PutPermissionsPolicy",
+	"sso:UpdatePermissionSet",
+]
+
+sso_messages(actions) := messages_for(
+	world(replace(valid_statements, governance_index, {"Effect": "Deny", "Action": actions, "Resource": "*"})),
+	with_governance({"actions": sso_governance_actions}),
+)
+
+test_pass_governance_sso_suffix_wildcards if {
+	count(sso_messages(sso_deny_actions)) == 0
+}
+
+test_pass_governance_sso_suffix_wildcards_case if {
+	count(sso_messages([upper(a) | some a in sso_deny_actions])) == 0
+}
+
+test_violation_governance_wildcard_not_covering if {
+	msgs := sso_messages(["sso:*AccountAssignment"])
+	some m in msgs
+	startswith(m, denied_06("sso:CreatePermissionSet"))
+	not any_startswith(msgs, denied_06("sso:CreateAccountAssignment"))
+	not any_startswith(msgs, denied_06("sso:DeleteAccountAssignment"))
+}
+
+test_violation_governance_sso_wildcard_removed if {
+	some m in sso_messages(array.slice(sso_deny_actions, 1, count(sso_deny_actions)))
+	startswith(m, denied_06("sso:CreateAccountAssignment"))
+}
+
+test_violation_governance_other_service_wildcard if {
+	some m in sso_messages(["iam:*PermissionSet", "iam:*AccountAssignment"])
+	startswith(m, denied_06("sso:CreatePermissionSet"))
+}
+
+test_violation_governance_service_wide_wildcard if {
+	every action in [["sso:*"], ["sso:**"], ["sso:?*"], ["*:CreatePermissionSet"], ["ss?:CreatePermissionSet"]] {
+		some m in sso_messages(action)
+		startswith(m, denied_06("sso:CreatePermissionSet"))
+	}
+}
+
+any_startswith(msgs, prefix) if {
+	some m in msgs
+	startswith(m, prefix)
+}
+
 test_violation_governance_action_and_not_action if {
 	s := replace(valid_statements, governance_index, object.union(governance_deny, {"NotAction": ["s3:GetObject"]}))
 	some m in messages(s)
