@@ -2505,6 +2505,27 @@ run "break_glass_outside_path" {
   expect_failures = [aws_iam_role_policy.apply_identity]
 }
 
+# 種類ごとに path の内の ARN も含め、管理アカウントの precondition ではなく path の precondition で落ちることを見る。
+run "break_glass_user_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass-2", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "break_glass_group_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass", "arn:aws:iam::123456789012:group/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
 run "break_glass_in_other_partition" {
   command = plan
 
