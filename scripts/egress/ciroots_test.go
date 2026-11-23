@@ -158,7 +158,7 @@ func Test_rootPath(t *testing.T) {
 			assert.Equal(t, "env/admin", rootPath("admin", cientry.RootWorkload))
 		})
 
-		// 配置の規則は local.mk の TF_LOCAL_DIR も持つ。片方だけが動くと、CI が実行する dir と型を集める dir が
+		// 配置の規則は ci.mk の TF_LOCAL_DIR も持つ。片方だけが動くと、CI が実行する dir と型を集める dir が
 		// ずれるので、実物の ci.mk の入口を make -n で展開して突き合わせる（ADR-0702 決定17）。
 		t.Run("実物の ci.mk の入口が terraform を実行する dir と一致する", func(t *testing.T) {
 			t.Parallel()
