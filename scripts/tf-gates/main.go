@@ -13,8 +13,8 @@
 //	tf-gates validate-canary -base <dir> -data <dir> -work <dir> -reference <dir>
 //
 // 対象のディレクトリは、走査の root の下の `.tf` を持つディレクトリで、段に `tests` か `.terraform` を持つものを
-// 除きます（tests の下の setup module は親の terraform test が読む）。root が1つでも無いときは失敗し、対象が
-// 0件のときは成功させません（ADR-0702 決定13）。terraform と TFLint には AWS_ で始まる環境変数を渡さず、
+// 除きます（tests の下の setup module は親の terraform test が読む）。無い root は飛ばし、対象が0件のときは
+// 成功させません（ADR-0702 決定13）。terraform と TFLint には AWS_ で始まる環境変数を渡さず、
 // 資格情報を持つ手元でも、持たない CI と同じ条件で走らせます（ADR-0401 決定6）。
 //
 // 落ちた検査は終了コード 1、入力や宣言を読めない・対象が0件は 2 です。

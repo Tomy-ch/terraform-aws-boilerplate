@@ -21,13 +21,16 @@ type target struct {
 }
 
 // listDirs は、roots の下の `.tf` を持つディレクトリを、相対パスの辞書順で返します。段に `tests` か `.terraform`
-// を持つディレクトリは除きます。
+// を持つディレクトリは除きます。無い root は飛ばし（対象が0件なら呼び出し側が落とす）、ディレクトリでない root は
+// errMissingRoot です。
 func listDirs(base string, roots []string) ([]target, error) {
 	seen := map[string]bool{}
 	for _, root := range roots {
 		dir := filepath.Join(base, filepath.FromSlash(root))
 		info, err := os.Stat(dir)
 		switch {
+		case xerrors.Is(err, fs.ErrNotExist):
+			continue
 		case err != nil:
 			return nil, xerrors.Wrapf(errMissingRoot, "%s: %v", root, err)
 		case !info.IsDir():

@@ -40,12 +40,19 @@ func Test_listDirs(t *testing.T) {
 		assert.Empty(t, got)
 	})
 
-	t.Run("root が無いかファイルなら errMissingRoot", func(t *testing.T) {
+	t.Run("無い root は飛ばす", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules/a/x.tf": ""})
+		got, err := listDirs(base, []string{"modules", "usecases"})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "modules/a", got[0].rel)
+	})
+
+	t.Run("root がファイルなら errMissingRoot", func(t *testing.T) {
 		t.Parallel()
 		base := tree(t, map[string]string{"modules/a/x.tf": "", "env": ""})
-		_, err := listDirs(base, []string{"modules", "usecases"})
-		require.ErrorIs(t, err, errMissingRoot)
-		_, err = listDirs(base, []string{"modules", "env"})
+		_, err := listDirs(base, []string{"modules", "env"})
 		require.ErrorIs(t, err, errMissingRoot)
 	})
 
@@ -198,9 +205,15 @@ func Test_runNone(t *testing.T) {
 		require.ErrorIs(t, runNone([]string{"-base", base, "modules"}, &bytes.Buffer{}), errTargets)
 	})
 
-	t.Run("root が無ければ errMissingRoot（skip しない）", func(t *testing.T) {
+	t.Run("root が無ければ対象0件として成功する", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, runNone([]string{"-base", t.TempDir(), "modules"}, &bytes.Buffer{}), errMissingRoot)
+		require.NoError(t, runNone([]string{"-base", t.TempDir(), "modules"}, &bytes.Buffer{}))
+	})
+
+	t.Run("root がファイルなら errMissingRoot（skip しない）", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules": ""})
+		require.ErrorIs(t, runNone([]string{"-base", base, "modules"}, &bytes.Buffer{}), errMissingRoot)
 	})
 
 	t.Run("引数の誤りは errUsage", func(t *testing.T) {
