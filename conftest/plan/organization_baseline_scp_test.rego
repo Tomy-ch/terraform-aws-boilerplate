@@ -19,6 +19,8 @@ decl := {
 		"deny-state-write": ["PolicyStaging"],
 		"protect-governance-roles": ["PolicyStaging"],
 		"deny-guardduty-stop": ["PolicyStaging"],
+		"deny-baseline-stop": ["PolicyStaging"],
+		"deny-enable-region": ["PolicyStaging"],
 		"data-perimeter-prod-resources": ["PolicyStaging"],
 		"data-perimeter-org-principals": ["PolicyStaging"],
 		"data-perimeter-prod-principals": ["PolicyStaging"],
@@ -29,7 +31,18 @@ decl := {
 
 policy_keys := [
 	"deny-leave-and-close", "deny-root-user", "deny-state-write", "protect-governance-roles", "deny-guardduty-stop",
+	"deny-baseline-stop", "deny-enable-region",
 	"data-perimeter-prod-resources", "data-perimeter-org-principals", "data-perimeter-prod-principals",
+]
+
+baseline_actions := [
+	"access-analyzer:CreateArchiveRule", "access-analyzer:DeleteAnalyzer", "access-analyzer:UpdateArchiveRule",
+	"config:DeleteConfigurationRecorder", "config:DeleteDeliveryChannel", "config:DeleteRetentionConfiguration",
+	"config:PutConfigurationRecorder", "config:PutDeliveryChannel", "config:PutRetentionConfiguration",
+	"config:StopConfigurationRecorder", "ec2:CreateVpcBlockPublicAccessExclusion", "ec2:DisableEbsEncryptionByDefault",
+	"ec2:ModifyVpcBlockPublicAccessExclusion", "ec2:ModifyVpcBlockPublicAccessOptions",
+	"elasticmapreduce:PutBlockPublicAccessConfiguration", "s3:PutAccountPublicAccessBlock",
+	"ssm:ResetServiceSetting", "ssm:UpdateServiceSetting",
 ]
 
 change(address, type, after) := {"address": address, "type": type, "change": {"actions": ["create"], "after": after, "after_unknown": {}}}
@@ -44,6 +57,8 @@ valid_docs := {
 	"deny-state-write": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["s3:PutObject*"], "Resource": "arn:aws:s3:::tabp-*-tfstate-*/*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply", bg_pattern]}}}]},
 	"protect-governance-roles": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern}]},
 	"deny-guardduty-stop": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["guardduty:DeleteDetector"], "Resource": "*"}]},
+	"deny-baseline-stop": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": baseline_actions, "Resource": "*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply"]}}}]},
+	"deny-enable-region": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": "account:EnableRegion", "Resource": "*"}]},
 	"data-perimeter-prod-resources": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"ForAnyValue:StringLike": {"aws:ResourceOrgPaths": concat("", [prod_path, "*"])}}}]},
 	"data-perimeter-org-principals": {"Type": "RESOURCE_CONTROL_POLICY", "Statement": [{"Sid": "Org", "Effect": "Deny", "Principal": "*", "Action": ["s3:*", "sts:AssumeRole"], "Resource": "*", "Condition": {"StringNotEqualsIfExists": {"aws:PrincipalOrgID": "o-exampleorg1"}, "BoolIfExists": {"aws:PrincipalIsAWSService": "false"}}}]},
 	"data-perimeter-prod-principals": {"Type": "RESOURCE_CONTROL_POLICY", "Statement": [{"Sid": "Prod", "Effect": "Deny", "Principal": "*", "Action": ["s3:*"], "Resource": "*", "Condition": {"ForAllValues:StringNotLike": {"aws:PrincipalOrgPaths": concat("", [prod_path, "*"])}, "BoolIfExists": {"aws:PrincipalIsAWSService": "false"}}}]},
@@ -142,9 +157,49 @@ test_violation_break_glass_exempt_from_detection if {
 	fixture.has("[PLAN-ORG-05]", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }
 
+exec_pattern := "arn:aws:iam::*:role/stacksets-exec-*"
+
+bg_with_exception := {"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern, "Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}}}
+
+exec_protection := {"Effect": "Deny", "Action": ["iam:Attach*", "iam:Create*", "iam:PassRole", "iam:Put*", "iam:Update*"], "Resource": exec_pattern}
+
+with_statements(key, statements) := object.union(valid_docs, {key: {"Type": valid_docs[key].Type, "Statement": statements}})
+
+governance_roles_messages(statements) := msgs if {
+	msgs := p.deny with input as plan_with(with_statements("protect-governance-roles", statements), valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_pass_governance_roles_stacksets_exception if {
+	not fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, exec_protection]))
+}
+
+test_violation_governance_roles_exception_without_exec_protection if {
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception]))
+}
+
+test_violation_governance_roles_exec_protection_with_condition if {
+	conditioned := object.union(exec_protection, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, conditioned]))
+}
+
+test_violation_governance_roles_exec_protection_allows_create if {
+	no_create := object.union(exec_protection, {"Action": ["iam:Attach*", "iam:PassRole", "iam:Put*", "iam:Update*"]})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, no_create]))
+}
+
+test_violation_governance_roles_exec_protection_other_resource if {
+	other := object.union(exec_protection, {"Resource": "arn:aws:iam::*:role/other-*"})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([bg_with_exception, other]))
+}
+
 test_violation_governance_roles_wider_exception if {
-	docs := with_doc("protect-governance-roles", {"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern, "Condition": {"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/stacksets-exec-*"}}})
-	fixture.has("[PLAN-ORG-06]", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	wider := object.union(bg_with_exception, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": "arn:aws:iam::*:role/*"}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([wider, exec_protection]))
+}
+
+test_violation_governance_roles_extra_condition if {
+	extra := object.union(bg_with_exception, {"Condition": {"ArnNotLike": {"aws:PrincipalArn": exec_pattern}, "StringEquals": {"aws:RequestedRegion": "us-east-1"}}})
+	fixture.has("[PLAN-ORG-06]", governance_roles_messages([extra, exec_protection]))
 }
 
 test_violation_prod_resources_wrong_path if {
@@ -317,4 +372,42 @@ test_pass_state_write_exception_unlock_identity if {
 test_violation_guardduty_policy_without_actions if {
 	docs := with_doc("deny-guardduty-stop", {"Effect": "Deny", "Action": [], "Resource": "*"})
 	fixture.has("[PLAN-ORG-08] deny-guardduty-stop が guardduty:DeleteDetector を拒んでいません", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_baseline_stop_missing_action if {
+	every a in baseline_actions {
+		docs := with_doc("deny-baseline-stop", {"Effect": "Deny", "Action": [x | some x in baseline_actions; x != a], "Resource": "*"})
+		fixture.has("[PLAN-ORG-09] deny-baseline-stop", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+test_violation_enable_region_with_condition if {
+	docs := with_doc("deny-enable-region", {"Effect": "Deny", "Action": "account:EnableRegion", "Resource": "*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": bg_pattern}}})
+	fixture.has("[PLAN-ORG-09] deny-enable-region", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_enable_region_other_action if {
+	docs := with_doc("deny-enable-region", {"Effect": "Deny", "Action": "account:DisableRegion", "Resource": "*"})
+	fixture.has("[PLAN-ORG-09] deny-enable-region", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+baseline_with(resource, condition) := with_doc("deny-baseline-stop", {"Effect": "Deny", "Action": baseline_actions, "Resource": resource, "Condition": condition})
+
+apply_exception := {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply"]}}
+
+test_violation_baseline_stop_narrow_resource if {
+	docs := baseline_with("arn:aws:config:*:*:config-recorder/*", apply_exception)
+	fixture.has("[PLAN-ORG-09] deny-baseline-stop が", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_baseline_stop_exception if {
+	every v in ["arn:aws:iam::*:role/*", bg_pattern, "arn:aws:iam::*:role/tabp-dev-ci-apply-identity", "arn:aws:iam::*:role/tabp-*-ci-apply", "arn:aws:iam::*:role/tabp-qa-ci-apply"] {
+		docs := baseline_with("*", {"ArnNotLike": {"aws:PrincipalArn": [v]}})
+		fixture.has("[PLAN-ORG-09] deny-baseline-stop の条件 ArnNotLike", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+test_violation_baseline_stop_other_condition if {
+	docs := baseline_with("*", object.union(apply_exception, {"StringNotEquals": {"aws:PrincipalAccount": "111111111111"}}))
+	fixture.has("[PLAN-ORG-09] deny-baseline-stop の条件 StringNotEquals", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }

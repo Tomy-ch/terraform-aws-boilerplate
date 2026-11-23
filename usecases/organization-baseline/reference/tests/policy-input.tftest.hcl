@@ -8,6 +8,9 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
 }
 
 override_resource {
@@ -110,6 +113,18 @@ override_resource {
   target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-iam-user"]
   override_during = plan
   values          = { id = "p-denyiamuser" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-baseline-stop"]
+  override_during = plan
+  values          = { id = "p-denybaselinestop" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-enable-region"]
+  override_during = plan
+  values          = { id = "p-denyenableregion" }
 }
 
 override_resource {

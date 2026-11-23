@@ -548,6 +548,7 @@ jobs:
             sts.ap-northeast-1.amazonaws.com
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com
@@ -648,6 +649,7 @@ jobs:
             sts.ap-northeast-1.amazonaws.com
             s3.ap-northeast-1.amazonaws.com
             *.s3.ap-northeast-1.amazonaws.com
+            cloudformation.ap-northeast-1.amazonaws.com
             iam.amazonaws.com
             kms.ap-northeast-1.amazonaws.com
             organizations.us-east-1.amazonaws.com

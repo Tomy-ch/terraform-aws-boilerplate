@@ -125,6 +125,10 @@ run "policies" {
     target = aws_iam_policy.governance[0]
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
   }
+  override_resource {
+    target = aws_iam_policy.manage
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage" }
+  }
 
   assert {
     condition = jsondecode(aws_iam_role_policy.this["plan"].policy).Statement == [
@@ -597,42 +601,6 @@ run "policies" {
         Resource = "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock"
       },
       {
-        Sid    = "ConfigureBuckets"
-        Effect = "Allow"
-        Action = [
-          "s3:DeleteBucketPolicy",
-          "s3:PutBucketOwnershipControls",
-          "s3:PutBucketPolicy",
-          "s3:PutBucketPublicAccessBlock",
-          "s3:PutBucketVersioning",
-          "s3:PutEncryptionConfiguration",
-          "s3:PutLifecycleConfiguration",
-        ]
-        Resource = [
-          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
-          "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
-          "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an",
-        ]
-      },
-      {
-        Sid      = "CreateApplyOutputBucket"
-        Effect   = "Allow"
-        Action   = "s3:CreateBucket"
-        Resource = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
-      },
-      {
-        Sid    = "ManageGitHubProvider"
-        Effect = "Allow"
-        Action = [
-          "iam:AddClientIDToOpenIDConnectProvider",
-          "iam:CreateOpenIDConnectProvider",
-          "iam:DeleteOpenIDConnectProvider",
-          "iam:RemoveClientIDFromOpenIDConnectProvider",
-          "iam:UpdateOpenIDConnectProviderThumbprint",
-        ]
-        Resource = aws_iam_openid_connect_provider.github.arn
-      },
-      {
         Sid    = "ManageCiRoles"
         Effect = "Allow"
         Action = [
@@ -658,12 +626,6 @@ run "policies" {
         Sid      = "ReadStateKey"
         Effect   = "Allow"
         Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
-      },
-      {
-        Sid      = "ManageStateKey"
-        Effect   = "Allow"
-        Action   = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
         Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
       {
@@ -822,7 +784,61 @@ run "policies" {
         }
       },
     ]
-    error_message = "apply-identity の role の権限が、identity の state と lock の読み書きと、bootstrap の構成物と state の鍵の管理と、apply の出力の書き込みになっていません。"
+    error_message = "apply-identity の role の inline policy が、決定21 の核（identity の state と lock の読み書き、CI の role と policy の管理、identity root の構成物の読み取り、apply の出力の書き込み）だけになっていません。"
+  }
+
+  assert {
+    condition     = aws_iam_policy.manage.name == "tabp-admin-ci-apply-identity-manage"
+    error_message = "apply-identity の role の manage の policy の名前が <name_prefix>-ci-apply-identity-manage になっていません。"
+  }
+
+  # deployment-identity/ADR-0201 決定21。
+  assert {
+    condition = jsondecode(aws_iam_policy.manage.policy).Statement == [
+      {
+        Sid    = "ConfigureBuckets"
+        Effect = "Allow"
+        Action = [
+          "s3:DeleteBucketPolicy",
+          "s3:PutBucketOwnershipControls",
+          "s3:PutBucketPolicy",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutBucketVersioning",
+          "s3:PutEncryptionConfiguration",
+          "s3:PutLifecycleConfiguration",
+        ]
+        Resource = [
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an",
+          "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an",
+          "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an",
+        ]
+      },
+      {
+        Sid      = "CreateApplyOutputBucket"
+        Effect   = "Allow"
+        Action   = "s3:CreateBucket"
+        Resource = "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an"
+      },
+      {
+        Sid    = "ManageGitHubProvider"
+        Effect = "Allow"
+        Action = [
+          "iam:AddClientIDToOpenIDConnectProvider",
+          "iam:CreateOpenIDConnectProvider",
+          "iam:DeleteOpenIDConnectProvider",
+          "iam:RemoveClientIDFromOpenIDConnectProvider",
+          "iam:UpdateOpenIDConnectProviderThumbprint",
+        ]
+        Resource = aws_iam_openid_connect_provider.github.arn
+      },
+      {
+        Sid      = "ManageStateKey"
+        Effect   = "Allow"
+        Action   = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
+        Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      },
+    ]
+    error_message = "apply-identity の role の manage の policy の文書が、3つの Bucket の設定、apply の出力の Bucket の作成、OIDC provider の管理、state の鍵の rotation と Key Policy の設定だけになっていません。"
   }
 
   assert {
@@ -897,24 +913,26 @@ run "policies" {
       ]) == jsonencode([
       [aws_iam_role.this["plan"].name, []],
       [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
-      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"]],
+      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"]],
       [aws_iam_role.this["unlock"].name, []],
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
-    error_message = "managed policy が、apply の role の workload の2つの policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
+    error_message = "managed policy が、apply の role の workload の2つの policy と、apply-identity の role の manage の policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
   }
 
   assert {
     condition = jsonencode([
       [aws_iam_role_policy_attachment.workload.role, aws_iam_role_policy_attachment.workload.policy_arn],
       [aws_iam_role_policy_attachment.workload_read.role, aws_iam_role_policy_attachment.workload_read.policy_arn],
+      [aws_iam_role_policy_attachment.manage.role, aws_iam_role_policy_attachment.manage.policy_arn],
       [aws_iam_role_policy_attachment.governance[0].role, aws_iam_role_policy_attachment.governance[0].policy_arn],
       ]) == jsonencode([
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"],
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
+      [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"],
     ])
-    error_message = "workload の2つの policy と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
+    error_message = "workload の2つの policy と manage と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
   }
 
   assert {
@@ -1341,14 +1359,14 @@ run "key_arn_follows_input" {
       one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadStateKey"]),
       one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyStateKeyChange"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadStateKey"]),
-      one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageStateKey"]),
+      one([for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Resource if s.Sid == "ManageStateKey"]),
       ] == [
       "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
       "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
       "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
       "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789",
     ]
-    error_message = "plan の読み取り、apply の Deny、apply-identity の読み取りと管理の Resource が、入力の鍵の ARN になっていません。"
+    error_message = "plan の読み取り、apply の Deny、apply-identity の読み取りと manage の policy の管理の Resource が、入力の鍵の ARN になっていません。"
   }
 }
 
@@ -1566,6 +1584,22 @@ run "policy_length" {
     condition     = alltrue([for p in aws_iam_policy.governance : length(p.policy) <= 6144])
     error_message = "統制の customer managed policy が 6,144 文字を超えています。"
   }
+
+  assert {
+    condition = alltrue([
+      for m in [{
+        governance    = aws_iam_policy.governance
+        manage        = [aws_iam_policy.manage]
+        workload      = [aws_iam_policy.workload]
+        workload_read = [aws_iam_policy.workload_read]
+        boundary      = values(aws_iam_policy.boundary)
+      }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
+      toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
+      alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
+    ])
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
+  }
 }
 
 run "policy_length_outside_admin" {
@@ -1669,6 +1703,22 @@ run "policy_length_outside_admin" {
   assert {
     condition     = alltrue([for p in values(aws_iam_policy.boundary) : length(p.policy) <= 6144])
     error_message = "boundary が 6,144 文字を超えています: ${join(", ", [for k, p in aws_iam_policy.boundary : k if length(p.policy) > 6144])}"
+  }
+
+  assert {
+    condition = alltrue([
+      for m in [{
+        governance    = aws_iam_policy.governance
+        manage        = [aws_iam_policy.manage]
+        workload      = [aws_iam_policy.workload]
+        workload_read = [aws_iam_policy.workload_read]
+        boundary      = values(aws_iam_policy.boundary)
+      }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
+      toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
+      alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
+    ])
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
@@ -1821,6 +1871,22 @@ run "policy_length_aws" {
     ]
     error_message = "aws の partition の境界の入力で、Budgets と Cost Explorer の Resource が region を持つか、us-east-1 の分だけ増えています。"
   }
+
+  assert {
+    condition = alltrue([
+      for m in [{
+        governance    = aws_iam_policy.governance
+        manage        = [aws_iam_policy.manage]
+        workload      = [aws_iam_policy.workload]
+        workload_read = [aws_iam_policy.workload_read]
+        boundary      = values(aws_iam_policy.boundary)
+      }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
+      toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
+      alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
+    ])
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
+  }
 }
 
 run "policy_length_outside_admin_aws" {
@@ -1937,6 +2003,22 @@ run "policy_length_outside_admin_aws" {
       length(one([for st in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : st.Condition.StringEquals["kms:ViaService"] if st.Sid == "UseKeysViaSns"])) == 2
     )
     error_message = "aws の partition の境界の入力で、workload の2つの policy と boundary が2つの region の形になっていません。"
+  }
+
+  assert {
+    condition = alltrue([
+      for m in [{
+        governance    = aws_iam_policy.governance
+        manage        = [aws_iam_policy.manage]
+        workload      = [aws_iam_policy.workload]
+        workload_read = [aws_iam_policy.workload_read]
+        boundary      = values(aws_iam_policy.boundary)
+      }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
+      toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
+      alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
+    ])
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
@@ -2127,7 +2209,7 @@ run "apply_output_bucket_arn_follows_input" {
 
   assert {
     condition = [
-      for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource
+      for s in concat(jsondecode(aws_iam_role_policy.apply_identity.policy).Statement, jsondecode(aws_iam_policy.manage.policy).Statement) : s.Resource
       if contains(["CreateApplyOutputBucket", "ListBuckets", "ReadBucketConfiguration", "ConfigureBuckets"], s.Sid)
       ] == [
       [
@@ -2147,7 +2229,7 @@ run "apply_output_bucket_arn_follows_input" {
       ],
       "arn:aws:s3:::other-tfapply-210987654321-us-west-2-an",
     ]
-    error_message = "apply-identity の role の apply の出力の Bucket の作成・読み取り・設定の Resource が、入力の ARN になっていません。"
+    error_message = "apply-identity の role の apply の出力の Bucket の作成・読み取り・設定（inline policy と manage の policy）の Resource が、入力の ARN になっていません。"
   }
 
   assert {
@@ -2203,12 +2285,8 @@ run "no_governance_in_dev" {
       "ReadBucketConfiguration",
       "WriteIdentityState",
       "LockIdentityState",
-      "ConfigureBuckets",
-      "CreateApplyOutputBucket",
-      "ManageGitHubProvider",
       "ManageCiRoles",
       "ReadStateKey",
-      "ManageStateKey",
       "DenyLockoutSafetyBypass",
       "ReadGitHubProvider",
       "ReadCiRoles",
@@ -2220,6 +2298,11 @@ run "no_governance_in_dev" {
       "AttachApplyIdentityPolicies",
     ]
     error_message = "dev の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
+    error_message = "dev の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
   }
 
   assert {
@@ -2287,8 +2370,8 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "dev の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "dev の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
   }
 }
 
@@ -2312,12 +2395,8 @@ run "no_governance_in_security" {
       "ReadBucketConfiguration",
       "WriteIdentityState",
       "LockIdentityState",
-      "ConfigureBuckets",
-      "CreateApplyOutputBucket",
-      "ManageGitHubProvider",
       "ManageCiRoles",
       "ReadStateKey",
-      "ManageStateKey",
       "DenyLockoutSafetyBypass",
       "ReadGitHubProvider",
       "ReadCiRoles",
@@ -2329,6 +2408,11 @@ run "no_governance_in_security" {
       "AttachApplyIdentityPolicies",
     ]
     error_message = "security の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
+    error_message = "security の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
   }
 
   assert {
@@ -2396,8 +2480,8 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "security の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "security の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
   }
 }
 
@@ -2421,12 +2505,8 @@ run "no_governance_in_log_archive" {
       "ReadBucketConfiguration",
       "WriteIdentityState",
       "LockIdentityState",
-      "ConfigureBuckets",
-      "CreateApplyOutputBucket",
-      "ManageGitHubProvider",
       "ManageCiRoles",
       "ReadStateKey",
-      "ManageStateKey",
       "DenyLockoutSafetyBypass",
       "ReadGitHubProvider",
       "ReadCiRoles",
@@ -2438,6 +2518,11 @@ run "no_governance_in_log_archive" {
       "AttachApplyIdentityPolicies",
     ]
     error_message = "log-archive の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
+    error_message = "log-archive の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
   }
 
   assert {
@@ -2505,8 +2590,8 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns) == 0 && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "log-archive の apply-identity の role に managed policy が付いているか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "log-archive の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
   }
 }
 
@@ -2652,8 +2737,8 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance"])
-    error_message = "apply-identity の role に付く統制の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
+    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage"])
+    error_message = "apply-identity の role に付く manage と統制の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
   }
 
   assert {

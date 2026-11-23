@@ -78,6 +78,8 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 
 ### 3.5 StackSets の信頼アクセスを有効にする
 
+このリポジトリを新しく使う管理アカウントでは、組織の作成と StackSet の作成が同じ apply に入る。その apply は、信頼アクセスが無いために StackSet の作成で止まる（組織と他の resource は作られ、StackSet は state に残らない）。止まったら次の手順で信頼アクセスを有効にし、同じ apply をやり直す（[bootstrap 手順書](bootstrap.md) の段4 の手順7）。
+
 メンバーアカウントへ break-glass の role を配る変更（CloudFormation の StackSet を作る変更）の merge より前に行う。`deployment-identity` に StackSets の権限を足す変更が昇格した後でよい。StackSet は、組織への信頼アクセスが無いと作れない。
 
 1. 管理アカウントのコンソールで、`ap-northeast-1` の CloudFormation を開き、「StackSets」を選ぶ
@@ -86,12 +88,24 @@ Identity Center から `organization_admin` で管理アカウントへ入れる
 
 AWS CLI を使える管理アカウントの資格情報が在るなら、`aws cloudformation activate-organizations-access` と `aws cloudformation describe-organizations-access`（`Status` が `ENABLED`）でもよい。
 
+メンバーアカウントを作る変更が昇格した後に、次を確かめる。
+
+1. CloudFormation の「StackSets」で `<project>-break-glass` を開き、「スタックインスタンス」のすべてのメンバーアカウントの状態が `CURRENT` であることを確かめる
+2. 3.6 の試験で、メンバーアカウントの break-glass の role へも切り替えられることを確かめ、結果を Pull Request に書く
+
+StackSet か stack instance の作成で昇格の apply が失敗したときは、次の順に直す。失敗した resource は state に tainted で残り、次の plan は作り直しを求めて `prevent_destroy` で止まる。CI の role は削除の権限を持たないので、tainted は人が外す。apply は人が行わず、CI の経路でやり直す。
+
+1. CloudFormation の「StackSets」で `<project>-break-glass` の「オペレーション」を開き、失敗した操作とアカウントの理由を見る
+2. 原因を直す。コードの変更が要るなら、それを Pull Request で直して昇格する
+3. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
+4. CI の plan が作り直しを示さないことを確かめ、昇格の apply をやり直す
+
 ### 3.6 break-glass を試す（毎月）
 
 45日より短い間隔で行う。CIS AWS Foundations Benchmark は、45日使われていない資格情報を無効にするよう求める。
 
 1. break-glass の user でコンソールにサインインし、MFA を使う
-2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる
+2. 管理アカウントの break-glass の role（`/break-glass/<project>-break-glass`）へ切り替えられることを確かめる。メンバーアカウントが在れば、そのうち1つの同じ名前の role へも切り替える
 3. サインインと role の引き受けの通知が届くことを確かめる
 4. 試した日と結果を記録する
 

@@ -356,6 +356,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    失敗したら[トラブルシューティング](#段4-の-apply-が失敗した)へ。
 
+   この apply は、StackSet（`aws_cloudformation_stack_set`）の作成で止まる。組織への信頼アクセスは組織ができた後でないと有効にできず、それが無いと StackSet を作れないためである。組織と他の resource は作られ、StackSet は state に残らない。止まったら [organization-baseline 手順書](organization-baseline.md) の 3.5 で信頼アクセスを有効にし、[トラブルシューティング](#段4-の-apply-が失敗した)に従って手順4 からやり直す。
+
 8. 作られたものを確かめる。1行目は backend の設定の控えだけを消す（state は消えない）。`TF_LOCAL_MISSING_STATE_KEY` は付けない
 
    ```bash
@@ -601,6 +603,7 @@ credential_process = aws configure export-credentials --profile tabp-bootstrap -
 | lock が残った | 他に apply が走っていないことを確かめ、`terraform force-unlock <ID>` で外す |
 | `MalformedPolicyDocumentException` | commit を変えずに手順4 からやり直す |
 | `EntityAlreadyExists` | 手順3 に戻る |
+| StackSet の作成が、組織への信頼アクセスが無いことで失敗した | [organization-baseline 手順書](organization-baseline.md) の 3.5 を行い、commit を変えずに手順4 からやり直す |
 | その他のエラー | 原因を直した commit を同じ Pull Request に足し、手順4 からやり直す。記録も取り直す |
 | やり直しの手順6 で `before-apply` が NG を返す（Bucket Policy・lifecycle・state の鍵の alias・組織・break-glass の user・group・role など） | `terraform state list` で、前の apply が作ったものとして state に在るかを見る。在れば手順4 の plan の差分で確かめたことにする。無ければ、誰がなぜ置いたかを確かめるまで止まる |
 
