@@ -343,7 +343,11 @@ permissions() {
   sim implicitDeny apply "*" sso:DescribePermissionSet sso:GetPermissionSet sso:ListAccountAssignments
   sim explicitDeny apply "$bg" iam:UpdateAssumeRolePolicy iam:AttachRolePolicy
   sim explicitDeny apply "$gp" iam:CreatePolicyVersion
-  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query "contains(AttachedPolicies[].PolicyName, 'tabp-admin-ci-apply-identity-governance')" --output text) == True ]]; then
+  # 読み取りの失敗を「付いていない」と取り違えて確認を飛ばさないよう、失敗は NG として数える。
+  local attached
+  if ! attached=$(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query "contains(AttachedPolicies[].PolicyName, 'tabp-admin-ci-apply-identity-governance')" --output text); then
+    ng "apply-identity: list-attached-role-policies が失敗したので、統制の policy が付いているかを決められない"
+  elif [[ $attached == True ]]; then
     sim allowed apply-identity "*" organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy
     sim allowed apply-identity "$bg" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
     sim implicitDeny apply-identity "*" organizations:DeleteOrganization
