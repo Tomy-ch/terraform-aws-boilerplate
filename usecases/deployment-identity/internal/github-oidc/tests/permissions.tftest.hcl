@@ -1594,10 +1594,11 @@ run "policy_length" {
         workload_read = [aws_iam_policy.workload_read]
         boundary      = values(aws_iam_policy.boundary)
       }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
       toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
       alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
     ])
-    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していません。"
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
@@ -1713,10 +1714,11 @@ run "policy_length_outside_admin" {
         workload_read = [aws_iam_policy.workload_read]
         boundary      = values(aws_iam_policy.boundary)
       }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
       toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
       alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
     ])
-    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していません。"
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
@@ -1879,10 +1881,11 @@ run "policy_length_aws" {
         workload_read = [aws_iam_policy.workload_read]
         boundary      = values(aws_iam_policy.boundary)
       }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
       toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
       alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
     ])
-    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していません。"
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
@@ -2011,10 +2014,11 @@ run "policy_length_outside_admin_aws" {
         workload_read = [aws_iam_policy.workload_read]
         boundary      = values(aws_iam_policy.boundary)
       }] :
+      length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
       toset(keys(m)) == toset([for a in jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies : trimprefix(a, "module.deployment_identity.module.github_oidc.aws_iam_policy.")]) &&
       alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
     ])
-    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していません。"
+    error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
 }
 
