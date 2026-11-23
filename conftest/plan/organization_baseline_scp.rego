@@ -290,14 +290,35 @@ deny contains msg if {
 deny contains msg if {
 	content("protect-governance-roles")
 	not governance_roles_shape
-	msg := "[PLAN-ORG-06] protect-governance-roles が break-glass の role を条件なしで守る形ではありません"
+	msg := "[PLAN-ORG-06] protect-governance-roles が、StackSet の実行の role のほかを外さずに break-glass の role を守る形ではありません"
 }
+
+stacksets_exec_pattern := "arn:aws:iam::*:role/stacksets-exec-*"
 
 governance_roles_shape if {
 	some s in statements("protect-governance-roles")
 	s.Effect == "Deny"
 	s.Resource == break_glass_pattern
 	not s.Condition
+}
+
+# 外せるのは StackSet の実行の role だけで、その名前の role はメンバーの主体に作らせない（organization-baseline/ADR-0202）。
+governance_roles_shape if {
+	some s in statements("protect-governance-roles")
+	s.Effect == "Deny"
+	s.Resource == break_glass_pattern
+	s.Condition == {"ArnNotLike": {"aws:PrincipalArn": stacksets_exec_pattern}}
+	stacksets_exec_protected
+}
+
+stacksets_exec_protected if {
+	some s in statements("protect-governance-roles")
+	s.Effect == "Deny"
+	s.Resource == stacksets_exec_pattern
+	not s.Condition
+	every a in {"iam:create*", "iam:update*", "iam:put*", "iam:attach*", "iam:passrole"} {
+		a in lib.lower_all(s.Action)
+	}
 }
 
 deny contains msg if {

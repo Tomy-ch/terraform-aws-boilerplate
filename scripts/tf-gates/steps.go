@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -58,19 +59,6 @@ func command(dir string, env []string, step string) *exec.Cmd {
 	return cmd
 }
 
-// toolEnv は、environ から AWS_ で始まる変数を外し、SDK が資格情報を探す先を塞いだ環境を返します。extra を足します。
-func toolEnv(environ []string, extra ...string) []string {
-	env := make([]string, 0, len(environ)+4+len(extra))
-	for _, kv := range environ {
-		if !strings.HasPrefix(kv, "AWS_") {
-			env = append(env, kv)
-		}
-	}
-	env = append(env, "AWS_SHARED_CREDENTIALS_FILE=/dev/null", "AWS_CONFIG_FILE=/dev/null", "AWS_EC2_METADATA_DISABLED=true", "CHECKPOINT_DISABLE=1")
-
-	return append(env, extra...)
-}
-
 // runEach は、targets のそれぞれで step を起動し、出力を w へ流し、落ちたディレクトリを集めて失敗にします。
 func runEach(name string, targets []target, w io.Writer, cmdOf func(target) *exec.Cmd) error {
 	var failed []string
@@ -115,7 +103,7 @@ func runFmt(args []string, w io.Writer, tool toolFunc) error {
 		}
 		targets = append(targets, target{rel: r, path: p})
 	}
-	env := toolEnv(os.Environ())
+	env := tfexec.Env(os.Environ())
 
 	return runEach(name, targets, w, func(t target) *exec.Cmd { return tool(t.path, env, step) })
 }
@@ -154,7 +142,7 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc) erro
 			step = stepInitReadonly
 		}
 
-		return tool(t.path, toolEnv(os.Environ(), "TF_DATA_DIR="+dataDir(data, t.rel)), step)
+		return tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), step)
 	})
 }
 
@@ -193,7 +181,7 @@ func validateTargets(data, out string, targets []target, tool toolFunc) error {
 
 			return xerrors.Wrapf(err, "%s の作成", errPath)
 		}
-		cmd := tool(t.path, toolEnv(os.Environ(), "TF_DATA_DIR="+dataDir(data, t.rel)), stepValidate)
+		cmd := tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepValidate)
 		cmd.Stdout, cmd.Stderr = stdout, stderr
 		code := 0
 		if err := cmd.Run(); err != nil {
@@ -238,7 +226,7 @@ func runTest(args []string, w io.Writer, tool toolFunc) error {
 	}
 
 	return runEach("tf-test", tested, w, func(t target) *exec.Cmd {
-		return tool(t.path, toolEnv(os.Environ(), "TF_DATA_DIR="+dataDir(data, t.rel)), stepTest)
+		return tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepTest)
 	})
 }
 
@@ -271,7 +259,7 @@ func runLint(args []string, w io.Writer, tool toolFunc) error {
 	if err := os.MkdirAll(plugins, 0o750); err != nil {
 		return xerrors.Wrapf(err, "%s の作成", plugins)
 	}
-	env := toolEnv(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins)
+	env := tfexec.Env(os.Environ(), "TFLINT_CONFIG_FILE="+config, "TFLINT_PLUGIN_DIR="+plugins)
 	if err := runEach("tf-lint の ruleset の取得", []target{{rel: ".", path: base}}, w, func(t target) *exec.Cmd {
 		return tool(t.path, env, stepLintInit)
 	}); err != nil {

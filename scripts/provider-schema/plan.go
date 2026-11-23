@@ -100,19 +100,33 @@ func planDeprecated(args []string, stderr io.Writer) error {
 	fset := flag.NewFlagSet("provider-schema plan-deprecated", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	outPath := fset.String("out", "", "書き出す JSON のパス")
+	listPath := fset.String("list", "", "読む jsonl の一覧（1行に1件）。位置引数の代わりに渡す")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
-	if *outPath == "" {
+	if *outPath == "" || (*listPath != "" && fset.NArg() > 0) {
 		return errUsage
 	}
-	if fset.NArg() == 0 {
+	paths := fset.Args()
+	if *listPath != "" {
+		raw, err := os.ReadFile(filepath.Clean(*listPath))
+		if err != nil {
+			return xerrors.Wrapf(errPlanMalformed, "%s を読めません（%v）", *listPath, err)
+		}
+		paths = nil
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			if line != "" {
+				paths = append(paths, line)
+			}
+		}
+	}
+	if len(paths) == 0 {
 		return errNoPlans
 	}
 
-	perRoot := make([]map[string]entry, 0, fset.NArg())
-	counts := make([]string, 0, fset.NArg())
-	for _, path := range fset.Args() {
+	perRoot := make([]map[string]entry, 0, len(paths))
+	counts := make([]string, 0, len(paths))
+	for _, path := range paths {
 		f, err := os.Open(filepath.Clean(path))
 		if err != nil {
 			return xerrors.Wrapf(errPlanMalformed, "%s を開けません（%v）", path, err)

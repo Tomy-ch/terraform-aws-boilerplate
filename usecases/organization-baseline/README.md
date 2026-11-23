@@ -31,8 +31,9 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - OU の木: Root の直下に Security・Workloads・Sandbox・PolicyStaging、Workloads の下に Prod・NonProd（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)）
 - SCP 10個・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
+- メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
 
-組織、OU、break-glass の IAM user と role に `prevent_destroy` を付ける。組織、OU、IAM user は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
+組織、OU、break-glass の IAM user と role、StackSet と stack instance に `prevent_destroy` を付ける。組織、OU、IAM user、StackSet と stack instance は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
 
 ## supported / unsupported
 
@@ -54,7 +55,7 @@ unsupported:
 
 ## 所有者
 
-- この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy
+- この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy、メンバーアカウントの break-glass の role を配る StackSet
 - `account-baseline`: アカウント単位の安全側の設定の停止の拒否（`deny-baseline-stop`）と、opt-in のリージョンの有効化の拒否（`deny-enable-region`）の中身（Security・Workloads・Sandbox。[account-baseline/ADR-0201](../account-baseline/docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md)）。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書けるのは、deployment-identity の `DenyGovernanceChange` が password policy の Action を管理アカウントに限るとき（deployment-identity/ADR-0201 決定5）
 - `security-tooling`（#473）: 組織の trail・GuardDuty・Inspector を守る拒否の中身
 - `audit-evidence`: 監査ログの保管庫と鍵を守る拒否（Security。`protect-log-vault`）の中身
@@ -68,7 +69,7 @@ unsupported:
 
 区分は「破棄すると認証や組織の構造を失う」（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14）。sandbox での apply と destroy、残存検出を行わない。代わりに次を行う。
 
-- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさを、`internal/break-glass` が user・group・role・password policy を固定する。`tests/` が入力の検査と出力の配線を固定する
+- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさを、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
 - Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
 - 拒まれるべき操作が拒まれることを人が確かめる（下の手順）。結果を Pull Request に記録し、行わなかったものは行わなかったと書く
 - drift が0であること: 昇格の後の次の plan が変更を示さないこと
