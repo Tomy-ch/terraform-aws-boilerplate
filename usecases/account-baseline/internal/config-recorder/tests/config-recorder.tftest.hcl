@@ -42,12 +42,32 @@ run "recorder_per_region" {
   }
 
   assert {
-    condition     = alltrue([for k, s in aws_config_configuration_recorder_status.this : s.is_enabled && s.name == "tabp-dev" && s.region == k])
+    condition     = toset(keys(aws_config_configuration_recorder_status.this)) == var.regions && alltrue([for k, s in aws_config_configuration_recorder_status.this : s.is_enabled && s.name == "tabp-dev" && s.region == k])
     error_message = "各リージョンの recorder が有効になっていません。"
   }
 
   assert {
-    condition     = alltrue([for k, r in aws_config_retention_configuration.this : r.retention_period_in_days == 2557 && r.region == k])
+    condition     = toset(keys(aws_config_retention_configuration.this)) == var.regions && alltrue([for k, r in aws_config_retention_configuration.this : r.retention_period_in_days == 2557 && r.region == k])
     error_message = "retention_days が、各リージョンの履歴の保持日数に渡っていません。"
   }
+}
+
+run "home_region_outside" {
+  command = plan
+
+  variables {
+    regions = ["us-east-1", "us-west-2"]
+  }
+
+  expect_failures = [aws_config_configuration_recorder.this]
+}
+
+run "empty_regions" {
+  command = plan
+
+  variables {
+    regions = []
+  }
+
+  expect_failures = [var.regions]
 }

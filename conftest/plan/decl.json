@@ -465,7 +465,14 @@
         "aws_accessanalyzer_analyzer",
         "aws_config_configuration_recorder",
         "aws_config_delivery_channel",
-        "aws_iam_service_linked_role"
+        "aws_iam_service_linked_role",
+        "aws_config_configuration_recorder_status",
+        "aws_config_retention_configuration",
+        "aws_vpc_block_public_access_options",
+        "aws_ssm_service_setting",
+        "aws_emr_block_public_access_configuration",
+        "aws_account_alternate_contact",
+        "aws_iam_account_password_policy"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -628,9 +635,11 @@
         "retention": "aws_config_retention_configuration"
       },
       "public_access_block": "aws_s3_account_public_access_block",
+      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"],
       "owners": {
         "aws_account_alternate_contact": ["account-baseline"],
         "aws_config_configuration_recorder": ["account-baseline"],
+        "aws_config_configuration_recorder_status": ["account-baseline"],
         "aws_config_delivery_channel": ["account-baseline"],
         "aws_config_retention_configuration": ["account-baseline"],
         "aws_ebs_encryption_by_default": ["account-baseline"],

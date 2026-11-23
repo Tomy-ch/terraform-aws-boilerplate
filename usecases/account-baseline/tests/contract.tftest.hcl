@@ -72,6 +72,11 @@ run "sandbox_has_no_config" {
     condition     = length(module.regional_controls.regions) == 17
     error_message = "sandbox でも、リージョンごとの設定は置かなければなりません。"
   }
+
+  assert {
+    condition     = module.account_controls.password_policy_count == 1
+    error_message = "sandbox に IAM の password policy を置いていません。"
+  }
 }
 
 run "management_account_has_no_password_policy" {
@@ -85,6 +90,11 @@ run "management_account_has_no_password_policy" {
     condition     = module.account_controls.password_policy_count == 0
     error_message = "管理アカウントに password policy を置いています（organization-baseline の break-glass が持つ）。"
   }
+
+  assert {
+    condition     = length(module.config_recorder) == 1
+    error_message = "管理アカウントに AWS Config を置いていません。"
+  }
 }
 
 run "unsupported_partition" {
@@ -93,6 +103,30 @@ run "unsupported_partition" {
   override_data {
     target = data.aws_partition.current
     values = { partition = "aws-iso" }
+  }
+
+  expect_failures = [data.aws_partition.current]
+}
+
+run "every_other_env_has_config_and_password_policy" {
+  command = plan
+
+  variables {
+    env = "security"
+  }
+
+  assert {
+    condition     = length(module.config_recorder) == 1 && module.account_controls.password_policy_count == 1
+    error_message = "security に AWS Config か password policy を置いていません。"
+  }
+}
+
+run "us_gov_partition" {
+  command = plan
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
   }
 
   expect_failures = [data.aws_partition.current]

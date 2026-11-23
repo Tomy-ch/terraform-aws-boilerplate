@@ -26,6 +26,8 @@ run "member_account" {
   assert {
     condition = (
       aws_account_alternate_contact.security.alternate_contact_type == "SECURITY" &&
+      aws_account_alternate_contact.security.name == "Security Team" &&
+      aws_account_alternate_contact.security.title == "Security" &&
       aws_account_alternate_contact.security.email_address == "security@example.com" &&
       aws_account_alternate_contact.security.phone_number == "+81 3 0000 0000"
     )
@@ -41,7 +43,9 @@ run "member_account" {
       aws_iam_account_password_policy.this[0].require_uppercase_characters &&
       aws_iam_account_password_policy.this[0].require_numbers &&
       aws_iam_account_password_policy.this[0].require_symbols &&
-      aws_iam_account_password_policy.this[0].max_password_age == 90
+      aws_iam_account_password_policy.this[0].max_password_age == 90 &&
+      aws_iam_account_password_policy.this[0].allow_users_to_change_password &&
+      !aws_iam_account_password_policy.this[0].hard_expiry
     )
     error_message = "password policy の値が、organization-baseline の break-glass と同じになっていません。"
   }

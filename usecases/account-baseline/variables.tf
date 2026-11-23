@@ -3,10 +3,10 @@ variable "project" {
   type        = string
   nullable    = false
 
-  # ハイフンを許すと `<project>-<env>` の境目を名前から読めなくなる。
+  # ハイフンを許すと `<project>-<env>` の境目を名前から読めなくなる。analyzer の名前は英字で始まらなければならない。
   validation {
-    condition     = can(regex("^[a-z0-9]+$", var.project))
-    error_message = "project は英小文字と数字だけにしてください。"
+    condition     = can(regex("^[a-z][a-z0-9]*$", var.project))
+    error_message = "project は英小文字で始まる、英小文字と数字だけの文字列にしてください。"
   }
 
   # 最も長い名前 `<project>-log-archive-external`（project と21文字）を、analyzer の名前の上限の255文字に収める。
@@ -68,18 +68,24 @@ variable "security_contact" {
   nullable  = false
   sensitive = true
 
+  # 長さと文字の形は PutAlternateContact の API の制約に合わせる。
   validation {
-    condition     = alltrue([for v in values(var.security_contact) : length(trimspace(v)) > 0])
-    error_message = "security_contact の4つの値は、どれも空にできません。"
+    condition     = length(trimspace(var.security_contact.name)) > 0 && length(var.security_contact.name) <= 64
+    error_message = "security_contact.name は1文字以上64文字以内にしてください。"
   }
 
   validation {
-    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.security_contact.email_address))
-    error_message = "security_contact.email_address はメールアドレスにしてください。"
+    condition     = length(trimspace(var.security_contact.title)) > 0 && length(var.security_contact.title) <= 50
+    error_message = "security_contact.title は1文字以上50文字以内にしてください。"
   }
 
   validation {
-    condition     = can(regex("^[+][0-9 -]{4,49}$", var.security_contact.phone_number))
-    error_message = "security_contact.phone_number は + で始まる国際形式の電話番号にしてください。"
+    condition     = length(var.security_contact.email_address) <= 254 && can(regex("^[A-Za-z0-9_+=.#|!&-]+@[A-Za-z0-9_.-]+\\.[A-Za-z0-9_]+$", var.security_contact.email_address))
+    error_message = "security_contact.email_address は254文字以内のメールアドレスにしてください。"
+  }
+
+  validation {
+    condition     = can(regex("^[+][0-9][0-9 ()-]{3,23}$", var.security_contact.phone_number))
+    error_message = "security_contact.phone_number は + と数字で始まる国際形式の電話番号（25文字以内）にしてください。"
   }
 }

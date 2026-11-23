@@ -24,6 +24,13 @@ resource "aws_config_configuration_recorder" "this" {
   recording_mode {
     recording_frequency = "CONTINUOUS"
   }
+
+  lifecycle {
+    precondition {
+      condition     = contains(var.regions, data.aws_region.home.region)
+      error_message = "provider のリージョン（${data.aws_region.home.region}）が regions に無く、グローバルな resource を記録する recorder が無くなります。"
+    }
+  }
 }
 
 resource "aws_config_delivery_channel" "this" {

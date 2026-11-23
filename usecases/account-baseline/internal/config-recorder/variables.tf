@@ -8,6 +8,11 @@ variable "regions" {
   description = "recorder を置くリージョンの集合。provider のリージョン（home）を含まなければならない。"
   type        = set(string)
   nullable    = false
+
+  validation {
+    condition     = length(var.regions) > 0
+    error_message = "regions は空にできません。"
+  }
 }
 
 variable "delivery" {

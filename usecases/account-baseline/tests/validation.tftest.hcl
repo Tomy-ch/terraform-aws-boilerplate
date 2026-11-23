@@ -5,6 +5,9 @@ mock_provider "aws" {
   mock_data "aws_regions" {
     defaults = { names = ["ap-northeast-1"] }
   }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
 }
 
 variables {
@@ -45,6 +48,128 @@ run "project_over_maximum_length" {
     project = "${join("", [for i in range(23) : "abcdefghij"])}abcde"
   }
   expect_failures = [var.project]
+}
+
+run "project_starting_with_digit" {
+  command = plan
+  variables {
+    project = "1tabp"
+  }
+  expect_failures = [var.project]
+}
+
+run "project_with_upper_case" {
+  command = plan
+  variables {
+    project = "Tabp"
+  }
+  expect_failures = [var.project]
+}
+
+run "bucket_name_with_upper_case" {
+  command = plan
+  variables {
+    config_delivery = {
+      bucket_name = "Tabp-log-archive-audit-evidence"
+      kms_key_arn = "arn:aws:kms:ap-northeast-1:210987654321:key/11111111-2222-3333-4444-555555555555"
+    }
+  }
+  expect_failures = [var.config_delivery]
+}
+
+run "kms_key_with_short_account" {
+  command = plan
+  variables {
+    config_delivery = {
+      bucket_name = "tabp-log-archive-audit-evidence-210987654321-ap-northeast-1-an"
+      kms_key_arn = "arn:aws:kms:ap-northeast-1:21098765432:key/11111111-2222-3333-4444-555555555555"
+    }
+  }
+  expect_failures = [var.config_delivery]
+}
+
+run "retention_at_maximum" {
+  command = plan
+  variables {
+    config_history_retention_days = 2557
+  }
+}
+
+run "contact_title_too_long" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "${join("", [for i in range(5) : "abcdefghij"])}x"
+      email_address = "security@example.com"
+      phone_number  = "+81 3 0000 0000"
+    }
+  }
+  expect_failures = [var.security_contact]
+}
+
+run "contact_name_too_long" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "${join("", [for i in range(6) : "abcdefghij"])}abcde"
+      title         = "Security"
+      email_address = "security@example.com"
+      phone_number  = "+81 3 0000 0000"
+    }
+  }
+  expect_failures = [var.security_contact]
+}
+
+run "contact_phone_at_maximum_length" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "Security"
+      email_address = "security@example.com"
+      phone_number  = "+812345678901234567890123"
+    }
+  }
+}
+
+run "contact_phone_too_long" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "Security"
+      email_address = "security@example.com"
+      phone_number  = "+8123456789012345678901234"
+    }
+  }
+  expect_failures = [var.security_contact]
+}
+
+run "contact_phone_without_digits" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "Security"
+      email_address = "security@example.com"
+      phone_number  = "+----"
+    }
+  }
+  expect_failures = [var.security_contact]
+}
+
+run "contact_email_with_space" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "Security"
+      email_address = "secu rity@example.com"
+      phone_number  = "+81 3 0000 0000"
+    }
+  }
+  expect_failures = [var.security_contact]
 }
 
 run "unknown_env" {
