@@ -3,7 +3,7 @@ name: KICS
 # KICS over the Terraform tree, one of the Security layer's gates (ADR-0501 decision 6).
 # Any finding fails regardless of severity; accepted exceptions are file-level
 # `kics-scan disable` comments. The tool runs from its upstream image without a bind mount,
-# which the runner's egress agent refuses (.makefiles/runner.mk IMAGE_RUN).
+# which the runner's egress agent refuses (scripts/iac-scan).
 
 on:
   push:
@@ -22,6 +22,12 @@ on:
       - 'Makefile'
       - 'docker-compose.yaml'
       - 'docker/images-pin.toml'
+      - 'scripts/iac-scan/**'
+      - 'scripts/lib/**'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
+      - '.github/actions/setup-mise/**'
+      - 'mise.toml'
       - 'usecases/**'
       - 'modules/**'
       - 'env/**'
@@ -87,6 +93,12 @@ jobs:
               - 'Makefile'
               - 'docker-compose.yaml'
               - 'docker/images-pin.toml'
+              - 'scripts/iac-scan/**'
+              - 'scripts/lib/**'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
+              - '.github/actions/setup-mise/**'
+              - 'mise.toml'
               - 'usecases/**'
               - 'modules/**'
               - 'env/**'
@@ -123,6 +135,24 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
             registry-1.docker.io
             auth.docker.io
             production.cloudfront.docker.com
@@ -133,6 +163,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The gate exits non-zero on a finding, which would skip the summary below; the exit
       # code is recorded instead and judged by the last step.
@@ -206,8 +242,8 @@ jobs:
           sarif_file: tmp/kics/out/results.sarif
           category: kics
 
-      # The verdict is make's exit code: the threshold lives in .makefiles/security/kics.mk
-      # alone, and results.json lists findings of every severity. The count only reports.
+      # The verdict is make's exit code: .makefiles/security/kics.mk passes the threshold and
+      # scripts/iac-scan validates it. The count only reports.
       - name: Fail if the gate failed
         if: always()
         shell: bash

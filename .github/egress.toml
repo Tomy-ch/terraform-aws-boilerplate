@@ -401,20 +401,20 @@ classes = ["trivy"]
 classes = []
 
 [job."checkov.yaml:checkov"]
-classes = ["docker-hub"]
+classes = ["mise", "docker-hub"]
 
 [job."kics.yaml:changes"]
 classes = []
 
 [job."kics.yaml:kics"]
-classes = ["docker-hub"]
+classes = ["mise", "docker-hub"]
 
 [job."semgrep.yaml:changes"]
 classes = []
 
 # rule は codeload.github.com（base）から commit を固定して取る。走査そのものは network を持たない。
 [job."semgrep.yaml:semgrep"]
-classes = ["docker-hub"]
+classes = ["mise", "docker-hub"]
 
 [job."trivy-fs.yaml:trivy-fs"]
 classes = ["trivy"]

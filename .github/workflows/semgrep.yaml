@@ -4,7 +4,7 @@ name: Semgrep
 # Rules are fetched at run time from a pinned semgrep-rules commit and never committed here
 # (.makefiles/security/semgrep.mk). Any finding fails; accepted exceptions are `nosemgrep`
 # comments. The tool runs from its upstream image without a bind mount, which the runner's
-# egress agent refuses (.makefiles/runner.mk IMAGE_RUN).
+# egress agent refuses (scripts/iac-scan).
 
 on:
   push:
@@ -23,6 +23,12 @@ on:
       - 'Makefile'
       - 'docker-compose.yaml'
       - 'docker/images-pin.toml'
+      - 'scripts/iac-scan/**'
+      - 'scripts/lib/**'
+      - 'scripts/go.mod'
+      - 'scripts/go.sum'
+      - '.github/actions/setup-mise/**'
+      - 'mise.toml'
       - 'usecases/**'
       - 'modules/**'
       - 'env/**'
@@ -88,6 +94,12 @@ jobs:
               - 'Makefile'
               - 'docker-compose.yaml'
               - 'docker/images-pin.toml'
+              - 'scripts/iac-scan/**'
+              - 'scripts/lib/**'
+              - 'scripts/go.mod'
+              - 'scripts/go.sum'
+              - '.github/actions/setup-mise/**'
+              - 'mise.toml'
               - 'usecases/**'
               - 'modules/**'
               - 'env/**'
@@ -124,6 +136,24 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
+            mise.jdx.dev
+            mise-versions.jdx.dev
+            mise.run
+            mise.en.dev
+            aquaproj.github.io
+            proxy.golang.org
+            sum.golang.org
+            index.golang.org
+            storage.googleapis.com
+            dl.google.com
+            go.dev
+            golang.org
+            nodejs.org
+            registry.npmjs.org
+            tuf-repo-cdn.sigstore.dev
+            rekor.sigstore.dev
+            fulcio.sigstore.dev
+            awscli.amazonaws.com
             registry-1.docker.io
             auth.docker.io
             production.cloudfront.docker.com
@@ -134,6 +164,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Setup mise and required tools
+        uses: ./.github/actions/setup-mise
+        with:
+          tools: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The gate exits non-zero on a finding, which would skip the summary below; the exit
       # code is recorded instead and judged by the last step.
@@ -205,8 +241,7 @@ jobs:
           sarif_file: tmp/semgrep/out/results.sarif
           category: semgrep
 
-      # The verdict is make's exit code: the threshold lives in .makefiles/security/semgrep.mk
-      # alone, and results.json lists findings of every severity. The count only reports.
+      # The verdict is make's exit code, judged by scripts/iac-scan. The count only reports.
       - name: Fail if the gate failed
         if: always()
         shell: bash
