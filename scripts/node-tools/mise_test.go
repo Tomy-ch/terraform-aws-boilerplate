@@ -51,6 +51,19 @@ func Test_runMiseNPMDisabled(t *testing.T) {
 		require.NoError(t, runMiseNPMDisabled(ctx, nil, testDeps(f, io.Discard)))
 		assert.Equal(t, []string{""}, f.dirs())
 	})
+	t.Run("mise ls の途中で中断されたら中断として落ちる", func(t *testing.T) {
+		t.Parallel()
+		cctx, cancel := context.WithCancel(ctx)
+		f := mise("exec sleep 30")
+		d := testDeps(f, io.Discard)
+		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
+			cmd := f.tool(c, dir, step)
+			cancel()
+
+			return cmd
+		}
+		require.ErrorIs(t, runMiseNPMDisabled(cctx, nil, d), errInterrupted)
+	})
 	t.Run("引数があれば usage で落ちる", func(t *testing.T) {
 		t.Parallel()
 		f := &fakeTools{}

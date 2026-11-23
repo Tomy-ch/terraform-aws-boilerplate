@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -84,6 +85,19 @@ func Test_runExec(t *testing.T) {
 		d, _, dir, lock, _ := setup(t, "mkdir -p node_modules/.bin/markdownlint-cli2")
 		require.ErrorIs(t, runExec(ctx, []string{"-dir", dir, "-lock", lock, "markdownlint-cli2"}, d), errNoTool)
 	})
+	t.Run("install の後に中断されていれば道具を起動しない", func(t *testing.T) {
+		t.Parallel()
+		cctx, cancel := context.WithCancel(ctx)
+		d, _, dir, lock, _ := setup(t, installScript)
+		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
+			cmd := (&fakeTools{scripts: map[string]string{stepInstall: installScript}}).tool(c, dir, step)
+			cancel()
+
+			return cmd
+		}
+		d.execTool = func(string, []string, []string) error { t.Fatal("起動された"); return nil }
+		require.ErrorIs(t, runExec(cctx, []string{"-dir", dir, "-lock", lock, "markdownlint-cli2"}, d), errInterrupted)
+	})
 	t.Run("起動に失敗したらそのエラーを返す", func(t *testing.T) {
 		t.Parallel()
 		d, _, dir, lock, _ := setup(t, installScript)
@@ -139,14 +153,23 @@ func Test_installLocked(t *testing.T) {
 	t.Run("install の途中で中断されたら install を止め、lock を返して中断として落ちる", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(context.Background())
-		f := &fakeTools{scripts: map[string]string{stepInstall: "sleep 30"}}
+		dir := t.TempDir()
+		f := &fakeTools{scripts: map[string]string{stepInstall: "touch started; exec sleep 30"}}
 		lock := filepath.Join(t.TempDir(), "l")
 		go func() {
-			time.Sleep(200 * time.Millisecond)
-			cancel()
+			// install が起動してから中断する（起動の前の中断は acquireLock の側の経路になる）。
+			for {
+				if _, err := os.Stat(filepath.Join(dir, "started")); err == nil {
+					cancel()
+
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 		}()
 		start := time.Now()
-		require.ErrorIs(t, installLocked(ctx, t.TempDir(), lock, testDeps(f, io.Discard)), errInterrupted)
+		require.ErrorIs(t, installLocked(ctx, dir, lock, testDeps(f, io.Discard)), errInterrupted)
+		assert.FileExists(t, filepath.Join(dir, "started"))
 		assert.Less(t, time.Since(start), 10*time.Second)
 		assert.NoDirExists(t, lock)
 	})
@@ -166,7 +189,7 @@ func Test_acquireLock(t *testing.T) {
 		release()
 		assert.NoDirExists(t, lock)
 	})
-	t.Run("待ちは合わせて2分", func(t *testing.T) {
+	t.Run("errLockBusy の文言の2分と待ちの合計が合う", func(t *testing.T) {
 		t.Parallel()
 		assert.Equal(t, 2*time.Minute, lockPoll*lockTries)
 	})

@@ -49,7 +49,8 @@ func main() {
 	err := run(ctx, os.Args[1:], d)
 	stop()
 	if err != nil {
-		log.Fatalf("❌ node-tools: %v", err)
+		log.Printf("❌ node-tools: %v", err)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -68,6 +69,22 @@ func run(ctx context.Context, args []string, d deps) error {
 		return xerrors.Wrap(errUsage, args[0])
 	}
 }
+
+// exitCode は、中断を 130 で、ほかの失敗を 1 で返します。
+func exitCode(err error) int {
+	if xerrors.Is(err, errInterrupted) {
+		return interruptedExit
+	}
+
+	return 1
+}
+
+// interruptedExit は、SIGINT で終わったときの慣例の終了コードです。
+const interruptedExit = 130
+
+// stopGrace は、中断で子へ SIGTERM を送ってから、出力のパイプを手放すまで待つ時間です。孫（pnpm の子）が
+// パイプを握ったまま残っても、ここで待ちを打ち切る。
+const stopGrace = 10 * time.Second
 
 type toolFunc func(ctx context.Context, dir string, step string) *exec.Cmd
 
@@ -90,8 +107,16 @@ func command(ctx context.Context, dir string, step string) *exec.Cmd {
 		panic(fmt.Sprintf("node-tools: 知らない段 %q", step))
 	}
 	cmd.Dir = dir
+	stopGently(cmd)
 
 	return cmd
+}
+
+// stopGently は、ctx が終わったときに子へ SIGKILL ではなく SIGTERM を送らせます。子が自分の子を止めて
+// 片付けてから終われるようにする。
+func stopGently(cmd *exec.Cmd) {
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = stopGrace
 }
 
 // execProcess は、この process を bin に置き換えます。戻るのは置き換えに失敗したときだけです。

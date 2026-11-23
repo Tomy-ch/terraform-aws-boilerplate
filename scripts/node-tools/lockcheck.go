@@ -67,6 +67,10 @@ func runLockCheck(ctx context.Context, args []string, d deps) error {
 	cmd := d.tool(ctx, *dir, stepLockCheck)
 	cmd.Stdout, cmd.Stderr = d.stderr, d.stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return errInterrupted
+		}
+
 		return xerrors.Wrap(err, "lockfile の照合")
 	}
 
@@ -136,7 +140,10 @@ func runCanary(ctx context.Context, dir string, cases []canaryCase, d deps) erro
 }
 
 func canaryCommand(ctx context.Context, self, dir, lock string) *exec.Cmd {
-	return exec.CommandContext(ctx, self, "exec", "-dir", dir, "-lock", lock, canaryTool, "--version") //nolint:gosec // self は os.Executable が返すこの道具自身で、引数は canary の写しと lock だけ。canary が自分を子プロセスで起動しなくなれば外す
+	cmd := exec.CommandContext(ctx, self, "exec", "-dir", dir, "-lock", lock, canaryTool, "--version") //nolint:gosec // self は os.Executable が返すこの道具自身で、引数は canary の写しと lock だけ。canary が自分を子プロセスで起動しなくなれば外す
+	stopGently(cmd)
+
+	return cmd
 }
 
 func judgeCanary(c canaryCase, out []byte, runErr error) error {

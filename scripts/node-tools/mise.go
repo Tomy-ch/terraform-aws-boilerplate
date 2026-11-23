@@ -29,6 +29,10 @@ func runMiseNPMDisabled(ctx context.Context, args []string, d deps) error {
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, d.stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return errInterrupted
+		}
+
 		return xerrors.Wrap(err, "mise ls")
 	}
 	active, err := npmTools(out.Bytes())

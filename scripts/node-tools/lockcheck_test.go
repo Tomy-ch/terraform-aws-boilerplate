@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,6 +123,19 @@ func Test_runLockCheck(t *testing.T) {
 		assert.Equal(t, 1, exitErr.ExitCode())
 		assert.Contains(t, stderr.String(), "ERR_PNPM_OUTDATED_LOCKFILE")
 	})
+	t.Run("照合の途中で中断されたら中断として落ちる", func(t *testing.T) {
+		t.Parallel()
+		f := &fakeTools{scripts: map[string]string{stepLockCheck: "exec sleep 30"}}
+		d, _ := canaryDeps(t, f, io.Discard)
+		cctx, cancel := context.WithCancel(ctx)
+		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
+			cmd := f.tool(c, dir, step)
+			cancel()
+
+			return cmd
+		}
+		require.ErrorIs(t, runLockCheck(cctx, []string{"-dir", declDir(t, "")}, d), errInterrupted)
+	})
 	for name, args := range map[string][]string{
 		"-dir が無い":   nil,
 		"余分な引数がある":   {"-dir", "d", "x"},
@@ -188,7 +202,7 @@ func Test_runCanary(t *testing.T) {
 		t.Parallel()
 		d, wd := canaryDeps(t, &fakeTools{}, io.Discard)
 		require.NoError(t, os.WriteFile(filepath.Join(wd, "tmp"), nil, 0o600))
-		require.Error(t, runCanary(ctx, declDir(t, ""), canaryCases, d))
+		require.ErrorIs(t, runCanary(ctx, declDir(t, ""), canaryCases, d), syscall.ENOTDIR)
 	})
 	t.Run("中断されたら中断として落ち、一時ディレクトリを残さない", func(t *testing.T) {
 		t.Parallel()
@@ -257,7 +271,7 @@ func Test_judgeCanary(t *testing.T) {
 func Test_writeFake(t *testing.T) {
 	t.Parallel()
 
-	t.Run("同名の偽の道具を実行できる形で置き、起動すれば印を出す", func(t *testing.T) {
+	t.Run("同名の偽の道具を実行できる形で置き、印を出す台本にする", func(t *testing.T) {
 		t.Parallel()
 		bin := t.TempDir()
 		require.NoError(t, writeFake(bin))
@@ -265,9 +279,10 @@ func Test_writeFake(t *testing.T) {
 		info, err := os.Stat(p)
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o500), info.Mode().Perm())
-		out, err := exec.CommandContext(t.Context(), p).Output()
+		// 書いた直後に実行すると、並行の fork が書き込みの fd を握って ETXTBSY になりうるので、中身で確かめる。
+		b, err := os.ReadFile(p) //nolint:gosec // t.TempDir 配下
 		require.NoError(t, err)
-		assert.Equal(t, canaryMarker+"\n", string(out))
+		assert.Equal(t, "#!/bin/sh\necho "+canaryMarker+"\n", string(b))
 	})
 	t.Run("置き場が無ければ落ちる", func(t *testing.T) {
 		t.Parallel()

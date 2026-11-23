@@ -53,6 +53,11 @@ func runExec(ctx context.Context, args []string, d deps) error {
 		return xerrors.Wrap(errNoTool, bin)
 	}
 
+	// install の後に届いたシグナルは ctx を閉じるだけで process を止めないので、起動の前に見る。
+	if ctx.Err() != nil {
+		return errInterrupted
+	}
+
 	return d.execTool(bin, append([]string{bin}, fs.Args()[1:]...), os.Environ())
 }
 

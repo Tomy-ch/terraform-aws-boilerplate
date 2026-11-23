@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ elif grep -qE 'sha512-(AAAA|BBBB)' pnpm-lock.yaml; then
   echo ERR_PNPM_TARBALL_INTEGRITY >&2; exit 1
 fi
 mkdir -p node_modules/.bin
-printf '#!/bin/sh\necho launched "$@" "x=$X_TEST"\n' > node_modules/.bin/markdownlint-cli2
+printf '#!/bin/sh\nread -r in || in=\necho launched "$@" "x=$X_TEST" "in=$in" "pid=$$"\nexit "${X_EXIT:-0}"\n' > node_modules/.bin/markdownlint-cli2
 chmod +x node_modules/.bin/markdownlint-cli2
 `
 
@@ -214,9 +215,52 @@ func Test_execProcess(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), nil, 0o600))
 		cmd := exec.CommandContext(t.Context(), selfAsNodeTools(t), "exec", "-dir", dir, "-lock", filepath.Join(t.TempDir(), "l"), "markdownlint-cli2", "--fix", "a b.md")
-		cmd.Env = append(os.Environ(), "X_TEST=v")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, string(out))
-		assert.Equal(t, "launched --fix a b.md x=v\n", string(out))
+		cmd.Env = append(os.Environ(), "X_TEST=v", "X_EXIT=7")
+		cmd.Stdin = strings.NewReader("payload\n")
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		// 道具の終了コードがそのまま返り、stdin が道具へ届き、道具の pid が起動した process の pid と同じ（置き換わった）。
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, err, &exitErr, out.String())
+		assert.Equal(t, 7, exitErr.ExitCode())
+		assert.Equal(t, fmt.Sprintf("launched --fix a b.md x=v in=payload pid=%d\n", cmd.Process.Pid), out.String())
+	})
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("中断は 130 で終わる", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, 130, exitCode(fmt.Errorf("x: %w", errInterrupted)))
+	})
+	t.Run("ほかの失敗は 1 で終わる", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, 1, exitCode(errInstall))
+	})
+}
+
+func Test_stopGently(t *testing.T) {
+	t.Parallel()
+
+	t.Run("中断で子へ SIGTERM を送り、子が片付けてから終わるのを待ち、待ちには上限を置く", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		out := filepath.Join(t.TempDir(), "out")
+		cmd := exec.CommandContext(ctx, "sh", "-c", `trap 'echo term > "$0"; exit 0' TERM; echo ready; while :; do sleep 0.1; done`, out)
+		stopGently(cmd)
+		assert.Equal(t, stopGrace, cmd.WaitDelay)
+		stdout, err := cmd.StdoutPipe()
+		require.NoError(t, err)
+		require.NoError(t, cmd.Start())
+		buf := make([]byte, 6)
+		_, err = io.ReadFull(stdout, buf)
+		require.NoError(t, err)
+		cancel()
+		_ = cmd.Wait()
+		got, err := os.ReadFile(out) //nolint:gosec // t.TempDir 配下
+		require.NoError(t, err)
+		assert.Equal(t, "term\n", string(got))
 	})
 }
