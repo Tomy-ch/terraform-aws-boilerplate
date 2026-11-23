@@ -389,10 +389,11 @@ apply）で戻す。CI は Pull Request を
   止まって通知の revert を使うかを判断する
 - **判定は `revert-plan` が持ち、書き込みの token を持つのは `revert-push` だけである。** `revert-plan` は
   `contents: read` と `actions: read` で、範囲を一時の worktree で実際に revert して木の一致を確かめ、同じ名前の
-  ブランチの有無も見る。`revert-push` は `contents: write` だけを持ち、道具を導入せず、決まった commit を同じ順に
-  git で revert して force せずに push する。同じ名前のブランチが違う commit を持てば、push は拒まれる。token は
-  argv に置かず、push の1回に環境変数で渡す。job の形は `make contents-write-lint` が、push の入口の振る舞いは
-  `scripts/apply-revert` の `TestPushRecipes` が一時のリポジトリで見る
+  ブランチの有無も見る。`revert-push` は `contents: write` だけを持ち、道具を導入せず、決まった commit を `revert-plan` が確かめたのと
+  同じ順で1回の `git revert` に渡し、`--force` を付けずに push する。token は gh の credential helper が
+  `GH_TOKEN` から push の1回にだけ渡す。job の形は `make contents-write-lint` が、revert の範囲・順序・`-m 1` は
+  `scripts/apply-revert` のテストが `revert-plan` の側で見る。push の入口（`apply-revert.mk`）は git と gh を
+  決まった順に呼ぶだけで、テストを持たない（ADR-0702 決定25）
 - **ブランチの名前は `branches.json` の `revert` の接頭辞と run の番号から決める**（`revert/apply-<run>`）。
   同じ run の再実行は同じ名前になり、同じ木のブランチが在れば push せずに通知だけを出す。宣言は `repo-settings` と
   `apply-revert` が同じ読み手（`scripts/lib/branchdecl`）で読み、接頭辞が無いか `lines` と重なれば、どちらも落ちる
