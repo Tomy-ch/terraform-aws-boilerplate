@@ -19,7 +19,6 @@ import (
 )
 
 const (
-	// missingCommand は、PATH に存在しない実行ファイル名。
 	missingCommand     = "gobp-repo-setup-missing-command"
 	ghRepoViewCall     = `gh repo view --json name,owner -q .owner.login + "/" + .name`
 	initialTagCall     = "git tag -a v0.0.0 -m Initial boilerplate tag"
@@ -39,8 +38,7 @@ type fakeRunner struct {
 	// allowFail は実行層の責務なのでここでは解釈しません。
 	failOn   string
 	branches map[string]bool
-	// env は、getenv が返す環境変数。無いキーは空を返す。
-	env map[string]string
+	env      map[string]string
 }
 
 func (f *fakeRunner) runner() runner {
@@ -627,6 +625,20 @@ func Test_runPreflight(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Run("DRY_RUN が立てば、タグも宛先も見ずに止める", func(t *testing.T) {
+			dir := initRepo(t)
+			git(t, dir, "tag", initialTag)
+			t.Chdir(dir)
+
+			err := runPreflight(func(k string) string {
+				if k == "DRY_RUN" {
+					return "1"
+				}
+				return "someone/else"
+			})
+			require.ErrorIs(t, err, errDryRun)
+		})
+
 		t.Run("初期タグが既にあれば初期化を止める", func(t *testing.T) {
 			dir := initRepo(t)
 			git(t, dir, "tag", initialTag)
@@ -1183,5 +1195,66 @@ func Test_start(t *testing.T) {
 			require.ErrorIs(t, start(f.runner(), []string{"bootstrap"}, same, unresolved), reporoot.ErrNoToplevel)
 			assert.Empty(t, f.calls)
 		})
+	})
+}
+
+func placeNotes(t *testing.T, dir string) string {
+	t.Helper()
+	noteDir := filepath.Join(dir, releaseNoteDir)
+	require.NoError(t, os.MkdirAll(noteDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(noteDir, initialTag+".md"), []byte("keep"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(noteDir, "v1.0.0.md"), []byte("drop"), 0o600))
+	return noteDir
+}
+
+// TestEntryRequiresRepoRoot は、ビルドした repo-setup を直下以外で起動したとき、ノートに触れずに止まることを見る。
+// 直下の外で起動すると、ノートの相対パスが別の場所を指し、ディレクトリが無いとして黙って成功する。
+func TestEntryRequiresRepoRoot(t *testing.T) {
+	t.Parallel()
+
+	bin := filepath.Join(t.TempDir(), "repo-setup")
+	out, err := exec.CommandContext(t.Context(), "go", "build", "-o", bin, ".").CombinedOutput()
+	require.NoError(t, err, string(out))
+	start := func(t *testing.T, dir string, env ...string) (string, error) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), bin, "prune-release-notes")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), env...)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	t.Run("直下の下では、そこのノートを消さない", func(t *testing.T) {
+		t.Parallel()
+		sub := filepath.Join(initRepo(t), "scripts")
+		noteDir := placeNotes(t, sub)
+
+		got, err := start(t, sub)
+		require.Error(t, err, got)
+		assert.Contains(t, got, "はリポジトリの直下ではありません")
+		assert.FileExists(t, filepath.Join(noteDir, "v1.0.0.md"))
+	})
+
+	t.Run("直下を解決できなければノートを消さない", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		noteDir := placeNotes(t, dir)
+
+		got, err := start(t, dir)
+		require.Error(t, err, got)
+		assert.Contains(t, got, "リポジトリの直下を解決できません")
+		assert.FileExists(t, filepath.Join(noteDir, "v1.0.0.md"))
+	})
+
+	t.Run("GIT_DIR が立っていれば直下の下のノートを消さない", func(t *testing.T) {
+		t.Parallel()
+		root := initRepo(t)
+		sub := filepath.Join(root, "scripts")
+		noteDir := placeNotes(t, sub)
+
+		got, err := start(t, sub, "GIT_DIR="+filepath.Join(root, ".git"))
+		require.Error(t, err, got)
+		assert.Contains(t, got, "GIT_DIR: が環境に立っています")
+		assert.FileExists(t, filepath.Join(noteDir, "v1.0.0.md"))
 	})
 }
