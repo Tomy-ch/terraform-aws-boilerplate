@@ -6,8 +6,7 @@ name: Markdown Lint
 #
 # 3つを1つの workflow に置くのは、どれも主題が Markdown だからである。
 #
-# CI ではコンテナを起こさない。markdownlint-cli2 は `RUNNER_MODE=host` の前置きが
-# docker/tools/node の lockfile から frozen で入れて直接呼ぶ（ADR-0503 決定7・17）。
+# CI ではコンテナを起こさず、`RUNNER_MODE=host` の前置きで直接呼ぶ（ADR-0503 決定7・17）。
 #
 # `paths` フィルタは置かない。Markdown の検査はリポジトリ中の `.md` をすべて読むため、
 # フィルタが名指しできる対象が無い。
@@ -78,7 +77,8 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          tools: node aqua:pnpm/pnpm
+          # go は前置きの scripts/node-tools をビルドする。
+          tools: go node aqua:pnpm/pnpm
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
 
