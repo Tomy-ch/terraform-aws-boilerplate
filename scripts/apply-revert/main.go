@@ -103,10 +103,7 @@ type exitCoder interface {
 func main() {
 	log.SetFlags(0)
 
-	if len(os.Args) < 2 || os.Args[1] != "plan" {
-		log.Fatal(errUsage)
-	}
-	if err := run(os.Args[2:], os.Getenv, os.Stdout, runner{output: output}); err != nil {
+	if err := run(os.Args[1:], os.Getenv, os.Stdout, runner{output: output}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -197,8 +194,12 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	return o, nil
 }
 
+// run は、サブコマンド plan とその flag を args で受けます。
 func run(args []string, getenv func(string) string, out io.Writer, r runner) error {
-	o, err := parseOptions(args, getenv)
+	if len(args) == 0 || args[0] != "plan" {
+		return errUsage
+	}
+	o, err := parseOptions(args[1:], getenv)
 	if err != nil {
 		return err
 	}
