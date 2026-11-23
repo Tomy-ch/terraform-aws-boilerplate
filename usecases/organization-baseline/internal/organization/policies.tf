@@ -14,6 +14,8 @@ locals {
     ]
   ])
   break_glass_role_arn_pattern = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
+  # account-baseline を apply するメンバーの CI の role（workload root の apply）。
+  baseline_apply_role_patterns = [for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-apply"]
 
   service_control_policies = {
     deny-leave-and-close = {
@@ -67,6 +69,47 @@ locals {
           "guardduty:DisassociateFromMasterAccount",
           "guardduty:UpdateDetector",
         ]
+        Resource = "*"
+      }]
+    }
+    # 中身は account-baseline が決める（account-baseline/ADR-0201）。
+    deny-baseline-stop = {
+      description = "account-baseline のアカウント単位の安全側の設定を、CI の apply の role の外が止めることと変えることを拒む。"
+      statements = [{
+        Sid    = "DenyBaselineStop"
+        Effect = "Deny"
+        Action = [
+          "access-analyzer:CreateArchiveRule",
+          "access-analyzer:DeleteAnalyzer",
+          "access-analyzer:UpdateArchiveRule",
+          "config:DeleteConfigurationRecorder",
+          "config:DeleteDeliveryChannel",
+          "config:DeleteRetentionConfiguration",
+          "config:PutConfigurationRecorder",
+          "config:PutDeliveryChannel",
+          "config:PutRetentionConfiguration",
+          "config:StopConfigurationRecorder",
+          "ec2:CreateVpcBlockPublicAccessExclusion",
+          "ec2:DisableEbsEncryptionByDefault",
+          "ec2:ModifyVpcBlockPublicAccessOptions",
+          "elasticmapreduce:PutBlockPublicAccessConfiguration",
+          "s3:PutAccountPublicAccessBlock",
+          "ssm:ResetServiceSetting",
+          "ssm:UpdateServiceSetting",
+        ]
+        Resource = "*"
+        Condition = {
+          ArnNotLike = { "aws:PrincipalArn" = local.baseline_apply_role_patterns }
+        }
+      }]
+    }
+    # 中身は account-baseline が決める（account-baseline/ADR-0101）。例外を持たない。
+    deny-enable-region = {
+      description = "opt-in のリージョンを有効にすることを拒む。"
+      statements = [{
+        Sid      = "DenyEnableRegion"
+        Effect   = "Deny"
+        Action   = "account:EnableRegion"
         Resource = "*"
       }]
     }
@@ -203,6 +246,8 @@ locals {
       "deny-guardduty-stop",
       "deny-root-user",
       "deny-iam-user",
+      "deny-baseline-stop",
+      "deny-enable-region",
       "data-perimeter-prod-resources",
       "data-perimeter-org-principals",
       "data-perimeter-prod-principals",

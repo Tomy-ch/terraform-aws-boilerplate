@@ -113,6 +113,18 @@ override_resource {
 }
 
 override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-baseline-stop"]
+  override_during = plan
+  values          = { id = "p-denybaselinestop" }
+}
+
+override_resource {
+  target          = module.organization_baseline.module.organization.aws_organizations_policy.this["deny-enable-region"]
+  override_during = plan
+  values          = { id = "p-denyenableregion" }
+}
+
+override_resource {
   target          = module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-prod-resources"]
   override_during = plan
   values          = { id = "p-dataperimeterprodres" }

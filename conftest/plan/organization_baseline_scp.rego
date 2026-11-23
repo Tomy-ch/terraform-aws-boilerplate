@@ -19,6 +19,7 @@ break_glass := object.get(ob, "break_glass", {})
 # 規則が名指しで読む policy と OU。宣言から消えると、その規則が黙る。
 required_policies := {
 	"deny-leave-and-close", "deny-root-user", "deny-state-write", "protect-governance-roles", "deny-guardduty-stop",
+	"deny-baseline-stop", "deny-enable-region",
 	"data-perimeter-prod-resources", "data-perimeter-org-principals", "data-perimeter-prod-principals",
 }
 
@@ -223,7 +224,7 @@ covers(patterns, action) if {
 
 # NotAction の Deny は、拒む Action を列挙できず、どの規則の covers も読めない。
 deny contains msg if {
-	some key in scp_keys | rcp_keys
+	some key in (scp_keys | rcp_keys)
 	some s in statements(key)
 	s.Effect == "Deny"
 	object.get(s, "NotAction", null) != null
@@ -358,4 +359,37 @@ guardduty_stop_shape if {
 	some s in statements("deny-guardduty-stop")
 	s.Effect == "Deny"
 	"guardduty:deletedetector" in lib.lower_all(object.get(s, "Action", []))
+}
+
+# account-baseline の設定を止める Action（account-baseline/ADR-0201）。どれかが抜けると、その設定を誰でも止められる。
+baseline_stop_actions := {
+	"config:stopconfigurationrecorder", "config:deleteconfigurationrecorder", "config:deletedeliverychannel",
+	"access-analyzer:deleteanalyzer", "ec2:disableebsencryptionbydefault", "ec2:modifyvpcblockpublicaccessoptions",
+	"s3:putaccountpublicaccessblock", "elasticmapreduce:putblockpublicaccessconfiguration", "ssm:updateservicesetting",
+}
+
+baseline_stop_denied := {a |
+	some s in statements("deny-baseline-stop")
+	s.Effect == "Deny"
+	some a in lib.lower_all(object.get(s, "Action", []))
+}
+
+deny contains msg if {
+	content("deny-baseline-stop")
+	some a in (baseline_stop_actions - baseline_stop_denied)
+	msg := sprintf("[PLAN-ORG-09] deny-baseline-stop が %s を拒んでいません", [a])
+}
+
+# opt-in のリージョンの有効化は、例外なしに拒む（account-baseline/ADR-0101）。
+deny contains msg if {
+	content("deny-enable-region")
+	not enable_region_shape
+	msg := "[PLAN-ORG-09] deny-enable-region が、条件なしに account:EnableRegion を拒む形ではありません"
+}
+
+enable_region_shape if {
+	some s in statements("deny-enable-region")
+	s.Effect == "Deny"
+	"account:enableregion" in lib.lower_all(object.get(s, "Action", []))
+	not s.Condition
 }

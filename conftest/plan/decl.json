@@ -507,6 +507,8 @@
         "deny-guardduty-stop": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-guardduty-stop\"]",
         "deny-root-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-root-user\"]",
         "deny-iam-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-iam-user\"]",
+        "deny-baseline-stop": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-baseline-stop\"]",
+        "deny-enable-region": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-enable-region\"]",
         "data-perimeter-prod-resources": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-resources\"]",
         "data-perimeter-org-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-org-principals\"]",
         "data-perimeter-prod-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-principals\"]",
@@ -530,6 +532,12 @@
           "PolicyStaging"
         ],
         "deny-iam-user": [
+          "PolicyStaging"
+        ],
+        "deny-baseline-stop": [
+          "PolicyStaging"
+        ],
+        "deny-enable-region": [
           "PolicyStaging"
         ],
         "data-perimeter-prod-resources": [

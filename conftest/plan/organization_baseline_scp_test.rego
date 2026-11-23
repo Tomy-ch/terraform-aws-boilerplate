@@ -19,6 +19,8 @@ decl := {
 		"deny-state-write": ["PolicyStaging"],
 		"protect-governance-roles": ["PolicyStaging"],
 		"deny-guardduty-stop": ["PolicyStaging"],
+		"deny-baseline-stop": ["PolicyStaging"],
+		"deny-enable-region": ["PolicyStaging"],
 		"data-perimeter-prod-resources": ["PolicyStaging"],
 		"data-perimeter-org-principals": ["PolicyStaging"],
 		"data-perimeter-prod-principals": ["PolicyStaging"],
@@ -29,7 +31,14 @@ decl := {
 
 policy_keys := [
 	"deny-leave-and-close", "deny-root-user", "deny-state-write", "protect-governance-roles", "deny-guardduty-stop",
+	"deny-baseline-stop", "deny-enable-region",
 	"data-perimeter-prod-resources", "data-perimeter-org-principals", "data-perimeter-prod-principals",
+]
+
+baseline_actions := [
+	"access-analyzer:DeleteAnalyzer", "config:DeleteConfigurationRecorder", "config:DeleteDeliveryChannel",
+	"config:StopConfigurationRecorder", "ec2:DisableEbsEncryptionByDefault", "ec2:ModifyVpcBlockPublicAccessOptions",
+	"elasticmapreduce:PutBlockPublicAccessConfiguration", "s3:PutAccountPublicAccessBlock", "ssm:UpdateServiceSetting",
 ]
 
 change(address, type, after) := {"address": address, "type": type, "change": {"actions": ["create"], "after": after, "after_unknown": {}}}
@@ -44,6 +53,8 @@ valid_docs := {
 	"deny-state-write": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["s3:PutObject*"], "Resource": "arn:aws:s3:::tabp-*-tfstate-*/*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply", bg_pattern]}}}]},
 	"protect-governance-roles": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["iam:Put*"], "Resource": bg_pattern}]},
 	"deny-guardduty-stop": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": ["guardduty:DeleteDetector"], "Resource": "*"}]},
+	"deny-baseline-stop": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": baseline_actions, "Resource": "*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": ["arn:aws:iam::*:role/tabp-dev-ci-apply"]}}}]},
+	"deny-enable-region": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": "account:EnableRegion", "Resource": "*"}]},
 	"data-perimeter-prod-resources": {"Type": "SERVICE_CONTROL_POLICY", "Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"ForAnyValue:StringLike": {"aws:ResourceOrgPaths": concat("", [prod_path, "*"])}}}]},
 	"data-perimeter-org-principals": {"Type": "RESOURCE_CONTROL_POLICY", "Statement": [{"Sid": "Org", "Effect": "Deny", "Principal": "*", "Action": ["s3:*", "sts:AssumeRole"], "Resource": "*", "Condition": {"StringNotEqualsIfExists": {"aws:PrincipalOrgID": "o-exampleorg1"}, "BoolIfExists": {"aws:PrincipalIsAWSService": "false"}}}]},
 	"data-perimeter-prod-principals": {"Type": "RESOURCE_CONTROL_POLICY", "Statement": [{"Sid": "Prod", "Effect": "Deny", "Principal": "*", "Action": ["s3:*"], "Resource": "*", "Condition": {"ForAllValues:StringNotLike": {"aws:PrincipalOrgPaths": concat("", [prod_path, "*"])}, "BoolIfExists": {"aws:PrincipalIsAWSService": "false"}}}]},
@@ -317,4 +328,21 @@ test_pass_state_write_exception_unlock_identity if {
 test_violation_guardduty_policy_without_actions if {
 	docs := with_doc("deny-guardduty-stop", {"Effect": "Deny", "Action": [], "Resource": "*"})
 	fixture.has("[PLAN-ORG-08] deny-guardduty-stop が guardduty:DeleteDetector を拒んでいません", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_baseline_stop_missing_action if {
+	every a in baseline_actions {
+		docs := with_doc("deny-baseline-stop", {"Effect": "Deny", "Action": [x | some x in baseline_actions; x != a], "Resource": "*"})
+		fixture.has("[PLAN-ORG-09] deny-baseline-stop", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+	}
+}
+
+test_violation_enable_region_with_condition if {
+	docs := with_doc("deny-enable-region", {"Effect": "Deny", "Action": "account:EnableRegion", "Resource": "*", "Condition": {"ArnNotLike": {"aws:PrincipalArn": bg_pattern}}})
+	fixture.has("[PLAN-ORG-09] deny-enable-region", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_enable_region_other_action if {
+	docs := with_doc("deny-enable-region", {"Effect": "Deny", "Action": "account:DisableRegion", "Resource": "*"})
+	fixture.has("[PLAN-ORG-09] deny-enable-region", p.deny) with input as plan_with(docs, valid_attachments) with data.policy_plan as {"organization_baseline": decl}
 }
