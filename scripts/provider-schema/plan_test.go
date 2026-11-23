@@ -178,6 +178,38 @@ func Test_planDeprecated(t *testing.T) {
 		assert.Equal(t, map[string][]string{"aws_0": {"legacy", "old"}, "aws_1": {}}, readDeprecated(t, out))
 	})
 
+	t.Run("-list の一覧の jsonl を読む", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		a := writeFile(t, base, "a.jsonl", planJSONL(providerBody(awsProvider, resourceX)))
+		list := writeFile(t, base, "plans.txt", a+"\n\n")
+		out := filepath.Join(base, "o.json")
+		require.NoError(t, planDeprecated([]string{"-out", out, "-list", list}, &bytes.Buffer{}))
+		assert.Equal(t, map[string][]string{"aws_0": {"legacy", "old"}}, readDeprecated(t, out))
+	})
+
+	t.Run("-list の一覧が空なら errNoPlans", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		list := writeFile(t, base, "plans.txt", "")
+		out := filepath.Join(base, "o.json")
+		require.ErrorIs(t, planDeprecated([]string{"-out", out, "-list", list}, &bytes.Buffer{}), errNoPlans)
+		assert.NoFileExists(t, out)
+	})
+
+	t.Run("-list を読めなければ errPlanMalformed", func(t *testing.T) {
+		t.Parallel()
+		out := filepath.Join(t.TempDir(), "o.json")
+		require.ErrorIs(t, planDeprecated([]string{"-out", out, "-list", filepath.Join(t.TempDir(), "none")}, &bytes.Buffer{}), errPlanMalformed)
+	})
+
+	t.Run("-list と位置引数を両方渡せば errUsage", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		list := writeFile(t, base, "plans.txt", "x\n")
+		require.ErrorIs(t, planDeprecated([]string{"-out", filepath.Join(base, "o.json"), "-list", list, "y"}, &bytes.Buffer{}), errUsage)
+	})
+
 	t.Run("入力が0件なら errNoPlans", func(t *testing.T) {
 		t.Parallel()
 		out := filepath.Join(t.TempDir(), "o.json")

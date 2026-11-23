@@ -112,13 +112,6 @@ func isRoot(rel string) bool {
 	return false
 }
 
-// dataDir は、ディレクトリごとの TF_DATA_DIR です。別のディレクトリが同じ名前にならないよう、_ を先にエスケープ
-// します。検査の init は root の .terraform を使わない —— 手元で実 AWS の backend に init した root は、
-// .terraform に backend の設定を残し、-backend=false の init がその資格情報を探して落ちる。
-func dataDir(data, rel string) string {
-	return filepath.Join(data, strings.NewReplacer("_", "_u", "/", "__").Replace(rel))
-}
-
 // hasTests は、ディレクトリが直下か tests/ に *.tftest.hcl を持つかを返します。
 func hasTests(dir string) (bool, error) {
 	for _, d := range []string{dir, filepath.Join(dir, "tests")} {

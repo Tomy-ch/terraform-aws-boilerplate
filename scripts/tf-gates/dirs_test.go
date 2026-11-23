@@ -135,20 +135,6 @@ func Test_isRoot(t *testing.T) {
 	}
 }
 
-func Test_dataDir(t *testing.T) {
-	t.Parallel()
-
-	t.Run("_ を先にエスケープし、/ を __ にする", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, filepath.Join("/d", "modules__a_u__b"), dataDir("/d", "modules/a_/b"))
-	})
-
-	t.Run("_ と / の並びが違えば別の名前になる", func(t *testing.T) {
-		t.Parallel()
-		assert.NotEqual(t, dataDir("/d", "modules/a_/b"), dataDir("/d", "modules/a/_b"))
-	})
-}
-
 func Test_hasTests(t *testing.T) {
 	t.Parallel()
 

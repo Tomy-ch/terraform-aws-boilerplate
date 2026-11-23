@@ -1,6 +1,6 @@
 # Policy Test
 
-[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) の Policy 層である。本リポジトリの ADR を読まなければ書けない invariant だけを持つ（同 決定1-3）。`make tf-policy` が実行し、`make tf-policy-canary` がその検査自体を検査する（[`.makefiles/terraform/policy.mk`](../../.makefiles/terraform/policy.mk)）。
+[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) の Policy 層である。本リポジトリの ADR を読まなければ書けない invariant だけを持つ（同 決定1-3）。`make tf-policy` が実行し、`make tf-policy-canary` がその検査自体を検査する（[`.makefiles/terraform/policy.mk`](../../.makefiles/terraform/policy.mk)）。Rego の形の検査、Rego のテストの件数の突き合わせ、reference の root ごとの plan の取得と取り出し、canary は [`scripts/tf-policy`](../../scripts/README.md) が持つ。
 
 ## 入力
 
