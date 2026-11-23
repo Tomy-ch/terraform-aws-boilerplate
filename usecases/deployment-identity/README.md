@@ -51,7 +51,7 @@ role と environment の名前は入力から決まる。利用者は選ばな�
 
 role の集合は CI の入口の種別の登録簿（`scripts/lib/cientry`）の role と過不足なく一致し、`internal/github-oidc` の `local.roles` との一致は `lib/cientry` のテスト（`TestCheckTerraformRoles`）が、この表の役割の列との一致は同じく `Test_registry_checkReadmeRoles` が見る。role を足すときは、同じ変更で登録簿の種別にその role を持たせる。どの入口も取らない role は作らない。
 
-- ログの所在: 無い。`AssumeRoleWithWebIdentity` の記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
+- ログの所在: 無い。`AssumeRoleWithWebIdentity` の記録は CloudTrail が持ち、その配置は `security-tooling` と `audit-evidence` が持つ
 - 基盤系アラームの通知先 Topic ARN: 受けない。フェーズ0 の `deployment-identity` は対象外である（[scope.md 第7節](../../docs/v1.0-plan/scope.md)）
 
 ## 持つもの

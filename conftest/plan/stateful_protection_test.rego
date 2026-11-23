@@ -53,6 +53,19 @@ test_violation_delete_of_state_key_under_declaration if {
 	count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == 2
 }
 
+# 宣言（decl.json）を差し替えずに読む。account-baseline の宣言に在る型が保護の対象から外れると、ここが落ちる。
+account_baseline_types := (({t | some t, _ in data.policy_plan.account_baseline.owners} | {t | some t in data.policy_plan.account_baseline.regional}) | {t | some t in data.policy_plan.account_baseline.config}) | {"aws_iam_service_linked_role"}
+
+test_pass_account_baseline_types_are_protected if {
+	count(account_baseline_types) > 0
+	count(account_baseline_types - {t | some t in data.policy_plan.stateful_protection.protected_types}) == 0
+}
+
+test_violation_delete_of_account_baseline_settings_under_declaration if {
+	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/dev.json", [change(sprintf("module.account_baseline.%s.this", [t]), t, ["delete"]) | some t in account_baseline_types])
+	count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == count(account_baseline_types)
+}
+
 test_pass_allowed_removal_in_its_root if {
 	d := {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy"], "allow": {"admin-identity": [{"address": bucket, "reason": "作り直す"}]}}
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/admin-identity.json", [change(bucket, "aws_s3_bucket", ["delete"])]) with data.policy_plan.stateful_protection as d
