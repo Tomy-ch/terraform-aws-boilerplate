@@ -17,7 +17,7 @@
 - アカウントの Chatbot に、通知先の Slack の workspace が認可されている
 - アカウントごとに、通知を受ける Slack の channel が1つある
 - env の値に、その workspace の ID（`T` で始まる）と channel の ID（`C` で始まる）が書かれている
-- 毎日 9時（Asia/Tokyo）の心拍が、その channel に届く（`usecases/ops-notification/internal/heartbeat/main.tf` の `schedule_expression`）
+- 毎日 9時（Asia/Tokyo）の心拍が、その channel に2通届く。provider の region の Topic と us-east-1 の Topic から1通ずつで、title と本文の region で区別する（`usecases/ops-notification/internal/heartbeat/main.tf` の `schedule_expression`）
 
 ## 3. 手順
 
@@ -47,5 +47,6 @@
 
 ### 3.4 apply の後に確かめる
 
-1. 次の 9時（Asia/Tokyo）に、channel に心拍が届くことを確かめ、結果を Pull Request に書く
-2. 届かなければ、3.2 の認可と、3.3 の ID と招待を見直す
+1. 次の 9時（Asia/Tokyo）に、channel に心拍が2通届くことを確かめ、結果を Pull Request に書く。title の region が provider の region のものと `us-east-1` のものが1通ずつ来る
+2. 2通とも届かなければ、3.2 の認可と、3.3 の ID と招待を見直す
+3. 片方だけ届かなければ、届かない region の Topic・鍵・schedule を見る。手順は [`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「心拍が来なかったときに見るもの」

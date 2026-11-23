@@ -31,4 +31,9 @@ run "replica" {
     condition     = output.topic_arn == "arn:${split(":", output.topic_arn)[1]}:sns:ap-northeast-1:${split(":", output.topic_arn)[4]}:${var.project}-sandbox-ops-notification"
     error_message = "複製の Topic が <project>-sandbox-ops-notification の名前で ap-northeast-1 に作られていません。"
   }
+
+  assert {
+    condition     = output.us_east_1_topic_arn == "arn:${split(":", output.topic_arn)[1]}:sns:us-east-1:${split(":", output.topic_arn)[4]}:${var.project}-sandbox-ops-notification-us-east-1"
+    error_message = "複製の us-east-1 の Topic が、region 引数で us-east-1 に <project>-sandbox-ops-notification-us-east-1 の名前で作られていません。"
+  }
 }

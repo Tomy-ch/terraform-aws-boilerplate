@@ -21,6 +21,17 @@ variable "env" {
   }
 }
 
+variable "us_east_1_name" {
+  description = "us-east-1 の schedule group と schedule の名前（`<project>-<env>-ops-us-east-1`）。"
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]{1,64}$", var.us_east_1_name))
+    error_message = "us_east_1_name は英数字・_・.・- だけの 1-64 文字にしてください。"
+  }
+}
+
 variable "topic_arn" {
   description = "心拍を publish する Topic の ARN。この module と同じ partition・リージョン・アカウントの Topic にする。"
   type        = string
@@ -29,6 +40,17 @@ variable "topic_arn" {
   validation {
     condition     = can(regex("^arn:aws[a-z-]*:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}$", var.topic_arn))
     error_message = "topic_arn は標準の SNS の Topic の ARN（arn:<partition>:sns:<region>:<account>:<name>）にしてください。FIFO の Topic は受けません。"
+  }
+}
+
+variable "us_east_1_topic_arn" {
+  description = "心拍を publish する us-east-1 の Topic の ARN。この module と同じ partition・アカウントの Topic にする。"
+  type        = string
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^arn:aws[a-z-]*:sns:us-east-1:[0-9]{12}:[A-Za-z0-9_-]{1,256}$", var.us_east_1_topic_arn))
+    error_message = "us_east_1_topic_arn は us-east-1 の標準の SNS の Topic の ARN（arn:<partition>:sns:us-east-1:<account>:<name>）にしてください。"
   }
 }
 

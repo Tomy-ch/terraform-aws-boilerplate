@@ -36,6 +36,11 @@ run "names" {
     condition     = module.heartbeat.role_arn == "arn:aws:iam::123456789012:role/t4bp-dev-ops-heartbeat"
     error_message = "心拍の role が <project>-<env>-ops-heartbeat になっていません。"
   }
+
+  assert {
+    condition     = local.us_east_1_topic_name == "t4bp-dev-ops-notification-us-east-1"
+    error_message = "us-east-1 の Topic が <project>-<env>-ops-notification-us-east-1 になっていません。"
+  }
 }
 
 run "fixed_publishers" {
@@ -58,6 +63,16 @@ run "fixed_publishers" {
 override_resource {
   target = module.sns.aws_sns_topic.this
   values = { arn = "arn:aws:sns:ap-northeast-1:123456789012:t4bp-dev-ops-notification" }
+}
+
+override_resource {
+  target = module.us_east_1_topic.aws_sns_topic.this
+  values = { arn = "arn:aws:sns:us-east-1:123456789012:t4bp-dev-ops-notification-us-east-1" }
+}
+
+override_resource {
+  target = module.us_east_1_topic.aws_kms_key.this
+  values = { arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ac" }
 }
 
 run "wiring" {
@@ -90,8 +105,14 @@ run "wiring" {
   }
 
   assert {
+    condition     = local.us_east_1_topic_arn == output.us_east_1_topic_arn && local.us_east_1_topic_arn == "arn:aws:sns:us-east-1:123456789012:t4bp-dev-ops-notification-us-east-1"
+    error_message = "心拍と Chatbot の構成へ渡す us-east-1 の Topic の ARN が、internal/us-east-1-topic の Topic になっていません。"
+  }
+
+  assert {
     condition = local.heartbeat_args == {
       name                     = "t4bp-dev-ops-heartbeat"
+      us_east_1_name           = "t4bp-dev-ops-us-east-1"
       env                      = "dev"
       permissions_boundary_arn = "arn:aws:iam::123456789012:policy/t4bp-dev-workload-boundary"
     }
