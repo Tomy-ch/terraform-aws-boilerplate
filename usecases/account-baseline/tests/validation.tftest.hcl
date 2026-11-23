@@ -31,6 +31,22 @@ run "project_with_hyphen" {
   expect_failures = [var.project]
 }
 
+run "project_at_maximum_length" {
+  command = plan
+  variables {
+    project = "${join("", [for i in range(23) : "abcdefghij"])}abcd"
+    env     = "log-archive"
+  }
+}
+
+run "project_over_maximum_length" {
+  command = plan
+  variables {
+    project = "${join("", [for i in range(23) : "abcdefghij"])}abcde"
+  }
+  expect_failures = [var.project]
+}
+
 run "unknown_env" {
   command = plan
   variables {

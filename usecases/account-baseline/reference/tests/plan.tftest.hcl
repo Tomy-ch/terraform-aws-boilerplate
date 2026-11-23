@@ -15,7 +15,7 @@ mock_provider "aws" {
   }
 }
 
-# reference の3つの合成が plan を通ることを確かめる。値の配線は usecase の tests/contract.tftest.hcl が見る。
+# 値の配線は usecase の tests/contract.tftest.hcl が見る。
 run "reference_plan" {
   command = plan
 }

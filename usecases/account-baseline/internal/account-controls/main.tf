@@ -17,7 +17,7 @@ resource "aws_account_alternate_contact" "security" {
   phone_number           = var.security_contact.phone_number
 }
 
-# 値は organization-baseline の break-glass が管理アカウントに置くものと同じにする。両方の Unit Test が同じ値を固定する。
+# 値は organization-baseline の break-glass が管理アカウントに置くものと同じにする。
 resource "aws_iam_account_password_policy" "this" {
   count = var.manage_password_policy ? 1 : 0
 

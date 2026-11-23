@@ -16,7 +16,7 @@ Security Hub の AWS Foundational Security Best Practices（FSBP）と CIS AWS F
 
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
-| `project` | `string`（英小文字と数字、235文字以内） | 名前の先頭に置くプロジェクトの token |
+| `project` | `string`（英小文字と数字、234文字以内） | 名前の先頭に置くプロジェクトの token |
 | `env` | `admin` / `security` / `log-archive` / `sandbox` / `dev` / `stg` / `prd` | 置くアカウントの env の token。`sandbox` では AWS Config を置かず、`admin` では IAM の password policy を置かない |
 | `config_delivery` | `object({ bucket_name = string, kms_key_arn = string })` | Config の配信先。log-archive の `audit-evidence` の `bucket_name` と `kms_key_arn`。鍵は ARN だけを受け、alias を受けない。`sandbox` では使わない |
 | `config_history_retention_days` | `number`（30 以上 2557 以下の整数） | Config の構成の履歴を保持する日数。`sandbox` では使わない |
@@ -128,7 +128,7 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 - 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。管理アカウントには SCP が効かず、有効なリージョンの検出は plan の postcondition だけである
 - SSM Automation が作る既定の Log Group（`/aws/ssm/automation/executeScript`）の暗号化と保持日数。出力先を CloudWatch にする設定だけを持つ
 - メンバーの apply の role が password policy を書けること（上の「依存するユースケースと判断 Issue」）
-- `project` の長さの上限（235文字）を、テストが確かめること
+- `project` の長さの上限（234文字）を、テストが確かめること
 - Security Hub のコントロールの判定そのもの。Security Hub はこのユースケースが有効にしない
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）

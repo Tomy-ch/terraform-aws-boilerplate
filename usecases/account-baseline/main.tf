@@ -35,7 +35,7 @@ module "regional_controls" {
   regions     = local.default_regions[data.aws_partition.current.partition]
 }
 
-# sandbox は AWS Config を常駐させない（#86、account-baseline/ADR-0102）。
+# sandbox の例外は公式推奨からの逸脱（account-baseline/ADR-0102 決定6）。
 module "config_recorder" {
   source = "./internal/config-recorder"
   count  = var.env == "sandbox" ? 0 : 1

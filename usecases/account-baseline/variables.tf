@@ -9,10 +9,10 @@ variable "project" {
     error_message = "project は英小文字と数字だけにしてください。"
   }
 
-  # 最も長い名前 `<project>-log-archive-external` を、analyzer の名前の上限の255文字に収める。
+  # 最も長い名前 `<project>-log-archive-external`（project と21文字）を、analyzer の名前の上限の255文字に収める。
   validation {
-    condition     = length(var.project) <= 235
-    error_message = "project は235文字以内にしてください。"
+    condition     = length(var.project) <= 234
+    error_message = "project は234文字以内にしてください。"
   }
 }
 
