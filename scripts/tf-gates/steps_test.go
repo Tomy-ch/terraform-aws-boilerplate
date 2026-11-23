@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
 )
 
 // okTree は、modules/a・usecases/b・env/dev に構成とテストを持つ木を建てる。
@@ -51,18 +53,6 @@ func Test_command(t *testing.T) {
 	}
 }
 
-func Test_toolEnv(t *testing.T) {
-	t.Parallel()
-
-	t.Run("AWS_ で始まる変数を外し、資格情報を探す先を塞ぎ、extra を足す", func(t *testing.T) {
-		t.Parallel()
-		got := toolEnv([]string{"PATH=/bin", "AWS_PROFILE=p", "AWS_ACCESS_KEY_ID=x", "XAWS_KEEP=1"}, "TF_DATA_DIR=/d")
-		assert.Equal(t, []string{"PATH=/bin", "XAWS_KEEP=1",
-			"AWS_SHARED_CREDENTIALS_FILE=/dev/null", "AWS_CONFIG_FILE=/dev/null", "AWS_EC2_METADATA_DISABLED=true", "CHECKPOINT_DISABLE=1",
-			"TF_DATA_DIR=/d"}, got)
-	})
-}
-
 func Test_runEach(t *testing.T) {
 	t.Parallel()
 
@@ -86,7 +76,7 @@ func Test_runEach(t *testing.T) {
 			targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases"}, log: io.Discard})
 			require.NoError(t, err)
 			var out bytes.Buffer
-			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd { return tool(tg.path, toolEnv(os.Environ()), stepTest) })
+			err = runEach("tf-x", targets, &out, func(tg target) *exec.Cmd { return tool(tg.path, tfexec.Env(os.Environ()), stepTest) })
 			assert.Len(t, calls(), 2, "落ちても残りのディレクトリを走らせる")
 			if c.want == "" {
 				require.NoError(t, err)

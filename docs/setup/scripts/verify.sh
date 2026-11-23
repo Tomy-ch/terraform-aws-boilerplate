@@ -323,13 +323,19 @@ permissions() {
   sim explicitDeny apply "$sk" kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription
   sim explicitDeny apply-identity "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:PutKeyPolicy
 
-  echo "# 統制の構成物（deployment-identity/ADR-0201 決定3・5・7）"
+  echo "# 統制の構成物と apply-identity の policy（deployment-identity/ADR-0201 決定3・5・7）"
   local gp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-governance"
   local bg="arn:aws:iam::${ACCOUNT_ID}:role/break-glass/tabp-break-glass"
   sim allowed apply-identity "$gp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim implicitDeny apply-identity "arn:aws:iam::${ACCOUNT_ID}:policy/other" iam:CreatePolicy iam:CreatePolicyVersion
   sim allowed apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${gp},ContextKeyType=arn" iam:AttachRolePolicy
   sim implicitDeny apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
+  local mp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-manage"
+  sim allowed apply-identity "$mp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim allowed apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${mp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${mp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim allowed plan "$mp" iam:GetPolicy iam:GetPolicyVersion
+  sim explicitDeny apply "$mp" iam:CreatePolicyVersion
   sim allowed plan "*" organizations:DescribeOrganization organizations:ListRoots organizations:ListAccounts iam:ListOrganizationsFeatures iam:GetAccountPasswordPolicy
   sim allowed plan "$gp" iam:GetPolicy iam:GetPolicyVersion
   sim implicitDeny plan "*" organizations:CreateOrganization iam:UpdateAccountPasswordPolicy
