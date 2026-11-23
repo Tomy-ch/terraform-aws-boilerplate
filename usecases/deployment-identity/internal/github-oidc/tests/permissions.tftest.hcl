@@ -1585,7 +1585,6 @@ run "policy_length" {
     error_message = "統制の customer managed policy が 6,144 文字を超えています。"
   }
 
-  # 長さを測る customer managed policy の集合が、Policy Test が plan から数える宣言 deployment_identity.customer_managed_policies と一致する（決定21）。
   assert {
     condition = alltrue([
       for m in [{
@@ -1705,7 +1704,6 @@ run "policy_length_outside_admin" {
     error_message = "boundary が 6,144 文字を超えています: ${join(", ", [for k, p in aws_iam_policy.boundary : k if length(p.policy) > 6144])}"
   }
 
-  # 長さを測る customer managed policy の集合が、Policy Test が plan から数える宣言 deployment_identity.customer_managed_policies と一致する（決定21）。
   assert {
     condition = alltrue([
       for m in [{
@@ -1872,7 +1870,6 @@ run "policy_length_aws" {
     error_message = "aws の partition の境界の入力で、Budgets と Cost Explorer の Resource が region を持つか、us-east-1 の分だけ増えています。"
   }
 
-  # 長さを測る customer managed policy の集合が、Policy Test が plan から数える宣言 deployment_identity.customer_managed_policies と一致する（決定21）。
   assert {
     condition = alltrue([
       for m in [{
@@ -2005,7 +2002,6 @@ run "policy_length_outside_admin_aws" {
     error_message = "aws の partition の境界の入力で、workload の2つの policy と boundary が2つの region の形になっていません。"
   }
 
-  # 長さを測る customer managed policy の集合が、Policy Test が plan から数える宣言 deployment_identity.customer_managed_policies と一致する（決定21）。
   assert {
     condition = alltrue([
       for m in [{

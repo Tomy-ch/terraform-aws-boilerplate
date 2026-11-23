@@ -84,8 +84,7 @@ resource "aws_iam_role_policies_exclusive" "this" {
   policy_names = [local.all_policies[each.key].name]
 }
 
-# apply-identity の role に env によらず付ける（deployment-identity/ADR-0201 決定21）。inline policy がこの付与に依存するので、
-# inline policy の書き込みには依存させない。
+# apply-identity の role に env によらず付ける（deployment-identity/ADR-0201 決定21）。
 resource "aws_iam_policy" "manage" {
   name = local.manage_policy_name
   policy = jsonencode({

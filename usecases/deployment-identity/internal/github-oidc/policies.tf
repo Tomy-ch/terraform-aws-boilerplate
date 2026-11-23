@@ -636,7 +636,6 @@ resource "aws_iam_role_policy" "apply_identity" {
     Statement = local.statements.apply_identity
   })
 
-  # 決定21 の policy を付けてから、そこへ移した文を inline policy から外す。
   depends_on = [aws_iam_role_policy_attachment.manage]
 
   lifecycle {

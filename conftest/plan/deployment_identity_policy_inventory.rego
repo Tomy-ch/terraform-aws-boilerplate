@@ -1,6 +1,5 @@
-# deployment-identity の module が作る customer managed policy の集合が、宣言 deployment_identity.customer_managed_policies と
-# 一致すること（deployment-identity/ADR-0201 決定21）。internal/github-oidc の permissions.tftest.hcl は同じ宣言を読み、
-# そのすべての policy の長さを入力の境界で測る。terraform test は同じ型の resource を列挙できないので、列挙はここが持つ。
+# customer managed policy の集合が、宣言 deployment_identity.customer_managed_policies と一致すること（deployment-identity/ADR-0201 決定21）。
+# terraform test は同じ型の resource を列挙できないので、列挙はここが持つ（conftest/plan/README.md）。
 package plan.deployment_identity_policy_inventory
 
 import data.plan.lib
