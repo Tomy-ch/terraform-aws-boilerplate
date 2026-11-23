@@ -30,7 +30,7 @@ AWS のマネージドサービス（ECR）だけで、コードを実行しな�
 | `repositories` | 論理名ごとの `arn` と `url`。`url` は発火側の push の宛先と、Compute のユースケースの image の入力（digest は発火側が Task 定義の revision に書く。[ADR-0601](../../docs/adr/0601-change-delivery-path.md) 決定20-23）。`arn` は Compute のユースケースの Execution Role の pull の権限の Resource |
 | `publisher_role_arns` | 論理名ごとの push の role の ARN。発火側の workflow が assume する |
 
-ログの所在は持たない。ECR は Log Group を持たず、API の記録は CloudTrail（`account-baseline`、`audit-evidence`）が持つ。基盤系アラームの通知先も受けない。基盤系アラームの対象となる metric を持たないためである（`docs/v1.0-plan/scope.md` 第7節）。
+ログの所在は持たない。ECR は Log Group を持たず、API の記録は CloudTrail（`security-tooling`、`audit-evidence`）が持つ。基盤系アラームの通知先も受けない。基盤系アラームの対象となる metric を持たないためである（`docs/v1.0-plan/scope.md` 第7節）。
 
 ### 供給契約（発火側の責務）
 
@@ -65,7 +65,7 @@ unsupported:
 - リージョン間・アカウント間の複製（replication）。env ごとにイメージが違い、各アカウントへ push する。リージョン障害への備えは発火側の再 push
 - pull through cache と repository creation template。どちらもこのユースケースの外で repository を作り、既定は `MUTABLE`・AES256 である
 - registry のスキャンの設定を、このユースケースの外で持つこと。設定はアカウント×リージョンに1つで、2つの書き手は互いに上書きする
-- スキャン結果の通知。所見は Inspector と Security Hub に集まり、その経路は組織の検知（`account-baseline`、#22）が持つ
+- スキャン結果の通知。所見は Inspector と Security Hub に集まり、その経路は組織の検知（`security-tooling`、#473）が持つ
 - Inspector の有効化。#22 が組織の委任管理者として全アカウントで有効にする。このユースケースは registry のスキャンの設定だけを持つ
 - GitHub Actions 以外の発火側
 
@@ -80,7 +80,7 @@ unsupported:
 
 ## 所有者
 
-このユースケースが、鍵・repository・lifecycle policy・repository policy・push の role・registry のスキャンの設定を所有する。Inspector の有効化は `account-baseline`（#22）が、pull の経路の VPC Endpoint は `private-aws-access` が、pull の権限は Compute のユースケースの Execution Role が持つ。
+このユースケースが、鍵・repository・lifecycle policy・repository policy・push の role・registry のスキャンの設定を所有する。Inspector の有効化は `security-tooling`（#473）が、pull の経路の VPC Endpoint は `private-aws-access` が、pull の権限は Compute のユースケースの Execution Role が持つ。
 
 ## 依存するユースケースと判断 Issue
 

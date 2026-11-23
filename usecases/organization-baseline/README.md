@@ -22,8 +22,8 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | --- | --- |
 | `break_glass_arns` | 管理アカウントの break-glass の IAM user 2つ・group・role の ARN。管理アカウントの identity root が `deployment-identity` へ渡し、apply の role にこれらの変更を拒ませる |
 
-- ログの所在: 無い。Organizations と IAM の API の記録は CloudTrail が持ち、その配置は `account-baseline` と `audit-evidence` が持つ
-- 基盤系アラームの通知先 Topic ARN: 受けない。break-glass の user のサインイン、break-glass の role の引き受け、root の使用、`sts:AssumeRoot` の呼び出しの通知は `account-baseline` と `ops-notification` が持つ
+- ログの所在: 無い。Organizations と IAM の API の記録は CloudTrail が持ち、その配置は `security-tooling` と `audit-evidence` が持つ
+- 基盤系アラームの通知先 Topic ARN: 受けない。break-glass の user のサインイン、break-glass の role の引き受け、root の使用、`sts:AssumeRoot` の呼び出しの通知は `security-tooling` と `ops-notification` が持つ
 
 ## 持つもの
 
@@ -55,7 +55,7 @@ unsupported:
 ## 所有者
 
 - この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy
-- `account-baseline`: 検知の停止の拒否（Workloads・Security）と、組織の trail を守る拒否（Security）の中身。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy は持たない（メンバーは IAM user の作成を SCP で拒む）
+- `account-baseline`: 検知の停止の拒否（Workloads・Security）と、組織の trail を守る拒否（Security）の中身。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書けるのは、deployment-identity の `DenyGovernanceChange` が password policy の Action を管理アカウントに限るとき（deployment-identity/ADR-0201 決定5）
 - `audit-evidence`: 監査ログの保管庫と鍵を守る拒否（Security。`protect-log-vault`）の中身
 
 ## 依存するユースケースと判断 Issue

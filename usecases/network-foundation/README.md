@@ -128,7 +128,7 @@ sandbox の destroy の後の期待残存: Flow Logs の鍵（alias `<project>-s
 - `aws-ia/vpc` の public subnet の公開 IP の自動の割り当て: EC2.15
 - `aws-ia/vpc` の `az_count` と、tier・NAT・TGW・IPv6 を入力で切り替える構成: [network-foundation/ADR-0101](docs/adr/0101-two-tiers-and-fixed-cidr-slots.md)
 - EC2.10（EC2 の interface 型の endpoint）: `private-aws-access` が持つ
-- EC2.172（VPC Block Public Access）: アカウント・リージョン単位の設定で、VPC を親に取らない。`account-baseline` の候補。このユースケースは Internet Gateway を持たないので、どの設定とも両立する
+- EC2.172（VPC Block Public Access）: アカウント・リージョン単位の設定で、VPC を親に取らない。`account-baseline` が両向きを止める形（`block-bidirectional`）で持つ。このユースケースは Internet Gateway を持たないので、この設定と両立する
 - EC2.16・EC2.21（Network ACL）: custom の Network ACL を作らない。既定の Network ACL は EC2.21 の対象外
 
 ## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
