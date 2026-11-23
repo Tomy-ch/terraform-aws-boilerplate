@@ -281,7 +281,6 @@ run "attachments" {
 run "baseline_scps" {
   command = plan
 
-  # 中身は account-baseline/ADR-0201 と ADR-0101 が決める。
   assert {
     condition = jsondecode(aws_organizations_policy.this["deny-baseline-stop"].content).Statement[0].Action == [
       "access-analyzer:CreateArchiveRule",

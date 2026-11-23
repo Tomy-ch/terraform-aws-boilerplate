@@ -6,15 +6,13 @@ locals {
   organization_id = aws_organizations_organization.this.id
   prod_path       = "${local.organization_id}/${local.root_id}/${aws_organizations_organizational_unit.top["Workloads"].id}/${aws_organizations_organizational_unit.workloads["Prod"].id}/"
 
-  # メンバーの CI の apply 系と lock の解除の role（deployment-identity の `<project>-<env>-ci-<役割>`）。env を固定し、
-  # 名前の一部だけが一致する role を例外にしない。
+  # メンバーの CI の apply 系と lock の解除の role（deployment-identity の `<project>-<env>-ci-<役割>`）。
   state_writer_role_patterns = flatten([
     for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : [
       for suffix in ["apply", "apply-identity", "unlock", "unlock-identity"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-${suffix}"
     ]
   ])
   break_glass_role_arn_pattern = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
-  # account-baseline を apply するメンバーの CI の role（workload root の apply）。
   baseline_apply_role_patterns = [for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-apply"]
 
   service_control_policies = {
@@ -103,7 +101,7 @@ locals {
         }
       }]
     }
-    # 中身は account-baseline が決める（account-baseline/ADR-0101）。例外を持たない。
+    # 中身は account-baseline が決める（account-baseline/ADR-0201 決定4）。
     deny-enable-region = {
       description = "opt-in のリージョンを有効にすることを拒む。"
       statements = [{

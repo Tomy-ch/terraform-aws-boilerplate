@@ -361,7 +361,7 @@ guardduty_stop_shape if {
 	"guardduty:deletedetector" in lib.lower_all(object.get(s, "Action", []))
 }
 
-# account-baseline の設定を止める Action（account-baseline/ADR-0201）。どれかが抜けると、その設定を誰でも止められる。
+# account-baseline の設定を止める Action（account-baseline/ADR-0201 決定1）。
 baseline_stop_actions := {
 	"config:stopconfigurationrecorder", "config:deleteconfigurationrecorder", "config:deletedeliverychannel",
 	"access-analyzer:deleteanalyzer", "ec2:disableebsencryptionbydefault", "ec2:modifyvpcblockpublicaccessoptions",
@@ -380,7 +380,7 @@ deny contains msg if {
 	msg := sprintf("[PLAN-ORG-09] deny-baseline-stop が %s を拒んでいません", [a])
 }
 
-# opt-in のリージョンの有効化は、例外なしに拒む（account-baseline/ADR-0101）。
+# account-baseline/ADR-0201 決定4。
 deny contains msg if {
 	content("deny-enable-region")
 	not enable_region_shape
