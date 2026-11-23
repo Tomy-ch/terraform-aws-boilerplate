@@ -28,9 +28,11 @@ SCP と RCP は管理アカウントに効かない。SCP はメンバーの roo
    | `deny-root-user` | `aws:AssumedRoot` の無い root の要求 | Security・Workloads・Sandbox |
    | `deny-iam-user` | IAM user と長期の資格情報の作成 | Security・Workloads |
    | `deny-guardduty-stop` | GuardDuty の停止と削除 | Sandbox |
+   | `deny-baseline-stop` | account-baseline のアカウント単位の安全側の設定の停止と変更（Config の recorder と delivery channel の停止と削除、Access Analyzer の analyzer の削除、EBS の既定の暗号化の無効化、アカウントの Public Access Block・VPC Block Public Access・EMR の block public access・SSM の設定の変更）。各アカウントの CI の apply の role を除く | Security・Workloads・Sandbox |
+   | `deny-enable-region` | opt-in のリージョンの有効化（account:EnableRegion） | Security・Workloads・Sandbox |
    | `data-perimeter-prod-resources` | Prod の OU に在る resource への操作（role の引き受けを含む） | NonProd・Sandbox |
 
-   検知の停止の拒否（Workloads・Security）と組織の trail を守る拒否（Security）の中身は `account-baseline` が、監査ログの保管庫と鍵を守る拒否（Security）の中身は `audit-evidence` が決め、この usecase が付ける。
+   アカウント単位の安全側の設定の停止の拒否と、opt-in のリージョンの有効化の拒否（Security・Workloads・Sandbox）の中身は `account-baseline` が決める。組織の trail・GuardDuty・Inspector を守る拒否の中身は `security-tooling` が決める。監査ログの保管庫と鍵を守る拒否（Security）の中身は `audit-evidence` が決める。この usecase はそれらを付ける。
 
 6. RCP の一覧と最終の付け先を次とする。どちらも S3・KMS・Secrets Manager の resource と role の引き受け（`sts:AssumeRole`）を対象とし、AWS のサービスの主体（`aws:PrincipalIsAWSService`）を外す。Web Identity と SAML の引き受けは対象にしない。GitHub の OIDC と Identity Center の到達がそれを使う。
 
@@ -93,6 +95,7 @@ SCP と RCP は管理アカウントに効かない。SCP はメンバーの roo
 
 - Unit Test: `internal/organization/tests/organization.tftest.hcl` が OU の木、policy の一覧と種類、文書、付け先、文書の大きさを固定する
 - Policy Test: `conftest/plan/organization_baseline_scp.rego`（`PLAN-ORG-*`）が、mock の plan の組織・Root・OU の値から組んだ path と ID で、文書と付け先を見る。実 plan には掛けない
+- Policy Test: `PLAN-ORG-09` が、`deny-baseline-stop` が account-baseline の各設定を止める Action（Config の recorder の停止と削除、delivery channel の削除、analyzer の削除、EBS の既定の暗号化の無効化、VPC Block Public Access・アカウントの Public Access Block・EMR の block public access・SSM の設定の変更）を拒むことと、`deny-enable-region` が `account:EnableRegion` を条件なしに拒むことを見る。拒む Action の一覧の正本は account-baseline/ADR-0201 (baseline-settings-changed-only-by-ci-apply) で、一覧の全体は Unit Test が固定する
 - 実環境: PolicyStaging に sandbox を移した間に、拒まれるべき操作が拒まれ、通るべき到達（Identity Center、GitHub の OIDC、break-glass）が通ることを人が確かめ、結果を Pull Request に記録する
 
 ## 影響

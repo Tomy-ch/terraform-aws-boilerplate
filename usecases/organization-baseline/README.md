@@ -29,7 +29,7 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 
 - 組織（all features。SCP・RCP・EC2 の declarative policy を有効にする）と、IAM の信頼アクセス、root の資格情報の中央管理（`RootCredentialsManagement`・`RootSessions`）
 - OU の木: Root の直下に Security・Workloads・Sandbox・PolicyStaging、Workloads の下に Prod・NonProd（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)）
-- SCP 8つ・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
+- SCP 10個・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
 
 組織、OU、break-glass の IAM user と role に `prevent_destroy` を付ける。組織、OU、IAM user は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
@@ -55,7 +55,8 @@ unsupported:
 ## 所有者
 
 - この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy
-- `account-baseline`: 検知の停止の拒否（Workloads・Security）と、組織の trail を守る拒否（Security）の中身。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書けるのは、deployment-identity の `DenyGovernanceChange` が password policy の Action を管理アカウントに限るとき（deployment-identity/ADR-0201 決定5）
+- `account-baseline`: アカウント単位の安全側の設定の停止の拒否（`deny-baseline-stop`）と、opt-in のリージョンの有効化の拒否（`deny-enable-region`）の中身（Security・Workloads・Sandbox。[account-baseline/ADR-0201](../account-baseline/docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md)）。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書けるのは、deployment-identity の `DenyGovernanceChange` が password policy の Action を管理アカウントに限るとき（deployment-identity/ADR-0201 決定5）
+- `security-tooling`（#473）: 組織の trail・GuardDuty・Inspector を守る拒否の中身
 - `audit-evidence`: 監査ログの保管庫と鍵を守る拒否（Security。`protect-log-vault`）の中身
 
 ## 依存するユースケースと判断 Issue
