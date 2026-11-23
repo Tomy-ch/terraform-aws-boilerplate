@@ -13,7 +13,8 @@ supported_suffixes := [".tf", ".tftest.hcl"]
 unsupported_suffixes := [".tf.json", ".tftest.json", ".tfquery.hcl"]
 
 # 走査の root に置いてよい、構成ファイルでないファイル。ここが除外の唯一の宣言である。
-excluded_suffixes := [".md"]
+# `.tftpl` は templatefile が読むテンプレートで、それを読む関数の呼び出しは IC030 と許可リストの所在が見る。
+excluded_suffixes := [".md", ".tftpl"]
 
 excluded_names := {".terraform.lock.hcl"}
 

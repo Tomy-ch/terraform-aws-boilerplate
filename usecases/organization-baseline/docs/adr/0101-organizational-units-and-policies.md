@@ -24,7 +24,7 @@ SCP と RCP は管理アカウントに効かない。SCP はメンバーの roo
    | `deny-leave-and-close` | 組織からの離脱、アカウントの閉鎖 | Root |
    | `deny-bootstrap-role` | `OrganizationAccountAccessRole` のすべての要求 | 立ち上げの中でない各メンバーアカウント |
    | `deny-state-write` | メンバーの state Bucket の object の書き込み。CI の apply 系と lock の解除の role と break-glass の role を除く（repository-wide/ADR-0602 決定11） | Security・Workloads・Sandbox |
-   | `protect-governance-roles` | break-glass の role の変更 | Security・Workloads・Sandbox |
+   | `protect-governance-roles` | break-glass の role の変更。StackSets の実行の role（`stacksets-exec-*`）を除く（organization-baseline/ADR-0202） | Security・Workloads・Sandbox |
    | `deny-root-user` | `aws:AssumedRoot` の無い root の要求 | Security・Workloads・Sandbox |
    | `deny-iam-user` | IAM user と長期の資格情報の作成 | Security・Workloads |
    | `deny-guardduty-stop` | GuardDuty の停止と削除 | Sandbox |

@@ -56,7 +56,7 @@ trust_statements := lib.statements(body(object.get(bg, "role", ""), "assume_role
 self_management := {"iam:changepassword", "iam:enablemfadevice", "iam:getuser", "iam:listmfadevices", "iam:resyncmfadevice"}
 
 deny contains msg if {
-	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", "")])
+	some a in array.concat(object.get(bg, "users", []), [object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", ""), object.get(bg, "stack_set", ""), object.get(bg, "stack_instances", "")])
 	not after(a)
 	msg := sprintf("[PLAN-BG-00] 宣言した break-glass の %s が入力にありません", [a])
 }
@@ -185,3 +185,74 @@ deny contains msg if {
 	object.get(attachment, "policy_arn", null) != administrator_access
 	msg := "[PLAN-BG-04] break-glass の role の attachment が付ける policy が AdministratorAccess ではありません"
 }
+
+# メンバーの break-glass の role（organization-baseline/ADR-0202）。
+stack_set := after(object.get(bg, "stack_set", ""))
+
+template := body(object.get(bg, "stack_set", ""), "template_body")
+
+member_role_keys := {"RoleName", "Path", "MaxSessionDuration", "ManagedPolicyArns", "AssumeRolePolicyDocument"}
+
+deny contains msg if {
+	stack_set
+	not service_managed_auto(stack_set)
+	msg := "[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed で新しいアカウントへ自動で置く形ではありません"
+}
+
+service_managed_auto(s) if {
+	s.permission_model == "SERVICE_MANAGED"
+	s.auto_deployment[0].enabled == true
+}
+
+deny contains msg if {
+	stack_set
+	not member_role_shape
+	msg := "[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレートが、管理アカウントの break-glass の role と同じ1つの role ではありません"
+}
+
+member_role_shape if {
+	object.keys(template) == {"AWSTemplateFormatVersion", "Resources"}
+	count(template.Resources) == 1
+	some r in template.Resources
+	object.keys(r) == {"Type", "Properties"}
+	r.Type == "AWS::IAM::Role"
+	object.keys(r.Properties) == member_role_keys
+	r.Properties.RoleName == role.name
+	r.Properties.Path == role.path
+	r.Properties.MaxSessionDuration == role.max_session_duration
+	r.Properties.ManagedPolicyArns == [administrator_access]
+	statements := lib.statements(r.Properties.AssumeRolePolicyDocument)
+	count([s | some s in statements; s.Effect == "Allow"]) > 0
+	every s in statements {
+		s.Effect == "Allow"
+		trust_shape(s)
+	}
+}
+
+deny contains msg if {
+	stack_set
+	instances := after(object.get(bg, "stack_instances", ""))
+	not instances.stack_set_name == stack_set.name
+	msg := "[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません"
+}
+
+# 展開先は組織の Root だけ。メンバーのすべて（これから作るものを含む）に置く。
+organization_root_id := after(object.get(object.get(data.policy_plan, "organization_baseline", {}), "organization", "")).roots[0].id
+
+deny contains msg if {
+	stack_set
+	instances := after(object.get(bg, "stack_instances", ""))
+	not targets_root_only(instances)
+	msg := "[PLAN-BG-05] メンバーの break-glass の stack instance の展開先が、組織の Root だけではありません"
+}
+
+targets_root_only(instances) if {
+	count(instances.deployment_targets) == 1
+	target := instances.deployment_targets[0]
+	target.organizational_unit_ids == [organization_root_id]
+	no_accounts(target)
+}
+
+no_accounts(target) if object.get(target, "accounts", null) == null
+
+no_accounts(target) if count(target.accounts) == 0
