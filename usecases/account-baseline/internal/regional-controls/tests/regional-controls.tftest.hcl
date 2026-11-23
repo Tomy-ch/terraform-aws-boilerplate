@@ -41,6 +41,11 @@ run "every_region" {
   }
 
   assert {
+    condition     = alltrue([for k, b in aws_vpc_block_public_access_options.this : b.internet_gateway_block_mode == "block-bidirectional" && b.region == k]) && length(aws_vpc_block_public_access_options.this) == 3
+    error_message = "VPC Block Public Access が、各リージョンで両向きを止める形になっていません（EC2.172）。"
+  }
+
+  assert {
     condition     = length(aws_ssm_service_setting.document_public_sharing) == 3 && length(aws_ssm_service_setting.automation_log_destination) == 3 && length(aws_emr_block_public_access_configuration.this) == 3
     error_message = "リージョンごとの設定の数が、regions の数と合いません。"
   }

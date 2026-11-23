@@ -51,3 +51,11 @@ resource "aws_emr_block_public_access_configuration" "this" {
     max_range = 22
   }
 }
+
+# インターネットゲートウェイを通る通信を、両向きとも止める（EC2.172）。例外の宣言（exclusion）は持たない（README の unsupported）。
+resource "aws_vpc_block_public_access_options" "this" {
+  for_each = var.regions
+
+  region                      = each.key
+  internet_gateway_block_mode = "block-bidirectional"
+}
