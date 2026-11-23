@@ -5,11 +5,15 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  mock_data "aws_region" {
+    defaults = { region = "ap-northeast-1" }
+  }
 }
 
 variables {
-  role_name = "tabp-break-glass"
-  path      = "/break-glass/"
+  role_name            = "tabp-break-glass"
+  path                 = "/break-glass/"
+  organization_root_id = "r-exam"
 }
 
 override_resource {
@@ -117,6 +121,75 @@ run "role" {
   assert {
     condition     = aws_iam_role.this.max_session_duration == 3600
     error_message = "break-glass の role のセッションは1時間です。"
+  }
+}
+
+run "member_stack_set" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_cloudformation_stack_set.this.name == "tabp-break-glass" &&
+      aws_cloudformation_stack_set.this.permission_model == "SERVICE_MANAGED" &&
+      aws_cloudformation_stack_set.this.capabilities == toset(["CAPABILITY_NAMED_IAM"]) &&
+      aws_cloudformation_stack_set.this.auto_deployment[0].enabled &&
+      aws_cloudformation_stack_set.this.managed_execution[0].active &&
+      !aws_cloudformation_stack_set.this.auto_deployment[0].retain_stacks_on_account_removal &&
+      aws_cloudformation_stack_set.this.call_as == null &&
+      aws_cloudformation_stack_set.this.administration_role_arn == null &&
+      length(coalesce(aws_cloudformation_stack_set.this.tags, {})) == 0
+    )
+    error_message = "メンバーの break-glass の StackSet は、break-glass の role と同じ名前の service-managed で、新しいアカウントへ自動で置き、tag を付けないものにしてください。"
+  }
+
+  assert {
+    condition = jsondecode(aws_cloudformation_stack_set.this.template_body).Resources == {
+      BreakGlassRole = {
+        Type = "AWS::IAM::Role"
+        Properties = {
+          RoleName           = "tabp-break-glass"
+          Path               = "/break-glass/"
+          MaxSessionDuration = 3600
+          ManagedPolicyArns  = ["arn:aws:iam::aws:policy/AdministratorAccess"]
+          AssumeRolePolicyDocument = {
+            Version = "2012-10-17"
+            Statement = [{
+              Effect    = "Allow"
+              Principal = { AWS = ["arn:aws:iam::111111111111:user/break-glass/break-glass-1", "arn:aws:iam::111111111111:user/break-glass/break-glass-2"] }
+              Action    = "sts:AssumeRole"
+              Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
+            }]
+          }
+        }
+      }
+    }
+    error_message = "メンバーの break-glass の role は、管理アカウントの break-glass の user と MFA だけを信頼し、AdministratorAccess だけを持つ1つの role にしてください。"
+  }
+
+  assert {
+    condition = (
+      aws_cloudformation_stack_instances.this.stack_set_name == "tabp-break-glass" &&
+      aws_cloudformation_stack_instances.this.deployment_targets[0].organizational_unit_ids == toset(["r-exam"]) &&
+      aws_cloudformation_stack_instances.this.regions == toset(["ap-northeast-1"]) &&
+      !coalesce(aws_cloudformation_stack_instances.this.retain_stacks, false)
+    )
+    error_message = "メンバーの break-glass の stack instance は、組織の Root を対象に provider の region へ置いてください。"
+  }
+}
+
+# 管理アカウントの role と別に書いた文書が、ずれていないことを見る。
+run "member_role_matches_management_role" {
+  command = apply
+
+  assert {
+    condition = (
+      jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BreakGlassRole.Properties.AssumeRolePolicyDocument == jsondecode(aws_iam_role.this.assume_role_policy) &&
+      jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BreakGlassRole.Properties.RoleName == aws_iam_role.this.name &&
+      jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BreakGlassRole.Properties.Path == aws_iam_role.this.path &&
+      jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BreakGlassRole.Properties.MaxSessionDuration == aws_iam_role.this.max_session_duration &&
+      toset(jsondecode(aws_cloudformation_stack_set.this.template_body).Resources.BreakGlassRole.Properties.ManagedPolicyArns) == toset(aws_iam_role_policy_attachments_exclusive.this.policy_arns)
+    )
+    error_message = "メンバーの break-glass の role が、管理アカウントの break-glass の role と同じ名前・path・信頼条件・権限になっていません。"
   }
 }
 

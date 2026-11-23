@@ -5,10 +5,10 @@
 対象は Terraform コードの正しさではなく、リポジトリの構造・CI 定義・依存の固定・ブランチ運用・
 保護設定・outbound 制限です。
 
-**ここにあるものは `terraform` の実行経路に入りません**（ADR-0702 決定3）。`terraform fmt` /
-`validate` / `test` / `plan` / `apply` は、この配下が1つも動かない状態で成功しなければなりません。
-障害対応で必要になるのは apply であって lint だからです。ゲートとして CI の必須検査に入れることは
-妨げません（決定5）——禁じているのは実行経路への挿入であって、ゲートとしての採用ではありません。
+**ここにあるものが無くても、`terraform` は実行できなければなりません**（ADR-0702 決定3）。`terraform fmt` /
+`validate` / `test` / `plan` / `apply` は、この配下が1つも動かない状態でも、人が同じ引数と値を与えれば成功しなければ
+なりません。障害対応で必要になるのは apply であって lint だからです。検査と CI の入口では、ここの道具が terraform を
+起動してよく、そのとき起動の引数は段ごとに固定します。ゲートとして CI の必須検査に入れることも妨げません（決定5）。
 
 Go モジュールはこのディレクトリに根を持ちます（`scripts/go.mod`、module path は
 `github.com/Tomy-ch/terraform-aws-boilerplate/scripts`）。言語に Go を採ったのは、ADR-0501 決定32 が

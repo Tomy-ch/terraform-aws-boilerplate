@@ -40,6 +40,7 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlo
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy.this["unlock"]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.boundary["ops-notification"]
 add module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]
+add module.deployment_identity.module.github_oidc.aws_iam_policy.manage
 add module.deployment_identity.module.github_oidc.aws_iam_policy.workload
 add module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read
 add module.deployment_identity.module.github_oidc.aws_iam_role_policies_exclusive.this["plan"]
@@ -53,9 +54,12 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock_identity"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this["unlock"]
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.governance[0]
+add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.manage
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_read
 
+add module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this
+add module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this
 add module.organization_baseline.module.break_glass.aws_iam_account_password_policy.this
 add module.organization_baseline.module.break_glass.aws_iam_group.this
 add module.organization_baseline.module.break_glass.aws_iam_group_membership.this

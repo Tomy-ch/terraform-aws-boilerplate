@@ -3,12 +3,14 @@ package plan.organization_baseline_break_glass_test
 import data.plan.fixture
 import data.plan.organization_baseline_break_glass as p
 
-decl := {"break_glass": {
+decl := {"organization": "module.o.aws_organizations_organization.this", "break_glass": {
 	"users": ["module.b.aws_iam_user.this[\"break-glass-1\"]", "module.b.aws_iam_user.this[\"break-glass-2\"]"],
 	"group_policy": "module.b.aws_iam_group_policy.this",
 	"role": "module.b.aws_iam_role.this",
 	"role_attachments": "module.b.aws_iam_role_policy_attachments_exclusive.this",
 	"role_policy_attachment": "module.b.aws_iam_role_policy_attachment.administrator_access",
+	"stack_set": "module.b.aws_cloudformation_stack_set.this",
+	"stack_instances": "module.b.aws_cloudformation_stack_instances.this",
 }}
 
 user_arns := ["arn:aws:iam::111111111111:user/break-glass/break-glass-1", "arn:aws:iam::111111111111:user/break-glass/break-glass-2"]
@@ -33,7 +35,9 @@ valid_group := [assume, self_manage, deactivate, password_policy, long_term_cred
 
 trust(principals) := [{"Effect": "Allow", "Principal": {"AWS": principals}, "Action": "sts:AssumeRole", "Condition": mfa}]
 
-role(statements) := change("module.b.aws_iam_role.this", "aws_iam_role", {"name": "tabp-break-glass", "path": "/break-glass/", "assume_role_policy": json.marshal({"Statement": statements})})
+role(statements) := change("module.b.aws_iam_role.this", "aws_iam_role", {"name": "tabp-break-glass", "path": "/break-glass/", "max_session_duration": 3600, "assume_role_policy": json.marshal({"Statement": statements})})
+
+organization := change("module.o.aws_organizations_organization.this", "aws_organizations_organization", {"roots": [{"id": "r-exam"}]})
 
 group_policy(statements) := change("module.b.aws_iam_group_policy.this", "aws_iam_group_policy", {"policy": json.marshal({"Statement": statements})})
 
@@ -43,7 +47,44 @@ admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 
 attachment(arn) := change("module.b.aws_iam_role_policy_attachment.administrator_access", "aws_iam_role_policy_attachment", {"role": "tabp-break-glass", "policy_arn": arn})
 
-rcs(group, trusts, arns) := [user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns), attachment(admin)]
+member_properties := {
+	"RoleName": "tabp-break-glass",
+	"Path": "/break-glass/",
+	"MaxSessionDuration": 3600,
+	"ManagedPolicyArns": [admin],
+	"AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": trust(user_arns)},
+}
+
+member_template(resources) := json.marshal({"AWSTemplateFormatVersion": "2010-09-09", "Resources": resources})
+
+stack_set(model, auto, resources) := change("module.b.aws_cloudformation_stack_set.this", "aws_cloudformation_stack_set", {
+	"name": "tabp-break-glass",
+	"permission_model": model,
+	"auto_deployment": [{"enabled": auto, "retain_stacks_on_account_removal": false}],
+	"template_body": member_template(resources),
+})
+
+instances_with(after) := change("module.b.aws_cloudformation_stack_instances.this", "aws_cloudformation_stack_instances", after)
+
+instances(name) := instances_with({"stack_set_name": name, "deployment_targets": [{"organizational_unit_ids": ["r-exam"], "accounts": null}]})
+
+valid_member := {"BreakGlassRole": {"Type": "AWS::IAM::Role", "Properties": member_properties}}
+
+member_rcs_with(set, inst) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), attachments([admin]), attachment(admin), set, inst]
+
+member_rcs(set) := member_rcs_with(set, instances("tabp-break-glass"))
+
+valid_stack_set := stack_set("SERVICE_MANAGED", true, valid_member)
+
+template_violation := "[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート"
+
+member_messages(rcs) := msgs if {
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": decl}
+}
+
+with_properties(patch) := {"BreakGlassRole": {"Type": "AWS::IAM::Role", "Properties": object.union(member_properties, patch)}}
+
+rcs(group, trusts, arns) := [organization, user(1, user_arns[0]), user(2, user_arns[1]), group_policy(group), role(trusts), attachments(arns), attachment(admin), stack_set("SERVICE_MANAGED", true, valid_member), instances("tabp-break-glass")]
 
 valid := fixture.plan(rcs(valid_group, trust(user_arns), [admin]))
 
@@ -185,6 +226,133 @@ test_violation_declared_attachment_for_other_role if {
 	other := change("module.b.aws_iam_role_policy_attachments_exclusive.this", "aws_iam_role_policy_attachments_exclusive", {"role_name": "other", "policy_arns": [admin]})
 	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), group_policy(valid_group), role(trust(user_arns)), other])
 	fixture.has("[PLAN-BG-04] module.b.aws_iam_role_policy_attachments_exclusive.this が AdministratorAccess", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_stack_set_self_managed if {
+	inp := fixture.plan(member_rcs(stack_set("SELF_MANAGED", true, valid_member)))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_stack_set_without_auto_deployment if {
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", false, valid_member)))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_template_extra_resource if {
+	extra := object.union(valid_member, {"Fn": {"Type": "AWS::Lambda::Function", "Properties": {"Code": {"ZipFile": "x"}}}})
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, extra)))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_inline_policy if {
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"Policies": [{"PolicyName": "x", "PolicyDocument": {}}]}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_other_managed_policy if {
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"ManagedPolicyArns": [admin, "arn:aws:iam::aws:policy/ReadOnlyAccess"]}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_other_name if {
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"RoleName": "other"}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_trusts_other_principal if {
+	doc := {"Version": "2012-10-17", "Statement": trust(["arn:aws:iam::111111111111:root"])}
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"AssumeRolePolicyDocument": doc}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_trust_without_mfa if {
+	doc := {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"AWS": user_arns}, "Action": "sts:AssumeRole"}]}
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"AssumeRolePolicyDocument": doc}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_role_trust_with_deny_only if {
+	doc := {"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Principal": "*", "Action": "sts:AssumeRole"}]}
+	inp := fixture.plan(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"AssumeRolePolicyDocument": doc}))))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet のテンプレート", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_member_instances_other_stack_set if {
+	rcs := [x | some x in member_rcs(stack_set("SERVICE_MANAGED", true, valid_member)); x.type != "aws_cloudformation_stack_instances"]
+	inp := fixture.plan(array.concat(rcs, [instances("other")]))
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_declared_stack_set_missing if {
+	rcs := [x | some x in member_rcs(stack_set("SERVICE_MANAGED", true, valid_member)); x.type != "aws_cloudformation_stack_set"]
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_cloudformation_stack_set.this", member_messages(rcs))
+}
+
+test_violation_member_role_other_path if {
+	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"Path": "/other/"})))))
+}
+
+test_violation_member_role_longer_session if {
+	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"MaxSessionDuration": 43200})))))
+}
+
+test_violation_member_template_transform if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/template_body", "value": json.marshal({"AWSTemplateFormatVersion": "2010-09-09", "Transform": "AWS::Include", "Resources": valid_member})}])
+	fixture.has(template_violation, member_messages(member_rcs(set)))
+}
+
+test_violation_member_resource_extra_key if {
+	resources := {"BreakGlassRole": {"Type": "AWS::IAM::Role", "Properties": member_properties, "DeletionPolicy": "Retain"}}
+	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, resources))))
+}
+
+test_violation_member_template_not_json if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/template_body", "value": "not-json"}])
+	fixture.has(template_violation, member_messages(member_rcs(set)))
+}
+
+test_violation_member_template_unknown if {
+	set := json.patch(valid_stack_set, [{"op": "remove", "path": "/change/after/template_body"}])
+	fixture.has(template_violation, member_messages(member_rcs(set)))
+}
+
+test_violation_member_template_empty_resources if {
+	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, {}))))
+}
+
+test_violation_member_stack_set_auto_deployment_missing if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/auto_deployment", "value": []}])
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の StackSet が、service-managed", member_messages(member_rcs(set)))
+}
+
+test_violation_member_role_second_allow_other_principal if {
+	doc := {"Version": "2012-10-17", "Statement": array.concat(trust(user_arns), trust(["arn:aws:iam::222222222222:root"]))}
+	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"AssumeRolePolicyDocument": doc})))))
+}
+
+test_pass_member_role_statement_as_object if {
+	doc := {"Version": "2012-10-17", "Statement": trust(user_arns)[0]}
+	not fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, with_properties({"AssumeRolePolicyDocument": doc})))))
+}
+
+test_violation_member_instances_target_other_ou if {
+	inst := instances_with({"stack_set_name": "tabp-break-glass", "deployment_targets": [{"organizational_unit_ids": ["ou-exam-security"], "accounts": null}]})
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance の展開先", member_messages(member_rcs_with(valid_stack_set, inst)))
+}
+
+test_violation_member_instances_with_accounts if {
+	inst := instances_with({"stack_set_name": "tabp-break-glass", "deployment_targets": [{"organizational_unit_ids": ["r-exam"], "accounts": ["333333333333"]}]})
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance の展開先", member_messages(member_rcs_with(valid_stack_set, inst)))
+}
+
+test_violation_member_instances_without_stack_set_name if {
+	inst := instances_with({"deployment_targets": [{"organizational_unit_ids": ["r-exam"], "accounts": null}]})
+	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません", member_messages(member_rcs_with(valid_stack_set, inst)))
+}
+
+test_violation_declared_stack_instances_missing if {
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_cloudformation_stack_instances.this", member_messages(rcs))
 }
 
 own := "arn:aws:iam::111111111111:user/break-glass/${aws:username}"

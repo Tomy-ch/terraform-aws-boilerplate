@@ -50,6 +50,12 @@ override_resource {
 }
 
 override_resource {
+  target          = module.deployment_identity.module.github_oidc.aws_iam_policy.manage
+  override_during = plan
+  values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage" }
+}
+
+override_resource {
   target          = module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]
   override_during = plan
   values          = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
