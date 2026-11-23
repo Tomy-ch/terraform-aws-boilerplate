@@ -203,7 +203,7 @@ before_apply() {
   expect_error "IAM group break-glass がまだ無い" NoSuchEntity aws iam get-group --group-name break-glass
   expect_error "role tabp-break-glass がまだ無い" NoSuchEntity aws iam get-role --role-name tabp-break-glass
   local p
-  for p in apply-identity-governance apply-workload boundary-ops-notification; do
+  for p in apply-identity-governance apply-identity-manage apply-workload boundary-ops-notification; do
     expect_error "policy tabp-admin-ci-$p がまだ無い" NoSuchEntity aws iam get-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-$p"
   done
   # 在ると、段4 の apply は import せずに上書きする。
@@ -222,8 +222,8 @@ stage4() {
     expect_json "role tabp-admin-ci-$r の inline policy が $p だけ" "$(aws iam list-role-policies --role-name "tabp-admin-ci-$r")" \
       --arg p "$p" "$JQ_POLICY_NAMES"
     if [[ $r == apply-identity ]]; then
-      expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-        '.AttachedPolicies | map(.PolicyName) | . == ["tabp-admin-ci-apply-identity-governance"]'
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy と manage の policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | sort | . == ["tabp-admin-ci-apply-identity-governance", "tabp-admin-ci-apply-identity-manage"]'
     elif [[ $r == apply ]]; then
       expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の2つの policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies | map(.PolicyName) | sort | . == ["tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-read"]'
@@ -343,7 +343,7 @@ permissions() {
   sim implicitDeny apply "*" sso:DescribePermissionSet sso:GetPermissionSet sso:ListAccountAssignments
   sim explicitDeny apply "$bg" iam:UpdateAssumeRolePolicy iam:AttachRolePolicy
   sim explicitDeny apply "$gp" iam:CreatePolicyVersion
-  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query 'AttachedPolicies[].PolicyName' --output text) == tabp-admin-ci-apply-identity-governance ]]; then
+  if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query "contains(AttachedPolicies[].PolicyName, 'tabp-admin-ci-apply-identity-governance')" --output text) == True ]]; then
     sim allowed apply-identity "*" organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy
     sim allowed apply-identity "$bg" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
     sim implicitDeny apply-identity "*" organizations:DeleteOrganization
