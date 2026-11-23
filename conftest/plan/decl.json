@@ -458,6 +458,8 @@
         "aws_ecr_registry_scanning_configuration",
         "aws_s3_bucket_object_lock_configuration",
         "aws_sns_topic",
+        "aws_cloudformation_stack_set",
+        "aws_cloudformation_stack_instances",
         "aws_route53_zone",
         "aws_route53_key_signing_key",
         "aws_route53_hosted_zone_dnssec",
@@ -563,7 +565,9 @@
         "group_policy": "module.organization_baseline.module.break_glass.aws_iam_group_policy.this",
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
         "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this",
-        "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access"
+        "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access",
+        "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
+        "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
       }
     },
     "ops_notification": {

@@ -131,8 +131,26 @@ run "policies" {
   }
 
   assert {
-    condition     = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" && !can(jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition)
-    error_message = "統制の role の保護の対象は break-glass の role です。"
+    condition = (
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" &&
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition == { ArnNotLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/stacksets-exec-*" } }
+    )
+    error_message = "統制の role の保護の対象は break-glass の role で、外すのは StackSet の実行の role（stacksets-exec-*）だけです。"
+  }
+
+  assert {
+    condition = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[1] == {
+      Sid      = "DenyStackSetsExecutionRoleChange"
+      Effect   = "Deny"
+      Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+      Resource = "arn:aws:iam::*:role/stacksets-exec-*"
+    }
+    error_message = "例外にした StackSet の実行の role の名前を、メンバーの主体が作ったり変えたりすることを拒んでください。"
+  }
+
+  assert {
+    condition     = output.root_id == "r-exam"
+    error_message = "root_id は組織の Root の ID です。"
   }
 
   assert {

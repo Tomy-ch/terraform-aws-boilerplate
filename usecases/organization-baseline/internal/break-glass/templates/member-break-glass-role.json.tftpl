@@ -1,0 +1,23 @@
+${jsonencode({
+  AWSTemplateFormatVersion = "2010-09-09"
+  Resources = {
+    BreakGlassRole = {
+      Type = "AWS::IAM::Role"
+      Properties = {
+        RoleName           = role_name
+        Path               = role_path
+        MaxSessionDuration = 3600
+        ManagedPolicyArns  = ["arn:${partition}:iam::aws:policy/AdministratorAccess"]
+        AssumeRolePolicyDocument = {
+          Version = "2012-10-17"
+          Statement = [{
+            Effect    = "Allow"
+            Principal = { AWS = user_arns }
+            Action    = "sts:AssumeRole"
+            Condition = { Bool = { "aws:MultiFactorAuthPresent" = "true" } }
+          }]
+        }
+      }
+    }
+  }
+})}
