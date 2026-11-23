@@ -16,10 +16,18 @@ override_resource {
   values          = { arn = "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-sandbox-ops-heartbeat" }
 }
 
+override_resource {
+  target          = aws_scheduler_schedule_group.us_east_1
+  override_during = plan
+  values          = { arn = "arn:aws:scheduler:us-east-1:123456789012:schedule-group/tabp-sandbox-ops-us-east-1" }
+}
+
 variables {
   name                     = "tabp-sandbox-ops-heartbeat"
+  us_east_1_name           = "tabp-sandbox-ops-us-east-1"
   env                      = "sandbox"
   topic_arn                = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  us_east_1_topic_arn      = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-workload-boundary"
 }
 
@@ -45,11 +53,11 @@ run "role" {
         Action    = "sts:AssumeRole"
         Condition = { StringEquals = {
           "aws:SourceAccount" = "123456789012"
-          "aws:SourceArn"     = "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-sandbox-ops-heartbeat"
+          "aws:SourceArn"     = ["arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-sandbox-ops-heartbeat", "arn:aws:scheduler:us-east-1:123456789012:schedule-group/tabp-sandbox-ops-us-east-1"]
         } }
       }]
     }
-    error_message = "role の信頼が、scheduler.amazonaws.com をアカウントと schedule group の ARN で限る形になっていません。"
+    error_message = "role の信頼が、scheduler.amazonaws.com をアカウントと2つの schedule group の ARN で限る形になっていません。"
   }
 
   assert {
@@ -58,10 +66,10 @@ run "role" {
       Statement = [{
         Effect   = "Allow"
         Action   = "sns:Publish"
-        Resource = var.topic_arn
+        Resource = [var.topic_arn, var.us_east_1_topic_arn]
       }]
     }
-    error_message = "role の権限が、Topic への sns:Publish だけになっていません。"
+    error_message = "role の権限が、2つの Topic への sns:Publish だけになっていません。"
   }
 
   assert {

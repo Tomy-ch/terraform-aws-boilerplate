@@ -52,11 +52,16 @@ JQ
 )
 JQ_KEY_POLICY=$(jq_program <<'JQ'
 def arr: if type == "array" then . else [.] end;
-.Statement | length == 4
+def rw($p; $o): any(.Effect == "Allow" and (.Principal.AWS | arr) == [$p] and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"] and ((.Condition.StringLike["kms:EncryptionContext:aws:s3:arn"] | arr | sort) == ($o | sort)) and .Condition.StringEquals["kms:ViaService"] == $via);
+def rd($p; $o): any(.Effect == "Allow" and (.Principal.AWS | arr) == [$p] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr | sort) == ($o | sort)) and .Condition.StringEquals["kms:ViaService"] == $via);
+.Statement | length == 7
 and any(.Effect == "Allow" and .Principal.AWS == $root)
-and any(.Effect == "Allow" and (.Principal.AWS | arr | sort) == ([$ai, $plan, $apply] | sort) and (.Action | arr | sort) == ["kms:Decrypt", "kms:GenerateDataKey"] and .Condition.StringEquals["kms:ViaService"] == $via)
-and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$unlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$lock]) and .Condition.StringEquals["kms:ViaService"] == $via)
-and any(.Effect == "Allow" and (.Principal.AWS | arr) == [$wunlock] and (.Action | arr) == ["kms:Decrypt"] and ((.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"] | arr) == [$wlock]) and .Condition.StringEquals["kms:ViaService"] == $via)
+and rw($plan; ["\($pb)/pr/*", "\($pb)/branch/*"])
+and rd($plan; ["\($sb)/identity/terraform.tfstate", "\($sb)/workload/terraform.tfstate"])
+and rw($ai; ["\($sb)/identity/terraform.tfstate", "\($sb)/identity/terraform.tfstate.tflock", "\($pb)/apply/*"])
+and rw($apply; ["\($sb)/workload/terraform.tfstate", "\($sb)/workload/terraform.tfstate.tflock", "\($ab)/*"])
+and rd($unlock; ["\($sb)/identity/terraform.tfstate.tflock"])
+and rd($wunlock; ["\($sb)/workload/terraform.tfstate.tflock"])
 JQ
 )
 
@@ -254,11 +259,11 @@ stage4() {
     '.Role.AssumeRolePolicyDocument.Statement | length > 0 and all(.Condition.Bool["aws:MultiFactorAuthPresent"] == "true")'
   expect_json "state の鍵の自動 rotation が 365 日" "$(aws kms get-key-rotation-status --region "$REGION" --key-id "$KEY_ALIAS")" \
     '.KeyRotationEnabled == true and .RotationPeriodInDays == 365'
-  expect_json "Key Policy が、アカウントへの委任・plan と apply-identity と apply の S3 経由の暗号操作・unlock-identity と unlock のそれぞれの lock file の復号の4文だけ" \
+  expect_json "Key Policy が、アカウントへの委任・plan と apply-identity と apply の読み書きする object に限った S3 経由の暗号操作・plan の state の復号・unlock-identity と unlock のそれぞれの lock file の復号の7文だけ" \
     "$(aws kms get-key-policy --region "$REGION" --key-id "$KEY_ALIAS" --policy-name default --query Policy --output text)" \
     --arg root "arn:aws:iam::${ACCOUNT_ID}:root" --arg plan "$(role_arn plan)" --arg ai "$(role_arn apply-identity)" \
     --arg apply "$(role_arn apply)" --arg unlock "$(role_arn unlock-identity)" --arg wunlock "$(role_arn unlock)" --arg via "s3.${REGION}.amazonaws.com" \
-    --arg lock "arn:aws:s3:::${BUCKET}/identity/terraform.tfstate.tflock" --arg wlock "arn:aws:s3:::${BUCKET}/workload/terraform.tfstate.tflock" \
+    --arg sb "arn:aws:s3:::${BUCKET}" --arg pb "arn:aws:s3:::${PLAN_BUCKET}" --arg ab "arn:aws:s3:::${APPLY_BUCKET}" \
     "$JQ_KEY_POLICY"
 }
 

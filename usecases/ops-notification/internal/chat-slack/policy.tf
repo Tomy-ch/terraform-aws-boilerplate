@@ -7,7 +7,7 @@ locals {
         Sid      = "ReadAlarms"
         Effect   = "Allow"
         Action   = ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"]
-        Resource = "arn:${local.partition}:cloudwatch:${local.region}:${local.account}:alarm:*"
+        Resource = [for r in distinct([local.region, "us-east-1"]) : "arn:${local.partition}:cloudwatch:${r}:${local.account}:alarm:*"]
       },
       {
         Sid      = "ReadMetrics"

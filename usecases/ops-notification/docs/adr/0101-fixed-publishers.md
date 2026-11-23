@@ -1,4 +1,4 @@
-# ADR-0101: Topic の送り手を budgets・cloudwatch・costalerts・events に固定し、入力にしない
+# ADR-0101: Topic の送り手を budgets・cloudwatch・costalerts・events（us-east-1 の Topic は cloudwatch）に固定し、入力にしない
 
 - Status: Accepted
 - Date: 2026-11-19
@@ -15,9 +15,9 @@
 
 ## Decision
 
-1. 送り手を `budgets`・`cloudwatch`・`costalerts`・`events` の4つに固定し、公開契約の入力にしない。
-2. `modules/sns` の `publishers` と `modules/kms` の `users.services.sns[*].publishers` に、同じ固定の集合を渡す。
-3. 送り手の居ないアカウントでも同じ4つを許す。広がるのは、同じアカウントの4つのサービスが Topic へ送れることだけである（`aws:SourceAccount` の固定値。EventBridge は暗号化コンテキストで Topic を名指す）。
+1. 送り手を `budgets`・`cloudwatch`・`costalerts`・`events` の4つに固定し、公開契約の入力にしない。us-east-1 の Topic（ops-notification/ADR-0001 決定1）の送り手は `cloudwatch` だけに固定する。この Topic を置く理由が us-east-1 にしか出ない metric の alarm だからである。Budgets と Cost Anomaly Detection は provider の region の Topic へ送れ、us-east-1 の EventBridge の rule から送る送り手は無い。
+2. `modules/sns` の `publishers` と `modules/kms` の `users.services.sns[*].publishers` に、同じ固定の集合を渡す（us-east-1 の Topic と鍵には `cloudwatch` の集合を、`internal/` の同じ形の文書に渡す）。
+3. 送り手の居ないアカウントでも、provider の region の Topic は同じ4つを、us-east-1 の Topic は `cloudwatch` を許す。広がるのは、同じアカウントの4つのサービスが Topic へ送れることだけである（`aws:SourceAccount` の固定値。EventBridge は暗号化コンテキストで Topic を名指す）。
 4. Topic Policy と Key Policy の送り手の一致は Policy Test（`PLAN-NOTIFY-01`・`02`）が見る。
 
 ## 検討した代替案
@@ -29,6 +29,10 @@ alarm を持つ module を足す変更が env の `publishers` の更新を忘�
 ### 案B: `cloudwatch` を、alarm を持つ module が現れたアカウントだけで足す
 
 案A と同じ理由で、足すのを忘れた変更を検出できない。
+
+### 案C: us-east-1 の Topic にも4つを許す
+
+provider の region の Topic と揃うが、送る者の居ない許可が3つ増える。
 
 ## 意図的に捨てるもの
 
@@ -50,3 +54,4 @@ alarm を持つ module を足す変更が env の `publishers` の更新を忘�
 
 - 4つのほかに、同じアカウントのサービスから Topic へ送る送り手が要るとき
 - EventBridge の送信が暗号化コンテキストの条件で拒まれると sandbox で分かったとき（送り手の usecase が role を持つ形へ移る）
+- us-east-1 の EventBridge の rule から送る送り手が要るとき（us-east-1 の Topic に `events` を足す）

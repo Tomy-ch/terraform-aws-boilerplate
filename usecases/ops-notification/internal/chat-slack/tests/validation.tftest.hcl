@@ -14,6 +14,7 @@ variables {
   name                     = "tabp-sandbox-ops-chat"
   slack                    = { team_id = "T07EA123LEP", channel_id = "C07EZ1ABC23" }
   topic_arn                = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  us_east_1_topic_arn      = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-workload-boundary"
 }
 
@@ -100,6 +101,36 @@ run "rejects_topic_in_another_account" {
 
   variables {
     topic_arn = "arn:aws:sns:ap-northeast-1:210987654321:tabp-sandbox-ops-notification"
+  }
+
+  expect_failures = [aws_chatbot_slack_channel_configuration.this]
+}
+
+run "rejects_us_east_1_topic_in_another_region" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
+  }
+
+  expect_failures = [var.us_east_1_topic_arn]
+}
+
+run "rejects_us_east_1_topic_in_another_account" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws:sns:us-east-1:210987654321:tabp-sandbox-ops-notification-us-east-1"
+  }
+
+  expect_failures = [aws_chatbot_slack_channel_configuration.this]
+}
+
+run "rejects_us_east_1_topic_in_another_partition" {
+  command = plan
+
+  variables {
+    us_east_1_topic_arn = "arn:aws-us-gov:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   }
 
   expect_failures = [aws_chatbot_slack_channel_configuration.this]

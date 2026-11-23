@@ -49,7 +49,7 @@ unsupported:
 - 予算と閾値の通知の並びを選ぶこと。閾値の割合（85%・100%・予測100%、異常の40%）は固定する
 - 別のアカウントの Topic への通知
 - 不正利用の即時の検知。遅れが大きいので、侵害の検知の代わりにならない（GuardDuty は `account-baseline` の責務）
-- 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を Terraform で持つこと（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）
+- 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を Terraform で持つこと（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）。それらは人が tag `<project>:bootstrap` を付け、CI の apply の role に、その変更・削除を拒む Deny を置く。実際の要求での評価は確かめていない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) の保証範囲）
 - 1つのアカウントに複数の env を置く構成（scope.md 第10.1節）
 
 ## 所有者
@@ -72,7 +72,7 @@ unsupported:
 - Static Analysis（`make layer-check`・`make infra-code-gate`）: 層の規則と、resource の型の分類を、HCL のソースで確かめる
 - 実環境テストの形: scope.md 第11.1節の区分「破棄できるが、仕様で残るものがある」に当たる。sandbox では常駐の実体と AWS managed monitor の枠を共有して複製を作れないので、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14 の既定（作成して破棄する）を常駐の実体で行い、destroy して作り直す。残存は決定16 の期待残存と照合する
 
-env の root、CI の apply の経路、`ops-notification`、CI の role の権限、sandbox の掃除 CI は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
+env の root、CI の apply の経路、`ops-notification`、sandbox の掃除 CI は無い。いずれも配線された後に遡って検証する。その間に検出できない故障モード（[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定17）:
 
 - 通知が Topic に届くこと。Budgets が暗号化した Topic へ送るための鍵の policy の文例を AWS は示していない。Budgets は課金データの反映を、Cost Anomaly Detection は検知までの最大24時間と10日の履歴を待つので、apply の後の検証の時間内には観測できない
 - API が名前・Topic の region・AWS managed monitor の枠で拒むこと。メンバーアカウントに手で作った AWS services monitor が在ると、apply が枠で落ちる

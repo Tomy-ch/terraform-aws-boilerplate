@@ -65,7 +65,7 @@ resource "aws_chatbot_slack_channel_configuration" "this" {
   iam_role_arn                = aws_iam_role.this.arn
   slack_team_id               = var.slack.team_id
   slack_channel_id            = var.slack.channel_id
-  sns_topic_arns              = [var.topic_arn]
+  sns_topic_arns              = [var.topic_arn, var.us_east_1_topic_arn]
   guardrail_policy_arns       = [aws_iam_policy.read.arn]
   logging_level               = "NONE"
   user_authorization_required = true
@@ -76,6 +76,11 @@ resource "aws_chatbot_slack_channel_configuration" "this" {
     precondition {
       condition     = startswith(var.topic_arn, "arn:${local.partition}:sns:") && split(":", var.topic_arn)[4] == local.account
       error_message = "topic_arn が、この module と同じアカウントと partition の Topic ではありません。"
+    }
+
+    precondition {
+      condition     = startswith(var.us_east_1_topic_arn, "arn:${local.partition}:sns:us-east-1:${local.account}:")
+      error_message = "us_east_1_topic_arn が、この module と同じアカウントと partition の us-east-1 の Topic ではありません。"
     }
   }
 }
