@@ -1128,7 +1128,7 @@ test_violation_governance_service_wide_wildcard if {
 }
 
 test_pass_governance_question_mark_covers_name if {
-	every action in [["sso:CreatePermissionSe?"], ["sso:?reatePermissionSet"]] {
+	every action in [["sso:CreatePermissionSe?"], ["sso:Create?ermissionSet"]] {
 		not any_startswith(sso_messages(action), denied_06("sso:CreatePermissionSet"))
 	}
 }
