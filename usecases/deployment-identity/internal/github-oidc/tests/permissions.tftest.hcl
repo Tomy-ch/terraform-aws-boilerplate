@@ -2219,7 +2219,7 @@ run "no_governance_in_dev" {
       "AttachApplyWorkloadPolicy",
       "AttachApplyIdentityPolicies",
     ]
-    error_message = "dev の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "dev の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
@@ -2328,7 +2328,7 @@ run "no_governance_in_security" {
       "AttachApplyWorkloadPolicy",
       "AttachApplyIdentityPolicies",
     ]
-    error_message = "security の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "security の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
@@ -2437,7 +2437,7 @@ run "no_governance_in_log_archive" {
       "AttachApplyWorkloadPolicy",
       "AttachApplyIdentityPolicies",
     ]
-    error_message = "log-archive の apply-identity の role に、統制の構成物の権限が入っています。"
+    error_message = "log-archive の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
