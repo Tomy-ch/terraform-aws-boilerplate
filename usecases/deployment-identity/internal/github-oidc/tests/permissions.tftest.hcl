@@ -48,6 +48,71 @@ variables {
 run "policies" {
   command = apply
 
+  variables {
+    # Service Authorization Reference「Actions, resources, and condition keys for AWS IAM Identity Center」で Access level が
+    # Read か List の Action（2026-11-24 の写し）。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
+    sso_read_actions = [
+      "sso:DescribeAccountAssignmentCreationStatus",
+      "sso:DescribeAccountAssignmentDeletionStatus",
+      "sso:DescribeApplication",
+      "sso:DescribeApplicationAssignment",
+      "sso:DescribeApplicationProvider",
+      "sso:DescribeInstance",
+      "sso:DescribeInstanceAccessControlAttributeConfiguration",
+      "sso:DescribePermissionSet",
+      "sso:DescribePermissionSetProvisioningStatus",
+      "sso:DescribeRegion",
+      "sso:DescribeRegisteredRegions",
+      "sso:DescribeTrustedTokenIssuer",
+      "sso:GetApplicationAccessScope",
+      "sso:GetApplicationAssignmentConfiguration",
+      "sso:GetApplicationAuthenticationMethod",
+      "sso:GetApplicationGrant",
+      "sso:GetApplicationInstance",
+      "sso:GetApplicationSessionConfiguration",
+      "sso:GetApplicationTemplate",
+      "sso:GetInlinePolicyForPermissionSet",
+      "sso:GetManagedApplicationInstance",
+      "sso:GetMfaDeviceManagementForDirectory",
+      "sso:GetPermissionSet",
+      "sso:GetPermissionsBoundaryForPermissionSet",
+      "sso:GetProfile",
+      "sso:GetSSOStatus",
+      "sso:GetSharedSsoConfiguration",
+      "sso:GetSsoConfiguration",
+      "sso:GetTrust",
+      "sso:ListAccountAssignmentCreationStatus",
+      "sso:ListAccountAssignmentDeletionStatus",
+      "sso:ListAccountAssignments",
+      "sso:ListAccountAssignmentsForPrincipal",
+      "sso:ListAccountsForProvisionedPermissionSet",
+      "sso:ListApplicationAccessScopes",
+      "sso:ListApplicationAssignments",
+      "sso:ListApplicationAssignmentsForPrincipal",
+      "sso:ListApplicationAuthenticationMethods",
+      "sso:ListApplicationGrants",
+      "sso:ListApplicationInstanceCertificates",
+      "sso:ListApplicationInstances",
+      "sso:ListApplicationProviders",
+      "sso:ListApplicationTemplates",
+      "sso:ListApplications",
+      "sso:ListCustomerManagedPolicyReferencesInPermissionSet",
+      "sso:ListDirectoryAssociations",
+      "sso:ListInstances",
+      "sso:ListManagedPoliciesInPermissionSet",
+      "sso:ListPermissionSetProvisioningStatus",
+      "sso:ListPermissionSets",
+      "sso:ListPermissionSetsProvisionedToAccount",
+      "sso:ListProfileAssociations",
+      "sso:ListProfiles",
+      "sso:ListRegions",
+      "sso:ListTagsForResource",
+      "sso:ListTrustedTokenIssuers",
+      "sso:SearchGroups",
+      "sso:SearchUsers",
+    ]
+  }
+
   override_resource {
     target = aws_iam_policy.workload
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload" }
@@ -429,19 +494,13 @@ run "policies" {
           "iam:DisableOrganizationsRoot*",
           "iam:EnableOrganizationsRoot*",
           "iam:UpdateAccountPasswordPolicy",
-          "sso:AttachCustomerManagedPolicyReferenceToPermissionSet",
-          "sso:AttachManagedPolicyToPermissionSet",
-          "sso:CreateAccountAssignment",
+          "sso:*AccountAssignment",
+          "sso:*FromPermissionSet",
+          "sso:*ToPermissionSet",
           "sso:CreatePermissionSet",
-          "sso:DeleteAccountAssignment",
-          "sso:DeleteInlinePolicyFromPermissionSet",
           "sso:DeletePermissionSet",
-          "sso:DeletePermissionsBoundaryFromPermissionSet",
-          "sso:DetachCustomerManagedPolicyReferenceFromPermissionSet",
-          "sso:DetachManagedPolicyFromPermissionSet",
           "sso:ProvisionPermissionSet",
-          "sso:PutInlinePolicyToPermissionSet",
-          "sso:PutPermissionsBoundaryToPermissionSet",
+          "sso:PutPermissionsPolicy",
           "sso:UpdatePermissionSet",
           "cloudformation:ActivateOrganizationsAccess",
           "cloudformation:CreateStackInstances",
@@ -462,10 +521,9 @@ run "policies" {
         Effect = "Deny"
         Action = "*"
         Resource = [
-          "arn:aws:iam::123456789012:user/break-glass/break-glass-1",
-          "arn:aws:iam::123456789012:user/break-glass/break-glass-2",
-          "arn:aws:iam::123456789012:group/break-glass/break-glass",
-          "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
+          "arn:aws:iam::123456789012:group/break-glass/*",
+          "arn:aws:iam::123456789012:role/break-glass/*",
+          "arn:aws:iam::123456789012:user/break-glass/*",
         ]
       },
       { Sid = "DenyBoundaryRemoval", Effect = "Deny", Action = "iam:DeleteRolePermissionsBoundary", Resource = "*" },
@@ -1040,6 +1098,15 @@ run "policies" {
   assert {
     condition     = length([for s in jsondecode(aws_iam_policy.boundary["ops-notification"].policy).Statement : s if s.Effect == "Deny"]) == 10
     error_message = "boundary の Deny の文が、apply の role の bootstrap の Deny の10文になっていません。"
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for p in one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"]) : [
+        for r in var.sso_read_actions : !can(regex("^(?i)${replace(p, "*", ".*")}$", r))
+      ] if startswith(p, "sso:")
+    ]))
+    error_message = "DenyGovernanceChange の sso: の Action が、Identity Center の Read・List の Action に当たります（決定5）。"
   }
 
   assert {
@@ -2006,6 +2073,11 @@ run "role_arns_follow_data_sources" {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Condition if s.Sid == "DenyBootstrapAnomalyDetectionChange"]) == { Null = { "aws:ResourceTag/t4bp:bootstrap" = "false" } }
     error_message = "apply の role の異常検知の Deny の tag の key が、name_prefix の project から組まれていません。"
   }
+
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws-us-gov:iam::210987654321:group/break-glass/*", "arn:aws-us-gov:iam::210987654321:role/break-glass/*", "arn:aws-us-gov:iam::210987654321:user/break-glass/*"]
+    error_message = "apply の role の break-glass の Deny の pattern が、partition・アカウントから組まれていません。"
+  }
 }
 
 run "plan_output_bucket_arn_follows_input" {
@@ -2182,8 +2254,8 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "dev の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "dev の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2284,8 +2356,8 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "security の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "security の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2386,8 +2458,8 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"]
-    error_message = "log-archive の apply の role の break-glass の Deny が、入力の role の ARN になっていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "log-archive の apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {
@@ -2406,6 +2478,16 @@ run "break_glass_in_other_account" {
 
   variables {
     break_glass_arns = ["arn:aws:iam::210987654321:role/break-glass/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
+  }
+
+  expect_failures = [aws_iam_role_policy.apply_identity]
+}
+
+run "break_glass_outside_path" {
+  command = plan
+
+  variables {
+    break_glass_arns = ["arn:aws:iam::123456789012:role/tabp-break-glass", "arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:group/break-glass/break-glass"]
   }
 
   expect_failures = [aws_iam_role_policy.apply_identity]
