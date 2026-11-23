@@ -17,7 +17,7 @@
 - アカウントの Chatbot に、通知先の Slack の workspace が認可されている
 - アカウントごとに、通知を受ける Slack の channel が1つある
 - env の値に、その workspace の ID（`T` で始まる）と channel の ID（`C` で始まる）が書かれている
-- 毎日 9時（Asia/Tokyo）の心拍が、その channel に届く（`usecases/ops-notification/internal/heartbeat/main.tf` の `schedule_expression`）
+- 毎日 9時（Asia/Tokyo）の心拍が、その channel に2通届く。provider の region の Topic と us-east-1 の Topic から1通ずつで、title と本文の region で区別する（`usecases/ops-notification/internal/heartbeat/main.tf` の `schedule_expression`）
 
 ## 3. 手順
 
@@ -47,5 +47,13 @@
 
 ### 3.4 apply の後に確かめる
 
-1. 次の 9時（Asia/Tokyo）に、channel に心拍が届くことを確かめ、結果を Pull Request に書く
-2. 届かなければ、3.2 の認可と、3.3 の ID と招待を見直す
+1. apply の直後に、2つの Topic のそれぞれに Chatbot の購読が1つずつあることを確かめる。apply の成功は、Chatbot が Topic を購読したことを保証しない。購読は Chatbot の service-linked role が構成の作成と更新の中で作り、作れなかったときも構成の作成は成功で返る。`<region>` に provider の region と `us-east-1` を入れて2回実行し、どちらも `https  https://global.sns-api.chatbot.amazonaws.com` の1行が出ればよい
+
+   ```sh
+   aws sns list-subscriptions --region <region> --query 'Subscriptions[?ends_with(TopicArn, `:<project>-<env>-ops-notification`) || ends_with(TopicArn, `:<project>-<env>-ops-notification-us-east-1`)].[Protocol,Endpoint]' --output text
+   ```
+
+2. 購読が無い Topic があれば、Amazon Q Developer in chat applications のコンソールで、構成 `<project>-<env>-ops-chat` の SNS topics からその Topic だけを外して保存し、もう一度足して保存する。Chatbot は、構成に足された Topic を購読し直す。最後の状態は Terraform の宣言と同じなので、次の plan に差分は出ない。そのあと 1 をやり直す
+3. 次の 9時（Asia/Tokyo）に、channel に心拍が2通届くことを確かめ、結果を Pull Request に書く。title の region が provider の region のものと `us-east-1` のものが1通ずつ来る
+4. 2通とも届かなければ、3.2 の認可と、3.3 の ID と招待を見直す
+5. 片方だけ届かなければ、届かない region の Topic・鍵・schedule を見る。手順は [`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「心拍が来なかったときに見るもの」

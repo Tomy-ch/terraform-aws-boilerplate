@@ -31,8 +31,8 @@ locals {
     "kms:UpdateKeyDescription",
   ]
 
-  s3_roles = sort([for r in var.users.roles : r.arn if r.via == "s3" && r.access == "read-write"])
-  # read の role は文を分けて、暗号化コンテキストの object を role ごとに限る。
+  # S3 経由の role は文を分けて、暗号化コンテキストの object を role ごとに限る。接頭辞は末尾に * を付けて pattern にする。
+  s3_writers = { for r in var.users.roles : r.arn => sort(concat(r.objects, [for p in r.object_prefixes : "${p}*"])) if r.via == "s3" && r.access == "read-write" }
   s3_readers = { for r in var.users.roles : r.arn => sort(r.objects) if r.via == "s3" && r.access == "read" }
   ecr_roles  = sort([for r in var.users.roles : r.arn if r.via == "ecr"])
   log_groups = sort(distinct(var.users.services.logs))
@@ -51,15 +51,19 @@ locals {
       Action    = local.administration_actions
       Resource  = "*"
     }],
-    length(local.s3_roles) == 0 ? [] : [{
-      Sid       = "RolesViaS3ReadWrite"
+    # object の ARN で限れるのは Bucket Key を使わない Bucket だけ（README「Key Policy の文書」）。
+    # 固定の object も StringLike に置く。同じキーを2つの演算子に分けると AND になり、どちらも満たす要求が無くなる。
+    [for i, arn in sort(keys(local.s3_writers)) : {
+      Sid       = "RolesViaS3ReadWrite${i}"
       Effect    = "Allow"
-      Principal = { AWS = local.s3_roles }
+      Principal = { AWS = [arn] }
       Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
       Resource  = "*"
-      Condition = { StringEquals = { "kms:ViaService" = "s3.${local.region}.amazonaws.com" } }
+      Condition = {
+        StringEquals = { "kms:ViaService" = "s3.${local.region}.amazonaws.com" }
+        StringLike   = { "kms:EncryptionContext:aws:s3:arn" = local.s3_writers[arn] }
+      }
     }],
-    # object の ARN で限れるのは Bucket Key を使わない Bucket だけ（README「Key Policy の文書」）。
     [for i, arn in sort(keys(local.s3_readers)) : {
       Sid       = "RolesViaS3Read${i}"
       Effect    = "Allow"
@@ -185,10 +189,15 @@ resource "aws_kms_key_policy" "this" {
       error_message = "users.roles[*].arn は、この鍵と同じアカウントと partition の role にしてください。"
     }
 
-    # S3 の ARN はアカウントを持たないので、別のアカウントの Bucket の object かどうかは見られない。partition だけを見る。
     precondition {
-      condition     = alltrue(flatten([for r in var.users.roles : [for o in r.objects : startswith(o, "arn:${local.partition}:s3:::")]]))
-      error_message = "users.roles[*].objects は、この鍵と同じ partition の S3 の object にしてください。"
+      condition     = alltrue(flatten([for r in var.users.roles : [for o in concat(r.objects, r.object_prefixes) : startswith(o, "arn:${local.partition}:s3:::")]]))
+      error_message = "users.roles[*].objects と object_prefixes は、この鍵と同じ partition の S3 の object にしてください。"
+    }
+
+    # 所有は Bucket の名前の account regional namespace の接尾辞で読む。PLAN-KMS-12 と同じ判定なので、片方を変えたらもう片方も変える（README「公式実装の参照」）。
+    precondition {
+      condition     = alltrue(flatten([for r in var.users.roles : [for o in concat(r.objects, r.object_prefixes) : endswith(try(regex("^arn:[^:]+:s3:::([^/]+)/", o)[0], ""), "-${local.account}-${local.region}-an")]]))
+      error_message = "users.roles[*].objects と object_prefixes は、この鍵のアカウントと region の account regional namespace の Bucket（名前が -<account>-<region>-an で終わる）の object にしてください。"
     }
 
     precondition {

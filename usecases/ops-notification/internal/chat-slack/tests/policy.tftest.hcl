@@ -14,6 +14,7 @@ variables {
   name                     = "tabp-sandbox-ops-chat"
   slack                    = { team_id = "T07EA123LEP", channel_id = "C07EZ1ABC23" }
   topic_arn                = "arn:aws:sns:ap-northeast-1:123456789012:tabp-sandbox-ops-notification"
+  us_east_1_topic_arn      = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1"
   permissions_boundary_arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-workload-boundary"
 }
 
@@ -33,7 +34,7 @@ run "policies" {
           Sid      = "ReadAlarms"
           Effect   = "Allow"
           Action   = ["cloudwatch:DescribeAlarmHistory", "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource"]
-          Resource = "arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*"
+          Resource = ["arn:aws:cloudwatch:ap-northeast-1:123456789012:alarm:*", "arn:aws:cloudwatch:us-east-1:123456789012:alarm:*"]
         },
         {
           Sid      = "ReadMetrics"
@@ -77,5 +78,20 @@ run "policies" {
   assert {
     condition     = aws_iam_role_policy_attachments_exclusive.this.role_name == "tabp-sandbox-ops-chat"
     error_message = "managed policy の排他が channel role に付いていません。"
+  }
+}
+
+# provider の region が us-east-1 でも、alarm の Resource を重ねない。
+run "alarms_in_us_east_1_provider" {
+  command = plan
+
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-east-1" }
+  }
+
+  assert {
+    condition     = [for s in jsondecode(aws_iam_policy.read.policy).Statement : s.Resource if s.Sid == "ReadAlarms"] == [["arn:aws:cloudwatch:us-east-1:123456789012:alarm:*"]]
+    error_message = "provider の region が us-east-1 のとき、ReadAlarms の Resource が us-east-1 の alarm の1つになっていません。"
   }
 }

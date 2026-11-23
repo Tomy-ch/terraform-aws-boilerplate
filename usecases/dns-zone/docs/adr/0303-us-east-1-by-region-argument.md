@@ -3,27 +3,21 @@
 - Status: Accepted
 - Date: 2026-11-20
 - Scope: dns-zone
-- Related: repository-wide/ADR-0102, repository-wide/ADR-0205, repository-wide/ADR-0402, repository-wide/ADR-0501, dns-zone/ADR-0301, dns-zone/ADR-0302
+- Related: repository-wide/ADR-0102, repository-wide/ADR-0205, repository-wide/ADR-0208, repository-wide/ADR-0402, repository-wide/ADR-0501, dns-zone/ADR-0301, dns-zone/ADR-0302
 
 ## Context
 
-クエリログの Log Group と鍵、resource policy、DNSSEC の鍵、DNSSEC の alarm は us-east-1 に置く。provider は env の root が1つの region で渡す。module が `configuration_aliases` で us-east-1 の provider を要求すると、その module のディレクトリでの `terraform validate` が、渡されない provider を理由に落ちる。`make tf-validate` はすべてのユースケースのディレクトリで validate を走らせ、このエラーは抑止できない。AWS Provider v6 は多くの resource に `region` 引数を持ち、plan の JSON に region が値として現れる。Route 53 の resource は region を持たない（グローバル）。CI のランナーが出てよい宛先は `make egress-check` が root から辿る block の `region` 引数から導き、`region` が region の形の literal でない block を落とす（`scripts/README.md` の `egress/`）。
+クエリログの Log Group と鍵、resource policy、DNSSEC の鍵、DNSSEC の alarm は us-east-1 に置く。us-east-1 にしか置けない資源の置き方は repository-wide/ADR-0208 (us-east-1-resources-by-region-argument) が決める。Route 53 の resource は region を持たない（グローバル）。
 
 ## Decision
 
-1. us-east-1 の資源は、各 resource の `region = "us-east-1"`（literal）で置く。変数や local を通さない。このユースケースは `provider` block と `configuration_aliases` を持たない。
-2. クエリログの鍵（Key Policy・alias を含む）と Log Group は `internal/query-log` が自分で持ち、`modules/kms` と `modules/log-group` を呼ばない。一般 module に `region` の入力を足すと、その module を呼ぶすべての root で `region` が literal でなくなり、egress の宣言の検査が落ちる。
+1. us-east-1 の資源は、repository-wide/ADR-0208 決定1 に従い、各 resource の `region = "us-east-1"`（literal）で置く。このユースケースは `provider` block と `configuration_aliases` を持たない。
+2. クエリログの鍵（Key Policy・alias を含む）と Log Group は、repository-wide/ADR-0208 決定2 に従い `internal/query-log` が自分で持ち、`modules/kms` と `modules/log-group` を呼ばない。
 3. `internal/query-log` は `modules/kms`・`modules/log-group` と同じ値（対称鍵・自動 rotation 365 日・削除の猶予 30 日、管理の委任に暗号操作を含めない Key Policy、class `STANDARD`、`skip_destroy = false`）を持つ。重複は repository-wide/ADR-0205 (module-dependency-policy) 決定11 が許す重複で、保持日数の下限・鍵による暗号化・region は PLAN-DNS-02 が、Key Policy は `plan.kms_key_policy` が、一般 module と同じ検査で見る。
 
 ## 検討した代替案
 
-### 案A: `configuration_aliases` で us-east-1 の provider を受ける
-
-必須のゲートの `terraform validate` が落ちる。plan の JSON から resource の region を読めず、Policy が us-east-1 であることを見られない。
-
-### 案B: `modules/kms` と `modules/log-group` に optional の入力 `region` を足す
-
-不変条件を1箇所に保てるが、`region = var.region` は literal でないので、`modules/kms` を呼ぶ既存の root（`env/admin/identity`）の `make egress-check` が落ちる。egress の宣言の検査が module の変数を呼び手の値から解くようになれば取れる。
+provider の alias と、一般 module の `region` の入力は、repository-wide/ADR-0208 の案A・案B が退けている。
 
 ## 意図的に捨てるもの
 
@@ -41,8 +35,7 @@
 ## 影響
 
 - CI の apply の role の権限と、ランナーの egress の宛先を、us-east-1 についても列挙する必要がある（#330）。
-- CloudFront の証明書や WAF など、us-east-1 を要る他のユースケースも同じ形を取れる。2つ目のユースケースが同じ形を取るときに、repository-wide の ADR への昇格を判断する（repository-wide/ADR-0001 (adr-process-and-placement) 決定20-22）。
 
 ## 見直し条件
 
-- `terraform validate` が `configuration_aliases` を持つ module を単独で検証できるようになったとき。
+- repository-wide/ADR-0208 の見直し条件

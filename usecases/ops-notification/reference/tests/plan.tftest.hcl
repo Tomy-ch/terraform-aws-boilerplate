@@ -21,6 +21,16 @@ override_resource {
 }
 
 override_resource {
+  target = module.ops_notification.module.us_east_1_topic.aws_sns_topic.this
+  values = { arn = "arn:aws:sns:us-east-1:123456789012:tabp-sandbox-ops-notification-us-east-1" }
+}
+
+override_resource {
+  target = module.ops_notification.module.us_east_1_topic.aws_kms_key.this
+  values = { arn = "arn:aws:kms:us-east-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ac" }
+}
+
+override_resource {
   target = module.ops_notification.module.heartbeat.aws_iam_role.this
   values = { arn = "arn:aws:iam::123456789012:role/tabp-sandbox-ops-heartbeat" }
 }
@@ -35,7 +45,6 @@ override_resource {
   values = { arn = "arn:aws:iam::123456789012:policy/tabp-sandbox-ops-chat-read" }
 }
 
-# reference の値が入力の検査と precondition を通り、mock の apply まで進むこと。
 run "reference_applies" {
   command = apply
 }

@@ -570,6 +570,8 @@ run "ci_role_arns_unlock_user" {
 }
 
 # Key Policy の割当は state-backend/ADR-0201 決定9。state Bucket の ARN が plan で決まらないと文書も決まらない。
+# 出力の2つの Bucket の ARN は override しない。その ARN を待つと、apply の出力の Bucket を CI が作る plan で文書が決まらない。
+# object の key は backend.tf の key と lock file、scripts/tf-local の planKey・applyKey が組む key の接頭辞と同じ文字列である。
 run "key_policy_apply_and_unlock" {
   command = plan
 
@@ -580,24 +582,85 @@ run "key_policy_apply_and_unlock" {
   }
 
   assert {
-    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if s.Sid == "RolesViaS3ReadWrite"] == [{
-      Sid    = "RolesViaS3ReadWrite"
-      Effect = "Allow"
-      Principal = { AWS = [
-        "arn:aws:iam::123456789012:role/tabp-admin-ci-apply",
-        "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity",
-        "arn:aws:iam::123456789012:role/tabp-admin-ci-plan",
-      ] }
-      Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s.Sid] == [
+      "AccountKeyAdministration",
+      "RolesViaS3ReadWrite0", "RolesViaS3ReadWrite1", "RolesViaS3ReadWrite2",
+      "RolesViaS3Read0", "RolesViaS3Read1", "RolesViaS3Read2",
+    ]
+    error_message = "Key Policy が、委任と、read-write の3文（apply・apply_identity・plan）と、read の3文（plan・unlock・unlock_identity）の7文になっていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if startswith(s.Sid, "RolesViaS3ReadWrite")] == [
+      {
+        Sid       = "RolesViaS3ReadWrite0"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply"] }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+          StringLike = { "kms:EncryptionContext:aws:s3:arn" = [
+            "arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/*",
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate.tflock",
+          ] }
+        }
+      },
+      {
+        Sid       = "RolesViaS3ReadWrite1"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"] }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+          StringLike = { "kms:EncryptionContext:aws:s3:arn" = [
+            "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/apply/*",
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
+            "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock",
+          ] }
+        }
+      },
+      {
+        Sid       = "RolesViaS3ReadWrite2"
+        Effect    = "Allow"
+        Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" }
+          StringLike = { "kms:EncryptionContext:aws:s3:arn" = [
+            "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/*",
+            "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*",
+          ] }
+        }
+      },
+    ]
+    error_message = "Key Policy の read-write の文が、apply に workload root の state と lock file と apply の出力の Bucket、apply_identity に identity root の state と lock file と plan の出力の apply/、plan に plan の出力の pr/・branch/ の復号と鍵の生成だけを許していません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if s.Sid == "RolesViaS3Read0"] == [{
+      Sid       = "RolesViaS3Read0"
+      Effect    = "Allow"
+      Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] }
+      Action    = "kms:Decrypt"
       Resource  = "*"
-      Condition = { StringEquals = { "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com" } }
+      Condition = { StringEquals = {
+        "kms:ViaService" = "s3.ap-northeast-1.amazonaws.com"
+        "kms:EncryptionContext:aws:s3:arn" = [
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate",
+          "arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/workload/terraform.tfstate",
+        ]
+      } }
     }]
-    error_message = "Key Policy の read-write の文が、plan と apply_identity と apply の role に S3 経由の暗号化と復号を許していません。"
+    error_message = "Key Policy が plan の role に、2つの root の state の object に限った復号だけを許していません（plan は state に書かない）。"
   }
 
   assert {
     condition = [for s in jsondecode(module.kms.key_policy).Statement : s if try(s.Principal.AWS, null) == ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"]] == [{
-      Sid       = "RolesViaS3Read0"
+      Sid       = "RolesViaS3Read1"
       Effect    = "Allow"
       Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock"] }
       Action    = "kms:Decrypt"
@@ -608,6 +671,21 @@ run "key_policy_apply_and_unlock" {
       } }
     }]
     error_message = "Key Policy が unlock の role に、workload root の lock file の object に限った復号だけを許していません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(module.kms.key_policy).Statement : s if try(s.Principal.AWS, null) == ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"]] == [{
+      Sid       = "RolesViaS3Read2"
+      Effect    = "Allow"
+      Principal = { AWS = ["arn:aws:iam::123456789012:role/tabp-admin-ci-unlock-identity"] }
+      Action    = "kms:Decrypt"
+      Resource  = "*"
+      Condition = { StringEquals = {
+        "kms:ViaService"                   = "s3.ap-northeast-1.amazonaws.com"
+        "kms:EncryptionContext:aws:s3:arn" = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate.tflock"]
+      } }
+    }]
+    error_message = "Key Policy が unlock_identity の role に、identity root の lock file の object に限った復号だけを許していません。"
   }
 }
 

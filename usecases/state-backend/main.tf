@@ -1,10 +1,12 @@
 locals {
-  state_name = "${var.project}-${var.env}-tfstate"
+  state_name         = "${var.project}-${var.env}-tfstate"
+  identity_state_key = "identity/terraform.tfstate"
   # identity root の lock file。backend.tf の key と、deployment-identity の unlock-identity の IAM の Resource が同じ key を持つ。
-  identity_lock_key = "identity/terraform.tfstate.tflock"
-  identity_keys     = ["identity/terraform.tfstate", local.identity_lock_key]
-  workload_lock_key = "workload/terraform.tfstate.tflock"
-  workload_keys     = ["workload/terraform.tfstate", local.workload_lock_key]
+  identity_lock_key  = "identity/terraform.tfstate.tflock"
+  identity_keys      = [local.identity_state_key, local.identity_lock_key]
+  workload_state_key = "workload/terraform.tfstate"
+  workload_lock_key  = "workload/terraform.tfstate.tflock"
+  workload_keys      = [local.workload_state_key, local.workload_lock_key]
 }
 
 module "s3" {
@@ -28,11 +30,25 @@ module "kms" {
 
   name = local.state_name
   users = {
+    # 割当は state-backend/ADR-0201 決定9。出力の Bucket の object は Bucket Policy の書き手と同じ宣言から組む。
     roles = [
-      { arn = var.ci_role_arns.plan, via = "s3", access = "read-write" },
-      { arn = var.ci_role_arns.apply_identity, via = "s3", access = "read-write" },
+      { arn = var.ci_role_arns.plan, via = "s3", access = "read", objects = [for k in [local.identity_state_key, local.workload_state_key] : "${module.s3.bucket_arn}/${k}"] },
+      { arn = var.ci_role_arns.plan, via = "s3", access = "read-write", object_prefixes = module.plan_output.writer_object_prefixes[var.ci_role_arns.plan] },
+      {
+        arn             = var.ci_role_arns.apply_identity
+        via             = "s3"
+        access          = "read-write"
+        objects         = [for k in local.identity_keys : "${module.s3.bucket_arn}/${k}"]
+        object_prefixes = module.plan_output.writer_object_prefixes[var.ci_role_arns.apply_identity]
+      },
       { arn = var.ci_role_arns.unlock_identity, via = "s3", access = "read", objects = ["${module.s3.bucket_arn}/${local.identity_lock_key}"] },
-      { arn = var.ci_role_arns.apply, via = "s3", access = "read-write" },
+      {
+        arn             = var.ci_role_arns.apply
+        via             = "s3"
+        access          = "read-write"
+        objects         = [for k in local.workload_keys : "${module.s3.bucket_arn}/${k}"]
+        object_prefixes = module.apply_output.writer_object_prefixes[var.ci_role_arns.apply]
+      },
       { arn = var.ci_role_arns.unlock, via = "s3", access = "read", objects = ["${module.s3.bucket_arn}/${local.workload_lock_key}"] },
     ]
   }
