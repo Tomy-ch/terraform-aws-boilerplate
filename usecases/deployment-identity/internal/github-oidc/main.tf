@@ -84,6 +84,16 @@ resource "aws_iam_role_policies_exclusive" "this" {
   policy_names = [local.all_policies[each.key].name]
 }
 
+# apply-identity の role に env によらず付ける（deployment-identity/ADR-0201 決定21）。inline policy がこの付与に依存するので、
+# inline policy の書き込みには依存させない。
+resource "aws_iam_policy" "manage" {
+  name = local.manage_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.manage_statements
+  })
+}
+
 # 管理アカウントの apply-identity の role にだけ付ける（deployment-identity/ADR-0201 決定7）。
 resource "aws_iam_policy" "governance" {
   count = local.management ? 1 : 0
@@ -133,6 +143,11 @@ resource "aws_iam_policy" "boundary" {
 }
 
 # 付け外しは policy ごとの attachment に持たせ、policy_arn で policy を参照する（repository-wide/ADR-0301 決定21、deployment-identity/ADR-0201 決定7）。
+resource "aws_iam_role_policy_attachment" "manage" {
+  role       = aws_iam_role.apply_identity.name
+  policy_arn = aws_iam_policy.manage.arn
+}
+
 resource "aws_iam_role_policy_attachment" "governance" {
   count = local.management ? 1 : 0
 
@@ -154,7 +169,7 @@ resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = each.key == "apply_identity" ? local.governance_policy_arns : each.key == "apply" ? local.workload_policy_arns : []
+  policy_arns = each.key == "apply_identity" ? local.apply_identity_policy_arns : each.key == "apply" ? local.workload_policy_arns : []
 
-  depends_on = [aws_iam_role_policy_attachment.governance, aws_iam_role_policy_attachment.workload, aws_iam_role_policy_attachment.workload_read]
+  depends_on = [aws_iam_role_policy_attachment.manage, aws_iam_role_policy_attachment.governance, aws_iam_role_policy_attachment.workload, aws_iam_role_policy_attachment.workload_read]
 }
