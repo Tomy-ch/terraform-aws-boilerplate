@@ -10,10 +10,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 	"time"
 
@@ -28,46 +30,46 @@ type deps struct {
 	self     func() (string, error)
 	wd       func() (string, error)
 	sleep    func(time.Duration)
-	exit     func(int)
 	stderr   io.Writer
-	stdout   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
+	// SIGINT・SIGTERM で ctx が終わり、起動中の子（pnpm・canary の子）を止め、lock と一時ディレクトリを片付けてから終わる。
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	d := deps{
 		tool:     command,
 		execTool: execProcess,
 		self:     os.Executable,
 		wd:       os.Getwd,
 		sleep:    time.Sleep,
-		exit:     os.Exit,
 		stderr:   os.Stderr,
-		stdout:   os.Stdout,
 	}
-	if err := run(os.Args[1:], d); err != nil {
+	err := run(ctx, os.Args[1:], d)
+	stop()
+	if err != nil {
 		log.Fatalf("❌ node-tools: %v", err)
 	}
 }
 
-func run(args []string, d deps) error {
+func run(ctx context.Context, args []string, d deps) error {
 	if len(args) == 0 {
 		return errUsage
 	}
 	switch args[0] {
 	case "exec":
-		return runExec(args[1:], d)
+		return runExec(ctx, args[1:], d)
 	case "lock-check":
-		return runLockCheck(args[1:], d)
+		return runLockCheck(ctx, args[1:], d)
 	case "mise-npm-disabled":
-		return runMiseNPMDisabled(args[1:], d)
+		return runMiseNPMDisabled(ctx, args[1:], d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}
 }
 
-type toolFunc func(dir string, step string) *exec.Cmd
+type toolFunc func(ctx context.Context, dir string, step string) *exec.Cmd
 
 const (
 	stepInstall   = "install"
@@ -75,16 +77,17 @@ const (
 	stepMiseLs    = "mise-ls"
 )
 
-func command(dir string, step string) *exec.Cmd {
-	ctx := context.Background()
+func command(ctx context.Context, dir string, step string) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch step {
 	case stepInstall:
 		cmd = exec.CommandContext(ctx, "pnpm", "install", "--frozen-lockfile", "--prod", "--reporter=silent")
 	case stepLockCheck:
 		cmd = exec.CommandContext(ctx, "pnpm", "install", "--frozen-lockfile", "--lockfile-only")
-	default:
+	case stepMiseLs:
 		cmd = exec.CommandContext(ctx, "mise", "ls", "--current", "--local", "--json")
+	default:
+		panic(fmt.Sprintf("node-tools: 知らない段 %q", step))
 	}
 	cmd.Dir = dir
 
@@ -93,5 +96,5 @@ func command(dir string, step string) *exec.Cmd {
 
 // execProcess は、この process を bin に置き換えます。戻るのは置き換えに失敗したときだけです。
 func execProcess(bin string, argv, env []string) error {
-	return syscall.Exec(bin, argv, env) //nolint:gosec // bin は node_modules/.bin の下の道具に限り（runExec が確かめる）、引数を道具へ渡すのがこの前置きの役目である
+	return syscall.Exec(bin, argv, env) //nolint:gosec // bin は node_modules/.bin の下の道具に限り（runExec が確かめる）、引数を道具へ渡すのがこの前置きの役目である。npm の道具を固定の引数でしか起動しなくなれば外す
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -20,11 +21,11 @@ var (
 // runMiseNPMDisabled は、mise ls が返す、いまの作業ディレクトリで有効な道具に npm: のものが無いことを検証します。
 // mise.toml が npm: の道具を宣言していることと、外す集合がその道具と一致することは versions check が見る。
 // ここが見るのは、mise がその宣言を実際に守るかだけである。
-func runMiseNPMDisabled(args []string, d deps) error {
+func runMiseNPMDisabled(ctx context.Context, args []string, d deps) error {
 	if len(args) > 0 {
 		return errMiseUsage
 	}
-	cmd := d.tool("", stepMiseLs)
+	cmd := d.tool(ctx, "", stepMiseLs)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, d.stderr
 	if err := cmd.Run(); err != nil {

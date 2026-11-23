@@ -15,7 +15,7 @@ NODE_INSTALL_LOCK := tmp/node-tools-install.lock
 
 ifeq ($(RUNNER_MODE),host)
 GO_TOOL :=
-NODE_TOOL = $(call RUN_SCRIPT_HOST_ARGS,node-tools,exec -dir $(CURDIR)/$(NODE_TOOLS_DIR) -lock $(CURDIR)/$(NODE_INSTALL_LOCK))
+NODE_TOOL = $(call RUN_SCRIPT_HOST_ARGS,node-tools) exec -dir "$(CURDIR)/$(NODE_TOOLS_DIR)" -lock "$(CURDIR)/$(NODE_INSTALL_LOCK)"
 else
 # ホストの gh からトークンを借りる。未認証の GitHub API は 60 req/hour・IP 単位で、
 # イメージの install 群を賄えず 403 になる。
@@ -89,7 +89,7 @@ RUN_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" $(2)'
 
-## RUN_SCRIPT_HOST の、前置きとして使う形。後ろに続く引数を $(2) の後ろへ渡す。
+## RUN_SCRIPT_HOST の、前置きとして使う形。引数はすべて後ろに続けて渡す（sh -c の本文に埋めない）。
 RUN_SCRIPT_HOST_ARGS = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
-	exec "./$(SCRIPT_BIN)/$(1)" $(2) "$$@"' $(1)
+	exec "./$(SCRIPT_BIN)/$(1)" "$$@"' $(1)

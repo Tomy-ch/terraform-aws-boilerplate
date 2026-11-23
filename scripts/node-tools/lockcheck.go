@@ -25,6 +25,7 @@ var (
 	errCanaryFallback = xerrors.New("canary: PATH の同名の道具へ退きました")
 	errCanaryLaunched = xerrors.New("canary: 写しで道具が起動しました（frozen の install が外れた）")
 	errCanaryReason   = xerrors.New("canary: 期待と違う理由で落ちました")
+	errCanaryNoCases  = xerrors.New("canary: 確かめるケースが0件です")
 
 	canaryFiles = []string{"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"}
 
@@ -47,7 +48,7 @@ var canaryCases = []canaryCase{
 
 // runLockCheck は、canary を走らせ、通ったときだけ dir の lockfile を照合します。
 // 照合では、lockfile のずれと供給網の窓（pnpm-workspace.yaml の minimumReleaseAge）を pnpm が見る。
-func runLockCheck(args []string, d deps) error {
+func runLockCheck(ctx context.Context, args []string, d deps) error {
 	fs := flag.NewFlagSet("lock-check", flag.ContinueOnError)
 	fs.SetOutput(d.stderr)
 	dir := fs.String("dir", "", "package.json と lockfile を持つディレクトリ")
@@ -58,12 +59,12 @@ func runLockCheck(args []string, d deps) error {
 		return errLockCheckUsage
 	}
 
-	if err := runCanary(*dir, d); err != nil {
+	if err := runCanary(ctx, *dir, canaryCases, d); err != nil {
 		return err
 	}
 	fmt.Fprintln(d.stderr, "✅ node-tools canary: lockfile のずれと integrity の不一致で、道具の起動の前に落ちました")
 
-	cmd := d.tool(*dir, stepLockCheck)
+	cmd := d.tool(ctx, *dir, stepLockCheck)
 	cmd.Stdout, cmd.Stderr = d.stderr, d.stderr
 	if err := cmd.Run(); err != nil {
 		return xerrors.Wrap(err, "lockfile の照合")
@@ -74,7 +75,7 @@ func runLockCheck(args []string, d deps) error {
 
 // runCanary は、dir の宣言を写して1か所ずつ壊し、この道具自身の exec を子プロセスとして起動します。
 // PATH の先頭に同名の偽の道具を置き、どのケースも期待の pnpm のエラーで、道具の起動の前に落ちることを要求する。
-func runCanary(dir string, d deps) error {
+func runCanary(ctx context.Context, dir string, cases []canaryCase, d deps) error {
 	cwd, err := d.wd()
 	if err != nil {
 		return xerrors.Wrap(err, "作業ディレクトリの取得")
@@ -107,26 +108,35 @@ func runCanary(dir string, d deps) error {
 	}
 	env := append(withoutPath(os.Environ()), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	for _, c := range canaryCases {
+	ran := 0
+	for _, c := range cases {
 		caseDir := filepath.Join(root, c.name)
 		if err := copyDecl(src, caseDir, c); err != nil {
 			return err
 		}
-		cmd := canaryCommand(self, caseDir, filepath.Join(root, "lock"))
+		cmd := canaryCommand(ctx, self, caseDir, filepath.Join(root, "lock"))
 		cmd.Env = env
 		out, runErr := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			return errInterrupted
+		}
 		if err := judgeCanary(c, out, runErr); err != nil {
 			fmt.Fprintf(d.stderr, "%s\n", out)
 
 			return err
 		}
+		ran++
+	}
+	// ケースの一覧が空になったら、canary は何も確かめずに通る。
+	if ran == 0 {
+		return errCanaryNoCases
 	}
 
 	return nil
 }
 
-func canaryCommand(self, dir, lock string) *exec.Cmd {
-	return exec.CommandContext(context.Background(), self, "exec", "-dir", dir, "-lock", lock, canaryTool, "--version") //nolint:gosec // self は os.Executable が返すこの道具自身で、引数は canary の写しと lock だけ
+func canaryCommand(ctx context.Context, self, dir, lock string) *exec.Cmd {
+	return exec.CommandContext(ctx, self, "exec", "-dir", dir, "-lock", lock, canaryTool, "--version") //nolint:gosec // self は os.Executable が返すこの道具自身で、引数は canary の写しと lock だけ。canary が自分を子プロセスで起動しなくなれば外す
 }
 
 func judgeCanary(c canaryCase, out []byte, runErr error) error {
