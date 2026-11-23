@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,16 +24,6 @@ func writeFile(t *testing.T, dir, name, body string) string {
 	return p
 }
 
-func writeListed(t *testing.T, dir string, paths ...string) string {
-	t.Helper()
-	var body strings.Builder
-	for _, p := range paths {
-		body.WriteString(p + "\n")
-	}
-
-	return writeFile(t, dir, "locks.found", body.String())
-}
-
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -46,20 +35,23 @@ func readFile(t *testing.T, path string) string {
 func Test_run(t *testing.T) {
 	t.Parallel()
 
-	t.Run("prepare と merge を選ぶ", func(t *testing.T) {
+	t.Run("prepare と merge を選び、間を fetch がつなぐ", func(t *testing.T) {
 		t.Parallel()
 		base := t.TempDir()
-		lock := writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a="))
+		writeFile(t, base, "a/.terraform.lock.hcl", awsLock("6.2.0", "h1:a="))
+		gitIn(t, base, "init", "-q")
+		gitIn(t, base, "add", "a")
+		found := writeFile(t, base, "found.txt", "a/.terraform.lock.hcl\n")
 		dir := filepath.Join(base, "schema")
-		var stdout, stderr bytes.Buffer
-		require.NoError(t, run([]string{"prepare", "-provider", awsProvider, "-out", dir, "-listed", writeListed(t, base, lock), lock}, &stdout, &stderr))
-		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n", stdout.String())
+		require.NoError(t, run([]string{"prepare", "-provider", awsProvider, "-out", dir, "-base", base, "-listed", found, "a"}, &bytes.Buffer{}))
+		assert.Equal(t, filepath.Join(dir, "6.2.0")+"\n", readFile(t, filepath.Join(dir, fetchName)))
 
-		writeFile(t, dir, "6.2.0/raw.json", rawJSON(awsProvider, resourceX))
+		require.NoError(t, fetch([]string{"-dir", dir}, &bytes.Buffer{}, fakeTerraform(t, 0, 0, rawJSON(awsProvider, resourceX))))
+		assert.FileExists(t, filepath.Join(dir, "6.2.0", rawName))
+		require.ErrorIs(t, run([]string{"fetch"}, &bytes.Buffer{}), errUsage, "fetch を選ぶ")
+
 		out := filepath.Join(base, "schema.json")
-		stdout.Reset()
-		require.NoError(t, run([]string{"merge", "-provider", awsProvider, "-dir", dir, "-out", out}, &stdout, &stderr))
-		assert.Empty(t, stdout.String(), "merge は stdout に何も出さない")
+		require.NoError(t, run([]string{"merge", "-provider", awsProvider, "-dir", dir, "-out", out}, &bytes.Buffer{}))
 		assert.FileExists(t, out)
 	})
 
@@ -68,18 +60,16 @@ func Test_run(t *testing.T) {
 		base := t.TempDir()
 		in := writeFile(t, base, "a.jsonl", planJSONL(providerBody(awsProvider, resourceX)))
 		out := filepath.Join(base, "provider-schema.json")
-		var stdout, stderr bytes.Buffer
-		require.NoError(t, run([]string{"plan-deprecated", "-out", out, in}, &stdout, &stderr))
-		assert.Empty(t, stdout.String(), "plan-deprecated は stdout に何も出さない")
+		require.NoError(t, run([]string{"plan-deprecated", "-out", out, in}, &bytes.Buffer{}))
 		assert.FileExists(t, out)
 	})
 
 	t.Run("サブコマンドが無いか知らなければ errUsage", func(t *testing.T) {
 		t.Parallel()
-		for name, args := range map[string][]string{"引数が無い": nil, "知らないサブコマンド": {"fetch"}} {
+		for name, args := range map[string][]string{"引数が無い": nil, "知らないサブコマンド": {"schema"}} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				require.ErrorIs(t, run(args, &bytes.Buffer{}, &bytes.Buffer{}), errUsage)
+				require.ErrorIs(t, run(args, &bytes.Buffer{}), errUsage)
 			})
 		}
 	})

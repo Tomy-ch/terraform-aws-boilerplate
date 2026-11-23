@@ -8,21 +8,21 @@ Conftest に割り当てる）。何を禁じるかは ADR が持ち、ここに
 起動は `make layer-check` で、CI では Pull Request の Static Analysis の層の job（`terraform-gates.yaml` の `tf-lint`）が
 TFLint の後に走らせ、apply する木では `terraform-apply.yaml` の `apply-layer-check` が走らせる。apply の job はその成功を
 待つ（[`.github/workflows/README.md`](../../../.github/workflows/README.md) の「apply の job」）。検査そのものの検査は、
-Rego のテスト（`layer-verify`）と、`scripts/hcl-input` などの Go のテストである。
+Rego のテスト（`layer-verify`）と、`scripts/hcl-input`・`scripts/hcl-tally`・`scripts/provider-schema` などの Go のテストである。
 
 | 段 | make | 判定するもの |
 | --- | --- | --- |
 | Rego のテスト | `layer-verify` | 各 deny の ID が違反と非違反の両方のテストを持ち、テストがすべて走って通ったこと（`infra-code-gate rego-tests`） |
-| Provider の schema | `layer-schema` | [`scripts/provider-schema`](../../../scripts/README.md) が、追跡している `.terraform.lock.hcl` の `hashicorp/aws` の版ごとに、その版だけを持つ一時の構成を作る。make はそれぞれを `init -lockfile=readonly` して `terraform providers schema -json` を取り、`provider-schema` が型ごとの書ける引数（`arguments`）・非推奨の書ける引数（`deprecated`。`make tf-policy` と同じ関数で取り出す）・block の名前（`blocks`）の和を JSON（`data.layer_schema`）に書く。lock が0件、Provider の block があるのに版が読めない、版の形が違う、init か schema の取得が失敗した、ある版の schema が読めないか型が0件のときは JSON を書かずに落ち、Conftest を起動しない。版ごとの schema は lock の内容が変わるまで `tmp/layer-check/schema/` に残し、取り直さない |
-| HCL の入力 | `layer-detect` | [`scripts/hcl-input`](../../../scripts/README.md) が走査の root（`usecases` `modules` `env`）の下のファイルを読み、block・入れ子の block・属性を、式の構文の木と参照の列とともに JSON に書く（ADR-0501 決定5）。読んだファイルの集合を `find` の一覧と突き合わせる。構文の誤り・知らない式・symlink・`.tf` が0件のときは JSON を書かずに落ち、Conftest を起動しない。段は `.makefiles/terraform/hcl-input.mk` が持ち、構文として読んだファイルの一覧とトップレベルの block の行頭の数えも `--data` に書く |
-| 検査 | `layer-detect` | その JSON を1つの入力として掛ける。入力の形と、構文として読んだファイルの集合・トップレベルの block の数を独立の数え（`find`・行頭の数え）と突き合わせ（`lib.hcl_input.input_errors`。ADR-0702 決定15）、入力の `.tf` と `.tf.json` の集合を構成ファイルの `find` の一覧と突き合わせ、評価した規則の数を `layer.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
+| 独立の数え | `layer-inputs` | [`scripts/hcl-tally`](../../../scripts/README.md) が、走査の root の下の通常のファイルの一覧、構成ファイル（`.tf`・`.tf.json`）の一覧、構文として読むファイルごとのトップレベルの block の行頭の数を、hcl-input とは別の経路で書く（ADR-0702 決定15）。root が1つでも無いか `.tf` が0件なら落ちる |
+| Provider の schema | `layer-schema` | [`scripts/provider-schema`](../../../scripts/README.md) が、git が追跡している `.terraform.lock.hcl` を `hcl-tally` の一覧の lock と突き合わせ、`hashicorp/aws` の版ごとに、その版だけを持つ一時の構成を作る。`provider-schema fetch` がそれぞれを `init -lockfile=readonly` して `terraform providers schema -json` を取り、`provider-schema merge` が型ごとの書ける引数（`arguments`）・非推奨の書ける引数（`deprecated`。`make tf-policy` と同じ関数で取り出す）・block の名前（`blocks`）の和を JSON（`data.layer_schema`）に書く。lock が0件、Provider の block があるのに版が読めない、版の形が違う、init か schema の取得が失敗した、ある版の schema が読めないか型が0件のときは JSON を書かずに落ち、Conftest を起動しない。版ごとの schema は lock の内容が変わるまで `tmp/layer-check/schema/` に残し、取り直さない |
+| HCL の入力 | `layer-detect` | [`scripts/hcl-input`](../../../scripts/README.md) が走査の root（`usecases` `modules` `env`）の下のファイルを読み、block・入れ子の block・属性を、式の構文の木と参照の列とともに JSON に書く（ADR-0501 決定5）。読んだファイルの集合を `hcl-tally` の一覧と突き合わせる。構文の誤り・知らない式・symlink・`.tf` が0件のときは JSON を書かずに落ち、Conftest を起動しない |
+| 検査 | `layer-detect` | その JSON を1つの入力として掛ける。入力の形と、構文として読んだファイルの集合・トップレベルの block の数を独立の数え（`hcl-tally` のファイルの一覧・行頭の数え）と突き合わせ（`lib.hcl_input.input_errors`。ADR-0702 決定15）、入力の `.tf` と `.tf.json` の集合を構成ファイルの `hcl-tally` の一覧と突き合わせ、評価した規則の数を `layer.rego` の `deny contains` の数と突き合わせる（`tf-local policy-result`） |
 
 `tf-local policy-result` は `layer.rego` の行頭の `deny contains` を数える。規則は字下げせずにこのファイルへ置く。
 
-上の「JSON を書かずに落ち、Conftest を起動しない」順序はレシピ（`.makefiles/terraform/layer.mk`・`hcl-input.mk`）が持ち、レシピの
-ロジックを Go へ移すまで（#439）、テストで固定されていない。Conftest を起動した後の失敗は、Conftest の `|| :` の
-後の `tf-local policy-result` が結果を読めないか規則の数と合わないことで落とす（読み手の側は `scripts/tf-local` の Go の
-テストが固定する）。
+上の「落ちたら Conftest を起動しない」順序は、make が段ごとに止まることが持つ（`.makefiles/terraform/layer.mk`）。各段が
+落ちる条件は、それぞれの道具の Go のテストが固定する。Conftest の終了コードは捨て、`tf-local policy-result` が結果を読めないか
+規則の数と合わないことで落とす。
 
 ## 失敗の読み方
 
@@ -32,9 +32,9 @@ symlink は実体のファイルで書く）。
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
 | `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
-| `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `find` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
+| `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `hcl-tally` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
 | `LY003` | 走査の root に JSON の構成（`.tf.json`）が在る。検査はそれを解釈しない（ADR-0501 決定5、ADR-0103 決定11） | HCL（`.tf`）で書く |
-| `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `find` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
+| `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
 | `LY101` | `usecases/<use-case>/` 直下の `.tf` に `resource` が在る（決定14） | module に置き、usecase は module を合成する |
 | `LY102` | `usecases/<use-case>/` 直下の `.tf` に `provider` が在る（決定14） | env の root に置く |
 | `LY103` | `usecases/<use-case>/` 直下の `.tf` に root module にしか置けない block（`import`、`terraform` の `backend` と `cloud`）が在る（決定14） | env の root に置く |

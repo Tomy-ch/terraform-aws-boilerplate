@@ -78,6 +78,8 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		return err
 	}
 	if len(results) == 0 {
+		printReport(out, *reportPath)
+
 		return xerrors.Wrapf(errNoInput, "%s: テストが1件も走っていません", *reportPath)
 	}
 
@@ -86,6 +88,9 @@ func runRegoTests(args []string, repo string, out io.Writer) error {
 		return err
 	}
 	findings := slices.Concat(suite.findings, parseFindings, checkPairs(suite), checkRan(suite, results))
+	if len(findings) > 0 {
+		printReport(out, *reportPath)
+	}
 	if err := report(out, "rego-tests", findings); err != nil {
 		return err
 	}
@@ -230,6 +235,16 @@ func checkPairs(suite *regoSuite) []lintreport.Finding {
 }
 
 // readReport は `conftest verify --report notes` の出力から、テストごとの結果を読みます。
+// printReport は、conftest verify の報告をそのまま out へ写します。落ちたテストの理由は報告にしか無いためです。
+// 読めなくても写さないだけにします（読めない報告は readReport が先に落としています）。
+func printReport(out io.Writer, p string) {
+	raw, err := os.ReadFile(filepath.Clean(p))
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(out, "conftest verify の報告（%s）:\n%s\n", p, strings.TrimRight(string(raw), "\n"))
+}
+
 func readReport(p string) (map[string]string, error) {
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {
