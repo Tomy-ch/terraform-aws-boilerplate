@@ -26,7 +26,7 @@ const (
 	testRepo    = "owner/name"
 	testLine    = "admin"
 	testDefault = "release/v0.1.0"
-	// testWorkflowDefault は、.github/workflows/ を変える線。workflowHead はこの線の commit を運ぶ。
+	// testWorkflowDefault は、workflowHead が運ばれる線（newHistory）。
 	testWorkflowDefault = "release/v0.2.0"
 	testWorkflow        = "terraform-apply.yaml"
 	testJob             = "apply-admin-identity"
@@ -206,7 +206,7 @@ func Test_parseOptions(t *testing.T) {
 	args, _ := planArgs(t, strings.Repeat("a", 40), "failure", "apply")
 	t.Run("すべての引数を受ける", func(t *testing.T) {
 		t.Parallel()
-		o, err := parseOptions(args)
+		o, err := parseOptions(args, noEnv)
 		require.NoError(t, err)
 		assert.Equal(t, testRun, o.runID)
 		assert.Equal(t, []jobResult{{job: testJob, result: "failure", outcome: "failure", failure: "apply"}}, o.results)
@@ -214,7 +214,7 @@ func Test_parseOptions(t *testing.T) {
 	})
 	t.Run("複数の job の結果を、渡した順に受ける", func(t *testing.T) {
 		t.Parallel()
-		o, err := parseOptions(replace(args, "-results", "apply-admin-identity=failure:failure:policy apply-admin-workload=skipped::"))
+		o, err := parseOptions(replace(args, "-results", "apply-admin-identity=failure:failure:policy apply-admin-workload=skipped::"), noEnv)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"apply-admin-identity", "apply-admin-workload"}, o.jobs)
 		assert.Equal(t, jobResult{job: "apply-admin-workload", result: "skipped"}, o.results[1])
@@ -241,10 +241,65 @@ func Test_parseOptions(t *testing.T) {
 	for name, mutate := range broken {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := parseOptions(mutate(slicesClone(args)))
+			_, err := parseOptions(mutate(slicesClone(args)), noEnv)
 			require.ErrorIs(t, err, errUsage)
 		})
 	}
+	t.Run("flag を与えなければ環境変数から取る", parseOptionsFromEnv)
+}
+
+// planEnv は、revert-plan の job が渡す環境変数で planArgs と同じ options を表す。
+func planEnv(t *testing.T, head string) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"GITHUB_REPOSITORY": testRepo, "GITHUB_REF_NAME": testLine, "DEFAULT_BRANCH": testDefault, "GITHUB_SHA": head,
+		"GITHUB_RUN_ID": strconv.FormatInt(testRun, 10), "APPLY_REVERT_RESULTS": testJob + "=failure:failure:apply",
+		"APPLY_REVERT_WORKFLOW": testWorkflow, "GITHUB_SERVER_URL": testServer, "GITHUB_OUTPUT": filepath.Join(t.TempDir(), "github_output"),
+	}
+}
+
+func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+func noEnv(string) string { return "" }
+
+func parseOptionsFromEnv(t *testing.T) {
+	t.Parallel()
+
+	head := strings.Repeat("a", 40)
+	branches := []string{"-branches", writeBranches(t, branchesBody)}
+	t.Run("-branches のほかは revert-plan の job の環境変数だけで揃う", func(t *testing.T) {
+		t.Parallel()
+		env := planEnv(t, head)
+		o, err := parseOptions(branches, envOf(env))
+		require.NoError(t, err)
+		args, _ := planArgs(t, head, "failure", "apply")
+		want, err := parseOptions(args, noEnv)
+		require.NoError(t, err)
+		want.branches, want.output = o.branches, env["GITHUB_OUTPUT"]
+		assert.Equal(t, want, o)
+	})
+	t.Run("flag は環境変数に勝つ", func(t *testing.T) {
+		t.Parallel()
+		o, err := parseOptions(append(slicesClone(branches), "-line", "other"), envOf(planEnv(t, head)))
+		require.NoError(t, err)
+		assert.Equal(t, "other", o.line)
+	})
+	for name := range planEnv(t, head) {
+		t.Run(name+" が空なら errUsage", func(t *testing.T) {
+			t.Parallel()
+			env := planEnv(t, head)
+			env[name] = ""
+			_, err := parseOptions(branches, envOf(env))
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+	t.Run("envDefaults は -branches のほかのすべての flag を覆う", func(t *testing.T) {
+		t.Parallel()
+		assert.Len(t, envDefaults, len(planEnv(t, head)))
+		for _, name := range envDefaults {
+			assert.Contains(t, planEnv(t, head), name)
+		}
+	})
 }
 
 func slicesClone(a []string) []string { return append([]string(nil), a...) }
@@ -886,6 +941,19 @@ func Test_verifyRevert(t *testing.T) {
 		assert.Contains(t, reason, "衝突")
 		assert.True(t, removed)
 	})
+	t.Run("commits を渡した順に1回の revert -m 1 へ渡す", func(t *testing.T) {
+		t.Parallel()
+		var reverts [][]string
+		stub := runner{output: func(_ string, args ...string) (string, error) {
+			if len(args) > 6 && args[6] == "revert" {
+				reverts = append(reverts, args[7:])
+			}
+			return "", nil
+		}}
+		_, err := verifyRevert(stub, h.base, h.head, []string{h.head, h.first})
+		require.NoError(t, err)
+		assert.Equal(t, [][]string{{"-m", "1", "--no-edit", "--", h.head, h.first}}, reverts)
+	})
 	t.Run("木の比較が 1 以外で失敗すれば理由にせず失敗する", func(t *testing.T) {
 		t.Parallel()
 		stub := runner{output: func(_ string, args ...string) (string, error) {
@@ -1097,7 +1165,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "failure", "policy")
 		var out bytes.Buffer
-		require.NoError(t, run(args, &out, (&fake{dir: h.dir, gh: gh}).runner()))
+		require.NoError(t, run(args, noEnv, &out, (&fake{dir: h.dir, gh: gh}).runner()))
 		m := outputs(t, path)
 		// 鍵の名前は terraform-apply.yaml の revert-plan の outputs が読む名前である。
 		assert.ElementsMatch(t, []string{"decision", "headline", "summary", "commits", "branch", "head"}, keys(m))
@@ -1111,7 +1179,7 @@ func Test_run(t *testing.T) {
 	t.Run("用意できなければ理由を outputs に書き、push の値を書かない", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "failure", "apply")
-		require.NoError(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: map[string]string{runsKey(): runsJSON()}}).runner()))
+		require.NoError(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: map[string]string{runsKey(): runsJSON()}}).runner()))
 		m := outputs(t, path)
 		assert.ElementsMatch(t, []string{"decision", "headline", "summary"}, keys(m))
 		assert.Equal(t, "none", m["decision"])
@@ -1121,7 +1189,7 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.workflowHead, "failure", "apply")
 		args = replace(args, "-default", testWorkflowDefault)
-		require.NoError(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()))
+		require.NoError(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()))
 		m := outputs(t, path)
 		assert.ElementsMatch(t, []string{"decision", "headline", "summary"}, keys(m))
 		assert.Equal(t, "local", m["decision"])
@@ -1131,13 +1199,13 @@ func Test_run(t *testing.T) {
 		t.Parallel()
 		args, _ := planArgs(t, h.head, "failure", "lock")
 		args = replace(args, "-output", filepath.Join(t.TempDir(), "missing", "out"))
-		require.ErrorIs(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()), os.ErrNotExist)
+		require.ErrorIs(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()), os.ErrNotExist)
 	})
 	t.Run("対象外なら skip を書き、API を呼ばない", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "failure", "lock")
 		f := &fake{dir: h.dir, gh: gh}
-		require.NoError(t, run(args, &bytes.Buffer{}, f.runner()))
+		require.NoError(t, run(args, noEnv, &bytes.Buffer{}, f.runner()))
 		m := outputs(t, path)
 		assert.Equal(t, "skip", m["decision"])
 		assert.Contains(t, m["reason"], "lock")
@@ -1148,7 +1216,7 @@ func Test_run(t *testing.T) {
 		args, path := planArgsWith(t, h.head, testJob+"=failure:failure:apply")
 		args = replace(replace(args, "-line", "security"), "-branches", writeBranches(t, strings.Replace(branchesBody, `{"branch":"admin","env":"admin","from":["release/"]}`, `{"branch":"security","env":"security","from":["release/"]}`, 1)))
 		ghs := map[string]string{"api repos/" + testRepo + "/actions/workflows/" + testWorkflow + "/runs?branch=security&event=push&per_page=100&status=completed": runsJSON(10, h.base), jobsKey(10): jobsJSON(testJob, "success", h.base), refsKey("revert/apply-42"): "[]"}
-		require.NoError(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: ghs}).runner()))
+		require.NoError(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: ghs}).runner()))
 		assert.Equal(t, "push", outputs(t, path)["decision"])
 	})
 	t.Run("skipped の job は戻す対象なしに数え、ほかの job の失敗で戻す", func(t *testing.T) {
@@ -1157,27 +1225,27 @@ func Test_run(t *testing.T) {
 		both := maps.Clone(gh)
 		both[jobsKey(10)] = fmt.Sprintf(`{"total_count":2,"jobs":[{"name":%q,"conclusion":"success","head_sha":%q},{"name":"apply-admin-workload","conclusion":"success","head_sha":%q}]}`, testJob, h.base, h.base)
 		f := &fake{dir: h.dir, gh: both}
-		require.NoError(t, run(args, &bytes.Buffer{}, f.runner()))
+		require.NoError(t, run(args, noEnv, &bytes.Buffer{}, f.runner()))
 		assert.Equal(t, "push", outputs(t, path)["decision"])
 		assert.NotEmpty(t, f.calls, "戻す対象と判定して、最後に成功した run を読みに行く")
 	})
 	t.Run("結果を受け取れなければ何も書かずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "", "")
-		require.ErrorIs(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()), errNoOutcome)
+		require.ErrorIs(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: gh}).runner()), errNoOutcome)
 		_, err := os.Stat(path)
 		assert.True(t, os.IsNotExist(err))
 	})
 	t.Run("API を読めなければ何も書かずに失敗する", func(t *testing.T) {
 		t.Parallel()
 		args, path := planArgs(t, h.head, "failure", "apply")
-		require.ErrorIs(t, run(args, &bytes.Buffer{}, (&fake{dir: h.dir, gh: map[string]string{}}).runner()), errAPI)
+		require.ErrorIs(t, run(args, noEnv, &bytes.Buffer{}, (&fake{dir: h.dir, gh: map[string]string{}}).runner()), errAPI)
 		_, err := os.Stat(path)
 		assert.True(t, os.IsNotExist(err))
 	})
 	t.Run("引数が足りなければ失敗する", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run(nil, &bytes.Buffer{}, (&fake{}).runner()), errUsage)
+		require.ErrorIs(t, run(nil, noEnv, &bytes.Buffer{}, (&fake{}).runner()), errUsage)
 	})
 }
 

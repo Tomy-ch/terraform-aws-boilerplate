@@ -4,6 +4,8 @@
 //	apply-revert plan -repo <owner/name> -line <branch> -default <branch> -head <sha> -run <id>
 //	    -results "<job>=<result>:<outcome>:<failure> ..." -workflow <file> -branches <branches.json> -server <url> -output <file>
 //
+// -branches のほかの flag は、与えなければ revert-plan の job の環境変数から取る（envDefaults）。
+//
 // -line はデプロイブランチ、-default はデフォルトブランチの名前である。revert はデプロイブランチの上では作らず、
 // 失敗した merge が運んだ線の commit（head の第2親）の上で作り、デフォルトブランチへ向ける（ADR-0601 決定17）。
 //
@@ -21,7 +23,7 @@
 //
 // 判定は gh と git の出力だけを読む。origin へは書かない —— この job は contents: read だけを持つ。戻す範囲は、
 // 一時の worktree で実際に revert し、木が最後に成功した commit の木と一致することを確かめてから決める。
-// push の入口はこの判定を繰り返さず、同じ commit を同じ順に revert して push するだけである。
+// push の入口はこの判定を繰り返さず、同じ commit を同じ順に1回の `git revert` へ渡して push するだけである。
 // 規則は .github/workflows/README.md の「apply の失敗の revert」。
 package main
 
@@ -77,7 +79,7 @@ var (
 	repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	jobPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -default <b> -head <sha> -run <id> -results \"<job>=<result>:<outcome>:<failure> ...\" -workflow <f> -branches <file> -server <url> -output <file>")
+	errUsage          = xerrors.New("❌ usage: apply-revert plan -repo <r> -line <b> -default <b> -head <sha> -run <id> -results \"<job>=<result>:<outcome>:<failure> ...\" -workflow <f> -branches <file> -server <url> -output <file>（-branches のほかは環境変数 GITHUB_REPOSITORY・GITHUB_REF_NAME・DEFAULT_BRANCH・GITHUB_SHA・GITHUB_RUN_ID・APPLY_REVERT_RESULTS・APPLY_REVERT_WORKFLOW・GITHUB_SERVER_URL・GITHUB_OUTPUT でもよい）")
 	errNoOutcome      = xerrors.New("❌ apply の step の結果を受け取れません。apply の job の outputs が渡っていません")
 	errNoKind         = xerrors.New("❌ apply の step が失敗したのに、失敗の種類を受け取れません")
 	errUnknownKind    = xerrors.New("❌ 失敗の種類を知りません")
@@ -104,7 +106,7 @@ func main() {
 	if len(os.Args) < 2 || os.Args[1] != "plan" {
 		log.Fatal(errUsage)
 	}
-	if err := run(os.Args[2:], os.Stdout, runner{output: output}); err != nil {
+	if err := run(os.Args[2:], os.Getenv, os.Stdout, runner{output: output}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -143,23 +145,43 @@ func parseResults(value string) ([]jobResult, error) {
 	return out, nil
 }
 
-func parseOptions(args []string) (options, error) {
+// envDefaults は、flag の名前と、与えないときに値を取る環境変数の名前の対。環境変数は revert-plan の job が渡す
+// （.github/workflows/terraform-apply.yaml の revert-plan）。
+var envDefaults = map[string]string{
+	"repo":     "GITHUB_REPOSITORY",
+	"line":     "GITHUB_REF_NAME",
+	"default":  "DEFAULT_BRANCH",
+	"head":     "GITHUB_SHA",
+	"run":      "GITHUB_RUN_ID",
+	"results":  "APPLY_REVERT_RESULTS",
+	"workflow": "APPLY_REVERT_WORKFLOW",
+	"server":   "GITHUB_SERVER_URL",
+	"output":   "GITHUB_OUTPUT",
+}
+
+func parseOptions(args []string, getenv func(string) string) (options, error) {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	env := func(name string) string { return getenv(envDefaults[name]) }
 	var o options
-	fs.StringVar(&o.repo, "repo", "", "")
-	fs.StringVar(&o.line, "line", "", "")
-	fs.StringVar(&o.def, "default", "", "")
-	fs.StringVar(&o.head, "head", "", "")
-	fs.Int64Var(&o.runID, "run", 0, "")
-	results := fs.String("results", "", "")
-	fs.StringVar(&o.workflow, "workflow", "", "")
+	fs.StringVar(&o.repo, "repo", env("repo"), "")
+	fs.StringVar(&o.line, "line", env("line"), "")
+	fs.StringVar(&o.def, "default", env("default"), "")
+	fs.StringVar(&o.head, "head", env("head"), "")
+	runID := fs.String("run", env("run"), "")
+	results := fs.String("results", env("results"), "")
+	fs.StringVar(&o.workflow, "workflow", env("workflow"), "")
 	fs.StringVar(&o.branches, "branches", "", "")
-	fs.StringVar(&o.server, "server", "", "")
-	fs.StringVar(&o.output, "output", "", "")
+	fs.StringVar(&o.server, "server", env("server"), "")
+	fs.StringVar(&o.output, "output", env("output"), "")
 	if err := fs.Parse(args); err != nil {
 		return options{}, xerrors.Wrap(errUsage, err.Error())
 	}
+	id, err := strconv.ParseInt(*runID, 10, 64)
+	if err != nil {
+		return options{}, xerrors.Wrapf(errUsage, "-run の %q", *runID)
+	}
+	o.runID = id
 	if fs.NArg() > 0 || !repoPattern.MatchString(o.repo) || o.line == "" || o.def == "" || !shaPattern.MatchString(o.head) || o.runID <= 0 ||
 		o.workflow == "" || o.branches == "" || o.server == "" || o.output == "" {
 		return options{}, errUsage
@@ -175,8 +197,8 @@ func parseOptions(args []string) (options, error) {
 	return o, nil
 }
 
-func run(args []string, out io.Writer, r runner) error {
-	o, err := parseOptions(args)
+func run(args []string, getenv func(string) string, out io.Writer, r runner) error {
+	o, err := parseOptions(args, getenv)
 	if err != nil {
 		return err
 	}
@@ -288,8 +310,8 @@ func decide(o options, r runner) ([][2]string, error) {
 }
 
 // resultsEligibility は、apply の job ごとの結果から、revert の対象かを返します。どれか1つの job が対象なら
-// 空の理由を返す。failure でない job は戻すものを持たない —— identity root の apply が失敗すれば、それを
-// needs で待つ job は skipped になる。どれか1つでも判定できない job があれば、ほかが対象でもエラーにする。
+// 空の理由を返す。failure でない job は戻すものを持たない。どれか1つでも判定できない job があれば、
+// ほかが対象でもエラーにする。
 func resultsEligibility(results []jobResult) (string, error) {
 	if len(results) == 0 {
 		return "", xerrors.Wrap(errUsage, "apply の job の結果がありません")
@@ -483,8 +505,9 @@ func sourceHead(r runner, d branchdecl.DeployBranch, def, head string) (string, 
 	return source, "", nil
 }
 
-// verifyRevert は、start を一時の worktree へ取り出して commits を順に revert し、木が base の木と一致するかを
-// 確かめます。revert が衝突するか木が一致しなければ、用意しない理由を返す。worktree は戻る前に外す。
+// verifyRevert は、start を一時の worktree へ取り出して commits をこの順に1回の `git revert` で戻し、木が base の
+// 木と一致するかを確かめます。push の入口（apply-revert.mk）と同じ起動の形である。revert が衝突するか木が一致
+// しなければ、用意しない理由を返す。worktree は戻る前に外す。
 func verifyRevert(r runner, base, start string, commits []string) (string, error) {
 	dir, err := os.MkdirTemp("", "apply-revert-")
 	if err != nil {
@@ -496,15 +519,18 @@ func verifyRevert(r runner, base, start string, commits []string) (string, error
 	}
 	defer func() { _, _ = r.output("git", "worktree", "remove", "--force", dir) }()
 
-	for _, c := range commits {
-		if _, err := r.output("git", "-C", dir, "-c", "user.name=apply-revert", "-c", "user.email=apply-revert@invalid",
-			"revert", "-m", "1", "--no-edit", c); err != nil {
-			var code exitCoder
-			if xerrors.As(err, &code) && code.ExitCode() == 1 {
-				return fmt.Sprintf("merge %s の revert が衝突するか、空になります", c[:7]), nil
+	args := append([]string{"-C", dir, "-c", "user.name=apply-revert", "-c", "user.email=apply-revert@invalid",
+		"revert", "-m", "1", "--no-edit", "--"}, commits...)
+	if _, err := r.output("git", args...); err != nil {
+		var code exitCoder
+		if xerrors.As(err, &code) && code.ExitCode() == 1 {
+			short := make([]string, len(commits))
+			for i, c := range commits {
+				short[i] = c[:7]
 			}
-			return "", xerrors.Wrap(errGit, err.Error())
+			return fmt.Sprintf("merge %s の revert のいずれかが衝突するか、空になります", strings.Join(short, " ")), nil
 		}
+		return "", xerrors.Wrap(errGit, err.Error())
 	}
 	if _, err := r.output("git", "-C", dir, "diff", "--quiet", base, "HEAD"); err != nil {
 		var code exitCoder
