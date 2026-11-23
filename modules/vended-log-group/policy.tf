@@ -1,5 +1,5 @@
 # kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370
-# e592a0c5（IAM Access Analyzer）: アカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: account-baseline を実装したとき。
+# e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
 
 resource "aws_cloudwatch_log_resource_policy" "this" {
   resource_arn = aws_cloudwatch_log_group.this.arn
