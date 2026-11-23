@@ -1,18 +1,22 @@
-# 引数なしで、このアカウントで有効なリージョンを返す。宣言の集合の外のリージョンが有効なら、そこに設定が届かないので plan で止める。
-data "aws_regions" "enabled" {
-  lifecycle {
-    postcondition {
-      condition     = length(setsubtract(self.names, var.regions)) == 0
-      error_message = "このアカウントで、account-baseline の宣言の外のリージョンが有効になっています（${join(", ", sort(setsubtract(self.names, var.regions)))}）。opt-in のリージョンは使えません（account-baseline/ADR-0101）。"
-    }
-  }
-}
+# kics-scan disable=e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10
+# e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
+
+# 引数なしで、このアカウントで有効なリージョンを返す。
+data "aws_regions" "enabled" {}
 
 resource "aws_ebs_encryption_by_default" "this" {
   for_each = var.regions
 
   region  = each.key
   enabled = true
+
+  # 宣言の集合の外のリージョンが有効なら、そこに設定が届かないので plan で止める。
+  lifecycle {
+    precondition {
+      condition     = length(setsubtract(data.aws_regions.enabled.names, var.regions)) == 0
+      error_message = "このアカウントで、account-baseline の宣言の外のリージョンが有効になっています（${join(", ", sort(setsubtract(data.aws_regions.enabled.names, var.regions)))}）。opt-in のリージョンは使えません（account-baseline/ADR-0101）。"
+    }
+  }
 }
 
 resource "aws_accessanalyzer_analyzer" "this" {

@@ -56,7 +56,7 @@ issue #472 で退けた。Chatbot の SLR を前提にする `ops-notification` 
 ## 検証方法
 
 - Unit Test: `internal/config-recorder/tests/` の `recorder_per_region` が SLR の service 名を確かめる
-- Policy Test（`make tf-policy`）: `PLAN-ABL-02` が reference の plan で recorder の `role_arn` の形を見る。`conftest/plan/stateful_protection_test.rego` が、宣言の `protected_types` から SLR の型が外れることを落とす。`PLAN-STATE-*` は CI の実 plan（`plan.stateful_protection`）で SLR の削除と置換を見る
+- Policy Test（`make tf-policy`）: `PLAN-ACB-02` が reference の plan で recorder の `role_arn` の形を見る。`conftest/plan/stateful_protection_test.rego` が、宣言の `protected_types` から SLR の型が外れることを落とす。`PLAN-STATE-*` は CI の実 plan（`plan.stateful_protection`）で SLR の削除と置換を見る
 
 ## 影響
 

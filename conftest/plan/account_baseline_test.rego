@@ -119,21 +119,21 @@ test_pass_deleted_unsafe_setting_is_not_read if {
 }
 
 test_violation_no_declaration if {
-	fixture.has("[PLAN-ABL-00]", p.deny) with input as array.concat(ab(ok), org_baseline) with data.policy_plan.account_baseline as null
+	fixture.has("[PLAN-ACB-00]", p.deny) with input as array.concat(ab(ok), org_baseline) with data.policy_plan.account_baseline as null
 }
 
 test_violation_each_declaration_key_missing if {
 	every k in ["regions", "regional", "config", "public_access_block", "owners", "password_policy_keys"] {
-		fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as object.remove(decl, [k])
+		fixture.has("[PLAN-ACB-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as object.remove(decl, [k])
 	}
 }
 
 test_violation_declaration_inner_key_missing if {
 	every k in ["recorder", "status", "delivery", "retention"] {
-		fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, "config", object.remove(decl.config, [k]))
+		fixture.has("[PLAN-ACB-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, "config", object.remove(decl.config, [k]))
 	}
 	every k in ["ebs_encryption", "analyzer", "emr_block_public_access", "ssm_service_setting", "vpc_block_public_access"] {
-		fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, "regional", object.remove(decl.regional, [k]))
+		fixture.has("[PLAN-ACB-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, "regional", object.remove(decl.regional, [k]))
 	}
 }
 
@@ -145,69 +145,69 @@ test_violation_declaration_values_malformed if {
 		["public_access_block", 1], ["password_policy_keys", []], ["password_policy_keys", [1]],
 		["password_policy_keys", [""]], ["password_policy_keys", ["minimum_password_length", "minimum_password_length"]],
 	] {
-		fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, bad[0], bad[1])
+		fixture.has("[PLAN-ACB-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, bad[0], bad[1])
 	}
 }
 
 test_violation_empty_input if {
-	fixture.has("[PLAN-ABL-00]", denies([]))
+	fixture.has("[PLAN-ACB-00]", denies([]))
 }
 
 test_violation_each_required_type_absent if {
 	every type in ["aws_ebs_encryption_by_default", "aws_accessanalyzer_analyzer", "aws_emr_block_public_access_configuration", "aws_ssm_service_setting", "aws_vpc_block_public_access_options", "aws_s3_account_public_access_block", "aws_config_configuration_recorder"] {
-		fixture.has("[PLAN-ABL-00]", denies([rc | some rc in ok; rc.type != type]))
+		fixture.has("[PLAN-ACB-00]", denies([rc | some rc in ok; rc.type != type]))
 	}
 }
 
 test_violation_settings_only_in_another_usecase if {
 	other := plan_of("tmp/tf-policy/state-backend.json", ok)
-	fixture.has("[PLAN-ABL-00]", p.deny) with input as other with data.policy_plan.account_baseline as decl
+	fixture.has("[PLAN-ACB-00]", p.deny) with input as other with data.policy_plan.account_baseline as decl
 }
 
 test_violation_region_missing if {
-	only("[PLAN-ABL-01]", denies(without(ok, addr("aws_ebs_encryption_by_default", "this", "us-east-1"))))
+	only("[PLAN-ACB-01]", denies(without(ok, addr("aws_ebs_encryption_by_default", "this", "us-east-1"))))
 }
 
 test_violation_region_extra if {
-	only("[PLAN-ABL-01]", denies(array.concat(ok, [change("aws_ebs_encryption_by_default", addr("aws_ebs_encryption_by_default", "this", "af-south-1"), {"region": "af-south-1", "enabled": true})])))
+	only("[PLAN-ACB-01]", denies(array.concat(ok, [change("aws_ebs_encryption_by_default", addr("aws_ebs_encryption_by_default", "this", "af-south-1"), {"region": "af-south-1", "enabled": true})])))
 }
 
 test_violation_region_missing_in_one_instance if {
 	sandbox := without(no_config("sandbox"), "module.sandbox.module.regional_controls.aws_vpc_block_public_access_options.this[\"us-east-1\"]")
-	only("[PLAN-ABL-01]", denies(array.concat(ok, sandbox)))
+	only("[PLAN-ACB-01]", denies(array.concat(ok, sandbox)))
 }
 
 test_violation_ssm_setting_missing_in_one_region if {
 	every name in ["automation_log_destination", "document_public_sharing"] {
-		only("[PLAN-ABL-01]", denies(without(ok, addr("aws_ssm_service_setting", name, "us-east-1"))))
+		only("[PLAN-ACB-01]", denies(without(ok, addr("aws_ssm_service_setting", name, "us-east-1"))))
 	}
 }
 
 test_violation_config_region_missing if {
 	every type in ["aws_config_configuration_recorder", "aws_config_delivery_channel", "aws_config_configuration_recorder_status", "aws_config_retention_configuration"] {
-		fixture.has("[PLAN-ABL-01]", denies(without(ok, cfg(type, "us-east-1"))))
+		fixture.has("[PLAN-ACB-01]", denies(without(ok, cfg(type, "us-east-1"))))
 	}
 }
 
 test_violation_config_without_recorder_in_instance if {
 	partial := [rc | some rc in config("sandbox", "ap-northeast-1", true); rc.type == "aws_config_delivery_channel"]
-	fixture.has("[PLAN-ABL-01]", denies(array.concat(ok, partial)))
+	fixture.has("[PLAN-ACB-01]", denies(array.concat(ok, partial)))
 }
 
 test_violation_region_unknown if {
 	every a in [addr("aws_ebs_encryption_by_default", "this", "us-east-1"), cfg("aws_config_delivery_channel", "us-east-1")] {
-		fixture.has("[PLAN-ABL-01]", denies([unknown_of(rc, a, "region") | some rc in ok]))
+		fixture.has("[PLAN-ACB-01]", denies([unknown_of(rc, a, "region") | some rc in ok]))
 	}
 }
 
 test_violation_region_absent if {
 	a := addr("aws_accessanalyzer_analyzer", "this", "us-east-1")
 	rcs := [r | some rc in ok; rc.address == a; r := set_key(rc, "change", set_key(rc.change, "after", object.remove(rc.change.after, ["region"])))]
-	fixture.has("[PLAN-ABL-01]", denies(array.concat(without(ok, a), rcs)))
+	fixture.has("[PLAN-ACB-01]", denies(array.concat(without(ok, a), rcs)))
 }
 
 test_violation_unreadable_instance if {
-	fixture.has("[PLAN-ABL-01]", denies(array.concat(ok, [change("aws_accessanalyzer_analyzer", "aws_accessanalyzer_analyzer.loose", {"region": "us-east-1", "type": "ACCOUNT"})])))
+	fixture.has("[PLAN-ACB-01]", denies(array.concat(ok, [change("aws_accessanalyzer_analyzer", "aws_accessanalyzer_analyzer.loose", {"region": "us-east-1", "type": "ACCOUNT"})])))
 }
 
 test_violation_unsafe_regional_values if {
@@ -224,22 +224,22 @@ test_violation_unsafe_regional_values if {
 		[addr("aws_ssm_service_setting", "automation_log_destination", "us-east-1"), {"setting_value": "S3"}],
 		[addr("aws_vpc_block_public_access_options", "this", "us-east-1"), {"internet_gateway_block_mode": "block-ingress"}],
 	] {
-		only("[PLAN-ABL-02]", denies(patch_all(ok, bad[0], bad[1])))
+		only("[PLAN-ACB-02]", denies(patch_all(ok, bad[0], bad[1])))
 	}
 }
 
 test_violation_unknown_ssm_setting if {
 	extra := change("aws_ssm_service_setting", addr("aws_ssm_service_setting", "other", "us-east-1"), {"region": "us-east-1", "setting_id": "/ssm/parameter-store/high-throughput-enabled", "setting_value": "true"})
-	fixture.has("[PLAN-ABL-02]", denies(array.concat(ok, [extra])))
+	fixture.has("[PLAN-ACB-02]", denies(array.concat(ok, [extra])))
 }
 
 test_violation_recorder_disabled if {
-	only("[PLAN-ABL-02]", denies(patch_all(ok, cfg("aws_config_configuration_recorder_status", "us-east-1"), {"is_enabled": false})))
+	only("[PLAN-ACB-02]", denies(patch_all(ok, cfg("aws_config_configuration_recorder_status", "us-east-1"), {"is_enabled": false})))
 }
 
 test_violation_recorder_role_not_config_slr if {
 	every role in ["arn:aws:iam::123456789012:role/config-recorder", "arn:aws:iam::12345678901:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig", "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfigX"] {
-		only("[PLAN-ABL-02]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "us-east-1"), {"role_arn": role})))
+		only("[PLAN-ACB-02]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "us-east-1"), {"role_arn": role})))
 	}
 }
 
@@ -249,47 +249,47 @@ test_pass_recorder_role_in_other_partition if {
 
 test_violation_recorder_role_unknown if {
 	a := cfg("aws_config_configuration_recorder", "us-east-1")
-	only("[PLAN-ABL-02]", denies([unknown_of(rc, a, "role_arn") | some rc in patch_all(ok, a, {"role_arn": null})]))
+	only("[PLAN-ACB-02]", denies([unknown_of(rc, a, "role_arn") | some rc in patch_all(ok, a, {"role_arn": null})]))
 }
 
 test_violation_global_resources_twice if {
-	only("[PLAN-ABL-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "us-east-1"), {"recording_group": [{"all_supported": true, "include_global_resource_types": true}]})))
+	only("[PLAN-ACB-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "us-east-1"), {"recording_group": [{"all_supported": true, "include_global_resource_types": true}]})))
 }
 
 test_violation_global_resources_nowhere if {
-	only("[PLAN-ABL-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "ap-northeast-1"), {"recording_group": [{"all_supported": true, "include_global_resource_types": false}]})))
-	only("[PLAN-ABL-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "ap-northeast-1"), {"recording_group": []})))
+	only("[PLAN-ACB-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "ap-northeast-1"), {"recording_group": [{"all_supported": true, "include_global_resource_types": false}]})))
+	only("[PLAN-ACB-03]", denies(patch_all(ok, cfg("aws_config_configuration_recorder", "ap-northeast-1"), {"recording_group": []})))
 }
 
 test_violation_public_access_block_off if {
 	every key in ["block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"] {
-		only("[PLAN-ABL-04]", denies(patch_all(ok, "module.dev.module.account_controls.aws_s3_account_public_access_block.this", {key: false})))
+		only("[PLAN-ACB-04]", denies(patch_all(ok, "module.dev.module.account_controls.aws_s3_account_public_access_block.this", {key: false})))
 	}
 }
 
 test_violation_owned_outside if {
 	every type in ["aws_s3_account_public_access_block", "aws_config_configuration_recorder", "aws_ssm_service_setting"] {
 		other := plan_of("tmp/tf-policy/state-backend.json", [change(type, "module.sb.x.this", {})])
-		fixture.has("[PLAN-ABL-05]", p.deny) with input as array.concat(ab(ok), other) with data.policy_plan.account_baseline as decl
+		fixture.has("[PLAN-ACB-05]", p.deny) with input as array.concat(ab(ok), other) with data.policy_plan.account_baseline as decl
 	}
 }
 
 test_violation_password_policy_in_third_usecase if {
 	other := plan_of("tmp/tf-policy/finops.json", [password_policy("finops", 14)])
-	fixture.has("[PLAN-ABL-05]", p.deny) with input as array.concat(ab(ok), other) with data.policy_plan.account_baseline as decl
+	fixture.has("[PLAN-ACB-05]", p.deny) with input as array.concat(ab(ok), other) with data.policy_plan.account_baseline as decl
 }
 
 test_violation_password_policy_values_differ if {
-	only("[PLAN-ABL-06]", denies(patch_all(ok, "module.dev.module.account_controls.aws_iam_account_password_policy.this", {"minimum_password_length": 12})))
+	only("[PLAN-ACB-06]", denies(patch_all(ok, "module.dev.module.account_controls.aws_iam_account_password_policy.this", {"minimum_password_length": 12})))
 }
 
 test_violation_password_policy_without_counterpart if {
 	msgs := p.deny with input as ab(ok) with data.policy_plan.account_baseline as decl
-	only("[PLAN-ABL-06]", msgs)
+	only("[PLAN-ACB-06]", msgs)
 }
 
 test_violation_password_policy_keys_not_attributes if {
-	d := set_key(decl, "password_policy_keys", ["minimum_password_lenght"])
+	d := set_key(decl, "password_policy_keys", ["minimum_length_of_password"])
 	msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.policy_plan.account_baseline as d
-	only("[PLAN-ABL-06]", msgs)
+	only("[PLAN-ACB-06]", msgs)
 }

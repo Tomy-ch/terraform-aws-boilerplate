@@ -91,28 +91,28 @@ config_instances contains {"path": c.path, "instance": instance_of(c.rc.address)
 
 deny contains msg if {
 	not well_formed_decl
-	msg := "[PLAN-ABL-00] 宣言 account_baseline の regions・regional・config・public_access_block・owners・password_policy_keys が無いか、形が違います"
+	msg := "[PLAN-ACB-00] 宣言 account_baseline の regions・regional・config・public_access_block・owners・password_policy_keys が無いか、形が違います"
 }
 
 deny contains msg if {
 	well_formed_decl
 	some type in array.concat(regional_types, [decl.public_access_block, decl.config.recorder])
 	count(own_changes_of(type)) == 0
-	msg := sprintf("[PLAN-ABL-00] 入力に account-baseline の %s の変更がありません。見る対象が0件では通しません", [type])
+	msg := sprintf("[PLAN-ACB-00] 入力に account-baseline の %s の変更がありません。見る対象が0件では通しません", [type])
 }
 
 deny contains msg if {
 	some type in array.concat(regional_types, config_types)
 	some c in own_changes_of(type)
 	not regex.match(`^module\.[^.\[]+(\[[^\]]*\])?`, c.rc.address)
-	msg := sprintf("[PLAN-ABL-01] %s: %s の address から usecase の instance を読めません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-01] %s: %s の address から usecase の instance を読めません", [c.path, c.rc.address])
 }
 
 deny contains msg if {
 	some type in array.concat(regional_types, config_types)
 	some c in own_changes_of(type)
 	unknown(c, "region")
-	msg := sprintf("[PLAN-ABL-01] %s: %s の region が plan で決まりません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-01] %s: %s の region が plan で決まりません", [c.path, c.rc.address])
 }
 
 deny contains msg if {
@@ -121,7 +121,7 @@ deny contains msg if {
 	type != decl.regional.ssm_service_setting
 	got := regions_of(i.path, i.instance, type)
 	got != regions
-	msg := sprintf("[PLAN-ABL-01] %s: %s の %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, type, regions - got, got - regions])
+	msg := sprintf("[PLAN-ACB-01] %s: %s の %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, type, regions - got, got - regions])
 }
 
 ssm_settings := {
@@ -142,7 +142,7 @@ deny contains msg if {
 	some id, _ in ssm_settings
 	got := ssm_regions(i.path, i.instance, id)
 	got != regions
-	msg := sprintf("[PLAN-ABL-01] %s: %s の SSM の設定 %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, id, regions - got, got - regions])
+	msg := sprintf("[PLAN-ACB-01] %s: %s の SSM の設定 %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, id, regions - got, got - regions])
 }
 
 deny contains msg if {
@@ -150,7 +150,7 @@ deny contains msg if {
 	some type in config_types
 	got := regions_of(i.path, i.instance, type)
 	got != regions
-	msg := sprintf("[PLAN-ABL-01] %s: %s の %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, type, regions - got, got - regions])
+	msg := sprintf("[PLAN-ACB-01] %s: %s の %s が、宣言のリージョンの集合に過不足なく在りません（足りない %v、余る %v）", [i.path, i.instance, type, regions - got, got - regions])
 }
 
 safe(c, "ebs_encryption") if after(c, "enabled") == true
@@ -174,26 +174,26 @@ deny contains msg if {
 	some name, type in decl.regional
 	some c in own_changes_of(type)
 	not safe(c, name)
-	msg := sprintf("[PLAN-ABL-02] %s: %s の値が安全側の形ではありません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-02] %s: %s の値が安全側の形ではありません", [c.path, c.rc.address])
 }
 
 deny contains msg if {
 	some c in own_changes_of(decl.config.status)
 	after(c, "is_enabled") != true
-	msg := sprintf("[PLAN-ABL-02] %s: %s が recorder を有効にしていません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-02] %s: %s が recorder を有効にしていません", [c.path, c.rc.address])
 }
 
 deny contains msg if {
 	some c in own_changes_of(decl.config.recorder)
 	not unknown(c, "role_arn")
 	not regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/aws-service-role/config\.amazonaws\.com/AWSServiceRoleForConfig$`, after(c, "role_arn"))
-	msg := sprintf("[PLAN-ABL-02] %s: %s の role_arn が AWS Config の service-linked role ではありません（Config.1）", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-02] %s: %s の role_arn が AWS Config の service-linked role ではありません（Config.1）", [c.path, c.rc.address])
 }
 
 deny contains msg if {
 	some c in own_changes_of(decl.config.recorder)
 	unknown(c, "role_arn")
-	msg := sprintf("[PLAN-ABL-02] %s: %s の role_arn が plan で決まりません", [c.path, c.rc.address])
+	msg := sprintf("[PLAN-ACB-02] %s: %s の role_arn が plan で決まりません", [c.path, c.rc.address])
 }
 
 global_regions(path, instance) := [r |
@@ -208,21 +208,21 @@ global_regions(path, instance) := [r |
 deny contains msg if {
 	some i in config_instances
 	count(global_regions(i.path, i.instance)) != 1
-	msg := sprintf("[PLAN-ABL-03] %s: %s でグローバルな resource を記録する recorder が、ちょうど1つのリージョンではありません（%v）", [i.path, i.instance, global_regions(i.path, i.instance)])
+	msg := sprintf("[PLAN-ACB-03] %s: %s でグローバルな resource を記録する recorder が、ちょうど1つのリージョンではありません（%v）", [i.path, i.instance, global_regions(i.path, i.instance)])
 }
 
 deny contains msg if {
 	some c in own_changes_of(decl.public_access_block)
 	some key in ["block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"]
 	after(c, key) != true
-	msg := sprintf("[PLAN-ABL-04] %s: %s の %s が true ではありません（S3.1）", [c.path, c.rc.address, key])
+	msg := sprintf("[PLAN-ACB-04] %s: %s の %s が true ではありません（S3.1）", [c.path, c.rc.address, key])
 }
 
 deny contains msg if {
 	some type, owners in decl.owners
 	some c in changes_of(type)
 	not usecase_of(c.path) in owners
-	msg := sprintf("[PLAN-ABL-05] %s: %s はアカウントに1つしか置けない型で、%v の外が持っています", [c.path, c.rc.address, owners])
+	msg := sprintf("[PLAN-ACB-05] %s: %s はアカウントに1つしか置けない型で、%v の外が持っています", [c.path, c.rc.address, owners])
 }
 
 # 管理アカウントは organization-baseline、メンバーは account-baseline が password policy を持つ。値はどちらも同じにする。
@@ -234,7 +234,7 @@ deny contains msg if {
 	some a in password_policies
 	some b in password_policies
 	a.values != b.values
-	msg := sprintf("[PLAN-ABL-06] %s と %s の password policy の値が違います", [a.at, b.at])
+	msg := sprintf("[PLAN-ACB-06] %s と %s の password policy の値が違います", [a.at, b.at])
 }
 
 # 宣言の属性名が provider に無いと、どの値も null になり、食い違いを比べられない。
@@ -243,7 +243,7 @@ deny contains msg if {
 	every _, v in a.values {
 		v == null
 	}
-	msg := sprintf("[PLAN-ABL-06] %s の password policy の値が、宣言の password_policy_keys の属性で1つも読めません", [a.at])
+	msg := sprintf("[PLAN-ACB-06] %s の password policy の値が、宣言の password_policy_keys の属性で1つも読めません", [a.at])
 }
 
 # 比べる相手が無いと、比較が行われないまま通る。password policy を持つと宣言した usecase は、それぞれ1つ以上持つ。
@@ -251,5 +251,5 @@ deny contains msg if {
 	well_formed_decl
 	some owner in decl.owners.aws_iam_account_password_policy
 	count([c | some c in changes_of("aws_iam_account_password_policy"); usecase_of(c.path) == owner]) == 0
-	msg := sprintf("[PLAN-ABL-06] 入力に %s の password policy がありません。値を比べる相手が無いままでは通しません", [owner])
+	msg := sprintf("[PLAN-ACB-06] 入力に %s の password policy がありません。値を比べる相手が無いままでは通しません", [owner])
 }

@@ -1,5 +1,6 @@
-# kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370
+# kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370,e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10
 # e592a0c5（IAM Access Analyzer）: KICS はファイルごとに analyzer の宣言を求める。analyzer はアカウント単位の統制で account-baseline が持つ（docs/v1.0-plan/scope.md 第7節）。撤回: KICS がファイルの外の宣言を数えるようになったとき。
+# e38a8e0a（tag）: tag は共通の単一入力でだけ付ける（ADR-0204 決定5）。この module はその入力を持たない。撤回: 共通の tag 入力を配線したとき。
 
 data "aws_region" "home" {}
 
@@ -9,6 +10,7 @@ resource "aws_iam_service_linked_role" "config" {
 }
 
 resource "aws_config_configuration_recorder" "this" {
+  #checkov:skip=CKV2_AWS_48:グローバルな resource は provider のリージョンだけで記録する（Config.1 の注記、account-baseline/ADR-0102）。ちょうど1つのリージョンで記録することは PLAN-ACB-03 が見る。撤回: Checkov がリージョンをまたいだ記録を数えるようになったとき
   for_each = var.regions
 
   region   = each.key

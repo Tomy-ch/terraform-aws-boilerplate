@@ -59,7 +59,7 @@ run "opt_in_region_enabled" {
     values = { names = ["ap-northeast-1", "af-south-1"] }
   }
 
-  expect_failures = [data.aws_regions.enabled]
+  expect_failures = [aws_ebs_encryption_by_default.this]
 }
 
 run "empty_regions" {

@@ -105,7 +105,7 @@ unsupported:
 | --- | --- | --- |
 | Unit | `internal/account-controls` の PAB の4項目・代替の連絡先・password policy の値と有無、`internal/regional-controls` の各リージョンの6つの設定の値と件数・集合の外の有効なリージョンで plan が落ちること・空の集合の拒否、`internal/config-recorder` の SLR・記録の範囲・home だけのグローバルな記録・配信先・status・保持日数・provider のリージョンが集合の外にあるときに recorder の precondition で plan が落ちること・空の集合の拒否 | `make tf-test`（`internal/*/tests/`） |
 | Contract | env ごとの合成（Config と password policy の件数）、aws の集合が届くこと、`config_delivery` の届き先、aws の外の partition で plan が落ちること、入力の検査（`project` の形と234文字の境界、代替の連絡先の長さと形の境界） | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` |
-| Policy | `PLAN-ABL-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
+| Policy | `PLAN-ACB-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
 | Policy（削除の保護） | `PLAN-STATE-*`（`stateful_protection.protected_types` の13型。PAB・代替の連絡先・password policy・EBS の既定の暗号化・analyzer・SSM のサービス設定・EMR の block public access・VPC Block Public Access・SLR・recorder・delivery channel・recorder の status・retention の削除と置換）。reference の plan は作成しか持たないので、ここでは効かない。型が宣言から外れることは `conftest/plan/stateful_protection_test.rego` が落とす | CI の実 plan（`plan.stateful_protection`）。account-baseline を呼ぶ env の root が配線されるまで効かない |
 | Static | 層の規則、型の分類 | `make layer-check`、`make infra-code-gate` |
 | Integration（sandbox） | 拒まれるべき操作が拒まれること、drift 0、`internal/config-recorder` の作成と破棄 | 未実施。sandbox の apply の経路（#331）の後に行う |
@@ -123,7 +123,7 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 | 実 API が読み戻す設定の値が宣言と違う | plan が毎回差分を出す | 配線の後の plan |
 | SSM の `setting_id` を `/ssm/...` の形で書いたのに、実 API が ARN の形で読み戻す（未確認） | plan が毎回差分を出す | 配線の後の plan |
 | 別の経路（Security Hub の central configuration、Control Tower など）が先に recorder か delivery channel を作っている | 作成が止まり、apply が落ちる | 配線の前の人の確認（全リージョンで `aws configservice describe-configuration-recorders`） |
-| mock の SLR の ARN は手書きで、実 provider の値の形と一致することを確かめていない | `PLAN-ABL-02` の `role_arn` の検査が、実際の値と違う形を見て通る | 無い。どの層も見ていない |
+| mock の SLR の ARN は手書きで、実 provider の値の形と一致することを確かめていない | `PLAN-ACB-02` の `role_arn` の検査が、実際の値と違う形を見て通る | 無い。どの層も見ていない |
 | opt-in のリージョンの判定を、mock の `aws_regions` の値でしか確かめていない | 実 provider の `aws_regions` が返す集合が mock と違えば、有効な opt-in のリージョンを見逃す | 無い |
 | 適用の後にアカウントで opt-in のリージョンを有効にする | `aws_regions` の postcondition で、destroy の plan も止まる | plan の失敗 |
 | EMR の block public access・SSM の2つの設定・VPC Block Public Access・analyzer が、実際には効かない | 設定は在るが効かない | apply の後の人の確認（未実施） |
@@ -131,7 +131,7 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 ## 保証しないもの
 
 - 実際の AWS での作成。このユースケースを呼ぶ root と、その apply の経路が要る
-- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ABL-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かるのは `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけである（[`conftest/plan/README.md`](../../conftest/plan/README.md)）
+- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ACB-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かるのは `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけである（[`conftest/plan/README.md`](../../conftest/plan/README.md)）
 - 設定の削除と置換を止めること。`plan.stateful_protection` は CI の実 plan に掛かり、account-baseline を呼ぶ env の root が配線されるまで、どの plan も見ない
 - 設定の停止と変更を、主体ごとに拒むこと。拒否は組織の SCP が持ち、このユースケースは持たない
 - 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。管理アカウントには SCP が効かず、有効なリージョンの検出は plan の postcondition だけである
