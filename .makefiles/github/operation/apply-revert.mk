@@ -7,7 +7,7 @@
 
 APPLY_REVERT_BOT := GIT_AUTHOR_NAME='github-actions[bot]' GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
 	GIT_COMMITTER_NAME='github-actions[bot]' GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
-# 失敗した回の worktree は残り、次の回の最初の行が外す。同じ checkout で2つを同時に走らせない。
+# 失敗した回の worktree は残り、次の回の最初の2行が登録ごと外す。同じ checkout で2つを同時に走らせない。
 APPLY_REVERT_WORKTREE := $(CURDIR)/tmp/apply-revert
 
 # REVERT_HEAD・REVERT_COMMITS・REVERT_BRANCH を環境変数で受ける。push は force しない（README.md の「apply の失敗の revert」）。
@@ -16,7 +16,8 @@ define APPLY_REVERT_PUSH
 @test -n "$$REVERT_HEAD" || { echo "❌ REVERT_HEAD がありません" >&2; exit 1; }
 @test -n "$$REVERT_COMMITS" || { echo "❌ REVERT_COMMITS がありません" >&2; exit 1; }
 @test -n "$$REVERT_BRANCH" || { echo "❌ REVERT_BRANCH がありません" >&2; exit 1; }
-@if [ -e "$(APPLY_REVERT_WORKTREE)" ]; then git worktree remove --force "$(APPLY_REVERT_WORKTREE)"; fi
+@rm -rf "$(APPLY_REVERT_WORKTREE)"
+@git worktree prune
 @git worktree add --quiet --detach "$(APPLY_REVERT_WORKTREE)" "$$REVERT_HEAD"
 @$(1) git -C "$(APPLY_REVERT_WORKTREE)" revert -m 1 --no-edit -- $$REVERT_COMMITS
 @git -C "$(APPLY_REVERT_WORKTREE)" $(2) push --quiet origin "HEAD:refs/heads/$$REVERT_BRANCH"
