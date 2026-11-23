@@ -89,6 +89,8 @@ run "policies" {
       deny-guardduty-stop            = "SERVICE_CONTROL_POLICY"
       deny-root-user                 = "SERVICE_CONTROL_POLICY"
       deny-iam-user                  = "SERVICE_CONTROL_POLICY"
+      deny-baseline-stop             = "SERVICE_CONTROL_POLICY"
+      deny-enable-region             = "SERVICE_CONTROL_POLICY"
       data-perimeter-prod-resources  = "SERVICE_CONTROL_POLICY"
       data-perimeter-org-principals  = "RESOURCE_CONTROL_POLICY"
       data-perimeter-prod-principals = "RESOURCE_CONTROL_POLICY"
@@ -131,8 +133,26 @@ run "policies" {
   }
 
   assert {
-    condition     = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" && !can(jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition)
-    error_message = "統制の role の保護の対象は break-glass の role です。"
+    condition = (
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Resource == "arn:aws:iam::*:role/break-glass/tabp-break-glass" &&
+      jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[0].Condition == { ArnNotLike = { "aws:PrincipalArn" = "arn:aws:iam::*:role/stacksets-exec-*" } }
+    )
+    error_message = "統制の role の保護の対象は break-glass の role で、外すのは StackSet の実行の role（stacksets-exec-*）だけです。"
+  }
+
+  assert {
+    condition = jsondecode(aws_organizations_policy.this["protect-governance-roles"].content).Statement[1] == {
+      Sid      = "DenyStackSetsExecutionRoleChange"
+      Effect   = "Deny"
+      Action   = ["iam:Attach*", "iam:Create*", "iam:Delete*", "iam:Detach*", "iam:PassRole", "iam:Put*", "iam:Tag*", "iam:Untag*", "iam:Update*"]
+      Resource = "arn:aws:iam::*:role/stacksets-exec-*"
+    }
+    error_message = "例外にした StackSet の実行の role の名前を、メンバーの主体が作ったり変えたりすることを拒んでください。"
+  }
+
+  assert {
+    condition     = output.root_id == "r-exam"
+    error_message = "root_id は組織の Root の ID です。"
   }
 
   assert {
@@ -260,6 +280,8 @@ run "attachments" {
       "deny-guardduty-stop",
       "deny-root-user",
       "deny-iam-user",
+      "deny-baseline-stop",
+      "deny-enable-region",
       "data-perimeter-prod-resources",
       "data-perimeter-org-principals",
       "data-perimeter-prod-principals",
@@ -271,5 +293,45 @@ run "attachments" {
   assert {
     condition     = !contains([for k, a in aws_organizations_policy_attachment.this : split("/", k)[0]], "deny-bootstrap-role")
     error_message = "OrganizationAccountAccessRole の拒否は、アカウントを作る変更まで付けません。"
+  }
+}
+
+run "baseline_scps" {
+  command = plan
+
+  assert {
+    condition = jsondecode(aws_organizations_policy.this["deny-baseline-stop"].content).Statement[0].Action == [
+      "access-analyzer:CreateArchiveRule",
+      "access-analyzer:DeleteAnalyzer",
+      "access-analyzer:UpdateArchiveRule",
+      "config:DeleteConfigurationRecorder",
+      "config:DeleteDeliveryChannel",
+      "config:DeleteRetentionConfiguration",
+      "config:PutConfigurationRecorder",
+      "config:PutDeliveryChannel",
+      "config:PutRetentionConfiguration",
+      "config:StopConfigurationRecorder",
+      "ec2:CreateVpcBlockPublicAccessExclusion",
+      "ec2:DisableEbsEncryptionByDefault",
+      "ec2:ModifyVpcBlockPublicAccessExclusion",
+      "ec2:ModifyVpcBlockPublicAccessOptions",
+      "elasticmapreduce:PutBlockPublicAccessConfiguration",
+      "s3:PutAccountPublicAccessBlock",
+      "ssm:ResetServiceSetting",
+      "ssm:UpdateServiceSetting",
+    ]
+    error_message = "deny-baseline-stop が拒む Action が、account-baseline/ADR-0201 の一覧と違います。"
+  }
+
+  assert {
+    condition = jsondecode(aws_organizations_policy.this["deny-baseline-stop"].content).Statement[0].Condition == {
+      ArnNotLike = { "aws:PrincipalArn" = [for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : "arn:aws:iam::*:role/tabp-${env}-ci-apply"] }
+    }
+    error_message = "deny-baseline-stop の例外が、メンバーの CI の apply の role だけになっていません（break-glass は例外にしない。PLAN-ORG-05）。"
+  }
+
+  assert {
+    condition     = jsondecode(aws_organizations_policy.this["deny-enable-region"].content).Statement == [{ Sid = "DenyEnableRegion", Effect = "Deny", Action = "account:EnableRegion", Resource = "*" }]
+    error_message = "deny-enable-region が、例外なしに account:EnableRegion だけを拒む形になっていません。"
   }
 }

@@ -269,9 +269,17 @@
         "output_bucket_policy": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this",
         "output_bucket_policy_statements": 5,
         "managed_policies": [
+          "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
           "module.deployment_identity.module.github_oidc.aws_iam_policy.governance[0]"
         ]
       },
+      "customer_managed_policies": [
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
+      ],
       "unlock_roles": [
         "unlock_role",
         "workload_unlock_role"
@@ -458,6 +466,8 @@
         "aws_ecr_registry_scanning_configuration",
         "aws_s3_bucket_object_lock_configuration",
         "aws_sns_topic",
+        "aws_cloudformation_stack_set",
+        "aws_cloudformation_stack_instances",
         "aws_route53_zone",
         "aws_route53_key_signing_key",
         "aws_route53_hosted_zone_dnssec",
@@ -507,6 +517,8 @@
         "deny-guardduty-stop": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-guardduty-stop\"]",
         "deny-root-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-root-user\"]",
         "deny-iam-user": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-iam-user\"]",
+        "deny-baseline-stop": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-baseline-stop\"]",
+        "deny-enable-region": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"deny-enable-region\"]",
         "data-perimeter-prod-resources": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-resources\"]",
         "data-perimeter-org-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-org-principals\"]",
         "data-perimeter-prod-principals": "module.organization_baseline.module.organization.aws_organizations_policy.this[\"data-perimeter-prod-principals\"]",
@@ -530,6 +542,12 @@
           "PolicyStaging"
         ],
         "deny-iam-user": [
+          "PolicyStaging"
+        ],
+        "deny-baseline-stop": [
+          "PolicyStaging"
+        ],
+        "deny-enable-region": [
           "PolicyStaging"
         ],
         "data-perimeter-prod-resources": [
@@ -563,7 +581,9 @@
         "group_policy": "module.organization_baseline.module.break_glass.aws_iam_group_policy.this",
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
         "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this",
-        "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access"
+        "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access",
+        "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
+        "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
       }
     },
     "ops_notification": {
