@@ -156,7 +156,7 @@ manifest が版を固定できる範囲には限りがある。
 - Static Analysis: イメージが取るパッケージマネージャの版が manifest の宣言と一致し、配布物の照合値が揃っていること（決定2、`make pin-pnpm-check`）
 - Static Analysis: version manager の install から外す宣言が、manifest の npm 側の道具の集合と一致すること（決定1、`make versions-check`）
 - **実行**: version manager が manifest の npm 側の道具を install の対象にしないこと（決定1、`make mise-npm-disabled-check` を CI が走らせる）
-- **実行**: ホストの経路が、宣言の写しが lockfile からずれたとき、および lockfile の integrity が合わないときに道具の起動の前に失敗し、PATH の同名の道具へ退かないこと（決定17、ホストの経路で道具を起動する Go の入口が、起動の前に走らせる canary）
+- **実行**: ホストの経路が、宣言の写しが lockfile からずれたとき、および lockfile の integrity が合わないときに道具の起動の前に失敗し、PATH の同名の道具へ退かないこと（決定17、`make node-tools-lock-check` の Go の入口が本走査の前に走らせる canary）
 - Static Analysis: 走らせる道具を持たない runner が存在しないこと（決定19）
 
 ## 影響
