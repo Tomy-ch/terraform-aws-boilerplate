@@ -13,7 +13,7 @@ mock_provider "aws" {
 variables {
   name = "tabp-admin-tfstate"
   users = {
-    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write" }]
+    roles = [{ arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
   }
 }
 
@@ -92,7 +92,7 @@ run "users_rejects_user_arn" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:user/bootstrap", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:user/bootstrap", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -104,7 +104,7 @@ run "users_rejects_wildcard_arn" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/*", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/*", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -116,7 +116,7 @@ run "users_rejects_account_root" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:root", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:root", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -129,8 +129,8 @@ run "users_rejects_duplicate_role" {
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
       ]
     }
   }
@@ -155,7 +155,7 @@ run "users_rejects_role_arn_without_name" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -262,7 +262,7 @@ run "users_rejects_other_account_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::210987654321:role/r", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws:iam::210987654321:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -274,7 +274,7 @@ run "users_rejects_other_partition_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws-cn:iam::123456789012:role/r", via = "s3", access = "read-write" }]
+      roles = [{ arn = "arn:aws-cn:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -344,16 +344,287 @@ run "users_rejects_read_without_objects" {
   expect_failures = [var.users]
 }
 
-run "users_rejects_objects_on_read_write" {
+run "users_rejects_read_write_without_objects" {
   command = plan
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::bkt/k"] }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" }]
     }
   }
 
   expect_failures = [var.users]
+}
+
+run "users_accepts_read_write_objects_only" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/identity/terraform.tfstate"] }]
+    }
+  }
+}
+
+run "users_accepts_read_write_prefixes" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = [
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/a/b.c/",
+      ] }]
+    }
+  }
+}
+
+run "users_accepts_read_write_bucket_wide_prefix" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/"] }]
+    }
+  }
+}
+
+run "users_rejects_malformed_object_prefix" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = [
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr",
+      ] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_asterisk" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/*"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_question_mark" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/p?/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_policy_variable" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/$${aws:username}/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_dollar" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/a$b/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_brace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/a{b}/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_empty_segment" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr//"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefix_with_leading_slash" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an//"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_bucket_arn_as_object_prefix" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_duplicate_object_prefix" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = [
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/",
+      ] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+# read の object は事前に決まるので、接頭辞を受けない。
+run "users_rejects_object_prefixes_on_read" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{
+        arn             = "arn:aws:iam::123456789012:role/r"
+        via             = "s3"
+        access          = "read"
+        objects         = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"]
+        object_prefixes = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/pr/"]
+      }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefixes_on_sns_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "sns", access = "read-write", topics = ["t"], object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_objects_on_ecr_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "ecr", access = "grant", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_object_prefixes_on_ecr_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "ecr", access = "grant", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_ecr_role" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "ecr", access = "grant" }]
+    }
+  }
+}
+
+run "users_rejects_object_prefix_in_other_partition" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws-cn:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_prefix_in_other_account_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-111111111111-ap-northeast-1-an/pr/"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_object_prefix_in_global_namespace_bucket" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan/pr/"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
+}
+
+run "users_rejects_read_write_object_outside_namespace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-111111111111-ap-northeast-1-an/k"] }]
+    }
+  }
+
+  expect_failures = [aws_kms_key_policy.this]
 }
 
 run "users_rejects_bucket_arn_as_object" {
@@ -416,14 +687,27 @@ run "users_rejects_duplicate_object" {
   expect_failures = [var.users]
 }
 
-run "users_rejects_same_role_with_other_access" {
+run "users_accepts_same_role_with_read_and_read_write" {
   command = plan
 
   variables {
     users = {
       roles = [
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write" },
-        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::bkt/k"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] },
+      ]
+    }
+  }
+}
+
+run "users_rejects_duplicate_role_read" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/b"] },
       ]
     }
   }
@@ -588,7 +872,7 @@ run "users_rejects_topics_on_s3_role" {
 
   variables {
     users = {
-      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "s3", access = "read-write", topics = ["t"] }]
+      roles = [{ arn = "arn:aws:iam::123456789012:role/heartbeat", via = "s3", access = "read-write", topics = ["t"], object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] }]
     }
   }
 
@@ -963,6 +1247,69 @@ run "users_rejects_read_write_via_ecr" {
   variables {
     users = {
       roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "ecr", access = "read-write" }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+# Key Policy の StringEquals と StringLike は IAM の policy 変数を置き換えるので、固定の object にも policy 変数の文字を受けない。
+run "users_rejects_object_with_policy_variable" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/$${aws:username}"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_write_object_with_dollar" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a$b"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_rejects_read_write_object_with_brace" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a{b}"] }]
+    }
+  }
+
+  expect_failures = [var.users]
+}
+
+run "users_accepts_object_with_other_punctuation" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [{ arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/a-b_c.d/e:f=g"] }]
+    }
+  }
+}
+
+# 同じ role の read-write を、固定の object だけと接頭辞だけの2件に分けて渡さない。
+run "users_rejects_same_role_read_write_split" {
+  command = plan
+
+  variables {
+    users = {
+      roles = [
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", objects = ["arn:aws:s3:::tabp-admin-tfstate-123456789012-ap-northeast-1-an/k"] },
+        { arn = "arn:aws:iam::123456789012:role/r", via = "s3", access = "read-write", object_prefixes = ["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"] },
+      ]
     }
   }
 

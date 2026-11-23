@@ -82,7 +82,6 @@ run "bucket_policy" {
   }
 }
 
-# 接頭辞の空は、その role が Bucket のすべての key に書けることを表す。
 run "bucket_policy_whole_bucket_writer" {
   command = apply
 
@@ -113,8 +112,6 @@ run "bucket_policy_whole_bucket_writer" {
   }
 }
 
-# 空の接頭辞とほかの接頭辞を併せ持つ role は、Bucket のすべての key に書ける。接頭辞の外への書き込みを拒む文は、
-# 接頭辞だけを持つ role にだけ作る。
 run "bucket_policy_mixed_whole_bucket_writer" {
   command = apply
 
@@ -267,4 +264,55 @@ run "writers_role_arn_no_name" {
   }
 
   expect_failures = [var.writers]
+}
+
+# mock の plan では Bucket の ARN が決まらないので、名前から組む値を plan で確かめる。
+run "writer_object_prefixes" {
+  command = plan
+
+  assert {
+    condition = output.writer_object_prefixes == tomap({
+      "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity" = tolist(["arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/apply/"])
+      "arn:aws:iam::123456789012:role/tabp-admin-ci-plan" = tolist([
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/branch/",
+        "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/",
+      ])
+    })
+    error_message = "writer_object_prefixes が、書き手の role ごとに、Bucket の名前と key の接頭辞から組んだ object の接頭辞の ARN を昇順で返していません。"
+  }
+}
+
+run "writer_object_prefixes_whole_bucket" {
+  command = plan
+
+  variables {
+    name    = "tabp-admin-tfapply"
+    writers = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply", key_prefix = "" }]
+  }
+
+  assert {
+    condition = output.writer_object_prefixes == tomap({
+      "arn:aws:iam::123456789012:role/tabp-admin-ci-apply" = tolist(["arn:aws:s3:::tabp-admin-tfapply-123456789012-ap-northeast-1-an/"])
+    })
+    error_message = "空の接頭辞の書き手の writer_object_prefixes が、Bucket のすべての key（<Bucket の ARN>/）になっていません。"
+  }
+}
+
+run "writer_object_prefixes_partition" {
+  command = plan
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-cn" }
+  }
+
+  variables {
+    kms_key_arn = "arn:aws-cn:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    writers     = [{ role_arn = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan", key_prefix = "pr/" }]
+  }
+
+  assert {
+    condition     = output.writer_object_prefixes["arn:aws:iam::123456789012:role/tabp-admin-ci-plan"] == tolist(["arn:aws-cn:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an/pr/"])
+    error_message = "writer_object_prefixes の partition が、data.aws_partition の値になっていません。"
+  }
 }

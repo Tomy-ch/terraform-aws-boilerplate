@@ -14,14 +14,15 @@ variable "name" {
 }
 
 variable "users" {
-  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲（access が read-write なら復号と鍵の生成、read なら objects に名指した S3 の object の復号だけ）。via が sns の role は topics に名指した SNS の Topic へ publish するときだけ鍵を使える。via が ecr の role は access を grant とし、ECR が repository の暗号化に使う grant の作成と廃止だけを許す。services.logs は CloudWatch Logs の Log Group の名前。services.sns は SNS の Topic の名前と、その Topic へ publish する AWS のサービス（budgets・cloudwatch・costalerts・events）。services.cloudtrail は鍵で暗号化して配信する CloudTrail の trail の ARN、services.config は鍵で暗号化して配信する AWS Config のアカウントの ID。trail と Config のアカウントは鍵の外のアカウントでもよい。合わせて1件以上。"
+  description = "鍵の暗号操作を許す相手。roles は経由するサービスごとの IAM role と、その利用の範囲。via が s3 の role は、access が read なら objects に名指した S3 の object の復号だけを、read-write なら objects の object と object_prefixes の接頭辞の下の object の復号と鍵の生成だけを許す。同じ role に read と read-write を併せて渡せる。via が sns の role は topics に名指した SNS の Topic へ publish するときだけ鍵を使える。via が ecr の role は access を grant とし、ECR が repository の暗号化に使う grant の作成と廃止だけを許す。services.logs は CloudWatch Logs の Log Group の名前。services.sns は SNS の Topic の名前と、その Topic へ publish する AWS のサービス（budgets・cloudwatch・costalerts・events）。services.cloudtrail は鍵で暗号化して配信する CloudTrail の trail の ARN、services.config は鍵で暗号化して配信する AWS Config のアカウントの ID。trail と Config のアカウントは鍵の外のアカウントでもよい。合わせて1件以上。"
   type = object({
     roles = optional(list(object({
-      arn     = string
-      via     = string
-      access  = string
-      objects = optional(list(string), [])
-      topics  = optional(list(string), [])
+      arn             = string
+      via             = string
+      access          = string
+      objects         = optional(list(string), [])
+      object_prefixes = optional(list(string), [])
+      topics          = optional(list(string), [])
     })), [])
     services = optional(object({
       logs = optional(list(string), [])
@@ -56,18 +57,21 @@ variable "users" {
     error_message = "users.roles[*].access は、via が ecr のとき grant、それ以外のとき read か read-write にしてください。"
   }
 
-  # read の文は objects の暗号化コンテキストで限る。限る object の無い read は、read-write と同じ範囲の復号になる。
+  # S3 経由の文は object の暗号化コンテキストで限る。限る object の無い文は、鍵で暗号化したすべての object に及ぶ。
   validation {
-    condition     = alltrue([for r in var.users.roles : r.access == "read" ? length(r.objects) > 0 : length(r.objects) == 0])
-    error_message = "users.roles[*].objects は、access が read のとき1件以上、read-write のとき空にしてください。"
+    condition = alltrue([for r in var.users.roles : r.via == "s3" ? (
+      length(r.objects) + length(r.object_prefixes) > 0 && (r.access == "read-write" || length(r.object_prefixes) == 0)
+    ) : length(r.objects) + length(r.object_prefixes) == 0])
+    error_message = "users.roles[*] は、via が s3 なら objects と object_prefixes を合わせて1件以上（object_prefixes は access が read-write のときだけ）に、via が s3 でなければ objects と object_prefixes を空にしてください。"
   }
 
-  # Key Policy の StringEquals は * と ? をワイルドカードとして読まないが、IAM の Resource と突き合わせる値なので閉じる。
+  # read-write の objects は Key Policy の StringLike に置かれ、* と ? をワイルドカードとして読む。StringEquals と StringLike は
+  # IAM の policy 変数（${...}）も置き換えるので、固定の object の ARN に閉じる。
   validation {
     condition = alltrue(flatten([for r in var.users.roles : [
-      for o in r.objects : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/[^*?]+$", o))
+      for o in r.objects : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/[^*?\\$\\{\\}]+$", o))
     ]]))
-    error_message = "users.roles[*].objects は S3 の object の ARN（arn:<partition>:s3:::<bucket>/<key>）にしてください。* と ? は受けません。"
+    error_message = "users.roles[*].objects は S3 の object の ARN（arn:<partition>:s3:::<bucket>/<key>）にしてください。* と ? と、IAM の policy 変数の文字（$ と { と }）は受けません。"
   }
 
   validation {
@@ -75,10 +79,23 @@ variable "users" {
     error_message = "users.roles[*].objects に同じ object を重ねないでください。"
   }
 
+  # module が末尾に * を付けて StringLike に置くので、接頭辞の中の wildcard と IAM の policy 変数の文字を閉じる。
+  validation {
+    condition = alltrue(flatten([for r in var.users.roles : [
+      for p in r.object_prefixes : can(regex("^arn:aws[a-z-]*:s3:::[a-z0-9][a-z0-9.-]*[a-z0-9]/([^/*?\\$\\{\\}]+/)*$", p))
+    ]]))
+    error_message = "users.roles[*].object_prefixes は、S3 の Bucket の ARN に / と、空か / で終わる key の接頭辞を続けた値（arn:<partition>:s3:::<bucket>/<prefix>）にしてください。接頭辞は / で始めず、空の区切り（//）を作らず、* と ? と $ と { と } を含めないでください。"
+  }
+
+  validation {
+    condition     = alltrue([for r in var.users.roles : length(distinct(r.object_prefixes)) == length(r.object_prefixes)])
+    error_message = "users.roles[*].object_prefixes に同じ接頭辞を重ねないでください。"
+  }
+
   # SNS の文は publish に要る復号と鍵の生成を、topics の Topic の暗号化コンテキストに限って許す。
   validation {
-    condition     = alltrue([for r in var.users.roles : r.via == "sns" ? r.access == "read-write" && length(r.objects) == 0 && length(r.topics) > 0 : length(r.topics) == 0])
-    error_message = "users.roles[*] は、via が sns なら access を read-write・objects を空・topics を1件以上に、via が s3 なら topics を空にしてください。"
+    condition     = alltrue([for r in var.users.roles : r.via == "sns" ? r.access == "read-write" && length(r.topics) > 0 : length(r.topics) == 0])
+    error_message = "users.roles[*] は、via が sns なら access を read-write・topics を1件以上に、via が sns でなければ topics を空にしてください。"
   }
 
   validation {
@@ -92,8 +109,8 @@ variable "users" {
   }
 
   validation {
-    condition     = length(distinct([for r in var.users.roles : "${r.via} ${r.arn}"])) == length(var.users.roles)
-    error_message = "users.roles に同じ role と via の組を重ねないでください。"
+    condition     = length(distinct([for r in var.users.roles : "${r.via} ${r.arn} ${r.access}"])) == length(var.users.roles)
+    error_message = "users.roles に同じ role と via と access の組を重ねないでください。"
   }
 
   # Key Policy の ArnEquals は * と ? をワイルドカードとして読むので、名前の文字をここで閉じる。
