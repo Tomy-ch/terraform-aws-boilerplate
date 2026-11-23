@@ -502,6 +502,27 @@ locals {
     },
   ]
 
+  # apply-identity の role の、核の外の書き込み（deployment-identity/ADR-0201 決定21）。
+  manage_statements = [
+    # s3:PutLifecycleConfiguration は DeleteBucketLifecycle の権限も兼ねる。
+    { Sid = "ConfigureBuckets", Effect = "Allow", Action = concat(local.bucket_configure_actions, ["s3:PutLifecycleConfiguration"]), Resource = local.bucket_arns },
+    { Sid = "CreateApplyOutputBucket", Effect = "Allow", Action = "s3:CreateBucket", Resource = var.apply_output_bucket_arn },
+    {
+      Sid    = "ManageGitHubProvider"
+      Effect = "Allow"
+      Action = [
+        "iam:AddClientIDToOpenIDConnectProvider",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:RemoveClientIDFromOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint",
+      ]
+      Resource = aws_iam_openid_connect_provider.github.arn
+    },
+    # 鍵と alias を作る権限は与えない（deployment-identity/ADR-0201 決定3）。
+    { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = var.state_key_arn },
+  ]
+
   # 決定1。apply-identity と apply の role に同じ文で置く。
   lockout_bypass_deny_statement = { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } }
 
@@ -569,21 +590,6 @@ locals {
       [
         { Sid = "WriteIdentityState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = local.identity_state_key },
         { Sid = "LockIdentityState", Effect = "Allow", Action = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"], Resource = "${local.identity_state_key}.tflock" },
-        # s3:PutLifecycleConfiguration は DeleteBucketLifecycle の権限も兼ねる。
-        { Sid = "ConfigureBuckets", Effect = "Allow", Action = concat(local.bucket_configure_actions, ["s3:PutLifecycleConfiguration"]), Resource = local.bucket_arns },
-        { Sid = "CreateApplyOutputBucket", Effect = "Allow", Action = "s3:CreateBucket", Resource = var.apply_output_bucket_arn },
-        {
-          Sid    = "ManageGitHubProvider"
-          Effect = "Allow"
-          Action = [
-            "iam:AddClientIDToOpenIDConnectProvider",
-            "iam:CreateOpenIDConnectProvider",
-            "iam:DeleteOpenIDConnectProvider",
-            "iam:RemoveClientIDFromOpenIDConnectProvider",
-            "iam:UpdateOpenIDConnectProviderThumbprint",
-          ]
-          Resource = aws_iam_openid_connect_provider.github.arn
-        },
         {
           Sid    = "ManageCiRoles"
           Effect = "Allow"
@@ -600,9 +606,7 @@ locals {
           ]
           Resource = local.identity_role_arns
         },
-        # 鍵と alias を作る権限は与えない（deployment-identity/ADR-0201 決定3）。
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
-        { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = var.state_key_arn },
         local.lockout_bypass_deny_statement,
       ],
       local.identity_read_statements,
@@ -631,6 +635,8 @@ resource "aws_iam_role_policy" "apply_identity" {
     Version   = "2012-10-17"
     Statement = local.statements.apply_identity
   })
+
+  depends_on = [aws_iam_role_policy_attachment.manage]
 
   lifecycle {
     # 別のアカウントやリージョンの鍵を渡すと、apply-identity は自分の state の鍵を管理できなくなる。他の role は
