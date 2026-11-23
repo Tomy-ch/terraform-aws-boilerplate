@@ -508,7 +508,6 @@ locals {
     [for v in ["Accept", "Attach", "Cancel", "Close", "Create", "Decline", "Delete", "Deregister", "Detach", "Disable", "Enable", "Invite", "Leave", "Move", "Put", "Register", "Remove", "Tag", "Terminate", "Untag", "Update"] : "organizations:${v}*"],
     ["account:CloseAccount"],
     ["iam:DeleteAccountPasswordPolicy", "iam:DisableOrganizationsRoot*", "iam:EnableOrganizationsRoot*", "iam:UpdateAccountPasswordPolicy"],
-    # wildcard は Identity Center の Read・List の Action に当たらないものに限る（決定5）。
     ["sso:*AccountAssignment", "sso:*FromPermissionSet", "sso:*ToPermissionSet"],
     [for a in ["CreatePermissionSet", "DeletePermissionSet", "ProvisionPermissionSet", "PutPermissionsPolicy", "UpdatePermissionSet"] : "sso:${a}"],
     [for a in ["ActivateOrganizationsAccess", "CreateStackInstances", "CreateStackSet", "DeactivateOrganizationsAccess", "DeleteStackInstances", "DeleteStackSet", "ImportStacksToStackSet", "StopStackSetOperation", "UpdateStackInstances", "UpdateStackSet"] : "cloudformation:${a}"],

@@ -50,7 +50,7 @@ run "policies" {
 
   variables {
     # Service Authorization Reference「Actions, resources, and condition keys for AWS IAM Identity Center」で Access level が
-    # Read か List の Action（2026-11-24 の写し）。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
+    # Read か List の Action の写し。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
     sso_read_actions = [
       "sso:DescribeAccountAssignmentCreationStatus",
       "sso:DescribeAccountAssignmentDeletionStatus",
