@@ -323,7 +323,7 @@ permissions() {
   sim explicitDeny apply "$sk" kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription
   sim explicitDeny apply-identity "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:PutKeyPolicy
 
-  echo "# 統制の構成物（deployment-identity/ADR-0201 決定3・5・7）"
+  echo "# 統制の構成物と apply-identity の policy（deployment-identity/ADR-0201 決定3・5・7）"
   local gp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-governance"
   local bg="arn:aws:iam::${ACCOUNT_ID}:role/break-glass/tabp-break-glass"
   sim allowed apply-identity "$gp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
