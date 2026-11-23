@@ -7,7 +7,7 @@
 //	provider-schema prepare -provider <address> -out <dir> -base <dir> -listed <file> <root>...
 //	provider-schema fetch -dir <dir>
 //	provider-schema merge -provider <address> -dir <dir> -out <json>
-//	provider-schema plan-deprecated -out <json> <test.jsonl>...
+//	provider-schema plan-deprecated -out <json> (-list <file> | <test.jsonl>...)
 //
 // prepare は、root の下で git が追跡する lock の集合を、-listed の一覧（git とは独立に走査したファイルの一覧）の
 // lock の集合と突き合わせてから（ADR-0702 決定15）、lock から Provider の版を取り出し、版ごとに
@@ -44,7 +44,7 @@ const outPerm = 0o644
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)
 
 var (
-	errUsage           = xerrors.New("使い方: provider-schema prepare -provider <address> -out <dir> -base <dir> -listed <path> <root>... | provider-schema fetch -dir <dir> | provider-schema merge -provider <address> -dir <dir> -out <path> | provider-schema plan-deprecated -out <path> <test.jsonl>...")
+	errUsage           = xerrors.New("使い方: provider-schema prepare -provider <address> -out <dir> -base <dir> -listed <path> <root>... | provider-schema fetch -dir <dir> | provider-schema merge -provider <address> -dir <dir> -out <path> | provider-schema plan-deprecated -out <path> (-list <file> | <test.jsonl>...)")
 	errNoLocks         = xerrors.New("git が追跡する .terraform.lock.hcl が root の下に1件もありません")
 	errLockSyntax      = xerrors.New("lock の HCL の構文の誤りがあります")
 	errDuplicateBlock  = xerrors.New("lock に同じ Provider の block が2つ以上あります")
