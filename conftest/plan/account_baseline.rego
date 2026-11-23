@@ -35,9 +35,19 @@ well_formed_decl if {
 	every owners in decl.owners {
 		is_array(owners)
 		count(owners) > 0
+		every o in owners {
+			is_string(o)
+			o != ""
+		}
 	}
+	is_array(decl.owners.aws_iam_account_password_policy)
 	is_array(decl.password_policy_keys)
 	count(decl.password_policy_keys) > 0
+	every k in decl.password_policy_keys {
+		is_string(k)
+		k != ""
+	}
+	count({k | some k in decl.password_policy_keys}) == count(decl.password_policy_keys)
 }
 
 regions := {r | some r in decl.regions}
@@ -51,7 +61,8 @@ usecase_of(path) := regex.replace(path, `^(.*/)?([^/]+)\.json$`, "$2")
 # 作るか変える変更だけを見る。消す変更は after を持たない。
 changes_of(type) := [c | some c in lib.changes; c.rc.type == type; is_object(c.rc.change.after)]
 
-# 形の検査は account-baseline の reference の plan に掛ける。同じ型をほかの usecase が持つことは 05 が見る。
+# 形の検査は account-baseline の reference の plan に掛ける。同じ型をほかの usecase が持つことは、owners に載せた型について 05 が見る。
+# analyzer（security-tooling の組織の analyzer と同じ型）と service-linked role（ほかの usecase も持つ型）は owners に載せない。
 own_changes_of(type) := [c | some c in changes_of(type); usecase_of(c.path) == "account-baseline"]
 
 after(c, key) := object.get(c.rc.change.after, key, null)
@@ -224,4 +235,21 @@ deny contains msg if {
 	some b in password_policies
 	a.values != b.values
 	msg := sprintf("[PLAN-ABL-06] %s と %s の password policy の値が違います", [a.at, b.at])
+}
+
+# 宣言の属性名が provider に無いと、どの値も null になり、食い違いを比べられない。
+deny contains msg if {
+	some a in password_policies
+	every _, v in a.values {
+		v == null
+	}
+	msg := sprintf("[PLAN-ABL-06] %s の password policy の値が、宣言の password_policy_keys の属性で1つも読めません", [a.at])
+}
+
+# 比べる相手が無いと、比較が行われないまま通る。password policy を持つと宣言した usecase は、それぞれ1つ以上持つ。
+deny contains msg if {
+	well_formed_decl
+	some owner in decl.owners.aws_iam_account_password_policy
+	count([c | some c in changes_of("aws_iam_account_password_policy"); usecase_of(c.path) == owner]) == 0
+	msg := sprintf("[PLAN-ABL-06] 入力に %s の password policy がありません。値を比べる相手が無いままでは通しません", [owner])
 }

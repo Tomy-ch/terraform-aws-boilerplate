@@ -88,6 +88,30 @@ run "kms_key_with_short_account" {
   expect_failures = [var.config_delivery]
 }
 
+run "kms_key_with_multi_region_id" {
+  command = plan
+  variables {
+    config_delivery = {
+      bucket_name = "tabp-log-archive-audit-evidence-210987654321-ap-northeast-1-an"
+      kms_key_arn = "arn:aws:kms:ap-northeast-1:210987654321:key/mrk-1234567890abcdef1234567890abcdef"
+    }
+  }
+  expect_failures = [var.config_delivery]
+}
+
+run "contact_email_too_long" {
+  command = plan
+  variables {
+    security_contact = {
+      name          = "Security Team"
+      title         = "Security"
+      email_address = "${join("", [for i in range(25) : "abcdefghij"])}@example.com"
+      phone_number  = "+81 3 0000 0000"
+    }
+  }
+  expect_failures = [var.security_contact]
+}
+
 run "retention_at_maximum" {
   command = plan
   variables {

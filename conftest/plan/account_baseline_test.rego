@@ -32,8 +32,11 @@ plan_of(path, rcs) := [{"path": path, "contents": {"plan_format_version": "1.2",
 
 ab(rcs) := plan_of("tmp/tf-policy/account-baseline.json", rcs)
 
+# 管理アカウントの password policy は organization-baseline の break-glass が持つ。比べる相手として毎回入れる。
+org_baseline := plan_of("tmp/tf-policy/organization-baseline.json", [password_policy("ob.module.break_glass", 14)])
+
 denies(rcs) := msgs if {
-	msgs := p.deny with input as ab(rcs) with data.policy_plan.account_baseline as decl
+	msgs := p.deny with input as array.concat(ab(rcs), org_baseline) with data.policy_plan.account_baseline as decl
 }
 
 # 期待する ID だけが出たこと。ほかの規則が同時に落ちた入力を、目当ての分岐のテストとして数えない。
@@ -72,7 +75,7 @@ pab(m) := change("aws_s3_account_public_access_block", sprintf("module.%s.module
 
 password_policy(path_module, minimum) := change("aws_iam_account_password_policy", sprintf("module.%s.aws_iam_account_password_policy.this", [path_module]), {"minimum_password_length": minimum, "max_password_age": 90})
 
-instance(m) := array.concat(array.concat(array.concat(regional(m, "ap-northeast-1"), regional(m, "us-east-1")), array.concat(config(m, "ap-northeast-1", true), config(m, "us-east-1", false))), [pab(m)])
+instance(m) := array.concat(array.concat(array.concat(regional(m, "ap-northeast-1"), regional(m, "us-east-1")), array.concat(config(m, "ap-northeast-1", true), config(m, "us-east-1", false))), [pab(m), password_policy(sprintf("%s.module.account_controls", [m]), 14)])
 
 # sandbox と同じく、Config を持たない instance。
 no_config(m) := array.concat(array.concat(regional(m, "ap-northeast-1"), regional(m, "us-east-1")), [pab(m)])
@@ -116,7 +119,7 @@ test_pass_deleted_unsafe_setting_is_not_read if {
 }
 
 test_violation_no_declaration if {
-	fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as null
+	fixture.has("[PLAN-ABL-00]", p.deny) with input as array.concat(ab(ok), org_baseline) with data.policy_plan.account_baseline as null
 }
 
 test_violation_each_declaration_key_missing if {
@@ -135,7 +138,13 @@ test_violation_declaration_inner_key_missing if {
 }
 
 test_violation_declaration_values_malformed if {
-	every bad in [["regions", []], ["regions", "ap-northeast-1"], ["owners", {}], ["owners", {"aws_ssm_service_setting": []}], ["public_access_block", 1], ["password_policy_keys", []]] {
+	every bad in [
+		["regions", []], ["regions", "ap-northeast-1"], ["owners", {}], ["owners", {"aws_ssm_service_setting": []}],
+		["owners", {"aws_x": "account-baseline"}], ["owners", {"aws_x": [1]}], ["owners", {"aws_x": [""]}],
+		["owners", {"aws_s3_account_public_access_block": ["account-baseline"]}],
+		["public_access_block", 1], ["password_policy_keys", []], ["password_policy_keys", [1]],
+		["password_policy_keys", [""]], ["password_policy_keys", ["minimum_password_length", "minimum_password_length"]],
+	] {
 		fixture.has("[PLAN-ABL-00]", p.deny) with input as ab(ok) with data.policy_plan.account_baseline as set_key(decl, bad[0], bad[1])
 	}
 }
@@ -270,13 +279,17 @@ test_violation_password_policy_in_third_usecase if {
 	fixture.has("[PLAN-ABL-05]", p.deny) with input as array.concat(ab(ok), other) with data.policy_plan.account_baseline as decl
 }
 
-test_pass_password_policy_in_organization_baseline if {
-	other := plan_of("tmp/tf-policy/organization-baseline.json", [password_policy("ob.module.break_glass", 14)])
-	count(p.deny) == 0 with input as array.concat(ab(array.concat(ok, [password_policy("dev.module.account_controls", 14)])), other) with data.policy_plan.account_baseline as decl
+test_violation_password_policy_values_differ if {
+	only("[PLAN-ABL-06]", denies(patch_all(ok, "module.dev.module.account_controls.aws_iam_account_password_policy.this", {"minimum_password_length": 12})))
 }
 
-test_violation_password_policy_values_differ if {
-	other := plan_of("tmp/tf-policy/organization-baseline.json", [password_policy("ob.module.break_glass", 14)])
-	msgs := p.deny with input as array.concat(ab(array.concat(ok, [password_policy("dev.module.account_controls", 12)])), other) with data.policy_plan.account_baseline as decl
+test_violation_password_policy_without_counterpart if {
+	msgs := p.deny with input as ab(ok) with data.policy_plan.account_baseline as decl
+	only("[PLAN-ABL-06]", msgs)
+}
+
+test_violation_password_policy_keys_not_attributes if {
+	d := set_key(decl, "password_policy_keys", ["minimum_password_lenght"])
+	msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.policy_plan.account_baseline as d
 	only("[PLAN-ABL-06]", msgs)
 }

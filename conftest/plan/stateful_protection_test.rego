@@ -53,14 +53,13 @@ test_violation_delete_of_state_key_under_declaration if {
 	count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == 2
 }
 
-# 宣言（decl.json）を差し替えずに読む。account-baseline の安全側の設定の型が保護の対象から外れると、ここが落ちる。
-account_baseline_types := [
-	"aws_s3_account_public_access_block", "aws_account_alternate_contact", "aws_iam_account_password_policy",
-	"aws_ebs_encryption_by_default", "aws_accessanalyzer_analyzer", "aws_ssm_service_setting",
-	"aws_emr_block_public_access_configuration", "aws_vpc_block_public_access_options",
-	"aws_iam_service_linked_role", "aws_config_configuration_recorder", "aws_config_delivery_channel",
-	"aws_config_configuration_recorder_status", "aws_config_retention_configuration",
-]
+# 宣言（decl.json）を差し替えずに読む。account-baseline の宣言に在る型が保護の対象から外れると、ここが落ちる。
+account_baseline_types := (({t | some t, _ in data.policy_plan.account_baseline.owners} | {t | some t in data.policy_plan.account_baseline.regional}) | {t | some t in data.policy_plan.account_baseline.config}) | {"aws_iam_service_linked_role"}
+
+test_pass_account_baseline_types_are_protected if {
+	count(account_baseline_types) > 0
+	count(account_baseline_types - {t | some t in data.policy_plan.stateful_protection.protected_types}) == 0
+}
 
 test_violation_delete_of_account_baseline_settings_under_declaration if {
 	msgs := stateful_protection.deny with input as plan_at("tmp/ci-plan/dev.json", [change(sprintf("module.account_baseline.%s.this", [t]), t, ["delete"]) | some t in account_baseline_types])

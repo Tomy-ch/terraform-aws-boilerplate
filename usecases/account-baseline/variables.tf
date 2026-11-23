@@ -41,7 +41,7 @@ variable "config_delivery" {
   }
 
   validation {
-    condition     = can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$", var.config_delivery.kms_key_arn))
+    condition     = can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.config_delivery.kms_key_arn))
     error_message = "config_delivery.kms_key_arn は KMS の鍵の ARN（arn:<partition>:kms:<region>:<account>:key/<id>）にしてください。alias は受けません。"
   }
 }
