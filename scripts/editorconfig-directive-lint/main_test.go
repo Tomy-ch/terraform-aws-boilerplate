@@ -401,13 +401,15 @@ func Test_splitNUL(t *testing.T) {
 	}
 }
 
+// t.Setenv はプロセスの env を変えるので、このテストは並行に走らせない。
 func Test_gitEnv(t *testing.T) {
-	t.Parallel()
-
-	t.Run("このプロセスの PATH を残す", func(t *testing.T) {
-		t.Parallel()
+	t.Run("このプロセスの env から GIT_DIR を外し、PATH を残す", func(t *testing.T) {
+		t.Setenv("GIT_DIR", "/x")
 		env, err := gitEnv()
 		require.NoError(t, err)
+		for _, kv := range env {
+			assert.False(t, strings.HasPrefix(kv, "GIT_DIR="), kv)
+		}
 		assert.Contains(t, env, "PATH="+os.Getenv("PATH"))
 	})
 }

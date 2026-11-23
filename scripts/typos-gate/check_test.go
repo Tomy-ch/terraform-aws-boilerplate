@@ -141,6 +141,17 @@ func Test_runCheck(t *testing.T) {
 		require.NoError(t, runCheck([]string{"-work", "tmp/w", "-config", cfg}, new(bytes.Buffer), passingFake(t).tool(), isolated, root), "対照: 欠けも余りも無ければ通る")
 	})
 
+	t.Run("fixture を root の tmp の下に建て、終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		args, root := checkArgs(t)
+		f := passingFake(t)
+		require.NoError(t, runCheck(args, new(bytes.Buffer), f.tool(), isolated, root))
+		calls := f.calls()
+		require.NotEmpty(t, calls)
+		assert.Equal(t, filepath.Join(root, "tmp", "typos-gate")+" "+stepScan+" ", calls[0])
+		assert.NoDirExists(t, filepath.Join(root, "tmp", "typos-gate"))
+	})
+
 	t.Run("-config の値を範囲の突き合わせの自身の除外へ渡す", func(t *testing.T) {
 		t.Parallel()
 		args, root := checkArgs(t)
@@ -228,6 +239,58 @@ func Test_workDir(t *testing.T) {
 		require.ErrorIs(t, err, errUsage)
 	})
 
+	t.Run("tmp の親（リポジトリ直下）を指す symlink の下も自身も errUsage", func(t *testing.T) {
+		t.Parallel()
+		root := realDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(root, filepath.Join(root, "tmp", "up")))
+		for _, work := range []string{"tmp/up/x", "tmp/up"} {
+			_, err := workDir(root, work)
+			require.ErrorIs(t, err, errUsage, work)
+		}
+	})
+
+	t.Run("既に在る tmp/x は通る", func(t *testing.T) {
+		t.Parallel()
+		root := realDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp", "x"), 0o750))
+		got, err := workDir(root, "tmp/x")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(root, "tmp", "x"), got)
+	})
+
+	t.Run("外を指す壊れた symlink の下も自身も errUsage", func(t *testing.T) {
+		t.Parallel()
+		root, outside := realDir(t), realDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(filepath.Join(outside, "none"), filepath.Join(root, "tmp", "dangling")))
+		for _, work := range []string{"tmp/dangling/x", "tmp/dangling"} {
+			_, err := workDir(root, work)
+			require.ErrorIs(t, err, errUsage, work)
+		}
+	})
+
+	t.Run("root がファイルで tmp を調べられなければ errUsage", func(t *testing.T) {
+		t.Parallel()
+		file := filepath.Join(realDir(t), "file")
+		require.NoError(t, os.WriteFile(file, nil, 0o600))
+		_, err := workDir(file, "tmp/x")
+		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("相対の root でも、symlink の無い tmp の下へ解決する", func(t *testing.T) {
+		t.Parallel()
+		root := realDir(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		rel, err := filepath.Rel(cwd, root)
+		require.NoError(t, err)
+		got, err := workDir(rel, "tmp/x")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(rel, "tmp", "x"), got)
+	})
+
 	t.Run("-work の途中がファイルなら errUsage", func(t *testing.T) {
 		t.Parallel()
 		root := realDir(t)
@@ -256,6 +319,41 @@ func Test_staysUnder(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp", "real"), 0o750))
 		require.NoError(t, os.Symlink(filepath.Join(root, "tmp", "real"), filepath.Join(root, "tmp", "in")))
 		require.NoError(t, staysUnder(filepath.Join(rel, "tmp"), filepath.Join(rel, "tmp", "in", "x")), "絶対パスを指す中の symlink は通る")
+	})
+
+	t.Run("base の親を指す symlink の下も自身も落ちる", func(t *testing.T) {
+		t.Parallel()
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		base := filepath.Join(root, "tmp")
+		require.NoError(t, os.MkdirAll(base, 0o750))
+		require.NoError(t, os.Symlink(root, filepath.Join(base, "up")))
+		require.Error(t, staysUnder(base, filepath.Join(base, "up", "x")))
+		require.Error(t, staysUnder(base, filepath.Join(base, "up")))
+	})
+
+	t.Run("既に在る base の下のディレクトリは通る", func(t *testing.T) {
+		t.Parallel()
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(filepath.Join(base, "x"), 0o750))
+		require.NoError(t, staysUnder(base, filepath.Join(base, "x")))
+	})
+
+	t.Run("外を指す壊れた symlink の下も自身も落ちる", func(t *testing.T) {
+		t.Parallel()
+		base, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "none"), filepath.Join(base, "dangling")))
+		require.Error(t, staysUnder(base, filepath.Join(base, "dangling", "x")))
+		require.Error(t, staysUnder(base, filepath.Join(base, "dangling")))
+	})
+
+	t.Run("base を調べられなければ（ENOTDIR）落ちる", func(t *testing.T) {
+		t.Parallel()
+		file := filepath.Join(t.TempDir(), "file")
+		require.NoError(t, os.WriteFile(file, nil, 0o600))
+		require.Error(t, staysUnder(filepath.Join(file, "tmp"), filepath.Join(file, "tmp", "x")))
 	})
 
 	t.Run("base が無ければ確かめない", func(t *testing.T) {

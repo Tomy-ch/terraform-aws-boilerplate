@@ -153,6 +153,20 @@ func Test_runCoverage(t *testing.T) {
 		})
 	}
 
+	for _, step := range []string{stepFiles, stepLsFiles} {
+		t.Run(step+" が rc≠0 なら、stderr にだけ出した診断を載せて errTool", func(t *testing.T) {
+			t.Parallel()
+			f := newFake(t)
+			f.set(stepLsFiles, "out", "a\x00")
+			f.set(stepFiles, "out", "./a\n")
+			f.set(step, "err", "STDERR-ONLY\n")
+			f.set(step, "rc", "1")
+			err := cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated)
+			require.ErrorIs(t, err, errTool)
+			assert.Contains(t, err.Error(), "STDERR-ONLY")
+		})
+	}
+
 	t.Run("git ls-files が stderr にだけ出したパスは数えず errNoInput", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
