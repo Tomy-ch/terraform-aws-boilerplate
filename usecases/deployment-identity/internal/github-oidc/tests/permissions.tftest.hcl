@@ -50,7 +50,7 @@ run "policies" {
 
   variables {
     # Service Authorization Reference「Actions, resources, and condition keys for AWS IAM Identity Center」で Access level が
-    # Read か List の Action の写し。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
+    # Read か List の Action（2026-11-24 の写し）。決定5 の sso: の wildcard がどれにも当たらないことを確かめる。
     sso_read_actions = [
       "sso:DescribeAccountAssignmentCreationStatus",
       "sso:DescribeAccountAssignmentDeletionStatus",
@@ -1100,13 +1100,25 @@ run "policies" {
     error_message = "boundary の Deny の文が、apply の role の bootstrap の Deny の10文になっていません。"
   }
 
+  # IAM の wildcard を正規表現へ訳し（metacharacter を escape してから * を .*、? を . に）、サービスの欄が大文字小文字を
+  # 問わず sso に当たりうる pattern をすべて、Read・List の Action に当てる。
   assert {
     condition = alltrue(flatten([
-      for p in one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"]) : [
-        for r in var.sso_read_actions : !can(regex("^(?i)${replace(p, "*", ".*")}$", r))
-      ] if startswith(p, "sso:")
+      for p in flatten([one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"])]) : [
+        for r in var.sso_read_actions : !can(regex("^(?i)${replace(replace(replace(p, "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", r))
+      ] if can(regex("^(?i)${replace(replace(replace(split(":", p)[0], "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", "sso"))
     ]))
-    error_message = "DenyGovernanceChange の sso: の Action が、Identity Center の Read・List の Action に当たります（決定5）。"
+    error_message = "DenyGovernanceChange の Action が、Identity Center の Read・List の Action に当たります（決定5）。"
+  }
+
+  assert {
+    condition     = length([for p in flatten([one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Action if s.Sid == "DenyGovernanceChange"])]) : p if can(regex("^(?i)${replace(replace(replace(split(":", p)[0], "/([.+^$()\\[\\]{}|\\\\])/", "\\$1"), "*", ".*"), "?", ".")}$", "sso"))]) > 0
+    error_message = "DenyGovernanceChange が sso の Action を持たず、上の Read・List の assert が何も見ていません。"
+  }
+
+  assert {
+    condition     = length(var.sso_read_actions) == 58
+    error_message = "Identity Center の Read・List の Action の写しが 58 件ではありません。"
   }
 
   assert {
