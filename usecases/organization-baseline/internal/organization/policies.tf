@@ -6,8 +6,7 @@ locals {
   organization_id = aws_organizations_organization.this.id
   prod_path       = "${local.organization_id}/${local.root_id}/${aws_organizations_organizational_unit.top["Workloads"].id}/${aws_organizations_organizational_unit.workloads["Prod"].id}/"
 
-  # メンバーの CI の apply 系と lock の解除の role（deployment-identity の `<project>-<env>-ci-<役割>`）。env を固定し、
-  # 名前の一部だけが一致する role を例外にしない。
+  # メンバーの CI の apply 系と lock の解除の role（deployment-identity の `<project>-<env>-ci-<役割>`）。
   state_writer_role_patterns = flatten([
     for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : [
       for suffix in ["apply", "apply-identity", "unlock", "unlock-identity"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-${suffix}"
@@ -15,6 +14,7 @@ locals {
   ])
   break_glass_role_arn_pattern    = "arn:aws:iam::*:role${var.break_glass_role_path}${var.break_glass_role_name}"
   stacksets_exec_role_arn_pattern = "arn:aws:iam::*:role/stacksets-exec-*"
+  baseline_apply_role_patterns    = [for env in ["security", "log-archive", "sandbox", "dev", "stg", "prd"] : "arn:aws:iam::*:role/${var.project}-${env}-ci-apply"]
 
   service_control_policies = {
     deny-leave-and-close = {
@@ -76,6 +76,48 @@ locals {
           "guardduty:DisassociateFromMasterAccount",
           "guardduty:UpdateDetector",
         ]
+        Resource = "*"
+      }]
+    }
+    # 中身は account-baseline が決める（account-baseline/ADR-0201）。
+    deny-baseline-stop = {
+      description = "account-baseline のアカウント単位の安全側の設定を、CI の apply の role の外が止めることと変えることを拒む。"
+      statements = [{
+        Sid    = "DenyBaselineStop"
+        Effect = "Deny"
+        Action = [
+          "access-analyzer:CreateArchiveRule",
+          "access-analyzer:DeleteAnalyzer",
+          "access-analyzer:UpdateArchiveRule",
+          "config:DeleteConfigurationRecorder",
+          "config:DeleteDeliveryChannel",
+          "config:DeleteRetentionConfiguration",
+          "config:PutConfigurationRecorder",
+          "config:PutDeliveryChannel",
+          "config:PutRetentionConfiguration",
+          "config:StopConfigurationRecorder",
+          "ec2:CreateVpcBlockPublicAccessExclusion",
+          "ec2:DisableEbsEncryptionByDefault",
+          "ec2:ModifyVpcBlockPublicAccessExclusion",
+          "ec2:ModifyVpcBlockPublicAccessOptions",
+          "elasticmapreduce:PutBlockPublicAccessConfiguration",
+          "s3:PutAccountPublicAccessBlock",
+          "ssm:ResetServiceSetting",
+          "ssm:UpdateServiceSetting",
+        ]
+        Resource = "*"
+        Condition = {
+          ArnNotLike = { "aws:PrincipalArn" = local.baseline_apply_role_patterns }
+        }
+      }]
+    }
+    # 中身は account-baseline が決める（account-baseline/ADR-0201 決定4）。
+    deny-enable-region = {
+      description = "opt-in のリージョンを有効にすることを拒む。"
+      statements = [{
+        Sid      = "DenyEnableRegion"
+        Effect   = "Deny"
+        Action   = "account:EnableRegion"
         Resource = "*"
       }]
     }
@@ -212,6 +254,8 @@ locals {
       "deny-guardduty-stop",
       "deny-root-user",
       "deny-iam-user",
+      "deny-baseline-stop",
+      "deny-enable-region",
       "data-perimeter-prod-resources",
       "data-perimeter-org-principals",
       "data-perimeter-prod-principals",

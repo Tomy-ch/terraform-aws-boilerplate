@@ -383,6 +383,32 @@ test_violation_governance_policy_writes_outside_apply if {
 	fixture.has("[PLAN-AIO-03]", messages_for(with_governance([create_org, write], attached_governance), gdecl))
 }
 
+# --- manage と統制の2つの customer managed policy（deployment-identity/ADR-0201 決定7・21） ---
+
+manage_arn := "arn:aws:iam::123456789012:policy/ci-apply-identity-manage"
+
+manage(statements) := object.union(
+	fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.manage", "policy", {"Statement": statements}),
+	{"change": {"after": {"arn": manage_arn}}},
+)
+
+mdecl := {"apply_identity_role": object.union(decl.apply_identity_role, {"managed_policies": ["module.x.aws_iam_policy.manage", "module.x.aws_iam_policy.governance[0]"]})}
+
+attached_both := object.union(attachments_exclusive, {"change": {"after": {"policy_arns": [manage_arn, governance_arn]}}})
+
+with_manage(statements) := fixture.plan(array.concat([role, policies_exclusive, attached_both, policy([write_apply]), governance([create_org]), manage(statements)], state_side))
+
+configure_buckets := {"Effect": "Allow", "Action": ["s3:PutBucketPolicy", "s3:PutLifecycleConfiguration"], "Resource": b}
+
+test_pass_manage_and_governance_policies_attached if {
+	count(messages_for(with_manage([configure_buckets]), mdecl)) == 0
+}
+
+test_violation_manage_policy_writes_outside_apply if {
+	write := {"Effect": "Allow", "Action": "s3:PutObject", "Resource": sprintf("%s/pr/*", [b])}
+	fixture.has("[PLAN-AIO-03]", messages_for(with_manage([configure_buckets, write]), mdecl))
+}
+
 test_violation_governance_policy_arn_unknown if {
 	unknown := json.patch(governance([create_org]), [
 		{"op": "remove", "path": "/change/after/arn"},

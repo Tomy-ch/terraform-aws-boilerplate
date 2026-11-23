@@ -19,6 +19,7 @@ break_glass := object.get(ob, "break_glass", {})
 # 規則が名指しで読む policy と OU。宣言から消えると、その規則が黙る。
 required_policies := {
 	"deny-leave-and-close", "deny-root-user", "deny-state-write", "protect-governance-roles", "deny-guardduty-stop",
+	"deny-baseline-stop", "deny-enable-region",
 	"data-perimeter-prod-resources", "data-perimeter-org-principals", "data-perimeter-prod-principals",
 }
 
@@ -379,4 +380,60 @@ guardduty_stop_shape if {
 	some s in statements("deny-guardduty-stop")
 	s.Effect == "Deny"
 	"guardduty:deletedetector" in lib.lower_all(object.get(s, "Action", []))
+}
+
+# account-baseline の設定を止める Action（account-baseline/ADR-0201 決定1）。
+baseline_stop_actions := {
+	"access-analyzer:createarchiverule", "access-analyzer:deleteanalyzer", "access-analyzer:updatearchiverule",
+	"config:deleteconfigurationrecorder", "config:deletedeliverychannel", "config:deleteretentionconfiguration",
+	"config:putconfigurationrecorder", "config:putdeliverychannel", "config:putretentionconfiguration",
+	"config:stopconfigurationrecorder", "ec2:createvpcblockpublicaccessexclusion", "ec2:disableebsencryptionbydefault",
+	"ec2:modifyvpcblockpublicaccessexclusion", "ec2:modifyvpcblockpublicaccessoptions",
+	"elasticmapreduce:putblockpublicaccessconfiguration", "s3:putaccountpublicaccessblock",
+	"ssm:resetservicesetting", "ssm:updateservicesetting",
+}
+
+baseline_stop_denied := {a |
+	some s in statements("deny-baseline-stop")
+	s.Effect == "Deny"
+	s.Resource == "*"
+	some a in lib.lower_all(object.get(s, "Action", []))
+}
+
+# 例外はメンバーの env の CI の apply の role に限る（account-baseline/ADR-0201 決定2・3）。
+baseline_apply_pattern := `^arn:aws:iam::\*:role/[a-z0-9]+-(security|log-archive|sandbox|dev|stg|prd)-ci-apply$`
+
+deny contains msg if {
+	some s in statements("deny-baseline-stop")
+	some op, keys in object.get(s, "Condition", {})
+	not baseline_exception_shape(op, keys)
+	msg := sprintf("[PLAN-ORG-09] deny-baseline-stop の条件 %s が、ArnNotLike aws:PrincipalArn でメンバーの CI の apply の role だけを外す形ではありません", [op])
+}
+
+baseline_exception_shape(op, keys) if {
+	op == "ArnNotLike"
+	object.keys(keys) == {"aws:PrincipalArn"}
+	every v in lib.as_array(keys["aws:PrincipalArn"]) {
+		regex.match(baseline_apply_pattern, v)
+	}
+}
+
+deny contains msg if {
+	content("deny-baseline-stop")
+	some a in (baseline_stop_actions - baseline_stop_denied)
+	msg := sprintf("[PLAN-ORG-09] deny-baseline-stop が %s を拒んでいません", [a])
+}
+
+# account-baseline/ADR-0201 決定4。
+deny contains msg if {
+	content("deny-enable-region")
+	not enable_region_shape
+	msg := "[PLAN-ORG-09] deny-enable-region が、条件なしに account:EnableRegion を拒む形ではありません"
+}
+
+enable_region_shape if {
+	some s in statements("deny-enable-region")
+	s.Effect == "Deny"
+	"account:enableregion" in lib.lower_all(object.get(s, "Action", []))
+	not s.Condition
 }
