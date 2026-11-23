@@ -337,14 +337,28 @@ well_formed_governance if {
 	}
 }
 
-# 宣言した名前そのものを Deny の Action に求める。決定5 は読み取りを拒まないので、`*` や `organizations:*` の
-# 広い Deny を覆いと数えない（鍵の Deny の `kms:*` とは違う）。
+# 宣言した名前を、Deny の Action のどれかが覆うことを求める。覆いは、同じ名前か、同じサービスの wildcard が IAM の
+# `*` と `?` でその名前に当たるもの（Identity Center の接尾辞の wildcard。deployment-identity/ADR-0201 決定5）。
+# 決定5 は読み取りを拒まないので、`*` や `organizations:*` のようなサービスの全体に当たる広い Deny を覆いと数えない
+# （鍵の Deny の `kms:*` とは違う）。宣言の `organizations:Create*` のように名前が * か ? を持つときは、pattern がその
+# 文字列に当たっても宣言の名前すべては覆わないので、完全一致だけを数える（on_or_pattern と同じ）。
 governance_denied(a) if {
 	some s in statements
 	unconditional_deny(s)
 	"Action" in object.keys(s)
 	on(s, "*")
-	lower(a) in lib.lower_all(s.Action)
+	some p in lib.lower_all(s.Action)
+	covers(p, lower(a))
+}
+
+covers(p, a) if p == a
+
+covers(p, a) if {
+	not regex.match(`[*?]`, a)
+	not regex.match(`^[^:]*:[*?]*$`, p)
+	not regex.match(`[*?]`, split(p, ":")[0])
+	split(p, ":")[0] == split(a, ":")[0]
+	lib.iam_match(p, a)
 }
 
 # --- apply の role に付く policy ---

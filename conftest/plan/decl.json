@@ -131,6 +131,7 @@
             "sso:ProvisionPermissionSet",
             "sso:PutInlinePolicyToPermissionSet",
             "sso:PutPermissionsBoundaryToPermissionSet",
+            "sso:PutPermissionsPolicy",
             "sso:UpdatePermissionSet",
             "cloudformation:ActivateOrganizationsAccess",
             "cloudformation:CreateStackInstances",
@@ -459,7 +460,20 @@
         "aws_sns_topic",
         "aws_route53_zone",
         "aws_route53_key_signing_key",
-        "aws_route53_hosted_zone_dnssec"
+        "aws_route53_hosted_zone_dnssec",
+        "aws_s3_account_public_access_block",
+        "aws_ebs_encryption_by_default",
+        "aws_accessanalyzer_analyzer",
+        "aws_config_configuration_recorder",
+        "aws_config_delivery_channel",
+        "aws_iam_service_linked_role",
+        "aws_config_configuration_recorder_status",
+        "aws_config_retention_configuration",
+        "aws_vpc_block_public_access_options",
+        "aws_ssm_service_setting",
+        "aws_emr_block_public_access_configuration",
+        "aws_account_alternate_contact",
+        "aws_iam_account_password_policy"
       ],
       "allow": {},
       "shorten_allow": {}
@@ -604,6 +618,37 @@
           "cloudtrail.amazonaws.com",
           "config.amazonaws.com"
         ]
+      }
+    },
+    "account_baseline": {
+      "regions": ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"],
+      "regional": {
+        "ebs_encryption": "aws_ebs_encryption_by_default",
+        "analyzer": "aws_accessanalyzer_analyzer",
+        "emr_block_public_access": "aws_emr_block_public_access_configuration",
+        "ssm_service_setting": "aws_ssm_service_setting",
+        "vpc_block_public_access": "aws_vpc_block_public_access_options"
+      },
+      "config": {
+        "recorder": "aws_config_configuration_recorder",
+        "delivery": "aws_config_delivery_channel",
+        "status": "aws_config_configuration_recorder_status",
+        "retention": "aws_config_retention_configuration"
+      },
+      "public_access_block": "aws_s3_account_public_access_block",
+      "password_policy_keys": ["minimum_password_length", "password_reuse_prevention", "require_lowercase_characters", "require_uppercase_characters", "require_numbers", "require_symbols", "allow_users_to_change_password", "max_password_age", "hard_expiry"],
+      "owners": {
+        "aws_account_alternate_contact": ["account-baseline"],
+        "aws_config_configuration_recorder": ["account-baseline"],
+        "aws_config_configuration_recorder_status": ["account-baseline"],
+        "aws_config_delivery_channel": ["account-baseline"],
+        "aws_config_retention_configuration": ["account-baseline"],
+        "aws_ebs_encryption_by_default": ["account-baseline"],
+        "aws_emr_block_public_access_configuration": ["account-baseline"],
+        "aws_iam_account_password_policy": ["account-baseline", "organization-baseline"],
+        "aws_s3_account_public_access_block": ["account-baseline"],
+        "aws_ssm_service_setting": ["account-baseline"],
+        "aws_vpc_block_public_access_options": ["account-baseline"]
       }
     },
     "audit_evidence": {

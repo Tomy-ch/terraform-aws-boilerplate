@@ -101,7 +101,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`、`zizmor` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`（`make tf-validate-canary`）、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |

@@ -62,6 +62,15 @@ run "outputs" {
     ])
     error_message = "permissions_boundary_arns の key が usecase の名前（ops-notification）でないか、値が arn:<partition>:iam::<account>:policy/<project>-<env>-ci-boundary-<usecase> の形ではありません。"
   }
+
+  assert {
+    condition = [for sid in ["ReadBreakGlassUsers", "ReadBreakGlassGroup", "ReadBreakGlassRole"] : one([for s in jsondecode(module.github_oidc.role_policies["plan"]).Statement : s.Resource if s.Sid == sid])] == [
+      ["arn:aws:iam::123456789012:user/break-glass/break-glass-1", "arn:aws:iam::123456789012:user/break-glass/break-glass-2"],
+      ["arn:aws:iam::123456789012:group/break-glass/break-glass"],
+      ["arn:aws:iam::123456789012:role/break-glass/tabp-break-glass"],
+    ]
+    error_message = "break_glass_arns が内部の module の権限へ渡っていません。"
+  }
 }
 
 # 取り違えが見えるよう、上の admin とは別の値を渡す。
@@ -117,8 +126,8 @@ run "wiring" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(module.github_oidc.role_policies["apply"]).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:role/break-glass/t4bp-break-glass"]
-    error_message = "break_glass_arns が apply の role の Deny へ渡っていません。"
+    condition     = one([for s in jsondecode(module.github_oidc.role_policies["apply"]).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws:iam::123456789012:group/break-glass/*", "arn:aws:iam::123456789012:role/break-glass/*", "arn:aws:iam::123456789012:user/break-glass/*"]
+    error_message = "apply の role の break-glass の Deny が、path が /break-glass/ の user・group・role の pattern になっていません。"
   }
 
   assert {

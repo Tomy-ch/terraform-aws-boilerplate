@@ -333,7 +333,8 @@ permissions() {
   sim allowed plan "*" organizations:DescribeOrganization organizations:ListRoots organizations:ListAccounts iam:ListOrganizationsFeatures iam:GetAccountPasswordPolicy
   sim allowed plan "$gp" iam:GetPolicy iam:GetPolicyVersion
   sim implicitDeny plan "*" organizations:CreateOrganization iam:UpdateAccountPasswordPolicy
-  sim explicitDeny apply "*" organizations:CreateOrganization organizations:AttachPolicy organizations:LeaveOrganization account:CloseAccount iam:EnableOrganizationsRootSessions iam:UpdateAccountPasswordPolicy sso:CreatePermissionSet sts:AssumeRoot
+  sim explicitDeny apply "*" organizations:CreateOrganization organizations:AttachPolicy organizations:LeaveOrganization account:CloseAccount iam:EnableOrganizationsRootSessions iam:UpdateAccountPasswordPolicy sso:CreatePermissionSet sso:AttachManagedPolicyToPermissionSet sso:DeleteAccountAssignment sso:PutPermissionsPolicy sts:AssumeRoot
+  sim implicitDeny apply "*" sso:DescribePermissionSet sso:GetPermissionSet sso:ListAccountAssignments
   sim explicitDeny apply "$bg" iam:UpdateAssumeRolePolicy iam:AttachRolePolicy
   sim explicitDeny apply "$gp" iam:CreatePolicyVersion
   if [[ $(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --query 'AttachedPolicies[].PolicyName' --output text) == tabp-admin-ci-apply-identity-governance ]]; then

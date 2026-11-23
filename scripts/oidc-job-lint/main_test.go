@@ -92,7 +92,6 @@ var applyWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make infra-code-gate-test RUNNER_MODE=host",
 	"      - run: make infra-code-gate RUNNER_MODE=host",
 	"",
 	"  apply-resource-order-check:",
@@ -100,7 +99,6 @@ var applyWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make resource-order-check-test RUNNER_MODE=host",
 	"      - run: make resource-order-check RUNNER_MODE=host",
 	"",
 	"  apply-layer-check:",
@@ -115,7 +113,6 @@ var applyWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make root-check-test RUNNER_MODE=host",
 	"      - run: make root-check RUNNER_MODE=host",
 	"",
 	"  apply-admin-identity:",
@@ -262,14 +259,10 @@ var gatesWorkflow = strings.Join([]string{
 	"        env:",
 	"          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
 	"        run: make tf-lint RUNNER_MODE=host",
-	"      - name: Run the resource-order check's own tests",
-	"        run: make resource-order-check-test RUNNER_MODE=host",
 	"      - name: Check the resource order",
 	"        run: make resource-order-check RUNNER_MODE=host",
 	"      - name: Check the layer rules",
 	"        run: make layer-check RUNNER_MODE=host",
-	"      - name: Run the root check's own tests",
-	"        run: make root-check-test RUNNER_MODE=host",
 	"      - name: Check the root composition and backend settings",
 	"        run: make root-check RUNNER_MODE=host",
 	"",
@@ -411,7 +404,7 @@ func Test_run(t *testing.T) {
 		wf, env := repoWith(t, map[string]string{"plan.yaml": planWorkflow, "apply.yml": applyWorkflow, "gates.yaml": strings.Replace(gatesWorkflow, "        run: make resource-order-check RUNNER_MODE=host\n", "        run: echo\n", 1)}, envDecl)
 		var out bytes.Buffer
 		require.ErrorIs(t, run(wf, env, rulesetOf(env), "", &out), errViolations)
-		assert.Contains(t, out.String(), "make resource-order-check-test と make resource-order-check を走らせるものがありません")
+		assert.Contains(t, out.String(), "make resource-order-check を走らせるものがありません")
 	})
 
 	t.Run("2つの検査を走らせる必須検査の job の job 単位の違反は1件だけ報告する", func(t *testing.T) {
@@ -1229,7 +1222,7 @@ func Test_checkDetection(t *testing.T) {
 		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "make infra-code-gate を走らせる job")
 	})
 
-	t.Run("検出の自己テストだけの job は検出と認めない", func(t *testing.T) {
+	t.Run("検出に似た名前のターゲットだけの job は検出と認めない", func(t *testing.T) {
 		t.Parallel()
 
 		j, aw := applyWith(t, "      - run: make infra-code-gate RUNNER_MODE=host\n", "      - run: make infra-code-gate-test RUNNER_MODE=host\n")
@@ -1378,14 +1371,14 @@ func Test_checkDetection(t *testing.T) {
 		"検出の job の defaults: は違反":       {detJob, "  apply-infra-code-gate:\n    defaults: {}\n    runs-on: ubuntu-24.04\n", "defaults:"},
 		"検出の job の services: は違反":       {detJob, "  apply-infra-code-gate:\n    services: {}\n    runs-on: ubuntu-24.04\n", "services:"},
 		"検出の job の MFLAGS は違反":          {detStep, detStep + "        env:\n          MFLAGS: -n\n", "MAKEFLAGS と MAKEFILES を渡さない"},
-		"検出の job の似た名前のターゲットは違反":        {detStep, detStep + "      - run: make infra-code-gate-testx RUNNER_MODE=host\n", "run: は make infra-code-gate-test と make infra-code-gate だけ"},
+		"検出の job の似た名前のターゲットは違反":        {detStep, detStep + "      - run: make infra-code-gate-testx RUNNER_MODE=host\n", "run: は make infra-code-gate だけ"},
 		"検出の job の env: は違反":            {detJob, "  apply-infra-code-gate:\n    env:\n      X: y\n    runs-on: ubuntu-24.04\n", "env:"},
 		"検出の job の container: は違反":      {detJob, "  apply-infra-code-gate:\n    container: alpine\n    runs-on: ubuntu-24.04\n", "container:"},
 		"検出の job の MAKEFLAGS は違反":       {detJob, "  apply-infra-code-gate:\n    env:\n      MAKEFLAGS: -n\n    runs-on: ubuntu-24.04\n", "MAKEFLAGS と MAKEFILES を渡さない"},
 		"検出の step の shell: は違反":         {detStep, detStep + "        shell: sh -c true {0}\n", "shell:"},
 		"検出の step の引用符付き env: は違反":      {detStep, detStep + "        \"env\":\n          X: y\n", "env:"},
 		"検出の job の MAKEFILES は違反":       {detStep, detStep + "        env:\n          MAKEFILES: x.mk\n", "MAKEFLAGS と MAKEFILES を渡さない"},
-		"検出の job のほかの run: は違反":         {detStep, "      - run: echo /tmp/b >> \"$GITHUB_PATH\"\n" + detStep, "run: は make infra-code-gate-test と make infra-code-gate だけ"},
+		"検出の job のほかの run: は違反":         {detStep, "      - run: echo /tmp/b >> \"$GITHUB_PATH\"\n" + detStep, "run: は make infra-code-gate だけ"},
 		"検出の job から GITHUB_PATH に書けば違反": {detStep, "      - run: echo /tmp/b >> \"$GITHUB_PATH\"\n" + detStep, "GITHUB_PATH と GITHUB_ENV"},
 	}
 	for name, c := range hidden {
@@ -1445,7 +1438,7 @@ func Test_checkDetection(t *testing.T) {
 
 		const orderStep = "      - run: make resource-order-check RUNNER_MODE=host\n"
 		j, aw := applyWith(t, orderStep, orderStep+"      - run: make layer-check RUNNER_MODE=host\n")
-		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check の run: は make resource-order-check-test と make resource-order-check だけ")
+		assert.Contains(t, messages(checkDetection(j, aw.jobs, formatted)), "順序の検査の job apply-resource-order-check の run: は make resource-order-check だけ")
 	})
 
 	t.Run("検出の job のコメントの if: は読まない", func(t *testing.T) {
@@ -1704,13 +1697,13 @@ func Test_checkGateJob(t *testing.T) {
 
 		const rootStep = "      - run: make root-check RUNNER_MODE=host\n"
 		j := jobOf(t, replaced(t, applyWorkflow, rootStep, "      - run: make root-check RUNNER_MODE=host RT_NS=x\n"), "apply-root-check")
-		assert.Contains(t, messages(checkGateJob(j, rootGate, formatted)), "root の検査の job apply-root-check の run: は make root-check-test と make root-check だけ")
+		assert.Contains(t, messages(checkGateJob(j, rootGate, formatted)), "root の検査の job apply-root-check の run: は make root-check だけ")
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
-		"ほかの run: は違反":         {orderStep, orderStep + "      - run: echo\n", "順序の検査の job apply-resource-order-check の run: は make resource-order-check-test と make resource-order-check だけ"},
-		"変数を足した make は違反":      {orderStep, "      - run: make resource-order-check RUNNER_MODE=host RO_NS=x\n", "run: は make resource-order-check-test と make resource-order-check だけ"},
-		"検出の make は違反":         {orderStep, orderStep + "      - run: make infra-code-gate RUNNER_MODE=host\n", "run: は make resource-order-check-test と make resource-order-check だけ"},
+		"ほかの run: は違反":         {orderStep, orderStep + "      - run: echo\n", "順序の検査の job apply-resource-order-check の run: は make resource-order-check だけ"},
+		"変数を足した make は違反":      {orderStep, "      - run: make resource-order-check RUNNER_MODE=host RO_NS=x\n", "run: は make resource-order-check だけ"},
+		"検出の make は違反":         {orderStep, orderStep + "      - run: make infra-code-gate RUNNER_MODE=host\n", "run: は make resource-order-check だけ"},
 		"step の if: は違反":       {orderStep, orderStep + "        if: false\n", "順序の検査の job apply-resource-order-check に if:"},
 		"job の needs: は違反":     {"  apply-resource-order-check:\n    runs-on: ubuntu-24.04\n", "  apply-resource-order-check:\n    needs: changes\n    runs-on: ubuntu-24.04\n", "順序の検査の job apply-resource-order-check に needs:"},
 		"MAKEFLAGS は違反":        {orderStep, orderStep + "        env:\n          MAKEFLAGS: -n\n", "MAKEFLAGS と MAKEFILES を渡さない"},
@@ -1764,13 +1757,13 @@ func Test_checkApplyGate(t *testing.T) {
 		g        gate
 		from, to string
 	}{
-		"順序の検査: 自己テストだけの job は数えない":           {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", ""},
-		"順序の検査: 検出も走らせる job は数えない":            {orderGate, "      - run: make resource-order-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"順序の検査: 検査の make を持たない job は数えない":     {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", ""},
+		"順序の検査: 検出も走らせる job は数えない":            {orderGate, "      - run: make resource-order-check RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n      - run: make resource-order-check RUNNER_MODE=host\n"},
 		"層の検査: 層の検査を走らせない job は数えない":          {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", ""},
 		"層の検査: 検出も走らせる job は数えない":             {layerGate, "      - run: make layer-check RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n      - run: make layer-check RUNNER_MODE=host\n"},
 		"層の検査: 順序の検査の job は層の検査と数えない":         {layerGate, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n", "    needs: [apply-infra-code-gate, apply-resource-order-check]\n"},
-		"root の検査: 自己テストだけの job は数えない":        {rootGate, "      - run: make root-check RUNNER_MODE=host\n", ""},
-		"root の検査: 検出も走らせる job は数えない":         {rootGate, "      - run: make root-check-test RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n"},
+		"root の検査: 検査の make を持たない job は数えない":  {rootGate, "      - run: make root-check RUNNER_MODE=host\n", ""},
+		"root の検査: 検出も走らせる job は数えない":         {rootGate, "      - run: make root-check RUNNER_MODE=host\n", "      - run: make infra-code-gate RUNNER_MODE=host\n      - run: make root-check RUNNER_MODE=host\n"},
 		"root の検査: 層の検査の job は root の検査と数えない": {rootGate, "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check, apply-root-check]\n", "    needs: [apply-infra-code-gate, apply-resource-order-check, apply-layer-check]\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -2144,7 +2137,7 @@ func Test_runsGate(t *testing.T) {
 	}{
 		"make infra-code-gate を走らせる": {"      - run: make infra-code-gate RUNNER_MODE=host\n", true},
 		"引数の無い make infra-code-gate": {"      - run: make infra-code-gate\n", true},
-		"自己テストだけは偽":                  {"      - run: make infra-code-gate-test\n", false},
+		"-test の付いた別のターゲットは偽":        {"      - run: make infra-code-gate-test\n", false},
 		"name: の中は偽":                 {"      - name: make infra-code-gate\n        run: echo\n", false},
 		"コメントは偽":                     {"      # - run: make infra-code-gate\n      - run: echo\n", false},
 		"make を通さない検出の道具は偽":          {"      - run: ./tmp/bin/infra-code-gate\n", false},
@@ -2160,6 +2153,9 @@ func Test_runsGate(t *testing.T) {
 		"-f（別の Makefile）は偽":          {"      - run: make -f /dev/null infra-code-gate\n", false},
 		"後置の -n は偽":                  {"      - run: make infra-code-gate -n\n", false},
 		"RUNNER_MODE=host は認める":      {"      - run: make RUNNER_MODE=host infra-code-gate\n", true},
+		"-k は認める":                    {"      - run: make -k infra-code-gate RUNNER_MODE=host\n", true},
+		"後置の -k は偽":                  {"      - run: make infra-code-gate -k\n", false},
+		"-k の後の -n は偽":               {"      - run: make -k -n infra-code-gate\n", false},
 		"MAKEFLAGS=n（実行しない）は偽":       {"      - run: make infra-code-gate MAKEFLAGS=n\n", false},
 		"SHELL の差し替えは偽":              {"      - run: make SHELL=/usr/bin/true infra-code-gate\n", false},
 		"ほかの変数の代入は偽":                 {"      - run: make infra-code-gate V=1\n", false},
@@ -2177,7 +2173,7 @@ func Test_runsGate(t *testing.T) {
 		want bool
 	}{
 		"make resource-order-check を走らせる": {"      - run: make resource-order-check RUNNER_MODE=host\n", true},
-		"自己テストだけは偽":                       {"      - run: make resource-order-check-test RUNNER_MODE=host\n", false},
+		"-test の付いた別のターゲットは偽":             {"      - run: make resource-order-check-test RUNNER_MODE=host\n", false},
 		"検出は順序の検査ではない":                    {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
 		"-n（実行しない）は偽":                     {"      - run: make -n resource-order-check\n", false},
 	}
@@ -2194,6 +2190,7 @@ func Test_runsGate(t *testing.T) {
 		want bool
 	}{
 		"make layer-check を走らせる":   {"      - run: make layer-check RUNNER_MODE=host\n", true},
+		"-k は認める":                  {"      - run: make -k layer-check RUNNER_MODE=host\n", true},
 		"make layer-check-test は偽": {"      - run: make layer-check-test RUNNER_MODE=host\n", false},
 		"検出は層の検査ではない":              {"      - run: make infra-code-gate RUNNER_MODE=host\n", false},
 		"順序の検査は層の検査ではない":           {"      - run: make resource-order-check RUNNER_MODE=host\n", false},
@@ -2215,7 +2212,7 @@ func Test_runsGate(t *testing.T) {
 		want bool
 	}{
 		"make root-check を走らせる": {"      - run: make root-check RUNNER_MODE=host\n", true},
-		"自己テストだけは偽":             {"      - run: make root-check-test RUNNER_MODE=host\n", false},
+		"-test の付いた別のターゲットは偽":   {"      - run: make root-check-test RUNNER_MODE=host\n", false},
 		"層の検査は root の検査ではない":    {"      - run: make layer-check RUNNER_MODE=host\n", false},
 		"-n（実行しない）は偽":           {"      - run: make -n root-check\n", false},
 		"|| true で失敗を隠すのは偽":     {"      - run: make root-check || true\n", false},
@@ -2951,7 +2948,6 @@ var unlockWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make infra-code-gate-test RUNNER_MODE=host",
 	"      - run: make infra-code-gate RUNNER_MODE=host",
 	"",
 	"  unlock-admin-identity:",
@@ -3622,7 +3618,6 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 	required := map[string]bool{"tf-lint": true}
 	const (
 		check = "        run: make resource-order-check RUNNER_MODE=host\n"
-		self  = "        run: make resource-order-check-test RUNNER_MODE=host\n"
 	)
 
 	t.Run("必須検査の job が両方を走らせれば1件で違反0件", func(t *testing.T) {
@@ -3636,16 +3631,6 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 	t.Run("層の検査も同じ job で数える", func(t *testing.T) {
 		t.Parallel()
 
-		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, layerGate)
-		assert.Equal(t, 1, n)
-		assert.Empty(t, f)
-	})
-
-	t.Run("層の検査は自己テストの make を要らない", func(t *testing.T) {
-		t.Parallel()
-
-		assert.Nil(t, layerGate.testRun)
-		require.NotContains(t, gatesWorkflow, "layer-check-test")
 		n, f := checkRequiredGateJobs("g.yaml", gatesWorkflow, required, layerGate)
 		assert.Equal(t, 1, n)
 		assert.Empty(t, f)
@@ -3665,7 +3650,6 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 	)
 	for name, src := range map[string]string{
 		"root の検査そのものが無い":             strings.Replace(gatesWorkflow, rootCheckStep, "        run: echo\n", 1),
-		"root の検査の自己テストが無い":           strings.Replace(gatesWorkflow, rootSelfStep, "        run: echo\n", 1),
 		"root の検査: required でない job":  strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
 		"root の検査: 変数を足した make は数えない": strings.Replace(gatesWorkflow, rootCheckStep, "        run: make root-check RUNNER_MODE=host RT_NS=x\n", 1),
 		"root の検査: コメントの中は数えない":       strings.Replace(gatesWorkflow, rootCheckStep, "        # run: make root-check RUNNER_MODE=host\n        run: echo\n", 1),
@@ -3715,7 +3699,6 @@ func Test_checkRequiredGateJobs(t *testing.T) {
 
 	for name, src := range map[string]string{
 		"検査そのものが無い":           strings.Replace(gatesWorkflow, check, "        run: echo\n", 1),
-		"自己テストが無い":            strings.Replace(gatesWorkflow, self, "        run: echo\n", 1),
 		"required でない job":    strings.Replace(gatesWorkflow, "  tf-lint:\n", "  other:\n", 1),
 		"pull_request で起動しない": strings.Replace(gatesWorkflow, "  pull_request:\n", "  push:\n", 1),
 		"変数を足した make は数えない":   strings.Replace(gatesWorkflow, check, "        run: make resource-order-check RUNNER_MODE=host RO_NS=x\n", 1),
@@ -3746,7 +3729,6 @@ func Test_checkRequiredGateJob(t *testing.T) {
 
 	const (
 		check  = "        run: make resource-order-check RUNNER_MODE=host\n"
-		self   = "        run: make resource-order-check-test RUNNER_MODE=host\n"
 		jobIf  = "    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}\n"
 		header = "  tf-lint:\n    needs: changes\n"
 	)
@@ -3780,24 +3762,23 @@ func Test_checkRequiredGateJob(t *testing.T) {
 	})
 
 	for name, c := range map[string]struct{ from, to, want string }{
-		"検査の step の continue-on-error: は違反":    {check, check + "        continue-on-error: true\n", "順序の検査の step に if:・continue-on-error:"},
-		"自己テストの step の continue-on-error: は違反": {self, self + "        continue-on-error: true\n", "順序の検査の step に if:・continue-on-error:"},
-		"検査の step の if: false は違反":             {check, check + "        if: false\n", "順序の検査の step に if:"},
-		"検査の step の shell: は違反":                {check, check + "        shell: sh -c true {0}\n", "shell:"},
-		"検査の step の working-directory: は違反":    {check, check + "        working-directory: /tmp\n", "working-directory:"},
-		"job の if: false は違反":                  {jobIf, "    if: false\n", "if: は ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }} だけ"},
-		"job の if: ${{ false }} は違反":           {jobIf, "    if: ${{ false }}\n", "if: は ${{"},
-		"job の if: always() を足せば違反":            {jobIf, "    if: ${{ always() && !cancelled() && needs.changes.outputs.relevant != 'false' }}\n", "if: は ${{"},
-		"job の if: always() だけは違反":             {jobIf, "    if: ${{ always() }}\n", "if: は ${{"},
-		"job の if: の || は違反":                   {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' || false }}\n", "if: は ${{"},
-		"job の if: の否定の差し替えは違反":                {jobIf, "    if: ${{ !cancelled() && !(needs.changes.outputs.relevant != 'false') }}\n", "if: は ${{"},
-		"job の if: の比較の差し替えは違反":                {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant == 'false' }}\n", "if: は ${{"},
-		"job の continue-on-error: は違反":         {header, header + "    continue-on-error: true\n", "必須検査の job に continue-on-error:"},
-		"job の env: は違反":                       {header, header + "    env:\n      X: y\n", "必須検査の job に env:"},
-		"job の container: は違反":                 {header, header + "    container: alpine\n", "必須検査の job に container:"},
-		"workflow の env: は違反":                  {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  X: y\n", "workflow に defaults: と env:"},
-		"MAKEFLAGS は違反":                        {self, self + "        env:\n          MAKEFLAGS: -n\n", "MAKEFLAGS と MAKEFILES"},
-		"GITHUB_ENV への書き込みは違反":                 {"        run: make tf-lint RUNNER_MODE=host\n", "        run: echo X=y >> \"$GITHUB_ENV\"\n", "GITHUB_PATH と GITHUB_ENV"},
+		"検査の step の continue-on-error: は違反": {check, check + "        continue-on-error: true\n", "順序の検査の step に if:・continue-on-error:"},
+		"検査の step の if: false は違反":          {check, check + "        if: false\n", "順序の検査の step に if:"},
+		"検査の step の shell: は違反":             {check, check + "        shell: sh -c true {0}\n", "shell:"},
+		"検査の step の working-directory: は違反": {check, check + "        working-directory: /tmp\n", "working-directory:"},
+		"job の if: false は違反":               {jobIf, "    if: false\n", "if: は ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }} だけ"},
+		"job の if: ${{ false }} は違反":        {jobIf, "    if: ${{ false }}\n", "if: は ${{"},
+		"job の if: always() を足せば違反":         {jobIf, "    if: ${{ always() && !cancelled() && needs.changes.outputs.relevant != 'false' }}\n", "if: は ${{"},
+		"job の if: always() だけは違反":          {jobIf, "    if: ${{ always() }}\n", "if: は ${{"},
+		"job の if: の || は違反":                {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' || false }}\n", "if: は ${{"},
+		"job の if: の否定の差し替えは違反":             {jobIf, "    if: ${{ !cancelled() && !(needs.changes.outputs.relevant != 'false') }}\n", "if: は ${{"},
+		"job の if: の比較の差し替えは違反":             {jobIf, "    if: ${{ !cancelled() && needs.changes.outputs.relevant == 'false' }}\n", "if: は ${{"},
+		"job の continue-on-error: は違反":      {header, header + "    continue-on-error: true\n", "必須検査の job に continue-on-error:"},
+		"job の env: は違反":                    {header, header + "    env:\n      X: y\n", "必須検査の job に env:"},
+		"job の container: は違反":              {header, header + "    container: alpine\n", "必須検査の job に container:"},
+		"workflow の env: は違反":               {"permissions:\n  contents: read\n", "permissions:\n  contents: read\nenv:\n  X: y\n", "workflow に defaults: と env:"},
+		"MAKEFLAGS は違反":                     {check, check + "        env:\n          MAKEFLAGS: -n\n", "MAKEFLAGS と MAKEFILES"},
+		"GITHUB_ENV への書き込みは違反":              {"        run: make tf-lint RUNNER_MODE=host\n", "        run: echo X=y >> \"$GITHUB_ENV\"\n", "GITHUB_PATH と GITHUB_ENV"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -3850,7 +3831,7 @@ func Test_checkPullRequestGate(t *testing.T) {
 		t.Run(g.noun+": apply の job が在って Pull Request の側に無ければ違反", func(t *testing.T) {
 			t.Parallel()
 
-			assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, g)), g.targets+" を走らせるもの")
+			assert.Contains(t, messages(checkPullRequestGate("wf", append(unlock, apply...), 0, g)), g.check+" を走らせるもの")
 		})
 	}
 }
@@ -4612,7 +4593,6 @@ var holdWorkflow = strings.Join([]string{
 	"    permissions:",
 	"      contents: read",
 	"    steps:",
-	"      - run: make infra-code-gate-test RUNNER_MODE=host",
 	"      - run: make infra-code-gate RUNNER_MODE=host",
 	"",
 	"  hold-admin-identity:",

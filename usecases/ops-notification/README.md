@@ -27,7 +27,7 @@
 
 | 出力 | 使う側 |
 | --- | --- |
-| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`account-baseline` の GuardDuty の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
+| `topic_arn` | 同じアカウントの送り手を持つユースケース（alarm を持つ module、`security-tooling` の検知の rule、`finops` の Budgets と Cost Anomaly Detection）。env の root が渡す |
 | `us_east_1_topic_arn` | us-east-1 にしか出ない metric の CloudWatch の alarm を持つユースケース（Route 53 の DNSSEC の alarm など）。送り手は CloudWatch だけ。env の root が渡す |
 
 - ログの所在: このユースケースはログを持たない。Chatbot の `logging_level` は `NONE`、SNS の配送状況のログ（delivery status logging）も持たない。API の呼び出しの記録は CloudTrail が持つ
@@ -126,8 +126,9 @@ AWS Well-Architected Framework（2024-06-27 版）の OPS10-BP02「Have a proces
 
 1. Scheduler の schedule が `ENABLED` で、CloudWatch の `AWS/Scheduler` の `TargetErrorCount`・`InvocationDroppedCount` が増えていないか
 2. Topic の `NumberOfMessagesPublished` と `NumberOfNotificationsFailed`
-3. Chatbot の構成と、Slack の workspace の認可
-4. 鍵の状態と Key Policy の `RolesViaSns0`
+3. Topic に Chatbot の購読（endpoint `https://global.sns-api.chatbot.amazonaws.com`）があるか。`NumberOfMessagesPublished` が増えていて、`NumberOfNotificationsDelivered` と `NumberOfNotificationsFailed` が増えていなければ、購読が無い。付け直しは [`docs/setup/ops-notification.md`](../../docs/setup/ops-notification.md) の 3.4
+4. Chatbot の構成と、Slack の workspace の認可
+5. 鍵の状態と Key Policy の `RolesViaSns0`
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
