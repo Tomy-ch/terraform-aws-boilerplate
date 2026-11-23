@@ -17,27 +17,25 @@ import (
 )
 
 const (
-	fixturePackage = `{
-  "dependencies": {
-    "@commitlint/cli": "20.1.0",
-    "markdownlint-cli2": "0.24.1"
-  }%s
-}
-`
-	fixtureLock = `lockfileVersion: '9.0'
-
-packages:
-
-  markdownlint-cli2@0.24.1:
-    resolution: {integrity: sha512-nLhes/MIPJQLm+Gmh==}
-    hasBin: true
-
-snapshots:
-
-  markdownlint-cli2@0.24.1:
-    dependencies:
-      globby: 16.2.4
-`
+	fixturePackage = "{\n" +
+		"  \"dependencies\": {\n" +
+		"    \"@commitlint/cli\": \"20.1.0\",\n" +
+		"    \"markdownlint-cli2\": \"0.24.1\"\n" +
+		"  }%s\n" +
+		"}\n"
+	fixtureLock = "lockfileVersion: '9.0'\n" +
+		"\n" +
+		"packages:\n" +
+		"\n" +
+		"  markdownlint-cli2@0.24.1:\n" +
+		"    resolution: {integrity: sha512-nLhes/MIPJQLm+Gmh==}\n" +
+		"    hasBin: true\n" +
+		"\n" +
+		"snapshots:\n" +
+		"\n" +
+		"  markdownlint-cli2@0.24.1:\n" +
+		"    dependencies:\n" +
+		"      globby: 16.2.4\n"
 	fixtureWorkspace = "minimumReleaseAge: 10080\n"
 )
 

@@ -31,8 +31,8 @@ const asNodeTools = "NODE_TOOLS_TEST_AS_MAIN"
 const fakePnpm = `if grep -q x-test-launch package.json; then :
 elif grep -q '"0.0.0"' package.json; then echo ERR_PNPM_OUTDATED_LOCKFILE >&2; exit 1
 elif grep -qE 'sha512-(AAAA|BBBB)' pnpm-lock.yaml; then
-  if grep -q x-test-integrity-reason package.json; then echo ERR_PNPM_FETCH_404 >&2; exit 1; fi
-  echo ERR_PNPM_TARBALL_INTEGRITY >&2; exit 1
+	if grep -q x-test-integrity-reason package.json; then echo ERR_PNPM_FETCH_404 >&2; exit 1; fi
+	echo ERR_PNPM_TARBALL_INTEGRITY >&2; exit 1
 fi
 mkdir -p node_modules/.bin
 printf '#!/bin/sh\nread -r in || in=\necho launched "$@" "x=$X_TEST" "in=$in" "pid=$$"\nexit "${X_EXIT:-0}"\n' > node_modules/.bin/markdownlint-cli2
@@ -197,7 +197,7 @@ func Test_command(t *testing.T) {
 	}
 	t.Run("知らない段は別の道具へ落とさず panic する", func(t *testing.T) {
 		t.Parallel()
-		assert.Panics(t, func() { command(context.Background(), "/x/d", "lock-chek") })
+		assert.Panics(t, func() { command(context.Background(), "/x/d", "unknown-step") })
 	})
 }
 
