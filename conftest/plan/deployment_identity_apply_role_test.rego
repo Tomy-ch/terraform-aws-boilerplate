@@ -1127,6 +1127,19 @@ test_violation_governance_service_wide_wildcard if {
 	}
 }
 
+test_pass_governance_question_mark_covers_name if {
+	every action in [["sso:CreatePermissionSe?"], ["sso:?reatePermissionSet"]] {
+		not any_startswith(sso_messages(action), denied_06("sso:CreatePermissionSet"))
+	}
+}
+
+# 宣言の名前が * を持つとき、それに当たる pattern は宣言の名前すべて（organizations:CreateAccount など）を覆わない。
+test_violation_governance_pattern_on_declared_wildcard if {
+	s := replace(valid_statements, governance_index, {"Effect": "Deny", "Action": ["organizations:Create?", "sts:AssumeRoot"], "Resource": "*"})
+	some m in messages(s)
+	startswith(m, denied_06("organizations:Create*"))
+}
+
 any_startswith(msgs, prefix) if {
 	some m in msgs
 	startswith(m, prefix)
@@ -1183,6 +1196,12 @@ declared_governance_actions := data.policy_plan.deployment_identity.apply_role.g
 declared_decl := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance/actions", "value": declared_governance_actions}])
 
 declared_messages(actions) := messages_for(world(replace(valid_statements, governance_index, {"Effect": "Deny", "Action": actions, "Resource": "*"})), declared_decl)
+
+# 合成の sso の宣言を実際の宣言に揃える。宣言の Identity Center の Action が増減したら、ここで落ちる。
+test_sso_governance_actions_match_declaration if {
+	{a | some a in declared_governance_actions; startswith(a, "sso:")} == {a | some a in sso_governance_actions}
+	count(sso_governance_actions) == 15
+}
 
 test_pass_declared_governance_actions if {
 	count([a | some a in declared_governance_actions; startswith(a, "cloudformation:")]) > 0
