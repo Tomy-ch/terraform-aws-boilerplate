@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,8 +16,8 @@ func Test_run(t *testing.T) {
 
 	t.Run("サブコマンドが無いか知らなければ errUsage", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run(nil, &bytes.Buffer{}, command), errUsage)
-		require.ErrorIs(t, run([]string{"apply"}, &bytes.Buffer{}, command), errUsage)
+		require.ErrorIs(t, run(nil, &bytes.Buffer{}, command, t.TempDir()), errUsage)
+		require.ErrorIs(t, run([]string{"apply"}, &bytes.Buffer{}, command, t.TempDir()), errUsage)
 	})
 
 	t.Run("各サブコマンドへ渡す", func(t *testing.T) {
@@ -25,10 +26,35 @@ func Test_run(t *testing.T) {
 			t.Run(sub, func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
-				require.ErrorIs(t, run([]string{sub, "-no-such-flag"}, &out, command), errUsage)
+				require.ErrorIs(t, run([]string{sub, "-no-such-flag"}, &out, command, t.TempDir()), errUsage)
 				assert.Contains(t, out.String(), "-no-such-flag", "そのサブコマンドの flag の解釈に届いている")
 			})
 		}
+	})
+
+	t.Run("plan は root を -out・-canary-work の検証と canary へ渡す", func(t *testing.T) {
+		t.Parallel()
+		ref := tree(t, map[string]string{"versions.tf": "", ".terraform.lock.hcl": "", "decl.json": "{}", "layer.json": layerWithNulls})
+		base := tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": ""})
+		plan := func(root, out, work string, tool toolFunc) error {
+			return run([]string{"plan", "-base", base, "-data", "/d", "-out", out, "-canary-data", t.TempDir(), "-canary-work", work,
+				"-policy", policyTree(t), "-decl", filepath.Join(ref, "decl.json"), "-layer", filepath.Join(ref, "layer.json"), "-reference", ref},
+				&bytes.Buffer{}, tool, root)
+		}
+
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		for flag, args := range map[string][2]string{"-out": {"tmp/out/w", "tmp/c/work"}, "-canary-work": {"tmp/c/work", "tmp/out/w"}} {
+			err := plan(root, args[0], args[1], tool)
+			require.ErrorIs(t, err, errUsage, "root の tmp/out は外を指す")
+			assert.Contains(t, err.Error(), flag+` "tmp/out/w"`)
+		}
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.ErrorIs(t, plan(root, "tmp/run", "tmp/c/work", tool), errCanary, "偽の道具では canary が成り立たない")
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"), "canary は root の下に建てる")
 	})
 }
 

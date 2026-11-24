@@ -45,7 +45,9 @@ locals {
   workload_read_policy_name = "${var.name_prefix}-ci-apply-workload-read"
   workload_read_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_read_policy_name}"
   workload_policy_arns      = [local.workload_policy_arn, local.workload_read_policy_arn]
-  boundary_policy_names     = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
+  # account-baseline の管理を置く（決定17・21）。
+  workload_2_policy_arn = "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-apply-workload-2"
+  boundary_policy_names = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
   # 決定13。IAM の role と policy を書き込む Allow は、usecase が IAM の名前の先頭に置く小文字の接頭辞に限る。
   usecase_iam_prefixes = { "ops-notification" = "${var.name_prefix}-ops-" }
   boundary_policy_arns = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
@@ -112,7 +114,7 @@ locals {
       Sid      = "ReadCiPolicies"
       Effect   = "Allow"
       Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
-      Resource = local.ci_policy_arns
+      Resource = "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-*"
     },
   ]
 
@@ -148,7 +150,7 @@ locals {
   manage_policy_name         = "${var.name_prefix}-ci-apply-identity-manage"
   manage_policy_arn          = "${local.iam_arn_prefix}:policy/${local.manage_policy_name}"
   apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns)
-  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
+  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, [local.workload_2_policy_arn], values(local.boundary_policy_arns))
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
@@ -492,7 +494,15 @@ locals {
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.apply
-      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arns } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = concat(local.workload_policy_arns, [local.workload_2_policy_arn]) } }
+    },
+    # plan の role は workload の読み取りを apply の role と同じ policy で受ける（決定17）。
+    {
+      Sid       = "AttachPlanReadPolicy"
+      Effect    = "Allow"
+      Action    = "iam:AttachRolePolicy"
+      Resource  = local.role_arns.plan
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_read_policy_arn } }
     },
     {
       Sid       = "AttachApplyIdentityPolicies"

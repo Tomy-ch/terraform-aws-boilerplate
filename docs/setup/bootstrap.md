@@ -21,17 +21,17 @@
 - CI はアクセスキーを持たず、GitHub の OIDC で AWS に入る
 - 残った lock は GitHub Actions の `Terraform Unlock` で外す
 - アカウントは Paid plan で、連絡先・Cost Explorer・Cost Anomaly Detection が設定済みである
-- Cost Anomaly Detection の既存の AWS services monitor とその email の subscription が、tag `tabp:bootstrap` を持つ（2-4 の手順で人が確かめる。自動の検査は無い）。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）
+- Cost Anomaly Detection の既存の AWS services monitor とその email の subscription が、tag `tabp:bootstrap` を持つ（`make bootstrap-check-account` が確かめる）。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）
 - root は MFA を2台以上持ち、アクセスキーを持たない。IAM user は break-glass の2つだけである
 
 ## 3. やること
 
-完了条件は、その作業で実現した状態である。確認のコマンドは `docs/setup/scripts/` に在り、どれも読むだけで何も変えない。
+完了条件は、その作業で実現した状態である。確認のコマンド（`make bootstrap-check-*` と `docs/setup/scripts/` のスクリプト）は、どれも読むだけで何も変えない。
 
 | 作業 | 内容 | 実施者 | 完了条件 |
 | --- | --- | --- | --- |
 | [事前準備](#事前準備) | MFA デバイスなどを揃える | 人 | 5点が揃っている |
-| [アカウントの準備](#アカウントの準備)（1-0 〜 2-4） | アカウントの初期設定、一時 IAM user、`aws login`、連絡先、Cost Explorer、既存の異常検知への tag | root、一時 IAM user | `check-account.sh` が `NG 0 件`、かつ[目で見る3点](#2-3-アカウントの準備を確かめる)を満たす、2-4 の tag の確認が `true` を2つ示す |
+| [アカウントの準備](#アカウントの準備)（1-0 〜 2-4） | アカウントの初期設定、一時 IAM user、`aws login`、連絡先、Cost Explorer、既存の異常検知への tag | root、一時 IAM user | `make bootstrap-check-account` が `NG 0 件`、かつ[目で見る3点](#2-3-アカウントの準備を確かめる)を満たす |
 | [段1](#段1-state-bucket-を作る) | state Bucket を CLI で作る | 一時 IAM user | `verify.sh stage1` が `NG 0 件` |
 | [段2](#段2-plan-で突合する) | Terraform に取り込み、plan を期待値と照合する | 一時 IAM user | `make bootstrap-check-plan` が `不足 0 件、余剰 0 件`、`verify.sh before-apply` が `NG 0 件` |
 | [段3](#段3-入力の値を用意する) | 自分のリポジトリの値を入れ、Pull Request を開く | 一時 IAM user | `sub` が immutable 形式、Pull Request の commit で `make bootstrap-check-plan` が一致 |
@@ -152,10 +152,10 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 1. 次を実行する
 
    ```bash
-   docs/setup/scripts/check-account.sh
+   make bootstrap-check-account
    ```
 
-   最後の行が `NG 0 件` なら次へ。`呼び出しが失敗` と添えられた NG は、添えられたエラーを見て資格情報（`make aws-login`）を確かめる。それ以外の NG は、対応する作業（行頭の番号）をやり直す。2-2 の行だけが NG なら、翌日に再実行する。
+   `呼び出しが失敗` と添えられた NG は、添えられたエラーを見て資格情報（`make aws-login`）を確かめる。それ以外の NG は、対応する作業（行頭の番号）をやり直す。2-2 の行が NG なら、翌日に再実行する。2-4 の行は、2-4 を行うまで NG になる。2-4 の行のほかが ok なら 2-4 へ進む。
 
 2. コマンドで見られない次の3点を、コンソールで確かめる
    - root の「Security credentials」の MFA の一覧に2台以上ある（1-1）
@@ -164,7 +164,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
 #### 2-4. 既存の異常検知に tag を付ける
 
-2-2 で AWS が作った AWS services monitor とその email の subscription に tag `tabp:bootstrap` を付ける。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）。2-3 の `check-account.sh` で 2-2 の行が OK になってから行う。
+2-2 で AWS が作った AWS services monitor とその email の subscription に tag `tabp:bootstrap` を付ける。CI の apply の role の inline policy は、この tag を持つ monitor と subscription の変更・削除を拒む Deny を置く（[deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13）。2-3 の `make bootstrap-check-account` で 2-2 の行が ok になってから行う。
 
 `tabp` は project の値である。自分の project の値に置き換える。
 
@@ -189,12 +189,10 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 3. 確かめる
 
    ```bash
-   for arn in "$MONITOR" "$SUBSCRIPTION"; do
-     aws ce list-tags-for-resource --resource-arn "$arn" --query 'ResourceTags[?Key==`tabp:bootstrap`].Value' --output text
-   done
+   make bootstrap-check-account
    ```
 
-   `true` が2行表示されれば完了
+   最後の行が `NG 0 件` なら完了
 
 ### 段1. state Bucket を作る
 
@@ -558,8 +556,8 @@ Credential report の IAM user が break-glass の2つ（`break-glass-1`・`brea
 | 症状 | 対処 |
 | --- | --- |
 | `ACCOUNT_ID が12桁ではありません`、`一時 IAM user の資格情報ではありません` | `make aws-login` をやり直す |
-| `check-account.sh` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する |
-| 2-4 で ARN が1つずつ表示されない | AWS services monitor が無いか、ほかの SERVICE の monitor が在る。コンソールの Cost Anomaly Detection の「Cost monitors」で、2-2 で作られた monitor を確かめ、その ARN を `MONITOR` に入れる |
+| `make bootstrap-check-account` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する。2-4 だけなら 2-4 を行う |
+| 2-4 で ARN が1つずつ表示されない、`make bootstrap-check-account` の 2-4 の行が `1つではない` を添える | AWS services monitor が無いか、ほかの SERVICE の monitor か、同じ monitor の subscription がほかに在る。どの monitor と subscription に tag を付けるかを決めずに止まり、コンソールの Cost Anomaly Detection の「Cost monitors」と「Alert subscriptions」の一覧を Pull Request に記録する |
 | 段1 の `verify.sh stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
 | Terraform が `aws login` の認証情報を読めない | [aws login の認証情報を読めない](#aws-login-の認証情報を読めない) |
 | `make bootstrap-check-plan` に NG がある | [段2 の plan が一致しない](#段2-の-plan-が一致しない) |
@@ -651,6 +649,7 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 ## この文書の保守
 
+- アカウントの準備（1-0 から 2-4）の作業や番号を変える変更は、`scripts/bootstrap-check` の `accountChecks` を同じ変更で更新する。ずれると、確認は古い手順を確かめて通るか、行頭の番号が手順と食い違う
 - identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
 - identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`docs/setup/scripts/verify.sh` の `before-apply` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
 - apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）

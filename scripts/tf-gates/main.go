@@ -6,7 +6,7 @@
 //	tf-gates none -base <dir> <root>...
 //	tf-gates fmt [-check] -base <dir> <root>...
 //	tf-gates init -base <dir> -data <dir> <root>...
-//	tf-gates validate -base <dir> -data <dir> -out <dir> -canary-data <dir> -canary-work <dir> -canary-reference <dir> <root>...
+//	tf-gates validate -base <dir> -data <dir> -out <dir> -canary-data <dir> -canary-work <tmp/ の下の相対パス> -canary-reference <dir> <root>...
 //	tf-gates result -base <dir> -manifest <tsv> -ignore <yaml>
 //	tf-gates test -base <dir> -data <dir> <root>...
 //	tf-gates lint -base <dir> -config <file> -plugin-dir <dir> <root>...
@@ -39,10 +39,11 @@ var (
 )
 
 func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout, command), os.Stderr))
+	os.Exit(report(run(os.Args[1:], os.Stdout, command, "."), os.Stderr))
 }
 
-func run(args []string, w io.Writer, tool toolFunc) error {
+// run は、サブコマンドへ振り分けます。root はリポジトリ直下です。
+func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
 	}
@@ -57,7 +58,7 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "init":
 		return runInit(rest, w, tool)
 	case "validate":
-		return runValidate(rest, w, tool, runValidateCanary)
+		return runValidate(rest, w, tool, validateCanary(root), root)
 	case "result":
 		return runResult(rest, w)
 	case "test":
