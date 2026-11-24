@@ -123,7 +123,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |---|---|
 |`lib/xerrors/`|StackTrace を含むエラーのラップ・判定・結合。失敗モードはすべてパッケージレベルのセンチネルで、テストは `require.ErrorIs` で到達します。|
 |`lib/ghfiles/`|`uses:` を書ける GitHub Actions 定義ファイル（`.github/workflows/**` と `.github/actions/**`）の列挙。列挙が1箇所にあるので、対象範囲が検査ごとにずれません。|
-|`lib/harden/`|各 job の先頭の bullfrog の step の対の形（ADR-0702 決定20）。本体は `id: harden-runner` と `continue-on-error: true` を持ち、再試行は `if: steps.harden-runner.outcome != 'success'` で同じ `uses:` と `with:` を持つ。`!= 'success'` にするのは、本体が cancelled などで終わったときも、hardening の無いまま job を進めないため。生成は `egress` が、検査の job と書き込みの job で `if:` と `continue-on-error:` を拒む規則の例外は `oidc-job-lint` と `contents-write-lint` が、この形を読む。例外は、先頭の2つの step の頭が一字一句この形で、どちらも bullfrog を uses に持つときの2行だけに当たる。|
+|`lib/harden/`|各 job の先頭の bullfrog の step の対の形（ADR-0702 決定20）。本体は `id: harden-runner` と `continue-on-error: true` を持ち、再試行は `if: steps.harden-runner.outcome != 'success'` で同じ `uses:` と `with:` を持つ。`== 'failure'` ではなく `!= 'success'` にするのは、本体の outcome が想定外の値でも再試行の側へ倒すため（job が cancel されれば、暗黙の `success()` で再試行も走らない）。生成は `egress` が、検査の job と書き込みの job で `if:` と `continue-on-error:` を拒む規則の例外は `oidc-job-lint` と `contents-write-lint` が、この形を読む。例外は、先頭の2つの step の頭が一字一句この形で、どちらも bullfrog を uses に持つときの2行だけに当たる。|
 |`lib/workflow/`|workflow 定義を「桁」で読むための切り出し。job の `steps:` の列の範囲は `StepsSpan` だけが決め、`SplitSteps` と `repo-settings` がそれを読みます。ブロックスカラーの本体はキーより深く字下げされるという性質に依存し、YAML パーサでは失われる行位置を保ちます。|
 |`lib/yamlblock/`|YAML のブロックスカラー（`key: \|` / `key: >-`）の中身の判定。|
 |`lib/shellcheck/`|shellcheck の起動と結果の解釈。`actions-shellcheck` と `shell-lint` が同じ解釈を共有します。|

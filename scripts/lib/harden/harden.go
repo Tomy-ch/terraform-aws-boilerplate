@@ -15,7 +15,8 @@ const (
 	Action = "bullfrogsec/bullfrog"
 	// ID は本体の step の id。再試行の step の if: がこれを名指す。
 	ID = "harden-runner"
-	// RetryIf は再試行の step の条件。cancelled なども含め、本体が成功しなかったときに必ず走らせる。
+	// RetryIf は再試行の step の条件。本体の outcome が failure のほか想定外の値でも、再試行の側へ倒す
+	// （status の関数を書かないので、job が cancel されれば暗黙の success() で走らない）。
 	RetryIf = "steps." + ID + ".outcome != 'success'"
 )
 
@@ -49,7 +50,7 @@ func Render(uses string, with []string) []string {
 
 // GeneratedLines は、job の先頭の2つの step が生成した対の頭（Head と RetryHead）と一字一句同じで、
 // どちらも bullfrog を uses に持つとき、その continue-on-error: と if: の行番号を返します。形が違えば空を返す。
-// uses: と with: が対の間で揃っていることは egress の検査が持つ。
+// uses: と with: が対の間で揃っていることは egress の検査（必須の check）が持つ。この除外はそれを前提にする。
 func GeneratedLines(job workflow.Job) map[int]bool {
 	steps := workflow.SplitSteps(job)
 	if len(steps) < 2 {

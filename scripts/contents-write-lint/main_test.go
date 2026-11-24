@@ -277,9 +277,34 @@ func Test_checkSteps(t *testing.T) {
 		require.NotEqual(t, goodWorkflow, src)
 		assert.Empty(t, checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
 	})
-	t.Run("形の違う対の if: は違反にする", func(t *testing.T) {
+	// 頭が生成した形と違えば対の全体を除外しないので、対の continue-on-error: と if: も数に入る。
+	for name, c := range map[string]struct {
+		block string
+		want  int
+	}{
+		"再試行の if: が always()":              {strings.Replace(pair, harden.RetryIf, "always()", 1), 2},
+		"本体の id が違う":                       {strings.Replace(pair, "id: "+harden.ID, "id: other", 1), 2},
+		"再試行に continue-on-error: がある":      {strings.Replace(pair, "if: "+harden.RetryIf+"\n", "if: "+harden.RetryIf+"\n        continue-on-error: true\n", 1), 3},
+		"本体の uses: の後ろに continue-on-error": {strings.Replace(pair, uses+"\n", uses+"\n        continue-on-error: true\n", 1), 1},
+	} {
+		t.Run(name+"なら、除外されない行だけを違反にする", func(t *testing.T) {
+			t.Parallel()
+			src := strings.Replace(goodWorkflow, head, c.block, 1)
+			require.NotEqual(t, goodWorkflow, src)
+			var hides []lintreport.Finding
+			for _, f := range checkSteps(workflow.SplitJobs(src).Jobs[1], finding) {
+				if f.Message == "step に %s: を置かないでください" {
+					hides = append(hides, f)
+				}
+			}
+			assert.Len(t, hides, c.want)
+		})
+	}
+	t.Run("対の後ろの step の if: は違反にする", func(t *testing.T) {
 		t.Parallel()
-		src := strings.Replace(goodWorkflow, head, strings.Replace(pair, harden.RetryIf, "always()", 1), 1)
+		src := strings.Replace(goodWorkflow, head, pair, 1)
+		src = strings.Replace(src, "      - name: Checkout\n", "      - name: Checkout\n        if: always()\n", 1)
+		require.Contains(t, src, "if: always()")
 		assert.Contains(t, messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding)), "step に %s: を置かないでください")
 	})
 	t.Run("push の入口でない run: を落とす", func(t *testing.T) {

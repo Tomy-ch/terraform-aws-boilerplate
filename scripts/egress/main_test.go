@@ -1340,6 +1340,7 @@ func Test_checkStepShape(t *testing.T) {
 			"1 行形の uses: を弾く":                  stepOf("      - uses: bullfrogsec/bullfrog@x"),
 			"name: の後に uses: が無ければ弾く":          stepOf(nameLine),
 			"キーだけで uses: が無ければ弾く":              stepOf(nameLine, "        id: x"),
+			"name: と uses: の間のコメントを弾く":         stepOf(nameLine, "        # 説明", usesLine),
 			"@ の無い uses: を弾く":                  stepOf(nameLine, "        uses: bullfrogsec/bullfrog"),
 			"引用符付きの uses: を弾く":                 stepOf(nameLine, `        uses: "bullfrogsec/bullfrog@x"`),
 			"with: の中の空行を弾く":                   stepOf(nameLine, usesLine, "        with:", "          egress-policy: block", "", "          enable-sudo: true"),
@@ -1450,6 +1451,7 @@ func Test_ssot_rewriteFile(t *testing.T) {
 			"再試行の uses: が本体と違う":              replaceNth(synced, usesLine, "        uses: bullfrogsec/bullfrog@other", 2),
 			"再試行の with: が本体と違う":              replaceNth(synced, "          enable-sudo: false", "          enable-sudo: true", 2),
 			"再試行の名前が違う":                      strings.Replace(synced, "(retry)", "(again)", 1),
+			"本体の id: が2回ある":                  strings.Replace(synced, "        id: harden-runner\n", "        id: harden-runner\n        id: harden-runner\n", 1),
 		} {
 			t.Run(name+"なら生成した対に戻す", func(t *testing.T) {
 				t.Parallel()

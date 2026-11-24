@@ -1685,6 +1685,21 @@ func Test_checkGateJob(t *testing.T) {
 		})
 	}
 
+	t.Run("先頭に無い対の continue-on-error: と if: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkGateJob(orderJob(t, orderStep, orderStep+pair), orderGate, formatted)
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("対の本体の uses: の後ろに足した continue-on-error: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		withExtra := strings.Replace(pair, "        uses: bullfrogsec/bullfrog@x\n", "        uses: bullfrogsec/bullfrog@x\n        continue-on-error: true\n", 1)
+		got := checkGateJob(orderJob(t, orderStep, withExtra+orderStep), orderGate, formatted)
+		assert.Len(t, got, 1)
+	})
+
 	t.Run("対の後ろの step の continue-on-error: は違反", func(t *testing.T) {
 		t.Parallel()
 

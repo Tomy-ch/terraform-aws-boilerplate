@@ -58,17 +58,39 @@ func TestGeneratedLines(t *testing.T) {
 		t.Parallel()
 		job := jobOf(t, pair, "      - name: Check", "        run: make x")
 		got := GeneratedLines(job)
-		require.Len(t, got, 2)
-		for n := range got {
-			var text string
+		// job の見出しが1行目、runs-on・steps: が2・3行目なので、本体の continue-on-error は7行目、再試行の if は
+		// 本体（name・id・continue-on-error・uses・with の2行）の後ろの2行目。
+		lineOf := func(n int) string {
 			for _, l := range job.Lines {
 				if l.Number == n {
-					text = l.Text
+					return l.Text
 				}
 			}
-			assert.Contains(t, []string{"        continue-on-error: true", "        if: " + RetryIf}, text)
+			return ""
 		}
+		require.Len(t, got, 2)
+		var texts []string
+		for n := range got {
+			texts = append(texts, lineOf(n))
+		}
+		assert.ElementsMatch(t, []string{"        continue-on-error: true", "        if: " + RetryIf}, texts)
 	})
+	// uses と with の対の一致は egress の検査が持つ。ここは頭の形だけを見て除外する。
+	t.Run("再試行の with: が本体と違っても、頭の形が同じなら除外する", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(pair, "          egress-policy: block", "          egress-policy: audit", 2)
+		src = strings.Replace(src, "          egress-policy: audit", "          egress-policy: block", 1)
+		assert.Len(t, GeneratedLines(jobOf(t, src, "      - name: Check", "        run: make x")), 2)
+	})
+	for name, steps := range map[string][]string{
+		"対が2番目にある":   {"      - name: Check", "        run: make x", pair},
+		"対が3番目以降にある": {"      - name: Check", "        run: make x", "      - name: Other", "        run: make y", pair},
+	} {
+		t.Run(name+"なら除外しない", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, GeneratedLines(jobOf(t, steps...)))
+		})
+	}
 	for name, src := range map[string]string{
 		"再試行の if が別の式":              strings.Replace(pair, RetryIf, "failure()", 1),
 		"再試行の if が always()":        strings.Replace(pair, RetryIf, "always()", 1),
@@ -84,6 +106,12 @@ func TestGeneratedLines(t *testing.T) {
 			assert.Empty(t, GeneratedLines(jobOf(t, src, "      - name: Check", "        run: make x")))
 		})
 	}
+	t.Run("step が0件なら除外しない", func(t *testing.T) {
+		t.Parallel()
+		split := workflow.SplitJobs("jobs:\n  j:\n    runs-on: x\n")
+		require.Len(t, split.Jobs, 1)
+		assert.Empty(t, GeneratedLines(split.Jobs[0]))
+	})
 	t.Run("step が1つだけなら除外しない", func(t *testing.T) {
 		t.Parallel()
 		assert.Empty(t, GeneratedLines(jobOf(t, "      - name: Check", "        run: make x")))

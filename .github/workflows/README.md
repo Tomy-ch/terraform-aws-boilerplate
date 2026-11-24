@@ -599,6 +599,10 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、同じ設定の2番目の step
 （`if: steps.harden-runner.outcome != 'success'`）がやり直し、2番目が落ちれば job は落ちる。bullfrog は agent の
 取得とパッケージの導入を再試行せず、配布元の一時的なエラーで必須の job を落とすためである。
+再試行が成功するのは、agent が準備の印（`/var/run/bullfrog/agent-ready`）を書いたときだけである。本体が
+agent を起動した後で落ちた場合も、再試行は sudo を外された後なら導入で落ち、そうでなければ既に動く agent の
+印で成功する —— どちらでも、通信制限の無いまま job が進むことはない（v0.11.1 の `action/src/main.ts` で確かめた。
+版を上げる Pull Request は確かめ直す。ADR-0702 決定23）。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
