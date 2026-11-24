@@ -135,7 +135,7 @@ locals {
   break_glass_stack_set_names = [for a in local.break_glass_role_arns : regex("[^/]+$", a)]
   break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
   # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。type の ARN はアカウントを `*` にする（deployment-identity/ADR-0201 決定4）。
-  # 実際の要求の stackset-target の ARN は region が空で（CloudTrail）、Service Authorization Reference の形と違う。type は実物を見ていないので region を `*`（空にも当たる）にし、region は TargetRegion の条件が限る。
+  # stackset-target は region を空、type は region を `*` にする（同 決定4）。
   break_glass_stack_set_write_arns = concat(
     local.break_glass_stack_set_arns,
     [for n in local.break_glass_stack_set_names : "arn:${data.aws_partition.current.partition}:cloudformation::${data.aws_caller_identity.current.account_id}:stackset-target/${n}:*"],
