@@ -1,4 +1,4 @@
-# 層の規則の検査（ADR-0102 決定14・17・18、ADR-0301 決定21 と、その検証方法）。
+# 層の規則の検査（ADR-0102 決定14・16・17・18、ADR-0301 決定21 と、その検証方法）。
 #
 # 入力は HCL のソースから作る JSON で、その形を読むのは lib.hcl_input だけである。
 # 形が崩れているか独立の数と食い違えば LY004 だけで落とし、それを読む規則は評価しない（hcl.doc が undefined）。
@@ -13,6 +13,8 @@ decl := data.layer_decl if is_object(data.layer_decl)
 attachments := object.get(decl, "attachments", null)
 
 not_attachments := object.get(decl, "not_attachments", null)
+
+singletons := object.get(decl, "singletons", null)
 
 default listed := set()
 
@@ -221,6 +223,45 @@ deny contains msg if {
 non_empty_string(s) if {
 	is_string(s)
 	s != ""
+}
+
+# singletons は、アカウントかリージョンに1つしか置けない型から、それを持つユースケースの名前の配列へ（ADR-0102 決定16）。
+# Policy Test は password policy の持ち主をここから導く。
+well_formed_owners(owners) if {
+	is_array(owners)
+	count(owners) > 0
+	count({o | some o in owners}) == count(owners)
+	every o in owners {
+		is_string(o)
+		regex.match(`^[a-z0-9][a-z0-9-]*$`, o)
+	}
+}
+
+deny contains msg if {
+	not is_object(singletons)
+	msg := "LY001 [宣言の形] data.layer_decl.singletons がオブジェクトではありません"
+}
+
+deny contains msg if {
+	is_object(singletons)
+	count(singletons) == 0
+	msg := "LY001 [宣言の形] data.layer_decl.singletons が空です"
+}
+
+deny contains msg if {
+	is_object(singletons)
+	some t, owners in singletons
+	not well_formed_owners(owners)
+	msg := sprintf("LY001 [宣言の形] singletons.%s が、持ち主のユースケースの名前（usecases/ の下のディレクトリ名）の、重複の無い空でない配列ではありません", [t])
+}
+
+# アカウントかリージョンの単位で設定する型は attachment 型でない（下の「分類の基準」）。
+deny contains msg if {
+	is_object(singletons)
+	is_object(not_attachments)
+	some t, _ in singletons
+	not not_attachments[t]
+	msg := sprintf("LY001 [宣言の形] singletons.%s は not_attachments にありません", [t])
 }
 
 # --- 対象と件数 ---
@@ -848,6 +889,22 @@ deny contains msg if {
 	some t in {type_of(c) | some c in resources}
 	not t in classified
 	msg := sprintf("LY303 [分類されていない型] resource の型 %s が宣言（conftest/hcl/layer/decl.json）のどの区分にもありません → attachment なら親の引数と親の型を、そうでなければ理由を宣言に足す", [t])
+}
+
+# --- 決定16: アカウントかリージョンに1つしか置けない型の持ち主（LY401） ---
+
+owned_by(path, owners) if {
+	some o in owners
+	startswith(path, concat("", ["usecases/", o, "/"]))
+}
+
+deny contains msg if {
+	is_object(singletons)
+	some c in resources
+	owners := singletons[type_of(c)]
+	well_formed_owners(owners)
+	not owned_by(c.path, owners)
+	msg := sprintf("LY401 [単一の型の持ち主] %s の %s は、アカウントかリージョンに1つしか置けない型で、持ち主のユースケース（%s）の外で宣言されています。後から apply した側が黙って上書きします（ADR-0102 決定16）→ 持ち主のユースケースに置き、ほかのユースケースは識別子を受け取る", [c.path, address(c), concat(", ", owners)])
 }
 
 # --- HCL の入力（hcl-input の出力。ADR-0501 決定5） ---

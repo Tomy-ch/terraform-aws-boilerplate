@@ -1,6 +1,6 @@
 # 層の規則
 
-[ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定14・17・18 の層の規則と、
+[ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定14・16・17・18 の層の規則と、
 [ADR-0301](../../../docs/adr/0301-least-privilege-policy.md) 決定21 の attachment の参照を、HCL のソースで検査する
 （各 ADR の検証方法。[ADR-0501](../../../docs/adr/0501-development-tooling-composition.md) 決定5 がソースの構造の規約として
 Conftest に割り当てる）。何を禁じるかは ADR が持ち、ここには再掲しない。検査(3)でどの参照を辿り、何を違反とするかは
@@ -32,7 +32,7 @@ symlink は実体のファイルで書く）。
 
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
-| `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
+| `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`singletons` が空でないオブジェクトでないか、型の値が持ち主の usecase の名前の重複の無い空でない配列でないか、型が `not_attachments` に無い、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
 | `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `hcl-tally` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
 | `LY003` | 走査の root に JSON の構成（`.tf.json`）が在る。検査はそれを解釈しない（ADR-0501 決定5、ADR-0103 決定11） | HCL（`.tf`）で書く |
 | `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
@@ -53,6 +53,7 @@ symlink は実体のファイルで書く）。
 | `LY307` | 排他に持つと宣言した親の引数（`inline_owned`）を `parent_arguments` に持つ attachment 型の resource が、その親を指す（決定18 のただし書き） | 親の引数で書く |
 | `LY308` | 文書全体を置き換える型の、同じ型の別々の resource が同じ親の葉を指し、同じ instance かを参照から判定できない。どちらかが `count` か `for_each` を持つか、親の選び方が判定できない | 1つの resource にまとめるか、別々の instance をリテラルの添字で指す |
 | `LY309` | `aws_iam_role_policy_attachment` の `policy_arn` が、同じ module の `aws_iam_policy` だけを参照せず、AWS managed policy の ARN でもない（ADR-0301 決定21。下の「policy の参照」） | 同じ module に `aws_iam_policy` を置いて参照する。AWS managed policy は、ARN を partition だけ `data.aws_partition` から組んで書く |
+| `LY401` | アカウントかリージョンに1つしか置けないと宣言した型（`singletons`）の resource が、宣言した持ち主の usecase の下（`usecases/<持ち主>/`）の外に在る。env の root、一般 module、ほかの usecase の宣言を落とす（決定16）。data source は見ない | 持ち主の usecase に置き、ほかの usecase は識別子を受け取る |
 | `LY303` | 使われている resource の型が、宣言の `attachments` にも `not_attachments` にも無い。親の型に現れるだけでは分類に数えない | 下の基準で分類し、宣言に足す |
 
 ## 層の決め方
@@ -117,6 +118,11 @@ ARN を `local` に置いて `policy_arn` から参照する形は、AWS managed
   理由（`reason`）と書かないときの値（`unwritten`）。非推奨の引数は、`parent_arguments` かここのどちらかに必ず置く（`LY306`）
 - `inline_owned`: 親の設定の集合全体を親の引数で排他に持つと宣言した引数と、理由。その引数は `LY304` の対象から外し、
   同じ設定を書く attachment 型をその親に置くことを `LY307` で落とす
+- `singletons`: アカウントかリージョン（組織の設定は管理アカウント）に1つしか置けない型から、それを持つ usecase の名前の
+  配列へ（`LY401`）。型は `not_attachments` に在るものに限る。Policy Test の `PLAN-ACB-06` は password policy の持ち主を
+  ここから導く（`conftest/plan/README.md`）。型を足すときは、Provider の docs か AWS の API の docs が、アカウントか
+  リージョンに1つしか置けない、または2つ目の宣言が1つ目を上書きすると明言することを確かめる。attachment 型（Config の
+  recorder の status）は、親を同じ module に置くことを `LY301` が求めるので、親の型を載せれば足りる
 - Policy Test は、保護の対象の型について `parent_arguments` と `unrelated_deprecated_arguments` から ADR-0402 決定17 の
   宣言を導く（`conftest/plan/README.md` の「宣言」）
 
@@ -157,5 +163,8 @@ resource である。親と引数の組で同一性が決まり、自前の名�
   `LY301` が見る
 - `LY309` の、参照とリテラルを混ぜた式のリテラルの部分。`var.x ? aws_iam_policy.p.arn : "arn:aws:iam::123456789012:policy/x"`
   は、参照がすべて `aws_iam_policy` なので通る
+- `singletons` に無い単一の型。型を使い始める Pull Request が宣言に足すことは、レビューで見る
+- `singletons` は型の単位で持ち主を決める。設定の key ごとに1つの型（代替の連絡先の種類、SSM のサービス設定の ID）も、
+  key を分けて別の usecase に持たせることはできない
 - `.tftest.hcl` の `run` の `module` の `source`
 - 走査の root の外の `.tf`。root の外に構成ファイルを置くことは `make infra-code-gate` が落とす

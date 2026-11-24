@@ -16,6 +16,7 @@ cox_decl := {
 		"aws_default_security_group": "既定の SG を引き取る resource",
 		"aws_route_table": "親になる resource",
 	}),
+	"singletons": fixture_decl.singletons,
 	"unrelated_deprecated_arguments": fixture_decl.unrelated_deprecated_arguments,
 	"inline_owned": {"aws_route_table": {"route": "経路を排他に持つ"}},
 }

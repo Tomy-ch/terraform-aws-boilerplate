@@ -30,7 +30,9 @@ fixture_decl := {
 		"aws_api_gateway_stage": "子 resource",
 		"aws_kms_key": "親になる resource",
 		"aws_kms_replica_key": "親になる resource",
+		"aws_s3_account_public_access_block": "アカウントの単位で設定する",
 	},
+	"singletons": {"aws_s3_account_public_access_block": ["account-baseline"]},
 	"unrelated_deprecated_arguments": {"aws_s3_bucket": {"acceleration_status": {"reason": "fixture", "unwritten": null}}},
 	"inline_owned": {},
 }
@@ -76,17 +78,17 @@ test_LY001_allow_declared if {
 }
 
 test_LY001_deny_attachments_missing if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
 test_LY001_deny_attachments_empty if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": {}, "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": {}, "not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments が空です")
 }
 
 test_LY001_deny_attachments_array if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": [], "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": [], "not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
@@ -142,6 +144,7 @@ test_LY001_deny_decl_not_object if {
 	with_id(msgs, "LY001") == {
 		"LY001 [宣言の形] data.layer_decl.attachments がオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.not_attachments がオブジェクトではありません",
+		"LY001 [宣言の形] data.layer_decl.singletons がオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.unrelated_deprecated_arguments が、親の型から、引数と reason（空でない理由）・unwritten（null か []）へのオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.inline_owned が、親の型から、引数と空でない理由へのオブジェクトではありません",
 	}
@@ -465,6 +468,13 @@ fixture_cases := {
 	"LY309_deny_template_partition_from_variable",
 	"LY309_deny_variable",
 	"LY309_deny_wrong_resource_type",
+	"LY401_allow_data_source_outside_owner",
+	"LY401_allow_owner_internal",
+	"LY401_allow_second_owner",
+	"LY401_deny_env_root",
+	"LY401_deny_general_module",
+	"LY401_deny_other_usecase",
+	"LY401_deny_usecase_name_prefix",
 	"ok_module",
 	"refs_shapes",
 	"tree_attachment_module_ref",

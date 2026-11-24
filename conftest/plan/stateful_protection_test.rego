@@ -53,8 +53,8 @@ test_violation_delete_of_state_key_under_declaration if {
 	count({m | some m in msgs; contains(m, "[PLAN-STATE-01]")}) == 2
 }
 
-# 宣言（decl.json）を差し替えずに読む。account-baseline の宣言に在る型が保護の対象から外れると、ここが落ちる。
-account_baseline_types := (({t | some t, _ in data.policy_plan.account_baseline.owners} | {t | some t in data.policy_plan.account_baseline.regional}) | {t | some t in data.policy_plan.account_baseline.config}) | {"aws_iam_service_linked_role"}
+# 宣言（decl.json と層の宣言の singletons）を差し替えずに読む。account-baseline の宣言に在る型が保護の対象から外れると、ここが落ちる。
+account_baseline_types := (({t | some t, owners in data.layer_decl.singletons; "account-baseline" in owners} | {t | some t in data.policy_plan.account_baseline.regional}) | {t | some t in data.policy_plan.account_baseline.config}) | {"aws_iam_service_linked_role"}
 
 test_pass_account_baseline_types_are_protected if {
 	count(account_baseline_types) > 0

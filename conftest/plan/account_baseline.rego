@@ -1,5 +1,6 @@
 # account-baseline の安全側の設定の形（account-baseline/ADR-0101・0102、ADR-0402 決定1・2）。リージョンごとの設定が宣言の
-# リージョンの集合のすべてに在り、値が安全側で、アカウントに1つの設定を account-baseline の外が持たないこと。
+# リージョンの集合のすべてに在り、値が安全側で、password policy の値が持ち主の間で同じであること。アカウントかリージョンに
+# 1つの型を持ち主の外が宣言しないことは、層の検査（conftest/hcl/layer の LY401）が持つ。
 package plan.account_baseline
 
 import data.plan.lib
@@ -30,17 +31,6 @@ well_formed_decl if {
 	strings_of(decl.config)
 	{k | some k, _ in decl.config} == config_keys
 	is_string(decl.public_access_block)
-	is_object(decl.owners)
-	count(decl.owners) > 0
-	every owners in decl.owners {
-		is_array(owners)
-		count(owners) > 0
-		every o in owners {
-			is_string(o)
-			o != ""
-		}
-	}
-	is_array(decl.owners.aws_iam_account_password_policy)
 	is_array(decl.password_policy_keys)
 	count(decl.password_policy_keys) > 0
 	every k in decl.password_policy_keys {
@@ -48,6 +38,20 @@ well_formed_decl if {
 		k != ""
 	}
 	count({k | some k in decl.password_policy_keys}) == count(decl.password_policy_keys)
+}
+
+# password policy の持ち主は、層の宣言（data.layer_decl。conftest/hcl/layer/decl.json）の singletons から導く。
+default password_policy_owners := null
+
+password_policy_owners := data.layer_decl.singletons.aws_iam_account_password_policy
+
+well_formed_owners if {
+	is_array(password_policy_owners)
+	count(password_policy_owners) > 0
+	every o in password_policy_owners {
+		is_string(o)
+		o != ""
+	}
 }
 
 regions := {r | some r in decl.regions}
@@ -61,8 +65,7 @@ usecase_of(path) := regex.replace(path, `^(.*/)?([^/]+)\.json$`, "$2")
 # 作るか変える変更だけを見る。消す変更は after を持たない。
 changes_of(type) := [c | some c in lib.changes; c.rc.type == type; is_object(c.rc.change.after)]
 
-# 形の検査は account-baseline の reference の plan に掛ける。同じ型をほかの usecase が持つことは、owners に載せた型について 05 が見る。
-# analyzer（security-tooling の組織の analyzer と同じ型）と service-linked role（ほかの usecase も持つ型）は owners に載せない。
+# 形の検査は account-baseline の reference の plan に掛ける。
 own_changes_of(type) := [c | some c in changes_of(type); usecase_of(c.path) == "account-baseline"]
 
 after(c, key) := object.get(c.rc.change.after, key, null)
@@ -91,7 +94,12 @@ config_instances contains {"path": c.path, "instance": instance_of(c.rc.address)
 
 deny contains msg if {
 	not well_formed_decl
-	msg := "[PLAN-ACB-00] 宣言 account_baseline の regions・regional・config・public_access_block・owners・password_policy_keys が無いか、形が違います"
+	msg := "[PLAN-ACB-00] 宣言 account_baseline の regions・regional・config・public_access_block・password_policy_keys が無いか、形が違います"
+}
+
+deny contains msg if {
+	not well_formed_owners
+	msg := "[PLAN-ACB-00] 層の宣言 data.layer_decl.singletons.aws_iam_account_password_policy（conftest/hcl/layer/decl.json）が無いか、空でない文字列の空でない配列ではありません"
 }
 
 deny contains msg if {
@@ -218,13 +226,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-ACB-04] %s: %s の %s が true ではありません（S3.1）", [c.path, c.rc.address, key])
 }
 
-deny contains msg if {
-	some type, owners in decl.owners
-	some c in changes_of(type)
-	not usecase_of(c.path) in owners
-	msg := sprintf("[PLAN-ACB-05] %s: %s はアカウントに1つしか置けない型で、%v の外が持っています", [c.path, c.rc.address, owners])
-}
-
 # 管理アカウントは organization-baseline、メンバーは account-baseline が password policy を持つ。値はどちらも同じにする。
 password_policies := [{"at": sprintf("%s: %s", [c.path, c.rc.address]), "values": {k: after(c, k) | some k in decl.password_policy_keys}} |
 	some c in changes_of("aws_iam_account_password_policy")
@@ -248,8 +249,8 @@ deny contains msg if {
 
 # 比べる相手が無いと、比較が行われないまま通る。password policy を持つと宣言した usecase は、それぞれ1つ以上持つ。
 deny contains msg if {
-	well_formed_decl
-	some owner in decl.owners.aws_iam_account_password_policy
+	well_formed_owners
+	some owner in password_policy_owners
 	count([c | some c in changes_of("aws_iam_account_password_policy"); usecase_of(c.path) == owner]) == 0
 	msg := sprintf("[PLAN-ACB-06] 入力に %s の password policy がありません。値を比べる相手が無いままでは通しません", [owner])
 }

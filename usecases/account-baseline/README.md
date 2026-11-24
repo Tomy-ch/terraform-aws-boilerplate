@@ -94,7 +94,6 @@ unsupported:
 - `deployment-identity`: 各アカウントの apply の role が、このユースケースの resource を作る権限を持たなければならない（#465 の判断を前提にする）。メンバーの apply の role が password policy を書けるのは、`DenyGovernanceChange` が password policy の Action を管理アカウントに限るときである（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5）
 - 呼ぶ env の root: 管理アカウントは `env/admin/`、メンバーは #21・#330・#331 が配線する
 - 全リージョンを CI の経路に乗せる egress の宣言と apply の role の権限: #474
-- アカウントに1つの型の持ち主を層の検査で固定すること: #475
 - 判断 Issue: #86（sandbox の Config を常駐させない）、#98（常駐層の完了条件）、#472（Chatbot の SLR の持ち主）
 
 ## 検証方法
@@ -105,9 +104,9 @@ unsupported:
 | --- | --- | --- |
 | Unit | `internal/account-controls` の PAB の4項目・代替の連絡先・password policy の値と有無、`internal/regional-controls` の各リージョンの6つの設定の値と件数・集合の外の有効なリージョンで plan が落ちること・空の集合の拒否、`internal/config-recorder` の SLR・記録の範囲・home だけのグローバルな記録・配信先・status・保持日数・provider のリージョンが集合の外にあるときに recorder の precondition で plan が落ちること・空の集合の拒否 | `make tf-test`（`internal/*/tests/`） |
 | Contract | env ごとの合成（Config と password policy の件数）、aws の集合が届くこと、`config_delivery` の届き先、aws の外の partition で plan が落ちること、入力の検査（`project` の形と234文字の境界、代替の連絡先の長さと形の境界） | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` |
-| Policy | `PLAN-ACB-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
+| Policy | `PLAN-ACB-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
 | Policy（削除の保護） | `PLAN-STATE-*`（`stateful_protection.protected_types` の13型。PAB・代替の連絡先・password policy・EBS の既定の暗号化・analyzer・SSM のサービス設定・EMR の block public access・VPC Block Public Access・SLR・recorder・delivery channel・recorder の status・retention の削除と置換）。reference の plan は作成しか持たないので、ここでは効かない。型が宣言から外れることは `conftest/plan/stateful_protection_test.rego` が落とす | CI の実 plan（`plan.stateful_protection`）。account-baseline を呼ぶ env の root が配線されるまで効かない |
-| Static | 層の規則、型の分類 | `make layer-check`、`make infra-code-gate` |
+| Static | 層の規則（アカウントかリージョンに1つの型を、ほかのユースケース・env・一般 module が宣言しないこと（`LY401`）を含む）、型の分類 | `make layer-check`、`make infra-code-gate` |
 | Integration（sandbox） | 拒まれるべき操作が拒まれること、drift 0、`internal/config-recorder` の作成と破棄 | 未実施。sandbox の apply の経路（#331）の後に行う |
 
 KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `internal/account-controls/main.tf` と `internal/config-recorder/main.tf` で抑止する。KICS はファイルごとに analyzer の宣言を求める。理由と撤回の条件は各ファイルの先頭が持つ。
