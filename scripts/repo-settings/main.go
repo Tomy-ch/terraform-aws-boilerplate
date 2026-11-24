@@ -332,15 +332,21 @@ func drift(ctx context.Context, root string, c githubClient, repo string, out io
 	for _, u := range unobserved {
 		fmt.Fprintf(out, "⚠️ 突合の対象外（観測できない）: %s\n", u)
 	}
-	if len(findings) > 0 {
-		fmt.Fprintf(out, "❌ %s: %s で宣言と実態のずれが %d 件あります\n", toolName, repo, len(findings))
+	if total := len(findings) + len(d.Ruleset.Exceptions); total > 0 {
+		fmt.Fprintf(out, "❌ %s: %s で宣言と実態のずれが %d 件あります\n", toolName, repo, total)
 		for _, f := range findings {
 			fmt.Fprintf(out, "  - %s\n", f)
+		}
+		if len(d.Ruleset.Exceptions) > 0 {
+			fmt.Fprintln(out, "  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:")
+			for _, f := range d.Ruleset.Exceptions {
+				fmt.Fprintf(out, "  - ruleset: %s\n", f)
+			}
 		}
 		if pvrErr != nil {
 			fmt.Fprintf(out, "❌ %s: %s の実態を読めませんでした: %v\n", toolName, vulnerabilityReportingName, pvrErr)
 		}
-		return xerrors.Wrapf(errDrift, "%d 件", len(findings))
+		return xerrors.Wrapf(errDrift, "%d 件", total)
 	}
 	excluded := ""
 	if len(unobserved) > 0 {

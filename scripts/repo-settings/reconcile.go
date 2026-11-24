@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"reflect"
 	"sort"
@@ -67,6 +68,8 @@ type rulesetDiff struct {
 	Missing  bool
 	ID       int64
 	Findings []string
+	// Exceptions は ADR-0603 決定7 の例外に当たる差分（pull_request のルールの承認者数）。Findings とは分けて報せる。
+	Exceptions []string
 }
 
 type envDiff struct {
@@ -131,7 +134,9 @@ func diffRuleset(want map[string]any, got live) rulesetDiff {
 	for _, k := range keys {
 		switch k {
 		case "rules":
-			rd.Findings = append(rd.Findings, diffRules(want[k], got.Ruleset[k])...)
+			findings, exceptions := diffRules(want[k], got.Ruleset[k])
+			rd.Findings = append(rd.Findings, findings...)
+			rd.Exceptions = append(rd.Exceptions, exceptions...)
 		case "bypass_actors":
 			if v, ok := got.Ruleset[k]; ok && !subsetMatch(want[k], v) {
 				rd.Findings = append(rd.Findings, "bypass_actors が宣言と異なります")
@@ -146,10 +151,11 @@ func diffRuleset(want map[string]any, got live) rulesetDiff {
 }
 
 // diffRules はルールを type で照合して比べます。順序は問いません。
-func diffRules(want, got any) []string {
+// pull_request のルールの承認者数の相違は、ほかの差分と分けて2つ目の戻り値で返します。
+func diffRules(want, got any) ([]string, []string) {
 	wantRules, _ := rulesByType(want)
 	gotRules, dups := rulesByType(got)
-	var out []string
+	var out, exceptions []string
 	for _, t := range dups {
 		out = append(out, "ルール "+t+" が実態に2件以上あります")
 	}
@@ -159,8 +165,18 @@ func diffRules(want, got any) []string {
 			out = append(out, "ルール "+t+" が実在しません")
 			continue
 		}
-		if !subsetMatch(wantRules[t], g) {
+		if subsetMatch(wantRules[t], g) {
+			continue
+		}
+		approval, others := true, true
+		if t == "pull_request" {
+			approval, others = splitApprovalCount(wantRules[t], g)
+		}
+		if others {
 			out = append(out, "ルール "+t+" が宣言と異なります"+contextDelta(wantRules[t], g))
+		}
+		if t == "pull_request" && approval {
+			exceptions = append(exceptions, "ルール pull_request の "+approvalCountKey+" が宣言と異なります")
 		}
 	}
 	for _, t := range sortedKeys(gotRules) {
@@ -168,7 +184,29 @@ func diffRules(want, got any) []string {
 			out = append(out, "宣言に無いルール "+t+" が実在します")
 		}
 	}
-	return out
+	return out, exceptions
+}
+
+const approvalCountKey = "required_approving_review_count"
+
+// splitApprovalCount は pull_request のルールどうしについて、承認者数が異なるかと、承認者数の外が異なるかを
+// 返します。宣言が承認者数を持たなければ、相違はすべて承認者数の外に数えます。
+func splitApprovalCount(want, got any) (approval, others bool) {
+	w, _ := want.(map[string]any)
+	wp, _ := w["parameters"].(map[string]any)
+	wv, ok := wp[approvalCountKey]
+	if !ok {
+		return false, !subsetMatch(want, got)
+	}
+	g, _ := got.(map[string]any)
+	gp, _ := g["parameters"].(map[string]any)
+	gv, ok := gp[approvalCountKey]
+	approval = !ok || !subsetMatch(wv, gv)
+	rest := maps.Clone(wp)
+	delete(rest, approvalCountKey)
+	stripped := maps.Clone(w)
+	stripped["parameters"] = rest
+	return approval, !subsetMatch(stripped, got)
 }
 
 // contextDelta は、required_status_checks のルールどうしの context の過不足を文にします。
@@ -400,7 +438,7 @@ func planRequests(d diff, want desired, repo, only string) []request {
 		switch {
 		case d.Ruleset.Missing:
 			out = append(out, request{Method: "POST", Path: base + "/rulesets", Body: want.Ruleset})
-		case len(d.Ruleset.Findings) > 0:
+		case len(d.Ruleset.Findings) > 0 || len(d.Ruleset.Exceptions) > 0:
 			out = append(out, request{Method: "PUT", Path: fmt.Sprintf("%s/rulesets/%d", base, d.Ruleset.ID), Body: want.Ruleset})
 		}
 		return out

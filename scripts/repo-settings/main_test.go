@@ -633,6 +633,50 @@ func Test_drift(t *testing.T) {
 		assert.Empty(t, f.writes())
 	})
 
+	approvalRoutes := func(t *testing.T, from, to string) map[string]fakeResponse {
+		t.Helper()
+		var ruleset map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.Replace(syncedRuleset, from, to, 1)), &ruleset))
+		ruleset["id"] = 7.0
+		body, err := json.Marshal(ruleset)
+		require.NoError(t, err)
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r/rulesets/7"] = ok(string(body))
+		return routes
+	}
+
+	t.Run("承認者数だけのずれを、決定7 の例外として分けて出力して失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := approvalRoutes(t, `"required_approving_review_count": 1`, `"required_approving_review_count": 0`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
+			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+		}, "\n")+"\n", out.String())
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("承認者数とほかのパラメータのずれは、両方を分けて出力して失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := approvalRoutes(t,
+			`"required_review_thread_resolution": true,
+      "required_approving_review_count": 1`,
+			`"required_review_thread_resolution": false,
+      "required_approving_review_count": 0`)
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 2 件あります",
+			"  - ruleset: ルール pull_request が宣言と異なります",
+			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
+			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+		}, "\n")+"\n", out.String())
+	})
+
 	t.Run("観測できなかったものを出力する", func(t *testing.T) {
 		t.Parallel()
 		root := writeRepo(t, syncedRuleset)
