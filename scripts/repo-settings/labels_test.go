@@ -22,7 +22,6 @@ func Test_checkDependabotLabels(t *testing.T) {
 		assert.Equal(t, 2, n)
 	})
 
-
 	t.Run("宣言に無いラベルを、ecosystem をまたいですべて ecosystem の名前とともに挙げる", func(t *testing.T) {
 		t.Parallel()
 		dependabot := "updates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      - \"go\"\n      - \"x\"\n" +
