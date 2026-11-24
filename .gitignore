@@ -49,6 +49,7 @@ usecases/**/.terraform.lock.hcl
 tmp/
 
 # scripts/<tool>/ で go build を直接打つと、拡張子の無い道具の名前のバイナリができる。
+# scripts/<tool>/ の直下の拡張子の無いファイルはすべて無視されるので、そこへは置けない。
 /scripts/*/*
 !/scripts/*/*.*
 !/scripts/*/*/
