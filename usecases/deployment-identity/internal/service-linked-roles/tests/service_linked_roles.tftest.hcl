@@ -18,6 +18,11 @@ run "chatbot_in_aws" {
   }
 
   assert {
+    condition     = aws_iam_service_linked_role.chatbot[0].description == "The Service Linked Role used by AWS Chatbot."
+    error_message = "service-linked role の description が、AWS が作成のときに付ける値と違います。取り込みの plan に変更が出ます（deployment-identity/ADR-0002 決定3）。"
+  }
+
+  assert {
     condition     = aws_iam_service_linked_role.chatbot[0].custom_suffix == null
     error_message = "service-linked role に custom_suffix が付いています。AWS が決める名前にしてください（deployment-identity/ADR-0002 決定3）。"
   }
