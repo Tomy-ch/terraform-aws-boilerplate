@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -146,12 +147,13 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc) erro
 	})
 }
 
-// runValidate は、各ディレクトリの `terraform validate -json` の出力と stderr を -out に置き、一覧（manifest.tsv）を
-// 書き直します。判定は result が持ちます。一覧に載るファイルだけが読まれます。
 // canaryFunc は、本走査の前に走らせる canary です。テストは差し替えます。
 type canaryFunc func(args []string, w io.Writer, tool toolFunc) error
 
-func runValidate(args []string, w io.Writer, tool toolFunc, canary canaryFunc) error {
+// runValidate は、canary を走らせてから、各ディレクトリの `terraform validate -json` の出力と stderr を -out に置き、
+// 一覧（manifest.tsv）を書き直します。判定は result が持ちます。一覧に載るファイルだけが読まれます。root はリポジトリ
+// 直下です。
+func runValidate(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root string) error {
 	var out, canaryData, canaryWork, canaryReference string
 	data, targets, err := parseData("validate", args, w, func(f *flag.FlagSet) {
 		f.StringVar(&out, "out", "", "出力と一覧を置くディレクトリ")
@@ -164,6 +166,9 @@ func runValidate(args []string, w io.Writer, tool toolFunc, canary canaryFunc) e
 	}
 	if out == "" || canaryData == "" || canaryWork == "" || canaryReference == "" {
 		return xerrors.Wrap(errUsage, "tf-gates validate は -out・-canary-data・-canary-work・-canary-reference が要ります")
+	}
+	if _, err := workdir.Resolve(root, canaryWork); err != nil {
+		return xerrors.Wrapf(errUsage, "-canary-work %v", err)
 	}
 	if err := canary([]string{"-data", canaryData, "-work", canaryWork, "-reference", canaryReference}, w, tool); err != nil {
 		return xerrors.Wrap(err, "canary が落ちたので、本走査を行いません")

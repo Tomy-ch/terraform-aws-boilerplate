@@ -64,7 +64,11 @@ plan-admin-identity: SHELL := /bin/bash
 plan-admin-identity: init-admin-identity
 	@$(call TF_LOCAL_PLAN,admin,identity)
 
-# 判定は bootstrap-check が持つ。terraform show は AWS を呼ばないので、環境変数は引き継がず、
+.PHONY: bootstrap-check-account ## アカウントの準備（1-0 から 2-4）を一時 IAM user の資格情報で読んで確かめる（要 make aws-login）
+bootstrap-check-account:
+	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) account -project $(TF_LOCAL_PROJECT) -region "$$region"
+
+# terraform show は AWS を呼ばないので、環境変数は引き継がず、
 # terraform が動くのに要る PATH と HOME だけを渡す。
 # bootstrap-check へはホストの terraform の出力を標準入力で渡し、plan のパスはホストの絶対パスなので、
 # RUN_SCRIPT_HOST で起動する。
