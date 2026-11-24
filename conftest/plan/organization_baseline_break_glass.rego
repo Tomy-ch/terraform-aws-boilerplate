@@ -56,7 +56,9 @@ trust_statements := lib.statements(body(object.get(bg, "role", ""), "assume_role
 self_management := {"iam:changepassword", "iam:enablemfadevice", "iam:getuser", "iam:listmfadevices", "iam:resyncmfadevice"}
 
 # stack instance は、それを作る権限を先に昇格する間だけ宣言から外せる（docs/setup/organization-baseline.md）。
-declared_instances := [a | some a in [object.get(bg, "stack_instances", "")]; a != ""]
+declared_instances := [bg.stack_instances] if "stack_instances" in object.keys(bg)
+
+else := []
 
 deny contains msg if {
 	some a in array.concat(object.get(bg, "users", []), array.concat([object.get(bg, "role", ""), object.get(bg, "group_policy", ""), object.get(bg, "role_attachments", ""), object.get(bg, "role_policy_attachment", ""), object.get(bg, "stack_set", "")], declared_instances))

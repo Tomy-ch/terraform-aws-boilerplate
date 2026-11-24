@@ -352,10 +352,24 @@ test_violation_member_instances_without_stack_set_name if {
 
 undeclared_instances := {"organization": decl.organization, "break_glass": object.remove(decl.break_glass, ["stack_instances"])}
 
-test_no_violation_undeclared_stack_instances_absent if {
+undeclared_message := "[PLAN-BG-00] break-glass の stack instance の宣言が無いのに"
+
+test_pass_undeclared_stack_instances_absent if {
 	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
 	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": undeclared_instances}
-	count([m | some m in msgs; startswith(m, "[PLAN-BG-00]")]) == 0
+	count(msgs) == 0
+}
+
+test_violation_empty_stack_instances_declaration if {
+	empty := {"organization": decl.organization, "break_glass": object.union(decl.break_glass, {"stack_instances": ""})}
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": empty}
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の  が入力にありません", msgs)
+}
+
+test_no_undeclared_message_without_break_glass_declaration if {
+	msgs := p.deny with input as fixture.plan(member_rcs(valid_stack_set)) with data.policy_plan as {"organization_baseline": {"organization": decl.organization}}
+	count([m | some m in msgs; startswith(m, undeclared_message)]) == 0
 }
 
 test_violation_undeclared_stack_instances_present if {
