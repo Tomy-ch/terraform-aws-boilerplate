@@ -19,7 +19,6 @@ import (
 // ruleMember は、semgrep-rules の tarball のうち写す member です（先頭の段は tarball の最上位のディレクトリ）。
 var ruleMember = regexp.MustCompile(`^[^/]*/terraform/.*\.ya?ml$`)
 
-// rule の1つの大きさ、件数、合計の大きさの上限です。
 const (
 	maxRuleSize   = 4 << 20
 	maxRules      = 1024
@@ -128,7 +127,7 @@ func writeRule(r io.Reader, p string) (sum string, n int64, err error) {
 	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
-// rulesDigest は、相対パスから sha256 への対応を `sha256sum` の出力の形で並べ、その sha256 を返します。
+// rulesDigest は、stageRules が want と比べる、写した rule の digest を返します。
 func rulesDigest(sums map[string]string) string {
 	paths := make([]string, 0, len(sums))
 	for p := range sums {

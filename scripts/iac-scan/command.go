@@ -40,10 +40,8 @@ var trivySeverities = []string{
 // その結果から trivy convert で作ります。
 var trivyFormats = []string{"table", "json", "sarif"}
 
-// stepTrivyConvertSARIF は、本走査の json を SARIF へ変える段です。
 const stepTrivyConvertSARIF = "trivy-convert/sarif"
 
-// trivyResult は、trivy convert へ渡す本走査の結果のファイル名です（作業ディレクトリからの相対パス）。
 const trivyResult = "result.json"
 
 // trivyStep は、閾値と出力の形を一覧と照らし、trivy-config の走査の段と、json 以外の形へ変える段（json なら空）を
@@ -62,8 +60,8 @@ func trivyStep(severity, format string) (scan, convert string, err error) {
 	return "trivy-config/" + severity, convert, nil
 }
 
-// command は toolFunc の実物です。引数は段ごとに固定で、可変の値は作業ディレクトリと、そこに置いたファイル
-// （compose.yaml・work/・out/・.trivyignore.yaml・result.json）で渡します。イメージの段だけはリポジトリ直下の docker-compose.yaml を読みます。
+// command は toolFunc の実物です。引数は段ごとに固定で、可変の値は作業ディレクトリと、そこに置いたファイルで渡します。
+// イメージの段だけはリポジトリ直下の docker-compose.yaml を読みます。
 // 知らない段は道具を起動せずに落ちます。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()

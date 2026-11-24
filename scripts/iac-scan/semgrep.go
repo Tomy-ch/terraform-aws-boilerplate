@@ -30,8 +30,8 @@ const (
 `
 )
 
-// runSemgrep は、走査の root を <base>/tmp/semgrep/work/src へ、rule を work/cfg へ写し（空の .semgrepignore も
-// stageSemgrepWork が置きます）、canary が s3-public-rw-bucket で落ちることを確かめてから本走査を起動します。
+// runSemgrep は、走査の root を <base>/tmp/semgrep/work/src へ、rule を work/cfg へ写し、canary が s3-public-rw-bucket で
+// 落ちることを確かめてから本走査を起動します。
 // 走査したファイルが0件か、写した .tf と .hcl の数に届かなければ、所見の有無に依らず失敗です。
 func runSemgrep(args []string, log io.Writer, r runner) error {
 	var rules, sha string

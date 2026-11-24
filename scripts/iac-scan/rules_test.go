@@ -65,7 +65,6 @@ func tarball(t *testing.T, members []member) string {
 	return p
 }
 
-// ruleMembers は、terraform/ の rule を n 件持つ member を返す。
 func ruleMembers(n int) []member {
 	ms := make([]member, 0, n)
 	for i := range n {

@@ -10,7 +10,6 @@ TRIVY_SKIP_FLAGS := --skip-version-check
 
 TRIVY_VULN_FLAGS := --scanners vuln --pkg-types library --severity CRITICAL,HIGH,MEDIUM
 
-# trivy-config の閾値。
 TRIVY_CONFIG_SEVERITY := CRITICAL,HIGH,MEDIUM
 
 .PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（閾値は TRIVY_CONFIG_SEVERITY）

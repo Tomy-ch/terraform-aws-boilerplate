@@ -85,7 +85,6 @@ func (f *fake) fail(step string) { f.write("fail-"+step, "") }
 
 func (f *fake) failIn(step, name string) { f.write("fail-"+step+"-"+name, "") }
 
-// kill は、段 step を自身へのシグナルで終わらせる。
 func (f *fake) kill(step string) { f.write("kill-"+step, "") }
 
 // out は /tmp/out からの相対パスと中身である。
@@ -112,7 +111,6 @@ func (f *fake) calls() []string {
 	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 }
 
-// envOf は、作業ディレクトリ name で段 step が受け取った環境変数を返す。
 func (f *fake) envOf(name, step string) []string {
 	f.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(f.dir, "env-"+name+"-"+strings.NewReplacer("/", "_", ",", "_").Replace(step)))
@@ -146,7 +144,6 @@ func tree(t *testing.T, files map[string]string) string {
 	return base
 }
 
-// tfTree は、usecases・modules・env の3つの root に .tf を1つずつ持ち、.terraform の下にも .tf を持つ木を建てる。
 func tfTree(t *testing.T) string {
 	t.Helper()
 	return tree(t, map[string]string{

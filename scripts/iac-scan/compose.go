@@ -51,7 +51,6 @@ type composeServiceSpec struct {
 // composePidsLimit は、コンテナが持てるプロセス（スレッドを含む）の上限です。
 const composePidsLimit = 1024
 
-// runner は、道具の起動と、それに渡す環境変数の元です。テストは両方を差し替えます。
 type runner struct {
 	tool    toolFunc
 	environ []string
@@ -80,8 +79,7 @@ func lookupImage(r runner, step string) (string, error) {
 }
 
 // writeCompose は、dir に compose.yaml を書きます。project 名は dir の絶対パスから決め、作業ディレクトリごとに分けます。
-// network を与えず、capability は入力を読むためのものだけにし、特権の取得とプロセスの数を絞ります。compose は値の
-// `$` を補間するので、`$$` にして渡します。
+// compose は値の `$` を補間するので、`$$` にして渡します。
 func writeCompose(dir, image string, t imageTool) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -174,8 +172,7 @@ func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, 
 	return rc, nil
 }
 
-// resolveWork は、base の下の作業ディレクトリ work（tmp/ の下の相対パス）を workdir.Resolve で確かめて返します。
-// tmp/ の外を指すもの（途中の symlink を含む）は使い方の誤りです。
+// resolveWork は、workdir.Resolve の失敗を使い方の誤りにして返します。
 func resolveWork(base, work string) (string, error) {
 	dir, err := workdir.Resolve(base, work)
 	if err != nil {
@@ -202,9 +199,8 @@ func prepareWork(base, work string) (string, error) {
 	return dir, nil
 }
 
-// runCanary は、base の下の作業ディレクトリ work を prepareWork で作り直し、その work/src に fixture の main.tf を置き、
-// prepare（nil でなければ）でその作業ディレクトリへ残りの入力を置いて t を起動し、judge で判定します。canary の出力は、
-// 落ちたときだけ log へ出します。通れば作業ディレクトリを消します。
+// runCanary は、作業ディレクトリ work に fixture の main.tf と、prepare（nil でなければ）が置く残りの入力を用意して t を
+// 起動し、judge で判定します。canary の出力は、落ちたときだけ log へ出します。通れば作業ディレクトリを消します。
 func runCanary(name, base, work, fixture, image string, t imageTool, r runner, log io.Writer,
 	judge func(rc int, out string) error, prepare func(dir string) error,
 ) error {
