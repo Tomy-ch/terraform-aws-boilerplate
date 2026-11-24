@@ -124,6 +124,8 @@ plan の log の1行目）は `$(call RUN_SCRIPT_HOST,tf-local,...)` で `script
 `bootstrap-check-plan` は、保存した plan を `terraform show -json` で読み、`scripts/bootstrap-check` へ標準入力で
 渡して段2-4 の期待値と突き合わせる。plan のパスと標準入力がホストのものなので `RUN_SCRIPT_HOST` で起動し、
 `terraform show` は `env -i` で起動して資格情報を渡さない。`PARTIAL` は make の引数でだけ渡せる。
+`bootstrap-check-account` は、`aws-login` と同じく `tf-local env-unset` の変数を外し、bootstrap の profile と
+identity root の region で `scripts/bootstrap-check account` を起動する。aws の起動は bootstrap-check が持つ。
 
 ### 直下
 
