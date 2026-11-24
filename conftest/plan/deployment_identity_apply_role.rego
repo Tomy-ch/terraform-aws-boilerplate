@@ -4,7 +4,7 @@
 # 構成物（state-backend）と apply の role（deployment-identity）は別の root の plan に在るので、結合した入力で突き合わせる。
 # 対象の ARN は検査する policy からではなく、構成物の resource の値と宣言から組む。
 # service-linked role は apply の role の作成の権限が残るので Deny で守らず、Allow の書き込みを宣言のサービスの条件つきの
-# 作成に限り、宣言したサービスの role が bootstrap の usecase の下にだけ在ることを見る（deployment-identity/ADR-0002 決定6）。
+# 作成に限り、宣言したサービスの role が bootstrap.prerequisite_module の下にだけ在ることを見る（deployment-identity/ADR-0002 決定6）。
 package plan.deployment_identity_apply_role
 
 import data.plan.lib
@@ -42,6 +42,8 @@ modules := object.get(bootstrap, "modules", [])
 types := object.get(bootstrap, "types", {})
 
 children := object.get(bootstrap, "children", {})
+
+prerequisite_module := object.get(bootstrap, "prerequisite_module", null)
 
 nonempty_string(x) if {
 	is_string(x)
@@ -124,6 +126,9 @@ well_formed_bootstrap if {
 	every _, c in children {
 		well_formed_child(c)
 	}
+	nonempty_string(prerequisite_module)
+	some m in modules
+	startswith(prerequisite_module, m)
 }
 
 # --- 構成物 ---
@@ -446,7 +451,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・service_linked・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・service_linked・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）/ prerequisite_module（modules のどれかで始まる空でない文字列）の形を満たしていません"
 }
 
 deny contains msg if {
@@ -586,11 +591,13 @@ wl_decl := object.get(di, "workload", {})
 
 declared_services := {x | some x in lib.as_array(object.get(wl_decl, "service_linked_roles", [])); is_string(x)}
 
-service_linked_roles[arn] := r.change.after.aws_service_name if {
+# 同じ ARN に異なるサービスが在っても評価が衝突しないよう、ARN とサービスの組の集合にする。
+service_linked_roles contains [arn, service] if {
 	some r in resources
 	class_of(r.type) == "service_linked"
 	arn := r.change.after.arn
 	arn_shaped(arn)
+	service := object.get(r.change.after, "aws_service_name", null)
 }
 
 # apply の role が使う Allow の全体: inline policy、workload の2つの policy（deployment-identity/ADR-0201 決定17）、作る role の boundary。
@@ -625,7 +632,7 @@ service_linked_create(s, a, service) if {
 }
 
 deny contains msg if {
-	some arn, service in service_linked_roles
+	some [arn, service] in service_linked_roles
 	some x in allows
 	applies_to(x.s, arn)
 	some a in lib.lower_all(object.get(x.s, "Action", []))
@@ -635,7 +642,7 @@ deny contains msg if {
 }
 
 deny contains msg if {
-	some arn, _ in service_linked_roles
+	some [arn, _] in service_linked_roles
 	some x in allows
 	"NotAction" in object.keys(x.s)
 	applies_to(x.s, arn)
@@ -839,25 +846,46 @@ deny contains msg if {
 
 # --- PLAN-APPLY-07: アカウントの前提の service-linked role の置き場（deployment-identity/ADR-0002 決定6）---
 
-prerequisites contains {"path": c.path, "address": c.rc.address, "service": service} if {
+service_linked_changes contains {"path": c.path, "address": c.rc.address, "service": object.get(c.rc.change.after, "aws_service_name", null)} if {
 	some c in lib.changes
 	c.rc.type == "aws_iam_service_linked_role"
 	is_object(c.rc.change.after)
-	service := object.get(c.rc.change.after, "aws_service_name", null)
-	service in declared_services
+}
+
+prerequisites contains p if {
+	some p in service_linked_changes
+	p.service in declared_services
+}
+
+in_prerequisite_module(address) if startswith(address, prerequisite_module)
+
+deny contains msg if {
+	well_formed_bootstrap
+	some p in service_linked_changes
+	not is_string(p.service)
+	msg := sprintf("[PLAN-APPLY-07] %s: %s の aws_service_name が plan で決まっていません。前提の service-linked role かを判定できません", [p.path, p.address])
 }
 
 deny contains msg if {
 	well_formed_bootstrap
 	some p in prerequisites
-	not in_scope(p.address)
-	msg := sprintf("[PLAN-APPLY-07] %s: %s が、宣言した前提の service-linked role（%s）を bootstrap の usecase（%v）の外で作っています。identity root の bootstrap の usecase だけが持ちます", [p.path, p.address, p.service, modules])
+	not in_prerequisite_module(p.address)
+	msg := sprintf("[PLAN-APPLY-07] %s: %s が、宣言した前提の service-linked role（%s）を %s の外で作っています。identity root の %s だけが持ちます", [p.path, p.address, p.service, prerequisite_module, prerequisite_module])
+}
+
+deny contains msg if {
+	well_formed_bootstrap
+	some p in service_linked_changes
+	in_prerequisite_module(p.address)
+	is_string(p.service)
+	not p.service in declared_services
+	msg := sprintf("[PLAN-APPLY-07] %s: %s の service-linked role（%s）が、宣言した前提のサービス（%v）にありません。data.policy_plan.deployment_identity.workload.service_linked_roles に足してください", [p.path, p.address, p.service, sort(declared_services)])
 }
 
 deny contains msg if {
 	well_formed_bootstrap
 	some service in declared_services
-	n := count({p | some p in prerequisites; p.service == service; in_scope(p.address)})
+	n := count({p | some p in prerequisites; p.service == service; in_prerequisite_module(p.address)})
 	n != 1
-	msg := sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、bootstrap の usecase（%v）の下に %d 件です（1件を期待）", [service, modules, n])
+	msg := sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、%s の下に %d 件です（1件を期待）", [service, prerequisite_module, n])
 }

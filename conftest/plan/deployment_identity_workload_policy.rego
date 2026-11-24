@@ -46,6 +46,7 @@ well_formed if {
 		well_formed_prefix(x)
 	}
 	nonempty_strings(wl.service_linked_roles)
+	count(wl.service_linked_roles) > 0
 	nonempty_strings(wl.passed_to_services)
 	count(wl.passed_to_services) > 0
 	nonempty_strings(wl.apply_only_denies)

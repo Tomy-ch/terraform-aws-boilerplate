@@ -119,6 +119,7 @@ test_violation_declaration_malformed if {
 		[{"op": "replace", "path": "/workload/apply_only_denies", "value": [1]}],
 		[{"op": "replace", "path": "/workload/service_linked_roles", "value": "x"}],
 		[{"op": "replace", "path": "/workload/service_linked_roles", "value": [""]}],
+		[{"op": "replace", "path": "/workload/service_linked_roles", "value": []}],
 		[{"op": "replace", "path": "/workload/passed_to_services", "value": []}],
 		[{"op": "add", "path": "/workload/extra", "value": 1}],
 		[{"op": "remove", "path": "/apply_role"}],

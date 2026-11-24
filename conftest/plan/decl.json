@@ -151,6 +151,7 @@
             "module.state_backend.",
             "module.deployment_identity."
           ],
+          "prerequisite_module": "module.deployment_identity.",
           "types": {
             "aws_iam_openid_connect_provider": {
               "class": "target"
