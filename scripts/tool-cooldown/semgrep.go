@@ -23,12 +23,18 @@ const (
 	semgrepRulesDir = "terraform"
 
 	commitsPerPage = 100
+	// maxCommitPages は commit の一覧を遡るページ数の上限。
+	maxCommitPages = 10
 )
 
 var (
 	// ErrInvalidSemgrep は semgrep.mk から固定の commit を1つに定められない場合のエラー。
 	ErrInvalidSemgrep = xerrors.New("semgrep.mk の SEMGREP_RULES_COMMIT を読めません")
 	errNoRulesTree    = xerrors.New("commit に走査対象のディレクトリがありません")
+	// errCommitsExhausted は、一覧を遡っても窓を満たす commit と pin が揃わない場合のエラー。
+	errCommitsExhausted = xerrors.New("commit の一覧に窓を満たす commit と pin が揃いません")
+	// errNotOnDefaultBranch は、pin が上流の既定ブランチから辿れない commit である場合のエラー。
+	errNotOnDefaultBranch = xerrors.New("commit が既定ブランチにありません")
 
 	semgrepCommitLine = regexp.MustCompile(`^SEMGREP_RULES_COMMIT\s*:=\s*([0-9a-f]{40})\s*$`)
 	// semgrepCommitAssign は代入の形を問わず SEMGREP_RULES_COMMIT へ値を与える行を拾う。
@@ -101,26 +107,69 @@ func githubCommit(ctx context.Context, client *http.Client, repo, sha string) (c
 	return info, nil
 }
 
-// githubCommits は既定ブランチの commit を新しい順に1ページ分返す。0件はエラーにする。
-func githubCommits(ctx context.Context, client *http.Client, repo string) ([]commitInfo, error) {
-	var body []commitBody
-	if err := getJSON(ctx, client, fmt.Sprintf("%s%s/commits?per_page=%d", githubAPI, repo, commitsPerPage), &body); err != nil {
-		return nil, err
-	}
-	if len(body) == 0 {
-		return nil, xerrors.Wrap(errNotFound, repo+" の commit")
-	}
-
-	out := make([]commitInfo, 0, len(body))
-	for _, b := range body {
-		info := b.info()
-		if info.sha == "" || info.at.IsZero() || info.tree == "" {
-			return nil, xerrors.Wrap(errNotFound, repo+" の commit の sha・committer の日付・tree")
+// githubCommits は既定ブランチの commit を新しい順に返す。pin と、窓を満たす最初の commit の
+// 両方が現れるまでページを遡り、揃わないまま一覧が尽きるか maxCommitPages に達したらエラーにする。
+func githubCommits(
+	ctx context.Context, client *http.Client, repo, pin string, window int, now time.Time,
+) ([]commitInfo, error) {
+	var (
+		out               []commitInfo
+		pinSeen, eligible bool
+	)
+	for page := 1; page <= maxCommitPages; page++ {
+		var body []commitBody
+		url := fmt.Sprintf("%s%s/commits?per_page=%d&page=%d", githubAPI, repo, commitsPerPage, page)
+		if err := getJSON(ctx, client, url, &body); err != nil {
+			return nil, err
 		}
-		out = append(out, info)
+		if page == 1 && len(body) == 0 {
+			return nil, xerrors.Wrap(errNotFound, repo+" の commit")
+		}
+		for _, b := range body {
+			info := b.info()
+			if info.sha == "" || info.at.IsZero() || info.tree == "" {
+				return nil, xerrors.Wrap(errNotFound, repo+" の commit の sha・committer の日付・tree")
+			}
+			out = append(out, info)
+			pinSeen = pinSeen || info.sha == pin
+			eligible = eligible || ageDays(info.at, now) >= window
+		}
+		if pinSeen && eligible {
+			return out, nil
+		}
+		if len(body) < commitsPerPage {
+			break
+		}
 	}
 
-	return out, nil
+	return nil, xerrors.Wrap(errCommitsExhausted, fmt.Sprintf("%s（pin %s、%d 件）", repo, pin, len(out)))
+}
+
+// verifyOnDefaultBranch は sha が上流の既定ブランチから辿れる commit かを確かめる。compare の
+// status は base（既定ブランチ）から見た head（sha）の位置で、behind と identical だけが
+// sha が既定ブランチの祖先であることを意味する。
+func verifyOnDefaultBranch(ctx context.Context, client *http.Client, repo, sha string) error {
+	var repoBody map[string]any
+	if err := getJSON(ctx, client, githubAPI+repo, &repoBody); err != nil {
+		return err
+	}
+	branch, _ := repoBody["default_branch"].(string)
+	if branch == "" {
+		return xerrors.Wrap(errNotFound, repo+" の既定ブランチ")
+	}
+
+	var compare struct {
+		Status string `json:"status"`
+	}
+	if err := getJSON(ctx, client, githubAPI+repo+"/compare/"+branch+"..."+sha, &compare); err != nil {
+		return err
+	}
+	switch compare.Status {
+	case "behind", "identical":
+		return nil
+	default:
+		return xerrors.Wrap(errNotOnDefaultBranch, fmt.Sprintf("%s@%s（%s との比較: %q）", repo, sha, branch, compare.Status))
+	}
 }
 
 // rulesTree は根の tree から走査対象のディレクトリの tree の SHA を返す。
@@ -150,27 +199,23 @@ func evaluateCommit(ctx context.Context, client *http.Client, t tool, now time.T
 	c := candidate{tool: t, window: windowFor(t.backend), commit: &commitSurvey{}}
 	_, repo, _ := strings.Cut(t.backend, ":")
 
-	commits, err := githubCommits(ctx, client, repo)
+	// 一覧は既定ブランチを辿るので、pin がそこに現れることが既定ブランチにあることの確認を兼ねる。
+	commits, err := githubCommits(ctx, client, repo, t.version, c.window, now)
 	if err != nil {
 		c.err = err
 
 		return c
 	}
 
-	pinIndex := len(commits)
-	pin := commitInfo{}
+	var (
+		pinIndex int
+		pin      commitInfo
+	)
 	for i, ci := range commits {
 		if ci.sha == t.version {
 			pinIndex, pin = i, ci
 
 			break
-		}
-	}
-	if pin.sha == "" {
-		if pin, err = githubCommit(ctx, client, repo, t.version); err != nil {
-			c.err = err
-
-			return c
 		}
 	}
 

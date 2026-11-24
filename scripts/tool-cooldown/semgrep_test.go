@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,9 +23,33 @@ var (
 )
 
 const (
-	commitsListURI = "/repos/" + semgrepRulesRepo + "/commits?per_page=100"
+	commitsListURI = "/repos/" + semgrepRulesRepo + "/commits?per_page=100&page=1"
 	treesURI       = "/repos/" + semgrepRulesRepo + "/git/trees/"
+	repoURI        = "/repos/" + semgrepRulesRepo
+	compareURI     = repoURI + "/compare/develop..."
 )
+
+func commitsPageURI(page int) string {
+	return fmt.Sprintf("/repos/%s/commits?per_page=100&page=%d", semgrepRulesRepo, page)
+}
+
+// freshPage は窓の内側の commit で埋まった1ページを返す。pin も窓を満たす commit も含まない。
+func freshPage(page int) string {
+	entries := make([]string, commitsPerPage)
+	for i := range entries {
+		entries[i] = commitJSON(fmt.Sprintf("%040x", page*commitsPerPage+i), daysAgo(1), "rootf")
+	}
+
+	return "[" + strings.Join(entries, ",") + "]"
+}
+
+// onDefaultBranch は sha を既定ブランチ develop と比べた結果が status になる上流の経路を返す。
+func onDefaultBranch(sha, status string) map[string]string {
+	return map[string]string{
+		repoURI:          `{"default_branch":"develop"}`,
+		compareURI + sha: `{"status":"` + status + `"}`,
+	}
+}
 
 func writeSemgrepDecl(t *testing.T, dir string) {
 	t.Helper()
@@ -79,23 +106,38 @@ func Test_parseSemgrepRules(t *testing.T) {
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
-		for name, content := range map[string]string{
-			"代入が無い":          "SEMGREP_RULES_SHA256 := " + strings.Repeat("0", 64) + "\n",
-			"空":              "",
-			"39桁":            "SEMGREP_RULES_COMMIT := " + semgrepPin[:39] + "\n",
-			"大文字の16進":        "SEMGREP_RULES_COMMIT := " + strings.ToUpper(semgrepPin) + "\n",
-			"再帰展開の代入":        "SEMGREP_RULES_COMMIT = " + semgrepPin + "\n",
-			"override 付きの代入": "override SEMGREP_RULES_COMMIT := " + semgrepPin + "\n",
-			"行末のコメント":        "SEMGREP_RULES_COMMIT := " + semgrepPin + " # 固定\n",
-			"変数の参照":          "SEMGREP_RULES_COMMIT := $(OTHER)\n",
-			"2つの代入":          semgrepFixture + "SEMGREP_RULES_COMMIT := " + semgrepNewer + "\n",
+		const noAssign, firstLine = "代入がありません", "1 行目: "
+		for name, tc := range map[string]struct{ content, want string }{
+			"代入が無い":          {"SEMGREP_RULES_SHA256 := " + strings.Repeat("0", 64) + "\n", noAssign},
+			"コメントだけで代入が無い":   {"# SEMGREP_RULES_COMMIT := " + semgrepPin + "\n", noAssign},
+			"空":              {"", noAssign},
+			"39桁":            {"SEMGREP_RULES_COMMIT := " + semgrepPin[:39] + "\n", firstLine},
+			"大文字の16進":        {"SEMGREP_RULES_COMMIT := " + strings.ToUpper(semgrepPin) + "\n", firstLine},
+			"再帰展開の代入":        {"SEMGREP_RULES_COMMIT = " + semgrepPin + "\n", firstLine},
+			"条件付きの代入":        {"SEMGREP_RULES_COMMIT ?= " + semgrepPin + "\n", firstLine},
+			"追記の代入":          {"SEMGREP_RULES_COMMIT += " + semgrepPin + "\n", firstLine},
+			"POSIX の即時展開の代入": {"SEMGREP_RULES_COMMIT ::= " + semgrepPin + "\n", firstLine},
+			"シェルの代入":         {"SEMGREP_RULES_COMMIT != echo " + semgrepPin + "\n", firstLine},
+			"export 付きの代入":   {"export SEMGREP_RULES_COMMIT := " + semgrepPin + "\n", firstLine},
+			"override 付きの代入": {"override SEMGREP_RULES_COMMIT := " + semgrepPin + "\n", firstLine},
+			"行末のコメント":        {"SEMGREP_RULES_COMMIT := " + semgrepPin + " # 固定\n", firstLine},
+			"変数の参照":          {"SEMGREP_RULES_COMMIT := $(OTHER)\n", firstLine},
+			"2つの代入":          {semgrepFixture + "SEMGREP_RULES_COMMIT := " + semgrepNewer + "\n", "2 行目: 2つ目の代入です"},
 		} {
 			t.Run(name+"ならエラーにする", func(t *testing.T) {
 				t.Parallel()
-				_, err := parseSemgrepRules([]byte(content))
+				_, err := parseSemgrepRules([]byte(tc.content))
 				require.ErrorIs(t, err, ErrInvalidSemgrep)
+				assert.Contains(t, err.Error(), tc.want)
 			})
 		}
+
+		t.Run("読めない長さの行は宣言の誤りではなく読み取りのエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSemgrepRules([]byte(strings.Repeat("x", 64*1024+1) + "\n" + semgrepFixture))
+			require.ErrorIs(t, err, bufio.ErrTooLong)
+			assert.NotErrorIs(t, err, ErrInvalidSemgrep)
+		})
 	})
 }
 
@@ -146,11 +188,84 @@ func Test_githubCommit(t *testing.T) {
 			_, err := githubCommit(t.Context(), client, semgrepRulesRepo, semgrepPin)
 			require.ErrorIs(t, err, errNotFound)
 		})
+
+		t.Run("根の tree が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondJSON("/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin,
+				commitJSON(semgrepPin, "2026-08-01T00:00:00Z", "")))
+
+			_, err := githubCommit(t.Context(), client, semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errNotFound)
+		})
+	})
+}
+
+func Test_verifyOnDefaultBranch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, status := range []string{"behind", "identical"} {
+			t.Run("既定ブランチとの比較が "+status+" なら既定ブランチの commit として通す", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, onDefaultBranch(semgrepPin, status))
+
+				require.NoError(t, verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin))
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, status := range []string{"ahead", "diverged", ""} {
+			t.Run("既定ブランチとの比較が "+strconv.Quote(status)+" ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, onDefaultBranch(semgrepPin, status))
+
+				err := verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin)
+				require.ErrorIs(t, err, errNotOnDefaultBranch)
+			})
+		}
+
+		t.Run("既定ブランチの名前が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			routes := onDefaultBranch(semgrepPin, "behind")
+			routes[repoURI] = `{}`
+			client := upstreamStub(t, routes)
+
+			err := verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("比較を引けなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{repoURI: `{"default_branch":"develop"}`})
+
+			err := verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("repository を引けなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusInternalServerError))
+
+			err := verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errUpstreamStatus)
+		})
 	})
 }
 
 func Test_githubCommits(t *testing.T) {
 	t.Parallel()
+
+	list := func(commits ...string) string { return "[" + strings.Join(commits, ",") + "]" }
+	commitsOf := func(t *testing.T, client *http.Client) ([]commitInfo, error) {
+		t.Helper()
+
+		return githubCommits(t.Context(), client, semgrepRulesRepo, semgrepPin, releaseWindowDays, outdatedNow)
+	}
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
@@ -158,15 +273,42 @@ func Test_githubCommits(t *testing.T) {
 		t.Run("上流の順序のまま返す", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
-				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(1), "root1") + `,` +
-					commitJSON(semgrepPin, daysAgo(30), "root0") + `]`,
+				commitsListURI: list(commitJSON(semgrepNewer, daysAgo(1), "root1"), commitJSON(semgrepPin, daysAgo(30), "root0")),
 			})
 
-			got, err := githubCommits(t.Context(), client, semgrepRulesRepo)
+			got, err := commitsOf(t, client)
 			require.NoError(t, err)
 			require.Len(t, got, 2)
 			assert.Equal(t, semgrepNewer, got[0].sha)
 			assert.Equal(t, "root0", got[1].tree)
+		})
+
+		t.Run("1ページ目に pin が無ければ次のページを遡る", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsPageURI(1): freshPage(1),
+				commitsPageURI(2): list(commitJSON(semgrepPin, daysAgo(30), "root0")),
+			})
+
+			got, err := commitsOf(t, client)
+			require.NoError(t, err)
+			require.Len(t, got, commitsPerPage+1)
+			assert.Equal(t, semgrepPin, got[commitsPerPage].sha)
+		})
+
+		// 2ページ目の経路を持たない上流で、引けば errNotFound になる。
+		t.Run("pin と窓を満たす commit が揃えば次のページを引かない", func(t *testing.T) {
+			t.Parallel()
+			entries := make([]string, 0, commitsPerPage)
+			for i := range commitsPerPage - 1 {
+				entries = append(entries, commitJSON(strings.Repeat("d", 39)+strconv.Itoa(i%10), daysAgo(1), "rootf"))
+			}
+			entries = append(entries, commitJSON(semgrepPin, daysAgo(30), "root0"))
+			client := upstreamStub(t, map[string]string{commitsListURI: list(entries...)})
+
+			got, err := commitsOf(t, client)
+			require.NoError(t, err)
+			assert.Len(t, got, commitsPerPage)
 		})
 	})
 
@@ -177,17 +319,63 @@ func Test_githubCommits(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{commitsListURI: `[]`})
 
-			_, err := githubCommits(t.Context(), client, semgrepRulesRepo)
+			_, err := commitsOf(t, client)
 			require.ErrorIs(t, err, errNotFound)
 		})
 
-		t.Run("tree を持たない commit があればエラーにする", func(t *testing.T) {
+		for name, entry := range map[string]string{
+			"tree":          commitJSON(semgrepNewer, daysAgo(1), ""),
+			"committer の日付": `{"sha":"` + semgrepNewer + `","commit":{"tree":{"sha":"root1"}}}`,
+			"sha":           commitJSON("", daysAgo(1), "root1"),
+		} {
+			t.Run(name+"を持たない commit があればエラーにする", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, map[string]string{
+					commitsListURI: list(entry, commitJSON(semgrepPin, daysAgo(30), "root0")),
+				})
+
+				_, err := commitsOf(t, client)
+				require.ErrorIs(t, err, errNotFound)
+			})
+		}
+
+		t.Run("一覧が尽きても pin が無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
-				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(1), "") + `]`,
+				commitsListURI: list(commitJSON(semgrepNewer, daysAgo(20), "root1")),
 			})
 
-			_, err := githubCommits(t.Context(), client, semgrepRulesRepo)
+			_, err := commitsOf(t, client)
+			require.ErrorIs(t, err, errCommitsExhausted)
+		})
+
+		t.Run("一覧が尽きても窓を満たす commit が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: list(commitJSON(semgrepNewer, daysAgo(1), "root1"), commitJSON(semgrepPin, daysAgo(2), "root0")),
+			})
+
+			_, err := commitsOf(t, client)
+			require.ErrorIs(t, err, errCommitsExhausted)
+		})
+
+		// 上限の次のページの経路を持たない上流で、引けば errNotFound になる。
+		t.Run("上限のページまで遡っても揃わなければそれ以上引かずにエラーにする", func(t *testing.T) {
+			t.Parallel()
+			routes := map[string]string{}
+			for page := 1; page <= maxCommitPages; page++ {
+				routes[commitsPageURI(page)] = freshPage(page)
+			}
+
+			_, err := commitsOf(t, upstreamStub(t, routes))
+			require.ErrorIs(t, err, errCommitsExhausted)
+		})
+
+		t.Run("次のページを引けなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{commitsPageURI(1): freshPage(1)})
+
+			_, err := commitsOf(t, client)
 			require.ErrorIs(t, err, errNotFound)
 		})
 
@@ -195,7 +383,7 @@ func Test_githubCommits(t *testing.T) {
 			t.Parallel()
 			client := fakeUpstream(t, respondStatus(http.StatusInternalServerError))
 
-			_, err := githubCommits(t.Context(), client, semgrepRulesRepo)
+			_, err := commitsOf(t, client)
 			require.ErrorIs(t, err, errUpstreamStatus)
 		})
 	})
@@ -223,6 +411,16 @@ func Test_rulesTree(t *testing.T) {
 		t.Run("terraform が無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{treesURI + "root0": rootTreeJSON("")})
+
+			_, err := rulesTree(t.Context(), client, semgrepRulesRepo, "root0")
+			require.ErrorIs(t, err, errNoRulesTree)
+		})
+
+		t.Run("terraform の tree の SHA が空ならエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				treesURI + "root0": `{"tree":[{"path":"terraform","type":"tree","sha":""}]}`,
+			})
 
 			_, err := rulesTree(t.Context(), client, semgrepRulesRepo, "root0")
 			require.ErrorIs(t, err, errNoRulesTree)
@@ -344,11 +542,13 @@ func Test_evaluateCommit(t *testing.T) {
 			assert.False(t, c.heldByWindow())
 		})
 
-		t.Run("pin が一覧に無ければ commit を引いて比べる", func(t *testing.T) {
+		t.Run("pin が次のページにあっても遡って比べる", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
-				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`,
-				"/repos/" + semgrepRulesRepo + "/commits/" + semgrepPin: commitJSON(semgrepPin, daysAgo(400), "root0"),
+				commitsPageURI(1): freshPage(1),
+				commitsPageURI(2): `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `,` +
+					commitJSON(semgrepPin, daysAgo(400), "root0") + `]`,
+				treesURI + "rootf": rootTreeJSON("tff"),
 				treesURI + "root0": rootTreeJSON("tf0"),
 				treesURI + "root1": rootTreeJSON("tf1"),
 			})
@@ -356,6 +556,7 @@ func Test_evaluateCommit(t *testing.T) {
 			c := evaluateCommit(t.Context(), client, semgrepTool(), outdatedNow)
 
 			require.NoError(t, c.err)
+			assert.Equal(t, semgrepNewer, c.eligible)
 			assert.True(t, c.actionable())
 		})
 	})
@@ -372,15 +573,52 @@ func Test_evaluateCommit(t *testing.T) {
 			assert.False(t, c.heldByWindow())
 		})
 
-		t.Run("pin の commit を上流が知らなければ err を持たせる", func(t *testing.T) {
+		// 既定ブランチの一覧に現れない pin は、fork や未 merge の branch の commit でありうる。
+		t.Run("pin が一覧に無ければ err を持たせる", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
 				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`,
+				"/repos/" + semgrepRulesRepo + "/commits/" + semgrepPin: commitJSON(semgrepPin, daysAgo(400), "root0"),
+				treesURI + "root0": rootTreeJSON("tf0"),
+				treesURI + "root1": rootTreeJSON("tf1"),
+			})
+
+			c := evaluateCommit(t.Context(), client, semgrepTool(), outdatedNow)
+
+			require.ErrorIs(t, c.err, errCommitsExhausted)
+			assert.False(t, c.actionable())
+		})
+
+		t.Run("窓を満たす commit が無ければ eligible を空のまま err を持たせる", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(1), "root1") + `,` +
+					commitJSON(semgrepPin, daysAgo(2), "root0") + `]`,
+				treesURI + "root0": rootTreeJSON("tf0"),
+				treesURI + "root1": rootTreeJSON("tf1"),
+			})
+
+			c := evaluateCommit(t.Context(), client, semgrepTool(), outdatedNow)
+
+			require.ErrorIs(t, c.err, errCommitsExhausted)
+			assert.Empty(t, c.eligible)
+			assert.False(t, c.actionable())
+		})
+
+		t.Run("窓を満たす commit の tree を引けなければ err を持たせる", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: `[` + commitJSON(semgrepNewest, daysAgo(2), "root2") + `,` +
+					commitJSON(semgrepNewer, daysAgo(20), "root1") + `,` +
+					commitJSON(semgrepPin, daysAgo(40), "root0") + `]`,
+				treesURI + "root0": rootTreeJSON("tf0"),
+				treesURI + "root2": rootTreeJSON("tf2"),
 			})
 
 			c := evaluateCommit(t.Context(), client, semgrepTool(), outdatedNow)
 
 			require.ErrorIs(t, c.err, errNotFound)
+			assert.False(t, c.actionable())
 		})
 
 		// 比べる先が無いまま「同じ」と読むと、報告は黙って空になる。

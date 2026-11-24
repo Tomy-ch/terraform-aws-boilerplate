@@ -151,10 +151,21 @@ func releasedOn(t *testing.T, publishedOn string) *http.Client {
 			_, _ = io.WriteString(w, `{"published_at":"`+publishedOn+`T00:00:00Z"}`)
 		case "/repos/" + semgrepRulesRepo + "/commits/" + semgrepPin:
 			_, _ = io.WriteString(w, commitJSON(semgrepPin, "2020-01-01T00:00:00Z", "root0"))
+		case repoURI, compareURI + semgrepPin:
+			_, _ = io.WriteString(w, onDefaultBranch(semgrepPin, "behind")[r.URL.Path])
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	})
+}
+
+// semgrepCommitOn は semgrep-rules の sha を publishedOn に既定ブランチへ入った commit として返す上流を返す。
+func semgrepCommitOn(t *testing.T, sha, publishedOn string) *http.Client {
+	t.Helper()
+	routes := onDefaultBranch(sha, "behind")
+	routes["/repos/"+semgrepRulesRepo+"/commits/"+sha] = commitJSON(sha, publishedOn+"T00:00:00Z", "root1")
+
+	return upstreamStub(t, routes)
 }
 
 // useMiseWorkTree は mise.toml だけを持つ作業ディレクトリを作り、そこへ移動します。パスを返すのは
@@ -172,12 +183,19 @@ func useMiseWorkTree(t *testing.T, content string) string {
 // current へ差し替えてそこへ移動します。gate の差分は git 越しに取るため実リポジトリが要ります。
 func useMiseGateRepo(t *testing.T, base, current string) {
 	t.Helper()
+	useGateRepo(t, base, current, miseFile, semgrepFile)
+}
+
+// useGateRepo は useMiseGateRepo のうち、base の commit に入れるファイルを baseFiles に限るもの。
+// 作業ツリーには mise.toml と semgrep.mk の両方を置く。
+func useGateRepo(t *testing.T, base, current string, baseFiles ...string) {
+	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, miseFile), []byte(base), 0o600))
 	writeSemgrepDecl(t, dir)
 
 	git := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
-	for _, args := range [][]string{{"init", "-q"}, {"add", miseFile, semgrepFile}, {"commit", "-q", "-m", "init"}} {
+	for _, args := range [][]string{{"init", "-q"}, append([]string{"add"}, baseFiles...), {"commit", "-q", "-m", "init"}} {
 		//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
 		out, err := exec.CommandContext(t.Context(), "git", append(git, args...)...).CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
@@ -1581,10 +1599,11 @@ func Test_publishedAt(t *testing.T) {
 			assert.Equal(t, "/@redocly/cli", got)
 		})
 
-		t.Run("github-commit は commit の committer の日付を返す", func(t *testing.T) {
+		t.Run("github-commit は既定ブランチの commit の committer の日付を返す", func(t *testing.T) {
 			t.Parallel()
-			client := fakeUpstream(t, respondJSON("/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin,
-				commitJSON(semgrepPin, "2026-08-01T00:00:00Z", "root0")))
+			routes := onDefaultBranch(semgrepPin, "behind")
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, "2026-08-01T00:00:00Z", "root0")
+			client := upstreamStub(t, routes)
 
 			at, err := publishedAt(t.Context(), client, semgrepTool())
 			require.NoError(t, err)
@@ -1630,6 +1649,16 @@ func Test_publishedAt(t *testing.T) {
 
 			_, err := publishedAt(t.Context(), client, semgrepTool())
 			require.ErrorIs(t, err, errNotFound)
+		})
+
+		// 窓を満たす日付の commit でも、既定ブランチに無ければ上流が採った rule ではない。
+		t.Run("github-commit の commit が既定ブランチに無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			routes := onDefaultBranch(semgrepPin, "diverged")
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, "2020-01-01T00:00:00Z", "root0")
+
+			_, err := publishedAt(t.Context(), upstreamStub(t, routes), semgrepTool())
+			require.ErrorIs(t, err, errNotOnDefaultBranch)
 		})
 
 		t.Run("取得経路を持たない backend はエラーにする", func(t *testing.T) {
@@ -2404,6 +2433,17 @@ func Test_run(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は窓を満たす semgrep-rules の commit への更新を通す", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, aged), now)
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "違反なし")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("summary-out 指定でサマリを書き出す", func(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			path := filepath.Join(dir, "summary.md")
@@ -2520,18 +2560,22 @@ func Test_run(t *testing.T) {
 		t.Run("gate は窓内に公開された semgrep-rules の commit への更新を失敗にする", func(t *testing.T) {
 			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
 			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
-			client := fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/repos/"+semgrepRulesRepo+"/commits/"+semgrepNewer {
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-				_, _ = io.WriteString(w, commitJSON(semgrepNewer, fresh+"T00:00:00Z", "root1"))
-			})
-
-			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, client, now)
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, fresh), now)
 
 			require.ErrorIs(t, err, errBlocking)
-			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepNewer)
+			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepNewer+"（"+semgrepRulesKey+"）は公開 1 日")
+		})
+
+		// base に semgrep.mk が無いのは宣言を足す pull request の正常な状態で、そのとき現在の pin は
+		// 新しく足されたものとして窓に掛かる。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は base に semgrep.mk が無ければ現在の commit を足されたものとして窓に掛ける", func(t *testing.T) {
+			useGateRepo(t, miseOneAquaTool, miseOneAquaTool, miseFile)
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepPin, fresh), now)
+
+			require.ErrorIs(t, err, errBlocking)
+			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepPin+"（"+semgrepRulesKey+"）は公開 1 日")
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可

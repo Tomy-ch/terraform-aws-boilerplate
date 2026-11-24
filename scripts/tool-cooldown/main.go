@@ -551,8 +551,14 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		return time.Time{}, err
 	case "commit":
 		info, err := githubCommit(ctx, client, ref, t.version)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if branchErr := verifyOnDefaultBranch(ctx, client, ref, t.version); branchErr != nil {
+			return time.Time{}, branchErr
+		}
 
-		return info.at, err
+		return info.at, nil
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":
