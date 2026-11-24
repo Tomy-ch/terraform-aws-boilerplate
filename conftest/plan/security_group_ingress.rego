@@ -54,8 +54,8 @@ port_shape(p) if {
 	0 <= p.from
 	p.from <= p.to
 	p.to <= 65535
-	protocol_of(p.protocol)
-	not icmp(p.protocol)
+	is_string(p.protocol)
+	lower(p.protocol) in declarable_protocols
 }
 
 integer(x) if {
@@ -63,19 +63,11 @@ integer(x) if {
 	floor(x) == x
 }
 
-# "all" と "-1" はすべての protocol とすべての port を表す。
-protocol_of(x) := "-1" if {
-	is_string(x)
-	lower(x) in {"-1", "all"}
-} else := lower(x) if {
-	is_string(x)
-	x != ""
-}
+# -1・all は ICMP も開け、ICMP の from_port・to_port は type と code であって port ではない。
+# 番号の表記（"6"・"17"）は名前へ寄せないので、tcp・udp 以外の protocol の規則はどの宣言にも覆われない。
+declarable_protocols := {"tcp", "udp"}
 
-# ICMP の from_port・to_port は type と code であり port ではないので、宣言できず、覆われることもない。
-icmp(x) if protocol_of(x) in {"icmp", "icmpv6", "1", "58"}
-
-declared_port(p) := {"protocol": protocol_of(p.protocol), "from": p.from, "to": p.to}
+declared_port(p) := {"protocol": lower(p.protocol), "from": p.from, "to": p.to}
 
 deny contains msg if {
 	not well_formed
@@ -177,32 +169,33 @@ cidr_malformed(r) := {attr |
 
 protocol_value(r) := object.get(r.rule, protocol_attr[r.c.rc.type], null)
 
-all_protocols(r) if protocol_of(protocol_value(r)) == "-1"
+rule_protocol(r) := lower(v) if {
+	v := protocol_value(r)
+	is_string(v)
+}
 
-# protocol が -1 の規則は、from_port と to_port に関わらず全 port を開ける。
-rule_ports(r) := {"protocol": "-1", "from": 0, "to": 65535} if {
-	all_protocols(r)
-} else := {"protocol": protocol_of(protocol_value(r)), "from": object.get(r.rule, "from_port", null), "to": object.get(r.rule, "to_port", null)}
+rule_from(r) := object.get(r.rule, "from_port", null)
+
+rule_to(r) := object.get(r.rule, "to_port", null)
 
 ports_unknown(r) if object.get(r.unknown, protocol_attr[r.c.rc.type], false) == true
 
 ports_unknown(r) if {
-	not all_protocols(r)
-	not icmp(protocol_value(r))
+	rule_protocol(r) in declarable_protocols
 	some attr in ["from_port", "to_port"]
 	object.get(r.unknown, attr, false) == true
 }
 
 covered(r) if {
-	ports := rule_ports(r)
-	not icmp(ports.protocol)
-	is_number(ports.from)
-	is_number(ports.to)
-	ports.from <= ports.to
+	from := rule_from(r)
+	to := rule_to(r)
+	is_number(from)
+	is_number(to)
+	from <= to
 	some p in declared_ports(r.c)
-	p.protocol in {"-1", ports.protocol}
-	p.from <= ports.from
-	ports.to <= p.to
+	p.protocol == rule_protocol(r)
+	p.from <= from
+	to <= p.to
 }
 
 exempt(r) if {
@@ -220,9 +213,11 @@ cidr_checked(r) if {
 	not covered(r)
 }
 
-describe_ports(r) := sprintf("%s %v-%v", [p.protocol, p.from, p.to]) if {
-	p := rule_ports(r)
-} else := sprintf("%v %v-%v", [protocol_value(r), object.get(r.rule, "from_port", null), object.get(r.rule, "to_port", null)])
+describe_ports(r) := sprintf("%v %v-%v", [shown_protocol(r), rule_from(r), rule_to(r)])
+
+shown_protocol(r) := p if {
+	p := rule_protocol(r)
+} else := protocol_value(r)
 
 deny contains msg if {
 	some r in ingress_rules

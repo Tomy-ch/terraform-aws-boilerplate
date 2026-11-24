@@ -251,24 +251,40 @@ test_violation_open_ingress_other_protocol if {
 	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "udp 443-443")}
 }
 
-test_violation_all_protocols_needs_declared_all if {
+test_violation_all_protocols_under_declared_tcp_range if {
 	rc := change("aws_vpc_security_group_ingress_rule", lb_address, {"ip_protocol": "-1", "cidr_ipv4": "0.0.0.0/0"}, {})
-	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "-1 0-65535")}
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "-1 null-null")}
 }
 
 test_violation_inline_all_protocols_with_zero_ports if {
 	rc := change("aws_security_group", "module.lb.aws_security_group.this", {"ingress": [{"from_port": 0, "to_port": 0, "protocol": "-1", "cidr_blocks": ["0.0.0.0/0"]}]}, {})
-	messages([rc], lb) == {undeclared_port("module.lb.aws_security_group.this", "0.0.0.0/0", "-1 0-65535")}
+	messages([rc], lb) == {undeclared_port("module.lb.aws_security_group.this", "0.0.0.0/0", "-1 0-0")}
 }
 
-test_violation_rule_protocol_all_needs_declared_all if {
-	rc := change("aws_security_group_rule", "module.lb.aws_security_group_rule.this", {"type": "ingress", "from_port": 443, "to_port": 443, "protocol": "all", "cidr_blocks": ["0.0.0.0/0"]}, {})
-	messages([rc], lb) == {undeclared_port("module.lb.aws_security_group_rule.this", "0.0.0.0/0", "-1 0-65535")}
+test_violation_rule_protocol_all_under_declared_port if {
+	rc := change("aws_security_group_rule", "module.lb.aws_security_group_rule.this", {"type": "ingress", "from_port": 443, "to_port": 443, "protocol": "ALL", "cidr_blocks": ["0.0.0.0/0"]}, {})
+	messages([rc], lb) == {undeclared_port("module.lb.aws_security_group_rule.this", "0.0.0.0/0", "all 443-443")}
 }
 
-test_pass_all_protocols_on_declared_all if {
-	rc := change("aws_vpc_security_group_ingress_rule", lb_address, {"ip_protocol": "-1", "cidr_ipv4": "0.0.0.0/0"}, {})
-	count(messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}])) == 0
+# 番号の protocol は名前へ寄せないので、6 の規則は tcp の宣言に覆われない。
+test_violation_numeric_protocol_under_declared_tcp_range if {
+	rc := ports_rule(lb_address, "6", 443, 443)
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "6 443-443")}
+}
+
+test_violation_protocol_with_space_under_declared_port if {
+	rc := ports_rule(lb_address, " tcp", 443, 443)
+	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", " tcp 443-443")}
+}
+
+test_pass_declared_protocol_upper_case if {
+	rc := ports_rule(lb_address, "tcp", 443, 443)
+	count(messages([rc], [{"module": "module.lb", "ports": [{"from": 443, "to": 443, "protocol": "TCP"}]}])) == 0
+}
+
+test_pass_declared_udp if {
+	rc := ports_rule(lb_address, "udp", 53, 53)
+	count(messages([rc], [{"module": "module.lb", "ports": [{"from": 53, "to": 53, "protocol": "udp"}]}])) == 0
 }
 
 test_violation_rule_from_after_to_not_covered if {
@@ -286,9 +302,9 @@ test_violation_icmp_by_number_under_declared_range if {
 	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "1 8-0")}
 }
 
-test_violation_icmp_under_declared_all if {
+test_violation_icmp_under_declared_tcp_range if {
 	rc := ports_rule(lb_address, "icmp", 0, 0)
-	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "icmp 0-0")}
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "icmp 0-0")}
 }
 
 test_violation_icmpv6_on_entrypoint if {
@@ -326,9 +342,9 @@ test_pass_port_unknown_on_entrypoint_with_limited_cidr if {
 	count(messages([rc], lb)) == 0
 }
 
-test_pass_port_unknown_with_all_protocols_on_declared_all if {
+test_violation_all_protocols_port_unknown_under_declared_tcp_range if {
 	rc := change("aws_vpc_security_group_ingress_rule", lb_address, {"ip_protocol": "-1", "cidr_ipv4": "0.0.0.0/0"}, {"from_port": true, "to_port": true})
-	count(messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}])) == 0
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "-1 null-null")}
 }
 
 test_violation_declaration_missing if {
@@ -420,6 +436,18 @@ test_violation_declaration_port_icmp_number if {
 	messages([], [{"module": "module.lb", "ports": [{"from": 8, "to": 8, "protocol": "58"}]}]) == {shape}
 }
 
+test_violation_declaration_port_all_protocols if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}]) == {shape}
+}
+
+test_violation_declaration_port_protocol_all if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "all"}]}]) == {shape}
+}
+
+test_violation_declaration_port_numeric_protocol if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 443, "to": 443, "protocol": "6"}]}]) == {shape}
+}
+
 test_violation_declaration_port_negative if {
 	messages([], [{"module": "module.lb", "ports": [{"from": -1, "to": 443, "protocol": "tcp"}]}]) == {shape}
 }
@@ -434,7 +462,7 @@ test_pass_declaration_port_range_bounds if {
 }
 
 test_violation_declaration_duplicate_port if {
-	messages([], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}, {"from": 0, "to": 65535, "protocol": "ALL"}]}]) == {shape}
+	messages([], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}, {"from": 0, "to": 65535, "protocol": "TCP"}]}]) == {shape}
 }
 
 test_violation_declaration_duplicate_module if {
