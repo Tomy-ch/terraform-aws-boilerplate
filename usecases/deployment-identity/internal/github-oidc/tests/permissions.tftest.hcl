@@ -275,6 +275,12 @@ run "policies" {
         Action   = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"]
         Resource = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
       },
+      {
+        Sid      = "ReadChatbotServiceLinkedRole"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
       { Sid = "OrganizationsDescribeOrganization", Effect = "Allow", Action = "organizations:DescribeOrganization", Resource = "*" },
@@ -779,6 +785,12 @@ run "policies" {
           ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"] }
         }
       },
+      {
+        Sid      = "ReadChatbotServiceLinkedRole"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      },
     ]
     error_message = "apply-identity の role の inline policy が、決定21 の核（identity の state と lock の読み書き、CI の role と policy の管理、identity root の構成物の読み取り、apply の出力の書き込み）だけになっていません。"
   }
@@ -833,8 +845,21 @@ run "policies" {
         Action   = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"]
         Resource = "arn:aws:kms:ap-northeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       },
+      {
+        Sid       = "CreateChatbotServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+      },
+      {
+        Sid      = "UpdateChatbotServiceLinkedRole"
+        Effect   = "Allow"
+        Action   = "iam:UpdateRole"
+        Resource = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      },
     ]
-    error_message = "apply-identity の role の manage の policy の文書が、3つの Bucket の設定、apply の出力の Bucket の作成、OIDC provider の管理、state の鍵の rotation と Key Policy の設定だけになっていません。"
+    error_message = "apply-identity の role の manage の policy の文書が、3つの Bucket の設定、apply の出力の Bucket の作成、OIDC provider の管理、state の鍵の rotation と Key Policy の設定、Chatbot の service-linked role の作成と description の更新だけになっていません。"
   }
 
   assert {
@@ -941,7 +966,7 @@ run "policies" {
 
   # deployment-identity/ADR-0201 決定13・14・17。
   assert {
-    condition     = jsondecode(aws_iam_policy.workload_read.policy).Statement == [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"], s.Sid)]
+    condition     = jsondecode(aws_iam_policy.workload_read.policy).Statement == [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"], s.Sid)]
     error_message = "apply の role の workload の読み取りの policy が、plan の role の workload の読み取りと同じ文になっていません。"
   }
 
@@ -1321,6 +1346,18 @@ run "policies" {
     ]) == ["Deny", { Null = { "aws:ResourceTag/tabp:bootstrap" = "false" } }, true, false]
     error_message = "apply の role に、tag tabp:bootstrap の key を持つ anomaly monitor と subscription の変更と tag の除去を拒む Deny がありません。"
   }
+
+  # chatbot_slr_absent_outside_aws の Resource の検査が、aws では文を見つけることを確かめる。
+  assert {
+    condition = [for p in [
+      aws_iam_role_policy.this["plan"].policy,
+      aws_iam_role_policy.apply_identity.policy,
+      aws_iam_policy.manage.policy,
+      aws_iam_policy.workload_read.policy,
+      ] : [for s in jsondecode(p).Statement : s.Sid if strcontains(jsonencode(s.Resource), "AWSServiceRoleForAWSChatbot")]
+    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    error_message = "aws の partition で、Resource が Chatbot の service-linked role の文が、plan・apply-identity の inline policy の読み取り、manage の作成と description の更新、workload の読み取りの policy の読み取りになっていません。"
+  }
 }
 
 # 既定の値と違う鍵を、data source を合わせて与え、入力を読んだかを区別する。
@@ -1449,8 +1486,9 @@ run "accepts_single_letter_break_glass_role_name_in_admin" {
 # mock の ARN は実物より短いので、入力が許す最も長い値（33文字の project と log-archive、63文字の Bucket、
 # 最長の組成の break-glass）と、それに対応する長さの ARN を与えて数える。role の ARN は名前から組むので、
 # partition と name_prefix から長さが決まる。partition と region は、aws_partitions の中で最も長いものを組を問わずに
-# 合わせる。この組は AWS に無い。policies.tf と main.tf は partition と region を ARN の文字列に埋め込むだけなので、
-# 文書はどちらの長さにも伸びる。そうでない使い方を入れたら、この組が最長である前提は崩れる。
+# 合わせる。この組は AWS に無い。policies.tf と main.tf は partition と region を ARN の文字列に埋め込むか、aws の
+# partition にだけ文を置くかなので、aws の最長の組も policy_length_aws・policy_length_outside_admin_aws で測り、
+# 上限は4つの run のどれでも見る。そうでない使い方を入れたら、この2組が最長である前提は崩れる。
 # 名前は IAM の上限（user・role 64文字、group 128文字）。組成は README の break_glass_arns の行が持つ。
 # どの run も role 名が最も長くなる log-archive の name_prefix を使う。
 run "policy_length" {
@@ -1883,6 +1921,17 @@ run "policy_length_aws" {
     ])
     error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
   }
+
+  assert {
+    condition = [for p in [
+      aws_iam_role_policy.this["plan"].policy,
+      aws_iam_role_policy.apply_identity.policy,
+      aws_iam_policy.manage.policy,
+      aws_iam_policy.workload_read.policy,
+      ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
+    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    error_message = "aws の partition の境界の入力で、長さを測る plan・apply-identity の inline policy、manage、workload の読み取りの policy に、aws でだけ置く Chatbot の service-linked role の文が入っていません。"
+  }
 }
 
 run "policy_length_outside_admin_aws" {
@@ -2015,6 +2064,17 @@ run "policy_length_outside_admin_aws" {
       alltrue([for p in flatten(values(m)) : length(p.policy) <= 6144])
     ])
     error_message = "customer managed policy が 6,144 文字を超えているか、長さを測る policy の集合が conftest/plan/decl.json の deployment_identity.customer_managed_policies と一致していないか、宣言に重複があります。"
+  }
+
+  assert {
+    condition = [for p in [
+      aws_iam_role_policy.this["plan"].policy,
+      aws_iam_role_policy.apply_identity.policy,
+      aws_iam_policy.manage.policy,
+      aws_iam_policy.workload_read.policy,
+      ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
+    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    error_message = "aws の partition の境界の入力で、長さを測る plan・apply-identity の inline policy、manage、workload の読み取りの policy に、aws でだけ置く Chatbot の service-linked role の文が入っていません。"
   }
 }
 
@@ -2176,6 +2236,57 @@ run "role_arns_follow_data_sources" {
   }
 }
 
+run "chatbot_slr_absent_outside_aws" {
+  command = apply
+
+  variables {
+    name_prefix   = "t4bp-dev"
+    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-2",
+      "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::210987654321:role/break-glass/tabp-break-glass",
+    ]
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  # workload の policy の CreateChatbotServiceLinkedRole は partition で分けない（deployment-identity/ADR-0201 決定3）ので、この検査の対象の外である。
+  assert {
+    condition = [for p in [
+      aws_iam_role_policy.this["plan"].policy,
+      aws_iam_role_policy.apply_identity.policy,
+      aws_iam_policy.manage.policy,
+      aws_iam_policy.workload_read.policy,
+      ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
+    ] == [[], [], [], []]
+    error_message = "aws でない partition で、plan・apply-identity の inline policy、manage、workload の読み取りの policy に、Chatbot の service-linked role の Sid の文があります。"
+  }
+
+  assert {
+    condition = [for p in [
+      aws_iam_role_policy.this["plan"].policy,
+      aws_iam_role_policy.apply_identity.policy,
+      aws_iam_policy.manage.policy,
+      aws_iam_policy.workload_read.policy,
+      ] : [for s in jsondecode(p).Statement : s.Sid if strcontains(jsonencode(s.Resource), "AWSServiceRoleForAWSChatbot")]
+    ] == [[], [], [], []]
+    error_message = "aws でない partition で、plan・apply-identity の inline policy、manage、workload の読み取りの policy に、Resource が Chatbot の service-linked role の文があります。"
+  }
+}
+
 run "plan_output_bucket_arn_follows_input" {
   command = apply
 
@@ -2273,7 +2384,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
     error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2295,13 +2406,14 @@ run "no_governance_in_dev" {
       "AttachApplyWorkloadPolicy",
       "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
+      "ReadChatbotServiceLinkedRole",
     ]
     error_message = "dev の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
-    error_message = "dev の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"]
+    error_message = "dev の apply-identity の role の manage の policy の Sid が、固定した6つの一覧と一致しません。"
   }
 
   assert {
@@ -2385,7 +2497,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
     error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2407,13 +2519,14 @@ run "no_governance_in_security" {
       "AttachApplyWorkloadPolicy",
       "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
+      "ReadChatbotServiceLinkedRole",
     ]
     error_message = "security の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
-    error_message = "security の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"]
+    error_message = "security の apply-identity の role の manage の policy の Sid が、固定した6つの一覧と一致しません。"
   }
 
   assert {
@@ -2497,7 +2610,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
     error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2519,13 +2632,14 @@ run "no_governance_in_log_archive" {
       "AttachApplyWorkloadPolicy",
       "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
+      "ReadChatbotServiceLinkedRole",
     ]
     error_message = "log-archive の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey"]
-    error_message = "log-archive の apply-identity の role の manage の policy の Sid が、admin と同じ4つの文になっていません。"
+    condition     = [for s in jsondecode(aws_iam_policy.manage.policy).Statement : s.Sid] == ["ConfigureBuckets", "CreateApplyOutputBucket", "ManageGitHubProvider", "ManageStateKey", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"]
+    error_message = "log-archive の apply-identity の role の manage の policy の Sid が、固定した6つの一覧と一致しません。"
   }
 
   assert {
@@ -2847,6 +2961,11 @@ run "workload_regions_in_aws_cn" {
     ]
     error_message = "Budgets と Cost Explorer の Resource が、data source の partition から組まれていません。"
   }
+
+  assert {
+    condition     = [for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Sid if st.Sid == "ReadChatbotServiceLinkedRole"] == []
+    error_message = "aws の外の partition で、workload の読み取りの policy に Chatbot の service-linked role の読み取りの文があります。"
+  }
 }
 
 run "workload_regions_in_aws_iso_b" {
@@ -2884,6 +3003,11 @@ run "workload_regions_in_aws_iso_b" {
       ["arn:aws-iso-b:ce::123456789012:anomalymonitor/*", "arn:aws-iso-b:ce::123456789012:anomalysubscription/*"],
     ]
     error_message = "Budgets と Cost Explorer の Resource が、data source の partition から組まれていません。"
+  }
+
+  assert {
+    condition     = [for st in jsondecode(aws_iam_policy.workload_read.policy).Statement : st.Sid if st.Sid == "ReadChatbotServiceLinkedRole"] == []
+    error_message = "aws の外の partition で、workload の読み取りの policy に Chatbot の service-linked role の読み取りの文があります。"
   }
 }
 
