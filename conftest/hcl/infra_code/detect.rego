@@ -29,7 +29,7 @@ provider_keys := {"command_blocks"}
 item_keys := {"id", "owner", "source", "language", "adr", "repository", "reasons"}
 
 # reason_code は、許可リストの項目の reasons に書く理由の符号（ADR-0103 決定12）。型（決定9）、provisioner、provider の
-# 設定の exec、中を読めない provider の設定、宣言した provider の block（command_block:<block>）の5つ。
+# 設定の exec、中を読めない provider の設定、宣言した provider の block（command_block:<block>）。
 reason_code := `^(type|provisioner|provider_exec|unresolved|command_block:[a-z0-9_]+(\.[a-z0-9_]+)*)$`
 
 components := hcl.components(doc)
@@ -89,7 +89,6 @@ detected_ids := {d.id | some d in detected}
 
 allowlisted contains item.id if some item in decl.allowlist
 
-# allowed は、許可リストの項目が受け入れる {id, 理由の符号} の対（ADR-0103 決定12）。
 allowed contains [item.id, code] if {
 	some item in decl.allowlist
 	is_array(item.reasons)

@@ -261,7 +261,6 @@ only_ly004(msgs, s) if {
 	count(with_id(msgs, "LY004")) == 1
 }
 
-# トップレベルの block の数を、行頭の数えと突き合わせる。
 test_LY004_deny_block_count_mismatch if {
 	doc := fx("ok_module")
 	only_ly004(denies_raw(doc, listed_of(doc), fixture_decl, parsed_of(doc), {"modules/m/main.tf": 2}), "modules/m/main.tf のトップレベルの block を 1 個読みましたが、行頭の数えは 2 個です")

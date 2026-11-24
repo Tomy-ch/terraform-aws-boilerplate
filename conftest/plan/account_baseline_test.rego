@@ -22,7 +22,6 @@ decl := {
 	"password_policy_keys": ["minimum_password_length", "max_password_age"],
 }
 
-# password policy の持ち主は層の宣言（conftest/hcl/layer/decl.json の singletons）から導く。
 layer_decl := {"singletons": {"aws_iam_account_password_policy": ["account-baseline", "organization-baseline"]}}
 
 plan_of(path, rcs) := [{"path": path, "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}]
@@ -269,7 +268,6 @@ test_violation_password_policy_owners_not_declared if {
 	}
 }
 
-# 持ち主は層の宣言から読む。宣言に足した持ち主の password policy が入力に無ければ落とす。
 test_violation_password_policy_of_layer_declared_owner_missing if {
 	three := {"singletons": {"aws_iam_account_password_policy": ["account-baseline", "organization-baseline", "finops"]}}
 	msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.layer_decl as three with data.policy_plan.account_baseline as decl
@@ -278,7 +276,7 @@ test_violation_password_policy_of_layer_declared_owner_missing if {
 	contains(m, "finops")
 }
 
-# 持ち主の外の password policy も値を比べる。持ち主の外に置くこと自体は層の検査（LY401）が落とす。
+# 持ち主の外に置くこと自体は層の検査（LY401）が落とす。
 test_violation_password_policy_in_third_usecase_differs if {
 	other := plan_of("tmp/tf-policy/finops.json", [password_policy("finops", 8)])
 	msgs := p.deny with input as array.concat(array.concat(ab(ok), org_baseline), other) with data.layer_decl as layer_decl with data.policy_plan.account_baseline as decl

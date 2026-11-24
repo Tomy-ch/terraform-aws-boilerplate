@@ -316,12 +316,10 @@ test_LY304_deny_nested_attribute if {
 	only_with(msgs, "aws_iam_role.r が inline_policy を書いています")
 }
 
-# 引数名を接頭辞に持つ別の引数は、その引数を書いたと数えない。
 test_LY304_allow_argument_name_prefix if {
 	count(with_id(cox_denies(fx("LY304_allow_argument_name_prefix")), "LY304")) == 0
 }
 
-# 別の resource が書いた引数は、その resource の分だけを数える。
 test_LY304_deny_only_resource_that_writes if {
 	msgs := with_id(cox_denies(fx("LY304_deny_only_resource_that_writes")), "LY304")
 	only_with(msgs, "aws_iam_role.q が managed_policy_arns を書いています")
@@ -361,7 +359,6 @@ test_LY308_deny_splat_selection if {
 	only_with(msgs, "同じ親 aws_s3_bucket.this を指し")
 }
 
-# 属性の続かない1段の参照は、親の全体を選ぶ。
 test_LY305_deny_reference_without_attribute if {
 	msgs := with_id(cox_denies(fx("LY305_deny_reference_without_attribute")), "LY305")
 	only_with(msgs, "同じ親 aws_s3_bucket.this の文書全体を書きます")
@@ -385,7 +382,6 @@ test_LY305_deny_through_two_plain_locals if {
 	only_with(with_id(cox_denies(fx("LY305_deny_through_two_plain_locals")), "LY305"), "同じ親 aws_s3_bucket.this")
 }
 
-# plain な local の先で local を添字で選べば、その先の葉は判定できない。
 test_LY308_deny_plain_local_to_selected_local if {
 	msgs := cox_denies(fx("LY308_deny_plain_local_to_selected_local"))
 	count(with_id(msgs, "LY305")) == 0
@@ -399,7 +395,6 @@ test_LY308_deny_local_selected_by_literal if {
 	count(with_id(msgs, "LY308")) == 1
 }
 
-# 別の module の同じ名前の親と attachment は比べない。
 test_LY305_allow_same_names_in_other_module if {
 	msgs := cox_denies(fx("LY305_allow_same_names_in_other_module"))
 	count(with_id(msgs, "LY305")) == 0
@@ -461,7 +456,6 @@ test_LY306_deny_inline_owned_argument_not_in_schema if {
 	only_with(msgs, "宣言の aws_route_table.gateway が、Provider の schema の書ける引数にありません")
 }
 
-# 別の親の型で分類された引数名は、この型の非推奨の引数の分類に数えない。
 test_LY306_deny_argument_classified_for_other_type if {
 	every arg in ["policy", "acceleration_status"] {
 		sch := object.union(cox_schema, {"aws_iam_role": {"arguments": ["name", "inline_policy", "managed_policy_arns", arg], "deprecated": ["inline_policy", "managed_policy_arns", arg], "blocks": ["inline_policy"]}})
@@ -518,12 +512,10 @@ test_LY305_allow_locals_only_in_tftest if {
 	contains(m, "local.b")
 }
 
-# 文書全体を置き換える型どうしでも、型が違えば同じ文書ではない。
 test_LY305_allow_distinct_exclusive_types if {
 	count(cox_denies(fx("LY305_allow_distinct_exclusive_types"))) == 0
 }
 
-# 添字が別々の変数なら、同じ instance かを判定できない。
 test_LY308_deny_variable_indexes if {
 	msgs := cox_denies(fx("LY308_deny_variable_indexes"))
 	count(with_id(msgs, "LY305")) == 0

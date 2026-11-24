@@ -379,7 +379,6 @@ test_IC011_deny_every_must_execute_type if {
 	}
 }
 
-# コマンドの block を宣言した provider では、参照・呼び出し・補間の値の先に exec を隠せるので検出する（ADR-0103 決定10）。
 command_provider_non_literal := ["IC011_deny_command_provider_reference", "IC011_deny_command_provider_call", "IC011_deny_command_provider_template"]
 
 test_IC011_deny_command_provider_non_literal_value if {
@@ -395,7 +394,6 @@ test_IC011_allow_listed_command_provider_non_literal_value if {
 	}
 }
 
-# コマンドの block を宣言しない provider の参照と呼び出しは、検出しない。
 test_IC011_allow_reference_in_provider_without_command_blocks if {
 	count(denies(fx("IC011_allow_reference_in_provider_without_command_blocks"), base_decl)) == 0
 }
@@ -406,7 +404,6 @@ test_IC011_allow_literal_in_command_provider if {
 
 instance_item(reasons) := {"id": "m#resource.aws_instance.i", "owner": "external", "repository": "github.com/o/r", "reasons": reasons}
 
-# 型を理由に許可した構成要素に、後から provisioner を足せば落とす。
 test_IC011_deny_reason_not_listed if {
 	d := object.union(base_decl, {"allowlist": [instance_item(["type"])]})
 	denies(fx("IC011_deny_reason_not_listed"), d) == {"IC011 [理由が許可リストに無い] m/main.tf: m#resource.aws_instance.i の項目は、この検出の理由 provisioner（provisioner）を reasons に挙げていません → 意図したコードなら reasons に足し、そうでなければ取り除く"}

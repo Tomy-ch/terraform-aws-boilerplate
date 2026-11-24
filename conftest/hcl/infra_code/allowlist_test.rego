@@ -25,7 +25,6 @@ test_IC020_deny_item_matching_code_free_component if {
 	count(with_id(msgs, "IC020")) == 1
 }
 
-# 項目が挙げた理由のうち、その構成要素の検出に当たらないものは落とす。
 test_IC020_deny_reason_matching_nothing if {
 	item := object.union(repo_item(fn_id, "u/internal/fn/src"), {"reasons": ["type", "provisioner"]})
 	with_id(denies(fx("IC020_deny_item_matching_nothing"), lambda_decl([item])), "IC020") == {"IC020 [当たらない理由] 許可リストの項目 u/internal/fn#resource.aws_lambda_function.f の理由 provisioner は、その構成要素のどの検出にも当たりません → reasons から外す"}
@@ -165,7 +164,6 @@ test_IC031_allow_source_is_the_file_itself if {
 	count(denies(fx("IC031_allow_source_is_the_file_itself"), d)) == 0
 }
 
-# 入力の形が崩れていれば、許可リストの項目が当たらないことも判定しない。
 test_IC005_deny_malformed_input_without_judging_allowlist if {
 	d := lambda_decl([repo_item("u/internal/fn#resource.aws_cloudfront_function.c", "u/internal/fn/src")])
 	msgs := deny with input as {"files": [], "blocks": null}
@@ -177,7 +175,6 @@ test_IC005_deny_malformed_input_without_judging_allowlist if {
 	msgs == with_id(msgs, "IC005")
 }
 
-# 許可リストの項目は id の一致する構成要素だけに当たる。
 test_IC031_deny_only_the_matching_component if {
 	d := lambda_decl([
 		repo_item("u/internal/fn#resource.aws_lambda_function.f", "u/internal/fn/src1"),
@@ -191,7 +188,6 @@ test_IC032_deny_external_item_pointing_into_repository_exactly if {
 	denies(fx("IC032_external_item_repository_path"), d) == {"IC032 [path] u/internal/fn/main.tf: 外部所有の項目 u/internal/fn#resource.aws_lambda_function.f の filename がリポジトリ内のパスを指しています"}
 }
 
-# 第1引数が参照の file() は、path として静的に確定しない。
 test_IC030_deny_file_function_with_reference if {
 	d := lambda_decl([repo_item("u/internal/fn#resource.aws_cloudfront_function.c", "u/internal/fn/src")])
 	some m in with_id(denies(fx("IC030_deny_file_function_with_reference"), d), "IC030")

@@ -18,7 +18,6 @@ test_LY401_deny_other_usecase if {
 	only_with(ly401("LY401_deny_other_usecase"), ly401_msg("usecases/finops/internal/x/main.tf"))
 }
 
-# 持ち主の名前を接頭辞に持つ別のユースケースは、持ち主ではない。
 test_LY401_deny_usecase_name_prefix if {
 	only_with(ly401("LY401_deny_usecase_name_prefix"), ly401_msg("usecases/account-baseline-extra/internal/x/main.tf"))
 }

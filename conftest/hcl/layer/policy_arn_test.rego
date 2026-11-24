@@ -36,12 +36,10 @@ test_LY309_deny_template_partition_from_variable if {
 	only_with(ly309("LY309_deny_template_partition_from_variable"), ": var.partition（ADR-0301 決定21）")
 }
 
-# partition のほかを補間する ARN は AWS managed と読まない。
 test_LY309_deny_template_name_interpolated if {
 	only_with(ly309("LY309_deny_template_name_interpolated"), ": data.aws_partition, var.name（ADR-0301 決定21）")
 }
 
-# 参照の1つでも aws_iam_policy でなければ落とす。
 test_LY309_deny_policy_and_variable if {
 	only_with(ly309("LY309_deny_policy_and_variable"), ": aws_iam_policy.p, var.arn（ADR-0301 決定21）")
 }
@@ -87,7 +85,6 @@ test_LY309_allow_without_policy_arn if {
 	count(ly309("LY309_allow_without_policy_arn")) == 0
 }
 
-# 決定21 は role への付与だけを定める。
 test_LY309_allow_other_attachment_type if {
 	count(ly309("LY309_allow_other_attachment_type")) == 0
 }

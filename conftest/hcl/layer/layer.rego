@@ -226,7 +226,6 @@ non_empty_string(s) if {
 }
 
 # singletons は、アカウントかリージョンに1つしか置けない型から、それを持つユースケースの名前の配列へ（ADR-0102 決定16）。
-# Policy Test は password policy の持ち主をここから導く。
 well_formed_owners(owners) if {
 	is_array(owners)
 	count(owners) > 0
@@ -255,7 +254,7 @@ deny contains msg if {
 	msg := sprintf("LY001 [宣言の形] singletons.%s が、持ち主のユースケースの名前（usecases/ の下のディレクトリ名）の、重複の無い空でない配列ではありません", [t])
 }
 
-# アカウントかリージョンの単位で設定する型は attachment 型でない（下の「分類の基準」）。
+# アカウントかリージョンの単位で設定する型は attachment 型でない（README の「分類の基準」）。
 deny contains msg if {
 	is_object(singletons)
 	is_object(not_attachments)
@@ -721,8 +720,6 @@ deny contains msg if {
 }
 
 # --- ADR-0301 決定21: role への managed policy の付与が policy を参照すること（LY309） ---
-#
-# 参照が欠けると Terraform は attachment と policy の依存を知らず、破棄と置換で policy の削除が付け外しより先に走る。
 
 policy_attachment_type := "aws_iam_role_policy_attachment"
 
