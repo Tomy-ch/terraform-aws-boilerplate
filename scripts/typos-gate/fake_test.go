@@ -26,7 +26,8 @@ func newFake(t *testing.T) *fake {
 	body := `#!/bin/sh
 ctl='` + dir + `'
 step="$1"
-echo "$PWD $step ${GIT_DIR:-}" >> "$ctl/calls.log"
+cwd=$(pwd -P)
+echo "$cwd $step ${GIT_DIR:-}" >> "$ctl/calls.log"
 if [ -e "$ctl/$step.kill" ]; then kill -9 $$; fi
 if [ -e "$ctl/$step.out" ]; then cat "$ctl/$step.out"; fi
 if [ -e "$ctl/$step.err" ]; then cat "$ctl/$step.err" >&2; fi
@@ -42,9 +43,11 @@ func (f *fake) set(step, suffix, body string) {
 	require.NoError(f.t, os.WriteFile(filepath.Join(f.dir, step+"."+suffix), []byte(body), 0o600))
 }
 
+// tool は、偽の道具を書いた直後のファイルとして exec せず、/bin/sh に読ませて起動します。並行のテストが別の偽の道具を
+// 書いている間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 func (f *fake) tool() toolFunc {
 	return func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), filepath.Join(f.dir, "tool"), step)
+		c := exec.CommandContext(context.Background(), "/bin/sh", filepath.Join(f.dir, "tool"), step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -74,7 +77,7 @@ func writeFile(t *testing.T, p, body string) string {
 	return p
 }
 
-// realCwd は、テストのプロセスの作業ディレクトリを symlink を解いて返します（偽の道具が控える $PWD と比べるため）。
+// realCwd は、テストのプロセスの作業ディレクトリを symlink を解いて返します（偽の道具が控える `pwd -P` と比べるため）。
 func realCwd(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()
