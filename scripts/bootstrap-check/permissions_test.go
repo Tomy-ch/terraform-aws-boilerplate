@@ -83,6 +83,14 @@ var (
 		"apply-identity *: 1 件が implicitDeny",
 		"apply-identity $bg: 1 件が implicitDeny",
 	}
+	permSLRDescs = []string{
+		"apply-identity $slr: 1 件が allowed",
+		"apply-identity $slr: 1 件が implicitDeny",
+		"apply-identity $slr: 2 件が allowed",
+		"apply-identity $slr: 5 件が implicitDeny",
+		"plan $slr: 1 件が allowed",
+		"plan $slr: 2 件が implicitDeny",
+	}
 	permWorkloadDescs = []string{
 		"apply-identity $policy/apply-workload: 7 件が allowed",
 		"apply-identity $policy/apply-workload-read: 7 件が allowed",
@@ -119,6 +127,7 @@ var (
 		"apply $topic: 2 件が allowed",
 		"apply $topic: 2 件が implicitDeny",
 		"apply $wk: 1 件が implicitDeny",
+		"apply $slr: 1 件が allowed",
 	}
 	permBudgetsDescs = []string{
 		"plan $budget: 2 件が allowed",
@@ -173,9 +182,9 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 103
+	permissionsBase     = 109
 	governanceGated     = 4
-	workloadGatedCount  = 8
+	workloadGatedCount  = 9
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
 	governanceAbsent    = "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
@@ -209,6 +218,7 @@ var permExpand = strings.NewReplacer(
 	"$policy/", "arn:aws:iam::123456789012:policy/tabp-admin-ci-",
 	"$iam", "arn:aws:iam::123456789012",
 	"$topic", "arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-ops-notification",
+	"$slr", "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot",
 	"$monitor", "arn:aws:ce::123456789012:anomalymonitor/x",
 	"$subscription", "arn:aws:ce::123456789012:anomalysubscription/x",
 )
@@ -282,6 +292,13 @@ var permRowActions = []string{
 	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
 	"organizations:DeleteOrganization",
 	"iam:DeleteRole",
+	// Chatbot の service-linked role
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
+	"iam:GetRole iam:UpdateRole",
+	"iam:DeleteServiceLinkedRole iam:TagRole iam:UntagRole iam:UpdateRoleDescription iam:ListRoleTags",
+	"iam:GetRole",
+	"iam:UpdateRole iam:CreateServiceLinkedRole",
 	// workload の権限の policy と permissions boundary
 	"$manage",
 	"$manage",
@@ -316,6 +333,7 @@ var permRowActions = []string{
 	"sns:CreateTopic sns:SetTopicAttributes",
 	"sns:DeleteTopic sns:Subscribe",
 	"kms:ScheduleKeyDeletion",
+	"iam:GetRole",
 	// budgets と Cost Anomaly Detection
 	"budgets:ViewBudget budgets:ListTagsForResource",
 	"ce:GetAnomalyMonitors ce:ListTagsForResource",
@@ -450,7 +468,8 @@ func permExpected(governance, workload, budgets []string) []string {
 		governance = expand(permGovernanceGatedDescs, "ok  ")
 	}
 
-	out = append(append(out, governance...), "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）")
+	out = append(append(out, governance...), "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）")
+	out = append(append(out, expand(permSLRDescs, "ok  ")...), "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）")
 	out = append(out, expand(permWorkloadDescs, "ok  ")...)
 
 	if workload == nil {
@@ -802,7 +821,7 @@ func Test_permissionSections(t *testing.T) {
 
 		var descs []string
 		for _, l := range [][]string{
-			permS3Descs, permKeyDescs, permGovernanceDescs, permGovernanceGatedDescs, permWorkloadDescs, permWorkloadGatedDescs,
+			permS3Descs, permKeyDescs, permGovernanceDescs, permGovernanceGatedDescs, permSLRDescs, permWorkloadDescs, permWorkloadGatedDescs,
 			permBudgetsDescs, permBudgetsGatedDescs, permUnlockIdentityDescs, permUnlockDescs,
 		} {
 			descs = append(descs, expand(l, "")...)
@@ -875,7 +894,7 @@ func Test_permissionSections(t *testing.T) {
 
 		w := newNames(verifyOptions{project: testProject, region: "us-west-2"}, testAccount)
 
-		assert.True(t, slices.ContainsFunc(permissionSections(w, testKeyARN, "")[3].rows, func(r simRow) bool {
+		assert.True(t, slices.ContainsFunc(permissionSections(w, testKeyARN, "")[4].rows, func(r simRow) bool {
 			return r.want == implicitDeny && r.resource == "arn:aws:sns:eu-west-1:123456789012:tabp-admin-ops-notification"
 		}))
 	})
@@ -902,13 +921,13 @@ func Test_permissionsSteps(t *testing.T) {
 		result                      string
 	}{
 		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 119 件のうち NG 0 件"},
+			"# 結果: 126 件のうち NG 0 件"},
 		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 115 件のうち NG 0 件（確かめていない区分 1）"},
+			"# 結果: 122 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 107 件のうち NG 0 件（確かめていない区分 2）"},
+			permissionsBase + governanceGated, "# 結果: 113 件のうち NG 0 件（確かめていない区分 2）"},
 		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
-			"# 結果: 103 件のうち NG 0 件（確かめていない区分 3）"},
+			"# 結果: 109 件のうち NG 0 件（確かめていない区分 3）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

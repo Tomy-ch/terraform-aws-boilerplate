@@ -265,6 +265,8 @@ func permissionSections(n names, sk, skReason string) []section {
 	mp := n.policyARN(ai + "-manage")
 	bg := iam + ":role/break-glass/" + n.project + "-break-glass"
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"
+	slr := iam + ":role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+	serviceName := func(svc string) []string { return []string{ctxEntry("iam:AWSServiceName", svc, "string")} }
 
 	wp := n.policyARN(apply + "-workload")
 	wrp := n.policyARN(apply + "-workload-read")
@@ -377,6 +379,14 @@ func permissionSections(n names, sk, skReason string) []section {
 			absentNote: "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
 		},
+		{heading: "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）", rows: []simRow{
+			simCtx(allowed, ai, slr, serviceName("management.chatbot.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+			simCtx(implicitDeny, ai, slr, serviceName("config.amazonaws.com"), "iam:CreateServiceLinkedRole"),
+			sim(allowed, ai, slr, "iam:GetRole", "iam:UpdateRole"),
+			sim(implicitDeny, ai, slr, "iam:DeleteServiceLinkedRole", "iam:TagRole", "iam:UntagRole", "iam:UpdateRoleDescription", "iam:ListRoleTags"),
+			sim(allowed, plan, slr, "iam:GetRole"),
+			sim(implicitDeny, plan, slr, "iam:UpdateRole", "iam:CreateServiceLinkedRole"),
+		}},
 		{
 			heading: "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）",
 			rows: []simRow{
@@ -417,6 +427,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(allowed, apply, topic, "sns:CreateTopic", "sns:SetTopicAttributes"),
 				sim(implicitDeny, apply, topic, "sns:DeleteTopic", "sns:Subscribe"),
 				sim(implicitDeny, apply, wk, "kms:ScheduleKeyDeletion"),
+				sim(allowed, apply, slr, "iam:GetRole"),
 			},
 			absentNote: "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
