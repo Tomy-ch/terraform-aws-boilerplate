@@ -97,7 +97,7 @@ run "service_linked_role_with_other_path" {
     target = data.aws_iam_role.chatbot_service_linked
     values = {
       path = "/"
-      arn  = "arn:aws:iam::123456789012:role/AWSServiceRoleForAWSChatbot"
+      arn  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
     }
   }
 
@@ -112,6 +112,34 @@ run "service_linked_role_in_other_account" {
     values = {
       path = "/aws-service-role/management.chatbot.amazonaws.com/"
       arn  = "arn:aws:iam::210987654321:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+  }
+
+  expect_failures = [aws_chatbot_slack_channel_configuration.this]
+}
+
+run "service_linked_role_in_other_partition" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_role.chatbot_service_linked
+    values = {
+      path = "/aws-service-role/management.chatbot.amazonaws.com/"
+      arn  = "arn:aws-us-gov:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+  }
+
+  expect_failures = [aws_chatbot_slack_channel_configuration.this]
+}
+
+run "service_linked_role_outside_service_role_path" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_role.chatbot_service_linked
+    values = {
+      path = "/aws-service-role/management.chatbot.amazonaws.com/"
+      arn  = "arn:aws:iam::123456789012:role/AWSServiceRoleForAWSChatbot"
     }
   }
 

@@ -18,8 +18,13 @@ run "chatbot_in_aws" {
   }
 
   assert {
-    condition     = aws_iam_service_linked_role.chatbot[0].custom_suffix == null && aws_iam_service_linked_role.chatbot[0].tags == null
-    error_message = "service-linked role に custom_suffix か tag が付いています。AWS が決める名前と、tag の無い形にしてください（deployment-identity/ADR-0002 決定3）。"
+    condition     = aws_iam_service_linked_role.chatbot[0].custom_suffix == null
+    error_message = "service-linked role に custom_suffix が付いています。AWS が決める名前にしてください（deployment-identity/ADR-0002 決定3）。"
+  }
+
+  assert {
+    condition     = aws_iam_service_linked_role.chatbot[0].tags == null
+    error_message = "service-linked role に tag が付いています。tag の無い形にしてください（deployment-identity/ADR-0002 決定3）。"
   }
 }
 
