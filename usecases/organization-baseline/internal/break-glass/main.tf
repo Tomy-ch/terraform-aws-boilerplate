@@ -4,6 +4,7 @@
 
 data "aws_partition" "current" {}
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 locals {
   partition = data.aws_partition.current.partition
@@ -136,9 +137,10 @@ resource "aws_iam_account_password_policy" "this" {
 }
 
 # メンバーアカウントの break-glass の role（organization-baseline/ADR-0202）。
+# description は ASCII に限る（PLAN-BG-05）。
 resource "aws_cloudformation_stack_set" "this" {
   name             = var.role_name
-  description      = "メンバーアカウントの break-glass の role"
+  description      = "Break-glass role for member accounts"
   permission_model = "SERVICE_MANAGED"
   capabilities     = ["CAPABILITY_NAMED_IAM"]
 
@@ -166,12 +168,15 @@ resource "aws_cloudformation_stack_set" "this" {
   }
 }
 
-# stack instance を作る権限を直す apply と、作る apply を分ける。権限を直す間は state から外し、実物は消さない
-# （docs/setup/organization-baseline.md の「StackSet か stack instance の作成で昇格の apply が失敗したとき」）。
-removed {
-  from = aws_cloudformation_stack_instances.this
+resource "aws_cloudformation_stack_instances" "this" {
+  stack_set_name = aws_cloudformation_stack_set.this.name
+  regions        = [data.aws_region.current.region]
+
+  deployment_targets {
+    organizational_unit_ids = [var.organization_root_id]
+  }
 
   lifecycle {
-    destroy = false
+    prevent_destroy = true
   }
 }
