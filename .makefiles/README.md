@@ -119,8 +119,8 @@ CI（OIDC で role を assume しての plan と apply）。
 検査の起動の表の外にあり、ホストの terraform と AWS CLI を人か CI の role の資格情報で起動する。
 `TF_ENV`（資格情報を外す）を経由しない。`local.mk` の init と plan は、`scripts/tf-local` の段
 （`local-prepare` が aws で init の値を算出し、`local-init` と `local-plan` が terraform を起動する）を順に起動する。
-`ci.mk` は、aws と terraform に渡す値（region、Bucket 名、外す環境変数）を `$(call RUN_SCRIPT_HOST,tf-local,...)` で
-tf-local から受け取り、aws と terraform は make が起動する。
+`ci.mk` の資格情報・plan・apply・lock の解除・lock を残す入口も、`scripts/tf-local` の段（`ci-*`）を順に
+起動する。aws・terraform・conftest は段が起動し、make は段の順序だけを持つ。
 
 `bootstrap-check-plan` は、保存した plan を `terraform show -json` で読み、`scripts/bootstrap-check` へ標準入力で
 渡して段2-4 の期待値と突き合わせる。plan のパスと標準入力がホストのものなので `RUN_SCRIPT_HOST` で起動し、
