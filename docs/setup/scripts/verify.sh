@@ -226,8 +226,11 @@ stage4() {
       expect_json "role tabp-admin-ci-$r に付く managed policy が、統制の policy と manage の policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies | map(.PolicyName) | sort | . == ["tabp-admin-ci-apply-identity-governance", "tabp-admin-ci-apply-identity-manage"]'
     elif [[ $r == apply ]]; then
-      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の2つの policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
-        '.AttachedPolicies | map(.PolicyName) | sort | . == ["tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-read"]'
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の3つの policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | sort | . == ["tabp-admin-ci-apply-workload", "tabp-admin-ci-apply-workload-2", "tabp-admin-ci-apply-workload-read"]'
+    elif [[ $r == plan ]]; then
+      expect_json "role tabp-admin-ci-$r に付く managed policy が、workload の読み取りの policy だけ" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
+        '.AttachedPolicies | map(.PolicyName) | . == ["tabp-admin-ci-apply-workload-read"]'
     else
       expect_json "role tabp-admin-ci-$r に managed policy が付いていない" "$(aws iam list-attached-role-policies --role-name "tabp-admin-ci-$r")" \
         '.AttachedPolicies == []'
@@ -404,7 +407,7 @@ permissions() {
   sim explicitDeny apply "*" --context "ContextKeyName=kms:BypassPolicyLockoutSafetyCheck,ContextKeyValues=true,ContextKeyType=boolean" kms:CreateKey kms:PutKeyPolicy
   local attached
   attached=$(aws iam list-attached-role-policies --role-name tabp-admin-ci-apply --query 'sort(AttachedPolicies[].PolicyName)' --output text)
-  if [[ $attached == $'tabp-admin-ci-apply-workload\ttabp-admin-ci-apply-workload-read' ]]; then
+  if [[ $attached == $'tabp-admin-ci-apply-workload\ttabp-admin-ci-apply-workload-2\ttabp-admin-ci-apply-workload-read' ]]; then
     local or="arn:aws:iam::${ACCOUNT_ID}:role/tabp-admin-ops-heartbeat" pbctx="ContextKeyName=iam:PermissionsBoundary,ContextKeyValues=${bp},ContextKeyType=arn"
     sim allowed apply "$or" --context "$pbctx" iam:CreateRole iam:PutRolePolicy iam:DeleteRole
     sim implicitDeny apply "$or" iam:CreateRole iam:PutRolePolicy
@@ -415,10 +418,28 @@ permissions() {
     sim implicitDeny apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:DeleteTopic sns:Subscribe
     sim implicitDeny apply "$wk" kms:ScheduleKeyDeletion
     sim allowed apply "$slr" iam:GetRole
+    # account-baseline の構成物（決定13・17）。削除と停止は与えず、password policy の更新は admin で拒む（決定5）。
+    local rec="arn:aws:config:${REGION}:${ACCOUNT_ID}:configuration-recorder/tabp-admin/abc" an="arn:aws:access-analyzer:${REGION}:${ACCOUNT_ID}:analyzer/tabp-admin-external"
+    local cslr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig" regctx="ContextKeyName=ec2:Region,ContextKeyValues=${REGION},ContextKeyType=string"
+    sim allowed apply "$rec" config:PutConfigurationRecorder config:StartConfigurationRecorder config:DescribeConfigurationRecorders
+    sim implicitDeny apply "$rec" config:DeleteConfigurationRecorder config:StopConfigurationRecorder
+    sim allowed apply "$an" access-analyzer:CreateAnalyzer access-analyzer:GetAnalyzer
+    sim implicitDeny apply "$an" access-analyzer:DeleteAnalyzer
+    sim allowed apply "$cslr" --context "ContextKeyName=iam:PassedToService,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:PassRole
+    sim allowed apply "$cslr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
+    sim implicitDeny apply "$cslr" iam:DeleteServiceLinkedRole
+    sim allowed apply "*" --context "$regctx" ec2:EnableEbsEncryptionByDefault ec2:ModifyVpcBlockPublicAccessOptions
+    sim implicitDeny apply "*" --context "$regctx" ec2:DisableEbsEncryptionByDefault
+    sim implicitDeny apply "*" --context "ContextKeyName=ec2:Region,ContextKeyValues=${other_region},ContextKeyType=string" ec2:EnableEbsEncryptionByDefault
+    sim allowed apply "*" s3:PutAccountPublicAccessBlock config:PutDeliveryChannel config:PutRetentionConfiguration elasticmapreduce:PutBlockPublicAccessConfiguration
+    sim implicitDeny apply "*" config:DeleteDeliveryChannel config:DeleteRetentionConfiguration
+    sim allowed plan "$rec" config:DescribeConfigurationRecorders config:DescribeConfigurationRecorderStatus
+    sim allowed plan "$an" access-analyzer:GetAnalyzer
+    sim implicitDeny plan "$an" access-analyzer:CreateAnalyzer
   elif [[ -z $attached || $attached == None ]]; then
-    echo "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
+    echo "  workload の3つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（3つの policy を作って付ける apply の後にもう一度走らせる）"
   else
-    ng "apply の role に付く managed policy が workload の2つの policy ではない（${attached}）"
+    ng "apply の role に付く managed policy が workload の3つの policy ではない（${attached}）"
   fi
 
   echo "# unlock-identity の role"
