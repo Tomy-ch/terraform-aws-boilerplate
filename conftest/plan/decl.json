@@ -171,6 +171,9 @@
             "module.deployment_identity."
           ],
           "prerequisite_module": "module.deployment_identity.",
+          "prerequisite_services": [
+            "management.chatbot.amazonaws.com"
+          ],
           "types": {
             "aws_iam_openid_connect_provider": {
               "class": "target"
