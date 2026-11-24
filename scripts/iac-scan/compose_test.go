@@ -53,7 +53,6 @@ func escapingParent(t *testing.T) (base, outside string) {
 	return base, outside
 }
 
-// requireLinkKept は、base の tmp/<name> が symlink のまま残っていることを確かめる（消されていない）。
 func requireLinkKept(t *testing.T, base, name string) {
 	t.Helper()
 	info, err := os.Lstat(filepath.Join(base, "tmp", name))

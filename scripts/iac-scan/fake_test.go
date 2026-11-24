@@ -89,7 +89,6 @@ func (f *fake) kill(step string) { f.write("kill-"+step, "") }
 
 func (f *fake) killIn(step, name string) { f.write("kill-"+step+"-"+name, "") }
 
-// brokenWriter は、書き込みを必ず失敗させる。
 type brokenWriter struct{}
 
 func (brokenWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }

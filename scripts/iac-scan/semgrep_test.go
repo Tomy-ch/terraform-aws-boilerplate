@@ -17,7 +17,6 @@ const (
 	semgrepSARIF      = `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"/work/src/env/c/main.tf"}}}]},{"suppressions":[{"kind":"inSource"}]}]}]}`
 )
 
-// semgrepArgs は、runSemgrep の引数を組む。roots を省けば usecases・modules・env。
 func semgrepArgs(base, rules, sha string, roots ...string) []string {
 	if len(roots) == 0 {
 		roots = []string{"usecases", "modules", "env"}
