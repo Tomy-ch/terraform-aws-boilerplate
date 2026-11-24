@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -27,8 +28,8 @@ const (
 
 // runValidateCanary は、実物の terraform と AWS Provider で validate と判定の全体を走らせ、非推奨の引数で落ち、
 // 宣言に当たる警告と非推奨の無い構成で通ることを確かめます（ADR-0501 決定13）。Provider の版は -reference の
-// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。
-func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
+// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。root はリポジトリ直下です。
+func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-gates validate-canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
@@ -38,12 +39,16 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if *data == "" || *work == "" || *reference == "" || fset.NArg() > 0 || !filepath.IsAbs(*data) {
-		return xerrors.Wrap(errUsage, "tf-gates validate-canary -data <絶対パス> -work <dir> -reference <dir>")
+		return xerrors.Wrap(errUsage, "tf-gates validate-canary -data <絶対パス> -work <tmp/ の下の相対パス> -reference <dir>")
 	}
-	if err := os.RemoveAll(*work); err != nil {
-		return xerrors.Wrapf(err, "%s の削除", *work)
+	workDir, err := workdir.Resolve(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
-	empty := filepath.Join(*work, "ignore-empty.yaml")
+	if err := os.RemoveAll(workDir); err != nil {
+		return xerrors.Wrapf(err, "%s の削除", workDir)
+	}
+	empty := filepath.Join(workDir, "ignore-empty.yaml")
 	if err := writeText(empty, "warnings: []\n"); err != nil {
 		return err
 	}
@@ -56,14 +61,14 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 		}
 	}
 
-	clean, err := canaryCase(*work, "clean", *reference, "")
+	clean, err := canaryCase(workDir, "clean", *reference, "")
 	if err != nil {
 		return err
 	}
 	out, err := validateFixture(clean, *data, empty, tool)
 	check("clean", err == nil && strings.Contains(out, "1 ディレクトリを validate し"), out)
 
-	deprecated, err := canaryCase(*work, "deprecated", *reference, canaryDeprecated)
+	deprecated, err := canaryCase(workDir, "deprecated", *reference, canaryDeprecated)
 	if err != nil {
 		return err
 	}
@@ -74,7 +79,7 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc) error {
 	if err != nil {
 		check("detail", false, err.Error())
 	} else {
-		ignore := filepath.Join(*work, "ignore-aws.yaml")
+		ignore := filepath.Join(workDir, "ignore-aws.yaml")
 		if err := writeIgnore(ignore, detail); err != nil {
 			return err
 		}

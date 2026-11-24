@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -163,7 +164,8 @@ func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error
 	return nil
 }
 
-func runPlan(args []string, w io.Writer, tool toolFunc) error {
+// runPlan は、-base の下の reference の root で planRoots を走らせます。root はリポジトリ直下です。
+func runPlan(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan", flag.ContinueOnError)
 	fset.SetOutput(w)
 	base := fset.String("base", "", "走査の基点（TF_BASE）")
@@ -173,14 +175,18 @@ func runPlan(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if *base == "" || *out == "" || !filepath.IsAbs(*data) || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <dir>")
+		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <tmp/ の下の相対パス>")
+	}
+	outDir, err := workdir.Resolve(root, *out)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-out %v", err)
 	}
 	roots, err := listRoots(*base)
 	if err != nil {
 		return err
 	}
 
-	return planRoots(roots, *data, *out, w, tool)
+	return planRoots(roots, *data, outDir, w, tool)
 }
 
 func joinLines(lines []string) string {
@@ -191,7 +197,6 @@ func joinLines(lines []string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// readLines は、1行に1件の一覧を読み、空の行を除いて返します。
 func readLines(p string) ([]string, error) {
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {

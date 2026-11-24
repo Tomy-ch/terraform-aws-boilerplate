@@ -18,6 +18,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -33,16 +34,14 @@ var canaryExcluded = []string{
 // canaryData は、canary の Policy の宣言です。terraform_data の input を IAM の文書として読ませます。
 const canaryData = `{"policy_plan": {"plan_format_version": "1.2", "provider_format_version": "1.0", "documents": {"terraform_data": ["input"]}, "required_documents": ["terraform_data"], "deployment_identity": {"roles": ["module.x.aws_iam_role.this"], "oidc_provider": "module.x.aws_iam_openid_connect_provider.this"}, "stateful_protection": {"protected_types": ["aws_s3_bucket", "aws_s3_bucket_lifecycle_configuration", "aws_ecr_lifecycle_policy", "terraform_data"], "allow": {}}, "inline_arguments": {"terraform_data": {"triggers_replace": null}}}}`
 
-// canaryLayer は、canary の層の宣言です。
 const canaryLayer = `{"layer_decl": {"attachments": {"aws_x_policy": {"parents": {"x": ["aws_x"]}, "optional": false, "parent_arguments": {}, "whole_document": false}}, "unrelated_deprecated_arguments": {}, "inline_owned": {}}}`
 
-// canaryPolicyInput は、Policy の入力を出す terraform test です。
 const canaryPolicyInput = "run \"policy_input\" {\n  command = plan\n}\n"
 
 // canaryOK は、違反の無い文書を持つ構成です。
 const canaryOK = `resource "terraform_data" "doc" { input = jsonencode({ Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }] }) }`
 
-// canaryCase は、canary の1ケースです。want は通るか（pass）落ちるか（fail）、pattern は出力に現れるべき文です。
+// canaryCase は、canary の1ケースです。pass は通るか落ちるか、pattern は出力に現れるべき文です。
 type canaryCase struct {
 	name    string
 	pass    bool
@@ -56,8 +55,8 @@ type canaryCase struct {
 // runCanary は、Policy Test の段（Rego の形の検査、Rego のテスト、plan の取得と取り出し、非推奨の引数の取り出し、
 // Conftest の適用、評価の数の突き合わせ）を、実物の terraform・Conftest・mock provider で通しで走らせ、違反の無い
 // 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
-// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。
-func runCanary(args []string, w io.Writer, tool toolFunc) error {
+// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。root はリポジトリ直下です。
+func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
@@ -70,15 +69,20 @@ func runCanary(args []string, w io.Writer, tool toolFunc) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if !filepath.IsAbs(*data) || *work == "" || *policy == "" || *planDecl == "" || *layerDecl == "" || *reference == "" || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "tf-policy canary -data <絶対パス> -work <dir> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+		return xerrors.Wrap(errUsage, "tf-policy canary -data <絶対パス> -work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+	}
+	resolved, err := workdir.Resolve(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-work %v", err)
+	}
+	// fixture の中で起動する道具の作業ディレクトリと、dir からの相対パスを解くため、絶対パスにする。
+	workAbs, err := filepath.Abs(resolved)
+	if err != nil {
+		return xerrors.Wrapf(err, "%s", resolved)
 	}
 	planDeclRaw, err := os.ReadFile(filepath.Clean(*planDecl))
 	if err != nil {
 		return xerrors.Wrapf(errRead, "%s: %v", *planDecl, err)
-	}
-	workAbs, err := filepath.Abs(*work)
-	if err != nil {
-		return xerrors.Wrapf(err, "%s", *work)
 	}
 	if err := os.RemoveAll(workAbs); err != nil {
 		return xerrors.Wrapf(err, "%s の削除", workAbs)
@@ -119,7 +123,6 @@ func runCanary(args []string, w io.Writer, tool toolFunc) error {
 	return nil
 }
 
-// canaryCases は、canary のケースの一覧です。
 func canaryCases(reference string, layerRaw []byte, nullValues string) []canaryCase {
 	appendTo := func(rel, text string) func(c string) error {
 		return func(c string) error { return appendText(filepath.Join(c, filepath.FromSlash(rel)), text) }

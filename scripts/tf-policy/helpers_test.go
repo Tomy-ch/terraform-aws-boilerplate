@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,4 +66,52 @@ exit 0
 		return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	}
 	return tool, calls
+}
+
+// snapshot は、dir の下のすべてのパスの内容の写しを返す。差を取るために使い、symlink はたどらない。
+func snapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.Type()&fs.ModeSymlink != 0:
+			dest, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			got[rel] = "link " + dest
+		case d.IsDir():
+			got[rel] = "dir"
+		default:
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(raw)
+			got[rel] = hex.EncodeToString(sum[:])
+		}
+		return nil
+	}))
+	return got
+}
+
+// workWorld は、リポジトリ直下に見立てる root と、その外の outside を、1つの一時ディレクトリ world の下に建てる。
+// world/x は、root から見て ../x に当たる。
+func workWorld(t *testing.T) (world, root, outside string) {
+	t.Helper()
+	world = tree(t, map[string]string{
+		"root/keep/f": "keep", "root/tmp/c/data/f": "data", "root/tmp/other/f": "other", "root/tmp/c/work/old": "old",
+		"outside/stale.txt": "stale", "x/stale.txt": "stale",
+	})
+	root, outside = filepath.Join(world, "root"), filepath.Join(world, "outside")
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "out")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "tmp"), filepath.Join(root, "tmp", "self")))
+	return world, root, outside
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -123,27 +125,106 @@ func Test_planRoots(t *testing.T) {
 func Test_runPlan(t *testing.T) {
 	t.Parallel()
 
+	planBase := func(t *testing.T) string {
+		t.Helper()
+		return tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": "", "usecases/a/reference/plan.out": planOK})
+	}
+
 	t.Run("reference の root で plan を起動する", func(t *testing.T) {
 		t.Parallel()
-		base := tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": "", "usecases/a/reference/plan.out": planOK})
+		root := tree(t, nil)
 		tool, calls := fakeTool(t)
-		out := filepath.Join(t.TempDir(), "run")
-		require.NoError(t, runPlan([]string{"-base", base, "-data", "/d", "-out", out}, &bytes.Buffer{}, tool))
+		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, root))
 		assert.Len(t, calls(), 1)
+		assert.Equal(t, filepath.Join(root, "tmp", "run", "runs", "a.jsonl")+"\n", readText(t, filepath.Join(root, "tmp", "run", "plans.txt")))
 	})
 
 	t.Run("root が0件なら起動せずに errNoInput", func(t *testing.T) {
 		t.Parallel()
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", tree(t, map[string]string{"x": ""}), "-data", "/d", "-out", t.TempDir()}, &bytes.Buffer{}, tool), errNoInput)
+		require.ErrorIs(t, runPlan([]string{"-base", tree(t, map[string]string{"x": ""}), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, tree(t, nil)), errNoInput)
 		assert.Empty(t, calls())
 	})
 
 	t.Run("引数の誤りは errUsage", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "rel", "-out", "o"}, &bytes.Buffer{}, tool), errUsage)
-		require.ErrorIs(t, runPlan([]string{"-data", "/d", "-out", "o"}, &bytes.Buffer{}, tool), errUsage)
+		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "rel", "-out", "tmp/o"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
+		require.ErrorIs(t, runPlan([]string{"-data", "/d", "-out", "tmp/o"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
+	})
+
+	t.Run("-out が tmp/ の下の相対パスでなければ、何も消さず道具も起動せずに、-out を名指す errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, out := range []string{
+			"", ".", "tmp", "tmp/", "tmp/.", "<root>/keep", "<outside>", "keep", "tmp/../keep", "../x", "TMP/x",
+			"tmp/out", "tmp/out/w", "tmp/self",
+		} {
+			t.Run(out, func(t *testing.T) {
+				t.Parallel()
+				world, root, outside := workWorld(t)
+				switch out {
+				case "<root>/keep":
+					out = filepath.Join(root, "keep")
+				case "<outside>":
+					out = outside
+				}
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				err := runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", out}, &bytes.Buffer{}, tool, root)
+				require.ErrorIs(t, err, errUsage)
+				assert.Equal(t, 2, exitCode(err))
+				if out != "" {
+					assert.Contains(t, err.Error(), fmt.Sprintf("-out %q", out))
+				}
+				assert.Empty(t, calls())
+				assert.Equal(t, before, snapshot(t, world))
+			})
+		}
+	})
+
+	t.Run("-out を2度渡せば後の値を使う", func(t *testing.T) {
+		t.Parallel()
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		err := runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/c/work", "-out", "../x"}, &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Contains(t, err.Error(), `-out "../x"`)
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "../x", "-out", "tmp/c/work"}, &bytes.Buffer{}, tool, root))
+		assert.FileExists(t, filepath.Join(root, "tmp", "c", "work", "plans.txt"))
+	})
+
+	t.Run("-out だけを作り直し、tmp/ 自身・兄弟・tmp/ の外を残す", func(t *testing.T) {
+		t.Parallel()
+		for _, out := range []string{"tmp/c/work", "./tmp/c/work"} {
+			t.Run(out, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				before := snapshot(t, world)
+				tool, _ := fakeTool(t)
+				require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", out}, &bytes.Buffer{}, tool, root))
+				after := snapshot(t, world)
+				for rel, sum := range before {
+					if !strings.HasPrefix(rel, filepath.Join("root", "tmp", "c", "work")) {
+						assert.Equal(t, sum, after[rel], rel)
+					}
+				}
+				assert.NotContains(t, after, filepath.Join("root", "tmp", "c", "work", "old"), "前回の中身は消す")
+				assert.Contains(t, after, filepath.Join("root", "tmp", "c", "work", "plans.txt"))
+			})
+		}
+	})
+
+	t.Run("root に tmp/ が無ければ作って通る", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, map[string]string{"keep/f": "keep"})
+		tool, _ := fakeTool(t)
+		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, root))
+		assert.FileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
+		assert.FileExists(t, filepath.Join(root, "keep", "f"))
 	})
 }
 

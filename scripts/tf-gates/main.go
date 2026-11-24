@@ -10,7 +10,7 @@
 //	tf-gates result -base <dir> -manifest <tsv> -ignore <yaml>
 //	tf-gates test -base <dir> -data <dir> <root>...
 //	tf-gates lint -base <dir> -config <file> -plugin-dir <dir> <root>...
-//	tf-gates validate-canary -base <dir> -data <dir> -work <dir> -reference <dir>
+//	tf-gates validate-canary -base <dir> -data <dir> -work <tmp/ の下の相対パス> -reference <dir>
 //
 // 対象のディレクトリは、走査の root の下の `.tf` を持つディレクトリで、段に `tests` か `.terraform` を持つものを
 // 除きます（tests の下の setup module は親の terraform test が読む）。宣言した root が1つでも無いときと、対象が
@@ -64,7 +64,7 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "lint":
 		return runLint(rest, w, tool)
 	case "validate-canary":
-		return runValidateCanary(rest, w, tool)
+		return runValidateCanary(rest, w, tool, ".")
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}

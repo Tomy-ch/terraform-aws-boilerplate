@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -259,18 +261,22 @@ func Test_verifyKey(t *testing.T) {
 func Test_runCanary(t *testing.T) {
 	t.Parallel()
 
-	args := func(t *testing.T) []string {
+	argsWith := func(t *testing.T, work string) []string {
 		t.Helper()
 		ref := tree(t, map[string]string{"versions.tf": "", ".terraform.lock.hcl": "", "decl.json": "{}", "layer.json": layerWithNulls})
-		return []string{"-data", t.TempDir(), "-work", filepath.Join(t.TempDir(), "w"), "-policy", policyTree(t),
+		return []string{"-data", t.TempDir(), "-work", work, "-policy", policyTree(t),
 			"-decl", filepath.Join(ref, "decl.json"), "-layer", filepath.Join(ref, "layer.json"), "-reference", ref}
+	}
+	args := func(t *testing.T) []string {
+		t.Helper()
+		return argsWith(t, "tmp/w")
 	}
 
 	t.Run("期待どおりでないケースを名指して errCanary", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
 		var out bytes.Buffer
-		err := runCanary(args(t), &out, tool)
+		err := runCanary(args(t), &out, tool, tree(t, nil))
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, err.Error(), "ok ")
 		assert.Contains(t, out.String(), "--- canary ok の出力")
@@ -283,7 +289,7 @@ func Test_runCanary(t *testing.T) {
 		require.NoError(t, os.WriteFile(layer, []byte(`{"layer_decl":{}}`), 0o600))
 		a[9] = layer
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool), errCanary)
+		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool, tree(t, nil)), errCanary)
 		assert.Empty(t, calls())
 	})
 
@@ -292,13 +298,85 @@ func Test_runCanary(t *testing.T) {
 		a := args(t)
 		a[7] = filepath.Join(t.TempDir(), "none")
 		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool), errRead)
+		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool, tree(t, nil)), errRead)
 	})
 
 	t.Run("引数の誤りは errUsage", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runCanary([]string{"-data", "rel"}, &bytes.Buffer{}, tool), errUsage)
+		require.ErrorIs(t, runCanary([]string{"-data", "rel"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
+	})
+
+	t.Run("-work が tmp/ の下の相対パスでなければ、何も消さず道具も起動せずに、-work を名指す errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, work := range []string{
+			"", ".", "tmp", "tmp/", "tmp/.", "<root>/keep", "keep", "tmp/../keep", "../x", "TMP/x",
+			"tmp/out", "tmp/out/w", "tmp/self",
+		} {
+			t.Run(work, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				if work == "<root>/keep" {
+					work = filepath.Join(root, "keep")
+				}
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				err := runCanary(argsWith(t, work), &bytes.Buffer{}, tool, root)
+				require.ErrorIs(t, err, errUsage)
+				assert.Equal(t, 2, exitCode(err))
+				if work != "" {
+					assert.Contains(t, err.Error(), fmt.Sprintf("-work %q", work))
+				}
+				assert.Empty(t, calls())
+				assert.Equal(t, before, snapshot(t, world))
+			})
+		}
+	})
+
+	t.Run("-work を2度渡せば後の値を使う", func(t *testing.T) {
+		t.Parallel()
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		err := runCanary(append(argsWith(t, "tmp/c/work"), "-work", "../x"), &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Contains(t, err.Error(), `-work "../x"`)
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.ErrorIs(t, runCanary(append(argsWith(t, "../x"), "-work", "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
+	})
+
+	t.Run("-work だけを作り直し、tmp/ 自身・兄弟・tmp/ の外を残す", func(t *testing.T) {
+		t.Parallel()
+		for _, work := range []string{"tmp/c/work", "./tmp/c/work"} {
+			t.Run(work, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				require.ErrorIs(t, runCanary(argsWith(t, work), &bytes.Buffer{}, tool, root), errCanary, "偽の道具では期待どおりにならない")
+				after := snapshot(t, world)
+				for rel, sum := range before {
+					if !strings.HasPrefix(rel, filepath.Join("root", "tmp", "c", "work")) {
+						assert.Equal(t, sum, after[rel], rel)
+					}
+				}
+				assert.NotContains(t, after, filepath.Join("root", "tmp", "c", "work", "old"), "前回の中身は消す")
+				require.NotEmpty(t, calls())
+				assert.True(t, strings.HasPrefix(calls()[0], filepath.Join(root, "tmp", "c", "work")+string(filepath.Separator)), "道具は絶対パスの fixture で起動する: %s", calls()[0])
+			})
+		}
+	})
+
+	t.Run("root に tmp/ が無ければ作って建てる", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, map[string]string{"keep/f": "keep"})
+		tool, _ := fakeTool(t)
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
+		assert.FileExists(t, filepath.Join(root, "keep", "f"))
 	})
 }
 
