@@ -1275,8 +1275,8 @@ run "policies" {
         Action = "cloudformation:UpdateStackSet"
         Resource = [
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
-          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset-target/tabp-break-glass:*",
-          "arn:aws:cloudformation:ap-northeast-1:*:type/resource/AWS-IAM-Role",
+          "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role",
         ]
       },
       {
@@ -1285,8 +1285,8 @@ run "policies" {
         Action = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
         Resource = [
           "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*",
-          "arn:aws:cloudformation:ap-northeast-1:123456789012:stackset-target/tabp-break-glass:*",
-          "arn:aws:cloudformation:ap-northeast-1:*:type/resource/AWS-IAM-Role",
+          "arn:aws:cloudformation::123456789012:stackset-target/tabp-break-glass:*",
+          "arn:aws:cloudformation:*:*:type/resource/AWS-IAM-Role",
         ]
         Condition = { StringEquals = { "cloudformation:TargetRegion" = "ap-northeast-1" } }
       },
@@ -2769,11 +2769,11 @@ run "governance_follows_data_sources" {
     condition = [for s in jsondecode(aws_iam_policy.governance[0].policy).Statement : [s.Resource, try(s.Condition, null)] if contains(["UpdateBreakGlassStackSet", "ManageBreakGlassStackInstances"], s.Sid)] == [
       for c in [null, { StringEquals = { "cloudformation:TargetRegion" = "us-gov-west-1" } }] : [[
         "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset/t4bp-break-glass:*",
-        "arn:aws-us-gov:cloudformation:us-gov-west-1:210987654321:stackset-target/t4bp-break-glass:*",
-        "arn:aws-us-gov:cloudformation:us-gov-west-1:*:type/resource/AWS-IAM-Role",
+        "arn:aws-us-gov:cloudformation::210987654321:stackset-target/t4bp-break-glass:*",
+        "arn:aws-us-gov:cloudformation:*:*:type/resource/AWS-IAM-Role",
       ], c]
     ]
-    error_message = "break-glass の StackSet の書き込みの Resource と条件が、partition・region・アカウントと role の名前から組まれていません。"
+    error_message = "break-glass の StackSet の書き込みの Resource と条件が、partition・region・アカウントと role の名前から組まれていません（stackset-target は region を空、type は region を `*` にする）。"
   }
 
   assert {
