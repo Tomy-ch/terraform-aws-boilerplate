@@ -11,14 +11,16 @@
 // plan は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
 // conftest verify はテストが0件でも、conftest test は入力が0件でも失敗しません。件数はここで独立に数えます
-// （ADR-0702 決定13・15）。落ちた検査は終了コード 1、入力を読めない・対象が0件は 2 です。
+// （ADR-0702 決定13・15）。落ちた検査は終了コード 1、入力を読めない・対象が0件・道具を起動できない・道具がシグナルで
+// 終わったは 2 です。道具を起動できない、またはシグナルで終わったときは、その時点で残りを走らせません。canary の中で
+// 起動する Conftest の終了コードは捨てて結果を読む段が合否を決めますが、起動できない・シグナルで終わったは 2 です。
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -28,6 +30,7 @@ var (
 	errRead    = xerrors.New("入力を読めません")
 	errFailed  = xerrors.New("検査が落ちました")
 	errCanary  = xerrors.New("canary が期待どおりではありません")
+	errTool    = toolrun.ErrTool
 )
 
 func main() {
@@ -56,20 +59,11 @@ func run(args []string, w io.Writer, tool toolFunc, root string) error {
 
 // report は run のエラーを1行で w に書き、終了コードを返します。
 func report(err error, w io.Writer) int {
-	if err != nil {
-		fmt.Fprintf(w, "❌ tf-policy: %v\n", err)
-	}
+	toolrun.Report("tf-policy", err, w)
 
 	return exitCode(err)
 }
 
 func exitCode(err error) int {
-	switch {
-	case err == nil:
-		return 0
-	case xerrors.Is(err, errFailed), xerrors.Is(err, errCanary):
-		return 1
-	default:
-		return 2
-	}
+	return toolrun.ExitCode(err, errFailed, errCanary)
 }

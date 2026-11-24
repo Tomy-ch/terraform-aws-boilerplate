@@ -28,7 +28,8 @@ const (
 
 // runValidateCanary は、実物の terraform と AWS Provider で validate と判定の全体を走らせ、非推奨の引数で落ち、
 // 宣言に当たる警告と非推奨の無い構成で通ることを確かめます（ADR-0501 決定13）。Provider の版は -reference の
-// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。root はリポジトリ直下です。
+// lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。[errTool] の
+// ときは、ケースの判定に畳まず [errTool] を返し、それまでに落ちたケースは文面にだけ添えます。root はリポジトリ直下です。
 func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-gates validate の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
@@ -60,12 +61,22 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 			fmt.Fprintf(w, "--- canary %s の出力:\n%s\n", name, out)
 		}
 	}
+	aborted := func(name string, err error) error {
+		if len(failed) == 0 {
+			return err
+		}
+
+		return xerrors.Wrapf(err, "canary %s で打ち切りました（それまでに落ちたケース: %s）", name, strings.Join(failed, " "))
+	}
 
 	clean, err := canaryCase(workDir, "clean", *reference, "")
 	if err != nil {
 		return err
 	}
 	out, err := validateFixture(clean, *data, empty, tool)
+	if xerrors.Is(err, errTool) {
+		return aborted("clean", err)
+	}
 	check("clean", err == nil && strings.Contains(out, "1 ディレクトリを validate し"), out)
 
 	deprecated, err := canaryCase(workDir, "deprecated", *reference, canaryDeprecated)
@@ -73,6 +84,9 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 		return err
 	}
 	out, err = validateFixture(deprecated, *data, empty, tool)
+	if xerrors.Is(err, errTool) {
+		return aborted("deprecated", err)
+	}
 	check("deprecated", xerrors.Is(err, errFailed) && strings.Contains(out, canaryWarning), out)
 
 	detail, err := onlyWarningDetail(filepath.Join(deprecated, "tmp", "tf-validate", "1.json"))
@@ -84,6 +98,9 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 			return err
 		}
 		out, err = validateFixture(deprecated, *data, ignore, tool)
+		if xerrors.Is(err, errTool) {
+			return aborted("ignored", err)
+		}
 		check("ignored", err == nil && strings.Contains(out, "抑止 1 件"), out)
 	}
 
