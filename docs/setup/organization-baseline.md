@@ -97,8 +97,8 @@ StackSet か stack instance の作成で昇格の apply が失敗したときは
 
 1. 原因を見る。作成の API が拒まれたなら CloudTrail に `AccessDenied` が残り、resource は state に入らない。API が通って操作が失敗したなら、CloudFormation の「StackSets」で `<project>-break-glass` の「オペレーション」に失敗した操作とアカウントの理由が残り、resource は tainted で state に残る
 2. 作成の API が拒まれたとき（権限の不足）: 権限と、それを要る resource を同じ apply に入れない
-   1. 権限を直す Pull Request で、作れなかった resource の block を `removed`（`lifecycle { destroy = false }`）に置き換えて昇格する。state に無ければ plan は差分を示さず、残っていれば state から外すだけで実物は消さない
-   2. resource を戻す Pull Request で `removed` を消して昇格する
+   1. 権限を直す Pull Request で、作れなかった resource の block を `removed`（`lifecycle { destroy = false }`）に置き換え、`conftest/plan/decl.json` の `break_glass` からその address を外して昇格する。resource は state に無いので、plan は差分を示さない。plan がその resource の管理からの除外を示したら、state に残っている。保護の対象の除外は `plan.stateful_protection` が落とすので（[ADR-0604](../adr/0604-state-split-by-apply-role.md) 決定11）、手順3 に進む
+   2. resource を戻す Pull Request で、`removed` と `decl.json` の address を元に戻して昇格する
 3. 操作が失敗したとき（tainted で残る）: 先に tainted を外してから直す
    1. `organization_admin` の資格情報で `env/admin/identity` を `terraform init` し、失敗した resource の tainted を外す（`terraform untaint 'module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this'`。StackSet が失敗したなら `aws_cloudformation_stack_set.this` も）
    2. 原因を Pull Request で直して昇格する。コードの変更が要らなければ、昇格の apply をやり直す
