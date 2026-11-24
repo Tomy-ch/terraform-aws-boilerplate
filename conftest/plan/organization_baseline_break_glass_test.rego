@@ -228,7 +228,7 @@ test_pass_long_term_credential_deny_all_actions if {
 }
 
 test_pass_long_term_credential_deny_single_character_wildcard if {
-	actions := ["iam:CreateAccessKe?", "iam:CreateServiceSpecificCredentia?", "iam:UploadSSHPublicKe?", "iam:UploadSigningCertificat?"]
+	actions := ["iam:CreateAccessKe?", "iam:CreateServiceSpecificCredentia?", "iam:UploadSSHPublicKe?", "iam:UploadSigning?ertificate"]
 	not fixture.has("[PLAN-BG-02]", group_messages(with_deny([{"Effect": "Deny", "Action": actions, "Resource": "*"}])))
 }
 
