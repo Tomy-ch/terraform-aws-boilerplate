@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -81,11 +82,10 @@ func writeDockerStub(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" + body
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755)) //nolint:gosec // 実行可能スタブ
+	fakeexec.Write(t, filepath.Join(dir, "docker"), script, 0o755)
 	return dir
 }
 
-// useDockerStub はダミー docker を PATH 先頭へ載せる。
 func useDockerStub(t *testing.T, body string) {
 	t.Helper()
 	t.Setenv("PATH", writeDockerStub(t, body)+string(os.PathListSeparator)+os.Getenv("PATH"))
