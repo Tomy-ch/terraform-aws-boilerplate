@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -115,6 +118,78 @@ func Test_planRoots(t *testing.T) {
 		assert.Contains(t, w.String(), "❌ tf-policy が落ちたディレクトリ: "+roots[1].path)
 	})
 
+	// files のキーは基点からの相対パス。
+	threeRoots := func(t *testing.T, files map[string]string) []root {
+		t.Helper()
+		base := tree(t, files)
+		var roots []root
+		for _, n := range []string{"a", "b", "c"} {
+			rel := "usecases/" + n + "/reference"
+			roots = append(roots, root{name: n, rel: rel, path: filepath.Join(base, rel)})
+		}
+		return roots
+	}
+	unstartableAt := func(tool toolFunc, path string) toolFunc {
+		return func(d string, env []string, step string) *exec.Cmd {
+			if d == path {
+				return tooltest.Missing(d, env, step)
+			}
+			return tool(d, env, step)
+		}
+	}
+
+	t.Run("最初の root で道具を起動できなければ、残りを起動せず plans.txt を書かずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		roots := threeRoots(t, map[string]string{"usecases/a/reference/.keep": "", "usecases/b/reference/plan.out": planOK, "usecases/c/reference/.keep": ""})
+		tool, calls := fakeTool(t)
+		out := filepath.Join(t.TempDir(), "run")
+		err := planRoots(roots, "/d", out, &bytes.Buffer{}, unstartableAt(tool, roots[0].path))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errFailed)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), roots[0].path+" の plan で打ち切りました")
+		assert.NotContains(t, err.Error(), "それまでに落ちた")
+		assert.Empty(t, calls(), "残りの root を起動しない")
+		assert.NoFileExists(t, filepath.Join(out, "plans.txt"))
+		assert.NoFileExists(t, filepath.Join(out, "runs", "a.jsonl"))
+	})
+
+	t.Run("先の root が 1 で落ち、次で道具を起動できなければ、先の失敗を文面にだけ名指し、plans.txt を書かずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		roots := threeRoots(t, map[string]string{
+			"usecases/a/reference/fail-plan": "", "usecases/a/reference/plan.out": `{"@level":"error","@message":"a の誤り"}` + "\n",
+			"usecases/c/reference/.keep": "",
+		})
+		tool, calls := fakeTool(t)
+		out := filepath.Join(t.TempDir(), "run")
+		var w bytes.Buffer
+		err := planRoots(roots, "/d", out, &w, unstartableAt(tool, roots[1].path))
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errFailed), "落ちた root の sentinel を包まない（包むと終了コードが 1 になる）")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), roots[1].path+" の plan で打ち切りました（それまでに落ちた root: "+roots[0].path+"）")
+		assert.Equal(t, []string{roots[0].path + " plan /d/usecases__a__reference"}, calls(), "打ち切った後の root を起動しない")
+		assert.NoFileExists(t, filepath.Join(out, "plans.txt"))
+		assert.FileExists(t, filepath.Join(out, "runs", "a.jsonl"), "0 以外の終了コードの root の出力は書く")
+		assert.NoFileExists(t, filepath.Join(out, "runs", "b.jsonl"))
+		assert.Contains(t, w.String(), "a の誤り")
+		assert.NotContains(t, w.String(), "❌", "先の失敗は文面にだけ名指す")
+	})
+
+	t.Run("道具がシグナルで終われば、残りを起動せず plans.txt を書かずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		roots := threeRoots(t, map[string]string{"usecases/a/reference/.keep": "", "usecases/b/reference/.keep": "", "usecases/c/reference/.keep": ""})
+		f := tooltest.New(t)
+		f.Set(stepPlan, "kill", "")
+		out := filepath.Join(t.TempDir(), "run")
+		err := planRoots(roots, "/d", out, &bytes.Buffer{}, f.Tool())
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "がシグナルで終わりました")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Len(t, f.Calls(), 1)
+		assert.NoFileExists(t, filepath.Join(out, "plans.txt"))
+	})
+
 	t.Run("前の出力を消してから書く", func(t *testing.T) {
 		t.Parallel()
 		base := tree(t, map[string]string{"usecases/a/reference/plan.out": planOK})
@@ -125,10 +200,8 @@ func Test_planRoots(t *testing.T) {
 	})
 }
 
-// canaryFlags は、plan の canary の引数です。
 var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
 
-// passCanary は、引数を記録して成功する canary です。
 func passCanary(got *[]string) canaryFunc {
 	return func(args []string, _ io.Writer, _ toolFunc) error {
 		*got = args
@@ -190,15 +263,28 @@ func Test_runPlan(t *testing.T) {
 		}
 	})
 
+	t.Run("本走査で道具を起動できなければ、plans.txt を書かずに errTool で終了コードは 2 で、errFailed を包まない", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, nil)
+		var got []string
+		err := runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tooltest.Missing, passCanary(&got), root)
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotNil(t, got, "canary は走った")
+		assert.NoFileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
+	})
+
 	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
 		t.Parallel()
 		for name, c := range map[string]struct {
 			cause error
 			code  int
 		}{
-			"canary の不成立は 1":   {errCanary, 1},
-			"canary の引数の誤りは 2": {errUsage, 2},
-			"canary が読めないのは 2": {errRead, 2},
+			"canary の不成立は 1":        {errCanary, 1},
+			"canary の引数の誤りは 2":      {errUsage, 2},
+			"canary が読めないのは 2":      {errRead, 2},
+			"canary の道具を起動できないのは 2": {errTool, 2},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()

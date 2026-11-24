@@ -64,6 +64,8 @@ func writeRepo(t *testing.T, ruleset string) string {
 	writeFile(t, root, environmentsFile, environmentsFixture)
 	writeFile(t, root, rulesetFile, ruleset)
 	writeFile(t, root, vulnerabilityReportingFile, `{"enabled": true}`)
+	writeFile(t, root, dependabotFile, dependabotFixture)
+	writeFile(t, root, labelsFile, labelsFixture)
 	writeFile(t, root, "env/x/identity/main.tf", identityRootFixture)
 	writeFile(t, root, ".github/workflows/apply.yaml", applyWorkflowFixture)
 	writeFile(t, root, ".github/workflows/lint.yaml", "on:\n  push:\n    branches: # branch-set: deploy\n      - 'main'\n  pull_request:\nconcurrency:\n  group: ${{ github.ref }}\n")
@@ -268,6 +270,7 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Len(t, decl.sets, 1)
 		assert.Equal(t, 1, decl.marks)
 		assert.Equal(t, 1, decl.exprs)
+		assert.Equal(t, 2, decl.dependabotLabels)
 	})
 
 	cases := []struct {
@@ -286,6 +289,15 @@ func Test_readDeclarations(t *testing.T) {
 		}, errDeclaration},
 		{"private-vulnerability-reporting.json が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, vulnerabilityReportingFile)))
+		}, os.ErrNotExist},
+		{"Dependabot のラベルが labels.json に無ければ失敗する", func(root string) {
+			writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+		}, errDependabotLabels},
+		{"dependabot.yml が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, dependabotFile)))
+		}, os.ErrNotExist},
+		{"labels.json が無ければ失敗する", func(root string) {
+			require.NoError(t, os.Remove(filepath.Join(root, labelsFile)))
 		}, os.ErrNotExist},
 		{"branch-protection.json が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, rulesetFile)))
@@ -535,7 +547,7 @@ func Test_applyOrCheck(t *testing.T) {
 		require.NoError(t, err)
 		// 書き込みは rename なので、書けば別のファイルになる。
 		assert.True(t, os.SameFile(before, after))
-		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件。生成する区間は宣言どおりです\n", out.String())
+		assert.Equal(t, "✅ repo-settings: 保護対象 3 件、environment 6 件、Private Vulnerability Reporting の宣言（enabled=true）、apply の workflow 1 件、分岐の集合の印 1 件（workflow 1 件）、ref を比べる式の検査 1 件、labels.json にある Dependabot のラベル 2 件。生成する区間は宣言どおりです\n", out.String())
 	})
 
 	t.Run("check はずれを報せ、書かない", func(t *testing.T) {
@@ -567,6 +579,21 @@ func Test_applyOrCheck(t *testing.T) {
 		assert.Equal(t, rulesetFixture, string(got))
 	})
 
+	t.Run("Dependabot のラベルが labels.json に無ければ、apply は include の区間も起動条件も書き換えない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
+		writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDependabotLabels)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(wf))
+	})
+
 	t.Run("書き込めなければ失敗し、ファイルは元のまま", func(t *testing.T) {
 		t.Parallel()
 		testenv.RequireNonRoot(t, "読み取り専用のディレクトリへの書き込みの失敗を作る")
@@ -584,7 +611,7 @@ func Test_applyOrCheck(t *testing.T) {
 		for _, e := range entries {
 			names = append(names, e.Name())
 		}
-		assert.ElementsMatch(t, []string{"branches.json", "environments.json", "branch-protection.json", "private-vulnerability-reporting.json"}, names)
+		assert.ElementsMatch(t, []string{"branches.json", "environments.json", "branch-protection.json", "private-vulnerability-reporting.json", "labels.json"}, names)
 	})
 }
 
@@ -620,6 +647,48 @@ func Test_drift(t *testing.T) {
 			"  - environment other: 宣言に無い environment が実在します",
 		}, "\n")+"\n", out.String())
 		assert.Empty(t, f.writes())
+	})
+
+	approvalRoutes := func(t *testing.T, from, to string) map[string]fakeResponse {
+		t.Helper()
+		var ruleset map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.Replace(syncedRuleset, from, to, 1)), &ruleset))
+		ruleset["id"] = 7.0
+		body, err := json.Marshal(ruleset)
+		require.NoError(t, err)
+		routes := liveRoutes(t)
+		routes["GET /repos/o/r/rulesets/7"] = ok(string(body))
+		return routes
+	}
+
+	t.Run("承認者数だけのずれを、決定7 の例外として分けて出力して失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := approvalRoutes(t, `"required_approving_review_count": 1`, `"required_approving_review_count": 0`)
+		f, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 1 件あります",
+			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
+			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+		}, "\n")+"\n", out.String())
+		assert.Empty(t, f.writes())
+	})
+
+	t.Run("承認者数とほかのパラメータのずれは、両方を分けて出力して失敗する", func(t *testing.T) {
+		t.Parallel()
+		routes := approvalRoutes(t,
+			"\"required_review_thread_resolution\": true,\n      \"required_approving_review_count\": 1",
+			"\"required_review_thread_resolution\": false,\n      \"required_approving_review_count\": 0")
+		_, c := newFakeGitHub(t, routes)
+		var out bytes.Buffer
+		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
+		assert.Equal(t, strings.Join([]string{
+			"❌ repo-settings: o/r で宣言と実態のずれが 2 件あります",
+			"  - ruleset: ルール pull_request が宣言と異なります",
+			"  ADR-0603 決定7 の例外（承認者数の要件）に当たるずれ:",
+			"  - ruleset: ルール pull_request の required_approving_review_count が宣言と異なります",
+		}, "\n")+"\n", out.String())
 	})
 
 	t.Run("観測できなかったものを出力する", func(t *testing.T) {

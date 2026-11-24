@@ -19,13 +19,15 @@
 //
 // validate は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
-// 落ちた検査は終了コード 1、入力や宣言を読めない・対象が0件は 2 です。
+// 落ちた検査は終了コード 1、入力や宣言を読めない・対象が0件・道具を起動できない・道具がシグナルで終わったは 2 です。
+// 道具を起動できない、またはシグナルで終わったときは、その時点で残りの対象を走らせません。
 package main
 
 import (
 	"io"
 	"os"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -36,6 +38,7 @@ var (
 	errTargets     = xerrors.New("対象ディレクトリがあります")
 	errDirsFailed  = xerrors.New("落ちたディレクトリがあります")
 	errCanary      = xerrors.New("canary が期待どおりではありません")
+	errTool        = toolrun.ErrTool
 )
 
 func main() {
@@ -83,12 +86,5 @@ func report(err error, w io.Writer) int {
 }
 
 func exitCode(err error) int {
-	switch {
-	case err == nil:
-		return 0
-	case xerrors.Is(err, errFailed), xerrors.Is(err, errDirsFailed), xerrors.Is(err, errTargets), xerrors.Is(err, errCanary):
-		return 1
-	default:
-		return 2
-	}
+	return toolrun.ExitCode(err, errFailed, errDirsFailed, errTargets, errCanary)
 }

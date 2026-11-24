@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
-
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // okTree は、modules/a・usecases/b・env/dev に構成とテストを持つ木を建てる。
@@ -89,6 +89,72 @@ func Test_runEach(t *testing.T) {
 			assert.Contains(t, out.String(), strings.ReplaceAll(c.want, "{base}", base))
 		})
 	}
+
+	threeTargets := func(t *testing.T, files map[string]string, unstartable string) ([]target, func(target) *exec.Cmd, func() []string) {
+		t.Helper()
+		files["modules/a/main.tf"], files["usecases/b/main.tf"], files["usecases/c/main.tf"] = "", "", ""
+		base := tree(t, files)
+		tool, calls := fakeTool(t)
+		targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases"}, log: io.Discard})
+		require.NoError(t, err)
+		return targets, func(tg target) *exec.Cmd {
+			if tg.rel == unstartable {
+				return tooltest.Missing(tg.path, nil, stepTest)
+			}
+			return tool(tg.path, tfexec.Env(os.Environ()), stepTest)
+		}, calls
+	}
+
+	t.Run("最初の対象で道具を起動できなければ、残りを起動せずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		targets, cmdOf, calls := threeTargets(t, map[string]string{}, "modules/a")
+		var out bytes.Buffer
+		err := runEach("tf-x", targets, &out, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errDirsFailed)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "tf-x: "+targets[0].path+" で打ち切りました")
+		assert.NotContains(t, err.Error(), "それまでに落ちた")
+		assert.Empty(t, calls(), "残りの対象を起動しない")
+		assert.NotContains(t, out.String(), "❌")
+	})
+
+	t.Run("先の対象が 1 で落ち、次で道具を起動できなければ、先の失敗を文面にだけ名指して errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		targets, cmdOf, calls := threeTargets(t, map[string]string{"modules/a/fail-test": ""}, "usecases/b")
+		var out bytes.Buffer
+		err := runEach("tf-x", targets, &out, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errDirsFailed), "落ちた対象の sentinel を包まない（包むと終了コードが 1 になる）")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "tf-x: "+targets[1].path+" で打ち切りました（それまでに落ちたディレクトリ: "+targets[0].path+"）")
+		assert.NotContains(t, out.String(), "❌", "先の失敗は文面にだけ名指す")
+		assert.Equal(t, []string{targets[0].path + " test   "}, calls(), "打ち切った後の対象を起動しない")
+	})
+
+	t.Run("道具がシグナルで終われば、残りを起動せずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepTest, "kill", "")
+		targets, _, _ := threeTargets(t, map[string]string{}, "")
+		err := runEach("tf-x", targets, &bytes.Buffer{}, func(tg target) *exec.Cmd { return f.Tool()(tg.path, nil, stepTest) })
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "がシグナルで終わりました")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Len(t, f.Calls(), 1, "打ち切った後の対象を起動しない")
+	})
+
+	t.Run("対照: 0 以外の終了コードは落ちた対象のままで、終了コードは 1", func(t *testing.T) {
+		t.Parallel()
+		targets, cmdOf, calls := threeTargets(t, map[string]string{"modules/a/fail-test": ""}, "")
+		var out bytes.Buffer
+		err := runEach("tf-x", targets, &out, cmdOf)
+		require.ErrorIs(t, err, errDirsFailed)
+		require.NotErrorIs(t, err, errTool)
+		assert.Equal(t, 1, exitCode(err))
+		assert.Len(t, calls(), 3)
+		assert.Contains(t, out.String(), "tf-x: "+targets[0].path+": exit status 1\n")
+	})
 }
 
 func Test_runFmt(t *testing.T) {
@@ -143,6 +209,24 @@ func Test_runFmt(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
 		require.ErrorIs(t, runFmt([]string{"-x"}, &bytes.Buffer{}, tool), errUsage)
+	})
+
+	t.Run("root の親が通常のファイルで Stat が ENOTDIR なら、道具を起動せずに errMissingRoot で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules": "", "usecases/b/main.tf": ""})
+		tool, calls := fakeTool(t)
+		err := runFmt([]string{"-check", "-allow-missing-roots", "-base", base, "modules/a", "usecases"}, &bytes.Buffer{}, tool)
+		require.ErrorIs(t, err, errMissingRoot)
+		assert.Contains(t, err.Error(), "not a directory")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
+	})
+
+	t.Run("道具を起動できなければ errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		err := runFmt([]string{"-check", "-base", okTree(t, nil), "modules", "usecases"}, &bytes.Buffer{}, tooltest.Missing)
+		require.ErrorIs(t, err, errTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 }
 
@@ -206,6 +290,13 @@ func Test_runInit(t *testing.T) {
 		require.ErrorIs(t, runInit([]string{"-base", base, "-data", "/d", "modules", "usecases"}, &out, tool), errDirsFailed)
 		assert.Contains(t, out.String(), "❌ tf-init が落ちたディレクトリ: "+filepath.Join(base, "modules/a")+"\n")
 	})
+
+	t.Run("道具を起動できなければ errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		err := runInit([]string{"-base", okTree(t, nil), "-data", "/d", "modules"}, &bytes.Buffer{}, tooltest.Missing)
+		require.ErrorIs(t, err, errTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
 }
 
 func Test_initTargets(t *testing.T) {
@@ -219,10 +310,8 @@ func Test_initTargets(t *testing.T) {
 	})
 }
 
-// canaryFlags は、validate の canary の引数です。
 var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "tmp/cw", "-canary-reference", "cr"}
 
-// passCanary は、引数を記録して成功する canary です。
 func passCanary(got *[]string) canaryFunc {
 	return func(args []string, _ io.Writer, _ toolFunc) error {
 		*got = args
@@ -279,6 +368,19 @@ func Test_runValidate(t *testing.T) {
 		assert.Empty(t, calls())
 	})
 
+	t.Run("本走査で道具を起動できなければ、errTool で終了コードは 2 で、errDirsFailed を包まない", func(t *testing.T) {
+		t.Parallel()
+		out := filepath.Join(t.TempDir(), "v")
+		var got []string
+		args := append(append([]string{"-base", okTree(t, nil), "-data", "/d", "-out", out}, canaryFlags...), "modules")
+		err := runValidate(args, &bytes.Buffer{}, tooltest.Missing, passCanary(&got), tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errDirsFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotNil(t, got, "canary は走った")
+		assert.NoFileExists(t, filepath.Join(out, "manifest.tsv"))
+	})
+
 	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
 		t.Parallel()
 		for name, c := range map[string]struct {
@@ -288,6 +390,7 @@ func Test_runValidate(t *testing.T) {
 			"canary の不成立は 1":        {errCanary, 1},
 			"canary の引数の誤りは 2":      {errUsage, 2},
 			"canary の root が無いのは 2": {errMissingRoot, 2},
+			"canary の道具を起動できないのは 2": {errTool, 2},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
@@ -363,19 +466,60 @@ func Test_runValidate(t *testing.T) {
 func Test_validateTargets(t *testing.T) {
 	t.Parallel()
 
-	t.Run("道具を起動できなければ errDirsFailed で、一覧を書かない", func(t *testing.T) {
+	t.Run("道具を起動できなければ、残りを起動せず、前の一覧を消したまま書かずに errTool で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		base := okTree(t, nil)
-		targets, err := requireDirs(scan{base: base, roots: []string{"modules"}, log: io.Discard})
+		base := okTree(t, map[string]string{"env/dev/fail-validate": ""})
+		targets, err := requireDirs(scan{base: base, roots: []string{"modules", "usecases", "env"}, log: io.Discard})
 		require.NoError(t, err)
-		out := filepath.Join(t.TempDir(), "v")
-		broken := func(d string, env []string, _ string) *exec.Cmd {
-			c := exec.CommandContext(context.Background(), filepath.Join(d, "no-such-tool"))
-			c.Dir, c.Env = d, env
-			return c
+		require.Len(t, targets, 3)
+		out := tree(t, map[string]string{"manifest.tsv": "stale\t0\tx\ty\n"})
+		tool, calls := fakeTool(t)
+		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+			if d == targets[1].path {
+				return tooltest.Missing(d, env, step)
+			}
+			return tool(d, env, step)
 		}
-		require.ErrorIs(t, validateTargets("/d", out, targets, broken), errDirsFailed)
+		err = validateTargets("/d", out, targets, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errDirsFailed)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), targets[1].path+" の validate で打ち切りました")
+		assert.Equal(t, []string{targets[0].path + " validate /d/env__dev  "}, calls(), "打ち切った後の対象を起動しない")
+		assert.NoFileExists(t, filepath.Join(out, "manifest.tsv"), "前の一覧を緑として残さない")
+	})
+
+	t.Run("道具がシグナルで終われば、一覧を書かずに errTool", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepValidate, "kill", "")
+		out := tree(t, map[string]string{"manifest.tsv": "stale\n"})
+		err := validateTargets("/d", out, []target{{rel: "m", path: t.TempDir()}}, f.Tool())
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "がシグナルで終わりました")
 		assert.NoFileExists(t, filepath.Join(out, "manifest.tsv"))
+	})
+
+	t.Run("前の一覧を消せなければ、道具を起動せずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		out := tree(t, map[string]string{"manifest.tsv/f": ""})
+		tool, calls := fakeTool(t)
+		err := validateTargets("/d", out, []target{{rel: "m", path: t.TempDir()}}, tool)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "manifest.tsv の削除")
+		assert.Empty(t, calls())
+	})
+
+	t.Run("前の一覧を書き直す", func(t *testing.T) {
+		t.Parallel()
+		d := t.TempDir()
+		out := tree(t, map[string]string{"manifest.tsv": "stale\n"})
+		tool, _ := fakeTool(t)
+		require.NoError(t, validateTargets("/d", out, []target{{rel: "m", path: d}}, tool))
+		manifest, err := os.ReadFile(filepath.Join(out, "manifest.tsv"))
+		require.NoError(t, err)
+		assert.Equal(t, d+"\t0\t"+filepath.Join(out, "1.json")+"\t"+filepath.Join(out, "1.err")+"\n", string(manifest))
 	})
 
 	t.Run("出力の置き場を作れなければ失敗する", func(t *testing.T) {
@@ -419,6 +563,13 @@ func Test_runTest(t *testing.T) {
 		require.ErrorIs(t, runTest([]string{"-base", base, "-data", "/d", "modules", "usecases"}, &out, tool), errDirsFailed)
 		assert.Contains(t, out.String(), "❌ tf-test が落ちたディレクトリ: "+filepath.Join(base, "modules/a")+" "+filepath.Join(base, "usecases/b"))
 	})
+
+	t.Run("道具を起動できなければ errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		err := runTest([]string{"-base", okTree(t, nil), "-data", "/d", "modules"}, &bytes.Buffer{}, tooltest.Missing)
+		require.ErrorIs(t, err, errTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
 }
 
 func Test_runLint(t *testing.T) {
@@ -436,6 +587,39 @@ func Test_runLint(t *testing.T) {
 			filepath.Join(base, "usecases/b") + " lint  /c/.tflint.hcl " + plugins,
 		}, calls())
 		assert.DirExists(t, plugins)
+	})
+
+	t.Run("ruleset の取得で道具を起動できなければ、ディレクトリを走らせずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepLintInit {
+				return tooltest.Missing(d, env, step)
+			}
+			return tool(d, env, step)
+		}
+		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
+	})
+
+	t.Run("ディレクトリごとの TFLint を起動できなければ、残りを起動せずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepLint {
+				return tooltest.Missing(d, env, step)
+			}
+			return tool(d, env, step)
+		}
+		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &bytes.Buffer{}, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errDirsFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.Len(t, calls(), 1, "ruleset の取得だけが走った")
 	})
 
 	t.Run("ruleset の取得が落ちれば、ディレクトリを走らせずに落ちる", func(t *testing.T) {
