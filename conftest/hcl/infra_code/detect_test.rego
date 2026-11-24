@@ -261,6 +261,7 @@ fixture_cases := {
 	"IC011_deny_provisioner_in_removed_block",
 	"IC011_deny_provisioner_on_any_type",
 	"IC011_deny_command_provider_reference",
+	"IC011_deny_command_provider_nested_reference",
 	"IC011_deny_command_provider_call",
 	"IC011_deny_command_provider_template",
 	"IC011_allow_reference_in_provider_without_command_blocks",
@@ -425,4 +426,32 @@ test_IC004_deny_malformed_reasons if {
 test_IC004_deny_missing_reasons if {
 	d := object.union(base_decl, {"allowlist": [object.remove(instance_item([]), ["reasons"])]})
 	with_id(denies(empty_doc, d), "IC004") == {"IC004 [宣言の形] allowlist の項目 m#resource.aws_instance.i の reasons が、理由の符号（type・provisioner・provider_exec・unresolved・command_block:<block>）の、重複の無い空でない配列ではありません"}
+}
+
+test_IC004_deny_command_blocks_not_expressible_as_reason if {
+	every bs in [null, "runner.command", [1], [""], ["Runner.Command"], ["runner command"], ["runner..command"], [".runner"], ["runner.command", "runner.command"]] {
+		d := json.patch(base_decl, [{"op": "replace", "path": "/providers/registry.terraform.io~1example~1runner/command_blocks", "value": bs}])
+		with_id(denies(empty_doc, d), "IC004") == {"IC004 [宣言の形] providers.registry.terraform.io/example/runner の command_blocks が、理由の符号 command_block:<block> に書ける位置（小文字・数字・_ の名前を . でつないだもの）の、重複の無い配列ではありません"}
+	}
+}
+
+test_IC004_deny_command_blocks_missing if {
+	d := json.patch(base_decl, [{"op": "remove", "path": "/providers/registry.terraform.io~1example~1runner/command_blocks"}])
+	with_id(denies(empty_doc, d), "IC004") == {"IC004 [宣言の形] providers.registry.terraform.io/example/runner の command_blocks が、理由の符号 command_block:<block> に書ける位置（小文字・数字・_ の名前を . でつないだもの）の、重複の無い配列ではありません"}
+}
+
+runner_item(reasons) := {"id": "m#provider.runner", "owner": "external", "repository": "github.com/o/r", "reasons": reasons}
+
+test_IC011_allow_listed_command_block if {
+	d := object.union(base_decl, {"allowlist": [runner_item(["command_block:runner.command"])]})
+	count(denies(fx("IC011_deny_declared_command_block"), d)) == 0
+}
+
+test_IC011_deny_command_block_not_in_reasons if {
+	d := object.union(base_decl, {"allowlist": [runner_item(["unresolved"])]})
+	with_id(denies(fx("IC011_deny_declared_command_block"), d), "IC011") == {"IC011 [理由が許可リストに無い] m/providers.tf: m#provider.runner の項目は、この検出の理由 command_block:runner.command（provider の runner.command）を reasons に挙げていません → 意図したコードなら reasons に足し、そうでなければ取り除く"}
+}
+
+test_IC011_deny_command_provider_nested_non_literal if {
+	with_id(denies(fx("IC011_deny_command_provider_nested_reference"), base_decl), "IC011") == {"IC011 [許可リストに無い] m/providers.tf: m#provider.runner（解けない式）はインフラ内コードです → allowlist に項目を足し、本リポジトリ所有なら ADR-0103 決定13 の ADR を書く"}
 }

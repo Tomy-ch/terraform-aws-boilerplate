@@ -179,6 +179,22 @@ deny contains msg if {
 	msg := sprintf("IC004 [宣言の形] providers.%s のキー %s を解釈できません", [source, key])
 }
 
+# 符号に書けない block は、検出の理由を許可リストの項目に挙げられず、通す手段が無くなる。
+deny contains msg if {
+	some source, class in decl.providers
+	not well_formed_command_blocks(object.get(class, "command_blocks", null))
+	msg := sprintf("IC004 [宣言の形] providers.%s の command_blocks が、理由の符号 command_block:<block> に書ける位置（小文字・数字・_ の名前を . でつないだもの）の、重複の無い配列ではありません", [source])
+}
+
+well_formed_command_blocks(bs) if {
+	is_array(bs)
+	count({b | some b in bs}) == count(bs)
+	every b in bs {
+		is_string(b)
+		regex.match(reason_code, concat("", ["command_block:", b]))
+	}
+}
+
 deny contains msg if {
 	some item in decl.allowlist
 	not well_formed_reasons(object.get(item, "reasons", null))
