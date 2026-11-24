@@ -8,7 +8,6 @@
 # cooldown がそれより短いと、取り込めない PR が先に開く。
 version: 2
 updates:
-  # ---- Go modules ----
   - package-ecosystem: "gomod"
     directory: "/scripts"
     schedule:
@@ -27,7 +26,6 @@ updates:
         patterns:
           - "*"
 
-  # ---- Docker ----
   - package-ecosystem: "docker"
     directory: "/docker/tools"
     schedule:
@@ -59,7 +57,6 @@ updates:
         patterns:
           - "*"
 
-  # ---- GitHub Actions ----
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
