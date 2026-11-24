@@ -16,11 +16,16 @@ const (
 	stepGitAdd    = "git-add"
 	stepCheck     = "check"
 	stepDryRun    = "dry-run"
+	stepScan      = "scan"
 	stepLsFiles   = "ls-files"
 	stepLsDeleted = "ls-deleted"
 )
 
 // command は toolFunc の実物です。引数は段ごとに固定です。git は hook を起動しません。
+//
+// editorconfig-checker は GITHUB_ACTIONS=true で出力を github-actions の形（`::error file=...`）へ替えます。出力を
+// 読んで判定する canary（stepCheck）と -dry-run は -format default で形を固定します。本走査（stepScan）は出力を
+// 写して終了コードだけで判定するので形を固定せず、GitHub Actions では違反が注釈として出ます。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()
 	var cmd *exec.Cmd
@@ -29,8 +34,10 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "init", "-q")
 	case stepGitAdd:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "add", "-A")
+	case stepCheck:
+		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-format", "default")
 	case stepDryRun:
-		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-dry-run")
+		cmd = exec.CommandContext(ctx, "editorconfig-checker", "-format", "default", "-dry-run")
 	case stepLsFiles:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--stage")
 	case stepLsDeleted:

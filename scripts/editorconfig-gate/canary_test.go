@@ -377,6 +377,7 @@ func Test_judgeCheck(t *testing.T) {
 		"別のファイルの違反":                 {toolrun.Result{Combined: controlHit, Code: 1}, "想定外"},
 		"非 ASCII の名前のファイルを名指さない":    {toolrun.Result{Combined: hit(canaryFile), Code: 1}, "core.quotepath"},
 		"非 ASCII の名前のファイルだけを名指す":    {toolrun.Result{Combined: hit(nonASCIIFile), Code: 1}, "想定外"},
+		"github-actions の形（-format default を外した出力）は読まない": {toolrun.Result{Combined: "::error file=canary.yaml,line=2::wrong indent style found (tabs instead of spaces)\n::error file=" + nonASCIIFile + ",line=2::wrong indent style found (tabs instead of spaces)\n", Code: 1}, "想定外"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

@@ -16,8 +16,9 @@ func Test_command(t *testing.T) {
 	for step, want := range map[string][]string{
 		stepGitInit:   {"git", "-c", "core.hooksPath=/dev/null", "init", "-q"},
 		stepGitAdd:    {"git", "-c", "core.hooksPath=/dev/null", "add", "-A"},
-		stepCheck:     {"editorconfig-checker"},
-		stepDryRun:    {"editorconfig-checker", "-dry-run"},
+		stepCheck:     {"editorconfig-checker", "-format", "default"},
+		stepDryRun:    {"editorconfig-checker", "-format", "default", "-dry-run"},
+		stepScan:      {"editorconfig-checker"},
 		stepLsFiles:   {"git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--stage"},
 		stepLsDeleted: {"git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--deleted"},
 	} {

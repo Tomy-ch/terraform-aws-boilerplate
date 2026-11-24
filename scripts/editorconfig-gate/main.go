@@ -17,8 +17,9 @@
 // どちらも同じリポジトリの git が返す形で比べます（macOS では core.precomposeunicode により NFC）。改行を含むパスは
 // 1行1パスの -dry-run に載り得ないので、必ず欠けとして落ちます。
 //
-// 3つの canary は、fixture を -work の下に毎回作り直してその中にリポジトリを建て、本走査と同じ探索経路（引数なしの
-// 起動）で実物の editorconfig-checker を走らせ、終わりに fixture を消します。
+// 3つの canary は、fixture を -work の下に毎回作り直してその中にリポジトリを建て、本走査と同じ探索経路（パスを
+// 渡さない起動）で実物の editorconfig-checker を走らせ、終わりに fixture を消します。canary と -dry-run は出力を
+// 読むので -format default で形を固定し、本走査は GitHub Actions で注釈を出せるよう形を固定しません。
 //
 //   - check-canary: tab で字下げした YAML で落ち、同じ違反を置いた非 ASCII の名前のファイルも名指すこと
 //   - directive-canary: 範囲を開く無効化の印を閉じなければ、そのファイルの残りが検査されないこと。
