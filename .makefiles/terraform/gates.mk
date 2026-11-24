@@ -32,6 +32,10 @@ TF_BIN ?= terraform
 TF = $(TF_ENV) $(TF_BIN)
 # 無い root を飛ばすのは、root の一部だけを持つ fixture で検査を走らせる canary だけである（-allow-missing-roots）。
 TF_GATES_ROOTS_FLAG ?=
+# validate の canary は実物の AWS Provider を使い、版は state-backend の reference の lock に揃える（plugin cache に
+# 無ければ取得する）。tf-gates validate が本走査の前に同じ起動の中で走らせる（ADR-0702 決定25）。
+TF_VALIDATE_CANARY_DIR = tmp/tf-validate-canary
+TF_VALIDATE_CANARY_FLAGS = -canary-data "$(abspath $(TF_VALIDATE_CANARY_DIR))/data" -canary-work "$(TF_VALIDATE_CANARY_DIR)/work" -canary-reference usecases/state-backend/reference
 TF_GATES = $(call RUN_SCRIPT_HOST,tf-gates,$(1) -base "$(TF_BASE)" $(TF_GATES_ROOTS_FLAG) $(2) $(TF_ROOTS))
 
 .PHONY: tf-fmt ## Terraform の書式を整える
@@ -51,7 +55,7 @@ tf-init:
 
 .PHONY: tf-validate ## Terraform の構成を検査し、エラーと抑止されない警告で落とす（provider の取得を伴う）
 tf-validate: tf-init
-	@$(call TF_GATES,validate,-data "$(TF_GATES_DATA)" -out "$(TF_VALIDATE_OUT)")
+	@$(call TF_GATES,validate,-data "$(TF_GATES_DATA)" -out "$(TF_VALIDATE_OUT)" $(TF_VALIDATE_CANARY_FLAGS))
 	@$(call RUN_SCRIPT,tf-gates,result -base $(TF_BASE) -manifest $(TF_VALIDATE_OUT)/manifest.tsv -ignore $(TF_VALIDATE_IGNORE))
 
 .PHONY: tf-test ## terraform test を実行（*.tftest.hcl を持つディレクトリ）
@@ -67,10 +71,3 @@ tf-lint: tool-cooldown-check
 tf-no-targets:
 	@$(call TF_GATES,none) >/dev/null 2>&1
 
-# 実物の AWS Provider の版は state-backend の reference の lock に揃え、plugin cache に無ければ取得する。
-TF_VALIDATE_CANARY_DIR = tmp/tf-validate-canary
-
-.PHONY: tf-validate-canary ## tf-validate が AWS Provider の非推奨の引数で落ち、宣言に当たる警告と非推奨の無い構成で通ることを検査
-tf-validate-canary:
-	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
-	@$(call RUN_SCRIPT_HOST,tf-gates,validate-canary -data "$(abspath $(TF_VALIDATE_CANARY_DIR))/data" -work "$(TF_VALIDATE_CANARY_DIR)/work" -reference usecases/state-backend/reference)

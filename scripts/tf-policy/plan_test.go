@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const planOK = `{"@level":"info","type":"test_plan","test_plan":{"format_version":"1.2","provider_format_version":"1.0","provider_schemas":{"x":{}},"resource_changes":[]}}` + "\n"
@@ -120,30 +123,59 @@ func Test_planRoots(t *testing.T) {
 	})
 }
 
+// canaryFlags は、plan の canary の引数です。
+var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
+
+// passCanary は、引数を記録して成功する canary です。
+func passCanary(got *[]string) canaryFunc {
+	return func(args []string, _ io.Writer, _ toolFunc) error {
+		*got = args
+
+		return nil
+	}
+}
+
 func Test_runPlan(t *testing.T) {
 	t.Parallel()
 
-	t.Run("reference の root で plan を起動する", func(t *testing.T) {
+	t.Run("canary を本走査の前に走らせ、reference の root で plan を起動する", func(t *testing.T) {
 		t.Parallel()
 		base := tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": "", "usecases/a/reference/plan.out": planOK})
 		tool, calls := fakeTool(t)
 		out := filepath.Join(t.TempDir(), "run")
-		require.NoError(t, runPlan([]string{"-base", base, "-data", "/d", "-out", out}, &bytes.Buffer{}, tool))
+		var canaryArgs []string
+		require.NoError(t, runPlan(append([]string{"-base", base, "-data", "/d", "-out", out}, canaryFlags...), &bytes.Buffer{}, tool, passCanary(&canaryArgs)))
+		assert.Equal(t, []string{"-data", "/cd", "-work", "cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}, canaryArgs)
 		assert.Len(t, calls(), 1)
+	})
+
+	t.Run("canary が落ちれば本走査を行わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": ""})
+		tool, calls := fakeTool(t)
+		fail := func([]string, io.Writer, toolFunc) error { return xerrors.Wrap(errCanary, "x") }
+		err := runPlan(append([]string{"-base", base, "-data", "/d", "-out", t.TempDir()}, canaryFlags...), &bytes.Buffer{}, tool, fail)
+		require.ErrorIs(t, err, errCanary)
+		assert.Contains(t, err.Error(), "canary が落ちたので、本走査を行いません")
+		assert.Empty(t, calls())
 	})
 
 	t.Run("root が0件なら起動せずに errNoInput", func(t *testing.T) {
 		t.Parallel()
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", tree(t, map[string]string{"x": ""}), "-data", "/d", "-out", t.TempDir()}, &bytes.Buffer{}, tool), errNoInput)
+		var canaryArgs []string
+		require.ErrorIs(t, runPlan(append([]string{"-base", tree(t, map[string]string{"x": ""}), "-data", "/d", "-out", t.TempDir()}, canaryFlags...), &bytes.Buffer{}, tool, passCanary(&canaryArgs)), errNoInput)
 		assert.Empty(t, calls())
 	})
 
-	t.Run("引数の誤りは errUsage", func(t *testing.T) {
+	t.Run("引数の誤りは、canary も本走査も起動せずに errUsage", func(t *testing.T) {
 		t.Parallel()
-		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "rel", "-out", "o"}, &bytes.Buffer{}, tool), errUsage)
-		require.ErrorIs(t, runPlan([]string{"-data", "/d", "-out", "o"}, &bytes.Buffer{}, tool), errUsage)
+		tool, calls := fakeTool(t)
+		var canaryArgs []string
+		require.ErrorIs(t, runPlan(append([]string{"-base", ".", "-data", "rel", "-out", "o"}, canaryFlags...), &bytes.Buffer{}, tool, passCanary(&canaryArgs)), errUsage)
+		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "/d", "-out", "o"}, &bytes.Buffer{}, tool, passCanary(&canaryArgs)), errUsage)
+		assert.Nil(t, canaryArgs)
+		assert.Empty(t, calls())
 	})
 }
 
