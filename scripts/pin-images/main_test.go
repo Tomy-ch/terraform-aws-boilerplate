@@ -92,18 +92,17 @@ func useDockerStub(t *testing.T, body string) {
 }
 
 // coveringHook は scannedPatterns をすべて覆う pin-images-check の項目を持つ hook の設定。
-const coveringHook = `pre-commit:
-  commands:
-    pin-images-check:
-      glob:
-        - "docker/*/Dockerfile"
-        - "docker-compose*.yaml"
-        - ".github/workflows/*.{yml,yaml}"
-        - ".github/actions/**/action.{yml,yaml}"
-        - "docker/images-pin.toml"
-        - ".lefthook.yaml"
-      run: make pin-images-check
-`
+const coveringHook = "pre-commit:\n" +
+	"  commands:\n" +
+	"    pin-images-check:\n" +
+	"      glob:\n" +
+	"        - \"docker/*/Dockerfile\"\n" +
+	"        - \"docker-compose*.yaml\"\n" +
+	"        - \".github/workflows/*.{yml,yaml}\"\n" +
+	"        - \".github/actions/**/action.{yml,yaml}\"\n" +
+	"        - \"docker/images-pin.toml\"\n" +
+	"        - \".lefthook.yaml\"\n" +
+	"      run: make pin-images-check\n"
 
 // writeHook は root に hook の設定を書く。
 func writeHook(t *testing.T, root, body string) {
