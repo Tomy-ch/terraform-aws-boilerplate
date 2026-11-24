@@ -41,7 +41,7 @@ resource "aws_s3_bucket_acl" "canary" {
 // runCheckov は、走査の root を <base>/tmp/checkov/work/src へ写し、canary が CKV2_AWS_65 で落ちることを確かめてから
 // 本走査を起動します。走査した resource が0件か、解釈できなかったファイルがあれば、所見の有無に依らず失敗です ——
 // Checkov は解釈できないファイルを飛ばして終了コードを変えません。
-func runCheckov(args []string, log io.Writer, tool toolFunc) error {
+func runCheckov(args []string, log io.Writer, r runner) error {
 	s, err := parseScan("checkov", args, log, nil)
 	if err != nil {
 		return err
@@ -53,11 +53,11 @@ func runCheckov(args []string, log io.Writer, tool toolFunc) error {
 	if _, err := stageTerraform(s.base, s.roots, filepath.Join(dir, "work", "src")); err != nil {
 		return err
 	}
-	image, err := lookupImage(tool, checkovTool.imageStep)
+	image, err := lookupImage(r, checkovTool.imageStep)
 	if err != nil {
 		return err
 	}
-	err = runCanary("checkov の canary", filepath.Join(s.base, "tmp", "checkov-canary"), checkovCanary, image, checkovTool, tool, log,
+	err = runCanary("checkov の canary", filepath.Join(s.base, "tmp", "checkov-canary"), checkovCanary, image, checkovTool, r, log,
 		func(rc int, out string) error {
 			return judgeCheckovCanary(rc, filepath.Join(out, "results_json.json"))
 		}, nil)
@@ -66,7 +66,7 @@ func runCheckov(args []string, log io.Writer, tool toolFunc) error {
 	}
 	fmt.Fprintln(log, "✅ checkov の canary: ACL を有効にした構成を "+checkovCanaryID+" で検出しました")
 
-	rc, err := runImage(dir, image, checkovTool, tool, log)
+	rc, err := runImage(dir, image, checkovTool, r, log)
 	if err != nil {
 		return err
 	}

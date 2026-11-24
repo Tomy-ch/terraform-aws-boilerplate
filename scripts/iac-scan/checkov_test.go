@@ -20,7 +20,7 @@ const (
 func Test_runCheckov(t *testing.T) {
 	t.Parallel()
 
-	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, toolFunc, string) {
+	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, runner, string) {
 		t.Helper()
 		f, tool := newFake(t)
 		f.scenario("checkov-canary", 1, "", map[string]string{"results_json.json": checkovCanaryJSON})
@@ -53,6 +53,10 @@ func Test_runCheckov(t *testing.T) {
 		assert.Equal(t, composeServiceSpec{
 			Image:       testImage,
 			NetworkMode: "none",
+			CapDrop:     []string{"ALL"},
+			CapAdd:      []string{"DAC_READ_SEARCH"},
+			SecurityOpt: []string{"no-new-privileges:true"},
+			PidsLimit:   1024,
 			Command: []string{
 				"-d", "/work/src", "--framework", "terraform", "--skip-download", "--compact", "--quiet",
 				"-o", "cli", "-o", "json", "-o", "sarif",
@@ -84,7 +88,7 @@ func Test_runCheckov(t *testing.T) {
 		f.scenario("checkov-canary", 0, "", map[string]string{"results_json.json": checkovCleanJSON})
 		var log bytes.Buffer
 		require.ErrorIs(t, runCheckov(args(base), &log, tool), errCanary)
-		assert.NotContains(t, f.calls(), "checkov up")
+		assert.Equal(t, append([]string{"iac-scan image-checkov"}, cycle("checkov-canary")...), f.calls())
 		assert.Contains(t, log.String(), "--- checkov の canary の出力:")
 	})
 
@@ -111,6 +115,29 @@ func Test_runCheckov(t *testing.T) {
 			require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), c.want)
 		})
 	}
+
+	t.Run("本走査の docker が落ちれば errDocker", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, checkovCleanJSON)
+		f.failIn(stepCreate, "checkov")
+		require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errDocker)
+		calls := f.calls()
+		assert.Equal(t, []string{"checkov create", "checkov down"}, calls[len(calls)-2:])
+	})
+
+	t.Run("本走査の SARIF が壊れていれば errResult", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, checkovCleanJSON)
+		f.write("scenario/checkov/out/results_sarif.sarif", "not json")
+		require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errResult)
+	})
+
+	t.Run("本走査の SARIF が無ければ errResult", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, checkovCleanJSON)
+		require.NoError(t, os.Remove(filepath.Join(f.dir, "scenario", "checkov", "out", "results_sarif.sarif")))
+		require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errResult)
+	})
 
 	t.Run("結果が無ければ errResult", func(t *testing.T) {
 		t.Parallel()

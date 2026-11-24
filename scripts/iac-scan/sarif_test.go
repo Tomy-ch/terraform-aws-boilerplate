@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 func Test_normalizeSARIF(t *testing.T) {
@@ -53,11 +55,38 @@ func Test_normalizeSARIF(t *testing.T) {
 		assert.JSONEq(t, `{"runs":[{"tool":{}},{"results":null}]}`, string(raw))
 	})
 
-	t.Run("ファイルが無ければ何もしない", func(t *testing.T) {
+	t.Run("ファイルが無ければ errResult", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		require.NoError(t, normalizeSARIF(filepath.Join(dir, "none.sarif")))
+		require.ErrorIs(t, normalizeSARIF(filepath.Join(dir, "none.sarif")), errResult)
 		assert.NoFileExists(t, filepath.Join(dir, "none.sarif"))
+	})
+
+	t.Run("symlink は辿らずに errResult で、指す先を書き換えない", func(t *testing.T) {
+		t.Parallel()
+		in := `{"runs":[{"results":[{"suppressions":[{"kind":"inSource"}]}]}]}`
+		dir := tree(t, map[string]string{"real.sarif": in})
+		p := filepath.Join(dir, "r.sarif")
+		require.NoError(t, os.Symlink("real.sarif", p))
+		require.ErrorIs(t, normalizeSARIF(p), errResult)
+		raw, err := os.ReadFile(filepath.Join(dir, "real.sarif"))
+		require.NoError(t, err)
+		assert.Equal(t, in, string(raw))
+	})
+
+	t.Run("書き戻せなければ errOutput で、ファイルを書き換えない", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "親ディレクトリを読み取り専用にして書き込みを落とす")
+		in := `{"runs":[{"results":[{"suppressions":[{"kind":"inSource"}]}]}]}`
+		dir := tree(t, map[string]string{"out/r.sarif": in})
+		out := filepath.Join(dir, "out")
+		require.NoError(t, os.Chmod(out, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(out, 0o700) })
+		p := filepath.Join(out, "r.sarif")
+		require.ErrorIs(t, normalizeSARIF(p), errOutput)
+		raw, err := os.ReadFile(p)
+		require.NoError(t, err)
+		assert.Equal(t, in, string(raw))
 	})
 
 	for name, in := range map[string]string{
@@ -120,10 +149,10 @@ func Test_unsuppressed(t *testing.T) {
 		"object でない要素":       []any{"x"},
 		"配列でない suppressions": []any{map[string]any{"suppressions": "x"}},
 	} {
-		t.Run(name+"はエラー", func(t *testing.T) {
+		t.Run(name+"は errResult", func(t *testing.T) {
 			t.Parallel()
 			_, err := unsuppressed(in)
-			require.Error(t, err)
+			require.ErrorIs(t, err, errResult)
 		})
 	}
 }
@@ -159,9 +188,9 @@ func Test_stripStagedPrefix(t *testing.T) {
 		assert.Equal(t, map[string]any{"index": 0}, v["artifactLocation"])
 	})
 
-	t.Run("文字列でない uri と object でない artifactLocation はエラー", func(t *testing.T) {
+	t.Run("文字列でない uri と object でない artifactLocation は errResult", func(t *testing.T) {
 		t.Parallel()
-		require.Error(t, stripStagedPrefix([]any{map[string]any{"artifactLocation": map[string]any{"uri": 1}}}))
-		require.Error(t, stripStagedPrefix(map[string]any{"artifactLocation": nil}))
+		require.ErrorIs(t, stripStagedPrefix([]any{map[string]any{"artifactLocation": map[string]any{"uri": 1}}}), errResult)
+		require.ErrorIs(t, stripStagedPrefix(map[string]any{"artifactLocation": nil}), errResult)
 	})
 }

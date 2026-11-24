@@ -3,9 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"regexp"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
@@ -18,14 +15,12 @@ var stagedPrefix = regexp.MustCompile(`^(\.\./)*/?work/src/`)
 // normalizeSARIF は、コンテナから取り出した SARIF を code scanning が読める形に書き直します。source の中で抑止した
 // result（空でない suppressions を持つもの）を落とし —— code scanning は suppressions を見ずに open の alert として
 // 載せる ——、artifactLocation の uri から入力の置き場の前置きを外してリポジトリの相対パスへ戻します。
-// ファイルが無ければ何もしません。results が無いか null の run はそのままにします。
+// ファイルが無いか通常のファイルでなければ失敗します（本走査は SARIF を必ず残す）。results が無いか null の run は
+// そのままにします。
 func normalizeSARIF(p string) error {
-	raw, err := os.ReadFile(filepath.Clean(p))
-	if xerrors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
+	raw, err := readResult(p)
 	if err != nil {
-		return xerrors.Wrapf(errResult, "%s: %v", p, err)
+		return err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -44,14 +39,14 @@ func normalizeSARIF(p string) error {
 		}
 		kept, err := unsuppressed(run["results"])
 		if err != nil {
-			return xerrors.Wrapf(errResult, "%s の runs[%d]: %v", p, i, err)
+			return xerrors.Wrapf(err, "%s の runs[%d]", p, i)
 		}
 		if kept != nil {
 			run["results"] = kept
 		}
 	}
 	if err := stripStagedPrefix(doc); err != nil {
-		return xerrors.Wrapf(errResult, "%s: %v", p, err)
+		return xerrors.Wrapf(err, "%s", p)
 	}
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)
@@ -61,7 +56,7 @@ func normalizeSARIF(p string) error {
 		return xerrors.Wrapf(errResult, "%s の書き出し: %v", p, err)
 	}
 	if err := atomicwrite.Apply(map[string]string{p: out.String()}, 0o600); err != nil {
-		return xerrors.Wrapf(err, "%s の書き込み", p)
+		return xerrors.Wrapf(errOutput, "%s の書き込み: %v", p, err)
 	}
 
 	return nil
@@ -75,13 +70,13 @@ func unsuppressed(results any) ([]any, error) {
 	}
 	list, ok := results.([]any)
 	if !ok {
-		return nil, xerrors.New("results が配列ではありません")
+		return nil, xerrors.Wrap(errResult, "results が配列ではありません")
 	}
 	kept := make([]any, 0, len(list))
 	for i, r := range list {
 		res, ok := r.(map[string]any)
 		if !ok {
-			return nil, xerrors.Newf("results[%d] が object ではありません", i)
+			return nil, xerrors.Wrapf(errResult, "results[%d] が object ではありません", i)
 		}
 		switch s := res["suppressions"].(type) {
 		case nil:
@@ -90,7 +85,7 @@ func unsuppressed(results any) ([]any, error) {
 				continue
 			}
 		default:
-			return nil, xerrors.Newf("results[%d] の suppressions が配列ではありません", i)
+			return nil, xerrors.Wrapf(errResult, "results[%d] の suppressions が配列ではありません", i)
 		}
 		kept = append(kept, res)
 	}
@@ -106,14 +101,14 @@ func stripStagedPrefix(v any) error {
 		if l, has := x["artifactLocation"]; has {
 			loc, ok := l.(map[string]any)
 			if !ok {
-				return xerrors.Newf("artifactLocation が object ではありません（%v）", l)
+				return xerrors.Wrapf(errResult, "artifactLocation が object ではありません（%v）", l)
 			}
 			switch uri := loc["uri"].(type) {
 			case nil:
 			case string:
 				loc["uri"] = stagedPrefix.ReplaceAllString(uri, "")
 			default:
-				return xerrors.Newf("artifactLocation の uri が文字列ではありません（%v）", uri)
+				return xerrors.Wrapf(errResult, "artifactLocation の uri が文字列ではありません（%v）", uri)
 			}
 		}
 		for _, c := range x {

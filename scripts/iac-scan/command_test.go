@@ -10,25 +10,36 @@ import (
 func Test_trivyStep(t *testing.T) {
 	t.Parallel()
 
-	t.Run("一覧の値なら段の名前を返す", func(t *testing.T) {
-		t.Parallel()
-		got, err := trivyStep("CRITICAL,HIGH,MEDIUM", "sarif")
-		require.NoError(t, err)
-		assert.Equal(t, "trivy-config/CRITICAL,HIGH,MEDIUM/sarif", got)
-	})
+	for name, c := range map[string]struct {
+		severity, format, scan, convert string
+	}{
+		"json は変換しない": {"CRITICAL,HIGH,MEDIUM", "json", "trivy-config/CRITICAL,HIGH,MEDIUM", ""},
+		"sarif は変換する": {"CRITICAL,HIGH,MEDIUM,LOW", "sarif", "trivy-config/CRITICAL,HIGH,MEDIUM,LOW", "trivy-convert/sarif"},
+		"table は変換する": {"CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "table", "trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "trivy-convert/table"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			scan, convert, err := trivyStep(c.severity, c.format)
+			require.NoError(t, err)
+			assert.Equal(t, c.scan, scan)
+			assert.Equal(t, c.convert, convert)
+		})
+	}
 
 	for name, c := range map[string][2]string{
-		"一覧に無い閾値":    {"HIGH,MEDIUM", "json"},
-		"並びの違う閾値":    {"MEDIUM,HIGH,CRITICAL", "json"},
-		"小文字の閾値":     {"critical", "json"},
-		"空の閾値":       {"", "json"},
-		"一覧に無い出力の形":  {"CRITICAL", "cyclonedx"},
-		"空の出力の形":     {"CRITICAL", ""},
-		"引数を足そうとする値": {"CRITICAL --exit-code 0", "json"},
+		"MEDIUM を含まない閾値": {"CRITICAL,HIGH", "json"},
+		"CRITICAL だけの閾値": {"CRITICAL", "json"},
+		"一覧に無い閾値":        {"HIGH,MEDIUM", "json"},
+		"並びの違う閾値":        {"MEDIUM,HIGH,CRITICAL", "json"},
+		"小文字の閾値":         {"critical,high,medium", "json"},
+		"空の閾値":           {"", "json"},
+		"一覧に無い出力の形":      {"CRITICAL,HIGH,MEDIUM", "cyclonedx"},
+		"空の出力の形":         {"CRITICAL,HIGH,MEDIUM", ""},
+		"引数を足そうとする値":     {"CRITICAL,HIGH,MEDIUM --exit-code 0", "json"},
 	} {
 		t.Run(name+"は errUsage", func(t *testing.T) {
 			t.Parallel()
-			_, err := trivyStep(c[0], c[1])
+			_, _, err := trivyStep(c[0], c[1])
 			require.ErrorIs(t, err, errUsage)
 		})
 	}
@@ -37,6 +48,12 @@ func Test_trivyStep(t *testing.T) {
 func Test_command(t *testing.T) {
 	t.Parallel()
 
+	scan := func(sev string) []string {
+		return []string{
+			"trivy", "config", "--severity", sev, "--ignorefile", ".trivyignore.yaml", "--exit-code", "1",
+			"--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".",
+		}
+	}
 	want := map[string][]string{
 		stepImageCheckov: {"docker", "compose", "config", "--images", "checkov_runner"},
 		stepImageKics:    {"docker", "compose", "config", "--images", "kics_runner"},
@@ -47,19 +64,18 @@ func Test_command(t *testing.T) {
 			"docker", "compose", "up", "--no-recreate", "--no-build", "--pull", "never",
 			"--no-log-prefix", "--exit-code-from", "scan", "scan",
 		},
-		stepCopyOut:    {"docker", "compose", "cp", "scan:/tmp/out/.", "out"},
-		stepDown:       {"docker", "compose", "down"},
-		"no-such-step": {"false"},
-	}
-	for _, sev := range trivySeverities {
-		for _, format := range trivyFormats {
-			step, err := trivyStep(sev, format)
-			require.NoError(t, err)
-			want[step] = []string{
-				"trivy", "config", "--severity", sev, "--ignorefile", ".trivyignore.yaml", "--exit-code", "1",
-				"--skip-version-check", "--skip-dirs", "tmp", "--format", format, ".",
-			}
-		}
+		stepCopyOut:                             {"docker", "compose", "cp", "scan:/tmp/out/.", "out"},
+		stepDown:                                {"docker", "compose", "down"},
+		"trivy-config/CRITICAL,HIGH,MEDIUM":     scan("CRITICAL,HIGH,MEDIUM"),
+		"trivy-config/CRITICAL,HIGH,MEDIUM,LOW": scan("CRITICAL,HIGH,MEDIUM,LOW"),
+		"trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN": scan("CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"),
+		"trivy-convert/table": {
+			"trivy", "convert", "--format", "table", "--scanners", "misconfig", "--ignorefile", "", "result.json",
+		},
+		"trivy-convert/sarif":        {"trivy", "convert", "--format", "sarif", "--ignorefile", "", "result.json"},
+		"trivy-config/CRITICAL,HIGH": {"false"},
+		"trivy-convert/json":         {"false"},
+		"no-such-step":               {"false"},
 	}
 	for step, args := range want {
 		t.Run(step, func(t *testing.T) {

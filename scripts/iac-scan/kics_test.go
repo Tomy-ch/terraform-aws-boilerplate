@@ -34,7 +34,7 @@ func Test_kicsTool(t *testing.T) {
 func Test_runKics(t *testing.T) {
 	t.Parallel()
 
-	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, toolFunc, string) {
+	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, runner, string) {
 		t.Helper()
 		f, tool := newFake(t)
 		f.scenario("kics-canary", 50, "", map[string]string{"results.json": kicsCanaryJSON})
@@ -66,7 +66,10 @@ func Test_runKics(t *testing.T) {
 		main := serviceOf(t, f.composeOf("kics"))
 		assert.Equal(t, main, serviceOf(t, f.composeOf("kics-canary")))
 		assert.Equal(t, main, serviceOf(t, f.composeOf("kics-canary-threshold")))
-		assert.Equal(t, kicsTool(kicsAll).command, main.Command)
+		assert.Equal(t, []string{
+			"scan", "-p", "/work/src", "--type", "Terraform", "--disable-secrets", "--no-progress", "--ci",
+			"-o", "/tmp/out", "--report-formats", "json,sarif", "--fail-on", "critical,high,medium,low,info",
+		}, main.Command)
 		assert.Equal(t, map[string]string{"DISABLE_CRASH_REPORT": "0"}, main.Environment)
 		assert.Equal(t, "none", main.NetworkMode)
 	})
@@ -82,8 +85,7 @@ func Test_runKics(t *testing.T) {
 		f, tool, base := setup(t, 0, kicsCleanJSON)
 		f.scenario("kics-canary", 0, "", map[string]string{"results.json": kicsCleanJSON})
 		require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errCanary)
-		assert.NotContains(t, f.calls(), "kics up")
-		assert.NotContains(t, f.calls(), "kics-canary-threshold up")
+		assert.Equal(t, append([]string{"iac-scan image-kics"}, cycle("kics-canary")...), f.calls())
 	})
 
 	t.Run("閾値の canary が 20 で落ちなければ本走査を起動せずに errCanary", func(t *testing.T) {
@@ -91,8 +93,34 @@ func Test_runKics(t *testing.T) {
 		f, tool, base := setup(t, 0, kicsCleanJSON)
 		f.scenario("kics-canary-threshold", 0, "", map[string]string{"results.json": kicsThresholdJSON})
 		require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errCanary)
-		assert.NotContains(t, f.calls(), "kics up")
+		want := append([]string{"iac-scan image-kics"}, cycle("kics-canary")...)
+		assert.Equal(t, append(want, cycle("kics-canary-threshold")...), f.calls())
 	})
+
+	t.Run("本走査の docker が落ちれば errDocker", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, kicsCleanJSON)
+		f.failIn(stepCreate, "kics")
+		require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errDocker)
+		calls := f.calls()
+		assert.Equal(t, []string{"kics create", "kics down"}, calls[len(calls)-2:])
+	})
+
+	t.Run("本走査の SARIF が壊れていれば errResult", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, kicsCleanJSON)
+		f.write("scenario/kics/out/results.sarif", `{"runs":{}}`)
+		require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errResult)
+	})
+
+	for name, rel := range map[string]string{"SARIF": "results.sarif", "results.json": "results.json"} {
+		t.Run("本走査の "+name+" が無ければ errResult", func(t *testing.T) {
+			t.Parallel()
+			f, tool, base := setup(t, 0, kicsCleanJSON)
+			require.NoError(t, os.Remove(filepath.Join(f.dir, "scenario", "kics", "out", rel)))
+			require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errResult)
+		})
+	}
 
 	for name, c := range map[string]struct {
 		json string
@@ -102,6 +130,7 @@ func Test_runKics(t *testing.T) {
 		"写した .tf に届かない":   {`{"files_scanned":2,"files_parsed":2,"queries_failed_to_execute":0}`, errCoverage},
 		"解釈できなかったファイルがある": {`{"files_scanned":3,"files_parsed":2,"queries_failed_to_execute":0}`, errCoverage},
 		"欄が無い":            {`{"files_scanned":3}`, errResult},
+		"結果が JSON でない":    {`not json`, errResult},
 	} {
 		t.Run(name+"なら、所見の有無に依らず失敗する", func(t *testing.T) {
 			t.Parallel()
@@ -117,10 +146,13 @@ func Test_runKics(t *testing.T) {
 		require.NoError(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool))
 		raw, err := os.ReadFile(filepath.Join(base, "tmp", "kics", "out", "results.sarif"))
 		require.NoError(t, err)
-		assert.Contains(t, string(raw), `"uri": "env/c/main.tf"`)
+		assert.JSONEq(t, `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"env/c/main.tf"}}}]}]}]}`, string(raw))
 	})
 
-	for _, failOn := range []string{"", "info", "high,critical", "critical,high,medium,low,info,trace", "CRITICAL"} {
+	for _, failOn := range []string{
+		"", "info", "high,critical", "critical,high,medium,low,info,trace", "CRITICAL",
+		"critical", "critical,high", "critical,high,medium", "critical,high,medium,low",
+	} {
 		t.Run("一覧に無い閾値 "+failOn+" は docker を起動せずに errUsage", func(t *testing.T) {
 			t.Parallel()
 			f, tool, base := setup(t, 0, kicsCleanJSON)
@@ -129,12 +161,9 @@ func Test_runKics(t *testing.T) {
 		})
 	}
 
-	t.Run("一覧のどの閾値も受ける", func(t *testing.T) {
+	t.Run("受ける閾値は INFO を含むものだけ", func(t *testing.T) {
 		t.Parallel()
-		for _, failOn := range kicsFailOn {
-			_, tool, base := setup(t, 0, kicsCleanJSON)
-			require.NoError(t, runKics(args(base, failOn), &bytes.Buffer{}, tool), failOn)
-		}
+		assert.Equal(t, []string{"critical,high,medium,low,info"}, kicsFailOn)
 	})
 
 	t.Run("root が無ければ docker を起動せずに errMissingRoot", func(t *testing.T) {
@@ -149,21 +178,23 @@ func Test_judgeKics(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		json string
-		want int
-		err  error
+		json    string
+		want    int
+		scanned int64
+		err     error
 	}{
-		"走査が写した数と等しければ通る":    {`{"files_scanned":3,"files_parsed":3,"queries_failed_to_execute":0}`, 3, nil},
-		"走査が写した数より多くても通る":    {`{"files_scanned":4,"files_parsed":4,"queries_failed_to_execute":0}`, 3, nil},
-		"走査が写した数の1つ手前なら落ちる":  {`{"files_scanned":2,"files_parsed":2,"queries_failed_to_execute":0}`, 3, errCoverage},
-		"0件は errNoTargets":   {`{"files_scanned":0,"files_parsed":0,"queries_failed_to_execute":0}`, 0, errNoTargets},
-		"解釈できなかったファイル":       {`{"files_scanned":3,"files_parsed":2,"queries_failed_to_execute":0}`, 3, errCoverage},
-		"実行できなかった query":     {`{"files_scanned":3,"files_parsed":3,"queries_failed_to_execute":1}`, 3, errCoverage},
-		"解釈が走査より多い":          {`{"files_scanned":3,"files_parsed":4,"queries_failed_to_execute":0}`, 3, errCoverage},
-		"files_scanned が無い":  {`{"files_parsed":3,"queries_failed_to_execute":0}`, 3, errResult},
-		"files_parsed が文字列":  {`{"files_scanned":3,"files_parsed":"3","queries_failed_to_execute":0}`, 3, errResult},
-		"queries_failed が無い": {`{"files_scanned":3,"files_parsed":3}`, 3, errResult},
-		"object でない":         {`[]`, 3, errResult},
+		"走査が写した数と等しければ通る":      {`{"files_scanned":3,"files_parsed":3,"queries_failed_to_execute":0}`, 3, 3, nil},
+		"走査が写した数より多くても通る":      {`{"files_scanned":4,"files_parsed":4,"queries_failed_to_execute":0}`, 3, 4, nil},
+		"解釈の超過と実行の失敗が相殺しても落ちる": {`{"files_scanned":3,"files_parsed":4,"queries_failed_to_execute":1}`, 3, 0, errCoverage},
+		"走査が写した数の1つ手前なら落ちる":    {`{"files_scanned":2,"files_parsed":2,"queries_failed_to_execute":0}`, 3, 0, errCoverage},
+		"0件は errNoTargets":     {`{"files_scanned":0,"files_parsed":0,"queries_failed_to_execute":0}`, 0, 0, errNoTargets},
+		"解釈できなかったファイル":         {`{"files_scanned":3,"files_parsed":2,"queries_failed_to_execute":0}`, 3, 0, errCoverage},
+		"実行できなかった query":       {`{"files_scanned":3,"files_parsed":3,"queries_failed_to_execute":1}`, 3, 0, errCoverage},
+		"解釈が走査より多い":            {`{"files_scanned":3,"files_parsed":4,"queries_failed_to_execute":0}`, 3, 0, errCoverage},
+		"files_scanned が無い":    {`{"files_parsed":3,"queries_failed_to_execute":0}`, 3, 0, errResult},
+		"files_parsed が文字列":    {`{"files_scanned":3,"files_parsed":"3","queries_failed_to_execute":0}`, 3, 0, errResult},
+		"queries_failed が無い":   {`{"files_scanned":3,"files_parsed":3}`, 3, 0, errResult},
+		"object でない":           {`[]`, 3, 0, errResult},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -174,7 +205,7 @@ func Test_judgeKics(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Positive(t, n)
+			assert.Equal(t, c.scanned, n)
 		})
 	}
 }

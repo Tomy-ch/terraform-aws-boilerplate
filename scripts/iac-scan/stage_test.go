@@ -50,6 +50,39 @@ func Test_parseScan(t *testing.T) {
 	})
 }
 
+func Test_readResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("通常のファイルを読む", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"a.json": "{}"})
+		got, err := readResult(filepath.Join(dir, "a.json"))
+		require.NoError(t, err)
+		assert.Equal(t, "{}", string(got))
+	})
+
+	t.Run("無いファイルは errResult", func(t *testing.T) {
+		t.Parallel()
+		_, err := readResult(filepath.Join(t.TempDir(), "none.json"))
+		require.ErrorIs(t, err, errResult)
+	})
+
+	t.Run("symlink は辿らずに errResult", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"real.json": "{}"})
+		require.NoError(t, os.Symlink("real.json", filepath.Join(dir, "a.json")))
+		_, err := readResult(filepath.Join(dir, "a.json"))
+		require.ErrorIs(t, err, errResult)
+		assert.Contains(t, err.Error(), "通常のファイルではありません")
+	})
+
+	t.Run("ディレクトリは errResult", func(t *testing.T) {
+		t.Parallel()
+		_, err := readResult(t.TempDir())
+		require.ErrorIs(t, err, errResult)
+	})
+}
+
 func Test_readJSON(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +110,14 @@ func Test_readJSON(t *testing.T) {
 	t.Run("空のファイルは errResult", func(t *testing.T) {
 		t.Parallel()
 		dir := tree(t, map[string]string{"a.json": ""})
+		_, err := readJSON(filepath.Join(dir, "a.json"))
+		require.ErrorIs(t, err, errResult)
+	})
+
+	t.Run("symlink は辿らずに errResult", func(t *testing.T) {
+		t.Parallel()
+		dir := tree(t, map[string]string{"real.json": "{}"})
+		require.NoError(t, os.Symlink("real.json", filepath.Join(dir, "a.json")))
 		_, err := readJSON(filepath.Join(dir, "a.json"))
 		require.ErrorIs(t, err, errResult)
 	})
@@ -109,6 +150,57 @@ func Test_intField(t *testing.T) {
 			require.ErrorIs(t, err, errResult)
 		})
 	}
+}
+
+func Test_checkRoots(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root を / 区切りに整えて返す", func(t *testing.T) {
+		t.Parallel()
+		base := tfTree(t)
+		got, err := checkRoots(base, []string{"usecases/", "modules/b/../b", "env"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"usecases", "modules/b", "env"}, got)
+	})
+
+	t.Run("前置きだけが一致する root は重ならない", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"env/a.tf": "", "envx/a.tf": ""})
+		got, err := checkRoots(base, []string{"env", "envx"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"env", "envx"}, got)
+	})
+
+	for name, roots := range map[string][]string{
+		"空":             {""},
+		"絶対パス":          {"/env"},
+		"親へ出る":          {"../env"},
+		"途中で親へ出る":       {"env/../../x"},
+		"base 自身":       {"."},
+		"戻って base 自身":   {"env/.."},
+		"同じ root":       {"env", "env"},
+		"同じ root の別の綴り": {"env", "env/"},
+		"先の root が後を含む": {"usecases", "usecases/a"},
+		"後の root が先を含む": {"usecases/a", "usecases"},
+	} {
+		t.Run(name+"は errUsage", func(t *testing.T) {
+			t.Parallel()
+			_, err := checkRoots(tfTree(t), roots)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+
+	t.Run("無い root は errMissingRoot", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkRoots(tfTree(t), []string{"env", "nothing"})
+		require.ErrorIs(t, err, errMissingRoot)
+	})
+
+	t.Run("ファイルの root は errMissingRoot", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkRoots(tree(t, map[string]string{"env": ""}), []string{"env"})
+		require.ErrorIs(t, err, errMissingRoot)
+	})
 }
 
 func Test_stageTerraform(t *testing.T) {
@@ -183,7 +275,7 @@ func Test_stageTerraform(t *testing.T) {
 		require.ErrorIs(t, err, errInput)
 	})
 
-	for name, root := range map[string]string{"空": "", "絶対パス": "/env", "親へ出る": "../env", "途中で親へ出る": "env/../../x"} {
+	for name, root := range map[string]string{"空": "", "絶対パス": "/env", "親へ出る": "../env", "途中で親へ出る": "env/../../x", "base 自身": "."} {
 		t.Run(name+"の root は errUsage", func(t *testing.T) {
 			t.Parallel()
 			base := tree(t, map[string]string{"env/a/main.tf": ""})
@@ -205,17 +297,17 @@ func Test_copyFile(t *testing.T) {
 		assert.Equal(t, "body", string(got))
 	})
 
-	t.Run("無い元はエラー", func(t *testing.T) {
+	t.Run("無い元は errInput", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		require.Error(t, copyFile(filepath.Join(dir, "a"), filepath.Join(dir, "b")))
+		require.ErrorIs(t, copyFile(filepath.Join(dir, "a"), filepath.Join(dir, "b")), errInput)
 		assert.NoFileExists(t, filepath.Join(dir, "b"))
 	})
 
-	t.Run("書けない先はエラー", func(t *testing.T) {
+	t.Run("書けない先は errInput", func(t *testing.T) {
 		t.Parallel()
 		dir := tree(t, map[string]string{"a": "body"})
-		require.Error(t, copyFile(filepath.Join(dir, "a"), filepath.Join(dir, "no", "b")))
+		require.ErrorIs(t, copyFile(filepath.Join(dir, "a"), filepath.Join(dir, "no", "b")), errInput)
 	})
 }
 

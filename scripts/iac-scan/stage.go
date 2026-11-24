@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -38,11 +39,28 @@ func parseScan(name string, args []string, w io.Writer, extra func(*flag.FlagSet
 	return s, nil
 }
 
-// readJSON は、p を JSON として読みます。数は json.Number のまま残します。
-func readJSON(p string) (any, error) {
+// readResult は、コンテナから取り出した結果 p を読みます。通常のファイルでなければ（symlink を含む）辿らずに失敗します。
+func readResult(p string) ([]byte, error) {
+	info, err := os.Lstat(p)
+	if err != nil {
+		return nil, xerrors.Wrapf(errResult, "%v", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, xerrors.Wrapf(errResult, "%s は通常のファイルではありません（%s）", p, info.Mode().Type())
+	}
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {
 		return nil, xerrors.Wrapf(errResult, "%v", err)
+	}
+
+	return raw, nil
+}
+
+// readJSON は、p を readResult で読み、JSON として解釈します。数は json.Number のまま残します。
+func readJSON(p string) (any, error) {
+	raw, err := readResult(p)
+	if err != nil {
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -67,23 +85,44 @@ func intField(m map[string]any, key string) (int64, error) {
 	return i, nil
 }
 
-// stageTerraform は、base の下の roots を dst へ同じ相対パスで写し、写したファイルの `/` 区切りの相対パスを返します。
-// 名前がちょうど `.terraform` のものは写しません（`.terraform.lock.hcl` は写す）。宣言した root が1つでも無いとき、
-// symlink か通常のファイルでないもの、読めないファイル、写したファイルが0件のときは成功させません（ADR-0702 決定13・14）。
-func stageTerraform(base string, roots []string, dst string) ([]string, error) {
-	var staged []string
+// checkRoots は、roots を base の下の `/` 区切りの相対パスに整えて返します。base の外か base 自身を指す root、
+// 重なる root（同じもの、一方が他方を含むもの）は使い方の誤り、ディレクトリとして無い root は errMissingRoot です。
+func checkRoots(base string, roots []string) ([]string, error) {
+	clean := make([]string, 0, len(roots))
 	for _, root := range roots {
-		if root == "" || filepath.IsAbs(root) || !filepath.IsLocal(root) {
-			return nil, xerrors.Wrapf(errUsage, "走査の root %q は base からの相対パスにする", root)
+		c := path.Clean(filepath.ToSlash(root))
+		if root == "" || filepath.IsAbs(root) || !filepath.IsLocal(root) || c == "." {
+			return nil, xerrors.Wrapf(errUsage, "走査の root %q は base の下の相対パスにする", root)
 		}
-		dir := filepath.Join(base, filepath.FromSlash(root))
-		info, err := os.Stat(dir)
+		for _, prev := range clean {
+			if c == prev || strings.HasPrefix(c, prev+"/") || strings.HasPrefix(prev, c+"/") {
+				return nil, xerrors.Wrapf(errUsage, "走査の root %q と %q が重なっています", prev, root)
+			}
+		}
+		info, err := os.Stat(filepath.Join(base, filepath.FromSlash(c)))
 		switch {
 		case err != nil:
 			return nil, xerrors.Wrapf(errMissingRoot, "%s: %v", root, err)
 		case !info.IsDir():
 			return nil, xerrors.Wrapf(errMissingRoot, "%s はディレクトリではありません", root)
 		}
+		clean = append(clean, c)
+	}
+
+	return clean, nil
+}
+
+// stageTerraform は、base の下の roots（checkRoots で確かめる）を dst へ同じ相対パスで写し、写したファイルの `/` 区切りの
+// 相対パスを返します。名前がちょうど `.terraform` のものは写しません（`.terraform.lock.hcl` は写す）。symlink か通常の
+// ファイルでないもの、読めないファイル、写したファイルが0件のときは成功させません（ADR-0702 決定13・14）。
+func stageTerraform(base string, roots []string, dst string) ([]string, error) {
+	roots, err := checkRoots(base, roots)
+	if err != nil {
+		return nil, err
+	}
+	var staged []string
+	for _, root := range roots {
+		dir := filepath.Join(base, filepath.FromSlash(root))
 		err = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -122,6 +161,11 @@ func stageTerraform(base string, roots []string, dst string) ([]string, error) {
 }
 
 func copyFile(src, dst string) (err error) {
+	defer func() {
+		if err != nil {
+			err = xerrors.Wrapf(errInput, "%s を %s へ写せません: %v", src, dst, err)
+		}
+	}()
 	in, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return err

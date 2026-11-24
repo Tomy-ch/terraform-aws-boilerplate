@@ -2,7 +2,7 @@
 // （ADR-0501 決定6）。サブコマンドは1つの走査器だけを起動し、入力の準備と番兵、canary、本走査、件数の突き合わせを
 // この順に行います。canary が期待どおりに落ちなければ、本走査を起動せずに失敗します（ADR-0702 決定13・15・25）。
 //
-//	iac-scan trivy-config [-base <dir>] -severity <値> [-format table|json|sarif]
+//	iac-scan trivy-config [-base <dir>] -severity <値> [-format table|json|sarif] <root>...
 //	iac-scan checkov [-base <dir>] <root>...
 //	iac-scan kics [-base <dir>] -fail-on <値> <root>...
 //	iac-scan semgrep [-base <dir>] -rules <tar.gz> -rules-sha256 <hex> <root>...
@@ -14,7 +14,7 @@
 // そこを作業ディレクトリにして docker compose で起動します。ホストのパスを mount せず、network も与えず、
 // 入力を複写で渡して結果（out/）を複写で取り出します（ADR-0503 決定7）。イメージは docker-compose.yaml の service から
 // 引きます。結果を取り出せなければ、道具が 0 で終わっていても失敗です。本走査の出力は stderr へ流し、canary の出力は
-// canary が落ちたときだけ stderr へ出します。stdout へ書くのは trivy-config の本走査の結果だけです。
+// canary が落ちたときだけ stderr へ出します。stdout へ書くのは trivy-config の本走査の結果（要求された形）だけです。
 //
 // 所見・canary の失敗・件数のずれ・結果の取り出しの失敗は終了コード 1、使い方・入力・対象が0件・docker の失敗は 2 です。
 package main
@@ -42,23 +42,23 @@ var (
 )
 
 func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout, os.Stderr, command), os.Stderr))
+	os.Exit(report(run(os.Args[1:], os.Stdout, os.Stderr, runner{tool: command, environ: os.Environ()}), os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer, tool toolFunc) error {
+func run(args []string, stdout, stderr io.Writer, r runner) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
 	}
 	rest := args[1:]
 	switch args[0] {
 	case "trivy-config":
-		return runTrivyConfig(rest, stdout, stderr, tool)
+		return runTrivyConfig(rest, stdout, stderr, r)
 	case "checkov":
-		return runCheckov(rest, stderr, tool)
+		return runCheckov(rest, stderr, r)
 	case "kics":
-		return runKics(rest, stderr, tool)
+		return runKics(rest, stderr, r)
 	case "semgrep":
-		return runSemgrep(rest, stderr, tool)
+		return runSemgrep(rest, stderr, r)
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}

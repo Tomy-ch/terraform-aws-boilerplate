@@ -11,12 +11,9 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// kicsFailOn は、KICS の閾値（`--fail-on`）として受ける値です。どれも、ある重大度とそれより重いものすべてを並べます。
+// kicsFailOn は、KICS の閾値（`--fail-on`）として受ける値です。閾値の canary は INFO の所見で落ちることを求めるので、
+// INFO を含む値だけを受けます。
 var kicsFailOn = []string{
-	"critical",
-	"critical,high",
-	"critical,high,medium",
-	"critical,high,medium,low",
 	"critical,high,medium,low,info",
 }
 
@@ -66,7 +63,7 @@ resource "aws_cloudwatch_log_group" "canary" {
 // INFO の所見だけで終了コード 20 になる）を確かめてから本走査を起動します。走査したファイルが0件か、写した .tf の数に
 // 届かないか、解釈できなかったファイルか実行できなかった query があれば、所見の有無に依らず失敗です —— KICS はそれらを
 // 終了コードに出しません。
-func runKics(args []string, log io.Writer, tool toolFunc) error {
+func runKics(args []string, log io.Writer, r runner) error {
 	var failOn string
 	s, err := parseScan("kics", args, log, func(f *flag.FlagSet) {
 		f.StringVar(&failOn, "fail-on", "", "閾値（"+strings.Join(kicsFailOn, " | ")+"）")
@@ -87,11 +84,11 @@ func runKics(args []string, log io.Writer, tool toolFunc) error {
 		return err
 	}
 	want := countSuffix(staged, ".tf")
-	image, err := lookupImage(tool, t.imageStep)
+	image, err := lookupImage(r, t.imageStep)
 	if err != nil {
 		return err
 	}
-	err = runCanary("kics の canary", filepath.Join(s.base, "tmp", "kics-canary"), kicsCanary, image, t, tool, log,
+	err = runCanary("kics の canary", filepath.Join(s.base, "tmp", "kics-canary"), kicsCanary, image, t, r, log,
 		func(rc int, out string) error {
 			return judgeKicsCanary(rc, filepath.Join(out, "results.json"), kicsCanaryID, 0)
 		}, nil)
@@ -99,7 +96,7 @@ func runKics(args []string, log io.Writer, tool toolFunc) error {
 		return err
 	}
 	fmt.Fprintln(log, "✅ kics の canary: Public Access Block を外した構成を検出しました")
-	err = runCanary("kics の閾値の canary", filepath.Join(s.base, "tmp", "kics-canary-threshold"), kicsThresholdCanary, image, t, tool, log,
+	err = runCanary("kics の閾値の canary", filepath.Join(s.base, "tmp", "kics-canary-threshold"), kicsThresholdCanary, image, t, r, log,
 		func(rc int, out string) error {
 			return judgeKicsCanary(rc, filepath.Join(out, "results.json"), kicsThresholdID, kicsThresholdRC)
 		}, nil)
@@ -108,7 +105,7 @@ func runKics(args []string, log io.Writer, tool toolFunc) error {
 	}
 	fmt.Fprintln(log, "✅ kics の閾値の canary: INFO の所見だけの構成で落ちました")
 
-	rc, err := runImage(dir, image, t, tool, log)
+	rc, err := runImage(dir, image, t, r, log)
 	if err != nil {
 		return err
 	}
@@ -127,8 +124,8 @@ func runKics(args []string, log io.Writer, tool toolFunc) error {
 	return nil
 }
 
-// judgeKics は、走査したファイルの数を返します。0件、want に届かない、(走査 − 解釈) + 実行できなかった query が0でない
-// ときは失敗です。
+// judgeKics は、走査したファイルの数を返します。0件、want に届かない、走査と解釈の数が違う、実行できなかった query が
+// あるときは失敗です。
 func judgeKics(p string, want int) (int64, error) {
 	v, err := readJSON(p)
 	if err != nil {
@@ -150,8 +147,10 @@ func judgeKics(p string, want int) (int64, error) {
 		return 0, xerrors.Wrap(errNoTargets, "kics: 走査したファイルが0件です")
 	case scanned < int64(want):
 		return 0, xerrors.Wrapf(errCoverage, "kics: 走査したファイル %d 件が、写した .tf の %d 件に届きません", scanned, want)
-	case (scanned-parsed)+failed != 0:
-		return 0, xerrors.Wrapf(errCoverage, "kics: 解釈できなかったファイルか実行できなかった query が %d 件あります", (scanned-parsed)+failed)
+	case parsed != scanned:
+		return 0, xerrors.Wrapf(errCoverage, "kics: 走査したファイル %d 件のうち、解釈したのは %d 件です", scanned, parsed)
+	case failed != 0:
+		return 0, xerrors.Wrapf(errCoverage, "kics: 実行できなかった query が %d 件あります", failed)
 	}
 
 	return scanned, nil

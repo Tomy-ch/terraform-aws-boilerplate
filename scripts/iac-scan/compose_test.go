@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,8 +18,8 @@ import (
 var testTool = imageTool{
 	imageStep:   stepImageKics,
 	command:     []string{"scan", "-p", "/work/src", "--price", "$5"},
-	environment: map[string]string{"A": "1"},
-	workingDir:  "/work/cfg",
+	environment: map[string]string{"A": "1", "B": "$HOME"},
+	workingDir:  "/work/$cfg",
 }
 
 func workDir(t *testing.T, name string) string {
@@ -55,6 +59,19 @@ func Test_lookupImage(t *testing.T) {
 		})
 	}
 
+	t.Run("docker compose に COMPOSE_ で始まる環境変数を渡さない", func(t *testing.T) {
+		t.Parallel()
+		f, r := newFake(t)
+		r.environ = append(slices.Clone(r.environ), "COMPOSE_FILE=x.yaml", "COMPOSE_PROJECT_NAME=x", "IACSCAN_KEEP=1")
+		_, err := lookupImage(r, stepImageSemgrep)
+		require.NoError(t, err)
+		env := f.envOf("iac-scan", stepImageSemgrep)
+		assert.Contains(t, env, "IACSCAN_KEEP=1")
+		for _, kv := range env {
+			assert.False(t, strings.HasPrefix(kv, "COMPOSE_"), kv)
+		}
+	})
+
 	t.Run("docker compose が落ちれば errImage", func(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
@@ -68,7 +85,7 @@ func Test_lookupImage(t *testing.T) {
 func Test_writeCompose(t *testing.T) {
 	t.Parallel()
 
-	t.Run("service を1つだけ持ち、network を与えず、$ を補間させない", func(t *testing.T) {
+	t.Run("service を1つだけ持ち、network と capability を与えず、$ を補間させない", func(t *testing.T) {
 		t.Parallel()
 		dir := workDir(t, "kics")
 		require.NoError(t, writeCompose(dir, testImage, testTool))
@@ -80,9 +97,13 @@ func Test_writeCompose(t *testing.T) {
 		assert.Equal(t, map[string]composeServiceSpec{"scan": {
 			Image:       testImage,
 			NetworkMode: "none",
+			CapDrop:     []string{"ALL"},
+			CapAdd:      []string{"DAC_READ_SEARCH"},
+			SecurityOpt: []string{"no-new-privileges:true"},
+			PidsLimit:   1024,
 			Command:     []string{"scan", "-p", "/work/src", "--price", "$$5"},
-			Environment: map[string]string{"A": "1"},
-			WorkingDir:  "/work/cfg",
+			Environment: map[string]string{"A": "1", "B": "$$HOME"},
+			WorkingDir:  "/work/$$cfg",
 		}}, got.Services)
 	})
 
@@ -111,10 +132,10 @@ func Test_writeCompose(t *testing.T) {
 		assert.Equal(t, name(a), name(a))
 	})
 
-	t.Run("書けなければエラー", func(t *testing.T) {
+	t.Run("書けなければ errInput", func(t *testing.T) {
 		t.Parallel()
 		dir := tree(t, map[string]string{"file": ""})
-		require.Error(t, writeCompose(filepath.Join(dir, "file"), testImage, testTool))
+		require.ErrorIs(t, writeCompose(filepath.Join(dir, "file"), testImage, testTool), errInput)
 	})
 }
 
@@ -136,6 +157,38 @@ func Test_runImage(t *testing.T) {
 		assert.Contains(t, log.String(), "up-stdout kics")
 		assert.Contains(t, log.String(), "up-stderr kics")
 		assert.FileExists(t, filepath.Join(dir, "compose.yaml"))
+	})
+
+	t.Run("docker compose に COMPOSE_ で始まる環境変数を渡さない", func(t *testing.T) {
+		t.Parallel()
+		f, r := newFake(t)
+		r.environ = append(slices.Clone(r.environ), "COMPOSE_FILE=x.yaml", "COMPOSE_PROJECT_NAME=x", "IACSCAN_KEEP=1")
+		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
+		require.NoError(t, err)
+		for _, step := range []string{stepCreate, stepCopyIn, stepUp, stepCopyOut, stepDown} {
+			env := f.envOf("kics", step)
+			assert.Contains(t, env, "IACSCAN_KEEP=1", step)
+			for _, kv := range env {
+				assert.False(t, strings.HasPrefix(kv, "COMPOSE_"), "%s: %s", step, kv)
+			}
+		}
+	})
+
+	t.Run("up を起動できなければ errDocker で、down する", func(t *testing.T) {
+		t.Parallel()
+		f, r := newFake(t)
+		fakeTool := r.tool
+		r.tool = func(d string, env []string, step string) *exec.Cmd {
+			if step == stepUp {
+				c := exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "no-such-docker"))
+				c.Dir, c.Env = d, env
+				return c
+			}
+			return fakeTool(d, env, step)
+		}
+		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
+		require.ErrorIs(t, err, errDocker)
+		assert.Equal(t, []string{"kics create", "kics copy-in", "kics down"}, f.calls())
 	})
 
 	for _, step := range []string{stepCreate, stepCopyIn} {
@@ -186,7 +239,7 @@ func Test_runImage(t *testing.T) {
 		f, tool := newFake(t)
 		dir := tree(t, map[string]string{"file": ""})
 		_, err := runImage(filepath.Join(dir, "file"), testImage, testTool, tool, &bytes.Buffer{})
-		require.Error(t, err)
+		require.ErrorIs(t, err, errInput)
 		assert.Empty(t, f.calls())
 	})
 }
@@ -204,10 +257,10 @@ func Test_prepareWork(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(dir, "compose.yaml"))
 	})
 
-	t.Run("作れなければエラー", func(t *testing.T) {
+	t.Run("作れなければ errInput", func(t *testing.T) {
 		t.Parallel()
 		base := tree(t, map[string]string{"file": ""})
-		require.Error(t, prepareWork(filepath.Join(base, "file", "x")))
+		require.ErrorIs(t, prepareWork(filepath.Join(base, "file", "x")), errInput)
 	})
 }
 
@@ -304,9 +357,9 @@ func Test_writeText(t *testing.T) {
 		assert.Equal(t, "body", string(raw))
 	})
 
-	t.Run("親がファイルならエラー", func(t *testing.T) {
+	t.Run("親がファイルなら errInput", func(t *testing.T) {
 		t.Parallel()
 		dir := tree(t, map[string]string{"file": ""})
-		require.Error(t, writeText(filepath.Join(dir, "file", "c.txt"), "body"))
+		require.ErrorIs(t, writeText(filepath.Join(dir, "file", "c.txt"), "body"), errInput)
 	})
 }

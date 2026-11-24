@@ -33,7 +33,7 @@ const (
 // runSemgrep は、走査の root を <base>/tmp/semgrep/work/src へ、rule を work/cfg へ写し（空の .semgrepignore も
 // stageSemgrepWork が置きます）、canary が s3-public-rw-bucket で落ちることを確かめてから本走査を起動します。
 // 走査したファイルが0件か、写した .tf と .hcl の数に届かなければ、所見の有無に依らず失敗です。
-func runSemgrep(args []string, log io.Writer, tool toolFunc) error {
+func runSemgrep(args []string, log io.Writer, r runner) error {
 	var rules, sha string
 	s, err := parseScan("semgrep", args, log, func(f *flag.FlagSet) {
 		f.StringVar(&rules, "rules", "", "semgrep-rules の tarball")
@@ -57,12 +57,12 @@ func runSemgrep(args []string, log io.Writer, tool toolFunc) error {
 	if err := stageSemgrepWork(dir, rules, sha); err != nil {
 		return err
 	}
-	image, err := lookupImage(tool, semgrepTool.imageStep)
+	image, err := lookupImage(r, semgrepTool.imageStep)
 	if err != nil {
 		return err
 	}
 	canary := filepath.Join(s.base, "tmp", "semgrep-canary")
-	err = runCanary("semgrep の canary", canary, semgrepCanary, image, semgrepTool, tool, log,
+	err = runCanary("semgrep の canary", canary, semgrepCanary, image, semgrepTool, r, log,
 		func(rc int, out string) error {
 			return judgeSemgrepCanary(rc, filepath.Join(out, "results.json"))
 		}, func() error { return stageSemgrepWork(canary, rules, sha) })
@@ -71,7 +71,7 @@ func runSemgrep(args []string, log io.Writer, tool toolFunc) error {
 	}
 	fmt.Fprintln(log, "✅ semgrep の canary: public-read-write の構成を検出しました")
 
-	rc, err := runImage(dir, image, semgrepTool, tool, log)
+	rc, err := runImage(dir, image, semgrepTool, r, log)
 	if err != nil {
 		return err
 	}

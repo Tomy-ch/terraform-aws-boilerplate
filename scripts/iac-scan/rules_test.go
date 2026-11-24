@@ -4,6 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +63,28 @@ func tarball(t *testing.T, members []member) string {
 	p := filepath.Join(t.TempDir(), "rules.tar.gz")
 	require.NoError(t, os.WriteFile(p, buf.Bytes(), 0o600))
 	return p
+}
+
+// ruleMembers は、terraform/ の rule を n 件持つ member を返す。
+func ruleMembers(n int) []member {
+	ms := make([]member, 0, n)
+	for i := range n {
+		ms = append(ms, member{name: fmt.Sprintf("semgrep-rules-x/terraform/r%04d.yaml", i), body: "x\n"})
+	}
+	return ms
+}
+
+// digestOf は、members のうち terraform/ の rule を写したときに stageRules が照合する値を返す。
+func digestOf(members []member) string {
+	sums := map[string]string{}
+	for _, m := range members {
+		if ruleMember.MatchString(m.name) {
+			_, rel, _ := strings.Cut(m.name, "/")
+			sum := sha256.Sum256([]byte(m.body))
+			sums[rel] = hex.EncodeToString(sum[:])
+		}
+	}
+	return rulesDigest(sums)
 }
 
 // files は dir の下の通常のファイルの、dir からの `/` 区切りの相対パスを返す。
@@ -134,6 +159,41 @@ func Test_stageRules(t *testing.T) {
 		require.ErrorIs(t, stageRules(tarball(t, []member{big}), t.TempDir(), rulesSHA256), errInput)
 	})
 
+	t.Run("rule の件数は上限ちょうどまで写せる", func(t *testing.T) {
+		t.Parallel()
+		ms := ruleMembers(maxRules)
+		require.NoError(t, stageRules(tarball(t, ms), t.TempDir(), digestOf(ms)))
+	})
+
+	t.Run("rule の件数が上限を1つ超えれば errInput", func(t *testing.T) {
+		t.Parallel()
+		ms := ruleMembers(maxRules + 1)
+		err := stageRules(tarball(t, ms), t.TempDir(), digestOf(ms))
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "件を超えています")
+	})
+
+	t.Run("rule の合計は上限ちょうどまで写せる", func(t *testing.T) {
+		t.Parallel()
+		ms := []member{
+			{name: "semgrep-rules-x/terraform/a.yaml", body: strings.Repeat("a", maxRuleSize)},
+			{name: "semgrep-rules-x/terraform/b.yaml", body: strings.Repeat("b", maxRulesBytes-maxRuleSize)},
+		}
+		require.NoError(t, stageRules(tarball(t, ms), t.TempDir(), digestOf(ms)))
+	})
+
+	t.Run("rule の合計が上限を1バイト超えれば errInput", func(t *testing.T) {
+		t.Parallel()
+		ms := []member{
+			{name: "semgrep-rules-x/terraform/a.yaml", body: strings.Repeat("a", maxRuleSize)},
+			{name: "semgrep-rules-x/terraform/b.yaml", body: strings.Repeat("b", maxRulesBytes-maxRuleSize)},
+			{name: "semgrep-rules-x/terraform/c.yaml", body: "c"},
+		}
+		err := stageRules(tarball(t, ms), t.TempDir(), digestOf(ms))
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "バイトを超えています")
+	})
+
 	t.Run("同じ名前の rule が2つあれば errInput", func(t *testing.T) {
 		t.Parallel()
 		dup := append(append([]member{}, rulesMembers...), rulesMembers[1])
@@ -182,10 +242,10 @@ func Test_ruleRel(t *testing.T) {
 		"ディレクトリ":  {Name: "r/terraform/a.yaml", Typeflag: tar.TypeDir},
 		"文字デバイス":  {Name: "r/terraform/a.yaml", Typeflag: tar.TypeChar},
 	} {
-		t.Run(name+"はエラー", func(t *testing.T) {
+		t.Run(name+"は errInput", func(t *testing.T) {
 			t.Parallel()
 			_, err := ruleRel(h)
-			require.Error(t, err)
+			require.ErrorIs(t, err, errInput)
 		})
 	}
 }
@@ -196,9 +256,10 @@ func Test_writeRule(t *testing.T) {
 	t.Run("中身を書き、sha256 を返す", func(t *testing.T) {
 		t.Parallel()
 		p := filepath.Join(t.TempDir(), "terraform", "a.yaml")
-		sum, err := writeRule(strings.NewReader("rules: []\n"), p)
+		sum, n, err := writeRule(strings.NewReader("rules: []\n"), p)
 		require.NoError(t, err)
 		assert.Equal(t, "e0dfa70eb69d47fe9cb2be8a4fcd53e74cf7fe26fcbb1f06912b57a9c028e4e0", sum)
+		assert.Equal(t, int64(10), n)
 		raw, err := os.ReadFile(p)
 		require.NoError(t, err)
 		assert.Equal(t, "rules: []\n", string(raw))
@@ -206,21 +267,23 @@ func Test_writeRule(t *testing.T) {
 
 	t.Run("上限ちょうどは書ける", func(t *testing.T) {
 		t.Parallel()
-		_, err := writeRule(strings.NewReader(strings.Repeat("a", maxRuleSize)), filepath.Join(t.TempDir(), "a.yaml"))
+		_, n, err := writeRule(strings.NewReader(strings.Repeat("a", maxRuleSize)), filepath.Join(t.TempDir(), "a.yaml"))
 		require.NoError(t, err)
+		assert.Equal(t, int64(maxRuleSize), n)
 	})
 
-	t.Run("上限を1バイト超えるとエラー", func(t *testing.T) {
+	t.Run("上限を1バイト超えると errInput", func(t *testing.T) {
 		t.Parallel()
-		_, err := writeRule(strings.NewReader(strings.Repeat("a", maxRuleSize+1)), filepath.Join(t.TempDir(), "a.yaml"))
-		require.Error(t, err)
+		_, _, err := writeRule(strings.NewReader(strings.Repeat("a", maxRuleSize+1)), filepath.Join(t.TempDir(), "a.yaml"))
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "バイトを超えています")
 	})
 
-	t.Run("既に在るファイルは上書きしない", func(t *testing.T) {
+	t.Run("既に在るファイルは上書きせずに errInput", func(t *testing.T) {
 		t.Parallel()
 		dir := tree(t, map[string]string{"a.yaml": "old"})
-		_, err := writeRule(strings.NewReader("new"), filepath.Join(dir, "a.yaml"))
-		require.Error(t, err)
+		_, _, err := writeRule(strings.NewReader("new"), filepath.Join(dir, "a.yaml"))
+		require.ErrorIs(t, err, errInput)
 		raw, err := os.ReadFile(filepath.Join(dir, "a.yaml"))
 		require.NoError(t, err)
 		assert.Equal(t, "old", string(raw))

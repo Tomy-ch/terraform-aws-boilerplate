@@ -15,7 +15,8 @@ import (
 const testImage = "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // fake は docker と trivy の偽物の振る舞いを置くディレクトリである。偽物は起動ごとに「作業ディレクトリの basename 段」を
-// calls.log へ書く。振る舞いは次のファイルで決まる。
+// calls.log へ書き、受け取った環境変数を env-<名>-<段>（段の `/` と `,` は `_`）へ控える。basename は最初の `.` より前
+// だけを使う（os.MkdirTemp の置き場を名で引くため）。振る舞いは次のファイルで決まる。
 //
 //	image          イメージの段が出す内容
 //	fail-<段>      その段を 1 で落とす（fail-<段>-<名> は作業ディレクトリの basename が名のときだけ）
@@ -24,13 +25,14 @@ const testImage = "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef01234
 //
 // copy-in は、その時点の compose.yaml を compose-<名>.yaml へ、work/ の下のファイルの一覧を work-<名>.txt へ控える
 // （canary の作業ディレクトリは通れば消えるため）。
-// up と trivy は、stdout と stderr に印を書く。
+// up と trivy は、stdout と stderr に印を書く。trivy-convert/sarif は convert-sarif（無ければ ROOTPATH を作業ディレクトリの
+// result.json に向けた SARIF）を、ほかの trivy-convert は result.json を `converted <形>:` に続けて stdout へ書く。
 type fake struct {
 	t   *testing.T
 	dir string
 }
 
-func newFake(t *testing.T) (*fake, toolFunc) {
+func newFake(t *testing.T) (*fake, runner) {
 	t.Helper()
 	f := &fake{t: t, dir: t.TempDir()}
 	f.write("image", testImage+"\n")
@@ -38,8 +40,9 @@ func newFake(t *testing.T) (*fake, toolFunc) {
 	body := `#!/bin/sh
 F='` + f.dir + `'
 step="$1"
-d=$(basename "$PWD")
+d=$(basename "$PWD"); d=${d%%.*}
 echo "$d $step" >> "$F/calls.log"
+env | LC_ALL=C sort > "$F/env-$d-$(printf %s "$step" | tr '/,' '__')"
 if [ -e "$F/fail-$step" ] || [ -e "$F/fail-$step-$d" ]; then echo "fake: $step failed" >&2; exit 1; fi
 s="$F/scenario/$d"; [ -d "$s" ] || s="$F/scenario/default"
 rc=$(cat "$s/rc" 2>/dev/null || echo 0)
@@ -52,6 +55,10 @@ up) echo "up-stdout $d"; echo "up-stderr $d" >&2; rm -rf .fake-out; mkdir .fake-
 copy-out) cp -R .fake-out/. out/ ;;
 trivy-config/*) [ -e .trivyignore.yaml ] || exit 8
     if [ -e "$s/stdout" ]; then cat "$s/stdout"; fi; echo "trivy-stderr $d" >&2; exit "$rc" ;;
+trivy-convert/sarif) [ -e result.json ] || exit 7
+    if [ -e "$F/convert-sarif" ]; then cat "$F/convert-sarif"
+    else printf '{"runs":[{"originalUriBaseIds":{"ROOTPATH":{"uri":"file://%s/result.json/"}},"results":[]}]}' "$PWD"; fi ;;
+trivy-convert/*) [ -e result.json ] || exit 7; printf 'converted %s:' "${step#trivy-convert/}"; cat result.json ;;
 esac
 exit 0
 `
@@ -61,7 +68,7 @@ exit 0
 		c.Dir, c.Env = d, env
 		return c
 	}
-	return f, tool
+	return f, runner{tool: tool, environ: os.Environ()}
 }
 
 func (f *fake) write(rel, body string) {
@@ -95,6 +102,14 @@ func (f *fake) calls() []string {
 	if os.IsNotExist(err) {
 		return nil
 	}
+	require.NoError(f.t, err)
+	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+}
+
+// envOf は、作業ディレクトリ name で段 step が受け取った環境変数を返す。
+func (f *fake) envOf(name, step string) []string {
+	f.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(f.dir, "env-"+name+"-"+strings.NewReplacer("/", "_", ",", "_").Replace(step)))
 	require.NoError(f.t, err)
 	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 }

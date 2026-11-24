@@ -15,12 +15,12 @@ func Test_run(t *testing.T) {
 
 	t.Run("サブコマンドが無ければ errUsage", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run(nil, &bytes.Buffer{}, &bytes.Buffer{}, command), errUsage)
+		require.ErrorIs(t, run(nil, &bytes.Buffer{}, &bytes.Buffer{}, runner{tool: command}), errUsage)
 	})
 
 	t.Run("知らないサブコマンドは errUsage", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, run([]string{"tfsec"}, &bytes.Buffer{}, &bytes.Buffer{}, command), errUsage)
+		require.ErrorIs(t, run([]string{"tfsec"}, &bytes.Buffer{}, &bytes.Buffer{}, runner{tool: command}), errUsage)
 	})
 
 	t.Run("各サブコマンドへ渡し、flag の誤りを stdout へ書かない", func(t *testing.T) {
@@ -29,9 +29,10 @@ func Test_run(t *testing.T) {
 			t.Run(sub, func(t *testing.T) {
 				t.Parallel()
 				var stdout, stderr bytes.Buffer
-				err := run([]string{sub, "-no-such-flag"}, &stdout, &stderr, command)
+				err := run([]string{sub, "-no-such-flag"}, &stdout, &stderr, runner{tool: command})
 				require.ErrorIs(t, err, errUsage)
-				assert.Contains(t, stderr.String(), "-no-such-flag", "そのサブコマンドの flag の解釈に届いている")
+				assert.Contains(t, stderr.String(), "-no-such-flag")
+				assert.Contains(t, stderr.String(), "Usage of iac-scan "+sub+":", "そのサブコマンドの flag の解釈に届いている")
 				assert.Empty(t, stdout.String())
 			})
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,16 +13,17 @@ import (
 const (
 	semgrepCanaryJSON = `{"results":[{"check_id":"terraform.lang.security.s3-public-rw-bucket"}],"paths":{"scanned":["/work/src/main.tf"]}}`
 	semgrepCleanJSON  = `{"results":[],"paths":{"scanned":["a","b","c","d"]}}`
+	semgrepSARIF      = `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"/work/src/env/c/main.tf"}}}]},{"suppressions":[{"kind":"inSource"}]}]}]}`
 )
 
 func Test_runSemgrep(t *testing.T) {
 	t.Parallel()
 
-	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, toolFunc, string, []string) {
+	setup := func(t *testing.T, mainRC int, mainJSON string) (*fake, runner, string, []string) {
 		t.Helper()
 		f, tool := newFake(t)
 		f.scenario("semgrep-canary", 1, "", map[string]string{"results.json": semgrepCanaryJSON})
-		f.scenario("semgrep", mainRC, "", map[string]string{"results.json": mainJSON})
+		f.scenario("semgrep", mainRC, "", map[string]string{"results.json": mainJSON, "results.sarif": semgrepSARIF})
 		base := tfTree(t)
 		args := []string{"-base", base, "-rules", tarball(t, rulesMembers), "-rules-sha256", rulesSHA256, "usecases", "modules", "env"}
 		return f, tool, base, args
@@ -53,6 +55,10 @@ func Test_runSemgrep(t *testing.T) {
 		assert.Equal(t, composeServiceSpec{
 			Image:       testImage,
 			NetworkMode: "none",
+			CapDrop:     []string{"ALL"},
+			CapAdd:      []string{"DAC_READ_SEARCH"},
+			SecurityOpt: []string{"no-new-privileges:true"},
+			PidsLimit:   1024,
 			Command: []string{
 				"semgrep", "scan", "--config", "terraform", "--metrics", "off", "--disable-version-check", "--error", "--strict",
 				"--json-output=/tmp/out/results.json", "--sarif-output=/tmp/out/results.sarif", "/work/src",
@@ -72,7 +78,47 @@ func Test_runSemgrep(t *testing.T) {
 		f, tool, _, args := setup(t, 0, semgrepCleanJSON)
 		f.scenario("semgrep-canary", 0, "", map[string]string{"results.json": semgrepCleanJSON})
 		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errCanary)
-		assert.NotContains(t, f.calls(), "semgrep up")
+		assert.Equal(t, append([]string{"iac-scan image-semgrep"}, cycle("semgrep-canary")...), f.calls())
+	})
+
+	t.Run("本走査の SARIF を正規化する", func(t *testing.T) {
+		t.Parallel()
+		_, tool, base, args := setup(t, 0, semgrepCleanJSON)
+		require.NoError(t, runSemgrep(args, &bytes.Buffer{}, tool))
+		raw, err := os.ReadFile(filepath.Join(base, "tmp", "semgrep", "out", "results.sarif"))
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"env/c/main.tf"}}}]}]}]}`, string(raw))
+	})
+
+	t.Run("本走査の docker が落ちれば errDocker", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+		f.failIn(stepCreate, "semgrep")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errDocker)
+		calls := f.calls()
+		assert.Equal(t, []string{"semgrep create", "semgrep down"}, calls[len(calls)-2:])
+	})
+
+	t.Run("本走査の SARIF が壊れていれば errResult", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+		f.write("scenario/semgrep/out/results.sarif", "not json")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errResult)
+	})
+
+	for name, rel := range map[string]string{"SARIF": "results.sarif", "results.json": "results.json"} {
+		t.Run("本走査の "+name+" が無ければ errResult", func(t *testing.T) {
+			t.Parallel()
+			f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+			require.NoError(t, os.Remove(filepath.Join(f.dir, "scenario", "semgrep", "out", rel)))
+			require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errResult)
+		})
+	}
+
+	t.Run("本走査の results.json が JSON でなければ errResult", func(t *testing.T) {
+		t.Parallel()
+		_, tool, _, args := setup(t, 0, "not json")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errResult)
 	})
 
 	t.Run("走査したファイルが写した .tf と .hcl に届かなければ errCoverage", func(t *testing.T) {

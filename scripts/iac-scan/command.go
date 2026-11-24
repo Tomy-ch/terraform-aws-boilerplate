@@ -28,32 +28,42 @@ const (
 // --ignorefile で明示し、その結果として抑止が他のスキャナへ暗黙に波及しません。
 const trivyIgnore = ".trivyignore.yaml"
 
-// trivySeverities は、trivy-config の閾値として受ける値です。どれも、ある重大度とそれより重いものすべてを並べます。
+// trivySeverities は、trivy-config の閾値として受ける値です。どれも、ある重大度とそれより重いものすべてを並べ、
+// canary の MEDIUM を含みます。
 var trivySeverities = []string{
-	"CRITICAL",
-	"CRITICAL,HIGH",
 	"CRITICAL,HIGH,MEDIUM",
 	"CRITICAL,HIGH,MEDIUM,LOW",
 	"CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN",
 }
 
-// trivyFormats は、trivy-config の本走査の出力の形として受ける値です。canary は json で走ります。
+// trivyFormats は、trivy-config の本走査の出力の形として受ける値です。走査は常に json で走り、ほかの形は
+// その結果から trivy convert で作ります。
 var trivyFormats = []string{"table", "json", "sarif"}
 
-// trivyStep は、閾値と出力の形を一覧と照らし、trivy-config の段の名前を返します。
-func trivyStep(severity, format string) (string, error) {
+// stepTrivyConvertSARIF は、本走査の json を SARIF へ変える段です。
+const stepTrivyConvertSARIF = "trivy-convert/sarif"
+
+// trivyResult は、trivy convert へ渡す本走査の結果のファイル名です（作業ディレクトリからの相対パス）。
+const trivyResult = "result.json"
+
+// trivyStep は、閾値と出力の形を一覧と照らし、trivy-config の走査の段と、json 以外の形へ変える段（json なら空）を
+// 返します。
+func trivyStep(severity, format string) (scan, convert string, err error) {
 	if !slices.Contains(trivySeverities, severity) {
-		return "", xerrors.Wrapf(errUsage, "-severity %q は受けない値です（%s）", severity, strings.Join(trivySeverities, " | "))
+		return "", "", xerrors.Wrapf(errUsage, "-severity %q は受けない値です（%s）", severity, strings.Join(trivySeverities, " | "))
 	}
 	if !slices.Contains(trivyFormats, format) {
-		return "", xerrors.Wrapf(errUsage, "-format %q は受けない値です（%s）", format, strings.Join(trivyFormats, " | "))
+		return "", "", xerrors.Wrapf(errUsage, "-format %q は受けない値です（%s）", format, strings.Join(trivyFormats, " | "))
+	}
+	if format != "json" {
+		convert = "trivy-convert/" + format
 	}
 
-	return "trivy-config/" + severity + "/" + format, nil
+	return "trivy-config/" + severity, convert, nil
 }
 
 // command は toolFunc の実物です。引数は段ごとに固定で、可変の値は作業ディレクトリと、そこに置いたファイル
-// （compose.yaml・work/・out/・.trivyignore.yaml）で渡します。イメージの段だけはリポジトリ直下の docker-compose.yaml を読みます。
+// （compose.yaml・work/・out/・.trivyignore.yaml・result.json）で渡します。イメージの段だけはリポジトリ直下の docker-compose.yaml を読みます。
 // 知らない段は道具を起動せずに落ちます。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()
@@ -77,36 +87,17 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "docker", "compose", "cp", composeService+":/tmp/out/.", "out")
 	case stepDown:
 		cmd = exec.CommandContext(ctx, "docker", "compose", "down")
-	case "trivy-config/CRITICAL/table":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "table", ".")
-	case "trivy-config/CRITICAL/json":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".")
-	case "trivy-config/CRITICAL/sarif":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "sarif", ".")
-	case "trivy-config/CRITICAL,HIGH/table":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "table", ".")
-	case "trivy-config/CRITICAL,HIGH/json":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".")
-	case "trivy-config/CRITICAL,HIGH/sarif":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "sarif", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM/table":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "table", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM/json":
+	case "trivy-config/CRITICAL,HIGH,MEDIUM":
 		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM/sarif":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "sarif", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW/table":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "table", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW/json":
+	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW":
 		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW/sarif":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "sarif", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN/table":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "table", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN/json":
+	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN":
 		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "json", ".")
-	case "trivy-config/CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN/sarif":
-		cmd = exec.CommandContext(ctx, "trivy", "config", "--severity", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN", "--ignorefile", trivyIgnore, "--exit-code", "1", "--skip-version-check", "--skip-dirs", "tmp", "--format", "sarif", ".")
+	case "trivy-convert/table":
+		// 抑止は走査で済んでいるので、ここでは抑止のファイルを読まない。
+		cmd = exec.CommandContext(ctx, "trivy", "convert", "--format", "table", "--scanners", "misconfig", "--ignorefile", "", trivyResult)
+	case stepTrivyConvertSARIF:
+		cmd = exec.CommandContext(ctx, "trivy", "convert", "--format", "sarif", "--ignorefile", "", trivyResult)
 	default:
 		cmd = exec.CommandContext(ctx, "false")
 	}
