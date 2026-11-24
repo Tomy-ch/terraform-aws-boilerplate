@@ -399,7 +399,10 @@ func Test_awsProfile(t *testing.T) {
 		require.ErrorIs(t, err, errNoProfile)
 	})
 
-	for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+	for _, k := range []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+	} {
 		t.Run(k+" が在れば、profile が在っても errStaticCredentials", func(t *testing.T) {
 			t.Parallel()
 

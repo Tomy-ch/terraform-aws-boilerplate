@@ -237,7 +237,8 @@ func retentionReader(content string) func(string) ([]byte, error) {
 }
 
 // allNG は、すべての呼び出しに同じ応答を返すとき、段の全行が NG で、結果の行が件数どおりであること。
-func allNG(t *testing.T, steps []step, descs []string, r awsResult) {
+// first は、先頭の行の NG に添える理由。
+func allNG(t *testing.T, steps []step, descs []string, r awsResult, first string) {
 	t.Helper()
 
 	f := &fakeAWS{t: t, handler: func([]string) (awsResult, bool) { return r, true }}
@@ -251,6 +252,7 @@ func allNG(t *testing.T, steps []step, descs []string, r awsResult) {
 		assert.True(t, strings.HasPrefix(lines[i], "NG  "+d), lines[i])
 	}
 
+	assert.Equal(t, "NG  "+descs[0]+"（"+first+"）", lines[0])
 	assert.Equal(t, "# 結果: "+strconv.Itoa(len(descs))+" 件のうち NG "+strconv.Itoa(len(descs))+" 件", lines[len(descs)])
 }
 
@@ -562,11 +564,17 @@ func Test_beforeApplySteps(t *testing.T) {
 		})
 	}
 
-	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+	for name, tc := range map[string]struct {
+		r     awsResult
+		first string
+	}{
+		"応答がすべて空":    {okResult(""), "応答を読めない"},
+		"呼び出しがすべて失敗": {failed("An error occurred (AccessDenied)"), "呼び出しが失敗: An error occurred (AccessDenied)"},
+	} {
 		t.Run(name+"なら、全行が NG", func(t *testing.T) {
 			t.Parallel()
 
-			allNG(t, beforeApplySteps(n), beforeApplyDescs, r)
+			allNG(t, beforeApplySteps(n), beforeApplyDescs, tc.r, tc.first)
 		})
 	}
 
@@ -694,6 +702,10 @@ func Test_retentionDays(t *testing.T) {
 		"1か所の値を読む":     {retentionFile, 90, ""},
 		"空白とタブを許す":     {"\tstate_noncurrent_version_retention_days=30\n", 30, ""},
 		"// のコメントを許す":  {"state_noncurrent_version_retention_days = 30 // 日\n", 30, ""},
+		"# のコメントを許す":   {"state_noncurrent_version_retention_days = 30 # 日\n", 30, ""},
+		"値の後ろの空白を許す":   {"state_noncurrent_version_retention_days = 30 \t\n", 30, ""},
+		"引用符つきの値":      {"state_noncurrent_version_retention_days = \"30\"\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
+		"負の値":          {"state_noncurrent_version_retention_days = -30\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
 		"CRLF を許す":     {"state_noncurrent_version_retention_days = 30\r\n", 30, ""},
 		"行が無い":         {"locals {}\n", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（0 か所）"},
 		"2か所":          {"state_noncurrent_version_retention_days = 1\nstate_noncurrent_version_retention_days = 2\n", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（2 か所）"},
@@ -937,11 +949,17 @@ func Test_stage4Steps(t *testing.T) {
 		assert.Contains(t, lines, "NG  "+keyPolicyDesc)
 	})
 
-	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+	for name, tc := range map[string]struct {
+		r     awsResult
+		first string
+	}{
+		"応答がすべて空":    {okResult(""), "state の鍵の ARN を読めない: 応答を読めない"},
+		"呼び出しがすべて失敗": {failed("An error occurred (AccessDenied)"), "state の鍵の ARN を読めない: 呼び出しが失敗: An error occurred (AccessDenied)"},
+	} {
 		t.Run(name+"なら、全行が NG", func(t *testing.T) {
 			t.Parallel()
 
-			allNG(t, stage4Steps(n, retentionReader(retentionFile)), stage4Descs(noExecutorDesc), r)
+			allNG(t, stage4Steps(n, retentionReader(retentionFile)), stage4Descs(noExecutorDesc), tc.r, tc.first)
 		})
 	}
 }
@@ -1001,11 +1019,17 @@ func Test_stage5Steps(t *testing.T) {
 		assert.Equal(t, "# 結果: 5 件のうち NG 4 件", lines[len(lines)-1])
 	})
 
-	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+	for name, tc := range map[string]struct {
+		r     awsResult
+		first string
+	}{
+		"応答がすべて空":    {okResult(""), "state の鍵の ARN を読めない: 応答を読めない"},
+		"呼び出しがすべて失敗": {failed("An error occurred (AccessDenied)"), "state の鍵の ARN を読めない: 呼び出しが失敗: An error occurred (AccessDenied)"},
+	} {
 		t.Run(name+"なら、全行が NG", func(t *testing.T) {
 			t.Parallel()
 
-			allNG(t, stage5Steps(n), stage5Descs, r)
+			allNG(t, stage5Steps(n), stage5Descs, tc.r, tc.first)
 		})
 	}
 }

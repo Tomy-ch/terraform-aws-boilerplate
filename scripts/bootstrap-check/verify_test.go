@@ -723,10 +723,21 @@ func Test_checkVerify(t *testing.T) {
 		assert.Equal(t, []string{""}, lines)
 	})
 
-	for _, o := range []verifyOptions{
-		{stage: "stage1"}, {stage: "before-apply"}, {stage: "stage4"}, {stage: "stage4", executor: "bob"}, {stage: "permissions"},
-		{stage: "stage5"}, {stage: "output-policy", policySource: "live"}, {stage: "output-policy", policySource: "reference"},
+	// 結果の行は、permissiveHandler の応答に対して表と独立に数えたもの。
+	for _, tc := range []struct {
+		o      verifyOptions
+		result string
+	}{
+		{verifyOptions{stage: "stage1"}, "# 結果: 4 件のうち NG 4 件"},
+		{verifyOptions{stage: "before-apply"}, "# 結果: 21 件のうち NG 21 件"},
+		{verifyOptions{stage: "stage4"}, "# 結果: 24 件のうち NG 22 件"},
+		{verifyOptions{stage: "stage4", executor: "bob"}, "# 結果: 24 件のうち NG 23 件"},
+		{verifyOptions{stage: "permissions"}, "# 結果: 119 件のうち NG 66 件"},
+		{verifyOptions{stage: "stage5"}, "# 結果: 5 件のうち NG 4 件"},
+		{verifyOptions{stage: "output-policy", policySource: "live"}, "# 結果: 13 件のうち NG 7 件"},
+		{verifyOptions{stage: "output-policy", policySource: "reference"}, "# 結果: 13 件のうち NG 7 件"},
 	} {
+		o := tc.o
 		t.Run(o.stage+o.executor+o.policySource+" は読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
 			t.Parallel()
 
@@ -736,13 +747,12 @@ func Test_checkVerify(t *testing.T) {
 
 			lines, err := run(t, o, d)
 
-			if err != nil {
-				require.ErrorIs(t, err, errMismatch)
-			}
-
-			assert.True(t, strings.HasPrefix(lines[len(lines)-1], "# 結果: "), "段の確認を最後まで回した")
+			require.ErrorIs(t, err, errMismatch)
+			assert.Equal(t, tc.result, lines[len(lines)-1])
 			assert.Greater(t, len(f.calls), 1, "sts のほかに段の読み取りを呼んだ")
+			// query.call のガードが書き込みの操作を止めるので、これはガードを外したときの保険。
 			assert.Empty(t, writeOps(f.calls))
 		})
 	}
+
 }

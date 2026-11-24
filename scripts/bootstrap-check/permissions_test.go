@@ -539,8 +539,16 @@ func Test_simCheck(t *testing.T) {
 		"重複して欠落":         {simResult([]string{"s3:A", "s3:A"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 2 / 2: s3:A s3:A）"}},
 		"別名":             {simResult([]string{"s3:A", "s3:b"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 2 / 2: s3:A s3:b）"}},
 		"0件":             {okResult(`{"EvaluationResults":[]}`), verdict{reason: "返った action が要求と一致しない（返った件数 0 / 2: なし）"}},
-		"足りない context がある": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["s3:prefix"]},` +
-			`{"EvalActionName":"s3:B","EvalDecision":"allowed","MissingContextValues":["aws:x","aws:y"]}]}`), verdict{reason: "評価に足りない context: s3:prefix aws:x aws:y"}},
+		"context を与えない行は、足りない context を判定に使わない": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["s3:prefix"]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`), verdict{ok: true}},
+		"context を与えない行は、NG の理由に足りない context を添える": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"implicitDeny","MissingContextValues":["s3:prefix"]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`), verdict{reason: "違う判定: s3:A=implicitDeny、足りない context: s3:prefix"}},
+		"action の不一致にも足りない context を添える": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["aws:x"]}]}`),
+			verdict{reason: "返った action が要求と一致しない（返った件数 1 / 2: s3:A）、足りない context: aws:x"}},
+		"足りない context が object": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":{"k":"v"}},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`), verdict{reason: "応答を読めない"}},
+		"足りない context が文字列": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":"s3:prefix"},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`), verdict{reason: "応答を読めない"}},
 		"足りない context が空・null なら ok": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":[]},` +
 			`{"EvalActionName":"s3:B","EvalDecision":"allowed","MissingContextValues":null}]}`), verdict{ok: true}},
 		"足りない context が文字列でない": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":[1]},` +
@@ -585,6 +593,34 @@ func Test_simCheck(t *testing.T) {
 
 		require.ErrorIs(t, err, errAWSStart)
 	})
+
+	for name, r := range map[string]simRow{
+		"context を与えた行":      simCtx(allowed, "plan", "arn:x", []string{"c"}, "s3:A", "s3:B"),
+		"Bucket Policy を含む行": {want: allowed, role: "plan", resource: "arn:x", actions: []string{"s3:A", "s3:B"}, bucketPolicy: true, doc: `{"Statement":[]}`},
+	} {
+		for cname, tc := range map[string]struct {
+			body string
+			want verdict
+		}{
+			"足りない context があれば NG": {`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["s3:prefix"]},` +
+				`{"EvalActionName":"s3:B","EvalDecision":"allowed","MissingContextValues":["aws:x","aws:y"]}]}`, verdict{reason: "評価に足りない context: s3:prefix aws:x aws:y"}},
+			"足りない context と違う判定が同時なら、足りない context を先に報告する": {`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"implicitDeny","MissingContextValues":["aws:x"]},` +
+				`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`, verdict{reason: "評価に足りない context: aws:x"}},
+			"足りない context が空なら ok": {`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":[]},` +
+				`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`, verdict{ok: true}},
+		} {
+			t.Run(name+"で、"+cname, func(t *testing.T) {
+				t.Parallel()
+
+				f := verifyFake(t, map[string]awsResult{jsonKey(r.args(n)...): okResult(tc.body)}, nil)
+
+				v, err := simCheck(r, n).eval(newQuery(f.fn, testRegion))
+
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, v)
+			})
+		}
+	}
 }
 
 func Test_attachedNames(t *testing.T) {
@@ -743,14 +779,53 @@ func Test_permissionSections(t *testing.T) {
 		}
 	})
 
-	t.Run("ダミーの鍵の ARN は、アカウント ID の伏せ字で潰れない", func(t *testing.T) {
+	t.Run("ダミーの鍵の ARN は、アカウント ID の伏せ字の後も2種類を区別できる", func(t *testing.T) {
 		t.Parallel()
+
+		var masked []string
 
 		for _, r := range allRows(n, testKeyARN) {
 			if strings.Contains(r.resource, ":key/00000000-") {
-				assert.Equal(t, "arn:aws:kms:ap-northeast-1:<account>"+strings.TrimPrefix(r.resource, "arn:aws:kms:ap-northeast-1:123456789012"),
-					maskAllAccounts(r.resource))
+				masked = append(masked, maskAllAccounts(r.resource))
 			}
+		}
+
+		a0 := "arn:aws:kms:ap-northeast-1:<account>:key/00000000-0000-0000-0000-0000000000a0"
+		a1 := "arn:aws:kms:ap-northeast-1:<account>:key/00000000-0000-0000-0000-0000000000a1"
+
+		require.Len(t, masked, 5)
+		assert.Equal(t, []string{a0, a0, a1, a1, a1}, masked)
+	})
+
+	t.Run("各行の role・resource・判定・action の数が、表と独立に書いた desc の一覧と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		var descs []string
+		for _, l := range [][]string{
+			permS3Descs, permKeyDescs, permGovernanceDescs, permGovernanceGatedDescs, permWorkloadDescs, permWorkloadGatedDescs,
+			permBudgetsDescs, permBudgetsGatedDescs, permUnlockIdentityDescs, permUnlockDescs,
+		} {
+			descs = append(descs, expand(l, "")...)
+		}
+
+		rows := allRows(n, testKeyARN)
+
+		require.Len(t, descs, len(rows))
+
+		for i, r := range rows {
+			head, tail, ok := strings.Cut(descs[i], ": ")
+			require.True(t, ok, descs[i])
+
+			role, resource, ok := strings.Cut(head, " ")
+			require.True(t, ok, descs[i])
+
+			count, want, ok := strings.Cut(tail, " 件が ")
+			require.True(t, ok, descs[i])
+
+			assert.Equal(t, role, r.role, "%d 行目", i)
+			assert.Equal(t, resource, r.resource, "%d 行目", i)
+			assert.Equal(t, want, r.want, "%d 行目", i)
+			assert.Equal(t, count, strconv.Itoa(len(r.actions)), "%d 行目", i)
 		}
 	})
 
@@ -856,7 +931,26 @@ func Test_permissionsSteps(t *testing.T) {
 			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
-		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 3）"), lines)
+		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 1）"), lines)
+	})
+
+	t.Run("統制の policy を読めなければ NG 1 件で、確かめていない区分には数えない", func(t *testing.T) {
+		t.Parallel()
+
+		lines, err := run(t, permFake(t, failed("denied"), okResult(workloadAttached)))
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 1 件", lines[len(lines)-1])
+	})
+
+	t.Run("workload の policy を読めなければ NG 1 件で、budgets の注記だけを確かめていない区分に数える", func(t *testing.T) {
+		t.Parallel()
+
+		lines, err := run(t, permFake(t, okResult(governanceAttached), failed("denied")))
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Contains(t, lines, budgetsUnknown)
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("apply の managed policy が想定と違えば、名前を添えて NG", func(t *testing.T) {
@@ -867,7 +961,7 @@ func Test_permissionsSteps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の2つの policy ではない（x）")
 		assert.Contains(t, lines, budgetsUnknown)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 2）", lines[len(lines)-1])
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("state の鍵の ARN を読めなければ NG を数え、その鍵の行は aws を呼ばずに NG", func(t *testing.T) {
@@ -1050,6 +1144,27 @@ func Test_outputDocument(t *testing.T) {
 
 		require.ErrorIs(t, err, errAWSStart)
 	})
+
+	for _, policy := range []string{"x", "[1]"} {
+		t.Run("reference の policy が "+policy+" なら読めない理由を返す", func(t *testing.T) {
+			t.Parallel()
+
+			b, err := json.Marshal(map[string]any{"resource_changes": []any{map[string]any{
+				"address": "module.state_backend.module.plan_output.aws_s3_bucket_policy.this",
+				"change":  map[string]any{"after": map[string]any{"policy": policy}},
+			}}})
+			require.NoError(t, err)
+
+			e := env(t, sourceReference, okResult(""))
+			e.readFile = func(string) ([]byte, error) { return b, nil }
+
+			doc, reason, err := outputDocument(e, testPlanBucket, "plan_output")
+
+			require.NoError(t, err)
+			assert.Empty(t, doc)
+			assert.Equal(t, "文書を JSON の object として読めない", reason)
+		})
+	}
 }
 
 func Test_outputPolicySteps(t *testing.T) {

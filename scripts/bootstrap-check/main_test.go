@@ -26,6 +26,9 @@ func Test_exitCode(t *testing.T) {
 		"検証できないは 2": {errPlanJSON, 2},
 		"期待値の誤りは 2": {errExpectedMalformed, 2},
 		"知らないエラーは 2（成功にも差分にも読まない）": {xerrors.New("x"), 2},
+		"静的な資格情報は 2":   {errStaticCredentials, 2},
+		"読むだけでない操作は 2": {errNotReadOnly, 2},
+		"表の誤りは 2":      {errBadStep, 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -300,6 +303,8 @@ func Test_finish(t *testing.T) {
 		"mock の一致は ✅ を足す":        {true, nil, mockMatched + "\n"},
 		"mock の差分は ❌ の差分の行を足す":   {true, errMismatch, mockMismatch + "\n"},
 		"mock の検証不能は理由の後に ❌ を足す": {true, errPlanJSON, errPlanJSON.Error() + "\n" + mockUnverifiable + "\n"},
+		"読むだけでない操作は理由を足す":        {false, errNotReadOnly, errNotReadOnly.Error() + "\n"},
+		"表の誤りは理由を足す":             {false, errBadStep, errBadStep.Error() + "\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -519,6 +524,22 @@ func Test_execute(t *testing.T) {
 
 		assert.Equal(t, 2, execute(verifyArgs, errWriter{}, verifyDeps(f, nil)))
 	})
+
+	for name, args := range map[string][]string{"account": accountArgs, "verify": verifyArgs} {
+		t.Run(name+" は静的な資格情報が環境に在れば理由を出して 2 を返す", func(t *testing.T) {
+			t.Parallel()
+
+			var stdout bytes.Buffer
+
+			f := verifyFake(t, nil, nil)
+			d := verifyDeps(f, nil)
+			d.getenv = func(k string) string { return map[string]string{"AWS_PROFILE": "p", "AWS_CONFIG_FILE": "/x"}[k] }
+
+			assert.Equal(t, 2, execute(args, &stdout, d))
+			assert.Equal(t, "AWS_CONFIG_FILE: "+errStaticCredentials.Error()+"\n", stdout.String())
+			assert.Empty(t, f.calls)
+		})
+	}
 
 	t.Run("verify の引数の誤りは 2 を返す", func(t *testing.T) {
 		t.Parallel()

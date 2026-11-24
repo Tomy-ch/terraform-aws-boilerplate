@@ -74,8 +74,9 @@ func (r simRow) args(n names) []string {
 	return append(append(args, "--action-names"), r.actions...)
 }
 
-// simCheck は、行の評価の結果が、要求した actions と同じ action を同じ数だけ返し（多重集合として一致）、どの結果にも
-// 足りない context が無く、すべて want であれば ok とする確認。
+// simCheck は、行の評価の結果が、要求した actions と同じ action を同じ数だけ返し（多重集合として一致）、すべて want
+// であれば ok とする確認。context を与えた行（context か Bucket Policy を持つ行）は、どの結果にも足りない context が
+// 無いことも求める。
 func simCheck(r simRow, n names) check {
 	return check{desc: r.desc(), eval: func(q *query) (verdict, error) {
 		if r.unresolved != "" {
@@ -99,10 +100,11 @@ func simCheck(r simRow, n names) check {
 			decision, ok2 := at(e, "EvalDecision").(string)
 
 			m, ok3 := get(e, "MissingContextValues")
-			keys, ok4 := strs(arrOf(m))
+			list, isArray := m.([]any)
+			keys, ok4 := strs(list)
 
-			if m == nil {
-				keys, ok4 = nil, true
+			if m != nil && !isArray {
+				ok4 = false
 			}
 
 			if !ok1 || !ok2 || !ok3 || !ok4 {
@@ -122,13 +124,21 @@ func simCheck(r simRow, n names) check {
 			returned = "なし"
 		}
 
+		// context を与えた行は、足りない context を判定に使う。与えない行は、NG の理由に添えるだけにする。
+		givesContext := len(r.context) > 0 || r.bucketPolicy
+		note := ""
+
+		if !givesContext && len(missing) > 0 {
+			note = "、足りない context: " + strings.Join(missing, " ")
+		}
+
 		switch {
-		case len(missing) > 0:
+		case givesContext && len(missing) > 0:
 			return verdict{reason: "評価に足りない context: " + strings.Join(missing, " ")}, nil
 		case !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(r.actions))):
-			return verdict{reason: fmt.Sprintf("返った action が要求と一致しない（返った件数 %d / %d: %s）", len(got), len(r.actions), returned)}, nil
+			return verdict{reason: fmt.Sprintf("返った action が要求と一致しない（返った件数 %d / %d: %s）", len(got), len(r.actions), returned) + note}, nil
 		case len(bad) > 0:
-			return verdict{reason: "違う判定: " + strings.Join(bad, " ")}, nil
+			return verdict{reason: "違う判定: " + strings.Join(bad, " ") + note}, nil
 		}
 
 		return verdict{ok: true}, nil
@@ -500,9 +510,7 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 		case g.state == gateAbsent:
 			steps = append(steps, skipStep(s.absentNote))
 		case s.reportGate:
-			ng := checkStep(g.ng)
-			ng.skipped = true
-			steps = append(steps, ng)
+			steps = append(steps, checkStep(g.ng))
 		default:
 			steps = append(steps, skipStep(s.unknownNote))
 		}

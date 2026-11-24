@@ -24,13 +24,17 @@ var (
 	errAWSStart = xerrors.New("aws を起動できません")
 	// errNoProfile は、AWS_PROFILE が空なこと。資格情報を変える環境変数を外し、profile を渡すのは make である。
 	errNoProfile = xerrors.New("AWS_PROFILE が空です。make bootstrap-check-account か make bootstrap-verify から起動してください")
-	// errStaticCredentials は、profile より優先される静的な資格情報が環境に在ること。
-	errStaticCredentials = xerrors.New("環境に静的な資格情報が在ります。make bootstrap-check-account か make bootstrap-verify から起動してください（make が外します）")
+	// errStaticCredentials は、profile より優先される資格情報か、profile の読み先を変える指定が環境に在ること。
+	errStaticCredentials = xerrors.New("環境に profile を迂回する資格情報の指定が在ります。make bootstrap-check-account か make bootstrap-verify から起動してください（make が外します）")
 	// errNotReadOnly は、読むだけでない aws の操作を起動しようとしたこと（確認の表の誤り）。
 	errNotReadOnly = xerrors.New("読むだけでない aws の操作は起動しません")
 
-	staticCredentials = []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
-	readOnlyPrefixes  = []string{"get-", "list-", "describe-", "head-", "simulate-"}
+	// staticCredentials は、AWS_PROFILE より優先されるか、profile の読み先を変える環境変数。
+	staticCredentials = []string{
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+	}
+	readOnlyPrefixes = []string{"get-", "list-", "describe-", "head-", "simulate-"}
 )
 
 // awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。

@@ -556,7 +556,7 @@ Credential report の IAM user が break-glass の2つ（`break-glass-1`・`brea
 | 症状 | 対処 |
 | --- | --- |
 | `ACCOUNT_ID が12桁ではありません`、`アカウント ID が12桁ではありません`、`一時 IAM user の資格情報ではありません`、`AWS_PROFILE が空です` | `make aws-login` をやり直し、`make` のターゲットから実行する |
-| `環境に静的な資格情報が在ります` | 名指された環境変数を外すか、`make bootstrap-check-account`・`make bootstrap-verify` から実行する（make が外す） |
+| `環境に profile を迂回する資格情報の指定が在ります` | 名指された環境変数を外すか、`make bootstrap-check-account`・`make bootstrap-verify` から実行する（make が外す） |
 | `make bootstrap-verify` の NG に `（呼び出しが失敗: …）`・`（応答を読めない）`・`（state の鍵の ARN を読めない）` などの理由が添えられている | 確認の前提を読めていない。理由のエラーを見て資格情報と段の順序を確かめ、やり直す。理由の無い NG は、期待と実環境が違う |
 | `make bootstrap-check-account` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する。2-4 だけなら 2-4 を行う |
 | 2-4 で ARN が1つずつ表示されない、`make bootstrap-check-account` の 2-4 の行が `1つではない` を添える | AWS services monitor が無いか、ほかの SERVICE の monitor か、同じ monitor の subscription がほかに在る。どの monitor と subscription に tag を付けるかを決めずに止まり、コンソールの Cost Anomaly Detection の「Cost monitors」と「Alert subscriptions」の一覧を Pull Request に記録する |
