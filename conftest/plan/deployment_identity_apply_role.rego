@@ -351,6 +351,21 @@ required_governance_actions := array.concat(governance_actions, management_actio
 
 else := governance_actions
 
+# 統制の policy は管理アカウントの identity root だけが作る（決定3・7）。名前の判定がそれと食い違えば、
+# management_actions の検査が黙って外れるので落とす。
+governance_policy_in_input if {
+	some c in lib.changes
+	c.rc.type == "aws_iam_policy"
+	endswith(object.get(c.rc.change.after, "name", ""), "-ci-apply-identity-governance")
+}
+
+deny contains msg if {
+	role_known
+	governance_policy_in_input
+	not management_role
+	msg := sprintf("[PLAN-APPLY-00] 入力に統制の policy（<project>-admin-ci-apply-identity-governance）があるのに、apply の role %s の名前が -admin-ci-apply で終わりません。management_actions の検査の対象を決められません", [role_name])
+}
+
 # 宣言した名前を、Deny の Action のどれかが覆うことを求める。覆いは、同じ名前か、同じサービスの wildcard が IAM の
 # `*` と `?` でその名前に当たるもの（Identity Center の接尾辞の wildcard。deployment-identity/ADR-0201 決定5）。
 # 決定5 は読み取りを拒まないので、`*` や `organizations:*` のようなサービスの全体に当たる広い Deny を覆いと数えない

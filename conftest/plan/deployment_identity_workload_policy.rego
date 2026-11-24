@@ -264,7 +264,18 @@ deny contains msg if {
 	some a in actions(x.s)
 	matches(a, "iam:passrole")
 	not passed_to_declared(x.s)
+	not service_linked_pass_only(x.s, a)
 	msg := sprintf("[PLAN-AWP-03] %s: %s の Allow が iam:PassRole を、条件 StringEquals の iam:PassedToService を宣言したサービス %v に限らずに許しています（deployment-identity/ADR-0201 決定14）", [x.path, x.address, wl.passed_to_services])
+}
+
+# service-linked role だけを渡す文は、渡し先を PLAN-AWP-01 の service_linked がその role のサービスに結び付けて見る。
+# usecase の role と混ぜた文は免じない。
+service_linked_pass_only(s, a) if {
+	resources := lib.as_array(object.get(s, "Resource", []))
+	count(resources) > 0
+	every r in resources {
+		service_linked(s, a, r)
+	}
 }
 
 passed_to_declared(s) if {

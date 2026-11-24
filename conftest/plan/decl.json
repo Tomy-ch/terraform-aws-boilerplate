@@ -332,7 +332,6 @@
         ],
         "passed_to_services": [
           "chatbot.amazonaws.com",
-          "config.amazonaws.com",
           "scheduler.amazonaws.com"
         ],
         "account_iam_writes": [
@@ -396,6 +395,7 @@
       "exclusives": [
         "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply\"]",
         "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"apply_identity\"]",
+        "module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]",
         "module.ops_notification.module.chat.aws_iam_role_policy_attachments_exclusive.this",
         "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this"
       ]

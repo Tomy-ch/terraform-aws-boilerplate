@@ -2592,6 +2592,16 @@ run "no_governance_in_dev" {
     condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
     error_message = "dev の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の3つの policy だけになっていません。"
   }
+
+  # メンバーの password policy は account-baseline が apply の role で置く（deployment-identity/ADR-0201 決定5）。
+  assert {
+    condition = [
+      [for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : [st.Action, st.Resource] if st.Sid == "UpdatePasswordPolicy"],
+      contains(flatten([one([for st in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : st.Action if st.Sid == "DenyGovernanceChange"])]), "iam:UpdateAccountPasswordPolicy"),
+      contains(flatten([one([for st in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : st.Action if st.Sid == "DenyGovernanceChange"])]), "iam:DeleteAccountPasswordPolicy"),
+    ] == [[["iam:UpdateAccountPasswordPolicy", "*"]], false, true]
+    error_message = "dev の apply の role が、password policy の更新を workload-2 で許し、DenyGovernanceChange で削除だけを拒む形になっていません。"
+  }
 }
 
 run "no_governance_in_security" {

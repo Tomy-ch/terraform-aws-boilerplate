@@ -88,7 +88,7 @@ decl := {
 		"boundaries": {"ops-notification": boundary_address},
 		"usecase_iam_prefixes": ["ops-"],
 		"service_linked_roles": ["config.amazonaws.com", "management.chatbot.amazonaws.com"],
-		"passed_to_services": ["chatbot.amazonaws.com", "config.amazonaws.com", "scheduler.amazonaws.com"],
+		"passed_to_services": ["chatbot.amazonaws.com", "scheduler.amazonaws.com"],
 		"account_iam_writes": ["iam:UpdateAccountPasswordPolicy"],
 		"apply_only_denies": ["DenyBoundaryRemoval"],
 	},
@@ -473,4 +473,14 @@ test_violation_pass_service_linked_role_outside_declaration if {
 	}
 	d := json.patch(decl, [{"op": "replace", "path": "/workload/service_linked_roles", "value": ["management.chatbot.amazonaws.com"]}])
 	fixture.has(sprintf("[PLAN-AWP-01] p.json: %s の Allow が iam:passrole", [policy_2_address]), messages_for(valid_world, d))
+}
+
+# service-linked role を渡す文の免除が、usecase の role を同じサービスへ渡す文に及ばないこと。
+test_violation_pass_usecase_role_to_slr_service if {
+	every s in [
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": [ops_roles], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+		{"Effect": "Allow", "Action": "iam:PassRole", "Resource": [config_slr, ops_roles], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}},
+	] {
+		fixture.has(sprintf("[PLAN-AWP-03] p.json: %s の Allow が iam:PassRole", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
+	}
 }

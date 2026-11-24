@@ -1277,3 +1277,13 @@ test_violation_management_actions_missing if {
 	some msg in messages_for(world(valid_statements), json.patch(decl, [{"op": "remove", "path": "/deployment_identity/apply_role/governance/management_actions"}]))
 	startswith(msg, malformed_governance)
 }
+
+governance_policy_rc := res("aws_iam_policy", sprintf("%saws_iam_policy.governance[0]", [g]), {"name": "tabp-admin-ci-apply-identity-governance", "arn": sprintf("arn:aws:iam::%s:policy/tabp-admin-ci-apply-identity-governance", [account]), "policy": json.marshal({"Statement": []})})
+
+test_violation_governance_policy_without_admin_role if {
+	fixture.has("[PLAN-APPLY-00] 入力に統制の policy", messages_for(array.concat(renamed_apply_role("tabp-dev-ci-apply"), [governance_policy_rc]), decl))
+}
+
+test_pass_governance_policy_with_admin_role if {
+	not fixture.has("[PLAN-APPLY-00] 入力に統制の policy", messages_for(array.concat(renamed_apply_role("tabp-admin-ci-apply"), [governance_policy_rc]), decl))
+}
