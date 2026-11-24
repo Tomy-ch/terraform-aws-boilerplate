@@ -375,6 +375,12 @@ func Test_candidate_actionable(t *testing.T) {
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}}.actionable())
 		})
 
+		t.Run("pin が eligible より新しければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.52.2"}, eligible: "1.52.0"}.actionable())
+		})
+
 		t.Run("上流を確認できていなければ動かせない", func(t *testing.T) {
 			t.Parallel()
 
@@ -403,6 +409,18 @@ func Test_candidate_heldByWindow(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}, latest: "1.1.0", eligible: "1.1.0"}.heldByWindow())
+		})
+
+		t.Run("pin が eligible より新しく上流最新と同じなら待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.52.2"}, latest: "1.52.2", eligible: "1.52.0"}.heldByWindow())
+		})
+
+		t.Run("pin が上流最新より新しければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.53.0"}, latest: "1.52.2", eligible: "1.52.0"}.heldByWindow())
 		})
 
 		t.Run("上流最新をそのまま採れるなら待ちは立たない", func(t *testing.T) {

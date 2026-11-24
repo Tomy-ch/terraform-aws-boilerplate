@@ -39,14 +39,15 @@ type candidate struct {
 	err         error
 }
 
-// actionable は、今日ピンを動かせる状態かどうかを返す。
+// actionable は、今日ピンを新しい版へ動かせる状態かどうかを返す。pin が eligible より新しい
+// （窓の内側の版をバイパスで先に採った）ときに真にすると、版を下げる提案になる。
 func (c candidate) actionable() bool {
-	return c.err == nil && c.eligible != "" && c.eligible != c.tool.version
+	return c.err == nil && c.eligible != "" && lessVersion(c.tool.version, c.eligible)
 }
 
-// heldByWindow は、上流に新版があるのに窓がそれを止めている状態かどうかを返す。
+// heldByWindow は、pin より新しい版が上流にあるのに窓がそれを止めている状態かどうかを返す。
 func (c candidate) heldByWindow() bool {
-	return c.err == nil && c.latest != "" && c.latest != c.tool.version && c.latest != c.eligible
+	return c.err == nil && c.latest != "" && lessVersion(c.tool.version, c.latest) && c.latest != c.eligible
 }
 
 // surveyOutdated は各ツールの上流を調べ、窓を満たす更新先を決めます。
