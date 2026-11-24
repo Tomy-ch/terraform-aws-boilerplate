@@ -428,7 +428,7 @@ func Test_resultsEligibility(t *testing.T) {
 func Test_eligibility(t *testing.T) {
 	t.Parallel()
 
-	// 種類の名前は ci.mk の CI_APPLY と tf-local の failure-kind が書く値で、ここで字面のまま固定する。
+	// 種類の名前は tf-local の ci-finish が書く値で、ここで字面のまま固定する。
 	for _, kind := range []string{"plan", "policy", "apply", "timeout"} {
 		t.Run("対象の種類 "+kind, func(t *testing.T) {
 			t.Parallel()

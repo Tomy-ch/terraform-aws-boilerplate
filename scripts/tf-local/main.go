@@ -16,19 +16,6 @@
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
-//	tf-local plan-summary -exitcode <0|1|2> <show.json>
-//	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す。終了コードが 1 なら
-//	    JSON を読まずに plan の失敗として落ちる
-//	tf-local plan-key (-pr <n> | -branch <b>) -run <id> -attempt <n> -root <root>
-//	    plan の出力を置く object の key を1行で出す
-//	tf-local apply-key -run <id> -attempt <n> -root <root>
-//	    apply の出力を置く object の key を1行で出す
-//	tf-local apply-result -exitcode <n>
-//	    `timeout` で包んだ apply の終了コードから成否を読む。0 なら成功の行を出し、124 は打ち切り、
-//	    ほかは apply の失敗として落ちる
-//	tf-local failure-kind -step <plan|apply> -exitcode <n> <全文>
-//	    apply の入口の段の種類（plan・lock・apply・timeout・applied）を1行で出す。終了コードが 1 のときだけ全文を
-//	    読み、lock の取得の失敗なら lock を出す
 //	tf-local policy-result -namespace <ns> -rego <file> <conftest.json>
 //	tf-local policy-result -policy <dir> <conftest.json>
 //	    `conftest test -o json` の結果から、名前空間の規則の評価件数と違反を読む。違反が無いのに
@@ -37,8 +24,6 @@
 //
 //	tf-local account -identity <out>
 //	    `aws sts get-caller-identity --query '[Account,Arn]' --output text` の出力から、アカウント ID を1行で出す
-//	tf-local sha256 <file>
-//	    ファイルの SHA-256 を base64 で1行で出す（`aws s3api put-object --checksum-sha256` に渡す形）
 //	tf-local lock-key <root>
 //	    <root>/backend.tf の key から、state の lock file の key を1行で出す
 //	tf-local lock-etag -key <k> [-want absent|present] <list.json>
@@ -58,7 +43,7 @@
 // ci-assume-denied。cicred.go）は、1回の起動で1つの目的の道具（aws か terraform）だけを、固定の引数で起動する
 // （ADR-0702 決定3・24）。CI の資格情報の段は、OIDC の token を GitHub Actions から自分で取る。
 // そのほかのサブコマンドは aws も terraform も起動せず、値だけを返す。plan-header だけは git を起動して作業ツリーを
-// 読む。plan-summary・failure-kind・policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait は
+// 読む。policy-result・lock-key・lock-etag・lock-stale・lock-held・lock-wait は
 // ファイルを読み、lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
@@ -112,7 +97,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file> | ci-credentials -project <p> -env <e> -role <r> -base <dir> -work <dir> | ci-assume-denied -project <p> -env <e> -base <dir> -work <dir>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file> | ci-credentials -project <p> -env <e> -role <r> -base <dir> -work <dir> | ci-assume-denied -project <p> -env <e> -base <dir> -work <dir> | ci-prepare -mode plan|apply -project <p> -env <e> -root <r> -profile <p> -base <dir> -header <file> -state <file> | ci-init|ci-plan|ci-upload|ci-finish -state <file> | ci-policy -state <file> -policy <dir> -decl <file> -layer <file> -namespace <ns>... | ci-apply -state <file> -timeout <d>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -151,7 +136,6 @@ var argCounts = map[string]int{
 	"region":      2,
 	"env-unset":   1,
 	"plan-header": 1,
-	"sha256":      2,
 	"lock-key":    2,
 }
 
@@ -185,22 +169,10 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = envUnset(d.environ)
 	case "plan-header":
 		value, err = planHeader(d.git)
-	case "plan-summary":
-		value, err = runPlanSummary(args[1:], d.readFile)
-	case "plan-key":
-		value, err = runPlanKey(args[1:])
-	case "apply-key":
-		value, err = runApplyKey(args[1:])
-	case "apply-result":
-		value, err = runApplyResult(args[1:])
-	case "failure-kind":
-		value, err = runFailureKind(args[1:], d.readFile)
 	case "policy-result":
 		value, err = runPolicyResult(args[1:], d.readFile)
 	case "account":
 		value, err = runAccount(args[1:])
-	case "sha256":
-		value, err = fileSHA256(arg, d.readFile)
 	case "lock-key":
 		value, err = lockKey(arg, d.readFile)
 	case "lock-etag":
@@ -221,6 +193,20 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = ciCredentials(args[1:], d, out)
 	case "ci-assume-denied":
 		value, err = ciAssumeDenied(args[1:], d, out)
+	case "ci-prepare":
+		value, err = ciPrepareStep(args[1:], d, out)
+	case "ci-init":
+		value, err = ciInitStep(args[1:], d)
+	case "ci-plan":
+		value, err = ciPlanStep(args[1:], d, out)
+	case "ci-policy":
+		value, err = ciPolicyStep(args[1:], d, out)
+	case "ci-apply":
+		value, err = ciApplyStep(args[1:], d, out)
+	case "ci-upload":
+		value, err = ciUploadStep(args[1:], d, out)
+	case "ci-finish":
+		value, err = ciFinishStep(args[1:], d)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -43,7 +44,7 @@ var (
 type toolFunc func(dir string, env []string, step string) *exec.Cmd
 
 // command は toolFunc の実物です。aws の可変の値は、作業ディレクトリに置いた input.json（--cli-input-json）と
-// AWS_REGION で渡します。
+// AWS_REGION で、terraform の可変の値は TF_CLI_ARGS_<サブコマンド> で渡します。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()
 	var cmd *exec.Cmd
@@ -56,6 +57,21 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "aws", "s3api", "get-bucket-encryption", "--cli-input-json", "file://input.json", "--output", "json")
 	case stepAssumeRole:
 		cmd = exec.CommandContext(ctx, "aws", "sts", "assume-role-with-web-identity", "--cli-input-json", "file://input.json", "--output", "json")
+	case stepCIInit:
+		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-no-color", "-lockfile=readonly")
+	case stepCIPlanNoLock:
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-lock=false", "-input=false", "-no-color", "-detailed-exitcode")
+	case stepCIPlanLock:
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-detailed-exitcode")
+	case stepCIShow:
+		cmd = exec.CommandContext(ctx, "terraform", "show")
+	case stepCIApply:
+		cmd = exec.CommandContext(ctx, "terraform", "apply")
+	case stepCIConftest:
+		cmd = exec.CommandContext(ctx, "conftest", "test", "--combine", "--all-namespaces", "--no-color", "-o", "json",
+			"--policy", "rego", "--data", "decl.json", "--data", "layer.json", "plan.json")
+	case stepCIPutObject:
+		cmd = exec.CommandContext(ctx, "aws", "s3api", "put-object", "--cli-input-json", "file://input.json", "--body", "body.txt", "--output", "json")
 	case stepLocalInit:
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-lockfile=readonly")
 	default:
@@ -96,11 +112,9 @@ func localRoot(base, env, root string) (string, error) {
 	if !tokenPattern.MatchString(env) {
 		return "", errToken
 	}
-	switch root {
-	case "identity":
-		return filepath.Join(base, "env", env, "identity"), nil
-	case "workload":
-		return filepath.Join(base, "env", env), nil
+	switch r := cientry.Root(root); r {
+	case cientry.RootIdentity, cientry.RootWorkload:
+		return filepath.Join(base, filepath.FromSlash(r.Dir(env))), nil
 	default:
 		return "", xerrors.Wrap(errUsage, "root は identity か workload です")
 	}
