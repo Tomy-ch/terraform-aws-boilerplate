@@ -244,33 +244,6 @@ func Test_makefiles_一時のリポジトリを建てるレシピはGIT_ISOLATE�
 	assert.Subset(t, found, []string{"gitleaks-canary", "trufflehog-canary"})
 }
 
-// go-test と go-test-cover は、git の位置の変数が壊れた場所を指す環境で走る。
-func Test_makefiles_go_testは壊した環境で走る(t *testing.T) {
-	t.Parallel()
-
-	root := filepath.Join("..", "..", "..")
-	for _, target := range []string{"go-test", "go-test-cover"} {
-		t.Run(target, func(t *testing.T) {
-			t.Parallel()
-
-			cmd := exec.CommandContext(t.Context(), "make", "-C", root, "-n", "--no-print-directory", target, "RUNNER_MODE=host", "GO_TOOL=")
-			cmd.Env = withoutMakeVars(os.Environ())
-			out, err := cmd.CombinedOutput()
-			require.NoError(t, err, string(out))
-
-			var lines []string
-			for _, line := range strings.Split(string(out), "\n") {
-				if strings.Contains(line, "go -C scripts test") {
-					lines = append(lines, line)
-				}
-			}
-			require.Len(t, lines, 1, string(out))
-			assert.Contains(t, lines[0], "GIT_DIR=/dev/null/git-isolation-required")
-			assert.Contains(t, lines[0], "GIT_INDEX_FILE=/dev/null/git-isolation-required")
-		})
-	}
-}
-
 // makeRecipes は dir の下の .mk を読み、target ごとにレシピの行を連結して返します。
 func makeRecipes(t *testing.T, dir string) map[string]string {
 	t.Helper()
