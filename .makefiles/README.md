@@ -46,7 +46,7 @@ make が持つのは、運用機構（`scripts/`）と道具を呼び出す**順
 | 形 | 何を起動するか | 使う場面 |
 | --- | --- | --- |
 | `$(GO_TOOL)` | Go 側のツールランナー | `mise.toml` が pin した Go 製の既製品（golangci-lint、trivy、hadolint ほか） |
-| `$(NODE_TOOL)` | npm 側のツールランナー。host では `docker/tools/node` の lockfile を frozen で入れてから、入れた先の道具を起動する（`NODE_HOST_RUN`） | markdownlint-cli2、commitlint |
+| `$(NODE_TOOL)` | npm 側のツールランナー。host では `docker/tools/node` の lockfile を frozen で入れてから、入れた先の道具を起動する（`scripts/node-tools` の `exec`） | markdownlint-cli2、commitlint |
 | `$(call RUN_SCRIPT,<名前>,<引数>)` | `scripts/<名前>` をビルドして起動 | このリポジトリが書いた検査 |
 | `$(call IMAGE_RUN,<service>,<入力>,<出力>,<create の引数>,<引数>)` | `docker-compose.yaml` の service が宣言する上流のイメージ。mount せず、入力を複写で渡して結果を複写で取り出す。`RUNNER_MODE` に依らない | 上流がイメージとして配布する道具（Checkov / KICS / Semgrep CE。ADR-0503 決定4・7） |
 | `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **提供段のコンテナに無い前提を要するもの** —— version manager 自身を入力にする、`docker` を呼ぶ、`git` / `gh` がホストの資格情報を使う |
@@ -95,7 +95,7 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `hygiene/`
 
-綴りと `.editorconfig` の一致、`.mk` にテストのターゲットが無いこと。
+綴りと `.editorconfig` の一致、editorconfig-checker の無効化の印の形。判定と canary は `scripts/typos-gate`・`scripts/editorconfig-gate`・`scripts/editorconfig-directive-lint` が持つ。
 
 ### `markdown/`
 
