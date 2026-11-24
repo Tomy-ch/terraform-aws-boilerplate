@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -370,6 +371,28 @@ func Test_runCanary(t *testing.T) {
 		}
 	})
 
+	t.Run("root が相対パスでも、道具は絶対パスの fixture で起動する", func(t *testing.T) {
+		t.Parallel()
+		_, root, _ := workWorld(t)
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		rel, err := filepath.Rel(cwd, root)
+		require.NoError(t, err)
+		require.False(t, filepath.IsAbs(rel))
+		fake, _ := fakeTool(t)
+		var dirs []string
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			dirs = append(dirs, d)
+			return fake(d, env, step)
+		}
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, rel), errCanary)
+		require.NotEmpty(t, dirs)
+		for _, d := range dirs {
+			assert.True(t, filepath.IsAbs(d), d)
+			assert.True(t, strings.HasPrefix(d, filepath.Join(root, "tmp", "c", "work")+string(filepath.Separator)), d)
+		}
+	})
+
 	t.Run("root に tmp/ が無ければ作って建てる", func(t *testing.T) {
 		t.Parallel()
 		root := tree(t, map[string]string{"keep/f": "keep"})
@@ -377,6 +400,28 @@ func Test_runCanary(t *testing.T) {
 		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary)
 		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
 		assert.FileExists(t, filepath.Join(root, "keep", "f"))
+	})
+}
+
+func Test_planCanary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root を runCanary へ渡す", func(t *testing.T) {
+		t.Parallel()
+		ref := tree(t, map[string]string{"versions.tf": "", ".terraform.lock.hcl": "", "decl.json": "{}", "layer.json": layerWithNulls})
+		args := func(work string) []string {
+			return []string{"-data", t.TempDir(), "-work", work, "-policy", policyTree(t),
+				"-decl", filepath.Join(ref, "decl.json"), "-layer", filepath.Join(ref, "layer.json"), "-reference", ref}
+		}
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, planCanary(root)(args("tmp/out/w"), &bytes.Buffer{}, tool), errUsage, "root の tmp/out は外を指す")
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.ErrorIs(t, planCanary(root)(args("tmp/c/work"), &bytes.Buffer{}, tool), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
 	})
 }
 

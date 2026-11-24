@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,6 +101,35 @@ func snapshot(t *testing.T, dir string) map[string]string {
 		return nil
 	}))
 	return got
+}
+
+func Test_snapshot(t *testing.T) {
+	t.Parallel()
+
+	for name, change := range map[string]func(t *testing.T, dir string){
+		"ファイルを消す": func(t *testing.T, dir string) { require.NoError(t, os.Remove(filepath.Join(dir, "a", "f"))) },
+		"ファイルを足す": func(t *testing.T, dir string) {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "a", "g"), nil, 0o600))
+		},
+		"中身を書き換える": func(t *testing.T, dir string) {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "a", "f"), []byte("y"), 0o600))
+		},
+		"symlink の先を変える": func(t *testing.T, dir string) {
+			require.NoError(t, os.Remove(filepath.Join(dir, "l")))
+			require.NoError(t, os.Symlink(filepath.Join(dir, "b"), filepath.Join(dir, "l")))
+		},
+		"空のディレクトリを足す": func(t *testing.T, dir string) { require.NoError(t, os.Mkdir(filepath.Join(dir, "e"), 0o750)) },
+	} {
+		t.Run(name+"と変わる", func(t *testing.T) {
+			t.Parallel()
+			dir := tree(t, map[string]string{"a/f": "x", "b/f": "x"})
+			require.NoError(t, os.Symlink(filepath.Join(dir, "a"), filepath.Join(dir, "l")))
+			before := snapshot(t, dir)
+			assert.Equal(t, before, snapshot(t, dir), "対照: 何もしなければ変わらない")
+			change(t, dir)
+			assert.NotEqual(t, before, snapshot(t, dir))
+		})
+	}
 }
 
 // workWorld は、リポジトリ直下に見立てる root と、その外の outside を、1つの一時ディレクトリ world の下に建てる。

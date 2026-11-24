@@ -239,10 +239,10 @@ func Test_runValidate(t *testing.T) {
 		base := okTree(t, map[string]string{"modules/a/validate.out": `{"valid":true}`, "usecases/b/fail-validate": ""})
 		tool, calls := fakeTool(t)
 		out := filepath.Join(t.TempDir(), "v")
-		var canaryArgs []string
+		var got []string
 		args := append(append([]string{"-base", base, "-data", "/d", "-out", out}, canaryFlags...), "modules", "usecases")
-		require.NoError(t, runValidate(args, &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)))
-		assert.Equal(t, []string{"-data", "/cd", "-work", "tmp/cw", "-reference", "cr"}, canaryArgs, "-canary-work は検証した元の値のまま渡す")
+		require.NoError(t, runValidate(args, &bytes.Buffer{}, tool, passCanary(&got), tree(t, nil)))
+		assert.Equal(t, []string{"-data", "/cd", "-work", "tmp/cw", "-reference", "cr"}, got, "-canary-work は検証した元の値のまま渡す")
 		assert.Len(t, calls(), 2)
 		manifest, err := os.ReadFile(filepath.Join(out, "manifest.tsv"))
 		require.NoError(t, err)
@@ -272,11 +272,60 @@ func Test_runValidate(t *testing.T) {
 		t.Parallel()
 		base := okTree(t, nil)
 		tool, calls := fakeTool(t)
-		var canaryArgs []string
-		require.ErrorIs(t, runValidate(append([]string{"-base", base, "-data", "/d"}, append(canaryFlags, "modules")...), &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errUsage)
-		require.ErrorIs(t, runValidate([]string{"-base", base, "-data", "/d", "-out", "o", "modules"}, &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errUsage)
-		assert.Nil(t, canaryArgs)
+		var got []string
+		require.ErrorIs(t, runValidate(append([]string{"-base", base, "-data", "/d"}, append(canaryFlags, "modules")...), &bytes.Buffer{}, tool, passCanary(&got), tree(t, nil)), errUsage)
+		require.ErrorIs(t, runValidate([]string{"-base", base, "-data", "/d", "-out", "o", "modules"}, &bytes.Buffer{}, tool, passCanary(&got), tree(t, nil)), errUsage)
+		assert.Nil(t, got)
 		assert.Empty(t, calls())
+	})
+
+	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
+		t.Parallel()
+		for name, c := range map[string]struct {
+			cause error
+			code  int
+		}{
+			"canary の不成立は 1":        {errCanary, 1},
+			"canary の引数の誤りは 2":      {errUsage, 2},
+			"canary の root が無いのは 2": {errMissingRoot, 2},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				tool, calls := fakeTool(t)
+				fail := func([]string, io.Writer, toolFunc) error { return xerrors.Wrap(c.cause, "x") }
+				err := runValidate(append(append([]string{"-base", okTree(t, nil), "-data", "/d", "-out", filepath.Join(t.TempDir(), "v")}, canaryFlags...), "modules"), &bytes.Buffer{}, tool, fail, tree(t, nil))
+				require.ErrorIs(t, err, c.cause)
+				assert.Equal(t, c.code, exitCode(err))
+				assert.Contains(t, err.Error(), "canary が落ちたので、本走査を行いません")
+				assert.Empty(t, calls())
+			})
+		}
+	})
+
+	t.Run("canary の引数が1つでも無ければ、canary も道具も起動せず何も消さずに errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, drop := range []string{"-canary-data", "-canary-work", "-canary-reference"} {
+			t.Run(drop, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				var args []string
+				for i := 0; i < len(canaryFlags); i += 2 {
+					if canaryFlags[i] != drop {
+						args = append(args, canaryFlags[i], canaryFlags[i+1])
+					}
+				}
+				args = append(append([]string{"-base", okTree(t, nil), "-data", "/d", "-out", filepath.Join(t.TempDir(), "v")}, args...), "modules")
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				var got []string
+				err := runValidate(args, &bytes.Buffer{}, tool, passCanary(&got), root)
+				require.ErrorIs(t, err, errUsage)
+				assert.Equal(t, 2, exitCode(err))
+				assert.Nil(t, got, "canary を起動しない")
+				assert.Empty(t, calls())
+				assert.Equal(t, before, snapshot(t, world))
+			})
+		}
 	})
 
 	t.Run("-canary-work が tmp/ の下の相対パスでなければ、canary も道具も起動せず何も消さずに、-canary-work を名指す errUsage で終了コードは 2", func(t *testing.T) {
@@ -294,16 +343,16 @@ func Test_runValidate(t *testing.T) {
 				base := okTree(t, nil)
 				before := snapshot(t, world)
 				tool, calls := fakeTool(t)
-				var canaryArgs []string
+				var got []string
 				args := []string{"-base", base, "-data", "/d", "-out", filepath.Join(t.TempDir(), "v"),
 					"-canary-data", "/cd", "-canary-work", work, "-canary-reference", "cr", "modules"}
-				err := runValidate(args, &bytes.Buffer{}, tool, passCanary(&canaryArgs), root)
+				err := runValidate(args, &bytes.Buffer{}, tool, passCanary(&got), root)
 				require.ErrorIs(t, err, errUsage)
 				assert.Equal(t, 2, exitCode(err))
 				if work != "" {
 					assert.Contains(t, err.Error(), fmt.Sprintf("-canary-work %q", work))
 				}
-				assert.Nil(t, canaryArgs, "canary を起動しない")
+				assert.Nil(t, got, "canary を起動しない")
 				assert.Empty(t, calls())
 				assert.Equal(t, before, snapshot(t, world))
 			})

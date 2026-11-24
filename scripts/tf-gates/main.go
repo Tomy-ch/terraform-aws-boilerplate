@@ -39,10 +39,11 @@ var (
 )
 
 func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout, command), os.Stderr))
+	os.Exit(report(run(os.Args[1:], os.Stdout, command, "."), os.Stderr))
 }
 
-func run(args []string, w io.Writer, tool toolFunc) error {
+// run は、サブコマンドへ振り分けます。root はリポジトリ直下です。
+func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
 	}
@@ -57,7 +58,7 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "init":
 		return runInit(rest, w, tool)
 	case "validate":
-		return runValidate(rest, w, tool, func(a []string, w io.Writer, t toolFunc) error { return runValidateCanary(a, w, t, ".") }, ".")
+		return runValidate(rest, w, tool, validateCanary(root), root)
 	case "result":
 		return runResult(rest, w)
 	case "test":

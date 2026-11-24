@@ -196,6 +196,24 @@ func Test_runValidateCanary(t *testing.T) {
 	})
 }
 
+func Test_validateCanary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root を runValidateCanary へ渡す", func(t *testing.T) {
+		t.Parallel()
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		err := validateCanary(root)(canaryArgs(t, "tmp/out/w"), &bytes.Buffer{}, tool)
+		require.ErrorIs(t, err, errUsage, "root の tmp/out は外を指す")
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.NoError(t, validateCanary(root)(canaryArgs(t, "tmp/c/work"), &bytes.Buffer{}, canaryTool(t, "")))
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "clean"))
+	})
+}
+
 func Test_canaryCase(t *testing.T) {
 	t.Parallel()
 

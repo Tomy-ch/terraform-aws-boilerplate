@@ -123,6 +123,11 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	return nil
 }
 
+// planCanary は、root をリポジトリ直下として runCanary を走らせる canary です。
+func planCanary(root string) canaryFunc {
+	return func(args []string, w io.Writer, tool toolFunc) error { return runCanary(args, w, tool, root) }
+}
+
 func canaryCases(reference string, layerRaw []byte, nullValues string) []canaryCase {
 	appendTo := func(rel, text string) func(c string) error {
 		return func(c string) error { return appendText(filepath.Join(c, filepath.FromSlash(rel)), text) }

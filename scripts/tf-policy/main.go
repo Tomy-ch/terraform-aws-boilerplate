@@ -31,10 +31,11 @@ var (
 )
 
 func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout, command), os.Stderr))
+	os.Exit(report(run(os.Args[1:], os.Stdout, command, "."), os.Stderr))
 }
 
-func run(args []string, w io.Writer, tool toolFunc) error {
+// run は、サブコマンドへ振り分けます。root はリポジトリ直下です。
+func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
 	}
@@ -45,7 +46,7 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "verify-result":
 		return runVerifyResult(rest, w)
 	case "plan":
-		return runPlan(rest, w, tool, func(a []string, w io.Writer, t toolFunc) error { return runCanary(a, w, t, ".") }, ".")
+		return runPlan(rest, w, tool, planCanary(root), root)
 	case "extract":
 		return runExtract(rest, w)
 	default:

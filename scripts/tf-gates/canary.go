@@ -95,6 +95,11 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 	return nil
 }
 
+// validateCanary は、root をリポジトリ直下として runValidateCanary を走らせる canary です。
+func validateCanary(root string) canaryFunc {
+	return func(args []string, w io.Writer, tool toolFunc) error { return runValidateCanary(args, w, tool, root) }
+}
+
 // canaryCase は、<work>/<name> に reference の版を写した root を建て、その基点を返します。
 func canaryCase(work, name, reference, extra string) (string, error) {
 	base := filepath.Join(work, name)

@@ -170,12 +170,72 @@ func Test_runPlan(t *testing.T) {
 		assert.Empty(t, calls())
 	})
 
-	t.Run("root が0件なら起動せずに errNoInput", func(t *testing.T) {
+	t.Run("canary を root の列挙より先に走らせ、root が0件か列挙できなければ本走査を起動しない", func(t *testing.T) {
 		t.Parallel()
-		tool, calls := fakeTool(t)
-		var canaryArgs []string
-		require.ErrorIs(t, runPlan(planArgs(tree(t, map[string]string{"x": ""}), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errNoInput)
-		assert.Empty(t, calls())
+		for name, c := range map[string]struct {
+			files map[string]string
+			want  error
+		}{
+			"root が0件なら errNoInput":    {map[string]string{"x": ""}, errNoInput},
+			"usecases を読めなければ errRead": {map[string]string{"usecases": ""}, errRead},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				tool, calls := fakeTool(t)
+				var canaryArgs []string
+				require.ErrorIs(t, runPlan(planArgs(tree(t, c.files), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), c.want)
+				assert.NotNil(t, canaryArgs, "canary は走った")
+				assert.Empty(t, calls())
+			})
+		}
+	})
+
+	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
+		t.Parallel()
+		for name, c := range map[string]struct {
+			cause error
+			code  int
+		}{
+			"canary の不成立は 1":   {errCanary, 1},
+			"canary の引数の誤りは 2": {errUsage, 2},
+			"canary が読めないのは 2": {errRead, 2},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				tool, calls := fakeTool(t)
+				fail := func([]string, io.Writer, toolFunc) error { return xerrors.Wrap(c.cause, "x") }
+				err := runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tool, fail, tree(t, nil))
+				require.ErrorIs(t, err, c.cause)
+				assert.Equal(t, c.code, exitCode(err))
+				assert.Contains(t, err.Error(), "canary が落ちたので、本走査を行いません")
+				assert.Empty(t, calls())
+			})
+		}
+	})
+
+	t.Run("必須の引数が1つでも無ければ、canary も道具も起動せず何も消さずに errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, drop := range []string{"-canary-data", "-canary-work", "-policy", "-decl", "-layer", "-reference"} {
+			t.Run(drop, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				args := []string{"-base", planBase(t), "-data", "/d", "-out", "tmp/c/work"}
+				for i := 0; i < len(canaryFlags); i += 2 {
+					if canaryFlags[i] != drop {
+						args = append(args, canaryFlags[i], canaryFlags[i+1])
+					}
+				}
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				var canaryArgs []string
+				err := runPlan(args, &bytes.Buffer{}, tool, passCanary(&canaryArgs), root)
+				require.ErrorIs(t, err, errUsage)
+				assert.Equal(t, 2, exitCode(err))
+				assert.Nil(t, canaryArgs, "canary を起動しない")
+				assert.Empty(t, calls())
+				assert.Equal(t, before, snapshot(t, world))
+			})
+		}
 	})
 
 	t.Run("引数の誤りは、canary も本走査も起動せずに errUsage", func(t *testing.T) {
