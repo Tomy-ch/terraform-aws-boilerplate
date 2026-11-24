@@ -14,6 +14,7 @@ module "organization" {
 module "break_glass" {
   source = "./internal/break-glass"
 
-  role_name = local.break_glass_role_name
-  path      = local.break_glass_path
+  role_name            = local.break_glass_role_name
+  path                 = local.break_glass_path
+  organization_root_id = module.organization.root_id
 }
