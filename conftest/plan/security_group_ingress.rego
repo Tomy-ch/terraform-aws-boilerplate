@@ -86,7 +86,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SG-01] %s: %s が %s からの ingress を許します。公開点として宣言していません", [r.c.path, r.c.rc.address, cidr])
 }
 
-# ingress の block の list 自体か、規則の CIDR が plan で決まらなければ、全開放でないことを確かめられない。
 deny contains msg if {
 	some c in lib.changes
 	c.rc.type in inline_types
@@ -103,7 +102,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-SG-02] %s: %s の %s が plan で決まらないので、全開放でないことを確かめられません", [r.c.path, r.c.rc.address, attr])
 }
 
-# aws_security_group_rule の type が決まらなければ、ingress かどうかを確かめられない。
 deny contains msg if {
 	some c in lib.changes
 	c.rc.type == "aws_security_group_rule"

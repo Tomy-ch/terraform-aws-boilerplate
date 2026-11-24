@@ -1,4 +1,4 @@
-# break-glass の形（ADR-0301 決定19 の検証方法、organization-baseline/ADR-0201。conftest/plan/README.md の
+# break-glass の形（ADR-0301 決定19・20、organization-baseline/ADR-0201。conftest/plan/README.md の
 # plan.organization_baseline_break_glass）。
 package plan.organization_baseline_break_glass
 
@@ -144,7 +144,6 @@ deny contains msg if {
 	msg := sprintf("[PLAN-BG-02] break-glass の group が %s を、条件なしで全 Resource について拒んでいません", [a])
 }
 
-# Condition は空の {} でも持てば条件ありと読む。
 denies_unconditionally(action) if {
 	some s in group_statements
 	s.Effect == "Deny"
