@@ -48,6 +48,11 @@ usecases/**/.terraform.lock.hcl
 # make が組み立てるツールのバイナリ。派生物であり、失っても費用がゼロ。
 tmp/
 
+# scripts/<tool>/ で go build を直接打つと、拡張子の無い道具の名前のバイナリができる。
+/scripts/*/*
+!/scripts/*/*.*
+!/scripts/*/*/
+
 # カバレッジプロファイル。make go-test-cover が書き、make cover-gate が読む中間物。
 coverage.out
 
