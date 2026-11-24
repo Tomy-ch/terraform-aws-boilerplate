@@ -8,6 +8,13 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
+  # identity root が先に作る Chatbot の service-linked role（ops-notification/ADR-0201 決定9）。
+  mock_data "aws_iam_role" {
+    defaults = {
+      path = "/aws-service-role/management.chatbot.amazonaws.com/"
+      arn  = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+  }
 }
 
 override_resource {
@@ -82,4 +89,33 @@ run "wiring" {
     condition     = aws_iam_role_policy_attachment.read.role == aws_iam_role.this.name && aws_iam_role_policy_attachment.read.policy_arn == aws_iam_policy.read.arn
     error_message = "読み取りの policy を channel role に付けるのが、attachment になっていません。"
   }
+}
+
+# 同じ名前の role が service-linked role でなければ、plan で落とす（ops-notification/ADR-0201 決定9）。
+run "service_linked_role_with_other_path" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_role.chatbot_service_linked
+    values = {
+      path = "/"
+      arn  = "arn:aws:iam::123456789012:role/AWSServiceRoleForAWSChatbot"
+    }
+  }
+
+  expect_failures = [data.aws_iam_role.chatbot_service_linked]
+}
+
+run "service_linked_role_in_other_account" {
+  command = plan
+
+  override_data {
+    target = data.aws_iam_role.chatbot_service_linked
+    values = {
+      path = "/aws-service-role/management.chatbot.amazonaws.com/"
+      arn  = "arn:aws:iam::210987654321:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+    }
+  }
+
+  expect_failures = [aws_chatbot_slack_channel_configuration.this]
 }
