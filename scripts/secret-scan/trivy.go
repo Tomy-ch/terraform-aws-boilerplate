@@ -18,8 +18,7 @@ import (
 // trivyRuleGitHubPAT は、canary の偽の token に当たる Trivy の規則です。
 const trivyRuleGitHubPAT = "github-pat"
 
-// trivyConfigs は、Trivy が作業ディレクトリから既定で読む設定（--config と --secret-config の既定値）です。canary は
-// root に在るものを写し、本走査と同じ設定で走ります。
+// trivyConfigs は、Trivy が作業ディレクトリから既定で読む設定（--config と --secret-config の既定値）です。
 var trivyConfigs = []string{"trivy.yaml", "trivy-secret.yaml"}
 
 var trivySteps = map[string]string{"table": stepTrivyTable, "json": stepTrivyJSON, "sarif": stepTrivySARIF}

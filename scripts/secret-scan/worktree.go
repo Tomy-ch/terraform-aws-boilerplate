@@ -129,7 +129,7 @@ func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error)
 // stageFiles は、root からの相対パス files を stage の下へ同じ相対パスで置きます。通常のファイルは hard link で、
 // 張れなければ複写で置きます。symlink は同じ指す先の symlink として置き、辿るかどうかを trufflehog に任せます。
 // ただし、root の外を指す symlink（stage に置くと stage の外を指しうる）は置かずに、log へ名前を出して飛ばします ——
-// trufflehog は symlink を辿らないので、置いても走査は増えず、置けば将来の版が root の外を読みうる。
+// trufflehog は symlink を辿らないので、置いても走査は増えず、辿る版では root の外を読みうる。
 func stageFiles(root string, files []string, stage string, log io.Writer) error {
 	for _, p := range files {
 		src := filepath.Join(root, filepath.FromSlash(p))
