@@ -620,6 +620,7 @@ allows contains {"path": r.document.path, "address": r.document.address, "s": s}
 }
 
 # wildcard の Action も、iam のサービスに当たり読み取りの動詞で始まらなければ書き込みと数える。
+# iam:PassRole も書き込みと数える。service-linked role は渡す先を持たない。
 iam_write_action(a) if {
 	glob.match(split(a, ":")[0], null, "iam")
 	not regex.match(`^[^:]+:(get|list|generate|simulate)[a-z0-9*?]*$`, a)
@@ -629,6 +630,17 @@ service_linked_create(s, a, service) if {
 	a == "iam:createservicelinkedrole"
 	service in declared_services
 	lib.as_array(object.get(object.get(object.get(s, "Condition", {}), "StringEquals", {}), "iam:AWSServiceName", [])) == [service]
+	service_linked_resources(s, service)
+}
+
+# Resource は、そのサービスの service-linked role の ARN（plan の値）と完全一致する要素だけを持つ。
+service_linked_resources(s, service) if {
+	not "NotResource" in object.keys(s)
+	resources := lib.as_array(object.get(s, "Resource", []))
+	count(resources) > 0
+	every r in resources {
+		[r, service] in service_linked_roles
+	}
 }
 
 deny contains msg if {

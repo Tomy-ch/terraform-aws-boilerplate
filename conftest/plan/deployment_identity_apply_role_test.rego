@@ -1392,7 +1392,9 @@ test_violation_same_arn_different_service if {
 
 test_violation_declaration_empty_with_service_linked_role if {
 	d := json.patch(slr_decl, [{"op": "replace", "path": "/deployment_identity/workload/service_linked_roles", "value": []}])
-	count(messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), d)) > 0
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), d)
+	fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), msgs)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s の service-linked role（%s）が、宣言した前提のサービス（[]）にありません", [slr_address, slr_service]), msgs)
 }
 
 # --- PLAN-APPLY-02 の境界 ---
@@ -1430,8 +1432,28 @@ test_violation_create_condition_multiple_or_for_any_value if {
 	}
 }
 
-test_pass_create_resource_wildcard_with_condition if {
-	count(slr_messages([], [json.patch(slr_create, [{"op": "replace", "path": "/Resource", "value": "*"}])], [slr_read], [boundary_allow])) == 0
+test_violation_create_resource_not_exact_arn if {
+	every resource in [
+		"*",
+		[slr_arn, "*"],
+		sprintf("arn:aws:iam::%s:role/aws-service-role/%s/*", [account, slr_service]),
+		sprintf("arn:aws:iam::%s:role/aws-service-role/*", [account]),
+	] {
+		create := json.patch(slr_create, [{"op": "replace", "path": "/Resource", "value": resource}])
+		fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+	}
+}
+
+test_violation_create_not_resource if {
+	create := json.patch(object.remove(slr_create, ["Resource"]), [{"op": "add", "path": "/NotResource", "value": role_arn("ci-plan")}])
+	fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+}
+
+test_pass_create_resource_exact_arn if {
+	every resource in [slr_arn, [slr_arn]] {
+		create := json.patch(slr_create, [{"op": "replace", "path": "/Resource", "value": resource}])
+		count(slr_messages([], [create], [slr_read], [boundary_allow])) == 0
+	}
 }
 
 test_violation_not_action_only_iam_reads if {
