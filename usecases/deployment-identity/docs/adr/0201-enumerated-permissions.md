@@ -190,11 +190,11 @@ boundary は role に1つしか付かず、文書は 6,144 文字が上限であ
 
 ## 影響
 
-- identity root に構成物を足す変更と、管理アカウントに workload の usecase を足す変更は、まずこの policy を広げる変更を apply してから、その権限を使う変更を apply する。CI の role を足す変更は、決定4 の順序により1回の apply に収まる。権限の変更と、その権限で作る resource を同じ apply に入れると、両者の間に依存が無く失敗しうる
+- identity root に構成物を足す変更と、管理アカウントに workload の usecase を足す変更は、この policy を広げる変更と、その権限を使う変更を、同じ Pull Request・同じ昇格に入れてよい。CI の role を足す変更は、決定4 の順序により1回の apply に収まる。そのほかは権限の変更と resource の間に依存が無いので、IAM の反映の遅れで初回の apply が AccessDenied で落ちうる。そのときは失敗した job を走らせ直す（見分け方は `docs/setup/bootstrap.md` の「段5 の CI の apply が失敗した」）。権限と resource を別の昇格に分けると、レビューと昇格が2回になる
 - inline policy は role あたり 10,240 文字、customer managed policy は1つ 6,144 文字（どちらも空白を除く）が上限である。入力の境界での長さは、`permissions.tftest.hcl` の `policy_length`（`admin`）と `policy_length_outside_admin`（`admin` 以外）が上限以下であることを固定する。boundary（決定15）、apply の role の workload の2つの policy（決定17）、統制の policy（決定7）と決定21 の policy も同じ run で測る。宣言（`customer_managed_policies`）の policy がすべて測られることは、Policy Test（`PLAN-CMP-*`）と Unit Test が見る。us-east-1 は aws の partition にだけ足すので、aws の最長の region と us-east-1 を並べた形を `policy_length_aws`・`policy_length_outside_admin_aws` で測る
 - IAM の role を作る workload root の usecase は、出力 `permissions_boundary_arns`のうち自分の名前の boundary の ARN を入力で受け、作るすべての role に付ける。対象は `ops-notification`（入力 `permissions_boundary_arn`）と、以後 role を作る usecase のすべて（`modules/vpc` の flow logs の role を使う `network-foundation` を含む）。boundary の中身はこの usecase（identity root）が持ち、role を作る usecase は決めない。role を作る usecase を足す変更は、その usecase の boundary を足す変更（この ADR の書き換え）を先に merge して apply する。入力は policy の文書ではなく、この usecase が持つ1つの policy の ARN であり、repository-wide/ADR-0204 決定2 の、意味が AWS の表現に依存する入力ではない
 - workload root は、boundary の ARN を identity root の state から読めない（決定5 の `DenyIdentityStateChange`）。env の root が、名前から組んだ ARN を usecase に渡す
-- 決定15・17・21 の policy を作って付ける変更は、それを作る権限（apply-identity の inline policy）を入れる変更を `admin` へ昇格し apply した後に merge する。権限と、その権限で作る policy を同じ apply に入れると、IAM の反映の遅れで1回目の apply が落ちうる
+- 決定15・17・21 の policy を作って付ける変更は、それを作る権限（apply-identity の inline policy）を入れる変更と同じ昇格でよい。IAM の反映の遅れで1回目の apply が落ちたら、項目1 と同じく走らせ直す
 - apply-identity の inline policy から決定21 の policy へ文を移す変更は、1回の apply で、policy の作成、付与、inline policy の縮小の順に進む（決定21 の依存）。途中で失敗しても、付与より前に inline policy から文は消えず、再実行で収束する。
 - 管理アカウントの workload root に `finops` を置く変更は、`docs/setup/bootstrap.md` の 2-4 の tag を付けてから apply する。tag が無いと、apply の role は bootstrap の前提の AWS services monitor とその subscription を変更・削除でき、その plan は Pull Request のレビューでしか止まらない
 
