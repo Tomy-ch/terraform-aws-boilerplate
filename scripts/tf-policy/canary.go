@@ -57,7 +57,7 @@ type canaryCase struct {
 // Conftest の適用、評価の数の突き合わせ）を、実物の terraform・Conftest・mock provider で通しで走らせ、違反の無い
 // 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
 // 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。[errTool] のときは、ケースの判定に
-// 畳まず [errTool] をそのまま返します。root はリポジトリ直下です。
+// 畳まず [errTool] を返し、それまでに落ちたケースは文面にだけ添えます。root はリポジトリ直下です。
 func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
@@ -107,7 +107,11 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 		}
 		out, err := policyChain(dir, *data, tool, verified)
 		if xerrors.Is(err, errTool) {
-			return err
+			if len(failed) == 0 {
+				return err
+			}
+
+			return xerrors.Wrapf(err, "canary %s で打ち切りました（それまでに落ちたケース: %s）", c.name, strings.Join(failed, " "))
 		}
 		ok := strings.Contains(out, c.pattern)
 		if c.pass {

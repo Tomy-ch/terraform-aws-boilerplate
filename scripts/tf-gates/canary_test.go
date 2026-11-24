@@ -95,10 +95,57 @@ func Test_runValidateCanary(t *testing.T) {
 			}
 			return actual(d, env, step)
 		}
-		err := runValidateCanary(canaryArgs(t, "tmp/w"), &bytes.Buffer{}, tool, tree(t, nil))
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
 		require.ErrorIs(t, err, errTool)
 		require.NotErrorIs(t, err, errCanary)
 		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "--- canary deprecated")
+		assert.NotContains(t, err.Error(), "それまでに落ちたケース")
+	})
+
+	t.Run("抑止の宣言を当てた validate だけを起動できなければ、errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		validates := 0
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepValidate && strings.Contains(d, string(filepath.Separator)+"deprecated"+string(filepath.Separator)) {
+				validates++
+				if validates == 2 {
+					return tooltest.Missing(d, env, step)
+				}
+			}
+			return actual(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Equal(t, 2, validates, "deprecated の validate は、警告を見る1回目と抑止を当てる2回目")
+		assert.NotContains(t, out.String(), "--- canary")
+	})
+
+	t.Run("先のケースが期待どおりでなく、後のケースで道具を起動できなければ、先のケースを文面にだけ名指して errTool", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		sep := string(filepath.Separator)
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			switch {
+			case strings.Contains(d, sep+"clean"+sep):
+				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+			case strings.Contains(d, sep+"deprecated"+sep):
+				return tooltest.Missing(d, env, step)
+			}
+			return actual(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "canary deprecated で打ち切りました（それまでに落ちたケース: clean）")
+		assert.Contains(t, out.String(), "--- canary clean の出力")
 	})
 
 	t.Run("reference の lock が無ければ失敗する", func(t *testing.T) {

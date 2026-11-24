@@ -262,6 +262,18 @@ func Test_runPlan(t *testing.T) {
 		}
 	})
 
+	t.Run("本走査で道具を起動できなければ、plans.txt を書かずに errTool で終了コードは 2 で、errFailed を包まない", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, nil)
+		var got []string
+		err := runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tooltest.Missing, passCanary(&got), root)
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotNil(t, got, "canary は走った")
+		assert.NoFileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
+	})
+
 	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
 		t.Parallel()
 		for name, c := range map[string]struct {

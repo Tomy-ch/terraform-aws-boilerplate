@@ -128,6 +128,7 @@ func Test_runEach(t *testing.T) {
 		assert.False(t, errors.Is(err, errDirsFailed), "落ちた対象の sentinel を包まない（包むと終了コードが 1 になる）")
 		assert.Equal(t, 2, exitCode(err))
 		assert.Contains(t, err.Error(), "tf-x: "+targets[1].path+" で打ち切りました（それまでに落ちたディレクトリ: "+targets[0].path+"）")
+		assert.NotContains(t, out.String(), "❌", "先の失敗は文面にだけ名指す")
 		assert.Equal(t, []string{targets[0].path + " test   "}, calls(), "打ち切った後の対象を起動しない")
 	})
 
@@ -208,6 +209,17 @@ func Test_runFmt(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
 		require.ErrorIs(t, runFmt([]string{"-x"}, &bytes.Buffer{}, tool), errUsage)
+	})
+
+	t.Run("root の親が通常のファイルで Stat が ENOTDIR なら、道具を起動せずに errMissingRoot で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"modules": "", "usecases/b/main.tf": ""})
+		tool, calls := fakeTool(t)
+		err := runFmt([]string{"-check", "-allow-missing-roots", "-base", base, "modules/a", "usecases"}, &bytes.Buffer{}, tool)
+		require.ErrorIs(t, err, errMissingRoot)
+		assert.Contains(t, err.Error(), "not a directory")
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
 	})
 
 	t.Run("道具を起動できなければ errTool で終了コードは 2", func(t *testing.T) {
@@ -354,6 +366,19 @@ func Test_runValidate(t *testing.T) {
 		require.ErrorIs(t, runValidate([]string{"-base", base, "-data", "/d", "-out", "o", "modules"}, &bytes.Buffer{}, tool, passCanary(&got), tree(t, nil)), errUsage)
 		assert.Nil(t, got)
 		assert.Empty(t, calls())
+	})
+
+	t.Run("本走査で道具を起動できなければ、errTool で終了コードは 2 で、errDirsFailed を包まない", func(t *testing.T) {
+		t.Parallel()
+		out := filepath.Join(t.TempDir(), "v")
+		var got []string
+		args := append(append([]string{"-base", okTree(t, nil), "-data", "/d", "-out", out}, canaryFlags...), "modules")
+		err := runValidate(args, &bytes.Buffer{}, tooltest.Missing, passCanary(&got), tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errDirsFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotNil(t, got, "canary は走った")
+		assert.NoFileExists(t, filepath.Join(out, "manifest.tsv"))
 	})
 
 	t.Run("canary が落ちた理由の sentinel と終了コードを保ち、本走査を行わないことを添える", func(t *testing.T) {
@@ -578,6 +603,23 @@ func Test_runLint(t *testing.T) {
 		require.ErrorIs(t, err, errTool)
 		assert.Equal(t, 2, exitCode(err))
 		assert.Empty(t, calls())
+	})
+
+	t.Run("ディレクトリごとの TFLint を起動できなければ、残りを起動せずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		base := okTree(t, nil)
+		tool, calls := fakeTool(t)
+		cmdOf := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepLint {
+				return tooltest.Missing(d, env, step)
+			}
+			return tool(d, env, step)
+		}
+		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &bytes.Buffer{}, cmdOf)
+		require.ErrorIs(t, err, errTool)
+		assert.False(t, errors.Is(err, errDirsFailed))
+		assert.Equal(t, 2, exitCode(err))
+		assert.Len(t, calls(), 1, "ruleset の取得だけが走った")
 	})
 
 	t.Run("ruleset の取得が落ちれば、ディレクトリを走らせずに落ちる", func(t *testing.T) {

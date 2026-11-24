@@ -267,24 +267,35 @@ func Test_policyChain(t *testing.T) {
 		assert.Contains(t, err.Error(), "がシグナルで終わりました")
 	})
 
-	t.Run("対照: verify と conftest の 0 以外の終了コードは捨てて結果を読み、init の 0 以外は errFailed", func(t *testing.T) {
-		t.Parallel()
-		dir := chainDir(t, verifyOK, planOK, resultOK)
+	// rcTool は、verify・conftest が rc=1 で結果を出し、plan が planOK を出す偽の道具。
+	rcTool := func(t *testing.T) *tooltest.Fake {
+		t.Helper()
 		f := tooltest.New(t)
 		f.Set(stepVerify, "out", verifyOK)
 		f.Set(stepVerify, "rc", "1")
 		f.Set(stepPlan, "out", planOK)
 		f.Set(stepConftest, "out", resultOK)
 		f.Set(stepConftest, "rc", "1")
-		out, err := policyChain(dir, "/d", f.Tool(), map[string][]byte{})
-		require.NoError(t, err, out)
+		return f
+	}
 
-		f.Set(stepInit, "rc", "1")
-		_, err = policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", f.Tool(), map[string][]byte{})
-		require.ErrorIs(t, err, errFailed)
-		require.NotErrorIs(t, err, errTool)
-		assert.Equal(t, 1, exitCode(err))
+	t.Run("対照: verify と conftest の 0 以外の終了コードは捨てて結果を読む", func(t *testing.T) {
+		t.Parallel()
+		out, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", rcTool(t).Tool(), map[string][]byte{})
+		require.NoError(t, err, out)
 	})
+
+	for _, step := range []string{stepInit, stepDeprecated} {
+		t.Run("対照: "+step+" の 0 以外の終了コードは errFailed で終了コードは 1", func(t *testing.T) {
+			t.Parallel()
+			f := rcTool(t)
+			f.Set(step, "rc", "1")
+			_, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", f.Tool(), map[string][]byte{})
+			require.ErrorIs(t, err, errFailed)
+			require.NotErrorIs(t, err, errTool)
+			assert.Equal(t, 1, exitCode(err))
+		})
+	}
 
 	t.Run("Policy の形が崩れていれば Conftest を起動せずに落ちる", func(t *testing.T) {
 		t.Parallel()
@@ -372,6 +383,7 @@ func Test_runCanary(t *testing.T) {
 		require.NotErrorIs(t, err, errCanary)
 		assert.Equal(t, 2, exitCode(err))
 		assert.Contains(t, out.String(), "--- canary ok の出力", "先のケースは偽の道具で期待どおりでない")
+		assert.Contains(t, err.Error(), "canary failing-rego-test で打ち切りました（それまでに落ちたケース: ok ")
 	})
 
 	t.Run("層の宣言から null の値を組めなければ errCanary", func(t *testing.T) {
