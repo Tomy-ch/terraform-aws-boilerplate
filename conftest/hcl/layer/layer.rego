@@ -1,4 +1,4 @@
-# 層の規則の検査（ADR-0102 決定14・17・18 と、その検証方法）。
+# 層の規則の検査（ADR-0102 決定14・17・18、ADR-0301 決定21 と、その検証方法）。
 #
 # 入力は HCL のソースから作る JSON で、その形を読むのは lib.hcl_input だけである。
 # 形が崩れているか独立の数と食い違えば LY004 だけで落とし、それを読む規則は評価しない（hcl.doc が undefined）。
@@ -678,6 +678,49 @@ deny contains msg if {
 	undecided_pair(c1, c2, l)
 	msg := sprintf("LY308 [判定できない文書全体の重複] %s の %s と %s が、同じ親 %s を指し、同じ instance かを参照から判定できません（ADR-0102 決定18）→ 1つの resource にまとめるか、別々の instance をリテラルの添字で指す", [c1.path, address(c1), address(c2), l])
 }
+
+# --- ADR-0301 決定21: role への managed policy の付与が policy を参照すること（LY309） ---
+#
+# 参照が欠けると Terraform は attachment と policy の依存を知らず、破棄と置換で policy の削除が付け外しより先に走る。
+
+policy_attachment_type := "aws_iam_role_policy_attachment"
+
+# AWS managed policy の ARN は、アカウントの部分が aws である（arn:<partition>:iam::aws:policy/<path><name>）。
+aws_managed_arn := `^arn:aws(-[a-z]+)*:iam::aws:policy/.+$`
+
+# aws_managed_policy は、policy_arn の式そのものが AWS managed policy の ARN かを返す。リテラルか、partition の部分だけを
+# 補間し、その補間の参照が local と each を辿った先で data.aws_partition だけを指すテンプレートである。
+aws_managed_policy(_, at) if regex.match(aws_managed_arn, hcl.literal_string(at.expr))
+
+aws_managed_policy(c, at) if {
+	at.expr.kind == "template"
+	count(at.expr.parts) == 3
+	hcl.literal_string(at.expr.parts[0]) == "arn:"
+	regex.match(`^:iam::aws:policy/.+$`, hcl.literal_string(at.expr.parts[2]))
+	leaves(c, at.refs) == {"data.aws_partition"}
+}
+
+# references_policy は、policy_arn の参照が local と each を辿った先で、同じ module の aws_iam_policy だけを指すかを返す。
+references_policy(c, at) if {
+	ls := leaves(c, at.refs)
+	count(ls) > 0
+	every l in ls {
+		allowed_leaf(c, {"aws_iam_policy"}, l)
+	}
+}
+
+deny contains msg if {
+	some c in resources
+	type_of(c) == policy_attachment_type
+	some at in resource_attrs(c, "policy_arn")
+	not references_policy(c, at)
+	not aws_managed_policy(c, at)
+	msg := sprintf("LY309 [policy の参照] %s の %s の policy_arn が、同じ module の aws_iam_policy だけを参照せず、AWS managed policy の ARN でもありません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN を partition だけ data.aws_partition から組んで書く", [c.path, address(c), describe_policy_leaves(leaves(c, at.refs))])
+}
+
+describe_policy_leaves(ls) := "参照がありません" if count(ls) == 0
+
+describe_policy_leaves(ls) := concat(", ", sort(ls)) if count(ls) > 0
 
 # --- 決定18 の分類の網羅: Provider の schema との突き合わせ（LY306） ---
 

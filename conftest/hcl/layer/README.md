@@ -1,7 +1,8 @@
 # 層の規則
 
-[ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定14・17・18 の層の規則を、HCL のソースで検査する
-（同 ADR の検証方法。[ADR-0501](../../../docs/adr/0501-development-tooling-composition.md) 決定5 がソースの構造の規約として
+[ADR-0102](../../../docs/adr/0102-use-case-centric-scope.md) 決定14・17・18 の層の規則と、
+[ADR-0301](../../../docs/adr/0301-least-privilege-policy.md) 決定21 の attachment の参照を、HCL のソースで検査する
+（各 ADR の検証方法。[ADR-0501](../../../docs/adr/0501-development-tooling-composition.md) 決定5 がソースの構造の規約として
 Conftest に割り当てる）。何を禁じるかは ADR が持ち、ここには再掲しない。検査(3)でどの参照を辿り、何を違反とするかは
 ここが持つ（同 検証方法）。
 
@@ -51,6 +52,7 @@ symlink は実体のファイルで書く）。
 | `LY306` | Provider の schema との突き合わせ。`data.layer_schema` が無いか空か形が違う、親の型が schema に無いか書ける引数を1つも持たない、親の型の非推奨の書ける引数がどの `parent_arguments` にも `unrelated_deprecated_arguments` にも無い、宣言の引数が schema の書ける引数に無い、`unrelated_deprecated_arguments` の引数が非推奨でない、書かないときの値が schema の種類（block は `[]`、属性は `null`）と合わない | Provider の版を上げたなら、足された非推奨の引数を分類する。宣言の引数名を直す |
 | `LY307` | 排他に持つと宣言した親の引数（`inline_owned`）を `parent_arguments` に持つ attachment 型の resource が、その親を指す（決定18 のただし書き） | 親の引数で書く |
 | `LY308` | 文書全体を置き換える型の、同じ型の別々の resource が同じ親の葉を指し、同じ instance かを参照から判定できない。どちらかが `count` か `for_each` を持つか、親の選び方が判定できない | 1つの resource にまとめるか、別々の instance をリテラルの添字で指す |
+| `LY309` | `aws_iam_role_policy_attachment` の `policy_arn` が、同じ module の `aws_iam_policy` だけを参照せず、AWS managed policy の ARN でもない（ADR-0301 決定21。下の「policy の参照」） | 同じ module に `aws_iam_policy` を置いて参照する。AWS managed policy は、ARN を partition だけ `data.aws_partition` から組んで書く |
 | `LY303` | 使われている resource の型が、宣言の `attachments` にも `not_attachments` にも無い。親の型に現れるだけでは分類に数えない | 下の基準で分類し、宣言に足す |
 
 ## 層の決め方
@@ -86,6 +88,18 @@ symlink は実体のファイルで書く）。
 その `local` の定義の参照の選び方を引き継ぐ。`local` を添字で選んだ先（`local.all[each.key]`）と、`each` を経て
 `for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の resource の組だけ
 である。1つの resource の `count` と `for_each` の instance どうしは比べない。
+
+### policy の参照（LY309）
+
+`aws_iam_role_policy_attachment` の `policy_arn` は、次のどちらかであれば通す。
+
+- 参照を上の辿り方で辿った先がすべて、同じディレクトリに宣言された `aws_iam_policy` である
+- 式そのものが AWS managed policy の ARN である。リテラルなら `arn:<partition>:iam::aws:policy/<path><name>` の形
+  （partition は `aws` か `aws-` で始まる名前）、テンプレートなら `arn:` と `${<partition>}` と `:iam::aws:policy/<path><name>`
+  の3つの部分だけを持ち、補間の参照を辿った先が `data.aws_partition` だけである
+
+ARN を `local` に置いて `policy_arn` から参照する形は、AWS managed の形として読まない（参照の辿り方で読み、違反になる）。
+決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
 
 ## 宣言
 
@@ -141,5 +155,7 @@ resource である。親と引数の組で同一性が決まり、自前の名�
   `hcl-input` の Go のテストが固定する
 - module の呼び出しが無い、層の置き場でないディレクトリの resource は `LY101` に当たらない。attachment 型であれば
   `LY301` が見る
+- `LY309` の、参照とリテラルを混ぜた式のリテラルの部分。`var.x ? aws_iam_policy.p.arn : "arn:aws:iam::123456789012:policy/x"`
+  は、参照がすべて `aws_iam_policy` なので通る
 - `.tftest.hcl` の `run` の `module` の `source`
 - 走査の root の外の `.tf`。root の外に構成ファイルを置くことは `make infra-code-gate` が落とす
