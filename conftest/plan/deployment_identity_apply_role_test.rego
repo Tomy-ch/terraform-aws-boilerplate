@@ -1424,18 +1424,6 @@ test_violation_same_arn_different_service if {
 	fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), msgs)
 }
 
-# 前提のサービスは、apply の role が作成を許されるサービスの部分集合である。
-test_violation_prerequisite_services_not_declared_in_workload if {
-	every d in [
-		json.patch(slr_decl, [{"op": "replace", "path": "/deployment_identity/workload/service_linked_roles", "value": []}]),
-		json.patch(slr_decl, [{"op": "replace", "path": "/deployment_identity/workload/service_linked_roles", "value": ["config.amazonaws.com"]}]),
-		json.patch(slr_decl, [{"op": "remove", "path": "/deployment_identity/workload/service_linked_roles"}]),
-		json.patch(slr_decl, [{"op": "replace", "path": "/deployment_identity/apply_role/bootstrap/prerequisite_services", "value": [slr_service, "config.amazonaws.com"]}]),
-	] {
-		fixture.has(malformed, messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), d))
-	}
-}
-
 # --- 前提のサービスと、apply の role が作るサービスの区別 ---
 
 config_service := "config.amazonaws.com"

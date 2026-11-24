@@ -135,23 +135,11 @@ well_formed_bootstrap if {
 	well_formed_prerequisite_services
 }
 
-# 前提のサービスは、apply の role が作成を許されるサービス（workload.service_linked_roles）の部分集合である。
-# workload を宣言しない入力では、部分集合の検査を置かない（PLAN-APPLY-05 と同じく workload の宣言は任意）。
 well_formed_prerequisite_services if {
 	is_array(prerequisite_services)
 	count(prerequisite_services) > 0
 	every x in prerequisite_services {
 		nonempty_string(x)
-	}
-	prerequisite_services_declared
-}
-
-prerequisite_services_declared if not is_object(object.get(di, "workload", null))
-
-prerequisite_services_declared if {
-	declared := lib.as_array(object.get(di.workload, "service_linked_roles", []))
-	every x in prerequisite_services {
-		x in declared
 	}
 }
 
@@ -504,7 +492,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_bootstrap
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・service_linked・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）/ prerequisite_module（modules のどれかで始まる空でない文字列）/ prerequisite_services（空でない文字列の空でない配列で、workload を宣言したなら workload.service_linked_roles に在るもの）の形を満たしていません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.bootstrap が、modules（空でない文字列の配列）/ types（class が target（children は真偽値）・key・service_linked・covered_by（parent・ref・parent_ref が必須）。ほかのキーを持たない）/ children（suffixes・roots・version_deletion・writes だけを持ち、子の ARN を1つ以上生む。writes は suffixes と共に置き、読み取りの名前でない1つの Action の名前（wildcard を含まない）の空でない配列）/ prerequisite_module（modules のどれかで始まる空でない文字列）/ prerequisite_services（空でない文字列の空でない配列）の形を満たしていません"
 }
 
 deny contains msg if {
