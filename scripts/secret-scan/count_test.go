@@ -1,11 +1,7 @@
 package main
 
 import (
-	"crypto/sha256"
 	"fmt"
-	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,86 +11,6 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/misetoml"
 )
-
-type fixture struct {
-	t   *testing.T
-	dir string
-}
-
-func newFixture(t *testing.T) *fixture {
-	t.Helper()
-
-	f := &fixture{t: t, dir: t.TempDir()}
-	f.git("init", "-q")
-	f.write("base", "base\n")
-	f.commit("base")
-
-	return f
-}
-
-func (f *fixture) git(args ...string) string {
-	f.t.Helper()
-
-	cmd := exec.CommandContext(f.t.Context(), "git", append([]string{
-		"-C", f.dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
-		"-c", "maintenance.auto=false", "-c", "gc.auto=0",
-	}, args...)...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(f.t, err, string(out))
-
-	return strings.TrimSpace(string(out))
-}
-
-func (f *fixture) write(name, body string) {
-	f.t.Helper()
-
-	require.NoError(f.t, os.WriteFile(filepath.Join(f.dir, name), []byte(body), 0o600))
-	f.git("add", name)
-}
-
-func (f *fixture) commit(msg string, extra ...string) {
-	f.t.Helper()
-
-	f.git(append([]string{"commit", "-q", "-m", msg}, extra...)...)
-}
-
-func (f *fixture) snapshot() string {
-	f.t.Helper()
-
-	var b strings.Builder
-	err := filepath.WalkDir(filepath.Join(f.dir, ".git"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(&b, "%s %x\n", path, sha256.Sum256(body))
-
-		return nil
-	})
-	require.NoError(f.t, err)
-
-	return b.String()
-}
-
-func (f *fixture) head() string {
-	f.t.Helper()
-
-	return f.git("rev-parse", "HEAD")
-}
-
-// numstat は、本体の numstat（実物の git）で範囲 rev..HEAD（rev が空なら HEAD）の numstat を取る。
-func (f *fixture) numstat(rev string) []byte {
-	f.t.Helper()
-
-	out, err := numstat(runner{git: command}, os.Environ(), f.dir, rev)
-	require.NoError(f.t, err)
-
-	return out
-}
 
 func Test_runCount(t *testing.T) {
 	t.Parallel()
@@ -134,6 +50,24 @@ func Test_runCount(t *testing.T) {
 			require.ErrorIs(t, err, c.want)
 		})
 	}
+
+	t.Run("範囲: 上限は数えるかを決められない commit を含む（must と must+maybe を通し、+1 を落とす）", func(t *testing.T) {
+		t.Parallel()
+		g := newFixture(t)
+		from := g.head()
+		g.write("a", "a\n")
+		g.commit("text")
+		g.git("mv", "base", "moved")
+		g.commit("rename")
+		ns := g.numstat(from)
+		must, maybe, err := expected(ns)
+		require.NoError(t, err)
+		require.Equal(t, [2]int{1, 1}, [2]int{must, maybe}, "前提: テキストの commit 1つと、行の変わらない rename だけの commit 1つ")
+		require.NoError(t, runCount("INF 1 commits scanned.\n", ns, 0))
+		require.NoError(t, runCount("INF 2 commits scanned.\n", ns, 0))
+		require.ErrorIs(t, runCount("INF 3 commits scanned.\n", ns, 0), errMismatch)
+		require.ErrorIs(t, runCount("INF 0 commits scanned.\n", ns, 0), errMismatch)
+	})
 }
 
 func Test_scanned(t *testing.T) {

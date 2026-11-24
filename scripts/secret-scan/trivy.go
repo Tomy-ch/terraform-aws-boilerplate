@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,10 @@ import (
 
 // trivyRuleGitHubPAT は、canary の偽の token に当たる Trivy の規則です。
 const trivyRuleGitHubPAT = "github-pat"
+
+// trivyConfigs は、Trivy が作業ディレクトリから既定で読む設定（--config と --secret-config の既定値）です。canary は
+// root に在るものを写し、本走査と同じ設定で走ります。
+var trivyConfigs = []string{"trivy.yaml", "trivy-secret.yaml"}
 
 var trivySteps = map[string]string{"table": stepTrivyTable, "json": stepTrivyJSON, "sarif": stepTrivySARIF}
 
@@ -60,8 +65,8 @@ func runTrivy(args []string, stdout, log io.Writer, r runner) error {
 	}
 }
 
-// trivyCanary は、tmp/secret-scan/trivy/canary に偽の token を置いて canary の段を走らせ、終わりに作業ディレクトリを
-// 消します。落ちたときだけ、Trivy の stderr を log へ出します。
+// trivyCanary は、tmp/secret-scan/trivy/canary に偽の token と、root に在る trivyConfigs の写しを置いて canary の段を
+// 走らせ、終わりに作業ディレクトリを消します。落ちたときだけ、Trivy の stderr を log へ出します。
 func trivyCanary(r runner, env []string, log io.Writer) error {
 	dir, err := prepareWork(r.root, "trivy")
 	if err != nil {
@@ -71,6 +76,18 @@ func trivyCanary(r runner, env []string, log io.Writer) error {
 	canary := filepath.Join(dir, "canary")
 	if err := writeFile(filepath.Join(canary, "canary.txt"), fakeGitHubToken()); err != nil {
 		return err
+	}
+	for _, name := range trivyConfigs {
+		_, err := os.Lstat(filepath.Join(r.root, name))
+		switch {
+		case xerrors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			return xerrors.Wrapf(errInput, "%v", err)
+		}
+		if err := copyInto(r.root, canary, name); err != nil {
+			return err
+		}
 	}
 	var out, errOut bytes.Buffer
 	cmd := r.tool(canary, env, stepTrivyCanary, "")
@@ -90,10 +107,11 @@ func trivyCanary(r runner, env []string, log io.Writer) error {
 }
 
 // judgeTrivyCanary は、canary の走査が 0 で終わり、結果の Results[].Secrets[] に trivyRuleGitHubPAT があることを
-// 確かめます。
+// 確かめます。canary は --exit-code 0 で走るので、0 以外の終了コードと読めない結果は走査器の不全（errScan）、
+// 期待の規則が無いのは errCanary です。
 func judgeTrivyCanary(rc int, out []byte) error {
 	if rc != 0 {
-		return xerrors.Wrapf(errCanary, "trivy が異常終了しました（終了コード %d）", rc)
+		return xerrors.Wrapf(errScan, "trivy が異常終了しました（終了コード %d）", rc)
 	}
 	var report struct {
 		Results []struct {
@@ -103,7 +121,7 @@ func judgeTrivyCanary(rc int, out []byte) error {
 		} `json:"Results"`
 	}
 	if err := json.Unmarshal(out, &report); err != nil {
-		return xerrors.Wrapf(errCanary, "結果を読めません: %v", err)
+		return xerrors.Wrapf(errScan, "trivy の結果を読めません: %v", err)
 	}
 	for _, res := range report.Results {
 		for _, s := range res.Secrets {

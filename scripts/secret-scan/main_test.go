@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +32,28 @@ func Test_run(t *testing.T) {
 			assert.Contains(t, stderr.String(), "Usage of secret-scan "+sub+":")
 			assert.Empty(t, stdout.String())
 			assert.Nil(t, s.calls())
+		})
+	}
+
+	for _, args := range [][]string{
+		{"gitleaks-range", "-from", "HEAD"},
+		{"gitleaks-history"},
+		{"trufflehog-range", "-from", "HEAD"},
+		{"trufflehog-history"},
+		{"trufflehog-worktree"},
+	} {
+		t.Run(args[0]+": git の env を作れなければ（壊れた .gitconfig）gitenv.ErrNames で、走査器を1つも起動しない", func(t *testing.T) {
+			t.Parallel()
+			r := newRepo(t)
+			s := newScanner(t)
+			rn := r.runner(s)
+			home := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[broken\n"), 0o600))
+			rn.environ = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home}
+			require.ErrorIs(t, run(args, &bytes.Buffer{}, &bytes.Buffer{}, rn), gitenv.ErrNames)
+			assert.Nil(t, s.calls())
+			_, err := os.Stat(filepath.Join(r.dir, "tmp"))
+			require.ErrorIs(t, err, os.ErrNotExist, "作業ディレクトリを作った")
 		})
 	}
 
@@ -84,6 +108,7 @@ func Test_exitCode(t *testing.T) {
 		"走査器の不全は 2":           {errScan, 2},
 		"数の行を読めないのは 2":        {errNoCount, 2},
 		"numstat を解釈できないのは 2": {errNumstat, 2},
+		"未分類のエラーは 2":          {xerrors.New("x"), 2},
 		"git の env を作れないのは 2": {gitenv.ErrNames, 2},
 	} {
 		t.Run(name, func(t *testing.T) {

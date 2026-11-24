@@ -121,21 +121,24 @@ func gitleaksCanary(r runner, env []string, dir string, log io.Writer) error {
 
 // judgeGitleaksCanary は、canary の走査が終了コード 1 で終わり、JSON の報告に gitleaksRuleAWS の所見があり、
 // 走査した数の突き合わせ countErr が通ったことを確かめます。gitleaks は検出でも異常終了でも 1 を返すので、終了コードと
-// 報告の RuleID の両方で見ます。
+// 報告の RuleID の両方で見ます。検出しない（0）・数が合わない・期待の所見が無いのは errCanary、0・1 以外の終了コードと
+// 読めない報告は走査器の不全（errScan）です。数の行が無い・numstat を解釈できないときは countErr をそのまま返します。
 func judgeGitleaksCanary(rc int, report []byte, countErr error) error {
 	switch {
 	case rc == 0:
 		return xerrors.Wrap(errCanary, "埋めた偽の AWS キーを検出できませんでした（抑止・検出規則・--log-opts の変更を疑う）")
 	case rc != 1:
-		return xerrors.Wrapf(errCanary, "gitleaks が異常終了しました（終了コード %d）", rc)
-	case countErr != nil:
+		return xerrors.Wrapf(errScan, "gitleaks が異常終了しました（終了コード %d）", rc)
+	case xerrors.Is(countErr, errMismatch):
 		return xerrors.Wrapf(errCanary, "%v", countErr)
+	case countErr != nil:
+		return countErr
 	}
 	var findings []struct {
 		RuleID string `json:"RuleID"`
 	}
 	if err := json.Unmarshal(report, &findings); err != nil {
-		return xerrors.Wrapf(errCanary, "報告を読めません: %v", err)
+		return xerrors.Wrapf(errScan, "gitleaks の報告を読めません: %v", err)
 	}
 	for _, f := range findings {
 		if f.RuleID == gitleaksRuleAWS {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -51,7 +52,7 @@ func runTrufflehogWorktree(args []string, stdout, log io.Writer, r runner) error
 		return err
 	}
 	stage := filepath.Join(dir, "stage")
-	if err := stageFiles(r.root, files, stage); err != nil {
+	if err := stageFiles(r.root, files, stage, log); err != nil {
 		return err
 	}
 
@@ -105,8 +106,12 @@ func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error)
 		case info.IsDir():
 			continue
 		case info.Mode()&fs.ModeSymlink != 0:
-			if _, err := os.Stat(full); err != nil {
+			_, err := os.Stat(full)
+			switch {
+			case xerrors.Is(err, fs.ErrNotExist):
 				continue
+			case err != nil:
+				return nil, xerrors.Wrapf(errInput, "%v", err)
 			}
 		}
 		if excluded(p, patterns) {
@@ -123,7 +128,9 @@ func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error)
 
 // stageFiles は、root からの相対パス files を stage の下へ同じ相対パスで置きます。通常のファイルは hard link で、
 // 張れなければ複写で置きます。symlink は同じ指す先の symlink として置き、辿るかどうかを trufflehog に任せます。
-func stageFiles(root string, files []string, stage string) error {
+// ただし、root の外を指す symlink（stage に置くと stage の外を指しうる）は置かずに、log へ名前を出して飛ばします ——
+// trufflehog は symlink を辿らないので、置いても走査は増えず、置けば将来の版が root の外を読みうる。
+func stageFiles(root string, files []string, stage string, log io.Writer) error {
 	for _, p := range files {
 		src := filepath.Join(root, filepath.FromSlash(p))
 		dst := filepath.Join(stage, filepath.FromSlash(p))
@@ -138,6 +145,15 @@ func stageFiles(root string, files []string, stage string) error {
 			target, err := os.Readlink(src)
 			if err != nil {
 				return xerrors.Wrapf(errInput, "%v", err)
+			}
+			inside, err := linkStaysInside(root, p, target)
+			if err != nil {
+				return err
+			}
+			if !inside {
+				fmt.Fprintf(log, "trufflehog-worktree: root の外を指す symlink %s を走査の対象に置きません\n", p)
+
+				continue
 			}
 			if err := os.Symlink(target, dst); err != nil {
 				return xerrors.Wrapf(errInput, "%v", err)
@@ -158,4 +174,27 @@ func stageFiles(root string, files []string, stage string) error {
 	}
 
 	return nil
+}
+
+// linkStaysInside は、root からの相対パス p の symlink（指す先 target）が、字面でも解決した先でも root の下を指せば
+// true です。字面は p の親からの相対パスとして root の外へ出ないこと（絶対パスは外）を、解決した先は root の実パスの
+// 下にあることを見ます。stage は root と同じ相対パスで置くので、字面が root の下に留まれば stage の下に留まります。
+func linkStaysInside(root, p, target string) (bool, error) {
+	if filepath.IsAbs(target) || !filepath.IsLocal(filepath.Join(filepath.Dir(filepath.FromSlash(p)), target)) {
+		return false, nil
+	}
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, xerrors.Wrapf(errInput, "%v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(p)))
+	if err != nil {
+		return false, xerrors.Wrapf(errInput, "%v", err)
+	}
+	rel, err := filepath.Rel(rootReal, resolved)
+	if err != nil {
+		return false, xerrors.Wrapf(errInput, "%v", err)
+	}
+
+	return filepath.IsLocal(rel), nil
 }

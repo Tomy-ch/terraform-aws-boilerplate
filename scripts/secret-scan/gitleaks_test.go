@@ -26,6 +26,99 @@ func rangeRepo(t *testing.T) (*repo, string) {
 func Test_runGitleaks(t *testing.T) {
 	t.Parallel()
 
+	t.Run("全履歴: GIT_DIR が外側を指していても、外側を書き換えず、走査器へ GIT_DIR を渡さない", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		outer := newFixture(t)
+		before := outer.snapshot()
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksHistory+"@"+r.name(), "err", "INF 1 commits scanned.\n")
+		run := r.runner(s)
+		run.environ = leaked(outer.dir)
+		require.NoError(t, runGitleaks(nil, false, &bytes.Buffer{}, run))
+		assert.Equal(t, before, outer.snapshot(), "外側のリポジトリが書き換わった")
+		calls := s.calls()
+		require.Len(t, calls, 3)
+		for _, c := range calls {
+			assert.Empty(t, c.gitDir, "%s へ GIT_DIR を渡した", c.step)
+		}
+	})
+
+	t.Run("本走査の stdout の報告は log へ出さない", func(t *testing.T) {
+		t.Parallel()
+		r, _ := rangeRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksRange+"@"+r.name(), "err", "INF 1 commits scanned.\n")
+		s.set(stepGitleaksRange+"@"+r.name(), "out", "MAIN-REPORT\n")
+		var log bytes.Buffer
+		require.NoError(t, runGitleaks([]string{"-from", "HEAD~1"}, true, &log, r.runner(s)))
+		assert.NotContains(t, log.String(), "MAIN-REPORT")
+	})
+
+	t.Run("範囲: 空の範囲は 0 commits の走査で通す", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksRange+"@"+r.name(), "err", "INF 0 commits scanned.\n")
+		require.NoError(t, runGitleaks([]string{"-from", "HEAD"}, true, &bytes.Buffer{}, r.runner(s)))
+		assert.Len(t, s.calls(), 3)
+	})
+
+	t.Run("範囲: 本走査の numstat を取れなければ errInput で、本走査を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r, _ := rangeRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		run := r.runner(s)
+		run.git = failingGit(stepNumstatRange, r.dir)
+		require.ErrorIs(t, runGitleaks([]string{"-from", "HEAD~1"}, true, &bytes.Buffer{}, run), errInput)
+		assert.Equal(t, []string{"canary " + stepGitleaksRange, "canary " + stepGitleaksHistory}, s.steps())
+	})
+
+	t.Run("canary の出力に数の行が無ければ errNoCount で、本走査を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r, _ := rangeRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksRange+"@canary", "err", "ERR boom\n")
+		require.ErrorIs(t, runGitleaks([]string{"-from", "HEAD~1"}, true, &bytes.Buffer{}, r.runner(s)), errNoCount)
+		assert.Len(t, s.calls(), 1)
+	})
+
+	t.Run("canary で走査器が異常終了すれば errScan で、本走査を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r, _ := rangeRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksHistory+"@canary", "rc", "2")
+		err := runGitleaks([]string{"-from", "HEAD~1"}, true, &bytes.Buffer{}, r.runner(s))
+		require.ErrorIs(t, err, errScan)
+		assert.NotErrorIs(t, err, errCanary)
+		assert.Len(t, s.calls(), 2)
+	})
+
+	t.Run("本走査だけがシグナルで終われば ErrTool", func(t *testing.T) {
+		t.Parallel()
+		r, _ := rangeRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		s.set(stepGitleaksRange+"@"+r.name(), "kill", "")
+		require.ErrorIs(t, runGitleaks([]string{"-from", "HEAD~1"}, true, &bytes.Buffer{}, r.runner(s)), errTool)
+		assert.Len(t, s.calls(), 3, "canary は通っている")
+	})
+
+	t.Run("作業ディレクトリが tmp/ の外を指せば errUsage で、走査器を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		escapeWork(t, r.dir)
+		s := newScanner(t)
+		require.ErrorIs(t, runGitleaks(nil, false, &bytes.Buffer{}, r.runner(s)), errUsage)
+		assert.Nil(t, s.calls())
+	})
+
 	t.Run("範囲: canary を範囲と全履歴で走らせてから、解決した sha で本走査を root で起動する", func(t *testing.T) {
 		t.Parallel()
 		r, from := rangeRepo(t)
@@ -200,7 +293,7 @@ func Test_gitleaksCanary(t *testing.T) {
 		r := newRepo(t)
 		s := newScanner(t)
 		s.passingCanaries()
-		s.set(stepGitleaksRange+"@canary", "rc", "2")
+		s.set(stepGitleaksRange+"@canary", "rc", "0")
 		var log bytes.Buffer
 		err := gitleaksCanary(r.runner(s), os.Environ(), t.TempDir(), &log)
 		require.ErrorIs(t, err, errCanary)
@@ -220,20 +313,28 @@ func Test_judgeGitleaksCanary(t *testing.T) {
 		rc       int
 		report   string
 		countErr error
+		want     error
 	}{
-		"検出しない（0）":     {0, gitleaksHit, nil},
-		"異常終了（2）":      {2, gitleaksHit, nil},
-		"数が合わない":       {1, gitleaksHit, xerrors.Wrap(errMismatch, "x")},
-		"報告が空":         {1, "", nil},
-		"報告が壊れている":     {1, "[{", nil},
-		"報告が空の配列":      {1, "[]", nil},
-		"AWS キーの所見が無い": {1, `[{"RuleID":"generic-api-key"}]`, nil},
-		"RuleID の欄が無い": {1, `[{"Rule":"aws-access-token"}]`, nil},
-		"報告が配列でない":     {1, `{"RuleID":"aws-access-token"}`, nil},
+		"検出しない（0）は errCanary":      {0, gitleaksHit, nil, errCanary},
+		"異常終了（2）は errScan":         {2, gitleaksHit, nil, errScan},
+		"数が合わないのは errCanary":       {1, gitleaksHit, xerrors.Wrap(errMismatch, "x"), errCanary},
+		"数の行が無いのは errNoCount のまま":  {1, gitleaksHit, xerrors.Wrap(errNoCount, "x"), errNoCount},
+		"報告が空なのは errScan":          {1, "", nil, errScan},
+		"報告が壊れているのは errScan":       {1, "[{", nil, errScan},
+		"報告が配列でないのは errScan":       {1, `{"RuleID":"aws-access-token"}`, nil, errScan},
+		"報告が空の配列なのは errCanary":     {1, "[]", nil, errCanary},
+		"AWS キーの所見が無いのは errCanary": {1, `[{"RuleID":"generic-api-key"}]`, nil, errCanary},
+		"RuleID の欄が無いのは errCanary": {1, `[{"Rule":"aws-access-token"}]`, nil, errCanary},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, judgeGitleaksCanary(c.rc, []byte(c.report), c.countErr), errCanary)
+			err := judgeGitleaksCanary(c.rc, []byte(c.report), c.countErr)
+			require.ErrorIs(t, err, c.want)
+			for _, other := range []error{errCanary, errScan, errNoCount} {
+				if !xerrors.Is(other, c.want) {
+					assert.NotErrorIs(t, err, other)
+				}
+			}
 		})
 	}
 }

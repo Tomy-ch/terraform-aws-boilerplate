@@ -67,7 +67,7 @@ func TestRunGitIsolated(t *testing.T) { //nolint:paralleltest // プロセスの
 		}
 	})
 
-	t.Run("外せなければ走らせずに 2 を返す", func(t *testing.T) {
+	t.Run("一覧を得られなければ走らせずに 2 を返す", func(t *testing.T) {
 		installGitFakes(t, "", errBoom, "")
 		old := stderr
 		t.Cleanup(func() { stderr = old })

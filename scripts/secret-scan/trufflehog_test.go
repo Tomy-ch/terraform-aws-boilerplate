@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 func Test_trufflehogExcludeFile(t *testing.T) {
@@ -86,6 +88,42 @@ func Test_parseTrufflehogFlags(t *testing.T) {
 func Test_runTrufflehogGit(t *testing.T) {
 	t.Parallel()
 
+	t.Run("全履歴: GIT_DIR が外側を指していても、外側を書き換えず、走査器へ GIT_DIR を渡さない", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		outer := newFixture(t)
+		before := outer.snapshot()
+		s := newScanner(t)
+		s.passingCanaries()
+		run := r.runner(s)
+		run.environ = leaked(outer.dir)
+		require.NoError(t, runTrufflehogGit(nil, false, &bytes.Buffer{}, &bytes.Buffer{}, run))
+		assert.Equal(t, before, outer.snapshot())
+		calls := s.calls()
+		require.Len(t, calls, 3)
+		for _, c := range calls {
+			assert.Empty(t, c.gitDir, "%s へ GIT_DIR を渡した", c.step)
+		}
+	})
+
+	for name, ranged := range map[string]bool{"全履歴": false, "範囲": true} {
+		t.Run(name+": 全履歴の抑止を解釈できなければ errExclude で、本走査を起動しない", func(t *testing.T) {
+			t.Parallel()
+			r, _ := rangeRepo(t)
+			require.NoError(t, os.WriteFile(filepath.Join(r.dir, trufflehogExcludeHistory), []byte("(\n"), 0o600))
+			s := newScanner(t)
+			s.passingCanaries()
+			args := []string(nil)
+			if ranged {
+				args = []string{"-from", "HEAD~1"}
+			}
+			require.ErrorIs(t, runTrufflehogGit(args, ranged, &bytes.Buffer{}, &bytes.Buffer{}, r.runner(s)), errExclude)
+			for _, step := range s.steps() {
+				assert.NotContains(t, step, r.name()+" ", "本走査を起動した")
+			}
+		})
+	}
+
 	t.Run("範囲: canary を git と filesystem で走らせてから、解決した sha と範囲の抑止で本走査を起動し、stdout には本走査だけを出す", func(t *testing.T) {
 		t.Parallel()
 		r, from := rangeRepo(t)
@@ -143,11 +181,13 @@ func Test_runTrufflehogGit(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		key, out, rc string
+		want         error
 	}{
-		"git の canary が検出しない":        {stepTrufflehogRangeJSON + "@canary-git", "", "0"},
-		"git の canary が異常終了":         {stepTrufflehogRangeJSON + "@canary-git", "", "1"},
-		"filesystem の canary が検出しない": {stepTrufflehogFilesystemJSON + "@canary-fs", "", "0"},
-		"AWS 以外の所見だけ":                {stepTrufflehogFilesystemJSON + "@canary-fs", `{"DetectorName":"Slack"}` + "\n", "183"},
+		"git の canary が検出しない":                {stepTrufflehogRangeJSON + "@canary-git", "", "0", errCanary},
+		"git の canary が異常終了":                 {stepTrufflehogRangeJSON + "@canary-git", "", "1", errScan},
+		"filesystem の canary が検出しない":         {stepTrufflehogFilesystemJSON + "@canary-fs", "", "0", errCanary},
+		"filesystem の canary が JSON でない行を出す": {stepTrufflehogFilesystemJSON + "@canary-fs", "not json\n", "183", errScan},
+		"AWS 以外の所見だけ":                        {stepTrufflehogFilesystemJSON + "@canary-fs", `{"DetectorName":"Slack"}` + "\n", "183", errCanary},
 	} {
 		t.Run(name+"なら、本走査を起動しない", func(t *testing.T) {
 			t.Parallel()
@@ -157,7 +197,7 @@ func Test_runTrufflehogGit(t *testing.T) {
 			s.set(c.key, "out", c.out)
 			s.set(c.key, "rc", c.rc)
 			var stdout bytes.Buffer
-			require.ErrorIs(t, runTrufflehogGit([]string{"-from", "HEAD~1"}, true, &stdout, &bytes.Buffer{}, r.runner(s)), errCanary)
+			require.ErrorIs(t, runTrufflehogGit([]string{"-from", "HEAD~1"}, true, &stdout, &bytes.Buffer{}, r.runner(s)), c.want)
 			for _, step := range s.steps() {
 				assert.NotEqual(t, r.name()+" "+stepTrufflehogRange, step, "本走査を起動した")
 			}
@@ -230,6 +270,18 @@ func Test_trufflehogMain(t *testing.T) {
 func Test_trufflehogCanary(t *testing.T) {
 	t.Parallel()
 
+	t.Run("filesystem の経路の偽のキーを書けなければ errInput で、filesystem の経路を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		s := newScanner(t)
+		s.passingCanaries()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "canary-fs"), nil, 0o600))
+		err := trufflehogCanary(r.runner(s), os.Environ(), dir, stepTrufflehogRangeJSON, "", &bytes.Buffer{})
+		require.ErrorIs(t, err, errInput)
+		assert.Equal(t, []string{"canary-git " + stepTrufflehogRangeJSON}, s.steps())
+	})
+
 	t.Run("抑止の和集合が偽のキーのファイルに当たれば、filesystem の経路を起動せずに落とす", func(t *testing.T) {
 		t.Parallel()
 		r := newRepo(t)
@@ -275,7 +327,7 @@ func Test_trufflehogCanaryRun(t *testing.T) {
 		s.set("x", "rc", "1")
 		var log bytes.Buffer
 		err := trufflehogCanaryRun(s.tool()(t.TempDir(), os.Environ(), "x", ""), "git", &log)
-		require.ErrorIs(t, err, errCanary)
+		require.ErrorIs(t, err, errScan)
 		assert.Contains(t, log.String(), "2\n3\n4\n5\n6")
 		assert.NotContains(t, log.String(), "1\n2")
 		assert.NotContains(t, log.String(), "SECRET-OUT")
@@ -296,19 +348,26 @@ func Test_judgeTrufflehogCanary(t *testing.T) {
 	require.NoError(t, judgeTrufflehogCanary(183, `{"DetectorName":"Slack"}`+"\n\n"+trufflehogHit))
 
 	for name, c := range map[string]struct {
-		rc  int
-		out string
+		rc   int
+		out  string
+		want error
 	}{
-		"検出しない（0）":         {0, trufflehogHit},
-		"異常終了（1）":          {1, trufflehogHit},
-		"AWS 以外だけ":         {183, `{"DetectorName":"Slack"}`},
-		"出力が空":             {183, ""},
-		"JSON でない行がある":     {183, trufflehogHit + "not json\n"},
-		"DetectorName が無い": {183, `{"Detector":"AWS"}`},
+		"検出しない（0）は errCanary":          {0, trufflehogHit, errCanary},
+		"異常終了（1）は errScan":             {1, trufflehogHit, errScan},
+		"AWS 以外だけは errCanary":          {183, `{"DetectorName":"Slack"}`, errCanary},
+		"出力が空なのは errCanary":            {183, "", errCanary},
+		"JSON でない行があるのは errScan":       {183, trufflehogHit + "not json\n", errScan},
+		"DetectorName が無いのは errCanary": {183, `{"Detector":"AWS"}`, errCanary},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, judgeTrufflehogCanary(c.rc, c.out), errCanary)
+			err := judgeTrufflehogCanary(c.rc, c.out)
+			require.ErrorIs(t, err, c.want)
+			for _, other := range []error{errCanary, errScan} {
+				if !xerrors.Is(other, c.want) {
+					assert.NotErrorIs(t, err, other)
+				}
+			}
 		})
 	}
 }

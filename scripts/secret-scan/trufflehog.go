@@ -200,14 +200,15 @@ func trufflehogCanaryRun(cmd *exec.Cmd, label string, log io.Writer) error {
 }
 
 // judgeTrufflehogCanary は、canary の走査が所見の終了コードで終わり、NDJSON の stdout に AWS の検出器の所見が
-// あることを確かめます。JSON として読めない行があれば落とします。
+// あることを確かめます。検出しない（0）・AWS の所見が無いのは errCanary、0・183 以外の終了コードと JSON として読めない
+// 行は走査器の不全（errScan）です。
 func judgeTrufflehogCanary(rc int, stdout string) error {
 	switch rc {
 	case 0:
 		return xerrors.Wrap(errCanary, "埋めた偽の AWS キーを検出できませんでした（検出器・閾値・--results の変更を疑う）")
 	case trufflehogFound:
 	default:
-		return xerrors.Wrapf(errCanary, "trufflehog が異常終了しました（終了コード %d）", rc)
+		return xerrors.Wrapf(errScan, "trufflehog が異常終了しました（終了コード %d）", rc)
 	}
 	found := false
 	for _, line := range strings.Split(stdout, "\n") {
@@ -218,7 +219,7 @@ func judgeTrufflehogCanary(rc int, stdout string) error {
 			DetectorName string `json:"DetectorName"`
 		}
 		if err := json.Unmarshal([]byte(line), &res); err != nil {
-			return xerrors.Wrapf(errCanary, "stdout に JSON でない行があります: %v", err)
+			return xerrors.Wrapf(errScan, "trufflehog の stdout に JSON でない行があります: %v", err)
 		}
 		found = found || res.DetectorName == trufflehogDetectorAWS
 	}

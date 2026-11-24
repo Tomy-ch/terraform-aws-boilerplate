@@ -144,6 +144,22 @@ func Test_buildCanaryRepo(t *testing.T) {
 		assert.Equal(t, "CREDS", f.git("show", "HEAD:"+canaryCredentials))
 	})
 
+	for _, step := range []string{stepInit, stepCommitBase, stepAddCanary, stepCommitCanary} {
+		t.Run(step+" が落ちれば errInput", func(t *testing.T) {
+			t.Parallel()
+			_, err := buildCanaryRepo(runner{git: failingGit(step, "")}, os.Environ(), filepath.Join(t.TempDir(), "canary"), "CREDS\n")
+			require.ErrorIs(t, err, errInput)
+		})
+	}
+
+	t.Run("偽の資格情報を書けなければ errInput", func(t *testing.T) {
+		t.Parallel()
+		dir := filepath.Join(t.TempDir(), "canary")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, canaryCredentials), 0o750))
+		_, err := buildCanaryRepo(gitRunner(), os.Environ(), dir, "CREDS\n")
+		require.ErrorIs(t, err, errInput)
+	})
+
 	t.Run("作れない場所なら errInput", func(t *testing.T) {
 		t.Parallel()
 		file := filepath.Join(t.TempDir(), "file")
