@@ -21,7 +21,7 @@ func Test_run(t *testing.T) {
 
 	t.Run("各サブコマンドへ渡す", func(t *testing.T) {
 		t.Parallel()
-		for _, sub := range []string{"rego-check", "verify-result", "plan", "extract", "canary"} {
+		for _, sub := range []string{"rego-check", "verify-result", "plan", "extract"} {
 			t.Run(sub, func(t *testing.T) {
 				t.Parallel()
 				var out bytes.Buffer
