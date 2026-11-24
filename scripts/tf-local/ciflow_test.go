@@ -63,9 +63,13 @@ s3api-get-bucket-encryption) cat input.json >> "$k/encryption.log" ;;
 ci-terraform-plan*) out="${TF_CLI_ARGS_plan#-out=}"; echo tfplan > "$out" ;;
 ci-conftest) ls -R > "$k/conftest.ls" ;;
 ci-terraform-apply) if [ -e "$k/apply.sleep" ]; then trap 'echo interrupted; exit 1' INT; while :; do sleep 0.05; done; fi ;;
+s3api-get-object) cat input.json >> "$k/get.log"; echo >> "$k/get.log"; if [ -e "$k/lock.body" ]; then cp "$k/lock.body" lock.json; fi ;;
+s3api-delete-object) cat input.json >> "$k/delete.log"; echo >> "$k/delete.log" ;;
 esac
-if [ -e "$k/$step.out" ]; then cat "$k/$step.out"; fi
+n=$(( $(cat "$k/$step.n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$k/$step.n"
+if [ -e "$k/$step.$n.out" ]; then cat "$k/$step.$n.out"; elif [ -e "$k/$step.out" ]; then cat "$k/$step.out"; fi
 if [ -e "$k/$step.stderr" ]; then cat "$k/$step.stderr" >&2; fi
+if [ "$step" = ci-terraform-plan-hold ] && [ -e "$k/hold.sleep" ]; then while :; do sleep 0.05; done; fi
 rc=0; if [ -e "$k/$step.rc" ]; then rc=$(cat "$k/$step.rc"); fi
 exit "$rc"
 `

@@ -240,8 +240,8 @@ environment `admin-unlock` の下で unlock の role を assume して、workloa
     lock file の `LastModified` で測る。閾値は `scripts/tf-local` の定数で、apply の job の
     `timeout-minutes` とのずれは tf-local のテストが見る
   - **読んだ版の条件**: 読んで判定した版だけを、その ETag を条件にした削除（`delete-object --if-match`）で
-    消す。判定の後に lock file が置き換わっていれば、削除は失敗する。レシピがこの形で消すことは
-    `TestCiRecipes` が見る
+    消す。判定の後に lock file が置き換わっていれば、削除は失敗する。`ci-unlock` がこの形で消すことは
+    `scripts/tf-local` の段のテストが見る
   - **Terraform の lock の取得**: Terraform v1.17.1（版は `mise.toml`。`scripts/tf-local` の `lockFormatTerraform`
     との一致は tf-local のテストが見る）の S3 backend は、lock file を `If-None-Match: *` の
     条件付きの書き込みで作る（`lockWithFile`）。lock file が在る間は apply の lock の取得が失敗するので、
@@ -275,9 +275,9 @@ environment `admin-unlock` の下で unlock の role を assume して、workloa
 - 通知は持たない。人が起動し、結果を画面で見る
 - 許す AWS の宛先は `aws-state` クラス（STS と S3）だけである。egress の `root` はこの job も名指すが、
   型の宛先は `ci-unlock-*` だけを呼ぶ job に求めない（「ランナーの封じ込め」節）
-- job の形は `make oidc-job-lint` が、`CI_UNLOCK` が lock の無いとき以外は lock を消すか非ゼロで終わり、
-  新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の `TestCiRecipes` が
-  偽物の aws でレシピを走らせて見る
+- job の形は `make oidc-job-lint` が、`ci-unlock` が lock の無いとき以外は lock を消すか非ゼロで終わり、
+  新しい lock・置き換わった lock・読めない lock・人の手元の apply の lock を消さないことは `scripts/tf-local` の段のテストが
+  偽物の aws で見る
 
 保証しないこと:
 
@@ -304,12 +304,12 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
   無いことを確かめてから、lock を取る `terraform plan`（`-parallelism=1`）を裏で起動する。plan の全文に lock を
   取った後の行（resource の `Refreshing state...` か data source の `Reading...`）が現れたら SIGKILL で止める。
   lock file は Terraform の S3 backend が書くので、`Terraform Unlock` が相手にするのは障害で残る lock と同じ形の
-  lock である。待つ判定は `scripts/tf-local` の `lock-wait` が持つ
+  lock である。待つ判定は `scripts/tf-local` の `ci-hold-plan` が持つ
 - **残った lock を確かめてから成功する。** 止めた後に lock file の一覧を取り直し、lock が残っていて、`Who` が
-  `runner@`・`Operation` が `OperationTypePlan` の、lock の解除が消す形であることを `tf-local lock-held` で確かめる。
+  `runner@`・`Operation` が `OperationTypePlan` の、lock の解除が消す形であることを `tf-local ci-hold-verify` で確かめる。
   ログに lock の説明と、`Terraform Unlock` が消せるようになる時刻（`LastModified` に閾値を足した時刻）を出す。
   plan が行を出す前に終わった、止めた後に lock が無い、消せない形の lock が残った、のどれでも失敗する。どの段で
-  終わっても、裏の terraform は trap が止める
+  終わっても、裏の terraform は `ci-hold-plan` が止める
 - **起動の前に lock が無いことを確かめる。** 前の apply が残した lock を、この job が残した lock と取り違えない。
   lock が在れば plan を起動せずに失敗する
 - **apply しない。** state と AWS の resource を変えず、plan の出力も保存しない。plan の全文はランナーの外に出さない
@@ -335,8 +335,8 @@ terraform は取り消しの信号（SIGINT・SIGTERM）で lock を外してか
 - 許す AWS の宛先は、その root の apply の job と同じクラスである。`ci-hold-*` は terraform を
   呼ぶ入口なので、egress の `root` に名指され、型の宛先を求められる（「ランナーの封じ込め」節）
 - job の形（role・environment・concurrency の group の apply の job との一致、起動条件、拒否の step、入口）は
-  `make oidc-job-lint` が、`CI_HOLD` が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
-  `scripts/tf-local` の `TestCiMk` と `TestCiRecipes` が偽物の terraform と aws でレシピを走らせて見る
+  `make oidc-job-lint` が、lock を残す入口の段が apply も削除も書き込みもせず、lock を確かめるまで成功しないことは
+  `scripts/tf-local` の段のテストが偽物の terraform と aws で見る
 
 保証しないこと:
 

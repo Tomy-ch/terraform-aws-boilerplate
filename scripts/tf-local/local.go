@@ -72,6 +72,14 @@ func command(dir string, env []string, step string) *exec.Cmd {
 			"--policy", "rego", "--data", "decl.json", "--data", "layer.json", "plan.json")
 	case stepCIPutObject:
 		cmd = exec.CommandContext(ctx, "aws", "s3api", "put-object", "--cli-input-json", "file://input.json", "--body", "body.txt", "--output", "json")
+	case stepS3List:
+		cmd = exec.CommandContext(ctx, "aws", "s3api", "list-objects-v2", "--cli-input-json", "file://input.json", "--no-paginate", "--output", "json")
+	case stepS3GetObject:
+		cmd = exec.CommandContext(ctx, "aws", "s3api", "get-object", "--cli-input-json", "file://input.json", "--output", "json", "lock.json")
+	case stepS3Delete:
+		cmd = exec.CommandContext(ctx, "aws", "s3api", "delete-object", "--cli-input-json", "file://input.json", "--output", "json")
+	case stepCIPlanHold:
+		cmd = exec.CommandContext(ctx, "terraform", "plan", "-input=false", "-no-color", "-parallelism=1")
 	case stepLocalInit:
 		cmd = exec.CommandContext(ctx, "terraform", "init", "-input=false", "-lockfile=readonly")
 	default:

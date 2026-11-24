@@ -101,7 +101,7 @@ func loadCIState(path string) (ciState, error) {
 		return ciState{}, xerrors.Wrap(errCIState, err.Error())
 	}
 	var s ciState
-	if err := json.Unmarshal(raw, &s); err != nil || (s.Mode != ciModePlan && s.Mode != ciModeApply) || s.Dir == "" || s.Out == "" {
+	if err := json.Unmarshal(raw, &s); err != nil || (s.Mode != ciModePlan && s.Mode != ciModeApply && s.Mode != ciModeHold) || s.Dir == "" || s.Out == "" {
 		return ciState{}, xerrors.Wrap(errCIState, path)
 	}
 
@@ -215,7 +215,7 @@ func ciPrepareStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if err := fs.Parse(args); err != nil {
 		return "", xerrors.Wrap(errUsage, err.Error())
 	}
-	if (*mode != ciModePlan && *mode != ciModeApply) || *project == "" || *profile == "" || *base == "" ||
+	if (*mode != ciModePlan && *mode != ciModeApply && *mode != ciModeHold) || *project == "" || *profile == "" || *base == "" ||
 		*header == "" || *statePath == "" || fs.NArg() > 0 {
 		return "", errUsage
 	}
@@ -253,9 +253,10 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	}
 	s.Dir = dir
 	run, attempt := envValue(d.environ, "GITHUB_RUN_ID"), envValue(d.environ, "GITHUB_RUN_ATTEMPT")
-	if mode == ciModePlan {
+	switch mode {
+	case ciModePlan:
 		s.Key, err = planKey(envValue(d.environ, "CI_PR"), "", run, attempt, s.Root)
-	} else {
+	case ciModeApply:
 		s.Key, err = applyKey(run, attempt, s.Root)
 	}
 	if err != nil {
@@ -295,8 +296,10 @@ func ciPrepareState(d deps, stdout io.Writer, mode, project, env, root, profile,
 	if err != nil {
 		return s, err
 	}
-	if s.OutBucket, err = bucketName(project, env, ciOutputBucketKind(mode, root), s.Account, s.Region); err != nil {
-		return s, err
+	if mode != ciModeHold {
+		if s.OutBucket, err = bucketName(project, env, ciOutputBucketKind(mode, root), s.Account, s.Region); err != nil {
+			return s, err
+		}
 	}
 	aliases, err := runTool(d.tool, work, awsEnv, stepListAliases, d.stderr)
 	if err != nil {
