@@ -54,6 +54,7 @@ func (c candidate) actionable() bool {
 		return c.commit.eligibleMoves
 	}
 
+	// evaluate が比べられない pin を err に畳み、上流の比べられない版を一覧から落とすので err は起きない。崩れても偽に倒す。
 	less, err := lessVersion(c.tool.version, c.eligible)
 
 	return err == nil && less

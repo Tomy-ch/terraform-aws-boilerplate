@@ -51,6 +51,14 @@ func onDefaultBranch(sha, status string) map[string]string {
 	}
 }
 
+// pinBeforeDefault は pin...develop の比較が status になる上流の経路を返す。
+func pinBeforeDefault(status string) map[string]string {
+	return map[string]string{
+		repoURI: `{"default_branch":"develop"}`,
+		repoURI + "/compare/" + semgrepPin + "...develop": `{"status":"` + status + `"}`,
+	}
+}
+
 func writeSemgrepDecl(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, semgrepFile)
@@ -214,6 +222,16 @@ func Test_verifyOnDefaultBranch(t *testing.T) {
 				require.NoError(t, verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin))
 			})
 		}
+
+		t.Run("既定ブランチの名前の # を escape して比べる", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				repoURI: `{"default_branch":"release/#1"}`,
+				repoURI + "/compare/release/%231..." + semgrepPin: `{"status":"behind"}`,
+			})
+
+			require.NoError(t, verifyOnDefaultBranch(t.Context(), client, semgrepRulesRepo, semgrepPin))
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -257,6 +275,123 @@ func Test_verifyOnDefaultBranch(t *testing.T) {
 	})
 }
 
+func Test_pinPrecedes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, status := range []string{"ahead", "identical"} {
+			t.Run("pin から既定ブランチへの比較が "+status+" なら通す", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, pinBeforeDefault(status))
+
+				require.NoError(t, pinPrecedes(t.Context(), client, semgrepRulesRepo, semgrepPin))
+			})
+		}
+
+		t.Run("既定ブランチの名前の # を escape して比べる", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				repoURI: `{"default_branch":"release/#1"}`,
+				repoURI + "/compare/" + semgrepPin + "...release/%231": `{"status":"ahead"}`,
+			})
+
+			require.NoError(t, pinPrecedes(t.Context(), client, semgrepRulesRepo, semgrepPin))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		// behind は pin が既定ブランチの先にあり、diverged は既定ブランチの外にある。
+		for _, status := range []string{"behind", "diverged", ""} {
+			t.Run("pin から既定ブランチへの比較が "+strconv.Quote(status)+" ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, pinBeforeDefault(status))
+
+				err := pinPrecedes(t.Context(), client, semgrepRulesRepo, semgrepPin)
+				require.ErrorIs(t, err, errNotOnDefaultBranch)
+			})
+		}
+
+		t.Run("比較を引けなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{repoURI: `{"default_branch":"develop"}`})
+
+			err := pinPrecedes(t.Context(), client, semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("既定ブランチの名前が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			routes := pinBeforeDefault("ahead")
+			routes[repoURI] = `{}`
+
+			err := pinPrecedes(t.Context(), upstreamStub(t, routes), semgrepRulesRepo, semgrepPin)
+			require.ErrorIs(t, err, errNotFound)
+		})
+	})
+}
+
+func Test_defaultBranch(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("既定ブランチの名前を返す", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{repoURI: `{"default_branch":"develop"}`})
+
+			got, err := defaultBranch(t.Context(), client, semgrepRulesRepo)
+			require.NoError(t, err)
+			assert.Equal(t, "develop", got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, body := range map[string]string{"無い": `{}`, "空": `{"default_branch":""}`, "文字列でない": `{"default_branch":1}`} {
+			t.Run("既定ブランチの名前が"+name+"ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				client := upstreamStub(t, map[string]string{repoURI: body})
+
+				_, err := defaultBranch(t.Context(), client, semgrepRulesRepo)
+				require.ErrorIs(t, err, errNotFound)
+			})
+		}
+
+		t.Run("repository を引けなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusInternalServerError))
+
+			_, err := defaultBranch(t.Context(), client, semgrepRulesRepo)
+			require.ErrorIs(t, err, errUpstreamStatus)
+		})
+	})
+}
+
+func Test_compareURL(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, tc := range map[string]struct{ base, head, want string }{
+			"段の区切りの / は残す":         {"release/v1", semgrepPin, "release/v1..." + semgrepPin},
+			"# は段の中で escape する":    {semgrepPin, "release/#1", semgrepPin + "...release/%231"},
+			"? と空白も段の中で escape する": {"a?b c", semgrepPin, "a%3Fb%20c..." + semgrepPin},
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, githubAPI+semgrepRulesRepo+"/compare/"+tc.want, compareURL(semgrepRulesRepo, tc.base, tc.head))
+			})
+		}
+	})
+}
+
 func Test_githubCommits(t *testing.T) {
 	t.Parallel()
 
@@ -294,6 +429,34 @@ func Test_githubCommits(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, got, commitsPerPage+1)
 			assert.Equal(t, semgrepPin, got[commitsPerPage].sha)
+		})
+
+		for _, status := range []string{"ahead", "identical"} {
+			t.Run("一覧が尽きて pin が無くても既定ブランチとの比較が "+status+" なら一覧を返す", func(t *testing.T) {
+				t.Parallel()
+				routes := pinBeforeDefault(status)
+				routes[commitsListURI] = list(commitJSON(semgrepNewer, daysAgo(20), "root1"))
+
+				got, err := commitsOf(t, upstreamStub(t, routes))
+				require.NoError(t, err)
+				require.Len(t, got, 1)
+				assert.Equal(t, semgrepNewer, got[0].sha)
+			})
+		}
+
+		// 上限の次のページの経路を持たない上流で、引けば errNotFound になる。
+		t.Run("上限のページまで pin が無くても窓を満たす commit があり pin が祖先なら一覧を返す", func(t *testing.T) {
+			t.Parallel()
+			routes := pinBeforeDefault("ahead")
+			for page := 1; page <= maxCommitPages; page++ {
+				routes[commitsPageURI(page)] = freshPage(page)
+			}
+			routes[commitsPageURI(maxCommitPages)] = "[" + commitJSON(semgrepNewer, daysAgo(20), "root1") + "," +
+				strings.TrimPrefix(freshPage(maxCommitPages), "[")
+
+			got, err := commitsOf(t, upstreamStub(t, routes))
+			require.NoError(t, err)
+			assert.Len(t, got, maxCommitPages*commitsPerPage+1)
 		})
 
 		// 2ページ目の経路を持たない上流で、引けば errNotFound になる。
@@ -339,10 +502,36 @@ func Test_githubCommits(t *testing.T) {
 			})
 		}
 
-		t.Run("一覧が尽きても pin が無ければエラーにする", func(t *testing.T) {
+		for status, want := range map[string]error{
+			"behind":   errNotOnDefaultBranch,
+			"diverged": errNotOnDefaultBranch,
+			"":         errNotOnDefaultBranch,
+		} {
+			t.Run("一覧に無い pin と既定ブランチの比較が "+strconv.Quote(status)+" ならエラーにする", func(t *testing.T) {
+				t.Parallel()
+				routes := pinBeforeDefault(status)
+				routes[commitsListURI] = list(commitJSON(semgrepNewer, daysAgo(20), "root1"))
+
+				_, err := commitsOf(t, upstreamStub(t, routes))
+				require.ErrorIs(t, err, want)
+			})
+		}
+
+		t.Run("一覧に無い pin と既定ブランチを比べられなければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
 				commitsListURI: list(commitJSON(semgrepNewer, daysAgo(20), "root1")),
+				repoURI:        `{"default_branch":"develop"}`,
+			})
+
+			_, err := commitsOf(t, client)
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("一覧が尽きても pin も窓を満たす commit も無ければ比べずにエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: list(commitJSON(semgrepNewer, daysAgo(1), "root1")),
 			})
 
 			_, err := commitsOf(t, client)
@@ -471,6 +660,24 @@ func Test_evaluateCommit(t *testing.T) {
 			assert.False(t, c.heldByWindow())
 		})
 
+		t.Run("一覧より古い祖先の pin から窓を満たす commit へ動かせる", func(t *testing.T) {
+			t.Parallel()
+			routes := pinBeforeDefault("ahead")
+			routes[commitsListURI] = `[` + commitJSON(semgrepNewest, daysAgo(2), "root2") + `,` +
+				commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, daysAgo(400), "root0")
+			routes[treesURI+"root0"] = rootTreeJSON("tf0")
+			routes[treesURI+"root1"] = rootTreeJSON("tf1")
+			routes[treesURI+"root2"] = rootTreeJSON("tf2")
+
+			c := evaluateCommit(t.Context(), upstreamStub(t, routes), semgrepTool(), outdatedNow)
+
+			require.NoError(t, c.err)
+			assert.Equal(t, semgrepNewer, c.eligible)
+			assert.True(t, c.actionable())
+			assert.True(t, c.heldByWindow())
+		})
+
 		// 上流の commit が進むたびに動かせると言うと、報告が自分で閉じなくなる。
 		t.Run("terraform の tree が pin と同じなら動かせるとは言わない", func(t *testing.T) {
 			t.Parallel()
@@ -574,18 +781,29 @@ func Test_evaluateCommit(t *testing.T) {
 		})
 
 		// 既定ブランチの一覧に現れない pin は、fork や未 merge の branch の commit でありうる。
-		t.Run("pin が一覧に無ければ err を持たせる", func(t *testing.T) {
+		t.Run("pin が一覧に無く既定ブランチの祖先でもなければ err を持たせる", func(t *testing.T) {
 			t.Parallel()
-			client := upstreamStub(t, map[string]string{
-				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`,
-				"/repos/" + semgrepRulesRepo + "/commits/" + semgrepPin: commitJSON(semgrepPin, daysAgo(400), "root0"),
-				treesURI + "root0": rootTreeJSON("tf0"),
-				treesURI + "root1": rootTreeJSON("tf1"),
-			})
+			routes := pinBeforeDefault("diverged")
+			routes[commitsListURI] = `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, daysAgo(400), "root0")
+			routes[treesURI+"root0"] = rootTreeJSON("tf0")
+			routes[treesURI+"root1"] = rootTreeJSON("tf1")
 
-			c := evaluateCommit(t.Context(), client, semgrepTool(), outdatedNow)
+			c := evaluateCommit(t.Context(), upstreamStub(t, routes), semgrepTool(), outdatedNow)
 
-			require.ErrorIs(t, c.err, errCommitsExhausted)
+			require.ErrorIs(t, c.err, errNotOnDefaultBranch)
+			assert.False(t, c.actionable())
+			assert.False(t, c.heldByWindow())
+		})
+
+		t.Run("一覧より古い pin の commit を引けなければ err を持たせる", func(t *testing.T) {
+			t.Parallel()
+			routes := pinBeforeDefault("ahead")
+			routes[commitsListURI] = `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `]`
+
+			c := evaluateCommit(t.Context(), upstreamStub(t, routes), semgrepTool(), outdatedNow)
+
+			require.ErrorIs(t, c.err, errNotFound)
 			assert.False(t, c.actionable())
 		})
 

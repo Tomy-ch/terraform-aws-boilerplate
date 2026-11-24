@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -31,8 +32,8 @@ var (
 	// ErrInvalidSemgrep は semgrep.mk から固定の commit を1つに定められない場合のエラー。
 	ErrInvalidSemgrep = xerrors.New("semgrep.mk の SEMGREP_RULES_COMMIT を読めません")
 	errNoRulesTree    = xerrors.New("commit に走査対象のディレクトリがありません")
-	// errCommitsExhausted は、一覧を遡っても窓を満たす commit と pin が揃わない場合のエラー。
-	errCommitsExhausted = xerrors.New("commit の一覧に窓を満たす commit と pin が揃いません")
+	// errCommitsExhausted は、一覧を遡っても窓を満たす commit が現れない場合のエラー。
+	errCommitsExhausted = xerrors.New("commit の一覧に窓を満たす commit がありません")
 	// errNotOnDefaultBranch は、pin が上流の既定ブランチから辿れない commit である場合のエラー。
 	errNotOnDefaultBranch = xerrors.New("commit が既定ブランチにありません")
 
@@ -108,7 +109,9 @@ func githubCommit(ctx context.Context, client *http.Client, repo, sha string) (c
 }
 
 // githubCommits は既定ブランチの commit を新しい順に返す。pin と、窓を満たす最初の commit の
-// 両方が現れるまでページを遡り、揃わないまま一覧が尽きるか maxCommitPages に達したらエラーにする。
+// 両方が現れるまでページを遡る。窓を満たす commit だけが現れたまま一覧が尽きるか maxCommitPages に
+// 達したときは、pin が一覧のどれよりも古い既定ブランチの commit であることを pinPrecedes で確かめて
+// 返す。窓を満たす commit が現れなければエラーにする。
 func githubCommits(
 	ctx context.Context, client *http.Client, repo, pin string, window int, now time.Time,
 ) ([]commitInfo, error) {
@@ -141,6 +144,13 @@ func githubCommits(
 			break
 		}
 	}
+	if eligible && !pinSeen {
+		if err := pinPrecedes(ctx, client, repo, pin); err != nil {
+			return nil, err
+		}
+
+		return out, nil
+	}
 
 	return nil, xerrors.Wrap(errCommitsExhausted, fmt.Sprintf("%s（pin %s、%d 件）", repo, pin, len(out)))
 }
@@ -149,19 +159,15 @@ func githubCommits(
 // status は base（既定ブランチ）から見た head（sha）の位置で、behind と identical だけが
 // sha が既定ブランチの祖先であることを意味する。
 func verifyOnDefaultBranch(ctx context.Context, client *http.Client, repo, sha string) error {
-	var repoBody map[string]any
-	if err := getJSON(ctx, client, githubAPI+repo, &repoBody); err != nil {
+	branch, err := defaultBranch(ctx, client, repo)
+	if err != nil {
 		return err
-	}
-	branch, _ := repoBody["default_branch"].(string)
-	if branch == "" {
-		return xerrors.Wrap(errNotFound, repo+" の既定ブランチ")
 	}
 
 	var compare struct {
 		Status string `json:"status"`
 	}
-	if err := getJSON(ctx, client, githubAPI+repo+"/compare/"+branch+"..."+sha, &compare); err != nil {
+	if err := getJSON(ctx, client, compareURL(repo, branch, sha), &compare); err != nil {
 		return err
 	}
 	switch compare.Status {
@@ -170,6 +176,58 @@ func verifyOnDefaultBranch(ctx context.Context, client *http.Client, repo, sha s
 	default:
 		return xerrors.Wrap(errNotOnDefaultBranch, fmt.Sprintf("%s@%s（%s との比較: %q）", repo, sha, branch, compare.Status))
 	}
+}
+
+// pinPrecedes は pin が既定ブランチの祖先であることを確かめる。一覧に現れない祖先は、一覧のどの
+// commit よりも古いとみなせる。
+func pinPrecedes(ctx context.Context, client *http.Client, repo, pin string) error {
+	branch, err := defaultBranch(ctx, client, repo)
+	if err != nil {
+		return err
+	}
+
+	var compare struct {
+		Status string `json:"status"`
+	}
+	if err := getJSON(ctx, client, compareURL(repo, pin, branch), &compare); err != nil {
+		return err
+	}
+	// base が pin、head が既定ブランチなので、ahead は既定ブランチが pin の先へ進んでいることを表す。
+	switch compare.Status {
+	case "ahead", "identical":
+		return nil
+	default:
+		return xerrors.Wrap(errNotOnDefaultBranch, fmt.Sprintf("%s@%s（%s との比較: %q）", repo, pin, branch, compare.Status))
+	}
+}
+
+// defaultBranch は上流の既定ブランチの名前を返す。
+func defaultBranch(ctx context.Context, client *http.Client, repo string) (string, error) {
+	var body map[string]any
+	if err := getJSON(ctx, client, githubAPI+repo, &body); err != nil {
+		return "", err
+	}
+	branch, _ := body["default_branch"].(string)
+	if branch == "" {
+		return "", xerrors.Wrap(errNotFound, repo+" の既定ブランチ")
+	}
+
+	return branch, nil
+}
+
+// compareURL は base...head の compare の URL を返す。ref は `/` で区切った段ごとに escape し、
+// `#` や `?` を持つ branch 名を URL の別の部分として読ませない。
+func compareURL(repo, base, head string) string {
+	escape := func(ref string) string {
+		segments := strings.Split(ref, "/")
+		for i, s := range segments {
+			segments[i] = url.PathEscape(s)
+		}
+
+		return strings.Join(segments, "/")
+	}
+
+	return githubAPI + repo + "/compare/" + escape(base) + "..." + escape(head)
 }
 
 // rulesTree は根の tree から走査対象のディレクトリの tree の SHA を返す。
@@ -199,7 +257,8 @@ func evaluateCommit(ctx context.Context, client *http.Client, t tool, now time.T
 	c := candidate{tool: t, window: windowFor(t.backend), commit: &commitSurvey{}}
 	_, repo, _ := strings.Cut(t.backend, ":")
 
-	// 一覧は既定ブランチを辿るので、pin がそこに現れることが既定ブランチにあることの確認を兼ねる。
+	// 一覧は既定ブランチを辿るので、pin がそこに現れるか pinPrecedes を通ることが、既定ブランチに
+	// あることの確認を兼ねる。
 	commits, err := githubCommits(ctx, client, repo, t.version, c.window, now)
 	if err != nil {
 		c.err = err
@@ -207,15 +266,21 @@ func evaluateCommit(ctx context.Context, client *http.Client, t tool, now time.T
 		return c
 	}
 
-	var (
-		pinIndex int
-		pin      commitInfo
-	)
+	// githubCommits が pin を一覧に含めずに返すのは、pin が一覧のどれよりも古いときだけである。
+	pinIndex := len(commits)
+	var pin commitInfo
 	for i, ci := range commits {
 		if ci.sha == t.version {
 			pinIndex, pin = i, ci
 
 			break
+		}
+	}
+	if pinIndex == len(commits) {
+		if pin, err = githubCommit(ctx, client, repo, t.version); err != nil {
+			c.err = err
+
+			return c
 		}
 	}
 

@@ -307,6 +307,34 @@ func Test_evaluate(t *testing.T) {
 			assert.False(t, c.heldByWindow())
 		})
 
+		// actionable と heldByWindow は比べられない組を偽に倒すだけで、err には出さない。
+		for backend, routes := range map[string]map[string]string{
+			"aqua:owner/repo": {"/repos/owner/repo/releases?per_page=100": `[
+				{"tag_name":"v1.3.x","published_at":"` + daysAgo(30) + `","prerelease":false,"draft":false},
+				{"tag_name":"v1.4.0+build","published_at":"` + daysAgo(30) + `","prerelease":false,"draft":false}
+			]`},
+			"npm:pkg": {"/pkg": `{"time":{"1.3.x":"` + daysAgo(30) + `","latest":"` + daysAgo(30) + `"}}`},
+			"go:example.com/mod": {
+				"/example.com/mod/@v/list":            "v1.3.x\nv1.4.0-pre\n",
+				"/example.com/mod/@v/v1.3.x.info":     `{"Time":"` + daysAgo(30) + `"}`,
+				"/example.com/mod/@v/v1.4.0-pre.info": `{"Time":"` + daysAgo(30) + `"}`,
+			},
+		} {
+			t.Run(backend+" の比べられない版を pin と比べる候補に残さない", func(t *testing.T) {
+				t.Parallel()
+
+				c := evaluate(t.Context(), upstreamStub(t, routes), tool{
+					key: backend, version: "1.1.0", backend: backend,
+				}, outdatedNow)
+
+				require.NoError(t, c.err)
+				assert.Empty(t, c.latest)
+				assert.Empty(t, c.eligible)
+				assert.False(t, c.actionable())
+				assert.False(t, c.heldByWindow())
+			})
+		}
+
 		// 0 と読んで比べると、プレリリースの pin より古い版を更新先として差し出す。
 		t.Run("pin を比べられなければ err を持たせ候補にしない", func(t *testing.T) {
 			t.Parallel()
