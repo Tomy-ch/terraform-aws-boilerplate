@@ -27,7 +27,9 @@ self_manage := {"Effect": "Allow", "Action": ["iam:ChangePassword", "iam:EnableM
 
 password_policy := {"Effect": "Allow", "Action": "iam:GetAccountPasswordPolicy", "Resource": "*"}
 
-long_term_credentials_deny := {"Effect": "Deny", "Action": ["iam:CreateAccessKey"], "Resource": "*"}
+long_term_credential_actions := ["iam:CreateAccessKey", "iam:CreateServiceSpecificCredential", "iam:UploadSSHPublicKey", "iam:UploadSigningCertificate"]
+
+long_term_credentials_deny := {"Effect": "Deny", "Action": long_term_credential_actions, "Resource": "*"}
 
 deactivate := {"Effect": "Allow", "Action": "iam:DeactivateMFADevice", "Resource": "arn:aws:iam::111111111111:user/break-glass/${aws:username}", "Condition": mfa}
 
@@ -144,9 +146,78 @@ test_violation_deactivate_mfa_without_mfa if {
 	fixture.has("[PLAN-BG-02]", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
 }
 
+not_denied(action) := sprintf("[PLAN-BG-02] break-glass の group が %s を、条件なしで全 Resource について拒んでいません", [lower(action)])
+
+group_messages(group) := msgs if {
+	msgs := p.deny with input as fixture.plan(rcs(group, trust(user_arns), [admin])) with data.policy_plan as {"organization_baseline": decl}
+}
+
+with_deny(statements) := array.concat([assume, self_manage, deactivate, password_policy], statements)
+
 test_violation_access_key_not_denied if {
-	inp := fixture.plan(rcs([assume, self_manage, password_policy], trust(user_arns), [admin]))
-	fixture.has("[PLAN-BG-02] break-glass の group が iam:CreateAccessKey を拒んでいません", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+	msgs := group_messages([assume, self_manage, password_policy])
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_with_condition if {
+	conditioned := object.union(long_term_credentials_deny, {"Condition": {"StringEquals": {"aws:username": "nobody"}}})
+	msgs := group_messages(with_deny([conditioned]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_with_empty_condition if {
+	msgs := group_messages(with_deny([object.union(long_term_credentials_deny, {"Condition": {}})]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_action_missing if {
+	every i, a in long_term_credential_actions {
+		rest := array.concat(array.slice(long_term_credential_actions, 0, i), array.slice(long_term_credential_actions, i + 1, count(long_term_credential_actions)))
+		msgs := group_messages(with_deny([object.union(long_term_credentials_deny, {"Action": rest})]))
+		{m | some m in msgs; startswith(m, "[PLAN-BG-02]")} == {not_denied(a)}
+	}
+}
+
+test_violation_long_term_credential_deny_narrowed_resource if {
+	narrowed := object.union(long_term_credentials_deny, {"Resource": "arn:aws:iam::111111111111:user/break-glass/break-glass-1"})
+	msgs := group_messages(with_deny([narrowed]))
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
+}
+
+test_violation_long_term_credential_deny_partial_resource if {
+	partial := object.union(long_term_credentials_deny, {"Resource": ["*", "arn:aws:iam::111111111111:user/break-glass/break-glass-1"]})
+	fixture.has("[PLAN-BG-02] break-glass の group が iam:createaccesskey", group_messages(with_deny([partial])))
+}
+
+test_violation_long_term_credential_allow_does_not_count if {
+	allow := object.union(long_term_credentials_deny, {"Effect": "Allow"})
+	fixture.has("[PLAN-BG-02] break-glass の group が iam:createaccesskey", group_messages(with_deny([allow])))
+}
+
+test_pass_long_term_credential_deny_split_and_cased if {
+	first := {"Effect": "Deny", "Action": "IAM:CREATEACCESSKEY", "Resource": "*"}
+	second := {"Effect": "Deny", "Action": ["iam:createservicespecificcredential", "iam:UploadSshPublicKey", "iam:UploadSigningCertificate"], "Resource": ["*"]}
+	msgs := group_messages(with_deny([first, second]))
+	not fixture.has("[PLAN-BG-02]", msgs)
+}
+
+test_pass_long_term_credential_deny_wildcard if {
+	msgs := group_messages(with_deny([{"Effect": "Deny", "Action": ["iam:Create*", "iam:Upload*"], "Resource": "*"}]))
+	not fixture.has("[PLAN-BG-02]", msgs)
+}
+
+test_pass_long_term_credential_conditioned_deny_beside_unconditioned if {
+	conditioned := object.union(long_term_credentials_deny, {"Condition": {"Bool": {"aws:MultiFactorAuthPresent": "false"}}})
+	msgs := group_messages(with_deny([conditioned, long_term_credentials_deny]))
+	not fixture.has("[PLAN-BG-02]", msgs)
 }
 
 test_violation_trust_other_principal if {
@@ -174,6 +245,13 @@ test_violation_break_glass_extra_managed_policy if {
 test_violation_group_policy_without_statement if {
 	inp := fixture.plan([user(1, user_arns[0]), user(2, user_arns[1]), change("module.b.aws_iam_group_policy.this", "aws_iam_group_policy", {"policy": "{}"}), role(trust(user_arns)), attachments([admin])])
 	fixture.has("[PLAN-BG-02] break-glass の group の policy が文を持ちません", p.deny) with input as inp with data.policy_plan as {"organization_baseline": decl}
+}
+
+test_violation_group_policy_without_statement_denies_nothing if {
+	msgs := group_messages([])
+	every a in long_term_credential_actions {
+		not_denied(a) in msgs
+	}
 }
 
 test_violation_group_allow_not_action if {
