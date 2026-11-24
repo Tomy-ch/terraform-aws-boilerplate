@@ -154,7 +154,7 @@ func (f *flow) all(mode, root string) error {
 		return err
 	}
 	_ = f.step("ci-plan", "-state", f.state)
-	_ = f.step("ci-policy", "-state", f.state, "-policy", f.policy, "-decl", fileWith(f.t, "{}"), "-layer", fileWith(f.t, "{}"), "-namespace", "plan.p")
+	_ = f.step("ci-policy", "-state", f.state, "-work", f.t.TempDir(), "-policy", f.policy, "-decl", fileWith(f.t, "{}"), "-layer", fileWith(f.t, "{}"), "-namespace", "plan.p")
 	if mode == ciModeApply {
 		_ = f.step("ci-apply", "-state", f.state, "-timeout", "5s")
 	}
@@ -460,7 +460,7 @@ func Test_ciPolicyStep(t *testing.T) {
 
 	t.Run("名前空間が無ければ errUsage", func(t *testing.T) {
 		t.Parallel()
-		_, err := ciPolicyStep([]string{"-state", "s", "-policy", "p", "-decl", "d", "-layer", "l"}, testDeps(nil), &bytes.Buffer{})
+		_, err := ciPolicyStep([]string{"-state", "s", "-work", "w", "-policy", "p", "-decl", "d", "-layer", "l"}, testDeps(nil), &bytes.Buffer{})
 		require.ErrorIs(t, err, errUsage)
 	})
 }
@@ -493,7 +493,7 @@ func Test_ciRunPolicy(t *testing.T) {
 			t.Parallel()
 			tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": c.out})
 			s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
-			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}}, &bytes.Buffer{}, policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
+			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}}, &bytes.Buffer{}, t.TempDir(), policyDirWith(t, c.files), fileWith(t, "{}"), fileWith(t, "{}"), []string{c.ns})
 			require.ErrorIs(t, err, c.want)
 		})
 	}
@@ -532,7 +532,7 @@ func Test_ciApplyStep(t *testing.T) {
 			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
 		require.NoError(t, f.step("ci-init", "-state", f.state))
 		require.NoError(t, f.step("ci-plan", "-state", f.state))
-		require.NoError(t, f.step("ci-policy", "-state", f.state, "-policy", f.policy, "-decl", fileWith(t, "{}"), "-layer", fileWith(t, "{}"), "-namespace", "plan.p"))
+		require.NoError(t, f.step("ci-policy", "-state", f.state, "-work", t.TempDir(), "-policy", f.policy, "-decl", fileWith(t, "{}"), "-layer", fileWith(t, "{}"), "-namespace", "plan.p"))
 		require.ErrorIs(t, f.step("ci-apply", "-state", f.state, "-timeout", "200ms"), errApplyTimeout)
 		require.NoError(t, f.step("ci-upload", "-state", f.state))
 		require.Error(t, f.step("ci-finish", "-state", f.state))

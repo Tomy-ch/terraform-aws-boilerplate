@@ -47,7 +47,7 @@ define CI_STEPS_PLAN
 @$(call TF_LOCAL,ci-prepare -mode $(1) -project $(TF_LOCAL_PROJECT) -env $(2) -root $(3) -profile $(TF_LOCAL_PROFILE) -base $(TF_BASE) -header "$(CI_PLAN_DIR)/$(2)-$(3).header" -state "$(call CI_STATE,$(2),$(3))")
 @$(call TF_LOCAL,ci-init -state "$(call CI_STATE,$(2),$(3))")
 -@$(call TF_LOCAL,ci-plan -state "$(call CI_STATE,$(2),$(3))")
--@$(call TF_LOCAL,ci-policy -state "$(call CI_STATE,$(2),$(3))" -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) $(foreach ns,$(CI_POLICY_NAMESPACES),-namespace $(ns)))
+-@$(call TF_LOCAL,ci-policy -state "$(call CI_STATE,$(2),$(3))" -work tmp/ci-policy -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) $(foreach ns,$(CI_POLICY_NAMESPACES),-namespace $(ns)))
 endef
 
 define CI_STEPS_FINISH

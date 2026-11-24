@@ -504,11 +504,13 @@ func ciRunPlan(s *ciState, d deps, stdout io.Writer) (string, error) {
 
 // ciPolicyStep は ci-policy です。入口の名前空間の Policy を1つずつ plan に掛け、違反か評価の欠けがあれば失敗します。
 // conftest は作業ディレクトリへ写した Policy の木・宣言・plan に対して、固定の引数で1回だけ起動し、名前空間ごとの
-// 判定は policyresult が持つ。rego のファイルは名前空間から `plan.` を除いた名前である。
+// 判定は policyresult が持つ。rego のファイルは名前空間から `plan.` を除いた名前である。作業ディレクトリ（-work）は
+// リポジトリの中に置く —— mise の shim は作業ディレクトリから mise.toml を探して版を決める。
 func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
-	var policy, decl, layer string
+	var policy, decl, layer, work string
 	var namespaces stringList
 	statePath, err := ciStepArgs("ci-policy", args, d, func(fs *flag.FlagSet) {
+		fs.StringVar(&work, "work", "", "")
 		fs.StringVar(&policy, "policy", "", "")
 		fs.StringVar(&decl, "decl", "", "")
 		fs.StringVar(&layer, "layer", "", "")
@@ -517,8 +519,8 @@ func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if policy == "" || decl == "" || layer == "" || len(namespaces) == 0 {
-		return "", xerrors.Wrap(errUsage, "ci-policy は -policy・-decl・-layer と1つ以上の -namespace が要ります")
+	if work == "" || policy == "" || decl == "" || layer == "" || len(namespaces) == 0 {
+		return "", xerrors.Wrap(errUsage, "ci-policy は -work・-policy・-decl・-layer と1つ以上の -namespace が要ります")
 	}
 	s, err := loadCIState(statePath)
 	if err != nil {
@@ -527,7 +529,7 @@ func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	if s.Stage != "" || !slices.Contains(s.Done, stagePlan) {
 		return "前の段が終わっていないので Policy を掛けません", nil
 	}
-	if err := ciRunPolicy(s, d, stdout, policy, decl, layer, namespaces); err != nil {
+	if err := ciRunPolicy(s, d, stdout, work, policy, decl, layer, namespaces); err != nil {
 		s.fail(stagePolicy)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
@@ -551,8 +553,11 @@ func (l *stringList) Set(v string) error {
 	return nil
 }
 
-func ciRunPolicy(s ciState, d deps, stdout io.Writer, policy, decl, layer string, namespaces []string) error {
-	work, err := os.MkdirTemp(filepath.Dir(s.Out), "policy-")
+func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, layer string, namespaces []string) error {
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return xerrors.Wrap(err, "作業ディレクトリ")
+	}
+	work, err := os.MkdirTemp(parent, "policy-")
 	if err != nil {
 		return xerrors.Wrap(err, "作業ディレクトリ")
 	}
