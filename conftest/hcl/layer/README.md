@@ -32,7 +32,7 @@ symlink は実体のファイルで書く）。
 
 | ID | 意味 | 直し方 |
 | --- | --- | --- |
-| `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`singletons` が空でないオブジェクトでないか、型の値が持ち主の usecase の名前の重複の無い空でない配列でないか、型が `not_attachments` に無い、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
+| `LY001` | 宣言（`decl.json`）の形が違う。`attachments` が空でないオブジェクトでない、項目が `parents`・`optional`・`parent_arguments`・`whole_document` だけを持たない、`parent_arguments` の親の型がその項目の `parents` に無い、`whole_document` が `true` なのに親の引数が1つでない、`not_attachments` の理由が空、同じ型が両方の区分に在る、`singletons` が空でないオブジェクトでないか、型の値が持ち主の usecase の名前の重複の無い空でない配列でないか、型が `not_attachments` に無いか Provider の schema（`data.layer_schema`。読めないときは `LY306`）に無い、`unrelated_deprecated_arguments`・`inline_owned` の形が違うか親の型でない型を持つ、同じ引数が `parent_arguments` と `unrelated_deprecated_arguments` の両方に在る、`inline_owned` の引数がどの `parent_arguments` にも無い、同じ引数の書かないときの値が項目の間で食い違う | 宣言を直す |
 | `LY002` | 走査の root に `.tf` も `.tf.json` も無い。または入力（hcl-input）が読んだ `.tf` と `.tf.json` の集合と、構成ファイルの `hcl-tally` の一覧が違う | 一覧の差のファイルを実体のファイルにするか、走査の root から外す |
 | `LY003` | 走査の root に JSON の構成（`.tf.json`）が在る。検査はそれを解釈しない（ADR-0501 決定5、ADR-0103 決定11） | HCL（`.tf`）で書く |
 | `LY004` | 入力の形が違う（`lib.hcl_input` の読む形。block・属性・式・参照・段の形、添字の段の式の種類、`within` が添字の段を指すこと）か、構文として読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違うか、その独立の数えが渡されていない。このときは `LY004` だけで落ち、入力を読むほかの規則を評価しない | `make layer-check` から起動する。`scripts/hcl-input` の出力の形と `conftest/hcl/lib/hcl_input.rego` の読む形を揃える |
@@ -53,8 +53,8 @@ symlink は実体のファイルで書く）。
 | `LY307` | 排他に持つと宣言した親の引数（`inline_owned`）を `parent_arguments` に持つ attachment 型の resource が、その親を指す（決定18 のただし書き） | 親の引数で書く |
 | `LY308` | 文書全体を置き換える型の、同じ型の別々の resource が同じ親の葉を指し、同じ instance かを参照から判定できない。どちらかが `count` か `for_each` を持つか、親の選び方が判定できない | 1つの resource にまとめるか、別々の instance をリテラルの添字で指す |
 | `LY309` | `aws_iam_role_policy_attachment` の `policy_arn` の値になりうるものに、同じ module の `aws_iam_policy` の参照でも AWS managed policy の ARN でもないもの（参照・リテラル・中を読めない式）が在るか、値になりうるものが無いか、`policy_arn` を書いていない（ADR-0301 決定21。下の「policy の参照」） | 同じ module に `aws_iam_policy` を置いて参照する。AWS managed policy は、ARN をリテラルか、partition だけ `data.aws_partition` から組むテンプレートで書く |
-| `LY401` | アカウントかリージョンに1つしか置けないと宣言した型（`singletons`）の resource が、宣言した持ち主の usecase の下（`usecases/<持ち主>/`）の外に在る。env の root、一般 module、ほかの usecase の宣言を落とす（決定16）。data source は見ない | 持ち主の usecase に置き、ほかの usecase は識別子を受け取る |
 | `LY303` | 使われている resource の型が、宣言の `attachments` にも `not_attachments` にも無い。親の型に現れるだけでは分類に数えない | 下の基準で分類し、宣言に足す |
+| `LY401` | アカウントかリージョンに1つしか置けないと宣言した型（`singletons`）の resource が、宣言した持ち主の usecase の下（`usecases/<持ち主>/`）の外に在る。env の root、一般 module、ほかの usecase の宣言を落とす（決定16）。data source は見ない | 持ち主の usecase に置き、ほかの usecase は識別子を受け取る |
 
 ## 層の決め方
 
@@ -87,7 +87,10 @@ symlink は実体のファイルで書く）。
 最初の名前の直後の段で読む。段が無いか属性なら「添字なし」、添字で、入力の式の種類が `literal` なら「リテラル」
 （数の形の文字列は数に直し、`this[0]` と `this["0"]` を同じに読む）、ほかは「判定できない」とする。`local` を経た葉は、
 その `local` の定義の参照の選び方を引き継ぐ。`local` を添字で選んだ先（`local.all[each.key]`）と、`each` を経て
-`for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の r### policy の参照（LY309）
+`for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の resource の組だけ
+である。1つの resource の `count` と `for_each` の instance どうしは比べない。
+
+### policy の参照（LY309）
 
 `aws_iam_role_policy_attachment` の `policy_arn` は、値になりうるものがすべて次のどれかであり、少なくとも1つ在れば通す。
 `policy_arn` を書かない resource は落とす。
@@ -105,9 +108,6 @@ symlink は実体のファイルで書く）。
 それ自体を違反とする。`local` は式の全体を読むので、オブジェクトの一部の属性だけを `policy_arn` に渡す `local` でも、
 ほかの属性のリテラルを数える。
 
-決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
-
-の辿り方で読み、違反になる）。
 決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
 
 ## 宣言
@@ -128,9 +128,11 @@ symlink は実体のファイルで書く）。
   同じ設定を書く attachment 型をその親に置くことを `LY307` で落とす
 - `singletons`: アカウントかリージョン（組織の設定は管理アカウント）に1つしか置けない型から、それを持つ usecase の名前の
   配列へ（`LY401`）。型は `not_attachments` に在るものに限る。Policy Test の `PLAN-ACB-06` は password policy の持ち主を
-  ここから導く（`conftest/plan/README.md`）。型を足すときは、Provider の docs か AWS の API の docs が、アカウントか
-  リージョンに1つしか置けない、または2つ目の宣言が1つ目を上書きすると明言することを確かめる。attachment 型（Config の
-  recorder の status）は、親を同じ module に置くことを `LY301` が求めるので、親の型を載せれば足りる
+  ここから導き、`PLAN-ACB-00` は account-baseline の宣言の型がここに持ち主 `account-baseline` として在ることを見る
+  （`conftest/plan/README.md`）。型を足すときは、Provider の docs か AWS の API の docs が、アカウントか
+  リージョンに1つしか置けない、または2つ目の宣言が1つ目を上書きすると明言することを確かめる。
+  `aws_config_configuration_recorder_status` は attachment 型で、親の recorder を同じ module に置くことを `LY301` が
+  求め、recorder の持ち主に縛られるので、`singletons` に載せない
 - Policy Test は、保護の対象の型について `parent_arguments` と `unrelated_deprecated_arguments` から ADR-0402 決定17 の
   宣言を導く（`conftest/plan/README.md` の「宣言」）
 

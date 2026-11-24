@@ -160,6 +160,13 @@ tree_decl := {
 }
 
 tree_schema := {
+	"aws_s3_account_public_access_block": {
+		"arguments": [
+			"block_public_acls"
+		],
+		"deprecated": [],
+		"blocks": []
+	},
 	"aws_s3_bucket": {
 		"arguments": [
 			"bucket",
@@ -214,6 +221,13 @@ tree_schema := {
 }
 
 tree_schema_website := {
+	"aws_s3_account_public_access_block": {
+		"arguments": [
+			"block_public_acls"
+		],
+		"deprecated": [],
+		"blocks": []
+	},
 	"aws_s3_bucket": {
 		"arguments": [
 			"bucket",

@@ -39,7 +39,7 @@ fixture_decl := {
 
 fixture_schema := object.union(
 	{t: {"arguments": ["name"], "deprecated": [], "blocks": []} |
-		some t in {"aws_vpc", "aws_subnet", "aws_api_gateway_rest_api", "aws_api_gateway_stage", "aws_kms_key", "aws_kms_replica_key"}
+		some t in {"aws_vpc", "aws_subnet", "aws_api_gateway_rest_api", "aws_api_gateway_stage", "aws_kms_key", "aws_kms_replica_key", "aws_s3_account_public_access_block"}
 	},
 	{"aws_s3_bucket": {"arguments": ["bucket", "policy", "acceleration_status", "versioning"], "deprecated": ["policy", "acceleration_status"], "blocks": ["versioning"]}},
 )
@@ -483,6 +483,7 @@ fixture_cases := {
 	"LY309_deny_wrong_resource_type",
 	"LY401_allow_data_source_outside_owner",
 	"LY401_allow_owner_internal",
+	"LY401_allow_owner_reference",
 	"LY401_allow_second_owner",
 	"LY401_deny_env_root",
 	"LY401_deny_general_module",

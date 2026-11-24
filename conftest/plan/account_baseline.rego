@@ -102,6 +102,20 @@ deny contains msg if {
 	msg := "[PLAN-ACB-00] 層の宣言 data.layer_decl.singletons.aws_iam_account_password_policy（conftest/hcl/layer/decl.json）が無いか、空でない文字列の空でない配列ではありません"
 }
 
+# アカウントかリージョンに1つの型を持ち主の外が宣言しないことは LY401 が見る。宣言の型が singletons に持ち主
+# account-baseline として無ければ、LY401 はその型を見ない。analyzer は名前で区別する resource、recorder の status は
+# attachment 型（recorder の持ち主に LY301 で縛られる）なので除く。
+singleton_types := {decl.regional[k] | some k in regional_keys - {"analyzer"}} | {decl.config[k] | some k in config_keys - {"status"}} | {decl.public_access_block}
+
+owned_by_baseline(type) if "account-baseline" in data.layer_decl.singletons[type]
+
+deny contains msg if {
+	well_formed_decl
+	some type in singleton_types
+	not owned_by_baseline(type)
+	msg := sprintf("[PLAN-ACB-00] 宣言 account_baseline の %s が、層の宣言 data.layer_decl.singletons（conftest/hcl/layer/decl.json）に持ち主 account-baseline として在りません", [type])
+}
+
 deny contains msg if {
 	well_formed_decl
 	some type in array.concat(regional_types, [decl.public_access_block, decl.config.recorder])

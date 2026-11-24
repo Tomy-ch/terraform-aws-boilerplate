@@ -26,6 +26,10 @@ test_LY401_allow_owner_internal if {
 	count(ly401("LY401_allow_owner_internal")) == 0
 }
 
+test_LY401_allow_owner_reference if {
+	count(ly401("LY401_allow_owner_reference")) == 0
+}
+
 two_owners := object.union(fixture_decl, {"singletons": {"aws_s3_account_public_access_block": ["account-baseline", "organization-baseline"]}})
 
 test_LY401_allow_second_owner if {
@@ -64,9 +68,37 @@ test_LY001_deny_malformed_owners if {
 	}
 }
 
+# 形の崩れた持ち主は LY001 だけで落とし、LY401 はその型を評価しない。
+test_LY001_deny_malformed_owners_without_LY401 if {
+	doc := fx("LY401_deny_env_root")
+	d := json.patch(fixture_decl, [{"op": "replace", "path": "/singletons/aws_s3_account_public_access_block", "value": "account-baseline"}])
+	msgs := denies_with(doc, listed_of(doc), d)
+	only_with(with_id(msgs, "LY001"), "singletons.aws_s3_account_public_access_block が、持ち主のユースケースの名前")
+	count(with_id(msgs, "LY401")) == 0
+}
+
+test_LY001_deny_singleton_not_in_schema if {
+	d := json.patch(fixture_decl, [
+		{"op": "add", "path": "/not_attachments/aws_zz_account_setting", "value": "アカウントの単位で設定する"},
+		{"op": "add", "path": "/singletons/aws_zz_account_setting", "value": ["account-baseline"]},
+	])
+	with_id(ly001_with(d), "LY001") == {"LY001 [宣言の形] singletons.aws_zz_account_setting が Provider の schema にありません → 型名を直す"}
+}
+
 test_LY001_deny_singleton_not_classified_as_not_attachment if {
 	d := object.union(fixture_decl, {"singletons": {"aws_s3_account_public_access_block": ["account-baseline"], "aws_ebs_encryption_by_default": ["account-baseline"]}})
-	only_with(ly001_with(d), "singletons.aws_ebs_encryption_by_default は not_attachments にありません")
+	sch := object.union(fixture_schema, {"aws_ebs_encryption_by_default": {"arguments": ["enabled"], "deprecated": [], "blocks": []}})
+	only_with(ly001_with_schema(d, sch), "singletons.aws_ebs_encryption_by_default は not_attachments にありません")
+}
+
+ly001_with_schema(d, sch) := with_id(msgs, "LY001") if {
+	doc := fx("ok_module")
+	msgs := deny with input as doc
+		with data.layer_decl as d
+		with data.layer_files as listed_of(doc)
+		with data.hcl_parsed_files as parsed_of(doc)
+		with data.hcl_block_counts as counts_of(doc)
+		with data.layer_schema as sch
 }
 
 test_LY001_allow_singletons if {

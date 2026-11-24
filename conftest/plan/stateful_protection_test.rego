@@ -57,7 +57,8 @@ test_violation_delete_of_state_key_under_declaration if {
 account_baseline_types := (({t | some t, owners in data.layer_decl.singletons; "account-baseline" in owners} | {t | some t in data.policy_plan.account_baseline.regional}) | {t | some t in data.policy_plan.account_baseline.config}) | {"aws_iam_service_linked_role"}
 
 test_pass_account_baseline_types_are_protected if {
-	count(account_baseline_types) > 0
+	count({t | some t, owners in data.layer_decl.singletons; "account-baseline" in owners}) > 0
+	data.policy_plan.account_baseline.public_access_block in account_baseline_types
 	count(account_baseline_types - {t | some t in data.policy_plan.stateful_protection.protected_types}) == 0
 }
 

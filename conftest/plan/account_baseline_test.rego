@@ -22,7 +22,21 @@ decl := {
 	"password_policy_keys": ["minimum_password_length", "max_password_age"],
 }
 
-layer_decl := {"singletons": {"aws_iam_account_password_policy": ["account-baseline", "organization-baseline"]}}
+# analyzer と recorder の status は singletons に載らない。
+baseline_singletons := {
+	"aws_ebs_encryption_by_default",
+	"aws_emr_block_public_access_configuration",
+	"aws_ssm_service_setting",
+	"aws_vpc_block_public_access_options",
+	"aws_config_configuration_recorder",
+	"aws_config_delivery_channel",
+	"aws_config_retention_configuration",
+	"aws_s3_account_public_access_block",
+}
+
+singletons_with(owners) := object.union({t: ["account-baseline"] | some t in baseline_singletons}, {"aws_iam_account_password_policy": owners})
+
+layer_decl := {"singletons": singletons_with(["account-baseline", "organization-baseline"])}
 
 plan_of(path, rcs) := [{"path": path, "contents": {"plan_format_version": "1.2", "resource_changes": rcs}}]
 
@@ -262,14 +276,14 @@ test_violation_public_access_block_off if {
 }
 
 test_violation_password_policy_owners_not_declared if {
-	every bad in [null, {}, {"singletons": {}}, {"singletons": {"aws_iam_account_password_policy": []}}, {"singletons": {"aws_iam_account_password_policy": "account-baseline"}}, {"singletons": {"aws_iam_account_password_policy": [""]}}] {
+	every bad in [null, {}, {"singletons": {}}, {"singletons": singletons_with([])}, {"singletons": singletons_with("account-baseline")}, {"singletons": singletons_with([""])}, {"singletons": singletons_with([1])}] {
 		msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.layer_decl as bad with data.policy_plan.account_baseline as decl
 		only("[PLAN-ACB-00]", msgs)
 	}
 }
 
 test_violation_password_policy_of_layer_declared_owner_missing if {
-	three := {"singletons": {"aws_iam_account_password_policy": ["account-baseline", "organization-baseline", "finops"]}}
+	three := {"singletons": singletons_with(["account-baseline", "organization-baseline", "finops"])}
 	msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.layer_decl as three with data.policy_plan.account_baseline as decl
 	only("[PLAN-ACB-06]", msgs)
 	some m in msgs
@@ -296,4 +310,26 @@ test_violation_password_policy_keys_not_attributes if {
 	d := set_key(decl, "password_policy_keys", ["minimum_length_of_password"])
 	msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.layer_decl as layer_decl with data.policy_plan.account_baseline as d
 	only("[PLAN-ACB-06]", msgs)
+}
+
+test_pass_singleton_types_exclude_analyzer_and_status if {
+	p.singleton_types == baseline_singletons with data.policy_plan.account_baseline as decl
+}
+
+test_violation_singleton_type_not_owned_by_account_baseline if {
+	every t in baseline_singletons {
+		every owners in [null, ["finops"]] {
+			ld := {"singletons": object.union(layer_decl.singletons, {t: owners})}
+			msgs := p.deny with input as array.concat(ab(ok), org_baseline) with data.layer_decl as ld with data.policy_plan.account_baseline as decl
+			msgs == {sprintf("[PLAN-ACB-00] 宣言 account_baseline の %s が、層の宣言 data.layer_decl.singletons（conftest/hcl/layer/decl.json）に持ち主 account-baseline として在りません", [t])}
+		}
+	}
+}
+
+# 宣言（decl.json と層の宣言）を差し替えずに読む。
+test_pass_declared_singleton_types_owned_by_account_baseline if {
+	count(p.singleton_types) > 0
+	every t in p.singleton_types {
+		p.owned_by_baseline(t)
+	}
 }

@@ -263,6 +263,15 @@ deny contains msg if {
 	msg := sprintf("LY001 [宣言の形] singletons.%s は not_attachments にありません", [t])
 }
 
+# 型名の誤りは、どの resource にも当たらないまま LY401 を空振りさせる。schema が読めないときは LY306 が落とす。
+deny contains msg if {
+	schema_ok
+	is_object(singletons)
+	some t, _ in singletons
+	not schema[t]
+	msg := sprintf("LY001 [宣言の形] singletons.%s が Provider の schema にありません → 型名を直す", [t])
+}
+
 # --- 対象と件数 ---
 
 deny contains msg if {
