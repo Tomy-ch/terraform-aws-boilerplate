@@ -218,16 +218,10 @@ run "policies" {
       },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
       {
-        Sid    = "ReadCiPolicies"
-        Effect = "Allow"
-        Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
-        Resource = [
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification",
-        ]
+        Sid      = "ReadCiPolicies"
+        Effect   = "Allow"
+        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
+        Resource = "arn:aws:iam::123456789012:policy/tabp-admin-ci-*"
       },
       {
         Sid      = "ReadWorkloadTopics"
@@ -661,16 +655,10 @@ run "policies" {
       },
       { Sid = "ListKeyAliases", Effect = "Allow", Action = "kms:ListAliases", Resource = "*" },
       {
-        Sid    = "ReadCiPolicies"
-        Effect = "Allow"
-        Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
-        Resource = [
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
-          "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification",
-        ]
+        Sid      = "ReadCiPolicies"
+        Effect   = "Allow"
+        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
+        Resource = "arn:aws:iam::123456789012:policy/tabp-admin-ci-*"
       },
       {
         Sid      = "WriteApplyOutput"
@@ -764,6 +752,7 @@ run "policies" {
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-boundary-ops-notification",
         ]
       },
@@ -772,7 +761,14 @@ run "policies" {
         Effect    = "Allow"
         Action    = "iam:AttachRolePolicy"
         Resource  = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply"
-        Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"] } }
+        Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2"] } }
+      },
+      {
+        Sid       = "AttachPlanReadPolicy"
+        Effect    = "Allow"
+        Action    = "iam:AttachRolePolicy"
+        Resource  = "arn:aws:iam::123456789012:role/tabp-admin-ci-plan"
+        Condition = { ArnEquals = { "iam:PolicyARN" = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read" } }
       },
       {
         Sid      = "AttachApplyIdentityPolicies"
@@ -2071,15 +2067,17 @@ run "role_arns_follow_data_sources" {
 
   assert {
     condition = [for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)] == [
-      for _ in range(2) : [
+      "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-*",
+      [
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-manage",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read",
+        "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-2",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-boundary-ops-notification",
-      ]
+      ],
     ]
-    error_message = "apply-identity の role の CI の policy の読み取りと管理の Resource が、apply-identity の role の2つの policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
+    error_message = "apply-identity の role の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の2つの policy・apply の role の workload の policy・boundary の、partition・アカウント・name_prefix から組んだ ARN になっていません。"
   }
 
   assert {
@@ -2097,8 +2095,8 @@ run "role_arns_follow_data_sources" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyWorkloadPolicy"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read"] } }
-    error_message = "apply-identity が apply の role に付けてよい policy が、apply の role の workload の2つの policy に限られていません。"
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyWorkloadPolicy"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-2"] } }
+    error_message = "apply-identity が apply の role に付けてよい policy が、apply の role の workload の3つの policy に限られていません。"
   }
   assert {
     condition = { for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Sid => s.Resource if contains(["ManageWorkloadKeys", "ManageWorkloadKeyAliases", "ManageWorkloadTopics", "ManageChatConfigurations", "ManageBoundedRoles", "ManageWorkloadPolicies", "PassWorkloadRoles", "CreateChatbotServiceLinkedRole"], s.Sid) } == {
@@ -2295,6 +2293,7 @@ run "no_governance_in_dev" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
     ]
     error_message = "dev の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
@@ -2345,13 +2344,14 @@ run "no_governance_in_dev" {
       one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
-      ] == [for _ in range(3) : [
+      ] == ["arn:aws:iam::123456789012:policy/tabp-dev-ci-*", "arn:aws:iam::123456789012:policy/tabp-dev-ci-*", [
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-workload-read",
+        "arn:aws:iam::123456789012:policy/tabp-dev-ci-apply-workload-2",
         "arn:aws:iam::123456789012:policy/tabp-dev-ci-boundary-ops-notification",
     ]]
-    error_message = "dev の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
+    error_message = "dev の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
@@ -2405,6 +2405,7 @@ run "no_governance_in_security" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
     ]
     error_message = "security の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
@@ -2455,13 +2456,14 @@ run "no_governance_in_security" {
       one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
-      ] == [for _ in range(3) : [
+      ] == ["arn:aws:iam::123456789012:policy/tabp-security-ci-*", "arn:aws:iam::123456789012:policy/tabp-security-ci-*", [
         "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-workload-read",
+        "arn:aws:iam::123456789012:policy/tabp-security-ci-apply-workload-2",
         "arn:aws:iam::123456789012:policy/tabp-security-ci-boundary-ops-notification",
     ]]
-    error_message = "security の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
+    error_message = "security の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
@@ -2515,6 +2517,7 @@ run "no_governance_in_log_archive" {
       "WriteApplyOutput",
       "ManageCiPolicies",
       "AttachApplyWorkloadPolicy",
+      "AttachPlanReadPolicy",
       "AttachApplyIdentityPolicies",
     ]
     error_message = "log-archive の apply-identity の role の Sid が、統制の文を含まない固定の一覧（manage の policy の付与を含む）と一致していません。"
@@ -2565,13 +2568,14 @@ run "no_governance_in_log_archive" {
       one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]),
       one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]),
-      ] == [for _ in range(3) : [
+      ] == ["arn:aws:iam::123456789012:policy/tabp-log-archive-ci-*", "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-*", [
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-identity-manage",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-workload",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-workload-read",
+        "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-apply-workload-2",
         "arn:aws:iam::123456789012:policy/tabp-log-archive-ci-boundary-ops-notification",
     ]]
-    error_message = "log-archive の CI の policy の読み取りと管理の Resource が、apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
+    error_message = "log-archive の CI の policy の読み取りが name_prefix の CI の policy の pattern に、管理が apply-identity の role の manage の policy・apply の role の workload の policy・boundary になっていません。"
   }
 
   assert {
@@ -2756,7 +2760,10 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : contains(s.Resource, "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance") if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) && length([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s if contains(["ReadCiPolicies", "ManageCiPolicies"], s.Sid)]) == 2
+    condition = (
+      contains(one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ManageCiPolicies"]), "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance") &&
+      one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Resource if s.Sid == "ReadCiPolicies"]) == "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-*"
+    )
     error_message = "apply-identity の統制の policy の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
   }
 
