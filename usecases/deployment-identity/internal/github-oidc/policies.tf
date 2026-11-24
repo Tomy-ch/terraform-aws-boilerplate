@@ -41,7 +41,7 @@ locals {
 
   workload_policy_name = "${var.name_prefix}-ci-apply-workload"
   workload_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
-  # workload の Allow が 6,144 文字を超えるので、読み取りを同じ役割の2つ目の policy に置く（決定17）。
+  # 読み取りは2つ目の policy に分ける（決定17）。
   workload_read_policy_name = "${var.name_prefix}-ci-apply-workload-read"
   workload_read_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_read_policy_name}"
   workload_policy_arns      = [local.workload_policy_arn, local.workload_read_policy_arn]
