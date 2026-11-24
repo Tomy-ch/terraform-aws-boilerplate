@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func Test_checkDependabotLabels(t *testing.T) {
 		dependabot := "updates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      - \"go\"\n      - \"x\"\n" +
 			"  - package-ecosystem: \"docker\"\n    labels:\n      - \"y\"\n"
 		_, err := checkDependabotLabels([]byte(dependabot), []byte(labelsFixture))
-		require.ErrorIs(t, err, errDependabotLabels)
+		assertOnlySentinel(t, err, errDependabotLabels)
 		assert.Contains(t, err.Error(), `gomod の "x", docker の "y"`)
 	})
 
@@ -54,8 +55,19 @@ func Test_checkDependabotLabels(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := checkDependabotLabels([]byte(tc.dependabot), []byte(tc.labels))
-			require.ErrorIs(t, err, tc.sentinel)
+			assertOnlySentinel(t, err, tc.sentinel)
 			assert.Contains(t, err.Error(), tc.message)
 		})
+	}
+}
+
+// assertOnlySentinel は、err が sentinel に当たり、ラベルの検査のほかの sentinel に当たらないことを要求します。
+func assertOnlySentinel(t *testing.T, err, sentinel error) {
+	t.Helper()
+	require.ErrorIs(t, err, sentinel)
+	for _, other := range []error{errDependabotParse, errLabelsParse, errDependabotLabels} {
+		if !errors.Is(other, sentinel) {
+			assert.NotErrorIs(t, err, other)
+		}
 	}
 }
