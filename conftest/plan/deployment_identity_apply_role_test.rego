@@ -131,7 +131,7 @@ decl := {
 	"deployment_identity": {"apply_role": {
 		"role": apply_role_address,
 		"policy": apply_policy_address,
-		"governance": {"actions": governance_actions, "management_actions": management_actions},
+		"governance": {"actions": governance_actions, "management_actions": management_actions, "management_policy": governance_policy_address},
 		"bootstrap": bootstrap,
 	}},
 	"state_backend": {
@@ -991,8 +991,8 @@ test_pass_writes_denied_elsewhere if {
 
 with_governance(g) := json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance", "value": governance_value(g)}])
 
-# management_actions を書かない宣言は、空の management_actions を持つとして扱う。
-governance_value(g) := object.union({"management_actions": []}, g) if is_object(g)
+# management_actions と management_policy を書かない宣言は、既定の値を持つとして扱う。
+governance_value(g) := object.union({"management_actions": management_actions, "management_policy": governance_policy_address}, g) if is_object(g)
 
 else := g
 
@@ -1236,54 +1236,63 @@ test_violation_declared_cloudformation_action_missing if {
 
 # --- 管理アカウントでだけ拒む統制の Action（deployment-identity/ADR-0201 決定5）---
 
-renamed_apply_role(name) := with_after(world(valid_statements), apply_role_address, {"name": name, "arn": role_arn(name), "inline_policy": [], "managed_policy_arns": []})
+governance_policy_address := sprintf("%saws_iam_policy.governance[0]", [g])
+
+governance_policy_rc := res("aws_iam_policy", governance_policy_address, {"name": "tabp-admin-ci-apply-identity-governance", "arn": sprintf("arn:aws:iam::%s:policy/tabp-admin-ci-apply-identity-governance", [account]), "policy": json.marshal({"Statement": []})})
+
+with_governance_policy(statements) := array.concat(world(statements), [governance_policy_rc])
+
+management_deny := {"Effect": "Deny", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": "*"}
 
 test_violation_management_action_not_denied_in_admin if {
-	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(renamed_apply_role("tabp-admin-ci-apply"), decl))
+	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(with_governance_policy(valid_statements), decl))
 }
 
 test_pass_management_action_denied_in_admin if {
-	s := array.concat(valid_statements, [{"Effect": "Deny", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": "*"}])
-	rcs := with_after(world(s), apply_role_address, {"name": "tabp-admin-ci-apply", "arn": role_arn("tabp-admin-ci-apply"), "inline_policy": [], "managed_policy_arns": []})
+	not fixture.has("[PLAN-APPLY-06]", messages_for(with_governance_policy(array.concat(valid_statements, [management_deny])), decl))
+}
+
+# 管理アカウントかどうかは統制の policy の address で見る。role の名前が admin の形でも、統制の policy が無ければ求めない。
+test_pass_management_action_not_required_without_governance_policy if {
+	rcs := with_after(world(valid_statements), apply_role_address, {"name": "tabp-admin-ci-apply", "arn": role_arn("tabp-admin-ci-apply"), "inline_policy": [], "managed_policy_arns": []})
 	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(rcs, decl))
 }
 
-test_pass_management_action_not_required_in_member if {
-	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(renamed_apply_role("tabp-dev-ci-apply"), decl))
+# 宣言の address と違う address の統制の policy は、管理アカウントの印にならない。
+test_pass_management_action_not_required_for_other_address if {
+	other := json.patch(governance_policy_rc, [{"op": "replace", "path": "/address", "value": sprintf("%saws_iam_policy.governance_x[0]", [g])}])
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(array.concat(world(valid_statements), [other]), decl))
 }
 
-test_pass_management_action_not_required_for_admin_lookalike if {
-	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(renamed_apply_role("tabp-admin-ci-apply-x"), decl))
-}
-
-management_malformed(m) if {
-	some msg in messages_for(world(valid_statements), json.patch(decl, [{"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": m}]))
+management_malformed(patch) if {
+	some msg in messages_for(world(valid_statements), json.patch(decl, [patch]))
 	startswith(msg, malformed_governance)
 }
 
 test_violation_management_actions_not_array if {
-	management_malformed("iam:UpdateAccountPasswordPolicy")
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": "iam:UpdateAccountPasswordPolicy"})
+}
+
+test_violation_management_actions_empty if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": []})
 }
 
 test_violation_management_actions_empty_string if {
-	management_malformed([""])
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": [""]})
 }
 
 test_violation_management_actions_not_string if {
-	management_malformed([1])
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_actions", "value": [1]})
 }
 
 test_violation_management_actions_missing if {
-	some msg in messages_for(world(valid_statements), json.patch(decl, [{"op": "remove", "path": "/deployment_identity/apply_role/governance/management_actions"}]))
-	startswith(msg, malformed_governance)
+	management_malformed({"op": "remove", "path": "/deployment_identity/apply_role/governance/management_actions"})
 }
 
-governance_policy_rc := res("aws_iam_policy", sprintf("%saws_iam_policy.governance[0]", [g]), {"name": "tabp-admin-ci-apply-identity-governance", "arn": sprintf("arn:aws:iam::%s:policy/tabp-admin-ci-apply-identity-governance", [account]), "policy": json.marshal({"Statement": []})})
-
-test_violation_governance_policy_without_admin_role if {
-	fixture.has("[PLAN-APPLY-00] 入力に統制の policy", messages_for(array.concat(renamed_apply_role("tabp-dev-ci-apply"), [governance_policy_rc]), decl))
+test_violation_management_policy_missing if {
+	management_malformed({"op": "remove", "path": "/deployment_identity/apply_role/governance/management_policy"})
 }
 
-test_pass_governance_policy_with_admin_role if {
-	not fixture.has("[PLAN-APPLY-00] 入力に統制の policy", messages_for(array.concat(renamed_apply_role("tabp-admin-ci-apply"), [governance_policy_rc]), decl))
+test_violation_management_policy_empty if {
+	management_malformed({"op": "replace", "path": "/deployment_identity/apply_role/governance/management_policy", "value": ""})
 }

@@ -145,6 +145,9 @@ test_violation_declaration_malformed if {
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:*"]}],
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:Update*"]}],
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["s3:PutAccountPublicAccessBlock"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:PutRolePolicy"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:CreateUser"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": [1]}],
 		[{"op": "remove", "path": "/apply_role"}],
 	] {
 		fixture.has(malformed, messages_for(valid_world, json.patch(decl, patch)))
@@ -483,4 +486,10 @@ test_violation_pass_usecase_role_to_slr_service if {
 	] {
 		fixture.has(sprintf("[PLAN-AWP-03] p.json: %s の Allow が iam:PassRole", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
 	}
+}
+
+# Resource の無い文は免除の every を空で満たす。免除が count で外れることを固定する。
+test_violation_pass_role_without_resource_not_exempt if {
+	s := {"Effect": "Allow", "Action": "iam:PassRole", "Resource": [], "Condition": {"StringEquals": {"iam:PassedToService": "config.amazonaws.com"}}}
+	fixture.has(sprintf("[PLAN-AWP-03] p.json: %s の Allow が iam:PassRole", [policy_2_address]), messages_2(array.concat(valid_policy_2, [s])))
 }

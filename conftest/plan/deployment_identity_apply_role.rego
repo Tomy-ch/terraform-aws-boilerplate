@@ -332,6 +332,9 @@ governance_actions := object.get(object.get(cfg, "governance", {}), "actions", n
 # 管理アカウントでだけ拒む Action。メンバーの password policy は account-baseline が apply の role で持つ（決定5）。
 management_actions := object.get(object.get(cfg, "governance", {}), "management_actions", null)
 
+# 管理アカウントでだけ作る統制の policy の address（決定3・7）。管理アカウントかどうかは、その有無で見る。
+management_policy := object.get(object.get(cfg, "governance", {}), "management_policy", null)
+
 well_formed_governance if {
 	is_array(governance_actions)
 	count(governance_actions) > 0
@@ -339,32 +342,21 @@ well_formed_governance if {
 		nonempty_string(a)
 	}
 	is_array(management_actions)
+	count(management_actions) > 0
 	every a in management_actions {
 		nonempty_string(a)
 	}
+	nonempty_string(management_policy)
 }
 
-# apply の role の名前は `<project>-<env>-ci-apply` で、管理アカウントの env は admin である。
-management_role if endswith(role_name, "-admin-ci-apply")
+management_role if {
+	some c in lib.changes
+	c.rc.address == management_policy
+}
 
 required_governance_actions := array.concat(governance_actions, management_actions) if management_role
 
 else := governance_actions
-
-# 統制の policy は管理アカウントの identity root だけが作る（決定3・7）。名前の判定がそれと食い違えば、
-# management_actions の検査が黙って外れるので落とす。
-governance_policy_in_input if {
-	some c in lib.changes
-	c.rc.type == "aws_iam_policy"
-	endswith(object.get(c.rc.change.after, "name", ""), "-ci-apply-identity-governance")
-}
-
-deny contains msg if {
-	role_known
-	governance_policy_in_input
-	not management_role
-	msg := sprintf("[PLAN-APPLY-00] 入力に統制の policy（<project>-admin-ci-apply-identity-governance）があるのに、apply の role %s の名前が -admin-ci-apply で終わりません。management_actions の検査の対象を決められません", [role_name])
-}
 
 # 宣言した名前を、Deny の Action のどれかが覆うことを求める。覆いは、同じ名前か、同じサービスの wildcard が IAM の
 # `*` と `?` でその名前に当たるもの（Identity Center の接尾辞の wildcard。deployment-identity/ADR-0201 決定5）。
@@ -547,7 +539,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_governance
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance の actions が空でない文字列の空でない配列ではないか、management_actions が空でない文字列の配列ではありません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance の actions と management_actions が空でない文字列の空でない配列ではないか、management_policy が空でない文字列ではありません"
 }
 
 # --- PLAN-APPLY-01: 鍵 ---

@@ -352,3 +352,11 @@ test_violation_other_policy_attached_beside_managed if {
 	admin := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.admin", {"role": "ci-plan", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
 	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に付ける policy が", [admin.address]), p.deny) with input as with_managed([fixture.allow("s3:GetObject")], [admin]) with data.policy_plan.deployment_identity as managed_decl
 }
+
+# 宣言した policy の ARN が決まらないとき、policy_arn の無い attachment を一致と数えない。
+test_violation_attachment_without_policy_arn_while_managed_arn_unknown if {
+	unknown := json.patch(read_policy([fixture.allow("s3:GetObject")]), [{"op": "remove", "path": "/change/after/arn"}, {"op": "add", "path": "/change/after_unknown/arn", "value": true}])
+	bare := json.patch(read_attachment, [{"op": "remove", "path": "/change/after/policy_arn"}])
+	plan := fixture.plan([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), unknown, bare])
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に付ける policy が", [read_attachment.address]), p.deny) with input as plan with data.policy_plan.deployment_identity as managed_decl
+}

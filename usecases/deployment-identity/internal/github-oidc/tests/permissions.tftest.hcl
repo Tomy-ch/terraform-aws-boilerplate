@@ -1211,7 +1211,7 @@ run "policies" {
 
   assert {
     condition     = aws_iam_policy.workload.name == "tabp-admin-ci-apply-workload" && aws_iam_policy.workload_read.name == "tabp-admin-ci-apply-workload-read" && aws_iam_policy.workload_2.name == "tabp-admin-ci-apply-workload-2" && [for k, p in aws_iam_policy.boundary : [k, p.name]] == [["ops-notification", "tabp-admin-ci-boundary-ops-notification"]]
-    error_message = "apply の role の workload の policy と boundary の名前が、<name_prefix>-ci-apply-workload・<name_prefix>-ci-apply-workload-read と <name_prefix>-ci-boundary-<usecase> になっていません。"
+    error_message = "apply の role の workload の policy と boundary の名前が、<name_prefix>-ci-apply-workload・<name_prefix>-ci-apply-workload-read・<name_prefix>-ci-apply-workload-2 と <name_prefix>-ci-boundary-<usecase> になっていません。"
   }
 
   # deployment-identity/ADR-0201 決定5・15・16。
@@ -2343,6 +2343,30 @@ run "role_arns_follow_data_sources" {
     condition     = one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBreakGlassChange"]) == ["arn:aws-us-gov:iam::210987654321:group/break-glass/*", "arn:aws-us-gov:iam::210987654321:role/break-glass/*", "arn:aws-us-gov:iam::210987654321:user/break-glass/*"]
     error_message = "apply の role の break-glass の Deny の pattern が、partition・アカウントから組まれていません。"
   }
+
+  # account-baseline の構成物の ARN（決定13）。
+  assert {
+    condition = { for st in concat(jsondecode(aws_iam_policy.workload_2.policy).Statement, jsondecode(aws_iam_policy.workload_read.policy).Statement) : st.Sid => st.Resource if contains(["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "ReadAlternateContact", "ReadConfigServiceLinkedRole", "ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings"], st.Sid) } == {
+      PutAlternateContact             = "arn:aws-us-gov:account::210987654321:account"
+      CreateConfigServiceLinkedRole   = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+      CreateAnalyzerServiceLinkedRole = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
+      PassConfigServiceLinkedRole     = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+      ManageConfigRecorders           = ["arn:aws-us-gov:config:us-gov-west-1:210987654321:configuration-recorder/t4bp-dev/*"]
+      CreateAnalyzers                 = ["arn:aws-us-gov:access-analyzer:us-gov-west-1:210987654321:analyzer/t4bp-dev-external"]
+      UpdateSsmServiceSettings        = ["arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/documents/console/public-sharing-permission", "arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/automation/customer-script-log-destination"]
+      ReadAlternateContact            = "arn:aws-us-gov:account::210987654321:account"
+      ReadConfigServiceLinkedRole     = "arn:aws-us-gov:iam::210987654321:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+      ReadConfigRecorders             = ["arn:aws-us-gov:config:us-gov-west-1:210987654321:configuration-recorder/t4bp-dev/*"]
+      ReadAnalyzers                   = ["arn:aws-us-gov:access-analyzer:us-gov-west-1:210987654321:analyzer/t4bp-dev-external"]
+      ReadSsmServiceSettings          = ["arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/documents/console/public-sharing-permission", "arn:aws-us-gov:ssm:us-gov-west-1:210987654321:servicesetting/ssm/automation/customer-script-log-destination"]
+    }
+    error_message = "account-baseline の構成物の Resource が、partition・リージョン・アカウント・name_prefix から組まれていません。"
+  }
+
+  assert {
+    condition     = one([for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Condition if st.Sid == "EnableEbsEncryptionByDefault"]) == { StringEquals = { "ec2:Region" = ["us-gov-west-1"] } }
+    error_message = "EC2 の Action の ec2:Region の条件が、provider のリージョンから組まれていないか、aws の外で us-east-1 を足しています。"
+  }
 }
 
 run "chatbot_slr_absent_outside_aws" {
@@ -2601,6 +2625,14 @@ run "no_governance_in_dev" {
       contains(flatten([one([for st in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : st.Action if st.Sid == "DenyGovernanceChange"])]), "iam:DeleteAccountPasswordPolicy"),
     ] == [[["iam:UpdateAccountPasswordPolicy", "*"]], false, true]
     error_message = "dev の apply の role が、password policy の更新を workload-2 で許し、DenyGovernanceChange で削除だけを拒む形になっていません。"
+  }
+
+  assert {
+    condition = [
+      jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["plan"].policy_arns)),
+      [aws_iam_role_policy_attachment.plan_workload_read.role, aws_iam_role_policy_attachment.plan_workload_read.policy_arn],
+    ] == [jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"]), [aws_iam_role.this["plan"].name, aws_iam_policy.workload_read.arn]]
+    error_message = "dev の plan の role の managed policy が、workload の読み取りの policy だけになっていません。"
   }
 }
 
