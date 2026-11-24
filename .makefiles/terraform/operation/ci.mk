@@ -84,7 +84,7 @@ ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
 
 .PHONY: ci-apply-admin-identity ## [CI] 管理アカウントの identity root を plan し直し、Policy を通った plan を apply する
-ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
+ci-apply-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive plan.s3_bucket_namespace plan.state_backend_write_deny
 ci-apply-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply-identity)
 ci-apply-admin-identity:
 	@$(call CI_APPLY,admin,identity)
@@ -106,7 +106,7 @@ ci-plan-admin-workload:
 	@$(call CI_PLAN,admin,workload)
 
 .PHONY: ci-apply-admin-workload ## [CI] 管理アカウントの workload root を plan し直し、Policy を通った plan を apply する
-ci-apply-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-apply-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection plan.s3_bucket_namespace
 ci-apply-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,apply)
 ci-apply-admin-workload:
 	@$(call CI_APPLY,admin,workload)

@@ -131,7 +131,7 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 ## 保証しないもの
 
 - 実際の AWS での作成。このユースケースを呼ぶ root と、その apply の経路が要る
-- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ACB-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かるのは `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけである（[`conftest/plan/README.md`](../../conftest/plan/README.md)）
+- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ACB-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かる Policy（[`conftest/plan/README.md`](../../conftest/plan/README.md) が列挙する）に `plan.account_baseline` は無い
 - 設定の削除と置換を止めること。`plan.stateful_protection` は CI の実 plan に掛かり、account-baseline を呼ぶ env の root が配線されるまで、どの plan も見ない
 - 管理アカウントでの設定の停止と変更を拒むこと。SCP は管理アカウントに効かない（[account-baseline/ADR-0201](docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md) 決定6）
 - メンバーでの設定の停止と opt-in のリージョンの有効化を、SCP を Security・Workloads・Sandbox へ広げる前に拒むこと。新しい SCP は PolicyStaging に付けて始める（同 決定5）
