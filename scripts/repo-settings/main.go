@@ -16,7 +16,7 @@
 //
 //	apply  include の区間と workflow の起動条件を書き換える（ネットワークを使わない）
 //	check  apply と同じ判定で、書き換えずにずれを報せる。宣言の Static Analysis と、workflow の式が ref を
-//	       宣言の外の文字列と比べていないことも見る
+//	       宣言の外の文字列と比べていないことと、Dependabot が付けるラベルが labels.json にあることも見る
 //	drift  実態を GET で読み、宣言との差分を報せる
 //	sync   drift と同じ差分を、GitHub への書き込みで解消する（管理者の資格情報を要する）
 //	source デプロイブランチへ入る Pull Request の head を検査する（ADR-0603 決定31。ネットワークを使わない）
@@ -157,6 +157,8 @@ type declarations struct {
 	marks                  int
 	// exprs は、ref と文字列リテラルの比較が無いことを確かめた式の数。
 	exprs int
+	// dependabotLabels は、labels.json にあることを確かめた Dependabot のラベルの数。
+	dependabotLabels int
 }
 
 // readDeclarations は宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -202,6 +204,18 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
+	dependabot, err := os.ReadFile(filepath.Clean(filepath.Join(root, dependabotFile)))
+	if err != nil {
+		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", dependabotFile)
+	}
+	labels, err := os.ReadFile(filepath.Clean(filepath.Join(root, labelsFile)))
+	if err != nil {
+		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", labelsFile)
+	}
+	dependabotLabels, err := checkDependabotLabels(dependabot, labels)
+	if err != nil {
+		return declarations{}, err
+	}
 	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
 	if err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
@@ -217,7 +231,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs}, nil
+	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -248,9 +262,9 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件",
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件",
 		len(rulesetIncludes(decl.branches)), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
-		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs)
+		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels)
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {

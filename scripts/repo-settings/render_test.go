@@ -29,6 +29,7 @@ const rulesetFixture = `{
     {"type": "pull_request", "parameters": {
       "require_code_owner_review": true,
       "required_review_thread_resolution": true,
+      "required_approving_review_count": 1,
       "allowed_merge_methods": ["merge"]
     }},
     {"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "go-test", "integration_id": 15368}]}}
@@ -209,6 +210,10 @@ func Test_checkRuleset(t *testing.T) {
 		{"required status check が無ければ拒む", `"type": "required_status_checks"`, `"type": "other"`, "required_status_checks"},
 		{"スレッドの解決が無ければ拒む", `"required_review_thread_resolution": true`, `"required_review_thread_resolution": false`, "required_review_thread_resolution"},
 		{"code owner の review が無ければ拒む", `"require_code_owner_review": true`, `"require_code_owner_review": false`, "require_code_owner_review"},
+		{"承認者数が0なら拒む", `"required_approving_review_count": 1`, `"required_approving_review_count": 0`, "required_approving_review_count"},
+		{"承認者数が無ければ拒む", `"required_approving_review_count": 1,`, ``, "required_approving_review_count"},
+		{"承認者数が整数でなければ拒む", `"required_approving_review_count": 1`, `"required_approving_review_count": 1.5`, "required_approving_review_count"},
+		{"承認者数が数でなければ拒む", `"required_approving_review_count": 1`, `"required_approving_review_count": "1"`, "required_approving_review_count"},
 		{"merge 方式が merge だけでなければ拒む", `["merge"]`, `["merge", "squash"]`, "allowed_merge_methods"},
 		{"name が無ければ拒む", `"name": "branch-protection",`, ``, "name"},
 		{"target が branch でなければ拒む", `"target": "branch"`, `"target": "tag"`, "target"},
@@ -231,6 +236,13 @@ func Test_checkRuleset(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.message)
 		})
 	}
+
+	t.Run("承認者数が2以上でも通る", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(rulesetFixture, `"required_approving_review_count": 1`, `"required_approving_review_count": 2`, 1)
+		require.NotEqual(t, rulesetFixture, src)
+		require.NoError(t, checkRuleset([]byte(src)))
+	})
 
 	t.Run("pull_request のルールが無ければ拒む", func(t *testing.T) {
 		t.Parallel()
