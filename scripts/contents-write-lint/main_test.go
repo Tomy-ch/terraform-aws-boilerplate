@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 
@@ -266,6 +267,20 @@ func Test_checkSteps(t *testing.T) {
 	t.Run("形どおりなら違反が無い", func(t *testing.T) {
 		t.Parallel()
 		assert.Empty(t, checkSteps(split.Jobs[1], finding))
+	})
+	const head = "      - name: Harden the runner\n        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1\n        with:\n          egress-policy: block\n"
+	uses := "        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1"
+	pair := strings.Join(harden.Render(uses, []string{"        with:", "          egress-policy: block"}), "\n") + "\n"
+	t.Run("生成した bullfrog の対の continue-on-error: と if: は違反にしない", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, pair, 1)
+		require.NotEqual(t, goodWorkflow, src)
+		assert.Empty(t, checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
+	})
+	t.Run("形の違う対の if: は違反にする", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, strings.Replace(pair, harden.RetryIf, "always()", 1), 1)
+		assert.Contains(t, messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding)), "step に %s: を置かないでください")
 	})
 	t.Run("push の入口でない run: を落とす", func(t *testing.T) {
 		t.Parallel()

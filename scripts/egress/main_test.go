@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
@@ -95,13 +96,17 @@ func ciMakeFixture(entries ...[3]string) string {
 	return b.String()
 }
 
-// testWorkflow は bullfrog の step の uses: 行に tail を続け、その後ろへ checkout の step を置いた 1 ジョブの workflow。
-// one のジョブは、さらに testSSOT の root を CI の入口で実行する。
+// testWorkflow は、再試行の無い bullfrog の step（name と uses:）に tail を続け、その後ろへ checkout の step を置いた
+// 1 ジョブの workflow。one のジョブは、さらに testSSOT の root を CI の入口で実行する。
 func testWorkflow(jobID string, tail ...string) string {
+	return jobWorkflow(jobID, append([]string{nameLine, usesLine}, tail...))
+}
+
+// jobWorkflow は、block を先頭の step の行として置き、その後ろへ checkout の step を置いた 1 ジョブの workflow。
+func jobWorkflow(jobID string, block []string) string {
 	var b strings.Builder
 	b.WriteString(workflowHead + "  " + jobID + ":\n    steps:\n")
-	b.WriteString("      - name: Harden the runner\n        uses: bullfrogsec/bullfrog@x\n")
-	for _, l := range tail {
+	for _, l := range block {
 		b.WriteString(l + "\n")
 	}
 	b.WriteString("\n      - name: Checkout\n")
@@ -117,7 +122,11 @@ func staleWorkflow(jobID string) string {
 }
 
 func syncedWorkflow(jobID, policy string, hosts ...string) string {
-	return testWorkflow(jobID, renderWith(policy, testIPs, hosts)...)
+	return jobWorkflow(jobID, harden.Render(usesLine, renderWith(policy, testIPs, hosts)))
+}
+
+func syncedOne() string {
+	return syncedWorkflow("one", policyBlock, oneHosts...)
 }
 
 // bWorkflow は testSSOT が宣言する b.yaml 側の 2 ジョブ（block と audit）を SSOT どおりに持つ workflow。
@@ -154,7 +163,6 @@ func unlockTestRepo(t *testing.T, run string) string {
 	return root
 }
 
-// writeFile は root 直下からのスラッシュ区切りのパスへ body を書く。
 func writeFile(t *testing.T, root, rel, body string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -947,7 +955,6 @@ func Test_validateIP(t *testing.T) {
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
-		// allowed-ips はドメインの判定を経ずに通すので、loopback の外や広すぎる CIDR は遮断を無効にする。
 		for name, v := range map[string]string{
 			"全 IPv4 の CIDR":      "0.0.0.0/0",
 			"loopback より広い CIDR": "127.0.0.0/7",
@@ -1005,12 +1012,20 @@ func Test_scanJobs(t *testing.T) {
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("ジョブごとに with: の範囲を返す", func(t *testing.T) {
+		t.Run("再試行の無いジョブは本体の step の範囲を返す", func(t *testing.T) {
 			t.Parallel()
 			targets, err := scanJobs("a.yaml", staleWorkflow("one"))
 			require.NoError(t, err)
-			// 0 起点で uses: は 6 行目、with: の4行は 7-10 行目。
-			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 7, end: 11}}, targets)
+			// 0 起点で name: は 5 行目、uses: は 6 行目、with: の4行は 7-10 行目。
+			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 5, end: 11, uses: usesLine, mentions: 1}}, targets)
+		})
+
+		t.Run("生成した対は本体の頭から再試行の末尾までを範囲にする", func(t *testing.T) {
+			t.Parallel()
+			targets, err := scanJobs("a.yaml", syncedOne())
+			require.NoError(t, err)
+			pair := harden.Render(usesLine, renderWith(policyBlock, testIPs, oneHosts))
+			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 5, end: 5 + len(pair), uses: usesLine, mentions: 2}}, targets)
 		})
 
 		t.Run("複数ジョブを job id で識別する", func(t *testing.T) {
@@ -1053,7 +1068,7 @@ func Test_scanJobs(t *testing.T) {
 			body = strings.TrimSuffix(body, "\n      - name: Checkout\n") + "    timeout-minutes: 5\n"
 			targets, err := scanJobs("a.yaml", body)
 			require.NoError(t, err)
-			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 7, end: 9}}, targets)
+			assert.Equal(t, []target{{jobKey: "a.yaml:one", start: 5, end: 9, uses: usesLine, mentions: 1}}, targets)
 		})
 	})
 
@@ -1075,12 +1090,33 @@ func Test_scanJobs(t *testing.T) {
 			require.ErrorIs(t, err, errStepNotFirst)
 		})
 
-		t.Run("1 ジョブに 2 つの bullfrog を弾く", func(t *testing.T) {
+		// 本体と再試行の間に別の step があると、その step は hardening の前に走る。
+		t.Run("2つ目の bullfrog が本体の直後に無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			body := staleWorkflow("one") + "      - name: Again\n        uses: bullfrogsec/bullfrog@x\n"
 			_, err := scanJobs("a.yaml", body)
+			require.ErrorIs(t, err, errStepNotFirst)
+		})
+
+		t.Run("1 ジョブに 3 つの bullfrog を弾く", func(t *testing.T) {
+			t.Parallel()
+			body := strings.Replace(syncedOne(), "      - name: Checkout\n", "      - name: Again\n        uses: bullfrogsec/bullfrog@x\n      - name: Checkout\n", 1)
+			_, err := scanJobs("a.yaml", body)
 			require.ErrorIs(t, err, errStepDuplicate)
 		})
+
+		// 本体の後ろの行は書き直す範囲に入るので、apply が黙って消す。
+		for name, between := range map[string]string{
+			"コメント": "      # 再試行の説明\n",
+			"空行":   "\n",
+		} {
+			t.Run("本体と再試行の間の"+name+"を弾く", func(t *testing.T) {
+				t.Parallel()
+				body := strings.Replace(syncedOne(), "      - name: Harden the runner (retry)\n", between+"      - name: Harden the runner (retry)\n", 1)
+				_, err := scanJobs("a.yaml", body)
+				require.ErrorIs(t, err, errStepMalformed)
+			})
+		}
 
 		t.Run("step の外で bullfrog を名指しすると弾く", func(t *testing.T) {
 			t.Parallel()
@@ -1209,69 +1245,117 @@ const (
 	usesLine = "        uses: bullfrogsec/bullfrog@x"
 )
 
+func Test_checkHarden(t *testing.T) {
+	t.Parallel()
+
+	with := []string{"        with:", "          egress-policy: block"}
+	t.Run("本体だけなら本体の範囲と uses: を返す", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkHarden([]workflow.Step{stepOf(append([]string{nameLine, usesLine}, with...)...)})
+		require.NoError(t, err)
+		assert.Equal(t, target{start: 0, end: 4, uses: usesLine, mentions: 1}, got)
+	})
+	t.Run("対なら再試行の末尾までを範囲にし、uses: は本体のものを返す", func(t *testing.T) {
+		t.Parallel()
+		body := append(append([]string{}, harden.Head()...), append([]string{usesLine}, with...)...)
+		retry := append(append([]string{}, harden.RetryHead()...), append([]string{"        uses: bullfrogsec/bullfrog@other"}, with...)...)
+		second := stepOf(retry...)
+		for i := range second.Lines {
+			second.Lines[i].Number += len(body)
+		}
+		second.Number = len(body) + 1
+		got, err := checkHarden([]workflow.Step{stepOf(body...), second})
+		require.NoError(t, err)
+		assert.Equal(t, target{start: 0, end: len(body) + len(retry), uses: usesLine, mentions: 2}, got)
+	})
+	t.Run("どちらかの step の形の崩れを伝播する", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkHarden([]workflow.Step{stepOf(nameLine, usesLine), stepOf(nameLine, "        env:", usesLine)})
+		require.ErrorIs(t, err, errStepMalformed)
+	})
+}
+
 func Test_checkStepShape(t *testing.T) {
 	t.Parallel()
 
 	t.Run("正常系", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("with: の範囲を返す", func(t *testing.T) {
+		t.Run("uses: 行と with: の終わりを返す", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkStepShape(stepOf(nameLine, usesLine, "        with:", "          egress-policy: block",
-				"          allowed-domains: |", "            a.test"))
+			uses, end, err := checkStepShape(stepOf(nameLine, usesLine, "        with:", "          egress-policy: block",
+				"          allowed-domains: |", "            a.test"), true)
 			require.NoError(t, err)
-			assert.Equal(t, target{start: 2, end: 6}, got)
+			assert.Equal(t, usesLine, uses)
+			assert.Equal(t, 6, end)
 		})
 
-		t.Run("with: が無ければ uses: の直後への挿入にする", func(t *testing.T) {
+		t.Run("with: が無ければ uses: の行で終わる", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkStepShape(stepOf(nameLine, usesLine))
+			_, end, err := checkStepShape(stepOf(nameLine, usesLine), true)
 			require.NoError(t, err)
-			assert.Equal(t, target{start: 2, end: 2}, got)
+			assert.Equal(t, 2, end)
 		})
 
-		t.Run("中身の無い with: は with: の行だけを範囲にする", func(t *testing.T) {
+		t.Run("中身の無い with: は with: の行で終わる", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkStepShape(stepOf(nameLine, usesLine, "        with:"))
+			_, end, err := checkStepShape(stepOf(nameLine, usesLine, "        with:"), true)
 			require.NoError(t, err)
-			assert.Equal(t, target{start: 2, end: 3}, got)
+			assert.Equal(t, 3, end)
 		})
 
 		t.Run("pin 済みの uses: を受け付ける", func(t *testing.T) {
 			t.Parallel()
-			_, err := checkStepShape(stepOf(nameLine, "        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1"))
-			assert.NoError(t, err)
+			pinned := "        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1"
+			uses, _, err := checkStepShape(stepOf(nameLine, pinned), true)
+			require.NoError(t, err)
+			assert.Equal(t, pinned, uses)
 		})
 
-		t.Run("後ろの空行とコメントは範囲に含めない", func(t *testing.T) {
+		// 値は生成し直して比べるので、ここでは形だけを見る。
+		t.Run("uses: の前の id・continue-on-error・if を受け付ける", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkStepShape(stepOf(nameLine, usesLine, "        with:", "          egress-policy: block",
-				"", "      # 次の step の説明"))
+			_, end, err := checkStepShape(stepOf(nameLine, "        id: x", "        continue-on-error: false", "        if: always()", usesLine), true)
 			require.NoError(t, err)
-			assert.Equal(t, target{start: 2, end: 4}, got)
+			assert.Equal(t, 5, end)
+		})
+
+		t.Run("最後の step の後ろの空行とコメントは範囲に含めない", func(t *testing.T) {
+			t.Parallel()
+			_, end, err := checkStepShape(stepOf(nameLine, usesLine, "        with:", "          egress-policy: block",
+				"", "      # 次の step の説明"), true)
+			require.NoError(t, err)
+			assert.Equal(t, 4, end)
 		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 		tests := map[string]workflow.Step{
-			"if: を弾く":                 stepOf(nameLine, "        if: always()", usesLine),
-			"continue-on-error: を弾く":  stepOf(nameLine, usesLine, "        continue-on-error: true"),
-			"with: の後ろの env: を弾く":     stepOf(nameLine, usesLine, "        with:", "          egress-policy: block", "        env:"),
-			"name: が先頭に無い step を弾く":   stepOf("      - uses: bullfrogsec/bullfrog@x", "        name: Harden the runner"),
-			"1 行形の uses: を弾く":         stepOf("      - uses: bullfrogsec/bullfrog@x"),
-			"name: の後に uses: が無ければ弾く": stepOf(nameLine),
-			"@ の無い uses: を弾く":         stepOf(nameLine, "        uses: bullfrogsec/bullfrog"),
-			"引用符付きの uses: を弾く":        stepOf(nameLine, `        uses: "bullfrogsec/bullfrog@x"`),
-			"with: の中の空行を弾く":          stepOf(nameLine, usesLine, "        with:", "          egress-policy: block", "", "          enable-sudo: true"),
+			"uses: の後の if: を弾く":                stepOf(nameLine, usesLine, "        if: always()"),
+			"uses: の後の continue-on-error: を弾く": stepOf(nameLine, usesLine, "        continue-on-error: true"),
+			"uses: の前の env: を弾く":               stepOf(nameLine, "        env:", usesLine),
+			"with: の後ろの env: を弾く":              stepOf(nameLine, usesLine, "        with:", "          egress-policy: block", "        env:"),
+			"name: が先頭に無い step を弾く":            stepOf("      - uses: bullfrogsec/bullfrog@x", "        name: Harden the runner"),
+			"1 行形の uses: を弾く":                  stepOf("      - uses: bullfrogsec/bullfrog@x"),
+			"name: の後に uses: が無ければ弾く":          stepOf(nameLine),
+			"キーだけで uses: が無ければ弾く":              stepOf(nameLine, "        id: x"),
+			"@ の無い uses: を弾く":                  stepOf(nameLine, "        uses: bullfrogsec/bullfrog"),
+			"引用符付きの uses: を弾く":                 stepOf(nameLine, `        uses: "bullfrogsec/bullfrog@x"`),
+			"with: の中の空行を弾く":                   stepOf(nameLine, usesLine, "        with:", "          egress-policy: block", "", "          enable-sudo: true"),
 		}
 		for name, st := range tests {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				_, err := checkStepShape(st)
+				_, _, err := checkStepShape(st, true)
 				require.ErrorIs(t, err, errStepMalformed)
 			})
 		}
+		t.Run("後ろに再試行が続く step の後ろの空行を弾く", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := checkStepShape(stepOf(nameLine, usesLine, ""), false)
+			require.ErrorIs(t, err, errStepMalformed)
+		})
 	})
 }
 
@@ -1350,7 +1434,40 @@ func Test_ssot_rewriteFile(t *testing.T) {
 			assert.Equal(t, syncedWorkflow("one", policyBlock, oneHosts...), out)
 		})
 
-		// 差し替えと挿入で行数が変わっても、2 回目は何も変えない。
+		synced := syncedOne()
+		retryIfLine := "        if: " + harden.RetryIf
+		for name, body := range map[string]string{
+			"再試行の if: が無い":                   strings.Replace(synced, retryIfLine+"\n", "", 1),
+			"再試行の if: が failure()":           strings.Replace(synced, retryIfLine, "        if: failure()", 1),
+			"再試行の if: が always()":            strings.Replace(synced, retryIfLine, "        if: always()", 1),
+			"再試行の if: が outcome == failure":  strings.Replace(synced, retryIfLine, "        if: steps.harden-runner.outcome == 'failure'", 1),
+			"再試行の if: の id が違う":              strings.Replace(synced, retryIfLine, "        if: steps.harden.outcome != 'success'", 1),
+			"本体の id: が無い":                    strings.Replace(synced, "        id: harden-runner\n", "", 1),
+			"本体の id: が違う":                    strings.Replace(synced, "        id: harden-runner", "        id: harden", 1),
+			"本体の continue-on-error: が無い":     strings.Replace(synced, "        continue-on-error: true\n", "", 1),
+			"本体の continue-on-error: が false": strings.Replace(synced, "        continue-on-error: true", "        continue-on-error: false", 1),
+			"再試行に continue-on-error: がある":    strings.Replace(synced, retryIfLine+"\n", retryIfLine+"\n        continue-on-error: true\n", 1),
+			"再試行の uses: が本体と違う":              replaceNth(synced, usesLine, "        uses: bullfrogsec/bullfrog@other", 2),
+			"再試行の with: が本体と違う":              replaceNth(synced, "          enable-sudo: false", "          enable-sudo: true", 2),
+			"再試行の名前が違う":                      strings.Replace(synced, "(retry)", "(again)", 1),
+		} {
+			t.Run(name+"なら生成した対に戻す", func(t *testing.T) {
+				t.Parallel()
+				require.NotEqual(t, synced, body)
+				out, err := mustParse(t, testSSOT).rewriteFile("a.yaml", body, map[string]bool{})
+				require.NoError(t, err)
+				assert.Equal(t, synced, out)
+			})
+		}
+
+		t.Run("再試行の無い本体に再試行を足す", func(t *testing.T) {
+			t.Parallel()
+			body := testWorkflow("one", renderWith(policyBlock, testIPs, oneHosts)...)
+			out, err := mustParse(t, testSSOT).rewriteFile("a.yaml", body, map[string]bool{})
+			require.NoError(t, err)
+			assert.Equal(t, synced, out)
+		})
+
 		t.Run("ずれた with: と無い with: を直した結果に、もう一度適用しても変わらない", func(t *testing.T) {
 			t.Parallel()
 			s := mustParse(t, testSSOT)
@@ -1501,6 +1618,20 @@ func Test_applyOrCheck(t *testing.T) {
 		t.Run("SSOT が無ければ弾く", func(t *testing.T) {
 			t.Parallel()
 			require.ErrorIs(t, applyOrCheck(t.TempDir(), true), os.ErrNotExist)
+		})
+
+		// 再試行が本体の失敗で走らない形は、hardening の無いまま job が進む形になる。
+		t.Run("check は再試行の if: が欠けた対をドリフトとして報告する", func(t *testing.T) {
+			t.Parallel()
+			broken := strings.Replace(syncedOne(), "        if: "+harden.RetryIf+"\n", "", 1)
+			root := newTestRepo(t, map[string]string{"a.yaml": broken, "b.yaml": bWorkflow()})
+			require.ErrorIs(t, applyOrCheck(root, true), errEgressDrift)
+		})
+
+		t.Run("check は生成した対どおりの workflow を通す", func(t *testing.T) {
+			t.Parallel()
+			root := newTestRepo(t, map[string]string{"a.yaml": syncedOne(), "b.yaml": bWorkflow()})
+			require.NoError(t, applyOrCheck(root, true))
 		})
 
 		t.Run("check はドリフトを非ゼロ終了で報告する", func(t *testing.T) {
@@ -1655,4 +1786,17 @@ func Test_relTo(t *testing.T) {
 			assert.Equal(t, "a.yaml", relTo("/repo", "a.yaml"))
 		})
 	})
+}
+
+// replaceNth は、s の中の old の n 番目（1 起点）だけを repl にします。
+func replaceNth(s, old, repl string, n int) string {
+	idx := -1
+	for range n {
+		next := strings.Index(s[idx+1:], old)
+		if next < 0 {
+			return s
+		}
+		idx += next + 1
+	}
+	return s[:idx] + repl + s[idx+len(old):]
 }

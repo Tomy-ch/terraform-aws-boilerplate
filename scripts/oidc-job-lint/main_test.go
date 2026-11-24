@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cientry"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
@@ -1662,6 +1663,33 @@ func Test_checkGateJob(t *testing.T) {
 		t.Parallel()
 
 		assert.Empty(t, checkGateJob(jobOf(t, applyWorkflow, "apply-resource-order-check"), orderGate, formatted))
+	})
+
+	// pair は egress が生成する bullfrog の対。with: は形の検査に関わらないので省く。
+	pair := strings.Join(harden.Render("        uses: bullfrogsec/bullfrog@x", nil), "\n") + "\n"
+	t.Run("生成した bullfrog の対の continue-on-error: と if: は違反にしない", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Empty(t, checkGateJob(orderJob(t, orderStep, pair+orderStep), orderGate, formatted))
+	})
+
+	for name, broken := range map[string]string{
+		"再試行の if: が always()":        strings.Replace(pair, harden.RetryIf, "always()", 1),
+		"本体の id が違う":                 strings.Replace(pair, "id: "+harden.ID, "id: other", 1),
+		"再試行に continue-on-error がある": strings.Replace(pair, "if: "+harden.RetryIf+"\n", "if: "+harden.RetryIf+"\n        continue-on-error: true\n", 1),
+	} {
+		t.Run(name+"なら対の行も違反にする", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Contains(t, messages(checkGateJob(orderJob(t, orderStep, broken+orderStep), orderGate, formatted)), "に if:・continue-on-error:")
+		})
+	}
+
+	t.Run("対の後ろの step の continue-on-error: は違反", func(t *testing.T) {
+		t.Parallel()
+
+		got := checkGateJob(orderJob(t, orderStep, pair+orderStep+"        continue-on-error: true\n"), orderGate, formatted)
+		assert.Len(t, got, 1)
 	})
 
 	t.Run("層の検査の make だけなら違反0件", func(t *testing.T) {
