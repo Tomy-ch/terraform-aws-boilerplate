@@ -24,8 +24,8 @@ var semgrepTool = imageTool{
 const (
 	semgrepCanaryID = "terraform.lang.security.s3-public-rw-bucket"
 	semgrepCanary   = `resource "aws_s3_bucket" "canary" {
-  bucket = "canary"
-  acl    = "public-read-write"
+	bucket = "canary"
+	acl    = "public-read-write"
 }
 `
 )

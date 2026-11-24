@@ -1,12 +1,15 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,7 +43,6 @@ type composeServiceSpec struct {
 	Image       string            `yaml:"image"`
 	NetworkMode string            `yaml:"network_mode"`
 	CapDrop     []string          `yaml:"cap_drop"`
-	CapAdd      []string          `yaml:"cap_add"`
 	SecurityOpt []string          `yaml:"security_opt"`
 	PidsLimit   int               `yaml:"pids_limit"`
 	Command     []string          `yaml:"command"`
@@ -92,7 +94,6 @@ func writeCompose(dir, image string, t imageTool) error {
 		NetworkMode: "none",
 		CapDrop:     []string{"ALL"},
 		// docker cp はホストの uid と mode を保つので、root で走る道具が入力を読むにはこれが要る。
-		CapAdd:      []string{"DAC_READ_SEARCH"},
 		SecurityOpt: []string{"no-new-privileges:true"},
 		PidsLimit:   composePidsLimit,
 		WorkingDir:  escape(t.workingDir),
@@ -117,7 +118,7 @@ func writeCompose(dir, image string, t imageTool) error {
 	return writeText(filepath.Join(dir, "compose.yaml"), string(raw))
 }
 
-// runImage は、dir の work/ を入力にして t をコンテナで起動し、コンテナの /tmp/out を dir の out/ へ取り出し、道具の
+// runImage は、dir の work/ を workTar でコンテナの /work へ渡して t を起動し、コンテナの /tmp/out を dir の out/ へ取り出し、道具の
 // 終了コードを返します。docker compose の出力は log へ流します。docker compose を起動できないかシグナルで終わった段は
 // errTool、up 以外の段が 0 以外で終われば errDocker（copy-out は errOutput）です。up の終了コードは道具の終了コードとして
 // 返します。create を試みた後は、失敗の経路でもコンテナを消します。
@@ -125,10 +126,17 @@ func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, 
 	if err := writeCompose(dir, image, t); err != nil {
 		return 0, err
 	}
+	input, err := workTar(filepath.Join(dir, "work"))
+	if err != nil {
+		return 0, err
+	}
 	env := withoutPrefix(r.environ, "COMPOSE_")
 	runStep := func(step string) (int, error) {
 		cmd := r.tool(dir, env, step)
 		cmd.Stdout, cmd.Stderr = log, log
+		if step == stepCopyIn {
+			cmd.Stdin = bytes.NewReader(input)
+		}
 		code, err := toolrun.Exec(cmd)
 		if err != nil {
 			return 0, xerrors.Wrapf(err, "%s: %s", dir, step)
@@ -170,6 +178,52 @@ func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, 
 	}
 
 	return rc, nil
+}
+
+// workTar は、src の下を `work/` の下に置いた tar を返します。entry は uid・gid 0 で、ディレクトリは 0700、ファイルは
+// 0600 です —— コンテナの root が所有者になり、capability 無しで読めます。ディレクトリと通常のファイルのほかは errInput
+// です。
+func workTar(src string) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	root, err := os.OpenRoot(src)
+	if err == nil {
+		defer func() { _ = root.Close() }()
+		fsys := root.FS()
+		err = fs.WalkDir(fsys, ".", func(p string, e fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			h := &tar.Header{Name: path.Join("work", p), Uid: 0, Gid: 0, Format: tar.FormatPAX}
+			switch {
+			case e.IsDir():
+				h.Typeflag, h.Name, h.Mode = tar.TypeDir, h.Name+"/", 0o700
+
+				return tw.WriteHeader(h)
+			case !e.Type().IsRegular():
+				return xerrors.Newf("%s は通常のファイルではありません（%s）", p, e.Type())
+			}
+			raw, err := fs.ReadFile(fsys, p)
+			if err != nil {
+				return err
+			}
+			h.Typeflag, h.Mode, h.Size = tar.TypeReg, 0o600, int64(len(raw))
+			if err := tw.WriteHeader(h); err != nil {
+				return err
+			}
+			_, err = tw.Write(raw)
+
+			return err
+		})
+	}
+	if err == nil {
+		err = tw.Close()
+	}
+	if err != nil {
+		return nil, xerrors.Wrapf(errInput, "%s を tar にできません: %v", src, err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 // resolveWork は、workdir.Resolve の失敗を使い方の誤りにして返します。

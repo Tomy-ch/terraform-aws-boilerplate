@@ -33,14 +33,14 @@ func kicsTool(failOn string) imageTool {
 const (
 	kicsCanaryID = "d0cc8694-fcad-43ff-ac86-32331d7e867f"
 	kicsCanary   = `resource "aws_s3_bucket" "canary" {
-  bucket = "canary"
+	bucket = "canary"
 }
 resource "aws_s3_bucket_public_access_block" "canary" {
-  bucket                  = aws_s3_bucket.canary.id
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+	bucket                  = aws_s3_bucket.canary.id
+	block_public_acls       = false
+	block_public_policy     = false
+	ignore_public_acls      = false
+	restrict_public_buckets = false
 }
 `
 )
@@ -52,9 +52,9 @@ const (
 	kicsThresholdID     = "e38a8e0a-b88b-4902-b3fe-b0fcb17d5c10"
 	kicsThresholdCanary = `# kics-scan disable=e592a0c5-5bdb-414c-9066-5dba7cdea370
 resource "aws_cloudwatch_log_group" "canary" {
-  name              = "canary"
-  retention_in_days = 365
-  kms_key_id        = "arn:aws:kms:us-east-1:111111111111:key/canary"
+	name              = "canary"
+	retention_in_days = 365
+	kms_key_id        = "arn:aws:kms:us-east-1:111111111111:key/canary"
 }
 `
 )

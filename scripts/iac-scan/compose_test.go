@@ -1,7 +1,10 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,7 +141,6 @@ func Test_writeCompose(t *testing.T) {
 			Image:       testImage,
 			NetworkMode: "none",
 			CapDrop:     []string{"ALL"},
-			CapAdd:      []string{"DAC_READ_SEARCH"},
 			SecurityOpt: []string{"no-new-privileges:true"},
 			PidsLimit:   1024,
 			Command:     []string{"scan", "-p", "/work/src", "--price", "$$5"},
@@ -197,6 +199,30 @@ func Test_runImage(t *testing.T) {
 		assert.Contains(t, log.String(), "up-stdout kics")
 		assert.Contains(t, log.String(), "up-stderr kics")
 		assert.FileExists(t, filepath.Join(dir, "compose.yaml"))
+	})
+
+	t.Run("copy-in は work/ の tar を stdin で渡す", func(t *testing.T) {
+		t.Parallel()
+		f, tool := newFake(t)
+		dir := workDir(t, "kics")
+		require.NoError(t, writeText(filepath.Join(dir, "work", "src", "main.tf"), "x\n"))
+		_, err := runImage(dir, testImage, testTool, tool, &bytes.Buffer{})
+		require.NoError(t, err)
+		assert.Equal(t, []tarEntry{
+			{"work/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/src/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/src/main.tf", tar.TypeReg, 0, 0, 0o600, "x\n"},
+		}, f.tarOf("kics"))
+	})
+
+	t.Run("work/ に symlink があれば docker を起動せずに errInput", func(t *testing.T) {
+		t.Parallel()
+		f, tool := newFake(t)
+		dir := workDir(t, "kics")
+		require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(dir, "work", "src", "link.tf")))
+		_, err := runImage(dir, testImage, testTool, tool, &bytes.Buffer{})
+		require.ErrorIs(t, err, errInput)
+		assert.Empty(t, f.calls())
 	})
 
 	t.Run("docker compose に COMPOSE_ で始まる環境変数を渡さない", func(t *testing.T) {
@@ -305,6 +331,58 @@ func Test_runImage(t *testing.T) {
 		require.ErrorIs(t, err, errInput)
 		assert.Empty(t, f.calls())
 	})
+}
+
+func Test_workTar(t *testing.T) {
+	t.Parallel()
+
+	t.Run("work/ の下を uid・gid 0、ディレクトリ 0700、ファイル 0600 で並べる", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"work/src/env/main.tf": "resource {}\n", "work/cfg/r.yaml": "rules: []\n"})
+		require.NoError(t, os.Chmod(filepath.Join(base, "work", "src", "env", "main.tf"), 0o644))
+		raw, err := workTar(filepath.Join(base, "work"))
+		require.NoError(t, err)
+		assert.Equal(t, []tarEntry{
+			{"work/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/cfg/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/cfg/r.yaml", tar.TypeReg, 0, 0, 0o600, "rules: []\n"},
+			{"work/src/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/src/env/", tar.TypeDir, 0, 0, 0o700, ""},
+			{"work/src/env/main.tf", tar.TypeReg, 0, 0, 0o600, "resource {}\n"},
+		}, readTar(t, raw))
+	})
+
+	t.Run("symlink は写さずに errInput", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"work/src/main.tf": ""})
+		require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(base, "work", "src", "link.tf")))
+		_, err := workTar(filepath.Join(base, "work"))
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "link.tf")
+	})
+
+	t.Run("無いディレクトリは errInput", func(t *testing.T) {
+		t.Parallel()
+		_, err := workTar(filepath.Join(t.TempDir(), "work"))
+		require.ErrorIs(t, err, errInput)
+	})
+}
+
+// readTar は、raw の tar の header と中身を、並んだ順に返す。
+func readTar(t *testing.T, raw []byte) []tarEntry {
+	t.Helper()
+	var got []tarEntry
+	tr := tar.NewReader(bytes.NewReader(raw))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return got
+		}
+		require.NoError(t, err)
+		body, err := io.ReadAll(tr)
+		require.NoError(t, err)
+		got = append(got, tarEntry{h.Name, h.Typeflag, h.Uid, h.Gid, h.Mode, string(body)})
+	}
 }
 
 func Test_resolveWork(t *testing.T) {

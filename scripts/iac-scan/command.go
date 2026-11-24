@@ -76,7 +76,8 @@ func command(dir string, env []string, step string) *exec.Cmd {
 	case stepCreate:
 		cmd = exec.CommandContext(ctx, "docker", "compose", "create")
 	case stepCopyIn:
-		cmd = exec.CommandContext(ctx, "docker", "compose", "cp", "work/.", composeService+":/work")
+		// stdin の tar（workTar）を、その uid・gid のままコンテナの / へ展開する。
+		cmd = exec.CommandContext(ctx, "docker", "compose", "cp", "-a", "-", composeService+":/")
 	case stepUp:
 		// 起動を待ち、道具の終了コードを返す。compose wait は、先に終わったコンテナを待てない。
 		cmd = exec.CommandContext(ctx, "docker", "compose", "up", "--no-recreate", "--no-build", "--pull", "never",

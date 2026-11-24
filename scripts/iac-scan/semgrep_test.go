@@ -63,7 +63,6 @@ func Test_runSemgrep(t *testing.T) {
 			Image:       testImage,
 			NetworkMode: "none",
 			CapDrop:     []string{"ALL"},
-			CapAdd:      []string{"DAC_READ_SEARCH"},
 			SecurityOpt: []string{"no-new-privileges:true"},
 			PidsLimit:   1024,
 			Command: []string{

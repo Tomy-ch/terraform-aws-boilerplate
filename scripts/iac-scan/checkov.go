@@ -24,17 +24,17 @@ var checkovTool = imageTool{
 const checkovCanaryID = "CKV2_AWS_65"
 
 const checkovCanary = `resource "aws_s3_bucket" "canary" {
-  bucket = "canary"
+	bucket = "canary"
 }
 resource "aws_s3_bucket_ownership_controls" "canary" {
-  bucket = aws_s3_bucket.canary.id
-  rule {
-    object_ownership = "ObjectWriter"
-  }
+	bucket = aws_s3_bucket.canary.id
+	rule {
+		object_ownership = "ObjectWriter"
+	}
 }
 resource "aws_s3_bucket_acl" "canary" {
-  bucket = aws_s3_bucket.canary.id
-  acl    = "private"
+	bucket = aws_s3_bucket.canary.id
+	acl    = "private"
 }
 `
 

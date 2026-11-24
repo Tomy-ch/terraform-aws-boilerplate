@@ -24,7 +24,8 @@ const testImage = "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef01234
 //	scenario/<名>/ 名は作業ディレクトリの basename（無ければ default）。rc は up と trivy の終了コード、stdout は trivy の
 //	               stdout、out/ は up がコンテナの /tmp/out に残すもの
 //
-// copy-in は、その時点の compose.yaml を compose-<名>.yaml へ、work/ の下のファイルの一覧を work-<名>.txt へ控える
+// copy-in は、stdin の tar を tar-<名>.tar へ、その時点の compose.yaml を compose-<名>.yaml へ、work/ の下のファイルの一覧を
+// work-<名>.txt へ控える
 // （canary の作業ディレクトリは通れば消えるため）。
 // up と trivy は、stdout と stderr に印を書く。trivy-convert/sarif は convert-sarif（無ければ ROOTPATH を作業ディレクトリの
 // result.json に向けた SARIF）を、ほかの trivy-convert は result.json を `converted <形>:` に続けて stdout へ書く。
@@ -50,16 +51,16 @@ s="$F/scenario/$d"; [ -d "$s" ] || s="$F/scenario/default"
 rc=$(cat "$s/rc" 2>/dev/null || echo 0)
 case "$step" in
 image-*) cat "$F/image" ;;
-copy-in) cp compose.yaml "$F/compose-$d.yaml"; (cd work && find . -type f | LC_ALL=C sort) > "$F/work-$d.txt"
-    [ -d work/src ] || exit 9 ;;
+copy-in) cat > "$F/tar-$d.tar"; cp compose.yaml "$F/compose-$d.yaml"; (cd work && find . -type f | LC_ALL=C sort) > "$F/work-$d.txt"
+	[ -d work/src ] || exit 9 ;;
 up) echo "up-stdout $d"; echo "up-stderr $d" >&2; rm -rf .fake-out; mkdir .fake-out
-    if [ -d "$s/out" ]; then cp -R "$s/out/." .fake-out/; fi; exit "$rc" ;;
+	if [ -d "$s/out" ]; then cp -R "$s/out/." .fake-out/; fi; exit "$rc" ;;
 copy-out) cp -R .fake-out/. out/ ;;
 trivy-config/*) [ -e .trivyignore.yaml ] || exit 8
-    if [ -e "$s/stdout" ]; then cat "$s/stdout"; fi; echo "trivy-stderr $d" >&2; exit "$rc" ;;
+	if [ -e "$s/stdout" ]; then cat "$s/stdout"; fi; echo "trivy-stderr $d" >&2; exit "$rc" ;;
 trivy-convert/sarif) [ -e result.json ] || exit 7
-    if [ -e "$F/convert-sarif" ]; then cat "$F/convert-sarif"
-    else printf '{"runs":[{"originalUriBaseIds":{"ROOTPATH":{"uri":"file://%s/result.json/"}},"results":[]}]}' "$PWD"; fi ;;
+	if [ -e "$F/convert-sarif" ]; then cat "$F/convert-sarif"
+	else printf '{"runs":[{"originalUriBaseIds":{"ROOTPATH":{"uri":"file://%s/result.json/"}},"results":[]}]}' "$PWD"; fi ;;
 trivy-convert/*) [ -e result.json ] || exit 7; printf 'converted %s:' "${step#trivy-convert/}"; cat result.json ;;
 esac
 exit 0
@@ -122,6 +123,22 @@ func (f *fake) envOf(name, step string) []string {
 	raw, err := os.ReadFile(filepath.Join(f.dir, "env-"+name+"-"+strings.NewReplacer("/", "_", ",", "_").Replace(step)))
 	require.NoError(f.t, err)
 	return strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+}
+
+// tarOf は、作業ディレクトリ name の copy-in が stdin で受け取った tar の header と中身を、名前の順に返す。
+func (f *fake) tarOf(name string) []tarEntry {
+	f.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(f.dir, "tar-"+name+".tar"))
+	require.NoError(f.t, err)
+	return readTar(f.t, raw)
+}
+
+type tarEntry struct {
+	name     string
+	typ      byte
+	uid, gid int
+	mode     int64
+	body     string
 }
 
 func (f *fake) composeOf(name string) string {

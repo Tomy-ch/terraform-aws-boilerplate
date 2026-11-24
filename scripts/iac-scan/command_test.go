@@ -77,7 +77,7 @@ func Test_command(t *testing.T) {
 		stepImageKics:    {"docker", "compose", "config", "--images", "kics_runner"},
 		stepImageSemgrep: {"docker", "compose", "config", "--images", "semgrep_runner"},
 		stepCreate:       {"docker", "compose", "create"},
-		stepCopyIn:       {"docker", "compose", "cp", "work/.", "scan:/work"},
+		stepCopyIn:       {"docker", "compose", "cp", "-a", "-", "scan:/"},
 		stepUp: {
 			"docker", "compose", "up", "--no-recreate", "--no-build", "--pull", "never",
 			"--no-log-prefix", "--exit-code-from", "scan", "scan",
