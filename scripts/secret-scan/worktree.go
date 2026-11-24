@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -38,7 +39,7 @@ func runTrufflehogWorktree(args []string, stdout, log io.Writer, r runner) error
 	if err != nil {
 		return err
 	}
-	files, err := selectFiles(r.root, list, patterns)
+	files, err := selectFiles(r.root, list, patterns, log)
 	if err != nil {
 		return err
 	}
@@ -52,8 +53,12 @@ func runTrufflehogWorktree(args []string, stdout, log io.Writer, r runner) error
 		return err
 	}
 	stage := filepath.Join(dir, "stage")
-	if err := stageFiles(r.root, files, stage, log); err != nil {
+	placed, err := stageFiles(r.root, files, stage, log)
+	if err != nil {
 		return err
+	}
+	if placed == 0 {
+		return xerrors.Wrap(errNoTargets, "trufflehog-worktree: 走査の対象に置いたファイルが0件です")
 	}
 
 	return trufflehogMain(r.tool(stage, env, trufflehogSteps[format][2], ""), stdout, log)
@@ -88,9 +93,10 @@ func excluded(path string, patterns []*regexp.Regexp) bool {
 }
 
 // selectFiles は、git ls-files -z の出力 list（root からの相対パス）から、走査するファイルを選びます。lstat で
-// 無いもの（削除した追跡ファイル）と、ディレクトリ（gitlink）を飛ばし、symlink は指す先が無ければ飛ばします
-// 。抑止に当たるものも外します。残りが0件なら errNoTargets です。
-func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error) {
+// 無いもの（削除した追跡ファイル）と、ディレクトリ（gitlink）を飛ばします。symlink は、指す先を辿れなければ
+// （ENOENT・ENOTDIR・ELOOP）log へ名前を出して飛ばし、それ以外の失敗は errInput です。抑止に当たるものも外します。
+// 残りが0件なら errNoTargets です。
+func selectFiles(root, list string, patterns []*regexp.Regexp, log io.Writer) ([]string, error) {
 	var files []string
 	for _, p := range strings.Split(list, "\x00") {
 		if p == "" {
@@ -108,7 +114,9 @@ func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error)
 		case info.Mode()&fs.ModeSymlink != 0:
 			_, err := os.Stat(full)
 			switch {
-			case xerrors.Is(err, fs.ErrNotExist):
+			case xerrors.Is(err, fs.ErrNotExist) || xerrors.Is(err, syscall.ENOTDIR) || xerrors.Is(err, syscall.ELOOP):
+				fmt.Fprintf(log, "trufflehog-worktree: 辿れない symlink %s を走査の対象に置きません\n", p)
+
 				continue
 			case err != nil:
 				return nil, xerrors.Wrapf(errInput, "%v", err)
@@ -129,51 +137,56 @@ func selectFiles(root, list string, patterns []*regexp.Regexp) ([]string, error)
 // stageFiles は、root からの相対パス files を stage の下へ同じ相対パスで置きます。通常のファイルは hard link で、
 // 張れなければ複写で置きます。symlink は同じ指す先の symlink として置き、辿るかどうかを trufflehog に任せます。
 // ただし、root の外を指す symlink（stage に置くと stage の外を指しうる）は置かずに、log へ名前を出して飛ばします ——
-// trufflehog は symlink を辿らないので、置いても走査は増えず、辿る版では root の外を読みうる。
-func stageFiles(root string, files []string, stage string, log io.Writer) error {
+// trufflehog は symlink を辿らないので、置いても走査は増えず、辿る版では root の外を読みうる。置いた件数を返します。
+func stageFiles(root string, files []string, stage string, log io.Writer) (int, error) {
+	placed := 0
 	for _, p := range files {
 		src := filepath.Join(root, filepath.FromSlash(p))
 		dst := filepath.Join(stage, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
-			return xerrors.Wrapf(errInput, "%v", err)
-		}
 		info, err := os.Lstat(src)
 		if err != nil {
-			return xerrors.Wrapf(errInput, "%v", err)
+			return 0, xerrors.Wrapf(errInput, "%v", err)
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
 			target, err := os.Readlink(src)
 			if err != nil {
-				return xerrors.Wrapf(errInput, "%v", err)
+				return 0, xerrors.Wrapf(errInput, "%v", err)
 			}
 			inside, err := linkStaysInside(root, p, target)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if !inside {
 				fmt.Fprintf(log, "trufflehog-worktree: root の外を指す symlink %s を走査の対象に置きません\n", p)
 
 				continue
 			}
-			if err := os.Symlink(target, dst); err != nil {
-				return xerrors.Wrapf(errInput, "%v", err)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+				return 0, xerrors.Wrapf(errInput, "%v", err)
 			}
+			if err := os.Symlink(target, dst); err != nil {
+				return 0, xerrors.Wrapf(errInput, "%v", err)
+			}
+			placed++
 
 			continue
 		}
-		if os.Link(src, dst) == nil {
-			continue
+		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+			return 0, xerrors.Wrapf(errInput, "%v", err)
 		}
-		body, err := readFile(src)
-		if err != nil {
-			return err
+		if os.Link(src, dst) != nil {
+			body, err := readFile(src)
+			if err != nil {
+				return 0, err
+			}
+			if err := writeFile(dst, body); err != nil {
+				return 0, err
+			}
 		}
-		if err := writeFile(dst, body); err != nil {
-			return err
-		}
+		placed++
 	}
 
-	return nil
+	return placed, nil
 }
 
 // linkStaysInside は、root からの相対パス p の symlink（指す先 target）が、字面でも解決した先でも root の下を指せば

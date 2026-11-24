@@ -9,10 +9,28 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 )
 
 func Test_runTrufflehogWorktree(t *testing.T) {
 	t.Parallel()
+
+	t.Run("置けた対象が0件（root の外を指す symlink だけ）なら errNoTargets で、本走査を起動しない", func(t *testing.T) {
+		t.Parallel()
+		r := newRepo(t)
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, trufflehogExclude), []byte("^(\\.|base$)\n"), 0o600))
+		outside := filepath.Join(t.TempDir(), "o")
+		require.NoError(t, os.WriteFile(outside, nil, 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(r.dir, "out")))
+		s := newScanner(t)
+		s.passingCanaries()
+		var log bytes.Buffer
+		require.ErrorIs(t, runTrufflehogWorktree(nil, &bytes.Buffer{}, &log, r.runner(s)), errNoTargets)
+		assert.Equal(t, []string{"canary-git " + stepTrufflehogRangeJSON, "canary-fs " + stepTrufflehogFilesystemJSON}, s.steps(), "本走査を起動した")
+		assert.Contains(t, log.String(), "root の外を指す symlink out")
+		noWork(t, r.dir, "trufflehog-worktree")
+	})
 
 	t.Run("GIT_DIR が外側を指していても、外側を書き換えず、走査器へ GIT_DIR を渡さない", func(t *testing.T) {
 		t.Parallel()
@@ -179,30 +197,58 @@ func Test_selectFiles(t *testing.T) {
 
 	t.Run("無いもの・gitlink・指す先の無い symlink・抑止に当たるものを外す", func(t *testing.T) {
 		t.Parallel()
-		got, err := selectFiles(root, "a\x00dir/b\x00skip/c\x00gone\x00gitlink\x00link\x00dangling\x00", skip)
+		var log bytes.Buffer
+		got, err := selectFiles(root, "a\x00dir/b\x00skip/c\x00gone\x00gitlink\x00link\x00dangling\x00", skip, &log)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"a", "dir/b", "link"}, got)
+		assert.Equal(t, "trufflehog-worktree: 辿れない symlink dangling を走査の対象に置きません\n", log.String())
 	})
 
 	t.Run("ErrNotExist 以外の lstat の失敗（親が通常のファイル）は errInput", func(t *testing.T) {
 		t.Parallel()
-		_, err := selectFiles(root, "a\x00a/x\x00", nil)
+		_, err := selectFiles(root, "a\x00a/x\x00", nil, &bytes.Buffer{})
 		require.ErrorIs(t, err, errInput)
 	})
 
-	t.Run("symlink の指す先の ErrNotExist 以外の stat の失敗は errInput", func(t *testing.T) {
+	for name, link := range map[string]func(dir string){
+		"指す先が無い（ENOENT）":         func(dir string) { require.NoError(t, os.Symlink("nowhere", filepath.Join(dir, "bad"))) },
+		"指す先の親が通常のファイル（ENOTDIR）": func(dir string) { require.NoError(t, os.Symlink("f/x", filepath.Join(dir, "bad"))) },
+		"循環（ELOOP）": func(dir string) {
+			require.NoError(t, os.Symlink("bad2", filepath.Join(dir, "bad")))
+			require.NoError(t, os.Symlink("bad", filepath.Join(dir, "bad2")))
+		},
+	} {
+		t.Run("辿れない symlink は飛ばし、log に名前を出す: "+name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "f"), nil, 0o600))
+			link(dir)
+			var log bytes.Buffer
+			got, err := selectFiles(dir, "f\x00bad\x00", nil, &log)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"f"}, got)
+			assert.Equal(t, "trufflehog-worktree: 辿れない symlink bad を走査の対象に置きません\n", log.String())
+		})
+	}
+
+	t.Run("symlink の指す先のそれ以外の stat の失敗（EACCES）は errInput", func(t *testing.T) {
 		t.Parallel()
+		testenv.RequireNonRoot(t, "読めないディレクトリの下を stat できないことを作る")
 		dir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "f"), nil, 0o600))
-		require.NoError(t, os.Symlink("f/x", filepath.Join(dir, "bad")))
-		_, err := selectFiles(dir, "f\x00bad\x00", nil)
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "locked"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "locked", "x"), nil, 0o600))
+		require.NoError(t, os.Chmod(filepath.Join(dir, "locked"), 0o000))
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "locked"), 0o700) })
+		require.NoError(t, os.Symlink("locked/x", filepath.Join(dir, "bad")))
+		_, err := selectFiles(dir, "f\x00bad\x00", nil, &bytes.Buffer{})
 		require.ErrorIs(t, err, errInput)
 	})
 
 	t.Run("残りが0件なら errNoTargets", func(t *testing.T) {
 		t.Parallel()
 		for name, list := range map[string]string{"空の一覧": "", "すべて外れる": "skip/c\x00gone\x00dangling\x00"} {
-			_, err := selectFiles(root, list, skip)
+			_, err := selectFiles(root, list, skip, &bytes.Buffer{})
 			require.ErrorIs(t, err, errNoTargets, name)
 		}
 	})
@@ -219,7 +265,9 @@ func Test_stageFiles(t *testing.T) {
 		require.NoError(t, os.Symlink("d/f", filepath.Join(root, "l")))
 		stage := filepath.Join(t.TempDir(), "stage")
 		var log bytes.Buffer
-		require.NoError(t, stageFiles(root, []string{"d/f", "l"}, stage, &log))
+		placed, err := stageFiles(root, []string{"d/f", "l"}, stage, &log)
+		require.NoError(t, err)
+		assert.Equal(t, 2, placed)
 		assert.Empty(t, log.String())
 		body, err := os.ReadFile(filepath.Join(stage, "d", "f"))
 		require.NoError(t, err)
@@ -231,7 +279,8 @@ func Test_stageFiles(t *testing.T) {
 
 	t.Run("元が無ければ errInput", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, stageFiles(t.TempDir(), []string{"gone"}, t.TempDir(), &bytes.Buffer{}), errInput)
+		_, err := stageFiles(t.TempDir(), []string{"gone"}, t.TempDir(), &bytes.Buffer{})
+		require.ErrorIs(t, err, errInput)
 	})
 
 	t.Run("hard link を張れなければ複写で置く", func(t *testing.T) {
@@ -240,7 +289,9 @@ func Test_stageFiles(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "f"), []byte("body"), 0o600))
 		stage := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(stage, "f"), []byte("old"), 0o600), "置き場が埋まっていて link が失敗する")
-		require.NoError(t, stageFiles(root, []string{"f"}, stage, &bytes.Buffer{}))
+		placed, err := stageFiles(root, []string{"f"}, stage, &bytes.Buffer{})
+		require.NoError(t, err)
+		assert.Equal(t, 1, placed)
 		body, err := os.ReadFile(filepath.Join(stage, "f"))
 		require.NoError(t, err)
 		assert.Equal(t, "body", string(body))
@@ -258,7 +309,8 @@ func Test_stageFiles(t *testing.T) {
 		require.NoError(t, os.Symlink("f", filepath.Join(root, "l")))
 		stage := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(stage, "l"), nil, 0o600))
-		require.ErrorIs(t, stageFiles(root, []string{"l"}, stage, &bytes.Buffer{}), errInput)
+		_, err := stageFiles(root, []string{"l"}, stage, &bytes.Buffer{})
+		require.ErrorIs(t, err, errInput)
 	})
 
 	for name, target := range map[string]func(root, outside string) string{
@@ -274,8 +326,10 @@ func Test_stageFiles(t *testing.T) {
 			require.NoError(t, os.Symlink(target(root, outside), filepath.Join(root, "out")))
 			stage := t.TempDir()
 			var log bytes.Buffer
-			require.NoError(t, stageFiles(root, []string{"f", "out"}, stage, &log))
-			_, err := os.Lstat(filepath.Join(stage, "out"))
+			placed, err := stageFiles(root, []string{"f", "out"}, stage, &log)
+			require.NoError(t, err)
+			assert.Equal(t, 1, placed, "外を指す symlink は数えない")
+			_, err = os.Lstat(filepath.Join(stage, "out"))
 			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.FileExists(t, filepath.Join(stage, "f"))
 			assert.Contains(t, log.String(), "out")

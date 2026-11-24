@@ -123,6 +123,8 @@ func gitleaksCanary(r runner, env []string, dir string, log io.Writer) error {
 // 走査した数の突き合わせ countErr が通ったことを確かめます。gitleaks は検出でも異常終了でも 1 を返すので、終了コードと
 // 報告の RuleID の両方で見ます。検出しない（0）・数が合わない・期待の所見が無いのは errCanary、0・1 以外の終了コードと
 // 読めない報告は走査器の不全（errScan）です。数の行が無い・numstat を解釈できないときは countErr をそのまま返します。
+// 終了コード 1 で期待の所見が無いときは、検出しなかったのか異常終了したのかを gitleaks の終了コードからは区別できない
+// （どちらも 1）ので、errCanary とします。
 func judgeGitleaksCanary(rc int, report []byte, countErr error) error {
 	switch {
 	case rc == 0:
