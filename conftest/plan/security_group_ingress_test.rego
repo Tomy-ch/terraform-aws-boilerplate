@@ -271,6 +271,36 @@ test_pass_all_protocols_on_declared_all if {
 	count(messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}])) == 0
 }
 
+test_violation_rule_from_after_to_not_covered if {
+	rc := ports_rule(lb_address, "tcp", 65535, 0)
+	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "tcp 65535-0")}
+}
+
+test_violation_icmp_on_entrypoint if {
+	rc := ports_rule(lb_address, "icmp", 8, 0)
+	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "icmp 8-0")}
+}
+
+test_violation_icmp_by_number_under_declared_range if {
+	rc := ports_rule(lb_address, "1", 8, 0)
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "tcp"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "1 8-0")}
+}
+
+test_violation_icmp_under_declared_all if {
+	rc := ports_rule(lb_address, "icmp", 0, 0)
+	messages([rc], [{"module": "module.lb", "ports": [{"from": 0, "to": 65535, "protocol": "-1"}]}]) == {undeclared_port(lb_address, "0.0.0.0/0", "icmp 0-0")}
+}
+
+test_violation_icmpv6_on_entrypoint if {
+	rc := ports_rule(lb_address, "ICMPv6", 128, 0)
+	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "icmpv6 128-0")}
+}
+
+test_violation_icmp_port_unknown_on_entrypoint if {
+	rc := change("aws_vpc_security_group_ingress_rule", lb_address, {"ip_protocol": "icmp", "cidr_ipv4": "0.0.0.0/0"}, {"from_port": true, "to_port": true})
+	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "icmp null-null")}
+}
+
 test_violation_open_ingress_ports_null if {
 	rc := ports_rule(lb_address, "icmpv6", null, null)
 	messages([rc], lb) == {undeclared_port(lb_address, "0.0.0.0/0", "icmpv6 null-null")}
@@ -376,6 +406,31 @@ test_violation_declaration_port_extra_key if {
 
 test_violation_declaration_port_from_after_to if {
 	messages([], [{"module": "module.lb", "ports": [{"from": 444, "to": 443, "protocol": "tcp"}]}]) == {shape}
+}
+
+test_violation_declaration_port_icmp if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 8, "to": 8, "protocol": "ICMP"}]}]) == {shape}
+}
+
+test_violation_declaration_port_icmpv6 if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 128, "to": 128, "protocol": "icmpv6"}]}]) == {shape}
+}
+
+test_violation_declaration_port_icmp_number if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 8, "to": 8, "protocol": "58"}]}]) == {shape}
+}
+
+test_violation_declaration_port_negative if {
+	messages([], [{"module": "module.lb", "ports": [{"from": -1, "to": 443, "protocol": "tcp"}]}]) == {shape}
+}
+
+test_violation_declaration_port_above_range if {
+	messages([], [{"module": "module.lb", "ports": [{"from": 443, "to": 65536, "protocol": "tcp"}]}]) == {shape}
+}
+
+test_pass_declaration_port_range_bounds if {
+	rcs := [ports_rule(lb_address, "tcp", 0, 0), ports_rule("module.lb.aws_vpc_security_group_ingress_rule.high", "tcp", 65535, 65535)]
+	count(messages(rcs, [{"module": "module.lb", "ports": [{"from": 0, "to": 0, "protocol": "tcp"}, {"from": 65535, "to": 65535, "protocol": "tcp"}]}])) == 0
 }
 
 test_violation_declaration_duplicate_port if {

@@ -51,8 +51,11 @@ port_shape(p) if {
 	object.keys(p) == {"from", "to", "protocol"}
 	integer(p.from)
 	integer(p.to)
+	0 <= p.from
 	p.from <= p.to
+	p.to <= 65535
 	protocol_of(p.protocol)
+	not icmp(p.protocol)
 }
 
 integer(x) if {
@@ -68,6 +71,9 @@ protocol_of(x) := "-1" if {
 	is_string(x)
 	x != ""
 }
+
+# ICMP の from_port・to_port は type と code であり port ではないので、宣言できず、覆われることもない。
+icmp(x) if protocol_of(x) in {"icmp", "icmpv6", "1", "58"}
 
 declared_port(p) := {"protocol": protocol_of(p.protocol), "from": p.from, "to": p.to}
 
@@ -182,14 +188,17 @@ ports_unknown(r) if object.get(r.unknown, protocol_attr[r.c.rc.type], false) == 
 
 ports_unknown(r) if {
 	not all_protocols(r)
+	not icmp(protocol_value(r))
 	some attr in ["from_port", "to_port"]
 	object.get(r.unknown, attr, false) == true
 }
 
 covered(r) if {
 	ports := rule_ports(r)
+	not icmp(ports.protocol)
 	is_number(ports.from)
 	is_number(ports.to)
+	ports.from <= ports.to
 	some p in declared_ports(r.c)
 	p.protocol in {"-1", ports.protocol}
 	p.from <= ports.from
