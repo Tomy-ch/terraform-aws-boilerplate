@@ -26,16 +26,16 @@
 
 ## 3. やること
 
-完了条件は、その作業で実現した状態である。確認のコマンド（`make bootstrap-check-*` と `docs/setup/scripts/` のスクリプト）は、どれも読むだけで何も変えない。
+完了条件は、その作業で実現した状態である。確認のコマンド（`make bootstrap-check-*` と `make bootstrap-verify`）は、どれも読むだけで何も変えない。
 
 | 作業 | 内容 | 実施者 | 完了条件 |
 | --- | --- | --- | --- |
 | [事前準備](#事前準備) | MFA デバイスなどを揃える | 人 | 5点が揃っている |
 | [アカウントの準備](#アカウントの準備)（1-0 〜 2-4） | アカウントの初期設定、一時 IAM user、`aws login`、連絡先、Cost Explorer、既存の異常検知への tag | root、一時 IAM user | `make bootstrap-check-account` が `NG 0 件`、かつ[目で見る3点](#2-3-アカウントの準備を確かめる)を満たす |
-| [段1](#段1-state-bucket-を作る) | state Bucket を CLI で作る | 一時 IAM user | `verify.sh stage1` が `NG 0 件` |
-| [段2](#段2-plan-で突合する) | Terraform に取り込み、plan を期待値と照合する | 一時 IAM user | `make bootstrap-check-plan` が `不足 0 件、余剰 0 件`、`verify.sh before-apply` が `NG 0 件` |
+| [段1](#段1-state-bucket-を作る) | state Bucket を CLI で作る | 一時 IAM user | `make bootstrap-verify STAGE=stage1` が `NG 0 件` |
+| [段2](#段2-plan-で突合する) | Terraform に取り込み、plan を期待値と照合する | 一時 IAM user | `make bootstrap-check-plan` が `不足 0 件、余剰 0 件`、`make bootstrap-verify STAGE=before-apply` が `NG 0 件` |
 | [段3](#段3-入力の値を用意する) | 自分のリポジトリの値を入れ、Pull Request を開く | 一時 IAM user | `sub` が immutable 形式、Pull Request の commit で `make bootstrap-check-plan` が一致 |
-| [段4](#段4-ローカルから-apply-する) | Pull Request の commit を手元から apply し、merge する | 一時 IAM user、管理者 | plan が `No changes.`、`verify.sh stage4` と `permissions` が `NG 0 件`、CI の plan が変更なし、記録が Pull Request に在る |
+| [段4](#段4-ローカルから-apply-する) | Pull Request の commit を手元から apply し、merge する | 一時 IAM user、管理者 | plan が `No changes.`、`make bootstrap-verify` の `stage4` と `permissions` が `NG 0 件`、CI の plan が変更なし、記録が Pull Request に在る |
 | [段5](#段5-ci-の-apply-に移る) | 以後の変更を CI に apply させる | 管理者、CI | [段5 の成功条件](#段5-の成功条件)をすべて満たす |
 | [削除](#一時-iam-user-の削除) | 一時 IAM user を消す | root | Credential report の IAM user が break-glass の2つだけ、root はアクセスキー無しで MFA が有効 |
 
@@ -228,7 +228,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 3. 確かめる
 
    ```bash
-   docs/setup/scripts/verify.sh stage1
+   make bootstrap-verify STAGE=stage1
    ```
 
    最後の行が `NG 0 件` なら完了。NG があれば[トラブルシューティング](#段1-で-ng-が出た)へ。
@@ -261,7 +261,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 3. 段4 で作るものがまだ無いことを確かめる
 
    ```bash
-   docs/setup/scripts/verify.sh before-apply
+   make bootstrap-verify STAGE=before-apply
    ```
 
    最後の行が `NG 0 件` で、終了コードが 0 なら完了。NG があれば、**誰がなぜ置いたかを確かめるまで段3 へ進まない**。
@@ -309,7 +309,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 3. 作るものがまだ無いことを確かめる
 
    ```bash
-   docs/setup/scripts/verify.sh before-apply
+   make bootstrap-verify STAGE=before-apply
    ```
 
    `NG 0 件` で終了コード 0 なら次へ。NG があれば**止まり**、誰がなぜ作ったかを確かめる。`import` で取り込まない。
@@ -339,7 +339,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 6. apply の直前に、もう一度確かめる
 
    ```bash
-   docs/setup/scripts/verify.sh before-apply
+   make bootstrap-verify STAGE=before-apply
    ```
 
    `NG 0 件` で終了コード 0 なら次へ。NG があれば止まる（やり直しの途中なら[トラブルシューティング](#段4-の-apply-が失敗した)へ）。
@@ -361,17 +361,17 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    ```bash
    rm -f env/admin/identity/.terraform/terraform.tfstate
    make plan-admin-identity
-   BOOTSTRAP_EXECUTOR=<一時 IAM user の名前> docs/setup/scripts/verify.sh stage4
+   make bootstrap-verify STAGE=stage4 BOOTSTRAP_EXECUTOR=<一時 IAM user の名前>
    ```
 
    段3 で `bootstrap_executor_user_name` を渡さなかったなら、3行目は `BOOTSTRAP_EXECUTOR=` を付けずに実行する。
 
-   plan が `No changes.` を示し、`verify.sh stage4` が `NG 0 件` で終了コード 0 なら次へ。どちらかが違えば、出力を Pull Request に記録して**止まる**。
+   plan が `No changes.` を示し、`make bootstrap-verify STAGE=stage4` が `NG 0 件` で終了コード 0 なら次へ。どちらかが違えば、出力を Pull Request に記録して**止まる**。
 
 9. role の権限を確かめる
 
    ```bash
-   docs/setup/scripts/verify.sh permissions
+   make bootstrap-verify STAGE=permissions
    ```
 
    `NG 0 件` で終了コード 0 なら次へ。NG があれば、出力を Pull Request に記録して**止まる**。確かめる権限は [deployment-identity/ADR-0201](../../usecases/deployment-identity/docs/adr/0201-enumerated-permissions.md)、この確認で検出できないものは [`usecases/deployment-identity/README.md`](../../usecases/deployment-identity/README.md) にある。
@@ -454,7 +454,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `docs/setup/scripts/verify.sh` の `permissions` に足す。Condition を持つ Action は、条件キーを `--context` で与える。apply の後に実行する
 
    ```bash
-   docs/setup/scripts/verify.sh permissions
+   make bootstrap-verify STAGE=permissions
    ```
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。
@@ -462,7 +462,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    出力の2つの Bucket の Bucket Policy（[state-backend/ADR-0201](../../usecases/state-backend/docs/adr/0201-plan-output-bucket.md) 決定8）を変える変更では、`admin` への Pull Request を merge する**前に**、その commit で `make tf-policy` を実行してから、reference の plan の文書を実アカウントの role で評価する。誤った文書を apply すると、plan の job が全文を置けず、それを直す昇格も merge できない。apply の後は `POLICY_SOURCE` を渡さずに実行し、Bucket に付いた文書を評価する
 
    ```bash
-   POLICY_SOURCE=reference docs/setup/scripts/verify.sh output-policy
+   make bootstrap-verify STAGE=output-policy POLICY_SOURCE=reference
    ```
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
@@ -525,7 +525,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 | --- | --- | --- |
 | 1 | 段5 の変更がすべて適用され、それぞれの後の plan が変更なし | 手順3 |
 | 2 | 書き込みを拒否する前に、`Terraform Unlock` が lock を外せた | 手順6 |
-| 3 | 3つの Bucket と state が state の鍵で暗号化され、Bucket Policy の例外に IAM user が無い | 段5 の変更の apply の後に `docs/setup/scripts/verify.sh stage5` が `NG 0 件` で終了コード 0 |
+| 3 | 3つの Bucket と state が state の鍵で暗号化され、Bucket Policy の例外に IAM user が無い | 段5 の変更の apply の後に `make bootstrap-verify STAGE=stage5` が `NG 0 件` で終了コード 0 |
 | 4 | 一時 IAM user の書き込みが Bucket Policy で拒まれる | 下のコマンド |
 | 5 | 書き込みの拒否の下で、`Terraform Unlock` が lock の無い状態を読める | 下の確認 |
 
@@ -558,7 +558,7 @@ Credential report の IAM user が break-glass の2つ（`break-glass-1`・`brea
 | `ACCOUNT_ID が12桁ではありません`、`一時 IAM user の資格情報ではありません` | `make aws-login` をやり直す |
 | `make bootstrap-check-account` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する。2-4 だけなら 2-4 を行う |
 | 2-4 で ARN が1つずつ表示されない、`make bootstrap-check-account` の 2-4 の行が `1つではない` を添える | AWS services monitor が無いか、ほかの SERVICE の monitor か、同じ monitor の subscription がほかに在る。どの monitor と subscription に tag を付けるかを決めずに止まり、コンソールの Cost Anomaly Detection の「Cost monitors」と「Alert subscriptions」の一覧を Pull Request に記録する |
-| 段1 の `verify.sh stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
+| 段1 の `make bootstrap-verify STAGE=stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
 | Terraform が `aws login` の認証情報を読めない | [aws login の認証情報を読めない](#aws-login-の認証情報を読めない) |
 | `make bootstrap-check-plan` に NG がある | [段2 の plan が一致しない](#段2-の-plan-が一致しない) |
 | `make bootstrap-check-plan` が `検証できません` で終わる | 示された理由を見る。init が済んでいなければ段2 の手順1 から、plan が失敗していれば原因を直して段2 の手順2 をやり直す |
