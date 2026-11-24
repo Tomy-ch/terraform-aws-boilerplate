@@ -917,12 +917,16 @@ policy_violation(c, at) := "参照もリテラルもありません" if {
 	policy_empty(c, at)
 }
 
+default policy_hint(_) := ""
+
+policy_hint(v) := "。関数の呼び出しや条件式は値を決められないので、policy を aws_iam_policy.x[0].arn のように添字で参照する" if contains(v, "値を決められない式")
+
 deny contains msg if {
 	some c in resources
 	type_of(c) == policy_attachment_type
 	some at in resource_attrs(c, "policy_arn")
 	v := policy_violation(c, at)
-	msg := sprintf("LY309 [policy の参照] %s の %s の policy_arn が、同じ module の aws_iam_policy の参照と AWS managed policy の ARN だけに決まりません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN をリテラルか partition だけ data.aws_partition から組むテンプレートで書く", [c.path, address(c), v])
+	msg := sprintf("LY309 [policy の参照] %s の %s の policy_arn が、同じ module の aws_iam_policy の参照と AWS managed policy の ARN だけに決まりません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN をリテラルか partition だけ data.aws_partition から組むテンプレートで書く%s", [c.path, address(c), v, policy_hint(v)])
 }
 
 deny contains msg if {

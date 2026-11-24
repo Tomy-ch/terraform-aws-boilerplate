@@ -4,7 +4,11 @@ package layer
 
 ly309(name) := with_id(denies(fx(name)), "LY309")
 
-ly309_msg(detail) := sprintf("LY309 [policy の参照] modules/m/main.tf の aws_iam_role_policy_attachment.a の policy_arn が、同じ module の aws_iam_policy の参照と AWS managed policy の ARN だけに決まりません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN をリテラルか partition だけ data.aws_partition から組むテンプレートで書く", [detail])
+ly309_msg(detail) := concat("", [sprintf("LY309 [policy の参照] modules/m/main.tf の aws_iam_role_policy_attachment.a の policy_arn が、同じ module の aws_iam_policy の参照と AWS managed policy の ARN だけに決まりません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN をリテラルか partition だけ data.aws_partition から組むテンプレートで書く", [detail]), ly309_hint(detail)])
+
+ly309_hint(detail) := "。関数の呼び出しや条件式は値を決められないので、policy を aws_iam_policy.x[0].arn のように添字で参照する" if contains(detail, "値を決められない式")
+
+default ly309_hint(_) := ""
 
 ly309_denied(name, detail) if ly309(name) == {ly309_msg(detail)}
 
@@ -60,6 +64,14 @@ test_LY309_deny_partition_local_from_variable if {
 
 test_LY309_deny_partition_other_attribute if {
 	ly309_denied("LY309_deny_partition_other_attribute", `参照 data.aws_partition / リテラル ":iam::aws:policy/ReadOnlyAccess", "arn:"`)
+}
+
+test_LY309_deny_partition_alias_cycle if {
+	ly309_denied("LY309_deny_partition_alias_cycle", `リテラル ":iam::aws:policy/ReadOnlyAccess", "arn:"`)
+}
+
+test_LY309_deny_partition_undefined_local if {
+	ly309_denied("LY309_deny_partition_undefined_local", `参照 local.missing / リテラル ":iam::aws:policy/ReadOnlyAccess", "arn:"`)
 }
 
 test_LY309_deny_template_name_interpolated if {

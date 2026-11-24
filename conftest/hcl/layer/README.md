@@ -108,6 +108,10 @@ symlink は実体のファイルで書く）。
 それ自体を違反とする。`local` は式の全体を読むので、オブジェクトの一部の属性だけを `policy_arn` に渡す `local` でも、
 ほかの属性のリテラルを数える。
 
+`policy_arn` を `one()`・`try()`・`element()`・`toset()` などの関数の呼び出しや条件式で書くと、値を決められない式として
+落とす。policy は `aws_iam_policy.x[0].arn` のように添字で参照する。partition の別名の `local` が循環するか、定義の無い
+`local` を指すときも、テンプレートとは読めず落とす。
+
 決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
 
 ## 宣言
