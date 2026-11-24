@@ -18,6 +18,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -55,7 +56,8 @@ type canaryCase struct {
 // runCanary は、Policy Test の段（Rego の形の検査、Rego のテスト、plan の取得と取り出し、非推奨の引数の取り出し、
 // Conftest の適用、評価の数の突き合わせ）を、実物の terraform・Conftest・mock provider で通しで走らせ、違反の無い
 // 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
-// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。root はリポジトリ直下です。
+// 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。[errTool] のときは、ケースの判定に
+// 畳まず [errTool] をそのまま返します。root はリポジトリ直下です。
 func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
@@ -104,6 +106,9 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 			return xerrors.Wrapf(err, "%s の fixture", c.name)
 		}
 		out, err := policyChain(dir, *data, tool, verified)
+		if xerrors.Is(err, errTool) {
+			return err
+		}
 		ok := strings.Contains(out, c.pattern)
 		if c.pass {
 			ok = ok && err == nil
@@ -340,7 +345,7 @@ func copyPolicy(src, dst string) error {
 
 // policyChain は、ケースの配置 dir で Policy Test の段を順に走らせ、出力と、最初に落ちた段のエラーを返します。
 // Rego のテストの結果は、Rego の木と宣言の中身が同じケースの間で verified に持ち回ります（同じ入力の conftest
-// verify を繰り返さない）。
+// verify を繰り返さない）。[errTool] を返した段は、その結果を持ち回りません。
 func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (string, error) {
 	var out bytes.Buffer
 	files, err := readPolicy(filepath.Join(dir, "rego"))
@@ -364,7 +369,9 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 		var buf bytes.Buffer
 		verify := tool(dir, env, stepVerify)
 		verify.Stdout, verify.Stderr = &buf, &out
-		_ = verify.Run()
+		if _, err := toolrun.Exec(verify); err != nil {
+			return out.String(), xerrors.Wrap(err, "conftest verify")
+		}
 		report = buf.Bytes()
 		verified[key] = report
 	}
@@ -383,8 +390,12 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	for _, r := range roots {
 		cmd := tool(r.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, r.rel)), stepInit)
 		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Run(); err != nil {
-			return out.String(), xerrors.Wrapf(errFailed, "%s の init: %v", r.path, err)
+		code, err := toolrun.Exec(cmd)
+		if err != nil {
+			return out.String(), xerrors.Wrapf(err, "%s の init", r.path)
+		}
+		if code != 0 {
+			return out.String(), xerrors.Wrapf(errFailed, "%s の init: exit status %d", r.path, code)
 		}
 	}
 	outDir := filepath.Join(dir, "out")
@@ -404,13 +415,19 @@ func policyChain(dir, data string, tool toolFunc, verified map[string][]byte) (s
 	}
 	deprecated := tool(dir, env, stepDeprecated)
 	deprecated.Stdout, deprecated.Stderr = &out, &out
-	if err := deprecated.Run(); err != nil {
-		return out.String(), xerrors.Wrapf(errFailed, "非推奨の引数を取り出せません: %v", err)
+	code, err := toolrun.Exec(deprecated)
+	if err != nil {
+		return out.String(), xerrors.Wrap(err, "非推奨の引数の取り出し")
+	}
+	if code != 0 {
+		return out.String(), xerrors.Wrapf(errFailed, "非推奨の引数を取り出せません: exit status %d", code)
 	}
 	var result bytes.Buffer
 	test := tool(dir, env, stepConftest)
 	test.Stdout, test.Stderr = &result, &out
-	_ = test.Run()
+	if _, err := toolrun.Exec(test); err != nil {
+		return out.String(), xerrors.Wrap(err, "conftest test")
+	}
 	rules, err := policyresult.Rules(filepath.Join(dir, "rego"), os.ReadFile)
 	if err != nil {
 		fmt.Fprintf(&out, "%v\n", err)

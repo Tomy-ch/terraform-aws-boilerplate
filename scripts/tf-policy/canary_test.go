@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const layerWithNulls = `{"layer_decl": {"attachments": {
@@ -222,6 +224,68 @@ func Test_policyChain(t *testing.T) {
 		})
 	}
 
+	for step, before := range map[string][]string{
+		stepVerify:     nil,
+		stepInit:       {stepVerify},
+		stepDeprecated: {stepVerify, stepInit, stepPlan},
+		stepConftest:   {stepVerify, stepInit, stepPlan, stepDeprecated},
+	} {
+		t.Run(step+" を起動できなければ、後の段を起動せずに errTool", func(t *testing.T) {
+			t.Parallel()
+			dir := chainDir(t, verifyOK, planOK, resultOK)
+			fake, calls := fakeTool(t)
+			tool := func(d string, env []string, s string) *exec.Cmd {
+				if s == step {
+					return tooltest.Missing(d, env, s)
+				}
+				return fake(d, env, s)
+			}
+			verified := map[string][]byte{}
+			_, err := policyChain(dir, "/d", tool, verified)
+			require.ErrorIs(t, err, errTool)
+			require.NotErrorIs(t, err, errFailed)
+			assert.Equal(t, 2, exitCode(err))
+			var started []string
+			for _, c := range calls() {
+				started = append(started, strings.Fields(c)[1])
+			}
+			assert.Equal(t, before, started)
+			if step == stepVerify {
+				assert.Empty(t, verified, "起動できなかった verify の結果を持ち回らない")
+			}
+		})
+	}
+
+	t.Run("init がシグナルで終われば errTool", func(t *testing.T) {
+		t.Parallel()
+		dir := chainDir(t, verifyOK, planOK, resultOK)
+		f := tooltest.New(t)
+		f.Set(stepVerify, "out", verifyOK)
+		f.Set(stepInit, "kill", "")
+		_, err := policyChain(dir, "/d", f.Tool(), map[string][]byte{})
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "がシグナルで終わりました")
+	})
+
+	t.Run("対照: verify と conftest の 0 以外の終了コードは捨てて結果を読み、init の 0 以外は errFailed", func(t *testing.T) {
+		t.Parallel()
+		dir := chainDir(t, verifyOK, planOK, resultOK)
+		f := tooltest.New(t)
+		f.Set(stepVerify, "out", verifyOK)
+		f.Set(stepVerify, "rc", "1")
+		f.Set(stepPlan, "out", planOK)
+		f.Set(stepConftest, "out", resultOK)
+		f.Set(stepConftest, "rc", "1")
+		out, err := policyChain(dir, "/d", f.Tool(), map[string][]byte{})
+		require.NoError(t, err, out)
+
+		f.Set(stepInit, "rc", "1")
+		_, err = policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", f.Tool(), map[string][]byte{})
+		require.ErrorIs(t, err, errFailed)
+		require.NotErrorIs(t, err, errTool)
+		assert.Equal(t, 1, exitCode(err))
+	})
+
 	t.Run("Policy の形が崩れていれば Conftest を起動せずに落ちる", func(t *testing.T) {
 		t.Parallel()
 		dir := chainDir(t, verifyOK, planOK, resultOK)
@@ -281,6 +345,33 @@ func Test_runCanary(t *testing.T) {
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, err.Error(), "ok ")
 		assert.Contains(t, out.String(), "--- canary ok の出力")
+	})
+
+	t.Run("道具を起動できなければ、ケースの不成立に畳まずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		err := runCanary(args(t), &out, tooltest.Missing, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "--- canary")
+	})
+
+	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {
+		t.Parallel()
+		fake, _ := fakeTool(t)
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepVerify && filepath.Base(d) == "failing-rego-test" {
+				return tooltest.Missing(d, env, step)
+			}
+			return fake(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runCanary(args(t), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, out.String(), "--- canary ok の出力", "先のケースは偽の道具で期待どおりでない")
 	})
 
 	t.Run("層の宣言から null の値を組めなければ errCanary", func(t *testing.T) {
