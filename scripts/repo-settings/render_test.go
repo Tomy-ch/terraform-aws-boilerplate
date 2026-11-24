@@ -214,12 +214,7 @@ func Test_checkRuleset(t *testing.T) {
 		{"承認者数が無ければ拒む", `"required_approving_review_count": 1,`, ``, "required_approving_review_count"},
 		{"承認者数が整数でなければ拒む", `"required_approving_review_count": 1`, `"required_approving_review_count": 1.5`, "required_approving_review_count"},
 		{"承認者数が数でなければ拒む", `"required_approving_review_count": 1`, `"required_approving_review_count": "1"`, "required_approving_review_count"},
-		{"pull_request のルールに parameters が無ければ拒む", `{"type": "pull_request", "parameters": {
-      "require_code_owner_review": true,
-      "required_review_thread_resolution": true,
-      "required_approving_review_count": 1,
-      "allowed_merge_methods": ["merge"]
-    }}`, `{"type": "pull_request"}`, "required_approving_review_count"},
+		{"pull_request のルールに parameters が無ければ拒む", "{\"type\": \"pull_request\", \"parameters\": {\n      \"require_code_owner_review\": true,\n      \"required_review_thread_resolution\": true,\n      \"required_approving_review_count\": 1,\n      \"allowed_merge_methods\": [\"merge\"]\n    }}", `{"type": "pull_request"}`, "required_approving_review_count"},
 		{"merge 方式が merge だけでなければ拒む", `["merge"]`, `["merge", "squash"]`, "allowed_merge_methods"},
 		{"name が無ければ拒む", `"name": "branch-protection",`, ``, "name"},
 		{"target が branch でなければ拒む", `"target": "branch"`, `"target": "tag"`, "target"},

@@ -678,10 +678,8 @@ func Test_drift(t *testing.T) {
 	t.Run("承認者数とほかのパラメータのずれは、両方を分けて出力して失敗する", func(t *testing.T) {
 		t.Parallel()
 		routes := approvalRoutes(t,
-			`"required_review_thread_resolution": true,
-      "required_approving_review_count": 1`,
-			`"required_review_thread_resolution": false,
-      "required_approving_review_count": 0`)
+			"\"required_review_thread_resolution\": true,\n      \"required_approving_review_count\": 1",
+			"\"required_review_thread_resolution\": false,\n      \"required_approving_review_count\": 0")
 		_, c := newFakeGitHub(t, routes)
 		var out bytes.Buffer
 		require.ErrorIs(t, drift(context.Background(), writeRepo(t, syncedRuleset), c, repo, &out), errDrift)
