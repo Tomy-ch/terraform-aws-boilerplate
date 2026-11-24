@@ -128,4 +128,4 @@ Private Vulnerability Reporting を有効にするかの宣言です。[`SECURIT
 
 ## labels.json
 
-`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。
+`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。名指したラベルがこのファイルにあることは `make repo-settings-check` が検査します。
