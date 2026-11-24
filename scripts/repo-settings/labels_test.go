@@ -22,33 +22,30 @@ func Test_checkDependabotLabels(t *testing.T) {
 		assert.Equal(t, 2, n)
 	})
 
-	t.Run("labels の無い ecosystem だけなら0件で通る", func(t *testing.T) {
-		t.Parallel()
-		n, err := checkDependabotLabels([]byte("updates:\n  - package-ecosystem: \"docker\"\n"), []byte(labelsFixture))
-		require.NoError(t, err)
-		assert.Equal(t, 0, n)
-	})
 
 	cases := []struct {
 		name       string
 		dependabot string
 		labels     string
+		sentinel   error
 		message    string
 	}{
-		{"宣言に無いラベルは拒む", dependabotFixture + "    labels:\n      - \"docker\"\n", labelsFixture, `docker の "docker"`},
-		{"ecosystem が1つも無ければ拒む", "version: 2\nupdates: []\n", labelsFixture, "ecosystem が1つもありません"},
-		{"updates が無ければ拒む", "version: 2\n", labelsFixture, "ecosystem が1つもありません"},
-		{"YAML として読めなければ拒む", "updates: [\n", labelsFixture, dependabotFile},
-		{"labels が文字列の一覧でなければ拒む", "updates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      a: b\n", labelsFixture, dependabotFile},
-		{"labels.json が JSON として読めなければ拒む", dependabotFixture, `x`, labelsFile},
-		{"labels.json が配列でなければ拒む", dependabotFixture, `{"name": "go"}`, labelsFile},
-		{"labels.json に name の無い要素があれば拒む", dependabotFixture, `[{"name": "dependencies"}, {"color": "000000"}]`, "2 番目の要素に name がありません"},
+		{"宣言に無いラベルは拒む", dependabotFixture + "    labels:\n      - \"docker\"\n", labelsFixture, errDependabotLabels, `docker の "docker"`},
+		{"labels の無い ecosystem だけなら、確かめるラベルが0件なので拒む", "updates:\n  - package-ecosystem: \"docker\"\n", labelsFixture, errDependabotLabels, "ラベルを1つも名指していません"},
+		{"ecosystem が1つも無ければ拒む", "version: 2\nupdates: []\n", labelsFixture, errDependabotLabels, "ecosystem が1つもありません"},
+		{"updates が無ければ拒む", "version: 2\n", labelsFixture, errDependabotLabels, "ecosystem が1つもありません"},
+		{"YAML として読めなければ拒む", "updates: [\n", labelsFixture, errDependabotParse, dependabotFile},
+		{"labels が文字列の一覧でなければ拒む", "updates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      a: b\n", labelsFixture, errDependabotParse, dependabotFile},
+		{"labels.json が JSON として読めなければ拒む", dependabotFixture, `x`, errLabelsParse, labelsFile},
+		{"labels.json が配列でなければ拒む", dependabotFixture, `{"name": "go"}`, errLabelsParse, labelsFile},
+		{"labels.json が null なら拒む", dependabotFixture, `null`, errLabelsParse, "null です"},
+		{"labels.json に name の無い要素があれば拒む", dependabotFixture, `[{"name": "dependencies"}, {"color": "000000"}]`, errDependabotLabels, "2 番目の要素に name がありません"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := checkDependabotLabels([]byte(tc.dependabot), []byte(tc.labels))
-			require.ErrorIs(t, err, errDependabotLabels)
+			require.ErrorIs(t, err, tc.sentinel)
 			assert.Contains(t, err.Error(), tc.message)
 		})
 	}
