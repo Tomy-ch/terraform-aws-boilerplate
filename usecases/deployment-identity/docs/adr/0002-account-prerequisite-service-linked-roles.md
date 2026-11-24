@@ -18,7 +18,7 @@ repository-wide/ADR-0602 決定1 は、この種の構成物をアカウント�
 3. `description` は、AWS が作成のときに付ける値と同じ literal にする。tag を付けない。`prevent_destroy` を付け、型は `plan.stateful_protection` の保護の対象である。削除の権限はどの role にも与えない（deployment-identity/ADR-0201 決定3）。description の更新の権限は apply-identity の role にだけ与え、人がコンソールで変えた description を次の apply が宣言の値へ戻す。usecase から外すときは `removed` block（`destroy = false`）と、その root の `plan.stateful_protection` の許可の宣言で手放す。
 4. identity root の apply より前にアカウントに在る service-linked role は、そのアカウントの identity root の `import` block で取り込み、state を書く前に plan で突合する（repository-wide/ADR-0602 決定6）。取り込みの apply の後に、その `import` block を外す。新しく立ち上がるアカウントには取り込む実体が無く、残すと段2 の plan が落ちるからである。
 5. apply の role に残す `iam:CreateServiceLinkedRole` の理由と撤回の条件は、deployment-identity/ADR-0201 決定14 が持つ。
-6. 宣言したサービスの service-linked role は、identity root の bootstrap の usecase の下にだけ置き、workload root の usecase の下に置かない。Policy Test（`plan.deployment_identity_apply_role`）が、すべての reference の plan で見る。apply の role の Create が残る間、作成の権限だけでは workload root の usecase が作ることを止められないからである。
+6. 宣言したサービスの service-linked role は、この usecase（identity root が呼ぶ `deployment-identity`）の下にだけ置き、workload root の usecase の下に置かない。Policy Test（`plan.deployment_identity_apply_role`）が、すべての reference の plan で見る。apply の role の Create が残る間、作成の権限だけでは workload root の usecase が作ることを止められないからである。
 
 ## 検討した代替案
 
