@@ -62,7 +62,7 @@ AWS SRA は、Config と Access Analyzer をアカウントの onboarding と ba
 ## 保証範囲
 
 - 保証すること: `env` が7つの token の外なら plan で落ちること。`sandbox` で Config を置かず、`admin` で password policy を置かず、ほかの env では両方を置くこと。account-baseline が持つアカウントに1つの型を、ほかのユースケースの reference の plan が持てば Policy Test で落ちること。reference の plan の間で password policy の値が `organization-baseline` の break-glass と食い違えば Policy Test で落ちること
-- 保証しないこと: このユースケースが実際に7つのアカウントの workload root から呼ばれること（呼び出す root の配置が決める）。env の root の直接の宣言が、アカウントに1つの型を持たないこと。メンバーの apply の role が password policy を書けること（「影響」の改訂の前は、メンバーでの apply が落ちる）
+- 保証しないこと: このユースケースが実際に7つのアカウントの workload root から呼ばれること（呼び出す root の配置が決める）。env の root の直接の宣言が、アカウントに1つの型を持たないこと
 
 ## 検証方法
 
@@ -74,7 +74,7 @@ AWS SRA は、Config と Access Analyzer をアカウントの onboarding と ba
 
 各アカウントの workload root と、その apply の role の権限が要る。管理アカウントの password policy の持ち主は `organization-baseline` のままである。
 
-メンバーの apply の role が password policy を書けるのは、deployment-identity/ADR-0201 (enumerated-permissions) 決定5 の `DenyGovernanceChange` の password policy の Action を、管理アカウントに限る改訂の後である（#465 の後の、#22 の PR-3）。それまでは、メンバーでの apply が password policy で落ちる。
+メンバーの apply の role は password policy を書ける。deployment-identity/ADR-0201 (enumerated-permissions) 決定5 の `DenyGovernanceChange` は、password policy の更新を管理アカウントでだけ拒む。
 
 ## 見直し条件
 

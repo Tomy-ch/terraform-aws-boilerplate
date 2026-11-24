@@ -44,10 +44,11 @@ locals {
   # 読み取りは2つ目の policy に分ける（決定17）。
   workload_read_policy_name = "${var.name_prefix}-ci-apply-workload-read"
   workload_read_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_read_policy_name}"
-  workload_policy_arns      = [local.workload_policy_arn, local.workload_read_policy_arn]
-  # account-baseline の管理を置く（決定17・21）。
-  workload_2_policy_arn = "${local.iam_arn_prefix}:policy/${var.name_prefix}-ci-apply-workload-2"
-  boundary_policy_names = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
+  # account-baseline の管理は3つ目の policy に置く（決定17・21）。
+  workload_2_policy_name = "${var.name_prefix}-ci-apply-workload-2"
+  workload_2_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_2_policy_name}"
+  workload_policy_arns   = [local.workload_policy_arn, local.workload_read_policy_arn, local.workload_2_policy_arn]
+  boundary_policy_names  = { "ops-notification" = "${var.name_prefix}-ci-boundary-ops-notification" }
   # 決定13。IAM の role と policy を書き込む Allow は、usecase が IAM の名前の先頭に置く小文字の接頭辞に限る。
   usecase_iam_prefixes = { "ops-notification" = "${var.name_prefix}-ops-" }
   boundary_policy_arns = { for k, n in local.boundary_policy_names : k => "${local.iam_arn_prefix}:policy/${n}" }
@@ -150,7 +151,8 @@ locals {
   manage_policy_name         = "${var.name_prefix}-ci-apply-identity-manage"
   manage_policy_arn          = "${local.iam_arn_prefix}:policy/${local.manage_policy_name}"
   apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns)
-  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, [local.workload_2_policy_arn], values(local.boundary_policy_arns))
+  managed_policy_arns        = { apply_identity = local.apply_identity_policy_arns, apply = local.workload_policy_arns, plan = [local.workload_read_policy_arn] }
+  ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
 
   regional_arn_suffix = "${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
   # workload root の usecase の構成物は、名前を `<name_prefix>-` で始める pattern で限る（決定13）。
@@ -177,6 +179,48 @@ locals {
   chatbot_slr_read_statements = [for s in [
     { Sid = "ReadChatbotServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = local.chatbot_slr_arn },
   ] : s if data.aws_partition.current.partition == "aws"]
+  # account-baseline の構成物（決定13）。
+  account_arn    = "arn:${data.aws_partition.current.partition}:account::${data.aws_caller_identity.current.account_id}:account"
+  config_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+  # CreateAnalyzer は、Access Analyzer の SLR が無ければ呼び手の権限で作る（Service Authorization Reference の依存の Action）。
+  analyzer_slr_arn         = "${local.iam_arn_prefix}:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
+  config_recorder_arns     = [for r in local.workload_regions : "arn:${data.aws_partition.current.partition}:config:${r}:${data.aws_caller_identity.current.account_id}:configuration-recorder/${var.name_prefix}/*"]
+  analyzer_arns            = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:access-analyzer:${x}:analyzer/${var.name_prefix}-external"]
+  ssm_service_setting_arns = flatten([for x in local.workload_arn_suffixes : [for id in ["documents/console/public-sharing-permission", "automation/customer-script-log-destination"] : "arn:${data.aws_partition.current.partition}:ssm:${x}:servicesetting/ssm/${id}"]])
+  ec2_region_condition     = { StringEquals = { "ec2:Region" = local.workload_regions } }
+  baseline_read_statements = [
+    { Sid = "ReadAlternateContact", Effect = "Allow", Action = "account:GetAlternateContact", Resource = local.account_arn },
+    { Sid = "ReadConfigServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = local.config_slr_arn },
+    { Sid = "ReadConfigRecorders", Effect = "Allow", Action = ["config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders"], Resource = local.config_recorder_arns },
+    { Sid = "ReadAnalyzers", Effect = "Allow", Action = "access-analyzer:GetAnalyzer", Resource = local.analyzer_arns },
+    { Sid = "ReadSsmServiceSettings", Effect = "Allow", Action = "ssm:GetServiceSetting", Resource = local.ssm_service_setting_arns },
+    { Sid = "ReadAccountPublicAccessBlock", Effect = "Allow", Action = "s3:GetAccountPublicAccessBlock", Resource = "*" },
+    { Sid = "ReadPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
+    { Sid = "ReadDeliveryChannels", Effect = "Allow", Action = "config:DescribeDeliveryChannels", Resource = "*" },
+    { Sid = "ReadRetentionConfigurations", Effect = "Allow", Action = "config:DescribeRetentionConfigurations", Resource = "*" },
+    { Sid = "ReadEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:GetEbsEncryptionByDefault", Resource = "*", Condition = local.ec2_region_condition },
+    { Sid = "DescribeRegions", Effect = "Allow", Action = "ec2:DescribeRegions", Resource = "*", Condition = local.ec2_region_condition },
+    { Sid = "ReadVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:DescribeVpcBlockPublicAccessOptions", Resource = "*", Condition = local.ec2_region_condition },
+    { Sid = "ReadEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:GetBlockPublicAccessConfiguration", Resource = "*" },
+  ]
+  baseline_manage_statements = concat([
+    { Sid = "PutAlternateContact", Effect = "Allow", Action = "account:PutAlternateContact", Resource = local.account_arn, Condition = { StringEquals = { "account:AlternateContactTypes" = "SECURITY" } } },
+    { Sid = "CreateConfigServiceLinkedRole", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = local.config_slr_arn, Condition = { StringEquals = { "iam:AWSServiceName" = "config.amazonaws.com" } } },
+    { Sid = "CreateAnalyzerServiceLinkedRole", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = local.analyzer_slr_arn, Condition = { StringEquals = { "iam:AWSServiceName" = "access-analyzer.amazonaws.com" } } },
+    # PutConfigurationRecorder は、recorder の role を渡す PassRole を要する（Service Authorization Reference の依存の Action）。
+    { Sid = "PassConfigServiceLinkedRole", Effect = "Allow", Action = "iam:PassRole", Resource = local.config_slr_arn, Condition = { StringEquals = { "iam:PassedToService" = "config.amazonaws.com" } } },
+    { Sid = "ManageConfigRecorders", Effect = "Allow", Action = ["config:PutConfigurationRecorder", "config:StartConfigurationRecorder"], Resource = local.config_recorder_arns },
+    { Sid = "CreateAnalyzers", Effect = "Allow", Action = "access-analyzer:CreateAnalyzer", Resource = local.analyzer_arns },
+    { Sid = "UpdateSsmServiceSettings", Effect = "Allow", Action = "ssm:UpdateServiceSetting", Resource = local.ssm_service_setting_arns },
+    { Sid = "PutAccountPublicAccessBlock", Effect = "Allow", Action = "s3:PutAccountPublicAccessBlock", Resource = "*" },
+    { Sid = "PutDeliveryChannels", Effect = "Allow", Action = "config:PutDeliveryChannel", Resource = "*" },
+    { Sid = "PutRetentionConfigurations", Effect = "Allow", Action = "config:PutRetentionConfiguration", Resource = "*" },
+    { Sid = "EnableEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:EnableEbsEncryptionByDefault", Resource = "*", Condition = local.ec2_region_condition },
+    { Sid = "ModifyVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:ModifyVpcBlockPublicAccessOptions", Resource = "*", Condition = local.ec2_region_condition },
+    { Sid = "PutEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:PutBlockPublicAccessConfiguration", Resource = "*" },
+    ], local.management ? [] : [
+    { Sid = "UpdatePasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
+  ])
   workload_read_statements = concat([
     {
       Sid      = "ReadWorkloadTopics"
@@ -213,7 +257,7 @@ locals {
     # Provider は tag を付けなくても Read のたびに ListTagsForResource を呼ぶ。
     { Sid = "ReadWorkloadBudgets", Effect = "Allow", Action = ["budgets:ListTagsForResource", "budgets:ViewBudget"], Resource = local.workload_budget_arn },
     { Sid = "ReadAnomalyDetection", Effect = "Allow", Action = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"], Resource = local.anomaly_detection_arns },
-  ], local.chatbot_slr_read_statements)
+  ], local.chatbot_slr_read_statements, local.baseline_read_statements)
 
   workload_role_write_arns   = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:role/${p}*"]
   workload_policy_write_arns = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:policy/${p}*"]
@@ -499,7 +543,7 @@ locals {
       Effect    = "Allow"
       Action    = "iam:AttachRolePolicy"
       Resource  = local.role_arns.apply
-      Condition = { ArnEquals = { "iam:PolicyARN" = concat(local.workload_policy_arns, [local.workload_2_policy_arn]) } }
+      Condition = { ArnEquals = { "iam:PolicyARN" = local.workload_policy_arns } }
     },
     # plan の role は workload の読み取りを apply の role と同じ policy で受ける（決定17）。
     {
@@ -555,7 +599,9 @@ locals {
   governance_change_actions = concat(
     [for v in ["Accept", "Attach", "Cancel", "Close", "Create", "Decline", "Delete", "Deregister", "Detach", "Disable", "Enable", "Invite", "Leave", "Move", "Put", "Register", "Remove", "Tag", "Terminate", "Untag", "Update"] : "organizations:${v}*"],
     ["account:CloseAccount"],
-    ["iam:DeleteAccountPasswordPolicy", "iam:DisableOrganizationsRoot*", "iam:EnableOrganizationsRoot*", "iam:UpdateAccountPasswordPolicy"],
+    ["iam:DeleteAccountPasswordPolicy", "iam:DisableOrganizationsRoot*", "iam:EnableOrganizationsRoot*"],
+    # メンバーの password policy は account-baseline が apply の role で持つ（決定5）。
+    local.management ? ["iam:UpdateAccountPasswordPolicy"] : [],
     ["sso:*AccountAssignment", "sso:*FromPermissionSet", "sso:*ToPermissionSet"],
     [for a in ["CreatePermissionSet", "DeletePermissionSet", "ProvisionPermissionSet", "PutPermissionsPolicy", "UpdatePermissionSet"] : "sso:${a}"],
     [for a in ["ActivateOrganizationsAccess", "CreateStackInstances", "CreateStackSet", "DeactivateOrganizationsAccess", "DeleteStackInstances", "DeleteStackSet", "ImportStacksToStackSet", "StopStackSetOperation", "UpdateStackInstances", "UpdateStackSet"] : "cloudformation:${a}"],
@@ -586,7 +632,6 @@ locals {
         { Sid = "ReadStateKey", Effect = "Allow", Action = local.state_key_read_actions, Resource = var.state_key_arn },
       ],
       local.identity_read_statements,
-      local.workload_read_statements,
       local.governance_read_statements,
     )
 
