@@ -6,11 +6,11 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// toolFunc は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type toolFunc func(dir string, env []string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
 const (
 	stepImageCheckov = "image-checkov"

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 var testTool = imageTool{
@@ -24,9 +26,20 @@ var testTool = imageTool{
 
 func workDir(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), name)
-	require.NoError(t, prepareWork(dir))
+	dir, err := prepareWork(t.TempDir(), "tmp/"+name)
+	require.NoError(t, err)
 	return dir
+}
+
+// escapingWork は、tmp/<name> が外のディレクトリを指す symlink である base と、その外のディレクトリを返す。外には keep を
+// 置く。
+func escapingWork(t *testing.T, name string) (base, outside string) {
+	t.Helper()
+	base = tfTree(t)
+	outside = tree(t, map[string]string{"keep": "k"})
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "tmp"), 0o750))
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "tmp", name)))
+	return base, outside
 }
 
 func Test_lookupImage(t *testing.T) {
@@ -70,6 +83,12 @@ func Test_lookupImage(t *testing.T) {
 		for _, kv := range env {
 			assert.False(t, strings.HasPrefix(kv, "COMPOSE_"), kv)
 		}
+	})
+
+	t.Run("docker compose を起動できなければ errTool", func(t *testing.T) {
+		t.Parallel()
+		_, err := lookupImage(runner{tool: tooltest.Missing, environ: os.Environ()}, stepImageSemgrep)
+		require.ErrorIs(t, err, errTool)
 	})
 
 	t.Run("docker compose が落ちれば errImage", func(t *testing.T) {
@@ -174,22 +193,45 @@ func Test_runImage(t *testing.T) {
 		}
 	})
 
-	t.Run("up を起動できなければ errDocker で、down する", func(t *testing.T) {
+	t.Run("up を起動できなければ errTool で、down する", func(t *testing.T) {
 		t.Parallel()
 		f, r := newFake(t)
 		fakeTool := r.tool
 		r.tool = func(d string, env []string, step string) *exec.Cmd {
 			if step == stepUp {
-				c := exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "no-such-docker"))
-				c.Dir, c.Env = d, env
-				return c
+				return tooltest.Missing(d, env, step)
 			}
 			return fakeTool(d, env, step)
 		}
 		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
-		require.ErrorIs(t, err, errDocker)
+		require.ErrorIs(t, err, errTool)
 		assert.Equal(t, []string{"kics create", "kics copy-in", "kics down"}, f.calls())
 	})
+
+	t.Run("up がシグナルで終われば、終了コードとして扱わずに errTool で、down する", func(t *testing.T) {
+		t.Parallel()
+		f, r := newFake(t)
+		f.kill(stepUp)
+		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
+		require.ErrorIs(t, err, errTool)
+		assert.Equal(t, []string{"kics create", "kics copy-in", "kics up", "kics down"}, f.calls())
+	})
+
+	for _, step := range []string{stepCreate, stepCopyIn, stepCopyOut, stepDown} {
+		t.Run(step+" を起動できなければ errTool", func(t *testing.T) {
+			t.Parallel()
+			_, r := newFake(t)
+			fakeTool := r.tool
+			r.tool = func(d string, env []string, s string) *exec.Cmd {
+				if s == step {
+					return tooltest.Missing(d, env, s)
+				}
+				return fakeTool(d, env, s)
+			}
+			_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
+			require.ErrorIs(t, err, errTool)
+		})
+	}
 
 	for _, step := range []string{stepCreate, stepCopyIn} {
 		t.Run(step+" が落ちれば errDocker で、道具を起動せずに down する", func(t *testing.T) {
@@ -244,14 +286,49 @@ func Test_runImage(t *testing.T) {
 	})
 }
 
+func Test_resolveWork(t *testing.T) {
+	t.Parallel()
+
+	t.Run("tmp/ の下の作業ディレクトリのパスを返す", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		got, err := resolveWork(base, "tmp/checkov")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(base, "tmp", "checkov"), got)
+	})
+
+	for name, work := range map[string]string{"tmp/ の外": "checkov", "tmp/ 自身": "tmp", "親へ出る": "tmp/../x", "絶対パス": "/tmp/checkov"} {
+		t.Run(name+"は errUsage", func(t *testing.T) {
+			t.Parallel()
+			_, err := resolveWork(t.TempDir(), work)
+			require.ErrorIs(t, err, errUsage)
+		})
+	}
+
+	t.Run("作業ディレクトリが tmp/ の外を指す symlink なら errUsage", func(t *testing.T) {
+		t.Parallel()
+		base, _ := escapingWork(t, "checkov")
+		_, err := resolveWork(base, "tmp/checkov")
+		require.ErrorIs(t, err, errUsage)
+	})
+
+	t.Run("途中のディレクトリが tmp/ の外を指す symlink なら errUsage", func(t *testing.T) {
+		t.Parallel()
+		base, _ := escapingWork(t, "a")
+		_, err := resolveWork(base, "tmp/a/checkov")
+		require.ErrorIs(t, err, errUsage)
+	})
+}
+
 func Test_prepareWork(t *testing.T) {
 	t.Parallel()
 
-	t.Run("前の中身を消して work/src を作る", func(t *testing.T) {
+	t.Run("前の中身を消して work/src を作り、そのパスを返す", func(t *testing.T) {
 		t.Parallel()
-		base := tree(t, map[string]string{"x/out/old.json": "", "x/compose.yaml": ""})
-		dir := filepath.Join(base, "x")
-		require.NoError(t, prepareWork(dir))
+		base := tree(t, map[string]string{"tmp/x/out/old.json": "", "tmp/x/compose.yaml": ""})
+		dir, err := prepareWork(base, "tmp/x")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(base, "tmp", "x"), dir)
 		assert.DirExists(t, filepath.Join(dir, "work", "src"))
 		assert.NoDirExists(t, filepath.Join(dir, "out"))
 		assert.NoFileExists(t, filepath.Join(dir, "compose.yaml"))
@@ -259,8 +336,21 @@ func Test_prepareWork(t *testing.T) {
 
 	t.Run("作れなければ errInput", func(t *testing.T) {
 		t.Parallel()
-		base := tree(t, map[string]string{"file": ""})
-		require.ErrorIs(t, prepareWork(filepath.Join(base, "file", "x")), errInput)
+		testenv.RequireNonRoot(t, "tmp/ を読み取り専用にして作成を落とす")
+		base := tree(t, map[string]string{"tmp/.keep": ""})
+		tmp := filepath.Join(base, "tmp")
+		require.NoError(t, os.Chmod(tmp, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(tmp, 0o700) })
+		_, err := prepareWork(base, "tmp/x")
+		require.ErrorIs(t, err, errInput)
+	})
+
+	t.Run("作業ディレクトリが tmp/ の外を指せば、何も消さずに errUsage", func(t *testing.T) {
+		t.Parallel()
+		base, outside := escapingWork(t, "x")
+		_, err := prepareWork(base, "tmp/x")
+		require.ErrorIs(t, err, errUsage)
+		assert.FileExists(t, filepath.Join(outside, "keep"))
 	})
 }
 
@@ -280,12 +370,14 @@ func Test_runCanary(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
 		f.scenario("x-canary", 1, "", nil)
-		dir := filepath.Join(t.TempDir(), "x-canary")
+		base := t.TempDir()
+		dir := filepath.Join(base, "tmp", "x-canary")
 		var prepared bool
 		var log bytes.Buffer
-		err := runCanary("x の canary", dir, "fixture", testImage, testTool, tool, &log, judgeRC(1), func() error {
+		err := runCanary("x の canary", base, "tmp/x-canary", "fixture", testImage, testTool, tool, &log, judgeRC(1), func(got string) error {
 			prepared = true
-			return writeText(filepath.Join(dir, "work", "cfg", "r.yaml"), "")
+			assert.Equal(t, dir, got)
+			return writeText(filepath.Join(got, "work", "cfg", "r.yaml"), "")
 		})
 		require.NoError(t, err)
 		assert.True(t, prepared)
@@ -297,9 +389,10 @@ func Test_runCanary(t *testing.T) {
 	t.Run("fixture を work/src/main.tf に置く", func(t *testing.T) {
 		t.Parallel()
 		_, tool := newFake(t)
-		dir := filepath.Join(t.TempDir(), "x-canary")
+		base := t.TempDir()
+		dir := filepath.Join(base, "tmp", "x-canary")
 		var seen string
-		err := runCanary("x の canary", dir, "fixture", testImage, testTool, tool, &bytes.Buffer{}, func(int, string) error {
+		err := runCanary("x の canary", base, "tmp/x-canary", "fixture", testImage, testTool, tool, &bytes.Buffer{}, func(int, string) error {
 			raw, err := os.ReadFile(filepath.Join(dir, "work", "src", "main.tf"))
 			seen = string(raw)
 			return err
@@ -312,9 +405,10 @@ func Test_runCanary(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
 		f.scenario("x-canary", 0, "", nil)
-		dir := filepath.Join(t.TempDir(), "x-canary")
+		base := t.TempDir()
+		dir := filepath.Join(base, "tmp", "x-canary")
 		var log bytes.Buffer
-		err := runCanary("x の canary", dir, "fixture", testImage, testTool, tool, &log, judgeRC(1), nil)
+		err := runCanary("x の canary", base, "tmp/x-canary", "fixture", testImage, testTool, tool, &log, judgeRC(1), nil)
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, log.String(), "--- x の canary の出力:")
 		assert.Contains(t, log.String(), "up-stdout x-canary")
@@ -325,9 +419,9 @@ func Test_runCanary(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
 		f.fail(stepCreate)
-		dir := filepath.Join(t.TempDir(), "x-canary")
+		base := t.TempDir()
 		judged := false
-		err := runCanary("x の canary", dir, "fixture", testImage, testTool, tool, &bytes.Buffer{}, func(int, string) error {
+		err := runCanary("x の canary", base, "tmp/x-canary", "fixture", testImage, testTool, tool, &bytes.Buffer{}, func(int, string) error {
 			judged = true
 			return nil
 		}, nil)
@@ -338,9 +432,19 @@ func Test_runCanary(t *testing.T) {
 	t.Run("prepare が落ちれば docker を起動しない", func(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
-		dir := filepath.Join(t.TempDir(), "x-canary")
-		err := runCanary("x の canary", dir, "fixture", testImage, testTool, tool, &bytes.Buffer{}, judgeRC(0), func() error { return errInput })
+		base := t.TempDir()
+		err := runCanary("x の canary", base, "tmp/x-canary", "fixture", testImage, testTool, tool, &bytes.Buffer{}, judgeRC(0), func(string) error { return errInput })
 		require.ErrorIs(t, err, errInput)
+		assert.Empty(t, f.calls())
+	})
+
+	t.Run("作業ディレクトリが tmp/ の外を指せば、何も消さず docker も起動せずに errUsage", func(t *testing.T) {
+		t.Parallel()
+		f, tool := newFake(t)
+		base, outside := escapingWork(t, "x")
+		err := runCanary("x の canary", base, "tmp/x", "fixture", testImage, testTool, tool, &bytes.Buffer{}, judgeRC(0), nil)
+		require.ErrorIs(t, err, errUsage)
+		assert.FileExists(t, filepath.Join(outside, "keep"))
 		assert.Empty(t, f.calls())
 	})
 }

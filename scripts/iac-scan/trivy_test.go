@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const (
@@ -45,7 +47,7 @@ func Test_runTrivyConfig(t *testing.T) {
 	// noScratch は、canary と変換の一時の置き場が残っていないことを確かめる。
 	noScratch := func(t *testing.T, base string) {
 		t.Helper()
-		left, err := filepath.Glob(filepath.Join(base, "tmp", "trivy-config-*"))
+		left, err := os.ReadDir(filepath.Join(base, "tmp", "trivy-config"))
 		require.NoError(t, err)
 		assert.Empty(t, left)
 	}
@@ -120,7 +122,7 @@ func Test_runTrivyConfig(t *testing.T) {
 		err := runTrivyConfig(args(base, "-format", "json"), &bytes.Buffer{}, &bytes.Buffer{}, runner{tool: tool, environ: os.Environ()})
 		require.ErrorIs(t, err, errNoTargets, "本走査の結果に Terraform の対象が無い")
 		assert.Equal(t, "misconfigurations: [x]\n", seen)
-		assert.Equal(t, filepath.Join(base, "tmp"), filepath.Dir(dir))
+		assert.Equal(t, filepath.Join(base, "tmp", "trivy-config"), filepath.Dir(dir))
 		noScratch(t, base)
 	})
 
@@ -204,31 +206,45 @@ func Test_runTrivyConfig(t *testing.T) {
 		assert.Empty(t, f.calls())
 	})
 
-	t.Run("trivy を起動できなければ errStart", func(t *testing.T) {
+	t.Run("trivy を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
 		_, _, base := setup(t, 0, trivyMainJSON)
-		tool := func(d string, env []string, _ string) *exec.Cmd {
-			c := exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "no-such-trivy"))
-			c.Dir, c.Env = d, env
-			return c
-		}
-		require.ErrorIs(t, runTrivyConfig(args(base), &bytes.Buffer{}, &bytes.Buffer{}, runner{tool: tool, environ: os.Environ()}), errStart)
+		require.ErrorIs(t, runTrivyConfig(args(base), &bytes.Buffer{}, &bytes.Buffer{}, runner{tool: tooltest.Missing, environ: os.Environ()}), errTool)
 	})
 
-	t.Run("本走査だけを起動できなくても errStart", func(t *testing.T) {
+	t.Run("canary がシグナルで終われば errTool", func(t *testing.T) {
+		t.Parallel()
+		f, r, base := setup(t, 0, trivyMainJSON)
+		f.kill("trivy-config/" + trivySev)
+		require.ErrorIs(t, runTrivyConfig(args(base), &bytes.Buffer{}, &bytes.Buffer{}, r), errTool)
+		assert.Len(t, f.calls(), 1)
+	})
+
+	t.Run("作業ディレクトリが tmp/ の外を指せば、trivy を起動せずに errUsage", func(t *testing.T) {
+		t.Parallel()
+		f, r, base := setup(t, 0, trivyMainJSON)
+		outside := tree(t, map[string]string{"keep": "k"})
+		require.NoError(t, os.MkdirAll(filepath.Join(base, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(base, "tmp", "trivy-config")))
+		require.ErrorIs(t, runTrivyConfig(args(base), &bytes.Buffer{}, &bytes.Buffer{}, r), errUsage)
+		assert.Empty(t, f.calls())
+		left, err := os.ReadDir(outside)
+		require.NoError(t, err)
+		assert.Len(t, left, 1, "外に canary の置き場を作らない")
+	})
+
+	t.Run("本走査だけを起動できなくても errTool", func(t *testing.T) {
 		t.Parallel()
 		f, r, base := setup(t, 0, trivyMainJSON)
 		fakeTool := r.tool
 		r.tool = func(d string, env []string, step string) *exec.Cmd {
 			if d == base {
-				c := exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "no-such-trivy"))
-				c.Dir, c.Env = d, env
-				return c
+				return tooltest.Missing(d, env, step)
 			}
 			return fakeTool(d, env, step)
 		}
 		var stdout bytes.Buffer
-		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), &stdout, &bytes.Buffer{}, r), errStart)
+		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), &stdout, &bytes.Buffer{}, r), errTool)
 		assert.Equal(t, []string{"trivy-config-canary trivy-config/" + trivySev}, f.calls())
 		assert.Empty(t, stdout.String())
 	})
@@ -351,15 +367,11 @@ func Test_writeTrivyReport(t *testing.T) {
 		assert.Empty(t, f.calls())
 	})
 
-	t.Run("変換を起動できなければ errStart", func(t *testing.T) {
+	t.Run("変換を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		tool := func(d string, env []string, _ string) *exec.Cmd {
-			c := exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "no-such-trivy"))
-			c.Dir, c.Env = d, env
-			return c
-		}
+		tool := tooltest.Missing
 		err := writeTrivyReport([]byte(`{}`), "/repo", t.TempDir(), "trivy-convert/sarif", os.Environ(), runner{tool: tool}, &bytes.Buffer{}, &bytes.Buffer{})
-		require.ErrorIs(t, err, errStart)
+		require.ErrorIs(t, err, errTool)
 	})
 }
 
@@ -420,14 +432,6 @@ func rootPathOf(t *testing.T, raw []byte) string {
 	u, err := url.Parse(doc.Runs[0].OriginalURIBaseIDs["ROOTPATH"].URI)
 	require.NoError(t, err)
 	return u.Scheme + "://" + u.Path
-}
-
-func Test_exitStatus(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, 0, exitStatus(nil))
-	assert.Equal(t, 3, exitStatus(exec.CommandContext(context.Background(), "sh", "-c", "exit 3").Run()))
-	assert.Equal(t, -1, exitStatus(exec.CommandContext(context.Background(), filepath.Join(t.TempDir(), "none")).Run()))
 }
 
 func Test_judgeTrivyCanary(t *testing.T) {

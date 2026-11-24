@@ -170,6 +170,17 @@ func Test_runCheckov(t *testing.T) {
 		assert.Equal(t, []string{"iac-scan image-checkov"}, f.calls())
 	})
 
+	for _, work := range []string{"checkov", "checkov-canary"} {
+		t.Run("作業ディレクトリ tmp/"+work+" が tmp/ の外を指せば、外を消さずに errUsage", func(t *testing.T) {
+			t.Parallel()
+			f, tool, _ := setup(t, 0, checkovCleanJSON)
+			base, outside := escapingWork(t, work)
+			require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errUsage)
+			assert.FileExists(t, filepath.Join(outside, "keep"))
+			assert.NotContains(t, f.calls(), work+" create")
+		})
+	}
+
 	t.Run("root が無い引数は errUsage", func(t *testing.T) {
 		t.Parallel()
 		f, tool, base := setup(t, 0, checkovCleanJSON)

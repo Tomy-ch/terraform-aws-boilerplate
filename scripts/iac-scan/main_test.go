@@ -75,7 +75,7 @@ func Test_exitCode(t *testing.T) {
 		"入力を読めないのは 2":     {errInput, 2},
 		"イメージを決められないのは 2": {errImage, 2},
 		"docker の失敗は 2":   {errDocker, 2},
-		"起動できないのは 2":      {errStart, 2},
+		"道具を起動できないのは 2":   {errTool, 2},
 		"結果を読めないのは 2":     {errResult, 2},
 		"包んでも区分は変わらない":    {xerrors.Wrap(errCanary, "x"), 1},
 	} {

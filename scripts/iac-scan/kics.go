@@ -75,8 +75,8 @@ func runKics(args []string, log io.Writer, r runner) error {
 		return xerrors.Wrapf(errUsage, "-fail-on %q は受けない値です（%s）", failOn, strings.Join(kicsFailOn, " | "))
 	}
 	t := kicsTool(failOn)
-	dir := filepath.Join(s.base, "tmp", "kics")
-	if err := prepareWork(dir); err != nil {
+	dir, err := prepareWork(s.base, "tmp/kics")
+	if err != nil {
 		return err
 	}
 	staged, err := stageTerraform(s.base, s.roots, filepath.Join(dir, "work", "src"))
@@ -88,7 +88,7 @@ func runKics(args []string, log io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	err = runCanary("kics の canary", filepath.Join(s.base, "tmp", "kics-canary"), kicsCanary, image, t, r, log,
+	err = runCanary("kics の canary", s.base, "tmp/kics-canary", kicsCanary, image, t, r, log,
 		func(rc int, out string) error {
 			return judgeKicsCanary(rc, filepath.Join(out, "results.json"), kicsCanaryID, 0)
 		}, nil)
@@ -96,7 +96,7 @@ func runKics(args []string, log io.Writer, r runner) error {
 		return err
 	}
 	fmt.Fprintln(log, "✅ kics の canary: Public Access Block を外した構成を検出しました")
-	err = runCanary("kics の閾値の canary", filepath.Join(s.base, "tmp", "kics-canary-threshold"), kicsThresholdCanary, image, t, r, log,
+	err = runCanary("kics の閾値の canary", s.base, "tmp/kics-canary-threshold", kicsThresholdCanary, image, t, r, log,
 		func(rc int, out string) error {
 			return judgeKicsCanary(rc, filepath.Join(out, "results.json"), kicsThresholdID, kicsThresholdRC)
 		}, nil)

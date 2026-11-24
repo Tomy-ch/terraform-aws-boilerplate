@@ -45,8 +45,8 @@ func runSemgrep(args []string, log io.Writer, r runner) error {
 	if rules == "" || sha == "" {
 		return xerrors.Wrap(errUsage, "iac-scan semgrep は -rules と -rules-sha256 が要ります")
 	}
-	dir := filepath.Join(s.base, "tmp", "semgrep")
-	if err := prepareWork(dir); err != nil {
+	dir, err := prepareWork(s.base, "tmp/semgrep")
+	if err != nil {
 		return err
 	}
 	staged, err := stageTerraform(s.base, s.roots, filepath.Join(dir, "work", "src"))
@@ -61,11 +61,10 @@ func runSemgrep(args []string, log io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	canary := filepath.Join(s.base, "tmp", "semgrep-canary")
-	err = runCanary("semgrep の canary", canary, semgrepCanary, image, semgrepTool, r, log,
+	err = runCanary("semgrep の canary", s.base, "tmp/semgrep-canary", semgrepCanary, image, semgrepTool, r, log,
 		func(rc int, out string) error {
 			return judgeSemgrepCanary(rc, filepath.Join(out, "results.json"))
-		}, func() error { return stageSemgrepWork(canary, rules, sha) })
+		}, func(canary string) error { return stageSemgrepWork(canary, rules, sha) })
 	if err != nil {
 		return err
 	}

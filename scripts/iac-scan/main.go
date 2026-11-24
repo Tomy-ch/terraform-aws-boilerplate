@@ -16,13 +16,16 @@
 // 引きます。結果を取り出せなければ、道具が 0 で終わっていても失敗です。本走査の出力は stderr へ流し、canary の出力は
 // canary が落ちたときだけ stderr へ出します。stdout へ書くのは trivy-config の本走査の結果（要求された形）だけです。
 //
-// 所見・canary の失敗・件数のずれ・結果の取り出しの失敗は終了コード 1、使い方・入力・対象が0件・docker の失敗は 2 です。
+// 所見・canary の失敗・件数のずれ・結果の取り出しの失敗は終了コード 1、使い方・入力・対象が0件・docker の失敗・道具を
+// 起動できないかシグナルで終わったこと（toolrun.ErrTool）は 2 です。作業ディレクトリは workdir.Resolve で <base>/tmp/ の
+// 下にあることを確かめてから消し、外を指せば使い方の誤りです。
 package main
 
 import (
 	"io"
 	"os"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -33,7 +36,7 @@ var (
 	errInput       = xerrors.New("入力を読めません")
 	errImage       = xerrors.New("イメージを決められません")
 	errDocker      = xerrors.New("docker compose が失敗しました")
-	errStart       = xerrors.New("道具を起動できません")
+	errTool        = toolrun.ErrTool
 	errResult      = xerrors.New("走査の結果を読めません")
 	errOutput      = xerrors.New("走査の結果を取り出せません")
 	errCoverage    = xerrors.New("走査した範囲が入力に届きません")
@@ -66,20 +69,11 @@ func run(args []string, stdout, stderr io.Writer, r runner) error {
 
 // report は run のエラーを1行で w に書き、終了コードを返します。
 func report(err error, w io.Writer) int {
-	if err != nil {
-		_, _ = io.WriteString(w, "❌ iac-scan: "+err.Error()+"\n")
-	}
+	toolrun.Report("iac-scan", err, w)
 
 	return exitCode(err)
 }
 
 func exitCode(err error) int {
-	switch {
-	case err == nil:
-		return 0
-	case xerrors.Is(err, errFindings), xerrors.Is(err, errCanary), xerrors.Is(err, errCoverage), xerrors.Is(err, errOutput):
-		return 1
-	default:
-		return 2
-	}
+	return toolrun.ExitCode(err, errFindings, errCanary, errCoverage, errOutput)
 }

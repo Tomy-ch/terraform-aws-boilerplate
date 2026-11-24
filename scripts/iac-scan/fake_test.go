@@ -20,6 +20,7 @@ const testImage = "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef01234
 //
 //	image          イメージの段が出す内容
 //	fail-<段>      その段を 1 で落とす（fail-<段>-<名> は作業ディレクトリの basename が名のときだけ）
+//	kill-<段>      その段を自身へのシグナルで終わらせる
 //	scenario/<名>/ 名は作業ディレクトリの basename（無ければ default）。rc は up と trivy の終了コード、stdout は trivy の
 //	               stdout、out/ は up がコンテナの /tmp/out に残すもの
 //
@@ -43,6 +44,7 @@ step="$1"
 d=$(basename "$PWD"); d=${d%%.*}
 echo "$d $step" >> "$F/calls.log"
 env | LC_ALL=C sort > "$F/env-$d-$(printf %s "$step" | tr '/,' '__')"
+if [ -e "$F/kill-$step" ]; then kill -9 $$; fi
 if [ -e "$F/fail-$step" ] || [ -e "$F/fail-$step-$d" ]; then echo "fake: $step failed" >&2; exit 1; fi
 s="$F/scenario/$d"; [ -d "$s" ] || s="$F/scenario/default"
 rc=$(cat "$s/rc" 2>/dev/null || echo 0)
@@ -62,9 +64,10 @@ trivy-convert/*) [ -e result.json ] || exit 7; printf 'converted %s:' "${step#tr
 esac
 exit 0
 `
-	require.NoError(t, os.WriteFile(script, []byte(body), 0o700))
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
+	// exec せず /bin/sh に読ませる。並行のテストが書いたばかりのスクリプトの exec は ETXTBSY で落ちうる（tooltest.Fake.Tool と同じ）。
 	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), script, step)
+		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -81,6 +84,9 @@ func (f *fake) write(rel, body string) {
 func (f *fake) fail(step string) { f.write("fail-"+step, "") }
 
 func (f *fake) failIn(step, name string) { f.write("fail-"+step+"-"+name, "") }
+
+// kill は、段 step を自身へのシグナルで終わらせる。
+func (f *fake) kill(step string) { f.write("kill-"+step, "") }
 
 // out は /tmp/out からの相対パスと中身である。
 func (f *fake) scenario(name string, rc int, stdout string, out map[string]string) {

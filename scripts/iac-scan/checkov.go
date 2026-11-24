@@ -46,8 +46,8 @@ func runCheckov(args []string, log io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(s.base, "tmp", "checkov")
-	if err := prepareWork(dir); err != nil {
+	dir, err := prepareWork(s.base, "tmp/checkov")
+	if err != nil {
 		return err
 	}
 	if _, err := stageTerraform(s.base, s.roots, filepath.Join(dir, "work", "src")); err != nil {
@@ -57,7 +57,7 @@ func runCheckov(args []string, log io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	err = runCanary("checkov の canary", filepath.Join(s.base, "tmp", "checkov-canary"), checkovCanary, image, checkovTool, r, log,
+	err = runCanary("checkov の canary", s.base, "tmp/checkov-canary", checkovCanary, image, checkovTool, r, log,
 		func(rc int, out string) error {
 			return judgeCheckovCanary(rc, filepath.Join(out, "results_json.json"))
 		}, nil)

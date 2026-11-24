@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -22,7 +22,7 @@ const (
 	trivyCanary   = "FROM alpine:latest\nUSER nobody\nHEALTHCHECK CMD true\n"
 )
 
-// runTrivyConfig は、<base>/tmp/trivy-config-canary.* に MEDIUM の誤設定だけを持つ Dockerfile と <base> の
+// runTrivyConfig は、<base>/tmp/trivy-config/trivy-config-canary.* に MEDIUM の誤設定だけを持つ Dockerfile と <base> の
 // .trivyignore.yaml を置いて、本走査と同じ引数で canary を走らせ、DS-0001 で落ちることを確かめてから、<base> で本走査を
 // 起動します。走査は常に json で走らせ、走査の root ごとに Terraform の対象が1件以上あることを確かめます。json 以外の形は
 // その結果から trivy convert で作り、要求された形の結果だけを stdout へ書きます。tmp/ は gitignore された作業領域なので
@@ -52,7 +52,10 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 		return xerrors.Wrapf(errInput, "%v", err)
 	}
 	env := withoutPrefix(r.environ, "TRIVY_")
-	tmp := filepath.Join(*base, "tmp")
+	tmp, err := resolveWork(*base, "tmp/trivy-config")
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(tmp, 0o750); err != nil {
 		return xerrors.Wrapf(errInput, "%s の作成: %v", tmp, err)
 	}
@@ -71,9 +74,9 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 	var out, errOut bytes.Buffer
 	cmd := r.tool(canary, env, scanStep)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	rc := exitStatus(cmd.Run())
-	if rc < 0 {
-		return xerrors.Wrap(errStart, "trivy")
+	rc, err := toolrun.Exec(cmd)
+	if err != nil {
+		return xerrors.Wrapf(err, "trivy-config の canary")
 	}
 	if err := judgeTrivyCanary(rc, out.Bytes()); err != nil {
 		fmt.Fprintf(log, "--- trivy-config の canary の出力:\n%s\n", errOut.String())
@@ -85,9 +88,8 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 	out.Reset()
 	cmd = r.tool(*base, env, scanStep)
 	cmd.Stdout, cmd.Stderr = &out, log
-	rc = exitStatus(cmd.Run())
-	if rc < 0 {
-		return xerrors.Wrap(errStart, "trivy")
+	if rc, err = toolrun.Exec(cmd); err != nil {
+		return xerrors.Wrapf(err, "trivy-config の本走査")
 	}
 	counts, err := trivyTargets(out.Bytes(), roots)
 	if err != nil {
@@ -159,9 +161,9 @@ func writeTrivyReport(raw []byte, base, tmp, convertStep string, env []string, r
 	var out bytes.Buffer
 	cmd := r.tool(dir, env, convertStep)
 	cmd.Stdout, cmd.Stderr = &out, log
-	switch rc := exitStatus(cmd.Run()); {
-	case rc < 0:
-		return xerrors.Wrap(errStart, "trivy convert")
+	switch rc, err := toolrun.Exec(cmd); {
+	case err != nil:
+		return xerrors.Wrapf(err, "trivy convert")
 	case rc != 0:
 		return xerrors.Wrapf(errResult, "trivy convert が終了コード %d で終わりました", rc)
 	}
@@ -215,19 +217,6 @@ func setSARIFRoot(raw []byte, base string) ([]byte, error) {
 	}
 
 	return out.Bytes(), nil
-}
-
-// exitStatus は、Run の結果を終了コードにします。起動できなかったときは -1 です。
-func exitStatus(err error) int {
-	if err == nil {
-		return 0
-	}
-	var exit *exec.ExitError
-	if xerrors.As(err, &exit) {
-		return exit.ExitCode()
-	}
-
-	return -1
 }
 
 // judgeTrivyCanary は、canary が非0で終わり、結果の Misconfigurations に DS-0001 があることを確かめます。非0の終了は

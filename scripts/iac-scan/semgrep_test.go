@@ -135,6 +135,18 @@ func Test_runSemgrep(t *testing.T) {
 		assert.Empty(t, f.calls())
 	})
 
+	for _, work := range []string{"semgrep", "semgrep-canary"} {
+		t.Run("作業ディレクトリ tmp/"+work+" が tmp/ の外を指せば、外を消さずに errUsage", func(t *testing.T) {
+			t.Parallel()
+			f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+			base, outside := escapingWork(t, work)
+			args[1] = base
+			require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errUsage)
+			assert.FileExists(t, filepath.Join(outside, "keep"))
+			assert.NotContains(t, f.calls(), work+" create")
+		})
+	}
+
 	t.Run("-rules か -rules-sha256 が無ければ errUsage", func(t *testing.T) {
 		t.Parallel()
 		f, tool, base, _ := setup(t, 0, semgrepCleanJSON)

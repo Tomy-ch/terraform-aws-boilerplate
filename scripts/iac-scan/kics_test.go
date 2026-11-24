@@ -166,6 +166,17 @@ func Test_runKics(t *testing.T) {
 		assert.Equal(t, []string{"critical,high,medium,low,info"}, kicsFailOn)
 	})
 
+	for _, work := range []string{"kics", "kics-canary", "kics-canary-threshold"} {
+		t.Run("作業ディレクトリ tmp/"+work+" が tmp/ の外を指せば、外を消さずに errUsage", func(t *testing.T) {
+			t.Parallel()
+			f, tool, _ := setup(t, 0, kicsCleanJSON)
+			base, outside := escapingWork(t, work)
+			require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errUsage)
+			assert.FileExists(t, filepath.Join(outside, "keep"))
+			assert.NotContains(t, f.calls(), work+" create")
+		})
+	}
+
 	t.Run("root が無ければ docker を起動せずに errMissingRoot", func(t *testing.T) {
 		t.Parallel()
 		f, tool, base := setup(t, 0, kicsCleanJSON)

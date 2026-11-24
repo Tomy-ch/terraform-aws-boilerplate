@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -60,25 +61,27 @@ var pinnedImage = regexp.MustCompile(`^[^\s@]+@sha256:[0-9a-f]{64}$`)
 
 // lookupImage は、docker-compose.yaml の service が宣言するイメージを引きます（版と digest の正本はそこにある）。
 // docker compose はカレントディレクトリの docker-compose.yaml を読み、-base を見ません。make が常にリポジトリ直下で
-// 起動することが前提です。出力がちょうど1行の、digest で固定した参照でなければ失敗します。
+// 起動することが前提です。docker compose を起動できなければ errTool、0 以外で終われば errImage、出力がちょうど1行の、
+// digest で固定した参照でなければ errImage です。
 func lookupImage(r runner, step string) (string, error) {
-	cmd := r.tool("", withoutPrefix(r.environ, "COMPOSE_"), step)
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		return "", xerrors.Wrapf(errImage, "%s: %v: %s", step, err, strings.TrimSpace(errOut.String()))
+	res, err := toolrun.Run(r.tool("", withoutPrefix(r.environ, "COMPOSE_"), step))
+	switch {
+	case err != nil:
+		return "", xerrors.Wrapf(err, "%s", step)
+	case res.Code != 0:
+		return "", xerrors.Wrapf(errImage, "%s: 終了コード %d: %s", step, res.Code, strings.TrimSpace(res.Combined))
 	}
-	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	lines := strings.Split(strings.TrimSuffix(res.Stdout, "\n"), "\n")
 	if len(lines) != 1 || !pinnedImage.MatchString(lines[0]) {
-		return "", xerrors.Wrapf(errImage, "%s: digest で固定したイメージがちょうど1行ではありません（%q）", step, out.String())
+		return "", xerrors.Wrapf(errImage, "%s: digest で固定したイメージがちょうど1行ではありません（%q）", step, res.Stdout)
 	}
 
 	return lines[0], nil
 }
 
 // writeCompose は、dir に compose.yaml を書きます。project 名は dir の絶対パスから決め、作業ディレクトリごとに分けます。
-// network を与えず、capability は入力を読むためのものだけにし、特権の取得とプロセスの数を絞ります。compose は値の `$` を補間するので、`$$` にして
-// 渡します。
+// network を与えず、capability は入力を読むためのものだけにし、特権の取得とプロセスの数を絞ります。compose は値の
+// `$` を補間するので、`$$` にして渡します。
 func writeCompose(dir, image string, t imageTool) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -117,69 +120,103 @@ func writeCompose(dir, image string, t imageTool) error {
 }
 
 // runImage は、dir の work/ を入力にして t をコンテナで起動し、コンテナの /tmp/out を dir の out/ へ取り出し、道具の
-// 終了コードを返します。docker compose の出力は log へ流します。create を試みた後は、失敗の経路でもコンテナを消します。
+// 終了コードを返します。docker compose の出力は log へ流します。docker compose を起動できないかシグナルで終わった段は
+// errTool、up 以外の段が 0 以外で終われば errDocker（copy-out は errOutput）です。up の終了コードは道具の終了コードとして
+// 返します。create を試みた後は、失敗の経路でもコンテナを消します。
 func runImage(dir, image string, t imageTool, r runner, log io.Writer) (rc int, err error) {
 	if err := writeCompose(dir, image, t); err != nil {
 		return 0, err
 	}
 	env := withoutPrefix(r.environ, "COMPOSE_")
-	start := func(step string) *exec.Cmd {
+	runStep := func(step string) (int, error) {
 		cmd := r.tool(dir, env, step)
 		cmd.Stdout, cmd.Stderr = log, log
+		code, err := toolrun.Exec(cmd)
+		if err != nil {
+			return 0, xerrors.Wrapf(err, "%s: %s", dir, step)
+		}
 
-		return cmd
+		return code, nil
 	}
 	defer func() {
-		if derr := start(stepDown).Run(); derr != nil && err == nil {
-			err = xerrors.Wrapf(errDocker, "%s: コンテナを消せません: %v", dir, derr)
+		code, derr := runStep(stepDown)
+		switch {
+		case err != nil:
+		case derr != nil:
+			err = derr
+		case code != 0:
+			err = xerrors.Wrapf(errDocker, "%s: コンテナを消せません（終了コード %d）", dir, code)
 		}
 	}()
 	for _, step := range []string{stepCreate, stepCopyIn} {
-		if err := start(step).Run(); err != nil {
-			return 0, xerrors.Wrapf(errDocker, "%s: %s: %v", dir, step, err)
+		code, err := runStep(step)
+		if err != nil {
+			return 0, err
+		}
+		if code != 0 {
+			return 0, xerrors.Wrapf(errDocker, "%s: %s が終了コード %d で終わりました", dir, step, code)
 		}
 	}
-	if err := start(stepUp).Run(); err != nil {
-		var exit *exec.ExitError
-		if !xerrors.As(err, &exit) {
-			return 0, xerrors.Wrapf(errDocker, "%s: %s: %v", dir, stepUp, err)
-		}
-		rc = exit.ExitCode()
+	if rc, err = runStep(stepUp); err != nil {
+		return 0, err
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "out"), 0o750); err != nil {
 		return 0, xerrors.Wrapf(errOutput, "%s の作成: %v", filepath.Join(dir, "out"), err)
 	}
-	if err := start(stepCopyOut).Run(); err != nil {
-		return rc, xerrors.Wrapf(errOutput, "%s（道具の終了コード %d）: %v", dir, rc, err)
+	code, err := runStep(stepCopyOut)
+	if err != nil {
+		return rc, err
+	}
+	if code != 0 {
+		return rc, xerrors.Wrapf(errOutput, "%s（道具の終了コード %d）: copy-out が終了コード %d で終わりました", dir, rc, code)
 	}
 
 	return rc, nil
 }
 
-func prepareWork(dir string) error {
-	if err := os.RemoveAll(dir); err != nil {
-		return xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "work", "src"), 0o750); err != nil {
-		return xerrors.Wrapf(errInput, "%s の作成: %v", dir, err)
+// resolveWork は、base の下の作業ディレクトリ work（tmp/ の下の相対パス）を workdir.Resolve で確かめて返します。
+// tmp/ の外を指すもの（途中の symlink を含む）は使い方の誤りです。
+func resolveWork(base, work string) (string, error) {
+	dir, err := workdir.Resolve(base, work)
+	if err != nil {
+		return "", xerrors.Wrapf(errUsage, "-base %q の作業ディレクトリ: %v", base, err)
 	}
 
-	return nil
+	return dir, nil
 }
 
-// runCanary は、dir の work/src に fixture の main.tf を置き、prepare（nil でなければ）で残りの入力を置いて t を起動し、
-// judge で判定します。canary の出力は、落ちたときだけ log へ出します。通れば dir を消します。
-func runCanary(name, dir, fixture, image string, t imageTool, r runner, log io.Writer,
-	judge func(rc int, out string) error, prepare func() error,
+// prepareWork は、base の下の作業ディレクトリ work を resolveWork で確かめてから作り直し、work/src を作ってそのパスを
+// 返します。
+func prepareWork(base, work string) (string, error) {
+	dir, err := resolveWork(base, work)
+	if err != nil {
+		return "", err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return "", xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "work", "src"), 0o750); err != nil {
+		return "", xerrors.Wrapf(errInput, "%s の作成: %v", dir, err)
+	}
+
+	return dir, nil
+}
+
+// runCanary は、base の下の作業ディレクトリ work を prepareWork で作り直し、その work/src に fixture の main.tf を置き、
+// prepare（nil でなければ）でその作業ディレクトリへ残りの入力を置いて t を起動し、judge で判定します。canary の出力は、
+// 落ちたときだけ log へ出します。通れば作業ディレクトリを消します。
+func runCanary(name, base, work, fixture, image string, t imageTool, r runner, log io.Writer,
+	judge func(rc int, out string) error, prepare func(dir string) error,
 ) error {
-	if err := prepareWork(dir); err != nil {
+	dir, err := prepareWork(base, work)
+	if err != nil {
 		return err
 	}
 	if err := writeText(filepath.Join(dir, "work", "src", "main.tf"), fixture); err != nil {
 		return err
 	}
 	if prepare != nil {
-		if err := prepare(); err != nil {
+		if err := prepare(dir); err != nil {
 			return err
 		}
 	}
