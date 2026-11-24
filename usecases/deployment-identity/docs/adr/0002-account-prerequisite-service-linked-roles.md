@@ -14,7 +14,7 @@ repository-wide/ADR-0602 決定1 は、この種の構成物をアカウント�
 ## Decision
 
 1. Chatbot の service-linked role を、この usecase の `internal/service-linked-roles` が `aws_iam_service_linked_role` で持つ。identity root の apply で apply-identity の role が作り、新しいアカウントでは段4 の apply が作る（repository-wide/ADR-0602 決定1・9）。作るのは partition が `aws` のときだけとする。Chatbot の service-linked role は AWS GovCloud (US) で使えない（同 Administrator Guide の頁の表）。
-2. サービスの集合を入力で受けない。この usecase が固定で持つ（repository-wide/ADR-0204）。workload root の usecase が新しく service-linked role を前提にするときは、この決定に足し、`conftest/plan/decl.json` の `deployment_identity.workload.service_linked_roles` に足す。
+2. サービスの集合を入力で受けない。この usecase が固定で持つ（repository-wide/ADR-0204）。workload root の usecase が新しく service-linked role を前提にするときは、この決定に足し、`conftest/plan/decl.json` の `deployment_identity.apply_role.bootstrap.prerequisite_services` に足す。apply の role に作成を残すサービスは、別に `deployment_identity.workload.service_linked_roles` にも足す（deployment-identity/ADR-0201 決定14）。
 3. `description` は、AWS が作成のときに付ける値と同じ literal にする。tag を付けない。`prevent_destroy` を付け、型は `plan.stateful_protection` の保護の対象である。削除の権限はどの role にも与えない（deployment-identity/ADR-0201 決定3）。description の更新の権限は apply-identity の role にだけ与え、人がコンソールで変えた description を次の apply が宣言の値へ戻す。usecase から外すときは `removed` block（`destroy = false`）と、その root の `plan.stateful_protection` の許可の宣言で手放す。
 4. identity root の apply より前にアカウントに在る service-linked role は、そのアカウントの identity root の `import` block で取り込み、state を書く前に plan で突合する（repository-wide/ADR-0602 決定6）。取り込みの apply の後に、その `import` block を外す。新しく立ち上がるアカウントには取り込む実体が無く、残すと段2 の plan が落ちるからである。
 5. apply の role に残す `iam:CreateServiceLinkedRole` の理由と撤回の条件は、deployment-identity/ADR-0201 決定14 が持つ。
