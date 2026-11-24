@@ -128,6 +128,17 @@ resource "aws_iam_policy" "workload_read" {
   depends_on = [aws_iam_role_policy.apply_identity]
 }
 
+# account-baseline の管理（deployment-identity/ADR-0201 決定17・21）。
+resource "aws_iam_policy" "workload_2" {
+  name = local.workload_2_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = local.baseline_manage_statements
+  })
+
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
 # apply の role が作る role の permissions boundary。role を作る usecase ごとに1つ（deployment-identity/ADR-0201 決定15）。
 resource "aws_iam_policy" "boundary" {
   for_each = local.boundary_policy_names
@@ -164,11 +175,29 @@ resource "aws_iam_role_policy_attachment" "workload_read" {
   policy_arn = aws_iam_policy.workload_read.arn
 }
 
+resource "aws_iam_role_policy_attachment" "workload_2" {
+  role       = aws_iam_role.this["apply"].name
+  policy_arn = aws_iam_policy.workload_2.arn
+}
+
+# plan の role は workload の読み取りを apply の role と同じ policy で受ける（deployment-identity/ADR-0201 決定17）。
+resource "aws_iam_role_policy_attachment" "plan_workload_read" {
+  role       = aws_iam_role.this["plan"].name
+  policy_arn = aws_iam_policy.workload_read.arn
+}
+
 resource "aws_iam_role_policy_attachments_exclusive" "this" {
   for_each = local.roles
 
   role_name   = local.all_roles[each.key].name
-  policy_arns = each.key == "apply_identity" ? local.apply_identity_policy_arns : each.key == "apply" ? local.workload_policy_arns : []
+  policy_arns = lookup(local.managed_policy_arns, each.key, [])
 
-  depends_on = [aws_iam_role_policy_attachment.manage, aws_iam_role_policy_attachment.governance, aws_iam_role_policy_attachment.workload, aws_iam_role_policy_attachment.workload_read]
+  depends_on = [
+    aws_iam_role_policy_attachment.manage,
+    aws_iam_role_policy_attachment.governance,
+    aws_iam_role_policy_attachment.workload,
+    aws_iam_role_policy_attachment.workload_read,
+    aws_iam_role_policy_attachment.workload_2,
+    aws_iam_role_policy_attachment.plan_workload_read,
+  ]
 }
