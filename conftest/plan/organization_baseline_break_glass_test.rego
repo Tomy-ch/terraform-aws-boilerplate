@@ -59,6 +59,7 @@ member_template(resources) := json.marshal({"AWSTemplateFormatVersion": "2010-09
 
 stack_set(model, auto, resources) := change("module.b.aws_cloudformation_stack_set.this", "aws_cloudformation_stack_set", {
 	"name": "tabp-break-glass",
+	"description": "Break-glass role for member accounts",
 	"permission_model": model,
 	"auto_deployment": [{"enabled": auto, "retain_stacks_on_account_removal": false}],
 	"template_body": member_template(resources),
@@ -318,6 +319,23 @@ test_violation_member_template_unknown if {
 
 test_violation_member_template_empty_resources if {
 	fixture.has(template_violation, member_messages(member_rcs(stack_set("SERVICE_MANAGED", true, {}))))
+}
+
+description_violation := "[PLAN-BG-05] メンバーの break-glass の StackSet の description"
+
+test_violation_member_stack_set_description_not_ascii if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/description", "value": "メンバーアカウントの break-glass の role"}])
+	fixture.has(description_violation, member_messages(member_rcs(set)))
+}
+
+test_violation_member_stack_set_description_control_character if {
+	set := json.patch(valid_stack_set, [{"op": "replace", "path": "/change/after/description", "value": "Break-glass\nrole"}])
+	fixture.has(description_violation, member_messages(member_rcs(set)))
+}
+
+test_pass_member_stack_set_without_description if {
+	set := json.patch(valid_stack_set, [{"op": "remove", "path": "/change/after/description"}])
+	not fixture.has(description_violation, member_messages(member_rcs(set)))
 }
 
 test_violation_member_stack_set_auto_deployment_missing if {
