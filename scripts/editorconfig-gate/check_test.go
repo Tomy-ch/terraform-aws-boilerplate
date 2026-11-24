@@ -22,8 +22,7 @@ func stepsOf(calls []string) []string {
 	return out
 }
 
-// passingFake は、2つの canary と設定の確認が成り立ち、本走査が 0 で終わる偽の道具です。canary と本走査は同じ段
-// （check）なので、作業ディレクトリ（check・directive）で出し分けます。
+// passingFake の canary と本走査は同じ段（check・dry-run）を使うので、作業ディレクトリ（check・directive・exclude）で出し分けます。
 func passingFake(t *testing.T) *tooltest.Fake {
 	t.Helper()
 	f := newFake(t)
@@ -31,11 +30,12 @@ func passingFake(t *testing.T) *tooltest.Fake {
 	f.Set(stepCheck+"@check", "rc", "1")
 	f.Set(stepCheck+"@directive", "out", controlHit)
 	f.Set(stepCheck+"@directive", "rc", "1")
+	f.Set(stepDryRun+"@exclude", "out", excludeListed)
 	f.Set(stepDryRun, "out", "a.yaml\n")
+	f.Set(stepLsFiles, "out", staged("a.yaml"))
 	return f
 }
 
-// checkCase は、一時ディレクトリをリポジトリ直下（root）に見立てた check の引数と、-work の実パスです。
 type checkCase struct {
 	args       []string
 	root, work string
@@ -58,7 +58,7 @@ func (c checkCase) run(out *bytes.Buffer, tool toolFunc, env envFunc) error {
 func Test_runCheck(t *testing.T) {
 	t.Parallel()
 
-	t.Run("2つの canary・設定の確認・本走査の順に走り、本走査が 0 なら通って fixture を消す", func(t *testing.T) {
+	t.Run("3つの canary・設定の確認と範囲の突き合わせ・本走査の順に走り、本走査が 0 なら通って fixture を消す", func(t *testing.T) {
 		t.Parallel()
 		f := passingFake(t)
 		c := checkArgs(t)
@@ -71,12 +71,35 @@ func Test_runCheck(t *testing.T) {
 		assert.Equal(t, []string{
 			"check git-init", "check git-add", "check check",
 			"directive git-init", "directive git-add", "directive check",
-			"editorconfig-gate dry-run", "editorconfig-gate check",
+			"exclude git-init", "exclude git-add", "exclude dry-run",
+			"editorconfig-gate dry-run", "editorconfig-gate ls-files", "editorconfig-gate ls-deleted", "editorconfig-gate scan",
 		}, stepsOf(f.Calls()))
-		for _, want := range []string{"✅ editorconfig check-canary", "✅ editorconfig directive-canary", "editorconfig-check: 1 ファイル", "✅ editorconfig-check:"} {
+		for _, want := range []string{"✅ editorconfig check-canary", "✅ editorconfig directive-canary", "✅ editorconfig exclude-canary", "editorconfig-check: 走査対象 1 ファイル", "✅ editorconfig coverage:", "✅ editorconfig-check:"} {
 			assert.Contains(t, out.String(), want)
 		}
 		assert.NoDirExists(t, work)
+	})
+
+	t.Run("editorconfig-checker の起動はどれも core.quotepath=false だけを受け、受け継いだ git の設定は届かない", func(t *testing.T) {
+		t.Parallel()
+		f := passingFake(t)
+		hostile := func() ([]string, error) {
+			env, _ := isolated()
+			return append(env, "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=true",
+				"GIT_CONFIG_KEY_1=core.x", "GIT_CONFIG_VALUE_1=y", "GIT_CONFIG_PARAMETERS='core.quotepath'='true'"), nil
+		}
+		require.NoError(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), hostile))
+		var checker []string
+		for _, line := range strings.Split(strings.TrimSpace(f.Read("env.log")), "\n") {
+			if fields := strings.Fields(line); fields[1] == stepCheck || fields[1] == stepDryRun || fields[1] == stepScan {
+				checker = append(checker, line)
+			}
+		}
+		const injected = " c=1 k0=core.quotepath v0=false k1= p="
+		assert.Equal(t, []string{
+			"check check" + injected, "directive check" + injected, "exclude dry-run" + injected,
+			"editorconfig-gate dry-run" + injected, "editorconfig-gate scan" + injected,
+		}, checker)
 	})
 
 	t.Run("check-canary が成り立たなければ、後の段を起動せずに errCanary", func(t *testing.T) {
@@ -93,21 +116,40 @@ func Test_runCheck(t *testing.T) {
 		f.Set(stepCheck+"@directive", "out", checkHit+controlHit)
 		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errCanary)
 		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate dry-run")
-		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate check")
+		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate scan")
 	})
 
-	t.Run("走査の対象が0件なら、本走査を起動せずに errNoInput", func(t *testing.T) {
+	t.Run("exclude-canary が成り立たなければ、設定の確認も本走査も起動せずに errCanary", func(t *testing.T) {
 		t.Parallel()
 		f := passingFake(t)
-		f.Set(stepDryRun, "out", "")
+		f.Set(stepDryRun+"@exclude", "out", excludeListed+excludeDir+"/"+excludedNames[0]+"\n")
+		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errCanary)
+		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate dry-run")
+		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate scan")
+	})
+
+	t.Run("追跡ファイルが0件なら、本走査を起動せずに errNoInput", func(t *testing.T) {
+		t.Parallel()
+		f := passingFake(t)
+		f.Set(stepLsFiles, "out", "")
 		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errNoInput)
-		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate check")
+		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate scan")
+	})
+
+	t.Run("追跡ファイルが走査の対象から外れていれば、本走査を起動せずに errUncovered", func(t *testing.T) {
+		t.Parallel()
+		f := passingFake(t)
+		f.Set(stepLsFiles, "out", staged("a.yaml", "b.md"))
+		err := checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated)
+		require.ErrorIs(t, err, errUncovered)
+		assert.Equal(t, 1, exitCode(err))
+		assert.NotContains(t, stepsOf(f.Calls()), "editorconfig-gate scan")
 	})
 
 	t.Run("本走査が違反で落ちれば errFailed", func(t *testing.T) {
 		t.Parallel()
 		f := passingFake(t)
-		f.Set(stepCheck+"@editorconfig-gate", "rc", "1")
+		f.Set(stepScan, "rc", "1")
 		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errFailed)
 	})
 
@@ -115,6 +157,9 @@ func Test_runCheck(t *testing.T) {
 		t.Parallel()
 		f := passingFake(t)
 		f.Set(stepCheck, "kill", "")
+		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errTool)
+		f = passingFake(t)
+		f.Set(stepScan, "kill", "")
 		require.ErrorIs(t, checkArgs(t).run(new(bytes.Buffer), f.Tool(), isolated), errTool)
 	})
 
@@ -190,8 +235,8 @@ func Test_runScan(t *testing.T) {
 	t.Run("リポジトリ直下で隔離した env の本走査を起動し、0 なら通って出力を写す", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.Set(stepCheck, "out", "OUT\n")
-		f.Set(stepCheck, "err", "STDERR-ONLY\n")
+		f.Set(stepScan, "out", "OUT\n")
+		f.Set(stepScan, "err", "STDERR-ONLY\n")
 		var out bytes.Buffer
 		require.NoError(t, runScan(&out, f.Tool(), isolatedEnv))
 		assert.Contains(t, out.String(), "OUT\n")
@@ -199,15 +244,15 @@ func Test_runScan(t *testing.T) {
 		assert.Contains(t, out.String(), "✅ editorconfig-check")
 		calls := f.Calls()
 		require.Len(t, calls, 1)
-		assert.True(t, strings.HasSuffix(calls[0], " "+stepCheck+" /isolated"), calls[0])
+		assert.True(t, strings.HasSuffix(calls[0], " "+stepScan+" /isolated"), calls[0])
 	})
 
 	t.Run("rc≠0 なら出力を写して errFailed", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.Set(stepCheck, "out", checkHit)
-		f.Set(stepCheck, "err", "STDERR-ONLY\n")
-		f.Set(stepCheck, "rc", "1")
+		f.Set(stepScan, "out", checkHit)
+		f.Set(stepScan, "err", "STDERR-ONLY\n")
+		f.Set(stepScan, "rc", "1")
 		var out bytes.Buffer
 		require.ErrorIs(t, runScan(&out, f.Tool(), isolatedEnv), errFailed)
 		assert.Contains(t, out.String(), "wrong indent")

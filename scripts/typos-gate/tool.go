@@ -10,10 +10,11 @@ import (
 type toolFunc = toolrun.Func
 
 const (
-	stepMain    = "main"
-	stepScan    = "scan"
-	stepFiles   = "files"
-	stepLsFiles = "ls-files"
+	stepMain      = "main"
+	stepScan      = "scan"
+	stepFiles     = "files"
+	stepLsFiles   = "ls-files"
+	stepLsDeleted = "ls-deleted"
 )
 
 const fixtureConfig = ".typos.toml"
@@ -29,6 +30,8 @@ func command(dir string, env []string, step string) *exec.Cmd {
 		cmd = exec.CommandContext(ctx, "typos", "--config", fixtureConfig, "--format", "brief")
 	case stepFiles:
 		cmd = exec.CommandContext(ctx, "typos", "--files")
+	case stepLsDeleted:
+		cmd = exec.CommandContext(ctx, "git", "-c", "core.quotepath=false", "ls-files", "-z", "--deleted")
 	default:
 		cmd = exec.CommandContext(ctx, "git", "-c", "core.quotepath=false", "ls-files", "-z")
 	}

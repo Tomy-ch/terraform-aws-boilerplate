@@ -21,7 +21,8 @@ const missingShown = 20
 var expectedExcludes = []string{".git/", "**/.terraform.lock.hcl", "scripts/go.sum"}
 
 // runCoverage は、設定 cfg の extend-exclude が expectedExcludes と集合として一致し、本走査の対象（typos --files）が、
-// git の追跡ファイルから expectedExcludes に当たるものと設定 config 自身を除いたものを覆っていることを確かめます。
+// git の追跡ファイルから作業ツリーから消えたもの・expectedExcludes に当たるもの・設定 config 自身を除いたものを
+// 覆っていることを確かめます。
 // config はリポジトリ直下からの相対パスです。
 func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envFunc) error {
 	declared, err := extendExcludes(string(cfg))
@@ -44,18 +45,29 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 	if scanned.Code != 0 {
 		return xerrors.Wrapf(errTool, "typos --files が rc=%d で終わりました\n%s", scanned.Code, scanned.Combined)
 	}
-	listed, err := toolrun.Run(tool(".", gitEnv, stepLsFiles))
+	listed, err := gitList(tool, gitEnv, stepLsFiles)
 	if err != nil {
 		return err
 	}
-	if listed.Code != 0 {
-		return xerrors.Wrapf(errTool, "git ls-files が rc=%d で終わりました\n%s", listed.Code, listed.Combined)
+	deleted, err := gitList(tool, gitEnv, stepLsDeleted)
+	if err != nil {
+		return err
+	}
+	gone := map[string]bool{}
+	for _, p := range strings.Split(deleted, "\x00") {
+		gone[p] = true
 	}
 
 	self := filepath.ToSlash(filepath.Clean(config))
 	var want []string
-	for _, p := range strings.Split(listed.Stdout, "\x00") {
+	nGone := 0
+	for _, p := range strings.Split(listed, "\x00") {
 		if p == "" || p == self {
+			continue
+		}
+		if gone[p] {
+			nGone++
+
 			continue
 		}
 		hit, err := excluded(p, patterns)
@@ -78,9 +90,22 @@ func runCoverage(config string, cfg []byte, w io.Writer, tool toolFunc, env envF
 
 		return xerrors.Wrapf(errUncovered, "%d 件", len(missing))
 	}
-	fmt.Fprintf(w, "✅ typos coverage: 追跡ファイル %d 件がすべて走査の対象です\n", len(want))
+	fmt.Fprintf(w, "✅ typos coverage: 追跡ファイル %d 件がすべて走査の対象です（作業ツリーから消えた %d 件を引いた）\n", len(want), nGone)
 
 	return nil
+}
+
+// gitList は、リポジトリ直下で段 step の git を起動し、stdout を返します。0 でない終了コードは errTool です。
+func gitList(tool toolFunc, env []string, step string) (string, error) {
+	r, err := toolrun.Run(tool(".", env, step))
+	if err != nil {
+		return "", err
+	}
+	if r.Code != 0 {
+		return "", xerrors.Wrapf(errTool, "git の %s が rc=%d で終わりました\n%s", step, r.Code, r.Combined)
+	}
+
+	return r.Stdout, nil
 }
 
 // sameExcludes は、declared と expected が重複を除いて同じ集合なら nil、そうでなければ両方を名指した errExcludes です。
