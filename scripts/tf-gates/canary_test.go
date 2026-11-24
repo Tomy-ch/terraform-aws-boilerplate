@@ -17,6 +17,8 @@ const canaryWarningJSON = `{"format_version":"1.0","valid":true,"error_count":0,
 "range":{"filename":"main.tf","start":{"line":4,"column":25,"byte":90},"end":{"line":4,"column":27,"byte":92}},
 "snippet":{"context":"resource \"aws_iam_role\" \"this\"","code":"  managed_policy_arns = []","start_line":4,"highlight_start_offset":24,"highlight_end_offset":26,"values":[]}}]}`
 
+// 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する。並行のテストが別の偽の道具を書いている
+// 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 // canaryTool は、main.tf が非推奨の引数を持てば警告を、持たなければ警告の無い結果を出す偽の terraform を作る。
 // behaves が "silent" なら、非推奨の引数を書いても警告を出さない（Provider が警告をやめた形）。
 func canaryTool(t *testing.T, behaves string) toolFunc {
@@ -29,9 +31,9 @@ func canaryTool(t *testing.T, behaves string) toolFunc {
 [ "$1" = validate ] || exit 0
 if [ "` + behaves + `" != silent ] && grep -q managed_policy_arns main.tf; then cat '` + filepath.Join(dir, "warn.json") + `'; else cat '` + filepath.Join(dir, "clean.json") + `'; fi
 `
-	require.NoError(t, os.WriteFile(script, []byte(body), 0o700))
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	return func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), script, step)
+		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}

@@ -4,7 +4,7 @@
 ## terraform は ADR-0503 決定4 の表の「ホスト」行に当たり、理由は同 ADR 決定5 が持つ。pnpm は同表の
 ## lockfile 行で、理由は同 決定4 が持つ。AWS CLI は同表に行が無く、理由は ADR-0504 が持つ。
 ## RUNNER_MODE=host の npm の道具も、この pnpm が lockfile から入れる（.makefiles/runner.mk の
-## NODE_HOST_RUN）。検査ツールは同表の第2行（既定の経路はコンテナ）なので含めない。
+## NODE_TOOL）。検査ツールは同表の第2行（既定の経路はコンテナ）なので含めない。
 
 .PHONY: host-tools-install ## ホストで実行する道具を mise.toml の版で導入
 
