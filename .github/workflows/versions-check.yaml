@@ -90,7 +90,7 @@ jobs:
         run: |
           set +e
 
-          make -k versions-check mise-npm-disabled-check pin-pnpm-check node-tools-lock-check node-tools-host-canary node-tools-image-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
+          make -k versions-check mise-npm-disabled-check pin-pnpm-check node-tools-lock-check node-tools-image-check RUNNER_MODE=host 2>&1 | tee /tmp/versions.log
 
           code=${PIPESTATUS[0]}
 

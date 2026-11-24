@@ -46,6 +46,7 @@ var (
 	errUnknownSubcommand = xerrors.New("❌ unknown subcommand (preflight / bootstrap / prune-release-notes)")
 	errNoReleaseBase     = xerrors.New("❌ 宣言に release_base の印を持つブランチがありません")
 	errBaseHasEnv        = xerrors.New("は env を持つデプロイブランチです。初期化では作れないので、初期のデフォルトブランチにできません")
+	errDryRun            = xerrors.New("❌ setup-repo は DRY_RUN 未対応です（ローカル/リモートを破壊的に変更します）。DRY_RUN を外して実行してください。")
 	errTargetOverridden  = xerrors.New("が環境にあると、gh と make の宛先が origin に固定されません。外してから実行してください（例: env -u GH_REPO -u REPO_SETTINGS_REPO -u GITHUB_REPOSITORY make setup-repo）")
 )
 
@@ -247,6 +248,11 @@ var targetOverrides = []string{"GH_REPO", "REPO_SETTINGS_REPO", "GITHUB_REPOSITO
 
 func runPreflight(getenv func(string) string) error {
 	log.Printf("🔧 設定を確認中...")
+
+	// make の DRY_RUN は、コマンドラインで与えてもレシピの環境に入る。
+	if getenv("DRY_RUN") != "" {
+		return errDryRun
+	}
 
 	for _, key := range targetOverrides {
 		if getenv(key) != "" {

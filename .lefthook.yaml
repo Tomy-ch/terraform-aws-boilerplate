@@ -96,6 +96,7 @@ pre-commit:
     node-tools-lock-check:
       glob:
         - "docker/tools/node/*"
+        - "scripts/node-tools/*.go"
       run: make node-tools-lock-check
 
     # uses: / image: が lockfile 通りか。orphan を落とすのは pin-actions-check だけである。

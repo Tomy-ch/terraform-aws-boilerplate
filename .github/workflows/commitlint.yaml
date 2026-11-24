@@ -87,8 +87,9 @@ jobs:
       - name: Setup mise and required tools
         uses: ./.github/actions/setup-mise
         with:
-          # node は lockfile から入れた commitlint を動かす（ADR-0503 決定17）。
-          tools: node aqua:pnpm/pnpm
+          # node は lockfile から入れた commitlint を動かし、go はそれを起動する前置きの
+          # scripts/node-tools をビルドする（ADR-0503 決定17）。
+          tools: go node aqua:pnpm/pnpm
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run commitlint on the PR commit range

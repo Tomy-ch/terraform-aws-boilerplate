@@ -582,8 +582,7 @@
         "role": "module.organization_baseline.module.break_glass.aws_iam_role.this",
         "role_attachments": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachments_exclusive.this",
         "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access",
-        "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
-        "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
+        "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this"
       }
     },
     "ops_notification": {

@@ -350,6 +350,33 @@ test_violation_member_instances_without_stack_set_name if {
 	fixture.has("[PLAN-BG-05] メンバーの break-glass の stack instance が、break-glass の StackSet を名指していません", member_messages(member_rcs_with(valid_stack_set, inst)))
 }
 
+undeclared_instances := {"organization": decl.organization, "break_glass": object.remove(decl.break_glass, ["stack_instances"])}
+
+undeclared_message := "[PLAN-BG-00] break-glass の stack instance の宣言が無いのに"
+
+test_pass_undeclared_stack_instances_absent if {
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": undeclared_instances}
+	count(msgs) == 0
+}
+
+test_violation_empty_stack_instances_declaration if {
+	empty := {"organization": decl.organization, "break_glass": object.union(decl.break_glass, {"stack_instances": ""})}
+	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
+	msgs := p.deny with input as fixture.plan(rcs) with data.policy_plan as {"organization_baseline": empty}
+	fixture.has("[PLAN-BG-00] 宣言した break-glass の  が入力にありません", msgs)
+}
+
+test_no_undeclared_message_without_break_glass_declaration if {
+	msgs := p.deny with input as fixture.plan(member_rcs(valid_stack_set)) with data.policy_plan as {"organization_baseline": {"organization": decl.organization}}
+	count([m | some m in msgs; startswith(m, undeclared_message)]) == 0
+}
+
+test_violation_undeclared_stack_instances_present if {
+	msgs := p.deny with input as fixture.plan(member_rcs(valid_stack_set)) with data.policy_plan as {"organization_baseline": undeclared_instances}
+	fixture.has("[PLAN-BG-00] break-glass の stack instance の宣言が無いのに、module.b.aws_cloudformation_stack_instances.this が入力にあります", msgs)
+}
+
 test_violation_declared_stack_instances_missing if {
 	rcs := [x | some x in member_rcs(valid_stack_set); x.type != "aws_cloudformation_stack_instances"]
 	fixture.has("[PLAN-BG-00] 宣言した break-glass の module.b.aws_cloudformation_stack_instances.this", member_messages(rcs))

@@ -7,7 +7,8 @@
 [files]
 # 既定は隠しディレクトリを飛ばす。.github/ と .makefiles/ が対象から落ちる。
 ignore-hidden = false
-# 生成物のハッシュ列。
+# 生成物のハッシュ列。scripts/typos-gate の expectedExcludes と同じ集合に保つ —— 走査の範囲を独立に突き合わせる
+# ための意図した二重の宣言で（ADR-0702 決定15）、片方だけを変えると make typos が落ちる。
 extend-exclude = [".git/", "**/.terraform.lock.hcl", "scripts/go.sum"]
 
 [default.extend-words]
