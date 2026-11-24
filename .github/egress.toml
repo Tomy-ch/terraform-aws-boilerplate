@@ -50,6 +50,17 @@ hosts = [
   "awscli.amazonaws.com",
 ]
 
+[class.go]
+# setup-mise の `tools: go` で Go だけを入れ、scripts/ の道具を go build する job。mise の他の backend は引かない。
+hosts = [
+  # mise が go の版の一覧を引く先。
+  "mise-versions.jdx.dev",
+  # mise の core の go が toolchain の配布物と checksum を取る先（go_download_mirror の既定）。
+  "dl.google.com",
+  # go build が module を取る先。go.sum が全件を持つので sum.golang.org は引かない。
+  "proxy.golang.org",
+]
+
 [class.terraform]
 includes = ["mise"]
 hosts = [
@@ -398,20 +409,20 @@ classes = ["trivy"]
 classes = []
 
 [job."checkov.yaml:checkov"]
-classes = ["docker-hub"]
+classes = ["go", "docker-hub"]
 
 [job."kics.yaml:changes"]
 classes = []
 
 [job."kics.yaml:kics"]
-classes = ["docker-hub"]
+classes = ["go", "docker-hub"]
 
 [job."semgrep.yaml:changes"]
 classes = []
 
 # rule は codeload.github.com（base）から commit を固定して取る。走査そのものは network を持たない。
 [job."semgrep.yaml:semgrep"]
-classes = ["docker-hub"]
+classes = ["go", "docker-hub"]
 
 [job."trivy-fs.yaml:trivy-fs"]
 classes = ["trivy"]
