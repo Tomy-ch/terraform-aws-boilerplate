@@ -164,22 +164,38 @@ func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error
 	return nil
 }
 
-// runPlan は、-base の下の reference の root で planRoots を走らせます。root はリポジトリ直下です。
-func runPlan(args []string, w io.Writer, tool toolFunc, root string) error {
+// canaryFunc は、本走査の前に走らせる canary です。テストは差し替えます。
+type canaryFunc func(args []string, w io.Writer, tool toolFunc) error
+
+// runPlan は、canary を走らせてから、-base の下の reference の root で planRoots を走らせます。root はリポジトリ直下です。
+func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan", flag.ContinueOnError)
 	fset.SetOutput(w)
 	base := fset.String("base", "", "走査の基点（TF_BASE）")
 	data := fset.String("data", "", "ディレクトリごとの TF_DATA_DIR を置くディレクトリ（tf-init と同じ。絶対パス）")
 	out := fset.String("out", "", "出力の置き場（毎回作り直す）")
+	canaryData := fset.String("canary-data", "", "canary の TF_DATA_DIR を置くディレクトリ（絶対パス）")
+	canaryWork := fset.String("canary-work", "", "canary の fixture を建てるディレクトリ")
+	policy := fset.String("policy", "", "Policy の木（conftest/plan）")
+	planDecl := fset.String("decl", "", "Policy の宣言（conftest/plan/decl.json）")
+	layerDecl := fset.String("layer", "", "層の宣言（conftest/hcl/layer/decl.json）")
+	reference := fset.String("reference", "", "canary の aws の fixture に写す versions.tf と lock の root")
 	if err := fset.Parse(args); err != nil {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
-	if *base == "" || *out == "" || !filepath.IsAbs(*data) || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <tmp/ の下の相対パス>")
+	if *base == "" || *out == "" || !filepath.IsAbs(*data) || fset.NArg() > 0 ||
+		*canaryData == "" || *canaryWork == "" || *policy == "" || *planDecl == "" || *layerDecl == "" || *reference == "" {
+		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <tmp/ の下の相対パス> -canary-data <絶対パス> -canary-work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
 	}
 	outDir, err := workdir.Resolve(root, *out)
 	if err != nil {
 		return xerrors.Wrapf(errUsage, "-out %v", err)
+	}
+	if _, err := workdir.Resolve(root, *canaryWork); err != nil {
+		return xerrors.Wrapf(errUsage, "-canary-work %v", err)
+	}
+	if err := canary([]string{"-data", *canaryData, "-work", *canaryWork, "-policy", *policy, "-decl", *planDecl, "-layer", *layerDecl, "-reference", *reference}, w, tool); err != nil {
+		return xerrors.Wrap(err, "canary が落ちたので、本走査を行いません")
 	}
 	roots, err := listRoots(*base)
 	if err != nil {

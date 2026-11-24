@@ -5,9 +5,10 @@
 //
 //	tf-policy rego-check -policy <dir>
 //	tf-policy verify-result -policy <dir> -report <conftest verify -o json の出力>
-//	tf-policy plan -base <dir> -data <dir> -out <tmp/ の下の相対パス>
+//	tf-policy plan -base <dir> -data <dir> -out <tmp/ の下の相対パス> -canary-data <dir> -canary-work <tmp/ の下の相対パス> -policy <dir> -decl <decl.json> -layer <decl.json> -reference <dir>
 //	tf-policy extract -out <dir> -decl <decl.json>
-//	tf-policy canary -data <dir> -work <tmp/ の下の相対パス> -policy <dir> -decl <decl.json> -layer <decl.json> -reference <dir>
+//
+// plan は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
 // conftest verify はテストが0件でも、conftest test は入力が0件でも失敗しません。件数はここで独立に数えます
 // （ADR-0702 決定13・15）。落ちた検査は終了コード 1、入力を読めない・対象が0件は 2 です。
@@ -44,11 +45,9 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "verify-result":
 		return runVerifyResult(rest, w)
 	case "plan":
-		return runPlan(rest, w, tool, ".")
+		return runPlan(rest, w, tool, func(a []string, w io.Writer, t toolFunc) error { return runCanary(a, w, t, ".") }, ".")
 	case "extract":
 		return runExtract(rest, w)
-	case "canary":
-		return runCanary(rest, w, tool, ".")
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}

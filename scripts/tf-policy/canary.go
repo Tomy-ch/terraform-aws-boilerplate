@@ -57,7 +57,7 @@ type canaryCase struct {
 // 入力で通り、Go の単体テストでは作れない落ち方（実物の Conftest が評価しない規則、mock の override が書いた
 // 値を隠さないこと。ADR-0402 決定18）で落ちることを確かめます。root はリポジトリ直下です。
 func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
-	fset := flag.NewFlagSet("tf-policy canary", flag.ContinueOnError)
+	fset := flag.NewFlagSet("tf-policy plan の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
 	work := fset.String("work", "", "fixture を建てるディレクトリ（中身は毎回作り直す）")
@@ -69,7 +69,7 @@ func runCanary(args []string, w io.Writer, tool toolFunc, root string) error {
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if !filepath.IsAbs(*data) || *work == "" || *policy == "" || *planDecl == "" || *layerDecl == "" || *reference == "" || fset.NArg() > 0 {
-		return xerrors.Wrap(errUsage, "tf-policy canary -data <絶対パス> -work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+		return xerrors.Wrap(errUsage, "canary -data <絶対パス> -work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
 	}
 	resolved, err := workdir.Resolve(root, *work)
 	if err != nil {

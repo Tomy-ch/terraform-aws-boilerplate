@@ -30,7 +30,7 @@ const (
 // 宣言に当たる警告と非推奨の無い構成で通ることを確かめます（ADR-0501 決定13）。Provider の版は -reference の
 // lock に揃えます。抑止の宣言の detail は、canary の出力から取ります（版で文言が変わるため）。root はリポジトリ直下です。
 func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) error {
-	fset := flag.NewFlagSet("tf-gates validate-canary", flag.ContinueOnError)
+	fset := flag.NewFlagSet("tf-gates validate の canary", flag.ContinueOnError)
 	fset.SetOutput(w)
 	data := fset.String("data", "", "TF_DATA_DIR を置くディレクトリ（絶対パス）")
 	work := fset.String("work", "", "fixture を建てるディレクトリ（中身は毎回作り直す）")
@@ -39,7 +39,7 @@ func runValidateCanary(args []string, w io.Writer, tool toolFunc, root string) e
 		return xerrors.Wrapf(errUsage, "%v", err)
 	}
 	if *data == "" || *work == "" || *reference == "" || fset.NArg() > 0 || !filepath.IsAbs(*data) {
-		return xerrors.Wrap(errUsage, "tf-gates validate-canary -data <絶対パス> -work <tmp/ の下の相対パス> -reference <dir>")
+		return xerrors.Wrap(errUsage, "canary -data <絶対パス> -work <tmp/ の下の相対パス> -reference <dir>")
 	}
 	workDir, err := workdir.Resolve(root, *work)
 	if err != nil {

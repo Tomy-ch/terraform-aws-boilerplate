@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 const planOK = `{"@level":"info","type":"test_plan","test_plan":{"format_version":"1.2","provider_format_version":"1.0","provider_schemas":{"x":{}},"resource_changes":[]}}` + "\n"
@@ -122,6 +125,18 @@ func Test_planRoots(t *testing.T) {
 	})
 }
 
+// canaryFlags は、plan の canary の引数です。
+var canaryFlags = []string{"-canary-data", "/cd", "-canary-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
+
+// passCanary は、引数を記録して成功する canary です。
+func passCanary(got *[]string) canaryFunc {
+	return func(args []string, _ io.Writer, _ toolFunc) error {
+		*got = args
+
+		return nil
+	}
+}
+
 func Test_runPlan(t *testing.T) {
 	t.Parallel()
 
@@ -129,55 +144,106 @@ func Test_runPlan(t *testing.T) {
 		t.Helper()
 		return tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": "", "usecases/a/reference/plan.out": planOK})
 	}
+	planArgs := func(base, out string) []string {
+		return append([]string{"-base", base, "-data", "/d", "-out", out}, canaryFlags...)
+	}
 
-	t.Run("reference の root で plan を起動する", func(t *testing.T) {
+	t.Run("canary を本走査の前に走らせ、reference の root で plan を起動する", func(t *testing.T) {
 		t.Parallel()
 		root := tree(t, nil)
 		tool, calls := fakeTool(t)
-		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, root))
+		var canaryArgs []string
+		require.NoError(t, runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
+		assert.Equal(t, []string{"-data", "/cd", "-work", "tmp/cw", "-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}, canaryArgs, "-canary-work は検証した元の値のまま渡す")
 		assert.Len(t, calls(), 1)
 		assert.Equal(t, filepath.Join(root, "tmp", "run", "runs", "a.jsonl")+"\n", readText(t, filepath.Join(root, "tmp", "run", "plans.txt")))
+	})
+
+	t.Run("canary が落ちれば本走査を行わずに失敗する", func(t *testing.T) {
+		t.Parallel()
+		base := tree(t, map[string]string{"usecases/a/reference/tests/policy-input.tftest.hcl": ""})
+		tool, calls := fakeTool(t)
+		fail := func([]string, io.Writer, toolFunc) error { return xerrors.Wrap(errCanary, "x") }
+		err := runPlan(planArgs(base, "tmp/run"), &bytes.Buffer{}, tool, fail, tree(t, nil))
+		require.ErrorIs(t, err, errCanary)
+		assert.Contains(t, err.Error(), "canary が落ちたので、本走査を行いません")
+		assert.Empty(t, calls())
 	})
 
 	t.Run("root が0件なら起動せずに errNoInput", func(t *testing.T) {
 		t.Parallel()
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", tree(t, map[string]string{"x": ""}), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, tree(t, nil)), errNoInput)
+		var canaryArgs []string
+		require.ErrorIs(t, runPlan(planArgs(tree(t, map[string]string{"x": ""}), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errNoInput)
 		assert.Empty(t, calls())
 	})
 
-	t.Run("引数の誤りは errUsage", func(t *testing.T) {
+	t.Run("引数の誤りは、canary も本走査も起動せずに errUsage", func(t *testing.T) {
 		t.Parallel()
-		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "rel", "-out", "tmp/o"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
-		require.ErrorIs(t, runPlan([]string{"-data", "/d", "-out", "tmp/o"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
+		tool, calls := fakeTool(t)
+		var canaryArgs []string
+		require.ErrorIs(t, runPlan(append([]string{"-base", ".", "-data", "rel", "-out", "tmp/o"}, canaryFlags...), &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errUsage)
+		require.ErrorIs(t, runPlan([]string{"-base", ".", "-data", "/d", "-out", "tmp/o"}, &bytes.Buffer{}, tool, passCanary(&canaryArgs), tree(t, nil)), errUsage)
+		assert.Nil(t, canaryArgs)
+		assert.Empty(t, calls())
 	})
 
-	t.Run("-out が tmp/ の下の相対パスでなければ、何も消さず道具も起動せずに、-out を名指す errUsage で終了コードは 2", func(t *testing.T) {
+	// bad は、-out か -canary-work の一方だけを誤った値にした引数で runPlan を呼び、canary も道具も起動せず、world が
+	// 前後で変わらないことを確かめる。
+	bad := func(t *testing.T, flag, value string, mk func(root, outside string) []string) {
+		t.Helper()
+		world, root, outside := workWorld(t)
+		switch value {
+		case "<root>/keep":
+			value = filepath.Join(root, "keep")
+		case "<outside>":
+			value = outside
+		}
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		var canaryArgs []string
+		args := mk(root, outside)
+		for i := range args {
+			if args[i] == "<bad>" {
+				args[i] = value
+			}
+		}
+		err := runPlan(args, &bytes.Buffer{}, tool, passCanary(&canaryArgs), root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Equal(t, 2, exitCode(err))
+		if value != "" {
+			assert.Contains(t, err.Error(), fmt.Sprintf("%s %q", flag, value))
+		}
+		assert.Nil(t, canaryArgs, "canary を起動しない")
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+	}
+	badValues := []string{
+		"", ".", "tmp", "tmp/", "tmp/.", "<root>/keep", "<outside>", "keep", "tmp/../keep", "../x", "TMP/x",
+		"tmp/out", "tmp/out/w", "tmp/self",
+	}
+
+	t.Run("-out だけが tmp/ の下の相対パスでなければ、canary も道具も起動せず何も消さずに、-out を名指す errUsage で終了コードは 2", func(t *testing.T) {
 		t.Parallel()
-		for _, out := range []string{
-			"", ".", "tmp", "tmp/", "tmp/.", "<root>/keep", "<outside>", "keep", "tmp/../keep", "../x", "TMP/x",
-			"tmp/out", "tmp/out/w", "tmp/self",
-		} {
-			t.Run(out, func(t *testing.T) {
+		for _, v := range badValues {
+			t.Run(v, func(t *testing.T) {
 				t.Parallel()
-				world, root, outside := workWorld(t)
-				switch out {
-				case "<root>/keep":
-					out = filepath.Join(root, "keep")
-				case "<outside>":
-					out = outside
-				}
-				before := snapshot(t, world)
-				tool, calls := fakeTool(t)
-				err := runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", out}, &bytes.Buffer{}, tool, root)
-				require.ErrorIs(t, err, errUsage)
-				assert.Equal(t, 2, exitCode(err))
-				if out != "" {
-					assert.Contains(t, err.Error(), fmt.Sprintf("-out %q", out))
-				}
-				assert.Empty(t, calls())
-				assert.Equal(t, before, snapshot(t, world))
+				bad(t, "-out", v, func(string, string) []string {
+					return append([]string{"-base", planBase(t), "-data", "/d", "-out", "<bad>"}, canaryFlags...)
+				})
+			})
+		}
+	})
+
+	t.Run("-canary-work だけが tmp/ の下の相対パスでなければ、canary も道具も起動せず何も消さずに、-canary-work を名指す errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, v := range badValues {
+			t.Run(v, func(t *testing.T) {
+				t.Parallel()
+				bad(t, "-canary-work", v, func(string, string) []string {
+					return []string{"-base", planBase(t), "-data", "/d", "-out", "tmp/c/work", "-canary-data", "/cd", "-canary-work", "<bad>",
+						"-policy", "p", "-decl", "d.json", "-layer", "l.json", "-reference", "r"}
+				})
 			})
 		}
 	})
@@ -187,13 +253,15 @@ func Test_runPlan(t *testing.T) {
 		world, root, _ := workWorld(t)
 		before := snapshot(t, world)
 		tool, calls := fakeTool(t)
-		err := runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/c/work", "-out", "../x"}, &bytes.Buffer{}, tool, root)
+		var canaryArgs []string
+		err := runPlan(append(planArgs(planBase(t), "tmp/c/work"), "-out", "../x"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root)
 		require.ErrorIs(t, err, errUsage)
 		assert.Contains(t, err.Error(), `-out "../x"`)
+		assert.Nil(t, canaryArgs)
 		assert.Empty(t, calls())
 		assert.Equal(t, before, snapshot(t, world))
 
-		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "../x", "-out", "tmp/c/work"}, &bytes.Buffer{}, tool, root))
+		require.NoError(t, runPlan(append(planArgs(planBase(t), "../x"), "-out", "tmp/c/work"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
 		assert.FileExists(t, filepath.Join(root, "tmp", "c", "work", "plans.txt"))
 	})
 
@@ -205,7 +273,8 @@ func Test_runPlan(t *testing.T) {
 				world, root, _ := workWorld(t)
 				before := snapshot(t, world)
 				tool, _ := fakeTool(t)
-				require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", out}, &bytes.Buffer{}, tool, root))
+				var canaryArgs []string
+				require.NoError(t, runPlan(planArgs(planBase(t), out), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
 				after := snapshot(t, world)
 				for rel, sum := range before {
 					if !strings.HasPrefix(rel, filepath.Join("root", "tmp", "c", "work")) {
@@ -222,7 +291,8 @@ func Test_runPlan(t *testing.T) {
 		t.Parallel()
 		root := tree(t, map[string]string{"keep/f": "keep"})
 		tool, _ := fakeTool(t)
-		require.NoError(t, runPlan([]string{"-base", planBase(t), "-data", "/d", "-out", "tmp/run"}, &bytes.Buffer{}, tool, root))
+		var canaryArgs []string
+		require.NoError(t, runPlan(planArgs(planBase(t), "tmp/run"), &bytes.Buffer{}, tool, passCanary(&canaryArgs), root))
 		assert.FileExists(t, filepath.Join(root, "tmp", "run", "plans.txt"))
 		assert.FileExists(t, filepath.Join(root, "keep", "f"))
 	})

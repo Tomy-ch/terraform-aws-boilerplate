@@ -15,7 +15,7 @@ TRIVY_SKIP_FLAGS := --skip-version-check
 TRIVY_VULN_FLAGS := --scanners vuln --pkg-types library --severity CRITICAL,HIGH,MEDIUM
 
 # trivy-config のゲートの条件。trivy-config-canary も同じ条件で走る。
-# tmp/ は gitignore された作業領域で、tf-validate-canary の fixture が置かれる。commit されない構成の
+# tmp/ は gitignore された作業領域で、tf-validate と tf-policy の canary の fixture が置かれる。commit されない構成の
 # 誤設定で手元のゲートを落とさない。canary は fixture を走査の起点として渡すので、これに掛からない。
 TRIVY_CONFIG_FLAGS := --severity CRITICAL,HIGH,MEDIUM --ignorefile .trivyignore.yaml --exit-code 1 $(TRIVY_SKIP_FLAGS) --skip-dirs tmp
 
