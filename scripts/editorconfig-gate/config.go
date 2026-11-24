@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -16,14 +17,14 @@ func runConfig(config string, w io.Writer, tool toolFunc, env []string) error {
 	if _, err := readCheckerConfig(config); err != nil {
 		return err
 	}
-	r, err := runTool(tool(".", env, stepDryRun))
+	r, err := toolrun.Run(tool(".", env, stepDryRun))
 	if err != nil {
 		return err
 	}
-	if r.code != 0 {
-		return xerrors.Wrapf(errTool, "editorconfig-checker -dry-run が rc=%d で終わりました\n%s", r.code, r.combined)
+	if r.Code != 0 {
+		return xerrors.Wrapf(errTool, "editorconfig-checker -dry-run が rc=%d で終わりました\n%s", r.Code, r.Combined)
 	}
-	n := countFiles(r.stdout)
+	n := countFiles(r.Stdout)
 	if n == 0 {
 		return xerrors.Wrap(errNoInput, "editorconfig-checker -dry-run の走査対象のファイルが0件です")
 	}

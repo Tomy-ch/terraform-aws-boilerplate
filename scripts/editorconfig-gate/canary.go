@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // marker は、範囲を開く無効化の印です。
 const marker = "editorconfig-" + "checker-" + "disable"
+
+const canaryFile = "canary.yaml"
 
 // tabYAML は、tab で字下げした YAML です。.editorconfig は YAML に space を宣言します。
 const tabYAML = "a:\n\tb: c\n"
@@ -22,10 +25,9 @@ const (
 	checkerConfigName = ".editorconfig-checker.json"
 )
 
-// canarySpec は、canary の fixture に置くファイルと判定です。
 type canarySpec struct {
 	files map[string]string
-	judge func(r result) (bool, string)
+	judge func(r toolrun.Result) (bool, string)
 	ok    string
 }
 
@@ -36,7 +38,7 @@ type fixturePaths struct {
 
 func runCheckCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
 	return runCanary("check-canary", canarySpec{
-		files: map[string]string{"canary.yaml": tabYAML},
+		files: map[string]string{canaryFile: tabYAML},
 		judge: judgeCheck,
 		ok:    "tab で字下げした YAML で落ちました",
 	}, p, w, tool, env)
@@ -44,7 +46,7 @@ func runCheckCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) er
 
 func runDirectiveCanary(p fixturePaths, w io.Writer, tool toolFunc, env []string) error {
 	return runCanary("directive-canary", canarySpec{
-		files: map[string]string{"canary.yaml": "# " + marker + "\n" + tabYAML, "control.yaml": tabYAML},
+		files: map[string]string{canaryFile: "# " + marker + "\n" + tabYAML, "control.yaml": tabYAML},
 		judge: judgeDirective,
 		ok:    "閉じない印の後ろは検査されませんでした（editorconfig-directive-lint の前提どおり）",
 	}, p, w, tool, env)
@@ -61,7 +63,7 @@ func runCanary(name string, spec canarySpec, p fixturePaths, w io.Writer, tool t
 		return err
 	}
 	if ok, reason := spec.judge(r); !ok {
-		fmt.Fprintf(w, "--- editorconfig-checker（rc=%d）:\n%s\n", r.code, r.combined)
+		fmt.Fprintf(w, "--- editorconfig-checker（rc=%d）:\n%s\n", r.Code, r.Combined)
 
 		return xerrors.Wrap(errCanary, reason)
 	}
@@ -104,46 +106,46 @@ func buildFixture(work, editorconfig, checkerConfig string, files map[string]str
 }
 
 // runInFixture は、work にリポジトリを建ててファイルを追跡させ、引数なしの editorconfig-checker を走らせます。
-func runInFixture(work string, env []string, tool toolFunc) (result, error) {
+func runInFixture(work string, env []string, tool toolFunc) (toolrun.Result, error) {
 	for _, step := range []string{stepGitInit, stepGitAdd} {
-		r, err := runTool(tool(work, env, step))
+		r, err := toolrun.Run(tool(work, env, step))
 		if err != nil {
 			return r, err
 		}
-		if r.code != 0 {
-			return r, xerrors.Wrapf(errTool, "fixture の %s が rc=%d で終わりました\n%s", step, r.code, r.combined)
+		if r.Code != 0 {
+			return r, xerrors.Wrapf(errTool, "fixture の %s が rc=%d で終わりました\n%s", step, r.Code, r.Combined)
 		}
 	}
 
-	return runTool(tool(work, env, stepCheck))
+	return toolrun.Run(tool(work, env, stepCheck))
 }
 
 // judgeCheck は、0 以外で終わり、出力が canary.yaml の後に字下げの違反を名指していれば成り立ちます。
-func judgeCheck(r result) (bool, string) {
-	out := stripANSI(r.combined)
+func judgeCheck(r toolrun.Result) (bool, string) {
+	out := stripANSI(r.Combined)
 	switch {
-	case r.code == 0:
+	case r.Code == 0:
 		return false, "tab で字下げした YAML で落ちませんでした"
-	case containsInOrder(out, "canary.yaml", "wrong indent"):
+	case containsInOrder(out, canaryFile, "wrong indent"):
 		return true, ""
 	default:
-		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.code)
+		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.Code)
 	}
 }
 
 // judgeDirective は、0 以外で終わり、出力が印の無い対照（control.yaml）だけを名指していれば成り立ちます。
 // 印を置いた canary.yaml の違反が出れば、閉じない印の後ろも検査されています。
-func judgeDirective(r result) (bool, string) {
-	out := stripANSI(r.combined)
+func judgeDirective(r toolrun.Result) (bool, string) {
+	out := stripANSI(r.Combined)
 	switch {
-	case r.code == 0:
+	case r.Code == 0:
 		return false, "印の無い対照の違反でも落ちませんでした。走査が働いていません"
-	case strings.Contains(out, "canary.yaml"):
+	case strings.Contains(out, canaryFile):
 		return false, "閉じない印の後ろの違反を検査しました。editorconfig-directive-lint の分類を見直す"
 	case strings.Contains(out, "control.yaml"):
 		return true, ""
 	default:
-		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.code)
+		return false, fmt.Sprintf("想定外の失敗です (rc=%d)", r.Code)
 	}
 }
 

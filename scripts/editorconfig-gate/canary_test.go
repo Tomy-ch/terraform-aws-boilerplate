@@ -9,6 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const (
@@ -37,22 +40,22 @@ func Test_runCheckCanary(t *testing.T) {
 	t.Run("fixture のリポジトリで違反を名指して落ちれば通り、隔離した env を渡し、fixture を消す", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.set(stepCheck, "out", checkHit)
-		f.set(stepCheck, "rc", "1")
-		f.set(stepCheck, "ls", "")
-		f.set(stepCheck, "copy", "")
+		f.Set(stepCheck, "out", checkHit)
+		f.Set(stepCheck, "rc", "1")
+		f.Set(stepCheck, "ls", "")
+		f.Set(stepCheck, "copy", "")
 		p := canaryPaths(t)
 		work := p.work
 		var out bytes.Buffer
-		require.NoError(t, runCheckCanary(p, &out, f.tool(), isolatedEnv))
-		assert.Contains(t, f.read("copied-canary.yaml"), "\n\t", "canary.yaml は tab で字下げする")
+		require.NoError(t, runCheckCanary(p, &out, f.Tool(), isolatedEnv))
+		assert.Contains(t, f.Read("copied-canary.yaml"), "\n\t", "canary.yaml は tab で字下げする")
 		assert.Contains(t, out.String(), "✅ editorconfig check-canary")
 		assert.Equal(t, []string{
 			work + " " + stepGitInit + " /isolated",
 			work + " " + stepGitAdd + " /isolated",
 			work + " " + stepCheck + " /isolated",
-		}, f.calls())
-		assert.Equal(t, ".editorconfig\n.editorconfig-checker.json\ncanary.yaml\n", f.read(stepCheck+".ls"))
+		}, f.Calls())
+		assert.Equal(t, ".editorconfig\n.editorconfig-checker.json\ncanary.yaml\n", f.Read(stepCheck+".ls"))
 		assert.NoDirExists(t, work)
 	})
 
@@ -66,10 +69,10 @@ func Test_runCheckCanary(t *testing.T) {
 		t.Run(name+"なら errCanary で、成功を出さない", func(t *testing.T) {
 			t.Parallel()
 			f := newFake(t)
-			f.set(stepCheck, "out", c.out)
-			f.set(stepCheck, "rc", c.rc)
+			f.Set(stepCheck, "out", c.out)
+			f.Set(stepCheck, "rc", c.rc)
 			var out bytes.Buffer
-			err := runCheckCanary(canaryPaths(t), &out, f.tool(), isolatedEnv)
+			err := runCheckCanary(canaryPaths(t), &out, f.Tool(), isolatedEnv)
 			require.ErrorIs(t, err, errCanary)
 			assert.Contains(t, err.Error(), c.want)
 			assert.NotContains(t, out.String(), "✅")
@@ -78,7 +81,7 @@ func Test_runCheckCanary(t *testing.T) {
 
 	t.Run("道具を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, runCheckCanary(canaryPaths(t), &bytes.Buffer{}, missingTool, isolatedEnv), errTool)
+		require.ErrorIs(t, runCheckCanary(canaryPaths(t), &bytes.Buffer{}, tooltest.Missing, isolatedEnv), errTool)
 	})
 }
 
@@ -88,20 +91,20 @@ func Test_runDirectiveCanary(t *testing.T) {
 	t.Run("対照だけを名指して落ちれば通り、印つきと対照のファイルを置く", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.set(stepCheck, "out", controlHit)
-		f.set(stepCheck, "rc", "1")
-		f.set(stepCheck, "ls", "")
-		f.set(stepCheck, "copy", "")
+		f.Set(stepCheck, "out", controlHit)
+		f.Set(stepCheck, "rc", "1")
+		f.Set(stepCheck, "ls", "")
+		f.Set(stepCheck, "copy", "")
 		p := canaryPaths(t)
 		work := p.work
 		var out bytes.Buffer
-		require.NoError(t, runDirectiveCanary(p, &out, f.tool(), isolatedEnv))
+		require.NoError(t, runDirectiveCanary(p, &out, f.Tool(), isolatedEnv))
 		assert.Contains(t, out.String(), "✅ editorconfig directive-canary")
-		assert.Equal(t, ".editorconfig\n.editorconfig-checker.json\ncanary.yaml\ncontrol.yaml\n", f.read(stepCheck+".ls"))
-		first, rest, ok := strings.Cut(f.read("copied-canary.yaml"), "\n")
+		assert.Equal(t, ".editorconfig\n.editorconfig-checker.json\ncanary.yaml\ncontrol.yaml\n", f.Read(stepCheck+".ls"))
+		first, rest, ok := strings.Cut(f.Read("copied-canary.yaml"), "\n")
 		require.True(t, ok)
 		assert.Equal(t, "# "+marker, first, "canary.yaml の1行目は印")
-		control := f.read("copied-control.yaml")
+		control := f.Read("copied-control.yaml")
 		assert.NotContains(t, control, marker, "対照は印を持たない")
 		assert.Equal(t, control, rest, "印の行を除けば対照と同じ")
 		assert.Contains(t, control, "\t")
@@ -116,10 +119,10 @@ func Test_runDirectiveCanary(t *testing.T) {
 		t.Run(name+"なら errCanary で、成功を出さない", func(t *testing.T) {
 			t.Parallel()
 			f := newFake(t)
-			f.set(stepCheck, "out", c.out)
-			f.set(stepCheck, "rc", c.rc)
+			f.Set(stepCheck, "out", c.out)
+			f.Set(stepCheck, "rc", c.rc)
 			var out bytes.Buffer
-			err := runDirectiveCanary(canaryPaths(t), &out, f.tool(), isolatedEnv)
+			err := runDirectiveCanary(canaryPaths(t), &out, f.Tool(), isolatedEnv)
 			require.ErrorIs(t, err, errCanary)
 			assert.Contains(t, err.Error(), c.want)
 			assert.NotContains(t, out.String(), "✅")
@@ -130,15 +133,15 @@ func Test_runDirectiveCanary(t *testing.T) {
 func Test_runCanary(t *testing.T) {
 	t.Parallel()
 
-	spec := canarySpec{files: map[string]string{"x.yaml": tabYAML}, judge: func(result) (bool, string) { return true, "" }, ok: "ok"}
+	spec := canarySpec{files: map[string]string{"x.yaml": tabYAML}, judge: func(toolrun.Result) (bool, string) { return true, "" }, ok: "ok"}
 
 	for _, step := range []string{stepGitInit, stepGitAdd} {
 		t.Run(step+" が rc≠0 なら editorconfig-checker を起動せずに errTool", func(t *testing.T) {
 			t.Parallel()
 			f := newFake(t)
-			f.set(step, "rc", "128")
-			require.ErrorIs(t, runCanary("x", spec, canaryPaths(t), &bytes.Buffer{}, f.tool(), isolatedEnv), errTool)
-			for _, c := range f.calls() {
+			f.Set(step, "rc", "128")
+			require.ErrorIs(t, runCanary("x", spec, canaryPaths(t), &bytes.Buffer{}, f.Tool(), isolatedEnv), errTool)
+			for _, c := range f.Calls() {
 				assert.NotContains(t, c, " "+stepCheck+" ")
 			}
 		})
@@ -147,12 +150,12 @@ func Test_runCanary(t *testing.T) {
 	t.Run("不成立なら、道具の stdout・stderr と rc の見出しを出す", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.set(stepCheck, "out", "CHECK-STDOUT\n")
-		f.set(stepCheck, "err", "STDERR-ONLY\n")
-		f.set(stepCheck, "rc", "3")
-		failing := canarySpec{files: spec.files, judge: func(result) (bool, string) { return false, "x" }}
+		f.Set(stepCheck, "out", "CHECK-STDOUT\n")
+		f.Set(stepCheck, "err", "STDERR-ONLY\n")
+		f.Set(stepCheck, "rc", "3")
+		failing := canarySpec{files: spec.files, judge: func(toolrun.Result) (bool, string) { return false, "x" }}
 		var out bytes.Buffer
-		require.ErrorIs(t, runCanary("x", failing, canaryPaths(t), &out, f.tool(), isolatedEnv), errCanary)
+		require.ErrorIs(t, runCanary("x", failing, canaryPaths(t), &out, f.Tool(), isolatedEnv), errCanary)
 		assert.Contains(t, out.String(), "--- editorconfig-checker（rc=3）:")
 		assert.Contains(t, out.String(), "CHECK-STDOUT")
 		assert.Contains(t, out.String(), "STDERR-ONLY")
@@ -161,8 +164,8 @@ func Test_runCanary(t *testing.T) {
 	t.Run("editorconfig-checker がシグナルで終われば errTool", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.set(stepCheck, "kill", "")
-		require.ErrorIs(t, runCanary("x", spec, canaryPaths(t), &bytes.Buffer{}, f.tool(), isolatedEnv), errTool)
+		f.Set(stepCheck, "kill", "")
+		require.ErrorIs(t, runCanary("x", spec, canaryPaths(t), &bytes.Buffer{}, f.Tool(), isolatedEnv), errTool)
 	})
 
 	t.Run("設定を複写できなければ道具を起動しない", func(t *testing.T) {
@@ -170,8 +173,8 @@ func Test_runCanary(t *testing.T) {
 		f := newFake(t)
 		p := canaryPaths(t)
 		require.NoError(t, os.WriteFile(p.checkerConfig, []byte(`{"Exclude":["x"]}`), 0o600))
-		require.ErrorIs(t, runCanary("x", spec, p, &bytes.Buffer{}, f.tool(), isolatedEnv), errScope)
-		assert.Empty(t, f.calls())
+		require.ErrorIs(t, runCanary("x", spec, p, &bytes.Buffer{}, f.Tool(), isolatedEnv), errScope)
+		assert.Empty(t, f.Calls())
 	})
 }
 
@@ -222,18 +225,18 @@ func Test_runInFixture(t *testing.T) {
 	t.Run("init・add・本走査の順に、同じ env で起動する", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
-		f.set(stepCheck, "out", "x")
+		f.Set(stepCheck, "out", "x")
 		dir, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
-		r, err := runInFixture(dir, []string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/i"}, f.tool())
+		r, err := runInFixture(dir, []string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/i"}, f.Tool())
 		require.NoError(t, err)
-		assert.Equal(t, "x", r.combined)
-		assert.Equal(t, []string{dir + " git-init /i", dir + " git-add /i", dir + " check /i"}, f.calls())
+		assert.Equal(t, "x", r.Combined)
+		assert.Equal(t, []string{dir + " git-init /i", dir + " git-add /i", dir + " check /i"}, f.Calls())
 	})
 
 	t.Run("git を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		_, err := runInFixture(t.TempDir(), nil, missingTool)
+		_, err := runInFixture(t.TempDir(), nil, tooltest.Missing)
 		require.ErrorIs(t, err, errTool)
 	})
 }
@@ -242,16 +245,16 @@ func Test_judgeCheck(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		r    result
+		r    toolrun.Result
 		want bool
 	}{
-		"rc≠0・制御列つきでファイル名の後に違反": {result{combined: checkHit, code: 1}, true},
-		"制御列が文言を割っても成り立つ":       {result{combined: "canary.yaml:\n\t2: wrong \x1b[0mindent style", code: 1}, true},
-		"rc=2 でも名指せば成り立つ":       {result{combined: "canary.yaml: wrong indent", code: 2}, true},
-		"rc=0":                  {result{combined: checkHit}, false},
-		"出力が空":                  {result{code: 1}, false},
-		"違反がファイル名より前":           {result{combined: "wrong indent\ncanary.yaml\n", code: 1}, false},
-		"別のファイルの違反":             {result{combined: controlHit, code: 1}, false},
+		"rc≠0・制御列つきでファイル名の後に違反": {toolrun.Result{Combined: checkHit, Code: 1}, true},
+		"制御列が文言を割っても成り立つ":       {toolrun.Result{Combined: "canary.yaml:\n\t2: wrong \x1b[0mindent style", Code: 1}, true},
+		"rc=2 でも名指せば成り立つ":       {toolrun.Result{Combined: "canary.yaml: wrong indent", Code: 2}, true},
+		"rc=0":                  {toolrun.Result{Combined: checkHit}, false},
+		"出力が空":                  {toolrun.Result{Code: 1}, false},
+		"違反がファイル名より前":           {toolrun.Result{Combined: "wrong indent\ncanary.yaml\n", Code: 1}, false},
+		"別のファイルの違反":             {toolrun.Result{Combined: controlHit, Code: 1}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -266,13 +269,13 @@ func Test_judgeDirective(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		r    result
+		r    toolrun.Result
 		want string
 	}{
-		"対照だけなら成り立つ": {result{combined: controlHit, code: 1}, ""},
-		"rc=0":       {result{combined: controlHit}, "走査が働いていません"},
-		"印の後ろを名指す（対照より先に見る）": {result{combined: controlHit + checkHit, code: 1}, "分類を見直す"},
-		"どちらも名指さない":          {result{combined: "x", code: 2}, "想定外"},
+		"対照だけなら成り立つ": {toolrun.Result{Combined: controlHit, Code: 1}, ""},
+		"rc=0":       {toolrun.Result{Combined: controlHit}, "走査が働いていません"},
+		"印の後ろを名指す（対照より先に見る）": {toolrun.Result{Combined: controlHit + checkHit, Code: 1}, "分類を見直す"},
+		"どちらも名指さない":          {toolrun.Result{Combined: "x", Code: 2}, "想定外"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
