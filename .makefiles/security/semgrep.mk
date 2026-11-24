@@ -13,7 +13,7 @@ SEMGREP_RULES_TGZ := tmp/semgrep-rules-$(SEMGREP_RULES_COMMIT).tar.gz
 
 $(SEMGREP_RULES_TGZ):
 	@mkdir -p tmp
-	@curl -fsSL --proto '=https' --proto-redir '=https' "https://codeload.github.com/semgrep/semgrep-rules/tar.gz/$(SEMGREP_RULES_COMMIT)" -o "$@.part"
+	@curl -fsSL --proto '=https' --proto-redir '=https' --max-filesize 8M "https://codeload.github.com/semgrep/semgrep-rules/tar.gz/$(SEMGREP_RULES_COMMIT)" -o "$@.part"
 	@mv "$@.part" "$@"
 
 .PHONY: semgrep ## Terraform の誤設定を Semgrep CE で検査（所見があれば落ちる）

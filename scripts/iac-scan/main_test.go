@@ -78,6 +78,7 @@ func Test_exitCode(t *testing.T) {
 		"道具を起動できないのは 2":   {errTool, 2},
 		"結果を読めないのは 2":     {errResult, 2},
 		"包んでも区分は変わらない":    {xerrors.Wrap(errCanary, "x"), 1},
+		"区分の無いエラーは 2":     {xerrors.New("x"), 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

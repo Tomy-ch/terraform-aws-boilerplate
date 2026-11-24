@@ -171,15 +171,47 @@ func Test_runTrivyConfig(t *testing.T) {
 		"本走査の結果に Results が無い":        {`{}`, errResult},
 		"root の1つに Terraform の対象が無い": {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"}]}`, errNoTargets},
 		"root の下にあるのが Terraform でない": {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"env/Dockerfile","Type":"dockerfile"}]}`, errNoTargets},
+		"Dockerfile の対象が無い":          {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"env/c","Type":"terraform"}]}`, errNoTargets},
 		"root と前置きだけが一致する Target":    {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"envx/c","Type":"terraform"}]}`, errNoTargets},
 		"Results が空": {`{"Results":[]}`, errNoTargets},
 	} {
-		t.Run(name+"なら、所見の有無に依らず失敗する", func(t *testing.T) {
-			t.Parallel()
-			_, r, base := setup(t, 0, c.json)
-			require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), &bytes.Buffer{}, &bytes.Buffer{}, r), c.want)
-		})
+		for _, format := range []string{"json", "sarif"} {
+			t.Run(name+"なら、所見の有無に依らず、"+format+" で何も書かずに失敗する", func(t *testing.T) {
+				t.Parallel()
+				f, r, base := setup(t, 1, c.json)
+				var stdout bytes.Buffer
+				require.ErrorIs(t, runTrivyConfig(args(base, "-format", format), &stdout, &bytes.Buffer{}, r), c.want)
+				assert.Empty(t, stdout.String())
+				assert.Len(t, f.calls(), 2, "変換を起動しない")
+			})
+		}
 	}
+
+	t.Run("stdout へ書けなければ errOutput", func(t *testing.T) {
+		t.Parallel()
+		_, r, base := setup(t, 0, trivyMainJSON)
+		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), brokenWriter{}, &bytes.Buffer{}, r), errOutput)
+	})
+
+	t.Run("本走査がシグナルで終われば、何も書かずに errTool", func(t *testing.T) {
+		t.Parallel()
+		f, r, base := setup(t, 0, trivyMainJSON)
+		f.killIn("trivy-config/"+trivySev, filepath.Base(base))
+		var stdout bytes.Buffer
+		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "json"), &stdout, &bytes.Buffer{}, r), errTool)
+		assert.Empty(t, stdout.String())
+		assert.Len(t, f.calls(), 2)
+	})
+
+	t.Run("変換がシグナルで終われば、何も書かずに errTool", func(t *testing.T) {
+		t.Parallel()
+		f, r, base := setup(t, 0, trivyMainJSON)
+		f.kill("trivy-convert/sarif")
+		var stdout bytes.Buffer
+		require.ErrorIs(t, runTrivyConfig(args(base, "-format", "sarif"), &stdout, &bytes.Buffer{}, r), errTool)
+		assert.Empty(t, stdout.String())
+		noScratch(t, base)
+	})
 
 	t.Run("本走査の結果を読めなければ stdout に何も書かない", func(t *testing.T) {
 		t.Parallel()
@@ -275,33 +307,37 @@ func Test_runTrivyConfig(t *testing.T) {
 	}
 }
 
-func Test_trivyTargets(t *testing.T) {
+func Test_judgeTrivyTargets(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Terraform の Target を、下にある root ごとに数える", func(t *testing.T) {
-		t.Parallel()
-		got, err := trivyTargets([]byte(trivyMainJSON), []string{"usecases", "modules", "env", "docker"})
-		require.NoError(t, err)
-		assert.Equal(t, map[string]int{"usecases": 1, "modules": 1, "env": 1}, got)
-	})
-
-	t.Run("root そのものの Target も数える", func(t *testing.T) {
-		t.Parallel()
-		got, err := trivyTargets([]byte(`{"Results":[{"Target":"env","Type":"terraform"}]}`), []string{"env"})
-		require.NoError(t, err)
-		assert.Equal(t, map[string]int{"env": 1}, got)
-	})
-
+	roots := []string{"usecases", "modules", "env"}
 	for name, in := range map[string]string{
-		"JSON でない":       "x",
-		"Results が無い":    `{}`,
-		"Results が null": `{"Results":null}`,
-		"Results が配列でない": `{"Results":{}}`,
+		"root ごとに Terraform が1件以上、Dockerfile が1件以上": trivyMainJSON,
+		"root そのものの Target も数える": `{"Results":[{"Target":"usecases","Type":"terraform"},{"Target":"modules","Type":"terraform"},` +
+			`{"Target":"env","Type":"terraform"},{"Target":"Dockerfile","Type":"dockerfile"}]}`,
 	} {
-		t.Run(name+"は errResult", func(t *testing.T) {
+		t.Run(name+"なら通る", func(t *testing.T) {
 			t.Parallel()
-			_, err := trivyTargets([]byte(in), []string{"env"})
-			require.ErrorIs(t, err, errResult)
+			require.NoError(t, judgeTrivyTargets([]byte(in), roots))
+		})
+	}
+
+	for name, c := range map[string]struct {
+		in   string
+		want error
+	}{
+		"JSON でない":                {"x", errResult},
+		"Results が無い":             {`{}`, errResult},
+		"Results が null":          {`{"Results":null}`, errResult},
+		"Results が配列でない":          {`{"Results":{}}`, errResult},
+		"root の1つに Terraform が無い": {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"Dockerfile","Type":"dockerfile"}]}`, errNoTargets},
+		"前置きだけが一致する Target":       {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"envx","Type":"terraform"},{"Target":"Dockerfile","Type":"dockerfile"}]}`, errNoTargets},
+		"Dockerfile が無い":          {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"env/c","Type":"terraform"}]}`, errNoTargets},
+		"root の下の Dockerfile だけ":  {`{"Results":[{"Target":"usecases/a","Type":"terraform"},{"Target":"modules/b","Type":"terraform"},{"Target":"env/Dockerfile","Type":"dockerfile"}]}`, errNoTargets},
+	} {
+		t.Run(name+"は落ちる", func(t *testing.T) {
+			t.Parallel()
+			require.ErrorIs(t, judgeTrivyTargets([]byte(c.in), roots), c.want)
 		})
 	}
 }

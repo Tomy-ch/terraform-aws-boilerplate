@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,14 @@ const (
 	semgrepSARIF      = `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":"/work/src/env/c/main.tf"}}}]},{"suppressions":[{"kind":"inSource"}]}]}]}`
 )
 
+// semgrepArgs は、runSemgrep の引数を組む。roots を省けば usecases・modules・env。
+func semgrepArgs(base, rules, sha string, roots ...string) []string {
+	if len(roots) == 0 {
+		roots = []string{"usecases", "modules", "env"}
+	}
+	return append([]string{"-base", base, "-rules", rules, "-rules-sha256", sha}, roots...)
+}
+
 func Test_runSemgrep(t *testing.T) {
 	t.Parallel()
 
@@ -25,8 +34,7 @@ func Test_runSemgrep(t *testing.T) {
 		f.scenario("semgrep-canary", 1, "", map[string]string{"results.json": semgrepCanaryJSON})
 		f.scenario("semgrep", mainRC, "", map[string]string{"results.json": mainJSON, "results.sarif": semgrepSARIF})
 		base := tfTree(t)
-		args := []string{"-base", base, "-rules", tarball(t, rulesMembers), "-rules-sha256", rulesSHA256, "usecases", "modules", "env"}
-		return f, tool, base, args
+		return f, tool, base, semgrepArgs(base, tarball(t, rulesMembers), rulesSHA256)
 	}
 
 	t.Run("canary が通れば本走査を起動し、所見が無ければ成功する", func(t *testing.T) {
@@ -129,20 +137,46 @@ func Test_runSemgrep(t *testing.T) {
 
 	t.Run("rule が宣言と違えば docker を起動せずに errInput", func(t *testing.T) {
 		t.Parallel()
-		f, tool, _, args := setup(t, 0, semgrepCleanJSON)
-		args[5] = "0000000000000000000000000000000000000000000000000000000000000000"
+		f, tool, base, _ := setup(t, 0, semgrepCleanJSON)
+		args := semgrepArgs(base, tarball(t, rulesMembers), strings.Repeat("0", 64))
 		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errInput)
+		assert.Empty(t, f.calls())
+	})
+
+	t.Run("イメージを決められなければ canary を起動しない", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+		f.write("image", "")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errImage)
+		assert.Equal(t, []string{"iac-scan image-semgrep"}, f.calls())
+	})
+
+	t.Run("root が無ければ docker を起動せずに errMissingRoot", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base, _ := setup(t, 0, semgrepCleanJSON)
+		args := semgrepArgs(base, tarball(t, rulesMembers), rulesSHA256, "env", "nothing")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errMissingRoot)
+		assert.Empty(t, f.calls())
+	})
+
+	t.Run("写したファイルが0件の root があれば docker を起動せずに errNoTargets", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _, _ := setup(t, 0, semgrepCleanJSON)
+		base := tree(t, map[string]string{"env/c/main.tf": "", "modules/b/.terraform/x.tf": ""})
+		args := semgrepArgs(base, tarball(t, rulesMembers), rulesSHA256, "env", "modules")
+		require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errNoTargets)
 		assert.Empty(t, f.calls())
 	})
 
 	for _, work := range []string{"semgrep", "semgrep-canary"} {
 		t.Run("作業ディレクトリ tmp/"+work+" が tmp/ の外を指せば、外を消さずに errUsage", func(t *testing.T) {
 			t.Parallel()
-			f, tool, _, args := setup(t, 0, semgrepCleanJSON)
+			f, tool, _, _ := setup(t, 0, semgrepCleanJSON)
 			base, outside := escapingWork(t, work)
-			args[1] = base
+			args := semgrepArgs(base, tarball(t, rulesMembers), rulesSHA256)
 			require.ErrorIs(t, runSemgrep(args, &bytes.Buffer{}, tool), errUsage)
 			assert.FileExists(t, filepath.Join(outside, "keep"))
+			requireLinkKept(t, base, work)
 			assert.NotContains(t, f.calls(), work+" create")
 		})
 	}

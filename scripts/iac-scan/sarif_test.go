@@ -90,16 +90,17 @@ func Test_normalizeSARIF(t *testing.T) {
 	})
 
 	for name, in := range map[string]string{
-		"JSON でない":              "not json",
-		"object でない":            `[]`,
-		"runs が無い":              `{}`,
-		"runs が配列でない":           `{"runs":{}}`,
-		"run が object でない":      `{"runs":[1]}`,
-		"results が配列でない":        `{"runs":[{"results":{}}]}`,
-		"result が object でない":   `{"runs":[{"results":[1]}]}`,
-		"suppressions が配列でない":   `{"runs":[{"results":[{"suppressions":{}}]}]}`,
-		"uri が文字列でない":           `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":1}}}]}]}]}`,
-		"artifactLocation が文字列": `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":"x"}}]}]}]}`,
+		"JSON でない":    "not json",
+		"object でない":  `[]`,
+		"runs が無い":    `{}`,
+		"runs が配列でない": `{"runs":{}}`,
+		"run が無い（setSARIFRoot と同じく落とす）": `{"runs":[]}`,
+		"run が object でない":              `{"runs":[1]}`,
+		"results が配列でない":                `{"runs":[{"results":{}}]}`,
+		"result が object でない":           `{"runs":[{"results":[1]}]}`,
+		"suppressions が配列でない":           `{"runs":[{"results":[{"suppressions":{}}]}]}`,
+		"uri が文字列でない":                   `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":{"uri":1}}}]}]}]}`,
+		"artifactLocation が文字列":         `{"runs":[{"results":[{"locations":[{"physicalLocation":{"artifactLocation":"x"}}]}]}]}`,
 	} {
 		t.Run(name+"なら errResult で、ファイルを書き換えない", func(t *testing.T) {
 			t.Parallel()

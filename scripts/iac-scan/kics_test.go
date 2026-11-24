@@ -173,9 +173,27 @@ func Test_runKics(t *testing.T) {
 			base, outside := escapingWork(t, work)
 			require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errUsage)
 			assert.FileExists(t, filepath.Join(outside, "keep"))
+			requireLinkKept(t, base, work)
 			assert.NotContains(t, f.calls(), work+" create")
 		})
 	}
+
+	t.Run("イメージを決められなければ canary を起動しない", func(t *testing.T) {
+		t.Parallel()
+		f, tool, base := setup(t, 0, kicsCleanJSON)
+		f.write("image", "")
+		require.ErrorIs(t, runKics(args(base, kicsAll), &bytes.Buffer{}, tool), errImage)
+		assert.Equal(t, []string{"iac-scan image-kics"}, f.calls())
+	})
+
+	t.Run("写したファイルが0件の root があれば docker を起動せずに errNoTargets", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _ := setup(t, 0, kicsCleanJSON)
+		base := tree(t, map[string]string{"env/c/main.tf": "", "modules/b/.terraform/x.tf": ""})
+		in := []string{"-base", base, "-fail-on", kicsAll, "env", "modules"}
+		require.ErrorIs(t, runKics(in, &bytes.Buffer{}, tool), errNoTargets)
+		assert.Empty(t, f.calls())
+	})
 
 	t.Run("root が無ければ docker を起動せずに errMissingRoot", func(t *testing.T) {
 		t.Parallel()

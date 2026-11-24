@@ -23,14 +23,16 @@ const (
 	maxRuleSize   = 4 << 20
 	maxRules      = 1024
 	maxRulesBytes = 8 << 20
+	// maxTarBytes は、展開した tarball 全体（写さない member を含む）の上限です。
+	maxTarBytes = 64 << 20
 )
 
 // stageRules は、tarball tgz の terraform/ の rule（*.yaml・*.yml）を dst/terraform/ へ写し、写した中身が want と一致する
 // ことを確かめます。tarball には rule ごとのテスト用のサンプル（攻撃コードを含む）も入っているので、当たらない member は
 // ディスクへ書きません。want は、写した rule を `/` 区切りの相対パスのバイト順に並べた `sha256sum` の出力
 // （`<hex>  terraform/<path>` の行）の sha256 です —— codeload の tarball はバイト列が安定しないので、中身で照合します。
-// 通常のファイルでない member、`..` を含む名前、上限（1つの大きさ・件数・合計の大きさ）を超える rule、rule が0件の
-// ときは失敗です。
+// 通常のファイルでない member、`..` を含む名前、上限（1つの大きさ・件数・合計の大きさ）を超える rule、展開した全体が
+// maxTarBytes を超える tarball、rule が0件のときは失敗です。
 func stageRules(tgz, dst, want string) error {
 	f, err := os.Open(filepath.Clean(tgz))
 	if err != nil {
@@ -41,11 +43,15 @@ func stageRules(tgz, dst, want string) error {
 	if err != nil {
 		return xerrors.Wrapf(errInput, "semgrep-rules: %s は gzip として読めません: %v", tgz, err)
 	}
-	tr := tar.NewReader(gz)
+	limited := &io.LimitedReader{R: gz, N: maxTarBytes + 1}
+	tr := tar.NewReader(limited)
 	sums := map[string]string{}
 	var total int64
 	for {
 		h, err := tr.Next()
+		if limited.N <= 0 {
+			return xerrors.Wrapf(errInput, "semgrep-rules: %s を展開した大きさが上限の %d バイトを超えています", tgz, maxTarBytes)
+		}
 		if xerrors.Is(err, io.EOF) {
 			break
 		}

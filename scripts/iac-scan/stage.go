@@ -85,14 +85,18 @@ func intField(m map[string]any, key string) (int64, error) {
 	return i, nil
 }
 
-// checkRoots は、roots を base の下の `/` 区切りの相対パスに整えて返します。base の外か base 自身を指す root、
-// 重なる root（同じもの、一方が他方を含むもの）は使い方の誤り、ディレクトリとして無い root は errMissingRoot です。
+// checkRoots は、roots を base の下の `/` 区切りの相対パスに整えて返します。base の外か base 自身を指す root、作業領域の
+// tmp とその下の root、重なる root（同じもの、一方が他方を含むもの）は使い方の誤り、ディレクトリとして無い root は
+// errMissingRoot です。
 func checkRoots(base string, roots []string) ([]string, error) {
 	clean := make([]string, 0, len(roots))
 	for _, root := range roots {
 		c := path.Clean(filepath.ToSlash(root))
 		if root == "" || filepath.IsAbs(root) || !filepath.IsLocal(root) || c == "." {
 			return nil, xerrors.Wrapf(errUsage, "走査の root %q は base の下の相対パスにする", root)
+		}
+		if c == "tmp" || strings.HasPrefix(c, "tmp/") {
+			return nil, xerrors.Wrapf(errUsage, "走査の root %q は作業領域の tmp/ を指しています", root)
 		}
 		for _, prev := range clean {
 			if c == prev || strings.HasPrefix(c, prev+"/") || strings.HasPrefix(prev, c+"/") {
@@ -114,7 +118,8 @@ func checkRoots(base string, roots []string) ([]string, error) {
 
 // stageTerraform は、base の下の roots（checkRoots で確かめる）を dst へ同じ相対パスで写し、写したファイルの `/` 区切りの
 // 相対パスを返します。名前がちょうど `.terraform` のものは写しません（`.terraform.lock.hcl` は写す）。symlink か通常の
-// ファイルでないもの、読めないファイル、写したファイルが0件のときは成功させません（ADR-0702 決定13・14）。
+// ファイルでないもの（symlink の root を含む）、読めないファイル、写したファイルが0件の root があるときは成功させません
+// （ADR-0702 決定13・14）。
 func stageTerraform(base string, roots []string, dst string) ([]string, error) {
 	roots, err := checkRoots(base, roots)
 	if err != nil {
@@ -122,6 +127,7 @@ func stageTerraform(base string, roots []string, dst string) ([]string, error) {
 	}
 	var staged []string
 	for _, root := range roots {
+		before := len(staged)
 		dir := filepath.Join(base, filepath.FromSlash(root))
 		err = filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
 			if err != nil {
@@ -152,9 +158,9 @@ func stageTerraform(base string, roots []string, dst string) ([]string, error) {
 		if err != nil {
 			return nil, xerrors.Wrapf(errInput, "%s を写せません: %v", root, err)
 		}
-	}
-	if len(staged) == 0 {
-		return nil, xerrors.Wrapf(errNoTargets, "%s の下に写すファイルがありません", strings.Join(roots, " "))
+		if len(staged) == before {
+			return nil, xerrors.Wrapf(errNoTargets, "%s の下に写すファイルがありません", root)
+		}
 	}
 
 	return staged, nil

@@ -162,6 +162,14 @@ func Test_runCheckov(t *testing.T) {
 		assert.Empty(t, f.calls())
 	})
 
+	t.Run("写したファイルが0件の root があれば docker を起動せずに errNoTargets", func(t *testing.T) {
+		t.Parallel()
+		f, tool, _ := setup(t, 0, checkovCleanJSON)
+		base := tree(t, map[string]string{"env/c/main.tf": "", "modules/b/.terraform/x.tf": ""})
+		require.ErrorIs(t, runCheckov([]string{"-base", base, "env", "modules"}, &bytes.Buffer{}, tool), errNoTargets)
+		assert.Empty(t, f.calls())
+	})
+
 	t.Run("イメージを決められなければ canary を起動しない", func(t *testing.T) {
 		t.Parallel()
 		f, tool, base := setup(t, 0, checkovCleanJSON)
@@ -177,6 +185,7 @@ func Test_runCheckov(t *testing.T) {
 			base, outside := escapingWork(t, work)
 			require.ErrorIs(t, runCheckov(args(base), &bytes.Buffer{}, tool), errUsage)
 			assert.FileExists(t, filepath.Join(outside, "keep"))
+			requireLinkKept(t, base, work)
 			assert.NotContains(t, f.calls(), work+" create")
 		})
 	}

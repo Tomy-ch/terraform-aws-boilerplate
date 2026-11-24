@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,23 @@ func Test_trivyStep(t *testing.T) {
 			t.Parallel()
 			_, _, err := trivyStep(c[0], c[1])
 			require.ErrorIs(t, err, errUsage)
+		})
+	}
+}
+
+func Test_trivySeverities(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []string{"CRITICAL,HIGH,MEDIUM", "CRITICAL,HIGH,MEDIUM,LOW", "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"}, trivySeverities)
+	for _, sev := range trivySeverities {
+		t.Run(sev+" は command がその閾値で trivy を起動する", func(t *testing.T) {
+			t.Parallel()
+			scan, _, err := trivyStep(sev, "json")
+			require.NoError(t, err)
+			args := command("", nil, scan).Args
+			i := slices.Index(args, "--severity")
+			require.GreaterOrEqual(t, i, 0, "command に %s の段が無い", scan)
+			assert.Equal(t, sev, args[i+1])
 		})
 	}
 }

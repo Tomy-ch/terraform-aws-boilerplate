@@ -91,17 +91,11 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 	if rc, err = toolrun.Exec(cmd); err != nil {
 		return xerrors.Wrapf(err, "trivy-config の本走査")
 	}
-	counts, err := trivyTargets(out.Bytes(), roots)
-	if err != nil {
+	if err := judgeTrivyTargets(out.Bytes(), roots); err != nil {
 		return err
 	}
 	if err := writeTrivyReport(out.Bytes(), *base, tmp, convertStep, env, r, stdout, log); err != nil {
 		return err
-	}
-	for _, root := range roots {
-		if counts[root] == 0 {
-			return xerrors.Wrapf(errNoTargets, "trivy-config: %s の下に Terraform の走査の対象がありません", root)
-		}
 	}
 	if rc != 0 {
 		return xerrors.Wrapf(errFindings, "trivy config が終了コード %d で終わりました", rc)
@@ -110,9 +104,10 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 	return nil
 }
 
-// trivyTargets は、本走査の json の Results のうち Type が terraform のものを、Target が下にある root ごとに数えます。
-// Target は base からの `/` 区切りの相対パス（root module のディレクトリかファイル）です。
-func trivyTargets(raw []byte, roots []string) (map[string]int, error) {
+// judgeTrivyTargets は、本走査の json の Results のうち Type が terraform のものを、Target（base からの `/` 区切りの
+// 相対パス。root module のディレクトリかファイル）が下にある root ごとに数え、0件の root があれば errNoTargets にします。
+// Type が dockerfile のものも1件以上を求めます。json として読めないか Results が無ければ errResult です。
+func judgeTrivyTargets(raw []byte, roots []string) error {
 	var report struct {
 		Results *[]struct {
 			Target string `json:"Target"`
@@ -120,24 +115,35 @@ func trivyTargets(raw []byte, roots []string) (map[string]int, error) {
 		} `json:"Results"`
 	}
 	if err := json.Unmarshal(raw, &report); err != nil {
-		return nil, xerrors.Wrapf(errResult, "trivy-config: 本走査の結果を読めません: %v", err)
+		return xerrors.Wrapf(errResult, "trivy-config: 本走査の結果を読めません: %v", err)
 	}
 	if report.Results == nil {
-		return nil, xerrors.Wrap(errResult, "trivy-config: 本走査の結果に Results がありません")
+		return xerrors.Wrap(errResult, "trivy-config: 本走査の結果に Results がありません")
 	}
 	counts := make(map[string]int, len(roots))
+	dockerfiles := 0
 	for _, res := range *report.Results {
-		if res.Type != "terraform" {
-			continue
-		}
-		for _, root := range roots {
-			if res.Target == root || strings.HasPrefix(res.Target, root+"/") {
-				counts[root]++
+		switch res.Type {
+		case "dockerfile":
+			dockerfiles++
+		case "terraform":
+			for _, root := range roots {
+				if res.Target == root || strings.HasPrefix(res.Target, root+"/") {
+					counts[root]++
+				}
 			}
 		}
 	}
+	for _, root := range roots {
+		if counts[root] == 0 {
+			return xerrors.Wrapf(errNoTargets, "trivy-config: %s の下に Terraform の走査の対象がありません", root)
+		}
+	}
+	if dockerfiles == 0 {
+		return xerrors.Wrap(errNoTargets, "trivy-config: Dockerfile の走査の対象がありません")
+	}
 
-	return counts, nil
+	return nil
 }
 
 // writeTrivyReport は、本走査の json を stdout へ書きます。convertStep が空でなければ、tmp の下の一時のディレクトリに

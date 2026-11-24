@@ -42,6 +42,25 @@ func escapingWork(t *testing.T, name string) (base, outside string) {
 	return base, outside
 }
 
+// escapingParent は、tmp/a が外のディレクトリを指す symlink である base と、その外のディレクトリを返す。外には x/keep を
+// 置くので、作業ディレクトリ tmp/a/x を消せば keep も消える。
+func escapingParent(t *testing.T) (base, outside string) {
+	t.Helper()
+	base = tfTree(t)
+	outside = tree(t, map[string]string{"x/keep": "k"})
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "tmp"), 0o750))
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "tmp", "a")))
+	return base, outside
+}
+
+// requireLinkKept は、base の tmp/<name> が symlink のまま残っていることを確かめる（消されていない）。
+func requireLinkKept(t *testing.T, base, name string) {
+	t.Helper()
+	info, err := os.Lstat(filepath.Join(base, "tmp", name))
+	require.NoError(t, err)
+	require.Equal(t, os.ModeSymlink, info.Mode().Type())
+}
+
 func Test_lookupImage(t *testing.T) {
 	t.Parallel()
 
@@ -62,6 +81,9 @@ func Test_lookupImage(t *testing.T) {
 		"digest が短い":   "example/scan:1.0@sha256:0123\n",
 		"前後に空白":        " " + testImage + "\n",
 		"digest だけの名前": "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n",
+		"digest が63桁":  "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde\n",
+		"digest が65桁":  "example/scan:1.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0\n",
+		"digest が大文字":  "example/scan:1.0@sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef\n",
 	} {
 		t.Run(name+"なら errImage", func(t *testing.T) {
 			t.Parallel()
@@ -314,8 +336,8 @@ func Test_resolveWork(t *testing.T) {
 
 	t.Run("途中のディレクトリが tmp/ の外を指す symlink なら errUsage", func(t *testing.T) {
 		t.Parallel()
-		base, _ := escapingWork(t, "a")
-		_, err := resolveWork(base, "tmp/a/checkov")
+		base, _ := escapingParent(t)
+		_, err := resolveWork(base, "tmp/a/x")
 		require.ErrorIs(t, err, errUsage)
 	})
 }
@@ -347,10 +369,10 @@ func Test_prepareWork(t *testing.T) {
 
 	t.Run("作業ディレクトリが tmp/ の外を指せば、何も消さずに errUsage", func(t *testing.T) {
 		t.Parallel()
-		base, outside := escapingWork(t, "x")
-		_, err := prepareWork(base, "tmp/x")
+		base, outside := escapingParent(t)
+		_, err := prepareWork(base, "tmp/a/x")
 		require.ErrorIs(t, err, errUsage)
-		assert.FileExists(t, filepath.Join(outside, "keep"))
+		assert.FileExists(t, filepath.Join(outside, "x", "keep"))
 	})
 }
 
@@ -441,10 +463,10 @@ func Test_runCanary(t *testing.T) {
 	t.Run("作業ディレクトリが tmp/ の外を指せば、何も消さず docker も起動せずに errUsage", func(t *testing.T) {
 		t.Parallel()
 		f, tool := newFake(t)
-		base, outside := escapingWork(t, "x")
-		err := runCanary("x の canary", base, "tmp/x", "fixture", testImage, testTool, tool, &bytes.Buffer{}, judgeRC(0), nil)
+		base, outside := escapingParent(t)
+		err := runCanary("x の canary", base, "tmp/a/x", "fixture", testImage, testTool, tool, &bytes.Buffer{}, judgeRC(0), nil)
 		require.ErrorIs(t, err, errUsage)
-		assert.FileExists(t, filepath.Join(outside, "keep"))
+		assert.FileExists(t, filepath.Join(outside, "x", "keep"))
 		assert.Empty(t, f.calls())
 	})
 }

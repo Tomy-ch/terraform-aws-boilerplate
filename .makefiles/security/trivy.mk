@@ -15,7 +15,7 @@ TRIVY_CONFIG_SEVERITY := CRITICAL,HIGH,MEDIUM
 .PHONY: trivy-config ## Terraform と Dockerfile の誤設定を検査（閾値は TRIVY_CONFIG_SEVERITY）
 ## 引数の実体（閾値の一覧、canary、走査の対象の数え方）は scripts/iac-scan が持つ。
 trivy-config:
-	@$(call RUN_SCRIPT,iac-scan,trivy-config -severity $(TRIVY_CONFIG_SEVERITY) -format $(TRIVY_FORMAT) $(TF_ROOTS))
+	@$(call RUN_SCRIPT,iac-scan,trivy-config -base "$(TF_BASE)" -severity $(TRIVY_CONFIG_SEVERITY) -format $(TRIVY_FORMAT) $(TF_ROOTS))
 
 .PHONY: trivy-fs ## 依存の既知脆弱性を検査（報告のみ。ブロック判定は trivy-fs-release が持つ）
 trivy-fs:

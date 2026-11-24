@@ -15,8 +15,8 @@ var stagedPrefix = regexp.MustCompile(`^(\.\./)*/?work/src/`)
 // normalizeSARIF は、コンテナから取り出した SARIF を code scanning が読める形に書き直します。source の中で抑止した
 // result（空でない suppressions を持つもの）を落とし —— code scanning は suppressions を見ずに open の alert として
 // 載せる ——、artifactLocation の uri から入力の置き場の前置きを外してリポジトリの相対パスへ戻します。
-// ファイルが無いか通常のファイルでなければ失敗します（本走査は SARIF を必ず残す）。results が無いか null の run は
-// そのままにします。
+// ファイルが無いか通常のファイルでないとき、run が無いときは失敗します（本走査は自身の run を持つ SARIF を必ず残す）。
+// results が無いか null の run はそのままにします。
 func normalizeSARIF(p string) error {
 	raw, err := readResult(p)
 	if err != nil {
@@ -29,8 +29,11 @@ func normalizeSARIF(p string) error {
 		return xerrors.Wrapf(errResult, "%s は JSON の object として読めません: %v", p, err)
 	}
 	runs, ok := doc["runs"].([]any)
-	if !ok {
+	switch {
+	case !ok:
 		return xerrors.Wrapf(errResult, "%s の runs が配列ではありません", p)
+	case len(runs) == 0:
+		return xerrors.Wrapf(errResult, "%s に run がありません", p)
 	}
 	for i, r := range runs {
 		run, ok := r.(map[string]any)

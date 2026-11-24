@@ -76,6 +76,15 @@ func Test_readResult(t *testing.T) {
 		assert.Contains(t, err.Error(), "通常のファイルではありません")
 	})
 
+	t.Run("読めないファイルは errResult", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "権限を落として読めないファイルを作る")
+		dir := tree(t, map[string]string{"a.json": "{}"})
+		require.NoError(t, os.Chmod(filepath.Join(dir, "a.json"), 0))
+		_, err := readResult(filepath.Join(dir, "a.json"))
+		require.ErrorIs(t, err, errResult)
+	})
+
 	t.Run("ディレクトリは errResult", func(t *testing.T) {
 		t.Parallel()
 		_, err := readResult(t.TempDir())
@@ -182,6 +191,9 @@ func Test_checkRoots(t *testing.T) {
 		"同じ root の別の綴り": {"env", "env/"},
 		"先の root が後を含む": {"usecases", "usecases/a"},
 		"後の root が先を含む": {"usecases/a", "usecases"},
+		"作業領域の tmp":     {"tmp"},
+		"作業領域の tmp の下":  {"tmp/checkov/work/src"},
+		"綴りを変えた tmp":    {"env/../tmp/x"},
 	} {
 		t.Run(name+"は errUsage", func(t *testing.T) {
 			t.Parallel()
@@ -255,6 +267,27 @@ func Test_stageTerraform(t *testing.T) {
 		base := tree(t, map[string]string{"env/a/.terraform/x.tf": ""})
 		_, err := stageTerraform(base, []string{"env"}, t.TempDir())
 		require.ErrorIs(t, err, errNoTargets)
+	})
+
+	for name, roots := range map[string][]string{"先": {"modules", "env"}, "後": {"env", "modules"}} {
+		t.Run(name+"の root だけが0件でも errNoTargets", func(t *testing.T) {
+			t.Parallel()
+			base := tree(t, map[string]string{"env/a/main.tf": "", "modules/b/.terraform/x.tf": ""})
+			_, err := stageTerraform(base, roots, t.TempDir())
+			require.ErrorIs(t, err, errNoTargets)
+			assert.Contains(t, err.Error(), "modules の下")
+		})
+	}
+
+	t.Run("root が base の外を指す symlink なら、外を写さずに errInput", func(t *testing.T) {
+		t.Parallel()
+		outside := tree(t, map[string]string{"a/main.tf": "secret"})
+		base := tree(t, map[string]string{"modules/b/main.tf": ""})
+		require.NoError(t, os.Symlink(outside, filepath.Join(base, "env")))
+		dst := t.TempDir()
+		_, err := stageTerraform(base, []string{"modules", "env"}, dst)
+		require.ErrorIs(t, err, errInput)
+		assert.NoFileExists(t, filepath.Join(dst, "env", "a", "main.tf"))
 	})
 
 	t.Run("symlink は errInput", func(t *testing.T) {

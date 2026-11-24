@@ -137,25 +137,51 @@ func Test_stageRules(t *testing.T) {
 		assert.Contains(t, err.Error(), "rule がありません")
 	})
 
-	for name, m := range map[string]member{
-		"symlink":     {name: "semgrep-rules-x/terraform/l.yaml", body: "../../../etc/passwd", typ: tar.TypeSymlink},
-		"hard link":   {name: "semgrep-rules-x/terraform/h.yaml", body: "semgrep-rules-x/terraform/aws/a.yaml", typ: tar.TypeLink},
-		"親へ出る名前":      {name: "semgrep-rules-x/terraform/../../x.yaml", body: "x\n"},
-		"ディレクトリの形の名前": {name: "semgrep-rules-x/terraform/d.yaml", typ: tar.TypeDir},
+	for name, c := range map[string]struct {
+		m   member
+		msg string
+	}{
+		"symlink":     {member{name: "semgrep-rules-x/terraform/l.yaml", body: "../../../etc/passwd", typ: tar.TypeSymlink}, "通常のファイルではありません"},
+		"hard link":   {member{name: "semgrep-rules-x/terraform/h.yaml", body: "semgrep-rules-x/terraform/aws/a.yaml", typ: tar.TypeLink}, "通常のファイルではありません"},
+		"親へ出る名前":      {member{name: "semgrep-rules-x/terraform/../../x.yaml", body: "x\n"}, "写せない名前"},
+		"ディレクトリの形の名前": {member{name: "semgrep-rules-x/terraform/d.yaml", typ: tar.TypeDir}, "通常のファイルではありません"},
 	} {
 		t.Run(name+"の rule は errInput", func(t *testing.T) {
 			t.Parallel()
 			dst := t.TempDir()
-			err := stageRules(tarball(t, append(append([]member{}, rulesMembers...), m)), dst, rulesSHA256)
+			ms := append(append([]member{}, rulesMembers...), c.m)
+			err := stageRules(tarball(t, ms), dst, rulesSHA256)
 			require.ErrorIs(t, err, errInput)
+			assert.Contains(t, err.Error(), c.msg)
 			assert.NoFileExists(t, filepath.Join(filepath.Dir(dst), "x.yaml"))
 		})
 	}
 
 	t.Run("上限を超える rule は errInput", func(t *testing.T) {
 		t.Parallel()
-		big := member{name: "semgrep-rules-x/terraform/big.yaml", body: strings.Repeat("a", maxRuleSize+1)}
-		require.ErrorIs(t, stageRules(tarball(t, []member{big}), t.TempDir(), rulesSHA256), errInput)
+		ms := []member{{name: "semgrep-rules-x/terraform/big.yaml", body: strings.Repeat("a", maxRuleSize+1)}}
+		err := stageRules(tarball(t, ms), t.TempDir(), digestOf(ms))
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "バイトを超えています")
+	})
+
+	t.Run("展開した全体が上限を超えれば、写さない member でも errInput", func(t *testing.T) {
+		t.Parallel()
+		ms := append(append([]member{}, rulesMembers...), member{name: "semgrep-rules-x/python/big.bin", body: strings.Repeat("\x00", maxTarBytes)})
+		err := stageRules(tarball(t, ms), t.TempDir(), rulesSHA256)
+		require.ErrorIs(t, err, errInput)
+		assert.Contains(t, err.Error(), "展開した大きさが上限")
+	})
+
+	t.Run("切れた tarball は errInput", func(t *testing.T) {
+		t.Parallel()
+		p := tarball(t, rulesMembers)
+		raw, err := os.ReadFile(p)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(p, raw[:len(raw)/2], 0o600))
+		err = stageRules(p, t.TempDir(), rulesSHA256)
+		require.ErrorIs(t, err, errInput)
+		assert.NotContains(t, err.Error(), "宣言と一致しません")
 	})
 
 	t.Run("rule の件数は上限ちょうどまで写せる", func(t *testing.T) {
