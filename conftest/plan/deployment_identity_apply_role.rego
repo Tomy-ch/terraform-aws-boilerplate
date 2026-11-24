@@ -329,13 +329,42 @@ key_covered(a, denied) if a in denied
 # 統制の構成物は組織の ID が作る前に決まらず、Resource "*" の Action も持つので、ARN ではなく Action で拒む。
 governance_actions := object.get(object.get(cfg, "governance", {}), "actions", null)
 
+# 管理アカウントでだけ拒む Action。メンバーの password policy は account-baseline が apply の role で持つ（決定5）。
+management_actions := object.get(object.get(cfg, "governance", {}), "management_actions", null)
+
+# 管理アカウントでだけ作る統制の policy の address（決定3・7）。管理アカウントかどうかは、その有無で見る。
+management_policy := object.get(object.get(cfg, "governance", {}), "management_policy", null)
+
 well_formed_governance if {
 	is_array(governance_actions)
 	count(governance_actions) > 0
 	every a in governance_actions {
 		nonempty_string(a)
 	}
+	is_array(management_actions)
+	count(management_actions) > 0
+	every a in management_actions {
+		nonempty_string(a)
+	}
+	nonempty_string(management_policy)
 }
+
+management_role if {
+	some c in lib.changes
+	c.rc.address == management_policy
+}
+
+# 入力は reference の plan で、管理アカウントの形である（conftest/plan/README.md）。address がずれて management_actions の
+# 検査が黙って外れないよう、宣言の address が入力に無ければ落とす。
+deny contains msg if {
+	well_formed_governance
+	not management_role
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy（%s）が入力にありません。address が変わったなら宣言を直してください", [management_policy])
+}
+
+required_governance_actions := array.concat(governance_actions, management_actions) if management_role
+
+else := governance_actions
 
 # 宣言した名前を、Deny の Action のどれかが覆うことを求める。覆いは、同じ名前か、同じサービスの wildcard が IAM の
 # `*` と `?` でその名前に当たるもの（Identity Center の接尾辞の wildcard。deployment-identity/ADR-0201 決定5）。
@@ -518,7 +547,7 @@ deny contains msg if {
 
 deny contains msg if {
 	not well_formed_governance
-	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.actions が、空でない文字列の空でない配列ではありません"
+	msg := "[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance の actions と management_actions が空でない文字列の空でない配列ではないか、management_policy が空でない文字列ではありません"
 }
 
 # --- PLAN-APPLY-01: 鍵 ---
@@ -682,19 +711,21 @@ deny contains msg if {
 	msg := sprintf("[PLAN-APPLY-05] %s: %s の policy_names が %v ではありません", [a.path, a.address, [object.get(after(target), "name", null)]])
 }
 
-# apply の role に付いてよい managed policy は、宣言した workload の2つの policy だけ（deployment-identity/ADR-0201 決定17）。
+# apply の role に付いてよい managed policy は、宣言した workload の3つの policy だけ（deployment-identity/ADR-0201 決定17・21）。
+workload_keys := ["policy", "read_policy", "policy_2"]
+
 workload_policies := [p |
-	some key in ["policy", "read_policy"]
+	some key in workload_keys
 	p := object.get(object.get(di, "workload", {}), key, "")
 	p != ""
 ]
 
 expected_managed := [object.get(after(p), "arn", null) | some p in workload_policies]
 
-# workload を宣言したら、2つの policy の address を持ち、どちらも入力に在る。欠けると期待が黙って縮む。
+# workload を宣言したら、3つの policy の address を持ち、どれも入力に在る。欠けると期待が黙って縮む。
 deny contains msg if {
 	is_object(object.get(di, "workload", null))
-	some key in ["policy", "read_policy"]
+	some key in workload_keys
 	address := object.get(di.workload, key, "")
 	not after_defined(address)
 	msg := sprintf("[PLAN-APPLY-05] data.policy_plan.deployment_identity.workload.%s（%v）が無いか、入力にありません", [key, address])
@@ -756,7 +787,7 @@ deny contains msg if {
 
 deny contains msg if {
 	well_formed_governance
-	some a in governance_actions
+	some a in required_governance_actions
 	not governance_denied(a)
 	msg := sprintf("[PLAN-APPLY-06] apply の role %q が、%s を Resource \"*\" の条件なしの Deny で拒んでいません（deployment-identity/ADR-0201 決定5）", [target, a])
 }
