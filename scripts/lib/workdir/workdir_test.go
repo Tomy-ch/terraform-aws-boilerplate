@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,8 +39,25 @@ func snapshot(t *testing.T, dir string) map[string]string {
 	return files
 }
 
+// caseInsensitive は、t.TempDir() のファイルシステムが大文字小文字を区別しないかを返します。
+func caseInsensitive(t *testing.T) bool {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a"), nil, 0o600))
+	_, err := os.Lstat(filepath.Join(dir, "A"))
+	return err == nil
+}
+
 func TestResolve(t *testing.T) {
-	t.Parallel()
+	t.Run("tmp が symlink で git を起動できなければ ErrInvalid", func(t *testing.T) {
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, "tmp")))
+		t.Setenv("PATH", t.TempDir())
+		_, err = Resolve(root, "tmp/x")
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Contains(t, err.Error(), gitenv.ErrNames.Error(), "env を切り離す段で落ちる")
+	})
 
 	for _, work := range []string{"tmp/x", "./tmp/x", "tmp/x/y", "tmp/x/"} {
 		t.Run(work+" は root の下へ解決する", func(t *testing.T) {
@@ -136,6 +154,48 @@ func TestResolve(t *testing.T) {
 		assert.Contains(t, err.Error(), "確かめられません")
 	})
 
+	t.Run("大文字小文字を区別しないファイルシステムで、git の追跡している TMP が symlink なら ErrInvalid", func(t *testing.T) {
+		t.Parallel()
+		if !caseInsensitive(t) {
+			t.Skip("大文字小文字を区別するファイルシステムでは TMP を tmp として開かないので、この経路が無い")
+		}
+		root, outside := realDir(t), realDir(t)
+		git(t, root, "init", "-q")
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "TMP")))
+		git(t, root, "add", "TMP")
+		_, err := Resolve(root, "tmp/x")
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Contains(t, err.Error(), "追跡している symlink")
+	})
+
+	t.Run("git の追跡している symlink の tmp の先の symlink が外を指せば、追跡している tmp を原因に ErrInvalid", func(t *testing.T) {
+		t.Parallel()
+		root, outside, further := realDir(t), realDir(t), realDir(t)
+		git(t, root, "init", "-q")
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp")))
+		require.NoError(t, os.Symlink(further, filepath.Join(outside, "link")))
+		git(t, root, "add", "tmp")
+		_, err := Resolve(root, "tmp/link/x")
+		require.ErrorIs(t, err, ErrInvalid)
+		assert.Contains(t, err.Error(), "追跡している symlink")
+		assert.NotContains(t, err.Error(), " の下にありません", "tmp の検証が先に落とす")
+	})
+
+	for name, track := range map[string]bool{"追跡していない": false, "追跡している": true} {
+		t.Run("tmp が git の"+name+"ファイルなら ErrInvalid", func(t *testing.T) {
+			t.Parallel()
+			root := realDir(t)
+			git(t, root, "init", "-q")
+			require.NoError(t, os.WriteFile(filepath.Join(root, "tmp"), []byte("f"), 0o600))
+			if track {
+				git(t, root, "add", "tmp")
+			}
+			_, err := Resolve(root, "tmp/x")
+			require.ErrorIs(t, err, ErrInvalid)
+			assert.Contains(t, err.Error(), "not a directory")
+		})
+	}
+
 	t.Run("tmp/ の下の git の追跡している symlink が外を指せば ErrInvalid", func(t *testing.T) {
 		t.Parallel()
 		root, outside := realDir(t), realDir(t)
@@ -155,7 +215,7 @@ func TestResolve(t *testing.T) {
 		require.NoError(t, os.Symlink(filepath.Join(root, "none"), filepath.Join(root, "tmp")))
 		_, err := Resolve(root, "tmp/x")
 		require.ErrorIs(t, err, ErrInvalid)
-		assert.Contains(t, err.Error(), "no such file or directory", "落とすのは symlink の先の検証")
+		assert.Contains(t, err.Error(), "lstat "+filepath.Join(root, "none")+": ", "落とすのは symlink の先の検証")
 	})
 
 	t.Run("tmp の親（リポジトリ直下）を指す symlink の下も自身も ErrInvalid", func(t *testing.T) {
@@ -386,7 +446,44 @@ func Test_untrackedIfSymlink(t *testing.T) {
 }
 
 func Test_lsFilesTmp(t *testing.T) {
-	t.Parallel()
+	trackedTmp := func(t *testing.T) string {
+		t.Helper()
+		root := t.TempDir()
+		git(t, root, "init", "-q")
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "a"), nil, 0o600))
+		git(t, root, "add", "-f", "tmp/a")
+		return root
+	}
+
+	t.Run("外側のリポジトリを指す GIT_DIR と GIT_INDEX_FILE を外して、root のリポジトリに問う", func(t *testing.T) {
+		root, other := trackedTmp(t), t.TempDir()
+		git(t, other, "init", "-q")
+		t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+		t.Setenv("GIT_INDEX_FILE", filepath.Join(other, ".git", "index"))
+		out, err := lsFilesTmp(root)
+		require.NoError(t, err)
+		assert.Equal(t, "tmp/a\x00", string(out))
+	})
+
+	t.Run("GIT_LITERAL_PATHSPECS が立っていても、大文字小文字を区別せずに問う", func(t *testing.T) {
+		root := trackedTmp(t)
+		t.Setenv("GIT_LITERAL_PATHSPECS", "1")
+		out, err := lsFilesTmp(root)
+		require.NoError(t, err)
+		assert.Equal(t, "tmp/a\x00", string(out))
+	})
+
+	t.Run("追跡している TMP を、大文字小文字を区別せずに返す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		git(t, root, "init", "-q")
+		require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, "TMP")))
+		git(t, root, "add", "TMP")
+		out, err := lsFilesTmp(root)
+		require.NoError(t, err)
+		assert.Equal(t, "TMP\x00", string(out))
+	})
 
 	t.Run("追跡している tmp の下を返し、名前が tmp で始まるだけのものは返さない", func(t *testing.T) {
 		t.Parallel()
@@ -407,9 +504,13 @@ func Test_lsFilesTmp(t *testing.T) {
 
 	t.Run("リポジトリでなければ、git の stderr を添えて失敗する", func(t *testing.T) {
 		t.Parallel()
-		_, err := lsFilesTmp(t.TempDir())
+		dir := t.TempDir()
+		cmd := exec.CommandContext(t.Context(), "git", "ls-files")
+		cmd.Dir = dir
+		stderr, gitErr := cmd.CombinedOutput()
+		require.Error(t, gitErr)
+		_, err := lsFilesTmp(dir)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "exit status")
-		assert.Contains(t, err.Error(), "git")
+		assert.Contains(t, err.Error(), "exit status 128: "+strings.TrimSpace(string(stderr)))
 	})
 }

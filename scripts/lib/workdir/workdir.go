@@ -19,7 +19,7 @@ import (
 // ErrInvalid は、作業ディレクトリがリポジトリ直下の tmp/ の下の相対パスではないことです。
 var ErrInvalid = xerrors.New("リポジトリ直下の tmp/ の下の相対パスではありません")
 
-// lsFilesFunc は、root で `git ls-files -z -- tmp` を起動し、その出力を返します。
+// lsFilesFunc は、root で、大文字小文字を区別せずに tmp とその下の追跡しているパスを git に問い、その出力を返します。
 type lsFilesFunc func(root string) ([]byte, error)
 
 // Resolve は、作業ディレクトリの値 work を検証し、root からのパスを返します。work はリポジトリ直下の tmp/ の下の
@@ -27,9 +27,11 @@ type lsFilesFunc func(root string) ([]byte, error)
 // 外を指せば [ErrInvalid] です。
 //
 // root の tmp が symlink なら、その先を tmp/ として扱うのは git が追跡していない symlink に限ります。追跡している
-// symlink は Pull Request が持ち込めるので、その先を消させないよう [ErrInvalid] にします。追跡していないことを
-// git で確かめられないとき（root がリポジトリでない、git を起動できない）も [ErrInvalid] です。tmp/ の下の追跡
-// している symlink は、外を指せば上の symlink の検証が落とします。
+// symlink は Pull Request が持ち込めるので、その先を消させないよう [ErrInvalid] にします。大文字小文字を区別しない
+// ファイルシステムでは TMP なども tmp として開くので、追跡しているかは大文字小文字を区別せずに問い、tmp/ の下の
+// 追跡しているパスがあっても落とします。追跡していないことを git で確かめられないとき（root がリポジトリでない、
+// git を起動できない）も [ErrInvalid] です。tmp/ の下の追跡している symlink は、外を指せば上の symlink の検証が
+// 落とします。
 func Resolve(root, work string) (string, error) {
 	return resolve(root, work, lsFilesTmp)
 }
@@ -81,7 +83,10 @@ func lsFilesTmp(root string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(context.Background(), "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--", "tmp")
+	// GIT_LITERAL_PATHSPECS が立つと :(icase) を字面として読み、何も返さずに通してしまう。
+	env = append(env, "GIT_LITERAL_PATHSPECS=0")
+	// ls-files は hook を起動しないが、hook の設定を読む道が増えても起動しないよう外しておく。
+	cmd := exec.CommandContext(context.Background(), "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--", ":(icase)tmp")
 	cmd.Dir, cmd.Env = root, env
 	out, err := cmd.Output()
 	var exitErr *exec.ExitError

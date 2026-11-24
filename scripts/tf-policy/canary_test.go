@@ -401,6 +401,44 @@ func Test_runCanary(t *testing.T) {
 		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
 		assert.FileExists(t, filepath.Join(root, "keep", "f"))
 	})
+
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		c := exec.CommandContext(t.Context(), "git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	t.Run("tmp/ 自身が git の追跡している外への symlink なら使い方の誤りで、先を消さない", func(t *testing.T) {
+		t.Parallel()
+		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/work/old": "old", "elsewhere/stale.txt": "stale"})
+		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
+		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
+		git(t, root, "add", "tmp")
+		before := snapshot(t, elsewhere)
+		tool, calls := fakeTool(t)
+		err := runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, elsewhere))
+	})
+
+	t.Run("tmp/ 自身が git の追跡していない外への symlink なら、その先を tmp/ として建て、先の兄弟を残す", func(t *testing.T) {
+		t.Parallel()
+		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/data/f": "data", "elsewhere/stale.txt": "stale"})
+		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
+		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
+		tool, _ := fakeTool(t)
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary, "偽の道具では期待どおりにならない")
+		assert.DirExists(t, filepath.Join(elsewhere, "c", "work", "ok"))
+		assert.FileExists(t, filepath.Join(elsewhere, "c", "data", "f"))
+		assert.FileExists(t, filepath.Join(elsewhere, "stale.txt"))
+		assert.FileExists(t, filepath.Join(root, "keep", "f"))
+	})
 }
 
 func Test_planCanary(t *testing.T) {
