@@ -19,6 +19,9 @@ updates:
       semver-patch-days: 5
       semver-minor-days: 7
       semver-major-days: 30
+    labels:
+      - "dependencies"
+      - "go"
     groups:
       gomod:
         patterns:
@@ -32,6 +35,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "docker"
     groups:
       docker:
         patterns:
@@ -45,6 +51,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "docker_compose"
     groups:
       docker-compose:
         patterns:
@@ -58,6 +67,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "github_actions"
     groups:
       github-actions:
         patterns:
