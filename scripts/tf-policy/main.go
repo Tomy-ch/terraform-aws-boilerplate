@@ -5,7 +5,7 @@
 //
 //	tf-policy rego-check -policy <dir>
 //	tf-policy verify-result -policy <dir> -report <conftest verify -o json の出力>
-//	tf-policy plan -base <dir> -data <dir> -out <dir> -canary-data <dir> -canary-work <dir> -policy <dir> -decl <decl.json> -layer <decl.json> -reference <dir>
+//	tf-policy plan -base <dir> -data <dir> -out <tmp/ の下の相対パス> -canary-data <dir> -canary-work <tmp/ の下の相対パス> -policy <dir> -decl <decl.json> -layer <decl.json> -reference <dir>
 //	tf-policy extract -out <dir> -decl <decl.json>
 //
 // plan は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
@@ -31,10 +31,11 @@ var (
 )
 
 func main() {
-	os.Exit(report(run(os.Args[1:], os.Stdout, command), os.Stderr))
+	os.Exit(report(run(os.Args[1:], os.Stdout, command, "."), os.Stderr))
 }
 
-func run(args []string, w io.Writer, tool toolFunc) error {
+// run は、サブコマンドへ振り分けます。root はリポジトリ直下です。
+func run(args []string, w io.Writer, tool toolFunc, root string) error {
 	if len(args) == 0 {
 		return xerrors.Wrap(errUsage, "サブコマンドがありません")
 	}
@@ -45,7 +46,7 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "verify-result":
 		return runVerifyResult(rest, w)
 	case "plan":
-		return runPlan(rest, w, tool, runCanary)
+		return runPlan(rest, w, tool, planCanary(root), root)
 	case "extract":
 		return runExtract(rest, w)
 	default:

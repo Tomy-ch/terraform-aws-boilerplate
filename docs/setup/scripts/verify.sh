@@ -328,7 +328,7 @@ permissions() {
   local gp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-governance"
   local bg="arn:aws:iam::${ACCOUNT_ID}:role/break-glass/tabp-break-glass"
   sim allowed apply-identity "$gp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
-  sim implicitDeny apply-identity "arn:aws:iam::${ACCOUNT_ID}:policy/other" iam:CreatePolicy iam:CreatePolicyVersion
+  sim implicitDeny apply-identity "arn:aws:iam::${ACCOUNT_ID}:policy/other" iam:CreatePolicy iam:CreatePolicyVersion iam:GetPolicy
   sim allowed apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${gp},ContextKeyType=arn" iam:AttachRolePolicy
   sim implicitDeny apply-identity "$(role_arn apply-identity)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=arn:aws:iam::aws:policy/AdministratorAccess,ContextKeyType=arn" iam:AttachRolePolicy
   local mp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-identity-manage"
@@ -369,13 +369,20 @@ permissions() {
   echo "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）"
   local wp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload"
   local wrp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload-read"
+  local w2p="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload-2"
   local bp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-boundary-ops-notification"
   sim allowed apply-identity "$wp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$wrp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
+  sim allowed apply-identity "$w2p" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$bp" iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions
   sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wp},ContextKeyType=arn" iam:AttachRolePolicy
   sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wrp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim allowed apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${w2p},ContextKeyType=arn" iam:AttachRolePolicy
   sim implicitDeny apply-identity "$(role_arn apply)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${bp},ContextKeyType=arn" iam:AttachRolePolicy
+  # plan の role に付けてよいのは読み取りの policy だけ（決定7・17）。
+  sim allowed apply-identity "$(role_arn plan)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wrp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn plan)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${wp},ContextKeyType=arn" iam:AttachRolePolicy
+  sim implicitDeny apply-identity "$(role_arn plan)" --context "ContextKeyName=iam:PolicyARN,ContextKeyValues=${w2p},ContextKeyType=arn" iam:AttachRolePolicy
   sim allowed plan "$wp" iam:GetPolicy iam:GetPolicyVersion
   sim allowed plan "$wrp" iam:GetPolicy iam:GetPolicyVersion
   # workload の権限は provider の region と us-east-1 に及び、ほかの region には及ばない（ADR-0208 決定4）。

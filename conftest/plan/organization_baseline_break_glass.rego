@@ -218,6 +218,20 @@ service_managed_auto(s) if {
 	s.auto_deployment[0].enabled == true
 }
 
+# CloudFormation は ASCII の外の文字を「?」に置き換えて保存する。HCL と実物が合わず、plan が毎回 UpdateStackSet を出す。
+deny contains msg if {
+	stack_set
+	description := object.get(stack_set, "description", null)
+	description != null
+	not printable_ascii(description)
+	msg := "[PLAN-BG-05] メンバーの break-glass の StackSet の description が、印字できる ASCII の外の文字を含みます"
+}
+
+printable_ascii(s) if {
+	is_string(s)
+	regex.match(`^[\x20-\x7E]*$`, s)
+}
+
 deny contains msg if {
 	stack_set
 	not member_role_shape
