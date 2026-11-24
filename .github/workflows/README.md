@@ -596,6 +596,9 @@ Go には `min-release-age` に相当するものが無い。`go get` に「新�
 
 このディレクトリのすべての job は、最初の step で `bullfrogsec/bullfrog` を `egress-policy: block`・
 `dns-policy: allowed-domains-only`・`enable-sudo: false` で、自分の `allowed-domains` とともに開始する。
+最初の step（`id: harden-runner`、`continue-on-error: true`）が落ちたときだけ、同じ設定の2番目の step
+（`if: steps.harden-runner.outcome != 'success'`）がやり直し、2番目が落ちれば job は落ちる。bullfrog は agent の
+取得とパッケージの導入を再試行せず、配布元の一時的なエラーで必須の job を落とすためである。
 外向きの接続と名前解決を一覧に照らし、それ以外を拒む —— 侵害された action や道具のダウンロードが、
 その job に用の無い宛先へ持ち出せない。sudo を外すのは、sudo が残る job では step の中から通信制限
 そのものを外せるからである。決定と受け入れた限界は [ADR-0702](../../docs/adr/0702-repository-operations-substrate.md)
@@ -607,9 +610,9 @@ bullfrog は checkout の**前**に走らなければならない —— checkou
 それを守ることが目的だからである。括り出すと、塞ぐために置いた窓が開く。
 
 **固定されていないのは一覧の出所の方である。** [`.github/egress.toml`](../egress.toml) が SSOT で、
-`make egress-apply` が各 job の `with:` を丸ごと書き、`make egress-check` がずれで落ちる。step が
-`name` / `uses` / `with` 以外のキー（`if:` や `continue-on-error:`）を持つこと、job の最初の step で
-ないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
+`make egress-apply` が各 job の先頭の2つの step を `uses:` を除いて丸ごと書き、`make egress-check` がずれで
+落ちる。step が `name` / `id` / `continue-on-error` / `if` / `uses` / `with` 以外のキーを持つこと、2つの step が
+job の先頭に並んでいないこと、steps を持つ job に bullfrog が無いこと、steps を読み取れない job（`steps:` は4桁、step は
 6桁のハイフンで始める）も、同じ検査が拒む。拒む条件の一覧は
 [`scripts/README.md`](../../scripts/README.md) の `egress/` の行が持つ。
 
