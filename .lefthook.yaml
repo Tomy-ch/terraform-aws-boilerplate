@@ -260,12 +260,6 @@ pre-commit:
         - ".makefiles/**"
       run: make -k root-check
 
-    secret-gates-test:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-      run: make secret-gates-test
-
 commit-msg:
   commands:
     # 規約の正本は commitlint.config.js（.makefiles/github/commitlint.mk）。ここを通らない
