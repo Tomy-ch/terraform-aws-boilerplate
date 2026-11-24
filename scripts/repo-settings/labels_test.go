@@ -23,6 +23,15 @@ func Test_checkDependabotLabels(t *testing.T) {
 	})
 
 
+	t.Run("宣言に無いラベルを、ecosystem をまたいですべて ecosystem の名前とともに挙げる", func(t *testing.T) {
+		t.Parallel()
+		dependabot := "updates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      - \"go\"\n      - \"x\"\n" +
+			"  - package-ecosystem: \"docker\"\n    labels:\n      - \"y\"\n"
+		_, err := checkDependabotLabels([]byte(dependabot), []byte(labelsFixture))
+		require.ErrorIs(t, err, errDependabotLabels)
+		assert.Contains(t, err.Error(), `gomod の "x", docker の "y"`)
+	})
+
 	cases := []struct {
 		name       string
 		dependabot string
@@ -32,6 +41,7 @@ func Test_checkDependabotLabels(t *testing.T) {
 	}{
 		{"宣言に無いラベルは拒む", dependabotFixture + "    labels:\n      - \"docker\"\n", labelsFixture, errDependabotLabels, `docker の "docker"`},
 		{"labels の無い ecosystem だけなら、確かめるラベルが0件なので拒む", "updates:\n  - package-ecosystem: \"docker\"\n", labelsFixture, errDependabotLabels, "ラベルを1つも名指していません"},
+		{"dependabot.yml が空なら拒む", "", labelsFixture, errDependabotLabels, "ecosystem が1つもありません"},
 		{"ecosystem が1つも無ければ拒む", "version: 2\nupdates: []\n", labelsFixture, errDependabotLabels, "ecosystem が1つもありません"},
 		{"updates が無ければ拒む", "version: 2\n", labelsFixture, errDependabotLabels, "ecosystem が1つもありません"},
 		{"YAML として読めなければ拒む", "updates: [\n", labelsFixture, errDependabotParse, dependabotFile},

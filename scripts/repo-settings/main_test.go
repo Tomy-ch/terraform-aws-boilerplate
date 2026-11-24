@@ -270,6 +270,7 @@ func Test_readDeclarations(t *testing.T) {
 		assert.Len(t, decl.sets, 1)
 		assert.Equal(t, 1, decl.marks)
 		assert.Equal(t, 1, decl.exprs)
+		assert.Equal(t, 2, decl.dependabotLabels)
 	})
 
 	cases := []struct {
@@ -576,6 +577,21 @@ func Test_applyOrCheck(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, rulesetFile))
 		require.NoError(t, err)
 		assert.Equal(t, rulesetFixture, string(got))
+	})
+
+	t.Run("Dependabot のラベルが labels.json に無ければ、apply は include の区間も起動条件も書き換えない", func(t *testing.T) {
+		t.Parallel()
+		root := writeRepo(t, rulesetFixture)
+		drifted := strings.Replace(applyWorkflowFixture, "      - main", "      - 'release/*'", 1)
+		writeFile(t, root, ".github/workflows/apply.yaml", drifted)
+		writeFile(t, root, labelsFile, `[{"name": "bug"}]`)
+		require.ErrorIs(t, applyOrCheck(root, false, &bytes.Buffer{}), errDependabotLabels)
+		ruleset, err := os.ReadFile(filepath.Join(root, rulesetFile))
+		require.NoError(t, err)
+		assert.Equal(t, rulesetFixture, string(ruleset))
+		wf, err := os.ReadFile(filepath.Join(root, ".github/workflows/apply.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, drifted, string(wf))
 	})
 
 	t.Run("書き込めなければ失敗し、ファイルは元のまま", func(t *testing.T) {
