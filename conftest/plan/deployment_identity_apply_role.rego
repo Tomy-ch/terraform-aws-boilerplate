@@ -354,6 +354,14 @@ management_role if {
 	c.rc.address == management_policy
 }
 
+# 入力は reference の plan で、管理アカウントの形である（conftest/plan/README.md）。address がずれて management_actions の
+# 検査が黙って外れないよう、宣言の address が入力に無ければ落とす。
+deny contains msg if {
+	well_formed_governance
+	not management_role
+	msg := sprintf("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy（%s）が入力にありません。address が変わったなら宣言を直してください", [management_policy])
+}
+
 required_governance_actions := array.concat(governance_actions, management_actions) if management_role
 
 else := governance_actions

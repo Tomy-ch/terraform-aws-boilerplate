@@ -54,7 +54,7 @@ well_formed if {
 	is_array(wl.account_iam_writes)
 	every x in wl.account_iam_writes {
 		is_string(x)
-		regex.match(`^iam:[A-Za-z]+Account(PasswordPolicy|Alias)$`, x)
+		regex.match(`^iam:(Create|Delete|Update)Account(PasswordPolicy|Alias)$`, x)
 	}
 	nonempty_string(apply_policy)
 }
@@ -95,7 +95,7 @@ boundary_instances := {c.rc.address |
 
 deny contains msg if {
 	not well_formed
-	msg := "[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか、互いに異なる policy・read_policy・policy_2・boundaries（usecase を key にした address の空でない object）・usecase_iam_prefixes（小文字で - で終わり、ci- で始まらない接頭辞の空でない配列）・service_linked_roles・passed_to_services（空でない）・account_iam_writes（アカウントの password policy か alias の iam: の Action の配列）・apply_only_denies（空でない文字列の配列）だけを持つ形を満たしていないか、deployment_identity.apply_role.policy がありません"
+	msg := "[PLAN-AWP-00] data.policy_plan.deployment_identity.workload が無いか、互いに異なる policy・read_policy・policy_2・boundaries（usecase を key にした address の空でない object）・usecase_iam_prefixes（小文字で - で終わり、ci- で始まらない接頭辞の空でない配列）・service_linked_roles・passed_to_services（空でない）・account_iam_writes（アカウントの password policy か alias の作成・更新・削除の iam: の Action の配列）・apply_only_denies（空でない文字列の配列）だけを持つ形を満たしていないか、deployment_identity.apply_role.policy がありません"
 }
 
 deny contains msg if {

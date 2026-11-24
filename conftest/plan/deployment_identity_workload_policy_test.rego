@@ -147,6 +147,7 @@ test_violation_declaration_malformed if {
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["s3:PutAccountPublicAccessBlock"]}],
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:PutRolePolicy"]}],
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:CreateUser"]}],
+		[{"op": "replace", "path": "/workload/account_iam_writes", "value": ["iam:GetAccountPasswordPolicy"]}],
 		[{"op": "replace", "path": "/workload/account_iam_writes", "value": [1]}],
 		[{"op": "remove", "path": "/apply_role"}],
 	] {

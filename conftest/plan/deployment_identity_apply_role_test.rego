@@ -64,6 +64,7 @@ valid_statements := [
 	full_deny([ao]),
 	{"Effect": "Deny", "NotAction": ["s3:PutObject"], "Resource": ao_objects},
 	governance_deny,
+	management_deny,
 ]
 
 governance_actions := ["organizations:Create*", "sts:AssumeRoot"]
@@ -71,6 +72,10 @@ governance_actions := ["organizations:Create*", "sts:AssumeRoot"]
 management_actions := ["iam:UpdateAccountPasswordPolicy"]
 
 governance_deny := {"Effect": "Deny", "Action": governance_actions, "Resource": "*"}
+
+management_deny := {"Effect": "Deny", "Action": management_actions, "Resource": "*"}
+
+management_index := 10
 
 governance_index := 9
 
@@ -101,7 +106,8 @@ others := [
 	key_policy,
 ]
 
-world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements)])
+# 入力は管理アカウントの reference の plan なので、統制の policy を既定で持つ。
+world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements), governance_policy_rc])
 
 cov(parent, ref, parent_ref) := {"class": "covered_by", "parent": parent, "ref": ref, "parent_ref": parent_ref}
 
@@ -1236,32 +1242,41 @@ test_violation_declared_cloudformation_action_missing if {
 
 # --- 管理アカウントでだけ拒む統制の Action（deployment-identity/ADR-0201 決定5）---
 
-governance_policy_address := sprintf("%saws_iam_policy.governance[0]", [g])
+# bootstrap の modules の外に置き、PLAN-APPLY-02・03 の対象にしない。
+governance_policy_address := "module.governance_marker.aws_iam_policy.governance[0]"
 
 governance_policy_rc := res("aws_iam_policy", governance_policy_address, {"name": "tabp-admin-ci-apply-identity-governance", "arn": sprintf("arn:aws:iam::%s:policy/tabp-admin-ci-apply-identity-governance", [account]), "policy": json.marshal({"Statement": []})})
 
-with_governance_policy(statements) := array.concat(world(statements), [governance_policy_rc])
-
-management_deny := {"Effect": "Deny", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": "*"}
+without_management_deny := remove(valid_statements, management_index)
 
 test_violation_management_action_not_denied_in_admin if {
-	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(with_governance_policy(valid_statements), decl))
+	fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(world(without_management_deny), decl))
 }
 
 test_pass_management_action_denied_in_admin if {
-	not fixture.has("[PLAN-APPLY-06]", messages_for(with_governance_policy(array.concat(valid_statements, [management_deny])), decl))
+	not fixture.has("[PLAN-APPLY-06]", messages_for(world(valid_statements), decl))
 }
 
-# 管理アカウントかどうかは統制の policy の address で見る。role の名前が admin の形でも、統制の policy が無ければ求めない。
+# 統制の policy が無い入力では、宣言の address のずれとして落とし、management_actions は求めない。
 test_pass_management_action_not_required_without_governance_policy if {
-	rcs := with_after(world(valid_statements), apply_role_address, {"name": "tabp-admin-ci-apply", "arn": role_arn("tabp-admin-ci-apply"), "inline_policy": [], "managed_policy_arns": []})
-	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(rcs, decl))
+	msgs := messages_for(without(world(without_management_deny), governance_policy_address), decl)
+	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), msgs)
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", msgs)
 }
 
-# 宣言の address と違う address の統制の policy は、管理アカウントの印にならない。
-test_pass_management_action_not_required_for_other_address if {
-	other := json.patch(governance_policy_rc, [{"op": "replace", "path": "/address", "value": sprintf("%saws_iam_policy.governance_x[0]", [g])}])
-	not fixture.has(denied_06("iam:UpdateAccountPasswordPolicy"), messages_for(array.concat(world(valid_statements), [other]), decl))
+# 宣言の address が入力に無いと、management_actions の検査が黙って外れる。role の名前によらず落とす。
+test_violation_management_policy_absent if {
+	rcs := without(world(valid_statements), governance_policy_address)
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(rcs, decl))
+}
+
+test_violation_management_policy_at_other_address if {
+	other := json.patch(governance_policy_rc, [{"op": "replace", "path": "/address", "value": "module.governance_marker.aws_iam_policy.governance_x[0]"}])
+	fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(array.concat(without(world(valid_statements), governance_policy_address), [other]), decl))
+}
+
+test_pass_management_policy_present if {
+	not fixture.has("[PLAN-APPLY-00] data.policy_plan.deployment_identity.apply_role.governance.management_policy", messages_for(world(valid_statements), decl))
 }
 
 management_malformed(patch) if {
