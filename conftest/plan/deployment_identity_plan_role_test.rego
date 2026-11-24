@@ -4,8 +4,8 @@ import data.plan.deployment_identity_plan_role as p
 import data.plan.fixture
 import data.plan.input as gate
 
-# with は decl.json の宣言と合わさるので、read_actions を空にして置き換える。
-decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]", "read_actions": []}}
+# with は decl.json の宣言と合わさるので、read_actions と managed_policies を空にして置き換える。
+decl := {"plan_role": {"role": "module.x.aws_iam_role.this[\"plan\"]", "policy": "module.x.aws_iam_role_policy.this[\"plan\"]", "read_actions": [], "managed_policies": []}}
 
 plan_bucket := "arn:aws:s3:::tabp-admin-tfplan-123456789012-ap-northeast-1-an"
 
@@ -109,10 +109,9 @@ test_violation_put_object_without_resource if {
 
 test_violation_extra_policy_on_plan_role if {
 	extra := rc("aws_iam_role_policy", "module.x.aws_iam_role_policy.extra", {"role": "ci-plan", "policy": "{}"})
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に権限を足しています", [extra.address]), p.deny) with input as with_role([write_output], [extra]) with data.policy_plan.deployment_identity as decl
 	attachment := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.admin", {"role": "ci-plan", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
-	every other in [extra, attachment] {
-		fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に権限を足しています", [other.address]), p.deny) with input as with_role([write_output], [other]) with data.policy_plan.deployment_identity as decl
-	}
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に付ける policy が [] のどれでもありません", [attachment.address]), p.deny) with input as with_role([write_output], [attachment]) with data.policy_plan.deployment_identity as decl
 }
 
 test_violation_unknown_role_of_policy if {
@@ -143,13 +142,13 @@ test_violation_exclusive_allows_more if {
 	names := rc("aws_iam_role_policies_exclusive", "module.x.aws_iam_role_policies_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_names": ["plan", "extra"]})
 	arns := rc("aws_iam_role_policy_attachments_exclusive", "module.x.aws_iam_role_policy_attachments_exclusive.this[\"plan\"]", {"role_name": "ci-plan", "policy_arns": ["arn:aws:iam::aws:policy/AdministratorAccess"]})
 	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_names が", [names.address]), p.deny) with input as fixture.plan([role, names, attachments_exclusive, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
-	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arns が空ではありません", [arns.address]), p.deny) with input as fixture.plan([role, policies_exclusive, arns, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arns が [] ではありません", [arns.address]), p.deny) with input as fixture.plan([role, policies_exclusive, arns, plan_policy([write_output])]) with data.policy_plan.deployment_identity as decl
 }
 
 test_violation_exclusive_contents_absent if {
 	every c in [
 		{"e": policies_exclusive, "attr": "policy_names", "says": "が"},
-		{"e": attachments_exclusive, "attr": "policy_arns", "says": "が空ではありません"},
+		{"e": attachments_exclusive, "attr": "policy_arns", "says": "が [] ではありません"},
 	] {
 		absent := json.patch(c.e, [{"op": "remove", "path": sprintf("/change/after/%s", [c.attr])}])
 		others := [r | some r in [role, policies_exclusive, attachments_exclusive, plan_policy([write_output])]; r.address != c.e.address]
@@ -288,4 +287,68 @@ test_violation_read_actions_unused if {
 		msgs := p.deny with input as with_role(statements, []) with data.policy_plan.deployment_identity as read_decl(["budgets:ViewBudget"])
 		fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の budgets:ViewBudget は、plan の role の Allow で使われていません", msgs)
 	}
+}
+
+# --- plan の role に付けてよい customer managed policy（deployment-identity/ADR-0201 決定17）---
+
+read_policy_address := "module.x.aws_iam_policy.workload_read"
+
+read_policy_arn := "arn:aws:iam::123456789012:policy/ci-apply-workload-read"
+
+managed_decl := {"plan_role": object.union(decl.plan_role, {"managed_policies": [read_policy_address]})}
+
+read_policy(statements) := object.union(doc_of(statements), {"change": {"after": object.union(doc_of(statements).change.after, {"name": "ci-apply-workload-read", "arn": read_policy_arn})}})
+
+doc_of(statements) := fixture.doc("aws_iam_policy", read_policy_address, "policy", {"Statement": statements})
+
+read_attachment := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.plan_workload_read", {"role": "ci-plan", "policy_arn": read_policy_arn})
+
+attached_exclusive := rc("aws_iam_role_policy_attachments_exclusive", attachments_exclusive.address, {"role_name": "ci-plan", "policy_arns": [read_policy_arn]})
+
+with_managed(statements, others) := fixture.plan(array.concat([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), read_policy(statements), read_attachment], others))
+
+test_pass_declared_managed_policy if {
+	count(p.deny) == 0 with input as with_managed([fixture.allow(["sns:GetTopicAttributes", "config:DescribeDeliveryChannels"])], []) with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_write_in_managed_policy if {
+	fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action config:putdeliverychannel", p.deny) with input as with_managed([fixture.allow("config:PutDeliveryChannel")], []) with data.policy_plan.deployment_identity as managed_decl
+}
+
+# 宣言した policy の文が allows に入らないと、PLAN-ROLE-02 は付いた policy を見ずに緑になる。
+test_violation_not_action_in_managed_policy if {
+	s := {"Effect": "Allow", "NotAction": "s3:GetObject", "Resource": "*"}
+	fixture.has("[PLAN-ROLE-01]", p.deny) with input as with_managed([s], []) with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_managed_policy_missing if {
+	plan := fixture.plan([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), read_attachment])
+	fixture.has(sprintf("[PLAN-ROLE-00] plan の role に付ける policy %s が入力にないか", [read_policy_address]), p.deny) with input as plan with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_managed_policy_arn_unknown if {
+	unknown := json.patch(read_policy([fixture.allow("s3:GetObject")]), [{"op": "remove", "path": "/change/after/arn"}, {"op": "add", "path": "/change/after_unknown/arn", "value": true}])
+	plan := fixture.plan([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), unknown, read_attachment])
+	fixture.has(sprintf("[PLAN-ROLE-00] plan の role に付ける policy %s が入力にないか、ARN が plan で決まっていません", [read_policy_address]), p.deny) with input as plan with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_managed_policies_malformed if {
+	every bad in ["x", [""], [1]] {
+		fixture.has("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.managed_policies が", p.deny) with input as with_role([write_output], []) with data.policy_plan.deployment_identity as {"plan_role": object.union(decl.plan_role, {"managed_policies": bad})}
+	}
+}
+
+test_violation_attachment_policy_arn_unknown if {
+	unknown := json.patch(read_attachment, [{"op": "remove", "path": "/change/after/policy_arn"}, {"op": "add", "path": "/change/after_unknown/policy_arn", "value": true}])
+	plan := fixture.plan([role, policies_exclusive, attached_exclusive, plan_policy([write_output]), read_policy([fixture.allow("s3:GetObject")]), unknown])
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arn を plan で読めません", [read_attachment.address]), p.deny) with input as plan with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_exclusive_without_managed_policy if {
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s の policy_arns が [%q] ではありません", [attachments_exclusive.address, read_policy_arn]), p.deny) with input as fixture.plan([role, policies_exclusive, attachments_exclusive, plan_policy([write_output]), read_policy([fixture.allow("s3:GetObject")]), read_attachment]) with data.policy_plan.deployment_identity as managed_decl
+}
+
+test_violation_other_policy_attached_beside_managed if {
+	admin := rc("aws_iam_role_policy_attachment", "module.x.aws_iam_role_policy_attachment.admin", {"role": "ci-plan", "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"})
+	fixture.has(sprintf("[PLAN-ROLE-04] p.json: %s が plan の role に付ける policy が", [admin.address]), p.deny) with input as with_managed([fixture.allow("s3:GetObject")], [admin]) with data.policy_plan.deployment_identity as managed_decl
 }

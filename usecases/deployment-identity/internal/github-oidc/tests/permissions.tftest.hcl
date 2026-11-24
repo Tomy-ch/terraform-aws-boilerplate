@@ -122,6 +122,10 @@ run "policies" {
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read" }
   }
   override_resource {
+    target = aws_iam_policy.workload_2
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2" }
+  }
+  override_resource {
     target = aws_iam_policy.governance[0]
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
   }
@@ -222,64 +226,6 @@ run "policies" {
         Effect   = "Allow"
         Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions"]
         Resource = "arn:aws:iam::123456789012:policy/tabp-admin-ci-*"
-      },
-      {
-        Sid      = "ReadWorkloadTopics"
-        Effect   = "Allow"
-        Action   = ["sns:GetTopicAttributes", "sns:ListTagsForResource"]
-        Resource = ["arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*", "arn:aws:sns:us-east-1:123456789012:tabp-admin-*"]
-      },
-      {
-        Sid      = "ReadWorkloadKeys"
-        Effect   = "Allow"
-        Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
-        Resource = ["arn:aws:kms:ap-northeast-1:123456789012:key/*", "arn:aws:kms:us-east-1:123456789012:key/*"]
-        Condition = {
-          Bool         = { "kms:MultiRegion" = "false" }
-          StringEquals = { "kms:KeyOrigin" = "AWS_KMS", "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" }
-        }
-      },
-      {
-        Sid    = "ReadWorkloadSchedules"
-        Effect = "Allow"
-        Action = ["scheduler:GetSchedule", "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource"]
-        Resource = [
-          "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-admin-*",
-          "arn:aws:scheduler:ap-northeast-1:123456789012:schedule/tabp-admin-*/*",
-          "arn:aws:scheduler:us-east-1:123456789012:schedule-group/tabp-admin-*",
-          "arn:aws:scheduler:us-east-1:123456789012:schedule/tabp-admin-*/*",
-        ]
-      },
-      { Sid = "DescribeChatConfigurations", Effect = "Allow", Action = "chatbot:DescribeSlackChannelConfigurations", Resource = "*" },
-      {
-        Sid      = "ReadWorkloadRoles"
-        Effect   = "Allow"
-        Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]
-        Resource = "arn:aws:iam::123456789012:role/tabp-admin-*"
-      },
-      {
-        Sid      = "ReadWorkloadPolicies"
-        Effect   = "Allow"
-        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
-        Resource = "arn:aws:iam::123456789012:policy/tabp-admin-*"
-      },
-      {
-        Sid      = "ReadWorkloadBudgets"
-        Effect   = "Allow"
-        Action   = ["budgets:ListTagsForResource", "budgets:ViewBudget"]
-        Resource = "arn:aws:budgets::123456789012:budget/tabp-admin-*"
-      },
-      {
-        Sid      = "ReadAnomalyDetection"
-        Effect   = "Allow"
-        Action   = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"]
-        Resource = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
-      },
-      {
-        Sid      = "ReadChatbotServiceLinkedRole"
-        Effect   = "Allow"
-        Action   = "iam:GetRole"
-        Resource = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
       },
       { Sid = "IamGetAccountPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
       { Sid = "IamListOrganizationsFeatures", Effect = "Allow", Action = "iam:ListOrganizationsFeatures", Resource = "*" },
@@ -932,28 +878,32 @@ run "policies" {
       [aws_iam_role_policy_attachments_exclusive.this["unlock"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["unlock"].policy_arns))],
       [aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].role_name, sort(tolist(aws_iam_role_policy_attachments_exclusive.this["unlock_identity"].policy_arns))],
       ]) == jsonencode([
-      [aws_iam_role.this["plan"].name, []],
-      [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
+      [aws_iam_role.this["plan"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
+      [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
       [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"]],
       [aws_iam_role.this["unlock"].name, []],
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
-    error_message = "managed policy が、apply の role の workload の2つの policy と、apply-identity の role の manage の policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
+    error_message = "managed policy が、plan の role の workload の読み取りの policy と、apply の role の workload の3つの policy と、apply-identity の role の manage の policy と、管理アカウントの apply-identity の role の統制の policy だけになっていません。"
   }
 
   assert {
     condition = jsonencode([
       [aws_iam_role_policy_attachment.workload.role, aws_iam_role_policy_attachment.workload.policy_arn],
       [aws_iam_role_policy_attachment.workload_read.role, aws_iam_role_policy_attachment.workload_read.policy_arn],
+      [aws_iam_role_policy_attachment.workload_2.role, aws_iam_role_policy_attachment.workload_2.policy_arn],
+      [aws_iam_role_policy_attachment.plan_workload_read.role, aws_iam_role_policy_attachment.plan_workload_read.policy_arn],
       [aws_iam_role_policy_attachment.manage.role, aws_iam_role_policy_attachment.manage.policy_arn],
       [aws_iam_role_policy_attachment.governance[0].role, aws_iam_role_policy_attachment.governance[0].policy_arn],
       ]) == jsonencode([
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"],
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
+      [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2"],
+      [aws_iam_role.this["plan"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"],
     ])
-    error_message = "workload の2つの policy と manage と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
+    error_message = "workload の3つの policy と plan の role の読み取りの policy と manage と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
   }
 
   assert {
@@ -966,8 +916,164 @@ run "policies" {
 
   # deployment-identity/ADR-0201 決定13・14・17。
   assert {
-    condition     = jsondecode(aws_iam_policy.workload_read.policy).Statement == [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"], s.Sid)]
-    error_message = "apply の role の workload の読み取りの policy が、plan の role の workload の読み取りと同じ文になっていません。"
+    condition = jsondecode(aws_iam_policy.workload_read.policy).Statement == [
+      {
+        Sid      = "ReadWorkloadTopics"
+        Effect   = "Allow"
+        Action   = ["sns:GetTopicAttributes", "sns:ListTagsForResource"]
+        Resource = ["arn:aws:sns:ap-northeast-1:123456789012:tabp-admin-*", "arn:aws:sns:us-east-1:123456789012:tabp-admin-*"]
+      },
+      {
+        Sid      = "ReadWorkloadKeys"
+        Effect   = "Allow"
+        Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"]
+        Resource = ["arn:aws:kms:ap-northeast-1:123456789012:key/*", "arn:aws:kms:us-east-1:123456789012:key/*"]
+        Condition = {
+          Bool         = { "kms:MultiRegion" = "false" }
+          StringEquals = { "kms:KeyOrigin" = "AWS_KMS", "kms:KeySpec" = "SYMMETRIC_DEFAULT", "kms:KeyUsage" = "ENCRYPT_DECRYPT" }
+        }
+      },
+      {
+        Sid    = "ReadWorkloadSchedules"
+        Effect = "Allow"
+        Action = ["scheduler:GetSchedule", "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource"]
+        Resource = [
+          "arn:aws:scheduler:ap-northeast-1:123456789012:schedule-group/tabp-admin-*",
+          "arn:aws:scheduler:ap-northeast-1:123456789012:schedule/tabp-admin-*/*",
+          "arn:aws:scheduler:us-east-1:123456789012:schedule-group/tabp-admin-*",
+          "arn:aws:scheduler:us-east-1:123456789012:schedule/tabp-admin-*/*",
+        ]
+      },
+      { Sid = "DescribeChatConfigurations", Effect = "Allow", Action = "chatbot:DescribeSlackChannelConfigurations", Resource = "*" },
+      {
+        Sid      = "ReadWorkloadRoles"
+        Effect   = "Allow"
+        Action   = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]
+        Resource = "arn:aws:iam::123456789012:role/tabp-admin-*"
+      },
+      {
+        Sid      = "ReadWorkloadPolicies"
+        Effect   = "Allow"
+        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"]
+        Resource = "arn:aws:iam::123456789012:policy/tabp-admin-*"
+      },
+      {
+        Sid      = "ReadWorkloadBudgets"
+        Effect   = "Allow"
+        Action   = ["budgets:ListTagsForResource", "budgets:ViewBudget"]
+        Resource = "arn:aws:budgets::123456789012:budget/tabp-admin-*"
+      },
+      {
+        Sid      = "ReadAnomalyDetection"
+        Effect   = "Allow"
+        Action   = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"]
+        Resource = ["arn:aws:ce::123456789012:anomalymonitor/*", "arn:aws:ce::123456789012:anomalysubscription/*"]
+      },
+      {
+        Sid      = "ReadChatbotServiceLinkedRole"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = "arn:aws:iam::123456789012:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      },
+      { Sid = "ReadAlternateContact", Effect = "Allow", Action = "account:GetAlternateContact", Resource = "arn:aws:account::123456789012:account" },
+      { Sid = "ReadConfigServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig" },
+      {
+        Sid      = "ReadConfigRecorders"
+        Effect   = "Allow"
+        Action   = ["config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders"]
+        Resource = ["arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/*", "arn:aws:config:us-east-1:123456789012:configuration-recorder/tabp-admin/*"]
+      },
+      {
+        Sid      = "ReadAnalyzers"
+        Effect   = "Allow"
+        Action   = "access-analyzer:GetAnalyzer"
+        Resource = ["arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external", "arn:aws:access-analyzer:us-east-1:123456789012:analyzer/tabp-admin-external"]
+      },
+      {
+        Sid    = "ReadSsmServiceSettings"
+        Effect = "Allow"
+        Action = "ssm:GetServiceSetting"
+        Resource = [
+          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+        ]
+      },
+      { Sid = "ReadAccountPublicAccessBlock", Effect = "Allow", Action = "s3:GetAccountPublicAccessBlock", Resource = "*" },
+      { Sid = "ReadPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
+      { Sid = "ReadDeliveryChannels", Effect = "Allow", Action = "config:DescribeDeliveryChannels", Resource = "*" },
+      { Sid = "ReadRetentionConfigurations", Effect = "Allow", Action = "config:DescribeRetentionConfigurations", Resource = "*" },
+      { Sid = "ReadEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:GetEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "DescribeRegions", Effect = "Allow", Action = "ec2:DescribeRegions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "ReadVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:DescribeVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "ReadEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:GetBlockPublicAccessConfiguration", Resource = "*" },
+    ]
+    error_message = "workload の読み取りの policy が、workload の usecase と account-baseline の読み取りの文になっていません。"
+  }
+
+  # account-baseline の管理（決定13・17）。admin の password policy は organization-baseline が持つので含めない（決定5）。
+  assert {
+    condition = jsondecode(aws_iam_policy.workload_2.policy).Statement == [
+      {
+        Sid       = "PutAlternateContact"
+        Effect    = "Allow"
+        Action    = "account:PutAlternateContact"
+        Resource  = "arn:aws:account::123456789012:account"
+        Condition = { StringEquals = { "account:AlternateContactTypes" = "SECURITY" } }
+      },
+      {
+        Sid       = "CreateConfigServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "config.amazonaws.com" } }
+      },
+      {
+        Sid       = "CreateAnalyzerServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "access-analyzer.amazonaws.com" } }
+      },
+      {
+        Sid       = "PassConfigServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+        Condition = { StringEquals = { "iam:PassedToService" = "config.amazonaws.com" } }
+      },
+      {
+        Sid      = "ManageConfigRecorders"
+        Effect   = "Allow"
+        Action   = ["config:PutConfigurationRecorder", "config:StartConfigurationRecorder"]
+        Resource = ["arn:aws:config:ap-northeast-1:123456789012:configuration-recorder/tabp-admin/*", "arn:aws:config:us-east-1:123456789012:configuration-recorder/tabp-admin/*"]
+      },
+      {
+        Sid      = "CreateAnalyzers"
+        Effect   = "Allow"
+        Action   = "access-analyzer:CreateAnalyzer"
+        Resource = ["arn:aws:access-analyzer:ap-northeast-1:123456789012:analyzer/tabp-admin-external", "arn:aws:access-analyzer:us-east-1:123456789012:analyzer/tabp-admin-external"]
+      },
+      {
+        Sid    = "UpdateSsmServiceSettings"
+        Effect = "Allow"
+        Action = "ssm:UpdateServiceSetting"
+        Resource = [
+          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:ap-northeast-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/documents/console/public-sharing-permission",
+          "arn:aws:ssm:us-east-1:123456789012:servicesetting/ssm/automation/customer-script-log-destination",
+        ]
+      },
+      { Sid = "PutAccountPublicAccessBlock", Effect = "Allow", Action = "s3:PutAccountPublicAccessBlock", Resource = "*" },
+      { Sid = "PutDeliveryChannels", Effect = "Allow", Action = "config:PutDeliveryChannel", Resource = "*" },
+      { Sid = "PutRetentionConfigurations", Effect = "Allow", Action = "config:PutRetentionConfiguration", Resource = "*" },
+      { Sid = "EnableEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:EnableEbsEncryptionByDefault", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "ModifyVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:ModifyVpcBlockPublicAccessOptions", Resource = "*", Condition = { StringEquals = { "ec2:Region" = ["ap-northeast-1", "us-east-1"] } } },
+      { Sid = "PutEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:PutBlockPublicAccessConfiguration", Resource = "*" },
+    ]
+    error_message = "apply の role の account-baseline の管理の policy が、決めた Action・Resource・条件の文になっていません。"
   }
 
   assert {
@@ -1104,7 +1210,7 @@ run "policies" {
   }
 
   assert {
-    condition     = aws_iam_policy.workload.name == "tabp-admin-ci-apply-workload" && aws_iam_policy.workload_read.name == "tabp-admin-ci-apply-workload-read" && [for k, p in aws_iam_policy.boundary : [k, p.name]] == [["ops-notification", "tabp-admin-ci-boundary-ops-notification"]]
+    condition     = aws_iam_policy.workload.name == "tabp-admin-ci-apply-workload" && aws_iam_policy.workload_read.name == "tabp-admin-ci-apply-workload-read" && aws_iam_policy.workload_2.name == "tabp-admin-ci-apply-workload-2" && [for k, p in aws_iam_policy.boundary : [k, p.name]] == [["ops-notification", "tabp-admin-ci-boundary-ops-notification"]]
     error_message = "apply の role の workload の policy と boundary の名前が、<name_prefix>-ci-apply-workload・<name_prefix>-ci-apply-workload-read と <name_prefix>-ci-boundary-<usecase> になっていません。"
   }
 
@@ -1318,24 +1424,26 @@ run "policies" {
   # deployment-identity/ADR-0201 決定20 と「与えないもの」。
   assert {
     condition = alltrue(flatten([
-      for d in [aws_iam_policy.workload.policy, aws_iam_policy.workload_read.policy, aws_iam_role_policy.this["plan"].policy] : [
+      for d in [aws_iam_policy.workload.policy, aws_iam_policy.workload_read.policy, aws_iam_policy.workload_2.policy, aws_iam_role_policy.this["plan"].policy] : [
         for s in jsondecode(d).Statement : [
           for a in flatten([try(s.Action, [])]) : !can(regex("^((budgets|ce):(tag|untag)resource|aws-portal:.*|budgets:(createbudgetaction|executebudgetaction))$", lower(a)))
         ]
       ]
     ]))
-    error_message = "workload の2つの policy か plan の role の policy が、budgets・ce の tag の書き込み、aws-portal、予算の action のどれかを許しています。"
+    error_message = "workload の3つの policy か plan の role の policy が、budgets・ce の tag の書き込み、aws-portal、予算の action のどれかを許しています。"
   }
 
   assert {
     condition = [
       [for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Sid if s.Resource == "*"],
       [for s in jsondecode(aws_iam_policy.workload_read.policy).Statement : s.Sid if s.Resource == "*"],
+      [for s in jsondecode(aws_iam_policy.workload_2.policy).Statement : s.Sid if s.Resource == "*"],
       ] == [
       ["CreateWorkloadKeys", "CreateChatConfigurations", "CreateAnomalyMonitors", "CreateAnomalySubscriptions"],
-      ["DescribeChatConfigurations"],
+      ["DescribeChatConfigurations", "ReadAccountPublicAccessBlock", "ReadPasswordPolicy", "ReadDeliveryChannels", "ReadRetentionConfigurations", "ReadEbsEncryptionByDefault", "DescribeRegions", "ReadVpcBlockPublicAccess", "ReadEmrBlockPublicAccess"],
+      ["PutAccountPublicAccessBlock", "PutDeliveryChannels", "PutRetentionConfigurations", "EnableEbsEncryptionByDefault", "ModifyVpcBlockPublicAccess", "PutEmrBlockPublicAccess"],
     ]
-    error_message = "workload の2つの policy の Resource \"*\" の文が、resource-level 権限を持たない Action の文だけになっていません。"
+    error_message = "workload の3つの policy の Resource \"*\" の文が、resource-level 権限を持たない Action の文だけになっていません。"
   }
 
   # deployment-identity/ADR-0201 決定13。
@@ -1350,13 +1458,12 @@ run "policies" {
   # chatbot_slr_absent_outside_aws の Resource の検査が、aws では文を見つけることを確かめる。
   assert {
     condition = [for p in [
-      aws_iam_role_policy.this["plan"].policy,
       aws_iam_role_policy.apply_identity.policy,
       aws_iam_policy.manage.policy,
       aws_iam_policy.workload_read.policy,
       ] : [for s in jsondecode(p).Statement : s.Sid if strcontains(jsonencode(s.Resource), "AWSServiceRoleForAWSChatbot")]
-    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
-    error_message = "aws の partition で、Resource が Chatbot の service-linked role の文が、plan・apply-identity の inline policy の読み取り、manage の作成と description の更新、workload の読み取りの policy の読み取りになっていません。"
+    ] == [["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    error_message = "aws の partition で、Resource が Chatbot の service-linked role の文が、apply-identity の inline policy の読み取り、manage の作成と description の更新、workload の読み取りの policy の読み取りになっていません。"
   }
 }
 
@@ -1600,7 +1707,7 @@ run "policy_length" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144 && length(aws_iam_policy.workload_2.policy) <= 6144
     error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
   }
 
@@ -1626,6 +1733,7 @@ run "policy_length" {
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
+        workload_2    = [aws_iam_policy.workload_2]
         boundary      = values(aws_iam_policy.boundary)
       }] :
       length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
@@ -1730,7 +1838,7 @@ run "policy_length_outside_admin" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144 && length(aws_iam_policy.workload_2.policy) <= 6144
     error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
   }
 
@@ -1746,6 +1854,7 @@ run "policy_length_outside_admin" {
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
+        workload_2    = [aws_iam_policy.workload_2]
         boundary      = values(aws_iam_policy.boundary)
       }] :
       length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
@@ -1865,7 +1974,7 @@ run "policy_length_aws" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144 && length(aws_iam_policy.workload_2.policy) <= 6144
     error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
   }
 
@@ -1913,6 +2022,7 @@ run "policy_length_aws" {
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
+        workload_2    = [aws_iam_policy.workload_2]
         boundary      = values(aws_iam_policy.boundary)
       }] :
       length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
@@ -1924,12 +2034,11 @@ run "policy_length_aws" {
 
   assert {
     condition = [for p in [
-      aws_iam_role_policy.this["plan"].policy,
       aws_iam_role_policy.apply_identity.policy,
       aws_iam_policy.manage.policy,
       aws_iam_policy.workload_read.policy,
       ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
-    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    ] == [["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
     error_message = "aws の partition の境界の入力で、長さを測る plan・apply-identity の inline policy、manage、workload の読み取りの policy に、aws でだけ置く Chatbot の service-linked role の文が入っていません。"
   }
 }
@@ -2027,7 +2136,7 @@ run "policy_length_outside_admin_aws" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144
+    condition     = length(aws_iam_policy.boundary) == 1 && length(aws_iam_policy.workload.policy) <= 6144 && length(aws_iam_policy.workload_read.policy) <= 6144 && length(aws_iam_policy.workload_2.policy) <= 6144
     error_message = "apply の role の workload の policy が 6,144 文字を超えているか、boundary の数が1つではありません。測る policy を見直してください。"
   }
 
@@ -2057,6 +2166,7 @@ run "policy_length_outside_admin_aws" {
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
+        workload_2    = [aws_iam_policy.workload_2]
         boundary      = values(aws_iam_policy.boundary)
       }] :
       length(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies) == length(toset(jsondecode(file("../../../../conftest/plan/decl.json")).policy_plan.deployment_identity.customer_managed_policies)) &&
@@ -2068,12 +2178,11 @@ run "policy_length_outside_admin_aws" {
 
   assert {
     condition = [for p in [
-      aws_iam_role_policy.this["plan"].policy,
       aws_iam_role_policy.apply_identity.policy,
       aws_iam_policy.manage.policy,
       aws_iam_policy.workload_read.policy,
       ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
-    ] == [["ReadChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
+    ] == [["ReadChatbotServiceLinkedRole"], ["CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], ["ReadChatbotServiceLinkedRole"]]
     error_message = "aws の partition の境界の入力で、長さを測る plan・apply-identity の inline policy、manage、workload の読み取りの policy に、aws でだけ置く Chatbot の service-linked role の文が入っていません。"
   }
 }
@@ -2141,7 +2250,7 @@ run "role_arns_follow_data_sources" {
   }
 
   assert {
-    condition = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "ReadWorkloadRoles", "ReadWorkloadPolicies"], s.Sid)] == [
+    condition = [for s in jsondecode(aws_iam_policy.workload_read.policy).Statement : s.Resource if contains(["ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "ReadWorkloadRoles", "ReadWorkloadPolicies"], s.Sid)] == [
       ["arn:aws-us-gov:sns:us-gov-west-1:210987654321:t4bp-dev-*"],
       ["arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/*"],
       [
@@ -2151,7 +2260,7 @@ run "role_arns_follow_data_sources" {
       "arn:aws-us-gov:iam::210987654321:role/t4bp-dev-*",
       "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-*",
     ]
-    error_message = "plan の role の workload の読み取りの Resource が、partition・リージョン・アカウント・name_prefix から組んだ pattern になっていません。"
+    error_message = "workload の読み取りの policy の Resource が、partition・リージョン・アカウント・name_prefix から組んだ pattern になっていません。"
   }
 
   assert {
@@ -2195,7 +2304,7 @@ run "role_arns_follow_data_sources" {
   }
 
   assert {
-    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read"])
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-2", "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read"])
     error_message = "apply の role に付く workload の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
   }
 
@@ -2210,7 +2319,7 @@ run "role_arns_follow_data_sources" {
 
   assert {
     condition = [
-      one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadWorkloadBudgets"]),
+      one([for s in jsondecode(aws_iam_policy.workload_read.policy).Statement : s.Resource if s.Sid == "ReadWorkloadBudgets"]),
       one([for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Resource if s.Sid == "ManageWorkloadBudgets"]),
     ] == [for _ in range(2) : "arn:aws-us-gov:budgets::210987654321:budget/t4bp-dev-*"]
     error_message = "予算の読み取りと管理の Resource が、partition・アカウント・name_prefix から組まれていません。"
@@ -2218,7 +2327,7 @@ run "role_arns_follow_data_sources" {
 
   assert {
     condition = [
-      one([for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Resource if s.Sid == "ReadAnomalyDetection"]),
+      one([for s in jsondecode(aws_iam_policy.workload_read.policy).Statement : s.Resource if s.Sid == "ReadAnomalyDetection"]),
       one([for s in jsondecode(aws_iam_policy.workload.policy).Statement : s.Resource if s.Sid == "ManageAnomalyDetection"]),
       one([for s in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : s.Resource if s.Sid == "DenyBootstrapAnomalyDetectionChange"]),
     ] == [for _ in range(3) : ["arn:aws-us-gov:ce::210987654321:anomalymonitor/*", "arn:aws-us-gov:ce::210987654321:anomalysubscription/*"]]
@@ -2266,24 +2375,22 @@ run "chatbot_slr_absent_outside_aws" {
   # workload の policy の CreateChatbotServiceLinkedRole は partition で分けない（deployment-identity/ADR-0201 決定3）ので、この検査の対象の外である。
   assert {
     condition = [for p in [
-      aws_iam_role_policy.this["plan"].policy,
       aws_iam_role_policy.apply_identity.policy,
       aws_iam_policy.manage.policy,
       aws_iam_policy.workload_read.policy,
       ] : [for s in jsondecode(p).Statement : s.Sid if contains(["ReadChatbotServiceLinkedRole", "CreateChatbotServiceLinkedRole", "UpdateChatbotServiceLinkedRole"], s.Sid)]
-    ] == [[], [], [], []]
-    error_message = "aws でない partition で、plan・apply-identity の inline policy、manage、workload の読み取りの policy に、Chatbot の service-linked role の Sid の文があります。"
+    ] == [[], [], []]
+    error_message = "aws でない partition で、apply-identity の inline policy、manage、workload の読み取りの policy に、Chatbot の service-linked role の Sid の文があります。"
   }
 
   assert {
     condition = [for p in [
-      aws_iam_role_policy.this["plan"].policy,
       aws_iam_role_policy.apply_identity.policy,
       aws_iam_policy.manage.policy,
       aws_iam_policy.workload_read.policy,
       ] : [for s in jsondecode(p).Statement : s.Sid if strcontains(jsonencode(s.Resource), "AWSServiceRoleForAWSChatbot")]
-    ] == [[], [], [], []]
-    error_message = "aws でない partition で、plan・apply-identity の inline policy、manage、workload の読み取りの policy に、Resource が Chatbot の service-linked role の文があります。"
+    ] == [[], [], []]
+    error_message = "aws でない partition で、apply-identity の inline policy、manage、workload の読み取りの policy に、Resource が Chatbot の service-linked role の文があります。"
   }
 }
 
@@ -2384,7 +2491,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
     error_message = "dev の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2482,8 +2589,8 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "dev の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "dev の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の3つの policy だけになっていません。"
   }
 }
 
@@ -2497,7 +2604,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
     error_message = "security の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2595,8 +2702,8 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "security の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "security の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の3つの policy だけになっていません。"
   }
 }
 
@@ -2610,7 +2717,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies", "ReadWorkloadTopics", "ReadWorkloadKeys", "ReadWorkloadSchedules", "DescribeChatConfigurations", "ReadWorkloadRoles", "ReadWorkloadPolicies", "ReadWorkloadBudgets", "ReadAnomalyDetection", "ReadChatbotServiceLinkedRole"]
+    condition     = [for s in jsondecode(aws_iam_role_policy.this["plan"].policy).Statement : s.Sid] == ["ListBuckets", "ReadBucketConfiguration", "ReadState", "WritePlanOutput", "ReadStateKey", "ReadGitHubProvider", "ReadCiRoles", "ListKeyAliases", "ReadCiPolicies"]
     error_message = "log-archive の plan の role に、統制の構成物の読み取りが入っています。"
   }
 
@@ -2708,8 +2815,8 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
-    error_message = "log-archive の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の2つの policy だけになっていません。"
+    condition     = jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-identity-manage"]) && jsonencode(tolist(aws_iam_role_policy_attachments_exclusive.this["apply"].policy_arns)) == jsonencode(["arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/${var.name_prefix}-ci-apply-workload-read"])
+    error_message = "log-archive の apply-identity の role の managed policy が manage の policy だけでないか、apply の role の managed policy が workload の3つの policy だけになっていません。"
   }
 }
 
