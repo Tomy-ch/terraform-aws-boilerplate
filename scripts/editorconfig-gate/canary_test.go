@@ -193,6 +193,7 @@ func Test_excludeCanaryFiles(t *testing.T) {
 	assert.NotContains(t, excludedNames, excludeControl, "対照は宣言に無い名前")
 	assert.NotContains(t, excludedNames, excludeControlNonASCII, "対照は宣言に無い名前")
 	assert.NotEqual(t, strconv.QuoteToASCII(excludeControlNonASCII), strconv.Quote(excludeControlNonASCII), "非 ASCII の対照は ASCII でない文字を含む")
+	assert.NotEqual(t, strconv.QuoteToASCII(nonASCIIFile), strconv.Quote(nonASCIIFile), "check-canary の非 ASCII のファイルは ASCII でない文字を含む")
 	assert.Contains(t, excludeDir, "/", "入れ子は2段以上")
 }
 
@@ -206,8 +207,8 @@ func Test_judgeExclude(t *testing.T) {
 	}{
 		"対照だけが載れば成り立つ":        {toolrun.Result{Stdout: excludeListed}, ""},
 		"rc≠0":                {toolrun.Result{Stdout: excludeListed, Code: 1}, "rc=1"},
-		"何も載らない":              {toolrun.Result{}, "対照"},
-		"対照が stderr にだけ載る":    {toolrun.Result{Combined: control + "\n"}, "対照"},
+		"何も載らない":              {toolrun.Result{}, "列挙が働いていません"},
+		"対照が stderr にだけ載る":    {toolrun.Result{Combined: control + "\n"}, "列挙が働いていません"},
 		"非 ASCII の対照だけが載らない":  {toolrun.Result{Stdout: control + "\n"}, "core.quotepath"},
 		"全部が載る":               {toolrun.Result{Stdout: excludeListed + excludeDir + "/" + excludedNames[0] + "\n" + excludeDir + "/" + excludedNames[len(excludedNames)-1] + "\n"}, excludedNames[len(excludedNames)-1]},
 		"同じ名前の別の段は除外の判定に使わない": {toolrun.Result{Stdout: excludeListed + excludedNames[0] + "\n"}, ""},
@@ -217,6 +218,9 @@ func Test_judgeExclude(t *testing.T) {
 			ok, reason := judgeExclude(c.r)
 			assert.Equal(t, c.want == "", ok)
 			assert.Contains(t, reason, c.want)
+			if c.want == "core.quotepath" {
+				assert.NotContains(t, reason, "列挙が働いていません", "ASCII の対照は載っている")
+			}
 		})
 	}
 
@@ -391,10 +395,11 @@ func Test_flaggedFiles(t *testing.T) {
 		want map[string]bool
 	}{
 		"空": {"", map[string]bool{}},
-		"見出しの後の違反の行で数える":    {"a.yaml:\n\t2: wrong indent style\nb.md:\n\t3: x\n", map[string]bool{"a.yaml": true}},
-		"非 ASCII と空白を含む見出し": {"d/ünï x.yaml:\n\t2: wrong indent\n", map[string]bool{"d/ünï x.yaml": true}},
-		"見出しの無い違反は数えない":     {"\t2: wrong indent\n", map[string]bool{}},
-		"字下げした行は見出しにしない":    {"a.yaml:\n\tx:\n\t2: wrong indent\n", map[string]bool{"a.yaml": true}},
+		"見出しの後の違反の行で数える":            {"a.yaml:\n\t2: wrong indent style\nb.md:\n\t3: x\n", map[string]bool{"a.yaml": true}},
+		"非 ASCII と空白を含む見出し":         {"d/ünï x.yaml:\n\t2: wrong indent\n", map[string]bool{"d/ünï x.yaml": true}},
+		"見出しの無い違反は数えない":             {"\t2: wrong indent\n", map[string]bool{}},
+		"字下げした行は見出しにしない":            {"a.yaml:\n\tx:\n\t2: wrong indent\n", map[string]bool{"a.yaml": true}},
+		"末尾が : でない字下げの無い行は見出しを替えない": {"a.yaml:\nsummary line\n\t2: wrong indent\n", map[string]bool{"a.yaml": true}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

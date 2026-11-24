@@ -51,13 +51,13 @@ func Test_runCoverage(t *testing.T) {
 	t.Run("作業ツリーから消えた追跡ファイルは引き、件数を出す", func(t *testing.T) {
 		t.Parallel()
 		f := tooltest.New(t)
-		f.Set(stepLsFiles, "out", "a.md\x00gone.md\x00x/gone two.md\x00")
-		f.Set(stepLsDeleted, "out", "gone.md\x00x/gone two.md\x00")
+		f.Set(stepLsFiles, "out", "a.md\x00gone.md\x00x/gone two.md\x00scripts/go.sum\x00")
+		f.Set(stepLsDeleted, "out", "gone.md\x00x/gone two.md\x00scripts/go.sum\x00")
 		f.Set(stepFiles, "out", "./a.md\n")
 		var out bytes.Buffer
 		require.NoError(t, cover(coverageConfig, &out, f.Tool(), isolated))
 		assert.Contains(t, out.String(), "追跡ファイル 1 件")
-		assert.Contains(t, out.String(), "作業ツリーから消えた 2 件")
+		assert.Contains(t, out.String(), "作業ツリーから消えた 3 件", "期待の除外に当たる消えたファイルも、除外より先に消えたものとして数える")
 	})
 
 	t.Run("消えた追跡ファイルを引いて0件なら errNoInput", func(t *testing.T) {

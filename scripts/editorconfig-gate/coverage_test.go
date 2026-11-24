@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -259,7 +261,7 @@ func Test_runCoverage_realGit(t *testing.T) {
 	// NFC で返すので、-dry-run も NFC になる。ほかの OS では作業ツリーの名前のまま返る。
 	nfc, nfd := "docs/dé.md", "docs/de\u0301.md"
 	repo := t.TempDir()
-	for _, p := range []string{"docs/ünï.md", "sp ace.md", nfd} {
+	for _, p := range []string{"docs/ünï.md", "sp ace.md", nfd, "gone.md"} {
 		writeFile(t, filepath.Join(repo, filepath.FromSlash(p)), "x\n")
 	}
 	env, err := gitEnv()
@@ -270,13 +272,37 @@ func Test_runCoverage_realGit(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, r.Code, r.Combined)
 	}
+	require.NoError(t, os.Remove(filepath.Join(repo, "gone.md")))
+	gitlink := exec.CommandContext(context.Background(), "git", "-c", "core.hooksPath=/dev/null", "update-index", "--add", "--cacheinfo", "160000,e69de29bb2d1d6434b8b29ae775ad8c2e48c5391,sub")
+	gitlink.Dir, gitlink.Env = repo, env
+	out, err := gitlink.CombinedOutput()
+	require.NoError(t, err, string(out))
+	realTargets := func() targets {
+		t.Helper()
+		listed, err := gitList(inRepo, env, stepLsFiles)
+		require.NoError(t, err)
+		deleted, err := gitList(inRepo, env, stepLsDeleted)
+		require.NoError(t, err)
+		tg, err := coverageTargets(listed, deleted)
+		require.NoError(t, err)
+		return tg
+	}
+	// ディレクトリの無い submodule は --deleted にも載るので、消えたものとして数える。
+	tg := realTargets()
+	assert.Equal(t, []int{5, 2, 0}, []int{tg.tracked, tg.deleted, tg.submodules})
+	// clone は submodule の空のディレクトリを作る。そのときは submodule として数える。
+	require.NoError(t, os.Mkdir(filepath.Join(repo, "sub"), 0o750))
+	tg = realTargets()
+	assert.Equal(t, []int{5, 1, 1}, []int{tg.tracked, tg.deleted, tg.submodules})
+
 	listedNFD := nfd
 	if runtime.GOOS == "darwin" {
 		listedNFD = nfc
 	}
-	var out bytes.Buffer
-	require.NoError(t, runCoverage([]string{"docs/ünï.md", "sp ace.md", listedNFD}, &out, inRepo, env), out.String())
-	assert.Contains(t, out.String(), "追跡ファイル 3 件がすべて走査の対象です")
+	var buf bytes.Buffer
+	require.NoError(t, runCoverage([]string{"docs/ünï.md", "sp ace.md", listedNFD}, &buf, inRepo, env), buf.String())
+	assert.Contains(t, buf.String(), "作業ツリーから消えた 1 件・submodule 1 件")
+	assert.Contains(t, buf.String(), "追跡ファイル 3 件がすべて走査の対象です")
 }
 
 func Test_coverageTargets(t *testing.T) {
