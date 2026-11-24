@@ -14,7 +14,11 @@ const (
 	oidcHost     = "token.actions.githubusercontent.com"
 )
 
-var retentionDaysLine = regexp.MustCompile(`(?m)^[ \t]*state_noncurrent_version_retention_days[ \t]*=[ \t]*([0-9]+)`)
+var (
+	retentionDaysLine = regexp.MustCompile(`(?m)^[ \t]*state_noncurrent_version_retention_days[ \t]*=([^\n]*)$`)
+	// retentionDaysValue は代入の右辺。数字の後ろは空白とコメントだけ。
+	retentionDaysValue = regexp.MustCompile(`^[ \t]*([0-9]+)[ \t]*(?:(?:#|//).*)?\r?$`)
+)
 
 // stateKeyARN は、state の鍵の ARN。読めなければ理由を返す。
 func stateKeyARN(q *query, n names) (string, string, error) {
@@ -191,7 +195,7 @@ func beforeApplySteps(n names) []step {
 		checkStep(expectError("StackSet "+breakGlass+" がまだ無い", "StackSetNotFoundException", "cloudformation", "describe-stack-set", "--stack-set-name", breakGlass)),
 	)
 
-	for _, p := range []string{n.applyIdentity + "-governance", n.applyIdentity + "-manage", n.apply + "-workload", "boundary-ops-notification"} {
+	for _, p := range []string{n.applyIdentity + "-governance", n.applyIdentity + "-manage", n.apply + "-workload", n.apply + "-workload-read", "boundary-ops-notification"} {
 		steps = append(steps, checkStep(expectError("policy "+n.roleName(p)+" がまだ無い", "NoSuchEntity", "iam", "get-policy", "--policy-arn", n.policyARN(p))))
 	}
 
@@ -272,8 +276,9 @@ func executorException(v map[string]any, suffix string) bool {
 }
 
 // noUser は、文書の文字列のどれも IAM user（:user/）を含まないこと。
+// 文が無い文書は偽。
 func noUser(v map[string]any) bool {
-	return !anyString(v, func(s string) bool { return strings.Contains(s, ":user/") })
+	return hasStatements(v) && !anyString(v, func(s string) bool { return strings.Contains(s, ":user/") })
 }
 
 // retentionDays は、identity root の state_noncurrent_version_retention_days の値。ちょうど1か所でなければ理由を返す。
@@ -285,10 +290,15 @@ func retentionDays(readFile func(string) ([]byte, error)) (int, string) {
 
 	m := retentionDaysLine.FindAllSubmatch(b, -1)
 	if len(m) != 1 {
-		return 0, fmt.Sprintf("%s の state_noncurrent_version_retention_days = <日数> が1か所ではない（%d か所）", identityMain, len(m))
+		return 0, fmt.Sprintf("%s の state_noncurrent_version_retention_days の代入が1か所ではない（%d か所）", identityMain, len(m))
 	}
 
-	days, err := strconv.Atoi(string(m[0][1]))
+	v := retentionDaysValue.FindSubmatch(m[0][1])
+	if v == nil {
+		return 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"
+	}
+
+	days, err := strconv.Atoi(string(v[1]))
 	if err != nil {
 		return 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"
 	}

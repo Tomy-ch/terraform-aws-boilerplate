@@ -498,6 +498,28 @@ func Test_execute(t *testing.T) {
 		assert.NotContains(t, stdout.String(), "# 結果:")
 	})
 
+	t.Run("verify の出力は16進の英字に隣り合う12桁も伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		f := verifyFake(t, stage1Responses(), map[string]awsResult{
+			stsAccountKey: okResult(testAccount),
+			s3Key("get-bucket-versioning", testBucket): failed("denied for cafe123456789012"),
+		})
+
+		assert.Equal(t, 1, execute(verifyArgs, &stdout, verifyDeps(f, nil)))
+		assert.Contains(t, stdout.String(), "denied for cafe<account>）\n")
+	})
+
+	t.Run("verify がすべて ok でも stdout へ書けなければ 2 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, stage1Responses(), map[string]awsResult{stsAccountKey: okResult(testAccount)})
+
+		assert.Equal(t, 2, execute(verifyArgs, errWriter{}, verifyDeps(f, nil)))
+	})
+
 	t.Run("verify の引数の誤りは 2 を返す", func(t *testing.T) {
 		t.Parallel()
 

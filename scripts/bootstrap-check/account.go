@@ -24,7 +24,36 @@ var (
 	errAWSStart = xerrors.New("aws を起動できません")
 	// errNoProfile は、AWS_PROFILE が空なこと。資格情報を変える環境変数を外し、profile を渡すのは make である。
 	errNoProfile = xerrors.New("AWS_PROFILE が空です。make bootstrap-check-account か make bootstrap-verify から起動してください")
+	// errStaticCredentials は、profile より優先される静的な資格情報が環境に在ること。
+	errStaticCredentials = xerrors.New("環境に静的な資格情報が在ります。make bootstrap-check-account か make bootstrap-verify から起動してください（make が外します）")
+	// errNotReadOnly は、読むだけでない aws の操作を起動しようとしたこと（確認の表の誤り）。
+	errNotReadOnly = xerrors.New("読むだけでない aws の操作は起動しません")
+
+	staticCredentials = []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+	readOnlyPrefixes  = []string{"get-", "list-", "describe-", "head-", "simulate-"}
 )
+
+// awsProfile は、aws に使わせる profile。静的な資格情報が環境に在るか、AWS_PROFILE が空なら、aws を起動せずに止める。
+func awsProfile(getenv func(string) string) (string, error) {
+	var found []string
+
+	for _, k := range staticCredentials {
+		if getenv(k) != "" {
+			found = append(found, k)
+		}
+	}
+
+	if len(found) > 0 {
+		return "", xerrors.Wrapf(errStaticCredentials, "%s", strings.Join(found, "・"))
+	}
+
+	profile := getenv("AWS_PROFILE")
+	if profile == "" {
+		return "", errNoProfile
+	}
+
+	return profile, nil
+}
 
 // awsResult は、aws の1回の起動の結果。err は終了の失敗（*exec.ExitError）か起動の失敗。
 type awsResult struct {
@@ -93,7 +122,12 @@ func newQuery(aws awsFunc, region string) *query {
 	return &query{aws: aws, region: region, cache: map[string]awsResult{}}
 }
 
+// 操作名（args の2番目）が読むだけのもの（get-・list-・describe-・head-・simulate-）でなければ、起動せずに errNotReadOnly。
 func (q *query) call(output string, args ...string) (awsResult, error) {
+	if len(args) < 2 || !slices.ContainsFunc(readOnlyPrefixes, func(p string) bool { return strings.HasPrefix(args[1], p) }) {
+		return awsResult{}, xerrors.Wrapf(errNotReadOnly, "aws %s", strings.Join(args, " "))
+	}
+
 	full := append(append([]string{}, args...), "--output", output, "--region", q.region)
 	key := strings.Join(full, "\x00")
 
@@ -319,9 +353,9 @@ func hasTag(q *query, arn, key string) (verdict, error) {
 
 // checkAccount は、一時 IAM user の資格情報でアカウントの準備を読んで確かめる。
 func checkAccount(o accountOptions, out io.Writer, d deps) error {
-	profile := d.getenv("AWS_PROFILE")
-	if profile == "" {
-		return errNoProfile
+	profile, err := awsProfile(d.getenv)
+	if err != nil {
+		return err
 	}
 
 	q := newQuery(d.aws, o.region)

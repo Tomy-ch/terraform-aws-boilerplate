@@ -74,7 +74,8 @@ func (r simRow) args(n names) []string {
 	return append(append(args, "--action-names"), r.actions...)
 }
 
-// simCheck は、行の評価の結果が、返った件数と actions の数が等しく、すべて want であれば ok とする確認。
+// simCheck は、行の評価の結果が、要求した actions と同じ action を同じ数だけ返し（多重集合として一致）、どの結果にも
+// 足りない context が無く、すべて want であれば ok とする確認。
 func simCheck(r simRow, n names) check {
 	return check{desc: r.desc(), eval: func(q *query) (verdict, error) {
 		if r.unresolved != "" {
@@ -91,31 +92,46 @@ func simCheck(r simRow, n names) check {
 			return verdict{reason: "応答を読めない"}, nil
 		}
 
-		var bad []string
+		var got, bad, missing []string
 
 		for _, e := range results {
 			action, ok1 := at(e, "EvalActionName").(string)
 			decision, ok2 := at(e, "EvalDecision").(string)
 
-			if !ok1 || !ok2 {
+			m, ok3 := get(e, "MissingContextValues")
+			keys, ok4 := strs(arrOf(m))
+
+			if m == nil {
+				keys, ok4 = nil, true
+			}
+
+			if !ok1 || !ok2 || !ok3 || !ok4 {
 				return verdict{reason: "応答を読めない"}, nil
 			}
+
+			got = append(got, action)
+			missing = append(missing, keys...)
 
 			if decision != r.want {
 				bad = append(bad, action+"="+decision)
 			}
 		}
 
-		if len(results) == len(r.actions) && len(bad) == 0 {
-			return verdict{ok: true}, nil
+		returned := strings.Join(got, " ")
+		if returned == "" {
+			returned = "なし"
 		}
 
-		shown := "なし"
-		if len(bad) > 0 {
-			shown = strings.Join(bad, " ")
+		switch {
+		case len(missing) > 0:
+			return verdict{reason: "評価に足りない context: " + strings.Join(missing, " ")}, nil
+		case !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(r.actions))):
+			return verdict{reason: fmt.Sprintf("返った action が要求と一致しない（返った件数 %d / %d: %s）", len(got), len(r.actions), returned)}, nil
+		case len(bad) > 0:
+			return verdict{reason: "違う判定: " + strings.Join(bad, " ")}, nil
 		}
 
-		return verdict{reason: fmt.Sprintf("返った件数 %d / %d、違う判定: %s", len(results), len(r.actions), shown)}, nil
+		return verdict{ok: true}, nil
 	}}
 }
 
@@ -225,7 +241,7 @@ func permissionSections(n names, sk, skReason string) []section {
 	pb := "arn:aws:s3:::" + n.planBucket
 	ab := "arn:aws:s3:::" + n.applyBucket
 	iam := "arn:aws:iam::" + n.account
-	other := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-000000000000"
+	other := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-0000000000a0"
 	policyARN := func(arn string) []string { return []string{ctxEntry("iam:PolicyARN", arn, "arn")} }
 	bypass := []string{ctxEntry("kms:BypassPolicyLockoutSafetyCheck", "true", "boolean")}
 	manage := []string{"iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"}
@@ -251,7 +267,7 @@ func permissionSections(n names, sk, skReason string) []section {
 		otherRegion = "eu-west-1"
 	}
 
-	wk := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-000000000001"
+	wk := "arn:aws:kms:" + n.region + ":" + n.account + ":key/00000000-0000-0000-0000-0000000000a1"
 	keyCtx := func(spec, usage string) []string {
 		return []string{
 			ctxEntry("kms:KeySpec", spec, "string"), ctxEntry("kms:KeyUsage", usage, "string"),
@@ -482,11 +498,13 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 		case g.state == gateAttached:
 			rowSteps(s.gated)
 		case g.state == gateAbsent:
-			steps = append(steps, noteStep(s.absentNote))
+			steps = append(steps, skipStep(s.absentNote))
 		case s.reportGate:
-			steps = append(steps, checkStep(g.ng))
+			ng := checkStep(g.ng)
+			ng.skipped = true
+			steps = append(steps, ng)
 		default:
-			steps = append(steps, noteStep(s.unknownNote))
+			steps = append(steps, skipStep(s.unknownNote))
 		}
 	}
 
@@ -530,22 +548,26 @@ func referencePolicy(readFile func(string) ([]byte, error), module, account stri
 }
 
 // outputDocument は、出力の Bucket の Bucket Policy の文書。source が live ならいま Bucket に付いているもの、reference
-// なら reference の plan のもの。
+// なら reference の plan のもの。JSON の object として読めなければ理由を返す。
 func outputDocument(e verifyEnv, bucket, module string) (string, string, error) {
+	var doc string
+
 	if e.source == sourceReference {
-		doc, reason := referencePolicy(e.readFile, module, e.n.account)
+		var reason string
+		if doc, reason = referencePolicy(e.readFile, module, e.n.account); reason != "" {
+			return "", reason, nil
+		}
+	} else {
+		v, reason, err := e.q.object(e.n.s3("get-bucket-policy", bucket)...)
+		if err != nil || reason != "" {
+			return "", reason, err
+		}
 
-		return doc, reason, nil
+		doc, _ = v["Policy"].(string)
 	}
 
-	v, reason, err := e.q.object(e.n.s3("get-bucket-policy", bucket)...)
-	if err != nil || reason != "" {
-		return "", reason, err
-	}
-
-	doc, _ := v["Policy"].(string)
-	if doc == "" {
-		return "", "応答を読めない", nil
+	if _, ok := decodeObject([]byte(doc)); !ok {
+		return "", "文書を JSON の object として読めない", nil
 	}
 
 	return doc, "", nil
@@ -571,10 +593,9 @@ func outputPolicySteps(e verifyEnv) ([]step, error) {
 			return checkStep(fixedCheck(desc, verdict{reason: reason}))
 		}
 
-		v, ok := decodeObject([]byte(doc))
-		l, isLength := jsonLength(v["Statement"])
+		v, _ := decodeObject([]byte(doc))
 
-		return checkStep(fixedCheck(desc, verdict{ok: ok && isLength && l > 0}))
+		return checkStep(fixedCheck(desc, verdict{ok: hasStatements(v)}))
 	}
 	rows := func(doc, reason string, rs []simRow) []step {
 		out := make([]step, 0, len(rs))

@@ -32,6 +32,8 @@ var (
 	errNoAccount = xerrors.New("アカウント ID が12桁ではありません。make aws-login をやり直してください")
 	// errNoChecks は、確認が1件も無いこと（ADR-0702 決定13）。
 	errNoChecks = xerrors.New("確認が1件もありません")
+	// errBadStep は、確認の表に見出しも判定も持たない行があること。
+	errBadStep = xerrors.New("確認の表に、見出しも判定も持たない行があります")
 )
 
 type verifyOptions struct {
@@ -84,11 +86,14 @@ func parseVerifyArgs(args []string) (verifyOptions, error) {
 	return o, nil
 }
 
-// ciRole は、CI の入口の登録簿で種別 kind が root の種類 r に対して取る role。無ければ空。
+// ciRole は、CI の入口の登録簿で種別 kind が root の種類 r に対して取る role。登録簿は固定なので、無ければ panic する。
 func ciRole(kind string, r cientry.Root) string {
-	k, _ := cientry.Lookup(kind)
+	k, ok := cientry.Lookup(kind)
+	if role := k.Role(r); ok && role != "" {
+		return role
+	}
 
-	return k.Role(r)
+	panic(fmt.Sprintf("CI の入口の登録簿に種別 %s の %s の role がありません", kind, r))
 }
 
 // names は、確認が名指す resource の名前。CI の role の名前は登録簿から組む。
@@ -149,13 +154,18 @@ func (n names) s3(sub, bucket string, extra ...string) []string {
 	return append([]string{"s3api", sub, "--bucket", bucket, "--expected-bucket-owner", n.account}, extra...)
 }
 
-// step は出力の1行。check の eval が nil なら note をそのまま出す（見出しと注記）。
+// step は出力の1行。check の eval が nil なら note をそのまま出す（見出しと注記）。skipped は、前提の policy が
+// 付いていないなどで確かめなかった区分を表す行であること。
 type step struct {
-	note  string
-	check check
+	note    string
+	check   check
+	skipped bool
 }
 
 func noteStep(s string) step { return step{note: s} }
+
+// skipStep は、確かめなかった区分の注記。
+func skipStep(s string) step { return step{note: s, skipped: true} }
 
 func checkStep(c check) step { return step{check: c} }
 
@@ -164,13 +174,22 @@ func fixedCheck(desc string, v verdict) check {
 	return check{desc: desc, eval: func(*query) (verdict, error) { return v, nil }}
 }
 
-// runChecks は steps を順に出し、確認の件数と NG の件数を結果の行に出す。NG があれば errMismatch。
-// aws を起動できなくなれば、結果の行を出さずにそのエラーを返す。
+// runChecks は steps を順に出し、確認の件数と NG の件数を結果の行に出す。確かめなかった区分があれば、その数も
+// 結果の行に添える（終了コードは変えない）。NG があれば errMismatch。aws を起動できなくなれば、結果の行を出さずに
+// そのエラーを返す。
 func runChecks(q *query, out io.Writer, steps []step) error {
-	total, fails := 0, 0
+	total, fails, skipped := 0, 0, 0
 
 	for _, s := range steps {
+		if s.skipped {
+			skipped++
+		}
+
 		if s.check.eval == nil {
+			if s.note == "" {
+				return errBadStep
+			}
+
 			fmt.Fprintln(out, s.note)
 
 			continue
@@ -201,7 +220,11 @@ func runChecks(q *query, out io.Writer, steps []step) error {
 		return errNoChecks
 	}
 
-	fmt.Fprintf(out, "# 結果: %d 件のうち NG %d 件\n", total, fails)
+	if skipped > 0 {
+		fmt.Fprintf(out, "# 結果: %d 件のうち NG %d 件（確かめていない区分 %d）\n", total, fails, skipped)
+	} else {
+		fmt.Fprintf(out, "# 結果: %d 件のうち NG %d 件\n", total, fails)
+	}
 
 	if fails > 0 {
 		return errMismatch
@@ -297,9 +320,9 @@ func verifySteps(stage string, e verifyEnv) ([]step, error) {
 
 // checkVerify は、bootstrap の段の確認を実環境を読んで行う。何も作らず、何も変えない。
 func checkVerify(o verifyOptions, out io.Writer, d deps) error {
-	profile := d.getenv("AWS_PROFILE")
-	if profile == "" {
-		return errNoProfile
+	profile, err := awsProfile(d.getenv)
+	if err != nil {
+		return err
 	}
 
 	q := newQuery(d.aws, o.region)

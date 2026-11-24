@@ -136,28 +136,28 @@ func Test_anyString(t *testing.T) {
 	assert.False(t, anyString(nil, isX))
 }
 
-func Test_jsonLength(t *testing.T) {
+func Test_hasStatements(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
-		in     any
-		want   float64
-		wantOK bool
+		in   string
+		want bool
 	}{
-		"null は 0":        {nil, 0, true},
-		"配列は要素の数":         {[]any{1, 2}, 2, true},
-		"object は key の数": {map[string]any{"a": 1}, 1, true},
-		"文字列は文字の数":        {"あい", 2, true},
-		"数は絶対値":           {float64(-3), 3, true},
-		"真偽値はエラー":         {true, 0, false},
+		"空でない配列":     {`{"Statement":[{}]}`, true},
+		"1文の object": {`{"Statement":{"Effect":"Deny"}}`, true},
+		"空の配列":       {`{"Statement":[]}`, false},
+		"空の object":  {`{"Statement":{}}`, false},
+		"無い":         {`{}`, false},
+		"null":       {`{"Statement":null}`, false},
+		"文字列":        {`{"Statement":"x"}`, false},
+		"真偽値":        {`{"Statement":true}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := jsonLength(tc.in)
-
-			assert.Equal(t, tc.wantOK, ok)
-			assert.InDelta(t, tc.want, got, 0)
+			v, ok := decode(t, tc.in).(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, hasStatements(v))
 		})
 	}
 }

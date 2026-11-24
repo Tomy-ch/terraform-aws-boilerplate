@@ -163,8 +163,8 @@ func Test_ciRole(t *testing.T) {
 	assert.Equal(t, "apply", ciRole(cientry.Apply, cientry.RootWorkload))
 	assert.Equal(t, "unlock-identity", ciRole(cientry.Unlock, cientry.RootIdentity))
 	assert.Equal(t, "unlock", ciRole(cientry.Unlock, cientry.RootWorkload))
-	assert.Empty(t, ciRole("none", cientry.RootIdentity), "登録簿に無い種別は空")
-	assert.Empty(t, ciRole(cientry.Plan, cientry.Root("x")), "知らない root の種類は空")
+	assert.Panics(t, func() { ciRole("none", cientry.RootIdentity) }, "登録簿に無い種別")
+	assert.Panics(t, func() { ciRole(cientry.Plan, cientry.Root("x")) }, "知らない root の種類")
 }
 
 func Test_newNames(t *testing.T) {
@@ -221,6 +221,16 @@ func Test_noteStep(t *testing.T) {
 	s := noteStep("# x")
 
 	assert.Equal(t, "# x", s.note)
+	assert.Nil(t, s.check.eval)
+}
+
+func Test_skipStep(t *testing.T) {
+	t.Parallel()
+
+	s := skipStep("  注記")
+
+	assert.Equal(t, "  注記", s.note)
+	assert.True(t, s.skipped)
 	assert.Nil(t, s.check.eval)
 }
 
@@ -284,6 +294,40 @@ func Test_runChecks(t *testing.T) {
 			assert.NotContains(t, strings.Join(lines, "\n"), "# 結果:")
 		})
 	}
+
+	t.Run("確かめなかった区分があれば、その数を結果の行に添える", func(t *testing.T) {
+		t.Parallel()
+
+		ng := checkStep(fixedCheck("c", verdict{reason: "r"}))
+		ng.skipped = true
+
+		lines, err := runStepLines(t, verifyFake(t, nil, nil), []step{
+			checkStep(fixedCheck("a", verdict{ok: true})),
+			skipStep("  飛ばした"),
+			ng,
+		})
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Equal(t, []string{"ok  a", "  飛ばした", "NG  c（r）", "# 結果: 2 件のうち NG 1 件（確かめていない区分 2）"}, lines)
+	})
+
+	t.Run("確かめなかった区分があっても、NG が無ければエラーを返さない", func(t *testing.T) {
+		t.Parallel()
+
+		lines, err := runStepLines(t, verifyFake(t, nil, nil), []step{checkStep(fixedCheck("a", verdict{ok: true})), skipStep("  飛ばした")})
+
+		require.NoError(t, err)
+		assert.Equal(t, "# 結果: 1 件のうち NG 0 件（確かめていない区分 1）", lines[len(lines)-1])
+	})
+
+	t.Run("見出しも判定も持たない行は errBadStep で、結果の行を出さない", func(t *testing.T) {
+		t.Parallel()
+
+		lines, err := runStepLines(t, verifyFake(t, nil, nil), []step{checkStep(fixedCheck("a", verdict{ok: true})), {}})
+
+		require.ErrorIs(t, err, errBadStep)
+		assert.Equal(t, []string{"ok  a"}, lines)
+	})
 
 	t.Run("aws を起動できなくなれば、そこで止まり結果の行を出さない", func(t *testing.T) {
 		t.Parallel()
@@ -405,15 +449,43 @@ func Test_expectDocument(t *testing.T) {
 			assert.Equal(t, tc.want, v)
 		})
 	}
+
+	t.Run("aws を起動できなければ errAWSStart", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := expectDocument("d", pred, args...).eval(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion))
+
+		require.ErrorIs(t, err, errAWSStart)
+	})
+}
+
+// stepTexts は、steps の見出し・注記と、確認の desc の並び。
+func stepTexts(steps []step) []string {
+	out := make([]string, 0, len(steps))
+
+	for _, s := range steps {
+		if s.check.eval == nil {
+			out = append(out, s.note)
+		} else {
+			out = append(out, s.check.desc)
+		}
+	}
+
+	return out
 }
 
 func Test_verifySteps(t *testing.T) {
 	t.Parallel()
 
-	e := verifyEnv{n: testNames(""), readFile: func(string) ([]byte, error) { return nil, os.ErrNotExist }}
+	e := verifyEnv{n: testNames(""), readFile: retentionReader(retentionFile)}
 
-	for _, stage := range []string{"stage1", "before-apply", "stage4", "stage5"} {
-		t.Run(stage+" は aws を呼ばずに表を組む", func(t *testing.T) {
+	for stage, want := range map[string][]string{
+		"stage1":       stage1Descs,
+		"before-apply": beforeApplyDescs,
+		"stage4":       stage4Descs(noExecutorDesc),
+		"stage5":       stage5Descs,
+	} {
+		t.Run(stage+" は aws を呼ばずに、その段の表を組む", func(t *testing.T) {
 			t.Parallel()
 
 			f := verifyFake(t, nil, nil)
@@ -423,10 +495,50 @@ func Test_verifySteps(t *testing.T) {
 			steps, err := verifySteps(stage, e)
 
 			require.NoError(t, err)
-			assert.NotEmpty(t, steps)
+			assert.Equal(t, want, stepTexts(steps))
 			assert.Empty(t, f.calls)
 		})
 	}
+
+	t.Run("permissions は、managed policy と鍵を読んで、その段の表を組む", func(t *testing.T) {
+		t.Parallel()
+
+		f := permFake(t, okResult(governanceAttached), okResult(workloadAttached))
+		e := e
+		e.q = newQuery(f.fn, testRegion)
+
+		steps, err := verifySteps("permissions", e)
+
+		require.NoError(t, err)
+
+		want := permExpected(nil, nil, nil)
+		for i, l := range want {
+			want[i] = strings.TrimPrefix(l, "ok  ")
+		}
+
+		assert.Equal(t, want, stepTexts(steps))
+		assert.Len(t, f.calls, 3, "表を組むときは鍵と2つの role の managed policy だけを読む")
+	})
+
+	t.Run("output-policy は、文書を読んで、その段の表を組む", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, map[string]awsResult{
+			s3Key("get-bucket-policy", testPlanBucket):  policyResult(t, `{"Statement":[{"Sid":"p"}]}`),
+			s3Key("get-bucket-policy", testApplyBucket): policyResult(t, `{"Statement":[{"Sid":"a"}]}`),
+		}, nil)
+		e := e
+		e.q, e.source = newQuery(f.fn, testRegion), sourceLive
+
+		steps, err := verifySteps("output-policy", e)
+
+		require.NoError(t, err)
+
+		want := []string{"# 文書の出所: live", "plan の出力の Bucket の Bucket Policy の文書を読めた", "apply の出力の Bucket の Bucket Policy の文書を読めた", "# plan の出力の Bucket"}
+		want = append(append(append(want, expand(outputPolicyPlanDescs, "")...), "# apply の出力の Bucket"), expand(outputPolicyApplyDescs, "")...)
+
+		assert.Equal(t, want, stepTexts(steps))
+	})
 
 	t.Run("知らない段は使い方の誤り", func(t *testing.T) {
 		t.Parallel()
@@ -529,6 +641,20 @@ func Test_checkVerify(t *testing.T) {
 		assert.Equal(t, "# 結果: 4 件のうち NG 1 件", lines[len(lines)-1])
 	})
 
+	t.Run("静的な資格情報が環境に在れば aws を起動せずに errStaticCredentials", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, nil, nil)
+		d := verifyDeps(f, nil)
+		d.getenv = func(k string) string { return map[string]string{"AWS_PROFILE": "p", "AWS_ACCESS_KEY_ID": "a"}[k] }
+
+		lines, err := run(t, opts, d)
+
+		require.ErrorIs(t, err, errStaticCredentials)
+		assert.Empty(t, f.calls)
+		assert.Equal(t, []string{""}, lines)
+	})
+
 	t.Run("AWS_PROFILE が空なら aws を起動せずに errNoProfile", func(t *testing.T) {
 		t.Parallel()
 
@@ -597,21 +723,26 @@ func Test_checkVerify(t *testing.T) {
 		assert.Equal(t, []string{""}, lines)
 	})
 
-	t.Run("どの段も、読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
-		t.Parallel()
+	for _, o := range []verifyOptions{
+		{stage: "stage1"}, {stage: "before-apply"}, {stage: "stage4"}, {stage: "stage4", executor: "bob"}, {stage: "permissions"},
+		{stage: "stage5"}, {stage: "output-policy", policySource: "live"}, {stage: "output-policy", policySource: "reference"},
+	} {
+		t.Run(o.stage+o.executor+o.policySource+" は読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
+			t.Parallel()
 
-		f := &fakeAWS{t: t, responses: map[string]awsResult{stsAccountKey: okResult(testAccount)}, handler: permissiveHandler}
-		d := verifyDeps(f, map[string]string{identityMain: "state_noncurrent_version_retention_days = 90\n", referencePlan: referencePlanJSON(t)})
-
-		for _, o := range []verifyOptions{
-			{stage: "stage1"}, {stage: "before-apply"}, {stage: "stage4"}, {stage: "stage4", executor: "bob"}, {stage: "permissions"},
-			{stage: "stage5"}, {stage: "output-policy", policySource: "live"}, {stage: "output-policy", policySource: "reference"},
-		} {
+			f := &fakeAWS{t: t, responses: map[string]awsResult{stsAccountKey: okResult(testAccount)}, handler: permissiveHandler}
+			d := verifyDeps(f, map[string]string{identityMain: "state_noncurrent_version_retention_days = 90\n", referencePlan: referencePlanJSON(t)})
 			o.project, o.region = testProject, testRegion
-			_, _ = run(t, o, d)
-		}
 
-		assert.Greater(t, len(f.calls), 150, "条件つきの確認を含め、表の呼び出しを回した")
-		assert.Empty(t, writeOps(f.calls))
-	})
+			lines, err := run(t, o, d)
+
+			if err != nil {
+				require.ErrorIs(t, err, errMismatch)
+			}
+
+			assert.True(t, strings.HasPrefix(lines[len(lines)-1], "# 結果: "), "段の確認を最後まで回した")
+			assert.Greater(t, len(f.calls), 1, "sts のほかに段の読み取りを呼んだ")
+			assert.Empty(t, writeOps(f.calls))
+		})
+	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,6 +37,7 @@ var (
 		"policy tabp-admin-ci-apply-identity-governance がまだ無い",
 		"policy tabp-admin-ci-apply-identity-manage がまだ無い",
 		"policy tabp-admin-ci-apply-workload がまだ無い",
+		"policy tabp-admin-ci-apply-workload-read がまだ無い",
 		"policy tabp-admin-ci-boundary-ops-notification がまだ無い",
 		"account password policy がまだ無い",
 	}
@@ -83,7 +85,7 @@ func stage4Descs(executor string) []string {
 
 const (
 	stage1Count      = 4
-	beforeApplyCount = 20
+	beforeApplyCount = 21
 	stage4Count      = 24
 	stage5Count      = 5
 
@@ -130,7 +132,7 @@ func beforeApplyResponses() map[string]awsResult {
 		r[jsonKey("iam", "get-user", "--user-name", u)] = awsError("NoSuchEntity")
 	}
 
-	for _, p := range []string{"apply-identity-governance", "apply-identity-manage", "apply-workload", "boundary-ops-notification"} {
+	for _, p := range []string{"apply-identity-governance", "apply-identity-manage", "apply-workload", "apply-workload-read", "boundary-ops-notification"} {
 		r[jsonKey("iam", "get-policy", "--policy-arn", "arn:aws:iam::123456789012:policy/tabp-admin-ci-"+p)] = awsError("NoSuchEntity")
 	}
 
@@ -234,6 +236,24 @@ func retentionReader(content string) func(string) ([]byte, error) {
 	}
 }
 
+// allNG は、すべての呼び出しに同じ応答を返すとき、段の全行が NG で、結果の行が件数どおりであること。
+func allNG(t *testing.T, steps []step, descs []string, r awsResult) {
+	t.Helper()
+
+	f := &fakeAWS{t: t, handler: func([]string) (awsResult, bool) { return r, true }}
+
+	lines, err := runStepLines(t, f, steps)
+
+	require.ErrorIs(t, err, errMismatch)
+	require.Len(t, lines, len(descs)+1)
+
+	for i, d := range descs {
+		assert.True(t, strings.HasPrefix(lines[i], "NG  "+d), lines[i])
+	}
+
+	assert.Equal(t, "# 結果: "+strconv.Itoa(len(descs))+" 件のうち NG "+strconv.Itoa(len(descs))+" 件", lines[len(descs)])
+}
+
 func Test_stateKeyARN(t *testing.T) {
 	t.Parallel()
 
@@ -275,7 +295,7 @@ func Test_stateKeyARN(t *testing.T) {
 func Test_expectWithKey(t *testing.T) {
 	t.Parallel()
 
-	args := []string{"s3api", "x"}
+	args := []string{"s3api", "get-x"}
 	pred := func(v map[string]any, key string) bool { return v["k"] == key }
 	describe := jsonKey("kms", "describe-key", "--key-id", testAlias)
 
@@ -300,6 +320,25 @@ func Test_expectWithKey(t *testing.T) {
 			assert.Equal(t, tc.want, v)
 		})
 	}
+
+	for name, failing := range map[string]string{"鍵の読み取り": "describe-key", "応答の読み取り": "get-x"} {
+		t.Run(name+"で aws を起動できなければ errAWSStart", func(t *testing.T) {
+			t.Parallel()
+
+			f := verifyFake(t, map[string]awsResult{describe: okResult(describeKeyBody)}, nil)
+			q := newQuery(func(a ...string) awsResult {
+				if a[1] == failing {
+					return awsResult{err: os.ErrNotExist}
+				}
+
+				return f.fn(a...)
+			}, testRegion)
+
+			_, err := expectWithKey("d", testNames(""), pred, args...).eval(q)
+
+			require.ErrorIs(t, err, errAWSStart)
+		})
+	}
 }
 
 func Test_singleRule(t *testing.T) {
@@ -315,8 +354,12 @@ func Test_singleRule(t *testing.T) {
 		"Rules が無い":      `{}`,
 		"Rules が object": `{"Rules":{"x":1}}`,
 	} {
-		_, ok := singleRule(decode(t, in), "Rules")
-		assert.False(t, ok, name)
+		t.Run(name+"なら偽", func(t *testing.T) {
+			t.Parallel()
+
+			_, ok := singleRule(decode(t, in), "Rules")
+			assert.False(t, ok)
+		})
 	}
 }
 
@@ -477,7 +520,7 @@ func Test_beforeApplySteps(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Len(t, steps, beforeApplyCount)
-		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 20 件のうち NG 0 件"), lines)
+		assert.Equal(t, append(okLines(beforeApplyDescs), "# 結果: 21 件のうち NG 0 件"), lines)
 	})
 
 	for name, tc := range map[string]struct {
@@ -488,7 +531,8 @@ func Test_beforeApplySteps(t *testing.T) {
 		"OIDC provider が在る": {jsonKey("iam", "list-open-id-connect-providers"),
 			okResult(`{"OpenIDConnectProviderList":[{"Arn":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"}]}`),
 			"NG  " + beforeApplyDescs[0]},
-		"OIDC provider の一覧が読めない": {jsonKey("iam", "list-open-id-connect-providers"), okResult(`{}`), "NG  " + beforeApplyDescs[0]},
+		"OIDC provider の一覧が読めない":      {jsonKey("iam", "list-open-id-connect-providers"), okResult(`{}`), "NG  " + beforeApplyDescs[0]},
+		"OIDC provider の Arn が文字列でない": {jsonKey("iam", "list-open-id-connect-providers"), okResult(`{"OpenIDConnectProviderList":[{"Arn":1}]}`), "NG  " + beforeApplyDescs[0]},
 		"role が在る": {jsonKey("iam", "get-role", "--role-name", "tabp-admin-ci-apply"), okResult(`{"Role":{}}`),
 			"NG  role tabp-admin-ci-apply がまだ無い（エラーが返らなかった）"},
 		"role の読み取りが拒否": {jsonKey("iam", "get-role", "--role-name", "tabp-admin-ci-plan"), awsError("AccessDenied"),
@@ -514,9 +558,29 @@ func Test_beforeApplySteps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, tc.line)
-			assert.Equal(t, "# 結果: 20 件のうち NG 1 件", lines[len(lines)-1])
+			assert.Equal(t, "# 結果: 21 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
+
+	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+		t.Run(name+"なら、全行が NG", func(t *testing.T) {
+			t.Parallel()
+
+			allNG(t, beforeApplySteps(n), beforeApplyDescs, r)
+		})
+	}
+
+	t.Run("ホスト名の接尾辞だけ一致する別の provider は数えない", func(t *testing.T) {
+		t.Parallel()
+
+		f := verifyFake(t, beforeApplyResponses(), map[string]awsResult{jsonKey("iam", "list-open-id-connect-providers"): okResult(
+			`{"OpenIDConnectProviderList":[{"Arn":"arn:aws:iam::123456789012:oidc-provider/evil-token.actions.githubusercontent.com"}]}`)})
+
+		lines, err := runStepLines(t, f, beforeApplySteps(n))
+
+		require.NoError(t, err)
+		assert.Equal(t, "ok  "+beforeApplyDescs[0], lines[0])
+	})
 }
 
 func Test_policyNames(t *testing.T) {
@@ -566,6 +630,8 @@ func Test_tlsDenyPolicy(t *testing.T) {
 	assert.False(t, tlsDenyPolicy(doc(`{}`)))
 	assert.False(t, tlsDenyPolicy(doc(`{"Statement":[{"Effect":"Deny","Condition":{"Bool":{"aws:SecureTransport":"false"}}},{"Effect":"Deny","Condition":"x"}]}`)),
 		"評価できない文があれば偽")
+	assert.False(t, tlsDenyPolicy(doc(`{"Statement":[{"Effect":"Deny","Condition":{"Bool":{"aws:SecureTransport":"true"}}}]}`)),
+		"TLS の要求を拒む Deny だけ")
 }
 
 func Test_executorException(t *testing.T) {
@@ -591,6 +657,10 @@ func Test_executorException(t *testing.T) {
 	assert.False(t, executorException(doc(`{"Statement":[{"Sid":"X","Condition":{"ArnNotEquals":{"aws:PrincipalArn":"arn:aws:iam::1:user/bob"}}}]}`), ":user/bob"),
 		"別の文の例外は数えない")
 	assert.False(t, executorException(doc(`{}`), ":user/bob"))
+	assert.True(t, executorException(doc(`{"Statement":[`+
+		`{"Sid":"DenyObjectWriteByOthers","Condition":{"ArnNotEquals":{"aws:PrincipalArn":"arn:aws:iam::1:user/bob"}}},`+
+		`{"Sid":"DenyObjectWriteByOthers","Condition":{"ArnNotEquals":{"aws:PrincipalArn":"arn:aws:iam::1:role/r"}}}]}`), ":user/bob"),
+		"同名の文が2つで前者だけ一致しても真")
 	assert.False(t, executorException(doc(`{"Statement":["s"]}`), ":user/bob"), "文が object でない")
 }
 
@@ -607,7 +677,10 @@ func Test_noUser(t *testing.T) {
 	assert.True(t, noUser(doc(stateBucketPolicy)))
 	assert.False(t, noUser(doc(`{"Statement":[{"Condition":{"ArnNotEquals":{"aws:PrincipalArn":["arn:aws:iam::1:user/bob"]}}}]}`)))
 	assert.False(t, noUser(doc(`{"Sid":"arn:aws:iam::1:user/x"}`)), "どこに在っても数える")
-	assert.True(t, noUser(doc(`{":user/":"key は見ない"}`)))
+	assert.True(t, noUser(doc(`{"Statement":[{":user/":"key は見ない"}]}`)))
+	assert.True(t, noUser(doc(`{"Statement":{"Effect":"Deny"}}`)), "1文の object")
+	assert.False(t, noUser(doc(`{"Statement":[]}`)), "文が無い文書")
+	assert.False(t, noUser(doc(`{}`)), "空の文書")
 }
 
 func Test_retentionDays(t *testing.T) {
@@ -620,12 +693,17 @@ func Test_retentionDays(t *testing.T) {
 	}{
 		"1か所の値を読む":     {retentionFile, 90, ""},
 		"空白とタブを許す":     {"\tstate_noncurrent_version_retention_days=30\n", 30, ""},
-		"行が無い":         {"locals {}\n", 0, identityMain + " の state_noncurrent_version_retention_days = <日数> が1か所ではない（0 か所）"},
-		"2か所":          {"state_noncurrent_version_retention_days = 1\nstate_noncurrent_version_retention_days = 2\n", 0, identityMain + " の state_noncurrent_version_retention_days = <日数> が1か所ではない（2 か所）"},
-		"値が数でない":       {"state_noncurrent_version_retention_days = var.days\n", 0, identityMain + " の state_noncurrent_version_retention_days = <日数> が1か所ではない（0 か所）"},
-		"行の途中の名前は数えない": {"# x state_noncurrent_version_retention_days = 1\n", 0, identityMain + " の state_noncurrent_version_retention_days = <日数> が1か所ではない（0 か所）"},
+		"// のコメントを許す":  {"state_noncurrent_version_retention_days = 30 // 日\n", 30, ""},
+		"CRLF を許す":     {"state_noncurrent_version_retention_days = 30\r\n", 30, ""},
+		"行が無い":         {"locals {}\n", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（0 か所）"},
+		"2か所":          {"state_noncurrent_version_retention_days = 1\nstate_noncurrent_version_retention_days = 2\n", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（2 か所）"},
+		"値が数でない":       {"state_noncurrent_version_retention_days = var.days\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
+		"式":            {"state_noncurrent_version_retention_days = 90 * 2\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
+		"数の後ろに文字":      {"state_noncurrent_version_retention_days = 90d\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
+		"値が空":          {"state_noncurrent_version_retention_days =\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
+		"行の途中の名前は数えない": {"# x state_noncurrent_version_retention_days = 1\n", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（0 か所）"},
 		"桁が多すぎる":       {"state_noncurrent_version_retention_days = 99999999999999999999\n", 0, identityMain + " の state_noncurrent_version_retention_days を日数として読めない"},
-		"空のファイル":       {"", 0, identityMain + " の state_noncurrent_version_retention_days = <日数> が1か所ではない（0 か所）"},
+		"空のファイル":       {"", 0, identityMain + " の state_noncurrent_version_retention_days の代入が1か所ではない（0 か所）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -691,7 +769,14 @@ func Test_keyPolicy(t *testing.T) {
 
 	assert.True(t, keyPolicy(doc(keyPolicyDoc()), n))
 
+	six := doc(keyPolicyDoc())
+	stmts, ok := six["Statement"].([]any)
+	require.True(t, ok)
+
+	six["Statement"] = stmts[:6]
+
 	for name, d := range map[string]map[string]any{
+		"文が6つ":                   six,
 		"委任の文が無い":                {"Statement": nil},
 		"委任の principal が違う":      swap(`"arn:aws:iam::123456789012:root"`, `"arn:aws:iam::123456789012:user/x"`),
 		"plan の書き込みに余分な action":  swap(`["kms:GenerateDataKey","kms:Decrypt"]`, `["kms:GenerateDataKey","kms:Decrypt","kms:Encrypt"]`),
@@ -703,7 +788,11 @@ func Test_keyPolicy(t *testing.T) {
 		"文が8つ":                   doc(strings.Replace(keyPolicyDoc(), `"Statement":[`, `"Statement":[{"Effect":"Deny","Principal":"*"},`, 1)),
 		"principal が文字列 * の文が在る": doc(strings.Replace(keyPolicyDoc(), `{"Sid":"root",`, `{"Effect":"Allow","Principal":"*"},{"Sid":"root",`, 1)),
 	} {
-		assert.False(t, keyPolicy(d, n), name)
+		t.Run(name+"なら偽", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, keyPolicy(d, n))
+		})
 	}
 }
 
@@ -764,7 +853,7 @@ func Test_stage4Steps(t *testing.T) {
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  lifecycle が規則1つ（版の保持 ? 日、delete marker の掃除、未完了の multipart の中止 1 日）（"+
-			identityMain+" の state_noncurrent_version_retention_days = <日数> が1か所ではない（0 か所））")
+			identityMain+" の state_noncurrent_version_retention_days の代入が1か所ではない（0 か所））")
 	})
 
 	t.Run("Bucket Policy を読めなければ、それを読む2行が理由を添えた NG", func(t *testing.T) {
@@ -814,6 +903,14 @@ func Test_stage4Steps(t *testing.T) {
 		"rotation が 90 日":    {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{"KeyRotationEnabled":true,"RotationPeriodInDays":90}`, "state の鍵の自動 rotation が 365 日"},
 		"rotation が無効":       {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{"KeyRotationEnabled":false,"RotationPeriodInDays":365}`, "state の鍵の自動 rotation が 365 日"},
 		"lifecycle の保持日数が違う": {s3Key("get-bucket-lifecycle-configuration", testBucket), strings.Replace(lifecycleBody, `"NoncurrentDays":90`, `"NoncurrentDays":30`, 1), lifecycleDesc},
+		"ClientIDList が無い": {jsonKey("iam", "get-open-id-connect-provider", "--open-id-connect-provider-arn", "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"),
+			`{}`, "OIDC provider の ClientIDList が sts.amazonaws.com だけ"},
+		"ClientIDList が null": {jsonKey("iam", "get-open-id-connect-provider", "--open-id-connect-provider-arn", "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"),
+			`{"ClientIDList":null}`, "OIDC provider の ClientIDList が sts.amazonaws.com だけ"},
+		"AccessKeyMetadata が無い":    {jsonKey("iam", "list-access-keys", "--user-name", "break-glass-1"), `{}`, "IAM user break-glass-1 がアクセスキーを持たない"},
+		"AccessKeyMetadata が null": {jsonKey("iam", "list-access-keys", "--user-name", "break-glass-1"), `{"AccessKeyMetadata":null}`, "IAM user break-glass-1 がアクセスキーを持たない"},
+		"rotation の項目が無い":          {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{}`, "state の鍵の自動 rotation が 365 日"},
+		"rotation の日数が null":       {jsonKey("kms", "get-key-rotation-status", "--key-id", testAlias), `{"KeyRotationEnabled":true,"RotationPeriodInDays":null}`, "state の鍵の自動 rotation が 365 日"},
 	} {
 		t.Run(name+"なら NG", func(t *testing.T) {
 			t.Parallel()
@@ -823,6 +920,7 @@ func Test_stage4Steps(t *testing.T) {
 
 			require.ErrorIs(t, err, errMismatch)
 			assert.Contains(t, lines, "NG  "+tc.desc)
+			assert.Equal(t, "# 結果: 24 件のうち NG 1 件", lines[len(lines)-1])
 		})
 	}
 
@@ -838,6 +936,14 @@ func Test_stage4Steps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  "+keyPolicyDesc)
 	})
+
+	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+		t.Run(name+"なら、全行が NG", func(t *testing.T) {
+			t.Parallel()
+
+			allNG(t, stage4Steps(n, retentionReader(retentionFile)), stage4Descs(noExecutorDesc), r)
+		})
+	}
 }
 
 func Test_stage5Steps(t *testing.T) {
@@ -894,4 +1000,12 @@ func Test_stage5Steps(t *testing.T) {
 
 		assert.Equal(t, "# 結果: 5 件のうち NG 4 件", lines[len(lines)-1])
 	})
+
+	for name, r := range map[string]awsResult{"応答がすべて空": okResult(""), "呼び出しがすべて失敗": failed("An error occurred (AccessDenied)")} {
+		t.Run(name+"なら、全行が NG", func(t *testing.T) {
+			t.Parallel()
+
+			allNG(t, stage5Steps(n), stage5Descs, r)
+		})
+	}
 }

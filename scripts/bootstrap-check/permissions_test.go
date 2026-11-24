@@ -190,6 +190,11 @@ const (
 )
 
 var permExpand = strings.NewReplacer(
+	"$reads", "s3:GetBucketAcl s3:GetBucketCORS s3:GetBucketWebsite s3:GetAccelerateConfiguration s3:GetBucketRequestPayment "+
+		"s3:GetBucketLogging s3:GetLifecycleConfiguration s3:GetReplicationConfiguration s3:GetBucketObjectLockConfiguration "+
+		"s3:GetBucketTagging s3:GetBucketPolicy s3:GetBucketVersioning s3:GetEncryptionConfiguration "+
+		"s3:GetBucketPublicAccessBlock s3:GetBucketOwnershipControls",
+	"$manage", "iam:CreatePolicy iam:CreatePolicyVersion iam:DeletePolicyVersion iam:SetDefaultPolicyVersion iam:GetPolicy iam:GetPolicyVersion iam:ListPolicyVersions",
 	"$bg", "arn:aws:iam::123456789012:role/break-glass/tabp-break-glass",
 	"$budget", "arn:aws:budgets::123456789012:budget/tabp-admin-x",
 	"$b", "arn:aws:s3:::"+testBucket,
@@ -198,8 +203,8 @@ var permExpand = strings.NewReplacer(
 	"$pb", "arn:aws:s3:::"+testPlanBucket,
 	"$ab", "arn:aws:s3:::"+testApplyBucket,
 	"$sk", testKeyARN,
-	"$other", "arn:aws:kms:ap-northeast-1:123456789012:key/00000000-0000-0000-0000-000000000000",
-	"$wk", "arn:aws:kms:ap-northeast-1:123456789012:key/00000000-0000-0000-0000-000000000001",
+	"$other", "arn:aws:kms:ap-northeast-1:123456789012:key/00000000-0000-0000-0000-0000000000a0",
+	"$wk", "arn:aws:kms:ap-northeast-1:123456789012:key/00000000-0000-0000-0000-0000000000a1",
 	"$role/", "arn:aws:iam::123456789012:role/tabp-admin-ci-",
 	"$policy/", "arn:aws:iam::123456789012:policy/tabp-admin-ci-",
 	"$iam", "arn:aws:iam::123456789012",
@@ -207,6 +212,162 @@ var permExpand = strings.NewReplacer(
 	"$monitor", "arn:aws:ce::123456789012:anomalymonitor/x",
 	"$subscription", "arn:aws:ce::123456789012:anomalysubscription/x",
 )
+
+// permRowActions は、permissions の表の各行（区分ごとに行、条件つきの行の順）の action と context を、表と独立に
+// 書いたもの。"<action ...> ; <key> = <value> (<type>) ; ..." の形で、$ の記号は permExpand が展開する。
+var permRowActions = []string{
+	// S3 と IAM
+	"$reads",
+	"$reads s3:PutBucketPolicy s3:PutLifecycleConfiguration",
+	"s3:PutObject",
+	"iam:PutRolePolicy iam:UpdateAssumeRolePolicy",
+	"$reads",
+	"s3:PutObject",
+	"$reads s3:PutLifecycleConfiguration",
+	"s3:PutObject",
+	"s3:ListBucket $reads",
+	"s3:CreateBucket s3:ListBucket $reads s3:PutBucketPolicy s3:PutLifecycleConfiguration",
+	"s3:DeleteBucket",
+	"s3:CreateBucket s3:PutBucketPolicy",
+	"s3:ListBucket s3:GetEncryptionConfiguration",
+	"s3:PutObject",
+	"iam:PutRolePolicy",
+	"s3:DeleteObject s3:DeleteObjectVersion",
+	"s3:PutObject",
+	"s3:PutObject s3:DeleteObject",
+	"s3:DeleteObject s3:DeleteObjectVersion",
+	"iam:PutRolePolicy iam:UpdateAssumeRolePolicy sts:AssumeRole",
+	"s3:PutBucketPolicy s3:DeleteBucketPolicy s3:PutLifecycleConfiguration s3:PutBucketTagging s3:TagResource",
+	"s3:PutObject s3:DeleteObject",
+	"s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:GetBucketPolicy",
+	"s3:PutObject s3:DeleteObjectVersion",
+	"s3:PutObject",
+	"s3:GetObject s3:DeleteObject s3:DeleteObjectVersion s3:PutObjectAcl",
+	"s3:ListBucket s3:GetBucketPolicy s3:PutBucketPolicy s3:PutLifecycleConfiguration s3:DeleteBucket",
+	// state の鍵
+	"kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags kms:EnableKeyRotation kms:PutKeyPolicy",
+	"kms:ListAliases",
+	"kms:DescribeKey kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListResourceTags",
+	"kms:ListAliases",
+	"kms:ListAliases",
+	"kms:CreateKey",
+	"kms:CreateAlias kms:ScheduleKeyDeletion kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:UpdateKeyDescription kms:TagResource kms:Decrypt",
+	"kms:DescribeKey kms:PutKeyPolicy",
+	"kms:PutKeyPolicy kms:Decrypt kms:GenerateDataKey",
+	"kms:DescribeKey",
+	"kms:Decrypt kms:GenerateDataKey",
+	"kms:CancelKeyDeletion kms:CreateAlias kms:DeleteAlias kms:DescribeKey kms:DisableKey kms:DisableKeyRotation kms:EnableKey kms:EnableKeyRotation " +
+		"kms:GetKeyPolicy kms:GetKeyRotationStatus kms:ListGrants kms:ListKeyPolicies kms:ListResourceTags kms:PutKeyPolicy kms:RevokeGrant " +
+		"kms:RotateKeyOnDemand kms:ScheduleKeyDeletion kms:TagResource kms:UntagResource kms:UpdateAlias kms:UpdateKeyDescription",
+	"kms:PutKeyPolicy ; kms:BypassPolicyLockoutSafetyCheck = true (boolean)",
+	// 統制の構成物
+	"$manage",
+	"iam:CreatePolicy iam:CreatePolicyVersion iam:GetPolicy",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"$manage",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-manage (arn)",
+	"iam:GetPolicy iam:GetPolicyVersion",
+	"iam:CreatePolicyVersion",
+	"organizations:DescribeOrganization organizations:ListRoots organizations:ListAccounts iam:ListOrganizationsFeatures iam:GetAccountPasswordPolicy",
+	"iam:GetPolicy iam:GetPolicyVersion",
+	"organizations:CreateOrganization iam:UpdateAccountPasswordPolicy",
+	"organizations:CreateOrganization organizations:AttachPolicy organizations:LeaveOrganization account:CloseAccount iam:EnableOrganizationsRootSessions " +
+		"iam:UpdateAccountPasswordPolicy sso:CreatePermissionSet sso:AttachManagedPolicyToPermissionSet sso:DeleteAccountAssignment sso:PutPermissionsPolicy sts:AssumeRoot",
+	"sso:DescribePermissionSet sso:GetPermissionSet sso:ListAccountAssignments",
+	"iam:UpdateAssumeRolePolicy iam:AttachRolePolicy",
+	"iam:CreatePolicyVersion",
+	"organizations:CreateOrganization organizations:DescribeOrganization iam:UpdateAccountPasswordPolicy",
+	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
+	"organizations:DeleteOrganization",
+	"iam:DeleteRole",
+	// workload の権限の policy と permissions boundary
+	"$manage",
+	"$manage",
+	"$manage",
+	"$manage",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/boundary-ops-notification (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-read (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload (arn)",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-workload-2 (arn)",
+	"iam:GetPolicy iam:GetPolicyVersion",
+	"iam:GetPolicy iam:GetPolicyVersion",
+	"sns:GetTopicAttributes sns:ListTagsForResource",
+	"sns:GetTopicAttributes",
+	"sns:GetTopicAttributes sns:ListTagsForResource",
+	"sns:SetTopicAttributes",
+	"kms:DescribeKey ; kms:KeySpec = SYMMETRIC_DEFAULT (string) ; kms:KeyUsage = ENCRYPT_DECRYPT (string) ; kms:KeyOrigin = AWS_KMS (string) ; kms:MultiRegion = false (boolean)",
+	"kms:DescribeKey ; kms:KeySpec = RSA_2048 (string) ; kms:KeyUsage = SIGN_VERIFY (string) ; kms:KeyOrigin = AWS_KMS (string) ; kms:MultiRegion = false (boolean)",
+	"iam:CreatePolicyVersion iam:DeletePolicy",
+	"iam:CreatePolicyVersion iam:DeletePolicy",
+	"iam:CreatePolicyVersion iam:DeletePolicy",
+	"iam:CreateRole iam:PassRole",
+	"iam:DeleteRolePermissionsBoundary",
+	"kms:CreateKey kms:PutKeyPolicy ; kms:BypassPolicyLockoutSafetyCheck = true (boolean)",
+	"iam:CreateRole iam:PutRolePolicy iam:DeleteRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:CreateRole iam:PutRolePolicy",
+	"iam:CreateRole ; iam:PermissionsBoundary = $policy/boundary-ops-notification (arn)",
+	"iam:PassRole ; iam:PassedToService = scheduler.amazonaws.com (string)",
+	"iam:PassRole ; iam:PassedToService = lambda.amazonaws.com (string)",
+	"sns:CreateTopic sns:SetTopicAttributes",
+	"sns:DeleteTopic sns:Subscribe",
+	"kms:ScheduleKeyDeletion",
+	// budgets と Cost Anomaly Detection
+	"budgets:ViewBudget budgets:ListTagsForResource",
+	"ce:GetAnomalyMonitors ce:ListTagsForResource",
+	"ce:GetAnomalySubscriptions ce:ListTagsForResource",
+	"budgets:ModifyBudget",
+	"ce:CreateAnomalyMonitor ce:CreateAnomalySubscription",
+	"ce:UpdateAnomalyMonitor ce:DeleteAnomalyMonitor",
+	"ce:UpdateAnomalySubscription ce:DeleteAnomalySubscription",
+	"ce:UpdateAnomalyMonitor ce:DeleteAnomalyMonitor ce:UntagResource ; aws:ResourceTag/tabp:bootstrap = true (string)",
+	"ce:UpdateAnomalySubscription ce:DeleteAnomalySubscription ce:UntagResource ; aws:ResourceTag/tabp:bootstrap = true (string)",
+	"budgets:ModifyBudget",
+	"ce:CreateAnomalyMonitor ce:CreateAnomalySubscription",
+	"ce:UpdateAnomalyMonitor ce:DeleteAnomalyMonitor",
+	"ce:UpdateAnomalySubscription ce:DeleteAnomalySubscription",
+	// unlock-identity の role
+	"s3:ListBucket ; s3:prefix = identity/terraform.tfstate.tflock (string)",
+	"s3:GetObject s3:DeleteObject",
+	"s3:ListBucket ; s3:prefix = identity/terraform.tfstate (string)",
+	"s3:PutObject s3:DeleteObjectVersion",
+	"s3:GetObject s3:PutObject s3:DeleteObject",
+	"kms:Decrypt",
+	// unlock の role
+	"s3:ListBucket ; s3:prefix = workload/terraform.tfstate.tflock (string)",
+	"s3:GetObject s3:DeleteObject",
+	"s3:ListBucket ; s3:prefix = identity/terraform.tfstate.tflock (string)",
+	"s3:PutObject s3:DeleteObjectVersion",
+	"s3:GetObject s3:DeleteObject",
+	"s3:GetObject s3:PutObject s3:DeleteObject",
+	"kms:Decrypt",
+}
+
+// parseRowActions は、permRowActions の1件を action の並びと context entry に分ける。
+func parseRowActions(t *testing.T, entry string) ([]string, []string) {
+	t.Helper()
+
+	parts := strings.Split(entry, " ; ")
+	actions := strings.Fields(permExpand.Replace(parts[0]))
+
+	var context []string
+
+	for _, c := range parts[1:] {
+		key, rest, ok := strings.Cut(c, " = ")
+		require.True(t, ok, c)
+
+		value, typ, ok := strings.Cut(rest, " (")
+		require.True(t, ok, c)
+
+		context = append(context, "ContextKeyName="+key+",ContextKeyValues="+permExpand.Replace(value)+",ContextKeyType="+strings.TrimSuffix(typ, ")"))
+	}
+
+	return actions, context
+}
 
 func expand(descs []string, prefix string) []string {
 	out := make([]string, 0, len(descs))
@@ -371,10 +532,19 @@ func Test_simCheck(t *testing.T) {
 		want verdict
 	}{
 		"すべて want なら ok": {simResult([]string{"s3:A", "s3:B"}, allowed), verdict{ok: true}},
-		"違う判定を並べる":       {simResult([]string{"s3:A", "s3:B"}, implicitDeny), verdict{reason: "返った件数 2 / 2、違う判定: s3:A=implicitDeny s3:B=implicitDeny"}},
-		"件数が足りない":        {simResult([]string{"s3:A"}, allowed), verdict{reason: "返った件数 1 / 2、違う判定: なし"}},
-		"件数が多い":          {simResult([]string{"s3:A", "s3:B", "s3:C"}, allowed), verdict{reason: "返った件数 3 / 2、違う判定: なし"}},
-		"0件":             {okResult(`{"EvaluationResults":[]}`), verdict{reason: "返った件数 0 / 2、違う判定: なし"}},
+		"順序が違っても ok":     {simResult([]string{"s3:B", "s3:A"}, allowed), verdict{ok: true}},
+		"違う判定を並べる":       {simResult([]string{"s3:A", "s3:B"}, implicitDeny), verdict{reason: "違う判定: s3:A=implicitDeny s3:B=implicitDeny"}},
+		"件数が足りない":        {simResult([]string{"s3:A"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 1 / 2: s3:A）"}},
+		"件数が多い":          {simResult([]string{"s3:A", "s3:B", "s3:C"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 3 / 2: s3:A s3:B s3:C）"}},
+		"重複して欠落":         {simResult([]string{"s3:A", "s3:A"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 2 / 2: s3:A s3:A）"}},
+		"別名":             {simResult([]string{"s3:A", "s3:b"}, allowed), verdict{reason: "返った action が要求と一致しない（返った件数 2 / 2: s3:A s3:b）"}},
+		"0件":             {okResult(`{"EvaluationResults":[]}`), verdict{reason: "返った action が要求と一致しない（返った件数 0 / 2: なし）"}},
+		"足りない context がある": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":["s3:prefix"]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed","MissingContextValues":["aws:x","aws:y"]}]}`), verdict{reason: "評価に足りない context: s3:prefix aws:x aws:y"}},
+		"足りない context が空・null なら ok": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":[]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed","MissingContextValues":null}]}`), verdict{ok: true}},
+		"足りない context が文字列でない": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":"allowed","MissingContextValues":[1]},` +
+			`{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`), verdict{reason: "応答を読めない"}},
 		"結果の配列が無い":       {okResult(`{}`), verdict{reason: "応答を読めない"}},
 		"結果が object でない": {okResult(`{"EvaluationResults":["x"]}`), verdict{reason: "応答を読めない"}},
 		"判定が文字列でない": {okResult(`{"EvaluationResults":[{"EvalActionName":"s3:A","EvalDecision":1},{"EvalActionName":"s3:B","EvalDecision":"allowed"}]}`),
@@ -460,6 +630,8 @@ func Test_governanceGate(t *testing.T) {
 		"統制の policy だけでも attached":    {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), gateAttached},
 		"付いていなければ absent":             {okResult(noneAttached), gateAbsent},
 		"manage だけなら absent":          {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`), gateAbsent},
+		"一覧が配列でなければ unknown":          {okResult(`{"AttachedPolicies":{"PolicyName":"tabp-admin-ci-apply-identity-governance"}}`), gateUnknown},
+		"空の応答なら unknown":              {okResult(""), gateUnknown},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -571,6 +743,32 @@ func Test_permissionSections(t *testing.T) {
 		}
 	})
 
+	t.Run("ダミーの鍵の ARN は、アカウント ID の伏せ字で潰れない", func(t *testing.T) {
+		t.Parallel()
+
+		for _, r := range allRows(n, testKeyARN) {
+			if strings.Contains(r.resource, ":key/00000000-") {
+				assert.Equal(t, "arn:aws:kms:ap-northeast-1:<account>"+strings.TrimPrefix(r.resource, "arn:aws:kms:ap-northeast-1:123456789012"),
+					maskAllAccounts(r.resource))
+			}
+		}
+	})
+
+	t.Run("各行の action の並びと context が、表と独立に書いた一覧と一致する", func(t *testing.T) {
+		t.Parallel()
+
+		rows := allRows(n, testKeyARN)
+
+		require.Len(t, permRowActions, len(rows))
+
+		for i, r := range rows {
+			actions, context := parseRowActions(t, permRowActions[i])
+
+			assert.Equal(t, actions, r.actions, "%d 行目 %s", i, r.desc())
+			assert.Equal(t, context, r.context, "%d 行目 %s", i, r.desc())
+		}
+	})
+
 	t.Run("条件つきの区分は、行と注記を持つ", func(t *testing.T) {
 		t.Parallel()
 
@@ -626,12 +824,16 @@ func Test_permissionsSteps(t *testing.T) {
 		identity, apply             string
 		governance, workload, budgt []string
 		count                       int
+		result                      string
 	}{
-		"条件つきの確認がすべて走る":      {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount},
-		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount},
+		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
+			"# 結果: 119 件のうち NG 0 件"},
+		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
+			"# 結果: 115 件のうち NG 0 件（確かめていない区分 1）"},
 		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated},
-		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase},
+			permissionsBase + governanceGated, "# 結果: 107 件のうち NG 0 件（確かめていない区分 2）"},
+		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
+			"# 結果: 103 件のうち NG 0 件（確かめていない区分 3）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -639,7 +841,8 @@ func Test_permissionsSteps(t *testing.T) {
 			lines, err := run(t, permFake(t, okResult(tc.identity), okResult(tc.apply)))
 
 			require.NoError(t, err)
-			assert.Equal(t, append(permExpected(tc.governance, tc.workload, tc.budgt), "# 結果: "+strconv.Itoa(tc.count)+" 件のうち NG 0 件"), lines)
+			assert.Equal(t, append(permExpected(tc.governance, tc.workload, tc.budgt), tc.result), lines)
+			assert.Contains(t, tc.result, "# 結果: "+strconv.Itoa(tc.count)+" 件", "件数は表と独立の定数から")
 		})
 	}
 
@@ -653,7 +856,7 @@ func Test_permissionsSteps(t *testing.T) {
 			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の2つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
-		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件"), lines)
+		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 3）"), lines)
 	})
 
 	t.Run("apply の managed policy が想定と違えば、名前を添えて NG", func(t *testing.T) {
@@ -664,6 +867,7 @@ func Test_permissionsSteps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の2つの policy ではない（x）")
 		assert.Contains(t, lines, budgetsUnknown)
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 2）", lines[len(lines)-1])
 	})
 
 	t.Run("state の鍵の ARN を読めなければ NG を数え、その鍵の行は aws を呼ばずに NG", func(t *testing.T) {
@@ -819,10 +1023,11 @@ func Test_outputDocument(t *testing.T) {
 		want       string
 		wantReason string
 	}{
-		"live は Bucket に付いている文書": {sourceLive, okResult(`{"Policy":"{\"a\":1}"}`), `{"a":1}`, ""},
-		"live の呼び出しの失敗":          {sourceLive, failed("NoSuchBucketPolicy"), "", "呼び出しが失敗: NoSuchBucketPolicy"},
-		"live の Policy が無い":      {sourceLive, okResult(`{}`), "", "応答を読めない"},
-		"reference は plan の文書":   {sourceReference, okResult(""), `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::123456789012:root"}]}`, ""},
+		"live は Bucket に付いている文書":   {sourceLive, okResult(`{"Policy":"{\"a\":1}"}`), `{"a":1}`, ""},
+		"live の呼び出しの失敗":            {sourceLive, failed("NoSuchBucketPolicy"), "", "呼び出しが失敗: NoSuchBucketPolicy"},
+		"live の Policy が無い":        {sourceLive, okResult(`{}`), "", "文書を JSON の object として読めない"},
+		"live の Policy が JSON でない": {sourceLive, okResult(`{"Policy":"[1]"}`), "", "文書を JSON の object として読めない"},
+		"reference は plan の文書":     {sourceReference, okResult(""), `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::123456789012:root"}]}`, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -851,17 +1056,17 @@ func Test_outputPolicySteps(t *testing.T) {
 	t.Parallel()
 
 	n := testNames("")
-	planRows, applyRows := outputPolicyRows(n)
 	pdoc := `{"Statement":[{"Sid":"plan"}]}`
 	adoc := `{"Statement":[{"Sid":"apply"}]}`
 
-	handler := func(docs map[string]string) func(args []string) (awsResult, bool) {
+	handlerFor := func(nn names, docs map[string]string) func(args []string) (awsResult, bool) {
 		wants := map[string]string{}
+		planRows, applyRows := outputPolicyRows(nn)
 
 		for doc, rows := range map[string][]simRow{docs["plan"]: planRows, docs["apply"]: applyRows} {
 			for _, r := range rows {
 				r.bucketPolicy, r.doc = true, doc
-				wants[strings.Join(r.args(n), " ")] = r.want
+				wants[strings.Join(r.args(nn), " ")] = r.want
 			}
 		}
 
@@ -874,6 +1079,7 @@ func Test_outputPolicySteps(t *testing.T) {
 			return simResult(simActions(args), want), true
 		}
 	}
+	handler := func(docs map[string]string) func(args []string) (awsResult, bool) { return handlerFor(n, docs) }
 	expected := func(source string, readable []string) []string {
 		out := append([]string{"# 文書の出所: " + source}, readable...)
 		out = append(append(out, "# plan の出力の Bucket"), expand(outputPolicyPlanDescs, "ok  ")...)
@@ -942,8 +1148,101 @@ func Test_outputPolicySteps(t *testing.T) {
 		assert.Equal(t, "# 結果: 13 件のうち NG 9 件", lines[len(lines)-1])
 	})
 
+	t.Run("reference の文書は、実際のアカウント ID に置き換えて評価する", func(t *testing.T) {
+		t.Parallel()
+
+		other := newNames(verifyOptions{project: testProject, region: testRegion}, "210987654321")
+		f := &fakeAWS{t: t, handler: handlerFor(other, map[string]string{
+			"plan":  `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::210987654321:root"}]}`,
+			"apply": `{"Statement":[{"Sid":"apply"}]}`,
+		})}
+		e := verifyEnv{q: newQuery(f.fn, testRegion), n: other, source: sourceReference,
+			readFile: func(string) ([]byte, error) { return []byte(referencePlanJSON(t)), nil }}
+
+		lines, err := run(t, e, f)
+
+		require.NoError(t, err)
+		assert.Equal(t, "# 結果: 13 件のうち NG 0 件", lines[len(lines)-1])
+		assert.Len(t, f.calls, 11)
+
+		for _, c := range f.calls {
+			assert.NotContains(t, c, testAccount)
+		}
+	})
+
+	t.Run("apply の文書だけ読めなければ、apply の側だけ NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fakeAWS{t: t, responses: map[string]awsResult{
+			s3Key("get-bucket-policy", testPlanBucket):  policyResult(t, pdoc),
+			s3Key("get-bucket-policy", testApplyBucket): failed("denied"),
+		}, handler: handler(map[string]string{"plan": pdoc})}
+
+		lines, err := run(t, verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceLive}, f)
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Equal(t, "ok  plan の出力の Bucket の Bucket Policy の文書を読めた", lines[1])
+		assert.Equal(t, "NG  apply の出力の Bucket の Bucket Policy の文書を読めた（呼び出しが失敗: denied）", lines[2])
+		assert.Equal(t, "# 結果: 13 件のうち NG 4 件", lines[len(lines)-1])
+	})
+
+	t.Run("Policy が JSON でなければ、読めた確認とその Bucket の行が NG", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fakeAWS{t: t, responses: map[string]awsResult{
+			s3Key("get-bucket-policy", testPlanBucket):  okResult(`{"Policy":"x"}`),
+			s3Key("get-bucket-policy", testApplyBucket): policyResult(t, adoc),
+		}, handler: handler(map[string]string{"apply": adoc})}
+
+		lines, err := run(t, verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceLive}, f)
+
+		require.ErrorIs(t, err, errMismatch)
+		assert.Equal(t, "NG  plan の出力の Bucket の Bucket Policy の文書を読めた（文書を JSON の object として読めない）", lines[1])
+		assert.Equal(t, "# 結果: 13 件のうち NG 9 件", lines[len(lines)-1])
+	})
+
+	for name, tc := range map[string]struct {
+		plan   func(t *testing.T) ([]byte, error)
+		result string
+	}{
+		"reference の plan が無い": {func(*testing.T) ([]byte, error) { return nil, os.ErrNotExist }, "# 結果: 13 件のうち NG 13 件"},
+		"reference の plan に apply_output だけ無い": {func(t *testing.T) ([]byte, error) {
+			return []byte(strings.Replace(referencePlanJSON(t), "module.state_backend.module.apply_output", "module.x", 1)), nil
+		}, "# 結果: 13 件のうち NG 4 件"},
+	} {
+		t.Run(name+"なら、読めない側が NG", func(t *testing.T) {
+			t.Parallel()
+
+			f := &fakeAWS{t: t, handler: handler(map[string]string{
+				"plan": `{"Statement":[{"Effect":"Deny","Principal":"arn:aws:iam::123456789012:root"}]}`,
+			})}
+			e := verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceReference, readFile: func(string) ([]byte, error) { return tc.plan(t) }}
+
+			lines, err := run(t, e, f)
+
+			require.ErrorIs(t, err, errMismatch)
+			assert.Equal(t, tc.result, lines[len(lines)-1])
+		})
+	}
+
+	t.Run("文書の Statement が1文の object なら読めた", func(t *testing.T) {
+		t.Parallel()
+
+		doc := `{"Statement":{"Effect":"Deny"}}`
+		f := &fakeAWS{t: t, responses: map[string]awsResult{
+			s3Key("get-bucket-policy", testPlanBucket):  policyResult(t, doc),
+			s3Key("get-bucket-policy", testApplyBucket): policyResult(t, adoc),
+		}, handler: handler(map[string]string{"plan": doc, "apply": adoc})}
+
+		lines, err := run(t, verifyEnv{q: newQuery(f.fn, testRegion), n: n, source: sourceLive}, f)
+
+		require.NoError(t, err)
+		assert.Equal(t, "ok  plan の出力の Bucket の Bucket Policy の文書を読めた", lines[1])
+	})
+
 	for name, doc := range map[string]string{
 		"文が無い":           `{"Statement":[]}`,
+		"1文の object が空":  `{"Statement":{}}`,
 		"Statement が無い":  `{}`,
 		"Statement が真偽値": `{"Statement":true}`,
 	} {

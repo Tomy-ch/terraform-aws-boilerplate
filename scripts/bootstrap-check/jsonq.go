@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"math"
 	"reflect"
 	"slices"
-	"unicode/utf8"
 )
 
 // ここの関数は、aws の JSON の応答を判定する。null をたどれば null、object でも null でもない値をたどればエラー
@@ -91,22 +89,16 @@ func anyString(v any, f func(string) bool) bool {
 	return false
 }
 
-// jsonLength は、null は 0、配列・object は要素数、文字列は文字数、数は絶対値。真偽値はエラー（false）。
-func jsonLength(v any) (float64, bool) {
-	switch x := v.(type) {
-	case nil:
-		return 0, true
+// hasStatements は、文書の Statement が空でない配列か、空でない object（1文の形）であること。
+func hasStatements(v map[string]any) bool {
+	switch s := v["Statement"].(type) {
 	case []any:
-		return float64(len(x)), true
+		return len(s) > 0
 	case map[string]any:
-		return float64(len(x)), true
-	case string:
-		return float64(utf8.RuneCountInString(x)), true
-	case float64:
-		return math.Abs(x), true
+		return len(s) > 0
 	}
 
-	return 0, false
+	return false
 }
 
 // cond は、1つの文（Statement の要素など）に対する比較1つ。返り値は（真偽、評価できたか）。
