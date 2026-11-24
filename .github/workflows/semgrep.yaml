@@ -136,24 +136,9 @@ jobs:
             productionresultssa30.blob.core.windows.net
             productionresultssa31.blob.core.windows.net
             productionresultssa32.blob.core.windows.net
-            mise.jdx.dev
             mise-versions.jdx.dev
-            mise.run
-            mise.en.dev
-            aquaproj.github.io
-            proxy.golang.org
-            sum.golang.org
-            index.golang.org
-            storage.googleapis.com
             dl.google.com
-            go.dev
-            golang.org
-            nodejs.org
-            registry.npmjs.org
-            tuf-repo-cdn.sigstore.dev
-            rekor.sigstore.dev
-            fulcio.sigstore.dev
-            awscli.amazonaws.com
+            proxy.golang.org
             registry-1.docker.io
             auth.docker.io
             production.cloudfront.docker.com

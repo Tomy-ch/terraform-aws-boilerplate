@@ -23,6 +23,7 @@ on:
     paths:
       - '.github/workflows/trivy-config.yaml'
       - '.makefiles/security/trivy.mk'
+      - '.makefiles/terraform/gates.mk'
       - '.makefiles/runner.mk'
       - 'scripts/iac-scan/**'
       - 'scripts/lib/**'
@@ -95,6 +96,7 @@ jobs:
             relevant:
               - '.github/workflows/trivy-config.yaml'
               - '.makefiles/security/trivy.mk'
+              - '.makefiles/terraform/gates.mk'
               - '.makefiles/runner.mk'
               - 'scripts/iac-scan/**'
               - 'scripts/lib/**'
