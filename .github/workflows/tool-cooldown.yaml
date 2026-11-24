@@ -1,7 +1,8 @@
 name: Tool Cooldown
 
-# Every CLI tool version this repository pins is gated here. `mise.toml` is the sole declaration
-# site, and a version published inside the window carries the same risk whichever tool it belongs to.
+# Every CLI tool version this repository pins is gated here. The files it reads as declarations are
+# owned by `declarationPaths` in `scripts/tool-cooldown`, and a version published inside the window
+# carries the same risk whichever tool it belongs to.
 #
 # Transitive dependencies are out of scope, for the same reason `go-cooldown` only gates direct
 # requirements.
