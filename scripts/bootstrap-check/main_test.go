@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -254,7 +255,7 @@ func Test_run(t *testing.T) {
 
 		for name, args := range map[string][]string{
 			"サブコマンドが無い":     nil,
-			"知らないサブコマンド":    {"account"},
+			"知らないサブコマンド":    {"foo"},
 			"plan の引数が足りない": {"plan"},
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -364,6 +365,114 @@ func Test_execute(t *testing.T) {
 
 		assert.Equal(t, 2, execute(args, partialWriter{}, d))
 	})
+
+	accountArgs := []string{"account", "-project", testProject, "-region", testRegion}
+
+	t.Run("account がすべて ok なら 0 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		assert.Equal(t, 0, execute(accountArgs, &stdout, accountDeps(newFake(t, nil))))
+		assert.Contains(t, stdout.String(), "# 結果: 15 件のうち NG 0 件\n")
+	})
+
+	t.Run("account に NG があれば 1 を返し、理由の12桁の数字は伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		d := accountDeps(newFake(t, map[string]awsResult{
+			jsonKey("iam", "get-user", "--user-name", testUser): failed("User arn:aws:iam::123456789012:user/alice is not authorized"),
+		}))
+
+		assert.Equal(t, 1, execute(accountArgs, &stdout, d))
+		assert.Contains(t, stdout.String(), "NG  1-3 一時 IAM user の path が /（呼び出しが失敗: User arn:aws:iam::<account>:user/alice is not authorized）\n")
+		assert.NotContains(t, stdout.String(), "123456789012")
+	})
+
+	t.Run("account が一時 IAM user でなければ理由を出して 2 を返し、ARN の12桁の数字は伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		d := accountDeps(newFake(t, map[string]awsResult{
+			"sts get-caller-identity --query Arn --output text --region " + testRegion: okResult("arn:aws:iam::123456789012:root"),
+		}))
+
+		assert.Equal(t, 2, execute(accountArgs, &stdout, d))
+		assert.Equal(t, "sts get-caller-identity の Arn: arn:aws:iam::<account>:root: 一時 IAM user の資格情報ではありません。make aws-login をやり直してください\n", stdout.String())
+	})
+
+	t.Run("account の出力は16進の英字に隣り合う12桁も伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		d := accountDeps(newFake(t, map[string]awsResult{
+			jsonKey("iam", "get-user", "--user-name", testUser): failed("denied for cafe123456789012"),
+		}))
+
+		assert.Equal(t, 1, execute(accountArgs, &stdout, d))
+		assert.Contains(t, stdout.String(), "denied for cafe<account>）\n")
+	})
+
+	for name, tc := range map[string]struct {
+		d    func(deps) deps
+		want string
+	}{
+		"AWS_PROFILE が空": {func(d deps) deps {
+			d.getenv = func(string) string { return "" }
+
+			return d
+		}, errNoProfile.Error()},
+		"aws を起動できない": {func(d deps) deps {
+			d.aws = func(...string) awsResult { return awsResult{err: os.ErrNotExist} }
+
+			return d
+		}, errAWSStart.Error()},
+	} {
+		t.Run("account で"+name+"なら理由を出して 2 を返し、結果の行は出さない", func(t *testing.T) {
+			t.Parallel()
+
+			var stdout bytes.Buffer
+
+			assert.Equal(t, 2, execute(accountArgs, &stdout, tc.d(accountDeps(newFake(t, nil)))))
+			assert.Contains(t, stdout.String(), tc.want)
+			assert.NotContains(t, stdout.String(), "# 結果:")
+		})
+	}
+
+	t.Run("account がすべて ok でも stdout へ書けなければ 2 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, 2, execute(accountArgs, errWriter{}, accountDeps(newFake(t, nil))))
+	})
+
+	t.Run("account の引数の誤りは 2 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		assert.Equal(t, 2, execute([]string{"account"}, &stdout, accountDeps(newFake(t, nil))))
+		assert.Contains(t, stdout.String(), "使い方:")
+	})
+}
+
+func Test_maskAllAccounts(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct{ in, want string }{
+		"16進の英字に隣り合っても伏せる": {"cafe123456789012ab\n", "cafe<account>ab\n"},
+		"commit の行も伏せる":    {"# commit: 123456789012\n", "# commit: <account>\n"},
+		"11桁は伏せない":         {"12345678901\n", "12345678901\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, maskAllAccounts(tc.in))
+		})
+	}
 }
 
 func Test_maskLine(t *testing.T) {

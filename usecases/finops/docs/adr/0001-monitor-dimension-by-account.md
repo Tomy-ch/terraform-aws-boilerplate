@@ -11,7 +11,7 @@
 
 AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウント全体の支出を見る予算を置くことを、COST01-BP05 は、ワークロードのすべてのアカウントに AWS Budgets を置くことを勧める。Cost Anomaly Detection の User Guide は、組織の主たる次元を AWS managed monitor で覆い、AWS services monitor を並べて持つことを勧める。メンバーアカウントごとに見る monitor（`LINKED_ACCOUNT`）は管理アカウントでしか作れない。AWS managed monitor は、管理アカウントに2つ（うち AWS services monitor は1つ）、メンバーアカウントに1つまでである。
 
-管理アカウントには、Cost Explorer を有効にした時点の AWS services monitor と email の subscription が在り、`docs/setup/scripts/check-account.sh` がその存在を確かめる。AWS Organizations のベストプラクティスは、管理アカウントに置くものを、管理アカウントでしかできないことに限ることを勧める。
+管理アカウントには、Cost Explorer を有効にした時点の AWS services monitor と email の subscription が在り、`make bootstrap-check-account` がその存在と tag を確かめる。AWS Organizations のベストプラクティスは、管理アカウントに置くものを、管理アカウントでしかできないことに限ることを勧める。
 
 ## Decision
 
@@ -33,7 +33,7 @@ AWS Well-Architected の COST02-BP05 は、アカウントごとにアカウン�
 
 ### 案C: 管理アカウントの AWS services monitor を `finops` が持つ
 
-自動で作られた monitor を人が消してから `finops` が作るか、import で取り込む。消してから apply までの間は検知が止まり、bootstrap の手順と `check-account.sh` の書き換えが要る。import は repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 の範囲の外である。
+自動で作られた monitor を人が消してから `finops` が作るか、import で取り込む。消してから apply までの間は検知が止まり、bootstrap の手順と `make bootstrap-check-account`（`scripts/bootstrap-check`）の書き換えが要る。import は repository-wide/ADR-0202 (internal-topology-as-implementation-detail) 決定7 の範囲の外である。
 
 ### 評価
 
