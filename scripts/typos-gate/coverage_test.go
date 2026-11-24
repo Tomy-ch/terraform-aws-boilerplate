@@ -24,6 +24,8 @@ func isolated() ([]string, error) {
 	return []string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/isolated"}, nil
 }
 
+var isolatedEnv = []string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/isolated"}
+
 func cover(cfg string, out *bytes.Buffer, tool toolFunc, env envFunc) error {
 	return runCoverage(".typos.toml", []byte(cfg), out, tool, env)
 }
@@ -40,9 +42,49 @@ func Test_runCoverage(t *testing.T) {
 		require.NoError(t, runCoverage("./.typos.toml", []byte(coverageConfig), &out, f.Tool(), isolated))
 		assert.Contains(t, out.String(), "追跡ファイル 2 件")
 		calls := f.Calls()
-		require.Len(t, calls, 2)
+		require.Len(t, calls, 3)
 		assert.Equal(t, realCwd(t)+" "+stepFiles+" ", calls[0], "--files はリポジトリ直下（cwd）で走る")
 		assert.True(t, strings.HasSuffix(calls[1], " "+stepLsFiles+" /isolated"), "git には隔離した env を渡す: %s", calls[1])
+		assert.True(t, strings.HasSuffix(calls[2], " "+stepLsDeleted+" /isolated"), "git には隔離した env を渡す: %s", calls[2])
+	})
+
+	t.Run("作業ツリーから消えた追跡ファイルは引き、件数を出す", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "out", "a.md\x00gone.md\x00x/gone two.md\x00")
+		f.Set(stepLsDeleted, "out", "gone.md\x00x/gone two.md\x00")
+		f.Set(stepFiles, "out", "./a.md\n")
+		var out bytes.Buffer
+		require.NoError(t, cover(coverageConfig, &out, f.Tool(), isolated))
+		assert.Contains(t, out.String(), "追跡ファイル 1 件")
+		assert.Contains(t, out.String(), "作業ツリーから消えた 2 件")
+	})
+
+	t.Run("消えた追跡ファイルを引いて0件なら errNoInput", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "out", "gone.md\x00")
+		f.Set(stepLsDeleted, "out", "gone.md\x00")
+		f.Set(stepFiles, "out", "./x\n")
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errNoInput)
+	})
+
+	t.Run("git ls-files --deleted が stderr にだけ出したパスは引かない", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "out", "a.md\x00gone.md\x00")
+		f.Set(stepLsDeleted, "err", "gone.md\x00")
+		f.Set(stepFiles, "out", "./a.md\n")
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errUncovered)
+	})
+
+	t.Run("git ls-files が rc≠0 なら --deleted を起動しない", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "rc", "128")
+		f.Set(stepFiles, "out", "./a\n")
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errTool)
+		assert.Len(t, f.Calls(), 2)
 	})
 
 	t.Run("走査の対象から外れた追跡ファイルを先頭20件まで出し errUncovered", func(t *testing.T) {
@@ -78,9 +120,11 @@ func Test_runCoverage(t *testing.T) {
 	})
 
 	for name, c := range map[string]struct{ step, suffix, body string }{
-		"typos --files が rc≠0":   {stepFiles, "rc", "64"},
-		"git ls-files が rc≠0":    {stepLsFiles, "rc", "128"},
-		"git ls-files がシグナルで終わる": {stepLsFiles, "kill", ""},
+		"typos --files が rc≠0":             {stepFiles, "rc", "64"},
+		"git ls-files が rc≠0":              {stepLsFiles, "rc", "128"},
+		"git ls-files がシグナルで終わる":           {stepLsFiles, "kill", ""},
+		"git ls-files --deleted が rc≠0":    {stepLsDeleted, "rc", "128"},
+		"git ls-files --deleted がシグナルで終わる": {stepLsDeleted, "kill", ""},
 	} {
 		t.Run(name+"なら errTool", func(t *testing.T) {
 			t.Parallel()
@@ -155,7 +199,7 @@ func Test_runCoverage(t *testing.T) {
 		})
 	}
 
-	for _, step := range []string{stepFiles, stepLsFiles} {
+	for _, step := range []string{stepFiles, stepLsFiles, stepLsDeleted} {
 		t.Run(step+" が rc≠0 なら、stderr にだけ出した診断を載せて errTool", func(t *testing.T) {
 			t.Parallel()
 			f := tooltest.New(t)
@@ -422,4 +466,42 @@ func Test_matchGlob(t *testing.T) {
 			require.ErrorIs(t, err, errRead)
 		})
 	}
+}
+
+func Test_gitList(t *testing.T) {
+	t.Parallel()
+
+	t.Run("リポジトリ直下で段の git を隔離した env で起動し、stdout だけを返す", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsDeleted, "out", "a\x00b\x00")
+		f.Set(stepLsDeleted, "err", "STDERR-ONLY\n")
+		got, err := gitList(f.Tool(), isolatedEnv, stepLsDeleted)
+		require.NoError(t, err)
+		assert.Equal(t, "a\x00b\x00", got)
+		calls := f.Calls()
+		require.Len(t, calls, 1)
+		assert.True(t, strings.HasSuffix(calls[0], " "+stepLsDeleted+" /isolated"), calls[0])
+	})
+
+	t.Run("rc≠0 なら、段と出力を名指して errTool", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsDeleted, "err", "fatal: x\n")
+		f.Set(stepLsDeleted, "rc", "128")
+		_, err := gitList(f.Tool(), isolatedEnv, stepLsDeleted)
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), stepLsDeleted+" が rc=128")
+		assert.Contains(t, err.Error(), "fatal: x")
+	})
+
+	t.Run("シグナルで終わるか起動できなければ errTool", func(t *testing.T) {
+		t.Parallel()
+		f := tooltest.New(t)
+		f.Set(stepLsDeleted, "kill", "")
+		_, err := gitList(f.Tool(), isolatedEnv, stepLsDeleted)
+		require.ErrorIs(t, err, errTool)
+		_, err = gitList(tooltest.Missing, isolatedEnv, stepLsDeleted)
+		require.ErrorIs(t, err, errTool)
+	})
 }
