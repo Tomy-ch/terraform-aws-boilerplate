@@ -79,13 +79,13 @@
 | --- | --- |
 | `deletion` | 対象ブランチを削除できない。 |
 | `non_fast_forward` | 対象ブランチへの force-push を拒否する。 |
-| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
+| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認は要求しない、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
 | `required_status_checks` | 宣言したチェックがすべて成功してからマージする。各 context は `integration_id`（GitHub Actions）を持ち、Actions 以外が報告した同じ名前の status では満たせない（ADR-0603 決定34）。`repo-settings-check` が欠けを落とす。 |
 
 ### 単独メンテナのリポジトリに `pull_request` を適用する場合
 
-GitHub では自分の PR を自分で承認できません。`required_approving_review_count: 1` かつ `bypass_actors` が空の場合、参加者がオーナー 1 人だけのリポジトリではこのルールを満たせる人間が存在せず、保護ブランチ向けの PR がすべて恒久的にマージ不能になります。そうしたリポジトリへ適用する前に、メンテナを `bypass_actors` に列挙するか、承認を要求するパラメータを両方とも下ろしてください（`required_approving_review_count: 0` と `require_last_push_approval: false`）。スレッド解決とマージ方法の制限はそれ単体でも効きます。
+GitHub では自分の PR を自分で承認できません。`required_approving_review_count: 1` かつ `bypass_actors` が空の場合、参加者がオーナー 1 人だけのリポジトリではこのルールを満たせる人間が存在せず、保護ブランチ向けの PR がすべて恒久的にマージ不能になります。それでも宣言の値は下げません（ADR-0603 決定21）。メンテナを `bypass_actors` に列挙して解決することもしません（同 決定22）。
 
 ### `code_quality` は裏側の機能が先に報告している必要がある
 
@@ -104,7 +104,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 | 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
-| コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
+| コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`tf-policy`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan`、`trufflehog`、`typos`、`editorconfig-check` |
 | デプロイブランチへの経路（ADR-0603 決定32 の例外） | `deploy-source-check`。デフォルトブランチの名前と到達性、デプロイブランチの今の木に依り、変更に誤りが無くても赤になりうる。デプロイブランチ宛でない Pull Request では対象外として成功する。検査のコードと宣言は Pull Request の base の commit のものを使う |
 | plan（ADR-0603 決定12-14 の例外） | `plan-admin-identity`・`plan-admin-workload`。AWS の状態と資格情報の取得に依存し、変更に誤りが無くても赤になりうる。fork と Dependabot の Pull Request では拒否の step で失敗するので、それらは merge できない |
 
@@ -128,4 +128,4 @@ Private Vulnerability Reporting を有効にするかの宣言です。[`SECURIT
 
 ## labels.json
 
-`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。
+`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。名指したラベルがこのファイルにあることは `make repo-settings-check` が検査します。
