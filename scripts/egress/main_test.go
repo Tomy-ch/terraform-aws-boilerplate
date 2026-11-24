@@ -73,7 +73,6 @@ var testCIMake = ciMakeFixture([3]string{cientry.Plan, "t", "identity"})
 // 登録簿に無い種別の role は plan にする。
 func ciMakeFixture(entries ...[3]string) string {
 	var b strings.Builder
-	b.WriteString("CI_DENIED_ROLES ?= apply apply-identity unlock-identity unlock\n")
 	var defined []string
 	for _, e := range entries {
 		if !slices.Contains(defined, e[0]) {
