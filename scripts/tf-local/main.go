@@ -16,18 +16,6 @@
 //	    `env` に渡す `-u <名前>` の並びで出す
 //	tf-local plan-header
 //	    plan の log の1行目（plan した commit と、作業ツリーに未コミットの変更があるか）を出す
-//	tf-local role-arn -project <p> -env <e> -role <役割> -account <id>
-//	    CI が assume する role の ARN を1行で出す。役割は lib/cientry の登録簿の role に限る
-//	tf-local assume-denied -role <役割> -exitcode <n> <stderr-file>
-//	    `aws sts assume-role-with-web-identity` の終了コードと stderr から、assume が AccessDenied で拒否されたことを
-//	    確かめて1行で出す。assume が通ったか、拒否が AccessDenied でなければ失敗する
-//	tf-local oidc-url
-//	    GitHub Actions の OIDC token を STS 向けに要求する URL を1行で出す。job に id-token: write が無く、
-//	    要求先か要求の token が環境変数に無ければ失敗する
-//	tf-local oidc-token <response-file>
-//	    OIDC token の要求の応答（JSON）から token を1行で出す
-//	tf-local oidc-sub <token-file>
-//	    GitHub Actions の OIDC token の sub を1行で出す
 //	tf-local plan-summary -exitcode <0|1|2> <show.json>
 //	    plan の終了コードと `terraform show -json` の変更を突き合わせ、件数の要約を1行で出す。終了コードが 1 なら
 //	    JSON を読まずに plan の失敗として落ちる
@@ -66,11 +54,12 @@
 //	    裏で走る plan の全文に、lock を取った後の行が現れたら held を出す。現れる前に plan が終われば空行を出す。
 //	    どちらも起きずに limit を過ぎたら失敗する
 //
-// 人の手元の入口の段（local-prepare・local-init・local-plan。local.go）は、1回の起動で1つの目的の道具（aws か
-// terraform）だけを、固定の引数で起動する（ADR-0702 決定3・24）。そのほかのサブコマンドは aws も terraform も
-// 起動せず、値だけを返す。plan-header だけは git を起動して作業ツリーを読む。assume-denied・oidc-token・oidc-sub・plan-summary・failure-kind・
-// policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait はファイルを読み、oidc-url は環境変数を読み、
-// lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
+// 人の手元の入口の段（local-prepare・local-init・local-plan。local.go）と、CI の資格情報の段（ci-credentials・
+// ci-assume-denied。cicred.go）は、1回の起動で1つの目的の道具（aws か terraform）だけを、固定の引数で起動する
+// （ADR-0702 決定3・24）。CI の資格情報の段は、OIDC の token を GitHub Actions から自分で取る。
+// そのほかのサブコマンドは aws も terraform も起動せず、値だけを返す。plan-header だけは git を起動して作業ツリーを
+// 読む。plan-summary・failure-kind・policy-result・sha256・lock-key・lock-etag・lock-stale・lock-held・lock-wait は
+// ファイルを読み、lock-stale と lock-held は時刻を読み、lock-wait は pid のプロセスが生きているかを見る。
 // 値を決められない入力はすべて非ゼロで終わり、make はその時点で terraform を呼ばない。
 // make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
@@ -123,7 +112,7 @@ var (
 	unsetNames    = []string{"TF_WORKSPACE", "TF_DATA_DIR", "TF_CLI_CONFIG_FILE", "TF_REATTACH_PROVIDERS",
 		"ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"}
 
-	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | role-arn ... | assume-denied -role <r> -exitcode <n> <file> | oidc-sub <file> | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | oidc-url | oidc-token <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file>")
+	errUsage            = xerrors.New("❌ usage: tf-local region <root> | bucket -project <p> -env <e> [-kind tfstate|tfplan|tfapply] -region <r> -identity <out> | state-key ... | env-unset | plan-header | plan-summary -exitcode <c> <file> | plan-key ... | apply-key ... | apply-result -exitcode <n> | failure-kind -step <s> -exitcode <n> <file> | policy-result -namespace <ns> -rego <file> <file> | policy-result -policy <dir> <file> | account -identity <out> | sha256 <file> | lock-key <root> | lock-etag -key <k> [-want absent|present] <file> | lock-stale -etag <e> -meta <file> <file> | lock-held -etag <e> -meta <file> <file> | lock-wait -pid <pid> [-interval <d>] [-limit <d>] <file> | local-prepare -project <p> -profile <p> -env <e> -root identity|workload -base <dir> [-missing fail|sse-s3] -out <file> | local-init -profile <p> -state <file> | local-plan -profile <p> -env <e> -root <r> -base <dir> -header <file> -log <file> | ci-credentials -project <p> -env <e> -role <r> -base <dir> -work <dir> | ci-assume-denied -project <p> -env <e> -base <dir> -work <dir>")
 	errBackendMissing   = xerrors.New("❌ backend.tf がありません")
 	errProvidersMissing = xerrors.New("❌ providers.tf がありません")
 	errRegionMismatch   = xerrors.New("❌ provider と backend の region が違います")
@@ -145,13 +134,14 @@ type deps struct {
 	alive    func(pid int) bool
 	sleep    func(time.Duration)
 	tool     toolFunc
+	fetch    fetchFunc
 	stderr   io.Writer
 }
 
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, stderr: os.Stderr}); err != nil {
+	if err := run(os.Args[1:], os.Stdout, deps{readFile: os.ReadFile, environ: os.Environ(), git: gitOutput, now: time.Now, alive: processAlive, sleep: time.Sleep, tool: command, fetch: fetchOIDC, stderr: os.Stderr}); err != nil {
 		log.Fatalf("%v", err)
 	}
 }
@@ -161,9 +151,6 @@ var argCounts = map[string]int{
 	"region":      2,
 	"env-unset":   1,
 	"plan-header": 1,
-	"oidc-url":    1,
-	"oidc-token":  2,
-	"oidc-sub":    2,
 	"sha256":      2,
 	"lock-key":    2,
 }
@@ -198,16 +185,6 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = envUnset(d.environ)
 	case "plan-header":
 		value, err = planHeader(d.git)
-	case "role-arn":
-		value, err = runRoleARN(args[1:])
-	case "assume-denied":
-		value, err = runAssumeDenied(args[1:], d.readFile)
-	case "oidc-url":
-		value, err = oidcURL(d.environ)
-	case "oidc-token":
-		value, err = oidcToken(arg, d.readFile)
-	case "oidc-sub":
-		value, err = oidcSub(arg, d.readFile)
 	case "plan-summary":
 		value, err = runPlanSummary(args[1:], d.readFile)
 	case "plan-key":
@@ -240,6 +217,10 @@ func run(args []string, out io.Writer, d deps) error {
 		value, err = localInit(args[1:], d, out, d.stderr)
 	case "local-plan":
 		value, err = localPlan(args[1:], d, out, d.stderr)
+	case "ci-credentials":
+		value, err = ciCredentials(args[1:], d, out)
+	case "ci-assume-denied":
+		value, err = ciAssumeDenied(args[1:], d, out)
 	default:
 		return xerrors.Wrap(errUsage, args[0])
 	}

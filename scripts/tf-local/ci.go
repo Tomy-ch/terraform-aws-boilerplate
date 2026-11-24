@@ -66,24 +66,6 @@ var (
 	errPolicyRules = policyresult.ErrRules
 )
 
-func runRoleARN(args []string) (string, error) {
-	fs := flag.NewFlagSet("role-arn", flag.ContinueOnError)
-	project := fs.String("project", "", "")
-	env := fs.String("env", "", "")
-	role := fs.String("role", "", "")
-	account := fs.String("account", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() > 0 {
-		return "", errUsage
-	}
-
-	return roleARN(*project, *env, *role, *account)
-}
-
 func roleARN(project, env, role, account string) (string, error) {
 	if !tokenPattern.MatchString(project) || !tokenPattern.MatchString(env) ||
 		!slices.Contains(cientry.Roles(), role) || !accountPattern.MatchString(account) {
@@ -91,43 +73,6 @@ func roleARN(project, env, role, account string) (string, error) {
 	}
 
 	return fmt.Sprintf(roleFormat, account, project, env, role), nil
-}
-
-func runAssumeDenied(args []string, readFile func(string) ([]byte, error)) (string, error) {
-	fs := flag.NewFlagSet("assume-denied", flag.ContinueOnError)
-	role := fs.String("role", "", "")
-	exitCode := fs.String("exitcode", "", "")
-
-	if err := fs.Parse(args); err != nil {
-		return "", xerrors.Wrap(errUsage, err.Error())
-	}
-
-	if fs.NArg() != 1 || !slices.Contains(cientry.Roles(), *role) {
-		return "", errUsage
-	}
-
-	code, err := strconv.Atoi(*exitCode)
-	if err != nil || code < 0 || code > 255 {
-		return "", xerrors.Wrap(errUsage, "-exitcode は 0 から 255 の整数です")
-	}
-
-	// assume が成立したことが最も重いので、stderr を読む前に落とす。
-	if code == 0 {
-		return "", xerrors.Wrapf(errAssumeSucceeded, "%s の role", *role)
-	}
-
-	stderr, err := readFile(fs.Arg(0))
-	if err != nil {
-		return "", xerrors.Wrap(errAssumeUnreadable, "stderr のファイルを読めません")
-	}
-
-	value, err := assumeDenied(*role, stderr)
-	// stderr は文に入れられないので、STS に届かなかった失敗の手掛かりは終了コードだけが運ぶ。
-	if xerrors.Is(err, errAssumeUnreadable) {
-		return "", xerrors.Wrapf(err, "aws の終了コード %d", code)
-	}
-
-	return value, err
 }
 
 // assumeDenied は、失敗した `aws sts assume-role-with-web-identity` の stderr から、拒否が AccessDenied で
@@ -146,8 +91,7 @@ func assumeDenied(role string, stderr []byte) (string, error) {
 	return fmt.Sprintf("✅ %s の role の assume は拒否されました（AccessDenied）", role), nil
 }
 
-// oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。要求の
-// token は curl が環境変数から直接読み、ここは出さない。
+// oidcURL は、GitHub Actions が渡す OIDC token の要求先に STS 向けの audience を付けて返します。
 func oidcURL(environ []string) (string, error) {
 	var request, bearer string
 
@@ -179,12 +123,7 @@ func oidcURL(environ []string) (string, error) {
 }
 
 // oidcToken は、OIDC token の要求の応答 `{"value": "<JWT>"}` から token を返します。JWT の形でなければ失敗します。
-func oidcToken(path string, readFile func(string) ([]byte, error)) (string, error) {
-	raw, err := readFile(path)
-	if err != nil {
-		return "", xerrors.Wrap(errOIDCResponse, "応答のファイルを読めません")
-	}
-
+func oidcToken(raw []byte) (string, error) {
 	var resp struct {
 		Value string `json:"value"`
 	}
@@ -203,13 +142,8 @@ func oidcToken(path string, readFile func(string) ([]byte, error)) (string, erro
 
 // oidcSub は、GitHub Actions の OIDC token（JWT）の payload の sub を返します。署名は検証しない
 // —— 値は公開ログへの表示用で、信頼の判断は AWS の STS が行う。
-func oidcSub(path string, readFile func(string) ([]byte, error)) (string, error) {
-	raw, err := readFile(path)
-	if err != nil {
-		return "", xerrors.Wrap(errOIDCToken, "token のファイルを読めません")
-	}
-
-	token := strings.TrimSpace(string(raw))
+func oidcSub(raw string) (string, error) {
+	token := strings.TrimSpace(raw)
 	if token == "" || len(token) > maxTokenSize {
 		return "", xerrors.Wrap(errOIDCToken, "token が空か、大きすぎます")
 	}
