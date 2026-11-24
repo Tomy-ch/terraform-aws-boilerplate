@@ -3,28 +3,46 @@
 package workdir
 
 import (
+	"context"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
 // ErrInvalid は、作業ディレクトリがリポジトリ直下の tmp/ の下の相対パスではないことです。
 var ErrInvalid = xerrors.New("リポジトリ直下の tmp/ の下の相対パスではありません")
 
+// lsFilesFunc は、root で `git ls-files -z -- tmp` を起動し、その出力を返します。
+type lsFilesFunc func(root string) ([]byte, error)
+
 // Resolve は、作業ディレクトリの値 work を検証し、root からのパスを返します。work はリポジトリ直下の tmp/ の下の
 // 相対パスに限ります（絶対パス・`..` を含むもの・tmp/ 自身は [ErrInvalid]）。字面が tmp/ の下でも、途中の symlink が
 // 外を指せば [ErrInvalid] です。
+//
+// root の tmp が symlink なら、その先を tmp/ として扱うのは git が追跡していない symlink に限ります。追跡している
+// symlink は Pull Request が持ち込めるので、その先を消させないよう [ErrInvalid] にします。追跡していないことを
+// git で確かめられないとき（root がリポジトリでない、git を起動できない）も [ErrInvalid] です。tmp/ の下の追跡
+// している symlink は、外を指せば上の symlink の検証が落とします。
 func Resolve(root, work string) (string, error) {
+	return resolve(root, work, lsFilesTmp)
+}
+
+func resolve(root, work string, lsFiles lsFilesFunc) (string, error) {
 	slashed := filepath.ToSlash(work)
 	clean := path.Clean(slashed)
 	if work == "" || filepath.IsAbs(work) || strings.HasPrefix(slashed, "/") || slices.Contains(strings.Split(slashed, "/"), "..") ||
 		!strings.HasPrefix(clean, "tmp/") {
 		return "", xerrors.Wrapf(ErrInvalid, "%q", work)
+	}
+	if err := untrackedIfSymlink(root, lsFiles); err != nil {
+		return "", xerrors.Wrapf(ErrInvalid, "%q: %v", work, err)
 	}
 	target := filepath.Join(root, filepath.FromSlash(clean))
 	if err := staysUnder(filepath.Join(root, "tmp"), target); err != nil {
@@ -32,6 +50,46 @@ func Resolve(root, work string) (string, error) {
 	}
 
 	return target, nil
+}
+
+// untrackedIfSymlink は、root の tmp が symlink なら、git がそれ（とその下）を追跡していないことを確かめます。
+// symlink でなければ git を起動しません。
+func untrackedIfSymlink(root string, lsFiles lsFilesFunc) error {
+	info, err := os.Lstat(filepath.Join(root, "tmp"))
+	if xerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		return nil
+	}
+	out, err := lsFiles(root)
+	if err != nil {
+		return xerrors.Newf("tmp は symlink で、git が追跡していないことを確かめられません: %v", err)
+	}
+	if len(out) > 0 {
+		return xerrors.New("tmp は git が追跡している symlink です")
+	}
+
+	return nil
+}
+
+func lsFilesTmp(root string) ([]byte, error) {
+	env, err := gitenv.Env(os.Environ())
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(context.Background(), "git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--", "tmp")
+	cmd.Dir, cmd.Env = root, env
+	out, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if xerrors.As(err, &exitErr) {
+		return nil, xerrors.Newf("%v: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+	}
+
+	return out, err
 }
 
 // staysUnder は、target の在る祖先のうち最も深いものの symlink を解いた先が、base の symlink を解いた先の下に

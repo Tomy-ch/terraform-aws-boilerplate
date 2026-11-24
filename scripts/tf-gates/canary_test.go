@@ -183,11 +183,35 @@ func Test_runValidateCanary(t *testing.T) {
 		}
 	})
 
-	t.Run("tmp/ 自身が外への symlink なら、その先を tmp/ として通し、先の兄弟を残す", func(t *testing.T) {
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		c := exec.CommandContext(t.Context(), "git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	t.Run("tmp/ 自身が git の追跡している外への symlink なら使い方の誤りで、先を消さない", func(t *testing.T) {
+		t.Parallel()
+		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/work/old": "old", "elsewhere/stale.txt": "stale"})
+		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
+		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
+		git(t, root, "add", "tmp")
+		before := snapshot(t, elsewhere)
+		tool, calls := fakeTool(t)
+		err := runValidateCanary(canaryArgs(t, "tmp/c/work"), &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, elsewhere))
+	})
+
+	t.Run("tmp/ 自身が git の追跡していない外への symlink なら、その先を tmp/ として通し、先の兄弟を残す", func(t *testing.T) {
 		t.Parallel()
 		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/data/f": "data", "elsewhere/stale.txt": "stale"})
 		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
 		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
 		require.NoError(t, runValidateCanary(canaryArgs(t, "tmp/c/work"), &bytes.Buffer{}, canaryTool(t, ""), root))
 		assert.DirExists(t, filepath.Join(elsewhere, "c", "work", "clean"))
 		assert.FileExists(t, filepath.Join(elsewhere, "c", "data", "f"))
