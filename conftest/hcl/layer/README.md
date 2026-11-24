@@ -52,7 +52,7 @@ symlink は実体のファイルで書く）。
 | `LY306` | Provider の schema との突き合わせ。`data.layer_schema` が無いか空か形が違う、親の型が schema に無いか書ける引数を1つも持たない、親の型の非推奨の書ける引数がどの `parent_arguments` にも `unrelated_deprecated_arguments` にも無い、宣言の引数が schema の書ける引数に無い、`unrelated_deprecated_arguments` の引数が非推奨でない、書かないときの値が schema の種類（block は `[]`、属性は `null`）と合わない | Provider の版を上げたなら、足された非推奨の引数を分類する。宣言の引数名を直す |
 | `LY307` | 排他に持つと宣言した親の引数（`inline_owned`）を `parent_arguments` に持つ attachment 型の resource が、その親を指す（決定18 のただし書き） | 親の引数で書く |
 | `LY308` | 文書全体を置き換える型の、同じ型の別々の resource が同じ親の葉を指し、同じ instance かを参照から判定できない。どちらかが `count` か `for_each` を持つか、親の選び方が判定できない | 1つの resource にまとめるか、別々の instance をリテラルの添字で指す |
-| `LY309` | `aws_iam_role_policy_attachment` の `policy_arn` が、同じ module の `aws_iam_policy` だけを参照せず、AWS managed policy の ARN でもない（ADR-0301 決定21。下の「policy の参照」） | 同じ module に `aws_iam_policy` を置いて参照する。AWS managed policy は、ARN を partition だけ `data.aws_partition` から組んで書く |
+| `LY309` | `aws_iam_role_policy_attachment` の `policy_arn` の値になりうるものに、同じ module の `aws_iam_policy` の参照でも AWS managed policy の ARN でもないもの（参照・リテラル・中を読めない式）が在るか、値になりうるものが無いか、`policy_arn` を書いていない（ADR-0301 決定21。下の「policy の参照」） | 同じ module に `aws_iam_policy` を置いて参照する。AWS managed policy は、ARN をリテラルか、partition だけ `data.aws_partition` から組むテンプレートで書く |
 | `LY401` | アカウントかリージョンに1つしか置けないと宣言した型（`singletons`）の resource が、宣言した持ち主の usecase の下（`usecases/<持ち主>/`）の外に在る。env の root、一般 module、ほかの usecase の宣言を落とす（決定16）。data source は見ない | 持ち主の usecase に置き、ほかの usecase は識別子を受け取る |
 | `LY303` | 使われている resource の型が、宣言の `attachments` にも `not_attachments` にも無い。親の型に現れるだけでは分類に数えない | 下の基準で分類し、宣言に足す |
 
@@ -87,19 +87,27 @@ symlink は実体のファイルで書く）。
 最初の名前の直後の段で読む。段が無いか属性なら「添字なし」、添字で、入力の式の種類が `literal` なら「リテラル」
 （数の形の文字列は数に直し、`this[0]` と `this["0"]` を同じに読む）、ほかは「判定できない」とする。`local` を経た葉は、
 その `local` の定義の参照の選び方を引き継ぐ。`local` を添字で選んだ先（`local.all[each.key]`）と、`each` を経て
-`for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の resource の組だけ
-である。1つの resource の `count` と `for_each` の instance どうしは比べない。
+`for_each` の式へ辿った先の葉は「判定できない」とする。比べるのは、同じ型で同じディレクトリの別々の r### policy の参照（LY309）
 
-### policy の参照（LY309）
+`aws_iam_role_policy_attachment` の `policy_arn` は、値になりうるものがすべて次のどれかであり、少なくとも1つ在れば通す。
+`policy_arn` を書かない resource は落とす。
 
-`aws_iam_role_policy_attachment` の `policy_arn` は、次のどちらかであれば通す。
+- 参照: 上の辿り方で辿った先が、同じディレクトリに宣言された `aws_iam_policy` である
+- リテラル: `arn:<partition>:iam::aws:policy/<path><name>` の形の文字列（partition は `aws` か `aws-` で始まる名前）
+- テンプレート: `arn:` と `${<partition>}` と `:iam::aws:policy/<path><name>` の3つの部分だけを持ち、`<partition>` が
+  `data.aws_partition.<名前>.partition` か、`local.<名前>` だけの別名を辿った先がそれである。属性の式の全体か、`local` の
+  値の全体のときだけこの形として読み、その `local` から先は辿らない
 
-- 参照を上の辿り方で辿った先がすべて、同じディレクトリに宣言された `aws_iam_policy` である
-- 式そのものが AWS managed policy の ARN である。リテラルなら `arn:<partition>:iam::aws:policy/<path><name>` の形
-  （partition は `aws` か `aws-` で始まる名前）、テンプレートなら `arn:` と `${<partition>}` と `:iam::aws:policy/<path><name>`
-  の3つの部分だけを持ち、補間の参照を辿った先が `data.aws_partition` だけである
+値になりうるものは、属性の式と、参照の辿り方で辿った `local` の式と、`each` を辿ったときの `for_each` の式の中から集める。
+リテラルの値の中の文字列（オブジェクトの値と配列の要素）、テンプレートのリテラルの部分、タプルの要素、オブジェクトの値を
+数える。オブジェクトのキーは、`policy_arn` が `each.key` を参照するときだけ数える。参照の段の中の添字は数えない。関数の
+呼び出しと、中を構文として読めない式（条件・`for`・splat・演算子・式の添字）は、どの値が流れるかを決められないので、
+それ自体を違反とする。`local` は式の全体を読むので、オブジェクトの一部の属性だけを `policy_arn` に渡す `local` でも、
+ほかの属性のリテラルを数える。
 
-ARN を `local` に置いて `policy_arn` から参照する形は、AWS managed の形として読まない（参照の辿り方で読み、違反になる）。
+決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
+
+の辿り方で読み、違反になる）。
 決定21 は role への付与だけを定めるので、user と group の attachment 型は見ない。
 
 ## 宣言
@@ -161,8 +169,6 @@ resource である。親と引数の組で同一性が決まり、自前の名�
   `hcl-input` の Go のテストが固定する
 - module の呼び出しが無い、層の置き場でないディレクトリの resource は `LY101` に当たらない。attachment 型であれば
   `LY301` が見る
-- `LY309` の、参照とリテラルを混ぜた式のリテラルの部分。`var.x ? aws_iam_policy.p.arn : "arn:aws:iam::123456789012:policy/x"`
-  は、参照がすべて `aws_iam_policy` なので通る
 - `singletons` に無い単一の型。型を使い始める Pull Request が宣言に足すことは、レビューで見る
 - `singletons` は型の単位で持ち主を決める。設定の key ごとに1つの型（代替の連絡先の種類、SSM のサービス設定の ID）も、
   key を分けて別の usecase に持たせることはできない

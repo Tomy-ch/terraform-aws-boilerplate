@@ -444,18 +444,20 @@ ref_graph := object.union(
 
 # graph.reachable は graph のキーに無い節（葉）を返さないので、辿った節の辺の先から葉を集める。
 # 定義の無い local も、辿れない参照として葉に残す。
-leaves(c, refs) := {l |
+leaves(c, refs) := leaves_in(ref_graph, c, refs)
+
+leaves_in(g, c, refs) := {l |
 	start := nodes_of(hcl.dir(c.path), c.id, refs)
-	reached := graph.reachable(ref_graph, start)
-	some n in start | {m | some r in reached; some m in ref_graph[r]}
-	l := leaf_of(n)
+	reached := graph.reachable(g, start)
+	some n in start | {m | some r in reached; some m in g[r]}
+	l := leaf_of_in(g, n)
 }
 
-leaf_of(n) := trim_prefix(n, "leaf|") if startswith(n, "leaf|")
+leaf_of_in(_, n) := trim_prefix(n, "leaf|") if startswith(n, "leaf|")
 
-leaf_of(n) := concat("", ["local.", split(n, "|")[2]]) if {
+leaf_of_in(g, n) := concat("", ["local.", split(n, "|")[2]]) if {
 	startswith(n, "local|")
-	not ref_graph[n]
+	not g[n]
 }
 
 keywords := {"var", "data", "module", "path", "terraform", "self", "each", "local", "count"}
@@ -726,39 +728,200 @@ policy_attachment_type := "aws_iam_role_policy_attachment"
 # AWS managed policy の ARN は、アカウントの部分が aws である（arn:<partition>:iam::aws:policy/<path><name>）。
 aws_managed_arn := `^arn:aws(-[a-z]+)*:iam::aws:policy/.+$`
 
-# aws_managed_policy は、policy_arn の式そのものが AWS managed policy の ARN かを返す。リテラルか、partition の部分だけを
-# 補間し、その補間の参照が local と each を辿った先で data.aws_partition だけを指すテンプレートである。
-aws_managed_policy(_, at) if regex.match(aws_managed_arn, hcl.literal_string(at.expr))
+local_key(d, n) := sprintf("local|%s|%s", [d, n])
 
-aws_managed_policy(c, at) if {
-	at.expr.kind == "template"
-	count(at.expr.parts) == 3
-	hcl.literal_string(at.expr.parts[0]) == "arn:"
-	regex.match(`^:iam::aws:policy/.+$`, hcl.literal_string(at.expr.parts[2]))
-	leaves(c, at.refs) == {"data.aws_partition"}
+local_exprs := {local_key(d, a0.path): [a.expr | some [d2, a] in local_attrs; d2 == d; a.path == a0.path] | some [d, a0] in local_attrs}
+
+local_alias(e) := e.steps[0].name if {
+	e.kind == "traversal"
+	e.root == "local"
+	count(e.steps) == 1
+	e.steps[0].kind == "attr"
 }
 
-# references_policy は、policy_arn の参照が local と each を辿った先で、同じ module の aws_iam_policy だけを指すかを返す。
-references_policy(c, at) if {
-	ls := leaves(c, at.refs)
-	count(ls) > 0
-	every l in ls {
-		allowed_leaf(c, {"aws_iam_policy"}, l)
+partition_attribute(e) if {
+	e.kind == "traversal"
+	e.root == "data"
+	count(e.steps) == 3
+	every s in e.steps {
+		s.kind == "attr"
 	}
+	e.steps[0].name == "aws_partition"
+	e.steps[2].name == "partition"
+}
+
+alias_graph := {n: {local_key(split(n, "|")[1], local_alias(e)) | some e in es; local_alias(e)} | some n, es in local_exprs}
+
+# partition_ref は、e が data.aws_partition.<名前>.partition か、local.<名前> だけの別名を辿った先がそれだけかを返す。
+partition_ref(_, e) if partition_attribute(e)
+
+partition_ref(d, e) if {
+	reached := graph.reachable(alias_graph, {local_key(d, local_alias(e))})
+	every n in reached {
+		every x in local_exprs[n] {
+			alias_or_partition(x)
+		}
+	}
+	some n in reached
+	some x in local_exprs[n]
+	partition_attribute(x)
+}
+
+alias_or_partition(e) if partition_attribute(e)
+
+alias_or_partition(e) if local_alias(e)
+
+partition_template(d, e) if {
+	e.kind == "template"
+	count(e.parts) == 3
+	hcl.literal_string(e.parts[0]) == "arn:"
+	regex.match(`^:iam::aws:policy/.+$`, hcl.literal_string(e.parts[2]))
+	partition_ref(d, e.parts[1])
+}
+
+# policy_graph は ref_graph と同じ辿り方で、値の全体が partition_template の local から先を辿らない。
+policy_graph := object.union(
+	{n: union({nodes_of(split(n, "|")[1], "", a.refs) |
+		some [d, a] in local_attrs
+		local_key(d, a.path) == n
+		not partition_template(d, a.expr)
+	}) |
+		some n, _ in local_exprs
+	},
+	{k: v | some k, v in ref_graph; startswith(k, "each|")},
+)
+
+managed_local(n) if {
+	some x in local_exprs[n]
+	partition_template(split(n, "|")[1], x)
+}
+
+# flow_exprs は、policy_arn の値になりうる式。属性の式と、辿った local の式（partition_template のものを除く）と、
+# each を辿ったときの for_each の式である。
+flow_exprs(c, at) := array.concat(
+	[at.expr],
+	[x |
+		some n in graph.reachable(policy_graph, nodes_of(hcl.dir(c.path), c.id, at.refs))
+		some x in flow_exprs_of(c, n)
+	],
+)
+
+flow_exprs_of(_, n) := [x | some x in local_exprs[n]; not partition_template(split(n, "|")[1], x)] if startswith(n, "local|")
+
+flow_exprs_of(c, n) := [a.expr | some a in resource_attrs(c, "for_each")] if startswith(n, "each|")
+
+# each.key を書けば、for_each のキーも値になる。
+keys_flow(at) if {
+	some r in at.refs
+	r.root == "each"
+	r.steps[0].name == "key"
+}
+
+stop_kinds := {"literal", "traversal", "call", "other"}
+
+# flow_nodes は、式 e の中の、値になりうる位置の式の節。リテラルの値・参照の段・関数の引数・中を読めない式の中には
+# 入らない。オブジェクトのキーは、keys が真のときだけ数える。
+flow_nodes(e, keys) := [x |
+	m := {json.marshal(p): v | walk(e, [p, v])}
+	walk(e, [p, x])
+	is_object(x)
+	is_string(x.kind)
+	not stopped(m, p)
+	key_ok(p, keys)
+]
+
+stopped(m, p) if {
+	count(p) > 0
+	some k in numbers.range(0, count(p) - 1)
+	a := m[json.marshal(array.slice(p, 0, k))]
+	is_object(a)
+	a.kind in stop_kinds
+}
+
+key_ok(_, true) := true
+
+key_ok(p, false) if not "key" in p
+
+flow_literals(c, at) := {v |
+	some e in flow_exprs(c, at)
+	some x in flow_nodes(e, keys_flow_of(at))
+	x.kind == "literal"
+	some v in scalars(x.value, keys_flow_of(at))
+}
+
+default keys_flow_of(_) := false
+
+keys_flow_of(at) := true if keys_flow(at)
+
+scalars(v, keys) := {s | walk(v, [_, s]); not is_object(s); not is_array(s)} | object_keys(v, keys)
+
+object_keys(_, false) := set()
+
+object_keys(v, true) := {k | walk(v, [_, o]); is_object(o); some k, _ in o}
+
+opaque_exprs(c, at) := {describe_opaque(x) |
+	some e in flow_exprs(c, at)
+	some x in flow_nodes(e, keys_flow_of(at))
+	x.kind in {"call", "other"}
+}
+
+describe_opaque(x) := sprintf("%s()", [x.name]) if x.kind == "call"
+
+describe_opaque(x) := x.syntax if x.kind == "other"
+
+policy_leaves(c, at) := leaves_in(policy_graph, c, at.refs)
+
+managed_locals(c, at) := {n | some n in graph.reachable(policy_graph, nodes_of(hcl.dir(c.path), c.id, at.refs)); managed_local(n)}
+
+policy_problems(c, at) := [p |
+	some p in [
+		describe_problem("参照", {l | some l in policy_leaves(c, at); not allowed_leaf(c, {"aws_iam_policy"}, l)}),
+		describe_problem("リテラル", {json.marshal(v) | some v in flow_literals(c, at); not aws_managed_literal(v)}),
+		describe_problem("値を決められない式", opaque_exprs(c, at)),
+	]
+	p != ""
+]
+
+aws_managed_literal(v) if {
+	is_string(v)
+	regex.match(aws_managed_arn, v)
+}
+
+describe_problem(_, xs) := "" if count(xs) == 0
+
+describe_problem(label, xs) := sprintf("%s %s", [label, concat(", ", sort(xs))]) if count(xs) > 0
+
+policy_empty(c, at) if {
+	count(policy_leaves(c, at)) == 0
+	count(flow_literals(c, at)) == 0
+	count(managed_locals(c, at)) == 0
+}
+
+policy_violation(c, at) := concat(" / ", policy_problems(c, at)) if {
+	not partition_template(hcl.dir(c.path), at.expr)
+	count(policy_problems(c, at)) > 0
+}
+
+policy_violation(c, at) := "参照もリテラルもありません" if {
+	not partition_template(hcl.dir(c.path), at.expr)
+	count(policy_problems(c, at)) == 0
+	policy_empty(c, at)
 }
 
 deny contains msg if {
 	some c in resources
 	type_of(c) == policy_attachment_type
 	some at in resource_attrs(c, "policy_arn")
-	not references_policy(c, at)
-	not aws_managed_policy(c, at)
-	msg := sprintf("LY309 [policy の参照] %s の %s の policy_arn が、同じ module の aws_iam_policy だけを参照せず、AWS managed policy の ARN でもありません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN を partition だけ data.aws_partition から組んで書く", [c.path, address(c), describe_policy_leaves(leaves(c, at.refs))])
+	v := policy_violation(c, at)
+	msg := sprintf("LY309 [policy の参照] %s の %s の policy_arn が、同じ module の aws_iam_policy の参照と AWS managed policy の ARN だけに決まりません: %s（ADR-0301 決定21）→ 同じ module に aws_iam_policy を置いて参照するか、AWS managed policy の ARN をリテラルか partition だけ data.aws_partition から組むテンプレートで書く", [c.path, address(c), v])
 }
 
-describe_policy_leaves(ls) := "参照がありません" if count(ls) == 0
-
-describe_policy_leaves(ls) := concat(", ", sort(ls)) if count(ls) > 0
+deny contains msg if {
+	some c in resources
+	type_of(c) == policy_attachment_type
+	count(resource_attrs(c, "policy_arn")) == 0
+	msg := sprintf("LY309 [policy の参照] %s の %s が policy_arn を書いていません（ADR-0301 決定21）→ policy_arn に、同じ module の aws_iam_policy の参照か AWS managed policy の ARN を書く", [c.path, address(c)])
+}
 
 # --- 決定18 の分類の網羅: Provider の schema との突き合わせ（LY306） ---
 
