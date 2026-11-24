@@ -146,6 +146,7 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 |`lib/toolrun/`|検査の道具（`typos-gate`・`editorconfig-gate`・`tf-gates`・`tf-policy`・`iac-scan`）が外部の道具を段ごとに起動するときの取り決め。起動の関数の型（`Func`）、起動できない・シグナルで終わったことを `ErrTool`（終了コード 2）とし、0 以外の終了コードはエラーにせず呼び出し側の判定へ渡す分類（`Exec`）、stdout と、stdout・stderr を束ねたものの捕捉（`Run`）、呼び出し側が挙げた検査の失敗に当たれば 1・ほかのエラーを 2 とする終了コード（`ExitCode`）と1行の報告（`Report`）。引数は各道具の `Func` の実物がリテラルで固定し、ここは組み上がったコマンドを受けるだけです。テストの偽の道具は `lib/toolrun/tooltest` が持ちます（段ごとの stdout・stderr・終了コード・シグナルと、起動の記録）。|
 |`lib/workdir/`|毎回作り直して消す作業ディレクトリ（`-work`）の検証。リポジトリ直下の `tmp/` の下の相対パスに限り、途中の symlink が外を指すものも落とします。`tmp` 自身が symlink なら、その先を `tmp/` として扱うのは git が追跡していないものに限ります（追跡している symlink は Pull Request が持ち込めます）。追跡しているかは大文字小文字を区別せずに問い、`tmp/` の下に追跡しているパスがあっても落とします。追跡していないことを確かめられないとき（リポジトリでない、git を起動できない）も落とします。検証が道具ごとに分かれて片方だけ緩むと、`tmp/` の外を消します。使うのは `typos-gate`・`editorconfig-gate`・`tf-gates`（`validate` の `-canary-work`）・`tf-policy`（`plan` の `-out`・`-canary-work`）・`iac-scan`（`-base`）で、不正な値は各道具が使い方の誤り（終了コード 2）にします。|
 |`lib/testenv/`|実行環境の都合による skip の入口。root では成立しないケースを `RequireNonRoot`、shellcheck 不在を `RequireShellcheck` に通し、`REQUIRE_NONROOT` / `REQUIRE_SHELLCHECK` が立っていれば skip せず失敗させます。git を起動するテストの `TestMain` が呼ぶ `RunGitIsolated` も持ちます（Test Strategy）。|
+|`lib/fakeexec/`|テストが直に exec する偽の道具（実行権付きのスクリプト）の書き込み（`Write`）。書き込みの fd を開いてから閉じるまで `syscall.ForkLock` の読みロックを握り、並行するテストの fork がその fd を子へ持ち越し、Linux で ETXTBSY（text file busy）になるのを防ぎます。本体が `#!` で始まらない、所有者の実行権が無い、パスが既に在るときはテストを失敗させます。使うのは `PATH` の先頭へ置く偽の道具や、make・ビルドした実バイナリの先で起動される偽の道具を書くテストです。|
 
 ## Test Strategy
 
@@ -172,7 +173,9 @@ Terratest を次段階の導入対象としており、**Go はいずれこの�
 - **窓には両側を与える。** 閾値と比較するもの——日数のクールダウン窓、桁数——は、境界値そのものと
   その1つ手前を対にします。内側に余裕を持った1ケースでは `>=` と `>` を区別できません。
 - **外界はその境界で差し替える。** `git` / `docker` / `gh` は `PATH` の先頭へ置いたシェルスクリプトで
-  差し替え、ツールが組み立てた引数列そのものをテスト対象にします。GitHub API とモジュールレジストリは
+  差し替え、ツールが組み立てた引数列そのものをテスト対象にします。**直に exec する偽の道具は
+  `lib/fakeexec` の `Write` で書きます** —— `os.WriteFile` で書くと、並行するテストの fork が書き込みの fd を
+  持ち越し、Linux で ETXTBSY になります。GitHub API とモジュールレジストリは
   `httptest` サーバへ向けます。`t.Setenv` は `t.Parallel()` と両立しないので、`t.Parallel()` は
   ケース単位で宣言し、迂回しません。`actions-shellcheck` は例外で、実物の `shellcheck` を駆動し、
   不在なら skip します。**その skip が実行として通らないようにする**のが `REQUIRE_SHELLCHECK` で、
