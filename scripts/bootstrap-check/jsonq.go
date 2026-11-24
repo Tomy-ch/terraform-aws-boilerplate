@@ -8,10 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-// ここの関数は、aws の JSON の応答の判定に jq と同じ評価の規則を与える:
-// null をたどれば null、object でも null でもない値をたどればエラー（ok が false）、エラーは判定を偽にする。
+// ここの関数は、aws の JSON の応答を判定する。null をたどれば null、object でも null でもない値をたどればエラー
+// （ok が false）、エラーは判定を偽にする。
 
-// get は jq の .k1.k2… の値。
+// get は、keys を順にたどった値。
 func get(v any, keys ...string) (any, bool) {
 	for _, k := range keys {
 		switch m := v.(type) {
@@ -26,14 +26,14 @@ func get(v any, keys ...string) (any, bool) {
 	return v, true
 }
 
-// items は jq の .[] で回す配列。配列でなければ false（object を回す形は判定の対象に現れない）。
+// items は、v が配列ならその要素。配列でなければ false（object を回す形は判定の対象に現れない）。
 func items(v any, ok bool) ([]any, bool) {
 	a, isArray := v.([]any)
 
 	return a, ok && isArray
 }
 
-// arrOf は jq の def arr: if type == "array" then . else [.] end。
+// arrOf は、配列ならそのまま、それ以外は1要素の配列にしたもの。
 func arrOf(v any) []any {
 	if a, ok := v.([]any); ok {
 		return a
@@ -58,7 +58,7 @@ func strs(a []any) ([]string, bool) {
 	return out, true
 }
 
-// truthy は jq の真偽。false と null だけが偽。
+// truthy は、false と null だけが偽。
 func truthy(v any) bool {
 	return v != nil && v != false
 }
@@ -73,7 +73,7 @@ func jsonEqual(v any, literal string) bool {
 	return reflect.DeepEqual(v, want)
 }
 
-// anyString は、jq の .. | strings が出す文字列（object の key は含まない）のどれかが f を満たすこと。
+// anyString は、v の中の文字列（object の key は含まない）のどれかが f を満たすこと。
 func anyString(v any, f func(string) bool) bool {
 	switch x := v.(type) {
 	case string:
@@ -91,8 +91,8 @@ func anyString(v any, f func(string) bool) bool {
 	return false
 }
 
-// jqLength は jq の length。真偽値はエラー（false）。
-func jqLength(v any) (float64, bool) {
+// jsonLength は、null は 0、配列・object は要素数、文字列は文字数、数は絶対値。真偽値はエラー（false）。
+func jsonLength(v any) (float64, bool) {
 	switch x := v.(type) {
 	case nil:
 		return 0, true
@@ -109,10 +109,10 @@ func jqLength(v any) (float64, bool) {
 	return 0, false
 }
 
-// cond は、1つの文（Statement の要素など）に対する jq の比較1つ。返り値は（真偽、評価できたか）。
+// cond は、1つの文（Statement の要素など）に対する比較1つ。返り値は（真偽、評価できたか）。
 type cond func(s any) (bool, bool)
 
-// fieldEq は jq の .k1.k2… == want。want は文字列・数・真偽値に限る。
+// fieldEq は、keys をたどった値が want に等しいこと。want は文字列・数・真偽値に限る。
 func fieldEq(want any, keys ...string) cond {
 	return func(s any) (bool, bool) {
 		v, ok := get(s, keys...)
@@ -121,7 +121,7 @@ func fieldEq(want any, keys ...string) cond {
 	}
 }
 
-// arrEq は jq の (.k1.k2… | arr [| sort]) == want。
+// arrEq は、keys をたどった値を配列にして（配列でなければ1要素の配列）、want に等しいこと。sorted なら並べ替えて比べる。
 func arrEq(want []string, sorted bool, keys ...string) cond {
 	return func(s any) (bool, bool) {
 		v, ok := get(s, keys...)
@@ -144,7 +144,7 @@ func arrEq(want []string, sorted bool, keys ...string) cond {
 	}
 }
 
-// allConds は jq の c1 and c2 and …。偽の比較の後ろは評価しない。
+// allConds は、cs がすべて真であること。偽の比較の後ろは評価しない。
 func allConds(s any, cs ...cond) (bool, bool) {
 	for _, c := range cs {
 		m, ok := c(s)
@@ -160,7 +160,7 @@ func allConds(s any, cs ...cond) (bool, bool) {
 	return true, true
 }
 
-// anyStatement は jq の any(c1 and c2 and …)。どれかの要素で評価できなければ、判定ごと偽にする。
+// anyStatement は、どれかの要素で cs がすべて真であること。どれかの要素で評価できなければ、判定ごと偽にする。
 func anyStatement(stmts []any, cs ...cond) bool {
 	found := false
 
@@ -176,7 +176,7 @@ func anyStatement(stmts []any, cs ...cond) bool {
 	return found
 }
 
-// everyStatement は jq の all(c1 and c2 and …)。空の配列は真。
+// everyStatement は、すべての要素で cs がすべて真であること。空の配列は真。
 func everyStatement(stmts []any, cs ...cond) bool {
 	for _, s := range stmts {
 		if m, ok := allConds(s, cs...); !ok || !m {

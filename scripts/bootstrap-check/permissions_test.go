@@ -61,7 +61,7 @@ var (
 	}
 	permGovernanceDescs = []string{
 		"apply-identity $policy/apply-identity-governance: 7 件が allowed",
-		"apply-identity $iam:policy/other: 2 件が implicitDeny",
+		"apply-identity $iam:policy/other: 3 件が implicitDeny",
 		"apply-identity $role/apply-identity: 1 件が allowed",
 		"apply-identity $role/apply-identity: 1 件が implicitDeny",
 		"apply-identity $policy/apply-identity-manage: 7 件が allowed",
@@ -86,10 +86,15 @@ var (
 	permWorkloadDescs = []string{
 		"apply-identity $policy/apply-workload: 7 件が allowed",
 		"apply-identity $policy/apply-workload-read: 7 件が allowed",
+		"apply-identity $policy/apply-workload-2: 7 件が allowed",
 		"apply-identity $policy/boundary-ops-notification: 7 件が allowed",
 		"apply-identity $role/apply: 1 件が allowed",
 		"apply-identity $role/apply: 1 件が allowed",
+		"apply-identity $role/apply: 1 件が allowed",
 		"apply-identity $role/apply: 1 件が implicitDeny",
+		"apply-identity $role/plan: 1 件が allowed",
+		"apply-identity $role/plan: 1 件が implicitDeny",
+		"apply-identity $role/plan: 1 件が implicitDeny",
 		"plan $policy/apply-workload: 2 件が allowed",
 		"plan $policy/apply-workload-read: 2 件が allowed",
 		"plan arn:aws:sns:us-east-1:123456789012:tabp-admin-ops-notification-us-east-1: 2 件が allowed",
@@ -168,7 +173,7 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 98
+	permissionsBase     = 103
 	governanceGated     = 4
 	workloadGatedCount  = 8
 	budgetsGatedCount   = 4
@@ -224,7 +229,6 @@ func simActions(args []string) []string {
 	return args[i+1 : j]
 }
 
-// simResult は、actions のすべてを decision と判定した simulate-principal-policy の応答。
 func simResult(actions []string, decision string) awsResult {
 	results := make([]map[string]string, 0, len(actions))
 	for _, a := range actions {
@@ -236,7 +240,6 @@ func simResult(actions []string, decision string) awsResult {
 	return okResult(string(b))
 }
 
-// tableHandler は、表の行の引数列に、その行の want で応答する。
 func tableHandler(n names, rows []simRow) func(args []string) (awsResult, bool) {
 	wants := map[string]string{}
 	for _, r := range rows {

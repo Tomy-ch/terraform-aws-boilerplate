@@ -426,12 +426,12 @@ func stage4Steps(n names, readFile func(string) ([]byte, error)) []step {
 
 			return ok && m
 		}, "kms", "describe-key", "--key-id", n.keyAlias)),
-		// 資格情報は organization-baseline.md の 3.4 で人が設定する。
 		checkStep(expectJSON("組織の FeatureSet が ALL", func(v map[string]any) bool {
 			return at(v, "Organization", "FeatureSet") == "ALL"
 		}, "organizations", "describe-organization")),
 	)
 
+	// 資格情報は organization-baseline.md の 3.4 で人が設定する。
 	for _, u := range []string{"break-glass-1", "break-glass-2"} {
 		steps = append(steps, checkStep(expectJSON("IAM user "+u+" がアクセスキーを持たない", func(v map[string]any) bool {
 			return arrayLen(v["AccessKeyMetadata"]) == 0

@@ -32,7 +32,6 @@ func s3Key(sub, bucket string, extra ...string) string {
 	return jsonKey(append([]string{"s3api", sub, "--bucket", bucket, "--expected-bucket-owner", testAccount}, extra...)...)
 }
 
-// policyResult は、Policy に文書（JSON の文字列）を持つ応答。
 func policyResult(t *testing.T, doc string) awsResult {
 	t.Helper()
 
@@ -61,7 +60,6 @@ func verifyFake(t *testing.T, responses map[string]awsResult, override map[strin
 	return &fakeAWS{t: t, responses: merged}
 }
 
-// runStepLines は steps を runChecks に通し、出力の行を返す。
 func runStepLines(t *testing.T, f *fakeAWS, steps []step) ([]string, error) {
 	t.Helper()
 
@@ -72,7 +70,6 @@ func runStepLines(t *testing.T, f *fakeAWS, steps []step) ([]string, error) {
 	return strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"), err
 }
 
-// okLines は、descs がすべて ok の行と、結果の行。
 func okLines(descs []string) []string {
 	out := make([]string, 0, len(descs)+1)
 	for _, d := range descs {

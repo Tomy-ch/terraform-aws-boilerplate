@@ -451,7 +451,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    > **重要**: 再実行を確かめる前に、次を昇格しない。apply-identity の権限を足す変更は、その権限で作る resource の変更より先に昇格して apply する。
 
-4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `docs/setup/scripts/verify.sh` の `permissions` に足す。Condition を持つ Action は、条件キーを `--context` で与える。apply の後に実行する
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。apply の後に実行する
 
    ```bash
    make bootstrap-verify STAGE=permissions
@@ -555,7 +555,8 @@ Credential report の IAM user が break-glass の2つ（`break-glass-1`・`brea
 
 | 症状 | 対処 |
 | --- | --- |
-| `ACCOUNT_ID が12桁ではありません`、`一時 IAM user の資格情報ではありません` | `make aws-login` をやり直す |
+| `ACCOUNT_ID が12桁ではありません`、`アカウント ID が12桁ではありません`、`一時 IAM user の資格情報ではありません`、`AWS_PROFILE が空です` | `make aws-login` をやり直し、`make` のターゲットから実行する |
+| `make bootstrap-verify` の NG に `（呼び出しが失敗: …）`・`（応答を読めない）`・`（state の鍵の ARN を読めない）` などの理由が添えられている | 確認の前提を読めていない。理由のエラーを見て資格情報と段の順序を確かめ、やり直す。理由の無い NG は、期待と実環境が違う |
 | `make bootstrap-check-account` に NG がある | `呼び出しが失敗` と添えられていれば、そのエラーを見て資格情報を確かめる。それ以外は行頭の番号の作業をやり直す。2-2 だけなら翌日に再実行する。2-4 だけなら 2-4 を行う |
 | 2-4 で ARN が1つずつ表示されない、`make bootstrap-check-account` の 2-4 の行が `1つではない` を添える | AWS services monitor が無いか、ほかの SERVICE の monitor か、同じ monitor の subscription がほかに在る。どの monitor と subscription に tag を付けるかを決めずに止まり、コンソールの Cost Anomaly Detection の「Cost monitors」と「Alert subscriptions」の一覧を Pull Request に記録する |
 | 段1 の `make bootstrap-verify STAGE=stage1` に NG がある、Bucket の名前や namespace を誤った | [段1 で NG が出た](#段1-で-ng-が出た) |
@@ -651,10 +652,10 @@ aws s3api delete-object --bucket "$BUCKET" --expected-bucket-owner "$ACCOUNT_ID"
 
 - アカウントの準備（1-0 から 2-4）の作業や番号を変える変更は、`scripts/bootstrap-check` の `accountChecks` を同じ変更で更新する。ずれると、確認は古い手順を確かめて通るか、行頭の番号が手順と食い違う
 - identity root の resource を足すか消す変更は、[`scripts/check-plan.expected`](scripts/check-plan.expected) を同じ変更で更新する。ずれは CI の `make check-plan-expected` が落とし、足りない行と余る行を `NG` で示す
-- identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`docs/setup/scripts/verify.sh` の `before-apply` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
-- apply-identity の権限を足す変更は、`docs/setup/scripts/verify.sh` の `permissions` を同じ変更で更新する（段5 の手順4）
-- state の鍵の Key Policy の `users` を変える変更は、`docs/setup/scripts/verify.sh` の `JQ_KEY_POLICY` と、その文の数を同じ変更で更新する
-- 出力の2つの Bucket の Bucket Policy を変える変更は、`docs/setup/scripts/verify.sh` の `output-policy` の期待を同じ変更で更新する
+- identity root が作る IAM の user・group・role・policy の名前を変えるか足す変更は、`scripts/bootstrap-check` の `beforeApplySteps` を同じ変更で更新する。名前がずれると、その確認は無いものを確かめて通る
+- apply-identity の権限を足す変更は、`scripts/bootstrap-check` の `permissionSections` を同じ変更で更新する（段5 の手順4）
+- state の鍵の Key Policy の `users` を変える変更は、`scripts/bootstrap-check` の `keyPolicy` と、その文の数を同じ変更で更新する
+- 出力の2つの Bucket の Bucket Policy を変える変更は、`scripts/bootstrap-check` の `outputPolicyRows` の期待を同じ変更で更新する
 
 ## 参考資料
 

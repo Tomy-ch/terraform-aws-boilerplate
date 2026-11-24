@@ -242,6 +242,7 @@ func permissionSections(n names, sk, skReason string) []section {
 
 	wp := n.policyARN(apply + "-workload")
 	wrp := n.policyARN(apply + "-workload-read")
+	w2p := n.policyARN(apply + "-workload-2")
 	bp := n.policyARN("boundary-ops-notification")
 	topic := "arn:aws:sns:" + n.region + ":" + n.account + ":" + n.prefix + "-ops-notification"
 	// workload の権限は provider の region と us-east-1 に及び、ほかの region には及ばない（ADR-0208 決定4）。
@@ -322,7 +323,7 @@ func permissionSections(n names, sk, skReason string) []section {
 			heading: "# 統制の構成物と " + ai + " の policy（deployment-identity/ADR-0201 決定3・5・7）",
 			rows: []simRow{
 				sim(allowed, ai, gp, manage...),
-				sim(implicitDeny, ai, iam+":policy/other", "iam:CreatePolicy", "iam:CreatePolicyVersion"),
+				sim(implicitDeny, ai, iam+":policy/other", "iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:GetPolicy"),
 				simCtx(allowed, ai, n.roleARN(ai), policyARN(gp), "iam:AttachRolePolicy"),
 				simCtx(implicitDeny, ai, n.roleARN(ai), policyARN(admin), "iam:AttachRolePolicy"),
 				sim(allowed, ai, mp, manage...),
@@ -355,10 +356,16 @@ func permissionSections(n names, sk, skReason string) []section {
 			rows: []simRow{
 				sim(allowed, ai, wp, manage...),
 				sim(allowed, ai, wrp, manage...),
+				sim(allowed, ai, w2p, manage...),
 				sim(allowed, ai, bp, manage...),
 				simCtx(allowed, ai, n.roleARN(apply), policyARN(wp), "iam:AttachRolePolicy"),
 				simCtx(allowed, ai, n.roleARN(apply), policyARN(wrp), "iam:AttachRolePolicy"),
+				simCtx(allowed, ai, n.roleARN(apply), policyARN(w2p), "iam:AttachRolePolicy"),
 				simCtx(implicitDeny, ai, n.roleARN(apply), policyARN(bp), "iam:AttachRolePolicy"),
+				// plan の role に付けてよいのは読み取りの policy だけ。
+				simCtx(allowed, ai, n.roleARN(plan), policyARN(wrp), "iam:AttachRolePolicy"),
+				simCtx(implicitDeny, ai, n.roleARN(plan), policyARN(wp), "iam:AttachRolePolicy"),
+				simCtx(implicitDeny, ai, n.roleARN(plan), policyARN(w2p), "iam:AttachRolePolicy"),
 				sim(allowed, plan, wp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(allowed, plan, wrp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(allowed, plan, "arn:aws:sns:us-east-1:"+n.account+":"+n.prefix+"-ops-notification-us-east-1", "sns:GetTopicAttributes", "sns:ListTagsForResource"),
@@ -565,7 +572,7 @@ func outputPolicySteps(e verifyEnv) ([]step, error) {
 		}
 
 		v, ok := decodeObject([]byte(doc))
-		l, isLength := jqLength(v["Statement"])
+		l, isLength := jsonLength(v["Statement"])
 
 		return checkStep(fixedCheck(desc, verdict{ok: ok && isLength && l > 0}))
 	}

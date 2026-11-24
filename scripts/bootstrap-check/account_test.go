@@ -85,7 +85,7 @@ func failed(stderr string) awsResult {
 	return awsResult{stderr: stderr, err: &exec.ExitError{}}
 }
 
-// goodResponses は、15 件すべてが ok になる応答。
+// goodResponses は、確認の表のすべてが ok になる応答。
 func goodResponses() map[string]awsResult {
 	return map[string]awsResult{
 		"sts get-caller-identity --query Arn --output text --region " + testRegion: okResult(testARN + "\n"),

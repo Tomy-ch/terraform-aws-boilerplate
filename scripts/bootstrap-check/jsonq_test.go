@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// decode は、テスト内の JSON の文字列を値にする。
 func decode(t *testing.T, s string) any {
 	t.Helper()
 
@@ -137,7 +136,7 @@ func Test_anyString(t *testing.T) {
 	assert.False(t, anyString(nil, isX))
 }
 
-func Test_jqLength(t *testing.T) {
+func Test_jsonLength(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
@@ -155,7 +154,7 @@ func Test_jqLength(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := jqLength(tc.in)
+			got, ok := jsonLength(tc.in)
 
 			assert.Equal(t, tc.wantOK, ok)
 			assert.InDelta(t, tc.want, got, 0)
