@@ -108,7 +108,7 @@ test_IC011_allow_removed_block_without_provisioner if {
 }
 
 test_IC011_allow_listed_code if {
-	d := object.union(base_decl, {"allowlist": [{"id": "m#resource.aws_instance.i", "owner": "external", "repository": "github.com/o/r"}]})
+	d := object.union(base_decl, {"allowlist": [{"id": "m#resource.aws_instance.i", "owner": "external", "repository": "github.com/o/r", "reasons": ["type"]}]})
 	msgs := denies(fx("IC011_allow_listed_code"), d)
 	count(msgs) == 0
 }
@@ -167,7 +167,7 @@ test_IC004_deny_unknown_keys if {
 		"extra": true,
 		"types": {"resource.aws_s3_bucket": {"executes_code": false, "x": 1}},
 		"providers": {"registry.terraform.io/hashicorp/aws": {"y": 1}},
-		"allowlist": [{"id": "a", "owner": "external", "z": 1}],
+		"allowlist": [{"id": "a", "owner": "external", "reasons": ["type"], "z": 1}],
 	})
 	with_id(denies(empty_doc, d), "IC004") == {
 		"IC004 [宣言の形] infra_code_decl のキー extra を解釈できません",
@@ -178,7 +178,7 @@ test_IC004_deny_unknown_keys if {
 }
 
 test_IC004_deny_allowlist_item_without_id_or_owner if {
-	d := object.union(base_decl, {"allowlist": [{"repository": "github.com/o/r"}]})
+	d := object.union(base_decl, {"allowlist": [{"repository": "github.com/o/r", "reasons": ["type"]}]})
 	with_id(denies(empty_doc, d), "IC004") == {
 		"IC004 [宣言の形] allowlist の 0 番目の項目に id がありません",
 		"IC004 [宣言の形] allowlist の 0 番目の項目に owner がありません",
@@ -194,8 +194,8 @@ test_IC004_allow_known_keys if {
 	d := object.union(base_decl, {
 		"languages": {"python": {"contexts": ["python-test"]}},
 		"allowlist": [
-			{"id": "m#resource.aws_instance.i", "owner": "repository", "source": "m/src", "language": "python", "adr": "x/y"},
-			{"id": "n#resource.aws_instance.j", "owner": "external", "repository": "github.com/o/r"},
+			{"id": "m#resource.aws_instance.i", "owner": "repository", "source": "m/src", "language": "python", "adr": "x/y", "reasons": ["type"]},
+			{"id": "n#resource.aws_instance.j", "owner": "external", "repository": "github.com/o/r", "reasons": ["type", "provisioner", "provider_exec", "unresolved", "command_block:runner.command"]},
 		],
 	})
 	count(with_id(denies(empty_doc, d), "IC004")) == 0
@@ -208,8 +208,8 @@ test_IC011_deny_declared_command_block_in_tftest if {
 
 test_IC011_allow_listed_provider_exec_and_removed_provisioner if {
 	d := object.union(base_decl, {"allowlist": [
-		{"id": "m#provider.kubernetes", "owner": "external", "repository": "github.com/o/r"},
-		{"id": "m#removed.aws_s3_bucket.old", "owner": "external", "repository": "github.com/o/r"},
+		{"id": "m#provider.kubernetes", "owner": "external", "repository": "github.com/o/r", "reasons": ["provider_exec"]},
+		{"id": "m#removed.aws_s3_bucket.old", "owner": "external", "repository": "github.com/o/r", "reasons": ["provisioner"]},
 	]})
 	count(denies(fx("IC011_allow_listed_provider_exec_and_removed_provisioner"), d)) == 0
 }
@@ -260,6 +260,12 @@ fixture_cases := {
 	"IC011_deny_provider_unresolved_object_key",
 	"IC011_deny_provisioner_in_removed_block",
 	"IC011_deny_provisioner_on_any_type",
+	"IC011_deny_command_provider_reference",
+	"IC011_deny_command_provider_call",
+	"IC011_deny_command_provider_template",
+	"IC011_allow_reference_in_provider_without_command_blocks",
+	"IC011_allow_literal_in_command_provider",
+	"IC011_deny_reason_not_listed",
 	"IC013_allow_classified_provider_with_required_source",
 	"IC013_deny_once_when_provider_block_and_required_source_agree",
 	"IC013_deny_required_provider_without_source",
@@ -332,7 +338,7 @@ test_IC011_deny_provider_unresolved_expression if {
 }
 
 test_IC011_allow_listed_provider_unresolved_expression if {
-	d := object.union(base_decl, {"allowlist": [{"id": "m#provider.helm", "owner": "external", "repository": "github.com/o/r"}]})
+	d := object.union(base_decl, {"allowlist": [{"id": "m#provider.helm", "owner": "external", "repository": "github.com/o/r", "reasons": ["unresolved"]}]})
 	every c in ["IC011_deny_provider_unresolved_conditional", "IC011_deny_provider_unresolved_object_key"] {
 		count(with_id(denies(fx(c), d), "IC011")) == 0
 	}
@@ -371,4 +377,55 @@ test_IC011_deny_every_must_execute_type if {
 		some m in msgs
 		contains(m, sprintf("コードを実行させる型 %s", [k]))
 	}
+}
+
+# コマンドの block を宣言した provider では、参照・呼び出し・補間の値の先に exec を隠せるので検出する（ADR-0103 決定10）。
+command_provider_non_literal := ["IC011_deny_command_provider_reference", "IC011_deny_command_provider_call", "IC011_deny_command_provider_template"]
+
+test_IC011_deny_command_provider_non_literal_value if {
+	every c in command_provider_non_literal {
+		with_id(denies(fx(c), base_decl), "IC011") == {"IC011 [許可リストに無い] m/providers.tf: m#provider.runner（解けない式）はインフラ内コードです → allowlist に項目を足し、本リポジトリ所有なら ADR-0103 決定13 の ADR を書く"}
+	}
+}
+
+test_IC011_allow_listed_command_provider_non_literal_value if {
+	d := object.union(base_decl, {"allowlist": [{"id": "m#provider.runner", "owner": "external", "repository": "github.com/o/r", "reasons": ["unresolved"]}]})
+	every c in command_provider_non_literal {
+		count(denies(fx(c), d)) == 0
+	}
+}
+
+# コマンドの block を宣言しない provider の参照と呼び出しは、検出しない。
+test_IC011_allow_reference_in_provider_without_command_blocks if {
+	count(denies(fx("IC011_allow_reference_in_provider_without_command_blocks"), base_decl)) == 0
+}
+
+test_IC011_allow_literal_in_command_provider if {
+	count(denies(fx("IC011_allow_literal_in_command_provider"), base_decl)) == 0
+}
+
+instance_item(reasons) := {"id": "m#resource.aws_instance.i", "owner": "external", "repository": "github.com/o/r", "reasons": reasons}
+
+# 型を理由に許可した構成要素に、後から provisioner を足せば落とす。
+test_IC011_deny_reason_not_listed if {
+	d := object.union(base_decl, {"allowlist": [instance_item(["type"])]})
+	denies(fx("IC011_deny_reason_not_listed"), d) == {"IC011 [理由が許可リストに無い] m/main.tf: m#resource.aws_instance.i の項目は、この検出の理由 provisioner（provisioner）を reasons に挙げていません → 意図したコードなら reasons に足し、そうでなければ取り除く"}
+}
+
+test_IC011_allow_every_reason_listed if {
+	d := object.union(base_decl, {"allowlist": [instance_item(["type", "provisioner"])]})
+	count(denies(fx("IC011_deny_reason_not_listed"), d)) == 0
+}
+
+test_IC004_deny_malformed_reasons if {
+	every rs in [null, [], "type", [1], ["exec"], ["type", "type"], ["command_block:"], ["command_block:Runner.Command"]] {
+		item := object.union(object.remove(instance_item([]), ["reasons"]), {"reasons": rs})
+		d := object.union(base_decl, {"allowlist": [item]})
+		with_id(denies(empty_doc, d), "IC004") == {"IC004 [宣言の形] allowlist の項目 m#resource.aws_instance.i の reasons が、理由の符号（type・provisioner・provider_exec・unresolved・command_block:<block>）の、重複の無い空でない配列ではありません"}
+	}
+}
+
+test_IC004_deny_missing_reasons if {
+	d := object.union(base_decl, {"allowlist": [object.remove(instance_item([]), ["reasons"])]})
+	with_id(denies(empty_doc, d), "IC004") == {"IC004 [宣言の形] allowlist の項目 m#resource.aws_instance.i の reasons が、理由の符号（type・provisioner・provider_exec・unresolved・command_block:<block>）の、重複の無い空でない配列ではありません"}
 }

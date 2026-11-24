@@ -103,7 +103,8 @@
         "owner": "repository",
         "source": "usecases/organization-baseline/internal/break-glass/templates/member-break-glass-role.json.tftpl",
         "language": "hcl",
-        "adr": "organization-baseline/member-break-glass-via-stacksets"
+        "adr": "organization-baseline/member-break-glass-via-stacksets",
+        "reasons": ["type"]
       }
     ]
   }

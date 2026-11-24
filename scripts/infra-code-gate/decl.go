@@ -93,12 +93,13 @@ type language struct {
 }
 
 type item struct {
-	ID         string `json:"id"`
-	Owner      string `json:"owner"`
-	Source     string `json:"source"`
-	Language   string `json:"language"`
-	ADR        string `json:"adr"`
-	Repository string `json:"repository"`
+	ID         string   `json:"id"`
+	Owner      string   `json:"owner"`
+	Source     string   `json:"source"`
+	Language   string   `json:"language"`
+	ADR        string   `json:"adr"`
+	Repository string   `json:"repository"`
+	Reasons    []string `json:"reasons"`
 }
 
 type ownerRule struct {

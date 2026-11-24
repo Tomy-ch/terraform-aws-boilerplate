@@ -31,8 +31,8 @@ const declOK = `{"infra_code_decl": {` +
 	`"providers": {"registry.terraform.io/hashicorp/aws": {"command_blocks": []}},` +
 	`"languages": {"python": {"contexts": ["python-test"]}},` +
 	`"allowlist": [` +
-	`{"id": "usecases/x/internal/fn#resource.aws_lambda_function.f", "owner": "repository", "source": "usecases/x/internal/fn/src", "language": "python", "adr": "x/fn-runtime"},` +
-	`{"id": "usecases/x#resource.aws_lambda_function.g", "owner": "external", "repository": "github.com/org/app"}` +
+	`{"id": "usecases/x/internal/fn#resource.aws_lambda_function.f", "owner": "repository", "source": "usecases/x/internal/fn/src", "language": "python", "adr": "x/fn-runtime", "reasons": ["type"]},` +
+	`{"id": "usecases/x#resource.aws_lambda_function.g", "owner": "external", "repository": "github.com/org/app", "reasons": ["type", "provisioner"]}` +
 	`]}}`
 
 const rulesetOK = `{"rules": [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "infra-code-gate"}, {"context": "python-test"}]}}]}`
@@ -194,6 +194,7 @@ func Test_readDeclaration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, d.Types, 2)
 		assert.Len(t, d.Allowlist, 2)
+		assert.Equal(t, []string{"type", "provisioner"}, d.Allowlist[1].Reasons)
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -206,6 +207,7 @@ func Test_readDeclaration(t *testing.T) {
 		}{
 			"未知のキーはエラー":                {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}, "extra": 1}}`, want: errDeclShape},
 			"項目の未知のキーもエラー":             {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false, "x": 1}}}}`, want: errDeclShape},
+			"許可リストの項目の未知のキーもエラー":       {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}}, "allowlist": [{"id": "a", "reason": ["type"]}]}}`, want: errDeclShape},
 			"重複したキーはエラー":               {content: `{"infra_code_decl": {"types": {"resource.a": {"executes_code": false}, "resource.a": {"executes_code": true}}}}`, want: errDuplicateKey},
 			"infra_code_decl が無ければエラー": {content: `{}`, want: errDeclShape},
 			"型の分類が0行なら0件のエラー":          {content: `{"infra_code_decl": {"types": {}}}`, want: errNoInput},

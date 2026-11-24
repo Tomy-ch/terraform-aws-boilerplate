@@ -26,13 +26,13 @@ deny のメッセージは固定の ID で始まり、何を直すかを含む�
 | `IC001` | 構成ファイルでも未対応の入力でもなく、除外の宣言（[`input.rego`](input.rego) の `.md`・`.tftpl` と `.terraform.lock.hcl`）にも当たらないファイルが走査の root に在る | 走査の root から外す。外せないなら `input.rego` の除外に足す |
 | `IC002` | JSON の構成（`.tf.json` 等）か `.tfquery.hcl` | HCL で書く。検出はこれらを解釈しない |
 | `IC003` | 解釈できないトップレベルのブロック | 検出がそのブロックを読めるようにしてから使う |
-| `IC004` | 宣言に未知のキーがある。型の行の `executes_code` が `true` / `false` でない。許可リストの項目に `id` か `owner` が無い。宣言そのものが無い | キーの綴りを直す / 足りないキーを書く |
+| `IC004` | 宣言に未知のキーがある。型の行の `executes_code` が `true` / `false` でない。許可リストの項目に `id` か `owner` が無い。項目の `reasons` が、理由の符号の重複の無い空でない配列でない。宣言そのものが無い | キーの綴りを直す / 足りないキーを書く |
 | `IC005` | 入力（hcl-input の JSON）の形が違う。または読んだファイルの集合が `hcl-tally` の一覧と、ファイルごとのトップレベルの block の数が行頭の数えと違う。崩れた入力の上では、それを読む規則を評価しない | `make infra-code-gate` から起動する。行頭の数えとの差は、ヒアドキュメントやブロックコメントの行頭に block の頭の形が在る |
 | `IC010` | 型の分類に無い型 | [`decl.json`](decl.json) の `types` に1行足す |
-| `IC011` | 許可リストに無いインフラ内コード | `allowlist` に項目を足す。本リポジトリ所有なら ADR-0103 決定13 の ADR を書く |
+| `IC011` | 許可リストに無いインフラ内コード。または、許可リストに在る構成要素の検出のうち、項目の `reasons` が挙げない理由のもの | `allowlist` に項目を足す。本リポジトリ所有なら ADR-0103 決定13 の ADR を書く。項目は在るなら、意図したコードのときだけ `reasons` に理由を足す |
 | `IC012` | 決定9 が決定5 の側に置く型を、そうでない側に分類している | `executes_code` を `true` にする |
 | `IC013` / `IC014` | provider の分類に無い provider / source がリテラルでない。`required_providers` の source は、provider ブロックが無くても対象になる | `providers` に1行足す / source をリテラルにする |
-| `IC020` | 許可リストの項目がどのインフラ内コードにも当たらない | 項目を消す |
+| `IC020` | 許可リストの項目がどのインフラ内コードにも当たらない。または項目の `reasons` の理由が、その構成要素のどの検出にも当たらない | 項目を消す / その理由を `reasons` から外す |
 | `IC030`-`IC033` | 許可リストの項目の path の違反（決定15） | メッセージのとおり |
 | `IC034` | 許可リストの項目が、コードをリストで渡す引数（`external` の `program` 等）を持つ | 許可リストには載せられない。どの要素がコードかを決められず、path を検査できないため |
 
@@ -56,17 +56,30 @@ deny のメッセージは固定の ID で始まり、何を直すかを含む�
 コマンドを実行させるブロックの位置を `.` 区切りで書く。任意の深さの `exec` ブロックは、ここに書かなくても
 検出する。属性の値のオブジェクトのキーの `exec` も同じである。provider の設定の中の、中を構文として読めない式（条件・
 for・splat・演算子・式の添字）と、キーがリテラルでないオブジェクトは、その中に `exec` を隠せるので、理由「解けない式」の
-インフラ内コードとして検出する（`IC011`。使うなら許可リストに項目を足す）。
+インフラ内コードとして検出する（`IC011`。使うなら許可リストに項目を足す）。`command_blocks` が空でない provider では、
+参照・関数の呼び出し・補間（`kubernetes = local.k`、`merge(var.v, {...})`、`"${var.h}"`）の値も、参照した先に
+`exec` を隠せるので「解けない式」として検出する。`command_blocks` が空の provider（`hashicorp/aws`）の参照は検出しない。
 
 許可リストの項目の `id` は `<宣言した module のディレクトリ>#<種別>.<型>.<名前>` である。provider は
 `<module のディレクトリ>#provider.<名前>[.<alias>]`、`.tftest.hcl` の provider は `<ファイル>#provider.<名前>`、
 provisioner を持つ `removed` ブロックは `<module のディレクトリ>#removed.<from のアドレス>` と書く。
 module が何度呼ばれても、項目は1つで済む。
 
+項目の `reasons` は、その構成要素について受け入れる検出の理由の符号の配列である（ADR-0103 決定12）。項目は、挙げた理由の
+検出だけを通す。挙げない理由の検出は `IC011`、その構成要素の検出に当たらない理由は `IC020` で落ちる。
+
+| 符号 | 検出の理由 |
+| --- | --- |
+| `type` | `executes_code` が `true` の型（決定9） |
+| `provisioner` | provisioner（`removed` ブロックのものを含む） |
+| `provider_exec` | provider の設定の `exec` |
+| `unresolved` | 中を読めない provider の設定（上の「解けない式」） |
+| `command_block:<block>` | `command_blocks` に宣言した provider の block（`<block>` は宣言の位置） |
+
 | `owner` | 持つキー |
 | --- | --- |
-| `repository` | `source`（ソースの所在）、`language`、`adr`（`<scope>/<slug>`） |
-| `external` | `repository`（`<host>/<owner>/<repo>`） |
+| `repository` | `source`（ソースの所在）、`language`、`adr`（`<scope>/<slug>`）、`reasons` |
+| `external` | `repository`（`<host>/<owner>/<repo>`）、`reasons` |
 
 本リポジトリ所有の項目を足すときは、`source` の行を [`.github/CODEOWNERS`](../../../.github/CODEOWNERS) にも足す。
 `language` は `languages` に在り、その `contexts` は required の宣言に在る必要がある（ADR-0103 決定18）。
@@ -81,9 +94,9 @@ module が何度呼ばれても、項目は1つで済む。
 
 ## 保証しないこと
 
-- 参照を辿らない。provider の属性の値が参照か関数の呼び出し（`kubernetes = local.k`、`merge(var.v, {...})`）なら、
-  参照した先の値の中の `exec` は見ない（#442）
-- 許可リストの項目は `id` だけで当たり、その構成要素の検出を理由を問わずすべて受ける（#442）
+- 参照を辿らない。`command_blocks` が空の provider の属性の値が参照か関数の呼び出しなら、参照した先の値の中の
+  `exec` は見ない
+- alias がリテラルでない provider は、同じ module の中で同じ `id`（`<解けない alias>`）になり、1つの項目で当たる
 - override のファイルによる合成を再現しない。ブロックごとに検出するので、override のファイルが足した
   provisioner も検出する。合成した後の引数の値は見ない
 - `path_args` と `body_args` の網羅。引数の追加を伴う provider の更新で、型の行を見直すのは review である

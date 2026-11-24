@@ -9,7 +9,7 @@ lambda_decl(items) := object.union(base_decl, {
 	"allowlist": items,
 })
 
-repo_item(id, source) := {"id": id, "owner": "repository", "source": source, "language": "python", "adr": "x/fn"}
+repo_item(id, source) := {"id": id, "owner": "repository", "source": source, "language": "python", "adr": "x/fn", "reasons": ["type"]}
 
 fn_id := "u/internal/fn#resource.aws_lambda_function.f"
 
@@ -20,9 +20,15 @@ test_IC020_deny_item_matching_nothing if {
 }
 
 test_IC020_deny_item_matching_code_free_component if {
-	d := lambda_decl([{"id": "m#resource.aws_s3_bucket.b", "owner": "external", "repository": "github.com/o/r"}])
+	d := lambda_decl([{"id": "m#resource.aws_s3_bucket.b", "owner": "external", "repository": "github.com/o/r", "reasons": ["type"]}])
 	msgs := denies(fx("IC002_allow_hcl"), d)
 	count(with_id(msgs, "IC020")) == 1
+}
+
+# 項目が挙げた理由のうち、その構成要素の検出に当たらないものは落とす。
+test_IC020_deny_reason_matching_nothing if {
+	item := object.union(repo_item(fn_id, "u/internal/fn/src"), {"reasons": ["type", "provisioner"]})
+	with_id(denies(fx("IC020_deny_item_matching_nothing"), lambda_decl([item])), "IC020") == {"IC020 [当たらない理由] 許可リストの項目 u/internal/fn#resource.aws_lambda_function.f の理由 provisioner は、その構成要素のどの検出にも当たりません → reasons から外す"}
 }
 
 test_IC020_allow_item_matching_code if {
@@ -81,12 +87,12 @@ test_IC031_allow_path_under_source if {
 }
 
 test_IC032_deny_external_item_referencing_repository_path if {
-	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r"}])
+	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r", "reasons": ["type"]}])
 	count(with_id(denies(fx("IC020_deny_item_matching_nothing"), d), "IC032")) == 1
 }
 
 test_IC032_allow_external_item_without_repository_path if {
-	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r"}])
+	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r", "reasons": ["type"]}])
 	msgs := denies(fx("IC032_allow_external_item_without_repository_path"), d)
 	count(with_id(msgs, "IC030")) == 1
 	count(with_id(msgs, "IC032")) == 0
@@ -181,7 +187,7 @@ test_IC031_deny_only_the_matching_component if {
 }
 
 test_IC032_deny_external_item_pointing_into_repository_exactly if {
-	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r"}])
+	d := lambda_decl([{"id": fn_id, "owner": "external", "repository": "github.com/o/r", "reasons": ["type"]}])
 	denies(fx("IC032_external_item_repository_path"), d) == {"IC032 [path] u/internal/fn/main.tf: 外部所有の項目 u/internal/fn#resource.aws_lambda_function.f の filename がリポジトリ内のパスを指しています"}
 }
 
