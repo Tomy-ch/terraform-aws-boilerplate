@@ -358,7 +358,7 @@ permissions() {
   fi
 
   echo "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）"
-    local slr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+  local slr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
   sim allowed apply-identity "$slr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=management.chatbot.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
   sim implicitDeny apply-identity "$slr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
   sim allowed apply-identity "$slr" iam:GetRole iam:UpdateRole
