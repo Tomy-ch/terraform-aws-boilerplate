@@ -357,6 +357,16 @@ permissions() {
     echo "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）"
   fi
 
+  echo "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）"
+  # #432 で Go へ移すときは、この節と下の apply の role の GetRole の判定も写す。
+  local slr="arn:aws:iam::${ACCOUNT_ID}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+  sim allowed apply-identity "$slr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=management.chatbot.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
+  sim implicitDeny apply-identity "$slr" --context "ContextKeyName=iam:AWSServiceName,ContextKeyValues=config.amazonaws.com,ContextKeyType=string" iam:CreateServiceLinkedRole
+  sim allowed apply-identity "$slr" iam:GetRole iam:UpdateRole
+  sim implicitDeny apply-identity "$slr" iam:DeleteServiceLinkedRole iam:TagRole iam:UntagRole iam:UpdateRoleDescription iam:ListRoleTags
+  sim allowed plan "$slr" iam:GetRole
+  sim implicitDeny plan "$slr" iam:UpdateRole iam:CreateServiceLinkedRole
+
   echo "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）"
   local wp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload"
   local wrp="arn:aws:iam::${ACCOUNT_ID}:policy/tabp-admin-ci-apply-workload-read"
@@ -398,6 +408,7 @@ permissions() {
     sim allowed apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:CreateTopic sns:SetTopicAttributes
     sim implicitDeny apply "arn:aws:sns:${REGION}:${ACCOUNT_ID}:tabp-admin-ops-notification" sns:DeleteTopic sns:Subscribe
     sim implicitDeny apply "$wk" kms:ScheduleKeyDeletion
+    sim allowed apply "$slr" iam:GetRole
   elif [[ -z $attached || $attached == None ]]; then
     echo "  workload の2つの policy がまだ付いていないので、apply の role の workload の権限は確かめない（2つの policy を作って付ける apply の後にもう一度走らせる）"
   else
