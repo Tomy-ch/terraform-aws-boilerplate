@@ -147,6 +147,11 @@ func runDecl(args []string, repo string, out io.Writer) error {
 		return err
 	}
 	targets := ownedTargets(d, workflows)
+	missing, err := checkTargets(repo, *codeownersPath, append(slices.Clone(codeownerTargets), workflows...))
+	if err != nil {
+		return err
+	}
+	findings = append(findings, missing...)
 	findings = append(findings, checkCodeowners(*codeownersPath, rules, targets)...)
 	if err := report(out, "decl", findings); err != nil {
 		return err
@@ -430,6 +435,33 @@ func ownedTargets(d *declaration, workflows []string) []string {
 		}
 	}
 	return targets
+}
+
+// checkTargets は、code owner の対象が実在することを検査します。末尾が `/` の対象はディレクトリ、それ以外は通常の
+// ファイルでなければならない。改名で対象が消えると、CODEOWNERS と一覧が一致したまま何も所有しない状態になるためです。
+// symlink は実体として数えない。許可リストの項目のソースの所在は checkSource が見るので、ここには渡さない。
+func checkTargets(repo, file string, targets []string) ([]lintreport.Finding, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, xerrors.Wrapf(err, "%s を開く", repo)
+	}
+	defer func() { _ = root.Close() }()
+	var findings []lintreport.Finding
+	for _, target := range targets {
+		wantDir := strings.HasSuffix(target, "/")
+		info, err := root.Lstat(strings.TrimSuffix(target, "/"))
+		switch {
+		case xerrors.Is(err, fs.ErrNotExist):
+			findings = append(findings, lintreport.Finding{File: file, Line: 1, Message: fmt.Sprintf("対象 %s が実在しません（ADR-0103 決定14）", target)})
+		case err != nil:
+			return nil, xerrors.Wrapf(err, "%s の確認", target)
+		case wantDir && !info.IsDir():
+			findings = append(findings, lintreport.Finding{File: file, Line: 1, Message: fmt.Sprintf("対象 %s はディレクトリではありません（ADR-0103 決定14）", target)})
+		case !wantDir && !info.Mode().IsRegular():
+			findings = append(findings, lintreport.Finding{File: file, Line: 1, Message: fmt.Sprintf("対象 %s は通常のファイルではありません（ADR-0103 決定14）", target)})
+		}
+	}
+	return findings, nil
 }
 
 // readCodeowners は code owner の宣言を、閉じた文法で読みます。GitHub は解釈できない行を黙って無視するので、
