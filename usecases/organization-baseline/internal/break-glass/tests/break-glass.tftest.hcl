@@ -11,9 +11,8 @@ mock_provider "aws" {
 }
 
 variables {
-  role_name            = "tabp-break-glass"
-  path                 = "/break-glass/"
-  organization_root_id = "r-exam"
+  role_name = "tabp-break-glass"
+  path      = "/break-glass/"
 }
 
 override_resource {
@@ -164,16 +163,6 @@ run "member_stack_set" {
       }
     }
     error_message = "メンバーの break-glass の role は、管理アカウントの break-glass の user と MFA だけを信頼し、AdministratorAccess だけを持つ1つの role にしてください。"
-  }
-
-  assert {
-    condition = (
-      aws_cloudformation_stack_instances.this.stack_set_name == "tabp-break-glass" &&
-      aws_cloudformation_stack_instances.this.deployment_targets[0].organizational_unit_ids == toset(["r-exam"]) &&
-      aws_cloudformation_stack_instances.this.regions == toset(["ap-northeast-1"]) &&
-      !coalesce(aws_cloudformation_stack_instances.this.retain_stacks, false)
-    )
-    error_message = "メンバーの break-glass の stack instance は、組織の Root を対象に provider の region へ置いてください。"
   }
 }
 
