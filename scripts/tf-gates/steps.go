@@ -148,16 +148,25 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc) erro
 
 // runValidate は、各ディレクトリの `terraform validate -json` の出力と stderr を -out に置き、一覧（manifest.tsv）を
 // 書き直します。判定は result が持ちます。一覧に載るファイルだけが読まれます。
-func runValidate(args []string, w io.Writer, tool toolFunc) error {
-	var out string
+// canaryFunc は、本走査の前に走らせる canary です。テストは差し替えます。
+type canaryFunc func(args []string, w io.Writer, tool toolFunc) error
+
+func runValidate(args []string, w io.Writer, tool toolFunc, canary canaryFunc) error {
+	var out, canaryData, canaryWork, canaryReference string
 	data, targets, err := parseData("validate", args, w, func(f *flag.FlagSet) {
 		f.StringVar(&out, "out", "", "出力と一覧を置くディレクトリ")
+		f.StringVar(&canaryData, "canary-data", "", "canary の TF_DATA_DIR を置くディレクトリ（絶対パス）")
+		f.StringVar(&canaryWork, "canary-work", "", "canary の fixture を建てるディレクトリ")
+		f.StringVar(&canaryReference, "canary-reference", "", "canary に写す versions.tf と lock の root")
 	})
 	if err != nil {
 		return err
 	}
-	if out == "" {
-		return xerrors.Wrap(errUsage, "tf-gates validate は -out が要ります")
+	if out == "" || canaryData == "" || canaryWork == "" || canaryReference == "" {
+		return xerrors.Wrap(errUsage, "tf-gates validate は -out・-canary-data・-canary-work・-canary-reference が要ります")
+	}
+	if err := canary([]string{"-data", canaryData, "-work", canaryWork, "-reference", canaryReference}, w, tool); err != nil {
+		return xerrors.Wrap(err, "canary が落ちたので、本走査を行いません")
 	}
 
 	return validateTargets(data, out, targets, tool)

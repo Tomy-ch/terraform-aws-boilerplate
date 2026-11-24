@@ -159,10 +159,6 @@
             "integration_id": 15368
           },
           {
-            "context": "tf-gates-test",
-            "integration_id": 15368
-          },
-          {
             "context": "tf-lint",
             "integration_id": 15368
           },

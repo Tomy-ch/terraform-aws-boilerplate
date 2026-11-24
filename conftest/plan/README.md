@@ -1,6 +1,6 @@
 # Policy Test
 
-[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) の Policy 層である。本リポジトリの ADR を読まなければ書けない invariant だけを持つ（同 決定1-3）。`make tf-policy` が実行し、`make tf-policy-canary` がその検査自体を検査する（[`.makefiles/terraform/policy.mk`](../../.makefiles/terraform/policy.mk)）。Rego の形の検査、Rego のテストの件数の突き合わせ、reference の root ごとの plan の取得と取り出し、canary は [`scripts/tf-policy`](../../scripts/README.md) が持つ。
+[ADR-0402](../../docs/adr/0402-policy-test-scope-and-verification.md) の Policy 層である。本リポジトリの ADR を読まなければ書けない invariant だけを持つ（同 決定1-3）。`make tf-policy` が実行し、本走査の前にその検査自体を canary で検査する（[`.makefiles/terraform/policy.mk`](../../.makefiles/terraform/policy.mk)）。Rego の形の検査、Rego のテストの件数の突き合わせ、reference の root ごとの plan の取得と取り出し、canary は [`scripts/tf-policy`](../../scripts/README.md) が持つ。
 
 ## 入力
 
@@ -10,7 +10,7 @@
 
 policy の文書が参照する ARN は、`override_resource`（`override_during = plan`）で instance ごとに与える。与えないと文書が plan で unknown になり、`[PLAN-INPUT-04]` で落ちる。
 
-`inline_arguments` に宣言した文字列の属性は、同じ `override_resource` で `null` を与える。mock provider は書いていない computed な属性に乱数を入れ、そのままでは `[PLAN-INPUT-09]` で落ちる。override は書いた値を隠さない。`aws_s3_bucket` の `policy` について、`make tf-policy-canary` がこれを固定する。
+`inline_arguments` に宣言した文字列の属性は、同じ `override_resource` で `null` を与える。mock provider は書いていない computed な属性に乱数を入れ、そのままでは `[PLAN-INPUT-09]` で落ちる。override は書いた値を隠さない。`aws_s3_bucket` の `policy` について、`make tf-policy` が本走査の前に走らせる canary がこれを固定する。
 
 `env/` の root は `make tf-policy` の入力にしない。資格情報なしでは plan できないためである。CI の plan と apply の経路（`.makefiles/terraform/operation/ci.mk` の `CI_PLAN` と `CI_APPLY`）は、実 provider の plan の `terraform show -json` に `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけを掛ける（target ごとの `CI_POLICY_NAMESPACES`）。ほかの package は mock の入力を前提にしているので、実 plan には掛けない。CI は `plan.input` を掛けないので、Key Policy が無いことと読めないことは `plan.kms_key_policy` 自身が落とす（`PLAN-KMS-00`・`09`）
 
