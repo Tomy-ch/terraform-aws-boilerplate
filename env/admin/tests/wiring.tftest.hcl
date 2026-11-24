@@ -10,7 +10,6 @@ mock_provider "aws" {
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
   }
-  # identity root が先に作る Chatbot の service-linked role（ops-notification/ADR-0201 決定9）。
   mock_data "aws_iam_role" {
     defaults = {
       path = "/aws-service-role/management.chatbot.amazonaws.com/"

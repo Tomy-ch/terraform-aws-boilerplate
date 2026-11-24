@@ -23,7 +23,6 @@ run "chatbot_in_aws" {
   }
 }
 
-# Chatbot の service-linked role は AWS GovCloud (US) で使えない（deployment-identity/ADR-0002 決定1）。
 run "absent_outside_aws" {
   command = plan
 

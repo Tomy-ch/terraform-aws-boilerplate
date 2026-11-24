@@ -593,7 +593,7 @@ service_linked_roles[arn] := r.change.after.aws_service_name if {
 	arn_shaped(arn)
 }
 
-# apply の role が使う Allow の全体: inline policy、workload の2つの policy（決定17）、作る role の boundary。
+# apply の role が使う Allow の全体: inline policy、workload の2つの policy（deployment-identity/ADR-0201 決定17）、作る role の boundary。
 allow_sources contains a if {
 	some a in array.concat([target], [object.get(wl_decl, k, "") | some k in ["policy", "read_policy"]])
 	a != ""
