@@ -78,7 +78,7 @@ ci-assume-denied:
 	@$(if $(CI_ENV),,$(error CI_ENV が空です))$(call TF_LOCAL,ci-assume-denied -project $(TF_LOCAL_PROJECT) -env $(CI_ENV) -base $(TF_BASE) -work $(CI_PLAN_DIR))
 
 .PHONY: ci-plan-admin-identity ## [CI] 管理アカウントの identity root を plan し、全文を plan の出力の Bucket に置く
-ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive
+ci-plan-admin-identity: CI_POLICY_NAMESPACES := plan.stateful_protection plan.kms_key_policy plan.resource_policy_exclusive plan.s3_bucket_namespace plan.state_backend_write_deny
 ci-plan-admin-identity: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-identity:
 	@$(call CI_PLAN,admin,identity)
@@ -100,7 +100,7 @@ ci-hold-admin-identity:
 	@$(call CI_HOLD,admin,identity)
 
 .PHONY: ci-plan-admin-workload ## [CI] 管理アカウントの workload root を plan し、全文を plan の出力の Bucket に置く
-ci-plan-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection
+ci-plan-admin-workload: CI_POLICY_NAMESPACES := plan.stateful_protection plan.s3_bucket_namespace
 ci-plan-admin-workload: TF_LOCAL_PROFILE := $(call CI_PROFILE,admin,plan)
 ci-plan-admin-workload:
 	@$(call CI_PLAN,admin,workload)
