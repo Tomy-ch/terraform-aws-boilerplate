@@ -189,24 +189,24 @@ func diffRules(want, got any) ([]string, []string) {
 
 const approvalCountKey = "required_approving_review_count"
 
-// splitApprovalCount は pull_request のルールどうしについて、承認者数が異なるかと、承認者数の外が異なるかを
-// 返します。宣言が承認者数を持たなければ、相違はすべて承認者数の外に数えます。
+// splitApprovalCount は pull_request のルールどうしについて、ADR-0603 決定7 の例外に当たる承認者数のずれかと、
+// それ以外の相違があるかを返します。例外に当たるのは、宣言と実態の承認者数がともに数で、実態が宣言より少ない
+// ときだけです。実態が多い、承認者数を持たない、数でないときは、承認者数の相違もそれ以外の相違に数えます。
 func splitApprovalCount(want, got any) (approval, others bool) {
 	w, _ := want.(map[string]any)
 	wp, _ := w["parameters"].(map[string]any)
-	wv, ok := wp[approvalCountKey]
-	if !ok {
-		return false, !subsetMatch(want, got)
-	}
 	g, _ := got.(map[string]any)
 	gp, _ := g["parameters"].(map[string]any)
-	gv, ok := gp[approvalCountKey]
-	approval = !ok || !subsetMatch(wv, gv)
+	wv, wok := wp[approvalCountKey].(float64)
+	gv, gok := gp[approvalCountKey].(float64)
+	if !wok || !gok || gv >= wv {
+		return false, !subsetMatch(want, got)
+	}
 	rest := maps.Clone(wp)
 	delete(rest, approvalCountKey)
 	stripped := maps.Clone(w)
 	stripped["parameters"] = rest
-	return approval, !subsetMatch(stripped, got)
+	return true, !subsetMatch(stripped, got)
 }
 
 // contextDelta は、required_status_checks のルールどうしの context の過不足を文にします。
