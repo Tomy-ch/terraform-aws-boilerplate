@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -166,7 +167,8 @@ func planRoots(roots []root, data, out string, w io.Writer, tool toolFunc) error
 // canaryFunc は、本走査の前に走らせる canary です。テストは差し替えます。
 type canaryFunc func(args []string, w io.Writer, tool toolFunc) error
 
-func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc) error {
+// runPlan は、canary を走らせてから、-base の下の reference の root で planRoots を走らせます。root はリポジトリ直下です。
+func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root string) error {
 	fset := flag.NewFlagSet("tf-policy plan", flag.ContinueOnError)
 	fset.SetOutput(w)
 	base := fset.String("base", "", "走査の基点（TF_BASE）")
@@ -183,7 +185,14 @@ func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc) error
 	}
 	if *base == "" || *out == "" || !filepath.IsAbs(*data) || fset.NArg() > 0 ||
 		*canaryData == "" || *canaryWork == "" || *policy == "" || *planDecl == "" || *layerDecl == "" || *reference == "" {
-		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <dir> -canary-data <絶対パス> -canary-work <dir> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+		return xerrors.Wrap(errUsage, "tf-policy plan -base <dir> -data <絶対パス> -out <tmp/ の下の相対パス> -canary-data <絶対パス> -canary-work <tmp/ の下の相対パス> -policy <dir> -decl <path> -layer <path> -reference <dir>")
+	}
+	outDir, err := workdir.Resolve(root, *out)
+	if err != nil {
+		return xerrors.Wrapf(errUsage, "-out %v", err)
+	}
+	if _, err := workdir.Resolve(root, *canaryWork); err != nil {
+		return xerrors.Wrapf(errUsage, "-canary-work %v", err)
 	}
 	if err := canary([]string{"-data", *canaryData, "-work", *canaryWork, "-policy", *policy, "-decl", *planDecl, "-layer", *layerDecl, "-reference", *reference}, w, tool); err != nil {
 		return xerrors.Wrap(err, "canary が落ちたので、本走査を行いません")
@@ -193,7 +202,7 @@ func runPlan(args []string, w io.Writer, tool toolFunc, canary canaryFunc) error
 		return err
 	}
 
-	return planRoots(roots, *data, *out, w, tool)
+	return planRoots(roots, *data, outDir, w, tool)
 }
 
 func joinLines(lines []string) string {
@@ -204,7 +213,6 @@ func joinLines(lines []string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// readLines は、1行に1件の一覧を読み、空の行を除いて返します。
 func readLines(p string) ([]string, error) {
 	raw, err := os.ReadFile(filepath.Clean(p))
 	if err != nil {
