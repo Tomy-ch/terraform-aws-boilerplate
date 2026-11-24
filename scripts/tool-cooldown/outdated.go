@@ -37,17 +37,33 @@ type candidate struct {
 	eligibleAge int
 	window      int
 	err         error
+	// commit は commit で固定する宣言の棚卸し結果。nil なら版の大小で決める。
+	commit *commitSurvey
 }
 
 // actionable は、今日ピンを新しい版へ動かせる状態かどうかを返す。pin が eligible より新しい
 // （窓の内側の版をバイパスで先に採った）ときに真にすると、版を下げる提案になる。
 func (c candidate) actionable() bool {
-	return c.err == nil && c.eligible != "" && lessVersion(c.tool.version, c.eligible)
+	if c.err != nil || c.eligible == "" {
+		return false
+	}
+	if c.commit != nil {
+		return c.commit.eligibleMoves
+	}
+
+	return lessVersion(c.tool.version, c.eligible)
 }
 
 // heldByWindow は、pin より新しい版が上流にあるのに窓がそれを止めている状態かどうかを返す。
 func (c candidate) heldByWindow() bool {
-	return c.err == nil && c.latest != "" && lessVersion(c.tool.version, c.latest) && c.latest != c.eligible
+	if c.err != nil || c.latest == "" || c.latest == c.eligible {
+		return false
+	}
+	if c.commit != nil {
+		return c.commit.latestMoves
+	}
+
+	return lessVersion(c.tool.version, c.latest)
 }
 
 // surveyOutdated は各ツールの上流を調べ、窓を満たす更新先を決めます。
@@ -73,6 +89,9 @@ func surveyOutdated(ctx context.Context, client *http.Client, tools []tool, now 
 
 // evaluate は 1 ツールの上流を調べて candidate に畳みます。
 func evaluate(ctx context.Context, client *http.Client, t tool, now time.Time) candidate {
+	if backendKind(t.backend) == "commit" {
+		return evaluateCommit(ctx, client, t, now)
+	}
 	c := candidate{tool: t, window: windowFor(t.backend)}
 
 	releases, err := listReleases(ctx, client, t)
@@ -306,8 +325,13 @@ func outdatedReport(cands []candidate, now time.Time) string {
 	} else {
 		b.WriteString("| ツール | 現在 | 窓を満たす最新 | 齢 | 宣言 |\n| --- | --- | --- | --- | --- |\n")
 		for _, c := range actionable {
-			fmt.Fprintf(&b, "| `%s` | %s | **%s** | %dd | `%s` |\n",
-				c.tool.key, c.tool.version, c.eligible, c.eligibleAge, c.tool.file)
+			declared := "`" + c.tool.file + "`"
+			if c.commit != nil {
+				// 内容の sha256 は commit と対で照合されるので、片方だけを上げると make semgrep が落ちる。
+				declared += "（同じファイルの `SEMGREP_RULES_SHA256` も同時に上げる）"
+			}
+			fmt.Fprintf(&b, "| `%s` | %s | **%s** | %dd | %s |\n",
+				c.tool.key, c.tool.version, c.eligible, c.eligibleAge, declared)
 		}
 	}
 

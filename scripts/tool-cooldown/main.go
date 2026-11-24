@@ -301,7 +301,7 @@ func parseTools(content []byte) ([]tool, error) {
 }
 
 func declarationPaths() []string {
-	return []string{miseFile, tflintFile}
+	return []string{miseFile, tflintFile, semgrepFile}
 }
 
 // readDeclarations は作業ツリーの宣言ファイルを読む。
@@ -326,8 +326,11 @@ func parseDeclarations(decls []declaration) ([]tool, error) {
 	var tools []tool
 	for _, d := range decls {
 		parse := parseTools
-		if filepath.Base(d.path) == tflintFile {
+		switch filepath.Base(d.path) {
+		case tflintFile:
 			parse = parseTflintPlugins
+		case filepath.Base(semgrepFile):
+			parse = parseSemgrepRules
 		}
 		parsed, err := parse(d.content)
 		if err != nil {
@@ -468,7 +471,7 @@ func firstBackend(registryOutput []byte, name string) (string, error) {
 
 func windowFor(backend string) int {
 	switch backendKind(backend) {
-	case "github":
+	case "github", "commit":
 		return releaseWindowDays
 	default:
 		return registryWindowDays
@@ -480,6 +483,8 @@ func backendKind(backend string) string {
 	switch name {
 	case "aqua", "ubi", "github":
 		return "github"
+	case "github-commit":
+		return "commit"
 	case "go":
 		return "go"
 	case "npm":
@@ -544,6 +549,10 @@ func publishedAt(ctx context.Context, client *http.Client, t tool) (time.Time, e
 		}
 
 		return time.Time{}, err
+	case "commit":
+		info, err := githubCommit(ctx, client, ref, t.version)
+
+		return info.at, err
 	case "go":
 		return goModuleAt(ctx, client, ref, t.version)
 	case "npm":

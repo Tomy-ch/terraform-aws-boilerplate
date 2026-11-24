@@ -192,6 +192,23 @@ func Test_evaluate(t *testing.T) {
 			assert.True(t, c.heldByWindow(), "上流に新版があることは待ちとして見える")
 		})
 
+		t.Run("github-commit は commit の一覧から棚卸しする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `,` +
+					commitJSON(semgrepPin, daysAgo(40), "root0") + `]`,
+				treesURI + "root0": rootTreeJSON("tf0"),
+				treesURI + "root1": rootTreeJSON("tf1"),
+			})
+
+			c := evaluate(t.Context(), client, semgrepTool(), outdatedNow)
+
+			require.NoError(t, c.err)
+			require.NotNil(t, c.commit)
+			assert.Equal(t, semgrepNewer, c.eligible)
+			assert.True(t, c.actionable())
+		})
+
 		t.Run("プレリリースと draft は候補にしない", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
@@ -310,6 +327,32 @@ func Test_outdatedReport(t *testing.T) {
 			assert.NotContains(t, body, "## 上流を確認できなかった")
 		})
 
+		// 内容の sha256 は commit と対で照合されるので、commit だけを上げると make semgrep が落ちる。
+		t.Run("commit の宣言の行は SEMGREP_RULES_SHA256 の同時の更新を添える", func(t *testing.T) {
+			t.Parallel()
+			body := outdatedReport([]candidate{
+				{
+					tool:   semgrepTool(),
+					latest: semgrepNewer, eligible: semgrepNewer, eligibleAge: 20, window: releaseWindowDays,
+					commit: &commitSurvey{eligibleMoves: true},
+				},
+			}, outdatedNow)
+
+			assert.Contains(t, body, "| **"+semgrepNewer+"** | 20d | `"+semgrepFile+"`（同じファイルの `SEMGREP_RULES_SHA256` も同時に上げる） |")
+		})
+
+		t.Run("版の宣言の行は SEMGREP_RULES_SHA256 に触れない", func(t *testing.T) {
+			t.Parallel()
+			body := outdatedReport([]candidate{
+				{
+					tool:     tool{key: "lefthook", version: "2.1.10", backend: "aqua:evilmartians/lefthook", file: miseFile},
+					eligible: "2.1.11", eligibleAge: 19, window: releaseWindowDays,
+				},
+			}, outdatedNow)
+
+			assert.NotContains(t, body, "SEMGREP_RULES_SHA256")
+		})
+
 		t.Run("どちらも無ければ両方の節がなしになる", func(t *testing.T) {
 			t.Parallel()
 			body := outdatedReport([]candidate{
@@ -358,6 +401,14 @@ func Test_candidate_actionable(t *testing.T) {
 
 			assert.True(t, candidate{tool: tool{version: "1.1.0"}, eligible: "1.2.0"}.actionable())
 		})
+
+		t.Run("commit の宣言は eligible が terraform の中身を変えれば動かせる", func(t *testing.T) {
+			t.Parallel()
+
+			assert.True(t, candidate{
+				tool: tool{version: semgrepPin}, eligible: semgrepNewer, commit: &commitSurvey{eligibleMoves: true},
+			}.actionable())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -373,6 +424,14 @@ func Test_candidate_actionable(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}}.actionable())
+		})
+
+		t.Run("commit の宣言は terraform の中身が変わらなければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{
+				tool: tool{version: semgrepPin}, eligible: semgrepNewer, commit: &commitSurvey{},
+			}.actionable())
 		})
 
 		t.Run("pin が eligible より新しければ動かせない", func(t *testing.T) {
@@ -400,6 +459,15 @@ func Test_candidate_heldByWindow(t *testing.T) {
 
 			assert.True(t, candidate{tool: tool{version: "1.1.0"}, latest: "1.3.0", eligible: "1.2.0"}.heldByWindow())
 		})
+
+		t.Run("commit の宣言は上流最新が terraform の中身を変えれば待ちが立つ", func(t *testing.T) {
+			t.Parallel()
+
+			assert.True(t, candidate{
+				tool: tool{version: semgrepPin}, latest: semgrepNewer, eligible: semgrepPin,
+				commit: &commitSurvey{latestMoves: true},
+			}.heldByWindow())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -421,6 +489,14 @@ func Test_candidate_heldByWindow(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.53.0"}, latest: "1.52.2", eligible: "1.52.0"}.heldByWindow())
+		})
+
+		t.Run("commit の宣言は上流最新が terraform の中身を変えなければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{
+				tool: tool{version: semgrepPin}, latest: semgrepNewer, eligible: semgrepPin, commit: &commitSurvey{},
+			}.heldByWindow())
 		})
 
 		t.Run("上流最新をそのまま採れるなら待ちは立たない", func(t *testing.T) {
