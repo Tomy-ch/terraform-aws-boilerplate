@@ -44,7 +44,7 @@ func Test_runTrivyConfig(t *testing.T) {
 	args := func(base string, extra ...string) []string {
 		return append(append([]string{"-base", base, "-severity", trivySev}, extra...), "usecases", "modules", "env")
 	}
-		noScratch := func(t *testing.T, base string) {
+	noScratch := func(t *testing.T, base string) {
 		t.Helper()
 		left, err := os.ReadDir(filepath.Join(base, "tmp", "trivy-config"))
 		require.NoError(t, err)
