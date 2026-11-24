@@ -173,6 +173,7 @@ func Test_planRoots(t *testing.T) {
 		assert.FileExists(t, filepath.Join(out, "runs", "a.jsonl"), "0 以外の終了コードの root の出力は書く")
 		assert.NoFileExists(t, filepath.Join(out, "runs", "b.jsonl"))
 		assert.Contains(t, w.String(), "a の誤り")
+		assert.NotContains(t, w.String(), "❌", "先の失敗は文面にだけ名指す")
 	})
 
 	t.Run("道具がシグナルで終われば、残りを起動せず plans.txt を書かずに errTool で終了コードは 2", func(t *testing.T) {

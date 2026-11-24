@@ -366,6 +366,7 @@ func Test_runCanary(t *testing.T) {
 		require.NotErrorIs(t, err, errCanary)
 		assert.Equal(t, 2, exitCode(err))
 		assert.NotContains(t, out.String(), "--- canary")
+		assert.NotContains(t, err.Error(), "それまでに落ちたケース", "最初のケースで打ち切れば、名指す先のケースは無い")
 	})
 
 	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {

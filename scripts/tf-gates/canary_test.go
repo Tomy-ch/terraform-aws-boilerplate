@@ -126,6 +126,30 @@ func Test_runValidateCanary(t *testing.T) {
 		assert.NotContains(t, out.String(), "--- canary")
 	})
 
+	t.Run("clean が期待どおりでなく、抑止を当てる validate だけを起動できなければ、clean を文面にだけ名指して errTool", func(t *testing.T) {
+		t.Parallel()
+		actual := canaryTool(t, "")
+		sep := string(filepath.Separator)
+		validates := 0
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			switch {
+			case strings.Contains(d, sep+"clean"+sep):
+				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+			case step == stepValidate && strings.Contains(d, sep+"deprecated"+sep):
+				validates++
+				if validates == 2 {
+					return tooltest.Missing(d, env, step)
+				}
+			}
+			return actual(d, env, step)
+		}
+		err := runValidateCanary(canaryArgs(t, "tmp/w"), &bytes.Buffer{}, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, err.Error(), "canary ignored で打ち切りました（それまでに落ちたケース: clean）")
+	})
+
 	t.Run("先のケースが期待どおりでなく、後のケースで道具を起動できなければ、先のケースを文面にだけ名指して errTool", func(t *testing.T) {
 		t.Parallel()
 		actual := canaryTool(t, "")
