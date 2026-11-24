@@ -250,6 +250,20 @@ func Test_run(t *testing.T) {
 		})
 	})
 
+	t.Run("verify は段の確認を回し、NG があれば差分のエラーを返す", func(t *testing.T) {
+		t.Parallel()
+
+		var out bytes.Buffer
+
+		f := verifyFake(t, stage1Responses(), map[string]awsResult{
+			stsAccountKey: okResult(testAccount), s3Key("get-bucket-versioning", testBucket): okResult(`{"Status":"Suspended"}`),
+		})
+
+		require.ErrorIs(t, run([]string{"verify", "-stage", "stage1", "-project", testProject, "-region", testRegion}, &out, verifyDeps(f, nil)), errMismatch)
+		assert.Contains(t, out.String(), "NG  版管理が Enabled\n")
+		assert.True(t, strings.HasSuffix(out.String(), "# 結果: 4 件のうち NG 1 件\n"))
+	})
+
 	t.Run("異常系", func(t *testing.T) {
 		t.Parallel()
 
@@ -257,6 +271,7 @@ func Test_run(t *testing.T) {
 			"サブコマンドが無い":     nil,
 			"知らないサブコマンド":    {"foo"},
 			"plan の引数が足りない": {"plan"},
+			"verify の段が無い":  {"verify", "-project", "tabp", "-region", "r"},
 		} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
@@ -442,6 +457,55 @@ func Test_execute(t *testing.T) {
 			assert.NotContains(t, stdout.String(), "# 結果:")
 		})
 	}
+
+	verifyArgs := []string{"verify", "-stage", "stage1", "-project", testProject, "-region", testRegion}
+
+	t.Run("verify がすべて ok なら 0 を返し、Bucket 名の12桁の数字は伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		f := verifyFake(t, stage1Responses(), map[string]awsResult{stsAccountKey: okResult(testAccount)})
+
+		assert.Equal(t, 0, execute(verifyArgs, &stdout, verifyDeps(f, nil)))
+		assert.Contains(t, stdout.String(), "# 結果: 4 件のうち NG 0 件\n")
+		assert.NotContains(t, stdout.String(), "123456789012")
+	})
+
+	t.Run("verify に NG があれば 1 を返し、理由の12桁の数字は伏せる", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		f := verifyFake(t, stage1Responses(), map[string]awsResult{
+			stsAccountKey: okResult(testAccount),
+			s3Key("get-bucket-versioning", testBucket): failed("Access Denied for arn:aws:iam::123456789012:user/x"),
+		})
+
+		assert.Equal(t, 1, execute(verifyArgs, &stdout, verifyDeps(f, nil)))
+		assert.Contains(t, stdout.String(), "NG  版管理が Enabled（呼び出しが失敗: Access Denied for arn:aws:iam::<account>:user/x）\n")
+	})
+
+	t.Run("verify でアカウント ID を取れなければ理由を出して 2 を返し、結果の行は出さない", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		f := verifyFake(t, nil, map[string]awsResult{stsAccountKey: okResult("None")})
+
+		assert.Equal(t, 2, execute(verifyArgs, &stdout, verifyDeps(f, nil)))
+		assert.Contains(t, stdout.String(), errNoAccount.Error())
+		assert.NotContains(t, stdout.String(), "# 結果:")
+	})
+
+	t.Run("verify の引数の誤りは 2 を返す", func(t *testing.T) {
+		t.Parallel()
+
+		var stdout bytes.Buffer
+
+		assert.Equal(t, 2, execute([]string{"verify", "-stage", "x"}, &stdout, verifyDeps(verifyFake(t, nil, nil), nil)))
+		assert.Contains(t, stdout.String(), "使い方:")
+	})
 
 	t.Run("account がすべて ok でも stdout へ書けなければ 2 を返す", func(t *testing.T) {
 		t.Parallel()

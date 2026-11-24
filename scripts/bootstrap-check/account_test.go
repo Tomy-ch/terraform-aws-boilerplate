@@ -45,10 +45,12 @@ var accountDescs = []string{
 
 // fakeAWS は、引数列（--output と --region を含む）ごとの応答を返す awsFunc を作る。登録の無い呼び出しは
 // テストを失敗にし、呼ばれた引数列を calls に残す。
+// handler は、responses に無い呼び出しに応答する（偽なら登録の無い呼び出し）。
 type fakeAWS struct {
 	t         *testing.T
 	mu        sync.Mutex
 	responses map[string]awsResult
+	handler   func(args []string) (awsResult, bool)
 	calls     []string
 }
 
@@ -60,6 +62,10 @@ func (f *fakeAWS) fn(args ...string) awsResult {
 	f.calls = append(f.calls, key)
 
 	r, ok := f.responses[key]
+	if !ok && f.handler != nil {
+		r, ok = f.handler(args)
+	}
+
 	if !ok {
 		f.t.Errorf("想定していない aws の呼び出し: %s", key)
 
@@ -787,6 +793,18 @@ func Test_checkAccount(t *testing.T) {
 			assert.Len(t, f.calls, 1)
 		})
 	}
+
+	t.Run("読むだけの操作（get-・list-・describe-・head-・simulate-）しか呼ばない", func(t *testing.T) {
+		t.Parallel()
+
+		f := newFake(t, nil)
+
+		_, err := runAccount(t, f)
+
+		require.NoError(t, err)
+		assert.Len(t, f.calls, len(goodResponses()))
+		assert.Empty(t, writeOps(f.calls))
+	})
 
 	t.Run("AWS_PROFILE が空なら aws を起動せずに errNoProfile", func(t *testing.T) {
 		t.Parallel()
