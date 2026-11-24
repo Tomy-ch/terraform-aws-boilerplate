@@ -185,6 +185,9 @@
               "ref": "role_name",
               "parent_ref": "name"
             },
+            "aws_iam_service_linked_role": {
+              "class": "service_linked"
+            },
             "aws_kms_alias": {
               "class": "covered_by",
               "parent": "aws_kms_key",

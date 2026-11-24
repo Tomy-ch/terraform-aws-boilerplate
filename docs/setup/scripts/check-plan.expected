@@ -6,6 +6,7 @@ import module.state_backend.module.s3.aws_s3_bucket.this
 import module.state_backend.module.s3.aws_s3_bucket_public_access_block.this
 import module.state_backend.module.s3.aws_s3_bucket_ownership_controls.this
 import module.state_backend.module.s3.aws_s3_bucket_versioning.this
+import module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]
 
 add module.state_backend.module.s3.aws_s3_bucket_server_side_encryption_configuration.this
 add module.state_backend.module.s3.aws_s3_bucket_policy.this
