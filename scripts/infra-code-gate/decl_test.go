@@ -693,6 +693,46 @@ func Test_checkTargets(t *testing.T) {
 		_, err := checkTargets(filepath.Join(t.TempDir(), "missing"), "CODEOWNERS", []string{"conftest/hcl/"})
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
+
+	t.Run("確かめられない対象は所見でなくエラー", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]func(t *testing.T, repo string){
+			"親がファイル": func(t *testing.T, repo string) { writeFile(t, filepath.Join(repo, "conftest"), "x") },
+			"親が root の外への symlink": func(t *testing.T, repo string) {
+				outside := t.TempDir()
+				require.NoError(t, os.MkdirAll(filepath.Join(outside, "hcl"), 0o750))
+				require.NoError(t, os.Symlink(outside, filepath.Join(repo, "conftest")))
+			},
+		}
+		for name, prepare := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				repo := t.TempDir()
+				prepare(t, repo)
+				got, err := checkTargets(repo, "CODEOWNERS", []string{"conftest/hcl/"})
+				require.Error(t, err)
+				require.NotErrorIs(t, err, os.ErrNotExist)
+				assert.Contains(t, err.Error(), "conftest/hcl/ の確認")
+				assert.Nil(t, got)
+			})
+		}
+	})
+
+	t.Run("固定の対象はファイルとディレクトリの両方を持つ", func(t *testing.T) {
+		t.Parallel()
+		require.NotEmpty(t, codeownerTargets)
+		var dirs, files int
+		for _, target := range codeownerTargets {
+			if strings.HasSuffix(target, "/") {
+				dirs++
+			} else {
+				files++
+			}
+		}
+		assert.Positive(t, dirs)
+		assert.Positive(t, files)
+	})
 }
 
 func Test_codeownersMatch(t *testing.T) {
