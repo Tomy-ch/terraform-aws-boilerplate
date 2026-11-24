@@ -105,7 +105,7 @@ var (
 
 // tool は宣言の 1 行。backend は解決後の値で、短縮名なら mise registry が決める。
 type tool struct {
-	key     string // 宣言に書かれたキーそのもの
+	key     string
 	version string
 	backend string // 例: aqua:owner/repo, go:module, npm:pkg, pypi:pkg, core:go
 	file    string // 宣言元のパス。注釈を宣言した場所へ付けるために持つ
@@ -156,7 +156,7 @@ func main() {
 	}
 }
 
-// run は mise.toml の宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
+// run はツールの宣言を cooldown に照らして報告します。gate で違反が残った場合はエラーを
 // 返し、終了コードへの変換は呼び出し側に委ねます。
 // client は上流への問い合わせ手段、now は窓と期限の基準時刻で、差し替えられるよう引数で受けます。
 func run(args []string, client *http.Client, now time.Time) error {

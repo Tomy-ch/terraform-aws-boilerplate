@@ -37,7 +37,7 @@ type candidate struct {
 	eligibleAge int
 	window      int
 	err         error
-	// commit は commit で固定する宣言の棚卸し結果。nil なら版の大小で決める。
+	// nil なら版の大小で決める。
 	commit *commitSurvey
 }
 

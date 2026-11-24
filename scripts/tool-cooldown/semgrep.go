@@ -28,8 +28,7 @@ const (
 var (
 	// ErrInvalidSemgrep は semgrep.mk から固定の commit を1つに定められない場合のエラー。
 	ErrInvalidSemgrep = xerrors.New("semgrep.mk の SEMGREP_RULES_COMMIT を読めません")
-	// errNoRulesTree は commit の木に走査対象のディレクトリが無い場合のエラー。
-	errNoRulesTree = xerrors.New("commit に走査対象のディレクトリがありません")
+	errNoRulesTree    = xerrors.New("commit に走査対象のディレクトリがありません")
 
 	semgrepCommitLine = regexp.MustCompile(`^SEMGREP_RULES_COMMIT\s*:=\s*([0-9a-f]{40})\s*$`)
 	// semgrepCommitAssign は代入の形を問わず SEMGREP_RULES_COMMIT へ値を与える行を拾う。
@@ -221,7 +220,6 @@ func evaluateCommit(ctx context.Context, client *http.Client, t tool, now time.T
 	return c
 }
 
-// commitBody は commits API の応答のうち使う部分。
 type commitBody struct {
 	SHA    string `json:"sha"`
 	Commit struct {

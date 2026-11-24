@@ -24,7 +24,6 @@ const (
 	treesURI       = "/repos/" + semgrepRulesRepo + "/git/trees/"
 )
 
-// writeSemgrepDecl は dir に semgrepFixture を semgrepFile として置く。
 func writeSemgrepDecl(t *testing.T, dir string) {
 	t.Helper()
 	path := filepath.Join(dir, semgrepFile)
@@ -32,12 +31,11 @@ func writeSemgrepDecl(t *testing.T, dir string) {
 	require.NoError(t, os.WriteFile(path, []byte(semgrepFixture), 0o600))
 }
 
-// commitJSON は commits API の commit 1つ分の応答を組む。
 func commitJSON(sha, date, tree string) string {
 	return `{"sha":"` + sha + `","commit":{"committer":{"date":"` + date + `"},"tree":{"sha":"` + tree + `"}}}`
 }
 
-// rootTreeJSON は根の tree の応答を組む。rules が空なら terraform/ を持たない。
+// rules が空なら terraform/ を持たない。
 func rootTreeJSON(rules string) string {
 	entries := `{"path":"python","type":"tree","sha":"py0"}`
 	if rules != "" {
