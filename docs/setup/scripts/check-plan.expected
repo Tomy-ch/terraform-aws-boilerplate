@@ -58,7 +58,6 @@ add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload
 add module.deployment_identity.module.github_oidc.aws_iam_role_policy_attachment.workload_read
 
-add module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this
 add module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this
 add module.organization_baseline.module.break_glass.aws_iam_account_password_policy.this
 add module.organization_baseline.module.break_glass.aws_iam_group.this
@@ -81,7 +80,9 @@ add module.organization_baseline.module.organization.aws_organizations_organizat
 add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-org-principals"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-prod-principals"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["data-perimeter-prod-resources"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-baseline-stop"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-bootstrap-role"]
+add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-enable-region"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-guardduty-stop"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-iam-user"]
 add module.organization_baseline.module.organization.aws_organizations_policy.this["deny-leave-and-close"]
@@ -92,6 +93,8 @@ add module.organization_baseline.module.organization.aws_organizations_policy.th
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-org-principals/policy-staging"]
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-prod-principals/policy-staging"]
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["data-perimeter-prod-resources/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-baseline-stop/policy-staging"]
+add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-enable-region/policy-staging"]
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-guardduty-stop/policy-staging"]
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-iam-user/policy-staging"]
 add module.organization_baseline.module.organization.aws_organizations_policy_attachment.this["deny-leave-and-close/root"]

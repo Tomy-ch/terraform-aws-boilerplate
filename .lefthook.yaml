@@ -96,6 +96,7 @@ pre-commit:
     node-tools-lock-check:
       glob:
         - "docker/tools/node/*"
+        - "scripts/node-tools/*.go"
       run: make node-tools-lock-check
 
     # uses: / image: が lockfile 通りか。orphan を落とすのは pin-actions-check だけである。
@@ -180,6 +181,8 @@ pre-commit:
         - "conftest/plan/**"
         - "conftest/hcl/layer/decl.json"
         - ".tf-validate-ignore.yaml"
+        - "Makefile"
+        - ".makefiles/**"
         - "docs/setup/scripts/check-plan.*"
         - "scripts/tf-local/**"
         - "scripts/bootstrap-check/**"
@@ -192,30 +195,6 @@ pre-commit:
       skip:
         - run: make -s tf-no-targets
       run: make -k tf-validate tf-test tf-policy check-plan-expected
-    tf-validate-canary:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "usecases/state-backend/reference/versions.tf"
-        - "usecases/state-backend/reference/.terraform.lock.hcl"
-        - "scripts/tf-gates/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make tf-validate-canary
-    tf-policy-canary:
-      glob:
-        - "Makefile"
-        - ".makefiles/**"
-        - "conftest/plan/**"
-        - "conftest/hcl/layer/decl.json"
-        - "scripts/tf-local/**"
-        - "scripts/provider-schema/**"
-        - "scripts/tf-policy/**"
-        - "scripts/lib/**"
-        - "scripts/go.mod"
-        - "scripts/go.sum"
-      run: make tf-policy-canary
     # skip を置かない。CI の job と同じく、Terraform の構成が無いツリーでは0件として落ちるのが正しい。
     infra-code-gate:
       glob:

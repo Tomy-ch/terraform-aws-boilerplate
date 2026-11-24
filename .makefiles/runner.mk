@@ -8,32 +8,14 @@
 
 RUNNER_MODE ?= container
 
-## npm 側の道具をホストで起動する前置き（ADR-0503 決定7・17）。
-##
-## 起動のたびに $(1) の lockfile を frozen で入れ、入れた先の道具を絶対パスで exec する。lockfile が
-## package.json からずれていれば、道具を起動する前に落ちる。PATH の同名の道具へは退かない。
-## install は $(2) のディレクトリを排他の印にして直列にする。並行の初回 install は同じ node_modules へ
-## shim を書き合って落ちる。install と exec を1つの sh に収めるのは、パイプの stdin を道具へ届けるため。
-##
-##   $(1) package.json と lockfile を持つディレクトリ（絶対パス）
-##   $(2) 排他の印にするディレクトリ（絶対パス）
+## npm 側の道具をホストで起動する前置き（ADR-0503 決定7・17）。lockfile を frozen で入れてから、
+## 入れた先の道具を起動する。排他・install・起動は scripts/node-tools の exec が持つ。
 NODE_TOOLS_DIR := docker/tools/node
 NODE_INSTALL_LOCK := tmp/node-tools-install.lock
-NODE_HOST_RUN = sh -c 'set -eu; dir="$$1"; lock="$$2"; tool="$$3"; shift 3; \
-	mkdir -p "$${lock%/*}"; n=0; \
-	until mkdir "$$lock" 2>/dev/null; do \
-		n=$$((n + 1)); \
-		[ "$$n" -lt 600 ] || { echo "❌ $$lock を2分取れません。install が動いていなければ消してください" >&2; exit 1; }; \
-		sleep 0.2; \
-	done; \
-	unlock() { rmdir "$$lock" 2>/dev/null || true; }; trap unlock EXIT; \
-	pnpm -C "$$dir" install --frozen-lockfile --prod --reporter=silent </dev/null >&2; \
-	unlock; trap - EXIT; \
-	exec "$$dir/node_modules/.bin/$$tool" "$$@"' node-tool "$(1)" "$(2)"
 
 ifeq ($(RUNNER_MODE),host)
 GO_TOOL :=
-NODE_TOOL := $(call NODE_HOST_RUN,$(CURDIR)/$(NODE_TOOLS_DIR),$(CURDIR)/$(NODE_INSTALL_LOCK))
+NODE_TOOL = $(call RUN_SCRIPT_HOST_ARGS,node-tools) exec -dir "$(CURDIR)/$(NODE_TOOLS_DIR)" -lock "$(CURDIR)/$(NODE_INSTALL_LOCK)"
 else
 # ホストの gh からトークンを借りる。未認証の GitHub API は 60 req/hour・IP 単位で、
 # イメージの install 群を賄えず 403 になる。
@@ -46,11 +28,7 @@ GO_TOOL := $(COMPOSE_RUN) go_tool_runner
 NODE_TOOL := $(COMPOSE_RUN) node_tool_runner
 endif
 
-## 運用機構（scripts/）の起動
-##
-## go.mod は scripts/ をモジュールルートとするため、`go -C scripts run` は cwd をそこへ移す。
-## 一方で各ツールはリポジトリ直下を基準にパスを解決する（.github/egress.toml など）。
-## そのままでは scripts/.github/... を探して落ちる。ビルドしてから直下で実行する。
+## 運用機構（scripts/）の起動。`go run` にせず、ビルドしてからリポジトリ直下で実行する（理由は .makefiles/README.md）。
 SCRIPT_BIN := tmp/bin
 RUN_SCRIPT = $(GO_TOOL) sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
@@ -65,3 +43,8 @@ BUILD_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); go -C scripts build 
 RUN_SCRIPT_HOST = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
 	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
 	exec "./$(SCRIPT_BIN)/$(1)" $(2)'
+
+## RUN_SCRIPT_HOST の、前置きとして使う形。引数はすべて後ろに続けて渡す（sh -c の本文に埋めない）。
+RUN_SCRIPT_HOST_ARGS = sh -c 'set -eu; mkdir -p $(SCRIPT_BIN); \
+	go -C scripts build -o "$$PWD/$(SCRIPT_BIN)/$(1)" ./$(1); \
+	exec "./$(SCRIPT_BIN)/$(1)" "$$@"' $(1)

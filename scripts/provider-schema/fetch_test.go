@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する。並行のテストが別の偽の道具を書いている
+// 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 // fakeTerraform は、init で initRC を、schema で schema を出して schemaRC を返す偽の terraform を置き、それを起動する
 // tfCommand を返す。起動ごとに作業ディレクトリと段を calls.log へ1行ずつ書く。
 func fakeTerraform(t *testing.T, initRC, schemaRC int, schema string) tfCommand {
@@ -29,10 +31,10 @@ esac
 exit 99
 `, filepath.Join(dir, "calls.log"), initRC, filepath.Join(dir, "schema.json"), schemaRC)
 	p := filepath.Join(dir, "terraform")
-	require.NoError(t, os.WriteFile(p, []byte(body), 0o700))
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
 
 	return func(d, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), p, step)
+		c := exec.CommandContext(context.Background(), "/bin/sh", p, step)
 		c.Dir = d
 
 		return c
@@ -42,7 +44,7 @@ exit 99
 // calls は、fakeTerraform の calls.log を返す。偽の terraform を1度も起動していなければ空。
 func calls(t *testing.T, tf tfCommand) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(tf(".", "init").Path), "calls.log"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(tf(".", "init").Args[1]), "calls.log"))
 	if os.IsNotExist(err) {
 		return ""
 	}

@@ -341,9 +341,6 @@ classes = ["terraform"]
 [job."terraform-gates.yaml:tf-policy"]
 classes = ["terraform"]
 
-[job."terraform-gates.yaml:tf-gates-test"]
-classes = ["terraform"]
-
 # conftest は GitHub Release から入る。Rego と宣言はリポジトリ内に在り、実行時に取りに行かない。
 [job."terraform-gates.yaml:infra-code-gate"]
 classes = ["mise"]

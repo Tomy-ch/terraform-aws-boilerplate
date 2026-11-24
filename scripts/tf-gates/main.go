@@ -6,17 +6,18 @@
 //	tf-gates none -base <dir> <root>...
 //	tf-gates fmt [-check] -base <dir> <root>...
 //	tf-gates init -base <dir> -data <dir> <root>...
-//	tf-gates validate -base <dir> -data <dir> -out <dir> <root>...
+//	tf-gates validate -base <dir> -data <dir> -out <dir> -canary-data <dir> -canary-work <dir> -canary-reference <dir> <root>...
 //	tf-gates result -base <dir> -manifest <tsv> -ignore <yaml>
 //	tf-gates test -base <dir> -data <dir> <root>...
 //	tf-gates lint -base <dir> -config <file> -plugin-dir <dir> <root>...
-//	tf-gates validate-canary -base <dir> -data <dir> -work <dir> -reference <dir>
 //
 // 対象のディレクトリは、走査の root の下の `.tf` を持つディレクトリで、段に `tests` か `.terraform` を持つものを
 // 除きます（tests の下の setup module は親の terraform test が読む）。宣言した root が1つでも無いときと、対象が
 // 0件のときは成功させません（ADR-0702 決定13）。-allow-missing-roots を渡したときだけ、無い root を名指して
 // 飛ばします（root の一部だけを持つ canary の fixture のため）。terraform と TFLint には AWS_ で始まる環境変数を渡さず、
 // 資格情報を持つ手元でも、持たない CI と同じ条件で走らせます（ADR-0401 決定6）。
+//
+// validate は、本走査の前に同じ起動の中で canary を走らせ、canary が落ちれば本走査を行いません（ADR-0702 決定25）。
 //
 // 落ちた検査は終了コード 1、入力や宣言を読めない・対象が0件は 2 です。
 package main
@@ -56,15 +57,13 @@ func run(args []string, w io.Writer, tool toolFunc) error {
 	case "init":
 		return runInit(rest, w, tool)
 	case "validate":
-		return runValidate(rest, w, tool)
+		return runValidate(rest, w, tool, runValidateCanary)
 	case "result":
 		return runResult(rest, w)
 	case "test":
 		return runTest(rest, w, tool)
 	case "lint":
 		return runLint(rest, w, tool)
-	case "validate-canary":
-		return runValidateCanary(rest, w, tool)
 	default:
 		return xerrors.Wrapf(errUsage, "知らないサブコマンド %q", args[0])
 	}

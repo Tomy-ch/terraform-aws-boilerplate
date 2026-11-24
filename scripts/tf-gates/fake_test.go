@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// 偽の道具は書いた直後のファイルを exec せず、/bin/sh に読ませて起動する。並行のテストが別の偽の道具を書いている
+// 間に fork した子がその書き込みの fd を持ち越すと、書いたばかりのファイルの exec が ETXTBSY で落ちるため。
 // fakeTool は、起動ごとに「作業ディレクトリ 段 TF_DATA_DIR」を calls.log へ書く偽の道具を作る。作業ディレクトリに
 // `fail-<段>` があればその段は 1 で、`validate.out` があれば validate はその中身を出す。環境に AWS_ で始まる変数
 // （宣言で塞ぐ3つを除く）が残っていれば 3 で落ちる。
@@ -28,9 +30,9 @@ if [ -e "fail-$step" ]; then echo "$step が落ちた"; exit 1; fi
 if [ "$step" = validate ] && [ -e validate.out ]; then cat validate.out; fi
 exit 0
 `
-	require.NoError(t, os.WriteFile(script, []byte(body), 0o700))
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	tool := func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), script, step)
+		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
 		c.Dir = d
 		c.Env = env
 		return c
