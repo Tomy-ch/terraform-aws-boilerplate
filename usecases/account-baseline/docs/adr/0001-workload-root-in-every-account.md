@@ -68,7 +68,7 @@ AWS SRA は、Config と Access Analyzer をアカウントの onboarding と ba
 
 - Contract Test: `tests/validation.tftest.hcl` の `unknown_env` が、ほかの `env` を拒むことを確かめる。`tests/contract.tftest.hcl` の `workload_account`・`sandbox_has_no_config`・`management_account_has_no_password_policy` が、env ごとの合成の件数を確かめる
 - Static Analysis（`make layer-check`）: `LY401` が、アカウントかリージョンに1つの型が持ち主の外で宣言されることを落とす（password policy は `organization-baseline` も認める）。
-- Policy Test（`make tf-policy`）: `PLAN-ACB-06` が、reference の plan の間で password policy の値（`conftest/plan/decl.json` の `account_baseline.password_policy_keys`）が食い違うことを落とす。比べる相手（owners に載せた usecase の password policy）が入力に無いときと、宣言の属性で値が1つも読めないときも落とす
+- Policy Test（`make tf-policy`）: `PLAN-ACB-06` が、reference の plan の間で password policy の値（`conftest/plan/decl.json` の `account_baseline.password_policy_keys`）が食い違うことを落とす。比べる相手（層の宣言 `conftest/hcl/layer/decl.json` の `singletons` が password policy の持ち主とする usecase の password policy）が入力に無いときと、宣言の属性で値が1つも読めないときも落とす
 - 昇格の条件（決定7）は実環境の観測で確かめる。どのテストも見ない
 
 ## 影響
