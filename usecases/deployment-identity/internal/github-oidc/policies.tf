@@ -41,7 +41,7 @@ locals {
 
   workload_policy_name = "${var.name_prefix}-ci-apply-workload"
   workload_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_policy_name}"
-  # workload の Allow が 6,144 文字を超えるので、読み取りを同じ役割の2つ目の policy に置く（決定17）。
+  # 読み取りは2つ目の policy に分ける（決定17）。
   workload_read_policy_name = "${var.name_prefix}-ci-apply-workload-read"
   workload_read_policy_arn  = "${local.iam_arn_prefix}:policy/${local.workload_read_policy_name}"
   workload_policy_arns      = [local.workload_policy_arn, local.workload_read_policy_arn]
@@ -172,7 +172,12 @@ locals {
   anomaly_detection_arns = [for t in ["anomalymonitor", "anomalysubscription"] : "arn:${data.aws_partition.current.partition}:ce::${data.aws_caller_identity.current.account_id}:${t}/*"]
   # project は英小文字と数字だけなので（usecases/deployment-identity の variables.tf）、name_prefix の最初の - の前が project である。
   bootstrap_tag_key = "${split("-", var.name_prefix)[0]}:bootstrap"
-  workload_read_statements = [
+  # アカウントの前提の構成物（deployment-identity/ADR-0201 決定3）。aws 以外の partition にはこの role が無いので、文を置かない。
+  chatbot_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+  chatbot_slr_read_statements = [for s in [
+    { Sid = "ReadChatbotServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = local.chatbot_slr_arn },
+  ] : s if data.aws_partition.current.partition == "aws"]
+  workload_read_statements = concat([
     {
       Sid      = "ReadWorkloadTopics"
       Effect   = "Allow"
@@ -208,7 +213,7 @@ locals {
     # Provider は tag を付けなくても Read のたびに ListTagsForResource を呼ぶ。
     { Sid = "ReadWorkloadBudgets", Effect = "Allow", Action = ["budgets:ListTagsForResource", "budgets:ViewBudget"], Resource = local.workload_budget_arn },
     { Sid = "ReadAnomalyDetection", Effect = "Allow", Action = ["ce:GetAnomalyMonitors", "ce:GetAnomalySubscriptions", "ce:ListTagsForResource"], Resource = local.anomaly_detection_arns },
-  ]
+  ], local.chatbot_slr_read_statements)
 
   workload_role_write_arns   = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:role/${p}*"]
   workload_policy_write_arns = [for p in values(local.usecase_iam_prefixes) : "${local.iam_arn_prefix}:policy/${p}*"]
@@ -309,7 +314,7 @@ locals {
       Sid       = "CreateChatbotServiceLinkedRole"
       Effect    = "Allow"
       Action    = "iam:CreateServiceLinkedRole"
-      Resource  = "${local.iam_arn_prefix}:role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
+      Resource  = local.chatbot_slr_arn
       Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
     },
     # budgets:ModifyBudget は予算と通知の作成・更新・削除を1つの Action で許す（決定13・18）。
@@ -514,7 +519,7 @@ locals {
   ]
 
   # apply-identity の role の、核の外の書き込み（deployment-identity/ADR-0201 決定21）。
-  manage_statements = [
+  manage_statements = concat([
     # s3:PutLifecycleConfiguration は DeleteBucketLifecycle の権限も兼ねる。
     { Sid = "ConfigureBuckets", Effect = "Allow", Action = concat(local.bucket_configure_actions, ["s3:PutLifecycleConfiguration"]), Resource = local.bucket_arns },
     { Sid = "CreateApplyOutputBucket", Effect = "Allow", Action = "s3:CreateBucket", Resource = var.apply_output_bucket_arn },
@@ -532,7 +537,16 @@ locals {
     },
     # 鍵と alias を作る権限は与えない（deployment-identity/ADR-0201 決定3）。
     { Sid = "ManageStateKey", Effect = "Allow", Action = ["kms:EnableKeyRotation", "kms:PutKeyPolicy"], Resource = var.state_key_arn },
-  ]
+    ], [for s in [
+      {
+        Sid       = "CreateChatbotServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = local.chatbot_slr_arn
+        Condition = { StringEquals = { "iam:AWSServiceName" = "management.chatbot.amazonaws.com" } }
+      },
+      { Sid = "UpdateChatbotServiceLinkedRole", Effect = "Allow", Action = "iam:UpdateRole", Resource = local.chatbot_slr_arn },
+  ] : s if data.aws_partition.current.partition == "aws"])
 
   # 決定1。apply-identity と apply の role に同じ文で置く。
   lockout_bypass_deny_statement = { Sid = "DenyLockoutSafetyBypass", Effect = "Deny", Action = ["kms:CreateKey", "kms:PutKeyPolicy"], Resource = "*", Condition = { Bool = { "kms:BypassPolicyLockoutSafetyCheck" = "true" } } }
@@ -624,6 +638,7 @@ locals {
       [{ Sid = "WriteApplyOutput", Effect = "Allow", Action = "s3:PutObject", Resource = "${var.plan_output_bucket_arn}/apply/*" }],
       local.governance_read_statements,
       local.ci_policy_management_statements,
+      local.chatbot_slr_read_statements,
     )
 
     # 範囲と、各 Action が要る理由は deployment-identity/ADR-0201 決定9（unlock は決定11）。
