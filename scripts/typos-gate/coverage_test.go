@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const coverageConfig = `[files]
@@ -31,13 +33,13 @@ func Test_runCoverage(t *testing.T) {
 
 	t.Run("除外と自身の設定を除いた追跡ファイルがすべて走査の対象なら通る", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepLsFiles, "out", "a.md\x00.typos.toml\x00x/.terraform.lock.hcl\x00scripts/go.sum\x00.github/w.yaml\x00")
-		f.set(stepFiles, "out", "./a.md\n./.github/w.yaml\n./untracked.md\n")
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "out", "a.md\x00.typos.toml\x00x/.terraform.lock.hcl\x00scripts/go.sum\x00.github/w.yaml\x00")
+		f.Set(stepFiles, "out", "./a.md\n./.github/w.yaml\n./untracked.md\n")
 		var out bytes.Buffer
-		require.NoError(t, runCoverage("./.typos.toml", []byte(coverageConfig), &out, f.tool(), isolated))
+		require.NoError(t, runCoverage("./.typos.toml", []byte(coverageConfig), &out, f.Tool(), isolated))
 		assert.Contains(t, out.String(), "追跡ファイル 2 件")
-		calls := f.calls()
+		calls := f.Calls()
 		require.Len(t, calls, 2)
 		assert.Equal(t, realCwd(t)+" "+stepFiles+" ", calls[0], "--files はリポジトリ直下（cwd）で走る")
 		assert.True(t, strings.HasSuffix(calls[1], " "+stepLsFiles+" /isolated"), "git には隔離した env を渡す: %s", calls[1])
@@ -45,15 +47,15 @@ func Test_runCoverage(t *testing.T) {
 
 	t.Run("走査の対象から外れた追跡ファイルを先頭20件まで出し errUncovered", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
+		f := tooltest.New(t)
 		var tracked []string
 		for i := range 25 {
 			tracked = append(tracked, fmt.Sprintf("f%02d", i))
 		}
-		f.set(stepLsFiles, "out", strings.Join(tracked, "\x00")+"\x00")
-		f.set(stepFiles, "out", "./f00\n")
+		f.Set(stepLsFiles, "out", strings.Join(tracked, "\x00")+"\x00")
+		f.Set(stepFiles, "out", "./f00\n")
 		var out bytes.Buffer
-		err := cover(coverageConfig, &out, f.tool(), isolated)
+		err := cover(coverageConfig, &out, f.Tool(), isolated)
 		require.ErrorIs(t, err, errUncovered)
 		assert.Contains(t, err.Error(), "24 件")
 		assert.Contains(t, out.String(), "f20\n")
@@ -67,10 +69,10 @@ func Test_runCoverage(t *testing.T) {
 		for name, listed := range map[string]string{"空": "", "除外だけ": "scripts/go.sum\x00a/.terraform.lock.hcl\x00"} {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				f := newFake(t)
-				f.set(stepLsFiles, "out", listed)
-				f.set(stepFiles, "out", "./x\n")
-				require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated), errNoInput)
+				f := tooltest.New(t)
+				f.Set(stepLsFiles, "out", listed)
+				f.Set(stepFiles, "out", "./x\n")
+				require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errNoInput)
 			})
 		}
 	})
@@ -82,32 +84,32 @@ func Test_runCoverage(t *testing.T) {
 	} {
 		t.Run(name+"なら errTool", func(t *testing.T) {
 			t.Parallel()
-			f := newFake(t)
-			f.set(stepLsFiles, "out", "a\x00")
-			f.set(stepFiles, "out", "./a\n")
-			f.set(c.step, c.suffix, c.body)
-			require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated), errTool)
+			f := tooltest.New(t)
+			f.Set(stepLsFiles, "out", "a\x00")
+			f.Set(stepFiles, "out", "./a\n")
+			f.Set(c.step, c.suffix, c.body)
+			require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errTool)
 		})
 	}
 
 	t.Run("typos を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
-		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), missingTool, isolated), errTool)
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), tooltest.Missing, isolated), errTool)
 	})
 
 	t.Run("git の隔離の一覧を得られなければ、道具を起動せずに errTool", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		err := cover(coverageConfig, new(bytes.Buffer), f.tool(), func() ([]string, error) { return nil, errors.New("boom") })
+		f := tooltest.New(t)
+		err := cover(coverageConfig, new(bytes.Buffer), f.Tool(), func() ([]string, error) { return nil, errors.New("boom") })
 		require.ErrorIs(t, err, errTool)
-		assert.Empty(t, f.calls())
+		assert.Empty(t, f.Calls())
 	})
 
 	t.Run("設定を解釈できなければ、道具を起動せずに errRead", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		require.ErrorIs(t, cover("[files]\nextend-exclude = \"x\"\n", new(bytes.Buffer), f.tool(), isolated), errRead)
-		assert.Empty(t, f.calls())
+		f := tooltest.New(t)
+		require.ErrorIs(t, cover("[files]\nextend-exclude = \"x\"\n", new(bytes.Buffer), f.Tool(), isolated), errRead)
+		assert.Empty(t, f.Calls())
 	})
 
 	for name, c := range map[string]struct{ cfg, declared string }{
@@ -118,22 +120,22 @@ func Test_runCoverage(t *testing.T) {
 	} {
 		t.Run(name+"なら、両方の一覧を名指して道具を起動せずに errExcludes", func(t *testing.T) {
 			t.Parallel()
-			f := newFake(t)
-			err := cover(c.cfg, new(bytes.Buffer), f.tool(), isolated)
+			f := tooltest.New(t)
+			err := cover(c.cfg, new(bytes.Buffer), f.Tool(), isolated)
 			require.ErrorIs(t, err, errExcludes)
 			assert.Contains(t, err.Error(), ".typos.toml: "+c.declared)
 			assert.Contains(t, err.Error(), `typos-gate: ["**/.terraform.lock.hcl" ".git/" "scripts/go.sum"]`)
-			assert.Empty(t, f.calls())
+			assert.Empty(t, f.Calls())
 		})
 	}
 
 	t.Run("順序と重複が違っても同じ集合なら通る", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepLsFiles, "out", "a\x00scripts/go.sum\x00")
-		f.set(stepFiles, "out", "./a\n")
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "out", "a\x00scripts/go.sum\x00")
+		f.Set(stepFiles, "out", "./a\n")
 		cfg := "[files]\nextend-exclude = [\"scripts/go.sum\", \".git/\", \"**/.terraform.lock.hcl\", \".git/\"]\n"
-		require.NoError(t, cover(cfg, new(bytes.Buffer), f.tool(), isolated))
+		require.NoError(t, cover(cfg, new(bytes.Buffer), f.Tool(), isolated))
 	})
 
 	for name, c := range map[string]struct{ filesOut, filesErr string }{
@@ -143,12 +145,12 @@ func Test_runCoverage(t *testing.T) {
 	} {
 		t.Run(name+"なら、成功を出さずに errUncovered", func(t *testing.T) {
 			t.Parallel()
-			f := newFake(t)
-			f.set(stepLsFiles, "out", "a.md\x00")
-			f.set(stepFiles, "out", c.filesOut)
-			f.set(stepFiles, "err", c.filesErr)
+			f := tooltest.New(t)
+			f.Set(stepLsFiles, "out", "a.md\x00")
+			f.Set(stepFiles, "out", c.filesOut)
+			f.Set(stepFiles, "err", c.filesErr)
 			var out bytes.Buffer
-			require.ErrorIs(t, cover(coverageConfig, &out, f.tool(), isolated), errUncovered)
+			require.ErrorIs(t, cover(coverageConfig, &out, f.Tool(), isolated), errUncovered)
 			assert.NotContains(t, out.String(), "✅")
 		})
 	}
@@ -156,12 +158,12 @@ func Test_runCoverage(t *testing.T) {
 	for _, step := range []string{stepFiles, stepLsFiles} {
 		t.Run(step+" が rc≠0 なら、stderr にだけ出した診断を載せて errTool", func(t *testing.T) {
 			t.Parallel()
-			f := newFake(t)
-			f.set(stepLsFiles, "out", "a\x00")
-			f.set(stepFiles, "out", "./a\n")
-			f.set(step, "err", "STDERR-ONLY\n")
-			f.set(step, "rc", "1")
-			err := cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated)
+			f := tooltest.New(t)
+			f.Set(stepLsFiles, "out", "a\x00")
+			f.Set(stepFiles, "out", "./a\n")
+			f.Set(step, "err", "STDERR-ONLY\n")
+			f.Set(step, "rc", "1")
+			err := cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated)
 			require.ErrorIs(t, err, errTool)
 			assert.Contains(t, err.Error(), "STDERR-ONLY")
 		})
@@ -169,19 +171,19 @@ func Test_runCoverage(t *testing.T) {
 
 	t.Run("git ls-files が stderr にだけ出したパスは数えず errNoInput", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepLsFiles, "err", "a.md\x00")
-		f.set(stepFiles, "out", "./a.md\n")
-		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated), errNoInput)
+		f := tooltest.New(t)
+		f.Set(stepLsFiles, "err", "a.md\x00")
+		f.Set(stepFiles, "out", "./a.md\n")
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errNoInput)
 	})
 
 	t.Run("typos --files だけがシグナルで終われば、git を起動せずに errTool", func(t *testing.T) {
 		t.Parallel()
-		f := newFake(t)
-		f.set(stepFiles, "kill", "")
-		f.set(stepLsFiles, "out", "a\x00")
-		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.tool(), isolated), errTool)
-		assert.Len(t, f.calls(), 1)
+		f := tooltest.New(t)
+		f.Set(stepFiles, "kill", "")
+		f.Set(stepLsFiles, "out", "a\x00")
+		require.ErrorIs(t, cover(coverageConfig, new(bytes.Buffer), f.Tool(), isolated), errTool)
+		assert.Len(t, f.Calls(), 1)
 	})
 }
 
@@ -273,6 +275,47 @@ func Test_extendExcludes(t *testing.T) {
 			t.Parallel()
 			_, err := extendExcludes(cfg)
 			require.ErrorIs(t, err, errRead)
+		})
+	}
+
+	for name, c := range map[string]struct{ cfg, want string }{
+		"[files] の外は、その行を名指す": {"# x\n[default]\nextend-exclude = [\"a\"]\n", "3 行目: [files] の外"},
+		"重複は、2つ目の行を名指す":       {"[files]\nextend-exclude = [\"a\"]\n\nextend-exclude = [\"b\"]\n", "4 行目: extend-exclude が重複"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := extendExcludes(c.cfg)
+			require.ErrorIs(t, err, errRead)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}
+
+func Test_checkExcludeLine(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		prefix, section string
+		found           bool
+		want            string
+	}{
+		"[files] の中は通る":                {"", "files", false, ""},
+		"直下の files. は通る":               {"files.", "", false, ""},
+		"[files] の外は errRead":          {"", "default", false, "3 行目: [files] の外の extend-exclude は解釈しません"},
+		"直下の前置きなしは errRead":            {"", "", false, "3 行目: [files] の外の extend-exclude は解釈しません"},
+		"節の中の files. は errRead":        {"files.", "default", false, "3 行目: [files] の外の extend-exclude は解釈しません"},
+		"[files] の中の files. は errRead": {"files.", "files", false, "3 行目: [files] の外の extend-exclude は解釈しません"},
+		"重複は errRead":                  {"", "files", true, "3 行目: extend-exclude が重複しています"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := checkExcludeLine(3, c.prefix, c.section, c.found)
+			if c.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, errRead)
+			assert.Contains(t, err.Error(), c.want)
 		})
 	}
 }
