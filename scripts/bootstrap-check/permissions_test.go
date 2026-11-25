@@ -83,6 +83,28 @@ var (
 		"apply-identity *: 1 件が implicitDeny",
 		"apply-identity $bg: 1 件が implicitDeny",
 	}
+	permDelegatedDescs = []string{
+		"apply-identity $policy/apply-identity-governance-2: 7 件が allowed",
+		"apply-identity $role/apply-identity: 1 件が allowed",
+		"plan *: 1 件が allowed",
+		"plan *: 2 件が allowed",
+		"plan *: 2 件が explicitDeny",
+		"plan *: 2 件が implicitDeny",
+		"apply arn:aws:organizations::123456789012:account/o-exampleorg1/111111111111: 2 件が explicitDeny",
+		"apply $policy/apply-identity-governance-2: 1 件が explicitDeny",
+	}
+	permDelegatedGatedDescs = []string{
+		"apply-identity arn:aws:organizations::123456789012:account/o-exampleorg1/111111111111: 2 件が allowed",
+		"apply-identity arn:aws:organizations::123456789012:account/o-exampleorg1/111111111111: 1 件が allowed",
+		"apply-identity arn:aws:organizations::123456789012:account/o-exampleorg1/111111111111: 1 件が implicitDeny",
+		"apply-identity *: 1 件が allowed",
+		"apply-identity *: 2 件が implicitDeny",
+		"apply-identity *: 4 件が allowed",
+		"apply-identity *: 4 件が explicitDeny",
+		"apply-identity *: 2 件が allowed",
+		"apply-identity $iam:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail: 1 件が allowed",
+		"apply-identity $iam:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail: 1 件が implicitDeny",
+	}
 	permSLRDescs = []string{
 		"apply-identity $slr: 1 件が allowed",
 		"apply-identity $slr: 1 件が implicitDeny",
@@ -201,8 +223,11 @@ var (
 
 const (
 	// permissions の件数。条件つきの確認の有無で変わる。
-	permissionsBase     = 109
+	permissionsBase     = 117
 	governanceGated     = 4
+	delegatedGated      = 10
+	delegatedAbsent     = "  委任管理者の policy がまだ付いていないので、指定と解除の権限は確かめない（委任管理者の policy を作って付ける apply の後にもう一度走らせる）"
+	delegatedUnknown    = "  apply-identity の role の managed policy を確かめられないので（上の NG）、委任管理者の指定と解除の権限は確かめない"
 	workloadGatedCount  = 28
 	budgetsGatedCount   = 4
 	outputPolicyCount   = 13
@@ -212,7 +237,7 @@ const (
 	budgetsUnknown      = "  apply の role の managed policy を確かめられないので（上の NG）、apply の role の budgets と Cost Anomaly Detection の作成と変更の権限は確かめない"
 	attachedIdentityKey = "iam list-attached-role-policies --role-name tabp-admin-ci-apply-identity --output json --region " + testRegion
 	attachedApplyKey    = "iam list-attached-role-policies --role-name tabp-admin-ci-apply --output json --region " + testRegion
-	governanceAttached  = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`
+	governanceAttached  = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"},{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"}]}`
 	workloadAttached    = `{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-workload-read"},{"PolicyName":"tabp-admin-ci-apply-workload-2"},{"PolicyName":"tabp-admin-ci-apply-workload"}]}`
 	noneAttached        = `{"AttachedPolicies":[]}`
 )
@@ -311,6 +336,25 @@ var permRowActions = []string{
 	"iam:AttachRolePolicy ; iam:PolicyARN = arn:aws:iam::aws:policy/AdministratorAccess (arn)",
 	"organizations:DeleteOrganization",
 	"iam:DeleteRole",
+	// 委任管理者の指定
+	"$manage",
+	"iam:AttachRolePolicy ; iam:PolicyARN = $policy/apply-identity-governance-2 (arn)",
+	"organizations:ListDelegatedAdministrators",
+	"guardduty:ListOrganizationAdminAccounts inspector2:ListDelegatedAdminAccounts ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"guardduty:ListOrganizationAdminAccounts inspector2:ListDelegatedAdminAccounts ; aws:RequestedRegion = af-south-1 (string)",
+	"guardduty:EnableOrganizationAdminAccount inspector2:EnableDelegatedAdminAccount ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"organizations:RegisterDelegatedAdministrator organizations:DeregisterDelegatedAdministrator",
+	"iam:CreatePolicyVersion",
+	"organizations:RegisterDelegatedAdministrator organizations:DeregisterDelegatedAdministrator ; organizations:ServicePrincipal = guardduty.amazonaws.com (string)",
+	"organizations:RegisterDelegatedAdministrator ; organizations:ServicePrincipal = config.amazonaws.com (string)",
+	"organizations:RegisterDelegatedAdministrator ; organizations:ServicePrincipal = sso.amazonaws.com (string)",
+	"organizations:EnableAWSServiceAccess ; organizations:ServicePrincipal = inspector2.amazonaws.com (string)",
+	"organizations:EnableAWSServiceAccess organizations:DisableAWSServiceAccess ; organizations:ServicePrincipal = config.amazonaws.com (string)",
+	"guardduty:EnableOrganizationAdminAccount guardduty:DisableOrganizationAdminAccount inspector2:EnableDelegatedAdminAccount inspector2:DisableDelegatedAdminAccount ; aws:RequestedRegion = ap-northeast-1 (string)",
+	"guardduty:EnableOrganizationAdminAccount guardduty:DisableOrganizationAdminAccount inspector2:EnableDelegatedAdminAccount inspector2:DisableDelegatedAdminAccount ; aws:RequestedRegion = af-south-1 (string)",
+	"cloudtrail:RegisterOrganizationDelegatedAdmin cloudtrail:DeregisterOrganizationDelegatedAdmin",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = cloudtrail.amazonaws.com (string)",
+	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = guardduty.amazonaws.com (string)",
 	// Chatbot の service-linked role
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = management.chatbot.amazonaws.com (string)",
 	"iam:CreateServiceLinkedRole ; iam:AWSServiceName = config.amazonaws.com (string)",
@@ -494,9 +538,9 @@ func permFake(t *testing.T, identity, apply awsResult) *fakeAWS {
 	}, handler: tableHandler(n, allRows(n, testKeyARN))}
 }
 
-// permExpected は、permissions の出力の行。governance と workload は条件つきの確認の区分の末尾の行（nil なら
-// 条件つきの確認をすべて ok とする）。
-func permExpected(governance, workload, budgets []string) []string {
+// permExpected は、permissions の出力の行。governance・delegated・workload・budgets は条件つきの確認の区分の末尾の
+// 行（nil なら条件つきの確認をすべて ok とする）。
+func permExpected(governance, delegated, workload, budgets []string) []string {
 	out := []string{"# S3 と IAM"}
 	out = append(out, expand(permS3Descs, "ok  ")...)
 	out = append(append(out, "# state の鍵"), expand(permKeyDescs, "ok  ")...)
@@ -506,7 +550,14 @@ func permExpected(governance, workload, budgets []string) []string {
 		governance = expand(permGovernanceGatedDescs, "ok  ")
 	}
 
-	out = append(append(out, governance...), "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）")
+	out = append(append(out, governance...), "# 委任管理者の指定（deployment-identity/ADR-0201 決定7・21、repository-wide/ADR-0209 決定4）")
+	out = append(out, expand(permDelegatedDescs, "ok  ")...)
+
+	if delegated == nil {
+		delegated = expand(permDelegatedGatedDescs, "ok  ")
+	}
+
+	out = append(append(out, delegated...), "# Chatbot の service-linked role（deployment-identity/ADR-0201 決定3）")
 	out = append(append(out, expand(permSLRDescs, "ok  ")...), "# workload の権限の policy と permissions boundary（deployment-identity/ADR-0201 決定5・13-17）")
 	out = append(out, expand(permWorkloadDescs, "ok  ")...)
 
@@ -716,33 +767,37 @@ func Test_governanceGate(t *testing.T) {
 	n := testNames("")
 
 	for name, tc := range map[string]struct {
-		r     awsResult
-		state gateState
+		r                awsResult
+		state, delegated gateState
 	}{
-		"統制の policy が付いていれば attached": {okResult(governanceAttached), gateAttached},
-		"統制の policy だけでも attached":    {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), gateAttached},
-		"付いていなければ absent":             {okResult(noneAttached), gateAbsent},
-		"manage だけなら absent":          {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`), gateAbsent},
-		"一覧が配列でなければ unknown":          {okResult(`{"AttachedPolicies":{"PolicyName":"tabp-admin-ci-apply-identity-governance"}}`), gateUnknown},
-		"空の応答なら unknown":              {okResult(""), gateUnknown},
+		"両方が付いていれば attached":           {okResult(governanceAttached), gateAttached, gateAttached},
+		"統制の policy だけなら委任管理者は absent": {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`), gateAttached, gateAbsent},
+		"委任管理者の policy だけなら統制は absent": {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-governance-2"}]}`), gateAbsent, gateAttached},
+		"付いていなければ absent":              {okResult(noneAttached), gateAbsent, gateAbsent},
+		"manage だけなら absent":           {okResult(`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"}]}`), gateAbsent, gateAbsent},
+		"一覧が配列でなければ unknown":           {okResult(`{"AttachedPolicies":{"PolicyName":"tabp-admin-ci-apply-identity-governance"}}`), gateUnknown, gateUnknown},
+		"空の応答なら unknown":               {okResult(""), gateUnknown, gateUnknown},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			g, err := governanceGate(newQuery(verifyFake(t, map[string]awsResult{attachedIdentityKey: tc.r}, nil).fn, testRegion), n)
+			g, d, err := governanceGate(newQuery(verifyFake(t, map[string]awsResult{attachedIdentityKey: tc.r}, nil).fn, testRegion), n)
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.state, g.state)
+			assert.Equal(t, tc.delegated, d.state)
 		})
 	}
 
 	t.Run("読めなければ unknown で、NG の確認を持つ", func(t *testing.T) {
 		t.Parallel()
 
-		g, err := governanceGate(newQuery(verifyFake(t, map[string]awsResult{attachedIdentityKey: failed("denied")}, nil).fn, testRegion), n)
+		g, d, err := governanceGate(newQuery(verifyFake(t, map[string]awsResult{attachedIdentityKey: failed("denied")}, nil).fn, testRegion), n)
 
 		require.NoError(t, err)
 		assert.Equal(t, gateUnknown, g.state)
+		assert.Equal(t, gateUnknown, d.state)
+		assert.Nil(t, d.ng.eval, "NG は統制の側だけが持つ")
 
 		v, _ := g.ng.eval(nil)
 		assert.Equal(t, "apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない", g.ng.desc)
@@ -752,7 +807,7 @@ func Test_governanceGate(t *testing.T) {
 	t.Run("aws を起動できなければ errAWSStart", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := governanceGate(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion), n)
+		_, _, err := governanceGate(newQuery(func(...string) awsResult { return awsResult{err: os.ErrNotExist} }, testRegion), n)
 
 		require.ErrorIs(t, err, errAWSStart)
 	})
@@ -828,7 +883,7 @@ func Test_permissionSections(t *testing.T) {
 
 		rows := allRows(n, testKeyARN)
 
-		require.Len(t, rows, permissionsBase+governanceGated+workloadGatedCount+budgetsGatedCount)
+		require.Len(t, rows, permissionsBase+governanceGated+delegatedGated+workloadGatedCount+budgetsGatedCount)
 
 		for _, r := range rows {
 			assert.NotEmpty(t, r.actions, r.desc())
@@ -861,7 +916,7 @@ func Test_permissionSections(t *testing.T) {
 
 		var descs []string
 		for _, l := range [][]string{
-			permS3Descs, permKeyDescs, permGovernanceDescs, permGovernanceGatedDescs, permSLRDescs, permWorkloadDescs, permWorkloadGatedDescs,
+			permS3Descs, permKeyDescs, permGovernanceDescs, permGovernanceGatedDescs, permDelegatedDescs, permDelegatedGatedDescs, permSLRDescs, permWorkloadDescs, permWorkloadGatedDescs,
 			permBudgetsDescs, permBudgetsGatedDescs, permUnlockIdentityDescs, permUnlockDescs,
 		} {
 			descs = append(descs, expand(l, "")...)
@@ -934,7 +989,7 @@ func Test_permissionSections(t *testing.T) {
 
 		w := newNames(verifyOptions{project: testProject, region: "us-west-2"}, testAccount)
 
-		assert.True(t, slices.ContainsFunc(permissionSections(w, testKeyARN, "")[4].rows, func(r simRow) bool {
+		assert.True(t, slices.ContainsFunc(permissionSections(w, testKeyARN, "")[5].rows, func(r simRow) bool {
 			return r.want == implicitDeny && r.resource == "arn:aws:sns:eu-west-1:123456789012:tabp-admin-ops-notification"
 		}))
 	})
@@ -955,19 +1010,21 @@ func Test_permissionsSteps(t *testing.T) {
 	}
 
 	for name, tc := range map[string]struct {
-		identity, apply             string
-		governance, workload, budgt []string
-		count                       int
-		result                      string
+		identity, apply                        string
+		governance, delegated, workload, budgt []string
+		count                                  int
+		result                                 string
 	}{
-		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 145 件のうち NG 0 件"},
-		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
-			"# 結果: 141 件のうち NG 0 件（確かめていない区分 1）"},
-		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, []string{workloadAbsent}, []string{budgetsAbsent},
-			permissionsBase + governanceGated, "# 結果: 113 件のうち NG 0 件（確かめていない区分 2）"},
-		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
-			"# 結果: 109 件のうち NG 0 件（確かめていない区分 3）"},
+		"条件つきの確認がすべて走る": {governanceAttached, workloadAttached, nil, nil, nil, nil, permissionsBase + governanceGated + delegatedGated + workloadGatedCount + budgetsGatedCount,
+			"# 結果: 163 件のうち NG 0 件"},
+		"統制の policy が付いていない": {noneAttached, workloadAttached, []string{governanceAbsent}, []string{delegatedAbsent}, nil, nil, permissionsBase + workloadGatedCount + budgetsGatedCount,
+			"# 結果: 149 件のうち NG 0 件（確かめていない区分 2）"},
+		"委任管理者の policy だけが付いていない": {`{"AttachedPolicies":[{"PolicyName":"tabp-admin-ci-apply-identity-manage"},{"PolicyName":"tabp-admin-ci-apply-identity-governance"}]}`, workloadAttached,
+			nil, []string{delegatedAbsent}, nil, nil, permissionsBase + governanceGated + workloadGatedCount + budgetsGatedCount, "# 結果: 153 件のうち NG 0 件（確かめていない区分 1）"},
+		"workload の policy が付いていない": {governanceAttached, noneAttached, nil, nil, []string{workloadAbsent}, []string{budgetsAbsent},
+			permissionsBase + governanceGated + delegatedGated, "# 結果: 131 件のうち NG 0 件（確かめていない区分 2）"},
+		"どちらも付いていない": {noneAttached, noneAttached, []string{governanceAbsent}, []string{delegatedAbsent}, []string{workloadAbsent}, []string{budgetsAbsent}, permissionsBase,
+			"# 結果: 117 件のうち NG 0 件（確かめていない区分 4）"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -975,7 +1032,7 @@ func Test_permissionsSteps(t *testing.T) {
 			lines, err := run(t, permFake(t, okResult(tc.identity), okResult(tc.apply)))
 
 			require.NoError(t, err)
-			assert.Equal(t, append(permExpected(tc.governance, tc.workload, tc.budgt), tc.result), lines)
+			assert.Equal(t, append(permExpected(tc.governance, tc.delegated, tc.workload, tc.budgt), tc.result), lines)
 			assert.Contains(t, tc.result, "# 結果: "+strconv.Itoa(tc.count)+" 件", "件数は表と独立の定数から")
 		})
 	}
@@ -988,18 +1045,20 @@ func Test_permissionsSteps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Equal(t, append(permExpected(
 			[]string{"NG  apply-identity: list-attached-role-policies を読めないので、統制の policy が付いているかを決められない（呼び出しが失敗: denied）"},
+			[]string{delegatedUnknown},
 			[]string{"NG  apply: list-attached-role-policies を読めないので、workload の3つの policy が付いているかを決められない（呼び出しが失敗: denied）"},
 			[]string{budgetsUnknown},
-		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 1）"), lines)
+		), "# 結果: "+strconv.Itoa(permissionsBase+2)+" 件のうち NG 2 件（確かめていない区分 2）"), lines)
 	})
 
-	t.Run("統制の policy を読めなければ NG 1 件で、確かめていない区分には数えない", func(t *testing.T) {
+	t.Run("統制の policy を読めなければ NG 1 件で、委任管理者の区分だけを確かめていない区分に数える", func(t *testing.T) {
 		t.Parallel()
 
 		lines, err := run(t, permFake(t, failed("denied"), okResult(workloadAttached)))
 
 		require.ErrorIs(t, err, errMismatch)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 1 件", lines[len(lines)-1])
+		assert.Contains(t, lines, delegatedUnknown)
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("workload の policy を読めなければ NG 1 件で、budgets の注記だけを確かめていない区分に数える", func(t *testing.T) {
@@ -1009,7 +1068,7 @@ func Test_permissionsSteps(t *testing.T) {
 
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, budgetsUnknown)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("apply の managed policy が想定と違えば、名前を添えて NG", func(t *testing.T) {
@@ -1020,7 +1079,7 @@ func Test_permissionsSteps(t *testing.T) {
 		require.ErrorIs(t, err, errMismatch)
 		assert.Contains(t, lines, "NG  apply の role に付く managed policy が workload の3つの policy ではない（x）")
 		assert.Contains(t, lines, budgetsUnknown)
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+1)+" 件のうち NG 1 件（確かめていない区分 1）", lines[len(lines)-1])
 	})
 
 	t.Run("state の鍵の ARN を読めなければ NG を数え、その鍵の行は aws を呼ばずに NG", func(t *testing.T) {
@@ -1038,7 +1097,7 @@ func Test_permissionsSteps(t *testing.T) {
 		assert.Equal(t, "NG  state の鍵の ARN（alias/tabp-admin-tfstate）を読めない（呼び出しが失敗: NotFoundException）", lines[i+1])
 		assert.Equal(t, "NG  apply-identity arn:aws:kms:ap-northeast-1:123456789012:key/unknown: 6 件が allowed（state の鍵の ARN を読めない）", lines[i+2])
 		// 鍵を読めない NG 1 と、鍵を使う行（鍵の区分 6、unlock-identity と unlock の各 1）。
-		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 9 件", lines[len(lines)-1])
+		assert.Equal(t, "# 結果: "+strconv.Itoa(permissionsBase+governanceGated+delegatedGated+workloadGatedCount+budgetsGatedCount+1)+" 件のうち NG 9 件", lines[len(lines)-1])
 
 		for _, c := range f.calls {
 			assert.NotContains(t, c, "key/unknown")

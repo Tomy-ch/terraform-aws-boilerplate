@@ -298,6 +298,7 @@
       "customer_managed_policies": [
         "module.deployment_identity.module.github_oidc.aws_iam_policy.boundary",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.governance",
+        "module.deployment_identity.module.github_oidc.aws_iam_policy.governance_2",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.manage",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload",
         "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_2",

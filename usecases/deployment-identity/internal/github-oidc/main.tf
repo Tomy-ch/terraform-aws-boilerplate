@@ -107,6 +107,19 @@ resource "aws_iam_policy" "governance" {
   depends_on = [aws_iam_role_policy.apply_identity]
 }
 
+# 委任管理者の指定と解除（deployment-identity/ADR-0201 決定7・21）。
+resource "aws_iam_policy" "governance_2" {
+  count = local.management ? 1 : 0
+
+  name = local.governance_2_policy_name
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = concat(local.delegated_admin_read_statements, local.delegated_admin_manage_statements, local.delegated_admin_region_deny.apply)
+  })
+
+  depends_on = [aws_iam_role_policy.apply_identity]
+}
+
 # apply の role の workload の権限（deployment-identity/ADR-0201 決定17）。
 resource "aws_iam_policy" "workload" {
   name = local.workload_policy_name
@@ -165,6 +178,13 @@ resource "aws_iam_role_policy_attachment" "governance" {
   policy_arn = aws_iam_policy.governance[0].arn
 }
 
+resource "aws_iam_role_policy_attachment" "governance_2" {
+  count = local.management ? 1 : 0
+
+  role       = aws_iam_role.apply_identity.name
+  policy_arn = aws_iam_policy.governance_2[0].arn
+}
+
 resource "aws_iam_role_policy_attachment" "workload" {
   role       = aws_iam_role.this["apply"].name
   policy_arn = aws_iam_policy.workload.arn
@@ -195,6 +215,7 @@ resource "aws_iam_role_policy_attachments_exclusive" "this" {
   depends_on = [
     aws_iam_role_policy_attachment.manage,
     aws_iam_role_policy_attachment.governance,
+    aws_iam_role_policy_attachment.governance_2,
     aws_iam_role_policy_attachment.workload,
     aws_iam_role_policy_attachment.workload_read,
     aws_iam_role_policy_attachment.workload_2,

@@ -130,6 +130,10 @@ run "policies" {
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance" }
   }
   override_resource {
+    target = aws_iam_policy.governance_2[0]
+    values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2" }
+  }
+  override_resource {
     target = aws_iam_policy.manage
     values = { arn = "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage" }
   }
@@ -298,10 +302,26 @@ run "policies" {
         ]
         Resource = ["arn:aws:cloudformation:ap-northeast-1:123456789012:stackset/tabp-break-glass:*"]
       },
+      { Sid = "OrganizationsListDelegatedAdministrators", Effect = "Allow", Action = "organizations:ListDelegatedAdministrators", Resource = "*" },
+      {
+        Sid      = "ReadCloudTrailServiceLinkedRoles"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = ["arn:aws:iam::123456789012:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail", "arn:aws:iam::123456789012:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"]
+      },
+      { Sid = "GuarddutyListOrganizationAdminAccounts", Effect = "Allow", Action = "guardduty:ListOrganizationAdminAccounts", Resource = "*" },
+      { Sid = "Inspector2ListDelegatedAdminAccounts", Effect = "Allow", Action = "inspector2:ListDelegatedAdminAccounts", Resource = "*" },
       {
         Sid       = "DenyBaselineOutsideRegions"
         Effect    = "Deny"
         Action    = ["access-analyzer:GetAnalyzer", "config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders", "config:DescribeDeliveryChannels", "config:DescribeRetentionConfigurations", "ec2:DescribeRegions", "ec2:DescribeVpcBlockPublicAccessOptions", "ec2:GetEbsEncryptionByDefault", "elasticmapreduce:GetBlockPublicAccessConfiguration", "ssm:GetServiceSetting"]
+        Resource  = "*"
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
+      },
+      {
+        Sid       = "DenyDelegatedAdminOutsideRegions"
+        Effect    = "Deny"
+        Action    = ["guardduty:ListOrganizationAdminAccounts", "inspector2:ListDelegatedAdminAccounts"]
         Resource  = "*"
         Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
       },
@@ -716,6 +736,7 @@ run "policies" {
         Resource = [
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance",
+          "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read",
           "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2",
@@ -742,7 +763,7 @@ run "policies" {
         Action   = "iam:AttachRolePolicy"
         Resource = "arn:aws:iam::123456789012:role/tabp-admin-ci-apply-identity"
         Condition = {
-          ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"] }
+          ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2"] }
         }
       },
       {
@@ -894,7 +915,7 @@ run "policies" {
       ]) == jsonencode([
       [aws_iam_role.this["plan"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
       [aws_iam_role.this["apply"].name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"]],
-      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"]],
+      [aws_iam_role.apply_identity.name, ["arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2", "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"]],
       [aws_iam_role.this["unlock"].name, []],
       [aws_iam_role.this["unlock_identity"].name, []],
     ])
@@ -909,6 +930,7 @@ run "policies" {
       [aws_iam_role_policy_attachment.plan_workload_read.role, aws_iam_role_policy_attachment.plan_workload_read.policy_arn],
       [aws_iam_role_policy_attachment.manage.role, aws_iam_role_policy_attachment.manage.policy_arn],
       [aws_iam_role_policy_attachment.governance[0].role, aws_iam_role_policy_attachment.governance[0].policy_arn],
+      [aws_iam_role_policy_attachment.governance_2[0].role, aws_iam_role_policy_attachment.governance_2[0].policy_arn],
       ]) == jsonencode([
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload"],
       [aws_iam_role.this["apply"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
@@ -916,6 +938,7 @@ run "policies" {
       [aws_iam_role.this["plan"].name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-workload-read"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-manage"],
       [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance"],
+      [aws_iam_role.apply_identity.name, "arn:aws:iam::123456789012:policy/tabp-admin-ci-apply-identity-governance-2"],
     ])
     error_message = "workload の3つの policy と plan の role の読み取りの policy と manage と統制の policy を付けるのが、それぞれの role への attachment になっていません。"
   }
@@ -1267,6 +1290,68 @@ run "policies" {
   assert {
     condition     = length(var.sso_read_actions) == 58
     error_message = "Identity Center の Read・List の Action の写しが 58 件ではありません。"
+  }
+
+  assert {
+    condition     = aws_iam_policy.governance_2[0].name == "tabp-admin-ci-apply-identity-governance-2"
+    error_message = "委任管理者の customer managed policy の名前が <name_prefix>-ci-apply-identity-governance-2 になっていません。"
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_policy.governance_2[0].policy).Statement == [
+      { Sid = "OrganizationsListDelegatedAdministrators", Effect = "Allow", Action = "organizations:ListDelegatedAdministrators", Resource = "*" },
+      {
+        Sid      = "ReadCloudTrailServiceLinkedRoles"
+        Effect   = "Allow"
+        Action   = "iam:GetRole"
+        Resource = ["arn:aws:iam::123456789012:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail", "arn:aws:iam::123456789012:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"]
+      },
+      { Sid = "GuarddutyListOrganizationAdminAccounts", Effect = "Allow", Action = "guardduty:ListOrganizationAdminAccounts", Resource = "*" },
+      { Sid = "Inspector2ListDelegatedAdminAccounts", Effect = "Allow", Action = "inspector2:ListDelegatedAdminAccounts", Resource = "*" },
+      {
+        Sid       = "RegisterDelegatedAdministrators"
+        Effect    = "Allow"
+        Action    = ["organizations:DeregisterDelegatedAdministrator", "organizations:RegisterDelegatedAdministrator"]
+        Resource  = "arn:aws:organizations::123456789012:account/o-*/*"
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["access-analyzer.amazonaws.com", "cloudtrail.amazonaws.com", "config.amazonaws.com", "guardduty.amazonaws.com", "inspector2.amazonaws.com"] } }
+      },
+      {
+        Sid       = "EnableSecurityServiceAccess"
+        Effect    = "Allow"
+        Action    = "organizations:EnableAWSServiceAccess"
+        Resource  = "*"
+        Condition = { StringEquals = { "organizations:ServicePrincipal" = ["guardduty.amazonaws.com", "inspector2.amazonaws.com"] } }
+      },
+      { Sid = "DescribeOrganizationAccounts", Effect = "Allow", Action = "organizations:DescribeAccount", Resource = "arn:aws:organizations::123456789012:account/o-*/*" },
+      { Sid = "CloudtrailRegisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:RegisterOrganizationDelegatedAdmin", Resource = "*" },
+      { Sid = "CloudtrailDeregisterOrganizationDelegatedAdmin", Effect = "Allow", Action = "cloudtrail:DeregisterOrganizationDelegatedAdmin", Resource = "*" },
+      {
+        Sid       = "CreateCloudTrailServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "cloudtrail.amazonaws.com" } }
+      },
+      {
+        Sid       = "CreateCloudTrailEventContextServiceLinkedRole"
+        Effect    = "Allow"
+        Action    = "iam:CreateServiceLinkedRole"
+        Resource  = "arn:aws:iam::123456789012:role/aws-service-role/context.cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrailEventContext"
+        Condition = { StringEquals = { "iam:AWSServiceName" = "context.cloudtrail.amazonaws.com" } }
+      },
+      { Sid = "GuarddutyDisableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:DisableOrganizationAdminAccount", Resource = "*" },
+      { Sid = "GuarddutyEnableOrganizationAdminAccount", Effect = "Allow", Action = "guardduty:EnableOrganizationAdminAccount", Resource = "*" },
+      { Sid = "Inspector2DisableDelegatedAdminAccount", Effect = "Allow", Action = "inspector2:DisableDelegatedAdminAccount", Resource = "*" },
+      { Sid = "Inspector2EnableDelegatedAdminAccount", Effect = "Allow", Action = "inspector2:EnableDelegatedAdminAccount", Resource = "*" },
+      {
+        Sid       = "DenyDelegatedAdminOutsideRegions"
+        Effect    = "Deny"
+        Action    = ["guardduty:DisableOrganizationAdminAccount", "guardduty:EnableOrganizationAdminAccount", "guardduty:ListOrganizationAdminAccounts", "inspector2:DisableDelegatedAdminAccount", "inspector2:EnableDelegatedAdminAccount", "inspector2:ListDelegatedAdminAccounts"]
+        Resource  = "*"
+        Condition = { StringNotEquals = { "aws:RequestedRegion" = ["ap-northeast-1", "ap-northeast-2", "ap-northeast-3", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "eu-central-1", "eu-north-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1", "us-east-1", "us-east-2", "us-west-1", "us-west-2"] } }
+      },
+    ]
+    error_message = "委任管理者の policy が、5つのサービスの委任管理者の指定・解除と読み取り、GuardDuty と Inspector の信頼アクセスの有効化、CloudTrail の SLR の作成と、リージョンごとの Action の集合の外の拒否になっていません。"
   }
 
   assert {
@@ -1733,6 +1818,7 @@ run "policy_length" {
     condition = alltrue([
       for m in [{
         governance    = aws_iam_policy.governance
+        governance_2  = aws_iam_policy.governance_2
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -1854,6 +1940,7 @@ run "policy_length_outside_admin" {
     condition = alltrue([
       for m in [{
         governance    = aws_iam_policy.governance
+        governance_2  = aws_iam_policy.governance_2
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2022,6 +2109,7 @@ run "policy_length_aws" {
     condition = alltrue([
       for m in [{
         governance    = aws_iam_policy.governance
+        governance_2  = aws_iam_policy.governance_2
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2166,6 +2254,7 @@ run "policy_length_outside_admin_aws" {
     condition = alltrue([
       for m in [{
         governance    = aws_iam_policy.governance
+        governance_2  = aws_iam_policy.governance_2
         manage        = [aws_iam_policy.manage]
         workload      = [aws_iam_policy.workload]
         workload_read = [aws_iam_policy.workload_read]
@@ -2243,6 +2332,7 @@ run "role_arns_follow_data_sources" {
       [
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-manage",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance",
+        "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-identity-governance-2",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-read",
         "arn:aws-us-gov:iam::210987654321:policy/t4bp-dev-ci-apply-workload-2",
@@ -2602,7 +2692,7 @@ run "no_governance_in_dev" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
     error_message = "dev に、統制の customer managed policy が作られています。"
   }
 
@@ -2734,7 +2824,7 @@ run "no_governance_in_security" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
     error_message = "security に、統制の customer managed policy が作られています。"
   }
 
@@ -2848,7 +2938,7 @@ run "no_governance_in_log_archive" {
   }
 
   assert {
-    condition     = length(aws_iam_policy.governance) == 0
+    condition     = length(aws_iam_policy.governance) == 0 && length(aws_iam_policy.governance_2) == 0
     error_message = "log-archive に、統制の customer managed policy が作られています。"
   }
 
@@ -3000,7 +3090,7 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage"])
+    condition     = jsonencode(sort(tolist(aws_iam_role_policy_attachments_exclusive.this["apply_identity"].policy_arns))) == jsonencode(["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage"])
     error_message = "apply-identity の role に付く manage と統制の policy の ARN が、partition・アカウント・name_prefix から組まれていません。"
   }
 
@@ -3027,8 +3117,29 @@ run "governance_follows_data_sources" {
   }
 
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance"] } }
+    condition     = one([for s in jsondecode(aws_iam_role_policy.apply_identity.policy).Statement : s.Condition if s.Sid == "AttachApplyIdentityPolicies"]) == { ArnEquals = { "iam:PolicyARN" = ["arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-manage", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance", "arn:aws-us-gov:iam::210987654321:policy/t4bp-admin-ci-apply-identity-governance-2"] } }
     error_message = "apply-identity が自分の role に付けてよい policy の ARN が、partition・アカウント・name_prefix から組んだ manage と統制の policy になっていません。"
+  }
+
+  assert {
+    condition = [for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : s.Sid] == [
+      "OrganizationsListDelegatedAdministrators", "ReadCloudTrailServiceLinkedRoles", "RegisterDelegatedAdministrators", "EnableSecurityServiceAccess", "DescribeOrganizationAccounts",
+      "CloudtrailRegisterOrganizationDelegatedAdmin", "CloudtrailDeregisterOrganizationDelegatedAdmin", "CreateCloudTrailServiceLinkedRole", "CreateCloudTrailEventContextServiceLinkedRole",
+    ]
+    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、委任管理者の policy が GuardDuty と Inspector の文と、リージョンの Deny を外していません。"
+  }
+
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.this["plan"].policy, "guardduty:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "inspector2:") && !strcontains(aws_iam_role_policy.this["plan"].policy, "DenyDelegatedAdminOutsideRegions")
+    error_message = "repository-wide/ADR-0209 の集合を持たない partition で、plan の role が GuardDuty と Inspector の読み取りと、リージョンの Deny を外していません。"
+  }
+
+  assert {
+    condition = one([for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : [s.Resource, s.Condition] if s.Sid == "CreateCloudTrailServiceLinkedRole"]) == [
+      "arn:aws-us-gov:iam::210987654321:role/aws-service-role/cloudtrail.amazonaws.com/AWSServiceRoleForCloudTrail",
+      { StringEquals = { "iam:AWSServiceName" = "cloudtrail.amazonaws.com" } },
+    ] && one([for s in jsondecode(aws_iam_policy.governance_2[0].policy).Statement : s.Resource if s.Sid == "RegisterDelegatedAdministrators"]) == "arn:aws-us-gov:organizations::210987654321:account/o-*/*"
+    error_message = "委任管理者の policy の Resource が、partition・アカウントから組まれていません。"
   }
 
   assert {
