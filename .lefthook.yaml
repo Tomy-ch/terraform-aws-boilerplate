@@ -37,6 +37,14 @@ pre-commit:
       glob: "**/*.md"
       run: make adr-lint
 
+    # 何を見るかと、なぜ要るかは scripts/README.md の ref-record-lint 行が持つ。
+    # README に絞らないのは、ユースケースと module のディレクトリの追加と削除も対象を変えるため。
+    ref-record-lint:
+      glob:
+        - "usecases/**"
+        - "modules/**"
+      run: make ref-record-lint
+
     # 何を見るかと、なぜ要るかは scripts/README.md の skill-lint 行が持つ。
     skill-lint:
       glob:
@@ -116,7 +124,6 @@ pre-commit:
         - ".lefthook.yaml"
       run: make pin-images-check
 
-    # テストを hook から外さない（ADR-0702 決定16）。
     go-fmt-check:
       glob: "scripts/**/*.go"
       run: make go-fmt-check
