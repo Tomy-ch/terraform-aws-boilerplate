@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -140,7 +141,7 @@ func run(args []string, wd func() (string, error), apiBase string) error {
 	switch args[0] {
 	case "resolve":
 		fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
-		minAge := fs.Int("min-age-days", 0, "N 日未満のコミットは quarantine（0 で無効）")
+		minAge := fs.Int("min-age-days", cooldown.PinWindowDays, "N 日未満のコミットは quarantine（0 で無効）")
 		if err := fs.Parse(args[1:]); err != nil {
 			// usage は flag が既に出力している。
 			if xerrors.Is(err, flag.ErrHelp) {
