@@ -2,7 +2,7 @@
 //
 // **窓を読む実装は複数ある**（scripts/tool-cooldown と scripts/go-cooldown の gate、
 // scripts/versions が docker/tools/node/pnpm-workspace.yaml へ書く pnpm の minimumReleaseAge、
-// scripts/pin-images と scripts/pin-actions の resolve）。
+// scripts/pin-images と scripts/pin-actions の resolve、scripts/repo-settings が Dependabot の cooldown と比べる下限）。
 // 同じ日数を各々が定数で持つと、片方だけを変えたときに窓が黙って割れる。
 package cooldown
 

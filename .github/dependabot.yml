@@ -2,10 +2,10 @@
 # was published. A security update skips it and opens immediately, which is Dependabot's own
 # behaviour and not configurable here.
 #
-# docker / docker-compose / github-actions は、更新を取り込むときに digest / SHA の固定を解決し直す
-# （make pin-images-resolve / make pin-actions-resolve）。その解決は既定 14 日未満の公開物を採用しない
-# （.makefiles/docker/pin.mk の PIN_IMAGES_MIN_AGE_DAYS、.makefiles/github/pin.mk の PIN_ACTIONS_MIN_AGE_DAYS）。
-# cooldown がそれより短いと、取り込めない PR が先に開く。
+# 各 ecosystem の cooldown は、その更新を取り込むときに掛かる窓より短くしない。短いと、取り込めない PR が
+# 先に開く（ADR-0501 決定17）。docker / docker-compose / github-actions は digest / SHA の固定を解決し直す窓
+# （make pin-images-resolve / make pin-actions-resolve の既定）、gomod は make go-cooldown-gate の窓で、
+# どちらも scripts/lib/cooldown の定数が持つ。make repo-settings-check が下回らないことを確かめる。
 version: 2
 updates:
   - package-ecosystem: "gomod"
@@ -14,8 +14,8 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 5
-      semver-patch-days: 5
+      default-days: 7
+      semver-patch-days: 7
       semver-minor-days: 7
       semver-major-days: 30
     labels:

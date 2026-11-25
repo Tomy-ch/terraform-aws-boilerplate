@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	dependabotFixture = "version: 2\nupdates:\n  - package-ecosystem: \"gomod\"\n    labels:\n      - \"dependencies\"\n      - \"go\"\n  - package-ecosystem: \"docker\"\n"
+	dependabotFixture = "version: 2\nupdates:\n  - package-ecosystem: \"gomod\"\n    cooldown:\n      default-days: 7\n    labels:\n      - \"dependencies\"\n      - \"go\"\n  - package-ecosystem: \"docker\"\n    cooldown:\n      default-days: 14\n"
 	labelsFixture     = `[{"name": "dependencies", "color": "0366d6"}, {"name": "go", "color": "16e2e2"}, {"name": "bug", "color": "d73a4a"}]`
 )
 
@@ -61,11 +61,11 @@ func Test_checkDependabotLabels(t *testing.T) {
 	}
 }
 
-// assertOnlySentinel は、err が sentinel に当たり、ラベルの検査のほかの sentinel に当たらないことを要求します。
+// assertOnlySentinel は、err が sentinel に当たり、Dependabot の検査のほかの sentinel に当たらないことを要求します。
 func assertOnlySentinel(t *testing.T, err, sentinel error) {
 	t.Helper()
 	require.ErrorIs(t, err, sentinel)
-	for _, other := range []error{errDependabotParse, errLabelsParse, errDependabotLabels} {
+	for _, other := range []error{errDependabotParse, errLabelsParse, errDependabotLabels, errDependabotCooldown} {
 		if !errors.Is(other, sentinel) {
 			assert.NotErrorIs(t, err, other)
 		}

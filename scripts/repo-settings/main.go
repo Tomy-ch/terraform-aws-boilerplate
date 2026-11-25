@@ -159,6 +159,8 @@ type declarations struct {
 	exprs int
 	// dependabotLabels は、labels.json にあることを確かめた Dependabot のラベルの数。
 	dependabotLabels int
+	// dependabotCooldowns は、cooldown が取り込みの窓を下回らないことを確かめた Dependabot の ecosystem の数。
+	dependabotCooldowns int
 }
 
 // readDeclarations は宣言を読み、検証し、include の区間を生成し直します。書き込みはしません。
@@ -216,6 +218,10 @@ func readDeclarations(root string) (declarations, error) {
 	if err != nil {
 		return declarations{}, err
 	}
+	dependabotCooldowns, err := checkDependabotCooldown(dependabot)
+	if err != nil {
+		return declarations{}, err
+	}
 	src, err := os.ReadFile(filepath.Clean(filepath.Join(root, rulesetFile)))
 	if err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s の読み取り", rulesetFile)
@@ -231,7 +237,7 @@ func readDeclarations(root string) (declarations, error) {
 	if err := verifyInclude(rendered, includes); err != nil {
 		return declarations{}, xerrors.Wrapf(err, "%s", rulesetFile)
 	}
-	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels}, nil
+	return declarations{branches: b, environments: envs, vulnerabilityReporting: pvr, ruleset: src, rendered: rendered, workflows: workflows, sets: sets, marks: marks, exprs: exprs, dependabotLabels: dependabotLabels, dependabotCooldowns: dependabotCooldowns}, nil
 }
 
 // loadDesired は宣言からあるべき実態を組みます。include の区間がずれていればエラーにします
@@ -262,9 +268,9 @@ func applyOrCheck(root string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件",
+	summary := fmt.Sprintf("保護対象 %d 件、environment %d 件、%s の宣言（enabled=%t）、apply の workflow %d 件、分岐の集合の印 %d 件（workflow %d 件）、ref を比べる式の検査 %d 件、labels.json にある Dependabot のラベル %d 件、窓を下回らない Dependabot の cooldown %d 件",
 		len(rulesetIncludes(decl.branches)), len(decl.environments), vulnerabilityReportingName, decl.vulnerabilityReporting,
-		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels)
+		len(decl.workflows), decl.marks, len(decl.sets), decl.exprs, decl.dependabotLabels, decl.dependabotCooldowns)
 	changed := map[string]string{}
 	var names []string
 	if string(decl.rendered) != string(decl.ruleset) {
