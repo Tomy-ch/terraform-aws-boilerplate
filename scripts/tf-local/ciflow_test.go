@@ -312,7 +312,6 @@ func Test_ciFinishStep(t *testing.T) {
 		f.leftovers()
 	})
 
-	// preparedState は、prepare と init を通した state を読み、Stage と Established を差し替えて書き戻す。
 	preparedState := func(t *testing.T, established bool, drop bool) *flow {
 		t.Helper()
 		f := newFlow(t, nil)

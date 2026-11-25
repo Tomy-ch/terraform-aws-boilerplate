@@ -93,8 +93,7 @@ type ciState struct {
 	Done      []string `json:"done"`
 	// Stage は失敗した段の種類。空なら失敗していない。
 	Stage string `json:"stage"`
-	// Established は、Stage の失敗が対象について否と言えた判定であることです。無い（古い state）なら成り立たない側に
-	// 倒します。
+	// Established は、Stage の失敗が対象について否と言えた判定であることです。無ければ成り立たない側に倒します。
 	Established bool   `json:"established"`
 	Applied     bool   `json:"applied"`
 	Summary     string `json:"summary"`
@@ -152,7 +151,6 @@ func (s *ciState) done(step string) {
 	}
 }
 
-// isVerdict は、err が対象について否と言えた判定（終了コード 1）かを返します。
 func isVerdict(err error) bool {
 	return exitCode(err) == 1
 }

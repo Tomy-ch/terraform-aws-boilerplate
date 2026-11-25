@@ -14,7 +14,7 @@
 //
 // 入口の段は、1回の起動で1つの目的の道具（aws か terraform か conftest）だけを、固定の引数で起動する
 // （ADR-0702 決定3・24）。人の手元の段は local.go、CI の資格情報の段は cicred.go、plan と apply の段は ciflow.go、
-// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて非ゼロで終わり、make はその時点で
+// lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて失敗し（終了コードは下）、make はその時点で
 // 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
 // 終了コードは lib/toolrun の取り決めで、対象について否と言えた失敗（plan の失敗、Policy の違反、apply の失敗、
