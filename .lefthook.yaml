@@ -108,9 +108,12 @@ pre-commit:
       run: make pin-actions-check
     pin-images-check:
       glob:
-        - "docker/**/Dockerfile"
-        - "docker-compose.yaml"
+        - "docker/*/Dockerfile"
+        - "docker-compose*.yaml"
+        - ".github/workflows/*.{yml,yaml}"
+        - ".github/actions/**/action.{yml,yaml}"
         - "docker/images-pin.toml"
+        - ".lefthook.yaml"
       run: make pin-images-check
 
     # テストを hook から外さない（ADR-0702 決定16）。
