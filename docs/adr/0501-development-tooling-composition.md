@@ -145,8 +145,8 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
 ### 依存の更新
 
-16. Terraform 本体・provider・GitHub Actions・ツール pin の更新を Renovate で継続的に提案する。
-17. Renovate の terraform module manager は無効化する。ADR-0205 決定1-3 により外部 module への依存が存在せず、有効なまま置くと常に0件の検査になる。
+16. GitHub Actions・Docker image（Dockerfile と compose）・Go module の更新を Dependabot で継続的に提案する。Terraform 本体と、manifest（決定19）が pin するそのほかの道具は Dependabot の対象に無いので、`make tool-cooldown-outdated` が上流の新版を報告し、人が取り込む。
+17. 更新の提案に cooldown を置く。その日数を、その ecosystem の更新を取り込むときに掛かる窓（digest / SHA を解決し直す窓と、Go module の取り込みの gate の窓）より短くしない。短いと、取り込めない提案が先に開く。
 18. 更新 PR を自動 merge しない。ADR-0601 決定2 の検証を通すことを条件とする。
 
 ### version の固定と実行
@@ -196,7 +196,7 @@ Security は事情が違う。誤設定の規則は道具ごとに独立に書�
 
 ### 導入順序
 
-31. 初期導入を Terraform CLI / TFLint / `terraform test` / Trivy / Checkov / KICS / Semgrep CE / Renovate / Terraform MCP Server とする。
+31. 初期導入を Terraform CLI / TFLint / `terraform test` / Trivy / Checkov / KICS / Semgrep CE / Dependabot / Terraform MCP Server とする。
 32. 次段階を Conftest（OPA）/ Infracost / tfautomv / Terratest / ローカル hook とする。
 33. terraform-docs / Rover / Inframap は必要が生じた時点で導入する。未使用の道具を pin だけ置かない。
 
@@ -256,7 +256,7 @@ Terraform Cloud / Spacelift 等が提供する検証と実行に統合する。�
 - Static Analysis: 決定6 の各道具に、本走査と同じ条件で落ちることを示す canary があること
 - Static Analysis: 決定6 の各道具のジョブが required context として宣言されていること
 - Static Analysis: `<manager> exec` を含む recipe / hook 定義が存在しないこと（決定20）
-- Static Analysis: Renovate 設定で terraform module manager が無効化されていること（決定17）
+- Static Analysis: `.github/dependabot.yml` の各 ecosystem の cooldown が、その ecosystem を取り込むときの解決の窓を下回らないこと（決定17）
 - レビュー: 決定28 の実行結果を Pull Request に記録すること
 - レビュー: 検査の削除または閾値の緩和を含む Pull Request が、本 ADR の変更を伴うこと（決定14）
 

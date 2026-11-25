@@ -51,7 +51,7 @@
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
 - ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が、`push` で起動する種別の role の `<env>-<role>` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
-- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
+- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`・`create-deploy-branch`（`make create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
 
@@ -101,7 +101,7 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`zizmor` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`ref-record-lint`、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
 | コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`tf-policy`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan`、`trufflehog`、`typos`、`editorconfig-check` |
@@ -128,4 +128,4 @@ Private Vulnerability Reporting を有効にするかの宣言です。[`SECURIT
 
 ## labels.json
 
-`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。名指したラベルがこのファイルにあることは `make repo-settings-check` が検査します。
+`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。名指したラベルがこのファイルにあること（大文字小文字を区別しない）は `make repo-settings-check` が検査します。宣言の形（0件でない、`name` が空でない、`color` が `#` を付けない6桁の16進、名前が大文字小文字を区別せずに重複しない）は、`make repo-settings-check` と、`make delete-all-labels`・`make create-default-labels` が GitHub に書く前に、同じ検査で検めます。`description` を省いたラベルは、既存のラベルの説明も空に書き換えます。

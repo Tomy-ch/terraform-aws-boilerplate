@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
@@ -1519,9 +1521,7 @@ func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
 
-func Test_run(t *testing.T) {
-	t.Parallel()
-
+func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケースが useDockerStub で t.Setenv を使うため並列化不可
 	lockBody := "\"alpine:3.24\" = \"" + digestAlpine + "\"\n"
 
 	t.Run("正常系", func(t *testing.T) {
@@ -1644,6 +1644,67 @@ func Test_run(t *testing.T) {
 			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()))
 
 			require.ErrorContains(t, err, "failed to parse flags")
+		})
+	})
+
+	t.Run("既定の窓", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		const key = "alpine:3.24"
+		daysAgo := func(n int) time.Time {
+			return time.Now().UTC().Add(-time.Duration(n)*hoursPerDay*time.Hour - time.Hour)
+		}
+		setup := func(t *testing.T, existing string) string {
+			t.Helper()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM "+key+"\n")
+			if existing != "" {
+				writeFile(t, filepath.Join(root, lockFile), "\""+key+"\" = \""+existing+"\"\n")
+			}
+			return root
+		}
+
+		t.Run("フラグが無ければ PinWindowDays に1日足りない digest を採らず既存ピンを維持する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestStale}, lock)
+		})
+
+		t.Run("フラグが無ければ PinWindowDays ちょうどの digest を採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays)))
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestFresh}, lock)
+		})
+
+		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない digest を載せずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, "")
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			err := run([]string{"resolve"}, stubWD(root))
+
+			require.ErrorIs(t, err, errNoStepBack)
+			assert.ErrorContains(t, err, fmt.Sprintf("%d 日未満", cooldown.PinWindowDays))
+			assert.ErrorContains(t, err, key)
+			assert.NotContains(t, readAll(t, filepath.Join(root, lockFile)), digestFresh)
+		})
+
+		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない digest も採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestFresh}, lock)
 		})
 	})
 }

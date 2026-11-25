@@ -100,19 +100,33 @@ unsupported:
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
-2026-11-19 に確認した。
+参照日: 2026-11-19（break-glass の role の attachment の項は 2026-11-20）
 
-| 参照 | 採ったもの | 採らなかったもの（理由） |
-| --- | --- | --- |
-| AWS Provider v6.70.0 の文書と source（`organizations_organization`・`organizations_aws_service_access`・`iam_organizations_features`・`organizations_policy`） | `aws_service_access_principals` は `Optional` で `Computed` でないので書かず、変更を無視する。IAM の信頼アクセスだけ `aws_organizations_aws_service_access` で持つ。policy の `type` に `RESOURCE_CONTROL_POLICY`・`DECLARATIVE_POLICY_EC2` | `aws_service_access_principals` の一覧（併用で互いに上書きする） |
-| AWS Organizations User Guide（管理アカウントのベストプラクティス、SCP、RCP、declarative policy、既定の統制、信頼アクセス、クォータ） | Root への `DenyLeaveOrganizationAndCloseAccount` と同じ文、新しい policy を Root に試験なしに付けない、信頼アクセスをサービスの側で有効化する、SCP の文書は10,240文字・RCP は5,120文字まで | allow-list の SCP（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 案B） |
-| IAM User Guide（root の中央管理、`aws:AssumedRoot`） | `deny-root-user` を `Null aws:AssumedRoot` の形で書く | — |
-| whitepaper「Organizing Your AWS Environment Using Multiple Accounts」 | OU の木（Security・Workloads（Prod・NonProd）・Sandbox・Policy Staging）、break-glass を管理アカウントの IAM user で持つ形 | Infrastructure・Suspended の OU（要るまで作らない） |
-| AWS Security Reference Architecture | Security Tooling・Log Archive のアカウントの分離 | Identity Center と root の中央管理の委任、Infrastructure の OU（[organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md)、[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)） |
-| Well-Architected Framework（2026-11-16 の版。FND01・FND02・FND05） | メンバーの root と IAM user を SCP で縛る、データ境界の SCP と RCP、検知の停止の拒否 | 専用の非常用アカウント（FND05-BP02。[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)） |
-| AWS Provider v6.73.0 の `aws_iam_role`・`aws_iam_role_policy_attachment`・`aws_iam_role_policy_attachments_exclusive` の文書と `internal/service/iam/role.go`（2026-11-20） | break-glass の role に `AdministratorAccess` を `aws_iam_role_policy_attachment` で付け、排他の resource を併用して同じ ARN を載せる（[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定21） | `force_detach_policies`（role の削除だけに効く。role は `prevent_destroy`） |
-| Security Hub の標準（FSBP、CIS AWS Foundations Benchmark v3.0.0・v5.0.0） | IAM.2（group で権限を与える）、IAM.7・IAM.15・IAM.16（password policy） | — |
-| Terraform Registry の AWS・HashiCorp が publisher の module（`aws`・`aws-ia`・`hashicorp` の namespace の一覧から） | `aws-ia/iam-identity-center` を permission set と割当の形の参照先とする | `aws-ia/control_tower_account_factory`（AWS Control Tower を前提とする。この usecase は Control Tower を使わない）。依存として使うことはしない（[ADR-0205](../../docs/adr/0205-module-dependency-policy.md)） |
+- AWS / HashiCorp が publisher の Registry module: `aws`・`aws-ia`・`hashicorp` の namespace の一覧から引いた
+- 参照した一次資料: AWS Provider v6.70.0 の文書と source（`organizations_organization`・`organizations_aws_service_access`・`iam_organizations_features`・`organizations_policy`）、AWS Provider v6.73.0 の `aws_iam_role`・`aws_iam_role_policy_attachment`・`aws_iam_role_policy_attachments_exclusive` の文書と `internal/service/iam/role.go`、AWS Organizations User Guide（管理アカウントのベストプラクティス、SCP、RCP、declarative policy、既定の統制、信頼アクセス、クォータ）、IAM User Guide（root の中央管理、`aws:AssumedRoot`）、whitepaper「Organizing Your AWS Environment Using Multiple Accounts」、AWS Security Reference Architecture、Well-Architected Framework（2026-11-16 の版。FND01・FND02・FND05）、Security Hub の標準（FSBP、CIS AWS Foundations Benchmark v3.0.0・v5.0.0）
+
+採用した知見:
+
+- `aws_service_access_principals` は `Optional` で `Computed` でないので書かず、変更を無視する。IAM の信頼アクセスだけ `aws_organizations_aws_service_access` で持つ。policy の `type` に `RESOURCE_CONTROL_POLICY`・`DECLARATIVE_POLICY_EC2`（AWS Provider v6.70.0 の文書と source）
+- Root への `DenyLeaveOrganizationAndCloseAccount` と同じ文、新しい policy を Root に試験なしに付けない、信頼アクセスをサービスの側で有効化する、SCP の文書は10,240文字・RCP は5,120文字まで（AWS Organizations User Guide）
+- `deny-root-user` を `Null aws:AssumedRoot` の形で書く（IAM User Guide）
+- OU の木（Security・Workloads（Prod・NonProd）・Sandbox・Policy Staging）、break-glass を管理アカウントの IAM user で持つ形（whitepaper）
+- Security Tooling・Log Archive のアカウントの分離（SRA）
+- メンバーの root と IAM user を SCP で縛る、データ境界の SCP と RCP、検知の停止の拒否（Well-Architected Framework）
+- break-glass の role に `AdministratorAccess` を `aws_iam_role_policy_attachment` で付け、排他の resource を併用して同じ ARN を載せる（AWS Provider v6.73.0、[ADR-0301](../../docs/adr/0301-least-privilege-policy.md) 決定21）
+- IAM.2（group で権限を与える）、IAM.7・IAM.15・IAM.16（password policy）（Security Hub の標準）
+- `aws-ia/iam-identity-center` を permission set と割当の形の参照先とする（Registry module）
+
+採用しなかった知見と理由:
+
+- `aws_service_access_principals` の一覧: 併用で互いに上書きする
+- allow-list の SCP: [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 案B
+- Infrastructure・Suspended の OU（whitepaper）: 要るまで作らない
+- Identity Center と root の中央管理の委任、Infrastructure の OU（SRA）: [organization-baseline/ADR-0001](docs/adr/0001-governance-in-management-identity-root.md)、[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)
+- 専用の非常用アカウント（FND05-BP02）: [organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)
+- `force_detach_policies`: role の削除だけに効く。role は `prevent_destroy`
+- `aws-ia/control_tower_account_factory`: AWS Control Tower を前提とする。この usecase は Control Tower を使わない
+- Registry module を依存として使うこと: [ADR-0205](../../docs/adr/0205-module-dependency-policy.md)
 
 ## 公式推奨からの逸脱（[ADR-0207](../../docs/adr/0207-default-value-policy.md) 決定11）
 

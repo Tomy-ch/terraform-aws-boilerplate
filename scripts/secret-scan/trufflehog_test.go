@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitrev"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -137,7 +138,7 @@ func Test_runTrufflehogGit(t *testing.T) {
 		assert.Equal(t, []string{"canary-git " + stepTrufflehogRangeJSON, "canary-fs " + stepTrufflehogFilesystemJSON, r.name() + " " + stepTrufflehogRange}, s.steps())
 		calls := s.calls()
 		assert.Equal(t, from, calls[2].rev)
-		assert.True(t, isHash(calls[0].rev))
+		assert.True(t, gitrev.IsHash(calls[0].rev))
 		assert.NotEqual(t, from, calls[0].rev)
 		assert.Equal(t, "# base\n^base-excluded$\n", s.read("exclude-"+stepTrufflehogRange+"@"+r.name()), "範囲の本走査は範囲の抑止だけを読む")
 		assert.Equal(t, "# base\n^base-excluded$\n# history\n^history-excluded$\n", s.read("exclude-"+stepTrufflehogRangeJSON+"@canary-git"), "canary は和集合を読む")
