@@ -109,6 +109,8 @@ unsupported:
 
 ## 公式実装の参照（[ADR-0206](../../docs/adr/0206-official-implementations-as-reference.md) 決定7・8）
 
+参照日: 2026-11-19
+
 - AWS / HashiCorp が publisher の ECR の Registry module は見つからなかった（`https://registry.terraform.io/v1/modules/search` を `q` = `ecr` / `ecr-repository` / `container-registry`、`provider=aws` で引いた結果に、namespace `aws`・`aws-ia`・`hashicorp`・`aws-samples` が無い。2026-11-19）
 - 参照した一次資料: AWS Provider 6.70.0 の `aws_ecr_repository`・`aws_ecr_registry_scanning_configuration`・`aws_ecr_lifecycle_policy`・`aws_ecr_repository_policy` の文書、Amazon ECR User Guide（[Image tag mutability](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html)、[Image scanning](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html)、[Lifecycle policy parameters](https://docs.aws.amazon.com/AmazonECR/latest/userguide/lifecycle_policy_parameters.html)、[Encryption at rest](https://docs.aws.amazon.com/AmazonECR/latest/userguide/encryption-at-rest.html)、[Pushing an image (IAM)](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-push-iam.html)）、Security Hub の [ECR の control](https://docs.aws.amazon.com/securityhub/latest/userguide/ecr-controls.html)（ECR.1・ECR.2・ECR.3・ECR.5）と [FSBP](https://docs.aws.amazon.com/securityhub/latest/userguide/fsbp-standard.html)（Inspector.2 を含む）。CIS AWS Foundations Benchmark に ECR と Inspector の項目は無い
 
