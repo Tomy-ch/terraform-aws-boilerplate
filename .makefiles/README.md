@@ -128,5 +128,4 @@ identity root の region で `scripts/bootstrap-check account` を起動する�
 
 ### 直下
 
-`runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）、
-`git-isolation.mk`（一時のリポジトリで git を使うレシピを外側のリポジトリから切り離す）。
+`runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）。
