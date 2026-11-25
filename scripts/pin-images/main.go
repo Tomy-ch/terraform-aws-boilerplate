@@ -42,6 +42,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/ghfiles"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/yamlblock"
 	"gopkg.in/yaml.v3"
@@ -126,6 +127,7 @@ var (
 	errHookConfig        = xerrors.New(hookFile + " を解釈できません")
 	errHookMissing       = xerrors.New(hookFile + " の pre-commit に " + hookCommand + " がありません")
 	errHookUncovered     = xerrors.New(hookCommand + " の glob が走査対象のパターンを覆っていません")
+	errInspect           = xerrors.New("docker buildx imagetools inspect が落ちました")
 )
 
 // target は走査対象のファイルと、その参照行を捕捉する正規表現（prefix/ref/suffix の 3 グループ）。
@@ -154,12 +156,54 @@ func (r imageRef) key() string { return r.image + ":" + r.tag }
 func main() {
 	log.SetFlags(0)
 
-	if err := run(os.Args[1:], os.Getwd); err != nil {
-		log.Fatalf("❌ %v", err)
+	if err := run(os.Args[1:], os.Getwd, command); err != nil {
+		log.Printf("❌ %v", err)
+		os.Exit(exitCode(err))
 	}
 }
 
-func run(args []string, wd func() (string, error)) error {
+// exitCode は lib/toolrun の取り決めで、固定の不備（未固定・lockfile の欠け・解釈できない参照・退行先の無い
+// 出来立ての image・hook の不備）を 1、検査を成り立たせられなかったこと（道具を起動できない、inspect が落ちた、
+// 出力を解釈できない、使い方の誤りなど）を 2 で返します。
+func exitCode(err error) int {
+	return toolrun.ExitCode(err, errPinDrift, errLockMissingImage, errLooseRef, errNoStepBack, errHookMissing, errHookUncovered)
+}
+
+// toolFunc は、外部の道具を段ごとに起動するコマンドを作ります。テストは差し替えます。
+type toolFunc = toolrun.Func
+
+// imagetools inspect の段です。created の2つの段は --format の雛形だけが違います。マルチアーキ（index）は .Image が
+// map、単一アーキは struct なので、前者で読めなければ後者を試します。
+const (
+	stepInspect       = "imagetools-inspect"
+	stepCreatedIndex  = "imagetools-created-index"
+	stepCreatedSingle = "imagetools-created-single"
+)
+
+// command は toolFunc の実物です。operand は image の参照1つで、-- の後ろに置き、`-` で始まる参照を option と
+// 読ませません。参照がちょうど1つでなければ、起動せずに落ちる false を返します。
+func command(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+	var args []string
+	switch step {
+	case stepInspect:
+		args = []string{"buildx", "imagetools", "inspect"}
+	case stepCreatedIndex:
+		args = []string{"buildx", "imagetools", "inspect", "--format", `{{ range .Image }}{{ println .Created }}{{ end }}`}
+	case stepCreatedSingle:
+		args = []string{"buildx", "imagetools", "inspect", "--format", `{{ println .Image.Created }}`}
+	}
+	var cmd *exec.Cmd
+	if args == nil || len(operands) != 1 {
+		cmd = exec.CommandContext(ctx, "false")
+	} else {
+		cmd = exec.CommandContext(ctx, "docker", append(append(args, "--"), operands...)...) //nolint:gosec // G204: 参照は Dockerfile と compose の宣言から読んだ image:tag で、-- の後ろだけに置く。道具と option はリテラル
+	}
+	cmd.Dir, cmd.Env = dir, env
+
+	return cmd
+}
+
+func run(args []string, wd func() (string, error), tool toolFunc) error {
 	if len(args) == 0 {
 		return errUsage
 	}
@@ -187,7 +231,7 @@ func run(args []string, wd func() (string, error)) error {
 			return xerrors.Wrap(err, "failed to parse flags")
 		}
 
-		return resolve(root, targets, *minAge)
+		return resolve(root, targets, *minAge, tool)
 	case "apply":
 		return applyOrCheck(root, targets, false)
 	case "check":
@@ -490,7 +534,7 @@ func lastColonSplit(s string) (string, string, bool) {
 	return s[:i], s[i+1:], true
 }
 
-func resolve(root string, targets []target, minAgeDays int) error {
+func resolve(root string, targets []target, minAgeDays int, tool toolFunc) error {
 	if err := validateLoose(root, targets); err != nil {
 		return err
 	}
@@ -510,11 +554,11 @@ func resolve(root string, targets []target, minAgeDays int) error {
 	lock := map[string]string{}
 	var notes, skipped []string
 	for k, r := range keys {
-		digest, err := resolveDigest(ctx, r.key())
+		digest, err := resolveDigest(ctx, tool, r.key())
 		if err != nil {
 			return xerrors.Wrap(err, "resolve "+k)
 		}
-		use, note, err := quarantine(ctx, r, k, digest, minAgeDays, existing)
+		use, note, err := quarantine(ctx, tool, r, k, digest, minAgeDays, existing)
 		if err != nil {
 			return xerrors.Wrap(err, "age "+k)
 		}
@@ -568,11 +612,11 @@ func collectKeys(targets []target) (map[string]imageRef, error) {
 
 // quarantine は minAgeDays 未満の新しすぎる digest を採用しない。第1戻り値 "" は skip。
 // 経過日数の取得に失敗した場合は err で呼び出し元へ伝播する。
-func quarantine(ctx context.Context, r imageRef, key, candidate string, minAgeDays int, existing map[string]string) (string, string, error) {
+func quarantine(ctx context.Context, tool toolFunc, r imageRef, key, candidate string, minAgeDays int, existing map[string]string) (string, string, error) {
 	if minAgeDays <= 0 {
 		return candidate, "", nil
 	}
-	age, err := digestAgeDays(ctx, r.key())
+	age, err := digestAgeDays(ctx, tool, r.key())
 	if err != nil {
 		return "", "", err
 	}
@@ -586,8 +630,8 @@ func quarantine(ctx context.Context, r imageRef, key, candidate string, minAgeDa
 }
 
 // resolveDigest は image:tag の現在の index digest を registry から取得する。
-func resolveDigest(ctx context.Context, ref string) (string, error) {
-	out, err := inspect(ctx, ref)
+func resolveDigest(ctx context.Context, tool toolFunc, ref string) (string, error) {
+	out, err := inspect(ctx, tool, stepInspect, ref)
 	if err != nil {
 		return "", err
 	}
@@ -600,23 +644,19 @@ func resolveDigest(ctx context.Context, ref string) (string, error) {
 
 // digestAgeDays は image:tag が指す digest の image config created から経過日数を返す。
 // 公式イメージのビルド日は publish 日にほぼ一致する。マルチアーキの場合は最も古い created を採る。
-func digestAgeDays(ctx context.Context, ref string) (int, error) {
-	created, err := earliestCreated(ctx, ref)
+func digestAgeDays(ctx context.Context, tool toolFunc, ref string) (int, error) {
+	created, err := earliestCreated(ctx, tool, ref)
 	if err != nil {
 		return 0, err
 	}
 	return int(time.Since(created).Hours() / hoursPerDay), nil
 }
 
-func earliestCreated(ctx context.Context, ref string) (time.Time, error) {
-	// マルチアーキ (index) は .Image が map、単一アーキは struct。前者→後者でフォールバックする。
+func earliestCreated(ctx context.Context, tool toolFunc, ref string) (time.Time, error) {
 	// inspect 自体のエラー（429 等）は握り潰さず伝播し、テンプレート不一致のときだけ次を試す。
 	var lastErr error
-	for _, tmpl := range []string{
-		`{{ range .Image }}{{ println .Created }}{{ end }}`,
-		`{{ println .Image.Created }}`,
-	} {
-		out, err := inspect(ctx, ref, "--format", tmpl)
+	for _, step := range []string{stepCreatedIndex, stepCreatedSingle} {
+		out, err := inspect(ctx, tool, step, ref)
 		if err != nil {
 			lastErr = err
 			continue
@@ -653,18 +693,17 @@ func minCreated(out string) (time.Time, bool) {
 	return earliest, found
 }
 
-func inspect(ctx context.Context, ref string, extra ...string) (string, error) {
+func inspect(ctx context.Context, tool toolFunc, step, ref string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
-	args := append([]string{"buildx", "imagetools", "inspect", ref}, extra...)
-	cmd := exec.CommandContext(cctx, "docker", args...) //nolint:gosec // ref は Dockerfile 由来
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	res, err := toolrun.Run(tool(cctx, "", nil, step, ref))
 	if err != nil {
-		return "", xerrors.Wrap(err, "docker buildx imagetools inspect "+ref+": "+strings.TrimSpace(stderr.String()))
+		return "", xerrors.Wrap(err, "docker buildx imagetools inspect "+ref)
 	}
-	return string(out), nil
+	if res.Code != 0 {
+		return "", xerrors.Wrapf(errInspect, "%s: exit status %d: %s", ref, res.Code, strings.TrimSpace(res.Combined))
+	}
+	return res.Stdout, nil
 }
 
 // rewritePins は lock を元に image 参照（対象4種いずれも共通）を digest 固定した内容と、lock
