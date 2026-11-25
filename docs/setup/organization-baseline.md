@@ -19,12 +19,15 @@
 - root の資格情報の中央管理が有効で、この後に作るメンバーアカウントは root の資格情報を持たない
 - 管理アカウントに break-glass の IAM user が2つ在り、それぞれにパスワードとハードウェア MFA が設定されている
 - 管理アカウントの password policy が、14文字以上・24世代の再利用の禁止・4種の文字を求める
+- Security OU にメンバーアカウント security と log-archive が在り、それぞれに break-glass の role が StackSet で置かれている
 
 ## 3. 手順
 
 ### 3.1 段4 の前: 組織が無いことを確かめる
 
 この usecase は組織を作る。既に組織を持つ管理アカウントは unsupported である。組織と break-glass の IAM user・group・role がまだ無いことは、`bootstrap.md` の段2 と段4 の `make bootstrap-verify STAGE=before-apply` が確かめる。
+
+段4 の apply はメンバーアカウントも作る。段4 の前に 3.8 の手順1-3 を行う。parameter が無いと、段4 の plan が落ちる。
 
 ### 3.2 段5 の後: 組織と policy を確かめる
 
@@ -124,7 +127,34 @@ PolicyStaging に付けた policy の付け先を広げる変更の前に行う�
 
 declarative policy は、付ける前に account status report で影響を見る。RCP は PolicyStaging では本番の文を試せないので、付けた直後に読み取りで確かめ、通らなければ外す変更を昇格する。
 
-### 3.8 セキュリティのサービスの信頼アクセスを有効にする
+### 3.8 メンバーアカウントを作る
+
+メンバーアカウントを作る変更（[organization-baseline の README](../../usecases/organization-baseline/README.md) の対応表に行を足す変更）は取り消せない。手順1-3 は、その変更の merge より前に行う。
+
+1. 各アカウントのメールを用意し、受信できること（グループの受信箱へ届くこと）を確かめる。メールは他の AWS アカウントで使われていないものにする
+2. Service Quotas で、AWS Organizations のアカウント数の上限が、管理アカウントを含めたアカウントの数以上であることを確かめる
+3. 管理アカウントの資格情報で、メールの parameter を置く。key は対応表の env のすべてで、過不足があると plan が落ちる
+
+   ```sh
+   aws ssm put-parameter --region ap-northeast-1 --type String --overwrite --name /<project>/organization-baseline/member-account-emails --value '{"security":"<メール>","log-archive":"<メール>"}'
+   ```
+
+4. 変更を昇格した後、次を確かめて Pull Request に書く
+   1. `aws organizations list-accounts-for-parent --parent-id <Security の OU の ID>` に、作ったアカウントが `ACTIVE` で在る
+   2. 3.5 の「メンバーアカウントを作る変更が昇格した後」の2つ（stack instance が `CURRENT`、break-glass の role への切り替え）
+   3. 次の CI の plan が変更を示さない
+
+作成の途中で apply が落ち、アカウントは在るが state に無いとき（plan がそのアカウントを作ろうとし、apply がメールの重複で落ちる）は、作り直さずに取り込む。
+
+1. `aws organizations list-accounts` で、そのアカウントの ID を確かめる
+2. `env/admin/identity` に `import` block（`to = module.organization_baseline.module.organization.aws_organizations_account.this["<env>"]`、`id = "<アカウントの ID>"`）を足す Pull Request を作り、CI の plan が import 1 と変更なしを示すことを確かめて昇格する
+3. 取り込んだ後、`import` block を消す Pull Request を作る
+
+メールを変えるときは、AWS の側で先に変える。その後に parameter を同じ値に合わせる。parameter だけを変えると、plan が作り直しを求め、`prevent_destroy` で止まる。
+
+立ち上げを終えたアカウントは、`env/admin/identity/main.tf` の `bootstrapping` から外す Pull Request で閉じる。外したアカウントには `deny-bootstrap-role` が付き、`OrganizationAccountAccessRole` が使えなくなる。
+
+### 3.9 セキュリティのサービスの信頼アクセスを有効にする
 
 セキュリティのサービスの委任管理者を security のアカウントに指定する変更の merge より前に、1回行う（[ADR-0602](../adr/0602-bootstrap-and-ci-authentication.md) 決定1）。CloudTrail・AWS Config・IAM Access Analyzer の委任管理者の登録は、信頼アクセスが有効でないと拒まれる（Organizations の `SERVICE_ACCESS_NOT_ENABLED`）。GuardDuty・Inspector・Security Hub は、指定の API が信頼アクセスを有効にするので、ここでは行わない。
 

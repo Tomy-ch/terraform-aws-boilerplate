@@ -75,6 +75,8 @@ add module.organization_baseline.module.break_glass.aws_iam_role_policy_attachme
 add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-1"]
 add module.organization_baseline.module.break_glass.aws_iam_user.this["break-glass-2"]
 add module.organization_baseline.module.organization.aws_iam_organizations_features.this
+add module.organization_baseline.module.organization.aws_organizations_account.this["log-archive"]
+add module.organization_baseline.module.organization.aws_organizations_account.this["security"]
 add module.organization_baseline.module.organization.aws_organizations_aws_service_access.iam
 add module.organization_baseline.module.organization.aws_organizations_organization.this
 add module.organization_baseline.module.organization.aws_organizations_organizational_unit.top["PolicyStaging"]

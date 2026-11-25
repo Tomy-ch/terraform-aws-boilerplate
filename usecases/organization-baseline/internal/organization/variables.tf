@@ -12,3 +12,8 @@ variable "break_glass_role_path" {
   description = "break-glass の role の IAM の path。`/` で始まり `/` で終わる。"
   type        = string
 }
+
+variable "bootstrapping" {
+  description = "立ち上げ中のメンバーアカウントの env。ここに無いアカウントには、OrganizationAccountAccessRole の使用を拒む SCP を付ける。"
+  type        = set(string)
+}
