@@ -115,22 +115,17 @@ var lockFormat = lockfile.Format{
 }
 
 var (
-	// errUsage は、サブコマンドが無いか未知の場合のエラー。
-	errUsage = xerrors.New("usage: pin-images <resolve|apply|check>")
-	// errDigestUnparsable は、inspect 出力から Digest 行を解析できなかった場合のエラー。
-	errDigestUnparsable = xerrors.New("Digest 行を解析できません")
-	// errCreatedUnparsable は、inspect 出力から image config の created を解析できなかった場合のエラー。
+	errUsage             = xerrors.New("usage: pin-images <resolve|apply|check>")
+	errDigestUnparsable  = xerrors.New("Digest 行を解析できません")
 	errCreatedUnparsable = xerrors.New("created を解析できません")
-	// errLockMissingImage は、参照されている image が lockfile に登録されていない場合のエラー。
-	errLockMissingImage = xerrors.New("lockfile に未登録の base image があります")
-	// errPinDrift は、check で未固定・lockfile 不一致の image 参照を検出した場合のエラー。
-	errPinDrift       = xerrors.New("image 参照が未固定か lockfile と不一致です")
-	errNoStepBack     = xerrors.New("退行先の無い出来立て image は採用できません")
-	errLooseRef       = xerrors.New("固定対象として解釈できない image 参照があります")
-	errMissingRewrite = xerrors.New("書き換え対象に内容の対応が無いパスがあります")
-	errHookConfig     = xerrors.New(hookFile + " を解釈できません")
-	errHookMissing    = xerrors.New(hookFile + " の pre-commit に " + hookCommand + " がありません")
-	errHookUncovered  = xerrors.New(hookCommand + " の glob が走査対象のパターンを覆っていません")
+	errLockMissingImage  = xerrors.New("lockfile に未登録の base image があります")
+	errPinDrift          = xerrors.New("image 参照が未固定か lockfile と不一致です")
+	errNoStepBack        = xerrors.New("退行先の無い出来立て image は採用できません")
+	errLooseRef          = xerrors.New("固定対象として解釈できない image 参照があります")
+	errMissingRewrite    = xerrors.New("書き換え対象に内容の対応が無いパスがあります")
+	errHookConfig        = xerrors.New(hookFile + " を解釈できません")
+	errHookMissing       = xerrors.New(hookFile + " の pre-commit に " + hookCommand + " がありません")
+	errHookUncovered     = xerrors.New(hookCommand + " の glob が走査対象のパターンを覆っていません")
 )
 
 // target は走査対象のファイルと、その参照行を捕捉する正規表現（prefix/ref/suffix の 3 グループ）。
@@ -164,8 +159,6 @@ func main() {
 	}
 }
 
-// run は、サブコマンドを解釈して固定処理へ振り分けます。
-// wd は走査の基点となるディレクトリの取得手段で、差し替えられるよう引数で受けます。
 func run(args []string, wd func() (string, error)) error {
 	if len(args) == 0 {
 		return errUsage
@@ -208,8 +201,7 @@ func run(args []string, wd func() (string, error)) error {
 }
 
 // targetFiles は走査対象を返す。Dockerfile の FROM、compose の image:、workflow / composite action の
-// uses: docker:// と services の image: の 4 種で、registry の image を指す参照は書かれた場所に
-// よらずこの機構が固定する。
+// uses: docker:// と services の image: の 4 種。
 //
 // workflow は 2 つの target として登録する。target が 1 ファイルにつき 1 つの正規表現しか持たない
 // ためで、uses: docker:// と service の image: は書式が違う。同じファイルを 2 度走査するが掴む行は
@@ -546,8 +538,6 @@ func resolve(root string, targets []target, minAgeDays int) error {
 	}
 	log.Printf("✅ %s に %d 件を書き出しました", lockFile, len(lock))
 
-	// 退行先の無い出来立て image（fresh + 既存ピン無し）は tag のまま残さず失敗させる。
-	// tag のみ運用を許すと未検証 digest を掴むため、check も同状態を弾く（fail-closed）。
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
 
@@ -698,7 +688,7 @@ func rewritePins(data string, re *regexp.Regexp, lock map[string]string) (string
 	return out, missing
 }
 
-// applyOrCheck は lockfile を SSOT に FROM を digest 固定する。dryRun=true は書き換えず
+// applyOrCheck は lockfile を SSOT に image 参照を digest 固定する。dryRun=true は書き換えず
 // 未固定/未登録/drift を非ゼロ終了で報告する。tag のみへ戻す正規化はしない（fail-closed）。
 //
 // 書き出す前に全て確定させる方針は scripts/README.md の Test Strategy が持つ。
