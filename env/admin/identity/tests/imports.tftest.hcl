@@ -1,6 +1,9 @@
 # import block の取り込み先と id は見ない（usecases/state-backend/README.md「検証方法」の段2 の突合）。
 # mock の provider からは import できないので、取り込み先をすべて override する。
 mock_provider "aws" {
+  mock_data "aws_ssm_parameter" {
+    defaults = { value = "{\"security\":\"security@example.com\",\"log-archive\":\"log-archive@example.com\"}" }
+  }
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
   }

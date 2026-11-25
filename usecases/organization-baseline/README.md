@@ -17,10 +17,15 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 | 入力 | 型 | 意味 |
 | --- | --- | --- |
 | `project` | `string`（英小文字と数字、38文字以内） | policy の名前 `<project>-<policy>` と break-glass の role の名前 `<project>-break-glass` の先頭。SCP はメンバーの state Bucket と CI の role を `deployment-identity`・`state-backend` と同じ token で名指すので、それらと同じ値を渡す。最も長いアカウント名 `<project>-log-archive` を Organizations の上限の50文字に収める |
+| `bootstrapping` | `set(string)`（`security`・`log-archive` のいずれか。既定 `[]`） | 立ち上げ中のメンバーアカウントの env。ここに無いアカウントでは、`OrganizationAccountAccessRole` の使用を SCP（`deny-bootstrap-role`）が拒む。管理アカウントの identity root が、メンバーの `state-backend`・`deployment-identity` を作り終えるまで入れておき、外す PR で立ち上げを閉じる |
 
 | 出力 | 使う側 |
 | --- | --- |
 | `break_glass_arns` | 管理アカウントの break-glass の IAM user 2つ・group・role の ARN。管理アカウントの identity root が `deployment-identity` へ渡し、apply の role にこれらの変更を拒ませる |
+| `account_ids` | メンバーアカウントの env から ID への map。メンバーの root と、アカウントを名指す usecase が使う |
+| `bootstrapping_account_ids` | `bootstrapping` に入れたメンバーアカウントの env から ID への map。管理アカウントの identity root が、立ち上げの provider の引き受け先に使う |
+
+- メンバーアカウントのメールは入力に取らない。管理アカウントの SSM の String の parameter `/<project>/organization-baseline/member-account-emails`（JSON の object。env からメールへ）を読む。人が置く（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md)）。key の集合が対応表と一致しないか、値がメールの形でなければ plan が落ちる
 
 - ログの所在: 無い。Organizations と IAM の API の記録は CloudTrail が持ち、その配置は `security-tooling` と `audit-evidence` が持つ
 - 基盤系アラームの通知先 Topic ARN: 受けない。break-glass の user のサインイン、break-glass の role の引き受け、root の使用、`sts:AssumeRoot` の呼び出しの通知は `security-tooling` と `ops-notification` が持つ
@@ -31,9 +36,11 @@ AWS Organizations の組織と OU、SCP・RCP・declarative policy、root の資
 - OU の木: Root の直下に Security・Workloads・Sandbox・PolicyStaging、Workloads の下に Prod・NonProd（[organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md)）
 - SCP 10個・RCP 2つ・EC2 の declarative policy 1つと、その付け先。Root には組織からの離脱とアカウントの閉鎖の拒否だけを付け、ほかは PolicyStaging に付ける。最終の付け先は [organization-baseline/ADR-0101](docs/adr/0101-organizational-units-and-policies.md) 決定5-7 が持つ
 - 管理アカウントの break-glass の IAM user 2つ、group とその policy、break-glass の role（`AdministratorAccess`）、IAM の password policy（[organization-baseline/ADR-0201](docs/adr/0201-break-glass.md)）
+- メンバーアカウント security と log-archive（Security OU）。env と OU の対応表は `internal/organization/accounts.tf` の1つの local が持つ。`OrganizationAccountAccessRole`・請求情報への IAM の到達・閉じない削除は書かず、AWS と Provider の既定に任せる（Provider の Read はこの3つを state に書かないので、書くと import の後に作り直しの差分が出る）。名前は `<project>-<env>` で変えない
+- 立ち上げを終えたメンバーアカウントに付ける `deny-bootstrap-role`（アカウントごと）
 - メンバーアカウントの break-glass の role を配る CloudFormation の StackSet（service-managed、自動展開）と、組織の Root を対象にした stack instance（[organization-baseline/ADR-0202](docs/adr/0202-member-break-glass-via-stacksets.md)）
 
-組織、OU、break-glass の IAM user と role、StackSet と stack instance に `prevent_destroy` を付ける。組織、OU、IAM user、StackSet と stack instance は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
+組織、OU、メンバーアカウント、break-glass の IAM user と role、StackSet と stack instance に `prevent_destroy` を付ける。組織、OU、メンバーアカウント、IAM user、StackSet と stack instance は `conftest/plan/decl.json` の `stateful_protection.protected_types` に載り、CI の plan と apply が削除・置換・管理からの除外を落とす（[ADR-0604](../../docs/adr/0604-state-split-by-apply-role.md) 決定11）。
 
 ## supported / unsupported
 
@@ -52,6 +59,9 @@ unsupported:
 - 信頼アクセスの一覧を Terraform で持つこと。各サービスの側で有効化する
 - ユーザーとグループを Terraform で持つこと。IdP か Identity Center の directory が持つ
 - 管理アカウントの root による変更。SCP が効かない（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定11）
+- メンバーアカウントの名前の変更。apply-identity の role に `account:PutAccountName` を与えないので、名前が変わる変更は apply で拒まれる
+- メンバーアカウントのメールを Terraform で変えること。メールの変更は作り直しになり、`prevent_destroy` が止める。AWS の側で変えてから parameter を合わせる（[`docs/setup/organization-baseline.md`](../../docs/setup/organization-baseline.md)）
+- メールを plan から隠すこと。parameter の値は plan の JSON に平文で入る。plan の JSON は暗号化した tfplan の Bucket にだけ置く
 
 ## 所有者
 
@@ -69,7 +79,7 @@ unsupported:
 
 区分は「破棄すると認証や組織の構造を失う」（[scope.md 第11.1節](../../docs/v1.0-plan/scope.md)、[ADR-0401](../../docs/adr/0401-testing-policy.md) 決定14）。sandbox での apply と destroy、残存検出を行わない。代わりに次を行う。
 
-- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさを、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
+- Unit Test（`terraform test` + `mock_provider`）: `internal/organization` が OU の木、policy の文書と付け先、文書の大きさ、メンバーアカウントの名前・メール・置く OU と立ち上げの SCP の付け先を、`internal/break-glass` が user・group・role・password policy と、メンバーの role を配る StackSet を固定する。`tests/` が入力の検査と出力の配線を固定する
 - Policy Test: `plan.organization_baseline_scp`（`PLAN-ORG-*`）と `plan.organization_baseline_break_glass`（`PLAN-BG-*`）と `plan.iam_role_attachment_pairing`（`PLAN-ATTACH-*`）が、reference の mock の plan で見る。実 plan には掛けない
 - 拒まれるべき操作が拒まれることを人が確かめる（下の手順）。結果を Pull Request に記録し、行わなかったものは行わなかったと書く
 - drift が0であること: 昇格の後の次の plan が変更を示さないこと
@@ -81,6 +91,8 @@ unsupported:
 | 故障モード | 起きたときの症状 | 代わりに検出するもの |
 | --- | --- | --- |
 | root の中央管理の有効化が、アカウントの作成より後になる | 既存のメンバーに root の資格情報が残る | `depends_on` と、人の確認（`aws iam list-organizations-features`） |
+| アカウントの作成が途中で失敗し、アカウントは在るが state に無い | 再実行がメールの重複で落ちる | 人が手順書の回復（`import` block の Pull Request）で取り込む |
+| 新しいアカウントへの break-glass の StackSet の自動展開が失敗する | 新しいアカウントへ break-glass で入れない | 昇格の後の人の確認（stack instance が `CURRENT`、引き受け） |
 | `aws:PrincipalArn` の条件が、assumed-role のセッションや root のセッションに一致しない | SCP が拒まない、または回復の経路を拒む | Policy Test は文書の形までしか見ない。PolicyStaging での人の確認 |
 | 実 API が読み戻した policy の文書が宣言と違う | plan が毎回差分を出す | 昇格の後の plan |
 | RCP が想定しない AWS のサービスの経路を止める | 配送や連携が止まる | PolicyStaging での確認と、付けた直後の読み取りの確認 |
