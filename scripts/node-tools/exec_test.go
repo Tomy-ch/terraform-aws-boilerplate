@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,10 +70,21 @@ func Test_runExec(t *testing.T) {
 		assert.Contains(t, stderr.String(), "ERR_PNPM_OUTDATED_LOCKFILE")
 		assert.NoDirExists(t, lock)
 	})
-	t.Run("-dir のディレクトリが無ければ install が落ちる", func(t *testing.T) {
+	t.Run("-dir のディレクトリが無ければ install を起動できず ErrTool で不成立（2）", func(t *testing.T) {
 		t.Parallel()
 		d, _, _, lock, _ := setup(t, installScript)
-		require.ErrorIs(t, runExec(ctx, []string{"-dir", filepath.Join(t.TempDir(), "none"), "-lock", lock, "markdownlint-cli2"}, d), errInstall)
+		err := runExec(ctx, []string{"-dir", filepath.Join(t.TempDir(), "none"), "-lock", lock, "markdownlint-cli2"}, d)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
+	})
+	t.Run("install が非0で終われば errInstall で不成立（2）、道具を起動しない", func(t *testing.T) {
+		t.Parallel()
+		d, _, dir, lock, _ := setup(t, "exit 4")
+		d.execTool = func(string, []string, []string) error { t.Fatal("起動された"); return nil }
+		err := runExec(ctx, []string{"-dir", dir, "-lock", lock, "markdownlint-cli2"}, d)
+		require.ErrorIs(t, err, errInstall)
+		assert.Contains(t, err.Error(), "exit status 4")
+		assert.Equal(t, 2, exitCode(err))
 	})
 	t.Run("install の後に道具が無ければ PATH を引かずに落ちる", func(t *testing.T) {
 		t.Parallel()
@@ -89,8 +101,8 @@ func Test_runExec(t *testing.T) {
 		t.Parallel()
 		cctx, cancel := context.WithCancel(ctx)
 		d, _, dir, lock, _ := setup(t, installScript)
-		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
-			cmd := (&fakeTools{scripts: map[string]string{stepInstall: installScript}}).tool(c, dir, step)
+		d.tool = func(c context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
+			cmd := (&fakeTools{scripts: map[string]string{stepInstall: installScript}}).tool(c, dir, env, step)
 			cancel()
 
 			return cmd

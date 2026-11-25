@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,11 +13,12 @@ import (
 	"time"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -78,20 +80,20 @@ func dockerStubBody(digest string, created time.Time) string {
 		"esac\n"
 }
 
-// writeDockerStub は実 docker を呼ばずに inspect の入出力を差し替えるダミーを書き出し、その
-// ディレクトリを返す（PATH へは載せない）。
-func writeDockerStub(t *testing.T, body string) string {
+// dockerTool は、command が組んだ docker の argv を、body の sh へ位置引数として渡す偽の道具です。body は "$*" で
+// 引数を見られます。
+func dockerTool(t *testing.T, body string) toolFunc {
 	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" + body
-	fakeexec.Write(t, filepath.Join(dir, "docker"), script, 0o755)
-	return dir
+	return func(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd {
+		built := command(ctx, dir, env, step, operands...)
+		c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", body, "docker"}, built.Args[1:]...)...)
+		c.Dir, c.Env = built.Dir, built.Env
+		return c
+	}
 }
 
-func useDockerStub(t *testing.T, body string) {
-	t.Helper()
-	t.Setenv("PATH", writeDockerStub(t, body)+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
+// noDocker は、起動されれば落ちる偽の道具です。docker を起動しないはずの経路に渡します。
+var noDocker toolFunc = tooltest.Missing
 
 // coveringHook は scannedPatterns をすべて覆う pin-images-check の項目を持つ hook の設定。
 const coveringHook = "pre-commit:\n" +
@@ -106,7 +108,6 @@ const coveringHook = "pre-commit:\n" +
 	"        - \".lefthook.yaml\"\n" +
 	"      run: make pin-images-check\n"
 
-// writeHook は root に hook の設定を書く。
 func writeHook(t *testing.T, root, body string) {
 	t.Helper()
 	writeFile(t, filepath.Join(root, hookFile), body)
@@ -919,194 +920,255 @@ func Test_minCreated(t *testing.T) {
 	})
 }
 
-func Test_inspect(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("buildx imagetools inspect へ ref と追加引数をこの順で渡し標準出力を返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "printf '%s' \"$*\"\n")
+func Test_inspect(t *testing.T) {
+	t.Parallel()
 
-			out, err := inspect(context.Background(), "alpine:3.24", "--format", "{{ .Name }}")
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		for step, want := range map[string]string{
+			stepInspect:       "buildx imagetools inspect -- alpine:3.24",
+			stepCreatedIndex:  "buildx imagetools inspect --format {{ range .Image }}{{ println .Created }}{{ end }} -- alpine:3.24",
+			stepCreatedSingle: "buildx imagetools inspect --format {{ println .Image.Created }} -- alpine:3.24",
+		} {
+			t.Run(step+" は option をリテラルで置き、ref を -- の後ろに渡して標準出力を返す", func(t *testing.T) {
+				t.Parallel()
+				tool := dockerTool(t, "printf '%s' \"$*\"\n")
+
+				out, err := inspect(t.Context(), tool, step, "alpine:3.24")
+				require.NoError(t, err)
+				assert.Equal(t, want, out)
+			})
+		}
+
+		t.Run("- で始まる ref も -- の後ろに置く", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "printf '%s' \"$*\"\n")
+
+			out, err := inspect(t.Context(), tool, stepInspect, "-x")
 			require.NoError(t, err)
-			assert.Equal(t, "buildx imagetools inspect alpine:3.24 --format {{ .Name }}", out)
+			assert.Equal(t, "buildx imagetools inspect -- -x", out)
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("docker が非 0 終了なら ref と標準エラー出力を含むエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "echo 'toomanyrequests' >&2\nexit 1\n")
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
 
-			_, err := inspect(context.Background(), "alpine:3.24")
-			require.Error(t, err)
+		t.Run("docker が非 0 終了なら errInspect で、ref と標準エラー出力を含み、終了コードは 2", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "echo 'toomanyrequests' >&2\nexit 1\n")
+
+			_, err := inspect(t.Context(), tool, stepInspect, "alpine:3.24")
+			require.ErrorIs(t, err, errInspect)
 			assert.Contains(t, err.Error(), "alpine:3.24")
 			assert.Contains(t, err.Error(), "toomanyrequests")
+			assert.Equal(t, 2, exitCode(err))
+		})
+
+		t.Run("docker を起動できなければ ErrTool で、終了コードは 2", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := inspect(t.Context(), noDocker, stepInspect, "alpine:3.24")
+			require.ErrorIs(t, err, toolrun.ErrTool)
+			assert.Equal(t, 2, exitCode(err))
 		})
 	})
 }
 
-func Test_resolveDigest(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("inspect 出力の Digest 行から digest を取り出す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "printf 'Name: alpine:3.24\\nDigest: %s\\n' '"+digestAlpine+"'\n")
+func Test_resolveDigest(t *testing.T) {
+	t.Parallel()
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("inspect 出力の Digest 行から digest を取り出す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "printf 'Name: alpine:3.24\\nDigest: %s\\n' '"+digestAlpine+"'\n")
 
-			got, err := resolveDigest(context.Background(), "alpine:3.24")
+			got, err := resolveDigest(context.Background(), tool, "alpine:3.24")
 			require.NoError(t, err)
 			assert.Equal(t, digestAlpine, got)
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("Digest 行が無ければ解析不能として扱う", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "printf 'Name: alpine:3.24\\n'\n")
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("Digest 行が無ければ解析不能として扱う", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "printf 'Name: alpine:3.24\\n'\n")
 
-			_, err := resolveDigest(context.Background(), "alpine:3.24")
+			_, err := resolveDigest(context.Background(), tool, "alpine:3.24")
 			require.ErrorIs(t, err, errDigestUnparsable)
 		})
 
-		t.Run("inspect が失敗すればそのエラーを伝播する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "exit 1\n")
+		t.Run("inspect が失敗すればそのエラーを伝播する", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "exit 1\n")
 
-			_, err := resolveDigest(context.Background(), "alpine:3.24")
+			_, err := resolveDigest(context.Background(), tool, "alpine:3.24")
 			require.Error(t, err)
 			require.NotErrorIs(t, err, errDigestUnparsable)
 		})
 	})
 }
 
-func Test_earliestCreated(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("マルチアーキは全アーキの created のうち最古を返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "printf '2026-07-08 01:02:03 +0000 UTC\\n2026-07-01 00:00:00 +0000 UTC\\n'\n")
+func Test_earliestCreated(t *testing.T) {
+	t.Parallel()
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("マルチアーキは全アーキの created のうち最古を返す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "printf '2026-07-08 01:02:03 +0000 UTC\\n2026-07-01 00:00:00 +0000 UTC\\n'\n")
 
-			got, err := earliestCreated(context.Background(), "alpine:3.24")
+			got, err := earliestCreated(context.Background(), tool, "alpine:3.24")
 			require.NoError(t, err)
 			assert.Equal(t, time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC), got.UTC())
 		})
 
-		t.Run("index 用テンプレートで解析できなければ単一アーキ用へフォールバックする", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "case \"$*\" in\n"+
+		t.Run("index 用テンプレートで解析できなければ単一アーキ用へフォールバックする", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "case \"$*\" in\n"+
 				"  *range*) exit 0 ;;\n"+
 				"esac\n"+
 				"printf '2026-07-08 01:02:03 +0000 UTC\\n'\n")
 
-			got, err := earliestCreated(context.Background(), "alpine:3.24")
+			got, err := earliestCreated(context.Background(), tool, "alpine:3.24")
 			require.NoError(t, err)
 			assert.Equal(t, time.Date(2026, time.July, 8, 1, 2, 3, 0, time.UTC), got.UTC())
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("inspect 自体が失敗し続ければ解析不能ではなくその失敗を返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "echo 'toomanyrequests' >&2\nexit 1\n")
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("inspect 自体が失敗し続ければ解析不能ではなくその失敗を返す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "echo 'toomanyrequests' >&2\nexit 1\n")
 
-			_, err := earliestCreated(context.Background(), "alpine:3.24")
+			_, err := earliestCreated(context.Background(), tool, "alpine:3.24")
 			require.Error(t, err)
 			require.NotErrorIs(t, err, errCreatedUnparsable)
 			assert.Contains(t, err.Error(), "toomanyrequests")
 		})
 
-		t.Run("どちらのテンプレートでも created を読めなければ解析不能として扱う", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "printf 'no timestamps here\\n'\n")
+		t.Run("どちらのテンプレートでも created を読めなければ解析不能として扱う", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "printf 'no timestamps here\\n'\n")
 
-			_, err := earliestCreated(context.Background(), "alpine:3.24")
+			_, err := earliestCreated(context.Background(), tool, "alpine:3.24")
 			require.ErrorIs(t, err, errCreatedUnparsable)
 		})
 	})
 }
 
-func Test_digestAgeDays(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("created からの経過を日数へ丸めて返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+func Test_digestAgeDays(t *testing.T) {
+	t.Parallel()
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("created からの経過を日数へ丸めて返す", func(t *testing.T) {
+			t.Parallel()
 			created := time.Now().UTC().Add(-30*hoursPerDay*time.Hour - time.Hour)
-			useDockerStub(t, dockerStubBody(digestAlpine, created))
+			tool := dockerTool(t, dockerStubBody(digestAlpine, created))
 
-			got, err := digestAgeDays(context.Background(), "alpine:3.24")
+			got, err := digestAgeDays(context.Background(), tool, "alpine:3.24")
 			require.NoError(t, err)
 			assert.Equal(t, 30, got)
 		})
 
-		t.Run("公開直後は 0 日として返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestAlpine, time.Now().UTC().Add(-time.Hour)))
+		t.Run("公開直後は 0 日として返す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestAlpine, time.Now().UTC().Add(-time.Hour)))
 
-			got, err := digestAgeDays(context.Background(), "alpine:3.24")
+			got, err := digestAgeDays(context.Background(), tool, "alpine:3.24")
 			require.NoError(t, err)
 			assert.Zero(t, got)
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("created を取得できなければエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "exit 1\n")
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("created を取得できなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "exit 1\n")
 
-			_, err := digestAgeDays(context.Background(), "alpine:3.24")
+			_, err := digestAgeDays(context.Background(), tool, "alpine:3.24")
 			require.Error(t, err)
 		})
 	})
 }
 
-func Test_quarantine(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
+func Test_quarantine(t *testing.T) {
+	t.Parallel()
 	ref := imageRef{image: "alpine", tag: "3.24"}
 	key := ref.key()
 	existing := map[string]string{key: digestStale}
 
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("cooldown 無効なら age を問わず現 digest を採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 0, existing)
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("cooldown 無効なら age を問わず現 digest を採用する", func(t *testing.T) {
+			t.Parallel()
+			use, note, err := quarantine(context.Background(), noDocker, ref, key, digestFresh, 0, existing)
 			require.NoError(t, err)
 			assert.Equal(t, digestFresh, use)
 			assert.Empty(t, note)
 		})
 
-		t.Run("窓を越えた digest はそのまま採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-30*hoursPerDay*time.Hour)))
+		t.Run("窓を越えた digest はそのまま採用する", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-30*hoursPerDay*time.Hour)))
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, existing)
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, existing)
 			require.NoError(t, err)
 			assert.Equal(t, digestFresh, use)
 			assert.Empty(t, note)
 		})
 
-		t.Run("窓とちょうど同じ日数の digest も採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-14*hoursPerDay*time.Hour-time.Hour)))
+		t.Run("窓とちょうど同じ日数の digest も採用する", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-14*hoursPerDay*time.Hour-time.Hour)))
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, existing)
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, existing)
 			require.NoError(t, err)
 			assert.Equal(t, digestFresh, use)
 			assert.Empty(t, note)
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("窓の内側で既存ピンがあれば出来立てを採らず前回 lock へ退く", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC()))
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("窓の内側で既存ピンがあれば出来立てを採らず前回 lock へ退く", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC()))
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, existing)
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, existing)
 			require.NoError(t, err)
 			assert.Equal(t, digestStale, use)
 			assert.Contains(t, note, key)
 			assert.Contains(t, note, "既存ピンを維持")
 		})
 
-		t.Run("窓に 1 日足りなければ既存ピンへ退く", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-13*hoursPerDay*time.Hour-time.Hour)))
+		t.Run("窓に 1 日足りなければ既存ピンへ退く", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC().Add(-13*hoursPerDay*time.Hour-time.Hour)))
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, existing)
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, existing)
 			require.NoError(t, err)
 			assert.Equal(t, digestStale, use)
 			assert.Contains(t, note, "既存ピンを維持")
 		})
 
-		t.Run("窓の内側で既存ピンが無ければ採用せず skip する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC()))
+		t.Run("窓の内側で既存ピンが無ければ採用せず skip する", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC()))
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, map[string]string{})
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, map[string]string{})
 			require.NoError(t, err)
 			assert.Empty(t, use)
 			assert.Contains(t, note, "skip")
 		})
 
-		t.Run("経過日数を取得できなければ採用も skip もせずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-			useDockerStub(t, "exit 1\n")
+		t.Run("経過日数を取得できなければ採用も skip もせずエラーを返す", func(t *testing.T) {
+			t.Parallel()
+			tool := dockerTool(t, "exit 1\n")
 
-			use, note, err := quarantine(context.Background(), ref, key, digestFresh, 14, existing)
+			use, note, err := quarantine(context.Background(), tool, ref, key, digestFresh, 14, existing)
 			require.Error(t, err)
 			assert.Empty(t, use)
 			assert.Empty(t, note)
@@ -1114,27 +1176,31 @@ func Test_quarantine(t *testing.T) { //nolint:paralleltest // useDockerStub が 
 	})
 }
 
-func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.Setenv を使うため並列化不可
-	t.Run("正常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("収集した image の digest を解決し lockfile へ書き出す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+func Test_resolve(t *testing.T) {
+	t.Parallel()
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("収集した image の digest を解決し lockfile へ書き出す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
-			useDockerStub(t, dockerStubBody(digestAlpine, time.Now().UTC()))
+			tool := dockerTool(t, dockerStubBody(digestAlpine, time.Now().UTC()))
 
-			require.NoError(t, resolve(root, testTargets(t, root), 0))
+			require.NoError(t, resolve(root, testTargets(t, root), 0, tool))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{"alpine:3.24": digestAlpine}, lock)
 		})
 
-		t.Run("窓の内側なら既存 lockfile の digest を維持して書き出す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("窓の内側なら既存 lockfile の digest を維持して書き出す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
 			writeFile(t, filepath.Join(root, lockFile), "\"alpine:3.24\" = \""+digestStale+"\"\n")
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC()))
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC()))
 
-			require.NoError(t, resolve(root, testTargets(t, root), 14))
+			require.NoError(t, resolve(root, testTargets(t, root), 14, tool))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1142,27 +1208,30 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 		})
 	})
 
-	t.Run("異常系", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
-		t.Run("退行先の無い出来立て image は lockfile へ載せずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+		t.Run("退行先の無い出来立て image は lockfile へ載せずエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC()))
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC()))
 
-			err := resolve(root, testTargets(t, root), 14)
+			err := resolve(root, testTargets(t, root), 14, tool)
 
 			require.ErrorIs(t, err, errNoStepBack)
 			require.ErrorContains(t, err, "alpine:3.24")
 			assert.NotContains(t, readAll(t, filepath.Join(root, lockFile)), digestFresh)
 		})
 
-		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("解釈できない lockfile は既存ピン無しと見なさずエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
 			body := "\"alpine:3.24\" = \"" + digestStale + "\"\n" + "invalid line\n"
 			writeFile(t, filepath.Join(root, lockFile), body)
-			useDockerStub(t, dockerStubBody(digestFresh, time.Now().UTC()))
+			tool := dockerTool(t, dockerStubBody(digestFresh, time.Now().UTC()))
 
-			err := resolve(root, testTargets(t, root), 14)
+			err := resolve(root, testTargets(t, root), 14, tool)
 
 			require.ErrorIs(t, err, lockfile.ErrInvalidLine)
 			assert.ErrorContains(t, err, "pin-images-resolve", "直し方の案内が相手のツール名になっている")
@@ -1170,54 +1239,59 @@ func Test_resolve(t *testing.T) { //nolint:paralleltest // useDockerStub が t.S
 				"読めない lockfile を空と見なすと退行先ごと書き潰される")
 		})
 
-		t.Run("走査対象を読めなければエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("走査対象を読めなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 
-			err := resolve(root, []target{{path: filepath.Join(root, "absent"), re: fromRe}}, 0)
+			err := resolve(root, []target{{path: filepath.Join(root, "absent"), re: fromRe}}, 0, noDocker)
 
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
-		t.Run("解釈できない uses: docker:// があれば registry へ問い合わせる前に落ちる", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("解釈できない uses: docker:// があれば registry へ問い合わせる前に落ちる", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, ".github", "workflows", "ci.yaml"), "      - uses: docker://alpine\n")
 
-			err := resolve(root, testTargets(t, root), 0)
+			err := resolve(root, testTargets(t, root), 0, noDocker)
 
 			require.ErrorIs(t, err, errLooseRef)
 		})
 
-		t.Run("digest を解決できなければどのキーで失敗したか示すエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("digest を解決できなければどのキーで失敗したか示すエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
-			useDockerStub(t, "exit 1\n")
+			tool := dockerTool(t, "exit 1\n")
 
-			err := resolve(root, testTargets(t, root), 0)
+			err := resolve(root, testTargets(t, root), 0, tool)
 
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "resolve alpine:3.24")
 		})
 
-		t.Run("経過日数を取得できなければどのキーで失敗したか示すエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("経過日数を取得できなければどのキーで失敗したか示すエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24\n")
-			useDockerStub(t, "case \"$*\" in\n"+
+			tool := dockerTool(t, "case \"$*\" in\n"+
 				"  *--format*) exit 1 ;;\n"+
 				"  *) printf 'Digest: %s\\n' '"+digestAlpine+"' ;;\n"+
 				"esac\n")
 
-			err := resolve(root, testTargets(t, root), 14)
+			err := resolve(root, testTargets(t, root), 14, tool)
 
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "age alpine:3.24")
 		})
 
-		t.Run("lockfile を書き出せなければエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("lockfile を書き出せなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "docker-compose.yaml"), "  db:\n    image: alpine:3.24\n")
-			useDockerStub(t, dockerStubBody(digestAlpine, time.Now().UTC()))
+			tool := dockerTool(t, dockerStubBody(digestAlpine, time.Now().UTC()))
 
-			err := resolve(root, testTargets(t, root), 0)
+			err := resolve(root, testTargets(t, root), 0, tool)
 
 			require.ErrorIs(t, err, os.ErrNotExist)
 			assert.ErrorContains(t, err, "write lockfile")
@@ -1521,7 +1595,8 @@ func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
 
-func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケースが useDockerStub で t.Setenv を使うため並列化不可
+func Test_run(t *testing.T) {
+	t.Parallel()
 	lockBody := "\"alpine:3.24\" = \"" + digestAlpine + "\"\n"
 
 	t.Run("正常系", func(t *testing.T) {
@@ -1532,7 +1607,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 
-			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), noDocker))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -1546,7 +1621,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			writeFile(t, df, "FROM alpine:3.24\n")
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 
-			require.NoError(t, run([]string{"apply"}, stubWD(root)))
+			require.NoError(t, run([]string{"apply"}, stubWD(root), noDocker))
 
 			assert.Equal(t, "FROM alpine:3.24@"+digestAlpine+"\n", readAll(t, df))
 		})
@@ -1560,7 +1635,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 			writeHook(t, root, coveringHook)
 
-			require.NoError(t, run([]string{"check"}, stubWD(root)))
+			require.NoError(t, run([]string{"check"}, stubWD(root), noDocker))
 
 			assert.Equal(t, body, readAll(t, df))
 			assert.Equal(t, lockBody, readAll(t, filepath.Join(root, lockFile)),
@@ -1572,7 +1647,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 
-			require.NoError(t, run([]string{"resolve", "-h"}, stubWD(root)))
+			require.NoError(t, run([]string{"resolve", "-h"}, stubWD(root), noDocker))
 
 			assert.Equal(t, lockBody, readAll(t, filepath.Join(root, lockFile)),
 				"ヘルプ要求で resolve まで進むと lockfile が書き直される")
@@ -1585,7 +1660,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 		t.Run("サブコマンドが無ければ使い方を返す", func(t *testing.T) {
 			t.Parallel()
 
-			err := run(nil, stubWD(t.TempDir()))
+			err := run(nil, stubWD(t.TempDir()), noDocker)
 
 			require.ErrorIs(t, err, errUsage)
 		})
@@ -1593,7 +1668,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 		t.Run("未知のサブコマンドは使い方を返す", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"bogus"}, stubWD(t.TempDir()))
+			err := run([]string{"bogus"}, stubWD(t.TempDir()), noDocker)
 
 			require.ErrorIs(t, err, errUsage)
 		})
@@ -1601,7 +1676,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 		t.Run("作業ディレクトリを取得できなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"check"}, func() (string, error) { return "", errWD })
+			err := run([]string{"check"}, func() (string, error) { return "", errWD }, noDocker)
 
 			require.ErrorIs(t, err, errWD)
 			assert.ErrorContains(t, err, "getwd")
@@ -1610,7 +1685,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 		t.Run("走査対象を集められなければ失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"check"}, stubWD(filepath.Join(t.TempDir(), "x[")))
+			err := run([]string{"check"}, stubWD(filepath.Join(t.TempDir(), "x[")), noDocker)
 
 			require.ErrorIs(t, err, filepath.ErrBadPattern)
 		})
@@ -1622,7 +1697,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 			writeHook(t, root, strings.Replace(coveringHook, "        - \"docker-compose*.yaml\"\n", "", 1))
 
-			err := run([]string{"check"}, stubWD(root))
+			err := run([]string{"check"}, stubWD(root), noDocker)
 
 			require.ErrorIs(t, err, errHookUncovered)
 			assert.ErrorContains(t, err, composePattern)
@@ -1633,7 +1708,7 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
 
-			err := run([]string{"check"}, stubWD(root))
+			err := run([]string{"check"}, stubWD(root), noDocker)
 
 			require.ErrorIs(t, err, errHookConfig)
 		})
@@ -1641,13 +1716,14 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 		t.Run("未知のフラグはヘルプ要求と混同せず失敗する", func(t *testing.T) {
 			t.Parallel()
 
-			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()))
+			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()), noDocker)
 
 			require.ErrorContains(t, err, "failed to parse flags")
 		})
 	})
 
-	t.Run("既定の窓", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+	t.Run("既定の窓", func(t *testing.T) {
+		t.Parallel()
 		const key = "alpine:3.24"
 		daysAgo := func(n int) time.Time {
 			return time.Now().UTC().Add(-time.Duration(n)*hoursPerDay*time.Hour - time.Hour)
@@ -1662,33 +1738,36 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			return root
 		}
 
-		t.Run("フラグが無ければ PinWindowDays に1日足りない digest を採らず既存ピンを維持する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("フラグが無ければ PinWindowDays に1日足りない digest を採らず既存ピンを維持する", func(t *testing.T) {
+			t.Parallel()
 			root := setup(t, digestStale)
-			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+			tool := dockerTool(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
 
-			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), tool))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{key: digestStale}, lock)
 		})
 
-		t.Run("フラグが無ければ PinWindowDays ちょうどの digest を採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("フラグが無ければ PinWindowDays ちょうどの digest を採用する", func(t *testing.T) {
+			t.Parallel()
 			root := setup(t, digestStale)
-			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays)))
+			tool := dockerTool(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays)))
 
-			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), tool))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
 			assert.Equal(t, map[string]string{key: digestFresh}, lock)
 		})
 
-		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない digest を載せずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない digest を載せずエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			root := setup(t, "")
-			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+			tool := dockerTool(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
 
-			err := run([]string{"resolve"}, stubWD(root))
+			err := run([]string{"resolve"}, stubWD(root), tool)
 
 			require.ErrorIs(t, err, errNoStepBack)
 			assert.ErrorContains(t, err, fmt.Sprintf("%d 日未満", cooldown.PinWindowDays))
@@ -1696,11 +1775,12 @@ func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケース�
 			assert.NotContains(t, readAll(t, filepath.Join(root, lockFile)), digestFresh)
 		})
 
-		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない digest も採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない digest も採用する", func(t *testing.T) {
+			t.Parallel()
 			root := setup(t, digestStale)
-			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+			tool := dockerTool(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
 
-			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root)))
+			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root), tool))
 
 			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
 			require.NoError(t, err)
@@ -2033,4 +2113,71 @@ func Test_readHookFile(t *testing.T) {
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
+}
+
+func Test_command(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		step     string
+		operands []string
+	}{
+		"ref が無ければ false":  {stepInspect, nil},
+		"ref が2つあれば false": {stepCreatedIndex, []string{"a:1", "b:2"}},
+		"知らない段は false":     {"unknown", []string{"a:1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "", nil, c.step, c.operands...)
+			assert.Equal(t, []string{"false"}, []string{filepath.Base(cmd.Args[0])})
+			assert.Len(t, cmd.Args, 1)
+		})
+	}
+
+	for step, want := range map[string][]string{
+		stepCreatedIndex:  {"docker", "buildx", "imagetools", "inspect", "--format", `{{ range .Image }}{{ println .Created }}{{ end }}`, "--", "-x"},
+		stepCreatedSingle: {"docker", "buildx", "imagetools", "inspect", "--format", `{{ println .Image.Created }}`, "--", "-x"},
+	} {
+		t.Run(step+" は --format の雛形の後ろ、-- の後ろに ref を置く", func(t *testing.T) {
+			t.Parallel()
+			cmd := command(t.Context(), "", nil, step, "-x")
+			assert.Equal(t, want, append([]string{filepath.Base(cmd.Args[0])}, cmd.Args[1:]...))
+		})
+	}
+
+	t.Run("作業ディレクトリと env を渡す", func(t *testing.T) {
+		t.Parallel()
+		cmd := command(t.Context(), "/d", []string{"A=1"}, stepInspect, "a:1")
+		assert.Equal(t, []string{"docker", "buildx", "imagetools", "inspect", "--", "a:1"}, cmd.Args)
+		assert.Equal(t, "/d", cmd.Dir)
+		assert.Equal(t, []string{"A=1"}, cmd.Env)
+	})
+}
+
+func Test_exitCode(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		err  error
+		want int
+	}{
+		"成功は 0":                 {nil, 0},
+		"未固定・不一致は 1":            {errPinDrift, 1},
+		"lockfile の欠けは 1":       {errLockMissingImage, 1},
+		"解釈できない参照は 1":           {errLooseRef, 1},
+		"退行先の無い出来立ての image は 1": {errNoStepBack, 1},
+		"hook の項目が無いのは 1":       {errHookMissing, 1},
+		"hook の glob が覆わないのは 1": {errHookUncovered, 1},
+		"inspect の失敗は 2":        {errInspect, 2},
+		"Digest を解釈できないのは 2":    {errDigestUnparsable, 2},
+		"created を解釈できないのは 2":   {errCreatedUnparsable, 2},
+		"道具を起動できないのは 2":         {toolrun.ErrTool, 2},
+		"hook の設定を解釈できないのは 2":   {errHookConfig, 2},
+		"使い方の誤りは 2":             {errUsage, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, exitCode(c.err))
+		})
+	}
 }

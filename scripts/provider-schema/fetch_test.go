@@ -84,6 +84,23 @@ func Test_terraformCmd(t *testing.T) {
 		assert.Equal(t, []string{"terraform", "providers", "schema", "-json"}, c.Args)
 		assert.Equal(t, "/x/6.2.0", c.Dir)
 	})
+
+	t.Run("どちらの段も、AWS_ の変数を外して資格情報の探し先を塞いだ環境で起動する", func(t *testing.T) {
+		t.Parallel()
+		blocked := []string{"AWS_SHARED_CREDENTIALS_FILE=/dev/null", "AWS_CONFIG_FILE=/dev/null", "AWS_EC2_METADATA_DISABLED=true"}
+		for _, step := range []string{"init", "schema"} {
+			c := terraformCmd("/x/6.2.0", step)
+			require.NotNil(t, c.Env, step)
+			var aws []string
+			for _, kv := range c.Env {
+				if strings.HasPrefix(kv, "AWS_") {
+					aws = append(aws, kv)
+				}
+			}
+			assert.ElementsMatch(t, blocked, aws, step)
+			assert.Contains(t, c.Env, "CHECKPOINT_DISABLE=1", step)
+		}
+	})
 }
 
 func Test_fetch(t *testing.T) {

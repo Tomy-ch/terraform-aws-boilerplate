@@ -161,7 +161,7 @@ func Test_runRegoTests(t *testing.T) {
 				t.Parallel()
 				repo, p := setup(t, tt.policy, tt.test, tt.report)
 				if tt.policy == "" {
-					require.NoError(t, os.RemoveAll(filepath.Join(repo, "conftest")))
+					testenv.RemoveUnder(t, repo, "conftest")
 				}
 				args := []string{"-policy", "conftest/hcl", "-report", p, "-namespaces", "infra_code"}
 				if tt.noReport {

@@ -877,7 +877,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: out}, outdatedNow)
+			}, options{summaryOut: out}, outdatedNow, command)
 
 			require.NoError(t, err)
 			body, readErr := os.ReadFile(out) //nolint:gosec // out は t.TempDir() 配下
@@ -895,7 +895,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{}, outdatedNow)
+			}, options{}, outdatedNow, command)
 
 			require.NoError(t, err)
 		})
@@ -914,7 +914,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: filepath.Join(t.TempDir(), "missing", "report.md")}, outdatedNow)
+			}, options{summaryOut: filepath.Join(t.TempDir(), "missing", "report.md")}, outdatedNow, command)
 
 			require.Error(t, err)
 		})
@@ -927,7 +927,7 @@ func Test_reportOutdated(t *testing.T) {
 
 			err := reportOutdated(client, []tool{
 				{key: "aqua:owner/repo", version: "1.1.0", file: miseFile},
-			}, options{summaryOut: out}, outdatedNow)
+			}, options{summaryOut: out}, outdatedNow, command)
 
 			require.ErrorIs(t, err, errUnconfirmed)
 			body, readErr := os.ReadFile(out) //nolint:gosec // out は t.TempDir() 配下
@@ -937,10 +937,13 @@ func Test_reportOutdated(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // GITHUB_OUTPUT の書き出し先を t.Setenv で差し替えるため並列化できない
 func Test_appendOutdatedOutput(t *testing.T) {
+	t.Parallel()
+
 	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
 		t.Run("件数を key=value で追記する", func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(t.TempDir(), "out")
 
 			require.NoError(t, appendOutdatedOutput(path, 3, 2, 1))
@@ -954,7 +957,9 @@ func Test_appendOutdatedOutput(t *testing.T) {
 	})
 
 	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
 		t.Run("開けなければエラーを返す", func(t *testing.T) {
+			t.Parallel()
 			err := appendOutdatedOutput(filepath.Join(t.TempDir(), "missing", "out"), 0, 0, 0)
 
 			require.Error(t, err)

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,12 +32,20 @@ func Test_runMiseNPMDisabled(t *testing.T) {
 		require.ErrorIs(t, err, errMiseNPM)
 		assert.Contains(t, err.Error(), "npm:a npm:b")
 	})
-	t.Run("mise が正しい JSON を出してから非0で終われば、npm: が無くても落ちる", func(t *testing.T) {
+	t.Run("mise が正しい JSON を出してから非0で終われば、npm: が無くても不成立（2）で落ちる", func(t *testing.T) {
 		t.Parallel()
 		err := runMiseNPMDisabled(ctx, nil, testDeps(mise(`echo '{"go": []}'; exit 3`), io.Discard))
-		var exitErr *exec.ExitError
-		require.ErrorAs(t, err, &exitErr)
-		assert.Equal(t, 3, exitErr.ExitCode())
+		require.ErrorIs(t, err, errMiseLs)
+		assert.Contains(t, err.Error(), "exit status 3")
+		assert.Equal(t, 2, exitCode(err))
+	})
+	t.Run("mise を起動できなければ ErrTool で不成立（2）", func(t *testing.T) {
+		t.Parallel()
+		d := testDeps(&fakeTools{}, io.Discard)
+		d.tool = tooltest.Missing
+		err := runMiseNPMDisabled(ctx, nil, d)
+		require.ErrorIs(t, err, toolrun.ErrTool)
+		assert.Equal(t, 2, exitCode(err))
 	})
 	t.Run("mise が何も出さずに 0 で終われば解釈できないとして落ちる", func(t *testing.T) {
 		t.Parallel()
@@ -56,8 +66,8 @@ func Test_runMiseNPMDisabled(t *testing.T) {
 		cctx, cancel := context.WithCancel(ctx)
 		f := mise("exec sleep 30")
 		d := testDeps(f, io.Discard)
-		d.tool = func(c context.Context, dir, step string) *exec.Cmd {
-			cmd := f.tool(c, dir, step)
+		d.tool = func(c context.Context, dir string, env []string, step string, _ ...string) *exec.Cmd {
+			cmd := f.tool(c, dir, env, step)
 			cancel()
 
 			return cmd

@@ -145,11 +145,31 @@ func Test_run(t *testing.T) {
 		{"delete-labels に -env を渡せば usage で失敗する", []string{"delete-labels", "-repo=o/r", "-env", "x"}},
 		{"enable-workflows に -only を渡せば usage で失敗する", []string{"enable-workflows", "-repo=o/r", "-only", "ruleset"}},
 		{"create-deploy-branch に -base を渡せば usage で失敗する", []string{"create-deploy-branch", "-repo=o/r", "-env", "x", "-base", "main"}},
+		{"deploy-branch-exists に -only を渡せば usage で失敗する", []string{"deploy-branch-exists", "-repo=o/r", "-env", "x", "-only", "ruleset"}},
 	}
 
 	t.Run("create-deploy-branch は -env が無ければ errDeployEnvArg", func(t *testing.T) {
 		t.Parallel()
 		require.ErrorIs(t, run([]string{"create-deploy-branch", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -env が無ければ errDeployEnvArg", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-repo=o/r"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errDeployEnvArg)
+	})
+	t.Run("deploy-branch-exists は -repo が無ければ errNoRepo", func(t *testing.T) {
+		t.Parallel()
+		require.ErrorIs(t, run([]string{"deploy-branch-exists", "-env=admin"}, fixedWD(t.TempDir()), githubClient{token: "t"}, &bytes.Buffer{}), errNoRepo)
+	})
+	t.Run("deploy-branch-exists は -env と -repo を受け付け、読み取りまで届く", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, branchesFile, sourceBranches)
+		f, c := newFakeGitHub(t, map[string]fakeResponse{"GET /repos/o/r/branches/admin": ok(`{"name": "admin"}`)})
+		var out bytes.Buffer
+		require.NoError(t, run([]string{"deploy-branch-exists", "-repo=o/r", "-env=admin"}, fixedWD(root), c, &out))
+		assert.Equal(t, 1, requestCount(f))
+		assert.Contains(t, out.String(), "✅")
+		assert.Empty(t, f.writes())
 	})
 	t.Run("enable-workflows は -repo が無ければ errNoRepo", func(t *testing.T) {
 		t.Parallel()
@@ -218,6 +238,12 @@ func Test_run(t *testing.T) {
 		assert.Contains(t, out.String(), "release/v1 から到達でき")
 		err := run([]string{"source", "-base", "main", "-base-sha", base, "-head-sha", evil, "-default", "release/v1"}, fixedWD(root), githubClient{}, &bytes.Buffer{})
 		require.ErrorIs(t, err, errSource)
+	})
+	t.Run("usage はすべてのサブコマンドを名指す", func(t *testing.T) {
+		t.Parallel()
+		for _, sub := range []string{"apply", "check", "drift", "sync", "source", "deploy-branch", "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch", "deploy-branch-exists"} {
+			assert.Contains(t, errUsage.Error(), sub)
+		}
 	})
 	for _, tc := range usageCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -362,7 +388,7 @@ func Test_readDeclarations(t *testing.T) {
 			writeFile(t, root, branchesFile, `{"deploy": [{"branch": "main", "release_base": true}], "lines": {"release": "release/", "hotfix": "hotfix/"}, "line_version": "v<major>.<minor>.<patch>", "revert": "revert/"}`)
 		}, errDeployMismatch},
 		{"deployment-identity を呼ぶ root が無ければ失敗する", func(root string) {
-			require.NoError(t, os.RemoveAll(filepath.Join(root, "env")))
+			testenv.RemoveUnder(t, root, "env")
 		}, os.ErrNotExist},
 		{"apply の workflow が無ければ失敗する", func(root string) {
 			require.NoError(t, os.Remove(filepath.Join(root, ".github/workflows/apply.yaml")))

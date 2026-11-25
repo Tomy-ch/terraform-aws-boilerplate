@@ -91,9 +91,10 @@ unsupported:
 ## 依存するユースケースと判断 Issue
 
 - `audit-evidence`: `bucket_name` と `kms_key_arn` を `config_delivery` に受ける。`audit-evidence` の `writers.config_source_accounts` に、`sandbox` の外の各アカウントの ID が要る
-- `deployment-identity`: 各アカウントの apply の role が、このユースケースの resource を作る権限を持つ。管理は `<project>-<env>-ci-apply-workload-2`、読み取りは `<project>-<env>-ci-apply-workload-read`（plan の role にも付く）に置く。ARN にリージョンを持つ Action と EC2 の Action は provider のリージョンと us-east-1 に限り、Resource `"*"` の S3・Config の delivery channel と保持期間・EMR の Action はリージョンで限らない。password policy の更新は、`DenyGovernanceChange` が管理アカウントでだけ拒む（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5・13・17）
+- `deployment-identity`: 各アカウントの apply の role が、このユースケースの resource を作る権限を持つ。管理は `<project>-<env>-ci-apply-workload-2`、読み取りは `<project>-<env>-ci-apply-workload-read`（plan の role にも付く）に置く。リージョンごとの Action は、repository-wide/ADR-0209 の集合（`modules/default-regions`）の外を `aws:RequestedRegion` の Deny で拒む。アカウントに1つの設定（S3 の Public Access Block・代替の連絡先・password policy）と service-linked role は、リージョンで限らない。password policy の更新は、`DenyGovernanceChange` が管理アカウントでだけ拒む（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5・13・17）
 - 呼ぶ env の root: 管理アカウントは `env/admin/`、メンバーは #21・#330・#331 が配線する
-- 全リージョンを CI の経路に乗せる egress の宣言と apply の role の権限: #474
+- リージョンの集合: `modules/default-regions`（[ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md)）
+- 全リージョンの egress の宣言: account-baseline を呼ぶ env の root を足す変更（#22 PR-6）が、`.github/egress.toml` の `region_set` で宣言する
 - 判断 Issue: #86（sandbox の Config を常駐させない）、#98（常駐層の完了条件）、#472（Chatbot の SLR の持ち主）
 
 ## 検証方法
@@ -130,13 +131,13 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 ## 保証しないもの
 
 - 実際の AWS での作成。このユースケースを呼ぶ root と、その apply の経路が要る
-- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ACB-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かるのは `plan.stateful_protection`・`plan.kms_key_policy`・`plan.resource_policy_exclusive` だけである（[`conftest/plan/README.md`](../../conftest/plan/README.md)）
+- 設定を弱める変更を、CI の実 plan で見ること。`PLAN-ACB-*` は reference の mock の plan にだけ掛かる。CI の実 plan に掛かる Policy（[`conftest/plan/README.md`](../../conftest/plan/README.md) が列挙する）に `plan.account_baseline` は無い
 - 設定の削除と置換を止めること。`plan.stateful_protection` は CI の実 plan に掛かり、account-baseline を呼ぶ env の root が配線されるまで、どの plan も見ない
 - 管理アカウントでの設定の停止と変更を拒むこと。SCP は管理アカウントに効かない（[account-baseline/ADR-0201](docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md) 決定6）
 - メンバーでの設定の停止と opt-in のリージョンの有効化を、SCP を Security・Workloads・Sandbox へ広げる前に拒むこと。新しい SCP は PolicyStaging に付けて始める（同 決定5）
 - 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。管理アカウントには SCP が効かず、有効なリージョンの検出は plan の postcondition だけである
 - SSM Automation が作る既定の Log Group（`/aws/ssm/automation/executeScript`）の暗号化と保持日数。出力先を CloudWatch にする設定だけを持つ
-- provider のリージョンと us-east-1 のほかのリージョンでの apply。recorder・analyzer・SSM の設定・EBS の既定の暗号化・VPC Block Public Access の作成は拒まれる（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13。全リージョンは #474）
+- 実際の AWS で、apply の role の `aws:RequestedRegion` の Deny が集合の外の要求を拒むこと（[ADR-0209](../../docs/adr/0209-default-regions-for-regional-controls.md) の保証しないこと）
 - S3 Public Access Block・EMR の block public access・VPC Block Public Access を、CI の apply の role が外さないこと。これらの削除は作成と同じ Action で行うので、権限で分けられない（同 決定13）
 - `project` の上限（234文字）で組んだ255文字の analyzer の名前を、AWS が実際に受けること。入力の検査の境界は `tests/validation.tftest.hcl` が確かめる
 - Security Hub のコントロールの判定そのもの。Security Hub はこのユースケースが有効にしない

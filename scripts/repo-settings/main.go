@@ -25,6 +25,7 @@
 //	create-labels  labels.json のラベルを作るか、同じ名前のものを宣言へ書き換える
 //	enable-workflows  disabled_fork の workflow を有効にする
 //	create-deploy-branch  env のデプロイブランチを、デフォルトブランチの先頭から作る（在れば失敗する）
+//	deploy-branch-exists  env のデプロイブランチが在ることを GET で確かめる（無ければ失敗する）
 package main
 
 import (
@@ -57,7 +58,7 @@ const (
 )
 
 var (
-	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch|delete-labels|create-labels|enable-workflows|create-deploy-branch> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
+	errUsage                             = xerrors.New("usage: repo-settings <apply|check|drift|sync|source|deploy-branch|delete-labels|create-labels|enable-workflows|create-deploy-branch|deploy-branch-exists> [-repo owner/name] [-only ruleset|environments|vulnerability-reporting] [-base <ref> -base-sha <sha> -head-sha <sha> -default <branch>] [-env <env>]")
 	errIncludeDrift                      = xerrors.New("branch-protection.json の include が branches.json からずれています（make repo-settings-apply）")
 	errDrift                             = xerrors.New("宣言と実態がずれています")
 	errNoToken                           = xerrors.New("GITHUB_TOKEN がありません（gh auth login でログインするか、GITHUB_TOKEN を渡してください）")
@@ -96,7 +97,7 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 		"source":        {"base": true, "base-sha": true, "head-sha": true, "default": true},
 		"deploy-branch": {"env": true},
 		"delete-labels": {"repo": true}, "create-labels": {"repo": true}, "enable-workflows": {"repo": true},
-		"create-deploy-branch": {"repo": true, "env": true},
+		"create-deploy-branch": {"repo": true, "env": true}, "deploy-branch-exists": {"repo": true, "env": true},
 	}
 	unused := false
 	fs.Visit(func(f *flag.Flag) {
@@ -145,6 +146,14 @@ func run(args []string, wd func() (string, error), c githubClient, out io.Writer
 			return errUsage
 		}
 		return deployBranch(root, *env, out)
+	case "deploy-branch-exists":
+		if *env == "" {
+			return errDeployEnvArg
+		}
+		if *repo == "" {
+			return errNoRepo
+		}
+		return deployBranchExists(ctx, root, c, *repo, *env, out)
 	case "delete-labels", "create-labels", "enable-workflows", "create-deploy-branch":
 		return runSetup(ctx, args[0], root, c, *repo, *env, out)
 	default:

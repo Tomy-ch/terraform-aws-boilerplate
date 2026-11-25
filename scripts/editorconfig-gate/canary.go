@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -118,7 +119,6 @@ func runCanary(name string, spec canarySpec, p fixturePaths, w io.Writer, tool t
 	if err := buildFixture(p.work, p.editorconfig, p.checkerConfig, spec.files); err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(p.work) }()
 	r, err := runInFixture(p.work, env, tool, spec.step)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func runCanary(name string, spec canarySpec, p fixturePaths, w io.Writer, tool t
 	return nil
 }
 
-// buildFixture は、work を作り直し、2つの設定の複写と files（work からの相対パス）を置きます。.editorconfig が無い・空なら errRead、
+// buildFixture は、まだ無い work を作り、2つの設定の複写と files（work からの相対パス）を置きます。.editorconfig が無い・空なら errRead、
 // .editorconfig-checker.json が `{}` でなければ errScope です。
 func buildFixture(work, editorconfig, checkerConfig string, files map[string]string) error {
 	ec, err := os.ReadFile(filepath.Clean(editorconfig))
@@ -146,9 +146,6 @@ func buildFixture(work, editorconfig, checkerConfig string, files map[string]str
 	cc, err := readCheckerConfig(checkerConfig)
 	if err != nil {
 		return err
-	}
-	if err := os.RemoveAll(work); err != nil {
-		return xerrors.Wrapf(errRead, "%s の削除: %v", work, err)
 	}
 	if err := os.MkdirAll(work, 0o750); err != nil {
 		return xerrors.Wrapf(errRead, "%v", err)
@@ -172,7 +169,7 @@ func buildFixture(work, editorconfig, checkerConfig string, files map[string]str
 
 func runInFixture(work string, env []string, tool toolFunc, step string) (toolrun.Result, error) {
 	for _, step := range []string{stepGitInit, stepGitAdd} {
-		r, err := toolrun.Run(tool(work, env, step))
+		r, err := toolrun.Run(tool(context.Background(), work, env, step))
 		if err != nil {
 			return r, err
 		}
@@ -181,7 +178,7 @@ func runInFixture(work string, env []string, tool toolFunc, step string) (toolru
 		}
 	}
 
-	return toolrun.Run(tool(work, checkerEnv(env), step))
+	return toolrun.Run(tool(context.Background(), work, checkerEnv(env), step))
 }
 
 // judgeCheck は、0 以外で終わり、出力が canaryFile と nonASCIIFile の両方に字下げの違反を名指していれば成り立ちます。

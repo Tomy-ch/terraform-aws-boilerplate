@@ -12,6 +12,8 @@
 
 7つのアカウント（admin・security・log-archive・sandbox・dev・stg・prd）のそれぞれで、そのアカウントの workload root が ops-notification を呼ぶ変更の merge より前に行う。認可の前に apply すると、Chatbot の構成の作成が失敗する見込みである（確かめていない）。
 
+そのアカウントの identity root が、workload root より先に apply されていること。Chatbot の service-linked role（`AWSServiceRoleForAWSChatbot`）は identity root の `deployment-identity` が作り、workload root はそれを名前で読む。無ければ workload root の plan が落ちる（[`usecases/ops-notification/README.md`](../../usecases/ops-notification/README.md) の「plan で落ちたときに見るもの」）。sandbox のアカウントでも、role は sandbox の identity root の apply で作る（sandbox の apply の経路は #331 が配線する）。role を CLI やコンソールで作らない。identity root の apply が名前の重複で落ちる
+
 ## 2. 設定完了後の状態
 
 - アカウントの Chatbot に、通知先の Slack の workspace が認可されている

@@ -12,7 +12,8 @@
 | 宣言の整合 | `repo-settings-check` | 無し | CI（required）と pre-commit |
 | 突合 | `repo-settings-drift` | 無し（GET のみ） | 人が手元で（誰でも） |
 | 適用 | `apply-branch-protection` / `apply-environments` / `apply-vulnerability-reporting` | GitHub の ruleset / environment / Private Vulnerability Reporting | 管理者の資格情報を持つ人 |
-| デプロイブランチの作成 | `create-deploy-branch DEPLOY_ENV=<env>` | GitHub のブランチ（env のデプロイブランチを、デフォルトブランチの先頭から作る。在れば失敗する） | 管理者の資格情報を持つ人（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段5 で1回） |
+| デプロイブランチの作成 | `create-deploy-branch DEPLOY_ENV=<env>` | GitHub のブランチ（env のデプロイブランチを、デフォルトブランチの先頭から作る。在れば失敗する） | 管理者の資格情報を持つ人（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段4 で1回） |
+| デプロイブランチの確認 | `deploy-branch-exists DEPLOY_ENV=<env>` | 無し（GET のみ。env のデプロイブランチが無ければ失敗する） | 人が手元で（[`docs/setup/bootstrap.md`](../../docs/setup/bootstrap.md) の段4 の apply の前） |
 
 - 宣言を変える Pull Request は、merge の後に管理者が適用します。CI は保護設定を書き込みません（ADR-0603 決定30）。適用は `make setup-repo` も呼びます。
 - 突合は人が手元で実行します。保護設定は人が管理者の資格情報で守るもので、CI の定期実行で重ねて見ることはしません。適用の後と、管理画面で設定が変わったと疑うときに `make repo-settings-drift` を実行し、ずれがあれば失敗します。直すのは、宣言を実態へ寄せる Pull Request か、宣言の再適用です（ADR-0601 決定13）。
@@ -51,7 +52,7 @@
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
 - ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が、`push` で起動する種別の role の `<env>-<role>` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
-- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`・`create-deploy-branch`（`make create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
+- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`・`create-deploy-branch`・`deploy-branch-exists`（`make create-deploy-branch`・`make deploy-branch-exists`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
 
