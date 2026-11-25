@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,14 +23,40 @@ func ecosystemYAML(ecosystem, body string) string {
 
 func days(key string, n int) string { return fmt.Sprintf("      %s: %d\n", key, n) }
 
+// updatesYAML は、窓を持つ ecosystem をすべて窓ちょうどの default-days で並べた updates を返します。
+// override に挙げた ecosystem は cooldown の本体をその値（"" なら cooldown 無し）に置き換え、omit に挙げた
+// ecosystem は外します。
+func updatesYAML(override map[string]string, omit ...string) string {
+	windows := []struct {
+		ecosystem string
+		days      int
+	}{
+		{"gomod", cooldown.RegistryWindowDays},
+		{"docker", cooldown.PinWindowDays},
+		{"docker-compose", cooldown.PinWindowDays},
+		{"github-actions", cooldown.PinWindowDays},
+	}
+	var b strings.Builder
+	b.WriteString("updates:\n")
+	for _, w := range windows {
+		if slices.Contains(omit, w.ecosystem) {
+			continue
+		}
+		body, ok := override[w.ecosystem]
+		if !ok {
+			body = days("default-days", w.days)
+		}
+		b.WriteString(ecosystemYAML(w.ecosystem, body))
+	}
+	return b.String()
+}
+
 func Test_checkDependabotCooldown(t *testing.T) {
 	t.Parallel()
 
-	allAtWindow := "updates:\n" +
-		ecosystemYAML("gomod", days("default-days", cooldown.RegistryWindowDays)+days("semver-patch-days", cooldown.RegistryWindowDays)) +
-		ecosystemYAML("docker", days("default-days", cooldown.PinWindowDays)) +
-		ecosystemYAML("docker-compose", days("default-days", cooldown.PinWindowDays)) +
-		ecosystemYAML("github-actions", days("default-days", cooldown.PinWindowDays))
+	allAtWindow := updatesYAML(map[string]string{
+		"gomod": days("default-days", cooldown.RegistryWindowDays) + days("semver-patch-days", cooldown.RegistryWindowDays),
+	})
 
 	t.Run("すべての ecosystem が窓ちょうどなら、確かめた ecosystem の数を返す", func(t *testing.T) {
 		t.Parallel()
@@ -48,12 +76,24 @@ func Test_checkDependabotCooldown(t *testing.T) {
 		assert.ErrorContains(t, err, fmt.Sprintf("github-actions の default-days が %d 日", cooldown.PinWindowDays-1))
 	})
 
+	t.Run("同じ ecosystem を別の directory に置いた項も1つずつ数える", func(t *testing.T) {
+		t.Parallel()
+		src := allAtWindow +
+			"  - package-ecosystem: \"gomod\"\n    directory: \"/other\"\n    cooldown:\n" + days("default-days", cooldown.RegistryWindowDays)
+		n, err := checkDependabotCooldown([]byte(src))
+		require.NoError(t, err)
+		assert.Equal(t, 5, n)
+	})
+
 	cases := []struct {
 		name     string
 		src      string
 		sentinel error
 		message  string
 	}{
+		{"default-days が小数なら日数でないとして拒む", updatesYAML(map[string]string{"docker": fmt.Sprintf("      default-days: %d.0\n", cooldown.PinWindowDays)}), errDependabotCooldown, "docker の default-days が日数ではありません"},
+		{"cooldown の無い ecosystem は拒む", updatesYAML(map[string]string{"github-actions": ""}), errDependabotCooldown, "github-actions に cooldown がありません"},
+		{"default-days が 0 なら拒む", updatesYAML(map[string]string{"gomod": days("default-days", 0)}), errDependabotCooldown, "gomod の default-days が 0 日"},
 		{"gomod は RegistryWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("gomod", days("default-days", cooldown.RegistryWindowDays-1)), errDependabotCooldown, "gomod の default-days"},
 		{"docker は PinWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("docker", days("default-days", cooldown.PinWindowDays-1)), errDependabotCooldown, "docker の default-days"},
 		{"docker-compose は PinWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("docker-compose", days("default-days", cooldown.PinWindowDays-1)), errDependabotCooldown, "docker-compose の default-days"},

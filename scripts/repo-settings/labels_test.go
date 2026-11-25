@@ -2,16 +2,24 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
 )
 
-const (
-	dependabotFixture = "version: 2\nupdates:\n  - package-ecosystem: \"gomod\"\n    cooldown:\n      default-days: 7\n    labels:\n      - \"dependencies\"\n      - \"go\"\n  - package-ecosystem: \"docker\"\n    cooldown:\n      default-days: 14\n"
-	labelsFixture     = `[{"name": "dependencies", "color": "0366d6"}, {"name": "go", "color": "16e2e2"}, {"name": "bug", "color": "d73a4a"}]`
-)
+// dependabotFixture は、窓を持つ ecosystem をすべて窓ちょうどの cooldown で持つ。末尾の項は docker である。
+var dependabotFixture = fmt.Sprintf("version: 2\nupdates:\n"+
+	"  - package-ecosystem: \"gomod\"\n    cooldown:\n      default-days: %[1]d\n    labels:\n      - \"dependencies\"\n      - \"go\"\n"+
+	"  - package-ecosystem: \"docker-compose\"\n    cooldown:\n      default-days: %[2]d\n"+
+	"  - package-ecosystem: \"github-actions\"\n    cooldown:\n      default-days: %[2]d\n"+
+	"  - package-ecosystem: \"docker\"\n    cooldown:\n      default-days: %[2]d\n",
+	cooldown.RegistryWindowDays, cooldown.PinWindowDays)
+
+const labelsFixture = `[{"name": "dependencies", "color": "0366d6"}, {"name": "go", "color": "16e2e2"}, {"name": "bug", "color": "d73a4a"}]`
 
 func Test_checkDependabotLabels(t *testing.T) {
 	t.Parallel()
