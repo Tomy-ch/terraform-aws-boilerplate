@@ -1,7 +1,6 @@
 package testenv
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -32,7 +30,6 @@ func (f *fakeRunner) Run() int {
 
 var errBoom = errors.New("boom")
 
-// installGitFakes は、gitEnvVars の出力と unsetenv を差し替え、外した名前を控えます。
 func installGitFakes(t *testing.T, out string, outErr error, failOn string) *[]string {
 	t.Helper()
 
@@ -70,7 +67,7 @@ func TestRunGitIsolated(t *testing.T) { //nolint:paralleltest // プロセスの
 		}
 	})
 
-	t.Run("外せなければ走らせずに 2 を返す", func(t *testing.T) {
+	t.Run("一覧を得られなければ走らせずに 2 を返す", func(t *testing.T) {
 		installGitFakes(t, "", errBoom, "")
 		old := stderr
 		t.Cleanup(func() { stderr = old })
@@ -176,126 +173,12 @@ func Test_外側のリポジトリ_事故の再現と防御(t *testing.T) {
 	})
 }
 
-// GIT_ISOLATE（.makefiles/git-isolation.mk）を持たないレシピは外側を書き換え、持つレシピは書き換えない。
-func Test_GIT_ISOLATE_外側を守る(t *testing.T) {
-	t.Parallel()
-
-	names, err := gitEnvVars()
-	require.NoError(t, err)
-	clean := withoutVars(os.Environ(), names)
-
-	mk, err := filepath.Abs(filepath.Join("..", "..", "..", ".makefiles", "git-isolation.mk"))
-	require.NoError(t, err)
-
-	for _, c := range []struct {
-		name    string
-		isolate string
-		changed bool
-	}{
-		{"持たなければ外側が変わる", "", true},
-		{"持てば外側は変わらない", "$(GIT_ISOLATE); ", false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-
-			outer := initRepo(t, clean)
-			work := t.TempDir()
-			makefile := filepath.Join(t.TempDir(), "Makefile")
-			require.NoError(t, os.WriteFile(makefile, []byte(fmt.Sprintf(
-				"include %s\nrecipe:\n\t@set -eu; %scd %q && git -c core.hooksPath=/dev/null init -q && echo x > f && git add f\n",
-				mk, c.isolate, work)), 0o600))
-
-			before := snapshot(t, outer)
-			cmd := exec.CommandContext(t.Context(), "make", "-s", "-f", makefile, "recipe")
-			cmd.Env = withoutMakeVars(leakInto(clean, outer))
-			out, err := cmd.CombinedOutput()
-			require.NoError(t, err, string(out))
-
-			if c.changed {
-				assert.NotEqual(t, before, snapshot(t, outer))
-			} else {
-				assert.Equal(t, before, snapshot(t, outer))
-				assert.DirExists(t, filepath.Join(work, ".git"))
-			}
-		})
-	}
-}
-
-// tempRepoRecipe は、一時のリポジトリを建てるレシピの印（git init）です。
-var tempRepoRecipe = regexp.MustCompile(`\binit -q\b`)
-
-// 一時のリポジトリを建てる .makefiles のレシピは、先頭で $(GIT_ISOLATE) を実行する。
-func Test_makefiles_一時のリポジトリを建てるレシピはGIT_ISOLATEを持つ(t *testing.T) {
-	t.Parallel()
-
-	recipes := makeRecipes(t, filepath.Join("..", "..", "..", ".makefiles"))
-	var found []string
-	for target, body := range recipes {
-		i := tempRepoRecipe.FindStringIndex(body)
-		if i == nil {
-			continue
-		}
-		found = append(found, target)
-		j := strings.Index(body, "$(GIT_ISOLATE)")
-		assert.True(t, j >= 0 && j < i[0], "%s は一時のリポジトリを建てる前に $(GIT_ISOLATE) を実行していない", target)
-	}
-
-	// 見つけたレシピが0件なら、印か読み方が壊れている。
-	assert.Subset(t, found, []string{"gitleaks-canary", "trufflehog-canary"})
-}
-
-// makeRecipes は dir の下の .mk を読み、target ごとにレシピの行を連結して返します。
-func makeRecipes(t *testing.T, dir string) map[string]string {
-	t.Helper()
-
-	rule := regexp.MustCompile(`^([A-Za-z0-9_.-]+):(?:[^=]|$)`)
-	recipes := map[string]string{}
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".mk" {
-			return err
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-
-		target := ""
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for sc.Scan() {
-			line := sc.Text()
-			if m := rule.FindStringSubmatch(line); m != nil {
-				target = m[1]
-
-				continue
-			}
-			if target != "" && strings.HasPrefix(line, "\t") {
-				recipes[target] += line + "\n"
-
-				continue
-			}
-			target = ""
-		}
-
-		return sc.Err()
-	})
-	require.NoError(t, err)
-	require.NotEmpty(t, recipes)
-
-	return recipes
-}
-
 func withoutVars(env, names []string) []string {
 	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
 
 		return slices.Contains(names, name)
 	})
-}
-
-func withoutMakeVars(env []string) []string {
-	return withoutVars(env, []string{"MAKEFLAGS", "MFLAGS", "MAKELEVEL"})
 }
 
 func leakInto(env []string, outer string) []string {

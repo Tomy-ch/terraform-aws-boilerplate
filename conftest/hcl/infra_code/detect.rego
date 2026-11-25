@@ -26,39 +26,59 @@ type_keys := {"executes_code", "body_args", "path_args"}
 
 provider_keys := {"command_blocks"}
 
-item_keys := {"id", "owner", "source", "language", "adr", "repository"}
+item_keys := {"id", "owner", "source", "language", "adr", "repository", "reasons"}
+
+# reason_code は、許可リストの項目の reasons に書く理由の符号（ADR-0103 決定12）。型（決定9）、provisioner、provider の
+# 設定の exec、中を読めない provider の設定、宣言した provider の block（command_block:<block>）。
+reason_code := `^(type|provisioner|provider_exec|unresolved|command_block:[a-z0-9_]+(\.[a-z0-9_]+)*)$`
 
 components := hcl.components(doc)
 
 providers := hcl.providers(doc)
 
-detected contains {"id": c.id, "path": c.path, "reason": sprintf("コードを実行させる型 %s", [c.key])} if {
+detected contains {"id": c.id, "path": c.path, "code": "type", "reason": sprintf("コードを実行させる型 %s", [c.key])} if {
 	some c in components
 	decl.types[c.key].executes_code == true
 }
 
-detected contains {"id": c.id, "path": c.path, "reason": "provisioner"} if {
+detected contains {"id": c.id, "path": c.path, "code": "provisioner", "reason": "provisioner"} if {
 	some c in components
 	hcl.has_provisioner(c.scope)
 }
 
-detected contains {"id": r.id, "path": r.path, "reason": "provisioner"} if {
+detected contains {"id": r.id, "path": r.path, "code": "provisioner", "reason": "provisioner"} if {
 	some r in hcl.removed_blocks(doc)
 	hcl.has_provisioner(r.scope)
 }
 
-detected contains {"id": p.id, "path": p.path, "reason": "provider の exec"} if {
+detected contains {"id": p.id, "path": p.path, "code": "provider_exec", "reason": "provider の exec"} if {
 	some p in providers
 	hcl.has_key_anywhere(p.scope, "exec")
 }
 
 # 中を読めない式の中に exec などのコマンドの block が在るかは決められないので、検出として許可リストに委ねる。
-detected contains {"id": p.id, "path": p.path, "reason": "解けない式"} if {
+detected contains {"id": p.id, "path": p.path, "code": "unresolved", "reason": "解けない式"} if {
 	some p in providers
 	hcl.unresolved_expr(p.scope)
 }
 
-detected contains {"id": p.id, "path": p.path, "reason": sprintf("provider の %s", [block])} if {
+# コマンドの block を宣言した provider では、参照・関数の呼び出し・補間の値も中を読めない式とする。参照先の locals や
+# variables、呼び出しの結果に exec などのコマンドの block が在るかを、provider の block からは決められない。
+detected contains {"id": p.id, "path": p.path, "code": "unresolved", "reason": "解けない式"} if {
+	some p in providers
+	source := hcl.provider_source(doc, p.module, p.name)
+	count(decl.providers[source].command_blocks) > 0
+	non_literal_value(p.scope)
+}
+
+non_literal_value(s) if {
+	some a in hcl.attrs_in(s)
+	walk(a.expr, [_, v])
+	is_object(v)
+	v.kind in {"traversal", "call", "template"}
+}
+
+detected contains {"id": p.id, "path": p.path, "code": concat("", ["command_block:", block]), "reason": sprintf("provider の %s", [block])} if {
 	some p in providers
 	source := hcl.provider_source(doc, p.module, p.name)
 	some block in decl.providers[source].command_blocks
@@ -68,6 +88,12 @@ detected contains {"id": p.id, "path": p.path, "reason": sprintf("provider の %
 detected_ids := {d.id | some d in detected}
 
 allowlisted contains item.id if some item in decl.allowlist
+
+allowed contains [item.id, code] if {
+	some item in decl.allowlist
+	is_array(item.reasons)
+	some code in item.reasons
+}
 
 deny contains msg if {
 	some c in components
@@ -79,6 +105,13 @@ deny contains msg if {
 	some d in detected
 	not d.id in allowlisted
 	msg := sprintf("IC011 [許可リストに無い] %s: %s（%s）はインフラ内コードです → allowlist に項目を足し、本リポジトリ所有なら ADR-0103 決定13 の ADR を書く", [d.path, d.id, d.reason])
+}
+
+deny contains msg if {
+	some d in detected
+	d.id in allowlisted
+	not [d.id, d.code] in allowed
+	msg := sprintf("IC011 [理由が許可リストに無い] %s: %s の項目は、この検出の理由 %s（%s）を reasons に挙げていません → 意図したコードなら reasons に足し、そうでなければ取り除く", [d.path, d.id, d.code, d.reason])
 }
 
 deny contains msg if {
@@ -144,6 +177,38 @@ deny contains msg if {
 	some key, _ in class
 	not key in provider_keys
 	msg := sprintf("IC004 [宣言の形] providers.%s のキー %s を解釈できません", [source, key])
+}
+
+# 符号に書けない block は、検出の理由を許可リストの項目に挙げられず、通す手段が無くなる。
+deny contains msg if {
+	some source, class in decl.providers
+	not well_formed_command_blocks(object.get(class, "command_blocks", null))
+	msg := sprintf("IC004 [宣言の形] providers.%s の command_blocks が、理由の符号 command_block:<block> に書ける位置（小文字・数字・_ の名前を . でつないだもの）の、重複の無い配列ではありません", [source])
+}
+
+well_formed_command_blocks(bs) if {
+	is_array(bs)
+	count({b | some b in bs}) == count(bs)
+	every b in bs {
+		is_string(b)
+		regex.match(reason_code, concat("", ["command_block:", b]))
+	}
+}
+
+deny contains msg if {
+	some item in decl.allowlist
+	not well_formed_reasons(object.get(item, "reasons", null))
+	msg := sprintf("IC004 [宣言の形] allowlist の項目 %v の reasons が、理由の符号（type・provisioner・provider_exec・unresolved・command_block:<block>）の、重複の無い空でない配列ではありません", [object.get(item, "id", "?")])
+}
+
+well_formed_reasons(rs) if {
+	is_array(rs)
+	count(rs) > 0
+	count({r | some r in rs}) == count(rs)
+	every r in rs {
+		is_string(r)
+		regex.match(reason_code, r)
+	}
 }
 
 deny contains msg if {

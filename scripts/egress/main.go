@@ -1,6 +1,6 @@
 // Package main は bullfrog の通信制限（with: ブロック）を SSOT から生成・検証するツール。
 //
-//	apply: .github/egress.toml を元に、各 job の先頭にある bullfrog step の with: を書き換える。
+//	apply: .github/egress.toml を元に、各 job の先頭の bullfrog の step の対（本体と再試行）を書き換える。
 //	check: apply と同じ判定を書き換えなしで行い、ドリフトがあれば非ゼロ終了する（CI / hook 用）。
 //
 // 詳細は .github/workflows/README.md の「ランナーの封じ込め」節を参照。
@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/atomicwrite"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -33,10 +34,9 @@ const (
 	ssotFile = ".github/egress.toml"
 	filePerm = 0o644
 	// policyAudit は許可リストを持たない唯一の egress-policy。
-	policyAudit = "audit"
-	policyBlock = "block"
-	// bullfrogAction は step を見つける錨。SHA は pin-actions が書くので、ここでは名前だけを見る。
-	bullfrogAction = "bullfrogsec/bullfrog"
+	policyAudit    = "audit"
+	policyBlock    = "block"
+	bullfrogAction = harden.Action
 	// withIndent / itemIndent は workflow.SplitSteps が前提とする桁（step は6桁の "- "）から決まる。
 	withIndent = "        "
 	keyIndent  = "          "
@@ -44,7 +44,7 @@ const (
 )
 
 var (
-	sectionRe   = regexp.MustCompile(`^\[(class|job|root|type)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
+	sectionRe   = regexp.MustCompile(`^\[(class|job|root|type|region_set)\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]$`)
 	scalarRe    = regexp.MustCompile(`^(\w+)\s*=\s*"([^"]*)"$`)
 	arrayHeadRe = regexp.MustCompile(`^(\w+)\s*=\s*\[(.*)$`)
 	quotedRe    = regexp.MustCompile(`"([^"]*)"`)
@@ -58,7 +58,9 @@ var (
 	stepNameRe   = regexp.MustCompile(`^ {6}- name: \S`)
 	stepUsesRe   = regexp.MustCompile(`^ {8}uses: ` + regexp.QuoteMeta(bullfrogAction) + `@[0-9A-Za-z._-]+(?: # \S+)?$`)
 	stepWithRe   = regexp.MustCompile(`^ {8}with:$`)
-	commentRe    = regexp.MustCompile(`^\s*#`)
+	// stepKeyRe は、bullfrog の step のうち生成器が書き直してよいキーの行。ほかのキーは apply が黙って消すので拒む。
+	stepKeyRe = regexp.MustCompile(`^ {8}(?:id|continue-on-error|if):`)
+	commentRe = regexp.MustCompile(`^\s*#`)
 	// reusableRe は reusable workflow を呼ぶジョブ（runner を持たない）の `uses:` 行。
 	reusableRe = regexp.MustCompile(`^ {4}uses:\s*\S`)
 	// elementListRe は、配列の `[` と `]` の間から引用符付きの要素を elementMark に置き換えた残りが取れる形。
@@ -90,20 +92,21 @@ var (
 	errSSOTTypeName   = xerrors.New("SSOT の type が resource / data source の型の接頭辞の形をしていません")
 	// errSSOTTypeHosts は、宛先の無い接頭辞の type のエラー。API を呼ばない型は型名そのもので宣言する。
 	errSSOTTypeHosts  = xerrors.New("SSOT の接頭辞の type が宛先を持ちません")
+	errSSOTRegionSet  = xerrors.New("SSOT の region_set か、宛先の {<set>} が不正です")
 	errWorkflowNoJobs = xerrors.New("jobs: を持たない workflow があります")
 	// errJobUnparsed は、reusable workflow の呼び出しでもないのに steps を読み取れないジョブのエラー。
 	// 読める形は scripts/lib/workflow の切り出しが決める。
 	errJobUnparsed   = xerrors.New("steps を読み取れないジョブがあります")
 	errStepMissing   = xerrors.New("steps を持つのに bullfrog の step が無いジョブがあります")
-	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの最初の step ではありません")
-	errStepDuplicate = xerrors.New("1 つのジョブに bullfrog の step が複数あります")
-	// errStepMalformed は、bullfrog の step が生成器の書ける形（name / uses / with だけ）を外れているか、
-	// step の外で bullfrog が名指しされている場合のエラー。apply では直らない。
+	errStepNotFirst  = xerrors.New("bullfrog の step がジョブの先頭の2つ（本体と再試行）に並んでいません")
+	errStepDuplicate = xerrors.New("1 つのジョブに bullfrog の step が3つ以上あります")
+	// errStepMalformed は、bullfrog の step が生成器の書ける形（name / id / continue-on-error / if / uses / with
+	// だけ）を外れているか、step の外で bullfrog が名指しされている場合のエラー。apply では直らない。
 	errStepMalformed = xerrors.New("bullfrog の step が想定外の形をしています")
 	errJobMissing    = xerrors.New("SSOT に未登録のジョブがあります")
 	errJobOrphan     = xerrors.New("SSOT に対応する workflow が無いジョブがあります")
 	errNoTargets     = xerrors.New("bullfrog の step が 1 件も見つかりません")
-	errEgressDrift   = xerrors.New("bullfrog の with: が SSOT からずれています")
+	errEgressDrift   = xerrors.New("bullfrog の step が SSOT と生成の形からずれています")
 )
 
 type class struct {
@@ -129,25 +132,32 @@ type typeSpec struct {
 	hosts []string
 }
 
+// regionSetSpec は region の集合 1 件。宛先の `{<name>}` を集合の各 region に展開する。
+type regionSetSpec struct {
+	regions []string
+}
+
 // ssot は .github/egress.toml の内容。*Order は各セクションの宣言順。
 type ssot struct {
-	classes   map[string]*class
-	jobs      map[string]*jobSpec
-	jobOrder  []string
-	roots     map[string]*rootSpec
-	rootOrder []string
-	types     map[string]*typeSpec
-	typeOrder []string
-	baseHosts []string
-	baseIPs   []string
+	regionSets map[string]*regionSetSpec
+	classes    map[string]*class
+	jobs       map[string]*jobSpec
+	jobOrder   []string
+	roots      map[string]*rootSpec
+	rootOrder  []string
+	types      map[string]*typeSpec
+	typeOrder  []string
+	baseHosts  []string
+	baseIPs    []string
 }
 
 // section は解析中のセクション。どれか 1 つだけが nil でない。
 type section struct {
-	class *class
-	job   *jobSpec
-	root  *rootSpec
-	typ   *typeSpec
+	regionSet *regionSetSpec
+	class     *class
+	job       *jobSpec
+	root      *rootSpec
+	typ       *typeSpec
 }
 
 // orderedHosts は初出順を保ったまま重複を落とすホスト集合。
@@ -156,13 +166,17 @@ type orderedHosts struct {
 	seen map[string]bool
 }
 
-// target は workflow 内の bullfrog step 1 件のうち、生成器が書く with: の範囲。
+// target は 1 ジョブの bullfrog の step（本体と、在れば再試行）のうち、生成器が書き直す範囲。
 type target struct {
 	jobKey string
-	// start / end は差し替える行の範囲（0 起点・end は排他）。with: が無い step では start == end で、
-	// uses: の直後へ挿入する。
+	// start / end は差し替える行の範囲（0 起点・end は排他）。本体の `- name:` から、再試行の step の
+	// 末尾（無ければ本体の末尾）まで。後ろに続く空行とコメントは次の step のものなので含めない。
 	start int
 	end   int
+	// uses は本体の uses: 行。版は pin-actions が書くので、生成器は写すだけで決めない。
+	uses string
+	// mentions は範囲の中で bullfrog を名指す行の数。
+	mentions int
 }
 
 func main() {
@@ -195,7 +209,7 @@ func run(args []string, wd func() (string, error)) error {
 func parseSSOT(data string) (*ssot, error) {
 	s := &ssot{
 		classes: map[string]*class{}, jobs: map[string]*jobSpec{},
-		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{},
+		roots: map[string]*rootSpec{}, types: map[string]*typeSpec{}, regionSets: map[string]*regionSetSpec{},
 	}
 	var cur section
 	var seen map[string]bool
@@ -231,7 +245,78 @@ func parseSSOT(data string) (*ssot, error) {
 			return nil, xerrors.Wrap(err, fmt.Sprintf("%d 行目", i+1))
 		}
 	}
+	if err := s.expandRegionSets(); err != nil {
+		return nil, err
+	}
 	return s, s.validate()
+}
+
+// regionTemplateRe は宛先の `{<name>}`。
+var regionTemplateRe = regexp.MustCompile(`\{([^{}]*)\}`)
+
+// expandRegionSets は class・job の extra・type の宛先の `{<name>}` を、region_set の各 region に展開する。
+// 未知の集合、使われない集合、空の集合、region の形でない要素、1 つの宛先に 2 つ以上の `{}` を拒む。
+func (s *ssot) expandRegionSets() error {
+	for name, rs := range s.regionSets {
+		if len(rs.regions) == 0 {
+			return xerrors.Wrap(errSSOTRegionSet, name+": regions が空です")
+		}
+		for _, r := range rs.regions {
+			if !regionLabelRe.MatchString(r) {
+				return xerrors.Wrap(errSSOTRegionSet, fmt.Sprintf("%s: %q は region の形ではありません", name, r))
+			}
+		}
+	}
+	used := map[string]bool{}
+	expand := func(owner string, hosts []string) ([]string, error) {
+		var out []string
+		for _, h := range hosts {
+			m := regionTemplateRe.FindAllStringSubmatchIndex(h, -1)
+			if len(m) == 0 {
+				out = append(out, h)
+				continue
+			}
+			if len(m) > 1 {
+				return nil, xerrors.Wrap(errSSOTRegionSet, owner+": "+h+"（{} は 1 つだけ）")
+			}
+			name := h[m[0][2]:m[0][3]]
+			rs, ok := s.regionSets[name]
+			if !ok {
+				return nil, xerrors.Wrap(errSSOTRegionSet, owner+": "+h+"（region_set "+name+" がありません）")
+			}
+			used[name] = true
+			for _, r := range rs.regions {
+				out = append(out, h[:m[0][0]]+r+h[m[0][1]:])
+			}
+		}
+		// 展開した宛先と、同じリストのリテラルの宛先の重複を拒む（requireUnique と同じ理由）。
+		if err := requireUnique(out); err != nil {
+			return nil, xerrors.Wrap(err, owner)
+		}
+		return out, nil
+	}
+	var err error
+	for _, name := range sortedKeys(s.classes) {
+		if s.classes[name].hosts, err = expand("class "+name, s.classes[name].hosts); err != nil {
+			return err
+		}
+	}
+	for _, key := range s.jobOrder {
+		if s.jobs[key].extra, err = expand("job "+key, s.jobs[key].extra); err != nil {
+			return err
+		}
+	}
+	for _, name := range s.typeOrder {
+		if s.types[name].hosts, err = expand("type "+name, s.types[name].hosts); err != nil {
+			return err
+		}
+	}
+	for _, name := range sortedKeys(s.regionSets) {
+		if !used[name] {
+			return xerrors.Wrap(errSSOTRegionSet, name+"（どの宛先も使いません。"+ssotFile+" から削除してください）")
+		}
+	}
+	return nil
 }
 
 // stripComment は行末コメントを落とす。値のクオート内に `#` は現れない前提。
@@ -259,6 +344,12 @@ func (s *ssot) openSection(kind, name string) (section, error) {
 		s.jobs[name] = &jobSpec{}
 		s.jobOrder = append(s.jobOrder, name)
 		return section{job: s.jobs[name]}, nil
+	case "region_set":
+		if _, ok := s.regionSets[name]; ok {
+			return dup()
+		}
+		s.regionSets[name] = &regionSetSpec{}
+		return section{regionSet: s.regionSets[name]}, nil
 	case "root":
 		if _, ok := s.roots[name]; ok {
 			return dup()
@@ -335,6 +426,8 @@ func assign(cur section, key string, values []string) error {
 		cur.root.jobs = values
 	case cur.typ != nil && key == "hosts":
 		cur.typ.hosts = values
+	case cur.regionSet != nil && key == "regions":
+		cur.regionSet.regions = values
 	default:
 		return xerrors.Wrap(errSSOTSyntax, "未知のキー "+key)
 	}
@@ -353,7 +446,6 @@ func requireUnique(values []string) error {
 	return nil
 }
 
-// validateDomain は bullfrog の allowed-domains へ書ける宛先かを判定する。
 func validateDomain(d string) error {
 	if !domainRe.MatchString(d) {
 		return xerrors.Wrap(errSSOTDomain, d)
@@ -361,7 +453,6 @@ func validateDomain(d string) error {
 	return nil
 }
 
-// validateIP は loopbackPrefix 内の IPv4 アドレスまたは IPv4 CIDR かを判定する。
 func validateIP(v string) error {
 	if a, err := netip.ParseAddr(v); err == nil && a.Is4() && loopbackPrefix.Contains(a) {
 		return nil
@@ -552,21 +643,27 @@ func scanJobs(name, data string) ([]target, error) {
 		switch {
 		case len(found) == 0:
 			return nil, xerrors.Wrap(errStepMissing, key)
-		case len(found) > 1:
+		case len(found) > 2:
 			return nil, xerrors.Wrap(errStepDuplicate, key)
 		case found[0] != 0:
 			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[0]].Number))
+		case len(found) == 2 && found[1] != 1:
+			return nil, xerrors.Wrap(errStepNotFirst, fmt.Sprintf("%s %d 行目", key, steps[found[1]].Number))
 		}
-		t, err := checkStepShape(steps[0])
+		t, err := checkHarden(steps[:len(found)])
 		if err != nil {
 			return nil, xerrors.Wrap(err, key)
 		}
 		t.jobKey = key
 		targets = append(targets, t)
 	}
-	if total != len(targets) {
+	inSteps := 0
+	for _, t := range targets {
+		inSteps += t.mentions
+	}
+	if total != inSteps {
 		return nil, xerrors.Wrap(errStepMalformed,
-			fmt.Sprintf("%s: step の外で %s が名指しされています（step 内 %d 件 / 全体 %d 件）", name, bullfrogAction, len(targets), total))
+			fmt.Sprintf("%s: step の外で %s が名指しされています（step 内 %d 件 / 全体 %d 件）", name, bullfrogAction, inSteps, total))
 	}
 	return targets, nil
 }
@@ -609,35 +706,64 @@ func mentionsBullfrog(lines []workflow.Line) int {
 	return n
 }
 
-// checkStepShape は bullfrog step が `- name:` → `uses:` → 任意の `with:` だけから成ることを確かめ、
-// 差し替える with: の範囲を返す。それ以外の形を拒む理由は scripts/README.md の egress 行が持つ。
-// step の後ろに続く空行とコメントは次の step のものなので残す。
-func checkStepShape(st workflow.Step) (target, error) {
+// checkHarden は、ジョブの先頭の bullfrog の step（本体と、在れば再試行）が生成器の書き直せる形かを確かめ、
+// 書き直す範囲と本体の uses: 行を返す。再試行の step の uses: は本体と同じものを生成するので、ここでは読まない。
+func checkHarden(steps []workflow.Step) (target, error) {
+	t := target{start: steps[0].Number - 1}
+	for i, st := range steps {
+		last := i == len(steps)-1
+		uses, end, err := checkStepShape(st, last)
+		if err != nil {
+			return target{}, err
+		}
+		if i == 0 {
+			t.uses = uses
+		}
+		t.end = end
+		t.mentions++
+	}
+	return t, nil
+}
+
+// checkStepShape は bullfrog の step が `- name:` の後に、生成器が書き直すキー（id / continue-on-error / if）、
+// `uses:`、任意の `with:` だけを持つことを確かめ、uses: 行と step の終わり（0 起点・排他）を返す。
+// それ以外の形を拒む理由は scripts/README.md の egress 行が持つ。last でない step（本体の後ろに再試行が続く）は、
+// 後ろに空行やコメントを持てない —— 書き直す範囲に入り、apply が黙って消すため。
+func checkStepShape(st workflow.Step, last bool) (string, int, error) {
 	ls := st.Lines
 	malformed := func(l workflow.Line) error {
 		return xerrors.Wrap(errStepMalformed, fmt.Sprintf("%d 行目: %q", l.Number, l.Text))
 	}
 	if len(ls) < 2 || !stepNameRe.MatchString(ls[0].Text) {
-		return target{}, malformed(ls[0])
+		return "", 0, malformed(ls[0])
 	}
-	if !stepUsesRe.MatchString(ls[1].Text) {
-		return target{}, malformed(ls[1])
+	i := 1
+	for i < len(ls) && stepKeyRe.MatchString(ls[i].Text) {
+		i++
 	}
-	i := 2
-	t := target{start: ls[1].Number, end: ls[1].Number}
+	if i >= len(ls) || !stepUsesRe.MatchString(ls[i].Text) {
+		l := ls[len(ls)-1]
+		if i < len(ls) {
+			l = ls[i]
+		}
+		return "", 0, malformed(l)
+	}
+	uses := ls[i].Text
+	end := ls[i].Number
+	i++
 	if i < len(ls) && stepWithRe.MatchString(ls[i].Text) {
 		i++
 		for i < len(ls) && strings.HasPrefix(ls[i].Text, keyIndent) {
 			i++
 		}
-		t.end = ls[i-1].Number
+		end = ls[i-1].Number
 	}
 	for ; i < len(ls); i++ {
-		if strings.TrimSpace(ls[i].Text) != "" && !commentRe.MatchString(ls[i].Text) {
-			return target{}, malformed(ls[i])
+		if !last || (strings.TrimSpace(ls[i].Text) != "" && !commentRe.MatchString(ls[i].Text)) {
+			return "", 0, malformed(ls[i])
 		}
 	}
-	return t, nil
+	return uses, end, nil
 }
 
 // renderWith は 1 ジョブ分の with: ブロックを返す。enable-sudo: false は全ジョブで書く（ADR-0702 決定21）。
@@ -664,7 +790,7 @@ func renderWith(policy string, ips, hosts []string) []string {
 	return out
 }
 
-// applyOrCheck は SSOT を正本に bullfrog の with: を書き換える。dryRun=true は書かない。
+// applyOrCheck は SSOT を正本に bullfrog の step の対を書き換える。dryRun=true は書かない。
 func applyOrCheck(root string, dryRun bool) error {
 	raw, err := os.ReadFile(filepath.Join(root, ssotFile)) //nolint:gosec // path is cwd + literal filename
 	if err != nil {
@@ -705,6 +831,9 @@ func applyOrCheck(root string, dryRun bool) error {
 	if err := s.checkEndpoints(root, ran); err != nil {
 		return err
 	}
+	if err := checkReferenceRegions(root); err != nil {
+		return err
+	}
 	return writeChanges(root, changes, dryRun)
 }
 
@@ -729,7 +858,7 @@ func (s *ssot) planFiles(files []string) (map[string]string, map[string]bool, er
 	return changes, used, nil
 }
 
-// rewriteFile は 1 ファイルの bullfrog step の with: を SSOT 由来の内容へ差し替えた本文を返す。
+// rewriteFile は 1 ファイルの bullfrog の step の対を、SSOT と生成の形どおりに差し替えた本文を返す。
 func (s *ssot) rewriteFile(name, data string, used map[string]bool) (string, error) {
 	targets, err := scanJobs(name, data)
 	if err != nil {
@@ -748,7 +877,7 @@ func (s *ssot) rewriteFile(name, data string, used map[string]bool) (string, err
 		if err != nil {
 			return "", err
 		}
-		block := renderWith(s.jobs[t.jobKey].policy, s.baseIPs, hosts)
+		block := harden.Render(t.uses, renderWith(s.jobs[t.jobKey].policy, s.baseIPs, hosts))
 		lines = append(lines[:t.start:t.start], append(block, lines[t.end:]...)...)
 	}
 	return strings.Join(lines, "\n"), nil
@@ -790,7 +919,7 @@ func writeChanges(root string, changes map[string]string, dryRun bool) error {
 			}
 			return xerrors.Wrap(errEgressDrift, "make egress-apply してコミットしてください: "+strings.Join(rels, ", "))
 		}
-		log.Printf("✅ 全ジョブの bullfrog の with: が %s 通りです", ssotFile)
+		log.Printf("✅ 全ジョブの bullfrog の step の対が %s と生成の形どおりです", ssotFile)
 
 		return nil
 	}

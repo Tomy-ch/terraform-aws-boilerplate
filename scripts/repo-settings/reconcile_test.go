@@ -161,6 +161,16 @@ func Test_diffRuleset(t *testing.T) {
 		assert.Equal(t, []string{"conditions が宣言と異なります", "target が宣言と異なります"}, rd.Findings)
 	})
 
+	t.Run("pull_request のルールの承認者数の相違を、Findings と分けて Exceptions に置く", func(t *testing.T) {
+		t.Parallel()
+		pr := func(count float64) map[string]any {
+			return map[string]any{"rules": []any{map[string]any{"type": "pull_request", "parameters": map[string]any{"required_approving_review_count": count}}}}
+		}
+		rd := diffRuleset(pr(1), live{Ruleset: pr(0)})
+		assert.Empty(t, rd.Findings)
+		assert.Equal(t, []string{"ルール pull_request の required_approving_review_count が宣言と異なります"}, rd.Exceptions)
+	})
+
 	t.Run("bypass の列挙を報せる", func(t *testing.T) {
 		t.Parallel()
 		got := decodeAny(t, liveRulesetJSON)
@@ -189,7 +199,9 @@ func Test_diffRules(t *testing.T) {
 	t.Run("順序を問わず type で照合する", func(t *testing.T) {
 		t.Parallel()
 		got := []any{want[1], want[0]}
-		assert.Empty(t, diffRules(want, got))
+		findings, exceptions := diffRules(want, got)
+		assert.Empty(t, findings)
+		assert.Empty(t, exceptions)
 	})
 
 	t.Run("欠落・相違・余分を報せる", func(t *testing.T) {
@@ -198,17 +210,20 @@ func Test_diffRules(t *testing.T) {
 			map[string]any{"type": "pull_request", "parameters": map[string]any{"x": false}},
 			map[string]any{"type": "copilot_code_review"},
 		}
+		findings, exceptions := diffRules(want, got)
 		assert.Equal(t, []string{
 			"ルール deletion が実在しません",
 			"ルール pull_request が宣言と異なります",
 			"宣言に無いルール copilot_code_review が実在します",
-		}, diffRules(want, got))
+		}, findings)
+		assert.Empty(t, exceptions)
 	})
 
 	t.Run("実態の同じ type のルールの重複を報せる", func(t *testing.T) {
 		t.Parallel()
 		got := []any{want[0], want[1], map[string]any{"type": "deletion"}}
-		assert.Equal(t, []string{"ルール deletion が実態に2件以上あります"}, diffRules(want, got))
+		findings, _ := diffRules(want, got)
+		assert.Equal(t, []string{"ルール deletion が実態に2件以上あります"}, findings)
 	})
 
 	t.Run("required status check の過不足を文に添える", func(t *testing.T) {
@@ -220,9 +235,98 @@ func Test_diffRules(t *testing.T) {
 			}
 			return map[string]any{"type": "required_status_checks", "parameters": map[string]any{"required_status_checks": list}}
 		}
-		assert.Equal(t, []string{"ルール required_status_checks が宣言と異なります（実態に無い context: b）"},
-			diffRules([]any{check("a", "b")}, []any{check("a")}))
+		findings, exceptions := diffRules([]any{check("a", "b")}, []any{check("a")})
+		assert.Equal(t, []string{"ルール required_status_checks が宣言と異なります（実態に無い context: b）"}, findings)
+		assert.Empty(t, exceptions)
 	})
+
+	pr := func(count any, thread bool) any {
+		return map[string]any{"type": "pull_request", "parameters": map[string]any{
+			"required_approving_review_count": count, "required_review_thread_resolution": thread,
+		}}
+	}
+
+	t.Run("pull_request のルールが承認者数だけ違えば、決定7 の例外として分けて返す", func(t *testing.T) {
+		t.Parallel()
+		findings, exceptions := diffRules([]any{pr(1.0, true)}, []any{pr(0.0, true)})
+		assert.Empty(t, findings)
+		assert.Equal(t, []string{"ルール pull_request の required_approving_review_count が宣言と異なります"}, exceptions)
+	})
+
+	t.Run("pull_request のルールが承認者数とほかのパラメータで違えば、両方を返す", func(t *testing.T) {
+		t.Parallel()
+		findings, exceptions := diffRules([]any{pr(1.0, true)}, []any{pr(0.0, false)})
+		assert.Equal(t, []string{"ルール pull_request が宣言と異なります"}, findings)
+		assert.Equal(t, []string{"ルール pull_request の required_approving_review_count が宣言と異なります"}, exceptions)
+	})
+
+	t.Run("pull_request のルールが承認者数の外だけで違えば、例外に数えない", func(t *testing.T) {
+		t.Parallel()
+		findings, exceptions := diffRules([]any{pr(1.0, true)}, []any{pr(1.0, false)})
+		assert.Equal(t, []string{"ルール pull_request が宣言と異なります"}, findings)
+		assert.Empty(t, exceptions)
+	})
+
+	t.Run("pull_request のルールの承認者数が実態で宣言より多ければ、例外に数えない", func(t *testing.T) {
+		t.Parallel()
+		findings, exceptions := diffRules([]any{pr(1.0, true)}, []any{pr(2.0, true)})
+		assert.Equal(t, []string{"ルール pull_request が宣言と異なります"}, findings)
+		assert.Empty(t, exceptions)
+	})
+
+	t.Run("pull_request のルールが実在しなければ、例外に数えない", func(t *testing.T) {
+		t.Parallel()
+		findings, exceptions := diffRules([]any{pr(1.0, true)}, []any{})
+		assert.Equal(t, []string{"ルール pull_request が実在しません"}, findings)
+		assert.Empty(t, exceptions)
+	})
+
+	t.Run("pull_request の外のルールの required_approving_review_count の相違は、例外に数えない", func(t *testing.T) {
+		t.Parallel()
+		rule := func(count any) any {
+			return map[string]any{"type": "other", "parameters": map[string]any{"required_approving_review_count": count}}
+		}
+		findings, exceptions := diffRules([]any{rule(1.0)}, []any{rule(0.0)})
+		assert.Equal(t, []string{"ルール other が宣言と異なります"}, findings)
+		assert.Empty(t, exceptions)
+	})
+}
+
+func Test_splitApprovalCount(t *testing.T) {
+	t.Parallel()
+
+	rule := func(params map[string]any) any {
+		r := map[string]any{"type": "pull_request"}
+		if params != nil {
+			r["parameters"] = params
+		}
+		return r
+	}
+	want := rule(map[string]any{"required_approving_review_count": 1.0, "x": true})
+
+	cases := []struct {
+		name             string
+		want, got        any
+		approval, others bool
+	}{
+		{"承認者数だけが違えば承認者数だけを立てる", want, rule(map[string]any{"required_approving_review_count": 0.0, "x": true}), true, false},
+		{"承認者数の外だけが違えば外だけを立てる", want, rule(map[string]any{"required_approving_review_count": 1.0, "x": false}), false, true},
+		{"両方が違えば両方を立てる", want, rule(map[string]any{"required_approving_review_count": 0.0, "x": false}), true, true},
+		{"実態の承認者数が宣言より多ければ、外に数える", want, rule(map[string]any{"required_approving_review_count": 2.0, "x": true}), false, true},
+		{"実態が承認者数を持たなければ、外に数える", want, rule(map[string]any{"x": true}), false, true},
+		{"実態の承認者数が数でなければ、外に数える", want, rule(map[string]any{"required_approving_review_count": "0", "x": true}), false, true},
+		{"実態が parameters を持たなければ、外に数える", want, rule(nil), false, true},
+		{"宣言が承認者数を持たなければ、相違はすべて外に数える", rule(map[string]any{"x": true}), rule(map[string]any{"x": false}), false, true},
+		{"宣言が parameters を持たなければ、相違はすべて外に数える", map[string]any{"type": "pull_request", "y": 1.0}, rule(nil), false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			approval, others := splitApprovalCount(tc.want, tc.got)
+			assert.Equal(t, tc.approval, approval, "approval")
+			assert.Equal(t, tc.others, others, "others")
+		})
+	}
 }
 
 func Test_contextDelta(t *testing.T) {
@@ -549,6 +653,12 @@ func Test_planRequests(t *testing.T) {
 	t.Run("ruleset がずれていれば PUT で置き換える", func(t *testing.T) {
 		t.Parallel()
 		reqs := planRequests(diff{Ruleset: rulesetDiff{ID: 3, Findings: []string{"x"}}}, want, "o/r", onlyRuleset)
+		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Ruleset}}, reqs)
+	})
+
+	t.Run("ruleset のずれが決定7 の例外だけでも PUT で置き換える", func(t *testing.T) {
+		t.Parallel()
+		reqs := planRequests(diff{Ruleset: rulesetDiff{ID: 3, Exceptions: []string{"x"}}}, want, "o/r", onlyRuleset)
 		assert.Equal(t, []request{{Method: "PUT", Path: "/repos/o/r/rulesets/3", Body: want.Ruleset}}, reqs)
 	})
 

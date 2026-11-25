@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun/tooltest"
 )
 
 const layerWithNulls = `{"layer_decl": {"attachments": {
@@ -219,6 +224,79 @@ func Test_policyChain(t *testing.T) {
 		})
 	}
 
+	for step, before := range map[string][]string{
+		stepVerify:     nil,
+		stepInit:       {stepVerify},
+		stepDeprecated: {stepVerify, stepInit, stepPlan},
+		stepConftest:   {stepVerify, stepInit, stepPlan, stepDeprecated},
+	} {
+		t.Run(step+" を起動できなければ、後の段を起動せずに errTool", func(t *testing.T) {
+			t.Parallel()
+			dir := chainDir(t, verifyOK, planOK, resultOK)
+			fake, calls := fakeTool(t)
+			tool := func(d string, env []string, s string) *exec.Cmd {
+				if s == step {
+					return tooltest.Missing(d, env, s)
+				}
+				return fake(d, env, s)
+			}
+			verified := map[string][]byte{}
+			_, err := policyChain(dir, "/d", tool, verified)
+			require.ErrorIs(t, err, errTool)
+			require.NotErrorIs(t, err, errFailed)
+			assert.Equal(t, 2, exitCode(err))
+			var started []string
+			for _, c := range calls() {
+				started = append(started, strings.Fields(c)[1])
+			}
+			assert.Equal(t, before, started)
+			if step == stepVerify {
+				assert.Empty(t, verified, "起動できなかった verify の結果を持ち回らない")
+			}
+		})
+	}
+
+	t.Run("init がシグナルで終われば errTool", func(t *testing.T) {
+		t.Parallel()
+		dir := chainDir(t, verifyOK, planOK, resultOK)
+		f := tooltest.New(t)
+		f.Set(stepVerify, "out", verifyOK)
+		f.Set(stepInit, "kill", "")
+		_, err := policyChain(dir, "/d", f.Tool(), map[string][]byte{})
+		require.ErrorIs(t, err, errTool)
+		assert.Contains(t, err.Error(), "がシグナルで終わりました")
+	})
+
+	// rcTool は、verify・conftest が rc=1 で結果を出し、plan が planOK を出す偽の道具。
+	rcTool := func(t *testing.T) *tooltest.Fake {
+		t.Helper()
+		f := tooltest.New(t)
+		f.Set(stepVerify, "out", verifyOK)
+		f.Set(stepVerify, "rc", "1")
+		f.Set(stepPlan, "out", planOK)
+		f.Set(stepConftest, "out", resultOK)
+		f.Set(stepConftest, "rc", "1")
+		return f
+	}
+
+	t.Run("対照: verify と conftest の 0 以外の終了コードは捨てて結果を読む", func(t *testing.T) {
+		t.Parallel()
+		out, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", rcTool(t).Tool(), map[string][]byte{})
+		require.NoError(t, err, out)
+	})
+
+	for _, step := range []string{stepInit, stepDeprecated} {
+		t.Run("対照: "+step+" の 0 以外の終了コードは errFailed で終了コードは 1", func(t *testing.T) {
+			t.Parallel()
+			f := rcTool(t)
+			f.Set(step, "rc", "1")
+			_, err := policyChain(chainDir(t, verifyOK, planOK, resultOK), "/d", f.Tool(), map[string][]byte{})
+			require.ErrorIs(t, err, errFailed)
+			require.NotErrorIs(t, err, errTool)
+			assert.Equal(t, 1, exitCode(err))
+		})
+	}
+
 	t.Run("Policy の形が崩れていれば Conftest を起動せずに落ちる", func(t *testing.T) {
 		t.Parallel()
 		dir := chainDir(t, verifyOK, planOK, resultOK)
@@ -259,21 +337,54 @@ func Test_verifyKey(t *testing.T) {
 func Test_runCanary(t *testing.T) {
 	t.Parallel()
 
-	args := func(t *testing.T) []string {
+	argsWith := func(t *testing.T, work string) []string {
 		t.Helper()
 		ref := tree(t, map[string]string{"versions.tf": "", ".terraform.lock.hcl": "", "decl.json": "{}", "layer.json": layerWithNulls})
-		return []string{"-data", t.TempDir(), "-work", filepath.Join(t.TempDir(), "w"), "-policy", policyTree(t),
+		return []string{"-data", t.TempDir(), "-work", work, "-policy", policyTree(t),
 			"-decl", filepath.Join(ref, "decl.json"), "-layer", filepath.Join(ref, "layer.json"), "-reference", ref}
+	}
+	args := func(t *testing.T) []string {
+		t.Helper()
+		return argsWith(t, "tmp/w")
 	}
 
 	t.Run("期待どおりでないケースを名指して errCanary", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
 		var out bytes.Buffer
-		err := runCanary(args(t), &out, tool)
+		err := runCanary(args(t), &out, tool, tree(t, nil))
 		require.ErrorIs(t, err, errCanary)
 		assert.Contains(t, err.Error(), "ok ")
 		assert.Contains(t, out.String(), "--- canary ok の出力")
+	})
+
+	t.Run("道具を起動できなければ、ケースの不成立に畳まずに errTool で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		var out bytes.Buffer
+		err := runCanary(args(t), &out, tooltest.Missing, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.NotContains(t, out.String(), "--- canary")
+		assert.NotContains(t, err.Error(), "それまでに落ちたケース", "最初のケースで打ち切れば、名指す先のケースは無い")
+	})
+
+	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {
+		t.Parallel()
+		fake, _ := fakeTool(t)
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			if step == stepVerify && filepath.Base(d) == "failing-rego-test" {
+				return tooltest.Missing(d, env, step)
+			}
+			return fake(d, env, step)
+		}
+		var out bytes.Buffer
+		err := runCanary(args(t), &out, tool, tree(t, nil))
+		require.ErrorIs(t, err, errTool)
+		require.NotErrorIs(t, err, errCanary)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Contains(t, out.String(), "--- canary ok の出力", "先のケースは偽の道具で期待どおりでない")
+		assert.Contains(t, err.Error(), "canary failing-rego-test で打ち切りました（それまでに落ちたケース: ok ")
 	})
 
 	t.Run("層の宣言から null の値を組めなければ errCanary", func(t *testing.T) {
@@ -283,7 +394,7 @@ func Test_runCanary(t *testing.T) {
 		require.NoError(t, os.WriteFile(layer, []byte(`{"layer_decl":{}}`), 0o600))
 		a[9] = layer
 		tool, calls := fakeTool(t)
-		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool), errCanary)
+		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool, tree(t, nil)), errCanary)
 		assert.Empty(t, calls())
 	})
 
@@ -292,13 +403,167 @@ func Test_runCanary(t *testing.T) {
 		a := args(t)
 		a[7] = filepath.Join(t.TempDir(), "none")
 		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool), errRead)
+		require.ErrorIs(t, runCanary(a, &bytes.Buffer{}, tool, tree(t, nil)), errRead)
 	})
 
 	t.Run("引数の誤りは errUsage", func(t *testing.T) {
 		t.Parallel()
 		tool, _ := fakeTool(t)
-		require.ErrorIs(t, runCanary([]string{"-data", "rel"}, &bytes.Buffer{}, tool), errUsage)
+		require.ErrorIs(t, runCanary([]string{"-data", "rel"}, &bytes.Buffer{}, tool, tree(t, nil)), errUsage)
+	})
+
+	t.Run("-work が tmp/ の下の相対パスでなければ、何も消さず道具も起動せずに、-work を名指す errUsage で終了コードは 2", func(t *testing.T) {
+		t.Parallel()
+		for _, work := range []string{
+			"", ".", "tmp", "tmp/", "tmp/.", "<root>/keep", "keep", "tmp/../keep", "../x", "TMP/x",
+			"tmp/out", "tmp/out/w", "tmp/self",
+		} {
+			t.Run(work, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				if work == "<root>/keep" {
+					work = filepath.Join(root, "keep")
+				}
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				err := runCanary(argsWith(t, work), &bytes.Buffer{}, tool, root)
+				require.ErrorIs(t, err, errUsage)
+				assert.Equal(t, 2, exitCode(err))
+				if work != "" {
+					assert.Contains(t, err.Error(), fmt.Sprintf("-work %q", work))
+				}
+				assert.Empty(t, calls())
+				assert.Equal(t, before, snapshot(t, world))
+			})
+		}
+	})
+
+	t.Run("-work を2度渡せば後の値を使う", func(t *testing.T) {
+		t.Parallel()
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		err := runCanary(append(argsWith(t, "tmp/c/work"), "-work", "../x"), &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Contains(t, err.Error(), `-work "../x"`)
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.ErrorIs(t, runCanary(append(argsWith(t, "../x"), "-work", "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
+	})
+
+	t.Run("-work だけを作り直し、tmp/ 自身・兄弟・tmp/ の外を残す", func(t *testing.T) {
+		t.Parallel()
+		for _, work := range []string{"tmp/c/work", "./tmp/c/work"} {
+			t.Run(work, func(t *testing.T) {
+				t.Parallel()
+				world, root, _ := workWorld(t)
+				before := snapshot(t, world)
+				tool, calls := fakeTool(t)
+				require.ErrorIs(t, runCanary(argsWith(t, work), &bytes.Buffer{}, tool, root), errCanary, "偽の道具では期待どおりにならない")
+				after := snapshot(t, world)
+				for rel, sum := range before {
+					if !strings.HasPrefix(rel, filepath.Join("root", "tmp", "c", "work")) {
+						assert.Equal(t, sum, after[rel], rel)
+					}
+				}
+				assert.NotContains(t, after, filepath.Join("root", "tmp", "c", "work", "old"), "前回の中身は消す")
+				require.NotEmpty(t, calls())
+				assert.True(t, strings.HasPrefix(calls()[0], filepath.Join(root, "tmp", "c", "work")+string(filepath.Separator)), "道具は絶対パスの fixture で起動する: %s", calls()[0])
+			})
+		}
+	})
+
+	t.Run("root が相対パスでも、道具は絶対パスの fixture で起動する", func(t *testing.T) {
+		t.Parallel()
+		_, root, _ := workWorld(t)
+		cwd, err := os.Getwd()
+		require.NoError(t, err)
+		rel, err := filepath.Rel(cwd, root)
+		require.NoError(t, err)
+		require.False(t, filepath.IsAbs(rel))
+		fake, _ := fakeTool(t)
+		var dirs []string
+		tool := func(d string, env []string, step string) *exec.Cmd {
+			dirs = append(dirs, d)
+			return fake(d, env, step)
+		}
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, rel), errCanary)
+		require.NotEmpty(t, dirs)
+		for _, d := range dirs {
+			assert.True(t, filepath.IsAbs(d), d)
+			assert.True(t, strings.HasPrefix(d, filepath.Join(root, "tmp", "c", "work")+string(filepath.Separator)), d)
+		}
+	})
+
+	t.Run("root に tmp/ が無ければ作って建てる", func(t *testing.T) {
+		t.Parallel()
+		root := tree(t, map[string]string{"keep/f": "keep"})
+		tool, _ := fakeTool(t)
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
+		assert.FileExists(t, filepath.Join(root, "keep", "f"))
+	})
+
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		c := exec.CommandContext(t.Context(), "git", append([]string{"-c", "core.hooksPath=/dev/null"}, args...)...)
+		c.Dir = dir
+		out, err := c.CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+
+	t.Run("tmp/ 自身が git の追跡している外への symlink なら使い方の誤りで、先を消さない", func(t *testing.T) {
+		t.Parallel()
+		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/work/old": "old", "elsewhere/stale.txt": "stale"})
+		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
+		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
+		git(t, root, "add", "tmp")
+		before := snapshot(t, elsewhere)
+		tool, calls := fakeTool(t)
+		err := runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root)
+		require.ErrorIs(t, err, errUsage)
+		assert.Equal(t, 2, exitCode(err))
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, elsewhere))
+	})
+
+	t.Run("tmp/ 自身が git の追跡していない外への symlink なら、その先を tmp/ として建て、先の兄弟を残す", func(t *testing.T) {
+		t.Parallel()
+		world := tree(t, map[string]string{"root/keep/f": "keep", "elsewhere/c/data/f": "data", "elsewhere/stale.txt": "stale"})
+		root, elsewhere := filepath.Join(world, "root"), filepath.Join(world, "elsewhere")
+		require.NoError(t, os.Symlink(elsewhere, filepath.Join(root, "tmp")))
+		git(t, root, "init", "-q")
+		tool, _ := fakeTool(t)
+		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, root), errCanary, "偽の道具では期待どおりにならない")
+		assert.DirExists(t, filepath.Join(elsewhere, "c", "work", "ok"))
+		assert.FileExists(t, filepath.Join(elsewhere, "c", "data", "f"))
+		assert.FileExists(t, filepath.Join(elsewhere, "stale.txt"))
+		assert.FileExists(t, filepath.Join(root, "keep", "f"))
+	})
+}
+
+func Test_planCanary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("root を runCanary へ渡す", func(t *testing.T) {
+		t.Parallel()
+		ref := tree(t, map[string]string{"versions.tf": "", ".terraform.lock.hcl": "", "decl.json": "{}", "layer.json": layerWithNulls})
+		args := func(work string) []string {
+			return []string{"-data", t.TempDir(), "-work", work, "-policy", policyTree(t),
+				"-decl", filepath.Join(ref, "decl.json"), "-layer", filepath.Join(ref, "layer.json"), "-reference", ref}
+		}
+		world, root, _ := workWorld(t)
+		before := snapshot(t, world)
+		tool, calls := fakeTool(t)
+		require.ErrorIs(t, planCanary(root)(args("tmp/out/w"), &bytes.Buffer{}, tool), errUsage, "root の tmp/out は外を指す")
+		assert.Empty(t, calls())
+		assert.Equal(t, before, snapshot(t, world))
+
+		require.ErrorIs(t, planCanary(root)(args("tmp/c/work"), &bytes.Buffer{}, tool), errCanary)
+		assert.DirExists(t, filepath.Join(root, "tmp", "c", "work", "ok"))
 	})
 }
 

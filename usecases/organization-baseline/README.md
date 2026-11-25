@@ -56,13 +56,13 @@ unsupported:
 ## 所有者
 
 - この usecase: 組織・OU・policy とその付け先、root の中央管理、管理アカウントの break-glass と password policy、メンバーアカウントの break-glass の role を配る StackSet
-- `account-baseline`: アカウント単位の安全側の設定の停止の拒否（`deny-baseline-stop`）と、opt-in のリージョンの有効化の拒否（`deny-enable-region`）の中身（Security・Workloads・Sandbox。[account-baseline/ADR-0201](../account-baseline/docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md)）。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書けるのは、deployment-identity の `DenyGovernanceChange` が password policy の Action を管理アカウントに限るとき（deployment-identity/ADR-0201 決定5）
+- `account-baseline`: アカウント単位の安全側の設定の停止の拒否（`deny-baseline-stop`）と、opt-in のリージョンの有効化の拒否（`deny-enable-region`）の中身（Security・Workloads・Sandbox。[account-baseline/ADR-0201](../account-baseline/docs/adr/0201-baseline-settings-changed-only-by-ci-apply.md)）。付け先はこの usecase が持つ。アカウントの代替の連絡先（Security Hub の Account.1）。メンバーアカウントの password policy（IAM.7・15・16）。メンバーの apply の role がそれを書く。deployment-identity の `DenyGovernanceChange` は password policy の更新を管理アカウントでだけ拒む（deployment-identity/ADR-0201 決定5）
 - `security-tooling`（#473）: 組織の trail・GuardDuty・Inspector を守る拒否の中身
 - `audit-evidence`: 監査ログの保管庫と鍵を守る拒否（Security。`protect-log-vault`）の中身
 
 ## 依存するユースケースと判断 Issue
 
-- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。初回は bootstrap の段4 が、権限とこの usecase の resource を同じ apply で作る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。以後、この usecase の resource を足す変更は、その権限の変更を先に昇格してから昇格する
+- `deployment-identity`: 管理アカウントの apply-identity の role に、この usecase の resource を変える権限と、apply の role にそれを拒ませる Deny が要る。初回は bootstrap の段4 が、権限とこの usecase の resource を同じ apply で作る（[ADR-0602](../../docs/adr/0602-bootstrap-and-ci-authentication.md) 決定1）。以後、この usecase の resource を足す変更は、その権限の変更と同じ昇格でよい（deployment-identity/ADR-0201 の影響）
 - 判断 Issue: #21（7つのアカウント、OU、break-glass、Identity Center、データ境界の決定）、#99、#142、#156、#128
 
 ## 検証方法

@@ -12,7 +12,7 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// runCheck は、2つの canary・設定と走査の対象の確認・本走査を、この順に走らせます。前の段が落ちれば、後の段を
+// runCheck は、3つの canary・設定の確認と走査の範囲の突き合わせ・本走査を、この順に走らせます。前の段が落ちれば、後の段を
 // 起動しません。root はリポジトリ直下です。-work の検証は [workdir.Resolve] が持ち、-work は終わりに消します。
 func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root string) error {
 	fset := flag.NewFlagSet("editorconfig-gate check", flag.ContinueOnError)
@@ -44,6 +44,9 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if err := runDirectiveCanary(fixture("directive"), w, tool, gitEnv); err != nil {
 		return err
 	}
+	if err := runExcludeCanary(fixture("exclude"), w, tool, gitEnv); err != nil {
+		return err
+	}
 	if err := runConfig(*checkerConfig, w, tool, gitEnv); err != nil {
 		return err
 	}
@@ -54,7 +57,7 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 // runScan は、リポジトリ直下で本走査（引数なしの editorconfig-checker）を走らせ、出力を w へ写します。0 でない
 // 終了コードは errFailed です。
 func runScan(w io.Writer, tool toolFunc, env []string) error {
-	r, err := toolrun.Run(tool(".", env, stepCheck))
+	r, err := toolrun.Run(tool(".", checkerEnv(env), stepScan))
 	fmt.Fprint(w, r.Combined)
 	if err != nil {
 		return err
