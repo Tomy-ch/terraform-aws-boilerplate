@@ -542,14 +542,36 @@ func Test_checkReadme(t *testing.T) {
 		assert.Empty(t, got)
 	})
 
-	t.Run("HTML ブロックの開始行は、その行の違反", func(t *testing.T) {
+	t.Run("HTML ブロックの開きと閉じのタグの行は、それぞれの行の違反", func(t *testing.T) {
 		t.Parallel()
 		body := readmeWith(validSection) + "\n<pre>\nx\n</pre>\n"
 		got, err := checkReadme("R.md", []byte(body))
 		require.NoError(t, err)
 		line, err := strconv.Atoi(lineOf(t, body, "<pre>"))
 		require.NoError(t, err)
-		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: line, Message: msgHTMLBlock}}, got)
+		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: line, Message: msgHTMLBlock}, {File: "R.md", Line: line + 2, Message: msgHTMLBlock}}, got)
+	})
+
+	t.Run("div と details の閉じのタグで始まる行は、それぞれの行の違反", func(t *testing.T) {
+		t.Parallel()
+		body := readmeWith(validSection) + "\n<div>\nx\n\n</details>\n"
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		div, err := strconv.Atoi(lineOf(t, body, "<div>"))
+		require.NoError(t, err)
+		details, err := strconv.Atoi(lineOf(t, body, "</details>"))
+		require.NoError(t, err)
+		assert.Equal(t, []lintreport.Finding{
+			{File: "R.md", Line: div, Message: msgHTMLBlock},
+			{File: "R.md", Line: details, Message: msgHTMLBlock},
+		}, got)
+	})
+
+	t.Run("段落の途中のタグは違反でない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith(validSection)+"\na <b>x</b>\n"))
+		require.NoError(t, err)
+		assert.Empty(t, got)
 	})
 
 	t.Run("setext 見出しは、下線の行の違反", func(t *testing.T) {
@@ -723,11 +745,16 @@ func Test_isHTMLBlockStart(t *testing.T) {
 		"属性が続く script":    {"<script src=x>", true},
 		"大文字の STYLE":      {"<STYLE>", true},
 		"行末で終わる textarea": {"<textarea", true},
+		"div":             {"<div>", true},
+		"閉じのタグ details":   {"</details>", true},
+		"任意のタグ名":          {"<prefix>", true},
 		"3つまでの字下げ":        {"   <pre>", true},
 		"4つの字下げ":          {"    <pre>", false},
-		"語が続く":            {"<prefix>", false},
-		"行頭でない":           {"a <pre>", false},
-		"div":             {"<div>", false},
+		"行頭でない":           {"a <b>x</b>", false},
+		"< の後が英字でない":      {"< a", false},
+		"< の後が数字":         {"<1>", false},
+		"コメントはタグではない":     {"<!-- x -->", false},
+		"</ の後が英字でない":     {"</ a>", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -899,7 +926,7 @@ func Test_scanReadme(t *testing.T) {
 		"HTML ブロックの開始行を、読まない形として報告する": {
 			"a\n\n<PRE>\n</pre>",
 			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3, Text: "<PRE>"}, {Number: 4, Text: "</pre>"}},
-				unsupported: []lintreport.Finding{{Line: 3, Message: msgHTMLBlock}}},
+				unsupported: []lintreport.Finding{{Line: 3, Message: msgHTMLBlock}, {Line: 4, Message: msgHTMLBlock}}},
 		},
 		"段落の直後の = か - だけの行を、setext 見出しとして報告する": {
 			"a\n===\n\nb\n-",

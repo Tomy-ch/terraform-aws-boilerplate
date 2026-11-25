@@ -60,7 +60,7 @@ const (
 
 // 読まない形の違反。走査がこれらを読めば、後ろの行の意味が変わる。
 const (
-	msgHTMLBlock = "ref-record-lint は HTML ブロック（`<pre`・`<script`・`<style`・`<textarea` で始まる行）を読みません。別の書き方にします"
+	msgHTMLBlock = "ref-record-lint は HTML ブロック（`<` か `</` に英字が続くタグで始まる行）を読みません。別の書き方にします"
 	msgSetext    = "ref-record-lint は setext 見出し（段落の直後の `=` か `-` だけの行）を読みません。`#` の見出しにするか、前に空行を置きます"
 )
 
@@ -70,7 +70,7 @@ var scanRoots = []string{"usecases", "modules"}
 var (
 	providerVersion = regexp.MustCompile(`AWS Provider v?[0-9]+\.[0-9]+\.[0-9]+`)
 	anyHeading      = regexp.MustCompile(`^ {0,3}(#{1,6})([ \t]|$)`)
-	htmlBlockStart  = regexp.MustCompile(`(?i)^ {0,3}<(pre|script|style|textarea)([ \t>]|$)`)
+	htmlBlockStart  = regexp.MustCompile(`^ {0,3}</?[A-Za-z]`)
 	setextUnderline = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
 	listItem        = regexp.MustCompile(`^ {0,3}([-+*]|[0-9]{1,9}[.)])([ \t]|$)`)
 	thematicBreak   = regexp.MustCompile(`^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$`)
@@ -422,8 +422,8 @@ func headingLevel(text string) int {
 	return len(m[1])
 }
 
-// isHTMLBlockStart は、text が、空行まででなく閉じのタグまで続く HTML ブロック（CommonMark の種類1）を開くかを
-// 返します。
+// isHTMLBlockStart は、text がタグで始まり、HTML ブロック（CommonMark の種類1・6・7）を開きうるかを返します。
+// コメント（`<!--`）は含みません。
 func isHTMLBlockStart(text string) bool {
 	return htmlBlockStart.MatchString(text)
 }
