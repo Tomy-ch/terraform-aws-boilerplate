@@ -86,23 +86,68 @@ func Test_lessVersion(t *testing.T) {
 		t.Run("数値として比べるので桁数では並ばない", func(t *testing.T) {
 			t.Parallel()
 
-			assert.True(t, lessVersion("1.9.0", "1.10.0"), "文字列比較なら 1.9.0 が後になる")
-			assert.False(t, lessVersion("1.10.0", "1.9.0"))
+			assertLess(t, true, "1.9.0", "1.10.0")
+			assertLess(t, false, "1.10.0", "1.9.0")
 		})
 
 		t.Run("区切りの数が違えば足りない側を 0 とみなす", func(t *testing.T) {
 			t.Parallel()
 
-			assert.False(t, lessVersion("1.2", "1.2.0"))
-			assert.True(t, lessVersion("1.2", "1.2.1"))
+			assertLess(t, false, "1.2", "1.2.0")
+			assertLess(t, true, "1.2", "1.2.1")
 		})
 
 		t.Run("同じ版は小さくない", func(t *testing.T) {
 			t.Parallel()
 
-			assert.False(t, lessVersion("2.1.1", "2.1.1"))
+			assertLess(t, false, "2.1.1", "2.1.1")
+		})
+
+		t.Run("先頭の v は両側で落として比べる", func(t *testing.T) {
+			t.Parallel()
+
+			assertLess(t, false, "v1.2.3", "1.2.3")
+			assertLess(t, false, "1.2.3", "v1.2.3")
+			assertLess(t, false, "v1.5.0", "1.4.0")
+			assertLess(t, true, "1.4.0", "v1.5.0")
 		})
 	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for name, pair := range map[string][2]string{
+			"プレリリース識別子":    {"1.2.0-rc1", "1.2.0"},
+			"右側のプレリリース識別子": {"1.2.0", "1.2.0-rc1"},
+			"空の区切り":        {"1..3", "1.2.3"},
+			"空":            {"", "1.2.3"},
+			"符号付きの区切り":     {"1.+2.3", "1.2.3"},
+			"数値でない版":       {"created", "1.2.3"},
+		} {
+			t.Run(name+"は比べずにエラーにする", func(t *testing.T) {
+				t.Parallel()
+
+				_, err := lessVersion(pair[0], pair[1])
+				require.ErrorIs(t, err, errIncomparableVersion)
+			})
+		}
+
+		// 先に違う区切りで大小が決まっても、後ろの区切りを読まずに比べたことにしない。
+		t.Run("大小が先の区切りで決まっても後ろの区切りが比べられなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := lessVersion("1.2.0-rc1", "1.3.0")
+			require.ErrorIs(t, err, errIncomparableVersion)
+		})
+	})
+}
+
+func assertLess(t *testing.T, want bool, a, b string) {
+	t.Helper()
+
+	got, err := lessVersion(a, b)
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "lessVersion(%q, %q)", a, b)
 }
 
 func Test_majorOf(t *testing.T) {
@@ -192,6 +237,41 @@ func Test_evaluate(t *testing.T) {
 			assert.True(t, c.heldByWindow(), "上流に新版があることは待ちとして見える")
 		})
 
+		t.Run("v 付きの pin より古い版は更新先にしない", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				"/repos/owner/repo/releases?per_page=100": `[
+					{"tag_name":"v1.4.0","published_at":"` + daysAgo(20) + `","prerelease":false,"draft":false}
+				]`,
+			})
+
+			c := evaluate(t.Context(), client, tool{
+				key: "aqua:owner/repo", version: "v1.5.0", backend: "aqua:owner/repo",
+			}, outdatedNow)
+
+			require.NoError(t, c.err)
+			assert.Equal(t, "1.4.0", c.eligible)
+			assert.False(t, c.actionable())
+			assert.False(t, c.heldByWindow())
+		})
+
+		t.Run("github-commit は commit の一覧から棚卸しする", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				commitsListURI: `[` + commitJSON(semgrepNewer, daysAgo(20), "root1") + `,` +
+					commitJSON(semgrepPin, daysAgo(40), "root0") + `]`,
+				treesURI + "root0": rootTreeJSON("tf0"),
+				treesURI + "root1": rootTreeJSON("tf1"),
+			})
+
+			c := evaluate(t.Context(), client, semgrepTool(), outdatedNow)
+
+			require.NoError(t, c.err)
+			require.NotNil(t, c.commit)
+			assert.Equal(t, semgrepNewer, c.eligible)
+			assert.True(t, c.actionable())
+		})
+
 		t.Run("プレリリースと draft は候補にしない", func(t *testing.T) {
 			t.Parallel()
 			client := upstreamStub(t, map[string]string{
@@ -225,6 +305,53 @@ func Test_evaluate(t *testing.T) {
 			require.Error(t, c.err)
 			assert.False(t, c.actionable())
 			assert.False(t, c.heldByWindow())
+		})
+
+		// actionable と heldByWindow は比べられない組を偽に倒すだけで、err には出さない。
+		for backend, routes := range map[string]map[string]string{
+			"aqua:owner/repo": {"/repos/owner/repo/releases?per_page=100": `[
+				{"tag_name":"v1.3.x","published_at":"` + daysAgo(30) + `","prerelease":false,"draft":false},
+				{"tag_name":"v1.4.0+build","published_at":"` + daysAgo(30) + `","prerelease":false,"draft":false}
+			]`},
+			"npm:pkg": {"/pkg": `{"time":{"1.3.x":"` + daysAgo(30) + `","latest":"` + daysAgo(30) + `"}}`},
+			"go:example.com/mod": {
+				"/example.com/mod/@v/list":            "v1.3.x\nv1.4.0-pre\n",
+				"/example.com/mod/@v/v1.3.x.info":     `{"Time":"` + daysAgo(30) + `"}`,
+				"/example.com/mod/@v/v1.4.0-pre.info": `{"Time":"` + daysAgo(30) + `"}`,
+			},
+		} {
+			t.Run(backend+" の比べられない版を pin と比べる候補に残さない", func(t *testing.T) {
+				t.Parallel()
+
+				c := evaluate(t.Context(), upstreamStub(t, routes), tool{
+					key: backend, version: "1.1.0", backend: backend,
+				}, outdatedNow)
+
+				require.NoError(t, c.err)
+				assert.Empty(t, c.latest)
+				assert.Empty(t, c.eligible)
+				assert.False(t, c.actionable())
+				assert.False(t, c.heldByWindow())
+			})
+		}
+
+		// 0 と読んで比べると、プレリリースの pin より古い版を更新先として差し出す。
+		t.Run("pin を比べられなければ err を持たせ候補にしない", func(t *testing.T) {
+			t.Parallel()
+			client := upstreamStub(t, map[string]string{
+				"/repos/owner/repo/releases?per_page=100": `[
+					{"tag_name":"v1.3.0","published_at":"` + daysAgo(20) + `","prerelease":false,"draft":false}
+				]`,
+			})
+
+			c := evaluate(t.Context(), client, tool{
+				key: "aqua:owner/repo", version: "1.2.0-rc1", backend: "aqua:owner/repo",
+			}, outdatedNow)
+
+			require.ErrorIs(t, c.err, errIncomparableVersion)
+			assert.False(t, c.actionable())
+			assert.False(t, c.heldByWindow())
+			assert.Contains(t, outdatedReport([]candidate{c}, outdatedNow), "## 上流を確認できなかった")
 		})
 	})
 }
@@ -310,6 +437,32 @@ func Test_outdatedReport(t *testing.T) {
 			assert.NotContains(t, body, "## 上流を確認できなかった")
 		})
 
+		// 内容の sha256 は commit と対で照合されるので、commit だけを上げると make semgrep が落ちる。
+		t.Run("commit の宣言の行は SEMGREP_RULES_SHA256 の同時の更新を添える", func(t *testing.T) {
+			t.Parallel()
+			body := outdatedReport([]candidate{
+				{
+					tool:   semgrepTool(),
+					latest: semgrepNewer, eligible: semgrepNewer, eligibleAge: 20, window: releaseWindowDays,
+					commit: &commitSurvey{eligibleMoves: true},
+				},
+			}, outdatedNow)
+
+			assert.Contains(t, body, "| **"+semgrepNewer+"** | 20d | `"+semgrepFile+"`（同じファイルの `SEMGREP_RULES_SHA256` も同時に上げる） |")
+		})
+
+		t.Run("版の宣言の行は SEMGREP_RULES_SHA256 に触れない", func(t *testing.T) {
+			t.Parallel()
+			body := outdatedReport([]candidate{
+				{
+					tool:     tool{key: "lefthook", version: "2.1.10", backend: "aqua:evilmartians/lefthook", file: miseFile},
+					eligible: "2.1.11", eligibleAge: 19, window: releaseWindowDays,
+				},
+			}, outdatedNow)
+
+			assert.NotContains(t, body, "SEMGREP_RULES_SHA256")
+		})
+
 		t.Run("どちらも無ければ両方の節がなしになる", func(t *testing.T) {
 			t.Parallel()
 			body := outdatedReport([]candidate{
@@ -358,6 +511,14 @@ func Test_candidate_actionable(t *testing.T) {
 
 			assert.True(t, candidate{tool: tool{version: "1.1.0"}, eligible: "1.2.0"}.actionable())
 		})
+
+		t.Run("commit の宣言は eligible が terraform の中身を変えれば動かせる", func(t *testing.T) {
+			t.Parallel()
+
+			assert.True(t, candidate{
+				tool: tool{version: semgrepPin}, eligible: semgrepNewer, commit: &commitSurvey{eligibleMoves: true},
+			}.actionable())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -375,10 +536,42 @@ func Test_candidate_actionable(t *testing.T) {
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}}.actionable())
 		})
 
+		t.Run("commit の宣言は terraform の中身が変わらなければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{
+				tool: tool{version: semgrepPin}, eligible: semgrepNewer, commit: &commitSurvey{},
+			}.actionable())
+		})
+
+		t.Run("pin が eligible より新しければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.52.2"}, eligible: "1.52.0"}.actionable())
+		})
+
 		t.Run("上流を確認できていなければ動かせない", func(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}, eligible: "1.2.0", err: errNotFound}.actionable())
+		})
+
+		t.Run("v 付きの pin が eligible と同じ版なら動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "v1.2.3"}, eligible: "1.2.3"}.actionable())
+		})
+
+		t.Run("v 付きの pin が eligible より新しければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "v1.5.0"}, eligible: "1.4.0"}.actionable())
+		})
+
+		t.Run("pin を比べられなければ動かせない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.2.0-rc1"}, eligible: "1.3.0"}.actionable())
 		})
 	})
 }
@@ -394,6 +587,15 @@ func Test_candidate_heldByWindow(t *testing.T) {
 
 			assert.True(t, candidate{tool: tool{version: "1.1.0"}, latest: "1.3.0", eligible: "1.2.0"}.heldByWindow())
 		})
+
+		t.Run("commit の宣言は上流最新が terraform の中身を変えれば待ちが立つ", func(t *testing.T) {
+			t.Parallel()
+
+			assert.True(t, candidate{
+				tool: tool{version: semgrepPin}, latest: semgrepNewer, eligible: semgrepPin,
+				commit: &commitSurvey{latestMoves: true},
+			}.heldByWindow())
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -403,6 +605,26 @@ func Test_candidate_heldByWindow(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}, latest: "1.1.0", eligible: "1.1.0"}.heldByWindow())
+		})
+
+		t.Run("pin が eligible より新しく上流最新と同じなら待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.52.2"}, latest: "1.52.2", eligible: "1.52.0"}.heldByWindow())
+		})
+
+		t.Run("pin が上流最新より新しければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.53.0"}, latest: "1.52.2", eligible: "1.52.0"}.heldByWindow())
+		})
+
+		t.Run("commit の宣言は上流最新が terraform の中身を変えなければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{
+				tool: tool{version: semgrepPin}, latest: semgrepNewer, eligible: semgrepPin, commit: &commitSurvey{},
+			}.heldByWindow())
 		})
 
 		t.Run("上流最新をそのまま採れるなら待ちは立たない", func(t *testing.T) {
@@ -415,6 +637,18 @@ func Test_candidate_heldByWindow(t *testing.T) {
 			t.Parallel()
 
 			assert.False(t, candidate{tool: tool{version: "1.1.0"}, latest: "1.3.0", err: errNotFound}.heldByWindow())
+		})
+
+		t.Run("v 付きの pin が上流最新より新しければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "v1.5.0"}, latest: "1.4.0", eligible: "1.3.0"}.heldByWindow())
+		})
+
+		t.Run("pin を比べられなければ待ちは立たない", func(t *testing.T) {
+			t.Parallel()
+
+			assert.False(t, candidate{tool: tool{version: "1.2.0-rc1"}, latest: "1.3.0", eligible: "1.2.0"}.heldByWindow())
 		})
 	})
 }
