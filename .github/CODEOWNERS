@@ -64,11 +64,13 @@ scripts/hcl-tally/                         @Tomy-ch
 scripts/provider-schema/                   @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
 scripts/lib/atomicwrite/                   @Tomy-ch
+scripts/lib/gitenv/                        @Tomy-ch
 scripts/lib/lintreport/                    @Tomy-ch
 scripts/lib/mdscan/                        @Tomy-ch
 scripts/lib/requiredchecks/                @Tomy-ch
 scripts/lib/shellcheck/                    @Tomy-ch
 scripts/lib/testenv/                       @Tomy-ch
+scripts/lib/workdir/                       @Tomy-ch
 scripts/lib/workflow/                      @Tomy-ch
 scripts/lib/xerrors/                       @Tomy-ch
 scripts/tf-job-lint/                       @Tomy-ch
