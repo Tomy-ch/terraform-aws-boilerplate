@@ -93,6 +93,20 @@ func InlineCodes(line string) []string {
 	return out
 }
 
+// CodeSpan は、s の先頭のバッククォートの並びが開く inline code span の、閉じの並びまでを含めた長さを返します。
+// 閉じの規則は InlineCodes と同じで、長さの違う並びは読み飛ばします。閉じが無ければ、開きの並びの長さと false を
+// 返します（その並びはただの文字です）。s がバッククォートで始まらなければ 0 と false です。
+func CodeSpan(s string) (n int, closed bool) {
+	open := runLen(s, 0)
+	if open == 0 {
+		return 0, false
+	}
+	if closeAt, ok := findClose(s, open, open); ok {
+		return closeAt + open, true
+	}
+	return open, false
+}
+
 // findClose は、from 以降で、ちょうど want 個のバッククォートが並ぶ位置を返します。
 func findClose(line string, from, want int) (int, bool) {
 	for j := from; j < len(line); {

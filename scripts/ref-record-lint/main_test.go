@@ -515,6 +515,39 @@ func Test_checkReadme(t *testing.T) {
 		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: line, Message: `"採用した知見:" の項目の本文が空です`}}, got)
 	})
 
+	t.Run("字下げした見出しも、参照記録の見出しとして読む", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading, "  "+heading, 1))))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("HTML ブロックの開始行は、その行の違反", func(t *testing.T) {
+		t.Parallel()
+		body := readmeWith(validSection) + "\n<pre>\nx\n</pre>\n"
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		line, err := strconv.Atoi(lineOf(t, body, "<pre>"))
+		require.NoError(t, err)
+		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: line, Message: msgHTMLBlock}}, got)
+	})
+
+	t.Run("setext 見出しは、下線の行の違反", func(t *testing.T) {
+		t.Parallel()
+		body := readmeWith(validSection) + "\n本文\n---\n"
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: strings.Count(body, "\n"), Message: msgSetext}}, got)
+	})
+
+	t.Run("見出しより前の閉じないコメントは、見出しの行をコメントの理由で名指す errCountMismatch", func(t *testing.T) {
+		t.Parallel()
+		body := "<!-- 閉じない\n\n" + readmeWith(validSection)
+		_, err := checkReadme("R.md", []byte(body))
+		require.ErrorIs(t, err, errCountMismatch)
+		assert.Contains(t, err.Error(), "読まなかった行: "+lineOf(t, body, heading)+" 行目（HTML コメント）")
+	})
+
 	t.Run("空のコメントは閉じないコメントではない", func(t *testing.T) {
 		t.Parallel()
 		got, err := checkReadme("R.md", []byte("<!--> a <!--->\n"+readmeWith(validSection)))
@@ -616,12 +649,89 @@ func Test_headingLevel(t *testing.T) {
 		"7段は見出しでない": {"####### a", 0},
 		"空白の無い # は見出しでない": {"#hash", 0},
 		"行頭がコメント":         {"<!-- -->## a", 0},
-		"字下げした行":          {" ## a", 0},
+		"1つの字下げ":          {" ## a", 2},
+		"3つの字下げ":          {"   ## a", 2},
+		"4つの字下げは見出しでない":   {"    ## a", 0},
+		"タブで区切る":          {"##\ta", 2},
 		"本文":              {"a", 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, c.want, headingLevel(c.text))
+		})
+	}
+}
+
+func Test_isHTMLBlockStart(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want bool
+	}{
+		"pre":             {"<pre>", true},
+		"属性が続く script":    {"<script src=x>", true},
+		"大文字の STYLE":      {"<STYLE>", true},
+		"行末で終わる textarea": {"<textarea", true},
+		"3つまでの字下げ":        {"   <pre>", true},
+		"4つの字下げ":          {"    <pre>", false},
+		"語が続く":            {"<prefix>", false},
+		"行頭でない":           {"a <pre>", false},
+		"div":             {"<div>", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isHTMLBlockStart(c.text))
+		})
+	}
+}
+
+func Test_isSetextUnderline(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want bool
+	}{
+		"= の並び":    {"===", true},
+		"- が1つ":    {"-", true},
+		"後ろの空白を許す": {"---  ", true},
+		"3つまでの字下げ": {"   ==", true},
+		"4つの字下げ":   {"    ==", false},
+		"混ざる":      {"=-", false},
+		"間に空白":     {"- -", false},
+		"本文が続く":    {"- A", false},
+		"空":        {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isSetextUnderline(c.text))
+		})
+	}
+}
+
+func Test_isParagraphLine(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want bool
+	}{
+		"本文":        {"本文", true},
+		"label":     {adoptedLabel, true},
+		"= の並び":     {"===", true},
+		"空白だけ":      {"  ", false},
+		"見出し":       {"## a", false},
+		"- の項目":     {"- A", false},
+		"- だけの項目":   {"-", false},
+		"番号の項目":     {"1. A", false},
+		"区切り線":      {"* * *", false},
+		"HTML ブロック": {"<pre>", false},
+		"行頭がコメント":   {"<!-- x -->", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isParagraphLine(c.text))
 		})
 	}
 }
@@ -651,13 +761,16 @@ func Test_isHeading(t *testing.T) {
 		text string
 		want bool
 	}{
-		"見出しだけ":   {heading, true},
-		"空白が続く":   {heading + " <!-- x -->", true},
-		"括弧書きが続く": {heading + "（ADR-0206 決定7・8）", true},
-		"語が続く":    {heading + "メモ", false},
-		"3段目":     {"#" + heading, false},
-		"行頭でない":   {" " + heading, false},
-		"別の見出し":   {"## 公式実装", false},
+		"見出しだけ":    {heading, true},
+		"空白が続く":    {heading + " <!-- x -->", true},
+		"括弧書きが続く":  {heading + "（ADR-0206 決定7・8）", true},
+		"語が続く":     {heading + "メモ", false},
+		"3段目":      {"#" + heading, false},
+		"3つまでの字下げ": {"   " + heading, true},
+		"4つの字下げ":   {"    " + heading, false},
+		"タブで区切る":   {"##\t公式実装の参照", true},
+		"空白が2つ":    {"##  公式実装の参照", true},
+		"別の見出し":    {"## 公式実装", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -729,6 +842,34 @@ func Test_scanReadme(t *testing.T) {
 			"<!-- a\nb --> c <!-- d\ne",
 			scanned{lines: []line{{Number: 1}, {Number: 2, Text: " c "}, {Number: 3}}, openedAt: 2},
 		},
+		"字下げした見出しも見出しとして数える": {
+			"   " + heading,
+			scanned{lines: []line{{Number: 1, Text: "   " + heading, Level: 2}}, headings: []int{0}},
+		},
+		"HTML ブロックの開始行を、読まない形として報告する": {
+			"a\n\n<PRE>\n</pre>",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3, Text: "<PRE>"}, {Number: 4, Text: "</pre>"}},
+				unsupported: []lintreport.Finding{{Line: 3, Message: msgHTMLBlock}}},
+		},
+		"段落の直後の = か - だけの行を、setext 見出しとして報告する": {
+			"a\n===\n\nb\n-",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2, Text: "==="}, {Number: 3}, {Number: 4, Text: "b"}, {Number: 5, Text: "-"}},
+				unsupported: []lintreport.Finding{{Line: 2, Message: msgSetext}, {Line: 5, Message: msgSetext}}},
+		},
+		"フェンスと、行頭で開いたコメントの直後の --- は setext ではない": {
+			"a\n```\n```\n---\n<!--\n-->\n---",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 4, Text: "---"}, {Number: 5}, {Number: 6}, {Number: 7, Text: "---"}}},
+		},
+		"段落の中で開いたコメントの後ろは段落が続き、--- は setext": {
+			"b <!--\n-->\n---",
+			scanned{lines: []line{{Number: 1, Text: "b "}, {Number: 2}, {Number: 3, Text: "---"}},
+				unsupported: []lintreport.Finding{{Line: 3, Message: msgSetext}}},
+		},
+		"空行の後の --- と、項目の後の - と、フェンスとコメントの中は報告しない": {
+			"a\n\n---\n- A\n-\n```\n<pre>\n```\n<!--\n<pre>\n-->",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3, Text: "---"}, {Number: 4, Text: "- A"}, {Number: 5, Text: "-"},
+				{Number: 9}, {Number: 10}, {Number: 11}}},
+		},
 		"閉じれば開いた行を忘れる": {
 			"<!-- a\nb -->",
 			scanned{lines: []line{{Number: 1}, {Number: 2}}},
@@ -759,6 +900,7 @@ func Test_stripComments(t *testing.T) {
 		"inline code の中の開きは開かない":               {"`<!--` a", false, "`<!--` a", false},
 		"閉じない inline code の後ろは開く":              {"`a <!-- b", false, "`a ", true},
 		"閉じなければ開いたままを返す":                       {"a <!-- b", false, "a ", true},
+		"長さの違う並びを読み飛ばして inline code を閉じる":      {"`a``b<!-- c`", false, "`a``b<!-- c`", false},
 		"長さの違う閉じは inline code を閉じない":           {"`a``<!-- b", false, "`a``", true},
 		"2つ以上のバッククォートの inline code の中の開きは開かない": {"``a`<!--``", false, "``a`<!--``", false},
 		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
@@ -794,25 +936,6 @@ func Test_cutEmptyComment(t *testing.T) {
 			got, ok := cutEmptyComment(c.rest)
 			assert.Equal(t, c.want, got)
 			assert.Equal(t, c.ok, ok)
-		})
-	}
-}
-
-func Test_backtickRun(t *testing.T) {
-	t.Parallel()
-
-	for name, c := range map[string]struct {
-		s    string
-		want int
-	}{
-		"先頭がバッククォートでない": {"a`", 0},
-		"1つ":   {"`a`", 1},
-		"3つ続く": {"```", 3},
-		"空":    {"", 0},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, c.want, backtickRun(c.s))
 		})
 	}
 }
