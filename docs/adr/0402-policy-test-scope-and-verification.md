@@ -37,12 +37,13 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
    | S3 の public access の遮断 | Security | ADR を読まずに書ける |
    | 暗号化の有効化 | Security | 同上 |
    | RDS の public access の禁止 | Security | 同上 |
-   | IAM の Action wildcard の禁止 | Security | 同上 |
+   | IAM の Action wildcard の禁止（Security の道具の既定ルールが検出する書き方） | Security | 同上 |
+   | IAM の Action wildcard の禁止（Security の道具の既定ルールが検出しない書き方。同じ効果を持つ `NotAction` の Allow を含む） | Policy | 決定4 |
    | `0.0.0.0/0` と `::/0` からの ingress を、インターネット公開点として設計された module に限ること | Policy | 何が公開点かは本リポジトリの設計が決める（ADR-0301 決定15） |
    | 意味論的な権限指定から導出された Action の集合と、生成された policy が完全一致すること | Policy | 導出規則は当該ユースケースの ADR が持つ（ADR-0301 決定7） |
    | OIDC の信頼条件にワイルドカードが存在しないこと | Policy | 対象と条件の形が本リポジトリの設計に属する |
 
-   Security の道具の既定のルールが、本リポジトリの書き方の文書を検出しない場合は、決定4 により Policy が持つ。IAM の Action wildcard はその例である。
+   Security の道具の既定のルールが、本リポジトリの書き方の文書を検出しない場合は、決定4 により Policy が持つ。表の IAM の Action wildcard の2行目はその例である。
 
 ### Policy 自体の検証
 
@@ -138,3 +139,4 @@ plan の出力から役割を読めるようになる。ただし tag は利用�
 - address による役割判定が、module の粒度の変更に追随できなくなった場合
 - Policy の数が、レビューによる重複判定（決定3）では追えない規模に達した場合
 - Provider が、別の resource と同じ設定を書く引数を非推奨としなくなり、決定18 の schema との突き合わせが宣言の網羅を表さなくなった場合
+- Security の道具のいずれかが、表の下の文により Policy が持つ検査を既定ルールで検出するようになった場合（決定3 により Policy 側を削る）
