@@ -142,11 +142,31 @@ func writeBypass(t *testing.T, body string) string {
 	return path
 }
 
+// releasedOn は aqua:owner/repo@1.2.3 を publishedOn に公開した上流を返す。semgrepFixture の
+// commit は窓の外で公開したものとして応える。
 func releasedOn(t *testing.T, publishedOn string) *http.Client {
 	t.Helper()
-	return fakeUpstream(t, respondJSON(
-		"/repos/owner/repo/releases/tags/v1.2.3", `{"published_at":"`+publishedOn+`T00:00:00Z"}`,
-	))
+	return fakeUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo/releases/tags/v1.2.3":
+			_, _ = io.WriteString(w, `{"published_at":"`+publishedOn+`T00:00:00Z"}`)
+		case "/repos/" + semgrepRulesRepo + "/commits/" + semgrepPin:
+			_, _ = io.WriteString(w, commitJSON(semgrepPin, "2020-01-01T00:00:00Z", "root0"))
+		case repoURI, compareURI + semgrepPin:
+			_, _ = io.WriteString(w, onDefaultBranch(semgrepPin, "behind")[r.URL.Path])
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+// semgrepCommitOn は semgrep-rules の sha を publishedOn に既定ブランチへ入った commit として返す上流を返す。
+func semgrepCommitOn(t *testing.T, sha, publishedOn string) *http.Client {
+	t.Helper()
+	routes := onDefaultBranch(sha, "behind")
+	routes["/repos/"+semgrepRulesRepo+"/commits/"+sha] = commitJSON(sha, publishedOn+"T00:00:00Z", "root1")
+
+	return upstreamStub(t, routes)
 }
 
 // useMiseWorkTree は mise.toml だけを持つ作業ディレクトリを作り、そこへ移動します。パスを返すのは
@@ -155,6 +175,7 @@ func useMiseWorkTree(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, miseFile), []byte(content), 0o600))
+	writeSemgrepDecl(t, dir)
 	t.Chdir(dir)
 	return dir
 }
@@ -163,11 +184,19 @@ func useMiseWorkTree(t *testing.T, content string) string {
 // current へ差し替えてそこへ移動します。gate の差分は git 越しに取るため実リポジトリが要ります。
 func useMiseGateRepo(t *testing.T, base, current string) {
 	t.Helper()
+	useGateRepo(t, base, current, miseFile, semgrepFile)
+}
+
+// useGateRepo は useMiseGateRepo のうち、base の commit に入れるファイルを baseFiles に限るもの。
+// 作業ツリーには mise.toml と semgrep.mk の両方を置く。
+func useGateRepo(t *testing.T, base, current string, baseFiles ...string) {
+	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, miseFile), []byte(base), 0o600))
+	writeSemgrepDecl(t, dir)
 
 	git := []string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}
-	for _, args := range [][]string{{"init", "-q"}, {"add", miseFile}, {"commit", "-q", "-m", "init"}} {
+	for _, args := range [][]string{{"init", "-q"}, append([]string{"add"}, baseFiles...), {"commit", "-q", "-m", "init"}} {
 		//nolint:gosec // 引数は本ファイル内のリテラルと t.TempDir のパス
 		out, err := exec.CommandContext(t.Context(), "git", append(git, args...)...).CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
@@ -312,6 +341,17 @@ func Test_parseDeclarations(t *testing.T) {
 			assert.Equal(t, tflintFile, got[0].file)
 		})
 
+		t.Run("semgrep.mk は semgrep-rules の commit の宣言として読む", func(t *testing.T) {
+			t.Parallel()
+			got, err := parseDeclarations([]declaration{
+				{path: semgrepFile, content: []byte(semgrepFixture)},
+			})
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, semgrepRulesKey+"@"+semgrepPin, got[0].id())
+			assert.Equal(t, semgrepFile, got[0].file)
+		})
+
 		t.Run("宣言元のパスをツールに持たせる", func(t *testing.T) {
 			t.Parallel()
 			got, err := parseDeclarations([]declaration{
@@ -345,9 +385,9 @@ func Test_declarationPaths(t *testing.T) {
 
 		// ここが増えたら、窓の判定も readDeclarations も parseDeclarations も追随しているかを
 		// 確かめること。
-		t.Run("mise.toml と .tflint.hcl を返す", func(t *testing.T) {
+		t.Run("mise.toml と .tflint.hcl と semgrep.mk を返す", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, []string{miseFile, tflintFile}, declarationPaths())
+			assert.Equal(t, []string{miseFile, tflintFile, semgrepFile}, declarationPaths())
 		})
 	})
 }
@@ -392,6 +432,13 @@ func Test_readDeclarations(t *testing.T) {
 		t.Run("mise.toml が無ければエラーにする", func(t *testing.T) {
 			t.Parallel()
 			_, err := readDeclarations([]string{filepath.Join(t.TempDir(), "missing", miseFile)})
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		// .tflint.hcl と違い、無いことを許すと semgrep-rules の commit が窓を掛けられないまま残る。
+		t.Run("semgrep.mk が無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			_, err := readDeclarations([]string{filepath.Join(t.TempDir(), semgrepFile)})
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 
@@ -483,6 +530,11 @@ func Test_backendKind(t *testing.T) {
 			assert.Equal(t, "go", backendKind("go:go.uber.org/mock/mockgen"))
 		})
 
+		t.Run("github-commit は commit 系に分類する", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, "commit", backendKind(semgrepRulesKey))
+		})
+
 		t.Run("npm は npm レジストリ系に分類する", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, "npm", backendKind("npm:@redocly/cli"))
@@ -509,6 +561,11 @@ func Test_windowFor(t *testing.T) {
 		t.Run("GitHub リリース系の窓は 14 日", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, releaseWindowDays, windowFor("aqua:owner/repo"))
+		})
+
+		t.Run("GitHub の commit の窓は 14 日", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, releaseWindowDays, windowFor(semgrepRulesKey))
 		})
 
 		t.Run("go の窓は 7 日", func(t *testing.T) {
@@ -1542,6 +1599,17 @@ func Test_publishedAt(t *testing.T) {
 			got := requestedPath(t, tool{key: "npm:@redocly/cli", version: "2.31.4", backend: "npm:@redocly/cli"})
 			assert.Equal(t, "/@redocly/cli", got)
 		})
+
+		t.Run("github-commit は既定ブランチの commit の committer の日付を返す", func(t *testing.T) {
+			t.Parallel()
+			routes := onDefaultBranch(semgrepPin, "behind")
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, "2026-08-01T00:00:00Z", "root0")
+			client := upstreamStub(t, routes)
+
+			at, err := publishedAt(t.Context(), client, semgrepTool())
+			require.NoError(t, err)
+			assert.Equal(t, "2026-08-01T00:00:00Z", at.Format(time.RFC3339))
+		})
 	})
 
 	t.Run("異常系", func(t *testing.T) {
@@ -1574,6 +1642,24 @@ func Test_publishedAt(t *testing.T) {
 			_, err := publishedAt(t.Context(), client,
 				tool{key: "ubi:owner/repo", version: "1.2.3", backend: "ubi:owner/repo"})
 			require.ErrorIs(t, err, errNotFound)
+		})
+
+		t.Run("github-commit で commit が見つからなければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			client := fakeUpstream(t, respondStatus(http.StatusNotFound))
+
+			_, err := publishedAt(t.Context(), client, semgrepTool())
+			require.ErrorIs(t, err, errNotFound)
+		})
+
+		// 窓を満たす日付の commit でも、既定ブランチに無ければ上流が採った rule ではない。
+		t.Run("github-commit の commit が既定ブランチに無ければエラーにする", func(t *testing.T) {
+			t.Parallel()
+			routes := onDefaultBranch(semgrepPin, "diverged")
+			routes["/repos/"+semgrepRulesRepo+"/commits/"+semgrepPin] = commitJSON(semgrepPin, "2020-01-01T00:00:00Z", "root0")
+
+			_, err := publishedAt(t.Context(), upstreamStub(t, routes), semgrepTool())
+			require.ErrorIs(t, err, errNotOnDefaultBranch)
 		})
 
 		t.Run("取得経路を持たない backend はエラーにする", func(t *testing.T) {
@@ -2311,7 +2397,7 @@ func Test_run(t *testing.T) {
 			out, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
 
 			require.NoError(t, err)
-			assert.Contains(t, out, "宣言 2 件を読めました")
+			assert.Contains(t, out, "宣言 3 件を読めました")
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
@@ -2348,6 +2434,17 @@ func Test_run(t *testing.T) {
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は窓を満たす semgrep-rules の commit への更新を通す", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, aged), now)
+
+			require.NoError(t, err)
+			assert.Contains(t, out, "違反なし")
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
 		t.Run("summary-out 指定でサマリを書き出す", func(t *testing.T) {
 			dir := useMiseWorkTree(t, miseOneAquaTool)
 			path := filepath.Join(dir, "summary.md")
@@ -2372,7 +2469,7 @@ func Test_run(t *testing.T) {
 			body, readErr := os.ReadFile(path) //nolint:gosec // テスト内の一時ファイル
 			require.NoError(t, readErr)
 			assert.Contains(t, string(body), "findings=1")
-			assert.Contains(t, string(body), "audited=1")
+			assert.Contains(t, string(body), "audited=2")
 			assert.Contains(t, string(body), "blocking=0")
 		})
 
@@ -2448,6 +2545,38 @@ func Test_run(t *testing.T) {
 			_, err := runCaptured(t, []string{"audit"}, releasedOn(t, aged), now)
 
 			require.ErrorIs(t, err, errNoDeclarations)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("check は上流に問い合わせず、semgrep.mk の commit を読めなければ失敗する", func(t *testing.T) {
+			dir := useMiseWorkTree(t, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, semgrepFile), []byte("SEMGREP_RULES_COMMIT := main\n"), 0o600))
+
+			_, err := runCaptured(t, []string{"check"}, &http.Client{Transport: unreachableUpstream{}}, now)
+
+			require.ErrorIs(t, err, ErrInvalidSemgrep)
+		})
+
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は窓内に公開された semgrep-rules の commit への更新を失敗にする", func(t *testing.T) {
+			useMiseGateRepo(t, miseOneAquaTool, miseOneAquaTool)
+			require.NoError(t, os.WriteFile(semgrepFile, []byte("SEMGREP_RULES_COMMIT := "+semgrepNewer+"\n"), 0o600))
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepNewer, fresh), now)
+
+			require.ErrorIs(t, err, errBlocking)
+			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepNewer+"（"+semgrepRulesKey+"）は公開 1 日")
+		})
+
+		// base に semgrep.mk が無いのは宣言を足す pull request の正常な状態で、そのとき現在の pin は
+		// 新しく足されたものとして窓に掛かる。
+		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
+		t.Run("gate は base に semgrep.mk が無ければ現在の commit を足されたものとして窓に掛ける", func(t *testing.T) {
+			useGateRepo(t, miseOneAquaTool, miseOneAquaTool, miseFile)
+
+			out, err := runCaptured(t, []string{"gate", "--base=HEAD", "--github"}, semgrepCommitOn(t, semgrepPin, fresh), now)
+
+			require.ErrorIs(t, err, errBlocking)
+			assert.Contains(t, out, "::error file="+semgrepFile+"::"+semgrepRulesKey+"@"+semgrepPin+"（"+semgrepRulesKey+"）は公開 1 日")
 		})
 
 		//nolint:paralleltest // 親がプロセス共有の状態を差し替えるため並列化不可
