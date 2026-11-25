@@ -167,7 +167,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - 保証すること: break-glass の経路の形（IAM user の数と資格情報の種類、role の信頼条件、決定8・10 の例外の範囲、SCP からの除外の範囲、通知の経路）が宣言どおりであること
 - 保証すること: 人の permission set に付く AWS managed policy が、設計記録の一覧に載ったものだけであること。組織の管理者の permission set が管理アカウントにだけ、ユーザーへ直接割り当てられていること
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
-- 保証しないこと: attachment が参照で policy に依存すること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する。Policy Test の入力は構成を持たず、参照を見る検査は無い
+- 保証すること: role への managed policy の付与（`aws_iam_role_policy_attachment`）が、同じ module の `aws_iam_policy` を参照するか、AWS managed policy の ARN を付けること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する
 - 保証しないこと: 人の permission set に付く AWS managed policy の中身。AWS が改訂すると、宣言を変えずに人の権限が変わる
 - 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
 
@@ -191,6 +191,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
+- Static Analysis（Conftest、HCL のソース。`conftest/hcl/layer/` の `LY309`）: `aws_iam_role_policy_attachment` の `policy_arn` が、`local` と `each` を辿った先で同じ module の `aws_iam_policy` だけを参照するか、partition の部分だけを `data.aws_partition` から組む AWS managed policy の ARN であること（決定21）。Policy Test の入力は構成を持たないので、参照は HCL のソースで見る
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
 
 ## 影響
