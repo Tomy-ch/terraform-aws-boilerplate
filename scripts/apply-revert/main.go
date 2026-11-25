@@ -62,7 +62,7 @@ const (
 )
 
 // revertKinds は、revert の対象にする失敗の種類。commit の宣言を AWS に対して評価した後の失敗である。
-// 種類は .makefiles/terraform/operation/ci.mk の CI_APPLY が書く。
+// 種類は scripts/tf-local の ci-prepare・ci-init・ci-finish が書く（failureKind と stage）。
 var revertKinds = []string{"plan", "policy", "apply", "timeout"}
 
 // skipOutcomes は、apply の step の結果（steps.<id>.outcome）のうち、revert の対象にしないもの。eligibility が読む。

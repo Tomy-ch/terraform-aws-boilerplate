@@ -56,12 +56,21 @@ usecases/*/reference/tests/policy-input.tftest.hcl  @Tomy-ch
 # インフラ内コードの検出（ADR-0103 決定14）。
 # 許可リストに本リポジトリ所有の項目を足す変更は、その項目のソースの所在の行をここに足す
 # （`make infra-code-decl-check` が、所在がこの宣言で覆われていることを検査する）。
+# 検出の道具がテストを含めて import する scripts/ のパッケージの行も、同じ検査が import から導いて求める。
 conftest/hcl/                              @Tomy-ch
 scripts/infra-code-gate/                   @Tomy-ch
 scripts/hcl-input/                         @Tomy-ch
 scripts/hcl-tally/                         @Tomy-ch
 scripts/provider-schema/                   @Tomy-ch
 scripts/lib/adrdoc/                        @Tomy-ch
+scripts/lib/atomicwrite/                   @Tomy-ch
+scripts/lib/lintreport/                    @Tomy-ch
+scripts/lib/mdscan/                        @Tomy-ch
+scripts/lib/requiredchecks/                @Tomy-ch
+scripts/lib/shellcheck/                    @Tomy-ch
+scripts/lib/testenv/                       @Tomy-ch
+scripts/lib/workflow/                      @Tomy-ch
+scripts/lib/xerrors/                       @Tomy-ch
 scripts/tf-job-lint/                       @Tomy-ch
 .makefiles/terraform/infra-code.mk         @Tomy-ch
 .makefiles/terraform/hcl-input.mk          @Tomy-ch
