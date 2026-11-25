@@ -10,7 +10,7 @@
 
 POLICY_PLAN_DIR = conftest/plan
 POLICY_PLAN_DECL = conftest/plan/decl.json
-# 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
+# ADR-0402 決定17 の引数の一部は、ADR-0102 決定18 の宣言（層の検査の宣言）から導く（conftest/plan/README.md の「入力」）。
 POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。tf-policy plan の -out は
@@ -30,7 +30,7 @@ tf-policy: tf-init
 	-@$(GO_TOOL) $(CONFTEST_BIN) verify --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) -o json > $(TF_POLICY_INPUT)/verify.json
 	@$(call RUN_SCRIPT,tf-policy,verify-result -policy $(POLICY_PLAN_DIR) -report $(TF_POLICY_INPUT)/verify.json)
 	@$(call BUILD_SCRIPT_HOST,provider-schema)
-	@PATH="$(CURDIR)/$(SCRIPT_BIN):$$PATH" $(TF_ENV) $(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run" $(TF_POLICY_CANARY_FLAGS))
+	@PATH="$(CURDIR)/$(SCRIPT_BIN):$$PATH" $(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run" $(TF_POLICY_CANARY_FLAGS))
 	@$(call RUN_SCRIPT,tf-policy,extract -out "$(TF_POLICY_INPUT)/run" -decl $(POLICY_PLAN_DECL))
 	@$(call RUN_SCRIPT,provider-schema,plan-deprecated -out "$(TF_POLICY_INPUT)/provider-schema.json" -list "$(TF_POLICY_INPUT)/run/plans.txt")
 	-@$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) \
