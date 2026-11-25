@@ -101,6 +101,7 @@ func Test_checkDependabotCooldown(t *testing.T) {
 		{"github-actions は PinWindowDays の1日手前で拒む", updatesYAML(map[string]string{"github-actions": days("default-days", cooldown.PinWindowDays-1)}), errDependabotCooldown, "github-actions の default-days"},
 		{"窓を知らない ecosystem は拒む", updatesYAML(nil) + ecosystemYAML("npm", days("default-days", 30)), errDependabotCooldown, `"npm" は窓を知らない ecosystem`},
 		{"窓を宣言した ecosystem が updates に無ければ拒む", updatesYAML(nil, "docker-compose"), errDependabotCooldown, `"docker-compose" は窓を宣言した ecosystem ですが updates にありません`},
+		{"窓を宣言した ecosystem が複数無ければ昇順ですべて挙げる", updatesYAML(nil, "gomod", "docker"), errDependabotCooldown, `"docker" は窓を宣言した ecosystem ですが updates にありません, "gomod" は窓を宣言した ecosystem ですが updates にありません`},
 		{"ecosystem が1つも無ければ拒む", "version: 2\nupdates: []\n", errDependabotCooldown, "ecosystem が1つもありません"},
 		{"updates が無ければ拒む", "version: 2\n", errDependabotCooldown, "ecosystem が1つもありません"},
 		{"dependabot.yml が空なら拒む", "", errDependabotCooldown, "ecosystem が1つもありません"},

@@ -159,7 +159,7 @@ type declarations struct {
 	exprs int
 	// dependabotLabels は、labels.json にあることを確かめた Dependabot のラベルの数。
 	dependabotLabels int
-	// dependabotCooldowns は、cooldown が取り込みの窓を下回らないことを確かめた Dependabot の ecosystem の数。
+	// dependabotCooldowns は、cooldown が取り込みの窓を下回らないことを確かめた Dependabot の updates の項の数。
 	dependabotCooldowns int
 }
 
