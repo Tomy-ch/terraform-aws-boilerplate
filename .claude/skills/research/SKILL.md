@@ -82,7 +82,7 @@ a precedent is not an authorization.
 
 **Look for that decision by concern, not by keyword.** `AGENTS.md` states plainly that searching the
 index for your feature's words is not enough, because a document is named for the concern it owns.
-Read the entries in `docs/adr/README.md` —— **ADR の一覧が存在する唯一の場所** —— and pick by what
+Read the entries in `docs/adr/README.md` —— **repository-wide の ADR の一覧が存在する唯一の場所** —— and pick by what
 each one governs. 触っているユースケースがあるなら `usecases/<use-case>/docs/adr/` も同じ拘束力を
 持つ（ADR-0001 決定12-14）。 A decision missed this way does not
 surface as an error — it surfaces as a comparison that re-litigates something already settled, which

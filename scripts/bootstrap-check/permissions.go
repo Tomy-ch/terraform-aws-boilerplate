@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -12,8 +13,8 @@ const (
 	implicitDeny = "implicitDeny"
 	explicitDeny = "explicitDeny"
 
-	// referencePlan は、make tf-policy が書く state-backend の reference の plan（リポジトリの直下からのパス）。
-	referencePlan = "tmp/tf-policy/state-backend.json"
+	// referenceRoot は、make tf-policy の reference の root のうち、出力の Bucket を持つもの。
+	referenceRoot = "state-backend"
 	// referenceAccount は、reference の plan のアカウント ID。実際の ID に置き換えて評価する。
 	referenceAccount = "123456789012"
 )
@@ -32,9 +33,33 @@ type simRow struct {
 	unresolved   string
 }
 
-// ctxEntry は、simulate-principal-policy の --context-entries の1つ。
 func ctxEntry(name, value, typ string) string {
 	return "ContextKeyName=" + name + ",ContextKeyValues=" + value + ",ContextKeyType=" + typ
+}
+
+// ctxList は、値の一覧を受ける条件キーの --context-entries の1つ。値は AWS CLI の shorthand の一覧として `,` で区切る。
+func ctxList(name, first string, rest ...string) string {
+	return ctxEntry(name, strings.Join(append([]string{first}, rest...), ","), "stringList")
+}
+
+// ctxSummary は、ctxEntry の形の entry を `<key>=<values>` に縮めたもの。その形でなければ entry をそのまま返す。
+func ctxSummary(entry string) string {
+	rest, ok := strings.CutPrefix(entry, "ContextKeyName=")
+	if !ok {
+		return entry
+	}
+
+	name, rest, ok := strings.Cut(rest, ",ContextKeyValues=")
+	if !ok {
+		return entry
+	}
+
+	i := strings.LastIndex(rest, ",ContextKeyType=")
+	if i < 0 {
+		return entry
+	}
+
+	return name + "=" + rest[:i]
 }
 
 func sim(want, role, resource string, actions ...string) simRow {
@@ -45,15 +70,25 @@ func simCtx(want, role, resource string, context []string, actions ...string) si
 	return simRow{want: want, role: role, resource: resource, context: context, actions: actions}
 }
 
+// desc は、行の説明。context を与える行は、同じ role と resource の行と区別できるように context を `[...]` で添える。
 func (r simRow) desc() string {
+	subject := r.role + " " + r.resource
 	if r.bucketPolicy {
-		return fmt.Sprintf("%s %s（Bucket Policy を含む）: %d 件が %s", r.role, r.resource, len(r.actions), r.want)
+		subject += "（Bucket Policy を含む）"
 	}
 
-	return fmt.Sprintf("%s %s: %d 件が %s", r.role, r.resource, len(r.actions), r.want)
+	if len(r.context) > 0 {
+		parts := make([]string, 0, len(r.context))
+		for _, c := range r.context {
+			parts = append(parts, ctxSummary(c))
+		}
+
+		subject += " [" + strings.Join(parts, "; ") + "]"
+	}
+
+	return fmt.Sprintf("%s: %d 件が %s", subject, len(r.actions), r.want)
 }
 
-// args は simulate-principal-policy の引数。
 func (r simRow) args(n names) []string {
 	role := n.roleARN(r.role)
 	args := []string{"iam", "simulate-principal-policy", "--policy-source-arn", role}
@@ -76,7 +111,7 @@ func (r simRow) args(n names) []string {
 
 // simCheck は、行の評価の結果が、要求した actions と同じ action を同じ数だけ返し（多重集合として一致）、すべて want
 // であれば ok とする確認。context を与えた行（context か Bucket Policy を持つ行）は、どの結果にも足りない context が
-// 無いことも求める。
+// 無いことも求める。与えない行は、足りない context を NG の理由に添えるだけで、判定には使わない。
 func simCheck(r simRow, n names) check {
 	return check{desc: r.desc(), eval: func(q *query) (verdict, error) {
 		if r.unresolved != "" {
@@ -124,7 +159,6 @@ func simCheck(r simRow, n names) check {
 			returned = "なし"
 		}
 
-		// context を与えた行は、足りない context を判定に使う。与えない行は、NG の理由に添えるだけにする。
 		givesContext := len(r.context) > 0 || r.bucketPolicy
 		note := ""
 
@@ -155,7 +189,6 @@ const (
 	gateWorkload
 )
 
-// gateState は、前提の managed policy が付いているか。
 type gateState int
 
 const (
@@ -223,8 +256,6 @@ func governanceGate(q *query, n names) (gateResult, gateResult, error) {
 	return state(n.applyIdentity + "-governance"), state(n.applyIdentity + "-governance-2"), nil
 }
 
-// workloadGate は、apply の role に workload の3つの policy が付いているか。どれも付いていなければ absent、
-// 3つちょうどでなければ unknown。
 func workloadGate(q *query, n names) (gateResult, error) {
 	got, reason, err := attachedNames(q, n.roleName(n.apply))
 	if err != nil {
@@ -283,18 +314,13 @@ func permissionSections(n names, sk, skReason string) []section {
 	admin := "arn:aws:iam::aws:policy/AdministratorAccess"
 	slr := iam + ":role/aws-service-role/management.chatbot.amazonaws.com/AWSServiceRoleForAWSChatbot"
 	serviceName := func(svc string) []string { return []string{ctxEntry("iam:AWSServiceName", svc, "string")} }
+	ss, _, _ := stackSetARNs(n, n.project+"-break-glass")
 
 	wp := n.policyARN(apply + "-workload")
 	wrp := n.policyARN(apply + "-workload-read")
 	w2p := n.policyARN(apply + "-workload-2")
 	bp := n.policyARN("boundary-ops-notification")
 	topic := "arn:aws:sns:" + n.region + ":" + n.account + ":" + n.prefix + "-ops-notification"
-	// workload の権限は provider の region と us-east-1 に及び、ほかの region には及ばない（ADR-0208 決定4）。
-	otherRegion := "us-west-2"
-	if n.region == otherRegion {
-		otherRegion = "eu-west-1"
-	}
-
 	rec := "arn:aws:config:" + n.region + ":" + n.account + ":configuration-recorder/" + n.prefix + "/abc"
 	an := "arn:aws:access-analyzer:" + n.region + ":" + n.account + ":analyzer/" + n.prefix + "-external"
 	cslr := iam + ":role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
@@ -396,14 +422,15 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(implicitDeny, apply, "*", "sso:DescribePermissionSet", "sso:GetPermissionSet", "sso:ListAccountAssignments"),
 				sim(explicitDeny, apply, bg, "iam:UpdateAssumeRolePolicy", "iam:AttachRolePolicy"),
 				sim(explicitDeny, apply, gp, "iam:CreatePolicyVersion"),
+				sim(explicitDeny, apply, ss, "cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances", "cloudformation:DeleteStackInstances"),
 			},
 			gate: gateGovernance,
-			gated: []simRow{
+			gated: append([]simRow{
 				sim(allowed, ai, "*", "organizations:CreateOrganization", "organizations:DescribeOrganization", "iam:UpdateAccountPasswordPolicy"),
 				simCtx(allowed, ai, bg, policyARN(admin), "iam:AttachRolePolicy"),
 				sim(implicitDeny, ai, "*", "organizations:DeleteOrganization"),
 				sim(implicitDeny, ai, bg, "iam:DeleteRole"),
-			},
+			}, stackInstanceRows(n, otherRegion(n))...),
 			absentNote: "  統制の policy がまだ付いていないので、作成と設定の権限は確かめない（統制の policy を作って付ける apply の後にもう一度走らせる）",
 			reportGate: true,
 		},
@@ -466,7 +493,7 @@ func permissionSections(n names, sk, skReason string) []section {
 				sim(allowed, plan, wp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(allowed, plan, wrp, "iam:GetPolicy", "iam:GetPolicyVersion"),
 				sim(allowed, plan, "arn:aws:sns:us-east-1:"+n.account+":"+n.prefix+"-ops-notification-us-east-1", "sns:GetTopicAttributes", "sns:ListTagsForResource"),
-				sim(implicitDeny, plan, "arn:aws:sns:"+otherRegion+":"+n.account+":"+n.prefix+"-ops-notification", "sns:GetTopicAttributes"),
+				sim(implicitDeny, plan, "arn:aws:sns:"+otherRegion(n)+":"+n.account+":"+n.prefix+"-ops-notification", "sns:GetTopicAttributes"),
 				sim(allowed, plan, topic, "sns:GetTopicAttributes", "sns:ListTagsForResource"),
 				sim(implicitDeny, plan, topic, "sns:SetTopicAttributes"),
 				simCtx(allowed, plan, wk, keyCtx("SYMMETRIC_DEFAULT", "ENCRYPT_DECRYPT"), "kms:DescribeKey"),
@@ -557,6 +584,72 @@ func permissionSections(n names, sk, skReason string) []section {
 	}
 }
 
+// otherRegion は、provider の region でない region。workload の権限は provider の region と us-east-1 に及び、ほかの
+// region には及ばない（ADR-0208 決定4）。
+func otherRegion(n names) string {
+	if n.region == "us-west-2" {
+		return "eu-west-1"
+	}
+
+	return "us-west-2"
+}
+
+// stackSetARNs は、name の StackSet の stack instance の操作が当たる3つの resource（stackset・stackset-target・type）の
+// ARN。stackset-target は region を持たず、type は region が `*` でアカウントを持たない（deployment-identity/ADR-0201 決定4）。
+// 末尾の ID は作るまで決まらないので、ダミーにする。
+func stackSetARNs(n names, name string) (string, string, string) {
+	id := name + ":00000000-0000-0000-0000-0000000000b0"
+
+	return "arn:aws:cloudformation:" + n.region + ":" + n.account + ":stackset/" + id,
+		"arn:aws:cloudformation::" + n.account + ":stackset-target/" + id + "/r-abcd",
+		"arn:aws:cloudformation:*::type/resource/AWS-IAM-Role"
+}
+
+// stackInstanceRows は、apply-identity が break-glass の stack instance を provider の region にだけ作り・更新でき、削除
+// できず、別の名前の StackSet には及ばないことの行（名前の prefix を共有する名前は、Resource を名前の prefix へ広げた policy を
+// 見つける）。1つの要求が3つの resource に当たり、simCheck は返った action を数えるので、resource ごとに行を分ける。
+func stackInstanceRows(n names, other string) []simRow {
+	ss, st, ty := stackSetARNs(n, n.project+"-break-glass")
+	// policy の type の Resource はアカウントが `*` で StackSet の名前を含まないので、type には別の名前の行を持たない。
+	xss, xst, _ := stackSetARNs(n, n.project+"-other")
+	yss, yst, _ := stackSetARNs(n, n.project+"-break-glass-x")
+	ai := n.applyIdentity
+	inst := []string{"cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"}
+	// TargetRegion は type の評価にだけ付き、stackset と stackset-target の評価には付かない（実際の要求での観測。
+	// Service Authorization Reference は3つとも受けると書く）。付かないキーを context に与える行は、IAM が見ないものを確かめる。
+	// type の条件は一覧を受けるキー（ArrayOfString）を provider の region に限る（deployment-identity/ADR-0201 決定4）。
+	// provider の region だけの一覧は、条件が StringEquals なら implicitDeny になるので、StringEquals で書いた条件を見つける。
+	// 同じ region を2つ並べた一覧は、`,` を含む1つの値として渡ったときに allowed にならない。
+	tr := func(first string, rest ...string) []string {
+		return []string{ctxList("cloudformation:TargetRegion", first, rest...)}
+	}
+
+	upd := "cloudformation:UpdateStackSet"
+
+	return []simRow{
+		// キーの無い stackset と stackset-target の行は、条件がこの2つへ戻ったときに implicitDeny になる。
+		sim(allowed, ai, ss, inst...),
+		sim(allowed, ai, st, inst...),
+		simCtx(allowed, ai, ty, tr(n.region), inst...),
+		simCtx(allowed, ai, ty, tr(n.region, n.region), inst...),
+		simCtx(implicitDeny, ai, ty, tr(n.region, other), inst...),
+		simCtx(implicitDeny, ai, ty, tr(other), inst...),
+		sim(implicitDeny, ai, ty, inst...),
+		sim(allowed, ai, ss, upd),
+		sim(allowed, ai, st, upd),
+		sim(allowed, ai, ty, upd),
+		sim(implicitDeny, ai, ss, "cloudformation:DeleteStackInstances"),
+		sim(implicitDeny, ai, xss, inst...),
+		sim(implicitDeny, ai, xst, inst...),
+		sim(implicitDeny, ai, yss, inst...),
+		sim(implicitDeny, ai, yst, inst...),
+		sim(implicitDeny, ai, xss, upd),
+		sim(implicitDeny, ai, xst, upd),
+		sim(implicitDeny, ai, yss, upd),
+		sim(implicitDeny, ai, yst, upd),
+	}
+}
+
 // permissionsSteps は、CI の role の権限を simulate-principal-policy で評価する確認の表。state の鍵の ARN を読めなければ、
 // それを NG として数え、その鍵に対する行は aws を呼ばずに NG にする。
 func permissionsSteps(q *query, n names) ([]step, error) {
@@ -611,9 +704,25 @@ func permissionsSteps(q *query, n names) ([]step, error) {
 	return steps, nil
 }
 
-// referencePolicy は、reference の plan の module の出力の Bucket の Bucket Policy の文書。アカウント ID を account に
-// 置き換える。読めなければ理由を返す。
-func referencePolicy(readFile func(string) ([]byte, error), module, account string) (string, string) {
+// referencePolicy は、make tf-policy が dir に書いた reference の plan の、module の出力の Bucket の Bucket Policy の
+// 文書。アカウント ID を account に置き換える。読めなければ理由を返す。
+// dir の plans.txt に referenceRoot の plan が無ければ、inputs に残っているのは今回の出力ではないので読まない。
+func referencePolicy(readFile func(string) ([]byte, error), dir, module, account string) (string, string) {
+	list := filepath.Join(dir, "plans.txt")
+
+	lines, err := readFile(list)
+	if err != nil {
+		return "", list + " を読めない（make tf-policy を走らせてください）: " + err.Error()
+	}
+
+	if !slices.ContainsFunc(strings.Split(string(lines), "\n"), func(l string) bool {
+		return filepath.Base(strings.TrimSpace(l)) == referenceRoot+".jsonl"
+	}) {
+		return "", list + " に " + referenceRoot + " の plan が無い（make tf-policy で " + referenceRoot + " の plan が落ちた）"
+	}
+
+	referencePlan := filepath.Join(dir, "inputs", referenceRoot+".json")
+
 	b, err := readFile(referencePlan)
 	if err != nil {
 		return "", referencePlan + " を読めない: " + err.Error()
@@ -654,7 +763,7 @@ func outputDocument(e verifyEnv, bucket, module string) (string, string, error) 
 
 	if e.source == sourceReference {
 		var reason string
-		if doc, reason = referencePolicy(e.readFile, module, e.n.account); reason != "" {
+		if doc, reason = referencePolicy(e.readFile, e.referenceDir, module, e.n.account); reason != "" {
 			return "", reason, nil
 		}
 	} else {

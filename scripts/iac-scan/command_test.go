@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -55,7 +56,7 @@ func Test_trivySeverities(t *testing.T) {
 			t.Parallel()
 			scan, _, err := trivyStep(sev, "json")
 			require.NoError(t, err)
-			args := command("", nil, scan).Args
+			args := command(context.Background(), "", nil, scan).Args
 			i := slices.Index(args, "--severity")
 			require.GreaterOrEqual(t, i, 0, "command に %s の段が無い", scan)
 			assert.Equal(t, sev, args[i+1])
@@ -98,7 +99,7 @@ func Test_command(t *testing.T) {
 	for step, args := range want {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
-			c := command("/x/d", []string{"A=1"}, step)
+			c := command(context.Background(), "/x/d", []string{"A=1"}, step)
 			assert.Equal(t, args, c.Args)
 			assert.Equal(t, "/x/d", c.Dir)
 			assert.Equal(t, []string{"A=1"}, c.Env)

@@ -47,7 +47,7 @@ The orchestrator gives you:
   - 抽出件数を独立した経路と突き合わせていない検査（数えた数が正しいことを誰も確かめていない）。
   - 同じ検査の定義が2箇所にあり、片方だけ更新できてしまう構造（`.makefiles/` と workflow、
     `.lefthook.yaml` と CI）。
-  - 理由と撤回条件の無い抑止（`nolint`、`# trivy:ignore`、`tflint-ignore`、allowlist への追記）。
+  - 理由と撤回条件の無い抑止（`nolint`、`# trivy:ignore`、`#checkov:skip`、`# kics-scan disable`、`# nosemgrep`、`tflint-ignore`、allowlist への追記）。
 - **security** — 資格情報とその到達範囲。ハードコードされた秘密、`persist-credentials` の既定への
   復帰、`GITHUB_TOKEN` の過剰な `permissions:`、`pull_request_target` と checkout の組み合わせ、
   未固定の `uses:` / `image:`、egress の allowlist へ理由の無いホスト追加、ログ・PR コメント・成果物

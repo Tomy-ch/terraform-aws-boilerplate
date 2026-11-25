@@ -1,10 +1,12 @@
 // Package toolrun は、検査の道具が外部の道具を段ごとに起動するときの、共有の取り決めを持ちます。起動できない、
 // またはシグナルで終わったことは [ErrTool]（終了コード 2）で、0 以外の終了コードはエラーにせず呼び出し側の判定へ
-// 渡します。引数は各道具の [Func] の実物がリテラルで固定し、ここは組み上がった *exec.Cmd を受けるだけです。
+// 渡します。道具の名前と option は各道具の [Func] の実物がリテラルで固定し、可変の値（ref・tag・URL・名前）は
+// operand として境（`--` か `--end-of-options`）の後ろにだけ置きます。ここは組み上がった *exec.Cmd を受けるだけです。
 package toolrun
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os/exec"
@@ -16,8 +18,9 @@ import (
 // ErrTool は、道具を起動できない、またはシグナルで終わったことです。
 var ErrTool = xerrors.New("道具を起動できません")
 
-// Func は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type Func func(dir string, env []string, step string) *exec.Cmd
+// Func は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。operands は段の実物が境の後ろに置きます。
+// ctx の取り消しは道具を止めます。テストは差し替えます。
+type Func func(ctx context.Context, dir string, env []string, step string, operands ...string) *exec.Cmd
 
 // Result は、道具の stdout、stdout と stderr を束ねたもの、終了コードです。
 type Result struct {

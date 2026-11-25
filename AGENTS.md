@@ -6,7 +6,7 @@
 
 すべての作業に3つの制約が掛かる。
 
-1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Trivy、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定20、[0401](docs/adr/0401-testing-policy.md) 決定3）。
+1. **決定的な検査が在るなら、それがあなたの判断より上位に立つ。** `terraform validate`、TFLint、Security の道具（[0501](docs/adr/0501-development-tooling-composition.md) 決定6）、`terraform test`、Policy Test、CI の実行。結論したことではなく、それが何と言ったかを報告し、行や件数を落とすフィルタ越しに報告しない。検査を持たない安全性の主張は、保証として扱わない（[0301](docs/adr/0301-least-privilege-policy.md) 決定20、[0401](docs/adr/0401-testing-policy.md) 決定3）。
 2. **アーキテクチャと方針の決定は、人のゲートを残す。** 決定と選択肢を差し出すのであって、選ばない。どこがそれに当たるかは *手を止めてよい場所* が閉じた一覧として持ち、その外では決めて、決定を Pull Request へ記録する。
 3. **インフラは AI に依存しない。** `terraform validate` / `terraform test` / `terraform plan` / `terraform apply` と CI の必須検査は、エージェントが1つも居ない状態で通らなければならない。必須検査の経路へ自らを差し込む道具は、ここに置かない。
 
@@ -101,7 +101,7 @@
 
 ## 禁止事項をここに列挙しない
 
-機械的に判定できるものはゲートが捕まえる —— `terraform fmt` / `terraform validate`、TFLint、Trivy、Policy Test、Contract Test（[0501](docs/adr/0501-development-tooling-composition.md) 決定4）。残りは、触っているユースケースの `README.md` と ADR が述べる。
+機械的に判定できるものはゲートが捕まえる —— `terraform fmt` / `terraform validate`、TFLint、Security の道具、Policy Test、Contract Test（[0501](docs/adr/0501-development-tooling-composition.md) 決定4・6）。残りは、触っているユースケースの `README.md` と ADR が述べる。
 
 **ここに禁止が書かれていないことは、本書についての情報であって、その禁止についての情報ではない。**
 

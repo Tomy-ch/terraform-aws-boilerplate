@@ -35,8 +35,8 @@ func canaryTool(t *testing.T, behaves string) toolFunc {
 if [ "` + behaves + `" != silent ] && grep -q managed_policy_arns main.tf; then cat '` + filepath.Join(dir, "warn.json") + `'; else cat '` + filepath.Join(dir, "clean.json") + `'; fi
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
-	return func(d string, env []string, step string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+	return func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}
@@ -68,8 +68,8 @@ func Test_runValidateCanary(t *testing.T) {
 
 	t.Run("init が落ちれば失敗する", func(t *testing.T) {
 		t.Parallel()
-		broken := func(d string, env []string, _ string) *exec.Cmd {
-			c := exec.CommandContext(context.Background(), "false")
+		broken := func(ctx context.Context, d string, env []string, _ string, _ ...string) *exec.Cmd {
+			c := exec.CommandContext(ctx, "false")
 			c.Dir, c.Env = d, env
 			return c
 		}
@@ -89,11 +89,11 @@ func Test_runValidateCanary(t *testing.T) {
 	t.Run("落ちることを期待するケースで道具を起動できなくても、期待どおりに落ちたと数えずに errTool", func(t *testing.T) {
 		t.Parallel()
 		actual := canaryTool(t, "")
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if strings.Contains(d, string(filepath.Separator)+"deprecated"+string(filepath.Separator)) {
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return actual(d, env, step)
+			return actual(ctx, d, env, step)
 		}
 		var out bytes.Buffer
 		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
@@ -108,14 +108,14 @@ func Test_runValidateCanary(t *testing.T) {
 		t.Parallel()
 		actual := canaryTool(t, "")
 		validates := 0
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepValidate && strings.Contains(d, string(filepath.Separator)+"deprecated"+string(filepath.Separator)) {
 				validates++
 				if validates == 2 {
-					return tooltest.Missing(d, env, step)
+					return tooltest.Missing(ctx, d, env, step)
 				}
 			}
-			return actual(d, env, step)
+			return actual(ctx, d, env, step)
 		}
 		var out bytes.Buffer
 		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))
@@ -131,17 +131,17 @@ func Test_runValidateCanary(t *testing.T) {
 		actual := canaryTool(t, "")
 		sep := string(filepath.Separator)
 		validates := 0
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			switch {
 			case strings.Contains(d, sep+"clean"+sep):
-				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+				return exec.CommandContext(ctx, "/bin/sh", "-c", "exit 1")
 			case step == stepValidate && strings.Contains(d, sep+"deprecated"+sep):
 				validates++
 				if validates == 2 {
-					return tooltest.Missing(d, env, step)
+					return tooltest.Missing(ctx, d, env, step)
 				}
 			}
-			return actual(d, env, step)
+			return actual(ctx, d, env, step)
 		}
 		err := runValidateCanary(canaryArgs(t, "tmp/w"), &bytes.Buffer{}, tool, tree(t, nil))
 		require.ErrorIs(t, err, errTool)
@@ -154,14 +154,14 @@ func Test_runValidateCanary(t *testing.T) {
 		t.Parallel()
 		actual := canaryTool(t, "")
 		sep := string(filepath.Separator)
-		tool := func(d string, env []string, step string) *exec.Cmd {
+		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			switch {
 			case strings.Contains(d, sep+"clean"+sep):
-				return exec.CommandContext(context.Background(), "/bin/sh", "-c", "exit 1")
+				return exec.CommandContext(ctx, "/bin/sh", "-c", "exit 1")
 			case strings.Contains(d, sep+"deprecated"+sep):
-				return tooltest.Missing(d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return actual(d, env, step)
+			return actual(ctx, d, env, step)
 		}
 		var out bytes.Buffer
 		err := runValidateCanary(canaryArgs(t, "tmp/w"), &out, tool, tree(t, nil))

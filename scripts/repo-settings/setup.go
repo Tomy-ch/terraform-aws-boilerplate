@@ -22,11 +22,12 @@ import (
 const maxLabelPages = 50
 
 var (
-	errLabelsDecl   = xerrors.New("labels.json がラベルの宣言として正しくありません")
-	errNoWorkflows  = xerrors.New("workflow が1つも見つかりません")
-	errEnable       = xerrors.New("有効化できなかった workflow があります")
-	errLabelPages   = xerrors.New("ラベルの一覧がページの上限までに尽きませんでした")
-	errDeployEnvArg = xerrors.New("DEPLOY_ENV を指定してください（例: DEPLOY_ENV=admin）")
+	errLabelsDecl     = xerrors.New("labels.json がラベルの宣言として正しくありません")
+	errNoWorkflows    = xerrors.New("workflow が1つも見つかりません")
+	errEnable         = xerrors.New("有効化できなかった workflow があります")
+	errLabelPages     = xerrors.New("ラベルの一覧がページの上限までに尽きませんでした")
+	errDeployEnvArg   = xerrors.New("DEPLOY_ENV を指定してください（例: DEPLOY_ENV=admin）")
+	errNoDeployBranch = xerrors.New("デプロイブランチがありません（make create-deploy-branch で作ってください）")
 )
 
 var (
@@ -278,6 +279,35 @@ func createDeployBranch(ctx context.Context, root string, c githubClient, repo, 
 		return err
 	}
 	fmt.Fprintf(out, "✅ %s を %s の先頭 %s から作りました\n", d.Branch, meta.DefaultBranch, ref.Object.SHA)
+
+	return nil
+}
+
+// deployBranchExists は、env のデプロイブランチが GitHub に在ることを読み取りだけで確かめます。404 は無いことと
+// 扱い、ほかの失敗と、別の名前のブランチを返す応答（改名による転送）は確かめられなかったとして落とします。
+func deployBranchExists(ctx context.Context, root string, c githubClient, repo, env string, out io.Writer) error {
+	b, err := branchdecl.Read(filepath.Join(root, branchesFile))
+	if err != nil {
+		return err
+	}
+	d, ok := b.DeployForEnv(env)
+	if !ok {
+		return xerrors.Wrapf(errNoDeployEnv, "%q", env)
+	}
+	var branch struct {
+		Name string `json:"name"`
+	}
+	err = c.do(ctx, http.MethodGet, "/repos/"+repo+"/branches/"+escapeSegments(d.Branch), nil, &branch)
+	if xerrors.Is(err, errNotFound) {
+		return xerrors.Wrapf(errNoDeployBranch, "%s に %s が見つかりません（リポジトリを読めないときも 404 になります）", repo, d.Branch)
+	}
+	if err != nil {
+		return err
+	}
+	if branch.Name != d.Branch {
+		return xerrors.Wrapf(errUnexpectedResponse, "%s を問うて %q が返りました", d.Branch, branch.Name)
+	}
+	fmt.Fprintf(out, "✅ %s は %s に在ります\n", d.Branch, repo)
 
 	return nil
 }
