@@ -331,6 +331,56 @@ func Test_lineView_thematicBreakAt(t *testing.T) {
 	}
 }
 
+func Test_interrupts(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		body string
+		want bool
+	}{
+		"ATX 見出し":       {"# h", true},
+		"7つの # は見出しでない": {"####### h", false},
+		"引用":            {"> q", true},
+		"種類1 は大文字でも遮る":  {"<SCRIPT>", true},
+		"種類1 の名前の後ろに文字が続けば遮らない":     {"<scripts>", false},
+		"種類2 のコメント":                 {"<!-- x", true},
+		"種類3":                       {"<?php", true},
+		"種類4 は大文字の英字でも遮る":           {"<!DOCTYPE html>", true},
+		"種類5 の CDATA":               {"<![CDATA[x", true},
+		"種類5 は小文字の cdata では遮らない":    {"<![cdata[x", false},
+		"種類6 は大文字小文字を問わない":          {"<Div class=x>", true},
+		"種類6 の閉じタグ":                 {"</ul>", true},
+		"種類6 の自己終了":                 {"<hr/>", true},
+		"種類7 は遮らない":                 {"<b>x", false},
+		"ロング s は ASCII の s と同一視しない": {"<ſcript>", false},
+		"ケルビン記号は ASCII の英字と同一視しない":  {"<!\u212Ax", false},
+		"遮らない行":                     {"本文", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, interrupts(c.body))
+		})
+	}
+}
+
+func Test_asciiLower(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		s    string
+		want string
+	}{
+		"ASCII の大文字を小文字にする": {"DiV", "div"},
+		"ASCII でない文字は変えない":  {"\u212A\u017F", "\u212A\u017F"},
+		"空":                 {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, asciiLower(c.s))
+		})
+	}
+}
+
 func Test_listMarker(t *testing.T) {
 	t.Parallel()
 

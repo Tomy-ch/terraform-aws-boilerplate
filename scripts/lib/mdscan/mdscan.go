@@ -120,7 +120,7 @@ func (b *Blocks) Next(text string) bool {
 			b.fence, b.fenceBase = marker, base
 			return true
 		}
-		if v.thematicBreakAt(len(line)-len(body)) || interrupter.MatchString(body) {
+		if v.thematicBreakAt(len(line)-len(body)) || interrupts(body) {
 			b.items, b.paragraph = b.items[:matched], false
 			return false
 		}
@@ -178,14 +178,35 @@ var (
 	listStart       = regexp.MustCompile(`^([-+*]|([0-9]{1,9})[.)])( *)`)
 	thematicBreak   = regexp.MustCompile(`^((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$`)
 	setextUnderline = regexp.MustCompile(`^(=+|-+)[ \t]*$`)
-	// interrupter は、段落を遮り、遅延した続きの行にならない行の頭（ATX 見出し・引用と、CommonMark の種類1-6 の
-	// HTML ブロック）です。
-	interrupter = regexp.MustCompile(`(?i)^(#{1,6}([ \t]|$)|>|<(script|pre|style|textarea)([ \t>]|$)|<!--|<\?|<![a-z]|<!\[CDATA\[|` +
+	blockStart      = regexp.MustCompile(`^(#{1,6}([ \t]|$)|>|<!\[CDATA\[)`)
+	// htmlStart は CommonMark の種類1-4・6 の HTML ブロックの開始です。ASCII の小文字にした行頭で照合します。
+	htmlStart = regexp.MustCompile(`^(<(script|pre|style|textarea)([ \t>]|$)|<!--|<\?|<![a-z]|` +
 		`</?(address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|` +
 		`fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|` +
 		`menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|` +
 		`track|ul)([ \t>]|/>|$))`)
 )
+
+// interruptHead は、interrupts が見る行頭の長さです。いちばん長い開始の形（`</figcaption` と区切りの1文字）より長くします。
+const interruptHead = 16
+
+// interrupts は、body（字下げを除いた行）が段落を遮り、遅延した続きの行にならない行頭（ATX 見出し・引用と、
+// CommonMark の種類1-6 の HTML ブロック）かを返します。タグの名前の大文字小文字は ASCII の範囲だけで同一視します。
+func interrupts(body string) bool {
+	head := body[:min(len(body), interruptHead)]
+	return blockStart.MatchString(head) || htmlStart.MatchString(asciiLower(head))
+}
+
+// asciiLower は、s の ASCII の大文字だけを小文字にします。
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
 
 // listMarker は、body（字下げを除いた行）が一覧の項目を開くなら、中身の桁と、印の後ろが空かを返します。at は印の桁
 // です。印の後ろの空白が5つ以上なら、中身は印の1つ後ろの桁からの字下げしたコードブロックです（CommonMark）。
