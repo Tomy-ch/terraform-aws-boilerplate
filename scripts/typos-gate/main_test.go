@@ -3,14 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -24,26 +22,6 @@ func Test_gitEnv(t *testing.T) {
 			assert.False(t, strings.HasPrefix(kv, "GIT_DIR="), kv)
 		}
 		assert.Contains(t, env, "PATH="+os.Getenv("PATH"))
-	})
-}
-
-func Test_gitEnvFrom(t *testing.T) {
-	t.Parallel()
-
-	t.Run("GIT_DIR を外し、ほかは残す", func(t *testing.T) {
-		t.Parallel()
-		env, err := gitEnvFrom([]string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/x", "A=1"})
-		require.NoError(t, err)
-		assert.NotContains(t, env, "GIT_DIR=/x")
-		assert.Contains(t, env, "A=1")
-	})
-
-	t.Run("git が一覧を返せなければエラーを返す", func(t *testing.T) {
-		t.Parallel()
-		home := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[broken\n"), 0o600))
-		_, err := gitEnvFrom([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + home})
-		require.ErrorIs(t, err, gitenv.ErrNames)
 	})
 }
 

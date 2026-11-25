@@ -20,6 +20,9 @@ import (
 // 往復になる。新しい方から数えてこの数だけ見れば、窓を満たす版はまず見つかる。
 const maxGoProxyProbes = 20
 
+// errIncomparableVersion は、版を数値の区切りとして比べられない場合のエラー。
+var errIncomparableVersion = xerrors.New("版を数値の区切りとして比べられません")
+
 // release は上流が公開している版 1 つ。
 type release struct {
 	version string
@@ -37,16 +40,38 @@ type candidate struct {
 	eligibleAge int
 	window      int
 	err         error
+	// nil なら版の大小で決める。
+	commit *commitSurvey
 }
 
-// actionable は、今日ピンを動かせる状態かどうかを返す。
+// actionable は、今日ピンを新しい版へ動かせる状態かどうかを返す。pin が eligible より新しい
+// （窓の内側の版をバイパスで先に採った）ときに真にすると、版を下げる提案になる。
 func (c candidate) actionable() bool {
-	return c.err == nil && c.eligible != "" && c.eligible != c.tool.version
+	if c.err != nil || c.eligible == "" {
+		return false
+	}
+	if c.commit != nil {
+		return c.commit.eligibleMoves
+	}
+
+	// evaluate が比べられない pin を err に畳み、上流の比べられない版を一覧から落とすので err は起きない。崩れても偽に倒す。
+	less, err := lessVersion(c.tool.version, c.eligible)
+
+	return err == nil && less
 }
 
-// heldByWindow は、上流に新版があるのに窓がそれを止めている状態かどうかを返す。
+// heldByWindow は、pin より新しい版が上流にあるのに窓がそれを止めている状態かどうかを返す。
 func (c candidate) heldByWindow() bool {
-	return c.err == nil && c.latest != "" && c.latest != c.tool.version && c.latest != c.eligible
+	if c.err != nil || c.latest == "" || c.latest == c.eligible {
+		return false
+	}
+	if c.commit != nil {
+		return c.commit.latestMoves
+	}
+
+	less, err := lessVersion(c.tool.version, c.latest)
+
+	return err == nil && less
 }
 
 // surveyOutdated は各ツールの上流を調べ、窓を満たす更新先を決めます。
@@ -72,7 +97,16 @@ func surveyOutdated(ctx context.Context, client *http.Client, tools []tool, now 
 
 // evaluate は 1 ツールの上流を調べて candidate に畳みます。
 func evaluate(ctx context.Context, client *http.Client, t tool, now time.Time) candidate {
+	if backendKind(t.backend) == "commit" {
+		return evaluateCommit(ctx, client, t, now)
+	}
 	c := candidate{tool: t, window: windowFor(t.backend)}
+	// pin を比べられなければ、上流の版との大小を決められない。
+	if _, err := lessVersion(t.version, t.version); err != nil {
+		c.err = err
+
+		return c
+	}
 
 	releases, err := listReleases(ctx, client, t)
 	if err != nil {
@@ -82,7 +116,20 @@ func evaluate(ctx context.Context, client *http.Client, t tool, now time.Time) c
 	}
 	// 新しい版が先に来る順へ揃える。上流ごとに一覧の順序が違うため、ここで決め直さないと
 	// 「最新」も「窓を満たす最新」も上流の都合で変わる。
-	sort.Slice(releases, func(i, j int) bool { return lessVersion(releases[j].version, releases[i].version) })
+	var sortErr error
+	sort.Slice(releases, func(i, j int) bool {
+		less, lessErr := lessVersion(releases[j].version, releases[i].version)
+		if lessErr != nil {
+			sortErr = lessErr
+		}
+
+		return less
+	})
+	if sortErr != nil {
+		c.err = sortErr
+
+		return c
+	}
 
 	if len(releases) > 0 {
 		c.latest = releases[0].version
@@ -156,7 +203,18 @@ func goModuleReleases(ctx context.Context, client *http.Client, pkg string) ([]r
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(versions, func(i, j int) bool { return lessVersion(versions[j], versions[i]) })
+	var sortErr error
+	sort.Slice(versions, func(i, j int) bool {
+		less, lessErr := lessVersion(versions[j], versions[i])
+		if lessErr != nil {
+			sortErr = lessErr
+		}
+
+		return less
+	})
+	if sortErr != nil {
+		return nil, sortErr
+	}
 	if len(versions) > maxGoProxyProbes {
 		versions = versions[:maxGoProxyProbes]
 	}
@@ -229,39 +287,56 @@ func npmReleases(ctx context.Context, client *http.Client, pkg string) ([]releas
 // stableVersion は数値だけの区切りからなる版かどうかを返します。プレリリース識別子やビルド
 // メタデータを持つ版を弾くのが目的で、ここを通さないと `1.2.0-rc1` が最新として選ばれます。
 func stableVersion(v string) bool {
-	if v == "" {
+	if strings.HasPrefix(v, "v") {
 		return false
 	}
-	for part := range strings.SplitSeq(v, ".") {
-		if part == "" {
-			return false
-		}
-		if _, err := strconv.Atoi(part); err != nil {
-			return false
-		}
-	}
+	_, err := lessVersion(v, v)
 
-	return true
+	return err == nil
 }
 
-// lessVersion は数値区切りを左から比べます。区切りの数が違う場合は足りない側を 0 とみなすので、
-// `1.2` は `1.2.0` と同じ位置に来ます。
-func lessVersion(a, b string) bool {
-	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+// lessVersion は先頭の v を落とした数値区切りを左から比べます。区切りの数が違う場合は足りない側を
+// 0 とみなすので、`1.2` は `1.2.0` と同じ位置に来ます。区切りに非負の整数でないものが1つでもあれば、
+// 大小を決めずに errIncomparableVersion を返します。
+func lessVersion(a, b string) (bool, error) {
+	parse := func(v string) ([]int, error) {
+		parts := strings.Split(strings.TrimPrefix(v, "v"), ".")
+		out := make([]int, len(parts))
+		for i, p := range parts {
+			if p == "" || strings.Trim(p, "0123456789") != "" {
+				return nil, xerrors.Wrap(errIncomparableVersion, v)
+			}
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				return nil, xerrors.Wrap(errIncomparableVersion, v)
+			}
+			out[i] = n
+		}
+
+		return out, nil
+	}
+	as, err := parse(a)
+	if err != nil {
+		return false, err
+	}
+	bs, err := parse(b)
+	if err != nil {
+		return false, err
+	}
 	for i := 0; i < len(as) || i < len(bs); i++ {
 		x, y := 0, 0
 		if i < len(as) {
-			x, _ = strconv.Atoi(as[i])
+			x = as[i]
 		}
 		if i < len(bs) {
-			y, _ = strconv.Atoi(bs[i])
+			y = bs[i]
 		}
 		if x != y {
-			return x < y
+			return x < y, nil
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // majorOf は先頭の数値区切りを返します。比較ではなく分類に使うので、解釈できない版は
@@ -305,8 +380,13 @@ func outdatedReport(cands []candidate, now time.Time) string {
 	} else {
 		b.WriteString("| ツール | 現在 | 窓を満たす最新 | 齢 | 宣言 |\n| --- | --- | --- | --- | --- |\n")
 		for _, c := range actionable {
-			fmt.Fprintf(&b, "| `%s` | %s | **%s** | %dd | `%s` |\n",
-				c.tool.key, c.tool.version, c.eligible, c.eligibleAge, c.tool.file)
+			declared := "`" + c.tool.file + "`"
+			if c.commit != nil {
+				// 内容の sha256 は commit と対で照合されるので、片方だけを上げると make semgrep が落ちる。
+				declared += "（同じファイルの `SEMGREP_RULES_SHA256` も同時に上げる）"
+			}
+			fmt.Fprintf(&b, "| `%s` | %s | **%s** | %dd | %s |\n",
+				c.tool.key, c.tool.version, c.eligible, c.eligibleAge, declared)
 		}
 	}
 

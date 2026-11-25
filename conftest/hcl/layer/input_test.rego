@@ -30,14 +30,16 @@ fixture_decl := {
 		"aws_api_gateway_stage": "子 resource",
 		"aws_kms_key": "親になる resource",
 		"aws_kms_replica_key": "親になる resource",
+		"aws_s3_account_public_access_block": "アカウントの単位で設定する",
 	},
+	"singletons": {"aws_s3_account_public_access_block": ["account-baseline"]},
 	"unrelated_deprecated_arguments": {"aws_s3_bucket": {"acceleration_status": {"reason": "fixture", "unwritten": null}}},
 	"inline_owned": {},
 }
 
 fixture_schema := object.union(
 	{t: {"arguments": ["name"], "deprecated": [], "blocks": []} |
-		some t in {"aws_vpc", "aws_subnet", "aws_api_gateway_rest_api", "aws_api_gateway_stage", "aws_kms_key", "aws_kms_replica_key"}
+		some t in {"aws_vpc", "aws_subnet", "aws_api_gateway_rest_api", "aws_api_gateway_stage", "aws_kms_key", "aws_kms_replica_key", "aws_s3_account_public_access_block"}
 	},
 	{"aws_s3_bucket": {"arguments": ["bucket", "policy", "acceleration_status", "versioning"], "deprecated": ["policy", "acceleration_status"], "blocks": ["versioning"]}},
 )
@@ -76,17 +78,17 @@ test_LY001_allow_declared if {
 }
 
 test_LY001_deny_attachments_missing if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
 test_LY001_deny_attachments_empty if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": {}, "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": {}, "not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments が空です")
 }
 
 test_LY001_deny_attachments_array if {
-	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": [], "not_attachments": {}, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
+	msgs := denies_with(fx("ok_module"), listed_of(fx("ok_module")), {"attachments": [], "not_attachments": fixture_decl.not_attachments, "singletons": fixture_decl.singletons, "unrelated_deprecated_arguments": {}, "inline_owned": {}})
 	only_with(with_id(msgs, "LY001"), "data.layer_decl.attachments がオブジェクトではありません")
 }
 
@@ -142,6 +144,7 @@ test_LY001_deny_decl_not_object if {
 	with_id(msgs, "LY001") == {
 		"LY001 [宣言の形] data.layer_decl.attachments がオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.not_attachments がオブジェクトではありません",
+		"LY001 [宣言の形] data.layer_decl.singletons がオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.unrelated_deprecated_arguments が、親の型から、引数と reason（空でない理由）・unwritten（null か []）へのオブジェクトではありません",
 		"LY001 [宣言の形] data.layer_decl.inline_owned が、親の型から、引数と空でない理由へのオブジェクトではありません",
 	}
@@ -258,7 +261,6 @@ only_ly004(msgs, s) if {
 	count(with_id(msgs, "LY004")) == 1
 }
 
-# トップレベルの block の数を、行頭の数えと突き合わせる。
 test_LY004_deny_block_count_mismatch if {
 	doc := fx("ok_module")
 	only_ly004(denies_raw(doc, listed_of(doc), fixture_decl, parsed_of(doc), {"modules/m/main.tf": 2}), "modules/m/main.tf のトップレベルの block を 1 個読みましたが、行頭の数えは 2 個です")
@@ -444,6 +446,51 @@ fixture_cases := {
 	"LY308_deny_two_multi",
 	"LY308_deny_undecidable_index",
 	"LY308_deny_variable_indexes",
+	"LY309_allow_aws_managed_literal",
+	"LY309_allow_aws_managed_literal_other_partition",
+	"LY309_allow_aws_managed_literal_through_local",
+	"LY309_allow_aws_managed_partition_template",
+	"LY309_allow_aws_managed_partition_through_local",
+	"LY309_allow_aws_managed_template_through_local",
+	"LY309_allow_direct_reference",
+	"LY309_allow_each_value_with_literal_key",
+	"LY309_allow_indexed_reference",
+	"LY309_allow_other_attachment_type",
+	"LY309_allow_reference_through_each",
+	"LY309_allow_reference_through_local",
+	"LY309_deny_conditional_with_customer_literal",
+	"LY309_deny_data_source",
+	"LY309_deny_each_from_call",
+	"LY309_deny_each_label_literal",
+	"LY309_deny_empty_tuple",
+	"LY309_deny_for_each_mixed_literal",
+	"LY309_deny_literal_customer_managed",
+	"LY309_deny_local_conditional",
+	"LY309_deny_local_resolving_to_literal",
+	"LY309_deny_module_reference",
+	"LY309_deny_partition_alias_cycle",
+	"LY309_deny_partition_local_from_variable",
+	"LY309_deny_partition_other_attribute",
+	"LY309_deny_partition_undefined_local",
+	"LY309_deny_policy_and_variable",
+	"LY309_deny_policy_in_other_module",
+	"LY309_deny_template_customer_managed",
+	"LY309_deny_template_name_interpolated",
+	"LY309_deny_template_partition_account_literal",
+	"LY309_deny_template_partition_from_variable",
+	"LY309_deny_template_suffix_on_reference",
+	"LY309_deny_template_without_arn_prefix",
+	"LY309_deny_variable",
+	"LY309_deny_without_policy_arn",
+	"LY309_deny_wrong_resource_type",
+	"LY401_allow_data_source_outside_owner",
+	"LY401_allow_owner_internal",
+	"LY401_allow_owner_reference",
+	"LY401_allow_second_owner",
+	"LY401_deny_env_root",
+	"LY401_deny_general_module",
+	"LY401_deny_other_usecase",
+	"LY401_deny_usecase_name_prefix",
 	"ok_module",
 	"refs_shapes",
 	"tree_attachment_module_ref",

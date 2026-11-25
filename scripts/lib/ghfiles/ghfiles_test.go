@@ -3,6 +3,8 @@ package ghfiles_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,6 +124,77 @@ func Test_Collect(t *testing.T) {
 			got, err := ghfiles.Collect(root)
 			require.NoError(t, err)
 			assert.Empty(t, got)
+		})
+	})
+}
+
+// matchesPattern は Patterns の返す glob に rel が一致するかを返す。`/**/` は任意の深さの
+// ディレクトリ（0 階層を含まない）として扱う。
+func matchesPattern(t *testing.T, pattern, rel string) bool {
+	t.Helper()
+	dir, base, deep := strings.Cut(pattern, "/**/")
+	if !deep {
+		ok, err := filepath.Match(pattern, rel)
+		require.NoError(t, err)
+		return ok
+	}
+	if !strings.HasPrefix(rel, dir+"/") || strings.Count(rel[len(dir)+1:], "/") == 0 {
+		return false
+	}
+	ok, err := filepath.Match(base, filepath.Base(rel))
+	require.NoError(t, err)
+	return ok
+}
+
+func Test_Patterns(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("workflow と入れ子の composite action の定義を拡張子ごとに返す", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, []string{
+				".github/workflows/*.yaml",
+				".github/workflows/*.yml",
+				".github/actions/**/action.yml",
+				".github/actions/**/action.yaml",
+			}, ghfiles.Patterns())
+		})
+
+		t.Run("Collect が集める各パスはいずれかのパターンに一致する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, ".github", "workflows", "ci.yaml"))
+			writeFile(t, filepath.Join(root, ".github", "workflows", "lint.yml"))
+			writeFile(t, filepath.Join(root, ".github", "actions", "setup", "action.yml"))
+			writeFile(t, filepath.Join(root, ".github", "actions", "g", "nested", "action.yaml"))
+
+			got, err := ghfiles.Collect(root)
+			require.NoError(t, err)
+			require.Len(t, got, 4)
+			for _, p := range got {
+				rel, err := filepath.Rel(root, p)
+				require.NoError(t, err)
+				rel = filepath.ToSlash(rel)
+				assert.Truef(t, slices.ContainsFunc(ghfiles.Patterns(), func(pat string) bool {
+					return matchesPattern(t, pat, rel)
+				}), "%s がどのパターンにも一致しない", rel)
+			}
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("返した一覧を書き換えても次の呼び出しへ漏れない", func(t *testing.T) {
+			t.Parallel()
+
+			first := ghfiles.Patterns()
+			first[0] = "changed"
+
+			assert.Equal(t, ".github/workflows/*.yaml", ghfiles.Patterns()[0])
 		})
 	})
 }

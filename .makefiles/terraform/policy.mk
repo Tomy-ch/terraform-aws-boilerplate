@@ -15,6 +15,12 @@ POLICY_LAYER_DECL = conftest/hcl/layer/decl.json
 CONFTEST_BIN ?= conftest
 # conftest はツールランナーの中で走り、リポジトリは /app に mount される。パスは相対で渡す。
 TF_POLICY_INPUT = $(TF_BASE)/tmp/tf-policy
+# canary は tf-policy plan が本走査の前に同じ起動の中で走らせる（ADR-0702 決定25）。実物の terraform・Conftest・
+# mock provider で段を通しで走らせ、terraform と Conftest はホストの PATH のものを起動する。provider-schema は
+# ビルドした置き場を PATH の先頭に置いて起動させる。aws の fixture は state-backend の reference の版の AWS Provider を使う。
+TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
+TF_POLICY_CANARY_FLAGS = -canary-data "$(abspath $(TF_POLICY_CANARY_DIR))/data" -canary-work "$(TF_POLICY_CANARY_DIR)/work" \
+	-policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) -reference usecases/state-backend/reference
 
 .PHONY: tf-policy ## Policy Test を実行（Rego のテストと、reference の plan への適用）
 tf-policy: tf-init
@@ -22,20 +28,10 @@ tf-policy: tf-init
 	@mkdir -p $(TF_POLICY_INPUT)
 	-@$(GO_TOOL) $(CONFTEST_BIN) verify --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) -o json > $(TF_POLICY_INPUT)/verify.json
 	@$(call RUN_SCRIPT,tf-policy,verify-result -policy $(POLICY_PLAN_DIR) -report $(TF_POLICY_INPUT)/verify.json)
-	@$(TF_ENV) $(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run")
+	@$(call BUILD_SCRIPT_HOST,provider-schema)
+	@PATH="$(CURDIR)/$(SCRIPT_BIN):$$PATH" $(TF_ENV) $(call RUN_SCRIPT_HOST,tf-policy,plan -base "$(TF_BASE)" -data "$(TF_GATES_DATA)" -out "$(TF_POLICY_INPUT)/run" $(TF_POLICY_CANARY_FLAGS))
 	@$(call RUN_SCRIPT,tf-policy,extract -out "$(TF_POLICY_INPUT)/run" -decl $(POLICY_PLAN_DECL))
 	@$(call RUN_SCRIPT,provider-schema,plan-deprecated -out "$(TF_POLICY_INPUT)/provider-schema.json" -list "$(TF_POLICY_INPUT)/run/plans.txt")
 	-@$(GO_TOOL) $(CONFTEST_BIN) test --combine --all-namespaces --no-color -o json --policy $(POLICY_PLAN_DIR) --data $(POLICY_PLAN_DECL) --data $(POLICY_LAYER_DECL) \
 		--data "$(TF_POLICY_INPUT)/provider-schema.json" "$(TF_POLICY_INPUT)/run/inputs" > "$(TF_POLICY_INPUT)/result.json"
 	@$(call RUN_SCRIPT,tf-local,policy-result -policy $(POLICY_PLAN_DIR) $(TF_POLICY_INPUT)/result.json)
-
-# canary は実物の terraform・Conftest・mock provider で Policy Test の段を通しで走らせる（scripts/tf-policy の canary）。
-# terraform と Conftest はホストの PATH のものを起動する。provider-schema はビルドした置き場を PATH の先頭に置いて
-# 起動させる。aws の fixture は state-backend の reference の版の AWS Provider を使い、plugin cache に無ければ取得する。
-TF_POLICY_CANARY_DIR = tmp/tf-policy-canary
-
-.PHONY: tf-policy-canary ## tf-policy が違反の無い入力で通り、実物の Conftest が評価しない規則・件数のずれ・違反・unknown の文書・書いた inline の引数・宣言と schema のずれで落ちることを検査
-tf-policy-canary:
-	@mkdir -p "$$TF_PLUGIN_CACHE_DIR"
-	@$(call BUILD_SCRIPT_HOST,provider-schema)
-	@PATH="$(CURDIR)/$(SCRIPT_BIN):$$PATH" $(call RUN_SCRIPT_HOST,tf-policy,canary -data "$(abspath $(TF_POLICY_CANARY_DIR))/data" -work "$(TF_POLICY_CANARY_DIR)/work" -policy $(POLICY_PLAN_DIR) -decl $(POLICY_PLAN_DECL) -layer $(POLICY_LAYER_DECL) -reference usecases/state-backend/reference)

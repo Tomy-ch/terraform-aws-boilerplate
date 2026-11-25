@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 
 	"github.com/stretchr/testify/assert"
@@ -41,7 +42,7 @@ func fakeGit(t *testing.T, script string) {
 	t.Helper()
 
 	bin := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\n"+script), 0o700)) //nolint:gosec // 偽物の道具は実行できなければならない
+	fakeexec.Write(t, filepath.Join(bin, "git"), "#!/bin/sh\n"+script, 0o700)
 	t.Setenv("PATH", bin)
 }
 

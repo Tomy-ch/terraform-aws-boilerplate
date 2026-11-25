@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/harden"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workflow"
 
@@ -266,6 +267,45 @@ func Test_checkSteps(t *testing.T) {
 	t.Run("形どおりなら違反が無い", func(t *testing.T) {
 		t.Parallel()
 		assert.Empty(t, checkSteps(split.Jobs[1], finding))
+	})
+	const head = "      - name: Harden the runner\n        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1\n        with:\n          egress-policy: block\n"
+	uses := "        uses: bullfrogsec/bullfrog@7dee337d4575320b6d8cbe9a56d48d2fb765963a # v0.11.1"
+	pair := strings.Join(harden.Render(uses, []string{"        with:", "          egress-policy: block"}), "\n") + "\n"
+	t.Run("生成した bullfrog の対の continue-on-error: と if: は違反にしない", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, pair, 1)
+		require.NotEqual(t, goodWorkflow, src)
+		assert.Empty(t, checkSteps(workflow.SplitJobs(src).Jobs[1], finding))
+	})
+	// 頭が生成した形と違えば対の全体を除外しないので、対の continue-on-error: と if: も数に入る。
+	for name, c := range map[string]struct {
+		block string
+		want  int
+	}{
+		"再試行の if: が always()":              {strings.Replace(pair, harden.RetryIf, "always()", 1), 2},
+		"本体の id が違う":                       {strings.Replace(pair, "id: "+harden.ID, "id: other", 1), 2},
+		"再試行に continue-on-error: がある":      {strings.Replace(pair, "if: "+harden.RetryIf+"\n", "if: "+harden.RetryIf+"\n        continue-on-error: true\n", 1), 3},
+		"本体の uses: の後ろに continue-on-error": {strings.Replace(pair, uses+"\n", uses+"\n        continue-on-error: true\n", 1), 1},
+	} {
+		t.Run(name+"なら、除外されない行だけを違反にする", func(t *testing.T) {
+			t.Parallel()
+			src := strings.Replace(goodWorkflow, head, c.block, 1)
+			require.NotEqual(t, goodWorkflow, src)
+			var hides []lintreport.Finding
+			for _, f := range checkSteps(workflow.SplitJobs(src).Jobs[1], finding) {
+				if f.Message == "step に %s: を置かないでください" {
+					hides = append(hides, f)
+				}
+			}
+			assert.Len(t, hides, c.want)
+		})
+	}
+	t.Run("対の後ろの step の if: は違反にする", func(t *testing.T) {
+		t.Parallel()
+		src := strings.Replace(goodWorkflow, head, pair, 1)
+		src = strings.Replace(src, "      - name: Checkout\n", "      - name: Checkout\n        if: always()\n", 1)
+		require.Contains(t, src, "if: always()")
+		assert.Contains(t, messages(checkSteps(workflow.SplitJobs(src).Jobs[1], finding)), "step に %s: を置かないでください")
 	})
 	t.Run("push の入口でない run: を落とす", func(t *testing.T) {
 		t.Parallel()

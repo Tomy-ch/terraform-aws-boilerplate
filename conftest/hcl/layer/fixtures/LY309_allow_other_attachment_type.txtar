@@ -1,0 +1,5 @@
+-- modules/m/main.tf --
+resource "aws_iam_user_policy_attachment" "a" {
+  user       = "u"
+  policy_arn = "arn:aws:iam::123456789012:policy/x"
+}

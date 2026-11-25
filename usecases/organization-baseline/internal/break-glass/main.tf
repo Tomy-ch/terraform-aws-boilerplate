@@ -137,9 +137,10 @@ resource "aws_iam_account_password_policy" "this" {
 }
 
 # メンバーアカウントの break-glass の role（organization-baseline/ADR-0202）。
+# description は ASCII に限る（PLAN-BG-05）。
 resource "aws_cloudformation_stack_set" "this" {
   name             = var.role_name
-  description      = "メンバーアカウントの break-glass の role"
+  description      = "Break-glass role for member accounts"
   permission_model = "SERVICE_MANAGED"
   capabilities     = ["CAPABILITY_NAMED_IAM"]
 
