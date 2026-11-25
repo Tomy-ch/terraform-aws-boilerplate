@@ -631,6 +631,38 @@
         "role_policy_attachment": "module.organization_baseline.module.break_glass.aws_iam_role_policy_attachment.administrator_access",
         "stack_set": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_set.this",
         "stack_instances": "module.organization_baseline.module.break_glass.aws_cloudformation_stack_instances.this"
+      },
+      "bootstrap_read": {
+        "stack_set": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_set.this",
+        "stack_instances": "module.organization_baseline.module.bootstrap_access.aws_cloudformation_stack_instances.this",
+        "management_only_actions": [
+          "cloudformation:DescribeStackInstance",
+          "cloudformation:DescribeStackSet",
+          "cloudformation:DescribeStackSetOperation",
+          "cloudformation:ListStackInstances",
+          "cloudformation:ListStackSetOperationResults",
+          "iam:GetAccountPasswordPolicy",
+          "iam:GetGroup",
+          "iam:GetGroupPolicy",
+          "iam:GetUser",
+          "iam:ListOrganizationsFeatures",
+          "iam:ListUserTags",
+          "organizations:DescribeAccount",
+          "organizations:DescribeCreateAccountStatus",
+          "organizations:DescribeOrganization",
+          "organizations:DescribeOrganizationalUnit",
+          "organizations:DescribePolicy",
+          "organizations:ListAWSServiceAccessForOrganization",
+          "organizations:ListAccounts",
+          "organizations:ListAccountsForParent",
+          "organizations:ListParents",
+          "organizations:ListRoots",
+          "organizations:ListTagsForResource",
+          "organizations:ListTargetsForPolicy",
+          "s3:GetObject",
+          "s3:PutObject",
+          "ssm:GetParameter"
+        ]
       }
     },
     "ops_notification": {
