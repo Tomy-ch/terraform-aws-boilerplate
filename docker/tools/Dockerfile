@@ -126,9 +126,9 @@ RUN apk add --no-cache ca-certificates curl
 # 版と照合値は make pin-pnpm-resolve が mise.toml の宣言から書く写しで、make pin-pnpm-check が守る。
 ARG TARGETARCH
 RUN set -eu; \
-    pnpm_version="12.17.0"; \
-    pnpm_sha256_amd64="0a3f8f12f4d894ba5013c7d445136eec5260dcffb63477247ca9b1c23d4fe27f"; \
-    pnpm_sha256_arm64="57f5f13647270dd55f4c463b5ad8e6e9157fc0463bb1ac62216da7c18531cb5b"; \
+    pnpm_version="12.19.0"; \
+    pnpm_sha256_amd64="b41d7b2d8f47187fdf9b3df170f984ffb02ef14bd27d353ccff704cef0d1af6e"; \
+    pnpm_sha256_arm64="cf6a59cbbd06800575d8274cd5f84eb9de74794ec495630b554bfef341ecd0d8"; \
     case "${TARGETARCH:-}" in \
       amd64) asset=x64; sum="$pnpm_sha256_amd64" ;; \
       arm64) asset=arm64; sum="$pnpm_sha256_arm64" ;; \
