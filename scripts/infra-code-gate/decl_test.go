@@ -454,20 +454,24 @@ func Test_checkADR(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "docs/adr/0005-deep.md"), strings.Replace(acceptedADR, "## 入出力", "#### 入出力", 1))
 	writeFile(t, filepath.Join(repo, "docs/adr/0006-no-status.md"), strings.Replace(acceptedADR, "- Status: Accepted\n", "", 1))
 	writeFile(t, filepath.Join(repo, "docs/adr/0007-commented.md"), strings.Replace(acceptedADR, "## 入出力\n", "<!--\n## 入出力\n-->\n", 1))
+	writeFile(t, filepath.Join(repo, "docs/adr/0008-unclosed.md"), acceptedADR+"<!-- 閉じない\n")
+	writeFile(t, filepath.Join(repo, "docs/adr/0009-unclosed-proposed.md"), strings.Replace(acceptedADR, "Accepted", "Proposed", 1)+"<!--\n")
 
 	tests := map[string]struct {
 		id   string
 		want []string
 	}{
-		"Accepted で4見出しを持てば通る": {id: "repository-wide/ok"},
-		"見出しのレベルは問わない":         {id: "repository-wide/deep"},
-		"Status 行の無い ADR は落ちる": {id: "repository-wide/no-status", want: []string{"Status が Accepted ではありません"}},
-		"HTML コメントの中の見出しは数えない": {id: "repository-wide/commented", want: []string{"見出し「入出力」がありません"}},
-		"Accepted でなければ落ちる":    {id: "repository-wide/proposed", want: []string{"Status が Accepted ではありません"}},
-		"見出しが欠ければ落ちる":          {id: "repository-wide/no-heading", want: []string{"見出し「入出力」がありません"}},
-		"フェンスの中の見出しは数えない":      {id: "repository-wide/fenced", want: []string{"見出し「入出力」がありません"}},
-		"実在しない ADR は落ちる":       {id: "repository-wide/none", want: []string{"identity に当たる ADR がありません"}},
-		"identity の形でない参照は落ちる": {id: "0001", want: []string{"`<scope>/<slug>` の形ではありません"}},
+		"Accepted で4見出しを持てば通る":         {id: "repository-wide/ok"},
+		"見出しのレベルは問わない":                 {id: "repository-wide/deep"},
+		"Status 行の無い ADR は落ちる":         {id: "repository-wide/no-status", want: []string{"Status が Accepted ではありません"}},
+		"HTML コメントの中の見出しは数えない":         {id: "repository-wide/commented", want: []string{"見出し「入出力」がありません"}},
+		"Accepted でなければ落ちる":            {id: "repository-wide/proposed", want: []string{"Status が Accepted ではありません"}},
+		"見出しが欠ければ落ちる":                  {id: "repository-wide/no-heading", want: []string{"見出し「入出力」がありません"}},
+		"フェンスの中の見出しは数えない":              {id: "repository-wide/fenced", want: []string{"見出し「入出力」がありません"}},
+		"見出しをすべて持っても、閉じないコメントは落ちる":     {id: "repository-wide/unclosed", want: []string{"HTML コメントが閉じていません"}},
+		"閉じないコメントは Status の違反と並べて報告する": {id: "repository-wide/unclosed-proposed", want: []string{"Status が Accepted ではありません", "HTML コメントが閉じていません"}},
+		"実在しない ADR は落ちる":               {id: "repository-wide/none", want: []string{"identity に当たる ADR がありません"}},
+		"identity の形でない参照は落ちる":         {id: "0001", want: []string{"`<scope>/<slug>` の形ではありません"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

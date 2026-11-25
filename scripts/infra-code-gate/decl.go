@@ -17,6 +17,7 @@ import (
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/adrdoc"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lintreport"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/mdscan"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/requiredchecks"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
@@ -419,7 +420,13 @@ func checkADR(repo, id string) ([]string, error) {
 	if status, _ := adrdoc.Status(string(raw)); status != "Accepted" {
 		msgs = append(msgs, fmt.Sprintf("ADR %s の Status が Accepted ではありません（%q）", id, status))
 	}
-	headings := adrdoc.Headings(raw)
+	headings, err := adrdoc.Headings(raw)
+	if err != nil {
+		if !xerrors.Is(err, mdscan.ErrUnclosedComment) {
+			return nil, xerrors.Wrapf(err, "%s の見出し", p)
+		}
+		return append(msgs, fmt.Sprintf("ADR %s: %v。見出しを読めません（ADR-0103 決定13）", id, err)), nil
+	}
 	for _, h := range requiredHeadings {
 		if !slices.Contains(headings, h) {
 			msgs = append(msgs, fmt.Sprintf("ADR %s に見出し「%s」がありません（ADR-0103 決定13）", id, h))
