@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/gitenv"
@@ -52,7 +51,7 @@ func runGitleaks(args []string, ranged bool, log io.Writer, r runner) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer removeWork(r.root, work)
 
 	if err := gitleaksCanary(r, env, dir, log); err != nil {
 		return err

@@ -31,14 +31,18 @@ func runCheck(args []string, w io.Writer, tool toolFunc, root string) error {
 	if !filepath.IsLocal(*dir) {
 		return xerrors.Wrapf(errUsage, "-dir %q はリポジトリ直下からの相対パスで、外へ出ないものに限ります", *dir)
 	}
-	fixture, err := workdir.Resolve(root, *work)
-	if err != nil {
+	if _, err := workdir.Resolve(root, *work); err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
 	n, err := countGoFiles(filepath.Join(root, *dir))
 	if err != nil {
 		return err
 	}
+	fixture, err := workdir.Recreate(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errRead, "-work %v", err)
+	}
+	defer func() { _ = workdir.Remove(root, *work) }()
 	if err := runCanary(fixture, w, tool); err != nil {
 		return err
 	}

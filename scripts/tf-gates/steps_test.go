@@ -186,7 +186,7 @@ func Test_runEach(t *testing.T) {
 			require.ErrorIs(t, err, c.wantErr)
 			assert.Equal(t, c.wantCode, exitCode(err))
 			assert.Len(t, f.Calls(), c.calls)
-			if c.wantErr == errToolFailed {
+			if errors.Is(c.wantErr, errToolFailed) {
 				assert.Contains(t, err.Error(), "exit status "+c.rc)
 				assert.NotContains(t, out.String(), "❌")
 			}
@@ -528,9 +528,9 @@ func Test_validateTargets(t *testing.T) {
 		tool, calls := fakeTool(t)
 		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == targets[1].path {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return tool(context.Background(), d, env, step)
+			return tool(ctx, d, env, step)
 		}
 		err = validateTargets("/d", out, targets, cmdOf)
 		require.ErrorIs(t, err, errTool)
@@ -647,9 +647,9 @@ func Test_runLint(t *testing.T) {
 		tool, calls := fakeTool(t)
 		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepLintInit {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return tool(context.Background(), d, env, step)
+			return tool(ctx, d, env, step)
 		}
 		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules"}, &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)
@@ -663,9 +663,9 @@ func Test_runLint(t *testing.T) {
 		tool, calls := fakeTool(t)
 		cmdOf := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepLint {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return tool(context.Background(), d, env, step)
+			return tool(ctx, d, env, step)
 		}
 		err := runLint([]string{"-base", base, "-config", "c", "-plugin-dir", t.TempDir(), "modules", "usecases"}, &bytes.Buffer{}, cmdOf)
 		require.ErrorIs(t, err, errTool)

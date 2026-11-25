@@ -672,3 +672,46 @@ func TestTemp(t *testing.T) {
 		assert.NotPanics(t, cleanup)
 	})
 }
+
+func TestRemove(t *testing.T) {
+	t.Parallel()
+
+	t.Run("-work を中身ごと消し、tmp/ のほかは残す", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp", "w", "sub"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "w", "sub", "f"), []byte("x"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tmp", "keep"), []byte("k"), 0o600))
+		require.NoError(t, Remove(root, "tmp/w"))
+		assert.Equal(t, map[string]string{"tmp/keep": "k"}, snapshot(t, root))
+	})
+
+	t.Run("-work も tmp も無ければ何もしない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		require.NoError(t, Remove(root, "tmp/w"))
+		require.NoError(t, os.Mkdir(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, Remove(root, "tmp/w"))
+	})
+
+	for _, work := range []string{"", "tmp", "../x", "keep"} {
+		t.Run(work+" は ErrInvalid で、何も消さない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(root, "keep"), []byte("k"), 0o600))
+			require.ErrorIs(t, Remove(root, work), ErrInvalid)
+			assert.Equal(t, map[string]string{"keep": "k"}, snapshot(t, root))
+		})
+	}
+
+	t.Run("tmp/ の下の symlink が外を指せば ErrInvalid で、外は消さない", func(t *testing.T) {
+		t.Parallel()
+		root, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), []byte("o"), 0o600))
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "tmp"), 0o750))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "tmp", "out")))
+		require.ErrorIs(t, Remove(root, "tmp/out"), ErrInvalid)
+		require.ErrorIs(t, Remove(root, "tmp/out/f"), ErrInvalid)
+		assert.Equal(t, map[string]string{"f": "o"}, snapshot(t, outside))
+	})
+}

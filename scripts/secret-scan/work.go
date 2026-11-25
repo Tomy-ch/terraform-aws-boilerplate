@@ -8,21 +8,23 @@ import (
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// prepareWork は、root の下の作業ディレクトリ tmp/secret-scan/<name> を workdir.Resolve で確かめてから作り直し、
-// そのパスを返します。外を指せば errUsage です。
+// prepareWork は、root の下の作業ディレクトリ tmp/secret-scan/<name> を workdir.Recreate で作り直し、そのパスを
+// 返します。外を指せば errUsage です。
 func prepareWork(root, name string) (string, error) {
-	dir, err := workdir.Resolve(root, "tmp/secret-scan/"+name)
-	if err != nil {
+	dir, err := workdir.Recreate(root, "tmp/secret-scan/"+name)
+	if xerrors.Is(err, workdir.ErrInvalid) {
 		return "", xerrors.Wrapf(errUsage, "作業ディレクトリ: %v", err)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return "", xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
-	}
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", xerrors.Wrapf(errInput, "%s の作成: %v", dir, err)
+	if err != nil {
+		return "", xerrors.Wrapf(errInput, "作業ディレクトリの作り直し: %v", err)
 	}
 
 	return dir, nil
+}
+
+// removeWork は、prepareWork が作り直した tmp/secret-scan/<name> を workdir.Remove で消します。
+func removeWork(root, name string) {
+	_ = workdir.Remove(root, "tmp/secret-scan/"+name)
 }
 
 // readFile は p を読みます。読めなければ errInput です。

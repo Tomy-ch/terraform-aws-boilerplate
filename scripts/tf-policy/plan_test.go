@@ -133,9 +133,9 @@ func Test_planRoots(t *testing.T) {
 	unstartableAt := func(tool toolFunc, path string) toolFunc {
 		return func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if d == path {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return tool(context.Background(), d, env, step)
+			return tool(ctx, d, env, step)
 		}
 	}
 

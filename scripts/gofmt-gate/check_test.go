@@ -69,6 +69,22 @@ func Test_runCheck(t *testing.T) {
 		assert.Equal(t, []string{stepCanary}, steps(f.Calls()))
 	})
 
+	t.Run("-work の前の中身を消して canary を建て、通っても落ちても終わりに消す", func(t *testing.T) {
+		t.Parallel()
+		for name, f := range map[string]*tooltest.Fake{"通る": passingFake(t), "落ちる": tooltest.New(t)} {
+			root := repoRoot(t)
+			writeFile(t, filepath.Join(root, "tmp", "gofmt-gate", "stale.go"), "package stale\n")
+			err := runCheck(checkArgs, new(bytes.Buffer), f.Tool(), root)
+			if name == "通る" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, errCanary)
+			}
+			assert.NoDirExists(t, filepath.Join(root, "tmp", "gofmt-gate"), name)
+			assert.DirExists(t, filepath.Join(root, "tmp"), name)
+		}
+	})
+
 	t.Run(".go が0件なら、道具を起動せずに errNoInput", func(t *testing.T) {
 		t.Parallel()
 		root, err := filepath.EvalSymlinks(t.TempDir())

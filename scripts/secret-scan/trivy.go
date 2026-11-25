@@ -71,7 +71,7 @@ func trivyCanary(r runner, env []string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer removeWork(r.root, "trivy")
 	canary := filepath.Join(dir, "canary")
 	if err := writeFile(filepath.Join(canary, "canary.txt"), fakeGitHubToken()); err != nil {
 		return err

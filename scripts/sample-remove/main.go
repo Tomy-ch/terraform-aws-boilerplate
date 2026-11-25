@@ -405,8 +405,16 @@ func apply(root string, p plan) error {
 	if err := atomicwrite.Apply(changes, 0o644); err != nil {
 		return xerrors.Wrap(err, "❌ 書き換えに失敗しました")
 	}
+	if len(p.deletes) == 0 {
+		return nil
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return xerrors.Wrapf(err, "❌ %s を開けません", root)
+	}
+	defer func() { _ = r.Close() }()
 	for _, d := range p.deletes {
-		if err := os.RemoveAll(filepath.Join(root, d)); err != nil {
+		if err := r.RemoveAll(d); err != nil {
 			return xerrors.Wrapf(err, "❌ %s を消せません", d)
 		}
 	}

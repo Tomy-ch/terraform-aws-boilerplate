@@ -237,9 +237,9 @@ func Test_policyChain(t *testing.T) {
 			fake, calls := fakeTool(t)
 			tool := func(ctx context.Context, d string, env []string, s string, _ ...string) *exec.Cmd {
 				if s == step {
-					return tooltest.Missing(context.Background(), d, env, s)
+					return tooltest.Missing(ctx, d, env, s)
 				}
-				return fake(context.Background(), d, env, s)
+				return fake(ctx, d, env, s)
 			}
 			verified := map[string][]byte{}
 			_, err := policyChain(dir, "/d", tool, verified)
@@ -375,9 +375,9 @@ func Test_runCanary(t *testing.T) {
 		fake, _ := fakeTool(t)
 		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepVerify && filepath.Base(d) == "failing-rego-test" {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return fake(context.Background(), d, env, step)
+			return fake(ctx, d, env, step)
 		}
 		var out bytes.Buffer
 		err := runCanary(args(t), &out, tool, tree(t, nil))
@@ -488,7 +488,7 @@ func Test_runCanary(t *testing.T) {
 		var dirs []string
 		tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			dirs = append(dirs, d)
-			return fake(context.Background(), d, env, step)
+			return fake(ctx, d, env, step)
 		}
 		require.ErrorIs(t, runCanary(argsWith(t, "tmp/c/work"), &bytes.Buffer{}, tool, rel), errCanary)
 		require.NotEmpty(t, dirs)

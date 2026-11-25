@@ -160,3 +160,17 @@ func gitEnvVars() ([]string, error) {
 
 	return names, nil
 }
+
+// RemoveUnder は、base を開いた [os.Root] の中で rel（スラッシュ区切り）を中身ごと消します。消せなければテストを
+// 落とします。テストの fixture から一部を外すときに使い、base の外へは辿りません。
+func RemoveUnder(t testing.TB, base, rel string) {
+	t.Helper()
+	r, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatalf("%s を開けません: %v", base, err)
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.RemoveAll(rel); err != nil {
+		t.Fatalf("%s の %s を消せません: %v", base, rel, err)
+	}
+}

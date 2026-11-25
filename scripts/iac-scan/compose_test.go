@@ -247,9 +247,9 @@ func Test_runImage(t *testing.T) {
 		fakeTool := r.tool
 		r.tool = func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
 			if step == stepUp {
-				return tooltest.Missing(context.Background(), d, env, step)
+				return tooltest.Missing(ctx, d, env, step)
 			}
-			return fakeTool(context.Background(), d, env, step)
+			return fakeTool(ctx, d, env, step)
 		}
 		_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
 		require.ErrorIs(t, err, errTool)
@@ -272,9 +272,9 @@ func Test_runImage(t *testing.T) {
 			fakeTool := r.tool
 			r.tool = func(ctx context.Context, d string, env []string, s string, _ ...string) *exec.Cmd {
 				if s == step {
-					return tooltest.Missing(context.Background(), d, env, s)
+					return tooltest.Missing(ctx, d, env, s)
 				}
-				return fakeTool(context.Background(), d, env, s)
+				return fakeTool(ctx, d, env, s)
 			}
 			_, err := runImage(workDir(t, "kics"), testImage, testTool, r, &bytes.Buffer{})
 			require.ErrorIs(t, err, errTool)

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -97,11 +98,11 @@ func runCanary(ctx context.Context, dir string, cases []canaryCase, d deps) erro
 	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return xerrors.Wrap(err, parent)
 	}
-	root, err := os.MkdirTemp(parent, "node-tools-canary.")
+	root, cleanup, err := workdir.Temp(parent, "node-tools-canary.")
 	if err != nil {
 		return xerrors.Wrap(err, "canary の一時ディレクトリ")
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	defer cleanup()
 
 	bin := filepath.Join(root, "bin")
 	if err := os.Mkdir(bin, 0o750); err != nil {

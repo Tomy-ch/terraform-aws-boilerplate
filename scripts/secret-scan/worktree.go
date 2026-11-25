@@ -47,7 +47,7 @@ func runTrufflehogWorktree(args []string, stdout, log io.Writer, r runner) error
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer removeWork(r.root, "trufflehog-worktree")
 
 	if err := trufflehogCanary(r, env, dir, stepTrufflehogRangeJSON, union, log); err != nil {
 		return err

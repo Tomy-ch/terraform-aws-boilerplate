@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -150,7 +151,7 @@ func Test_runDecl(t *testing.T) {
 			},
 			"code owner の対象の path が実在しなければ違反": {
 				mutate: func(t *testing.T, repo string) {
-					require.NoError(t, os.RemoveAll(filepath.Join(repo, "scripts/hcl-tally")))
+					testenv.RemoveUnder(t, repo, "scripts/hcl-tally")
 				},
 				want: errViolations,
 				msg:  "対象 scripts/hcl-tally/ が実在しません",

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
@@ -61,11 +62,11 @@ func runTrivyConfig(args []string, stdout, log io.Writer, r runner) error {
 		return xerrors.Wrapf(errInput, "%s の作成: %v", tmp, err)
 	}
 
-	canary, err := os.MkdirTemp(tmp, "trivy-config-canary.")
+	canary, cleanupCanary, err := workdir.Temp(tmp, "trivy-config-canary.")
 	if err != nil {
 		return xerrors.Wrapf(errInput, "canary の置き場: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(canary) }()
+	defer cleanupCanary()
 	if err := writeText(filepath.Join(canary, "Dockerfile"), trivyCanary); err != nil {
 		return err
 	}
@@ -157,11 +158,11 @@ func writeTrivyReport(raw []byte, base, tmp, convertStep string, env []string, r
 
 		return nil
 	}
-	dir, err := os.MkdirTemp(tmp, "trivy-config-convert.")
+	dir, cleanup, err := workdir.Temp(tmp, "trivy-config-convert.")
 	if err != nil {
 		return xerrors.Wrapf(errInput, "trivy-config: 変換の置き場: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer cleanup()
 	if err := writeText(filepath.Join(dir, trivyResult), string(raw)); err != nil {
 		return err
 	}

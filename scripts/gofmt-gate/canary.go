@@ -25,10 +25,9 @@ const (
 // canaryWant は、canary で gofmt -l が挙げるべきファイルの一覧です（順は問わない）。
 var canaryWant = []string{nestedUnformattedFile, unformattedFile}
 
-// runCanary は、fixture を work に建て、実物の gofmt -l が入れ子を含む整形されていないファイルだけを挙げることを
-// 確かめます。fixture は、建てるのに失敗したときも含めて終わりに消します。
+// runCanary は、fixture を空の work に建て、実物の gofmt -l が入れ子を含む整形されていないファイルだけを挙げることを
+// 確かめます。work の作り直しと後片付けは呼び出し側が持ちます。
 func runCanary(work string, w io.Writer, tool toolFunc) error {
-	defer func() { _ = os.RemoveAll(work) }()
 	if err := buildFixture(work); err != nil {
 		return err
 	}
@@ -48,9 +47,6 @@ func runCanary(work string, w io.Writer, tool toolFunc) error {
 }
 
 func buildFixture(work string) error {
-	if err := os.RemoveAll(work); err != nil {
-		return xerrors.Wrapf(errRead, "%s の削除: %v", work, err)
-	}
 	if err := os.MkdirAll(filepath.Join(work, filepath.Dir(filepath.FromSlash(nestedUnformattedFile))), 0o750); err != nil {
 		return xerrors.Wrapf(errRead, "%v", err)
 	}

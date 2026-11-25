@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 
@@ -94,5 +95,30 @@ func TestRequireShellcheck(t *testing.T) { //nolint:paralleltest // パッケー
 			assert.Equal(t, []string{shellcheck.Binary}, p.lookNames)
 			assert.Empty(t, p.envNames, "在ると分かった時点で決まるのに環境変数を読んでいる")
 		})
+	})
+}
+
+func TestRemoveUnder(t *testing.T) {
+	t.Parallel()
+
+	t.Run("base の下の rel を中身ごと消し、ほかは残す", func(t *testing.T) {
+		t.Parallel()
+		base := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(base, "a", "b"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(base, "a", "b", "f"), nil, 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(base, "keep"), nil, 0o600))
+		RemoveUnder(t, base, "a/b")
+		assert.NoDirExists(t, filepath.Join(base, "a", "b"))
+		assert.DirExists(t, filepath.Join(base, "a"))
+		assert.FileExists(t, filepath.Join(base, "keep"))
+	})
+
+	t.Run("base の外を指す symlink の先は消さない", func(t *testing.T) {
+		t.Parallel()
+		base, outside := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "f"), nil, 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(base, "out")))
+		RemoveUnder(t, base, "out")
+		assert.FileExists(t, filepath.Join(outside, "f"))
 	})
 }

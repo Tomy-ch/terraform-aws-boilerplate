@@ -244,8 +244,8 @@ func prepareWork(base, work string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return "", xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
+	if _, err := workdir.Recreate(base, work); err != nil {
+		return "", xerrors.Wrapf(errInput, "%s の作り直し: %v", dir, err)
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "work", "src"), 0o750); err != nil {
 		return "", xerrors.Wrapf(errInput, "%s の作成: %v", dir, err)
@@ -281,7 +281,7 @@ func runCanary(name, base, work, fixture, image string, t imageTool, r runner, l
 
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := workdir.Remove(base, work); err != nil {
 		return xerrors.Wrapf(errInput, "%s の削除: %v", dir, err)
 	}
 

@@ -20,7 +20,7 @@ const canaryOut = "sub/unformatted.go\nunformatted.go\n"
 func Test_runCanary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("整形されていないファイルだけを挙げれば通り、fixture の中で起動し、終わりに消す", func(t *testing.T) {
+	t.Run("整形されていないファイルだけを挙げれば通り、fixture の中で起動する", func(t *testing.T) {
 		t.Parallel()
 		f := tooltest.New(t, tooltest.WithPrelude(`find . -name '*.go' | sort > "$ctl/seen.txt"`))
 		f.Set(stepCanary, "out", canaryOut)
@@ -34,7 +34,6 @@ func Test_runCanary(t *testing.T) {
 		parent, err := filepath.EvalSymlinks(filepath.Dir(work))
 		require.NoError(t, err)
 		assert.Equal(t, filepath.Join(parent, "work")+" "+stepCanary+" ", calls[0])
-		assert.NoDirExists(t, work)
 	})
 
 	for name, c := range map[string]struct{ out, rc string }{
@@ -45,7 +44,7 @@ func Test_runCanary(t *testing.T) {
 		"整形済みのファイルだけを挙げる":       {out: formattedFile + "\n"},
 		"挙げるべきものを挙げたうえで rc≠0":   {out: canaryOut, rc: "2"},
 	} {
-		t.Run(name+"なら errCanary で、出力と rc を出し、成功を出さず、fixture を消す", func(t *testing.T) {
+		t.Run(name+"なら errCanary で、出力と rc を出し、成功を出さない", func(t *testing.T) {
 			t.Parallel()
 			f := tooltest.New(t)
 			f.Set(stepCanary, "out", c.out)
@@ -59,15 +58,13 @@ func Test_runCanary(t *testing.T) {
 			assert.Contains(t, out.String(), "--- gofmt -l .（rc=")
 			assert.Contains(t, out.String(), "STDERR-ONLY")
 			assert.NotContains(t, out.String(), "✅")
-			assert.NoDirExists(t, work)
 		})
 	}
 
-	t.Run("道具を起動できなければ errTool で、fixture を消す", func(t *testing.T) {
+	t.Run("道具を起動できなければ errTool", func(t *testing.T) {
 		t.Parallel()
 		work := filepath.Join(t.TempDir(), "w")
 		require.ErrorIs(t, runCanary(work, new(bytes.Buffer), tooltest.Missing), toolrun.ErrTool)
-		assert.NoDirExists(t, work)
 	})
 
 	t.Run("fixture を建てられなければ道具を起動せずに errRead", func(t *testing.T) {
@@ -83,11 +80,9 @@ func Test_runCanary(t *testing.T) {
 func Test_buildFixture(t *testing.T) {
 	t.Parallel()
 
-	t.Run("前の中身を消し、直下と入れ子の整形されていないファイルと整形済みのファイルを置く", func(t *testing.T) {
+	t.Run("直下と入れ子の整形されていないファイルと整形済みのファイルを置く", func(t *testing.T) {
 		t.Parallel()
 		work := filepath.Join(t.TempDir(), "w")
-		require.NoError(t, os.MkdirAll(work, 0o750))
-		require.NoError(t, os.WriteFile(filepath.Join(work, "stale.go"), nil, 0o600))
 		require.NoError(t, buildFixture(work))
 		var got []string
 		require.NoError(t, filepath.WalkDir(work, func(p string, d os.DirEntry, err error) error {

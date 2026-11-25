@@ -68,7 +68,7 @@ exit 0
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	// exec せず /bin/sh に読ませる。並行のテストが書いたばかりのスクリプトの exec は ETXTBSY で落ちうる（tooltest.Fake.Tool と同じ）。
 	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir, c.Env = d, env
 		return c
 	}

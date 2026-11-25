@@ -43,7 +43,7 @@ var isolatedEnv = []string{"PATH=" + os.Getenv("PATH"), "GIT_DIR=/isolated"}
 func Test_runCheckCanary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("fixture のリポジトリで違反を名指して落ちれば通り、隔離した env を渡し、fixture を消す", func(t *testing.T) {
+	t.Run("fixture のリポジトリで違反を名指して落ちれば通り、隔離した env を渡す", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
 		f.Set(stepCheck, "out", checkHit)
@@ -63,7 +63,6 @@ func Test_runCheckCanary(t *testing.T) {
 			work + " " + stepCheck + " /isolated",
 		}, f.Calls())
 		assert.Equal(t, ".editorconfig\n.editorconfig-checker.json\ncanary.yaml\nnested\n", f.Read(stepCheck+".ls"))
-		assert.NoDirExists(t, work)
 	})
 
 	for name, c := range map[string]struct{ out, rc, want string }{
@@ -104,7 +103,6 @@ func Test_runDirectiveCanary(t *testing.T) {
 		f.Set(stepCheck, "ls", "")
 		f.Set(stepCheck, "copy", "")
 		p := canaryPaths(t)
-		work := p.work
 		var out bytes.Buffer
 		require.NoError(t, runDirectiveCanary(p, &out, f.Tool(), isolatedEnv))
 		assert.Contains(t, out.String(), "✅ editorconfig directive-canary")
@@ -116,7 +114,6 @@ func Test_runDirectiveCanary(t *testing.T) {
 		assert.NotContains(t, control, marker, "対照は印を持たない")
 		assert.Equal(t, control, rest, "印の行を除けば対照と同じ")
 		assert.Contains(t, control, "\t")
-		assert.NoDirExists(t, work)
 	})
 
 	for name, c := range map[string]struct{ out, rc, want string }{
@@ -144,7 +141,7 @@ const excludeListed = "\x1b[0m.editorconfig\n./.editorconfig-checker.json\n" + e
 func Test_runExcludeCanary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("対照が載り宣言した除外が載らなければ通り、-dry-run を隔離した env で起動して fixture を消す", func(t *testing.T) {
+	t.Run("対照が載り宣言した除外が載らなければ通り、-dry-run を隔離した env で起動する", func(t *testing.T) {
 		t.Parallel()
 		f := newFake(t)
 		f.Set(stepDryRun, "out", excludeListed)
@@ -158,7 +155,6 @@ func Test_runExcludeCanary(t *testing.T) {
 			work + " " + stepGitAdd + " /isolated",
 			work + " " + stepDryRun + " /isolated",
 		}, f.Calls())
-		assert.NoDirExists(t, work)
 	})
 
 	for _, n := range excludedNames {
@@ -290,13 +286,11 @@ func Test_runCanary(t *testing.T) {
 func Test_buildFixture(t *testing.T) {
 	t.Parallel()
 
-	t.Run("作り直し、2つの設定の複写と files を置く", func(t *testing.T) {
+	t.Run("work を作り、2つの設定の複写と files を置く", func(t *testing.T) {
 		t.Parallel()
 		p := canaryPaths(t)
 		work := p.work
-		stale := writeFile(t, filepath.Join(work, "stale"), "")
 		require.NoError(t, buildFixture(work, p.editorconfig, p.checkerConfig, map[string]string{"a.yaml": "A"}))
-		assert.NoFileExists(t, stale)
 		for name, want := range map[string]string{".editorconfig": "root = true\n", ".editorconfig-checker.json": "{}\n", "a.yaml": "A"} {
 			raw, err := os.ReadFile(filepath.Join(work, name))
 			require.NoError(t, err)

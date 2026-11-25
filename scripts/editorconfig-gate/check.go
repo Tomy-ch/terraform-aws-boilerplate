@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
@@ -27,15 +26,18 @@ func runCheck(args []string, w io.Writer, tool toolFunc, env envFunc, root strin
 	if *work == "" || *editorconfig == "" || *checkerConfig == "" || fset.NArg() > 0 {
 		return xerrors.Wrap(errUsage, "editorconfig-gate check -work <dir> -editorconfig <path> -checker-config <path>")
 	}
-	base, err := workdir.Resolve(root, *work)
-	if err != nil {
+	if _, err := workdir.Resolve(root, *work); err != nil {
 		return xerrors.Wrapf(errUsage, "-work %v", err)
 	}
 	gitEnv, err := env()
 	if err != nil {
 		return xerrors.Wrapf(errTool, "%v", err)
 	}
-	defer func() { _ = os.RemoveAll(base) }()
+	base, err := workdir.Recreate(root, *work)
+	if err != nil {
+		return xerrors.Wrapf(errRead, "-work %v", err)
+	}
+	defer func() { _ = workdir.Remove(root, *work) }()
 	fixture := func(sub string) fixturePaths {
 		return fixturePaths{work: filepath.Join(base, sub), editorconfig: *editorconfig, checkerConfig: *checkerConfig}
 	}

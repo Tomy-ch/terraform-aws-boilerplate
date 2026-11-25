@@ -38,7 +38,7 @@ exit 0
 `
 	require.NoError(t, os.WriteFile(script, []byte(body), 0o600))
 	tool := func(ctx context.Context, d string, env []string, step string, _ ...string) *exec.Cmd {
-		c := exec.CommandContext(context.Background(), "/bin/sh", script, step)
+		c := exec.CommandContext(ctx, "/bin/sh", script, step)
 		c.Dir = d
 		c.Env = env
 		return c

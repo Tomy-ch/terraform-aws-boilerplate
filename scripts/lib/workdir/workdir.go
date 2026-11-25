@@ -92,6 +92,33 @@ func realRel(tmp, target string) (string, string, error) {
 	return tmpReal, rel, nil
 }
 
+// Remove は、work を [Resolve] で検証し、tmp を開いた [os.Root] の中で消します。在らなければ何もしません。
+func Remove(root, work string) error {
+	return remove(root, work, lsFilesTmp)
+}
+
+func remove(root, work string, lsFiles lsFilesFunc) error {
+	target, err := resolve(root, work, lsFiles)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(root, "tmp")
+	if _, err := os.Lstat(tmp); xerrors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	tmpReal, rel, err := realRel(tmp, target)
+	if err != nil {
+		return xerrors.Wrapf(ErrInvalid, "%q: %v", work, err)
+	}
+	r, err := os.OpenRoot(tmpReal)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+
+	return xerrors.Wrapf(r.RemoveAll(rel), "%q を消せません", work)
+}
+
 // rebuild は、tmp を開いた [os.Root] の中で rel を消して作り直します。rel の途中の symlink が tmp の外を指せば、
 // 外へは辿らずに失敗します。
 func rebuild(tmp, rel string) error {
