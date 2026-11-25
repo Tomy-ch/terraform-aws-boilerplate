@@ -358,10 +358,10 @@ type scanned struct {
 	openedAt    int
 }
 
-// scanReadme は、フェンスと HTML コメントの状態を mdscan.Scanner の1度の走査で一緒に追います。見出しは元の行が
-// 見出しの形をしているときだけ数え（headingLevel）、`<!-- -->## …` のように行頭がコメントの行と、コメントの中で
-// 始まる行は、参照記録の見出しとしても、節と一覧の終わりとしても見出しではありません。フェンスとコメントの外の
-// HTML ブロックの開始行と setext 見出しの下線は、読み違えずに読む方法を持たないので unsupported に挙げます。
+// scanReadme は、見出しを元の行が見出しの形をしているときだけ数え（headingLevel）、`<!-- -->## …` のように
+// 行頭がコメントの行と、コメントの中で始まる行は、参照記録の見出しとしても、節と一覧の終わりとしても見出しに
+// しません。フェンスとコメントの外の HTML ブロックの開始行と setext 見出しの下線は、読み違えずに読む方法を
+// 持たないので unsupported に挙げます。
 func scanReadme(content []byte) scanned {
 	var sc scanned
 	var s mdscan.Scanner
@@ -446,7 +446,6 @@ func isHTMLBlockStart(text string) bool {
 	return htmlBlockStart.MatchString(text) && !commentStart.MatchString(text)
 }
 
-// isSetextUnderline は、text が、直前の段落の行を setext 見出しにする下線の形かを返します。
 func isSetextUnderline(text string) bool {
 	return setextUnderline.MatchString(text)
 }

@@ -58,7 +58,6 @@ func (f Fence) Next(text string) (next Fence, in bool) {
 	marker, info, ok := fenceMarker(text)
 	switch {
 	case f != "":
-		// 閉じは、同じ文字種で、開き以上の長さで、後ろに info string を持たないもの。
 		// 長さを「以上」で見るのは、``` の例を ```` で囲む入れ子が成立するためです。
 		if ok && marker[0] == f[0] && len(marker) >= len(f) && strings.TrimSpace(info) == "" {
 			return "", true
@@ -268,7 +267,6 @@ func findClose(line string, from, want int) (int, bool) {
 	return 0, false
 }
 
-// runLen は、位置 i から続くバッククォートの個数を返します。
 func runLen(line string, i int) int {
 	n := 0
 	for i+n < len(line) && line[i+n] == '`' {

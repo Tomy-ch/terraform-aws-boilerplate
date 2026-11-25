@@ -64,7 +64,6 @@ func fixedLister(names []string, err error) listFunc {
 	return func(string) ([]string, error) { return names, err }
 }
 
-// lineOf は、body の中で sub が最初に現れる行の番号を返す。
 func lineOf(t *testing.T, body, sub string) string {
 	t.Helper()
 	i := strings.Index(body, sub)
