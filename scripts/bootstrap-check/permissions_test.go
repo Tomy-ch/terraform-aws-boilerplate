@@ -1206,6 +1206,8 @@ func Test_stackInstanceRows(t *testing.T) {
 	t.Run("TargetRegion の context は type の行にだけ与え、stackset と stackset-target の行には与えない", func(t *testing.T) {
 		t.Parallel()
 
+		require.NotEmpty(t, rows)
+
 		for _, r := range rows {
 			if r.resource != ty {
 				assert.Empty(t, r.context, r.resource)
@@ -1412,15 +1414,27 @@ func Test_referencePolicy(t *testing.T) {
 		module  string
 		want    string
 	}{
-		"JSON でない":             {"x", "plan_output", testReferencePlan + " を JSON の object として読めない"},
-		"null":                 {"null", "plan_output", testReferencePlan + " を JSON の object として読めない"},
-		"空":                    {"", "plan_output", testReferencePlan + " を JSON の object として読めない"},
-		"resource_changes が無い": {`{}`, "plan_output", testReferencePlan + " に resource_changes の配列が無い"},
+		"JSON でない": {"x", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"null":     {"null", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"空":        {"", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"配列":       {"[{}]", "plan_output", testReferencePlan + " を JSON の object として読めない"},
+		"resource_changes が空の配列": {`{"resource_changes":[]}`, "plan_output",
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（0 個）"},
+		"resource_changes が配列でない": {`{"resource_changes":{}}`, "plan_output", testReferencePlan + " に resource_changes の配列が無い"},
+		"resource_changes が無い":    {`{}`, "plan_output", testReferencePlan + " に resource_changes の配列が無い"},
 		"address が無い": {referencePlanJSON(t), "none",
 			testReferencePlan + " に module.state_backend.module.none.aws_s3_bucket_policy.this の policy が1つではない（0 個）"},
 		"address が2つ": {dup, "apply_output",
 			testReferencePlan + " に module.state_backend.module.apply_output.aws_s3_bucket_policy.this の policy が1つではない（2 個）"},
 		"policy が null": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":{"policy":null}}}]}`, "plan_output",
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
+		"after が null": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":null}}]}`, "plan_output",
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
+		"policy が無い": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":{}}}]}`, "plan_output",
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
+		"policy が空": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":{"policy":""}}}]}`, "plan_output",
+			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
+		"policy が文字列でない": {`{"resource_changes":[{"address":"module.state_backend.module.plan_output.aws_s3_bucket_policy.this","change":{"after":{"policy":{"Statement":[]}}}}]}`, "plan_output",
 			testReferencePlan + " に module.state_backend.module.plan_output.aws_s3_bucket_policy.this の policy が1つではない（1 個）"},
 	} {
 		t.Run(name+"なら理由を返す", func(t *testing.T) {
@@ -1432,6 +1446,23 @@ func Test_referencePolicy(t *testing.T) {
 			assert.Equal(t, tc.want, reason)
 		})
 	}
+
+	t.Run("plans.txt の行の CRLF と前後の空白を外して state-backend の plan を見つける", func(t *testing.T) {
+		t.Parallel()
+
+		files := referenceFiles(referencePlanJSON(t))
+
+		doc, reason := referencePolicy(func(p string) ([]byte, error) {
+			if p == testReferenceList {
+				return []byte(testReferenceDir + "/runs/finops.jsonl\r\n  " + testReferenceDir + "/runs/state-backend.jsonl \r\n"), nil
+			}
+
+			return files(p)
+		}, testReferenceDir, "plan_output", testAccount)
+
+		assert.Empty(t, reason)
+		assert.NotEmpty(t, doc)
+	})
 
 	t.Run("plans.txt を読めなければ、inputs を読まずに理由を返す", func(t *testing.T) {
 		t.Parallel()
@@ -1452,6 +1483,8 @@ func Test_referencePolicy(t *testing.T) {
 	for name, list := range map[string]string{
 		"空":           "",
 		"ほかの root だけ": testReferenceDir + "/runs/finops.jsonl\n",
+		"空行と空白だけ":     "\n  \r\n\t\n",
+		"拡張子が違う":      testReferenceDir + "/runs/state-backend.json\n",
 		"名前が state-backend を含むだけ": testReferenceDir + "/runs/state-backend-x.jsonl\n" + testReferenceDir + "/runs/x-state-backend.jsonl\n",
 	} {
 		t.Run("plans.txt が"+name+"なら、今回の出力ではないので inputs を読まない", func(t *testing.T) {
@@ -1728,8 +1761,19 @@ func Test_outputPolicySteps(t *testing.T) {
 		readFile func(t *testing.T) func(string) ([]byte, error)
 		result   string
 	}{
-		"reference の plan が無い": {func(*testing.T) func(string) ([]byte, error) {
+		"tf-policy の出力が無い": {func(*testing.T) func(string) ([]byte, error) {
 			return func(string) ([]byte, error) { return nil, os.ErrNotExist }
+		}, "# 結果: 13 件のうち NG 13 件"},
+		"plans.txt はあるが inputs の plan が無い": {func(t *testing.T) func(string) ([]byte, error) {
+			files := referenceFiles(referencePlanJSON(t))
+
+			return func(p string) ([]byte, error) {
+				if p == testReferencePlan {
+					return nil, os.ErrNotExist
+				}
+
+				return files(p)
+			}
 		}, "# 結果: 13 件のうち NG 13 件"},
 		"reference の plan に apply_output だけ無い": {func(t *testing.T) func(string) ([]byte, error) {
 			return referenceFiles(strings.Replace(referencePlanJSON(t), "module.state_backend.module.apply_output", "module.x", 1))
