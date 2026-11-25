@@ -126,6 +126,7 @@ hosts = [
   "kms.ap-northeast-1.amazonaws.com",
   "organizations.us-east-1.amazonaws.com",
   "*.s3-control.ap-northeast-1.amazonaws.com",
+  "ssm.ap-northeast-1.amazonaws.com",
 ]
 
 # workload root の通知の構成物（ops-notification）の型の宛先。identity root の job には持たせない。
@@ -184,6 +185,9 @@ hosts = [
 
 [type.aws_scheduler_]
 hosts = ["scheduler.ap-northeast-1.amazonaws.com", "scheduler.us-east-1.amazonaws.com"]
+
+[type.aws_ssm_]
+hosts = ["ssm.ap-northeast-1.amazonaws.com"]
 
 [type.aws_sns_]
 hosts = ["sns.ap-northeast-1.amazonaws.com", "sns.us-east-1.amazonaws.com"]
@@ -249,6 +253,9 @@ classes = ["mise"]
 classes = ["mise"]
 
 [job."md-lint.yaml:skill-lint"]
+classes = ["mise"]
+
+[job."md-lint.yaml:ref-record-lint"]
 classes = ["mise"]
 
 [job."notify.yaml:notify"]

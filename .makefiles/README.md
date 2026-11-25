@@ -76,7 +76,7 @@ Dockerfile と compose の検査、image digest の固定。
 
 ### `github/`
 
-workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。
+workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。commit message の範囲の判定は `scripts/commit-range` が持つ。
 
 ### `github/operation/`
 
@@ -86,11 +86,11 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `github/setting/`
 
-ブランチ保護・ラベル・リポジトリ設定の適用。
+ブランチ保護・ラベル・リポジトリ設定の適用。判定と GitHub への書き込みは `scripts/repo-settings` が持つ。
 
 ### `go/`
 
-運用機構（`scripts/`）の Go の整形・Lint・テスト。
+運用機構（`scripts/`）の Go の整形・Lint・テスト。整形の検査の判定と canary は `scripts/gofmt-gate` が持つ。
 
 ### `hygiene/`
 
