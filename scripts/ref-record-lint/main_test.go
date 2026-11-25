@@ -505,6 +505,16 @@ func Test_checkReadme(t *testing.T) {
 		assert.Contains(t, got[0].Message, "見出しがありません")
 	})
 
+	t.Run("コメントだけの項目は、本文が空の項目", func(t *testing.T) {
+		t.Parallel()
+		body := readmeWith(strings.Replace(validSection, "- 知見 A\n", "- 知見 A\n- <!-- c -->\n", 1))
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		line, err := strconv.Atoi(lineOf(t, body, "- <!-- c -->"))
+		require.NoError(t, err)
+		assert.Equal(t, []lintreport.Finding{{File: "R.md", Line: line, Message: `"採用した知見:" の項目の本文が空です`}}, got)
+	})
+
 	t.Run("空のコメントは閉じないコメントではない", func(t *testing.T) {
 		t.Parallel()
 		got, err := checkReadme("R.md", []byte("<!--> a <!--->\n"+readmeWith(validSection)))
@@ -710,18 +720,21 @@ func Test_stripComments(t *testing.T) {
 		want      string
 		stillOpen bool
 	}{
-		"コメントが無ければそのまま":           {"a", false, "a", false},
-		"1行のコメントは空になる":            {"<!-- a -->", false, "", false},
-		"行末のコメントを外す":              {"- A <!-- sample:line -->", false, "- A ", false},
-		"開いたままの行は空になる":            {"## x", true, "", true},
-		"閉じた後ろの文字は残す":             {"b --> c", true, " c", false},
-		"1行に2つのコメント":              {"a<!-- x -->b<!-- y -->c", false, "abc", false},
-		"inline code の中の開きは開かない":  {"`<!--` a", false, "`<!--` a", false},
-		"閉じない inline code の後ろは開く": {"`a <!-- b", false, "`a ", true},
-		"閉じなければ開いたままを返す":          {"a <!-- b", false, "a ", true},
-		"<!--> は空のコメント":           {"a<!-->b", false, "ab", false},
-		"<!---> は空のコメント":          {"a<!--->b", false, "ab", false},
-		"<!----> は閉じたコメント":        {"a<!---->b", false, "ab", false},
+		"コメントが無ければそのまま":                        {"a", false, "a", false},
+		"1行のコメントは空になる":                         {"<!-- a -->", false, "", false},
+		"行末のコメントを外す":                           {"- A <!-- sample:line -->", false, "- A ", false},
+		"開いたままの行は空になる":                         {"## x", true, "", true},
+		"閉じた後ろの文字は残す":                          {"b --> c", true, " c", false},
+		"1行に2つのコメント":                           {"a<!-- x -->b<!-- y -->c", false, "abc", false},
+		"inline code の中の開きは開かない":               {"`<!--` a", false, "`<!--` a", false},
+		"閉じない inline code の後ろは開く":              {"`a <!-- b", false, "`a ", true},
+		"閉じなければ開いたままを返す":                       {"a <!-- b", false, "a ", true},
+		"長さの違う閉じは inline code を閉じない":           {"`a``<!-- b", false, "`a``", true},
+		"2つ以上のバッククォートの inline code の中の開きは開かない": {"``a`<!--``", false, "``a`<!--``", false},
+		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
+		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
+		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
+		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -951,6 +964,21 @@ func Test_checkList(t *testing.T) {
 		"コロンの後に空白が無い": {
 			"採用しなかった知見と理由:\n- A:理由\n", rejectedLabel, true,
 			[]lintreport.Finding{{Line: 2, Message: "\"採用しなかった知見と理由:\" の項目が `<知見>: <理由>` の形ではありません"}},
+		},
+		"項目の無い文だけなら、項目が無い違反だけを出す": {
+			"採用した知見:\n本文\n本文 2\n", adoptedLabel, false,
+			[]lintreport.Finding{{Line: 1, Message: `"採用した知見:" の後に項目がありません`}},
+		},
+		"採用しなかった知見の一覧は、採用した知見の label で終わる": {
+			"採用しなかった知見と理由:\n- A: 理由\n採用した知見:\n- B\n", rejectedLabel, true, nil,
+		},
+		"7段の # と空白の無い # は見出しでなく、空白の無い - は項目でない": {
+			"採用した知見:\n- A\n#hash\n####### x\n-x\n- B\n", adoptedLabel, false,
+			[]lintreport.Finding{
+				{Line: 3, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
+				{Line: 4, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
+				{Line: 5, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
+			},
 		},
 		"理由を求めなければコロンを見ない": {
 			"採用した知見:\n- A\n", adoptedLabel, false, nil,
