@@ -127,6 +127,8 @@ locals {
   org_root_arns  = ["${local.org_arn_prefix}:root/o-*/r-*"]
   org_ou_arns    = ["${local.org_arn_prefix}:ou/o-*/ou-*"]
   org_policy_arn = "${local.org_arn_prefix}:policy/o-*/*/p-*"
+  # メンバーアカウントのメールは、organization-baseline が管理アカウントの parameter から読む（organization-baseline/README.md）。
+  member_account_emails_parameter_arn = "arn:${data.aws_partition.current.partition}:ssm:${local.regional_arn_suffix}:parameter/${trimsuffix(var.name_prefix, "-${var.env}")}/organization-baseline/member-account-emails"
 
   break_glass_user_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":user/")]
   break_glass_group_arns = [for a in var.break_glass_arns : a if strcontains(a, ":group/")]
@@ -139,11 +141,13 @@ locals {
   break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
   # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。type の ARN はアカウントを `*` にする（deployment-identity/ADR-0201 決定4）。
   # stackset-target は region を空、type は region を `*` にする（同 決定4）。
-  break_glass_stack_set_write_arns = concat(
+  break_glass_stack_instance_arns = concat(
     local.break_glass_stack_set_arns,
     [for n in local.break_glass_stack_set_names : "arn:${data.aws_partition.current.partition}:cloudformation::${data.aws_caller_identity.current.account_id}:stackset-target/${n}:*"],
-    ["arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"],
   )
+  break_glass_stack_set_type_arn     = "arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"
+  break_glass_stack_set_write_arns   = concat(local.break_glass_stack_instance_arns, [local.break_glass_stack_set_type_arn])
+  break_glass_stack_instance_actions = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
 
   governance_policy_name     = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
@@ -179,23 +183,31 @@ locals {
   chatbot_slr_read_statements = [for s in [
     { Sid = "ReadChatbotServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = local.chatbot_slr_arn },
   ] : s if data.aws_partition.current.partition == "aws"]
-  # account-baseline の構成物（決定13）。
-  account_arn    = "arn:${data.aws_partition.current.partition}:account::${data.aws_caller_identity.current.account_id}:account"
-  config_slr_arn = "${local.iam_arn_prefix}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
+  # account-baseline の構成物（決定13）。リージョンごとの構成物は repository-wide/ADR-0209 の集合のすべてに在り、ARN の region を
+  # `*` にして、DenyBaselineOutsideRegions で集合に限る（ADR-0209 決定4、repository-wide/ADR-0301 決定11 の但し書き）。
+  # 集合を持たない partition では account-baseline を plan できないので、リージョンごとの文と Deny を置かない（account-baseline/ADR-0101 決定2）。
+  baseline_regions   = sort(tolist(lookup(module.default_regions.by_partition, data.aws_partition.current.partition, toset([]))))
+  baseline_supported = length(local.baseline_regions) > 0
+  account_arn        = "arn:${data.aws_partition.current.partition}:account::${data.aws_caller_identity.current.account_id}:account"
+  config_slr_arn     = "${local.iam_arn_prefix}:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig"
   # CreateAnalyzer は、Access Analyzer の SLR が無ければ呼び手の権限で作る（Service Authorization Reference の依存の Action）。
   analyzer_slr_arn         = "${local.iam_arn_prefix}:role/aws-service-role/access-analyzer.amazonaws.com/AWSServiceRoleForAccessAnalyzer"
-  config_recorder_arns     = [for r in local.workload_regions : "arn:${data.aws_partition.current.partition}:config:${r}:${data.aws_caller_identity.current.account_id}:configuration-recorder/${var.name_prefix}/*"]
-  analyzer_arns            = [for x in local.workload_arn_suffixes : "arn:${data.aws_partition.current.partition}:access-analyzer:${x}:analyzer/${var.name_prefix}-external"]
-  ssm_service_setting_arns = flatten([for x in local.workload_arn_suffixes : [for id in ["documents/console/public-sharing-permission", "automation/customer-script-log-destination"] : "arn:${data.aws_partition.current.partition}:ssm:${x}:servicesetting/ssm/${id}"]])
-  ec2_region_condition     = { StringEquals = { "ec2:Region" = local.workload_regions } }
-  baseline_read_statements = [
+  baseline_arn_suffix      = "*:${data.aws_caller_identity.current.account_id}"
+  config_recorder_arn      = "arn:${data.aws_partition.current.partition}:config:${local.baseline_arn_suffix}:configuration-recorder/${var.name_prefix}/*"
+  analyzer_arn             = "arn:${data.aws_partition.current.partition}:access-analyzer:${local.baseline_arn_suffix}:analyzer/${var.name_prefix}-external"
+  ssm_service_setting_arns = [for id in ["documents/console/public-sharing-permission", "automation/customer-script-log-destination"] : "arn:${data.aws_partition.current.partition}:ssm:${local.baseline_arn_suffix}:servicesetting/ssm/${id}"]
+  ec2_region_condition     = { StringEquals = { "ec2:Region" = local.baseline_regions } }
+  # アカウントに1つの設定と global のサービス（account・IAM・S3 の Public Access Block）は、リージョンで限らない。
+  baseline_account_read_statements = [
     { Sid = "ReadAlternateContact", Effect = "Allow", Action = "account:GetAlternateContact", Resource = local.account_arn },
     { Sid = "ReadConfigServiceLinkedRole", Effect = "Allow", Action = "iam:GetRole", Resource = local.config_slr_arn },
-    { Sid = "ReadConfigRecorders", Effect = "Allow", Action = ["config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders"], Resource = local.config_recorder_arns },
-    { Sid = "ReadAnalyzers", Effect = "Allow", Action = "access-analyzer:GetAnalyzer", Resource = local.analyzer_arns },
-    { Sid = "ReadSsmServiceSettings", Effect = "Allow", Action = "ssm:GetServiceSetting", Resource = local.ssm_service_setting_arns },
     { Sid = "ReadAccountPublicAccessBlock", Effect = "Allow", Action = "s3:GetAccountPublicAccessBlock", Resource = "*" },
     { Sid = "ReadPasswordPolicy", Effect = "Allow", Action = "iam:GetAccountPasswordPolicy", Resource = "*" },
+  ]
+  baseline_regional_read_statements = [
+    { Sid = "ReadConfigRecorders", Effect = "Allow", Action = ["config:DescribeConfigurationRecorderStatus", "config:DescribeConfigurationRecorders"], Resource = local.config_recorder_arn },
+    { Sid = "ReadAnalyzers", Effect = "Allow", Action = "access-analyzer:GetAnalyzer", Resource = local.analyzer_arn },
+    { Sid = "ReadSsmServiceSettings", Effect = "Allow", Action = "ssm:GetServiceSetting", Resource = local.ssm_service_setting_arns },
     { Sid = "ReadDeliveryChannels", Effect = "Allow", Action = "config:DescribeDeliveryChannels", Resource = "*" },
     { Sid = "ReadRetentionConfigurations", Effect = "Allow", Action = "config:DescribeRetentionConfigurations", Resource = "*" },
     { Sid = "ReadEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:GetEbsEncryptionByDefault", Resource = "*", Condition = local.ec2_region_condition },
@@ -203,24 +215,40 @@ locals {
     { Sid = "ReadVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:DescribeVpcBlockPublicAccessOptions", Resource = "*", Condition = local.ec2_region_condition },
     { Sid = "ReadEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:GetBlockPublicAccessConfiguration", Resource = "*" },
   ]
-  baseline_manage_statements = concat([
+  baseline_read_statements = concat(local.baseline_account_read_statements, [for s in local.baseline_regional_read_statements : s if local.baseline_supported])
+  baseline_account_manage_statements = concat([
     { Sid = "PutAlternateContact", Effect = "Allow", Action = "account:PutAlternateContact", Resource = local.account_arn, Condition = { StringEquals = { "account:AlternateContactTypes" = "SECURITY" } } },
     { Sid = "CreateConfigServiceLinkedRole", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = local.config_slr_arn, Condition = { StringEquals = { "iam:AWSServiceName" = "config.amazonaws.com" } } },
     { Sid = "CreateAnalyzerServiceLinkedRole", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = local.analyzer_slr_arn, Condition = { StringEquals = { "iam:AWSServiceName" = "access-analyzer.amazonaws.com" } } },
     # PutConfigurationRecorder は、recorder の role を渡す PassRole を要する（Service Authorization Reference の依存の Action）。
     { Sid = "PassConfigServiceLinkedRole", Effect = "Allow", Action = "iam:PassRole", Resource = local.config_slr_arn, Condition = { StringEquals = { "iam:PassedToService" = "config.amazonaws.com" } } },
-    { Sid = "ManageConfigRecorders", Effect = "Allow", Action = ["config:PutConfigurationRecorder", "config:StartConfigurationRecorder"], Resource = local.config_recorder_arns },
-    { Sid = "CreateAnalyzers", Effect = "Allow", Action = "access-analyzer:CreateAnalyzer", Resource = local.analyzer_arns },
-    { Sid = "UpdateSsmServiceSettings", Effect = "Allow", Action = "ssm:UpdateServiceSetting", Resource = local.ssm_service_setting_arns },
     { Sid = "PutAccountPublicAccessBlock", Effect = "Allow", Action = "s3:PutAccountPublicAccessBlock", Resource = "*" },
+    ], local.management ? [] : [
+    { Sid = "UpdatePasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
+  ])
+  baseline_regional_manage_statements = [
+    { Sid = "ManageConfigRecorders", Effect = "Allow", Action = ["config:PutConfigurationRecorder", "config:StartConfigurationRecorder"], Resource = local.config_recorder_arn },
+    { Sid = "CreateAnalyzers", Effect = "Allow", Action = "access-analyzer:CreateAnalyzer", Resource = local.analyzer_arn },
+    { Sid = "UpdateSsmServiceSettings", Effect = "Allow", Action = "ssm:UpdateServiceSetting", Resource = local.ssm_service_setting_arns },
     { Sid = "PutDeliveryChannels", Effect = "Allow", Action = "config:PutDeliveryChannel", Resource = "*" },
     { Sid = "PutRetentionConfigurations", Effect = "Allow", Action = "config:PutRetentionConfiguration", Resource = "*" },
     { Sid = "EnableEbsEncryptionByDefault", Effect = "Allow", Action = "ec2:EnableEbsEncryptionByDefault", Resource = "*", Condition = local.ec2_region_condition },
     { Sid = "ModifyVpcBlockPublicAccess", Effect = "Allow", Action = "ec2:ModifyVpcBlockPublicAccessOptions", Resource = "*", Condition = local.ec2_region_condition },
     { Sid = "PutEmrBlockPublicAccess", Effect = "Allow", Action = "elasticmapreduce:PutBlockPublicAccessConfiguration", Resource = "*" },
-    ], local.management ? [] : [
-    { Sid = "UpdatePasswordPolicy", Effect = "Allow", Action = "iam:UpdateAccountPasswordPolicy", Resource = "*" },
-  ])
+  ]
+  baseline_manage_statements = concat(local.baseline_account_manage_statements, [for s in local.baseline_regional_manage_statements : s if local.baseline_supported])
+  # aws:RequestedRegion は要求が呼んだ endpoint の region で、常に要求の文脈に在る（IAM User Guide）。StringNotEquals は key が
+  # 無い要求も拒む。
+  baseline_region_deny = { for role, statements in {
+    plan  = local.baseline_regional_read_statements
+    apply = concat(local.baseline_regional_read_statements, local.baseline_regional_manage_statements)
+    } : role => [for s in [{
+      Sid       = "DenyBaselineOutsideRegions"
+      Effect    = "Deny"
+      Action    = sort(distinct(flatten([for st in statements : st.Action])))
+      Resource  = "*"
+      Condition = { StringNotEquals = { "aws:RequestedRegion" = local.baseline_regions } }
+  }] : s if local.baseline_supported] }
   workload_read_statements = concat([
     {
       Sid      = "ReadWorkloadTopics"
@@ -421,6 +449,7 @@ locals {
         Action   = ["organizations:DescribePolicy", "organizations:ListTagsForResource", "organizations:ListTargetsForPolicy"]
         Resource = local.org_policy_arn
       },
+      { Sid = "ReadMemberAccountEmails", Effect = "Allow", Action = "ssm:GetParameter", Resource = local.member_account_emails_parameter_arn },
       { Sid = "ReadBreakGlassUsers", Effect = "Allow", Action = ["iam:GetUser", "iam:ListUserTags"], Resource = local.break_glass_user_arns },
       { Sid = "ReadBreakGlassGroup", Effect = "Allow", Action = ["iam:GetGroup", "iam:GetGroupPolicy"], Resource = local.break_glass_group_arns },
       {
@@ -521,12 +550,13 @@ locals {
       },
       # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
       { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.break_glass_stack_set_write_arns },
+      { Sid = "ManageBreakGlassStackInstances", Effect = "Allow", Action = local.break_glass_stack_instance_actions, Resource = local.break_glass_stack_instance_arns },
+      # TargetRegion は type の評価にだけ付くので、条件はこの文に置く。ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
       {
-        Sid      = "ManageBreakGlassStackInstances"
+        Sid      = "LimitBreakGlassStackInstanceRegions"
         Effect   = "Allow"
-        Action   = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
-        Resource = local.break_glass_stack_set_write_arns
-        # ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
+        Action   = local.break_glass_stack_instance_actions
+        Resource = [local.break_glass_stack_set_type_arn]
         Condition = {
           "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = data.aws_region.current.region }
           Null                        = { "cloudformation:TargetRegion" = "false" }
@@ -637,6 +667,7 @@ locals {
       ],
       local.identity_read_statements,
       local.governance_read_statements,
+      local.baseline_region_deny.plan,
     )
 
     apply = concat([
@@ -657,7 +688,7 @@ locals {
         Resource  = local.anomaly_detection_arns
         Condition = { Null = { "aws:ResourceTag/${local.bootstrap_tag_key}" = "false" } }
       },
-    ])
+    ], local.baseline_region_deny.apply)
 
     apply_identity = concat(
       local.bucket_read_statements,
