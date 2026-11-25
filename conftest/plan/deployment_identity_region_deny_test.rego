@@ -32,6 +32,7 @@ world(plan_statements, apply_statements) := [
 	fixture.doc("aws_iam_role_policy", apply_address, "policy", {"Statement": apply_statements}),
 	fixture.doc("aws_iam_policy", read_address, "policy", {"Statement": [read_allow]}),
 	fixture.doc("aws_iam_policy", manage_address, "policy", {"Statement": [manage_allow]}),
+	fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.workload", "policy", {"Statement": [{"Effect": "Allow", "Action": "sns:GetTopicAttributes", "Resource": "arn:aws:sns:ap-northeast-1:123456789012:t"}]}),
 ]
 
 valid_world := world(
@@ -64,7 +65,7 @@ test_pass_region_named_arn_needs_no_deny if {
 		fixture.doc("aws_iam_role_policy", apply_address, "policy", {"Statement": []}),
 		fixture.doc("aws_iam_policy", manage_address, "policy", {"Statement": [named]}),
 	]
-	count(messages_for(rcs, di, regions)) == 0
+	count({m | some m in messages_for(rcs, di, regions); startswith(m, "[PLAN-REGION-01]")}) == 0
 }
 
 test_violation_apply_deny_missing if {
@@ -91,6 +92,8 @@ test_violation_deny_shape_not_counted if {
 		{"Effect": "Deny", "Action": ["config:DescribeConfigurationRecorders", "config:PutConfigurationRecorder"], "Resource": "*", "Condition": {"StringEquals": {"aws:RequestedRegion": regions}}},
 		{"Effect": "Deny", "Action": ["config:DescribeConfigurationRecorders", "config:PutConfigurationRecorder"], "Resource": "*", "Condition": {"StringNotEquals": {"aws:RequestedRegion": regions, "aws:PrincipalAccount": "1"}}},
 		{"Effect": "Deny", "NotAction": ["s3:GetObject"], "Resource": "*", "Condition": {"StringNotEquals": {"aws:RequestedRegion": regions}}},
+		object.union(region_deny(["config:DescribeConfigurationRecorders", "config:PutConfigurationRecorder"], regions), {"Effect": "Allow"}),
+		object.remove(region_deny(["config:DescribeConfigurationRecorders", "config:PutConfigurationRecorder"], regions), ["Resource"]),
 	] {
 		msgs := messages_for(world([region_deny(["config:DescribeConfigurationRecorders"], regions)], [bad]), di, regions)
 		fixture.has(sprintf("[PLAN-REGION-01] p.json: %s の Allow が", [manage_address]), msgs)
@@ -112,4 +115,82 @@ test_pass_deny_regions_match_in_any_order if {
 test_violation_deny_regions_differ if {
 	msgs := messages_for(world([region_deny(["config:DescribeConfigurationRecorders"], ["us-east-1", "eu-west-1"])], [region_deny(["config:DescribeConfigurationRecorders", "config:PutConfigurationRecorder"], regions)]), di, regions)
 	fixture.has(sprintf("[PLAN-REGION-02] p.json: plan の role の aws:RequestedRegion の Deny のリージョンが、宣言の集合と違います（足りない %v、余る %v）", [["ap-northeast-1"], ["eu-west-1"]]), msgs)
+}
+
+# --- PLAN-REGION-03 ---
+
+test_violation_inline_policy_missing if {
+	rcs := [d | some d in valid_world; d.address != apply_address]
+	some m in messages_for(rcs, di, regions)
+	startswith(m, "[PLAN-REGION-03] apply の role の policy \"module.x.aws_iam_role_policy.this[\\\"apply\\\"]\"")
+}
+
+test_violation_managed_policy_missing if {
+	rcs := [d | some d in valid_world; d.address != read_address]
+	msgs := {m | some m in messages_for(rcs, di, regions); startswith(m, "[PLAN-REGION-03]")}
+	count(msgs) == 2
+}
+
+test_pass_all_policies_present if {
+	msgs := {m | some m in messages_for(valid_world, di, regions); startswith(m, "[PLAN-REGION-03]")}
+	count(msgs) == 0
+}
+
+test_violation_default_regions_null if {
+	msgs := p.deny with input as fixture.plan(valid_world) with data.policy_plan.deployment_identity as di with data.policy_plan.default_regions as null
+	fixture.has("[PLAN-REGION-00]", msgs)
+}
+
+test_violation_default_regions_string if {
+	msgs := p.deny with input as fixture.plan(valid_world) with data.policy_plan.deployment_identity as di with data.policy_plan.default_regions as "x"
+	fixture.has("[PLAN-REGION-00]", msgs)
+}
+
+test_violation_default_regions_empty_array if {
+	msgs := p.deny with input as fixture.plan(valid_world) with data.policy_plan.deployment_identity as di with data.policy_plan.default_regions as []
+	fixture.has("[PLAN-REGION-00]", msgs)
+}
+
+test_violation_default_regions_aws_null if {
+	msgs := p.deny with input as fixture.plan(valid_world) with data.policy_plan.deployment_identity as di with data.policy_plan.default_regions as {"aws": null}
+	fixture.has("[PLAN-REGION-00]", msgs)
+}
+
+test_violation_default_regions_aws_not_array if {
+	msgs := p.deny with input as fixture.plan(valid_world) with data.policy_plan.deployment_identity as di with data.policy_plan.default_regions as {"aws": "ap-northeast-1"}
+	fixture.has("[PLAN-REGION-00]", msgs)
+}
+
+# 宣言そのもの（decl.json）を読む。写しの形が崩れれば、plan を見る前に落ちる。
+test_decl_default_regions_well_formed if {
+	p.well_formed_regions
+	count(data.policy_plan.default_regions.aws) == 17
+}
+
+# region の部分が * を含めば、partition と service の形を問わず覆いを要る。
+test_violation_wildcard_region_forms if {
+	every arn in ["arn:aws-us-gov:config:*:1:x", "arn:aws-cn:ssm:*:1:x", "arn:*:config:*:1:x", "arn:aws:config:us-*:1:x", "arn:aws:config:eu-?-1:1:x"] {
+		allow := {"Effect": "Allow", "Action": "config:PutConfigurationRecorder", "Resource": arn}
+		rcs := [
+			fixture.doc("aws_iam_role_policy", plan_address, "policy", {"Statement": []}),
+			fixture.doc("aws_iam_role_policy", apply_address, "policy", {"Statement": []}),
+			fixture.doc("aws_iam_policy", read_address, "policy", {"Statement": []}),
+			fixture.doc("aws_iam_policy", manage_address, "policy", {"Statement": [allow]}),
+			fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.workload", "policy", {"Statement": []}),
+		]
+		fixture.has("[PLAN-REGION-01]", messages_for(rcs, di, regions))
+	}
+}
+
+# Deny の Action が文字列、大文字小文字の違い、region が文字列でも覆いと数える。
+test_pass_deny_normalized_forms if {
+	one := ["ap-northeast-1"]
+	rcs := [
+		fixture.doc("aws_iam_role_policy", plan_address, "policy", {"Statement": [{"Effect": "Deny", "Action": "CONFIG:describeconfigurationrecorders", "Resource": "*", "Condition": {"StringNotEquals": {"aws:RequestedRegion": "ap-northeast-1"}}}]}),
+		fixture.doc("aws_iam_role_policy", apply_address, "policy", {"Statement": [region_deny(["config:describeconfigurationrecorders", "Config:PutConfigurationRecorder"], one)]}),
+		fixture.doc("aws_iam_policy", read_address, "policy", {"Statement": [read_allow]}),
+		fixture.doc("aws_iam_policy", manage_address, "policy", {"Statement": [manage_allow]}),
+		fixture.doc("aws_iam_policy", "module.x.aws_iam_policy.workload", "policy", {"Statement": []}),
+	]
+	count(messages_for(rcs, di, one)) == 0
 }

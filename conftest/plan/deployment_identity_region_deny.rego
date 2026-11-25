@@ -8,7 +8,12 @@ di := object.get(data.policy_plan, "deployment_identity", {})
 
 wl := object.get(di, "workload", {})
 
-region_list := object.get(object.get(data.policy_plan, "default_regions", {}), "aws", null)
+default region_list := null
+
+region_list := object.get(dr, "aws", null) if {
+	dr := object.get(data.policy_plan, "default_regions", null)
+	is_object(dr)
+}
 
 well_formed_regions if {
 	is_array(region_list)
@@ -33,9 +38,10 @@ roles := {
 	},
 }
 
+# region の部分に * か ? を含む ARN（partition と service の形を問わない）。
 region_wildcard(arn) if {
 	is_string(arn)
-	regex.match(`^arn:aws[a-z-]*:[a-z0-9-]+:\*:`, arn)
+	regex.match(`^arn:[^:]*:[^:]*:[^:]*[*?][^:]*:`, arn)
 }
 
 wildcard_allows contains {"role": role, "path": r.document.path, "address": r.document.address, "action": a} if {
@@ -87,4 +93,12 @@ deny contains msg if {
 	some d in region_denies
 	d.regions != declared_regions
 	msg := sprintf("[PLAN-REGION-02] %s: %s の role の aws:RequestedRegion の Deny のリージョンが、宣言の集合と違います（足りない %v、余る %v）", [d.path, d.role, sort(declared_regions - d.regions), sort(d.regions - declared_regions)])
+}
+
+# 対象の policy が入力に無いと、01・02 は何も見ずに通る。
+deny contains msg if {
+	some role, cfg in roles
+	some address in array.concat([cfg.inline], cfg.managed)
+	count({r | some r in lib.readable; r.document.attr == "policy"; r.document.address == address}) == 0
+	msg := sprintf("[PLAN-REGION-03] %s の role の policy %q が入力に無いか、読めません。address が変わったなら data.policy_plan.deployment_identity を直してください", [role, address])
 }

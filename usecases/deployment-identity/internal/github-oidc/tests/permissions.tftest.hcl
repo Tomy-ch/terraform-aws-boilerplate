@@ -2347,7 +2347,7 @@ run "role_arns_follow_data_sources" {
   # 集合を持たない partition では、リージョンごとの文も Deny も置かない（repository-wide/ADR-0209 決定4）。アカウントに1つの設定の文は残す。
   assert {
     condition = [for p in [aws_iam_policy.workload_2.policy, aws_iam_policy.workload_read.policy, aws_iam_role_policy.this["plan"].policy, aws_iam_role_policy.this["apply"].policy] : [
-      for st in jsondecode(p).Statement : st.Sid if contains(["ManageConfigRecorders", "PutDeliveryChannels", "ReadConfigRecorders", "ReadEmrBlockPublicAccess", "DenyBaselineOutsideRegions"], st.Sid)
+      for st in jsondecode(p).Statement : st.Sid if contains(["ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings", "ReadDeliveryChannels", "ReadRetentionConfigurations", "ReadEbsEncryptionByDefault", "DescribeRegions", "ReadVpcBlockPublicAccess", "ReadEmrBlockPublicAccess", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "PutDeliveryChannels", "PutRetentionConfigurations", "EnableEbsEncryptionByDefault", "ModifyVpcBlockPublicAccess", "PutEmrBlockPublicAccess", "DenyBaselineOutsideRegions"], st.Sid)
     ]] == [[], [], [], []]
     error_message = "集合を持たない partition に、account-baseline のリージョンごとの文か DenyBaselineOutsideRegions があります。"
   }
@@ -3238,5 +3238,48 @@ run "baseline_arns_follow_data_sources" {
       toset(flatten([for st in concat(jsondecode(aws_iam_policy.workload_read.policy).Statement, jsondecode(aws_iam_policy.workload_2.policy).Statement) : st.Action if contains(["ReadConfigRecorders", "ReadAnalyzers", "ReadSsmServiceSettings", "ReadDeliveryChannels", "ReadRetentionConfigurations", "ReadEbsEncryptionByDefault", "DescribeRegions", "ReadVpcBlockPublicAccess", "ReadEmrBlockPublicAccess", "ManageConfigRecorders", "CreateAnalyzers", "UpdateSsmServiceSettings", "PutDeliveryChannels", "PutRetentionConfigurations", "EnableEbsEncryptionByDefault", "ModifyVpcBlockPublicAccess", "PutEmrBlockPublicAccess"], st.Sid)])),
     ]
     error_message = "DenyBaselineOutsideRegions の Action が、plan と apply の role のリージョンごとの account-baseline の Allow の Action と一致しません。"
+  }
+
+  # workload-2 は account-baseline の文だけを持つ。アカウントに1つの設定の文の外に足した文は、Deny に入らなければ落ちる。
+  assert {
+    condition = length(setsubtract(
+      toset(flatten([for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Action if !contains(["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "PutAccountPublicAccessBlock", "UpdatePasswordPolicy"], st.Sid)])),
+      toset(flatten([for st in jsondecode(aws_iam_role_policy.this["apply"].policy).Statement : st.Action if st.Sid == "DenyBaselineOutsideRegions"])),
+    )) == 0
+    error_message = "workload-2 のリージョンごとの文の Action に、DenyBaselineOutsideRegions に無いものがあります。"
+  }
+}
+
+run "baseline_partition_unsupported_member" {
+  command = apply
+
+  variables {
+    name_prefix   = "t4bp-dev"
+    env           = "dev"
+    state_key_arn = "arn:aws-us-gov:kms:us-gov-west-1:210987654321:key/abcdef01-2345-6789-abcd-ef0123456789"
+    break_glass_arns = [
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-1",
+      "arn:aws-us-gov:iam::210987654321:user/break-glass/break-glass-2",
+      "arn:aws-us-gov:iam::210987654321:group/break-glass/break-glass",
+      "arn:aws-us-gov:iam::210987654321:role/break-glass/tabp-break-glass",
+    ]
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = { partition = "aws-us-gov" }
+  }
+  override_data {
+    target = data.aws_region.current
+    values = { region = "us-gov-west-1" }
+  }
+  override_data {
+    target = data.aws_caller_identity.current
+    values = { account_id = "210987654321" }
+  }
+
+  assert {
+    condition     = [for st in jsondecode(aws_iam_policy.workload_2.policy).Statement : st.Sid] == ["PutAlternateContact", "CreateConfigServiceLinkedRole", "CreateAnalyzerServiceLinkedRole", "PassConfigServiceLinkedRole", "PutAccountPublicAccessBlock", "UpdatePasswordPolicy"]
+    error_message = "集合を持たない partition のメンバーの workload-2 が、アカウントに1つの設定の文（password policy の更新を含む）だけになっていません。"
   }
 }

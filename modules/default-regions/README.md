@@ -18,14 +18,14 @@ partition ごとの、AWS が既定で有効とするリージョン（opt-in �
 
 ## 写し
 
-Terraform を読まない道具のための写しは2つ在る（ADR-0209 決定6）。
+Terraform を読まない道具のための写しは次の2つに限る（ADR-0209 決定6）。
 
 - `conftest/plan/decl.json` の `default_regions.aws`: account-baseline の reference の plan のリージョンとずれると `PLAN-ACB-01` が、CI の role の Deny とずれると `PLAN-REGION-02` が落とす
-- `.github/egress.toml` の `region_set`: 集合に置く root を CI が実行するときに宣言する。置く region と宛先の region がずれると `make egress-check` が落とす
+- `.github/egress.toml` の `region_set`: 集合に置く root を実行する job を宣言する変更が足す。置く region と宛先の region がずれると `make egress-check` が落とす
 
 ## 保証しないもの
 
-- 集合が AWS の現在の定義と一致すること。`tests/contract.tftest.hcl` は件数（17）と代表の要素（`ap-northeast-1` と `us-east-1` を含み、opt-in の `af-south-1` と `ap-east-1` を含まない）だけを見る
+- 集合が AWS の定義と一致すること。`tests/contract.tftest.hcl` は、テストに書いた17のリージョンとの完全一致を見るので、AWS の定義が変わってもテストは落ちない
 - usecase が、この module を呼ばずに同じ集合を literal で書くことを拒むこと。レビューだけが見る
 
 ## 版
