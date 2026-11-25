@@ -26,10 +26,10 @@ var dependabotWindows = map[string]int{
 var cooldownDayKeys = []string{"default-days", "semver-major-days", "semver-minor-days", "semver-patch-days"}
 
 // checkDependabotCooldown は、dependabot の各 ecosystem の cooldown の日数（default-days と、書かれた
-// semver-*-days）が、その ecosystem の窓（dependabotWindows）を下回らないことを確かめ、確かめた ecosystem の
-// 数を返します。窓を知らない ecosystem、cooldown か default-days の無い ecosystem、日数でない値、
-// 未知のキー、cooldown を一部の依存に限るか外す include / exclude、ecosystem が0件はエラーにします。
-// 違反はすべて挙げます。
+// semver-*-days）が、その ecosystem の窓（dependabotWindows）を下回らないことを確かめ、確かめた updates の
+// 項の数を返します。窓を知らない ecosystem、窓を持つのに updates に無い ecosystem、cooldown か default-days の
+// 無い ecosystem、日数でない値、未知のキー、cooldown を一部の依存に限るか外す include / exclude、ecosystem が
+// 0件はエラーにします。違反はすべて挙げます。
 func checkDependabotCooldown(dependabot []byte) (int, error) {
 	var config struct {
 		Updates []struct {
@@ -44,13 +44,25 @@ func checkDependabotCooldown(dependabot []byte) (int, error) {
 		return 0, xerrors.Wrapf(errDependabotCooldown, "%s に updates の ecosystem が1つもありません", dependabotFile)
 	}
 	var problems []string
+	seen := map[string]bool{}
 	for _, u := range config.Updates {
 		window, ok := dependabotWindows[u.Ecosystem]
 		if !ok {
 			problems = append(problems, fmt.Sprintf("%q は窓を知らない ecosystem です", u.Ecosystem))
 			continue
 		}
+		seen[u.Ecosystem] = true
 		problems = append(problems, cooldownProblems(u.Ecosystem, window, u.Cooldown)...)
+	}
+	var missing []string
+	for ecosystem := range dependabotWindows {
+		if !seen[ecosystem] {
+			missing = append(missing, ecosystem)
+		}
+	}
+	sort.Strings(missing)
+	for _, ecosystem := range missing {
+		problems = append(problems, fmt.Sprintf("%q は窓を宣言した ecosystem ですが updates にありません", ecosystem))
 	}
 	if len(problems) > 0 {
 		return 0, xerrors.Wrapf(errDependabotCooldown, "%s: %s", dependabotFile, strings.Join(problems, ", "))

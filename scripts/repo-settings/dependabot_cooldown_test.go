@@ -67,9 +67,10 @@ func Test_checkDependabotCooldown(t *testing.T) {
 
 	t.Run("違反を ecosystem をまたいですべて挙げる", func(t *testing.T) {
 		t.Parallel()
-		src := "updates:\n" +
-			ecosystemYAML("gomod", days("default-days", cooldown.RegistryWindowDays-1)) +
-			ecosystemYAML("github-actions", days("default-days", cooldown.PinWindowDays-1))
+		src := updatesYAML(map[string]string{
+			"gomod":          days("default-days", cooldown.RegistryWindowDays-1),
+			"github-actions": days("default-days", cooldown.PinWindowDays-1),
+		})
 		_, err := checkDependabotCooldown([]byte(src))
 		assertOnlySentinel(t, err, errDependabotCooldown)
 		assert.ErrorContains(t, err, fmt.Sprintf("gomod の default-days が %d 日", cooldown.RegistryWindowDays-1))
@@ -94,11 +95,12 @@ func Test_checkDependabotCooldown(t *testing.T) {
 		{"default-days が小数なら日数でないとして拒む", updatesYAML(map[string]string{"docker": fmt.Sprintf("      default-days: %d.0\n", cooldown.PinWindowDays)}), errDependabotCooldown, "docker の default-days が日数ではありません"},
 		{"cooldown の無い ecosystem は拒む", updatesYAML(map[string]string{"github-actions": ""}), errDependabotCooldown, "github-actions に cooldown がありません"},
 		{"default-days が 0 なら拒む", updatesYAML(map[string]string{"gomod": days("default-days", 0)}), errDependabotCooldown, "gomod の default-days が 0 日"},
-		{"gomod は RegistryWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("gomod", days("default-days", cooldown.RegistryWindowDays-1)), errDependabotCooldown, "gomod の default-days"},
-		{"docker は PinWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("docker", days("default-days", cooldown.PinWindowDays-1)), errDependabotCooldown, "docker の default-days"},
-		{"docker-compose は PinWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("docker-compose", days("default-days", cooldown.PinWindowDays-1)), errDependabotCooldown, "docker-compose の default-days"},
-		{"github-actions は PinWindowDays の1日手前で拒む", "updates:\n" + ecosystemYAML("github-actions", days("default-days", cooldown.PinWindowDays-1)), errDependabotCooldown, "github-actions の default-days"},
-		{"窓を知らない ecosystem は拒む", "updates:\n" + ecosystemYAML("npm", days("default-days", 30)), errDependabotCooldown, `"npm" は窓を知らない ecosystem`},
+		{"gomod は RegistryWindowDays の1日手前で拒む", updatesYAML(map[string]string{"gomod": days("default-days", cooldown.RegistryWindowDays-1)}), errDependabotCooldown, "gomod の default-days"},
+		{"docker は PinWindowDays の1日手前で拒む", updatesYAML(map[string]string{"docker": days("default-days", cooldown.PinWindowDays-1)}), errDependabotCooldown, "docker の default-days"},
+		{"docker-compose は PinWindowDays の1日手前で拒む", updatesYAML(map[string]string{"docker-compose": days("default-days", cooldown.PinWindowDays-1)}), errDependabotCooldown, "docker-compose の default-days"},
+		{"github-actions は PinWindowDays の1日手前で拒む", updatesYAML(map[string]string{"github-actions": days("default-days", cooldown.PinWindowDays-1)}), errDependabotCooldown, "github-actions の default-days"},
+		{"窓を知らない ecosystem は拒む", updatesYAML(nil) + ecosystemYAML("npm", days("default-days", 30)), errDependabotCooldown, `"npm" は窓を知らない ecosystem`},
+		{"窓を宣言した ecosystem が updates に無ければ拒む", updatesYAML(nil, "docker-compose"), errDependabotCooldown, `"docker-compose" は窓を宣言した ecosystem ですが updates にありません`},
 		{"ecosystem が1つも無ければ拒む", "version: 2\nupdates: []\n", errDependabotCooldown, "ecosystem が1つもありません"},
 		{"updates が無ければ拒む", "version: 2\n", errDependabotCooldown, "ecosystem が1つもありません"},
 		{"dependabot.yml が空なら拒む", "", errDependabotCooldown, "ecosystem が1つもありません"},
