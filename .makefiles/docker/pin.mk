@@ -8,11 +8,10 @@
 .PHONY: pin-images-apply ## lockfile を元に FROM / compose image を digest へ正規化
 .PHONY: pin-images-check ## FROM / compose image が lockfile 通り固定済みか検証（書き換えなし・CI/hook用）
 
-# supply-chain cooldown: N 日未満の新しすぎる digest は採用しない（0 で無効）
-PIN_IMAGES_MIN_AGE_DAYS ?= 14
-
+# supply-chain cooldown: N 日未満の新しすぎる digest は採用しない（0 で無効）。既定は scripts/lib/cooldown の
+# PinWindowDays で、PIN_IMAGES_MIN_AGE_DAYS を与えたときだけ上書きする。
 pin-images-resolve:
-	@$(call RUN_SCRIPT_HOST,pin-images,resolve --min-age-days=$(PIN_IMAGES_MIN_AGE_DAYS))
+	@$(call RUN_SCRIPT_HOST,pin-images,resolve $(if $(PIN_IMAGES_MIN_AGE_DAYS),--min-age-days=$(PIN_IMAGES_MIN_AGE_DAYS)))
 
 pin-images-apply:
 	@$(call RUN_SCRIPT_HOST,pin-images,apply)
