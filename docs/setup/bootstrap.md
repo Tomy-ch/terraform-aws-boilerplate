@@ -451,7 +451,7 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
 
    > **重要**: 手順4 で `No changes.` を確かめる前に、次の変更を昇格しない。
 
-4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。apply の後に実行する
+4. 権限を足す変更では、足した Action と期待の判定を、同じ変更で `scripts/bootstrap-check` の `permissionSections` に足す。Condition を持つ Action は、条件キーを `simCtx` の context で与える。一覧を受ける条件キー（Service Authorization Reference の型が `ArrayOfString`）は、`ctxList` で `stringList` として与える。apply の後に実行する
 
    ```bash
    make bootstrap-verify STAGE=permissions
@@ -464,6 +464,8 @@ gh secret set AWS_ACCOUNT_ID --env admin-plan
    ```bash
    make bootstrap-verify STAGE=output-policy POLICY_SOURCE=reference
    ```
+
+   reference の plan は、`make tf-policy` の出力の置き場から読む。そこの `plans.txt` に state-backend の plan が無ければ（`make tf-policy` を走らせていないか、state-backend の plan が落ちた）、評価せずに NG にする。
 
    `NG 0 件` で終了コード 0 であることを確かめ、出力を Pull Request に記録する。違えば merge しない。
 

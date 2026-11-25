@@ -1,22 +1,20 @@
-# ADR-0101: リージョンごとの設定を、partition ごとの既定で有効な全リージョンに置き、有効なリージョンが集合の外なら plan を止める
+# ADR-0101: リージョンごとの設定を repository-wide/ADR-0209 の集合に置き、有効なリージョンが集合の外なら plan を止める
 
 - Status: Accepted
 - Date: 2026-11-24
 - Scope: account-baseline
-- Related: repository-wide/ADR-0204, repository-wide/ADR-0207, repository-wide/ADR-0208, account-baseline/ADR-0001, account-baseline/ADR-0102
+- Related: repository-wide/ADR-0204, repository-wide/ADR-0207, repository-wide/ADR-0208, repository-wide/ADR-0209, account-baseline/ADR-0001, account-baseline/ADR-0102
 
 ## Context
 
-EC2.7・IAM.28・Config.1・EC2.172・SSM.6・SSM.7・EMR.2 はリージョンごとに評価する。AWS SRA は EBS の既定の暗号化を「every account and Region」で、Config を「each member account and AWS Region that contains the resources」で有効にすることを求める。使わないリージョンでも、主体が資源を作ることはできる。
+リージョンごとの設定を置く集合と、その置き方（`for_each` と `region = each.key`）、CI の経路は repository-wide/ADR-0209 (default-regions-for-regional-controls) が持つ。決定1・2 は repository-wide/ADR-0209 決定2・3 の account-baseline への適用であり、account-baseline に固有の決定は決定3 以降である。
 
-AWS のリージョンの管理の文書は、2019年3月20日より前に提供されたリージョンを既定で有効とし、既定のリージョンは無効にできないとする。aws の partition の既定のリージョンは17ある。それより後のリージョンは opt-in で、有効にすると集合が広がる。
-
-repository-wide/ADR-0208 (us-east-1-resources-by-region-argument) 決定3 は、リージョンを利用者の入力にしない。入力にすると、受け取る値の意味が AWS の表現に依存する（repository-wide/ADR-0204 (no-generic-escape-hatch) 決定2）。
+EC2.7・IAM.28・Config.1・EC2.172・SSM.6・SSM.7・EMR.2 はリージョンごとに評価する。AWS SRA は Config を「each member account and AWS Region that contains the resources」で有効にすることを求める。既定のリージョンより後のリージョンは opt-in で、有効にすると、アカウントで使えるリージョンが集合より広がる。
 
 ## Decision
 
-1. リージョンごとの設定は、partition を key にした既定で有効なリージョンの集合の literal を、usecase の中に1つだけ持ち、`for_each` と resource の `region = each.key` で置く。集合は入力にしない。provider は1つのままにする。
-2. aws の partition の集合は、既定で有効な17のリージョンとする。ほかの partition の集合は持たず、`data.aws_partition` の postcondition で plan を止める。
+1. リージョンごとの設定は、repository-wide/ADR-0209 (default-regions-for-regional-controls) の集合（`modules/default-regions` の出力）のすべてに、`for_each` と resource の `region = each.key` で置く。provider は1つのままにする。
+2. `modules/default-regions` が key を持たない partition では、`data.aws_partition` の postcondition で plan を止める。
 3. アカウントで有効なリージョンが集合の外を含むなら、`data.aws_regions`（引数なし）の postcondition で plan を止める。opt-in のリージョンが有効なアカウントには置けない。
 4. opt-in のリージョンの有効化は、メンバーの OU に付ける SCP で拒む。SCP の付け先は `organization-baseline` が持つ。管理アカウントには SCP が効かないので、管理アカウントの opt-in のリージョンは、決定3 の事後の検出だけになる。
 5. internal の module は、全リージョンへ置くリージョンごとの設定を `internal/regional-controls` に、アカウントに1つの設定を `internal/account-controls` にまとめ、集合を受けて `for_each` で展開する場所と、集合を受けない場所を module の境界で分ける。Config の記録は `env` で有無が変わるので、`internal/config-recorder` に分ける（account-baseline/ADR-0102 (config-recorder-except-sandbox) 決定6）。
@@ -29,7 +27,7 @@ EC2.7・IAM.28・Config.1 ほかが、ほかのリージョンで外れる。外
 
 ### 案B: `data.aws_regions` の名前を `for_each` に使う
 
-plan のたびに集合が変わりうる。CI の role の権限と egress の宣言を、どのリージョンについて列挙するかを固定できない。opt-in のリージョンが黙って加わる。
+repository-wide/ADR-0209 (default-regions-for-regional-controls) の案B と同じ理由で採らない。集合が plan で決まらず、opt-in のリージョンが黙って加わる。
 
 ### 案C: 組織の SCP が許すリージョンの集合を入力で受ける
 
@@ -55,22 +53,21 @@ plan のたびに集合が変わりうる。CI の role の権限と egress の�
 ## 保証範囲
 
 - 保証すること: reference の plan で、リージョンごとの設定と Config の記録が、宣言した集合のリージョンに過不足なく在ること。partition が `aws` でなければ plan で落ちること。アカウントで有効なリージョンが集合の外を含めば plan で落ちること
-- 保証しないこと: 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。決定3 の検出は Terraform の評価であって CI のゲートの Policy ではなく、その plan を走らせない経路では効かない。集合のすべてのリージョンへ CI の経路が apply できること（egress の宣言と apply の role の権限は #474 が持つ）
+- 保証しないこと: 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。決定3 の検出は Terraform の評価であって CI のゲートの Policy ではなく、その plan を走らせない経路では効かない。集合のすべてのリージョンへの apply の role の権限と egress は repository-wide/ADR-0209 決定4・5 が持つ
 
 ## 検証方法
 
 - Unit Test: `tests/contract.tftest.hcl` の `workload_account` が aws の集合（17、opt-in の `af-south-1` を含まない）が届くことを、`unsupported_partition` が aws の外の partition で plan が落ちることを確かめる。`internal/regional-controls/tests/` の `opt_in_region_enabled` が、集合の外の有効なリージョンで plan が落ちることを、`empty_regions` が空の集合を拒むことを確かめる
-- Policy Test（`make tf-policy`）: `PLAN-ACB-01` が、account-baseline の reference の plan の usecase の instance ごとに、リージョンごとの型と、SSM の2つの設定のそれぞれと、（Config の型を1つでも持つ instance の）Config の型が `conftest/plan/decl.json` の `account_baseline.regions` に過不足なく在ることを見る。region が plan で決まらない変更も落とす
+- Policy Test（`make tf-policy`）: `PLAN-ACB-01` が、account-baseline の reference の plan の usecase の instance ごとに、リージョンごとの型と、SSM の2つの設定のそれぞれと、（Config の型を1つでも持つ instance の）Config の型が `conftest/plan/decl.json` の `default_regions.aws` に過不足なく在ることを見る。region が plan で決まらない変更も落とす
 
 ## 影響
 
 - 各リージョンの instance が集合の数だけ増え、apply の role の権限と CI の egress も集合のリージョンについて要る
-- aws の17の集合の写しは3つ在る。正は usecase の `main.tf` の `local.default_regions` で、ほかの2つのずれは次が落とす
-  - `conftest/plan/decl.json` の `account_baseline.regions`: `main.tf` とずれると、reference の plan に置かれるリージョンと宣言が食い違い、`make tf-policy` の `PLAN-ACB-01` で落ちる
+- aws の17の集合の正は `modules/default-regions` で、写しのずれは次が落とす
+  - `conftest/plan/decl.json` の `default_regions.aws`: module とずれると、reference の plan に置かれるリージョンと宣言が食い違い、`make tf-policy` の `PLAN-ACB-01` で落ちる
   - `tests/contract.tftest.hcl` の `workload_account`（件数17、`ap-northeast-1` を含み `af-south-1` を含まない）: 件数かこの2つの要素が変わると `make tf-test` で落ちる。件数を変えずにほかのリージョンを入れ替えることは、このテストでは落ちず、`PLAN-ACB-01` が落とす
 
 ## 見直し条件
 
 - opt-in のリージョンを使う利用者が現れたとき
 - aws の外の partition で使う利用者が現れたとき
-- 全リージョンに置く設定を持つ usecase が2つ以上になり、集合を repository-wide の決定にするとき（#474）
