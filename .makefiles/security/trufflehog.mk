@@ -8,8 +8,9 @@ TRUFFLEHOG_FORMAT ?= text
 
 ## 値は sh -c の位置引数で渡す。
 .PHONY: trufflehog-scan ## push 予定の commit 範囲を trufflehog で走査
+trufflehog-scan: export RANGE_FROM = $(COMMITLINT_FROM)
 trufflehog-scan:
-	@$(call RUN_SCRIPT,secret-scan,"$$@") secret-scan trufflehog-range -from "$(COMMITLINT_FROM)" -format "$(TRUFFLEHOG_FORMAT)"
+	@$(call RUN_SCRIPT,secret-scan,"$$@") secret-scan trufflehog-range -from "$$RANGE_FROM" -format "$(TRUFFLEHOG_FORMAT)"
 
 .PHONY: trufflehog-history ## 全履歴を trufflehog で走査
 trufflehog-history:

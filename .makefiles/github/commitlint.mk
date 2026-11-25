@@ -25,7 +25,10 @@ COMMITLINT_FROM ?= $(if $(GITHUB_BASE_REF),origin/$(GITHUB_BASE_REF),$(shell git
 COMMITLINT_TO ?= HEAD
 
 ## 範囲の件数の判定は scripts/commit-range が持つ。
-## 引数は sh -c の位置引数で渡す（RUN_SCRIPT の $(2) は単一引用符の内側に入る）。
+## 引数は sh -c の位置引数で渡す（RUN_SCRIPT の $(2) は単一引用符の内側に入る）。範囲の両端は make の展開で
+## レシピのシェルの文字列へ埋めず、env（RANGE_FROM・RANGE_TO）から読む。ref の名前は $ や " を含みうる。
+commitlint-range: export RANGE_FROM = $(COMMITLINT_FROM)
+commitlint-range: export RANGE_TO = $(COMMITLINT_TO)
 commitlint-range:
-	@$(call RUN_SCRIPT,commit-range,"$$@") commit-range check -from "$(COMMITLINT_FROM)" -to "$(COMMITLINT_TO)"
-	@$(NODE_TOOL) commitlint --from "$(COMMITLINT_FROM)" --to "$(COMMITLINT_TO)"
+	@$(call RUN_SCRIPT,commit-range,"$$@") commit-range check -from "$$RANGE_FROM" -to "$$RANGE_TO"
+	@$(NODE_TOOL) commitlint --from "$$RANGE_FROM" --to "$$RANGE_TO"

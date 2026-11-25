@@ -4,8 +4,9 @@
 ##
 ## 起点は sh -c の位置引数で渡す。RUN_SCRIPT の $(2) は単一引用符の内側に入る。
 .PHONY: secret-scan ## push 予定の commit 範囲に秘密が無いことを検査
+secret-scan: export RANGE_FROM = $(COMMITLINT_FROM)
 secret-scan:
-	@$(call RUN_SCRIPT,secret-scan,"$$@") secret-scan gitleaks-range -from "$(COMMITLINT_FROM)"
+	@$(call RUN_SCRIPT,secret-scan,"$$@") secret-scan gitleaks-range -from "$$RANGE_FROM"
 
 .PHONY: secret-scan-history ## 全履歴を走査（検出ルールの更新で過去が対象になるため定期実行する）
 secret-scan-history:
