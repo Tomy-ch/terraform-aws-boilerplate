@@ -657,7 +657,7 @@ func Test_checkReadme(t *testing.T) {
 
 	t.Run("見出しの後ろの空白とコメントは許す", func(t *testing.T) {
 		t.Parallel()
-		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading+"（ADR-0206 決定7・8）", heading+" <!-- sample:line -->", 1))))
+		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading+"（ADR-0206 決定7・8）", heading+" <!-- note -->", 1))))
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
@@ -1031,7 +1031,7 @@ func Test_stripComments(t *testing.T) {
 	}{
 		"コメントが無ければそのまま":                        {"a", false, "a", false},
 		"1行のコメントは空になる":                         {"<!-- a -->", false, "", false},
-		"行末のコメントを外す":                           {"- A <!-- sample:line -->", false, "- A ", false},
+		"行末のコメントを外す":                           {"- A <!-- note -->", false, "- A ", false},
 		"開いたままの行は空になる":                         {"## x", true, "", true},
 		"閉じた後ろの文字は残す":                          {"b --> c", true, " c", false},
 		"1行に2つのコメント":                           {"a<!-- x -->b<!-- y -->c", false, "abc", false},
