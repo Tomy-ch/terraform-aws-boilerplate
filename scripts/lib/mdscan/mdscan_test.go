@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLines(t *testing.T) {
@@ -133,6 +134,220 @@ func Test_fenceMarker(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestVisibleLines(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			content string
+			want    []Line
+		}{
+			"コメントもフェンスも無ければ全行を返す": {
+				content: "一\n二",
+				want:    []Line{{Number: 1, Text: "一"}, {Number: 2, Text: "二"}},
+			},
+			"1行のコメントは空の行になる": {
+				content: "a\n<!-- ## 見出し -->\nb",
+				want:    []Line{{Number: 1, Text: "a"}, {Number: 2, Text: ""}, {Number: 3, Text: "b"}},
+			},
+			"複数行のコメントの行はすべて空の行になる": {
+				content: "a\n<!--\n## 見出し\n-->\nb",
+				want:    []Line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3}, {Number: 4}, {Number: 5, Text: "b"}},
+			},
+			"同じ行で開いて閉じたコメントは、前後の文字を残す": {
+				content: "前 <!-- x --> 後",
+				want:    []Line{{Number: 1, Text: "前  後"}},
+			},
+			"閉じた後ろの文字を残す": {
+				content: "<!-- a\nb --> c",
+				want:    []Line{{Number: 1}, {Number: 2, Text: " c"}},
+			},
+			"inline code の中の <!-- はコメントを開かない": {
+				content: "`<!--` は使わない\n## 見出し",
+				want:    []Line{{Number: 1, Text: "`<!--` は使わない"}, {Number: 2, Text: "## 見出し"}},
+			},
+			"フェンスの中の <!-- はコメントを開かず、フェンスの行は返さない": {
+				content: "```\n<!--\n```\n## 見出し",
+				want:    []Line{{Number: 4, Text: "## 見出し"}},
+			},
+			"コメントの中のフェンスの区切りはフェンスを開かない": {
+				content: "<!--\n```\n-->\n## 見出し",
+				want:    []Line{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4, Text: "## 見出し"}},
+			},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, err := VisibleLines([]byte(tt.content))
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			content string
+			want    []Line
+			wantAt  string
+		}{
+			"閉じないコメントはエラーにし、開いた行を名指す": {
+				content: "a\n<!-- b\n## 見出し",
+				want:    []Line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3}},
+				wantAt:  "2 行目",
+			},
+			"同じ行で閉じた後に開き直して閉じなければエラーにする": {
+				content: "<!-- a --> b <!-- c\nd",
+				want:    []Line{{Number: 1, Text: " b "}, {Number: 2}},
+				wantAt:  "1 行目",
+			},
+			"コメントの中で閉じて開き直せば、開き直した行を名指す": {
+				content: "<!-- a\nb --> c <!-- d\ne",
+				want:    []Line{{Number: 1}, {Number: 2, Text: " c "}, {Number: 3}},
+				wantAt:  "2 行目",
+			},
+		}
+
+		for name, tt := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				got, err := VisibleLines([]byte(tt.content))
+				require.ErrorIs(t, err, ErrUnclosedComment)
+				assert.Contains(t, err.Error(), tt.wantAt)
+				assert.Equal(t, tt.want, got)
+			})
+		}
+	})
+}
+
+func TestScanner_Next(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		lines []string
+		want  []Scanned
+	}{
+		"外の本文はコメントでもフェンスでもない": {
+			[]string{"本文"},
+			[]Scanned{{Visible: "本文"}},
+		},
+		"フェンスの行は Fence で、文字を返さない": {
+			[]string{"```", "<!--", "```"},
+			[]Scanned{{Fence: true}, {Fence: true}, {Fence: true}},
+		},
+		"行の頭でコメントが開いていれば Comment": {
+			[]string{"<!-- a", "b", "c -->d"},
+			[]Scanned{{}, {Comment: true}, {Comment: true, Visible: "d"}},
+		},
+		"コメントの中の区切りはフェンスを開かず、閉じた後の区切りは開く": {
+			[]string{"<!--", "```", "-->", "```"},
+			[]Scanned{{}, {Comment: true}, {Comment: true}, {Fence: true}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var s Scanner
+			got := make([]Scanned, 0, len(c.lines))
+			for i, text := range c.lines {
+				got = append(got, s.Next(Line{Number: i + 1, Text: text}))
+			}
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
+func TestScanner_Unclosed(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		lines []Line
+		want  int
+	}{
+		"何も読まなければ 0":         {nil, 0},
+		"閉じれば 0":             {[]Line{{1, "<!-- a"}, {2, "b -->"}}, 0},
+		"開いた行の番号を返す":         {[]Line{{1, "a"}, {7, "<!-- b"}, {8, "c"}}, 7},
+		"閉じて開き直せば、開き直した行を返す": {[]Line{{1, "<!-- a"}, {2, "b --> <!-- c"}}, 2},
+		"フェンスの中の開きは数えない":     {[]Line{{1, "```"}, {2, "<!--"}}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var s Scanner
+			for _, l := range c.lines {
+				s.Next(l)
+			}
+			assert.Equal(t, c.want, s.Unclosed())
+		})
+	}
+}
+
+func TestStripComments(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text      string
+		open      bool
+		want      string
+		stillOpen bool
+	}{
+		"コメントが無ければそのまま":                        {"a", false, "a", false},
+		"1行のコメントは空になる":                         {"<!-- a -->", false, "", false},
+		"行末のコメントを外す":                           {"- A <!-- note -->", false, "- A ", false},
+		"開いたままの行は空になる":                         {"## x", true, "", true},
+		"閉じた後ろの文字は残す":                          {"b --> c", true, " c", false},
+		"1行に2つのコメント":                           {"a<!-- x -->b<!-- y -->c", false, "abc", false},
+		"inline code の中の開きは開かない":               {"`<!--` a", false, "`<!--` a", false},
+		"閉じない inline code の後ろは開く":              {"`a <!-- b", false, "`a ", true},
+		"閉じなければ開いたままを返す":                       {"a <!-- b", false, "a ", true},
+		"長さの違う並びを読み飛ばして inline code を閉じる":      {"`a``b<!-- c`", false, "`a``b<!-- c`", false},
+		"長さの違う閉じは inline code を閉じない":           {"`a``<!-- b", false, "`a``", true},
+		"2つ以上のバッククォートの inline code の中の開きは開かない": {"``a`<!--``", false, "``a`<!--``", false},
+		"閉じた同じ行で開き直す":                          {"<!-- a --> b <!-- c", false, " b ", true},
+		"コメントでない < の後ろの開きは開く":                  {"a <div> <!-- x", false, "a <div> ", true},
+		"<! で始まるがコメントでないものは文字":                 {"a <div> <!x> b", false, "a <div> <!x> b", false},
+		"バックスラッシュで逃がした < は開かない":                {"\\<!-- x", false, "\\<!-- x", false},
+		"逃がしたバックスラッシュの後ろの < は開く":               {"\\\\<!-- x", false, "\\\\", true},
+		"逃がしたバッククォートは inline code を開かない":       {"\\`<!-- x`", false, "\\`", true},
+		"<!--> は空のコメント":                        {"a<!-->b", false, "ab", false},
+		"<!---> は空のコメント":                       {"a<!--->b", false, "ab", false},
+		"<!----> は閉じたコメント":                     {"a<!---->b", false, "ab", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, stillOpen := StripComments(c.text, c.open)
+			assert.Equal(t, c.want, got)
+			assert.Equal(t, c.stillOpen, stillOpen)
+		})
+	}
+}
+
+func Test_cutEmptyComment(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		rest string
+		want string
+		ok   bool
+	}{
+		"> で閉じる":          {">b", "b", true},
+		"-> で閉じる":         {"->b", "b", true},
+		"--> は空のコメントではない": {"-->b", "", false},
+		"本文が続く":           {" a -->", "", false},
+		"空":               {"", "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := cutEmptyComment(c.rest)
+			assert.Equal(t, c.want, got)
+			assert.Equal(t, c.ok, ok)
+		})
+	}
 }
 
 func TestInlineCodes(t *testing.T) {

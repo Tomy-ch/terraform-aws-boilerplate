@@ -142,6 +142,14 @@ func TestHeadings(t *testing.T) {
 			source: "<!-- a --> <!-- b\n## 入出力\n-->\n## 失敗時の扱い\n",
 			want:   []string{"失敗時の扱い"},
 		},
+		"閉じないコメントの後ろの見出しは返さない": {
+			source: "## 入出力\n<!-- a\n## 失敗時の扱い\n",
+			want:   []string{"入出力"},
+		},
+		"inline code の部分は見出しのテキストから除く": {
+			source: "## 入出力 `x`\n",
+			want:   []string{"入出力"},
+		},
 		"inline code の中の <!-- はコメントを開かない": {
 			source: "`<!--` は使わない\n## 入出力\n",
 			want:   []string{"入出力"},

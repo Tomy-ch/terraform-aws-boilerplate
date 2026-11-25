@@ -1,4 +1,4 @@
-// Package mdscan は、Markdown をコードフェンスの外だけ走査し、inline code span を取り出します。
+// Package mdscan は、Markdown をコードフェンスと HTML コメントの外だけ走査し、inline code span を取り出します。
 //
 // 名指しした先が実在するかを検査する道具は、**例示と参照を区別できなければ成立しません**。
 // フェンスの中に書かれた `make no-such-target` は使い方の例であって参照ではなく、そこを対象に
@@ -6,9 +6,23 @@
 //
 // フェンスを**組む**側は lib/mdfence が持ちます。こちらは**読む**側で、両者は同じ CommonMark の
 // 規則（開きと同じ文字種で、開き以上の長さ）の裏表です。
+//
+// HTML コメントの外の行を返すのは VisibleLines と Scanner だけです。Lines はコメントの中も読みます。
 package mdscan
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
+)
+
+const (
+	commentOpen  = "<!--"
+	commentClose = "-->"
+)
+
+// ErrUnclosedComment は、HTML コメントが末尾まで閉じないことを表します。
+var ErrUnclosedComment = xerrors.New("HTML コメントが閉じていません")
 
 // Line は、コードフェンスの外にある行1つです。Number は1始まりで、その行を開くための番号です。
 type Line struct {
@@ -68,6 +82,122 @@ func fenceMarker(line string) (marker, info string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// VisibleLines は、content のうちコードフェンスの外にある行を、HTML コメントの部分を除いた文字で返します。
+// コメントの中に収まる行は空の文字として返し、行の番号を保ちます。コメントが末尾まで閉じなければ、
+// ErrUnclosedComment を、開いた行の番号を添えて返します。そのときも行は返し、開いた行より後ろはすべて
+// コメントとして読んだものです。
+func VisibleLines(content []byte) ([]Line, error) {
+	var out []Line
+	var s Scanner
+	for i, text := range strings.Split(string(content), "\n") {
+		l := Line{Number: i + 1, Text: text}
+		if r := s.Next(l); !r.Fence {
+			out = append(out, Line{Number: l.Number, Text: r.Visible})
+		}
+	}
+	if at := s.Unclosed(); at != 0 {
+		return out, xerrors.Wrapf(ErrUnclosedComment, "%d 行目で開いたコメント", at)
+	}
+	return out, nil
+}
+
+// Scanner は、フェンスと HTML コメントの状態を1行ずつ一緒に追います。CommonMark のとおり、フェンスの中の
+// `<!--` はコメントを開かず、コメントの中のフェンスの区切りはフェンスを開きません。front matter のように
+// 走査しない行は、Next に渡さずに飛ばします。
+type Scanner struct {
+	fence    Fence
+	openedAt int
+}
+
+// Scanned は、Scanner.Next が読んだ1行です。
+type Scanned struct {
+	// Fence は、行がフェンスの開始行・内部・終了行のどれかかです。
+	Fence bool
+	// Comment は、行の頭で HTML コメントが開いていたかです。
+	Comment bool
+	// Visible は、行から HTML コメントの部分を除いた文字です。Fence なら空です。
+	Visible string
+}
+
+// Next は、l の1行を読み、状態を進めます。
+func (s *Scanner) Next(l Line) Scanned {
+	if s.openedAt == 0 {
+		var in bool
+		if s.fence, in = s.fence.Next(l.Text); in {
+			return Scanned{Fence: true}
+		}
+	}
+	inComment := s.openedAt != 0
+	visible, open := StripComments(l.Text, inComment)
+	switch {
+	case !open:
+		s.openedAt = 0
+	case !inComment || strings.Contains(l.Text, commentClose):
+		s.openedAt = l.Number
+	}
+	return Scanned{Comment: inComment, Visible: visible}
+}
+
+// Unclosed は、そこまでに読んだ行で開いたまま閉じていない HTML コメントを開いた行の番号を返します。閉じていれば
+// 0 です。
+func (s *Scanner) Unclosed() int {
+	return s.openedAt
+}
+
+// StripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
+// 行の頭でコメントが開いているかです。inline code の中の `<!--` と、バックスラッシュで逃がした `<` はコメントを
+// 開きません。`<!-->` と `<!--->` は空のコメントです。
+func StripComments(text string, open bool) (visible string, stillOpen bool) {
+	var b strings.Builder
+	for text != "" {
+		if open {
+			_, after, found := strings.Cut(text, commentClose)
+			if !found {
+				break
+			}
+			open, text = false, after
+			continue
+		}
+		if text[0] == '`' {
+			n, _ := CodeSpan(text)
+			b.WriteString(text[:n])
+			text = text[n:]
+			continue
+		}
+		if text[0] == '\\' && len(text) > 1 {
+			b.WriteString(text[:2])
+			text = text[2:]
+			continue
+		}
+		if rest, ok := strings.CutPrefix(text, commentOpen); ok {
+			if empty, ok := cutEmptyComment(rest); ok {
+				text = empty
+				continue
+			}
+			open, text = true, rest
+			continue
+		}
+		next := strings.IndexAny(text[1:], "`<\\")
+		if next < 0 {
+			b.WriteString(text)
+			break
+		}
+		b.WriteString(text[:next+1])
+		text = text[next+1:]
+	}
+	return b.String(), open
+}
+
+// cutEmptyComment は、`<!--` の直後の rest が `>` か `->` で始まる（`<!-->` か `<!--->` の）とき、その後ろを返します。
+func cutEmptyComment(rest string) (string, bool) {
+	for _, end := range []string{">", "->"} {
+		if after, ok := strings.CutPrefix(rest, end); ok {
+			return after, true
+		}
+	}
+	return "", false
 }
 
 // InlineCodes は、行に含まれる inline code span の中身を、現れた順に返します。
