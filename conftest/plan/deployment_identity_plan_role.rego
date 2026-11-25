@@ -64,7 +64,7 @@ read_only(action) if {
 read_actions := object.get(cfg, "read_actions", [])
 
 # 宣言に許す動詞。ほかの動詞の書き込みを読み取りとして通さないよう、拒む動詞ではなく許す動詞を挙げる。
-declared_read_verbs := {"view"}
+declared_read_verbs := {"view", "simulate"}
 
 read_action_shaped(x) if {
 	is_string(x)

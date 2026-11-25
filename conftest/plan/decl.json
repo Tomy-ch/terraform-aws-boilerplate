@@ -35,6 +35,7 @@
       "iam:EnableOrganizationsRootSessions",
       "iam:GetAccountPasswordPolicy",
       "iam:ListOrganizationsFeatures",
+      "iam:SimulateCustomPolicy",
       "iam:UpdateAccountPasswordPolicy",
       "kms:CreateKey",
       "kms:ListAliases",
@@ -100,7 +101,8 @@
         "role": "module.deployment_identity.module.github_oidc.aws_iam_role.this[\"plan\"]",
         "policy": "module.deployment_identity.module.github_oidc.aws_iam_role_policy.this[\"plan\"]",
         "read_actions": [
-          "budgets:ViewBudget"
+          "budgets:ViewBudget",
+          "iam:SimulateCustomPolicy"
         ],
         "managed_policies": [
           "module.deployment_identity.module.github_oidc.aws_iam_policy.workload_read"
