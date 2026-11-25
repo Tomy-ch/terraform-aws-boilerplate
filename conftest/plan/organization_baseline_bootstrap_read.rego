@@ -26,6 +26,8 @@ role_properties := r.Properties if {
 	count(template.Resources) == 1
 	some r in template.Resources
 	r.Type == "AWS::IAM::Role"
+	count(r.Properties.Policies) == 1
+	count(lib.statements(r.Properties.Policies[0].PolicyDocument)) > 0
 }
 
 role_pattern := sprintf("arn:aws:iam::*:role%s%s", [role_properties.Path, role_properties.RoleName])
@@ -47,22 +49,26 @@ plan_actions := {lower(a) |
 }
 
 # 管理アカウントの構成物にだけ掛かる読みと、state の object の読み書き。メンバーの立ち上げの plan は読まない（organization-baseline/ADR-0203）。
-management_only := {lower(a) | some a in object.get(br, "management_only_actions", [])}
+management_only := {lower(e.action) | some e in object.get(br, "management_only_actions", []); is_object(e)}
 
 well_formed_declaration if {
 	is_string(br.stack_set)
 	is_string(br.stack_instances)
 	is_array(br.management_only_actions)
 	count(br.management_only_actions) > 0
-	every a in br.management_only_actions {
-		is_string(a)
-		regex.match(`^[a-z0-9-]+:[A-Za-z0-9]+$`, a)
+	every e in br.management_only_actions {
+		is_object(e)
+		object.keys(e) == {"action", "reason"}
+		is_string(e.action)
+		regex.match(`^[a-z0-9-]+:[A-Za-z0-9]+$`, e.action)
+		is_string(e.reason)
+		trim_space(e.reason) != ""
 	}
 }
 
 deny contains msg if {
 	not well_formed_declaration
-	msg := "[PLAN-BR-00] 宣言 organization_baseline.bootstrap_read が、stack_set・stack_instances の address と、wildcard を含まない Action の名前の空でない配列 management_only_actions を持ちません"
+	msg := "[PLAN-BR-00] 宣言 organization_baseline.bootstrap_read が、stack_set・stack_instances の address と、wildcard を含まない Action の名前（action）と空でない理由（reason）の組の空でない配列 management_only_actions を持ちません"
 }
 
 deny contains msg if {
@@ -76,7 +82,7 @@ deny contains msg if {
 	well_formed_declaration
 	stack_set
 	not role_properties
-	msg := "[PLAN-BR-00] 立ち上げの読み取りの StackSet のテンプレートが、AWS::IAM::Role を1つだけ持つ JSON ではありません"
+	msg := "[PLAN-BR-00] 立ち上げの読み取りの StackSet のテンプレートが、文を持つ inline policy を1つだけ持つ AWS::IAM::Role を1つだけ持つ JSON ではありません"
 }
 
 # 上位集合の突き合わせの相手が無ければ、何も見ずに通さない。
@@ -111,10 +117,11 @@ organization_root_id := after(object.get(ob, "organization", "")).roots[0].id
 deny contains msg if {
 	stack_set
 	not instances_shape
-	msg := "[PLAN-BR-01] 立ち上げの読み取りの stack instance が、その StackSet を名指して組織の Root だけへ置く形ではありません"
+	msg := "[PLAN-BR-01] 立ち上げの読み取りの stack instance が、role と同じ名前の StackSet を名指して組織の Root だけへ置く形ではありません"
 }
 
 instances_shape if {
+	stack_set.name == role_properties.RoleName
 	instances.stack_set_name == stack_set.name
 	count(instances.deployment_targets) == 1
 	target := instances.deployment_targets[0]
@@ -127,10 +134,22 @@ role_keys := {"RoleName", "Path", "MaxSessionDuration", "AssumeRolePolicyDocumen
 deny contains msg if {
 	role_properties
 	not trust_shape
-	msg := "[PLAN-BR-02] 立ち上げの読み取りの role の信頼条件が、管理アカウントの root を Principal にし、aws:PrincipalArn を wildcard の無い1つの role の ARN に限る形ではありません"
+	msg := "[PLAN-BR-02] 立ち上げの読み取りの role の信頼条件が、管理アカウントの root を Principal にし、aws:PrincipalArn を管理アカウントの plan の role の ARN だけに限る形ではありません"
 }
 
-management_root := sprintf("arn:aws:iam::%s:root", [after(object.get(ob, "organization", "")).master_account_id])
+management_account := after(object.get(ob, "organization", "")).master_account_id
+
+management_root := sprintf("arn:aws:iam::%s:root", [management_account])
+
+plan_role := after(object.get(object.get(object.get(data.policy_plan, "deployment_identity", {}), "plan_role", {}), "role", ""))
+
+# 信頼する主体は、管理アカウントの、宣言した plan の role と同じ path と名前の role（organization-baseline/ADR-0203 決定3）。
+trusted_principal := sprintf("arn:aws:iam::%s:role%s%s", [management_account, plan_role_path, plan_role.name])
+
+# path を書かない role は、AWS が既定の "/" に置く。plan では null で表れる。
+default plan_role_path := "/"
+
+plan_role_path := plan_role.path if is_string(plan_role.path)
 
 trust_shape if {
 	object.keys(role_properties) == role_keys
@@ -143,9 +162,7 @@ trust_shape if {
 	s.Principal == {"AWS": management_root}
 	object.keys(s.Condition) == {"ArnEquals"}
 	object.keys(s.Condition.ArnEquals) == {"aws:PrincipalArn"}
-	arn := s.Condition.ArnEquals["aws:PrincipalArn"]
-	is_string(arn)
-	regex.match(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[^*?]+$`, arn)
+	s.Condition.ArnEquals["aws:PrincipalArn"] == trusted_principal
 }
 
 read_verbs := ["get", "list", "describe"]
@@ -153,7 +170,7 @@ read_verbs := ["get", "list", "describe"]
 deny contains msg if {
 	some s in read_statements
 	not read_only_statement(s)
-	msg := sprintf("[PLAN-BR-03] 立ち上げの読み取りの role の文 %v が、wildcard の無い読み取りの Action の Allow だけの形ではありません", [object.get(s, "Sid", "")])
+	msg := sprintf("[PLAN-BR-03] 立ち上げの読み取りの role の文 %v が、S3・KMS・IAM の wildcard の無い読み取りの Action を、置き先のアカウントの Resource に許す Allow だけの形ではありません", [object.get(s, "Sid", "")])
 }
 
 read_only_statement(s) if {
@@ -165,8 +182,28 @@ read_only_statement(s) if {
 		not contains(a, "?")
 		parts := split(lower(a), ":")
 		count(parts) == 2
+		parts[0] in read_services
 		some v in read_verbs
 		startswith(parts[1], v)
+	}
+	scoped_resources(s)
+}
+
+# 立ち上げの plan が読むのは、state-backend と deployment-identity の構成物（S3・KMS・IAM）だけである。
+read_services := {"s3", "kms", "iam"}
+
+# Resource は置き先のアカウントに限る。resource-level の権限を持たない kms:ListAliases だけが "*" を使う。
+scoped_resources(s) if {
+	lib.lower_all(s.Action) == ["kms:listaliases"]
+	s.Resource == "*"
+}
+
+scoped_resources(s) if {
+	every r in lib.as_array(s.Resource) {
+		is_object(r)
+		object.keys(r) == {"Fn::Sub"}
+		is_string(r["Fn::Sub"])
+		contains(r["Fn::Sub"], "${AWS::AccountId}")
 	}
 }
 
@@ -221,6 +258,7 @@ bootstrap_role_denied if {
 	s.Effect == "Deny"
 	s.Action == "*"
 	s.Resource == "*"
+	object.keys(s.Condition) == {"ArnLike"}
 	role_pattern in lib.as_array(s.Condition.ArnLike["aws:PrincipalArn"])
 }
 
