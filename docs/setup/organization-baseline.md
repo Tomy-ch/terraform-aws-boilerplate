@@ -24,7 +24,7 @@
 
 ### 3.1 段4 の前: 組織が無いことを確かめる
 
-この usecase は組織を作る。既に組織を持つ管理アカウントは unsupported である。組織と break-glass の IAM user・group・role がまだ無いことは、`bootstrap.md` の段2 と段4 の `verify.sh before-apply` が確かめる。
+この usecase は組織を作る。既に組織を持つ管理アカウントは unsupported である。組織と break-glass の IAM user・group・role がまだ無いことは、`bootstrap.md` の段2 と段4 の `make bootstrap-verify STAGE=before-apply` が確かめる。
 
 ### 3.2 段5 の後: 組織と policy を確かめる
 
