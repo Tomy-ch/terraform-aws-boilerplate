@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -38,28 +37,20 @@ func checkDependabotLabels(dependabot, labels []byte) (int, error) {
 	if len(config.Updates) == 0 {
 		return 0, xerrors.Wrapf(errDependabotLabels, "%s に updates の ecosystem が1つもありません", dependabotFile)
 	}
-	var decl []struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(labels, &decl); err != nil {
-		return 0, xerrors.Wrapf(errLabelsParse, "%s: %v", labelsFile, err)
-	}
-	if decl == nil {
-		return 0, xerrors.Wrapf(errLabelsParse, "%s が null です", labelsFile)
+	decl, err := parseLabels(labels)
+	if err != nil {
+		return 0, err
 	}
 	declared := map[string]bool{}
-	for i, l := range decl {
-		if l.Name == "" {
-			return 0, xerrors.Wrapf(errDependabotLabels, "%s の %d 番目の要素に name がありません", labelsFile, i+1)
-		}
-		declared[l.Name] = true
+	for _, l := range decl {
+		declared[strings.ToLower(l.Name)] = true
 	}
 	var missing []string
 	n := 0
 	for _, u := range config.Updates {
 		for _, l := range u.Labels {
 			n++
-			if !declared[l] {
+			if !declared[strings.ToLower(l)] {
 				missing = append(missing, fmt.Sprintf("%s の %q", u.Ecosystem, l))
 			}
 		}
