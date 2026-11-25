@@ -48,3 +48,19 @@ variable "break_glass_arns" {
   description = "break-glass の IAM user・group・role の ARN。apply の role の Deny と、管理アカウントの plan と apply-identity の role の読み取りの Resource に使う。"
   type        = list(string)
 }
+
+variable "bootstrap_read_role" {
+  description = "メンバーの立ち上げの読み取りの role の名前と path。管理アカウントでだけ渡す。"
+  type = object({
+    name = string
+    path = string
+  })
+  default = null
+}
+
+variable "bootstrap_member_account_ids" {
+  description = "立ち上げの中のメンバーアカウントの、env から ID への対応。管理アカウントでだけ空でない。"
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}

@@ -29,6 +29,9 @@ module "deployment_identity" {
   plan_output_bucket_arn  = module.state_backend.plan_output_bucket_arn
   apply_output_bucket_arn = module.state_backend.apply_output_bucket_arn
   break_glass_arns        = module.organization_baseline.break_glass_arns
+
+  bootstrap_read_role          = module.organization_baseline.bootstrap_read_role
+  bootstrap_member_account_ids = module.organization_baseline.bootstrapping_account_ids
 }
 
 module "organization_baseline" {

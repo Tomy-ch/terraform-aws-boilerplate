@@ -137,26 +137,28 @@ locals {
   break_glass_role_arns  = [for a in var.break_glass_arns : a if strcontains(a, ":role/")]
   administrator_access   = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AdministratorAccess"
 
-  # StackSet の名前は break-glass の role と同じで、ARN の末尾の ID は作るまで決まらないので `:*` で書く（deployment-identity/ADR-0201 決定3・4）。
-  cfn_arn_prefix              = "arn:${data.aws_partition.current.partition}:cloudformation:${local.regional_arn_suffix}"
-  break_glass_stack_set_names = [for a in local.break_glass_role_arns : regex("[^/]+$", a)]
-  break_glass_stack_set_arns  = [for n in local.break_glass_stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
-  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。type の ARN はアカウントを `*` にする（deployment-identity/ADR-0201 決定4）。
-  # stackset-target は region を空、type は region を `*` にする（同 決定4）。
-  break_glass_stack_instance_arns = concat(
-    local.break_glass_stack_set_arns,
-    [for n in local.break_glass_stack_set_names : "arn:${data.aws_partition.current.partition}:cloudformation::${data.aws_caller_identity.current.account_id}:stackset-target/${n}:*"],
+  # メンバーへ role を配る StackSet の名前は、配る role の名前と同じである。ARN の末尾の ID は作るまで決まらないので `:*` で書く（deployment-identity/ADR-0201 決定3・4）。
+  cfn_arn_prefix       = "arn:${data.aws_partition.current.partition}:cloudformation:${local.regional_arn_suffix}"
+  bootstrap_read_names = [for r in [var.bootstrap_read_role] : r.name if r != null]
+  stack_set_names      = concat([for a in local.break_glass_role_arns : regex("[^/]+$", a)], local.bootstrap_read_names)
+  stack_set_arns       = [for n in local.stack_set_names : "${local.cfn_arn_prefix}:stackset/${n}:*"]
+  # UpdateStackSet と stack instance の操作は、stackset-target と type の resource 型も要る（Service Authorization Reference）。ARN の形は deployment-identity/ADR-0201 決定4。
+  stack_instance_arns = concat(
+    local.stack_set_arns,
+    [for n in local.stack_set_names : "arn:${data.aws_partition.current.partition}:cloudformation::${data.aws_caller_identity.current.account_id}:stackset-target/${n}:*"],
   )
-  break_glass_stack_set_type_arn     = "arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"
-  break_glass_stack_set_write_arns   = concat(local.break_glass_stack_instance_arns, [local.break_glass_stack_set_type_arn])
-  break_glass_stack_instance_actions = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
+  stack_set_type_arn     = "arn:${data.aws_partition.current.partition}:cloudformation:*:*:type/resource/AWS-IAM-Role"
+  stack_set_write_arns   = concat(local.stack_instance_arns, [local.stack_set_type_arn])
+  stack_instance_actions = ["cloudformation:CreateStackInstances", "cloudformation:UpdateStackInstances"]
 
   governance_policy_name     = "${var.name_prefix}-ci-apply-identity-governance"
   governance_policy_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.governance_policy_name}"
   governance_policy_arns     = [for a in [local.governance_policy_arn] : a if local.management]
   manage_policy_name         = "${var.name_prefix}-ci-apply-identity-manage"
   manage_policy_arn          = "${local.iam_arn_prefix}:policy/${local.manage_policy_name}"
-  apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns)
+  members_policy_name        = "${var.name_prefix}-ci-apply-identity-members"
+  members_policy_arns        = [for a in ["${local.iam_arn_prefix}:policy/${local.members_policy_name}"] : a if local.management]
+  apply_identity_policy_arns = concat([local.manage_policy_arn], local.governance_policy_arns, local.members_policy_arns)
   managed_policy_arns        = { apply_identity = local.apply_identity_policy_arns, apply = local.workload_policy_arns, plan = [local.workload_read_policy_arn] }
   ci_policy_arns             = concat(local.apply_identity_policy_arns, local.workload_policy_arns, values(local.boundary_policy_arns))
 
@@ -464,7 +466,7 @@ locals {
         Resource = local.break_glass_role_arns
       },
       {
-        Sid    = "ReadBreakGlassStackSet"
+        Sid    = "ReadMemberRoleStackSets"
         Effect = "Allow"
         Action = [
           "cloudformation:DescribeStackInstance",
@@ -473,10 +475,21 @@ locals {
           "cloudformation:ListStackInstances",
           "cloudformation:ListStackSetOperationResults",
         ]
-        Resource = local.break_glass_stack_set_arns
+        Resource = local.stack_set_arns
       },
     ],
   ) : s if local.management]
+
+  # 立ち上げの中のメンバーアカウントへの引き受け（repository-wide/ADR-0604 決定6、deployment-identity/ADR-0201 決定22）。
+  bootstrap_account_ids = sort(distinct(values(var.bootstrap_member_account_ids)))
+  bootstrap_assume_arns = {
+    plan           = [for r in [var.bootstrap_read_role] : [for id in local.bootstrap_account_ids : "arn:${data.aws_partition.current.partition}:iam::${id}:role${r.path}${r.name}"] if r != null]
+    apply_identity = [for id in local.bootstrap_account_ids : "arn:${data.aws_partition.current.partition}:iam::${id}:role/OrganizationAccountAccessRole"]
+  }
+  bootstrap_assume_statements = {
+    plan           = [for arns in local.bootstrap_assume_arns.plan : { Sid = "AssumeBootstrapReadRoles", Effect = "Allow", Action = "sts:AssumeRole", Resource = arns } if local.management && length(arns) > 0]
+    apply_identity = [for s in [{ Sid = "AssumeBootstrapAccessRoles", Effect = "Allow", Action = "sts:AssumeRole", Resource = local.bootstrap_assume_arns.apply_identity }] : s if local.management && length(local.bootstrap_account_ids) > 0]
+  }
 
   governance_wildcard_write_actions = [
     "iam:DeleteAccountPasswordPolicy",
@@ -492,8 +505,6 @@ locals {
   # 組織の削除・メンバーの閉鎖・組織からの除外と、prevent_destroy を持つ構成物の削除は与えない（deployment-identity/ADR-0201 決定3）。
   governance_manage_statements = concat(
     [for a in local.governance_wildcard_write_actions : { Sid = replace(title(replace(a, ":", " ")), " ", ""), Effect = "Allow", Action = a, Resource = "*" }],
-    # StackSet に tag を付けないので、tag を伴う作成を拒む。
-    [{ Sid = "CloudformationCreateStackSet", Effect = "Allow", Action = "cloudformation:CreateStackSet", Resource = "*", Condition = { Null = { "aws:TagKeys" = "true" } } }],
     [for a in ["organizations:DisableAWSServiceAccess", "organizations:EnableAWSServiceAccess"] : {
       Sid       = replace(title(replace(a, ":", " ")), " ", "")
       Effect    = "Allow"
@@ -556,22 +567,31 @@ locals {
         Resource  = local.break_glass_role_arns
         Condition = { ArnEquals = { "iam:PolicyARN" = local.administrator_access } }
       },
-      # StackSet と stack instance の削除は与えない。メンバーの break-glass の role が消える（deployment-identity/ADR-0201「与えないもの」）。
-      { Sid = "UpdateBreakGlassStackSet", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.break_glass_stack_set_write_arns },
-      { Sid = "ManageBreakGlassStackInstances", Effect = "Allow", Action = local.break_glass_stack_instance_actions, Resource = local.break_glass_stack_instance_arns },
+    ],
+  )
+
+  # メンバーアカウントへ role を配る StackSet と、立ち上げの中のメンバーの引き受け（deployment-identity/ADR-0201 決定7・22）。
+  members_manage_statements = [for s in concat(
+    # StackSet に tag を付けないので、tag を伴う作成を拒む。
+    [{ Sid = "CloudformationCreateStackSet", Effect = "Allow", Action = "cloudformation:CreateStackSet", Resource = "*", Condition = { Null = { "aws:TagKeys" = "true" } } }],
+    [
+      # StackSet と stack instance の削除は与えない。メンバーの break-glass と立ち上げの読み取りの role が消える（deployment-identity/ADR-0201「与えないもの」）。
+      { Sid = "UpdateMemberRoleStackSets", Effect = "Allow", Action = "cloudformation:UpdateStackSet", Resource = local.stack_set_write_arns },
+      { Sid = "ManageMemberRoleStackInstances", Effect = "Allow", Action = local.stack_instance_actions, Resource = local.stack_instance_arns },
       # TargetRegion は type の評価にだけ付くので、条件はこの文に置く。ForAllValues は空の一覧にも成り立つので、Null を外さない（deployment-identity/ADR-0201 決定4）。
       {
-        Sid      = "LimitBreakGlassStackInstanceRegions"
+        Sid      = "LimitMemberRoleStackInstanceRegions"
         Effect   = "Allow"
-        Action   = local.break_glass_stack_instance_actions
-        Resource = [local.break_glass_stack_set_type_arn]
+        Action   = local.stack_instance_actions
+        Resource = [local.stack_set_type_arn]
         Condition = {
           "ForAllValues:StringEquals" = { "cloudformation:TargetRegion" = data.aws_region.current.region }
           Null                        = { "cloudformation:TargetRegion" = "false" }
         }
       },
     ],
-  )
+    local.bootstrap_assume_statements.apply_identity,
+  ) : s if local.management]
 
   ci_policy_management_statements = [
     {
@@ -675,6 +695,7 @@ locals {
       ],
       local.identity_read_statements,
       local.governance_read_statements,
+      local.bootstrap_assume_statements.plan,
       local.baseline_region_deny.plan,
     )
 
@@ -774,8 +795,14 @@ resource "aws_iam_role_policy" "apply_identity" {
 
     # role の名前は StackSet の名前にもなる。IAM が許して StackSet が許さない名前では、Allow がどの StackSet にも当たらない。
     precondition {
-      condition     = !local.management || alltrue([for n in local.break_glass_stack_set_names : can(regex("^[A-Za-z][-A-Za-z0-9]*$", n))])
+      condition     = !local.management || alltrue([for n in local.stack_set_names : can(regex("^[A-Za-z][-A-Za-z0-9]*$", n))])
       error_message = "管理アカウント（env が admin）の break-glass の role の名前は、英字で始まり英数字とハイフンだけの名前にしてください（StackSet の名前の制約）。"
+    }
+
+    # 立ち上げの読み取りの role を配る StackSet は管理アカウントにだけ在る。メンバーの引き受けも管理アカウントの CI だけが行う。
+    precondition {
+      condition     = local.management == (var.bootstrap_read_role != null) && (local.management || length(var.bootstrap_member_account_ids) == 0)
+      error_message = "bootstrap_read_role は管理アカウント（env が admin）でだけ、必ず渡してください。bootstrap_member_account_ids は管理アカウントでだけ空でない値にできます。"
     }
   }
 }
