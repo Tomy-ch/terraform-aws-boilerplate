@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/policyresult"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -907,5 +909,18 @@ func Test_copyTree(t *testing.T) {
 		require.NoError(t, copyTree(src, dst))
 		assert.FileExists(t, filepath.Join(dst, "lib", "b.rego"))
 		require.Error(t, copyTree(filepath.Join(t.TempDir(), "none"), dst))
+	})
+}
+
+func Test_isVerdict(t *testing.T) {
+	t.Parallel()
+
+	t.Run("判定の失敗は真、成り立たない失敗と nil は偽", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, isVerdict(xerrors.Wrap(errPlanFailed, "x")))
+		assert.True(t, isVerdict(policyresult.ErrViolation))
+		assert.False(t, isVerdict(toolrun.ErrTool))
+		assert.False(t, isVerdict(errCIInit))
+		assert.False(t, isVerdict(nil))
 	})
 }

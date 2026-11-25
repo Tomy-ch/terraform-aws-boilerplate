@@ -17,6 +17,11 @@
 // lock の解除と lock を残す段は cihold.go が持つ。値を決められない入力はすべて非ゼロで終わり、make はその時点で
 // 後の段を起動しない。make のレシピに分岐を置かず、判断はすべてここのテストで固定する。
 //
+// 終了コードは lib/toolrun の取り決めで、対象について否と言えた失敗（plan の失敗、Policy の違反、apply の失敗、
+// lock の衝突など。verdicts）を 1、道具を起動できない・値を決められない・入力を読めない・使い方の誤りを 2 にする。
+// ci-finish は、失敗した段が判定まで届いていなければ 2 で終わる。-work（ci-credentials・ci-assume-denied・
+// ci-policy）はリポジトリ直下の tmp/ の下に限り（lib/workdir）、その下に作る一時ディレクトリだけを消す。
+//
 // backend block は式を持てないので、Bucket 名・state の鍵の alias 名・role 名の規則をここに写す。Bucket 名と alias 名の正本は
 // modules/s3 と usecases/state-backend、role 名の正本は usecases/deployment-identity で、写しのずれはテストが
 // env/admin/identity のテストの期待値と docs/setup/bootstrap.md の段1、deployment-identity の .tf に
