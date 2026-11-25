@@ -250,7 +250,7 @@ test_violation_read_actions_malformed if {
 }
 
 test_violation_read_actions_verb_not_allowed if {
-	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget", "budgets:ExecuteBudgetAction", "ce:CreateAnomalyMonitor", "ce:TagResource", "s3:GetObject", "BUDGETS:MODIFYBUDGET", "budgets:XView"] {
+	every x in ["iam:AttachRolePolicy", "kms:Decrypt", "budgets:ModifyBudget", "budgets:ExecuteBudgetAction", "ce:CreateAnomalyMonitor", "ce:TagResource", "s3:GetObject", "BUDGETS:MODIFYBUDGET", "budgets:XView", "iam:XSimulate"] {
 		msgs := p.deny with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
 		fixture.has(sprintf("[PLAN-ROLE-00] data.policy_plan.deployment_identity.plan_role.read_actions の %s の動詞が", [x]), msgs)
 		not lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
@@ -266,6 +266,18 @@ test_pass_declared_view_verb if {
 		count(p.deny) == 0 with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
 		lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
 	}
+}
+
+test_pass_declared_simulate_verb if {
+	every x in ["iam:SimulateCustomPolicy", "IAM:SIMULATECUSTOMPOLICY", "iam:simulatecustompolicy"] {
+		count(p.deny) == 0 with input as with_role([fixture.allow(x), write_output], []) with data.policy_plan.deployment_identity as read_decl([x])
+		lower(x) in p.declared_reads with data.policy_plan.deployment_identity as read_decl([x])
+	}
+}
+
+test_violation_undeclared_simulate_action if {
+	msgs := p.deny with input as with_role([fixture.allow("iam:SimulateCustomPolicy"), write_output], []) with data.policy_plan.deployment_identity as read_decl([])
+	fixture.has("[PLAN-ROLE-02] p.json: plan の role の Allow に変更系の Action iam:simulatecustompolicy があります", msgs)
 }
 
 # with の data は decl.json と合わさってキーを消せないので、cfg を置き換える。
