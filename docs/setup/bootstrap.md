@@ -438,7 +438,7 @@ Billing and Cost Management コンソール →「Cost Explorer」→「Launch C
 
    3. 管理アカウントで Slack の workspace を認可し、team ID と channel ID を `env/admin/main.tf` に書いた変更をリリース線へ merge しておく。最初の run が workload root を apply するからである。手順は [`ops-notification.md`](ops-notification.md)
 
-2. リリース線から `admin` への最初の Pull Request を開き、`deploy-source-check` を含む必須検査が緑になってから merge する（手順3 の 2 と同じ操作）。その merge の run を `admin` の最初の run とし、次をすべて確かめる。段4 の準備で `admin` を作った push の run（secret の不在で落ちたもの）はこれに当たらない。run の URL を issue に残す（アカウント ID を載せない）
+2. リリース線から `admin` への最初の Pull Request を開き、`deploy-source-check` を含む必須検査が緑になってから merge する（[段5 の変更を適用する](#段5-の変更を適用する)の手順3 の 2 と同じ操作）。その merge の run を `admin` の最初の run とし、次をすべて確かめる。段4 の準備で `admin` を作った push の run（secret の不在で落ちたもの）はこれに当たらない。run の URL を issue に残す（アカウント ID を載せない）
    - `apply-infra-code-gate`・`apply-resource-order-check`・`apply-layer-check`・`apply-root-check`・`apply-admin-identity`・`apply-admin-workload` が緑
    - `apply-admin-identity` のログの plan の要約が `No changes.`。`apply-admin-workload` は workload root の resource を作る
    - Policy の違反が無い
