@@ -18,11 +18,11 @@ IAM の `aws:RequestedRegion` は、要求が呼んだ endpoint の region を�
 ## Decision
 
 1. リージョンを単位に評価・適用される安全側の設定（リージョンごとの統制の設定と、リージョンごとの委任管理者の指定）は、決定2 の集合のすべてのリージョンに置く。
-2. 集合は、partition ごとの、AWS が既定で有効とするリージョン（opt-in でないもの）とする。aws は17とする。集合は一般 module `modules/default-regions` の出力 `by_partition`（partition を key にした literal の map）として1つだけ持ち、Terraform のほかの場所に literal で書かない。持たない partition の key は置かない。集合は利用者の入力にしない（ADR-0204 決定2、ADR-0208 決定3）。
+2. 集合は、partition ごとの、AWS が既定で有効とするリージョン（opt-in でないもの）とする。aws は17とする。集合は一般 module `modules/default-regions` の出力 `by_partition`（partition を key にした literal の map）として1つだけ持ち、Terraform のほかの場所に literal で書かない。持たない partition の key は置かない。集合は利用者の入力にしない（ADR-0204 決定2、ADR-0208 決定3）。ADR-0205 決定1・2 が採らないのは外部の module であり、リポジトリの中の相対パスの一般 module（同 決定3）はこれに当たらない。
 3. 置く usecase は、provider を1つのまま、`by_partition[data.aws_partition.<name>.partition]` を `for_each` に取り、resource の `region = each.key` で置く。key の無い partition では、置く usecase が plan を止める。`data.aws_regions` の結果を `for_each` に使わない。
 4. 決定2 の集合に置く resource の CI の role の権限は、集合のリージョンに限る。ARN にリージョンを持つ Resource は、リージョンの部分だけを `*` にした ARN で Allow し、同じ role の inline policy に、それらの Action を、条件 `StringNotEquals` の `aws:RequestedRegion` が集合の外のとき拒む Deny（Resource `"*"`）を置く（ADR-0301 決定11 の但し書き）。resource-level 権限を持たないリージョンごとの Action も、同じ Deny で集合に限る。サービス固有のリージョンの条件キー（`ec2:Region`）を受ける Action は、Allow にもその条件を集合で置く。アカウントに1つの設定と global のサービスの Action は Deny に含めない。集合に key の無い partition では、これらの文を置かない。
 5. `make egress-check` は、`region = each.key` を、ブロックの `for_each` を root から静的に解いた集合の各リージョンとして読む。解ける形は閉じた一覧とし（`scripts/README.md` の `egress/` の行）、解けない形、空の集合、リージョンの形でない要素で落ちる。スカラーの `region` は ADR-0208 決定1 のとおり literal に限る。`.github/egress.toml` は集合の写しを `region_set` に持ち、リージョンごとの宛先を `{<set>}` を含む形で書く。`make egress-check` は、usecase の `reference/` の root でも、リージョンを解けることを確かめる（ADR-0702 決定20）。
-6. 集合の写しは、Terraform を読まない道具のための `.github/egress.toml` の `region_set` と、`conftest/plan/decl.json` の `default_regions` に限る。ずれは `make egress-check` と Policy Test が落とす。
+6. 集合の写しは、Terraform を読まない道具のための `.github/egress.toml` の `region_set` と、`conftest/plan/decl.json` の `default_regions` に限る。ずれは `make egress-check` と Policy Test が落とす。`region_set` は、集合に置く root を実行する job を宣言する変更が足す。テストの期待値は写しに数えない（ずれは、そのテストが落とす）。
 7. 集合のどれかのリージョンでサービスが提供されないときは、集合の一部だけに置く形を黙って採らない。ADR-0207 決定11 の逸脱として、置く usecase の ADR に記録する。
 
 ## 検討した代替案
@@ -37,7 +37,7 @@ IAM の `aws:RequestedRegion` は、要求が呼んだ endpoint の region を�
 
 ### 案C: 権限の ARN をリージョンごとに列挙する
 
-許す要求は決定4 と同じだが、aws の17では、リージョンごとの統制の読み取りの policy が 12,250 文字、管理が 10,008 文字（上限 6,144）になる。policy を足すたびに CI の role を管理する role の inline policy が伸び、上限の 90% を超える。
+許す要求は決定4 と同じだが、aws の17では、リージョンごとの統制の読み取りと管理の policy が、customer managed policy の上限の 6,144 文字を超える。policy を足すたびに CI の role を管理する role の inline policy が伸び、上限の 90% を超える。
 
 ### 案D: リージョンを `*` にした ARN で Allow し、条件を付けない
 
@@ -67,14 +67,14 @@ opt-in のリージョンを含む。SCP の効かない管理アカウントで
 
 ## 保証範囲
 
-- 保証すること: module を呼ぶ Terraform の消費者が同じ集合を使うこと（同じ module の出力）。写しが Terraform の集合とずれないこと（`make egress-check` と Policy Test）。CI の role の、ARN のリージョンを `*` にした Allow の Action が、同じ role の inline policy の集合の外を拒む Deny に含まれ、その Deny の集合が宣言と一致すること（Policy Test）。resource-level 権限を持たないリージョンごとの Action が Deny に含まれること（Unit Test）。`region = each.key` の集合を解けない構成が、CI の root と reference の root で落ちること
+- 保証すること: module を呼ぶ Terraform の消費者が同じ集合を使うこと（同じ module の出力）。写しが Terraform の集合とずれないこと（`decl.json` は Policy Test、`region_set` は集合に置く root を実行する job があるときの `make egress-check`）。CI の role の、ARN のリージョンを `*` にした Allow の Action が、同じ role の inline policy の集合の外を拒む Deny に含まれ、その Deny の集合が宣言と一致すること（Policy Test）。resource-level 権限を持たないリージョンごとの Action が Deny に含まれること（Unit Test）。`region = each.key` の集合を解けない構成が、CI の root と reference の root で落ちること
 - 保証しないこと: 消費者が module を呼ばずに同じ集合を literal で書くことを拒むこと。レビューだけが見る
 - 保証しないこと: 実際の AWS で Deny が集合の外の要求を拒むこと（sandbox の Integration Test の経路が無い間は確かめない）。集合のすべてのリージョンでサービスが提供されること（決定7 は、置く usecase が着手のときに確かめる）
 
 ## 検証方法
 
 - Unit Test: `modules/default-regions/tests/`（件数と代表の要素）、権限を持つ usecase の文書の完全一致と長さ、Deny の Action とリージョンごとの Allow の Action の一致
-- Policy Test（`make tf-policy`）: 置く usecase の reference の plan のリージョンが `decl.json` の `default_regions` に過不足なく在ること、CI の role の Deny と Allow の対応と Deny の集合（`PLAN-REGION-*`）
+- Policy Test（`make tf-policy`）: 置く usecase の reference の plan のリージョンが `decl.json` の `default_regions` に過不足なく在ること、CI の role の Deny と Allow の対応と Deny の集合、対象の policy が入力に在ること（`PLAN-REGION-*`）
 - `make egress-check`、`scripts/egress` の Go のテスト
 
 ## 影響

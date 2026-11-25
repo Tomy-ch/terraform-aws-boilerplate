@@ -7,7 +7,7 @@
 
 ## Context
 
-リージョンごとの設定を置く集合と、その置き方（`for_each` と `region = each.key`）、CI の経路は repository-wide/ADR-0209 (default-regions-for-regional-controls) が持つ。この ADR は、account-baseline に固有の扱いを持つ。
+リージョンごとの設定を置く集合と、その置き方（`for_each` と `region = each.key`）、CI の経路は repository-wide/ADR-0209 (default-regions-for-regional-controls) が持つ。決定1・2 は repository-wide/ADR-0209 決定2・3 の account-baseline への適用であり、account-baseline に固有の決定は決定3 以降である。
 
 EC2.7・IAM.28・Config.1・EC2.172・SSM.6・SSM.7・EMR.2 はリージョンごとに評価する。AWS SRA は Config を「each member account and AWS Region that contains the resources」で有効にすることを求める。既定のリージョンより後のリージョンは opt-in で、有効にすると、アカウントで使えるリージョンが集合より広がる。
 
