@@ -1,7 +1,9 @@
 package main
 
 import (
-	"sync"
+	"context"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,10 +14,13 @@ func Test_command(t *testing.T) {
 	t.Parallel()
 
 	for step, want := range map[string][]string{
-		stepGitInit: {"git", "-c", "core.hooksPath=/dev/null", "init", "-q"},
-		stepGitAdd:  {"git", "-c", "core.hooksPath=/dev/null", "add", "-A"},
-		stepCheck:   {"editorconfig-checker"},
-		stepDryRun:  {"editorconfig-checker", "-dry-run"},
+		stepGitInit:   {"git", "-c", "core.hooksPath=/dev/null", "init", "-q"},
+		stepGitAdd:    {"git", "-c", "core.hooksPath=/dev/null", "add", "-A"},
+		stepCheck:     {"editorconfig-checker", "-format", "default"},
+		stepDryRun:    {"editorconfig-checker", "-format", "default", "-dry-run"},
+		stepScan:      {"editorconfig-checker"},
+		stepLsFiles:   {"git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--stage"},
+		stepLsDeleted: {"git", "-c", "core.hooksPath=/dev/null", "ls-files", "-z", "--deleted"},
 	} {
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
@@ -25,78 +30,6 @@ func Test_command(t *testing.T) {
 			assert.Equal(t, []string{"A=1"}, c.Env)
 		})
 	}
-}
-
-func Test_runTool(t *testing.T) {
-	t.Parallel()
-
-	t.Run("stdout だけを stdout に、両方を combined に束ね、終了コードを返す", func(t *testing.T) {
-		t.Parallel()
-		f := newFake(t)
-		f.set("s", "out", "O\n")
-		f.set("s", "err", "E\n")
-		f.set("s", "rc", "3")
-		r, err := runTool(f.tool()(t.TempDir(), nil, "s"))
-		require.NoError(t, err)
-		assert.Equal(t, "O\n", r.stdout)
-		assert.Contains(t, r.combined, "O\n")
-		assert.Contains(t, r.combined, "E\n")
-		assert.Equal(t, 3, r.code)
-	})
-
-	t.Run("stderr だけでも combined に載る", func(t *testing.T) {
-		t.Parallel()
-		f := newFake(t)
-		f.set("s", "err", "E\n")
-		r, err := runTool(f.tool()(t.TempDir(), nil, "s"))
-		require.NoError(t, err)
-		assert.Empty(t, r.stdout)
-		assert.Equal(t, "E\n", r.combined)
-	})
-
-	t.Run("起動できなければ errTool", func(t *testing.T) {
-		t.Parallel()
-		_, err := runTool(missingTool(t.TempDir(), nil, "s"))
-		require.ErrorIs(t, err, errTool)
-	})
-
-	t.Run("シグナルで終われば errTool", func(t *testing.T) {
-		t.Parallel()
-		f := newFake(t)
-		f.set("s", "kill", "")
-		_, err := runTool(f.tool()(t.TempDir(), nil, "s"))
-		require.ErrorIs(t, err, errTool)
-		assert.Contains(t, err.Error(), "シグナル")
-	})
-}
-
-func Test_lockedBuffer_Write(t *testing.T) {
-	t.Parallel()
-
-	t.Run("並行に書いても取りこぼさない", func(t *testing.T) {
-		t.Parallel()
-		b := &lockedBuffer{}
-		var wg sync.WaitGroup
-		for range 50 {
-			wg.Go(func() {
-				_, _ = b.Write([]byte("x"))
-			})
-		}
-		wg.Wait()
-		assert.Len(t, b.String(), 50)
-	})
-}
-
-func Test_lockedBuffer_String(t *testing.T) {
-	t.Parallel()
-
-	t.Run("書いた順に返す", func(t *testing.T) {
-		t.Parallel()
-		b := &lockedBuffer{}
-		_, _ = b.Write([]byte("a"))
-		_, _ = b.Write([]byte("b"))
-		assert.Equal(t, "ab", b.String())
-	})
 }
 
 func Test_stripANSI(t *testing.T) {
@@ -112,4 +45,41 @@ func Test_stripANSI(t *testing.T) {
 			assert.Equal(t, c.want, stripANSI(c.in))
 		})
 	}
+}
+
+func Test_checkerEnv(t *testing.T) {
+	t.Parallel()
+
+	t.Run("受け継いだ env の後に core.quotepath=false を足し、ほかの変数は順に残す", func(t *testing.T) {
+		t.Parallel()
+		got := checkerEnv([]string{"PATH=/bin", "GIT_DIR=/i", "HOME=/h"})
+		assert.Equal(t, []string{"PATH=/bin", "GIT_DIR=/i", "HOME=/h", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=false"}, got)
+	})
+
+	t.Run("受け継いだ git の設定の変数はすべて外す", func(t *testing.T) {
+		t.Parallel()
+		got := checkerEnv([]string{
+			"GIT_CONFIG_COUNT=3", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=true",
+			"GIT_CONFIG_KEY_2=core.x", "GIT_CONFIG_VALUE_2=y", "GIT_CONFIG_PARAMETERS='core.quotepath'='true'", "A=1",
+		})
+		assert.Equal(t, []string{"A=1", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=false"}, got)
+	})
+
+	t.Run("名前が前置きを含むだけの変数（GIT_CONFIG_GLOBAL など）は残す", func(t *testing.T) {
+		t.Parallel()
+		got := checkerEnv([]string{"GIT_CONFIG_GLOBAL=/g", "GIT_CONFIG_NOSYSTEM=1"})
+		assert.Equal(t, []string{"GIT_CONFIG_GLOBAL=/g", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=false"}, got)
+	})
+
+	t.Run("実物の git は、受け継いだ設定があっても core.quotepath を false と読む", func(t *testing.T) {
+		t.Parallel()
+		env, err := gitEnv()
+		require.NoError(t, err)
+		env = append(env, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.quotepath", "GIT_CONFIG_VALUE_0=true", "GIT_CONFIG_PARAMETERS='core.quotepath'='true'")
+		cmd := exec.CommandContext(context.Background(), "git", "config", "--get", "core.quotepath")
+		cmd.Dir, cmd.Env = t.TempDir(), checkerEnv(env)
+		out, err := cmd.Output()
+		require.NoError(t, err)
+		assert.Equal(t, "false", strings.TrimSpace(string(out)))
+	})
 }

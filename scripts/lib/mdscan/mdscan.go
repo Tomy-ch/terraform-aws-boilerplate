@@ -22,24 +22,37 @@ type Line struct {
 // （```go の go）が参照の形をしていても、それが言語名であって参照ではないためです。
 func Lines(content []byte) []Line {
 	var out []Line
-	// fence は開いているフェンスのマーカそのもの（``` や ~~~~）。
-	fence := ""
+	var fence Fence
 	for i, text := range strings.Split(string(content), "\n") {
-		marker, info, ok := fenceMarker(text)
-		switch {
-		case fence != "":
-			// 閉じは、同じ文字種で、開き以上の長さで、後ろに info string を持たないもの。
-			// 長さを「以上」で見るのは、``` の例を ```` で囲む入れ子が成立するためです。
-			if ok && marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(info) == "" {
-				fence = ""
-			}
-		case ok:
-			fence = marker
-		default:
+		var in bool
+		if fence, in = fence.Next(text); !in {
 			out = append(out, Line{Number: i + 1, Text: text})
 		}
 	}
 	return out
+}
+
+// Fence は、そこまでの行を読んだ時点で開いているフェンスのマーカそのもの（``` や ~~~~）です。空ならフェンスの
+// 外です。フェンスの外かどうかを別の状態（HTML コメントなど）と合わせて1行ずつ決める走査は、Lines ではなくこれを
+// 使います。
+type Fence string
+
+// Next は、text の1行を読んだ後の状態と、text がフェンスの開始行・内部・終了行のどれかかを返します。
+func (f Fence) Next(text string) (next Fence, in bool) {
+	marker, info, ok := fenceMarker(text)
+	switch {
+	case f != "":
+		// 閉じは、同じ文字種で、開き以上の長さで、後ろに info string を持たないもの。
+		// 長さを「以上」で見るのは、``` の例を ```` で囲む入れ子が成立するためです。
+		if ok && marker[0] == f[0] && len(marker) >= len(f) && strings.TrimSpace(info) == "" {
+			return "", true
+		}
+		return f, true
+	case ok:
+		return Fence(marker), true
+	default:
+		return "", false
+	}
 }
 
 // fenceMarker は、行がフェンスの区切りなら、そのマーカと後続の info string を返します。
@@ -78,6 +91,20 @@ func InlineCodes(line string) []string {
 		i += open
 	}
 	return out
+}
+
+// CodeSpan は、s の先頭のバッククォートの並びが開く inline code span の、閉じの並びまでを含めた長さを返します。
+// 閉じの規則は InlineCodes と同じで、長さの違う並びは読み飛ばします。閉じが無ければ、開きの並びの長さと false を
+// 返します（その並びはただの文字です）。s がバッククォートで始まらなければ 0 と false です。
+func CodeSpan(s string) (n int, closed bool) {
+	open := runLen(s, 0)
+	if open == 0 {
+		return 0, false
+	}
+	if closeAt, ok := findClose(s, open, open); ok {
+		return closeAt + open, true
+	}
+	return open, false
 }
 
 // findClose は、from 以降で、ちょうど want 個のバッククォートが並ぶ位置を返します。

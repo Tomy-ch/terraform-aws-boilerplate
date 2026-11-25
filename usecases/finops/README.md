@@ -49,7 +49,7 @@ unsupported:
 - 予算と閾値の通知の並びを選ぶこと。閾値の割合（85%・100%・予測100%、異常の40%）は固定する
 - 別のアカウントの Topic への通知
 - 不正利用の即時の検知。遅れが大きいので、侵害の検知の代わりにならない（GuardDuty は `security-tooling` の責務）
-- 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を Terraform で持つこと（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）。それらは人が tag `<project>:bootstrap` を付け、CI の apply の role に、その変更・削除を拒む Deny を置く。実際の要求での評価は確かめていない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) の保証範囲）
+- 管理アカウントに bootstrap の前提として在る AWS services monitor と、その email の subscription を Terraform で持つこと（[finops/ADR-0001](docs/adr/0001-monitor-dimension-by-account.md)）。それらは人が tag `<project>:bootstrap` を付け（`make bootstrap-check-account` が確かめる）、CI の apply の role に、その変更・削除を拒む Deny を置く。実際の要求での評価は確かめていない（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) の保証範囲）
 - 1つのアカウントに複数の env を置く構成（scope.md 第10.1節）
 
 ## 所有者

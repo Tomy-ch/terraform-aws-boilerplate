@@ -101,6 +101,7 @@ func main() {
 
 // argCounts は、位置引数だけを取るサブコマンドの、サブコマンド名を含む引数の数。
 var argCounts = map[string]int{
+	"region":      2,
 	"env-unset":   1,
 	"plan-header": 1,
 }
@@ -120,6 +121,8 @@ func run(args []string, out io.Writer, d deps) error {
 	)
 
 	switch args[0] {
+	case "region":
+		value, err = rootRegion(args[len(args)-1], d.readFile)
 	case "env-unset":
 		value, err = envUnset(d.environ)
 	case "plan-header":

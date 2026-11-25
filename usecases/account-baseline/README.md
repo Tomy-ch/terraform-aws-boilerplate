@@ -91,10 +91,9 @@ unsupported:
 ## 依存するユースケースと判断 Issue
 
 - `audit-evidence`: `bucket_name` と `kms_key_arn` を `config_delivery` に受ける。`audit-evidence` の `writers.config_source_accounts` に、`sandbox` の外の各アカウントの ID が要る
-- `deployment-identity`: 各アカウントの apply の role が、このユースケースの resource を作る権限を持たなければならない（#465 の判断を前提にする）。メンバーの apply の role が password policy を書けるのは、`DenyGovernanceChange` が password policy の Action を管理アカウントに限るときである（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5）
+- `deployment-identity`: 各アカウントの apply の role が、このユースケースの resource を作る権限を持つ。管理は `<project>-<env>-ci-apply-workload-2`、読み取りは `<project>-<env>-ci-apply-workload-read`（plan の role にも付く）に置く。ARN にリージョンを持つ Action と EC2 の Action は provider のリージョンと us-east-1 に限り、Resource `"*"` の S3・Config の delivery channel と保持期間・EMR の Action はリージョンで限らない。password policy の更新は、`DenyGovernanceChange` が管理アカウントでだけ拒む（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5・13・17）
 - 呼ぶ env の root: 管理アカウントは `env/admin/`、メンバーは #21・#330・#331 が配線する
 - 全リージョンを CI の経路に乗せる egress の宣言と apply の role の権限: #474
-- アカウントに1つの型の持ち主を層の検査で固定すること: #475
 - 判断 Issue: #86（sandbox の Config を常駐させない）、#98（常駐層の完了条件）、#472（Chatbot の SLR の持ち主）
 
 ## 検証方法
@@ -105,9 +104,9 @@ unsupported:
 | --- | --- | --- |
 | Unit | `internal/account-controls` の PAB の4項目・代替の連絡先・password policy の値と有無、`internal/regional-controls` の各リージョンの6つの設定の値と件数・集合の外の有効なリージョンで plan が落ちること・空の集合の拒否、`internal/config-recorder` の SLR・記録の範囲・home だけのグローバルな記録・配信先・status・保持日数・provider のリージョンが集合の外にあるときに recorder の precondition で plan が落ちること・空の集合の拒否 | `make tf-test`（`internal/*/tests/`） |
 | Contract | env ごとの合成（Config と password policy の件数）、aws の集合が届くこと、`config_delivery` の届き先、aws の外の partition で plan が落ちること、入力の検査（`project` の形と234文字の境界、代替の連絡先の長さと形の境界） | `tests/contract.tftest.hcl`、`tests/validation.tftest.hcl` |
-| Policy | `PLAN-ACB-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、アカウントに1つの型をほかのユースケースの reference の plan が持たないこと、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
+| Policy | `PLAN-ACB-00`-`06`（宣言の形とキーの集合、見る型の変更の存在、単一の型が層の宣言の `singletons` に持ち主 `account-baseline` として在ること、リージョンごとの型と、Config の型を1つでも持つ instance の Config の型と、SSM の2つの設定のそれぞれが宣言のリージョンに過不足なく在ること、設定の値・recorder の `role_arn`・status、グローバルな記録が1つのリージョン、PAB の4項目、password policy の値が `organization-baseline` の break-glass と一致すること）。01-04 の形の検査は account-baseline の reference の plan にだけ掛ける | `make tf-policy`（reference の root の mock の plan） |
 | Policy（削除の保護） | `PLAN-STATE-*`（`stateful_protection.protected_types` の13型。PAB・代替の連絡先・password policy・EBS の既定の暗号化・analyzer・SSM のサービス設定・EMR の block public access・VPC Block Public Access・SLR・recorder・delivery channel・recorder の status・retention の削除と置換）。reference の plan は作成しか持たないので、ここでは効かない。型が宣言から外れることは `conftest/plan/stateful_protection_test.rego` が落とす | CI の実 plan（`plan.stateful_protection`）。account-baseline を呼ぶ env の root が配線されるまで効かない |
-| Static | 層の規則、型の分類 | `make layer-check`、`make infra-code-gate` |
+| Static | 層の規則（アカウントかリージョンに1つの型を、ほかのユースケース・env・一般 module が宣言しないこと（`LY401`）を含む）、型の分類 | `make layer-check`、`make infra-code-gate` |
 | Integration（sandbox） | 拒まれるべき操作が拒まれること、drift 0、`internal/config-recorder` の作成と破棄 | 未実施。sandbox の apply の経路（#331）の後に行う |
 
 KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `internal/account-controls/main.tf` と `internal/config-recorder/main.tf` で抑止する。KICS はファイルごとに analyzer の宣言を求める。理由と撤回の条件は各ファイルの先頭が持つ。
@@ -137,7 +136,8 @@ KICS の e592a0c5（IAM Access Analyzer）は、analyzer を宣言しない `int
 - メンバーでの設定の停止と opt-in のリージョンの有効化を、SCP を Security・Workloads・Sandbox へ広げる前に拒むこと。新しい SCP は PolicyStaging に付けて始める（同 決定5）
 - 管理アカウントで opt-in のリージョンが有効にされることを拒むこと。管理アカウントには SCP が効かず、有効なリージョンの検出は plan の postcondition だけである
 - SSM Automation が作る既定の Log Group（`/aws/ssm/automation/executeScript`）の暗号化と保持日数。出力先を CloudWatch にする設定だけを持つ
-- メンバーの apply の role が password policy を書けること。[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定5 の `DenyGovernanceChange` の password policy の Action を管理アカウントに限る改訂（#465 の後）までは、メンバーでの apply が落ちる（[account-baseline/ADR-0001](docs/adr/0001-workload-root-in-every-account.md)「影響」）
+- provider のリージョンと us-east-1 のほかのリージョンでの apply。recorder・analyzer・SSM の設定・EBS の既定の暗号化・VPC Block Public Access の作成は拒まれる（[deployment-identity/ADR-0201](../deployment-identity/docs/adr/0201-enumerated-permissions.md) 決定13。全リージョンは #474）
+- S3 Public Access Block・EMR の block public access・VPC Block Public Access を、CI の apply の role が外さないこと。これらの削除は作成と同じ Action で行うので、権限で分けられない（同 決定13）
 - `project` の上限（234文字）で組んだ255文字の analyzer の名前を、AWS が実際に受けること。入力の検査の境界は `tests/validation.tftest.hcl` が確かめる
 - Security Hub のコントロールの判定そのもの。Security Hub はこのユースケースが有効にしない
 

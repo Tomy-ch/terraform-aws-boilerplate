@@ -43,7 +43,20 @@ init-admin-identity:
 plan-admin-identity: init-admin-identity
 	$(call TF_LOCAL_PLAN,admin,identity)
 
-# 判定は bootstrap-check が持つ。terraform show は AWS を呼ばないので、環境変数は引き継がず、
+.PHONY: bootstrap-check-account ## アカウントの準備（1-0 から 2-4）を一時 IAM user の資格情報で読んで確かめる（要 make aws-login）
+bootstrap-check-account:
+	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) account -project $(TF_LOCAL_PROJECT) -region "$$region"
+
+# 環境変数から取らず、コマンドラインで渡されたときだけ値を持つ。
+STAGE :=
+BOOTSTRAP_EXECUTOR :=
+POLICY_SOURCE :=
+
+.PHONY: bootstrap-verify ## bootstrap の段の確認を実環境を読んで行う（STAGE=<stage1|before-apply|stage4|permissions|stage5|output-policy>、段4 は BOOTSTRAP_EXECUTOR=、output-policy は POLICY_SOURCE=）
+bootstrap-verify:
+	@set -eu; unset_env=$$($(call TF_LOCAL,env-unset)); region=$$($(call TF_LOCAL,region "$(TF_BASE)/env/admin/identity")); env $$unset_env AWS_PROFILE=$(TF_LOCAL_PROFILE) AWS_EC2_METADATA_DISABLED=true $(call RUN_SCRIPT_HOST_ARGS,bootstrap-check) verify -stage "$(STAGE)" -project $(TF_LOCAL_PROJECT) -region "$$region"$(if $(BOOTSTRAP_EXECUTOR), -executor "$(BOOTSTRAP_EXECUTOR)")$(if $(POLICY_SOURCE), -policy-source "$(POLICY_SOURCE)")
+
+# terraform show は AWS を呼ばないので、環境変数は引き継がず、
 # terraform が動くのに要る PATH と HOME だけを渡す。
 # bootstrap-check へはホストの terraform の出力を標準入力で渡し、plan のパスはホストの絶対パスなので、
 # RUN_SCRIPT_HOST で起動する。

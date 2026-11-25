@@ -2,29 +2,27 @@
 # was published. A security update skips it and opens immediately, which is Dependabot's own
 # behaviour and not configurable here.
 #
-# docker / docker-compose / github-actions は、更新を取り込むときに digest / SHA の固定を解決し直す
-# （make pin-images-resolve / make pin-actions-resolve）。その解決は既定 14 日未満の公開物を採用しない
-# （.makefiles/docker/pin.mk の PIN_IMAGES_MIN_AGE_DAYS、.makefiles/github/pin.mk の PIN_ACTIONS_MIN_AGE_DAYS）。
-# cooldown がそれより短いと、取り込めない PR が先に開く。
+# cooldown の下限（取り込みの窓）は scripts/repo-settings/dependabot_cooldown.go が検査する（ADR-0501 決定17）。
 version: 2
 updates:
-  # ---- Go modules ----
   - package-ecosystem: "gomod"
     directory: "/scripts"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     cooldown:
-      default-days: 5
-      semver-patch-days: 5
+      default-days: 7
+      semver-patch-days: 7
       semver-minor-days: 7
       semver-major-days: 30
+    labels:
+      - "dependencies"
+      - "go"
     groups:
       gomod:
         patterns:
           - "*"
 
-  # ---- Docker ----
   - package-ecosystem: "docker"
     directory: "/docker/tools"
     schedule:
@@ -32,6 +30,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "docker"
     groups:
       docker:
         patterns:
@@ -45,12 +46,14 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "docker_compose"
     groups:
       docker-compose:
         patterns:
           - "*"
 
-  # ---- GitHub Actions ----
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -58,6 +61,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 14
+    labels:
+      - "dependencies"
+      - "github_actions"
     groups:
       github-actions:
         patterns:

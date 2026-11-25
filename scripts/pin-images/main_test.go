@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -81,14 +84,32 @@ func writeDockerStub(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" + body
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755)) //nolint:gosec // 実行可能スタブ
+	fakeexec.Write(t, filepath.Join(dir, "docker"), script, 0o755)
 	return dir
 }
 
-// useDockerStub はダミー docker を PATH 先頭へ載せる。
 func useDockerStub(t *testing.T, body string) {
 	t.Helper()
 	t.Setenv("PATH", writeDockerStub(t, body)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// coveringHook は scannedPatterns をすべて覆う pin-images-check の項目を持つ hook の設定。
+const coveringHook = "pre-commit:\n" +
+	"  commands:\n" +
+	"    pin-images-check:\n" +
+	"      glob:\n" +
+	"        - \"docker/*/Dockerfile\"\n" +
+	"        - \"docker-compose*.yaml\"\n" +
+	"        - \".github/workflows/*.{yml,yaml}\"\n" +
+	"        - \".github/actions/**/action.{yml,yaml}\"\n" +
+	"        - \"docker/images-pin.toml\"\n" +
+	"        - \".lefthook.yaml\"\n" +
+	"      run: make pin-images-check\n"
+
+// writeHook は root に hook の設定を書く。
+func writeHook(t *testing.T, root, body string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, hookFile), body)
 }
 
 func captureLog(t *testing.T) *strings.Builder {
@@ -1500,9 +1521,7 @@ func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
 
-func Test_run(t *testing.T) {
-	t.Parallel()
-
+func Test_run(t *testing.T) { //nolint:paralleltest // 既定の窓のケースが useDockerStub で t.Setenv を使うため並列化不可
 	lockBody := "\"alpine:3.24\" = \"" + digestAlpine + "\"\n"
 
 	t.Run("正常系", func(t *testing.T) {
@@ -1539,6 +1558,7 @@ func Test_run(t *testing.T) {
 			body := "FROM alpine:3.24@" + digestAlpine + "\n"
 			writeFile(t, df, body)
 			writeFile(t, filepath.Join(root, lockFile), lockBody)
+			writeHook(t, root, coveringHook)
 
 			require.NoError(t, run([]string{"check"}, stubWD(root)))
 
@@ -1595,12 +1615,422 @@ func Test_run(t *testing.T) {
 			require.ErrorIs(t, err, filepath.ErrBadPattern)
 		})
 
+		t.Run("check は hook の glob が走査範囲を覆わなければ固定を見る前に失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM alpine:3.24@"+digestAlpine+"\n")
+			writeFile(t, filepath.Join(root, lockFile), lockBody)
+			writeHook(t, root, strings.Replace(coveringHook, "        - \"docker-compose*.yaml\"\n", "", 1))
+
+			err := run([]string{"check"}, stubWD(root))
+
+			require.ErrorIs(t, err, errHookUncovered)
+			assert.ErrorContains(t, err, composePattern)
+		})
+
+		t.Run("check は hook の設定が無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, lockFile), lockBody)
+
+			err := run([]string{"check"}, stubWD(root))
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+
 		t.Run("未知のフラグはヘルプ要求と混同せず失敗する", func(t *testing.T) {
 			t.Parallel()
 
 			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()))
 
 			require.ErrorContains(t, err, "failed to parse flags")
+		})
+	})
+
+	t.Run("既定の窓", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+		const key = "alpine:3.24"
+		daysAgo := func(n int) time.Time {
+			return time.Now().UTC().Add(-time.Duration(n)*hoursPerDay*time.Hour - time.Hour)
+		}
+		setup := func(t *testing.T, existing string) string {
+			t.Helper()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "FROM "+key+"\n")
+			if existing != "" {
+				writeFile(t, filepath.Join(root, lockFile), "\""+key+"\" = \""+existing+"\"\n")
+			}
+			return root
+		}
+
+		t.Run("フラグが無ければ PinWindowDays に1日足りない digest を採らず既存ピンを維持する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestStale}, lock)
+		})
+
+		t.Run("フラグが無ければ PinWindowDays ちょうどの digest を採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays)))
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestFresh}, lock)
+		})
+
+		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない digest を載せずエラーを返す", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, "")
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			err := run([]string{"resolve"}, stubWD(root))
+
+			require.ErrorIs(t, err, errNoStepBack)
+			assert.ErrorContains(t, err, fmt.Sprintf("%d 日未満", cooldown.PinWindowDays))
+			assert.ErrorContains(t, err, key)
+			assert.NotContains(t, readAll(t, filepath.Join(root, lockFile)), digestFresh)
+		})
+
+		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない digest も採用する", func(t *testing.T) { //nolint:paralleltest // t.Setenv 使用
+			root := setup(t, digestStale)
+			useDockerStub(t, dockerStubBody(digestFresh, daysAgo(cooldown.PinWindowDays-1)))
+
+			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root)))
+
+			lock, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: digestFresh}, lock)
+		})
+	})
+}
+
+func Test_scannedPatterns(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Dockerfile・compose・lockfile・hook の設定と ghfiles の集合を返す", func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, []string{
+				"docker/*/Dockerfile",
+				"docker-compose*.yaml",
+				"docker/images-pin.toml",
+				".lefthook.yaml",
+				".github/workflows/*.yaml",
+				".github/workflows/*.yml",
+				".github/actions/**/action.yml",
+				".github/actions/**/action.yaml",
+			}, scannedPatterns())
+		})
+
+		t.Run("targetFiles が走査するパスはいずれかのパターンに一致する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "docker", "app", "Dockerfile"), "")
+			writeFile(t, filepath.Join(root, "docker-compose.dev.yaml"), "")
+			writeFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"), "")
+			writeFile(t, filepath.Join(root, ".github", "actions", "g", "setup", "action.yaml"), "")
+
+			targets := testTargets(t, root)
+			require.NotEmpty(t, targets)
+			for _, tg := range targets {
+				r := filepath.ToSlash(rel(root, tg.path))
+				matched := false
+				for _, pat := range scannedPatterns() {
+					dir, base, deep := strings.Cut(pat, "/**/")
+					if deep {
+						ok, err := filepath.Match(base, filepath.Base(r))
+						require.NoError(t, err)
+						matched = matched || (ok && strings.HasPrefix(r, dir+"/"))
+						continue
+					}
+					ok, err := filepath.Match(pat, r)
+					require.NoError(t, err)
+					matched = matched || ok
+				}
+				assert.Truef(t, matched, "%s がどのパターンにも一致しない", r)
+			}
+		})
+	})
+}
+
+func Test_validateHookCoverage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("展開した glob が全パターンを含めば通す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, coveringHook)
+
+			require.NoError(t, validateHookCoverage(root))
+		})
+
+		t.Run("走査範囲の外の glob が混ざっていても通す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, strings.Replace(coveringHook, "      glob:\n", "      glob:\n        - \"mise.toml\"\n", 1))
+
+			require.NoError(t, validateHookCoverage(root))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("覆わないパターンを列挙して失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			body := strings.Replace(coveringHook, ".github/actions/**/action.{yml,yaml}", ".github/actions/**/action.yml", 1)
+			writeHook(t, root, body)
+
+			err := validateHookCoverage(root)
+
+			require.ErrorIs(t, err, errHookUncovered)
+			assert.ErrorContains(t, err, ".github/actions/**/action.yaml")
+			assert.NotContains(t, err.Error(), ".github/actions/**/action.yml,")
+		})
+
+		t.Run("より広い glob でも文字列として一致しなければ覆ったとみなさない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, strings.Replace(coveringHook, `"docker/*/Dockerfile"`, `"docker/**"`, 1))
+
+			err := validateHookCoverage(root)
+
+			require.ErrorIs(t, err, errHookUncovered)
+			assert.ErrorContains(t, err, dockerfilePattern)
+		})
+
+		t.Run("glob が無ければ全パターンを覆わない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      run: make pin-images-check\n")
+
+			err := validateHookCoverage(root)
+
+			require.ErrorIs(t, err, errHookUncovered)
+			assert.ErrorContains(t, err, lockFile)
+		})
+
+		t.Run("hook の設定を読めなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			err := validateHookCoverage(t.TempDir())
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+	})
+}
+
+func Test_hookGlobs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("列の glob を波括弧ごと展開して返す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      glob:\n"+
+				"        - \"a/*.{yml,yaml}\"\n        - \"b\"\n")
+
+			got, err := hookGlobs(root)
+
+			require.NoError(t, err)
+			assert.Equal(t, []string{"a/*.yml", "a/*.yaml", "b"}, got)
+		})
+
+		t.Run("文字列 1 つの glob も読む", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      glob: \"*.{a,b}\"\n")
+
+			got, err := hookGlobs(root)
+
+			require.NoError(t, err)
+			assert.Equal(t, []string{"*.a", "*.b"}, got)
+		})
+
+		t.Run("glob が無ければ空を返す", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      run: x\n")
+
+			got, err := hookGlobs(root)
+
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("hook の設定ファイルが無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := hookGlobs(t.TempDir())
+
+			require.ErrorIs(t, err, errHookConfig)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+
+		t.Run("YAML として解釈できなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit: [\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+
+		t.Run("pin-images-check の項目が無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-actions-check:\n      glob: \"x\"\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookMissing)
+		})
+
+		t.Run("pre-commit 以外の段にだけ在る項目は数えない", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-push:\n  commands:\n    pin-images-check:\n      glob: \"x\"\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookMissing)
+		})
+
+		t.Run("列の要素が文字列でなければ失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      glob:\n        - [x]\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+
+		t.Run("glob が写像なら失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      glob:\n        a: b\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+
+		t.Run("展開できない glob を含めば失敗する", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "pre-commit:\n  commands:\n    pin-images-check:\n      glob: \"a{b\"\n")
+
+			_, err := hookGlobs(root)
+
+			require.ErrorIs(t, err, errHookConfig)
+		})
+	})
+}
+
+func Test_expandBraces(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		cases := []struct {
+			name string
+			in   string
+			want []string
+		}{
+			{name: "波括弧が無ければそのまま返す", in: "docker/*/Dockerfile", want: []string{"docker/*/Dockerfile"}},
+			{name: "1 組を候補ごとに展開する", in: "a.{yml,yaml}", want: []string{"a.yml", "a.yaml"}},
+			{name: "複数の組を掛け合わせる", in: "{a,b}/{c,d}", want: []string{"a/c", "a/d", "b/c", "b/d"}},
+			{name: "入れ子を展開する", in: "x{a,b{c,d}}", want: []string{"xa", "xbc", "xbd"}},
+			{name: "空の候補を残す", in: "a{,b}", want: []string{"a", "ab"}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				got, err := expandBraces(tc.in)
+
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			})
+		}
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		for _, in := range []string{"a{b", "a}b", "a}{b}", "{a,{b}"} {
+			t.Run("対応の取れない波括弧を拒む: "+in, func(t *testing.T) {
+				t.Parallel()
+
+				got, err := expandBraces(in)
+
+				require.ErrorIs(t, err, errHookConfig)
+				assert.Empty(t, got)
+			})
+		}
+	})
+}
+
+func Test_readHookFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("正常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("root の下のファイルを読む", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeHook(t, root, "x\n")
+
+			got, err := readHookFile(root)
+
+			require.NoError(t, err)
+			assert.Equal(t, "x\n", string(got))
+		})
+	})
+
+	t.Run("異常系", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("root の外を指す symlink は辿らない", func(t *testing.T) {
+			t.Parallel()
+			root, outside := t.TempDir(), t.TempDir()
+			writeFile(t, filepath.Join(outside, "hook.yaml"), "x\n")
+			require.NoError(t, os.Symlink(filepath.Join(outside, "hook.yaml"), filepath.Join(root, hookFile)))
+
+			got, err := readHookFile(root)
+
+			require.Error(t, err)
+			assert.Empty(t, got)
+		})
+
+		t.Run("root が無ければ失敗する", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := readHookFile(filepath.Join(t.TempDir(), "missing"))
+
+			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
 }

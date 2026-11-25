@@ -127,6 +127,10 @@
             "integration_id": 15368
           },
           {
+            "context": "ref-record-lint",
+            "integration_id": 15368
+          },
+          {
             "context": "repo-settings-check",
             "integration_id": 15368
           },
@@ -156,10 +160,6 @@
           },
           {
             "context": "tf-fmt-check",
-            "integration_id": 15368
-          },
-          {
-            "context": "tf-gates-test",
             "integration_id": 15368
           },
           {

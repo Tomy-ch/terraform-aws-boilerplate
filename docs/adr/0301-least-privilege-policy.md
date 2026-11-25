@@ -77,7 +77,7 @@ Least Privilegeは一般にIAMの原則として語られるが、実際の権�
 
 13. ネットワークの既定をdeny とする。必要な通信のみを許可する。
 14. ingressは、可能な限りsource security groupの参照で限定する。CIDRによる許可は、security group参照が不可能な場合に限る。
-15. `0.0.0.0/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
+15. `0.0.0.0/0` と `::/0` からのingressは、インターネット公開点として設計されたコンポーネント（ロードバランサ、CDN等）に限る。workload本体への直接ingressを許可しない。
 16. egressについても、ユースケースごとに必要な範囲を定義する。全開放を既定としない。
 17. 利用者が通信経路を追加する必要がある場合は、接続先を意味論的に指定する契約として定義する（ADR-0204 決定7）。
 
@@ -167,7 +167,7 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - 保証すること: break-glass の経路の形（IAM user の数と資格情報の種類、role の信頼条件、決定8・10 の例外の範囲、SCP からの除外の範囲、通知の経路）が宣言どおりであること
 - 保証すること: 人の permission set に付く AWS managed policy が、設計記録の一覧に載ったものだけであること。組織の管理者の permission set が管理アカウントにだけ、ユーザーへ直接割り当てられていること
 - 保証しないこと: boilerplate外部で付与された権限、および利用者アカウント側のIAM運用
-- 保証しないこと: attachment が参照で policy に依存すること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する。Policy Test の入力は構成を持たず、参照を見る検査は無い
+- 保証すること: role への managed policy の付与（`aws_iam_role_policy_attachment`）が、同じ module の `aws_iam_policy` を参照するか、AWS managed policy の ARN を付けること（決定21）。参照が欠けると、破棄と置換で policy の削除が付け外しより先に走り、削除が失敗する
 - 保証しないこと: 人の permission set に付く AWS managed policy の中身。AWS が改訂すると、宣言を変えずに人の権限が変わる
 - 保証しないこと: break-glass のパスワードと MFA の保管。メンテナが1人の間は、パスワードと MFA を別の人に分けて持てない（AWS は管理アカウントの root について、1人が両方を持たないことを勧めている）。break-glass で実際に入れること（MFA が要るので自動では確かめられない。人が定期的に試す）
 
@@ -176,11 +176,10 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
 - Policy Test（必須）: 以下をinvariantとして検証する。
   - policy document の Allow の statement に Action wildcard が存在しないこと
   - Resource wildcard が、許可リストに登録されたaction以外で使用されていないこと。同じ範囲を与える `NotResource` の Allow が無いこと。許可リストに、使われていない action が残っていないこと
-  - `0.0.0.0/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
-  - 暗号化・public access block・secure transport等のSecure by Default設定が有効であること
+  - `0.0.0.0/0` と `::/0` からのingressが、インターネット公開点として宣言されたresource以外に存在しないこと
   - 意味論的権限指定から生成されたActionの集合が、期待集合と完全一致すること
   - KMS Key Policy のアカウントへの委任に暗号操作と `kms:CreateGrant` が無いこと。identity-based policy（role・user・group の inline policy と customer managed policy）の Allow に KMS の暗号操作と `kms:CreateGrant` が無いこと
-  - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、`iam:CreateAccessKey` を Deny していること
+  - break-glass の IAM user がちょうど2つで、Terraform がアクセスキーと login profile を持たないこと。IAM user の Allow が break-glass の role の `sts:AssumeRole` と自身の MFA・パスワードの管理に限られ、長期の資格情報の作成（`iam:CreateAccessKey`・`iam:CreateServiceSpecificCredential`・`iam:UploadSSHPublicKey`・`iam:UploadSigningCertificate`）を、条件なしで全 Resource について Deny していること
   - break-glass の role の信頼条件が、break-glass の IAM user の ARN と `aws:MultiFactorAuthPresent` を要求すること
   - 決定8・10 の例外（`AdministratorAccess`）が break-glass の role にだけ付いていること
   - SCP の除外が、回復を妨げる拒否についての break-glass の role の ARN に限られること
@@ -188,9 +187,11 @@ IAM Identity Center の文書の手順である。外部 IdP を前提とし、I
   - permission set に付く AWS managed policy が、設計記録の一覧（permission set ごとの許可リスト）に一致すること。一覧に無い policy の attachment が無いこと、一覧に使われていない項目が残っていないこと
   - `AdministratorAccess` を付ける permission set の割当が、管理アカウントだけ、かつ `principal_type = "USER"` だけであること。メンバーアカウントへの割当に、`AdministratorAccess` を付けた permission set が無いこと
   - 排他の resource（`aws_iam_role_policy_attachments_exclusive`）が載せる policy ごとに、同じ role への attachment がちょうど1つ在ること。排他の resource に載らない attachment が無いこと（決定21。`plan.iam_role_attachment_pairing`、`PLAN-ATTACH-*`）
+- Security（ADR-0501 決定6 の道具）: 暗号化・public access block・secure transport 等の Secure by Default の設定が有効であること。道具の既定ルールが本リポジトリの書き方を検出しない設定は、ADR-0402 決定6 の表の下の文により Policy Test が持つ。
 - Unit Test: 権限語彙と入力の組合せに対する導出結果を検証する。
 - 人の手順: break-glass で実際にサインインして role を引き受け、通知が届くことを定期的に試す。手順と頻度は `organization-baseline` の README の検証方法が持つ。
 - Integration / E2E Test: 意図した通信のみが成立し、意図しない通信が拒否されることを実環境で検証する。
+- Static Analysis（Conftest、HCL のソース。`conftest/hcl/layer/` の `LY309`）: `aws_iam_role_policy_attachment` の `policy_arn` が、`local` と `each` を辿った先で同じ module の `aws_iam_policy` だけを参照するか、partition の部分だけを `data.aws_partition` から組む AWS managed policy の ARN であること（決定21）。Policy Test の入力は構成を持たないので、参照は HCL のソースで見る
 - Static Analysis: policy JSONを受け取るvariableが存在しないことを検査する（ADR-0204と共通）。
 
 ## 影響

@@ -51,7 +51,7 @@
 読み手は次のとおりです。いずれも同じ読み手（`scripts/lib/branchdecl`）を通ります。
 
 - ここから生成するもの: `branch-protection.json` の include、environment の deployment branch policy、workflow の起動条件。apply の workflow（job の `environment:` が、`push` で起動する種別の role の `<env>-<role>` のもの。`make ci-hold-*` を走らせる lock を残す job は、同じ environment でも `workflow_dispatch` だけで起動するので数えない）の `on.push.branches` はその env のデプロイブランチ1つで、ほかの workflow は印 `# branch-set: <集合>` を持つ行を生成します（集合の一覧は [`.github/workflows/README.md`](../workflows/README.md) の「起動の方針」）。`make repo-settings-apply` が書き換え、`repo-settings-check` がずれを落とします
-- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`（`create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
+- 実行時に読むもの: `scripts/repo-settings` の `source`（`deploy-source-check`）と `deploy-branch`・`create-deploy-branch`（`make create-deploy-branch`）、`scripts/apply-revert`（`revert` の接頭辞と、デプロイブランチの `from`）、`scripts/base-branch`（`lines.release` と `line_version`）、`scripts/release`（`release_base`、線の役割の接頭辞と `line_version`）、`scripts/repo-setup`（`env` を持たないデプロイブランチ、`release_base`、線の接頭辞）
 
 ## environments.json
 
@@ -79,13 +79,13 @@
 | --- | --- |
 | `deletion` | 対象ブランチを削除できない。 |
 | `non_fast_forward` | 対象ブランチへの force-push を拒否する。 |
-| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
+| `pull_request` | 対象ブランチへの変更は PR 経由に限る。承認 1 件、push 時に既存の承認を破棄、最終 push 後の再承認は要求しない、全レビュースレッドの解決、CODEOWNERS レビュー、帰属の無い変更への追加の承認、マージ方法は merge commit に限定（squash と rebase merge を除外。ADR-0603 決定24）。 |
 | `code_quality` | GitHub の code quality ルールを `errors` 深刻度でブロックする。 |
 | `required_status_checks` | 宣言したチェックがすべて成功してからマージする。各 context は `integration_id`（GitHub Actions）を持ち、Actions 以外が報告した同じ名前の status では満たせない（ADR-0603 決定34）。`repo-settings-check` が欠けを落とす。 |
 
 ### 単独メンテナのリポジトリに `pull_request` を適用する場合
 
-GitHub では自分の PR を自分で承認できません。`required_approving_review_count: 1` かつ `bypass_actors` が空の場合、参加者がオーナー 1 人だけのリポジトリではこのルールを満たせる人間が存在せず、保護ブランチ向けの PR がすべて恒久的にマージ不能になります。そうしたリポジトリへ適用する前に、メンテナを `bypass_actors` に列挙するか、承認を要求するパラメータを両方とも下ろしてください（`required_approving_review_count: 0` と `require_last_push_approval: false`）。スレッド解決とマージ方法の制限はそれ単体でも効きます。
+GitHub では自分の PR を自分で承認できません。`required_approving_review_count: 1` かつ `bypass_actors` が空の場合、参加者がオーナー 1 人だけのリポジトリではこのルールを満たせる人間が存在せず、保護ブランチ向けの PR がすべて恒久的にマージ不能になります。それでも宣言の値は下げません（ADR-0603 決定21）。メンテナを `bypass_actors` に列挙して解決することもしません（同 決定22）。
 
 ### `code_quality` は裏側の機能が先に報告している必要がある
 
@@ -101,10 +101,10 @@ checkout だけでは再現しない部分を持ちます。これは ADR-0603 �
 
 | 群 | context |
 | --- | --- |
-| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`tf-gates-test`（`make tf-validate-canary`）、`zizmor` |
+| 検査の設定と定義 | `actions-lint`、`adr-lint`、`commitlint`、`docker-lint`、`egress-check`、`md-lint`、`ref-record-lint`、`zizmor` |
 | 宣言と実体のずれ | `mod-tidy-check`、`pin-actions-check`、`pin-images-check`、`pin-runners-check`、`repo-settings-check`、`skill-lint`、`versions-check` |
 | サンプルの除去 | `sample-remove-check` <!-- sample:line --> |
-| コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan` |
+| コードと構成 | `go-lint`、`go-fmt-check`、`go-test`、`test-mapping`、`tf-fmt-check`、`tf-lint`、`tf-validate-test`、`infra-code-gate`、`tf-policy`、`trivy-config`、`checkov`、`kics`、`semgrep`、`secret-scan`、`trufflehog`、`typos`、`editorconfig-check` |
 | デプロイブランチへの経路（ADR-0603 決定32 の例外） | `deploy-source-check`。デフォルトブランチの名前と到達性、デプロイブランチの今の木に依り、変更に誤りが無くても赤になりうる。デプロイブランチ宛でない Pull Request では対象外として成功する。検査のコードと宣言は Pull Request の base の commit のものを使う |
 | plan（ADR-0603 決定12-14 の例外） | `plan-admin-identity`・`plan-admin-workload`。AWS の状態と資格情報の取得に依存し、変更に誤りが無くても赤になりうる。fork と Dependabot の Pull Request では拒否の step で失敗するので、それらは merge できない |
 
@@ -128,4 +128,4 @@ Private Vulnerability Reporting を有効にするかの宣言です。[`SECURIT
 
 ## labels.json
 
-`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。
+`make create-default-labels` が作成するラベル定義（`name` / `description` / `color`）です。`make setup-repo` は先に `make delete-all-labels` を実行するため、このファイルは GitHub が既定で作るラベルへの追加分ではなく、意図するラベル集合そのものです。Dependabot が Pull Request に付けるラベルは `.github/dependabot.yml` の各 ecosystem の `labels:` で名指し、このファイルにも載せます。名指したラベルがこのファイルにあること（大文字小文字を区別しない）は `make repo-settings-check` が検査します。宣言の形（0件でない、`name` が空でない、`color` が `#` を付けない6桁の16進、名前が大文字小文字を区別せずに重複しない）は、`make repo-settings-check` と、`make delete-all-labels`・`make create-default-labels` が GitHub に書く前に、同じ検査で検めます。`description` を省いたラベルは、既存のラベルの説明も空に書き換えます。

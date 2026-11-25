@@ -7,29 +7,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// runConfig は、.editorconfig-checker.json が `{}` であることと、本走査の対象（-dry-run の一覧）が1件以上あることを
-// 確かめます。
+// runConfig は、.editorconfig-checker.json が `{}` であることを確かめ、本走査の対象（-dry-run の一覧）が git の
+// 追跡ファイルを覆っていることを [runCoverage] で突き合わせます。
 func runConfig(config string, w io.Writer, tool toolFunc, env []string) error {
 	if _, err := readCheckerConfig(config); err != nil {
 		return err
 	}
-	r, err := runTool(tool(".", env, stepDryRun))
+	r, err := toolrun.Run(tool(".", checkerEnv(env), stepDryRun))
 	if err != nil {
 		return err
 	}
-	if r.code != 0 {
-		return xerrors.Wrapf(errTool, "editorconfig-checker -dry-run が rc=%d で終わりました\n%s", r.code, r.combined)
+	if r.Code != 0 {
+		return xerrors.Wrapf(errTool, "editorconfig-checker -dry-run が rc=%d で終わりました\n%s", r.Code, r.Combined)
 	}
-	n := countFiles(r.stdout)
-	if n == 0 {
-		return xerrors.Wrap(errNoInput, "editorconfig-checker -dry-run の走査対象のファイルが0件です")
-	}
-	fmt.Fprintf(w, "editorconfig-check: %d ファイル\n", n)
+	scanned := dryRunPaths(r.Stdout)
+	fmt.Fprintf(w, "editorconfig-check: 走査対象 %d ファイル\n", len(scanned))
 
-	return nil
+	return runCoverage(scanned, w, tool, env)
 }
 
 // readCheckerConfig は、空白を除いて `{}` である p の中身を返します。読めなければ errRead、`{}` でなければ
@@ -48,16 +46,4 @@ func readCheckerConfig(p string) ([]byte, error) {
 
 func isEmptyObject(s string) bool {
 	return strings.Join(strings.Fields(s), "") == "{}"
-}
-
-// countFiles は、-dry-run の出力（1行1パス）の、色の制御列と空白を除いて空でない行を数えます。
-func countFiles(out string) int {
-	n := 0
-	for _, line := range strings.Split(stripANSI(out), "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-
-	return n
 }

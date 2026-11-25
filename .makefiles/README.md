@@ -48,8 +48,7 @@ make が持つのは、運用機構（`scripts/`）と道具を呼び出す**順
 | `$(GO_TOOL)` | Go 側のツールランナー | `mise.toml` が pin した Go 製の既製品（golangci-lint、trivy、hadolint ほか） |
 | `$(NODE_TOOL)` | npm 側のツールランナー。host では `docker/tools/node` の lockfile を frozen で入れてから、入れた先の道具を起動する（`scripts/node-tools` の `exec`） | markdownlint-cli2、commitlint |
 | `$(call RUN_SCRIPT,<名前>,<引数>)` | `scripts/<名前>` をビルドして起動 | このリポジトリが書いた検査 |
-| `$(call IMAGE_RUN,<service>,<入力>,<出力>,<create の引数>,<引数>)` | `docker-compose.yaml` の service が宣言する上流のイメージ。mount せず、入力を複写で渡して結果を複写で取り出す。`RUNNER_MODE` に依らない | 上流がイメージとして配布する道具（Checkov / KICS / Semgrep CE。ADR-0503 決定4・7） |
-| `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **提供段のコンテナに無い前提を要するもの** —— version manager 自身を入力にする、`docker` を呼ぶ、`git` / `gh` がホストの資格情報を使う |
+| `$(call RUN_SCRIPT_HOST,<名前>,<引数>)` | 同上、ただしコンテナを経由しない | **提供段のコンテナに無い前提を要するもの** —— version manager 自身を入力にする、`docker` を呼ぶ（上流がイメージとして配布する道具 —— Checkov / KICS / Semgrep CE —— は `scripts/iac-scan` が mount せずに起動する。ADR-0503 決定4・7）、`git` / `gh` がホストの資格情報を使う |
 | 前置きなし（`terraform` を直接） | ホストの terraform | Terraform 側の検査（ADR-0503 決定4・5）。TFLint だけは `$(GO_TOOL)` を経由する |
 
 最後の1つが要る理由は呼び出し側ごとに違い、いずれも「ツールランナーが提供できない前提」に帰着する
@@ -77,7 +76,7 @@ Dockerfile と compose の検査、image digest の固定。
 
 ### `github/`
 
-workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。
+workflow と action の検査、commit message、egress の SSOT、action と runner の固定、ベースブランチの解決。commit message の範囲の判定は `scripts/commit-range` が持つ。
 
 ### `github/operation/`
 
@@ -87,11 +86,11 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `github/setting/`
 
-ブランチ保護・ラベル・リポジトリ設定の適用。
+ブランチ保護・ラベル・リポジトリ設定の適用。判定と GitHub への書き込みは `scripts/repo-settings` が持つ。
 
 ### `go/`
 
-運用機構（`scripts/`）の Go の整形・Lint・テスト。
+運用機構（`scripts/`）の Go の整形・Lint・テスト。整形の検査の判定と canary は `scripts/gofmt-gate` が持つ。
 
 ### `hygiene/`
 
@@ -125,8 +124,11 @@ CI（OIDC で role を assume しての plan と apply）。
 `bootstrap-check-plan` は、保存した plan を `terraform show -json` で読み、`scripts/bootstrap-check` へ標準入力で
 渡して段2-4 の期待値と突き合わせる。plan のパスと標準入力がホストのものなので `RUN_SCRIPT_HOST` で起動し、
 `terraform show` は `env -i` で起動して資格情報を渡さない。`PARTIAL` は make の引数でだけ渡せる。
+`bootstrap-check-account` は、`aws-login` と同じく `tf-local env-unset` の変数を外し、bootstrap の profile と
+identity root の region で `scripts/bootstrap-check account` を起動する。`bootstrap-verify` も同じ形で
+`scripts/bootstrap-check verify` を起動し、`STAGE` と、空でなければ `BOOTSTRAP_EXECUTOR`・`POLICY_SOURCE` を渡す。
+aws の起動は bootstrap-check が持つ。
 
 ### 直下
 
-`runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）、
-`git-isolation.mk`（一時のリポジトリで git を使うレシピを外側のリポジトリから切り離す）。
+`runner.mk`（起動の前置き）、`versions.mk`（版の写しの反映と照合）、`host-tools.mk`（ホストへの道具の導入）。

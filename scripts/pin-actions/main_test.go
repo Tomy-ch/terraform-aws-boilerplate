@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/cooldown"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/fakeexec"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/lockfile"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
@@ -1735,7 +1737,7 @@ func useGitStub(t *testing.T) {
 		shaCodeQL + "\trefs/tags/v4\n"
 	dir := t.TempDir()
 	script := "#!/bin/sh\ncat <<'GITSTUB'\n" + out + "GITSTUB\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755)) //nolint:gosec // 実行可能スタブ
+	fakeexec.Write(t, filepath.Join(dir, "git"), script, 0o755)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -1793,9 +1795,8 @@ func stubWD(root string) func() (string, error) {
 	return func() (string, error) { return root, nil }
 }
 
+//nolint:paralleltest // 既定の窓のケースが useGitStub で t.Setenv を使うため並列化できない
 func Test_run(t *testing.T) {
-	t.Parallel()
-
 	lock := map[string]string{"actions/setup-go@v6": shaSetupGo}
 	unpinned := "      - uses: actions/setup-go@v6\n"
 	pinned := "      - uses: actions/setup-go@" + shaSetupGo + " # v6\n"
@@ -1900,6 +1901,70 @@ func Test_run(t *testing.T) {
 			err := run([]string{"resolve", "-bogus"}, stubWD(t.TempDir()), "")
 
 			require.ErrorContains(t, err, "failed to parse flags")
+		})
+	})
+
+	//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
+	t.Run("既定の窓", func(t *testing.T) {
+		const (
+			key  = "actions/checkout@v7.0.0"
+			uses = "      - uses: " + key + "\n"
+		)
+		setup := func(t *testing.T, existing map[string]string) string {
+			t.Helper()
+			root := t.TempDir()
+			writeLockAt(t, root, existing)
+			writeFile(t, root, ".github/workflows/a.yml", uses)
+			useGitStub(t)
+			return root
+		}
+
+		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
+		t.Run("フラグが無ければ PinWindowDays に1日足りない解決先を採らず既存ピンを維持する", func(t *testing.T) {
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaSetupGo}, got)
+		})
+
+		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
+		t.Run("フラグが無ければ PinWindowDays ちょうどの解決先を採用する", func(t *testing.T) {
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays, cooldown.PinWindowDays)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaCheckout}, got)
+		})
+
+		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
+		t.Run("フラグが無く既存ピンも無ければ PinWindowDays に1日足りない解決先を lockfile へ載せずに成功する", func(t *testing.T) {
+			root := setup(t, map[string]string{})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve"}, stubWD(root), base))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+
+		//nolint:paralleltest // useGitStub が t.Setenv を使うため並列化できない
+		t.Run("--min-age-days=0 なら PinWindowDays に1日足りない解決先も採用する", func(t *testing.T) {
+			root := setup(t, map[string]string{key: shaSetupGo})
+			base := githubTimesStub(t, cooldown.PinWindowDays-1, cooldown.PinWindowDays-1)
+
+			require.NoError(t, run([]string{"resolve", "--min-age-days=0"}, stubWD(root), base))
+
+			got, err := lockFormat.Read(filepath.Join(root, lockFile))
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{key: shaCheckout}, got)
 		})
 	})
 }

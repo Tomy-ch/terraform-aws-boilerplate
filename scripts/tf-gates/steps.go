@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,13 +13,13 @@ import (
 	"strings"
 
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/tfexec"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/workdir"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/xerrors"
 )
 
-// toolFunc は、ディレクトリ dir で段 step の道具を起動するコマンドを作ります。テストは差し替えます。
-type toolFunc func(dir string, env []string, step string) *exec.Cmd
+type toolFunc = toolrun.Func
 
-// 段の名前。command が引数を固定で持ちます。
 const (
 	stepFmt          = "fmt"
 	stepFmtCheck     = "fmt-check"
@@ -30,7 +31,6 @@ const (
 	stepLint         = "lint"
 )
 
-// command は toolFunc の実物です。引数は段ごとに固定で、ディレクトリは作業ディレクトリ、設定は環境変数で渡します。
 // root の init は lock を書き換えない（ADR-0205 決定9。lock の更新は人が root で行う）。
 func command(dir string, env []string, step string) *exec.Cmd {
 	ctx := context.Background()
@@ -60,13 +60,22 @@ func command(dir string, env []string, step string) *exec.Cmd {
 }
 
 // runEach は、targets のそれぞれで step を起動し、出力を w へ流し、落ちたディレクトリを集めて失敗にします。
+// [errTool] のときは、残りを起動せずに [errTool] を返します。それまでに落ちたディレクトリは文面にだけ添えます。
 func runEach(name string, targets []target, w io.Writer, cmdOf func(target) *exec.Cmd) error {
 	var failed []string
 	for _, t := range targets {
 		cmd := cmdOf(t)
 		cmd.Stdout, cmd.Stderr = w, w
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(w, "%s: %s: %v\n", name, t.path, err)
+		code, err := toolrun.Exec(cmd)
+		if err != nil {
+			if len(failed) > 0 {
+				return xerrors.Wrapf(err, "%s: %s で打ち切りました（それまでに落ちたディレクトリ: %s）", name, t.path, strings.Join(failed, " "))
+			}
+
+			return xerrors.Wrapf(err, "%s: %s で打ち切りました", name, t.path)
+		}
+		if code != 0 {
+			fmt.Fprintf(w, "%s: %s: exit status %d\n", name, t.path, code)
 			failed = append(failed, t.path)
 		}
 	}
@@ -98,8 +107,12 @@ func runFmt(args []string, w io.Writer, tool toolFunc) error {
 	targets := make([]target, 0, len(s.roots))
 	for _, r := range s.roots {
 		p := filepath.Join(s.base, filepath.FromSlash(r))
-		if _, err := os.Stat(p); err != nil {
+		_, err := os.Stat(p)
+		if xerrors.Is(err, fs.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return xerrors.Wrapf(err, "%s", p)
 		}
 		targets = append(targets, target{rel: r, path: p})
 	}
@@ -146,26 +159,43 @@ func initTargets(data string, targets []target, w io.Writer, tool toolFunc) erro
 	})
 }
 
-// runValidate は、各ディレクトリの `terraform validate -json` の出力と stderr を -out に置き、一覧（manifest.tsv）を
-// 書き直します。判定は result が持ちます。一覧に載るファイルだけが読まれます。
-func runValidate(args []string, w io.Writer, tool toolFunc) error {
-	var out string
+type canaryFunc func(args []string, w io.Writer, tool toolFunc) error
+
+// runValidate は、canary を走らせてから、各ディレクトリの `terraform validate -json` の出力と stderr を -out に置き、
+// 一覧（manifest.tsv）を書き直します。判定は result が持ちます。一覧に載るファイルだけが読まれます。root はリポジトリ
+// 直下です。
+func runValidate(args []string, w io.Writer, tool toolFunc, canary canaryFunc, root string) error {
+	var out, canaryData, canaryWork, canaryReference string
 	data, targets, err := parseData("validate", args, w, func(f *flag.FlagSet) {
 		f.StringVar(&out, "out", "", "出力と一覧を置くディレクトリ")
+		f.StringVar(&canaryData, "canary-data", "", "canary の TF_DATA_DIR を置くディレクトリ（絶対パス）")
+		f.StringVar(&canaryWork, "canary-work", "", "canary の fixture を建てるディレクトリ")
+		f.StringVar(&canaryReference, "canary-reference", "", "canary に写す versions.tf と lock の root")
 	})
 	if err != nil {
 		return err
 	}
-	if out == "" {
-		return xerrors.Wrap(errUsage, "tf-gates validate は -out が要ります")
+	if out == "" || canaryData == "" || canaryWork == "" || canaryReference == "" {
+		return xerrors.Wrap(errUsage, "tf-gates validate は -out・-canary-data・-canary-work・-canary-reference が要ります")
+	}
+	if _, err := workdir.Resolve(root, canaryWork); err != nil {
+		return xerrors.Wrapf(errUsage, "-canary-work %v", err)
+	}
+	if err := canary([]string{"-data", canaryData, "-work", canaryWork, "-reference", canaryReference}, w, tool); err != nil {
+		return xerrors.Wrap(err, "canary が落ちたので、本走査を行いません")
 	}
 
 	return validateTargets(data, out, targets, tool)
 }
 
+// validateTargets は、[errTool] のときは、残りを起動せずに一覧を書かないまま [errTool] を返します。前の起動の一覧は先に消し、打ち切った後に古い一覧が残らないようにします。
 func validateTargets(data, out string, targets []target, tool toolFunc) error {
 	if err := os.MkdirAll(out, 0o750); err != nil {
 		return xerrors.Wrapf(err, "%s の作成", out)
+	}
+	manifestPath := filepath.Join(out, "manifest.tsv")
+	if err := os.Remove(manifestPath); err != nil && !xerrors.Is(err, fs.ErrNotExist) {
+		return xerrors.Wrapf(err, "%s の削除", manifestPath)
 	}
 	var manifest strings.Builder
 	for i, t := range targets {
@@ -183,23 +213,16 @@ func validateTargets(data, out string, targets []target, tool toolFunc) error {
 		}
 		cmd := tool(t.path, tfexec.Env(os.Environ(), "TF_DATA_DIR="+tfexec.DataDir(data, t.rel)), stepValidate)
 		cmd.Stdout, cmd.Stderr = stdout, stderr
-		code := 0
-		if err := cmd.Run(); err != nil {
-			code = -1
-			var exit *exec.ExitError
-			if xerrors.As(err, &exit) {
-				code = exit.ExitCode()
-			}
-		}
+		code, err := toolrun.Exec(cmd)
 		_ = stdout.Close()
 		_ = stderr.Close()
-		if code < 0 {
-			return xerrors.Wrapf(errDirsFailed, "%s の validate を起動できません", t.path)
+		if err != nil {
+			return xerrors.Wrapf(err, "%s の validate で打ち切りました", t.path)
 		}
 		fmt.Fprintf(&manifest, "%s\t%d\t%s\t%s\n", t.path, code, jsonPath, errPath)
 	}
-	if err := os.WriteFile(filepath.Join(out, "manifest.tsv"), []byte(manifest.String()), 0o600); err != nil {
-		return xerrors.Wrapf(err, "%s の書き込み", filepath.Join(out, "manifest.tsv"))
+	if err := os.WriteFile(manifestPath, []byte(manifest.String()), 0o600); err != nil {
+		return xerrors.Wrapf(err, "%s の書き込み", manifestPath)
 	}
 
 	return nil
