@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"os"
@@ -295,15 +296,58 @@ func Test_ciFinishStep(t *testing.T) {
 		assert.Contains(t, readKnob(t, filepath.Dir(f.output), "output"), "failure=applied\n")
 	})
 
-	t.Run("段が state に終わりを書かずに落ちていれば、その段で落ちる", func(t *testing.T) {
+	t.Run("段が state に終わりを書かずに落ちていれば、判定に届いていないので errCINotEstablished で終了コード 2（失敗の種類は従来どおり書く）", func(t *testing.T) {
 		t.Parallel()
 		f := newFlow(t, nil)
 		require.NoError(t, f.step("ci-prepare", "-mode", ciModeApply, "-project", "tabp", "-env", "admin", "-root", "identity",
 			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
 		require.NoError(t, f.step("ci-init", "-state", f.state))
-		require.ErrorIs(t, f.step("ci-finish", "-state", f.state), errCIUnfinish)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.NotErrorIs(t, err, errCIUnfinish, "判定の sentinel を包むと終了コードが 1 になる")
+		assert.Equal(t, 2, exitCode(err))
 		assert.Equal(t, "failure=plan\n", readKnob(t, filepath.Dir(f.output), "output"))
 		f.leftovers()
+	})
+
+	// preparedState は、prepare と init を通した state を読み、Stage と Established を差し替えて書き戻す。
+	preparedState := func(t *testing.T, established bool, drop bool) *flow {
+		t.Helper()
+		f := newFlow(t, nil)
+		require.NoError(t, f.step("ci-prepare", "-mode", ciModePlan, "-project", "tabp", "-env", "admin", "-root", "identity",
+			"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+		require.NoError(t, f.step("ci-init", "-state", f.state))
+		st, err := loadCIState(f.state)
+		require.NoError(t, err)
+		st.Stage, st.Established = stagePlan, established
+		require.NoError(t, st.save(f.state))
+		if drop {
+			raw, err := os.ReadFile(f.state) //nolint:gosec // t.TempDir() 由来
+			require.NoError(t, err)
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(raw, &m))
+			delete(m, "established")
+			raw, err = json.Marshal(m)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(f.state, raw, 0o600))
+		}
+		return f
+	}
+
+	t.Run("判定として落ちた段（established）は従来どおり errCIUnfinish で終了コード 1", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, true, false)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCIUnfinish)
+		assert.Equal(t, 1, exitCode(err))
+	})
+
+	t.Run("established を持たない古い state の失敗は、成り立たない側（2）に倒す", func(t *testing.T) {
+		t.Parallel()
+		f := preparedState(t, true, true)
+		err := f.step("ci-finish", "-state", f.state)
+		require.ErrorIs(t, err, errCINotEstablished)
+		assert.Equal(t, 2, exitCode(err))
 	})
 
 	t.Run("state が無ければ失敗する", func(t *testing.T) {

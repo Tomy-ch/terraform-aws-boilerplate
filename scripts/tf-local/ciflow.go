@@ -64,14 +64,15 @@ const (
 )
 
 var (
-	errCIState    = xerrors.New("❌ CI の入口の state を読めません")
-	errCIInit     = xerrors.New("❌ init が失敗しました。全文はランナーの外に出しません")
-	errCIHeader   = xerrors.New("❌ plan した commit の行を読めません")
-	errCIPolicy   = xerrors.New("❌ Policy を通りません（理由は上の行）")
-	errCIUpload   = xerrors.New("❌ 全文を出力の Bucket に置けません")
-	errCIUnfinish = xerrors.New("❌ 終わっていない段があります")
-	errCIFailed   = xerrors.New("❌ 全文は上の key にあります")
-	errCIOutput   = xerrors.New("❌ job summary か GITHUB_OUTPUT に書けません")
+	errCIState          = xerrors.New("❌ CI の入口の state を読めません")
+	errCIInit           = xerrors.New("❌ init が失敗しました。全文はランナーの外に出しません")
+	errCIHeader         = xerrors.New("❌ plan した commit の行を読めません")
+	errCIPolicy         = xerrors.New("❌ Policy を通りません（理由は上の行）")
+	errCIUpload         = xerrors.New("❌ 全文を出力の Bucket に置けません")
+	errCIUnfinish       = xerrors.New("❌ 終わっていない段があります")
+	errCINotEstablished = xerrors.New("❌ 失敗した段が判定まで届いていません（道具を起動できない、値を決められないなど）")
+	errCIFailed         = xerrors.New("❌ 全文は上の key にあります")
+	errCIOutput         = xerrors.New("❌ job summary か GITHUB_OUTPUT に書けません")
 )
 
 // ciState は、段の間で運ぶ値です。アカウント ID を含むので、所有者だけが読める権限で書きます。
@@ -90,11 +91,14 @@ type ciState struct {
 	TFPlan    string   `json:"tfplan"`
 	Done      []string `json:"done"`
 	// Stage は失敗した段の種類。空なら失敗していない。
-	Stage   string `json:"stage"`
-	Applied bool   `json:"applied"`
-	Summary string `json:"summary"`
-	SHA     string `json:"sha"`
-	Version string `json:"version"`
+	Stage string `json:"stage"`
+	// Established は、Stage の失敗が対象について否と言えた判定であることです。無い（古い state）なら成り立たない側に
+	// 倒します。
+	Established bool   `json:"established"`
+	Applied     bool   `json:"applied"`
+	Summary     string `json:"summary"`
+	SHA         string `json:"sha"`
+	Version     string `json:"version"`
 }
 
 func loadCIState(path string) (ciState, error) {
@@ -145,6 +149,11 @@ func (s *ciState) done(step string) {
 	if !slices.Contains(s.Done, step) {
 		s.Done = append(s.Done, step)
 	}
+}
+
+// isVerdict は、err が対象について否と言えた判定（終了コード 1）かを返します。
+func isVerdict(err error) bool {
+	return exitCode(err) == 1
 }
 
 // fail は失敗の種類を残します。先に残した種類を上書きしません。
@@ -433,6 +442,7 @@ func ciPlanStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	summary, err := ciRunPlan(&s, d, stdout)
 	if err != nil {
+		s.Established = isVerdict(err)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -527,6 +537,7 @@ func ciPolicyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	if err := ciRunPolicy(s, d, stdout, work, policy, decl, layer, namespaces); err != nil {
 		s.fail(stagePolicy)
+		s.Established = isVerdict(err)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -691,6 +702,7 @@ func ciApplyStep(args []string, d deps, stdout io.Writer) (string, error) {
 	kind := failureKind(stageApply, code, out)
 	if kind != "applied" {
 		s.fail(kind)
+		s.Established = true
 		if serr := s.save(statePath); serr != nil {
 			return "", serr
 		}
@@ -762,6 +774,7 @@ func ciUploadStep(args []string, d deps, stdout io.Writer) (string, error) {
 	}
 	if err := ciRunUpload(&s, d, stdout); err != nil {
 		s.fail(stageUpload)
+		s.Established = isVerdict(err)
 		if serr := s.save(statePath); serr != nil {
 			return "", errors.Join(err, serr)
 		}
@@ -849,6 +862,10 @@ func ciFinishStep(args []string, d deps) (string, error) {
 			if werr := writeFailure(d.environ, s.Stage); werr != nil {
 				return "", errors.Join(err, werr)
 			}
+		}
+
+		if !s.Established {
+			return "", xerrors.Wrapf(errCINotEstablished, "失敗の段: %s（%v）", s.Stage, err)
 		}
 
 		return "", xerrors.Wrapf(err, "失敗の段: %s", s.Stage)
