@@ -194,6 +194,9 @@ func ciWorkUnder(root, parent, pattern string, w io.Writer) (string, func(), err
 	if err != nil {
 		return "", nil, xerrors.Wrap(err, "作業ディレクトリ")
 	}
+	if w == nil {
+		w = io.Discard
+	}
 
 	return work, func() {
 		cleanup()

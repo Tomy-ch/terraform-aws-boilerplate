@@ -399,6 +399,33 @@ func Test_ciFinishStep(t *testing.T) {
 		assert.Equal(t, 1, exitCode(err))
 	})
 
+	for name, c := range map[string]struct {
+		established bool
+		want        error
+		code        int
+	}{
+		"判定に届かない失敗は、失敗の種類を書けなくても終了コード 2 のまま":       {false, errCINotEstablished, 2},
+		"判定の失敗は、失敗の種類を書けなくても errCIFailed で終了コード 1": {true, errCIFailed, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFlow(t, nil)
+			require.NoError(t, f.step("ci-prepare", "-mode", ciModeApply, "-project", "tabp", "-env", "admin", "-root", "identity",
+				"-profile", "p", "-base", f.base, "-header", f.header, "-state", f.state))
+			require.NoError(t, f.step("ci-init", "-state", f.state))
+			st, err := loadCIState(f.state)
+			require.NoError(t, err)
+			st.Stage, st.Established = stagePlan, c.established
+			st.Done = append(st.Done, stagePlan, stagePolicy, stageApply, stageUpload)
+			require.NoError(t, st.save(f.state))
+			require.NoError(t, os.MkdirAll(f.output, 0o700), "GITHUB_OUTPUT をディレクトリにして書き込みを落とす")
+			err = f.step("ci-finish", "-state", f.state)
+			require.ErrorIs(t, err, c.want)
+			require.ErrorIs(t, err, errCIOutput)
+			assert.Equal(t, c.code, exitCode(err))
+		})
+	}
+
 	t.Run("established を持たない古い state の失敗は、成り立たない側（2）に倒す", func(t *testing.T) {
 		t.Parallel()
 		f := preparedState(t, true, true)
@@ -616,6 +643,7 @@ func Test_ciRunPolicy(t *testing.T) {
 		"rego に規則が無ければ失敗する":                            {files: map[string]string{"p.rego": "package plan.p\n"}, ns: "plan.p", out: "[]", want: errPolicyRules},
 		"conftest の結果を読めなければ失敗する":                      {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: "x", want: errPolicyJSON},
 		"評価の件数が規則の数と違えば評価できなかったとして ErrCount で、終了コード 2": {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":2}]`, want: policyresult.ErrCount, code: 2},
+		"評価の件数が規則の数より少なければ ErrCount で、終了コード 2":         {files: map[string]string{"p.rego": onePolicy + "\ndeny contains msg if {\n\tfalse\n\tmsg := \"y\"\n}\n"}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":1}]`, want: policyresult.ErrCount, code: 2},
 		"名前空間の規則が1つも評価されなければ ErrEmpty で、終了コード 2":       {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[]`, want: policyresult.ErrEmpty, code: 2},
 		"違反だけなら errCIPolicy で、終了コード 1":                 {files: map[string]string{"p.rego": onePolicy}, ns: "plan.p", out: `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`, want: errCIPolicy, code: 1},
 	} {
@@ -630,6 +658,21 @@ func Test_ciRunPolicy(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("違反の名前空間と評価できなかった名前空間が混ざれば、評価できなかった側を優先して終了コード 2", func(t *testing.T) {
+		t.Parallel()
+		tool, _ := fakeFlow(t, map[string]string{stepCIConftest + ".out": `[{"namespace":"plan.p","successes":0,"failures":[{"msg":"bad"}]}]`})
+		s := ciState{Out: filepath.Join(t.TempDir(), "o.txt"), JSON: fileWith(t, "{}")}
+		files := map[string]string{"p.rego": onePolicy, "q.rego": strings.Replace(onePolicy, "plan.p", "plan.q", 1)}
+		for _, order := range [][]string{{"plan.p", "plan.q"}, {"plan.q", "plan.p"}} {
+			err := ciRunPolicy(s, deps{tool: tool, stderr: &bytes.Buffer{}, root: t.TempDir()}, &bytes.Buffer{}, "tmp/ci-policy", policyDirWith(t, files), fileWith(t, "{}"), fileWith(t, "{}"), order)
+			require.ErrorIs(t, err, policyresult.ErrEmpty, order)
+			assert.NotErrorIs(t, err, errCIPolicy, order)
+			assert.Equal(t, 2, exitCode(err), order)
+			assert.Contains(t, err.Error(), "plan.p", order)
+			assert.Contains(t, err.Error(), "plan.q", order)
+		}
+	})
 
 	t.Run("conftest を起動できなければ ErrTool で、終了コード 2", func(t *testing.T) {
 		t.Parallel()
@@ -712,6 +755,35 @@ func Test_ciRunApply(t *testing.T) {
 		_, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: tool}, time.Second)
 		require.ErrorIs(t, err, toolrun.ErrTool)
 		assert.Equal(t, 2, exitCode(err))
+	})
+
+	shTool := func(script string) toolFunc {
+		return func(ctx context.Context, dir string, env []string, _ string, _ ...string) *exec.Cmd {
+			c := exec.CommandContext(ctx, "/bin/sh", "-c", script)
+			c.Dir, c.Env = dir, env
+			return c
+		}
+	}
+
+	t.Run("打ち切りの割り込みを無視して 0 で終わった apply は timeout にせず 0 を返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`trap '' INT; sleep 0.3; exit 0`)}, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Zero(t, code)
+	})
+
+	t.Run("割り込みで落ちた apply は applyTimedOut を返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`trap 'exit 1' INT; while :; do sleep 0.05; done`)}, 50*time.Millisecond)
+		require.NoError(t, err)
+		assert.Equal(t, applyTimedOut, code)
+	})
+
+	t.Run("期限の内に 0 以外で終わった apply は timeout にせず、その終了コードを返す", func(t *testing.T) {
+		t.Parallel()
+		code, err := ciRunApply(ciState{Dir: t.TempDir(), Out: fileWith(t, "")}, deps{tool: shTool(`exit 1`)}, time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, 1, code)
 	})
 }
 

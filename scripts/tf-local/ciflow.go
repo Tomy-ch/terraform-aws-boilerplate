@@ -613,7 +613,8 @@ func ciRunPolicy(s ciState, d deps, stdout io.Writer, parent, policy, decl, laye
 		}
 	}
 	// 評価が0件・件数の食い違いなど、違反のほかの理由で落ちた名前空間が1つでもあれば、Policy を評価できなかった
-	// ことになる（ADR-0702 決定13）。違反だけのときに限って判定（errCIPolicy）にする。
+	// ことになる（ADR-0702 決定13）。ほかの名前空間に違反があっても評価できなかった側を優先し、違反だけのときに
+	// 限って判定（errCIPolicy）にする。
 	if len(unestablished) > 0 {
 		return xerrors.Wrapf(errors.Join(unestablished...), "Policy を評価できません（%s）", strings.Join(failed, " "))
 	}
@@ -750,8 +751,10 @@ func ciRunApply(s ciState, d deps, limit time.Duration) (int, error) {
 	}
 	var timedOut atomic.Bool
 	timer := time.AfterFunc(limit, func() {
-		timedOut.Store(true)
-		_ = cmd.Process.Signal(os.Interrupt)
+		// 割り込みを届けられたときだけ打ち切りとする。終わった後に発火しても timeout に読み替えない。
+		if err := cmd.Process.Signal(os.Interrupt); err == nil {
+			timedOut.Store(true)
+		}
 	})
 	waitErr := cmd.Wait()
 	timer.Stop()

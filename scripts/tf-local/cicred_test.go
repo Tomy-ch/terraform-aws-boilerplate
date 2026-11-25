@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/testenv"
 	"github.com/Tomy-ch/terraform-aws-boilerplate/scripts/lib/toolrun"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -337,6 +338,36 @@ func Test_ciWorkUnder(t *testing.T) {
 			assert.Empty(t, entries)
 		})
 	}
+
+	t.Run("消し残せば作業ディレクトリのパスを含む警告を w へ書き、消せれば何も書かない", func(t *testing.T) {
+		t.Parallel()
+		testenv.RequireNonRoot(t, "消せないディレクトリを作る")
+		root := t.TempDir()
+		var ok bytes.Buffer
+		_, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", &ok)
+		require.NoError(t, err)
+		cleanup()
+		assert.Empty(t, ok.String())
+
+		var warn bytes.Buffer
+		work, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", &warn)
+		require.NoError(t, err)
+		sub := filepath.Join(work, "sub")
+		require.NoError(t, os.MkdirAll(sub, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(sub, "f"), nil, 0o600))
+		require.NoError(t, os.Chmod(sub, 0o500))
+		t.Cleanup(func() { _ = os.Chmod(sub, 0o700) })
+		cleanup()
+		assert.Contains(t, warn.String(), "⚠️ 作業ディレクトリ "+work+" を消せませんでした")
+	})
+
+	t.Run("w が nil でも、消し残したときに落ちない", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		_, cleanup, err := ciWorkUnder(root, "tmp/ci-plan", "assume-", nil)
+		require.NoError(t, err)
+		assert.NotPanics(t, cleanup)
+	})
 
 	t.Run("-work の親を作れなければ失敗する", func(t *testing.T) {
 		t.Parallel()
