@@ -468,13 +468,48 @@ func Test_checkReadme(t *testing.T) {
 		require.ErrorIs(t, err, errCountMismatch)
 	})
 
-	t.Run("コメントの中にだけ節があれば見出しが無い違反", func(t *testing.T) {
+	t.Run("コメントの中にだけ節があれば、その行と理由を名指して errCountMismatch", func(t *testing.T) {
 		t.Parallel()
-		got, err := checkReadme("R.md", []byte(readmeWith("<!--\n"+validSection+"-->\n")))
+		body := readmeWith("<!--\n" + validSection + "-->\n")
+		_, err := checkReadme("R.md", []byte(body))
+		require.ErrorIs(t, err, errCountMismatch)
+		assert.Contains(t, err.Error(), "読まなかった行: "+lineOf(t, body, heading)+" 行目（HTML コメント）")
+	})
+
+	t.Run("フェンスの中の見出しは、その行と理由を名指す", func(t *testing.T) {
+		t.Parallel()
+		_, err := checkReadme("R.md", []byte("# x\n```\n"+heading+"\n```\n"))
+		require.ErrorIs(t, err, errCountMismatch)
+		assert.Contains(t, err.Error(), "読まなかった行: 3 行目（フェンス）")
+	})
+
+	t.Run("フェンスの中の閉じない開きは、後ろの見出しを隠さない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte("# x\n\n```html\n<!-- 例\n```\n\n"+readmeWith(validSection)))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("コメントの中のフェンスの区切りは、後ろの見出しを隠さない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte("# x\n\n<!--\n```\n-->\n\n"+readmeWith(validSection)))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("行頭がコメントの行は見出しとして数えない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading, "<!-- -->"+heading, 1))))
 		require.NoError(t, err)
 		require.Len(t, got, 1)
-		assert.Equal(t, 1, got[0].Line)
 		assert.Contains(t, got[0].Message, "見出しがありません")
+	})
+
+	t.Run("空のコメントは閉じないコメントではない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte("<!--> a <!--->\n"+readmeWith(validSection)))
+		require.NoError(t, err)
+		assert.Empty(t, got)
 	})
 
 	t.Run("1行のコメントの中の見出しは数えない", func(t *testing.T) {
@@ -614,36 +649,108 @@ func Test_hasTail(t *testing.T) {
 	}
 }
 
-func Test_visibleLines(t *testing.T) {
+func Test_scanReadme(t *testing.T) {
 	t.Parallel()
 
+	type line = mdscan.Line
 	for name, c := range map[string]struct {
-		body     string
-		want     []string
-		openedAt int
+		content string
+		want    scanned
 	}{
-		"コメントが無ければそのまま": {"a\nb", []string{"a", "b"}, 0},
-		"1行のコメントは空になる":  {"<!-- a -->\nb", []string{"", "b"}, 0},
-		"行末のコメントを外す":    {"- A <!-- sample:line -->", []string{"- A "}, 0},
-		"複数行のコメントの中は空になる": {
-			"a\n<!--\n## x\n-->\nb", []string{"a", "", "", "", "b"}, 0,
+		"フェンスもコメントも無ければ全行を返し、見出しの添字を持つ": {
+			"a\n" + heading + "\nb",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2, Text: heading}, {Number: 3, Text: "b"}}, headings: []int{1}},
 		},
-		"閉じた後ろの文字は残す":                {"<!-- a\nb --> c", []string{"", " c"}, 0},
-		"1行に2つのコメント":                 {"a<!-- x -->b<!-- y -->c", []string{"abc"}, 0},
-		"inline code の中の開きは開かない":     {"`<!--` a\nb", []string{"`<!--` a", "b"}, 0},
-		"閉じない inline code の後ろの開きは開く": {"`a <!-- b\nc -->", []string{"`a ", ""}, 0},
-		"閉じなければ開いた行を返す":              {"a\n<!-- b\nc", []string{"a", "", ""}, 2},
+		"フェンスの行を返さず、中の見出しをフェンスの理由で報告する": {
+			"a\n```\n" + heading + "\n```\nb",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 5, Text: "b"}}, hidden: []hiddenLine{{Line: 3, Reason: reasonFence}}},
+		},
+		"コメントの中の見出しを、空の行にしてコメントの理由で報告する": {
+			"<!--\n" + heading + "\n-->",
+			scanned{lines: []line{{Number: 1}, {Number: 2}, {Number: 3}}, hidden: []hiddenLine{{Line: 2, Reason: reasonComment}}},
+		},
+		"フェンスの中の閉じない開きはコメントを開かない": {
+			"```\n<!--\n```\n" + heading,
+			scanned{lines: []line{{Number: 4, Text: heading}}, headings: []int{0}},
+		},
+		"コメントの中のフェンスの区切りはフェンスを開かない": {
+			"<!--\n```\n-->\n" + heading,
+			scanned{lines: []line{{Number: 1}, {Number: 2}, {Number: 3}, {Number: 4, Text: heading}}, headings: []int{3}},
+		},
+		"行頭がコメントの行は、残りが見出しの形でも見出しではない": {
+			"<!-- -->" + heading,
+			scanned{lines: []line{{Number: 1, Text: heading}}},
+		},
+		"閉じなければ開いた行を返す": {
+			"a\n<!-- b\nc",
+			scanned{lines: []line{{Number: 1, Text: "a"}, {Number: 2}, {Number: 3}}, openedAt: 2},
+		},
+		"コメントの中で閉じて開き直せば、開き直した行を返す": {
+			"<!-- a\nb --> c <!-- d\ne",
+			scanned{lines: []line{{Number: 1}, {Number: 2, Text: " c "}, {Number: 3}}, openedAt: 2},
+		},
+		"閉じれば開いた行を忘れる": {
+			"<!-- a\nb -->",
+			scanned{lines: []line{{Number: 1}, {Number: 2}}},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, openedAt := visibleLines(lines(c.body))
-			texts := make([]string, 0, len(got))
-			for i, l := range got {
-				assert.Equal(t, i+1, l.Number, "行の番号を保つ")
-				texts = append(texts, l.Text)
-			}
-			assert.Equal(t, c.want, texts)
-			assert.Equal(t, c.openedAt, openedAt)
+			assert.Equal(t, c.want, scanReadme([]byte(c.content)))
+		})
+	}
+}
+
+func Test_stripComments(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text      string
+		open      bool
+		want      string
+		stillOpen bool
+	}{
+		"コメントが無ければそのまま":           {"a", false, "a", false},
+		"1行のコメントは空になる":            {"<!-- a -->", false, "", false},
+		"行末のコメントを外す":              {"- A <!-- sample:line -->", false, "- A ", false},
+		"開いたままの行は空になる":            {"## x", true, "", true},
+		"閉じた後ろの文字は残す":             {"b --> c", true, " c", false},
+		"1行に2つのコメント":              {"a<!-- x -->b<!-- y -->c", false, "abc", false},
+		"inline code の中の開きは開かない":  {"`<!--` a", false, "`<!--` a", false},
+		"閉じない inline code の後ろは開く": {"`a <!-- b", false, "`a ", true},
+		"閉じなければ開いたままを返す":          {"a <!-- b", false, "a ", true},
+		"<!--> は空のコメント":           {"a<!-->b", false, "ab", false},
+		"<!---> は空のコメント":          {"a<!--->b", false, "ab", false},
+		"<!----> は閉じたコメント":        {"a<!---->b", false, "ab", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, stillOpen := stripComments(c.text, c.open)
+			assert.Equal(t, c.want, got)
+			assert.Equal(t, c.stillOpen, stillOpen)
+		})
+	}
+}
+
+func Test_cutEmptyComment(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		rest string
+		want string
+		ok   bool
+	}{
+		"> で閉じる":          {">b", "b", true},
+		"-> で閉じる":         {"->b", "b", true},
+		"--> は空のコメントではない": {"-->b", "", false},
+		"本文が続く":           {" a -->", "", false},
+		"空":               {"", "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := cutEmptyComment(c.rest)
+			assert.Equal(t, c.want, got)
+			assert.Equal(t, c.ok, ok)
 		})
 	}
 }

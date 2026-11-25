@@ -15,8 +15,8 @@
 // 記録の中身が正しいこと、公式実装と一致することは見ません（ADR-0206 の検証方法のレビュー）。
 //
 // 対象の集合は、ディレクトリの列挙と git の追跡ファイルの2つの経路で得て突き合わせます。見出しの数も、
-// フェンスを読む経路（lib/mdscan）と生の行の経路で数えて突き合わせます（ADR-0702 決定15）。CRLF の改行は LF として
-// 読みます。
+// フェンスと HTML コメントを読む経路と生の行の経路で数えて突き合わせ、フェンスかコメントの中に見出しの形の行が
+// 在れば食い違いとして扱います（ADR-0702 決定15）。CRLF の改行は LF として読みます。
 package main
 
 import (
@@ -267,37 +267,95 @@ func checkTarget(root, path string) ([]lintreport.Finding, error) {
 	return checkReadme(path, content)
 }
 
-// checkReadme は、README の参照記録の節を検査します。見出しの数が2つの経路で一致しなければ errCountMismatch を
-// 返します。
+// checkReadme は、README の参照記録の節を検査します。見出しの形をした生の行の数と、scanReadme が見出しとして
+// 読んだ数が一致しなければ、読まなかった行とその理由を名指して errCountMismatch を返します。
 func checkReadme(path string, content []byte) ([]lintreport.Finding, error) {
 	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
-	lines, openedAt := visibleLines(mdscan.Lines(content))
-	var at []int
-	for i, l := range lines {
-		if isHeading(l.Text) {
-			at = append(at, i)
-		}
-	}
+	sc := scanReadme(content)
 	raw := 0
-	rawVisible, _ := visibleLines(rawLines(content))
-	for _, l := range rawVisible {
+	for _, l := range rawLines(content) {
 		if isHeading(l.Text) {
 			raw++
 		}
 	}
-	if raw != len(at) {
-		return nil, xerrors.Wrapf(errCountMismatch, "%s: 見出し %q がフェンスの外に %d 件、全行に %d 件", path, heading, len(at), raw)
+	if raw != len(sc.headings) {
+		where := make([]string, 0, len(sc.hidden))
+		for _, h := range sc.hidden {
+			where = append(where, fmt.Sprintf("%d 行目（%s）", h.Line, h.Reason))
+		}
+		return nil, xerrors.Wrapf(errCountMismatch, "%s: 見出し %q が生の行に %d 件、見出しとして読める位置に %d 件。読まなかった行: %s",
+			path, heading, raw, len(sc.headings), strings.Join(where, "、"))
 	}
 
+	lines, at := sc.lines, sc.headings
 	switch {
-	case openedAt != 0:
-		return []lintreport.Finding{{File: path, Line: openedAt, Message: "HTML コメントが閉じていません。後ろの行をすべてコメントとして読みます"}}, nil
+	case sc.openedAt != 0:
+		return []lintreport.Finding{{File: path, Line: sc.openedAt, Message: "HTML コメントが閉じていません。後ろの行をすべてコメントとして読みます"}}, nil
 	case len(at) == 0:
 		return []lintreport.Finding{{File: path, Line: 1, Message: fmt.Sprintf("%q の見出しがありません", heading)}}, nil
 	case len(at) > 1:
 		return []lintreport.Finding{{File: path, Line: lines[at[1]].Number, Message: fmt.Sprintf("%q の見出しが %d 件あります。1つにまとめます", heading, len(at))}}, nil
 	}
 	return checkSection(path, lines[at[0]].Number, section(lines, at[0])), nil
+}
+
+// 見出しの形をした行を、見出しとして読まなかった理由。
+const (
+	reasonFence   = "フェンス"
+	reasonComment = "HTML コメント"
+)
+
+// hiddenLine は、見出しの形をしているが、フェンスか HTML コメントの中に在るので見出しとして読まなかった行です。
+type hiddenLine struct {
+	Line   int
+	Reason string
+}
+
+// scanned は scanReadme の結果です。lines はフェンスの外の行で、HTML コメントの部分を除いた文字を、行の番号を
+// 保って持ちます。headings は参照記録の見出しの lines での添字です。openedAt は末尾まで閉じなかったコメントを
+// 開いた行の番号で、閉じていれば 0 です。
+type scanned struct {
+	lines    []mdscan.Line
+	headings []int
+	hidden   []hiddenLine
+	openedAt int
+}
+
+// scanReadme は、フェンスと HTML コメントの状態を1度の走査で一緒に追います。CommonMark のとおり、フェンスの中の
+// `<!--` はコメントを開かず、コメントの中のフェンスの区切りはフェンスを開きません。見出しは元の行が見出しの形を
+// しているときだけ数え、`<!-- -->## …` のように行頭がコメントの行は見出しではありません。
+func scanReadme(content []byte) scanned {
+	var sc scanned
+	var fence mdscan.Fence
+	for i, text := range strings.Split(string(content), "\n") {
+		number := i + 1
+		if sc.openedAt == 0 {
+			var in bool
+			if fence, in = fence.Next(text); in {
+				if isHeading(text) {
+					sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonFence})
+				}
+				continue
+			}
+		}
+		inComment := sc.openedAt != 0
+		visible, open := stripComments(text, inComment)
+		switch {
+		case !open:
+			sc.openedAt = 0
+		case !inComment || strings.Contains(text, commentClose):
+			sc.openedAt = number
+		}
+		if isHeading(text) {
+			if inComment {
+				sc.hidden = append(sc.hidden, hiddenLine{Line: number, Reason: reasonComment})
+			} else {
+				sc.headings = append(sc.headings, len(sc.lines))
+			}
+		}
+		sc.lines = append(sc.lines, mdscan.Line{Number: number, Text: visible})
+	}
+	return sc
 }
 
 // rawLines は、content の全行を、フェンスを区別せずに1始まりの番号で返します。
@@ -329,49 +387,58 @@ func hasTail(rest string, tails []string) bool {
 	return false
 }
 
-// visibleLines は、各行から HTML コメントの部分を除いた文字を、行の番号を保って返します。コメントだけの行は空の行に
-// なります。inline code の中の `<!--` はコメントを開きません。末尾までコメントが閉じなければ、openedAt はその
-// コメントを開いた行の番号で、閉じていれば 0 です。
-func visibleLines(lines []mdscan.Line) (out []mdscan.Line, openedAt int) {
-	out = make([]mdscan.Line, 0, len(lines))
-	for _, l := range lines {
-		var visible strings.Builder
-		text := l.Text
-		for text != "" {
-			if openedAt != 0 {
-				_, after, found := strings.Cut(text, commentClose)
-				if !found {
-					break
-				}
-				openedAt, text = 0, after
-				continue
-			}
-			if text[0] == '`' {
-				n := backtickRun(text)
-				if end := strings.Index(text[n:], text[:n]); end >= 0 && backtickRun(text[n+end:]) == n {
-					visible.WriteString(text[:n+end+n])
-					text = text[n+end+n:]
-					continue
-				}
-				visible.WriteString(text[:n])
-				text = text[n:]
-				continue
-			}
-			if strings.HasPrefix(text, commentOpen) {
-				openedAt, text = l.Number, text[len(commentOpen):]
-				continue
-			}
-			next := strings.IndexAny(text[1:], "`<")
-			if next < 0 {
-				visible.WriteString(text)
+// stripComments は、1行から HTML コメントの部分を除いた文字と、行末でコメントが開いたままかを返します。open は、
+// 行の頭でコメントが開いているかです。inline code の中の `<!--` はコメントを開きません。`<!-->` と `<!--->` は
+// 空のコメントです。
+func stripComments(text string, open bool) (visible string, stillOpen bool) {
+	var b strings.Builder
+	for text != "" {
+		if open {
+			_, after, found := strings.Cut(text, commentClose)
+			if !found {
 				break
 			}
-			visible.WriteString(text[:next+1])
-			text = text[next+1:]
+			open, text = false, after
+			continue
 		}
-		out = append(out, mdscan.Line{Number: l.Number, Text: visible.String()})
+		if text[0] == '`' {
+			n := backtickRun(text)
+			if end := strings.Index(text[n:], text[:n]); end >= 0 && backtickRun(text[n+end:]) == n {
+				b.WriteString(text[:n+end+n])
+				text = text[n+end+n:]
+				continue
+			}
+			b.WriteString(text[:n])
+			text = text[n:]
+			continue
+		}
+		if rest, ok := strings.CutPrefix(text, commentOpen); ok {
+			if empty, ok := cutEmptyComment(rest); ok {
+				text = empty
+				continue
+			}
+			open, text = true, rest
+			continue
+		}
+		next := strings.IndexAny(text[1:], "`<")
+		if next < 0 {
+			b.WriteString(text)
+			break
+		}
+		b.WriteString(text[:next+1])
+		text = text[next+1:]
 	}
-	return out, openedAt
+	return b.String(), open
+}
+
+// cutEmptyComment は、`<!--` の直後の rest が `>` か `->` で始まる（`<!-->` か `<!--->` の）とき、その後ろを返します。
+func cutEmptyComment(rest string) (string, bool) {
+	for _, end := range []string{">", "->"} {
+		if after, ok := strings.CutPrefix(rest, end); ok {
+			return after, true
+		}
+	}
+	return "", false
 }
 
 // backtickRun は、s の先頭から続くバッククォートの個数を返します。
