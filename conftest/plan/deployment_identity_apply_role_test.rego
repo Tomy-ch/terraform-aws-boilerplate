@@ -106,8 +106,8 @@ others := [
 	key_policy,
 ]
 
-# 入力は管理アカウントの reference の plan なので、統制の policy を既定で持つ。
-world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements), governance_policy_rc])
+# 入力は管理アカウントの reference の plan なので、統制の policy と前提の service-linked role を既定で持つ。
+world(statements) := array.concat(array.concat(array.concat(array.concat(role_resources, others), exclusives), siblings), [apply_policy(statements), governance_policy_rc, slr(slr_address)])
 
 cov(parent, ref, parent_ref) := {"class": "covered_by", "parent": parent, "ref": ref, "parent_ref": parent_ref}
 
@@ -120,6 +120,7 @@ bootstrap := {
 		"aws_iam_role_policy": cov("aws_iam_role", "role", "name"),
 		"aws_iam_role_policy_attachment": cov("aws_iam_role", "role", "name"),
 		"aws_iam_role_policy_attachments_exclusive": cov("aws_iam_role", "role_name", "name"),
+		"aws_iam_service_linked_role": {"class": "service_linked"},
 		"aws_kms_alias": cov("aws_kms_key", "target_key_id", "key_id"),
 		"aws_kms_key": {"class": "key"},
 		"aws_kms_key_policy": cov("aws_kms_key", "key_id", "id"),
@@ -131,6 +132,8 @@ bootstrap := {
 		"module.state_backend.module.plan_output.aws_s3_bucket.this": {"suffixes": ["/*"]},
 		"module.state_backend.module.apply_output.aws_s3_bucket.this": {"suffixes": ["/*"], "writes": ["s3:PutObject"]},
 	},
+	"prerequisite_module": "module.deployment_identity.",
+	"prerequisite_services": [slr_service],
 }
 
 decl := {
@@ -296,6 +299,16 @@ test_violation_bootstrap_malformed if {
 		with_type("aws_s3_bucket", {"class": "target", "child": true}),
 		with_type("aws_kms_key", {"class": "key", "children": true}),
 		with_bootstrap({"children": []}),
+		with_bootstrap({"prerequisite_module": ""}),
+		with_bootstrap({"prerequisite_module": 1}),
+		with_bootstrap({"prerequisite_module": "module.ops_notification."}),
+		json.patch(decl, [{"op": "remove", "path": "/deployment_identity/apply_role/bootstrap/prerequisite_module"}]),
+		with_bootstrap({"prerequisite_services": []}),
+		with_bootstrap({"prerequisite_services": slr_service}),
+		with_bootstrap({"prerequisite_services": [""]}),
+		with_bootstrap({"prerequisite_services": [1]}),
+		with_bootstrap({"prerequisite_services": [slr_service, null]}),
+		json.patch(decl, [{"op": "remove", "path": "/deployment_identity/apply_role/bootstrap/prerequisite_services"}]),
 		with_child(state_bucket, true),
 		with_child(state_bucket, {}),
 		with_child(state_bucket, {"roots": "true", "version_deletion": true}),
@@ -336,7 +349,7 @@ test_violation_bootstrap_missing if {
 
 # 片方の use-case の address が変わると、その下の構成物が黙って対象から外れる。prefix ごとに数える。
 test_violation_module_prefix_empty if {
-	d := with_bootstrap({"modules": ["module.state_backend.", "module.renamed."]})
+	d := with_bootstrap({"modules": ["module.state_backend.", "module.renamed."], "prerequisite_module": "module.renamed."})
 	fixture.has("[PLAN-APPLY-00] bootstrap の module \"module.renamed.\"", messages_for(world(valid_statements), d))
 }
 
@@ -667,7 +680,7 @@ workload_policy_address := sprintf("%saws_iam_policy.workload", [g])
 
 workload_policy_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload", [account])
 
-with_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address}}])
+with_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "service_linked_roles": [slr_service]}}])
 
 workload_world(arns) := array.concat(
 	with_after(world(array.concat(valid_statements, [full_deny([workload_policy_arn])])), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": arns}),
@@ -704,7 +717,7 @@ policy_2_address := sprintf("%saws_iam_policy.workload_2", [g])
 
 policy_2_arn := sprintf("arn:aws:iam::%s:policy/ci-apply-workload-2", [account])
 
-with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address, "policy_2": policy_2_address}}])
+with_two_workload_decl := json.patch(with_type("aws_iam_policy", {"class": "target"}), [{"op": "add", "path": "/deployment_identity/workload", "value": {"policy": workload_policy_address, "read_policy": read_policy_address, "policy_2": policy_2_address, "service_linked_roles": [slr_service]}}])
 
 all_workload_arns := [workload_policy_arn, read_policy_arn, policy_2_arn]
 
@@ -1238,6 +1251,299 @@ test_violation_declared_cloudformation_action_missing if {
 	msgs := declared_messages([a | some a in declared_governance_actions; a != "cloudformation:UpdateStackInstances"])
 	some m in msgs
 	startswith(m, denied_06("cloudformation:UpdateStackInstances"))
+}
+
+# --- service-linked role（deployment-identity/ADR-0002 決定6）---
+
+slr_service := "management.chatbot.amazonaws.com"
+
+slr_arn := sprintf("arn:aws:iam::%s:role/aws-service-role/%s/AWSServiceRoleForAWSChatbot", [account, slr_service])
+
+slr_address := "module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[0]"
+
+slr(address) := res("aws_iam_service_linked_role", address, {"arn": slr_arn, "aws_service_name": slr_service})
+
+boundary_address := sprintf("%saws_iam_policy.boundary[\"ops-notification\"]", [g])
+
+boundary_arn := sprintf("arn:aws:iam::%s:policy/ci-boundary-ops-notification", [account])
+
+slr_create := {"Effect": "Allow", "Action": "iam:CreateServiceLinkedRole", "Resource": slr_arn, "Condition": {"StringEquals": {"iam:AWSServiceName": slr_service}}}
+
+slr_read := {"Effect": "Allow", "Action": ["iam:GetRole", "iam:List*"], "Resource": ["*", slr_arn]}
+
+boundary_allow := {"Effect": "Allow", "Action": ["sns:Publish", "iam:Get*"], "Resource": "*"}
+
+slr_decl := json.patch(with_two_workload_decl, [{"op": "add", "path": "/deployment_identity/workload/boundaries", "value": {"ops-notification": boundary_address}}])
+
+managed_policy(address, name, arn, statements) := res("aws_iam_policy", address, {"name": name, "arn": arn, "policy": json.marshal({"Statement": statements})})
+
+slr_world(apply_extra, workload, read, boundary, roles) := slr_world_2(apply_extra, workload, read, [], boundary, roles)
+
+# 基底の world の前提の service-linked role を外し、roles で置き直す。
+slr_world_2(apply_extra, workload, read, policy_2, boundary, roles) := array.concat(
+	with_after(without(world(array.concat(array.concat(valid_statements, [full_deny(array.concat(all_workload_arns, [boundary_arn]))]), apply_extra)), slr_address), exclusives[1].address, {"role_name": "ci-apply", "policy_arns": all_workload_arns}),
+	array.concat(
+		[
+			managed_policy(workload_policy_address, "ci-apply-workload", workload_policy_arn, workload),
+			managed_policy(read_policy_address, "ci-apply-workload-read", read_policy_arn, read),
+			managed_policy(policy_2_address, "ci-apply-workload-2", policy_2_arn, policy_2),
+			managed_policy(boundary_address, "ci-boundary-ops-notification", boundary_arn, boundary),
+		],
+		roles,
+	),
+)
+
+slr_messages(apply_extra, workload, read, boundary) := messages_for(slr_world(apply_extra, workload, read, boundary, [slr(slr_address)]), slr_decl)
+
+slr_allowed(address, a) := sprintf("[PLAN-APPLY-02] p.json: %s の Allow が、service-linked role %s に %s を許しています", [address, slr_arn, a])
+
+test_pass_service_linked_role if {
+	count(slr_messages([], [slr_create], [slr_read], [boundary_allow])) == 0
+}
+
+test_violation_service_linked_role_update_in_apply_inline if {
+	msgs := slr_messages([{"Effect": "Allow", "Action": "iam:UpdateRole", "Resource": slr_arn}], [slr_create], [slr_read], [boundary_allow])
+	fixture.has(slr_allowed(apply_policy_address, "iam:updaterole"), msgs)
+}
+
+test_violation_service_linked_role_wildcard_in_boundary if {
+	every a in ["iam:Put*", "iam:*", "*", "IAM:UpdateRoleDescription"] {
+		msgs := slr_messages([], [slr_create], [slr_read], [boundary_allow, {"Effect": "Allow", "Action": a, "Resource": "*"}])
+		fixture.has(slr_allowed(boundary_address, lower(a)), msgs)
+	}
+}
+
+test_violation_service_linked_role_pattern_resource if {
+	msgs := slr_messages([], [slr_create, {"Effect": "Allow", "Action": "iam:DeleteServiceLinkedRole", "Resource": sprintf("arn:aws:iam::%s:role/aws-service-role/*", [account])}], [slr_read], [boundary_allow])
+	fixture.has(slr_allowed(workload_policy_address, "iam:deleteservicelinkedrole"), msgs)
+}
+
+test_violation_service_linked_role_create_unconditioned if {
+	every create in [
+		object.remove(slr_create, ["Condition"]),
+		json.patch(slr_create, [{"op": "replace", "path": "/Condition/StringEquals/iam:AWSServiceName", "value": "config.amazonaws.com"}]),
+		json.patch(slr_create, [{"op": "replace", "path": "/Condition", "value": {"StringLike": {"iam:AWSServiceName": slr_service}}}]),
+	] {
+		fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+	}
+}
+
+test_violation_service_linked_role_not_action_allow if {
+	msgs := slr_messages([], [slr_create], [slr_read, {"Effect": "Allow", "NotAction": "s3:*", "Resource": "*"}], [boundary_allow])
+	fixture.has(sprintf("[PLAN-APPLY-02] p.json: %s の Allow の NotAction が、service-linked role %s への", [read_policy_address, slr_arn]), msgs)
+}
+
+test_pass_service_linked_role_not_action_excludes_iam if {
+	count(slr_messages([], [slr_create], [slr_read, {"Effect": "Allow", "NotAction": ["iam:*", "s3:*"], "Resource": "*"}], [boundary_allow])) == 0
+}
+
+test_violation_service_linked_role_arn_unknown if {
+	rcs := with_after(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), slr_address, {"aws_service_name": slr_service})
+	fixture.has(sprintf("[PLAN-APPLY-00] bootstrap の構成物 %s の ARN", [slr_address]), messages_for(rcs, slr_decl))
+}
+
+test_violation_service_linked_role_unclassified if {
+	d := json.patch(slr_decl, [{"op": "remove", "path": "/deployment_identity/apply_role/bootstrap/types/aws_iam_service_linked_role"}])
+	fixture.has(sprintf("[PLAN-APPLY-02] bootstrap の構成物 %s の型", [slr_address]), messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), d))
+}
+
+test_violation_service_linked_class_extra_key if {
+	d := json.patch(slr_decl, [{"op": "add", "path": "/deployment_identity/apply_role/bootstrap/types/aws_iam_service_linked_role/children", "value": true}])
+	fixture.has(malformed, messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), d))
+}
+
+# --- PLAN-APPLY-07: 前提の service-linked role の置き場 ---
+
+outside_address := "module.ops_notification.module.chat_slack.aws_iam_service_linked_role.chatbot"
+
+test_violation_prerequisite_in_workload_usecase if {
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(outside_address)]), slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が、宣言した前提の service-linked role（%s）を module.deployment_identity. の外で作っています", [outside_address, slr_service]), msgs)
+}
+
+test_violation_prerequisite_count if {
+	every c in [
+		[[], 0],
+		[[slr(slr_address), slr("module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.chatbot[1]")], 2],
+	] {
+		msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], c[0]), slr_decl)
+		some m in msgs
+		startswith(m, sprintf("[PLAN-APPLY-07] 宣言した前提の service-linked role（%s）が、module.deployment_identity. の下に", [slr_service]))
+		endswith(m, sprintf("の下に %d 件です（1件を期待）", [c[1]]))
+	}
+}
+
+# 宣言の外のサービス（account-baseline の Config）の service-linked role は、workload root の usecase が作ってよい。
+test_pass_undeclared_service_outside_bootstrap if {
+	config := res("aws_iam_service_linked_role", "module.account_baseline.module.config_recorder.aws_iam_service_linked_role.config", {"arn": sprintf("arn:aws:iam::%s:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig", [account]), "aws_service_name": "config.amazonaws.com"})
+	count(messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), config]), slr_decl)) == 0
+}
+
+test_violation_prerequisite_outside_prerequisite_module if {
+	every address in [
+		"module.state_backend.aws_iam_service_linked_role.chatbot",
+		"aws_iam_service_linked_role.chatbot",
+	] {
+		msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(address)]), slr_decl)
+		fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が、宣言した前提の service-linked role（%s）を module.deployment_identity. の外で作っています", [address, slr_service]), msgs)
+	}
+}
+
+# 置き場の外の1件だけが落ち、置き場の下の1件は数を満たすので、数の検査は落ちない。
+test_violation_prerequisite_only_outside_one_denied if {
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), slr(outside_address)]), slr_decl)
+	count(msgs) == 1
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s が", [outside_address]), msgs)
+}
+
+test_violation_service_linked_role_service_unknown if {
+	every after in [{"arn": slr_arn}, {"arn": slr_arn, "aws_service_name": null}, {"arn": slr_arn, "aws_service_name": 1}] {
+		rcs := with_after(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address)]), slr_address, after)
+		fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s の aws_service_name が plan で決まっていません", [slr_address]), messages_for(rcs, slr_decl))
+	}
+}
+
+test_violation_service_unknown_outside_bootstrap if {
+	unknown := res("aws_iam_service_linked_role", outside_address, {"arn": slr_arn})
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), unknown]), slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s の aws_service_name が plan で決まっていません", [outside_address]), msgs)
+}
+
+test_violation_undeclared_service_in_prerequisite_module if {
+	config_address := "module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.config"
+	config := res("aws_iam_service_linked_role", config_address, {"arn": sprintf("arn:aws:iam::%s:role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig", [account]), "aws_service_name": "config.amazonaws.com"})
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), config]), slr_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s の service-linked role（config.amazonaws.com）が、宣言した前提のサービス", [config_address]), msgs)
+}
+
+# 同じ ARN の2つの role が別のサービスを持っても評価は衝突せず、宣言の外のサービスの組で作成の Allow が落ちる。
+test_violation_same_arn_different_service if {
+	other_address := "module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.other"
+	other := res("aws_iam_service_linked_role", other_address, {"arn": slr_arn, "aws_service_name": "config.amazonaws.com"})
+	msgs := messages_for(slr_world([], [slr_create], [slr_read], [boundary_allow], [slr(slr_address), other]), slr_decl)
+	fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), msgs)
+}
+
+# --- 前提のサービスと、apply の role が作るサービスの区別 ---
+
+config_service := "config.amazonaws.com"
+
+config_slr_arn := sprintf("arn:aws:iam::%s:role/aws-service-role/%s/AWSServiceRoleForConfig", [account, config_service])
+
+analyzer_service := "access-analyzer.amazonaws.com"
+
+analyzer_slr_arn := sprintf("arn:aws:iam::%s:role/aws-service-role/%s/AWSServiceRoleForAccessAnalyzer", [account, analyzer_service])
+
+# 実の宣言と同じく、apply の role は3つのサービスの作成を許され、前提は Chatbot だけである。
+baseline_decl := json.patch(slr_decl, [{"op": "replace", "path": "/deployment_identity/workload/service_linked_roles", "value": [analyzer_service, config_service, slr_service]}])
+
+baseline_slrs := [
+	slr(slr_address),
+	res("aws_iam_service_linked_role", "module.account_baseline.aws_iam_service_linked_role.config", {"arn": config_slr_arn, "aws_service_name": config_service}),
+	res("aws_iam_service_linked_role", "module.account_baseline.aws_iam_service_linked_role.analyzer", {"arn": analyzer_slr_arn, "aws_service_name": analyzer_service}),
+]
+
+baseline_messages(policy_2) := messages_for(slr_world_2([], [slr_create], [slr_read], policy_2, [boundary_allow], baseline_slrs), baseline_decl)
+
+config_create := {"Effect": "Allow", "Action": "iam:CreateServiceLinkedRole", "Resource": config_slr_arn, "Condition": {"StringEquals": {"iam:AWSServiceName": config_service}}}
+
+config_pass := {"Effect": "Allow", "Action": "iam:PassRole", "Resource": config_slr_arn, "Condition": {"StringEquals": {"iam:PassedToService": config_service}}}
+
+test_pass_workload_service_linked_roles_outside_prerequisite_module if {
+	count(baseline_messages([config_create, config_pass])) == 0
+}
+
+test_pass_account_iam_write_in_policy_2 if {
+	count(baseline_messages([{"Effect": "Allow", "Action": "iam:UpdateAccountPasswordPolicy", "Resource": "*"}])) == 0
+}
+
+test_violation_update_role_on_prerequisite_in_policy_2 if {
+	fixture.has(slr_allowed(policy_2_address, "iam:updaterole"), baseline_messages([{"Effect": "Allow", "Action": "iam:UpdateRole", "Resource": slr_arn}]))
+}
+
+test_violation_pass_role_on_prerequisite_in_policy_2 if {
+	fixture.has(slr_allowed(policy_2_address, "iam:passrole"), baseline_messages([config_pass, {"Effect": "Allow", "Action": "iam:PassRole", "Resource": slr_arn}]))
+}
+
+# 置き場の下では、apply の role が作成を許されるサービスでも、前提でなければ落ちる。
+test_violation_workload_service_in_prerequisite_module if {
+	config_address := "module.deployment_identity.module.service_linked_roles.aws_iam_service_linked_role.config"
+	config := res("aws_iam_service_linked_role", config_address, {"arn": config_slr_arn, "aws_service_name": config_service})
+	msgs := messages_for(slr_world_2([], [slr_create], [slr_read], [], [boundary_allow], [slr(slr_address), config]), baseline_decl)
+	fixture.has(sprintf("[PLAN-APPLY-07] p.json: %s の service-linked role（%s）が、宣言した前提のサービス（[%q]）にありません", [config_address, config_service, slr_service]), msgs)
+}
+
+# role に向かない IAM の書き込みに当たる wildcard は数えず、role の書き込みに当たる wildcard は数える。
+test_pass_account_level_wildcard_in_policy_2 if {
+	count(baseline_messages([{"Effect": "Allow", "Action": ["iam:UpdateAccount*", "iam:*AccountAlias"], "Resource": "*"}])) == 0
+}
+
+test_violation_role_wildcard_in_policy_2 if {
+	fixture.has(slr_allowed(policy_2_address, "iam:update*"), baseline_messages([{"Effect": "Allow", "Action": "iam:Update*", "Resource": "*"}]))
+}
+
+# --- PLAN-APPLY-02 の境界 ---
+
+test_pass_write_to_other_role if {
+	other_role := role_arn("ops-notification-chatbot")
+	count(slr_messages([], [slr_create, {"Effect": "Allow", "Action": ["iam:UpdateRole", "iam:PutRolePolicy"], "Resource": other_role}], [slr_read], [boundary_allow])) == 0
+}
+
+test_pass_read_actions_on_service_linked_role if {
+	count(slr_messages([], [slr_create], [slr_read, {"Effect": "Allow", "Action": ["iam:GenerateServiceLastAccessedDetails", "iam:SimulatePrincipalPolicy"], "Resource": slr_arn}], [boundary_allow])) == 0
+}
+
+# iam:PassRole は読み取りの動詞でないので、service-linked role に当たれば書き込みと数える。
+test_violation_pass_role_on_service_linked_role if {
+	msgs := slr_messages([], [slr_create, {"Effect": "Allow", "Action": "iam:PassRole", "Resource": slr_arn}], [slr_read], [boundary_allow])
+	fixture.has(slr_allowed(workload_policy_address, "iam:passrole"), msgs)
+}
+
+test_violation_not_resource_excluding_other_role if {
+	msgs := slr_messages([], [slr_create, {"Effect": "Allow", "Action": "iam:UpdateRole", "NotResource": role_arn("ci-plan")}], [slr_read], [boundary_allow])
+	fixture.has(slr_allowed(workload_policy_address, "iam:updaterole"), msgs)
+}
+
+test_pass_not_resource_listing_service_linked_role if {
+	count(slr_messages([], [slr_create, {"Effect": "Allow", "Action": "iam:UpdateRole", "NotResource": [sprintf("arn:aws:iam::%s:role/aws-service-role/*", [account])]}], [slr_read], [boundary_allow])) == 0
+}
+
+test_violation_create_condition_multiple_or_for_any_value if {
+	every create in [
+		json.patch(slr_create, [{"op": "replace", "path": "/Condition/StringEquals/iam:AWSServiceName", "value": [slr_service, "config.amazonaws.com"]}]),
+		json.patch(slr_create, [{"op": "replace", "path": "/Condition", "value": {"ForAnyValue:StringEquals": {"iam:AWSServiceName": slr_service}}}]),
+	] {
+		fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+	}
+}
+
+test_violation_create_resource_not_exact_arn if {
+	every resource in [
+		"*",
+		[slr_arn, "*"],
+		sprintf("arn:aws:iam::%s:role/aws-service-role/%s/*", [account, slr_service]),
+		sprintf("arn:aws:iam::%s:role/aws-service-role/*", [account]),
+	] {
+		create := json.patch(slr_create, [{"op": "replace", "path": "/Resource", "value": resource}])
+		fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+	}
+}
+
+test_violation_create_not_resource if {
+	create := json.patch(object.remove(slr_create, ["Resource"]), [{"op": "add", "path": "/NotResource", "value": role_arn("ci-plan")}])
+	fixture.has(slr_allowed(workload_policy_address, "iam:createservicelinkedrole"), slr_messages([], [create], [slr_read], [boundary_allow]))
+}
+
+test_pass_create_resource_exact_arn if {
+	every resource in [slr_arn, [slr_arn]] {
+		create := json.patch(slr_create, [{"op": "replace", "path": "/Resource", "value": resource}])
+		count(slr_messages([], [create], [slr_read], [boundary_allow])) == 0
+	}
+}
+
+test_violation_not_action_only_iam_reads if {
+	msgs := slr_messages([], [slr_create], [slr_read, {"Effect": "Allow", "NotAction": ["iam:GetRole", "iam:ListRoles"], "Resource": "*"}], [boundary_allow])
+	fixture.has(sprintf("[PLAN-APPLY-02] p.json: %s の Allow の NotAction が、service-linked role %s への", [read_policy_address, slr_arn]), msgs)
 }
 
 # --- 管理アカウントでだけ拒む統制の Action（deployment-identity/ADR-0201 決定5）---

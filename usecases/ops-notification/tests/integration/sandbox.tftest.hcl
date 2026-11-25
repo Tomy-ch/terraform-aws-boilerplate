@@ -1,5 +1,8 @@
 # Integration Test。実 provider で sandbox のアカウントに複製を作り、確かめてから破棄する（ADR-0401 決定14-16）。
 # 実行は人が行う（README の「検証方法」）。CI と make tf-test はこのディレクトリを走らせない。
+# 前提: sandbox のアカウントに Chatbot の service-linked role（AWSServiceRoleForAWSChatbot）が在ること。sandbox の
+# identity root の apply が作る（sandbox の apply の経路は #331 が配線する）。CLI やコンソールで作らない。無ければ plan が
+# 落ちる（README の「plan で落ちたときに見るもの」）。
 #
 #   terraform -chdir=usecases/ops-notification test -test-directory=tests/integration \
 #     -var project=it<実行の識別子> -var 'chat={slack={team_id="<ID>",channel_id="<ID>"}}' \
