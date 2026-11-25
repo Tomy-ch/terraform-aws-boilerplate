@@ -17,3 +17,14 @@ variable "bootstrapping" {
   description = "立ち上げ中のメンバーアカウントの env。ここに無いアカウントには、OrganizationAccountAccessRole の使用を拒む SCP を付ける。"
   type        = set(string)
 }
+
+variable "delegated_admin_regions" {
+  description = "GuardDuty・Inspector・Security Hub の委任管理者を指定するリージョンの集合（repository-wide/ADR-0209）。"
+  type        = set(string)
+  nullable    = false
+
+  validation {
+    condition     = length(var.delegated_admin_regions) > 0
+    error_message = "delegated_admin_regions は空にできません。"
+  }
+}

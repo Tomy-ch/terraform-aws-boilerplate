@@ -10,6 +10,8 @@ module "organization" {
   break_glass_role_name = local.break_glass_role_name
   break_glass_role_path = local.break_glass_path
   bootstrapping         = var.bootstrapping
+  # partition は data.aws_partition.current の postcondition が限る。
+  delegated_admin_regions = module.default_regions.by_partition[data.aws_partition.current.partition]
 }
 
 module "break_glass" {
@@ -32,12 +34,4 @@ data "aws_partition" "current" {
       error_message = "partition ${self.partition} は organization-baseline の対象の外です（README の unsupported）。"
     }
   }
-}
-
-# セキュリティのサービスの委任管理者は security のアカウント（repository-wide/ADR-0602 決定1）。
-module "delegated_admin" {
-  source = "./internal/delegated-admin"
-
-  admin_account_id = module.organization.account_ids["security"]
-  regions          = module.default_regions.by_partition[data.aws_partition.current.partition]
 }

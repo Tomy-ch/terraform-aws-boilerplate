@@ -22,7 +22,7 @@ mock_provider "aws" {
   mock_resource "aws_organizations_organizational_unit" {
     defaults = { id = "ou-exam-abcdefgh" }
   }
-  # 委任管理者の指定は、アカウントの ID を12桁の数字として受ける。
+  # 委任管理者の指定は、Provider がアカウントの ID を12桁の数字として検査する。
   mock_resource "aws_organizations_account" {
     defaults = { id = "222222222222" }
   }
