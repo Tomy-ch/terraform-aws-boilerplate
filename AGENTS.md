@@ -12,7 +12,7 @@
 
 ## 現在の配線状態
 
-**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/` だけである。** 決定（`docs/adr/`）と、それを守る機構
+**Terraform の実装は、ユースケースの `usecases/state-backend/` と `usecases/deployment-identity/`（bootstrap の段1-4 の分）と `usecases/finops/`・`usecases/network-foundation/`・`usecases/dns-zone/`・`usecases/audit-evidence/`・`usecases/ops-notification/`・`usecases/image-registry/`・`usecases/organization-baseline/`・`usecases/account-baseline/`、管理アカウントの identity root の `env/admin/identity/` と workload root の `env/admin/`、一般 module の `modules/s3/`・`modules/kms/`・`modules/log-group/`・`modules/vended-log-group/`・`modules/sns/`・`modules/vpc/`・`modules/default-regions/` だけである。** 決定（`docs/adr/`）と、それを守る機構
 （`.github/` / `.makefiles/` / `scripts/` / `docker/`）は配線済みである。次はいずれも未配線とする。
 
 - `usecases/` / `env/` —— `state-backend`・`deployment-identity`・`organization-baseline`・`finops`・`network-foundation`・`dns-zone`・`audit-evidence`・`ops-notification`・`image-registry`・`account-baseline` と管理アカウントの identity root と workload root のほかに、ユースケースと環境が無い。`network-foundation`・`dns-zone`・`audit-evidence`・`image-registry`・`account-baseline` を呼ぶ env は無い
@@ -138,6 +138,7 @@
 6. **文書が、検査手段を持たない主張を述べようとしている**（[0401](docs/adr/0401-testing-policy.md) 決定3、[0701](docs/adr/0701-documentation-ownership-and-language.md) 決定12）。
 7. **次の一手が履歴を書き換えるか、保護ブランチへ触れる** —— force push、rebase、amend してからの push、保護ブランチの checkout。
 8. **次の一手が実環境へ直接 apply する**（[0601](docs/adr/0601-change-delivery-path.md) 決定3・5・13）。bootstrap の初回と回復の apply も含む —— [0602](docs/adr/0602-bootstrap-and-ci-authentication.md) 決定9 の例外は人が実行するものであり、エージェントがこのワイヤを越える根拠にならない。
+   v1.0.0 より前は、このリポジトリそのものの開発のために、エージェントが手元から apply してよい（[0601](docs/adr/0601-change-delivery-path.md) 決定3・5 の例外）。当てる前に、統括 AI へ実行の前の報告を送り、ユーザーの承認を得る。当てる木は線の commit に限り、plan を保存したファイルだけを当てる。開始と終わりも統括 AI に報告する。当てた木は、昇格でデプロイブランチへ運ぶ。 <!-- v1.0.0 で削除: #141 -->
 
 ### それ以外
 
