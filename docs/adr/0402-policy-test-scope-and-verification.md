@@ -38,7 +38,7 @@ ADR-0501 決定4・6 は Security レイヤーを Trivy / Checkov / KICS / Semgr
    | 暗号化の有効化 | Security | 同上 |
    | RDS の public access の禁止 | Security | 同上 |
    | IAM の Action wildcard の禁止 | Security | 同上 |
-   | `0.0.0.0/0` からの ingress を、インターネット公開点として設計された module に限ること | Policy | 何が公開点かは本リポジトリの設計が決める（ADR-0301 決定15） |
+   | `0.0.0.0/0` と `::/0` からの ingress を、インターネット公開点として設計された module に限ること | Policy | 何が公開点かは本リポジトリの設計が決める（ADR-0301 決定15） |
    | 意味論的な権限指定から導出された Action の集合と、生成された policy が完全一致すること | Policy | 導出規則は当該ユースケースの ADR が持つ（ADR-0301 決定7） |
    | OIDC の信頼条件にワイルドカードが存在しないこと | Policy | 対象と条件の形が本リポジトリの設計に属する |
 

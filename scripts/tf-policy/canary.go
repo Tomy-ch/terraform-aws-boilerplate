@@ -29,7 +29,7 @@ var canaryExcluded = []string{
 	"deployment_identity_*.rego", "state_backend_*.rego", "kms_key_policy*.rego", "resource_policy_exclusive*.rego",
 	"audit_evidence*.rego", "finops*.rego", "network_foundation*.rego", "dns_zone*.rego", "ops_notification*.rego",
 	"image_registry*.rego", "publisher_trust*.rego", "iam_role_attachment_pairing*.rego", "organization_baseline_*.rego",
-	"workload_role_boundary*.rego", "account_baseline*.rego",
+	"workload_role_boundary*.rego", "account_baseline*.rego", "security_group_ingress*.rego",
 }
 
 // canaryData は、canary の Policy の宣言です。terraform_data の input を IAM の文書として読ませます。
