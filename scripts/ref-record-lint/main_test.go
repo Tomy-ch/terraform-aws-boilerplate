@@ -417,6 +417,63 @@ func Test_checkReadme(t *testing.T) {
 		require.ErrorIs(t, err, errCountMismatch)
 	})
 
+	t.Run("コメントの中にだけ節があれば見出しが無い違反", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith("<!--\n"+validSection+"-->\n")))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, 1, got[0].Line)
+		assert.Contains(t, got[0].Message, "見出しがありません")
+	})
+
+	t.Run("1行のコメントの中の見出しは数えない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte("<!-- "+heading+" -->\n"+readmeWith(validSection)))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("コメントの中のラベルと項目は数えない", func(t *testing.T) {
+		t.Parallel()
+		section := strings.Replace(validSection, "採用した知見:\n\n- 知見 A\n", "<!--\n採用した知見:\n\n- 知見 A\n-->\n", 1)
+		got, err := checkReadme("R.md", []byte(readmeWith(section)))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, `"採用した知見:" の行がありません`)
+	})
+
+	t.Run("閉じないコメントは、開いた行の違反", func(t *testing.T) {
+		t.Parallel()
+		body := readmeWith(validSection) + "\n<!-- 閉じない\n"
+		got, err := checkReadme("R.md", []byte(body))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, strings.Count(body, "\n"), got[0].Line)
+		assert.Contains(t, got[0].Message, "HTML コメントが閉じていません")
+	})
+
+	t.Run("見出しの語が長ければ見出しとして数えない", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading, heading+"メモ", 1))))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "見出しがありません")
+	})
+
+	t.Run("見出しの後ろの空白とコメントは許す", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(readmeWith(strings.Replace(validSection, heading+"（ADR-0206 決定7・8）", heading+" <!-- sample:line -->", 1))))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("CRLF の README も、中身が揃えば違反なし", func(t *testing.T) {
+		t.Parallel()
+		got, err := checkReadme("R.md", []byte(strings.ReplaceAll(readmeWith(validSection), "\n", "\r\n")))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
 	t.Run("節は次の2段目の見出しで終わり、その後の項目を数えない", func(t *testing.T) {
 		t.Parallel()
 		body := "## 公式実装の参照\n\n参照日: 2026-11-19、AWS Provider v6.70.0\n\n## 別\n\n" +
@@ -445,6 +502,69 @@ func Test_section(t *testing.T) {
 
 	ls = lines("## 公式実装の参照\na\nb")
 	assert.Len(t, section(ls, 0), 2, "見出しが続かなければ末尾まで")
+}
+
+func Test_rawLines(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []mdscan.Line{{Number: 1, Text: "a"}, {Number: 2, Text: "```"}, {Number: 3, Text: ""}}, rawLines([]byte("a\n```\n")),
+		"フェンスも区別せず、全行を1始まりの番号で返す")
+}
+
+func Test_isHeading(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		text string
+		want bool
+	}{
+		"見出しだけ":   {heading, true},
+		"空白が続く":   {heading + " <!-- x -->", true},
+		"括弧書きが続く": {heading + "（ADR-0206 決定7・8）", true},
+		"語が続く":    {heading + "メモ", false},
+		"3段目":     {"#" + heading, false},
+		"行頭でない":   {" " + heading, false},
+		"別の見出し":   {"## 公式実装", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, isHeading(c.text))
+		})
+	}
+}
+
+func Test_visibleLines(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		body     string
+		want     []string
+		openedAt int
+	}{
+		"コメントが無ければそのまま": {"a\nb", []string{"a", "b"}, 0},
+		"1行のコメントは空になる":  {"<!-- a -->\nb", []string{"", "b"}, 0},
+		"行末のコメントを外す":    {"- A <!-- sample:line -->", []string{"- A "}, 0},
+		"複数行のコメントの中は空になる": {
+			"a\n<!--\n## x\n-->\nb", []string{"a", "", "", "", "b"}, 0,
+		},
+		"閉じた後ろの文字は残す":                {"<!-- a\nb --> c", []string{"", " c"}, 0},
+		"1行に2つのコメント":                 {"a<!-- x -->b<!-- y -->c", []string{"abc"}, 0},
+		"inline code の中の開きは開かない":     {"`<!--` a\nb", []string{"`<!--` a", "b"}, 0},
+		"閉じない inline code の後ろの開きは開く": {"`a <!-- b\nc -->", []string{"`a ", ""}, 0},
+		"閉じなければ開いた行を返す":              {"a\n<!-- b\nc", []string{"a", "", ""}, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, openedAt := visibleLines(lines(c.body))
+			texts := make([]string, 0, len(got))
+			for i, l := range got {
+				assert.Equal(t, i+1, l.Number, "行の番号を保つ")
+				texts = append(texts, l.Text)
+			}
+			assert.Equal(t, c.want, texts)
+			assert.Equal(t, c.openedAt, openedAt)
+		})
+	}
 }
 
 func Test_checkSection(t *testing.T) {
@@ -503,6 +623,9 @@ func Test_checkDate(t *testing.T) {
 		"短い":          {"参照日: 2026-11-1\n", false, 1, "読めません"},
 		"空":           {"参照日: \n", false, 1, "読めません"},
 		"日付でない":       {"参照日: 不明です、確かめる\n", false, 1, "読めません"},
+		"空白で続く":       {"参照日: 2026-11-19 AWS Provider v6.70.0\n", true, 1, ""},
+		"日の後ろに数字が続く":  {"参照日: 2026-11-199\n", false, 1, "読めません"},
+		"日の後ろに文字が続く":  {"参照日: 2026-01-01abc\n", false, 1, "読めません"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -570,9 +693,25 @@ func Test_checkList(t *testing.T) {
 			"採用した知見:\n\n採用しなかった知見と理由:\n- B: 理由\n", adoptedLabel, false,
 			[]lintreport.Finding{{Line: 1, Message: `"採用した知見:" の後に項目がありません`}},
 		},
-		"文で一覧が終わり、後ろの項目を数えない": {
+		"項目の前の文は、一覧の途中の違反": {
 			"採用した知見:\n本文\n- A\n", adoptedLabel, false,
-			[]lintreport.Finding{{Line: 1, Message: `"採用した知見:" の後に項目がありません`}},
+			[]lintreport.Finding{{Line: 2, Message: `"採用した知見:" の一覧の途中に項目でない行があります`}},
+		},
+		"項目の間の文は、一覧の途中の違反": {
+			"採用した知見:\n- A\n\n本文\n本文 2\n\n- B\n", adoptedLabel, false,
+			[]lintreport.Finding{
+				{Line: 4, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
+				{Line: 5, Message: `"採用した知見:" の一覧の途中に項目でない行があります`},
+			},
+		},
+		"項目の後の文は、後ろに項目が無ければ許す": {
+			"採用した知見:\n- A\n\n本文\n", adoptedLabel, false, nil,
+		},
+		"次の label で一覧が終わる": {
+			"採用した知見:\n- A\n採用しなかった知見と理由:\n本文\n- B: 理由\n", adoptedLabel, false, nil,
+		},
+		"見出しで一覧が終わる": {
+			"採用した知見:\n- A\n### 小見出し\n本文\n- B\n", adoptedLabel, false, nil,
 		},
 		"末尾で label が終わる": {
 			"採用した知見:", adoptedLabel, false,
@@ -581,6 +720,14 @@ func Test_checkList(t *testing.T) {
 		"本文が空の項目": {
 			"採用した知見:\n- A\n-  \n", adoptedLabel, false,
 			[]lintreport.Finding{{Line: 3, Message: `"採用した知見:" の項目の本文が空です`}},
+		},
+		"ハイフンだけの項目": {
+			"採用した知見:\n- A\n-\n", adoptedLabel, false,
+			[]lintreport.Finding{{Line: 3, Message: `"採用した知見:" の項目の本文が空です`}},
+		},
+		"ハイフンだけの項目だけなら、項目が無い違反は出さない": {
+			"採用した知見:\n-\t\n", adoptedLabel, false,
+			[]lintreport.Finding{{Line: 2, Message: `"採用した知見:" の項目の本文が空です`}},
 		},
 		"理由が無い": {
 			"採用しなかった知見と理由:\n- A\n", rejectedLabel, true,
