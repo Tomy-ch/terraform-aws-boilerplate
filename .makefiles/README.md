@@ -90,7 +90,7 @@ workflow と action の検査、commit message、egress の SSOT、action と ru
 
 ### `go/`
 
-運用機構（`scripts/`）の Go の整形・Lint・テスト。
+運用機構（`scripts/`）の Go の整形・Lint・テスト。整形の検査の判定と canary は `scripts/gofmt-gate` が持つ。
 
 ### `hygiene/`
 
